@@ -88,6 +88,7 @@ const seasons: MemesSeason[] = [
 ];
 
 test('smth should calculate the boost correctly', () => {
+  // eslint-disable-next-line
   console.log(Time.days(365).toMillis());
 });
 

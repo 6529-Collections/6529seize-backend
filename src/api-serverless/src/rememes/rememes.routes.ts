@@ -4,11 +4,11 @@ import { asyncRouter } from '../async.router';
 import {
   ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
   CONTENT_TYPE_HEADER,
+  corsOptions,
   DEFAULT_PAGE_SIZE,
   DISTRIBUTION_PAGE_SIZE,
   JSON_HEADER_VALUE,
-  SORT_DIRECTIONS,
-  corsOptions
+  SORT_DIRECTIONS
 } from '../api-constants';
 import { REMEMES_SORT } from '../api-filters';
 import { returnPaginatedResult } from '../api-helpers';
@@ -73,7 +73,7 @@ router.post(`/add`, validateRememeAdd, function (req: any, res: any) {
   res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
   res.setHeader(ACCESS_CONTROL_ALLOW_ORIGIN_HEADER, corsOptions.allowedHeaders);
   if (valid) {
-    db.addRememe(req.body.address, body).then((result) => {
+    db.addRememe(req.body.address, body).then(() => {
       res.status(201).send(JSON.stringify(body));
       res.end();
     });

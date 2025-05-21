@@ -307,9 +307,9 @@ async function fetchMemesAggregatedActivity<T>(
   key: string,
   value: string,
   table: string
-) {
+): Promise<T[]> {
   const sql = `
     SELECT * from ${table} where ${key} = :value
     `;
-  return await sqlExecutor.execute(sql, { value });
+  return await sqlExecutor.execute<T>(sql, { value });
 }

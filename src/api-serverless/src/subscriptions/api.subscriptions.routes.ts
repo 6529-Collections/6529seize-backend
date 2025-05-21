@@ -57,7 +57,7 @@ router.get(
       },
       any,
       any,
-      {}
+      any
     >,
     res: Response<SubscriptionBalance | string>
   ) {

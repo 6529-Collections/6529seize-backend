@@ -94,10 +94,7 @@ const logger = Logger.get('DB');
 
 let AppDataSource: DataSource;
 
-export async function connect(
-  entities: any[] = [],
-  syncEntities: boolean = false
-) {
+export async function connect(entities: any[] = [], syncEntities = false) {
   logger.info(
     `[DB HOST ${process.env.DB_HOST}] [SYNC ENTITIES ${syncEntities}]`
   );

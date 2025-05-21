@@ -50,7 +50,7 @@ interface TokenTraitWithCount {
   value_counts: TokenValueCount[];
 }
 
-function validateCollectionId(req: any, res: any, next: any) {
+function validateCollectionId(req: any, _: any, next: any) {
   const id: number = parseInt(req.params.id);
   if (isNaN(id)) {
     throw new BadRequestException('Collection ID must be a number.');
@@ -113,30 +113,27 @@ router.post(
   }
 );
 
-router.get(
-  `/merkle_roots/:merkle_root`,
-  async function (req: any, res: any, next: any) {
-    const merkleRoot = req.params.merkle_root;
+router.get(`/merkle_roots/:merkle_root`, async function (req: any, res: any) {
+  const merkleRoot = req.params.merkle_root;
 
-    db.fetchNextGenAllowlistCollection(merkleRoot).then((result) => {
-      if (result) {
-        result.merkle_tree = JSON.parse(result.merkle_tree);
-      } else {
-        result = null;
-      }
-      res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
-      res.setHeader(
-        ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
-        corsOptions.allowedHeaders
-      );
-      res.end(JSON.stringify(result));
-    });
-  }
-);
+  db.fetchNextGenAllowlistCollection(merkleRoot).then((result) => {
+    if (result) {
+      result.merkle_tree = JSON.parse(result.merkle_tree);
+    } else {
+      result = null;
+    }
+    res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
+    res.setHeader(
+      ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
+      corsOptions.allowedHeaders
+    );
+    res.end(JSON.stringify(result));
+  });
+});
 
 router.get(
   `/:collection_id/allowlist_merkle/:merkle_root?`,
-  async function (req: any, res: any, next: any) {
+  async function (req: any, res: any) {
     const id: number = parseInt(req.params.collection_id);
     if (!isNaN(id)) {
       const addresses = req.query.address;
@@ -168,7 +165,7 @@ router.get(
   }
 );
 
-router.get(`/proofs`, async function (req: any, res: any, next: any) {
+router.get(`/proofs`, async function (req: any, res: any) {
   const pageSize: number =
     req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
       ? parseInt(req.query.page_size)
@@ -188,7 +185,7 @@ router.get(`/proofs`, async function (req: any, res: any, next: any) {
 
 router.get(
   `/proofs/:merkle_root/:address`,
-  async function (req: any, res: any, next: any) {
+  async function (req: any, res: any) {
     const merkleRoot = req.params.merkle_root;
     const address = req.params.address;
 
@@ -205,7 +202,7 @@ router.get(
 
 router.get(
   `/burn_proofs/:merkle_root/:tokenId`,
-  async function (req: any, res: any, next: any) {
+  async function (req: any, res: any) {
     const merkleRoot = req.params.merkle_root;
     const tokenId = parseInt(req.params.tokenId);
 
@@ -220,7 +217,7 @@ router.get(
   }
 );
 
-router.get(`/allowlist_phases`, async function (req: any, res: any, next: any) {
+router.get(`/allowlist_phases`, async function (req: any, res: any) {
   const pageSize: number =
     req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
       ? parseInt(req.query.page_size)
@@ -237,7 +234,7 @@ router.get(`/allowlist_phases`, async function (req: any, res: any, next: any) {
 
 router.get(
   `/allowlist_phases/:collection_id`,
-  async function (req: any, res: any, next: any) {
+  async function (req: any, res: any) {
     const id: number = parseInt(req.params.collection_id);
     if (!isNaN(id)) {
       logger.info(`[FETCHING ALLOWLIST PHASES COLLECTION ID ${id}]`);
@@ -250,13 +247,13 @@ router.get(
   }
 );
 
-router.get(`/featured`, async function (req: any, res: any, next: any) {
+router.get(`/featured`, async function (req: any, res: any) {
   db.fetchFeaturedCollection().then((result) => {
     return returnJsonResult(result, req, res);
   });
 });
 
-router.get(`/collections`, async function (req: any, res: any, next: any) {
+router.get(`/collections`, async function (req: any, res: any) {
   const pageSize: number =
     req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
       ? parseInt(req.query.page_size)
@@ -273,7 +270,7 @@ router.get(`/collections`, async function (req: any, res: any, next: any) {
   });
 });
 
-router.get(`/collections/:id`, async function (req: any, res: any, next: any) {
+router.get(`/collections/:id`, async function (req: any, res: any) {
   const id: number = parseInt(req.params.id);
   let result: any;
   if (!isNaN(id)) {
@@ -294,7 +291,7 @@ router.get(`/collections/:id`, async function (req: any, res: any, next: any) {
 router.get(
   `/collections/:id/tokens`,
   validateCollectionId,
-  async function (req: any, res: any, next: any) {
+  async function (req: any, res: any) {
     const id: number = req.params.id;
     const pageSize: number =
       req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
@@ -341,7 +338,7 @@ router.get(
 router.get(
   `/collections/:id/tokens/:token`,
   validateCollectionId,
-  async function (req: any, res: any, next: any) {
+  async function (req: any, res: any) {
     const id: number = req.params.id;
     const token: number = parseInt(req.params.token);
 
@@ -363,7 +360,7 @@ router.get(
 router.get(
   `/collections/:id/logs`,
   validateCollectionId,
-  async function (req: any, res: any, next: any) {
+  async function (req: any, res: any) {
     const id: number = req.params.id;
     const pageSize: number =
       req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
@@ -380,7 +377,7 @@ router.get(
 router.get(
   `/collections/:id/logs/:tokenId`,
   validateCollectionId,
-  async function (req: any, res: any, next: any) {
+  async function (req: any, res: any) {
     const id: number = req.params.id;
     const tokenId = parseInt(req.params.tokenId);
 
@@ -403,7 +400,7 @@ router.get(
 router.get(
   `/collections/:id/traits`,
   validateCollectionId,
-  async function (req: any, res: any, next: any) {
+  async function (req: any, res: any) {
     const id: number = req.params.id;
 
     db.fetchNextGenCollectionTraits(id).then((result) => {
@@ -446,7 +443,7 @@ router.get(
 router.get(
   `/collections/:id/ultimate_trait_set`,
   validateCollectionId,
-  async function (req: any, res: any, next: any) {
+  async function (req: any, res: any) {
     const id: number = req.params.id;
     const traits = req.query.trait;
 
@@ -471,7 +468,7 @@ router.get(
 router.get(
   `/collections/:id/trait_sets/:trait`,
   validateCollectionId,
-  async function (req: any, res: any, next: any) {
+  async function (req: any, res: any) {
     const id: number = req.params.id;
     const trait: string = req.params.trait;
 
@@ -490,7 +487,7 @@ router.get(
   }
 );
 
-router.get(`/tokens/:id`, async function (req: any, res: any, next: any) {
+router.get(`/tokens/:id`, async function (req: any, res: any) {
   const id: number = parseInt(req.params.id);
   if (isNaN(id)) {
     throw new BadRequestException('Token ID must be a number.');
@@ -505,41 +502,35 @@ router.get(`/tokens/:id`, async function (req: any, res: any, next: any) {
   });
 });
 
-router.get(
-  `/tokens/:id/transactions`,
-  async function (req: any, res: any, next: any) {
-    const id: number = parseInt(req.params.id);
-    if (isNaN(id)) {
-      throw new BadRequestException('Token ID must be a number.');
-    }
-
-    const pageSize: number =
-      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-        ? parseInt(req.query.page_size)
-        : DEFAULT_PAGE_SIZE;
-    const page: number = req.query.page ? parseInt(req.query.page) : 1;
-
-    db.fetchNextGenTokenTransactions(id, pageSize, page).then((result) => {
-      return returnJsonResult(result, req, res);
-    });
+router.get(`/tokens/:id/transactions`, async function (req: any, res: any) {
+  const id: number = parseInt(req.params.id);
+  if (isNaN(id)) {
+    throw new BadRequestException('Token ID must be a number.');
   }
-);
 
-router.get(
-  `/tokens/:id/traits`,
-  async function (req: any, res: any, next: any) {
-    const id: number = parseInt(req.params.id);
-    if (isNaN(id)) {
-      throw new BadRequestException('Token ID must be a number.');
-    }
+  const pageSize: number =
+    req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+      ? parseInt(req.query.page_size)
+      : DEFAULT_PAGE_SIZE;
+  const page: number = req.query.page ? parseInt(req.query.page) : 1;
 
-    db.fetchNextGenTokenTraits(id).then((result) => {
-      return returnJsonResult(result, req, res);
-    });
+  db.fetchNextGenTokenTransactions(id, pageSize, page).then((result) => {
+    return returnJsonResult(result, req, res);
+  });
+});
+
+router.get(`/tokens/:id/traits`, async function (req: any, res: any) {
+  const id: number = parseInt(req.params.id);
+  if (isNaN(id)) {
+    throw new BadRequestException('Token ID must be a number.');
   }
-);
 
-router.get(`/tdh`, async function (req: any, res: any, next: any) {
+  db.fetchNextGenTokenTraits(id).then((result) => {
+    return returnJsonResult(result, req, res);
+  });
+});
+
+router.get(`/tdh`, async function (req: any, res: any) {
   const pageSize: number =
     req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
       ? parseInt(req.query.page_size)

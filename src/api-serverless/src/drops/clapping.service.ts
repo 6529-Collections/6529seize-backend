@@ -223,10 +223,7 @@ export class ClappingService {
 
   private async recordAllNotificationsSubscribers(
     {
-      waveId,
-      dropId,
-      clapperId,
-      vote
+      waveId
     }: {
       waveId: string;
       dropId: string;
@@ -236,7 +233,7 @@ export class ClappingService {
         drop_author_id: string;
       };
     },
-    { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
+    { connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
   ) {
     const subscriberIds =
       await this.identitySubscriptionsDb.findWaveSubscribedAllSubscribers(

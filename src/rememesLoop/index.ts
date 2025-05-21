@@ -94,7 +94,6 @@ async function loadRememes() {
         csvData.push({ contract, id: tokenId.toString(), memes });
       });
     } else {
-      const id = parseInt(tokenIdStr);
       const memes = r[2].split(',').map((m: string) => parseInt(m));
       csvData.push({ contract, id: tokenIdStr, memes });
     }

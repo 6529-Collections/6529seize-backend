@@ -145,7 +145,7 @@ export async function processLog(
       return await updateContracts(args);
   }
 
-  let methodNameParts = methodName
+  const methodNameParts = methodName
     .replace(/([A-Z])/g, ' $1')
     .trim()
     .split(' ');

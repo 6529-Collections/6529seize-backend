@@ -688,12 +688,10 @@ export function calculateBoost(
   memes: TokenTDH[],
   gradients: any[]
 ) {
-  let { boost, breakdown } = calculateMemesBoosts(
-    cardSets,
-    seasons,
-    s1Extra,
-    memes
-  );
+  const memesBoosts = calculateMemesBoosts(cardSets, seasons, s1Extra, memes);
+
+  let boost = memesBoosts.boost;
+  const breakdown = memesBoosts.breakdown;
 
   // GRADIENTS up to 3
   const gradientsBoost = Math.min(gradients.length * 0.02, 0.06);

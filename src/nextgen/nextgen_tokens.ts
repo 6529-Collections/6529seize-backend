@@ -1,16 +1,16 @@
 import {
   fetchNextGenCollections,
-  persistNextGenTraits,
-  fetchNextGenTokenTraits,
   fetchNextGenTokensForCollection,
-  persistNextGenCollectionHodlRate,
+  fetchNextGenTokenTraits,
   persistNextGenCollection,
+  persistNextGenCollectionHodlRate,
+  persistNextGenTraits,
   persistNextGenTraitScores
 } from './nextgen.db';
 import {
   NextGenCollection,
-  NextGenTokenTrait,
-  NextGenTokenScore
+  NextGenTokenScore,
+  NextGenTokenTrait
 } from '../entities/INextGen';
 import { Logger } from '../logging';
 import { EntityManager } from 'typeorm';
@@ -69,8 +69,7 @@ async function processCollectionTraitScores(
     const sharedKey = tokenTraits.filter((tt) => tt.trait === name);
     tt.trait_count = new Set(sharedKey.map((item) => item.value)).size;
 
-    const valueCount = sharedKey.filter((tt) => tt.value === value).length;
-    tt.value_count = valueCount;
+    tt.value_count = sharedKey.filter((tt) => tt.value === value).length;
 
     if (name.toLowerCase().startsWith(mintTypeTraitLower)) {
       tt.statistical_rarity = -1;
@@ -214,7 +213,7 @@ async function processTokens(
     }
 
     const traitCount = traitCountPerToken.get(token.id) ?? 0;
-    let denominator = Array.from(traitCountPerToken.values()).filter(
+    const denominator = Array.from(traitCountPerToken.values()).filter(
       (tc) => tc === traitCount
     ).length;
     const rarityScoreTraitCount = tokens.length / denominator + rarityScore;
@@ -362,7 +361,7 @@ async function processTokens(
 const calculateRanks = (
   scores: NextGenTokenScore[],
   scoreKey: keyof NextGenTokenScore,
-  inverse: boolean = false
+  inverse = false
 ): Map<number, number> => {
   const sortedScores = [...scores].sort((a, b) => {
     const aValue = a[scoreKey];
@@ -415,7 +414,7 @@ function calculateTokenRanksForCategory(
   let currentRank = 1;
   let previousValue = sortedTraits[0][field];
 
-  sortedTraits.forEach((tt, index) => {
+  sortedTraits.forEach((tt) => {
     if (tt[field] !== previousValue) {
       currentRank += 1;
       previousValue = tt[field];

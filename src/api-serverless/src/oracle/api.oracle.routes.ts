@@ -2,10 +2,10 @@ import { Request, Response } from 'express';
 import * as db from './api.oracle.db';
 import { asyncRouter } from '../async.router';
 import {
-  CONTENT_TYPE_HEADER,
-  JSON_HEADER_VALUE,
   ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
-  corsOptions
+  CONTENT_TYPE_HEADER,
+  corsOptions,
+  JSON_HEADER_VALUE
 } from '../api-constants';
 import * as SwaggerUI from 'swagger-ui-express';
 import { getIp, isLocalhost } from '../policies/policies';
@@ -39,7 +39,7 @@ router.use(
 
 router.get(
   '/tdh/total',
-  async function (req: Request<{}, any, any, {}>, res: any) {
+  async function (req: Request<any, any, any, any>, res: any) {
     const result = await db.fetchTotalTDH();
     return returnJsonResult(result, res);
   }
@@ -55,7 +55,7 @@ router.get(
       },
       any,
       any,
-      {}
+      any
     >,
     res: any
   ) {
@@ -78,7 +78,7 @@ router.get(
       },
       any,
       any,
-      {}
+      any
     >,
     res: any
   ) {
@@ -112,7 +112,7 @@ router.get(
       },
       any,
       any,
-      {}
+      any
     >,
     res: any
   ) {
@@ -137,7 +137,7 @@ router.get(
       },
       any,
       any,
-      {}
+      any
     >,
     res: any
   ) {
@@ -156,7 +156,7 @@ router.get(
       },
       any,
       any,
-      {}
+      any
     >,
     res: any
   ) {
@@ -176,7 +176,7 @@ router.get(
       },
       any,
       any,
-      {}
+      any
     >,
     res: any
   ) {
@@ -221,7 +221,7 @@ router.get(
       },
       any,
       any,
-      {}
+      any
     >,
     res: any
   ) {
@@ -250,7 +250,7 @@ router.get(
       },
       any,
       any,
-      {}
+      any
     >,
     res: any
   ) {
@@ -286,7 +286,7 @@ router.get(
       },
       any,
       any,
-      {}
+      any
     >,
     res: any
   ) {

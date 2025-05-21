@@ -278,8 +278,6 @@ export class WaveDecisionsService {
 
   private async transferFinalVotesToArchive(
     {
-      time_lock_ms,
-      decision_time,
       winnerDrops
     }: {
       time_lock_ms: number | null;

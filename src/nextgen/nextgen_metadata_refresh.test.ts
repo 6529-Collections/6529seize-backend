@@ -10,14 +10,20 @@ import * as tokens from './nextgen_tokens';
 describe('refreshNextgenMetadata', () => {
   const logger = { info: jest.fn() } as any;
   const entityManager = {} as any;
-  const dataSource = { transaction: jest.fn(async (fn: any) => await fn(entityManager)) } as any;
+  const dataSource = {
+    transaction: jest.fn(async (fn: any) => await fn(entityManager))
+  } as any;
 
   beforeEach(() => {
     jest.spyOn(db, 'getDataSource').mockReturnValue(dataSource);
     jest.spyOn(logging.Logger, 'get').mockReturnValue(logger);
-    jest.spyOn(constants, 'getNextgenNetwork').mockReturnValue('testnet' as any);
+    jest
+      .spyOn(constants, 'getNextgenNetwork')
+      .mockReturnValue('testnet' as any);
     (constants as any).NEXTGEN_CORE_CONTRACT = { testnet: '0xabc' } as any;
-    jest.spyOn(nextgenDb, 'fetchNextGenCollections').mockResolvedValue([{ id: 1 } as any]);
+    jest
+      .spyOn(nextgenDb, 'fetchNextGenCollections')
+      .mockResolvedValue([{ id: 1 } as any]);
     jest.spyOn(nextgenDb, 'fetchNextGenTokensForCollection').mockResolvedValue([
       {
         id: 1,

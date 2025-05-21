@@ -54,6 +54,7 @@ describe('Profile Level', () => {
   });
 
   it.skip('generates random wallets', () => {
+    // eslint-disable-next-line
     console.log(
       JSON.stringify(
         createRandomWallets(200).map((address) => ({

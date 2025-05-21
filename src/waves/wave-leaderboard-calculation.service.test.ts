@@ -180,15 +180,16 @@ describe('WaveLeaderboardCalculationService', () => {
         .calledWith(['B', 'A'], expect.anything())
         .mockResolvedValue({ A: 1000, B: 2000 });
 
-      const result = await service.calculateWaveLeaderBoardInTimeAndGetTopNDropsWithVotes(
-        {
-          waveId: 'wave-id',
-          startTime: Time.millis(0),
-          endTime: Time.millis(1000),
-          n: 2
-        },
-        {}
-      );
+      const result =
+        await service.calculateWaveLeaderBoardInTimeAndGetTopNDropsWithVotes(
+          {
+            waveId: 'wave-id',
+            startTime: Time.millis(0),
+            endTime: Time.millis(1000),
+            n: 2
+          },
+          {}
+        );
 
       expect(result).toEqual([
         { drop_id: 'B', vote: 100, rank: 1 },

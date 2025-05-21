@@ -42,7 +42,7 @@ import converter from 'json-2-csv';
 
 const logger = Logger.get('SUBSCRIPTIONS');
 
-export async function updateSubscriptions(reset?: boolean) {
+export async function updateSubscriptions() {
   const autoSubscriptions = await fetchAllAutoSubscriptions();
   logger.info(`[FOUND ${autoSubscriptions.length} AUTO SUBSCRIPTIONS]`);
 
@@ -176,7 +176,7 @@ async function createFinalSubscriptions(
       areEqualAddresses(b.consolidation_key, sub.consolidation_key)
     );
 
-    let airdropAddress = await fetchAirdropAddressForConsolidationKey(
+    const airdropAddress = await fetchAirdropAddressForConsolidationKey(
       sub.consolidation_key
     );
 

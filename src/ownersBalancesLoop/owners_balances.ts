@@ -96,7 +96,7 @@ export const updateOwnerBalances = async (reset?: boolean) => {
     NEXTGEN_CONTRACT
   ];
 
-  let addresses = new Set<string>();
+  const addresses = new Set<string>();
   let owners: NFTOwner[] = [];
 
   if (reset) {

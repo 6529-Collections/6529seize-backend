@@ -43,7 +43,7 @@ export async function fetchSubscriptionBalanceForConsolidationKey(
   consolidation_key: string,
   manager?: any
 ) {
-  let connection = manager ?? getDataSource();
+  const connection = manager ?? getDataSource();
   return await connection
     .getRepository(SubscriptionBalance)
     .findOne({ where: { consolidation_key } });
