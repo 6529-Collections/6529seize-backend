@@ -62,7 +62,6 @@ import { Rememe, RememeUpload } from './entities/IRememe';
 import {
   areEqualAddresses,
   extractConsolidationWallets,
-  formatAddress,
   isNullAddress
 } from './helpers';
 import { getConsolidationsSql, parseTdhDataFromDB } from './sql_helpers';
@@ -87,6 +86,7 @@ import {
   RecentTDHHistory,
   TDHHistory
 } from './entities/ITDHHistory';
+import { ethAddresses } from './eth-addresses';
 
 const mysql = require('mysql');
 
@@ -388,6 +388,15 @@ export async function fetchAllTDH(block: number, wallets?: string[]) {
   return results.map(parseTdhDataFromDB);
 }
 
+function shortFormatIfAddress(address: string): string {
+  if (!address || !ethAddresses.isEthAddress(address)) {
+    return address;
+  }
+  return `${address.substring(0, 5)}...${address.substring(
+    address.length - 3
+  )}`;
+}
+
 export async function fetchConsolidationDisplay(
   myWallets: string[]
 ): Promise<string> {
@@ -408,8 +417,7 @@ export async function fetchConsolidationDisplay(
   if (displayArray.length == 1) {
     return displayArray[0];
   }
-  const display = displayArray.map((d) => formatAddress(d)).join(' - ');
-  return display;
+  return displayArray.map((d) => shortFormatIfAddress(d)).join(' - ');
 }
 
 export async function fetchAllConsolidatedOwnerMetrics() {
