@@ -8,9 +8,6 @@ import {
 import * as short from 'short-uuid';
 import { goerli, sepolia } from '@wagmi/chains';
 import { Network } from 'alchemy-sdk';
-import { getAlchemyInstance } from './alchemy';
-import * as mcache from 'memory-cache';
-import { Time } from './time';
 import moment from 'moment-timezone';
 
 export function areEqualAddresses(w1: string, w2: string) {
@@ -367,25 +364,4 @@ export function getTransactionLink(chain_id: number, hash: string) {
 
 export function isWallet(identity: string) {
   return WALLET_REGEX.test(identity);
-}
-
-export async function getWalletFromEns(
-  identity: string
-): Promise<string | null> {
-  const normalisedIdentity = identity.toLowerCase();
-  if (!normalisedIdentity.endsWith('.eth')) {
-    return null;
-  }
-  const key = `ens2wallet-${normalisedIdentity}`;
-
-  const cacheHit = mcache.get(key);
-  if (cacheHit) {
-    return cacheHit;
-  } else {
-    const alchemyResponse = await getAlchemyInstance()
-      .core.resolveName(identity)
-      .then((response) => response?.toLowerCase() ?? ``);
-    mcache.put(key, alchemyResponse, Time.minutes(1).toMillis());
-    return isWallet(alchemyResponse) ? alchemyResponse : null;
-  }
 }

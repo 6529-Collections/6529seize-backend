@@ -5,8 +5,9 @@ import { NotFoundException } from '../../../exceptions';
 import { ProfileClassification } from '../../../entities/IProfile';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import { Time } from '../../../time';
-import { getWalletFromEns, isWallet } from '../../../helpers';
+import { isWallet } from '../../../helpers';
 import { identityFetcher } from '../identities/identity.fetcher';
+import { getWalletFromEns } from '../../../alchemy';
 
 export async function getRaterInfoFromRequest(
   req: Request<{ identity: string }, any, any, any, any>
