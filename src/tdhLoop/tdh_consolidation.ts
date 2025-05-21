@@ -12,7 +12,6 @@ import {
   persistTDHBlock,
   retrieveWalletConsolidations
 } from '../db';
-import { buildConsolidationKey } from '../helpers';
 import {
   calculateBoosts,
   calculateRanks,
@@ -26,6 +25,7 @@ import { fetchNextgenTokens } from '../nextgen/nextgen.db';
 import { calculateMemesTdh } from './tdh_memes';
 import { updateNftTDH } from './tdh_nft';
 import { equalIgnoreCase } from '../strings';
+import { consolidationTools } from '../consolidation-tools';
 
 const logger = Logger.get('TDH_CONSOLIDATION');
 
@@ -42,7 +42,8 @@ export async function consolidateTDHForWallets(
     const wallet = tdhEntry.wallet;
     const consolidations = await retrieveWalletConsolidations(wallet);
     const display = await fetchConsolidationDisplay(consolidations);
-    const consolidationKey = buildConsolidationKey(consolidations);
+    const consolidationKey =
+      consolidationTools.buildConsolidationKey(consolidations);
 
     if (
       !Array.from(processedWallets).some((pw) => equalIgnoreCase(wallet, pw))
@@ -173,7 +174,8 @@ export const consolidateMissingWallets = async (
   for (const wallet of wallets) {
     const consolidations = await retrieveWalletConsolidations(wallet);
     const display = await fetchConsolidationDisplay(consolidations);
-    const consolidationKey = buildConsolidationKey(consolidations);
+    const consolidationKey =
+      consolidationTools.buildConsolidationKey(consolidations);
 
     if (
       !Array.from(processedWallets).some((pw) => equalIgnoreCase(wallet, pw))

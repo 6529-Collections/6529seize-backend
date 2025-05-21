@@ -37,7 +37,6 @@ import {
   WALLETS_TDH_TABLE
 } from './constants';
 import { RememeSource } from './entities/IRememe';
-import { extractConsolidationWallets } from './helpers';
 import { getConsolidationsSql } from './sql_helpers';
 import { ConnectionWrapper, setSqlExecutor, sqlExecutor } from './sql-executor';
 
@@ -70,6 +69,7 @@ import { ApiTransaction } from './api-serverless/src/generated/models/ApiTransac
 import { ApiNftMedia } from './api-serverless/src/generated/models/ApiNftMedia';
 import { TDHHistory } from './entities/ITDHHistory';
 import { equalIgnoreCase } from './strings';
+import { consolidationTools } from './consolidation-tools';
 
 let read_pool: mysql.Pool;
 let write_pool: mysql.Pool;
@@ -1124,7 +1124,10 @@ export async function fetchConsolidationsForWallet(
     const consolidations: any[] = await sqlExecutor.execute(sql, {
       wallet: wallet
     });
-    const wallets = extractConsolidationWallets(consolidations, wallet);
+    const wallets = consolidationTools.extractConsolidationWallets(
+      consolidations,
+      wallet
+    );
     return {
       count: wallets.length,
       page: 1,

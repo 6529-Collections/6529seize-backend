@@ -59,7 +59,6 @@ import {
   NFTHistoryClaim
 } from './entities/INFTHistory';
 import { Rememe, RememeUpload } from './entities/IRememe';
-import { extractConsolidationWallets } from './helpers';
 import { getConsolidationsSql, parseTdhDataFromDB } from './sql_helpers';
 import { NextGenTokenTDH } from './entities/INextGen';
 import { ConnectionWrapper, setSqlExecutor, sqlExecutor } from './sql-executor';
@@ -84,6 +83,7 @@ import {
 } from './entities/ITDHHistory';
 import { ethTools } from './eth-tools';
 import { equalIgnoreCase } from './strings';
+import { consolidationTools } from './consolidation-tools';
 
 const mysql = require('mysql');
 
@@ -268,7 +268,7 @@ export async function retrieveWalletConsolidations(wallet: string) {
   const consolidations: any[] = await sqlExecutor.execute(sql, {
     wallet: wallet
   });
-  return extractConsolidationWallets(consolidations, wallet);
+  return consolidationTools.extractConsolidationWallets(consolidations, wallet);
 }
 
 export async function fetchLatestConsolidationsBlockNumber() {

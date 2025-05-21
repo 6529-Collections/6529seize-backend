@@ -8,7 +8,6 @@ import {
   TDHHistory
 } from '../entities/ITDHHistory';
 import { TokenTDH } from '../entities/ITDH';
-import { buildConsolidationKey } from '../helpers';
 import axios from 'axios';
 import { Readable } from 'stream';
 import { Logger } from '../logging';
@@ -17,6 +16,7 @@ import * as sentryContext from '../sentry.context';
 import { UploadFieldsConsolidation } from '../entities/IUpload';
 import { doInDbContext } from '../secrets';
 import { equalIgnoreCase } from '../strings';
+import { consolidationTools } from '../consolidation-tools';
 
 const csvParser = require('csv-parser');
 
@@ -107,7 +107,7 @@ function matchesConsolidationKey(d: any, yd: any) {
     equalIgnoreCase(d.consolidation_key, yd.consolidation_key) ||
     equalIgnoreCase(
       d.consolidation_key,
-      buildConsolidationKey(JSON.parse(yd.wallets))
+      consolidationTools.buildConsolidationKey(JSON.parse(yd.wallets))
     )
   );
 }
