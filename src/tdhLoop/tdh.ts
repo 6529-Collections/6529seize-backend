@@ -9,7 +9,6 @@ import {
 } from '../constants';
 import { DefaultBoost, TDH, TDHMemes, TokenTDH } from '../entities/ITDH';
 import { Transaction } from '../entities/ITransaction';
-import { parseUTCDateString } from '../helpers';
 import { Alchemy } from 'alchemy-sdk';
 import {
   consolidateTransactions,
@@ -783,7 +782,9 @@ function getTokenDatesFromConsolidation(
 
   consolidationTransactions = consolidationTransactions
     .map((c) => {
-      c.transaction_date = parseUTCDateString(c.transaction_date);
+      c.transaction_date = Time.fromUtcDateString(
+        c.transaction_date.toString()
+      ).toDate();
       c.from_address = c.from_address.toLowerCase();
       c.to_address = c.to_address.toLowerCase();
       return c;
