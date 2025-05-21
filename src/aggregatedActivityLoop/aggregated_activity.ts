@@ -37,7 +37,7 @@ import {
   NEXTGEN_CORE_CONTRACT
 } from '../nextgen/nextgen_constants';
 import { equalIgnoreCase } from '../strings';
-import { ethAddresses } from '../eth-addresses';
+import { ethTools } from '../eth-tools';
 
 const logger = Logger.get('AGGREGATED_ACTIVITY');
 interface ActivityBreakdown {
@@ -491,7 +491,7 @@ async function retrieveActivityDelta(
         address
       );
 
-      if (ethAddresses.isNullOrDead(address)) {
+      if (ethTools.isNullOrDeadAddress(address)) {
         addressTransactions.forEach((at) => {
           at.value = 0;
         });

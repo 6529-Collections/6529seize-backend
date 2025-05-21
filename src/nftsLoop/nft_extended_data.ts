@@ -21,7 +21,7 @@ import {
 import { NFTOwner } from '../entities/INFTOwner';
 import { Logger } from '../logging';
 import { equalIgnoreCase } from '../strings';
-import { ethAddresses } from '../eth-addresses';
+import { ethTools } from '../eth-tools';
 
 const logger = Logger.get('NFT_EXTENDED_DATA');
 
@@ -97,11 +97,11 @@ async function generateExtendedData<T, M extends ExtendedBase>(
       }
 
       const nonBurnt = tokenOwners.filter(
-        (o) => !ethAddresses.isNullOrDead(o.wallet)
+        (o) => !ethTools.isNullOrDeadAddress(o.wallet)
       ).length;
       const cleaned = tokenOwners.filter(
         (o) =>
-          !ethAddresses.isNullOrDead(o.wallet) &&
+          !ethTools.isNullOrDeadAddress(o.wallet) &&
           !equalIgnoreCase(o.wallet, SIX529_MUSEUM)
       ).length;
 
@@ -112,7 +112,7 @@ async function generateExtendedData<T, M extends ExtendedBase>(
       let edition_size_cleaned = 0;
 
       for (const tw of tokenOwners) {
-        if (ethAddresses.isNullOrDead(tw.wallet)) {
+        if (ethTools.isNullOrDeadAddress(tw.wallet)) {
           burnt += tw.balance;
         } else {
           edition_size_not_burnt += tw.balance;

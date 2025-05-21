@@ -7,7 +7,7 @@ import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import { Time } from '../../../time';
 import { identityFetcher } from '../identities/identity.fetcher';
 import { getWalletFromEns } from '../../../alchemy';
-import { ethAddresses } from '../../../eth-addresses';
+import { ethTools } from '../../../eth-tools';
 
 export async function getRaterInfoFromRequest(
   req: Request<{ identity: string }, any, any, any, any>
@@ -21,7 +21,7 @@ export async function getRaterInfoFromRequest(
     );
   if (!targetProfile?.id) {
     let wallet = identity.toLowerCase();
-    if (!ethAddresses.isEthAddress(wallet)) {
+    if (!ethTools.isEthAddress(wallet)) {
       wallet = await getWalletFromEns(identity).then((w) => {
         if (!w) {
           throw new NotFoundException(`No profile found for ${identity}`);

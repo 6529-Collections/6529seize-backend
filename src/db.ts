@@ -82,7 +82,7 @@ import {
   RecentTDHHistory,
   TDHHistory
 } from './entities/ITDHHistory';
-import { ethAddresses } from './eth-addresses';
+import { ethTools } from './eth-tools';
 import { equalIgnoreCase } from './strings';
 
 const mysql = require('mysql');
@@ -386,7 +386,7 @@ export async function fetchAllTDH(block: number, wallets?: string[]) {
 }
 
 function shortFormatIfAddress(address: string): string {
-  if (!address || !ethAddresses.isEthAddress(address)) {
+  if (!address || !ethTools.isEthAddress(address)) {
     return address;
   }
   return `${address.substring(0, 5)}...${address.substring(
@@ -513,7 +513,7 @@ export async function fetchWalletTransactions(
   };
 
   let filters;
-  if (ethAddresses.isNullOrDead(wallet)) {
+  if (ethTools.isNullOrDeadAddress(wallet)) {
     filters = constructFilters('filters', `to_address = :wallet`);
     params.wallet = wallet;
   } else {

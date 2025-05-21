@@ -281,14 +281,3 @@ export function resolveEnumOrThrow<T extends object>(
   }
   throw new Error(`Invalid enum value: ${value}`);
 }
-
-export function getTransactionLink(chain_id: number, hash: string) {
-  switch (chain_id) {
-    case sepolia.id:
-      return `https://sepolia.etherscan.io/tx/${hash}`;
-    case goerli.id:
-      return `https://goerli.etherscan.io/tx/${hash}`;
-    default:
-      return `https://etherscan.io/tx/${hash}`;
-  }
-}

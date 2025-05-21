@@ -23,7 +23,7 @@ import { getNextgenNetwork, NEXTGEN_CORE_CONTRACT } from './nextgen_constants';
 import { Transaction } from '../entities/ITransaction';
 import { getAlchemyInstance, getEns } from '../alchemy';
 import { equalIgnoreCase } from '../strings';
-import { ethAddresses } from '../eth-addresses';
+import { ethTools } from '../eth-tools';
 
 const logger = Logger.get('NEXTGEN_CORE_EVENTS');
 
@@ -175,7 +175,7 @@ async function processTransfer(
   )[0];
 
   const isMint = equalIgnoreCase(logInfo.args.from, NULL_ADDRESS);
-  const isBurn = ethAddresses.isNullOrDead(logInfo.args.to);
+  const isBurn = ethTools.isNullOrDeadAddress(logInfo.args.to);
   const isSale = transactionWithValue.value > 0;
   let description = 'Transfer';
 

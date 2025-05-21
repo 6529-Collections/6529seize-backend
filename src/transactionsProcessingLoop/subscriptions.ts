@@ -24,8 +24,8 @@ import {
 import { sqlExecutor } from '../sql-executor';
 import { fetchSubscriptionBalanceForConsolidationKey } from '../subscriptionsDaily/db.subscriptions';
 import { sendDiscordUpdate } from '../notifier-discord';
-import { getTransactionLink } from '../helpers';
 import { equalIgnoreCase } from '../strings';
+import { ethTools } from '../eth-tools';
 
 const logger = Logger.get('TRANSACTIONS_PROCESSING_SUBSCRIPTIONS');
 
@@ -198,7 +198,10 @@ async function processSubscription(
   if (!finalSubscription) {
     const message = `No subscription found for airdrop address: ${
       transaction.to_address
-    } \nTransaction: ${getTransactionLink(1, transaction.transaction)}`;
+    } \nTransaction: ${ethTools.toEtherScanTransactionLink(
+      1,
+      transaction.transaction
+    )}`;
     logger.warn(message);
     await sendDiscordUpdate(
       process.env.SUBSCRIPTIONS_DISCORD_WEBHOOK as string,
@@ -216,7 +219,10 @@ async function processSubscription(
   if (!balance) {
     const message = `No balance found for consolidation key: ${
       finalSubscription.consolidation_key
-    } \nTransaction: ${getTransactionLink(1, transaction.transaction)}`;
+    } \nTransaction: ${ethTools.toEtherScanTransactionLink(
+      1,
+      transaction.transaction
+    )}`;
     logger.error(message);
     await sendDiscordUpdate(
       process.env.SUBSCRIPTIONS_DISCORD_WEBHOOK as string,
@@ -231,7 +237,10 @@ async function processSubscription(
   } else if (MEMES_MINT_PRICE > balance.balance) {
     const message = `Insufficient balance for consolidation key: ${
       finalSubscription.consolidation_key
-    } \nTransaction: ${getTransactionLink(1, transaction.transaction)}`;
+    } \nTransaction: ${ethTools.toEtherScanTransactionLink(
+      1,
+      transaction.transaction
+    )}`;
     logger.error(message);
     await sendDiscordUpdate(
       process.env.SUBSCRIPTIONS_DISCORD_WEBHOOK as string,
