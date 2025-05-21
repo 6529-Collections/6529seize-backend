@@ -6,14 +6,6 @@ import { Network } from 'alchemy-sdk';
 import moment from 'moment-timezone';
 import { equalIgnoreCase } from './strings';
 
-export function getDaysDiff(t1: Date, t2: Date, floor = true) {
-  const diff = t1.getTime() - t2.getTime();
-  if (floor) {
-    return Math.floor(diff / (1000 * 3600 * 24));
-  }
-  return Math.ceil(diff / (1000 * 3600 * 24));
-}
-
 export function getLastTDH() {
   const now = new Date();
 

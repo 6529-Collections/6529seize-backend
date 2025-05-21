@@ -9,7 +9,7 @@ import {
 } from '../constants';
 import { DefaultBoost, TDH, TDHMemes, TokenTDH } from '../entities/ITDH';
 import { Transaction } from '../entities/ITransaction';
-import { getDaysDiff, parseUTCDateString } from '../helpers';
+import { parseUTCDateString } from '../helpers';
 import { Alchemy } from 'alchemy-sdk';
 import {
   consolidateTransactions,
@@ -713,6 +713,11 @@ export function calculateBoost(
   };
 }
 
+function getFullDaysBetweenDates(t1: Date, t2: Date) {
+  const diff = t1.getTime() - t2.getTime();
+  return Math.floor(diff / (1000 * 3600 * 24));
+}
+
 function getTokenTdh(
   lastTDHCalc: Date,
   id: number,
@@ -729,7 +734,7 @@ function getTokenTdh(
 
   let tdh__raw = 0;
   tokenDatesForWallet.forEach((e) => {
-    const daysDiff = getDaysDiff(lastTDHCalc, e);
+    const daysDiff = getFullDaysBetweenDates(lastTDHCalc, e);
     if (daysDiff > 0) {
       tdh__raw += daysDiff;
     }
