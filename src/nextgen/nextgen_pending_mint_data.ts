@@ -11,9 +11,9 @@ import {
   MINT_TYPE_TRAIT,
   NEXTGEN_CORE_CONTRACT
 } from './nextgen_constants';
-import { getRpcUrlFromNetwork } from '../helpers';
 import { NEXTGEN_CORE_ABI } from '../abis/nextgen';
 import { NextGenTokenTrait } from '../entities/INextGen';
+import { getRpcUrlFromNetwork } from '../alchemy';
 
 const logger = Logger.get('NEXTGEN_PENDING_MINT_DATA');
 

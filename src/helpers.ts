@@ -1,8 +1,6 @@
 import axios, { AxiosResponse } from 'axios';
 import { CONSOLIDATIONS_LIMIT } from './constants';
 import * as short from 'short-uuid';
-import { goerli, sepolia } from '@wagmi/chains';
-import { Network } from 'alchemy-sdk';
 import { equalIgnoreCase } from './strings';
 
 function shouldAddConsolidation(
@@ -164,24 +162,4 @@ export function buildConsolidationKey(wallets: string[]) {
 
 export function weiToEth(wei: number): number {
   return wei / 1e18;
-}
-
-export function getRpcUrlFromNetwork(network: Network) {
-  return `https://${network.toLowerCase()}.g.alchemy.com/v2/${
-    process.env.ALCHEMY_API_KEY
-  }`;
-}
-
-export function getRpcUrl(chainId: number) {
-  let network: Network;
-
-  if (chainId === goerli.id) {
-    network = Network.ETH_GOERLI;
-  } else if (chainId === sepolia.id) {
-    network = Network.ETH_SEPOLIA;
-  } else {
-    network = Network.ETH_MAINNET;
-  }
-
-  return getRpcUrlFromNetwork(network);
 }

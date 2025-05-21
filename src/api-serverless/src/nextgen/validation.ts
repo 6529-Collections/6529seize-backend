@@ -1,7 +1,7 @@
 import { ethers } from 'ethers';
 import * as Joi from 'joi';
 import { hashMessage } from '@ethersproject/hash';
-import { getRpcUrl, stringToHex } from '../../../helpers';
+import { stringToHex } from '../../../helpers';
 import { Readable } from 'stream';
 import {
   getNextGenChainId,
@@ -11,6 +11,7 @@ import {
 } from './abis';
 import { Logger } from '../../../logging';
 import { equalIgnoreCase } from '../../../strings';
+import { getRpcUrl } from '../../../alchemy';
 
 const { keccak256 } = require('@ethersproject/keccak256');
 const { MerkleTree } = require('merkletreejs');
