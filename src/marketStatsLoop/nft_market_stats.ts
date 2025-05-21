@@ -1,13 +1,14 @@
-import { areEqualAddresses, batchArray, delay, weiToEth } from '../helpers';
+import { areEqualAddresses, batchArray, weiToEth } from '../helpers';
 import {
-  fetchNftsForContract,
   fetchAllMemeLabNFTs,
-  persistLabNFTS,
+  fetchNftsForContract,
   findVolume,
+  persistLabNFTS,
   persistNFTs
 } from '../db';
 import { MEMELAB_CONTRACT } from '../constants';
 import { Logger } from '../logging';
+import { Time } from '../time';
 
 const logger = Logger.get('NFT_MARKET_STATS');
 
@@ -53,7 +54,7 @@ export const findNftMarketStats = async (contract: string) => {
     const offersUrl = buildOpenseaUrl(contract, 'offers', batch);
 
     const listings = await getOpenseaResponse(listingsUrl);
-    await delay(500);
+    await Time.millis(500).sleep();
     const offers = await getOpenseaResponse(offersUrl);
 
     const processedNfts = await processBatch(batch, listings, offers, contract);
@@ -66,7 +67,7 @@ export const findNftMarketStats = async (contract: string) => {
       batchedTokens.length - i - 1
     );
 
-    await delay(500);
+    await Time.millis(500).sleep();
   }
 };
 

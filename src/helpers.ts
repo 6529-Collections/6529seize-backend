@@ -59,10 +59,6 @@ export const parseUTCDateString = (dateString: any): Date => {
   return parsedDate.toDate();
 };
 
-export function delay(time: number) {
-  return new Promise((resolve) => setTimeout(resolve, time));
-}
-
 function shouldAddConsolidation(
   uniqueWallets: any[],
   consolidations: any[],
