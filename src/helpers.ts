@@ -417,12 +417,3 @@ export function isValidUuid(str: string): boolean {
     str
   );
 }
-
-export enum AppFeature {
-  UPLOAD_CIC_REP_SNAPSHOTS_TO_ARWEAVE = 'UPLOAD_CIC_REP_SNAPSHOTS_TO_ARWEAVE',
-  DROP_OVERVOTE_REVOCATION = 'DROP_OVERVOTE_REVOCATION'
-}
-
-export function isFeatureOn(feature: AppFeature) {
-  return process.env[`FEATURE_${feature}`] === 'true';
-}

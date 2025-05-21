@@ -45,13 +45,7 @@ import {
   ProfileProxiesDb
 } from '../profile-proxies/profile-proxies.db';
 import { ApiBulkRateRequest } from '../api-serverless/src/generated/models/ApiBulkRateRequest';
-import {
-  AppFeature,
-  distinct,
-  isFeatureOn,
-  resolveEnum,
-  uniqueShortId
-} from '../helpers';
+import { distinct, resolveEnum, uniqueShortId } from '../helpers';
 import { ApiAvailableRatingCredit } from '../api-serverless/src/generated/models/ApiAvailableRatingCredit';
 import { ApiRatingWithProfileInfoAndLevel } from '../api-serverless/src/generated/models/ApiRatingWithProfileInfoAndLevel';
 import { ApiRatingWithProfileInfoAndLevelPage } from '../api-serverless/src/generated/models/ApiRatingWithProfileInfoAndLevelPage';
@@ -66,6 +60,7 @@ import { ProfileRepRatedEventData } from '../events/datatypes/profile-rep-rated.
 import { ProfileClassification } from '../entities/IProfile';
 import { identityFetcher } from '../api-serverless/src/identities/identity.fetcher';
 import { revokeTdhBasedDropWavesOverVotes } from '../drops/participation-drops-over-vote-revocation';
+import { appFeatures } from '../app-features';
 
 export class RatingsService {
   private readonly logger = Logger.get('RATINGS_SERVICE');
@@ -336,7 +331,7 @@ export class RatingsService {
     matter: RateMatter,
     connection: ConnectionWrapper<any>
   ) {
-    if (!isFeatureOn(AppFeature.UPLOAD_CIC_REP_SNAPSHOTS_TO_ARWEAVE)) {
+    if (!appFeatures.isUploadCicRepSnaphotsToArweaveEnabled()) {
       return;
     }
     const now = Time.now();
