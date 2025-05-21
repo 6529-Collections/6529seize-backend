@@ -16,7 +16,7 @@ import {
   DropVotingDb
 } from '../api-serverless/src/drops/drop-voting.db';
 import { DropsDb, dropsDb } from '../drops/drops.db';
-import { distinct } from '../helpers';
+import { collections } from '../collections';
 
 export class WaveDecisionsService {
   private readonly logger: Logger = Logger.get(this.constructor.name);
@@ -337,7 +337,9 @@ export class WaveDecisionsService {
       dropIds,
       ctx.connection
     );
-    const waveIds = distinct(dropEntitiesOfWinnerDrops.map((it) => it.wave_id));
+    const waveIds = collections.distinct(
+      dropEntitiesOfWinnerDrops.map((it) => it.wave_id)
+    );
     await this.dropsDb.resyncParticipatoryDropCountsForWaves(waveIds, ctx);
     await this.dropVotingDb.transferAllDropVoterStatesToWinnerDropsVotes(
       { dropIds },

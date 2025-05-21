@@ -22,8 +22,8 @@ import {
 } from './db';
 import { NFTHistory, NFTHistoryClaim } from './entities/INFTHistory';
 import { NFT_HISTORY_IFACE } from './abis/nft_history';
-import { areEqualAddresses } from './helpers';
 import { Logger } from './logging';
+import { equalIgnoreCase } from './strings';
 
 const logger = Logger.get('NFT_HISTORY');
 
@@ -88,14 +88,14 @@ const findDetailsFromTransaction = async (tx: TransactionResponse) => {
             data: logData
           });
           const tokenId = parsedReceipt.args.id.toNumber();
-          if (areEqualAddresses(MEMES_CONTRACT, tx.to)) {
+          if (equalIgnoreCase(MEMES_CONTRACT, tx.to)) {
             return {
               contract: MEMES_CONTRACT,
               tokenId,
               tokenUri
             };
           }
-          if (areEqualAddresses(MEMELAB_CONTRACT, tx.to)) {
+          if (equalIgnoreCase(MEMELAB_CONTRACT, tx.to)) {
             return {
               contract: MEMELAB_CONTRACT,
               tokenId,
@@ -105,14 +105,14 @@ const findDetailsFromTransaction = async (tx: TransactionResponse) => {
         }
       }
       if (parsed.args.uri_ && parsed.args.tokenId && tx.to) {
-        if (areEqualAddresses(MEMES_CONTRACT, tx.to)) {
+        if (equalIgnoreCase(MEMES_CONTRACT, tx.to)) {
           return {
             contract: MEMES_CONTRACT,
             tokenId: parsed.args.tokenId.toNumber(),
             tokenUri: parsed.args.uri_
           };
         }
-        if (areEqualAddresses(MEMELAB_CONTRACT, tx.to)) {
+        if (equalIgnoreCase(MEMELAB_CONTRACT, tx.to)) {
           return {
             contract: MEMELAB_CONTRACT,
             tokenId: parsed.args.tokenId.toNumber(),
@@ -188,7 +188,7 @@ export const getEditDescription = async (
   blockNumber: number
 ) => {
   const previousUri = await fetchLatestNftUri(tokenId, contract, blockNumber);
-  if (previousUri && !areEqualAddresses(previousUri, newUri)) {
+  if (previousUri && !equalIgnoreCase(previousUri, newUri)) {
     const previousMeta: any = await (await fetch(previousUri)).json();
     const newMeta: any = await (await fetch(newUri)).json();
 

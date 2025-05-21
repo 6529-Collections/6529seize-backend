@@ -5,9 +5,9 @@ import {
   MEMES_CONTRACT
 } from '../constants';
 import { RateMatter } from '../entities/IRating';
-import { sum } from '../helpers';
 import { NEXTGEN_CORE_CONTRACT } from '../nextgen/nextgen_constants';
 import { Network } from 'alchemy-sdk';
+import { numbers } from '../numbers';
 
 export const isRatingOutOfBounds = ({
   min,
@@ -297,7 +297,7 @@ function isRealRatingOutOfBounds(
   min: number | null,
   max: number | null
 ) {
-  const real = sum(
+  const real = numbers.sum(
     ratings.filter((it) => sumCriteria(it, group)).map((it) => it.rating)
   );
   return isRatingOutOfBounds({

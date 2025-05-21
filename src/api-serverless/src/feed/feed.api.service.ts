@@ -9,7 +9,7 @@ import {
   ActivityEventEntity,
   ActivityEventTargetType
 } from '../../../entities/IActivityEvent';
-import { assertUnreachable, distinct } from '../../../helpers';
+import { assertUnreachable } from '../../../assertions';
 import { ApiDrop } from '../generated/models/ApiDrop';
 import { ApiWave } from '../generated/models/ApiWave';
 import { dropsService } from '../drops/drops.api.service';
@@ -17,6 +17,7 @@ import { AuthenticationContext } from '../../../auth-context';
 import { waveApiService } from '../waves/wave.api.service';
 import { ForbiddenException } from '../../../exceptions';
 import { ApiFeedItemType } from '../generated/models/ApiFeedItemType';
+import { collections } from '../../../collections';
 
 export class FeedApiService {
   constructor(
@@ -261,7 +262,7 @@ export class FeedApiService {
             .map((it) => it.reply_to?.drop_id)
             .filter((it) => !!it)
             .map((it) => it!);
-          const allReplyDropIds = distinct([
+          const allReplyDropIds = collections.distinct([
             ...replyDropsNeeded,
             ...replyDropIds
           ]);

@@ -14,7 +14,7 @@ import { ApiCreateNewProfileProxyCreateWaveAction } from '../generated/models/Ap
 import { ApiCreateNewProfileProxyReadWaveAction } from '../generated/models/ApiCreateNewProfileProxyReadWaveAction';
 import { ApiProfileProxyActionType } from '../generated/models/ApiProfileProxyActionType';
 import { ApiCreateNewProfileProxyRateWaveDropAction } from '../generated/models/ApiCreateNewProfileProxyRateWaveDropAction';
-import { assertUnreachable } from '../../../helpers';
+import { assertUnreachable } from '../../../assertions';
 import { ApiProfileProxy } from '../generated/models/ApiProfileProxy';
 import {
   AcceptActionRequest,

@@ -12,7 +12,6 @@ import {
   ForbiddenException,
   NotFoundException
 } from '../../../exceptions';
-import { resolveEnumOrThrow } from '../../../helpers';
 import { ApiDrop } from '../generated/models/ApiDrop';
 import {
   UserGroupsService,
@@ -56,6 +55,7 @@ import {
 } from '../identities/identity.fetcher';
 import { ApiLightDrop } from '../generated/models/ApiLightDrop';
 import { ApiDropMedia } from '../generated/models/ApiDropMedia';
+import { enums } from '../../../enums';
 
 export class DropsApiService {
   constructor(
@@ -137,7 +137,7 @@ export class DropsApiService {
         acc[it.id] = {
           id: it.id,
           serial_no: it.serial_no,
-          drop_type: resolveEnumOrThrow(ApiDropType, it.drop_type.toString()),
+          drop_type: enums.resolveOrThrow(ApiDropType, it.drop_type.toString()),
           title: it.title,
           is_reply_drop: !!it.reply_to_drop_id,
           part_1_medias: JSON.parse(it.medias_json ?? `[]`) as ApiDropMedia[],
@@ -190,7 +190,7 @@ export class DropsApiService {
         wave_id,
         author_id,
         include_replies,
-        drop_type: drop_type ? resolveEnumOrThrow(DropType, drop_type) : null
+        drop_type: drop_type ? enums.resolveOrThrow(DropType, drop_type) : null
       },
       ctx
     );
@@ -284,7 +284,7 @@ export class DropsApiService {
       { authenticationContext }
     ).then((it) => it.wave.id);
     const proposedActions = Object.values(actions).map((it) =>
-      resolveEnumOrThrow(ActivityEventAction, it)
+      enums.resolveOrThrow(ActivityEventAction, it)
     );
     return await this.identitySubscriptionsDb.executeNativeQueriesInTransaction(
       async (connection) => {
@@ -324,7 +324,7 @@ export class DropsApiService {
           )
           .then((result) =>
             result.map((it) =>
-              resolveEnumOrThrow(ApiDropSubscriptionTargetAction, it)
+              enums.resolveOrThrow(ApiDropSubscriptionTargetAction, it)
             )
           );
       }
@@ -356,7 +356,7 @@ export class DropsApiService {
               subscriber_id: subscriber,
               target_id: dropId,
               target_type: ActivityEventTargetType.DROP,
-              target_action: resolveEnumOrThrow(ActivityEventAction, action)
+              target_action: enums.resolveOrThrow(ActivityEventAction, action)
             },
             connection
           );
@@ -372,7 +372,7 @@ export class DropsApiService {
           )
           .then((result) =>
             result.map((it) =>
-              resolveEnumOrThrow(ApiDropSubscriptionTargetAction, it)
+              enums.resolveOrThrow(ApiDropSubscriptionTargetAction, it)
             )
           );
       }
@@ -438,7 +438,7 @@ export class DropsApiService {
         group_ids_user_is_eligible_for.includes(wave.admin_group_id),
       voting_period_start: wave.voting_period_start,
       voting_period_end: wave.voting_period_end,
-      voting_credit_type: resolveEnumOrThrow(
+      voting_credit_type: enums.resolveOrThrow(
         WaveCreditTypeApi,
         wave.voting_credit_type
       ),
@@ -466,7 +466,9 @@ export class DropsApiService {
           amount,
           serial_no_limit,
           search_strategy,
-          drop_type: drop_type ? resolveEnumOrThrow(DropType, drop_type) : null
+          drop_type: drop_type
+            ? enums.resolveOrThrow(DropType, drop_type)
+            : null
         },
         ctx
       );
@@ -495,7 +497,9 @@ export class DropsApiService {
           amount,
           serial_no_limit,
           search_strategy,
-          drop_type: drop_type ? resolveEnumOrThrow(DropType, drop_type) : null
+          drop_type: drop_type
+            ? enums.resolveOrThrow(DropType, drop_type)
+            : null
         },
         ctx
       );
@@ -572,7 +576,7 @@ export class DropsApiService {
         groupIdsUserIsEligibleFor.includes(waveEntity.admin_group_id),
       voting_period_start: waveEntity.voting_period_start,
       voting_period_end: votingPeriodEnd,
-      voting_credit_type: resolveEnumOrThrow(
+      voting_credit_type: enums.resolveOrThrow(
         WaveCreditTypeApi,
         waveEntity.voting_credit_type
       ),

@@ -9,10 +9,10 @@ import {
   SubscriptionBalance,
   SubscriptionTopUp
 } from '../entities/ISubscription';
-import { getTransactionLink } from '../helpers';
 import { sendDiscordUpdate } from '../notifier-discord';
 import { sqlExecutor } from '../sql-executor';
 import { Logger } from '../logging';
+import { ethTools } from '../eth-tools';
 
 const logger = Logger.get('SUBSCRIPTIONS_TOP_UP_DB');
 
@@ -86,7 +86,7 @@ export async function persistTopUps(topUps: SubscriptionTopUp[]) {
     const seizeDomain =
       process.env.NODE_ENV === 'development' ? 'staging.6529' : '6529';
     let discordMessage = `🔝 Subscription Top Up of ${topUp.amount} ETH from ${topUp.from_wallet}.`;
-    const link = getTransactionLink(
+    const link = ethTools.toEtherScanTransactionLink(
       parseInt(process.env.SUBSCRIPTIONS_CHAIN_ID ?? '1'),
       topUp.hash
     );

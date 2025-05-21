@@ -20,7 +20,6 @@ import {
   WETH_TOKEN_ADDRESS
 } from './constants';
 import { Transaction } from './entities/ITransaction';
-import { areEqualAddresses } from './helpers';
 import { ethers } from 'ethers';
 import { findTransactionsByHash } from './db';
 import { Logger } from './logging';
@@ -30,6 +29,7 @@ import {
   NEXTGEN_ROYALTIES_ADDRESS
 } from './nextgen/nextgen_constants';
 import { getClosestEthUsdPrice } from './ethPriceLoop/db.eth_price';
+import { equalIgnoreCase } from './strings';
 
 const logger = Logger.get('TRANSACTION_VALUES');
 
@@ -120,10 +120,10 @@ async function resolveValue(t: Transaction) {
   t.royalties = 0;
 
   let royaltiesAddress = ROYALTIES_ADDRESS;
-  if (areEqualAddresses(t.contract, MEMELAB_CONTRACT)) {
+  if (equalIgnoreCase(t.contract, MEMELAB_CONTRACT)) {
     royaltiesAddress = MEMELAB_ROYALTIES_ADDRESS;
   } else if (
-    areEqualAddresses(t.contract, NEXTGEN_CORE_CONTRACT[getNextgenNetwork()])
+    equalIgnoreCase(t.contract, NEXTGEN_CORE_CONTRACT[getNextgenNetwork()])
   ) {
     royaltiesAddress = NEXTGEN_ROYALTIES_ADDRESS;
   }
@@ -133,8 +133,8 @@ async function resolveValue(t: Transaction) {
     const logCount =
       receipt?.logs.filter(
         (l) =>
-          areEqualAddresses(l.topics[0], TRANSFER_EVENT) &&
-          areEqualAddresses(resolveLogAddress(l.topics[2]), t.to_address)
+          equalIgnoreCase(l.topics[0], TRANSFER_EVENT) &&
+          equalIgnoreCase(resolveLogAddress(l.topics[2]), t.to_address)
       ).length || 1;
 
     if (receipt?.gasUsed) {
@@ -160,7 +160,7 @@ async function resolveValue(t: Transaction) {
           if (
             parsedLog &&
             parsedLog.tokenId == t.token_id &&
-            areEqualAddresses(parsedLog.contract, t.contract)
+            equalIgnoreCase(parsedLog.contract, t.contract)
           ) {
             t.royalties = parsedLog.royaltiesAmount;
             t.value = parsedLog.totalAmount;
@@ -170,7 +170,7 @@ async function resolveValue(t: Transaction) {
               const royaltiesResponse = await parseBlurLog(log);
               if (
                 royaltiesResponse &&
-                areEqualAddresses(
+                equalIgnoreCase(
                   royaltiesResponse.feeRecipient,
                   royaltiesAddress
                 )
@@ -181,24 +181,22 @@ async function resolveValue(t: Transaction) {
                 t.royalties = royaltiesAmount;
               }
             } else if (
-              areEqualAddresses(log.topics[0], TRANSFER_EVENT) &&
+              equalIgnoreCase(log.topics[0], TRANSFER_EVENT) &&
               !seaportEvent
             ) {
               try {
                 const address = log.address;
-                if (areEqualAddresses(address, WETH_TOKEN_ADDRESS)) {
+                if (equalIgnoreCase(address, WETH_TOKEN_ADDRESS)) {
                   const from = resolveLogAddress(log.topics[1]);
                   const to = resolveLogAddress(log.topics[2]);
                   const value = resolveLogValue(log.data) / logCount;
-                  if (areEqualAddresses(from, t.to_address)) {
+                  if (equalIgnoreCase(from, t.to_address)) {
                     totalValue += value;
                   }
-                  if (areEqualAddresses(to, royaltiesAddress)) {
+                  if (equalIgnoreCase(to, royaltiesAddress)) {
                     totalRoyalties += value;
                   }
-                } else if (
-                  areEqualAddresses(log.topics[1], MINT_FROM_ADDRESS)
-                ) {
+                } else if (equalIgnoreCase(log.topics[1], MINT_FROM_ADDRESS)) {
                   totalValue = t.value / logCount;
                   totalRoyalties = 0;
                 }
@@ -220,10 +218,10 @@ async function resolveValue(t: Transaction) {
   }
 
   if (
-    areEqualAddresses(t.from_address, NULL_ADDRESS) ||
-    areEqualAddresses(t.from_address, MANIFOLD) ||
-    (areEqualAddresses(t.from_address, ACK_DEPLOYER) &&
-      areEqualAddresses(t.contract, MEMELAB_CONTRACT) &&
+    equalIgnoreCase(t.from_address, NULL_ADDRESS) ||
+    equalIgnoreCase(t.from_address, MANIFOLD) ||
+    (equalIgnoreCase(t.from_address, ACK_DEPLOYER) &&
+      equalIgnoreCase(t.contract, MEMELAB_CONTRACT) &&
       t.token_id == 12)
   ) {
     const block = `0x${t.block.toString(16)}`;
@@ -238,9 +236,9 @@ async function resolveValue(t: Transaction) {
     const filteredInternalTrfs = internlTrfs.transfers.filter(
       (it) =>
         it.hash == t.transaction &&
-        (areEqualAddresses(it.from, t.to_address) ||
-          areEqualAddresses(it.from, MANIFOLD) ||
-          (it.to && areEqualAddresses(it.to, MEMES_DEPLOYER)))
+        (equalIgnoreCase(it.from, t.to_address) ||
+          equalIgnoreCase(it.from, MANIFOLD) ||
+          (it.to && equalIgnoreCase(it.to, MEMES_DEPLOYER)))
     );
 
     if (filteredInternalTrfs.length > 0) {
@@ -291,24 +289,24 @@ const parseSeaportLog = async (
   }
 
   let recipientConsideration = seaResult.args.consideration?.find((c: any) =>
-    areEqualAddresses(c.recipient, t.from_address)
+    equalIgnoreCase(c.recipient, t.from_address)
   );
   if (!recipientConsideration) {
     recipientConsideration = seaResult.args.offer?.find((o: any) =>
-      areEqualAddresses(o.recipient, t.from_address)
+      equalIgnoreCase(o.recipient, t.from_address)
     );
   }
 
   const royaltiesConsideration = seaResult.args.consideration?.find((c: any) =>
-    areEqualAddresses(c.recipient, royaltiesAddress)
+    equalIgnoreCase(c.recipient, royaltiesAddress)
   );
 
   let tokenConsideration = seaResult.args.consideration?.find((o: any) =>
-    areEqualAddresses(o.token, t.contract)
+    equalIgnoreCase(o.token, t.contract)
   );
   if (!tokenConsideration) {
     tokenConsideration = seaResult.args.offer?.find((o: any) =>
-      areEqualAddresses(o.token, t.contract)
+      equalIgnoreCase(o.token, t.contract)
     );
   }
 
@@ -322,14 +320,14 @@ const parseSeaportLog = async (
     let totalAmount = 0;
 
     seaResult.args.offer
-      .filter((o: any) => !areEqualAddresses(o.token, t.contract))
+      .filter((o: any) => !equalIgnoreCase(o.token, t.contract))
       .map((o: any) => {
         totalAmount += parseFloat(Utils.formatEther(o.amount));
       });
 
     if (totalAmount == 0) {
       seaResult.args.consideration
-        .filter((o: any) => !areEqualAddresses(o.token, contract))
+        .filter((o: any) => !equalIgnoreCase(o.token, contract))
         .map((o: any) => {
           totalAmount += parseFloat(Utils.formatEther(o.amount));
         });
@@ -345,7 +343,7 @@ const parseSeaportLog = async (
 };
 
 const isBlurEvent = (log: ethers.providers.Log) => {
-  return areEqualAddresses(log.topics[0], BLUR_EVENT);
+  return equalIgnoreCase(log.topics[0], BLUR_EVENT);
 };
 
 const parseBlurLog = async (log: { data: string }) => {

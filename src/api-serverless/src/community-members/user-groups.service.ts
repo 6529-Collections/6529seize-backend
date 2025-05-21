@@ -18,7 +18,6 @@ import {
   UserGroupsDb
 } from '../../../user-groups/user-groups.db';
 import slugify from 'slugify';
-import { distinct, resolveEnum, uniqueShortId } from '../../../helpers';
 import { BadRequestException, NotFoundException } from '../../../exceptions';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import {
@@ -57,6 +56,9 @@ import {
 import { identityFetcher } from '../identities/identity.fetcher';
 import { ApiIdentity } from '../generated/models/ApiIdentity';
 import { identitiesDb } from '../../../identities/identities.db';
+import { enums } from '../../../enums';
+import { ids } from '../../../ids';
+import { collections } from '../../../collections';
 
 export type NewUserGroupEntity = Omit<
   UserGroupEntity,
@@ -94,7 +96,7 @@ export class UserGroupsService {
               strict: true
             }).slice(0, 50) +
             '-' +
-            uniqueShortId();
+            ids.uniqueShortId();
           const inclusionGroups = group.addresses.length
             ? await this.userGroupsDb.insertGroupEntriesAndGetGroupIds(
                 group.addresses,
@@ -1104,7 +1106,7 @@ export class UserGroupsService {
   ): Promise<ApiGroupFull[]> {
     ctx.timer?.start('userGroupsService->mapForApi');
     const relatedProfiles = await identityFetcher.getOverviewsByIds(
-      distinct(
+      collections.distinct(
         groups
           .map(
             (it) =>
@@ -1140,7 +1142,7 @@ export class UserGroupsService {
           min: it.cic_min,
           max: it.cic_max,
           direction: it.cic_direction
-            ? resolveEnum(ApiGroupFilterDirection, it.cic_direction)!
+            ? enums.resolve(ApiGroupFilterDirection, it.cic_direction)!
             : null,
           user_identity: it.cic_user
             ? relatedProfiles[it.cic_user]?.handle ?? it.cic_user
@@ -1150,7 +1152,7 @@ export class UserGroupsService {
           min: it.rep_min,
           max: it.rep_max,
           direction: it.rep_direction
-            ? resolveEnum(ApiGroupFilterDirection, it.rep_direction)!
+            ? enums.resolve(ApiGroupFilterDirection, it.rep_direction)!
             : null,
           user_identity: it.rep_user
             ? relatedProfiles[it.rep_user]?.handle ?? it.rep_user

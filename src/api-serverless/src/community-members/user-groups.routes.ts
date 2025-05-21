@@ -18,7 +18,6 @@ import { ApiGroupFilterDirection } from '../generated/models/ApiGroupFilterDirec
 import { ApiGroupRepFilter } from '../generated/models/ApiGroupRepFilter';
 import { ApiGroupLevelFilter } from '../generated/models/ApiGroupLevelFilter';
 import { ApiGroupTdhFilter } from '../generated/models/ApiGroupTdhFilter';
-import { distinct, parseIntOrNull, resolveEnum } from '../../../helpers';
 import { FilterDirection } from '../../../entities/IUserGroup';
 import {
   ApiGroupOwnsNft,
@@ -28,6 +27,9 @@ import { ApiCreateGroupDescription } from '../generated/models/ApiCreateGroupDes
 import { Timer } from '../../../time';
 import { RequestContext } from '../../../request.context';
 import { identityFetcher } from '../identities/identity.fetcher';
+import { enums } from '../../../enums';
+import { numbers } from '../../../numbers';
+import { collections } from '../../../collections';
 
 const router = asyncRouter();
 
@@ -51,7 +53,9 @@ router.get(
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
     const groupName = req.query.group_name ?? null;
-    const createdAtLessThan = parseIntOrNull(req.query.created_at_less_than);
+    const createdAtLessThan = numbers.parseIntOrNull(
+      req.query.created_at_less_than
+    );
     let authorId: string | null = null;
     if (req.query.author_identity) {
       authorId = await identityFetcher.getProfileIdByIdentityKey(
@@ -142,7 +146,7 @@ router.post(
     if (!savingProfileId) {
       throw new ForbiddenException(`Please create a profile first.`);
     }
-    const relatedIdentities = distinct(
+    const relatedIdentities = collections.distinct(
       [
         apiUserGroup.group.rep.user_identity,
         apiUserGroup.group.cic.user_identity
@@ -189,7 +193,8 @@ router.post(
           return it.given_identity === apiUserGroup.group.cic.user_identity;
         })?.profile_id ?? null,
       cic_direction: apiUserGroup.group.cic.direction
-        ? resolveEnum(FilterDirection, apiUserGroup.group.cic.direction) ?? null
+        ? enums.resolve(FilterDirection, apiUserGroup.group.cic.direction) ??
+          null
         : null,
       rep_min: apiUserGroup.group.rep.min,
       rep_max: apiUserGroup.group.rep.max,
@@ -198,7 +203,8 @@ router.post(
           return it.given_identity === apiUserGroup.group.rep.user_identity;
         })?.profile_id ?? null,
       rep_direction: apiUserGroup.group.rep.direction
-        ? resolveEnum(FilterDirection, apiUserGroup.group.rep.direction) ?? null
+        ? enums.resolve(FilterDirection, apiUserGroup.group.rep.direction) ??
+          null
         : null,
       rep_category: apiUserGroup.group.rep.category,
       tdh_min: apiUserGroup.group.tdh.min,

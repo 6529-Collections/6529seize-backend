@@ -21,7 +21,7 @@ import { randomUUID } from 'crypto';
 import { RequestContext } from '../request.context';
 import { Timer } from '../time';
 import { Wallet } from '../entities/IWallet';
-import { distinct } from '../helpers';
+import { collections } from '../collections';
 
 const mysql = require('mysql');
 
@@ -909,7 +909,7 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     ctx: RequestContext
   ): Promise<Record<string, string>> {
     ctx.timer?.start(`${this.constructor.name}->getProfileHandlesByIds`);
-    const distinctProfileIds = distinct(profileIds);
+    const distinctProfileIds = collections.distinct(profileIds);
     if (!distinctProfileIds.length) {
       return {};
     }

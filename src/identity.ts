@@ -3,7 +3,6 @@ import { identitiesDb } from './identities/identities.db';
 import { IdentityEntity } from './entities/IIdentity';
 import { profilesService } from './profiles/profiles.service';
 import { Profile } from './entities/IProfile';
-import { distinct, parseIntOrNull } from './helpers';
 import { Logger } from './logging';
 import {
   CONSOLIDATED_WALLETS_TDH_TABLE,
@@ -14,6 +13,8 @@ import {
 import { randomUUID } from 'crypto';
 import { identitySubscriptionsDb } from './api-serverless/src/identity-subscriptions/identity-subscriptions.db';
 import { identitiesService } from './api-serverless/src/identities/identities.service';
+import { numbers } from './numbers';
+import { collections } from './collections';
 
 const logger = Logger.get('IDENTITIES');
 
@@ -202,8 +203,8 @@ export async function syncIdentitiesWithTdhConsolidations(
           .filter((it) => !!it)
           .reduce((acc, data) => {
             const thisProfile = data.profile;
-            const thisCic = parseIntOrNull(`${data.identity.cic}`)!;
-            const thisTdh = parseIntOrNull(`${data.identity.tdh}`)!;
+            const thisCic = numbers.parseIntOrNull(`${data.identity.cic}`)!;
+            const thisTdh = numbers.parseIntOrNull(`${data.identity.tdh}`)!;
             if (thisProfile) {
               if (
                 !acc ||
@@ -236,7 +237,7 @@ export async function syncIdentitiesWithTdhConsolidations(
         .map((it) => it.identity);
       identitiesToMerge.push({ sourceIdentities, targetIdentity });
     }
-    const allOldWallets = distinct(
+    const allOldWallets = collections.distinct(
       Object.values(oldDataByWallets)
         .map((it) => it.identity.consolidation_key.split('-'))
         .flat()
@@ -269,7 +270,7 @@ export async function syncIdentitiesWithTdhConsolidations(
       }
     }
     await identitiesDb.deleteAddressConsolidations(allOldWallets, connection);
-    const allOldConsolidationKeys = distinct(
+    const allOldConsolidationKeys = collections.distinct(
       Object.values(oldDataByWallets).map((it) => it.identity.consolidation_key)
     );
     await identitiesDb.deleteIdentities(

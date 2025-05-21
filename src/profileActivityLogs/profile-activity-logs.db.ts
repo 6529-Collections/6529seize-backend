@@ -9,7 +9,6 @@ import {
   ProfileActivityLog,
   ProfileActivityLogType
 } from '../entities/IProfileActivityLog';
-import { uniqueShortId } from '../helpers';
 import {
   PROFILE_LATEST_LOG_TABLE,
   PROFILES_ACTIVITY_LOGS_TABLE
@@ -22,6 +21,7 @@ import {
 } from '../api-serverless/src/community-members/user-groups.service';
 import { Time, Timer } from '../time';
 import { RequestContext } from '../request.context';
+import { ids } from '../ids';
 
 const mysql = require('mysql');
 
@@ -57,7 +57,7 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
       logs.map((it) => ({
         ...it,
         created_at: currentTime,
-        id: uniqueShortId()
+        id: ids.uniqueShortId()
       })),
       {
         connection: connectionHolder
@@ -81,7 +81,7 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
         {
           ...log,
           currentTime,
-          id: uniqueShortId()
+          id: ids.uniqueShortId()
         },
         { wrappedConnection: connectionHolder }
       ),

@@ -45,13 +45,6 @@ import {
   ProfileProxiesDb
 } from '../profile-proxies/profile-proxies.db';
 import { ApiBulkRateRequest } from '../api-serverless/src/generated/models/ApiBulkRateRequest';
-import {
-  AppFeature,
-  distinct,
-  isFeatureOn,
-  resolveEnum,
-  uniqueShortId
-} from '../helpers';
 import { ApiAvailableRatingCredit } from '../api-serverless/src/generated/models/ApiAvailableRatingCredit';
 import { ApiRatingWithProfileInfoAndLevel } from '../api-serverless/src/generated/models/ApiRatingWithProfileInfoAndLevel';
 import { ApiRatingWithProfileInfoAndLevelPage } from '../api-serverless/src/generated/models/ApiRatingWithProfileInfoAndLevelPage';
@@ -66,6 +59,10 @@ import { ProfileRepRatedEventData } from '../events/datatypes/profile-rep-rated.
 import { ProfileClassification } from '../entities/IProfile';
 import { identityFetcher } from '../api-serverless/src/identities/identity.fetcher';
 import { revokeTdhBasedDropWavesOverVotes } from '../drops/participation-drops-over-vote-revocation';
+import { appFeatures } from '../app-features';
+import { enums } from '../enums';
+import { ids } from '../ids';
+import { collections } from '../collections';
 
 export class RatingsService {
   private readonly logger = Logger.get('RATINGS_SERVICE');
@@ -336,7 +333,7 @@ export class RatingsService {
     matter: RateMatter,
     connection: ConnectionWrapper<any>
   ) {
-    if (!isFeatureOn(AppFeature.UPLOAD_CIC_REP_SNAPSHOTS_TO_ARWEAVE)) {
+    if (!appFeatures.isUploadCicRepSnaphotsToArweaveEnabled()) {
       return;
     }
     const now = Time.now();
@@ -803,7 +800,7 @@ export class RatingsService {
         if (!actingAsId) {
           throw new ForbiddenException(`Create a profile before you rate`);
         }
-        const matter = resolveEnum(RateMatter, apiRequest.matter)!;
+        const matter = enums.resolve(RateMatter, apiRequest.matter)!;
         const wallets = apiRequest.target_wallet_addresses.map((it) =>
           it.toLowerCase()
         );
@@ -1003,14 +1000,16 @@ export class RatingsService {
 
   async bulkRep({ targets }: ApiBulkRepRequest, ctx: RequestContext) {
     const authenticationContext = ctx.authenticationContext!;
-    const proposedCategories = distinct(
+    const proposedCategories = collections.distinct(
       targets.map((target) => target.category)
     );
     await this.abusivenessCheckService.bulkCheckRepPhrases(
       proposedCategories,
       ctx
     );
-    const targetAddresses = distinct(targets.map((it) => it.address));
+    const targetAddresses = collections.distinct(
+      targets.map((it) => it.address)
+    );
     await this.identitiesDb.executeNativeQueriesInTransaction(
       async (connection) => {
         const ctxWithConnection = { ...ctx, connection };
@@ -1119,7 +1118,7 @@ export class RatingsService {
         const logs = ratingChanges
           .map<ProfileActivityLog[]>((profileChange) =>
             profileChange.changes.map<ProfileActivityLog>((ratingChange) => ({
-              id: uniqueShortId(),
+              id: ids.uniqueShortId(),
               created_at: now,
               profile_id: raterId,
               target_id: profileChange.profileId,

@@ -1,19 +1,19 @@
 import { ethers } from 'ethers';
 import {
-  persistNextGenToken,
   fetchMissingMintDataNextgenTokens,
+  persistNextGenToken,
   persistNextGenTraits
 } from './nextgen.db';
 import { Logger } from '../logging';
 import { EntityManager } from 'typeorm';
 import {
+  getNextgenNetwork,
   MINT_TYPE_TRAIT,
-  NEXTGEN_CORE_CONTRACT,
-  getNextgenNetwork
+  NEXTGEN_CORE_CONTRACT
 } from './nextgen_constants';
-import { capitalizeEveryWord, getRpcUrlFromNetwork } from '../helpers';
 import { NEXTGEN_CORE_ABI } from '../abis/nextgen';
 import { NextGenTokenTrait } from '../entities/INextGen';
+import { getRpcUrlFromNetwork } from '../alchemy';
 
 const logger = Logger.get('NEXTGEN_PENDING_MINT_DATA');
 
@@ -50,7 +50,11 @@ export async function processMissingMintData(entityManager: EntityManager) {
 
       const tokenDataObj = JSON.parse(tokenData);
       for (const key in tokenDataObj) {
-        const newTrait = `${MINT_TYPE_TRAIT} - ${capitalizeEveryWord(key)}`;
+        const newTrait = `${MINT_TYPE_TRAIT} - ${key
+          .toLocaleLowerCase()
+          .split(' ')
+          .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+          .join(' ')}`;
         const newTraitValue = tokenDataObj[key];
 
         logger.info(

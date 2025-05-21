@@ -14,7 +14,6 @@ import {
   returnJsonResult,
   returnPaginatedResult
 } from '../api-helpers';
-import { resolveEnum } from '../../../helpers';
 import { parseTdhDataFromDB } from '../../../sql_helpers';
 import {
   CONSOLIDATED_WALLETS_TDH_TABLE,
@@ -22,6 +21,7 @@ import {
 } from '../../../constants';
 import { NotFoundException } from '../../../exceptions';
 import { NFT_TDH_SORT } from '../api-filters';
+import { enums } from '../../../enums';
 
 const router = asyncRouter();
 
@@ -103,9 +103,9 @@ router.get(
         : METRICS_SORT[0];
     const sortDir = resolveSortDirection(req.query.sort_direction);
     const search = req.query.search;
-    const content = resolveEnum(MetricsContent, req.query.content);
+    const content = enums.resolve(MetricsContent, req.query.content);
     const season = req.query.season;
-    const collector = resolveEnum(MetricsCollector, req.query.collector);
+    const collector = enums.resolve(MetricsCollector, req.query.collector);
 
     const downloadPage = req.query.download_page;
     const downloadAll = req.query.download_all;

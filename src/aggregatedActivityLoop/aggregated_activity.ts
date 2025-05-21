@@ -9,7 +9,6 @@ import {
   PUNK_6529
 } from '../constants';
 import { Transaction } from '../entities/ITransaction';
-import { areEqualAddresses, isNullAddress } from '../helpers';
 import {
   fetchAllSeasons,
   fetchMaxTransactionsBlockNumber,
@@ -37,6 +36,8 @@ import {
   getNextgenNetwork,
   NEXTGEN_CORE_CONTRACT
 } from '../nextgen/nextgen_constants';
+import { equalIgnoreCase } from '../strings';
+import { ethTools } from '../eth-tools';
 
 const logger = Logger.get('AGGREGATED_ACTIVITY');
 interface ActivityBreakdown {
@@ -422,8 +423,8 @@ function getValue(arr: any[]): number {
 
 function isPunkGradient(t: Transaction) {
   return (
-    areEqualAddresses(t.from_address, PUNK_6529) &&
-    areEqualAddresses(t.contract, GRADIENT_CONTRACT)
+    equalIgnoreCase(t.from_address, PUNK_6529) &&
+    equalIgnoreCase(t.contract, GRADIENT_CONTRACT)
   );
 }
 
@@ -433,40 +434,40 @@ function getActivityBreakdown(
   contract: string
 ): ActivityBreakdown {
   let mintAddresses = [MANIFOLD, NULL_ADDRESS];
-  if (areEqualAddresses(contract, GRADIENT_CONTRACT)) {
+  if (equalIgnoreCase(contract, GRADIENT_CONTRACT)) {
     mintAddresses = [PUNK_6529];
   }
 
   return {
     airdrops: transactionsIn.filter(
-      (t) => areEqualAddresses(t.from_address, NULL_ADDRESS) && t.value === 0
+      (t) => equalIgnoreCase(t.from_address, NULL_ADDRESS) && t.value === 0
     ),
     primary_purchases: transactionsIn.filter(
       (t) =>
-        mintAddresses.some((ma) => areEqualAddresses(ma, t.from_address)) &&
+        mintAddresses.some((ma) => equalIgnoreCase(ma, t.from_address)) &&
         t.value > 0
     ),
     secondary_purchases: transactionsIn.filter(
       (t) =>
-        !mintAddresses.some((ma) => areEqualAddresses(ma, t.from_address)) &&
+        !mintAddresses.some((ma) => equalIgnoreCase(ma, t.from_address)) &&
         t.value > 0
     ),
     sales: transactionsOut.filter(
       (t) =>
         t.value > 0 &&
         !isPunkGradient(t) &&
-        !areEqualAddresses(t.to_address, NULL_ADDRESS)
+        !equalIgnoreCase(t.to_address, NULL_ADDRESS)
     ),
     burns: transactionsOut.filter((t) =>
-      areEqualAddresses(t.to_address, NULL_ADDRESS)
+      equalIgnoreCase(t.to_address, NULL_ADDRESS)
     ),
     transfersIn: transactionsIn.filter(
-      (t) => t.value == 0 && !areEqualAddresses(t.from_address, NULL_ADDRESS)
+      (t) => t.value == 0 && !equalIgnoreCase(t.from_address, NULL_ADDRESS)
     ),
     transfersOut: transactionsOut.filter(
       (t) =>
         (t.value == 0 || isPunkGradient(t)) &&
-        !areEqualAddresses(t.to_address, NULL_ADDRESS)
+        !equalIgnoreCase(t.to_address, NULL_ADDRESS)
     )
   };
 }
@@ -490,29 +491,29 @@ async function retrieveActivityDelta(
         address
       );
 
-      if (isNullAddress(address)) {
+      if (ethTools.isNullOrDeadAddress(address)) {
         addressTransactions.forEach((at) => {
           at.value = 0;
         });
       }
 
       if (
-        areEqualAddresses(address, NULL_ADDRESS) ||
-        areEqualAddresses(address, MEMES_DEPLOYER)
+        equalIgnoreCase(address, NULL_ADDRESS) ||
+        equalIgnoreCase(address, MEMES_DEPLOYER)
       ) {
         logger.info(
           `[WALLET ${address}] [SKIPPING MEME CARD 8 BURN TRANSACTION ${MEME_8_BURN_TRANSACTION}]`
         );
         addressTransactions = addressTransactions.filter(
-          (t) => !areEqualAddresses(t.transaction, MEME_8_BURN_TRANSACTION)
+          (t) => !equalIgnoreCase(t.transaction, MEME_8_BURN_TRANSACTION)
         );
       }
 
       const transactionsIn = [...addressTransactions].filter((wt) =>
-        areEqualAddresses(wt.to_address, address)
+        equalIgnoreCase(wt.to_address, address)
       );
       const transactionsOut = [...addressTransactions].filter((wt) =>
-        areEqualAddresses(wt.from_address, address)
+        equalIgnoreCase(wt.from_address, address)
       );
 
       const memesTransactionsIn = filterContract(
@@ -774,9 +775,7 @@ function retrieveMemesSeasonActivityForWallet(
 }
 
 function filterContract(transactions: Transaction[], contract: string) {
-  return [...transactions].filter((a) =>
-    areEqualAddresses(a.contract, contract)
-  );
+  return [...transactions].filter((a) => equalIgnoreCase(a.contract, contract));
 }
 
 function validateTransactions(

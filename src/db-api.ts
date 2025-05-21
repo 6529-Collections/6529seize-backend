@@ -37,7 +37,6 @@ import {
   WALLETS_TDH_TABLE
 } from './constants';
 import { RememeSource } from './entities/IRememe';
-import { areEqualAddresses, extractConsolidationWallets } from './helpers';
 import { getConsolidationsSql } from './sql_helpers';
 import { ConnectionWrapper, setSqlExecutor, sqlExecutor } from './sql-executor';
 
@@ -69,6 +68,8 @@ import { ApiTransactionPage } from './api-serverless/src/generated/models/ApiTra
 import { ApiTransaction } from './api-serverless/src/generated/models/ApiTransaction';
 import { ApiNftMedia } from './api-serverless/src/generated/models/ApiNftMedia';
 import { TDHHistory } from './entities/ITDHHistory';
+import { equalIgnoreCase } from './strings';
+import { consolidationTools } from './consolidation-tools';
 
 let read_pool: mysql.Pool;
 let write_pool: mysql.Pool;
@@ -776,8 +777,7 @@ export async function resolveEns(walletsStr: string) {
   wallets.forEach((wallet: any) => {
     const w = results.find(
       (r: any) =>
-        areEqualAddresses(r.wallet, wallet) ||
-        areEqualAddresses(r.display, wallet)
+        equalIgnoreCase(r.wallet, wallet) || equalIgnoreCase(r.display, wallet)
     );
     if (w) {
       returnResults.push(w.wallet);
@@ -1124,7 +1124,10 @@ export async function fetchConsolidationsForWallet(
     const consolidations: any[] = await sqlExecutor.execute(sql, {
       wallet: wallet
     });
-    const wallets = extractConsolidationWallets(consolidations, wallet);
+    const wallets = consolidationTools.extractConsolidationWallets(
+      consolidations,
+      wallet
+    );
     return {
       count: wallets.length,
       page: 1,
@@ -1578,7 +1581,7 @@ export const fetchNFTMedia = async (
   };
 
   for (const [key, sql] of Object.entries(queries)) {
-    if (areEqualAddresses(contract, key)) {
+    if (equalIgnoreCase(contract, key)) {
       return await sqlExecutor.execute(sql, { contract });
     }
   }

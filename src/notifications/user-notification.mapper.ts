@@ -10,7 +10,8 @@ import {
   WaveCreatedNotification
 } from './user-notification.types';
 import { IdentityNotificationDeserialized } from './identity-notifications.db';
-import { assertUnreachable, parseIntOrNull } from '../helpers';
+import { assertUnreachable } from '../assertions';
+import { numbers } from '../numbers';
 
 export class UserNotificationMapper {
   public mapNotifications(
@@ -88,7 +89,7 @@ export class UserNotificationMapper {
         drop_author_id: entity.identity_id,
         drop_id: entity.related_drop_id!,
         voter_id: entity.additional_identity_id!,
-        vote: parseIntOrNull(entity.additional_data.vote)!,
+        vote: numbers.parseIntOrNull(entity.additional_data.vote)!,
         wave_id: entity.wave_id!
       }
     };
@@ -159,7 +160,7 @@ export class UserNotificationMapper {
       data: {
         additional_identity_id: entity.additional_identity_id!,
         drop_id: entity.related_drop_id!,
-        vote: parseIntOrNull(entity.additional_data.vote)!
+        vote: numbers.parseIntOrNull(entity.additional_data.vote)!
       }
     };
   }

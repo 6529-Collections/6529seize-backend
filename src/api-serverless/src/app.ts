@@ -1,11 +1,6 @@
 import fetch from 'node-fetch';
 import * as db from '../../db-api';
-import {
-  isNumber,
-  isValidUuid,
-  parseIntOrNull,
-  uniqueShortId
-} from '../../helpers';
+import { ids } from '../../ids';
 
 import feedRoutes from './feed/feed.routes';
 import identitiesRoutes from './identities/identities.routes';
@@ -109,6 +104,7 @@ import {
 } from './ws/ws';
 import { WsMessageType } from './ws/ws-message';
 import { wsListenersNotifier } from './ws/ws-listeners-notifier';
+import { numbers } from '../../numbers';
 
 const YAML = require('yamljs');
 const compression = require('compression');
@@ -125,7 +121,7 @@ const API_PORT = 3000;
 function requestLogMiddleware() {
   return (request: Request, response: Response, next: NextFunction) => {
     const requestId =
-      request.apiGateway?.context?.awsRequestId ?? uniqueShortId();
+      request.apiGateway?.context?.awsRequestId ?? ids.uniqueShortId();
     Logger.registerAwsRequestId(requestId);
     const { method, originalUrl: url } = request;
     const uqKey = `${method} ${url}`;
@@ -133,7 +129,7 @@ function requestLogMiddleware() {
     (request as any).timer = timer;
     response.on('close', () => {
       const { statusCode } = response;
-      const slowRequestThresholdEnv = parseIntOrNull(
+      const slowRequestThresholdEnv = numbers.parseIntOrNull(
         process.env.SLOW_API_REQUEST_THRESHOLD
       );
       const slowRequestThreshold = slowRequestThresholdEnv
@@ -351,7 +347,9 @@ loadApi().then(async () => {
           ? parseInt(req.query.page_size)
           : DEFAULT_PAGE_SIZE;
       const page: number = req.query.page ? parseInt(req.query.page) : 1;
-      const block = isNumber(req.query.block) ? parseInt(req.query.block) : 0;
+      const block = numbers.isNumber(req.query.block)
+        ? parseInt(req.query.block)
+        : 0;
       const date = req.query.date;
       db.fetchUploads(pageSize, page, block, date).then((result) => {
         returnPaginatedResult(
@@ -378,7 +376,9 @@ loadApi().then(async () => {
           ? parseInt(req.query.page_size)
           : DEFAULT_PAGE_SIZE;
       const page: number = req.query.page ? parseInt(req.query.page) : 1;
-      const block = isNumber(req.query.block) ? parseInt(req.query.block) : 0;
+      const block = numbers.isNumber(req.query.block)
+        ? parseInt(req.query.block)
+        : 0;
       const date = req.query.date;
       db.fetchConsolidatedUploads(pageSize, page, block, date).then(
         (result) => {
@@ -1095,7 +1095,7 @@ loadApi().then(async () => {
             switch (message.type) {
               case WsMessageType.SUBSCRIBE_TO_WAVE: {
                 const waveId = message.wave_id?.toString() ?? null;
-                if (waveId && !isValidUuid(waveId)) {
+                if (waveId && !ids.isValidUuid(waveId)) {
                   socket.send(
                     JSON.stringify({
                       error: 'Invalid waveId'
@@ -1112,7 +1112,7 @@ loadApi().then(async () => {
               }
               case WsMessageType.USER_IS_TYPING: {
                 const waveId = message.wave_id?.toString();
-                if (!waveId || !isValidUuid(waveId)) {
+                if (!waveId || !ids.isValidUuid(waveId)) {
                   socket.send(
                     JSON.stringify({
                       error: 'Invalid wave id'

@@ -25,7 +25,7 @@ import {
   WaveRequiredMetadataItemType,
   WaveType
 } from '../entities/IWave';
-import { assertUnreachable, distinct, parseIntOrNull } from '../helpers';
+import { assertUnreachable } from '../assertions';
 import { randomUUID } from 'crypto';
 import {
   DropMediaEntity,
@@ -64,6 +64,8 @@ import {
 } from '../api-serverless/src/drops/drop-voting.db';
 import { identityFetcher } from '../api-serverless/src/identities/identity.fetcher';
 import { identitiesDb } from '../identities/identities.db';
+import { numbers } from '../numbers';
+import { collections } from '../collections';
 
 export class CreateOrUpdateDropUseCase {
   public constructor(
@@ -175,7 +177,7 @@ export class CreateOrUpdateDropUseCase {
         dropBeforeUpdate.updated_at ?? dropBeforeUpdate.created_at
       );
       const maximumTimeAllowedForEdit = Time.millis(
-        parseIntOrNull(process.env.MAX_DROP_EDIT_TIME_MS) ?? 0
+        numbers.parseIntOrNull(process.env.MAX_DROP_EDIT_TIME_MS) ?? 0
       );
       if (dropLastTouched.diffFromNow().gt(maximumTimeAllowedForEdit)) {
         throw new ForbiddenException(
@@ -446,7 +448,11 @@ export class CreateOrUpdateDropUseCase {
           );
         }
         if (requiredMetadata.type === WaveRequiredMetadataItemType.NUMBER) {
-          if (!metadata.some((it) => parseIntOrNull(it.data_value) !== null)) {
+          if (
+            !metadata.some(
+              (it) => numbers.parseIntOrNull(it.data_value) !== null
+            )
+          ) {
             throw new BadRequestException(
               `Wave requires metadata ${requiredMetadata.name} to be a number`
             );
@@ -807,7 +813,7 @@ export class CreateOrUpdateDropUseCase {
           wave.id,
           connection
         );
-      mentionedUsersIds = distinct(
+      mentionedUsersIds = collections.distinct(
         [...mentionedUsersIds, ...followerIds].filter(
           (it) => it !== model.author_id
         )

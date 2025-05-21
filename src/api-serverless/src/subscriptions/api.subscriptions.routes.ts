@@ -23,7 +23,6 @@ import {
   SubscriptionTopUp
 } from '../../../entities/ISubscription';
 import { getWalletOrThrow, needsAuthenticatedUser } from '../auth/auth';
-import { areEqualAddresses } from '../../../helpers';
 import {
   BadRequestException,
   ForbiddenException,
@@ -43,6 +42,7 @@ import {
 import { getNft } from '../../../nftsLoop/db.nfts';
 import { fetchAirdropAddressForConsolidationKey } from '../../../delegationsLoop/db.delegations';
 import { fetchEns } from '../../../db-api';
+import { equalIgnoreCase } from '../../../strings';
 
 const router = asyncRouter();
 
@@ -158,8 +158,8 @@ async function isAuthenticatedForConsolidationKey(
   );
   return (
     consolidationWallets.some((wallet) =>
-      areEqualAddresses(wallet, authenticatedWallet)
-    ) || areEqualAddresses(consolidationKey, authenticatedWallet)
+      equalIgnoreCase(wallet, authenticatedWallet)
+    ) || equalIgnoreCase(consolidationKey, authenticatedWallet)
   );
 }
 

@@ -3,12 +3,6 @@ import {
   IdentitySubscriptionsDb
 } from '../identity-subscriptions/identity-subscriptions.db';
 import {
-  areEqualAddresses,
-  replaceEmojisWithHex,
-  resolveEnum,
-  resolveEnumOrThrow
-} from '../../../helpers';
-import {
   ActivityEventAction,
   ActivityEventTargetType
 } from '../../../entities/IActivityEvent';
@@ -43,6 +37,9 @@ import { userGroupsService } from '../community-members/user-groups.service';
 import { wavesApiDb } from '../waves/waves.api.db';
 import { ApiProfileClassification } from '../generated/models/ApiProfileClassification';
 import { getLevelFromScore } from '../../../profiles/profile-level';
+import { equalIgnoreCase } from '../../../strings';
+import { enums } from '../../../enums';
+import { text } from '../../../text';
 
 export class IdentitiesService {
   constructor(
@@ -77,7 +74,7 @@ export class IdentitiesService {
           throw new NotFoundException(`Identity ${identityAddress} not found`);
         }
         const proposedActions = Object.values(acceptedActions).map((it) =>
-          resolveEnumOrThrow(ActivityEventAction, it)
+          enums.resolveOrThrow(ActivityEventAction, it)
         );
 
         const existingActions =
@@ -125,7 +122,7 @@ export class IdentitiesService {
           )
           .then((result) =>
             result.map((it) =>
-              resolveEnumOrThrow(ApiIdentitySubscriptionTargetAction, it)
+              enums.resolveOrThrow(ApiIdentitySubscriptionTargetAction, it)
             )
           );
       }
@@ -158,7 +155,7 @@ export class IdentitiesService {
               subscriber_id: subscriber,
               target_id: identityId,
               target_type: ActivityEventTargetType.IDENTITY,
-              target_action: resolveEnumOrThrow(ActivityEventAction, action)
+              target_action: enums.resolveOrThrow(ActivityEventAction, action)
             },
             connection
           );
@@ -174,7 +171,7 @@ export class IdentitiesService {
           )
           .then((result) =>
             result.map((it) =>
-              resolveEnumOrThrow(ApiIdentitySubscriptionTargetAction, it)
+              enums.resolveOrThrow(ApiIdentitySubscriptionTargetAction, it)
             )
           );
       }
@@ -318,7 +315,7 @@ export class IdentitiesService {
             consolidationKey
           );
           const oldPrimaryAddress = identity.consolidation_key;
-          if (!areEqualAddresses(newPrimaryAddress, oldPrimaryAddress)) {
+          if (!equalIgnoreCase(newPrimaryAddress, oldPrimaryAddress)) {
             const ensName = await this.supplyAlchemy().core.lookupAddress(
               newPrimaryAddress
             );
@@ -334,7 +331,7 @@ export class IdentitiesService {
                 await this.identitiesDb.updateWalletsEnsName(
                   {
                     wallet: newPrimaryAddress,
-                    ensName: ensName ? replaceEmojisWithHex(ensName) : null
+                    ensName: ensName ? text.replaceEmojisWithHex(ensName) : null
                   },
                   connection
                 );
@@ -419,8 +416,10 @@ export class IdentitiesService {
     );
     return identityEntities.map<ApiIdentity>((it) => {
       const classification = it.classification
-        ? resolveEnum(ApiProfileClassification, it.classification as string) ??
-          ApiProfileClassification.Pseudonym
+        ? enums.resolve(
+            ApiProfileClassification,
+            it.classification as string
+          ) ?? ApiProfileClassification.Pseudonym
         : ApiProfileClassification.Pseudonym;
       return {
         id: it.profile_id,

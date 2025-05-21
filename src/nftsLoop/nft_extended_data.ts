@@ -13,14 +13,15 @@ import {
   persistMemesSeasons
 } from '../db';
 import {
-  NFT,
-  MemesExtendedData,
+  LabExtendedData,
   LabNFT,
-  LabExtendedData
+  MemesExtendedData,
+  NFT
 } from '../entities/INFT';
 import { NFTOwner } from '../entities/INFTOwner';
-import { isNullAddress, areEqualAddresses } from '../helpers';
 import { Logger } from '../logging';
+import { equalIgnoreCase } from '../strings';
+import { ethTools } from '../eth-tools';
 
 const logger = Logger.get('NFT_EXTENDED_DATA');
 
@@ -96,12 +97,12 @@ async function generateExtendedData<T, M extends ExtendedBase>(
       }
 
       const nonBurnt = tokenOwners.filter(
-        (o) => !isNullAddress(o.wallet)
+        (o) => !ethTools.isNullOrDeadAddress(o.wallet)
       ).length;
       const cleaned = tokenOwners.filter(
         (o) =>
-          !isNullAddress(o.wallet) &&
-          !areEqualAddresses(o.wallet, SIX529_MUSEUM)
+          !ethTools.isNullOrDeadAddress(o.wallet) &&
+          !equalIgnoreCase(o.wallet, SIX529_MUSEUM)
       ).length;
 
       let edition_size = 0;
@@ -111,11 +112,11 @@ async function generateExtendedData<T, M extends ExtendedBase>(
       let edition_size_cleaned = 0;
 
       for (const tw of tokenOwners) {
-        if (isNullAddress(tw.wallet)) {
+        if (ethTools.isNullOrDeadAddress(tw.wallet)) {
           burnt += tw.balance;
         } else {
           edition_size_not_burnt += tw.balance;
-          if (!areEqualAddresses(tw.wallet, SIX529_MUSEUM)) {
+          if (!equalIgnoreCase(tw.wallet, SIX529_MUSEUM)) {
             edition_size_cleaned += tw.balance;
           } else {
             museum_holdings += tw.balance;
@@ -209,7 +210,7 @@ export async function findMemesExtendedData() {
       nft.metadata?.attributes?.find((a: any) => a.trait_type === 'Meme Name')
         ?.value,
     adjustBalances: (nft, owner) => {
-      if (nft.id === 8 && areEqualAddresses(owner.wallet, NULL_ADDRESS)) {
+      if (nft.id === 8 && equalIgnoreCase(owner.wallet, NULL_ADDRESS)) {
         owner.balance += MEME_8_EDITION_BURN_ADJUSTMENT;
       }
     },

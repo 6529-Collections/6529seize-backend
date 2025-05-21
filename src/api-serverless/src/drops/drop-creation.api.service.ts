@@ -21,12 +21,12 @@ import {
   deleteDrop,
   DeleteDropUseCase
 } from '../../../drops/delete-drop.use-case';
-import { resolveEnumOrThrow } from '../../../helpers';
 import { ApiDropType } from '../generated/models/ApiDropType';
 import {
   wsListenersNotifier,
   WsListenersNotifier
 } from '../ws/ws-listeners-notifier';
+import { enums } from '../../../enums';
 
 export class DropCreationApiService {
   constructor(
@@ -168,7 +168,7 @@ export class DropCreationApiService {
         const proxyId =
           authorId === representativeId ? undefined : representativeId;
         const dropType = drop.drop_type
-          ? resolveEnumOrThrow(ApiDropType, drop.drop_type)
+          ? enums.resolveOrThrow(ApiDropType, drop.drop_type)
           : ApiDropType.Chat;
         const model: CreateOrUpdateDropModel =
           this.dropsMappers.updateDropApiToUseCaseModel({

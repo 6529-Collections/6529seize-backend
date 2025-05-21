@@ -1,13 +1,16 @@
-import { areEqualAddresses, batchArray, delay, weiToEth } from '../helpers';
 import {
-  fetchNftsForContract,
   fetchAllMemeLabNFTs,
-  persistLabNFTS,
+  fetchNftsForContract,
   findVolume,
+  persistLabNFTS,
   persistNFTs
 } from '../db';
 import { MEMELAB_CONTRACT } from '../constants';
 import { Logger } from '../logging';
+import { Time } from '../time';
+import { equalIgnoreCase } from '../strings';
+import { collections } from '../collections';
+import { ethTools } from '../eth-tools';
 
 const logger = Logger.get('NFT_MARKET_STATS');
 
@@ -45,7 +48,7 @@ export const findNftMarketStats = async (contract: string) => {
     `[CONTRACT ${contract}] [PROCESSING STATS FOR ${nfts.length} NFTS]`
   );
 
-  const batchedTokens = batchArray(nfts, 30);
+  const batchedTokens = collections.chunkArray(nfts, 30);
 
   for (let i = 0; i < batchedTokens.length; i++) {
     const batch = batchedTokens[i];
@@ -53,7 +56,7 @@ export const findNftMarketStats = async (contract: string) => {
     const offersUrl = buildOpenseaUrl(contract, 'offers', batch);
 
     const listings = await getOpenseaResponse(listingsUrl);
-    await delay(500);
+    await Time.millis(500).sleep();
     const offers = await getOpenseaResponse(offersUrl);
 
     const processedNfts = await processBatch(batch, listings, offers, contract);
@@ -66,12 +69,12 @@ export const findNftMarketStats = async (contract: string) => {
       batchedTokens.length - i - 1
     );
 
-    await delay(500);
+    await Time.millis(500).sleep();
   }
 };
 
 const getNFTsForContract = async (contract: string): Promise<any[]> => {
-  if (areEqualAddresses(contract, MEMELAB_CONTRACT)) {
+  if (equalIgnoreCase(contract, MEMELAB_CONTRACT)) {
     return fetchAllMemeLabNFTs('id desc');
   }
   return fetchNftsForContract(contract, 'id desc');
@@ -131,7 +134,7 @@ const filterOffersForNft = (
   return offers.filter((o) =>
     o.protocol_data?.parameters.consideration.some(
       (f: any) =>
-        areEqualAddresses(f.token, contract) &&
+        equalIgnoreCase(f.token, contract) &&
         f.identifierOrCriteria === nftId.toString()
     )
   );
@@ -146,12 +149,12 @@ const getLowestListing = (
     [...nftListings].sort((a, d) => {
       const aOffer = a.protocol_data.parameters.offer.find(
         (o: any) =>
-          areEqualAddresses(o.token, contract) &&
+          equalIgnoreCase(o.token, contract) &&
           o.identifierOrCriteria === id.toString()
       );
       const dOffer = d.protocol_data.parameters.offer.find(
         (o: any) =>
-          areEqualAddresses(o.token, contract) &&
+          equalIgnoreCase(o.token, contract) &&
           o.identifierOrCriteria === id.toString()
       );
       return (
@@ -170,12 +173,12 @@ const getHighestOffer = (
     [...nftOffers].sort((a, d) => {
       const aConsideration = a.protocol_data.parameters.consideration.find(
         (c: any) =>
-          areEqualAddresses(c.token, contract) &&
+          equalIgnoreCase(c.token, contract) &&
           c.identifierOrCriteria === id.toString()
       );
       const dConsideration = d.protocol_data.parameters.consideration.find(
         (c: any) =>
-          areEqualAddresses(c.token, contract) &&
+          equalIgnoreCase(c.token, contract) &&
           c.identifierOrCriteria === id.toString()
       );
       return (
@@ -198,7 +201,7 @@ const updateNftMarketStats = (
   lowestListing: any,
   highestOffer: any
 ): void => {
-  let lowestListingPrice = weiToEth(
+  let lowestListingPrice = ethTools.weiToEth(
     lowestListing
       ? lowestListing.current_price / lowestListing.remaining_quantity
       : 0
@@ -208,7 +211,7 @@ const updateNftMarketStats = (
   nft.floor_price_from = lowestListing?.maker.address ?? null;
   nft.market_cap = lowestListingPrice * nft.supply;
 
-  let highestOfferPrice = weiToEth(
+  let highestOfferPrice = ethTools.weiToEth(
     highestOffer
       ? highestOffer.current_price / highestOffer.remaining_quantity
       : 0
@@ -222,7 +225,7 @@ const persistNFTsForContract = async (
   contract: string,
   processedNfts: any[]
 ): Promise<void> => {
-  if (areEqualAddresses(contract, MEMELAB_CONTRACT)) {
+  if (equalIgnoreCase(contract, MEMELAB_CONTRACT)) {
     await persistLabNFTS(processedNfts);
   } else {
     await persistNFTs(processedNfts);

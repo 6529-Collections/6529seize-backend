@@ -1,17 +1,16 @@
 import {
   GRADIENT_CONTRACT,
+  MEME_8_EDITION_BURN_ADJUSTMENT,
   MEMELAB_CONTRACT,
   MEMES_CONTRACT,
-  MEME_8_EDITION_BURN_ADJUSTMENT,
   NULL_ADDRESS
 } from '../constants';
-import { areEqualAddresses } from '../helpers';
 import {
   fetchAllOwnerBalances,
-  persistOwnerBalances,
-  persistConsolidatedOwnerBalances,
+  fetchRefreshOutdatedBalances,
   getMaxOwnerBalancesBlockReference,
-  fetchRefreshOutdatedBalances
+  persistConsolidatedOwnerBalances,
+  persistOwnerBalances
 } from './db.owners_balances';
 import {
   fetchAllSeasons,
@@ -35,6 +34,7 @@ import {
   fetchAllNftOwners,
   getMaxNftOwnersBlockReference
 } from '../nftOwnersLoop/db.nft_owners';
+import { equalIgnoreCase } from '../strings';
 
 const logger = Logger.get('OWNER_BALANCES');
 
@@ -151,9 +151,7 @@ export const updateOwnerBalances = async (reset?: boolean) => {
   const deleteDelta = new Set<string>();
 
   addresses.forEach((address) => {
-    const ownedNfts = owners.filter((o) =>
-      areEqualAddresses(o.wallet, address)
-    );
+    const ownedNfts = owners.filter((o) => equalIgnoreCase(o.wallet, address));
     if (!ownedNfts.length) {
       deleteDelta.add(address);
       return;
@@ -243,7 +241,7 @@ function buildOwnerBalance(
   }
 
   let memesBalance = memes.reduce((acc, n) => acc + n.balance, 0);
-  if (areEqualAddresses(pk, NULL_ADDRESS)) {
+  if (equalIgnoreCase(pk, NULL_ADDRESS)) {
     memesBalance += MEME_8_EDITION_BURN_ADJUSTMENT;
   }
   const memelabBalance = memelab.reduce((acc, n) => acc + n.balance, 0);
@@ -443,7 +441,7 @@ export async function consolidateOwnerBalances(
 }
 
 function filterContract(nfts: NFTOwner[], contract: string) {
-  return [...nfts].filter((a) => areEqualAddresses(a.contract, contract));
+  return [...nfts].filter((a) => equalIgnoreCase(a.contract, contract));
 }
 
 function getTokenIdBalance(nfts: NFTOwner[], tokenId: number) {

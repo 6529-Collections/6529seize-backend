@@ -1,5 +1,4 @@
 import { NFT } from './entities/INFT';
-import { areEqualAddresses } from './helpers';
 import { s3ObjectExists, s3UploadObject } from './helpers/s3_helpers';
 import {
   GRADIENT_CONTRACT,
@@ -13,6 +12,7 @@ import axios from 'axios';
 import axiosRetry from 'axios-retry';
 import pLimit from 'p-limit';
 import { invalidateCloudFront } from './cloudfront';
+import { equalIgnoreCase } from './strings';
 
 const logger = Logger.get('S3');
 const limit = pLimit(3);
@@ -110,12 +110,12 @@ export const persistS3 = async (nfts: NFT[]) => {
 async function processNft(myBucket: string, n: NFT) {
   let format: any;
   if (
-    areEqualAddresses(n.contract, MEMES_CONTRACT) ||
-    areEqualAddresses(n.contract, MEMELAB_CONTRACT)
+    equalIgnoreCase(n.contract, MEMES_CONTRACT) ||
+    equalIgnoreCase(n.contract, MEMELAB_CONTRACT)
   ) {
     format = n.metadata.image_details.format;
   }
-  if (areEqualAddresses(n.contract, GRADIENT_CONTRACT)) {
+  if (equalIgnoreCase(n.contract, GRADIENT_CONTRACT)) {
     format = n.metadata.image.split('.').pop();
   }
 

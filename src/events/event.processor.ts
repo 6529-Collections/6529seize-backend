@@ -2,8 +2,8 @@ import { EventsDb } from './events.db';
 import { EventType, ProcessableEvent } from '../entities/IEvent';
 import { EventListener } from './event.listener';
 import { Logger } from '../logging';
-import { distinct } from '../helpers';
 import { ConnectionWrapper } from '../sql-executor';
+import { collections } from '../collections';
 
 export class EventProcessor {
   private readonly logger = Logger.get('EVENT_PROCESSOR');
@@ -14,7 +14,7 @@ export class EventProcessor {
     private readonly eventsDb: EventsDb,
     private readonly listeners: EventListener[]
   ) {
-    this.supportedTypes = distinct(
+    this.supportedTypes = collections.distinct(
       Object.values(EventType).filter((type) =>
         listeners.find((l) => l.supports(type))
       )

@@ -3,7 +3,6 @@ import {
   ProfileProxyActionEntity,
   ProfileProxyActionType
 } from '../../../entities/IProfileProxyAction';
-import { distinct } from '../../../helpers';
 import { ApiProfileProxyActionType } from '../generated/models/ApiProfileProxyActionType';
 import { ApiProfileProxy } from '../generated/models/ApiProfileProxy';
 import { AuthenticationContext } from '../../../auth-context';
@@ -11,6 +10,7 @@ import {
   IdentityFetcher,
   identityFetcher
 } from '../identities/identity.fetcher';
+import { collections } from '../../../collections';
 
 const ACTION_MAP: Record<ProfileProxyActionType, ApiProfileProxyActionType> = {
   [ProfileProxyActionType.ALLOCATE_REP]: ApiProfileProxyActionType.AllocateRep,
@@ -36,7 +36,7 @@ export class ProfileProxiesMapper {
     },
     authenticatedProfileId?: string
   ): Promise<ApiProfileProxy[]> {
-    const profileIds = distinct(
+    const profileIds = collections.distinct(
       profileProxyEntities.flatMap((entity) => [
         entity.target_id,
         entity.created_by
