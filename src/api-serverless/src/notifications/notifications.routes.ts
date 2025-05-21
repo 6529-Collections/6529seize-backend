@@ -7,10 +7,10 @@ import { BadRequestException, ForbiddenException } from '../../../exceptions';
 import { getValidatedByJoiOrThrow } from '../validation';
 import * as Joi from 'joi';
 import { notificationsApiService } from './notifications.api.service';
-import { parseIntOrNull } from '../../../helpers';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import { IdentityNotificationCause } from '../../../entities/IIdentityNotification';
 import { Timer } from '../../../time';
+import { numbers } from '../../../numbers';
 
 const router = asyncRouter();
 
@@ -121,7 +121,7 @@ router.post(
       throw new ForbiddenException(`Proxies cannot access notifications`);
     }
     const id = req.params.id;
-    if (parseIntOrNull(id) !== null) {
+    if (numbers.parseIntOrNull(id) !== null) {
       await notificationsApiService.markNotificationAsRead({
         id: parseInt(id),
         identity_id: authenticationContext.getActingAsId()!
@@ -152,7 +152,7 @@ router.post(
       throw new ForbiddenException(`Proxies cannot access notifications`);
     }
     const id = req.params.id;
-    if (parseIntOrNull(id) !== null) {
+    if (numbers.parseIntOrNull(id) !== null) {
       await notificationsApiService.markNotificationAsUnread({
         id: parseInt(id),
         identity_id: authenticationContext.getActingAsId()!

@@ -19,7 +19,6 @@ import {
 import { ratingsService, RatingsService } from '../rates/ratings.service';
 import { cicService, CicService } from '../cic/cic.service';
 import { randomUUID } from 'crypto';
-import { distinct, resolveEnum, uniqueShortId } from '../helpers';
 import {
   profileProxiesDb,
   ProfileProxiesDb
@@ -43,6 +42,9 @@ import {
 import { ApiIdentity } from '../api-serverless/src/generated/models/ApiIdentity';
 import { identitySubscriptionsDb } from '../api-serverless/src/identity-subscriptions/identity-subscriptions.db';
 import { identityFetcher } from '../api-serverless/src/identities/identity.fetcher';
+import { enums } from '../enums';
+import { ids } from '../ids';
+import { collections } from '../collections';
 
 export class ProfilesService {
   private readonly logger = Logger.get('PROFILES_SERVICE');
@@ -85,7 +87,7 @@ export class ProfilesService {
         banner_1: apiIdentity.banner1 ?? undefined,
         banner_2: apiIdentity.banner2 ?? undefined,
         classification: apiIdentity.classification
-          ? resolveEnum(
+          ? enums.resolve(
               ProfileClassification,
               apiIdentity.classification.toString()
             ) ?? ProfileClassification.PSEUDONYM
@@ -219,7 +221,7 @@ export class ProfilesService {
     const newProfileCreationLogs = newProfileEntities
       .map<ProfileActivityLog[]>((profile) => [
         {
-          id: uniqueShortId(),
+          id: ids.uniqueShortId(),
           profile_id: profile.external_id,
           target_id: null,
           type: ProfileActivityLogType.HANDLE_EDIT,
@@ -233,7 +235,7 @@ export class ProfilesService {
           additional_data_2: null
         },
         {
-          id: uniqueShortId(),
+          id: ids.uniqueShortId(),
           profile_id: profile.external_id,
           target_id: null,
           type: ProfileActivityLogType.CLASSIFICATION_EDIT,
@@ -549,7 +551,10 @@ export class ProfilesService {
         targetIdentity,
         connectionHolder
       );
-    const distinctGroups = distinct([...sourceGroups, ...targetGroups]);
+    const distinctGroups = collections.distinct([
+      ...sourceGroups,
+      ...targetGroups
+    ]);
     if (distinctGroups) {
       await this.userGroupsDb.deleteProfileIdsInProfileGroups(
         [sourceIdentity, targetIdentity],

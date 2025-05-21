@@ -17,14 +17,15 @@ import { Logger } from '../logging';
 import { Transaction } from '../entities/ITransaction';
 import { EntityManager } from 'typeorm';
 import {
-  SubscriptionBalance,
+  NFTFinalSubscription,
   RedeemedSubscription,
-  NFTFinalSubscription
+  SubscriptionBalance
 } from '../entities/ISubscription';
 import { sqlExecutor } from '../sql-executor';
 import { fetchSubscriptionBalanceForConsolidationKey } from '../subscriptionsDaily/db.subscriptions';
 import { sendDiscordUpdate } from '../notifier-discord';
-import { areEqualAddresses, getTransactionLink } from '../helpers';
+import { equalIgnoreCase } from '../strings';
+import { ethTools } from '../eth-tools';
 
 const logger = Logger.get('TRANSACTIONS_PROCESSING_SUBSCRIPTIONS');
 
@@ -98,7 +99,7 @@ export async function validateNonSubscriptionAirdrop(
   transaction: Transaction,
   entityManager: EntityManager
 ): Promise<{ valid: boolean; message: string }> {
-  if (!areEqualAddresses(MEMES_CONTRACT, transaction.contract)) {
+  if (!equalIgnoreCase(MEMES_CONTRACT, transaction.contract)) {
     const message = 'Not memes contract';
     logger.info(
       `[SKIPPING: ${message}] : [CONTRACT ${transaction.contract}] : [Transaction ${transaction.transaction}]`
@@ -113,7 +114,7 @@ export async function validateNonSubscriptionAirdrop(
     );
   }
 
-  if (areEqualAddresses(RESEARCH_6529_ADDRESS, transaction.to_address)) {
+  if (equalIgnoreCase(RESEARCH_6529_ADDRESS, transaction.to_address)) {
     const message = 'Airdrop to research';
     logger.info(
       `[SKIPPING TRANSACTION] : [${message}] : [Transaction ${transaction.transaction}]`
@@ -197,7 +198,10 @@ async function processSubscription(
   if (!finalSubscription) {
     const message = `No subscription found for airdrop address: ${
       transaction.to_address
-    } \nTransaction: ${getTransactionLink(1, transaction.transaction)}`;
+    } \nTransaction: ${ethTools.toEtherScanTransactionLink(
+      1,
+      transaction.transaction
+    )}`;
     logger.warn(message);
     await sendDiscordUpdate(
       process.env.SUBSCRIPTIONS_DISCORD_WEBHOOK as string,
@@ -215,7 +219,10 @@ async function processSubscription(
   if (!balance) {
     const message = `No balance found for consolidation key: ${
       finalSubscription.consolidation_key
-    } \nTransaction: ${getTransactionLink(1, transaction.transaction)}`;
+    } \nTransaction: ${ethTools.toEtherScanTransactionLink(
+      1,
+      transaction.transaction
+    )}`;
     logger.error(message);
     await sendDiscordUpdate(
       process.env.SUBSCRIPTIONS_DISCORD_WEBHOOK as string,
@@ -230,7 +237,10 @@ async function processSubscription(
   } else if (MEMES_MINT_PRICE > balance.balance) {
     const message = `Insufficient balance for consolidation key: ${
       finalSubscription.consolidation_key
-    } \nTransaction: ${getTransactionLink(1, transaction.transaction)}`;
+    } \nTransaction: ${ethTools.toEtherScanTransactionLink(
+      1,
+      transaction.transaction
+    )}`;
     logger.error(message);
     await sendDiscordUpdate(
       process.env.SUBSCRIPTIONS_DISCORD_WEBHOOK as string,

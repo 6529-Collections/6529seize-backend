@@ -15,10 +15,10 @@ import {
 } from '../constants';
 import { RateMatter } from '../entities/IRating';
 import { randomUUID } from 'crypto';
-import { distinct } from '../helpers';
 import { identitiesDb } from '../identities/identities.db';
 import { RequestContext } from '../request.context';
 import { IdentityEntity } from '../entities/IIdentity';
+import { collections } from '../collections';
 
 const mysql = require('mysql');
 
@@ -97,7 +97,9 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
     connection: ConnectionWrapper<any>
   ): Promise<{ profile_group_id: string }> {
     const profile_group_id = randomUUID();
-    const distinctAddresses = distinct(addresses.map((w) => w.toLowerCase()));
+    const distinctAddresses = collections.distinct(
+      addresses.map((w) => w.toLowerCase())
+    );
     if (addresses.length) {
       const chunkSize = 100;
       for (let i = 0; i < distinctAddresses.length; i += chunkSize) {
@@ -120,7 +122,9 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
             connection
           )
           .then((it) =>
-            distinct(Object.values(it).map((it) => it.identity.profile_id!))
+            collections.distinct(
+              Object.values(it).map((it) => it.identity.profile_id!)
+            )
           );
         const alreadyInsertedProfileIds = await this.db
           .execute<{ profile_id: string }>(
@@ -502,7 +506,7 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
           }
         >
       );
-      const keys = distinct([
+      const keys = collections.distinct([
         ...Object.keys(includedIdentities),
         ...Object.keys(excludedIdentities)
       ]);

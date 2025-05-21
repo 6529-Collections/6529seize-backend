@@ -5,15 +5,15 @@ import {
 } from '../sql-executor';
 import { CIC_STATEMENTS_TABLE } from '../constants';
 import { CicStatement } from '../entities/ICICStatement';
-import { uniqueShortId } from '../helpers';
 import { DbPoolName } from '../db-query.options';
+import { ids } from '../ids';
 
 export class CicDb extends LazyDbAccessCompatibleService {
   async insertCicStatement(
     newCicStatement: Omit<CicStatement, 'id' | 'crated_at'>,
     connectionHolder: ConnectionWrapper<any>
   ): Promise<CicStatement> {
-    const id = uniqueShortId();
+    const id = ids.uniqueShortId();
     await this.db.execute(
       `
           insert into ${CIC_STATEMENTS_TABLE}

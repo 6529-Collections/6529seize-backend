@@ -15,7 +15,7 @@ import {
 } from '../constants';
 import { WaveDecisionStrategy, WaveOutcome } from '../entities/IWave';
 import { DropType } from '../entities/IDrop';
-import { distinct } from '../helpers';
+import { collections } from '../collections';
 
 const mysql = require('mysql');
 
@@ -226,7 +226,9 @@ export class WaveDecisionsDb extends LazyDbAccessCompatibleService {
       return [];
     }
     ctx.timer?.start(`${this.constructor.name}->findAllDecisionWinners`);
-    const waveIds = distinct(decisionEntities.map((it) => it.wave_id));
+    const waveIds = collections.distinct(
+      decisionEntities.map((it) => it.wave_id)
+    );
     const decisionTimes = decisionEntities.map((it) => it.decision_time);
     const result = await this.db
       .execute<

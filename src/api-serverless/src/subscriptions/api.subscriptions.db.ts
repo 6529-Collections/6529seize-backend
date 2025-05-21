@@ -24,8 +24,8 @@ import { constructFilters } from '../api-helpers';
 import { fetchPaginated } from '../../../db-api';
 import { getMaxMemeId } from '../../../nftsLoop/db.nfts';
 import { BadRequestException } from '../../../exceptions';
-import { areEqualAddresses } from '../../../helpers';
 import { PaginatedResponse } from '../api-constants';
+import { equalIgnoreCase } from '../../../strings';
 
 export interface SubscriptionDetails {
   consolidation_key: string;
@@ -496,7 +496,7 @@ export async function fetchUpcomingMemeSubscriptionCounts(
     const tokenAutoSubs = [...autoSubs].filter(
       (s) =>
         !tokenSubs.some((ts) =>
-          areEqualAddresses(ts.consolidation_key, s.consolidation_key)
+          equalIgnoreCase(ts.consolidation_key, s.consolidation_key)
         )
     );
     counts.push({

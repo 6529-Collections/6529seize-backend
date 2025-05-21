@@ -14,7 +14,6 @@ import {
 } from '../entities/IDelegation';
 import { Logger } from '../logging';
 import { discoverEnsConsolidations, discoverEnsDelegations } from '../ens';
-import { getLastTDH } from '../helpers';
 import { consolidateTDH } from '../tdhLoop/tdh_consolidation';
 import { dbSupplier, sqlExecutor } from '../sql-executor';
 import {
@@ -58,6 +57,7 @@ import {
 import { doInDbContext } from '../secrets';
 import { revokeTdhBasedDropWavesOverVotes } from '../drops/participation-drops-over-vote-revocation';
 import { identitiesService } from '../api-serverless/src/identities/identities.service';
+import { Time } from '../time';
 
 const logger = Logger.get('DELEGATIONS_LOOP');
 
@@ -191,7 +191,7 @@ async function reconsolidateWallets(events: ConsolidationEvent[]) {
       `[RECONSOLIDATING FOR ${affectedWallets.size} DISTINCT WALLETS]`
     );
 
-    const lastTDHCalc = getLastTDH();
+    const lastTDHCalc = Time.latestUtcMidnight().toDate();
     const walletsArray = Array.from(affectedWallets);
 
     const { block, timestamp } = await updateTDH(lastTDHCalc, walletsArray);

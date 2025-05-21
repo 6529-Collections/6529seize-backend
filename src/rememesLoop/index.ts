@@ -12,9 +12,10 @@ import {
 } from '../db';
 import converter from 'json-2-csv';
 import { persistRememesS3 } from '../s3_rememes';
-import { areEqualAddresses, getContentType } from '../helpers';
 import { Logger } from '../logging';
 import * as sentryContext from '../sentry.context';
+import { equalIgnoreCase } from '../strings';
+import { mediaChecker } from '../media-checker';
 
 const Arweave = require('arweave');
 const csvParser = require('csv-parser');
@@ -114,14 +115,14 @@ async function processRememes(rememes: Rememe[], csvData: CSVData[]) {
   const deleteRememesList = [...rememes].filter(
     (r) =>
       !csvData.some(
-        (d) => areEqualAddresses(r.contract, d.contract) && r.id == d.id
+        (d) => equalIgnoreCase(r.contract, d.contract) && r.id == d.id
       )
   );
 
   const addDataList = [...csvData].filter(
     (d) =>
       !rememes.some(
-        (r) => areEqualAddresses(r.contract, d.contract) && r.id == d.id
+        (r) => equalIgnoreCase(r.contract, d.contract) && r.id == d.id
       )
   );
 
@@ -222,7 +223,7 @@ async function buildRememe(contract: string, id: string, memes: number[]) {
         : ''
       : '';
 
-    const originalFormat = await getContentType(image);
+    const originalFormat = await mediaChecker.getContentType(image);
 
     let s3Original: string | null = null;
     let s3Scaled: string | null = null;

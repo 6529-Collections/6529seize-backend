@@ -10,13 +10,14 @@ import * as sentryContext from '../sentry.context';
 import { MemesSeason } from '../entities/ISeason';
 import { NFTOwner } from '../entities/INFTOwner';
 import { NFT_MODE, processNFTs } from './nfts';
-import { resolveEnumOrThrow } from '../helpers';
 import {
-  findMemesExtendedData,
-  findMemeLabExtendedData
+  findMemeLabExtendedData,
+  findMemesExtendedData
 } from './nft_extended_data';
 import { Transaction } from '../entities/ITransaction';
 import { updateDistributionInfoFor } from './nft_distribution';
+import { enums } from '../enums';
+
 const logger = Logger.get('NFTS_LOOP');
 
 export const handler = sentryContext.wrapLambdaHandler(async (event) => {
@@ -40,7 +41,7 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
 });
 
 async function nftsLoop(mode?: string) {
-  const modeEnum = resolveEnumOrThrow(NFT_MODE, mode);
+  const modeEnum = enums.resolveOrThrow(NFT_MODE, mode);
   await processNFTs(modeEnum);
   await findMemesExtendedData();
   await findMemeLabExtendedData();

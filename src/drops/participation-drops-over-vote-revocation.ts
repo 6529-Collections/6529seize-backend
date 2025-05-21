@@ -7,7 +7,7 @@ import { profileActivityLogsDb } from '../profileActivityLogs/profile-activity-l
 import { ProfileActivityLogType } from '../entities/IProfileActivityLog';
 import { Logger } from '../logging';
 import { dropVotingDb } from '../api-serverless/src/drops/drop-voting.db';
-import { AppFeature, isFeatureOn } from '../helpers';
+import { appFeatures } from '../app-features';
 
 const logger = Logger.get('PARTICIPATION_DROPS_OVER_VOTE_REVOCATION');
 
@@ -19,7 +19,7 @@ export async function revokeRepBasedDropOverVotes(
   },
   connection: ConnectionWrapper<any>
 ) {
-  if (!isFeatureOn(AppFeature.DROP_OVERVOTE_REVOCATION)) {
+  if (!appFeatures.isDropOvervoteRevocationEnabled()) {
     logger.warn(`Drop overvote revocation is disabled. Skipping.`);
     return;
   }
@@ -76,7 +76,7 @@ export async function revokeRepBasedDropOverVotes(
 export async function revokeTdhBasedDropWavesOverVotes(
   connection: ConnectionWrapper<any>
 ) {
-  if (!isFeatureOn(AppFeature.DROP_OVERVOTE_REVOCATION)) {
+  if (!appFeatures.isDropOvervoteRevocationEnabled()) {
     logger.warn(`Drop overvote revocation is disabled. Skipping.`);
     return;
   }

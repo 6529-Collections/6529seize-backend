@@ -6,10 +6,10 @@ import {
 import { IdentityNotificationEntity } from '../entities/IIdentityNotification';
 import { IDENTITY_NOTIFICATIONS_TABLE } from '../constants';
 import { Time } from '../time';
-import { parseIntOrNull } from '../helpers';
 import { sendIdentityPushNotification } from '../api-serverless/src/push-notifications/push-notifications.service';
 import { Logger } from '../logging';
 import { RequestContext } from '../request.context';
+import { numbers } from '../numbers';
 
 export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
   private readonly logger = Logger.get(IdentityNotificationsDb.name);
@@ -173,14 +173,14 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
         results.map((it) => ({
           ...it,
           additional_data: JSON.parse(it.additional_data),
-          related_drop_part_no: parseIntOrNull(
+          related_drop_part_no: numbers.parseIntOrNull(
             it.related_drop_part_no?.toString()
           ),
-          related_drop_2_part_no: parseIntOrNull(
+          related_drop_2_part_no: numbers.parseIntOrNull(
             it.related_drop_2_part_no?.toString()
           ),
           created_at: parseInt(it.created_at.toString()),
-          read_at: parseIntOrNull(it.read_at?.toString()),
+          read_at: numbers.parseIntOrNull(it.read_at?.toString()),
           id: parseInt(it.id.toString())
         }))
       );

@@ -3,7 +3,6 @@ import {
   fetchAllNftFinalSubscriptionsForContractAndToken,
   fetchAllPublicFinalSubscriptionsForContractAndToken
 } from './api.subscriptions.db';
-import { areEqualAddresses } from '../../../helpers';
 import {
   MEMES_CONTRACT,
   SUBSCRIPTIONS_ADMIN_WALLETS,
@@ -19,6 +18,7 @@ import { sqlExecutor } from '../../../sql-executor';
 import { NFTFinalSubscription } from '../../../entities/ISubscription';
 import { getAuthenticatedWalletOrNull } from '../auth/auth';
 import { Request } from 'express';
+import { equalIgnoreCase } from '../../../strings';
 
 export interface AllowlistResponse {
   allowlist_id: string;
@@ -51,7 +51,7 @@ export function authenticateSubscriptionsAdmin(
   const wallet = getAuthenticatedWalletOrNull(req);
   const isAdmin =
     wallet &&
-    SUBSCRIPTIONS_ADMIN_WALLETS.some((a) => areEqualAddresses(a, wallet));
+    SUBSCRIPTIONS_ADMIN_WALLETS.some((a) => equalIgnoreCase(a, wallet));
   return isAdmin;
 }
 
@@ -200,7 +200,7 @@ export async function splitAllowlistResults(
     const subscription = filteredSubscriptions.find((s) =>
       s.consolidation_key
         .split('-')
-        .some((k) => areEqualAddresses(k, walletAddress))
+        .some((k) => equalIgnoreCase(k, walletAddress))
     );
 
     if (

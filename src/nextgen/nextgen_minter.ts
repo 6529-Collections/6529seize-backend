@@ -9,7 +9,6 @@ import { Logger } from '../logging';
 import { NEXTGEN_MINTER_IFACE } from '../abis/nextgen';
 import { NextGenLog } from '../entities/INextGen';
 import { Time } from '../time';
-import { weiToEth } from '../helpers';
 import {
   fetchNextGenCollection,
   persistNextGenCollection,
@@ -17,10 +16,11 @@ import {
 } from './nextgen.db';
 import { EntityManager } from 'typeorm';
 import {
-  NEXTGEN_MINTER_CONTRACT,
-  getNextgenNetwork
+  getNextgenNetwork,
+  NEXTGEN_MINTER_CONTRACT
 } from './nextgen_constants';
 import { getEns } from '../alchemy';
+import { ethTools } from '../eth-tools';
 
 const logger = Logger.get('NEXTGEN_MINTER');
 
@@ -269,10 +269,10 @@ async function setCollectionCosts(args: ethers.utils.Result): Promise<
   }
 
   const mintCostDescription = `Mint Cost: ${
-    mintCost > 0 ? `${weiToEth(mintCost)} ETH` : 'Free'
+    mintCost > 0 ? `${ethTools.weiToEth(mintCost)} ETH` : 'Free'
   }`;
   const endMintCosetDescription = `End Mint Cost: ${
-    endMintCost > 0 ? `${weiToEth(endMintCost)} ETH` : 'Free'
+    endMintCost > 0 ? `${ethTools.weiToEth(endMintCost)} ETH` : 'Free'
   }`;
 
   return [

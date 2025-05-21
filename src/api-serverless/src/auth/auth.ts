@@ -8,12 +8,12 @@ import {
   AuthenticatedProxyAction,
   AuthenticationContext
 } from '../../../auth-context';
-import { resolveEnum } from '../../../helpers';
 import { ProfileProxyActionType } from '../../../entities/IProfileProxyAction';
 import { Time, Timer } from '../../../time';
 import * as mcache from 'memory-cache';
 import { identitiesDb } from '../../../identities/identities.db';
 import { identityFetcher } from '../identities/identity.fetcher';
+import { enums } from '../../../enums';
 
 export function getJwtSecret() {
   const jwtsecret = process.env.JWT_SECRET;
@@ -101,7 +101,7 @@ export async function getAuthenticationContext(
           .filter(isProxyActionActive)
           .map<AuthenticatedProxyAction>((action) => ({
             id: action.id,
-            type: resolveEnum(ProfileProxyActionType, action.action_type)!,
+            type: enums.resolve(ProfileProxyActionType, action.action_type)!,
             credit_spent: action.credit_spent,
             credit_amount: action.credit_amount
           }))

@@ -1,7 +1,6 @@
 import { ethers } from 'ethers';
 import * as Joi from 'joi';
 import { hashMessage } from '@ethersproject/hash';
-import { areEqualAddresses, getRpcUrl, stringToHex } from '../../../helpers';
 import { Readable } from 'stream';
 import {
   getNextGenChainId,
@@ -10,6 +9,8 @@ import {
   NEXTGEN_SET_COLLECTION_PHASES_SELECTOR
 } from './abis';
 import { Logger } from '../../../logging';
+import { equalIgnoreCase } from '../../../strings';
+import { getRpcUrl } from '../../../alchemy';
 
 const { keccak256 } = require('@ethersproject/keccak256');
 const { MerkleTree } = require('merkletreejs');
@@ -217,7 +218,7 @@ function validateSignature(address: string, signature: string, uuid: string) {
       hashMessage(uuid),
       signature
     );
-    return areEqualAddresses(address, verifySigner);
+    return equalIgnoreCase(address, verifySigner);
   } catch (e) {
     logger.error('error', e);
     return false;
@@ -378,4 +379,13 @@ async function validateAdmin(collection_id: number, address: string) {
     );
     return false;
   }
+}
+
+function stringToHex(s: string) {
+  let hexString = '';
+  for (let i = 0; i < s.length; i++) {
+    const hex = s.charCodeAt(i).toString(16);
+    hexString += hex;
+  }
+  return hexString;
 }

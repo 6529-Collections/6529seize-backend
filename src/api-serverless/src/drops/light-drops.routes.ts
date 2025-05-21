@@ -5,8 +5,8 @@ import { ApiResponse } from '../api-response';
 import { dropsService } from './drops.api.service';
 import { Timer } from '../../../time';
 import { BadRequestException } from '../../../exceptions';
-import { parseIntOrNull } from '../../../helpers';
 import { ApiLightDrop } from '../generated/models/ApiLightDrop';
+import { numbers } from '../../../numbers';
 
 const router = asyncRouter();
 
@@ -32,11 +32,11 @@ router.get(
     if (!limit) {
       throw new BadRequestException('limit must be provided');
     }
-    const parsedLimit = parseIntOrNull(limit);
+    const parsedLimit = numbers.parseIntOrNull(limit);
     if (parsedLimit === null || parsedLimit <= 0 || parsedLimit > 2000) {
       throw new BadRequestException('parsedLimit must be between 1 and 2000');
     }
-    const maxSerialNo = parseIntOrNull(max_serial_no);
+    const maxSerialNo = numbers.parseIntOrNull(max_serial_no);
     const latestDrops = await dropsService.findLatestLightDrops(
       {
         waveId: wave_id,

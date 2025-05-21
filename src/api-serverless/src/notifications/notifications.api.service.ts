@@ -7,11 +7,7 @@ import {
   UserGroupsService
 } from '../community-members/user-groups.service';
 import { UserNotification } from '../../../notifications/user-notification.types';
-import {
-  assertUnreachable,
-  distinct,
-  resolveEnumOrThrow
-} from '../../../helpers';
+import { assertUnreachable } from '../../../assertions';
 import { IdentityNotificationCause } from '../../../entities/IIdentityNotification';
 import { DropsApiService, dropsService } from '../drops/drops.api.service';
 import { AuthenticationContext } from '../../../auth-context';
@@ -36,6 +32,8 @@ import {
   identityFetcher,
   IdentityFetcher
 } from '../identities/identity.fetcher';
+import { enums } from '../../../enums';
+import { collections } from '../../../collections';
 
 export class NotificationsApiService {
   constructor(
@@ -194,7 +192,10 @@ export class NotificationsApiService {
         }
       }
     }
-    return { profileIds: distinct(profileIds), dropIds: distinct(dropIds) };
+    return {
+      profileIds: collections.distinct(profileIds),
+      dropIds: collections.distinct(dropIds)
+    };
   }
 
   private mapToApiNotification({
@@ -214,7 +215,7 @@ export class NotificationsApiService {
           id: notification.id,
           created_at: notification.created_at,
           read_at: notification.read_at,
-          cause: resolveEnumOrThrow(ApiNotificationCause, notificationCause),
+          cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
           related_identity: profiles[data.subscriber_id],
           related_drops: [],
           additional_context: {}
@@ -226,7 +227,7 @@ export class NotificationsApiService {
           id: notification.id,
           created_at: notification.created_at,
           read_at: notification.read_at,
-          cause: resolveEnumOrThrow(ApiNotificationCause, notificationCause),
+          cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
           related_identity: profiles[data.mentioner_identity_id],
           related_drops: [drops[data.drop_id]],
           additional_context: {}
@@ -238,7 +239,7 @@ export class NotificationsApiService {
           id: notification.id,
           created_at: notification.created_at,
           read_at: notification.read_at,
-          cause: resolveEnumOrThrow(ApiNotificationCause, notificationCause),
+          cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
           related_identity: profiles[data.voter_id],
           related_drops: [drops[data.drop_id]],
           additional_context: {
@@ -252,7 +253,7 @@ export class NotificationsApiService {
           id: notification.id,
           created_at: notification.created_at,
           read_at: notification.read_at,
-          cause: resolveEnumOrThrow(ApiNotificationCause, notificationCause),
+          cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
           related_identity: profiles[data.quote_drop_author_id],
           related_drops: [
             drops[data.quote_drop_id],
@@ -272,7 +273,7 @@ export class NotificationsApiService {
           id: notification.id,
           created_at: notification.created_at,
           read_at: notification.read_at,
-          cause: resolveEnumOrThrow(ApiNotificationCause, notificationCause),
+          cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
           related_identity: profiles[data.reply_drop_author_id],
           related_drops: [
             drops[data.replied_drop_id],
@@ -291,7 +292,7 @@ export class NotificationsApiService {
           id: notification.id,
           created_at: notification.created_at,
           read_at: notification.read_at,
-          cause: resolveEnumOrThrow(ApiNotificationCause, notificationCause),
+          cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
           related_identity: profiles[data.created_by],
           related_drops: [],
           additional_context: {
@@ -305,7 +306,7 @@ export class NotificationsApiService {
           id: notification.id,
           created_at: notification.created_at,
           read_at: notification.read_at,
-          cause: resolveEnumOrThrow(ApiNotificationCause, notificationCause),
+          cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
           related_identity: profiles[data.additional_identity_id],
           related_drops: [drops[data.drop_id]],
           additional_context: {

@@ -1,4 +1,5 @@
 import { Request } from 'express';
+import moment from 'moment-timezone';
 
 /**
  * Utility class for all time related operations.
@@ -123,6 +124,45 @@ export class Time {
 
   static weeksFromNow(amount: number): Time {
     return Time.now().plusWeeks(amount);
+  }
+
+  static fromUtcDateString(utcDateString: string): Time {
+    const parsedMoment = moment.tz(utcDateString, 'YYYY-MM-DD HH:mm:ss', 'UTC');
+    return Time.fromDate(parsedMoment.toDate());
+  }
+
+  static latestUtcMidnight(): Time {
+    const curDate = new Date();
+
+    let midnightDate = new Date(
+      Date.UTC(
+        curDate.getUTCFullYear(),
+        curDate.getUTCMonth(),
+        curDate.getUTCDate(),
+        0,
+        0,
+        0,
+        0
+      )
+    );
+
+    if (midnightDate > curDate) {
+      midnightDate = new Date(
+        midnightDate.getTime() - MILLIS_IN_UNIT[TimeUnit.DAYS]
+      );
+    }
+
+    const tdhStr = moment(midnightDate).tz('UTC').format('YYYY-MM-DD HH:mm:ss');
+    return Time.fromUtcDateString(tdhStr);
+  }
+
+  public toPaddedDateString(): string {
+    const date = this.toDate();
+    return [
+      date.getFullYear(),
+      (date.getMonth() + 1).toString().padStart(2, '0'),
+      date.getDate().toString().padStart(2, '0')
+    ].join('');
   }
 
   public diffFromNow(): Time {

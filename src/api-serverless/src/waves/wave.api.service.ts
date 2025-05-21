@@ -1,11 +1,7 @@
 import { SearchWavesParams, wavesApiDb, WavesApiDb } from './waves.api.db';
 import { ApiCreateNewWave } from '../generated/models/ApiCreateNewWave';
 import { ApiWave } from '../generated/models/ApiWave';
-import {
-  assertUnreachable,
-  distinct,
-  resolveEnumOrThrow
-} from '../../../helpers';
+import { assertUnreachable } from '../../../assertions';
 import {
   userGroupsService,
   UserGroupsService
@@ -65,6 +61,8 @@ import {
   IdentityFetcher,
   identityFetcher
 } from '../identities/identity.fetcher';
+import { enums } from '../../../enums';
+import { collections } from '../../../collections';
 
 export class WaveApiService {
   constructor(
@@ -339,7 +337,7 @@ export class WaveApiService {
       }
     }
     this.validateOutcomes(request);
-    const referencedGroupIds = distinct(
+    const referencedGroupIds = collections.distinct(
       [
         request.visibility.scope.group_id,
         request.participation.scope.group_id,
@@ -602,7 +600,7 @@ export class WaveApiService {
       await this.userGroupsService.getGroupsUserIsEligibleFor(subscriber);
     await this.findWaveByIdOrThrow(waveId, groupsUserIsEligibleFor, {});
     const proposedActions = Object.values(actions).map((it) =>
-      resolveEnumOrThrow(ActivityEventAction, it)
+      enums.resolveOrThrow(ActivityEventAction, it)
     );
     return await this.identitySubscriptionsDb.executeNativeQueriesInTransaction(
       async (connection) => {
@@ -642,7 +640,7 @@ export class WaveApiService {
           )
           .then((result) =>
             result.map((it) =>
-              resolveEnumOrThrow(ApiWaveSubscriptionTargetAction, it)
+              enums.resolveOrThrow(ApiWaveSubscriptionTargetAction, it)
             )
           );
       }
@@ -669,7 +667,7 @@ export class WaveApiService {
               subscriber_id: subscriber,
               target_id: waveId,
               target_type: ActivityEventTargetType.WAVE,
-              target_action: resolveEnumOrThrow(ActivityEventAction, action)
+              target_action: enums.resolveOrThrow(ActivityEventAction, action)
             },
             connection
           );
@@ -685,7 +683,7 @@ export class WaveApiService {
           )
           .then((result) =>
             result.map((it) =>
-              resolveEnumOrThrow(ApiWaveSubscriptionTargetAction, it)
+              enums.resolveOrThrow(ApiWaveSubscriptionTargetAction, it)
             )
           );
       }

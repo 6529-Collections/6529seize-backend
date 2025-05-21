@@ -1,5 +1,4 @@
 import { fetchLatestTDHBDate } from '../db';
-import { getLastTDH } from '../helpers';
 import { findNftTDH } from './nft_tdh';
 import { updateTDH } from './tdh';
 import { consolidateTDH } from './tdh_consolidation';
@@ -66,7 +65,7 @@ export async function tdhLoop(force?: boolean) {
 }
 
 async function tdh(force?: boolean) {
-  const lastTDHCalc = getLastTDH();
+  const lastTDHCalc = Time.latestUtcMidnight().toDate();
 
   const lastTdhDB = await fetchLatestTDHBDate();
   const lastTdhFromNow = lastTdhDB.timestamp.diffFromNow();

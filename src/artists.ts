@@ -5,8 +5,8 @@ import {
 } from './constants';
 import { Artist } from './entities/IArtist';
 import { BaseNFT } from './entities/INFT';
-import { areEqualAddresses } from './helpers';
 import { Logger } from './logging';
+import { equalIgnoreCase } from './strings';
 
 const logger = Logger.get('ARTISTS');
 
@@ -38,7 +38,7 @@ export const processArtists = async (
         !artists.some((a) => a.name == artistName) &&
         !startingArtists.some((a) => a.name == artistName)
       ) {
-        const memes = areEqualAddresses(nft.contract, MEMES_CONTRACT)
+        const memes = equalIgnoreCase(nft.contract, MEMES_CONTRACT)
           ? [
               {
                 id: nft.id,
@@ -48,7 +48,7 @@ export const processArtists = async (
               }
             ]
           : [];
-        const memelab = areEqualAddresses(nft.contract, MEMELAB_CONTRACT)
+        const memelab = equalIgnoreCase(nft.contract, MEMELAB_CONTRACT)
           ? [
               {
                 id: nft.id,
@@ -58,7 +58,7 @@ export const processArtists = async (
               }
             ]
           : [];
-        const gradients = areEqualAddresses(nft.contract, GRADIENT_CONTRACT)
+        const gradients = equalIgnoreCase(nft.contract, GRADIENT_CONTRACT)
           ? [nft.id]
           : [];
         const artist: Artist = {
@@ -78,7 +78,7 @@ export const processArtists = async (
         }
 
         if (artist) {
-          if (areEqualAddresses(nft.contract, MEMES_CONTRACT)) {
+          if (equalIgnoreCase(nft.contract, MEMES_CONTRACT)) {
             const memesNft = {
               id: nft.id,
               collboration_with: [...artistNames.filter((n) => n != artistName)]
@@ -87,12 +87,12 @@ export const processArtists = async (
               artist.memes.push(memesNft);
             }
           }
-          if (areEqualAddresses(nft.contract, GRADIENT_CONTRACT)) {
+          if (equalIgnoreCase(nft.contract, GRADIENT_CONTRACT)) {
             if (!artist.gradients.includes(nft.id)) {
               artist.gradients.push(nft.id);
             }
           }
-          if (areEqualAddresses(nft.contract, MEMELAB_CONTRACT)) {
+          if (equalIgnoreCase(nft.contract, MEMELAB_CONTRACT)) {
             const labNft = {
               id: nft.id,
               collboration_with: [...artistNames.filter((n) => n != artistName)]

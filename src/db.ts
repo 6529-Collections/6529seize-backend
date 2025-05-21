@@ -59,12 +59,6 @@ import {
   NFTHistoryClaim
 } from './entities/INFTHistory';
 import { Rememe, RememeUpload } from './entities/IRememe';
-import {
-  areEqualAddresses,
-  extractConsolidationWallets,
-  formatAddress,
-  isNullAddress
-} from './helpers';
 import { getConsolidationsSql, parseTdhDataFromDB } from './sql_helpers';
 import { NextGenTokenTDH } from './entities/INextGen';
 import { ConnectionWrapper, setSqlExecutor, sqlExecutor } from './sql-executor';
@@ -87,6 +81,9 @@ import {
   RecentTDHHistory,
   TDHHistory
 } from './entities/ITDHHistory';
+import { ethTools } from './eth-tools';
+import { equalIgnoreCase } from './strings';
+import { consolidationTools } from './consolidation-tools';
 
 const mysql = require('mysql');
 
@@ -271,7 +268,7 @@ export async function retrieveWalletConsolidations(wallet: string) {
   const consolidations: any[] = await sqlExecutor.execute(sql, {
     wallet: wallet
   });
-  return extractConsolidationWallets(consolidations, wallet);
+  return consolidationTools.extractConsolidationWallets(consolidations, wallet);
 }
 
 export async function fetchLatestConsolidationsBlockNumber() {
@@ -388,6 +385,15 @@ export async function fetchAllTDH(block: number, wallets?: string[]) {
   return results.map(parseTdhDataFromDB);
 }
 
+function shortFormatIfAddress(address: string): string {
+  if (!address || !ethTools.isEthAddress(address)) {
+    return address;
+  }
+  return `${address.substring(0, 5)}...${address.substring(
+    address.length - 3
+  )}`;
+}
+
 export async function fetchConsolidationDisplay(
   myWallets: string[]
 ): Promise<string> {
@@ -397,7 +403,7 @@ export async function fetchConsolidationDisplay(
   });
   const displayArray: string[] = [];
   myWallets.forEach((w) => {
-    const result = results.find((r: any) => areEqualAddresses(r.wallet, w));
+    const result = results.find((r: any) => equalIgnoreCase(r.wallet, w));
     if (result?.display && !result.display.includes('?')) {
       displayArray.push(result.display);
     } else {
@@ -408,8 +414,7 @@ export async function fetchConsolidationDisplay(
   if (displayArray.length == 1) {
     return displayArray[0];
   }
-  const display = displayArray.map((d) => formatAddress(d)).join(' - ');
-  return display;
+  return displayArray.map((d) => shortFormatIfAddress(d)).join(' - ');
 }
 
 export async function fetchAllConsolidatedOwnerMetrics() {
@@ -508,7 +513,7 @@ export async function fetchWalletTransactions(
   };
 
   let filters;
-  if (isNullAddress(wallet)) {
+  if (ethTools.isNullOrDeadAddress(wallet)) {
     filters = constructFilters('filters', `to_address = :wallet`);
     params.wallet = wallet;
   } else {

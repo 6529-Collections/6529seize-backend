@@ -49,7 +49,7 @@ import { DropRelationEntity } from '../entities/IDropRelation';
 import { ApiDropSearchStrategy } from '../api-serverless/src/generated/models/ApiDropSearchStrategy';
 import { DropVoterStateEntity } from '../entities/IDropVoterState';
 import { ProfileActivityLog } from '../entities/IProfileActivityLog';
-import { assertUnreachable } from '../helpers';
+import { assertUnreachable } from '../assertions';
 import { WaveDecisionWinnerDropEntity } from '../entities/IWaveDecision';
 
 const mysql = require('mysql');

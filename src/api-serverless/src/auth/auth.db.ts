@@ -5,7 +5,7 @@ import {
 import { RefreshToken } from '../../../entities/IRefreshToken';
 import { REFRESH_TOKENS_TABLE } from '../../../constants';
 import { randomBytes } from 'crypto';
-import { areEqualAddresses } from '../../../helpers';
+import { equalIgnoreCase } from '../../../strings';
 
 export class AuthDb extends LazyDbAccessCompatibleService {
   async retrieveOrGenerateRefreshToken(address: string): Promise<string> {
@@ -32,7 +32,7 @@ export class AuthDb extends LazyDbAccessCompatibleService {
       `select address from ${REFRESH_TOKENS_TABLE} where refresh_token = :refreshToken`,
       { refreshToken }
     );
-    return !!result?.address && areEqualAddresses(address, result.address);
+    return !!result?.address && equalIgnoreCase(address, result.address);
   }
 }
 

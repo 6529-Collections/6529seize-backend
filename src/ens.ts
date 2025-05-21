@@ -16,7 +16,7 @@ import {
 import { Wallet } from './entities/IWallet';
 import { sqlExecutor } from './sql-executor';
 import { Logger } from './logging';
-import { replaceEmojisWithHex } from './helpers';
+import { text } from './text';
 
 const logger = Logger.get('ENS');
 
@@ -61,7 +61,7 @@ async function findExistingEns(ens: ENS[]) {
       const newDisplay = await alchemy.core.lookupAddress(w.wallet);
       let newDisplayStr = newDisplay;
       if (newDisplay) {
-        newDisplayStr = replaceEmojisWithHex(newDisplay);
+        newDisplayStr = text.replaceEmojisWithHex(newDisplay);
       }
       const newEns: ENS = {
         created_at: new Date(),
@@ -97,7 +97,7 @@ export async function findNewEns(wallets: string[]) {
         const display = await alchemy.core.lookupAddress(w);
         let displayStr = display;
         if (display) {
-          displayStr = replaceEmojisWithHex(display);
+          displayStr = text.replaceEmojisWithHex(display);
         }
         const newEns: ENS = {
           created_at: new Date(),

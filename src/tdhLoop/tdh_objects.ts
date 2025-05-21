@@ -5,7 +5,7 @@ import {
 } from '../constants';
 import { NFTOwner } from '../entities/INFTOwner';
 import { Transaction } from '../entities/ITransaction';
-import { areEqualAddresses } from '../helpers';
+import { equalIgnoreCase } from '../strings';
 
 export interface NFTOwnerDelta {
   address: string;
@@ -23,7 +23,7 @@ async function extractNFTOwnerDeltas(
     const fromKey = `${transaction.contract}:${transaction.token_id}:${transaction.from_address}`;
     const toKey = `${transaction.contract}:${transaction.token_id}:${transaction.to_address}`;
 
-    if (!areEqualAddresses(transaction.from_address, NULL_ADDRESS)) {
+    if (!equalIgnoreCase(transaction.from_address, NULL_ADDRESS)) {
       if (!ownersMap[fromKey]) {
         ownersMap[fromKey] = {
           address: transaction.from_address.toLowerCase(),
@@ -75,8 +75,8 @@ export async function extractMemesEditionSizes(
   const nftsMap: Record<number, number> = {};
 
   transactions
-    .filter((t) => areEqualAddresses(t.contract, MEMES_CONTRACT))
-    .filter((t) => areEqualAddresses(t.from_address, NULL_ADDRESS))
+    .filter((t) => equalIgnoreCase(t.contract, MEMES_CONTRACT))
+    .filter((t) => equalIgnoreCase(t.from_address, NULL_ADDRESS))
     .forEach((transaction) => {
       const { token_id } = transaction;
       if (!nftsMap[token_id]) {

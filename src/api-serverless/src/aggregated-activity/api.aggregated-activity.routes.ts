@@ -9,7 +9,6 @@ import {
   returnPaginatedResult
 } from '../api-helpers';
 import { MetricsCollector, MetricsContent } from '../tdh/api.tdh.db';
-import { resolveEnum } from '../../../helpers';
 import {
   fetchAggregatedActivity,
   fetchAggregatedActivityForConsolidationKey,
@@ -22,6 +21,7 @@ import { ApiResponse } from '../api-response';
 import { ApiAggregatedActivityPage } from '../generated/models/ApiAggregatedActivityPage';
 import { ApiAggregatedActivity } from '../generated/models/ApiAggregatedActivity';
 import { ApiAggregatedActivityMemes } from '../generated/models/ApiAggregatedActivityMemes';
+import { enums } from '../../../enums';
 
 const router = asyncRouter();
 
@@ -71,9 +71,9 @@ router.get(
         : AGGREGATED_ACTIVITY_SORT[0];
     const sortDir = resolveSortDirection(req.query.sort_direction);
     const search = req.query.search;
-    const content = resolveEnum(MetricsContent, req.query.content);
+    const content = enums.resolve(MetricsContent, req.query.content);
     const season = req.query.season;
-    const collector = resolveEnum(MetricsCollector, req.query.collector);
+    const collector = enums.resolve(MetricsCollector, req.query.collector);
 
     const downloadPage = req.query.download_page;
     const downloadAll = req.query.download_all;

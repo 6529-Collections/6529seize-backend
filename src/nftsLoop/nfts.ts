@@ -25,10 +25,11 @@ import {
   NFT_VIDEO_LINK,
   NULL_ADDRESS
 } from '../constants';
-import { areEqualAddresses, replaceEmojisWithHex } from '../helpers';
 import { processArtists } from '../artists';
 import { Transaction } from '../entities/ITransaction';
 import { In, MoreThan } from 'typeorm';
+import { equalIgnoreCase } from '../strings';
+import { text } from '../text';
 
 const logger = Logger.get('nfts');
 
@@ -323,7 +324,7 @@ async function buildBaseNft(
     name: metadata.name,
     collection: config.collection,
     token_type: tokenType,
-    description: replaceEmojisWithHex(metadata.description),
+    description: text.replaceEmojisWithHex(metadata.description),
     artist,
     artist_seize_handle: artistSeizeHandle,
     uri: metadata.uri ?? '',
@@ -484,12 +485,12 @@ async function updateSupply(
           .getRawOne()
           .then((res) => Number(res?.sum ?? 0));
 
-        if (areEqualAddresses(nft.contract, MEMES_CONTRACT) && nft.id === 8) {
+        if (equalIgnoreCase(nft.contract, MEMES_CONTRACT) && nft.id === 8) {
           supply += MEME_8_EDITION_BURN_ADJUSTMENT;
         }
       } else {
         supply = Array.from(nftMap.values()).filter((e) =>
-          areEqualAddresses(e.nft.contract, nft.contract)
+          equalIgnoreCase(e.nft.contract, nft.contract)
         ).length;
       }
 

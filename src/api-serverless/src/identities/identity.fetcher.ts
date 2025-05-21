@@ -9,7 +9,6 @@ import { getLevelFromScore } from '../../../profiles/profile-level';
 import { ConnectionWrapper } from '../../../sql-executor';
 import { ApiProfileMin } from '../generated/models/ApiProfileMin';
 import { ActivityEventTargetType } from '../../../entities/IActivityEvent';
-import { resolveEnum, resolveEnumOrThrow } from '../../../helpers';
 import { ApiIdentitySubscriptionTargetAction } from '../generated/models/ApiIdentitySubscriptionTargetAction';
 import {
   identitySubscriptionsDb,
@@ -18,6 +17,7 @@ import {
 import { ApiProfileClassification } from '../generated/models/ApiProfileClassification';
 import { NotFoundException } from '../../../exceptions';
 import { ApiCommunityMemberMinimal } from '../generated/models/ApiCommunityMemberMinimal';
+import { enums } from '../../../enums';
 
 export class IdentityFetcher {
   constructor(
@@ -139,7 +139,7 @@ export class IdentityFetcher {
           .then((result) =>
             Object.entries(result).reduce((acc, [profileId, actions]) => {
               acc[profileId] = actions.map((it) =>
-                resolveEnumOrThrow(ApiIdentitySubscriptionTargetAction, it)
+                enums.resolveOrThrow(ApiIdentitySubscriptionTargetAction, it)
               );
               return acc;
             }, {} as Record<string, ApiIdentitySubscriptionTargetAction[]>)
@@ -293,7 +293,7 @@ export class IdentityFetcher {
       ctx
     );
     const classification = identity.classification
-      ? resolveEnum(
+      ? enums.resolve(
           ApiProfileClassification,
           identity.classification as string
         ) ?? ApiProfileClassification.Pseudonym

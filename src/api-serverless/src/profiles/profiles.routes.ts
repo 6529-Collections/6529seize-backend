@@ -30,11 +30,11 @@ import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import { getProfileClassificationsBySubclassification } from './profile.helper';
 import { ApiIdentity } from '../generated/models/ApiIdentity';
 import { ApiCreateOrUpdateProfileRequest } from '../generated/models/ApiCreateOrUpdateProfileRequest';
-import { resolveEnum } from '../../../helpers';
 import { ApiProfileClassification } from '../generated/models/ApiProfileClassification';
 import { identitiesService } from '../identities/identities.service';
 import { identityFetcher } from '../identities/identity.fetcher';
 import { Timer } from '../../../time';
+import { enums } from '../../../enums';
 
 const router = asyncRouter();
 
@@ -151,7 +151,7 @@ router.post(
     let subClassification = sub_classification;
     if (subClassification !== null) {
       const classifications =
-        resolveEnum(
+        enums.resolve(
           ProfileClassification,
           getProfileClassificationsBySubclassification(
             subClassification
@@ -168,7 +168,7 @@ router.post(
       website,
       creator_or_updater_wallet: getWalletOrThrow(req),
       classification:
-        resolveEnum(ProfileClassification, classification.toString()) ??
+        enums.resolve(ProfileClassification, classification.toString()) ??
         ProfileClassification.PSEUDONYM,
       sub_classification: subClassification,
       pfp_url

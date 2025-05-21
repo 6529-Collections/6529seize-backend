@@ -15,7 +15,6 @@ import {
 } from '../../../exceptions';
 import { dropCreationService } from './drop-creation.api.service';
 import { dropsService } from './drops.api.service';
-import { parseIntOrNull, resolveEnum } from '../../../helpers';
 import { dropCheeringService } from './drop-cheering.service';
 import { ApiDrop } from '../generated/models/ApiDrop';
 import { ApiCreateDropRequest } from '../generated/models/ApiCreateDropRequest';
@@ -36,6 +35,8 @@ import { wavesApiDb } from '../waves/waves.api.db';
 import { dropSignatureVerifier } from './drop-signature-verifier';
 import { dropsDb } from '../../../drops/drops.db';
 import { identityFetcher } from '../identities/identity.fetcher';
+import { enums } from '../../../enums';
+import { numbers } from '../../../numbers';
 
 const router = asyncRouter();
 
@@ -68,7 +69,9 @@ router.get(
       {
         amount: limit < 0 || limit > 20 ? 10 : limit,
         group_id: group_id,
-        serial_no_less_than: parseIntOrNull(req.query.serial_no_less_than),
+        serial_no_less_than: numbers.parseIntOrNull(
+          req.query.serial_no_less_than
+        ),
         wave_id,
         author_id,
         include_replies,
@@ -403,12 +406,12 @@ export async function prepLatestDropsSearchQuery(
     any
   >
 ) {
-  const limit = parseIntOrNull(req.query.limit) ?? 10;
+  const limit = numbers.parseIntOrNull(req.query.limit) ?? 10;
   const wave_id = req.query.wave_id ?? null;
   const group_id = req.query.group_id ?? null;
   const include_replies = req.query.include_replies === 'true';
   const drop_type_str = (req.query.drop_type as string) ?? null;
-  const drop_type_enum = resolveEnum(ApiDropType, drop_type_str) ?? null;
+  const drop_type_enum = enums.resolve(ApiDropType, drop_type_str) ?? null;
   const author_id = req.query.author
     ? await identityFetcher.getProfileIdByIdentityKeyOrThrow(
         { identityKey: req.query.author },

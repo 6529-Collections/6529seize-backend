@@ -18,9 +18,9 @@ import { ApiIdentitySubscriptionTargetAction } from '../generated/models/ApiIden
 import { identitiesService } from './identities.service';
 import { ApiIdentity } from '../generated/models/ApiIdentity';
 import { Timer } from '../../../time';
-import { parseIntOrNull } from '../../../helpers';
 import { WALLET_REGEX } from '../../../constants';
 import { identityFetcher } from './identity.fetcher';
+import { numbers } from '../../../numbers';
 
 const router = asyncRouter();
 
@@ -49,7 +49,7 @@ router.get(
     if (handle.length < 3) {
       throw new BadRequestException(`Handle must be at least 3 characters.`);
     }
-    const limit = parseIntOrNull(req.query.limit) ?? 20;
+    const limit = numbers.parseIntOrNull(req.query.limit) ?? 20;
     if (limit < 1 || limit > 100) {
       throw new BadRequestException(`Limit must be between 1 and 100.`);
     }

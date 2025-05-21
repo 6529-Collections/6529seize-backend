@@ -9,7 +9,6 @@ import {
 } from '../api-constants';
 import * as SwaggerUI from 'swagger-ui-express';
 import { getIp, isLocalhost } from '../policies/policies';
-import { isValidIP } from '../../../helpers';
 import { getPage, getPageSize } from '../api-helpers';
 
 const YAML = require('yamljs');
@@ -17,6 +16,16 @@ const YAML = require('yamljs');
 const router = asyncRouter();
 
 export default router;
+
+function isValidIP(ip: string): boolean {
+  const ipv4FormatRegex = /^(\d{1,3}\.){3}\d{1,3}$/;
+  if (!ipv4FormatRegex.test(ip)) {
+    return false;
+  }
+
+  const octets = ip.split('.').map(Number);
+  return octets.every((octet) => octet >= 0 && octet <= 255);
+}
 
 function returnJsonResult(result: any, response: Response) {
   response.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);

@@ -6,9 +6,9 @@ import { Time, Timer } from '../time';
 import { RequestContext } from '../request.context';
 import { Logger } from '../logging';
 import { DropRealVoteInTimeWithoutId } from '../entities/IDropRealVoteInTime';
-import { distinct } from '../helpers';
 import { DropRealVoterVoteInTimeEntityWithoutId } from '../entities/IDropRealVoterVoteInTime';
 import { BadRequestException } from '../exceptions';
+import { collections } from '../collections';
 
 export class WaveLeaderboardCalculationService {
   private readonly logger = Logger.get(WaveLeaderboardCalculationService.name);
@@ -254,7 +254,7 @@ export class WaveLeaderboardCalculationService {
     }
     const tieBreakers =
       await this.dropVotingDb.getLastVoteIncreaseTimesForEachDrop(
-        distinct(dropIdsInTie),
+        collections.distinct(dropIdsInTie),
         ctx
       );
     finalVotesByDropIds.sort((a, d) => {

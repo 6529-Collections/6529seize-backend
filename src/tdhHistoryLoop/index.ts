@@ -3,16 +3,11 @@ import { persistGlobalTDHHistory, persistTDHHistory } from '../db';
 import {
   GlobalTDHHistory,
   LatestGlobalTDHHistory,
-  TDHHistory,
   LatestTDHHistory,
-  RecentTDHHistory
+  RecentTDHHistory,
+  TDHHistory
 } from '../entities/ITDHHistory';
 import { TokenTDH } from '../entities/ITDH';
-import {
-  areEqualAddresses,
-  buildConsolidationKey,
-  formatDateAsString
-} from '../helpers';
 import axios from 'axios';
 import { Readable } from 'stream';
 import { Logger } from '../logging';
@@ -20,6 +15,8 @@ import { Time } from '../time';
 import * as sentryContext from '../sentry.context';
 import { UploadFieldsConsolidation } from '../entities/IUpload';
 import { doInDbContext } from '../secrets';
+import { equalIgnoreCase } from '../strings';
+import { consolidationTools } from '../consolidation-tools';
 
 const csvParser = require('csv-parser');
 
@@ -107,10 +104,10 @@ async function fetchAndParseCSV(url: string): Promise<any[]> {
 
 function matchesConsolidationKey(d: any, yd: any) {
   return (
-    areEqualAddresses(d.consolidation_key, yd.consolidation_key) ||
-    areEqualAddresses(
+    equalIgnoreCase(d.consolidation_key, yd.consolidation_key) ||
+    equalIgnoreCase(
       d.consolidation_key,
-      buildConsolidationKey(JSON.parse(yd.wallets))
+      consolidationTools.buildConsolidationKey(JSON.parse(yd.wallets))
     )
   );
 }
@@ -119,12 +116,12 @@ function hasMatchingWallet(d: any, yd: any) {
   const dWallets = d.consolidation_key.split('-');
   const ydWallets = yd.consolidation_key.split('-');
   return dWallets.some((dw: string) =>
-    ydWallets.some((yw: string) => areEqualAddresses(dw, yw))
+    ydWallets.some((yw: string) => equalIgnoreCase(dw, yw))
   );
 }
 
 async function tdhHistory(date: Date) {
-  const dateString = formatDateAsString(date);
+  const dateString = Time.fromDate(date).toPaddedDateString();
 
   logger.info(
     `[DATE ${date.toISOString().split('T')[0]}] [FETCHING UPLOADS...]`

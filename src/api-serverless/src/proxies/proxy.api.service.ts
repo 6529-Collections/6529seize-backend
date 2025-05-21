@@ -15,7 +15,7 @@ import {
   ProfileProxyActionEntity,
   ProfileProxyActionType
 } from '../../../entities/IProfileProxyAction';
-import { assertUnreachable } from '../../../helpers';
+import { assertUnreachable } from '../../../assertions';
 import { ApiProfileProxy } from '../generated/models/ApiProfileProxy';
 import { profileProxiesMapper, ProfileProxiesMapper } from './proxies.mapper';
 import { AcceptActionRequestActionEnum } from '../generated/models/AcceptActionRequest';

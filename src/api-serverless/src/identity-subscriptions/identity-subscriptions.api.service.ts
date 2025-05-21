@@ -11,7 +11,7 @@ import {
 import { ApiOutgoingIdentitySubscriptionsPage } from '../generated/models/ApiOutgoingIdentitySubscriptionsPage';
 import { ApiIncomingIdentitySubscriptionsPage } from '../generated/models/ApiIncomingIdentitySubscriptionsPage';
 import { ApiIdentityAndSubscriptionActions } from '../generated/models/ApiIdentityAndSubscriptionActions';
-import { assertUnreachable, resolveEnumOrThrow } from '../../../helpers';
+import { assertUnreachable } from '../../../assertions';
 import { ApiIdentitySubscriptionTargetAction } from '../generated/models/ApiIdentitySubscriptionTargetAction';
 import { ApiTargetAndSubscriptionActions } from '../generated/models/ApiTargetAndSubscriptionActions';
 import {
@@ -24,6 +24,7 @@ import {
   identityFetcher,
   IdentityFetcher
 } from '../identities/identity.fetcher';
+import { enums } from '../../../enums';
 
 export class IdentitySubscriptionsApiService {
   constructor(
@@ -67,7 +68,7 @@ export class IdentitySubscriptionsApiService {
             .map(([id, actions]) => ({
               target: waves[id],
               actions: actions.map((it) =>
-                resolveEnumOrThrow(ApiIdentitySubscriptionTargetAction, it)
+                enums.resolveOrThrow(ApiIdentitySubscriptionTargetAction, it)
               )
             }))
             .sort((a, d) => d.target.id.localeCompare(a.target.id))
@@ -84,7 +85,7 @@ export class IdentitySubscriptionsApiService {
             .map(([id, actions]) => ({
               target: drops[id],
               actions: actions.map((it) =>
-                resolveEnumOrThrow(ApiIdentitySubscriptionTargetAction, it)
+                enums.resolveOrThrow(ApiIdentitySubscriptionTargetAction, it)
               )
             }))
             .sort((a, d) => d.target.id.localeCompare(a.target.id))
@@ -101,7 +102,7 @@ export class IdentitySubscriptionsApiService {
             .map(([id, actions]) => ({
               target: profiles[id],
               actions: actions.map((it) =>
-                resolveEnumOrThrow(ApiIdentitySubscriptionTargetAction, it)
+                enums.resolveOrThrow(ApiIdentitySubscriptionTargetAction, it)
               )
             }))
             .sort((a, d) => d.target.id.localeCompare(a.target.id))
@@ -142,7 +143,7 @@ export class IdentitySubscriptionsApiService {
       .map(([id, actions]) => ({
         identity: profiles[id],
         actions: actions.map((it) =>
-          resolveEnumOrThrow(ApiIdentitySubscriptionTargetAction, it)
+          enums.resolveOrThrow(ApiIdentitySubscriptionTargetAction, it)
         )
       }))
       .sort((a, d) => d.identity.level - a.identity.level);

@@ -42,10 +42,10 @@ const {
   DELEGATIONS_IFACE: { parseLog: mockParseLog, parseTransaction: mockParseTx }
 } = jest.requireMock('../abis/delegations');
 
-jest.mock('../helpers', () => {
-  const areEqualAddresses = jest.fn();
+jest.mock('../strings', () => {
+  const equalIgnoreCase = jest.fn();
   return {
-    areEqualAddresses
+    equalIgnoreCase
   };
 });
 

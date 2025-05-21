@@ -25,7 +25,6 @@ import {
   SubscriptionLog,
   SubscriptionMode
 } from '../entities/ISubscription';
-import { areEqualAddresses, getUniqueValuesWithKeys } from '../helpers';
 import { Logger } from '../logging';
 import { getMaxMemeId } from '../nftsLoop/db.nfts';
 import { sendDiscordUpdate } from '../notifier-discord';
@@ -39,6 +38,8 @@ import {
   persistSubscriptions
 } from './db.subscriptions';
 import converter from 'json-2-csv';
+import { collections } from '../collections';
+import { equalIgnoreCase } from '../strings';
 
 const logger = Logger.get('SUBSCRIPTIONS');
 
@@ -86,7 +87,7 @@ async function populateAutoSubscriptionsForMemeId(
   const autoSubscriptionsDelta = autoSubscriptions.filter(
     (s) =>
       !newMemeSubscriptions.some((n) =>
-        areEqualAddresses(n.consolidation_key, s.consolidation_key)
+        equalIgnoreCase(n.consolidation_key, s.consolidation_key)
       )
   );
 
@@ -173,7 +174,7 @@ async function createFinalSubscriptions(
 
   const subscriptionPromises = filteredSubscriptions.map(async (sub) => {
     const balance = balances.find((b) =>
-      areEqualAddresses(b.consolidation_key, sub.consolidation_key)
+      equalIgnoreCase(b.consolidation_key, sub.consolidation_key)
     );
 
     const airdropAddress = await fetchAirdropAddressForConsolidationKey(
@@ -184,7 +185,7 @@ async function createFinalSubscriptions(
       if (balance.balance >= MEMES_MINT_PRICE) {
         let createdAt = sub.updated_at?.getTime() ?? Time.now().toMillis();
         const autoSub = autoSubscriptions.find((a) =>
-          areEqualAddresses(a.consolidation_key, sub.consolidation_key)
+          equalIgnoreCase(a.consolidation_key, sub.consolidation_key)
         );
         if (autoSub) {
           createdAt = autoSub.updated_at?.getTime() ?? Time.now().toMillis();
@@ -254,7 +255,7 @@ async function uploadFinalSubscriptions(
       const profile = profiles.find((p) =>
         sub.consolidation_key
           .split('-')
-          .some((key) => areEqualAddresses(p.primary_wallet, key))
+          .some((key) => equalIgnoreCase(p.primary_wallet, key))
       );
       return {
         date: Time.now().toIsoDateString(),
@@ -389,7 +390,9 @@ export async function consolidateSubscriptions(addresses: Set<string>) {
       }
     }
 
-    const uniqueValuesWithKeys = getUniqueValuesWithKeys(replaceConsolidations);
+    const uniqueValuesWithKeys = collections.getMapWithKeysAndValuesSwitched(
+      replaceConsolidations
+    );
     for (const value of Array.from(uniqueValuesWithKeys.keys())) {
       const keys = uniqueValuesWithKeys.get(value);
       if (!keys) {

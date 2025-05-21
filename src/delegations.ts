@@ -8,16 +8,16 @@ import {
   USE_CASE_SUB_DELEGATION
 } from './constants';
 import { DELEGATIONS_IFACE } from './abis/delegations';
-import { areEqualAddresses } from './helpers';
 import {
-  Event,
-  EventType,
   ConsolidationEvent,
-  DelegationEvent
+  DelegationEvent,
+  Event,
+  EventType
 } from './entities/IDelegation';
 import { Logger } from './logging';
 import { getAlchemyInstance } from './alchemy';
 import { sepolia } from '@wagmi/chains';
+import { equalIgnoreCase } from './strings';
 
 let alchemy: Alchemy;
 
@@ -99,10 +99,7 @@ export const findDelegationTransactions = async (
       const to = delResult.args.delegationAddress;
       const useCase = delResult.args.useCase.toNumber();
 
-      if (
-        !areEqualAddresses(from, to) ||
-        useCase === USE_CASE_PRIMARY_ADDRESS
-      ) {
+      if (!equalIgnoreCase(from, to) || useCase === USE_CASE_PRIMARY_ADDRESS) {
         if (
           [
             'RegisterDelegation',
