@@ -389,13 +389,3 @@ export async function getWalletFromEns(
     return isWallet(alchemyResponse) ? alchemyResponse : null;
   }
 }
-
-export function isValidIP(ip: string): boolean {
-  const ipv4FormatRegex = /^(\d{1,3}\.){3}\d{1,3}$/;
-  if (!ipv4FormatRegex.test(ip)) {
-    return false;
-  }
-
-  const octets = ip.split('.').map(Number);
-  return octets.every((octet) => octet >= 0 && octet <= 255);
-}
