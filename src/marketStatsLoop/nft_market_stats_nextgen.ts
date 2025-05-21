@@ -9,6 +9,7 @@ import {
 } from '../nextgen/nextgen.db';
 import { NEXTGEN_ROYALTIES_ADDRESS } from '../nextgen/nextgen_constants';
 import { getOpenseaResponse } from './nft_market_stats';
+import { Time } from '../time';
 
 const logger = Logger.get('NEXTGEN_MARKET_STATS');
 
@@ -138,19 +139,39 @@ async function getMagicEdenListings(contract: string): Promise<any[]> {
   let continuation: string | null = null;
 
   do {
-    const url = `https://api-mainnet.magiceden.dev/v3/rtp/ethereum/orders/asks/v5?contracts=${contract}&excludeEOA=true${
-      continuation ? `&continuation=${continuation}` : ''
-    }`;
-    const response = await fetch(url);
-    const jsonResponse: any = await response.json();
+    let jsonResponse: any = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const url = `https://api-mainnet.magiceden.dev/v3/rtp/ethereum/orders/asks/v5?contracts=${contract}&excludeEOA=true${
+        continuation ? `&continuation=${continuation}` : ''
+      }`;
+      const response = await fetch(url);
+
+      try {
+        jsonResponse = await response.json();
+        break;
+      } catch (error: any) {
+        const responseText = await response.text();
+        if (attempt === 3) {
+          const message = `Error getting JSON response from Magic Eden: ${JSON.stringify(
+            error
+          )}, response: ${responseText}`;
+          throw new Error(message);
+        } else {
+          const delay = Time.seconds(10 * attempt);
+          logger.error(
+            `Attempt ${attempt} to fetch ${url} failed: ${responseText}. Waiting for ${delay} and trying again...`
+          );
+          await delay.sleep();
+        }
+      }
+    }
 
     orders = orders.concat(jsonResponse?.orders ?? []);
 
     continuation = jsonResponse?.continuation ?? null;
   } while (continuation);
 
-  const filteredOrders = orders.filter((o) => o.source.name === 'Magic Eden');
-  return filteredOrders;
+  return orders.filter((o) => o.source.name === 'Magic Eden');
 }
 
 function getMinPositivePrice(prices: number[]): number {

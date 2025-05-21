@@ -400,10 +400,6 @@ export function isValidIP(ip: string): boolean {
   return octets.every((octet) => octet >= 0 && octet <= 255);
 }
 
-export async function sleep(millis: number) {
-  return new Promise((resolve) => setTimeout(resolve, millis));
-}
-
 export function getUniqueValuesWithKeys<K, V>(map: Map<K, V>): Map<V, K[]> {
   const valueToKeysMap = new Map<V, K[]>();
   map.forEach((value, key) => {
