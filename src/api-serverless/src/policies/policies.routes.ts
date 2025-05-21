@@ -24,7 +24,8 @@ router.get(`/country-check`, function (req: Request, res: any) {
 
   if (isLocalhost(ip)) {
     return res.status(200).send({
-      is_eu: true
+      is_eu: true,
+      country: null
     });
   }
 
@@ -35,7 +36,8 @@ router.get(`/country-check`, function (req: Request, res: any) {
       });
     }
     return res.status(200).send({
-      is_eu: isEUCountry(ipInfo.country)
+      is_eu: isEUCountry(ipInfo.country),
+      country: ipInfo.country
     });
   });
 });
