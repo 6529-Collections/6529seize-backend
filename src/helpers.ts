@@ -186,14 +186,6 @@ export function getRpcUrl(chainId: number) {
   return getRpcUrlFromNetwork(network);
 }
 
-export function capitalizeEveryWord(input: string): string {
-  return input
-    .toLocaleLowerCase()
-    .split(' ')
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(' ');
-}
-
 export function replaceEmojisWithHex(inputString: string) {
   return inputString.replace(
     /[\uD83C-\uDBFF][\uDC00-\uDFFF]/g,
