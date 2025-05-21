@@ -1,4 +1,4 @@
-import short from 'short-uuid';
+import * as short from 'short-uuid';
 
 export class Ids {
   public uniqueShortId(): string {
