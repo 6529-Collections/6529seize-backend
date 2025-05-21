@@ -30,7 +30,7 @@ The name of your .env file must include the environment you want to run like `.e
 
 ### 1.4 Run
 
-Before running anything, either manually run `npm run migrate:up` or make sure `dbMigrationsLoop` is ran.
+Before running anything, either manually run `npm run migrate:up` or make sure `dbMigrationsLoop` is run.
 
 #### 1.4.1 using npm
 
@@ -56,15 +56,15 @@ This repository is configured to be runnable through AWS Lambdas. Each 'loop' fo
 
 - **Running database for development:** You can use docker and docker-compose for this. Run `docker-compose up -d` in project root and configure your `.env` exactly as DB part in `.env.sample`.
 
-- **Database and ORM:** Backend service is using [TYPEORM](https://www.npmjs.com/package/typeorm). When starting a service, if the database is successful then the ORM will take care of synchronising the schema for the database and creating the necessary tables. \* Note: You will need to create the database and user and provide them in the .env file. Only thing TypeORM doesn't take care of, are views. Those are created with migrations. So you should either run `npm run migrate:up` or make sure `dbMigrationsLoop` is ran to be sure that all migrations are applied.
+- **Database and ORM:** Backend service is using [TYPEORM](https://www.npmjs.com/package/typeorm). When starting a service, if the database is successful then the ORM will take care of synchronising the schema for the database and creating the necessary tables. \* Note: You will need to create the database and user and provide them in the .env file. Only thing TypeORM doesn't take care of, are views. Those are created with migrations. So you should either run `npm run migrate:up` or make sure `dbMigrationsLoop` is run to be sure that all migrations are applied.
 
 - **CRON:** When starting the service, there are several scheduled cron jobs running at specific intervals which will consume data from the chain, process and save the result to the database.
   e.g. discovering NFTs - there is a scheduled cron job to run every 3 minutes which detects new nfts minted on the chain or any changes to existing nfts.
 
-- **S3 and Video Compression:** [S3Loop](https://github.com/6529-Collections/6529seize-backend/tree/main/src/s3Loop). The s3Loop persist compressed versions of the nft images and videos on AWS S3. This loop is configured to only run in `prod` mode. Video compression requires ffmpeg installed on the running machine.
+- **S3 and Video Compression:** [S3Loop](https://github.com/6529-Collections/6529seize-backend/tree/main/src/s3Loop). The s3Loop persists compressed versions of the nft images and videos on AWS S3. This loop is configured to only run in `prod` mode. Video compression requires ffmpeg installed on the running machine.
   Download instructions at: https://ffmpeg.org/
 
-- Creating new migrations: Run `npm run migrate:new name-of-the-migration`. Three new files are created in `migrations folder`. A jacascript file and 2 SQL files. Find the "up" SQL file and write the SQL for new migration there. Then run `npm run migrate:up` to apply the new migration. You can write reverse migration if you wish in the "down" SQL file.
+- Creating new migrations: Run `npm run migrate:new name-of-the-migration`. Three new files are created in `migrations folder`. A javascript file and 2 SQL files. Find the "up" SQL file and write the SQL for new migration there. Then run `npm run migrate:up` to apply the new migration. You can write reverse migration if you wish in the "down" SQL file.
 
 ## 2. API
 

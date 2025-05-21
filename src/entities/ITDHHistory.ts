@@ -2,6 +2,7 @@ import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
 import {
   LATEST_TDH_GLOBAL_HISTORY_TABLE,
   LATEST_TDH_HISTORY_TABLE,
+  RECENT_TDH_HISTORY_TABLE,
   TDH_GLOBAL_HISTORY_TABLE,
   TDH_HISTORY_TABLE
 } from '../constants';
@@ -126,3 +127,6 @@ export class LatestGlobalTDHHistory extends BaseGlobalTDHHistory {}
 
 @Entity(LATEST_TDH_HISTORY_TABLE)
 export class LatestTDHHistory extends BaseTDHHistoryWithConsolidation {}
+
+@Entity(RECENT_TDH_HISTORY_TABLE)
+export class RecentTDHHistory extends BaseTDHHistoryWithConsolidation {}

@@ -4,8 +4,7 @@ import { s3ObjectExists, s3UploadObject } from './helpers/s3_helpers';
 import {
   GRADIENT_CONTRACT,
   MEMELAB_CONTRACT,
-  MEMES_CONTRACT,
-  NFT_ORIGINAL_IMAGE_LINK
+  MEMES_CONTRACT
 } from './constants';
 import sharp from 'sharp';
 import { Stream } from 'stream';
@@ -235,7 +234,6 @@ async function handleScaledImage({
 
 async function handleImage({
   nft,
-  format,
   s3Key,
   height,
   toWEBP,

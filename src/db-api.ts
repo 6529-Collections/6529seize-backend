@@ -22,6 +22,7 @@ import {
   NFTS_TABLE,
   NULL_ADDRESS,
   NULL_ADDRESS_DEAD,
+  RECENT_TDH_HISTORY_TABLE,
   REMEMES_TABLE,
   REMEMES_UPLOADS,
   ROYALTIES_UPLOADS_TABLE,
@@ -67,6 +68,7 @@ import { NFT } from './entities/INFT';
 import { ApiTransactionPage } from './api-serverless/src/generated/models/ApiTransactionPage';
 import { ApiTransaction } from './api-serverless/src/generated/models/ApiTransaction';
 import { ApiNftMedia } from './api-serverless/src/generated/models/ApiNftMedia';
+import { TDHHistory } from './entities/ITDHHistory';
 
 let read_pool: mysql.Pool;
 let write_pool: mysql.Pool;
@@ -291,13 +293,6 @@ export async function fetchLatestTDHBlockNumber() {
   const sql = `SELECT block_number FROM ${TDH_BLOCKS_TABLE} order by block_number desc limit 1;`;
   const r = await sqlExecutor.execute(sql);
   return r.length > 0 ? r[0].block_number : 0;
-}
-
-async function getTeamWallets() {
-  const sql = `SELECT wallet FROM ${TEAM_TABLE}`;
-  let results = await sqlExecutor.execute(sql);
-  results = results.map((r: { wallet: string }) => r.wallet);
-  return results;
 }
 
 export async function fetchPaginated<T = any>(
@@ -985,9 +980,7 @@ export async function fetchEns(address: string) {
 export async function fetchRanksForWallet(address: string) {
   const tdhBlock = await fetchLatestTDHBlockNumber();
   const sqlTdh = `SELECT * FROM ${WALLETS_TDH_TABLE} WHERE block=${tdhBlock} and wallet=:address`;
-  const ownerTdh = await sqlExecutor.execute(sqlTdh, { address: address });
-
-  return ownerTdh;
+  return await sqlExecutor.execute(sqlTdh, { address: address });
 }
 
 export async function fetchLabExtended(
@@ -1549,6 +1542,19 @@ export async function fetchTDHHistory(
     filters
   );
 }
+
+export async function fetchRecentTDHHistory(
+  consolidationKey: string
+): Promise<TDHHistory[]> {
+  return sqlExecutor.execute(
+    `SELECT * FROM 
+      ${RECENT_TDH_HISTORY_TABLE} 
+      WHERE consolidation_key = :consolidation_key 
+      ORDER BY date DESC`,
+    { consolidation_key: consolidationKey }
+  );
+}
+
 export async function fetchRoyaltiesUploads(pageSize: number, page: number) {
   return fetchPaginated(
     ROYALTIES_UPLOADS_TABLE,

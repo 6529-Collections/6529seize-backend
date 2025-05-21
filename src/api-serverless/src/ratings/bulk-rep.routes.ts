@@ -18,7 +18,7 @@ router.post(
   needsAuthenticatedUser(),
   async function (
     req: Request<any, any, ApiBulkRepRequest, any, any>,
-    res: Response<ApiResponse<{}>>
+    res: Response<ApiResponse<any>>
   ) {
     const timer = Timer.getFromRequest(req);
     const apiRequest = getValidatedByJoiOrThrow(req.body, BulkRepRequestSchema);

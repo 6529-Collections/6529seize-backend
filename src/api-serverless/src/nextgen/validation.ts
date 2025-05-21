@@ -1,15 +1,16 @@
 import { ethers } from 'ethers';
 import * as Joi from 'joi';
 import { hashMessage } from '@ethersproject/hash';
-import { areEqualAddresses, stringToHex, getRpcUrl } from '../../../helpers';
+import { areEqualAddresses, getRpcUrl, stringToHex } from '../../../helpers';
 import { Readable } from 'stream';
 import {
+  getNextGenChainId,
   NEXTGEN_ADMIN,
   NEXTGEN_ADMIN_ABI,
-  NEXTGEN_SET_COLLECTION_PHASES_SELECTOR,
-  getNextGenChainId
+  NEXTGEN_SET_COLLECTION_PHASES_SELECTOR
 } from './abis';
 import { Logger } from '../../../logging';
+
 const { keccak256 } = require('@ethersproject/keccak256');
 const { MerkleTree } = require('merkletreejs');
 
@@ -370,7 +371,11 @@ async function validateAdmin(collection_id: number, address: string) {
     });
     return isGlobalAdmin || isFunctionAdmin || isCollectionAdmin;
   } catch (error) {
-    console.error('Error calling retrieveGlobalAdmin method:', rpcUrl, error);
+    logger.error(
+      `Error calling retrieveGlobalAdmin method. rpcUrl: '${rpcUrl}' error: ${JSON.stringify(
+        error
+      )}`
+    );
     return false;
   }
 }

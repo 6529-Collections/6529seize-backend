@@ -1,10 +1,6 @@
-import fetch from 'node-fetch';
 import axios, { AxiosResponse } from 'axios';
 import {
   CONSOLIDATIONS_LIMIT,
-  GRADIENT_CONTRACT,
-  MEMELAB_CONTRACT,
-  MEMES_CONTRACT,
   NULL_ADDRESS,
   NULL_ADDRESS_DEAD,
   WALLET_REGEX
@@ -12,12 +8,10 @@ import {
 import * as short from 'short-uuid';
 import { goerli, sepolia } from '@wagmi/chains';
 import { Network } from 'alchemy-sdk';
-import { Transaction } from './entities/ITransaction';
 import { getAlchemyInstance } from './alchemy';
 import * as mcache from 'memory-cache';
 import { Time } from './time';
 import moment from 'moment-timezone';
-import { TokenType } from './enums';
 
 export function areEqualAddresses(w1: string, w2: string) {
   if (!w1 || !w2) {
@@ -71,24 +65,6 @@ export const parseUTCDateString = (dateString: any): Date => {
 
 export function delay(time: number) {
   return new Promise((resolve) => setTimeout(resolve, time));
-}
-
-export function areEqualObjects(obj1: any, obj2: any) {
-  if (obj1 == null || obj2 == null) {
-    return false;
-  }
-  for (const property in obj1) {
-    const value1 = obj1[property];
-    const value2 = obj2[property];
-    if (typeof value1 === 'object' && value1 !== null) {
-      if (!areEqualObjects(value1, value2)) {
-        return false;
-      }
-    } else if (value1 != value2) {
-      return false;
-    }
-  }
-  return true;
 }
 
 export function formatAddress(address: string) {
@@ -223,15 +199,6 @@ export function formatDateAsString(date: Date) {
   ].join('');
 }
 
-export function isValidUrl(url: string) {
-  try {
-    new URL(url);
-    return true;
-  } catch (_) {
-    return false;
-  }
-}
-
 export function stringToHex(s: string) {
   let hexString = '';
   for (let i = 0; i < s.length; i++) {
@@ -254,6 +221,7 @@ export const sum = (ns: number[]) => ns.reduce((sum, n) => sum + n, 0);
 // The assertUnreachable function takes an input _x of type never and always throws
 // an error. This function is typically used in TypeScript to assert exhaustiveness in
 // switch-case or if-else constructs, ensuring that all possible cases are handled.
+// eslint-disable-next-line
 export const assertUnreachable = (_x: never): never => {
   // Throw an error with a message indicating that this function should not be reached.
   // This error should only be thrown if there's a bug in the code or a new case has been
@@ -261,40 +229,13 @@ export const assertUnreachable = (_x: never): never => {
   throw new Error("Didn't expect to get here");
 };
 
-export async function fetchImage(url: string): Promise<ArrayBuffer> {
-  const response = await fetch(url);
-  return await response.arrayBuffer();
-}
-
-export async function compareImages(
-  url1: string,
-  url2: string
-): Promise<boolean> {
-  try {
-    const [image1, image2] = await Promise.all([
-      fetchImage(url1),
-      fetchImage(url2)
-    ]);
-    const data1 = new Uint8Array(image1);
-    const data2 = new Uint8Array(image2);
-    const areImagesEqual = JSON.stringify(data1) === JSON.stringify(data2);
-    return areImagesEqual;
-  } catch (error) {
-    console.error('Error fetching or comparing images:', error);
-    return false;
-  }
-}
-
 export function buildConsolidationKey(wallets: string[]) {
   const sortedWallets = wallets
     .map((it) => it.toLowerCase())
     .slice()
-    .sort((a, b) => a.localeCompare(b));
+    .sort((a, b) => a.localeCompare(b))
+    .filter((it) => it !== '');
   return sortedWallets.join('-');
-}
-
-export function gweiToEth(gwei: number): number {
-  return gwei / 1e9;
 }
 
 export function weiToEth(wei: number): number {
@@ -342,39 +283,49 @@ export function replaceEmojisWithHex(inputString: string) {
     }
   );
 }
+/**
+ * Split an array into batches of at most `size` items.
+ * Fractional sizes are floored.
+ * Throws a RangeError when size <= 0.
+ */
 
-export function batchArray<T>(array: T[], batchSize: number): T[][] {
-  const batchedArray: T[][] = [];
-
-  for (let index = 0; index < array.length; index += batchSize) {
-    const batch = array.slice(index, index + batchSize);
-    batchedArray.push(batch);
+export function batchArray<T>(items: T[], size: number): T[][] {
+  if (size <= 0) {
+    throw new RangeError('size must be greater than 0');
   }
 
-  return batchedArray;
+  const batchSize = Math.floor(size);
+  const batched: T[][] = [];
+
+  for (let index = 0; index < items.length; index += batchSize) {
+    const batch = items.slice(index, index + batchSize);
+    batched.push(batch);
+  }
+
+  return batched;
 }
 
-export function parseNumberOrNull(input: any): number | null {
-  if (input === null || input === undefined) {
-    return null;
+const INT_LIKE = /^[+-]?(?:0|[1-9]\d*)(?:\.0+)?$/;
+
+export function parseIntOrNull(value: any): number | null {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) && Number.isInteger(value) ? value : null;
   }
-  const parsed = parseInt(input);
-  if (isNaN(parsed)) {
-    return null;
-  }
-  return parsed;
+
+  // anything that isn’t a string is automatically rejected
+  if (typeof value !== 'string') return null;
+
+  // trim *all* whitespace (including NBSP, tabs, new lines…)
+  const trimmed = value.trim();
+
+  // string must match the regexp exactly
+  if (!INT_LIKE.test(trimmed)) return null;
+
+  // safe to convert – it’s an exact int
+  return Number(trimmed);
 }
 
-export function parseIntOrNull(input: any): number | null {
-  const num = parseNumberOrNull(input);
-  const int = parseInt(input);
-  if (num === int) {
-    return int;
-  }
-  return null;
-}
-
-export function resolveEnum<T extends {}>(
+export function resolveEnum<T extends object>(
   enumObj: T,
   value?: string
 ): T[keyof T] | undefined {
@@ -401,10 +352,6 @@ export function resolveEnumOrThrow<T extends object>(
     return resolvedValue;
   }
   throw new Error(`Invalid enum value: ${value}`);
-}
-
-export function isAirdrop(t: Transaction): boolean {
-  return areEqualAddresses(t.from_address, NULL_ADDRESS) && t.value === 0;
 }
 
 export function getTransactionLink(chain_id: number, hash: string) {
@@ -453,10 +400,6 @@ export function isValidIP(ip: string): boolean {
   return octets.every((octet) => octet >= 0 && octet <= 255);
 }
 
-export async function sleep(millis: number) {
-  return new Promise((resolve) => setTimeout(resolve, millis));
-}
-
 export function getUniqueValuesWithKeys<K, V>(map: Map<K, V>): Map<V, K[]> {
   const valueToKeysMap = new Map<V, K[]>();
   map.forEach((value, key) => {
@@ -475,10 +418,6 @@ export function isValidUuid(str: string): boolean {
   );
 }
 
-export function isExperimentalModeOn() {
-  return process.env.EXPERIMENTAL_MODE_ON === 'true';
-}
-
 export enum AppFeature {
   UPLOAD_CIC_REP_SNAPSHOTS_TO_ARWEAVE = 'UPLOAD_CIC_REP_SNAPSHOTS_TO_ARWEAVE',
   DROP_OVERVOTE_REVOCATION = 'DROP_OVERVOTE_REVOCATION'
@@ -486,16 +425,4 @@ export enum AppFeature {
 
 export function isFeatureOn(feature: AppFeature) {
   return process.env[`FEATURE_${feature}`] === 'true';
-}
-
-export function getTokenType(contract: string): TokenType {
-  switch (contract.toLowerCase()) {
-    case MEMES_CONTRACT.toLowerCase():
-    case MEMELAB_CONTRACT.toLowerCase():
-      return TokenType.ERC1155;
-    case GRADIENT_CONTRACT.toLowerCase():
-      return TokenType.ERC721;
-    default:
-      throw new Error(`Unknown contract: ${contract}`);
-  }
 }

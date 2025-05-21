@@ -106,7 +106,7 @@ router.get(
       },
       any,
       any,
-      {}
+      any
     >,
     res: Response<ApiResponse<ApiAggregatedActivity>>
   ) {
@@ -133,7 +133,7 @@ router.get(
       },
       any,
       any,
-      {}
+      any
     >,
     res: Response<ApiResponse<ApiAggregatedActivityMemes>>
   ) {
@@ -159,7 +159,7 @@ router.get(
       },
       any,
       any,
-      {}
+      any
     >,
     res: any
   ) {
@@ -184,7 +184,7 @@ router.get(
       },
       any,
       any,
-      {}
+      any
     >,
     res: any
   ) {

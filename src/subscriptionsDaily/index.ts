@@ -17,7 +17,7 @@ const logger = Logger.get('SUBSCRIPTIONS_LOOP');
 export const handler = sentryContext.wrapLambdaHandler(async () => {
   await doInDbContext(
     async () => {
-      await updateSubscriptions(process.env.SUBSCRIPTIONS_RESET == 'true');
+      await updateSubscriptions();
     },
     {
       logger,

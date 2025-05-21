@@ -1,0 +1,1 @@
+TRUNCATE TABLE recent_tdh_history;

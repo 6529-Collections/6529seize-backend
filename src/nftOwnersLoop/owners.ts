@@ -1,6 +1,9 @@
 import { NftContractOwner } from 'alchemy-sdk';
 import fetch from 'node-fetch';
-import { sleep } from '../helpers';
+import { Time } from '../time';
+import { Logger } from '../logging';
+
+const logger = Logger.get('OWNERS');
 
 interface OwnersApiResponse {
   ownerAddresses: NftContractOwner[];
@@ -18,8 +21,7 @@ export async function getOwnersForContracts(
   contracts: string[],
   block?: number
 ): Promise<OwnedNft[]> {
-  const owned = await getAllOwnersFromAlchemy(contracts, block);
-  return owned;
+  return await getAllOwnersFromAlchemy(contracts, block);
 }
 
 async function getAllOwnersFromAlchemy(
@@ -66,23 +68,38 @@ async function getOwners(
 }
 
 async function getOwnersForPage(block: number, contract: string, page: string) {
-  await sleep(1000);
-  const baseUrl = `https://eth-mainnet.g.alchemy.com/nft/v2/${process.env.ALCHEMY_API_KEY}/getOwnersForContract`;
-  const urlParams = new URLSearchParams({
-    contractAddress: contract,
-    withTokenBalances: 'true',
-    ...(page ? { pageKey: page } : {})
-  });
-  if (block > 0) {
-    urlParams.append('block', block.toString());
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const baseUrl = `https://eth-mainnet.g.alchemy.com/nft/v2/${process.env.ALCHEMY_API_KEY}/getOwnersForContract`;
+    const urlParams = new URLSearchParams({
+      contractAddress: contract,
+      withTokenBalances: 'true',
+      ...(page ? { pageKey: page } : {})
+    });
+    if (block > 0) {
+      urlParams.append('block', block.toString());
+    }
+
+    const url = `${baseUrl}?${urlParams.toString()}`;
+
+    const response = await fetch(url);
+    try {
+      const data = (await response.json()) as OwnersApiResponse;
+
+      return {
+        owners: data.ownerAddresses,
+        pageKey: data.pageKey
+      };
+    } catch (e: any) {
+      const message = `Unable to get owners from ${url} (attempt ${attempt}) Error: ${JSON.stringify(
+        e
+      )}. Response Body: ${await response.text().catch(() => '')}`;
+      if (attempt === 3) {
+        throw new Error(message);
+      } else {
+        const delay = Time.seconds(attempt * 10);
+        logger.error(`${message}. Waiting for ${delay} before trying again`);
+      }
+    }
   }
-
-  const url = `${baseUrl}?${urlParams.toString()}`;
-  const response = await fetch(url);
-  const data = (await response.json()) as OwnersApiResponse;
-
-  return {
-    owners: data.ownerAddresses,
-    pageKey: data.pageKey
-  };
+  throw new Error('Unreachable code');
 }

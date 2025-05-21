@@ -1,6 +1,6 @@
 import { AbusivenessCheckService } from './abusiveness-check.service';
 import { AbusivenessCheckDb } from './abusiveness-check.db';
-import { AiBasedAbusivenessDetector } from '../abusinveness/ai-based-abusiveness.detector';
+import { AiBasedAbusivenessDetector } from '../abusiveness/ai-based-abusiveness.detector';
 import { mock } from 'ts-jest-mocker';
 import { when } from 'jest-when';
 import { Time } from '../time';

@@ -84,6 +84,7 @@ import {
   GlobalTDHHistory,
   LatestGlobalTDHHistory,
   LatestTDHHistory,
+  RecentTDHHistory,
   TDHHistory
 } from './entities/ITDHHistory';
 
@@ -93,10 +94,7 @@ const logger = Logger.get('DB');
 
 let AppDataSource: DataSource;
 
-export async function connect(
-  entities: any[] = [],
-  syncEntities: boolean = false
-) {
+export async function connect(entities: any[] = [], syncEntities = false) {
   logger.info(
     `[DB HOST ${process.env.DB_HOST}] [SYNC ENTITIES ${syncEntities}]`
   );
@@ -1250,11 +1248,39 @@ export async function fetchMissingS3Rememes() {
   });
 }
 
-export async function persistTDHHistory(tdhHistory: TDHHistory[]) {
+export async function persistTDHHistory(date: Date, tdhHistory: TDHHistory[]) {
   await AppDataSource.transaction(async (transactionalEntityManager) => {
-    await transactionalEntityManager
-      .getRepository(TDHHistory)
-      .upsert(tdhHistory, ['date', 'consolidation_key', 'block']);
+    const dateObject = new Date(date);
+    dateObject.setUTCHours(0, 0, 0, 0);
+    const cutoffDate = new Date();
+    cutoffDate.setUTCDate(cutoffDate.getUTCDate() - 30);
+    cutoffDate.setUTCHours(0, 0, 0, 0);
+
+    const tdhHistoryRepo = transactionalEntityManager.getRepository(TDHHistory);
+    const recentTdhHistoryRepo =
+      transactionalEntityManager.getRepository(RecentTDHHistory);
+
+    await tdhHistoryRepo.delete({
+      date: dateObject
+    });
+    await recentTdhHistoryRepo
+      .createQueryBuilder()
+      .delete()
+      .where('date = :exactDate OR date <= :cutoff', {
+        exactDate: dateObject,
+        cutoff: cutoffDate
+      })
+      .execute();
+    await tdhHistoryRepo.upsert(tdhHistory, [
+      'date',
+      'consolidation_key',
+      'block'
+    ]);
+    await recentTdhHistoryRepo.upsert(tdhHistory, [
+      'date',
+      'consolidation_key',
+      'block'
+    ]);
 
     await resetRepository(
       transactionalEntityManager.getRepository(LatestTDHHistory),
