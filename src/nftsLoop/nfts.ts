@@ -25,11 +25,11 @@ import {
   NFT_VIDEO_LINK,
   NULL_ADDRESS
 } from '../constants';
-import { replaceEmojisWithHex } from '../helpers';
 import { processArtists } from '../artists';
 import { Transaction } from '../entities/ITransaction';
 import { In, MoreThan } from 'typeorm';
 import { equalIgnoreCase } from '../strings';
+import { text } from '../text';
 
 const logger = Logger.get('nfts');
 
@@ -324,7 +324,7 @@ async function buildBaseNft(
     name: metadata.name,
     collection: config.collection,
     token_type: tokenType,
-    description: replaceEmojisWithHex(metadata.description),
+    description: text.replaceEmojisWithHex(metadata.description),
     artist,
     artist_seize_handle: artistSeizeHandle,
     uri: metadata.uri ?? '',

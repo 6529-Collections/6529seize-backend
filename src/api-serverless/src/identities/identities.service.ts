@@ -2,7 +2,6 @@ import {
   identitySubscriptionsDb,
   IdentitySubscriptionsDb
 } from '../identity-subscriptions/identity-subscriptions.db';
-import { replaceEmojisWithHex } from '../../../helpers';
 import {
   ActivityEventAction,
   ActivityEventTargetType
@@ -40,6 +39,7 @@ import { ApiProfileClassification } from '../generated/models/ApiProfileClassifi
 import { getLevelFromScore } from '../../../profiles/profile-level';
 import { equalIgnoreCase } from '../../../strings';
 import { enums } from '../../../enums';
+import { text } from '../../../text';
 
 export class IdentitiesService {
   constructor(
@@ -331,7 +331,7 @@ export class IdentitiesService {
                 await this.identitiesDb.updateWalletsEnsName(
                   {
                     wallet: newPrimaryAddress,
-                    ensName: ensName ? replaceEmojisWithHex(ensName) : null
+                    ensName: ensName ? text.replaceEmojisWithHex(ensName) : null
                   },
                   connection
                 );
