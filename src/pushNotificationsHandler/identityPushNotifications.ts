@@ -194,6 +194,9 @@ async function handleDropVoted(
   additionalEntity: ApiIdentity
 ) {
   const vote = (notification.additional_data as any).vote;
+  if (vote === 0) {
+    return;
+  }
   if (!vote) {
     throw new Error(`[ID ${notification.id}] Vote additional data not found`);
   }
