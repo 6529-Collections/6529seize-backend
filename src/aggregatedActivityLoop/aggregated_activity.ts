@@ -9,7 +9,6 @@ import {
   PUNK_6529
 } from '../constants';
 import { Transaction } from '../entities/ITransaction';
-import { isNullAddress } from '../helpers';
 import {
   fetchAllSeasons,
   fetchMaxTransactionsBlockNumber,
@@ -38,6 +37,7 @@ import {
   NEXTGEN_CORE_CONTRACT
 } from '../nextgen/nextgen_constants';
 import { equalIgnoreCase } from '../strings';
+import { ethAddresses } from '../eth-addresses';
 
 const logger = Logger.get('AGGREGATED_ACTIVITY');
 interface ActivityBreakdown {
@@ -491,7 +491,7 @@ async function retrieveActivityDelta(
         address
       );
 
-      if (isNullAddress(address)) {
+      if (ethAddresses.isNullOrDead(address)) {
         addressTransactions.forEach((at) => {
           at.value = 0;
         });

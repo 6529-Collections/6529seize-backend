@@ -9,7 +9,6 @@ import {
   NextGenTokenTrait
 } from '../entities/INextGen';
 import { LogDescription } from 'ethers/lib/utils';
-import { isNullAddress } from '../helpers';
 import { findTransactionValues } from '../transaction_values';
 import {
   fetchNextGenCollection,
@@ -24,6 +23,7 @@ import { getNextgenNetwork, NEXTGEN_CORE_CONTRACT } from './nextgen_constants';
 import { Transaction } from '../entities/ITransaction';
 import { getAlchemyInstance, getEns } from '../alchemy';
 import { equalIgnoreCase } from '../strings';
+import { ethAddresses } from '../eth-addresses';
 
 const logger = Logger.get('NEXTGEN_CORE_EVENTS');
 
@@ -175,7 +175,7 @@ async function processTransfer(
   )[0];
 
   const isMint = equalIgnoreCase(logInfo.args.from, NULL_ADDRESS);
-  const isBurn = isNullAddress(logInfo.args.to);
+  const isBurn = ethAddresses.isNullOrDead(logInfo.args.to);
   const isSale = transactionWithValue.value > 0;
   let description = 'Transfer';
 

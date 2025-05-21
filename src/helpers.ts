@@ -1,21 +1,10 @@
 import axios, { AxiosResponse } from 'axios';
-import {
-  CONSOLIDATIONS_LIMIT,
-  NULL_ADDRESS,
-  NULL_ADDRESS_DEAD
-} from './constants';
+import { CONSOLIDATIONS_LIMIT } from './constants';
 import * as short from 'short-uuid';
 import { goerli, sepolia } from '@wagmi/chains';
 import { Network } from 'alchemy-sdk';
 import moment from 'moment-timezone';
 import { equalIgnoreCase } from './strings';
-
-export function isNullAddress(address: string) {
-  return (
-    equalIgnoreCase(address, NULL_ADDRESS) ||
-    equalIgnoreCase(address, NULL_ADDRESS_DEAD)
-  );
-}
 
 export function getDaysDiff(t1: Date, t2: Date, floor = true) {
   const diff = t1.getTime() - t2.getTime();

@@ -59,7 +59,7 @@ import {
   NFTHistoryClaim
 } from './entities/INFTHistory';
 import { Rememe, RememeUpload } from './entities/IRememe';
-import { extractConsolidationWallets, isNullAddress } from './helpers';
+import { extractConsolidationWallets } from './helpers';
 import { getConsolidationsSql, parseTdhDataFromDB } from './sql_helpers';
 import { NextGenTokenTDH } from './entities/INextGen';
 import { ConnectionWrapper, setSqlExecutor, sqlExecutor } from './sql-executor';
@@ -513,7 +513,7 @@ export async function fetchWalletTransactions(
   };
 
   let filters;
-  if (isNullAddress(wallet)) {
+  if (ethAddresses.isNullOrDead(wallet)) {
     filters = constructFilters('filters', `to_address = :wallet`);
     params.wallet = wallet;
   } else {
