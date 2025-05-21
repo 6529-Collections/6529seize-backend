@@ -11,7 +11,7 @@ import {
 } from './ws/ws';
 import { Logger } from '../../logging';
 import { WsMessageType } from './ws/ws-message';
-import { isValidUuid } from '../../uuid';
+import { ids } from '../../ids';
 import { wsListenersNotifier } from './ws/ws-listeners-notifier';
 
 const serverlessHttp = require('serverless-http');
@@ -68,7 +68,7 @@ async function wsHandler(
         switch (message.type) {
           case WsMessageType.SUBSCRIBE_TO_WAVE: {
             const waveId = message.wave_id?.toString() ?? null;
-            if (waveId && !isValidUuid(waveId)) {
+            if (waveId && !ids.isValidUuid(waveId)) {
               return {
                 statusCode: 400,
                 body: JSON.stringify({ message: 'Invalid wave id' })
@@ -88,7 +88,7 @@ async function wsHandler(
           }
           case WsMessageType.USER_IS_TYPING: {
             const waveId = message.wave_id?.toString();
-            if (!waveId || !isValidUuid(waveId)) {
+            if (!waveId || !ids.isValidUuid(waveId)) {
               return {
                 statusCode: 400,
                 body: JSON.stringify({ message: 'Invalid wave id' })

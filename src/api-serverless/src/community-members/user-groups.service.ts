@@ -18,7 +18,7 @@ import {
   UserGroupsDb
 } from '../../../user-groups/user-groups.db';
 import slugify from 'slugify';
-import { distinct, uniqueShortId } from '../../../helpers';
+import { distinct } from '../../../helpers';
 import { BadRequestException, NotFoundException } from '../../../exceptions';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import {
@@ -58,6 +58,7 @@ import { identityFetcher } from '../identities/identity.fetcher';
 import { ApiIdentity } from '../generated/models/ApiIdentity';
 import { identitiesDb } from '../../../identities/identities.db';
 import { enums } from '../../../enums';
+import { ids } from '../../../ids';
 
 export type NewUserGroupEntity = Omit<
   UserGroupEntity,
@@ -95,7 +96,7 @@ export class UserGroupsService {
               strict: true
             }).slice(0, 50) +
             '-' +
-            uniqueShortId();
+            ids.uniqueShortId();
           const inclusionGroups = group.addresses.length
             ? await this.userGroupsDb.insertGroupEntriesAndGetGroupIds(
                 group.addresses,

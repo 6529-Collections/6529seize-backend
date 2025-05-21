@@ -45,7 +45,7 @@ import {
   ProfileProxiesDb
 } from '../profile-proxies/profile-proxies.db';
 import { ApiBulkRateRequest } from '../api-serverless/src/generated/models/ApiBulkRateRequest';
-import { distinct, uniqueShortId } from '../helpers';
+import { distinct } from '../helpers';
 import { ApiAvailableRatingCredit } from '../api-serverless/src/generated/models/ApiAvailableRatingCredit';
 import { ApiRatingWithProfileInfoAndLevel } from '../api-serverless/src/generated/models/ApiRatingWithProfileInfoAndLevel';
 import { ApiRatingWithProfileInfoAndLevelPage } from '../api-serverless/src/generated/models/ApiRatingWithProfileInfoAndLevelPage';
@@ -62,6 +62,7 @@ import { identityFetcher } from '../api-serverless/src/identities/identity.fetch
 import { revokeTdhBasedDropWavesOverVotes } from '../drops/participation-drops-over-vote-revocation';
 import { appFeatures } from '../app-features';
 import { enums } from '../enums';
+import { ids } from '../ids';
 
 export class RatingsService {
   private readonly logger = Logger.get('RATINGS_SERVICE');
@@ -1115,7 +1116,7 @@ export class RatingsService {
         const logs = ratingChanges
           .map<ProfileActivityLog[]>((profileChange) =>
             profileChange.changes.map<ProfileActivityLog>((ratingChange) => ({
-              id: uniqueShortId(),
+              id: ids.uniqueShortId(),
               created_at: now,
               profile_id: raterId,
               target_id: profileChange.profileId,

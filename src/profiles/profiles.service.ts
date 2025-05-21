@@ -19,7 +19,7 @@ import {
 import { ratingsService, RatingsService } from '../rates/ratings.service';
 import { cicService, CicService } from '../cic/cic.service';
 import { randomUUID } from 'crypto';
-import { distinct, uniqueShortId } from '../helpers';
+import { distinct } from '../helpers';
 import {
   profileProxiesDb,
   ProfileProxiesDb
@@ -44,6 +44,7 @@ import { ApiIdentity } from '../api-serverless/src/generated/models/ApiIdentity'
 import { identitySubscriptionsDb } from '../api-serverless/src/identity-subscriptions/identity-subscriptions.db';
 import { identityFetcher } from '../api-serverless/src/identities/identity.fetcher';
 import { enums } from '../enums';
+import { ids } from '../ids';
 
 export class ProfilesService {
   private readonly logger = Logger.get('PROFILES_SERVICE');
@@ -220,7 +221,7 @@ export class ProfilesService {
     const newProfileCreationLogs = newProfileEntities
       .map<ProfileActivityLog[]>((profile) => [
         {
-          id: uniqueShortId(),
+          id: ids.uniqueShortId(),
           profile_id: profile.external_id,
           target_id: null,
           type: ProfileActivityLogType.HANDLE_EDIT,
@@ -234,7 +235,7 @@ export class ProfilesService {
           additional_data_2: null
         },
         {
-          id: uniqueShortId(),
+          id: ids.uniqueShortId(),
           profile_id: profile.external_id,
           target_id: null,
           type: ProfileActivityLogType.CLASSIFICATION_EDIT,

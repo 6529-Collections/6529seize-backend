@@ -1,7 +1,6 @@
 import fetch from 'node-fetch';
 import * as db from '../../db-api';
-import { uniqueShortId } from '../../helpers';
-import { isValidUuid } from '../../uuid';
+import { ids } from '../../ids';
 
 import feedRoutes from './feed/feed.routes';
 import identitiesRoutes from './identities/identities.routes';
@@ -122,7 +121,7 @@ const API_PORT = 3000;
 function requestLogMiddleware() {
   return (request: Request, response: Response, next: NextFunction) => {
     const requestId =
-      request.apiGateway?.context?.awsRequestId ?? uniqueShortId();
+      request.apiGateway?.context?.awsRequestId ?? ids.uniqueShortId();
     Logger.registerAwsRequestId(requestId);
     const { method, originalUrl: url } = request;
     const uqKey = `${method} ${url}`;
@@ -1096,7 +1095,7 @@ loadApi().then(async () => {
             switch (message.type) {
               case WsMessageType.SUBSCRIBE_TO_WAVE: {
                 const waveId = message.wave_id?.toString() ?? null;
-                if (waveId && !isValidUuid(waveId)) {
+                if (waveId && !ids.isValidUuid(waveId)) {
                   socket.send(
                     JSON.stringify({
                       error: 'Invalid waveId'
@@ -1113,7 +1112,7 @@ loadApi().then(async () => {
               }
               case WsMessageType.USER_IS_TYPING: {
                 const waveId = message.wave_id?.toString();
-                if (!waveId || !isValidUuid(waveId)) {
+                if (!waveId || !ids.isValidUuid(waveId)) {
                   socket.send(
                     JSON.stringify({
                       error: 'Invalid wave id'

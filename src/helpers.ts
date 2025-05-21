@@ -1,6 +1,5 @@
 import axios, { AxiosResponse } from 'axios';
 import { CONSOLIDATIONS_LIMIT } from './constants';
-import * as short from 'short-uuid';
 import { equalIgnoreCase } from './strings';
 
 function shouldAddConsolidation(
@@ -132,10 +131,6 @@ export function stringToHex(s: string) {
 
 export function distinct<T>(arr: T[]): T[] {
   return Array.from(new Set(arr));
-}
-
-export function uniqueShortId(): string {
-  return short.generate();
 }
 
 export const sum = (ns: number[]) => ns.reduce((sum, n) => sum + n, 0);
