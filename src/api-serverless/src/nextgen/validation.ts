@@ -1,7 +1,6 @@
 import { ethers } from 'ethers';
 import * as Joi from 'joi';
 import { hashMessage } from '@ethersproject/hash';
-import { stringToHex } from '../../../helpers';
 import { Readable } from 'stream';
 import {
   getNextGenChainId,
@@ -380,4 +379,13 @@ async function validateAdmin(collection_id: number, address: string) {
     );
     return false;
   }
+}
+
+function stringToHex(s: string) {
+  let hexString = '';
+  for (let i = 0; i < s.length; i++) {
+    const hex = s.charCodeAt(i).toString(16);
+    hexString += hex;
+  }
+  return hexString;
 }

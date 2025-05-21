@@ -120,15 +120,6 @@ export function formatDateAsString(date: Date) {
   ].join('');
 }
 
-export function stringToHex(s: string) {
-  let hexString = '';
-  for (let i = 0; i < s.length; i++) {
-    const hex = s.charCodeAt(i).toString(16);
-    hexString += hex;
-  }
-  return hexString;
-}
-
 // The assertUnreachable function takes an input _x of type never and always throws
 // an error. This function is typically used in TypeScript to assert exhaustiveness in
 // switch-case or if-else constructs, ensuring that all possible cases are handled.
