@@ -18,7 +18,6 @@ import { ApiGroupFilterDirection } from '../generated/models/ApiGroupFilterDirec
 import { ApiGroupRepFilter } from '../generated/models/ApiGroupRepFilter';
 import { ApiGroupLevelFilter } from '../generated/models/ApiGroupLevelFilter';
 import { ApiGroupTdhFilter } from '../generated/models/ApiGroupTdhFilter';
-import { distinct } from '../../../helpers';
 import { FilterDirection } from '../../../entities/IUserGroup';
 import {
   ApiGroupOwnsNft,
@@ -30,6 +29,7 @@ import { RequestContext } from '../../../request.context';
 import { identityFetcher } from '../identities/identity.fetcher';
 import { enums } from '../../../enums';
 import { numbers } from '../../../numbers';
+import { collections } from '../../../collections';
 
 const router = asyncRouter();
 
@@ -146,7 +146,7 @@ router.post(
     if (!savingProfileId) {
       throw new ForbiddenException(`Please create a profile first.`);
     }
-    const relatedIdentities = distinct(
+    const relatedIdentities = collections.distinct(
       [
         apiUserGroup.group.rep.user_identity,
         apiUserGroup.group.cic.user_identity

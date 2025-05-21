@@ -17,13 +17,14 @@ import {
   NftData,
   NftsCollectionOwnershipData
 } from './collected.db';
-import { assertUnreachable, distinct } from '../../../../helpers';
+import { assertUnreachable } from '../../../../helpers';
 import {
   identityFetcher,
   IdentityFetcher
 } from '../../identities/identity.fetcher';
 import { equalIgnoreCase } from '../../../../strings';
 import { numbers } from '../../../../numbers';
+import { collections } from '../../../../collections';
 
 export class CollectedService {
   constructor(
@@ -250,57 +251,64 @@ export class CollectedService {
       await this.collectedDb.getGradientsAndMemesLiveBalancesByTokenIds(
         walletsToSearchBy
       );
-    distinct([
-      ...Object.keys(memesAndGradients.memes.tdhsAndBalances),
-      ...Object.keys(memesLiveBalances)
-    ]).forEach((id) => {
-      const tokenId = numbers.parseIntOrNull(id);
-      if (tokenId !== null) {
-        const liveBalance = memesLiveBalances[tokenId] ?? 0;
-        if (liveBalance === 0) {
-          delete memesAndGradients.memes.tdhsAndBalances[tokenId];
-        } else {
-          memesAndGradients.memes.tdhsAndBalances[tokenId] = {
-            balance: liveBalance,
-            tdh: memesAndGradients.memes.tdhsAndBalances[tokenId]?.tdh ?? 0
-          };
+    collections
+      .distinct([
+        ...Object.keys(memesAndGradients.memes.tdhsAndBalances),
+        ...Object.keys(memesLiveBalances)
+      ])
+      .forEach((id) => {
+        const tokenId = numbers.parseIntOrNull(id);
+        if (tokenId !== null) {
+          const liveBalance = memesLiveBalances[tokenId] ?? 0;
+          if (liveBalance === 0) {
+            delete memesAndGradients.memes.tdhsAndBalances[tokenId];
+          } else {
+            memesAndGradients.memes.tdhsAndBalances[tokenId] = {
+              balance: liveBalance,
+              tdh: memesAndGradients.memes.tdhsAndBalances[tokenId]?.tdh ?? 0
+            };
+          }
         }
-      }
-    });
-    distinct([
-      ...Object.keys(memesAndGradients.gradients.tdhsAndBalances),
-      ...Object.keys(gradientsLiveBalances)
-    ]).forEach((id) => {
-      const tokenId = numbers.parseIntOrNull(id);
-      if (tokenId !== null) {
-        const liveBalance = gradientsLiveBalances[tokenId] ?? 0;
-        if (liveBalance === 0) {
-          delete memesAndGradients.gradients.tdhsAndBalances[tokenId];
-        } else {
-          memesAndGradients.gradients.tdhsAndBalances[tokenId] = {
-            balance: liveBalance,
-            tdh: memesAndGradients.gradients.tdhsAndBalances[tokenId]?.tdh ?? 0
-          };
+      });
+    collections
+      .distinct([
+        ...Object.keys(memesAndGradients.gradients.tdhsAndBalances),
+        ...Object.keys(gradientsLiveBalances)
+      ])
+      .forEach((id) => {
+        const tokenId = numbers.parseIntOrNull(id);
+        if (tokenId !== null) {
+          const liveBalance = gradientsLiveBalances[tokenId] ?? 0;
+          if (liveBalance === 0) {
+            delete memesAndGradients.gradients.tdhsAndBalances[tokenId];
+          } else {
+            memesAndGradients.gradients.tdhsAndBalances[tokenId] = {
+              balance: liveBalance,
+              tdh:
+                memesAndGradients.gradients.tdhsAndBalances[tokenId]?.tdh ?? 0
+            };
+          }
         }
-      }
-    });
-    distinct([
-      ...Object.keys(nextgenStats.tdhsAndBalances),
-      ...Object.keys(nextgenLiveBalances)
-    ]).forEach((id) => {
-      const tokenId = numbers.parseIntOrNull(id);
-      if (tokenId !== null) {
-        const liveBalance = nextgenLiveBalances[tokenId] ?? 0;
-        if (liveBalance === 0) {
-          delete nextgenStats.tdhsAndBalances[tokenId];
-        } else {
-          nextgenStats.tdhsAndBalances[tokenId] = {
-            balance: liveBalance,
-            tdh: nextgenStats.tdhsAndBalances[tokenId]?.tdh ?? 0
-          };
+      });
+    collections
+      .distinct([
+        ...Object.keys(nextgenStats.tdhsAndBalances),
+        ...Object.keys(nextgenLiveBalances)
+      ])
+      .forEach((id) => {
+        const tokenId = numbers.parseIntOrNull(id);
+        if (tokenId !== null) {
+          const liveBalance = nextgenLiveBalances[tokenId] ?? 0;
+          if (liveBalance === 0) {
+            delete nextgenStats.tdhsAndBalances[tokenId];
+          } else {
+            nextgenStats.tdhsAndBalances[tokenId] = {
+              balance: liveBalance,
+              tdh: nextgenStats.tdhsAndBalances[tokenId]?.tdh ?? 0
+            };
+          }
         }
-      }
-    });
+      });
   }
 
   private getMemesAndGradientsOwnershipData(

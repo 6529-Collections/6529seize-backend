@@ -129,10 +129,6 @@ export function stringToHex(s: string) {
   return hexString;
 }
 
-export function distinct<T>(arr: T[]): T[] {
-  return Array.from(new Set(arr));
-}
-
 // The assertUnreachable function takes an input _x of type never and always throws
 // an error. This function is typically used in TypeScript to assert exhaustiveness in
 // switch-case or if-else constructs, ensuring that all possible cases are handled.

@@ -45,7 +45,6 @@ import {
   ProfileProxiesDb
 } from '../profile-proxies/profile-proxies.db';
 import { ApiBulkRateRequest } from '../api-serverless/src/generated/models/ApiBulkRateRequest';
-import { distinct } from '../helpers';
 import { ApiAvailableRatingCredit } from '../api-serverless/src/generated/models/ApiAvailableRatingCredit';
 import { ApiRatingWithProfileInfoAndLevel } from '../api-serverless/src/generated/models/ApiRatingWithProfileInfoAndLevel';
 import { ApiRatingWithProfileInfoAndLevelPage } from '../api-serverless/src/generated/models/ApiRatingWithProfileInfoAndLevelPage';
@@ -63,6 +62,7 @@ import { revokeTdhBasedDropWavesOverVotes } from '../drops/participation-drops-o
 import { appFeatures } from '../app-features';
 import { enums } from '../enums';
 import { ids } from '../ids';
+import { collections } from '../collections';
 
 export class RatingsService {
   private readonly logger = Logger.get('RATINGS_SERVICE');
@@ -1000,14 +1000,16 @@ export class RatingsService {
 
   async bulkRep({ targets }: ApiBulkRepRequest, ctx: RequestContext) {
     const authenticationContext = ctx.authenticationContext!;
-    const proposedCategories = distinct(
+    const proposedCategories = collections.distinct(
       targets.map((target) => target.category)
     );
     await this.abusivenessCheckService.bulkCheckRepPhrases(
       proposedCategories,
       ctx
     );
-    const targetAddresses = distinct(targets.map((it) => it.address));
+    const targetAddresses = collections.distinct(
+      targets.map((it) => it.address)
+    );
     await this.identitiesDb.executeNativeQueriesInTransaction(
       async (connection) => {
         const ctxWithConnection = { ...ctx, connection };

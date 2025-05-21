@@ -29,6 +29,10 @@ export class Collections {
 
     return batched;
   }
+
+  public distinct<T>(arr: T[]): T[] {
+    return Array.from(new Set(arr));
+  }
 }
 
 export const collections = new Collections();

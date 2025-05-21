@@ -19,7 +19,6 @@ import {
 import { ratingsService, RatingsService } from '../rates/ratings.service';
 import { cicService, CicService } from '../cic/cic.service';
 import { randomUUID } from 'crypto';
-import { distinct } from '../helpers';
 import {
   profileProxiesDb,
   ProfileProxiesDb
@@ -45,6 +44,7 @@ import { identitySubscriptionsDb } from '../api-serverless/src/identity-subscrip
 import { identityFetcher } from '../api-serverless/src/identities/identity.fetcher';
 import { enums } from '../enums';
 import { ids } from '../ids';
+import { collections } from '../collections';
 
 export class ProfilesService {
   private readonly logger = Logger.get('PROFILES_SERVICE');
@@ -551,7 +551,10 @@ export class ProfilesService {
         targetIdentity,
         connectionHolder
       );
-    const distinctGroups = distinct([...sourceGroups, ...targetGroups]);
+    const distinctGroups = collections.distinct([
+      ...sourceGroups,
+      ...targetGroups
+    ]);
     if (distinctGroups) {
       await this.userGroupsDb.deleteProfileIdsInProfileGroups(
         [sourceIdentity, targetIdentity],

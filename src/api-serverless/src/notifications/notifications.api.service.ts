@@ -7,7 +7,7 @@ import {
   UserGroupsService
 } from '../community-members/user-groups.service';
 import { UserNotification } from '../../../notifications/user-notification.types';
-import { assertUnreachable, distinct } from '../../../helpers';
+import { assertUnreachable } from '../../../helpers';
 import { IdentityNotificationCause } from '../../../entities/IIdentityNotification';
 import { DropsApiService, dropsService } from '../drops/drops.api.service';
 import { AuthenticationContext } from '../../../auth-context';
@@ -33,6 +33,7 @@ import {
   IdentityFetcher
 } from '../identities/identity.fetcher';
 import { enums } from '../../../enums';
+import { collections } from '../../../collections';
 
 export class NotificationsApiService {
   constructor(
@@ -191,7 +192,10 @@ export class NotificationsApiService {
         }
       }
     }
-    return { profileIds: distinct(profileIds), dropIds: distinct(dropIds) };
+    return {
+      profileIds: collections.distinct(profileIds),
+      dropIds: collections.distinct(dropIds)
+    };
   }
 
   private mapToApiNotification({

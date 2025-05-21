@@ -1,7 +1,7 @@
 import { SearchWavesParams, wavesApiDb, WavesApiDb } from './waves.api.db';
 import { ApiCreateNewWave } from '../generated/models/ApiCreateNewWave';
 import { ApiWave } from '../generated/models/ApiWave';
-import { assertUnreachable, distinct } from '../../../helpers';
+import { assertUnreachable } from '../../../helpers';
 import {
   userGroupsService,
   UserGroupsService
@@ -62,6 +62,7 @@ import {
   identityFetcher
 } from '../identities/identity.fetcher';
 import { enums } from '../../../enums';
+import { collections } from '../../../collections';
 
 export class WaveApiService {
   constructor(
@@ -336,7 +337,7 @@ export class WaveApiService {
       }
     }
     this.validateOutcomes(request);
-    const referencedGroupIds = distinct(
+    const referencedGroupIds = collections.distinct(
       [
         request.visibility.scope.group_id,
         request.participation.scope.group_id,

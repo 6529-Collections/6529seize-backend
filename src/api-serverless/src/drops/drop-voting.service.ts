@@ -9,9 +9,9 @@ import { DropEntity, DropType } from '../../../entities/IDrop';
 import { DropVotingDb, dropVotingDb } from './drop-voting.db';
 import { WaveCreditType } from '../../../entities/IWave';
 import { ConnectionWrapper } from '../../../sql-executor';
-import { distinct } from '../../../helpers';
 import { ratingsDb, RatingsDb } from '../../../rates/ratings.db';
 import { Rating } from '../../../entities/IRating';
+import { collections } from '../../../collections';
 
 export class DropVotingService {
   constructor(
@@ -35,7 +35,7 @@ export class DropVotingService {
     const participationDrops = dropEntities.filter(
       (drop) => drop.drop_type === DropType.PARTICIPATORY
     );
-    const relevantWaveIds = distinct(
+    const relevantWaveIds = collections.distinct(
       participationDrops.map((drop) => drop.wave_id)
     );
     const relevantWaves = await this.wavesDb.findWavesByIds(
@@ -60,8 +60,9 @@ export class DropVotingService {
       }))
       .filter((it) => it.rater_id !== null || it.category !== null);
     const hasOnlyOneRestriction =
-      distinct(repWaveConditions.map((it) => `${it.category}-${it.rater_id}`))
-        .length === 1;
+      collections.distinct(
+        repWaveConditions.map((it) => `${it.category}-${it.rater_id}`)
+      ).length === 1;
     const [activeVotes, totalVotesInRelevantWaves, tdh, repRatings] =
       await Promise.all([
         this.votingDb.getVotersActiveVoteForDrops(

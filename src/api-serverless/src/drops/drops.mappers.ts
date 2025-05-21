@@ -9,7 +9,6 @@ import {
 } from '../../../entities/IDrop';
 import { ConnectionWrapper } from '../../../sql-executor';
 import { ApiDrop } from '../generated/models/ApiDrop';
-import { distinct } from '../../../helpers';
 import { ApiProfileMin } from '../generated/models/ApiProfileMin';
 import { ApiDropPart } from '../generated/models/ApiDropPart';
 import { ApiDropMedia } from '../generated/models/ApiDropMedia';
@@ -62,6 +61,7 @@ import {
 } from '../identities/identity.fetcher';
 import { enums } from '../../../enums';
 import { numbers } from '../../../numbers';
+import { collections } from '../../../collections';
 
 export class DropsMappers {
   constructor(
@@ -238,7 +238,11 @@ export class DropsMappers {
     const replyDropIds = dropEntities
       .map((it) => it.reply_to_drop_id)
       .filter((it) => it !== null) as string[];
-    const dropIds = distinct([...rootDropIds, ...quoteIds, ...replyDropIds]);
+    const dropIds = collections.distinct([
+      ...rootDropIds,
+      ...quoteIds,
+      ...replyDropIds
+    ]);
     const [allEntities, dropsParts] = await Promise.all([
       this.dropsDb.getDropsByIds(dropIds, connection),
       this.dropsDb.getDropsParts(dropIds, connection)
@@ -246,13 +250,13 @@ export class DropsMappers {
     const allReplyDropIds = allEntities
       .map((it) => it.reply_to_drop_id)
       .filter((it) => it !== null) as string[];
-    const quotedDropIds = distinct(
+    const quotedDropIds = collections.distinct(
       Object.values(dropsParts)
         .flat()
         .map((it) => it.quoted_drop_id)
         .filter((it) => it !== null) as string[]
     );
-    const allDropIds = distinct([
+    const allDropIds = collections.distinct([
       ...quotedDropIds,
       ...allReplyDropIds,
       ...dropIds
@@ -425,7 +429,7 @@ export class DropsMappers {
     const voterProfileIds = Object.values(dropsTopVoters)
       .map((it) => it.map((r) => r.voter_id))
       .flat();
-    const allProfileIds = distinct([
+    const allProfileIds = collections.distinct([
       ...allEntities.map((it) => it.author_id),
       ...mentions.map((it) => it.mentioned_profile_id),
       ...clapperProfileIds,

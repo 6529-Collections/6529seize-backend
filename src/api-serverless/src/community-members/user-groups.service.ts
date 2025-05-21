@@ -18,7 +18,6 @@ import {
   UserGroupsDb
 } from '../../../user-groups/user-groups.db';
 import slugify from 'slugify';
-import { distinct } from '../../../helpers';
 import { BadRequestException, NotFoundException } from '../../../exceptions';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import {
@@ -59,6 +58,7 @@ import { ApiIdentity } from '../generated/models/ApiIdentity';
 import { identitiesDb } from '../../../identities/identities.db';
 import { enums } from '../../../enums';
 import { ids } from '../../../ids';
+import { collections } from '../../../collections';
 
 export type NewUserGroupEntity = Omit<
   UserGroupEntity,
@@ -1106,7 +1106,7 @@ export class UserGroupsService {
   ): Promise<ApiGroupFull[]> {
     ctx.timer?.start('userGroupsService->mapForApi');
     const relatedProfiles = await identityFetcher.getOverviewsByIds(
-      distinct(
+      collections.distinct(
         groups
           .map(
             (it) =>

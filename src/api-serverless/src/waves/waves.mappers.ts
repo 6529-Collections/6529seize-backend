@@ -1,6 +1,5 @@
 import { ApiCreateNewWave } from '../generated/models/ApiCreateNewWave';
 import { InsertWaveEntity, wavesApiDb, WavesApiDb } from './waves.api.db';
-import { distinct } from '../../../helpers';
 import {
   ParticipationRequiredMedia,
   WaveCreditType,
@@ -47,6 +46,7 @@ import {
   IdentityFetcher
 } from '../identities/identity.fetcher';
 import { enums } from '../../../enums';
+import { collections } from '../../../collections';
 
 export class WavesMappers {
   constructor(
@@ -428,7 +428,9 @@ export class WavesMappers {
 
       dropsService
         .findDropsByIdsOrThrow(
-          distinct(waveEntities.map((it) => it.description_drop_id)),
+          collections.distinct(
+            waveEntities.map((it) => it.description_drop_id)
+          ),
           ctx.authenticationContext,
           ctx.connection
         )
@@ -463,7 +465,7 @@ export class WavesMappers {
           )
         : Promise.resolve({} as Record<string, number>)
     ]);
-    const profileIds = distinct([
+    const profileIds = collections.distinct([
       ...waveEntities
         .map(
           (waveEntity) =>
