@@ -1,4 +1,3 @@
-import axios, { AxiosResponse } from 'axios';
 import { CONSOLIDATIONS_LIMIT } from './constants';
 import { equalIgnoreCase } from './strings';
 
@@ -62,50 +61,6 @@ export function extractConsolidationWallets(
   }
 
   return [wallet];
-}
-
-export async function getContentType(url: string): Promise<string | null> {
-  try {
-    const response: AxiosResponse = await axios.head(
-      parseIpfsUrlToCloudflare(url)
-    );
-    const cType = response.headers['content-type'];
-    if (cType) {
-      return cType.split('/')[1].toLowerCase();
-    }
-    return null;
-  } catch (error) {
-    try {
-      const response: AxiosResponse = await axios.head(parseIpfsUrl(url));
-      const cType = response.headers['content-type'];
-      if (cType) {
-        return cType.split('/')[1].toLowerCase();
-      }
-      return null;
-    } catch (error) {
-      return null;
-    }
-  }
-}
-
-export function parseIpfsUrl(url: string) {
-  if (!url) {
-    return url;
-  }
-  if (url.startsWith('ipfs')) {
-    return `https://ipfs.io/ipfs/${url.split('://')[1]}`;
-  }
-  return url;
-}
-
-export function parseIpfsUrlToCloudflare(url: string | undefined) {
-  if (!url) {
-    return '';
-  }
-  if (url.startsWith('ipfs')) {
-    return `https://cf-ipfs.com/ipfs/${url.split('://')[1]}`;
-  }
-  return url;
 }
 
 export function buildConsolidationKey(wallets: string[]) {

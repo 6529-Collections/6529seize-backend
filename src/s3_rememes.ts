@@ -1,15 +1,16 @@
 import {
-  S3Client,
   HeadObjectCommand,
-  PutObjectCommand
+  PutObjectCommand,
+  S3Client
 } from '@aws-sdk/client-s3';
 import sharp from 'sharp';
 import { RequestInfo, RequestInit } from 'node-fetch';
 import { Rememe } from './entities/IRememe';
-import { getContentType, parseIpfsUrlToCloudflare } from './helpers';
 import { CLOUDFRONT_LINK } from './constants';
 import { persistRememes } from './db';
 import { Logger } from './logging';
+import { ipfs } from './ipfs';
+import { mediaChecker } from './media-checker';
 
 const logger = Logger.get('S3_REMEMES');
 
@@ -37,10 +38,10 @@ export const persistRememesS3 = async (rememes: Rememe[]) => {
       const image =
         r.media && r.media.gateway
           ? r.media.gateway
-          : parseIpfsUrlToCloudflare(r.image);
+          : ipfs.ifIpfsThenCloudflareElsePreserveOrEmptyIfUndefined(r.image);
 
       if (image) {
-        const format = await getContentType(image);
+        const format = await mediaChecker.getContentType(image);
 
         if (format) {
           const originalKey = `rememes/images/original/${r.contract}-${r.id}.${format}`;
@@ -55,7 +56,9 @@ export const persistRememesS3 = async (rememes: Rememe[]) => {
               `[MISSING IMAGE] [CONTRACT ${r.contract}] [ID ${r.id}]`
             );
 
-            const res = await fetch(parseIpfsUrlToCloudflare(image));
+            const res = await fetch(
+              ipfs.ifIpfsThenCloudflareElsePreserveOrEmptyIfUndefined(image)
+            );
             const blob = await res.arrayBuffer();
 
             await handleImageUpload(originalKey, format, blob);
