@@ -36,6 +36,10 @@ export async function updateDistributionInfoFor<T extends BaseNFT>(
     const nft = await repo.findOneBy({ contract, id: card_id } as any);
 
     if (nft) {
+      const mintDate = nft.mint_date
+        ? new Date(nft.mint_date).toISOString().slice(0, 19).replace('T', ' ')
+        : null;
+
       await sqlExecutor.execute(
         `UPDATE ${table}
          SET card_name = :cardName, mint_date = :mintDate
@@ -45,9 +49,7 @@ export async function updateDistributionInfoFor<T extends BaseNFT>(
           contract: nft.contract,
           cardId: nft.id,
           cardName: nft.name,
-          mintDate: nft.mint_date
-            ? nft.mint_date.toISOString().slice(0, 19).replace('T', ' ')
-            : null
+          mintDate
         }
       );
     }
