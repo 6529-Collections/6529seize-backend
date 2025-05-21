@@ -1,11 +1,7 @@
 import fetch from 'node-fetch';
 import * as db from '../../db-api';
-import {
-  isNumber,
-  isValidUuid,
-  parseIntOrNull,
-  uniqueShortId
-} from '../../helpers';
+import { isNumber, parseIntOrNull, uniqueShortId } from '../../helpers';
+import { isValidUuid } from '../../uuid';
 
 import feedRoutes from './feed/feed.routes';
 import identitiesRoutes from './identities/identities.routes';

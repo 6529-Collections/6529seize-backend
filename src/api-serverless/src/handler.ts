@@ -11,7 +11,7 @@ import {
 } from './ws/ws';
 import { Logger } from '../../logging';
 import { WsMessageType } from './ws/ws-message';
-import { isValidUuid } from '../../helpers';
+import { isValidUuid } from '../../uuid';
 import { wsListenersNotifier } from './ws/ws-listeners-notifier';
 
 const serverlessHttp = require('serverless-http');
