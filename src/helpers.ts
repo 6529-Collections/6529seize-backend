@@ -63,15 +63,6 @@ export function delay(time: number) {
   return new Promise((resolve) => setTimeout(resolve, time));
 }
 
-export function formatAddress(address: string) {
-  if (!address || !address.startsWith('0x') || address.endsWith('.eth')) {
-    return address;
-  }
-  return `${address.substring(0, 5)}...${address.substring(
-    address.length - 3
-  )}`;
-}
-
 function shouldAddConsolidation(
   uniqueWallets: any[],
   consolidations: any[],
