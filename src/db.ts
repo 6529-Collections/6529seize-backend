@@ -59,11 +59,7 @@ import {
   NFTHistoryClaim
 } from './entities/INFTHistory';
 import { Rememe, RememeUpload } from './entities/IRememe';
-import {
-  areEqualAddresses,
-  extractConsolidationWallets,
-  isNullAddress
-} from './helpers';
+import { extractConsolidationWallets, isNullAddress } from './helpers';
 import { getConsolidationsSql, parseTdhDataFromDB } from './sql_helpers';
 import { NextGenTokenTDH } from './entities/INextGen';
 import { ConnectionWrapper, setSqlExecutor, sqlExecutor } from './sql-executor';
@@ -87,6 +83,7 @@ import {
   TDHHistory
 } from './entities/ITDHHistory';
 import { ethAddresses } from './eth-addresses';
+import { equalIgnoreCase } from './strings';
 
 const mysql = require('mysql');
 
@@ -406,7 +403,7 @@ export async function fetchConsolidationDisplay(
   });
   const displayArray: string[] = [];
   myWallets.forEach((w) => {
-    const result = results.find((r: any) => areEqualAddresses(r.wallet, w));
+    const result = results.find((r: any) => equalIgnoreCase(r.wallet, w));
     if (result?.display && !result.display.includes('?')) {
       displayArray.push(result.display);
     } else {

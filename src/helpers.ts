@@ -8,18 +8,12 @@ import * as short from 'short-uuid';
 import { goerli, sepolia } from '@wagmi/chains';
 import { Network } from 'alchemy-sdk';
 import moment from 'moment-timezone';
-
-export function areEqualAddresses(w1: string, w2: string) {
-  if (!w1 || !w2) {
-    return false;
-  }
-  return w1.toUpperCase() === w2.toUpperCase();
-}
+import { equalIgnoreCase } from './strings';
 
 export function isNullAddress(address: string) {
   return (
-    areEqualAddresses(address, NULL_ADDRESS) ||
-    areEqualAddresses(address, NULL_ADDRESS_DEAD)
+    equalIgnoreCase(address, NULL_ADDRESS) ||
+    equalIgnoreCase(address, NULL_ADDRESS_DEAD)
   );
 }
 
@@ -69,10 +63,9 @@ function shouldAddConsolidation(
     if (
       !consolidations.some(
         (c) =>
-          (areEqualAddresses(c.wallet1, w) &&
-            areEqualAddresses(c.wallet2, wallet)) ||
-          (areEqualAddresses(c.wallet2, w) &&
-            areEqualAddresses(c.wallet1, wallet))
+          (equalIgnoreCase(c.wallet1, w) &&
+            equalIgnoreCase(c.wallet2, wallet)) ||
+          (equalIgnoreCase(c.wallet2, w) && equalIgnoreCase(c.wallet1, wallet))
       )
     ) {
       hasConsolidationsWithAll = false;
@@ -115,7 +108,7 @@ export function extractConsolidationWallets(
     }
   });
 
-  if (uniqueWallets.some((w) => areEqualAddresses(w, wallet))) {
+  if (uniqueWallets.some((w) => equalIgnoreCase(w, wallet))) {
     return uniqueWallets.sort();
   }
 

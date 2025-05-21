@@ -9,7 +9,7 @@ import {
 } from '../constants';
 import { DefaultBoost, TDH, TDHMemes, TokenTDH } from '../entities/ITDH';
 import { Transaction } from '../entities/ITransaction';
-import { areEqualAddresses, getDaysDiff, parseUTCDateString } from '../helpers';
+import { getDaysDiff, parseUTCDateString } from '../helpers';
 import { Alchemy } from 'alchemy-sdk';
 import {
   consolidateTransactions,
@@ -35,6 +35,7 @@ import { calculateMemesTdh } from './tdh_memes';
 import { Time } from '../time';
 import { extractMemesEditionSizes, extractNFTOwners } from './tdh_objects';
 import { ethers } from 'ethers';
+import { equalIgnoreCase } from '../strings';
 
 const logger = Logger.get('TDH');
 
@@ -187,12 +188,12 @@ export const getAdjustedMemesAndSeasons = async (lastTDHCalc: Date) => {
   );
 
   const MEMES_COUNT = [...ADJUSTED_NFTS].filter((nft) =>
-    areEqualAddresses(nft.contract, MEMES_CONTRACT)
+    equalIgnoreCase(nft.contract, MEMES_CONTRACT)
   ).length;
 
   const seasons = await fetchAllSeasons();
   const memeNfts = ADJUSTED_NFTS.filter((nft) =>
-    areEqualAddresses(nft.contract, MEMES_CONTRACT)
+    equalIgnoreCase(nft.contract, MEMES_CONTRACT)
   );
 
   const ADJUSTED_SEASONS = seasons.filter(
@@ -331,15 +332,15 @@ export const updateTDH = async (
       });
 
       consolidationTransactions = consolidationTransactions.filter(
-        (t) => !areEqualAddresses(t.from_address, t.to_address)
+        (t) => !equalIgnoreCase(t.from_address, t.to_address)
       );
 
-      if (areEqualAddresses(wallet, NULL_ADDRESS)) {
+      if (equalIgnoreCase(wallet, NULL_ADDRESS)) {
         logger.info(
           `[WALLET ${wallet}] [SKIPPING MEME CARD 8 BURN TRANSACTION ${MEME_8_BURN_TRANSACTION}]`
         );
         consolidationTransactions = consolidationTransactions.filter(
-          (t) => !areEqualAddresses(t.transaction, MEME_8_BURN_TRANSACTION)
+          (t) => !equalIgnoreCase(t.transaction, MEME_8_BURN_TRANSACTION)
         );
       }
 
@@ -348,10 +349,10 @@ export const updateTDH = async (
           ...consolidationTransactions
         ].filter(
           (t) =>
-            t.token_id == nft.id && areEqualAddresses(t.contract, nft.contract)
+            t.token_id == nft.id && equalIgnoreCase(t.contract, nft.contract)
         );
 
-        const hodlRate = areEqualAddresses(nft.contract, MEMES_CONTRACT)
+        const hodlRate = equalIgnoreCase(nft.contract, MEMES_CONTRACT)
           ? MEMES_HODL_INDEX / memesEditionSizes[nft.id]
           : nft.hodl_rate;
 
@@ -369,13 +370,13 @@ export const updateTDH = async (
           totalTDH__raw += tokenTDH.tdh__raw;
           totalBalance += tokenTDH.balance;
 
-          if (areEqualAddresses(nft.contract, MEMES_CONTRACT)) {
+          if (equalIgnoreCase(nft.contract, MEMES_CONTRACT)) {
             memesData.memes_tdh += tokenTDH.tdh;
             memesData.memes_tdh__raw += tokenTDH.tdh__raw;
             unique_memes++;
             memesData.memes_balance += tokenTDH.balance;
             walletMemes.push(tokenTDH);
-          } else if (areEqualAddresses(nft.contract, GRADIENT_CONTRACT)) {
+          } else if (equalIgnoreCase(nft.contract, GRADIENT_CONTRACT)) {
             gradientsTDH += tokenTDH.tdh;
             gradientsTDH__raw += tokenTDH.tdh__raw;
             gradientsBalance += tokenTDH.balance;
@@ -390,7 +391,7 @@ export const updateTDH = async (
         ].filter(
           (t) =>
             t.token_id == nft.id &&
-            areEqualAddresses(t.contract, NEXTGEN_CONTRACT)
+            equalIgnoreCase(t.contract, NEXTGEN_CONTRACT)
         );
 
         const tokenTDH = getTokenTdh(
@@ -484,8 +485,7 @@ export const updateTDH = async (
     const allCurrentTdh = await fetchTDHForBlock(block);
     const allTdh = allCurrentTdh
       .filter(
-        (t: TDH) =>
-          !startingWallets.some((sw) => areEqualAddresses(sw, t.wallet))
+        (t: TDH) => !startingWallets.some((sw) => equalIgnoreCase(sw, t.wallet))
       )
       .concat(boostedTdh);
     const allRankedTdh = await calculateRanks(
@@ -496,7 +496,7 @@ export const updateTDH = async (
       NEXTGEN_NFTS
     );
     rankedTdh = allRankedTdh.filter((t: TDH) =>
-      startingWallets.some((sw) => areEqualAddresses(sw, t.wallet))
+      startingWallets.some((sw) => equalIgnoreCase(sw, t.wallet))
     );
   } else {
     rankedTdh = await calculateRanks(
@@ -794,16 +794,16 @@ function getTokenDatesFromConsolidation(
       const aInConsolidations = Number(
         consolidations.some(
           (c) =>
-            !areEqualAddresses(c, currentWallet) &&
-            areEqualAddresses(c, a.from_address)
+            !equalIgnoreCase(c, currentWallet) &&
+            equalIgnoreCase(c, a.from_address)
         )
       );
 
       const bInConsolidations = Number(
         consolidations.some(
           (c) =>
-            !areEqualAddresses(c, currentWallet) &&
-            areEqualAddresses(c, b.from_address)
+            !equalIgnoreCase(c, currentWallet) &&
+            equalIgnoreCase(c, b.from_address)
         )
       );
 
@@ -811,10 +811,10 @@ function getTokenDatesFromConsolidation(
         return bInConsolidations - aInConsolidations;
       }
 
-      if (areEqualAddresses(a.to_address, currentWallet)) {
+      if (equalIgnoreCase(a.to_address, currentWallet)) {
         return -1;
       }
-      if (areEqualAddresses(b.to_address, currentWallet)) {
+      if (equalIgnoreCase(b.to_address, currentWallet)) {
         return 1;
       }
 
@@ -828,8 +828,8 @@ function getTokenDatesFromConsolidation(
     const trDate = new Date(transaction_date);
 
     // inward
-    if (consolidations.some((c) => areEqualAddresses(c, to_address))) {
-      if (!consolidations.some((c) => areEqualAddresses(c, from_address))) {
+    if (consolidations.some((c) => equalIgnoreCase(c, to_address))) {
+      if (!consolidations.some((c) => equalIgnoreCase(c, from_address))) {
         addDates(
           to_address,
           Array.from({ length: token_count }, () => trDate)
@@ -841,7 +841,7 @@ function getTokenDatesFromConsolidation(
     }
 
     // outward
-    else if (consolidations.some((c) => areEqualAddresses(c, from_address))) {
+    else if (consolidations.some((c) => equalIgnoreCase(c, from_address))) {
       removeDates(from_address, token_count);
     }
   }
@@ -925,16 +925,16 @@ export async function calculateRanks(
     boostedTDH
       .filter(
         (w) =>
-          (areEqualAddresses(nft.contract, MEMES_CONTRACT) &&
+          (equalIgnoreCase(nft.contract, MEMES_CONTRACT) &&
             w.memes.some((m: any) => m.id == nft.id)) ||
-          (areEqualAddresses(nft.contract, GRADIENT_CONTRACT) &&
+          (equalIgnoreCase(nft.contract, GRADIENT_CONTRACT) &&
             w.gradients_tdh > 0)
       )
       .sort((a, b) => {
-        const aNftBalance = areEqualAddresses(nft.contract, MEMES_CONTRACT)
+        const aNftBalance = equalIgnoreCase(nft.contract, MEMES_CONTRACT)
           ? a.memes.find((m: any) => m.id == nft.id).tdh
           : a.gradients_tdh;
-        const bNftBalance = areEqualAddresses(nft.contract, MEMES_CONTRACT)
+        const bNftBalance = equalIgnoreCase(nft.contract, MEMES_CONTRACT)
           ? b.memes.find((m: any) => m.id == nft.id).tdh
           : b.gradients_tdh;
 
@@ -950,14 +950,14 @@ export async function calculateRanks(
         }
       })
       .forEach((w, index) => {
-        if (areEqualAddresses(nft.contract, MEMES_CONTRACT)) {
+        if (equalIgnoreCase(nft.contract, MEMES_CONTRACT)) {
           w.memes_ranks.push({
             id: nft.id,
             rank: index + 1
           });
           return w;
         }
-        if (areEqualAddresses(nft.contract, GRADIENT_CONTRACT)) {
+        if (equalIgnoreCase(nft.contract, GRADIENT_CONTRACT)) {
           const gradient = w.gradients.find((g: any) => g.id == nft.id);
           if (gradient) {
             w.gradients_ranks.push({
@@ -969,7 +969,7 @@ export async function calculateRanks(
         }
       });
 
-    if (areEqualAddresses(nft.contract, MEMES_CONTRACT)) {
+    if (equalIgnoreCase(nft.contract, MEMES_CONTRACT)) {
       const wallets = [...boostedTDH].filter((w) =>
         w.memes.some((m: any) => m.id == nft.id)
       );

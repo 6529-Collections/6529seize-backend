@@ -18,7 +18,6 @@ import {
   NftsCollectionOwnershipData
 } from './collected.db';
 import {
-  areEqualAddresses,
   assertUnreachable,
   distinct,
   parseIntOrNull
@@ -27,6 +26,7 @@ import {
   identityFetcher,
   IdentityFetcher
 } from '../../identities/identity.fetcher';
+import { equalIgnoreCase } from '../../../../strings';
 
 export class CollectedService {
   constructor(
@@ -173,7 +173,7 @@ export class CollectedService {
               ?.balance ?? null;
           if (
             nft.token_id === 8 &&
-            walletsToSearchBy.some((w) => areEqualAddresses(w, NULL_ADDRESS))
+            walletsToSearchBy.some((w) => equalIgnoreCase(w, NULL_ADDRESS))
           ) {
             seized += MEME_8_EDITION_BURN_ADJUSTMENT;
           }

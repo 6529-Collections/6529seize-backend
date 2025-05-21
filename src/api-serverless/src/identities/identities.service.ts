@@ -3,7 +3,6 @@ import {
   IdentitySubscriptionsDb
 } from '../identity-subscriptions/identity-subscriptions.db';
 import {
-  areEqualAddresses,
   replaceEmojisWithHex,
   resolveEnum,
   resolveEnumOrThrow
@@ -43,6 +42,7 @@ import { userGroupsService } from '../community-members/user-groups.service';
 import { wavesApiDb } from '../waves/waves.api.db';
 import { ApiProfileClassification } from '../generated/models/ApiProfileClassification';
 import { getLevelFromScore } from '../../../profiles/profile-level';
+import { equalIgnoreCase } from '../../../strings';
 
 export class IdentitiesService {
   constructor(
@@ -318,7 +318,7 @@ export class IdentitiesService {
             consolidationKey
           );
           const oldPrimaryAddress = identity.consolidation_key;
-          if (!areEqualAddresses(newPrimaryAddress, oldPrimaryAddress)) {
+          if (!equalIgnoreCase(newPrimaryAddress, oldPrimaryAddress)) {
             const ensName = await this.supplyAlchemy().core.lookupAddress(
               newPrimaryAddress
             );

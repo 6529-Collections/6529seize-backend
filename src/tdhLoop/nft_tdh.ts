@@ -1,16 +1,16 @@
 import { GRADIENT_CONTRACT, MEMES_CONTRACT } from '../constants';
 import { NFT } from '../entities/INFT';
-import { areEqualAddresses } from '../helpers';
 import {
   fetchAllConsolidatedTdh,
   fetchAllNFTs,
-  persistNFTs,
-  persistNextGenTokenTDH
+  persistNextGenTokenTDH,
+  persistNFTs
 } from '../db';
 import { ConsolidatedTDH } from '../entities/ITDH';
 import { Logger } from '../logging';
 import { NextGenToken, NextGenTokenTDH } from '../entities/INextGen';
 import { fetchNextgenTokens } from '../nextgen/nextgen.db';
+import { equalIgnoreCase } from '../strings';
 
 const logger = Logger.get('NFT_TDH');
 
@@ -28,25 +28,21 @@ export const findNftTDH = async () => {
   tdhs.forEach((tdh) => {
     tdh.memes.map((meme: any) => {
       const existing = nftTDH.some(
-        (n) => n.id == meme.id && areEqualAddresses(n.contract, MEMES_CONTRACT)
+        (n) => n.id == meme.id && equalIgnoreCase(n.contract, MEMES_CONTRACT)
       );
       if (existing) {
         nftTDH.find(
-          (n) =>
-            n.id == meme.id && areEqualAddresses(n.contract, MEMES_CONTRACT)
+          (n) => n.id == meme.id && equalIgnoreCase(n.contract, MEMES_CONTRACT)
         )!.boosted_tdh += Math.round(meme.tdh * tdh.boost);
         nftTDH.find(
-          (n) =>
-            n.id == meme.id && areEqualAddresses(n.contract, MEMES_CONTRACT)
+          (n) => n.id == meme.id && equalIgnoreCase(n.contract, MEMES_CONTRACT)
         )!.tdh += meme.tdh;
         nftTDH.find(
-          (n) =>
-            n.id == meme.id && areEqualAddresses(n.contract, MEMES_CONTRACT)
+          (n) => n.id == meme.id && equalIgnoreCase(n.contract, MEMES_CONTRACT)
         )!.tdh__raw += meme.tdh__raw;
       } else {
         const nft = nfts.find(
-          (n) =>
-            n.id == meme.id && areEqualAddresses(n.contract, MEMES_CONTRACT)
+          (n) => n.id == meme.id && equalIgnoreCase(n.contract, MEMES_CONTRACT)
         );
         if (nft) {
           nft.boosted_tdh = Math.round(meme.tdh * tdh.boost);
@@ -59,30 +55,29 @@ export const findNftTDH = async () => {
     tdh.gradients.map((gradient: any) => {
       const existing = nftTDH.some(
         (n) =>
-          n.id == gradient.id &&
-          areEqualAddresses(n.contract, GRADIENT_CONTRACT)
+          n.id == gradient.id && equalIgnoreCase(n.contract, GRADIENT_CONTRACT)
       );
       if (existing) {
         nftTDH.find(
           (n) =>
             n.id == gradient.id &&
-            areEqualAddresses(n.contract, GRADIENT_CONTRACT)
+            equalIgnoreCase(n.contract, GRADIENT_CONTRACT)
         )!.boosted_tdh += Math.round(gradient.tdh * tdh.boost);
         nftTDH.find(
           (n) =>
             n.id == gradient.id &&
-            areEqualAddresses(n.contract, GRADIENT_CONTRACT)
+            equalIgnoreCase(n.contract, GRADIENT_CONTRACT)
         )!.tdh += gradient.tdh;
         nftTDH.find(
           (n) =>
             n.id == gradient.id &&
-            areEqualAddresses(n.contract, GRADIENT_CONTRACT)
+            equalIgnoreCase(n.contract, GRADIENT_CONTRACT)
         )!.tdh__raw += gradient.tdh__raw;
       } else {
         const nft = nfts.find(
           (n) =>
             n.id == gradient.id &&
-            areEqualAddresses(n.contract, GRADIENT_CONTRACT)
+            equalIgnoreCase(n.contract, GRADIENT_CONTRACT)
         );
         if (nft) {
           nft.boosted_tdh = Math.round(gradient.tdh * tdh.boost);

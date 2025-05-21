@@ -1,4 +1,4 @@
-import { areEqualAddresses, batchArray, weiToEth } from '../helpers';
+import { batchArray, weiToEth } from '../helpers';
 import {
   fetchAllMemeLabNFTs,
   fetchNftsForContract,
@@ -9,6 +9,7 @@ import {
 import { MEMELAB_CONTRACT } from '../constants';
 import { Logger } from '../logging';
 import { Time } from '../time';
+import { equalIgnoreCase } from '../strings';
 
 const logger = Logger.get('NFT_MARKET_STATS');
 
@@ -72,7 +73,7 @@ export const findNftMarketStats = async (contract: string) => {
 };
 
 const getNFTsForContract = async (contract: string): Promise<any[]> => {
-  if (areEqualAddresses(contract, MEMELAB_CONTRACT)) {
+  if (equalIgnoreCase(contract, MEMELAB_CONTRACT)) {
     return fetchAllMemeLabNFTs('id desc');
   }
   return fetchNftsForContract(contract, 'id desc');
@@ -132,7 +133,7 @@ const filterOffersForNft = (
   return offers.filter((o) =>
     o.protocol_data?.parameters.consideration.some(
       (f: any) =>
-        areEqualAddresses(f.token, contract) &&
+        equalIgnoreCase(f.token, contract) &&
         f.identifierOrCriteria === nftId.toString()
     )
   );
@@ -147,12 +148,12 @@ const getLowestListing = (
     [...nftListings].sort((a, d) => {
       const aOffer = a.protocol_data.parameters.offer.find(
         (o: any) =>
-          areEqualAddresses(o.token, contract) &&
+          equalIgnoreCase(o.token, contract) &&
           o.identifierOrCriteria === id.toString()
       );
       const dOffer = d.protocol_data.parameters.offer.find(
         (o: any) =>
-          areEqualAddresses(o.token, contract) &&
+          equalIgnoreCase(o.token, contract) &&
           o.identifierOrCriteria === id.toString()
       );
       return (
@@ -171,12 +172,12 @@ const getHighestOffer = (
     [...nftOffers].sort((a, d) => {
       const aConsideration = a.protocol_data.parameters.consideration.find(
         (c: any) =>
-          areEqualAddresses(c.token, contract) &&
+          equalIgnoreCase(c.token, contract) &&
           c.identifierOrCriteria === id.toString()
       );
       const dConsideration = d.protocol_data.parameters.consideration.find(
         (c: any) =>
-          areEqualAddresses(c.token, contract) &&
+          equalIgnoreCase(c.token, contract) &&
           c.identifierOrCriteria === id.toString()
       );
       return (
@@ -223,7 +224,7 @@ const persistNFTsForContract = async (
   contract: string,
   processedNfts: any[]
 ): Promise<void> => {
-  if (areEqualAddresses(contract, MEMELAB_CONTRACT)) {
+  if (equalIgnoreCase(contract, MEMELAB_CONTRACT)) {
     await persistLabNFTS(processedNfts);
   } else {
     await persistNFTs(processedNfts);

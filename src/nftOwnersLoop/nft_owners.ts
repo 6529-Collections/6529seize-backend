@@ -1,4 +1,3 @@
-import { areEqualAddresses } from '../helpers';
 import {
   fetchAllNftOwners,
   getMaxNftOwnersBlockReference,
@@ -6,7 +5,7 @@ import {
   persistNftOwners
 } from './db.nft_owners';
 import { Logger } from '../logging';
-import { OwnedNft, getOwnersForContracts } from './owners';
+import { getOwnersForContracts, OwnedNft } from './owners';
 import { ConsolidatedNFTOwner, NFTOwner } from '../entities/INFTOwner';
 import {
   getNextgenNetwork,
@@ -22,6 +21,7 @@ import {
   fetchTransactionAddressesFromBlock,
   fetchWalletConsolidationKeysViewForWallet
 } from '../db';
+import { equalIgnoreCase } from '../strings';
 
 const logger = Logger.get('NFT_OWNERS');
 
@@ -118,7 +118,7 @@ export async function getOwnersDelta(
 
   addresses.forEach((address) => {
     const addressOwned = allOwners.filter((o) =>
-      areEqualAddresses(o.wallet, address)
+      equalIgnoreCase(o.wallet, address)
     );
     addressOwned.forEach((o) => {
       ownersDelta.push({

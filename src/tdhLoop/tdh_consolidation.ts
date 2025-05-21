@@ -12,7 +12,7 @@ import {
   persistTDHBlock,
   retrieveWalletConsolidations
 } from '../db';
-import { areEqualAddresses, buildConsolidationKey } from '../helpers';
+import { buildConsolidationKey } from '../helpers';
 import {
   calculateBoosts,
   calculateRanks,
@@ -25,6 +25,7 @@ import { NextGenToken } from '../entities/INextGen';
 import { fetchNextgenTokens } from '../nextgen/nextgen.db';
 import { calculateMemesTdh } from './tdh_memes';
 import { updateNftTDH } from './tdh_nft';
+import { equalIgnoreCase } from '../strings';
 
 const logger = Logger.get('TDH_CONSOLIDATION');
 
@@ -44,10 +45,10 @@ export async function consolidateTDHForWallets(
     const consolidationKey = buildConsolidationKey(consolidations);
 
     if (
-      !Array.from(processedWallets).some((pw) => areEqualAddresses(wallet, pw))
+      !Array.from(processedWallets).some((pw) => equalIgnoreCase(wallet, pw))
     ) {
       const consolidatedWalletsTdh = [...tdh].filter((t) =>
-        consolidations.some((c) => areEqualAddresses(c, t.wallet))
+        consolidations.some((c) => equalIgnoreCase(c, t.wallet))
       );
 
       let totalTDH = 0;
@@ -175,7 +176,7 @@ export const consolidateMissingWallets = async (
     const consolidationKey = buildConsolidationKey(consolidations);
 
     if (
-      !Array.from(processedWallets).some((pw) => areEqualAddresses(wallet, pw))
+      !Array.from(processedWallets).some((pw) => equalIgnoreCase(wallet, pw))
     ) {
       processedWallets.add(wallet);
       missingTdh.push({
@@ -252,7 +253,7 @@ export const consolidateTDH = async (
     const missingWallets = startingWallets?.filter(
       (s) =>
         !consolidatedBoostedTdh.some((c) =>
-          c.wallets.some((w: string) => areEqualAddresses(w, s))
+          c.wallets.some((w: string) => equalIgnoreCase(w, s))
         )
     );
     const missingConsolidatedTdh = await consolidateMissingWallets(
@@ -269,7 +270,7 @@ export const consolidateTDH = async (
       .filter(
         (t: ConsolidatedTDH) =>
           !startingWallets.some((sw) =>
-            t.wallets.some((tw: string) => areEqualAddresses(tw, sw))
+            t.wallets.some((tw: string) => equalIgnoreCase(tw, sw))
           )
       )
       .concat(consolidatedBoostedTdh);
@@ -282,7 +283,7 @@ export const consolidateTDH = async (
     );
     rankedTdh = allRankedTdh.filter((t: ConsolidatedTDH) =>
       startingWallets.some((sw) =>
-        t.wallets.some((tw: string) => areEqualAddresses(tw, sw))
+        t.wallets.some((tw: string) => equalIgnoreCase(tw, sw))
       )
     );
   } else {

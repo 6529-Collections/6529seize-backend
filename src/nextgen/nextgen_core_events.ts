@@ -9,7 +9,7 @@ import {
   NextGenTokenTrait
 } from '../entities/INextGen';
 import { LogDescription } from 'ethers/lib/utils';
-import { areEqualAddresses, isNullAddress } from '../helpers';
+import { isNullAddress } from '../helpers';
 import { findTransactionValues } from '../transaction_values';
 import {
   fetchNextGenCollection,
@@ -20,9 +20,10 @@ import {
   persistNextgenTransaction
 } from './nextgen.db';
 import { EntityManager } from 'typeorm';
-import { NEXTGEN_CORE_CONTRACT, getNextgenNetwork } from './nextgen_constants';
+import { getNextgenNetwork, NEXTGEN_CORE_CONTRACT } from './nextgen_constants';
 import { Transaction } from '../entities/ITransaction';
 import { getAlchemyInstance, getEns } from '../alchemy';
+import { equalIgnoreCase } from '../strings';
 
 const logger = Logger.get('NEXTGEN_CORE_EVENTS');
 
@@ -91,7 +92,7 @@ export async function processLog(
 
   switch (parsedLog.name) {
     case 'OwnershipTransferred':
-      if (areEqualAddresses(NULL_ADDRESS, parsedLog.args.previousOwner)) {
+      if (equalIgnoreCase(NULL_ADDRESS, parsedLog.args.previousOwner)) {
         return {
           id: 0,
           title: 'NextGen Contract Deployed',
@@ -173,7 +174,7 @@ async function processTransfer(
     await findTransactionValues([transaction], network)
   )[0];
 
-  const isMint = areEqualAddresses(logInfo.args.from, NULL_ADDRESS);
+  const isMint = equalIgnoreCase(logInfo.args.from, NULL_ADDRESS);
   const isBurn = isNullAddress(logInfo.args.to);
   const isSale = transactionWithValue.value > 0;
   let description = 'Transfer';
@@ -181,8 +182,8 @@ async function processTransfer(
   if (isMint) {
     description = 'Mint';
   } else if (
-    areEqualAddresses(logInfo.args.to, NULL_ADDRESS) ||
-    areEqualAddresses(logInfo.args.to, NULL_ADDRESS_DEAD)
+    equalIgnoreCase(logInfo.args.to, NULL_ADDRESS) ||
+    equalIgnoreCase(logInfo.args.to, NULL_ADDRESS_DEAD)
   ) {
     description = 'Burn';
   } else if (isSale) {

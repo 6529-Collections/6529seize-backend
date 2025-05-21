@@ -1,11 +1,11 @@
 import { ethers } from 'ethers';
 import * as Joi from 'joi';
 import { hashMessage } from '@ethersproject/hash';
-import { areEqualAddresses } from '../../../helpers';
 import { ALCHEMY_SETTINGS } from '../../../constants';
 import { Alchemy, Nft, NftContract } from 'alchemy-sdk';
 import { getTdhForAddress, rememeExists } from '../../../db-api';
 import { seizeSettings } from '../api-constants';
+import { equalIgnoreCase } from '../../../strings';
 
 const rememeSchema = Joi.object({
   contract: Joi.string().required(),
@@ -153,7 +153,7 @@ function validateSignature(
       hashMessage(JSON.stringify(rememe)),
       signature
     );
-    return areEqualAddresses(address, verifySigner);
+    return equalIgnoreCase(address, verifySigner);
   } catch (e) {
     return false;
   }
@@ -168,7 +168,7 @@ async function validateTDH(
     return false;
   }
 
-  if (areEqualAddresses(address, deployer)) {
+  if (equalIgnoreCase(address, deployer)) {
     return true;
   }
 

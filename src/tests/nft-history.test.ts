@@ -1,7 +1,7 @@
 import { jest } from '@jest/globals';
 import * as nftHistory from '../nft_history';
 import * as db from '../db'; // helpers that nft_history imports
-import * as helpers from '../helpers';
+import * as strings from '../strings';
 
 const {
   getAttributeChanges,
@@ -39,7 +39,7 @@ describe('nft_history helpers', () => {
     jest.spyOn(db, 'fetchLatestNftUri').mockResolvedValue('old');
 
     jest
-      .spyOn(helpers, 'areEqualAddresses')
+      .spyOn(strings, 'equalIgnoreCase')
       .mockImplementation((a: string, b: string) => a === b);
 
     /* ─── stub fetch returning old & new metadata ─── */

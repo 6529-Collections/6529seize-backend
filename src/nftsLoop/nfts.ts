@@ -25,10 +25,11 @@ import {
   NFT_VIDEO_LINK,
   NULL_ADDRESS
 } from '../constants';
-import { areEqualAddresses, replaceEmojisWithHex } from '../helpers';
+import { replaceEmojisWithHex } from '../helpers';
 import { processArtists } from '../artists';
 import { Transaction } from '../entities/ITransaction';
 import { In, MoreThan } from 'typeorm';
+import { equalIgnoreCase } from '../strings';
 
 const logger = Logger.get('nfts');
 
@@ -484,12 +485,12 @@ async function updateSupply(
           .getRawOne()
           .then((res) => Number(res?.sum ?? 0));
 
-        if (areEqualAddresses(nft.contract, MEMES_CONTRACT) && nft.id === 8) {
+        if (equalIgnoreCase(nft.contract, MEMES_CONTRACT) && nft.id === 8) {
           supply += MEME_8_EDITION_BURN_ADJUSTMENT;
         }
       } else {
         supply = Array.from(nftMap.values()).filter((e) =>
-          areEqualAddresses(e.nft.contract, nft.contract)
+          equalIgnoreCase(e.nft.contract, nft.contract)
         ).length;
       }
 

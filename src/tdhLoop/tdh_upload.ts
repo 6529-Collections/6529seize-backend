@@ -1,14 +1,14 @@
 import { ConsolidatedTDH, TDHENS } from '../entities/ITDH';
-import { areEqualAddresses, formatDateAsString } from '../helpers';
+import { formatDateAsString } from '../helpers';
 import { SIX529_MUSEUM } from '../constants';
 import converter from 'json-2-csv';
 import {
-  fetchAllTDH,
-  fetchLastUpload,
-  persistTdhUpload,
   fetchAllConsolidatedTdh,
+  fetchAllTDH,
+  fetchLastConsolidatedUpload,
+  fetchLastUpload,
   persistConsolidatedTdhUpload,
-  fetchLastConsolidatedUpload
+  persistTdhUpload
 } from '../db';
 import { Logger } from '../logging';
 import {
@@ -23,6 +23,7 @@ import {
   UploadFieldsConsolidation,
   UploadFieldsWallet
 } from '../entities/IUpload';
+import { equalIgnoreCase } from '../strings';
 
 const logger = Logger.get('TDH_UPLOAD');
 
@@ -90,7 +91,7 @@ function buildUpload(
     const uniqueFields: any = {};
     if (isConsolidation) {
       balance = ownerBalances.find((om) =>
-        areEqualAddresses(
+        equalIgnoreCase(
           (om as ConsolidatedOwnerBalances).consolidation_key,
           (tdh as ConsolidatedTDH).consolidation_key
         )
@@ -104,11 +105,11 @@ function buildUpload(
       uniqueFields.wallets = (tdh as ConsolidatedTDH).wallets;
     } else {
       balance = ownerBalances.find((om) =>
-        areEqualAddresses((om as OwnerBalances).wallet, (tdh as TDHENS).wallet)
+        equalIgnoreCase((om as OwnerBalances).wallet, (tdh as TDHENS).wallet)
       );
       uniqueFields.wallet = (tdh as TDHENS).wallet;
       let ens = (tdh as TDHENS).ens;
-      if (areEqualAddresses((tdh as TDHENS).wallet, SIX529_MUSEUM)) {
+      if (equalIgnoreCase((tdh as TDHENS).wallet, SIX529_MUSEUM)) {
         ens = '6529Museum';
       }
       uniqueFields.ens = ens;

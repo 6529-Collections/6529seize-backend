@@ -9,13 +9,13 @@ import { fetchMaxTransactionByBlockNumber, getDataSource } from '../db';
 import { DistributionNormalized } from '../entities/IDistribution';
 import { Transaction } from '../entities/ITransaction';
 import { TransactionsProcessedDistributionBlock } from '../entities/ITransactionsProcessing';
-import { areEqualAddresses } from '../helpers';
 import { Logger } from '../logging';
 import {
   getLastProcessingBlock,
   persistBlock
 } from './db.transactions_processing';
 import { sqlExecutor } from '../sql-executor';
+import { equalIgnoreCase } from '../strings';
 
 const logger = Logger.get('TRANSACTIONS_PROCESSING_DISTRIBUTIONS');
 
@@ -55,7 +55,7 @@ export const updateDistributionMints = async (reset?: boolean) => {
     (transaction) =>
       distinctDistributions.some(
         (distribution) =>
-          areEqualAddresses(transaction.contract, distribution.contract) &&
+          equalIgnoreCase(transaction.contract, distribution.contract) &&
           Number(transaction.token_id) === Number(distribution.card_id)
       )
   );
