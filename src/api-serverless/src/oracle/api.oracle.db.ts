@@ -1,19 +1,19 @@
 import {
-  CONSOLIDATED_WALLETS_TDH_TABLE,
-  MEMES_CONTRACT,
-  GRADIENT_CONTRACT,
-  TDH_NFT_TABLE,
-  MEMES_EXTENDED_DATA_TABLE,
   CONSOLIDATED_WALLETS_TDH_MEMES_TABLE,
+  CONSOLIDATED_WALLETS_TDH_TABLE,
+  GRADIENT_CONTRACT,
+  MEMES_CONTRACT,
+  MEMES_EXTENDED_DATA_TABLE,
   PRENODES_TABLE,
-  TDH_BLOCKS_TABLE
+  TDH_BLOCKS_TABLE,
+  TDH_NFT_TABLE
 } from '../../../constants';
 import { fetchPaginated } from '../../../db-api';
 import { MemesExtendedData } from '../../../entities/INFT';
 import { NftTDH } from '../../../entities/ITDH';
 import {
-  NEXTGEN_CORE_CONTRACT,
-  getNextgenNetwork
+  getNextgenNetwork,
+  NEXTGEN_CORE_CONTRACT
 } from '../../../nextgen/nextgen_constants';
 import { sqlExecutor } from '../../../sql-executor';
 import { getIpInfo } from '../policies/policies';
@@ -42,11 +42,11 @@ const getBlock = async () => {
   return blockResult[0].block ?? 0;
 };
 
-const getMerkleRoot = async (block: number) => {
-  const merkleRootResult = await sqlExecutor.execute(
+const getMerkleRoot = async (block: number): Promise<string | null> => {
+  const merkleRootResult = await sqlExecutor.oneOrNull<{ merkle_root: string }>(
     `SELECT merkle_root from ${TDH_BLOCKS_TABLE} WHERE block_number = ${block}`
   );
-  return merkleRootResult[0].merkle_root ?? null;
+  return merkleRootResult?.merkle_root ?? null;
 };
 
 const fetchBlockAndAddressTdh = async (address: string) => {
