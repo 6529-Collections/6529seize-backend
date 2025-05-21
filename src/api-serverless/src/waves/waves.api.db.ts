@@ -176,6 +176,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
            decisions_strategy,
            next_decision_time,
            forbid_negative_votes,
+           is_direct_message,
            outcomes${wave.serial_no !== null ? ', serial_no' : ''})
           values (:id,
                   :name,
@@ -212,6 +213,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                   :decisions_strategy,
                   :next_decision_time,
                   :forbid_negative_votes,
+                  :is_direct_message,
                   :outcomes${wave.serial_no !== null ? ', :serial_no' : ''})`,
         params,
         { wrappedConnection: ctx.connection }
@@ -259,7 +261,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                             decisions_strategy,
                             outcomes, 
                             serial_no,
-                            forbid_negative_votes
+                            forbid_negative_votes,
+                            is_direct_message
                            )
                            values (
                                    :now,
@@ -298,7 +301,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                                    :decisions_strategy,
                                    :outcomes,
                                    :serial_no,
-                                   :forbid_negative_votes
+                                   :forbid_negative_votes,
+                                   :is_direct_message
                            )`,
       { ...params, serial_no: serial, now: Time.currentMillis() },
       { wrappedConnection: ctx.connection }
@@ -338,13 +342,18 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         : ``
     } w.visibility_group_id is null) and w.serial_no < :serialNoLessThan order by w.serial_no desc limit ${
       searchParams.limit
+    }${
+      searchParams.direct_message !== undefined
+        ? ` and w.is_direct_message = :direct_message`
+        : ``
     }`;
     const params: Record<string, any> = {
       ...sqlAndParams.params,
       groupsUserIsEligibleFor,
       serialNoLessThan,
       name: searchParams.name ? `%${searchParams.name}%` : undefined,
-      author: searchParams.author
+      author: searchParams.author,
+      direct_message: searchParams.direct_message
     };
     return this.db
       .execute<
@@ -502,13 +511,15 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     authenticated_user_id,
     eligibleGroups,
     limit,
-    offset
+    offset,
+    direct_message
   }: {
     authenticated_user_id: string | null;
     only_waves_followed_by_authenticated_user: boolean;
     eligibleGroups: string[];
     limit: number;
     offset: number;
+    direct_message?: boolean;
   }): Promise<WaveEntity[]> {
     return this.db
       .execute<
@@ -532,6 +543,10 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
        } where ${
           only_waves_followed_by_authenticated_user
             ? `f.subscriber_id = :authenticated_user_id and`
+            : ``
+        }${
+          direct_message !== undefined
+            ? ` w.is_direct_message = :direct_message and `
             : ``
         } (w.visibility_group_id is null ${
           eligibleGroups.length
@@ -562,13 +577,15 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     authenticated_user_id,
     eligibleGroups,
     limit,
-    offset
+    offset,
+    direct_message
   }: {
     only_waves_followed_by_authenticated_user: boolean;
     authenticated_user_id: string | null;
     eligibleGroups: string[];
     limit: number;
     offset: number;
+    direct_message?: boolean;
   }): Promise<WaveEntity[]> {
     return this.db
       .execute<
@@ -595,6 +612,10 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         ${
           only_waves_followed_by_authenticated_user
             ? `f.subscriber_id = :authenticated_user_id and`
+            : ``
+        }${
+          direct_message !== undefined
+            ? ` w.is_direct_message = :direct_message and `
             : ``
         } 
        i.level_raw > :level and (w.visibility_group_id is null ${
@@ -632,13 +653,15 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     authenticatedUserId,
     only_waves_followed_by_authenticated_user,
     limit,
-    offset
+    offset,
+    direct_message
   }: {
     eligibleGroups: string[];
     authenticatedUserId: string;
     only_waves_followed_by_authenticated_user: boolean;
     limit: number;
     offset: number;
+    direct_message?: boolean;
   }): Promise<WaveEntity[]> {
     return this.db
       .execute<
@@ -681,7 +704,11 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
               only_waves_followed_by_authenticated_user
                 ? `f.subscriber_id = :authenticatedUserId and`
                 : ``
-            } wa.id in (select id from wids)
+            }${
+          direct_message !== undefined
+            ? ` wa.is_direct_message = :direct_message and `
+            : ``
+        } wa.id in (select id from wids)
             order by wa.serial_no desc, wa.id
         `,
         {
@@ -712,13 +739,15 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     authenticated_user_id,
     eligibleGroups,
     limit,
-    offset
+    offset,
+    direct_message
   }: {
     only_waves_followed_by_authenticated_user: boolean;
     authenticated_user_id: string | null;
     eligibleGroups: string[];
     limit: number;
     offset: number;
+    direct_message?: boolean;
   }): Promise<WaveEntity[]> {
     return this.db
       .execute<
@@ -750,7 +779,11 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
               only_waves_followed_by_authenticated_user
                 ? `f.subscriber_id = :authenticated_user_id and`
                 : ``
-            } (w.visibility_group_id is null ${
+            }${
+          direct_message !== undefined
+            ? ` w.is_direct_message = :direct_message and `
+            : ``
+        } (w.visibility_group_id is null ${
           eligibleGroups.length
             ? `or w.visibility_group_id in (:eligibleGroups)`
             : ``
@@ -1077,13 +1110,15 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     authenticated_user_id,
     only_waves_followed_by_authenticated_user,
     limit,
-    offset
+    offset,
+    direct_message
   }: {
     eligibleGroups: string[];
     authenticated_user_id: string | null;
     limit: number;
     only_waves_followed_by_authenticated_user: boolean;
     offset: number;
+    direct_message?: boolean;
   }): Promise<WaveEntity[]> {
     return this.db
       .execute<
@@ -1109,6 +1144,10 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         ${
           only_waves_followed_by_authenticated_user
             ? `f.subscriber_id = :authenticated_user_id and`
+            : ``
+        }${
+          direct_message !== undefined
+            ? ` w.is_direct_message = :direct_message and `
             : ``
         }  
            (w.visibility_group_id is null ${
@@ -1140,6 +1179,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     offset: number;
     limit: number;
     eligibleGroups: string[];
+    direct_message?: boolean;
   }): Promise<WaveEntity[]> {
     return this.db
       .execute<
@@ -1165,6 +1205,11 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         ${
           param.only_waves_followed_by_authenticated_user
             ? `f.subscriber_id = :authenticated_user_id and`
+            : ``
+        }
+        ${
+          param.direct_message !== undefined
+            ? ` w.is_direct_message = :direct_message and `
             : ``
         }
          (w.visibility_group_id is null ${
@@ -1197,6 +1242,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     offset: number;
     limit: number;
     eligibleGroups: string[];
+    direct_message?: boolean;
   }): Promise<WaveEntity[]> {
     return this.db
       .execute<
@@ -1215,6 +1261,11 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
          ${
            param.only_waves_followed_by_authenticated_user
              ? `join ${IDENTITY_SUBSCRIPTIONS_TABLE} f on f.target_type = 'WAVE' and f.target_action = 'DROP_CREATED' and f.target_id = w.id`
+             : ``
+         }
+         ${
+           param.direct_message !== undefined
+             ? ` w.is_direct_message = :direct_message and `
              : ``
          }
          join ${WAVE_DROPPER_METRICS_TABLE} wm on wm.wave_id = w.id 
@@ -1254,6 +1305,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     offset: number;
     limit: number;
     eligibleGroups: string[];
+    direct_message?: boolean;
   }): Promise<WaveEntity[]> {
     return this.db
       .execute<
@@ -1279,6 +1331,10 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         ${
           param.only_waves_followed_by_authenticated_user
             ? `f.subscriber_id = :authenticated_user_id and`
+            : ``
+        }${
+          param.direct_message !== undefined
+            ? ` w.is_direct_message = :direct_message and `
             : ``
         }
           wm.dropper_id = :dropperId and (w.visibility_group_id is null ${
@@ -1344,6 +1400,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
 
 export interface InsertWaveEntity extends Omit<WaveEntity, 'serial_no'> {
   readonly serial_no: number | null;
+  readonly is_direct_message: boolean;
 }
 
 export interface SearchWavesParams {
@@ -1352,6 +1409,7 @@ export interface SearchWavesParams {
   readonly limit: number;
   readonly serial_no_less_than?: number;
   readonly group_id?: string;
+  readonly direct_message?: boolean;
 }
 
 export const wavesApiDb = new WavesApiDb(dbSupplier);

@@ -125,6 +125,7 @@ export class UserGroupsService {
         }
       );
     await giveReadReplicaTimeToCatchUp();
+    this.invalidateGroupsUserIsEligibleFor(createdBy);
     return savedEntity;
   }
 
@@ -437,6 +438,11 @@ export class UserGroupsService {
       groupsWhereUserIsInByIdentity: groupsWhereUserIsInByIdentity,
       groupsInNeedOfAdditionalCheck: groupsInNeedOfAdditionalCheck
     };
+  }
+
+  public invalidateGroupsUserIsEligibleFor(profileId: string) {
+    const key = `eligible-groups-${profileId}`;
+    mcache.del(key);
   }
 
   public async getGroupsUserIsEligibleFor(
@@ -1219,6 +1225,13 @@ export class UserGroupsService {
       groups,
       ctx
     );
+  }
+
+  async findIdentitiesInGroups(
+    groupIds: string[],
+    ctx: RequestContext
+  ): Promise<string[]> {
+    return await this.userGroupsDb.findIdentitiesInGroups(groupIds, ctx);
   }
 }
 

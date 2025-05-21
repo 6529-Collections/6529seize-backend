@@ -1,4 +1,4 @@
-import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
 import { WAVES_ARCHIVE_TABLE, WAVES_TABLE } from '../constants';
 
 export interface WaveBaseType {
@@ -140,6 +140,10 @@ export class WaveBase implements WaveBaseType {
 
   @Column({ type: 'boolean', nullable: false, default: false })
   readonly forbid_negative_votes!: boolean;
+
+  @Index('idx_wave_is_direct_message')
+  @Column({ type: 'boolean', nullable: true, default: null })
+  readonly is_direct_message!: boolean | null;
 }
 
 @Entity(WAVES_TABLE)
