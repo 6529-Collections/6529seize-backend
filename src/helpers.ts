@@ -399,15 +399,3 @@ export function isValidIP(ip: string): boolean {
   const octets = ip.split('.').map(Number);
   return octets.every((octet) => octet >= 0 && octet <= 255);
 }
-
-export function getUniqueValuesWithKeys<K, V>(map: Map<K, V>): Map<V, K[]> {
-  const valueToKeysMap = new Map<V, K[]>();
-  map.forEach((value, key) => {
-    if (valueToKeysMap.has(value)) {
-      valueToKeysMap.get(value)!.push(key);
-    } else {
-      valueToKeysMap.set(value, [key]);
-    }
-  });
-  return valueToKeysMap;
-}

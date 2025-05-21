@@ -25,7 +25,7 @@ import {
   SubscriptionLog,
   SubscriptionMode
 } from '../entities/ISubscription';
-import { areEqualAddresses, getUniqueValuesWithKeys } from '../helpers';
+import { areEqualAddresses } from '../helpers';
 import { Logger } from '../logging';
 import { getMaxMemeId } from '../nftsLoop/db.nfts';
 import { sendDiscordUpdate } from '../notifier-discord';
@@ -39,6 +39,7 @@ import {
   persistSubscriptions
 } from './db.subscriptions';
 import converter from 'json-2-csv';
+import { getMapWithKeysAndValuesSwitched } from '../collections';
 
 const logger = Logger.get('SUBSCRIPTIONS');
 
@@ -389,7 +390,9 @@ export async function consolidateSubscriptions(addresses: Set<string>) {
       }
     }
 
-    const uniqueValuesWithKeys = getUniqueValuesWithKeys(replaceConsolidations);
+    const uniqueValuesWithKeys = getMapWithKeysAndValuesSwitched(
+      replaceConsolidations
+    );
     for (const value of Array.from(uniqueValuesWithKeys.keys())) {
       const keys = uniqueValuesWithKeys.get(value);
       if (!keys) {
