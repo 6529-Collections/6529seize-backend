@@ -22,6 +22,10 @@ export class Numbers {
   public isNumber(s: string): boolean {
     return !isNaN(Number(s));
   }
+
+  public sum(ns: number[]): number {
+    return ns.reduce((sum, n) => sum + n, 0);
+  }
 }
 
 export const numbers = new Numbers();
