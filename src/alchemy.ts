@@ -2,7 +2,7 @@ import { Alchemy, Network } from 'alchemy-sdk';
 import { ALCHEMY_SETTINGS } from './constants';
 import * as mcache from 'memory-cache';
 import { Time } from './time';
-import { isWallet } from './helpers';
+import { ethAddresses } from './eth-addresses';
 
 let alchemy: Alchemy | null = null;
 
@@ -47,6 +47,6 @@ export async function getWalletFromEns(
       .core.resolveName(identity)
       .then((response) => response?.toLowerCase() ?? ``);
     mcache.put(key, alchemyResponse, Time.minutes(1).toMillis());
-    return isWallet(alchemyResponse) ? alchemyResponse : null;
+    return ethAddresses.isEthAddress(alchemyResponse) ? alchemyResponse : null;
   }
 }

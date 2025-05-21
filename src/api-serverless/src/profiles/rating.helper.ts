@@ -5,9 +5,9 @@ import { NotFoundException } from '../../../exceptions';
 import { ProfileClassification } from '../../../entities/IProfile';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import { Time } from '../../../time';
-import { isWallet } from '../../../helpers';
 import { identityFetcher } from '../identities/identity.fetcher';
 import { getWalletFromEns } from '../../../alchemy';
+import { ethAddresses } from '../../../eth-addresses';
 
 export async function getRaterInfoFromRequest(
   req: Request<{ identity: string }, any, any, any, any>
@@ -21,7 +21,7 @@ export async function getRaterInfoFromRequest(
     );
   if (!targetProfile?.id) {
     let wallet = identity.toLowerCase();
-    if (!isWallet(wallet)) {
+    if (!ethAddresses.isEthAddress(wallet)) {
       wallet = await getWalletFromEns(identity).then((w) => {
         if (!w) {
           throw new NotFoundException(`No profile found for ${identity}`);

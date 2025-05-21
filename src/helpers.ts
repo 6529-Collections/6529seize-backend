@@ -2,8 +2,7 @@ import axios, { AxiosResponse } from 'axios';
 import {
   CONSOLIDATIONS_LIMIT,
   NULL_ADDRESS,
-  NULL_ADDRESS_DEAD,
-  WALLET_REGEX
+  NULL_ADDRESS_DEAD
 } from './constants';
 import * as short from 'short-uuid';
 import { goerli, sepolia } from '@wagmi/chains';
@@ -360,8 +359,4 @@ export function getTransactionLink(chain_id: number, hash: string) {
     default:
       return `https://etherscan.io/tx/${hash}`;
   }
-}
-
-export function isWallet(identity: string) {
-  return WALLET_REGEX.test(identity);
 }
