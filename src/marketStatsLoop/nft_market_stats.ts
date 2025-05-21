@@ -1,4 +1,3 @@
-import { weiToEth } from '../helpers';
 import {
   fetchAllMemeLabNFTs,
   fetchNftsForContract,
@@ -11,6 +10,7 @@ import { Logger } from '../logging';
 import { Time } from '../time';
 import { equalIgnoreCase } from '../strings';
 import { collections } from '../collections';
+import { ethTools } from '../eth-tools';
 
 const logger = Logger.get('NFT_MARKET_STATS');
 
@@ -201,7 +201,7 @@ const updateNftMarketStats = (
   lowestListing: any,
   highestOffer: any
 ): void => {
-  let lowestListingPrice = weiToEth(
+  let lowestListingPrice = ethTools.weiToEth(
     lowestListing
       ? lowestListing.current_price / lowestListing.remaining_quantity
       : 0
@@ -211,7 +211,7 @@ const updateNftMarketStats = (
   nft.floor_price_from = lowestListing?.maker.address ?? null;
   nft.market_cap = lowestListingPrice * nft.supply;
 
-  let highestOfferPrice = weiToEth(
+  let highestOfferPrice = ethTools.weiToEth(
     highestOffer
       ? highestOffer.current_price / highestOffer.remaining_quantity
       : 0

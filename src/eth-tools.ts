@@ -24,6 +24,10 @@ export class EthTools {
         return `https://etherscan.io/tx/${hash}`;
     }
   }
+
+  public weiToEth(wei: number): number {
+    return wei / 1e18;
+  }
 }
 
 export const ethTools = new EthTools();

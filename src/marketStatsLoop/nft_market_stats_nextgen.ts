@@ -1,7 +1,6 @@
 import { EntityManager } from 'typeorm';
 import { getDataSource } from '../db';
 import { NextGenToken, NextGenTokenListing } from '../entities/INextGen';
-import { weiToEth } from '../helpers';
 import { Logger } from '../logging';
 import {
   fetchNextgenTokens,
@@ -12,6 +11,7 @@ import { getOpenseaResponse } from './nft_market_stats';
 import { Time } from '../time';
 import { equalIgnoreCase } from '../strings';
 import { collections } from '../collections';
+import { ethTools } from '../eth-tools';
 
 const logger = Logger.get('NEXTGEN_MARKET_STATS');
 
@@ -71,7 +71,7 @@ async function processBatch(
         token.id.toString()
     );
     if (osOrder) {
-      osPrice = weiToEth(osOrder.current_price);
+      osPrice = ethTools.weiToEth(osOrder.current_price);
       const listingRoyalty = osOrder.maker_fees?.find((f: any) =>
         equalIgnoreCase(f.account.address, NEXTGEN_ROYALTIES_ADDRESS)
       );

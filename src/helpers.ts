@@ -159,7 +159,3 @@ export function buildConsolidationKey(wallets: string[]) {
     .filter((it) => it !== '');
   return sortedWallets.join('-');
 }
-
-export function weiToEth(wei: number): number {
-  return wei / 1e18;
-}
