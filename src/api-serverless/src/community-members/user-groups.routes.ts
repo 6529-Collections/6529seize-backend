@@ -18,7 +18,7 @@ import { ApiGroupFilterDirection } from '../generated/models/ApiGroupFilterDirec
 import { ApiGroupRepFilter } from '../generated/models/ApiGroupRepFilter';
 import { ApiGroupLevelFilter } from '../generated/models/ApiGroupLevelFilter';
 import { ApiGroupTdhFilter } from '../generated/models/ApiGroupTdhFilter';
-import { distinct, parseIntOrNull, resolveEnum } from '../../../helpers';
+import { distinct, parseIntOrNull } from '../../../helpers';
 import { FilterDirection } from '../../../entities/IUserGroup';
 import {
   ApiGroupOwnsNft,
@@ -28,6 +28,7 @@ import { ApiCreateGroupDescription } from '../generated/models/ApiCreateGroupDes
 import { Timer } from '../../../time';
 import { RequestContext } from '../../../request.context';
 import { identityFetcher } from '../identities/identity.fetcher';
+import { enums } from '../../../enums';
 
 const router = asyncRouter();
 
@@ -189,7 +190,8 @@ router.post(
           return it.given_identity === apiUserGroup.group.cic.user_identity;
         })?.profile_id ?? null,
       cic_direction: apiUserGroup.group.cic.direction
-        ? resolveEnum(FilterDirection, apiUserGroup.group.cic.direction) ?? null
+        ? enums.resolve(FilterDirection, apiUserGroup.group.cic.direction) ??
+          null
         : null,
       rep_min: apiUserGroup.group.rep.min,
       rep_max: apiUserGroup.group.rep.max,
@@ -198,7 +200,8 @@ router.post(
           return it.given_identity === apiUserGroup.group.rep.user_identity;
         })?.profile_id ?? null,
       rep_direction: apiUserGroup.group.rep.direction
-        ? resolveEnum(FilterDirection, apiUserGroup.group.rep.direction) ?? null
+        ? enums.resolve(FilterDirection, apiUserGroup.group.rep.direction) ??
+          null
         : null,
       rep_category: apiUserGroup.group.rep.category,
       tdh_min: apiUserGroup.group.tdh.min,

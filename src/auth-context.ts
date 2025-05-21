@@ -1,5 +1,5 @@
 import { ProfileProxyActionType } from './entities/IProfileProxyAction';
-import { resolveEnum } from './helpers';
+import { enums } from './enums';
 
 export class AuthenticationContext {
   readonly authenticatedWallet: string | null;
@@ -33,7 +33,7 @@ export class AuthenticationContext {
     this.authenticatedProfileId = authenticatedProfileId;
     this.roleProfileId = roleProfileId;
     this.activeProxyActions = activeProxyActions.reduce((acc, action) => {
-      const type = resolveEnum(ProfileProxyActionType, action.type);
+      const type = enums.resolve(ProfileProxyActionType, action.type);
       if (type) {
         acc[type] = action;
       }

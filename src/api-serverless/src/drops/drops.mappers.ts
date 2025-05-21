@@ -9,12 +9,7 @@ import {
 } from '../../../entities/IDrop';
 import { ConnectionWrapper } from '../../../sql-executor';
 import { ApiDrop } from '../generated/models/ApiDrop';
-import {
-  distinct,
-  parseIntOrNull,
-  resolveEnum,
-  resolveEnumOrThrow
-} from '../../../helpers';
+import { distinct, parseIntOrNull } from '../../../helpers';
 import { ApiProfileMin } from '../generated/models/ApiProfileMin';
 import { ApiDropPart } from '../generated/models/ApiDropPart';
 import { ApiDropMedia } from '../generated/models/ApiDropMedia';
@@ -65,6 +60,7 @@ import {
   identityFetcher,
   IdentityFetcher
 } from '../identities/identity.fetcher';
+import { enums } from '../../../enums';
 
 export class DropsMappers {
   constructor(
@@ -88,7 +84,7 @@ export class DropsMappers {
     proxyId?: string;
   }): CreateOrUpdateDropModel {
     const dropType = request.drop_type
-      ? resolveEnumOrThrow(ApiDropType, request.drop_type)
+      ? enums.resolveOrThrow(ApiDropType, request.drop_type)
       : ApiDropType.Chat;
     return this.updateDropApiToUseCaseModel({
       request: {
@@ -123,7 +119,7 @@ export class DropsMappers {
       proxy_identity: proxyId,
       proxy_id: proxyId,
       drop_id: dropId ?? null,
-      drop_type: resolveEnumOrThrow(DropType, request.drop_type),
+      drop_type: enums.resolveOrThrow(DropType, request.drop_type),
       wave_id: waveId,
       reply_to: replyTo,
       title: request.title ?? null,
@@ -204,7 +200,7 @@ export class DropsMappers {
             authenticated_user_admin:
               wave.admin_group_id !== null &&
               group_ids_user_is_eligible_for.includes(wave.admin_group_id),
-            voting_credit_type: resolveEnumOrThrow(
+            voting_credit_type: enums.resolveOrThrow(
               WaveCreditTypeApi,
               wave.voting_credit_type
             ),
@@ -374,7 +370,7 @@ export class DropsMappers {
       subscribedActions: Object.entries(subscribedActions).reduce(
         (acc, [id, actions]) => {
           acc[id] = actions.map((it) =>
-            resolveEnumOrThrow(ApiDropSubscriptionTargetAction, it)
+            enums.resolveOrThrow(ApiDropSubscriptionTargetAction, it)
           );
           return acc;
         },
@@ -569,15 +565,15 @@ export class DropsMappers {
           place: dropWinDecision.ranking,
           decision_time: dropWinDecision.decision_time,
           awards: dropWinDecision.prizes.map((prize) => ({
-            type: resolveEnumOrThrow(ApiWaveOutcomeType, prize.type),
+            type: enums.resolveOrThrow(ApiWaveOutcomeType, prize.type),
             subtype:
-              resolveEnum(
+              enums.resolve(
                 ApiWaveOutcomeSubType,
                 prize.subtype as string | undefined
               ) ?? undefined,
             description: prize.description,
             credit:
-              resolveEnum(
+              enums.resolve(
                 ApiWaveOutcomeCredit,
                 prize.credit as string | undefined
               ) ?? undefined,
@@ -653,7 +649,7 @@ export class DropsMappers {
       }
     }
     top_raters.sort((a, b) => b.rating - a.rating);
-    const dropType = resolveEnumOrThrow(ApiDropType, dropEntity.drop_type);
+    const dropType = enums.resolveOrThrow(ApiDropType, dropEntity.drop_type);
     const rank: number | null =
       weightedDropsRanks[dropEntity.id] ?? dropsRanks[dropEntity.id] ?? null;
     return {

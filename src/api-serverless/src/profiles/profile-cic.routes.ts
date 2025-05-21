@@ -27,8 +27,8 @@ import { ApiRatingWithProfileInfoAndLevelPage } from '../generated/models/ApiRat
 import { identityFetcher } from '../identities/identity.fetcher';
 import { Timer } from '../../../time';
 import { ApiIdentity } from '../generated/models/ApiIdentity';
-import { resolveEnum } from '../../../helpers';
 import { ProfileClassification } from '../../../entities/IProfile';
+import { enums } from '../../../enums';
 
 const router = asyncRouter({ mergeParams: true });
 
@@ -265,8 +265,10 @@ router.post(
       profile: {
         profile_id: profileId,
         classification:
-          resolveEnum(ProfileClassification, resolvedIdentity.classification) ??
-          null,
+          enums.resolve(
+            ProfileClassification,
+            resolvedIdentity.classification
+          ) ?? null,
         handle: resolvedIdentity.handle!
       },
       statement: {

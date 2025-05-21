@@ -252,32 +252,3 @@ export function parseIntOrNull(value: any): number | null {
   // safe to convert – it’s an exact int
   return Number(trimmed);
 }
-
-export function resolveEnum<T extends object>(
-  enumObj: T,
-  value?: string
-): T[keyof T] | undefined {
-  const normalizedValue = value?.toLowerCase();
-
-  for (const enumKey of Object.keys(enumObj)) {
-    // Use type assertion to assure TypeScript that toString can be called
-    const enumValue = enumObj[enumKey as keyof T] as any;
-
-    if (enumValue.toString().toLowerCase() === normalizedValue) {
-      return enumObj[enumKey as keyof T];
-    }
-  }
-
-  return undefined;
-}
-
-export function resolveEnumOrThrow<T extends object>(
-  enumObj: T,
-  value?: string
-): T[keyof T] {
-  const resolvedValue = resolveEnum(enumObj, value);
-  if (resolvedValue) {
-    return resolvedValue;
-  }
-  throw new Error(`Invalid enum value: ${value}`);
-}

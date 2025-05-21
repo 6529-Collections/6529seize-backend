@@ -45,7 +45,7 @@ import {
   ProfileProxiesDb
 } from '../profile-proxies/profile-proxies.db';
 import { ApiBulkRateRequest } from '../api-serverless/src/generated/models/ApiBulkRateRequest';
-import { distinct, resolveEnum, uniqueShortId } from '../helpers';
+import { distinct, uniqueShortId } from '../helpers';
 import { ApiAvailableRatingCredit } from '../api-serverless/src/generated/models/ApiAvailableRatingCredit';
 import { ApiRatingWithProfileInfoAndLevel } from '../api-serverless/src/generated/models/ApiRatingWithProfileInfoAndLevel';
 import { ApiRatingWithProfileInfoAndLevelPage } from '../api-serverless/src/generated/models/ApiRatingWithProfileInfoAndLevelPage';
@@ -61,6 +61,7 @@ import { ProfileClassification } from '../entities/IProfile';
 import { identityFetcher } from '../api-serverless/src/identities/identity.fetcher';
 import { revokeTdhBasedDropWavesOverVotes } from '../drops/participation-drops-over-vote-revocation';
 import { appFeatures } from '../app-features';
+import { enums } from '../enums';
 
 export class RatingsService {
   private readonly logger = Logger.get('RATINGS_SERVICE');
@@ -798,7 +799,7 @@ export class RatingsService {
         if (!actingAsId) {
           throw new ForbiddenException(`Create a profile before you rate`);
         }
-        const matter = resolveEnum(RateMatter, apiRequest.matter)!;
+        const matter = enums.resolve(RateMatter, apiRequest.matter)!;
         const wallets = apiRequest.target_wallet_addresses.map((it) =>
           it.toLowerCase()
         );

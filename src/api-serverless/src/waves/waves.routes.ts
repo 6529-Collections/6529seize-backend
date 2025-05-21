@@ -24,7 +24,7 @@ import { ApiCreateNewWaveParticipationConfig } from '../generated/models/ApiCrea
 import { ApiWaveRequiredMetadata } from '../generated/models/ApiWaveRequiredMetadata';
 import { ApiWaveConfig } from '../generated/models/ApiWaveConfig';
 import { ApiWaveType } from '../generated/models/ApiWaveType';
-import { parseIntOrNull, resolveEnum } from '../../../helpers';
+import { parseIntOrNull } from '../../../helpers';
 import { ApiWaveOutcome } from '../generated/models/ApiWaveOutcome';
 import { getValidatedByJoiOrThrow } from '../validation';
 import { waveApiService } from './wave.api.service';
@@ -69,6 +69,7 @@ import {
   WaveDecisionsQuerySort
 } from './wave-decisions-api.service';
 import { identityFetcher } from '../identities/identity.fetcher';
+import { enums } from '../../../enums';
 
 const router = asyncRouter();
 
@@ -386,12 +387,12 @@ router.get(
       serialNoLessThan ?? parseIntOrNull(req.query.serial_no_limit);
     const searchStrategy =
       serialNoLessThan === null
-        ? resolveEnum(ApiDropSearchStrategy, req.query.search_strategy) ??
+        ? enums.resolve(ApiDropSearchStrategy, req.query.search_strategy) ??
           ApiDropSearchStrategy.Older
         : ApiDropSearchStrategy.Older;
     const drop_type_str = req.query.drop_type as string | undefined;
     const drop_type = drop_type_str
-      ? resolveEnum(ApiDropType, drop_type_str) ?? null
+      ? enums.resolve(ApiDropType, drop_type_str) ?? null
       : null;
     const result = await dropsService.findWaveDropsFeed(
       {

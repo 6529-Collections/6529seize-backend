@@ -1,6 +1,6 @@
 import { ApiCreateNewWave } from '../generated/models/ApiCreateNewWave';
 import { InsertWaveEntity, wavesApiDb, WavesApiDb } from './waves.api.db';
-import { distinct, resolveEnumOrThrow } from '../../../helpers';
+import { distinct } from '../../../helpers';
 import {
   ParticipationRequiredMedia,
   WaveCreditType,
@@ -46,6 +46,7 @@ import {
   identityFetcher,
   IdentityFetcher
 } from '../identities/identity.fetcher';
+import { enums } from '../../../enums';
 
 export class WavesMappers {
   constructor(
@@ -97,7 +98,7 @@ export class WavesMappers {
       created_by,
       voting_group_id: request.voting.scope.group_id,
       admin_group_id: request.wave.admin_group?.group_id ?? null,
-      voting_credit_type: resolveEnumOrThrow(
+      voting_credit_type: enums.resolveOrThrow(
         WaveCreditType,
         request.voting.credit_type
       ),
@@ -114,17 +115,17 @@ export class WavesMappers {
       participation_required_metadata:
         request.participation.required_metadata.map((md) => ({
           name: md.name,
-          type: resolveEnumOrThrow(
+          type: enums.resolveOrThrow(
             WaveRequiredMetadataItemType,
             md.type.toString()
           )
         })),
       participation_required_media: request.participation.required_media.map(
-        (it) => resolveEnumOrThrow(ParticipationRequiredMedia, it)
+        (it) => enums.resolveOrThrow(ParticipationRequiredMedia, it)
       ),
       participation_period_start: request.participation.period?.min ?? null,
       participation_period_end: request.participation.period?.max ?? null,
-      type: resolveEnumOrThrow(WaveType, request.wave.type),
+      type: enums.resolveOrThrow(WaveType, request.wave.type),
       winning_min_threshold: request.wave.winning_thresholds?.min ?? null,
       winning_max_threshold: request.wave.winning_thresholds?.max ?? null,
       max_winners: request.wave.max_winners ?? null,
@@ -258,7 +259,7 @@ export class WavesMappers {
         groupIdsUserIsEligibleFor.includes(waveEntity.voting_group_id));
     const voting: ApiWaveVotingConfig = {
       scope: votingScope,
-      credit_type: resolveEnumOrThrow(
+      credit_type: enums.resolveOrThrow(
         WaveCreditTypeApi,
         waveEntity.voting_credit_type
       ),
@@ -290,11 +291,11 @@ export class WavesMappers {
       required_metadata: waveEntity.participation_required_metadata.map(
         (it) => ({
           name: it.name,
-          type: resolveEnumOrThrow(ApiWaveMetadataType, it.type)
+          type: enums.resolveOrThrow(ApiWaveMetadataType, it.type)
         })
       ),
       required_media: waveEntity.participation_required_media.map((it) =>
-        resolveEnumOrThrow(ApiWaveParticipationRequirement, it)
+        enums.resolveOrThrow(ApiWaveParticipationRequirement, it)
       ),
       signature_required: waveEntity.participation_signature_required,
       period: {
@@ -319,7 +320,7 @@ export class WavesMappers {
       groupIdsUserIsEligibleFor.includes(waveEntity.admin_group_id)
     );
     const waveConf: ApiWaveConfig = {
-      type: resolveEnumOrThrow(WaveTypeApi, waveEntity.type),
+      type: enums.resolveOrThrow(WaveTypeApi, waveEntity.type),
       winning_thresholds: {
         min: waveEntity.winning_min_threshold,
         max: waveEntity.winning_max_threshold
@@ -510,7 +511,7 @@ export class WavesMappers {
       subscribedActions: Object.entries(subscribedActions).reduce(
         (acc, [id, actions]) => {
           acc[id] = actions.map((it) =>
-            resolveEnumOrThrow(ApiWaveSubscriptionTargetAction, it)
+            enums.resolveOrThrow(ApiWaveSubscriptionTargetAction, it)
           );
           return acc;
         },
