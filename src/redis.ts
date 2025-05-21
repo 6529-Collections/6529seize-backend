@@ -1,7 +1,7 @@
 import { createClient, RedisClientType as Redis } from 'redis';
-import { parseIntOrNull } from './helpers';
 import { Logger } from './logging';
 import { Time } from './time';
+import { numbers } from './numbers';
 
 let redis: Redis;
 
@@ -90,7 +90,7 @@ export async function initRedis() {
     return;
   }
   const url = process.env.REDIS_URL ?? 'localhost';
-  const port = parseIntOrNull(process.env.REDIS_PORT) ?? 6379;
+  const port = numbers.parseIntOrNull(process.env.REDIS_PORT) ?? 6379;
   if (port < 0 || port > 65535) {
     throw new Error(
       'REDIS_PORT env is not set or is not set to an integer between 0 and 65535'

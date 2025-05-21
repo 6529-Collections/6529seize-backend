@@ -1,6 +1,6 @@
 import fetch from 'node-fetch';
 import * as db from '../../db-api';
-import { isNumber, parseIntOrNull, uniqueShortId } from '../../helpers';
+import { uniqueShortId } from '../../helpers';
 import { isValidUuid } from '../../uuid';
 
 import feedRoutes from './feed/feed.routes';
@@ -105,6 +105,7 @@ import {
 } from './ws/ws';
 import { WsMessageType } from './ws/ws-message';
 import { wsListenersNotifier } from './ws/ws-listeners-notifier';
+import { numbers } from '../../numbers';
 
 const YAML = require('yamljs');
 const compression = require('compression');
@@ -129,7 +130,7 @@ function requestLogMiddleware() {
     (request as any).timer = timer;
     response.on('close', () => {
       const { statusCode } = response;
-      const slowRequestThresholdEnv = parseIntOrNull(
+      const slowRequestThresholdEnv = numbers.parseIntOrNull(
         process.env.SLOW_API_REQUEST_THRESHOLD
       );
       const slowRequestThreshold = slowRequestThresholdEnv
@@ -347,7 +348,9 @@ loadApi().then(async () => {
           ? parseInt(req.query.page_size)
           : DEFAULT_PAGE_SIZE;
       const page: number = req.query.page ? parseInt(req.query.page) : 1;
-      const block = isNumber(req.query.block) ? parseInt(req.query.block) : 0;
+      const block = numbers.isNumber(req.query.block)
+        ? parseInt(req.query.block)
+        : 0;
       const date = req.query.date;
       db.fetchUploads(pageSize, page, block, date).then((result) => {
         returnPaginatedResult(
@@ -374,7 +377,9 @@ loadApi().then(async () => {
           ? parseInt(req.query.page_size)
           : DEFAULT_PAGE_SIZE;
       const page: number = req.query.page ? parseInt(req.query.page) : 1;
-      const block = isNumber(req.query.block) ? parseInt(req.query.block) : 0;
+      const block = numbers.isNumber(req.query.block)
+        ? parseInt(req.query.block)
+        : 0;
       const date = req.query.date;
       db.fetchConsolidatedUploads(pageSize, page, block, date).then(
         (result) => {

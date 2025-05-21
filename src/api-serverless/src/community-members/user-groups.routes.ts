@@ -18,7 +18,7 @@ import { ApiGroupFilterDirection } from '../generated/models/ApiGroupFilterDirec
 import { ApiGroupRepFilter } from '../generated/models/ApiGroupRepFilter';
 import { ApiGroupLevelFilter } from '../generated/models/ApiGroupLevelFilter';
 import { ApiGroupTdhFilter } from '../generated/models/ApiGroupTdhFilter';
-import { distinct, parseIntOrNull } from '../../../helpers';
+import { distinct } from '../../../helpers';
 import { FilterDirection } from '../../../entities/IUserGroup';
 import {
   ApiGroupOwnsNft,
@@ -29,6 +29,7 @@ import { Timer } from '../../../time';
 import { RequestContext } from '../../../request.context';
 import { identityFetcher } from '../identities/identity.fetcher';
 import { enums } from '../../../enums';
+import { numbers } from '../../../numbers';
 
 const router = asyncRouter();
 
@@ -52,7 +53,9 @@ router.get(
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
     const groupName = req.query.group_name ?? null;
-    const createdAtLessThan = parseIntOrNull(req.query.created_at_less_than);
+    const createdAtLessThan = numbers.parseIntOrNull(
+      req.query.created_at_less_than
+    );
     let authorId: string | null = null;
     if (req.query.author_identity) {
       authorId = await identityFetcher.getProfileIdByIdentityKey(

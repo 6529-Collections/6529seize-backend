@@ -3,7 +3,7 @@ import { identitiesDb } from './identities/identities.db';
 import { IdentityEntity } from './entities/IIdentity';
 import { profilesService } from './profiles/profiles.service';
 import { Profile } from './entities/IProfile';
-import { distinct, parseIntOrNull } from './helpers';
+import { distinct } from './helpers';
 import { Logger } from './logging';
 import {
   CONSOLIDATED_WALLETS_TDH_TABLE,
@@ -14,6 +14,7 @@ import {
 import { randomUUID } from 'crypto';
 import { identitySubscriptionsDb } from './api-serverless/src/identity-subscriptions/identity-subscriptions.db';
 import { identitiesService } from './api-serverless/src/identities/identities.service';
+import { numbers } from './numbers';
 
 const logger = Logger.get('IDENTITIES');
 
@@ -202,8 +203,8 @@ export async function syncIdentitiesWithTdhConsolidations(
           .filter((it) => !!it)
           .reduce((acc, data) => {
             const thisProfile = data.profile;
-            const thisCic = parseIntOrNull(`${data.identity.cic}`)!;
-            const thisTdh = parseIntOrNull(`${data.identity.tdh}`)!;
+            const thisCic = numbers.parseIntOrNull(`${data.identity.cic}`)!;
+            const thisTdh = numbers.parseIntOrNull(`${data.identity.tdh}`)!;
             if (thisProfile) {
               if (
                 !acc ||

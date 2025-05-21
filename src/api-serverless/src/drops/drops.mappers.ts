@@ -9,7 +9,7 @@ import {
 } from '../../../entities/IDrop';
 import { ConnectionWrapper } from '../../../sql-executor';
 import { ApiDrop } from '../generated/models/ApiDrop';
-import { distinct, parseIntOrNull } from '../../../helpers';
+import { distinct } from '../../../helpers';
 import { ApiProfileMin } from '../generated/models/ApiProfileMin';
 import { ApiDropPart } from '../generated/models/ApiDropPart';
 import { ApiDropMedia } from '../generated/models/ApiDropMedia';
@@ -61,6 +61,7 @@ import {
   IdentityFetcher
 } from '../identities/identity.fetcher';
 import { enums } from '../../../enums';
+import { numbers } from '../../../numbers';
 
 export class DropsMappers {
   constructor(
@@ -747,7 +748,7 @@ export class DropsMappers {
         }) ?? [],
       parts_count: dropEntity.parts_count,
       created_at: dropEntity.created_at,
-      updated_at: parseIntOrNull(dropEntity.updated_at),
+      updated_at: numbers.parseIntOrNull(dropEntity.updated_at),
       referenced_nfts: referencedNfts
         .filter((it) => it.drop_id === dropEntity.id)
         .map<ApiDropReferencedNFT>((it) => ({

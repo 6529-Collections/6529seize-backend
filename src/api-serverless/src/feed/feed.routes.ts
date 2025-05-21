@@ -4,7 +4,7 @@ import { getAuthenticationContext, needsAuthenticatedUser } from '../auth/auth';
 import { ApiResponse } from '../api-response';
 import { ApiFeedItem } from '../generated/models/ApiFeedItem';
 import { feedApiService } from './feed.api.service';
-import { parseIntOrNull } from '../../../helpers';
+import { numbers } from '../../../numbers';
 
 const router = asyncRouter();
 
@@ -26,7 +26,9 @@ router.get(
     const authenticationContext = await getAuthenticationContext(req);
     const feed = await feedApiService.getFeed(
       {
-        serial_no_less_than: parseIntOrNull(req.query.serial_no_less_than)
+        serial_no_less_than: numbers.parseIntOrNull(
+          req.query.serial_no_less_than
+        )
       },
       authenticationContext
     );
