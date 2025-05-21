@@ -108,18 +108,6 @@ export function parseIpfsUrlToCloudflare(url: string | undefined) {
   return url;
 }
 
-function padTo2Digits(num: number) {
-  return num.toString().padStart(2, '0');
-}
-
-export function formatDateAsString(date: Date) {
-  return [
-    date.getFullYear(),
-    padTo2Digits(date.getMonth() + 1),
-    padTo2Digits(date.getDate())
-  ].join('');
-}
-
 // The assertUnreachable function takes an input _x of type never and always throws
 // an error. This function is typically used in TypeScript to assert exhaustiveness in
 // switch-case or if-else constructs, ensuring that all possible cases are handled.

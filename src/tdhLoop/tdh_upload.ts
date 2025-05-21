@@ -1,5 +1,4 @@
 import { ConsolidatedTDH, TDHENS } from '../entities/ITDH';
-import { formatDateAsString } from '../helpers';
 import { SIX529_MUSEUM } from '../constants';
 import converter from 'json-2-csv';
 import {
@@ -24,6 +23,7 @@ import {
   UploadFieldsWallet
 } from '../entities/IUpload';
 import { equalIgnoreCase } from '../strings';
+import { Time } from '../time';
 
 const logger = Logger.get('TDH_UPLOAD');
 
@@ -58,7 +58,7 @@ export async function uploadTDH(
     ownerBalances = await fetchAllOwnerBalances();
   }
 
-  const dateString = formatDateAsString(new Date());
+  const dateString = Time.now().toPaddedDateString();
 
   const exists = lastUpload && lastUpload.date == dateString;
 

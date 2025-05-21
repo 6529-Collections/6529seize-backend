@@ -8,7 +8,7 @@ import {
   TDHHistory
 } from '../entities/ITDHHistory';
 import { TokenTDH } from '../entities/ITDH';
-import { buildConsolidationKey, formatDateAsString } from '../helpers';
+import { buildConsolidationKey } from '../helpers';
 import axios from 'axios';
 import { Readable } from 'stream';
 import { Logger } from '../logging';
@@ -121,7 +121,7 @@ function hasMatchingWallet(d: any, yd: any) {
 }
 
 async function tdhHistory(date: Date) {
-  const dateString = formatDateAsString(date);
+  const dateString = Time.fromDate(date).toPaddedDateString();
 
   logger.info(
     `[DATE ${date.toISOString().split('T')[0]}] [FETCHING UPLOADS...]`

@@ -156,6 +156,15 @@ export class Time {
     return Time.fromUtcDateString(tdhStr);
   }
 
+  public toPaddedDateString(): string {
+    const date = this.toDate();
+    return [
+      date.getFullYear(),
+      (date.getMonth() + 1).toString().padStart(2, '0'),
+      date.getDate().toString().padStart(2, '0')
+    ].join('');
+  }
+
   public diffFromNow(): Time {
     return Time.now().diff(this);
   }
