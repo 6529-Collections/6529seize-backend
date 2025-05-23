@@ -25,6 +25,7 @@ on:
           - dbMigrationsLoop
           - delegationsLoop
           - discoverEnsLoop
+          - dropVideoConversionInvokerLoop
           - ethPriceLoop
           - marketStatsLoop
           - mediaResizerLoop
@@ -65,11 +66,16 @@ jobs:
     name: Build and deploy ${{ github.event.inputs.service }} to ${{ github.event.inputs.environment }}
     runs-on: ubuntu-latest
     steps:
-      - name: Check preconditions
+      - name: Check production preconditions
         uses: actions/github-script@v3
         if: (github.event.inputs.service == 'mediaResizerLoop' || github.event.inputs.service == 'nextgenMediaProxyInterceptor' || github.event.inputs.service == 'nextgenMediaUploader' || github.event.inputs.service == 'nextgenMediaImageResolutions' || github.event.inputs.service == 'cloudwatchAlarmsToDiscordLoop') && github.event.inputs.environment != 'prod'
         with:
           script: core.setFailed('Given service can only be deployed to production environment')
+      - name: Check staging preconditions
+        uses: actions/github-script@v3
+        if: (github.event.inputs.service == 'dropVideoConversionInvokerLoop') && github.event.inputs.environment != 'staging'
+        with:
+          script: core.setFailed('Given service can only be deployed to staging environment')
       - name: Extract branch name
         shell: bash
         run: echo "branch=${GITHUB_HEAD_REF:-${GITHUB_REF#refs/heads/}}" >> $GITHUB_OUTPUT
