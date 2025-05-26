@@ -27,7 +27,7 @@ export class Enums {
     value?: string
   ): T[keyof T] {
     const resolvedValue = this.resolve(enumObj, value);
-    if (resolvedValue) {
+    if (resolvedValue !== undefined) {
       return resolvedValue;
     }
     throw new Error(`Invalid enum value: ${value}`);
