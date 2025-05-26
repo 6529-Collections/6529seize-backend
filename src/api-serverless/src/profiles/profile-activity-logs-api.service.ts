@@ -105,7 +105,7 @@ export class ProfileActivityLogsApiService {
           : null,
         is_target_of_type_drop: isTargetOfTypeDrop(log.type),
         proxy_handle: log.proxy_id
-          ? profilesHandlesByIds[log.proxy_id] ?? null
+          ? (profilesHandlesByIds[log.proxy_id] ?? null)
           : null
       };
     });

@@ -82,13 +82,17 @@ export class DropsApiService {
     );
     const group_ids_user_is_eligible_for =
       await this.userGroupsService.getGroupsUserIsEligibleFor(contextProfileId);
-    const dropEntity = await (skipEligibilityCheck
-      ? this.dropsDb.findDropByIdWithoutEligibilityCheck(dropId, ctx.connection)
-      : this.dropsDb.findDropByIdWithEligibilityCheck(
-          dropId,
-          group_ids_user_is_eligible_for,
-          ctx.connection
-        )
+    const dropEntity = await (
+      skipEligibilityCheck
+        ? this.dropsDb.findDropByIdWithoutEligibilityCheck(
+            dropId,
+            ctx.connection
+          )
+        : this.dropsDb.findDropByIdWithEligibilityCheck(
+            dropId,
+            group_ids_user_is_eligible_for,
+            ctx.connection
+          )
     ).then(async (drop) => {
       if (!drop) {
         throw new NotFoundException(`Drop ${dropId} not found`);
@@ -133,19 +137,25 @@ export class DropsApiService {
       ctx
     );
     const apiLightDrops = Object.values(
-      entities.reduce((acc, it) => {
-        acc[it.id] = {
-          id: it.id,
-          serial_no: it.serial_no,
-          drop_type: enums.resolveOrThrow(ApiDropType, it.drop_type.toString()),
-          title: it.title,
-          is_reply_drop: !!it.reply_to_drop_id,
-          part_1_medias: JSON.parse(it.medias_json ?? `[]`) as ApiDropMedia[],
-          part_1_text: it.part_content,
-          has_quote: !!it.part_quoted_drop_id
-        };
-        return acc;
-      }, {} as Record<string, ApiLightDrop>)
+      entities.reduce(
+        (acc, it) => {
+          acc[it.id] = {
+            id: it.id,
+            serial_no: it.serial_no,
+            drop_type: enums.resolveOrThrow(
+              ApiDropType,
+              it.drop_type.toString()
+            ),
+            title: it.title,
+            is_reply_drop: !!it.reply_to_drop_id,
+            part_1_medias: JSON.parse(it.medias_json ?? `[]`) as ApiDropMedia[],
+            part_1_text: it.part_content,
+            has_quote: !!it.part_quoted_drop_id
+          };
+          return acc;
+        },
+        {} as Record<string, ApiLightDrop>
+      )
     );
     return apiLightDrops.sort((a, d) => a.serial_no - d.serial_no);
   }
@@ -219,9 +229,8 @@ export class DropsApiService {
   async findAvailableCreditForRatingForProfile(
     profileId: string
   ): Promise<{ available_credit_for_rating: number }> {
-    const creditLeft = await this.clappingService.findCreditLeftForClapping(
-      profileId
-    );
+    const creditLeft =
+      await this.clappingService.findCreditLeftForClapping(profileId);
     return { available_credit_for_rating: creditLeft };
   }
 
@@ -259,10 +268,13 @@ export class DropsApiService {
         contextProfileId: authenticationContext?.getActingAsId()
       })
       .then((drops) =>
-        drops.reduce((acc, drop) => {
-          acc[drop.id] = drop;
-          return acc;
-        }, {} as Record<string, ApiDrop>)
+        drops.reduce(
+          (acc, drop) => {
+            acc[drop.id] = drop;
+            return acc;
+          },
+          {} as Record<string, ApiDrop>
+        )
       );
   }
 

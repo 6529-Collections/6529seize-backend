@@ -127,7 +127,9 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
             )
           );
         const alreadyInsertedProfileIds = await this.db
-          .execute<{ profile_id: string }>(
+          .execute<{
+            profile_id: string;
+          }>(
             `select profile_id from ${PROFILE_GROUPS_TABLE} where profile_id in (:profileIds) and profile_group_id = :profile_group_id`,
             { profileIds, profile_group_id },
             { wrappedConnection: connection }
@@ -620,12 +622,15 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
         { wrappedConnection: ctx.connection }
       )
       .then((res) =>
-        res.reduce((acc, it) => {
-          acc[it.contract.toLowerCase()] = it.token_ids
-            .split(',')
-            .map((k) => k.toLowerCase());
-          return acc;
-        }, {} as Record<string, string[]>)
+        res.reduce(
+          (acc, it) => {
+            acc[it.contract.toLowerCase()] = it.token_ids
+              .split(',')
+              .map((k) => k.toLowerCase());
+            return acc;
+          },
+          {} as Record<string, string[]>
+        )
       );
     ctx.timer?.stop(
       'userGroupsDb->getAllProfileOwnedTokensByProfileIdGroupedByContract'

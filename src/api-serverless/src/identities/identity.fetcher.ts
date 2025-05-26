@@ -113,10 +113,13 @@ export class IdentityFetcher {
           subscribed_actions: subscribedActions[p.external_id] ?? []
         }))
       );
-    return [...notArchivedProfiles, ...archivedProfiles].reduce((acc, it) => {
-      acc[it.id] = it;
-      return acc;
-    }, {} as Record<string, ApiProfileMin>);
+    return [...notArchivedProfiles, ...archivedProfiles].reduce(
+      (acc, it) => {
+        acc[it.id] = it;
+        return acc;
+      },
+      {} as Record<string, ApiProfileMin>
+    );
   }
 
   private async getSubscribedActions(
@@ -137,12 +140,15 @@ export class IdentityFetcher {
             connection
           )
           .then((result) =>
-            Object.entries(result).reduce((acc, [profileId, actions]) => {
-              acc[profileId] = actions.map((it) =>
-                enums.resolveOrThrow(ApiIdentitySubscriptionTargetAction, it)
-              );
-              return acc;
-            }, {} as Record<string, ApiIdentitySubscriptionTargetAction[]>)
+            Object.entries(result).reduce(
+              (acc, [profileId, actions]) => {
+                acc[profileId] = actions.map((it) =>
+                  enums.resolveOrThrow(ApiIdentitySubscriptionTargetAction, it)
+                );
+                return acc;
+              },
+              {} as Record<string, ApiIdentitySubscriptionTargetAction[]>
+            )
           )
       : {};
   }
@@ -293,10 +299,10 @@ export class IdentityFetcher {
       ctx
     );
     const classification = identity.classification
-      ? enums.resolve(
+      ? (enums.resolve(
           ApiProfileClassification,
           identity.classification as string
-        ) ?? ApiProfileClassification.Pseudonym
+        ) ?? ApiProfileClassification.Pseudonym)
       : ApiProfileClassification.Pseudonym;
     return {
       id: identity.profile_id,
@@ -354,18 +360,21 @@ export class IdentityFetcher {
           limit: limit * 3
         });
       const members = [...membersByHandles, ...profilesByEnsNames]
-        .reduce((acc, prof) => {
-          const profDisplay = prof.handle ?? prof.ens ?? prof.primary_address;
-          if (
-            !acc.find((it) => {
-              const itDisplay = it.handle ?? it.ens ?? it.primary_address;
-              return itDisplay === profDisplay;
-            })
-          ) {
-            acc.push(prof);
-          }
-          return acc;
-        }, [] as (IdentityEntity & { ens: string })[])
+        .reduce(
+          (acc, prof) => {
+            const profDisplay = prof.handle ?? prof.ens ?? prof.primary_address;
+            if (
+              !acc.find((it) => {
+                const itDisplay = it.handle ?? it.ens ?? it.primary_address;
+                return itDisplay === profDisplay;
+              })
+            ) {
+              acc.push(prof);
+            }
+            return acc;
+          },
+          [] as (IdentityEntity & { ens: string })[]
+        )
         .sort((a, d) => {
           if (a.handle && !d.handle) {
             return -1;

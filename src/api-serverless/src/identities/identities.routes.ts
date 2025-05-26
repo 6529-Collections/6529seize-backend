@@ -135,12 +135,12 @@ router.get(
     );
     const activeActions = !profileId
       ? []
-      : (
+      : ((
           await identityFetcher.getOverviewsByIds([profileId], {
             authenticationContext,
             timer
           })
-        )[profileId]?.subscribed_actions ?? [];
+        )[profileId]?.subscribed_actions ?? []);
     res.send({
       actions: activeActions
     });

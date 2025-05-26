@@ -75,13 +75,16 @@ export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
         connection ? { wrappedConnection: connection } : undefined
       )
       .then((result) =>
-        result.reduce((acc, it) => {
-          if (!acc[it.target_id]) {
-            acc[it.target_id] = [];
-          }
-          acc[it.target_id].push(it.target_action);
-          return acc;
-        }, {} as Record<string, ActivityEventAction[]>)
+        result.reduce(
+          (acc, it) => {
+            if (!acc[it.target_id]) {
+              acc[it.target_id] = [];
+            }
+            acc[it.target_id].push(it.target_action);
+            return acc;
+          },
+          {} as Record<string, ActivityEventAction[]>
+        )
       );
   }
 
@@ -166,10 +169,13 @@ export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
         }
       )
       .then((result) =>
-        result.reduce((acc, it) => {
-          acc[it.id] = it.actions.split(',') as ActivityEventAction[];
-          return acc;
-        }, {} as Record<string, ActivityEventAction[]>)
+        result.reduce(
+          (acc, it) => {
+            acc[it.id] = it.actions.split(',') as ActivityEventAction[];
+            return acc;
+          },
+          {} as Record<string, ActivityEventAction[]>
+        )
       );
   }
 
@@ -195,10 +201,10 @@ export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
             params.target_type === ActivityEventTargetType.DROP
               ? `join ${DROPS_TABLE} d on s.target_id = d.id
               join ${WAVES_TABLE} w on d.wave_id = w.id and (w.visibility_group_id is null ${
-                  eligibleGroupIds.length
-                    ? `or w.visibility_group_id in (:eligibleGroupIds)`
-                    : ``
-                })`
+                eligibleGroupIds.length
+                  ? `or w.visibility_group_id in (:eligibleGroupIds)`
+                  : ``
+              })`
               : ''
           }
              where s.subscriber_id = :subscriber_id
@@ -216,10 +222,13 @@ export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
         }
       )
       .then((result) =>
-        result.reduce((acc, it) => {
-          acc[it.id] = it.actions.split(',') as ActivityEventAction[];
-          return acc;
-        }, {} as Record<string, ActivityEventAction[]>)
+        result.reduce(
+          (acc, it) => {
+            acc[it.id] = it.actions.split(',') as ActivityEventAction[];
+            return acc;
+          },
+          {} as Record<string, ActivityEventAction[]>
+        )
       );
   }
 
@@ -263,10 +272,10 @@ export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
             params.target_type === ActivityEventTargetType.DROP
               ? `join ${DROPS_TABLE} d on s.target_id = d.id
               join ${WAVES_TABLE} w on d.wave_id = w.id and (w.visibility_group_id is null ${
-                  eligibleGroupIds.length
-                    ? `or w.visibility_group_id in (:eligibleGroupIds)`
-                    : ``
-                })`
+                eligibleGroupIds.length
+                  ? `or w.visibility_group_id in (:eligibleGroupIds)`
+                  : ``
+              })`
               : ''
           }
         where s.subscriber_id = :subscriber_id and s.target_type = :target_type`,

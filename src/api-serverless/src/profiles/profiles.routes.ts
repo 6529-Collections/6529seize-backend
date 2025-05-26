@@ -53,9 +53,8 @@ router.get(
     res: Response<ApiResponse<ProfileAndConsolidations>>
   ) {
     const identity = req.params.identity.toLowerCase();
-    const profile = await profilesService.getProfileAndConsolidationsByIdentity(
-      identity
-    );
+    const profile =
+      await profilesService.getProfileAndConsolidationsByIdentity(identity);
     if (!profile) {
       throw new NotFoundException('Profile not found');
     }
@@ -173,9 +172,8 @@ router.post(
       sub_classification: subClassification,
       pfp_url
     };
-    const profile = await profilesService.createOrUpdateProfile(
-      createProfileCommand
-    );
+    const profile =
+      await profilesService.createOrUpdateProfile(createProfileCommand);
     await giveReadReplicaTimeToCatchUp();
     res.status(201).send(profile);
   }

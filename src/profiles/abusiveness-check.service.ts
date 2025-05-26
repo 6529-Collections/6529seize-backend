@@ -80,9 +80,8 @@ export class AbusivenessCheckService {
       return existingResult;
     }
     try {
-      const result = await this.aiBasedAbusivenessDetector.checkRepPhraseText(
-        txt
-      );
+      const result =
+        await this.aiBasedAbusivenessDetector.checkRepPhraseText(txt);
       await this.abusivenessCheckDb.saveResult(result);
       return result;
     } catch (e) {

@@ -100,9 +100,10 @@ router.post(
       ApiUploadPartOfMultipartUploadRequestSchema
     );
 
-    const url = await uploadMediaService.getSignedUrlForPartOfMultipartUpload(
-      validatedRequest
-    );
+    const url =
+      await uploadMediaService.getSignedUrlForPartOfMultipartUpload(
+        validatedRequest
+      );
 
     res.send({
       upload_url: url
@@ -121,9 +122,8 @@ router.post(
       req.body,
       ApiCompleteMultipartUploadRequestSchema
     );
-    const url = await uploadMediaService.completeMultipartUpload(
-      validatedRequest
-    );
+    const url =
+      await uploadMediaService.completeMultipartUpload(validatedRequest);
     res.send({
       media_url: url
     });

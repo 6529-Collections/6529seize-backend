@@ -211,16 +211,16 @@ async function buildRememe(contract: string, id: string, memes: number[]) {
       ? metadata.image
         ? metadata.image
         : metadata.image_url
-        ? metadata.image_url
-        : ''
+          ? metadata.image_url
+          : ''
       : '';
 
     const animation = metadata
       ? metadata.animation
         ? metadata.animation
         : metadata.animation_url
-        ? metadata.animation_url
-        : ''
+          ? metadata.animation_url
+          : ''
       : '';
 
     const originalFormat = await mediaChecker.getContentType(image);

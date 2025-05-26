@@ -18,7 +18,7 @@ const reqIdCacheKey = () =>
 
 const messageFormat = (loggerName: string) =>
   printf((info) => {
-    if (info.message.constructor === Object) {
+    if (info.message?.constructor === Object) {
       info.message = JSON.stringify(info.message, null, 2);
     }
     return `[${info.timestamp}] [${

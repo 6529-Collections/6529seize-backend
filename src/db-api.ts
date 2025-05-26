@@ -310,7 +310,7 @@ export async function fetchPaginated<T = any>(
 ): Promise<PaginatedResponse<T>> {
   const groupPart = groups ? ` GROUP BY ${groups}` : '';
   const countSql = `SELECT COUNT(1) as count FROM (SELECT 1 FROM ${table} ${
-    !opts?.skipJoinsOnCountQuery ? joins ?? '' : ''
+    !opts?.skipJoinsOnCountQuery ? (joins ?? '') : ''
   } ${filters}${groupPart}) inner_q`;
 
   let resultsSql = `SELECT ${fields ? fields : '*'} FROM ${table} ${
@@ -426,7 +426,7 @@ export async function fetchArtists(
   if (meme_nfts) {
     meme_nfts.split(',').forEach((nft_id, index) => {
       const paramName = `nft_id${index}`;
-      const query = `%\"id\": ${nft_id}%`;
+      const query = `%"id": ${nft_id}%`;
 
       if (index === 0) {
         filters += 'WHERE ';

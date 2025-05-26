@@ -543,10 +543,13 @@ export class WaveApiService {
         { authenticationContext }
       )
       .then((res) =>
-        res.reduce((acc, it) => {
-          acc[it.id] = it;
-          return acc;
-        }, {} as Record<string, ApiWave>)
+        res.reduce(
+          (acc, it) => {
+            acc[it.id] = it;
+            return acc;
+          },
+          {} as Record<string, ApiWave>
+        )
       );
   }
 

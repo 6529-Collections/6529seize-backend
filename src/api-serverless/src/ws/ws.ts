@@ -47,6 +47,7 @@ abstract class ClientConnections {
 }
 
 class WebsocketClientConnections extends ClientConnections {
+  private readonly logger = Logger.get(WebsocketClientConnections.name);
   private readonly sockets: Record<string, WebSocket> = {};
 
   override async sendMessage({
@@ -74,7 +75,11 @@ class WebsocketClientConnections extends ClientConnections {
     }
     try {
       socket.close();
-    } catch (err: any) {}
+    } catch (err: any) {
+      this.logger.warn(
+        `Failed to close connection ${connectionId}: ${JSON.stringify(err)}`
+      );
+    }
     delete this.sockets[connectionId];
   }
 

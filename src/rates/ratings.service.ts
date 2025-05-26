@@ -870,10 +870,13 @@ export class RatingsService {
           );
         const profileIdsByWallets = Object.entries(
           allIdentitiesByAddresses
-        ).reduce((acc, [wallet, { profile }]) => {
-          acc[wallet] = profile!.external_id;
-          return acc;
-        }, {} as Record<string, string>);
+        ).reduce(
+          (acc, [wallet, { profile }]) => {
+            acc[wallet] = profile!.external_id;
+            return acc;
+          },
+          {} as Record<string, string>
+        );
         const raterRatingsByTargetProfileId = await this.ratingsDb
           .getRatingsOnMatter(
             {
@@ -883,37 +886,46 @@ export class RatingsService {
             connection
           )
           .then((result) =>
-            result.reduce((acc, it) => {
-              if (
-                !apiRequest.category ||
-                it.matter_category == apiRequest.category
-              ) {
-                acc[it.matter_target_id] = it.rating;
-              }
-              return acc;
-            }, {} as Record<string, number>)
+            result.reduce(
+              (acc, it) => {
+                if (
+                  !apiRequest.category ||
+                  it.matter_category == apiRequest.category
+                ) {
+                  acc[it.matter_target_id] = it.rating;
+                }
+                return acc;
+              },
+              {} as Record<string, number>
+            )
           );
         const skipped: { identity: string; reason: string }[] = [];
         const ratingChangesByProfileId = Object.entries(
           profileIdsByWallets
-        ).reduce((acc, [wallet, profileId]) => {
-          if (profileId === authContext.getActingAsId()!) {
-            skipped.push({
-              identity: wallet,
-              reason: `User can't rate themselves`
-            });
-          } else {
-            acc[profileId] = (acc[profileId] ?? 0) + apiRequest.amount_to_add;
-          }
-          return acc;
-        }, {} as Record<string, number>);
+        ).reduce(
+          (acc, [wallet, profileId]) => {
+            if (profileId === authContext.getActingAsId()!) {
+              skipped.push({
+                identity: wallet,
+                reason: `User can't rate themselves`
+              });
+            } else {
+              acc[profileId] = (acc[profileId] ?? 0) + apiRequest.amount_to_add;
+            }
+            return acc;
+          },
+          {} as Record<string, number>
+        );
         const newRatingsByProfileId = Object.entries(
           ratingChangesByProfileId
-        ).reduce((acc, [profileId, ratingChange]) => {
-          acc[profileId] =
-            (raterRatingsByTargetProfileId[profileId] ?? 0) + ratingChange;
-          return acc;
-        }, {} as Record<string, number>);
+        ).reduce(
+          (acc, [profileId, ratingChange]) => {
+            acc[profileId] =
+              (raterRatingsByTargetProfileId[profileId] ?? 0) + ratingChange;
+            return acc;
+          },
+          {} as Record<string, number>
+        );
         for (const [profileId, newRating] of Object.entries(
           newRatingsByProfileId
         )) {
@@ -1025,18 +1037,21 @@ export class RatingsService {
         if (isRatingItself) {
           throw new BadRequestException(`User can't rate themselves`);
         }
-        const newRatingsByCategoryAndProfile = targets.reduce((acc, target) => {
-          const targetAddress = target.address;
-          const targetProfileId = profileIdsByTargetAddresses[targetAddress];
-          if (targetProfileId) {
-            if (!acc[targetProfileId]) {
-              acc[targetProfileId] = {};
+        const newRatingsByCategoryAndProfile = targets.reduce(
+          (acc, target) => {
+            const targetAddress = target.address;
+            const targetProfileId = profileIdsByTargetAddresses[targetAddress];
+            if (targetProfileId) {
+              if (!acc[targetProfileId]) {
+                acc[targetProfileId] = {};
+              }
+              acc[targetProfileId][target.category] =
+                target.amount + (acc[targetProfileId][target.category] ?? 0);
             }
-            acc[targetProfileId][target.category] =
-              target.amount + (acc[targetProfileId][target.category] ?? 0);
-          }
-          return acc;
-        }, {} as Record<string, Record<string, number>>);
+            return acc;
+          },
+          {} as Record<string, Record<string, number>>
+        );
         const ratingChanges = await this.getRatingChanges(
           { newRatingsByCategoryAndProfile, proposedCategories },
           ctxWithConnection
@@ -1194,30 +1209,36 @@ export class RatingsService {
       );
     const categoryRatingsByProfiles = Object.entries(
       newRatingsByCategoryAndProfile
-    ).reduce((acc, [profileId, categoryRatings]) => {
-      acc[profileId] = Object.entries(categoryRatings).reduce(
-        (accInner, [category, amount]) => {
-          const oldRating =
-            ratingEntities.find(
-              (it) =>
-                it.matter_target_id === profileId &&
-                it.matter_category === category
-            )?.rating ?? 0;
-          accInner[category] = {
-            oldRating,
-            newRating: amount
-          };
-          return accInner;
-        },
-        {} as Record<string, { oldRating: number; newRating: number }>
-      );
-      return acc;
-    }, {} as Record<string, Record<string, { oldRating: number; newRating: number }>>);
+    ).reduce(
+      (acc, [profileId, categoryRatings]) => {
+        acc[profileId] = Object.entries(categoryRatings).reduce(
+          (accInner, [category, amount]) => {
+            const oldRating =
+              ratingEntities.find(
+                (it) =>
+                  it.matter_target_id === profileId &&
+                  it.matter_category === category
+              )?.rating ?? 0;
+            accInner[category] = {
+              oldRating,
+              newRating: amount
+            };
+            return accInner;
+          },
+          {} as Record<string, { oldRating: number; newRating: number }>
+        );
+        return acc;
+      },
+      {} as Record<
+        string,
+        Record<string, { oldRating: number; newRating: number }>
+      >
+    );
     return Object.entries(categoryRatingsByProfiles).map(
       ([profileId, changes]) => ({
         profileId,
         changes: Object.entries(changes)
-          // eslint-disable-next-line
+
           .filter(([_, it]) => it.oldRating !== it.newRating)
           .map(([category, { oldRating, newRating }]) => ({
             category,

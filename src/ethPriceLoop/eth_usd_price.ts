@@ -38,9 +38,8 @@ export async function syncEthUsdPrice(reset: boolean) {
 }
 
 async function syncHistoricEthUsdPriceData() {
-  const historicResponse = await axios.get<HistoricResponse>(
-    MOBULA_HISTORIC_URL
-  );
+  const historicResponse =
+    await axios.get<HistoricResponse>(MOBULA_HISTORIC_URL);
   const historicData = historicResponse.data;
   logger.info(
     `[HISTORIC DATA  RESPONSE ${historicData.data.price_history.length}]`

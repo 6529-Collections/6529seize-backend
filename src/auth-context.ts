@@ -32,13 +32,16 @@ export class AuthenticationContext {
     this.authenticatedWallet = authenticatedWallet;
     this.authenticatedProfileId = authenticatedProfileId;
     this.roleProfileId = roleProfileId;
-    this.activeProxyActions = activeProxyActions.reduce((acc, action) => {
-      const type = enums.resolve(ProfileProxyActionType, action.type);
-      if (type) {
-        acc[type] = action;
-      }
-      return acc;
-    }, {} as Record<ProfileProxyActionType, AuthenticatedProxyAction>);
+    this.activeProxyActions = activeProxyActions.reduce(
+      (acc, action) => {
+        const type = enums.resolve(ProfileProxyActionType, action.type);
+        if (type) {
+          acc[type] = action;
+        }
+        return acc;
+      },
+      {} as Record<ProfileProxyActionType, AuthenticatedProxyAction>
+    );
   }
 
   public isUserFullyAuthenticated(): boolean {
@@ -56,7 +59,7 @@ export class AuthenticationContext {
   public getActingAsId(): string | null {
     return this.isAuthenticatedAsProxy()
       ? this.roleProfileId!
-      : this.authenticatedProfileId ?? null;
+      : (this.authenticatedProfileId ?? null);
   }
 
   public hasProxyAction(type: ProfileProxyActionType): boolean {
@@ -82,7 +85,7 @@ export class AuthenticationContext {
   public getLoggedInUsersProfileId(): string | null {
     return this.isAuthenticatedAsProxy()
       ? this.authenticatedProfileId
-      : this.roleProfileId ?? this.authenticatedProfileId ?? null;
+      : (this.roleProfileId ?? this.authenticatedProfileId ?? null);
   }
 }
 

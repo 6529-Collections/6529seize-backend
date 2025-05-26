@@ -389,12 +389,12 @@ router.get(
       serialNoLessThan ?? numbers.parseIntOrNull(req.query.serial_no_limit);
     const searchStrategy =
       serialNoLessThan === null
-        ? enums.resolve(ApiDropSearchStrategy, req.query.search_strategy) ??
-          ApiDropSearchStrategy.Older
+        ? (enums.resolve(ApiDropSearchStrategy, req.query.search_strategy) ??
+          ApiDropSearchStrategy.Older)
         : ApiDropSearchStrategy.Older;
     const drop_type_str = req.query.drop_type as string | undefined;
     const drop_type = drop_type_str
-      ? enums.resolve(ApiDropType, drop_type_str) ?? null
+      ? (enums.resolve(ApiDropType, drop_type_str) ?? null)
       : null;
     const result = await dropsService.findWaveDropsFeed(
       {

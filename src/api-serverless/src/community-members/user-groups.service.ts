@@ -203,9 +203,8 @@ export class UserGroupsService {
     if (!givenGroups.length) {
       return [];
     }
-    const identityEntity = await this.userGroupsDb.getIdentityByProfileId(
-      profileId
-    );
+    const identityEntity =
+      await this.userGroupsDb.getIdentityByProfileId(profileId);
     if (!identityEntity) {
       return [];
     }
@@ -647,10 +646,13 @@ export class UserGroupsService {
     if (userIds.some((it) => it === null)) {
       return null;
     }
-    const usersToUserIds = filterUsers.reduce((acc, user, index) => {
-      acc[user] = userIds[index]!;
-      return acc;
-    }, {} as Record<string, string>);
+    const usersToUserIds = filterUsers.reduce(
+      (acc, user, index) => {
+        acc[user] = userIds[index]!;
+        return acc;
+      },
+      {} as Record<string, string>
+    );
     group.cic.user_identity = group.cic.user_identity
       ? usersToUserIds[group.cic.user_identity]
       : null;
@@ -941,7 +943,7 @@ export class UserGroupsService {
     let cicPart = null;
     if (cicGroup.user_identity || cicGroup.min || cicGroup.max) {
       const direction = cicGroup.user_identity
-        ? cicGroup.direction ?? ApiGroupFilterDirection.Received
+        ? (cicGroup.direction ?? ApiGroupFilterDirection.Received)
         : ApiGroupFilterDirection.Received;
       if (cicGroup.user_identity) {
         params.cic_user = cicGroup.user_identity;
@@ -1145,7 +1147,7 @@ export class UserGroupsService {
             ? enums.resolve(ApiGroupFilterDirection, it.cic_direction)!
             : null,
           user_identity: it.cic_user
-            ? relatedProfiles[it.cic_user]?.handle ?? it.cic_user
+            ? (relatedProfiles[it.cic_user]?.handle ?? it.cic_user)
             : null
         },
         rep: {
@@ -1155,7 +1157,7 @@ export class UserGroupsService {
             ? enums.resolve(ApiGroupFilterDirection, it.rep_direction)!
             : null,
           user_identity: it.rep_user
-            ? relatedProfiles[it.rep_user]?.handle ?? it.rep_user
+            ? (relatedProfiles[it.rep_user]?.handle ?? it.rep_user)
             : null,
           category: it.rep_category
         },

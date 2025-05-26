@@ -13,10 +13,13 @@ const sortObjectFirstLevel = (
 ): Record<string, any> => {
   return Object.keys(obj)
     .sort((a, b) => a.localeCompare(b)) // Use localeCompare for reliable sorting
-    .reduce((acc, key) => {
-      acc[key] = obj[key]; // Keep the value as is
-      return acc;
-    }, {} as Record<string, any>);
+    .reduce(
+      (acc, key) => {
+        acc[key] = obj[key]; // Keep the value as is
+        return acc;
+      },
+      {} as Record<string, any>
+    );
 };
 
 // Function to sort paths by the first tag
@@ -34,10 +37,13 @@ const sortPathsByFirstTag = (
     .sort((a, b) => {
       return (a.firstTag || '').localeCompare(b.firstTag || '');
     })
-    .reduce((acc, { path, methods }) => {
-      acc[path] = methods; // Rebuild the object with sorted paths
-      return acc;
-    }, {} as Record<string, any>);
+    .reduce(
+      (acc, { path, methods }) => {
+        acc[path] = methods; // Rebuild the object with sorted paths
+        return acc;
+      },
+      {} as Record<string, any>
+    );
 
   return sortedPaths;
 };

@@ -398,7 +398,9 @@ from general_stats
     profile_id: string;
   }): Promise<number> {
     return this.db
-      .oneOrNull<{ cnt: number }>(
+      .oneOrNull<{
+        cnt: number;
+      }>(
         `select count(distinct rater_profile_id) as cnt from ${RATINGS_TABLE} where matter_target_id = :profile_id and matter = :matter and rating <> 0`,
         param
       )
@@ -459,8 +461,8 @@ from general_stats
 from grouped_rates r
          join ${IDENTITIES_TABLE} i on i.profile_id = r.profile_id
          left join rater_cic_ratings on rater_cic_ratings.profile_id = r.profile_id order by ${order_by} ${order} ${
-          order_by !== `handle` ? `, i.handle asc` : ``
-        }  limit ${limit} offset ${offset}`,
+           order_by !== `handle` ? `, i.handle asc` : ``
+         }  limit ${limit} offset ${offset}`,
         sqlParams
       ),
       this.db
@@ -635,8 +637,8 @@ from grouped_rates r
         .execute<{ rating: number }>(
           `
       select sum(rating) as rating from ${RATINGS_TABLE} where matter = :matter ${
-            param.category ? `and matter_category = :category` : ``
-          } and matter_target_id = :to_profile_id
+        param.category ? `and matter_category = :category` : ``
+      } and matter_target_id = :to_profile_id
     `,
           param,
           { wrappedConnection: connection }
@@ -646,8 +648,8 @@ from grouped_rates r
         .execute<{ rating: number }>(
           `
       select sum(rating) as rating from ${RATINGS_TABLE} where matter = :matter ${
-            param.category ? `and matter_category = :category` : ``
-          } and matter_target_id = :to_profile_id and rater_profile_id = :from_profile_id
+        param.category ? `and matter_category = :category` : ``
+      } and matter_target_id = :to_profile_id and rater_profile_id = :from_profile_id
     `,
           param,
           { wrappedConnection: connection }
@@ -725,7 +727,9 @@ from grouped_rates r
 
   async getTdh(profleId: string, ctx: RequestContext): Promise<number> {
     return this.db
-      .oneOrNull<{ tdh: number }>(
+      .oneOrNull<{
+        tdh: number;
+      }>(
         `select tdh from ${IDENTITIES_TABLE} where profile_id = :profileId`,
         { profileId: profleId },
         { wrappedConnection: ctx.connection }

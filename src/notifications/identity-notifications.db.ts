@@ -232,7 +232,9 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
     connection?: ConnectionWrapper<any>
   ): Promise<string[]> {
     return this.db
-      .execute<{ identity_id: string }>(
+      .execute<{
+        identity_id: string;
+      }>(
         `select identity_id from ${IDENTITY_NOTIFICATIONS_TABLE} where wave_id = :waveId and (related_drop_id = :dropId or related_drop_2_id = :dropId)`,
         { waveId, dropId },
         { wrappedConnection: connection }

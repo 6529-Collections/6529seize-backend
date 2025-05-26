@@ -22,11 +22,14 @@ export async function redisGetManyByIds<T>({
 }): Promise<Record<string, T>> {
   const keys = ids.map((id) => `${prefix}:${id}`);
   const cachedValuesByKeys = await redisGetMany<T>(keys);
-  return Object.entries(cachedValuesByKeys).reduce((acc, [key, value]) => {
-    const id = key.replace(`${prefix}:`, '');
-    acc[id] = value;
-    return acc;
-  }, {} as Record<string, T>);
+  return Object.entries(cachedValuesByKeys).reduce(
+    (acc, [key, value]) => {
+      const id = key.replace(`${prefix}:`, '');
+      acc[id] = value;
+      return acc;
+    },
+    {} as Record<string, T>
+  );
 }
 
 export async function redisGetMany<T>(
@@ -39,12 +42,15 @@ export async function redisGetMany<T>(
     return {};
   }
   const valuesFromRedisRaw = await redis.mGet(keys);
-  return valuesFromRedisRaw.reduce((acc, value, index) => {
-    if (value) {
-      acc[keys[index]] = JSON.parse(value);
-    }
-    return acc;
-  }, {} as Record<string, T>);
+  return valuesFromRedisRaw.reduce(
+    (acc, value, index) => {
+      if (value) {
+        acc[keys[index]] = JSON.parse(value);
+      }
+      return acc;
+    },
+    {} as Record<string, T>
+  );
 }
 
 export async function redisCached<T>(

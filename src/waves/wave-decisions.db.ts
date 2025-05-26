@@ -131,11 +131,10 @@ export class WaveDecisionsDb extends LazyDbAccessCompatibleService {
       select dit.drop_id as drop_id, dit.vote as vote from ${DROP_REAL_VOTE_IN_TIME_TABLE} dit join x1 on x1.drop_id = dit.drop_id and x1.timestamp = dit.timestamp order by dit.vote desc, dit.timestamp desc limit :n
     `;
     return await this.db
-      .execute<{ drop_id: string; vote: number }>(
-        sql,
-        { waveId, n },
-        { wrappedConnection: ctx.connection }
-      )
+      .execute<{
+        drop_id: string;
+        vote: number;
+      }>(sql, { waveId, n }, { wrappedConnection: ctx.connection })
       .then((res) => res.map((it, idx) => ({ ...it, rank: idx + 1 })));
   }
 

@@ -175,9 +175,8 @@ export class CicService {
     profile_id: string;
     id: string;
   }): Promise<CicStatement> {
-    const cicStatement = await this.cicDb.getCicStatementByIdAndProfileId(
-      props
-    );
+    const cicStatement =
+      await this.cicDb.getCicStatementByIdAndProfileId(props);
     if (!cicStatement) {
       throw new NotFoundException(
         `CIC statement ${props.id} not found for profile ${props.profile_id}`
@@ -297,9 +296,8 @@ export class CicService {
   }
 
   public async deleteCicStatement(props: { profile_id: string; id: string }) {
-    const cicStatement = await this.getCicStatementByIdAndProfileIdOrThrow(
-      props
-    );
+    const cicStatement =
+      await this.getCicStatementByIdAndProfileIdOrThrow(props);
     await this.cicDb.executeNativeQueriesInTransaction(async (connection) => {
       await this.deleteStatement(cicStatement, connection);
     });

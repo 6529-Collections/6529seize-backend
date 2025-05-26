@@ -88,8 +88,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
             values (:waveId, ${
               newDropEntity.drop_type === DropType.CHAT ? 1 : 0
             }, 0, ${
-          newDropEntity.drop_type === DropType.PARTICIPATORY ? 1 : 0
-        }, :now)
+              newDropEntity.drop_type === DropType.PARTICIPATORY ? 1 : 0
+            }, :now)
             on duplicate key update drops_count = (drops_count + ${
               newDropEntity.drop_type === DropType.CHAT ? 1 : 0
             }),
@@ -111,8 +111,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
             values (:waveId, :dropperId, ${
               newDropEntity.drop_type === DropType.CHAT ? 1 : 0
             }, ${
-          newDropEntity.drop_type === DropType.PARTICIPATORY ? 1 : 0
-        }, :now)
+              newDropEntity.drop_type === DropType.PARTICIPATORY ? 1 : 0
+            }, :now)
             on duplicate key update drops_count = (drops_count + ${
               newDropEntity.drop_type === DropType.CHAT ? 1 : 0
             }),
@@ -162,7 +162,9 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     ]);
     if (replyToDropId) {
       const serialNo = await this.db
-        .oneOrNull<{ serial_no: number }>(
+        .oneOrNull<{
+          serial_no: number;
+        }>(
           `select serial_no from ${DROPS_TABLE} where id = :id and wave_id = :wave_id`,
           { id: dropId, wave_id: waveId },
           { wrappedConnection: connection }
@@ -408,17 +410,17 @@ export class DropsDb extends LazyDbAccessCompatibleService {
            UserGroupsService.GENERATED_VIEW
          } cm on cm.profile_id = d.author_id
          join ${WAVES_TABLE} w on d.wave_id = w.id and (${
-      group_ids_user_is_eligible_for.length
-        ? `w.visibility_group_id in (:groupsUserIsEligibleFor) or w.admin_group_id in (:groupsUserIsEligibleFor) or`
-        : ``
-    } w.visibility_group_id is null) ${wave_id ? `and w.id = :wave_id` : ``}
+           group_ids_user_is_eligible_for.length
+             ? `w.visibility_group_id in (:groupsUserIsEligibleFor) or w.admin_group_id in (:groupsUserIsEligibleFor) or`
+             : ``
+         } w.visibility_group_id is null) ${wave_id ? `and w.id = :wave_id` : ``}
          where ${
            drop_type ? ` d.drop_type = :drop_type and ` : ``
          } d.serial_no < :serialNoLessThan ${
-      !include_replies ? `and reply_to_drop_id is null` : ``
-    } ${
-      author_id ? ` and d.author_id = :author_id ` : ``
-    } order by d.serial_no desc limit ${amount}`;
+           !include_replies ? `and reply_to_drop_id is null` : ``
+         } ${
+           author_id ? ` and d.author_id = :author_id ` : ``
+         } order by d.serial_no desc limit ${amount}`;
     const params: Record<string, any> = {
       ...sqlAndParams.params,
       serialNoLessThan,
@@ -465,10 +467,10 @@ export class DropsDb extends LazyDbAccessCompatibleService {
             GROUP BY drop_id
         ) dm ON dm.drop_id = d.id
          join ${WAVES_TABLE} w on d.wave_id = w.id and (${
-      group_ids_user_is_eligible_for.length
-        ? `w.visibility_group_id in (:groupsUserIsEligibleFor) or w.admin_group_id in (:groupsUserIsEligibleFor) or`
-        : ``
-    } w.visibility_group_id is null) ${wave_id ? `and w.id = :wave_id` : ``}
+           group_ids_user_is_eligible_for.length
+             ? `w.visibility_group_id in (:groupsUserIsEligibleFor) or w.admin_group_id in (:groupsUserIsEligibleFor) or`
+             : ``
+         } w.visibility_group_id is null) ${wave_id ? `and w.id = :wave_id` : ``}
          where d.serial_no <= :maxSerialNo 
           order by d.serial_no desc limit :limit`;
     const params: Record<string, any> = {
@@ -656,10 +658,13 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       { dropIds },
       connection ? { wrappedConnection: connection } : undefined
     );
-    return dropIds.reduce((acc, it) => {
-      acc[it] = dbResult.filter((r) => r.drop_id === it);
-      return acc;
-    }, {} as Record<string, DropMediaEntity[]>);
+    return dropIds.reduce(
+      (acc, it) => {
+        acc[it] = dbResult.filter((r) => r.drop_id === it);
+        return acc;
+      },
+      {} as Record<string, DropMediaEntity[]>
+    );
   }
 
   async getQuoteIds(
@@ -693,13 +698,16 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         connection ? { wrappedConnection: connection } : undefined
       )
       .then((it: DropPartEntity[]) => {
-        return it.reduce((acc, part) => {
-          if (!acc[part.drop_id]) {
-            acc[part.drop_id] = [];
-          }
-          acc[part.drop_id].push(part);
-          return acc;
-        }, {} as Record<string, DropPartEntity[]>);
+        return it.reduce(
+          (acc, part) => {
+            if (!acc[part.drop_id]) {
+              acc[part.drop_id] = [];
+            }
+            acc[part.drop_id].push(part);
+            return acc;
+          },
+          {} as Record<string, DropPartEntity[]>
+        );
       });
   }
 
@@ -891,10 +899,13 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         connection ? { wrappedConnection: connection } : undefined
       )
       .then((result) =>
-        result.reduce((acc, it) => {
-          acc[it.id] = it;
-          return acc;
-        }, {} as Record<string, DeletedDropEntity>)
+        result.reduce(
+          (acc, it) => {
+            acc[it.id] = it;
+            return acc;
+          },
+          {} as Record<string, DeletedDropEntity>
+        )
       );
   }
 
@@ -1343,8 +1354,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         group by voter_id
     ) select * from voter_stats 
       order by ${order_by} ${
-      params.sort_direction
-    } limit :page_size offset :offset
+        params.sort_direction
+      } limit :page_size offset :offset
     `;
     const sqlParams = {
       ...params,
@@ -1397,10 +1408,13 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       { wrappedConnection: ctx.connection }
     );
     ctx.timer?.stop(`${this.constructor.name}->getWinDecisionsForDrops`);
-    return entities.reduce((acc, it) => {
-      acc[it.drop_id] = { ...it, prizes: JSON.parse(it.prizes) };
-      return acc;
-    }, {} as Record<string, WaveDecisionWinnerDropEntity>);
+    return entities.reduce(
+      (acc, it) => {
+        acc[it.drop_id] = { ...it, prizes: JSON.parse(it.prizes) };
+        return acc;
+      },
+      {} as Record<string, WaveDecisionWinnerDropEntity>
+    );
   }
 
   async findWaveIdByDropId(
@@ -1408,7 +1422,9 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     ctx: RequestContext
   ): Promise<string | null> {
     return await this.db
-      .oneOrNull<{ wave_id: string }>(
+      .oneOrNull<{
+        wave_id: string;
+      }>(
         `select wave_id from ${DROPS_TABLE} where id = :dropId`,
         { dropId },
         { wrappedConnection: ctx.connection }

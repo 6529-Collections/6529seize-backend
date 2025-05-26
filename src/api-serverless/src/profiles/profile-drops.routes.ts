@@ -18,9 +18,8 @@ router.get(
       { identityKey: identity },
       { timer: Timer.getFromRequest(req) }
     );
-    const rep = await dropsService.findAvailableCreditForRatingForProfile(
-      profileId
-    );
+    const rep =
+      await dropsService.findAvailableCreditForRatingForProfile(profileId);
     res.send(rep);
   }
 );

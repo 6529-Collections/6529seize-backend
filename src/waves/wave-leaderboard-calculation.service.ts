@@ -130,15 +130,21 @@ export class WaveLeaderboardCalculationService {
     const voteStatesInTime = voteStates.filter(
       (it) => +it.timestamp >= startMillis && +it.timestamp <= endMillis
     );
-    const newestVoteStateBeforeTime = voteStates.reduce((acc, it) => {
-      if (
-        +it.timestamp < startMillis &&
-        (!acc || +it.timestamp > +acc.timestamp)
-      ) {
-        return it;
-      }
-      return acc;
-    }, null as DropRealVoteInTimeWithoutId | DropRealVoterVoteInTimeEntityWithoutId | null);
+    const newestVoteStateBeforeTime = voteStates.reduce(
+      (acc, it) => {
+        if (
+          +it.timestamp < startMillis &&
+          (!acc || +it.timestamp > +acc.timestamp)
+        ) {
+          return it;
+        }
+        return acc;
+      },
+      null as
+        | DropRealVoteInTimeWithoutId
+        | DropRealVoterVoteInTimeEntityWithoutId
+        | null
+    );
     const finalVoteStates: (
       | DropRealVoteInTimeWithoutId
       | DropRealVoterVoteInTimeEntityWithoutId
@@ -217,13 +223,16 @@ export class WaveLeaderboardCalculationService {
         },
         ctx
       );
-    const importantVotesByDrop = importantVotes.reduce((acc, it) => {
-      if (!acc[it.drop_id]) {
-        acc[it.drop_id] = [];
-      }
-      acc[it.drop_id].push(it);
-      return acc;
-    }, {} as Record<string, DropRealVoteInTimeWithoutId[]>);
+    const importantVotesByDrop = importantVotes.reduce(
+      (acc, it) => {
+        if (!acc[it.drop_id]) {
+          acc[it.drop_id] = [];
+        }
+        acc[it.drop_id].push(it);
+        return acc;
+      },
+      {} as Record<string, DropRealVoteInTimeWithoutId[]>
+    );
     const allFinalVotesByDropIds = Object.entries(importantVotesByDrop)
       .map(([dropId, votes]) => {
         const finalVote = this.calculateFinalVoteForDrop({

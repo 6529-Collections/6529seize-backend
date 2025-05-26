@@ -371,17 +371,17 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
     const currentTime = Time.now().toDate();
     const latestLogsSql = `
         insert into ${PROFILE_LATEST_LOG_TABLE} (profile_id, latest_activity) values ${Array.from(
-      profileIds
-    )
-      .map(
-        (profileId) =>
-          `(${[profileId, currentTime]
-            .map((it) => mysql.escape(it))
-            .join(', ')})`
-      )
-      .join(
-        ', '
-      )} ON DUPLICATE KEY UPDATE latest_activity = VALUES(latest_activity)
+          profileIds
+        )
+          .map(
+            (profileId) =>
+              `(${[profileId, currentTime]
+                .map((it) => mysql.escape(it))
+                .join(', ')})`
+          )
+          .join(
+            ', '
+          )} ON DUPLICATE KEY UPDATE latest_activity = VALUES(latest_activity)
     `;
     await this.db.execute(latestLogsSql, undefined, {
       wrappedConnection: ctx.connection

@@ -23,10 +23,13 @@ export class EventsDb extends LazyDbAccessCompatibleService {
         { eventIds },
         { wrappedConnection: connection }
       );
-    return result.reduce((acc, it) => {
-      acc[it.event_id] = [...(acc[it.event_id] ?? []), it.listener_key];
-      return acc;
-    }, {} as Record<number, string[]>);
+    return result.reduce(
+      (acc, it) => {
+        acc[it.event_id] = [...(acc[it.event_id] ?? []), it.listener_key];
+        return acc;
+      },
+      {} as Record<number, string[]>
+    );
   }
 
   async markEventsDoneForListener(

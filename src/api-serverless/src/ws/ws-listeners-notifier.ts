@@ -55,7 +55,7 @@ export class WsListenersNotifier {
               dropUpdateMessage(
                 this.removeDropsAuthRequestContext(
                   inputDrop,
-                  profileId === null ? 0 : creditLefts[profileId] ?? 0
+                  profileId === null ? 0 : (creditLefts[profileId] ?? 0)
                 )
               )
             )
@@ -99,7 +99,7 @@ export class WsListenersNotifier {
               dropRatingUpdateMessage(
                 this.removeDropsAuthRequestContext(
                   drop,
-                  profileId === null ? 0 : creditLefts[profileId] ?? 0
+                  profileId === null ? 0 : (creditLefts[profileId] ?? 0)
                 )
               )
             )
@@ -130,9 +130,8 @@ export class WsListenersNotifier {
     if (!connectionIds.length) {
       return;
     }
-    const identityEntity = await identitiesDb.getIdentityByProfileId(
-      identityId
-    );
+    const identityEntity =
+      await identitiesDb.getIdentityByProfileId(identityId);
     if (!identityEntity) {
       return;
     }

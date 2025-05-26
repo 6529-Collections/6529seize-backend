@@ -244,9 +244,8 @@ export class CollectedService {
     memesAndGradients: MemesAndGradientsOwnershipData,
     nextgenStats: NftsCollectionOwnershipData
   ) {
-    const nextgenLiveBalances = await this.collectedDb.getNextgenLiveBalances(
-      walletsToSearchBy
-    );
+    const nextgenLiveBalances =
+      await this.collectedDb.getNextgenLiveBalances(walletsToSearchBy);
     const { gradients: gradientsLiveBalances, memes: memesLiveBalances } =
       await this.collectedDb.getGradientsAndMemesLiveBalancesByTokenIds(
         walletsToSearchBy

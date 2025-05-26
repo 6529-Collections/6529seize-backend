@@ -59,3 +59,15 @@ export async function loadLocalConfig() {
     });
   }
 }
+
+class Env {
+  public getStringOrThrow(name: string): string {
+    const value = process.env[name];
+    if (!value) {
+      throw new Error(`Expected environment variable ${name} not configured`);
+    }
+    return value;
+  }
+}
+
+export const env = new Env();

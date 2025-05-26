@@ -1,0 +1,68 @@
+service: dropVideoConversionInvokerLoop
+frameworkVersion: '3'
+
+package:
+  artifact: dist/index.zip
+
+plugins:
+  - serverless-offline
+
+provider:
+  name: aws
+  region: eu-west-1
+  runtime: nodejs18.x
+  memorySize: 1028
+  timeout: 900
+  role: arn:aws:iam::987989283142:role/lambda-vpc-role
+
+functions:
+  dropVideoConversionInvokerLoop:
+    handler: index.handler
+    name: dropVideoConversionInvokerLoop
+    description: ${env:VERSION_DESCRIPTION}
+
+    vpc:
+      securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
+      subnetIds:        ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
+
+    environment:
+      SENTRY_DSN:         ${env:SENTRY_DSN}
+      SENTRY_ENVIRONMENT: "dropVideoConversionInvokerLoop_${opt:stage, self:provider.stage}"
+      S3_BUCKET:          6529bucket
+      BUCKET_REGION:      eu-west-1
+      MC_DROPS_VIDEO_TEMPLATE_NAME: Drops_HLS_MP4_360_720
+
+resources:
+  Resources:
+
+    DropsVideoCreatedRule:
+      Type: AWS::Events::Rule
+      Properties:
+        Name: DropsVideoCreated-${opt:stage, self:provider.stage}
+        EventBusName: default
+        EventPattern:
+          source:
+            - aws.s3
+          detail-type:
+            - Object Created
+          detail:
+            bucket:
+              name:
+                - 6529bucket
+            object:
+              key:
+                - prefix: drops/
+        Targets:
+          - Id: LambdaTarget
+            Arn:
+              Fn::GetAtt: [DropVideoConversionInvokerLoopLambdaFunction, Arn]
+
+    AllowEventsToInvokeDropVideoConversion:
+      Type: AWS::Lambda::Permission
+      Properties:
+        FunctionName:
+          Fn::GetAtt: [DropVideoConversionInvokerLoopLambdaFunction, Arn]
+        Action: lambda:InvokeFunction
+        Principal: events.amazonaws.com
+        SourceArn:
+          Fn::GetAtt: [DropsVideoCreatedRule, Arn]
