@@ -87,10 +87,10 @@ export class ProfilesService {
         banner_1: apiIdentity.banner1 ?? undefined,
         banner_2: apiIdentity.banner2 ?? undefined,
         classification: apiIdentity.classification
-          ? enums.resolve(
+          ? (enums.resolve(
               ProfileClassification,
               apiIdentity.classification.toString()
-            ) ?? ProfileClassification.PSEUDONYM
+            ) ?? ProfileClassification.PSEUDONYM)
           : ProfileClassification.PSEUDONYM,
         sub_classification: apiIdentity.sub_classification
       };
@@ -194,10 +194,13 @@ export class ProfilesService {
     const identitiesMissingProfiles = Object.entries(
       Object.values(allIdentitiesAndProfiles)
         .filter((it) => !it.profile)
-        .reduce((acc, it) => {
-          acc[it.identity.primary_address] = it.identity.profile_id!;
-          return acc;
-        }, {} as Record<string, string>)
+        .reduce(
+          (acc, it) => {
+            acc[it.identity.primary_address] = it.identity.profile_id!;
+            return acc;
+          },
+          {} as Record<string, string>
+        )
     ).map(([address, profileId]) => ({ address, profileId }));
     const authenticationContext = ctx.authenticationContext;
     if (!authenticationContext?.authenticatedWallet) {

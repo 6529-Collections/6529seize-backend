@@ -53,50 +53,53 @@ export async function syncIdentitiesPrimaryWallets(
 
 function mergeDuplicates(identitiesToSave: IdentityEntity[]) {
   return Object.values(
-    identitiesToSave.reduce((acc, it) => {
-      const profileId = it.profile_id!;
-      if (!acc[profileId]) {
-        acc[profileId] = it;
-      } else {
-        const oldIdentity = acc[profileId];
-        if (oldIdentity.tdh < it.tdh) {
-          const newProfileId = randomUUID();
-          const oldIdentitiesNewVersion: IdentityEntity = {
-            ...oldIdentity,
-            profile_id: newProfileId,
-            handle: null,
-            normalised_handle: null,
-            rep: 0,
-            cic: 0,
-            level_raw: oldIdentity.level_raw - oldIdentity.rep,
-            classification: null,
-            sub_classification: null,
-            banner1: null,
-            banner2: null,
-            pfp: null
-          };
+    identitiesToSave.reduce(
+      (acc, it) => {
+        const profileId = it.profile_id!;
+        if (!acc[profileId]) {
           acc[profileId] = it;
-          acc[newProfileId] = oldIdentitiesNewVersion;
         } else {
-          const newProfileId = randomUUID();
-          acc[newProfileId] = {
-            ...it,
-            profile_id: newProfileId,
-            handle: null,
-            normalised_handle: null,
-            rep: 0,
-            cic: 0,
-            level_raw: it.level_raw - it.rep,
-            classification: null,
-            sub_classification: null,
-            banner1: null,
-            banner2: null,
-            pfp: null
-          };
+          const oldIdentity = acc[profileId];
+          if (oldIdentity.tdh < it.tdh) {
+            const newProfileId = randomUUID();
+            const oldIdentitiesNewVersion: IdentityEntity = {
+              ...oldIdentity,
+              profile_id: newProfileId,
+              handle: null,
+              normalised_handle: null,
+              rep: 0,
+              cic: 0,
+              level_raw: oldIdentity.level_raw - oldIdentity.rep,
+              classification: null,
+              sub_classification: null,
+              banner1: null,
+              banner2: null,
+              pfp: null
+            };
+            acc[profileId] = it;
+            acc[newProfileId] = oldIdentitiesNewVersion;
+          } else {
+            const newProfileId = randomUUID();
+            acc[newProfileId] = {
+              ...it,
+              profile_id: newProfileId,
+              handle: null,
+              normalised_handle: null,
+              rep: 0,
+              cic: 0,
+              level_raw: it.level_raw - it.rep,
+              classification: null,
+              sub_classification: null,
+              banner1: null,
+              banner2: null,
+              pfp: null
+            };
+          }
         }
-      }
-      return acc;
-    }, {} as Record<string, IdentityEntity>)
+        return acc;
+      },
+      {} as Record<string, IdentityEntity>
+    )
   );
 }
 
@@ -104,9 +107,8 @@ export async function syncIdentitiesWithTdhConsolidations(
   connection: ConnectionWrapper<any>
 ) {
   logger.info(`Syncing identities with tdh_consolidations`);
-  const newConsolidations = await getUnsynchronisedConsolidationKeysWithTdhs(
-    connection
-  );
+  const newConsolidations =
+    await getUnsynchronisedConsolidationKeysWithTdhs(connection);
 
   if (newConsolidations.length) {
     const addressesInNewConsolidationKeys = newConsolidations
@@ -201,21 +203,24 @@ export async function syncIdentitiesWithTdhConsolidations(
         walletsForConsolidationThatNeedsWork
           .map((it) => oldDataByWallets[it])
           .filter((it) => !!it)
-          .reduce((acc, data) => {
-            const thisProfile = data.profile;
-            const thisCic = numbers.parseIntOrNull(`${data.identity.cic}`)!;
-            const thisTdh = numbers.parseIntOrNull(`${data.identity.tdh}`)!;
-            if (thisProfile) {
-              if (
-                !acc ||
-                thisCic > acc.cic ||
-                (thisCic === acc.cic && thisTdh > acc.tdh)
-              ) {
-                return { ...thisProfile, cic: thisCic, tdh: thisTdh };
+          .reduce(
+            (acc, data) => {
+              const thisProfile = data.profile;
+              const thisCic = numbers.parseIntOrNull(`${data.identity.cic}`)!;
+              const thisTdh = numbers.parseIntOrNull(`${data.identity.tdh}`)!;
+              if (thisProfile) {
+                if (
+                  !acc ||
+                  thisCic > acc.cic ||
+                  (thisCic === acc.cic && thisTdh > acc.tdh)
+                ) {
+                  return { ...thisProfile, cic: thisCic, tdh: thisTdh };
+                }
               }
-            }
-            return acc;
-          }, null as (Profile & { cic: number; tdh: number }) | null);
+              return acc;
+            },
+            null as (Profile & { cic: number; tdh: number }) | null
+          );
       targetIdentity = {
         ...targetIdentity,
         consolidation_key: consolidationThatNeedsWork.consolidation_key,

@@ -111,9 +111,8 @@ router.post(
         chosenRole = roleId;
       }
       const accessToken = getAccessToken(signingAddress, chosenRole);
-      const refreshToken = await authDb.retrieveOrGenerateRefreshToken(
-        signingAddress
-      );
+      const refreshToken =
+        await authDb.retrieveOrGenerateRefreshToken(signingAddress);
       res.status(201).send({
         token: accessToken,
         refresh_token: refreshToken

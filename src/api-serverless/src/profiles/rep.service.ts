@@ -16,14 +16,17 @@ export class RepService {
       },
       connection
     );
-    return profileIds.reduce((acc, profileId) => {
-      return {
-        ...acc,
-        [profileId]:
-          foundRatings.find((rating) => rating.matter_target_id === profileId)
-            ?.rating ?? 0
-      };
-    }, {} as Record<string, number>);
+    return profileIds.reduce(
+      (acc, profileId) => {
+        return {
+          ...acc,
+          [profileId]:
+            foundRatings.find((rating) => rating.matter_target_id === profileId)
+              ?.rating ?? 0
+        };
+      },
+      {} as Record<string, number>
+    );
   }
 }
 

@@ -39,9 +39,8 @@ export class ArweaveFileUploader {
 
     await arweave.transactions.sign(areweaveTransaction, arweaveKey);
 
-    const uploader = await arweave.transactions.getUploader(
-      areweaveTransaction
-    );
+    const uploader =
+      await arweave.transactions.getUploader(areweaveTransaction);
 
     while (!uploader.isComplete) {
       await uploader.uploadChunk();

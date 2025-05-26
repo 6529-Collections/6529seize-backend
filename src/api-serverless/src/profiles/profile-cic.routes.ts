@@ -146,9 +146,8 @@ router.get(
       { timer: Timer.getFromRequest(req) }
     );
     if (resolvedProfileId) {
-      const statements = await cicService.getCicStatementsByProfileId(
-        resolvedProfileId
-      );
+      const statements =
+        await cicService.getCicStatementsByProfileId(resolvedProfileId);
       res.status(200).send(statements);
     } else {
       res.status(200).send([]);

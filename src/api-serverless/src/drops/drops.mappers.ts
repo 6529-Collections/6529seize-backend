@@ -461,10 +461,13 @@ export class DropsMappers {
       subscribed_actions: [],
       primary_address: ''
     };
-    const profilesByIds = allProfileIds.reduce((acc, profileId) => {
-      acc[profileId] = profileMins[profileId] ?? UNKNOWN_PROFILE;
-      return acc;
-    }, {} as Record<string, ApiProfileMin>);
+    const profilesByIds = allProfileIds.reduce(
+      (acc, profileId) => {
+        acc[profileId] = profileMins[profileId] ?? UNKNOWN_PROFILE;
+        return acc;
+      },
+      {} as Record<string, ApiProfileMin>
+    );
     return entities.map<ApiDropWithoutWave>((dropEntity) => {
       return this.toDrop({
         dropEntity,
@@ -487,10 +490,13 @@ export class DropsMappers {
         winningDropsTopRaters,
         winningDropsRatersCounts,
         winningDropsRatingsByVoter,
-        allEntities: allEntities.reduce((acc, it) => {
-          acc[it.id] = it;
-          return acc;
-        }, {} as Record<string, DropEntity>),
+        allEntities: allEntities.reduce(
+          (acc, it) => {
+            acc[it.id] = it;
+            return acc;
+          },
+          {} as Record<string, DropEntity>
+        ),
         weightedDropsRanks,
         weightedDropsRates,
         dropsInWavesWhereNegativeVotesAreNotAllowed

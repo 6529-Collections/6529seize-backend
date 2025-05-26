@@ -92,52 +92,55 @@ export class DropVotingService {
             )
           : Promise.resolve([] as Rating[])
       ]);
-    return relevantParticipationDropIds.reduce((acc, dropId) => {
-      const waveId = relevantParticipationDrops.find(
-        (it) => it.id === dropId
-      )?.wave_id;
-      if (waveId) {
-        const wave = relevantWaves.find((it) => it.id === waveId)!;
-        const waveVotingCreditType = wave.voting_credit_type;
-        const totalCredit =
-          waveVotingCreditType === WaveCreditType.TDH
-            ? tdh
-            : repRatings
-                .filter(
-                  (it) =>
-                    (wave.voting_credit_creditor === null ||
-                      wave.voting_credit_creditor === it.rater_profile_id) &&
-                    (wave.voting_credit_category === null ||
-                      wave.voting_credit_category === it.matter_category)
-                )
-                .reduce((acc, it) => acc + it.rating, 0);
-        const totalVotesInWave = totalVotesInRelevantWaves[waveId];
-        const activeVote = activeVotes[dropId];
-        if (totalVotesInWave !== undefined && activeVote !== undefined) {
-          const creditLeft = Math.max(0, totalCredit - totalVotesInWave);
-          if (activeVote < 0) {
-            acc[dropId] = {
-              min: -(creditLeft - activeVote),
-              current: activeVote,
-              max: -activeVote + creditLeft
-            };
-          } else if (activeVote > 0) {
-            acc[dropId] = {
-              min: -activeVote - creditLeft,
-              current: activeVote,
-              max: activeVote + creditLeft
-            };
-          } else {
-            acc[dropId] = {
-              min: -creditLeft,
-              current: activeVote,
-              max: creditLeft
-            };
+    return relevantParticipationDropIds.reduce(
+      (acc, dropId) => {
+        const waveId = relevantParticipationDrops.find(
+          (it) => it.id === dropId
+        )?.wave_id;
+        if (waveId) {
+          const wave = relevantWaves.find((it) => it.id === waveId)!;
+          const waveVotingCreditType = wave.voting_credit_type;
+          const totalCredit =
+            waveVotingCreditType === WaveCreditType.TDH
+              ? tdh
+              : repRatings
+                  .filter(
+                    (it) =>
+                      (wave.voting_credit_creditor === null ||
+                        wave.voting_credit_creditor === it.rater_profile_id) &&
+                      (wave.voting_credit_category === null ||
+                        wave.voting_credit_category === it.matter_category)
+                  )
+                  .reduce((acc, it) => acc + it.rating, 0);
+          const totalVotesInWave = totalVotesInRelevantWaves[waveId];
+          const activeVote = activeVotes[dropId];
+          if (totalVotesInWave !== undefined && activeVote !== undefined) {
+            const creditLeft = Math.max(0, totalCredit - totalVotesInWave);
+            if (activeVote < 0) {
+              acc[dropId] = {
+                min: -(creditLeft - activeVote),
+                current: activeVote,
+                max: -activeVote + creditLeft
+              };
+            } else if (activeVote > 0) {
+              acc[dropId] = {
+                min: -activeVote - creditLeft,
+                current: activeVote,
+                max: activeVote + creditLeft
+              };
+            } else {
+              acc[dropId] = {
+                min: -creditLeft,
+                current: activeVote,
+                max: creditLeft
+              };
+            }
           }
         }
-      }
-      return acc;
-    }, {} as Record<string, { min: number; current: number; max: number }>);
+        return acc;
+      },
+      {} as Record<string, { min: number; current: number; max: number }>
+    );
   }
 
   public async deleteVotes(dropId: string, ctx: RequestContext) {

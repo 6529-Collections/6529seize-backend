@@ -153,9 +153,8 @@ async function isAuthenticatedForConsolidationKey(
   consolidationKey: string
 ) {
   const authenticatedWallet = getWalletOrThrow(req);
-  const consolidationWallets = await fetchConsolidationAddresses(
-    consolidationKey
-  );
+  const consolidationWallets =
+    await fetchConsolidationAddresses(consolidationKey);
   return (
     consolidationWallets.some((wallet) =>
       equalIgnoreCase(wallet, authenticatedWallet)
@@ -352,9 +351,8 @@ router.get(
     res: Response<{ address: string; ens: string }>
   ) {
     const consolidationKey = req.params.consolidation_key.toLowerCase();
-    const result = await fetchAirdropAddressForConsolidationKey(
-      consolidationKey
-    );
+    const result =
+      await fetchAirdropAddressForConsolidationKey(consolidationKey);
     const ensTdhWallet = await fetchEns(result.tdh_wallet);
     const ensAirdrop = await fetchEns(result.airdrop_address);
     return returnJsonResult(

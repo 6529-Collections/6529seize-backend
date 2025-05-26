@@ -70,7 +70,7 @@ export const persistRememesS3 = async (rememes: Rememe[]) => {
 
             const scaledBuffer = await resizeImage(
               r,
-              scaledFormat == 'webp' ? true : false,
+              scaledFormat == 'webp',
               Buffer.from(blob),
               SCALED_HEIGHT
             );
@@ -79,7 +79,7 @@ export const persistRememesS3 = async (rememes: Rememe[]) => {
 
             const thumbnailBuffer = await resizeImage(
               r,
-              scaledFormat == 'webp' ? true : false,
+              scaledFormat == 'webp',
               Buffer.from(blob),
               THUMBNAIL_HEIGHT
             );
@@ -88,7 +88,7 @@ export const persistRememesS3 = async (rememes: Rememe[]) => {
 
             const iconBuffer = await resizeImage(
               r,
-              scaledFormat == 'webp' ? true : false,
+              scaledFormat == 'webp',
               Buffer.from(blob),
               ICON_HEIGHT
             );

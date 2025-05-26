@@ -19,6 +19,7 @@
     "jest.config.js",
     "serverless-config/**/*",
     "ffmpeg-installer.js",
-    "**/*.js"
-  ]
+    "**/*.js",
+    "eslint.config.*"
+  ],
 }

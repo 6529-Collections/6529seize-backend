@@ -40,9 +40,8 @@ export class Discord {
           `Environment variable DISCORD_CHANNEL_${channel} is not configured`
         );
       }
-      CHANNELS_TO_CHANNEL_IDS[channel] = await discord.channels.fetch(
-        channelId
-      );
+      CHANNELS_TO_CHANNEL_IDS[channel] =
+        await discord.channels.fetch(channelId);
     }
     return CHANNELS_TO_CHANNEL_IDS[channel]!;
   }

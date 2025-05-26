@@ -130,8 +130,8 @@ export function getRoyaltiesSql(
     AND (contract != ${mysql.escape(
       MEMES_CONTRACT
     )} OR (contract = ${mysql.escape(
-    MEMES_CONTRACT
-  )} AND ${nftsTable}.id != 100))
+      MEMES_CONTRACT
+    )} AND ${nftsTable}.id != 100))
   `;
 
   let joinClause = '';
