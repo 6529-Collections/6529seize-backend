@@ -258,9 +258,8 @@ export const consolidateTDH = async (
           c.wallets.some((w: string) => equalIgnoreCase(w, s))
         )
     );
-    const missingConsolidatedTdh = await consolidateMissingWallets(
-      missingWallets
-    );
+    const missingConsolidatedTdh =
+      await consolidateMissingWallets(missingWallets);
     logger.info(`[MISSING WALLETS TDH ${missingConsolidatedTdh.length}]`);
     consolidatedBoostedTdh.push(...missingConsolidatedTdh);
   }

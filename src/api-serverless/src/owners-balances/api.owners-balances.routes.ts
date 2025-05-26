@@ -62,9 +62,8 @@ router.get(
   ) {
     const consolidationKey = req.params.consolidation_key;
 
-    const result = await fetchOwnerBalancesForConsolidationKey(
-      consolidationKey
-    );
+    const result =
+      await fetchOwnerBalancesForConsolidationKey(consolidationKey);
     if (result) {
       return returnJsonResult(result, req, res);
     }
@@ -88,9 +87,8 @@ router.get(
     res: Response<ApiResponse<ApiOwnerBalanceMemes>>
   ) {
     const consolidationKey = req.params.consolidation_key;
-    const result = await fetchMemesOwnerBalancesForConsolidationKey(
-      consolidationKey
-    );
+    const result =
+      await fetchMemesOwnerBalancesForConsolidationKey(consolidationKey);
     if (result) {
       return returnJsonResult(result, req, res);
     }

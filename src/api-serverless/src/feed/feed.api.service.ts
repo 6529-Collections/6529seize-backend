@@ -61,14 +61,17 @@ export class FeedApiService {
     estimatedLimit: number
   ): ActivityEventEntity[] {
     return Object.values(
-      activityEvents.reduce((acc, it) => {
-        const key = this.createActionKey(it);
-        if (!acc[key]) {
-          acc[key] = [];
-        }
-        acc[key].push(it);
-        return acc;
-      }, {} as Record<string, ActivityEventEntity[]>)
+      activityEvents.reduce(
+        (acc, it) => {
+          const key = this.createActionKey(it);
+          if (!acc[key]) {
+            acc[key] = [];
+          }
+          acc[key].push(it);
+          return acc;
+        },
+        {} as Record<string, ActivityEventEntity[]>
+      )
     )
       .map((it) => it.at(0)!)
       .sort((a, d) => parseInt(`${d.id}`) - parseInt(`${a.id}`))

@@ -162,10 +162,13 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     `,
       { waveId, profileIds }
     );
-    return profileIds.reduce((acc, it) => {
-      acc[it] = res.find((r) => r.profile_id)?.credit_left ?? 0;
-      return acc;
-    }, {} as Record<string, number>);
+    return profileIds.reduce(
+      (acc, it) => {
+        acc[it] = res.find((r) => r.profile_id)?.credit_left ?? 0;
+        return acc;
+      },
+      {} as Record<string, number>
+    );
   }
 
   async getCreditLeftForProfilesForRepBasedWave({
@@ -196,19 +199,22 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
             where wave_id = :waveId and voter_id in (:profileIds)
             group by 1),
         total_reps as (select matter_target_id as profile_id, sum(rating) as rep from ${RATINGS_TABLE} where matter_target_id in (:profileIds) and matter = 'REP' and rating <> 0 ${
-        rep_giver ? ` and rater_profile_id = :rep_giver ` : ``
-      } ${
-        rep_category ? ` and matter_category = :rep_category ` : ``
-      } group by 1) select i.profile_id as profile_id, i.rep - ifnull(v.credit_spent, 0) as credit_left from total_reps i 
+          rep_giver ? ` and rater_profile_id = :rep_giver ` : ``
+        } ${
+          rep_category ? ` and matter_category = :rep_category ` : ``
+        } group by 1) select i.profile_id as profile_id, i.rep - ifnull(v.credit_spent, 0) as credit_left from total_reps i 
              left join given_votes v on v.profile_id = i.profile_id
              where i.profile_id in (:profileIds)
     `,
       { waveId, profileIds, rep_giver, rep_category }
     );
-    return profileIds.reduce((acc, it) => {
-      acc[it] = res.find((r) => r.profile_id)?.credit_left ?? 0;
-      return acc;
-    }, {} as Record<string, number>);
+    return profileIds.reduce(
+      (acc, it) => {
+        acc[it] = res.find((r) => r.profile_id)?.credit_left ?? 0;
+        return acc;
+      },
+      {} as Record<string, number>
+    );
   }
 
   async findAllByWaveId(waveId: string): Promise<WSConnectionEntity[]> {

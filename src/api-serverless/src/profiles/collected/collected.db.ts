@@ -142,10 +142,13 @@ export class CollectedDb extends LazyDbAccessCompatibleService {
       sql += ` or owner = lower(:${key})`;
     }
     const result: { id: number }[] = await this.db.execute(sql, params);
-    return result.reduce((acc, cur) => {
-      acc[cur.id] = 1;
-      return acc;
-    }, {} as Record<number, number>);
+    return result.reduce(
+      (acc, cur) => {
+        acc[cur.id] = 1;
+        return acc;
+      },
+      {} as Record<number, number>
+    );
   }
 
   async getWalletsMemeLabsBalancesByTokens(
@@ -257,14 +260,20 @@ export class CollectedDb extends LazyDbAccessCompatibleService {
       seized_count: number;
     }[] = await this.db.execute(sql, params);
     return {
-      tdhsAndBalances: result.reduce((acc, cur) => {
-        acc[cur.token_id] = { tdh: cur.tdh, balance: cur.seized_count };
-        return acc;
-      }, {} as Record<number, { tdh: number; balance: number }>),
-      ranks: result.reduce((acc, cur) => {
-        acc[cur.token_id] = cur.rank;
-        return acc;
-      }, {} as Record<number, number>)
+      tdhsAndBalances: result.reduce(
+        (acc, cur) => {
+          acc[cur.token_id] = { tdh: cur.tdh, balance: cur.seized_count };
+          return acc;
+        },
+        {} as Record<number, { tdh: number; balance: number }>
+      ),
+      ranks: result.reduce(
+        (acc, cur) => {
+          acc[cur.token_id] = cur.rank;
+          return acc;
+        },
+        {} as Record<number, number>
+      )
     };
   }
 

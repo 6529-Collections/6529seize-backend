@@ -133,10 +133,13 @@ export class CommunityMembersDb extends LazyDbAccessCompatibleService {
     ctx.timer?.stop(
       `${this.constructor.name}->getCommunityMembersLastActivitiesByConsolidationKeys`
     );
-    return dbResults.reduce((acc, row) => {
-      acc[row.consolidation_key] = new Date(row.last_activity).getTime();
-      return acc;
-    }, {} as Record<string, number>);
+    return dbResults.reduce(
+      (acc, row) => {
+        acc[row.consolidation_key] = new Date(row.last_activity).getTime();
+        return acc;
+      },
+      {} as Record<string, number>
+    );
   }
 }
 

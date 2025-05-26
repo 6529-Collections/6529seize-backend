@@ -329,9 +329,8 @@ export class NotificationsApiService {
   }
 
   public async subscribeToAllWaveDrops(identityId: string, waveId: string) {
-    const waveMembersCount = await notificationsApiService.countWaveSubscribers(
-      waveId
-    );
+    const waveMembersCount =
+      await notificationsApiService.countWaveSubscribers(waveId);
 
     const subscribersLimit =
       seizeSettings().all_drops_notifications_subscribers_limit;

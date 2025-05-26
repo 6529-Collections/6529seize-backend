@@ -73,24 +73,38 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
       { addresses },
       { wrappedConnection: connection }
     );
-    return addresses.reduce((acc, address) => {
-      const consolidationKeys = consolidations.filter(
-        (consolidation) => consolidation.address === address
-      );
-      if (consolidationKeys.length > 0) {
-        const consolidationKey = consolidationKeys[0].consolidation_key;
-        const identity = identities.find(
-          (i) => i.consolidation_key === consolidationKey
+    return addresses.reduce(
+      (acc, address) => {
+        const consolidationKeys = consolidations.filter(
+          (consolidation) => consolidation.address === address
         );
-        if (!identity) {
-          return acc;
+        if (consolidationKeys.length > 0) {
+          const consolidationKey = consolidationKeys[0].consolidation_key;
+          const identity = identities.find(
+            (i) => i.consolidation_key === consolidationKey
+          );
+          if (!identity) {
+            return acc;
+          }
+          const profile =
+            profiles.find((p) => p.external_id === identity.profile_id) ?? null;
+          acc[address] = {
+            consolidations: consolidationKeys,
+            identity,
+            profile
+          };
         }
-        const profile =
-          profiles.find((p) => p.external_id === identity.profile_id) ?? null;
-        acc[address] = { consolidations: consolidationKeys, identity, profile };
-      }
-      return acc;
-    }, {} as Record<string, { consolidations: AddressConsolidationKey[]; identity: IdentityEntity; profile: Profile | null }>);
+        return acc;
+      },
+      {} as Record<
+        string,
+        {
+          consolidations: AddressConsolidationKey[];
+          identity: IdentityEntity;
+          profile: Profile | null;
+        }
+      >
+    );
   }
 
   public async insertIdentity(
@@ -881,16 +895,22 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     }
     const opts = connection ? { wrappedConnection: connection } : undefined;
     return this.db
-      .execute<{ profile_id: string; handle: string }>(
+      .execute<{
+        profile_id: string;
+        handle: string;
+      }>(
         `select profile_id, handle from ${IDENTITIES_TABLE} where normalised_handle in (:handles)`,
         { handles: handles.map((it) => it.toLowerCase()) },
         opts
       )
       .then((result) =>
-        result.reduce((acc, it) => {
-          acc[it.handle] = it.profile_id;
-          return acc;
-        }, {} as Record<string, string>)
+        result.reduce(
+          (acc, it) => {
+            acc[it.handle] = it.profile_id;
+            return acc;
+          },
+          {} as Record<string, string>
+        )
       );
   }
 

@@ -500,10 +500,13 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
     ctx.timer?.stop(
       `${this.constructor.name}->getParticipationDropsRealtimeRanks`
     );
-    return results.reduce((acc, red) => {
-      acc[red.drop_id] = red.rnk;
-      return acc;
-    }, {} as Record<string, number>);
+    return results.reduce(
+      (acc, red) => {
+        acc[red.drop_id] = red.rnk;
+        return acc;
+      },
+      {} as Record<string, number>
+    );
   }
 
   async getTimeLockedDropsWeightedVotes(
@@ -534,10 +537,13 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
     ctx.timer?.stop(
       `${this.constructor.name}->getTimeLockedDropsWeightedVotes`
     );
-    return results.reduce((acc, red) => {
-      acc[red.drop_id] = red.rnk;
-      return acc;
-    }, {} as Record<string, number>);
+    return results.reduce(
+      (acc, red) => {
+        acc[red.drop_id] = red.rnk;
+        return acc;
+      },
+      {} as Record<string, number>
+    );
   }
 
   async getWinningDropsRatersCount(
@@ -554,10 +560,13 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
       raters_count: number;
     }>(sql, { dropIds }, { wrappedConnection: ctx.connection });
     ctx.timer?.stop(`${this.constructor.name}->getWinningDropsRatersCount`);
-    return results.reduce((acc, red) => {
-      acc[red.drop_id] = red.raters_count;
-      return acc;
-    }, {} as Record<string, number>);
+    return results.reduce(
+      (acc, red) => {
+        acc[red.drop_id] = red.raters_count;
+        return acc;
+      },
+      {} as Record<string, number>
+    );
   }
 
   async getWinningDropsTopRaters(
@@ -575,13 +584,16 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
       { wrappedConnection: ctx.connection }
     );
     ctx.timer?.stop(`${this.constructor.name}->getWinningDropsTopRaters`);
-    return results.reduce((acc, it) => {
-      if (!acc[it.drop_id]) {
-        acc[it.drop_id] = [];
-      }
-      acc[it.drop_id].push(it);
-      return acc;
-    }, {} as Record<string, WinnerDropVoterVoteEntity[]>);
+    return results.reduce(
+      (acc, it) => {
+        if (!acc[it.drop_id]) {
+          acc[it.drop_id] = [];
+        }
+        acc[it.drop_id].push(it);
+        return acc;
+      },
+      {} as Record<string, WinnerDropVoterVoteEntity[]>
+    );
   }
 
   async getWinningDropsRatingsByVoter(
@@ -599,10 +611,13 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
       votes: number;
     }>(sql, { dropIds, voterId }, { wrappedConnection: ctx.connection });
     ctx.timer?.stop(`${this.constructor.name}->getWinningDropsRatersCount`);
-    return results.reduce((acc, red) => {
-      acc[red.drop_id] = red.votes;
-      return acc;
-    }, {} as Record<string, number>);
+    return results.reduce(
+      (acc, red) => {
+        acc[red.drop_id] = red.votes;
+        return acc;
+      },
+      {} as Record<string, number>
+    );
   }
 
   async saveDropRealVoteInTime(
@@ -889,10 +904,13 @@ where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
         { wrappedConnection: ctx.connection }
       )
       .then((res) =>
-        res.reduce((acc, it) => {
-          acc[it.drop_id] = it.timestamp;
-          return acc;
-        }, {} as Record<string, number>)
+        res.reduce(
+          (acc, it) => {
+            acc[it.drop_id] = it.timestamp;
+            return acc;
+          },
+          {} as Record<string, number>
+        )
       );
   }
 

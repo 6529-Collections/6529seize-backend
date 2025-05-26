@@ -316,9 +316,8 @@ export class IdentitiesService {
           );
           const oldPrimaryAddress = identity.consolidation_key;
           if (!equalIgnoreCase(newPrimaryAddress, oldPrimaryAddress)) {
-            const ensName = await this.supplyAlchemy().core.lookupAddress(
-              newPrimaryAddress
-            );
+            const ensName =
+              await this.supplyAlchemy().core.lookupAddress(newPrimaryAddress);
             await this.identitiesDb.executeNativeQueriesInTransaction(
               async (connection) => {
                 await this.identitiesDb.updatePrimaryAddress(
@@ -357,9 +356,8 @@ export class IdentitiesService {
       return delegationPrimaryAddress;
     }
 
-    const highestTdhAddress = await getHighestTdhAddressForConsolidationKey(
-      consolidationKey
-    );
+    const highestTdhAddress =
+      await getHighestTdhAddressForConsolidationKey(consolidationKey);
     if (highestTdhAddress) {
       return highestTdhAddress;
     }
@@ -416,10 +414,10 @@ export class IdentitiesService {
     );
     return identityEntities.map<ApiIdentity>((it) => {
       const classification = it.classification
-        ? enums.resolve(
+        ? (enums.resolve(
             ApiProfileClassification,
             it.classification as string
-          ) ?? ApiProfileClassification.Pseudonym
+          ) ?? ApiProfileClassification.Pseudonym)
         : ApiProfileClassification.Pseudonym;
       return {
         id: it.profile_id,

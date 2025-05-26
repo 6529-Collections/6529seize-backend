@@ -335,18 +335,18 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
            UserGroupsService.GENERATED_VIEW
          } cm on cm.profile_id = w.created_by
          where ${searchParams.author ? ` w.created_by = :author and ` : ``} ${
-      searchParams.name ? ` w.name like :name and ` : ``
-    } (${
-      groupsUserIsEligibleFor.length
-        ? `w.visibility_group_id in (:groupsUserIsEligibleFor) or w.admin_group_id in (:groupsUserIsEligibleFor) or`
-        : ``
-    } w.visibility_group_id is null) and w.serial_no < :serialNoLessThan order by w.serial_no desc limit ${
-      searchParams.limit
-    }${
-      searchParams.direct_message !== undefined
-        ? ` and w.is_direct_message = :direct_message`
-        : ``
-    }`;
+           searchParams.name ? ` w.name like :name and ` : ``
+         } (${
+           groupsUserIsEligibleFor.length
+             ? `w.visibility_group_id in (:groupsUserIsEligibleFor) or w.admin_group_id in (:groupsUserIsEligibleFor) or`
+             : ``
+         } w.visibility_group_id is null) and w.serial_no < :serialNoLessThan order by w.serial_no desc limit ${
+           searchParams.limit
+         }${
+           searchParams.direct_message !== undefined
+             ? ` and w.is_direct_message = :direct_message`
+             : ``
+         }`;
     const params: Record<string, any> = {
       ...sqlAndParams.params,
       groupsUserIsEligibleFor,
@@ -417,22 +417,25 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         connection ? { wrappedConnection: connection } : undefined
       )
       .then((it) =>
-        it.reduce<Record<string, WaveEntity>>((acc, wave) => {
-          acc[wave.drop_id] = {
-            ...wave,
-            participation_required_media: JSON.parse(
-              wave.participation_required_media
-            ),
-            participation_required_metadata: JSON.parse(
-              wave.participation_required_metadata
-            ),
-            decisions_strategy: wave.decisions_strategy
-              ? JSON.parse(wave.decisions_strategy)
-              : null
-          };
-          delete (acc[wave.drop_id] as any).drop_id;
-          return acc;
-        }, {} as Record<string, WaveEntity>)
+        it.reduce<Record<string, WaveEntity>>(
+          (acc, wave) => {
+            acc[wave.drop_id] = {
+              ...wave,
+              participation_required_media: JSON.parse(
+                wave.participation_required_media
+              ),
+              participation_required_metadata: JSON.parse(
+                wave.participation_required_metadata
+              ),
+              decisions_strategy: wave.decisions_strategy
+                ? JSON.parse(wave.decisions_strategy)
+                : null
+            };
+            delete (acc[wave.drop_id] as any).drop_id;
+            return acc;
+          },
+          {} as Record<string, WaveEntity>
+        )
       );
   }
 
@@ -491,16 +494,22 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
             string,
             { contributor_identity: string; contributor_pfp: string }[]
           >
-        >((acc, wave) => {
-          if (!acc[wave.wave_id]) {
-            acc[wave.wave_id] = [];
-          }
-          acc[wave.wave_id].push({
-            contributor_identity: wave.contributor_identity,
-            contributor_pfp: wave.contributor_pfp
-          });
-          return acc;
-        }, {} as Record<string, { contributor_identity: string; contributor_pfp: string }[]>)
+        >(
+          (acc, wave) => {
+            if (!acc[wave.wave_id]) {
+              acc[wave.wave_id] = [];
+            }
+            acc[wave.wave_id].push({
+              contributor_identity: wave.contributor_identity,
+              contributor_pfp: wave.contributor_pfp
+            });
+            return acc;
+          },
+          {} as Record<
+            string,
+            { contributor_identity: string; contributor_pfp: string }[]
+          >
+        )
       );
     timer?.stop('wavesApiDb->getWavesContributorsOverviews');
     return result;
@@ -541,18 +550,18 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
            ? `join ${IDENTITY_SUBSCRIPTIONS_TABLE} f on f.target_type = 'WAVE' and f.target_action = 'DROP_CREATED' and f.target_id = w.id`
            : ``
        } where ${
-          only_waves_followed_by_authenticated_user
-            ? `f.subscriber_id = :authenticated_user_id and`
-            : ``
-        }${
-          direct_message !== undefined
-            ? ` w.is_direct_message = :direct_message and `
-            : ``
-        } (w.visibility_group_id is null ${
-          eligibleGroups.length
-            ? `or w.visibility_group_id in (:eligibleGroups)`
-            : ``
-        }) order by w.serial_no desc, w.id limit :limit offset :offset
+         only_waves_followed_by_authenticated_user
+           ? `f.subscriber_id = :authenticated_user_id and`
+           : ``
+       }${
+         direct_message !== undefined
+           ? ` w.is_direct_message = :direct_message and `
+           : ``
+       } (w.visibility_group_id is null ${
+         eligibleGroups.length
+           ? `or w.visibility_group_id in (:eligibleGroups)`
+           : ``
+       }) order by w.serial_no desc, w.id limit :limit offset :offset
     `,
         { limit, eligibleGroups, offset, authenticated_user_id }
       )
@@ -705,10 +714,10 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                 ? `f.subscriber_id = :authenticatedUserId and`
                 : ``
             }${
-          direct_message !== undefined
-            ? ` wa.is_direct_message = :direct_message and `
-            : ``
-        } wa.id in (select id from wids)
+              direct_message !== undefined
+                ? ` wa.is_direct_message = :direct_message and `
+                : ``
+            } wa.id in (select id from wids)
             order by wa.serial_no desc, wa.id
         `,
         {
@@ -769,10 +778,10 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                                          group by target_id)
             select w.*
             from ${WAVES_TABLE} w ${
-          only_waves_followed_by_authenticated_user
-            ? `join ${IDENTITY_SUBSCRIPTIONS_TABLE} f on f.target_type = 'WAVE' and f.target_action = 'DROP_CREATED' and f.target_id = w.id`
-            : ``
-        }
+              only_waves_followed_by_authenticated_user
+                ? `join ${IDENTITY_SUBSCRIPTIONS_TABLE} f on f.target_type = 'WAVE' and f.target_action = 'DROP_CREATED' and f.target_id = w.id`
+                : ``
+            }
                    join subscription_counts sc
             on sc.wave_id = w.id
             where ${
@@ -780,14 +789,14 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                 ? `f.subscriber_id = :authenticated_user_id and`
                 : ``
             }${
-          direct_message !== undefined
-            ? ` w.is_direct_message = :direct_message and `
-            : ``
-        } (w.visibility_group_id is null ${
-          eligibleGroups.length
-            ? `or w.visibility_group_id in (:eligibleGroups)`
-            : ``
-        })
+              direct_message !== undefined
+                ? ` w.is_direct_message = :direct_message and `
+                : ``
+            } (w.visibility_group_id is null ${
+              eligibleGroups.length
+                ? `or w.visibility_group_id in (:eligibleGroups)`
+                : ``
+            })
             order by sc.count
             desc, w.id desc
                 limit :limit offset :offset
@@ -830,16 +839,19 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         { wrappedConnection: connection }
       )
       .then((results) =>
-        waveIds.reduce((acc, waveId) => {
-          acc[waveId] = results.find((it) => it.wave_id === waveId) ?? {
-            wave_id: waveId,
-            subscribers_count: 0,
-            drops_count: 0,
-            participatory_drops_count: 0,
-            latest_drop_timestamp: 0
-          };
-          return acc;
-        }, {} as Record<string, WaveMetricEntity>)
+        waveIds.reduce(
+          (acc, waveId) => {
+            acc[waveId] = results.find((it) => it.wave_id === waveId) ?? {
+              wave_id: waveId,
+              subscribers_count: 0,
+              drops_count: 0,
+              participatory_drops_count: 0,
+              latest_drop_timestamp: 0
+            };
+            return acc;
+          },
+          {} as Record<string, WaveMetricEntity>
+        )
       );
     timer?.stop('wavesApiDb->findWavesMetricsByWaveIds');
     return result;
@@ -860,16 +872,19 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         { wrappedConnection: connection }
       )
       .then((results) =>
-        params.waveIds.reduce((acc, waveId) => {
-          acc[waveId] = results.find((it) => it.wave_id === waveId) ?? {
-            wave_id: waveId,
-            dropper_id: params.dropperId,
-            drops_count: 0,
-            participatory_drops_count: 0,
-            latest_drop_timestamp: 0
-          };
-          return acc;
-        }, {} as Record<string, WaveDropperMetricEntity>)
+        params.waveIds.reduce(
+          (acc, waveId) => {
+            acc[waveId] = results.find((it) => it.wave_id === waveId) ?? {
+              wave_id: waveId,
+              dropper_id: params.dropperId,
+              drops_count: 0,
+              participatory_drops_count: 0,
+              latest_drop_timestamp: 0
+            };
+            return acc;
+          },
+          {} as Record<string, WaveDropperMetricEntity>
+        )
       );
     timer?.stop('wavesApiDb->findWaveDropperMetricsByWaveIds');
     return result;

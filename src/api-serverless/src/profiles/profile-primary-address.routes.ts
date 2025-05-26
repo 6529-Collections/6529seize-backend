@@ -31,9 +31,8 @@ router.get(
     if (!consolidationKey) {
       throw new NotFoundException(`Identity ${identity} not found`);
     }
-    const highestTdhAddress = await getHighestTdhAddressForConsolidationKey(
-      consolidationKey
-    );
+    const highestTdhAddress =
+      await getHighestTdhAddressForConsolidationKey(consolidationKey);
     const ens = await fetchEns(highestTdhAddress);
     const tdhAddress: AddressResult = {
       consolidation_key: consolidationKey,

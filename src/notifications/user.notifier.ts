@@ -218,9 +218,8 @@ export class UserNotifier {
   ) {
     timer?.start('userNotifier->notifyAllNotificationsSubscribers');
 
-    const waveMembersCount = await identitySubscriptionsDb.countWaveSubscribers(
-      waveId
-    );
+    const waveMembersCount =
+      await identitySubscriptionsDb.countWaveSubscribers(waveId);
     const subscribersLimit =
       seizeSettings().all_drops_notifications_subscribers_limit;
 

@@ -112,9 +112,8 @@ router.get(
   ) {
     const consolidationKey = req.params.consolidation_key;
 
-    const result = await fetchAggregatedActivityForConsolidationKey(
-      consolidationKey
-    );
+    const result =
+      await fetchAggregatedActivityForConsolidationKey(consolidationKey);
     if (result) {
       return returnJsonResult(result, req, res);
     }
@@ -138,9 +137,8 @@ router.get(
     res: Response<ApiResponse<ApiAggregatedActivityMemes>>
   ) {
     const consolidationKey = req.params.consolidation_key;
-    const result = await fetchMemesAggregatedActivityForConsolidationKey(
-      consolidationKey
-    );
+    const result =
+      await fetchMemesAggregatedActivityForConsolidationKey(consolidationKey);
     if (result) {
       return returnJsonResult(result, req, res);
     }
