@@ -54,7 +54,6 @@ import {
   ProfileProxyApiService
 } from '../api-serverless/src/proxies/proxy.api.service';
 import { ProfileProxyActionType } from '../entities/IProfileProxyAction';
-import { profilesDb, ProfilesDb } from '../profiles/profiles.db';
 import process from 'node:process';
 import { deleteDrop, DeleteDropUseCase } from './delete-drop.use-case';
 import { seizeSettings } from '../api-serverless/src/api-constants';
@@ -72,7 +71,6 @@ export class CreateOrUpdateDropUseCase {
     private readonly dropsDb: DropsDb,
     private readonly dropVotingDb: DropVotingDb,
     private readonly userGroupsService: UserGroupsService,
-    private readonly profilesDb: ProfilesDb,
     private readonly wavesApiDb: WavesApiDb,
     private readonly userNotifier: UserNotifier,
     private readonly activityRecorder: ActivityRecorder,
@@ -892,7 +890,6 @@ export const createOrUpdateDrop = new CreateOrUpdateDropUseCase(
   dropsDb,
   dropVotingDb,
   userGroupsService,
-  profilesDb,
   wavesApiDb,
   userNotifier,
   activityRecorder,

@@ -405,7 +405,7 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
         AND rater_profile_id = :profileId
     `);
     }
-    const sql = parts.join(' UNION ALL ');
+    const sql = `select distinct all_res.* from (${parts.join(' UNION ALL ')}) all_res`;
     return this.db.execute<{
       rater_profile_id: string;
       matter_target_id: string;
