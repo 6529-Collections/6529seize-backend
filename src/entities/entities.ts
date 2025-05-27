@@ -23,6 +23,7 @@ export {
 } from './IDrop';
 export { DropClapperStateEntity } from './IDropClapperState';
 export { DropRankEntity } from './IDropRank';
+export { DropReactionsEntity } from './IDropReactions';
 export { DropRealVoteInTimeEntity } from './IDropRealVoteInTime';
 export { DropRealVoterVoteInTimeEntity } from './IDropRealVoterVoteInTime';
 export { DropRelationEntity } from './IDropRelation';

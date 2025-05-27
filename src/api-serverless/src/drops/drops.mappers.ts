@@ -62,6 +62,11 @@ import {
 import { enums } from '../../../enums';
 import { numbers } from '../../../numbers';
 import { collections } from '../../../collections';
+import {
+  DropReactionsResult,
+  reactionsDb,
+  ReactionsDb
+} from './reactions/reactions.db';
 
 export class DropsMappers {
   constructor(
@@ -72,7 +77,8 @@ export class DropsMappers {
     private readonly identitySubscriptionsDb: IdentitySubscriptionsDb,
     private readonly clappingDb: ClappingDb,
     private readonly dropVotingDb: DropVotingDb,
-    private readonly dropVotingService: DropVotingService
+    private readonly dropVotingService: DropVotingService,
+    private readonly reactionsDb: ReactionsDb
   ) {}
 
   public createDropApiToUseCaseModel({
@@ -290,7 +296,8 @@ export class DropsMappers {
       weightedDropsRanks,
       weightedDropsRates,
       deletedDrops,
-      dropsInWavesWhereNegativeVotesAreNotAllowed
+      dropsInWavesWhereNegativeVotesAreNotAllowed,
+      dropReactions
     ] = await Promise.all([
       this.dropVotingDb.getParticipationDropsRealtimeRanks(
         participatoryDropIds,
@@ -354,7 +361,10 @@ export class DropsMappers {
       this.dropsDb.findDropIdsOfWavesWhereNegativeVotesAreNotAllowed(
         allDropIds,
         connection
-      )
+      ),
+      this.reactionsDb.getByDropIds(allDropIds, contextProfileId ?? null, {
+        connection
+      })
     ]);
     return {
       dropsRanks,
@@ -385,7 +395,8 @@ export class DropsMappers {
       allEntities,
       weightedDropsRanks,
       weightedDropsRates,
-      dropsInWavesWhereNegativeVotesAreNotAllowed
+      dropsInWavesWhereNegativeVotesAreNotAllowed,
+      dropReactions
     };
   }
 
@@ -415,7 +426,8 @@ export class DropsMappers {
       winningDropsRatingsByVoter,
       weightedDropsRanks,
       weightedDropsRates,
-      dropsInWavesWhereNegativeVotesAreNotAllowed
+      dropsInWavesWhereNegativeVotesAreNotAllowed,
+      dropReactions
     } = await this.getAllDropsRelatedData(
       {
         dropEntities: entities,
@@ -461,13 +473,10 @@ export class DropsMappers {
       subscribed_actions: [],
       primary_address: ''
     };
-    const profilesByIds = allProfileIds.reduce(
-      (acc, profileId) => {
-        acc[profileId] = profileMins[profileId] ?? UNKNOWN_PROFILE;
-        return acc;
-      },
-      {} as Record<string, ApiProfileMin>
-    );
+    const profilesByIds = allProfileIds.reduce((acc, profileId) => {
+      acc[profileId] = profileMins[profileId] ?? UNKNOWN_PROFILE;
+      return acc;
+    }, {} as Record<string, ApiProfileMin>);
     return entities.map<ApiDropWithoutWave>((dropEntity) => {
       return this.toDrop({
         dropEntity,
@@ -490,16 +499,14 @@ export class DropsMappers {
         winningDropsTopRaters,
         winningDropsRatersCounts,
         winningDropsRatingsByVoter,
-        allEntities: allEntities.reduce(
-          (acc, it) => {
-            acc[it.id] = it;
-            return acc;
-          },
-          {} as Record<string, DropEntity>
-        ),
+        allEntities: allEntities.reduce((acc, it) => {
+          acc[it.id] = it;
+          return acc;
+        }, {} as Record<string, DropEntity>),
         weightedDropsRanks,
         weightedDropsRates,
-        dropsInWavesWhereNegativeVotesAreNotAllowed
+        dropsInWavesWhereNegativeVotesAreNotAllowed,
+        dropReactions
       });
     });
   }
@@ -528,7 +535,8 @@ export class DropsMappers {
     allEntities,
     weightedDropsRanks,
     weightedDropsRates,
-    dropsInWavesWhereNegativeVotesAreNotAllowed
+    dropsInWavesWhereNegativeVotesAreNotAllowed,
+    dropReactions
   }: {
     dropEntity: DropEntity;
     deletedDrops: Record<string, DeletedDropEntity>;
@@ -568,6 +576,7 @@ export class DropsMappers {
     weightedDropsRanks: Record<string, number>;
     weightedDropsRates: Record<string, { current: number; prediction: number }>;
     dropsInWavesWhereNegativeVotesAreNotAllowed: string[];
+    dropReactions: Map<string, DropReactionsResult>;
   }): ApiDropWithoutWave {
     const replyToDropId = dropEntity.reply_to_drop_id;
     const dropWinDecision = winDecisions[dropEntity.id];
@@ -663,6 +672,7 @@ export class DropsMappers {
     const dropType = enums.resolveOrThrow(ApiDropType, dropEntity.drop_type);
     const rank: number | null =
       weightedDropsRanks[dropEntity.id] ?? dropsRanks[dropEntity.id] ?? null;
+
     return {
       id: dropEntity.id,
       serial_no: dropEntity.serial_no,
@@ -698,7 +708,8 @@ export class DropsMappers {
                   winningDropsRatingsByVoter,
                   weightedDropsRanks,
                   weightedDropsRates,
-                  dropsInWavesWhereNegativeVotesAreNotAllowed
+                  dropsInWavesWhereNegativeVotesAreNotAllowed,
+                  dropReactions
                 })
               : undefined
           }
@@ -741,7 +752,8 @@ export class DropsMappers {
                           winningDropsRatingsByVoter,
                           weightedDropsRanks,
                           weightedDropsRates,
-                          dropsInWavesWhereNegativeVotesAreNotAllowed
+                          dropsInWavesWhereNegativeVotesAreNotAllowed,
+                          dropReactions
                         })
                       : undefined
                   }
@@ -787,7 +799,10 @@ export class DropsMappers {
       context_profile_context,
       subscribed_actions: subscribedActions[dropEntity.id] ?? [],
       winning_context: winningContext,
-      is_signed: !!dropEntity.signature
+      is_signed: !!dropEntity.signature,
+      reactions: dropReactions.get(dropEntity.id)?.reactions ?? [],
+      context_profile_reaction:
+        dropReactions.get(dropEntity.id)?.context_profile_reaction ?? null
     };
   }
 }
@@ -800,5 +815,6 @@ export const dropsMappers = new DropsMappers(
   identitySubscriptionsDb,
   clappingDb,
   dropVotingDb,
-  dropVotingService
+  dropVotingService,
+  reactionsDb
 );

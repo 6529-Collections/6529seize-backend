@@ -23,6 +23,8 @@ import { ProfileProxyActionType } from '../../../entities/IProfileProxyAction';
 import {
   ApiAddRatingToDropRequest,
   ApiAddRatingToDropRequestSchema,
+  ApiAddReactionToDropRequest,
+  ApiAddReactionToDropRequestSchema,
   NewDropSchema,
   UpdateDropSchema
 } from './drop.validator';
@@ -37,6 +39,7 @@ import { dropsDb } from '../../../drops/drops.db';
 import { identityFetcher } from '../identities/identity.fetcher';
 import { enums } from '../../../enums';
 import { numbers } from '../../../numbers';
+import { dropReactionsService } from './reactions/drop-reactions.service';
 
 const router = asyncRouter();
 
@@ -388,6 +391,12 @@ router.delete(
     });
   }
 );
+
+router
+  .route(`/:drop_id/reaction`)
+  .all(needsAuthenticatedUser())
+  .post(dropReactionsService.reactionHandler(false))
+  .delete(dropReactionsService.reactionHandler(true));
 
 export async function prepLatestDropsSearchQuery(
   req: Request<
