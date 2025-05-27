@@ -136,8 +136,6 @@ export class WsListenersNotifier {
         onlineProfiles,
         drop
       );
-      console.log('hi i am onlineProfiles', onlineProfiles);
-      console.log('hi i am drop', drop);
       await Promise.all(
         onlineProfiles.map(({ connectionId, profileId }) =>
           this.appWebSockets.send({
