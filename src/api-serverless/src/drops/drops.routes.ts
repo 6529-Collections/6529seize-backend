@@ -23,8 +23,6 @@ import { ProfileProxyActionType } from '../../../entities/IProfileProxyAction';
 import {
   ApiAddRatingToDropRequest,
   ApiAddRatingToDropRequestSchema,
-  ApiAddReactionToDropRequest,
-  ApiAddReactionToDropRequestSchema,
   NewDropSchema,
   UpdateDropSchema
 } from './drop.validator';

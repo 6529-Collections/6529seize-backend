@@ -34,7 +34,7 @@ export class ReactionsDb extends LazyDbAccessCompatibleService {
     if (isDeleting) {
       // ----- DELETE PATH -----
       console.log('hi i am deleting', profileId, dropId, waveId, reactionStr);
-      const [okPacket] = await this.db.execute(
+      await this.db.execute(
         `
           DELETE FROM ${DROP_REACTIONS_TABLE}
           WHERE profile_id = :profileId
