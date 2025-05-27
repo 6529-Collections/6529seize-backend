@@ -129,7 +129,7 @@ export class DropReactionsService {
         );
       }
     );
-    await this.wsListenersNotifier.notifyAboutDropRatingUpdate(drop, ctx);
+    await this.wsListenersNotifier.notifyAboutDropReactionUpdate(drop, ctx);
     await giveReadReplicaTimeToCatchUp();
   }
 }
