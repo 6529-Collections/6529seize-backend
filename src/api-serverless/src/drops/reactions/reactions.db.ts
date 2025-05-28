@@ -45,32 +45,24 @@ export class ReactionsDb extends LazyDbAccessCompatibleService {
         { wrappedConnection: ctx.connection }
       );
     } else {
-      // ----- INSERT PATH -----
-      try {
-        await this.db.execute(
-          `
-            INSERT INTO ${DROP_REACTIONS_TABLE}
-              (profile_id, drop_id, wave_id, reaction)
-            VALUES
-              (:profileId, :dropId, :waveId, :reaction)
-          `,
-          {
-            profileId,
-            dropId,
-            waveId,
-            reaction: reactionStr
-          },
-          { wrappedConnection: ctx.connection }
-        );
-      } catch (err: any) {
-        const code = err.code ?? err.sqlState;
-        if (code === 'ER_DUP_ENTRY') {
-          throw new BadRequestException(
-            'You have already reacted to this drop'
-          );
-        }
-        throw err;
-      }
+      // ----- INSERT/UPDATE PATH -----
+      await this.db.execute(
+        `
+          INSERT INTO ${DROP_REACTIONS_TABLE}
+            (profile_id, drop_id, wave_id, reaction)
+          VALUES
+            (:profileId, :dropId, :waveId, :reaction)
+          ON DUPLICATE KEY UPDATE
+            reaction = VALUES(reaction)
+        `,
+        {
+          profileId,
+          dropId,
+          waveId,
+          reaction: reactionStr
+        },
+        { wrappedConnection: ctx.connection }
+      );
     }
     ctx.timer?.stop(`${this.constructor.name}->upsertState`);
   }
