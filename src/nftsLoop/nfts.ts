@@ -395,67 +395,11 @@ async function refreshExistingNFTs(
       const method = nft.token_type === TokenType.ERC721 ? 'tokenURI' : 'uri';
 
       try {
-        const uri = await contract[method](nft.id);
-        if ((uri && uri !== nft.uri && isValidUrl(uri)) || !nft.metadata) {
-          const metadata = await fetchMetadata(uri);
-          if (metadata) {
-            logger.info(
-              `♻️ ${nft.contract} #${nft.id} resetting URI from ${
-                nft.uri ?? 'undefined'
-              } to ${uri}`
-            );
-            nft.uri = uri;
-            nft.metadata = metadata;
-            entry.changed = true;
-          }
-        }
-        if (!nft.mint_date) {
-          logger.info(
-            `🔄 ${nft.contract} #${nft.id} missing mint date, fetching...`
-          );
-          const mintDate = await getMintDate(nft.contract, nft.id);
-          if (mintDate) {
-            logger.info(
-              `♻️ ${nft.contract} #${nft.id} updating mint date from ${nft.mint_date} to ${mintDate}`
-            );
-            nft.mint_date = mintDate;
-            entry.changed = true;
-          } else {
-            logger.warn(`⚠️ ${nft.contract} #${nft.id} mint date not found`);
-          }
-        }
-        if (
-          !nft.mint_price &&
-          !equalIgnoreCase(nft.contract, GRADIENT_CONTRACT)
-        ) {
-          const mintDate = nft.mint_date ? new Date(nft.mint_date) : null;
-          if (
-            mintDate &&
-            mintDate <
-              new Date(
-                Date.now() - MINT_DATE_GRACE_PERIOD_DAYS * 24 * 60 * 60 * 1000
-              )
-          ) {
-            // Don't fetch mint price for old NFTs
-            // They are probably full airdropped
-            return;
-          }
-          logger.info(
-            `🔄 ${nft.contract} #${nft.id} missing mint price, fetching...`
-          );
-          const mintPrice = await getMintPrice(nft.contract, nft.id);
-          if (mintPrice) {
-            logger.info(
-              `♻️ ${nft.contract} #${nft.id} updating mint price from ${nft.mint_price} to ${mintPrice}`
-            );
-            nft.mint_price = mintPrice;
-            entry.changed = true;
-          } else {
-            logger.warn(
-              `⚠️ ${nft.contract} #${nft.id} mint price still missing`
-            );
-          }
-        }
+        await Promise.all([
+          updateUri(entry, contract, method),
+          updateMintDate(entry),
+          updateMintPrice(entry)
+        ]);
       } catch (err: any) {
         logger.warn(
           `⚠️ ${nft.contract} #${nft.id} refresh failed: ${err.message}`
@@ -463,6 +407,72 @@ async function refreshExistingNFTs(
       }
     })
   );
+}
+
+async function updateUri(
+  entry: { nft: NFT | LabNFT; changed: boolean },
+  contract: any,
+  method: 'tokenURI' | 'uri'
+) {
+  const { nft } = entry;
+  const uri = await contract[method](nft.id);
+  const shouldFetch =
+    (uri && uri !== nft.uri && isValidUrl(uri)) || !nft.metadata;
+  if (!shouldFetch) return;
+
+  const metadata = await fetchMetadata(uri);
+  if (!metadata) return;
+
+  logger.info(
+    `♻️ ${nft.contract} #${nft.id} resetting URI from ${
+      nft.uri ?? 'undefined'
+    } to ${uri}`
+  );
+  nft.uri = uri;
+  nft.metadata = metadata;
+  entry.changed = true;
+}
+
+async function updateMintDate(entry: { nft: NFT | LabNFT; changed: boolean }) {
+  const { nft } = entry;
+  if (nft.mint_date) return;
+
+  logger.info(`🔄 ${nft.contract} #${nft.id} missing mint date, fetching...`);
+  const mintDate = await getMintDate(nft.contract, nft.id);
+  if (mintDate) {
+    logger.info(
+      `♻️ ${nft.contract} #${nft.id} updating mint date from ${nft.mint_date} to ${mintDate}`
+    );
+    nft.mint_date = mintDate;
+    entry.changed = true;
+  } else {
+    logger.warn(`⚠️ ${nft.contract} #${nft.id} mint date not found`);
+  }
+}
+
+async function updateMintPrice(entry: { nft: NFT | LabNFT; changed: boolean }) {
+  const { nft } = entry;
+  if (nft.mint_price || equalIgnoreCase(nft.contract, GRADIENT_CONTRACT)) {
+    return;
+  }
+
+  const mintDate = nft.mint_date ? new Date(nft.mint_date) : null;
+  const tooOld =
+    mintDate &&
+    mintDate < new Date(Date.now() - MINT_DATE_GRACE_PERIOD_DAYS * 86400000);
+  if (tooOld) return; // skip old NFTs
+
+  logger.info(`🔄 ${nft.contract} #${nft.id} missing mint price, fetching...`);
+  const mintPrice = await getMintPrice(nft.contract, nft.id);
+  if (mintPrice) {
+    logger.info(
+      `♻️ ${nft.contract} #${nft.id} updating mint price from ${nft.mint_price} to ${mintPrice}`
+    );
+    nft.mint_price = mintPrice;
+    entry.changed = true;
+  } else {
+    logger.warn(`⚠️ ${nft.contract} #${nft.id} mint price still missing`);
+  }
 }
 
 async function updateMemeReferences(
