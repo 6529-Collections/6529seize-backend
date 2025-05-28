@@ -437,7 +437,7 @@ async function refreshExistingNFTs(
               )
           ) {
             // Don't fetch mint price for old NFTs
-            // They are probably full airdropped if we can't find the mint price
+            // They are probably full airdropped
             return;
           }
           logger.info(
