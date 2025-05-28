@@ -30,10 +30,11 @@ import { Transaction } from '../entities/ITransaction';
 import { In, MoreThan } from 'typeorm';
 import { equalIgnoreCase } from '../strings';
 import { text } from '../text';
+import { Time } from '../time';
 
 const logger = Logger.get('nfts');
 
-const MINT_DATE_GRACE_PERIOD_DAYS = 30;
+const MINT_DATE_GRACE_PERIOD_DAYS = 7;
 
 export enum NFT_MODE {
   DISCOVER = 'discover',
@@ -456,10 +457,11 @@ async function updateMintPrice(entry: { nft: NFT | LabNFT; changed: boolean }) {
     return;
   }
 
-  const mintDate = nft.mint_date ? new Date(nft.mint_date) : null;
+  const mintDate = nft.mint_date
+    ? Time.fromDate(new Date(nft.mint_date))
+    : null;
   const tooOld =
-    mintDate &&
-    mintDate < new Date(Date.now() - MINT_DATE_GRACE_PERIOD_DAYS * 86400000);
+    mintDate && Time.daysAgo(MINT_DATE_GRACE_PERIOD_DAYS) > mintDate;
   if (tooOld) return; // skip old NFTs
 
   logger.info(`🔄 ${nft.contract} #${nft.id} missing mint price, fetching...`);
