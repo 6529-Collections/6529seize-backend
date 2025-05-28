@@ -33,6 +33,8 @@ import { text } from '../text';
 
 const logger = Logger.get('nfts');
 
+const MINT_DATE_GRACE_PERIOD_DAYS = 30;
+
 export enum NFT_MODE {
   DISCOVER = 'discover',
   REFRESH = 'refresh'
@@ -422,7 +424,25 @@ async function refreshExistingNFTs(
             logger.warn(`⚠️ ${nft.contract} #${nft.id} mint date not found`);
           }
         }
-        if (!nft.mint_price) {
+        if (
+          !nft.mint_price &&
+          !equalIgnoreCase(nft.contract, GRADIENT_CONTRACT)
+        ) {
+          const mintDate = nft.mint_date ? new Date(nft.mint_date) : null;
+          if (
+            mintDate &&
+            mintDate <
+              new Date(
+                Date.now() - MINT_DATE_GRACE_PERIOD_DAYS * 24 * 60 * 60 * 1000
+              )
+          ) {
+            // Don't fetch mint price for old NFTs
+            // They are probably full airdropped if we can't find the mint price
+            return;
+          }
+          logger.info(
+            `🔄 ${nft.contract} #${nft.id} missing mint price, fetching...`
+          );
           const mintPrice = await getMintPrice(nft.contract, nft.id);
           if (mintPrice) {
             logger.info(
@@ -430,6 +450,10 @@ async function refreshExistingNFTs(
             );
             nft.mint_price = mintPrice;
             entry.changed = true;
+          } else {
+            logger.warn(
+              `⚠️ ${nft.contract} #${nft.id} mint price still missing`
+            );
           }
         }
       } catch (err: any) {
@@ -525,6 +549,7 @@ async function updateSupply(
 const getMintPrice = async (contract: string, tokenId: number) => {
   const repo = getDataSource().getRepository(Transaction);
   const firstMintTransaction = await repo.findOne({
+    select: ['value'],
     where: {
       contract,
       token_id: tokenId,
@@ -539,6 +564,7 @@ const getMintPrice = async (contract: string, tokenId: number) => {
 const getMintDate = async (contract: string, tokenId: number) => {
   const repo = getDataSource().getRepository(Transaction);
   const firstTransaction = await repo.findOne({
+    select: ['transaction_date'],
     where: {
       contract,
       token_id: tokenId,
