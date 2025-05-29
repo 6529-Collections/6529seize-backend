@@ -158,7 +158,9 @@ const getLowestListing = (
           o.identifierOrCriteria === id.toString()
       );
       if (offer) {
-        const normalizedPrice = item.current_price / offer.endAmount;
+        const normalizedPrice = ethTools.weiToEth(
+          item.current_price / offer.endAmount
+        );
         return { price: normalizedPrice, maker: item.maker?.address ?? null };
       }
       return null;
@@ -169,8 +171,9 @@ const getLowestListing = (
     return { price: 0, maker: null };
   }
 
-  const lowest = entries.reduce((min, curr) =>
-    curr.price < min.price ? curr : min
+  const lowest = entries.reduce(
+    (min, curr) => (curr.price < min.price ? curr : min),
+    { price: Infinity, maker: null }
   );
 
   return {
@@ -192,7 +195,9 @@ const getHighestOffer = (
           c.identifierOrCriteria === id.toString()
       );
       if (consideration) {
-        const normalizedPrice = item.current_price / consideration.endAmount;
+        const normalizedPrice = ethTools.weiToEth(
+          item.current_price / consideration.endAmount
+        );
         return { price: normalizedPrice, maker: item.maker?.address ?? null };
       }
       return null;
@@ -203,8 +208,9 @@ const getHighestOffer = (
     return { price: 0, maker: null };
   }
 
-  const highest = entries.reduce((max, curr) =>
-    curr.price > max.price ? curr : max
+  const highest = entries.reduce(
+    (max, curr) => (curr.price > max.price ? curr : max),
+    { price: -Infinity, maker: null }
   );
 
   return {
