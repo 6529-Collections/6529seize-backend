@@ -14,6 +14,11 @@ import { ethTools } from '../eth-tools';
 
 const logger = Logger.get('NFT_MARKET_STATS');
 
+type PriceResponse = {
+  price: number;
+  maker: string | null;
+};
+
 async function getOpenseaResponseForPage(url: string, pageToken: string) {
   if (pageToken) {
     url += `&cursor=${pageToken}`;
@@ -144,49 +149,74 @@ const getLowestListing = (
   id: string,
   contract: string,
   nftListings: any[]
-): any => {
-  return (
-    [...nftListings].sort((a, d) => {
-      const aOffer = a.protocol_data.parameters.offer.find(
+): PriceResponse => {
+  const entries = nftListings
+    .map((item) => {
+      const offer = item.protocol_data.parameters.offer.find(
         (o: any) =>
           equalIgnoreCase(o.token, contract) &&
           o.identifierOrCriteria === id.toString()
       );
-      const dOffer = d.protocol_data.parameters.offer.find(
-        (o: any) =>
-          equalIgnoreCase(o.token, contract) &&
-          o.identifierOrCriteria === id.toString()
-      );
-      return (
-        a.current_price / aOffer.endAmount - d.current_price / dOffer.endAmount
-      );
-    })?.[0] ?? null
+      if (offer) {
+        const normalizedPrice = ethTools.weiToEth(
+          item.current_price / offer.endAmount
+        );
+        return { price: normalizedPrice, maker: item.maker?.address ?? null };
+      }
+      return null;
+    })
+    .filter((entry) => entry !== null) as PriceResponse[];
+
+  if (entries.length === 0) {
+    return { price: 0, maker: null };
+  }
+
+  const lowest = entries.reduce(
+    (min, curr) => (curr.price < min.price ? curr : min),
+    { price: Infinity, maker: null }
   );
+
+  return {
+    price: Math.round(lowest.price * 10000) / 10000,
+    maker: lowest.maker
+  };
 };
 
 const getHighestOffer = (
   id: string,
   contract: string,
   nftOffers: any[]
-): any => {
-  return (
-    [...nftOffers].sort((a, d) => {
-      const aConsideration = a.protocol_data.parameters.consideration.find(
+): PriceResponse => {
+  const entries = nftOffers
+    .map((item) => {
+      const consideration = item.protocol_data.parameters.consideration.find(
         (c: any) =>
           equalIgnoreCase(c.token, contract) &&
           c.identifierOrCriteria === id.toString()
       );
-      const dConsideration = d.protocol_data.parameters.consideration.find(
-        (c: any) =>
-          equalIgnoreCase(c.token, contract) &&
-          c.identifierOrCriteria === id.toString()
-      );
-      return (
-        d.current_price / dConsideration.endAmount -
-        a.current_price / aConsideration.endAmount
-      );
-    })?.[0] ?? null
+      if (consideration) {
+        const normalizedPrice = ethTools.weiToEth(
+          item.current_price / consideration.endAmount
+        );
+        return { price: normalizedPrice, maker: item.maker?.address ?? null };
+      }
+      return null;
+    })
+    .filter((entry) => entry !== null) as PriceResponse[];
+
+  if (entries.length === 0) {
+    return { price: 0, maker: null };
+  }
+
+  const highest = entries.reduce(
+    (max, curr) => (curr.price > max.price ? curr : max),
+    { price: -Infinity, maker: null }
   );
+
+  return {
+    price: Math.round(highest.price * 10000) / 10000,
+    maker: highest.maker
+  };
 };
 
 const updateNftVolumeStats = (nft: any, volumes: any): void => {
@@ -198,27 +228,14 @@ const updateNftVolumeStats = (nft: any, volumes: any): void => {
 
 const updateNftMarketStats = (
   nft: any,
-  lowestListing: any,
-  highestOffer: any
+  lowestListing: PriceResponse,
+  highestOffer: PriceResponse
 ): void => {
-  let lowestListingPrice = ethTools.weiToEth(
-    lowestListing
-      ? lowestListing.current_price / lowestListing.remaining_quantity
-      : 0
-  );
-  lowestListingPrice = Math.round(lowestListingPrice * 10000) / 10000;
-  nft.floor_price = lowestListingPrice;
-  nft.floor_price_from = lowestListing?.maker.address ?? null;
-  nft.market_cap = lowestListingPrice * nft.supply;
-
-  let highestOfferPrice = ethTools.weiToEth(
-    highestOffer
-      ? highestOffer.current_price / highestOffer.remaining_quantity
-      : 0
-  );
-  highestOfferPrice = Math.round(highestOfferPrice * 10000) / 10000;
-  nft.highest_offer = highestOfferPrice;
-  nft.highest_offer_from = highestOffer?.maker.address ?? null;
+  nft.floor_price = lowestListing.price;
+  nft.floor_price_from = lowestListing.maker;
+  nft.market_cap = lowestListing.price * nft.supply;
+  nft.highest_offer = highestOffer.price;
+  nft.highest_offer_from = highestOffer.maker;
 };
 
 const persistNFTsForContract = async (
