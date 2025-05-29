@@ -78,7 +78,7 @@ export class ReactionsService {
           }),
           additional_data_1: drop.author_id,
           additional_data_2: drop.wave_id,
-          proxy_id: null // TODO: DO WE NEED THIS?
+          proxy_id: null
         },
         ctx.connection,
         ctx.timer
