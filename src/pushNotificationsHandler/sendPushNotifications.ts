@@ -5,7 +5,7 @@ import {
 } from 'firebase-admin/lib/messaging/messaging-api';
 import { Logger } from '../logging';
 import { numbers } from '../numbers';
-import emoji from 'node-emoji';
+import * as emoji from 'node-emoji';
 
 const logger = Logger.get('PUSH_NOTIFICATIONS_HANDLER_SEND');
 
