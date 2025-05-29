@@ -98,6 +98,7 @@
     "moment-timezone": "^0.5.45",
     "mysql": "^2.18.1",
     "node-cron": "^3.0.2",
+    "node-emoji": "^2.2.0",
     "node-fetch": "^2.7.0",
     "openai": "^4.24.1",
     "redis": "^4.7.0",
