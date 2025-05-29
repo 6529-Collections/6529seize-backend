@@ -117,8 +117,8 @@ export class ReactionsDb extends LazyDbAccessCompatibleService {
       }
       bucket.profiles.push({
         id: profile_id,
-        handle,
-        pfp
+        handle: !handle || handle === 'null' ? null : handle,
+        pfp: !pfp || pfp === 'null' ? null : pfp
       });
       result.set(drop_id, entry);
     }

@@ -12,13 +12,18 @@ import { ProfileActivityLogType } from '../../../../entities/IProfileActivityLog
 import { NewDropReaction, reactionsDb, ReactionsDb } from './reactions.db';
 import { dropsDb, DropsDb } from '../../../../drops/drops.db';
 import { profileActivityLogsDb } from '../../../../profileActivityLogs/profile-activity-logs.db';
+import {
+  UserNotifier,
+  userNotifier
+} from '../../../../notifications/user.notifier';
 
 export class ReactionsService {
   constructor(
     private readonly reactionsDb: ReactionsDb,
     private readonly wavesDb: WavesApiDb,
     private readonly dropsDb: DropsDb,
-    private readonly userGroupsService: UserGroupsService
+    private readonly userGroupsService: UserGroupsService,
+    private readonly userNotifier: UserNotifier
   ) {}
 
   public async react(reaction: NewDropReaction, ctx: RequestContext) {
@@ -77,8 +82,21 @@ export class ReactionsService {
         },
         ctx.connection,
         ctx.timer
-      )
-      // TODO: NOTIFY
+      ),
+      (() =>
+        drop.author_id === reaction.profileId || reaction.isDeleting
+          ? Promise.resolve()
+          : this.userNotifier.notifyOfDropReaction(
+              {
+                profile_id: reaction.profileId,
+                drop_id: reaction.dropId,
+                drop_author_id: drop.author_id,
+                reaction: reaction.reaction,
+                wave_id: reaction.waveId
+              },
+              wave.visibility_group_id,
+              ctx.connection
+            ))()
     ]);
     ctx.timer?.stop(`${this.constructor.name}->react`);
   }
@@ -88,5 +106,6 @@ export const reactionsService = new ReactionsService(
   reactionsDb,
   wavesApiDb,
   dropsDb,
-  userGroupsService
+  userGroupsService,
+  userNotifier
 );
