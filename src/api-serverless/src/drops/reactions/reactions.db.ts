@@ -4,7 +4,6 @@ import {
 } from '../../../../sql-executor';
 import { RequestContext } from '../../../../request.context';
 import { DROP_REACTIONS_TABLE, IDENTITIES_TABLE } from '../../../../constants';
-import { BadRequestException } from '../../../../exceptions';
 import { ApiDropReaction } from '../../generated/models/ApiDropReaction';
 
 export interface NewDropReaction {
