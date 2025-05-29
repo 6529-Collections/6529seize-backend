@@ -69,6 +69,19 @@ export class BaseTransaction {
 @Index('idx_transaction_date', ['transaction_date'])
 @Index('idx_transaction_block', ['block'])
 @Index('idx_contract_token_id', ['contract', 'token_id'])
+@Index('idx_mint_price', [
+  'contract',
+  'token_id',
+  'from_address',
+  'value',
+  'transaction_date'
+])
+@Index('idx_mint_date', [
+  'contract',
+  'token_id',
+  'from_address',
+  'transaction_date'
+])
 export class Transaction extends BaseTransaction {}
 
 export interface TransactionValue {
