@@ -6,6 +6,7 @@ import { ConnectionWrapper } from '../sql-executor';
 import { IdentityNotificationCause } from '../entities/IIdentityNotification';
 import {
   DropQuoteNotificationData,
+  DropReactionNotificationData,
   DropReplyNotificationData,
   DropVoteNotificationData,
   IdentityMentionNotificationData,
@@ -95,6 +96,34 @@ export class UserNotifier {
         related_drop_2_part_no: null,
         cause: IdentityNotificationCause.DROP_VOTED,
         additional_data: { vote },
+        wave_id,
+        visibility_group_id
+      },
+      connection
+    );
+  }
+
+  public async notifyOfDropReaction(
+    {
+      profile_id,
+      drop_id,
+      drop_author_id,
+      reaction,
+      wave_id
+    }: DropReactionNotificationData,
+    visibility_group_id: string | null,
+    connection?: ConnectionWrapper<any>
+  ) {
+    await this.identityNotificationsDb.insertNotification(
+      {
+        identity_id: drop_author_id,
+        additional_identity_id: profile_id,
+        related_drop_id: drop_id,
+        related_drop_part_no: null,
+        related_drop_2_id: null,
+        related_drop_2_part_no: null,
+        cause: IdentityNotificationCause.DROP_REACTED,
+        additional_data: { reaction },
         wave_id,
         visibility_group_id
       },

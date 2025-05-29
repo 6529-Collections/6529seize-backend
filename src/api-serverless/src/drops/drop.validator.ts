@@ -20,6 +20,15 @@ export const ApiAddRatingToDropRequestSchema: Joi.ObjectSchema<ApiAddRatingToDro
     category: Joi.string().optional().allow(null) // for legacy reasons
   });
 
+export interface ApiAddReactionToDropRequest {
+  readonly reaction: string;
+}
+
+export const ApiAddReactionToDropRequestSchema: Joi.ObjectSchema<ApiAddReactionToDropRequest> =
+  Joi.object({
+    reaction: Joi.string().required()
+  });
+
 const NftSchema: Joi.ObjectSchema<ApiDropReferencedNFT> = Joi.object({
   contract: Joi.string().regex(WALLET_REGEX).lowercase(),
   token: Joi.string().regex(/^\d+$/),

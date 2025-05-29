@@ -110,6 +110,8 @@ async function generateNotificationData(
       return handleDropReplied(notification, additionalEntity);
     case IdentityNotificationCause.DROP_VOTED:
       return handleDropVoted(notification, additionalEntity);
+    case IdentityNotificationCause.DROP_REACTED:
+      return handleDropReacted(notification, additionalEntity);
     case IdentityNotificationCause.WAVE_CREATED:
       return handleWaveCreated(notification, additionalEntity);
     case IdentityNotificationCause.ALL_DROPS:
@@ -203,6 +205,29 @@ async function handleDropVoted(
   const title = `${additionalEntity.handle} rated your drop: ${
     vote > 0 ? '+' : '-'
   }${Math.abs(vote)}`;
+  const imageUrl = additionalEntity.pfp;
+  const dropPart = await getDropPart(notification);
+  const dropSerialNo = await getDropSerialNo(notification.related_drop_id);
+  const body = dropPart?.content ?? 'View drop';
+  const data = {
+    redirect: 'waves',
+    wave_id: notification.wave_id,
+    drop_id: dropSerialNo
+  };
+  return { title, body, data, imageUrl };
+}
+
+async function handleDropReacted(
+  notification: IdentityNotificationEntity,
+  additionalEntity: ApiIdentity
+) {
+  const reaction: string = (notification.additional_data as any).reaction;
+  if (!reaction) {
+    throw new Error(
+      `[ID ${notification.id}] Reaction additional data not found`
+    );
+  }
+  const title = `${additionalEntity.handle} reacted ${reaction} to your drop`;
   const imageUrl = additionalEntity.pfp;
   const dropPart = await getDropPart(notification);
   const dropSerialNo = await getDropSerialNo(notification.related_drop_id);

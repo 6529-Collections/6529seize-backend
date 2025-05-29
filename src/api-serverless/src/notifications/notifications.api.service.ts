@@ -162,6 +162,12 @@ export class NotificationsApiService {
           dropIds.push(data.drop_id);
           break;
         }
+        case IdentityNotificationCause.DROP_REACTED: {
+          const data = notification.data;
+          profileIds.push(data.profile_id);
+          dropIds.push(data.drop_id);
+          break;
+        }
         case IdentityNotificationCause.DROP_QUOTED: {
           const data = notification.data;
           profileIds.push(data.quote_drop_author_id);
@@ -244,6 +250,20 @@ export class NotificationsApiService {
           related_drops: [drops[data.drop_id]],
           additional_context: {
             vote: data.vote
+          }
+        };
+      }
+      case IdentityNotificationCause.DROP_REACTED: {
+        const data = notification.data;
+        return {
+          id: notification.id,
+          created_at: notification.created_at,
+          read_at: notification.read_at,
+          cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
+          related_identity: profiles[data.profile_id],
+          related_drops: [drops[data.drop_id]],
+          additional_context: {
+            reaction: data.reaction
           }
         };
       }
