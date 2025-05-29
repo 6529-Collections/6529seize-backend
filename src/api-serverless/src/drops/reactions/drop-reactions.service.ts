@@ -57,7 +57,7 @@ export class DropReactionsService {
         if (
           authenticationContext.isAuthenticatedAsProxy() &&
           !authenticationContext.activeProxyActions[
-            ProfileProxyActionType.CREATE_DROP_TO_WAVE
+            ProfileProxyActionType.RATE_WAVE_DROP
           ]
         ) {
           throw new ForbiddenException(
