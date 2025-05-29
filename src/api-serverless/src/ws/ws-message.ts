@@ -5,6 +5,7 @@ export enum WsMessageType {
   DROP_UPDATE = 'DROP_UPDATE',
   DROP_DELETE = 'DROP_DELETE',
   DROP_RATING_UPDATE = 'DROP_RATING_UPDATE',
+  DROP_REACTION_UPDATE = 'DROP_REACTION_UPDATE',
   USER_IS_TYPING = 'USER_IS_TYPING',
   SUBSCRIBE_TO_WAVE = 'SUBSCRIBE_TO_WAVE'
 }
@@ -24,6 +25,13 @@ export function dropUpdateMessage(data: ApiDrop): WsMessage<ApiDrop> {
 export function dropRatingUpdateMessage(data: ApiDrop): WsMessage<ApiDrop> {
   return {
     type: WsMessageType.DROP_RATING_UPDATE,
+    data
+  };
+}
+
+export function dropReactionUpdateMessage(data: ApiDrop): WsMessage<ApiDrop> {
+  return {
+    type: WsMessageType.DROP_REACTION_UPDATE,
     data
   };
 }

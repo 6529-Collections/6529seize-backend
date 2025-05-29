@@ -54,7 +54,7 @@
     "@types/passport": "^1.0.13",
     "@types/passport-anonymous": "^1.0.4",
     "@types/passport-jwt": "^3.0.10",
-    "esbuild": "^0.14.11",
+    "esbuild": "^0.25.4",
     "eslint": "^9.27.0",
     "eslint-config-prettier": "^10.1.5",
     "eslint-plugin-prettier": "^5.4.0",
@@ -68,5 +68,8 @@
     "typescript": "^5.0.4"
   },
   "author": "The serverless webpack authors (https://github.com/elastic-coders/serverless-webpack)",
-  "license": "MIT"
+  "license": "MIT",
+  "overrides": {
+    "jsonpath-plus": "10.3.0"
+  }
 }

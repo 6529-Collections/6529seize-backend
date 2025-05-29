@@ -5,6 +5,7 @@ import {
 } from 'firebase-admin/lib/messaging/messaging-api';
 import { Logger } from '../logging';
 import { numbers } from '../numbers';
+import { emojify } from './emojify';
 
 const logger = Logger.get('PUSH_NOTIFICATIONS_HANDLER_SEND');
 
@@ -41,8 +42,8 @@ export async function sendMessage(
   imageUrl?: string
 ) {
   init();
-  title = title.replace(/@\[(.+?)\]/g, '@$1');
-  body = body.replace(/@\[(.+?)\]/g, '@$1');
+  title = emojify(title.replace(/@\[(.+?)\]/g, '@$1'));
+  body = emojify(body.replace(/@\[(.+?)\]/g, '@$1'));
 
   const badgeNumber = numbers.parseIntOrNull(badge) ?? 1;
 
