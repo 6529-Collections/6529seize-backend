@@ -1101,7 +1101,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                                                  RANK() OVER (ORDER BY vote DESC, timestamp ASC) AS rnk
                                           from ddata) drop_ranks
           )
-      select d.* from dranks r join drops d on d.id = r.drop_id order by r.rnk ${params.sort_order} limit :limit offset :offset
+      select d.* from dranks r join drops d on d.id = r.drop_id where r.vote <> 0 order by r.rnk ${params.sort_order} limit :limit offset :offset
     `;
     const sqlParams = {
       wave_id: params.wave_id,
