@@ -393,7 +393,7 @@ router.delete(
 );
 
 router.post(
-  '/:drop_id/reactions',
+  '/:drop_id/reaction',
   needsAuthenticatedUser(),
   async (
     req: Request<
@@ -441,7 +441,7 @@ router.post(
 );
 
 router.delete(
-  '/:drop_id/reactions',
+  '/:drop_id/reaction',
   needsAuthenticatedUser(),
   async (
     req: Request<{ drop_id: string }, any, any, any, any>,

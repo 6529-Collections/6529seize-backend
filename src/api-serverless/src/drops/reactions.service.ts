@@ -47,34 +47,28 @@ export class ReactionsService {
     ) => Promise<void>,
     ctx: RequestContext
   ) {
-    const drop = await this.dropsDb.executeNativeQueriesInTransaction(
-      async (connection) => {
-        const groupIdsUserIsEligibleFor =
-          await userGroupsService.getGroupsUserIsEligibleFor(
-            profileId,
-            ctx.timer
-          );
-        const dropEntity = await this.dropsDb.findDropByIdWithEligibilityCheck(
-          dropId,
-          groupIdsUserIsEligibleFor,
-          connection
-        );
-        const ctxWithConnection = { ...ctx, connection };
-        if (!dropEntity) {
-          throw new NotFoundException(`Drop ${dropId} not found`);
-        }
-        await callback(dropEntity, groupIdsUserIsEligibleFor);
-        return await this.dropsService.findDropByIdOrThrow(
-          {
-            dropId: dropId,
-            skipEligibilityCheck: true
-          },
-          ctxWithConnection
-        );
-      }
+    const groupIdsUserIsEligibleFor =
+      await userGroupsService.getGroupsUserIsEligibleFor(profileId, ctx.timer);
+    const dropEntity = await this.dropsDb.findDropByIdWithEligibilityCheck(
+      dropId,
+      groupIdsUserIsEligibleFor,
+      ctx.connection
     );
-    await this.wsListenersNotifier.notifyAboutDropReactionUpdate(drop, ctx);
+    if (!dropEntity) {
+      throw new NotFoundException(`Drop ${dropId} not found`);
+    }
+    await callback(dropEntity, groupIdsUserIsEligibleFor);
     await giveReadReplicaTimeToCatchUp();
+
+    const drop = await this.dropsService.findDropByIdOrThrow(
+      {
+        dropId: dropId,
+        skipEligibilityCheck: true
+      },
+      ctx
+    );
+
+    await this.wsListenersNotifier.notifyAboutDropReactionUpdate(drop, ctx);
     return drop;
   }
 

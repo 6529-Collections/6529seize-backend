@@ -87,8 +87,8 @@ export class DropCheeringService {
         );
       }
     );
-    await this.wsListenersNotifier.notifyAboutDropRatingUpdate(drop, ctx);
     await giveReadReplicaTimeToCatchUp();
+    await this.wsListenersNotifier.notifyAboutDropRatingUpdate(drop, ctx);
   }
 }
 
