@@ -75,7 +75,6 @@ export class ReactionsDb extends LazyDbAccessCompatibleService {
       drop_id: string;
       reaction: string;
       profile_id: string;
-      created_at: Date;
     }> = await this.db.execute(
       `
       SELECT
@@ -89,7 +88,6 @@ export class ReactionsDb extends LazyDbAccessCompatibleService {
       { dropIds },
       { wrappedConnection: ctx.connection }
     );
-
     const profiles = await identityFetcher.getOverviewsByIds(
       Array.from(new Set(rows.map((r) => r.profile_id))),
       ctx
@@ -97,28 +95,20 @@ export class ReactionsDb extends LazyDbAccessCompatibleService {
 
     const result = new Map<string, DropReactionsResult>();
 
-    let currentDropId: string | null = null;
-    let currentEntry: DropReactionsResult | null = null;
-
     for (const { drop_id, reaction, profile_id } of rows) {
-      if (drop_id !== currentDropId) {
-        currentDropId = drop_id;
-        currentEntry = {
-          reactions: [],
-          context_profile_reaction: null
-        };
-        result.set(drop_id, currentEntry);
+      const entry = result.get(drop_id) ?? {
+        reactions: [],
+        context_profile_reaction: null
+      };
+      let bucket = entry.reactions.find((r) => r.reaction === reaction);
+      if (!bucket) {
+        bucket = { reaction, profiles: [] };
+        entry.reactions.push(bucket);
       }
+      const profile = profiles[profile_id];
 
-      const bucket =
-        currentEntry.reactions.find((r) => r.reaction === reaction) ??
-        (() => {
-          const newB = { reaction, profiles: [] };
-          currentEntry!.reactions.push(newB);
-          return newB;
-        })();
-
-      bucket.profiles.push(profiles[profile_id]);
+      bucket.profiles.push(profile);
+      result.set(drop_id, entry);
     }
 
     if (contextProfileId) {
