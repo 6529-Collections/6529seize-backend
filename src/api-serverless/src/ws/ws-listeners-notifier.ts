@@ -132,8 +132,6 @@ export class WsListenersNotifier {
           },
           ctx
         );
-      console.log('onlineProfiles', onlineProfiles.length);
-      console.log('drop', drop);
       const creditLefts = await this.getCreditLeftsForOnlineProfiles(
         onlineProfiles,
         drop
