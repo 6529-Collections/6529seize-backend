@@ -6,8 +6,6 @@ import {
 import { WaveEntity } from '../../../entities/IWave';
 import {
   ACTIVITY_EVENTS_TABLE,
-  CLAP_CREDIT_SPENDINGS_TABLE,
-  DROP_CLAPPER_STATE_TABLE,
   DROP_MEDIA_TABLE,
   DROP_METADATA_TABLE,
   DROP_REFERENCED_NFTS_TABLE,
@@ -1039,26 +1037,6 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       { wrappedConnection: ctx.connection }
     );
     ctx.timer?.stop('wavesApiDb->deleteDropEntitiesByWaveId');
-  }
-
-  async deleteDropClapsByWaveId(waveId: string, ctx: RequestContext) {
-    ctx.timer?.start('wavesApiDb->deleteDropClapsByWaveId');
-    await this.db.execute(
-      `delete from ${DROP_CLAPPER_STATE_TABLE} where wave_id = :waveId`,
-      { waveId },
-      { wrappedConnection: ctx.connection }
-    );
-    ctx.timer?.stop('wavesApiDb->deleteDropClapsByWaveId');
-  }
-
-  async deleteClapCreditSpendingsByWaveId(waveId: string, ctx: RequestContext) {
-    ctx.timer?.start('wavesApiDb->deleteClapCreditSpendingsByWaveId');
-    await this.db.execute(
-      `delete from ${CLAP_CREDIT_SPENDINGS_TABLE} where wave_id = :waveId`,
-      { waveId },
-      { wrappedConnection: ctx.connection }
-    );
-    ctx.timer?.stop('wavesApiDb->deleteClapCreditSpendingsByWaveId');
   }
 
   async updateVisibilityInFeedEntities(

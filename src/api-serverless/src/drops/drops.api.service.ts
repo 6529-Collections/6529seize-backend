@@ -37,7 +37,6 @@ import { ApiDropSearchStrategy } from '../generated/models/ApiDropSearchStrategy
 import { ApiDropType } from '../generated/models/ApiDropType';
 import { DropEntity, DropType } from '../../../entities/IDrop';
 import { ApiWaveDropsFeed } from '../generated/models/ApiWaveDropsFeed';
-import { clappingService, ClappingService } from './clapping.service';
 import { ApiDropsLeaderboardPage } from '../generated/models/ApiDropsLeaderboardPage';
 import { WaveType } from '../../../entities/IWave';
 import { ApiWaveLog } from '../generated/models/ApiWaveLog';
@@ -63,7 +62,6 @@ export class DropsApiService {
     private readonly dropsDb: DropsDb,
     private readonly userGroupsService: UserGroupsService,
     private readonly identitySubscriptionsDb: IdentitySubscriptionsDb,
-    private readonly clappingService: ClappingService,
     private readonly identityFetcher: IdentityFetcher
   ) {}
 
@@ -224,14 +222,6 @@ export class DropsApiService {
       return null;
     }
     return context_profile_id;
-  }
-
-  async findAvailableCreditForRatingForProfile(
-    profileId: string
-  ): Promise<{ available_credit_for_rating: number }> {
-    const creditLeft =
-      await this.clappingService.findCreditLeftForClapping(profileId);
-    return { available_credit_for_rating: creditLeft };
   }
 
   async findDropsByIdsOrThrow(
@@ -791,6 +781,5 @@ export const dropsService = new DropsApiService(
   dropsDb,
   userGroupsService,
   identitySubscriptionsDb,
-  clappingService,
   identityFetcher
 );

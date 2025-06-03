@@ -2,16 +2,12 @@ import { dropsDb, DropsDb } from './drops.db';
 import { Time, Timer } from '../time';
 import { ConnectionWrapper } from '../sql-executor';
 import { DeleteDropModel } from './delete-drop.model';
-import { profilesService, ProfilesService } from '../profiles/profiles.service';
 import {
   BadRequestException,
   ForbiddenException,
   NotFoundException
 } from '../exceptions';
-import {
-  clappingService,
-  ClappingService
-} from '../api-serverless/src/drops/clapping.service';
+import { reactionsService } from '../api-serverless/src/drops/reactions.service';
 import {
   dropVotingService,
   DropVotingService
@@ -20,11 +16,11 @@ import { userGroupsService } from '../api-serverless/src/community-members/user-
 import { WaveEntity } from '../entities/IWave';
 import { DropEntity } from '../entities/IDrop';
 import { identityFetcher } from '../api-serverless/src/identities/identity.fetcher';
+import { ReactionsService } from '../api-serverless/src/drops/reactions.service';
 
 export class DeleteDropUseCase {
   public constructor(
-    private readonly profileService: ProfilesService,
-    private readonly clapsService: ClappingService,
+    private readonly reactionsService: ReactionsService,
     private readonly dropVotingService: DropVotingService,
     private readonly dropsDb: DropsDb
   ) {}
@@ -83,7 +79,10 @@ export class DeleteDropUseCase {
         this.dropsDb.deleteDropReferencedNfts(dropId, { timer, connection }),
         this.dropsDb.deleteDropMetadata(dropId, { timer, connection }),
         this.dropsDb.deleteDropEntity(dropId, { timer, connection }),
-        this.clapsService.deleteClaps(dropId, { timer, connection }),
+        this.reactionsService.deleteReactionsByDrop(dropId, {
+          timer,
+          connection
+        }),
         this.dropVotingService.deleteVotes(dropId, { timer, connection }),
         this.dropsDb.deleteDropFeedItems(dropId, { timer, connection }),
         this.dropsDb.deleteDropNotifications(dropId, { timer, connection }),
@@ -149,8 +148,7 @@ export class DeleteDropUseCase {
 }
 
 export const deleteDrop = new DeleteDropUseCase(
-  profilesService,
-  clappingService,
+  reactionsService,
   dropVotingService,
   dropsDb
 );

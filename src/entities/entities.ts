@@ -9,7 +9,6 @@ export {
 } from './IAggregatedActivity';
 export { CicScoreAggregation } from './ICicScoreAggregation';
 export { CicStatement } from './ICICStatement';
-export { ClapCreditSpendingEntity } from './IClapCreditSpending';
 export { CookiesConsent } from './ICookieConsent';
 export { Consolidation, Delegation, NFTDelegationBlock } from './IDelegation';
 export { DeletedDropEntity } from './IDeletedDrop';
@@ -21,7 +20,6 @@ export {
   DropMetadataEntity,
   DropMediaEntity
 } from './IDrop';
-export { DropClapperStateEntity } from './IDropClapperState';
 export { DropRankEntity } from './IDropRank';
 export { DropReactionsEntity } from './IDropReactions';
 export { DropRealVoteInTimeEntity } from './IDropRealVoteInTime';
