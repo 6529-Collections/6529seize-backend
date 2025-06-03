@@ -4,7 +4,7 @@ import {
   maybeAuthenticatedUser,
   needsAuthenticatedUser
 } from '../auth/auth';
-import { NextFunction, Request, RequestHandler, Response } from 'express';
+import { Request, Response } from 'express';
 import { ApiResponse } from '../api-response';
 import * as Joi from 'joi';
 import { getValidatedByJoiOrThrow } from '../validation';

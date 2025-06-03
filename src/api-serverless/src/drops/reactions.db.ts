@@ -106,13 +106,10 @@ export class ReactionsDb extends LazyDbAccessCompatibleService {
         context_profile_reaction: null
       };
       const profile = profiles[profile_id];
-      let bucket = entry.reactions.find((r) => r.reaction === reaction);
-      if (!bucket) {
-        bucket = {
-          reaction: reaction,
-          profiles: []
-        };
-      }
+      const bucket = entry.reactions.find((r) => r.reaction === reaction) ?? {
+        reaction: reaction,
+        profiles: []
+      };
       bucket.profiles.push(profile);
       result.set(drop_id, entry);
     }

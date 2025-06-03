@@ -7,7 +7,10 @@ import {
   ForbiddenException,
   NotFoundException
 } from '../exceptions';
-import { reactionsService } from '../api-serverless/src/drops/reactions.service';
+import {
+  reactionsService,
+  ReactionsService
+} from '../api-serverless/src/drops/reactions.service';
 import {
   dropVotingService,
   DropVotingService
@@ -16,7 +19,6 @@ import { userGroupsService } from '../api-serverless/src/community-members/user-
 import { WaveEntity } from '../entities/IWave';
 import { DropEntity } from '../entities/IDrop';
 import { identityFetcher } from '../api-serverless/src/identities/identity.fetcher';
-import { ReactionsService } from '../api-serverless/src/drops/reactions.service';
 
 export class DeleteDropUseCase {
   public constructor(

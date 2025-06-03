@@ -266,9 +266,6 @@ export class DropsMappers {
     const participatoryDropEntities = allEntities.filter(
       (it) => it.drop_type === DropType.PARTICIPATORY
     );
-    const chatDropIds = allEntities
-      .filter((it) => it.drop_type === DropType.CHAT)
-      .map((it) => it.id);
     const participatoryDropIds = participatoryDropEntities.map((it) => it.id);
     const [
       dropsRanks,
