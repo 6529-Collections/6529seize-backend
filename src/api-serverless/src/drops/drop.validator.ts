@@ -9,6 +9,7 @@ import { ApiCreateWaveDropRequest } from '../generated/models/ApiCreateWaveDropR
 import { ApiReplyToDrop } from '../generated/models/ApiReplyToDrop';
 import { ApiUpdateDropRequest } from '../generated/models/ApiUpdateDropRequest';
 import { ApiDropType } from '../generated/models/ApiDropType';
+import { ApiAddReactionToDropRequest } from '../generated/models/ApiAddReactionToDropRequest';
 
 export interface ApiAddRatingToDropRequest {
   readonly rating: number;
@@ -19,10 +20,6 @@ export const ApiAddRatingToDropRequestSchema: Joi.ObjectSchema<ApiAddRatingToDro
     rating: Joi.number().integer().required(),
     category: Joi.string().optional().allow(null) // for legacy reasons
   });
-
-export interface ApiAddReactionToDropRequest {
-  readonly reaction: string;
-}
 
 export const ApiAddReactionToDropRequestSchema: Joi.ObjectSchema<ApiAddReactionToDropRequest> =
   Joi.object({

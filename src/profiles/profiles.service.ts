@@ -32,9 +32,9 @@ import {
 import { RequestContext } from '../request.context';
 import { IdentityEntity } from '../entities/IIdentity';
 import {
-  clappingDb,
-  ClappingDb
-} from '../api-serverless/src/drops/clapping.db';
+  reactionsDb,
+  ReactionsDb
+} from '../api-serverless/src/drops/reactions.db';
 import {
   dropVotingDb,
   DropVotingDb
@@ -57,7 +57,7 @@ export class ProfilesService {
     private readonly userGroupsDb: UserGroupsDb,
     private readonly identitiesDb: IdentitiesDb,
     private readonly notificationsDb: IdentityNotificationsDb,
-    private readonly clappingDb: ClappingDb,
+    private readonly reactionsDb: ReactionsDb,
     private readonly dropVotingDb: DropVotingDb
   ) {}
 
@@ -477,7 +477,11 @@ export class ProfilesService {
           target,
           connectionHolder
         );
-        await this.mergeClappingStuff(sourceIdentity, target, connectionHolder);
+        await this.mergeReactionsStuff(
+          sourceIdentity,
+          target,
+          connectionHolder
+        );
         await this.mergeVotingStuff(sourceIdentity, target, connectionHolder);
         const targetProfile = await this.profilesDb.getProfileById(
           target,
@@ -595,12 +599,12 @@ export class ProfilesService {
     );
   }
 
-  private async mergeClappingStuff(
+  private async mergeReactionsStuff(
     sourceIdentity: string,
     target: string,
     connectionHolder: ConnectionWrapper<any>
   ) {
-    await this.clappingDb.mergeOnProfileIdChange(
+    await this.reactionsDb.mergeOnProfileIdChange(
       { previous_id: sourceIdentity, new_id: target },
       { connection: connectionHolder }
     );
@@ -851,6 +855,6 @@ export const profilesService = new ProfilesService(
   userGroupsDb,
   identitiesDb,
   identityNotificationsDb,
-  clappingDb,
+  reactionsDb,
   dropVotingDb
 );

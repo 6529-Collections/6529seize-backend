@@ -47,7 +47,7 @@ import {
   dropVotingService,
   DropVotingService
 } from '../drops/drop-voting.service';
-import { clappingService, ClappingService } from '../drops/clapping.service';
+import { reactionsService, ReactionsService } from '../drops/reactions.service';
 import { ApiWaveDecisionsStrategy } from '../generated/models/ApiWaveDecisionsStrategy';
 import {
   userNotifier,
@@ -74,7 +74,7 @@ export class WaveApiService {
     private readonly createOrUpdateDrop: CreateOrUpdateDropUseCase,
     private readonly dropsMappers: DropsMappers,
     private readonly dropVotingService: DropVotingService,
-    private readonly clappingService: ClappingService,
+    private readonly reactionsService: ReactionsService,
     private readonly userNotifier: UserNotifier,
     private readonly identityFetcher: IdentityFetcher
   ) {}
@@ -918,11 +918,10 @@ export class WaveApiService {
             ctxWithConnection
           ),
           this.wavesApiDb.deleteDropMetadataByWaveId(waveId, ctxWithConnection),
-          this.wavesApiDb.deleteClapCreditSpendingsByWaveId(
+          this.reactionsService.deleteReactionsByWave(
             waveId,
             ctxWithConnection
           ),
-          this.wavesApiDb.deleteDropClapsByWaveId(waveId, ctxWithConnection),
           this.wavesApiDb.deleteDropFeedItemsByWaveId(
             waveId,
             ctxWithConnection
@@ -936,7 +935,10 @@ export class WaveApiService {
             ctxWithConnection
           ),
           this.dropVotingService.deleteVoteByWave(waveId, ctxWithConnection),
-          this.clappingService.deleteClapsByWave(waveId, ctxWithConnection),
+          this.reactionsService.deleteReactionsByWave(
+            waveId,
+            ctxWithConnection
+          ),
           this.wavesApiDb.deleteDropEntitiesByWaveId(waveId, ctxWithConnection),
           this.wavesApiDb.deleteWaveMetrics(waveId, ctxWithConnection),
           this.wavesApiDb.deleteWave(waveId, ctxWithConnection),
@@ -1117,7 +1119,7 @@ export const waveApiService = new WaveApiService(
   createOrUpdateDrop,
   dropsMappers,
   dropVotingService,
-  clappingService,
+  reactionsService,
   userNotifier,
   identityFetcher
 );

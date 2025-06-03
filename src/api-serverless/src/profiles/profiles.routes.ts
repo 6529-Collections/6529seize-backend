@@ -23,7 +23,6 @@ import { profilesService } from '../../../profiles/profiles.service';
 import profileCicRoutes from './profile-cic.routes';
 import profileRepRoutes from './profile-rep.routes';
 import profileCollectedRoutes from './collected/collected.routes';
-import profileDropsRoutes from './profile-drops.routes';
 import profilePrimaryAddressRoutes from './profile-primary-address.routes';
 import profileProfileProxiesRoutes from './proxies/profile-proxies.routes';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
@@ -262,7 +261,6 @@ const ApiUploadProfilePictureRequestSchema: Joi.ObjectSchema<ApiUploadProfilePic
 router.use('/:identity/cic', profileCicRoutes);
 router.use('/:identity/rep', profileRepRoutes);
 router.use('/:identity/collected', profileCollectedRoutes);
-router.use('/:identity/drops', profileDropsRoutes);
 router.use('/:identity/primary-address', profilePrimaryAddressRoutes);
 router.use('/:identity/proxies', profileProfileProxiesRoutes);
 
