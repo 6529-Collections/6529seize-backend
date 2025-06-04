@@ -23,6 +23,7 @@ import { ProfileProxyActionType } from '../../../entities/IProfileProxyAction';
 import {
   ApiAddRatingToDropRequest,
   ApiAddRatingToDropRequestSchema,
+  ApiAddReactionToDropRequestSchema,
   NewDropSchema,
   UpdateDropSchema
 } from './drop.validator';
@@ -37,6 +38,8 @@ import { dropsDb } from '../../../drops/drops.db';
 import { identityFetcher } from '../identities/identity.fetcher';
 import { enums } from '../../../enums';
 import { numbers } from '../../../numbers';
+import { reactionsService } from './reactions.service';
+import { ApiAddReactionToDropRequest } from '../generated/models/ApiAddReactionToDropRequest';
 
 const router = asyncRouter();
 
@@ -386,6 +389,90 @@ router.delete(
     res.send({
       actions: activeActions
     });
+  }
+);
+
+router.post(
+  '/:drop_id/reaction',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<
+      { drop_id: string },
+      any,
+      ApiAddReactionToDropRequest,
+      any,
+      any
+    >,
+    res: Response<ApiResponse<ApiDrop>>
+  ) => {
+    const { reaction } = getValidatedByJoiOrThrow(
+      req.body,
+      ApiAddReactionToDropRequestSchema
+    );
+
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
+    const profileId = authenticationContext.getActingAsId();
+    if (!profileId) {
+      throw new ForbiddenException(
+        `No profile found for authenticated user ${authenticationContext.authenticatedWallet}`
+      );
+    }
+    if (
+      authenticationContext.isAuthenticatedAsProxy() &&
+      !authenticationContext.activeProxyActions[
+        ProfileProxyActionType.RATE_WAVE_DROP
+      ]
+    ) {
+      throw new ForbiddenException(
+        `Proxy doesn't have permission to add reactions`
+      );
+    }
+
+    const drop = await reactionsService.addReaction(
+      req.params.drop_id,
+      profileId,
+      reaction,
+      { timer, authenticationContext }
+    );
+
+    return res.send(drop);
+  }
+);
+
+router.delete(
+  '/:drop_id/reaction',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<{ drop_id: string }, any, any, any, any>,
+    res: Response<ApiResponse<ApiDrop>>
+  ) => {
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
+    const profileId = authenticationContext.getActingAsId();
+    if (!profileId) {
+      throw new ForbiddenException(
+        `No profile found for authenticated user ${authenticationContext.authenticatedWallet}`
+      );
+    }
+    if (
+      authenticationContext.isAuthenticatedAsProxy() &&
+      !authenticationContext.activeProxyActions[
+        ProfileProxyActionType.RATE_WAVE_DROP
+      ]
+    ) {
+      throw new ForbiddenException(
+        `Proxy doesn't have permission to add reactions`
+      );
+    }
+
+    const drop = await reactionsService.removeReaction(
+      req.params.drop_id,
+      profileId,
+      { timer, authenticationContext }
+    );
+
+    return res.send(drop);
   }
 );
 

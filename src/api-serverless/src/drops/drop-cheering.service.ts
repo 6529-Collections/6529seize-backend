@@ -3,7 +3,6 @@ import { BadRequestException, NotFoundException } from '../../../exceptions';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import { RequestContext } from '../../../request.context';
 import { DropType } from '../../../entities/IDrop';
-import { clappingService, ClappingService } from './clapping.service';
 import {
   voteForDropUseCase,
   VoteForDropUseCase
@@ -14,11 +13,12 @@ import {
   WsListenersNotifier
 } from '../ws/ws-listeners-notifier';
 import { DropsApiService, dropsService } from './drops.api.service';
+import { reactionsService, ReactionsService } from './reactions.service';
 
 export class DropCheeringService {
   constructor(
     private readonly dropsDb: DropsDb,
-    private readonly clappingService: ClappingService,
+    private readonly reactionsService: ReactionsService,
     private readonly voteForDrop: VoteForDropUseCase,
     private readonly wsListenersNotifier: WsListenersNotifier,
     private readonly dropsService: DropsApiService
@@ -48,14 +48,11 @@ export class DropCheeringService {
         const dropType = dropEntity.drop_type;
         switch (dropType) {
           case DropType.CHAT: {
-            await this.clappingService.clap(
-              {
-                drop_id: dropId,
-                clapper_id: param.rater_profile_id,
-                claps: param.cheersChange,
-                wave_id: dropEntity.wave_id,
-                proxy_id: null
-              },
+            const reaction = param.cheersChange > 0 ? ':+1:' : ':-1:';
+            await this.reactionsService.addReaction(
+              dropId,
+              param.rater_profile_id,
+              reaction,
               ctxWithConnection
             );
             break;
@@ -90,14 +87,14 @@ export class DropCheeringService {
         );
       }
     );
-    await this.wsListenersNotifier.notifyAboutDropRatingUpdate(drop, ctx);
     await giveReadReplicaTimeToCatchUp();
+    await this.wsListenersNotifier.notifyAboutDropRatingUpdate(drop, ctx);
   }
 }
 
 export const dropCheeringService = new DropCheeringService(
   dropsDb,
-  clappingService,
+  reactionsService,
   voteForDropUseCase,
   wsListenersNotifier,
   dropsService

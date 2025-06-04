@@ -43,8 +43,6 @@ import {
   DropPartIdentifierModel
 } from '../../../drops/create-or-update-drop.model';
 import { ApiDropType } from '../generated/models/ApiDropType';
-import { clappingDb, ClappingDb } from './clapping.db';
-import { clappingService } from './clapping.service';
 import { dropVotingService, DropVotingService } from './drop-voting.service';
 import { dropVotingDb, DropVotingDb } from './drop-voting.db';
 import { ApiWaveCreditType as WaveCreditTypeApi } from '../generated/models/ApiWaveCreditType';
@@ -62,6 +60,7 @@ import {
 import { enums } from '../../../enums';
 import { numbers } from '../../../numbers';
 import { collections } from '../../../collections';
+import { DropReactionsResult, reactionsDb, ReactionsDb } from './reactions.db';
 
 export class DropsMappers {
   constructor(
@@ -70,9 +69,9 @@ export class DropsMappers {
     private readonly dropsDb: DropsDb,
     private readonly wavesApiDb: WavesApiDb,
     private readonly identitySubscriptionsDb: IdentitySubscriptionsDb,
-    private readonly clappingDb: ClappingDb,
     private readonly dropVotingDb: DropVotingDb,
-    private readonly dropVotingService: DropVotingService
+    private readonly dropVotingService: DropVotingService,
+    private readonly reactionsDb: ReactionsDb
   ) {}
 
   public createDropApiToUseCaseModel({
@@ -267,9 +266,6 @@ export class DropsMappers {
     const participatoryDropEntities = allEntities.filter(
       (it) => it.drop_type === DropType.PARTICIPATORY
     );
-    const chatDropIds = allEntities
-      .filter((it) => it.drop_type === DropType.CHAT)
-      .map((it) => it.id);
     const participatoryDropIds = participatoryDropEntities.map((it) => it.id);
     const [
       dropsRanks,
@@ -277,9 +273,7 @@ export class DropsMappers {
       mentions,
       referencedNfts,
       metadata,
-      dropsTopClappers,
       dropsTopVoters,
-      clapsLeftForContextProfile,
       dropsVoteCounts,
       dropMedia,
       subscribedActions,
@@ -290,7 +284,8 @@ export class DropsMappers {
       weightedDropsRanks,
       weightedDropsRates,
       deletedDrops,
-      dropsInWavesWhereNegativeVotesAreNotAllowed
+      dropsInWavesWhereNegativeVotesAreNotAllowed,
+      dropReactions
     ] = await Promise.all([
       this.dropVotingDb.getParticipationDropsRealtimeRanks(
         participatoryDropIds,
@@ -306,15 +301,9 @@ export class DropsMappers {
       this.dropsDb.findMentionsByDropIds(allDropIds, connection),
       this.dropsDb.findReferencedNftsByDropIds(allDropIds, connection),
       this.dropsDb.findMetadataByDropIds(allDropIds, connection),
-      this.clappingDb.findDropsTopContributors(chatDropIds, contextProfileId, {
-        connection
-      }),
       this.dropVotingDb.findDropsTopContributors(participatoryDropIds, {
         connection
       }),
-      contextProfileId
-        ? clappingService.findCreditLeftForClapping(contextProfileId)
-        : Promise.resolve(0),
       this.dropVotingDb.getTallyForDrops(
         { dropIds: participatoryDropIds },
         { connection }
@@ -354,7 +343,10 @@ export class DropsMappers {
       this.dropsDb.findDropIdsOfWavesWhereNegativeVotesAreNotAllowed(
         allDropIds,
         connection
-      )
+      ),
+      this.reactionsDb.getByDropIds(allDropIds, contextProfileId ?? null, {
+        connection
+      })
     ]);
     return {
       dropsRanks,
@@ -362,12 +354,10 @@ export class DropsMappers {
       mentions,
       referencedNfts,
       metadata,
-      dropsTopClappers,
       dropsVoteCounts,
       dropsTopVoters,
       dropMedia,
       dropsParts,
-      clapsLeftForContextProfile,
       winDecisions,
       winningDropsTopRaters,
       winningDropsRatersCounts,
@@ -385,7 +375,8 @@ export class DropsMappers {
       allEntities,
       weightedDropsRanks,
       weightedDropsRates,
-      dropsInWavesWhereNegativeVotesAreNotAllowed
+      dropsInWavesWhereNegativeVotesAreNotAllowed,
+      dropReactions
     };
   }
 
@@ -399,13 +390,11 @@ export class DropsMappers {
       mentions,
       referencedNfts,
       metadata,
-      dropsTopClappers,
       dropsTopVoters,
       dropMedia,
       dropsParts,
       subscribedActions,
       deletedDrops,
-      clapsLeftForContextProfile,
       dropsVoteCounts,
       allEntities,
       dropsRanks,
@@ -415,7 +404,8 @@ export class DropsMappers {
       winningDropsRatingsByVoter,
       weightedDropsRanks,
       weightedDropsRates,
-      dropsInWavesWhereNegativeVotesAreNotAllowed
+      dropsInWavesWhereNegativeVotesAreNotAllowed,
+      dropReactions
     } = await this.getAllDropsRelatedData(
       {
         dropEntities: entities,
@@ -423,16 +413,12 @@ export class DropsMappers {
       },
       ctx.connection
     );
-    const clapperProfileIds = Object.values(dropsTopClappers)
-      .map((it) => it.map((r) => r.clapper_id))
-      .flat();
     const voterProfileIds = Object.values(dropsTopVoters)
       .map((it) => it.map((r) => r.voter_id))
       .flat();
     const allProfileIds = collections.distinct([
       ...allEntities.map((it) => it.author_id),
       ...mentions.map((it) => it.mentioned_profile_id),
-      ...clapperProfileIds,
       ...voterProfileIds,
       ...Object.values(deletedDrops).map((it) => it.author_id),
       ...Object.values(winningDropsTopRaters)
@@ -476,11 +462,9 @@ export class DropsMappers {
         dropsParts,
         dropMedia,
         contextProfileId,
-        clapsLeftForContextProfile,
         referencedNfts,
         mentions,
         metadata,
-        dropsTopClappers,
         dropsVoteCounts,
         dropsTopVoters,
         subscribedActions,
@@ -499,7 +483,8 @@ export class DropsMappers {
         ),
         weightedDropsRanks,
         weightedDropsRates,
-        dropsInWavesWhereNegativeVotesAreNotAllowed
+        dropsInWavesWhereNegativeVotesAreNotAllowed,
+        dropReactions
       });
     });
   }
@@ -510,12 +495,10 @@ export class DropsMappers {
     profilesByIds,
     dropsParts,
     dropMedia,
-    clapsLeftForContextProfile,
     contextProfileId,
     referencedNfts,
     mentions,
     metadata,
-    dropsTopClappers,
     dropsTopVoters,
     subscribedActions,
     submissionDropsVotingRanges,
@@ -528,27 +511,18 @@ export class DropsMappers {
     allEntities,
     weightedDropsRanks,
     weightedDropsRates,
-    dropsInWavesWhereNegativeVotesAreNotAllowed
+    dropsInWavesWhereNegativeVotesAreNotAllowed,
+    dropReactions
   }: {
     dropEntity: DropEntity;
     deletedDrops: Record<string, DeletedDropEntity>;
     profilesByIds: Record<string, ApiProfileMin>;
     dropsParts: Record<string, DropPartEntity[]>;
     dropMedia: Record<string, DropMediaEntity[]>;
-    clapsLeftForContextProfile: number;
     contextProfileId: string | undefined | null;
     referencedNfts: DropReferencedNftEntity[];
     mentions: DropMentionEntity[];
     metadata: DropMetadataEntity[];
-    dropsTopClappers: Record<
-      string,
-      {
-        claps: number;
-        clapper_id: string;
-        total_clappers: number;
-        total_claps: number;
-      }[]
-    >;
     dropsTopVoters: Record<string, { votes: number; voter_id: string }[]>;
     dropsVoteCounts: Record<
       string,
@@ -568,6 +542,7 @@ export class DropsMappers {
     weightedDropsRanks: Record<string, number>;
     weightedDropsRates: Record<string, { current: number; prediction: number }>;
     dropsInWavesWhereNegativeVotesAreNotAllowed: string[];
+    dropReactions: Map<string, DropReactionsResult>;
   }): ApiDropWithoutWave {
     const replyToDropId = dropEntity.reply_to_drop_id;
     const dropWinDecision = winDecisions[dropEntity.id];
@@ -593,24 +568,20 @@ export class DropsMappers {
           }))
         }
       : undefined;
-    const dropTopClappers = dropsTopClappers[dropEntity.id];
-    let raters_count = dropTopClappers?.at(0)?.total_clappers ?? 0;
-    let rating = dropTopClappers?.at(0)?.total_claps ?? 0;
-    let top_raters = (dropTopClappers ?? []).map<ApiDropRater>((rater) => ({
-      rating: rater.claps,
-      profile: profilesByIds[rater.clapper_id]
-    }));
+    let raters_count = 0;
+    let rating = 0;
+    let top_raters: ApiDropRater[] = [];
     let context_profile_context: ApiDropContextProfileContext | null = null;
     let realtime_rating = rating;
     let rating_prediction = rating;
+    const contextProfileReaction =
+      dropReactions.get(dropEntity.id)?.context_profile_reaction ?? null;
     if (contextProfileId) {
-      const clapsByClapper =
-        dropTopClappers?.find((cl) => cl.clapper_id === contextProfileId)
-          ?.claps ?? 0;
       context_profile_context = {
-        rating: clapsByClapper,
-        min_rating: clapsByClapper - clapsLeftForContextProfile,
-        max_rating: clapsByClapper + clapsLeftForContextProfile
+        rating: 0,
+        min_rating: 0,
+        max_rating: 0,
+        reaction: contextProfileReaction
       };
     }
     if (dropEntity.drop_type === DropType.WINNER) {
@@ -628,7 +599,8 @@ export class DropsMappers {
         context_profile_context = {
           rating: winningDropsRatingsByVoter[dropEntity.id] ?? 0,
           min_rating: winningDropsRatingsByVoter[dropEntity.id] ?? 0,
-          max_rating: winningDropsRatingsByVoter[dropEntity.id] ?? 0
+          max_rating: winningDropsRatingsByVoter[dropEntity.id] ?? 0,
+          reaction: contextProfileReaction
         };
       }
     } else if (dropEntity.drop_type === DropType.PARTICIPATORY) {
@@ -655,7 +627,8 @@ export class DropsMappers {
         context_profile_context = {
           rating: submissionDropsVotingRanges[dropEntity.id]?.current ?? 0,
           min_rating: minRating,
-          max_rating: submissionDropsVotingRanges[dropEntity.id]?.max ?? 0
+          max_rating: submissionDropsVotingRanges[dropEntity.id]?.max ?? 0,
+          reaction: contextProfileReaction
         };
       }
     }
@@ -663,6 +636,7 @@ export class DropsMappers {
     const dropType = enums.resolveOrThrow(ApiDropType, dropEntity.drop_type);
     const rank: number | null =
       weightedDropsRanks[dropEntity.id] ?? dropsRanks[dropEntity.id] ?? null;
+
     return {
       id: dropEntity.id,
       serial_no: dropEntity.serial_no,
@@ -680,12 +654,10 @@ export class DropsMappers {
                   profilesByIds,
                   dropsParts,
                   dropMedia,
-                  clapsLeftForContextProfile,
                   contextProfileId,
                   referencedNfts,
                   mentions,
                   metadata,
-                  dropsTopClappers,
                   dropsTopVoters,
                   dropsVoteCounts,
                   subscribedActions,
@@ -698,7 +670,8 @@ export class DropsMappers {
                   winningDropsRatingsByVoter,
                   weightedDropsRanks,
                   weightedDropsRates,
-                  dropsInWavesWhereNegativeVotesAreNotAllowed
+                  dropsInWavesWhereNegativeVotesAreNotAllowed,
+                  dropReactions
                 })
               : undefined
           }
@@ -723,12 +696,10 @@ export class DropsMappers {
                           profilesByIds,
                           dropsParts,
                           dropMedia,
-                          clapsLeftForContextProfile,
                           contextProfileId,
                           referencedNfts,
                           mentions,
                           metadata,
-                          dropsTopClappers,
                           dropsVoteCounts,
                           dropsTopVoters,
                           subscribedActions,
@@ -741,7 +712,8 @@ export class DropsMappers {
                           winningDropsRatingsByVoter,
                           weightedDropsRanks,
                           weightedDropsRates,
-                          dropsInWavesWhereNegativeVotesAreNotAllowed
+                          dropsInWavesWhereNegativeVotesAreNotAllowed,
+                          dropReactions
                         })
                       : undefined
                   }
@@ -787,7 +759,8 @@ export class DropsMappers {
       context_profile_context,
       subscribed_actions: subscribedActions[dropEntity.id] ?? [],
       winning_context: winningContext,
-      is_signed: !!dropEntity.signature
+      is_signed: !!dropEntity.signature,
+      reactions: dropReactions.get(dropEntity.id)?.reactions ?? []
     };
   }
 }
@@ -798,7 +771,7 @@ export const dropsMappers = new DropsMappers(
   dropsDb,
   wavesApiDb,
   identitySubscriptionsDb,
-  clappingDb,
   dropVotingDb,
-  dropVotingService
+  dropVotingService,
+  reactionsDb
 );

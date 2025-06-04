@@ -8,6 +8,7 @@ import { RequestContext } from '../../../request.context';
 import {
   dropDeleteMessage,
   dropRatingUpdateMessage,
+  dropReactionUpdateMessage,
   dropUpdateMessage,
   userIsTypingMessage
 } from './ws-message';
@@ -115,6 +116,48 @@ export class WsListenersNotifier {
     }
 
     ctx.timer?.stop(`${this.constructor.name}->notifyAboutDropRatingUpdate`);
+  }
+
+  async notifyAboutDropReactionUpdate(
+    drop: ApiDrop,
+    ctx: RequestContext
+  ): Promise<void> {
+    ctx.timer?.start(`${this.constructor.name}->notifyAboutDropReactionUpdate`);
+    try {
+      const onlineProfiles =
+        await this.wsConnectionRepository.getCurrentlyOnlineCommunityMemberConnectionIds(
+          {
+            groupId: drop.wave.visibility_group_id,
+            waveId: drop.wave.id
+          },
+          ctx
+        );
+      const creditLefts = await this.getCreditLeftsForOnlineProfiles(
+        onlineProfiles,
+        drop
+      );
+      await Promise.all(
+        onlineProfiles.map(({ connectionId, profileId }) =>
+          this.appWebSockets.send({
+            connectionId,
+            message: JSON.stringify(
+              dropReactionUpdateMessage(
+                this.removeDropsAuthRequestContext(
+                  drop,
+                  profileId === null ? 0 : (creditLefts[profileId] ?? 0)
+                )
+              )
+            )
+          })
+        )
+      );
+    } catch (e) {
+      this.logger.error(
+        `Sending data to websockets failed. Params: ${JSON.stringify(
+          drop
+        )}. Error: ${JSON.stringify(e)}`
+      );
+    }
   }
 
   async notifyAboutUserIsTyping({
