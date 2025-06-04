@@ -63,6 +63,8 @@ import {
 } from '../identities/identity.fetcher';
 import { enums } from '../../../enums';
 import { collections } from '../../../collections';
+import { ApiUpdateWaveDecisionPause } from '../generated/models/ApiUpdateWaveDecisionPause';
+import { numbers } from '../../../numbers';
 
 export class WaveApiService {
   constructor(
@@ -220,6 +222,185 @@ export class WaveApiService {
     await giveReadReplicaTimeToCatchUp();
     timer.stop(`${this.constructor.name}->createWave`);
     return createdWave;
+  }
+
+  public async createOrUpdateWavePause(
+    waveId: string,
+    model: ApiUpdateWaveDecisionPause,
+    ctx: RequestContext
+  ): Promise<ApiWave> {
+    const wave = await this.assertUserAllowedToModifyPauses(ctx, waveId);
+    await this.assertProposedPauseValidForAddOrUpdate(wave, model, ctx);
+    await this.wavesApiDb.executeNativeQueriesInTransaction(
+      async (connection) => {
+        if (model.id) {
+          await this.wavesApiDb.deletePause(model.id, connection);
+        }
+        await this.wavesApiDb.insertPause(
+          { startTime: model.start_time, endTime: model.end_time, waveId },
+          connection
+        );
+      }
+    );
+    await giveReadReplicaTimeToCatchUp();
+    const groupsUserIsEligibleFor =
+      await this.userGroupsService.getGroupsUserIsEligibleFor(
+        ctx.authenticationContext!.getActingAsId()
+      );
+    return this.findWaveByIdOrThrow(waveId, groupsUserIsEligibleFor, ctx);
+  }
+
+  public async deleteWavePause(
+    waveId: string,
+    pauseId: number,
+    ctx: RequestContext
+  ): Promise<ApiWave> {
+    const wave = await this.assertUserAllowedToModifyPauses(ctx, waveId);
+    await this.assertProposedPauseValidForDeletion(wave, pauseId, ctx);
+    await this.wavesApiDb.executeNativeQueriesInTransaction(
+      async (connection) => {
+        await this.wavesApiDb.deletePause(pauseId, connection);
+      }
+    );
+    await giveReadReplicaTimeToCatchUp();
+    const groupsUserIsEligibleFor =
+      await this.userGroupsService.getGroupsUserIsEligibleFor(
+        ctx.authenticationContext!.getActingAsId()
+      );
+    return this.findWaveByIdOrThrow(waveId, groupsUserIsEligibleFor, ctx);
+  }
+
+  private async assertProposedPauseValidForAddOrUpdate(
+    wave: WaveEntity,
+    model: ApiUpdateWaveDecisionPause,
+    ctx: RequestContext
+  ) {
+    const decisionStrategy = wave.decisions_strategy;
+    if (decisionStrategy === null) {
+      throw new BadRequestException(
+        `Can't add pauses to wave without a decision strategy`
+      );
+    }
+    const nextDecisionTime = wave.next_decision_time
+      ? Time.millis(wave.next_decision_time)
+      : null;
+    if (!nextDecisionTime) {
+      throw new BadRequestException(
+        `Can't add pauses to wave without a next decision time`
+      );
+    }
+    const proposedEndTime = Time.millis(model.end_time);
+    if (proposedEndTime.isInPast()) {
+      throw new BadRequestException(`Can't modify end_time to be in past`);
+    }
+    if (nextDecisionTime.isInPast()) {
+      throw new BadRequestException(
+        `Can't modify pauses of a wave with unresolved decisions`
+      );
+    }
+    const currentPauses = await this.wavesApiDb.getWavePauses(wave.id, ctx);
+    const proposedStartTime = Time.millis(model.start_time);
+    const pauseIdToUpdate = model.id;
+    const otherPauses = currentPauses.filter(
+      (it) =>
+        numbers.parseIntOrNull(it.id) !==
+        numbers.parseIntOrNull(pauseIdToUpdate)
+    );
+    const overLappingPause = otherPauses.find((it) => {
+      const otherPausesStart = Time.millis(+it.start_time);
+      const otherPausesEnd = Time.millis(+it.end_time);
+      return proposedStartTime.isInInterval(otherPausesStart, otherPausesEnd);
+    });
+    if (overLappingPause) {
+      throw new BadRequestException(
+        `Can not create a pause which is overlapping with another pause`
+      );
+    }
+    if (pauseIdToUpdate) {
+      const pauseToModify = currentPauses.find((it) => it.id === model.id);
+      if (!pauseToModify) {
+        throw new NotFoundException(
+          `Pause ${pauseIdToUpdate} for wave ${wave.id} not found`
+        );
+      }
+      if (Time.millis(pauseToModify.end_time).isInPast()) {
+        throw new BadRequestException(
+          `Can't modify a past which's end_time is already over`
+        );
+      }
+      const oldStartTime = Time.millis(+pauseToModify.start_time);
+      const newStartTime = Time.millis(model.start_time);
+      if (!oldStartTime.eq(newStartTime)) {
+        throw new BadRequestException(`Pause start time can not be updated`);
+      }
+    }
+  }
+
+  private async assertProposedPauseValidForDeletion(
+    wave: WaveEntity,
+    pauseId: number,
+    ctx: RequestContext
+  ) {
+    const nextDecisionTime = wave.next_decision_time
+      ? Time.millis(wave.next_decision_time)
+      : null;
+    if (!nextDecisionTime) {
+      throw new BadRequestException(
+        `Can't add pauses to wave without a next decision time`
+      );
+    }
+    if (nextDecisionTime.isInPast()) {
+      throw new BadRequestException(
+        `Can't modify pauses of a wave with unresolved decisions`
+      );
+    }
+    const currentPauses = await this.wavesApiDb.getWavePauses(wave.id, ctx);
+    const pauseToDelete = currentPauses.find((it) => it.id === pauseId);
+    if (!pauseToDelete) {
+      throw new NotFoundException(
+        `Pause ${pauseToDelete} for wave ${wave.id} not found`
+      );
+    }
+    if (Time.millis(pauseToDelete.end_time).isInPast()) {
+      throw new BadRequestException(
+        `Can't modify a pause which's end_time is already over`
+      );
+    }
+  }
+
+  private async assertUserAllowedToModifyPauses(
+    ctx: RequestContext,
+    waveId: string
+  ) {
+    const authContext = ctx.authenticationContext;
+    const authenticatedUserId = authContext?.getActingAsId();
+    if (!authenticatedUserId) {
+      throw new ForbiddenException(`User must be authenticated`);
+    }
+    if (authContext!.isAuthenticatedAsProxy()) {
+      throw new ForbiddenException(`This action can not be done as proxy`);
+    }
+    const wave = await this.wavesApiDb.findById(waveId);
+    if (!wave) {
+      throw new NotFoundException(`Wave not found`);
+    }
+    if (wave.created_by !== authenticatedUserId) {
+      const adminGroupId = wave.admin_group_id;
+      if (!adminGroupId) {
+        throw new ForbiddenException(
+          `Wave modification not allowed for authenticated user`
+        );
+      }
+      const isUserInAdminGroup = await this.userGroupsService
+        .getGroupsUserIsEligibleFor(authenticatedUserId, ctx.timer)
+        .then((it) => it.includes(authenticatedUserId));
+      if (!isUserInAdminGroup) {
+        throw new ForbiddenException(
+          `Wave modification not allowed for authenticated user`
+        );
+      }
+    }
+    return wave;
   }
 
   public async findOrCreateDirectMessageWave(
@@ -861,7 +1042,7 @@ export class WaveApiService {
       default:
         assertUnreachable(type);
     }
-    return []; // unreachable code but typescript doesn't know that
+    return []; // unreachable code but TS doesn't know that
   }
 
   async deleteWave(waveId: string, ctx: RequestContext) {

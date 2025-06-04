@@ -62,6 +62,10 @@ export class WaveDecisionsService {
     currentMillis: number,
     timer: Timer
   ) {
+    const wavePauses = await this.waveDecisionsDb.getWavePauses(
+      wavesLatestDecisionTimesWithStrategy.wave_id,
+      { timer }
+    );
     const latestDecisionTime =
       wavesLatestDecisionTimesWithStrategy.latest_decision_time ?? 0;
     const strategy = wavesLatestDecisionTimesWithStrategy.decisions_strategy;
@@ -84,11 +88,20 @@ export class WaveDecisionsService {
               `Execution decision ${decisionTime} for wave ${waveId}`
             );
             if (decisionTime !== null) {
-              await this.createDecision(
-                { waveId, decisionTime, outcomes, time_lock_ms },
-                { timer, connection }
+              const decisionNotOnPause = !wavePauses.find((p) =>
+                Time.millis(decisionTime!).isInInterval(p.start, p.end)
               );
-              decisionsExecuted++;
+              if (decisionNotOnPause) {
+                await this.createDecision(
+                  { waveId, decisionTime, outcomes, time_lock_ms },
+                  { timer, connection }
+                );
+                decisionsExecuted++;
+              } else {
+                this.logger.info(
+                  `Decision ${decisionTime} not executed for wave ${waveId}. Found a pause on this time`
+                );
+              }
             }
             decisionPointer = this.calculateNextDecisionPointer(
               decisionGaps,

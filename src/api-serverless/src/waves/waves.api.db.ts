@@ -3,7 +3,7 @@ import {
   dbSupplier,
   LazyDbAccessCompatibleService
 } from '../../../sql-executor';
-import { WaveEntity } from '../../../entities/IWave';
+import { WaveDecisionPauseEntity, WaveEntity } from '../../../entities/IWave';
 import {
   ACTIVITY_EVENTS_TABLE,
   DROP_MEDIA_TABLE,
@@ -20,6 +20,7 @@ import {
   WAVE_DROPPER_METRICS_TABLE,
   WAVE_METRICS_TABLE,
   WAVES_ARCHIVE_TABLE,
+  WAVES_DECISION_PAUSES_TABLE,
   WAVES_TABLE
 } from '../../../constants';
 import {
@@ -1388,6 +1389,63 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       { wrappedConnection: ctx.connection }
     );
     return result.length ? result[0] : null;
+  }
+
+  async getWavesPauses(
+    waveIds: string[],
+    ctx: RequestContext
+  ): Promise<Record<string, WaveDecisionPauseEntity[]>> {
+    if (!waveIds.length) {
+      return {};
+    }
+    const entities = await this.db.execute<WaveDecisionPauseEntity>(
+      `select * from ${WAVES_DECISION_PAUSES_TABLE} where wave_id in (:waveIds)`,
+      { waveIds },
+      { wrappedConnection: ctx.connection }
+    );
+    return entities.reduce(
+      (acc, it) => {
+        if (!acc[it.wave_id]) {
+          acc[it.wave_id] = [];
+        }
+        acc[it.wave_id].push(it);
+        return acc;
+      },
+      {} as Record<string, WaveDecisionPauseEntity[]>
+    );
+  }
+
+  async getWavePauses(
+    waveId: string,
+    ctx: RequestContext
+  ): Promise<WaveDecisionPauseEntity[]> {
+    return await this.db.execute<WaveDecisionPauseEntity>(
+      `select * from ${WAVES_DECISION_PAUSES_TABLE} where wave_id = :waveId`,
+      { waveId },
+      { wrappedConnection: ctx.connection }
+    );
+  }
+
+  async deletePause(id: number, connection: ConnectionWrapper<any>) {
+    await this.db.execute(
+      `delete from ${WAVES_DECISION_PAUSES_TABLE} where id = :id`,
+      { id },
+      { wrappedConnection: connection }
+    );
+  }
+
+  async insertPause(
+    param: { startTime: number; endTime: number; waveId: string },
+    connection: ConnectionWrapper<any>
+  ) {
+    await this.db.execute(
+      `
+      insert into ${WAVES_DECISION_PAUSES_TABLE} (start_time, end_time, wave_id)
+      values (:startTime, :endTime, :waveId)
+        `,
+      param,
+      { wrappedConnection: connection }
+    );
   }
 }
 

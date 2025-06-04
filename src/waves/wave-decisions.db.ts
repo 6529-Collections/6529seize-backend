@@ -9,13 +9,19 @@ import {
   DROP_RANK_TABLE,
   DROP_REAL_VOTE_IN_TIME_TABLE,
   DROPS_TABLE,
+  WAVES_DECISION_PAUSES_TABLE,
   WAVES_DECISION_WINNER_DROPS_TABLE,
   WAVES_DECISIONS_TABLE,
   WAVES_TABLE
 } from '../constants';
-import { WaveDecisionStrategy, WaveOutcome } from '../entities/IWave';
+import {
+  WaveDecisionPauseEntity,
+  WaveDecisionStrategy,
+  WaveOutcome
+} from '../entities/IWave';
 import { DropType } from '../entities/IDrop';
 import { collections } from '../collections';
+import { Time } from '../time';
 
 const mysql = require('mysql');
 
@@ -247,6 +253,24 @@ export class WaveDecisionsDb extends LazyDbAccessCompatibleService {
       );
     ctx.timer?.stop(`${this.constructor.name}->findAllDecisionWinners`);
     return result;
+  }
+
+  async getWavePauses(
+    waveId: string,
+    ctx: RequestContext
+  ): Promise<{ start: Time; end: Time }[]> {
+    return await this.db
+      .execute<WaveDecisionPauseEntity>(
+        `select * from ${WAVES_DECISION_PAUSES_TABLE} where wave_id = :waveId`,
+        { waveId },
+        { wrappedConnection: ctx.connection }
+      )
+      .then((res) =>
+        res.map((r) => ({
+          start: Time.millis(+r.start_time),
+          end: Time.millis(+r.end_time)
+        }))
+      );
   }
 }
 

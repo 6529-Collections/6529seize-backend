@@ -371,6 +371,14 @@ export class Time {
   public eq(other: Time): boolean {
     return this.ms === other.ms;
   }
+
+  public isInPast(): boolean {
+    return this.lt(Time.now());
+  }
+
+  public isInInterval(start: Time, end: Time): boolean {
+    return this.gte(start) || this.lte(end);
+  }
 }
 
 enum TimeUnit {

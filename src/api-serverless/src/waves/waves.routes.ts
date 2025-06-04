@@ -70,6 +70,7 @@ import {
 import { identityFetcher } from '../identities/identity.fetcher';
 import { enums } from '../../../enums';
 import { numbers } from '../../../numbers';
+import { ApiUpdateWaveDecisionPause } from '../generated/models/ApiUpdateWaveDecisionPause';
 
 const router = asyncRouter();
 
@@ -603,6 +604,59 @@ router.get(
         timer
       }
     );
+    res.send(result);
+  }
+);
+
+router.post(
+  '/:id/pauses',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<{ id: string }, any, ApiUpdateWaveDecisionPause, any, any>,
+    res: Response<ApiResponse<ApiWave>>
+  ) => {
+    const { id } = req.params;
+
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
+
+    const model: ApiUpdateWaveDecisionPause = getValidatedByJoiOrThrow(
+      req.body,
+      Joi.object<ApiUpdateWaveDecisionPause>({
+        id: Joi.number().integer().allow(null).default(null),
+        start_time: Joi.number().integer().min(0).required(),
+        end_time: Joi.number().integer().min(0).required()
+      })
+    );
+
+    const result = await waveApiService.createOrUpdateWavePause(id, model, {
+      timer,
+      authenticationContext
+    });
+    res.send(result);
+  }
+);
+
+router.delete(
+  '/:waveId/pauses/:id',
+  maybeAuthenticatedUser(),
+  async (
+    req: Request<{ waveId: string; id: string }, any, any, any, any>,
+    res: Response<ApiResponse<ApiWave>>
+  ) => {
+    const { waveId, id } = req.params;
+    const pauseId = numbers.parseIntOrNull(id);
+    if (!pauseId) {
+      throw new BadRequestException('Invalid pause id');
+    }
+
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
+
+    const result = await waveApiService.deleteWavePause(waveId, pauseId, {
+      timer,
+      authenticationContext
+    });
     res.send(result);
   }
 );

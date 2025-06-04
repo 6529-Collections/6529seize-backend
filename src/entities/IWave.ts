@@ -1,5 +1,9 @@
 import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
-import { WAVES_ARCHIVE_TABLE, WAVES_TABLE } from '../constants';
+import {
+  WAVES_ARCHIVE_TABLE,
+  WAVES_DECISION_PAUSES_TABLE,
+  WAVES_TABLE
+} from '../constants';
 
 export interface WaveBaseType {
   readonly name: string;
@@ -156,6 +160,22 @@ export class WaveEntity extends WaveBase {
 
   @Column({ type: 'bigint', nullable: true, default: null })
   readonly next_decision_time!: number | null;
+}
+
+@Entity(WAVES_DECISION_PAUSES_TABLE)
+export class WaveDecisionPauseEntity {
+  @PrimaryGeneratedColumn({ type: 'bigint' })
+  readonly id!: number;
+
+  @Index()
+  @Column({ type: 'varchar', length: 100, nullable: false })
+  readonly wave_id!: string;
+
+  @Column({ type: 'bigint', nullable: false })
+  readonly start_time!: number;
+
+  @Column({ type: 'bigint', nullable: false })
+  readonly end_time!: number;
 }
 
 @Entity(WAVES_ARCHIVE_TABLE)
