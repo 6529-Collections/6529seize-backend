@@ -86,7 +86,7 @@ export class ProfilesService {
         normalised_handle: apiIdentity.normalised_handle!,
         primary_wallet: apiIdentity.primary_wallet,
         created_at: profileFromDb?.created_at ?? new Date(),
-        created_by_wallet: 
+        created_by_wallet:
           profileFromDb?.created_by_wallet ?? apiIdentity.primary_wallet,
         updated_at: profileFromDb?.updated_at ?? null,
         pfp_url: apiIdentity.pfp ?? undefined,
