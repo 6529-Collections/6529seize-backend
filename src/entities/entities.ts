@@ -104,7 +104,11 @@ export {
 } from './ITransactionsProcessing';
 export { ConsolidatedTDHUpload } from './IUpload';
 export { UserGroupEntity } from './IUserGroup';
-export { WaveEntity, WaveArchiveEntity } from './IWave';
+export {
+  WaveEntity,
+  WaveArchiveEntity,
+  WaveDecisionPauseEntity
+} from './IWave';
 export {
   WaveDecisionEntity,
   WaveDecisionWinnerDropEntity
