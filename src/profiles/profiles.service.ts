@@ -75,14 +75,19 @@ export class ProfilesService {
     }
     let profile: Profile | null = null;
     if (apiIdentity.id) {
+      const profileFromDb = await this.profilesDb.getProfileById(
+        apiIdentity.id,
+        connection
+      );
+
       profile = {
         external_id: apiIdentity.id,
         handle: apiIdentity.handle!,
         normalised_handle: apiIdentity.normalised_handle!,
         primary_wallet: apiIdentity.primary_wallet,
-        created_at: new Date(),
-        created_by_wallet: apiIdentity.primary_wallet,
-        updated_at: null,
+        created_at: profileFromDb?.created_at ?? new Date(),
+        created_by_wallet: profileFromDb?.created_by_wallet ?? apiIdentity.primary_wallet,
+        updated_at: profileFromDb?.updated_at ?? null,
         pfp_url: apiIdentity.pfp ?? undefined,
         banner_1: apiIdentity.banner1 ?? undefined,
         banner_2: apiIdentity.banner2 ?? undefined,
