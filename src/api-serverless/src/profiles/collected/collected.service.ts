@@ -108,8 +108,8 @@ export class CollectedService {
     const pageNo = query.page;
     return [...cards]
       .sort((a, b) => {
-        const val1 = numbers.parseIntOrNull(a[query.sort]) ?? 0;
-        const val2 = numbers.parseIntOrNull(b[query.sort]) ?? 0;
+        const val1 = a[query.sort] ?? 0;
+        const val2 = b[query.sort] ?? 0;
         switch (query.sort_direction) {
           case PageSortDirection.DESC: {
             return val2 - val1;
