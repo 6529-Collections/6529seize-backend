@@ -126,8 +126,9 @@ const processBatch = async (
 const filterListingsForNft = (listings: any[], nftId: string): any[] => {
   return listings.filter(
     (o) =>
+      !o.taker &&
       o.protocol_data?.parameters.offer[0].identifierOrCriteria ===
-      nftId.toString()
+        nftId.toString()
   );
 };
 
