@@ -12,6 +12,7 @@ import {
   fetchTopUpsForConsolidationKey,
   fetchUpcomingMemeSubscriptionCounts,
   fetchUpcomingMemeSubscriptions,
+  RedeemedSubscriptionCounts,
   SubscriptionCounts,
   updateSubscription,
   updateSubscriptionMode
@@ -43,6 +44,7 @@ import { getNft } from '../../../nftsLoop/db.nfts';
 import { fetchAirdropAddressForConsolidationKey } from '../../../delegationsLoop/db.delegations';
 import { fetchEns } from '../../../db-api';
 import { equalIgnoreCase } from '../../../strings';
+import { PaginatedResponse } from '../api-constants';
 
 const router = asyncRouter();
 
@@ -211,10 +213,24 @@ router.get(
 router.get(
   `/redeemed-memes-counts`,
   async function (
-    req: Request<any, any, any, any>,
-    res: Response<SubscriptionCounts[]>
+    req: Request<
+      any,
+      any,
+      any,
+      {
+        page_size?: string;
+        page?: string;
+      }
+    >,
+    res: Response<
+      | RedeemedSubscriptionCounts[]
+      | PaginatedResponse<RedeemedSubscriptionCounts>
+    >
   ) {
-    const result = await fetchPastMemeSubscriptionCounts();
+    const pageSize = req.query.page_size;
+    const page = req.query.page;
+
+    const result = await fetchPastMemeSubscriptionCounts(pageSize, page);
     return returnJsonResult(result, req, res);
   }
 );
