@@ -573,7 +573,7 @@ export async function fetchPastMemeSubscriptionCounts(
         AND ${SUBSCRIPTIONS_REDEEMED_TABLE}.token_id = ${NFTS_TABLE}.id
       LEFT JOIN ${MEMES_EXTENDED_DATA_TABLE}
         ON ${MEMES_EXTENDED_DATA_TABLE}.id = ${NFTS_TABLE}.id
-      WHERE ${NFTS_TABLE}.id > ${SUBSCRIPTIONS_START_ID}
+      WHERE ${NFTS_TABLE}.id >= ${SUBSCRIPTIONS_START_ID}
         AND ${NFTS_TABLE}.contract = '${MEMES_CONTRACT}'
       GROUP BY ${NFTS_TABLE}.contract, ${NFTS_TABLE}.id
       ORDER BY ${NFTS_TABLE}.id DESC`
