@@ -44,7 +44,7 @@ import { getNft } from '../../../nftsLoop/db.nfts';
 import { fetchAirdropAddressForConsolidationKey } from '../../../delegationsLoop/db.delegations';
 import { fetchEns } from '../../../db-api';
 import { equalIgnoreCase } from '../../../strings';
-import { DEFAULT_PAGE_SIZE, PaginatedResponse } from '../api-constants';
+import { PaginatedResponse } from '../api-constants';
 
 const router = asyncRouter();
 
@@ -227,10 +227,8 @@ router.get(
       | PaginatedResponse<RedeemedSubscriptionCounts>
     >
   ) {
-    const pageSize = parseInt(
-      req.query.page_size ?? DEFAULT_PAGE_SIZE.toString()
-    );
-    const page = parseInt(req.query.page ?? '1');
+    const pageSize = req.query.page_size;
+    const page = req.query.page;
 
     const result = await fetchPastMemeSubscriptionCounts(pageSize, page);
     return returnJsonResult(result, req, res);
