@@ -18,11 +18,11 @@ export class ApiUpdateWaveDecisionPause {
     */
     'id': number | null;
     /**
-    * Decisions after this time will not be made. Should not overlap with other pauses. Needs to be in the future. Can not be updated when there are pauses made based on the previous start date.
+    * Decisions after this time will not be made. Should not overlap with other pauses. Needs to be in the future. Can not be updated after pause creation.
     */
     'start_time': number;
     /**
-    * Decisions before this time will not be made. Should not overlap with other pauses. Needs to be after start_time. Can not be updated to smaller value when there are pauses made based on the previous end date which would conflict with the new one.
+    * Decisions before this time will not be made. Should not overlap with other pauses. Needs to be after start_time, after now and after wave.next_decision_time
     */
     'end_time': number;
 
