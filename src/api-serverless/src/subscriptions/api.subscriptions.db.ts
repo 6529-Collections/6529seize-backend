@@ -1,6 +1,7 @@
 import {
   ADDRESS_CONSOLIDATION_KEY,
   MEMES_CONTRACT,
+  MEMES_EXTENDED_DATA_TABLE,
   MEMES_MINT_PRICE,
   NFTS_TABLE,
   SUBSCRIPTIONS_BALANCES_TABLE,
@@ -27,6 +28,8 @@ import { BadRequestException } from '../../../exceptions';
 import { PaginatedResponse } from '../api-constants';
 import { equalIgnoreCase } from '../../../strings';
 
+const SUBSCRIPTIONS_START_ID = 220;
+
 export interface SubscriptionDetails {
   consolidation_key: string;
   last_update: number;
@@ -51,6 +54,7 @@ export interface RedeemedSubscriptionCounts extends SubscriptionCounts {
   name: string;
   image_url: string;
   mint_date: string;
+  szn: number;
 }
 
 async function getForConsolidationKey(
@@ -508,20 +512,48 @@ export async function fetchUpcomingMemeSubscriptionCounts(
   return counts;
 }
 
-export async function fetchPastMemeSubscriptionCounts(): Promise<
-  RedeemedSubscriptionCounts[]
+export async function fetchPastMemeSubscriptionCounts(
+  pageSize: number,
+  page: number
+): Promise<
+  RedeemedSubscriptionCounts[] | PaginatedResponse<RedeemedSubscriptionCounts>
 > {
-  return sqlExecutor.execute(
-    `SELECT 
-      ${SUBSCRIPTIONS_REDEEMED_TABLE}.contract, 
-      ${SUBSCRIPTIONS_REDEEMED_TABLE}.token_id, 
-      count(*) as count,
-      ${NFTS_TABLE}.name as name,
-      ${NFTS_TABLE}.thumbnail as image_url,
-      ${NFTS_TABLE}.mint_date as mint_date
-    FROM ${SUBSCRIPTIONS_REDEEMED_TABLE} 
-    LEFT JOIN ${NFTS_TABLE} ON ${SUBSCRIPTIONS_REDEEMED_TABLE}.contract = ${NFTS_TABLE}.contract AND ${SUBSCRIPTIONS_REDEEMED_TABLE}.token_id = ${NFTS_TABLE}.id
-    GROUP BY contract, token_id 
-    ORDER BY token_id DESC;`
+  const joins = `
+      LEFT JOIN ${SUBSCRIPTIONS_REDEEMED_TABLE} 
+        ON ${SUBSCRIPTIONS_REDEEMED_TABLE}.contract = ${NFTS_TABLE}.contract 
+        AND ${SUBSCRIPTIONS_REDEEMED_TABLE}.token_id = ${NFTS_TABLE}.id 
+      LEFT JOIN ${MEMES_EXTENDED_DATA_TABLE}
+        ON ${MEMES_EXTENDED_DATA_TABLE}.id = ${NFTS_TABLE}.id
+    `;
+
+  const fields = `
+      ${NFTS_TABLE}.contract,
+      ${NFTS_TABLE}.id AS token_id,
+      COALESCE(COUNT(${SUBSCRIPTIONS_REDEEMED_TABLE}.consolidation_key), 0) AS count,
+      ${NFTS_TABLE}.name AS name,
+      ${NFTS_TABLE}.thumbnail AS image_url,
+      ${NFTS_TABLE}.mint_date AS mint_date,
+      ${MEMES_EXTENDED_DATA_TABLE}.season AS szn
+    `;
+
+  const groupBy = `${NFTS_TABLE}.contract, ${NFTS_TABLE}.id`;
+  const orderBy = `${NFTS_TABLE}.id DESC`;
+
+  const filters = constructFilters(
+    'id',
+    `${NFTS_TABLE}.id > ${SUBSCRIPTIONS_START_ID} AND ${NFTS_TABLE}.contract = '${MEMES_CONTRACT}'`
+  );
+
+  return fetchPaginated<RedeemedSubscriptionCounts>(
+    NFTS_TABLE,
+    {},
+    orderBy,
+    pageSize,
+    page,
+    filters,
+    fields,
+    joins,
+    groupBy,
+    { skipJoinsOnCountQuery: false }
   );
 }
