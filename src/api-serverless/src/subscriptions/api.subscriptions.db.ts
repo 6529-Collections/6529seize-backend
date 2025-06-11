@@ -534,7 +534,6 @@ export async function fetchPastMemeSubscriptionCounts(
       ${NFTS_TABLE}.contract,
       ${NFTS_TABLE}.id AS token_id,
       COALESCE(COUNT(${SUBSCRIPTIONS_REDEEMED_TABLE}.consolidation_key), 0) AS count,
-	@@ -540,46 +536,24 @@ export async function fetchPastMemeSubscriptionCounts(
       ${MEMES_EXTENDED_DATA_TABLE}.season AS szn
     `;
 
@@ -543,12 +542,12 @@ export async function fetchPastMemeSubscriptionCounts(
 
     const filters = constructFilters(
       'id',
-      `${NFTS_TABLE}.id > ${SUBSCRIPTIONS_START_ID} AND ${NFTS_TABLE}.contract = '${MEMES_CONTRACT}'`
+      `${NFTS_TABLE}.id >= :startId AND ${NFTS_TABLE}.contract = :contract`
     );
 
     return fetchPaginated<RedeemedSubscriptionCounts>(
       NFTS_TABLE,
-      {},
+      { startId: SUBSCRIPTIONS_START_ID, contract: MEMES_CONTRACT },
       orderBy,
       pageSizeNumber,
       pageNumber,
