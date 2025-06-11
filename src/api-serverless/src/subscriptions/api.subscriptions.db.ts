@@ -534,6 +534,9 @@ export async function fetchPastMemeSubscriptionCounts(
       ${NFTS_TABLE}.contract,
       ${NFTS_TABLE}.id AS token_id,
       COALESCE(COUNT(${SUBSCRIPTIONS_REDEEMED_TABLE}.consolidation_key), 0) AS count,
+      ${NFTS_TABLE}.name AS name,
+      ${NFTS_TABLE}.thumbnail AS image_url,
+      ${NFTS_TABLE}.mint_date AS mint_date,
       ${MEMES_EXTENDED_DATA_TABLE}.season AS szn
     `;
 
