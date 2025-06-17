@@ -1,5 +1,6 @@
 import { Logger } from './logging';
 import { SecretsManager } from '@aws-sdk/client-secrets-manager';
+import { numbers, Numbers } from './numbers';
 
 const SECRET = 'prod/lambdas';
 
@@ -61,6 +62,8 @@ export async function loadLocalConfig() {
 }
 
 class Env {
+  constructor(private readonly numbers: Numbers) {}
+
   public getStringOrThrow(name: string): string {
     const value = process.env[name];
     if (!value) {
@@ -68,6 +71,15 @@ class Env {
     }
     return value;
   }
+
+  public getIntOrThrow(name: string): number {
+    const strValue = this.getStringOrThrow(name);
+    const intValue = this.numbers.parseIntOrNull(strValue);
+    if (intValue === null) {
+      throw new Error(`Expected environment variable ${name} to be an integer`);
+    }
+    return intValue;
+  }
 }
 
-export const env = new Env();
+export const env = new Env(numbers);

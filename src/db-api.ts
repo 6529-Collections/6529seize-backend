@@ -41,7 +41,6 @@ import { getConsolidationsSql } from './sql_helpers';
 import { ConnectionWrapper, setSqlExecutor, sqlExecutor } from './sql-executor';
 
 import * as mysql from 'mysql';
-import { TypeCast } from 'mysql';
 import { Time } from './time';
 import { DbPoolName, DbQueryOptions } from './db-query.options';
 import { Logger } from './logging';
@@ -70,6 +69,11 @@ import { ApiNftMedia } from './api-serverless/src/generated/models/ApiNftMedia';
 import { TDHHistory } from './entities/ITDHHistory';
 import { equalIgnoreCase } from './strings';
 import { consolidationTools } from './consolidation-tools';
+import {
+  execNativeTransactionally,
+  execSQLWithParams,
+  TinyIntToBooleanCaster
+} from './db/my-sql.helpers';
 
 let read_pool: mysql.Pool;
 let write_pool: mysql.Pool;
@@ -77,27 +81,6 @@ let write_pool: mysql.Pool;
 const WRITE_OPERATIONS = ['INSERT', 'UPDATE', 'DELETE', 'REPLACE'];
 
 const logger = Logger.get('DB_API');
-
-const tinyIntToBooleanCaster: TypeCast = function castField(
-  field,
-  useDefaultTypeCasting
-) {
-  if (field.type === 'TINY') {
-    const value = field.string();
-    if (value !== null) {
-      const res = Number(value);
-      return !!res;
-    }
-
-    const bytes = field.buffer();
-    if (!bytes || bytes.length === 0) {
-      return null;
-    }
-    return !!bytes.readUInt8(0);
-  }
-
-  return useDefaultTypeCasting();
-};
 
 export async function connect() {
   if (
@@ -130,7 +113,7 @@ export async function connect() {
     password: process.env.DB_PASS,
     charset: 'utf8mb4',
     database: process.env.DB_NAME,
-    typeCast: tinyIntToBooleanCaster
+    typeCast: TinyIntToBooleanCaster
   });
   read_pool = mysql.createPool({
     connectionLimit: 10,
@@ -143,23 +126,40 @@ export async function connect() {
     password: process.env.DB_PASS_READ,
     charset: 'utf8mb4',
     database: process.env.DB_NAME,
-    typeCast: tinyIntToBooleanCaster
+    typeCast: TinyIntToBooleanCaster
   });
   setSqlExecutor({
-    execute: (
+    execute: async <T>(
       sql: string,
       params?: Record<string, any>,
       options?: DbQueryOptions
-    ) => execSQLWithParams(sql, params, options),
-    executeNativeQueriesInTransaction(executable) {
-      return execNativeTransactionally(executable);
+    ) => {
+      const connection = await getConnection(options, sql);
+      return await execSQLWithParams<T>(
+        sql,
+        connection,
+        !options?.wrappedConnection?.connection,
+        params
+      );
     },
-    oneOrNull: (
+    async executeNativeQueriesInTransaction(executable) {
+      return getDbConnectionByPoolName(DbPoolName.WRITE).then((con) =>
+        execNativeTransactionally(executable, con)
+      );
+    },
+    oneOrNull: async (
       sql: string,
       params?: Record<string, any>,
       options?: DbQueryOptions
-    ) =>
-      execSQLWithParams(sql, params, options).then((r) => (r[0] as any) ?? null)
+    ) => {
+      const connection = await getConnection(options, sql);
+      return await execSQLWithParams(
+        sql,
+        connection,
+        !options?.wrappedConnection?.connection,
+        params
+      ).then((r) => (r[0] as any) ?? null);
+    }
   });
   logger.info(`[CONNECTION POOLS CREATED]`);
 }
@@ -170,7 +170,7 @@ function getPoolNameBySql(sql: string): DbPoolName {
     : DbPoolName.READ;
 }
 
-function getDbConnecionForQuery(
+function getDbConnectionForQuery(
   sql: string,
   forcePool?: DbPoolName
 ): Promise<mysql.PoolConnection> {
@@ -184,6 +184,22 @@ function getPoolByName(poolName: DbPoolName): mysql.Pool {
     [DbPoolName.WRITE]: write_pool
   };
   return poolsMap[poolName];
+}
+
+async function getConnection(
+  options:
+    | {
+        forcePool?: DbPoolName;
+        wrappedConnection?: ConnectionWrapper<mysql.PoolConnection>;
+      }
+    | undefined,
+  sql: string
+) {
+  const externallyGivenConnection = options?.wrappedConnection?.connection;
+  return (
+    externallyGivenConnection ||
+    (await getDbConnectionForQuery(sql, options?.forcePool))
+  );
 }
 
 function getDbConnectionByPoolName(
@@ -204,88 +220,6 @@ function getDbConnectionByPoolName(
         reject(err);
       }
       resolve(dbcon);
-    });
-  });
-}
-
-async function execNativeTransactionally<T>(
-  executable: (connectionWrapper: ConnectionWrapper<any>) => Promise<T>
-): Promise<T> {
-  const connection = await getDbConnectionByPoolName(DbPoolName.WRITE);
-  try {
-    connection.beginTransaction();
-    const result = await executable({ connection: connection });
-    return await new Promise((resolve, reject) => {
-      connection.commit((err: any) => {
-        if (err) {
-          reject(err);
-        } else {
-          resolve(result);
-        }
-      });
-    });
-  } catch (e) {
-    connection.rollback();
-    throw e;
-  } finally {
-    connection.release();
-  }
-}
-
-function prepareStatemant(query: string, values: Record<string, any>) {
-  return query.replace(/:(\w+)/g, function (txt: any, key: any) {
-    if (values.hasOwnProperty(key)) {
-      const value = values[key];
-      if (Array.isArray(value)) {
-        return value.map((v) => mysql.escape(v)).join(', ');
-      }
-      return mysql.escape(value);
-    }
-    return txt;
-  });
-}
-
-async function execSQLWithParams<T>(
-  sql: string,
-  params?: Record<string, any>,
-  options?: {
-    forcePool?: DbPoolName;
-    wrappedConnection?: ConnectionWrapper<mysql.PoolConnection>;
-  }
-): Promise<T[]> {
-  const externallyGivenConnection = options?.wrappedConnection?.connection;
-  const connection: mysql.PoolConnection =
-    externallyGivenConnection ||
-    (await getDbConnecionForQuery(sql, options?.forcePool));
-  return new Promise((resolve, reject) => {
-    connection.config.queryFormat = function (query, values) {
-      if (!values) return query;
-      return prepareStatemant(query, values);
-    };
-    const timer = Time.now();
-    connection.query({ sql, values: params }, (err: any, result: T[]) => {
-      const queryTook = timer.diffFromNow();
-      if (queryTook.gt(Time.seconds(1))) {
-        logger.warn(
-          `SQL query took ${queryTook.toMillis()} ms to execute: ${sql.replace(
-            '\n',
-            ' '
-          )}${params ? ` with params ${JSON.stringify(params)}` : ''}`
-        );
-      }
-      if (!externallyGivenConnection) {
-        connection?.release();
-      }
-      if (err) {
-        logger.error(
-          `Error "${err}" executing SQL query ${sql.replace('\n', ' ')}${
-            params ? ` with params ${JSON.stringify(params)}` : ''
-          }\n`
-        );
-        reject(err);
-      } else {
-        resolve(Object.values(JSON.parse(JSON.stringify(result))));
-      }
     });
   });
 }
