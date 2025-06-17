@@ -53,7 +53,7 @@ export class AbusivenessCheckDb extends LazyDbAccessCompatibleService {
     ctx.timer?.start(`${this.constructor.name}->findResults`);
     const result = await this.db
       .execute<AbusivenessDetectionResult>(
-        `select * from ${ABUSIVENESS_DETECTION_RESULTS_TABLE} where text = :phrases`,
+        `select * from ${ABUSIVENESS_DETECTION_RESULTS_TABLE} where text in (:phrases)`,
         { phrases }
       )
       .then((results) =>
