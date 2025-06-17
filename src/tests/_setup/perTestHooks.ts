@@ -5,9 +5,9 @@ import { Time } from '../../time';
 import { env } from '../../env';
 import { Logger } from '../../logging';
 import {
+  CustomTypeCaster,
   execNativeTransactionally,
-  execSQLWithParams,
-  TinyIntToBooleanCaster
+  execSQLWithParams
 } from '../../db/my-sql.helpers';
 
 const logger = Logger.get('TEST');
@@ -41,7 +41,7 @@ beforeEach(async () => {
     password: env.getStringOrThrow('DB_PASS'),
     charset: 'utf8mb4',
     database: env.getStringOrThrow('DB_NAME'),
-    typeCast: TinyIntToBooleanCaster
+    typeCast: CustomTypeCaster
   });
 
   setSqlExecutor({

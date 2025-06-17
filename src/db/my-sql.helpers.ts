@@ -6,10 +6,23 @@ import { Logger } from '../logging';
 
 const logger = Logger.get('MYSQL_HELPERS');
 
-export const TinyIntToBooleanCaster: TypeCast = function castField(
-  field,
-  useDefaultTypeCasting
-) {
+const BigIntToNumberCaster: TypeCast = function castField(field, next) {
+  if (field.type === 'LONGLONG') {
+    const text = field.string();
+
+    if (text === null) return null;
+
+    const num = Number(text);
+
+    if (num > Number.MAX_SAFE_INTEGER || num < Number.MIN_SAFE_INTEGER) {
+      return BigInt(text);
+    }
+    return num;
+  }
+  return next();
+};
+
+const TinyIntToBooleanCaster: TypeCast = function castField(field, next) {
   if (field.type === 'TINY') {
     const value = field.string();
     if (value !== null) {
@@ -24,8 +37,11 @@ export const TinyIntToBooleanCaster: TypeCast = function castField(
     return !!bytes.readUInt8(0);
   }
 
-  return useDefaultTypeCasting();
+  return next();
 };
+
+export const CustomTypeCaster: TypeCast = (field, next) =>
+  TinyIntToBooleanCaster(field, () => BigIntToNumberCaster(field, next));
 
 export async function execNativeTransactionally<T>(
   executable: (connectionWrapper: ConnectionWrapper<any>) => Promise<T>,
