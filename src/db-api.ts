@@ -70,9 +70,9 @@ import { TDHHistory } from './entities/ITDHHistory';
 import { equalIgnoreCase } from './strings';
 import { consolidationTools } from './consolidation-tools';
 import {
+  CustomTypeCaster,
   execNativeTransactionally,
-  execSQLWithParams,
-  TinyIntToBooleanCaster
+  execSQLWithParams
 } from './db/my-sql.helpers';
 
 let read_pool: mysql.Pool;
@@ -113,7 +113,7 @@ export async function connect() {
     password: process.env.DB_PASS,
     charset: 'utf8mb4',
     database: process.env.DB_NAME,
-    typeCast: TinyIntToBooleanCaster
+    typeCast: CustomTypeCaster
   });
   read_pool = mysql.createPool({
     connectionLimit: 10,
@@ -126,7 +126,7 @@ export async function connect() {
     password: process.env.DB_PASS_READ,
     charset: 'utf8mb4',
     database: process.env.DB_NAME,
-    typeCast: TinyIntToBooleanCaster
+    typeCast: CustomTypeCaster
   });
   setSqlExecutor({
     execute: async <T>(

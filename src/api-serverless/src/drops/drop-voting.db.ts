@@ -706,9 +706,8 @@ where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
     ctx: RequestContext
   ): Promise<DropRealVoteInTimeWithoutId[]> {
     ctx.timer?.start(`${this.constructor.name}->getDropVoteStatesInTimespan`);
-    const states = await this.db
-      .execute<DropRealVoteInTimeWithoutId>(
-        `
+    const states = await this.db.execute<DropRealVoteInTimeWithoutId>(
+      `
       select drop_id, wave_id, timestamp, vote
       from ${DROP_REAL_VOTE_IN_TIME_TABLE}
       where drop_id = :dropId
@@ -724,16 +723,9 @@ where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
                      and timestamp <= :fromTime
       )
       `,
-        params,
-        { wrappedConnection: ctx.connection }
-      )
-      .then((res) =>
-        res.map((it) => ({
-          ...it,
-          vote: +it.vote,
-          timestamp: +it.timestamp
-        }))
-      );
+      params,
+      { wrappedConnection: ctx.connection }
+    );
     ctx.timer?.stop(`${this.constructor.name}->getDropVoteStatesInTimespan`);
     return states;
   }
@@ -790,9 +782,8 @@ where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
     ctx.timer?.start(
       `${this.constructor.name}->getDropsParticipatoryDropsVoteStatesInTimespan`
     );
-    const states = await this.db
-      .execute<DropRealVoteInTimeWithoutId>(
-        `
+    const states = await this.db.execute<DropRealVoteInTimeWithoutId>(
+      `
       select drv_1.drop_id as drop_id, drv_1.wave_id as wave_id, drv_1.timestamp as timestamp, drv_1.vote as vote
       from ${DROP_REAL_VOTE_IN_TIME_TABLE} drv_1
       join ${DROPS_TABLE} d1 on d1.id = drv_1.drop_id
@@ -812,12 +803,9 @@ where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
                      and drv_2_i.timestamp <= :fromTime
       )
       `,
-        params,
-        { wrappedConnection: ctx.connection }
-      )
-      .then((res) =>
-        res.map((it) => ({ ...it, timestamp: +it.timestamp, vote: +it.vote }))
-      );
+      params,
+      { wrappedConnection: ctx.connection }
+    );
     ctx.timer?.stop(
       `${this.constructor.name}->getDropsParticipatoryDropsVoteStatesInTimespan`
     );
