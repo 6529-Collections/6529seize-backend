@@ -49,23 +49,13 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
       { addresses },
       { wrappedConnection: connection }
     );
-    const identities = await this.db
-      .execute<IdentityEntity>(
-        `select * from ${IDENTITIES_TABLE} identity where identity.consolidation_key in (
+    const identities = await this.db.execute<IdentityEntity>(
+      `select * from ${IDENTITIES_TABLE} identity where identity.consolidation_key in (
       select distinct i.consolidation_key from ${ADDRESS_CONSOLIDATION_KEY} a join ${IDENTITIES_TABLE} i on i.consolidation_key = a.consolidation_key where a.address in (:addresses)
       )`,
-        { addresses },
-        { wrappedConnection: connection }
-      )
-      .then((res) =>
-        res.map((it) => ({
-          ...it,
-          level_raw: +it.level_raw,
-          cic: +it.cic,
-          rep: +it.rep,
-          tdh: +it.tdh
-        }))
-      );
+      { addresses },
+      { wrappedConnection: connection }
+    );
     const profiles = await this.db.execute<Profile>(
       `select p.* from ${PROFILES_TABLE} p where p.external_id in (
       select distinct i.profile_id from ${ADDRESS_CONSOLIDATION_KEY} a join ${IDENTITIES_TABLE} i on i.consolidation_key = a.consolidation_key where a.address in (:addresses) and i.handle is not null
@@ -327,48 +317,22 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     id: string,
     connectionHolder?: ConnectionWrapper<any>
   ) {
-    return await this.db
-      .oneOrNull<IdentityEntity>(
-        `select * from ${IDENTITIES_TABLE} where profile_id = :id`,
-        { id },
-        { wrappedConnection: connectionHolder }
-      )
-      .then((it) => {
-        if (!it) {
-          return null;
-        }
-        return {
-          ...it,
-          level_raw: +it.level_raw,
-          rep: +it.rep,
-          cic: +it.cic,
-          tdh: +it.tdh
-        };
-      });
+    return await this.db.oneOrNull<IdentityEntity>(
+      `select * from ${IDENTITIES_TABLE} where profile_id = :id`,
+      { id },
+      { wrappedConnection: connectionHolder }
+    );
   }
 
   async getIdentityByHandle(
     handle: string,
     ctx: RequestContext
   ): Promise<IdentityEntity | null> {
-    return await this.db
-      .oneOrNull<IdentityEntity>(
-        `select * from ${IDENTITIES_TABLE} where normalised_handle = :handle`,
-        { handle: handle.toLowerCase() },
-        { wrappedConnection: ctx.connection }
-      )
-      .then((it) => {
-        if (!it) {
-          return null;
-        }
-        return {
-          ...it,
-          level_raw: +it.level_raw,
-          rep: +it.rep,
-          cic: +it.cic,
-          tdh: +it.tdh
-        };
-      });
+    return await this.db.oneOrNull<IdentityEntity>(
+      `select * from ${IDENTITIES_TABLE} where normalised_handle = :handle`,
+      { handle: handle.toLowerCase() },
+      { wrappedConnection: ctx.connection }
+    );
   }
 
   async syncProfileAddressesFromIdentitiesToProfiles(
@@ -498,28 +462,15 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     wallet: string,
     connection?: ConnectionWrapper<any>
   ): Promise<IdentityEntity | null> {
-    return this.db
-      .oneOrNull<IdentityEntity>(
-        `
+    return this.db.oneOrNull<IdentityEntity>(
+      `
     select i.* from ${IDENTITIES_TABLE} i
     join ${ADDRESS_CONSOLIDATION_KEY} a on a.consolidation_key = i.consolidation_key
     where a.address = :wallet
     `,
-        { wallet },
-        { wrappedConnection: connection }
-      )
-      .then((it) => {
-        if (!it) {
-          return null;
-        }
-        return {
-          ...it,
-          level_raw: +it.level_raw,
-          rep: +it.rep,
-          cic: +it.cic,
-          tdh: +it.tdh
-        };
-      });
+      { wallet },
+      { wrappedConnection: connection }
+    );
   }
 
   public async getConsolidationInfoForAddress(
@@ -627,21 +578,11 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     if (!ids.length) {
       return [];
     }
-    return this.db
-      .execute<IdentityEntity>(
-        `select * from ${IDENTITIES_TABLE} where profile_id in (:ids)`,
-        { ids },
-        connection ? { wrappedConnection: connection } : undefined
-      )
-      .then((result) =>
-        result.map((it) => ({
-          ...it,
-          level_raw: +it.level_raw,
-          rep: +it.rep,
-          cic: +it.cic,
-          tdh: +it.tdh
-        }))
-      );
+    return this.db.execute<IdentityEntity>(
+      `select * from ${IDENTITIES_TABLE} where profile_id in (:ids)`,
+      { ids },
+      connection ? { wrappedConnection: connection } : undefined
+    );
   }
 
   async getNewestVersionHandlesOfArchivedProfiles(

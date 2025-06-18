@@ -10,9 +10,3 @@ services:
       - 3306:3306
     command:
       - --mysql-native-password=ON
-  redis:
-    image: redis:latest
-    restart: always
-    command: redis-server
-    ports:
-      - 6379:6379

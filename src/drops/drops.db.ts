@@ -298,17 +298,15 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     connection?: ConnectionWrapper<any>
   ): Promise<DropEntity | null> {
     const opts = connection ? { wrappedConnection: connection } : {};
-    return this.db
-      .execute(
-        `
+    return this.db.oneOrNull<DropEntity>(
+      `
         select d.* from ${DROPS_TABLE} d where d.id = :id
         `,
-        {
-          id
-        },
-        opts
-      )
-      .then((it) => it[0] ?? null);
+      {
+        id
+      },
+      opts
+    );
   }
 
   async findDropsByIds(
@@ -336,9 +334,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     connection?: ConnectionWrapper<any>
   ): Promise<DropEntity | null> {
     const opts = connection ? { wrappedConnection: connection } : {};
-    return this.db
-      .execute(
-        `
+    return this.db.oneOrNull<DropEntity>(
+      `
         select d.* from ${DROPS_TABLE} d
          join waves w on d.wave_id = w.id and (${
            group_ids_user_is_eligible_for.length
@@ -347,13 +344,12 @@ export class DropsDb extends LazyDbAccessCompatibleService {
          } w.visibility_group_id is null)
          where d.id = :id
         `,
-        {
-          id,
-          group_ids_user_is_eligible_for
-        },
-        opts
-      )
-      .then((it) => it[0] ?? null);
+      {
+        id,
+        group_ids_user_is_eligible_for
+      },
+      opts
+    );
   }
 
   async findDropByIdWithoutEligibilityCheck(
@@ -429,7 +425,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       wave_id,
       drop_type
     };
-    return this.db.execute(sql, params);
+    return this.db.execute<DropEntity>(sql, params);
   }
 
   async findLatestDropsWithPartsAndMedia(
@@ -479,7 +475,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       groupsUserIsEligibleFor: group_ids_user_is_eligible_for,
       wave_id
     };
-    return this.db.execute<DropWithMediaAndPart>(sql, params, {
+    return await this.db.execute<DropWithMediaAndPart>(sql, params, {
       wrappedConnection: ctx.connection
     });
   }
@@ -1265,7 +1261,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       { wrappedConnection: ctx.connection }
     );
     ctx.timer?.start(`${this.constructor.name}->findDropVotesForWaves`);
-    return results.map((it) => ({ ...it, votes: +it.votes }));
+    return results;
   }
 
   async findCategoryRepAmountFromProfileForProfile(

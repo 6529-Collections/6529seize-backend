@@ -307,8 +307,8 @@ export class WaveApiService {
         numbers.parseIntOrNull(pauseIdToUpdate)
     );
     const overLappingPause = otherPauses.find((it) => {
-      const otherPausesStart = Time.millis(+it.start_time);
-      const otherPausesEnd = Time.millis(+it.end_time);
+      const otherPausesStart = Time.millis(it.start_time);
+      const otherPausesEnd = Time.millis(it.end_time);
       return proposedStartTime.isInInterval(otherPausesStart, otherPausesEnd);
     });
     if (overLappingPause) {

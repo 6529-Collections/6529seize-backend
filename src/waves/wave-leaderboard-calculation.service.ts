@@ -128,13 +128,13 @@ export class WaveLeaderboardCalculationService {
     const startMillis = startTime.toMillis();
     const endMillis = endTime.toMillis();
     const voteStatesInTime = voteStates.filter(
-      (it) => +it.timestamp >= startMillis && +it.timestamp <= endMillis
+      (it) => it.timestamp >= startMillis && it.timestamp <= endMillis
     );
     const newestVoteStateBeforeTime = voteStates.reduce(
       (acc, it) => {
         if (
-          +it.timestamp < startMillis &&
-          (!acc || +it.timestamp > +acc.timestamp)
+          it.timestamp < startMillis &&
+          (!acc || it.timestamp > acc.timestamp)
         ) {
           return it;
         }
