@@ -136,18 +136,22 @@ export class UserGroupsService {
     identityAddresses: string[],
     ctx: RequestContext
   ): Promise<ApiGroupFull> {
+    const uniqueIdentityAddresses = Array.from(new Set(identityAddresses));
+    const allAddresses = Array.from(
+      new Set([creatorProfile.primary_wallet, ...uniqueIdentityAddresses])
+    );
     const existingGroup = await this.userGroupsDb.findDirectMessageGroup(
-      [creatorProfile.primary_wallet, ...identityAddresses],
+      allAddresses,
       ctx
     );
     if (existingGroup) {
       return (await this.mapForApi([existingGroup], ctx))[0];
     }
     const handles = await identitiesDb.getHandlesByPrimaryWallets(
-      identityAddresses,
+      uniqueIdentityAddresses,
       ctx.connection
     );
-    if (handles.length !== identityAddresses.length) {
+    if (handles.length !== uniqueIdentityAddresses.length) {
       throw new BadRequestException(`Invalid identity addresses.`);
     }
     const name = `DM - ${[creatorProfile.handle, ...handles].join(' / ')}`;
@@ -180,7 +184,7 @@ export class UserGroupsService {
       owns_gradient_tokens: null,
       owns_lab_tokens: null,
       owns_nextgen_tokens: null,
-      addresses: [creatorProfile.primary_wallet, ...identityAddresses],
+      addresses: allAddresses,
       excluded_addresses: [],
       visible: true,
       is_private: true,
