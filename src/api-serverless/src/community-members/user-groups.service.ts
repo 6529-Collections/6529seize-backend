@@ -136,10 +136,11 @@ export class UserGroupsService {
     identityAddresses: string[],
     ctx: RequestContext
   ): Promise<ApiGroupFull> {
-    const uniqueIdentityAddresses = Array.from(new Set(identityAddresses));
-    const allAddresses = Array.from(
-      new Set([creatorProfile.primary_wallet, ...uniqueIdentityAddresses])
-    );
+    const uniqueIdentityAddresses = collections.distinct(identityAddresses);
+    const allAddresses = collections.distinct([
+      creatorProfile.primary_wallet,
+      ...uniqueIdentityAddresses
+    ]);
     const existingGroup = await this.userGroupsDb.findDirectMessageGroup(
       allAddresses,
       ctx
