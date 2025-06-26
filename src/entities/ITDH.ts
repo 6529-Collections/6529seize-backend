@@ -241,6 +241,7 @@ export interface DefaultBoost {
   memes_szn8: BoostInfo;
   memes_szn9: BoostInfo;
   memes_szn10: BoostInfo;
+  memes_szn11: BoostInfo;
   memes_genesis: BoostInfo;
   memes_nakamoto: BoostInfo;
   gradients: BoostInfo;
