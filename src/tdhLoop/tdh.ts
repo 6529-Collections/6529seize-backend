@@ -43,11 +43,8 @@ let alchemy: Alchemy;
 export function getDefaultBoost(): DefaultBoost {
   return {
     memes_card_sets: {
-      available: 0.59,
-      available_info: [
-        '0.55 for Full Collection Set',
-        '0.02 for each additional set up to 2'
-      ],
+      available: 2.75,
+      available_info: ['0.55 for each Full Collection Set up to 5'],
       acquired: 0,
       acquired_info: []
     },
@@ -550,18 +547,19 @@ function calculateMemesBoostsCardSets(cardSets: number) {
   let boost = 1;
   const breakdown = getDefaultBoost();
 
-  let cardSetBreakdown = 0.55;
-  const additionalCardSets = cardSets - 1;
-  // additional full sets up to 2
-  cardSetBreakdown += Math.min(additionalCardSets * 0.02, 0.04);
-  boost += cardSetBreakdown;
-  breakdown.memes_card_sets.acquired = cardSetBreakdown;
+  const setBoost = 0.55;
+  const cappedSets = Math.min(cardSets, 5);
+  const totalCardSetBoost = cappedSets * setBoost;
 
-  const acquiredInfo = ['0.55 for Full Collection Set'];
-  if (additionalCardSets === 1) {
-    acquiredInfo.push(`0.02 for 1 additional set`);
-  } else if (additionalCardSets > 1) {
-    acquiredInfo.push(`0.04 for ${additionalCardSets} additional sets`);
+  boost += totalCardSetBoost;
+
+  breakdown.memes_card_sets.acquired = totalCardSetBoost;
+
+  const acquiredInfo = [];
+  if (cappedSets > 0) {
+    acquiredInfo.push(
+      `${totalCardSetBoost.toFixed(2)} for ${cappedSets} Full Collection Set${cappedSets > 1 ? 's' : ''}`
+    );
   }
   breakdown.memes_card_sets.acquired_info = acquiredInfo;
 
