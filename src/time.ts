@@ -377,7 +377,7 @@ export class Time {
   }
 
   public isInInterval(start: Time, end: Time): boolean {
-    return this.gte(start) || this.lte(end);
+    return this.gte(start) && this.lte(end);
   }
 }
 
