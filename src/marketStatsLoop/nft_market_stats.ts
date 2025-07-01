@@ -49,7 +49,7 @@ interface OpenSeaBestOfferResponse extends OpenSeaUserResponse {
 const fetchWithRetries = async <T>(
   url: string,
   maxRetries = 5,
-  retryDelayMs = 1000
+  retryDelayMs = 1500
 ): Promise<T | null> => {
   let attempt = 0;
 
