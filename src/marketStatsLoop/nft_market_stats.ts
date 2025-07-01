@@ -75,7 +75,7 @@ const fetchWithRetries = async <T>(
     }
 
     if (!response.ok) {
-      console.warn(
+      logger.warn(
         `[OPENSEA] Request failed with status ${response.status} for ${url}`
       );
       return null;
@@ -85,7 +85,7 @@ const fetchWithRetries = async <T>(
       const data = (await response.json()) as T;
       return data;
     } catch (error) {
-      console.error(`[OPENSEA] Failed to parse JSON for ${url}`, error);
+      logger.error(`[OPENSEA] Failed to parse JSON for ${url}`, error);
       return null;
     }
   }
@@ -152,31 +152,47 @@ export const findNftMarketStats = async (contract: string) => {
   }
 
   const nfts = await getNFTsForContract(contract);
+  const BATCH_SIZE = 5;
+  const totalBatches = Math.ceil(nfts.length / BATCH_SIZE);
 
   logger.info(
-    `[COLLECTION ${collectionSlug}] [PROCESSING STATS FOR ${nfts.length} NFTS]`
+    `[COLLECTION ${collectionSlug}] [PROCESSING STATS FOR ${nfts.length} NFTS IN ${totalBatches} BATCHES]`
   );
 
-  const processedNfts: BaseNFT[] = [];
+  for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
+    const start = batchIndex * BATCH_SIZE;
+    const end = start + BATCH_SIZE;
+    const batch = nfts.slice(start, end);
 
-  for (const nft of nfts) {
-    const bestOffer = await getBestOfferForToken(collectionSlug, nft.id);
-    const bestListing = await getBestListingForToken(collectionSlug, nft.id);
+    const processedBatch: BaseNFT[] = [];
 
-    logger.debug(
-      `[NFT ${nft.id}] [BEST OFFER: ${bestOffer.price}] [BEST LISTING: ${bestListing.price}]`
+    await Promise.all(
+      batch.map(async (nft) => {
+        const bestOffer = await getBestOfferForToken(collectionSlug, nft.id);
+        const bestListing = await getBestListingForToken(
+          collectionSlug,
+          nft.id
+        );
+
+        logger.debug(
+          `[NFT ${nft.id}] [BEST OFFER: ${bestOffer.price}] [BEST LISTING: ${bestListing.price}]`
+        );
+
+        const volumes = await findVolume(nft.id, contract);
+        updateNftVolumeStats(nft, volumes);
+        updateNftMarketStats(nft, bestListing, bestOffer);
+
+        processedBatch.push(nft);
+      })
     );
 
-    const volumes = await findVolume(nft.id, contract);
-    updateNftVolumeStats(nft, volumes);
-    updateNftMarketStats(nft, bestListing, bestOffer);
+    await persistNFTsForContract(contract, processedBatch);
+    logger.info(
+      `[COLLECTION ${collectionSlug}] [PROCESSED BATCH ${batchIndex + 1}/${totalBatches}]`
+    );
 
-    processedNfts.push(nft);
-    logger.info(`[COLLECTION ${collectionSlug}] [PROCESSED NFT ${nft.id}]`);
-    await Time.millis(500).sleep();
+    await Time.millis(1000).sleep();
   }
-
-  await persistNFTsForContract(contract, processedNfts);
 };
 
 const getNFTsForContract = async (contract: string): Promise<BaseNFT[]> => {
