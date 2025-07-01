@@ -13,6 +13,7 @@ import {
 import { Logger } from '../logging';
 import { equalIgnoreCase } from '../strings';
 import { BaseNFT } from '../entities/INFT';
+import { Time } from '../time';
 
 const logger = Logger.get('NFT_MARKET_STATS');
 
@@ -45,27 +46,51 @@ interface OpenSeaBestOfferResponse extends OpenSeaUserResponse {
   price: OpenSeaPriceResponse;
 }
 
-const getBestListingForToken = async (
-  collectionSlug: string,
-  tokenId: number
-): Promise<PriceResponse> => {
-  const url = `https://api.opensea.io/api/v2/listings/collection/${collectionSlug}/nfts/${tokenId}/best`;
-  const response = await fetch(url, {
-    headers: {
-      'x-api-key': process.env.OPENSEA_API_KEY!
+const fetchWithRetries = async <T>(
+  url: string,
+  maxRetries = 5,
+  retryDelayMs = 1000
+): Promise<T | null> => {
+  let attempt = 0;
+
+  while (attempt <= maxRetries) {
+    attempt++;
+
+    const response = await fetch(url, {
+      headers: {
+        'x-api-key': process.env.OPENSEA_API_KEY!
+      }
+    });
+
+    if (response.status === 429) {
+      if (attempt > maxRetries) {
+        logger.error(`[OPENSEA] Throttled after ${maxRetries} retries: ${url}`);
+        return null;
+      }
+      logger.warn(
+        `[OPENSEA] HTTP 429 on attempt ${attempt} for ${url}. Retrying in ${retryDelayMs}ms...`
+      );
+      await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+      continue;
     }
-  });
-  const data = (await response.json()) as OpenSeaBestListingResponse;
 
-  console.log('best listing', data);
+    if (!response.ok) {
+      console.warn(
+        `[OPENSEA] Request failed with status ${response.status} for ${url}`
+      );
+      return null;
+    }
 
-  return {
-    price:
-      data?.price?.current?.value && data.price.current.decimals
-        ? Number(data.price.current.value) / 10 ** data.price.current.decimals
-        : 0,
-    maker: data?.protocol_data?.parameters?.offerer ?? null
-  };
+    try {
+      const data = (await response.json()) as T;
+      return data;
+    } catch (error) {
+      console.error(`[OPENSEA] Failed to parse JSON for ${url}`, error);
+      return null;
+    }
+  }
+
+  return null;
 };
 
 const getBestOfferForToken = async (
@@ -73,19 +98,38 @@ const getBestOfferForToken = async (
   tokenId: number
 ): Promise<PriceResponse> => {
   const url = `https://api.opensea.io/api/v2/offers/collection/${collectionSlug}/nfts/${tokenId}/best`;
-  const response = await fetch(url, {
-    headers: {
-      'x-api-key': process.env.OPENSEA_API_KEY!
-    }
-  });
-  const data = (await response.json()) as OpenSeaBestOfferResponse;
 
-  console.log('best offer', data);
+  const data = await fetchWithRetries<OpenSeaBestOfferResponse>(url);
+
+  if (!data) {
+    return { price: 0, maker: null };
+  }
 
   return {
     price:
       data?.price?.value && data.price.decimals
         ? Number(data.price.value) / 10 ** data.price.decimals
+        : 0,
+    maker: data?.protocol_data?.parameters?.offerer ?? null
+  };
+};
+
+const getBestListingForToken = async (
+  collectionSlug: string,
+  tokenId: number
+): Promise<PriceResponse> => {
+  const url = `https://api.opensea.io/api/v2/listings/collection/${collectionSlug}/nfts/${tokenId}/best`;
+
+  const data = await fetchWithRetries<OpenSeaBestListingResponse>(url);
+
+  if (!data) {
+    return { price: 0, maker: null };
+  }
+
+  return {
+    price:
+      data?.price?.current?.value && data.price.current.decimals
+        ? Number(data.price.current.value) / 10 ** data.price.current.decimals
         : 0,
     maker: data?.protocol_data?.parameters?.offerer ?? null
   };
@@ -108,45 +152,31 @@ export const findNftMarketStats = async (contract: string) => {
   }
 
   const nfts = await getNFTsForContract(contract);
-  const BATCH_SIZE = 20;
-  const totalBatches = Math.ceil(nfts.length / BATCH_SIZE);
 
   logger.info(
-    `[COLLECTION ${collectionSlug}] [PROCESSING STATS FOR ${nfts.length} NFTS IN ${totalBatches} BATCHES]`
+    `[COLLECTION ${collectionSlug}] [PROCESSING STATS FOR ${nfts.length} NFTS]`
   );
 
-  for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
-    const start = batchIndex * BATCH_SIZE;
-    const end = start + BATCH_SIZE;
-    const batch = nfts.slice(start, end);
+  const processedNfts: BaseNFT[] = [];
 
-    const processedBatch: BaseNFT[] = [];
+  for (const nft of nfts) {
+    const bestOffer = await getBestOfferForToken(collectionSlug, nft.id);
+    const bestListing = await getBestListingForToken(collectionSlug, nft.id);
 
-    await Promise.all(
-      batch.map(async (nft) => {
-        const bestOffer = await getBestOfferForToken(collectionSlug, nft.id);
-        const bestListing = await getBestListingForToken(
-          collectionSlug,
-          nft.id
-        );
-
-        logger.debug(
-          `[NFT ${nft.id}] [BEST OFFER: ${bestOffer.price}] [BEST LISTING: ${bestListing.price}]`
-        );
-
-        const volumes = await findVolume(nft.id, contract);
-        updateNftVolumeStats(nft, volumes);
-        updateNftMarketStats(nft, bestListing, bestOffer);
-
-        processedBatch.push(nft);
-      })
+    logger.debug(
+      `[NFT ${nft.id}] [BEST OFFER: ${bestOffer.price}] [BEST LISTING: ${bestListing.price}]`
     );
 
-    await persistNFTsForContract(contract, processedBatch);
-    logger.info(
-      `[COLLECTION ${collectionSlug}] [PROCESSED BATCH ${batchIndex + 1}/${totalBatches}]`
-    );
+    const volumes = await findVolume(nft.id, contract);
+    updateNftVolumeStats(nft, volumes);
+    updateNftMarketStats(nft, bestListing, bestOffer);
+
+    processedNfts.push(nft);
+    logger.info(`[COLLECTION ${collectionSlug}] [PROCESSED NFT ${nft.id}]`);
+    await Time.millis(500).sleep();
   }
+
+  await persistNFTsForContract(contract, processedNfts);
 };
 
 const getNFTsForContract = async (contract: string): Promise<BaseNFT[]> => {
