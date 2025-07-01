@@ -83,7 +83,7 @@ const getBestOfferForToken = async (
       data?.price?.value && data.price.decimals
         ? Number(data.price.value) / 10 ** data.price.decimals
         : 0,
-    maker: data.protocol_data.parameters.offerer
+    maker: data?.protocol_data?.parameters?.offerer ?? null
   };
 };
 
