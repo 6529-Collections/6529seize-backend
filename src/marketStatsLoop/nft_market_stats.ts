@@ -57,6 +57,8 @@ const getBestListingForToken = async (
   });
   const data = (await response.json()) as OpenSeaBestListingResponse;
 
+  console.log('best listing', data);
+
   return {
     price:
       data?.price?.current?.value && data.price.current.decimals
@@ -78,6 +80,8 @@ const getBestOfferForToken = async (
   });
   const data = (await response.json()) as OpenSeaBestOfferResponse;
 
+  console.log('best offer', data);
+
   return {
     price:
       data?.price?.value && data.price.decimals
@@ -88,11 +92,6 @@ const getBestOfferForToken = async (
 };
 
 export const findNftMarketStats = async (contract: string) => {
-  const nfts = await getNFTsForContract(contract);
-  logger.info(
-    `[CONTRACT ${contract}] [PROCESSING STATS FOR ${nfts.length} NFTS]`
-  );
-
   let collectionSlug = '';
   switch (contract) {
     case MEMES_CONTRACT:
@@ -108,8 +107,13 @@ export const findNftMarketStats = async (contract: string) => {
       throw new Error(`Unknown contract: ${contract}`);
   }
 
+  const nfts = await getNFTsForContract(contract);
   const BATCH_SIZE = 20;
   const totalBatches = Math.ceil(nfts.length / BATCH_SIZE);
+
+  logger.info(
+    `[COLLECTION ${collectionSlug}] [PROCESSING STATS FOR ${nfts.length} NFTS IN ${totalBatches} BATCHES]`
+  );
 
   for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
     const start = batchIndex * BATCH_SIZE;
@@ -140,7 +144,7 @@ export const findNftMarketStats = async (contract: string) => {
 
     await persistNFTsForContract(contract, processedBatch);
     logger.info(
-      `[CONTRACT ${contract}] [PROCESSED BATCH ${batchIndex + 1}/${totalBatches}]`
+      `[COLLECTION ${collectionSlug}] [PROCESSED BATCH ${batchIndex + 1}/${totalBatches}]`
     );
   }
 };
