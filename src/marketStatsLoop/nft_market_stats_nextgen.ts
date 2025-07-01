@@ -7,13 +7,42 @@ import {
   persitNextgenTokenListings
 } from '../nextgen/nextgen.db';
 import { NEXTGEN_ROYALTIES_ADDRESS } from '../nextgen/nextgen_constants';
-import { getOpenseaResponse } from './nft_market_stats';
 import { Time } from '../time';
 import { equalIgnoreCase } from '../strings';
 import { collections } from '../collections';
 import { ethTools } from '../eth-tools';
 
 const logger = Logger.get('NEXTGEN_MARKET_STATS');
+
+async function getOpenseaResponseForPage(url: string, pageToken: string) {
+  if (pageToken) {
+    url += `&cursor=${pageToken}`;
+  }
+  return await fetch(url, {
+    headers: {
+      'x-api-key': process.env.OPENSEA_API_KEY!
+    }
+  });
+}
+
+async function getOpenseaResponse(url: string): Promise<any[]> {
+  let pageToken: any = '';
+  const response: any[] = [];
+  while (pageToken !== null) {
+    try {
+      const res = await getOpenseaResponseForPage(url, pageToken);
+      const data: any = await res.json();
+      if (Array.isArray(data.orders)) {
+        response.push(...data.orders);
+      }
+      pageToken = data.next;
+    } catch (e) {
+      logger.error(`[OPENSEA ERROR] ${e}`);
+      pageToken = null;
+    }
+  }
+  return response;
+}
 
 export const findNextgenMarketStats = async (contract: string) => {
   logger.info(`[CONTRACT ${contract}] [RUNNING]`);
