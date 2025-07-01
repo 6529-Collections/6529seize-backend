@@ -5,12 +5,15 @@ import {
   persistLabNFTS,
   persistNFTs
 } from '../db';
-import { MEMELAB_CONTRACT } from '../constants';
+import {
+  GRADIENT_CONTRACT,
+  MEMELAB_CONTRACT,
+  MEMES_CONTRACT
+} from '../constants';
 import { Logger } from '../logging';
-import { Time } from '../time';
 import { equalIgnoreCase } from '../strings';
-import { collections } from '../collections';
-import { ethTools } from '../eth-tools';
+import { BaseNFT } from '../entities/INFT';
+import { Time } from '../time';
 
 const logger = Logger.get('NFT_MARKET_STATS');
 
@@ -19,205 +22,184 @@ type PriceResponse = {
   maker: string | null;
 };
 
-async function getOpenseaResponseForPage(url: string, pageToken: string) {
-  if (pageToken) {
-    url += `&cursor=${pageToken}`;
-  }
-  return await fetch(url, {
-    headers: {
-      'x-api-key': process.env.OPENSEA_API_KEY!
-    }
-  });
+interface OpenSeaPriceResponse {
+  currency: string;
+  decimals: number;
+  value: string;
 }
 
-export async function getOpenseaResponse(url: string): Promise<any[]> {
-  let pageToken: any = '';
-  const response: any[] = [];
-  while (pageToken !== null) {
+interface OpenSeaUserResponse {
+  protocol_data: {
+    parameters: {
+      offerer: string;
+    };
+  };
+}
+
+interface OpenSeaBestListingResponse extends OpenSeaUserResponse {
+  price: {
+    current: OpenSeaPriceResponse;
+  };
+}
+
+interface OpenSeaBestOfferResponse extends OpenSeaUserResponse {
+  price: OpenSeaPriceResponse;
+}
+
+const fetchWithRetries = async <T>(
+  url: string,
+  maxRetries = 5,
+  retryDelayMs = 1000
+): Promise<T | null> => {
+  let attempt = 0;
+
+  while (attempt <= maxRetries) {
+    attempt++;
+
+    const response = await fetch(url, {
+      headers: {
+        'x-api-key': process.env.OPENSEA_API_KEY!
+      }
+    });
+
+    if (response.status === 429) {
+      if (attempt > maxRetries) {
+        logger.error(`[OPENSEA] Throttled after ${maxRetries} retries: ${url}`);
+        return null;
+      }
+      logger.warn(
+        `[OPENSEA] HTTP 429 on attempt ${attempt} for ${url}. Retrying in ${retryDelayMs}ms...`
+      );
+      await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+      continue;
+    }
+
+    if (!response.ok) {
+      logger.warn(
+        `[OPENSEA] Request failed with status ${response.status} for ${url}`
+      );
+      return null;
+    }
+
     try {
-      const res = await getOpenseaResponseForPage(url, pageToken);
-      const data: any = await res.json();
-      response.push(...data.orders);
-      pageToken = data.next;
-    } catch (e) {
-      logger.error(`[OPENSEA ERROR] ${e}`);
-      pageToken = null;
+      const data = (await response.json()) as T;
+      return data;
+    } catch (error) {
+      logger.error(`[OPENSEA] Failed to parse JSON for ${url}`, error);
+      return null;
     }
   }
-  return response;
-}
+
+  return null;
+};
+
+const getBestOfferForToken = async (
+  collectionSlug: string,
+  tokenId: number
+): Promise<PriceResponse> => {
+  const url = `https://api.opensea.io/api/v2/offers/collection/${collectionSlug}/nfts/${tokenId}/best`;
+
+  const data = await fetchWithRetries<OpenSeaBestOfferResponse>(url);
+
+  if (!data) {
+    return { price: 0, maker: null };
+  }
+
+  return {
+    price:
+      data?.price?.value && data.price.decimals
+        ? Number(data.price.value) / 10 ** data.price.decimals
+        : 0,
+    maker: data?.protocol_data?.parameters?.offerer ?? null
+  };
+};
+
+const getBestListingForToken = async (
+  collectionSlug: string,
+  tokenId: number
+): Promise<PriceResponse> => {
+  const url = `https://api.opensea.io/api/v2/listings/collection/${collectionSlug}/nfts/${tokenId}/best`;
+
+  const data = await fetchWithRetries<OpenSeaBestListingResponse>(url);
+
+  if (!data) {
+    return { price: 0, maker: null };
+  }
+
+  return {
+    price:
+      data?.price?.current?.value && data.price.current.decimals
+        ? Number(data.price.current.value) / 10 ** data.price.current.decimals
+        : 0,
+    maker: data?.protocol_data?.parameters?.offerer ?? null
+  };
+};
 
 export const findNftMarketStats = async (contract: string) => {
+  let collectionSlug = '';
+  switch (contract) {
+    case MEMES_CONTRACT:
+      collectionSlug = 'thememes6529';
+      break;
+    case MEMELAB_CONTRACT:
+      collectionSlug = 'memelab6529';
+      break;
+    case GRADIENT_CONTRACT:
+      collectionSlug = '6529-gradient';
+      break;
+    default:
+      throw new Error(`Unknown contract: ${contract}`);
+  }
+
   const nfts = await getNFTsForContract(contract);
+  const BATCH_SIZE = 5;
+  const totalBatches = Math.ceil(nfts.length / BATCH_SIZE);
+
   logger.info(
-    `[CONTRACT ${contract}] [PROCESSING STATS FOR ${nfts.length} NFTS]`
+    `[COLLECTION ${collectionSlug}] [PROCESSING STATS FOR ${nfts.length} NFTS IN ${totalBatches} BATCHES]`
   );
 
-  const batchedTokens = collections.chunkArray(nfts, 30);
+  for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
+    const start = batchIndex * BATCH_SIZE;
+    const end = start + BATCH_SIZE;
+    const batch = nfts.slice(start, end);
 
-  for (let i = 0; i < batchedTokens.length; i++) {
-    const batch = batchedTokens[i];
-    const listingsUrl = buildOpenseaUrl(contract, 'listings', batch);
-    const offersUrl = buildOpenseaUrl(contract, 'offers', batch);
+    const processedBatch: BaseNFT[] = [];
 
-    const listings = await getOpenseaResponse(listingsUrl);
-    await Time.millis(500).sleep();
-    const offers = await getOpenseaResponse(offersUrl);
+    await Promise.all(
+      batch.map(async (nft) => {
+        const bestOffer = await getBestOfferForToken(collectionSlug, nft.id);
+        const bestListing = await getBestListingForToken(
+          collectionSlug,
+          nft.id
+        );
 
-    const processedNfts = await processBatch(batch, listings, offers, contract);
+        logger.debug(
+          `[NFT ${nft.id}] [BEST OFFER: ${bestOffer.price}] [BEST LISTING: ${bestListing.price}]`
+        );
 
-    await persistNFTsForContract(contract, processedNfts);
+        const volumes = await findVolume(nft.id, contract);
+        updateNftVolumeStats(nft, volumes);
+        updateNftMarketStats(nft, bestListing, bestOffer);
 
-    logBatchStatus(
-      contract,
-      processedNfts.length,
-      batchedTokens.length - i - 1
+        processedBatch.push(nft);
+      })
     );
 
-    await Time.millis(500).sleep();
+    await persistNFTsForContract(contract, processedBatch);
+    logger.info(
+      `[COLLECTION ${collectionSlug}] [PROCESSED BATCH ${batchIndex + 1}/${totalBatches}]`
+    );
+
+    await Time.millis(1000).sleep();
   }
 };
 
-const getNFTsForContract = async (contract: string): Promise<any[]> => {
+const getNFTsForContract = async (contract: string): Promise<BaseNFT[]> => {
   if (equalIgnoreCase(contract, MEMELAB_CONTRACT)) {
     return fetchAllMemeLabNFTs('id desc');
   }
   return fetchNftsForContract(contract, 'id desc');
-};
-
-const buildOpenseaUrl = (
-  contract: string,
-  type: string,
-  batch: any[]
-): string => {
-  let url = `https://api.opensea.io/api/v2/orders/ethereum/seaport/${type}?asset_contract_address=${contract}&limit=50`;
-
-  for (const nft of batch) {
-    url += `&token_ids=${nft.id}`;
-  }
-
-  return url;
-};
-
-const processBatch = async (
-  batch: any[],
-  listings: any[],
-  offers: any[],
-  contract: string
-): Promise<any[]> => {
-  const processedNfts = [];
-
-  for (const nft of batch) {
-    const nftListings = filterListingsForNft(listings, nft.id);
-    const nftOffers = filterOffersForNft(offers, contract, nft.id);
-    const lowestListing = getLowestListing(nft.id, contract, nftListings);
-    const highestOffer = getHighestOffer(nft.id, contract, nftOffers);
-
-    const volumes = await findVolume(nft.id, contract);
-    updateNftVolumeStats(nft, volumes);
-    updateNftMarketStats(nft, lowestListing, highestOffer);
-
-    processedNfts.push(nft);
-  }
-
-  return processedNfts;
-};
-
-const filterListingsForNft = (listings: any[], nftId: string): any[] => {
-  return listings.filter(
-    (o) =>
-      !o.taker &&
-      o.protocol_data?.parameters.offer[0].identifierOrCriteria ===
-        nftId.toString()
-  );
-};
-
-const filterOffersForNft = (
-  offers: any[],
-  contract: string,
-  nftId: string
-): any[] => {
-  return offers.filter((o) =>
-    o.protocol_data?.parameters.consideration.some(
-      (f: any) =>
-        equalIgnoreCase(f.token, contract) &&
-        f.identifierOrCriteria === nftId.toString()
-    )
-  );
-};
-
-const getLowestListing = (
-  id: string,
-  contract: string,
-  nftListings: any[]
-): PriceResponse => {
-  const entries = nftListings
-    .map((item) => {
-      const offer = item.protocol_data.parameters.offer.find(
-        (o: any) =>
-          equalIgnoreCase(o.token, contract) &&
-          o.identifierOrCriteria === id.toString()
-      );
-      if (offer) {
-        const normalizedPrice = ethTools.weiToEth(
-          item.current_price / offer.endAmount
-        );
-        return { price: normalizedPrice, maker: item.maker?.address ?? null };
-      }
-      return null;
-    })
-    .filter((entry) => entry !== null) as PriceResponse[];
-
-  if (entries.length === 0) {
-    return { price: 0, maker: null };
-  }
-
-  const lowest = entries.reduce(
-    (min, curr) => (curr.price < min.price ? curr : min),
-    { price: Infinity, maker: null }
-  );
-
-  return {
-    price: Math.round(lowest.price * 10000) / 10000,
-    maker: lowest.maker
-  };
-};
-
-const getHighestOffer = (
-  id: string,
-  contract: string,
-  nftOffers: any[]
-): PriceResponse => {
-  const entries = nftOffers
-    .map((item) => {
-      const consideration = item.protocol_data.parameters.consideration.find(
-        (c: any) =>
-          equalIgnoreCase(c.token, contract) &&
-          c.identifierOrCriteria === id.toString()
-      );
-      if (consideration) {
-        const normalizedPrice = ethTools.weiToEth(
-          item.current_price / consideration.endAmount
-        );
-        return { price: normalizedPrice, maker: item.maker?.address ?? null };
-      }
-      return null;
-    })
-    .filter((entry) => entry !== null) as PriceResponse[];
-
-  if (entries.length === 0) {
-    return { price: 0, maker: null };
-  }
-
-  const highest = entries.reduce(
-    (max, curr) => (curr.price > max.price ? curr : max),
-    { price: -Infinity, maker: null }
-  );
-
-  return {
-    price: Math.round(highest.price * 10000) / 10000,
-    maker: highest.maker
-  };
 };
 
 const updateNftVolumeStats = (nft: any, volumes: any): void => {
@@ -248,18 +230,4 @@ const persistNFTsForContract = async (
   } else {
     await persistNFTs(processedNfts);
   }
-};
-
-const logBatchStatus = (
-  contract: string,
-  processedNftsLength: number,
-  remainingBatches: number
-): void => {
-  logger.info(
-    `[CONTRACT ${contract}] [PROCESSED BATCH OF ${processedNftsLength}]${
-      remainingBatches > 0
-        ? ` [REMAINING BATCHES: ${remainingBatches}]`
-        : '[LAST BATCH]'
-    }`
-  );
 };
