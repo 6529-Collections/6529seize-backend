@@ -68,14 +68,15 @@ export class ConsolidationTools {
           }
 
           if (newWallet) {
+            const safeWallet = newWallet;
             const allConnectionsExist = Array.from(cluster).every((existing) =>
               consolidationSet.has(
-                this.buildConsolidationKey([existing, newWallet])
+                this.buildConsolidationKey([existing, safeWallet])
               )
             );
 
             if (allConnectionsExist) {
-              cluster.add(newWallet);
+              cluster.add(safeWallet);
               queue.splice(i, 1);
               changed = true;
               break;
