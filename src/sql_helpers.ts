@@ -1,17 +1,39 @@
 import { CONSOLIDATIONS_TABLE } from './constants';
 
 export function getConsolidationsSql() {
-  const sql = `SELECT * FROM ${CONSOLIDATIONS_TABLE} 
-    WHERE 
-      (wallet1 = :wallet OR wallet2 = :wallet
-      OR wallet1 IN (SELECT wallet2 FROM consolidations WHERE wallet1 = :wallet AND confirmed = true)
-      OR wallet2 IN (SELECT wallet1 FROM consolidations WHERE wallet2 = :wallet AND confirmed = true)
-      OR wallet2 IN (SELECT wallet2 FROM consolidations WHERE wallet1 = :wallet AND confirmed = true)
-      OR wallet1 IN (SELECT wallet1 FROM consolidations WHERE wallet2 = :wallet AND confirmed = true)
-      )
-      AND confirmed = true
-    ORDER BY block DESC`;
-  return sql;
+  return `
+    WITH RECURSIVE wallet_cluster AS (
+      SELECT wallet1, wallet2
+      FROM ${CONSOLIDATIONS_TABLE}
+      WHERE confirmed = true
+        AND (:wallet IN (wallet1, wallet2))
+
+      UNION
+
+      SELECT c.wallet1, c.wallet2
+      FROM ${CONSOLIDATIONS_TABLE} c
+      INNER JOIN wallet_cluster wc
+          ON c.wallet1 = wc.wallet2
+          OR c.wallet2 = wc.wallet1
+          OR c.wallet1 = wc.wallet1
+          OR c.wallet2 = wc.wallet2
+      WHERE c.confirmed = true
+    )
+    SELECT DISTINCT *
+    FROM ${CONSOLIDATIONS_TABLE}
+    WHERE confirmed = true
+      AND (wallet1 IN (
+            SELECT wallet1 FROM wallet_cluster
+            UNION
+            SELECT wallet2 FROM wallet_cluster
+          )
+        OR wallet2 IN (
+            SELECT wallet1 FROM wallet_cluster
+            UNION
+            SELECT wallet2 FROM wallet_cluster
+          ))
+    ORDER BY block DESC
+  `;
 }
 
 export function parseTdhResultsFromDB(results: any) {
