@@ -24,12 +24,17 @@ export class ConsolidationTools {
     const usedWallets = new Set<string>();
     const clusters: string[][] = [];
 
+    // Create a quick lookup of all direct consolidations
+    const consolidationSet = new Set<string>();
+    for (const c of consolidations) {
+      consolidationSet.add(this.makeKey(c.wallet1, c.wallet2));
+    }
+
     // Convert consolidations into a queue
     const queue = [...consolidations];
 
     while (queue.length > 0) {
       const current = queue.shift()!;
-
       const { wallet1, wallet2 } = current;
 
       if (usedWallets.has(wallet1) || usedWallets.has(wallet2)) {
@@ -50,19 +55,29 @@ export class ConsolidationTools {
           const candidate = queue[i];
           const { wallet1: w1, wallet2: w2 } = candidate;
 
-          const connects =
-            (cluster.has(w1) && !cluster.has(w2) && !usedWallets.has(w2)) ||
-            (cluster.has(w2) && !cluster.has(w1) && !usedWallets.has(w1));
+          let newWallet: string | null = null;
 
-          if (connects) {
-            // Add new wallet to the cluster
-            if (!cluster.has(w1)) cluster.add(w1);
-            if (!cluster.has(w2)) cluster.add(w2);
+          if (cluster.has(w1) && !cluster.has(w2) && !usedWallets.has(w2)) {
+            newWallet = w2;
+          } else if (
+            cluster.has(w2) &&
+            !cluster.has(w1) &&
+            !usedWallets.has(w1)
+          ) {
+            newWallet = w1;
+          }
 
-            // Remove this consolidation from queue
-            queue.splice(i, 1);
-            changed = true;
-            break;
+          if (newWallet) {
+            const allConnectionsExist = Array.from(cluster).every((existing) =>
+              consolidationSet.has(this.makeKey(existing, newWallet!))
+            );
+
+            if (allConnectionsExist) {
+              cluster.add(newWallet);
+              queue.splice(i, 1);
+              changed = true;
+              break;
+            }
           }
         }
       }
@@ -90,6 +105,10 @@ export class ConsolidationTools {
     }
 
     return clusters;
+  }
+
+  private makeKey(a: string, b: string): string {
+    return [a.toLowerCase(), b.toLowerCase()].sort().join('-');
   }
 
   public buildConsolidationKey(wallets: string[]): string {
