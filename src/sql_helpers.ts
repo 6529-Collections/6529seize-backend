@@ -3,36 +3,48 @@ import { CONSOLIDATIONS_TABLE } from './constants';
 export function getConsolidationsSql() {
   return `
     WITH RECURSIVE wallet_cluster AS (
-      SELECT wallet1, wallet2
+      SELECT 
+        LOWER(wallet1) AS wallet1, 
+        LOWER(wallet2) AS wallet2
       FROM ${CONSOLIDATIONS_TABLE}
       WHERE confirmed = true
-        AND (:wallet IN (wallet1, wallet2))
+        AND LOWER(:wallet) IN (LOWER(wallet1), LOWER(wallet2))
 
       UNION
 
-      SELECT c.wallet1, c.wallet2
+      SELECT 
+        LOWER(c.wallet1) AS wallet1, 
+        LOWER(c.wallet2) AS wallet2
       FROM ${CONSOLIDATIONS_TABLE} c
       INNER JOIN wallet_cluster wc
-          ON c.wallet1 = wc.wallet2
-          OR c.wallet2 = wc.wallet1
-          OR c.wallet1 = wc.wallet1
-          OR c.wallet2 = wc.wallet2
+        ON LOWER(c.wallet1) = wc.wallet2
+        OR LOWER(c.wallet2) = wc.wallet1
+        OR LOWER(c.wallet1) = wc.wallet1
+        OR LOWER(c.wallet2) = wc.wallet2
       WHERE c.confirmed = true
     )
-    SELECT DISTINCT *
+
+    SELECT DISTINCT
+      LOWER(wallet1) AS wallet1,
+      LOWER(wallet2) AS wallet2,
+      block,
+      created_at
     FROM ${CONSOLIDATIONS_TABLE}
     WHERE confirmed = true
-      AND (wallet1 IN (
-            SELECT wallet1 FROM wallet_cluster
-            UNION
-            SELECT wallet2 FROM wallet_cluster
-          )
-        OR wallet2 IN (
-            SELECT wallet1 FROM wallet_cluster
-            UNION
-            SELECT wallet2 FROM wallet_cluster
-          ))
-    ORDER BY block DESC
+      AND (
+        LOWER(wallet1) IN (
+          SELECT wallet1 FROM wallet_cluster
+          UNION
+          SELECT wallet2 FROM wallet_cluster
+        )
+        OR
+        LOWER(wallet2) IN (
+          SELECT wallet1 FROM wallet_cluster
+          UNION
+          SELECT wallet2 FROM wallet_cluster
+        )
+      )
+    ORDER BY block DESC;
   `;
 }
 
