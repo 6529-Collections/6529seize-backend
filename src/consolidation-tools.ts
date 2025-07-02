@@ -27,7 +27,7 @@ export class ConsolidationTools {
     // Create a quick lookup of all direct consolidations
     const consolidationSet = new Set<string>();
     for (const c of consolidations) {
-      consolidationSet.add(this.makeKey(c.wallet1, c.wallet2));
+      consolidationSet.add(this.buildConsolidationKey([c.wallet1, c.wallet2]));
     }
 
     // Convert consolidations into a queue
@@ -69,7 +69,9 @@ export class ConsolidationTools {
 
           if (newWallet) {
             const allConnectionsExist = Array.from(cluster).every((existing) =>
-              consolidationSet.has(this.makeKey(existing, newWallet!))
+              consolidationSet.has(
+                this.buildConsolidationKey([existing, newWallet])
+              )
             );
 
             if (allConnectionsExist) {
@@ -105,10 +107,6 @@ export class ConsolidationTools {
     }
 
     return clusters;
-  }
-
-  private makeKey(a: string, b: string): string {
-    return [a.toLowerCase(), b.toLowerCase()].sort().join('-');
   }
 
   public buildConsolidationKey(wallets: string[]): string {
