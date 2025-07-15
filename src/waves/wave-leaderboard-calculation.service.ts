@@ -9,6 +9,7 @@ import { DropRealVoteInTimeWithoutId } from '../entities/IDropRealVoteInTime';
 import { DropRealVoterVoteInTimeEntityWithoutId } from '../entities/IDropRealVoterVoteInTime';
 import { BadRequestException } from '../exceptions';
 import { collections } from '../collections';
+import { numbers } from '../numbers';
 
 export class WaveLeaderboardCalculationService {
   private readonly logger = Logger.get(WaveLeaderboardCalculationService.name);
@@ -172,7 +173,8 @@ export class WaveLeaderboardCalculationService {
       const weightedVote = weight * finalVoteStates[i].vote;
       weightedDropVotes.push(weightedVote);
     }
-    return Math.floor(weightedDropVotes.reduce((a, b) => a + b, 0));
+    const nonFlooredResult = numbers.sum(weightedDropVotes);
+    return Math.floor(nonFlooredResult);
   }
 
   public async calculateWeightedVoteForDropAtTime({
