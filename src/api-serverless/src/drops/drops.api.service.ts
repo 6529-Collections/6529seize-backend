@@ -749,6 +749,48 @@ export class DropsApiService {
   ): Promise<ApiWaveVotersPage> {
     await this.assertViewingEligibilityForWave(params.wave_id, ctx);
 
+    const dropId = params.drop_id;
+    if (dropId) {
+      const drop = await this.dropsDb.findDropById(dropId, ctx.connection);
+      if (
+        drop?.wave_id === params.wave_id &&
+        drop?.drop_type === DropType.WINNER
+      ) {
+        const [data, totalCount] = await Promise.all([
+          this.dropsDb.getWinnerDropVoters(
+            {
+              drop_id: dropId,
+              page: params.page,
+              page_size: params.page_size,
+              direction: params.sort_direction
+            },
+            ctx
+          ),
+          this.dropsDb.countWinnerDropVoters(dropId, ctx)
+        ]);
+        const voters = await this.identityFetcher.getOverviewsByIds(
+          data.map((it) => it.voter_id),
+          ctx
+        );
+        return {
+          page: params.page,
+          count: totalCount,
+          next: totalCount > params.page_size * params.page,
+          data: data.map<ApiWaveVoter>((it) => ({
+            voter: voters[it.voter_id],
+            votes_summed: it.votes,
+            positive_votes_summed: it.votes > 0 ? it.votes : 0,
+            negative_votes_summed: it.votes < 0 ? it.votes : 0,
+            absolute_votes_summed: Math.abs(it.votes),
+            min_vote: it.votes,
+            max_vote: it.votes,
+            different_drops_voted: 1,
+            average_vote: it.votes
+          }))
+        };
+      }
+    }
+
     const [data, totalCount] = await Promise.all([
       this.dropsDb.findVotersInfo(params, ctx),
       this.dropsDb.countVoters(params, ctx)

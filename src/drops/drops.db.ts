@@ -33,7 +33,8 @@ import {
   WAVE_LEADERBOARD_ENTRIES_TABLE,
   WAVE_METRICS_TABLE,
   WAVES_DECISION_WINNER_DROPS_TABLE,
-  WAVES_TABLE
+  WAVES_TABLE,
+  WINNER_DROP_VOTER_VOTES_TABLE
 } from '../constants';
 import {
   userGroupsService,
@@ -51,6 +52,7 @@ import { DropVoterStateEntity } from '../entities/IDropVoterState';
 import { ProfileActivityLog } from '../entities/IProfileActivityLog';
 import { assertUnreachable } from '../assertions';
 import { WaveDecisionWinnerDropEntity } from '../entities/IWaveDecision';
+import { WinnerDropVoterVoteEntity } from '../entities/IWinnerDropVoterVote';
 
 const mysql = require('mysql');
 
@@ -304,25 +306,6 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         `,
       {
         id
-      },
-      opts
-    );
-  }
-
-  async findDropsByIds(
-    ids: string[],
-    connection?: ConnectionWrapper<any>
-  ): Promise<DropEntity[]> {
-    if (ids.length === 0) {
-      return [];
-    }
-    const opts = connection ? { wrappedConnection: connection } : {};
-    return this.db.execute<DropEntity>(
-      `
-        select d.* from ${DROPS_TABLE} d where d.id in (:ids)
-        `,
-      {
-        ids
       },
       opts
     );
@@ -1443,6 +1426,47 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       { wrappedConnection: connection }
     );
     return results.map((it) => it.id);
+  }
+
+  async getWinnerDropVoters(
+    {
+      drop_id,
+      page_size,
+      page,
+      direction
+    }: {
+      drop_id: string;
+      page: number;
+      page_size: number;
+      direction: PageSortDirection;
+    },
+    ctx: RequestContext
+  ): Promise<WinnerDropVoterVoteEntity[]> {
+    const params = {
+      limit: page_size,
+      offset: page_size * (page - 1),
+      dropId: drop_id
+    };
+    return await this.db.execute<WinnerDropVoterVoteEntity>(
+      `select * from ${WINNER_DROP_VOTER_VOTES_TABLE} where drop_id = :dropId order by abs(votes) ${direction} limit :limit offset :offset`,
+      params,
+      { wrappedConnection: ctx.connection }
+    );
+  }
+
+  async countWinnerDropVoters(
+    dropId: string,
+    ctx: RequestContext
+  ): Promise<number> {
+    return await this.db
+      .oneOrNull<{
+        cnt: number;
+      }>(
+        `select count(*) as cnt from ${WINNER_DROP_VOTER_VOTES_TABLE} where drop_id = :dropId`,
+        { dropId },
+        { wrappedConnection: ctx.connection }
+      )
+      .then((res) => res?.cnt ?? 0);
   }
 }
 
