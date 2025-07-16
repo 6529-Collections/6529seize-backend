@@ -39,13 +39,11 @@ export async function deleteWallet<T extends ObjectLiteral>(
   if (deleteDelta.size === 0) {
     return 0;
   }
-  const whereClause = Array.from(deleteDelta)
-    .map((wallet) => `wallet = '${wallet}'`)
-    .join(' OR ');
+  const wallets = Array.from(deleteDelta);
   const deleted = await repo
     .createQueryBuilder()
     .delete()
-    .where(whereClause)
+    .where('wallet IN (:...wallets)', { wallets })
     .execute();
   return deleted.affected ?? 0;
 }
@@ -57,13 +55,31 @@ export async function deleteConsolidations<T extends ObjectLiteral>(
   if (deleteDelta.size === 0) {
     return 0;
   }
+
+  // Build the WHERE clause for LIKE
   const whereClause = Array.from(deleteDelta)
     .map((wallet) => `consolidation_key LIKE '%${wallet}%'`)
     .join(' OR ');
+
+  // Step 1 → SELECT consolidation keys matching the LIKEs
+  const rows = await repo
+    .createQueryBuilder()
+    .select('consolidation_key')
+    .where(whereClause)
+    .getRawMany<{ consolidation_key: string }>();
+
+  const keysToDelete = rows.map((r) => r.consolidation_key);
+
+  if (keysToDelete.length === 0) {
+    return 0;
+  }
+
+  // Step 2 → DELETE using IN
   const deleted = await repo
     .createQueryBuilder()
     .delete()
-    .where(whereClause)
+    .where('consolidation_key IN (:...keys)', { keys: keysToDelete })
     .execute();
+
   return deleted.affected ?? 0;
 }
