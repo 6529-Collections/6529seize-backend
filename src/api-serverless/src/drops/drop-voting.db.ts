@@ -22,6 +22,7 @@ import { WaveLeaderboardEntryEntity } from '../../../entities/IWaveLeaderboardEn
 import { DropType } from '../../../entities/IDrop';
 import { DbPoolName } from '../../../db-query.options';
 import { WinnerDropVoterVoteEntity } from '../../../entities/IWinnerDropVoterVote';
+import mysql from 'mysql';
 
 export class DropVotingDb extends LazyDbAccessCompatibleService {
   public async upsertState(state: NewDropVoterState, ctx: RequestContext) {
@@ -902,49 +903,29 @@ where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
       );
   }
 
-  async transferAllDropVoterStatesToWinnerDropsVotes(
-    { dropIds }: { dropIds: string[] },
+  async insertWinnerDropsVoterVotes(
+    entities: WinnerDropVoterVoteEntity[],
     ctx: RequestContext
   ) {
-    if (!dropIds.length) {
+    if (!entities.length) {
       return;
     }
-    const stateIds = await this.db
-      .execute<{
-        drop_id: string;
-        id: number;
-      }>(
-        `
-        select max(id) as id
-        from ${DROP_REAL_VOTER_VOTE_IN_TIME_TABLE}
-        where drop_id in (:dropIds)
-        group by drop_id, voter_id
-        `,
-        { dropIds },
-        { wrappedConnection: ctx.connection }
-      )
-      .then((res) => res.map((it) => it.id));
-    if (stateIds.length) {
-      await this.db.execute(
-        `
-       insert into ${WINNER_DROP_VOTER_VOTES_TABLE} (voter_id, votes, drop_id, wave_id)
-       select voter_id, vote, drop_id, wave_id from ${DROP_REAL_VOTER_VOTE_IN_TIME_TABLE} where id in (:stateIds) and vote <> 0`,
-        { stateIds },
-        { wrappedConnection: ctx.connection }
-      );
-    }
-    await Promise.all([
-      this.db.execute(
-        `delete from ${DROP_REAL_VOTER_VOTE_IN_TIME_TABLE} where drop_id in (:dropIds)`,
-        { dropIds },
-        { wrappedConnection: ctx.connection }
-      ),
-      this.db.execute(
-        `delete from ${DROP_VOTER_STATE_TABLE} where drop_id in (:dropIds)`,
-        { dropIds },
-        { wrappedConnection: ctx.connection }
-      )
-    ]);
+    const sql = `
+        insert into ${WINNER_DROP_VOTER_VOTES_TABLE} (voter_id, drop_id, votes, wave_id)
+          values ${entities
+            .map(
+              (entity) =>
+                `(${mysql.escape(entity.voter_id)}, ${mysql.escape(
+                  entity.drop_id
+                )}, ${mysql.escape(entity.votes)}, ${mysql.escape(
+                  entity.wave_id
+                )})`
+            )
+            .join(', ')}
+      `;
+    await this.db.execute(sql, undefined, {
+      wrappedConnection: ctx.connection
+    });
   }
 
   public async snapshotDropVotersRealVoteInTimeBasedOnVoterState(
@@ -971,6 +952,87 @@ where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
         { dropId }
       )
       .then((it) => it?.time_lock_ms ?? null);
+  }
+
+  async getAllVoteChangeLogsForGivenDropsInTimeframe(
+    params: { timeLockStart: number; dropIds: string[] },
+    ctx: RequestContext
+  ): Promise<
+    Record<
+      string,
+      Record<
+        string,
+        [{ drop_id: string; voter_id: string; vote: number; timestamp: number }]
+      >
+    >
+  > {
+    if (params.dropIds.length === 0) {
+      return {};
+    }
+    const dbResults = await this.db
+      .execute<{
+        voter_id: string;
+        drop_id: string;
+        vote: number;
+        created_at_sec: number;
+      }>(
+        `
+      with transf_ac_logs as (select profile_id                        as              voter_id,
+                               target_id                         as              drop_id,
+                               JSON_UNQUOTE(JSON_EXTRACT(contents, '$.oldVote')) old_vote,
+                               JSON_UNQUOTE(JSON_EXTRACT(contents, '$.newVote')) new_vote,
+                               UNIX_TIMESTAMP(created_at) as              created_at_sec
+                        from profile_activity_logs
+                        where type = 'DROP_VOTE_EDIT'
+                          and target_id in
+                              (:dropIds))
+        select voter_id, drop_id, new_vote as vote, created_at_sec from transf_ac_logs where old_vote <> new_vote
+    `,
+        { dropIds: params.dropIds },
+        { wrappedConnection: ctx.connection }
+      )
+      .then((res) =>
+        res
+          .map((it) => ({
+            drop_id: it.drop_id,
+            vote: +it.vote,
+            voter_id: it.voter_id,
+            timestamp: it.created_at_sec * 1000
+          }))
+          .sort((a, d) => a.timestamp - d.timestamp)
+      );
+    return dbResults.reduce(
+      (byDropAcc, byDropIt) => {
+        const dropId = byDropIt.drop_id;
+        const voterId = byDropIt.voter_id;
+        const timestamp = byDropIt.timestamp;
+        if (!byDropAcc[dropId]) {
+          byDropAcc[dropId] = {};
+        }
+        if (!byDropAcc[dropId][voterId]) {
+          byDropAcc[dropId][voterId] = [byDropIt];
+        } else if (timestamp > params.timeLockStart) {
+          byDropAcc[dropId][voterId].push(byDropIt);
+        } else {
+          byDropAcc[dropId][voterId] = [byDropIt];
+        }
+        return byDropAcc;
+      },
+      {} as Record<
+        string,
+        Record<
+          string,
+          [
+            {
+              drop_id: string;
+              voter_id: string;
+              vote: number;
+              timestamp: number;
+            }
+          ]
+        >
+      >
+    );
   }
 }
 

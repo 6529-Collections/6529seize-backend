@@ -16,7 +16,8 @@ import {
   DropVotingDb
 } from '../api-serverless/src/drops/drop-voting.db';
 import { DropsDb, dropsDb } from '../drops/drops.db';
-import { collections } from '../collections';
+import { DropRealVoterVoteInTimeEntityWithoutId } from '../entities/IDropRealVoterVoteInTime';
+import { WinnerDropVoterVoteEntity } from '../entities/IWinnerDropVoterVote';
 
 export class WaveDecisionsService {
   private readonly logger: Logger = Logger.get(this.constructor.name);
@@ -245,15 +246,17 @@ export class WaveDecisionsService {
     const winnerDropIds = winnerDrops.map((it) => it.drop_id);
     await this.transferFinalVotesToArchive(
       {
-        winnerDrops,
+        dropIds: winnerDropIds,
         time_lock_ms,
-        decision_time: Time.millis(decisionTime)
+        decision_time: Time.millis(decisionTime),
+        waveId
       },
       ctx
     );
     await this.waveDecisionsDb.insertDecisionWinners(decisionWinners, ctx);
     await this.waveDecisionsDb.updateDropsToWinners(winnerDropIds, ctx);
     await this.waveDecisionsDb.deleteDropsRanks(winnerDropIds, ctx);
+    await this.dropsDb.resyncParticipatoryDropCountsForWaves([waveId], ctx);
     await this.dropVotingDb.deleteStaleLeaderboardEntries(ctx);
     ctx?.timer?.stop(`${this.constructor.name}->createDecision`);
   }
@@ -289,73 +292,66 @@ export class WaveDecisionsService {
     );
   }
 
-  private async transferFinalVotesToArchive(
+  public async transferFinalVotesToArchive(
     {
-      winnerDrops
+      dropIds,
+      decision_time,
+      time_lock_ms,
+      waveId
     }: {
       time_lock_ms: number | null;
       decision_time: Time;
-      winnerDrops: { drop_id: string; vote: number; rank: number }[];
+      dropIds: string[];
+      waveId: string;
     },
     ctx: RequestContext
   ) {
-    /*const endTime = decision_time;
-    let finalVotesSummed = 0;
+    const endTime = decision_time;
+    const allFinalVoterVotesByDrops: WinnerDropVoterVoteEntity[] = [];
     if (time_lock_ms !== null && time_lock_ms > 0) {
       const startTime = endTime.minusMillis(time_lock_ms);
-      const voterVotes =
+      const votesByDropsAndVoters =
         await this.dropVotingDb.getAllVoteChangeLogsForGivenDropsInTimeframe(
           {
-            fromTime: startTime.toMillis(),
-            toTime: endTime.toMillis(),
-            dropIds: winnerDrops.map((it) => it.drop_id)
+            timeLockStart: startTime.toMillis(),
+            dropIds
           },
           ctx
         );
-      const votesByDropsAndVoters = voterVotes.reduce((acc, it) => {
-        if (!acc[it.drop_id]) {
-          acc[it.drop_id] = {};
-        }
-        if (!acc[it.drop_id][it.voter_id]) {
-          acc[it.drop_id][it.voter_id] = [];
-        }
-        acc[it.drop_id][it.voter_id].push(it);
-        return acc;
-      }, {} as Record<string, Record<string, DropRealVoterVoteInTimeEntityWithoutId[]>>);
-      for (const [dropId, usersVotes] of Object.entries(
+      for (const [dropId, votesByVoters] of Object.entries(
         votesByDropsAndVoters
       )) {
-        for (const [voterId, votes] of Object.entries(usersVotes)) {
-          const finalVote =
+        for (const [voterId, dropVoterVotes] of Object.entries(votesByVoters)) {
+          const transformed =
+            dropVoterVotes.map<DropRealVoterVoteInTimeEntityWithoutId>(
+              (vote) => ({
+                drop_id: dropId,
+                voter_id: voterId,
+                vote: vote.vote,
+                timestamp:
+                  vote.timestamp > startTime.toMillis()
+                    ? vote.timestamp
+                    : startTime.toMillis(),
+                wave_id: waveId
+              })
+            );
+          const finalVoterVoteForThisDrop =
             this.waveLeaderboardCalculationService.calculateFinalVoteForDrop({
-              voteStates: votes,
+              voteStates: transformed,
               startTime,
               endTime
             });
-          finalVotesSummed += finalVote;
-          await this.dropVotingDb.updateLatestVoteValue(
-            {
-              endTime,
-              voterId,
-              dropId,
-              vote: finalVote
-            },
-            ctx
-          );
+          allFinalVoterVotesByDrops.push({
+            voter_id: voterId,
+            drop_id: dropId,
+            votes: finalVoterVoteForThisDrop,
+            wave_id: waveId
+          });
         }
       }
-    }*/
-    const dropIds = winnerDrops.map((it) => it.drop_id);
-    const dropEntitiesOfWinnerDrops = await this.dropsDb.findDropsByIds(
-      dropIds,
-      ctx.connection
-    );
-    const waveIds = collections.distinct(
-      dropEntitiesOfWinnerDrops.map((it) => it.wave_id)
-    );
-    await this.dropsDb.resyncParticipatoryDropCountsForWaves(waveIds, ctx);
-    await this.dropVotingDb.transferAllDropVoterStatesToWinnerDropsVotes(
-      { dropIds },
+    }
+    await this.dropVotingDb.insertWinnerDropsVoterVotes(
+      allFinalVoterVotesByDrops,
       ctx
     );
   }
