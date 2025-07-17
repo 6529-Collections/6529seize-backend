@@ -3,19 +3,17 @@ import { getDataSource } from '../db';
 import { Logger } from '../logging';
 import { sqlExecutor } from '../sql-executor';
 import { BaseNFT } from '../entities/INFT';
+
 const logger = Logger.get('NFT_DISTRIBUTION');
 
 export async function updateDistributionInfoFor<T extends BaseNFT>(
-  entityClass: new () => T,
-  table: string = DISTRIBUTION_NORMALIZED_TABLE
+  entityClass: new () => T
 ) {
   const missingInfo: { contract: string; card_id: number }[] =
     await getDataSource().manager.query(
       `SELECT DISTINCT contract, card_id
-     FROM ${table}
-     WHERE card_name IS NULL
-        OR card_name = ''
-        OR mint_date IS NULL`
+       FROM ${DISTRIBUTION_NORMALIZED_TABLE}
+       WHERE is_missing_info = 1`
     );
 
   if (missingInfo.length === 0) {
@@ -38,7 +36,7 @@ export async function updateDistributionInfoFor<T extends BaseNFT>(
         : null;
 
       await sqlExecutor.execute(
-        `UPDATE ${table}
+        `UPDATE ${DISTRIBUTION_NORMALIZED_TABLE}
          SET card_name = :cardName, mint_date = :mintDate
          WHERE contract = :contract
          AND card_id = :cardId;`,
