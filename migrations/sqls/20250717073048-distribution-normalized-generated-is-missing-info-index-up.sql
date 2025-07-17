@@ -1,0 +1,1 @@
+CREATE INDEX idx_missing_info ON distribution_normalized (is_missing_info, contract, card_id);

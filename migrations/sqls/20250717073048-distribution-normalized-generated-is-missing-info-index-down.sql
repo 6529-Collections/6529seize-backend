@@ -1,0 +1,1 @@
+DROP INDEX idx_missing_info ON distribution_normalized;

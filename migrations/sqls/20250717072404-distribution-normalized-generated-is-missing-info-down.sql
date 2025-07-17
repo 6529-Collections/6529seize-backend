@@ -1,0 +1,2 @@
+ALTER TABLE distribution_normalized
+DROP COLUMN is_missing_info;
