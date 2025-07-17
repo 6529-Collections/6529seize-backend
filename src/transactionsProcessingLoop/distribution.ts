@@ -15,7 +15,6 @@ import {
   persistBlock
 } from './db.transactions_processing';
 import { sqlExecutor } from '../sql-executor';
-import { equalIgnoreCase } from '../strings';
 
 const logger = Logger.get('TRANSACTIONS_PROCESSING_DISTRIBUTIONS');
 
@@ -46,23 +45,7 @@ export const updateDistributionMints = async (reset?: boolean) => {
     return;
   }
 
-  const distinctDistributions: { contract: string; card_id: number }[] =
-    await getDataSource().manager.query(
-      `SELECT DISTINCT contract, card_id FROM ${DISTRIBUTION_NORMALIZED_TABLE};`
-    );
-
-  const filteredTransactions: Transaction[] = transactions.filter(
-    (transaction) =>
-      distinctDistributions.some(
-        (distribution) =>
-          equalIgnoreCase(transaction.contract, distribution.contract) &&
-          Number(transaction.token_id) === Number(distribution.card_id)
-      )
-  );
-
-  logger.info(
-    `[${transactions.length} TRANSACTIONS TO PROCESS] : [${distinctDistributions.length} DISTINCT DISTRIBUTIONS] : [${filteredTransactions.length} FILTERED TRANSACTIONS]`
-  );
+  logger.info(`[${transactions.length} TRANSACTIONS TO PROCESS]`);
 
   await getDataSource().transaction(async (entityManager) => {
     for (const tr of transactions) {
