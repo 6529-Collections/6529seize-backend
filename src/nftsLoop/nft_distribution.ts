@@ -12,13 +12,10 @@ export async function updateDistributionInfoFor<T extends BaseNFT>(
   const missingInfo: { contract: string; card_id: number }[] =
     await getDataSource().manager.query(
       `SELECT DISTINCT contract, card_id
-        FROM (
-          SELECT contract, card_id, 1 AS tag FROM ${table} WHERE card_name IS NULL
-          UNION ALL
-          SELECT contract, card_id, 2 AS tag FROM ${table} WHERE card_name = ''
-          UNION ALL
-          SELECT contract, card_id, 3 AS tag FROM ${table} WHERE mint_date IS NULL
-        ) AS u`
+     FROM ${table}
+     WHERE card_name IS NULL
+        OR card_name = ''
+        OR mint_date IS NULL`
     );
 
   if (missingInfo.length === 0) {
