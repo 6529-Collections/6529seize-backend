@@ -311,9 +311,19 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
     profileId: string;
     givenGroups?: string[];
   }): Promise<string[]> {
-    const sql = `select distinct ug.id as group_id from ${PROFILE_GROUPS_TABLE} pg join ${USER_GROUPS_TABLE} ug on ug.profile_group_id = pg.profile_group_id where ${
-      givenGroups?.length ? `ug.id in (:givenGroups) and ` : ``
-    } pg.profile_id = :profileId and ug.visible`;
+    const sql = `
+    select distinct ug.id as group_id 
+    from (
+      select profile_group_id 
+      from ${PROFILE_GROUPS_TABLE} 
+      where profile_id = :profileId
+    ) pg
+    inner join ${USER_GROUPS_TABLE} ug 
+      on ug.profile_group_id = pg.profile_group_id
+      and ug.visible = 1
+      ${givenGroups?.length ? 'and ug.id in (:givenGroups)' : ''}
+  `.trim();
+
     return this.db
       .execute<{
         group_id: string;
