@@ -3,6 +3,8 @@ import { USER_GROUPS_TABLE } from '../constants';
 
 @Entity(USER_GROUPS_TABLE)
 @Index(['id', 'visible'])
+@Index(['profile_group_id', 'visible', 'id'])
+@Index(['excluded_profile_group_id', 'id'])
 export class UserGroupEntity {
   @PrimaryColumn({ type: 'varchar', length: 200, nullable: false })
   readonly id!: string;
