@@ -93,46 +93,84 @@ const fetchWithRetries = async <T>(
   return null;
 };
 
-const getBestOfferForToken = async (
-  collectionSlug: string,
-  tokenId: number
-): Promise<PriceResponse> => {
-  const url = `https://api.opensea.io/api/v2/offers/collection/${collectionSlug}/nfts/${tokenId}/best`;
+interface OpenSeaCollectionListingsResponse {
+  listings: (OpenSeaBestListingResponse & { asset: { token_id: string } })[];
+  next: string | null;
+}
 
-  const data = await fetchWithRetries<OpenSeaBestOfferResponse>(url);
+interface OpenSeaCollectionOffersResponse {
+  offers: (OpenSeaBestOfferResponse & { asset: { token_id: string } })[];
+  next: string | null;
+}
 
-  if (!data) {
-    return { price: 0, maker: null };
-  }
+const fetchBestListingsForCollection = async (
+  collectionSlug: string
+): Promise<Map<number, PriceResponse>> => {
+  const baseUrl = `https://api.opensea.io/api/v2/listings/collection/${collectionSlug}/best?limit=100`;
+  const listings = new Map<number, PriceResponse>();
+  let next: string | null = null;
 
-  return {
-    price:
-      data?.price?.value && data.price.decimals
-        ? Number(data.price.value) / 10 ** data.price.decimals
-        : 0,
-    maker: data?.protocol_data?.parameters?.offerer ?? null
-  };
+  do {
+    const url = next ? `${baseUrl}&next=${encodeURIComponent(next)}` : baseUrl;
+    const data = await fetchWithRetries<OpenSeaCollectionListingsResponse>(url);
+    if (!data) {
+      break;
+    }
+
+    for (const listing of data.listings || []) {
+      const tokenId = Number(
+        listing.asset?.token_id ??
+          listing.protocol_data?.parameters?.offer?.[0]?.identifierOrCriteria
+      );
+      if (!Number.isNaN(tokenId)) {
+        const price =
+          listing.price?.current?.value && listing.price.current.decimals
+            ? Number(listing.price.current.value) /
+              10 ** listing.price.current.decimals
+            : 0;
+        const maker = listing.protocol_data?.parameters?.offerer ?? null;
+        listings.set(tokenId, { price, maker });
+      }
+    }
+    next = data.next ?? null;
+  } while (next);
+
+  return listings;
 };
 
-const getBestListingForToken = async (
-  collectionSlug: string,
-  tokenId: number
-): Promise<PriceResponse> => {
-  const url = `https://api.opensea.io/api/v2/listings/collection/${collectionSlug}/nfts/${tokenId}/best`;
+const fetchBestOffersForCollection = async (
+  collectionSlug: string
+): Promise<Map<number, PriceResponse>> => {
+  const baseUrl = `https://api.opensea.io/api/v2/offers/collection/${collectionSlug}/best?limit=100`;
+  const offers = new Map<number, PriceResponse>();
+  let next: string | null = null;
 
-  const data = await fetchWithRetries<OpenSeaBestListingResponse>(url);
+  do {
+    const url = next ? `${baseUrl}&next=${encodeURIComponent(next)}` : baseUrl;
+    const data = await fetchWithRetries<OpenSeaCollectionOffersResponse>(url);
+    if (!data) {
+      break;
+    }
 
-  if (!data) {
-    return { price: 0, maker: null };
-  }
+    for (const offer of data.offers || []) {
+      const tokenId = Number(
+        offer.asset?.token_id ??
+          offer.protocol_data?.parameters?.consideration?.[0]
+            ?.identifierOrCriteria
+      );
+      if (!Number.isNaN(tokenId)) {
+        const price =
+          offer.price?.value && offer.price.decimals
+            ? Number(offer.price.value) / 10 ** offer.price.decimals
+            : 0;
+        const maker = offer.protocol_data?.parameters?.offerer ?? null;
+        offers.set(tokenId, { price, maker });
+      }
+    }
+    next = data.next ?? null;
+  } while (next);
 
-  return {
-    price:
-      data?.price?.current?.value && data.price.current.decimals
-        ? Number(data.price.current.value) / 10 ** data.price.current.decimals
-        : 0,
-    maker: data?.protocol_data?.parameters?.offerer ?? null
-  };
+  return offers;
 };
 
 export const findNftMarketStats = async (contract: string) => {
@@ -159,6 +197,11 @@ export const findNftMarketStats = async (contract: string) => {
     `[COLLECTION ${collectionSlug}] [PROCESSING STATS FOR ${nfts.length} NFTS IN ${totalBatches} BATCHES]`
   );
 
+  const [offersMap, listingsMap] = await Promise.all([
+    fetchBestOffersForCollection(collectionSlug),
+    fetchBestListingsForCollection(collectionSlug)
+  ]);
+
   for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
     const start = batchIndex * BATCH_SIZE;
     const end = start + BATCH_SIZE;
@@ -168,11 +211,11 @@ export const findNftMarketStats = async (contract: string) => {
 
     await Promise.all(
       batch.map(async (nft) => {
-        const bestOffer = await getBestOfferForToken(collectionSlug, nft.id);
-        const bestListing = await getBestListingForToken(
-          collectionSlug,
-          nft.id
-        );
+        const bestOffer = offersMap.get(nft.id) ?? { price: 0, maker: null };
+        const bestListing = listingsMap.get(nft.id) ?? {
+          price: 0,
+          maker: null
+        };
 
         logger.debug(
           `[NFT ${nft.id}] [BEST OFFER: ${bestOffer.price}] [BEST LISTING: ${bestListing.price}]`
