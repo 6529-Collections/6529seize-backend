@@ -11,6 +11,8 @@ import { WaveEntity } from '../entities/IWave';
 const logger = Logger.get('PUSH_NOTIFICATIONS_HANDLER');
 
 const sqsHandler: SQSHandler = async (event): Promise<SQSBatchResponse> => {
+  logger.info(`Received ${event.Records.length} messages`);
+
   const failedItems: { itemIdentifier: string }[] = [];
 
   await doInDbContext(
