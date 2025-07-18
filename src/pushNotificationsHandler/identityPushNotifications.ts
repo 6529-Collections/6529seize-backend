@@ -26,7 +26,8 @@ export async function sendIdentityNotification(id: number) {
     .getRepository(IdentityNotificationEntity)
     .findOneBy({ id });
   if (!notification) {
-    throw new Error(`Notification not found: ${id}`);
+    logger.error(`Notification not found: ${id}`);
+    return;
   }
 
   if (notification.read_at) {
