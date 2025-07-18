@@ -4,19 +4,29 @@ import * as sentryContext from '../sentry.context';
 import { IdentityNotificationEntity } from '../entities/IIdentityNotification';
 import { DropEntity, DropPartEntity } from '../entities/IDrop';
 import { PushNotificationDevice } from '../entities/IPushNotification';
-import { SQSHandler } from 'aws-lambda';
+import { SQSBatchResponse, SQSHandler } from 'aws-lambda';
 import { sendIdentityNotification } from './identityPushNotifications';
 import { WaveEntity } from '../entities/IWave';
 
 const logger = Logger.get('PUSH_NOTIFICATIONS_HANDLER');
 
-const sqsHandler: SQSHandler = async (event) => {
+const sqsHandler: SQSHandler = async (event): Promise<SQSBatchResponse> => {
+  const failedItems: { itemIdentifier: string }[] = [];
+
   await doInDbContext(
     async () => {
       await Promise.all(
         event.Records.map(async (record) => {
-          const messageBody = record.body;
-          await processNotification(messageBody);
+          try {
+            const messageBody = record.body;
+            await processNotification(messageBody);
+          } catch (err) {
+            logger.error('Failed processing record', {
+              error: err,
+              messageId: record.messageId
+            });
+            failedItems.push({ itemIdentifier: record.messageId });
+          }
         })
       );
     },
@@ -31,6 +41,8 @@ const sqsHandler: SQSHandler = async (event) => {
       ]
     }
   );
+
+  return { batchItemFailures: failedItems };
 };
 
 const processNotification = async (messageBody: string) => {

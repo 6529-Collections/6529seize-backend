@@ -23,7 +23,8 @@ functions:
       - sqs:
           arn:
             Fn::GetAtt: [FirebasePushNotificationsQueue, Arn]
-          batchSize: 1
+          batchSize: 5
+          functionResponseType: ReportBatchItemFailures
     vpc:
       securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
       subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
