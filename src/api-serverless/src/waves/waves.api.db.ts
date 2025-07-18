@@ -1368,7 +1368,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       `${this.constructor.name}->findIdentityParticipationDropsCountByWaveId`
     );
     const dbresult = await this.db.execute<{ wave_id: string; cnt: number }>(
-      `select d.wave_id as wave_id, count(d.id) as cnt from ${DROPS_TABLE} d where d.wave_id in (:waveIds) and d.author_id = :identityId and d.drop_type in ('${DropType.PARTICIPATORY}', '${DropType.WINNER}') group by 1`,
+      `select d.wave_id as wave_id, count(d.id) as cnt from ${DROPS_TABLE} d where d.wave_id in (:waveIds) and d.author_id = :identityId and d.drop_type = '${DropType.PARTICIPATORY}' group by 1`,
       param,
       { wrappedConnection: ctx.connection }
     );
