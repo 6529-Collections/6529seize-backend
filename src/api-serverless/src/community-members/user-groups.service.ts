@@ -195,7 +195,7 @@ export class UserGroupsService {
     return await this.save(userGroup, creatorProfile.id!, ctx, true);
   }
 
-  public async whichOfGivenGroupsIsUserEligibleFor(
+  private async whichOfGivenGroupsIsUserEligibleFor(
     {
       profileId,
       givenGroups
@@ -416,19 +416,13 @@ export class UserGroupsService {
     groupsWhereUserIsInByIdentity: UserGroupEntity[];
     groupsInNeedOfAdditionalCheck: UserGroupEntity[];
   }> {
-    const [
+    const {
       groupsIdsUserIsEligibleByIdentity,
       groupIdsUserIsBannedFromByIdentity
-    ] = await Promise.all([
-      this.userGroupsDb.getGroupsUserIsEligibleByIdentity({
-        profileId: profile.profile_id,
-        givenGroups: groups.map((it) => it.id)
-      }),
-      this.userGroupsDb.getGroupsUserIsExcludedFromByIdentity({
-        profileId: profile.profile_id,
-        givenGroups: groups.map((it) => it.id)
-      })
-    ]);
+    } = await this.getGroupsUserIsDirectlyInvolvedIn({
+      profileId: profile.profile_id,
+      candidates: groups.map((it) => it.id)
+    });
 
     const nonBannedGroups = groups.filter(
       (it) => !groupIdsUserIsBannedFromByIdentity.includes(it.id)
@@ -446,22 +440,64 @@ export class UserGroupsService {
     };
   }
 
-  public invalidateGroupsUserIsEligibleFor(profileId: string) {
+  private async getGroupsUserIsDirectlyInvolvedIn({
+    profileId,
+    candidates
+  }: {
+    profileId: string;
+    candidates: string[];
+  }): Promise<{
+    groupsIdsUserIsEligibleByIdentity: string[];
+    groupIdsUserIsBannedFromByIdentity: string[];
+  }> {
+    const [
+      groupsIdsUserIsEligibleByIdentity,
+      groupIdsUserIsBannedFromByIdentity
+    ] = await Promise.all([
+      this.userGroupsDb.getGroupsUserIsEligibleByIdentity({
+        profileId
+      }),
+      this.userGroupsDb.getGroupsUserIsExcludedFromByIdentity({
+        profileId
+      })
+    ]);
+
+    return {
+      groupsIdsUserIsEligibleByIdentity:
+        groupsIdsUserIsEligibleByIdentity.filter((it) =>
+          candidates.includes(it)
+        ),
+      groupIdsUserIsBannedFromByIdentity:
+        groupIdsUserIsBannedFromByIdentity.filter((it) =>
+          candidates.includes(it)
+        )
+    };
+  }
+
+  public async invalidateGroupsUserIsEligibleFor(profileId: string) {
     const key = `eligible-groups-${profileId}`;
     mcache.del(key);
   }
 
   public async getGroupsUserIsEligibleFor(
     profileId: string | null,
-    timer?: Timer
+    timer?: Timer | undefined
   ): Promise<string[]> {
     if (!profileId) {
       return [];
     }
     const key = `eligible-groups-${profileId}`;
-    const cachedGroupsUserIsEligibleFor = mcache.get(key);
-    if (cachedGroupsUserIsEligibleFor) {
-      return cachedGroupsUserIsEligibleFor;
+    const ignoreCache = profileId
+      ? await this.userGroupsDb.profileHasRecentGroupChanges(
+          profileId,
+          Time.minutes(1)
+        )
+      : false;
+    if (!ignoreCache) {
+      const cachedGroupsUserIsEligibleFor = mcache.get(key);
+      if (cachedGroupsUserIsEligibleFor) {
+        return cachedGroupsUserIsEligibleFor;
+      }
     }
     const timerKey = 'getGroupsUserIsEligibleFor';
     timer?.start(timerKey);

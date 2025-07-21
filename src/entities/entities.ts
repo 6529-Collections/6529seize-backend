@@ -64,6 +64,7 @@ export { ProfileGroupEntity } from './IProfileGroup';
 export { ProfileLatestLogEntity } from './IProfileLatestLog';
 export { ProfileProxyEntity } from './IProfileProxy';
 export { ProfileProxyActionEntity } from './IProfileProxyAction';
+export { ProfileGroupChangeEntity } from './IProfileGroupChangeEntity';
 export { PushNotificationDevice } from './IPushNotification';
 export { Rating } from './IRating';
 export { RefreshToken } from './IRefreshToken';

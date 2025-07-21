@@ -16,7 +16,7 @@ export class ActivityEventEntity {
   readonly action!: ActivityEventAction;
   @Column({ type: 'json', nullable: false })
   readonly data!: string;
-  @Column({ type: 'varchar', length: 50, nullable: true, default: null })
+  @Column({ type: 'varchar', length: 100, nullable: true, default: null })
   readonly visibility_group_id!: string | null;
   @Column({ type: 'bigint', nullable: false })
   readonly created_at!: number;
