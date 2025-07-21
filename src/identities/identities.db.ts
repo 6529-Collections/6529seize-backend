@@ -389,54 +389,50 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     ctx: RequestContext
   ): Promise<(IdentityEntity & { display: string | null })[]> {
     ctx.timer?.start(`${this.constructor.name}->searchIdentities`);
-    if (base === null) {
-      const results = await this.db.execute<
-        IdentityEntity & { display: string | null }
-      >(
-        `
-      select i.*, cwt.consolidation_display as display from ${IDENTITIES_TABLE} i
-       left join ${CONSOLIDATED_WALLETS_TDH_TABLE} cwt on i.consolidation_key = cwt.consolidation_key
-       where i.normalised_handle like :likeHandle
-       order by locate(:handle, i.normalised_handle) asc
-       limit :limit
-    `,
-        {
-          limit: param.limit,
-          likeHandle: `%${param.handle.toLowerCase()}%`,
-          handle: param.handle.toLowerCase()
-        },
-        {
-          wrappedConnection: ctx.connection
-        }
-      );
-      ctx.timer?.stop(`${this.constructor.name}->searchIdentities`);
-      return results;
-    } else {
-      const results = await this.db.execute<
-        IdentityEntity & { display: string | null }
-      >(
-        `
-      ${base.sql}
-      select i.*, cwt.consolidation_display as display from ${IDENTITIES_TABLE} i
-       join user_groups_view ug on i.profile_id = ug.profile_id
-       left join ${CONSOLIDATED_WALLETS_TDH_TABLE} cwt on i.consolidation_key = cwt.consolidation_key
-       where i.normalised_handle like :likeHandle
-       order by locate(:handle, i.normalised_handle) asc
-       limit :limit
-    `,
-        {
-          ...base.params,
-          limit: param.limit,
-          likeHandle: `%${param.handle.toLowerCase()}%`,
-          handle: param.handle.toLowerCase()
-        },
-        {
-          wrappedConnection: ctx.connection
-        }
-      );
-      ctx.timer?.stop(`${this.constructor.name}->searchIdentities`);
-      return results;
-    }
+
+    const likeHandle = `%${param.handle.toLowerCase()}%`;
+    const prefixHandle = `${param.handle.toLowerCase()}%`;
+    const handle = param.handle.toLowerCase();
+
+    const commonParams = {
+      limit: param.limit,
+      likeHandle,
+      prefixHandle,
+      handle
+    };
+
+    const prelude = base?.sql ?? '';
+    const join = base
+      ? `join user_groups_view ug on i.profile_id = ug.profile_id`
+      : '';
+
+    const query = `
+    ${prelude}
+    select i.*, cwt.consolidation_display as display
+    from ${IDENTITIES_TABLE} i
+    ${join}
+    left join ${CONSOLIDATED_WALLETS_TDH_TABLE} cwt
+      on i.consolidation_key = cwt.consolidation_key
+    where i.normalised_handle like :likeHandle
+    order by
+      (i.normalised_handle = :handle) desc,
+      (i.normalised_handle like :prefixHandle) desc,
+      char_length(i.normalised_handle) asc,
+      locate(:handle, i.normalised_handle) asc
+    limit :limit
+  `;
+
+    const queryParams = {
+      ...(base?.params ?? {}),
+      ...commonParams
+    };
+
+    const results = await this.db.execute<
+      IdentityEntity & { display: string | null }
+    >(query, queryParams, { wrappedConnection: ctx.connection });
+
+    ctx.timer?.stop(`${this.constructor.name}->searchIdentities`);
+    return results;
   }
 
   async getProfileIdByWallet(
