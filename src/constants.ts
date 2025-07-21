@@ -116,6 +116,7 @@ export const DROP_METADATA_TABLE = 'drops_metadatas';
 export const DROP_MEDIA_TABLE = 'drop_medias';
 
 export const COOKIES_CONSENT_TABLE = 'cookies_consent';
+export const PROFILE_GROUP_CHANGES = 'profile_group_changes';
 export const EULA_CONSENT_TABLE = 'eula_consent';
 export const ETH_PRICE_TABLE = 'eth_price';
 
