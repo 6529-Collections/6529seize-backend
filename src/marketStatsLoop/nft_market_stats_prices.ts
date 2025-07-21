@@ -154,7 +154,7 @@ function processEntry<T>(
     ?.find((item) => item.itemType === requiredItemType);
   if (!nftItem) {
     logger.warn(
-      `[OPENSEA] No itemType=${requiredItemType} item found in ${config.itemLabel.slice(0, -1)}: ${JSON.stringify(entry)}`
+      `[OPENSEA] No itemType=${requiredItemType} item found in ${config.itemLabel.slice(0, -1)}`
     );
     return;
   }
