@@ -121,41 +121,15 @@ async function fetchBestPricesForCollection<T>(
   let next: string | null = null;
 
   do {
-    const url: string = next
-      ? `${baseUrl}&next=${encodeURIComponent(next)}`
-      : baseUrl;
+    const url = buildUrl(baseUrl, next);
     const data = await fetchWithRetries<
       { next?: string | null } & Record<string, T[]>
     >(url);
     if (!data) break;
 
-    const entries = (data[config.itemLabel] || []) as T[];
-
+    const entries = data[config.itemLabel] || [];
     for (const entry of entries) {
-      const nftItem = config
-        .extractItems(entry)
-        ?.find((item) => item.itemType === requiredItemType);
-      if (!nftItem) {
-        logger.warn(
-          `[OPENSEA] No itemType=${requiredItemType} item found in ${config.itemLabel.slice(0, -1)}: ${JSON.stringify(entry)}`
-        );
-        continue;
-      }
-
-      const tokenIdStr = nftItem.identifierOrCriteria;
-      const tokenAmountStr = nftItem.startAmount;
-      const tokenId = Number(tokenIdStr);
-      if (Number.isNaN(tokenId)) continue;
-
-      const tokenAmount = Number.isNaN(tokenAmountStr)
-        ? 1
-        : Number(tokenAmountStr);
-      const price = config.getPriceForAll(entry) / tokenAmount;
-      const maker = config.getMaker(entry);
-      const existing = results.get(tokenIdStr);
-      if (!existing || config.isBetterPrice(price, existing.price)) {
-        results.set(tokenIdStr, { price, maker });
-      }
+      processEntry(entry, requiredItemType, config, results);
     }
 
     next = data.next ?? null;
@@ -165,7 +139,41 @@ async function fetchBestPricesForCollection<T>(
   return results;
 }
 
-// Wrappers
+function buildUrl(baseUrl: string, next: string | null): string {
+  return next ? `${baseUrl}&next=${encodeURIComponent(next)}` : baseUrl;
+}
+
+function processEntry<T>(
+  entry: T,
+  requiredItemType: number,
+  config: FetchConfig<T>,
+  results: Map<string, PriceResponse>
+) {
+  const nftItem = config
+    .extractItems(entry)
+    ?.find((item) => item.itemType === requiredItemType);
+  if (!nftItem) {
+    logger.warn(
+      `[OPENSEA] No itemType=${requiredItemType} item found in ${config.itemLabel.slice(0, -1)}: ${JSON.stringify(entry)}`
+    );
+    return;
+  }
+
+  const tokenIdStr = nftItem.identifierOrCriteria;
+  const tokenId = Number(tokenIdStr);
+  if (Number.isNaN(tokenId)) return;
+
+  const tokenAmount = Number.isNaN(nftItem.startAmount)
+    ? 1
+    : Number(nftItem.startAmount);
+  const price = config.getPriceForAll(entry) / tokenAmount;
+  const maker = config.getMaker(entry);
+  const existing = results.get(tokenIdStr);
+
+  if (!existing || config.isBetterPrice(price, existing.price)) {
+    results.set(tokenIdStr, { price, maker });
+  }
+}
 
 export const fetchBestListingsForCollection = (
   collectionSlug: string,
