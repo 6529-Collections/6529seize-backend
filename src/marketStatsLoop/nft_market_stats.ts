@@ -76,10 +76,6 @@ export const findNftMarketStats = async (contract: string) => {
           maker: null
         };
 
-        logger.info(
-          `[NFT ${nft.id}] [BEST OFFER: ${bestOffer.price}] [BEST LISTING: ${bestListing.price}]`
-        );
-
         const volumes = await findVolume(nft.id, contract);
         updateNftVolumeStats(nft, volumes);
         updateNftMarketStats(nft, bestListing, bestOffer);
