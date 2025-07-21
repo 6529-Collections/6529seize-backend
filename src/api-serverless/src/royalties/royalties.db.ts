@@ -120,7 +120,7 @@ export function getRoyaltiesSql(
       ${nftsTable}.contract, 
       ${nftsTable}.name, 
       ${nftsTable}.artist, 
-      ${nftsTable}.thumbnail`;
+      ${nftsTable}.icon as thumbnail`;
 
   const cases = `
     CASE WHEN 
