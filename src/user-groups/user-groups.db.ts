@@ -9,6 +9,7 @@ import {
   IDENTITIES_TABLE,
   IDENTITY_SUBSCRIPTIONS_TABLE,
   NFT_OWNERS_TABLE,
+  PROFILE_GROUP_CHANGES,
   PROFILE_GROUPS_TABLE,
   RATINGS_TABLE,
   USER_GROUPS_TABLE
@@ -19,6 +20,8 @@ import { identitiesDb } from '../identities/identities.db';
 import { RequestContext } from '../request.context';
 import { IdentityEntity } from '../entities/IIdentity';
 import { collections } from '../collections';
+import { Time } from '../time';
+import { DbPoolName } from '../db-query.options';
 
 const mysql = require('mysql');
 
@@ -139,6 +142,7 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
           (it) => !alreadyInsertedProfileIds.includes(it)
         );
         if (missingProfileIds.length) {
+          await this.insertGroupChanges(missingProfileIds);
           let sql = `insert into ${PROFILE_GROUPS_TABLE} (profile_group_id, profile_id)
                  values `;
           for (const profileId of missingProfileIds) {
@@ -305,11 +309,9 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
   }
 
   async getGroupsUserIsEligibleByIdentity({
-    profileId,
-    givenGroups
+    profileId
   }: {
     profileId: string;
-    givenGroups?: string[];
   }): Promise<string[]> {
     const sql = `
     select distinct ug.id as group_id 
@@ -320,23 +322,20 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
     ) pg
     inner join ${USER_GROUPS_TABLE} ug 
       on ug.profile_group_id = pg.profile_group_id
-      and ug.visible = 1
-      ${givenGroups?.length ? 'and ug.id in (:givenGroups)' : ''}
+      and ug.visible = 1;
   `.trim();
 
     return this.db
       .execute<{
         group_id: string;
-      }>(sql, { profileId, givenGroups })
+      }>(sql, { profileId })
       .then((res) => res.map((it) => it.group_id));
   }
 
   async getGroupsUserIsExcludedFromByIdentity({
-    profileId,
-    givenGroups
+    profileId
   }: {
     profileId: string;
-    givenGroups?: string[];
   }): Promise<string[]> {
     const sql = `
     select distinct ug.id as group_id
@@ -347,13 +346,12 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
     ) pg
     inner join ${USER_GROUPS_TABLE} ug 
       on ug.excluded_profile_group_id = pg.profile_group_id
-      ${givenGroups?.length ? 'and ug.id in (:givenGroups)' : ''}
   `.trim();
 
     return this.db
       .execute<{
         group_id: string;
-      }>(sql, { profileId, givenGroups })
+      }>(sql, { profileId })
       .then((res) => res.map((it) => it.group_id));
   }
   async getRatings(
@@ -588,6 +586,7 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
     if (!profileIds.length) {
       return;
     }
+    await this.insertGroupChanges(profileIds);
     await this.db.execute(
       `delete from ${PROFILE_GROUPS_TABLE} where profile_id in (:profileIds)`,
       { profileIds },
@@ -609,6 +608,7 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
           `(${mysql.escape(profileGroupId)}, ${mysql.escape(targetIdentity)}) `
       )
       .join(',')}`;
+    await this.insertGroupChanges([targetIdentity]);
     await this.db.execute(sql, undefined, {
       wrappedConnection: connection
     });
@@ -763,6 +763,27 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
     });
 
     return results[0] ?? null;
+  }
+
+  async profileHasRecentGroupChanges(profileId: string, interval: Time) {
+    return await this.db
+      .oneOrNull<{
+        profile_id: string;
+      }>(
+        `select profile_id from ${PROFILE_GROUP_CHANGES} where profile_id = :profileId and chg_time > :limit limit 1`,
+        { limit: Time.now().minus(interval).toMillis(), profileId },
+        { forcePool: DbPoolName.WRITE }
+      )
+      .then((it) => {
+        return !!it?.profile_id;
+      });
+  }
+
+  async insertGroupChanges(profileIds: string[]) {
+    if (!profileIds.length) return null;
+    const currentMillis = Time.currentMillis();
+    const sql = `INSERT INTO ${PROFILE_GROUP_CHANGES} (profile_id, chg_time) values ${profileIds.map((profileId) => `(${mysql.escape(profileId)}, ${currentMillis})`).join(', ')}`;
+    await this.db.execute(sql);
   }
 }
 
