@@ -19,6 +19,7 @@ import { ApiRedeemRefreshTokenResponse } from '../generated/models/ApiRedeemRefr
 import { identityFetcher } from '../identities/identity.fetcher';
 import { Timer } from '../../../time';
 import { authDb } from './auth.db';
+import { env } from '../../../env';
 
 const router = asyncRouter();
 
@@ -73,10 +74,21 @@ router.post(
   ) {
     const timer = Timer.getFromRequest(req);
     const loginRequest = getValidatedByJoiOrThrow(req.body, LoginRequestSchema);
-    const { server_signature, client_signature, role } = loginRequest;
+    const {
+      server_signature,
+      client_signature,
+      role,
+      client_address,
+      is_safe_wallet
+    } = loginRequest;
     try {
       const nonce = verifyServerSignature(server_signature);
-      const signingAddress = verifyClientSignature(nonce, client_signature);
+      const signingAddress = await verifyClientSignature(
+        nonce,
+        client_signature,
+        client_address,
+        is_safe_wallet
+      );
       const signingProfile = await identityFetcher.getProfileIdByIdentityKey(
         { identityKey: signingAddress },
         { timer }
@@ -172,21 +184,64 @@ function verifyServerSignature(serverSignature: string): string {
   return nonce;
 }
 
-function verifyClientSignature(nonce: string, clientSignature: string): string {
-  const signingAddress = ethers.utils
-    .verifyMessage(nonce, clientSignature)
-    ?.toLowerCase();
-  if (!signingAddress) {
-    throw new Error('Invalid client signature');
+async function verifyClientSignature(
+  nonce: string,
+  clientSignature: string,
+  clientAddress: string,
+  isSafeWallet: boolean
+): Promise<string> {
+  if (isSafeWallet) {
+    if (!clientAddress) {
+      throw new BadRequestException(
+        `client_address is mandatory in safe signatures`
+      );
+    }
+    const messageHash = ethers.utils.hashMessage(nonce); // returns bytes32
+
+    const EIP1271_ABI = [
+      'function isValidSignature(bytes32 _messageHash, bytes _signature) public view returns (bytes4)'
+    ];
+
+    const provider = new ethers.providers.JsonRpcProvider(
+      `https://eth-mainnet.alchemyapi.io/v2/${env.getStringOrThrow(`ALCHEMY_API_KEY`)}`
+    );
+    const safeContract = new ethers.Contract(
+      clientAddress,
+      EIP1271_ABI,
+      provider
+    );
+    const result = await safeContract.isValidSignature(
+      messageHash,
+      clientSignature
+    );
+    const MAGIC_VALUE = '0x1626ba7e';
+
+    if (result === MAGIC_VALUE) {
+      return clientAddress;
+    } else {
+      throw new Error('Invalid client signature');
+    }
+  } else {
+    const signingAddress = ethers.utils
+      .verifyMessage(nonce, clientSignature)
+      ?.toLowerCase();
+    if (
+      !signingAddress ||
+      (clientAddress && signingAddress !== clientAddress)
+    ) {
+      throw new Error('Invalid client signature');
+    }
+    return signingAddress;
   }
-  return signingAddress;
 }
 
 const LoginRequestSchema: Joi.ObjectSchema<ApiLoginRequest> =
   Joi.object<ApiLoginRequest>({
     server_signature: Joi.string().required(),
     client_signature: Joi.string().required(),
-    role: Joi.string().optional()
+    role: Joi.string().optional(),
+    client_address: Joi.string().optional().allow(null).default(null),
+    is_safe_wallet: Joi.boolean().optional().default(false)
   });
 
 interface ApiLoginResponse {
