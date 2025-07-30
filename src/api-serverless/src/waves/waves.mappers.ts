@@ -191,7 +191,8 @@ export class WavesMappers {
       metrics,
       authenticatedUserMetrics,
       yourParticipationDropsCountByWaveId,
-      wavePauses
+      wavePauses,
+      pinnedWaveIds
     } = await this.getRelatedData(waveEntities, groupIdsUserIsEligibleFor, ctx);
     return waveEntities.map<ApiWave>((waveEntity) =>
       this.mapWaveEntityToApiWave({
@@ -207,7 +208,8 @@ export class WavesMappers {
         metrics,
         authenticatedUserMetrics,
         yourParticipationDropsCountByWaveId,
-        wavePauses
+        wavePauses,
+        pinnedWaveIds
       })
     );
   }
@@ -225,7 +227,8 @@ export class WavesMappers {
     metrics,
     authenticatedUserMetrics,
     yourParticipationDropsCountByWaveId,
-    wavePauses
+    wavePauses,
+    pinnedWaveIds
   }: {
     waveEntity: WaveEntity;
     profiles: Record<string, ApiProfileMin>;
@@ -246,6 +249,7 @@ export class WavesMappers {
     authenticatedUserMetrics: Record<string, WaveDropperMetricEntity>;
     yourParticipationDropsCountByWaveId: Record<string, number>;
     wavePauses: Record<string, WaveDecisionPauseEntity[]>;
+    pinnedWaveIds: Set<string>;
   }): ApiWave {
     const contributorsOverview: ApiWaveContributorOverview[] =
       contributors[waveEntity.id]?.map((it) => ({
@@ -378,7 +382,8 @@ export class WavesMappers {
       outcomes: JSON.parse(waveEntity.outcomes),
       subscribed_actions: subscribedActions[waveEntity.id] ?? [],
       metrics: apiWaveMetrics,
-      pauses
+      pauses,
+      pinned: pinnedWaveIds.has(waveEntity.id)
     };
   }
 
@@ -399,6 +404,7 @@ export class WavesMappers {
     authenticatedUserMetrics: Record<string, WaveDropperMetricEntity>;
     yourParticipationDropsCountByWaveId: Record<string, number>;
     wavePauses: Record<string, WaveDecisionPauseEntity[]>;
+    pinnedWaveIds: Set<string>;
   }> {
     ctx.timer?.start('wavesMappers->getRelatedData');
     const waveIds = waveEntities.map((it) => it.id);
@@ -415,7 +421,8 @@ export class WavesMappers {
       creationDropsByDropId,
       subscribedActions,
       yourParticipationDropsCountByWaveId,
-      wavePauses
+      wavePauses,
+      pinnedWaveIds
     ] = await Promise.all([
       this.userGroupsService.getByIds(
         waveEntities
@@ -479,7 +486,14 @@ export class WavesMappers {
             ctx
           )
         : Promise.resolve({} as Record<string, number>),
-      this.wavesApiDb.getWavesPauses(waveIds, ctx)
+      this.wavesApiDb.getWavesPauses(waveIds, ctx),
+      this.wavesApiDb.whichOfWavesArePinnedByGivenProfile(
+        {
+          waveIds,
+          profileId: authenticatedUserId
+        },
+        ctx
+      )
     ]);
     const profileIds = collections.distinct([
       ...waveEntities
@@ -538,7 +552,8 @@ export class WavesMappers {
       metrics,
       authenticatedUserMetrics,
       yourParticipationDropsCountByWaveId,
-      wavePauses
+      wavePauses,
+      pinnedWaveIds
     };
   }
 }

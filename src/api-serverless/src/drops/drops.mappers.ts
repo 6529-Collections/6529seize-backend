@@ -169,10 +169,17 @@ export class DropsMappers {
         ? AuthenticationContext.fromProfileId(contextProfileId)
         : AuthenticationContext.notAuthenticated()
     });
-    const waveOverviews = await this.wavesApiDb.getWavesByDropIds(
-      dropEntities.map((it) => it.id),
-      connection
-    );
+    const waveIds = dropEntities.map((it) => it.id);
+    const [waveOverviews, pinnedWaveIds] = await Promise.all([
+      this.wavesApiDb.getWavesByDropIds(waveIds, connection),
+      this.wavesApiDb.whichOfWavesArePinnedByGivenProfile(
+        {
+          waveIds,
+          profileId: contextProfileId
+        },
+        { connection }
+      )
+    ]);
     const group_ids_user_is_eligible_for =
       await this.userGroupsService.getGroupsUserIsEligibleFor(
         contextProfileId ?? null
@@ -212,7 +219,8 @@ export class DropsMappers {
             participation_group_id: wave.participation_group_id,
             voting_group_id: wave.voting_group_id,
             admin_drop_deletion_enabled: wave.admin_drop_deletion_enabled,
-            forbid_negative_votes: wave.forbid_negative_votes
+            forbid_negative_votes: wave.forbid_negative_votes,
+            pinned: pinnedWaveIds.has(wave.id)
           }
         : null;
       return {

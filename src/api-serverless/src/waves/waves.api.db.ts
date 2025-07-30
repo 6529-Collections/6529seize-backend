@@ -16,6 +16,7 @@ import {
   IDENTITIES_TABLE,
   IDENTITY_NOTIFICATIONS_TABLE,
   IDENTITY_SUBSCRIPTIONS_TABLE,
+  PINNED_WAVES_TABLE,
   RATINGS_TABLE,
   WAVE_DROPPER_METRICS_TABLE,
   WAVE_METRICS_TABLE,
@@ -35,6 +36,7 @@ import { ActivityEventTargetType } from '../../../entities/IActivityEvent';
 import { WaveDropperMetricEntity } from '../../../entities/IWaveDropperMetric';
 import { DropType } from '../../../entities/IDrop';
 import { Time } from '../../../time';
+import { ApiWavesPinFilter } from '../generated/models/ApiWavesPinFilter';
 
 export class WavesApiDb extends LazyDbAccessCompatibleService {
   public async findWaveById(
@@ -520,7 +522,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     eligibleGroups,
     limit,
     offset,
-    direct_message
+    direct_message,
+    pinned
   }: {
     authenticated_user_id: string | null;
     only_waves_followed_by_authenticated_user: boolean;
@@ -528,6 +531,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     limit: number;
     offset: number;
     direct_message?: boolean;
+    pinned: ApiWavesPinFilter | null;
   }): Promise<WaveEntity[]> {
     return this.db
       .execute<
@@ -545,10 +549,20 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         `
       select w.* from ${WAVES_TABLE} w
        ${
+         pinned === ApiWavesPinFilter.Pinned && authenticated_user_id
+           ? ` join ${PINNED_WAVES_TABLE} pw on pw.wave_id = w.id and pw.profile_id = :authenticated_user_id `
+           : ``
+       }
+       ${
+         pinned === ApiWavesPinFilter.NotPinned && authenticated_user_id
+           ? ` left join ${PINNED_WAVES_TABLE} pw on pw.wave_id = w.id and pw.profile_id = :authenticated_user_id `
+           : ``
+       }
+       ${
          only_waves_followed_by_authenticated_user
            ? `join ${IDENTITY_SUBSCRIPTIONS_TABLE} f on f.target_type = 'WAVE' and f.target_action = 'DROP_CREATED' and f.target_id = w.id`
            : ``
-       } where ${
+       } where ${pinned === ApiWavesPinFilter.NotPinned && authenticated_user_id ? ` pw.profile_id is null and ` : ``} ${
          only_waves_followed_by_authenticated_user
            ? `f.subscriber_id = :authenticated_user_id and`
            : ``
@@ -586,7 +600,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     eligibleGroups,
     limit,
     offset,
-    direct_message
+    direct_message,
+    pinned
   }: {
     only_waves_followed_by_authenticated_user: boolean;
     authenticated_user_id: string | null;
@@ -594,6 +609,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     limit: number;
     offset: number;
     direct_message?: boolean;
+    pinned: ApiWavesPinFilter | null;
   }): Promise<WaveEntity[]> {
     return this.db
       .execute<
@@ -611,12 +627,23 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         `
       select w.* from ${WAVES_TABLE} w 
       ${
+        pinned === ApiWavesPinFilter.Pinned && authenticated_user_id
+          ? ` join ${PINNED_WAVES_TABLE} pw on pw.wave_id = w.id and pw.profile_id = :authenticated_user_id `
+          : ``
+      }
+       ${
+         pinned === ApiWavesPinFilter.NotPinned && authenticated_user_id
+           ? ` left join ${PINNED_WAVES_TABLE} pw on pw.wave_id = w.id and pw.profile_id = :authenticated_user_id `
+           : ``
+       }
+      ${
         only_waves_followed_by_authenticated_user
           ? `join ${IDENTITY_SUBSCRIPTIONS_TABLE} f on f.target_type = 'WAVE' and f.target_action = 'DROP_CREATED' and f.target_id = w.id`
           : ``
       }
       join ${IDENTITIES_TABLE} i on w.created_by = i.profile_id
       where
+      ${pinned === ApiWavesPinFilter.NotPinned && authenticated_user_id ? ` pw.profile_id is null and ` : ``}
         ${
           only_waves_followed_by_authenticated_user
             ? `f.subscriber_id = :authenticated_user_id and`
@@ -662,7 +689,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     only_waves_followed_by_authenticated_user,
     limit,
     offset,
-    direct_message
+    direct_message,
+    pinned
   }: {
     eligibleGroups: string[];
     authenticatedUserId: string;
@@ -670,6 +698,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     limit: number;
     offset: number;
     direct_message?: boolean;
+    pinned: ApiWavesPinFilter | null;
   }): Promise<WaveEntity[]> {
     return this.db
       .execute<
@@ -703,20 +732,32 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                           limit :limit offset :offset)
             select wa.*
             from ${WAVES_TABLE} wa
+              ${
+                pinned === ApiWavesPinFilter.Pinned && authenticatedUserId
+                  ? ` join ${PINNED_WAVES_TABLE} pw on pw.wave_id = wa.id and pw.profile_id = :authenticatedUserId `
+                  : ``
+              }
+              ${
+                pinned === ApiWavesPinFilter.NotPinned && authenticatedUserId
+                  ? ` left join ${PINNED_WAVES_TABLE} pw on pw.wave_id = wa.id and pw.profile_id = :authenticatedUserId `
+                  : ``
+              }
                 ${
                   only_waves_followed_by_authenticated_user
                     ? `join ${IDENTITY_SUBSCRIPTIONS_TABLE} f on f.target_type = 'WAVE' and f.target_action = 'DROP_CREATED' and f.target_id = wa.id`
                     : ``
                 }
-            where ${
-              only_waves_followed_by_authenticated_user
-                ? `f.subscriber_id = :authenticatedUserId and`
-                : ``
-            }${
-              direct_message !== undefined
-                ? ` wa.is_direct_message = :direct_message and `
-                : ``
-            } wa.id in (select id from wids)
+            where
+              ${pinned === ApiWavesPinFilter.NotPinned && authenticatedUserId ? ` pw.profile_id is null and ` : ``}
+              ${
+                only_waves_followed_by_authenticated_user
+                  ? `f.subscriber_id = :authenticatedUserId and`
+                  : ``
+              }${
+                direct_message !== undefined
+                  ? ` wa.is_direct_message = :direct_message and `
+                  : ``
+              } wa.id in (select id from wids)
             order by wa.serial_no desc, wa.id
         `,
         {
@@ -748,7 +789,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     eligibleGroups,
     limit,
     offset,
-    direct_message
+    direct_message,
+    pinned
   }: {
     only_waves_followed_by_authenticated_user: boolean;
     authenticated_user_id: string | null;
@@ -756,6 +798,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     limit: number;
     offset: number;
     direct_message?: boolean;
+    pinned: ApiWavesPinFilter | null;
   }): Promise<WaveEntity[]> {
     return this.db
       .execute<
@@ -776,14 +819,25 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                                          where target_type = 'WAVE'
                                          group by target_id)
             select w.*
-            from ${WAVES_TABLE} w ${
-              only_waves_followed_by_authenticated_user
-                ? `join ${IDENTITY_SUBSCRIPTIONS_TABLE} f on f.target_type = 'WAVE' and f.target_action = 'DROP_CREATED' and f.target_id = w.id`
-                : ``
-            }
+            from ${WAVES_TABLE} w
+              ${
+                pinned === ApiWavesPinFilter.Pinned && authenticated_user_id
+                  ? ` join ${PINNED_WAVES_TABLE} pw on pw.wave_id = w.id and pw.profile_id = :authenticated_user_id `
+                  : ``
+              }
+              ${
+                pinned === ApiWavesPinFilter.NotPinned && authenticated_user_id
+                  ? ` left join ${PINNED_WAVES_TABLE} pw on pw.wave_id = w.id and pw.profile_id = :authenticated_user_id `
+                  : ``
+              }
+              ${
+                only_waves_followed_by_authenticated_user
+                  ? `join ${IDENTITY_SUBSCRIPTIONS_TABLE} f on f.target_type = 'WAVE' and f.target_action = 'DROP_CREATED' and f.target_id = w.id`
+                  : ``
+              }
                    join subscription_counts sc
             on sc.wave_id = w.id
-            where ${
+            where ${pinned === ApiWavesPinFilter.NotPinned && authenticated_user_id ? ` pw.profile_id is null and ` : ``} ${
               only_waves_followed_by_authenticated_user
                 ? `f.subscriber_id = :authenticated_user_id and`
                 : ``
@@ -1105,7 +1159,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     only_waves_followed_by_authenticated_user,
     limit,
     offset,
-    direct_message
+    direct_message,
+    pinned
   }: {
     eligibleGroups: string[];
     authenticated_user_id: string | null;
@@ -1113,6 +1168,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     only_waves_followed_by_authenticated_user: boolean;
     offset: number;
     direct_message?: boolean;
+    pinned: ApiWavesPinFilter | null;
   }): Promise<WaveEntity[]> {
     return this.db
       .execute<
@@ -1128,6 +1184,16 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         }
       >(
         `select w.* from ${WAVES_TABLE} w
+        ${
+          pinned === ApiWavesPinFilter.Pinned && authenticated_user_id
+            ? ` join ${PINNED_WAVES_TABLE} pw on pw.wave_id = w.id and pw.profile_id = :authenticated_user_id `
+            : ``
+        }
+       ${
+         pinned === ApiWavesPinFilter.NotPinned && authenticated_user_id
+           ? ` left join ${PINNED_WAVES_TABLE} pw on pw.wave_id = w.id and pw.profile_id = :authenticated_user_id `
+           : ``
+       }
          ${
            only_waves_followed_by_authenticated_user
              ? `join ${IDENTITY_SUBSCRIPTIONS_TABLE} f on f.target_type = 'WAVE' and f.target_action = 'DROP_CREATED' and f.target_id = w.id`
@@ -1135,6 +1201,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
          }
          join ${WAVE_METRICS_TABLE} wm on wm.wave_id = w.id 
           where
+          ${pinned === ApiWavesPinFilter.NotPinned && authenticated_user_id ? ` pw.profile_id is null and ` : ``}
         ${
           only_waves_followed_by_authenticated_user
             ? `f.subscriber_id = :authenticated_user_id and`
@@ -1174,6 +1241,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     limit: number;
     eligibleGroups: string[];
     direct_message?: boolean;
+    pinned: ApiWavesPinFilter | null;
   }): Promise<WaveEntity[]> {
     return this.db
       .execute<
@@ -1190,12 +1258,25 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       >(
         `select w.* from ${WAVES_TABLE} w 
         ${
+          param.pinned === ApiWavesPinFilter.Pinned &&
+          param.authenticated_user_id
+            ? ` join ${PINNED_WAVES_TABLE} pw on pw.wave_id = w.id and pw.profile_id = :authenticated_user_id `
+            : ``
+        }
+       ${
+         param.pinned === ApiWavesPinFilter.NotPinned &&
+         param.authenticated_user_id
+           ? ` left join ${PINNED_WAVES_TABLE} pw on pw.wave_id = w.id and pw.profile_id = :authenticated_user_id `
+           : ``
+       }
+        ${
           param.only_waves_followed_by_authenticated_user
             ? `join ${IDENTITY_SUBSCRIPTIONS_TABLE} f on f.target_type = 'WAVE' and f.target_action = 'DROP_CREATED' and f.target_id = w.id`
             : ``
         }
         join ${WAVE_METRICS_TABLE} wm on wm.wave_id = w.id 
          where
+         ${param.pinned === ApiWavesPinFilter.NotPinned && param.authenticated_user_id ? ` pw.profile_id is null and ` : ``}
         ${
           param.only_waves_followed_by_authenticated_user
             ? `f.subscriber_id = :authenticated_user_id and`
@@ -1237,6 +1318,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     limit: number;
     eligibleGroups: string[];
     direct_message?: boolean;
+    pinned: ApiWavesPinFilter | null;
   }): Promise<WaveEntity[]> {
     return this.db
       .execute<
@@ -1252,6 +1334,18 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         }
       >(
         `select w.* from ${WAVES_TABLE} w
+        ${
+          param.pinned === ApiWavesPinFilter.Pinned &&
+          param.authenticated_user_id
+            ? ` join ${PINNED_WAVES_TABLE} pw on pw.wave_id = w.id and pw.profile_id = :authenticated_user_id `
+            : ``
+        }
+       ${
+         param.pinned === ApiWavesPinFilter.NotPinned &&
+         param.authenticated_user_id
+           ? ` left join ${PINNED_WAVES_TABLE} pw on pw.wave_id = w.id and pw.profile_id = :authenticated_user_id `
+           : ``
+       }
          ${
            param.only_waves_followed_by_authenticated_user
              ? `join ${IDENTITY_SUBSCRIPTIONS_TABLE} f on f.target_type = 'WAVE' and f.target_action = 'DROP_CREATED' and f.target_id = w.id`
@@ -1264,6 +1358,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
          }
          join ${WAVE_DROPPER_METRICS_TABLE} wm on wm.wave_id = w.id 
           where
+          ${param.pinned === ApiWavesPinFilter.NotPinned && param.authenticated_user_id ? ` pw.profile_id is null and ` : ``}
         ${
           param.only_waves_followed_by_authenticated_user
             ? `f.subscriber_id = :authenticated_user_id and`
@@ -1300,6 +1395,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     limit: number;
     eligibleGroups: string[];
     direct_message?: boolean;
+    pinned: ApiWavesPinFilter | null;
   }): Promise<WaveEntity[]> {
     return this.db
       .execute<
@@ -1315,6 +1411,18 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         }
       >(
         `select w.* from ${WAVES_TABLE} w
+        ${
+          param.pinned === ApiWavesPinFilter.Pinned &&
+          param.authenticated_user_id
+            ? ` join ${PINNED_WAVES_TABLE} pw on pw.wave_id = w.id and pw.profile_id = :authenticated_user_id `
+            : ``
+        }
+       ${
+         param.pinned === ApiWavesPinFilter.NotPinned &&
+         param.authenticated_user_id
+           ? ` left join ${PINNED_WAVES_TABLE} pw on pw.wave_id = w.id and pw.profile_id = :authenticated_user_id `
+           : ``
+       }
          ${
            param.only_waves_followed_by_authenticated_user
              ? `join ${IDENTITY_SUBSCRIPTIONS_TABLE} f on f.target_type = 'WAVE' and f.target_action = 'DROP_CREATED' and f.target_id = w.id`
@@ -1322,6 +1430,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
          }
          join ${WAVE_DROPPER_METRICS_TABLE} wm on wm.wave_id = w.id 
           where
+          ${param.pinned === ApiWavesPinFilter.NotPinned && param.authenticated_user_id ? ` pw.profile_id is null and ` : ``}
         ${
           param.only_waves_followed_by_authenticated_user
             ? `f.subscriber_id = :authenticated_user_id and`
@@ -1445,6 +1554,46 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         `,
       param,
       { wrappedConnection: connection }
+    );
+  }
+
+  async whichOfWavesArePinnedByGivenProfile(
+    param: {
+      waveIds: string[];
+      profileId?: string | null;
+    },
+    ctx: RequestContext
+  ): Promise<Set<string>> {
+    if (!param.profileId || !param.waveIds.length) {
+      return new Set<string>();
+    }
+    const results = await this.db.execute<{ wave_id: string }>(
+      `select wave_id from ${PINNED_WAVES_TABLE} where profile_id = :profileId and wave_id in (:waveIds)`,
+      param,
+      { wrappedConnection: ctx.connection }
+    );
+    return new Set<string>(results.map((it) => it.wave_id));
+  }
+
+  async insertPin(
+    { waveId, profileId }: { waveId: string; profileId: string },
+    ctx: RequestContext
+  ) {
+    await this.db.execute(
+      `insert into ${PINNED_WAVES_TABLE} (wave_id, profile_id) values (:waveId, :profileId) on duplicate key update wave_id = :waveId`,
+      { waveId, profileId },
+      { wrappedConnection: ctx.connection }
+    );
+  }
+
+  async deletePin(
+    { waveId, profileId }: { waveId: string; profileId: string },
+    ctx: RequestContext
+  ) {
+    await this.db.execute(
+      `delete from ${PINNED_WAVES_TABLE} where wave_id = :waveId and profile_id = :profileId`,
+      { waveId, profileId },
+      { wrappedConnection: ctx.connection }
     );
   }
 }

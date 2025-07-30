@@ -412,7 +412,16 @@ export class DropsApiService {
         : await this.userGroupsService.getGroupsUserIsEligibleFor(
             context_profile_id
           );
-    const wave = await wavesApiDb.findWaveById(wave_id);
+    const [wave, pinnedWaveIds] = await Promise.all([
+      wavesApiDb.findWaveById(wave_id),
+      wavesApiDb.whichOfWavesArePinnedByGivenProfile(
+        {
+          waveIds: [wave_id],
+          profileId: context_profile_id
+        },
+        ctx
+      )
+    ]);
     if (
       !wave ||
       (wave.visibility_group_id &&
@@ -450,7 +459,8 @@ export class DropsApiService {
       chat_group_id: wave.chat_group_id,
       voting_group_id: wave.voting_group_id,
       admin_drop_deletion_enabled: wave.admin_drop_deletion_enabled,
-      forbid_negative_votes: wave.forbid_negative_votes
+      forbid_negative_votes: wave.forbid_negative_votes,
+      pinned: pinnedWaveIds.has(wave_id)
     };
     if (drop_id) {
       const dropEntity = await this.dropsDb.findDropByIdWithEligibilityCheck(
@@ -546,7 +556,16 @@ export class DropsApiService {
       await this.userGroupsService.getGroupsUserIsEligibleFor(
         authenticatedProfileId
       );
-    const waveEntity = await wavesApiDb.findWaveById(params.wave_id);
+    const [waveEntity, pinnedWaveIds] = await Promise.all([
+      wavesApiDb.findWaveById(params.wave_id),
+      wavesApiDb.whichOfWavesArePinnedByGivenProfile(
+        {
+          waveIds: [params.wave_id],
+          profileId: authenticatedProfileId
+        },
+        ctx
+      )
+    ]);
     if (
       !waveEntity ||
       (waveEntity.visibility_group_id !== null &&
@@ -588,7 +607,8 @@ export class DropsApiService {
       chat_group_id: waveEntity.chat_group_id,
       voting_group_id: waveEntity.voting_group_id,
       admin_drop_deletion_enabled: waveEntity.admin_drop_deletion_enabled,
-      forbid_negative_votes: waveEntity.forbid_negative_votes
+      forbid_negative_votes: waveEntity.forbid_negative_votes,
+      pinned: pinnedWaveIds.has(params.wave_id)
     };
     const isTimeLockedWave =
       waveEntity.time_lock_ms !== null && waveEntity.time_lock_ms > 0;
