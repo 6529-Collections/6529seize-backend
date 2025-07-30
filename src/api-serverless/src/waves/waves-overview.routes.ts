@@ -8,6 +8,7 @@ import { getValidatedByJoiOrThrow } from '../validation';
 import { waveApiService, WavesOverviewParams } from './wave.api.service';
 import { ApiWavesOverviewType } from '../generated/models/ApiWavesOverviewType';
 import { Timer } from '../../../time';
+import { ApiWavesPinFilter } from '../generated/models/ApiWavesPinFilter';
 
 const router = asyncRouter();
 
@@ -41,7 +42,11 @@ const WavesOverviewParamsSchema = Joi.object<WavesOverviewParams>({
   only_waves_followed_by_authenticated_user: Joi.boolean()
     .optional()
     .default(false),
-  direct_message: Joi.boolean().truthy('true').falsy('false').optional()
+  direct_message: Joi.boolean().truthy('true').falsy('false').optional(),
+  pinned: Joi.string()
+    .optional()
+    .allow(null, ...Object.values(ApiWavesPinFilter))
+    .default(null)
 });
 
 export default router;
