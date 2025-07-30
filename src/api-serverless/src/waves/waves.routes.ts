@@ -343,6 +343,7 @@ router.post(
       },
       { authenticationContext, timer }
     );
+    await giveReadReplicaTimeToCatchUp();
     res.send({});
   }
 );
@@ -369,6 +370,7 @@ router.delete(
       },
       { authenticationContext, timer }
     );
+    await giveReadReplicaTimeToCatchUp();
     res.send({});
   }
 );
