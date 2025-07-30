@@ -65,6 +65,7 @@ import { enums } from '../../../enums';
 import { collections } from '../../../collections';
 import { ApiUpdateWaveDecisionPause } from '../generated/models/ApiUpdateWaveDecisionPause';
 import { numbers } from '../../../numbers';
+import { ApiWavesPinFilter } from '../generated/models/ApiWavesPinFilter';
 
 export class WaveApiService {
   constructor(
@@ -880,7 +881,8 @@ export class WaveApiService {
       limit,
       offset,
       only_waves_followed_by_authenticated_user,
-      direct_message
+      direct_message,
+      pinned
     }: WavesOverviewParams,
     ctx: RequestContext
   ) {
@@ -920,7 +922,8 @@ export class WaveApiService {
       eligibleGroups,
       only_waves_followed_by_authenticated_user,
       direct_message,
-      offset
+      offset,
+      pinned
     });
     const noRightToVote =
       !authenticationContext ||
@@ -954,7 +957,8 @@ export class WaveApiService {
     limit,
     only_waves_followed_by_authenticated_user,
     direct_message,
-    offset
+    offset,
+    pinned
   }: {
     eligibleGroups: string[];
     type: ApiWavesOverviewType;
@@ -963,6 +967,7 @@ export class WaveApiService {
     only_waves_followed_by_authenticated_user: boolean;
     authenticatedUserId: string | null;
     direct_message?: boolean;
+    pinned: ApiWavesPinFilter | null;
   }): Promise<WaveEntity[]> {
     switch (type) {
       case ApiWavesOverviewType.Latest:
@@ -972,7 +977,8 @@ export class WaveApiService {
           eligibleGroups,
           limit,
           offset,
-          direct_message
+          direct_message,
+          pinned
         });
       case ApiWavesOverviewType.MostSubscribed:
         return await this.wavesApiDb.findMostSubscribedWaves({
@@ -981,7 +987,8 @@ export class WaveApiService {
           eligibleGroups,
           limit,
           offset,
-          direct_message
+          direct_message,
+          pinned
         });
       case ApiWavesOverviewType.HighLevelAuthor:
         return await this.wavesApiDb.findHighLevelAuthorWaves({
@@ -990,7 +997,8 @@ export class WaveApiService {
           eligibleGroups,
           limit,
           offset,
-          direct_message
+          direct_message,
+          pinned
         });
       case ApiWavesOverviewType.AuthorYouHaveRepped:
         return await this.wavesApiDb.findWavesByAuthorsYouHaveRepped({
@@ -999,7 +1007,8 @@ export class WaveApiService {
           only_waves_followed_by_authenticated_user,
           limit,
           offset,
-          direct_message
+          direct_message,
+          pinned
         });
       case ApiWavesOverviewType.MostDropped:
         return await this.wavesApiDb.findMostDroppedWaves({
@@ -1008,7 +1017,8 @@ export class WaveApiService {
           only_waves_followed_by_authenticated_user,
           limit,
           offset,
-          direct_message
+          direct_message,
+          pinned
         });
       case ApiWavesOverviewType.MostDroppedByYou:
         return await this.wavesApiDb.findMostDroppedWavesByYou({
@@ -1018,7 +1028,8 @@ export class WaveApiService {
           authenticated_user_id: authenticatedUserId,
           limit,
           offset,
-          direct_message
+          direct_message,
+          pinned
         });
       case ApiWavesOverviewType.RecentlyDroppedTo:
         return await this.wavesApiDb.findRecentlyDroppedToWaves({
@@ -1027,7 +1038,8 @@ export class WaveApiService {
           authenticated_user_id: authenticatedUserId,
           limit,
           offset,
-          direct_message
+          direct_message,
+          pinned
         });
       case ApiWavesOverviewType.RecentlyDroppedToByYou:
         return await this.wavesApiDb.findRecentlyDroppedToWavesByYou({
@@ -1037,7 +1049,8 @@ export class WaveApiService {
           dropperId: authenticatedUserId!,
           limit,
           offset,
-          direct_message
+          direct_message,
+          pinned
         });
       default:
         assertUnreachable(type);
@@ -1281,6 +1294,62 @@ export class WaveApiService {
     }
     return subsequentDecisionPointer + 1;
   }
+
+  async pinWave({ waveId }: { waveId: string }, ctx: RequestContext) {
+    await this.wavesApiDb.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const ctxWithConnection = { ...ctx, connection };
+        await this.assertWaveExistsForAuthenticatedUser(
+          waveId,
+          ctxWithConnection
+        );
+        await this.wavesApiDb.insertPin(
+          { waveId, profileId: ctx.authenticationContext!.getActingAsId()! },
+          ctxWithConnection
+        );
+      }
+    );
+  }
+
+  async unPinWave({ waveId }: { waveId: string }, ctx: RequestContext) {
+    await this.wavesApiDb.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const ctxWithConnection = {
+          ...ctx,
+          connection
+        };
+        await this.assertWaveExistsForAuthenticatedUser(
+          waveId,
+          ctxWithConnection
+        );
+        await this.wavesApiDb.deletePin(
+          { waveId, profileId: ctx.authenticationContext!.getActingAsId()! },
+          ctxWithConnection
+        );
+      }
+    );
+  }
+
+  private async assertWaveExistsForAuthenticatedUser(
+    waveId: string,
+    ctx: RequestContext
+  ) {
+    const waveEntity = await this.wavesApiDb.findWaveById(
+      waveId,
+      ctx.connection
+    );
+    if (!waveEntity) {
+      throw new NotFoundException(`Wave ${waveId} not found.`);
+    }
+    const groupsUserIsEligibleFor =
+      await userGroupsService.getGroupsUserIsEligibleFor(waveId, ctx.timer);
+    if (
+      waveEntity.visibility_group_id &&
+      !groupsUserIsEligibleFor.includes(waveEntity.visibility_group_id)
+    ) {
+      throw new NotFoundException(`Wave ${waveId} not found.`);
+    }
+  }
 }
 
 export interface WavesOverviewParams {
@@ -1289,6 +1358,7 @@ export interface WavesOverviewParams {
   type: ApiWavesOverviewType;
   only_waves_followed_by_authenticated_user: boolean;
   direct_message?: boolean;
+  pinned: ApiWavesPinFilter | null;
 }
 
 export const waveApiService = new WaveApiService(
