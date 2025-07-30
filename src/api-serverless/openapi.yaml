@@ -4884,9 +4884,15 @@ components:
     ApiLoginRequest:
       type: object
       required:
+        - client_address
         - client_signature
         - server_signature
+        - is_safe_wallet
       properties:
+        is_safe_wallet:
+          type: boolean
+        client_address:
+          type: string
         client_signature:
           type: string
         server_signature:
