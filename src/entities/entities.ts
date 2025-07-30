@@ -57,6 +57,7 @@ export {
   ConsolidatedOwnerBalances,
   ConsolidatedOwnerBalancesMemes
 } from './IOwnerBalances';
+export { PinnedWaveEntity } from './IPinnedWaveEntity';
 export { Prenode } from './IPrenode';
 export { Profile, ProfileArchived } from './IProfile';
 export { ProfileActivityLog } from './IProfileActivityLog';
