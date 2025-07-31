@@ -547,7 +547,7 @@ async function assertDropIsCorrectlySigned(
         )
         .then((it) => it?.wallets?.map((w) => w.wallet) ?? []);
       const isDropCorrectlySigned =
-        dropSignatureVerifier.isDropSignedByAnyOfGivenWallets({
+        await dropSignatureVerifier.isDropSignedByAnyOfGivenWallets({
           wallets,
           drop: drop,
           termsOfService: waveEntity.participation_terms
