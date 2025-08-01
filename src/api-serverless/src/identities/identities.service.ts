@@ -412,6 +412,13 @@ export class IdentitiesService {
       base,
       ctx
     );
+    const mainStageSubmissions =
+      await this.identitiesDb.getActiveMainStageDropIds(
+        identityEntities
+          .map((it) => it.profile_id)
+          .filter((it) => !!it) as string[],
+        ctx
+      );
     return identityEntities.map<ApiIdentity>((it) => {
       const classification = it.classification
         ? (enums.resolve(
@@ -434,7 +441,10 @@ export class IdentitiesService {
         banner2: it.banner2,
         consolidation_key: it.consolidation_key,
         classification,
-        sub_classification: it.sub_classification
+        sub_classification: it.sub_classification,
+        active_main_stage_submission_ids: it.profile_id
+          ? (mainStageSubmissions[it.profile_id] ?? [])
+          : []
       };
     });
   }

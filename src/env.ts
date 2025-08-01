@@ -64,8 +64,12 @@ export async function loadLocalConfig() {
 class Env {
   constructor(private readonly numbers: Numbers) {}
 
+  public getStringOrNull(name: string): string | null {
+    return process.env[name] ?? null;
+  }
+
   public getStringOrThrow(name: string): string {
-    const value = process.env[name];
+    const value = this.getStringOrNull(name);
     if (!value) {
       throw new Error(`Expected environment variable ${name} not configured`);
     }
