@@ -7,6 +7,7 @@ import { IdentityEntity } from '../entities/IIdentity';
 import {
   ADDRESS_CONSOLIDATION_KEY,
   CONSOLIDATED_WALLETS_TDH_TABLE,
+  DROPS_TABLE,
   ENS_TABLE,
   IDENTITIES_TABLE,
   MEMES_CONTRACT,
@@ -22,6 +23,8 @@ import { RequestContext } from '../request.context';
 import { Timer } from '../time';
 import { Wallet } from '../entities/IWallet';
 import { collections } from '../collections';
+import { env } from '../env';
+import { DropType } from '../entities/IDrop';
 
 const mysql = require('mysql');
 
@@ -892,6 +895,40 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
       );
     ctx.timer?.stop(`${this.constructor.name}->getProfileHandlesByIds`);
     return result;
+  }
+
+  async getActiveMainStageDropIds(
+    profileIds: string[],
+    ctx: RequestContext
+  ): Promise<Record<string, string[]>> {
+    const mainStageWaveId = env.getStringOrNull(`MAIN_STAGE_WAVE_ID`);
+    if (!profileIds.length || !mainStageWaveId) {
+      return {};
+    }
+    const results = await this.db.execute<{
+      profile_id: string;
+      drop_id: string;
+    }>(
+      `
+      select author_id as profile_id, id as drop_id from ${DROPS_TABLE} where author_id in (:profileIds) and wave_id = :mainStageWaveId
+      and drop_type = '${DropType.PARTICIPATORY}'
+      `,
+      {
+        profileIds,
+        mainStageWaveId
+      },
+      { wrappedConnection: ctx.connection }
+    );
+    return results.reduce(
+      (acc, it) => {
+        if (!acc[it.profile_id]) {
+          acc[it.profile_id] = [];
+        }
+        acc[it.profile_id].push(it.drop_id);
+        return acc;
+      },
+      {} as Record<string, string[]>
+    );
   }
 }
 
