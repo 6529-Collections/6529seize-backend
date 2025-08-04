@@ -1342,7 +1342,10 @@ export class WaveApiService {
       throw new NotFoundException(`Wave ${waveId} not found.`);
     }
     const groupsUserIsEligibleFor =
-      await userGroupsService.getGroupsUserIsEligibleFor(waveId, ctx.timer);
+      await userGroupsService.getGroupsUserIsEligibleFor(
+        ctx.authenticationContext!.getActingAsId(),
+        ctx.timer
+      );
     if (
       waveEntity.visibility_group_id &&
       !groupsUserIsEligibleFor.includes(waveEntity.visibility_group_id)
