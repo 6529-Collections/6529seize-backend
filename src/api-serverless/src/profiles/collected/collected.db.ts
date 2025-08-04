@@ -1,8 +1,4 @@
 import {
-  dbSupplier,
-  LazyDbAccessCompatibleService
-} from '../../../../sql-executor';
-import {
   ADDRESS_CONSOLIDATION_KEY,
   CONSOLIDATED_WALLETS_TDH_TABLE,
   GRADIENT_CONTRACT,
@@ -13,42 +9,58 @@ import {
   TDH_BLOCKS_TABLE,
   WALLETS_TDH_TABLE
 } from '../../../../constants';
-import { CollectionType } from './collected.types';
 import {
   NEXTGEN_TOKENS_TABLE,
   NEXTGEN_TOKENS_TDH_TABLE
 } from '../../../../nextgen/nextgen_constants';
+import {
+  dbSupplier,
+  LazyDbAccessCompatibleService
+} from '../../../../sql-executor';
+import { CollectionType } from './collected.types';
 
 export class CollectedDb extends LazyDbAccessCompatibleService {
   async getAllNfts(): Promise<NftData[]> {
     return await this.db.execute(
       `
-    select if(contract = '${MEMES_CONTRACT}', '${CollectionType.MEMES}', '${CollectionType.GRADIENTS}') as collection,
-                    id as token_id,
-                    name,
-                    trim(regexp_substr(description, '(?<=Season: )(.*)(?=\\n)')) as season,
-                    thumbnail
-             from ${NFTS_TABLE}
-             where contract in
-                   ('${MEMES_CONTRACT}', '${GRADIENT_CONTRACT}')
-             union all
-             select '${CollectionType.MEMELAB}' as collection,
-                    id        as token_id,
-                    name,
-                    null      as season,
-                    thumbnail
-             from nfts_meme_lab
-             where contract = '${MEMELAB_CONTRACT}'
-             union all
-             select '${CollectionType.NEXTGEN}'  as collection,
-                   token.id                      as token_id,
-                   token.name                    as name,
-                   token.collection_name         as season,
-                   COALESCE(
-                    token.thumbnail_url, 
-                    token.image_url)             as thumbnail
-            from nextgen_tokens token
-    `
+        SELECT 
+          CAST(IF(contract = '${MEMES_CONTRACT}', '${CollectionType.MEMES}', '${CollectionType.GRADIENTS}') AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci AS collection,
+          n.id AS token_id,
+          CAST(n.name AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci AS name,
+          CAST(jt.value AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci AS season,
+          n.thumbnail
+        FROM ${NFTS_TABLE} n,
+          JSON_TABLE(
+            n.metadata,
+            '$.attributes[*]' COLUMNS (
+              trait_type VARCHAR(255) PATH '$.trait_type',
+              value VARCHAR(255) PATH '$.value'
+            )
+          ) AS jt
+        WHERE jt.trait_type = 'Type - Season'
+          AND n.contract IN ('${MEMES_CONTRACT}', '${GRADIENT_CONTRACT}')
+
+        UNION ALL
+
+        SELECT 
+          CAST('${CollectionType.MEMELAB}' AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci AS collection,
+          id AS token_id,
+          CAST(name AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci AS name,
+          CAST(NULL AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci AS season,
+          thumbnail
+        FROM nfts_meme_lab
+        WHERE contract = '${MEMELAB_CONTRACT}'
+
+        UNION ALL
+
+        SELECT 
+          CAST('${CollectionType.NEXTGEN}' AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci AS collection,
+          token.id AS token_id,
+          CAST(token.name AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci AS name,
+          CAST(token.collection_name AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci AS season,
+          COALESCE(token.thumbnail_url, token.image_url) AS thumbnail
+        FROM nextgen_tokens token
+      `
     );
   }
 

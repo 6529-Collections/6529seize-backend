@@ -359,8 +359,8 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
       `update ${IDENTITIES_TABLE} inner join ${PROFILES_TABLE} on ${IDENTITIES_TABLE}.profile_id = ${PROFILES_TABLE}.external_id
                            set
                                ${IDENTITIES_TABLE}.handle = ${PROFILES_TABLE}.handle,
-                               ${IDENTITIES_TABLE}.normalised_handle = ${PROFILES_TABLE}.classification,
-                               ${IDENTITIES_TABLE}.classification = ${PROFILES_TABLE}.normalised_handle
+                               ${IDENTITIES_TABLE}.normalised_handle = ${PROFILES_TABLE}.normalised_handle,
+                               ${IDENTITIES_TABLE}.classification = ${PROFILES_TABLE}.classification
                            where ${IDENTITIES_TABLE}.profile_id in (:profileIds)`,
       { profileIds },
       { wrappedConnection: ctx.connection }
