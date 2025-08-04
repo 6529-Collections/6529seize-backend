@@ -86,7 +86,7 @@ router.post(
       const signingAddress = await verifyClientSignature(
         nonce,
         client_signature,
-        client_address,
+        client_address ?? null,
         is_safe_wallet
       );
       const signingProfile = await identityFetcher.getProfileIdByIdentityKey(
@@ -187,9 +187,10 @@ function verifyServerSignature(serverSignature: string): string {
 async function verifyClientSignature(
   nonce: string,
   clientSignature: string,
-  clientAddress: string,
+  clientAddress: string | null,
   isSafeWallet: boolean
 ): Promise<string> {
+  clientAddress = clientAddress?.toLowerCase() ?? null;
   if (isSafeWallet) {
     if (!clientAddress) {
       throw new BadRequestException(
