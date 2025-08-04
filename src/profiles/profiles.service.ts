@@ -227,6 +227,17 @@ export class ProfilesService {
           id: ids.uniqueShortId(),
           profile_id: profile.external_id,
           target_id: null,
+          type: ProfileActivityLogType.PROFILE_CREATED,
+          contents: JSON.stringify({}),
+          proxy_id: null,
+          created_at: now,
+          additional_data_1: null,
+          additional_data_2: null
+        },
+        {
+          id: ids.uniqueShortId(),
+          profile_id: profile.external_id,
+          target_id: null,
           type: ProfileActivityLogType.HANDLE_EDIT,
           contents: JSON.stringify({
             authenticated_wallet: authenticatedWallet,
