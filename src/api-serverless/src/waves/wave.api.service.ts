@@ -1,71 +1,71 @@
-import { SearchWavesParams, wavesApiDb, WavesApiDb } from './waves.api.db';
-import { ApiCreateNewWave } from '../generated/models/ApiCreateNewWave';
-import { ApiWave } from '../generated/models/ApiWave';
-import { assertUnreachable } from '../../../assertions';
+import { randomUUID } from 'crypto';
 import {
-  userGroupsService,
-  UserGroupsService
-} from '../community-members/user-groups.service';
-import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
+  activityRecorder,
+  ActivityRecorder
+} from '../../../activity/activity.recorder';
+import { assertUnreachable } from '../../../assertions';
+import { AuthenticationContext } from '../../../auth-context';
+import { collections } from '../../../collections';
+import {
+  createOrUpdateDrop,
+  CreateOrUpdateDropUseCase
+} from '../../../drops/create-or-update-drop.use-case';
+import {
+  ActivityEventAction,
+  ActivityEventTargetType
+} from '../../../entities/IActivityEvent';
+import { ProfileProxyActionType } from '../../../entities/IProfileProxyAction';
+import { UserGroupEntity } from '../../../entities/IUserGroup';
+import { WaveEntity } from '../../../entities/IWave';
+import { enums } from '../../../enums';
 import {
   BadRequestException,
   ForbiddenException,
   NotFoundException
 } from '../../../exceptions';
-import { wavesMappers, WavesMappers } from './waves.mappers';
-import { randomUUID } from 'crypto';
-import { AuthenticationContext } from '../../../auth-context';
-import { ProfileProxyActionType } from '../../../entities/IProfileProxyAction';
-import {
-  activityRecorder,
-  ActivityRecorder
-} from '../../../activity/activity.recorder';
-import {
-  identitySubscriptionsDb,
-  IdentitySubscriptionsDb
-} from '../identity-subscriptions/identity-subscriptions.db';
-import {
-  ActivityEventAction,
-  ActivityEventTargetType
-} from '../../../entities/IActivityEvent';
-import { WaveEntity } from '../../../entities/IWave';
-import { RequestContext } from '../../../request.context';
-import { ApiUpdateWaveRequest } from '../generated/models/ApiUpdateWaveRequest';
-import { Time } from '../../../time';
-import {
-  createOrUpdateDrop,
-  CreateOrUpdateDropUseCase
-} from '../../../drops/create-or-update-drop.use-case';
-import { dropsMappers, DropsMappers } from '../drops/drops.mappers';
-import { ApiDropType } from '../generated/models/ApiDropType';
-import { ApiWaveType } from '../generated/models/ApiWaveType';
-import { ApiWaveOutcomeType } from '../generated/models/ApiWaveOutcomeType';
-import { ApiWaveOutcomeSubType } from '../generated/models/ApiWaveOutcomeSubType';
-import { ApiWaveSubscriptionTargetAction } from '../generated/models/ApiWaveSubscriptionTargetAction';
-import { ApiWavesOverviewType } from '../generated/models/ApiWavesOverviewType';
-import {
-  dropVotingService,
-  DropVotingService
-} from '../drops/drop-voting.service';
-import { reactionsService, ReactionsService } from '../drops/reactions.service';
-import { ApiWaveDecisionsStrategy } from '../generated/models/ApiWaveDecisionsStrategy';
 import {
   userNotifier,
   UserNotifier
 } from '../../../notifications/user.notifier';
-import { UserGroupEntity } from '../../../entities/IUserGroup';
+import { numbers } from '../../../numbers';
+import { RequestContext } from '../../../request.context';
+import { Time } from '../../../time';
+import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
+import {
+  userGroupsService,
+  UserGroupsService
+} from '../community-members/user-groups.service';
+import {
+  dropVotingService,
+  DropVotingService
+} from '../drops/drop-voting.service';
+import { dropsMappers, DropsMappers } from '../drops/drops.mappers';
+import { reactionsService, ReactionsService } from '../drops/reactions.service';
+import { ApiCreateNewWave } from '../generated/models/ApiCreateNewWave';
+import { ApiDropType } from '../generated/models/ApiDropType';
 import { ApiGroupFull } from '../generated/models/ApiGroupFull';
-import { ApiWaveCreditType } from '../generated/models/ApiWaveCreditType';
+import { ApiUpdateWaveDecisionPause } from '../generated/models/ApiUpdateWaveDecisionPause';
+import { ApiUpdateWaveRequest } from '../generated/models/ApiUpdateWaveRequest';
+import { ApiWave } from '../generated/models/ApiWave';
 import { ApiWaveCreditScope } from '../generated/models/ApiWaveCreditScope';
+import { ApiWaveCreditType } from '../generated/models/ApiWaveCreditType';
+import { ApiWaveDecisionsStrategy } from '../generated/models/ApiWaveDecisionsStrategy';
+import { ApiWaveOutcomeSubType } from '../generated/models/ApiWaveOutcomeSubType';
+import { ApiWaveOutcomeType } from '../generated/models/ApiWaveOutcomeType';
+import { ApiWaveSubscriptionTargetAction } from '../generated/models/ApiWaveSubscriptionTargetAction';
+import { ApiWaveType } from '../generated/models/ApiWaveType';
+import { ApiWavesOverviewType } from '../generated/models/ApiWavesOverviewType';
+import { ApiWavesPinFilter } from '../generated/models/ApiWavesPinFilter';
 import {
   IdentityFetcher,
   identityFetcher
 } from '../identities/identity.fetcher';
-import { enums } from '../../../enums';
-import { collections } from '../../../collections';
-import { ApiUpdateWaveDecisionPause } from '../generated/models/ApiUpdateWaveDecisionPause';
-import { numbers } from '../../../numbers';
-import { ApiWavesPinFilter } from '../generated/models/ApiWavesPinFilter';
+import {
+  identitySubscriptionsDb,
+  IdentitySubscriptionsDb
+} from '../identity-subscriptions/identity-subscriptions.db';
+import { SearchWavesParams, wavesApiDb, WavesApiDb } from './waves.api.db';
+import { wavesMappers, WavesMappers } from './waves.mappers';
 
 export class WaveApiService {
   constructor(
@@ -422,7 +422,7 @@ export class WaveApiService {
         signature: null,
         parts: [
           {
-            content: 'gm! :gm:',
+            content: 'gm! :gm1:',
             quoted_drop: null,
             media: []
           }
