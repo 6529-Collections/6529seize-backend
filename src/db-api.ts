@@ -37,43 +37,43 @@ import {
   WALLETS_TDH_TABLE
 } from './constants';
 import { RememeSource } from './entities/IRememe';
-import { getConsolidationsSql } from './sql_helpers';
 import { ConnectionWrapper, setSqlExecutor, sqlExecutor } from './sql-executor';
+import { getConsolidationsSql } from './sql_helpers';
 
-import * as mysql from 'mysql';
-import { Time } from './time';
-import { DbPoolName, DbQueryOptions } from './db-query.options';
-import { Logger } from './logging';
 import { Nft } from 'alchemy-sdk';
+import * as mysql from 'mysql';
+import {
+  NFTSearchResult,
+  PaginatedResponse
+} from './api-serverless/src/api-constants';
 import {
   constructFilters,
   constructFiltersOR,
   getSearchFilters
 } from './api-serverless/src/api-helpers';
+import { ApiNftMedia } from './api-serverless/src/generated/models/ApiNftMedia';
+import { ApiTransaction } from './api-serverless/src/generated/models/ApiTransaction';
+import { ApiTransactionPage } from './api-serverless/src/generated/models/ApiTransactionPage';
 import {
   getNextGenChainId,
   NEXTGEN_CORE
 } from './api-serverless/src/nextgen/abis';
-import { NEXTGEN_TOKENS_TABLE } from './nextgen/nextgen_constants';
-import {
-  NFTSearchResult,
-  PaginatedResponse
-} from './api-serverless/src/api-constants';
-import { TDHBlock } from './entities/ITDH';
-import { Upload } from './entities/IUpload';
-import { Artist } from './entities/IArtist';
-import { NFT } from './entities/INFT';
-import { ApiTransactionPage } from './api-serverless/src/generated/models/ApiTransactionPage';
-import { ApiTransaction } from './api-serverless/src/generated/models/ApiTransaction';
-import { ApiNftMedia } from './api-serverless/src/generated/models/ApiNftMedia';
-import { TDHHistory } from './entities/ITDHHistory';
-import { equalIgnoreCase } from './strings';
 import { consolidationTools } from './consolidation-tools';
+import { DbPoolName, DbQueryOptions } from './db-query.options';
 import {
   CustomTypeCaster,
   execNativeTransactionally,
   execSQLWithParams
 } from './db/my-sql.helpers';
+import { Artist } from './entities/IArtist';
+import { NFT } from './entities/INFT';
+import { TDHBlock } from './entities/ITDH';
+import { TDHHistory } from './entities/ITDHHistory';
+import { Upload } from './entities/IUpload';
+import { Logger } from './logging';
+import { NEXTGEN_TOKENS_TABLE } from './nextgen/nextgen_constants';
+import { equalIgnoreCase } from './strings';
+import { Time } from './time';
 
 let read_pool: mysql.Pool;
 let write_pool: mysql.Pool;
@@ -257,7 +257,7 @@ export async function fetchPaginated<T = any>(
     resultsSql += ` OFFSET ${offset}`;
   }
   logger.debug(`Count sql: '${countSql}`);
-  logger.debug(`Data sql: ${resultsSql}`);
+  logger.info(`Data sql: ${resultsSql}`);
 
   const count = await sqlExecutor
     .execute(countSql, params)
@@ -995,10 +995,11 @@ export async function fetchDistributions(
   search: string,
   cards: string,
   contracts: string,
+  wallets: string,
   pageSize: number,
   page: number
 ) {
-  if (!search && !cards && !contracts) {
+  if (!search && !cards && !contracts && !wallets) {
     return returnEmpty();
   }
 
@@ -1032,6 +1033,13 @@ export async function fetchDistributions(
       `${DISTRIBUTION_NORMALIZED_TABLE}.contract in (:contracts)`
     );
     params.contracts = contracts.split(',');
+  }
+  if (wallets) {
+    filters = constructFilters(
+      filters,
+      `LOWER(${DISTRIBUTION_NORMALIZED_TABLE}.wallet) in (:wallets)`
+    );
+    params.wallets = wallets.split(',').map((w: string) => w.toLowerCase());
   }
 
   const results = await fetchPaginated(
