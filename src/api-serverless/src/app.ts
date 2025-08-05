@@ -2,68 +2,71 @@ import fetch from 'node-fetch';
 import * as db from '../../db-api';
 import { ids } from '../../ids';
 
-import feedRoutes from './feed/feed.routes';
-import identitiesRoutes from './identities/identities.routes';
-import profilesRoutes from './profiles/profiles.routes';
-import authRoutes from './auth/auth.routes';
-import proxiesRoutes from './proxies/proxies.routes';
-import rememesRoutes from './rememes/rememes.routes';
-import nextgenRoutes from './nextgen/nextgen.routes';
-import royaltiesRoutes from './royalties/royalties.routes';
-import profileActivityLogsRoutes from './profiles/profile-activity-logs.routes';
-import repCategorySearchRoutes from './profiles/rep-category-search.routes';
-import ratingsRoutes from './ratings/ratings.routes';
-import bulkRepRoutes from './ratings/bulk-rep.routes';
-import gasRoutes from './gas/gas.routes';
-import tdhRoutes from './tdh/api.tdh.routes';
-import oracleRoutes from './oracle/api.oracle.routes';
-import aggregatedActivityRoutes from './aggregated-activity/api.aggregated-activity.routes';
-import ownersBalancesRoutes from './owners-balances/api.owners-balances.routes';
-import communityMembersRoutes from './community-members/community-members.routes';
-import userGroupsRoutes from './community-members/user-groups.routes';
-import userGroupsImEligibleForRoutes from './community-members/user-groups-im-elgigible-for.routes';
-import dropsRoutes from './drops/drops.routes';
-import lightDropsRoutes from './drops/light-drops.routes';
-import nftOwnersRoutes from './nft-owners/api.nft-owners.routes';
-import dropsMediaRoutes from './drops/drops-media.routes';
-import profileSubClassificationsRoutes from './profiles/profiles-sub-classifications.routes';
-import delegationsRoutes from './delegations/delegations.routes';
-import wavesRoutes from './waves/waves.routes';
-import publicWavesRoutes from './waves/waves-public.routes';
-import policiesRoutes from './policies/policies.routes';
-import notificationsRoutes from './notifications/notifications.routes';
-import waveMediaRoutes from './waves/wave-media.routes';
-import wavesOverviewRoutes from './waves/waves-overview.routes';
-import identitySubscriptionsRoutes from './identity-subscriptions/identity-subscriptions.routes';
-import pushNotificationsRoutes from './push-notifications/push-notifications.routes';
 import * as http from 'http';
 import WebSocket, { WebSocketServer } from 'ws';
+import aggregatedActivityRoutes from './aggregated-activity/api.aggregated-activity.routes';
+import authRoutes from './auth/auth.routes';
+import communityMembersRoutes from './community-members/community-members.routes';
+import userGroupsImEligibleForRoutes from './community-members/user-groups-im-elgigible-for.routes';
+import userGroupsRoutes from './community-members/user-groups.routes';
+import delegationsRoutes from './delegations/delegations.routes';
+import dropsMediaRoutes from './drops/drops-media.routes';
+import dropsRoutes from './drops/drops.routes';
+import lightDropsRoutes from './drops/light-drops.routes';
+import feedRoutes from './feed/feed.routes';
+import gasRoutes from './gas/gas.routes';
+import identitiesRoutes from './identities/identities.routes';
+import identitySubscriptionsRoutes from './identity-subscriptions/identity-subscriptions.routes';
+import nextgenRoutes from './nextgen/nextgen.routes';
+import nftOwnersRoutes from './nft-owners/api.nft-owners.routes';
+import notificationsRoutes from './notifications/notifications.routes';
+import oracleRoutes from './oracle/api.oracle.routes';
+import ownersBalancesRoutes from './owners-balances/api.owners-balances.routes';
+import policiesRoutes from './policies/policies.routes';
+import profileActivityLogsRoutes from './profiles/profile-activity-logs.routes';
+import profileSubClassificationsRoutes from './profiles/profiles-sub-classifications.routes';
+import profilesRoutes from './profiles/profiles.routes';
+import repCategorySearchRoutes from './profiles/rep-category-search.routes';
+import proxiesRoutes from './proxies/proxies.routes';
+import pushNotificationsRoutes from './push-notifications/push-notifications.routes';
+import bulkRepRoutes from './ratings/bulk-rep.routes';
+import ratingsRoutes from './ratings/ratings.routes';
+import rememesRoutes from './rememes/rememes.routes';
+import royaltiesRoutes from './royalties/royalties.routes';
+import tdhRoutes from './tdh/api.tdh.routes';
+import waveMediaRoutes from './waves/wave-media.routes';
+import wavesOverviewRoutes from './waves/waves-overview.routes';
+import publicWavesRoutes from './waves/waves-public.routes';
+import wavesRoutes from './waves/waves.routes';
 
+import * as Sentry from '@sentry/serverless';
+import { NextFunction, Request, Response } from 'express';
 import * as passport from 'passport';
 import {
   ExtractJwt,
   Strategy as JwtStrategy,
   VerifiedCallback
 } from 'passport-jwt';
-import { getJwtSecret } from './auth/auth';
-import { NextFunction, Request, Response } from 'express';
-import { Time, Timer } from '../../time';
-import * as sentryContext from '../../sentry.context';
-import * as Sentry from '@sentry/serverless';
-import { asyncRouter } from './async.router';
 import { ApiCompliantException } from '../../exceptions';
+import * as sentryContext from '../../sentry.context';
+import { Time, Timer } from '../../time';
+import { asyncRouter } from './async.router';
+import { getJwtSecret } from './auth/auth';
 
-import { Strategy as AnonymousStrategy } from 'passport-anonymous';
-import { Logger } from '../../logging';
 import * as awsServerlessExpressMiddleware from 'aws-serverless-express/middleware';
-import * as process from 'process';
+import { randomUUID } from 'crypto';
 import * as mcache from 'memory-cache';
-import {
-  cacheKey,
-  returnJsonResult,
-  returnPaginatedResult,
-  transformPaginatedResponse
-} from './api-helpers';
+import { Strategy as AnonymousStrategy } from 'passport-anonymous';
+import * as process from 'process';
+import * as SwaggerUI from 'swagger-ui-express';
+import { Artist } from '../../entities/IArtist';
+import { NFT } from '../../entities/INFT';
+import { TDHBlock } from '../../entities/ITDH';
+import { Upload } from '../../entities/IUpload';
+import { loadLocalConfig, loadSecrets } from '../../env';
+import { Logger } from '../../logging';
+import { numbers } from '../../numbers';
+import { parseTdhResultsFromDB } from '../../sql_helpers';
 import {
   corsOptions,
   DEFAULT_PAGE_SIZE,
@@ -73,38 +76,35 @@ import {
   SORT_DIRECTIONS
 } from './api-constants';
 import { MEMES_EXTENDED_SORT, TRANSACTION_FILTERS } from './api-filters';
-import { parseTdhResultsFromDB } from '../../sql_helpers';
-import { loadLocalConfig, loadSecrets } from '../../env';
-import subscriptionsRoutes from './subscriptions/api.subscriptions.routes';
-import * as SwaggerUI from 'swagger-ui-express';
-import { DEFAULT_MAX_SIZE } from './page-request';
+import {
+  cacheKey,
+  returnJsonResult,
+  returnPaginatedResult,
+  transformPaginatedResponse
+} from './api-helpers';
 import { ApiResponse } from './api-response';
-import { ApiBlockItem } from './generated/models/ApiBlockItem';
-import { TDHBlock } from '../../entities/ITDH';
-import { ApiBlocksPage } from './generated/models/ApiBlocksPage';
-import { ApiSeizeSettings } from './generated/models/ApiSeizeSettings';
-import { ApiUploadsPage } from './generated/models/ApiUploadsPage';
-import { Upload } from '../../entities/IUpload';
-import { ApiUploadItem } from './generated/models/ApiUploadItem';
-import { ApiArtistsPage } from './generated/models/ApiArtistsPage';
-import { Artist } from '../../entities/IArtist';
 import { ApiArtistItem } from './generated/models/ApiArtistItem';
-import { ApiNftsPage } from './generated/models/ApiNftsPage';
-import { NFT } from '../../entities/INFT';
-import { ApiNft } from './generated/models/ApiNft';
 import { ApiArtistNameItem } from './generated/models/ApiArtistNameItem';
+import { ApiArtistsPage } from './generated/models/ApiArtistsPage';
+import { ApiBlockItem } from './generated/models/ApiBlockItem';
+import { ApiBlocksPage } from './generated/models/ApiBlocksPage';
+import { ApiNft } from './generated/models/ApiNft';
+import { ApiNftsPage } from './generated/models/ApiNftsPage';
+import { ApiSeizeSettings } from './generated/models/ApiSeizeSettings';
 import { ApiTransactionPage } from './generated/models/ApiTransactionPage';
+import { ApiUploadItem } from './generated/models/ApiUploadItem';
+import { ApiUploadsPage } from './generated/models/ApiUploadsPage';
+import { DEFAULT_MAX_SIZE } from './page-request';
 import rpcRoutes from './rpc/rpc.routes';
 import sitemapRoutes from './sitemap/sitemap.routes';
-import { randomUUID } from 'crypto';
+import subscriptionsRoutes from './subscriptions/api.subscriptions.routes';
 import {
   appWebSockets,
   authenticateWebSocketJwtOrGetByConnectionId,
   mapHttpRequestToGatewayEvent
 } from './ws/ws';
-import { WsMessageType } from './ws/ws-message';
 import { wsListenersNotifier } from './ws/ws-listeners-notifier';
-import { numbers } from '../../numbers';
+import { WsMessageType } from './ws/ws-message';
 
 const YAML = require('yamljs');
 const compression = require('compression');
@@ -806,17 +806,23 @@ loadApi().then(async () => {
     const search = req.query.search;
     const cards = req.query.card_id;
     const contracts = req.query.contract;
+    const wallets = req.query.wallet;
 
     const pageSize: number =
       req.query.page_size && req.query.page_size < DISTRIBUTION_PAGE_SIZE
         ? parseInt(req.query.page_size)
         : DEFAULT_PAGE_SIZE;
     const page: number = req.query.page ? parseInt(req.query.page) : 1;
-    db.fetchDistributions(search, cards, contracts, pageSize, page).then(
-      (result) => {
-        returnPaginatedResult(result, req, res);
-      }
-    );
+    db.fetchDistributions(
+      search,
+      cards,
+      contracts,
+      wallets,
+      pageSize,
+      page
+    ).then((result) => {
+      returnPaginatedResult(result, req, res);
+    });
   });
 
   apiRouter.get(`/consolidations/:wallet`, function (req: any, res: any) {
