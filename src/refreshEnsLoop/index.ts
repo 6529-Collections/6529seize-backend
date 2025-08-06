@@ -16,5 +16,4 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
       entities: [ENS]
     }
   );
-  await refreshEns();
 });
