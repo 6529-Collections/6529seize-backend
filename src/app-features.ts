@@ -14,6 +14,10 @@ export class AppFeatures {
   public isDbMigrateDisabled(): boolean {
     return this.isFeatureEnabled('DB_MIGRATE_DISABLED');
   }
+
+  public isExperimentalBulkRepEnabled(): boolean {
+    return this.isFeatureEnabled('EXPERIMENTAL_BULK_REP');
+  }
 }
 
 export const appFeatures = new AppFeatures();
