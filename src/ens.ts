@@ -7,7 +7,6 @@ import {
 } from './constants';
 import { ENS } from './entities/IENS';
 import {
-  fetchBrokenEnsRefresh,
   fetchEnsRefresh,
   fetchMissingEns,
   fetchMissingEnsNFTDelegation,
@@ -163,13 +162,7 @@ async function discoverEnsNFTDelegation(table: string) {
 }
 
 async function refreshEnsLoop() {
-  let batch: ENS[];
-  if (process.env.REFRESH_BROKEN_ENS === 'true') {
-    logger.info(`[REFRESH ENS LOOP] [REFRESHING BROKEN ENS]`);
-    batch = await fetchBrokenEnsRefresh();
-  } else {
-    batch = await fetchEnsRefresh();
-  }
+  const batch = await fetchEnsRefresh();
 
   if (batch.length > 0) {
     const delta = await findExistingEns(batch);

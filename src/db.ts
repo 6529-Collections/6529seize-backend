@@ -84,6 +84,7 @@ import {
 import { ethTools } from './eth-tools';
 import { equalIgnoreCase } from './strings';
 import { consolidationTools } from './consolidation-tools';
+import { env } from './env';
 
 const mysql = require('mysql');
 
@@ -538,15 +539,9 @@ export async function fetchWalletTransactions(
 }
 
 export async function fetchEnsRefresh() {
-  const sql = `SELECT * FROM ${ENS_TABLE} WHERE created_at < DATE_SUB(NOW(), INTERVAL 6 HOUR) ORDER BY created_at ASC LIMIT 200;`;
-  const results = await sqlExecutor.execute(sql);
-  return results;
-}
-
-export async function fetchBrokenEnsRefresh() {
-  const sql = `SELECT * FROM ${ENS_TABLE} WHERE display LIKE '%?%' LIMIT 200;`;
-  const results = await sqlExecutor.execute(sql);
-  return results;
+  const batchSize = env.getIntOrNull('ENS_LOOP_MAX_BATCH_SIZE') ?? 100;
+  const sql = `SELECT * FROM ${ENS_TABLE} WHERE created_at < DATE_SUB(NOW(), INTERVAL 6 HOUR) ORDER BY created_at ASC LIMIT :batchSize`;
+  return sqlExecutor.execute<ENS>(sql, { batchSize });
 }
 
 export async function fetchMissingEns(datetime?: Date) {

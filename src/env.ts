@@ -84,6 +84,14 @@ class Env {
     }
     return intValue;
   }
+
+  public getIntOrNull(name: string): number | null {
+    const strValue = this.getStringOrNull(name);
+    if (strValue === null) {
+      return null;
+    }
+    return this.numbers.parseIntOrNull(strValue);
+  }
 }
 
 export const env = new Env(numbers);
