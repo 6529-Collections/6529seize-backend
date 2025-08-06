@@ -3,12 +3,25 @@ import { getEthPriceCount, persistEthPrices } from './db.eth_price';
 import { Logger } from '../logging';
 import { EthPrice } from '../entities/IEthPrice';
 import { Time } from '../time';
+import axiosRetry from 'axios-retry';
 
 const MOBULA_HISTORIC_URL =
   'https://api.mobula.io/api/1/market/history?asset=Ethereum&from=1633046400000';
 
 const MOBULA_CURRENT_URL =
   'https://api.mobula.io/api/1/market/data?asset=Ethereum';
+
+axiosRetry(axios, {
+  retries: 3,
+  retryDelay: axiosRetry.exponentialDelay,
+  retryCondition: (error) => {
+    return (
+      axiosRetry.isNetworkError(error) ??
+      axiosRetry.isRetryableError(error) ??
+      (error.response?.status ?? 0) >= 500
+    );
+  }
+});
 
 interface HistoricResponse {
   data: {
