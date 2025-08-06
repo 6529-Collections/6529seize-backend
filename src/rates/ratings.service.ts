@@ -271,9 +271,7 @@ export class RatingsService {
     if (creditAmount !== null) {
       const creditLeft = creditAmount - creditSpent;
       if (creditLeft < ratingChange) {
-        throw new BadRequestException(
-          `Not enough proxy credit left to rate. Needed ${ratingChange}, left ${creditLeft}`
-        );
+        throw new BadRequestException(`Not enough proxy credit left to rate.`);
       }
       await this.profileProxiesDb.updateCreditSpentForAction(
         {
@@ -1094,7 +1092,7 @@ export class RatingsService {
             (repAction.credit_amount ?? 0) - (repAction.credit_spent ?? 0);
           if (creditLeft < tdhWastedDuringThisBulkRating) {
             throw new BadRequestException(
-              `Not enough proxy credit left to rate. Needed ${tdhWastedDuringThisBulkRating}, left ${creditLeft}`
+              `Not enough proxy credit left to rate.`
             );
           }
           const creditSpentInThisBulk = ratingChanges.reduce(
