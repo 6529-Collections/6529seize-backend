@@ -25,6 +25,7 @@ import { Wallet } from '../entities/IWallet';
 import { collections } from '../collections';
 import { env } from '../env';
 import { DropType } from '../entities/IDrop';
+import { appFeatures } from '../app-features';
 
 const mysql = require('mysql');
 
@@ -372,15 +373,36 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     repBulkUpdates: { profileId: string; newRep: number }[],
     ctx: RequestContext
   ) {
-    await Promise.all(
-      repBulkUpdates.map((update) =>
-        this.db.execute(
-          `update ${IDENTITIES_TABLE} set rep = rep + :newRep, level_raw = level_raw + :newRep where profile_id = :profileId`,
-          update,
-          { wrappedConnection: ctx.connection }
+    if (appFeatures.isExperimentalBulkRepEnabled()) {
+      if (!repBulkUpdates.length) return;
+      const sql = `
+        UPDATE ${IDENTITIES_TABLE} 
+        SET rep = rep + CASE profile_id ${repBulkUpdates.map((_, i) => `WHEN :profileId${i} THEN :newRep${i}`).join(' ')} END,
+            level_raw = level_raw + CASE profile_id ${repBulkUpdates.map((_, i) => `WHEN :profileId${i} THEN :newRep${i}`).join(' ')} END
+        WHERE profile_id IN (${repBulkUpdates.map((_, i) => `:profileId${i}`).join(', ')})
+      `;
+
+      const params = repBulkUpdates.reduce(
+        (acc, update, i) => {
+          acc[`profileId${i}`] = update.profileId;
+          acc[`newRep${i}`] = update.newRep;
+          return acc;
+        },
+        {} as Record<string, any>
+      );
+
+      await this.db.execute(sql, params, { wrappedConnection: ctx.connection });
+    } else {
+      await Promise.all(
+        repBulkUpdates.map((update) =>
+          this.db.execute(
+            `update ${IDENTITIES_TABLE} set rep = rep + :newRep, level_raw = level_raw + :newRep where profile_id = :profileId`,
+            update,
+            { wrappedConnection: ctx.connection }
+          )
         )
-      )
-    );
+      );
+    }
   }
 
   async searchIdentitiesWithDisplays(
