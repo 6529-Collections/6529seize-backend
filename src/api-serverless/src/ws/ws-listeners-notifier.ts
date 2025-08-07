@@ -178,10 +178,10 @@ export class WsListenersNotifier {
     if (!identityEntity) {
       return;
     }
-    const mainStageSubscriptions = await identitiesDb.getActiveMainStageDropIds(
-      [identityId],
-      {}
-    );
+    const [mainStageSubscriptions, mainStageWins] = await Promise.all([
+      identitiesDb.getActiveMainStageDropIds([identityId], {}),
+      identitiesDb.getMainStageWinnerDropIds([identityId], {})
+    ]);
     const profile: Omit<ApiProfileMin, 'subscribed_actions'> = {
       id: identityId,
       handle: identityEntity.handle!,
@@ -194,7 +194,9 @@ export class WsListenersNotifier {
       level: getLevelFromScore(identityEntity.level_raw),
       archived: false,
       primary_address: identityEntity.primary_address,
-      active_main_stage_submission_ids: mainStageSubscriptions[identityId] ?? []
+      active_main_stage_submission_ids:
+        mainStageSubscriptions[identityId] ?? [],
+      winner_main_stage_drop_ids: mainStageWins[identityId] ?? []
     };
     const now = Time.currentMillis();
     await Promise.all(
