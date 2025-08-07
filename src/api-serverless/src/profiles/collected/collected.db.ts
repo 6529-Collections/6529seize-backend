@@ -24,21 +24,20 @@ export class CollectedDb extends LazyDbAccessCompatibleService {
     return await this.db.execute(
       `
         SELECT 
-          CAST(IF(contract = '${MEMES_CONTRACT}', '${CollectionType.MEMES}', '${CollectionType.GRADIENTS}') AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci AS collection,
+          CAST(IF(n.contract = '${MEMES_CONTRACT}', '${CollectionType.MEMES}', '${CollectionType.GRADIENTS}') AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci AS collection,
           n.id AS token_id,
           CAST(n.name AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci AS name,
           CAST(jt.value AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci AS season,
           n.thumbnail
-        FROM ${NFTS_TABLE} n,
-          JSON_TABLE(
-            n.metadata,
-            '$.attributes[*]' COLUMNS (
-              trait_type VARCHAR(255) PATH '$.trait_type',
-              value VARCHAR(255) PATH '$.value'
-            )
-          ) AS jt
-        WHERE jt.trait_type = 'Type - Season'
-          AND n.contract IN ('${MEMES_CONTRACT}', '${GRADIENT_CONTRACT}')
+        FROM ${NFTS_TABLE} n
+        LEFT JOIN JSON_TABLE(
+          n.metadata,
+          '$.attributes[*]' COLUMNS (
+            trait_type VARCHAR(255) PATH '$.trait_type',
+            value VARCHAR(255) PATH '$.value'
+          )
+        ) AS jt ON jt.trait_type = 'Type - Season'
+        WHERE n.contract IN ('${MEMES_CONTRACT}', '${GRADIENT_CONTRACT}')
 
         UNION ALL
 
