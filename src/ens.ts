@@ -163,22 +163,11 @@ async function discoverEnsNFTDelegation(table: string) {
   }
 }
 
-async function refreshEnsLoop(time: Time) {
+async function refreshEnsLoop() {
   const batch = await fetchEnsRefresh();
 
   if (batch.length > 0) {
     const delta = await findExistingEns(batch);
-    if (
-      time
-        .diffFromNow()
-        .gte(
-          Time.minutes(
-            env.getIntOrNull('REFRESH_ENS_VOLUNTARY_QUIT_MINUTES') ?? 10
-          )
-        )
-    ) {
-      return false;
-    }
     await persistENS(delta);
     return true;
   } else {
@@ -189,8 +178,17 @@ async function refreshEnsLoop(time: Time) {
 export async function refreshEns() {
   let processing = true;
   const time = Time.now();
-  while (processing) {
-    processing = await refreshEnsLoop(time);
+  while (
+    processing &&
+    !time
+      .diffFromNow()
+      .gte(
+        Time.minutes(
+          env.getIntOrNull('REFRESH_ENS_VOLUNTARY_QUIT_MINUTES') ?? 14
+        )
+      )
+  ) {
+    processing = await refreshEnsLoop();
   }
 }
 
