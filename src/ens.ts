@@ -16,6 +16,8 @@ import { Wallet } from './entities/IWallet';
 import { sqlExecutor } from './sql-executor';
 import { Logger } from './logging';
 import { text } from './text';
+import { Time } from './time';
+import { env } from './env';
 
 const logger = Logger.get('ENS');
 
@@ -175,7 +177,17 @@ async function refreshEnsLoop() {
 
 export async function refreshEns() {
   let processing = true;
-  while (processing) {
+  const time = Time.now();
+  while (
+    processing &&
+    !time
+      .diffFromNow()
+      .gte(
+        Time.minutes(
+          env.getIntOrNull('REFRESH_ENS_VOLUNTARY_QUIT_MINUTES') ?? 14
+        )
+      )
+  ) {
     processing = await refreshEnsLoop();
   }
 }
