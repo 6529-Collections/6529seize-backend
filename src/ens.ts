@@ -16,6 +16,8 @@ import { Wallet } from './entities/IWallet';
 import { sqlExecutor } from './sql-executor';
 import { Logger } from './logging';
 import { text } from './text';
+import { Time } from './time';
+import { env } from './env';
 
 const logger = Logger.get('ENS');
 
@@ -161,11 +163,22 @@ async function discoverEnsNFTDelegation(table: string) {
   }
 }
 
-async function refreshEnsLoop() {
+async function refreshEnsLoop(time: Time) {
   const batch = await fetchEnsRefresh();
 
   if (batch.length > 0) {
     const delta = await findExistingEns(batch);
+    if (
+      time
+        .diffFromNow()
+        .gte(
+          Time.minutes(
+            env.getIntOrNull('REFRESH_ENS_VOLUNTARY_QUIT_MINUTES') ?? 10
+          )
+        )
+    ) {
+      return false;
+    }
     await persistENS(delta);
     return true;
   } else {
@@ -175,8 +188,9 @@ async function refreshEnsLoop() {
 
 export async function refreshEns() {
   let processing = true;
+  const time = Time.now();
   while (processing) {
-    processing = await refreshEnsLoop();
+    processing = await refreshEnsLoop(time);
   }
 }
 
