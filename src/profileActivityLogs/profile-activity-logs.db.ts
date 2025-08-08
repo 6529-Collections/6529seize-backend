@@ -100,10 +100,17 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
   ): Promise<ProfileActivityLog[]> {
     ctx.timer?.start(`${this.constructor.name}->searchLogs`);
     const page = params.pageRequest.page;
+
+    const MAX_PAGE_SIZE = 500;
+    const DEFAULT_PAGE_SIZE = 200;
+
     const page_size =
-      params.pageRequest.page_size < 1 || params.pageRequest.page_size > 2000
-        ? 2001
-        : params.pageRequest.page_size;
+      params.pageRequest.page_size < 1
+        ? DEFAULT_PAGE_SIZE
+        : params.pageRequest.page_size > MAX_PAGE_SIZE
+          ? MAX_PAGE_SIZE
+          : params.pageRequest.page_size;
+
     const offsetVal = (page - 1) * page_size;
     const limitVal = page_size + 1;
 
@@ -124,7 +131,7 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
       }
       groupSqlJoin = ` JOIN ${UserGroupsService.GENERATED_VIEW} group_view 
                      ON group_view.profile_id = pa_logs.profile_id `;
-      groupSqlWhere = viewResult.sql || ''; // depends on how your code returns it
+      groupSqlWhere = viewResult.sql || '';
       groupParams = { ...viewResult.params };
     }
 
@@ -132,7 +139,7 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
       const subParams: Record<string, any> = {};
 
       let subSql = groupSqlWhere ? `${groupSqlWhere} ` : '';
-      subSql += `SELECT pa_logs.* 
+      subSql += `SELECT /*+ USE_INDEX(pa_logs, ${matchColumn === 'profile_id' ? 'profile_id' : matchColumn === 'proxy_id' ? 'proxy_id' : 'target_id'}) */ pa_logs.* 
                FROM ${PROFILES_ACTIVITY_LOGS_TABLE} pa_logs
                ${groupSqlJoin}
                WHERE 1=1`;
@@ -147,7 +154,7 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
         subParams.rating_matter = params.rating_matter;
       }
       if (params.category) {
-        subSql += ` AND JSON_UNQUOTE(JSON_EXTRACT(pa_logs.contents, '$.rating_category')) = :rating_category`;
+        subSql += ` AND additional_data_2 = :rating_category`;
         subParams.rating_category = params.category;
       }
       if (params.target_id) {
@@ -158,6 +165,12 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
         subSql += ` AND pa_logs.type IN (:type)`;
         subParams.type = params.type;
       }
+
+      const subQueryLimit = Math.min(limitVal * 3, 2000);
+      subSql += ` ORDER BY pa_logs.created_at ${
+        params.order?.toLowerCase() === 'asc' ? 'ASC' : 'DESC'
+      } LIMIT ${subQueryLimit}`;
+
       return { sql: subSql, params: subParams };
     };
 
@@ -170,7 +183,7 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
       for (const col of columnsToSearch) {
         const sq = buildSubQuery(col);
         subQuerySQLs.push(sq.sql);
-        subQueryParams.push({ ...groupParams, ...sq.params }); // merge group params + subquery params
+        subQueryParams.push({ ...groupParams, ...sq.params });
       }
     } else {
       let single =
@@ -186,7 +199,7 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
         singleParams.rating_matter = params.rating_matter;
       }
       if (params.category) {
-        single += ` AND JSON_UNQUOTE(JSON_EXTRACT(pa_logs.contents, '$.rating_category')) = :rating_category`;
+        single += ` AND additional_data_2 = :rating_category`;
         singleParams.rating_category = params.category;
       }
       if (params.target_id) {
