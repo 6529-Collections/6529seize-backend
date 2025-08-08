@@ -1,6 +1,7 @@
 import {
   AggregatedRating,
   AggregatedRatingRequest,
+  IdentityUpdate,
   OverRateMatter,
   ratingsDb,
   RatingsDb,
@@ -104,7 +105,18 @@ export class RatingsService {
   ): Promise<{ total: number; byUser: number }> {
     return await this.ratingsDb.executeNativeQueriesInTransaction(
       async (connection) => {
-        await this.updateRatingInternal(request, connection);
+        const identityUpdates = await this.updateRatingInternal(
+          request,
+          connection
+        );
+
+        if (identityUpdates.length > 0) {
+          await this.ratingsDb.applyBulkIdentityUpdates(
+            identityUpdates,
+            connection
+          );
+        }
+
         return await this.ratingsDb.getTotalAndUserRepRatingForCategoryToProfile(
           {
             matter: request.matter,
@@ -121,19 +133,20 @@ export class RatingsService {
   private async updateRatingInternal(
     request: UpdateRatingViaApiRequest,
     connection: ConnectionWrapper<any>
-  ) {
+  ): Promise<IdentityUpdate[]> {
     const authenticatedProfileId =
       request.authenticationContext.getActingAsId();
     if (!authenticatedProfileId) {
       throw new ForbiddenException(`Create a profile before you rate`);
     }
     if (!request.authenticationContext.isAuthenticatedAsProxy()) {
-      await this.updateRatingUnsafe({
+      const identityUpdate = await this.updateRatingUnsafe({
         request,
         changeReason: 'USER_EDIT',
         proxyContext: null,
         connection
       });
+      return identityUpdate ? [identityUpdate] : [];
     } else {
       const action =
         request.matter === RateMatter.REP
@@ -155,12 +168,13 @@ export class RatingsService {
         credit_amount: action.credit_amount,
         credit_spent: action.credit_spent
       };
-      await this.updateRatingUnsafe({
+      const identityUpdate = await this.updateRatingUnsafe({
         request,
         changeReason: 'USER_EDIT',
         proxyContext,
         connection
       });
+      return identityUpdate ? [identityUpdate] : [];
     }
   }
 
@@ -178,7 +192,7 @@ export class RatingsService {
     connection: ConnectionWrapper<any>;
     skipTdhCheck?: boolean;
     skipLogCreation?: boolean;
-  }) {
+  }): Promise<IdentityUpdate | null> {
     const profileId = request.rater_profile_id;
     if (
       getMattersWhereTargetIsProfile().includes(request.matter) &&
@@ -188,7 +202,7 @@ export class RatingsService {
     }
     const currentRating = await this.ratingsDb.getRating(request, connection);
     if (currentRating.rating === request.rating) {
-      return;
+      return null;
     }
     if (!skipTdhCheck) {
       const totalTdhSpentOnMatter = currentRating.total_tdh_spent_on_matter;
@@ -211,11 +225,12 @@ export class RatingsService {
         );
       }
     }
-    await this.ratingsDb.updateRating(
+    const identityUpdate = await this.ratingsDb.updateRating(
       request,
       request.rating - currentRating.rating,
       connection
     );
+
     await this.scheduleEvents(request, currentRating, connection);
     if (!skipLogCreation) {
       await this.insertLogs(
@@ -226,6 +241,8 @@ export class RatingsService {
         connection
       );
     }
+
+    return identityUpdate;
   }
 
   private async insertLogs(
@@ -431,6 +448,8 @@ export class RatingsService {
           );
           let overTdh =
             Math.abs(overRatedMatter.tally) - overRatedMatter.rater_tdh;
+          const identityUpdates: IdentityUpdate[] = [];
+
           for (const rating of ratings) {
             if (rating.rating !== 0) {
               const newRating =
@@ -438,12 +457,26 @@ export class RatingsService {
                 (rating.rating / Math.abs(rating.rating));
               overTdh =
                 overTdh - (Math.abs(rating.rating) - Math.abs(newRating));
-              await this.insertLostTdhRating(rating, newRating, connection);
+              const identityUpdate = await this.insertLostTdhRating(
+                rating,
+                newRating,
+                connection
+              );
+              if (identityUpdate) {
+                identityUpdates.push(identityUpdate);
+              }
             }
 
             if (overTdh <= 0) {
               break;
             }
+          }
+
+          if (identityUpdates.length > 0) {
+            await this.ratingsDb.applyBulkIdentityUpdates(
+              identityUpdates,
+              connection
+            );
           }
         }
       );
@@ -455,8 +488,8 @@ export class RatingsService {
     oldRating: Rating,
     newRating: number,
     connection: ConnectionWrapper<any>
-  ) {
-    await this.ratingsDb.updateRating(
+  ): Promise<IdentityUpdate | null> {
+    const identityUpdate = await this.ratingsDb.updateRating(
       {
         ...oldRating,
         rating: newRating
@@ -493,6 +526,8 @@ export class RatingsService {
       oldRating,
       connection
     );
+
+    return identityUpdate;
   }
 
   async deleteRatingsForProfileArchival(
@@ -501,8 +536,10 @@ export class RatingsService {
     targetHandle: string,
     connectionHolder: ConnectionWrapper<any>
   ) {
+    const identityUpdates: IdentityUpdate[] = [];
+
     for (const rating of ratings) {
-      await this.updateRatingUnsafe({
+      const identityUpdate = await this.updateRatingUnsafe({
         request: {
           ...rating,
           rating: 0
@@ -513,6 +550,17 @@ export class RatingsService {
         skipLogCreation: true,
         skipTdhCheck: true
       });
+
+      if (identityUpdate) {
+        identityUpdates.push(identityUpdate);
+      }
+    }
+
+    if (identityUpdates.length > 0) {
+      await this.ratingsDb.applyBulkIdentityUpdates(
+        identityUpdates,
+        connectionHolder
+      );
     }
   }
 
@@ -633,13 +681,15 @@ export class RatingsService {
     targetHandle: string,
     connectionHolder: ConnectionWrapper<any>
   ) {
+    const identityUpdates: IdentityUpdate[] = [];
+
     for (const rating of ratings) {
       const targetRating = await this.ratingsDb.getRating(
         rating,
         connectionHolder
       );
 
-      await this.updateRatingUnsafe({
+      const identityUpdate = await this.updateRatingUnsafe({
         request: { ...rating, rating: rating.rating + targetRating.rating },
         changeReason: `Profile ${sourceHandle} archived, ratings transferred to ${targetHandle}`,
         proxyContext: null,
@@ -647,6 +697,17 @@ export class RatingsService {
         skipTdhCheck: true,
         skipLogCreation: true
       });
+
+      if (identityUpdate) {
+        identityUpdates.push(identityUpdate);
+      }
+    }
+
+    if (identityUpdates.length > 0) {
+      await this.ratingsDb.applyBulkIdentityUpdates(
+        identityUpdates,
+        connectionHolder
+      );
     }
   }
 
@@ -924,11 +985,13 @@ export class RatingsService {
           },
           {} as Record<string, number>
         );
+        const allIdentityUpdates: IdentityUpdate[] = [];
+
         for (const [profileId, newRating] of Object.entries(
           newRatingsByProfileId
         )) {
           try {
-            await this.updateRatingInternal(
+            const identityUpdates = await this.updateRatingInternal(
               {
                 matter,
                 matter_category:
@@ -940,6 +1003,7 @@ export class RatingsService {
               },
               connection
             );
+            allIdentityUpdates.push(...identityUpdates);
           } catch (e: any) {
             if (
               e.message.startsWith(
@@ -951,6 +1015,13 @@ export class RatingsService {
               );
             }
           }
+        }
+
+        if (allIdentityUpdates.length > 0) {
+          await this.ratingsDb.applyBulkIdentityUpdates(
+            allIdentityUpdates,
+            connection
+          );
         }
         return skipped;
       }

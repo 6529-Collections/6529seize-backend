@@ -17,6 +17,12 @@ import { revokeRepBasedDropOverVotes } from '../drops/participation-drops-over-v
 
 const mysql = require('mysql');
 
+export interface IdentityUpdate {
+  profileId: string;
+  repChange?: number;
+  cicChange?: number;
+}
+
 export class RatingsDb extends LazyDbAccessCompatibleService {
   async getAggregatedRatingOnMatter(
     {
@@ -198,7 +204,7 @@ from general_stats
     ratingUpdate: UpdateRatingRequest,
     amountChanged: number,
     connection: ConnectionWrapper<any>
-  ) {
+  ): Promise<IdentityUpdate | null> {
     await this.db.execute(
       `
           update ${RATINGS_TABLE}
@@ -212,24 +218,20 @@ from general_stats
       ratingUpdate,
       { wrappedConnection: connection }
     );
+
+    let identityUpdate: IdentityUpdate | null = null;
+
     if (ratingUpdate.matter === RateMatter.CIC) {
-      await this.db.execute(
-        `update ${IDENTITIES_TABLE} set cic = (cic + :amount_changed) where profile_id = :profile_id`,
-        {
-          profile_id: ratingUpdate.matter_target_id,
-          amount_changed: amountChanged
-        },
-        { wrappedConnection: connection }
-      );
+      identityUpdate = {
+        profileId: ratingUpdate.matter_target_id,
+        cicChange: amountChanged
+      };
     } else if (ratingUpdate.matter === RateMatter.REP) {
-      await this.db.execute(
-        `update ${IDENTITIES_TABLE} set rep = (rep + :amount_changed), level_raw = (level_raw + :amount_changed) where profile_id = :profile_id`,
-        {
-          profile_id: ratingUpdate.matter_target_id,
-          amount_changed: amountChanged
-        },
-        { wrappedConnection: connection }
-      );
+      identityUpdate = {
+        profileId: ratingUpdate.matter_target_id,
+        repChange: amountChanged
+      };
+
       if (amountChanged < 0) {
         await revokeRepBasedDropOverVotes(
           {
@@ -240,6 +242,78 @@ from general_stats
           connection
         );
       }
+    }
+
+    return identityUpdate;
+  }
+
+  async applyBulkIdentityUpdates(
+    identityUpdates: IdentityUpdate[],
+    connection: ConnectionWrapper<any>
+  ): Promise<void> {
+    if (identityUpdates.length === 0) return;
+
+    // Consolidate updates by profileId and sort for consistent ordering to prevent deadlocks
+    const repUpdatesByProfileId = new Map<string, number>();
+    const cicUpdatesByProfileId = new Map<string, number>();
+
+    identityUpdates.forEach((update) => {
+      if (update.repChange !== undefined && update.repChange !== 0) {
+        const current = repUpdatesByProfileId.get(update.profileId) || 0;
+        repUpdatesByProfileId.set(update.profileId, current + update.repChange);
+      }
+      if (update.cicChange !== undefined && update.cicChange !== 0) {
+        const current = cicUpdatesByProfileId.get(update.profileId) || 0;
+        cicUpdatesByProfileId.set(update.profileId, current + update.cicChange);
+      }
+    });
+
+    // Convert to arrays and sort by profileId for consistent lock ordering
+    const repUpdates = Array.from(repUpdatesByProfileId.entries())
+      .map(([profileId, newRep]) => ({ profileId, newRep }))
+      .sort((a, b) => a.profileId.localeCompare(b.profileId));
+
+    const cicUpdates = Array.from(cicUpdatesByProfileId.entries())
+      .map(([profileId, cicChange]) => ({ profileId, cicChange }))
+      .sort((a, b) => a.profileId.localeCompare(b.profileId));
+
+    if (repUpdates.length > 0) {
+      const sql = `
+        UPDATE ${IDENTITIES_TABLE} 
+        SET rep = rep + CASE profile_id ${repUpdates.map((_, i) => `WHEN :profileId${i} THEN :newRep${i}`).join(' ')} END,
+            level_raw = level_raw + CASE profile_id ${repUpdates.map((_, i) => `WHEN :profileId${i} THEN :newRep${i}`).join(' ')} END
+        WHERE profile_id IN (${repUpdates.map((_, i) => `:profileId${i}`).join(', ')})
+      `;
+
+      const params = repUpdates.reduce(
+        (acc, update, i) => {
+          acc[`profileId${i}`] = update.profileId;
+          acc[`newRep${i}`] = update.newRep;
+          return acc;
+        },
+        {} as Record<string, any>
+      );
+
+      await this.db.execute(sql, params, { wrappedConnection: connection });
+    }
+
+    if (cicUpdates.length > 0) {
+      const sql = `
+        UPDATE ${IDENTITIES_TABLE} 
+        SET cic = cic + CASE profile_id ${cicUpdates.map((_, i) => `WHEN :profileId${i} THEN :cicChange${i}`).join(' ')} END
+        WHERE profile_id IN (${cicUpdates.map((_, i) => `:profileId${i}`).join(', ')})
+      `;
+
+      const params = cicUpdates.reduce(
+        (acc, update, i) => {
+          acc[`profileId${i}`] = update.profileId;
+          acc[`cicChange${i}`] = update.cicChange;
+          return acc;
+        },
+        {} as Record<string, any>
+      );
+
+      await this.db.execute(sql, params, { wrappedConnection: connection });
     }
   }
 
