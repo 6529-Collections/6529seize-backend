@@ -952,6 +952,40 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
       {} as Record<string, string[]>
     );
   }
+
+  async getMainStageWinnerDropIds(
+    profileIds: string[],
+    ctx: RequestContext
+  ): Promise<Record<string, string[]>> {
+    const mainStageWaveId = env.getStringOrNull(`MAIN_STAGE_WAVE_ID`);
+    if (!profileIds.length || !mainStageWaveId) {
+      return {};
+    }
+    const results = await this.db.execute<{
+      profile_id: string;
+      drop_id: string;
+    }>(
+      `
+      select author_id as profile_id, id as drop_id from ${DROPS_TABLE} where author_id in (:profileIds) and wave_id = :mainStageWaveId
+      and drop_type = '${DropType.WINNER}'
+      `,
+      {
+        profileIds,
+        mainStageWaveId
+      },
+      { wrappedConnection: ctx.connection }
+    );
+    return results.reduce(
+      (acc, it) => {
+        if (!acc[it.profile_id]) {
+          acc[it.profile_id] = [];
+        }
+        acc[it.profile_id].push(it.drop_id);
+        return acc;
+      },
+      {} as Record<string, string[]>
+    );
+  }
 }
 
 export const identitiesDb = new IdentitiesDb(dbSupplier);

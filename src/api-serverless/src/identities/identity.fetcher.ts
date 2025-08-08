@@ -68,15 +68,20 @@ export class IdentityFetcher {
     ids: string[],
     ctx: RequestContext
   ): Promise<Record<string, ApiProfileMin>> {
-    const [identities, subscribedActions, mainStageSubscriptions] =
-      await Promise.all([
-        this.identitiesDb.getIdentitiesByIds(ids, ctx.connection),
-        this.getSubscribedActions({
-          authenticatedProfileId: ctx.authenticationContext?.getActingAsId(),
-          ids
-        }),
-        this.identitiesDb.getActiveMainStageDropIds(ids, ctx)
-      ]);
+    const [
+      identities,
+      subscribedActions,
+      mainStageSubscriptions,
+      mainStageWins
+    ] = await Promise.all([
+      this.identitiesDb.getIdentitiesByIds(ids, ctx.connection),
+      this.getSubscribedActions({
+        authenticatedProfileId: ctx.authenticationContext?.getActingAsId(),
+        ids
+      }),
+      this.identitiesDb.getActiveMainStageDropIds(ids, ctx),
+      this.identitiesDb.getMainStageWinnerDropIds(ids, ctx)
+    ]);
     const notFoundProfileIds = ids.filter(
       (id) => !identities.find((p) => p.profile_id === id)
     );
@@ -94,7 +99,8 @@ export class IdentityFetcher {
       subscribed_actions: subscribedActions[p.profile_id!] ?? [],
       primary_address: p.primary_address,
       active_main_stage_submission_ids:
-        mainStageSubscriptions[p.profile_id!] ?? []
+        mainStageSubscriptions[p.profile_id!] ?? [],
+      winner_main_stage_drop_ids: mainStageWins[p.profile_id!] ?? []
     }));
     const archivedProfiles = await this.identitiesDb
       .getNewestVersionHandlesOfArchivedProfiles(
@@ -116,7 +122,8 @@ export class IdentityFetcher {
           archived: true,
           subscribed_actions: subscribedActions[p.external_id] ?? [],
           active_main_stage_submission_ids:
-            mainStageSubscriptions[p.external_id] ?? []
+            mainStageSubscriptions[p.external_id] ?? [],
+          winner_main_stage_drop_ids: mainStageWins[p.external_id] ?? []
         }))
       );
     return [...notArchivedProfiles, ...archivedProfiles].reduce(
@@ -238,7 +245,8 @@ export class IdentityFetcher {
         classification: ApiProfileClassification.Pseudonym,
         sub_classification: null,
         consolidation_key: query,
-        active_main_stage_submission_ids: []
+        active_main_stage_submission_ids: [],
+        winner_main_stage_drop_ids: []
       };
     }
     return await this.mapToApiIdentity(identity, query, ctx);
@@ -301,17 +309,27 @@ export class IdentityFetcher {
       },
       ctx
     );
-    const [wallets, mainStageDropIds] = await Promise.all([
-      this.identitiesDb.getPrediscoveredEnsNames(consolidatedWallets, ctx),
-      this.identitiesDb
-        .getActiveMainStageDropIds(
-          identity.profile_id ? [identity.profile_id] : [],
-          ctx
-        )
-        .then((it) =>
-          identity.profile_id ? (it[identity.profile_id] ?? []) : []
-        )
-    ]);
+    const [wallets, mainStageDropIds, mainStageWinnerDrops] = await Promise.all(
+      [
+        this.identitiesDb.getPrediscoveredEnsNames(consolidatedWallets, ctx),
+        this.identitiesDb
+          .getActiveMainStageDropIds(
+            identity.profile_id ? [identity.profile_id] : [],
+            ctx
+          )
+          .then((it) =>
+            identity.profile_id ? (it[identity.profile_id] ?? []) : []
+          ),
+        this.identitiesDb
+          .getMainStageWinnerDropIds(
+            identity.profile_id ? [identity.profile_id] : [],
+            ctx
+          )
+          .then((it) =>
+            identity.profile_id ? (it[identity.profile_id] ?? []) : []
+          )
+      ]
+    );
     const classification = identity.classification
       ? (enums.resolve(
           ApiProfileClassification,
@@ -340,7 +358,8 @@ export class IdentityFetcher {
       sub_classification: identity.sub_classification,
       consolidation_key: identity.consolidation_key,
       query: query,
-      active_main_stage_submission_ids: mainStageDropIds
+      active_main_stage_submission_ids: mainStageDropIds,
+      winner_main_stage_drop_ids: mainStageWinnerDrops
     };
   }
 

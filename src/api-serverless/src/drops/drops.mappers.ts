@@ -454,7 +454,8 @@ export class DropsMappers {
       archived: true,
       subscribed_actions: [],
       primary_address: '',
-      active_main_stage_submission_ids: []
+      active_main_stage_submission_ids: [],
+      winner_main_stage_drop_ids: []
     };
     const profilesByIds = allProfileIds.reduce(
       (acc, profileId) => {
