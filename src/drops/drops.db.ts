@@ -1124,16 +1124,18 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     );
     const results = await this.db.execute<ProfileOverVoteAmountInWave>(
       `
-          with given_tdh_votes as (select voter_id, wave_id, sum(abs(votes)) as total_given_votes
-                                   from ${DROP_VOTER_STATE_TABLE}
-                                   group by 1, 2)
-          select v.voter_id as profile_id, wave_id, i.tdh as tdh, v.total_given_votes as total_given_votes
-                               from given_tdh_votes v
-                                        join ${IDENTITIES_TABLE} i on v.voter_id = i.profile_id
-                                        join ${WAVES_TABLE} w on v.wave_id = w.id
-                               where w.voting_credit_type = '${WaveCreditType.TDH}'
-                                 and v.total_given_votes > i.tdh
-      `,
+        with given_tdh_votes as (select ${DROP_VOTER_STATE_TABLE}.voter_id, ${DROP_VOTER_STATE_TABLE}.wave_id, sum(abs(${DROP_VOTER_STATE_TABLE}.votes)) as total_given_votes
+                                 from ${DROP_VOTER_STATE_TABLE}
+                                 join ${DROPS_TABLE} on ${DROPS_TABLE}.id = ${DROP_VOTER_STATE_TABLE}.drop_id
+                                 where ${DROPS_TABLE}.drop_type = '${DropType.PARTICIPATORY}'
+                                 group by 1, 2)
+        select v.voter_id as profile_id, wave_id, i.tdh as tdh, v.total_given_votes as total_given_votes
+                             from given_tdh_votes v
+                                      join ${IDENTITIES_TABLE} i on v.voter_id = i.profile_id
+                                      join ${WAVES_TABLE} w on v.wave_id = w.id
+                             where w.voting_credit_type = '${WaveCreditType.TDH}'
+                               and v.total_given_votes > i.tdh
+    `,
       {},
       { wrappedConnection: ctx.connection }
     );
@@ -1238,7 +1240,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         select v.*, d.author_id as author_id, w.visibility_group_id as visibility_group_id from ${DROP_VOTER_STATE_TABLE} v
          join drops d on d.id = v.drop_id
          join waves w on w.id = d.wave_id
-         where v.wave_id = :wave_id and v.voter_id = :profile_id and votes <> 0
+         where v.wave_id = :wave_id and v.voter_id = :profile_id and votes <> 0 and d.drop_type = '${DropType.PARTICIPATORY}'
       `,
       params,
       { wrappedConnection: ctx.connection }
