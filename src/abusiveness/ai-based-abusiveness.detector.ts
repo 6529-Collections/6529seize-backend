@@ -1,5 +1,5 @@
-import { AbusivenessDetectionResult } from '../entities/IAbusivenessDetectionResult';
 import { discord, Discord, DiscordChannel } from '../discord';
+import { AbusivenessDetectionResult } from '../entities/IAbusivenessDetectionResult';
 import { AiPrompter } from './ai-prompter';
 import { bedrockAiPrompter } from './bedrock-ai.prompter';
 
@@ -67,7 +67,19 @@ export class AiBasedAbusivenessDetector {
     ${preamble}
     
     Our website allows us to give "rep" (aka reputation) points to community members for different activities or characteristics.
-    some valid examples below, that show the rep points being assigned and the classification for each rep:
+
+    IMPORTANT: Rep phrases often include **negative assessments**. That is OK.
+    - Allowed: Non-abusive evaluations of conduct, trustworthiness, reliability, professionalism, or behavior, e.g., "not an honest dealer", "unreliable", "late payer", "spams DMs", "poor moderator".
+    - Allowed: Neutral or positive skills/interests, e.g., "Solidity Programming", "nude photography".
+    - Disallowed: Hate speech; slurs; explicit harassment/profanities directed at a person (e.g., "fuckface"); doxxing of another person.
+
+    Heuristics for **Allowed** negative rep:
+    - Targeted at conduct/behavior, not protected characteristics.
+    - No private PII about someone else.
+    - No explicit slurs or direct abusive name-calling.
+    When in doubt for rep phrases, prefer **Allowed** if it reads like a reputation tag rather than harassment.
+
+    Some valid examples below, that show the rep points being assigned and the classification for each rep:
     +1,000 for "Solidity Programming" 
     +500 for "nude photography" 
     +4,200 for "Pizza Cooking" +6,969 for "Kindness"
@@ -79,9 +91,10 @@ export class AiBasedAbusivenessDetector {
     +4,444 for "bitcoin mining"
     +1,069 for "Rakesh Collector"
     +420 for "Paul Reid Maxi"
-    
+    -250 for "not an honest dealer"  (Allowed)
+
     Task
-    
+
     You are going to help us moderate user-generated rep classifications.
   
     I will share two examples of input and output.
@@ -283,7 +296,7 @@ Your Output:
 {"value": "Allowed", "self_dox": "Yes"}
 
 Example 3:
-Our Input: 
+Our Input:
 {"username": "JohnSmith", "filter_name": "I am just a quiet community member waiting for the rise of the Aryan Nation"}
 
 Your Output:
