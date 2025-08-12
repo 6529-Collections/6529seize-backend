@@ -761,6 +761,7 @@ where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
                      where d2.drop_type = '${DropType.PARTICIPATORY}' 
                      and drv_2_i.wave_id = :waveId
                      and drv_2_i.timestamp <= :fromTime
+                     group by drv_2_i.drop_id
       )
       `,
       params,
