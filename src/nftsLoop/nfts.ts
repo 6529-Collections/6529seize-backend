@@ -1,16 +1,7 @@
-import { ethers } from 'ethers';
 import axios from 'axios';
-import { getRpcProvider } from '../rpc-provider';
-import {
-  fetchAllArtists,
-  fetchMemesWithSeason,
-  getDataSource,
-  persistArtists
-} from '../db';
-import { LabNFT, NFT, NFTWithExtendedData } from '../entities/INFT';
-import { NFTOwner } from '../entities/INFTOwner';
-import { TokenType } from '../enums';
-import { Logger } from '../logging';
+import { ethers } from 'ethers';
+import { In, MoreThan } from 'typeorm';
+import { processArtists } from '../artists';
 import {
   GRADIENT_CONTRACT,
   MANIFOLD,
@@ -25,9 +16,18 @@ import {
   NFT_VIDEO_LINK,
   NULL_ADDRESS
 } from '../constants';
-import { processArtists } from '../artists';
+import {
+  fetchAllArtists,
+  fetchMemesWithSeason,
+  getDataSource,
+  persistArtists
+} from '../db';
+import { LabNFT, NFT, NFTWithExtendedData } from '../entities/INFT';
+import { NFTOwner } from '../entities/INFTOwner';
 import { Transaction } from '../entities/ITransaction';
-import { In, MoreThan } from 'typeorm';
+import { TokenType } from '../enums';
+import { Logger } from '../logging';
+import { getRpcProvider } from '../rpc-provider';
 import { equalIgnoreCase } from '../strings';
 import { text } from '../text';
 import { Time } from '../time';
@@ -360,6 +360,50 @@ async function buildBaseNft(
   return baseNft;
 }
 
+function rehydrateFromMetadata(entry: { nft: NFT | LabNFT; changed: boolean }) {
+  const { nft } = entry;
+  const metadata: any = (nft as any).metadata;
+  if (!metadata) return;
+
+  // Derive media paths from current metadata
+  const format = metadata.image_details?.format ?? 'WEBP';
+  const tokenPathOriginal = `${nft.contract}/${nft.id}.${format}`;
+  const tokenPath = getTokenPath(nft.contract, nft.id, format);
+  const { animation, compressedAnimation } = getAnimationPaths(
+    nft.contract,
+    nft.id,
+    metadata.animation_details
+  );
+
+  // Artist fields (fallback to existing if not present in metadata)
+  const artist =
+    metadata.attributes?.find((a: any) => a.trait_type === 'Artist')?.value ??
+    (nft as any).artist ??
+    '';
+
+  const artistSeizeHandle =
+    metadata.attributes?.find(
+      (a: any) => a.trait_type?.toUpperCase?.() === 'SEIZE ARTIST PROFILE'
+    )?.value ??
+    (nft as any).artist_seize_handle ??
+    '';
+
+  // Core fields that should be refreshed when tokenURI changes
+  (nft as any).name = metadata.name;
+  (nft as any).description = text.replaceEmojisWithHex(metadata.description);
+  (nft as any).artist = artist;
+  (nft as any).artist_seize_handle = artistSeizeHandle;
+  (nft as any).icon = `${NFT_SCALED60_IMAGE_LINK}${tokenPath}`;
+  (nft as any).thumbnail = `${NFT_SCALED450_IMAGE_LINK}${tokenPath}`;
+  (nft as any).scaled = `${NFT_SCALED1000_IMAGE_LINK}${tokenPath}`;
+  (nft as any).image = `${NFT_ORIGINAL_IMAGE_LINK}${tokenPathOriginal}`;
+  (nft as any).compressed_animation = compressedAnimation;
+  (nft as any).animation = animation;
+
+  // Mark as changed so it will be persisted
+  entry.changed = true;
+}
+
 function extractMemeRefs(
   metadata: any,
   memes: NFTWithExtendedData[]
@@ -431,7 +475,7 @@ async function updateUri(
   );
   nft.uri = uri;
   nft.metadata = metadata;
-  entry.changed = true;
+  rehydrateFromMetadata(entry);
 }
 
 async function updateMintDate(entry: { nft: NFT | LabNFT; changed: boolean }) {
