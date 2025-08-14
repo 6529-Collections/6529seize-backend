@@ -4,7 +4,10 @@ import {
   LazyDbAccessCompatibleService
 } from '../../../sql-executor';
 import { ACTIVITY_EVENTS_TABLE } from '../../../constants';
-import { ActivityEventEntity } from '../../../entities/IActivityEvent';
+import {
+  ActivityEventAction,
+  ActivityEventEntity
+} from '../../../entities/IActivityEvent';
 
 export class FeedDb extends LazyDbAccessCompatibleService {
   async getNextActivityEvents(
@@ -16,6 +19,10 @@ export class FeedDb extends LazyDbAccessCompatibleService {
     },
     connection?: ConnectionWrapper<any>
   ): Promise<ActivityEventEntity[]> {
+    const visibilityFilter = params.visibility_group_ids.length
+      ? `or ae.visibility_group_id in (:visibility_group_ids)`
+      : ``;
+
     return this.db.execute<ActivityEventEntity>(
       `
       SELECT STRAIGHT_JOIN ae.*
@@ -24,29 +31,37 @@ export class FeedDb extends LazyDbAccessCompatibleService {
       WHERE
          (:serial_no_less_than is null or ae.id < :serial_no_less_than)
       
-        AND ae.action_author_id <> :subscriber_id
-      
         AND (
           ae.visibility_group_id IS NULL
-          ${
-            params.visibility_group_ids.length
-              ? `or ae.visibility_group_id in (:visibility_group_ids)`
-              : ``
-          }
+          ${visibilityFilter}
           )
       
-        AND EXISTS (
-          SELECT 1
-          FROM identity_subscriptions ids
-          WHERE ids.subscriber_id  = :subscriber_id
-            AND ids.target_id     = ae.target_id
-            AND ids.target_type   = ae.target_type
-            AND ids.target_action = ae.action
-      )
+        AND (
+          -- Subscribed events from other users
+          (ae.action_author_id <> :subscriber_id
+           AND EXISTS (
+             SELECT 1
+             FROM identity_subscriptions ids
+             WHERE ids.subscriber_id = :subscriber_id
+               AND ids.target_id = ae.target_id
+               AND ids.target_type = ae.target_type
+               AND ids.target_action = ae.action
+           ))
+          
+          OR
+          
+          -- User's own DROP_CREATED messages
+          (ae.action_author_id = :subscriber_id
+           AND ae.action = :drop_created_action)
+        )
+      
       ORDER BY ae.id DESC
       LIMIT :limit
-    `,
-      params,
+      `,
+      {
+        ...params,
+        drop_created_action: ActivityEventAction.DROP_CREATED
+      },
       connection ? { wrappedConnection: connection } : undefined
     );
   }
