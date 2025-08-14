@@ -76,10 +76,6 @@ export async function revokeRepBasedDropOverVotes(
 export async function revokeTdhBasedDropWavesOverVotes(
   connection: ConnectionWrapper<any>
 ) {
-  if (!appFeatures.isDropOvervoteRevocationEnabled()) {
-    logger.warn(`Drop overvote revocation is disabled. Skipping.`);
-    return;
-  }
   logger.info(`Revoking TDH-based waves overvotes`);
   const timer = new Timer('revokeTdhBasedWavesOverVotes');
   const ctx: RequestContext = { timer, connection };
