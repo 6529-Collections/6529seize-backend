@@ -1,6 +1,6 @@
 import { asyncRouter } from '../async.router';
 import { Request, Response } from 'express';
-import { getAuthenticationContext, needsAuthenticatedUser } from '../auth/auth';
+import { getAuthenticationContext, maybeAuthenticatedUser } from '../auth/auth';
 import { ApiResponse } from '../api-response';
 import { ApiFeedItem } from '../generated/models/ApiFeedItem';
 import { feedApiService } from './feed.api.service';
@@ -10,7 +10,7 @@ const router = asyncRouter();
 
 router.get(
   '/',
-  needsAuthenticatedUser(),
+  maybeAuthenticatedUser(),
   async (
     req: Request<
       any,

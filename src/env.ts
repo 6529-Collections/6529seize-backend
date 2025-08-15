@@ -92,6 +92,15 @@ class Env {
     }
     return this.numbers.parseIntOrNull(strValue);
   }
+
+  public getStringArray(name: string, delimiter?: string): string[] {
+    delimiter = delimiter || ';';
+    const strValue = this.getStringOrNull(name);
+    if (strValue === null) {
+      return [];
+    }
+    return strValue.split(delimiter);
+  }
 }
 
 export const env = new Env(numbers);

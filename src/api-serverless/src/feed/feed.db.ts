@@ -65,6 +65,39 @@ export class FeedDb extends LazyDbAccessCompatibleService {
       connection ? { wrappedConnection: connection } : undefined
     );
   }
+
+  async getNextPublicFeedActivityEvents(
+    params: {
+      wave_ids: string[];
+      limit: number;
+      serial_no_less_than: number | null;
+    },
+    connection?: ConnectionWrapper<any>
+  ): Promise<ActivityEventEntity[]> {
+    if (params.wave_ids.length === 0) {
+      return [];
+    }
+    return this.db.execute<ActivityEventEntity>(
+      `
+    SELECT ae.*
+    FROM ${ACTIVITY_EVENTS_TABLE} ae
+    WHERE
+       (:serial_no_less_than is null or ae.id < :serial_no_less_than)
+    
+      AND ae.visibility_group_id IS NULL
+    
+      AND ae.wave_id in (:wave_ids)
+    
+    ORDER BY ae.id DESC
+    LIMIT :limit
+    `,
+      {
+        ...params,
+        drop_created_action: ActivityEventAction.DROP_CREATED
+      },
+      connection ? { wrappedConnection: connection } : undefined
+    );
+  }
 }
 
 export const feedDb = new FeedDb(dbSupplier);
