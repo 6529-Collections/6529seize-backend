@@ -63,10 +63,12 @@ export async function redisCached<T>(
   }
   const cachedValue = await redis.get(key);
   if (cachedValue) {
+    console.log('found the cached value', cachedValue);
     return JSON.parse(cachedValue);
   }
   const value = await callback();
   if (value !== undefined) {
+    console.log('REINITIALIZING');
     await redis.set(key, JSON.stringify(value), { EX: ttl.toMillis() });
   }
   return value;
@@ -119,4 +121,8 @@ export async function initRedis() {
   logger.info('starting to connect');
   await redis.connect();
   logger.info('finished connecting');
+}
+
+export async function clearWaveGroupsCache() {
+  await evictKeyFromRedisCache('cache_6529_wave_groups');
 }
