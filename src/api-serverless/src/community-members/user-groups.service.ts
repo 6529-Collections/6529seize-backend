@@ -59,6 +59,7 @@ import { identitiesDb } from '../../../identities/identities.db';
 import { enums } from '../../../enums';
 import { ids } from '../../../ids';
 import { collections } from '../../../collections';
+import { clearWaveGroupsCache, redisCached } from '../../../redis';
 
 export type NewUserGroupEntity = Omit<
   UserGroupEntity,
@@ -127,7 +128,8 @@ export class UserGroupsService {
         }
       );
     await giveReadReplicaTimeToCatchUp();
-    this.invalidateGroupsUserIsEligibleFor(createdBy);
+    await clearWaveGroupsCache();
+    await this.invalidateGroupsUserIsEligibleFor(createdBy);
     return savedEntity;
   }
 
@@ -198,10 +200,12 @@ export class UserGroupsService {
   private async whichOfGivenGroupsIsUserEligibleFor(
     {
       profileId,
-      givenGroups
+      givenGroups,
+      allWaveGroups
     }: {
       profileId: string;
       givenGroups: string[];
+      allWaveGroups: boolean;
     },
     timer?: Timer
   ): Promise<string[]> {
@@ -220,9 +224,10 @@ export class UserGroupsService {
       tdh: identityEntity.tdh,
       level: getLevelFromScore(identityEntity.level_raw)
     };
-    const givenGroupEntities = await this.userGroupsDb.getByIds(givenGroups, {
+    const givenGroupEntities = await this.getGivenGroupEntities(
+      { givenGroups, allWaveGroups },
       timer
-    });
+    );
     if (!givenGroupEntities.length) {
       return [];
     }
@@ -248,6 +253,28 @@ export class UserGroupsService {
       ...groupEntitiesWhichPassedAllChecks.map((it) => it.id),
       ...groupsWhereUserIsInByIdentity.map((it) => it.id)
     ];
+  }
+
+  private async getGivenGroupEntities(
+    {
+      givenGroups,
+      allWaveGroups
+    }: { givenGroups: string[]; allWaveGroups: boolean },
+    timer: Timer
+  ): Promise<UserGroupEntity[]> {
+    if (!allWaveGroups) {
+      return await this.userGroupsDb.getByIds(givenGroups, {
+        timer
+      });
+    }
+    return redisCached<UserGroupEntity[]>(
+      'cache_6529_wave_groups',
+      Time.minutes(1),
+      async () =>
+        this.userGroupsDb.getByIds(givenGroups, {
+          timer
+        })
+    );
   }
 
   private async eliminateGroupsByGranularRatings(
@@ -503,7 +530,7 @@ export class UserGroupsService {
     timer?.start(timerKey);
     const groups = await this.userGroupsDb.getAllWaveRelatedGroups({ timer });
     const results = await this.whichOfGivenGroupsIsUserEligibleFor(
-      { profileId, givenGroups: groups },
+      { profileId, givenGroups: groups, allWaveGroups: true },
       timer
     );
     mcache.put(key, results, Time.minutes(1).toMillis());
@@ -576,6 +603,7 @@ export class UserGroupsService {
         }
       );
     await giveReadReplicaTimeToCatchUp();
+    await clearWaveGroupsCache();
     return updatedGroupEntity;
   }
 

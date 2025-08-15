@@ -103,9 +103,6 @@ export async function initRedis() {
     );
   }
   const password = process.env.REDIS_PASSWORD;
-  logger.info(
-    `Creating reddis client with url: ${url}, port: ${port} and password: ${password}`
-  );
   redis = createClient({
     socket: {
       host: url,
@@ -114,9 +111,13 @@ export async function initRedis() {
     },
     password: password
   });
-  redis.on('error', (error) => logger.error('Error: ' + error));
-  redis.on('connect', () => logger.info('Connected!'));
-  logger.info('starting to connect');
+  redis.on('error', (error) =>
+    logger.error('Error connecting to Redis: ' + error)
+  );
+  redis.on('connect', () => logger.info('Redis connected!'));
   await redis.connect();
-  logger.info('finished connecting');
+}
+
+export async function clearWaveGroupsCache() {
+  await evictKeyFromRedisCache('cache_6529_wave_groups');
 }
