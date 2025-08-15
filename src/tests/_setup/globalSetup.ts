@@ -18,6 +18,7 @@ module.exports = async () => {
   process.env.DB_NAME = container.getDatabase(); // 'test'
   process.env.NODE_ENV = 'local';
   process.env.FEATURE_DB_MIGRATE_DISABLED = 'true';
+  process.env.FORCE_AVOID_REDIS = 'true';
 
   await dbMigrationsLoop.handler(
     undefined as any,
