@@ -2,6 +2,7 @@ import { connect, disconnect } from './db';
 import { prepEnvironment } from './env';
 import { Logger } from './logging';
 import { Time } from './time';
+import { initRedis } from './redis';
 
 async function loadEnv(entities: any[] = [], syncEntities = false) {
   await prepEnvironment();
@@ -20,6 +21,7 @@ export async function doInDbContext<T>(
   const logger = opts?.logger ?? Logger.get('MAIN');
   logger.info(`[RUNNING]`);
   await loadEnv(opts?.entities ?? [], opts?.syncEntities ?? false);
+  await initRedis();
   try {
     return await fn();
   } finally {
