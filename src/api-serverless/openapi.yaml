@@ -4777,6 +4777,7 @@ components:
         - rep
         - level
         - tdh
+        - tdh_rate
         - display
         - consolidation_key
         - classification
@@ -4811,6 +4812,9 @@ components:
         tdh:
           type: integer
           format: int65
+        tdh_rate:
+          type: number
+          format: int64
         consolidation_key:
           type: string
         display:
@@ -5474,6 +5478,7 @@ components:
         - rep
         - tdh
         - level
+        - tdh_rate
         - primary_address
         - banner1_color
         - banner2_color
@@ -5504,6 +5509,9 @@ components:
           type: number
           format: int64
         tdh:
+          type: number
+          format: int64
+        tdh_rate:
           type: number
           format: int64
         level:

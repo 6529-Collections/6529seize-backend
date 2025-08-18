@@ -23,6 +23,7 @@ export class ApiIdentity {
     'rep': number;
     'level': number;
     'tdh': number;
+    'tdh_rate': number;
     'consolidation_key': string;
     'display': string;
     'primary_wallet': string;
@@ -85,6 +86,12 @@ export class ApiIdentity {
             "baseName": "tdh",
             "type": "number",
             "format": "int65"
+        },
+        {
+            "name": "tdh_rate",
+            "baseName": "tdh_rate",
+            "type": "number",
+            "format": "int64"
         },
         {
             "name": "consolidation_key",
