@@ -10,6 +10,7 @@ import {
   DROPS_TABLE,
   ENS_TABLE,
   IDENTITIES_TABLE,
+  LATEST_TDH_HISTORY_TABLE,
   MEMES_CONTRACT,
   NFTS_TABLE,
   PROFILES_ARCHIVE_TABLE,
@@ -984,6 +985,33 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
         return acc;
       },
       {} as Record<string, string[]>
+    );
+  }
+
+  async getTdhRates(
+    ids: string[],
+    ctx: RequestContext
+  ): Promise<Record<string, number>> {
+    if (!ids.length) {
+      return {};
+    }
+    const tdhRates = await this.db.execute<{
+      profile_id: string;
+      tdh_rate: string;
+    }>(
+      `
+      select i.profile_id as profile_id, ifnull(t.created_boosted_tdh, 0) as tdh_rate from ${IDENTITIES_TABLE} i
+    left join ${LATEST_TDH_HISTORY_TABLE} t on t.consolidation_key = i.consolidation_key where i.profile_id in (:ids)
+    `,
+      { ids },
+      { wrappedConnection: ctx.connection }
+    );
+    return tdhRates.reduce(
+      (acc, it) => {
+        acc[it.profile_id] = +it.tdh_rate;
+        return acc;
+      },
+      {} as Record<string, number>
     );
   }
 }
