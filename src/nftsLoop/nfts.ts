@@ -362,7 +362,13 @@ async function buildBaseNft(
 
 function rehydrateFromMetadata(entry: { nft: NFT | LabNFT; changed: boolean }) {
   const { nft } = entry;
-  const metadata: any = (nft as any).metadata;
+  const metadata: {
+    image_details?: { format?: string };
+    animation_details: any;
+    attributes?: [{ trait_type?: string; value?: string }];
+    name: string;
+    description: string;
+  } | null = nft.metadata;
   if (!metadata) return;
 
   // Derive media paths from current metadata
@@ -377,28 +383,28 @@ function rehydrateFromMetadata(entry: { nft: NFT | LabNFT; changed: boolean }) {
 
   // Artist fields (fallback to existing if not present in metadata)
   const artist =
-    metadata.attributes?.find((a: any) => a.trait_type === 'Artist')?.value ??
-    (nft as any).artist ??
+    metadata.attributes?.find((a) => a.trait_type === 'Artist')?.value ??
+    nft.artist ??
     '';
 
   const artistSeizeHandle =
     metadata.attributes?.find(
-      (a: any) => a.trait_type?.toUpperCase?.() === 'SEIZE ARTIST PROFILE'
+      (a) => a.trait_type?.toUpperCase?.() === 'SEIZE ARTIST PROFILE'
     )?.value ??
-    (nft as any).artist_seize_handle ??
+    nft.artist_seize_handle ??
     '';
 
   // Core fields that should be refreshed when tokenURI changes
-  (nft as any).name = metadata.name;
-  (nft as any).description = text.replaceEmojisWithHex(metadata.description);
-  (nft as any).artist = artist;
-  (nft as any).artist_seize_handle = artistSeizeHandle;
-  (nft as any).icon = `${NFT_SCALED60_IMAGE_LINK}${tokenPath}`;
-  (nft as any).thumbnail = `${NFT_SCALED450_IMAGE_LINK}${tokenPath}`;
-  (nft as any).scaled = `${NFT_SCALED1000_IMAGE_LINK}${tokenPath}`;
-  (nft as any).image = `${NFT_ORIGINAL_IMAGE_LINK}${tokenPathOriginal}`;
-  (nft as any).compressed_animation = compressedAnimation;
-  (nft as any).animation = animation;
+  nft.name = metadata.name;
+  nft.description = text.replaceEmojisWithHex(metadata.description);
+  nft.artist = artist;
+  nft.artist_seize_handle = artistSeizeHandle;
+  nft.icon = `${NFT_SCALED60_IMAGE_LINK}${tokenPath}`;
+  nft.thumbnail = `${NFT_SCALED450_IMAGE_LINK}${tokenPath}`;
+  nft.scaled = `${NFT_SCALED1000_IMAGE_LINK}${tokenPath}`;
+  nft.image = `${NFT_ORIGINAL_IMAGE_LINK}${tokenPathOriginal}`;
+  nft.compressed_animation = compressedAnimation;
+  nft.animation = animation;
 
   // Mark as changed so it will be persisted
   entry.changed = true;
