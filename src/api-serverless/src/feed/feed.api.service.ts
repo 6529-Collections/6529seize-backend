@@ -15,9 +15,9 @@ import { ApiWave } from '../generated/models/ApiWave';
 import { dropsService } from '../drops/drops.api.service';
 import { AuthenticationContext } from '../../../auth-context';
 import { waveApiService } from '../waves/wave.api.service';
-import { ForbiddenException } from '../../../exceptions';
 import { ApiFeedItemType } from '../generated/models/ApiFeedItemType';
 import { collections } from '../../../collections';
+import { env } from '../../../env';
 
 export class FeedApiService {
   constructor(
@@ -30,11 +30,23 @@ export class FeedApiService {
     authenticationContext: AuthenticationContext
   ): Promise<ApiFeedItem[]> {
     const authenticatedUserId = authenticationContext.getActingAsId();
-    if (!authenticatedUserId) {
-      throw new ForbiddenException(`Create a profile before accessing feed`);
-    }
-    if (authenticationContext.isAuthenticatedAsProxy()) {
-      throw new ForbiddenException(`Proxies cannot access feed`);
+    if (
+      !authenticatedUserId ||
+      authenticationContext.isAuthenticatedAsProxy()
+    ) {
+      const estimatedLimit = 20;
+      const activityEvents = await this.feedDb
+        .getNextPublicFeedActivityEvents({
+          wave_ids: env.getStringArray('PUBLIC_FEED_WAVES'),
+          limit: estimatedLimit * 3,
+          serial_no_less_than: request.serial_no_less_than
+        })
+        .then((it) => this.groupDuplicates(it, estimatedLimit));
+      return await this.createFeedItems(
+        activityEvents,
+        authenticationContext,
+        []
+      );
     }
     const groupsUserIsEligibleFor =
       await this.userGroupsService.getGroupsUserIsEligibleFor(

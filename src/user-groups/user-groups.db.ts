@@ -248,12 +248,44 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
     if (!ids.length) {
       return [];
     }
+
+    // Deduplicate IDs to reduce query size
+    const uniqueIds = collections.distinct(ids);
+
     ctx.timer?.start('userGroupsDb->getByIds');
+
+    // For very large lists, batch the queries to avoid parameter limits
+    if (uniqueIds.length > 100) {
+      const batches = [];
+      for (let i = 0; i < uniqueIds.length; i += 100) {
+        batches.push(uniqueIds.slice(i, i + 100));
+      }
+
+      const results = await Promise.all(
+        batches.map((batchIds) =>
+          this.db.execute<UserGroupEntity>(
+            `
+            select *
+            from ${USER_GROUPS_TABLE} 
+            where id in (:ids) and visible = true
+            `,
+            { ids: batchIds },
+            { wrappedConnection: ctx?.connection }
+          )
+        )
+      );
+
+      ctx.timer?.stop('userGroupsDb->getByIds');
+      return results.flat();
+    }
+
     const result = await this.db.execute<UserGroupEntity>(
       `
-    select * from ${USER_GROUPS_TABLE} where visible is true and id in (:ids)
-    `,
-      { ids },
+      select *
+      from ${USER_GROUPS_TABLE} 
+      where id in (:ids) and visible = true
+      `,
+      { ids: uniqueIds },
       { wrappedConnection: ctx?.connection }
     );
     ctx.timer?.stop('userGroupsDb->getByIds');

@@ -450,6 +450,7 @@ export class DropsMappers {
       cic: 0,
       rep: 0,
       tdh: 0,
+      tdh_rate: 0,
       level: 0,
       archived: true,
       subscribed_actions: [],
