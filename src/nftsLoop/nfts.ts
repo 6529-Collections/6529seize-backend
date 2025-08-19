@@ -1,16 +1,7 @@
-import { ethers } from 'ethers';
 import axios from 'axios';
-import { getRpcProvider } from '../rpc-provider';
-import {
-  fetchAllArtists,
-  fetchMemesWithSeason,
-  getDataSource,
-  persistArtists
-} from '../db';
-import { LabNFT, NFT, NFTWithExtendedData } from '../entities/INFT';
-import { NFTOwner } from '../entities/INFTOwner';
-import { TokenType } from '../enums';
-import { Logger } from '../logging';
+import { ethers } from 'ethers';
+import { In, MoreThan } from 'typeorm';
+import { processArtists } from '../artists';
 import {
   GRADIENT_CONTRACT,
   MANIFOLD,
@@ -25,9 +16,18 @@ import {
   NFT_VIDEO_LINK,
   NULL_ADDRESS
 } from '../constants';
-import { processArtists } from '../artists';
+import {
+  fetchAllArtists,
+  fetchMemesWithSeason,
+  getDataSource,
+  persistArtists
+} from '../db';
+import { LabNFT, NFT, NFTWithExtendedData } from '../entities/INFT';
+import { NFTOwner } from '../entities/INFTOwner';
 import { Transaction } from '../entities/ITransaction';
-import { In, MoreThan } from 'typeorm';
+import { TokenType } from '../enums';
+import { Logger } from '../logging';
+import { getRpcProvider } from '../rpc-provider';
 import { equalIgnoreCase } from '../strings';
 import { text } from '../text';
 import { Time } from '../time';
@@ -360,6 +360,82 @@ async function buildBaseNft(
   return baseNft;
 }
 
+type MediaFormat = 'WEBP' | 'GIF' | 'PNG' | 'JPG';
+type AnimFormat = 'HTML' | 'MP4' | 'MOV';
+
+type MetaAttr = { trait_type?: string; value?: string | number | boolean };
+type MetaObject = {
+  image_details?: { format?: MediaFormat };
+  animation_details?: { format?: AnimFormat } | string | null;
+  attributes?: MetaAttr[];
+  name?: string;
+  description?: string;
+};
+
+type Meta = MetaObject | null | undefined;
+
+function parseAnimationDetails(
+  d: MetaObject['animation_details']
+): { format?: AnimFormat } | null {
+  if (!d) return null;
+  if (typeof d === 'string') {
+    try {
+      return JSON.parse(d) as { format?: AnimFormat };
+    } catch {
+      return null;
+    }
+  }
+  return d;
+}
+
+function findAttr(md: NonNullable<Meta>, name: string): string | undefined {
+  const it = (md.attributes ?? []).find(
+    (a) => a.trait_type?.toUpperCase() === name.toUpperCase()
+  );
+  const v = it?.value;
+
+  if (typeof v === 'string') return v;
+  if (v != null) return String(v);
+  return undefined;
+}
+
+function rehydrateFromMetadata(entry: { nft: NFT | LabNFT; changed: boolean }) {
+  const { nft } = entry;
+  const metadata: Meta = nft.metadata;
+  if (!metadata) return;
+
+  // media paths
+  const format: MediaFormat = metadata.image_details?.format ?? 'WEBP';
+  const tokenPathOriginal = `${nft.contract}/${nft.id}.${format}`;
+  const tokenPath = getTokenPath(nft.contract, nft.id, format);
+
+  const anim = parseAnimationDetails(metadata.animation_details);
+  const { animation, compressedAnimation } = getAnimationPaths(
+    nft.contract,
+    nft.id,
+    anim
+  );
+
+  // artist fields with fallback
+  const artist = findAttr(metadata, 'Artist') ?? nft.artist ?? '';
+  const artistSeizeHandle =
+    findAttr(metadata, 'SEIZE ARTIST PROFILE') ?? nft.artist_seize_handle ?? '';
+
+  // core fields
+  nft.name = metadata.name ?? nft.name ?? '';
+  nft.description = text.replaceEmojisWithHex(metadata.description ?? '');
+  nft.artist = artist;
+  nft.artist_seize_handle = artistSeizeHandle;
+  nft.icon = `${NFT_SCALED60_IMAGE_LINK}${tokenPath}`;
+  nft.thumbnail = `${NFT_SCALED450_IMAGE_LINK}${tokenPath}`;
+  nft.scaled = `${NFT_SCALED1000_IMAGE_LINK}${tokenPath}`;
+  nft.image = `${NFT_ORIGINAL_IMAGE_LINK}${tokenPathOriginal}`;
+  nft.compressed_animation = compressedAnimation ?? undefined;
+  nft.animation = animation ?? undefined;
+
+  entry.changed = true;
+}
+
 function extractMemeRefs(
   metadata: any,
   memes: NFTWithExtendedData[]
@@ -431,7 +507,7 @@ async function updateUri(
   );
   nft.uri = uri;
   nft.metadata = metadata;
-  entry.changed = true;
+  rehydrateFromMetadata(entry);
 }
 
 async function updateMintDate(entry: { nft: NFT | LabNFT; changed: boolean }) {
