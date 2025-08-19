@@ -360,53 +360,76 @@ async function buildBaseNft(
   return baseNft;
 }
 
+type MediaFormat = 'WEBP' | 'GIF' | 'PNG' | 'JPG';
+type AnimFormat = 'HTML' | 'MP4' | 'MOV';
+
+type MetaAttr = { trait_type?: string; value?: string | number | boolean };
+type MetaObject = {
+  image_details?: { format?: MediaFormat };
+  animation_details?: { format?: AnimFormat } | string | null;
+  attributes?: MetaAttr[];
+  name?: string;
+  description?: string;
+};
+
+type Meta = MetaObject | null | undefined;
+
+function parseAnimationDetails(
+  d: MetaObject['animation_details']
+): { format?: AnimFormat } | null {
+  if (!d) return null;
+  if (typeof d === 'string') {
+    try {
+      return JSON.parse(d) as { format?: AnimFormat };
+    } catch {
+      return null;
+    }
+  }
+  return d;
+}
+
+function findAttr(md: NonNullable<Meta>, name: string): string | undefined {
+  const it = (md.attributes ?? []).find(
+    (a) => a.trait_type?.toUpperCase() === name.toUpperCase()
+  );
+  const v = it?.value;
+  return typeof v === 'string' ? v : v != null ? String(v) : undefined;
+}
+
 function rehydrateFromMetadata(entry: { nft: NFT | LabNFT; changed: boolean }) {
   const { nft } = entry;
-  const metadata: {
-    image_details?: { format?: string };
-    animation_details: any;
-    attributes?: [{ trait_type?: string; value?: string }];
-    name: string;
-    description: string;
-  } | null = nft.metadata;
+  const metadata: Meta = nft.metadata;
   if (!metadata) return;
 
-  // Derive media paths from current metadata
-  const format = metadata.image_details?.format ?? 'WEBP';
+  // media paths
+  const format: MediaFormat = metadata.image_details?.format ?? 'WEBP';
   const tokenPathOriginal = `${nft.contract}/${nft.id}.${format}`;
   const tokenPath = getTokenPath(nft.contract, nft.id, format);
+
+  const anim = parseAnimationDetails(metadata.animation_details);
   const { animation, compressedAnimation } = getAnimationPaths(
     nft.contract,
     nft.id,
-    metadata.animation_details
+    anim
   );
 
-  // Artist fields (fallback to existing if not present in metadata)
-  const artist =
-    metadata.attributes?.find((a) => a.trait_type === 'Artist')?.value ??
-    nft.artist ??
-    '';
-
+  // artist fields with fallback
+  const artist = findAttr(metadata, 'Artist') ?? nft.artist ?? '';
   const artistSeizeHandle =
-    metadata.attributes?.find(
-      (a) => a.trait_type?.toUpperCase?.() === 'SEIZE ARTIST PROFILE'
-    )?.value ??
-    nft.artist_seize_handle ??
-    '';
+    findAttr(metadata, 'SEIZE ARTIST PROFILE') ?? nft.artist_seize_handle ?? '';
 
-  // Core fields that should be refreshed when tokenURI changes
-  nft.name = metadata.name;
-  nft.description = text.replaceEmojisWithHex(metadata.description);
+  // core fields
+  nft.name = metadata.name ?? nft.name ?? '';
+  nft.description = text.replaceEmojisWithHex(metadata.description ?? '');
   nft.artist = artist;
   nft.artist_seize_handle = artistSeizeHandle;
   nft.icon = `${NFT_SCALED60_IMAGE_LINK}${tokenPath}`;
   nft.thumbnail = `${NFT_SCALED450_IMAGE_LINK}${tokenPath}`;
   nft.scaled = `${NFT_SCALED1000_IMAGE_LINK}${tokenPath}`;
   nft.image = `${NFT_ORIGINAL_IMAGE_LINK}${tokenPathOriginal}`;
-  nft.compressed_animation = compressedAnimation;
-  nft.animation = animation;
+  nft.compressed_animation = compressedAnimation ?? undefined;
+  nft.animation = animation ?? undefined;
 
-  // Mark as changed so it will be persisted
   entry.changed = true;
 }
 
