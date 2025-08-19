@@ -393,7 +393,10 @@ function findAttr(md: NonNullable<Meta>, name: string): string | undefined {
     (a) => a.trait_type?.toUpperCase() === name.toUpperCase()
   );
   const v = it?.value;
-  return typeof v === 'string' ? v : v != null ? String(v) : undefined;
+
+  if (typeof v === 'string') return v;
+  if (v != null) return String(v);
+  return undefined;
 }
 
 function rehydrateFromMetadata(entry: { nft: NFT | LabNFT; changed: boolean }) {
