@@ -260,7 +260,7 @@ export class UserGroupsService {
       givenGroups,
       allWaveGroups
     }: { givenGroups: string[]; allWaveGroups: boolean },
-    timer: Timer
+    timer?: Timer
   ): Promise<UserGroupEntity[]> {
     if (!allWaveGroups) {
       return await this.userGroupsDb.getByIds(givenGroups, {

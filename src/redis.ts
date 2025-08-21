@@ -59,7 +59,7 @@ export async function redisCached<T>(
   callback: () => Promise<T>
 ): Promise<any> {
   if (!redis) {
-    throw new Error('Redis client is not initialized');
+    return await callback();
   }
   const cachedValue = await redis.get(key);
   if (cachedValue) {
@@ -73,19 +73,15 @@ export async function redisCached<T>(
 }
 
 export async function evictKeyFromRedisCache(key: string): Promise<any> {
-  if (!redis) {
-    throw new Error('Redis client is not initialized');
-  }
   await redis.del(key);
 }
 export async function evictAllKeysMatchingPatternFromRedisCache(
   pattern: string
 ) {
-  if (!redis) {
-    throw new Error('Redis client is not initialized');
+  if (redis) {
+    const keys = await redis.keys(pattern);
+    await Promise.all(keys.map((it) => redis.del(it)));
   }
-  const keys = await redis.keys(pattern);
-  await Promise.all(keys.map((it) => redis.del(it)));
 }
 
 const logger = Logger.get('REDIS_CLIENT');
@@ -95,7 +91,13 @@ export async function initRedis() {
     logger.info('Redis client already initialized');
     return;
   }
-  const url = process.env.REDIS_URL ?? 'localhost';
+  const url = process.env.REDIS_URL;
+  if (!url) {
+    logger.warn(
+      `Redis is disabled. Please set REDIS_URL environment variable to enable it`
+    );
+    return;
+  }
   const port = numbers.parseIntOrNull(process.env.REDIS_PORT) ?? 6379;
   if (port < 0 || port > 65535) {
     throw new Error(
