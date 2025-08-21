@@ -1,9 +1,9 @@
 import axios from 'axios';
-import { getEthPriceCount, persistEthPrices } from './db.eth_price';
-import { Logger } from '../logging';
-import { EthPrice } from '../entities/IEthPrice';
-import { Time } from '../time';
 import axiosRetry from 'axios-retry';
+import { EthPrice } from '../entities/IEthPrice';
+import { Logger } from '../logging';
+import { Time } from '../time';
+import { getEthPriceCount, persistEthPrices } from './db.eth_price';
 
 const MOBULA_HISTORIC_URL =
   'https://api.mobula.io/api/1/market/history?asset=Ethereum&from=1633046400000';
@@ -71,7 +71,12 @@ async function syncHistoricEthUsdPriceData() {
 }
 
 async function syncLatestEthUsdPriceData() {
-  const currentResponse = await axios.get<CurrentResponse>(MOBULA_CURRENT_URL);
+  const apiKey = process.env.MOBULA_API_KEY;
+  const currentResponse = await axios.get<CurrentResponse>(MOBULA_CURRENT_URL, {
+    headers: {
+      Authorization: `Bearer ${apiKey}`
+    }
+  });
   const currentData = currentResponse.data;
   logger.info(`[CURRENT DATA RESPONSE]`);
   const ethPrice: EthPrice = {
