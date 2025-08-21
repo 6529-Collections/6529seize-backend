@@ -105,6 +105,7 @@ import {
 } from './ws/ws';
 import { wsListenersNotifier } from './ws/ws-listeners-notifier';
 import { WsMessageType } from './ws/ws-message';
+import { initRedis } from '../../redis';
 
 const YAML = require('yamljs');
 const compression = require('compression');
@@ -197,6 +198,7 @@ loadApi().then(async () => {
   );
 
   await loadApiSecrets();
+  await initRedis();
   passport.use(
     new JwtStrategy(
       {
