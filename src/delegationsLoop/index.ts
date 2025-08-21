@@ -58,8 +58,6 @@ import { doInDbContext } from '../secrets';
 import { revokeTdhBasedDropWavesOverVotes } from '../drops/participation-drops-over-vote-revocation';
 import { identitiesService } from '../api-serverless/src/identities/identities.service';
 import { Time } from '../time';
-import { giveReadReplicaTimeToCatchUp } from '../api-serverless/src/api-helpers';
-import { clearWaveGroupsCache } from '../redis';
 
 const logger = Logger.get('DELEGATIONS_LOOP');
 
@@ -135,8 +133,6 @@ async function handleDelegations(startBlock: number | undefined) {
     await syncIdentitiesMetrics(connection);
     await revokeTdhBasedDropWavesOverVotes(connection);
   });
-  await giveReadReplicaTimeToCatchUp();
-  await clearWaveGroupsCache();
 
   return delegationsResponse;
 }

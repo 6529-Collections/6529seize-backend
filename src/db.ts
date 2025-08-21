@@ -85,8 +85,6 @@ import { ethTools } from './eth-tools';
 import { equalIgnoreCase } from './strings';
 import { consolidationTools } from './consolidation-tools';
 import { env } from './env';
-import { giveReadReplicaTimeToCatchUp } from './api-serverless/src/api-helpers';
-import { clearWaveGroupsCache } from './redis';
 
 const mysql = require('mysql');
 
@@ -830,8 +828,6 @@ export async function persistConsolidatedTDH(
     await syncIdentitiesMetrics(qrHolder);
     await revokeTdhBasedDropWavesOverVotes(qrHolder);
   });
-  await giveReadReplicaTimeToCatchUp();
-  await clearWaveGroupsCache();
 
   logger.info(`[CONSOLIDATED TDH] PERSISTED ALL WALLETS TDH [${tdh.length}]`);
 }
