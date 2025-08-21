@@ -60,6 +60,7 @@ import { enums } from '../../../enums';
 import { ids } from '../../../ids';
 import { collections } from '../../../collections';
 import { clearWaveGroupsCache, redisCached } from '../../../redis';
+import { env } from '../../../env';
 
 export type NewUserGroupEntity = Omit<
   UserGroupEntity,
@@ -267,9 +268,10 @@ export class UserGroupsService {
         timer
       });
     }
+    const ttlSec = env.getIntOrNull('WAVE_GROUPS_CACHE_TTL_SEC') ?? 60;
     return redisCached<UserGroupEntity[]>(
       'cache_6529_wave_groups',
-      Time.minutes(1),
+      Time.seconds(ttlSec),
       async () =>
         this.userGroupsDb.getByIds(givenGroups, {
           timer
