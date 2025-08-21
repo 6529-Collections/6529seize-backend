@@ -87,6 +87,10 @@ export async function evictAllKeysMatchingPatternFromRedisCache(
 const logger = Logger.get('REDIS_CLIENT');
 
 export async function initRedis() {
+  if (process.env.FORCE_AVOID_REDIS === 'true') {
+    logger.warn(`Redis is disabled with FORCE_AVOID_REDIS env`);
+    return;
+  }
   if (redis) {
     logger.info('Redis client already initialized');
     return;
