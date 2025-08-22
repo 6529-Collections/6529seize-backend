@@ -9,7 +9,7 @@ plugins:
 provider:
   name: aws
   runtime: nodejs18.x
-  memorySize: 5140
+  memorySize: 1500
   timeout: 900
 
 custom:
