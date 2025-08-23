@@ -33,7 +33,7 @@ resources:
     DbDumpsDailyOOMFilter:
       Type: AWS::Logs::MetricFilter
       Properties:
-        LogGroupName: /aws/lambda/dbDumpsDailyLoop
+        LogGroupName: /aws/lambda/dbDumpsDaily
         FilterPattern: "Runtime.OutOfMemory"
         MetricTransformations:
           - MetricNamespace: "Lambda/OOM"
