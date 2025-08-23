@@ -28,3 +28,35 @@ functions:
       SENTRY_DSN: ${env:SENTRY_DSN}
       SENTRY_ENVIRONMENT: 'tdhHistoryLoop_${opt:stage, self:provider.stage}'
       TDH_HISTORY_ITERATIONS: 1
+
+resources:
+  Resources:
+    TdhHistoryLoopOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      Properties:
+        LogGroupName: /aws/lambda/tdhHistoryLoop
+        FilterPattern: "Runtime.OutOfMemory"
+        MetricTransformations:
+          - MetricNamespace: "Lambda/OOM"
+            MetricName: "tdhHistoryLoop_OOMErrorCount"
+            MetricValue: "1"
+            DefaultValue: 0
+
+    TdhHistoryLoopOOMAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: TdhHistoryLoopOOMFilter
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-tdhHistoryLoop-OOM"
+        AlarmDescription: !Sub "Lambda tdhHistoryLoop OutOfMemory in ${AWS::Region}"
+        Namespace: "Lambda/OOM"
+        MetricName: "tdhHistoryLoop_OOMErrorCount"
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}

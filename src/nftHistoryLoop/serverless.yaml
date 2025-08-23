@@ -9,7 +9,7 @@ plugins:
 provider:
   name: aws
   runtime: nodejs18.x
-  memorySize: 1028
+  memorySize: 512
   timeout: 900
 
 functions:
@@ -28,3 +28,35 @@ functions:
       SENTRY_DSN: ${env:SENTRY_DSN}
       SENTRY_ENVIRONMENT: 'nftHistoryLoop_${opt:stage, self:provider.stage}'
       NFT_HISTORY_RESET: false
+
+resources:
+  Resources:
+    NftHistoryLoopOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      Properties:
+        LogGroupName: /aws/lambda/nftHistoryLoop
+        FilterPattern: "Runtime.OutOfMemory"
+        MetricTransformations:
+          - MetricNamespace: "Lambda/OOM"
+            MetricName: "nftHistoryLoop_OOMErrorCount"
+            MetricValue: "1"
+            DefaultValue: 0
+
+    NftHistoryLoopOOMAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: NftHistoryLoopOOMFilter
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-nftHistoryLoop-OOM"
+        AlarmDescription: !Sub "Lambda nftHistoryLoop OutOfMemory in ${AWS::Region}"
+        Namespace: "Lambda/OOM"
+        MetricName: "nftHistoryLoop_OOMErrorCount"
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}

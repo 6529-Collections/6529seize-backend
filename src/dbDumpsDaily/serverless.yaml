@@ -9,7 +9,7 @@ plugins:
 provider:
   name: aws
   runtime: nodejs18.x
-  memorySize: 10240
+  memorySize: 4098
   timeout: 900
 
 functions:
@@ -27,3 +27,35 @@ functions:
     environment:
       SENTRY_DSN: ${env:SENTRY_DSN}
       SENTRY_ENVIRONMENT: 'dbDumpsDaily_${opt:stage, self:provider.stage}'
+
+resources:
+  Resources:
+    DbDumpsDailyOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      Properties:
+        LogGroupName: /aws/lambda/dbDumpsDailyLoop
+        FilterPattern: "Runtime.OutOfMemory"
+        MetricTransformations:
+          - MetricNamespace: "Lambda/OOM"
+            MetricName: "dbDumpsDaily_OOMErrorCount"
+            MetricValue: "1"
+            DefaultValue: 0
+
+    DbDumpsDailyOOMAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: DbDumpsDailyOOMFilter
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-dbDumpsDaily-OOM"
+        AlarmDescription: !Sub "Lambda dbDumpsDaily OutOfMemory in ${AWS::Region}"
+        Namespace: "Lambda/OOM"
+        MetricName: "dbDumpsDaily_OOMErrorCount"
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}

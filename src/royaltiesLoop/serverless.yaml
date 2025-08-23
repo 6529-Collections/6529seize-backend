@@ -28,3 +28,35 @@ functions:
       REMEMES_LOAD_FILE: true
       SENTRY_DSN: ${env:SENTRY_DSN}
       SENTRY_ENVIRONMENT: "royaltiesLoop_${opt:stage, self:provider.stage}"
+      
+resources:
+  Resources:
+    RoyaltiesLoopOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      Properties:
+        LogGroupName: /aws/lambda/royaltiesLoop
+        FilterPattern: "Runtime.OutOfMemory"
+        MetricTransformations:
+          - MetricNamespace: "Lambda/OOM"
+            MetricName: "royaltiesLoop_OOMErrorCount"
+            MetricValue: "1"
+            DefaultValue: 0
+
+    RoyaltiesLoopOOMAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: RoyaltiesLoopOOMFilter
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-royaltiesLoop-OOM"
+        AlarmDescription: !Sub "Lambda royaltiesLoop OutOfMemory in ${AWS::Region}"
+        Namespace: "Lambda/OOM"
+        MetricName: "royaltiesLoop_OOMErrorCount"
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}

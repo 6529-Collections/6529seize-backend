@@ -27,3 +27,35 @@ functions:
     environment:
       SENTRY_DSN: ${env:SENTRY_DSN}
       SENTRY_ENVIRONMENT: "rateEventProcessingLoop_${opt:stage, self:provider.stage}"
+      
+resources:
+  Resources:
+    RateEventProcessingLoopOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      Properties:
+        LogGroupName: /aws/lambda/rateEventProcessingLoop
+        FilterPattern: "Runtime.OutOfMemory"
+        MetricTransformations:
+          - MetricNamespace: "Lambda/OOM"
+            MetricName: "rateEventProcessingLoop_OOMErrorCount"
+            MetricValue: "1"
+            DefaultValue: 0
+
+    RateEventProcessingLoopOOMAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: RateEventProcessingLoopOOMFilter
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-rateEventProcessingLoop-OOM"
+        AlarmDescription: !Sub "Lambda rateEventProcessingLoop OutOfMemory in ${AWS::Region}"
+        Namespace: "Lambda/OOM"
+        MetricName: "rateEventProcessingLoop_OOMErrorCount"
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}

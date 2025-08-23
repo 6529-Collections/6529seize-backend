@@ -9,7 +9,7 @@ plugins:
 provider:
   name: aws
   runtime: nodejs18.x
-  memorySize: 5140
+  memorySize: 512
   timeout: 900
 
 custom:
@@ -33,3 +33,35 @@ functions:
       SENTRY_ENVIRONMENT: 'transactionsProcessingLoop_${opt:stage, self:provider.stage}'
       TRANSACTIONS_PROCESSING_RESET: false
       DISABLE_DISCORD_NOTIFICATIONS: ${self:custom.disableDiscord.${opt:stage, self:provider.stage}, false}
+
+resources:
+  Resources:
+    TransactionsProcessingLoopOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      Properties:
+        LogGroupName: /aws/lambda/transactionsProcessingLoop
+        FilterPattern: "Runtime.OutOfMemory"
+        MetricTransformations:
+          - MetricNamespace: "Lambda/OOM"
+            MetricName: "transactionsProcessingLoop_OOMErrorCount"
+            MetricValue: "1"
+            DefaultValue: 0
+
+    TransactionsProcessingLoopOOMAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: TransactionsProcessingLoopOOMFilter
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-transactionsProcessingLoop-OOM"
+        AlarmDescription: !Sub "Lambda transactionsProcessingLoop OutOfMemory in ${AWS::Region}"
+        Namespace: "Lambda/OOM"
+        MetricName: "transactionsProcessingLoop_OOMErrorCount"
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
