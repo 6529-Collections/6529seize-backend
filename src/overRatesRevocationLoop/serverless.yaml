@@ -11,6 +11,7 @@ provider:
   runtime: nodejs18.x
   memorySize: 512
   timeout: 900
+  architecture: arm64
 
 functions:
   overRatesRevocationLoop:
