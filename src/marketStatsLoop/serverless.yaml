@@ -76,25 +76,116 @@ functions:
 
 resources:
   Resources:
-    MarketStatsLoopOOMFilter:
+    MarketStatsMEMESOOMFilter:
       Type: AWS::Logs::MetricFilter
       Properties:
-        LogGroupName: /aws/lambda/marketStatsLoop
+        LogGroupName: /aws/lambda/marketStatsMEMES
         FilterPattern: "Runtime.OutOfMemory"
         MetricTransformations:
           - MetricNamespace: "Lambda/OOM"
-            MetricName: "marketStatsLoop_OOMErrorCount"
+            MetricName: "marketStatsMEMES_OOMErrorCount"
             MetricValue: "1"
             DefaultValue: 0
 
-    MarketStatsLoopOOMAlarm:
+    MarketStatsMEMESLoopOOMAlarm:
       Type: AWS::CloudWatch::Alarm
-      DependsOn: MarketStatsLoopOOMFilter
+      DependsOn: MarketStatsMEMESOOMFilter
       Properties:
-        AlarmName: !Sub "${AWS::StackName}-marketStatsLoop-OOM"
-        AlarmDescription: !Sub "Lambda marketStatsLoop OutOfMemory in ${AWS::Region}"
+        AlarmName: !Sub "${AWS::StackName}-marketStatsMEMES-OOM"
+        AlarmDescription: !Sub "Lambda marketStatsMEMES OutOfMemory in ${AWS::Region}"
         Namespace: "Lambda/OOM"
-        MetricName: "marketStatsLoop_OOMErrorCount"
+        MetricName: "marketStatsMEMES_OOMErrorCount"
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+
+    MarketStatsLABOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      Properties:
+        LogGroupName: /aws/lambda/marketStatsLAB
+        FilterPattern: "Runtime.OutOfMemory"
+        MetricTransformations:
+          - MetricNamespace: "Lambda/OOM"
+            MetricName: "marketStatsLAB_OOMErrorCount"
+            MetricValue: "1"
+            DefaultValue: 0
+
+    MarketStatsLABOOMAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: MarketStatsLABOOMFilter
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-marketStatsLAB-OOM"
+        AlarmDescription: !Sub "Lambda marketStatsLAB OutOfMemory in ${AWS::Region}"
+        Namespace: "Lambda/OOM"
+        MetricName: "MarketStatsLAB_OOMErrorCount"
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+
+    MarketStatsGRADIENTOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      Properties:
+        LogGroupName: /aws/lambda/marketStatsGRADIENT
+        FilterPattern: "Runtime.OutOfMemory"
+        MetricTransformations:
+          - MetricNamespace: "Lambda/OOM"
+            MetricName: "marketStatsGRADIENT_OOMErrorCount"
+            MetricValue: "1"
+            DefaultValue: 0
+
+    MarketStatsGRADIENTOOMAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: MarketStatsGRADIENTOOMFilter
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-marketStatsGRADIENT-OOM"
+        AlarmDescription: !Sub "Lambda marketStatsGRADIENT OutOfMemory in ${AWS::Region}"
+        Namespace: "Lambda/OOM"
+        MetricName: "marketStatsGRADIENT_OOMErrorCount"
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+
+
+    MarketStatsNEXTGENOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      Properties:
+        LogGroupName: /aws/lambda/marketStatsNEXTGEN
+        FilterPattern: "Runtime.OutOfMemory"
+        MetricTransformations:
+          - MetricNamespace: "Lambda/OOM"
+            MetricName: "marketStatsNEXTGEN_OOMErrorCount"
+            MetricValue: "1"
+            DefaultValue: 0
+
+    MarketStatsNEXTGENOOMAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: MarketStatsNEXTGENOOMFilter
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-marketStatsNEXTGEN-OOM"
+        AlarmDescription: !Sub "Lambda marketStatsNEXTGEN OutOfMemory in ${AWS::Region}"
+        Namespace: "Lambda/OOM"
+        MetricName: marketStatsNEXTGEN_OOMErrorCount"
         Statistic: Sum
         Period: 60
         EvaluationPeriods: 1
