@@ -31,7 +31,7 @@ resources:
     DbMigrationsLoopOOMFilter:
       Type: AWS::Logs::MetricFilter
       Properties:
-        LogGroupName: /aws/lambda/dbMigrationsLoopLoop
+        LogGroupName: /aws/lambda/dbMigrationsLoop
         FilterPattern: "Runtime.OutOfMemory"
         MetricTransformations:
           - MetricNamespace: "Lambda/OOM"

@@ -31,7 +31,7 @@ resources:
     CustomReplayLoopOOMFilter:
       Type: AWS::Logs::MetricFilter
       Properties:
-        LogGroupName: /aws/lambda/customReplayLoopLoop
+        LogGroupName: /aws/lambda/customReplayLoop
         FilterPattern: "Runtime.OutOfMemory"
         MetricTransformations:
           - MetricNamespace: "Lambda/OOM"
