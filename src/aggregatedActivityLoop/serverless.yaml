@@ -39,7 +39,7 @@ resources:
     AggregatedActivityLoopOOMFilter:
       Type: AWS::Logs::MetricFilter
       Properties:
-        LogGroupName: /aws/lambda/aggregatedActivityLoopLoop
+        LogGroupName: /aws/lambda/aggregatedActivityLoop
         FilterPattern: "Runtime.OutOfMemory"
         MetricTransformations:
           - MetricNamespace: "Lambda/OOM"
