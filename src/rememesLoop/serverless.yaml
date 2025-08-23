@@ -9,7 +9,7 @@ plugins:
 provider:
   name: aws
   runtime: nodejs18.x
-  memorySize: 5120
+  memorySize: 2000
   timeout: 900
 
 functions:
@@ -56,3 +56,95 @@ functions:
       REMEMES_LOAD_FILE: true
       SENTRY_DSN: ${env:SENTRY_DSN}
       SENTRY_ENVIRONMENT: 'rememesFileLoop_${opt:stage, self:provider.stage}'
+
+resources:
+  Resources:
+    RememesS3LoopOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      Properties:
+        LogGroupName: /aws/lambda/rememesS3Loop
+        FilterPattern: "Runtime.OutOfMemory"
+        MetricTransformations:
+          - MetricNamespace: "Lambda/OOM"
+            MetricName: "rememesS3Loop_OOMErrorCount"
+            MetricValue: "1"
+            DefaultValue: 0
+
+    RememesS3LoopOOMAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: RememesS3LoopOOMFilter
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-rememesS3Loop-OOM"
+        AlarmDescription: !Sub "Lambda rememesS3Loop OutOfMemory in ${AWS::Region}"
+        Namespace: "Lambda/OOM"
+        MetricName: "rememesS3Loop_OOMErrorCount"
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+
+    RememesRefreshMetadataLoopOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      Properties:
+        LogGroupName: /aws/lambda/rememesRefreshMetadataLoop
+        FilterPattern: "Runtime.OutOfMemory"
+        MetricTransformations:
+          - MetricNamespace: "Lambda/OOM"
+            MetricName: "rememesRefreshMetadataLoop_OOMErrorCount"
+            MetricValue: "1"
+            DefaultValue: 0
+
+    RememesRefreshMetadataLoopOOMAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: RememesRefreshMetadataLoopOOMFilter
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-rememesRefreshMetadataLoop-OOM"
+        AlarmDescription: !Sub "Lambda rememesRefreshMetadataLoop OutOfMemory in ${AWS::Region}"
+        Namespace: "Lambda/OOM"
+        MetricName: "rememesRefreshMetadataLoop_OOMErrorCount"
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+
+    RememesFileLoopOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      Properties:
+        LogGroupName: /aws/lambda/rememesFileLoop
+        FilterPattern: "Runtime.OutOfMemory"
+        MetricTransformations:
+          - MetricNamespace: "Lambda/OOM"
+            MetricName: "rememesFileLoop_OOMErrorCount"
+            MetricValue: "1"
+            DefaultValue: 0
+
+    RememesFileLoopOOMAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: RememesFileLoopOOMFilter
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-rememesFileLoop-OOM"
+        AlarmDescription: !Sub "Lambda rememesFileLoop OutOfMemory in ${AWS::Region}"
+        Namespace: "Lambda/OOM"
+        MetricName: "rememesFileLoop_OOMErrorCount"
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}

@@ -9,7 +9,7 @@ plugins:
 provider:
   name: aws
   runtime: nodejs18.x
-  memorySize: 5140
+  memorySize: 512
   timeout: 900
 
 custom:
@@ -33,3 +33,35 @@ functions:
       SENTRY_ENVIRONMENT: 'aggregatedActivityLoop_${opt:stage, self:provider.stage}'
       NEXTGEN_CHAIN_ID: ${self:custom.chainIDs.${opt:stage, self:provider.stage}, 1}
       ACTIVITY_RESET: false
+
+resources:
+  Resources:
+    AggregatedActivityLoopOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      Properties:
+        LogGroupName: /aws/lambda/aggregatedActivityLoop
+        FilterPattern: "Runtime.OutOfMemory"
+        MetricTransformations:
+          - MetricNamespace: "Lambda/OOM"
+            MetricName: "aggregatedActivityLoop_OOMErrorCount"
+            MetricValue: "1"
+            DefaultValue: 0
+
+    AggregatedActivityLoopOOMAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: AggregatedActivityLoopOOMFilter
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-aggregatedActivityLoop-OOM"
+        AlarmDescription: !Sub "Lambda aggregatedActivityLoop OutOfMemory in ${AWS::Region}"
+        Namespace: "Lambda/OOM"
+        MetricName: "aggregatedActivityLoop_OOMErrorCount"
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}

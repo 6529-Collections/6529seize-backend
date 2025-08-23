@@ -35,3 +35,35 @@ functions:
       SUBSCRIPTIONS_CHAIN_ID: ${self:custom.chainIDs.${opt:stage, self:provider.stage}, 1}
       SUBSCRIPTIONS_RESET: false
       DISABLE_DISCORD_NOTIFICATIONS: ${self:custom.disableDiscord.${opt:stage, self:provider.stage}, false}
+
+resources:
+  Resources:
+    SubscriptionsTopUpLoopOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      Properties:
+        LogGroupName: /aws/lambda/subscriptionsTopUpLoop
+        FilterPattern: "Runtime.OutOfMemory"
+        MetricTransformations:
+          - MetricNamespace: "Lambda/OOM"
+            MetricName: "subscriptionsTopUpLoop_OOMErrorCount"
+            MetricValue: "1"
+            DefaultValue: 0
+
+    SubscriptionsTopUpLoopOOMAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: SubscriptionsTopUpLoopOOMFilter
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-subscriptionsTopUpLoop-OOM"
+        AlarmDescription: !Sub "Lambda subscriptionsTopUpLoop OutOfMemory in ${AWS::Region}"
+        Namespace: "Lambda/OOM"
+        MetricName: "subscriptionsTopUpLoop_OOMErrorCount"
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}

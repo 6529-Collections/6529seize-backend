@@ -25,3 +25,35 @@ functions:
     environment:
       SENTRY_DSN: ${env:SENTRY_DSN}
       SENTRY_ENVIRONMENT: 'customReplayLoop_${opt:stage, self:provider.stage}'
+
+resources:
+  Resources:
+    CustomReplayLoopOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      Properties:
+        LogGroupName: /aws/lambda/customReplayLoop
+        FilterPattern: "Runtime.OutOfMemory"
+        MetricTransformations:
+          - MetricNamespace: "Lambda/OOM"
+            MetricName: "customReplayLoop_OOMErrorCount"
+            MetricValue: "1"
+            DefaultValue: 0
+
+    CustomReplayLoopOOMAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: CustomReplayLoopOOMFilter
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-customReplayLoop-OOM"
+        AlarmDescription: !Sub "Lambda customReplayLoop OutOfMemory in ${AWS::Region}"
+        Namespace: "Lambda/OOM"
+        MetricName: "customReplayLoop_OOMErrorCount"
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}

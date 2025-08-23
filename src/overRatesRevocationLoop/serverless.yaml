@@ -70,3 +70,32 @@ resources:
                 - sqs:ChangeMessageVisibility
               Resource:
                 - !GetAtt OverRatesRevocationStartQueue.Arn
+    OverRatesRevocationLoopOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      Properties:
+        LogGroupName: /aws/lambda/overRatesRevocationLoop
+        FilterPattern: "Runtime.OutOfMemory"
+        MetricTransformations:
+          - MetricNamespace: "Lambda/OOM"
+            MetricName: "overRatesRevocationLoop_OOMErrorCount"
+            MetricValue: "1"
+            DefaultValue: 0
+
+    OverRatesRevocationLoopOOMAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: OverRatesRevocationLoopOOMFilter
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-overRatesRevocationLoop-OOM"
+        AlarmDescription: !Sub "Lambda overRatesRevocationLoop OutOfMemory in ${AWS::Region}"
+        Namespace: "Lambda/OOM"
+        MetricName: "overRatesRevocationLoop_OOMErrorCount"
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}

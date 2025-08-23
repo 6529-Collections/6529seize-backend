@@ -9,7 +9,7 @@ plugins:
 provider:
   name: aws
   runtime: nodejs18.x
-  memorySize: 5120
+  memorySize: 1028
   timeout: 900
 
 custom:
@@ -32,3 +32,35 @@ functions:
     environment:
       SENTRY_DSN: ${env:SENTRY_DSN}
       SENTRY_ENVIRONMENT: 'waveDecisionExecutionLoop_${opt:stage, self:provider.stage}'
+      
+resources:
+  Resources:
+    WaveDecisionExecutionLoopOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      Properties:
+        LogGroupName: /aws/lambda/waveDecisionExecutionLoop
+        FilterPattern: "Runtime.OutOfMemory"
+        MetricTransformations:
+          - MetricNamespace: "Lambda/OOM"
+            MetricName: "waveDecisionExecutionLoop_OOMErrorCount"
+            MetricValue: "1"
+            DefaultValue: 0
+
+    WaveDecisionExecutionLoopOOMAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: WaveDecisionExecutionLoopOOMFilter
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-waveDecisionExecutionLoop-OOM"
+        AlarmDescription: !Sub "Lambda waveDecisionExecutionLoop OutOfMemory in ${AWS::Region}"
+        Namespace: "Lambda/OOM"
+        MetricName: "waveDecisionExecutionLoop_OOMErrorCount"
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}

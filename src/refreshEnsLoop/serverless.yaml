@@ -27,3 +27,35 @@ functions:
     environment:
       SENTRY_DSN: ${env:SENTRY_DSN}
       SENTRY_ENVIRONMENT: "refreshENS_${opt:stage, self:provider.stage}"
+      
+resources:
+  Resources:
+    RefreshENSOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      Properties:
+        LogGroupName: /aws/lambda/refreshENS
+        FilterPattern: "Runtime.OutOfMemory"
+        MetricTransformations:
+          - MetricNamespace: "Lambda/OOM"
+            MetricName: "refreshENS_OOMErrorCount"
+            MetricValue: "1"
+            DefaultValue: 0
+
+    RefreshENSOOMAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: RefreshENSOOMFilter
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-refreshENS-OOM"
+        AlarmDescription: !Sub "Lambda refreshENS OutOfMemory in ${AWS::Region}"
+        Namespace: "Lambda/OOM"
+        MetricName: "refreshENS_OOMErrorCount"
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}

@@ -9,7 +9,7 @@ plugins:
 provider:
   name: aws
   runtime: nodejs18.x
-  memorySize: 5140
+  memorySize: 2000
   timeout: 900
 
 custom:
@@ -33,3 +33,35 @@ functions:
       SENTRY_ENVIRONMENT: 'ownersBalancesLoop_${opt:stage, self:provider.stage}'
       NEXTGEN_CHAIN_ID: ${self:custom.chainIDs.${opt:stage, self:provider.stage}, 1}
       OWNER_BALANCES_RESET: false
+
+resources:
+  Resources:
+    OwnersBalancesLoopOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      Properties:
+        LogGroupName: /aws/lambda/ownersBalancesLoop
+        FilterPattern: "Runtime.OutOfMemory"
+        MetricTransformations:
+          - MetricNamespace: "Lambda/OOM"
+            MetricName: "ownersBalancesLoop_OOMErrorCount"
+            MetricValue: "1"
+            DefaultValue: 0
+
+    OwnersBalancesLoopOOMAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: OwnersBalancesLoopOOMFilter
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-ownersBalancesLoop-OOM"
+        AlarmDescription: !Sub "Lambda ownersBalancesLoop OutOfMemory in ${AWS::Region}"
+        Namespace: "Lambda/OOM"
+        MetricName: "ownersBalancesLoop_OOMErrorCount"
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}

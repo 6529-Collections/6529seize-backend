@@ -13,3 +13,7 @@ module.exports.security = () => {
 module.exports.region = () => {
   return 'eu-west-1';
 };
+
+module.exports.cwtopic = () => {
+  return 'arn:aws:sns:eu-west-1:987989283142:cloudwatch-alarms';
+};
