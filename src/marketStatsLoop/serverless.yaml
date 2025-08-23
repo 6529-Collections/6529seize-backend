@@ -73,3 +73,35 @@ functions:
       CONTRACT: 'NEXTGEN'
       SENTRY_DSN: ${env:SENTRY_DSN}
       SENTRY_ENVIRONMENT: 'marketStatsNEXTGEN_${opt:stage, self:provider.stage}'
+
+resources:
+  Resources:
+    MarketStatsLoopOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      Properties:
+        LogGroupName: /aws/lambda/marketStatsLoop
+        FilterPattern: "Runtime.OutOfMemory"
+        MetricTransformations:
+          - MetricNamespace: "Lambda/OOM"
+            MetricName: "marketStatsLoop_OOMErrorCount"
+            MetricValue: "1"
+            DefaultValue: 0
+
+    MarketStatsLoopOOMAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: MarketStatsLoopOOMFilter
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-marketStatsLoop-OOM"
+        AlarmDescription: !Sub "Lambda marketStatsLoop OutOfMemory in ${AWS::Region}"
+        Namespace: "Lambda/OOM"
+        MetricName: "marketStatsLoop_OOMErrorCount"
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}

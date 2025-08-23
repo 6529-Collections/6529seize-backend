@@ -48,3 +48,33 @@ resources:
       Type: AWS::SQS::Queue
       Properties:
         QueueName: firebase-push-notifications-dlq
+
+    PushNotificationsHandlerOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      Properties:
+        LogGroupName: /aws/lambda/pushNotificationsHandler
+        FilterPattern: "Runtime.OutOfMemory"
+        MetricTransformations:
+          - MetricNamespace: "Lambda/OOM"
+            MetricName: "pushNotificationsHandler_OOMErrorCount"
+            MetricValue: "1"
+            DefaultValue: 0
+
+    PushNotificationsHandlerOOMAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: PushNotificationsHandlerOOMFilter
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-pushNotificationsHandler-OOM"
+        AlarmDescription: !Sub "Lambda pushNotificationsHandler OutOfMemory in ${AWS::Region}"
+        Namespace: "Lambda/OOM"
+        MetricName: "pushNotificationsHandler_OOMErrorCount"
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}

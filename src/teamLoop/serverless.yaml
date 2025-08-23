@@ -25,3 +25,35 @@ functions:
     environment:
       SENTRY_DSN: ${env:SENTRY_DSN}
       SENTRY_ENVIRONMENT: "teamLoop_${opt:stage, self:provider.stage}"
+      
+resources:
+  Resources:
+    TeamLoopOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      Properties:
+        LogGroupName: /aws/lambda/teamLoop
+        FilterPattern: "Runtime.OutOfMemory"
+        MetricTransformations:
+          - MetricNamespace: "Lambda/OOM"
+            MetricName: "teamLoop_OOMErrorCount"
+            MetricValue: "1"
+            DefaultValue: 0
+
+    TeamLoopOOMAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: TeamLoopOOMFilter
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-teamLoop-OOM"
+        AlarmDescription: !Sub "Lambda teamLoop OutOfMemory in ${AWS::Region}"
+        Namespace: "Lambda/OOM"
+        MetricName: "teamLoop_OOMErrorCount"
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}

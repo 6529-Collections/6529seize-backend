@@ -35,3 +35,35 @@ functions:
     environment:
       SENTRY_DSN: ${env:SENTRY_DSN}
       SENTRY_ENVIRONMENT: 'nftsLoop_${opt:stage, self:provider.stage}'
+
+resources:
+  Resources:
+    NftsLoopOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      Properties:
+        LogGroupName: /aws/lambda/nftsLoop
+        FilterPattern: "Runtime.OutOfMemory"
+        MetricTransformations:
+          - MetricNamespace: "Lambda/OOM"
+            MetricName: "nftsLoop_OOMErrorCount"
+            MetricValue: "1"
+            DefaultValue: 0
+
+    NftsLoopOOMAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: NftsLoopOOMFilter
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-nftsLoop-OOM"
+        AlarmDescription: !Sub "Lambda nftsLoop OutOfMemory in ${AWS::Region}"
+        Namespace: "Lambda/OOM"
+        MetricName: "nftsLoop_OOMErrorCount"
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}

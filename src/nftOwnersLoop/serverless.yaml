@@ -33,3 +33,35 @@ functions:
       SENTRY_ENVIRONMENT: 'nftOwnersLoop_${opt:stage, self:provider.stage}'
       NEXTGEN_CHAIN_ID: ${self:custom.chainIDs.${opt:stage, self:provider.stage}, 1}
       NFT_OWNERS_RESET: false
+
+resources:
+  Resources:
+    NftOwnersLoopOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      Properties:
+        LogGroupName: /aws/lambda/nftOwnersLoop
+        FilterPattern: "Runtime.OutOfMemory"
+        MetricTransformations:
+          - MetricNamespace: "Lambda/OOM"
+            MetricName: "nftOwnersLoop_OOMErrorCount"
+            MetricValue: "1"
+            DefaultValue: 0
+
+    NftOwnersLoopOOMAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: NftOwnersLoopOOMFilter
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-nftOwnersLoop-OOM"
+        AlarmDescription: !Sub "Lambda nftOwnersLoop OutOfMemory in ${AWS::Region}"
+        Namespace: "Lambda/OOM"
+        MetricName: "nftOwnersLoop_OOMErrorCount"
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}

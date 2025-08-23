@@ -34,3 +34,35 @@ functions:
       SENTRY_ENVIRONMENT: 'tdhLoop_${opt:stage, self:provider.stage}'
       NEXTGEN_CHAIN_ID: ${self:custom.chainIDs.${opt:stage, self:provider.stage}, 1}
       TDH_RESET: true
+
+resources:
+  Resources:
+    TdhLoopOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      Properties:
+        LogGroupName: /aws/lambda/tdhLoop
+        FilterPattern: "Runtime.OutOfMemory"
+        MetricTransformations:
+          - MetricNamespace: "Lambda/OOM"
+            MetricName: "tdhLoop_OOMErrorCount"
+            MetricValue: "1"
+            DefaultValue: 0
+
+    TdhLoopOOMAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: TdhLoopOOMFilter
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-tdhLoop-OOM"
+        AlarmDescription: !Sub "Lambda tdhLoop OutOfMemory in ${AWS::Region}"
+        Namespace: "Lambda/OOM"
+        MetricName: "tdhLoop_OOMErrorCount"
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}

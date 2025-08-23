@@ -34,3 +34,35 @@ functions:
       SENTRY_ENVIRONMENT: 'subscriptionsDaily_${opt:stage, self:provider.stage}'
       SUBSCRIPTIONS_RESET: false
       DISABLE_DISCORD_NOTIFICATIONS: ${self:custom.disableDiscord.${opt:stage, self:provider.stage}, false}
+
+resources:
+  Resources:
+    SubscriptionsDailyOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      Properties:
+        LogGroupName: /aws/lambda/subscriptionsDaily
+        FilterPattern: "Runtime.OutOfMemory"
+        MetricTransformations:
+          - MetricNamespace: "Lambda/OOM"
+            MetricName: "subscriptionsDaily_OOMErrorCount"
+            MetricValue: "1"
+            DefaultValue: 0
+
+    SubscriptionsDailyOOMAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: SubscriptionsDailyOOMFilter
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-subscriptionsDaily-OOM"
+        AlarmDescription: !Sub "Lambda subscriptionsDaily OutOfMemory in ${AWS::Region}"
+        Namespace: "Lambda/OOM"
+        MetricName: "subscriptionsDaily_OOMErrorCount"
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}

@@ -58,3 +58,95 @@ functions:
       SENTRY_DSN: ${env:SENTRY_DSN}
       SENTRY_ENVIRONMENT: 'memeLabTransactionsLoop_${opt:stage, self:provider.stage}'
       TRANSACTIONS_CONTRACT_ADDRESS: '0x4db52a61dc491e15a2f78f5ac001c14ffe3568cb'
+      
+resources:
+  Resources:
+    MemesTransactionsLoopOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      Properties:
+        LogGroupName: /aws/lambda/memesTransactionsLoop
+        FilterPattern: "Runtime.OutOfMemory"
+        MetricTransformations:
+          - MetricNamespace: "Lambda/OOM"
+            MetricName: "memesTransactionsLoop_OOMErrorCount"
+            MetricValue: "1"
+            DefaultValue: 0
+
+    MemesTransactionsLoopOOMAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: MemesTransactionsLoopOOMFilter
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-memesTransactionsLoop-OOM"
+        AlarmDescription: !Sub "Lambda memesTransactionsLoop OutOfMemory in ${AWS::Region}"
+        Namespace: "Lambda/OOM"
+        MetricName: "memesTransactionsLoop_OOMErrorCount"
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+
+    GradientsTransactionsLoopOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      Properties:
+        LogGroupName: /aws/lambda/gradientsTransactionsLoop
+        FilterPattern: "Runtime.OutOfMemory"
+        MetricTransformations:
+          - MetricNamespace: "Lambda/OOM"
+            MetricName: "gradientsTransactionsLoop_OOMErrorCount"
+            MetricValue: "1"
+            DefaultValue: 0
+
+    GradientsTransactionsLoopOOMAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: GradientsTransactionsLoopOOMFilter
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-gradientsTransactionsLoop-OOM"
+        AlarmDescription: !Sub "Lambda gradientsTransactionsLoop OutOfMemory in ${AWS::Region}"
+        Namespace: "Lambda/OOM"
+        MetricName: "gradientsTransactionsLoop_OOMErrorCount"
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+
+    MemeLabTransactionsLoopOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      Properties:
+        LogGroupName: /aws/lambda/memeLabTransactionsLoop
+        FilterPattern: "Runtime.OutOfMemory"
+        MetricTransformations:
+          - MetricNamespace: "Lambda/OOM"
+            MetricName: "memeLabTransactionsLoop_OOMErrorCount"
+            MetricValue: "1"
+            DefaultValue: 0
+
+    MemeLabTransactionsLoopOOMAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: MemeLabTransactionsLoopOOMFilter
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-memeLabTransactionsLoop-OOM"
+        AlarmDescription: !Sub "Lambda memeLabTransactionsLoop OutOfMemory in ${AWS::Region}"
+        Namespace: "Lambda/OOM"
+        MetricName: "memeLabTransactionsLoop_OOMErrorCount"
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}

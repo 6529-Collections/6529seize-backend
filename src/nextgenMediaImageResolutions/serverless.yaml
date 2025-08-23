@@ -33,3 +33,35 @@ functions:
       SENTRY_DSN: ${env:SENTRY_DSN}
       SENTRY_ENVIRONMENT: 'nextgenMediaImageResolutions_${opt:stage, self:provider.stage}'
       NEXTGEN_CHAIN_ID: ${self:custom.chainIDs.${opt:stage, self:provider.stage}, 1}
+
+resources:
+  Resources:
+    NextgenMediaImageResolutionsOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      Properties:
+        LogGroupName: /aws/lambda/nextgenMediaImageResolutions
+        FilterPattern: "Runtime.OutOfMemory"
+        MetricTransformations:
+          - MetricNamespace: "Lambda/OOM"
+            MetricName: "nextgenMediaImageResolutions_OOMErrorCount"
+            MetricValue: "1"
+            DefaultValue: 0
+
+    NextgenMediaImageResolutionsOOMAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: NextgenMediaImageResolutionsOOMFilter
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-nextgenMediaImageResolutions-OOM"
+        AlarmDescription: !Sub "Lambda nextgenMediaImageResolutions OutOfMemory in ${AWS::Region}"
+        Namespace: "Lambda/OOM"
+        MetricName: "nextgenMediaImageResolutions_OOMErrorCount"
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}

@@ -66,3 +66,33 @@ resources:
         Principal: events.amazonaws.com
         SourceArn:
           Fn::GetAtt: [DropsVideoCreatedRule, Arn]
+          
+    DropVideoConversionInvokerLoopOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      Properties:
+        LogGroupName: /aws/lambda/dropVideoConversionInvokerLoop
+        FilterPattern: "Runtime.OutOfMemory"
+        MetricTransformations:
+          - MetricNamespace: "Lambda/OOM"
+            MetricName: "dropVideoConversionInvokerLoop_OOMErrorCount"
+            MetricValue: "1"
+            DefaultValue: 0
+
+    DropVideoConversionInvokerLoopOOMAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: DropVideoConversionInvokerLoopOOMFilter
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-dropVideoConversionInvokerLoop-OOM"
+        AlarmDescription: !Sub "Lambda dropVideoConversionInvokerLoop OutOfMemory in ${AWS::Region}"
+        Namespace: "Lambda/OOM"
+        MetricName: "dropVideoConversionInvokerLoop_OOMErrorCount"
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}

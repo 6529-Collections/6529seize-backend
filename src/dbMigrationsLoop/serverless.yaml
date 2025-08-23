@@ -25,3 +25,35 @@ functions:
     environment:
       SENTRY_DSN: ${env:SENTRY_DSN}
       SENTRY_ENVIRONMENT: "dbMigrationsLoop_{opt:stage, self:provider.stage}"
+      
+resources:
+  Resources:
+    DbMigrationsLoopOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      Properties:
+        LogGroupName: /aws/lambda/dbMigrationsLoopLoop
+        FilterPattern: "Runtime.OutOfMemory"
+        MetricTransformations:
+          - MetricNamespace: "Lambda/OOM"
+            MetricName: "dbMigrationsLoop_OOMErrorCount"
+            MetricValue: "1"
+            DefaultValue: 0
+
+    DbMigrationsLoopOOMAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: DbMigrationsLoopOOMFilter
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-dbMigrationsLoop-OOM"
+        AlarmDescription: !Sub "Lambda dbMigrationsLoop OutOfMemory in ${AWS::Region}"
+        Namespace: "Lambda/OOM"
+        MetricName: "dbMigrationsLoop_OOMErrorCount"
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
