@@ -75,7 +75,7 @@ export class DropSignatureVerifier {
         const MAGIC_VALUE = '0x1626ba7e';
 
         if (result === MAGIC_VALUE) {
-          return signerAddress;
+          return signerAddress?.toLowerCase();
         } else {
           return null;
         }
@@ -83,7 +83,7 @@ export class DropSignatureVerifier {
       const signingAddress = ethers.utils
         .verifyMessage(hash, clientSignature)
         ?.toLowerCase();
-      if (signerAddress && signingAddress !== signerAddress) {
+      if (signerAddress && signingAddress !== signerAddress?.toLowerCase()) {
         return null;
       }
       return signingAddress ?? null;
