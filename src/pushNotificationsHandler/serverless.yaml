@@ -12,6 +12,7 @@ provider:
   memorySize: 1024
   timeout: 60
   architecture: arm64
+  logRetentionInDays: 60
 
 functions:
   pushNotificationsHandler:

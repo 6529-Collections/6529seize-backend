@@ -67,7 +67,7 @@ export async function redisCached<T>(
   }
   const value = await callback();
   if (value !== undefined) {
-    await redis.set(key, JSON.stringify(value), { EX: ttl.toMillis() });
+    await redis.set(key, JSON.stringify(value), { EX: ttl.toSeconds() });
   }
   return value;
 }
