@@ -80,7 +80,7 @@ const baseDropFieldsValidators = {
   mentions_all: Joi.boolean().optional(),
   signature: Joi.string().optional().allow(null).default(null),
   is_safe_signature: Joi.boolean().optional(),
-  signer_address: Joi.boolean().optional()
+  signer_address: Joi.string().optional()
 };
 
 export const NewDropSchema: Joi.ObjectSchema<ApiCreateDropRequest> = Joi.object(
