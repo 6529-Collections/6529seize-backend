@@ -12,6 +12,7 @@ provider:
   memorySize: 512
   timeout: 900
   architecture: arm64
+  logRetentionInDays: 60
 
 functions:
   nftHistoryLoop:
