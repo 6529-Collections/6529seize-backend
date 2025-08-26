@@ -71,6 +71,7 @@ import { identityFetcher } from '../identities/identity.fetcher';
 import { enums } from '../../../enums';
 import { numbers } from '../../../numbers';
 import { ApiUpdateWaveDecisionPause } from '../generated/models/ApiUpdateWaveDecisionPause';
+import { clearWaveGroupsCache } from '../../../redis';
 
 const router = asyncRouter();
 
@@ -218,6 +219,7 @@ router.post(
       requestContext
     );
     await giveReadReplicaTimeToCatchUp();
+    await clearWaveGroupsCache();
     res.send(wave);
   }
 );

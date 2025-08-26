@@ -66,6 +66,7 @@ import {
 } from '../identity-subscriptions/identity-subscriptions.db';
 import { SearchWavesParams, wavesApiDb, WavesApiDb } from './waves.api.db';
 import { wavesMappers, WavesMappers } from './waves.mappers';
+import { clearWaveGroupsCache } from '../../../redis';
 
 export class WaveApiService {
   constructor(
@@ -221,6 +222,7 @@ export class WaveApiService {
       }
     );
     await giveReadReplicaTimeToCatchUp();
+    await clearWaveGroupsCache();
     timer.stop(`${this.constructor.name}->createWave`);
     return createdWave;
   }
