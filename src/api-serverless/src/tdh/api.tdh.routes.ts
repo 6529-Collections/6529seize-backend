@@ -38,7 +38,7 @@ export const METRICS_SORT = [
 
 router.get(
   `/nft/:contract/:nft_id`,
-  function (
+  async function (
     req: Request<
       {
         contract: string;
@@ -67,15 +67,21 @@ router.get(
     const sortDir = resolveSortDirection(req.query.sort_direction);
     const search = req.query.search;
 
-    fetchNftTdh(contract, nftId, sort, sortDir, page, pageSize, search).then(
-      (result) => returnPaginatedResult(result, req, res)
-    );
+    await fetchNftTdh(
+      contract,
+      nftId,
+      sort,
+      sortDir,
+      page,
+      pageSize,
+      search
+    ).then(async (result) => await returnPaginatedResult(result, req, res));
   }
 );
 
 router.get(
   `/consolidated_metrics`,
-  function (
+  async function (
     req: Request<
       any,
       any,
@@ -114,16 +120,16 @@ router.get(
       page = 1;
     }
 
-    fetchConsolidatedMetrics(sort, sortDir, page, pageSize, {
+    await fetchConsolidatedMetrics(sort, sortDir, page, pageSize, {
       search,
       content,
       collector,
       season
     }).then(async (result) => {
       if (downloadAll || downloadPage) {
-        return returnCSVResult('consolidated_metrics', result.data, res);
+        return await returnCSVResult('consolidated_metrics', result.data, res);
       } else {
-        return returnPaginatedResult(result, req, res);
+        return await returnPaginatedResult(result, req, res);
       }
     });
   }
@@ -151,7 +157,7 @@ router.get(
     );
     if (result) {
       const parsedResult = parseTdhDataFromDB(result);
-      return returnJsonResult(parsedResult, req, res);
+      return await returnJsonResult(parsedResult, req, res);
     }
     throw new NotFoundException(
       `Consolidated TDH for ${consolidationKey} not found`
@@ -177,7 +183,7 @@ router.get(
     const result = await fetchTDH('wallet', wallet, WALLETS_TDH_TABLE);
     if (result) {
       const parsedResult = parseTdhDataFromDB(result);
-      return returnJsonResult(parsedResult, req, res);
+      return await returnJsonResult(parsedResult, req, res);
     }
     throw new NotFoundException(`Wallet TDH for ${wallet} not found`);
   }

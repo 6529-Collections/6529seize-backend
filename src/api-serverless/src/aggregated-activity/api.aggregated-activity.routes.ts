@@ -42,7 +42,7 @@ export const AGGREGATED_ACTIVITY_SORT = [
 
 router.get(
   '/',
-  function (
+  async function (
     req: Request<
       any,
       any,
@@ -82,16 +82,16 @@ router.get(
       page = 1;
     }
 
-    fetchAggregatedActivity(sort, sortDir, page, pageSize, {
+    await fetchAggregatedActivity(sort, sortDir, page, pageSize, {
       search,
       content,
       collector,
       season
     }).then(async (result) => {
       if (downloadAll || downloadPage) {
-        return returnCSVResult('consolidated_metrics', result.data, res);
+        return await returnCSVResult('consolidated_metrics', result.data, res);
       } else {
-        return returnPaginatedResult(result, req, res);
+        return await returnPaginatedResult(result, req, res);
       }
     });
   }
@@ -115,7 +115,7 @@ router.get(
     const result =
       await fetchAggregatedActivityForConsolidationKey(consolidationKey);
     if (result) {
-      return returnJsonResult(result, req, res);
+      return await returnJsonResult(result, req, res);
     }
     throw new NotFoundException(
       `Consolidated Aggregated activity for ${consolidationKey} not found`
@@ -140,7 +140,7 @@ router.get(
     const result =
       await fetchMemesAggregatedActivityForConsolidationKey(consolidationKey);
     if (result) {
-      return returnJsonResult(result, req, res);
+      return await returnJsonResult(result, req, res);
     }
     throw new NotFoundException(
       `Consolidated Memes Aggregated activity for ${consolidationKey} not found`
@@ -165,7 +165,7 @@ router.get(
 
     const result = await fetchAggregatedActivityForWallet(wallet);
     if (result) {
-      return returnJsonResult(result, req, res);
+      return await returnJsonResult(result, req, res);
     }
     throw new NotFoundException(
       `Wallet Aggregated activity for ${wallet} not found`
@@ -190,7 +190,7 @@ router.get(
 
     const result = await fetchMemesAggregatedActivityForWallet(wallet);
     if (result) {
-      return returnJsonResult(result, req, res);
+      return await returnJsonResult(result, req, res);
     }
     throw new NotFoundException(
       `Wallet Memes Aggregated activity for ${wallet} not found`

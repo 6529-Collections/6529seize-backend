@@ -227,8 +227,8 @@ router.get(`/allowlist_phases`, async function (req: any, res: any) {
   logger.info(
     `[FETCHING ALLOWLIST PHASES FOR ALL COLLECTIONS] : [PAGE SIZE ${pageSize}] : [PAGE ${page}]`
   );
-  db.fetchAllAllowlistPhases(pageSize, page).then((result) => {
-    return returnPaginatedResult(result, req, res);
+  await db.fetchAllAllowlistPhases(pageSize, page).then(async (result) => {
+    return await returnPaginatedResult(result, req, res);
   });
 });
 
@@ -238,8 +238,8 @@ router.get(
     const id: number = parseInt(req.params.collection_id);
     if (!isNaN(id)) {
       logger.info(`[FETCHING ALLOWLIST PHASES COLLECTION ID ${id}]`);
-      db.fetchAllowlistPhasesForCollection(id).then((result) => {
-        return returnPaginatedResult(result as unknown as any, req, res);
+      await db.fetchAllowlistPhasesForCollection(id).then(async (result) => {
+        return await returnPaginatedResult(result as unknown as any, req, res);
       });
     } else {
       return res.status(404).send({});
@@ -248,8 +248,8 @@ router.get(
 );
 
 router.get(`/featured`, async function (req: any, res: any) {
-  db.fetchFeaturedCollection().then((result) => {
-    return returnJsonResult(result, req, res);
+  await db.fetchFeaturedCollection().then(async (result) => {
+    return await returnJsonResult(result, req, res);
   });
 });
 
@@ -265,9 +265,11 @@ router.get(`/collections`, async function (req: any, res: any) {
     statusKey in NextGenCollectionStatus
       ? NextGenCollectionStatus[statusKey]
       : null;
-  db.fetchNextGenCollections(pageSize, page, status).then((result) => {
-    return returnPaginatedResult(result, req, res);
-  });
+  await db
+    .fetchNextGenCollections(pageSize, page, status)
+    .then(async (result) => {
+      return await returnPaginatedResult(result, req, res);
+    });
 });
 
 router.get(`/collections/:id`, async function (req: any, res: any) {
@@ -282,7 +284,7 @@ router.get(`/collections/:id`, async function (req: any, res: any) {
     result = await db.fetchNextGenCollectionByName(name);
   }
   if (result?.id) {
-    return returnJsonResult(result, req, res);
+    return await returnJsonResult(result, req, res);
   } else {
     return res.status(404).send({});
   }
@@ -319,19 +321,21 @@ router.get(
       listed = db.ListedType.NOT_LISTED;
     }
 
-    db.fetchNextGenCollectionTokens(
-      id,
-      pageSize,
-      page,
-      traits,
-      sort,
-      sortDir,
-      showNormalised,
-      showTraitCount,
-      listed
-    ).then((result) => {
-      return returnPaginatedResult(result, req, res);
-    });
+    await db
+      .fetchNextGenCollectionTokens(
+        id,
+        pageSize,
+        page,
+        traits,
+        sort,
+        sortDir,
+        showNormalised,
+        showTraitCount,
+        listed
+      )
+      .then(async (result) => {
+        return await returnPaginatedResult(result, req, res);
+      });
   }
 );
 
@@ -347,9 +351,9 @@ router.get(
     }
 
     const tokenId = id * 10000000000 + token;
-    db.fetchNextGenToken(tokenId).then((result) => {
+    await db.fetchNextGenToken(tokenId).then(async (result) => {
       if (result.id) {
-        return returnJsonResult(result, req, res);
+        return await returnJsonResult(result, req, res);
       } else {
         return res.status(404).send({});
       }
@@ -368,9 +372,11 @@ router.get(
         : DEFAULT_PAGE_SIZE;
     const page: number = req.query.page ? parseInt(req.query.page) : 1;
 
-    db.fetchNextGenCollectionLogs(id, pageSize, page).then((result) => {
-      return returnJsonResult(result, req, res);
-    });
+    await db
+      .fetchNextGenCollectionLogs(id, pageSize, page)
+      .then(async (result) => {
+        return await returnJsonResult(result, req, res);
+      });
   }
 );
 
@@ -391,9 +397,11 @@ router.get(
         : DEFAULT_PAGE_SIZE;
     const page: number = req.query.page ? parseInt(req.query.page) : 1;
 
-    db.fetchNextGenCollectionOnlyLogs(id, pageSize, page).then((result) => {
-      return returnJsonResult(result, req, res);
-    });
+    await db
+      .fetchNextGenCollectionOnlyLogs(id, pageSize, page)
+      .then(async (result) => {
+        return await returnJsonResult(result, req, res);
+      });
   }
 );
 
@@ -403,7 +411,7 @@ router.get(
   async function (req: any, res: any) {
     const id: number = req.params.id;
 
-    db.fetchNextGenCollectionTraits(id).then((result) => {
+    await db.fetchNextGenCollectionTraits(id).then(async (result) => {
       const uniqueKeys: string[] = [];
       result.forEach((r: any) => {
         if (!uniqueKeys.includes(r.trait)) {
@@ -435,7 +443,7 @@ router.get(
       const sortedTraits = traits
         .sort((a, b) => a.trait.localeCompare(b.trait))
         .sort((a, b) => b.values.length - a.values.length);
-      return returnJsonResult(sortedTraits, req, res);
+      return await returnJsonResult(sortedTraits, req, res);
     });
   }
 );
@@ -457,11 +465,11 @@ router.get(
         : DEFAULT_PAGE_SIZE;
     const page: number = req.query.page ? parseInt(req.query.page) : 1;
 
-    db.fetchNextGenCollectionTraitSetsUltimate(id, traits, pageSize, page).then(
-      (result) => {
-        return returnJsonResult(result, req, res);
-      }
-    );
+    await db
+      .fetchNextGenCollectionTraitSetsUltimate(id, traits, pageSize, page)
+      .then(async (result) => {
+        return await returnJsonResult(result, req, res);
+      });
   }
 );
 
@@ -479,11 +487,11 @@ router.get(
     const page: number = req.query.page ? parseInt(req.query.page) : 1;
     const search = req.query.search;
 
-    db.fetchNextGenCollectionTraitSets(id, trait, pageSize, page, search).then(
-      (result) => {
-        return returnJsonResult(result, req, res);
-      }
-    );
+    await db
+      .fetchNextGenCollectionTraitSets(id, trait, pageSize, page, search)
+      .then(async (result) => {
+        return await returnJsonResult(result, req, res);
+      });
   }
 );
 
@@ -493,9 +501,9 @@ router.get(`/tokens/:id`, async function (req: any, res: any) {
     throw new BadRequestException('Token ID must be a number.');
   }
 
-  db.fetchNextGenToken(id).then((result) => {
+  await db.fetchNextGenToken(id).then(async (result) => {
     if (result.id) {
-      return returnJsonResult(result, req, res);
+      return await returnJsonResult(result, req, res);
     } else {
       return res.status(404).send({});
     }
@@ -514,9 +522,11 @@ router.get(`/tokens/:id/transactions`, async function (req: any, res: any) {
       : DEFAULT_PAGE_SIZE;
   const page: number = req.query.page ? parseInt(req.query.page) : 1;
 
-  db.fetchNextGenTokenTransactions(id, pageSize, page).then((result) => {
-    return returnJsonResult(result, req, res);
-  });
+  await db
+    .fetchNextGenTokenTransactions(id, pageSize, page)
+    .then(async (result) => {
+      return await returnJsonResult(result, req, res);
+    });
 });
 
 router.get(`/tokens/:id/traits`, async function (req: any, res: any) {
@@ -525,8 +535,8 @@ router.get(`/tokens/:id/traits`, async function (req: any, res: any) {
     throw new BadRequestException('Token ID must be a number.');
   }
 
-  db.fetchNextGenTokenTraits(id).then((result) => {
-    return returnJsonResult(result, req, res);
+  await db.fetchNextGenTokenTraits(id).then(async (result) => {
+    return await returnJsonResult(result, req, res);
   });
 });
 
@@ -542,11 +552,11 @@ router.get(`/tdh`, async function (req: any, res: any) {
 
   logger.info(`[FETCHING TOKEN TDH]`);
 
-  db.fetchNextGenTokenTDH(consolidationKeys, tokenIds, pageSize, page).then(
-    (result) => {
-      return returnJsonResult(result, req, res);
-    }
-  );
+  await db
+    .fetchNextGenTokenTDH(consolidationKeys, tokenIds, pageSize, page)
+    .then(async (result) => {
+      return await returnJsonResult(result, req, res);
+    });
 });
 
 async function persistAllowlist(body: {
