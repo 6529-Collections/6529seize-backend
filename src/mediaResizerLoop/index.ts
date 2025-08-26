@@ -78,7 +78,8 @@ export const handler = wrapLambdaHandler(async (event: any) => {
     }
     const sharp = Sharp({
       failOn: 'none',
-      animated: originImage.ContentType === 'image/gif'
+      animated: originImage.ContentType === 'image/gif',
+      limitInputPixels: 1073741824 // 4x default limit (1GB pixel limit)
     })
       .resize(width, height, { withoutEnlargement: true, fit })
       .rotate();
