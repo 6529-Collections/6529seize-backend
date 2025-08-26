@@ -15,7 +15,7 @@ import {
   returnPaginatedResult
 } from '../api-helpers';
 import * as mcache from 'memory-cache';
-import { RoyaltyResponse, fetchRoyalties } from './royalties.db';
+import { fetchRoyalties, RoyaltyResponse } from './royalties.db';
 
 const router = asyncRouter();
 
@@ -74,7 +74,7 @@ router.get(
 
 router.get(
   `/uploads`,
-  function (
+  async function (
     req: Request<
       any,
       any,
@@ -91,8 +91,8 @@ router.get(
         ? req.query.page_size
         : DEFAULT_PAGE_SIZE;
     const page: number = req.query.page ? req.query.page : 1;
-    fetchRoyaltiesUploads(pageSize, page).then((result) => {
-      returnPaginatedResult<RoyaltyUploadResponse>(result, req, res);
+    await fetchRoyaltiesUploads(pageSize, page).then(async (result) => {
+      await returnPaginatedResult<RoyaltyUploadResponse>(result, req, res);
     });
   }
 );
@@ -130,9 +130,9 @@ function returnRoyalties(
 
     if (download) {
       results.forEach((r) => delete r.thumbnail);
-      return returnCSVResult(`royalties_${type}`, results, res);
+      return await returnCSVResult(`royalties_${type}`, results, res);
     } else {
-      return returnJsonResult(results, req, res);
+      return await returnJsonResult(results, req, res);
     }
   });
 }

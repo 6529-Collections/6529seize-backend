@@ -9,7 +9,7 @@ import {
   returnJsonResult
 } from '../api-helpers';
 import * as mcache from 'memory-cache';
-import { GasResponse, fetchGas } from './gas.db';
+import { fetchGas, GasResponse } from './gas.db';
 
 const router = asyncRouter();
 
@@ -19,7 +19,7 @@ export default router;
 
 router.get(
   `/collection/:collection_type`,
-  function (
+  async function (
     req: Request<
       {
         collection_type: string;
@@ -42,7 +42,7 @@ router.get(
     if (collectionType === 'memes' || collectionType === 'memelab') {
       const fromBlockResolved = resolveIntParam(req.query.from_block);
       const toBlockResolved = resolveIntParam(req.query.to_block);
-      return returnGas(
+      return await returnGas(
         collectionType,
         req.query.primary === 'true',
         req.query.artist as string,
@@ -60,7 +60,7 @@ router.get(
   }
 );
 
-function returnGas(
+async function returnGas(
   type: 'memes' | 'memelab',
   isPrimary: boolean,
   artist: string,
@@ -72,24 +72,30 @@ function returnGas(
   req: Request,
   res: Response
 ) {
-  fetchGas(type, isPrimary, artist, fromDate, toDate, fromBlock, toBlock).then(
-    async (results: GasResponse[]) => {
-      logger.info(
-        `[${type.toUpperCase()} FROM_DATE ${fromDate} TO_DATE ${toDate} - Fetched ${
-          results.length
-        }`
-      );
+  await fetchGas(
+    type,
+    isPrimary,
+    artist,
+    fromDate,
+    toDate,
+    fromBlock,
+    toBlock
+  ).then(async (results: GasResponse[]) => {
+    logger.info(
+      `[${type.toUpperCase()} FROM_DATE ${fromDate} TO_DATE ${toDate} - Fetched ${
+        results.length
+      }`
+    );
 
-      if (results.length > 0) {
-        mcache.put(cacheKey(req), results, CACHE_TIME_MS);
-      }
-
-      if (download) {
-        results.forEach((r) => delete r.thumbnail);
-        return returnCSVResult(`gas_${type}`, results, res);
-      } else {
-        return returnJsonResult(results, req, res);
-      }
+    if (results.length > 0) {
+      mcache.put(cacheKey(req), results, CACHE_TIME_MS);
     }
-  );
+
+    if (download) {
+      results.forEach((r) => delete r.thumbnail);
+      return returnCSVResult(`gas_${type}`, results, res);
+    } else {
+      return await returnJsonResult(results, req, res);
+    }
+  });
 }

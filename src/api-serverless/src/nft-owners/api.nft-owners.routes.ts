@@ -42,7 +42,7 @@ router.get(
       pageSize,
       sortDir
     );
-    return returnPaginatedResult(result, req, res);
+    return await returnPaginatedResult(result, req, res);
   }
 );
 
@@ -78,6 +78,6 @@ router.get(
       page,
       pageSize
     );
-    return returnPaginatedResult(results, req, res);
+    return await returnPaginatedResult(results, req, res);
   }
 );

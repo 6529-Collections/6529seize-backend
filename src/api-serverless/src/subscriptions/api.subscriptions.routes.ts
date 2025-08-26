@@ -67,7 +67,7 @@ router.get(
 
     const result = await fetchDetailsForConsolidationKey(consolidationKey);
     if (result) {
-      return returnJsonResult(result, req, res);
+      return await returnJsonResult(result, req, res);
     } else {
       return res.status(404).send('Not found');
     }
@@ -186,7 +186,7 @@ router.get(
       consolidationKey,
       cardCount
     );
-    return returnJsonResult(result, req, res);
+    return await returnJsonResult(result, req, res);
   }
 );
 
@@ -206,7 +206,7 @@ router.get(
     const cardCount = parseInt(req.query.card_count ?? '3');
 
     const result = await fetchUpcomingMemeSubscriptionCounts(cardCount);
-    return returnJsonResult(result, req, res);
+    return await returnJsonResult(result, req, res);
   }
 );
 
@@ -231,7 +231,7 @@ router.get(
     const page = req.query.page;
 
     const result = await fetchPastMemeSubscriptionCounts(pageSize, page);
-    return returnJsonResult(result, req, res);
+    return await returnJsonResult(result, req, res);
   }
 );
 
@@ -313,7 +313,7 @@ router.get(
       page
     );
     if (result) {
-      return returnJsonResult(result, req, res, true);
+      return await returnJsonResult(result, req, res, true);
     } else {
       return res.status(404).send('Not found');
     }
@@ -346,7 +346,7 @@ router.get(
       page
     );
     if (result) {
-      return returnJsonResult(result, req, res, true);
+      return await returnJsonResult(result, req, res, true);
     } else {
       return res.status(404).send('Not found');
     }
@@ -371,7 +371,7 @@ router.get(
       await fetchAirdropAddressForConsolidationKey(consolidationKey);
     const ensTdhWallet = await fetchEns(result.tdh_wallet);
     const ensAirdrop = await fetchEns(result.airdrop_address);
-    return returnJsonResult(
+    return await returnJsonResult(
       {
         tdh_wallet: {
           address: result.tdh_wallet,
@@ -414,7 +414,7 @@ router.get(
       tokenId
     );
     if (result) {
-      return returnJsonResult(result, req, res, true);
+      return await returnJsonResult(result, req, res, true);
     } else {
       return res.status(404).send('Not found');
     }
@@ -444,7 +444,7 @@ router.get(
     const page = parseInt(req.query.page ?? '1');
 
     const result = await fetchSubscriptionUploads(contract, pageSize, page);
-    return returnJsonResult(result, req, res, true);
+    return await returnJsonResult(result, req, res, true);
   }
 );
 
@@ -493,7 +493,7 @@ router.get(
 
     if (phaseId === 'public') {
       const results = await getPublicSubscriptions(contract, tokenId);
-      return returnJsonResult(results, req, res);
+      return await returnJsonResult(results, req, res);
     } else {
       const phaseResults = await fetchPhaseResults(auth, allowlistId, phaseId);
       const phaseName = await fetchPhaseName(auth, allowlistId, phaseId);
@@ -503,7 +503,7 @@ router.get(
         phaseName,
         phaseResults
       );
-      return returnJsonResult(results, req, res);
+      return await returnJsonResult(results, req, res);
     }
   }
 );
@@ -550,7 +550,7 @@ router.post(
     }
 
     await resetAllowlist(contract, tokenId);
-    return returnJsonResult(
+    return await returnJsonResult(
       {
         success: true,
         statusText: 'Reset successful'
