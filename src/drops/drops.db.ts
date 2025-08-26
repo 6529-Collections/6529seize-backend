@@ -967,7 +967,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       `${this.constructor.name}->findWeightedLeaderboardDropsOrderedByPrediction`
     );
     const sql = `
-        select d.* from ${WAVE_LEADERBOARD_ENTRIES_TABLE} r join ${DROPS_TABLE} d on d.id = r.drop_id order by r.vote_on_decision_time ${params.sort_direction} limit :page_size offset :offset
+        select d.* from ${WAVE_LEADERBOARD_ENTRIES_TABLE} r join ${DROPS_TABLE} d on d.id = r.drop_id where d.wave_id = :wave_id order by r.vote_on_decision_time ${params.sort_direction} limit :page_size offset :offset
     `;
     const sqlParams = {
       wave_id: params.wave_id,
