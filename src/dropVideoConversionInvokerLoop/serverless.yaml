@@ -15,6 +15,7 @@ provider:
   timeout: 900
   role: arn:aws:iam::987989283142:role/lambda-vpc-role
   architecture: arm64
+  logRetentionInDays: 60
 
 functions:
   dropVideoConversionInvokerLoop:
