@@ -15,7 +15,7 @@ import { returnPaginatedResult } from '../api-helpers';
 
 const router = asyncRouter();
 
-router.get(``, function (req: any, res: any) {
+router.get(``, async function (req: any, res: any) {
   const memeIds = req.query.meme_id;
   const pageSize: number =
     req.query.page_size && req.query.page_size < DISTRIBUTION_PAGE_SIZE
@@ -36,25 +36,27 @@ router.get(``, function (req: any, res: any) {
     SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
       ? req.query.sort_direction
       : 'desc';
-  db.fetchRememes(
-    memeIds,
-    pageSize,
-    page,
-    contract,
-    id,
-    tokenType,
-    sort,
-    sortDir
-  ).then((result) => {
-    result.data.map((a: any) => {
-      a.metadata = JSON.parse(a.metadata);
-      a.media = JSON.parse(a.media);
-      a.contract_opensea_data = JSON.parse(a.contract_opensea_data);
-      a.meme_references = JSON.parse(a.meme_references);
-      a.replicas = a.replicas.split(',');
+  await db
+    .fetchRememes(
+      memeIds,
+      pageSize,
+      page,
+      contract,
+      id,
+      tokenType,
+      sort,
+      sortDir
+    )
+    .then(async (result) => {
+      result.data.map((a: any) => {
+        a.metadata = JSON.parse(a.metadata);
+        a.media = JSON.parse(a.media);
+        a.contract_opensea_data = JSON.parse(a.contract_opensea_data);
+        a.meme_references = JSON.parse(a.meme_references);
+        a.replicas = a.replicas.split(',');
+      });
+      await returnPaginatedResult(result, req, res, true);
     });
-    returnPaginatedResult(result, req, res, true);
-  });
 });
 
 router.post(`/validate`, validateRememe, function (req: any, res: any) {

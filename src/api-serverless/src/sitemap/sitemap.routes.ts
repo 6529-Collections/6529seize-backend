@@ -14,6 +14,7 @@ import {
   NEXTGEN_COLLECTIONS_TABLE,
   NEXTGEN_TOKENS_TABLE
 } from '../../../nextgen/nextgen_constants';
+
 const router = asyncRouter();
 
 const PAGE_SIZE = 200;
@@ -56,7 +57,7 @@ async function handlePaginatedRequest(
   );
 
   const ids = results.data.map((r) => r[field ?? 'id']);
-  return returnPaginatedResult(
+  return await returnPaginatedResult(
     {
       count: results.count,
       page: results.page,

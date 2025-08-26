@@ -12,7 +12,7 @@ const router = asyncRouter();
 
 export default router;
 
-router.get(`/`, function (req: any, res: any) {
+router.get(`/`, async function (req: any, res: any) {
   const use_cases = req.query.use_case;
   const collections = req.query.collection;
   const pageSize: number =
@@ -25,19 +25,19 @@ router.get(`/`, function (req: any, res: any) {
   );
   const block = req.query.block;
 
-  fetchDelegationsByUseCase(
+  await fetchDelegationsByUseCase(
     collections,
     use_cases,
     showExpired,
     pageSize,
     page,
     block
-  ).then((result) => {
-    returnPaginatedResult(result, req, res);
+  ).then(async (result) => {
+    await returnPaginatedResult(result, req, res);
   });
 });
 
-router.get(`/minting/:wallet`, function (req: any, res: any) {
+router.get(`/minting/:wallet`, async function (req: any, res: any) {
   const wallet = req.params.wallet;
 
   const pageSize: number =
@@ -46,12 +46,12 @@ router.get(`/minting/:wallet`, function (req: any, res: any) {
       : DEFAULT_PAGE_SIZE;
   const page: number = req.query.page ? parseInt(req.query.page) : 1;
 
-  fetchMintingDelegations(wallet, pageSize, page).then((result) => {
-    returnPaginatedResult(result, req, res);
+  await fetchMintingDelegations(wallet, pageSize, page).then(async (result) => {
+    await returnPaginatedResult(result, req, res);
   });
 });
 
-router.get(`/:wallet`, function (req: any, res: any) {
+router.get(`/:wallet`, async function (req: any, res: any) {
   const wallet = req.params.wallet;
 
   const pageSize: number =
@@ -60,7 +60,7 @@ router.get(`/:wallet`, function (req: any, res: any) {
       : DEFAULT_PAGE_SIZE;
   const page: number = req.query.page ? parseInt(req.query.page) : 1;
 
-  fetchDelegations(wallet, pageSize, page).then((result) => {
-    returnPaginatedResult(result, req, res);
+  await fetchDelegations(wallet, pageSize, page).then(async (result) => {
+    await returnPaginatedResult(result, req, res);
   });
 });

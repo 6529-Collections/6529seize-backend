@@ -1,5 +1,4 @@
 import { Request, Response } from 'express';
-import * as mcache from 'memory-cache';
 import {
   ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
   CACHE_TIME_MS,
@@ -12,6 +11,7 @@ import {
 } from './api-constants';
 import { Time } from '../../time';
 import { numbers } from '../../numbers';
+import { redisCached } from '../../redis';
 
 const converter = require('json-2-csv');
 
@@ -56,14 +56,18 @@ export async function returnCSVResult(
   return response.send(csv);
 }
 
-export function returnJsonResult(
+export async function returnJsonResult(
   result: any,
   request: Request,
   response: Response,
   skipCache?: boolean
 ) {
   if (!skipCache && result.count > 0) {
-    mcache.put(cacheKey(request), result, CACHE_TIME_MS);
+    await redisCached(
+      cacheKey(request),
+      Time.millis(CACHE_TIME_MS),
+      () => result
+    );
   }
 
   response.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
@@ -86,14 +90,14 @@ export function transformPaginatedResponse<K, V>(
   };
 }
 
-export function returnPaginatedResult<T>(
+export async function returnPaginatedResult<T>(
   result: PaginatedResponse<T>,
   request: Request<any, any, any, any>,
   response: Response,
   skipCache?: boolean
 ) {
   result.next = fullUrl(request, result.next);
-  returnJsonResult(result, request, response, skipCache);
+  await returnJsonResult(result, request, response, skipCache);
 }
 
 export function constructFilters(f: string, newF: string) {

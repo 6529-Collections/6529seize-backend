@@ -43,7 +43,7 @@ router.get(
     const pageSize = req.query.page_size ?? DEFAULT_PAGE_SIZE;
     const sortDir = resolveSortDirection(req.query.sort_direction);
     const result = await fetchAllOwnerBalances(page, pageSize, sortDir);
-    return returnPaginatedResult(result, req, res);
+    return await returnPaginatedResult(result, req, res);
   }
 );
 
@@ -65,7 +65,7 @@ router.get(
     const result =
       await fetchOwnerBalancesForConsolidationKey(consolidationKey);
     if (result) {
-      return returnJsonResult(result, req, res);
+      return await returnJsonResult(result, req, res);
     }
     throw new NotFoundException(
       `Consolidation Owner Balance for ${consolidationKey} not found`
@@ -90,7 +90,7 @@ router.get(
     const result =
       await fetchMemesOwnerBalancesForConsolidationKey(consolidationKey);
     if (result) {
-      return returnJsonResult(result, req, res);
+      return await returnJsonResult(result, req, res);
     }
     throw new NotFoundException(
       `Consolidation Memes Owner Balance for ${consolidationKey} not found`
@@ -114,7 +114,7 @@ router.get(
     const wallet = req.params.wallet;
     const result = await fetchOwnerBalancesForWallet(wallet);
     if (result) {
-      return returnJsonResult(result, req, res);
+      return await returnJsonResult(result, req, res);
     }
     throw new NotFoundException(`Wallet Owner Balance for ${wallet} not found`);
   }
@@ -137,7 +137,7 @@ router.get(
 
     const result = await fetchMemesOwnerBalancesForWallet(wallet);
     if (result) {
-      return returnJsonResult(result, req, res);
+      return await returnJsonResult(result, req, res);
     }
     throw new NotFoundException(
       `Wallet Memes Owner Balance for ${wallet} not found`
