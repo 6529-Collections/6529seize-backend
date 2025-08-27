@@ -457,11 +457,11 @@ export async function fetchNextGenCollectionLogs(
     ${TRANSACTIONS_TABLE}.gas_price_gwei`;
 
   const joins = `
-    LEFT JOIN ${TRANSACTIONS_TABLE} tx
-      ON tx.transaction = ${NEXTGEN_LOGS_TABLE}.transaction
-      AND tx.token_id    = ${NEXTGEN_LOGS_TABLE}.token_id
-    LEFT JOIN ${ENS_TABLE} ens1 ON tx.from_address = ens1.wallet
-    LEFT JOIN ${ENS_TABLE} ens2 ON tx.to_address   = ens2.wallet
+    LEFT JOIN ${TRANSACTIONS_TABLE}
+      ON ${TRANSACTIONS_TABLE}.transaction = ${NEXTGEN_LOGS_TABLE}.transaction
+      AND ${TRANSACTIONS_TABLE}.token_id    = ${NEXTGEN_LOGS_TABLE}.token_id
+    LEFT JOIN ${ENS_TABLE} ens1 ON ${TRANSACTIONS_TABLE}.from_address = ens1.wallet
+    LEFT JOIN ${ENS_TABLE} ens2 ON ${TRANSACTIONS_TABLE}.to_address   = ens2.wallet
   `;
 
   return fetchPaginated(
