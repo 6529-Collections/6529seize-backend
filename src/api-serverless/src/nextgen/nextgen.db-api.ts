@@ -1,5 +1,3 @@
-import { NextGenCollectionStatus } from '../api-filters';
-import { constructFilters, constructFiltersOR } from '../api-helpers';
 import {
   ADDRESS_CONSOLIDATION_KEY,
   CONSOLIDATED_WALLETS_TDH_TABLE,
@@ -8,10 +6,8 @@ import {
   NULL_ADDRESS,
   TRANSACTIONS_TABLE
 } from '../../../constants';
-import { getProof } from '../../../merkle_proof';
-import { sqlExecutor } from '../../../sql-executor';
-import { Time } from '../../../time';
 import { fetchPaginated, resolveEns, returnEmpty } from '../../../db-api';
+import { getProof } from '../../../merkle_proof';
 import {
   MINT_TYPE_TRAIT,
   NEXTGEN_ALLOWLIST_BURN_TABLE,
@@ -26,9 +22,13 @@ import {
   NEXTGEN_TOKENS_TABLE,
   NEXTGEN_TOKENS_TDH_TABLE
 } from '../../../nextgen/nextgen_constants';
+import { calculateLevel } from '../../../profiles/profile-level';
+import { sqlExecutor } from '../../../sql-executor';
+import { Time } from '../../../time';
+import { NextGenCollectionStatus } from '../api-filters';
+import { constructFilters, constructFiltersOR } from '../api-helpers';
 import { PageSortDirection } from '../page-request';
 import { getNextGenChainId, NEXTGEN_CORE } from './abis';
-import { calculateLevel } from '../../../profiles/profile-level';
 
 export enum TokensSort {
   ID = 'id',
@@ -455,7 +455,14 @@ export async function fetchNextGenCollectionLogs(
     ${TRANSACTIONS_TABLE}.gas_price,
     ${TRANSACTIONS_TABLE}.gas,
     ${TRANSACTIONS_TABLE}.gas_price_gwei`;
-  const joins = `LEFT JOIN ${TRANSACTIONS_TABLE} on ${NEXTGEN_LOGS_TABLE}.transaction=${TRANSACTIONS_TABLE}.transaction LEFT JOIN ${ENS_TABLE} ens1 ON ${TRANSACTIONS_TABLE}.from_address=ens1.wallet LEFT JOIN ${ENS_TABLE} ens2 ON ${TRANSACTIONS_TABLE}.to_address=ens2.wallet`;
+
+  const joins = `
+    LEFT JOIN ${TRANSACTIONS_TABLE} tx
+      ON tx.transaction = ${NEXTGEN_LOGS_TABLE}.transaction
+      AND tx.token_id    = ${NEXTGEN_LOGS_TABLE}.token_id
+    LEFT JOIN ${ENS_TABLE} ens1 ON tx.from_address = ens1.wallet
+    LEFT JOIN ${ENS_TABLE} ens2 ON tx.to_address   = ens2.wallet
+  `;
 
   return fetchPaginated(
     NEXTGEN_LOGS_TABLE,
