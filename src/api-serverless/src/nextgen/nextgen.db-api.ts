@@ -459,7 +459,7 @@ export async function fetchNextGenCollectionLogs(
   const joins = `
     LEFT JOIN ${TRANSACTIONS_TABLE}
       ON ${TRANSACTIONS_TABLE}.transaction = ${NEXTGEN_LOGS_TABLE}.transaction
-      AND ${TRANSACTIONS_TABLE}.token_id    = ${NEXTGEN_LOGS_TABLE}.token_id
+      AND ${TRANSACTIONS_TABLE}.token_id   = ${NEXTGEN_LOGS_TABLE}.token_id
     LEFT JOIN ${ENS_TABLE} ens1 ON ${TRANSACTIONS_TABLE}.from_address = ens1.wallet
     LEFT JOIN ${ENS_TABLE} ens2 ON ${TRANSACTIONS_TABLE}.to_address   = ens2.wallet
   `;
