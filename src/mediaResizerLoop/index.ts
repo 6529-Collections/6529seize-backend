@@ -78,7 +78,8 @@ export const handler = wrapLambdaHandler(async (event: any) => {
     }
     const sharp = Sharp({
       failOn: 'none',
-      animated: originImage.ContentType === 'image/gif'
+      animated: originImage.ContentType === 'image/gif',
+      limitInputPixels: 1_000_000_000
     })
       .resize(width, height, { withoutEnlargement: true, fit })
       .rotate();
@@ -98,8 +99,11 @@ export const handler = wrapLambdaHandler(async (event: any) => {
       `[${path}] Resized successfully. Redirecting to ${filesFileServerUrl}`
     );
     return {
-      statusCode: 301,
-      headers: { Location: filesFileServerUrl }
+      statusCode: 302,
+      headers: {
+        Location: filesFileServerUrl,
+        'Cache-Control': 'no-store, private'
+      }
     };
   } catch (e: any) {
     logger.error(
