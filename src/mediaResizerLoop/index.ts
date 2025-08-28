@@ -98,8 +98,11 @@ export const handler = wrapLambdaHandler(async (event: any) => {
       `[${path}] Resized successfully. Redirecting to ${filesFileServerUrl}`
     );
     return {
-      statusCode: 301,
-      headers: { Location: filesFileServerUrl }
+      statusCode: 302,
+      headers: {
+        Location: filesFileServerUrl,
+        'Cache-Control': 'no-store, private'
+      }
     };
   } catch (e: any) {
     logger.error(
