@@ -18,6 +18,7 @@ functions:
   rememesS3Loop:
     handler: index.handler
     name: rememesS3Loop
+    architecture: x86_64
     description: ${env:VERSION_DESCRIPTION}
     role: arn:aws:iam::987989283142:role/lambda-vpc-role
     reservedConcurrency: 1
