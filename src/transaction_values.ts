@@ -6,6 +6,7 @@ import {
   Utils
 } from 'alchemy-sdk';
 import { BigNumber, ethers } from 'ethers';
+import { SEAPORT_IFACE } from './abis/seaport';
 import {
   ACK_DEPLOYER,
   ALCHEMY_SETTINGS,
@@ -27,7 +28,6 @@ import {
   NEXTGEN_CORE_CONTRACT,
   NEXTGEN_ROYALTIES_ADDRESS
 } from './nextgen/nextgen_constants';
-import { SEAPORT_IFACE } from './seaport';
 import { equalIgnoreCase } from './strings';
 
 const logger = Logger.get('TRANSACTION_VALUES');
