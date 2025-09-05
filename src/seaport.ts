@@ -1,5 +1,6 @@
 import { ethers } from 'ethers';
 
+// NOSONAR
 const SEAPORT_ABI = [
   {
     inputs: [
