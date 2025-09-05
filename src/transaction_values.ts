@@ -936,7 +936,7 @@ function attributeRowFromSeaportTx(
     return null;
 
   // Use the larger of offer-side vs consideration-side currency totals across the matched group (prevents double-counting when both sides include full price)
-  const groupTotalCurrency =
+  let groupTotalCurrency =
     mergedOfferCurrencyTotal > mergedConsiderationCurrencyTotal
       ? mergedOfferCurrencyTotal
       : mergedConsiderationCurrencyTotal;
@@ -972,7 +972,7 @@ function attributeRowFromSeaportTx(
       const safeToOverride = matchedGroupDistinctTokenCount === 1;
       if (safeToOverride && buyerOut > groupTotalCurrency) {
         // override groupTotalCurrency with on-chain ERC20 outflow from the buyer (single-token group only)
-        (groupTotalCurrency as any) = buyerOut;
+        groupTotalCurrency = buyerOut;
       }
     }
   } catch (e: any) {
