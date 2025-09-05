@@ -6,6 +6,7 @@ import {
   Utils
 } from 'alchemy-sdk';
 import { BigNumber, ethers } from 'ethers';
+import { SEAPORT_IFACE } from './abis/seaport';
 import {
   ACK_DEPLOYER,
   ALCHEMY_SETTINGS,
@@ -27,7 +28,6 @@ import {
   NEXTGEN_CORE_CONTRACT,
   NEXTGEN_ROYALTIES_ADDRESS
 } from './nextgen/nextgen_constants';
-import { SEAPORT_IFACE } from './seaport';
 import { equalIgnoreCase } from './strings';
 
 const logger = Logger.get('TRANSACTION_VALUES');
@@ -276,9 +276,9 @@ const parseSeaportLog = async (
   let seaResult;
   try {
     seaResult = SEAPORT_IFACE.parseLog(log);
-  } catch (err: any) {
+  } catch (e: any) {
     logger.debug(
-      `SEAPORT PARSE ERROR for transaction ${t.transaction} [ERROR: ${err.message}]`
+      `SEAPORT PARSE ERROR for transaction ${t.transaction} [ERROR: ${e.message}]`
     );
     return null;
   }
@@ -589,20 +589,10 @@ function attributeRowFromSeaportTx(
           amount: BigInt(values?.[i]?.toString() ?? '0')
         });
       });
-      continue;
     }
   }
 
-  // 2) Build helper to find the row's matching NFT edge
-  const wantEdge = nftEdges.find(
-    (e) =>
-      equalIgnoreCase(e.to, row.to_address) &&
-      equalIgnoreCase(e.contract, row.contract) &&
-      e.tokenId === row.token_id.toString()
-  );
-  // Do not return early if seller address is masked; we'll match via events below.
-
-  // 3) Parse Seaport OrderFulfilled events in this tx
+  // 2) Parse Seaport OrderFulfilled events in this tx
   type OrderEvt = {
     orderHash: string;
     offerer: string;
@@ -624,7 +614,7 @@ function attributeRowFromSeaportTx(
     offerCurrencyTotal: bigint; // NEW: sum of offer-side currency amounts
     considerationCurrencyTotal: bigint; // NEW: sum of consideration-side currency amounts
   };
-  const orderEvents: OrderEvt[] = [];
+  const OrderEvts: OrderEvt[] = [];
 
   for (const lg of receipt.logs) {
     let parsed: ethers.utils.LogDescription | null = null;
@@ -648,13 +638,13 @@ function attributeRowFromSeaportTx(
     let offer: any[] = [];
     let consideration: any[] = [];
     try {
-      offer = parsed.args.offer as any[];
-      consideration = parsed.args.consideration as any[];
+      offer = parsed.args.offer;
+      consideration = parsed.args.consideration;
     } catch {
       continue;
     }
 
-    const offerNfts = (offer as any[])
+    const offerNfts = offer
       .filter((o) => isNftItemType(Number(o.itemType)))
       .map((o) => ({
         contract: o.token as string,
@@ -662,7 +652,7 @@ function attributeRowFromSeaportTx(
         amount: BigInt((o.amount as ethers.BigNumber).toString())
       }));
 
-    const considerationNfts = (consideration as any[])
+    const considerationNfts = consideration
       .filter((c) => isNftItemType(Number(c.itemType)))
       .map((c) => ({
         contract: c.token as string,
@@ -673,17 +663,19 @@ function attributeRowFromSeaportTx(
     // currency totals on both sides
     let totalOfferCurrency = BigInt(0);
     let currency: { itemType: number; token: string } | null = null;
-    for (const o of offer as any[]) {
+    for (const o of offer) {
       const it = Number(o.itemType);
       if (isCurrencyItemType(it)) {
         try {
           totalOfferCurrency += BigInt(
             (o.amount as ethers.BigNumber).toString()
           );
-          if (!currency) {
-            currency = { itemType: it, token: o.token as string };
-          }
-        } catch {}
+          currency ??= { itemType: it, token: o.token as string };
+        } catch (e: any) {
+          logger.debug(
+            `Error adding currency for transaction ${row.transaction} [ERROR: ${e.message}]`
+          );
+        }
       }
     }
 
@@ -694,11 +686,11 @@ function attributeRowFromSeaportTx(
       recipient: string;
     }> = [];
     // If currency is not set yet, set it in the next loop (consideration)
-    for (const c of consideration as any[]) {
+    for (const c of consideration) {
       const it = Number(c.itemType);
       if (!isCurrencyItemType(it)) continue;
       const amt = BigInt(c.amount.toString());
-      if (!currency) currency = { itemType: it, token: c.token };
+      currency ??= { itemType: it, token: c.token };
       currencySplits.push({
         itemType: it,
         token: c.token as string,
@@ -717,7 +709,7 @@ function attributeRowFromSeaportTx(
         ? totalOfferCurrency
         : totalConsiderationCurrency;
 
-    orderEvents.push({
+    OrderEvts.push({
       orderHash,
       offerer,
       recipient,
@@ -731,72 +723,51 @@ function attributeRowFromSeaportTx(
     });
   }
 
-  if (orderEvents.length === 0) return null;
+  if (OrderEvts.length === 0) return null;
 
-  // 4) Find the ONE order event that corresponds to THIS row:
+  // 3) Find the ONE order event that corresponds to THIS row:
   // Try seller-side first (NFT in offer[], offerer === from, recipient === to), then seller-side loose, then buyer-side strict, then buyer-side loose, then fallback.
   const tok = row.contract;
   const idStr = row.token_id.toString();
   const edgeFrom = row.from_address;
   const edgeTo = row.to_address;
 
-  // 4a) strict seller-side: NFT in offer[], offerer === from, recipient === to
-  let chosen = orderEvents.find(
-    (e) =>
-      equalIgnoreCase(e.offerer, edgeFrom) &&
-      equalIgnoreCase(e.recipient, edgeTo) &&
-      e.offerNfts.some(
-        (i) => equalIgnoreCase(i.contract, tok) && i.tokenId === idStr
-      )
-  );
+  // token matchers
+  const tokenMatch = (i: { contract: string; tokenId: string }) =>
+    equalIgnoreCase(i.contract, tok) && i.tokenId === idStr;
 
-  // 4b) relaxed seller-side: NFT in offer[], offerer === from
-  if (!chosen) {
-    chosen = orderEvents.find(
-      (e) =>
-        equalIgnoreCase(e.offerer, edgeFrom) &&
-        e.offerNfts.some(
-          (i) => equalIgnoreCase(i.contract, tok) && i.tokenId === idStr
-        )
-    );
-  }
+  const hasOfferToken = (e: OrderEvt) => e.offerNfts.some(tokenMatch);
+  const hasConsToken = (e: OrderEvt) => e.considerationNfts.some(tokenMatch);
 
-  // 4c) strict buyer-side: NFT in consideration[], recipient === to
-  if (!chosen) {
-    chosen = orderEvents.find(
-      (e) =>
-        equalIgnoreCase(e.recipient, edgeTo) &&
-        e.considerationNfts.some(
-          (i) => equalIgnoreCase(i.contract, tok) && i.tokenId === idStr
-        )
-    );
-  }
+  // predicates in your original priority order
+  const strictSeller = (e: OrderEvt) =>
+    equalIgnoreCase(e.offerer, edgeFrom) &&
+    equalIgnoreCase(e.recipient, edgeTo) &&
+    hasOfferToken(e);
 
-  // 4d) relaxed buyer-side: NFT in consideration[], and either seller==from or buyer==to
-  if (!chosen) {
-    chosen = orderEvents.find(
-      (e) =>
-        e.considerationNfts.some(
-          (i) => equalIgnoreCase(i.contract, tok) && i.tokenId === idStr
-        ) &&
-        (equalIgnoreCase(e.offerer, edgeFrom) ||
-          equalIgnoreCase(e.recipient, edgeTo))
-    );
-  }
+  const relaxedSeller = (e: OrderEvt) =>
+    equalIgnoreCase(e.offerer, edgeFrom) && hasOfferToken(e);
 
-  // 4e) last resort: if exactly one event references the token on either side, choose it
-  if (!chosen) {
-    const refs = orderEvents.filter(
-      (e) =>
-        e.offerNfts.some(
-          (i) => equalIgnoreCase(i.contract, tok) && i.tokenId === idStr
-        ) ||
-        e.considerationNfts.some(
-          (i) => equalIgnoreCase(i.contract, tok) && i.tokenId === idStr
-        )
-    );
-    chosen = refs.length === 1 ? refs[0] : undefined;
-  }
+  const strictBuyer = (e: OrderEvt) =>
+    equalIgnoreCase(e.recipient, edgeTo) && hasConsToken(e);
+
+  const relaxedBuyer = (e: OrderEvt) =>
+    hasConsToken(e) &&
+    (equalIgnoreCase(e.offerer, edgeFrom) ||
+      equalIgnoreCase(e.recipient, edgeTo));
+
+  const lastResort = (): OrderEvt | undefined => {
+    const refs = OrderEvts.filter((e) => hasOfferToken(e) || hasConsToken(e));
+    return refs.length === 1 ? refs[0] : undefined;
+  };
+
+  // find in sequence; `find` returns `undefined` when not found, so `??` is perfect
+  const chosen: OrderEvt | undefined =
+    OrderEvts.find(strictSeller) ??
+    OrderEvts.find(relaxedSeller) ??
+    OrderEvts.find(strictBuyer) ??
+    OrderEvts.find(relaxedBuyer) ??
+    lastResort();
 
   if (!chosen) return null;
 
@@ -817,12 +788,12 @@ function attributeRowFromSeaportTx(
         e.tokenId === row.token_id.toString()
     );
     const buyerEdge = tokenEdgesForTx.find((e) =>
-      equalIgnoreCase(e.to, chosen!.recipient)
+      equalIgnoreCase(e.to, chosen.recipient)
     );
     if (buyerEdge) {
       // There is an explicit transfer to the buyer in this tx for this token.
       // Only attribute to the row that ends at the buyer; skip seller->operator leg.
-      if (!equalIgnoreCase(row.to_address, chosen!.recipient)) {
+      if (!equalIgnoreCase(row.to_address, chosen.recipient)) {
         return {
           value: 0,
           royalties: 0,
@@ -831,7 +802,11 @@ function attributeRowFromSeaportTx(
         };
       }
     }
-  } catch {}
+  } catch (e: any) {
+    logger.debug(
+      `Error adding currency for transaction ${row.transaction} [ERROR: ${e.message}]`
+    );
+  }
 
   // 4f) If OrdersMatched is present and includes this chosen orderHash, aggregate currency across the matched pair
   let mergedCurrencySplits = chosen.currencySplits.slice();
@@ -862,9 +837,9 @@ function attributeRowFromSeaportTx(
       if (!parsedMatch || parsedMatch.name !== 'OrdersMatched') continue;
       const hashes: string[] = (parsedMatch.args.orderHashes as string[]) || [];
       if (!hashes.length) continue;
-      if (hashes.some((h) => equalIgnoreCase(h, chosen!.orderHash))) {
+      if (hashes.some((h) => equalIgnoreCase(h, chosen.orderHash))) {
         // collect sibling orders from this match
-        const siblings = orderEvents.filter((e) =>
+        const siblings = OrderEvts.filter((e) =>
           hashes.some((h) => equalIgnoreCase(h, e.orderHash))
         );
         // Collect ALL NFT items across the entire matched group (for fallback/guard logic)
@@ -891,10 +866,10 @@ function attributeRowFromSeaportTx(
           // ensure chosen is included
           if (
             !relevant.some((e) =>
-              equalIgnoreCase(e.orderHash, chosen!.orderHash)
+              equalIgnoreCase(e.orderHash, chosen.orderHash)
             )
           ) {
-            relevant.push(chosen!);
+            relevant.push(chosen);
           }
           mergedCurrencySplits = [];
           mergedOfferNfts = [];
@@ -917,9 +892,13 @@ function attributeRowFromSeaportTx(
         break; // only need to process the first match group containing chosen
       }
     }
-  } catch {}
+  } catch (e: any) {
+    logger.debug(
+      `Error adding currency for transaction ${row.transaction} [ERROR: ${e.message}]`
+    );
+  }
 
-  // 5) If the chosen/matched group sold multiple NFTs, allocate within THIS GROUP only by executed units.
+  // 4) If the chosen/matched group sold multiple NFTs, allocate within THIS GROUP only by executed units.
   const inOffer = mergedOfferNfts.some(
     (i) =>
       equalIgnoreCase(i.contract, row.contract) &&
@@ -996,7 +975,11 @@ function attributeRowFromSeaportTx(
         (groupTotalCurrency as any) = buyerOut;
       }
     }
-  } catch {}
+  } catch (e: any) {
+    logger.debug(
+      `Error adding currency for transaction ${row.transaction} [ERROR: ${e.message}]`
+    );
+  }
 
   // If the group is only this token, take the full totals (no prorating). Otherwise, prorate by executed units.
   const valueWeiPart = onlyThisToken
