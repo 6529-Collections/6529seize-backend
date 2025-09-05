@@ -276,9 +276,9 @@ const parseSeaportLog = async (
   let seaResult;
   try {
     seaResult = SEAPORT_IFACE.parseLog(log);
-  } catch (err: any) {
+  } catch (e: any) {
     logger.debug(
-      `SEAPORT PARSE ERROR for transaction ${t.transaction} [ERROR: ${err.message}]`
+      `SEAPORT PARSE ERROR for transaction ${t.transaction} [ERROR: ${e.message}]`
     );
     return null;
   }
@@ -683,7 +683,11 @@ function attributeRowFromSeaportTx(
           if (!currency) {
             currency = { itemType: it, token: o.token as string };
           }
-        } catch {}
+        } catch (e: any) {
+          logger.debug(
+            `Error adding currency for transaction ${row.transaction} [ERROR: ${e.message}]`
+          );
+        }
       }
     }
 
@@ -831,7 +835,11 @@ function attributeRowFromSeaportTx(
         };
       }
     }
-  } catch {}
+  } catch (e: any) {
+    logger.debug(
+      `Error adding currency for transaction ${row.transaction} [ERROR: ${e.message}]`
+    );
+  }
 
   // 4f) If OrdersMatched is present and includes this chosen orderHash, aggregate currency across the matched pair
   let mergedCurrencySplits = chosen.currencySplits.slice();
@@ -917,7 +925,11 @@ function attributeRowFromSeaportTx(
         break; // only need to process the first match group containing chosen
       }
     }
-  } catch {}
+  } catch (e: any) {
+    logger.debug(
+      `Error adding currency for transaction ${row.transaction} [ERROR: ${e.message}]`
+    );
+  }
 
   // 5) If the chosen/matched group sold multiple NFTs, allocate within THIS GROUP only by executed units.
   const inOffer = mergedOfferNfts.some(
@@ -996,7 +1008,11 @@ function attributeRowFromSeaportTx(
         (groupTotalCurrency as any) = buyerOut;
       }
     }
-  } catch {}
+  } catch (e: any) {
+    logger.debug(
+      `Error adding currency for transaction ${row.transaction} [ERROR: ${e.message}]`
+    );
+  }
 
   // If the group is only this token, take the full totals (no prorating). Otherwise, prorate by executed units.
   const valueWeiPart = onlyThisToken
