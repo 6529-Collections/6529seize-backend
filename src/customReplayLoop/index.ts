@@ -1,15 +1,20 @@
+import { persistTransactions } from '../db';
 import { Transaction } from '../entities/ITransaction';
 import { Logger } from '../logging';
 import { doInDbContext } from '../secrets';
 import * as sentryContext from '../sentry.context';
-// import { transactions as wrongTransactions } from './wrong-transactions';
+import { sqlExecutor } from '../sql-executor';
+import { equalIgnoreCase } from '../strings';
+import { findTransactionValues } from '../transaction_values';
+import { withRetry } from './retry';
+import { transactions as wrongTransactions } from './wrong-transactions';
 
 const logger = Logger.get('CUSTOM_REPLAY_LOOP');
 
 export const handler = sentryContext.wrapLambdaHandler(async () => {
   await doInDbContext(
     async () => {
-      // await replay();
+      await replay();
       // await fixLatest();
     },
     { logger, entities: [Transaction] }
@@ -121,106 +126,106 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
 //   process.exit(0);
 // }
 
-// async function replay() {
-//   // logger.info(`[CUSTOM REPLAY NOT IMPLEMENTED]`);
+async function replay() {
+  // logger.info(`[CUSTOM REPLAY NOT IMPLEMENTED]`);
 
-//   console.log('Wrong Transactions count', wrongTransactions.length);
-//   const chunkSize = 100;
+  console.log('Wrong Transactions count', wrongTransactions.length);
+  const chunkSize = 100;
 
-//   let transactionEntriesLength = 0;
+  let transactionEntriesLength = 0;
 
-//   for (let i = 0; i < wrongTransactions.length; i += chunkSize) {
-//     const chunkedTransactions = wrongTransactions.slice(i, i + chunkSize);
-//     const chunkIndex = i / chunkSize + 1;
+  for (let i = 0; i < wrongTransactions.length; i += chunkSize) {
+    const chunkedTransactions = wrongTransactions.slice(i, i + chunkSize);
+    const chunkIndex = i / chunkSize + 1;
 
-//     const transactions = await sqlExecutor.execute(
-//       `SELECT * FROM transactions WHERE transaction IN (${chunkedTransactions.map((t) => `'${t}'`).join(',')})`
-//     );
+    const transactions = await sqlExecutor.execute(
+      `SELECT * FROM transactions WHERE transaction IN (${chunkedTransactions.map((t) => `'${t}'`).join(',')})`
+    );
 
-//     console.log(
-//       `[Chunk ${chunkIndex}]`,
-//       'Found',
-//       transactions.length,
-//       'transactions'
-//     );
+    console.log(
+      `[Chunk ${chunkIndex}]`,
+      'Found',
+      transactions.length,
+      'transactions'
+    );
 
-//     transactionEntriesLength += transactions.length;
+    transactionEntriesLength += transactions.length;
 
-//     const chunk = transactions.map((t) => structuredClone(t));
+    const chunk = transactions.map((t) => structuredClone(t));
 
-//     const transactionsWithValues = await withRetry(
-//       () => findTransactionValues(chunk),
-//       {
-//         retries: 10,
-//         minDelayMs: 1000,
-//         maxDelayMs: 15000,
-//         onRetry: (err, attempt) => {
-//           logger.warn(
-//             `findTransactionValues failed (attempt ${attempt}) — ${err.code || ''} ${err.status || ''} ${err.message || err}`
-//           );
-//         }
-//       }
-//     );
+    const transactionsWithValues = await withRetry(
+      () => findTransactionValues(chunk),
+      {
+        retries: 10,
+        minDelayMs: 1000,
+        maxDelayMs: 15000,
+        onRetry: (err, attempt) => {
+          logger.warn(
+            `findTransactionValues failed (attempt ${attempt}) — ${err.code || ''} ${err.status || ''} ${err.message || err}`
+          );
+        }
+      }
+    );
 
-//     for (const t of transactionsWithValues) {
-//       const originalTransaction = transactions.find(
-//         (t2) =>
-//           equalIgnoreCase(t2.transaction, t.transaction) &&
-//           equalIgnoreCase(t2.from_address, t.from_address) &&
-//           equalIgnoreCase(t2.to_address, t.to_address) &&
-//           equalIgnoreCase(t2.contract, t.contract) &&
-//           equalIgnoreCase(t2.token_id.toString(), t.token_id.toString()) &&
-//           t2.token_count === t.token_count
-//       );
+    for (const t of transactionsWithValues) {
+      const originalTransaction = transactions.find(
+        (t2) =>
+          equalIgnoreCase(t2.transaction, t.transaction) &&
+          equalIgnoreCase(t2.from_address, t.from_address) &&
+          equalIgnoreCase(t2.to_address, t.to_address) &&
+          equalIgnoreCase(t2.contract, t.contract) &&
+          equalIgnoreCase(t2.token_id.toString(), t.token_id.toString()) &&
+          t2.token_count === t.token_count
+      );
 
-//       if (!originalTransaction) {
-//         console.log('Missing transaction', t.transaction);
-//       }
-//       if (originalTransaction?.value !== t.value) {
-//         console.log(
-//           'Value mismatch',
-//           t.transaction,
-//           t.token_id,
-//           'new',
-//           t.value,
-//           'old',
-//           originalTransaction?.value
-//         );
-//       }
-//       if (originalTransaction?.royalties !== t.royalties) {
-//         console.log(
-//           'Royalties mismatch',
-//           t.transaction,
-//           t.token_id,
-//           'new',
-//           t.royalties,
-//           'old',
-//           originalTransaction?.royalties
-//         );
-//       }
-//     }
+      if (!originalTransaction) {
+        console.log('Missing transaction', t.transaction);
+      }
+      if (originalTransaction?.value !== t.value) {
+        console.log(
+          'Value mismatch',
+          t.transaction,
+          t.token_id,
+          'new',
+          t.value,
+          'old',
+          originalTransaction?.value
+        );
+      }
+      if (originalTransaction?.royalties !== t.royalties) {
+        console.log(
+          'Royalties mismatch',
+          t.transaction,
+          t.token_id,
+          'new',
+          t.royalties,
+          'old',
+          originalTransaction?.royalties
+        );
+      }
+    }
 
-//     await persistTransactions(transactionsWithValues);
+    await persistTransactions(transactionsWithValues);
 
-//     console.log(
-//       'Processed chunk',
-//       chunkIndex,
-//       'of',
-//       Math.ceil(wrongTransactions.length / chunkSize),
-//       `[Transaction entries: ${transactionEntriesLength}]`
-//     );
+    console.log(
+      'Processed chunk',
+      chunkIndex,
+      'of',
+      Math.ceil(wrongTransactions.length / chunkSize),
+      `[Transaction entries: ${transactionEntriesLength}]`
+    );
 
-//     //sleep for 2 seconds
-//     await new Promise((resolve) => setTimeout(resolve, 2000));
-//   }
+    //sleep for 2 seconds
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+  }
 
-//   console.log(
-//     'All transactions processed',
-//     `[Total transaction entries: ${transactionEntriesLength}]`
-//   );
+  console.log(
+    'All transactions processed',
+    `[Total transaction entries: ${transactionEntriesLength}]`
+  );
 
-//   process.exit(0);
-// }
+  process.exit(0);
+}
 
 // async function fixLatest() {
 //   const latestTransactions = await sqlExecutor.execute(
