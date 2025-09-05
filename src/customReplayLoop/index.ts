@@ -130,7 +130,7 @@ async function replay() {
   // logger.info(`[CUSTOM REPLAY NOT IMPLEMENTED]`);
 
   console.log('Wrong Transactions count', wrongTransactions.length);
-  const chunkSize = 100;
+  const chunkSize = 50;
 
   let transactionEntriesLength = 0;
 
