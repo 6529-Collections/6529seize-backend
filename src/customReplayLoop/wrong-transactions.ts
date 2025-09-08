@@ -1,4 +1,4 @@
-export const transactions = [
+export const wrongTransactions = [
   '0x68896a9377b8bb04c50d6952006317f3c85971f80a2def180853798c4ab5556b',
   '0x5a9243ca922fed61f29bae2cdd41fcd0d7d02119c96db1c3cd7cdee928ac35ec',
   '0x537a61f22797143de743557bd0a55fae375e4ed6be58cd469cfbb189190ea761',
