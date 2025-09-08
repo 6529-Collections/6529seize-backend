@@ -156,7 +156,7 @@ async function replay() {
     const transactionsWithValues = await withRetry(
       () => findTransactionValues(chunk),
       {
-        retries: 10,
+        attempts: 10,
         minDelayMs: 1000,
         maxDelayMs: 15000,
         onRetry: (err, attempt) => {
