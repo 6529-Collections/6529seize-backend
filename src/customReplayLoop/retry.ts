@@ -1,6 +1,11 @@
+import pLimit from 'p-limit';
+
+// Use a very high concurrency to avoid changing behavior. Adjust if needed elsewhere.
+const __retryLimiter = pLimit(Number.MAX_SAFE_INTEGER);
+
 // retry.ts
 export type RetryOptions = {
-  retries?: number; // total attempts (including the first). default 3
+  attempts?: number; // total attempts (including the first). default 3
   minDelayMs?: number; // base backoff. default 500ms
   maxDelayMs?: number; // cap on backoff. default 8000ms
   onRetry?: (err: any, attempt: number) => void;
@@ -10,34 +15,36 @@ export type RetryOptions = {
 export async function withRetry<T>(
   fn: () => Promise<T>,
   {
-    retries = 10,
+    attempts = 10,
     minDelayMs = 1000,
     maxDelayMs = 15000,
     onRetry,
     isRetriable = defaultIsRetriable
   }: RetryOptions = {}
 ): Promise<T> {
-  let attempt = 0;
-  let lastErr: any;
-  while (attempt < retries) {
-    try {
-      return await fn();
-    } catch (err: any) {
-      lastErr = err;
-      attempt++;
-      const willRetry = attempt < retries && isRetriable(err);
-      if (!willRetry) break;
+  return __retryLimiter(async () => {
+    let attempt = 0;
+    let lastErr: any;
+    while (attempt < attempts) {
+      try {
+        return await fn();
+      } catch (err: any) {
+        lastErr = err;
+        attempt++;
+        const willRetry = attempt < attempts && isRetriable(err);
+        if (!willRetry) break;
 
-      // exponential backoff with jitter
-      const backoff = Math.min(maxDelayMs, minDelayMs * 2 ** (attempt - 1));
-      const jitter = Math.floor(Math.random() * Math.floor(backoff / 3));
-      const delay = backoff + jitter;
+        // exponential backoff with jitter
+        const backoff = Math.min(maxDelayMs, minDelayMs * 2 ** (attempt - 1));
+        const jitter = Math.floor(Math.random() * Math.floor(backoff / 3));
+        const delay = backoff + jitter;
 
-      onRetry?.(err, attempt);
-      await new Promise((r) => setTimeout(r, delay));
+        onRetry?.(err, attempt);
+        await new Promise((r) => setTimeout(r, delay));
+      }
     }
-  }
-  throw lastErr;
+    throw lastErr;
+  });
 }
 
 // A conservative "transient" detector tailored for ethers/web + HTTP-ish failures
