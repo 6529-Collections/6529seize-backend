@@ -859,10 +859,13 @@ async function fetchPaginatedTransactions(
   const fields = `${TRANSACTIONS_TABLE}.*,ens1.display as from_display, ens2.display as to_display`;
   const joins = `LEFT JOIN ${ENS_TABLE} ens1 ON ${TRANSACTIONS_TABLE}.from_address=ens1.wallet LEFT JOIN ${ENS_TABLE} ens2 ON ${TRANSACTIONS_TABLE}.to_address=ens2.wallet`;
 
+  const orderBy =
+    'block DESC, transaction DESC, contract DESC, token_id DESC, from_address DESC, to_address DESC';
+
   return fetchPaginated<ApiTransaction>(
     TRANSACTIONS_TABLE,
     filters.params,
-    'transaction_date desc',
+    orderBy,
     pageSize,
     page,
     filters.filters,
