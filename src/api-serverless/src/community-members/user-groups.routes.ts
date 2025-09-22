@@ -156,7 +156,7 @@ router.post(
       relatedIdentities.map(async (identity) => {
         const profileId =
           await identityFetcher.getProfileIdByIdentityKeyOrThrow(
-            { identityKey: req.query.author_identity },
+            { identityKey: identity },
             {}
           );
         return {
