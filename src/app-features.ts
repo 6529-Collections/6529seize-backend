@@ -18,6 +18,10 @@ export class AppFeatures {
   public isExperimentalBulkRepEnabled(): boolean {
     return this.isFeatureEnabled('EXPERIMENTAL_BULK_REP');
   }
+
+  public isXTdhEnabled(): boolean {
+    return this.isFeatureEnabled('XTDH');
+  }
 }
 
 export const appFeatures = new AppFeatures();

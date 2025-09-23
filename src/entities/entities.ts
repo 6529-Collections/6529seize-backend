@@ -91,6 +91,7 @@ export {
   NftTDH,
   TDHBlock
 } from './ITDH';
+export { TdhGrantEntity } from './ITdhGrant';
 export {
   GlobalTDHHistory,
   TDHHistory,
