@@ -1,6 +1,7 @@
 import { sepolia } from '@wagmi/chains';
 import { Alchemy, Network } from 'alchemy-sdk';
 import { getAlchemyInstance } from '../alchemy';
+import { SubscriptionTopUp } from '../entities/ISubscription';
 import { Logger } from '../logging';
 import { getAllSubscriptionTopUps } from './alchemy.subscriptions';
 import {
@@ -14,6 +15,7 @@ const logger = Logger.get('SUBSCRIPTIONS_TOP_UP');
 
 const CHUNK_SIZE = 150;
 const CHECKPOINT_EVERY_BLOCKS = CHUNK_SIZE * 50;
+const CONFIRMATIONS = 5;
 
 async function persistLatestBlockCheckpoint(
   alchemy: Alchemy,
@@ -39,6 +41,27 @@ export function getSubscriptionsNetwork(): Network {
     return Network.ETH_SEPOLIA;
   }
   return Network.ETH_MAINNET;
+}
+
+function enforceBounds(subs: SubscriptionTopUp[], from: number, to: number) {
+  const sorted = subs.slice().sort((a, b) => a.block - b.block);
+
+  // filter to inclusive range
+  const bounded = sorted.filter((s) => s.block >= from && s.block <= to);
+
+  // dedupe by a composite key
+  const seen = new Set<string>();
+  const deduped: SubscriptionTopUp[] = [];
+
+  for (const s of bounded) {
+    const key = `${s.block}:${s.hash}:${s.from_wallet}:${s.amount}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      deduped.push(s);
+    }
+  }
+
+  return deduped;
 }
 
 export async function discoverTopUps(reset?: boolean) {
@@ -68,11 +91,19 @@ export async function discoverTopUps(reset?: boolean) {
     }
   }
 
-  const toBlock = await alchemy.core.getBlockNumber();
+  const head = await alchemy.core.getBlockNumber();
+  const toBlock = head - CONFIRMATIONS;
 
   logger.info(
-    `[NETWORK: ${network}] : [FROM BLOCK ${fromBlock}] : [TO BLOCK ${toBlock}]`
+    `[HEAD ${head}] [NETWORK: ${network}] : [FROM ${fromBlock}] : [TO ${toBlock}] (finality gap=${CONFIRMATIONS})`
   );
+
+  if (toBlock <= fromBlock) {
+    logger.info(
+      `[NO NEW CONFIRMED BLOCKS] [FROM ${fromBlock}] [TO ${toBlock}]`
+    );
+    return;
+  }
 
   let currentFromBlock = fromBlock;
   let lastProcessedBlock = fromBlock - 1;
@@ -85,17 +116,24 @@ export async function discoverTopUps(reset?: boolean) {
       `[NETWORK: ${network}] : [FROM BLOCK ${currentFromBlock}] : [TO BLOCK ${currentToBlock}]`
     );
 
-    const subscriptions = await getAllSubscriptionTopUps(
+    const subscriptions: SubscriptionTopUp[] = await getAllSubscriptionTopUps(
       alchemy,
       currentFromBlock,
       currentToBlock
     );
 
-    logger.info(
-      `[FROM BLOCK ${currentFromBlock} TO BLOCK ${currentToBlock}] [FOUND ${subscriptions.length} NEW TOP UPS]`
+    const boundedSubscriptions = enforceBounds(
+      subscriptions,
+      currentFromBlock,
+      currentToBlock
     );
 
-    await persistTopUps(subscriptions);
+    logger.info(
+      `[FROM BLOCK ${currentFromBlock} TO BLOCK ${currentToBlock}] ` +
+        `[FOUND ${boundedSubscriptions.length}] (raw=${subscriptions.length})`
+    );
+
+    await persistTopUps(boundedSubscriptions);
 
     lastProcessedBlock = currentToBlock;
     currentFromBlock = currentToBlock + 1;

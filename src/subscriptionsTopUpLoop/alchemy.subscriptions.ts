@@ -1,7 +1,8 @@
 import {
   Alchemy,
   AssetTransfersCategory,
-  AssetTransfersWithMetadataResult
+  AssetTransfersWithMetadataResult,
+  SortingOrder
 } from 'alchemy-sdk';
 import { SUBSCRIPTIONS_ADDRESS } from '../constants';
 import { SubscriptionTopUp } from '../entities/ISubscription';
@@ -44,6 +45,7 @@ async function getSubscriptions(
       AssetTransfersCategory.EXTERNAL,
       AssetTransfersCategory.INTERNAL
     ],
+    order: SortingOrder.ASCENDING,
     maxCount: 150,
     withMetadata: true,
     fromBlock: `0x${fromBlock.toString(16)}`,
