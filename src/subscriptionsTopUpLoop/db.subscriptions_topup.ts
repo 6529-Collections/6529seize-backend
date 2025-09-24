@@ -7,13 +7,13 @@ import {
 import { getDataSource } from '../db';
 import {
   SubscriptionBalance,
-  SubscriptionTopUp
+  SubscriptionTopUp,
+  SubscriptionTopUpLatestBlock
 } from '../entities/ISubscription';
-import { SubscriptionTopUpLatestBlock } from '../entities/ISubscriptionTopUpLatestBlock';
+import { ethTools } from '../eth-tools';
+import { Logger } from '../logging';
 import { sendDiscordUpdate } from '../notifier-discord';
 import { sqlExecutor } from '../sql-executor';
-import { Logger } from '../logging';
-import { ethTools } from '../eth-tools';
 
 const logger = Logger.get('SUBSCRIPTIONS_TOP_UP_DB');
 
