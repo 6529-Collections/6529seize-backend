@@ -15,6 +15,8 @@ import {
 import { TdhGrantStatus } from '../../../entities/ITdhGrant';
 import { ApiTdhGrantStatus } from '../generated/models/ApiTdhGrantStatus';
 import { enums } from '../../../enums';
+import { RequestContext } from '../../../request.context';
+import { TdhGrantSearchRequestApiModel } from './tdh-grant-search-request.api-model';
 
 export class TdhGrantApiConverter {
   constructor(private readonly identityFetcher: IdentityFetcher) {}
@@ -40,9 +42,13 @@ export class TdhGrantApiConverter {
   }
 
   public async fromTdhGrantModelToApiTdhGrant(
-    model: TdhGrantModel
+    model: TdhGrantModel,
+    ctx: RequestContext
   ): Promise<ApiTdhGrant> {
-    const apiResponses = await this.fromTdhGrantModelsToApiTdhGrants([model]);
+    const apiResponses = await this.fromTdhGrantModelsToApiTdhGrants(
+      [model],
+      ctx
+    );
     const result = apiResponses.at(0);
     if (!result) {
       throw new Error(
@@ -55,7 +61,8 @@ export class TdhGrantApiConverter {
   }
 
   public async fromTdhGrantModelsToApiTdhGrants(
-    models: TdhGrantModel[]
+    models: TdhGrantModel[],
+    ctx: RequestContext
   ): Promise<ApiTdhGrant[]> {
     if (!models.length) {
       return [];
@@ -65,7 +72,7 @@ export class TdhGrantApiConverter {
     );
     const grantorIdentities = await this.identityFetcher.getOverviewsByIds(
       grantorIds,
-      {}
+      ctx
     );
     return models.map<ApiTdhGrant>((model) => ({
       id: model.id,
@@ -129,6 +136,57 @@ export class TdhGrantApiConverter {
       );
     }
     return result;
+  }
+
+  private resolveModelStatusFromApiValue(
+    status: ApiTdhGrantStatus
+  ): TdhGrantStatus {
+    const result = enums.resolve(TdhGrantStatus, status);
+    if (!result) {
+      throw new Error(`Unknown TDH Grant status ${status}`);
+    }
+    return result;
+  }
+
+  public async prepApiSearchRequest(
+    apiModel: TdhGrantSearchRequestApiModel,
+    ctx: RequestContext
+  ): Promise<{
+    readonly grantor_id: string | null;
+    readonly target_contract: string | null;
+    readonly target_chain: number | null;
+    readonly status: TdhGrantStatus | null;
+    readonly sort_direction: 'ASC' | 'DESC' | null;
+    readonly sort: 'created_at' | 'valid_from' | 'valid_to' | 'tdh_rate' | null;
+    readonly page: number;
+    readonly page_size: number;
+  }> {
+    const grantorId = apiModel.grantor
+      ? await identityFetcher.getProfileIdByIdentityKeyOrThrow(
+          {
+            identityKey: apiModel.grantor
+          },
+          ctx
+        )
+      : null;
+    const targetChain =
+      apiModel.target_chain === null
+        ? null
+        : this.resolveTargetChainFromApiValue(apiModel.target_chain);
+    const status =
+      apiModel.status === null
+        ? null
+        : this.resolveModelStatusFromApiValue(apiModel.status);
+    return {
+      grantor_id: grantorId,
+      target_contract: apiModel.target_contract,
+      target_chain: targetChain,
+      status: status,
+      sort_direction: apiModel.sort_direction,
+      sort: apiModel.sort,
+      page: apiModel.page,
+      page_size: apiModel.page_size
+    };
   }
 }
 
