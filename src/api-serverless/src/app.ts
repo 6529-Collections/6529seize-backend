@@ -2,7 +2,7 @@ import fetch from 'node-fetch';
 import * as db from '../../db-api';
 import { ids } from '../../ids';
 
-import * as http from 'http';
+import * as http from 'node:http';
 import WebSocket, { WebSocketServer } from 'ws';
 import aggregatedActivityRoutes from './aggregated-activity/api.aggregated-activity.routes';
 import authRoutes from './auth/auth.routes';

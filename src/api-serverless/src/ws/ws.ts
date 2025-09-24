@@ -8,7 +8,7 @@ import {
   WsConnectionRepository
 } from './ws-connection.repository';
 import { Time } from '../../../time';
-import http from 'http';
+import type { IncomingMessage } from 'node:http';
 import {
   ApiGatewayManagementApiClient,
   DeleteConnectionCommand,
@@ -314,7 +314,7 @@ export async function authenticateWebSocketJwtOrGetByConnectionId(
 
 // mean only for dev environment
 export function mapHttpRequestToGatewayEvent(
-  req: http.IncomingMessage,
+  req: IncomingMessage,
   connectionId: string,
   routeKey: string
 ): APIGatewayEvent {
