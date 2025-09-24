@@ -83,6 +83,7 @@ export {
   SubscriptionLog,
   RedeemedSubscription
 } from './ISubscription';
+export { SubscriptionTopUpLatestBlock } from './ISubscriptionTopUpLatestBlock';
 export {
   TDH,
   ConsolidatedTDH,

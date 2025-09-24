@@ -9,12 +9,15 @@ import {
   SubscriptionBalance,
   SubscriptionTopUp
 } from '../entities/ISubscription';
+import { SubscriptionTopUpLatestBlock } from '../entities/ISubscriptionTopUpLatestBlock';
 import { sendDiscordUpdate } from '../notifier-discord';
 import { sqlExecutor } from '../sql-executor';
 import { Logger } from '../logging';
 import { ethTools } from '../eth-tools';
 
 const logger = Logger.get('SUBSCRIPTIONS_TOP_UP_DB');
+
+const SUBSCRIPTIONS_TOP_UP_LATEST_BLOCK_ID = 'subscription_top_up_latest_block';
 
 export async function persistTopUps(topUps: SubscriptionTopUp[]) {
   const processedTopUps: SubscriptionTopUp[] = [];
@@ -106,6 +109,44 @@ export async function getMaxSubscriptionTopUpBlock(): Promise<number> {
     `SELECT MAX(block) as max_block FROM ${SUBSCRIPTIONS_TOP_UP_TABLE}`
   );
   return result?.[0].max_block ?? 0;
+}
+
+export async function getLatestSubscriptionTopUpBlock(): Promise<
+  number | null
+> {
+  try {
+    const repository = getDataSource().getRepository(
+      SubscriptionTopUpLatestBlock
+    );
+    const latestBlock = await repository.findOne({
+      where: { id: SUBSCRIPTIONS_TOP_UP_LATEST_BLOCK_ID }
+    });
+    return latestBlock?.block ?? null;
+  } catch (error) {
+    logger.warn(
+      `Error fetching latest subscription top up block: ${(error as Error).message}`
+    );
+    return null;
+  }
+}
+
+export async function persistLatestSubscriptionTopUpBlock(
+  block: number,
+  blockTimestamp?: number
+): Promise<void> {
+  const repository = getDataSource().getRepository(
+    SubscriptionTopUpLatestBlock
+  );
+  const entity: Partial<SubscriptionTopUpLatestBlock> = {
+    id: SUBSCRIPTIONS_TOP_UP_LATEST_BLOCK_ID,
+    block
+  };
+
+  if (blockTimestamp !== undefined) {
+    entity.block_timestamp = new Date(blockTimestamp * 1000);
+  }
+
+  await repository.save(entity);
 }
 
 async function isTopUpProcessed(

@@ -3,7 +3,9 @@ import { sepolia } from '@wagmi/chains';
 import { Logger } from '../logging';
 import { getAllSubscriptionTopUps } from './alchemy.subscriptions';
 import {
+  getLatestSubscriptionTopUpBlock,
   getMaxSubscriptionTopUpBlock,
+  persistLatestSubscriptionTopUpBlock,
   persistTopUps
 } from './db.subscriptions_topup';
 import { getAlchemyInstance } from '../alchemy';
@@ -22,13 +24,26 @@ export async function discoverTopUps(reset?: boolean) {
   const network = getSubscriptionsNetwork();
   const alchemy: Alchemy = getAlchemyInstance(network);
 
-  let fromBlock: number;
+  let fromBlock = 0;
+  let latestPersistedBlock: number | null = null;
+
   if (reset) {
-    fromBlock = 0;
+    logger.info('[RESET REQUESTED] : [STARTING FROM GENESIS]');
   } else {
-    fromBlock = await getMaxSubscriptionTopUpBlock();
-    if (fromBlock) {
-      fromBlock = fromBlock + 1;
+    latestPersistedBlock = await getLatestSubscriptionTopUpBlock();
+
+    if (latestPersistedBlock !== null) {
+      fromBlock = latestPersistedBlock + 1;
+      logger.info(
+        `[USING LATEST STORED BLOCK ${latestPersistedBlock}] : [STARTING FROM ${fromBlock}]`
+      );
+    } else {
+      const fallbackBlock = await getMaxSubscriptionTopUpBlock();
+      fromBlock = fallbackBlock ? fallbackBlock + 1 : 0;
+      logger.info(
+        `[NO LATEST BLOCK FOUND] : [FALLBACK TO MAX TOP UP BLOCK ${fallbackBlock}] : [STARTING FROM ${fromBlock}]`
+      );
+      latestPersistedBlock = fallbackBlock;
     }
   }
 
@@ -40,6 +55,7 @@ export async function discoverTopUps(reset?: boolean) {
 
   const chunkSize = 150;
   let currentFromBlock = fromBlock;
+  let lastProcessedBlock = fromBlock - 1;
 
   while (currentFromBlock <= toBlock) {
     const currentToBlock = Math.min(currentFromBlock + chunkSize - 1, toBlock);
@@ -60,6 +76,26 @@ export async function discoverTopUps(reset?: boolean) {
 
     await persistTopUps(subscriptions);
 
+    lastProcessedBlock = currentToBlock;
     currentFromBlock = currentToBlock + 1;
   }
+
+  const blockCandidates = [lastProcessedBlock, 0];
+  if (latestPersistedBlock !== null) {
+    blockCandidates.push(latestPersistedBlock);
+  }
+  const blockToPersist = Math.max(...blockCandidates);
+
+  let blockTimestamp: number | undefined;
+  try {
+    const blockDetails = await alchemy.core.getBlock(blockToPersist);
+    blockTimestamp = blockDetails?.timestamp;
+  } catch (error) {
+    logger.warn(
+      `Unable to fetch timestamp for block ${blockToPersist}: ${(error as Error).message}`
+    );
+  }
+
+  await persistLatestSubscriptionTopUpBlock(blockToPersist, blockTimestamp);
+  logger.info(`[LATEST BLOCK UPDATED TO ${blockToPersist}]`);
 }
