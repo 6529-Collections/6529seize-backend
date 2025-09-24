@@ -85,6 +85,8 @@ export const CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE =
   'owners_balances_memes_consolidation';
 
 export const SUBSCRIPTIONS_TOP_UP_TABLE = 'subscriptions_top_up';
+export const SUBSCRIPTIONS_TOP_UP_LATEST_BLOCK_TABLE =
+  'subscriptions_top_up_latest_block';
 export const SUBSCRIPTIONS_BALANCES_TABLE = 'subscriptions_balances';
 export const SUBSCRIPTIONS_MODE_TABLE = 'subscriptions_mode';
 export const SUBSCRIPTIONS_NFTS_TABLE = 'subscriptions_nfts';

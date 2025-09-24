@@ -9,7 +9,8 @@ import {
   SubscriptionBalance,
   SubscriptionLog,
   SubscriptionMode,
-  SubscriptionTopUp
+  SubscriptionTopUp,
+  SubscriptionTopUpLatestBlock
 } from '../entities/ISubscription';
 import { doInDbContext } from '../secrets';
 
@@ -30,7 +31,8 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
         RedeemedSubscription,
         NFTSubscription,
         NFTFinalSubscription,
-        NFTFinalSubscriptionUpload
+        NFTFinalSubscriptionUpload,
+        SubscriptionTopUpLatestBlock
       ]
     }
   );
