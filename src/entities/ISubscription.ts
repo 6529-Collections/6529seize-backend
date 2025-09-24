@@ -9,13 +9,14 @@ import {
 } from 'typeorm';
 import {
   SUBSCRIPTIONS_BALANCES_TABLE,
-  SUBSCRIPTIONS_NFTS_TABLE,
-  SUBSCRIPTIONS_MODE_TABLE,
-  SUBSCRIPTIONS_TOP_UP_TABLE,
   SUBSCRIPTIONS_LOGS_TABLE,
+  SUBSCRIPTIONS_MODE_TABLE,
   SUBSCRIPTIONS_NFTS_FINAL_TABLE,
   SUBSCRIPTIONS_NFTS_FINAL_UPLOAD_TABLE,
-  SUBSCRIPTIONS_REDEEMED_TABLE
+  SUBSCRIPTIONS_NFTS_TABLE,
+  SUBSCRIPTIONS_REDEEMED_TABLE,
+  SUBSCRIPTIONS_TOP_UP_LATEST_BLOCK_TABLE,
+  SUBSCRIPTIONS_TOP_UP_TABLE
 } from '../constants';
 
 @Entity(SUBSCRIPTIONS_TOP_UP_TABLE)
@@ -196,4 +197,22 @@ export class RedeemedSubscription {
 
   @Column({ type: 'double' })
   balance_after!: number;
+}
+
+@Entity(SUBSCRIPTIONS_TOP_UP_LATEST_BLOCK_TABLE)
+export class SubscriptionTopUpLatestBlock {
+  @PrimaryColumn({ type: 'varchar', length: 100 })
+  id!: string;
+
+  @Column({ type: 'int' })
+  block!: number;
+
+  @Column({ type: 'datetime', nullable: true })
+  block_timestamp?: Date | null;
+
+  @CreateDateColumn({ type: 'datetime' })
+  created_at?: Date;
+
+  @UpdateDateColumn({ type: 'datetime' })
+  updated_at?: Date;
 }
