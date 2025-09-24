@@ -46,6 +46,7 @@ export * from '../models/ApiCreateNewWaveScope';
 export * from '../models/ApiCreateNewWaveVisibilityConfig';
 export * from '../models/ApiCreateNewWaveVotingConfig';
 export * from '../models/ApiCreateOrUpdateProfileRequest';
+export * from '../models/ApiCreateTdhGrant';
 export * from '../models/ApiCreateWaveConfig';
 export * from '../models/ApiCreateWaveDropRequest';
 export * from '../models/ApiDrop';
@@ -124,6 +125,9 @@ export * from '../models/ApiReplyToDropResponse';
 export * from '../models/ApiSeizeSettings';
 export * from '../models/ApiStartMultipartMediaUploadResponse';
 export * from '../models/ApiTargetAndSubscriptionActions';
+export * from '../models/ApiTdhGrant';
+export * from '../models/ApiTdhGrantStatus';
+export * from '../models/ApiTdhGrantTargetChain';
 export * from '../models/ApiTransaction';
 export * from '../models/ApiTransactionPage';
 export * from '../models/ApiUpdateDropRequest';
@@ -221,6 +225,7 @@ import { ApiCreateNewWaveScope } from '../models/ApiCreateNewWaveScope';
 import { ApiCreateNewWaveVisibilityConfig } from '../models/ApiCreateNewWaveVisibilityConfig';
 import { ApiCreateNewWaveVotingConfig         } from '../models/ApiCreateNewWaveVotingConfig';
 import { ApiCreateOrUpdateProfileRequest        } from '../models/ApiCreateOrUpdateProfileRequest';
+import { ApiCreateTdhGrant       } from '../models/ApiCreateTdhGrant';
 import { ApiCreateWaveConfig        } from '../models/ApiCreateWaveConfig';
 import { ApiCreateWaveDropRequest } from '../models/ApiCreateWaveDropRequest';
 import { ApiDrop                          } from '../models/ApiDrop';
@@ -299,6 +304,9 @@ import { ApiReplyToDropResponse } from '../models/ApiReplyToDropResponse';
 import { ApiSeizeSettings } from '../models/ApiSeizeSettings';
 import { ApiStartMultipartMediaUploadResponse } from '../models/ApiStartMultipartMediaUploadResponse';
 import { ApiTargetAndSubscriptionActions } from '../models/ApiTargetAndSubscriptionActions';
+import { ApiTdhGrant             } from '../models/ApiTdhGrant';
+import { ApiTdhGrantStatus } from '../models/ApiTdhGrantStatus';
+import { ApiTdhGrantTargetChain } from '../models/ApiTdhGrantTargetChain';
 import { ApiTransaction } from '../models/ApiTransaction';
 import { ApiTransactionPage } from '../models/ApiTransactionPage';
 import { ApiUpdateDropRequest } from '../models/ApiUpdateDropRequest';
@@ -375,6 +383,8 @@ let enumsMap: Set<string> = new Set<string>([
     "ApiProfileClassification",
     "ApiProfileProxyActionType",
     "ApiRateMatter",
+    "ApiTdhGrantStatus",
+    "ApiTdhGrantTargetChain",
     "ApiWaveCreditScope",
     "ApiWaveCreditType",
     "ApiWaveMetadataType",
@@ -437,6 +447,7 @@ let typeMap: {[index: string]: any} = {
     "ApiCreateNewWaveVisibilityConfig": ApiCreateNewWaveVisibilityConfig,
     "ApiCreateNewWaveVotingConfig": ApiCreateNewWaveVotingConfig,
     "ApiCreateOrUpdateProfileRequest": ApiCreateOrUpdateProfileRequest,
+    "ApiCreateTdhGrant": ApiCreateTdhGrant,
     "ApiCreateWaveConfig": ApiCreateWaveConfig,
     "ApiCreateWaveDropRequest": ApiCreateWaveDropRequest,
     "ApiDrop": ApiDrop,
@@ -504,6 +515,7 @@ let typeMap: {[index: string]: any} = {
     "ApiSeizeSettings": ApiSeizeSettings,
     "ApiStartMultipartMediaUploadResponse": ApiStartMultipartMediaUploadResponse,
     "ApiTargetAndSubscriptionActions": ApiTargetAndSubscriptionActions,
+    "ApiTdhGrant": ApiTdhGrant,
     "ApiTransaction": ApiTransaction,
     "ApiTransactionPage": ApiTransactionPage,
     "ApiUpdateDropRequest": ApiUpdateDropRequest,
