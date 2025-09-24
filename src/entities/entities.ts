@@ -92,6 +92,7 @@ export {
   TDHBlock,
   TDHMemes
 } from './ITDH';
+export { TdhGrantEntity } from './ITdhGrant';
 export {
   GlobalTDHHistory,
   LatestGlobalTDHHistory,

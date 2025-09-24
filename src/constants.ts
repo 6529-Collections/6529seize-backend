@@ -100,6 +100,8 @@ export const SUBSCRIPTIONS_ADMIN_WALLETS = [
   '0xFe49A85E98941F1A115aCD4bEB98521023a25802'
 ];
 
+export const TDH_GRANTS_TABLE = 'tdh_grants';
+
 export const DELETED_DROPS_TABLE = 'deleted_drops';
 export const DROPS_TABLE = 'drops';
 export const DROPS_PARTS_TABLE = 'drops_parts';
