@@ -1,5 +1,9 @@
 import { asyncRouter } from '../async.router';
-import { getAuthenticationContext, needsAuthenticatedUser } from '../auth/auth';
+import {
+  getAuthenticationContext,
+  maybeAuthenticatedUser,
+  needsAuthenticatedUser
+} from '../auth/auth';
 import { Request, Response } from 'express';
 import { ApiResponse } from '../api-response';
 import { ApiCreateTdhGrant } from '../generated/models/ApiCreateTdhGrant';
@@ -11,8 +15,54 @@ import { Timer } from '../../../time';
 import { createTdhGrantUseCase } from '../../../tdh-grants/create-tdh-grant.use-case';
 import { tdhGrantApiConverter } from './tdh-grant.api-converter';
 import { appFeatures } from '../../../app-features';
+import { ApiTdhGrantsPage } from '../generated/models/ApiTdhGrantsPage';
+import {
+  TdhGrantSearchRequestApiModel,
+  TdhGrantSearchRequestApiModelSchema
+} from './tdh-grant-search-request.api-model';
+import { RequestContext } from '../../../request.context';
+import { tdhGrantsFinder } from '../../../tdh-grants/tdh-grants.finder';
 
 const router = asyncRouter();
+
+router.get(
+  '/',
+  maybeAuthenticatedUser(),
+  async (
+    req: Request<
+      any,
+      any,
+      ApiCreateTdhGrant,
+      TdhGrantSearchRequestApiModel,
+      any
+    >,
+    res: Response<ApiResponse<ApiTdhGrantsPage>>
+  ) => {
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
+    const ctx: RequestContext = { timer, authenticationContext };
+    const tdhGrantSearchRequestApiModel = getValidatedByJoiOrThrow(
+      req.query,
+      TdhGrantSearchRequestApiModelSchema
+    );
+    const searchModel = await tdhGrantApiConverter.prepApiSearchRequest(
+      tdhGrantSearchRequestApiModel,
+      ctx
+    );
+    const results = await tdhGrantsFinder.searchForPage(searchModel, ctx);
+    const apiItems =
+      await tdhGrantApiConverter.fromTdhGrantModelsToApiTdhGrants(
+        results.items,
+        ctx
+      );
+    res.send({
+      count: results.count,
+      page: results.page,
+      next: results.next,
+      data: apiItems
+    });
+  }
+);
 
 router.post(
   '/',
@@ -50,7 +100,10 @@ router.post(
       timer
     });
     const apiResponse =
-      await tdhGrantApiConverter.fromTdhGrantModelToApiTdhGrant(model);
+      await tdhGrantApiConverter.fromTdhGrantModelToApiTdhGrant(model, {
+        authenticationContext,
+        timer
+      });
     res.send(apiResponse);
   }
 );

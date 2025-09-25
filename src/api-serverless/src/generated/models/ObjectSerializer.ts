@@ -105,6 +105,7 @@ export * from '../models/ApiOwnerBalance';
 export * from '../models/ApiOwnerBalanceMemes';
 export * from '../models/ApiOwnerBalancePage';
 export * from '../models/ApiPageBase';
+export * from '../models/ApiPageSortDirection';
 export * from '../models/ApiPageWithNextUriBase';
 export * from '../models/ApiProfileClassification';
 export * from '../models/ApiProfileMin';
@@ -128,6 +129,7 @@ export * from '../models/ApiTargetAndSubscriptionActions';
 export * from '../models/ApiTdhGrant';
 export * from '../models/ApiTdhGrantStatus';
 export * from '../models/ApiTdhGrantTargetChain';
+export * from '../models/ApiTdhGrantsPage';
 export * from '../models/ApiTransaction';
 export * from '../models/ApiTransactionPage';
 export * from '../models/ApiUpdateDropRequest';
@@ -284,6 +286,7 @@ import { ApiOwnerBalance } from '../models/ApiOwnerBalance';
 import { ApiOwnerBalanceMemes } from '../models/ApiOwnerBalanceMemes';
 import { ApiOwnerBalancePage } from '../models/ApiOwnerBalancePage';
 import { ApiPageBase } from '../models/ApiPageBase';
+import { ApiPageSortDirection } from '../models/ApiPageSortDirection';
 import { ApiPageWithNextUriBase } from '../models/ApiPageWithNextUriBase';
 import { ApiProfileClassification } from '../models/ApiProfileClassification';
 import { ApiProfileMin } from '../models/ApiProfileMin';
@@ -307,6 +310,7 @@ import { ApiTargetAndSubscriptionActions } from '../models/ApiTargetAndSubscript
 import { ApiTdhGrant             } from '../models/ApiTdhGrant';
 import { ApiTdhGrantStatus } from '../models/ApiTdhGrantStatus';
 import { ApiTdhGrantTargetChain } from '../models/ApiTdhGrantTargetChain';
+import { ApiTdhGrantsPage } from '../models/ApiTdhGrantsPage';
 import { ApiTransaction } from '../models/ApiTransaction';
 import { ApiTransactionPage } from '../models/ApiTransactionPage';
 import { ApiUpdateDropRequest } from '../models/ApiUpdateDropRequest';
@@ -380,6 +384,7 @@ let enumsMap: Set<string> = new Set<string>([
     "ApiIdentitySubscriptionTargetType",
     "ApiNftTokenTypeEnum",
     "ApiNotificationCause",
+    "ApiPageSortDirection",
     "ApiProfileClassification",
     "ApiProfileProxyActionType",
     "ApiRateMatter",
@@ -516,6 +521,7 @@ let typeMap: {[index: string]: any} = {
     "ApiStartMultipartMediaUploadResponse": ApiStartMultipartMediaUploadResponse,
     "ApiTargetAndSubscriptionActions": ApiTargetAndSubscriptionActions,
     "ApiTdhGrant": ApiTdhGrant,
+    "ApiTdhGrantsPage": ApiTdhGrantsPage,
     "ApiTransaction": ApiTransaction,
     "ApiTransactionPage": ApiTransactionPage,
     "ApiUpdateDropRequest": ApiUpdateDropRequest,
