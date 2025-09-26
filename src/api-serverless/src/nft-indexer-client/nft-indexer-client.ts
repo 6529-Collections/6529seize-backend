@@ -1,11 +1,13 @@
 import { env } from '../../../env';
 import {
   NftIndexerCollectionMetadata,
+  NftIndexerCollectionStatus,
   NftIndexerErrorApiModel
 } from './nft-indexer-client-models';
 import fetch from 'node-fetch';
 import { Logger } from '../../../logging';
 import { BadRequestException } from '../../../exceptions';
+import { numbers } from '../../../numbers';
 
 export interface NftIndexerClientConf {
   endpoint(): string;
@@ -44,6 +46,38 @@ export class NftIndexerClient {
       chain,
       contract
     });
+  }
+
+  async getContractStatus({
+    chain,
+    contract
+  }: {
+    chain: number;
+    contract: string;
+  }): Promise<{
+    status: NftIndexerCollectionStatus;
+    error: string | null;
+    safe_head_block: number | null;
+  }> {
+    try {
+      const metadata = await this.getJson<NftIndexerCollectionMetadata>(
+        `/collection/${chain}/contract`
+      );
+      return {
+        safe_head_block: metadata.safe_head_block ?? null,
+        status: metadata.status ?? 'ERROR_SNAPSHOTTING',
+        error:
+          metadata.status === 'ERROR_SNAPSHOTTING'
+            ? `Unknown snapshotting error`
+            : null
+      };
+    } catch (e: any) {
+      return {
+        status: 'ERROR_SNAPSHOTTING',
+        error: `Error fetching info from NFT indexer about chain/contract ${chain}/${contract} ${e?.message ?? JSON.stringify(e)}`,
+        safe_head_block: null
+      };
+    }
   }
 
   private async getJson<T>(path: string): Promise<T> {
@@ -96,6 +130,46 @@ export class NftIndexerClient {
       );
       throw error;
     }
+  }
+
+  async getSnapshot({
+    target_contract,
+    target_chain,
+    block
+  }: {
+    target_contract: string;
+    target_chain: number;
+    block: number;
+  }): Promise<
+    {
+      tokenId: number;
+      owner: string;
+      block: number;
+      timestamp: number;
+      acquiredAsSale: boolean;
+    }[]
+  > {
+    const endpoint = `${this.config.endpoint()}/collection/${target_chain}/${target_contract}/snapshot.csv?at_block=${block}`;
+    const response = await fetch(endpoint, {
+      method: 'GET',
+      headers: {
+        accept: 'text/csv'
+      }
+    });
+    const csvText = await response.text();
+    const rows = csvText.split('\n');
+    return rows
+      .slice(1)
+      .map((line) =>
+        line.split(',').map((cols) => ({
+          tokenId: numbers.parseIntOrNull(cols[0])!,
+          owner: cols[1]!,
+          block: numbers.parseIntOrNull(cols[2])!,
+          timestamp: numbers.parseIntOrNull(cols[3])!,
+          acquiredAsSale: cols[4] === 'true'
+        }))
+      )
+      .flat();
   }
 }
 

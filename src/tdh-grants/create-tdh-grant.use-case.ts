@@ -3,7 +3,7 @@ import {
   CreateTdhGrantCommand,
   fromTdhGrantEntityToModel,
   TdhGrantModel
-} from './create-tdh-grant.models';
+} from './tdh-grant.models';
 import { BadRequestException } from '../exceptions';
 import {
   nftIndexerClient,
