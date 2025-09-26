@@ -5,7 +5,7 @@ import { Time } from '../../../time';
 import {
   CreateTdhGrantCommand,
   TdhGrantModel
-} from '../../../tdh-grants/create-tdh-grant.models';
+} from '../../../tdh-grants/tdh-grant.models';
 import { ApiTdhGrant } from '../generated/models/ApiTdhGrant';
 import { collections } from '../../../collections';
 import {

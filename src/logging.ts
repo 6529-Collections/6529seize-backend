@@ -18,12 +18,34 @@ const reqIdCacheKey = () =>
 
 const messageFormat = (loggerName: string) =>
   printf((info) => {
+    const splatSym = Symbol.for('splat');
+    const extras = (info as any)[splatSym] as unknown[] | undefined;
+
+    // pretty print object messages
     if (info.message?.constructor === Object) {
       info.message = JSON.stringify(info.message, null, 2);
     }
+
+    const extrasStr = extras?.length
+      ? ' ' +
+        extras
+          .map((v) =>
+            typeof v === 'string'
+              ? v
+              : (() => {
+                  try {
+                    return JSON.stringify(v);
+                  } catch {
+                    return String(v);
+                  }
+                })()
+          )
+          .join(' ')
+      : '';
+
     return `[${info.timestamp}] [${
       mcache.get(reqIdCacheKey())?.toString() ?? ''
-    }] [${info.level}] [${loggerName}] : ${info.message}${
+    }] [${info.level}] [${loggerName}] : ${info.message}${extrasStr}${
       info.stack ? '\n' + info.stack : ''
     }`;
   });
@@ -73,29 +95,29 @@ export class Logger {
 
   private static readonly instances = new Map<string, Logger>();
 
-  private constructor(private readonly name: string) {}
+  private constructor(public readonly name: string) {}
 
   info(arg1: any, ...rest: any) {
     if (this.isLevelEnabled('INFO')) {
-      getWinstonInstance(this.name).info(arg1, rest);
+      getWinstonInstance(this.name).info(arg1, ...rest);
     }
   }
 
   debug(arg1: any, ...rest: any) {
     if (this.isLevelEnabled('DEBUG')) {
-      getWinstonInstance(this.name).debug(arg1, rest);
+      getWinstonInstance(this.name).debug(arg1, ...rest);
     }
   }
 
   warn(arg1: any, ...rest: any) {
     if (this.isLevelEnabled('WARN')) {
-      getWinstonInstance(this.name).warn(arg1, rest);
+      getWinstonInstance(this.name).warn(arg1, ...rest);
     }
   }
 
   error(arg1: any, ...rest: any) {
     if (this.isLevelEnabled('ERROR')) {
-      getWinstonInstance(this.name).error(arg1, rest);
+      getWinstonInstance(this.name).error(arg1, ...rest);
     }
   }
 

@@ -3,6 +3,7 @@ import * as mysql from 'mysql';
 import { PoolConnection, TypeCast } from 'mysql';
 import { Time } from '../time';
 import { Logger } from '../logging';
+import { RequestContext } from '../request.context';
 
 const logger = Logger.get('MYSQL_HELPERS');
 
@@ -117,4 +118,71 @@ function prepareStatement(query: string, values: Record<string, any>) {
     }
     return txt;
   });
+}
+
+type BulkUpsertOpts = {
+  chunkSize?: number; // default 1000
+  connection?: ConnectionWrapper<any>; // optional wrapped connection
+};
+
+export async function bulkUpsert(
+  db: {
+    execute: (
+      sql: string,
+      params?: any,
+      opts?: { wrappedConnection?: ConnectionWrapper<any> }
+    ) => Promise<any>;
+  },
+  table: string,
+  rows: Array<Record<string, any>>,
+  insertCols: string[],
+  updateCols: string[] = [],
+  ctx?: RequestContext,
+  opts: BulkUpsertOpts = {}
+): Promise<void> {
+  if (!rows.length) return;
+
+  const chunkSize = opts.chunkSize ?? 1000;
+  const timerName = `bulkUpsert:${table}`;
+  ctx?.timer?.start(timerName);
+
+  try {
+    for (let i = 0; i < rows.length; i += chunkSize) {
+      const chunk = rows.slice(i, i + chunkSize);
+
+      const header = `(${insertCols.map((c) => '`' + c + '`').join(', ')})`;
+      const values = chunk
+        .map(
+          (r) =>
+            `(${insertCols.map((c) => mysql.escape(r[c] ?? null)).join(', ')})`
+        )
+        .join(', ');
+
+      // INSERT ... VALUES ... AS new ON DUPLICATE KEY UPDATE ...
+      // If no updateCols were provided, fall back to INSERT IGNORE (skip duplicates).
+      const sql =
+        updateCols.length === 0
+          ? `
+              INSERT IGNORE INTO ${table}
+              ${header}
+              VALUES ${values}
+            `
+          : `
+              INSERT INTO ${table}
+              ${header}
+              VALUES ${values}
+              AS new
+              ON DUPLICATE KEY UPDATE
+              ${updateCols.map((c) => `\`${c}\` = new.\`${c}\``).join(', ')}
+            `;
+
+      await db.execute(
+        sql,
+        undefined,
+        opts.connection ? { wrappedConnection: opts.connection } : undefined
+      );
+    }
+  } finally {
+    ctx?.timer?.stop(timerName);
+  }
 }

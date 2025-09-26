@@ -3,10 +3,7 @@ import {
   TdhGrantsRepository
 } from './tdh-grants.repository';
 import { RequestContext } from '../request.context';
-import {
-  fromTdhGrantEntityToModel,
-  TdhGrantModel
-} from './create-tdh-grant.models';
+import { fromTdhGrantEntityToModel, TdhGrantModel } from './tdh-grant.models';
 import { TdhGrantStatus } from '../entities/ITdhGrant';
 
 export class TdhGrantsFinder {

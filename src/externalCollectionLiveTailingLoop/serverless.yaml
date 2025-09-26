@@ -1,0 +1,64 @@
+service: externalCollectionLiveTailingLoop
+
+package:
+  artifact: dist/index.zip
+
+plugins:
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs18.x
+  memorySize: 1024
+  timeout: 900
+  architecture: arm64
+  logRetentionInDays: 60
+
+functions:
+  overRatesRevocationLoop:
+    handler: index.handler
+    name: externalCollectionLiveTailingLoop
+    description: ${env:VERSION_DESCRIPTION}
+    events:
+      - schedule: rate(1 minute)
+    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    vpc:
+      securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
+      subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
+    environment:
+      SENTRY_DSN: ${env:SENTRY_DSN}
+      SENTRY_ENVIRONMENT: "externalCollectionLiveTailingLoop_${opt:stage, self:provider.stage}"
+      NFT_INDEXER_REORG_DEPTH_BLOCKS: 20
+      NFT_INDEXER_LIVE_TAIL_RANGE: 2000
+
+resources:
+  Resources:
+    ExternalCollectionLiveTailingLoopOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      Properties:
+        LogGroupName: /aws/lambda/externalCollectionLiveTailingLoop
+        FilterPattern: "Runtime.OutOfMemory"
+        MetricTransformations:
+          - MetricNamespace: "Lambda/OOM"
+            MetricName: "externalCollectionLiveTailingLoop_OOMErrorCount"
+            MetricValue: "1"
+            DefaultValue: 0
+
+    ExternalCollectionLiveTailingLoopOOMAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: externalCollectionLiveTailingLoopOOMFilter
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-externalCollectionLiveTailingLoop-OOM"
+        AlarmDescription: !Sub "Lambda externalCollectionLiveTailingLoop OutOfMemory in ${AWS::Region}"
+        Namespace: "Lambda/OOM"
+        MetricName: "externalCollectionLiveTailingLoop_OOMErrorCount"
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
