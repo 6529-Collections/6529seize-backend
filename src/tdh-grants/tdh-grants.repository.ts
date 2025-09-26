@@ -161,6 +161,55 @@ export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
     }
     return { whereAnds, params };
   }
+
+  async lockOldestPendingGrant(
+    offset: number,
+    ctx: RequestContext
+  ): Promise<TdhGrantEntity | null> {
+    ctx.timer?.start(`${this.constructor.name}->findOldestPendingGrant`);
+    try {
+      const connection = ctx.connection;
+      if (!connection) {
+        throw new Error(
+          `Can't lock a database entity outside of a transaction`
+        );
+      }
+      return await this.db.oneOrNull<TdhGrantEntity>(
+        `
+        select t.* from ${TDH_GRANTS_TABLE} t 
+        where t.status = :status 
+        order by t.created_at
+        limit 1 offset :offset
+        for update skip locked
+      `,
+        { offset, status: TdhGrantStatus.PENDING },
+        { wrappedConnection: connection }
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->findOldestPendingGrant`);
+    }
+  }
+
+  async updateStatus(
+    param: { grantId: string; status: TdhGrantStatus; error: string },
+    ctx: RequestContext
+  ) {
+    ctx.timer?.start(`${this.constructor.name}->updateStatus`);
+    try {
+      await this.db.execute(
+        `update ${TDH_GRANTS_TABLE}
+         set status = :status,
+             error_details = :error
+         where id = :grantId`,
+        param,
+        {
+          wrappedConnection: ctx.connection
+        }
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->updateStatus`);
+    }
+  }
 }
 
 export const tdhGrantsRepository = new TdhGrantsRepository(dbSupplier);

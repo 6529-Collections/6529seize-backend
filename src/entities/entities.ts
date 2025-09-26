@@ -93,6 +93,7 @@ export {
   TDHMemes
 } from './ITDH';
 export { TdhGrantEntity } from './ITdhGrant';
+export { ExternalTokenOwnerEntity } from './IExternalTokenOwner';
 export {
   GlobalTDHHistory,
   LatestGlobalTDHHistory,

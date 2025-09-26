@@ -60,6 +60,7 @@ export const DROP_VOTER_STATE_TABLE = 'drop_voter_states';
 export const DROP_REACTIONS_TABLE = 'drop_reactions';
 export const DROP_REAL_VOTER_VOTE_IN_TIME_TABLE =
   'drop_real_voter_vote_in_time';
+export const EXTERNAL_TOKEN_OWNERS_TABLE = 'external_token_owners';
 export const WINNER_DROP_VOTER_VOTES_TABLE = 'winner_drop_voter_votes';
 export const DROP_RANK_TABLE = 'drop_ranks';
 export const DROP_REAL_VOTE_IN_TIME_TABLE = 'drop_real_vote_in_time';
