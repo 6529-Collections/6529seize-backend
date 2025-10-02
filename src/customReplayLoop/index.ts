@@ -11,7 +11,6 @@ import { Time } from '../time';
 
 const logger = Logger.get('CUSTOM_REPLAY_LOOP');
 
-const TARGET_TOKEN_ID = 401;
 const MAX_RETRIES = 3;
 
 type OwnersForNftOwner =
@@ -51,19 +50,25 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
 });
 
 async function replay() {
-  const contract = MEMES_CONTRACT.toLowerCase();
-  const tokenId = TARGET_TOKEN_ID;
+  const tokenIds = [43, 60, 116, 320, 401, 405];
+  for (const tokenId of tokenIds) {
+    await replayForToken(tokenId);
+  }
+}
 
-  logger.info(`[REPLAY] Starting refresh for ${contract} token ${tokenId}`);
+async function replayForToken(tokenId: number) {
+  const contract = MEMES_CONTRACT.toLowerCase();
+
+  logger.info(`[REPLAY #${tokenId}] Starting refresh`);
 
   const owners = await fetchOwnersForToken(contract, tokenId);
   const totalBalance = owners.reduce((acc, owner) => acc + owner.balance, 0);
   logger.info(
-    `[REPLAY] Retrieved ${owners.length} owner balances, total balance: ${totalBalance}`
+    `[REPLAY #${tokenId}] Retrieved ${owners.length} owner balances, total balance: ${totalBalance}`
   );
 
   const blockReference = await fetchMaxTransactionsBlockNumber();
-  logger.info(`[REPLAY] Using block reference ${blockReference}`);
+  logger.info(`[REPLAY #${tokenId}] Using block reference ${blockReference}`);
 
   const addresses = new Set<string>();
   owners.forEach((owner) => addresses.add(owner.wallet.toLowerCase()));
@@ -80,10 +85,10 @@ async function replay() {
   await persistTokenOwners(contract, tokenId, owners, blockReference);
 
   logger.info(
-    `[REPLAY] Persisted owners. Consolidating for ${addresses.size} wallets`
+    `[REPLAY #${tokenId}] Persisted owners. Consolidating for ${addresses.size} wallets`
   );
   await consolidateNftOwners(addresses);
-  logger.info(`[REPLAY] Completed refresh for ${contract} token ${tokenId}`);
+  logger.info(`[REPLAY #${tokenId}] Completed refresh`);
 }
 
 async function fetchOwnersForToken(
