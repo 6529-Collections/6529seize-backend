@@ -51,9 +51,18 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
 
 async function replay() {
   const tokenIds = [43, 60, 116, 320, 401, 405];
+  const addresses = new Set<string>();
   for (const tokenId of tokenIds) {
-    await replayForToken(tokenId);
+    const addressesFromToken = await replayForToken(tokenId);
+    addressesFromToken.forEach((address) => addresses.add(address));
   }
+
+  logger.info(
+    `[REPLAY] Consolidating for ${addresses.size.toLocaleString()} wallets`
+  );
+  await consolidateNftOwners(addresses);
+
+  logger.info(`[REPLAY] Completed`);
 }
 
 async function replayForToken(tokenId: number) {
@@ -85,10 +94,12 @@ async function replayForToken(tokenId: number) {
   await persistTokenOwners(contract, tokenId, owners, blockReference);
 
   logger.info(
-    `[REPLAY #${tokenId}] Persisted owners. Consolidating for ${addresses.size} wallets`
+    `[REPLAY #${tokenId}] Persisted owners - ${addresses.size} wallets`
   );
-  await consolidateNftOwners(addresses);
+
   logger.info(`[REPLAY #${tokenId}] Completed refresh`);
+
+  return addresses;
 }
 
 async function fetchOwnersForToken(
