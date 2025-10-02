@@ -50,7 +50,7 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
 });
 
 async function replay() {
-  const tokenIds = [43, 60, 116, 320, 401, 405];
+  const tokenIds = [65];
   const addresses = new Set<string>();
   for (const tokenId of tokenIds) {
     const addressesFromToken = await replayForToken(tokenId);
