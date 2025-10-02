@@ -62,8 +62,6 @@ async function replay() {
     `[REPLAY] Retrieved ${owners.length} owner balances, total balance: ${totalBalance}`
   );
 
-  process.exit(0);
-
   const blockReference = await fetchMaxTransactionsBlockNumber();
   logger.info(`[REPLAY] Using block reference ${blockReference}`);
 
