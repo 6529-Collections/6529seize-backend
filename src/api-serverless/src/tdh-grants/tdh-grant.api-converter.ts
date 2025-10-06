@@ -35,7 +35,9 @@ export class TdhGrantApiConverter {
       ),
       target_contract: apiCreateTdhGrant.target_contract,
       target_tokens: apiCreateTdhGrant.target_tokens,
-      valid_to: Time.millis(apiCreateTdhGrant.valid_to),
+      valid_to: apiCreateTdhGrant.valid_to
+        ? Time.millis(apiCreateTdhGrant.valid_to)
+        : null,
       tdh_rate: apiCreateTdhGrant.tdh_rate,
       is_irrevocable: apiCreateTdhGrant.is_irrevocable
     };
@@ -91,7 +93,7 @@ export class TdhGrantApiConverter {
       error_details: model.error_details,
       created_at: model.created_at.toMillis(),
       valid_from: model.valid_from?.toMillis() ?? null,
-      valid_to: model.valid_to.toMillis(),
+      valid_to: model.valid_to?.toMillis() ?? null,
       is_irrevocable: model.is_irrevocable
     }));
   }

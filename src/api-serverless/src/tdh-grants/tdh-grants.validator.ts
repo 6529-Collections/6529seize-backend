@@ -57,7 +57,12 @@ export const ApiCreateTdhGrantSchema: Joi.ObjectSchema<ApiCreateTdhGrant> =
       .required(),
     target_contract: Joi.string().required().regex(WALLET_REGEX).lowercase(),
     target_tokens: targetTokensSchema,
-    valid_to: Joi.number().integer().greater(Time.now().toMillis()).required(),
+    valid_to: Joi.number()
+      .integer()
+      .greater(Time.now().toMillis())
+      .optional()
+      .allow(null)
+      .default(null),
     tdh_rate: Joi.number().integer().min(1).required(),
     is_irrevocable: Joi.boolean().required()
   });
