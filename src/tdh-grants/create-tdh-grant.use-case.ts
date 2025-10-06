@@ -63,7 +63,7 @@ export class CreateTdhGrantUseCase {
               : null,
             created_at: Time.currentMillis(),
             valid_from: null,
-            valid_to: command.valid_to.toMillis(),
+            valid_to: command.valid_to?.toMillis() ?? null,
             tdh_rate: command.tdh_rate,
             status: TdhGrantStatus.PENDING,
             error_details: null,

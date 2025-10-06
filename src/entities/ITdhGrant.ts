@@ -19,9 +19,9 @@ export class TdhGrantEntity {
   readonly created_at!: number;
   @Column({ type: 'bigint', nullable: true })
   readonly valid_from!: number | null;
-  @Column({ type: 'bigint', nullable: false })
-  readonly valid_to!: number;
-  @Column({ type: 'bigint', nullable: false })
+  @Column({ type: 'bigint', nullable: true })
+  readonly valid_to!: number | null;
+  @Column({ type: 'bigint', nullable: false, default: null })
   readonly tdh_rate!: number;
   @Column({ type: 'varchar', length: 100, nullable: false })
   @Index()
