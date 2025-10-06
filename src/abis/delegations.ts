@@ -1,6 +1,6 @@
 import { ethers } from 'ethers';
 
-export const DELEGATIONS_IFACE = new ethers.utils.Interface([
+export const DELEGATIONS_IFACE = new ethers.Interface([
   { inputs: [], stateMutability: 'nonpayable', type: 'constructor' },
   {
     anonymous: false,

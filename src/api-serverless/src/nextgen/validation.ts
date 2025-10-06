@@ -214,10 +214,7 @@ function handleValidationFailure(
 
 function validateSignature(address: string, signature: string, uuid: string) {
   try {
-    const verifySigner = ethers.utils.recoverAddress(
-      hashMessage(uuid),
-      signature
-    );
+    const verifySigner = ethers.recoverAddress(hashMessage(uuid), signature);
     return equalIgnoreCase(address, verifySigner);
   } catch (e) {
     logger.error('error', e);
@@ -342,7 +339,7 @@ async function computeMerkleBurn(
 async function validateAdmin(collection_id: number, address: string) {
   const chainId = getNextGenChainId();
   const rpcUrl = getRpcUrl(chainId);
-  const provider = new ethers.providers.JsonRpcProvider(rpcUrl);
+  const provider = new ethers.JsonRpcProvider(rpcUrl);
 
   const contract = new ethers.Contract(
     NEXTGEN_ADMIN[chainId],
@@ -351,16 +348,16 @@ async function validateAdmin(collection_id: number, address: string) {
   );
 
   try {
-    const result1 = await contract.functions.retrieveGlobalAdmin(address);
+    const result1 = await contract.retrieveGlobalAdmin(address);
     const isGlobalAdmin = result1[0];
 
-    const result2 = await contract.functions.retrieveFunctionAdmin(
+    const result2 = await contract.retrieveFunctionAdmin(
       address,
       NEXTGEN_SET_COLLECTION_PHASES_SELECTOR
     );
     const isFunctionAdmin = result2[0];
 
-    const result3 = await contract.functions.retrieveCollectionAdmin(
+    const result3 = await contract.retrieveCollectionAdmin(
       address,
       collection_id
     );

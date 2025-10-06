@@ -47,6 +47,17 @@ const OPENSEA_EVENT =
 const OPENSEA_MATCH_EVENT =
   '0x4b9f2d36e1b4c93de62cc077b00b1a91d84b6c31b4a14e012718dcca230689e7';
 
+// Minimal shapes that work with both ethers v5 (Alchemy) and ethers v6
+type LogLike = {
+  address: string;
+  data: string;
+  topics: string[];
+};
+
+type ReceiptLike = {
+  logs: LogLike[];
+};
+
 let alchemy: Alchemy;
 
 function isZeroAddress(address: string) {
@@ -262,7 +273,7 @@ async function resolveValue(t: Transaction) {
   return t;
 }
 
-const isSeaportEvent = (receipt: ethers.TransactionReceipt) => {
+const isSeaportEvent = (receipt: ReceiptLike) => {
   return receipt.logs.some((log) =>
     equalIgnoreCase(log.topics[0], OPENSEA_EVENT)
   );
@@ -271,7 +282,7 @@ const isSeaportEvent = (receipt: ethers.TransactionReceipt) => {
 const parseSeaportLog = async (
   t: Transaction,
   royaltiesAddress: string,
-  log: ethers.Log
+  log: LogLike
 ) => {
   let seaResult;
   try {
@@ -372,7 +383,7 @@ const parseSeaportLog = async (
   }
 };
 
-const isBlurEvent = (log: ethers.Log) => {
+const isBlurEvent = (log: LogLike) => {
   return equalIgnoreCase(log.topics[0], BLUR_EVENT);
 };
 
@@ -514,8 +525,9 @@ const isCurrencyItemType = (t: number) =>
  * - `royaltiesAddress` is the specific royalty recipient you're tracking (creator wallet/forwarder).
  * - `seaportAddress` is Seaport v1.6 address for the chain you’re on.
  */
+
 function attributeRowFromSeaportTx(
-  receipt: ethers.TransactionReceipt,
+  receipt: ReceiptLike,
   row: Transaction,
   royaltiesAddress: string
 ): RowAttribution | null {

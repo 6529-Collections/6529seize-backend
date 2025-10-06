@@ -77,7 +77,7 @@ const findDetailsFromTransaction = async (tx: TransactionResponse) => {
       const parsed = NFT_HISTORY_IFACE.parseTransaction({
         data,
         value: 0
-      });
+      })!;
       if (parsed.args.uris) {
         const tokenUri = parsed.args.uris[0];
         const receipt = await alchemy.core.getTransactionReceipt(tx.hash);
@@ -86,7 +86,7 @@ const findDetailsFromTransaction = async (tx: TransactionResponse) => {
           const parsedReceipt = NFT_HISTORY_IFACE.parseLog({
             topics: receipt?.logs[0].topics,
             data: logData
-          });
+          })!;
           const tokenId = parsedReceipt.args.id.toNumber();
           if (equalIgnoreCase(MEMES_CONTRACT, tx.to)) {
             return {
@@ -338,7 +338,7 @@ export const getDeployerTransactions = async (
         const parsed = NFT_HISTORY_IFACE.parseTransaction({
           data,
           value: 0
-        });
+        })!;
         const claimIndex = parsed.args.claimIndex.toNumber();
         const location = parsed.args.claimParameters.location;
         const contract = parsed.args.creatorContractAddress;
@@ -357,7 +357,7 @@ export const getDeployerTransactions = async (
         const parsed = NFT_HISTORY_IFACE.parseTransaction({
           data,
           value: 0
-        });
+        })!;
         const claimIndex = parsed.args.claimIndex.toNumber();
         const location = parsed.args.claimParameters.location;
         const contract = parsed.args.creatorContractAddress;
@@ -367,7 +367,7 @@ export const getDeployerTransactions = async (
           const parsedReceipt = NFT_HISTORY_IFACE.parseLog({
             topics: receipt?.logs[0].topics,
             data: logData
-          });
+          })!;
           const tokenId = parsedReceipt.args.id.toNumber();
           const nftMint: NFTHistory = {
             created_at: new Date(),
@@ -400,7 +400,7 @@ export const getDeployerTransactions = async (
         const parsed = NFT_HISTORY_IFACE.parseTransaction({
           data,
           value: 0
-        });
+        })!;
         const instanceId = parsed.args.instanceId.toNumber();
         const location = parsed.args.claimParameters.location;
         const contract = parsed.args.creatorContractAddress;
@@ -419,7 +419,7 @@ export const getDeployerTransactions = async (
         const parsed = NFT_HISTORY_IFACE.parseTransaction({
           data,
           value: 0
-        });
+        })!;
         const location = parsed.args.burnRedeemParameters.location;
         const contract = parsed.args.creatorContractAddress;
         const receipt = await alchemy.core.getTransactionReceipt(tx.hash);
@@ -428,7 +428,7 @@ export const getDeployerTransactions = async (
           const parsedReceipt = NFT_HISTORY_IFACE.parseLog({
             topics: receipt?.logs[1].topics,
             data: logData
-          });
+          })!;
           const tokenId = parsedReceipt.args.id.toNumber();
           const nftMint: NFTHistory = {
             created_at: new Date(),
@@ -477,7 +477,7 @@ export const getDeployerTransactions = async (
         const parsed = NFT_HISTORY_IFACE.parseTransaction({
           data,
           value: 0
-        });
+        })!;
         const claimIndex = parsed.args.claimIndex.toNumber();
         const receipt = await alchemy.core.getTransactionReceipt(tx.hash);
         const logData = receipt?.logs[0].data;
@@ -485,7 +485,7 @@ export const getDeployerTransactions = async (
           const parsedReceipt = NFT_HISTORY_IFACE.parseLog({
             topics: receipt?.logs[0].topics,
             data: logData
-          });
+          })!;
           const claims = await findClaim(claimIndex, -1);
           for (const claim of claims) {
             const tokenId = parsedReceipt.args.id.toNumber();
@@ -520,7 +520,7 @@ export const getDeployerTransactions = async (
         const parsed = NFT_HISTORY_IFACE.parseTransaction({
           data,
           value: 0
-        });
+        })!;
         const claimIndex =
           parsed.args.claimIndex?.toNumber() ??
           parsed.args.instanceId?.toNumber();

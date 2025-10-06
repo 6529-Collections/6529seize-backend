@@ -29,7 +29,7 @@ export async function processMissingMintData(entityManager: EntityManager) {
 
   const network = getNextgenNetwork();
   const rpcUrl = getRpcUrlFromNetwork(network);
-  const provider = new ethers.providers.JsonRpcProvider(rpcUrl);
+  const provider = new ethers.JsonRpcProvider(rpcUrl);
 
   const contract = new ethers.Contract(
     NEXTGEN_CORE_CONTRACT[network],
@@ -41,7 +41,7 @@ export async function processMissingMintData(entityManager: EntityManager) {
 
   for (const token of missingData) {
     try {
-      const tokenData = await contract.functions.tokenData(token.id);
+      const tokenData = await contract.tokenData(token.id);
       logger.info(`[TOKEN ID ${token.id}] : [TOKEN DATA] : [${tokenData}]`);
 
       token.mint_data = tokenData;

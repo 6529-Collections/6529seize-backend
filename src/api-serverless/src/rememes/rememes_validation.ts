@@ -149,7 +149,7 @@ function validateSignature(
   rememe: { contract: string; id: number; meme_references: number[] }
 ) {
   try {
-    const verifySigner = ethers.utils.recoverAddress(
+    const verifySigner = ethers.recoverAddress(
       hashMessage(JSON.stringify(rememe)),
       signature
     );
