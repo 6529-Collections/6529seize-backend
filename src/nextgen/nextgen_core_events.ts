@@ -8,7 +8,6 @@ import {
   NextGenToken,
   NextGenTokenTrait
 } from '../entities/INextGen';
-import { LogDescription } from 'ethers/lib/utils';
 import { findTransactionValues } from '../transaction_values';
 import {
   fetchNextGenCollection,
@@ -24,6 +23,7 @@ import { Transaction } from '../entities/ITransaction';
 import { getAlchemyInstance, getEns } from '../alchemy';
 import { equalIgnoreCase } from '../strings';
 import { ethTools } from '../eth-tools';
+import { LogDescription } from 'ethers';
 
 const logger = Logger.get('NEXTGEN_CORE_EVENTS');
 
@@ -82,7 +82,7 @@ export async function processLog(
   title: string;
   description: string;
 } | null> {
-  const parsedLog = NEXTGEN_CORE_IFACE.parseLog(log);
+  const parsedLog = NEXTGEN_CORE_IFACE.parseLog(log)!;
 
   const previousOwner = parsedLog.args.previousOwner;
   const newOwner = parsedLog.args.newOwner;

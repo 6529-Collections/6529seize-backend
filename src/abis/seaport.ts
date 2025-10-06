@@ -1708,4 +1708,4 @@ const SEAPORT_ABI = [
   { stateMutability: 'payable', type: 'receive' }
 ];
 
-export const SEAPORT_IFACE = new ethers.utils.Interface(SEAPORT_ABI);
+export const SEAPORT_IFACE = new ethers.Interface(SEAPORT_ABI);

@@ -1,6 +1,6 @@
 import { ethers } from 'ethers';
 
-export const NFT_HISTORY_IFACE = new ethers.utils.Interface([
+export const NFT_HISTORY_IFACE = new ethers.Interface([
   {
     inputs: [
       { internalType: 'address[]', name: 'to', type: 'address[]' },

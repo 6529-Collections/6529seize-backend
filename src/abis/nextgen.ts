@@ -2141,7 +2141,5 @@ export const NEXTGEN_ADMIN_ABI = [
   }
 ];
 
-export const NEXTGEN_CORE_IFACE = new ethers.utils.Interface(NEXTGEN_CORE_ABI);
-export const NEXTGEN_MINTER_IFACE = new ethers.utils.Interface(
-  NEXTGEN_MINTER_ABI
-);
+export const NEXTGEN_CORE_IFACE = new ethers.Interface(NEXTGEN_CORE_ABI);
+export const NEXTGEN_MINTER_IFACE = new ethers.Interface(NEXTGEN_MINTER_ABI);
