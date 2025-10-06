@@ -4,7 +4,7 @@ import {
   LazyDbAccessCompatibleService
 } from '../sql-executor';
 import { IdentityNotificationEntity } from '../entities/IIdentityNotification';
-import { IDENTITY_NOTIFICATIONS_TABLE } from '../constants';
+import { IDENTITIES_TABLE, IDENTITY_NOTIFICATIONS_TABLE } from '../constants';
 import { Time } from '../time';
 import { sendIdentityPushNotification } from '../api-serverless/src/push-notifications/push-notifications.service';
 import { Logger } from '../logging';
@@ -153,18 +153,19 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
     return this.db
       .execute<IdentityNotificationEntity>(
         `
-        select * from ${IDENTITY_NOTIFICATIONS_TABLE}
-        where identity_id = :identity_id ${
+        select n.* from ${IDENTITY_NOTIFICATIONS_TABLE} n
+        join ${IDENTITIES_TABLE} i on n.additional_identity_id = i.profile_id
+        where n.identity_id = :identity_id ${
           param.id_less_than !== null ? `and id < :id_less_than` : ``
         }
-        and (visibility_group_id is null ${
+        and (n.visibility_group_id is null ${
           param.eligible_group_ids.length
-            ? ` or visibility_group_id in (:eligible_group_ids) `
+            ? ` or n.visibility_group_id in (:eligible_group_ids) `
             : ``
         })
-        ${causes ? ` and cause in (:causes)` : ``}
-        ${param.unread_only ? ` and read_at is null` : ``}
-        order by id desc limit :limit
+        ${causes ? ` and n.cause in (:causes)` : ``}
+        ${param.unread_only ? ` and n.read_at is null` : ``}
+        order by n.id desc limit :limit
       `,
         { ...param, causes },
         connection ? { wrappedConnection: connection } : undefined
