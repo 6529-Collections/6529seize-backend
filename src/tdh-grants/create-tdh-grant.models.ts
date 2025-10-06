@@ -33,8 +33,7 @@ export function fromTdhGrantEntityToModel(
     id: entity.id,
     target_chain: entity.target_chain,
     target_contract: entity.target_contract,
-    target_tokens:
-      entity.target_tokens === null ? [] : JSON.parse(entity.target_tokens),
+    target_tokens: entity.target_tokens ? entity.target_tokens.split(',') : [],
     valid_from:
       entity.valid_from === null ? null : Time.millis(entity.valid_from),
     valid_to: entity.valid_to ? Time.millis(entity.valid_to) : null,
