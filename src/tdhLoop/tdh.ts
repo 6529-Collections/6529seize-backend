@@ -1,3 +1,5 @@
+import { Alchemy } from 'alchemy-sdk';
+import { ethers } from 'ethers';
 import {
   ALCHEMY_SETTINGS,
   GRADIENT_CONTRACT,
@@ -7,9 +9,6 @@ import {
   TRANSACTIONS_TABLE,
   WALLETS_TDH_TABLE
 } from '../constants';
-import { DefaultBoost, TDH, TDHMemes, TokenTDH } from '../entities/ITDH';
-import { Transaction } from '../entities/ITransaction';
-import { Alchemy } from 'alchemy-sdk';
 import {
   consolidateTransactions,
   fetchAllConsolidationAddresses,
@@ -20,21 +19,22 @@ import {
   persistTDH,
   retrieveWalletConsolidations
 } from '../db';
-import { ConnectionWrapper, sqlExecutor } from '../sql-executor';
-import { Logger } from '../logging';
-import { fetchNextgenTokens } from '../nextgen/nextgen.db';
 import { NextGenToken } from '../entities/INextGen';
 import { NFT } from '../entities/INFT';
+import { MemesSeason } from '../entities/ISeason';
+import { DefaultBoost, TDH, TDHMemes, TokenTDH } from '../entities/ITDH';
+import { Transaction } from '../entities/ITransaction';
+import { Logger } from '../logging';
+import { fetchNextgenTokens } from '../nextgen/nextgen.db';
 import {
   getNextgenNetwork,
   NEXTGEN_CORE_CONTRACT
 } from '../nextgen/nextgen_constants';
-import { MemesSeason } from '../entities/ISeason';
-import { calculateMemesTdh } from './tdh_memes';
-import { Time } from '../time';
-import { extractMemesEditionSizes, extractNFTOwners } from './tdh_objects';
-import { ethers } from 'ethers';
+import { ConnectionWrapper, sqlExecutor } from '../sql-executor';
 import { equalIgnoreCase } from '../strings';
+import { Time } from '../time';
+import { calculateMemesTdh } from './tdh_memes';
+import { extractMemesEditionSizes, extractNFTOwners } from './tdh_objects';
 
 const logger = Logger.get('TDH');
 
@@ -43,9 +43,9 @@ let alchemy: Alchemy;
 export function getDefaultBoost(): DefaultBoost {
   return {
     memes_card_sets: {
-      available: 0.59,
+      available: 0.64,
       available_info: [
-        '0.55 for Full Collection Set',
+        '0.60 for Full Collection Set',
         '0.02 for each additional set up to 2'
       ],
       acquired: 0,
@@ -114,6 +114,12 @@ export function getDefaultBoost(): DefaultBoost {
     memes_szn11: {
       available: 0.05,
       available_info: ['0.05 for Season 11 Set'],
+      acquired: 0,
+      acquired_info: []
+    },
+    memes_szn12: {
+      available: 0.05,
+      available_info: ['0.05 for Season 12 Set'],
       acquired: 0,
       acquired_info: []
     },
@@ -550,14 +556,14 @@ function calculateMemesBoostsCardSets(cardSets: number) {
   let boost = 1;
   const breakdown = getDefaultBoost();
 
-  let cardSetBreakdown = 0.55;
+  let cardSetBreakdown = 0.6;
   const additionalCardSets = cardSets - 1;
   // additional full sets up to 2
   cardSetBreakdown += Math.min(additionalCardSets * 0.02, 0.04);
   boost += cardSetBreakdown;
   breakdown.memes_card_sets.acquired = cardSetBreakdown;
 
-  const acquiredInfo = ['0.55 for Full Collection Set'];
+  const acquiredInfo = ['0.60 for Full Collection Set'];
   if (additionalCardSets === 1) {
     acquiredInfo.push(`0.02 for 1 additional set`);
   } else if (additionalCardSets > 1) {
@@ -593,6 +599,7 @@ function calculateMemesBoostsSeasons(
   const cardSetS9 = hasSeasonSet(9, seasons, memes);
   const cardSetS10 = hasSeasonSet(10, seasons, memes);
   const cardSetS11 = hasSeasonSet(11, seasons, memes);
+  const cardSetS12 = hasSeasonSet(12, seasons, memes);
 
   if (cardSetS1) {
     boost += 0.05;
@@ -663,6 +670,11 @@ function calculateMemesBoostsSeasons(
     boost += 0.05;
     breakdown.memes_szn11.acquired = 0.05;
     breakdown.memes_szn11.acquired_info = ['0.05 for holding Season 11 Set'];
+  }
+  if (cardSetS12) {
+    boost += 0.05;
+    breakdown.memes_szn12.acquired = 0.05;
+    breakdown.memes_szn12.acquired_info = ['0.05 for holding Season 12 Set'];
   }
 
   return {
