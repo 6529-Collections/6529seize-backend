@@ -1,0 +1,63 @@
+service: externalCollectionSnapshottingLoop
+
+package:
+  artifact: dist/index.zip
+
+plugins:
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs18.x
+  memorySize: 1024
+  timeout: 900
+  architecture: arm64
+  logRetentionInDays: 60
+
+functions:
+  externalCollectionSnapshottingLoop:
+    handler: index.handler
+    name: externalCollectionSnapshottingLoop
+    description: ${env:VERSION_DESCRIPTION}
+    events:
+      - schedule: rate(1 minute)
+    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    vpc:
+      securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
+      subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
+    environment:
+      SENTRY_DSN: ${env:SENTRY_DSN}
+      SENTRY_ENVIRONMENT: "externalCollectionSnapshottingLoop_${opt:stage, self:provider.stage}"
+      NFT_INDEXER_REORG_DEPTH_BLOCKS: 20
+
+resources:
+  Resources:
+    ExternalCollectionSnapshottingLoopOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      Properties:
+        LogGroupName: /aws/lambda/externalCollectionSnapshottingLoop
+        FilterPattern: "Runtime.OutOfMemory"
+        MetricTransformations:
+          - MetricNamespace: "Lambda/OOM"
+            MetricName: "externalCollectionSnapshottingLoop_OOMErrorCount"
+            MetricValue: "1"
+            DefaultValue: 0
+
+    ExternalCollectionSnapshottingLoopOOMAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: ExternalCollectionSnapshottingLoopOOMFilter
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-externalCollectionSnapshottingLoop-OOM"
+        AlarmDescription: !Sub "Lambda externalCollectionSnapshottingLoop OutOfMemory in ${AWS::Region}"
+        Namespace: "Lambda/OOM"
+        MetricName: "externalCollectionSnapshottingLoop_OOMErrorCount"
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}

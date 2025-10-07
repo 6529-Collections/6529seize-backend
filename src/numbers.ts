@@ -26,6 +26,14 @@ export class Numbers {
   public sum(ns: number[]): number {
     return ns.reduce((sum, n) => sum + n, 0);
   }
+
+  public parseIntOrThrow(value: any): number {
+    const result = this.parseIntOrNull(value);
+    if (result === null) {
+      throw new Error(`${value} is not an integer`);
+    }
+    return result;
+  }
 }
 
 export const numbers = new Numbers();
