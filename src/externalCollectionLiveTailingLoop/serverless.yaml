@@ -46,7 +46,7 @@ resources:
 
     ExternalCollectionLiveTailingLoopOOMAlarm:
       Type: AWS::CloudWatch::Alarm
-      DependsOn: externalCollectionLiveTailingLoopOOMFilter
+      DependsOn: ExternalCollectionLiveTailingLoopOOMFilter
       Properties:
         AlarmName: !Sub "${AWS::StackName}-externalCollectionLiveTailingLoop-OOM"
         AlarmDescription: !Sub "Lambda externalCollectionLiveTailingLoop OutOfMemory in ${AWS::Region}"

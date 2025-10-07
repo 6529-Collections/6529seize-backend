@@ -45,7 +45,7 @@ resources:
 
     ExternalCollectionSnapshottingLoopOOMAlarm:
       Type: AWS::CloudWatch::Alarm
-      DependsOn: externalCollectionSnapshottingLoopOOMFilter
+      DependsOn: ExternalCollectionSnapshottingLoopOOMFilter
       Properties:
         AlarmName: !Sub "${AWS::StackName}-externalCollectionSnapshottingLoop-OOM"
         AlarmDescription: !Sub "Lambda externalCollectionSnapshottingLoop OutOfMemory in ${AWS::Region}"
