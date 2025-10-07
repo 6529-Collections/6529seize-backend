@@ -27,6 +27,8 @@ on:
           - discoverEnsLoop
           - dropVideoConversionInvokerLoop
           - ethPriceLoop
+          - externalCollectionLiveTailingLoop
+          - externalCollectionSnapshottingLoop
           - marketStatsLoop
           - mediaResizerLoop
           - nextgenContractLoop
