@@ -63,7 +63,7 @@ export class ExternalCollectionSnapshottingService {
     const { chain, contract } = job;
     const contractLc = contract.toLowerCase();
     const partition = `${chain}:${contractLc}`;
-    const jobKey = `${this.logger.name} ${JSON.stringify({ chain, contract: contractLc })}`;
+    const jobKey = `${this.logger.name} ${JSON.stringify({ chain, contract: contractLc, lockOwner: job.lockOwner })}`;
     const log = Logger.get(jobKey);
     const ctx: RequestContext = { timer: new Timer(jobKey) };
 
@@ -734,7 +734,8 @@ export class ExternalCollectionSnapshottingService {
       partition: picked.partition,
       chain: picked.chain,
       contract: picked.contract,
-      at_block: picked.at_block
+      at_block: picked.at_block,
+      lockOwner
     });
 
     await this.snapshot({
@@ -742,7 +743,7 @@ export class ExternalCollectionSnapshottingService {
       chain: picked.chain,
       contract: picked.contract,
       atBlock: numbers.parseIntOrNull(picked.at_block),
-      lockOwner: lockOwner
+      lockOwner
     });
   }
 
