@@ -198,7 +198,7 @@ export class ExternalIndexingRepository extends LazyDbAccessCompatibleService {
     ctx.timer?.start(`${this.constructor.name}->commitSnapshotSuccess`);
     try {
       const affectedRows = await this.db
-        .oneOrNull(
+        .execute(
           `
             UPDATE ${EXTERNAL_INDEXED_CONTRACTS_TABLE}
             SET status                = '${IndexedContractStatus.LIVE_TAILING}',
@@ -280,7 +280,7 @@ export class ExternalIndexingRepository extends LazyDbAccessCompatibleService {
     );
     try {
       const affectedRows = await this.db
-        .oneOrNull(
+        .execute(
           `
             UPDATE ${EXTERNAL_INDEXED_CONTRACTS_TABLE}
             SET status                = '${IndexedContractStatus.ERROR_SNAPSHOTTING}',
@@ -320,7 +320,7 @@ export class ExternalIndexingRepository extends LazyDbAccessCompatibleService {
     ctx.timer?.start(`${this.constructor.name}->markUnindexableWithMessage`);
     try {
       const affectedRows = await this.db
-        .oneOrNull(
+        .execute(
           `
             UPDATE ${EXTERNAL_INDEXED_CONTRACTS_TABLE}
             SET status                = '${IndexedContractStatus.UNINDEXABLE}',
