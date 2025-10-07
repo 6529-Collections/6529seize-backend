@@ -15,7 +15,7 @@ provider:
   logRetentionInDays: 60
 
 functions:
-  overRatesRevocationLoop:
+  externalCollectionLiveTailingLoop:
     handler: index.handler
     name: externalCollectionLiveTailingLoop
     description: ${env:VERSION_DESCRIPTION}

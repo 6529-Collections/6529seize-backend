@@ -15,7 +15,7 @@ provider:
   logRetentionInDays: 60
 
 functions:
-  overRatesRevocationLoop:
+  externalCollectionSnapshottingLoop:
     handler: index.handler
     name: externalCollectionSnapshottingLoop
     description: ${env:VERSION_DESCRIPTION}
