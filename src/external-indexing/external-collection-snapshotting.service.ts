@@ -12,6 +12,7 @@ import {
 import { RequestContext } from '../request.context';
 import { ExternalIndexedOwnership721Entity } from '../entities/IExternalIndexedOwnership721';
 import { randomUUID } from 'crypto';
+import { ExternalIndexerRpc, externalIndexerRpc } from './external-indexer-rpc';
 
 const CRYPTOPUNKS_MAINNET = '0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb';
 const ERC721_ABI = ['function ownerOf(uint256) view returns (address)'];
@@ -45,19 +46,10 @@ export class ExternalCollectionSnapshottingService {
   private readonly logger = Logger.get(
     ExternalCollectionSnapshottingService.name
   );
-  private provider: ethers.providers.JsonRpcProvider;
   constructor(
-    private readonly externalIndexingRepository: ExternalIndexingRepository
+    private readonly externalIndexingRepository: ExternalIndexingRepository,
+    private readonly rpc: ExternalIndexerRpc
   ) {}
-
-  private getProvider(): ethers.providers.JsonRpcProvider {
-    if (!this.provider) {
-      this.provider = new ethers.providers.JsonRpcProvider(
-        env.getStringOrThrow('NFT_INDEXER_RPC')
-      );
-    }
-    return this.provider;
-  }
 
   public async snapshot(job: SnapshotCollectionJob): Promise<void> {
     const { chain, contract } = job;
@@ -103,7 +95,7 @@ export class ExternalCollectionSnapshottingService {
         totalSupply = env.getIntOrNull('PUNKS_SUPPLY') ?? 10000;
         log.info('CryptoPunks adapter engaged', { count: ids.length });
       } else {
-        const erc721 = new Contract(contract, ERC721_ABI, this.getProvider());
+        const erc721 = new Contract(contract, ERC721_ABI, this.rpc.provider);
         const supportsEnum = await this.supportsEnumerable(contract, atBlock);
 
         if (supportsEnum) {
@@ -318,7 +310,7 @@ export class ExternalCollectionSnapshottingService {
     let tries = 0;
     while (true) {
       try {
-        return await this.getProvider().getBlockNumber();
+        return await this.rpc.provider.getBlockNumber();
       } catch (e) {
         if (++tries > 3) throw e;
         await new Promise((r) => setTimeout(r, 500 * tries));
@@ -337,7 +329,7 @@ export class ExternalCollectionSnapshottingService {
     contractAddr: string,
     atBlock: number
   ): Promise<boolean> {
-    const erc165 = new Contract(contractAddr, ERC165_ABI, this.getProvider());
+    const erc165 = new Contract(contractAddr, ERC165_ABI, this.rpc.provider);
     try {
       return !!(await erc165.supportsInterface(IFACE_ERC721_ENUM, {
         blockTag: atBlock
@@ -354,7 +346,7 @@ export class ExternalCollectionSnapshottingService {
     const erc721Enum = new Contract(
       contractAddr,
       ERC721_ENUM_ABI,
-      this.getProvider()
+      this.rpc.provider
     );
     try {
       return await erc721Enum.totalSupply({ blockTag: atBlock });
@@ -462,7 +454,7 @@ export class ExternalCollectionSnapshottingService {
     const mc = new Contract(
       this.multicallAddr(),
       MULTICALL3_ABI,
-      this.getProvider()
+      this.rpc.provider
     );
     const erc721EnumIface = new ethers.utils.Interface(ERC721_ENUM_ABI);
 
@@ -500,7 +492,7 @@ export class ExternalCollectionSnapshottingService {
         const erc721Enum = new Contract(
           contractAddr,
           ERC721_ENUM_ABI,
-          this.getProvider()
+          this.rpc.provider
         );
         for (let i = start; i < end; i++) {
           try {
@@ -548,7 +540,7 @@ export class ExternalCollectionSnapshottingService {
   }
 
   private async getBlockTimestamp(blockNumber: number): Promise<number> {
-    const blk = await this.getProvider().getBlock(blockNumber);
+    const blk = await this.rpc.provider.getBlock(blockNumber);
     if (!blk) throw new Error(`Block ${blockNumber} not found`);
     return blk.timestamp;
   }
@@ -562,7 +554,7 @@ export class ExternalCollectionSnapshottingService {
     const mc = new Contract(
       this.multicallAddr(),
       MULTICALL3_ABI,
-      this.getProvider()
+      this.rpc.provider
     );
     const punksIface = new ethers.utils.Interface(PUNKS_ABI);
 
@@ -586,7 +578,7 @@ export class ExternalCollectionSnapshottingService {
           'Multicall (punks) failed; fallback to single calls for this chunk',
           { error: String(e) }
         );
-        const c = new Contract(contractAddr, PUNKS_ABI, this.getProvider());
+        const c = new Contract(contractAddr, PUNKS_ABI, this.rpc.provider);
         for (let j = 0; j < slice.length; j++) {
           try {
             const owner = await c.punkIndexToAddress(slice[j], {
@@ -637,10 +629,10 @@ export class ExternalCollectionSnapshottingService {
     const mc = new Contract(
       this.multicallAddr(),
       MULTICALL3_ABI,
-      this.getProvider()
+      this.rpc.provider
     );
     const erc721Iface = new ethers.utils.Interface(ERC721_ABI);
-    const c = new Contract(contractAddr, ERC721_ABI, this.getProvider());
+    const c = new Contract(contractAddr, ERC721_ABI, this.rpc.provider);
 
     const batchSize = env.getIntOrNull('SNAPSHOT_MULTICALL_BATCH') ?? 150;
     const results: (string | null)[] = new Array(tokenIds.length).fill(null);
@@ -769,10 +761,8 @@ export class ExternalCollectionSnapshottingService {
       };
     }
 
-    const provider = this.getProvider();
-
     try {
-      const code = await provider.getCode(contractAddr, atBlock);
+      const code = await this.rpc.provider.getCode(contractAddr, atBlock);
       if (!code || code === '0x') {
         return { ok: false, reason: 'No contract code at address' };
       }
@@ -780,7 +770,7 @@ export class ExternalCollectionSnapshottingService {
       return { ok: false, reason: 'Failed to fetch contract code' };
     }
 
-    const erc165 = new Contract(contractAddr, ERC165_ABI, provider);
+    const erc165 = new Contract(contractAddr, ERC165_ABI, this.rpc.provider);
 
     try {
       if (
@@ -812,7 +802,7 @@ export class ExternalCollectionSnapshottingService {
       // fall through to probe
     }
 
-    const erc721 = new Contract(contractAddr, ERC721_ABI, provider);
+    const erc721 = new Contract(contractAddr, ERC721_ABI, this.rpc.provider);
     const probeIds = [BigInt(0), BigInt(1)];
     for (const pid of probeIds) {
       try {
@@ -835,4 +825,7 @@ export class ExternalCollectionSnapshottingService {
 }
 
 export const externalCollectionSnapshottingService =
-  new ExternalCollectionSnapshottingService(externalIndexingRepository);
+  new ExternalCollectionSnapshottingService(
+    externalIndexingRepository,
+    externalIndexerRpc
+  );
