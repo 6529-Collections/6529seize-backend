@@ -632,10 +632,8 @@ function calculateMemesBoostsSeasons(
           ];
         }
       }
-    } else {
-      if (hasSet) {
-        applySeasonBoost(season);
-      }
+    } else if (hasSet) {
+      applySeasonBoost(season);
     }
   }
 
