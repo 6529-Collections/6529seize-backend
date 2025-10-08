@@ -43,10 +43,10 @@ let alchemy: Alchemy;
 export function getDefaultBoost(): DefaultBoost {
   return {
     memes_card_sets: {
-      available: 0.64,
+      available: 0.744051,
       available_info: [
         '0.60 for Full Collection Set',
-        '0.02 for each additional set up to 2'
+        '0.05 * 0.6529^(n-1) for each additional set (unlimited)'
       ],
       acquired: 0,
       acquired_info: []
@@ -136,8 +136,8 @@ export function getDefaultBoost(): DefaultBoost {
       acquired_info: []
     },
     gradients: {
-      available: 0.06,
-      available_info: ['0.02 for each Gradient up to 3'],
+      available: 0.1,
+      available_info: ['0.02 for each Gradient up to 5'],
       acquired: 0,
       acquired_info: []
     }
@@ -556,18 +556,32 @@ function calculateMemesBoostsCardSets(cardSets: number) {
   let boost = 1;
   const breakdown = getDefaultBoost();
 
+  // Base for 1 full collection set in TDH 1.4
   let cardSetBreakdown = 0.6;
-  const additionalCardSets = cardSets - 1;
-  // additional full sets up to 2
-  cardSetBreakdown += Math.min(additionalCardSets * 0.02, 0.04);
+
+  const additionalCardSets = Math.max(0, cardSets - 1);
+  if (additionalCardSets > 0) {
+    // Geometric series: 0.05 * (1 - r^n) / (1 - r), with r = 0.6529
+    const r = 0.6529;
+    const increment = (0.05 * (1 - Math.pow(r, additionalCardSets))) / (1 - r);
+    cardSetBreakdown += increment;
+  }
+
   boost += cardSetBreakdown;
   breakdown.memes_card_sets.acquired = cardSetBreakdown;
 
-  const acquiredInfo = ['0.60 for Full Collection Set'];
+  const acquiredInfo: string[] = ['0.60 for Full Collection Set'];
   if (additionalCardSets === 1) {
-    acquiredInfo.push(`0.02 for 1 additional set`);
+    acquiredInfo.push('0.05 for 1 additional set');
   } else if (additionalCardSets > 1) {
-    acquiredInfo.push(`0.04 for ${additionalCardSets} additional sets`);
+    // Keep numeric style; show total increment compactly
+    const r = 0.6529;
+    const increment = (0.05 * (1 - Math.pow(r, additionalCardSets))) / (1 - r);
+    // Limit to 6 decimals
+    const incStr = (Math.round(increment * 1e6) / 1e6).toString();
+    acquiredInfo.push(
+      `${incStr} for ${additionalCardSets} additional sets (0.05 * 0.6529^(n-1))`
+    );
   }
   breakdown.memes_card_sets.acquired_info = acquiredInfo;
 
@@ -588,93 +602,41 @@ function calculateMemesBoostsSeasons(
   let boost = 1;
   const breakdown = getDefaultBoost();
 
-  const cardSetS1 = hasSeasonSet(1, seasons, memes);
-  const cardSetS2 = hasSeasonSet(2, seasons, memes);
-  const cardSetS3 = hasSeasonSet(3, seasons, memes);
-  const cardSetS4 = hasSeasonSet(4, seasons, memes);
-  const cardSetS5 = hasSeasonSet(5, seasons, memes);
-  const cardSetS6 = hasSeasonSet(6, seasons, memes);
-  const cardSetS7 = hasSeasonSet(7, seasons, memes);
-  const cardSetS8 = hasSeasonSet(8, seasons, memes);
-  const cardSetS9 = hasSeasonSet(9, seasons, memes);
-  const cardSetS10 = hasSeasonSet(10, seasons, memes);
-  const cardSetS11 = hasSeasonSet(11, seasons, memes);
-  const cardSetS12 = hasSeasonSet(12, seasons, memes);
+  const applySeasonBoost = (season: number) => {
+    boost += 0.05;
+    (breakdown as any)[`memes_szn${season}`].acquired = 0.05;
+    (breakdown as any)[`memes_szn${season}`].acquired_info = [
+      `0.05 for holding Season ${season} Set`
+    ];
+  };
 
-  if (cardSetS1) {
-    boost += 0.05;
-    breakdown.memes_szn1.acquired = 0.05;
-    breakdown.memes_szn1.acquired_info = ['0.05 for holding Season 1 Set'];
-  } else {
-    if (s1Extra.genesis) {
-      boost += 0.01;
-      breakdown.memes_genesis.acquired = 0.01;
-      breakdown.memes_genesis.acquired_info = [
-        '0.01 for holding Meme Cards #1, #2, #3 (Genesis Set)'
-      ];
+  for (let season = 1; season <= 12; season++) {
+    const hasSet = hasSeasonSet(season, seasons, memes);
+
+    if (season === 1) {
+      if (hasSet) {
+        applySeasonBoost(1);
+      } else {
+        if (s1Extra.genesis) {
+          boost += 0.01;
+          breakdown.memes_genesis.acquired = 0.01;
+          breakdown.memes_genesis.acquired_info = [
+            '0.01 for holding Meme Cards #1, #2, #3 (Genesis Set)'
+          ];
+        }
+        if (s1Extra.nakamoto) {
+          boost += 0.01;
+          breakdown.memes_nakamoto.acquired = 0.01;
+          breakdown.memes_nakamoto.acquired_info = [
+            '0.01 for holding Meme Cards #4 (NakamotoFreedom)'
+          ];
+        }
+      }
+    } else {
+      if (hasSet) {
+        applySeasonBoost(season);
+      }
     }
-    if (s1Extra.nakamoto) {
-      boost += 0.01;
-      breakdown.memes_nakamoto.acquired = 0.01;
-      breakdown.memes_nakamoto.acquired_info = [
-        '0.01 for holding Meme Cards #4 (NakamotoFreedom)'
-      ];
-    }
-  }
-  if (cardSetS2) {
-    boost += 0.05;
-    breakdown.memes_szn2.acquired = 0.05;
-    breakdown.memes_szn2.acquired_info = ['0.05 for holding Season 2 Set'];
-  }
-  if (cardSetS3) {
-    boost += 0.05;
-    breakdown.memes_szn3.acquired = 0.05;
-    breakdown.memes_szn3.acquired_info = ['0.05 for holding Season 3 Set'];
-  }
-  if (cardSetS4) {
-    boost += 0.05;
-    breakdown.memes_szn4.acquired = 0.05;
-    breakdown.memes_szn4.acquired_info = ['0.05 for holding Season 4 Set'];
-  }
-  if (cardSetS5) {
-    boost += 0.05;
-    breakdown.memes_szn5.acquired = 0.05;
-    breakdown.memes_szn5.acquired_info = ['0.05 for holding Season 5 Set'];
-  }
-  if (cardSetS6) {
-    boost += 0.05;
-    breakdown.memes_szn6.acquired = 0.05;
-    breakdown.memes_szn6.acquired_info = ['0.05 for holding Season 6 Set'];
-  }
-  if (cardSetS7) {
-    boost += 0.05;
-    breakdown.memes_szn7.acquired = 0.05;
-    breakdown.memes_szn7.acquired_info = ['0.05 for holding Season 7 Set'];
-  }
-  if (cardSetS8) {
-    boost += 0.05;
-    breakdown.memes_szn8.acquired = 0.05;
-    breakdown.memes_szn8.acquired_info = ['0.05 for holding Season 8 Set'];
-  }
-  if (cardSetS9) {
-    boost += 0.05;
-    breakdown.memes_szn9.acquired = 0.05;
-    breakdown.memes_szn9.acquired_info = ['0.05 for holding Season 9 Set'];
-  }
-  if (cardSetS10) {
-    boost += 0.05;
-    breakdown.memes_szn10.acquired = 0.05;
-    breakdown.memes_szn10.acquired_info = ['0.05 for holding Season 10 Set'];
-  }
-  if (cardSetS11) {
-    boost += 0.05;
-    breakdown.memes_szn11.acquired = 0.05;
-    breakdown.memes_szn11.acquired_info = ['0.05 for holding Season 11 Set'];
-  }
-  if (cardSetS12) {
-    boost += 0.05;
-    breakdown.memes_szn12.acquired = 0.05;
-    breakdown.memes_szn12.acquired_info = ['0.05 for holding Season 12 Set'];
   }
 
   return {
@@ -716,14 +678,13 @@ export function calculateBoost(
   let boost = memesBoosts.boost;
   const breakdown = memesBoosts.breakdown;
 
-  // GRADIENTS up to 3
-  const gradientsBoost = Math.min(gradients.length * 0.02, 0.06);
+  // GRADIENTS up to 5
+  const countedGradients = Math.min(gradients.length, 5);
+  const gradientsBoost = Math.min(gradients.length * 0.02, 0.1);
   if (gradientsBoost > 0) {
     breakdown.gradients.acquired = gradientsBoost;
     breakdown.gradients.acquired_info = [
-      `${gradientsBoost} for holding ${gradients.length} Gradient${
-        gradients.length > 1 ? 's' : ''
-      }`
+      `${gradientsBoost} for holding ${countedGradients} Gradient${countedGradients > 1 ? 's' : ''}`
     ];
     boost += gradientsBoost;
   }
