@@ -32,10 +32,19 @@ functions:
 
 resources:
   Resources:
-    ExternalCollectionSnapshottingLoopOOMFilter:
-      Type: AWS::Logs::MetricFilter
+    ExternalCollectionSnapshottingLoopLogGroup:
+      Type: AWS::Logs::LogGroup
       Properties:
         LogGroupName: /aws/lambda/externalCollectionSnapshottingLoop
+        RetentionInDays: 60
+
+    ExternalCollectionSnapshottingLoopOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      DependsOn:
+        - ExternalCollectionSnapshottingLoopLogGroup
+      Properties:
+        LogGroupName:
+          Ref: ExternalCollectionSnapshottingLoopLogGroup
         FilterPattern: "Runtime.OutOfMemory"
         MetricTransformations:
           - MetricNamespace: "Lambda/OOM"
