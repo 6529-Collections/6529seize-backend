@@ -2293,7 +2293,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ApiDropsPage"
+                $ref: "#/components/schemas/ApiTdhGrantsPage"
         "400":
           description: Invalid request
     post:
@@ -4109,6 +4109,7 @@ components:
         valid_to:
           type: number
           format: int64
+          nullable: true
         tdh_rate:
           type: number
           format: int64
@@ -5975,6 +5976,7 @@ components:
         valid_to:
           type: number
           format: int64
+          nullable: true
         tdh_rate:
           type: number
           format: int64

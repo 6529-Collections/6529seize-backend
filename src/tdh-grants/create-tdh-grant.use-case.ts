@@ -3,12 +3,8 @@ import {
   CreateTdhGrantCommand,
   fromTdhGrantEntityToModel,
   TdhGrantModel
-} from './create-tdh-grant.models';
+} from './tdh-grant.models';
 import { BadRequestException } from '../exceptions';
-import {
-  nftIndexerClient,
-  NftIndexerClient
-} from '../api-serverless/src/nft-indexer-client/nft-indexer-client';
 import { TdhGrantEntity, TdhGrantStatus } from '../entities/ITdhGrant';
 import { randomUUID } from 'crypto';
 import { Time } from '../time';
@@ -16,11 +12,15 @@ import {
   tdhGrantsRepository,
   TdhGrantsRepository
 } from './tdh-grants.repository';
+import {
+  externalIndexingRepository,
+  ExternalIndexingRepository
+} from '../external-indexing/external-indexing.repository';
 
 export class CreateTdhGrantUseCase {
   constructor(
-    private readonly indexerClient: NftIndexerClient,
-    private readonly tdhGrantsRepository: TdhGrantsRepository
+    private readonly tdhGrantsRepository: TdhGrantsRepository,
+    private readonly externalIndexingRepository: ExternalIndexingRepository
   ) {}
 
   public async handle(
@@ -34,17 +34,17 @@ export class CreateTdhGrantUseCase {
           `Irrevocable grants are not supported yet`
         );
       }
-      const indexerState = await this.indexerClient.getStateOrStartIndexing({
-        chain: command.target_chain,
-        contract: command.target_contract
-      });
+      const indexerState =
+        await this.externalIndexingRepository.upsertOrSelectCollection(
+          {
+            chain: command.target_chain,
+            contract: command.target_contract
+          },
+          ctx
+        );
       if (
         indexerState.status === 'ERROR_SNAPSHOTTING' ||
-        indexerState.status === 'UNINDEXABLE' ||
-        indexerState.status === 'NOT_INDEXED' ||
-        (indexerState.status !== 'LIVE_TAILING' &&
-          indexerState.status !== 'SNAPSHOTTING' &&
-          indexerState.status !== 'WAITING_FOR_SNAPSHOTTING')
+        indexerState.status === 'UNINDEXABLE'
       ) {
         throw new BadRequestException(
           `There is a problem snapshotting given address. Please let the dev team know.`
@@ -63,7 +63,7 @@ export class CreateTdhGrantUseCase {
               : null,
             created_at: Time.currentMillis(),
             valid_from: null,
-            valid_to: command.valid_to.toMillis(),
+            valid_to: command.valid_to?.toMillis() ?? null,
             tdh_rate: command.tdh_rate,
             status: TdhGrantStatus.PENDING,
             error_details: null,
@@ -80,6 +80,6 @@ export class CreateTdhGrantUseCase {
 }
 
 export const createTdhGrantUseCase = new CreateTdhGrantUseCase(
-  nftIndexerClient,
-  tdhGrantsRepository
+  tdhGrantsRepository,
+  externalIndexingRepository
 );
