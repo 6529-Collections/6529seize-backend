@@ -33,10 +33,18 @@ functions:
 
 resources:
   Resources:
-    ExternalCollectionLiveTailingLoopOOMFilter:
-      Type: AWS::Logs::MetricFilter
+    ExternalCollectionLiveTailingLoopLogGroup:
+      Type: AWS::Logs::LogGroup
       Properties:
         LogGroupName: /aws/lambda/externalCollectionLiveTailingLoop
+        RetentionInDays: 60
+    ExternalCollectionLiveTailingLoopOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      DependsOn:
+        - ExternalCollectionLiveTailingLoopLogGroup
+      Properties:
+        LogGroupName:
+          Ref: ExternalCollectionLiveTailingLoopLogGroup
         FilterPattern: "Runtime.OutOfMemory"
         MetricTransformations:
           - MetricNamespace: "Lambda/OOM"
