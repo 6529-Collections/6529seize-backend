@@ -10,6 +10,11 @@ import {
 import { ExternalIndexedOwnership721Entity } from '../entities/IExternalIndexedOwnership721';
 import { ExternalIndexedOwnership721HistoryEntity } from '../entities/IExternalIndexedOwnership721History';
 import { ExternalIndexedTransfersEntity } from '../entities/IExternalIndexedTransfer';
+import { externalIndexerRpc, ExternalIndexerRpc } from './external-indexer-rpc';
+import {
+  externalCollectionSaleDetector,
+  ExternalCollectionSaleDetector
+} from './external-collection-sale-detector';
 
 const PUNKS_ABI_EVENTS = [
   'event PunkTransfer(address indexed from, address indexed to, uint256 punkIndex)',
@@ -32,24 +37,18 @@ const CRYPTOPUNKS_MAINNET = '0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb';
 
 export class ExternalCollectionLiveTailService {
   private readonly log = Logger.get(this.constructor.name);
-  private provider!: ethers.providers.JsonRpcProvider;
 
-  constructor(private readonly indexingRepo: ExternalIndexingRepository) {}
-
-  private getProvider(): ethers.providers.JsonRpcProvider {
-    if (!this.provider) {
-      this.provider = new ethers.providers.JsonRpcProvider(
-        env.getStringOrThrow('NFT_INDEXER_RPC')
-      );
-    }
-    return this.provider;
-  }
+  constructor(
+    private readonly indexingRepo: ExternalIndexingRepository,
+    private readonly rpc: ExternalIndexerRpc,
+    private readonly saleDetector: ExternalCollectionSaleDetector
+  ) {}
 
   private async getBestBlock(): Promise<number> {
     let tries = 0;
     while (true) {
       try {
-        return await this.getProvider().getBlockNumber();
+        return await this.rpc.provider.getBlockNumber();
       } catch (e) {
         if (++tries > 3) throw e;
         await Time.millis(500 * tries).sleep();
@@ -58,21 +57,21 @@ export class ExternalCollectionLiveTailService {
   }
 
   private async getBlockTimestamp(blockNumber: number): Promise<number> {
-    const blk = await this.getProvider().getBlock(blockNumber);
+    const blk = await this.rpc.provider.getBlock(blockNumber);
     if (!blk) throw new Error(`Block ${blockNumber} not found`);
     return blk.timestamp;
   }
 
   private async getLogs(contract: string, fromBlock: number, toBlock: number) {
     if (contract.toLowerCase() === CRYPTOPUNKS_MAINNET) {
-      return this.getProvider().getLogs({
+      return this.rpc.provider.getLogs({
         address: contract,
         topics: [[PUNKS_TRANSFER_TOPIC, PUNKS_ASSIGN_TOPIC]],
         fromBlock,
         toBlock
       });
     }
-    return this.getProvider().getLogs({
+    return this.rpc.provider.getLogs({
       address: contract,
       topics: [ERC721_TRANSFER_TOPIC],
       fromBlock,
@@ -159,14 +158,6 @@ export class ExternalCollectionLiveTailService {
     );
   }
 
-  private async classifySale(
-    _tx: string,
-    _contract: string,
-    _block?: number
-  ): Promise<boolean> {
-    return true;
-  }
-
   public async processLiveRange(
     collection: { partition: string; chain: number; contract: string },
     fromBlock: number,
@@ -193,12 +184,29 @@ export class ExternalCollectionLiveTailService {
     const events = await this.normalizeTransferLogs(contract, rawLogs);
     const now = Time.currentMillis();
 
+    // ✅ Per-tx memo so we call the detector at most once per transaction
+    const saleByTx = new Map<string, Promise<boolean>>();
+
+    const getIsSale = (txHash: string) => {
+      const existing = saleByTx.get(txHash);
+      if (existing) return existing;
+      const p = this.saleDetector
+        .isSale({ txHash, contract })
+        .catch(() => false); // defensive: on RPC hiccups, treat as non-sale
+      saleByTx.set(txHash, p);
+      return p;
+    };
+
     const transfers: ExternalIndexedTransfersEntity[] = [];
     const historyRows: ExternalIndexedOwnership721HistoryEntity[] = [];
     const currentByToken = new Map<string, ExternalIndexedOwnership721Entity>();
 
     for (const ev of events) {
-      const isSale = await this.classifySale(ev.tx, contract, ev.blockNumber);
+      // Never classify mints as sales
+      const isMint = ev.from === ethers.constants.AddressZero;
+
+      const isSale = isMint ? false : await getIsSale(ev.tx);
+
       transfers.push({
         partition,
         block_number: ev.blockNumber,
@@ -362,4 +370,8 @@ export class ExternalCollectionLiveTailService {
 }
 
 export const externalCollectionLiveTailService =
-  new ExternalCollectionLiveTailService(externalIndexingRepository);
+  new ExternalCollectionLiveTailService(
+    externalIndexingRepository,
+    externalIndexerRpc,
+    externalCollectionSaleDetector
+  );

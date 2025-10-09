@@ -1,8 +1,12 @@
 import { fetchLatestTDHBDate } from '../db';
-import { findNftTDH } from './nft_tdh';
-import { updateTDH } from './tdh';
-import { consolidateTDH } from './tdh_consolidation';
-import { ConsolidatedTDHUpload } from '../entities/IUpload';
+import { NextGenTokenTDH } from '../entities/INextGen';
+import { NFT } from '../entities/INFT';
+import { NFTOwner } from '../entities/INFTOwner';
+import {
+  ConsolidatedOwnerBalances,
+  OwnerBalances
+} from '../entities/IOwnerBalances';
+import { MemesSeason } from '../entities/ISeason';
 import {
   ConsolidatedTDH,
   ConsolidatedTDHMemes,
@@ -11,20 +15,16 @@ import {
   TDHBlock,
   TDHMemes
 } from '../entities/ITDH';
-import { NFT } from '../entities/INFT';
-import * as notifier from '../notifier';
+import { ConsolidatedTDHUpload } from '../entities/IUpload';
 import { Logger } from '../logging';
-import { Time } from '../time';
-import * as sentryContext from '../sentry.context';
-import { NextGenTokenTDH } from '../entities/INextGen';
-import { MemesSeason } from '../entities/ISeason';
-import { NFTOwner } from '../entities/INFTOwner';
-import { uploadTDH } from './tdh_upload';
-import {
-  ConsolidatedOwnerBalances,
-  OwnerBalances
-} from '../entities/IOwnerBalances';
+import * as notifier from '../notifier';
 import { doInDbContext } from '../secrets';
+import * as sentryContext from '../sentry.context';
+import { Time } from '../time';
+import { findNftTDH } from './nft_tdh';
+import { updateTDH } from './tdh';
+import { consolidateTDH } from './tdh_consolidation';
+import { uploadTDH } from './tdh_upload';
 
 const logger = Logger.get('TDH_LOOP');
 
