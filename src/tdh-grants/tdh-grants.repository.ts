@@ -2,8 +2,43 @@ import { dbSupplier, LazyDbAccessCompatibleService } from '../sql-executor';
 import { TdhGrantEntity, TdhGrantStatus } from '../entities/ITdhGrant';
 import { RequestContext } from '../request.context';
 import { TDH_GRANTS_TABLE } from '../constants';
+import { Time } from '../time';
+import { Logger } from '../logging';
 
 export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
+  private readonly logger = Logger.get(this.constructor.name);
+
+  public async lockOldestPendingGrant(
+    ctx: RequestContext
+  ): Promise<TdhGrantEntity | null> {
+    try {
+      ctx.timer?.start(`${this.constructor.name}->lockOldestPendingGrant`);
+      const connection = ctx.connection;
+      if (!connection) {
+        throw new Error(`Can not acquire db locks without a transaction`);
+      }
+      const grant = await this.db.oneOrNull<TdhGrantEntity>(
+        `
+      select * from ${TDH_GRANTS_TABLE} where status = '${TdhGrantStatus.PENDING}' order by updated_at limit 1 for update skip locked
+    `,
+        undefined,
+        { wrappedConnection: connection }
+      );
+      if (!grant) {
+        return null;
+      }
+      const now = Time.currentMillis();
+      await this.db.execute(
+        `update ${TDH_GRANTS_TABLE} set updated_at = :now where id = :grant_id`,
+        { now, grant_id: grant.id },
+        { wrappedConnection: connection }
+      );
+      return { ...grant, updated_at: now };
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->lockOldestPendingGrant`);
+    }
+  }
+
   public async insertGrant(
     tdhGrantEntity: TdhGrantEntity,
     ctx: RequestContext
@@ -15,10 +50,12 @@ export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
       (
        id,
        grantor_id,
+       target_partition,
        target_chain,
        target_contract,
        target_tokens,
        created_at,
+       updated_at,
        valid_from,
        valid_to,
        tdh_rate,
@@ -28,10 +65,12 @@ export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
       ) values (
        :id,
        :grantor_id,
+       :target_partition,
        :target_chain,
        :target_contract,
        :target_tokens,
        :created_at,
+       :updated_at,
        :valid_from,
        :valid_to,
        :tdh_rate,
@@ -162,52 +201,60 @@ export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
     return { whereAnds, params };
   }
 
-  async lockOldestPendingGrant(
-    offset: number,
-    ctx: RequestContext
-  ): Promise<TdhGrantEntity | null> {
-    ctx.timer?.start(`${this.constructor.name}->findOldestPendingGrant`);
-    try {
-      const connection = ctx.connection;
-      if (!connection) {
-        throw new Error(
-          `Can't lock a database entity outside of a transaction`
-        );
-      }
-      return await this.db.oneOrNull<TdhGrantEntity>(
-        `
-        select t.* from ${TDH_GRANTS_TABLE} t 
-        where t.status = :status 
-        order by t.created_at
-        limit 1 offset :offset
-        for update skip locked
-      `,
-        { offset, status: TdhGrantStatus.PENDING },
-        { wrappedConnection: connection }
-      );
-    } finally {
-      ctx.timer?.stop(`${this.constructor.name}->findOldestPendingGrant`);
-    }
-  }
-
   async updateStatus(
-    param: { grantId: string; status: TdhGrantStatus; error: string },
+    param: { grantId: string; status: TdhGrantStatus; error: string | null },
     ctx: RequestContext
   ) {
     ctx.timer?.start(`${this.constructor.name}->updateStatus`);
+    this.logger.info(`Updating grant status`, param);
     try {
       await this.db.execute(
         `update ${TDH_GRANTS_TABLE}
          set status = :status,
-             error_details = :error
+             error_details = :error,
+             updated_at = :now
          where id = :grantId`,
-        param,
+        { ...param, now: Time.currentMillis() },
         {
           wrappedConnection: ctx.connection
         }
       );
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->updateStatus`);
+    }
+  }
+
+  async getGrantorsSpentTdhRateInTimeSpan(
+    param: {
+      grantorId: string;
+      validFrom: number;
+      validTo: number | null;
+    },
+    ctx: RequestContext
+  ): Promise<number> {
+    try {
+      ctx.timer?.start(
+        `${this.constructor.name}->getGrantorsActiveGrantsInTimeSpan`
+      );
+      return this.db
+        .oneOrNull<{ spent_rate: number }>(
+          `
+        select sum(g.tdh_rate) as spent_rate from ${TDH_GRANTS_TABLE} g 
+        where g.grantor_id = :grantorId
+        and g.status = '${TdhGrantStatus.GRANTED}'
+        and g.valid_from >= :validFrom
+        and (g.valid_to is null ${param.validTo === null ? `` : `valid_to <= :validTo`})
+        `,
+          param,
+          {
+            wrappedConnection: ctx.connection
+          }
+        )
+        ?.then((res) => +(res?.spent_rate ?? 0));
+    } finally {
+      ctx.timer?.stop(
+        `${this.constructor.name}->getGrantorsActiveGrantsInTimeSpan`
+      );
     }
   }
 }
