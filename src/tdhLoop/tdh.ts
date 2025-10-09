@@ -580,7 +580,7 @@ function calculateMemesBoostsCardSets(cardSets: number) {
     // Limit to 6 decimals
     const incStr = (Math.round(increment * 1e6) / 1e6).toString();
     acquiredInfo.push(
-      `${incStr} for ${additionalCardSets} additional sets (0.05 * 0.6529^(n-1))`
+      `${incStr} for ${additionalCardSets} additional sets (0.05 * 0.6529^(${additionalCardSets - 1}))`
     );
   }
   breakdown.memes_card_sets.acquired_info = acquiredInfo;
