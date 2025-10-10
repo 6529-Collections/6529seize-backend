@@ -53,15 +53,18 @@ export class CreateTdhGrantUseCase {
       return await this.tdhGrantsRepository.executeNativeQueriesInTransaction(
         async (connection) => {
           const ctxWithConnection = { ...ctx, connection };
+          const currentMillis = Time.currentMillis();
           const entity: TdhGrantEntity = {
             id: randomUUID(),
             grantor_id: command.grantor_id,
+            target_partition: `${command.target_chain}:${command.target_contract}`,
             target_chain: command.target_chain,
             target_contract: command.target_contract,
             target_tokens: command.target_tokens.length
               ? command.target_tokens.join(`,`)
               : null,
-            created_at: Time.currentMillis(),
+            created_at: currentMillis,
+            updated_at: currentMillis,
             valid_from: null,
             valid_to: command.valid_to?.toMillis() ?? null,
             tdh_rate: command.tdh_rate,
