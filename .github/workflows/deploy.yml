@@ -49,6 +49,7 @@ on:
           - s3Loop
           - subscriptionsDaily
           - subscriptionsTopUpLoop
+          - tdhGrantsReviewerLoop
           - tdhHistoryLoop
           - tdhLoop
           - teamLoop
