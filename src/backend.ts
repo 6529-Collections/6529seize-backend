@@ -1,6 +1,6 @@
 import { Logger } from './logging';
 import * as dbMigrationsLoop from './dbMigrationsLoop';
-import * as externalCollectionLiveTailingLoop from './externalCollectionLiveTailingLoop';
+import * as tdhGrantsReviewerLoop from './tdhGrantsReviewerLoop';
 
 const logger = Logger.get('BACKEND');
 
@@ -12,7 +12,7 @@ async function start() {
     undefined as any,
     undefined as any
   );
-  await externalCollectionLiveTailingLoop.handler(
+  await tdhGrantsReviewerLoop.handler(
     undefined as any,
     undefined as any,
     undefined as any

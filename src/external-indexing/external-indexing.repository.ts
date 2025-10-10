@@ -560,6 +560,47 @@ export class ExternalIndexingRepository extends LazyDbAccessCompatibleService {
         ? (result as any)[1] // defensive: some wrappers expose index 1
         : 0;
   }
+
+  async findCollectionInfo(
+    { partition }: { partition: string },
+    ctx: RequestContext
+  ): Promise<ExternalIndexedContractEntity | null> {
+    try {
+      ctx.timer?.start(`${this.constructor.name}->findCollectionInfo`);
+      return this.db.oneOrNull(
+        `select * from ${EXTERNAL_INDEXED_CONTRACTS_TABLE} c where c.partition = :partition`,
+        { partition },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->findCollectionInfo`);
+    }
+  }
+
+  async getAllTokenNumbersForCollection(
+    param: { partition: string },
+    ctx: RequestContext
+  ): Promise<Set<string>> {
+    try {
+      ctx.timer?.start(
+        `${this.constructor.name}->getAllTokenNumbersForCollection`
+      );
+      const tokenIds = await this.db
+        .execute<{
+          token_id: string;
+        }>(
+          `select o.token_id from ${EXTERNAL_INDEXED_OWNERSHIP_721_TABLE} o where o.partition = :partition`,
+          param,
+          { wrappedConnection: ctx.connection }
+        )
+        .then((res) => res.map((it) => it.token_id));
+      return new Set<string>(tokenIds);
+    } finally {
+      ctx.timer?.stop(
+        `${this.constructor.name}->getAllTokenNumbersForCollection`
+      );
+    }
+  }
 }
 
 export const externalIndexingRepository = new ExternalIndexingRepository(

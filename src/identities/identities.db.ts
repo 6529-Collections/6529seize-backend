@@ -15,7 +15,8 @@ import {
   NFTS_TABLE,
   PROFILES_ARCHIVE_TABLE,
   PROFILES_TABLE,
-  WALLETS_TDH_TABLE
+  WALLETS_TDH_TABLE,
+  X_TDH_COEFFICIENT
 } from '../constants';
 import { Profile, ProfileClassification } from '../entities/IProfile';
 import { AddressConsolidationKey } from '../entities/IAddressConsolidationKey';
@@ -1013,6 +1014,21 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
       },
       {} as Record<string, number>
     );
+  }
+
+  async getXTdhRate(id: string, ctx: RequestContext): Promise<number> {
+    return this.db
+      .oneOrNull<{
+        tdh_rate: number;
+      }>(
+        `
+      select ifnull(t.created_boosted_tdh, 0) as tdh_rate from ${IDENTITIES_TABLE} i
+    left join ${LATEST_TDH_HISTORY_TABLE} t on t.consolidation_key = i.consolidation_key where i.profile_id = :id
+    `,
+        { id },
+        { wrappedConnection: ctx.connection }
+      )
+      .then((res) => (res?.tdh_rate ?? 0) * X_TDH_COEFFICIENT);
   }
 }
 

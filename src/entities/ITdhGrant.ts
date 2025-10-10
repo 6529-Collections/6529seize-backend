@@ -13,10 +13,15 @@ export class TdhGrantEntity {
   readonly target_chain!: number;
   @Column({ type: 'varchar', length: 100, nullable: false })
   readonly target_contract!: string;
+  @Index()
+  @Column({ type: 'varchar', length: 100, nullable: false })
+  readonly target_partition!: string;
   @Column({ type: 'text', nullable: true })
   readonly target_tokens!: string | null;
   @Column({ type: 'bigint', nullable: false })
   readonly created_at!: number;
+  @Column({ type: 'bigint', nullable: false })
+  readonly updated_at!: number;
   @Column({ type: 'bigint', nullable: true })
   readonly valid_from!: number | null;
   @Column({ type: 'bigint', nullable: true })
