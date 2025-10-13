@@ -108,6 +108,7 @@ export const SUBSCRIPTIONS_ADMIN_WALLETS = [
 ];
 
 export const TDH_GRANTS_TABLE = 'tdh_grants';
+export const TDH_GRANT_TOKENS_TABLE = 'tdh_grant_tokens';
 
 export const DELETED_DROPS_TABLE = 'deleted_drops';
 export const DROPS_TABLE = 'drops';

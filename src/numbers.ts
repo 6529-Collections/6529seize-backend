@@ -34,6 +34,10 @@ export class Numbers {
     }
     return result;
   }
+
+  public range(start: number, end: number): number[] {
+    return Array.from({ length: end - start + 1 }, (_, i) => i + start);
+  }
 }
 
 export const numbers = new Numbers();

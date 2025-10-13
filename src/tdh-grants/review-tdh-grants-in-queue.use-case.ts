@@ -11,7 +11,6 @@ import {
 import { Logger } from '../logging';
 import { TdhGrantEntity, TdhGrantStatus } from '../entities/ITdhGrant';
 import { IndexedContractStatus } from '../entities/IExternalIndexedContract';
-import { numbers } from '../numbers';
 import { identitiesDb, IdentitiesDb } from '../identities/identities.db';
 import { assertUnreachable } from '../assertions';
 
@@ -185,34 +184,17 @@ export class ReviewTdhGrantsInQueueUseCase {
   }
 
   private async searchForMissingToken(
-    grantCandidate: TdhGrantEntity,
+    grantCandidate: TdhGrantEntity & { tokens: string[] },
     ctx: RequestContext
   ) {
-    const targetTokenSpans: string[] =
-      grantCandidate.target_tokens === null
-        ? []
-        : grantCandidate.target_tokens.split(`,`);
     let missingToken: string | undefined = undefined;
-    if (targetTokenSpans.length) {
-      const range = (start: number, end: number) =>
-        Array.from({ length: end - start + 1 }, (_, i) => i + start).map((it) =>
-          it.toString()
-        );
-      const targetTokens = targetTokenSpans.flatMap((tokenSpan) => {
-        if (tokenSpan.includes('-')) {
-          const [start, end] = tokenSpan
-            .split('-')
-            .map((num) => numbers.parseIntOrThrow(num));
-          return range(start, end);
-        }
-        return [tokenSpan];
-      });
+    if (grantCandidate.tokens.length) {
       const actualTokens =
         await this.externalIndexingRepository.getAllTokenNumbersForCollection(
           { partition: grantCandidate.target_partition },
           ctx
         );
-      missingToken = targetTokens.find((it) => !actualTokens.has(it));
+      missingToken = grantCandidate.tokens.find((it) => !actualTokens.has(it));
     }
     return missingToken;
   }
