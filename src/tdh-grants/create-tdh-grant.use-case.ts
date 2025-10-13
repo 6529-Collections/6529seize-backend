@@ -5,7 +5,11 @@ import {
   TdhGrantModel
 } from './tdh-grant.models';
 import { BadRequestException } from '../exceptions';
-import { TdhGrantEntity, TdhGrantStatus } from '../entities/ITdhGrant';
+import {
+  TdhGrantEntity,
+  TdhGrantStatus,
+  TdhGrantTokenMode
+} from '../entities/ITdhGrant';
 import { randomUUID } from 'crypto';
 import { Time } from '../time';
 import {
@@ -16,6 +20,8 @@ import {
   externalIndexingRepository,
   ExternalIndexingRepository
 } from '../external-indexing/external-indexing.repository';
+import { numbers } from '../numbers';
+import { TdhGrantTokenEntity } from '../entities/ITdhGrantToken';
 
 export class CreateTdhGrantUseCase {
   constructor(
@@ -54,12 +60,37 @@ export class CreateTdhGrantUseCase {
         async (connection) => {
           const ctxWithConnection = { ...ctx, connection };
           const currentMillis = Time.currentMillis();
+          const tokenMode = command.target_tokens.length
+            ? TdhGrantTokenMode.INCLUDE
+            : TdhGrantTokenMode.ALL;
+          const grantId = randomUUID();
+          const targetPartition = `${command.target_chain}:${command.target_contract}`;
+          const tokenEntities = command.target_tokens
+            .flatMap((tokenOrTokenSpan) => {
+              if (tokenOrTokenSpan.includes('-')) {
+                const [start, end] = tokenOrTokenSpan.split('-');
+                return numbers
+                  .range(
+                    numbers.parseIntOrThrow(start),
+                    numbers.parseIntOrThrow(end)
+                  )
+                  .map((it) => it.toString());
+              } else {
+                return [tokenOrTokenSpan];
+              }
+            })
+            .map<TdhGrantTokenEntity>((token) => ({
+              token_id: token,
+              grant_id: grantId,
+              target_partition: targetPartition
+            }));
           const entity: TdhGrantEntity = {
-            id: randomUUID(),
+            id: grantId,
             grantor_id: command.grantor_id,
-            target_partition: `${command.target_chain}:${command.target_contract}`,
+            target_partition: targetPartition,
             target_chain: command.target_chain,
             target_contract: command.target_contract,
+            token_mode: tokenMode,
             target_tokens: command.target_tokens.length
               ? command.target_tokens.join(`,`)
               : null,
@@ -72,7 +103,11 @@ export class CreateTdhGrantUseCase {
             error_details: null,
             is_irrevocable: command.is_irrevocable
           };
-          await this.tdhGrantsRepository.insertGrant(entity, ctxWithConnection);
+          await this.tdhGrantsRepository.insertGrant(
+            entity,
+            tokenEntities,
+            ctxWithConnection
+          );
           return fromTdhGrantEntityToModel(entity);
         }
       );
