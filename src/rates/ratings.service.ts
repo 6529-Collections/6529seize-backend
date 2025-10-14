@@ -887,6 +887,9 @@ export class RatingsService {
                   cic: 0,
                   rep: 0,
                   tdh: 0,
+                  x_tdh: 0,
+                  produced_x_tdh: 0,
+                  granted_x_tdh: 0,
                   level_raw: 0
                 },
                 connection

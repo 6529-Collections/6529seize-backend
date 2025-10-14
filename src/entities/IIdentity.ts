@@ -51,4 +51,13 @@ export class IdentityEntity {
 
   @Column({ type: 'varchar', length: 255, nullable: true, default: null })
   public readonly sub_classification!: string | null;
+
+  @Column({ type: 'double', nullable: false, default: 0 })
+  readonly x_tdh!: number;
+
+  @Column({ type: 'double', nullable: false, default: 0 })
+  readonly produced_x_tdh!: number;
+
+  @Column({ type: 'double', nullable: false, default: 0 })
+  readonly granted_x_tdh!: number;
 }

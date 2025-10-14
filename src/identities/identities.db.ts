@@ -687,7 +687,14 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
   public async insertProfileArchiveRecord(
     param: Omit<
       IdentityEntity,
-      'cic' | 'rep' | 'tdh' | 'level_raw' | 'consolidation_key'
+      | 'cic'
+      | 'rep'
+      | 'tdh'
+      | 'level_raw'
+      | 'consolidation_key'
+      | 'x_tdh'
+      | 'produced_x_tdh'
+      | 'granted_x_tdh'
     >,
     connection: ConnectionWrapper<any>
   ) {

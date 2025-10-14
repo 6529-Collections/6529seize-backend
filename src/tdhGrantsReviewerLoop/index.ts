@@ -1,9 +1,9 @@
 import { Logger } from '../logging';
 import * as sentryContext from '../sentry.context';
 import { doInDbContext } from '../secrets';
-import { reviewTdhGrantUseCase } from '../tdh-grants/review-tdh-grants-in-queue.use-case';
 import { Timer } from '../time';
 import { RequestContext } from '../request.context';
+import { reviewTdhGrantUseCase } from '../tdh-grants/review-tdh-grants-in-queue.use-case';
 
 const logger = Logger.get('TDH_GRANTS_REVIEWER_LOOP');
 
