@@ -1,16 +1,22 @@
 import { dbSupplier, LazyDbAccessCompatibleService } from '../sql-executor';
-import { TdhGrantEntity, TdhGrantStatus } from '../entities/ITdhGrant';
+import {
+  TdhGrantEntity,
+  TdhGrantStatus,
+  TdhGrantTokenMode
+} from '../entities/ITdhGrant';
 import { RequestContext } from '../request.context';
-import { TDH_GRANTS_TABLE } from '../constants';
+import { TDH_GRANT_TOKENS_TABLE, TDH_GRANTS_TABLE } from '../constants';
 import { Time } from '../time';
 import { Logger } from '../logging';
+import { TdhGrantTokenEntity } from '../entities/ITdhGrantToken';
+import { bulkInsert } from '../db/my-sql.helpers';
 
 export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
   private readonly logger = Logger.get(this.constructor.name);
 
   public async lockOldestPendingGrant(
     ctx: RequestContext
-  ): Promise<TdhGrantEntity | null> {
+  ): Promise<(TdhGrantEntity & { tokens: string[] }) | null> {
     try {
       ctx.timer?.start(`${this.constructor.name}->lockOldestPendingGrant`);
       const connection = ctx.connection;
@@ -33,7 +39,19 @@ export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
         { now, grant_id: grant.id },
         { wrappedConnection: connection }
       );
-      return { ...grant, updated_at: now };
+      const tokens: string[] = [];
+      if (grant.token_mode === TdhGrantTokenMode.INCLUDE) {
+        await this.db
+          .execute<{
+            token_id: string;
+          }>(
+            `select token_id from ${TDH_GRANT_TOKENS_TABLE} where grant_id = :grant_id`,
+            { grant_id: grant.id },
+            { wrappedConnection: connection }
+          )
+          .then((res) => res.forEach((it) => tokens.push(it.token_id)));
+      }
+      return { ...grant, tokens, updated_at: now };
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->lockOldestPendingGrant`);
     }
@@ -41,6 +59,7 @@ export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
 
   public async insertGrant(
     tdhGrantEntity: TdhGrantEntity,
+    tokens: TdhGrantTokenEntity[],
     ctx: RequestContext
   ) {
     ctx.timer?.start(`${this.constructor.name}->insertGrant`);
@@ -54,6 +73,7 @@ export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
        target_chain,
        target_contract,
        target_tokens,
+       token_mode,
        created_at,
        updated_at,
        valid_from,
@@ -69,6 +89,7 @@ export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
        :target_chain,
        :target_contract,
        :target_tokens,
+       :token_mode,
        :created_at,
        :updated_at,
        :valid_from,
@@ -83,6 +104,13 @@ export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
       {
         wrappedConnection: ctx.connection
       }
+    );
+    await bulkInsert(
+      this.db,
+      TDH_GRANT_TOKENS_TABLE,
+      tokens as unknown as Record<string, any>[],
+      ['grant_id', 'token_id', 'target_partition'],
+      ctx
     );
     ctx.timer?.stop(`${this.constructor.name}->insertGrant`);
   }
