@@ -166,7 +166,10 @@ export async function syncIdentitiesWithTdhConsolidations(
               banner1: null,
               banner2: null,
               classification: null,
-              sub_classification: null
+              sub_classification: null,
+              x_tdh: 0,
+              produced_x_tdh: 0,
+              granted_x_tdh: 0
             };
           })
       )
@@ -270,7 +273,10 @@ export async function syncIdentitiesWithTdhConsolidations(
           banner1: null,
           banner2: null,
           classification: null,
-          sub_classification: null
+          sub_classification: null,
+          x_tdh: 0,
+          produced_x_tdh: 0,
+          granted_x_tdh: 0
         });
       }
     }

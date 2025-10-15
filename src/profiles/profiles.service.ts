@@ -12,10 +12,7 @@ import {
   NewProfileActivityLog,
   profileActivityLogsDb
 } from '../profileActivityLogs/profile-activity-logs.db';
-import {
-  ProfileActivityLog,
-  ProfileActivityLogType
-} from '../entities/IProfileActivityLog';
+import { ProfileActivityLogType } from '../entities/IProfileActivityLog';
 import { ratingsService, RatingsService } from '../rates/ratings.service';
 import { cicService, CicService } from '../cic/cic.service';
 import { randomUUID } from 'crypto';
@@ -30,7 +27,6 @@ import {
   IdentityNotificationsDb
 } from '../notifications/identity-notifications.db';
 import { RequestContext } from '../request.context';
-import { IdentityEntity } from '../entities/IIdentity';
 import {
   reactionsDb,
   ReactionsDb
@@ -43,8 +39,8 @@ import { ApiIdentity } from '../api-serverless/src/generated/models/ApiIdentity'
 import { identitySubscriptionsDb } from '../api-serverless/src/identity-subscriptions/identity-subscriptions.db';
 import { identityFetcher } from '../api-serverless/src/identities/identity.fetcher';
 import { enums } from '../enums';
-import { ids } from '../ids';
 import { collections } from '../collections';
+import { identitiesService } from '../api-serverless/src/identities/identities.service';
 
 export class ProfilesService {
   private readonly logger = Logger.get('PROFILES_SERVICE');
@@ -157,132 +153,12 @@ export class ProfilesService {
     ctx.timer?.start(
       `${this.constructor.name}->createProfilesAndIdentitiesForThoseWhoAreMissingAndGetProfileIdsByAddresses`
     );
-    let allIdentitiesAndProfiles =
+    await identitiesService.bulkCreateIdentities(addresses, ctx);
+    const allIdentitiesAndProfiles =
       await identitiesDb.getEverythingRelatedToIdentitiesByAddresses(
         addresses,
         ctx.connection!
       );
-    const addressesMissingIdentities = addresses.filter(
-      (it) => !allIdentitiesAndProfiles[it]
-    );
-    const newIdentities = addressesMissingIdentities.map<IdentityEntity>(
-      (address) => ({
-        primary_address: address,
-        profile_id: randomUUID(),
-        consolidation_key: address,
-        handle: null,
-        normalised_handle: null,
-        tdh: 0,
-        rep: 0,
-        cic: 0,
-        level_raw: 0,
-        pfp: null,
-        banner1: null,
-        banner2: null,
-        classification: null,
-        sub_classification: null
-      })
-    );
-    if (newIdentities.length) {
-      await identitiesDb.bulkInsertIdentities(newIdentities, ctx.connection!);
-      allIdentitiesAndProfiles =
-        await identitiesDb.getEverythingRelatedToIdentitiesByAddresses(
-          addresses,
-          ctx.connection!
-        );
-    }
-    const identitiesMissingProfiles = Object.entries(
-      Object.values(allIdentitiesAndProfiles)
-        .filter((it) => !it.profile)
-        .reduce(
-          (acc, it) => {
-            acc[it.identity.primary_address] = it.identity.profile_id!;
-            return acc;
-          },
-          {} as Record<string, string>
-        )
-    ).map(([address, profileId]) => ({ address, profileId }));
-    const authenticationContext = ctx.authenticationContext;
-    if (!authenticationContext?.authenticatedWallet) {
-      throw new BadRequestException(
-        'Not authenticated. Can not create profiles'
-      );
-    }
-    const now = Time.now().toDate();
-    const authenticatedWallet = authenticationContext.authenticatedWallet;
-    const newProfileEntities = identitiesMissingProfiles.map<Profile>(
-      ({ address, profileId }) => ({
-        external_id: profileId,
-        handle: `id-${address}`,
-        normalised_handle: `id-${address}`,
-        primary_wallet: address,
-        created_by_wallet: authenticatedWallet,
-        classification: ProfileClassification.PSEUDONYM,
-        created_at: now
-      })
-    );
-    const newProfileCreationLogs = newProfileEntities
-      .map<ProfileActivityLog[]>((profile) => [
-        {
-          id: ids.uniqueShortId(),
-          profile_id: profile.external_id,
-          target_id: null,
-          type: ProfileActivityLogType.PROFILE_CREATED,
-          contents: JSON.stringify({}),
-          proxy_id: null,
-          created_at: now,
-          additional_data_1: null,
-          additional_data_2: null
-        },
-        {
-          id: ids.uniqueShortId(),
-          profile_id: profile.external_id,
-          target_id: null,
-          type: ProfileActivityLogType.HANDLE_EDIT,
-          contents: JSON.stringify({
-            authenticated_wallet: authenticatedWallet,
-            new_value: profile.handle
-          }),
-          proxy_id: null,
-          created_at: now,
-          additional_data_1: null,
-          additional_data_2: null
-        },
-        {
-          id: ids.uniqueShortId(),
-          profile_id: profile.external_id,
-          target_id: null,
-          type: ProfileActivityLogType.CLASSIFICATION_EDIT,
-          contents: JSON.stringify({
-            authenticated_wallet: authenticatedWallet,
-            new_value: profile.classification
-          }),
-          proxy_id: null,
-          created_at: now,
-          additional_data_1: null,
-          additional_data_2: null
-        }
-      ])
-      .flat();
-    if (newProfileEntities.length) {
-      await Promise.all([
-        this.profilesDb.bulkInsertProfiles(newProfileEntities, ctx),
-        profileActivityLogsDb.bulkInsertProfileActivityLogs(
-          newProfileCreationLogs,
-          ctx
-        )
-      ]);
-      await identitiesDb.updateIdentityProfilesOfIds(
-        newProfileEntities.map((it) => it.external_id),
-        ctx
-      );
-      allIdentitiesAndProfiles =
-        await identitiesDb.getEverythingRelatedToIdentitiesByAddresses(
-          addresses,
-          ctx.connection!
-        );
-    }
-
     ctx.timer?.stop(
       `${this.constructor.name}->createProfilesAndIdentitiesForThoseWhoAreMissingAndGetProfileIdsByAddresses`
     );
@@ -332,7 +208,10 @@ export class ProfilesService {
           banner1: null,
           banner2: null,
           classification: null,
-          sub_classification: null
+          sub_classification: null,
+          x_tdh: 0,
+          produced_x_tdh: 0,
+          granted_x_tdh: 0
         },
         ctx.connection!
       );

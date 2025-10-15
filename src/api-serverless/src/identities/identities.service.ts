@@ -18,7 +18,10 @@ import {
   UserNotifier
 } from '../../../notifications/user.notifier';
 import { IdentityFetcher, identityFetcher } from './identity.fetcher';
-import { ProfileActivityLogType } from '../../../entities/IProfileActivityLog';
+import {
+  ProfileActivityLog,
+  ProfileActivityLogType
+} from '../../../entities/IProfileActivityLog';
 import { profileActivityLogsDb } from '../../../profileActivityLogs/profile-activity-logs.db';
 import { ConnectionWrapper } from '../../../sql-executor';
 import path from 'path';
@@ -40,6 +43,12 @@ import { getLevelFromScore } from '../../../profiles/profile-level';
 import { equalIgnoreCase } from '../../../strings';
 import { enums } from '../../../enums';
 import { text } from '../../../text';
+import { IdentityEntity } from '../../../entities/IIdentity';
+import { Time } from '../../../time';
+import { Profile, ProfileClassification } from '../../../entities/IProfile';
+import { ids } from '../../../ids';
+import { profilesDb } from '../../../profiles/profiles.db';
+import { NULL_ADDRESS } from '../../../constants';
 
 export class IdentitiesService {
   constructor(
@@ -452,6 +461,134 @@ export class IdentitiesService {
           : []
       };
     });
+  }
+
+  public async bulkCreateIdentities(addresses: string[], ctx: RequestContext) {
+    try {
+      ctx.timer?.start(`${this.constructor.name}->bulkCreateIdentities`);
+      if (!addresses.length) {
+        return {};
+      }
+      let allIdentitiesAndProfiles =
+        await identitiesDb.getEverythingRelatedToIdentitiesByAddresses(
+          addresses,
+          ctx.connection!
+        );
+      const addressesMissingIdentities = addresses.filter(
+        (it) => !allIdentitiesAndProfiles[it]
+      );
+      const newIdentities = addressesMissingIdentities.map<IdentityEntity>(
+        (address) => ({
+          primary_address: address,
+          profile_id: randomUUID(),
+          consolidation_key: address,
+          handle: null,
+          normalised_handle: null,
+          tdh: 0,
+          x_tdh: 0,
+          produced_x_tdh: 0,
+          granted_x_tdh: 0,
+          rep: 0,
+          cic: 0,
+          level_raw: 0,
+          pfp: null,
+          banner1: null,
+          banner2: null,
+          classification: null,
+          sub_classification: null
+        })
+      );
+      if (newIdentities.length) {
+        await identitiesDb.bulkInsertIdentities(newIdentities, ctx.connection!);
+        allIdentitiesAndProfiles =
+          await identitiesDb.getEverythingRelatedToIdentitiesByAddresses(
+            addresses,
+            ctx.connection!
+          );
+      }
+      const identitiesMissingProfiles = Object.entries(
+        Object.values(allIdentitiesAndProfiles)
+          .filter((it) => !it.profile)
+          .reduce(
+            (acc, it) => {
+              acc[it.identity.primary_address] = it.identity.profile_id!;
+              return acc;
+            },
+            {} as Record<string, string>
+          )
+      ).map(([address, profileId]) => ({ address, profileId }));
+      const now = Time.now().toDate();
+      const authenticatedWallet =
+        ctx.authenticationContext?.authenticatedWallet ?? NULL_ADDRESS;
+      const newProfileEntities = identitiesMissingProfiles.map<Profile>(
+        ({ address, profileId }) => ({
+          external_id: profileId,
+          handle: `id-${address}`,
+          normalised_handle: `id-${address}`,
+          primary_wallet: address,
+          created_by_wallet: authenticatedWallet,
+          classification: ProfileClassification.PSEUDONYM,
+          created_at: now
+        })
+      );
+      const newProfileCreationLogs =
+        newProfileEntities.flatMap<ProfileActivityLog>((profile) => [
+          {
+            id: ids.uniqueShortId(),
+            profile_id: profile.external_id,
+            target_id: null,
+            type: ProfileActivityLogType.PROFILE_CREATED,
+            contents: JSON.stringify({}),
+            proxy_id: null,
+            created_at: now,
+            additional_data_1: null,
+            additional_data_2: null
+          },
+          {
+            id: ids.uniqueShortId(),
+            profile_id: profile.external_id,
+            target_id: null,
+            type: ProfileActivityLogType.HANDLE_EDIT,
+            contents: JSON.stringify({
+              authenticated_wallet: authenticatedWallet,
+              new_value: profile.handle
+            }),
+            proxy_id: null,
+            created_at: now,
+            additional_data_1: null,
+            additional_data_2: null
+          },
+          {
+            id: ids.uniqueShortId(),
+            profile_id: profile.external_id,
+            target_id: null,
+            type: ProfileActivityLogType.CLASSIFICATION_EDIT,
+            contents: JSON.stringify({
+              authenticated_wallet: authenticatedWallet,
+              new_value: profile.classification
+            }),
+            proxy_id: null,
+            created_at: now,
+            additional_data_1: null,
+            additional_data_2: null
+          }
+        ]);
+      if (newProfileEntities.length) {
+        await Promise.all([
+          profilesDb.bulkInsertProfiles(newProfileEntities, ctx),
+          profileActivityLogsDb.bulkInsertProfileActivityLogs(
+            newProfileCreationLogs,
+            ctx
+          )
+        ]);
+        await identitiesDb.updateIdentityProfilesOfIds(
+          newProfileEntities.map((it) => it.external_id),
+          ctx
+        );
+      }
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->bulkCreateIdentities`);
+    }
   }
 }
 
