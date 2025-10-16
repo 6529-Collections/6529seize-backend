@@ -1,5 +1,5 @@
-import { Logger } from './logging';
 import * as dbMigrationsLoop from './dbMigrationsLoop';
+import { Logger } from './logging';
 
 const logger = Logger.get('BACKEND');
 
@@ -11,6 +11,7 @@ async function start() {
     undefined as any,
     undefined as any
   );
+
   process.exit(0);
 }
 

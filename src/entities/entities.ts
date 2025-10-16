@@ -31,6 +31,11 @@ export { ENS } from './IENS';
 export { EthPrice } from './IEthPrice';
 export { EULAConsent } from './IEULAPolicy';
 export { ListenerProcessedEvent, ProcessableEvent } from './IEvent';
+export { ExternalIndexedContractEntity } from './IExternalIndexedContract';
+export { ExternalIndexedOwnership721Entity } from './IExternalIndexedOwnership721';
+export { ExternalIndexedOwnership721HistoryEntity } from './IExternalIndexedOwnership721History';
+export { ExternalIndexedTransfersEntity } from './IExternalIndexedTransfer';
+export { ExternalTokenOwnerEntity } from './IExternalTokenOwner';
 export { IdentityEntity } from './IIdentity';
 export { IdentityNotificationEntity } from './IIdentityNotification';
 export { IdentitySubscriptionEntity } from './IIdentitySubscription';
@@ -86,19 +91,16 @@ export {
 } from './ISubscription';
 export {
   ConsolidatedTDH,
+  ConsolidatedTDHEditions,
   ConsolidatedTDHMemes,
   NftTDH,
   TDH,
   TDHBlock,
+  TDHEditions,
   TDHMemes
 } from './ITDH';
 export { TdhGrantEntity } from './ITdhGrant';
 export { TdhGrantTokenEntity } from './ITdhGrantToken';
-export { ExternalTokenOwnerEntity } from './IExternalTokenOwner';
-export { ExternalIndexedContractEntity } from './IExternalIndexedContract';
-export { ExternalIndexedTransfersEntity } from './IExternalIndexedTransfer';
-export { ExternalIndexedOwnership721Entity } from './IExternalIndexedOwnership721';
-export { ExternalIndexedOwnership721HistoryEntity } from './IExternalIndexedOwnership721History';
 export {
   GlobalTDHHistory,
   LatestGlobalTDHHistory,
