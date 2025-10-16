@@ -718,12 +718,12 @@ function getTokenTdh(
   );
 
   let tdh__raw = 0;
-  const daysHeldPerToken: number[] = [];
+  const daysHeldPerEdition: number[] = [];
   tokenDatesForWallet.forEach((e) => {
     const daysDiff = getFullDaysBetweenDates(lastTDHCalc, e);
     if (daysDiff > 0) {
       tdh__raw += daysDiff;
-      daysHeldPerToken.push(daysDiff);
+      daysHeldPerEdition.push(daysDiff);
     }
   });
 
@@ -739,7 +739,7 @@ function getTokenTdh(
       hodl_rate: hodlRate,
       tdh: Math.round(tdh),
       tdh__raw: tdh__raw,
-      days_held_per_token: daysHeldPerToken
+      days_held_per_edition: daysHeldPerEdition
     };
     return tokenTDH;
   }
