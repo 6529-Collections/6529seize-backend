@@ -43,16 +43,16 @@ export async function calculateTdhEditions(
       id: number;
       balance: number;
       hodl_rate: number;
-      days_held_per_token: number[];
+      days_held_per_edition: number[];
     }>,
     contract: string,
     owner: { wallet: string } | { consolidation_key: string },
     boost: number
   ) {
     for (const token of collection) {
-      const { id, balance, hodl_rate, days_held_per_token } = token;
-      for (let i = 0; i < days_held_per_token.length; i += 1) {
-        const daysHeld = days_held_per_token[i];
+      const { id, balance, hodl_rate, days_held_per_edition } = token;
+      for (let i = 0; i < days_held_per_edition.length; i += 1) {
+        const daysHeld = days_held_per_edition[i];
         const tdh = Math.round(daysHeld * hodl_rate);
         const boostedTdh = Math.round(tdh * boost);
         const shared: BaseTDHEditionsRow = {
@@ -61,7 +61,7 @@ export async function calculateTdhEditions(
           edition_id: i + 1,
           balance,
           hodl_rate,
-          days_held: days_held_per_token[i],
+          days_held: days_held_per_edition[i],
           tdh: tdh,
           boost: boost,
           boosted_tdh: boostedTdh
