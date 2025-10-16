@@ -9,10 +9,12 @@ import {
 import { MemesSeason } from '../entities/ISeason';
 import {
   ConsolidatedTDH,
+  ConsolidatedTDHEditions,
   ConsolidatedTDHMemes,
   NftTDH,
   TDH,
   TDHBlock,
+  TDHEditions,
   TDHMemes
 } from '../entities/ITDH';
 import { ConsolidatedTDHUpload } from '../entities/IUpload';
@@ -50,7 +52,9 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
         NftTDH,
         OwnerBalances,
         ConsolidatedOwnerBalances,
-        TDHBlock
+        TDHBlock,
+        TDHEditions,
+        ConsolidatedTDHEditions
       ]
     }
   );

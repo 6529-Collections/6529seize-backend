@@ -33,6 +33,7 @@ import {
 import { ConnectionWrapper, sqlExecutor } from '../sql-executor';
 import { equalIgnoreCase } from '../strings';
 import { Time } from '../time';
+import { calculateTdhEditions } from './tdh_editions';
 import { calculateMemesTdh } from './tdh_memes';
 import { extractMemesEditionSizes, extractNFTOwners } from './tdh_objects';
 
@@ -527,7 +528,9 @@ export const updateTDH = async (
     ADJUSTED_SEASONS,
     rankedTdh
   )) as TDHMemes[];
-  await persistTDH(block, rankedTdh, memesTdh, startingWallets);
+
+  const tdhEditions = await calculateTdhEditions(rankedTdh);
+  await persistTDH(block, rankedTdh, memesTdh, tdhEditions, startingWallets);
 
   return {
     block: block,
@@ -715,10 +718,12 @@ function getTokenTdh(
   );
 
   let tdh__raw = 0;
+  const daysHeldPerToken: number[] = [];
   tokenDatesForWallet.forEach((e) => {
     const daysDiff = getFullDaysBetweenDates(lastTDHCalc, e);
     if (daysDiff > 0) {
       tdh__raw += daysDiff;
+      daysHeldPerToken.push(daysDiff);
     }
   });
 
@@ -728,12 +733,13 @@ function getTokenTdh(
   const tdh = tdh__raw * hodlRate;
 
   if (tdh > 0 || balance > 0) {
-    const tokenTDH = {
+    const tokenTDH: TokenTDH = {
       id: id,
       balance: balance,
       hodl_rate: hodlRate,
       tdh: Math.round(tdh),
-      tdh__raw: tdh__raw
+      tdh__raw: tdh__raw,
+      days_held_per_token: daysHeldPerToken
     };
     return tokenTDH;
   }

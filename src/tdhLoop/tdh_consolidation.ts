@@ -1,8 +1,4 @@
-import {
-  ConsolidatedTDH,
-  ConsolidatedTDHMemes,
-  TDHENS
-} from '../entities/ITDH';
+import { consolidationTools } from '../consolidation-tools';
 import {
   fetchAllConsolidatedTdh,
   fetchAllTDH,
@@ -12,6 +8,15 @@ import {
   persistTDHBlock,
   retrieveWalletConsolidations
 } from '../db';
+import { NextGenToken } from '../entities/INextGen';
+import {
+  ConsolidatedTDH,
+  ConsolidatedTDHMemes,
+  TDHENS
+} from '../entities/ITDH';
+import { Logger } from '../logging';
+import { fetchNextgenTokens } from '../nextgen/nextgen.db';
+import { equalIgnoreCase } from '../strings';
 import {
   calculateBoosts,
   calculateRanks,
@@ -19,13 +24,9 @@ import {
   getAdjustedMemesAndSeasons,
   getGenesisAndNaka
 } from './tdh';
-import { Logger } from '../logging';
-import { NextGenToken } from '../entities/INextGen';
-import { fetchNextgenTokens } from '../nextgen/nextgen.db';
+import { calculateTdhEditions } from './tdh_editions';
 import { calculateMemesTdh } from './tdh_memes';
 import { updateNftTDH } from './tdh_nft';
-import { equalIgnoreCase } from '../strings';
-import { consolidationTools } from '../consolidation-tools';
 
 const logger = Logger.get('TDH_CONSOLIDATION');
 
@@ -303,7 +304,14 @@ export const consolidateTDH = async (
     true
   )) as ConsolidatedTDHMemes[];
 
-  await persistConsolidatedTDH(rankedTdh, memesTdh, startingWallets);
+  const tdhEditions = await calculateTdhEditions(rankedTdh, true);
+
+  await persistConsolidatedTDH(
+    rankedTdh,
+    memesTdh,
+    tdhEditions,
+    startingWallets
+  );
   await updateNftTDH(rankedTdh, startingWallets);
   await persistTDHBlock(block, timestamp);
   logger.info(`[FINAL ENTRIES ${rankedTdh.length}]`);

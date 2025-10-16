@@ -27,22 +27,9 @@ import {
 import { Artist } from './entities/IArtist';
 import { ENS } from './entities/IENS';
 
-import {
-  LabExtendedData,
-  LabNFT,
-  MemesExtendedData,
-  NFT
-} from './entities/INFT';
-import {
-  ConsolidatedTDH,
-  ConsolidatedTDHMemes,
-  NftTDH,
-  TDH,
-  TDHBlock,
-  TDHMemes
-} from './entities/ITDH';
-import { Team } from './entities/ITeam';
-import { BaseTransaction, Transaction } from './entities/ITransaction';
+import { consolidationTools } from './consolidation-tools';
+import { DbQueryOptions } from './db-query.options';
+import { revokeTdhBasedDropWavesOverVotes } from './drops/participation-drops-over-vote-revocation';
 import {
   Consolidation,
   ConsolidationEvent,
@@ -52,28 +39,32 @@ import {
   NFTDelegationBlock,
   WalletConsolidationKey
 } from './entities/IDelegation';
-import { RoyaltiesUpload } from './entities/IRoyalties';
+import { NextGenTokenTDH } from './entities/INextGen';
+import {
+  LabExtendedData,
+  LabNFT,
+  MemesExtendedData,
+  NFT
+} from './entities/INFT';
 import {
   NFTHistory,
   NFTHistoryBlock,
   NFTHistoryClaim
 } from './entities/INFTHistory';
-import { Rememe, RememeUpload } from './entities/IRememe';
-import { getConsolidationsSql, parseTdhDataFromDB } from './sql_helpers';
-import { NextGenTokenTDH } from './entities/INextGen';
-import { ConnectionWrapper, setSqlExecutor, sqlExecutor } from './sql-executor';
 import { Profile } from './entities/IProfile';
-import { Logger } from './logging';
-import { DbQueryOptions } from './db-query.options';
-import { Time } from './time';
+import { Rememe, RememeUpload } from './entities/IRememe';
+import { RoyaltiesUpload } from './entities/IRoyalties';
 import { MemesSeason } from './entities/ISeason';
-import { insertWithoutUpdate, resetRepository } from './orm_helpers';
 import {
-  syncIdentitiesMetrics,
-  syncIdentitiesWithTdhConsolidations
-} from './identity';
-import { revokeTdhBasedDropWavesOverVotes } from './drops/participation-drops-over-vote-revocation';
-import { computeMerkleRoot } from './tdhLoop/tdh_merkle';
+  ConsolidatedTDH,
+  ConsolidatedTDHEditions,
+  ConsolidatedTDHMemes,
+  NftTDH,
+  TDH,
+  TDHBlock,
+  TDHEditions,
+  TDHMemes
+} from './entities/ITDH';
 import {
   GlobalTDHHistory,
   LatestGlobalTDHHistory,
@@ -81,10 +72,21 @@ import {
   RecentTDHHistory,
   TDHHistory
 } from './entities/ITDHHistory';
-import { ethTools } from './eth-tools';
-import { equalIgnoreCase } from './strings';
-import { consolidationTools } from './consolidation-tools';
+import { Team } from './entities/ITeam';
+import { BaseTransaction, Transaction } from './entities/ITransaction';
 import { env } from './env';
+import { ethTools } from './eth-tools';
+import {
+  syncIdentitiesMetrics,
+  syncIdentitiesWithTdhConsolidations
+} from './identity';
+import { Logger } from './logging';
+import { insertWithoutUpdate, resetRepository } from './orm_helpers';
+import { ConnectionWrapper, setSqlExecutor, sqlExecutor } from './sql-executor';
+import { getConsolidationsSql, parseTdhDataFromDB } from './sql_helpers';
+import { equalIgnoreCase } from './strings';
+import { computeMerkleRoot } from './tdhLoop/tdh_merkle';
+import { Time } from './time';
 
 const mysql = require('mysql');
 
@@ -452,7 +454,7 @@ export async function fetchMaxTransactionsBlockNumber(): Promise<number> {
   return r.length > 0 ? r[0].max_block : 0;
 }
 
-export async function fetchMaxTransactionByBlockNumber(): Promise<Transaction> {
+export async function fetchMaxTransactionByBlockNumber(): Promise<Transaction | null> {
   const sql = `SELECT * FROM ${TRANSACTIONS_TABLE} WHERE block = (SELECT MAX(block) FROM ${TRANSACTIONS_TABLE});`;
   const r = await sqlExecutor.execute(sql);
   return r.length > 0 ? r[0] : null;
@@ -717,6 +719,7 @@ export async function persistTDH(
   block: number,
   tdh: TDH[],
   memesTdh: TDHMemes[],
+  tdhEditions: TDHEditions[],
   wallets?: string[]
 ) {
   logger.info(
@@ -726,6 +729,7 @@ export async function persistTDH(
   await AppDataSource.transaction(async (manager) => {
     const tdhRepo = manager.getRepository(TDH);
     const tdhMemesRepo = manager.getRepository(TDHMemes);
+    const tdhEditionsRepo = manager.getRepository(TDHEditions);
     if (wallets) {
       logger.info(`[TDH] [DELETING ${wallets.length} WALLETS]`);
       await Promise.all(
@@ -745,17 +749,27 @@ export async function persistTDH(
               wallet: wallet.toLowerCase()
             })
             .execute();
+          await tdhEditionsRepo
+            .createQueryBuilder()
+            .delete()
+            .where('LOWER(wallet) = :wallet ', {
+              wallet: wallet.toLowerCase()
+            })
+            .execute();
         })
       );
       await tdhRepo.save(tdh);
       await tdhMemesRepo.save(memesTdh);
+      await tdhEditionsRepo.save(tdhEditions);
     } else {
       logger.info(`[TDH] [DELETING ALL WALLETS FOR BLOCK ${block}]`);
       await tdhRepo.delete({ block: block });
       await tdhMemesRepo.clear();
+      await tdhEditionsRepo.clear();
       logger.info(`[TDH AND TDH_MEMES CLEARED]`);
       await insertWithoutUpdate(tdhRepo, tdh);
       await insertWithoutUpdate(tdhMemesRepo, memesTdh);
+      await insertWithoutUpdate(tdhEditionsRepo, tdhEditions);
     }
   });
 
@@ -784,6 +798,7 @@ export async function persistTDHBlock(block: number, timestamp: Date) {
 export async function persistConsolidatedTDH(
   tdh: ConsolidatedTDH[],
   memesTdh: ConsolidatedTDHMemes[],
+  tdhEditions: ConsolidatedTDHEditions[],
   wallets?: string[]
 ) {
   logger.info(`[CONSOLIDATED TDH] PERSISTING WALLETS TDH [${tdh.length}]`);
@@ -792,6 +807,7 @@ export async function persistConsolidatedTDH(
     const manager = queryRunner.manager;
     const tdhRepo = manager.getRepository(ConsolidatedTDH);
     const tdhMemesRepo = manager.getRepository(ConsolidatedTDHMemes);
+    const tdhEditionsRepo = manager.getRepository(ConsolidatedTDHEditions);
     if (wallets) {
       logger.info(`[CONSOLIDATED TDH] [DELETING ${wallets.length} WALLETS]`);
       await Promise.all(
@@ -811,17 +827,27 @@ export async function persistConsolidatedTDH(
               walletPattern
             })
             .execute();
+          await tdhEditionsRepo
+            .createQueryBuilder()
+            .delete()
+            .where('consolidation_key like :walletPattern', {
+              walletPattern
+            })
+            .execute();
         })
       );
       await tdhRepo.save(tdh);
       await tdhMemesRepo.save(memesTdh);
+      await tdhEditionsRepo.save(tdhEditions);
     } else {
       logger.info(`[CONSOLIDATED TDH] [DELETING ALL WALLETS]`);
       await tdhRepo.clear();
       await tdhMemesRepo.clear();
+      await tdhEditionsRepo.clear();
       logger.info(`[CONSOLIDATED TDH] [TDH AND TDH_MEMES CLEARED]`);
       await insertWithoutUpdate(tdhRepo, tdh);
       await insertWithoutUpdate(tdhMemesRepo, memesTdh);
+      await insertWithoutUpdate(tdhEditionsRepo, tdhEditions);
     }
 
     await syncIdentitiesWithTdhConsolidations(qrHolder);

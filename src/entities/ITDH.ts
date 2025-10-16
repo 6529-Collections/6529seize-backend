@@ -6,9 +6,11 @@ import {
   PrimaryColumn
 } from 'typeorm';
 import {
+  CONSOLIDATED_TDH_EDITIONS_TABLE,
   CONSOLIDATED_WALLETS_TDH_MEMES_TABLE,
   CONSOLIDATED_WALLETS_TDH_TABLE,
   TDH_BLOCKS_TABLE,
+  TDH_EDITIONS_TABLE,
   TDH_NFT_TABLE,
   WALLETS_TDH_MEMES_TABLE,
   WALLETS_TDH_TABLE
@@ -209,12 +211,54 @@ export class TDHBlock {
   merkle_root!: string | null;
 }
 
+export class BaseTDHEditionsFields {
+  @PrimaryColumn({ type: 'varchar', length: 50 })
+  contract!: string;
+
+  @PrimaryColumn({ type: 'bigint' })
+  id!: number;
+
+  @PrimaryColumn({ type: 'int', nullable: false })
+  edition_id!: number;
+
+  @Column({ type: 'int', nullable: false })
+  balance!: number;
+
+  @Column({ type: 'int', nullable: false })
+  hodl_rate!: number;
+
+  @Column({ type: 'int', nullable: false })
+  days_held!: number;
+
+  @Column({ type: 'int', nullable: false })
+  tdh!: number;
+
+  @Column({ type: 'double', nullable: false })
+  boost!: number;
+
+  @Column({ type: 'int', nullable: false })
+  boosted_tdh!: number;
+}
+
+@Entity(TDH_EDITIONS_TABLE)
+export class TDHEditions extends BaseTDHEditionsFields {
+  @PrimaryColumn({ type: 'varchar', length: 50 })
+  wallet!: string;
+}
+
+@Entity(CONSOLIDATED_TDH_EDITIONS_TABLE)
+export class ConsolidatedTDHEditions extends BaseTDHEditionsFields {
+  @PrimaryColumn({ type: 'varchar', length: 500 })
+  consolidation_key!: string;
+}
+
 export interface TokenTDH {
   id: number;
   balance: number;
   hodl_rate: number;
   tdh: number;
   tdh__raw: number;
+  days_held_per_token: number[];
 }
 
 export interface TokenTDHRank {
