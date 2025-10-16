@@ -99,11 +99,11 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
     ctx: RequestContext
   ): Promise<ProfileActivityLog[]> {
     ctx.timer?.start(`${this.constructor.name}->searchLogs`);
-    const page = params.pageRequest.page;
 
     const MAX_PAGE_SIZE = 500;
     const DEFAULT_PAGE_SIZE = 200;
 
+    const page = params.pageRequest.page;
     const page_size =
       params.pageRequest.page_size < 1
         ? DEFAULT_PAGE_SIZE
@@ -112,148 +112,196 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
           : params.pageRequest.page_size;
 
     const offsetVal = (page - 1) * page_size;
-    const limitVal = page_size + 1;
+    const limitVal = page_size + 1; // “hasNextPage” sentinel
 
-    const subQuerySQLs: string[] = [];
-    const subQueryParams: Record<string, any>[] = [];
+    // --- Helpers -------------------------------------------------------------
 
-    let groupSqlJoin = '';
-    let groupSqlWhere = '';
-    let groupParams: Record<string, any> = {};
+    const orderDir = params.order?.toLowerCase() === 'asc' ? 'ASC' : 'DESC';
 
-    if (params.group_id) {
+    // We’ll fetch IDs+created_at in each branch, then join once at the end.
+    // Size each branch limit only as large as needed for the page we’ll return.
+    // A small cushion (~1.5× spread over branches) handles interleaving across branches.
+    const numBranches = params.profile_id
+      ? params.includeProfileIdToIncoming
+        ? 3
+        : 2
+      : 1;
+
+    const branchCushion = 1.5;
+    const perBranchLimit = Math.min(
+      Math.max(
+        // at least a few rows per branch
+        16,
+        Math.ceil(
+          ((limitVal + offsetVal) * branchCushion) / Math.max(1, numBranches)
+        )
+      ),
+      1000 // hard cap
+    );
+
+    // Correct index names per branch (IMPORTANT: use index *names*, not columns)
+    const indexNameForMatchColumn: Record<string, string> = {
+      profile_id: 'idx_pal_profile_type_created_at', // (profile_id, type, created_at)
+      proxy_id: 'idx_pal_proxy_type_created_at', // (proxy_id,   type, created_at) <-- add this
+      target_id: 'idx_pal_target_type_created_at' // (target_id,  type, created_at) <-- add this
+    };
+
+    // Fallbacks if you haven’t created the two new indexes yet:
+    const fallbackIndexForMatchColumn: Record<string, string> = {
+      proxy_id: 'IDX_9b160d0fc9a4d05fcf63bc5b7c', // (proxy_id, additional_data_1, type, created_at)
+      target_id: 'IDX_9977cecaf54d9afa5cf1407f22' // (target_id, additional_data_1, type, created_at)
+    };
+
+    const groupPieces = await (async () => {
+      if (!params.group_id)
+        return { join: '', where: '', params: {} as Record<string, any> };
       const viewResult = await this.userGroupsService.getSqlAndParamsByGroupId(
         params.group_id,
         ctx
       );
-      if (viewResult === null) {
-        return [];
-      }
-      groupSqlJoin = ` JOIN ${UserGroupsService.GENERATED_VIEW} group_view 
-                     ON group_view.profile_id = pa_logs.profile_id `;
-      groupSqlWhere = viewResult.sql || '';
-      groupParams = { ...viewResult.params };
-    }
+      if (viewResult === null)
+        return { join: '', where: '', params: {} as Record<string, any> }; // nothing to filter
+      return {
+        join: ` JOIN ${UserGroupsService.GENERATED_VIEW} group_view ON group_view.profile_id = pa_logs.profile_id `,
+        where: viewResult.sql || '',
+        params: { ...(viewResult.params || {}) }
+      };
+    })();
 
-    const buildSubQuery = (matchColumn: string) => {
-      const subParams: Record<string, any> = {};
+    // Build one branch that returns only (id, created_at)
+    const buildIdsBranch = (
+      matchColumn: 'profile_id' | 'proxy_id' | 'target_id'
+    ) => {
+      const p: Record<string, any> = { ...groupPieces.params };
 
-      let subSql = groupSqlWhere ? `${groupSqlWhere} ` : '';
-      subSql += `SELECT /*+ USE_INDEX(pa_logs, ${matchColumn === 'profile_id' ? 'profile_id' : matchColumn === 'proxy_id' ? 'proxy_id' : 'target_id'}) */ pa_logs.* 
-               FROM ${PROFILES_ACTIVITY_LOGS_TABLE} pa_logs
-               ${groupSqlJoin}
-               WHERE 1=1`;
+      // Choose the best available index; prefer the new composite, otherwise fallback
+      const idxName =
+        indexNameForMatchColumn[matchColumn] ||
+        fallbackIndexForMatchColumn[matchColumn];
 
-      if (params.profile_id) {
-        subSql += ` AND pa_logs.${matchColumn} = :profile_id`;
-        subParams.profile_id = params.profile_id;
-      }
+      // Base WHERE (note: no WHERE 1=1; cleaner strings)
+      let sql = '';
+      if (groupPieces.where) sql += `${groupPieces.where} `;
+
+      sql += `
+      SELECT /*+ INDEX(pa_logs ${idxName}) */
+             pa_logs.id, pa_logs.created_at
+      FROM ${PROFILES_ACTIVITY_LOGS_TABLE} pa_logs
+      ${groupPieces.join}
+      FORCE INDEX (${idxName})
+      WHERE pa_logs.${matchColumn} = :profile_id
+    `;
+      p.profile_id = params.profile_id;
 
       if (params.rating_matter) {
-        subSql += ` AND additional_data_1 = :rating_matter`;
-        subParams.rating_matter = params.rating_matter;
+        sql += ` AND pa_logs.additional_data_1 = :rating_matter`;
+        p.rating_matter = params.rating_matter;
       }
       if (params.category) {
-        subSql += ` AND additional_data_2 = :rating_category`;
-        subParams.rating_category = params.category;
+        sql += ` AND pa_logs.additional_data_2 = :rating_category`;
+        p.rating_category = params.category;
       }
       if (params.target_id) {
-        subSql += ` AND pa_logs.target_id = :target_id`;
-        subParams.target_id = params.target_id;
+        sql += ` AND pa_logs.target_id = :target_id`;
+        p.target_id = params.target_id;
       }
       if (params.type?.length) {
-        subSql += ` AND pa_logs.type IN (:type)`;
-        subParams.type = params.type;
+        sql += ` AND pa_logs.type IN (:type)`;
+        p.type = params.type;
       }
 
-      const subQueryLimit = Math.min(limitVal * 3, 2000);
-      subSql += ` ORDER BY pa_logs.created_at ${
-        params.order?.toLowerCase() === 'asc' ? 'ASC' : 'DESC'
-      } LIMIT ${subQueryLimit}`;
+      // Optional: bound time if you generally care about recent logs
+      // if (params.since) { sql += ` AND pa_logs.created_at >= :since`; p.since = params.since; }
 
-      return { sql: subSql, params: subParams };
+      sql += ` ORDER BY pa_logs.created_at ${orderDir} LIMIT ${perBranchLimit}`;
+      return { sql, params: p };
     };
 
-    if (params.profile_id) {
-      const columnsToSearch: string[] = ['profile_id', 'proxy_id'];
-      if (params.includeProfileIdToIncoming) {
-        columnsToSearch.push('target_id');
-      }
+    // --- Build the query -----------------------------------------------------
 
-      for (const col of columnsToSearch) {
-        const sq = buildSubQuery(col);
-        subQuerySQLs.push(sq.sql);
-        subQueryParams.push({ ...groupParams, ...sq.params });
-      }
-    } else {
-      let single =
-        groupSqlWhere +
-        ` SELECT pa_logs.* 
-        FROM ${PROFILES_ACTIVITY_LOGS_TABLE} pa_logs
-        ${groupSqlJoin}
-        WHERE 1=1`;
-      const singleParams: Record<string, any> = { ...groupParams };
-
-      if (params.rating_matter) {
-        single += ` AND additional_data_1 = :rating_matter`;
-        singleParams.rating_matter = params.rating_matter;
-      }
-      if (params.category) {
-        single += ` AND additional_data_2 = :rating_category`;
-        singleParams.rating_category = params.category;
-      }
-      if (params.target_id) {
-        single += ` AND pa_logs.target_id = :target_id`;
-        singleParams.target_id = params.target_id;
-      }
-      if (params.type?.length) {
-        single += ` AND pa_logs.type IN (:type)`;
-        singleParams.type = params.type;
-      }
-
-      subQuerySQLs.push(single);
-      subQueryParams.push(singleParams);
-    }
     let finalSql: string;
     let finalParams: Record<string, any>;
 
-    if (subQuerySQLs.length === 1) {
-      finalSql = `${subQuerySQLs[0]}
-                ORDER BY pa_logs.created_at ${
-                  params.order?.toLowerCase() === 'asc' ? 'asc' : 'desc'
-                }
-                LIMIT :limit OFFSET :offset`;
-      finalParams = {
-        ...subQueryParams[0],
-        limit: limitVal,
-        offset: offsetVal
-      };
-    } else {
-      const unionParts = subQuerySQLs.map((sq) => `(${sq})`);
-      const unionSql = unionParts.join(`\nUNION ALL\n`);
+    if (params.profile_id) {
+      const branches: string[] = [];
+      const branchParams: Record<string, any>[] = [];
 
-      finalSql = `
-      SELECT * FROM (
-         ${unionSql}
-      ) as unioned
-      ORDER BY unioned.created_at ${
-        params.order?.toLowerCase() === 'asc' ? 'asc' : 'desc'
+      const cols: ('profile_id' | 'proxy_id' | 'target_id')[] =
+        params.includeProfileIdToIncoming
+          ? ['profile_id', 'proxy_id', 'target_id']
+          : ['profile_id', 'proxy_id'];
+
+      for (const c of cols) {
+        const b = buildIdsBranch(c);
+        branches.push(`(${b.sql})`);
+        branchParams.push(b.params);
       }
+
+      // UNION only ids+created_at, then fetch rows once
+      finalSql = `
+      WITH ids AS (
+        ${branches.join('\nUNION ALL\n')}
+      )
+      SELECT pa_logs.*
+      FROM ${PROFILES_ACTIVITY_LOGS_TABLE} pa_logs
+      JOIN ids USING (id)
+      ORDER BY pa_logs.created_at ${orderDir}
       LIMIT :limit OFFSET :offset
     `;
 
-      const allParams: Record<string, any> = {
-        limit: limitVal,
-        offset: offsetVal
-      };
-      for (const pObj of subQueryParams) {
-        for (const [k, v] of Object.entries(pObj)) {
-          allParams[k] = v;
-        }
+      finalParams = { limit: limitVal, offset: offsetVal };
+      for (const bp of branchParams) {
+        for (const [k, v] of Object.entries(bp)) finalParams[k] = v;
       }
-      finalParams = allParams;
+    } else {
+      // No profile_id: single scan path (keep it simple)
+      const p: Record<string, any> = { ...groupPieces.params };
+
+      let single = '';
+      if (groupPieces.where) single += `${groupPieces.where} `;
+
+      single += `
+      SELECT pa_logs.id, pa_logs.created_at
+      FROM ${PROFILES_ACTIVITY_LOGS_TABLE} pa_logs
+      ${groupPieces.join}
+      WHERE 1=1
+    `;
+
+      if (params.rating_matter) {
+        single += ` AND pa_logs.additional_data_1 = :rating_matter`;
+        p.rating_matter = params.rating_matter;
+      }
+      if (params.category) {
+        single += ` AND pa_logs.additional_data_2 = :rating_category`;
+        p.rating_category = params.category;
+      }
+      if (params.target_id) {
+        single += ` AND pa_logs.target_id = :target_id`;
+        p.target_id = params.target_id;
+      }
+      if (params.type?.length) {
+        single += ` AND pa_logs.type IN (:type)`;
+        p.type = params.type;
+      }
+
+      // If this path is hot, add a compound index that matches those filters.
+      single += ` ORDER BY pa_logs.created_at ${orderDir} LIMIT ${perBranchLimit}`;
+
+      finalSql = `
+      WITH ids AS (
+        ${single}
+      )
+      SELECT pa_logs.*
+      FROM ${PROFILES_ACTIVITY_LOGS_TABLE} pa_logs
+      JOIN ids USING (id)
+      ORDER BY pa_logs.created_at ${orderDir}
+      LIMIT :limit OFFSET :offset
+    `;
+
+      finalParams = { ...p, limit: limitVal, offset: offsetVal };
     }
 
+    // Execute
     const rows = await this.db.execute<
       Omit<ProfileActivityLog, 'created_at'> & { created_at: string }
     >(finalSql, finalParams);
