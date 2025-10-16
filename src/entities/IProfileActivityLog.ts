@@ -6,6 +6,8 @@ import { PROFILES_ACTIVITY_LOGS_TABLE } from '../constants';
 @Index(['proxy_id', 'additional_data_1', 'type', 'created_at'])
 @Index(['target_id', 'additional_data_1', 'type', 'created_at'])
 @Index('idx_pal_profile_type_created_at', ['profile_id', 'type', 'created_at'])
+@Index('idx_pal_proxy_type_created_at', ['proxy_id', 'type', 'created_at'])
+@Index('idx_pal_target_type_created_at', ['target_id', 'type', 'created_at'])
 export class ProfileActivityLog {
   @PrimaryColumn({ type: 'varchar', length: 100 })
   readonly id!: string;
