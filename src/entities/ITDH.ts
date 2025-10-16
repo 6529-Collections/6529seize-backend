@@ -224,7 +224,7 @@ export class BaseTDHEditionsFields {
   @Column({ type: 'int', nullable: false })
   balance!: number;
 
-  @Column({ type: 'int', nullable: false })
+  @Column({ type: 'double', nullable: false })
   hodl_rate!: number;
 
   @Column({ type: 'int', nullable: false })
