@@ -65,8 +65,12 @@ export async function calculateTdhEditions(
 
   for (const t of tdh) {
     const owner = isConsolidation
-      ? { consolidation_key: (t as ConsolidatedTDH).consolidation_key }
-      : { wallet: (t as TDH).wallet };
+      ? {
+          consolidation_key: (
+            t as ConsolidatedTDH
+          ).consolidation_key.toLowerCase()
+        }
+      : { wallet: (t as TDH).wallet.toLowerCase() };
 
     pushCollectionItems((t as any).memes ?? [], MEMES_CONTRACT, owner);
     pushCollectionItems((t as any).gradients ?? [], GRADIENT_CONTRACT, owner);

@@ -10,6 +10,7 @@
  * Do not edit the class manually.
  */
 
+import { ApiProfileMin } from '../models/ApiProfileMin';
 import { HttpFile } from '../http/http';
 
 export class ApiTdhEdition {
@@ -21,9 +22,7 @@ export class ApiTdhEdition {
     'days_held': number;
     'wallet'?: string | null;
     'consolidation_key'?: string | null;
-    'identity_id'?: string | null;
-    'identity_handle'?: string | null;
-    'identity_normalised_handle'?: string | null;
+    'profile'?: ApiProfileMin;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -77,21 +76,9 @@ export class ApiTdhEdition {
             "format": ""
         },
         {
-            "name": "identity_id",
-            "baseName": "identity_id",
-            "type": "string",
-            "format": ""
-        },
-        {
-            "name": "identity_handle",
-            "baseName": "identity_handle",
-            "type": "string",
-            "format": ""
-        },
-        {
-            "name": "identity_normalised_handle",
-            "baseName": "identity_normalised_handle",
-            "type": "string",
+            "name": "profile",
+            "baseName": "profile",
+            "type": "ApiProfileMin",
             "format": ""
         }    ];
 
