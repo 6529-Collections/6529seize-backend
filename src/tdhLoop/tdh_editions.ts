@@ -53,8 +53,8 @@ export async function calculateTdhEditions(
       const { id, balance, hodl_rate, days_held_per_edition } = token;
       for (let i = 0; i < days_held_per_edition.length; i += 1) {
         const daysHeld = days_held_per_edition[i];
-        const tdh = Math.round(daysHeld * hodl_rate);
-        const boostedTdh = Math.round(tdh * boost);
+        const tdh = daysHeld * hodl_rate;
+        const boostedTdh = tdh * boost;
         const shared: BaseTDHEditionsRow = {
           contract,
           id,

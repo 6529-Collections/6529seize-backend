@@ -230,13 +230,13 @@ export class BaseTDHEditionsFields {
   @Column({ type: 'int', nullable: false })
   days_held!: number;
 
-  @Column({ type: 'int', nullable: false })
+  @Column({ type: 'double', nullable: false })
   tdh!: number;
 
   @Column({ type: 'double', nullable: false })
   boost!: number;
 
-  @Column({ type: 'int', nullable: false })
+  @Column({ type: 'double', nullable: false })
   boosted_tdh!: number;
 }
 
