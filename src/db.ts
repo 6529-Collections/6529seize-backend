@@ -752,7 +752,7 @@ export async function persistTDH(
           await tdhEditionsRepo
             .createQueryBuilder()
             .delete()
-            .where('LOWER(wallet) = :wallet ', {
+            .where('wallet = :wallet ', {
               wallet: wallet.toLowerCase()
             })
             .execute();
