@@ -2227,6 +2227,223 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/ApiIncomingIdentitySubscriptionsPage"
+  /tdh-editions/wallet/{wallet}:
+    get:
+      tags:
+        - TDH Editions
+      summary: Get TDH editions for a wallet
+      operationId: getTdhEditionsByWallet
+      parameters:
+        - name: wallet
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: contract
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: token_id
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+        - name: edition_id
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+        - name: sort
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - id
+              - hodl_rate
+              - days_held
+              - balance
+              - edition_id
+              - contract
+            default: id
+        - name: sort_direction
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/ApiPageSortDirection"
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+            default: 1
+        - name: page_size
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+            maximum: 100
+            default: 50
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiTdhEditionsPage"
+        "400":
+          description: Invalid wallet
+  /tdh-editions/consolidation/{consolidation_key}:
+    get:
+      tags:
+        - TDH Editions
+      summary: Get TDH editions for a consolidation key
+      operationId: getTdhEditionsByConsolidationKey
+      parameters:
+        - name: consolidation_key
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: contract
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: token_id
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+        - name: edition_id
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+        - name: sort
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - id
+              - hodl_rate
+              - days_held
+              - balance
+              - edition_id
+              - contract
+            default: id
+        - name: sort_direction
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/ApiPageSortDirection"
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+            default: 1
+        - name: page_size
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+            maximum: 100
+            default: 50
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiTdhEditionsPage"
+  /tdh-editions/identity/{identity}:
+    get:
+      tags:
+        - TDH Editions
+      summary: Get TDH editions for an identity id or handle
+      operationId: getTdhEditionsByIdentity
+      parameters:
+        - name: identity
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Identity profile id (UUID) or handle
+        - name: contract
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: token_id
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+        - name: edition_id
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+        - name: sort
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - hodl_rate
+              - days_held
+              - balance
+              - edition_id
+              - contract
+            default: id
+        - name: sort_direction
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/ApiPageSortDirection"
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+            default: 1
+        - name: page_size
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+            maximum: 100
+            default: 50
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiTdhEditionsPage"
+        "404":
+          description: Identity not found
   /tdh-grants:
     get:
       tags:
@@ -5935,6 +6152,59 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ApiIdentitySubscriptionTargetAction"
+    ApiTdhEdition:
+      type: object
+      required:
+        - contract
+        - id
+        - edition_id
+        - balance
+        - days_held
+        - hodl_rate
+      properties:
+        contract:
+          type: string
+        id:
+          type: integer
+          format: int64
+        edition_id:
+          type: integer
+          format: int64
+        balance:
+          type: integer
+          format: int64
+        hodl_rate:
+          type: integer
+          format: int64
+        days_held:
+          type: integer
+          format: int64
+        wallet:
+          type: string
+          nullable: true
+        consolidation_key:
+          type: string
+          nullable: true
+        identity_id:
+          type: string
+          nullable: true
+        identity_handle:
+          type: string
+          nullable: true
+        identity_normalised_handle:
+          type: string
+          nullable: true
+    ApiTdhEditionsPage:
+      type: object
+      required:
+        - data
+      allOf:
+        - $ref: "#/components/schemas/ApiPageWithNextUriBase"
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiTdhEdition"
     ApiTdhGrant:
       type: object
       required:

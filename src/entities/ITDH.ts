@@ -224,20 +224,11 @@ export class BaseTDHEditionsFields {
   @Column({ type: 'int', nullable: false })
   balance!: number;
 
-  @Column({ type: 'double', nullable: false })
-  hodl_rate!: number;
-
   @Column({ type: 'int', nullable: false })
   days_held!: number;
 
   @Column({ type: 'double', nullable: false })
-  tdh!: number;
-
-  @Column({ type: 'double', nullable: false })
-  boost!: number;
-
-  @Column({ type: 'double', nullable: false })
-  boosted_tdh!: number;
+  hodl_rate!: number;
 }
 
 @Entity(TDH_EDITIONS_TABLE)
