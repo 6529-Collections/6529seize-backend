@@ -1,17 +1,16 @@
 import {
   CONSOLIDATED_TDH_EDITIONS_TABLE,
-  IDENTITIES_TABLE,
   TDH_EDITIONS_TABLE
 } from '../../../constants';
 import { fetchPaginated } from '../../../db-api';
 import { constructFilters } from '../api-helpers';
 
 export const TDH_EDITION_SORT_MAP: Record<string, string> = {
+  id: 'id',
   hodl_rate: 'hodl_rate',
   days_held: 'days_held',
   balance: 'balance',
   edition_id: 'edition_id',
-  id: 'id',
   contract: 'contract'
 };
 
@@ -59,7 +58,7 @@ export async function fetchWalletTdhEditions(
   pageSize: number,
   options: TdhEditionFilters
 ) {
-  const params: Record<string, any> = { wallet: wallet.toLowerCase() };
+  const params: Record<string, any> = { wallet };
   let filters = constructFilters('', `${TDH_EDITIONS_TABLE}.wallet = :wallet`);
   filters = applyEditionFilters(TDH_EDITIONS_TABLE, filters, params, options);
 
@@ -82,7 +81,7 @@ export async function fetchConsolidatedTdhEditions(
   options: TdhEditionFilters
 ) {
   const params: Record<string, any> = {
-    consolidationKey: consolidationKey.toLowerCase()
+    consolidationKey
   };
   let filters = constructFilters(
     '',
@@ -102,66 +101,5 @@ export async function fetchConsolidatedTdhEditions(
     pageSize,
     page,
     filters
-  );
-}
-
-export enum IdentityFilterType {
-  PROFILE_ID = 'PROFILE_ID',
-  HANDLE = 'HANDLE'
-}
-
-export async function fetchIdentityTdhEditions(
-  identity: string,
-  filterType: IdentityFilterType,
-  sort: string | undefined,
-  sortDir: string,
-  page: number,
-  pageSize: number,
-  options: TdhEditionFilters
-) {
-  const params: Record<string, any> = {};
-  let filters = '';
-
-  switch (filterType) {
-    case IdentityFilterType.PROFILE_ID:
-      params.identity = identity;
-      filters = constructFilters(
-        filters,
-        `${IDENTITIES_TABLE}.profile_id = :identity`
-      );
-      break;
-    case IdentityFilterType.HANDLE:
-      params.identity = identity.toLowerCase();
-      filters = constructFilters(
-        filters,
-        `${IDENTITIES_TABLE}.normalised_handle = :identity`
-      );
-      break;
-  }
-
-  filters = applyEditionFilters(
-    CONSOLIDATED_TDH_EDITIONS_TABLE,
-    filters,
-    params,
-    options
-  );
-
-  const joins = ` INNER JOIN ${IDENTITIES_TABLE} ON ${IDENTITIES_TABLE}.consolidation_key = ${CONSOLIDATED_TDH_EDITIONS_TABLE}.consolidation_key`;
-  const fields = `
-    ${CONSOLIDATED_TDH_EDITIONS_TABLE}.*,
-    ${IDENTITIES_TABLE}.profile_id as identity_id,
-    ${IDENTITIES_TABLE}.handle as identity_handle,
-    ${IDENTITIES_TABLE}.normalised_handle as identity_normalised_handle
-  `;
-
-  return fetchPaginated(
-    CONSOLIDATED_TDH_EDITIONS_TABLE,
-    params,
-    `${resolveSortColumn(sort, CONSOLIDATED_TDH_EDITIONS_TABLE)} ${sortDir}`,
-    pageSize,
-    page,
-    filters,
-    fields,
-    joins
   );
 }

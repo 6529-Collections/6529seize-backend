@@ -2304,7 +2304,7 @@ paths:
     get:
       tags:
         - TDH Editions
-      summary: Get TDH editions for a consolidation key
+      summary: Get TDH editions by consolidation key
       operationId: getTdhEditionsByConsolidationKey
       parameters:
         - name: consolidation_key
@@ -2371,11 +2371,13 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiTdhEditionsPage"
+        "404":
+          description: Consolidation key not found
   /tdh-editions/identity/{identity}:
     get:
       tags:
         - TDH Editions
-      summary: Get TDH editions for an identity id or handle
+      summary: Get TDH editions for an identity, wallet address, or ENS
       operationId: getTdhEditionsByIdentity
       parameters:
         - name: identity
@@ -2383,7 +2385,7 @@ paths:
           required: true
           schema:
             type: string
-          description: Identity profile id (UUID) or handle
+          description: Identity handle, profile id, wallet address, or ENS name
         - name: contract
           in: query
           required: false
@@ -2407,6 +2409,7 @@ paths:
           schema:
             type: string
             enum:
+              - id
               - hodl_rate
               - days_held
               - balance
@@ -5476,7 +5479,7 @@ components:
         updated_at:
           type: string
           format: date-time
-        token_id:
+        id:
           type: integer
           format: int64
         contract:
@@ -6185,14 +6188,8 @@ components:
         consolidation_key:
           type: string
           nullable: true
-        identity_id:
-          type: string
-          nullable: true
-        identity_handle:
-          type: string
-          nullable: true
-        identity_normalised_handle:
-          type: string
+        profile:
+          $ref: "#/components/schemas/ApiProfileMin"
           nullable: true
     ApiTdhEditionsPage:
       type: object
