@@ -1,25 +1,22 @@
-import { Request } from 'express';
-import { UUID_REGEX, WALLET_REGEX } from '../../../constants';
-import { BadRequestException, NotFoundException } from '../../../exceptions';
-import { identitiesDb } from '../../../identities/identities.db';
-import { numbers } from '../../../numbers';
+import * as Joi from 'joi';
+import { WALLET_REGEX } from '../../../constants';
+import { NotFoundException } from '../../../exceptions';
+import { identityFetcher } from '../identities/identity.fetcher';
+import { getValidatedByJoiOrThrow } from '../validation';
 import { Timer } from '../../../time';
 import {
-  getPage,
-  getPageSize,
-  resolveSortDirection,
-  returnPaginatedResult
+  returnPaginatedResult,
+  transformPaginatedResponse
 } from '../api-helpers';
 import { asyncRouter } from '../async.router';
 import {
   DEFAULT_TDH_EDITION_SORT,
+  TdhEditionFilters,
   fetchConsolidatedTdhEditions,
-  fetchIdentityTdhEditions,
   fetchWalletTdhEditions,
-  IdentityFilterType,
-  TDH_EDITION_SORT_MAP,
-  TdhEditionFilters
+  TDH_EDITION_SORT_MAP
 } from './tdh-editions.db';
+import { ApiProfileMin } from '../generated/models/ApiProfileMin';
 
 const router = asyncRouter();
 
@@ -27,110 +24,146 @@ export default router;
 
 const SORT_FIELDS = Object.keys(TDH_EDITION_SORT_MAP);
 
-function resolveSort(sort?: string | null) {
-  if (!sort) {
-    return DEFAULT_TDH_EDITION_SORT;
-  }
-  const key = sort.toLowerCase();
-  return SORT_FIELDS.includes(key) ? key : DEFAULT_TDH_EDITION_SORT;
+const PositiveIntSchema = Joi.number().integer().min(0);
+
+type TdhEditionsQuery = {
+  contract?: string;
+  token_id?: number;
+  edition_id?: number;
+  sort: string;
+  sort_direction: string;
+  page: number;
+  page_size: number;
+};
+
+const TdhEditionsQuerySchema: Joi.ObjectSchema<TdhEditionsQuery> = Joi.object({
+  contract: Joi.string().trim().lowercase(),
+  token_id: PositiveIntSchema,
+  edition_id: PositiveIntSchema,
+  sort: Joi.string()
+    .trim()
+    .lowercase()
+    .valid(...SORT_FIELDS)
+    .default(DEFAULT_TDH_EDITION_SORT),
+  sort_direction: Joi.string()
+    .trim()
+    .uppercase()
+    .valid('ASC', 'DESC')
+    .default('DESC'),
+  page: Joi.number().integer().positive().default(1),
+  page_size: Joi.number().integer().positive().max(100).default(50)
+});
+
+const WalletParamsSchema = Joi.object({
+  wallet: Joi.string().pattern(WALLET_REGEX).lowercase().required()
+});
+
+const IdentityParamsSchema = Joi.object({
+  identity: Joi.string().required()
+});
+
+function mapFilters(query: TdhEditionsQuery): TdhEditionFilters {
+  return {
+    contract: query.contract,
+    tokenId: query.token_id,
+    editionId: query.edition_id
+  };
 }
 
-function parseFilters(query: Request['query']): TdhEditionFilters {
-  const contract =
-    typeof query.contract === 'string'
-      ? query.contract.toLowerCase()
-      : undefined;
-  const tokenId = numbers.parseIntOrNull(query.token_id);
-  const editionId = numbers.parseIntOrNull(query.edition_id);
+type TdhEditionRow = {
+  contract: string;
+  id: number;
+  edition_id: number;
+  balance: number;
+  hodl_rate: number;
+  days_held: number;
+  wallet?: string | null;
+  consolidation_key?: string | null;
+};
 
+function toApiEdition(row: TdhEditionRow, profile?: ApiProfileMin | null) {
   return {
-    contract,
-    tokenId: tokenId === null ? undefined : tokenId,
-    editionId: editionId === null ? undefined : editionId
+    contract: row.contract,
+    id: row.id,
+    edition_id: row.edition_id,
+    balance: row.balance,
+    hodl_rate: row.hodl_rate,
+    days_held: row.days_held,
+    wallet: row.wallet ?? null,
+    consolidation_key: row.consolidation_key ?? null,
+    profile: profile ?? null
   };
 }
 
 router.get('/wallet/:wallet', async (req, res) => {
-  const wallet = req.params.wallet.toLowerCase();
-  if (!WALLET_REGEX.test(wallet)) {
-    throw new BadRequestException(`Invalid wallet ${wallet}`);
-  }
-  const page = getPage(req);
-  const pageSize = getPageSize(req);
-  const sort = resolveSort(req.query.sort as string | undefined);
-  const sortDir = resolveSortDirection(req.query.sort_direction);
-  const filters = parseFilters(req.query);
+  const { wallet } = getValidatedByJoiOrThrow(req.params, WalletParamsSchema);
+  const query = getValidatedByJoiOrThrow<TdhEditionsQuery>(
+    req.query,
+    TdhEditionsQuerySchema
+  );
 
   const result = await fetchWalletTdhEditions(
     wallet,
-    sort,
-    sortDir,
-    page,
-    pageSize,
-    filters
+    query.sort,
+    query.sort_direction,
+    query.page,
+    query.page_size,
+    mapFilters(query)
   );
-  await returnPaginatedResult(result, req, res);
-});
-
-router.get('/consolidation/:consolidation_key', async (req, res) => {
-  const consolidationKey = req.params.consolidation_key.toLowerCase();
-  const page = getPage(req);
-  const pageSize = getPageSize(req);
-  const sort = resolveSort(req.query.sort as string | undefined);
-  const sortDir = resolveSortDirection(req.query.sort_direction);
-  const filters = parseFilters(req.query);
-
-  const result = await fetchConsolidatedTdhEditions(
-    consolidationKey,
-    sort,
-    sortDir,
-    page,
-    pageSize,
-    filters
+  const response = transformPaginatedResponse(
+    (row: TdhEditionRow) => toApiEdition(row),
+    result
   );
-  await returnPaginatedResult(result, req, res);
+  await returnPaginatedResult(response, req, res);
 });
 
 router.get('/identity/:identity', async (req, res) => {
-  const identityParam = req.params.identity;
-  const timer = Timer.getFromRequest(req);
-  const filterType = UUID_REGEX.test(identityParam)
-    ? IdentityFilterType.PROFILE_ID
-    : IdentityFilterType.HANDLE;
-
-  const identityRecord =
-    filterType === IdentityFilterType.PROFILE_ID
-      ? await identitiesDb.getIdentityByProfileId(identityParam)
-      : await identitiesDb.getIdentityByHandle(identityParam, { timer });
-
-  if (!identityRecord) {
-    throw new NotFoundException(`Identity ${identityParam} not found`);
-  }
-
-  const identityValue =
-    filterType === IdentityFilterType.PROFILE_ID
-      ? identityRecord.profile_id!
-      : (identityRecord.normalised_handle ??
-        identityRecord.handle?.toLowerCase());
-
-  if (!identityValue) {
-    throw new NotFoundException(`Identity ${identityParam} not found`);
-  }
-
-  const page = getPage(req);
-  const pageSize = getPageSize(req);
-  const sort = resolveSort(req.query.sort as string | undefined);
-  const sortDir = resolveSortDirection(req.query.sort_direction);
-  const filters = parseFilters(req.query);
-
-  const result = await fetchIdentityTdhEditions(
-    identityValue,
-    filterType,
-    sort,
-    sortDir,
-    page,
-    pageSize,
-    filters
+  const { identity: identityParam } = getValidatedByJoiOrThrow(
+    req.params,
+    IdentityParamsSchema
   );
-  await returnPaginatedResult(result, req, res);
+  const query = getValidatedByJoiOrThrow<TdhEditionsQuery>(
+    req.query,
+    TdhEditionsQuerySchema
+  );
+  const timer = Timer.getFromRequest(req);
+  const identity =
+    await identityFetcher.getIdentityAndConsolidationsByIdentityKey(
+      {
+        identityKey: identityParam
+      },
+      { timer }
+    );
+
+  if (!identity) {
+    throw new NotFoundException(`Identity ${identityParam} not found`);
+  }
+
+  const result = await fetchConsolidatedTdhEditions(
+    identity.consolidation_key,
+    query.sort,
+    query.sort_direction,
+    query.page,
+    query.page_size,
+    mapFilters(query)
+  );
+  let profile: ApiProfileMin | null = null;
+  if (identity.id) {
+    const profiles = await identityFetcher.getOverviewsByIds([identity.id], {
+      timer
+    });
+    profile = profiles[identity.id] ?? null;
+  }
+  const response = transformPaginatedResponse(
+    (row: TdhEditionRow) =>
+      toApiEdition(
+        {
+          ...row,
+          consolidation_key: identity.consolidation_key
+        },
+        profile
+      ),
+    result
+  );
+  await returnPaginatedResult(response, req, res);
 });
