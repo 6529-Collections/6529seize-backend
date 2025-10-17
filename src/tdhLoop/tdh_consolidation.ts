@@ -332,13 +332,14 @@ export function consolidateCards(
     if (existingIndex === -1) {
       accumulator.push(current);
     } else {
-      accumulator[existingIndex].balance += current.balance;
-      accumulator[existingIndex].tdh += current.tdh;
-      accumulator[existingIndex].tdh__raw += current.tdh__raw;
-      accumulator[existingIndex].days_held_per_edition = [
-        ...accumulator[existingIndex].days_held_per_edition,
+      const existing = accumulator[existingIndex];
+      existing.balance += current.balance;
+      existing.tdh += current.tdh;
+      existing.tdh__raw += current.tdh__raw;
+      existing.days_held_per_edition = [
+        ...existing.days_held_per_edition,
         ...current.days_held_per_edition
-      ];
+      ].sort((a, b) => a - b);
     }
 
     return accumulator;
