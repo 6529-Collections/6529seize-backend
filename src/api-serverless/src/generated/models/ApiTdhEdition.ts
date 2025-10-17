@@ -10,8 +10,8 @@
  * Do not edit the class manually.
  */
 
+import { ApiProfileMin } from '../models/ApiProfileMin';
 import { HttpFile } from '../http/http';
-import { ApiProfileMin } from './ApiProfileMin';
 
 export class ApiTdhEdition {
     'contract': string;
@@ -22,7 +22,7 @@ export class ApiTdhEdition {
     'days_held': number;
     'wallet'?: string | null;
     'consolidation_key'?: string | null;
-    'profile'?: ApiProfileMin | null;
+    'profile'?: ApiProfileMin;
 
     static readonly discriminator: string | undefined = undefined;
 

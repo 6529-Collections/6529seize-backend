@@ -14,18 +14,22 @@ import { identityFetcher } from '../identities/identity.fetcher';
 import { Page } from '../page-request';
 import { getValidatedByJoiOrThrow } from '../validation';
 import {
-  DEFAULT_TDH_EDITION_SORT,
   fetchConsolidatedTdhEditions,
   fetchWalletTdhEditions,
-  TDH_EDITION_SORT_MAP,
   TdhEditionFilters
 } from './tdh-editions.db';
 
 const router = asyncRouter();
-
 export default router;
 
-const SORT_FIELDS = Object.keys(TDH_EDITION_SORT_MAP);
+const SORT_FIELDS = [
+  'id',
+  'hodl_rate',
+  'days_held',
+  'balance',
+  'edition_id',
+  'contract'
+] as const;
 
 const PositiveIntSchema = Joi.number().integer().min(0);
 
@@ -33,8 +37,8 @@ type TdhEditionsQuery = {
   contract?: string;
   token_id?: number;
   edition_id?: number;
-  sort: string;
-  sort_direction: string;
+  sort: (typeof SORT_FIELDS)[number];
+  sort_direction: 'ASC' | 'DESC';
   page: number;
   page_size: number;
 };
@@ -44,15 +48,9 @@ const TdhEditionsQuerySchema: Joi.ObjectSchema<TdhEditionsQuery> = Joi.object({
   token_id: PositiveIntSchema,
   edition_id: PositiveIntSchema,
   sort: Joi.string()
-    .trim()
-    .lowercase()
     .valid(...SORT_FIELDS)
-    .default(DEFAULT_TDH_EDITION_SORT),
-  sort_direction: Joi.string()
-    .trim()
-    .uppercase()
-    .valid('ASC', 'DESC')
-    .default('DESC'),
+    .default('id'),
+  sort_direction: Joi.string().valid('ASC', 'DESC').default('DESC'),
   page: Joi.number().integer().positive().default(1),
   page_size: Joi.number().integer().positive().max(100).default(50)
 });
@@ -76,6 +74,8 @@ function mapFilters(query: TdhEditionsQuery): TdhEditionFilters {
     editionId: query.edition_id
   };
 }
+
+/* ---- RESPONSE MAPPER ---- */
 
 type TdhEditionRow = {
   contract: string;
@@ -102,6 +102,8 @@ function toApiEdition(row: TdhEditionRow, profile?: ApiProfileMin | null) {
   };
 }
 
+/* ---- ROUTES ---- */
+
 router.get(
   '/wallet/:wallet',
   async (
@@ -109,10 +111,7 @@ router.get(
     res: Response<ApiResponse<Page<TdhEditionRow>>>
   ) => {
     const { wallet } = getValidatedByJoiOrThrow(req.params, WalletParamsSchema);
-    const query = getValidatedByJoiOrThrow<TdhEditionsQuery>(
-      req.query,
-      TdhEditionsQuerySchema
-    );
+    const query = getValidatedByJoiOrThrow(req.query, TdhEditionsQuerySchema);
 
     const result = await fetchWalletTdhEditions(
       wallet,
@@ -122,6 +121,7 @@ router.get(
       query.page_size,
       mapFilters(query)
     );
+
     const response = transformPaginatedResponse(
       (row: TdhEditionRow) => toApiEdition(row),
       result
@@ -140,10 +140,7 @@ router.get(
       req.params,
       ConsolidationParamsSchema
     );
-    const query = getValidatedByJoiOrThrow<TdhEditionsQuery>(
-      req.query,
-      TdhEditionsQuerySchema
-    );
+    const query = getValidatedByJoiOrThrow(req.query, TdhEditionsQuerySchema);
 
     const result = await fetchConsolidatedTdhEditions(
       consolidation_key,
@@ -172,16 +169,12 @@ router.get(
       req.params,
       IdentityParamsSchema
     );
-    const query = getValidatedByJoiOrThrow<TdhEditionsQuery>(
-      req.query,
-      TdhEditionsQuerySchema
-    );
+    const query = getValidatedByJoiOrThrow(req.query, TdhEditionsQuerySchema);
     const timer = Timer.getFromRequest(req);
+
     const identity =
       await identityFetcher.getIdentityAndConsolidationsByIdentityKey(
-        {
-          identityKey: identityParam
-        },
+        { identityKey: identityParam },
         { timer }
       );
 
@@ -197,6 +190,7 @@ router.get(
       query.page_size,
       mapFilters(query)
     );
+
     let profile: ApiProfileMin | null = null;
     if (identity.id) {
       const profiles = await identityFetcher.getOverviewsByIds([identity.id], {
@@ -204,17 +198,16 @@ router.get(
       });
       profile = profiles[identity.id] ?? null;
     }
+
     const response = transformPaginatedResponse(
       (row: TdhEditionRow) =>
         toApiEdition(
-          {
-            ...row,
-            consolidation_key: identity.consolidation_key
-          },
+          { ...row, consolidation_key: identity.consolidation_key },
           profile
         ),
       result
     );
+
     await returnPaginatedResult(response, req, res);
   }
 );

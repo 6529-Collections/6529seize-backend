@@ -5479,7 +5479,7 @@ components:
         updated_at:
           type: string
           format: date-time
-        id:
+        token_id:
           type: integer
           format: int64
         contract:

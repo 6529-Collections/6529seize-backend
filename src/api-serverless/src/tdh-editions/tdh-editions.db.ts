@@ -5,28 +5,14 @@ import {
 import { fetchPaginated } from '../../../db-api';
 import { constructFilters } from '../api-helpers';
 
-export const TDH_EDITION_SORT_MAP: Record<string, string> = {
-  id: 'id',
-  hodl_rate: 'hodl_rate',
-  days_held: 'days_held',
-  balance: 'balance',
-  edition_id: 'edition_id',
-  contract: 'contract'
-};
-
-export const DEFAULT_TDH_EDITION_SORT = 'id';
-
 export type TdhEditionFilters = {
   contract?: string;
   tokenId?: number;
   editionId?: number;
 };
 
-function resolveSortColumn(sort: string | undefined, table: string) {
-  const key = sort?.toLowerCase() ?? DEFAULT_TDH_EDITION_SORT;
-  const column =
-    TDH_EDITION_SORT_MAP[key] ?? TDH_EDITION_SORT_MAP[DEFAULT_TDH_EDITION_SORT];
-  return `${table}.${column}`;
+function buildOrderBy(sort: string, sortDir: string, table: string) {
+  return `${table}.${sort} ${sortDir}`;
 }
 
 function applyEditionFilters(
@@ -52,7 +38,7 @@ function applyEditionFilters(
 
 export async function fetchWalletTdhEditions(
   wallet: string,
-  sort: string | undefined,
+  sort: string,
   sortDir: string,
   page: number,
   pageSize: number,
@@ -65,7 +51,7 @@ export async function fetchWalletTdhEditions(
   return fetchPaginated(
     TDH_EDITIONS_TABLE,
     params,
-    `${resolveSortColumn(sort, TDH_EDITIONS_TABLE)} ${sortDir}`,
+    buildOrderBy(sort, sortDir, TDH_EDITIONS_TABLE),
     pageSize,
     page,
     filters
@@ -74,15 +60,13 @@ export async function fetchWalletTdhEditions(
 
 export async function fetchConsolidatedTdhEditions(
   consolidationKey: string,
-  sort: string | undefined,
+  sort: string,
   sortDir: string,
   page: number,
   pageSize: number,
   options: TdhEditionFilters
 ) {
-  const params: Record<string, any> = {
-    consolidationKey
-  };
+  const params: Record<string, any> = { consolidationKey };
   let filters = constructFilters(
     '',
     `${CONSOLIDATED_TDH_EDITIONS_TABLE}.consolidation_key = :consolidationKey`
@@ -97,7 +81,7 @@ export async function fetchConsolidatedTdhEditions(
   return fetchPaginated(
     CONSOLIDATED_TDH_EDITIONS_TABLE,
     params,
-    `${resolveSortColumn(sort, CONSOLIDATED_TDH_EDITIONS_TABLE)} ${sortDir}`,
+    buildOrderBy(sort, sortDir, CONSOLIDATED_TDH_EDITIONS_TABLE),
     pageSize,
     page,
     filters
