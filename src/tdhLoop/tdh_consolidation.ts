@@ -12,7 +12,8 @@ import { NextGenToken } from '../entities/INextGen';
 import {
   ConsolidatedTDH,
   ConsolidatedTDHMemes,
-  TDHENS
+  TDHENS,
+  TokenTDH
 } from '../entities/ITDH';
 import { Logger } from '../logging';
 import { fetchNextgenTokens } from '../nextgen/nextgen.db';
@@ -317,25 +318,31 @@ export const consolidateTDH = async (
   logger.info(`[FINAL ENTRIES ${rankedTdh.length}]`);
 };
 
-function consolidateCards(consolidationTokens: any[], walletTokens: any[]) {
-  const mergedArray = [...consolidationTokens, ...walletTokens].reduce(
-    (accumulator, current) => {
-      const existingIndex = accumulator.findIndex(
-        (item: any) => item.id === current.id
-      );
+export function consolidateCards(
+  consolidationTokens: TokenTDH[],
+  walletTokens: TokenTDH[]
+): TokenTDH[] {
+  const mergedArray = [...consolidationTokens, ...walletTokens].reduce<
+    TokenTDH[]
+  >((accumulator, current) => {
+    const existingIndex = accumulator.findIndex(
+      (item) => item.id === current.id
+    );
 
-      if (existingIndex === -1) {
-        accumulator.push(current);
-      } else {
-        accumulator[existingIndex].balance += current.balance;
-        accumulator[existingIndex].tdh += current.tdh;
-        accumulator[existingIndex].tdh__raw += current.tdh__raw;
-      }
+    if (existingIndex === -1) {
+      accumulator.push(current);
+    } else {
+      accumulator[existingIndex].balance += current.balance;
+      accumulator[existingIndex].tdh += current.tdh;
+      accumulator[existingIndex].tdh__raw += current.tdh__raw;
+      accumulator[existingIndex].days_held_per_edition = [
+        ...accumulator[existingIndex].days_held_per_edition,
+        ...current.days_held_per_edition
+      ];
+    }
 
-      return accumulator;
-    },
-    []
-  );
+    return accumulator;
+  }, []);
 
   return mergedArray;
 }
