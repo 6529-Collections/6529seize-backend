@@ -379,7 +379,7 @@ function getSeasonSet(id: number): TokenTDH[] {
       tdh: 1,
       tdh__raw: 1,
       hodl_rate: 1,
-      days_held_per_token: [1]
+      days_held_per_edition: [1]
     });
   }
   return tokens;
