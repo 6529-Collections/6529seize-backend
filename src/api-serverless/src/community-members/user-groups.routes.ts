@@ -118,14 +118,16 @@ router.get(
       ctx
     );
     const identityGroupId = group.group.identity_group_id;
-    if (identityGroupId !== req.params.identity_group_id) {
+    const exclusionGroupId = group.group.excluded_identity_group_id;
+    const givenIdentityGroupId = req.params.identity_group_id;
+    if (![identityGroupId, exclusionGroupId].includes(givenIdentityGroupId)) {
       throw new NotFoundException(
-        `Group does not have identity group with id ${req.params.identity_group_id}`
+        `Group does not have identity group with id ${givenIdentityGroupId}`
       );
     } else {
       const addresses =
         await userGroupsService.findUserGroupsIdentityGroupIdentities(
-          identityGroupId
+          givenIdentityGroupId
         );
       res.send(addresses);
     }
