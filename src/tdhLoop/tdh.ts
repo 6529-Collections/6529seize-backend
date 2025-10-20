@@ -730,7 +730,7 @@ function getTokenTdh(
   const balance = tokenDatesForWallet.length;
 
   hodlRate = Math.round(hodlRate * 100) / 100;
-  const tdh = tdh__raw * hodlRate;
+  const tdh = Math.round(hodlRate * tdh__raw * 1000) / 1000;
 
   if (tdh > 0 || balance > 0) {
     const tokenTDH: TokenTDH = {
@@ -869,10 +869,12 @@ export async function calculateBoosts(
         (sum: number, m: TokenTDH) => sum + Math.round(m.tdh * boost),
         0
       );
+
       const boostedGradientsTdh = w.gradients.reduce(
         (sum: number, g: any) => sum + Math.round(g.tdh * boost),
         0
       );
+
       const boostedNextgenTdh = w.nextgen.reduce(
         (sum: number, n: any) => sum + Math.round(n.tdh * boost),
         0
@@ -882,6 +884,8 @@ export async function calculateBoosts(
         Math.round(boostedMemesTdh) +
         Math.round(boostedGradientsTdh) +
         Math.round(boostedNextgenTdh);
+
+      logger.info(`hi i am boosted [BOOSTED_TDH ${boostedTdh}]`);
 
       w.boost = boost;
       w.boost_breakdown = boostBreakdown.breakdown;

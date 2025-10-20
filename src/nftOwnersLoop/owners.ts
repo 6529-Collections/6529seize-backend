@@ -1,7 +1,7 @@
 import { NftContractOwner } from 'alchemy-sdk';
 import fetch from 'node-fetch';
-import { Time } from '../time';
 import { Logger } from '../logging';
+import { Time } from '../time';
 
 const logger = Logger.get('OWNERS');
 
@@ -34,7 +34,10 @@ async function getAllOwnersFromAlchemy(
     const owners = await getOwners(block ?? -1, contract);
     owners.forEach((owner) => {
       owner.tokenBalances.forEach((balance) => {
-        const key = `${owner.ownerAddress}-${contract}-${balance.tokenId}`;
+        const walletNorm = owner.ownerAddress.toLowerCase();
+        const contractNorm = contract.toLowerCase();
+        const tokenIdNorm = BigInt(balance.tokenId).toString();
+        const key = `${walletNorm}-${contractNorm}-${tokenIdNorm}`;
         const myOwned = owned.get(key);
         if (myOwned) {
           myOwned.balance += parseInt(balance.balance);
