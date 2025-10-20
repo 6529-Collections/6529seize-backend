@@ -866,10 +866,10 @@ export async function calculateBoosts(
       const boost = boostBreakdown.total;
 
       w.memes.forEach((m: TokenTDH) => {
-        logger.info('hi i am a meme: [ID ${m.id}] [TDH ${m.tdh}]');
+        logger.info(`hi i am a meme: [ID ${m.id}] [TDH ${m.tdh}]`);
       });
 
-      logger.info('hi i am boost [BOOST ${boost}]');
+      logger.info(`hi i am boost [BOOST ${boost}]`);
 
       const boostedMemesTdh = w.memes.reduce(
         (sum: number, m: TokenTDH) => sum + Math.round(m.tdh * boost),
