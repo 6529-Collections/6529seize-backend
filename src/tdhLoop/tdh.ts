@@ -866,33 +866,39 @@ export async function calculateBoosts(
       const boost = boostBreakdown.total;
 
       w.memes.forEach((m: TokenTDH) => {
-        console.log('hi i am a meme', m.id, m.tdh);
+        logger.info('hi i am a meme: [ID ${m.id}] [TDH ${m.tdh}]');
       });
 
-      console.log('hi i am boost', boost);
+      logger.info('hi i am boost [BOOST ${boost}]');
 
       const boostedMemesTdh = w.memes.reduce(
         (sum: number, m: TokenTDH) => sum + Math.round(m.tdh * boost),
         0
       );
-      console.log('hi i am boosted memes tdh', boostedMemesTdh);
+      logger.info(
+        `hi i am boosted memes [BOOSTED_MEMES_TDH ${boostedMemesTdh}]`
+      );
       const boostedGradientsTdh = w.gradients.reduce(
         (sum: number, g: any) => sum + Math.round(g.tdh * boost),
         0
       );
-      console.log('hi i am boosted gradients tdh', boostedGradientsTdh);
+      logger.info(
+        `hi i am boosted gradients [BOOSTED_GRADIENTS_TDH ${boostedGradientsTdh}]`
+      );
       const boostedNextgenTdh = w.nextgen.reduce(
         (sum: number, n: any) => sum + Math.round(n.tdh * boost),
         0
       );
-      console.log('hi i am boosted nextgen tdh', boostedNextgenTdh);
+      logger.info(
+        `hi i am boosted nextgen [BOOSTED_NEXTGEN_TDH ${boostedNextgenTdh}]`
+      );
 
       const boostedTdh =
         Math.round(boostedMemesTdh) +
         Math.round(boostedGradientsTdh) +
         Math.round(boostedNextgenTdh);
 
-      console.log('hi i am boosted tdh', boostedTdh);
+      logger.info(`hi i am boosted [BOOSTED_TDH ${boostedTdh}]`);
 
       w.boost = boost;
       w.boost_breakdown = boostBreakdown.breakdown;
