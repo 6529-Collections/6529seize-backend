@@ -41,7 +41,7 @@ resources:
     NftOwnersLoopLogGroup:
       Type: AWS::Logs::LogGroup
       Properties:
-        LogGroupName: /aws/lambda/nftOwnerLoop
+        LogGroupName: /aws/lambda/nftOwnersLoop
         RetentionInDays: 60
     NftOwnersLoopOOMFilter:
       Type: AWS::Logs::MetricFilter
