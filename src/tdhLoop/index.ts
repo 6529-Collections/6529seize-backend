@@ -74,9 +74,11 @@ async function tdh(force?: boolean) {
   const lastTdhDB = await fetchLatestTDHBDate();
   const lastTdhFromNow = lastTdhDB.timestamp.diffFromNow();
 
+  const startingWallets = ['0xd7192081e5f481364c190022f0012a729fba37a5'];
+
   if (lastTdhFromNow.gt(Time.hours(24)) || force) {
-    const { block, timestamp } = await updateTDH(lastTDHCalc);
-    await consolidateTDH(lastTDHCalc, block, timestamp);
+    const { block, timestamp } = await updateTDH(lastTDHCalc, startingWallets);
+    await consolidateTDH(lastTDHCalc, block, timestamp, startingWallets);
     return block;
   } else {
     logger.info(
