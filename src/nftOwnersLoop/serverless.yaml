@@ -38,25 +38,33 @@ functions:
 
 resources:
   Resources:
+    NftOwnersLoopLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/nftOwnerLoop
+        RetentionInDays: 60
     NftOwnersLoopOOMFilter:
       Type: AWS::Logs::MetricFilter
+      DependsOn:
+        - NftOwnersLoopLogGroup
       Properties:
-        LogGroupName: /aws/lambda/nftOwnersLoop
-        FilterPattern: "Runtime.OutOfMemory"
+        LogGroupName:
+          Ref: NftOwnersLoopLogGroup
+        FilterPattern: 'Runtime.OutOfMemory'
         MetricTransformations:
-          - MetricNamespace: "Lambda/OOM"
-            MetricName: "nftOwnersLoop_OOMErrorCount"
-            MetricValue: "1"
+          - MetricNamespace: 'Lambda/OOM'
+            MetricName: 'nftOwnersLoop_OOMErrorCount'
+            MetricValue: '1'
             DefaultValue: 0
 
     NftOwnersLoopOOMAlarm:
       Type: AWS::CloudWatch::Alarm
       DependsOn: NftOwnersLoopOOMFilter
       Properties:
-        AlarmName: !Sub "${AWS::StackName}-nftOwnersLoop-OOM"
-        AlarmDescription: !Sub "Lambda nftOwnersLoop OutOfMemory in ${AWS::Region}"
-        Namespace: "Lambda/OOM"
-        MetricName: "nftOwnersLoop_OOMErrorCount"
+        AlarmName: !Sub '${AWS::StackName}-nftOwnersLoop-OOM'
+        AlarmDescription: !Sub 'Lambda nftOwnersLoop OutOfMemory in ${AWS::Region}'
+        Namespace: 'Lambda/OOM'
+        MetricName: 'nftOwnersLoop_OOMErrorCount'
         Statistic: Sum
         Period: 60
         EvaluationPeriods: 1
