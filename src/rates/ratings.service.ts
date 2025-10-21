@@ -887,10 +887,13 @@ export class RatingsService {
                   cic: 0,
                   rep: 0,
                   tdh: 0,
-                  x_tdh: 0,
-                  produced_x_tdh: 0,
-                  granted_x_tdh: 0,
-                  level_raw: 0
+                  total_tdh: 0,
+                  xtdh: 0,
+                  produced_xtdh: 0,
+                  granted_xtdh: 0,
+                  level_raw: 0,
+                  xtdh_rate: 0,
+                  basetdh_rate: 0
                 },
                 connection
               )

@@ -36,10 +36,12 @@ import royaltiesRoutes from './royalties/royalties.routes';
 import tdhEditionsRoutes from './tdh-editions/tdh-editions.routes';
 import tdhGrantsRoutes from './tdh-grants/tdh-grants.routes';
 import tdhRoutes from './tdh/api.tdh.routes';
+import tdhStatsRoutes from './tdh/tdh-stats.routes';
 import waveMediaRoutes from './waves/wave-media.routes';
 import wavesOverviewRoutes from './waves/waves-overview.routes';
 import publicWavesRoutes from './waves/waves-public.routes';
 import wavesRoutes from './waves/waves.routes';
+import xtdhRoutes from './xtdh/xtdh-info.routes';
 
 import * as Sentry from '@sentry/serverless';
 import { NextFunction, Request, Response } from 'express';
@@ -1053,6 +1055,7 @@ loadApi().then(async () => {
   apiRouter.use(`/tdh`, tdhRoutes);
   apiRouter.use(`/tdh-editions`, tdhEditionsRoutes);
   apiRouter.use(`/tdh-grants`, tdhGrantsRoutes);
+  apiRouter.use(`/tdh-stats`, tdhStatsRoutes);
   apiRouter.use(`/aggregated-activity`, aggregatedActivityRoutes);
   apiRouter.use(`/owners-balances`, ownersBalancesRoutes);
   apiRouter.use(`/ratings`, ratingsRoutes);
@@ -1070,6 +1073,7 @@ loadApi().then(async () => {
   apiRouter.use(`/public/waves`, publicWavesRoutes);
   apiRouter.use(`/policies`, policiesRoutes);
   apiRouter.use(`/push-notifications`, pushNotificationsRoutes);
+  apiRouter.use(`/xtdh`, xtdhRoutes);
 
   rootRouter.use(BASE_PATH, apiRouter);
   rootRouter.use(`/oracle`, oracleRoutes);

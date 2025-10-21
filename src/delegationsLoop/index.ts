@@ -59,7 +59,9 @@ import { dbSupplier, sqlExecutor } from '../sql-executor';
 import { consolidateSubscriptions } from '../subscriptionsDaily/subscriptions';
 import { updateTDH } from '../tdhLoop/tdh';
 import { consolidateAndPersistTDH } from '../tdhLoop/tdh_consolidation';
-import { Time } from '../time';
+import { Time, Timer } from '../time';
+import { reReviewRatesInTdhGrantsUseCase } from '../tdh-grants/re-review-rates-in-tdh-grants.use-case';
+import { recalculateXTdhUseCase } from '../tdh-grants/recalculate-xtdh.use-case';
 
 const logger = Logger.get('DELEGATIONS_LOOP');
 
@@ -134,6 +136,9 @@ async function handleDelegations(startBlock: number | undefined) {
   await dbSupplier().executeNativeQueriesInTransaction(async (connection) => {
     await syncIdentitiesWithTdhConsolidations(connection);
     await syncIdentitiesPrimaryWallets(connection);
+    const ctx = { connection, timer: new Timer('PERSIST_TDH') };
+    await reReviewRatesInTdhGrantsUseCase.handle(ctx);
+    await recalculateXTdhUseCase.handle(ctx);
     await syncIdentitiesMetrics(connection);
     await revokeTdhBasedDropWavesOverVotes(connection);
   });

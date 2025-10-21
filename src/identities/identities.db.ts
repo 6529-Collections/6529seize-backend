@@ -11,7 +11,6 @@ import {
   DROPS_TABLE,
   ENS_TABLE,
   IDENTITIES_TABLE,
-  LATEST_TDH_HISTORY_TABLE,
   MEMES_CONTRACT,
   NFTS_TABLE,
   PROFILES_ARCHIVE_TABLE,
@@ -124,7 +123,11 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
                                          banner1,
                                          banner2,
                                          classification,
-                                         sub_classification)
+                                         sub_classification,
+                                         total_tdh,
+                                         xtdh,
+                                         produced_xtdh,
+                                         granted_xtdh)
         values (:consolidation_key,
                 :profile_id,
                 :primary_address,
@@ -138,7 +141,11 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
                 :banner1,
                 :banner2,
                 :classification,
-                :sub_classification)
+                :sub_classification,
+                :total_tdh,
+                :xtdh,
+                :produced_xtdh,
+                :granted_xtdh)
     `,
       identityEntity,
       { wrappedConnection: connection }
@@ -709,9 +716,12 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
       | 'tdh'
       | 'level_raw'
       | 'consolidation_key'
-      | 'x_tdh'
-      | 'produced_x_tdh'
-      | 'granted_x_tdh'
+      | 'xtdh'
+      | 'produced_xtdh'
+      | 'granted_xtdh'
+      | 'total_tdh'
+      | 'xtdh_rate'
+      | 'basetdh_rate'
     >,
     connection: ConnectionWrapper<any>
   ) {
@@ -1025,15 +1035,7 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
       tdh_rate: string;
     }>(
       `
-    SELECT
-        i.profile_id as profile_id,
-        ROUND(SUM(e.hodl_rate) * COALESCE(MAX(c.boost), 1.0)) AS tdh_rate
-    FROM ${CONSOLIDATED_WALLETS_TDH_TABLE} c
-        join ${IDENTITIES_TABLE} i on i.consolidation_key = c.consolidation_key
-             LEFT JOIN ${CONSOLIDATED_TDH_EDITIONS_TABLE} e
-                       ON e.consolidation_key = c.consolidation_key
-    where i.profile_id in (:ids)
-    GROUP BY c.consolidation_key
+      select i.profile_id as profile_id, i.basetdh_rate + i.xtdh_rate as tdh_rate from ${IDENTITIES_TABLE} i where i.profile_id in (:ids)
     `,
       { ids },
       { wrappedConnection: ctx.connection }
@@ -1047,19 +1049,16 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     );
   }
 
-  async getXTdhRate(id: string, ctx: RequestContext): Promise<number> {
-    return this.db
-      .oneOrNull<{
-        tdh_rate: number;
-      }>(
-        `
-      select ifnull(t.created_boosted_tdh, 0) as tdh_rate from ${IDENTITIES_TABLE} i
-    left join ${LATEST_TDH_HISTORY_TABLE} t on t.consolidation_key = i.consolidation_key where i.profile_id = :id
+  async getProducedXTdhRate(id: string, ctx: RequestContext): Promise<number> {
+    const row = await this.db.oneOrNull<{ basetdh_rate: number }>(
+      `
+    select basetdh_rate from identities where profile_id = :id
     `,
-        { id },
-        { wrappedConnection: ctx.connection }
-      )
-      .then((res) => (res?.tdh_rate ?? 0) * X_TDH_COEFFICIENT);
+      { id },
+      { wrappedConnection: ctx.connection }
+    );
+
+    return (row?.basetdh_rate ?? 0) * X_TDH_COEFFICIENT;
   }
 }
 

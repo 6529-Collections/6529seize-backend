@@ -66,3 +66,22 @@ export const ApiCreateTdhGrantSchema: Joi.ObjectSchema<ApiCreateTdhGrant> =
     tdh_rate: Joi.number().integer().min(1).required(),
     is_irrevocable: Joi.boolean().required()
   });
+
+export const ApiCreateTdhGrantBackdoorSchema: Joi.ObjectSchema<
+  ApiCreateTdhGrant & { user: string }
+> = Joi.object<ApiCreateTdhGrant & { user: string }>({
+  target_chain: Joi.string()
+    .allow(...Object.values(ApiTdhGrantTargetChain))
+    .required(),
+  target_contract: Joi.string().required().regex(WALLET_REGEX).lowercase(),
+  target_tokens: targetTokensSchema,
+  valid_to: Joi.number()
+    .integer()
+    .greater(Time.now().toMillis())
+    .optional()
+    .allow(null)
+    .default(null),
+  tdh_rate: Joi.number().positive().required(),
+  is_irrevocable: Joi.boolean().required(),
+  user: Joi.string().required()
+});

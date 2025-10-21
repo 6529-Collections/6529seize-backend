@@ -22,9 +22,13 @@ async function getUnsynchronisedConsolidationKeysWithTdhs(
   connection: ConnectionWrapper<any>
 ) {
   const db = dbSupplier();
-  return await db.execute<{ consolidation_key: string; tdh: number }>(
+  return await db.execute<{
+    consolidation_key: string;
+    tdh: number;
+    total_tdh: number;
+  }>(
     `
-    select t.consolidation_key, t.boosted_tdh as tdh from tdh_consolidation t
+    select t.consolidation_key, floor(t.total_tdh) as tdh, t.total_tdh as total_tdh from tdh_consolidation t
       left join address_consolidation_keys a on t.consolidation_key = a.consolidation_key
       where a.consolidation_key is null
   `,
@@ -137,10 +141,12 @@ export async function syncIdentitiesWithTdhConsolidations(
           brandNewConsolidations: [] as {
             consolidation_key: string;
             tdh: number;
+            total_tdh: number;
           }[],
           consolidationsThatNeedWork: [] as {
             consolidation_key: string;
             tdh: number;
+            total_tdh: number;
           }[]
         }
       );
@@ -159,6 +165,7 @@ export async function syncIdentitiesWithTdhConsolidations(
               handle: null,
               normalised_handle: null,
               tdh: consolidation.tdh,
+              total_tdh: consolidation.total_tdh,
               rep: 0,
               cic: 0,
               level_raw: consolidation.tdh,
@@ -167,9 +174,11 @@ export async function syncIdentitiesWithTdhConsolidations(
               banner2: null,
               classification: null,
               sub_classification: null,
-              x_tdh: 0,
-              produced_x_tdh: 0,
-              granted_x_tdh: 0
+              xtdh: 0,
+              produced_xtdh: 0,
+              granted_xtdh: 0,
+              xtdh_rate: 0,
+              basetdh_rate: 0
             };
           })
       )
@@ -193,9 +202,12 @@ export async function syncIdentitiesWithTdhConsolidations(
           handle: null,
           normalised_handle: null,
           tdh: consolidationThatNeedsWork.tdh,
-          produced_x_tdh: 0,
-          granted_x_tdh: 0,
-          x_tdh: 0,
+          produced_xtdh: 0,
+          granted_xtdh: 0,
+          xtdh: 0,
+          xtdh_rate: 0,
+          basetdh_rate: 0,
+          total_tdh: 0,
           rep: 0,
           cic: 0,
           level_raw: consolidationThatNeedsWork.tdh,
@@ -271,15 +283,18 @@ export async function syncIdentitiesWithTdhConsolidations(
           tdh: 0,
           rep: 0,
           cic: 0,
+          total_tdh: 0,
           level_raw: 0,
           pfp: null,
           banner1: null,
           banner2: null,
           classification: null,
           sub_classification: null,
-          x_tdh: 0,
-          produced_x_tdh: 0,
-          granted_x_tdh: 0
+          xtdh: 0,
+          produced_xtdh: 0,
+          granted_xtdh: 0,
+          xtdh_rate: 0,
+          basetdh_rate: 0
         });
       }
     }
@@ -361,13 +376,16 @@ export async function syncIdentitiesMetrics(
     { wrappedConnection: connection }
   );
   await db.execute(
+    `update ${IDENTITIES_TABLE} set xtdh = 0, tdh = 0, produced_xtdh = 0, granted_xtdh = 0, total_tdh = 0, xtdh_rate = 0, basetdh_rate = 0`,
+    undefined,
+    { wrappedConnection: connection }
+  );
+  await db.execute(
     `
-        with out_of_sync_tdhs as (
-            select i.profile_id, ifnull(c.boosted_tdh, 0) as tdh from ${IDENTITIES_TABLE} i left join ${CONSOLIDATED_WALLETS_TDH_TABLE} c on i.consolidation_key = c.consolidation_key where ifnull(c.boosted_tdh, 0) <> i.tdh limit 1000000
-        )
-        update ${IDENTITIES_TABLE} i
-            inner join out_of_sync_tdhs on i.profile_id = out_of_sync_tdhs.profile_id
-        set i.tdh = out_of_sync_tdhs.tdh where true
+     update ${IDENTITIES_TABLE} i
+            inner join ${CONSOLIDATED_WALLETS_TDH_TABLE} c  on c.consolidation_key = i.consolidation_key
+        set i.tdh = floor(c.total_tdh), i.total_tdh = c.total_tdh, i.xtdh = c.xtdh, i.produced_xtdh = c.produced_xtdh,  i.granted_xtdh = c.granted_xtdh, i.xtdh_rate = c.xtdh_rate, i.basetdh_rate = c.boosted_tdh_rate
+        where i.consolidation_key = c.consolidation_key
   `,
     undefined,
     { wrappedConnection: connection }

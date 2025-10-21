@@ -57,7 +57,7 @@ export async function redisCached<T>(
   key: string,
   ttl: Time,
   callback: () => Promise<T>
-): Promise<any> {
+): Promise<T> {
   if (!redis) {
     return await callback();
   }

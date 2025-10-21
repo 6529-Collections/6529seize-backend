@@ -10,7 +10,7 @@ import {
   TdhGrantStatus,
   TdhGrantTokenMode
 } from '../entities/ITdhGrant';
-import { randomUUID } from 'crypto';
+import { randomUUID } from 'node:crypto';
 import { Time } from '../time';
 import {
   tdhGrantsRepository,
@@ -65,6 +65,7 @@ export class CreateTdhGrantUseCase {
             : TdhGrantTokenMode.ALL;
           const grantId = randomUUID();
           const targetPartition = `${command.target_chain}:${command.target_contract}`;
+          const tokensetId = randomUUID();
           const tokenEntities = command.target_tokens
             .flatMap((tokenOrTokenSpan) => {
               if (tokenOrTokenSpan.includes('-')) {
@@ -81,11 +82,13 @@ export class CreateTdhGrantUseCase {
             })
             .map<TdhGrantTokenEntity>((token) => ({
               token_id: token,
-              grant_id: grantId,
+              tokenset_id: tokensetId,
               target_partition: targetPartition
             }));
           const entity: TdhGrantEntity = {
             id: grantId,
+            tokenset_id: tokensetId,
+            replaced_grant_id: null,
             grantor_id: command.grantor_id,
             target_partition: targetPartition,
             target_chain: command.target_chain,

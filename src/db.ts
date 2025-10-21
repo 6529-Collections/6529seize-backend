@@ -27,8 +27,6 @@ import {
 } from './constants';
 import { Artist } from './entities/IArtist';
 import { ENS } from './entities/IENS';
-
-import { consolidationTools } from './consolidation-tools';
 import { DbQueryOptions } from './db-query.options';
 import { revokeTdhBasedDropWavesOverVotes } from './drops/participation-drops-over-vote-revocation';
 import {
@@ -76,7 +74,6 @@ import {
 } from './entities/ITDHHistory';
 import { Team } from './entities/ITeam';
 import { BaseTransaction, Transaction } from './entities/ITransaction';
-import { env } from './env';
 import { ethTools } from './eth-tools';
 import {
   syncIdentitiesMetrics,
@@ -87,8 +84,12 @@ import { deleteAll, insertWithoutUpdate, resetRepository } from './orm_helpers';
 import { ConnectionWrapper, setSqlExecutor, sqlExecutor } from './sql-executor';
 import { getConsolidationsSql, parseTdhDataFromDB } from './sql_helpers';
 import { equalIgnoreCase } from './strings';
+import { consolidationTools } from './consolidation-tools';
+import { env } from './env';
+import { reReviewRatesInTdhGrantsUseCase } from './tdh-grants/re-review-rates-in-tdh-grants.use-case';
 import { computeMerkleRoot } from './tdhLoop/tdh_merkle';
-import { Time } from './time';
+import { Time, Timer } from './time';
+import { recalculateXTdhUseCase } from './tdh-grants/recalculate-xtdh.use-case';
 
 const mysql = require('mysql');
 
@@ -1050,6 +1051,9 @@ export async function persistConsolidatedTDH(
     }
     await persistHistoricConsolidatedTDH(manager, block, tdh, wallets);
     await syncIdentitiesWithTdhConsolidations(qrHolder);
+    const ctx = { connection: qrHolder, timer: new Timer('PERSIST_TDH') };
+    await reReviewRatesInTdhGrantsUseCase.handle(ctx);
+    await recalculateXTdhUseCase.handle(ctx);
     await syncIdentitiesMetrics(qrHolder);
     await revokeTdhBasedDropWavesOverVotes(qrHolder);
   });

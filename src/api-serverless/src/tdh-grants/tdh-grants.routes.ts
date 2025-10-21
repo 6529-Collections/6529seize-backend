@@ -9,7 +9,10 @@ import { ApiResponse } from '../api-response';
 import { ApiCreateTdhGrant } from '../generated/models/ApiCreateTdhGrant';
 import { ApiTdhGrant } from '../generated/models/ApiTdhGrant';
 import { getValidatedByJoiOrThrow } from '../validation';
-import { ApiCreateTdhGrantSchema } from './tdh-grants.validator';
+import {
+  ApiCreateTdhGrantBackdoorSchema,
+  ApiCreateTdhGrantSchema
+} from './tdh-grants.validator';
 import { ForbiddenException } from '../../../exceptions';
 import { Timer } from '../../../time';
 import { createTdhGrantUseCase } from '../../../tdh-grants/create-tdh-grant.use-case';
@@ -22,6 +25,7 @@ import {
 } from './tdh-grant-search-request.api-model';
 import { RequestContext } from '../../../request.context';
 import { tdhGrantsFinder } from '../../../tdh-grants/tdh-grants.finder';
+import { identityFetcher } from '../identities/identity.fetcher';
 
 const router = asyncRouter();
 
@@ -102,6 +106,47 @@ router.post(
     const apiResponse =
       await tdhGrantApiConverter.fromTdhGrantModelToApiTdhGrant(model, {
         authenticationContext,
+        timer
+      });
+    res.send(apiResponse);
+  }
+);
+
+router.post(
+  '/backdoor',
+  async (
+    req: Request<any, any, ApiCreateTdhGrant & { user: string }, any, any>,
+    res: Response<ApiResponse<ApiTdhGrant>>
+  ) => {
+    if (!appFeatures.isXTdhEnabled()) {
+      throw new ForbiddenException(
+        `This endpoint is part of an ongoing development and is not yet enabled`
+      );
+    }
+    const apiCreateTdhGrant = getValidatedByJoiOrThrow(
+      req.body,
+      ApiCreateTdhGrantBackdoorSchema
+    );
+    const timer = Timer.getFromRequest(req);
+    const grantorId = await identityFetcher.getProfileIdByIdentityKey(
+      { identityKey: apiCreateTdhGrant.user },
+      { timer }
+    );
+    if (!grantorId) {
+      throw new ForbiddenException(
+        `No profile found for user ${apiCreateTdhGrant.user}`
+      );
+    }
+
+    const createCommand = tdhGrantApiConverter.fromApiCreateTdhGrantToModel({
+      apiCreateTdhGrant,
+      grantorId
+    });
+    const model = await createTdhGrantUseCase.handle(createCommand, {
+      timer
+    });
+    const apiResponse =
+      await tdhGrantApiConverter.fromTdhGrantModelToApiTdhGrant(model, {
         timer
       });
     res.send(apiResponse);
