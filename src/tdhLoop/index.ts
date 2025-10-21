@@ -19,11 +19,14 @@ import {
 } from '../entities/ITDH';
 import { ConsolidatedTDHUpload } from '../entities/IUpload';
 import { Logger } from '../logging';
+import * as notifier from '../notifier';
 import { doInDbContext } from '../secrets';
 import * as sentryContext from '../sentry.context';
 import { Time } from '../time';
+import { findNftTDH } from './nft_tdh';
 import { updateTDH } from './tdh';
 import { consolidateTDH } from './tdh_consolidation';
+import { uploadTDH } from './tdh_upload';
 
 const logger = Logger.get('TDH_LOOP');
 
@@ -59,10 +62,10 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
 
 export async function tdhLoop(force?: boolean) {
   const block = await tdh(force);
-  // await findNftTDH();
-  // await uploadTDH(block, false, force);
-  // await uploadTDH(block, true, force);
-  // await notifier.notifyTdhCalculationsDone();
+  await findNftTDH();
+  await uploadTDH(block, false, force);
+  await uploadTDH(block, true, force);
+  await notifier.notifyTdhCalculationsDone();
 }
 
 async function tdh(force?: boolean) {
