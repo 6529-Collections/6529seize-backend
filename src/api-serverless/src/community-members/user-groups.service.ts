@@ -800,7 +800,9 @@ export class UserGroupsService {
     let sql = ` included_profile_ids as (select distinct profile_id from (${
       anyOtherDescriptionButInclusion
         ? `select i.profile_id from cm_view i`
-        : ``
+        : group.identity_group_id === null
+          ? `select i.profile_id from ${IDENTITIES_TABLE} i`
+          : ``
     }`;
     if (group.identity_group_id !== null) {
       sql += ` ${
