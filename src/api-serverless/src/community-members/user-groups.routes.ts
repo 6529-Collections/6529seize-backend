@@ -30,6 +30,7 @@ import { identityFetcher } from '../identities/identity.fetcher';
 import { enums } from '../../../enums';
 import { numbers } from '../../../numbers';
 import { collections } from '../../../collections';
+import { WALLET_REGEX } from '../../../constants';
 
 const router = asyncRouter();
 
@@ -344,12 +345,12 @@ const GroupDescriptionSchema: Joi.ObjectSchema<ApiCreateGroupDescription> =
     owns_nfts: Joi.array().required().items(GroupOwnsNftSchema),
     identity_addresses: Joi.array()
       .required()
-      .items(Joi.string())
+      .items(Joi.string().regex(WALLET_REGEX).lowercase())
       .allow(null)
       .max(20000),
     excluded_identity_addresses: Joi.array()
       .optional()
-      .items(Joi.string())
+      .items(Joi.string().regex(WALLET_REGEX).lowercase())
       .allow(null)
       .default([])
       .max(20000)
