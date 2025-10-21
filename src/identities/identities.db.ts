@@ -692,9 +692,10 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
       | 'tdh'
       | 'level_raw'
       | 'consolidation_key'
-      | 'x_tdh'
-      | 'produced_x_tdh'
-      | 'granted_x_tdh'
+      | 'xtdh'
+      | 'produced_xtdh'
+      | 'granted_xtdh'
+      | 'total_tdh'
     >,
     connection: ConnectionWrapper<any>
   ) {
