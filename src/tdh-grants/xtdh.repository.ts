@@ -2,12 +2,16 @@ import { dbSupplier, LazyDbAccessCompatibleService } from '../sql-executor';
 import { RequestContext } from '../request.context';
 import {
   ADDRESS_CONSOLIDATION_KEY,
+  CONSOLIDATED_TDH_EDITIONS_TABLE,
+  CONSOLIDATED_WALLETS_TDH_TABLE,
   EXTERNAL_INDEXED_CONTRACTS_TABLE,
   EXTERNAL_INDEXED_OWNERSHIP_721_HISTORY_TABLE,
   IDENTITIES_TABLE,
   TDH_GRANT_TOKENS_TABLE,
-  TDH_GRANTS_TABLE
+  TDH_GRANTS_TABLE,
+  X_TDH_COEFFICIENT
 } from '../constants';
+import { Logger } from '../logging';
 
 //
 // ─── COMMON SQL FRAGMENTS ───────────────────────────────────────────────────────
@@ -181,6 +185,8 @@ const withSql = (ctes: string[], tail: string) =>
   `WITH\n${ctes.join(',\n')}\n${tail}`;
 
 export class XTdhRepository extends LazyDbAccessCompatibleService {
+  private readonly logger = Logger.get(this.constructor.name);
+
   async getWalletsWithoutIdentities(ctx: RequestContext): Promise<string[]> {
     try {
       ctx.timer?.start(`${this.constructor.name}->getWalletsWithoutIdentities`);
@@ -234,7 +240,7 @@ WHERE ack.address IS NULL
     try {
       ctx.timer?.start(`${this.constructor.name}->deleteXTdhState`);
       await this.db.execute(
-        `UPDATE ${IDENTITIES_TABLE} SET x_tdh = 0`,
+        `UPDATE ${CONSOLIDATED_WALLETS_TDH_TABLE} SET xtdh = 0`,
         undefined,
         {
           wrappedConnection: ctx.connection
@@ -245,22 +251,63 @@ WHERE ack.address IS NULL
     }
   }
 
-  async updateAllGrantedXTdhs(ctx: RequestContext) {
+  async updateProducedXTDH(ctx: RequestContext) {
     try {
-      ctx.timer?.start(`${this.constructor.name}->updateAllGrantedXTdhs`);
+      ctx.timer?.start(`${this.constructor.name}->updateProducedXTDH`);
+      this.logger.info(
+        `Clearing produced xTDH in ${CONSOLIDATED_WALLETS_TDH_TABLE}`
+      );
+      await this.db.execute(
+        `
+        UPDATE ${CONSOLIDATED_WALLETS_TDH_TABLE}
+        SET produced_xtdh = 0
+        WHERE produced_xtdh <> 0
+      `,
+        undefined,
+        { wrappedConnection: ctx.connection }
+      );
+      this.logger.info(
+        `Setting produced xTDH in ${CONSOLIDATED_WALLETS_TDH_TABLE}`
+      );
+      await this.db.execute(
+        `
+      update ${CONSOLIDATED_WALLETS_TDH_TABLE} c
+      left join (
+        select c.consolidation_key as consolidation_key, sum(ifnull(e.hodl_rate, 0)) * max(c.boost) * ${X_TDH_COEFFICIENT} AS produced_xtdh
+              from ${CONSOLIDATED_WALLETS_TDH_TABLE} c
+              join ${CONSOLIDATED_TDH_EDITIONS_TABLE} e on e.consolidation_key = c.consolidation_key
+              group by c.consolidation_key
+      ) x on x.consolidation_key = c.consolidation_key
+      set c.produced_xtdh = ifnull(x.produced_xtdh, 0)
+    `,
+        undefined,
+        {
+          wrappedConnection: ctx.connection
+        }
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->updateProducedXTDH`);
+    }
+  }
+
+  async updateAllGrantedXTdhsOnConsolidated(ctx: RequestContext) {
+    try {
+      ctx.timer?.start(
+        `${this.constructor.name}->updateAllGrantedXTdhsOnConsolidated`
+      );
 
       const sql = withSql(
         [
           CTE_CK_MAP,
           CTE_CUTOFF,
-          CTE_GR_WITH_GRANTOR, // includes grantor_id
+          CTE_GR_WITH_GRANTOR, // includes gr.grantor_id
           CTE_INC_COUNTS,
           CTE_GRANT_DIVISOR,
           CTE_GRANT_TOKENS,
           CTE_OWNERS_AT_CUT,
           CTE_HIST_PRE_CUT,
           CTE_LAST_RESET,
-          // bounded_windows carrying grantor_id
+          // same bounded_windows as you had (keeps grantor_id)
           `
 bounded_windows AS (
   SELECT
@@ -321,34 +368,39 @@ token_contrib AS (
   FROM days_owned
 )`,
           `
-grantor_xtdh AS (
+ck_xtdh AS (
   SELECT
-    grantor_id AS identity_id,
-    SUM(x)     AS total_granted_xtdh
-  FROM token_contrib
-  GROUP BY grantor_id
+    i.consolidation_key,
+    SUM(tc.x) AS total_granted_xtdh
+  FROM token_contrib tc
+  JOIN ${IDENTITIES_TABLE} i
+    ON i.profile_id = tc.grantor_id
+  GROUP BY i.consolidation_key
 )`
         ],
+        // Final update: write into CONSOLIDATED_WALLETS_TDH_TABLE
         `
-UPDATE ${IDENTITIES_TABLE} i
-LEFT JOIN grantor_xtdh gx
-  ON gx.identity_id = i.profile_id
-SET i.granted_x_tdh = COALESCE(gx.total_granted_xtdh, 0)
-`
+          UPDATE ${CONSOLIDATED_WALLETS_TDH_TABLE} cw
+            LEFT JOIN ck_xtdh gx
+            ON gx.consolidation_key = cw.consolidation_key
+          SET cw.granted_xtdh = COALESCE(gx.total_granted_xtdh, 0)
+        `
       );
 
       await this.db.execute(sql, undefined, {
         wrappedConnection: ctx.connection
       });
     } finally {
-      ctx.timer?.stop(`${this.constructor.name}->updateAllGrantedXTdhs`);
+      ctx.timer?.stop(
+        `${this.constructor.name}->updateAllGrantedXTdhsOnConsolidated`
+      );
     }
   }
 
   async updateAllXTdhsWithGrantedPart(ctx: RequestContext) {
     try {
       ctx.timer?.start(
-        `${this.constructor.name}->updateAllXTdhsWithGrantedPart`
+        `${this.constructor.name}->updateAllXTdhsWithGrantedPartOnConsolidated`
       );
 
       const sql = withSql(
@@ -427,21 +479,21 @@ wallet_xtdh AS (
   GROUP BY owner
 )`,
           `
-identity_xtdh AS (
+consolidated_xtdh AS (
   SELECT
-    i.profile_id AS identity_id,
+    ack.consolidation_key,
     SUM(w.total_xtdh) AS total_xtdh
   FROM wallet_xtdh w
   LEFT JOIN ${ADDRESS_CONSOLIDATION_KEY} ack ON ack.address = w.owner
-  LEFT JOIN ${IDENTITIES_TABLE} i ON i.consolidation_key = ack.consolidation_key
-  GROUP BY i.profile_id
+  GROUP BY ack.consolidation_key
 )`
         ],
+        // Final UPDATE targets CONSOLIDATED_WALLETS_TDH_TABLE
         `
-UPDATE ${IDENTITIES_TABLE} i
-LEFT JOIN identity_xtdh x
-  ON x.identity_id = i.profile_id
-SET i.x_tdh = COALESCE(x.total_xtdh, 0)
+UPDATE ${CONSOLIDATED_WALLETS_TDH_TABLE} cw
+LEFT JOIN consolidated_xtdh cx
+  ON cx.consolidation_key = cw.consolidation_key
+SET cw.xtdh = COALESCE(cx.total_xtdh, 0)
 `
       );
 
@@ -449,7 +501,9 @@ SET i.x_tdh = COALESCE(x.total_xtdh, 0)
         wrappedConnection: ctx.connection
       });
     } finally {
-      ctx.timer?.stop(`${this.constructor.name}->insertAllGrantXTdhs`);
+      ctx.timer?.stop(
+        `${this.constructor.name}->updateAllXTdhsWithGrantedPartOnConsolidated`
+      );
     }
   }
 
@@ -457,7 +511,7 @@ SET i.x_tdh = COALESCE(x.total_xtdh, 0)
     try {
       ctx.timer?.start(`${this.constructor.name}->giveOutUngrantedXTdh`);
       await this.db.execute(
-        `UPDATE ${IDENTITIES_TABLE} SET x_tdh = x_tdh + (produced_x_tdh - granted_x_tdh)`,
+        `UPDATE ${CONSOLIDATED_WALLETS_TDH_TABLE} SET xtdh = xtdh + (produced_xtdh - granted_xtdh)`,
         undefined,
         { wrappedConnection: ctx.connection }
       );
@@ -465,6 +519,19 @@ SET i.x_tdh = COALESCE(x.total_xtdh, 0)
       ctx.timer?.stop(
         `${this.constructor.name}->updateAllXTdhsWithGrantedPart`
       );
+    }
+  }
+
+  async updateTotalTdhs(ctx: RequestContext) {
+    try {
+      ctx.timer?.start(`${this.constructor.name}->updateTotalTdhs`);
+      await this.db.execute(
+        `UPDATE ${CONSOLIDATED_WALLETS_TDH_TABLE} SET total_tdh = xtdh + (produced_xtdh - granted_xtdh) + boosted_tdh`,
+        undefined,
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->updateTotalTdhs`);
     }
   }
 }
