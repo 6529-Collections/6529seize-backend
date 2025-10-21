@@ -456,16 +456,24 @@ export class UserGroupsService {
     const nonBannedGroups = groups.filter(
       (it) => !groupIdsUserIsBannedFromByIdentity.includes(it.id)
     );
-
     const groupsWhereUserIsInByIdentity = nonBannedGroups.filter((it) =>
       groupsIdsUserIsEligibleByIdentity.includes(it.id)
     );
     const groupsInNeedOfAdditionalCheck = nonBannedGroups
       .filter((it) => hasGroupGotAnyNonIdentityConditions(it))
       .filter((it) => !groupsIdsUserIsEligibleByIdentity.includes(it.id));
+    const groupsWhereUserIsInJustByMissingExclusion = nonBannedGroups.filter(
+      (it) =>
+        !!it.excluded_profile_group_id &&
+        !groupIdsUserIsBannedFromByIdentity.includes(it.id) &&
+        !hasGroupGotAnyNonIdentityConditions(it)
+    );
     return {
       groupsWhereUserIsInByIdentity: groupsWhereUserIsInByIdentity,
-      groupsInNeedOfAdditionalCheck: groupsInNeedOfAdditionalCheck
+      groupsInNeedOfAdditionalCheck: [
+        ...groupsInNeedOfAdditionalCheck,
+        ...groupsWhereUserIsInJustByMissingExclusion
+      ]
     };
   }
 
