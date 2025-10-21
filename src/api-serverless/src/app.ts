@@ -34,6 +34,7 @@ import ratingsRoutes from './ratings/ratings.routes';
 import rememesRoutes from './rememes/rememes.routes';
 import royaltiesRoutes from './royalties/royalties.routes';
 import tdhRoutes from './tdh/api.tdh.routes';
+import tdhEditionsRoutes from './tdh-editions/tdh-editions.routes';
 import tdhGrantsRoutes from './tdh-grants/tdh-grants.routes';
 import waveMediaRoutes from './waves/wave-media.routes';
 import wavesOverviewRoutes from './waves/waves-overview.routes';
@@ -1037,6 +1038,7 @@ loadApi().then(async () => {
   apiRouter.use(`/profile-logs`, profileActivityLogsRoutes);
   apiRouter.use(`/rep/categories`, repCategorySearchRoutes);
   apiRouter.use(`/tdh`, tdhRoutes);
+  apiRouter.use(`/tdh-editions`, tdhEditionsRoutes);
   apiRouter.use(`/tdh-grants`, tdhGrantsRoutes);
   apiRouter.use(`/aggregated-activity`, aggregatedActivityRoutes);
   apiRouter.use(`/owners-balances`, ownersBalancesRoutes);

@@ -10,11 +10,11 @@ import { DistributionNormalized } from '../entities/IDistribution';
 import { Transaction } from '../entities/ITransaction';
 import { TransactionsProcessedDistributionBlock } from '../entities/ITransactionsProcessing';
 import { Logger } from '../logging';
+import { sqlExecutor } from '../sql-executor';
 import {
   getLastProcessingBlock,
   persistBlock
 } from './db.transactions_processing';
-import { sqlExecutor } from '../sql-executor';
 
 const logger = Logger.get('TRANSACTIONS_PROCESSING_DISTRIBUTIONS');
 
@@ -24,6 +24,10 @@ export const updateDistributionMints = async (reset?: boolean) => {
   );
   const lastProcessingBlock = await getLastProcessingBlock(blockRepo, reset);
   const maxBlockTransaction = await fetchMaxTransactionByBlockNumber();
+
+  if (!maxBlockTransaction) {
+    throw new Error('No max transaction block');
+  }
 
   const transactions: Transaction[] = await sqlExecutor.execute(
     `SELECT * FROM ${TRANSACTIONS_TABLE} 

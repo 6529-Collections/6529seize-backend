@@ -1,3 +1,9 @@
+import { consolidateActivity } from '../aggregatedActivityLoop/aggregated_activity';
+import { identitiesService } from '../api-serverless/src/identities/identities.service';
+import {
+  CONSOLIDATED_WALLETS_TDH_TABLE,
+  USE_CASE_PRIMARY_ADDRESS
+} from '../constants';
 import {
   fetchLatestNftDelegationBlock,
   persistConsolidations,
@@ -5,6 +11,14 @@ import {
   persistNftDelegationBlock
 } from '../db';
 import { findDelegationTransactions } from '../delegations';
+import { revokeTdhBasedDropWavesOverVotes } from '../drops/participation-drops-over-vote-revocation';
+import { discoverEnsConsolidations, discoverEnsDelegations } from '../ens';
+import {
+  AggregatedActivity,
+  AggregatedActivityMemes,
+  ConsolidatedAggregatedActivity,
+  ConsolidatedAggregatedActivityMemes
+} from '../entities/IAggregatedActivity';
 import {
   Consolidation,
   ConsolidationEvent,
@@ -12,29 +26,7 @@ import {
   DelegationEvent,
   NFTDelegationBlock
 } from '../entities/IDelegation';
-import { Logger } from '../logging';
-import { discoverEnsConsolidations, discoverEnsDelegations } from '../ens';
-import { consolidateTDH } from '../tdhLoop/tdh_consolidation';
-import { dbSupplier, sqlExecutor } from '../sql-executor';
-import {
-  CONSOLIDATED_WALLETS_TDH_TABLE,
-  USE_CASE_PRIMARY_ADDRESS
-} from '../constants';
-import {
-  ConsolidatedTDH,
-  ConsolidatedTDHMemes,
-  NftTDH,
-  TDH,
-  TDHBlock,
-  TDHMemes
-} from '../entities/ITDH';
-import * as sentryContext from '../sentry.context';
 import { NextGenTokenTDH } from '../entities/INextGen';
-import { consolidateOwnerBalances } from '../ownersBalancesLoop/owners_balances';
-import { consolidateActivity } from '../aggregatedActivityLoop/aggregated_activity';
-import { consolidateNftOwners } from '../nftOwnersLoop/nft_owners';
-import { updateTDH } from '../tdhLoop/tdh';
-import { MemesSeason } from '../entities/ISeason';
 import { ConsolidatedNFTOwner, NFTOwner } from '../entities/INFTOwner';
 import {
   ConsolidatedOwnerBalances,
@@ -42,21 +34,31 @@ import {
   OwnerBalances,
   OwnerBalancesMemes
 } from '../entities/IOwnerBalances';
+import { MemesSeason } from '../entities/ISeason';
 import {
-  AggregatedActivity,
-  AggregatedActivityMemes,
-  ConsolidatedAggregatedActivity,
-  ConsolidatedAggregatedActivityMemes
-} from '../entities/IAggregatedActivity';
-import { consolidateSubscriptions } from '../subscriptionsDaily/subscriptions';
+  ConsolidatedTDH,
+  ConsolidatedTDHEditions,
+  ConsolidatedTDHMemes,
+  NftTDH,
+  TDH,
+  TDHBlock,
+  TDHEditions,
+  TDHMemes
+} from '../entities/ITDH';
 import {
   syncIdentitiesMetrics,
   syncIdentitiesPrimaryWallets,
   syncIdentitiesWithTdhConsolidations
 } from '../identity';
+import { Logger } from '../logging';
+import { consolidateNftOwners } from '../nftOwnersLoop/nft_owners';
+import { consolidateOwnerBalances } from '../ownersBalancesLoop/owners_balances';
 import { doInDbContext } from '../secrets';
-import { revokeTdhBasedDropWavesOverVotes } from '../drops/participation-drops-over-vote-revocation';
-import { identitiesService } from '../api-serverless/src/identities/identities.service';
+import * as sentryContext from '../sentry.context';
+import { dbSupplier, sqlExecutor } from '../sql-executor';
+import { consolidateSubscriptions } from '../subscriptionsDaily/subscriptions';
+import { updateTDH } from '../tdhLoop/tdh';
+import { consolidateTDH } from '../tdhLoop/tdh_consolidation';
 import { Time } from '../time';
 
 const logger = Logger.get('DELEGATIONS_LOOP');
@@ -100,7 +102,9 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
         AggregatedActivityMemes,
         ConsolidatedAggregatedActivityMemes,
         NftTDH,
-        TDHBlock
+        TDHBlock,
+        TDHEditions,
+        ConsolidatedTDHEditions
       ]
     }
   );

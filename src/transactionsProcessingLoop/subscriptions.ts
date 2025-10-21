@@ -1,3 +1,4 @@
+import { EntityManager } from 'typeorm';
 import {
   DISTRIBUTION_TABLE,
   MEMES_CONTRACT,
@@ -8,24 +9,23 @@ import {
   TRANSACTIONS_TABLE
 } from '../constants';
 import { fetchMaxTransactionByBlockNumber, getDataSource } from '../db';
-import { TransactionsProcessedSubscriptionsBlock } from '../entities/ITransactionsProcessing';
-import {
-  getLastProcessingBlock,
-  persistBlock
-} from './db.transactions_processing';
-import { Logger } from '../logging';
-import { Transaction } from '../entities/ITransaction';
-import { EntityManager } from 'typeorm';
 import {
   NFTFinalSubscription,
   RedeemedSubscription,
   SubscriptionBalance
 } from '../entities/ISubscription';
-import { sqlExecutor } from '../sql-executor';
-import { fetchSubscriptionBalanceForConsolidationKey } from '../subscriptionsDaily/db.subscriptions';
-import { sendDiscordUpdate } from '../notifier-discord';
-import { equalIgnoreCase } from '../strings';
+import { Transaction } from '../entities/ITransaction';
+import { TransactionsProcessedSubscriptionsBlock } from '../entities/ITransactionsProcessing';
 import { ethTools } from '../eth-tools';
+import { Logger } from '../logging';
+import { sendDiscordUpdate } from '../notifier-discord';
+import { sqlExecutor } from '../sql-executor';
+import { equalIgnoreCase } from '../strings';
+import { fetchSubscriptionBalanceForConsolidationKey } from '../subscriptionsDaily/db.subscriptions';
+import {
+  getLastProcessingBlock,
+  persistBlock
+} from './db.transactions_processing';
 
 const logger = Logger.get('TRANSACTIONS_PROCESSING_SUBSCRIPTIONS');
 
@@ -35,6 +35,10 @@ export const redeemSubscriptions = async (reset?: boolean) => {
   );
   const lastProcessingBlock = await getLastProcessingBlock(blockRepo, reset);
   const maxBlockTransaction = await fetchMaxTransactionByBlockNumber();
+
+  if (!maxBlockTransaction) {
+    throw new Error('No max transaction block');
+  }
 
   if (!lastProcessingBlock) {
     logger.info(
