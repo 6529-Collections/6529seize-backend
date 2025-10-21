@@ -456,16 +456,24 @@ export class UserGroupsService {
     const nonBannedGroups = groups.filter(
       (it) => !groupIdsUserIsBannedFromByIdentity.includes(it.id)
     );
-
     const groupsWhereUserIsInByIdentity = nonBannedGroups.filter((it) =>
       groupsIdsUserIsEligibleByIdentity.includes(it.id)
     );
     const groupsInNeedOfAdditionalCheck = nonBannedGroups
       .filter((it) => hasGroupGotAnyNonIdentityConditions(it))
       .filter((it) => !groupsIdsUserIsEligibleByIdentity.includes(it.id));
+    const groupsWhereUserIsInJustByMissingExclusion = nonBannedGroups.filter(
+      (it) =>
+        !!it.excluded_profile_group_id &&
+        !groupIdsUserIsBannedFromByIdentity.includes(it.id) &&
+        !hasGroupGotAnyNonIdentityConditions(it)
+    );
     return {
       groupsWhereUserIsInByIdentity: groupsWhereUserIsInByIdentity,
-      groupsInNeedOfAdditionalCheck: groupsInNeedOfAdditionalCheck
+      groupsInNeedOfAdditionalCheck: [
+        ...groupsInNeedOfAdditionalCheck,
+        ...groupsWhereUserIsInJustByMissingExclusion
+      ]
     };
   }
 
@@ -800,7 +808,9 @@ export class UserGroupsService {
     let sql = ` included_profile_ids as (select distinct profile_id from (${
       anyOtherDescriptionButInclusion
         ? `select i.profile_id from cm_view i`
-        : ``
+        : group.identity_group_id === null
+          ? `select i.profile_id from ${IDENTITIES_TABLE} i`
+          : ``
     }`;
     if (group.identity_group_id !== null) {
       sql += ` ${
