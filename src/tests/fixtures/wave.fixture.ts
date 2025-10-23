@@ -1,6 +1,8 @@
-import { WaveCreditType, WaveEntity, WaveType } from '../entities/IWave';
-import { Time } from '../time';
+import { WaveCreditType, WaveEntity, WaveType } from '../../entities/IWave';
+import { Time } from '../../time';
 import { randomUUID } from 'node:crypto';
+import { Seed } from '../_setup/seed';
+import { WAVES_TABLE } from '../../constants';
 
 type BaseWave = Omit<WaveEntity, 'serial_no' | 'id' | 'name'>;
 const aBaseWave: BaseWave = {
@@ -66,5 +68,12 @@ export function aWave(
         aBaseWave.participation_required_metadata
     ) as any,
     serial_no: key?.serial_no as any
+  };
+}
+
+export function withWaves(entities: WaveEntity[]): Seed {
+  return {
+    table: WAVES_TABLE,
+    rows: entities
   };
 }
