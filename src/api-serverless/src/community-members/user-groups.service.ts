@@ -464,6 +464,7 @@ export class UserGroupsService {
       .filter((it) => !groupsIdsUserIsEligibleByIdentity.includes(it.id));
     const groupsWhereUserIsInJustByMissingExclusion = nonBannedGroups.filter(
       (it) =>
+        !it.profile_group_id &&
         !!it.excluded_profile_group_id &&
         !groupIdsUserIsBannedFromByIdentity.includes(it.id) &&
         !hasGroupGotAnyNonIdentityConditions(it)
