@@ -8,6 +8,12 @@ export class TdhGrantEntity {
   @PrimaryColumn({ type: 'varchar', length: 100, nullable: false })
   readonly id: string;
   @Index()
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  readonly tokenset_id!: string | null;
+  @Index()
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  readonly replaced_grant_id!: string | null;
+  @Index()
   @Column({ type: 'varchar', length: 100, nullable: false })
   readonly grantor_id!: string;
   @Column({ type: 'int', nullable: false })
@@ -29,7 +35,7 @@ export class TdhGrantEntity {
   readonly valid_from!: number | null;
   @Column({ type: 'bigint', nullable: true })
   readonly valid_to!: number | null;
-  @Column({ type: 'bigint', nullable: false, default: null })
+  @Column({ type: 'double', nullable: false })
   readonly tdh_rate!: number;
   @Column({ type: 'varchar', length: 100, nullable: false })
   @Index()
@@ -48,5 +54,6 @@ export enum TdhGrantTokenMode {
 export enum TdhGrantStatus {
   PENDING = 'PENDING',
   FAILED = 'FAILED',
-  GRANTED = 'GRANTED'
+  GRANTED = 'GRANTED',
+  DISABLED = 'DISABLED'
 }
