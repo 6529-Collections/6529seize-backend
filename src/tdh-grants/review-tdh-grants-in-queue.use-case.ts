@@ -127,7 +127,13 @@ export class ReviewTdhGrantsInQueueUseCase {
               `Grant too large. Not enough capacity in grantors TDH Rate`
             );
           }
-          await this.approveGrant({ grantId }, ctx);
+          await this.approveGrant(
+            {
+              grantId,
+              validFrom: grantCandidate.valid_from ?? Time.currentMillis()
+            },
+            ctx
+          );
           break;
         }
         default:
@@ -160,7 +166,7 @@ export class ReviewTdhGrantsInQueueUseCase {
         {
           grantorId: grant.grantor_id,
           validFrom: grant.valid_from ?? now,
-          validTo: grant.valid_to
+          validTo: grant.valid_to ?? 99_999_999_999_999
         },
         ctxWithConnection
       )
@@ -170,14 +176,15 @@ export class ReviewTdhGrantsInQueueUseCase {
   }
 
   private async approveGrant(
-    { grantId }: { grantId: string },
+    { grantId, validFrom }: { grantId: string; validFrom: number },
     ctx: RequestContext
   ) {
     await this.tdhGrantsRepository.updateStatus(
       {
         grantId: grantId,
         status: TdhGrantStatus.GRANTED,
-        error: null
+        error: null,
+        validFrom
       },
       ctx
     );

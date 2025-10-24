@@ -6,6 +6,7 @@ import {
 import { IdentityEntity } from '../entities/IIdentity';
 import {
   ADDRESS_CONSOLIDATION_KEY,
+  CONSOLIDATED_TDH_EDITIONS_TABLE,
   CONSOLIDATED_WALLETS_TDH_TABLE,
   DROPS_TABLE,
   ENS_TABLE,
@@ -1025,18 +1026,34 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
   }
 
   async getXTdhRate(id: string, ctx: RequestContext): Promise<number> {
-    return this.db
-      .oneOrNull<{
-        tdh_rate: number;
-      }>(
-        `
-      select ifnull(t.created_boosted_tdh, 0) as tdh_rate from ${IDENTITIES_TABLE} i
-    left join ${LATEST_TDH_HISTORY_TABLE} t on t.consolidation_key = i.consolidation_key where i.profile_id = :id
+    const row = await this.db.oneOrNull<{ x_tdh_rate: number }>(
+      `
+    WITH latest_boost AS (
+      SELECT consolidation_key, boost
+      FROM (
+        SELECT
+          consolidation_key,
+          boost,
+          ROW_NUMBER() OVER (PARTITION BY consolidation_key ORDER BY block DESC) AS rn
+        FROM ${CONSOLIDATED_WALLETS_TDH_TABLE}
+      ) x
+      WHERE rn = 1
+    )
+    SELECT
+      COALESCE(SUM(ed.hodl_rate), 0) * COALESCE(MAX(lb.boost), 1.0) * ${X_TDH_COEFFICIENT} AS x_tdh_rate
+    FROM ${IDENTITIES_TABLE} i
+    LEFT JOIN ${CONSOLIDATED_TDH_EDITIONS_TABLE} ed
+      ON ed.consolidation_key = i.consolidation_key
+    LEFT JOIN latest_boost lb
+      ON lb.consolidation_key = i.consolidation_key
+    WHERE i.profile_id = :id
+    GROUP BY i.profile_id
     `,
-        { id },
-        { wrappedConnection: ctx.connection }
-      )
-      .then((res) => (res?.tdh_rate ?? 0) * X_TDH_COEFFICIENT);
+      { id },
+      { wrappedConnection: ctx.connection }
+    );
+
+    return row?.x_tdh_rate ?? 0;
   }
 }
 

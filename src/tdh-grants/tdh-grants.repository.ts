@@ -235,7 +235,12 @@ export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
   }
 
   async updateStatus(
-    param: { grantId: string; status: TdhGrantStatus; error: string | null },
+    param: {
+      grantId: string;
+      status: TdhGrantStatus;
+      error: string | null;
+      validFrom?: number;
+    },
     ctx: RequestContext
   ) {
     ctx.timer?.start(`${this.constructor.name}->updateStatus`);
@@ -246,6 +251,7 @@ export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
          set status = :status,
              error_details = :error,
              updated_at = :now
+             ${param.validFrom ? `, valid_from = :validFrom ` : ``}
          where id = :grantId`,
         { ...param, now: Time.currentMillis() },
         {
@@ -261,7 +267,7 @@ export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
     param: {
       grantorId: string;
       validFrom: number;
-      validTo: number | null;
+      validTo: number;
     },
     ctx: RequestContext
   ): Promise<number> {
