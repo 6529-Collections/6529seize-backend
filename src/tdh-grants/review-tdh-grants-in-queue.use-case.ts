@@ -156,7 +156,7 @@ export class ReviewTdhGrantsInQueueUseCase {
   ) {
     const [grantorsTotalRate, grantorsSpentRate] = await Promise.all([
       this.identityRepository.getXTdhRate(grant.grantor_id, ctxWithConnection),
-      this.tdhGrantsRepository.getGrantorsSpentTdhRateInTimeSpan(
+      this.tdhGrantsRepository.getGrantorsMaxSpentTdhRateInTimeSpan(
         {
           grantorId: grant.grantor_id,
           validFrom: grant.valid_from ?? now,

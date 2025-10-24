@@ -1,35 +1,21 @@
 import { dbSupplier, LazyDbAccessCompatibleService } from '../sql-executor';
-import {
-  TdhGrantEntity,
-  TdhGrantStatus,
-  TdhGrantTokenMode
-} from '../entities/ITdhGrant';
+import { TdhGrantEntity, TdhGrantStatus } from '../entities/ITdhGrant';
 import { RequestContext } from '../request.context';
 import {
-  ADDRESS_CONSOLIDATION_KEY,
+  CONSOLIDATED_TDH_EDITIONS_TABLE,
   CONSOLIDATED_WALLETS_TDH_TABLE,
   IDENTITIES_TABLE,
-  TDH_EDITIONS_TABLE,
   TDH_GRANT_TOKENS_TABLE,
-  TDH_GRANTS_TABLE
+  TDH_GRANTS_TABLE,
+  X_TDH_COEFFICIENT
 } from '../constants';
 import { Time } from '../time';
 import { Logger } from '../logging';
 import { TdhGrantTokenEntity } from '../entities/ITdhGrantToken';
 import { bulkInsert } from '../db/my-sql.helpers';
 import { numbers } from '../numbers';
-import { randomUUID } from 'node:crypto';
 
-export type TdhGrantOverflowRow = {
-  grant_id: string;
-  grantor_id: string;
-  valid_from: number | null;
-  valid_to: number | null;
-  grant_tdh_rate: number;
-  grantors_tdh_rate: number;
-  seg_valid_from: number;
-  seg_valid_to: number | null;
-};
+export type GrantWithCap = TdhGrantEntity & { grantor_x_tdh_rate: number };
 
 export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
   private readonly logger = Logger.get(this.constructor.name);
@@ -60,13 +46,13 @@ export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
         { wrappedConnection: connection }
       );
       const tokens: string[] = [];
-      if (grant.token_mode === TdhGrantTokenMode.INCLUDE) {
+      if (grant.tokenset_id) {
         await this.db
           .execute<{
             token_id: string;
           }>(
-            `select token_id from ${TDH_GRANT_TOKENS_TABLE} where grant_id = :grant_id`,
-            { grant_id: grant.id },
+            `select token_id from ${TDH_GRANT_TOKENS_TABLE} where tokenset_id = :tokenset_id`,
+            { tokenset_id: grant.tokenset_id },
             { wrappedConnection: connection }
           )
           .then((res) => res.forEach((it) => tokens.push(it.token_id)));
@@ -101,7 +87,9 @@ export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
        tdh_rate,
        status,
        error_details,
-       is_irrevocable
+       is_irrevocable,
+       tokenset_id,
+       replaced_grant_id
       ) values (
        :id,
        :grantor_id,
@@ -117,7 +105,9 @@ export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
        :tdh_rate,
        :status,
        :error_details,
-       :is_irrevocable         
+       :is_irrevocable,
+       :tokenset_id,
+       :replaced_grant_id
       )
     `,
       tdhGrantEntity,
@@ -129,7 +119,7 @@ export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
       this.db,
       TDH_GRANT_TOKENS_TABLE,
       tokens as unknown as Record<string, any>[],
-      ['grant_id', 'token_id', 'target_partition'],
+      ['tokenset_id', 'token_id', 'target_partition'],
       ctx
     );
     ctx.timer?.stop(`${this.constructor.name}->insertGrant`);
@@ -221,12 +211,7 @@ export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
     grantor_id: string | null,
     target_contract: string | null,
     target_chain: number | null,
-    status:
-      | TdhGrantStatus
-      | null
-      | TdhGrantStatus.PENDING
-      | TdhGrantStatus.FAILED
-      | TdhGrantStatus.GRANTED
+    status: TdhGrantStatus | null
   ) {
     const whereAnds: string[] = [];
     const params: Record<string, any> = {};
@@ -272,7 +257,7 @@ export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
     }
   }
 
-  async getGrantorsSpentTdhRateInTimeSpan(
+  async getGrantorsMaxSpentTdhRateInTimeSpan(
     param: {
       grantorId: string;
       validFrom: number;
@@ -282,16 +267,57 @@ export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
   ): Promise<number> {
     try {
       ctx.timer?.start(
-        `${this.constructor.name}->getGrantorsActiveGrantsInTimeSpan`
+        `${this.constructor.name}->getGrantorsMaxSpentTdhRateInTimeSpan`
       );
       return this.db
         .oneOrNull<{ spent_rate: number }>(
           `
-        select sum(g.tdh_rate) as spent_rate from ${TDH_GRANTS_TABLE} g 
-        where g.grantor_id = :grantorId
-        and g.status = '${TdhGrantStatus.GRANTED}'
-        and g.valid_from >= :validFrom
-        and (g.valid_to is null ${param.validTo === null ? `` : ` or g.valid_to <= :validTo`})
+            WITH
+              base AS (
+                SELECT COALESCE(SUM(g.tdh_rate), 0) AS base_rate
+                FROM ${TDH_GRANTS_TABLE} g
+                WHERE g.grantor_id = :grantorId
+                  AND g.status = '${TdhGrantStatus.GRANTED}'
+                  AND g.valid_from <= :validFrom
+                  AND (g.valid_to IS NULL OR g.valid_to > :validFrom)
+              ),
+              edges AS (
+                -- +rate at starts strictly inside the window
+                SELECT g.valid_from AS ts, g.tdh_rate AS delta
+                FROM ${TDH_GRANTS_TABLE} g
+                WHERE g.grantor_id = :grantorId
+                  AND g.status = '${TdhGrantStatus.GRANTED}'
+                  AND g.valid_from > :validFrom
+                  AND g.valid_from < :validTo
+                  AND (g.valid_to IS NULL OR g.valid_to > :validFrom)
+
+                UNION ALL
+
+                -- -rate at ends inside the window
+                SELECT g.valid_to AS ts, -g.tdh_rate AS delta
+                FROM ${TDH_GRANTS_TABLE} g
+                WHERE g.grantor_id = :grantorId
+                  AND g.status = '${TdhGrantStatus.GRANTED}'
+                  AND g.valid_to IS NOT NULL
+                  AND g.valid_to > :validFrom
+                  AND g.valid_to <= :validTo
+                  AND g.valid_from < :validTo
+              ),
+              agg AS (
+                SELECT ts, SUM(delta) AS delta
+                FROM edges
+                GROUP BY ts
+              ),
+              scan AS (
+                SELECT
+                  ts,
+                  (SELECT base_rate FROM base) + SUM(delta) OVER (ORDER BY ts) AS running_rate
+                FROM agg
+              )
+            SELECT GREATEST(
+                     (SELECT base_rate FROM base),
+                     COALESCE((SELECT MAX(running_rate) FROM scan), 0)
+                   ) AS max_spent_rate
         `,
           param,
           {
@@ -301,96 +327,140 @@ export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
         ?.then((res) => +(res?.spent_rate ?? 0));
     } finally {
       ctx.timer?.stop(
-        `${this.constructor.name}->getGrantorsActiveGrantsInTimeSpan`
+        `${this.constructor.name}->getGrantorsMaxSpentTdhRateInTimeSpan`
       );
     }
   }
 
   async getOverflowedGrantsWithGrantorRates(
     ctx: RequestContext
-  ): Promise<TdhGrantOverflowRow[]> {
+  ): Promise<GrantWithCap[]> {
     try {
       ctx.timer?.start(
-        `${this.constructor.name}->getGrantorsWithOverflowedGrants`
+        `${this.constructor.name}->getOverflowedGrantsWithGrantorRates`
       );
       return await this.db
-        .execute<TdhGrantOverflowRow>(
+        .execute<GrantWithCap>(
           `
-        WITH granted_grants AS (
-            SELECT *
-            FROM ${TDH_GRANTS_TABLE}
-            WHERE status = 'GRANTED'
-        ),
-             events AS (
-                 SELECT grantor_id, valid_from AS ts,  tdh_rate AS delta
-                 FROM granted_grants
-                 UNION ALL
-                 SELECT grantor_id, valid_to + 1 AS ts, -tdh_rate AS delta
-                 FROM granted_grants
-                 WHERE valid_to IS NOT NULL
-             ),
-             collapsed AS (
-                 SELECT grantor_id, ts, SUM(delta) AS net_delta
-                 FROM events
-                 GROUP BY grantor_id, ts
-                 HAVING SUM(delta) <> 0
-             ),
-             running AS (
-                 SELECT
-                     grantor_id,
-                     ts,
-                     SUM(net_delta) OVER (
-                         PARTITION BY grantor_id
-                         ORDER BY ts
-                         ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-                         ) AS tdh_rate_sum,
-                     LEAD(ts) OVER (PARTITION BY grantor_id ORDER BY ts) AS next_ts
-                 FROM collapsed
-             ),
-             segments AS (
-                 SELECT
-                     grantor_id,
-                     ts AS valid_from,
-                     CASE WHEN next_ts IS NULL THEN NULL ELSE next_ts - 1 END AS valid_to,
-                     tdh_rate_sum AS tdh_rate
-                 FROM running
-                 WHERE tdh_rate_sum > 0
-             ),
-             x_tdh_rates AS (
-                 select i.profile_id as grantor_id, sum(ifnull(e.hodl_rate,0)) * t.boost * 0.1 AS x_tdh_rate
-                 from
-                   ${IDENTITIES_TABLE} i
-                     join ${CONSOLIDATED_WALLETS_TDH_TABLE} t on i.consolidation_key = t.consolidation_key
-                     join ${ADDRESS_CONSOLIDATION_KEY} ac on ac.consolidation_key = t.consolidation_key
-                     left join ${TDH_EDITIONS_TABLE} e on e.wallet = ac.address
-                 group by i.profile_id, t.boost
-             ),
-             overflow_segments AS (
-                 SELECT s.*
-                 FROM segments s
-                          LEFT JOIN x_tdh_rates x
-                               ON x.grantor_id = s.grantor_id
-                 WHERE s.tdh_rate > ifnull(x.x_tdh_rate, 0)
-             )
-        SELECT DISTINCT
-            g.id            AS grant_id,
-            g.grantor_id    AS grantor_id,
-            g.valid_from    AS valid_from,
-            g.valid_to      AS valid_to,
-            g.tdh_rate      AS grant_tdh_rate,
-            x.x_tdh_rate    AS grantors_tdh_rate,
-            s.valid_from    AS seg_valid_from,
-            s.valid_to      AS seg_valid_to
-        FROM overflow_segments s
-                 JOIN granted_grants g
-                      ON g.grantor_id = s.grantor_id
-                          AND (s.valid_to IS NULL OR g.valid_from <= s.valid_to)
-                          AND (g.valid_to IS NULL OR g.valid_to >= s.valid_from)
-                 JOIN x_tdh_rates x
-                      ON x.grantor_id = s.grantor_id
-        ORDER BY grantor_id, valid_from, grant_id
+            WITH
+              latest_boost AS (
+                SELECT consolidation_key, boost
+                FROM (
+                       SELECT
+                         consolidation_key,
+                         boost,
+                         ROW_NUMBER() OVER (PARTITION BY consolidation_key ORDER BY block DESC) AS rn
+                       FROM ${CONSOLIDATED_WALLETS_TDH_TABLE}
+                     ) x
+                WHERE rn = 1
+              ),
+
+              capacity AS (
+                SELECT
+                  i.profile_id AS grantor_id,
+                  COALESCE(SUM(ed.hodl_rate), 0)
+                    * COALESCE(MAX(lb.boost), 1.0)
+                    * ${X_TDH_COEFFICIENT}
+                               AS grantor_x_tdh_rate
+                FROM ${IDENTITIES_TABLE} i
+                       LEFT JOIN ${CONSOLIDATED_TDH_EDITIONS_TABLE} ed
+                                 ON ed.consolidation_key = i.consolidation_key
+                       LEFT JOIN latest_boost lb
+                                 ON lb.consolidation_key = i.consolidation_key
+                WHERE i.profile_id IS NOT NULL
+                GROUP BY i.profile_id
+              ),
+
+              gr AS (
+                SELECT *
+                FROM ${TDH_GRANTS_TABLE}
+                WHERE status = '${TdhGrantStatus.GRANTED}'
+                  AND valid_from < :windowEnd
+                  AND (valid_to   IS NULL OR valid_to   > :windowStart)
+              ),
+
+              grantors_in_window AS (
+                SELECT DISTINCT grantor_id FROM gr
+              ),
+
+              base AS (
+                SELECT
+                  grantor_id,
+                  :windowStart AS ts,
+                  COALESCE(SUM(tdh_rate), 0) AS delta
+                FROM gr
+                WHERE valid_from <= :windowStart
+                  AND (valid_to   IS NULL OR valid_to   >  :windowStart)
+                GROUP BY grantor_id
+              ),
+
+              edges AS (
+                SELECT grantor_id, valid_from AS ts,  tdh_rate AS delta
+                FROM gr
+                WHERE valid_from IS NOT NULL
+                  AND valid_from > :windowStart AND valid_from < :windowEnd
+                UNION ALL
+                SELECT grantor_id, valid_to   AS ts, -tdh_rate AS delta
+                FROM gr
+                WHERE valid_to IS NOT NULL
+                  AND valid_to > :windowStart AND valid_to <= :windowEnd
+              ),
+
+              tail AS (
+                SELECT giw.grantor_id, :windowEnd AS ts, 0 AS delta
+                FROM grantors_in_window giw
+              ),
+
+              events AS (
+                SELECT grantor_id, ts, SUM(delta) AS delta
+                FROM (
+                       SELECT * FROM base
+                       UNION ALL SELECT * FROM edges
+                       UNION ALL SELECT * FROM tail
+                     ) e
+                GROUP BY grantor_id, ts
+              ),
+
+              scan AS (
+                SELECT
+                  grantor_id,
+                  ts,
+                  SUM(delta) OVER (PARTITION BY grantor_id ORDER BY ts ROWS UNBOUNDED PRECEDING) AS active_rate
+                FROM events
+              ),
+
+              intervals AS (
+                SELECT
+                  grantor_id,
+                  ts AS interval_start,
+                  LEAD(ts) OVER (PARTITION BY grantor_id ORDER BY ts) AS interval_end,
+                  active_rate AS interval_active_rate
+                FROM scan
+              ),
+
+              over_intervals AS (
+                SELECT i.grantor_id, i.interval_start, i.interval_end
+                FROM intervals i
+                       JOIN capacity c ON c.grantor_id = i.grantor_id
+                WHERE i.interval_end IS NOT NULL
+                  AND i.interval_active_rate > c.grantor_x_tdh_rate
+              )
+
+            SELECT DISTINCT
+              c.grantor_x_tdh_rate,
+              g.*
+            FROM over_intervals oi
+                   JOIN gr g
+                        ON g.grantor_id = oi.grantor_id
+                          AND g.valid_from < oi.interval_end
+                          AND (g.valid_to   IS NULL OR g.valid_to   > oi.interval_start)
+                   JOIN capacity c
+                        ON c.grantor_id = g.grantor_id
       `,
-          undefined,
+          {
+            windowStart: 0,
+            windowEnd: 99999999999999
+          },
           {
             wrappedConnection: ctx.connection
           }
@@ -400,15 +470,14 @@ export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
             ...it,
             valid_from: numbers.parseIntOrThrow(it.valid_from),
             valid_to: numbers.parseIntOrNull(it.valid_to),
-            grant_tdh_rate: numbers.parseNumberOrThrow(it.grant_tdh_rate),
-            grantors_tdh_rate: numbers.parseNumberOrThrow(it.grantors_tdh_rate),
-            seg_valid_from: numbers.parseIntOrThrow(it.seg_valid_from),
-            seg_valid_to: numbers.parseIntOrNull(it.seg_valid_to)
+            grantor_x_tdh_rate: numbers.parseNumberOrThrow(
+              it.grantor_x_tdh_rate
+            )
           }))
         );
     } finally {
       ctx.timer?.stop(
-        `${this.constructor.name}->getGrantorsWithOverflowedGrants`
+        `${this.constructor.name}->getOverflowedGrantsWithGrantorRates`
       );
     }
   }
@@ -437,103 +506,32 @@ export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
     }
   }
 
-  async insertReplacementGrants(
-    param: { grant_id: string; new_rate: number }[],
-    ctx: RequestContext
-  ) {
-    ctx.timer?.start(`${this.constructor.name}->insertReplacementGrants`);
-    try {
-      if (!param.length) return;
-
-      const now = Time.currentMillis();
-      const binds: Record<string, unknown> = { now };
-
-      const rowsSql: string[] = param.map((p, i) => {
-        const gid = `old_grant_id_${i}`;
-        const rate = `new_rate_${i}`;
-        const nid = `new_id_${i}`;
-
-        binds[gid] = p.grant_id;
-        binds[rate] = p.new_rate;
-        binds[nid] = randomUUID();
-
-        return `SELECT :${gid} AS old_grant_id, :${rate} AS new_rate, :${nid} AS new_id`;
-      });
-
-      // This is a SELECT ... UNION ALL SELECT ... used as a derived table
-      const mappingDerived = rowsSql.join(` UNION ALL `);
-
-      // 1) Insert replacement grants (clone + overrides) — NO CTE here
-      const insertGrantsSql = `
-        INSERT INTO ${TDH_GRANTS_TABLE} (
-          id,
-          grantor_id,
-          target_chain,
-          target_contract,
-          target_tokens,
-          created_at,
-          valid_from,
-          valid_to,
-          tdh_rate,
-          status,
-          error_details,
-          is_irrevocable,
-          target_partition,
-          updated_at,
-          token_mode
-        )
-        SELECT
-          m.new_id,
-          g.grantor_id,
-          g.target_chain,
-          g.target_contract,
-          g.target_tokens,
-          :now,
-          g.valid_from,
-          g.valid_to,
-          m.new_rate,
-          '${TdhGrantStatus.GRANTED}',
-          NULL,
-          g.is_irrevocable,
-          g.target_partition,
-          :now,
-          g.token_mode
-        FROM (${mappingDerived}) AS m
-               JOIN ${TDH_GRANTS_TABLE} g
-                    ON g.id = m.old_grant_id;
-      `;
-      await this.db.execute(insertGrantsSql, binds, {
-        wrappedConnection: ctx.connection
-      });
-
-      // 2) Delete dupes that would collide after we repoint tokens
-      const deleteDupesSql = `
-      DELETE tgt
-      FROM ${TDH_GRANT_TOKENS_TABLE} tgt
-      JOIN (${mappingDerived}) AS m
-        ON tgt.grant_id = m.old_grant_id
-      JOIN ${TDH_GRANT_TOKENS_TABLE} dupe
-        ON dupe.grant_id = m.new_id
-       AND dupe.token_id = tgt.token_id
-       AND dupe.target_partition = tgt.target_partition;
-    `;
-      await this.db.execute(deleteDupesSql, binds, {
-        wrappedConnection: ctx.connection
-      });
-
-      // 3) Repoint token rows old -> new grant_id
-      const updateTokensSql = `
-        UPDATE ${TDH_GRANT_TOKENS_TABLE} tgt
-          JOIN (${mappingDerived}) AS m
-          ON tgt.grant_id = m.old_grant_id
-        SET tgt.grant_id = m.new_id;
-      `;
-      await this.db.execute(updateTokensSql, binds, {
-        wrappedConnection: ctx.connection
-      });
-    } finally {
-      ctx.timer?.stop(`${this.constructor.name}->insertReplacementGrants`);
-    }
+  async bulkInsert(entities: TdhGrantEntity[], ctx: RequestContext) {
+    await bulkInsert(
+      this.db,
+      TDH_GRANTS_TABLE,
+      entities as unknown as Record<string, any>[],
+      [
+        'id',
+        'tokenset_id',
+        'replaced_grant_id',
+        'grantor_id',
+        'target_chain',
+        'target_contract',
+        'target_partition',
+        'token_mode',
+        'target_tokens',
+        'created_at',
+        'updated_at',
+        'valid_from',
+        'valid_to',
+        'tdh_rate',
+        'status',
+        'error_details',
+        'is_irrevocable'
+      ],
+      ctx
+    );
   }
 }
 

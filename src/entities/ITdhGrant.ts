@@ -8,6 +8,12 @@ export class TdhGrantEntity {
   @PrimaryColumn({ type: 'varchar', length: 100, nullable: false })
   readonly id: string;
   @Index()
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  readonly tokenset_id!: string | null;
+  @Index()
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  readonly replaced_grant_id!: string | null;
+  @Index()
   @Column({ type: 'varchar', length: 100, nullable: false })
   readonly grantor_id!: string;
   @Column({ type: 'int', nullable: false })

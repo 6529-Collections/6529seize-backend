@@ -1,27 +1,14 @@
 import { RequestContext } from '../request.context';
 import { Logger } from '../logging';
 import {
-  TdhGrantOverflowRow,
+  GrantWithCap,
   tdhGrantsRepository,
   TdhGrantsRepository
 } from './tdh-grants.repository';
-import { TdhGrantStatus } from '../entities/ITdhGrant';
-
-type AdjustedGrant = {
-  grant_id: string;
-  grantor_id: string;
-  original_tdh_rate: number;
-  suggested_tdh_rate: number;
-  scale_factor: number;
-};
-
-type SegmentBucket = {
-  grantorId: string;
-  segFrom: number;
-  segTo: number | null;
-  target: number;
-  grants: TdhGrantOverflowRow[];
-};
+import { TdhGrantEntity, TdhGrantStatus } from '../entities/ITdhGrant';
+import { randomUUID } from 'node:crypto';
+import { Time } from '../time';
+import { collections } from '../collections';
 
 export class ReReviewRatesInTdhGrantsUseCase {
   private readonly logger = Logger.get(this.constructor.name);
@@ -45,97 +32,161 @@ export class ReReviewRatesInTdhGrantsUseCase {
         return;
       }
       this.logger.info(
-        `Found ${overFlowedGrantsWithGrantorRates.length} overflowed grants. Adjusting them`
+        `Found ${overFlowedGrantsWithGrantorRates.length} overflowed grants. Creating replacements`
       );
-      // 2) Group by (grantor_id, seg_valid_from, seg_valid_to)
-      const segKey = (r: TdhGrantOverflowRow): string =>
-        r.grantor_id +
-        '|' +
-        r.seg_valid_from +
-        '|' +
-        (r.seg_valid_to ?? 'NULL');
-
-      const bySegment = new Map<string, SegmentBucket>();
-
-      for (const r of overFlowedGrantsWithGrantorRates) {
-        const key = segKey(r);
-        let bucket = bySegment.get(key);
-        if (!bucket) {
-          bucket = {
-            grantorId: r.grantor_id,
-            segFrom: r.seg_valid_from,
-            segTo: r.seg_valid_to ?? null,
-            target: r.grantors_tdh_rate,
-            grants: []
-          };
-          bySegment.set(key, bucket);
-        }
-        bucket.grants.push(r);
-      }
-
-      // --- compute min scale factor per grant
-      const perGrantMinFactor = new Map<string, number>();
-
-      bySegment.forEach((bucket: SegmentBucket) => {
-        const sum: number = bucket.grants.reduce<number>(
-          (acc: number, g: TdhGrantOverflowRow) => acc + g.grant_tdh_rate,
-          0
-        );
-        const safeTarget: number = Math.max(0, bucket.target);
-        const f: number = sum > 0 ? Math.min(1, safeTarget / sum) : 1;
-
-        for (const g of bucket.grants) {
-          const prev = perGrantMinFactor.get(g.grant_id);
-          perGrantMinFactor.set(
-            g.grant_id,
-            prev === undefined ? f : Math.min(prev, f)
-          );
-        }
-      });
-
-      // --- build final adjusted list (no iterator usage)
-      const seen = new Set<string>();
-      const adjusted: AdjustedGrant[] = [];
-
-      for (const r of overFlowedGrantsWithGrantorRates) {
-        if (seen.has(r.grant_id)) return;
-        seen.add(r.grant_id);
-
-        const f = perGrantMinFactor.get(r.grant_id) ?? 1;
-        adjusted.push({
-          grant_id: r.grant_id,
-          grantor_id: r.grantor_id,
-          original_tdh_rate: r.grant_tdh_rate,
-          suggested_tdh_rate: r.grant_tdh_rate * f,
-          scale_factor: f
-        });
-      }
-      this.logger.info(
-        `Adjustments prepared. Disabling current versions of grants`
+      const replacements = this.buildReplacementGrants(
+        overFlowedGrantsWithGrantorRates
       );
+      this.logger.info(`Replacements prepared. Inserting them`);
+      await this.tdhGrantsRepository.bulkInsert(replacements, ctx);
+      this.logger.info(`Replacement grants inserted.`);
+      this.logger.info(`Disabling old versions of grants`);
       await this.tdhGrantsRepository.bulkUpdateStatus(
         {
-          ids: adjusted.map((it) => it.grant_id),
+          ids: collections.distinct(
+            overFlowedGrantsWithGrantorRates.map((it) => it.id)
+          ),
           status: TdhGrantStatus.DISABLED,
           error:
-            'Sum of active grants in this timespan exceeded grantors xTDH rate'
+            'Sum of active grants in this timespan exceeded grantors xTDH rate. Created replacement grants'
         },
         ctx
       );
-      this.logger.info(
-        `Current versions disabled. Inserting replacement grants.`
-      );
-      await this.tdhGrantsRepository.insertReplacementGrants(
-        adjusted.map((it) => ({
-          grant_id: it.grant_id,
-          new_rate: it.suggested_tdh_rate
-        })),
-        ctx
-      );
-      this.logger.info(`Replacement grants inserted.`);
+      this.logger.info(`Old versions of grants disabled`);
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->handle`);
     }
+  }
+
+  private buildReplacementGrants(rows: GrantWithCap[]): TdhGrantEntity[] {
+    if (!rows.length) return [];
+    const WINDOW_START = 0;
+    const WINDOW_END = 99_999_999_999_999;
+    const nowMillis = Time.currentMillis();
+
+    const byGrantor: Record<string, GrantWithCap[]> = {};
+    for (const r of rows) {
+      (byGrantor[r.grantor_id] ??= []).push(r);
+    }
+
+    const out: TdhGrantEntity[] = [];
+
+    for (const grantorId in byGrantor) {
+      const grantsRaw = byGrantor[grantorId];
+      const capacity = grantsRaw[0].grantor_x_tdh_rate || 0;
+
+      const uniq: Record<string, GrantWithCap> = {};
+      for (const g of grantsRaw) uniq[g.id] = g;
+      const grants = Object.keys(uniq).map((k) => uniq[k]);
+
+      type Span = {
+        g: GrantWithCap;
+        from: number;
+        to: number;
+        toWasNull: boolean;
+      };
+
+      const spans: Span[] = [];
+      const points: number[] = [WINDOW_START, WINDOW_END];
+
+      for (const g of grants) {
+        const from = Math.max(g.valid_from!, WINDOW_START);
+        const toWasNull = g.valid_to == null;
+        const to = toWasNull ? WINDOW_END : Math.min(g.valid_to!, WINDOW_END);
+        if (from < to) {
+          points.push(from, to);
+          spans.push({ g, from, to, toWasNull });
+        }
+      }
+
+      points.sort((a, b) => a - b);
+
+      const segments: TdhGrantEntity[] = [];
+
+      for (let i = 0; i < points.length - 1; i++) {
+        const segStart = points[i];
+        const segEnd = points[i + 1];
+        if (segStart >= segEnd) continue;
+
+        const active: Span[] = [];
+        for (const s of spans) {
+          if (s.from < segEnd && s.to > segStart) active.push(s);
+        }
+        if (!active.length) continue;
+
+        let totalRate = 0;
+        for (const s of active) totalRate += s.g.tdh_rate;
+
+        const scale = totalRate > 0 ? Math.min(1, capacity / totalRate) : 1;
+
+        for (const s of active) {
+          const start = Math.max(segStart, s.from);
+          const end = Math.min(segEnd, s.to);
+          if (start >= end) continue;
+
+          const newRate = s.g.tdh_rate * scale;
+          const segValidTo = s.toWasNull && end === WINDOW_END ? null : end;
+
+          segments.push({
+            id: randomUUID(),
+            tokenset_id: s.g.tokenset_id ?? null,
+            replaced_grant_id: s.g.id,
+            grantor_id: s.g.grantor_id,
+            target_chain: s.g.target_chain,
+            target_contract: s.g.target_contract,
+            target_partition: s.g.target_partition,
+            token_mode: s.g.token_mode,
+            target_tokens: s.g.target_tokens ?? null,
+            created_at: nowMillis,
+            updated_at: nowMillis,
+            valid_from: start,
+            valid_to: segValidTo,
+            tdh_rate: newRate,
+            status: TdhGrantStatus.GRANTED,
+            error_details: null,
+            is_irrevocable: s.g.is_irrevocable
+          });
+        }
+      }
+
+      segments.sort((a, b) =>
+        a.replaced_grant_id! === b.replaced_grant_id!
+          ? a.valid_from! - b.valid_from!
+          : a.replaced_grant_id! < b.replaced_grant_id!
+            ? -1
+            : 1
+      );
+
+      const merged: TdhGrantEntity[] = [];
+      for (const seg of segments) {
+        const last = merged[merged.length - 1];
+        if (
+          last &&
+          last.replaced_grant_id === seg.replaced_grant_id &&
+          (last.valid_to ?? WINDOW_END) === seg.valid_from &&
+          Math.abs(last.tdh_rate - seg.tdh_rate) <= 1e-9 &&
+          last.status === seg.status &&
+          last.grantor_id === seg.grantor_id &&
+          last.target_chain === seg.target_chain &&
+          last.target_contract === seg.target_contract &&
+          last.target_partition === seg.target_partition &&
+          last.token_mode === seg.token_mode &&
+          last.target_tokens === seg.target_tokens &&
+          last.is_irrevocable === seg.is_irrevocable
+        ) {
+          merged[merged.length - 1] = {
+            ...last,
+            valid_to: seg.valid_to
+          };
+        } else {
+          merged.push(seg);
+        }
+      }
+
+      out.push(...merged);
+    }
+
+    return out;
   }
 }
 
