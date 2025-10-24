@@ -2,49 +2,50 @@ import 'reflect-metadata';
 import { sqlExecutor } from '../sql-executor';
 import { describeWithSeed } from '../tests/_setup/seed';
 import { AbusivenessCheckDb } from './abusiveness-check.db';
-import { ABUSIVENESS_DETECTION_RESULTS_TABLE } from '../constants';
 import { RequestContext } from '../request.context';
 import { AbusivenessDetectionResult } from '../entities/IAbusivenessDetectionResult';
+import {
+  anAbusivenessDetectionResult,
+  withAbusivenessDetectionResults
+} from '../tests/fixtures/abusiveness-detection-result.fixture';
+
+const okResult1 = anAbusivenessDetectionResult({
+  text: 'some allowed text',
+  status: 'ALLOWED',
+  explanation: 'ok'
+});
+const okResult2 = anAbusivenessDetectionResult({
+  text: 'another allowed text',
+  status: 'ALLOWED',
+  explanation: 'ok'
+});
+const okResult3 = anAbusivenessDetectionResult({
+  text: 'longer allowed text here',
+  status: 'ALLOWED',
+  explanation: 'ok'
+});
+const nokResult1 = anAbusivenessDetectionResult({
+  text: 'blocked text',
+  status: 'DISALLOWED',
+  explanation: 'bad'
+});
 
 describeWithSeed(
   'AbusivenessCheckDb',
-  {
-    table: ABUSIVENESS_DETECTION_RESULTS_TABLE,
-    rows: [
-      {
-        text: 'some allowed text',
-        status: 'ALLOWED',
-        explanation: 'ok',
-        external_check_performed_at: new Date()
-      },
-      {
-        text: 'another allowed text',
-        status: 'ALLOWED',
-        explanation: 'ok',
-        external_check_performed_at: new Date()
-      },
-      {
-        text: 'blocked text',
-        status: 'DISALLOWED',
-        explanation: 'bad',
-        external_check_performed_at: new Date()
-      },
-      {
-        text: 'longer allowed text here',
-        status: 'ALLOWED',
-        explanation: 'ok',
-        external_check_performed_at: new Date()
-      }
-    ]
-  },
+  withAbusivenessDetectionResults([
+    okResult1,
+    okResult2,
+    okResult3,
+    nokResult1
+  ]),
   () => {
     const repo = new AbusivenessCheckDb(() => sqlExecutor);
     const ctx: RequestContext = { timer: undefined };
 
     it('finds existing result', async () => {
-      const r = await repo.findResult('some allowed text');
+      const r = await repo.findResult(okResult1.text);
       expect(r).not.toBeNull();
-      expect(r!.status).toBe('ALLOWED');
+      expect(r!.status).toBe(okResult1.status);
     });
 
     it('returns null when nothing matches', async () => {
@@ -58,9 +59,9 @@ describeWithSeed(
         limit: 10
       });
       expect(results).toHaveLength(3);
-      expect(results).toContain('some allowed text');
-      expect(results).toContain('another allowed text');
-      expect(results).toContain('longer allowed text here');
+      expect(results).toContain(okResult1.text);
+      expect(results).toContain(okResult2.text);
+      expect(results).toContain(okResult3.text);
     });
 
     it('searches allowed texts with limit', async () => {
@@ -81,15 +82,15 @@ describeWithSeed(
 
     it('finds multiple results by exact text', async () => {
       const results = await repo.findResults(
-        ['some allowed text', 'blocked text'],
+        [okResult1.text, nokResult1.text],
         ctx
       );
       expect(results).toHaveLength(2);
-      expect(results.find((r) => r.text === 'some allowed text')?.status).toBe(
-        'ALLOWED'
+      expect(results.find((r) => r.text === okResult1.text)?.status).toBe(
+        okResult1.status
       );
-      expect(results.find((r) => r.text === 'blocked text')?.status).toBe(
-        'DISALLOWED'
+      expect(results.find((r) => r.text === nokResult1.text)?.status).toBe(
+        nokResult1.status
       );
     });
 
@@ -115,15 +116,15 @@ describeWithSeed(
 
     it('handles duplicate entries gracefully', async () => {
       const duplicateResult: AbusivenessDetectionResult = {
-        text: 'some allowed text', // already exists from seed data
-        status: 'ALLOWED',
+        text: okResult1.text,
+        status: okResult1.status,
         explanation: 'new explanation',
         external_check_performed_at: new Date()
       };
 
       const result = await repo.saveResult(duplicateResult);
       expect(result).not.toBeNull();
-      expect(result!.text).toBe('some allowed text');
+      expect(result!.text).toBe(okResult1.text);
     });
   }
 );

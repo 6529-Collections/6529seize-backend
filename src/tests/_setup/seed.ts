@@ -2,7 +2,7 @@ import 'reflect-metadata';
 import { sqlExecutor } from '../../sql-executor';
 import { collections } from '../../collections';
 
-interface Seed {
+export interface Seed {
   table: string;
   rows: Record<string, any>[];
 }

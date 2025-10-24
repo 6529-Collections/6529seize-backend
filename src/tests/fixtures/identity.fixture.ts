@@ -1,7 +1,9 @@
-import { IdentityEntity } from '../entities/IIdentity';
-import { ProfileClassification } from '../entities/IProfile';
+import { IdentityEntity } from '../../entities/IIdentity';
+import { ProfileClassification } from '../../entities/IProfile';
 import { Wallet } from 'ethers';
 import { randomUUID } from 'node:crypto';
+import { Seed } from '../_setup/seed';
+import { IDENTITIES_TABLE } from '../../constants';
 
 type BaseIdentity = Omit<
   IdentityEntity,
@@ -57,5 +59,12 @@ export function anIdentity(
     normalised_handle: key.handle.toLowerCase(),
     ...defaultBaseIdentity,
     ...other
+  };
+}
+
+export function withIdentities(entities: IdentityEntity[]): Seed {
+  return {
+    table: IDENTITIES_TABLE,
+    rows: entities
   };
 }

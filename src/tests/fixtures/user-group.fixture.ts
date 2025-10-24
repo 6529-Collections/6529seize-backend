@@ -1,6 +1,8 @@
-import { UserGroupEntity } from '../entities/IUserGroup';
-import { Time } from '../time';
+import { UserGroupEntity } from '../../entities/IUserGroup';
+import { Time } from '../../time';
 import { randomUUID } from 'node:crypto';
+import { Seed } from '../_setup/seed';
+import { USER_GROUPS_TABLE } from '../../constants';
 
 type BaseUserGroup = Omit<UserGroupEntity, 'id' | 'name'>;
 
@@ -27,7 +29,7 @@ const aDefaultUserGroup: BaseUserGroup = {
   owns_lab_tokens: null,
   owns_nextgen_tokens: null,
   visible: true,
-  is_private: true,
+  is_private: false,
   is_direct_message: true,
   created_at: Time.millis(0).toDate(),
   created_by: randomUUID(),
@@ -50,5 +52,12 @@ export function aUserGroup(
     ...key,
     ...aDefaultUserGroup,
     ...params
+  };
+}
+
+export function withUserGroups(entities: UserGroupEntity[]): Seed {
+  return {
+    table: USER_GROUPS_TABLE,
+    rows: entities
   };
 }
