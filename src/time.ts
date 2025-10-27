@@ -27,6 +27,17 @@ export class Time {
     return Time.now().plusDays(1);
   }
 
+  static fromDdMmYyyyDateOnlyToUtcMidnight(s: string): Time {
+    const m = /^(\d{1,2})-(\d{1,2})-(\d{4})$/.exec(s);
+    if (!m) {
+      throw new Error(`Input '${s}' is not in the required format dd-MM-yyyy'`);
+    }
+    const dd = Number(m[1]),
+      mm = Number(m[2]),
+      yyyy = Number(m[3]);
+    return Time.millis(Date.UTC(yyyy, mm - 1, dd));
+  }
+
   static todayUtcMidnight(): Time {
     const now = new Date();
     const nowUtc = new Date(

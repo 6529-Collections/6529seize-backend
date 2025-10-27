@@ -10,8 +10,18 @@ import { randomUUID } from 'node:crypto';
 import { Time } from '../time';
 import { collections } from '../collections';
 
+type Span = {
+  g: GrantWithCap;
+  from: number;
+  to: number;
+  toWasNull: boolean;
+};
+
 export class ReReviewRatesInTdhGrantsUseCase {
   private readonly logger = Logger.get(this.constructor.name);
+
+  private static readonly WINDOW_START = 0;
+  private static readonly WINDOW_END = 99_999_999_999_999;
 
   constructor(private readonly tdhGrantsRepository: TdhGrantsRepository) {}
 
@@ -60,133 +70,219 @@ export class ReReviewRatesInTdhGrantsUseCase {
 
   private buildReplacementGrants(rows: GrantWithCap[]): TdhGrantEntity[] {
     if (!rows.length) return [];
-    const WINDOW_START = 0;
-    const WINDOW_END = 99_999_999_999_999;
+
     const nowMillis = Time.currentMillis();
-
-    const byGrantor: Record<string, GrantWithCap[]> = {};
-    for (const r of rows) {
-      (byGrantor[r.grantor_id] ??= []).push(r);
-    }
-
+    const byGrantor = this.groupByGrantor(rows);
     const out: TdhGrantEntity[] = [];
 
     for (const grantorId in byGrantor) {
       const grantsRaw = byGrantor[grantorId];
       const capacity = grantsRaw[0].grantor_x_tdh_rate || 0;
 
-      const uniq: Record<string, GrantWithCap> = {};
-      for (const g of grantsRaw) uniq[g.id] = g;
-      const grants = Object.keys(uniq).map((k) => uniq[k]);
+      const grants = this.dedupeGrantsById(grantsRaw);
+      const spans = this.toSpans(grants);
+      if (!spans.length) continue;
 
-      type Span = {
-        g: GrantWithCap;
-        from: number;
-        to: number;
-        toWasNull: boolean;
-      };
-
-      const spans: Span[] = [];
-      const points: number[] = [WINDOW_START, WINDOW_END];
-
-      for (const g of grants) {
-        const from = Math.max(g.valid_from!, WINDOW_START);
-        const toWasNull = g.valid_to == null;
-        const to = toWasNull ? WINDOW_END : Math.min(g.valid_to!, WINDOW_END);
-        if (from < to) {
-          points.push(from, to);
-          spans.push({ g, from, to, toWasNull });
-        }
-      }
-
-      points.sort((a, b) => a - b);
-
-      const segments: TdhGrantEntity[] = [];
-
-      for (let i = 0; i < points.length - 1; i++) {
-        const segStart = points[i];
-        const segEnd = points[i + 1];
-        if (segStart >= segEnd) continue;
-
-        const active: Span[] = [];
-        for (const s of spans) {
-          if (s.from < segEnd && s.to > segStart) active.push(s);
-        }
-        if (!active.length) continue;
-
-        let totalRate = 0;
-        for (const s of active) totalRate += s.g.tdh_rate;
-
-        const scale = totalRate > 0 ? Math.min(1, capacity / totalRate) : 1;
-
-        for (const s of active) {
-          const start = Math.max(segStart, s.from);
-          const end = Math.min(segEnd, s.to);
-          if (start >= end) continue;
-
-          const newRate = s.g.tdh_rate * scale;
-          const segValidTo = s.toWasNull && end === WINDOW_END ? null : end;
-
-          segments.push({
-            id: randomUUID(),
-            tokenset_id: s.g.tokenset_id ?? null,
-            replaced_grant_id: s.g.id,
-            grantor_id: s.g.grantor_id,
-            target_chain: s.g.target_chain,
-            target_contract: s.g.target_contract,
-            target_partition: s.g.target_partition,
-            token_mode: s.g.token_mode,
-            target_tokens: s.g.target_tokens ?? null,
-            created_at: nowMillis,
-            updated_at: nowMillis,
-            valid_from: start,
-            valid_to: segValidTo,
-            tdh_rate: newRate,
-            status: TdhGrantStatus.GRANTED,
-            error_details: null,
-            is_irrevocable: s.g.is_irrevocable
-          });
-        }
-      }
-
-      segments.sort((a, b) =>
-        a.replaced_grant_id! === b.replaced_grant_id!
-          ? a.valid_from! - b.valid_from!
-          : a.replaced_grant_id! < b.replaced_grant_id!
-            ? -1
-            : 1
+      const points = this.collectSortedBreakpoints(spans);
+      const segments = this.buildScaledSegmentsForGrantor(
+        spans,
+        points,
+        capacity,
+        nowMillis
       );
 
-      const merged: TdhGrantEntity[] = [];
-      for (const seg of segments) {
-        const last = merged[merged.length - 1];
-        if (
-          last &&
-          last.replaced_grant_id === seg.replaced_grant_id &&
-          (last.valid_to ?? WINDOW_END) === seg.valid_from &&
-          Math.abs(last.tdh_rate - seg.tdh_rate) <= 1e-9 &&
-          last.status === seg.status &&
-          last.grantor_id === seg.grantor_id &&
-          last.target_chain === seg.target_chain &&
-          last.target_contract === seg.target_contract &&
-          last.target_partition === seg.target_partition &&
-          last.token_mode === seg.token_mode &&
-          last.target_tokens === seg.target_tokens &&
-          last.is_irrevocable === seg.is_irrevocable
-        ) {
-          merged[merged.length - 1] = {
-            ...last,
-            valid_to: seg.valid_to
-          };
-        } else {
-          merged.push(seg);
-        }
-      }
-
+      const merged = this.mergeAdjacentSegments(segments);
       out.push(...merged);
     }
 
     return out;
+  }
+
+  private groupByGrantor(rows: GrantWithCap[]): Record<string, GrantWithCap[]> {
+    const by: Record<string, GrantWithCap[]> = {};
+    for (const r of rows) {
+      const grantorId = r.grantor_id;
+      if (!by[grantorId]) {
+        by[grantorId] = [];
+      }
+      by[grantorId].push(r);
+    }
+    return by;
+  }
+
+  private dedupeGrantsById(rows: GrantWithCap[]): GrantWithCap[] {
+    const map: Record<string, GrantWithCap> = {};
+    for (const g of rows) {
+      map[g.id] = g;
+    }
+    const out: GrantWithCap[] = [];
+    for (const id in map) out.push(map[id]);
+    return out;
+  }
+
+  private toSpans(grants: GrantWithCap[]): Span[] {
+    const spans: Span[] = [];
+    for (const g of grants) {
+      const from = Math.max(
+        g.valid_from!,
+        ReReviewRatesInTdhGrantsUseCase.WINDOW_START
+      );
+      const toWasNull = g.valid_to == null;
+      const to = toWasNull
+        ? ReReviewRatesInTdhGrantsUseCase.WINDOW_END
+        : Math.min(g.valid_to, ReReviewRatesInTdhGrantsUseCase.WINDOW_END);
+
+      if (from < to) {
+        spans.push({ g, from, to, toWasNull });
+      }
+    }
+    return spans;
+  }
+
+  private collectSortedBreakpoints(spans: Span[]): number[] {
+    const raw: number[] = [
+      ReReviewRatesInTdhGrantsUseCase.WINDOW_START,
+      ReReviewRatesInTdhGrantsUseCase.WINDOW_END
+    ];
+    for (const span of spans) {
+      raw.push(span.from, span.to);
+    }
+    raw.sort((a, b) => a - b);
+    const points: number[] = [];
+    let last: number | undefined = undefined;
+    for (const v of raw) {
+      if (last === undefined || v !== last) {
+        points.push(v);
+        last = v;
+      }
+    }
+    return points;
+  }
+
+  private getActiveSpans(
+    spans: Span[],
+    segStart: number,
+    segEnd: number
+  ): Span[] {
+    const act: Span[] = [];
+    for (const s of spans) {
+      if (s.from < segEnd && s.to > segStart) act.push(s);
+    }
+    return act;
+  }
+
+  private computeScale(active: Span[], capacity: number): number {
+    if (!active.length) return 1;
+    let total = 0;
+    for (const a of active) total += a.g.tdh_rate;
+    if (total <= 0) return 1;
+    return Math.min(1, capacity / total);
+  }
+
+  private makeReplacementEntity(
+    source: Span,
+    segStart: number,
+    segEnd: number,
+    newRate: number,
+    nowMillis: number
+  ): TdhGrantEntity {
+    const isWindowEnd = segEnd === ReReviewRatesInTdhGrantsUseCase.WINDOW_END;
+    const segValidTo = source.toWasNull && isWindowEnd ? null : segEnd;
+
+    return {
+      id: randomUUID(),
+      tokenset_id: source.g.tokenset_id ?? null,
+      replaced_grant_id: source.g.id,
+      grantor_id: source.g.grantor_id,
+      target_chain: source.g.target_chain,
+      target_contract: source.g.target_contract,
+      target_partition: source.g.target_partition,
+      token_mode: source.g.token_mode,
+      target_tokens: source.g.target_tokens ?? null,
+      created_at: nowMillis,
+      updated_at: nowMillis,
+      valid_from: segStart,
+      valid_to: segValidTo,
+      tdh_rate: newRate,
+      status: TdhGrantStatus.GRANTED,
+      error_details: null,
+      is_irrevocable: source.g.is_irrevocable
+    };
+  }
+
+  private buildScaledSegmentsForGrantor(
+    spans: Span[],
+    points: number[],
+    capacity: number,
+    nowMillis: number
+  ): TdhGrantEntity[] {
+    const segments: TdhGrantEntity[] = [];
+
+    for (let i = 0; i < points.length - 1; i++) {
+      const segStart = points[i];
+      const segEnd = points[i + 1];
+      if (segStart >= segEnd) continue;
+
+      const active = this.getActiveSpans(spans, segStart, segEnd);
+      if (!active.length) continue;
+
+      const scale = this.computeScale(active, capacity);
+
+      for (const s of active) {
+        const start = Math.max(segStart, s.from);
+        const end = Math.min(segEnd, s.to);
+        if (start >= end) continue;
+
+        const newRate = s.g.tdh_rate * scale;
+        segments.push(
+          this.makeReplacementEntity(s, start, end, newRate, nowMillis)
+        );
+      }
+    }
+
+    segments.sort((a, b) => {
+      const aRepId = a.replaced_grant_id!;
+      const bRepId = b.replaced_grant_id!;
+      if (aRepId === bRepId) {
+        const aValidFrom = a.valid_from!;
+        const bValidFrom = b.valid_from!;
+        return aValidFrom - bValidFrom;
+      }
+      return aRepId < bRepId ? -1 : 1;
+    });
+
+    return this.mergeAdjacentSegments(segments);
+  }
+
+  private mergeAdjacentSegments(segments: TdhGrantEntity[]): TdhGrantEntity[] {
+    const merged: TdhGrantEntity[] = [];
+    const WINDOW_END = ReReviewRatesInTdhGrantsUseCase.WINDOW_END;
+
+    for (const seg of segments) {
+      const last = merged.at(-1);
+
+      const canMerge =
+        !!last &&
+        last.replaced_grant_id === seg.replaced_grant_id &&
+        (last.valid_to ?? WINDOW_END) === seg.valid_from &&
+        Math.abs(last.tdh_rate - seg.tdh_rate) <= 1e-9 &&
+        last.status === seg.status &&
+        last.grantor_id === seg.grantor_id &&
+        last.target_chain === seg.target_chain &&
+        last.target_contract === seg.target_contract &&
+        last.target_partition === seg.target_partition &&
+        last.token_mode === seg.token_mode &&
+        last.target_tokens === seg.target_tokens &&
+        last.is_irrevocable === seg.is_irrevocable;
+
+      if (canMerge) {
+        merged[merged.length - 1] = { ...last, valid_to: seg.valid_to };
+      } else {
+        merged.push(seg);
+      }
+    }
+
+    return merged;
   }
 }
 

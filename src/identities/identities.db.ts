@@ -123,7 +123,11 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
                                          banner1,
                                          banner2,
                                          classification,
-                                         sub_classification)
+                                         sub_classification,
+                                         total_tdh,
+                                         xtdh,
+                                         produced_xtdh,
+                                         granted_xtdh)
         values (:consolidation_key,
                 :profile_id,
                 :primary_address,
@@ -137,7 +141,11 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
                 :banner1,
                 :banner2,
                 :classification,
-                :sub_classification)
+                :sub_classification,
+                :total_tdh,
+                :xtdh,
+                :produced_xtdh,
+                :granted_xtdh)
     `,
       identityEntity,
       { wrappedConnection: connection }
