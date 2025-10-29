@@ -14,7 +14,7 @@ import {
 import { Logger } from '../logging';
 import { env } from '../env';
 import { Time } from '../time';
-import { TdhGrantTokenMode } from '../entities/ITdhGrant';
+import { TdhGrantStatus, TdhGrantTokenMode } from '../entities/ITdhGrant';
 
 const CTE_EPOCH = `
 epoch AS (
@@ -321,34 +321,32 @@ export class XTdhRepository extends LazyDbAccessCompatibleService {
       this.logger.info(
         `Setting produced xTDH in ${CONSOLIDATED_WALLETS_TDH_TABLE}`
       );
-      await this.db.execute(
-        `
-          UPDATE ${CONSOLIDATED_WALLETS_TDH_TABLE} c
-            LEFT JOIN (
-              SELECT
-                c.consolidation_key,
-                SUM(e.hodl_rate * LEAST(e.days_held, :days_since_epoch))
-                  * COALESCE(MAX(c.boost), 1.0)
-                  * ${X_TDH_COEFFICIENT} AS produced_xtdh
-              FROM ${CONSOLIDATED_WALLETS_TDH_TABLE} c
-                     LEFT JOIN ${CONSOLIDATED_TDH_EDITIONS_TABLE} e
-                               ON e.consolidation_key = c.consolidation_key
-              GROUP BY c.consolidation_key
-            ) x
-            ON x.consolidation_key = c.consolidation_key
-          SET c.produced_xtdh = COALESCE(x.produced_xtdh, 0);
-    `,
-        { days_since_epoch: this.getDaysSinceXTdhEpoch() },
-        {
-          wrappedConnection: ctx.connection
-        }
-      );
+      const sql = `
+        UPDATE ${CONSOLIDATED_WALLETS_TDH_TABLE} c
+          LEFT JOIN (
+            SELECT
+              c.consolidation_key,
+              SUM(e.hodl_rate * LEAST(e.days_held, :days_since_epoch))
+                * COALESCE(MAX(c.boost), 1.0)
+                * ${X_TDH_COEFFICIENT} AS produced_xtdh
+            FROM ${CONSOLIDATED_WALLETS_TDH_TABLE} c
+                   LEFT JOIN ${CONSOLIDATED_TDH_EDITIONS_TABLE} e
+                             ON e.consolidation_key = c.consolidation_key
+            GROUP BY c.consolidation_key
+          ) x
+          ON x.consolidation_key = c.consolidation_key
+        SET c.produced_xtdh = COALESCE(x.produced_xtdh, 0);
+  `;
+      const params = { days_since_epoch: this.getDaysSinceXTdhEpoch() };
+      await this.db.execute(sql, params, {
+        wrappedConnection: ctx.connection
+      });
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->updateProducedXTDH`);
     }
   }
 
-  async updateAllGrantedXTdhsOnConsolidated(ctx: RequestContext) {
+  async updateAllGrantedXTdhs(ctx: RequestContext) {
     try {
       ctx.timer?.start(
         `${this.constructor.name}->updateAllGrantedXTdhsOnConsolidated`
@@ -600,12 +598,178 @@ ck_xtdh AS (
     try {
       ctx.timer?.start(`${this.constructor.name}->updateTotalTdhs`);
       await this.db.execute(
-        `UPDATE ${CONSOLIDATED_WALLETS_TDH_TABLE} SET total_tdh = xtdh + (produced_xtdh - granted_xtdh) + boosted_tdh`,
+        `UPDATE ${CONSOLIDATED_WALLETS_TDH_TABLE} SET total_tdh = xtdh + boosted_tdh`,
         undefined,
         { wrappedConnection: ctx.connection }
       );
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->updateTotalTdhs`);
+    }
+  }
+
+  async createMissingTdhConsolidations(ctx: RequestContext) {
+    try {
+      ctx.timer?.start(
+        `${this.constructor.name}->createMissingTdhConsolidations`
+      );
+      await this.db.execute(
+        `
+              INSERT INTO ${CONSOLIDATED_WALLETS_TDH_TABLE} (
+                  \`date\`,
+                  consolidation_display,
+                  wallets,
+                  \`block\`,
+                  boost,
+                  tdh_rank,
+                  tdh_rank_memes,
+                  tdh_rank_gradients,
+                  balance,
+                  genesis,
+                  memes_cards_sets,
+                  unique_memes,
+                  memes_balance,
+                  memes,
+                  memes_ranks,
+                  gradients_balance,
+                  gradients,
+                  gradients_ranks,
+                  consolidation_key,
+                  tdh_rank_nextgen,
+                  nextgen_balance,
+                  nextgen,
+                  nextgen_ranks,
+                  boost_breakdown,
+                  nakamoto,
+                  tdh,
+                  boosted_tdh,
+                  tdh__raw,
+                  boosted_memes_tdh,
+                  memes_tdh,
+                  memes_tdh__raw,
+                  boosted_gradients_tdh,
+                  gradients_tdh,
+                  gradients_tdh__raw,
+                  boosted_nextgen_tdh,
+                  nextgen_tdh,
+                  nextgen_tdh__raw,
+                  produced_xtdh,
+                  xtdh,
+                  total_tdh,
+                  granted_xtdh
+              )
+              WITH
+                  cutoff AS (
+                      SELECT UNIX_TIMESTAMP(DATE(UTC_TIMESTAMP())) * 1000 AS cut_ms
+                  ),
+                  gr AS (
+                      SELECT g.id, g.target_partition, g.token_mode, g.tokenset_id
+                      FROM ${TDH_GRANTS_TABLE} g
+                      WHERE g.status = '${TdhGrantStatus.GRANTED}'
+                  ),
+                  grant_tokens AS (
+                      SELECT gr.id AS grant_id, gr.target_partition AS \`partition\`, h.token_id
+                      FROM gr
+                               JOIN  ${EXTERNAL_INDEXED_OWNERSHIP_721_HISTORY_TABLE} h
+                                    ON h.\`partition\` = gr.target_partition
+                      WHERE gr.token_mode = '${TdhGrantTokenMode.ALL}'
+                      GROUP BY gr.id, gr.target_partition, h.token_id
+              
+                      UNION ALL
+              
+                      SELECT gr.id AS grant_id, t.target_partition AS \`partition\`, t.token_id
+                      FROM gr
+                               JOIN  ${TDH_GRANT_TOKENS_TABLE} t
+                                    ON t.tokenset_id = gr.tokenset_id
+                                        AND t.target_partition = gr.target_partition
+                      WHERE gr.token_mode = '${TdhGrantTokenMode.INCLUDE}'
+                  ),
+                  owners_at_cut AS (
+                      SELECT
+                          h.\`partition\`,
+                          h.token_id,
+                          h.owner,
+                          ROW_NUMBER() OVER (
+                              PARTITION BY h.\`partition\`, h.token_id
+                              ORDER BY h.since_time DESC, h.block_number DESC, h.log_index DESC
+                              ) AS rn
+                      FROM  ${EXTERNAL_INDEXED_OWNERSHIP_721_HISTORY_TABLE} h
+                               CROSS JOIN cutoff c
+                               JOIN grant_tokens gt
+                                    ON gt.\`partition\` = h.\`partition\`
+                                        AND gt.token_id    = h.token_id
+                      WHERE h.since_time < c.cut_ms
+                  ),
+                  candidates AS (
+                      SELECT DISTINCT ack.consolidation_key
+                      FROM owners_at_cut o
+                               JOIN ${ADDRESS_CONSOLIDATION_KEY} ack
+                                    ON ack.address = o.owner
+                               LEFT JOIN ${CONSOLIDATED_WALLETS_TDH_TABLE} tc
+                                         ON tc.consolidation_key = ack.consolidation_key
+                      WHERE o.rn = 1
+                        AND tc.consolidation_key IS NULL
+                  ),
+                  max_block AS (
+                      SELECT COALESCE(MAX(\`block\`), 0) AS blk, UTC_TIMESTAMP() AS dt
+                      FROM tdh_consolidation
+                  )
+              SELECT *
+              FROM (
+                       SELECT
+                           mb.dt AS \`date\`,
+                           c.consolidation_key AS consolidation_display,
+                           JSON_ARRAY(c.consolidation_key) AS wallets,
+                           mb.blk AS \`block\`,
+                           0 AS boost,
+                           0 AS tdh_rank,
+                           0 AS tdh_rank_memes,
+                           0 AS tdh_rank_gradients,
+                           0 AS balance,
+                           0 AS genesis,
+                           0 AS memes_cards_sets,
+                           0 AS unique_memes,
+                           0 AS memes_balance,
+                           NULL AS memes,
+                           NULL AS memes_ranks,
+                           0 AS gradients_balance,
+                           NULL AS gradients,
+                           NULL AS gradients_ranks,
+                           c.consolidation_key AS consolidation_key,
+                           0 AS tdh_rank_nextgen,
+                           0 AS nextgen_balance,
+                           NULL AS nextgen,
+                           NULL AS nextgen_ranks,
+                           NULL AS boost_breakdown,
+                           0 AS nakamoto,
+                           0 AS tdh,
+                           0 AS boosted_tdh,
+                           0 AS tdh__raw,
+                           0 AS boosted_memes_tdh,
+                           0 AS memes_tdh,
+                           0 AS memes_tdh__raw,
+                           0 AS boosted_gradients_tdh,
+                           0 AS gradients_tdh,
+                           0 AS gradients_tdh__raw,
+                           0 AS boosted_nextgen_tdh,
+                           0 AS nextgen_tdh,
+                           0 AS nextgen_tdh__raw,
+                           0 AS produced_xtdh,
+                           0 AS xtdh,
+                           0 AS total_tdh,
+                           0 AS granted_xtdh
+                       FROM candidates c
+                                CROSS JOIN max_block mb
+                   ) AS new_rows
+              ON DUPLICATE KEY UPDATE
+                  consolidation_key = new_rows.consolidation_key
+      `,
+        undefined,
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(
+        `${this.constructor.name}->createMissingTdhConsolidations`
+      );
     }
   }
 }

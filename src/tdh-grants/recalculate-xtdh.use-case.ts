@@ -43,11 +43,16 @@ export class RecalculateXTdhUseCase {
         );
         this.logger.info(`Missing identities created`);
       }
+
+      this.logger.info(`Creating missing tdh_consolidations`);
+      await this.xtdhRepository.createMissingTdhConsolidations(ctx);
+      this.logger.info(`Created missing tdh_consolidations`);
+
       this.logger.info(`Updating all produced xTDHs`);
       await this.xtdhRepository.updateProducedXTDH(ctx);
       this.logger.info(`Updated all produced xTDHs`);
       this.logger.info(`Updating all granted xTDH tallies`);
-      await this.xtdhRepository.updateAllGrantedXTdhsOnConsolidated(ctx);
+      await this.xtdhRepository.updateAllGrantedXTdhs(ctx);
       this.logger.info(`Updated all granted xTDH tallies`);
       this.logger.info(`Deleting old xTDH state`);
       await this.xtdhRepository.deleteXTdhState(ctx);

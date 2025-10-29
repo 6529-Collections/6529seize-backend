@@ -203,6 +203,7 @@ export async function syncIdentitiesWithTdhConsolidations(
           produced_xtdh: 0,
           granted_xtdh: 0,
           xtdh: 0,
+          total_tdh: 0,
           rep: 0,
           cic: 0,
           level_raw: consolidationThatNeedsWork.tdh,
