@@ -43,6 +43,14 @@ export class RecalculateXTdhUseCase {
         );
         this.logger.info(`Missing identities created`);
       }
+
+      this.logger.info(`Creating missing tdh_consolidations`);
+      await this.xtdhRepository.createMissingTdhConsolidations(ctx);
+      this.logger.info(`Created missing tdh_consolidations`);
+
+      this.logger.info(`Updating all produced xTDHs`);
+      await this.xtdhRepository.updateProducedXTDH(ctx);
+      this.logger.info(`Updated all produced xTDHs`);
       this.logger.info(`Updating all granted xTDH tallies`);
       await this.xtdhRepository.updateAllGrantedXTdhs(ctx);
       this.logger.info(`Updated all granted xTDH tallies`);
@@ -57,6 +65,9 @@ export class RecalculateXTdhUseCase {
       this.logger.info(`Upserting rest of xTDH to core card owners`);
       await this.xtdhRepository.giveOutUngrantedXTdh(ctx);
       this.logger.info(`Rest of xTDH upserted to core card owners`);
+      this.logger.info(`Updating total TDHs`);
+      await this.xtdhRepository.updateTotalTdhs(ctx);
+      this.logger.info(`Total TDHs updated`);
       this.logger.info(`xTDH universe has been recalculated`);
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->recalculateXTdh`);

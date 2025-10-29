@@ -5114,6 +5114,9 @@ components:
         - rep
         - level
         - tdh
+        - xtdh
+        - produced_xtdh
+        - granted_xtdh
         - tdh_rate
         - display
         - consolidation_key
@@ -5147,8 +5150,17 @@ components:
           type: integer
           format: int65
         tdh:
-          type: integer
-          format: int65
+          type: number
+          format: double
+        xtdh:
+          type: number
+          format: double
+        produced_xtdh:
+          type: number
+          format: double
+        granted_xtdh:
+          type: number
+          format: double
         tdh_rate:
           type: number
           format: int64
@@ -5819,6 +5831,9 @@ components:
         - cic
         - rep
         - tdh
+        - xtdh
+        - produced_xtdh
+        - granted_xtdh
         - level
         - tdh_rate
         - primary_address
@@ -5852,7 +5867,16 @@ components:
           format: int64
         tdh:
           type: number
-          format: int64
+          format: double
+        xtdh:
+          type: number
+          format: double
+        produced_xtdh:
+          type: number
+          format: double
+        granted_xtdh:
+          type: number
+          format: double
         tdh_rate:
           type: number
           format: int64
