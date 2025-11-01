@@ -392,6 +392,33 @@ export class CreateOrUpdateDropUseCase {
     { timer }: { timer: Timer; connection: ConnectionWrapper<any> }
   ) {
     timer.start(`${CreateOrUpdateDropUseCase.name}->verifyMedia`);
+    for (const part of model.parts) {
+      for (const media of part.media) {
+        const mimeType = media.mime_type;
+        if (
+          mimeType.startsWith('image/') ||
+          mimeType.startsWith('video/') ||
+          mimeType.startsWith('audio/')
+        ) {
+          if (!media.url.startsWith('https://d3lqz0a4bldqgf.cloudfront.net')) {
+            throw new BadRequestException(
+              `Media needs to come from https://d3lqz0a4bldqgf.cloudfront.net`
+            );
+          }
+        } else if (mimeType === 'text/html') {
+          if (
+            !media.url.startsWith('https://arweave.net/') &&
+            !media.url.startsWith('ipfs://')
+          ) {
+            throw new BadRequestException(
+              `text/html needs to be served from IPFS or Arweave`
+            );
+          }
+        } else {
+          throw new BadRequestException(`Unsupported mime type ${mimeType}`);
+        }
+      }
+    }
     const requiredMedias = wave.participation_required_media;
     if (model.drop_type === DropType.PARTICIPATORY && requiredMedias.length) {
       const mimeTypes = model.parts

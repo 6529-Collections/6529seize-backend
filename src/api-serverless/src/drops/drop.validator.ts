@@ -55,9 +55,7 @@ const NewDropPartSchema: Joi.ObjectSchema<ApiCreateDropPart> = Joi.object({
     .items(
       Joi.object({
         mime_type: Joi.string().required(),
-        url: Joi.string()
-          .required()
-          .regex(/^https:\/\/d3lqz0a4bldqgf.cloudfront.net\//)
+        url: Joi.string().required()
       })
     )
     .default([])
