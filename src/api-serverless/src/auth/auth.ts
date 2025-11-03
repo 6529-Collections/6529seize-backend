@@ -1,5 +1,5 @@
 import * as passport from 'passport';
-import { Request } from 'express';
+import { NextFunction, Request, RequestHandler, Response } from 'express';
 import {
   isProxyActionActive,
   profileProxyApiService
@@ -14,6 +14,7 @@ import * as mcache from 'memory-cache';
 import { identitiesDb } from '../../../identities/identities.db';
 import { identityFetcher } from '../identities/identity.fetcher';
 import { enums } from '../../../enums';
+import { loggerContext } from '../../../logger-context';
 
 export function getJwtSecret() {
   const jwtsecret = process.env.JWT_SECRET;
@@ -35,12 +36,58 @@ export function getJwtExpiry(): string {
   return `${jwtExpiryNumber}s`;
 }
 
-export function needsAuthenticatedUser() {
-  return passport.authenticate('jwt', { session: false });
+function updateJwtContext(user: any) {
+  if (!user) {
+    loggerContext.setJwtSub(undefined);
+    return;
+  }
+  if (typeof user.wallet === 'string') {
+    loggerContext.setJwtSub(user.wallet.toLowerCase());
+    return;
+  }
+  if (typeof user.sub === 'string') {
+    loggerContext.setJwtSub(user.sub);
+    return;
+  }
+  loggerContext.setJwtSub(undefined);
 }
 
-export function maybeAuthenticatedUser() {
-  return passport.authenticate(['jwt', 'anonymous'], { session: false });
+type AnyRequestHandler = RequestHandler<any, any, any, any>;
+
+function runAuthenticate(
+  authenticate: AnyRequestHandler,
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  authenticate(req, res, (err?: any) => {
+    if (err) {
+      next(err);
+      return;
+    }
+    updateJwtContext(req.user);
+    next();
+  });
+}
+
+export function needsAuthenticatedUser(): AnyRequestHandler {
+  const authenticate = passport.authenticate('jwt', {
+    session: false
+  }) as unknown as AnyRequestHandler;
+  const handler: AnyRequestHandler = (req, res, next) => {
+    runAuthenticate(authenticate, req, res, next);
+  };
+  return handler;
+}
+
+export function maybeAuthenticatedUser(): AnyRequestHandler {
+  const authenticate = passport.authenticate(['jwt', 'anonymous'], {
+    session: false
+  }) as unknown as AnyRequestHandler;
+  const handler: AnyRequestHandler = (req, res, next) => {
+    runAuthenticate(authenticate, req, res, next);
+  };
+  return handler;
 }
 
 export function getAuthenticatedWalletOrNull(

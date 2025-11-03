@@ -5,21 +5,19 @@ import {
   transports
 } from 'winston';
 
-import * as mcache from 'memory-cache';
+import { loggerContext } from './logger-context';
 
 const { combine, timestamp, printf, errors, splat } = format;
 
-const REQ_ID_CACHE_TIMEOUT_MS = 900000;
-
 const winstonInstances = new Map<string, WinstonLogger>();
-
-const reqIdCacheKey = () =>
-  `__SEIZE_CACHE_REQ_ID_${process.env._X_AMZN_TRACE_ID}`;
 
 const messageFormat = (loggerName: string) =>
   printf((info) => {
     const splatSym = Symbol.for('splat');
     const extras = (info as any)[splatSym] as unknown[] | undefined;
+    const context = loggerContext.get();
+    const requestId = context?.requestId ?? '';
+    const jwtSub = context?.jwtSub ?? '';
 
     // pretty print object messages
     if (info.message?.constructor === Object) {
@@ -43,9 +41,7 @@ const messageFormat = (loggerName: string) =>
           .join(' ')
       : '';
 
-    return `[${info.timestamp}] [${
-      mcache.get(reqIdCacheKey())?.toString() ?? ''
-    }] [${info.level}] [${loggerName}] : ${info.message}${extrasStr}${
+    return `[${info.timestamp}] [${requestId}] [${jwtSub}] [${info.level}] [${loggerName}] : ${info.message}${extrasStr}${
       info.stack ? '\n' + info.stack : ''
     }`;
   });
@@ -76,16 +72,6 @@ const LEVELS = ['DEBUG', 'INFO', 'WARN', 'ERROR'];
 const DEFAULT_LEVEL = 'INFO';
 
 export class Logger {
-  public static registerAwsRequestId(requestId?: string) {
-    if (requestId) {
-      mcache.put(reqIdCacheKey(), requestId, REQ_ID_CACHE_TIMEOUT_MS);
-    }
-  }
-
-  public static deregisterRequestId() {
-    mcache.del(reqIdCacheKey());
-  }
-
   public static get(name: string): Logger {
     if (!Logger.instances.has(name)) {
       Logger.instances.set(name, new Logger(name));

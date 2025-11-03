@@ -66,6 +66,7 @@ import { TDHBlock } from '../../entities/ITDH';
 import { Upload } from '../../entities/IUpload';
 import { loadLocalConfig, loadSecrets } from '../../env';
 import { Logger } from '../../logging';
+import { loggerContext } from '../../logger-context';
 import { numbers } from '../../numbers';
 import { parseTdhResultsFromDB } from '../../sql_helpers';
 import {
@@ -125,35 +126,35 @@ function requestLogMiddleware() {
   return (request: Request, response: Response, next: NextFunction) => {
     const requestId =
       request.apiGateway?.context?.awsRequestId ?? ids.uniqueShortId();
-    Logger.registerAwsRequestId(requestId);
-    const { method, originalUrl: url } = request;
-    const uqKey = `${method} ${url}`;
-    const timer = new Timer(uqKey);
-    (request as any).timer = timer;
-    response.on('close', () => {
-      const { statusCode } = response;
-      const slowRequestThresholdEnv = numbers.parseIntOrNull(
-        process.env.SLOW_API_REQUEST_THRESHOLD
-      );
-      const slowRequestThreshold = slowRequestThresholdEnv
-        ? Time.millis(slowRequestThresholdEnv)
-        : Time.seconds(1);
-      if (timer.getTotalTimePassed().gt(slowRequestThreshold)) {
-        requestLogger.warn(
-          `[METHOD ${method}] [PATH ${url}] [RESPONSE_STATUS ${statusCode}] [TOOK_MS ${timer
-            .getTotalTimePassed()
-            .toMillis()}] [${timer.getReport()}]`
+    loggerContext.run({ requestId }, () => {
+      const { method, originalUrl: url } = request;
+      const uqKey = `${method} ${url}`;
+      const timer = new Timer(uqKey);
+      (request as any).timer = timer;
+      response.on('close', () => {
+        const { statusCode } = response;
+        const slowRequestThresholdEnv = numbers.parseIntOrNull(
+          process.env.SLOW_API_REQUEST_THRESHOLD
         );
-      } else {
-        requestLogger.info(
-          `[METHOD ${method}] [PATH ${url}] [RESPONSE_STATUS ${statusCode}] [TOOK_MS ${timer
-            .getTotalTimePassed()
-            .toMillis()}]`
-        );
-      }
-      Logger.deregisterRequestId();
+        const slowRequestThreshold = slowRequestThresholdEnv
+          ? Time.millis(slowRequestThresholdEnv)
+          : Time.seconds(1);
+        if (timer.getTotalTimePassed().gt(slowRequestThreshold)) {
+          requestLogger.warn(
+            `[METHOD ${method}] [PATH ${url}] [RESPONSE_STATUS ${statusCode}] [TOOK_MS ${timer
+              .getTotalTimePassed()
+              .toMillis()}] [${timer.getReport()}]`
+          );
+        } else {
+          requestLogger.info(
+            `[METHOD ${method}] [PATH ${url}] [RESPONSE_STATUS ${statusCode}] [TOOK_MS ${timer
+              .getTotalTimePassed()
+              .toMillis()}]`
+          );
+        }
+      });
+      next();
     });
-    next();
   };
 }
 
