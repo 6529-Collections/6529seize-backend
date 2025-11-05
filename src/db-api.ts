@@ -270,7 +270,7 @@ export async function fetchPaginated<T = any>(
   return {
     count,
     page,
-    next: count > pageSize * page ? 'true' : null,
+    next: pageSize > 0 && count > pageSize * page ? 'true' : null,
     data
   };
 }
@@ -607,6 +607,25 @@ export async function fetchMemesLite(sortDir: string) {
 
   return fetchPaginated(
     NFTS_TABLE,
+    params,
+    `id ${sortDir}`,
+    0,
+    1,
+    filters,
+    'id, name, contract, icon, thumbnail, scaled, image, animation',
+    ''
+  );
+}
+
+export async function fetchMemelabLite(sortDir: string) {
+  const filters = constructFilters(
+    '',
+    `${NFTS_MEME_LAB_TABLE}.contract = :memelab_contract`
+  );
+  const params = { memelab_contract: MEMELAB_CONTRACT };
+
+  return fetchPaginated(
+    NFTS_MEME_LAB_TABLE,
     params,
     `id ${sortDir}`,
     0,

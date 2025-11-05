@@ -33,9 +33,9 @@ import bulkRepRoutes from './ratings/bulk-rep.routes';
 import ratingsRoutes from './ratings/ratings.routes';
 import rememesRoutes from './rememes/rememes.routes';
 import royaltiesRoutes from './royalties/royalties.routes';
-import tdhRoutes from './tdh/api.tdh.routes';
 import tdhEditionsRoutes from './tdh-editions/tdh-editions.routes';
 import tdhGrantsRoutes from './tdh-grants/tdh-grants.routes';
+import tdhRoutes from './tdh/api.tdh.routes';
 import waveMediaRoutes from './waves/wave-media.routes';
 import wavesOverviewRoutes from './waves/waves-overview.routes';
 import publicWavesRoutes from './waves/waves-public.routes';
@@ -65,9 +65,10 @@ import { NFT } from '../../entities/INFT';
 import { TDHBlock } from '../../entities/ITDH';
 import { Upload } from '../../entities/IUpload';
 import { loadLocalConfig, loadSecrets } from '../../env';
-import { Logger } from '../../logging';
 import { loggerContext } from '../../logger-context';
+import { Logger } from '../../logging';
 import { numbers } from '../../numbers';
+import { initRedis, redisGet } from '../../redis';
 import { parseTdhResultsFromDB } from '../../sql_helpers';
 import {
   corsOptions,
@@ -108,7 +109,6 @@ import {
 } from './ws/ws';
 import { wsListenersNotifier } from './ws/ws-listeners-notifier';
 import { WsMessageType } from './ws/ws-message';
-import { initRedis, redisGet } from '../../redis';
 
 const YAML = require('yamljs');
 const compression = require('compression');
@@ -639,6 +639,18 @@ loadApi().then(async () => {
         : 'asc';
 
     await db.fetchMemesLite(sortDir).then(async (result) => {
+      return await returnPaginatedResult(result, req, res);
+    });
+  });
+
+  apiRouter.get(`/memelab_lite`, async function (req: any, res: any) {
+    const sortDir =
+      req.query.sort_direction &&
+      SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
+        ? req.query.sort_direction
+        : 'asc';
+
+    await db.fetchMemelabLite(sortDir).then(async (result) => {
       return await returnPaginatedResult(result, req, res);
     });
   });
