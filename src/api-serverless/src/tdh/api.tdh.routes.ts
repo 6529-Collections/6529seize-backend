@@ -22,6 +22,7 @@ import {
 import { NotFoundException } from '../../../exceptions';
 import { NFT_TDH_SORT } from '../api-filters';
 import { enums } from '../../../enums';
+import { cacheRequest } from '../request-cache';
 
 const router = asyncRouter();
 
@@ -38,6 +39,7 @@ export const METRICS_SORT = [
 
 router.get(
   `/nft/:contract/:nft_id`,
+  cacheRequest(),
   async function (
     req: Request<
       {
@@ -81,6 +83,7 @@ router.get(
 
 router.get(
   `/consolidated_metrics`,
+  cacheRequest(),
   async function (
     req: Request<
       any,
@@ -137,6 +140,7 @@ router.get(
 
 router.get(
   '/consolidation/:consolidation_key',
+  cacheRequest(),
   async function (
     req: Request<
       {
@@ -167,6 +171,7 @@ router.get(
 
 router.get(
   '/wallet/:wallet',
+  cacheRequest(),
   async function (
     req: Request<
       {
