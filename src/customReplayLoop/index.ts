@@ -216,19 +216,22 @@ async function replay() {
   if (missingRedeemed.length === 0) {
     logger.info(`[STEP 5] No missing redeemed entries to process`);
   } else {
-    // Collect all transactions that need processing
-    const transactionsToProcess: any[] = [];
+    // Collect subscriptions to process (one per subscription, use first transaction)
+    // Each subscription should only be processed once, even if it has multiple transactions
+    const subscriptionsToProcess: any[] = [];
     missingRedeemed.forEach((missing) => {
-      missing.transactions.forEach((tx) => {
-        transactionsToProcess.push({
-          transaction: tx,
+      // Use the first transaction for each subscription
+      const transaction = missing.transactions[0];
+      if (transaction) {
+        subscriptionsToProcess.push({
+          transaction: transaction,
           finalSubscription: missing.finalSubscription
         });
-      });
+      }
     });
 
     logger.info(
-      `[STEP 5] Processing ${transactionsToProcess.length} transactions for ${missingRedeemed.length} missing entries`
+      `[STEP 5] Processing ${subscriptionsToProcess.length} subscriptions (one per missing entry)`
     );
 
     // Get unique consolidation keys for statistics
@@ -254,8 +257,8 @@ async function replay() {
     const consolidationKeysWithBalance = new Set<string>();
     const consolidationKeysWithEnoughBalance = new Set<string>();
 
-    // Process each transaction to collect stats
-    for (const item of transactionsToProcess) {
+    // Process each subscription to collect stats
+    for (const item of subscriptionsToProcess) {
       const { finalSubscription } = item;
       const consolidationKey =
         finalSubscription.consolidation_key.toLowerCase();
@@ -299,7 +302,7 @@ async function replay() {
         let processedCount = 0;
         let skippedCount = 0;
 
-        for (const item of transactionsToProcess) {
+        for (const item of subscriptionsToProcess) {
           const { transaction, finalSubscription } = item;
           const consolidationKey =
             finalSubscription.consolidation_key.toLowerCase();
@@ -317,25 +320,19 @@ async function replay() {
           }
 
           // Get balance from map (already fetched)
-          const balance = balanceMap.get(consolidationKey);
-
+          // If no balance exists, create one with 0 balance (will go negative)
+          let balance = balanceMap.get(consolidationKey);
           if (!balance) {
+            balance = {
+              consolidation_key: consolidationKey,
+              balance: 0
+            };
             logger.warn(
-              `[STEP 5 SKIP] No balance found for consolidation_key: ${consolidationKey}, transaction: ${transaction.transaction}`
+              `[STEP 5] No balance found for consolidation_key: ${consolidationKey}, creating with 0 balance (will go negative), transaction: ${transaction.transaction}`
             );
-            skippedCount++;
-            continue;
           }
 
-          if (MEMES_MINT_PRICE > balance.balance) {
-            logger.warn(
-              `[STEP 5 SKIP] Insufficient balance for consolidation_key: ${consolidationKey}, balance: ${balance.balance}, required: ${MEMES_MINT_PRICE}, transaction: ${transaction.transaction}`
-            );
-            skippedCount++;
-            continue;
-          }
-
-          // Calculate balance after
+          // Calculate balance after (allow negative)
           let balanceAfter = balance.balance - MEMES_MINT_PRICE;
           balanceAfter = Math.round(balanceAfter * 100000) / 100000;
           balance.balance = balanceAfter;
