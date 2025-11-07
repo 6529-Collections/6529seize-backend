@@ -59,9 +59,9 @@ async function replay() {
   logger.info(
     `[STEP 2] Looking for transactions to ${uniqueAirdropAddresses.length} unique airdrop addresses`
   );
-  logger.info(
-    `[STEP 2] Airdrop addresses: ${JSON.stringify(uniqueAirdropAddresses)}`
-  );
+
+  const IGNORED_TRANSACTION =
+    '0x62ee19b3dcefdb0a6f35dc5c8549f8f694b6b427411d1a9d5f7881c77b64e9f1';
 
   const airdropTransactions = await sqlExecutor.execute(
     `SELECT * FROM ${TRANSACTIONS_TABLE} 
@@ -70,12 +70,14 @@ async function replay() {
     AND from_address = :nullAddress
     AND value = 0
     AND token_count > 0
+    AND transaction != :ignoredTransaction
     AND LOWER(to_address) IN (:airdropAddresses)
     ORDER BY block ASC`,
     {
       contract: CONTRACT,
       tokenId: TOKEN_ID,
       nullAddress: NULL_ADDRESS,
+      ignoredTransaction: IGNORED_TRANSACTION,
       airdropAddresses: uniqueAirdropAddresses
     }
   );
@@ -156,14 +158,13 @@ async function replay() {
     ([, count]) => count > 1
   );
   if (duplicateAddresses.length > 0) {
-    logger.info(
-      `[STEP 4] Found ${duplicateAddresses.length} airdrop addresses with multiple subscriptions_nfts_final:`
+    const totalDuplicates = duplicateAddresses.reduce(
+      (sum, [, count]) => sum + count,
+      0
     );
-    duplicateAddresses.forEach(([addr, count]) => {
-      logger.info(
-        `[STEP 4] Address ${addr} has ${count} subscriptions_nfts_final`
-      );
-    });
+    logger.info(
+      `[STEP 4] Found ${duplicateAddresses.length} airdrop addresses with multiple subscriptions_nfts_final (${totalDuplicates} total entries)`
+    );
   }
 
   // Find missing subscriptions_redeemed
@@ -197,14 +198,6 @@ async function replay() {
   logger.info(
     `[STEP 4 RESULT] Found ${missingRedeemed.length} subscriptions_nfts_final with transactions but missing in subscriptions_redeemed`
   );
-  if (missingRedeemed.length > 0) {
-    logger.info(`[STEP 4 MISSING ENTRIES]`);
-    missingRedeemed.forEach((missing, index) => {
-      logger.info(
-        `[STEP 4 MISSING ${index + 1}] Airdrop Address: ${missing.airdropAddress}, Consolidation Key: ${missing.consolidationKey}, Balance: ${missing.finalSubscription.balance}, Transaction Count: ${missing.transactions.length}`
-      );
-    });
-  }
 
   // Summary
   logger.info(`[SUMMARY]`);
