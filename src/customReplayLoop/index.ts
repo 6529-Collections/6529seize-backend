@@ -1,10 +1,18 @@
 import {
   MEMES_CONTRACT,
+  MEMES_MINT_PRICE,
   NULL_ADDRESS,
+  SUBSCRIPTIONS_BALANCES_TABLE,
   SUBSCRIPTIONS_NFTS_FINAL_TABLE,
   SUBSCRIPTIONS_REDEEMED_TABLE,
   TRANSACTIONS_TABLE
 } from '../constants';
+import { getDataSource } from '../db';
+import {
+  NFTFinalSubscription,
+  RedeemedSubscription,
+  SubscriptionBalance
+} from '../entities/ISubscription';
 import { Logger } from '../logging';
 import { doInDbContext } from '../secrets';
 import * as sentryContext from '../sentry.context';
@@ -24,6 +32,7 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
 async function replay() {
   const TOKEN_ID = 412;
   const CONTRACT = MEMES_CONTRACT;
+  const UPDATE_REDEEMED_SUBSCRIPTIONS = false;
 
   logger.info(`[STARTING REPLAY] Token ID: ${TOKEN_ID}, Contract: ${CONTRACT}`);
 
@@ -198,6 +207,174 @@ async function replay() {
   logger.info(
     `[STEP 4 RESULT] Found ${missingRedeemed.length} subscriptions_nfts_final with transactions but missing in subscriptions_redeemed`
   );
+
+  // Step 5: Process missing redeemed entries per transaction (like redeemSubscriptions)
+  logger.info(
+    `[STEP 5] Processing missing redeemed entries (DRY RUN: ${!UPDATE_REDEEMED_SUBSCRIPTIONS})`
+  );
+
+  if (missingRedeemed.length === 0) {
+    logger.info(`[STEP 5] No missing redeemed entries to process`);
+  } else {
+    // Collect all transactions that need processing
+    const transactionsToProcess: any[] = [];
+    missingRedeemed.forEach((missing) => {
+      missing.transactions.forEach((tx) => {
+        transactionsToProcess.push({
+          transaction: tx,
+          finalSubscription: missing.finalSubscription
+        });
+      });
+    });
+
+    logger.info(
+      `[STEP 5] Processing ${transactionsToProcess.length} transactions for ${missingRedeemed.length} missing entries`
+    );
+
+    // Get unique consolidation keys for statistics
+    const consolidationKeys = Array.from(
+      new Set(missingRedeemed.map((m) => m.consolidationKey))
+    );
+
+    // Fetch all balances upfront
+    const balances = await sqlExecutor.execute(
+      `SELECT * FROM ${SUBSCRIPTIONS_BALANCES_TABLE} 
+      WHERE consolidation_key IN (:consolidationKeys)`,
+      { consolidationKeys }
+    );
+
+    const balanceMap = new Map<string, any>();
+    balances.forEach((bal) => {
+      balanceMap.set(bal.consolidation_key.toLowerCase(), bal);
+    });
+
+    // Collect statistics
+    let entriesWithBalance = 0;
+    let entriesWithEnoughBalance = 0;
+    const consolidationKeysWithBalance = new Set<string>();
+    const consolidationKeysWithEnoughBalance = new Set<string>();
+
+    // Process each transaction to collect stats
+    for (const item of transactionsToProcess) {
+      const { finalSubscription } = item;
+      const consolidationKey =
+        finalSubscription.consolidation_key.toLowerCase();
+
+      if (!consolidationKeysWithBalance.has(consolidationKey)) {
+        const balance = balanceMap.get(consolidationKey);
+
+        if (balance) {
+          consolidationKeysWithBalance.add(consolidationKey);
+          entriesWithBalance++;
+          if (balance.balance >= MEMES_MINT_PRICE) {
+            consolidationKeysWithEnoughBalance.add(consolidationKey);
+            entriesWithEnoughBalance++;
+          }
+        }
+      }
+    }
+
+    // Count entries without balance and without enough balance
+    const entriesWithoutBalance =
+      consolidationKeys.length - consolidationKeysWithBalance.size;
+    const entriesWithoutEnoughBalance =
+      consolidationKeysWithBalance.size -
+      consolidationKeysWithEnoughBalance.size;
+
+    logger.info(`[STEP 5 STATISTICS]`);
+    logger.info(`  - Entries with balance: ${entriesWithBalance}`);
+    logger.info(`  - Entries WITHOUT balance: ${entriesWithoutBalance}`);
+    logger.info(
+      `  - Entries with enough balance (>= ${MEMES_MINT_PRICE}): ${entriesWithEnoughBalance}`
+    );
+    logger.info(
+      `  - Entries WITHOUT enough balance: ${entriesWithoutEnoughBalance}`
+    );
+
+    // Process transactions if not dry-run
+    if (UPDATE_REDEEMED_SUBSCRIPTIONS) {
+      logger.info(`[STEP 5] UPDATING DATABASE (NOT DRY RUN)`);
+
+      await getDataSource().transaction(async (entityManager) => {
+        let processedCount = 0;
+        let skippedCount = 0;
+
+        for (const item of transactionsToProcess) {
+          const { transaction, finalSubscription } = item;
+          const consolidationKey =
+            finalSubscription.consolidation_key.toLowerCase();
+
+          // Use the subscription we already have
+          const subscription = finalSubscription;
+
+          // Check if already redeemed
+          if (subscription.redeemed) {
+            logger.warn(
+              `[STEP 5 SKIP] Subscription already redeemed for transaction: ${transaction.transaction}`
+            );
+            skippedCount++;
+            continue;
+          }
+
+          // Get balance from map (already fetched)
+          const balance = balanceMap.get(consolidationKey);
+
+          if (!balance) {
+            logger.warn(
+              `[STEP 5 SKIP] No balance found for consolidation_key: ${consolidationKey}, transaction: ${transaction.transaction}`
+            );
+            skippedCount++;
+            continue;
+          }
+
+          if (MEMES_MINT_PRICE > balance.balance) {
+            logger.warn(
+              `[STEP 5 SKIP] Insufficient balance for consolidation_key: ${consolidationKey}, balance: ${balance.balance}, required: ${MEMES_MINT_PRICE}, transaction: ${transaction.transaction}`
+            );
+            skippedCount++;
+            continue;
+          }
+
+          // Calculate balance after
+          let balanceAfter = balance.balance - MEMES_MINT_PRICE;
+          balanceAfter = Math.round(balanceAfter * 100000) / 100000;
+          balance.balance = balanceAfter;
+
+          await entityManager.getRepository(SubscriptionBalance).save(balance);
+
+          // Create redeemed subscription
+          const redeemedSubscription: RedeemedSubscription = {
+            contract: transaction.contract,
+            token_id: transaction.token_id,
+            address: transaction.to_address,
+            transaction: transaction.transaction,
+            transaction_date: transaction.transaction_date,
+            consolidation_key: consolidationKey,
+            value: MEMES_MINT_PRICE,
+            balance_after: balanceAfter
+          };
+
+          await entityManager
+            .getRepository(RedeemedSubscription)
+            .save(redeemedSubscription);
+
+          // Mark final subscription as redeemed
+          subscription.redeemed = true;
+          await entityManager
+            .getRepository(NFTFinalSubscription)
+            .save(subscription);
+
+          processedCount++;
+        }
+
+        logger.info(
+          `[STEP 5 RESULT] Processed ${processedCount} transactions, skipped ${skippedCount} transactions`
+        );
+      });
+    } else {
+      logger.info(`[STEP 5] DRY RUN - No database updates performed`);
+    }
+  }
 
   // Summary
   logger.info(`[SUMMARY]`);
