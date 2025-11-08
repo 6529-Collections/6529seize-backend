@@ -33,7 +33,7 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
 async function replay() {
   const TOKEN_ID = 412;
   const CONTRACT = MEMES_CONTRACT;
-  const UPDATE_REDEEMED_SUBSCRIPTIONS = false;
+  const UPDATE_REDEEMED_SUBSCRIPTIONS = true;
 
   logger.info(`[STARTING REPLAY] Token ID: ${TOKEN_ID}, Contract: ${CONTRACT}`);
 
