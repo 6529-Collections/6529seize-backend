@@ -13,6 +13,7 @@ import {
   RedeemedSubscription,
   SubscriptionBalance
 } from '../entities/ISubscription';
+import { Transaction } from '../entities/ITransaction';
 import { Logger } from '../logging';
 import { doInDbContext } from '../secrets';
 import * as sentryContext from '../sentry.context';
@@ -40,7 +41,7 @@ async function replay() {
   logger.info(
     `[STEP 1] Fetching subscriptions_nfts_final for token_id ${TOKEN_ID} and contract ${CONTRACT}`
   );
-  const finalSubscriptions = await sqlExecutor.execute(
+  const finalSubscriptions = await sqlExecutor.execute<NFTFinalSubscription>(
     `SELECT * FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE} 
     WHERE contract = :contract 
     AND token_id = :tokenId`,
@@ -72,7 +73,7 @@ async function replay() {
   const IGNORED_TRANSACTION =
     '0x62ee19b3dcefdb0a6f35dc5c8549f8f694b6b427411d1a9d5f7881c77b64e9f1';
 
-  const airdropTransactions = await sqlExecutor.execute(
+  const airdropTransactions = await sqlExecutor.execute<Transaction>(
     `SELECT * FROM ${TRANSACTIONS_TABLE} 
     WHERE contract = :contract 
     AND token_id = :tokenId
@@ -96,7 +97,7 @@ async function replay() {
   );
 
   // Create a map of airdrop_address -> transactions
-  const airdropAddressToTransactions = new Map<string, any[]>();
+  const airdropAddressToTransactions = new Map<string, Transaction[]>();
   airdropTransactions.forEach((tx) => {
     const addr = tx.to_address.toLowerCase();
     if (!airdropAddressToTransactions.has(addr)) {
@@ -113,7 +114,7 @@ async function replay() {
   logger.info(
     `[STEP 3] Fetching all subscriptions_redeemed for token_id ${TOKEN_ID}`
   );
-  const redeemedSubscriptions = await sqlExecutor.execute(
+  const redeemedSubscriptions = await sqlExecutor.execute<RedeemedSubscription>(
     `SELECT * FROM ${SUBSCRIPTIONS_REDEEMED_TABLE} 
     WHERE contract = :contract 
     AND token_id = :tokenId`,
@@ -144,7 +145,7 @@ async function replay() {
 
   // Create a map of (address + consolidation_key) -> subscriptions_redeemed for matching
   // This accounts for multiple subscriptions_nfts_final with the same airdrop_address
-  const redeemedMap = new Map<string, any[]>();
+  const redeemedMap = new Map<string, RedeemedSubscription[]>();
   redeemedSubscriptions.forEach((redeemed) => {
     const key = `${redeemed.address.toLowerCase()}:${redeemed.consolidation_key.toLowerCase()}`;
     if (!redeemedMap.has(key)) {
@@ -178,12 +179,13 @@ async function replay() {
 
   // Find missing subscriptions_redeemed
   // Match by both address AND consolidation_key to handle multiple subscriptions_nfts_final with same address
-  const missingRedeemed: Array<{
-    finalSubscription: any;
+  interface MissingRedeemed {
+    finalSubscription: NFTFinalSubscription;
     airdropAddress: string;
     consolidationKey: string;
-    transactions: any[];
-  }> = [];
+    transactions: Transaction[];
+  }
+  const missingRedeemed: MissingRedeemed[] = [];
 
   finalSubscriptionsWithTransactions.forEach((finalSub) => {
     const airdropAddr = finalSub.airdrop_address.toLowerCase();
@@ -218,7 +220,11 @@ async function replay() {
   } else {
     // Collect subscriptions to process (one per subscription, use first transaction)
     // Each subscription should only be processed once, even if it has multiple transactions
-    const subscriptionsToProcess: any[] = [];
+    interface SubscriptionToProcess {
+      transaction: Transaction;
+      finalSubscription: NFTFinalSubscription;
+    }
+    const subscriptionsToProcess: SubscriptionToProcess[] = [];
     missingRedeemed.forEach((missing) => {
       // Use the first transaction for each subscription
       const transaction = missing.transactions[0];
@@ -240,13 +246,13 @@ async function replay() {
     );
 
     // Fetch all balances upfront
-    const balances = await sqlExecutor.execute(
+    const balances = await sqlExecutor.execute<SubscriptionBalance>(
       `SELECT * FROM ${SUBSCRIPTIONS_BALANCES_TABLE} 
       WHERE consolidation_key IN (:consolidationKeys)`,
       { consolidationKeys }
     );
 
-    const balanceMap = new Map<string, any>();
+    const balanceMap = new Map<string, SubscriptionBalance>();
     balances.forEach((bal) => {
       balanceMap.set(bal.consolidation_key.toLowerCase(), bal);
     });
@@ -321,12 +327,12 @@ async function replay() {
 
           // Get balance from map (already fetched)
           // If no balance exists, create one with 0 balance (will go negative)
-          let balance = balanceMap.get(consolidationKey);
+          let balance: SubscriptionBalance | undefined =
+            balanceMap.get(consolidationKey);
           if (!balance) {
-            balance = {
-              consolidation_key: consolidationKey,
-              balance: 0
-            };
+            balance = new SubscriptionBalance();
+            balance.consolidation_key = consolidationKey;
+            balance.balance = 0;
             logger.warn(
               `[STEP 5] No balance found for consolidation_key: ${consolidationKey}, creating with 0 balance (will go negative), transaction: ${transaction.transaction}`
             );
@@ -338,6 +344,9 @@ async function replay() {
           balance.balance = balanceAfter;
 
           await entityManager.getRepository(SubscriptionBalance).save(balance);
+
+          // Update balance in map for subsequent subscriptions with same consolidation_key
+          balanceMap.set(consolidationKey, balance);
 
           // Create redeemed subscription
           const redeemedSubscription: RedeemedSubscription = {
