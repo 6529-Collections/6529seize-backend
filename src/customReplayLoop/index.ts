@@ -364,6 +364,10 @@ async function replay() {
             .getRepository(RedeemedSubscription)
             .save(redeemedSubscription);
 
+          logger.info(
+            `[STEP 5] Saved redeemed subscription for consolidation_key: ${consolidationKey}, address: ${transaction.to_address}, transaction: ${transaction.transaction}`
+          );
+
           // Mark final subscription as redeemed
           subscription.redeemed = true;
           await entityManager
