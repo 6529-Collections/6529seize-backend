@@ -13,7 +13,7 @@ import {
   RedeemedSubscription,
   SubscriptionBalance
 } from '../entities/ISubscription';
-import { Transaction } from '../entities/ITransaction';
+import type { Transaction } from '../entities/ITransaction';
 import { Logger } from '../logging';
 import { doInDbContext } from '../secrets';
 import * as sentryContext from '../sentry.context';
@@ -26,7 +26,14 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
     async () => {
       await replay();
     },
-    { logger }
+    {
+      logger,
+      entities: [
+        SubscriptionBalance,
+        RedeemedSubscription,
+        NFTFinalSubscription
+      ]
+    }
   );
 });
 
