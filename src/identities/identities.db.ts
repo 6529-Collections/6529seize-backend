@@ -6,6 +6,7 @@ import {
 import { IdentityEntity } from '../entities/IIdentity';
 import {
   ADDRESS_CONSOLIDATION_KEY,
+  CONSOLIDATED_TDH_EDITIONS_TABLE,
   CONSOLIDATED_WALLETS_TDH_TABLE,
   DROPS_TABLE,
   ENS_TABLE,
@@ -1008,8 +1009,15 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
       tdh_rate: string;
     }>(
       `
-      select i.profile_id as profile_id, ifnull(t.created_boosted_tdh, 0) as tdh_rate from ${IDENTITIES_TABLE} i
-    left join ${LATEST_TDH_HISTORY_TABLE} t on t.consolidation_key = i.consolidation_key where i.profile_id in (:ids)
+    SELECT
+        i.profile_id as profile_id,
+        ROUND(SUM(e.hodl_rate) * COALESCE(MAX(c.boost), 1.0)) AS tdh_rate
+    FROM ${CONSOLIDATED_WALLETS_TDH_TABLE} c
+        join ${IDENTITIES_TABLE} i on i.consolidation_key = c.consolidation_key
+             LEFT JOIN ${CONSOLIDATED_TDH_EDITIONS_TABLE} e
+                       ON e.consolidation_key = c.consolidation_key
+    where i.profile_id in (:ids)
+    GROUP BY c.consolidation_key
     `,
       { ids },
       { wrappedConnection: ctx.connection }
