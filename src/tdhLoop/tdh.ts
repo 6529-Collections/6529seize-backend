@@ -885,8 +885,6 @@ export async function calculateBoosts(
         Math.round(boostedGradientsTdh) +
         Math.round(boostedNextgenTdh);
 
-      logger.info(`hi i am boosted [BOOSTED_TDH ${boostedTdh}]`);
-
       w.boost = boost;
       w.boost_breakdown = boostBreakdown.breakdown;
       w.boosted_tdh = boostedTdh;
