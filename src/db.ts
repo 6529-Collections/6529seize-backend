@@ -305,11 +305,11 @@ export async function fetchLatestTDHBDate(): Promise<{
   block: number;
   timestamp: Time;
 }> {
-  const sql = `SELECT timestamp FROM ${TDH_BLOCKS_TABLE} order by block_number desc limit 1;`;
+  const sql = `SELECT block_number, timestamp FROM ${TDH_BLOCKS_TABLE} order by block_number desc limit 1;`;
   const r = await sqlExecutor.execute(sql);
   return r.length > 0
     ? {
-        block: r[0].block_number,
+        block: +r[0].block_number,
         timestamp: Time.fromString(r[0].timestamp)
       }
     : { block: 0, timestamp: Time.millis(0) };
