@@ -34,7 +34,7 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
 async function populate() {
   const alchemy = getAlchemyInstance();
 
-  const iterations = parseInt(
+  const iterations = Number.parseInt(
     process.env.HISTORIC_CONSOLIDATED_TDH_ITERATIONS ?? '1'
   );
   const shouldUpload = process.env.HISTORIC_CONSOLIDATED_TDH_UPLOAD === 'true';
