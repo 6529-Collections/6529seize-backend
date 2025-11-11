@@ -3,9 +3,11 @@ import {
   fetchAllConsolidatedTdh,
   fetchAllTDH,
   fetchConsolidationDisplay,
+  fetchConsolidationDisplays,
   fetchLatestTDHBlockNumber,
   persistConsolidatedTDH,
   persistTDHBlock,
+  retrieveConsolidationsForWallets,
   retrieveWalletConsolidations
 } from '../db';
 import { NextGenToken } from '../entities/INextGen';
@@ -41,12 +43,35 @@ export async function consolidateTDHForWallets(
   const allGradientsTDH: any[] = [];
   const allNextgenTDH: any[] = [];
 
+  logger.info(`Starting to consolidate TDH for ${tdh.length} wallets`);
+  const allWallets = tdh.map((t) => t.wallet.toLowerCase());
+  const consolidationsForWallets =
+    await retrieveConsolidationsForWallets(allWallets);
+  const allConsolidationKeys = Object.values(consolidationsForWallets);
+  const allConsolidationDisplays =
+    await fetchConsolidationDisplays(allConsolidationKeys);
+  const walletConsolidationInfos = Object.entries(
+    consolidationsForWallets
+  ).reduce(
+    (acc, [wallet, consolidationKey]) => {
+      const consolidationDisplay = allConsolidationDisplays[consolidationKey]!;
+      acc[wallet] = {
+        consolidationKey,
+        consolidationDisplay
+      };
+      return acc;
+    },
+    {} as Record<
+      string,
+      { consolidationKey: string; consolidationDisplay: string }
+    >
+  );
   for (const tdhEntry of tdh) {
     const wallet = tdhEntry.wallet;
-    const consolidations = await retrieveWalletConsolidations(wallet);
-    const display = await fetchConsolidationDisplay(consolidations);
-    const consolidationKey =
-      consolidationTools.buildConsolidationKey(consolidations);
+    const consolidationInfo = walletConsolidationInfos[wallet.toLowerCase()]!;
+    const display = consolidationInfo.consolidationDisplay;
+    const consolidationKey = consolidationInfo.consolidationKey;
+    const consolidations = consolidationKey.split('-');
 
     if (
       !Array.from(processedWallets).some((pw) => equalIgnoreCase(wallet, pw))
