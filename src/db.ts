@@ -953,8 +953,8 @@ export async function persistTDH(
     } else {
       logger.info(`[TDH] [DELETING ALL WALLETS FOR BLOCK ${block}]`);
       await tdhRepo.delete({ block: block });
-      await tdhMemesRepo.clear();
-      await tdhEditionsRepo.clear();
+      await tdhMemesRepo.createQueryBuilder().delete().execute();
+      await tdhEditionsRepo.createQueryBuilder().delete().execute();
       logger.info(`[TDH AND TDH_MEMES CLEARED]`);
       await insertWithoutUpdate(tdhRepo, tdh);
       await insertWithoutUpdate(tdhMemesRepo, memesTdh);
@@ -1035,9 +1035,9 @@ export async function persistConsolidatedTDH(
       await tdhEditionsRepo.save(tdhEditions);
     } else {
       logger.info(`[CONSOLIDATED TDH] [DELETING ALL WALLETS]`);
-      await tdhRepo.clear();
-      await tdhMemesRepo.clear();
-      await tdhEditionsRepo.clear();
+      await tdhRepo.createQueryBuilder().delete().execute();
+      await tdhMemesRepo.createQueryBuilder().delete().execute();
+      await tdhEditionsRepo.createQueryBuilder().delete().execute();
 
       logger.info(
         `[CONSOLIDATED TDH] [TDH AND TDH_MEMES CLEARED, PERSISTING NEW TDH]`
@@ -1109,7 +1109,7 @@ export async function persistNftTdh(nftTdh: NftTDH[], wallets?: string[]) {
       await nftTdhRepo.save(nftTdh);
     } else {
       logger.info(`[NFT TDH] [DELETING ALL WALLETS]`);
-      await nftTdhRepo.clear();
+      await nftTdhRepo.createQueryBuilder().delete().execute();
       logger.info(`[NFT TDH] [TDH AND TDH_MEMES CLEARED]`);
       await insertWithoutUpdate(nftTdhRepo, nftTdh);
     }
