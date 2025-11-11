@@ -32,10 +32,19 @@ functions:
 
 resources:
   Resources:
-    PopulateHistoricConsolidatedTdhOOMFilter:
-      Type: AWS::Logs::MetricFilter
+    PopulateHistoricConsolidatedTdhLogGroup:
+      Type: AWS::Logs::LogGroup
       Properties:
         LogGroupName: /aws/lambda/populateHistoricConsolidatedTdh
+        RetentionInDays: 60
+
+    PopulateHistoricConsolidatedTdhOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      DependsOn:
+        - PopulateHistoricConsolidatedTdhLogGroup
+      Properties:
+        LogGroupName:
+          Ref: PopulateHistoricConsolidatedTdhLogGroup
         FilterPattern: 'Runtime.OutOfMemory'
         MetricTransformations:
           - MetricNamespace: 'Lambda/OOM'
