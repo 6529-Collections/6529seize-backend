@@ -80,7 +80,8 @@ async function tdh(force?: boolean) {
       block,
       blockTimestamp
     );
-    await uploadTDH(block, blockTimestamp, tdh, false, true);
+    // Disabled for now
+    // await uploadTDH(block, blockTimestamp, tdh, false, true);
     await uploadTDH(block, blockTimestamp, consolidatedTdh, true, true);
     return block;
   } else {
