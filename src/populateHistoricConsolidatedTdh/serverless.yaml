@@ -1,0 +1,63 @@
+service: populateHistoricConsolidatedTdh
+
+package:
+  artifact: dist/index.zip
+
+plugins:
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs18.x
+  memorySize: 512
+  timeout: 900
+  architecture: arm64
+  logRetentionInDays: 60
+
+functions:
+  populateHistoricConsolidatedTdh:
+    handler: index.handler
+    name: populateHistoricConsolidatedTdh
+    description: ${env:VERSION_DESCRIPTION}
+    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    reservedConcurrency: 1
+    vpc:
+      securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
+      subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
+    environment:
+      HISTORIC_CONSOLIDATED_TDH_ITERATIONS: 1
+      HISTORIC_CONSOLIDATED_TDH_UPLOAD: false
+      SENTRY_DSN: ${env:SENTRY_DSN}
+      SENTRY_ENVIRONMENT: 'populateHistoricConsolidatedTdh_{opt:stage, self:provider.stage}'
+
+resources:
+  Resources:
+    PopulateHistoricConsolidatedTdhOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      Properties:
+        LogGroupName: /aws/lambda/populateHistoricConsolidatedTdh
+        FilterPattern: 'Runtime.OutOfMemory'
+        MetricTransformations:
+          - MetricNamespace: 'Lambda/OOM'
+            MetricName: 'populateHistoricConsolidatedTdh_OOMErrorCount'
+            MetricValue: '1'
+            DefaultValue: 0
+
+    PopulateHistoricConsolidatedTdhOOMAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: PopulateHistoricConsolidatedTdhOOMFilter
+      Properties:
+        AlarmName: !Sub '${AWS::StackName}-populateHistoricConsolidatedTdh-OOM'
+        AlarmDescription: !Sub 'Lambda populateHistoricConsolidatedTdh OutOfMemory in ${AWS::Region}'
+        Namespace: 'Lambda/OOM'
+        MetricName: 'populateHistoricConsolidatedTdh_OOMErrorCount'
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}

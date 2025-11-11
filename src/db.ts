@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 import {
   DataSource,
+  EntityManager,
   IsNull,
   LessThan,
   MoreThanOrEqual,
@@ -59,6 +60,7 @@ import {
   ConsolidatedTDH,
   ConsolidatedTDHEditions,
   ConsolidatedTDHMemes,
+  HistoricConsolidatedTDH,
   NftTDH,
   TDH,
   TDHBlock,
@@ -776,26 +778,29 @@ export async function persistTDH(
   logger.info(`[TDH] PERSISTED ALL WALLETS TDH [${tdh.length}]`);
 }
 
-export async function persistTDHBlock(block: number, timestamp: Date) {
+export async function persistTDHBlock(
+  block: number,
+  timestamp: Date,
+  tdh: ConsolidatedTDH[]
+) {
   logger.info(`[TDH BLOCK] PERSISTING BLOCK [${block}]`);
 
-  const merkleRoot = await computeMerkleRoot();
+  const merkleRoot = computeMerkleRoot(tdh);
 
   logger.info(`[TDH BLOCK] MERKLE ROOT [${merkleRoot}]`);
 
-  await AppDataSource.getRepository(TDHBlock).upsert(
-    [
-      {
-        block_number: block,
-        timestamp: timestamp,
-        merkle_root: merkleRoot
-      }
-    ],
-    ['block_number']
-  );
+  const repo = AppDataSource.getRepository(TDHBlock);
+
+  await repo.delete({ block_number: block });
+  await repo.insert({
+    block_number: block,
+    timestamp,
+    merkle_root: merkleRoot
+  });
 }
 
 export async function persistConsolidatedTDH(
+  block: number,
   tdh: ConsolidatedTDH[],
   memesTdh: ConsolidatedTDHMemes[],
   tdhEditions: ConsolidatedTDHEditions[],
@@ -808,6 +813,7 @@ export async function persistConsolidatedTDH(
     const tdhRepo = manager.getRepository(ConsolidatedTDH);
     const tdhMemesRepo = manager.getRepository(ConsolidatedTDHMemes);
     const tdhEditionsRepo = manager.getRepository(ConsolidatedTDHEditions);
+
     if (wallets) {
       logger.info(`[CONSOLIDATED TDH] [DELETING ${wallets.length} WALLETS]`);
       await Promise.all(
@@ -837,6 +843,7 @@ export async function persistConsolidatedTDH(
         })
       );
       await tdhRepo.save(tdh);
+
       await tdhMemesRepo.save(memesTdh);
       await tdhEditionsRepo.save(tdhEditions);
     } else {
@@ -844,18 +851,52 @@ export async function persistConsolidatedTDH(
       await tdhRepo.clear();
       await tdhMemesRepo.clear();
       await tdhEditionsRepo.clear();
-      logger.info(`[CONSOLIDATED TDH] [TDH AND TDH_MEMES CLEARED]`);
+
+      logger.info(
+        `[CONSOLIDATED TDH] [TDH AND TDH_MEMES CLEARED, PERSISTING NEW TDH]`
+      );
       await insertWithoutUpdate(tdhRepo, tdh);
       await insertWithoutUpdate(tdhMemesRepo, memesTdh);
       await insertWithoutUpdate(tdhEditionsRepo, tdhEditions);
-    }
 
+      logger.info(`[CONSOLIDATED TDH] [PERSISTING HISTORIC TDH]`);
+    }
+    await persistHistoricConsolidatedTDH(manager, block, tdh, wallets);
     await syncIdentitiesWithTdhConsolidations(qrHolder);
     await syncIdentitiesMetrics(qrHolder);
     await revokeTdhBasedDropWavesOverVotes(qrHolder);
   });
 
   logger.info(`[CONSOLIDATED TDH] PERSISTED ALL WALLETS TDH [${tdh.length}]`);
+}
+
+export async function persistHistoricConsolidatedTDH(
+  entityManager: EntityManager,
+  block: number,
+  tdh: ConsolidatedTDH[],
+  wallets?: string[]
+) {
+  logger.info(`[HISTORIC CONSOLIDATED TDH] PERSISTING BLOCK [${block}]`);
+  const historicTdhRepo = entityManager.getRepository(HistoricConsolidatedTDH);
+  if (wallets) {
+    await Promise.all(
+      wallets.map(async (wallet) => {
+        await historicTdhRepo
+          .createQueryBuilder()
+          .delete()
+          .where('LOWER(wallet) = :wallet AND block = :block ', {
+            wallet: wallet.toLowerCase(),
+            block: block
+          })
+          .execute();
+      })
+    );
+    await historicTdhRepo.save(tdh);
+  } else {
+    await historicTdhRepo.delete({ block: block });
+    await insertWithoutUpdate(historicTdhRepo, tdh);
+  }
+  logger.info(`[HISTORIC CONSOLIDATED TDH] PERSISTED BLOCK [${block}]`);
 }
 
 export async function persistNftTdh(nftTdh: NftTDH[], wallets?: string[]) {

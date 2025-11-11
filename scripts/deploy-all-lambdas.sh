@@ -24,6 +24,7 @@ SERVICES=(
   nftsLoop
   overRatesRevocationLoop
   ownersBalancesLoop
+  populateHistoricConsolidatedTdh
   pushNotificationsHandler
   rateEventProcessingLoop
   refreshEnsLoop

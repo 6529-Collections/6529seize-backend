@@ -189,13 +189,13 @@ export function createMemesData() {
   };
 }
 
-export const getAdjustedMemesAndSeasons = async (lastTDHCalc: Date) => {
+export const getAdjustedMemesAndSeasons = async (timestamp: Date) => {
   const nfts: NFT[] = await fetchAllNFTs();
   const ADJUSTED_NFTS = [...nfts].filter(
     (nft) =>
       nft.mint_date &&
       Time.fromString(nft.mint_date.toString()).lte(
-        Time.fromDate(lastTDHCalc).minusDays(1)
+        Time.fromDate(timestamp).minusDays(1)
       )
   );
 
@@ -222,7 +222,7 @@ export const getAdjustedMemesAndSeasons = async (lastTDHCalc: Date) => {
 export const updateTDH = async (
   lastTDHCalc: Date,
   startingWallets?: string[]
-) => {
+): Promise<{ block: number; blockTimestamp: Date; tdh: TDH[] }> => {
   alchemy = new Alchemy({
     ...ALCHEMY_SETTINGS,
     apiKey: process.env.ALCHEMY_API_KEY
@@ -280,15 +280,15 @@ export const updateTDH = async (
 
   logger.info(`[UNIQUE WALLETS ${combinedAddresses.size}]`);
 
-  const { ADJUSTED_NFTS, MEMES_COUNT, ADJUSTED_SEASONS } =
-    await getAdjustedMemesAndSeasons(lastTDHCalc);
-
-  const timestamp = new Date(
+  const blockTimestamp = new Date(
     (await alchemy.core.getBlock(block)).timestamp * 1000
   );
 
+  const { ADJUSTED_NFTS, MEMES_COUNT, ADJUSTED_SEASONS } =
+    await getAdjustedMemesAndSeasons(blockTimestamp);
+
   logger.info(
-    `[BLOCK ${block} - ${timestamp.toUTCString()}] [LAST TDH ${lastTDHCalc.toUTCString()}] [ADJUSTED_NFTS ${
+    `[BLOCK ${block} - ${blockTimestamp.toUTCString()}] [ADJUSTED_NFTS ${
       ADJUSTED_NFTS.length
     }] : [ADJUSTED_MEMES_SEASONS ${ADJUSTED_SEASONS.length}] : [NEXTGEN_NFTS ${
       NEXTGEN_NFTS.length
@@ -368,8 +368,12 @@ export const updateTDH = async (
           ? MEMES_HODL_INDEX / memesEditionSizes[nft.id]
           : nft.hodl_rate;
 
+        if (tokenConsolidatedTransactions.length === 0) {
+          return;
+        }
+
         const tokenTDH = getTokenTdh(
-          lastTDHCalc,
+          blockTimestamp,
           nft.id,
           hodlRate,
           wallet,
@@ -407,7 +411,7 @@ export const updateTDH = async (
         );
 
         const tokenTDH = getTokenTdh(
-          lastTDHCalc,
+          blockTimestamp,
           nft.id,
           nft.hodl_rate,
           wallet,
@@ -439,7 +443,7 @@ export const updateTDH = async (
 
       if (totalTDH > 0 || totalBalance > 0 || consolidations.length > 1) {
         const tdh: TDH = {
-          date: new Date(),
+          date: blockTimestamp,
           wallet: wallet,
           tdh_rank: 0, //assigned later
           tdh_rank_memes: 0, //assigned later
@@ -534,7 +538,7 @@ export const updateTDH = async (
 
   return {
     block: block,
-    timestamp: timestamp,
+    blockTimestamp,
     tdh: rankedTdh
   };
 };
@@ -704,7 +708,7 @@ function getFullDaysBetweenDates(t1: Date, t2: Date) {
 }
 
 function getTokenTdh(
-  lastTDHCalc: Date,
+  timestamp: Date,
   id: number,
   hodlRate: number,
   wallet: string,
@@ -720,7 +724,7 @@ function getTokenTdh(
   let tdh__raw = 0;
   const daysHeldPerEdition: number[] = [];
   tokenDatesForWallet.forEach((e) => {
-    const daysDiff = getFullDaysBetweenDates(lastTDHCalc, e);
+    const daysDiff = getFullDaysBetweenDates(timestamp, e);
     if (daysDiff > 0) {
       tdh__raw += daysDiff;
       daysHeldPerEdition.push(daysDiff);

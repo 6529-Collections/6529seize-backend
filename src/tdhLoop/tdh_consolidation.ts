@@ -9,6 +9,7 @@ import {
   retrieveWalletConsolidations
 } from '../db';
 import { NextGenToken } from '../entities/INextGen';
+import { MemesSeason } from '../entities/ISeason';
 import {
   ConsolidatedTDH,
   ConsolidatedTDHMemes,
@@ -231,17 +232,50 @@ export const consolidateMissingWallets = async (
   return missingTdh;
 };
 
-export const consolidateTDH = async (
-  lastTDHCalc: Date,
+export const consolidateAndPersistTDH = async (
   block: number,
-  timestamp: Date,
+  blockTimestamp: Date,
   startingWallets?: string[]
-) => {
+): Promise<ConsolidatedTDH[]> => {
+  const { adjustedSeasons, consolidatedTdh } = await consolidateTDH(
+    block,
+    blockTimestamp,
+    startingWallets
+  );
+  const memesTdh = (await calculateMemesTdh(
+    adjustedSeasons,
+    consolidatedTdh,
+    true
+  )) as ConsolidatedTDHMemes[];
+
+  const tdhEditions = await calculateTdhEditions(consolidatedTdh, true);
+
+  await persistConsolidatedTDH(
+    block,
+    consolidatedTdh,
+    memesTdh,
+    tdhEditions,
+    startingWallets
+  );
+  await updateNftTDH(consolidatedTdh, startingWallets);
+  await persistTDHBlock(block, blockTimestamp, consolidatedTdh);
+
+  return consolidatedTdh;
+};
+
+export const consolidateTDH = async (
+  block: number,
+  blockTimestamp: Date,
+  startingWallets?: string[]
+): Promise<{
+  adjustedSeasons: MemesSeason[];
+  consolidatedTdh: ConsolidatedTDH[];
+}> => {
   const tdh: TDHENS[] = await fetchAllTDH(block, startingWallets);
   const NEXTGEN_NFTS: NextGenToken[] = await fetchNextgenTokens();
 
   const { ADJUSTED_NFTS, MEMES_COUNT, ADJUSTED_SEASONS } =
-    await getAdjustedMemesAndSeasons(lastTDHCalc);
+    await getAdjustedMemesAndSeasons(blockTimestamp);
 
   logger.info(`[WALLETS ${tdh.length}]`);
 
@@ -299,23 +333,11 @@ export const consolidateTDH = async (
     );
   }
 
-  const memesTdh = (await calculateMemesTdh(
-    ADJUSTED_SEASONS,
-    rankedTdh,
-    true
-  )) as ConsolidatedTDHMemes[];
-
-  const tdhEditions = await calculateTdhEditions(rankedTdh, true);
-
-  await persistConsolidatedTDH(
-    rankedTdh,
-    memesTdh,
-    tdhEditions,
-    startingWallets
-  );
-  await updateNftTDH(rankedTdh, startingWallets);
-  await persistTDHBlock(block, timestamp);
   logger.info(`[FINAL ENTRIES ${rankedTdh.length}]`);
+  return {
+    adjustedSeasons: ADJUSTED_SEASONS,
+    consolidatedTdh: rankedTdh
+  };
 };
 
 export function consolidateCards(

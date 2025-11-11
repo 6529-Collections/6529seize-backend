@@ -1,26 +1,18 @@
 import crypto from 'crypto';
-import { MoreThan } from 'typeorm';
 import { ConsolidatedTDH } from '../entities/ITDH';
-import { getDataSource } from '../db';
 
-export async function computeMerkleRoot() {
-  type PartialConsolidatedTDH = Pick<
-    ConsolidatedTDH,
-    'consolidation_key' | 'boosted_tdh'
-  >;
-  const data = (await getDataSource()
-    .getRepository(ConsolidatedTDH)
-    .find({
-      select: ['consolidation_key', 'boosted_tdh'],
-      where: { boosted_tdh: MoreThan(0) },
-      order: {
-        boosted_tdh: 'DESC',
-        consolidation_key: 'ASC'
-      }
-    })) as PartialConsolidatedTDH[];
+export function computeMerkleRoot(data: ConsolidatedTDH[]) {
+  const filteredData = data
+    .filter((item) => item.boosted_tdh > 0)
+    .sort((a, b) => {
+      if (a.boosted_tdh > b.boosted_tdh) return -1;
+      else if (a.boosted_tdh < b.boosted_tdh) return 1;
+      else if (a.consolidation_key < b.consolidation_key) return -1;
+      else return 1;
+    });
 
   const merkleRoot = getMerkleRoot(
-    data.map((item) => ({
+    filteredData.map((item) => ({
       key: item.consolidation_key,
       value: item.boosted_tdh
     }))

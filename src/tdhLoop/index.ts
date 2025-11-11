@@ -11,6 +11,7 @@ import {
   ConsolidatedTDH,
   ConsolidatedTDHEditions,
   ConsolidatedTDHMemes,
+  HistoricConsolidatedTDH,
   NftTDH,
   TDH,
   TDHBlock,
@@ -25,7 +26,7 @@ import * as sentryContext from '../sentry.context';
 import { Time } from '../time';
 import { findNftTDH } from './nft_tdh';
 import { updateTDH } from './tdh';
-import { consolidateTDH } from './tdh_consolidation';
+import { consolidateAndPersistTDH } from './tdh_consolidation';
 import { uploadTDH } from './tdh_upload';
 
 const logger = Logger.get('TDH_LOOP');
@@ -54,17 +55,16 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
         ConsolidatedOwnerBalances,
         TDHBlock,
         TDHEditions,
-        ConsolidatedTDHEditions
+        ConsolidatedTDHEditions,
+        HistoricConsolidatedTDH
       ]
     }
   );
 });
 
 export async function tdhLoop(force?: boolean) {
-  const block = await tdh(force);
+  await tdh(force);
   await findNftTDH();
-  await uploadTDH(block, false, force);
-  await uploadTDH(block, true, force);
   await notifier.notifyTdhCalculationsDone();
 }
 
@@ -75,8 +75,13 @@ async function tdh(force?: boolean) {
   const lastTdhFromNow = lastTdhDB.timestamp.diffFromNow();
 
   if (lastTdhFromNow.gt(Time.hours(24)) || force) {
-    const { block, timestamp } = await updateTDH(lastTDHCalc);
-    await consolidateTDH(lastTDHCalc, block, timestamp);
+    const { block, blockTimestamp, tdh } = await updateTDH(lastTDHCalc);
+    const consolidatedTdh = await consolidateAndPersistTDH(
+      block,
+      blockTimestamp
+    );
+    await uploadTDH(block, blockTimestamp, tdh, false, true);
+    await uploadTDH(block, blockTimestamp, consolidatedTdh, true, true);
     return block;
   } else {
     logger.info(
