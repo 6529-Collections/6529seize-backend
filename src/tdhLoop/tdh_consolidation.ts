@@ -65,10 +65,7 @@ export async function consolidateTDHForWallets(
       { consolidationKey: string; consolidationDisplay: string }
     >
   );
-  let index = 0;
   for (const tdhEntry of tdh) {
-    index++;
-    logger.info(`Consolidating TDH for wallet ${index}/${tdh.length}`);
     const wallet = tdhEntry.wallet;
     const consolidationInfo = walletConsolidationInfos[wallet.toLowerCase()]!;
     const display = consolidationInfo.consolidationDisplay;
