@@ -136,8 +136,7 @@ export interface TDHENS extends TDH {
   ens: string;
 }
 
-@Entity(CONSOLIDATED_WALLETS_TDH_TABLE)
-export class ConsolidatedTDH extends BaseTDH {
+export class BaseConsolidatedTDH extends BaseTDH {
   @Column({ type: 'varchar', length: 500 })
   @Index()
   consolidation_display!: string;
@@ -148,19 +147,12 @@ export class ConsolidatedTDH extends BaseTDH {
   @Column({ type: 'json', nullable: false })
   wallets?: any;
 }
+
+@Entity(CONSOLIDATED_WALLETS_TDH_TABLE)
+export class ConsolidatedTDH extends BaseConsolidatedTDH {}
 
 @Entity(HISTORIC_CONSOLIDATED_WALLETS_TDH_TABLE)
-export class HistoricConsolidatedTDH extends BaseTDH {
-  @Column({ type: 'varchar', length: 500 })
-  @Index()
-  consolidation_display!: string;
-
-  @PrimaryColumn({ type: 'varchar', length: 200 })
-  consolidation_key!: string;
-
-  @Column({ type: 'json', nullable: false })
-  wallets?: any;
-}
+export class HistoricConsolidatedTDH extends BaseConsolidatedTDH {}
 
 @Entity(WALLETS_TDH_MEMES_TABLE)
 export class TDHMemes extends BaseTDHFields {
