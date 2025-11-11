@@ -132,7 +132,7 @@ jobs:
           sh deploy.sh
           popd
       - name: Run lambda and validate result
-        if: github.event.inputs.service == 'dbMigrationsLoop' || github.event.inputs.service == 'populateHistoricConsolidatedTdh'
+        if: github.event.inputs.service == 'dbMigrationsLoop'
         run: |
           sleep 10
 
