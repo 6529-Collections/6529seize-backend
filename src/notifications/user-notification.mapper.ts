@@ -1,4 +1,7 @@
+import { assertUnreachable } from '../assertions';
 import { IdentityNotificationCause } from '../entities/IIdentityNotification';
+import { numbers } from '../numbers';
+import { IdentityNotificationDeserialized } from './identity-notifications.db';
 import {
   AllDropsNotification,
   DropQuoteNotification,
@@ -7,12 +10,10 @@ import {
   DropVoteNotification,
   IdentityMentionNotification,
   IdentitySubscriptionNotification,
+  PriorityAlertNotification,
   UserNotification,
   WaveCreatedNotification
 } from './user-notification.types';
-import { IdentityNotificationDeserialized } from './identity-notifications.db';
-import { assertUnreachable } from '../assertions';
-import { numbers } from '../numbers';
 
 export class UserNotificationMapper {
   public mapNotifications(
@@ -42,6 +43,8 @@ export class UserNotificationMapper {
         return this.mapWaveCreatedNotification(entity);
       case IdentityNotificationCause.ALL_DROPS:
         return this.mapAllDropsNotification(entity);
+      case IdentityNotificationCause.PRIORITY_ALERT:
+        return this.mapPriorityAlertNotification(entity);
       default: {
         return assertUnreachable(cause);
       }
@@ -182,6 +185,21 @@ export class UserNotificationMapper {
         additional_identity_id: entity.additional_identity_id!,
         drop_id: entity.related_drop_id!,
         vote: numbers.parseIntOrNull(entity.additional_data.vote)!
+      }
+    };
+  }
+
+  private mapPriorityAlertNotification(
+    entity: IdentityNotificationDeserialized
+  ): PriorityAlertNotification {
+    return {
+      id: entity.id,
+      created_at: entity.created_at,
+      read_at: entity.read_at,
+      cause: IdentityNotificationCause.PRIORITY_ALERT,
+      data: {
+        additional_identity_id: entity.additional_identity_id!,
+        drop_id: entity.related_drop_id!
       }
     };
   }

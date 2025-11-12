@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import { MoreThan } from 'typeorm';
-import { ConsolidatedTDH } from '../entities/ITDH';
 import { getDataSource } from '../db';
+import { ConsolidatedTDH } from '../entities/ITDH';
 
 export async function computeMerkleRoot() {
   type PartialConsolidatedTDH = Pick<

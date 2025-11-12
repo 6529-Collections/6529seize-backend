@@ -1,4 +1,7 @@
 import { Like } from 'typeorm';
+import { userGroupsService } from '../api-serverless/src/community-members/user-groups.service';
+import { ApiIdentity } from '../api-serverless/src/generated/models/ApiIdentity';
+import { identityFetcher } from '../api-serverless/src/identities/identity.fetcher';
 import { getDataSource } from '../db';
 import { DropEntity, DropPartEntity } from '../entities/IDrop';
 import {
@@ -6,14 +9,11 @@ import {
   IdentityNotificationEntity
 } from '../entities/IIdentityNotification';
 import { PushNotificationDevice } from '../entities/IPushNotification';
-import { sendMessage } from './sendPushNotifications';
+import { WaveEntity } from '../entities/IWave';
 import { Logger } from '../logging';
 import { IdentityNotificationsDb } from '../notifications/identity-notifications.db';
 import { dbSupplier } from '../sql-executor';
-import { userGroupsService } from '../api-serverless/src/community-members/user-groups.service';
-import { WaveEntity } from '../entities/IWave';
-import { identityFetcher } from '../api-serverless/src/identities/identity.fetcher';
-import { ApiIdentity } from '../api-serverless/src/generated/models/ApiIdentity';
+import { sendMessage } from './sendPushNotifications';
 
 const logger = Logger.get('PUSH_NOTIFICATIONS_HANDLER_IDENTITY');
 
@@ -92,6 +92,8 @@ export async function sendIdentityNotification(id: number) {
         })
       )
     );
+  } else {
+    logger.error(`Failed to generate notification data: ${notification.id}`);
   }
 }
 
@@ -117,6 +119,8 @@ async function generateNotificationData(
       return handleWaveCreated(notification, additionalEntity);
     case IdentityNotificationCause.ALL_DROPS:
       return handleAllDrops(notification, additionalEntity);
+    case IdentityNotificationCause.PRIORITY_ALERT:
+      return handlePriorityAlert(notification, additionalEntity);
     default:
       return null;
   }
@@ -261,6 +265,17 @@ async function getAdditionalIdOrThrow(
   return additionalProfile;
 }
 
+async function getDrop(notification: IdentityNotificationEntity) {
+  const dropId = notification.related_drop_id;
+  if (!dropId) {
+    throw new Error(`[ID ${notification.id}] Drop id not found`);
+  }
+  const drop = await getDataSource().getRepository(DropEntity).findOneBy({
+    id: dropId
+  });
+  return drop;
+}
+
 async function getDropPart(
   notification: IdentityNotificationEntity,
   handle?: string
@@ -348,6 +363,29 @@ async function handleAllDrops(
   const dropSerialNo = await getDropSerialNo(notification.related_drop_id);
   const imageUrl = wave.picture ?? additionalEntity.pfp;
   const body = dropPart?.content ?? 'View drop';
+  const data = {
+    redirect: 'waves',
+    wave_id: notification.wave_id,
+    drop_id: dropSerialNo
+  };
+  return { title, body, data, imageUrl };
+}
+
+async function handlePriorityAlert(
+  notification: IdentityNotificationEntity,
+  additionalEntity: ApiIdentity
+) {
+  const wave = await getWaveEntityOrThrow(
+    notification.id,
+    notification.wave_id
+  );
+
+  const drop = await getDrop(notification);
+  const dropPart = await getDropPart(notification);
+  const dropSerialNo = await getDropSerialNo(notification.related_drop_id);
+  const imageUrl = wave.picture ?? additionalEntity.pfp;
+  const title = `🚨 ${drop?.title ?? 'Priority Alert'}`;
+  const body = dropPart?.content ?? 'View alert';
   const data = {
     redirect: 'waves',
     wave_id: notification.wave_id,

@@ -1,4 +1,4 @@
-version: "3.7"
+version: '3.7'
 services:
   mariadb:
     build:
@@ -6,10 +6,12 @@ services:
     restart: always
     environment:
       MYSQL_ROOT_PASSWORD: password
+      TZ: UTC
     ports:
       - 3306:3306
     command:
       - --mysql-native-password=ON
+      - --default-time-zone=UTC
   redis:
     image: redis:latest
     restart: always

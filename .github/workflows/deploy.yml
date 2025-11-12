@@ -41,6 +41,7 @@ on:
           - nftsLoop
           - overRatesRevocationLoop
           - ownersBalancesLoop
+          - populateHistoricConsolidatedTdh
           - pushNotificationsHandler
           - rateEventProcessingLoop
           - refreshEnsLoop
@@ -135,7 +136,7 @@ jobs:
         run: |
           sleep 10
 
-          aws lambda invoke --function-name dbMigrationsLoop response.json > meta.json
+          aws lambda invoke --function-name ${{ github.event.inputs.service }} response.json > meta.json
 
           printf "\nresponse.json:\n"
           cat response.json

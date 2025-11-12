@@ -9,6 +9,7 @@ import {
   CONSOLIDATED_TDH_EDITIONS_TABLE,
   CONSOLIDATED_WALLETS_TDH_MEMES_TABLE,
   CONSOLIDATED_WALLETS_TDH_TABLE,
+  HISTORIC_CONSOLIDATED_WALLETS_TDH_TABLE,
   TDH_BLOCKS_TABLE,
   TDH_EDITIONS_TABLE,
   TDH_NFT_TABLE,
@@ -135,8 +136,7 @@ export interface TDHENS extends TDH {
   ens: string;
 }
 
-@Entity(CONSOLIDATED_WALLETS_TDH_TABLE)
-export class ConsolidatedTDH extends BaseTDH {
+export class BaseConsolidatedTDH extends BaseTDH {
   @Column({ type: 'varchar', length: 500 })
   @Index()
   consolidation_display!: string;
@@ -147,6 +147,12 @@ export class ConsolidatedTDH extends BaseTDH {
   @Column({ type: 'json', nullable: false })
   wallets?: any;
 }
+
+@Entity(CONSOLIDATED_WALLETS_TDH_TABLE)
+export class ConsolidatedTDH extends BaseConsolidatedTDH {}
+
+@Entity(HISTORIC_CONSOLIDATED_WALLETS_TDH_TABLE)
+export class HistoricConsolidatedTDH extends BaseConsolidatedTDH {}
 
 @Entity(WALLETS_TDH_MEMES_TABLE)
 export class TDHMemes extends BaseTDHFields {
