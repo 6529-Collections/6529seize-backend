@@ -187,12 +187,7 @@ export class NotificationsApiService {
           profileIds.push(data.created_by);
           break;
         }
-        case IdentityNotificationCause.ALL_DROPS: {
-          const data = notification.data;
-          profileIds.push(data.additional_identity_id);
-          dropIds.push(data.drop_id);
-          break;
-        }
+        case IdentityNotificationCause.ALL_DROPS:
         case IdentityNotificationCause.PRIORITY_ALERT: {
           const data = notification.data;
           profileIds.push(data.additional_identity_id);
