@@ -68,6 +68,9 @@ export class SubscriptionMode {
 
   @Column({ type: 'boolean' })
   automatic!: boolean;
+
+  @Column({ type: 'boolean', default: false })
+  subscribe_all_editions!: boolean;
 }
 
 class NFTSubscriptionFields {
@@ -88,6 +91,9 @@ class NFTSubscriptionFields {
 
   @Column({ type: 'bigint' })
   token_id!: number;
+
+  @Column({ type: 'int', default: 1 })
+  subscribed_count!: number;
 }
 
 @Entity(SUBSCRIPTIONS_NFTS_TABLE)
@@ -120,6 +126,9 @@ export class NFTFinalSubscription extends NFTSubscriptionFields {
 
   @Column({ type: 'boolean', default: false })
   redeemed!: boolean;
+
+  @Column({ type: 'int', default: 1 })
+  redeemed_count!: number;
 }
 
 @Entity(SUBSCRIPTIONS_NFTS_FINAL_UPLOAD_TABLE)
