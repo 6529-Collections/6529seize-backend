@@ -83,7 +83,7 @@ import {
   syncIdentitiesWithTdhConsolidations
 } from './identity';
 import { Logger } from './logging';
-import { insertWithoutUpdate, resetRepository } from './orm_helpers';
+import { deleteAll, insertWithoutUpdate, resetRepository } from './orm_helpers';
 import { ConnectionWrapper, setSqlExecutor, sqlExecutor } from './sql-executor';
 import { getConsolidationsSql, parseTdhDataFromDB } from './sql_helpers';
 import { equalIgnoreCase } from './strings';
@@ -953,8 +953,8 @@ export async function persistTDH(
     } else {
       logger.info(`[TDH] [DELETING ALL WALLETS FOR BLOCK ${block}]`);
       await tdhRepo.delete({ block: block });
-      await tdhMemesRepo.createQueryBuilder().delete().execute();
-      await tdhEditionsRepo.createQueryBuilder().delete().execute();
+      await deleteAll(tdhMemesRepo);
+      await deleteAll(tdhEditionsRepo);
       logger.info(`[TDH AND TDH_MEMES CLEARED]`);
       await insertWithoutUpdate(tdhRepo, tdh);
       await insertWithoutUpdate(tdhMemesRepo, memesTdh);
@@ -1035,9 +1035,9 @@ export async function persistConsolidatedTDH(
       await tdhEditionsRepo.save(tdhEditions);
     } else {
       logger.info(`[CONSOLIDATED TDH] [DELETING ALL WALLETS]`);
-      await tdhRepo.createQueryBuilder().delete().execute();
-      await tdhMemesRepo.createQueryBuilder().delete().execute();
-      await tdhEditionsRepo.createQueryBuilder().delete().execute();
+      await deleteAll(tdhRepo);
+      await deleteAll(tdhMemesRepo);
+      await deleteAll(tdhEditionsRepo);
 
       logger.info(
         `[CONSOLIDATED TDH] [TDH AND TDH_MEMES CLEARED, PERSISTING NEW TDH]`
@@ -1109,7 +1109,7 @@ export async function persistNftTdh(nftTdh: NftTDH[], wallets?: string[]) {
       await nftTdhRepo.save(nftTdh);
     } else {
       logger.info(`[NFT TDH] [DELETING ALL WALLETS]`);
-      await nftTdhRepo.createQueryBuilder().delete().execute();
+      await deleteAll(nftTdhRepo);
       logger.info(`[NFT TDH] [TDH AND TDH_MEMES CLEARED]`);
       await insertWithoutUpdate(nftTdhRepo, nftTdh);
     }
@@ -1210,7 +1210,7 @@ function constructFilters(f: string, newF: string) {
 
 export async function replaceTeam(team: Team[]) {
   const repo = AppDataSource.getRepository(Team);
-  await repo.clear();
+  await deleteAll(repo);
   await repo.save(team);
 }
 
