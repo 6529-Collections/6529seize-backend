@@ -169,6 +169,55 @@ function buildYesterdayDataIndex(
   };
 }
 
+function addDirectMatches(
+  matches: Set<ConsolidatedTDH>,
+  dKeyLower: string,
+  index: YesterdayDataIndex
+) {
+  const directMatches = index.byConsolidationKey.get(dKeyLower);
+  if (directMatches) {
+    for (const match of directMatches) {
+      matches.add(match);
+    }
+  }
+}
+
+function hasWalletOverlap(
+  match: ConsolidatedTDH,
+  dWalletSet: Set<string>,
+  index: YesterdayDataIndex
+): boolean {
+  const matchWalletSet = index.walletSets.get(match);
+  if (!matchWalletSet) {
+    return false;
+  }
+  const matchWalletsArray = Array.from(matchWalletSet);
+  for (const matchWallet of matchWalletsArray) {
+    if (dWalletSet.has(matchWallet)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function addWalletMatches(
+  matches: Set<ConsolidatedTDH>,
+  dWallets: string[],
+  dWalletSet: Set<string>,
+  index: YesterdayDataIndex
+) {
+  for (const wallet of dWallets) {
+    const walletMatches = index.byWallet.get(wallet);
+    if (walletMatches) {
+      for (const match of walletMatches) {
+        if (hasWalletOverlap(match, dWalletSet, index)) {
+          matches.add(match);
+        }
+      }
+    }
+  }
+}
+
 function findMatchingYesterdayEntries(
   d: ConsolidatedTDH,
   index: YesterdayDataIndex
@@ -176,33 +225,11 @@ function findMatchingYesterdayEntries(
   const matches = new Set<ConsolidatedTDH>();
 
   const dKeyLower = d.consolidation_key.toLowerCase();
-  const directMatches = index.byConsolidationKey.get(dKeyLower);
-  if (directMatches) {
-    for (const match of directMatches) {
-      matches.add(match);
-    }
-  }
+  addDirectMatches(matches, dKeyLower, index);
 
   const dWallets = d.consolidation_key.split('-').map((w) => w.toLowerCase());
   const dWalletSet = new Set(dWallets);
-
-  for (const wallet of dWallets) {
-    const walletMatches = index.byWallet.get(wallet);
-    if (walletMatches) {
-      for (const match of walletMatches) {
-        const matchWalletSet = index.walletSets.get(match);
-        if (matchWalletSet) {
-          const matchWalletsArray = Array.from(matchWalletSet);
-          for (const matchWallet of matchWalletsArray) {
-            if (dWalletSet.has(matchWallet)) {
-              matches.add(match);
-              break;
-            }
-          }
-        }
-      }
-    }
-  }
+  addWalletMatches(matches, dWallets, dWalletSet, index);
 
   return Array.from(matches);
 }
@@ -502,47 +529,34 @@ interface IndexedYesterdayTdh {
   nextgen: Map<number, IndexedToken[]>;
 }
 
+function indexTokensByType(
+  tokenMap: Map<number, IndexedToken[]>,
+  tokens: TokenTDH[] | undefined,
+  boost: number
+) {
+  if (!tokens) {
+    return;
+  }
+  for (const token of tokens) {
+    if (!tokenMap.has(token.id)) {
+      tokenMap.set(token.id, []);
+    }
+    tokenMap.get(token.id)!.push({
+      token,
+      boost
+    });
+  }
+}
+
 function buildTokenIndex(yesterdayTdh: ConsolidatedTDH[]): IndexedYesterdayTdh {
   const memes = new Map<number, IndexedToken[]>();
   const gradients = new Map<number, IndexedToken[]>();
   const nextgen = new Map<number, IndexedToken[]>();
 
   for (const yd of yesterdayTdh) {
-    if (yd.memes) {
-      for (const token of yd.memes) {
-        if (!memes.has(token.id)) {
-          memes.set(token.id, []);
-        }
-        memes.get(token.id)!.push({
-          token,
-          boost: yd.boost
-        });
-      }
-    }
-
-    if (yd.gradients) {
-      for (const token of yd.gradients) {
-        if (!gradients.has(token.id)) {
-          gradients.set(token.id, []);
-        }
-        gradients.get(token.id)!.push({
-          token,
-          boost: yd.boost
-        });
-      }
-    }
-
-    if (yd.nextgen) {
-      for (const token of yd.nextgen) {
-        if (!nextgen.has(token.id)) {
-          nextgen.set(token.id, []);
-        }
-        nextgen.get(token.id)!.push({
-          token,
-          boost: yd.boost
-        });
-      }
-    }
+    indexTokensByType(memes, yd.memes, yd.boost);
+    indexTokensByType(gradients, yd.gradients, yd.boost);
+    indexTokensByType(nextgen, yd.nextgen, yd.boost);
   }
 
   return { memes, gradients, nextgen };
