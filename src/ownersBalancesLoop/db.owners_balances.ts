@@ -10,6 +10,7 @@ import {
 import { Logger } from '../logging';
 import {
   deleteConsolidations,
+  deleteAll,
   deleteWallet,
   insertWithoutUpdate,
   resetRepository
@@ -153,9 +154,9 @@ export async function persistConsolidatedOwnerBalances(
     const balancesMemesRepo = getDataSource().getRepository(
       ConsolidatedOwnerBalancesMemes
     );
-    await balancesRepo.clear();
+    await deleteAll(balancesRepo);
     await insertWithoutUpdate(balancesRepo, consolidatedOwnerBalances);
-    await balancesMemesRepo.clear();
+    await deleteAll(balancesMemesRepo);
     await insertWithoutUpdate(
       balancesMemesRepo,
       consolidatedOwnerBalancesMemes
