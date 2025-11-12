@@ -972,7 +972,7 @@ export async function persistTDHBlock(
 ) {
   logger.info(`[TDH BLOCK] PERSISTING BLOCK [${block}]`);
 
-  const merkleRoot = await computeMerkleRoot();
+  const merkleRoot = await computeMerkleRoot(block);
 
   logger.info(`[TDH BLOCK] MERKLE ROOT [${merkleRoot}]`);
 
