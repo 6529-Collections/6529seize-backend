@@ -42,6 +42,8 @@ export async function sendMessage(
   imageUrl?: string
 ) {
   init();
+  logger.info(`Sending message for notification ${notification_id}`);
+
   title = emojify(title.replace(/@\[(.+?)\]/g, '@$1'));
   body = emojify(body.replace(/@\[(.+?)\]/g, '@$1'));
 
@@ -87,10 +89,15 @@ export async function sendMessage(
     }
   };
 
+  logger.info(
+    `Message for notification ${notification_id}: ${JSON.stringify(message)}`
+  );
+
   try {
     const response = await admin.messaging().send(message);
     logger.info(`Successfully sent notification: ${response}`);
   } catch (error: any) {
+    logger.error(`Error sending notification: ${error}`);
     // if the error is invalid payload and we have imageUrl, try to resend without it
     if (imageUrl && error.code === 'messaging/invalid-payload') {
       logger.info('Invalid payload, trying to resend without imageUrl');

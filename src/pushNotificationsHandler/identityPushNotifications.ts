@@ -1,4 +1,7 @@
 import { Like } from 'typeorm';
+import { userGroupsService } from '../api-serverless/src/community-members/user-groups.service';
+import { ApiIdentity } from '../api-serverless/src/generated/models/ApiIdentity';
+import { identityFetcher } from '../api-serverless/src/identities/identity.fetcher';
 import { getDataSource } from '../db';
 import { DropEntity, DropPartEntity } from '../entities/IDrop';
 import {
@@ -6,14 +9,11 @@ import {
   IdentityNotificationEntity
 } from '../entities/IIdentityNotification';
 import { PushNotificationDevice } from '../entities/IPushNotification';
-import { sendMessage } from './sendPushNotifications';
+import { WaveEntity } from '../entities/IWave';
 import { Logger } from '../logging';
 import { IdentityNotificationsDb } from '../notifications/identity-notifications.db';
 import { dbSupplier } from '../sql-executor';
-import { userGroupsService } from '../api-serverless/src/community-members/user-groups.service';
-import { WaveEntity } from '../entities/IWave';
-import { identityFetcher } from '../api-serverless/src/identities/identity.fetcher';
-import { ApiIdentity } from '../api-serverless/src/generated/models/ApiIdentity';
+import { sendMessage } from './sendPushNotifications';
 
 const logger = Logger.get('PUSH_NOTIFICATIONS_HANDLER_IDENTITY');
 
