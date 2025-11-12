@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 import { dropsDb } from './drops/drops.db';
 import { DropType } from './entities/IDrop';
 import { IdentityNotificationCause } from './entities/IIdentityNotification';
+import { identitiesDb } from './identities/identities.db';
 import { Logger } from './logging';
 import { identityNotificationsDb } from './notifications/identity-notifications.db';
 import { RequestContext } from './request.context';
@@ -94,14 +95,23 @@ async function handlePriorityAlert(
       const errorMessage = formatErrorMessage(error);
       const dropId = randomUUID();
 
+      const senderIdentity = await identitiesDb.getIdentityByHandle(
+        'punk6529',
+        ctx
+      );
+      if (!senderIdentity) {
+        throw new Error(`Identity 'punk6529' not found`);
+      }
+      const senderId = senderIdentity.consolidation_key;
+
       logger.info(
-        `Creating priority alert drop in wave ${waveId} with author ${wave.created_by}`
+        `Creating priority alert drop in wave ${waveId} with author ${senderId}`
       );
 
       await dropsDb.insertDrop(
         {
           id: dropId,
-          author_id: wave.created_by,
+          author_id: senderId,
           title: `Priority Alert: ${alertTitle}`,
           parts_count: 1,
           wave_id: waveId,
@@ -143,8 +153,7 @@ async function handlePriorityAlert(
         );
 
       const memberIdsToNotify = memberIds.filter(
-        (id) =>
-          !existingNotificationIdentities.includes(id) && id !== wave.created_by
+        (id) => !existingNotificationIdentities.includes(id) && id !== senderId
       );
 
       await Promise.all(
@@ -152,7 +161,7 @@ async function handlePriorityAlert(
           identityNotificationsDb.insertNotification(
             {
               identity_id: id,
-              additional_identity_id: wave.created_by,
+              additional_identity_id: senderId,
               related_drop_id: dropId,
               related_drop_part_no: null,
               related_drop_2_id: null,
