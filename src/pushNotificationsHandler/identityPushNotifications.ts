@@ -92,6 +92,8 @@ export async function sendIdentityNotification(id: number) {
         })
       )
     );
+  } else {
+    logger.error(`Failed to generate notification data: ${notification.id}`);
   }
 }
 
