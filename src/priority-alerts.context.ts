@@ -102,7 +102,10 @@ async function handlePriorityAlert(
       if (!senderIdentity) {
         throw new Error(`Identity 'punk6529' not found`);
       }
-      const senderId = senderIdentity.consolidation_key;
+      if (!senderIdentity.profile_id) {
+        throw new Error(`Identity 'punk6529' has no profile ID`);
+      }
+      const senderId = senderIdentity.profile_id;
 
       logger.info(
         `Creating priority alert drop in wave ${waveId} with author ${senderId}`
@@ -145,16 +148,7 @@ async function handlePriorityAlert(
         `Priority alert drop created with id ${dropId} in wave ${waveId}`
       );
 
-      const existingNotificationIdentities =
-        await identityNotificationsDb.findIdentitiesNotification(
-          waveId,
-          dropId,
-          connection
-        );
-
-      const memberIdsToNotify = memberIds.filter(
-        (id) => !existingNotificationIdentities.includes(id) && id !== senderId
-      );
+      const memberIdsToNotify = memberIds.filter((id) => id !== senderId);
 
       await Promise.all(
         memberIdsToNotify.map((id) =>
