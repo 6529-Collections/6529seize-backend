@@ -42,7 +42,6 @@ export async function sendMessage(
   imageUrl?: string
 ) {
   init();
-  logger.info(`Sending message for notification ${notification_id}`);
 
   title = emojify(title.replace(/@\[(.+?)\]/g, '@$1'));
   body = emojify(body.replace(/@\[(.+?)\]/g, '@$1'));
@@ -88,10 +87,6 @@ export async function sendMessage(
       }
     }
   };
-
-  logger.info(
-    `Message for notification ${notification_id}: ${JSON.stringify(message)}`
-  );
 
   try {
     const response = await admin.messaging().send(message);
