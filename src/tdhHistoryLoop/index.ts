@@ -1,5 +1,11 @@
 import { RequestInfo, RequestInit } from 'node-fetch';
+import { consolidationTools } from '../consolidation-tools';
+import {
+  HISTORIC_CONSOLIDATED_WALLETS_TDH_TABLE,
+  TDH_BLOCKS_TABLE
+} from '../constants';
 import { persistGlobalTDHHistory, persistTDHHistory } from '../db';
+import { ConsolidatedTDH, TDHBlock, TokenTDH } from '../entities/ITDH';
 import {
   GlobalTDHHistory,
   LatestGlobalTDHHistory,
@@ -7,16 +13,13 @@ import {
   RecentTDHHistory,
   TDHHistory
 } from '../entities/ITDHHistory';
-import { TokenTDH } from '../entities/ITDH';
-import axios from 'axios';
-import { Readable } from 'stream';
 import { Logger } from '../logging';
-import { Time } from '../time';
-import * as sentryContext from '../sentry.context';
-import { UploadFieldsConsolidation } from '../entities/IUpload';
 import { doInDbContext } from '../secrets';
+import * as sentryContext from '../sentry.context';
+import { sqlExecutor } from '../sql-executor';
+import { parseTdhDataFromDB } from '../sql_helpers';
 import { equalIgnoreCase } from '../strings';
-import { consolidationTools } from '../consolidation-tools';
+import { Time } from '../time';
 
 const csvParser = require('csv-parser');
 
@@ -68,38 +71,25 @@ async function tdhHistoryLoop(iterations: number) {
   }
 }
 
-async function fetchUploads(date: string): Promise<
-  {
-    date: string;
-    block: number;
-    url: string;
-  }[]
-> {
-  const uploads = await fetch(
-    `https://api.6529.io/api/consolidated_uploads?date=${date}&page_size=5`
+async function fetchTDHBlock(start: Time): Promise<TDHBlock> {
+  const end = start.minusDays(1);
+  const blocks = await sqlExecutor.execute<TDHBlock>(
+    `SELECT * FROM 
+    ${TDH_BLOCKS_TABLE} 
+    WHERE timestamp < :start 
+    AND timestamp > :end
+    ORDER BY block_number DESC`,
+    {
+      start: start.toIsoDateString(),
+      end: end.toIsoDateString()
+    }
   );
-  const json = await uploads.json();
-  return json.data;
-}
-
-async function fetchAndParseCSV(url: string): Promise<any[]> {
-  const response = await axios.get(url);
-  const csvData: any[] = [];
-
-  return new Promise((resolve, reject) => {
-    const readableStream = Readable.from(response.data);
-    readableStream
-      .pipe(csvParser())
-      .on('data', (row: any) => {
-        csvData.push(row);
-      })
-      .on('end', () => {
-        resolve(csvData);
-      })
-      .on('error', (error: any) => {
-        reject(new Error(error));
-      });
-  });
+  if (blocks.length !== 1) {
+    throw new Error(
+      `Expected 1 TDH block found ${blocks.length} for date ${start.toIsoDateString()}`
+    );
+  }
+  return blocks[0];
 }
 
 function matchesConsolidationKey(d: any, yd: any) {
@@ -107,9 +97,17 @@ function matchesConsolidationKey(d: any, yd: any) {
     equalIgnoreCase(d.consolidation_key, yd.consolidation_key) ||
     equalIgnoreCase(
       d.consolidation_key,
-      consolidationTools.buildConsolidationKey(JSON.parse(yd.wallets))
+      consolidationTools.buildConsolidationKey(yd.wallets)
     )
   );
+}
+
+async function fetchConsolidatedTDH(block: number): Promise<ConsolidatedTDH[]> {
+  const results = await sqlExecutor.execute<ConsolidatedTDH>(
+    `SELECT * FROM ${HISTORIC_CONSOLIDATED_WALLETS_TDH_TABLE} WHERE block = :block`,
+    { block }
+  );
+  return results.map(parseTdhDataFromDB);
 }
 
 function hasMatchingWallet(d: any, yd: any) {
@@ -121,34 +119,22 @@ function hasMatchingWallet(d: any, yd: any) {
 }
 
 async function tdhHistory(date: Date) {
-  const dateString = Time.fromDate(date).toPaddedDateString();
-
-  logger.info(
-    `[DATE ${date.toISOString().split('T')[0]}] [FETCHING UPLOADS...]`
-  );
-
-  const uploads = await fetchUploads(dateString);
-
-  const today = uploads[0];
-  const yesterday = uploads[1];
-
-  if (today.date !== dateString) {
-    throw new Error(`Uploads not found for date ${dateString}`);
-  }
+  const todayTime = Time.fromDate(date);
+  const yesterdayTime = todayTime.minusDays(1);
+  const todayBlock = await fetchTDHBlock(todayTime);
+  const yesterdayBlock = await fetchTDHBlock(yesterdayTime);
 
   logger.info({
     message: 'CALCULATING TDH CHANGE',
-    from: `${today.date} (BLOCK ${today.block})`,
-    from_url: today.url,
-    to: `${yesterday.date} (BLOCK ${yesterday.block})`,
-    to_url: yesterday.url
+    from: `${todayBlock.timestamp} (BLOCK ${todayBlock.block_number})`,
+    to: `${yesterdayBlock.timestamp} (BLOCK ${yesterdayBlock.block_number})`
   });
 
-  const todayData: UploadFieldsConsolidation[] = await fetchAndParseCSV(
-    today.url
+  const todayData: ConsolidatedTDH[] = await fetchConsolidatedTDH(
+    todayBlock.block_number
   );
-  const yesterdayData: UploadFieldsConsolidation[] = await fetchAndParseCSV(
-    yesterday.url
+  const yesterdayData: ConsolidatedTDH[] = await fetchConsolidatedTDH(
+    yesterdayBlock.block_number
   );
 
   const tdhHistory: TDHHistory[] = [];
@@ -158,9 +144,9 @@ async function tdhHistory(date: Date) {
   const yesterdayEntries: string[] = [];
 
   todayData.forEach((d) => {
-    const dMemes = JSON.parse(d.memes);
-    const dGradients = JSON.parse(d.gradients);
-    const dNextgen = JSON.parse(d.nextgen);
+    const dMemes = d.memes;
+    const dGradients = d.gradients;
+    const dNextgen = d.nextgen;
 
     const yesterdayTdh = yesterdayData.filter(
       (yd) => matchesConsolidationKey(d, yd) || hasMatchingWallet(d, yd)
@@ -169,15 +155,6 @@ async function tdhHistory(date: Date) {
     if (yesterdayTdh.length > 0) {
       yesterdayTdh.forEach((y) => {
         yesterdayEntries.push(y.consolidation_key);
-        if (!Array.isArray(y.memes)) {
-          y.memes = JSON.parse(y.memes);
-        }
-        if (!Array.isArray(y.gradients)) {
-          y.gradients = JSON.parse(y.gradients);
-        }
-        if (!Array.isArray(y.nextgen)) {
-          y.nextgen = JSON.parse(y.nextgen);
-        }
       });
     }
 
@@ -243,7 +220,7 @@ async function tdhHistory(date: Date) {
       consolidation_display: d.consolidation_display,
       consolidation_key: d.consolidation_key,
       wallets: d.wallets,
-      block: today.block,
+      block: todayBlock.block_number,
       boosted_tdh: d.boosted_tdh,
       tdh: d.tdh,
       tdh__raw: d.tdh__raw,
@@ -274,14 +251,14 @@ async function tdhHistory(date: Date) {
       const ydtdhRaw = yd.tdh__raw;
       const ydtdh = yd.tdh;
       const ydboostedTdh = yd.boosted_tdh;
-      const ydbalance = yd.total_balance;
+      const ydbalance = yd.balance;
 
       const tdhH: TDHHistory = {
         date: date,
         consolidation_display: yd.consolidation_display,
         consolidation_key: yd.consolidation_key,
         wallets: yd.wallets,
-        block: today.block,
+        block: todayBlock.block_number,
         boosted_tdh: 0,
         tdh: 0,
         tdh__raw: 0,
@@ -311,7 +288,7 @@ async function tdhHistory(date: Date) {
   await persistTDHHistory(date, tdhHistory);
 
   return {
-    block: today.block,
+    block: todayBlock.block_number,
     history: tdhHistory,
     tdh: todayData
   };
@@ -321,7 +298,7 @@ async function calculateGlobalTDHHistory(
   date: Date,
   block: number,
   tdhHistory: TDHHistory[],
-  tdhData: UploadFieldsConsolidation[]
+  tdhData: ConsolidatedTDH[]
 ) {
   logger.info(
     `[DATE ${
