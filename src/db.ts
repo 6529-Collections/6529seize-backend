@@ -972,7 +972,7 @@ export async function persistTDHBlock(
 ) {
   logger.info(`[TDH BLOCK] PERSISTING BLOCK [${block}]`);
 
-  const merkleRoot = computeMerkleRoot(tdh);
+  const merkleRoot = await computeMerkleRoot();
 
   logger.info(`[TDH BLOCK] MERKLE ROOT [${merkleRoot}]`);
 
@@ -1068,12 +1068,13 @@ export async function persistHistoricConsolidatedTDH(
   if (wallets) {
     await Promise.all(
       wallets.map(async (wallet) => {
+        const walletPattern = `%${wallet}%`;
         await historicTdhRepo
           .createQueryBuilder()
           .delete()
-          .where('LOWER(wallet) = :wallet AND block = :block ', {
-            wallet: wallet.toLowerCase(),
-            block: block
+          .where('consolidation_key like :walletPattern and block = :block', {
+            walletPattern,
+            block
           })
           .execute();
       })
