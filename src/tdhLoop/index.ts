@@ -65,8 +65,6 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
 });
 
 export async function tdhLoop(force?: boolean) {
-  //TODO: REMOVE THIS AFTER TESTING
-  throw new Error('Test error');
   await tdh(force);
   await findNftTDH();
   await notifier.notifyTdhCalculationsDone();
