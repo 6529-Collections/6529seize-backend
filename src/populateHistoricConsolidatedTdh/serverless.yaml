@@ -28,7 +28,7 @@ functions:
       HISTORIC_CONSOLIDATED_TDH_ITERATIONS: 1
       HISTORIC_CONSOLIDATED_TDH_UPLOAD: false
       SENTRY_DSN: ${env:SENTRY_DSN}
-      SENTRY_ENVIRONMENT: 'populateHistoricConsolidatedTdh_{opt:stage, self:provider.stage}'
+      SENTRY_ENVIRONMENT: 'populateHistoricConsolidatedTdh_${opt:stage, self:provider.stage}'
 
 resources:
   Resources:
