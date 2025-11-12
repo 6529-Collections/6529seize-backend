@@ -1,39 +1,39 @@
-import {
-  userNotificationReader,
-  UserNotificationsReader
-} from '../../../notifications/user-notifications.reader';
-import {
-  userGroupsService,
-  UserGroupsService
-} from '../community-members/user-groups.service';
-import { UserNotification } from '../../../notifications/user-notification.types';
 import { assertUnreachable } from '../../../assertions';
-import { IdentityNotificationCause } from '../../../entities/IIdentityNotification';
-import { DropsApiService, dropsService } from '../drops/drops.api.service';
 import { AuthenticationContext } from '../../../auth-context';
-import { ApiDrop } from '../generated/models/ApiDrop';
-import { ApiProfileMin } from '../generated/models/ApiProfileMin';
-import { ApiNotificationsResponse } from '../generated/models/ApiNotificationsResponse';
-import { ApiNotification } from '../generated/models/ApiNotification';
-import { ApiNotificationCause } from '../generated/models/ApiNotificationCause';
+import { collections } from '../../../collections';
+import { IdentityNotificationCause } from '../../../entities/IIdentityNotification';
+import { enums } from '../../../enums';
+import { BadRequestException } from '../../../exceptions';
 import {
   identityNotificationsDb,
   IdentityNotificationsDb
 } from '../../../notifications/identity-notifications.db';
+import { UserNotification } from '../../../notifications/user-notification.types';
 import {
-  identitySubscriptionsDb,
-  IdentitySubscriptionsDb
-} from '../identity-subscriptions/identity-subscriptions.db';
-import { BadRequestException } from '../../../exceptions';
-import { seizeSettings } from '../api-constants';
+  userNotificationReader,
+  UserNotificationsReader
+} from '../../../notifications/user-notifications.reader';
 import { RequestContext } from '../../../request.context';
 import { Time } from '../../../time';
+import { seizeSettings } from '../api-constants';
+import {
+  userGroupsService,
+  UserGroupsService
+} from '../community-members/user-groups.service';
+import { DropsApiService, dropsService } from '../drops/drops.api.service';
+import { ApiDrop } from '../generated/models/ApiDrop';
+import { ApiNotification } from '../generated/models/ApiNotification';
+import { ApiNotificationCause } from '../generated/models/ApiNotificationCause';
+import { ApiNotificationsResponse } from '../generated/models/ApiNotificationsResponse';
+import { ApiProfileMin } from '../generated/models/ApiProfileMin';
 import {
   identityFetcher,
   IdentityFetcher
 } from '../identities/identity.fetcher';
-import { enums } from '../../../enums';
-import { collections } from '../../../collections';
+import {
+  identitySubscriptionsDb,
+  IdentitySubscriptionsDb
+} from '../identity-subscriptions/identity-subscriptions.db';
 
 export class NotificationsApiService {
   constructor(
@@ -193,6 +193,12 @@ export class NotificationsApiService {
           dropIds.push(data.drop_id);
           break;
         }
+        case IdentityNotificationCause.PRIORITY_ALERT: {
+          const data = notification.data;
+          profileIds.push(data.additional_identity_id);
+          dropIds.push(data.drop_id);
+          break;
+        }
         default: {
           assertUnreachable(notificationCause);
         }
@@ -332,6 +338,18 @@ export class NotificationsApiService {
           additional_context: {
             vote: data.vote
           }
+        };
+      }
+      case IdentityNotificationCause.PRIORITY_ALERT: {
+        const data = notification.data;
+        return {
+          id: notification.id,
+          created_at: notification.created_at,
+          read_at: notification.read_at,
+          cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
+          related_identity: profiles[data.additional_identity_id],
+          related_drops: [drops[data.drop_id]],
+          additional_context: {}
         };
       }
       default: {

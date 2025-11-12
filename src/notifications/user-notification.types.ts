@@ -58,6 +58,11 @@ export interface AllDropsNotificationData {
   vote: number;
 }
 
+export interface PriorityAlertNotificationData {
+  additional_identity_id: string;
+  drop_id: string;
+}
+
 export interface UserNotificationBase {
   id: number;
   created_at: number;
@@ -104,6 +109,11 @@ export interface AllDropsNotification extends UserNotificationBase {
   data: AllDropsNotificationData;
 }
 
+export interface PriorityAlertNotification extends UserNotificationBase {
+  cause: IdentityNotificationCause.PRIORITY_ALERT;
+  data: PriorityAlertNotificationData;
+}
+
 export type UserNotification =
   | IdentitySubscriptionNotification
   | IdentityMentionNotification
@@ -112,7 +122,8 @@ export type UserNotification =
   | DropReplyNotification
   | DropQuoteNotification
   | WaveCreatedNotification
-  | AllDropsNotification;
+  | AllDropsNotification
+  | PriorityAlertNotification;
 
 export interface UserNotificationsResponse {
   readonly notifications: UserNotification[];

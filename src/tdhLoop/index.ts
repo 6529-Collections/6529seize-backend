@@ -21,6 +21,7 @@ import {
 import { ConsolidatedTDHUpload } from '../entities/IUpload';
 import { Logger } from '../logging';
 import * as notifier from '../notifier';
+import * as priorityAlertsContext from '../priority-alerts.context';
 import { doInDbContext } from '../secrets';
 import * as sentryContext from '../sentry.context';
 import { Time } from '../time';
@@ -30,14 +31,15 @@ import { consolidateAndPersistTDH } from './tdh_consolidation';
 import { uploadTDH } from './tdh_upload';
 
 const logger = Logger.get('TDH_LOOP');
+const ALERT_TITLE = 'TDH Loop';
 
 export const handler = sentryContext.wrapLambdaHandler(async () => {
   await doInDbContext(
-    async () => {
+    priorityAlertsContext.wrapAsyncFunction(ALERT_TITLE, async () => {
       const force = process.env.TDH_RESET == 'true';
       logger.info(`[force=${force}]`);
       await tdhLoop(force);
-    },
+    }),
     {
       logger,
       entities: [
@@ -63,6 +65,8 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
 });
 
 export async function tdhLoop(force?: boolean) {
+  //TODO: REMOVE THIS AFTER TESTING
+  throw new Error('Test error');
   await tdh(force);
   await findNftTDH();
   await notifier.notifyTdhCalculationsDone();

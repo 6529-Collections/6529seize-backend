@@ -117,6 +117,8 @@ async function generateNotificationData(
       return handleWaveCreated(notification, additionalEntity);
     case IdentityNotificationCause.ALL_DROPS:
       return handleAllDrops(notification, additionalEntity);
+    case IdentityNotificationCause.PRIORITY_ALERT:
+      return handlePriorityAlert(notification, additionalEntity);
     default:
       return null;
   }
@@ -348,6 +350,28 @@ async function handleAllDrops(
   const dropSerialNo = await getDropSerialNo(notification.related_drop_id);
   const imageUrl = wave.picture ?? additionalEntity.pfp;
   const body = dropPart?.content ?? 'View drop';
+  const data = {
+    redirect: 'waves',
+    wave_id: notification.wave_id,
+    drop_id: dropSerialNo
+  };
+  return { title, body, data, imageUrl };
+}
+
+async function handlePriorityAlert(
+  notification: IdentityNotificationEntity,
+  additionalEntity: ApiIdentity
+) {
+  const wave = await getWaveEntityOrThrow(
+    notification.id,
+    notification.wave_id
+  );
+
+  const dropPart = await getDropPart(notification);
+  const dropSerialNo = await getDropSerialNo(notification.related_drop_id);
+  const imageUrl = wave.picture ?? additionalEntity.pfp;
+  const title = `Priority Alert in ${wave.name}`;
+  const body = dropPart?.content ?? 'View alert';
   const data = {
     redirect: 'waves',
     wave_id: notification.wave_id,
