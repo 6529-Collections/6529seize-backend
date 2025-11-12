@@ -998,7 +998,6 @@ loadApi().then(async () => {
       const consolidationKey = req.params.consolidation_key;
       await db.fetchRecentTDHHistory(consolidationKey).then(async (result) => {
         result.map((d: any) => {
-          d.wallets = JSON.parse(JSON.parse(d.wallets));
           const date = new Date(d.date);
           const year = date.getFullYear();
           const month = String(date.getMonth() + 1).padStart(2, '0');
