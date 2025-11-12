@@ -265,6 +265,17 @@ async function getAdditionalIdOrThrow(
   return additionalProfile;
 }
 
+async function getDrop(notification: IdentityNotificationEntity) {
+  const dropId = notification.related_drop_id;
+  if (!dropId) {
+    throw new Error(`[ID ${notification.id}] Drop id not found`);
+  }
+  const drop = await getDataSource().getRepository(DropEntity).findOneBy({
+    id: dropId
+  });
+  return drop;
+}
+
 async function getDropPart(
   notification: IdentityNotificationEntity,
   handle?: string
@@ -369,10 +380,11 @@ async function handlePriorityAlert(
     notification.wave_id
   );
 
+  const drop = await getDrop(notification);
   const dropPart = await getDropPart(notification);
   const dropSerialNo = await getDropSerialNo(notification.related_drop_id);
   const imageUrl = wave.picture ?? additionalEntity.pfp;
-  const title = `Priority Alert in ${wave.name}`;
+  const title = `${drop?.title ?? 'Priority Alert'} in ${wave.name}`;
   const body = dropPart?.content ?? 'View alert';
   const data = {
     redirect: 'waves',
