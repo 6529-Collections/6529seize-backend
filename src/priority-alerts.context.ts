@@ -1,4 +1,4 @@
-import { randomUUID } from 'crypto';
+import { randomUUID } from 'node:crypto';
 import { dropsDb } from './drops/drops.db';
 import { DropType } from './entities/IDrop';
 import { IdentityNotificationCause } from './entities/IIdentityNotification';

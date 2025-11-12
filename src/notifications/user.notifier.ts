@@ -1,9 +1,13 @@
+import { seizeSettings } from '../api-serverless/src/api-constants';
+import { identitySubscriptionsDb } from '../api-serverless/src/identity-subscriptions/identity-subscriptions.db';
+import { IdentityNotificationCause } from '../entities/IIdentityNotification';
+import { RequestContext } from '../request.context';
+import { ConnectionWrapper } from '../sql-executor';
+import { Timer } from '../time';
 import {
   identityNotificationsDb,
   IdentityNotificationsDb
 } from './identity-notifications.db';
-import { ConnectionWrapper } from '../sql-executor';
-import { IdentityNotificationCause } from '../entities/IIdentityNotification';
 import {
   DropQuoteNotificationData,
   DropReactionNotificationData,
@@ -12,10 +16,6 @@ import {
   IdentityMentionNotificationData,
   IdentitySubscriptionNotificationData
 } from './user-notification.types';
-import { Timer } from '../time';
-import { RequestContext } from '../request.context';
-import { seizeSettings } from '../api-serverless/src/api-constants';
-import { identitySubscriptionsDb } from '../api-serverless/src/identity-subscriptions/identity-subscriptions.db';
 
 export class UserNotifier {
   constructor(
@@ -291,56 +291,6 @@ export class UserNotifier {
     );
 
     timer?.stop('userNotifier->notifyAllNotificationsSubscribers');
-  }
-
-  public async notifyPriorityAlert(
-    {
-      waveId,
-      dropId,
-      relatedIdentityId,
-      memberIds
-    }: {
-      waveId: string;
-      dropId: string;
-      relatedIdentityId: string;
-      memberIds: string[];
-    },
-    { timer, connection }: RequestContext
-  ) {
-    timer?.start('userNotifier->notifyPriorityAlert');
-
-    const existingNotificationIdentities =
-      await this.identityNotificationsDb.findIdentitiesNotification(
-        waveId,
-        dropId,
-        connection
-      );
-
-    const memberIdsToNotify = memberIds.filter(
-      (id) => !existingNotificationIdentities.includes(id) && id !== relatedIdentityId
-    );
-
-    await Promise.all(
-      memberIdsToNotify.map((id) =>
-        this.identityNotificationsDb.insertNotification(
-          {
-            identity_id: id,
-            additional_identity_id: relatedIdentityId,
-            related_drop_id: dropId,
-            related_drop_part_no: null,
-            related_drop_2_id: null,
-            related_drop_2_part_no: null,
-            wave_id: waveId,
-            cause: IdentityNotificationCause.PRIORITY_ALERT,
-            additional_data: {},
-            visibility_group_id: null
-          },
-          connection
-        )
-      )
-    );
-
-    timer?.stop('userNotifier->notifyPriorityAlert');
   }
 }
 
