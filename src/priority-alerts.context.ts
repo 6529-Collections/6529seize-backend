@@ -1,12 +1,13 @@
-import { userGroupsService } from './api-serverless/src/community-members/user-groups.service';
-import { wavesApiDb } from './api-serverless/src/waves/waves.api.db';
-import { createOrUpdateDrop } from './drops/create-or-update-drop.use-case';
+import { randomUUID } from 'crypto';
+import { dropsDb } from './drops/drops.db';
 import { DropType } from './entities/IDrop';
+import { IdentityNotificationCause } from './entities/IIdentityNotification';
 import { Logger } from './logging';
-import { userNotifier } from './notifications/user.notifier';
+import { identityNotificationsDb } from './notifications/identity-notifications.db';
 import { RequestContext } from './request.context';
 import { dbSupplier } from './sql-executor';
-import { Timer } from './time';
+import { Time, Timer } from './time';
+import { userGroupsDb } from './user-groups/user-groups.db';
 
 const logger = Logger.get('PRIORITY_ALERTS');
 
@@ -63,7 +64,7 @@ async function handlePriorityAlert(
     logger.info(`Sending priority alert for wave ${waveId}`);
     const db = dbSupplier();
     await db.executeNativeQueriesInTransaction(async (connection) => {
-      const wave = await wavesApiDb.findWaveById(waveId, connection);
+      const wave = await dropsDb.findWaveByIdOrNull(waveId, connection);
       if (!wave) {
         throw new Error(`Wave ${waveId} not found`);
       }
@@ -81,7 +82,7 @@ async function handlePriorityAlert(
       }
 
       const ctx: RequestContext = { connection, timer };
-      const memberIds = await userGroupsService.findIdentitiesInGroups(
+      const memberIds = await userGroupsDb.findIdentitiesInGroups(
         groupIds,
         ctx
       );
@@ -91,53 +92,83 @@ async function handlePriorityAlert(
       }
 
       const errorMessage = formatErrorMessage(error);
+      const dropId = randomUUID();
 
       logger.info(
         `Creating priority alert drop in wave ${waveId} with author ${wave.created_by}`
       );
 
-      const { drop_id } = await createOrUpdateDrop.execute(
+      await dropsDb.insertDrop(
         {
-          drop_id: null,
-          wave_id: waveId,
-          reply_to: null,
-          title: `Priority Alert: ${alertTitle}`,
-          parts: [
-            {
-              content: errorMessage,
-              quoted_drop: null,
-              media: []
-            }
-          ],
-          referenced_nfts: [],
-          mentioned_users: [],
-          metadata: [],
-          author_identity: wave.created_by,
+          id: dropId,
           author_id: wave.created_by,
+          title: `Priority Alert: ${alertTitle}`,
+          parts_count: 1,
+          wave_id: waveId,
+          reply_to_drop_id: null,
+          reply_to_part_id: null,
+          created_at: Time.currentMillis(),
+          updated_at: null,
+          serial_no: null,
           drop_type: DropType.CHAT,
-          mentions_all: false,
           signature: null
         },
-        false,
-        { timer, connection }
+        connection
+      );
+
+      await dropsDb.insertDropParts(
+        [
+          {
+            drop_id: dropId,
+            drop_part_id: 1,
+            content: errorMessage,
+            quoted_drop_id: null,
+            quoted_drop_part_id: null,
+            wave_id: waveId
+          }
+        ],
+        connection,
+        timer
       );
 
       logger.info(
-        `Priority alert drop created with id ${drop_id} in wave ${waveId}`
+        `Priority alert drop created with id ${dropId} in wave ${waveId}`
       );
 
-      await userNotifier.notifyPriorityAlert(
-        {
+      const existingNotificationIdentities =
+        await identityNotificationsDb.findIdentitiesNotification(
           waveId,
-          dropId: drop_id,
-          relatedIdentityId: wave.created_by,
-          memberIds
-        },
-        ctx
+          dropId,
+          connection
+        );
+
+      const memberIdsToNotify = memberIds.filter(
+        (id) =>
+          !existingNotificationIdentities.includes(id) && id !== wave.created_by
+      );
+
+      await Promise.all(
+        memberIdsToNotify.map((id) =>
+          identityNotificationsDb.insertNotification(
+            {
+              identity_id: id,
+              additional_identity_id: wave.created_by,
+              related_drop_id: dropId,
+              related_drop_part_no: null,
+              related_drop_2_id: null,
+              related_drop_2_part_no: null,
+              wave_id: waveId,
+              cause: IdentityNotificationCause.PRIORITY_ALERT,
+              additional_data: {},
+              visibility_group_id: null
+            },
+            connection
+          )
+        )
       );
 
       logger.info(
-        `Priority alert sent to ${memberIds.length} members in wave ${waveId} for drop ${drop_id}`
+        `Priority alert sent to ${memberIdsToNotify.length} members in wave ${waveId} for drop ${dropId}`
       );
     });
   } finally {
