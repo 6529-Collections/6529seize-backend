@@ -384,7 +384,7 @@ async function handlePriorityAlert(
   const dropPart = await getDropPart(notification);
   const dropSerialNo = await getDropSerialNo(notification.related_drop_id);
   const imageUrl = wave.picture ?? additionalEntity.pfp;
-  const title = `${drop?.title ?? 'Priority Alert'} in ${wave.name}`;
+  const title = `🚨 ${drop?.title ?? 'Priority Alert'}`;
   const body = dropPart?.content ?? 'View alert';
   const data = {
     redirect: 'waves',
