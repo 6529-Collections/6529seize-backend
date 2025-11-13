@@ -15,6 +15,7 @@ import {
   TDHHistory
 } from '../entities/ITDHHistory';
 import { Logger } from '../logging';
+import * as priorityAlertsContext from '../priority-alerts.context';
 import { doInDbContext } from '../secrets';
 import * as sentryContext from '../sentry.context';
 import { sqlExecutor } from '../sql-executor';
@@ -25,17 +26,18 @@ import { Time } from '../time';
 const csvParser = require('csv-parser');
 
 const logger = Logger.get('TDH_HISTORY_LOOP');
+const ALERT_TITLE = 'TDH History Loop';
 
 const fetch = (url: RequestInfo, init?: RequestInit) =>
   import('node-fetch').then(({ default: fetch }) => fetch(url, init));
 
 export const handler = sentryContext.wrapLambdaHandler(async () => {
   await doInDbContext(
-    async () => {
+    priorityAlertsContext.wrapAsyncFunction(ALERT_TITLE, async () => {
       const iterations = parseInt(process.env.TDH_HISTORY_ITERATIONS ?? '1');
       logger.info(`[ITERATIONS ${iterations}]`);
       await tdhHistoryLoop(iterations);
-    },
+    }),
     {
       logger,
       entities: [
@@ -50,6 +52,8 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
 });
 
 async function tdhHistoryLoop(iterations: number) {
+  // TODO: Remove this after testing
+  throw new Error('Test error');
   for (let i = iterations - 1; i >= 0; i--) {
     const start = Time.now();
     const myDate = new Date();
