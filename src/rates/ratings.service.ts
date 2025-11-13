@@ -290,13 +290,17 @@ export class RatingsService {
       if (creditLeft < ratingChange) {
         throw new BadRequestException(`Not enough proxy credit left to rate.`);
       }
-      await this.profileProxiesDb.updateCreditSpentForAction(
-        {
-          id: proxyContext.action_id,
-          credit_spent: creditSpent + ratingChange
-        },
-        connection
-      );
+      const creditUpdated =
+        await this.profileProxiesDb.incrementCreditSpentForAction(
+          {
+            id: proxyContext.action_id,
+            credit_spent_delta: ratingChange
+          },
+          connection
+        );
+      if (!creditUpdated) {
+        throw new BadRequestException(`Not enough proxy credit left to rate.`);
+      }
     }
   }
 
@@ -1178,14 +1182,19 @@ export class RatingsService {
               ),
             0
           );
-          await this.profileProxiesDb.updateCreditSpentForAction(
-            {
-              id: repAction.id,
-              credit_spent:
-                (repAction.credit_spent ?? 0) + creditSpentInThisBulk
-            },
-            connection
-          );
+          const creditUpdated =
+            await this.profileProxiesDb.incrementCreditSpentForAction(
+              {
+                id: repAction.id,
+                credit_spent_delta: creditSpentInThisBulk
+              },
+              connection
+            );
+          if (!creditUpdated) {
+            throw new BadRequestException(
+              `Not enough proxy credit left to rate.`
+            );
+          }
         }
         const now = Time.now().toDate();
         const raterId = ctx.authenticationContext!.getActingAsId()!;
