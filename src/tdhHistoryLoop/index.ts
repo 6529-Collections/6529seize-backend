@@ -34,7 +34,9 @@ const fetch = (url: RequestInfo, init?: RequestInit) =>
 export const handler = sentryContext.wrapLambdaHandler(async () => {
   await doInDbContext(
     priorityAlertsContext.wrapAsyncFunction(ALERT_TITLE, async () => {
-      const iterations = parseInt(process.env.TDH_HISTORY_ITERATIONS ?? '1');
+      const iterations = Number.parseInt(
+        process.env.TDH_HISTORY_ITERATIONS ?? '1'
+      );
       logger.info(`[ITERATIONS ${iterations}]`);
       await tdhHistoryLoop(iterations);
     }),
@@ -52,8 +54,6 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
 });
 
 async function tdhHistoryLoop(iterations: number) {
-  // TODO: Remove this after testing
-  throw new Error('Test error');
   for (let i = iterations - 1; i >= 0; i--) {
     const start = Time.now();
     const myDate = new Date();
@@ -176,7 +176,7 @@ async function fetchConsolidatedTDH(block: number): Promise<ConsolidatedTDH[]> {
     const consolidatedTdh: ConsolidatedTDH[] = csvData.map((row: any) => {
       // Map CSV fields to ConsolidatedTDH structure
       const tdh: any = {
-        block: parseInt(row.block) || block,
+        block: Number.parseInt(row.block) || block,
         date: new Date(
           row.date
             ? `${row.date.substring(0, 4)}-${row.date.substring(4, 6)}-${row.date.substring(6, 8)}`
@@ -185,35 +185,35 @@ async function fetchConsolidatedTDH(block: number): Promise<ConsolidatedTDH[]> {
         consolidation_key: row.consolidation_key || '',
         consolidation_display: row.consolidation_display || '',
         wallets: row.wallets || '[]',
-        balance: parseInt(row.total_balance) || 0,
-        unique_memes: parseInt(row.unique_memes) || 0,
-        memes_cards_sets: parseInt(row.memes_cards_sets) || 0,
-        tdh: parseInt(row.tdh) || 0,
-        boost: parseFloat(row.boost) || 0,
-        boosted_tdh: parseInt(row.boosted_tdh) || 0,
-        tdh__raw: parseInt(row.tdh__raw) || 0,
-        tdh_rank: parseInt(row.tdh_rank) || 0,
-        tdh_rank_memes: parseInt(row.tdh_rank_memes) || 0,
-        tdh_rank_gradients: parseInt(row.tdh_rank_gradients) || 0,
+        balance: Number.parseInt(row.total_balance) || 0,
+        unique_memes: Number.parseInt(row.unique_memes) || 0,
+        memes_cards_sets: Number.parseInt(row.memes_cards_sets) || 0,
+        tdh: Number.parseInt(row.tdh) || 0,
+        boost: Number.parseFloat(row.boost) || 0,
+        boosted_tdh: Number.parseInt(row.boosted_tdh) || 0,
+        tdh__raw: Number.parseInt(row.tdh__raw) || 0,
+        tdh_rank: Number.parseInt(row.tdh_rank) || 0,
+        tdh_rank_memes: Number.parseInt(row.tdh_rank_memes) || 0,
+        tdh_rank_gradients: Number.parseInt(row.tdh_rank_gradients) || 0,
         tdh_rank_nextgen: 0, // Not in CSV, default to 0
-        genesis: parseInt(row.genesis) || 0,
-        nakamoto: parseInt(row.nakamoto) || 0,
-        boosted_memes_tdh: parseInt(row.boosted_memes_tdh) || 0,
-        memes_tdh: parseInt(row.memes_tdh) || 0,
-        memes_tdh__raw: parseInt(row.memes_tdh__raw) || 0,
-        memes_balance: parseInt(row.memes_balance) || 0,
+        genesis: Number.parseInt(row.genesis) || 0,
+        nakamoto: Number.parseInt(row.nakamoto) || 0,
+        boosted_memes_tdh: Number.parseInt(row.boosted_memes_tdh) || 0,
+        memes_tdh: Number.parseInt(row.memes_tdh) || 0,
+        memes_tdh__raw: Number.parseInt(row.memes_tdh__raw) || 0,
+        memes_balance: Number.parseInt(row.memes_balance) || 0,
         memes: row.memes || '[]',
         memes_ranks: '[]', // Not in CSV, default to empty array
-        gradients_balance: parseInt(row.gradients_balance) || 0,
-        boosted_gradients_tdh: parseInt(row.boosted_gradients_tdh) || 0,
-        gradients_tdh: parseInt(row.gradients_tdh) || 0,
-        gradients_tdh__raw: parseInt(row.gradients_tdh__raw) || 0,
+        gradients_balance: Number.parseInt(row.gradients_balance) || 0,
+        boosted_gradients_tdh: Number.parseInt(row.boosted_gradients_tdh) || 0,
+        gradients_tdh: Number.parseInt(row.gradients_tdh) || 0,
+        gradients_tdh__raw: Number.parseInt(row.gradients_tdh__raw) || 0,
         gradients: row.gradients || '[]',
         gradients_ranks: '[]', // Not in CSV, default to empty array
-        nextgen_balance: parseInt(row.nextgen_balance) || 0,
-        boosted_nextgen_tdh: parseInt(row.boosted_nextgen_tdh) || 0,
-        nextgen_tdh: parseInt(row.nextgen_tdh) || 0,
-        nextgen_tdh__raw: parseInt(row.nextgen_tdh__raw) || 0,
+        nextgen_balance: Number.parseInt(row.nextgen_balance) || 0,
+        boosted_nextgen_tdh: Number.parseInt(row.boosted_nextgen_tdh) || 0,
+        nextgen_tdh: Number.parseInt(row.nextgen_tdh) || 0,
+        nextgen_tdh__raw: Number.parseInt(row.nextgen_tdh__raw) || 0,
         nextgen: row.nextgen || '[]',
         nextgen_ranks: '[]', // Not in CSV, default to empty array
         boost_breakdown: row.boost_breakdown || '{}'
@@ -575,18 +575,18 @@ async function calculateGlobalTDHHistory(
   let totalNetBalance = 0;
 
   tdhHistory.forEach((h: any) => {
-    totalCreatedTdh += parseFloat(h.created_tdh);
-    totalDestroyedTdh += parseFloat(h.destroyed_tdh);
-    totalNetTdh += parseFloat(h.net_tdh);
-    totalCreatedBoostedTdh += parseFloat(h.created_boosted_tdh);
-    totalDestroyedBoostedTdh += parseFloat(h.destroyed_boosted_tdh);
-    totalNetBoostedTdh += parseFloat(h.net_boosted_tdh);
-    totalCreatedTdhRaw += parseFloat(h.created_tdh__raw);
-    totalDestroyedTdhRaw += parseFloat(h.destroyed_tdh__raw);
-    totalNetTdhRaw += parseFloat(h.net_tdh__raw);
-    totalCreatedBalance += parseFloat(h.created_balance);
-    totalDestroyedBalance += parseFloat(h.destroyed_balance);
-    totalNetBalance += parseFloat(h.net_balance);
+    totalCreatedTdh += Number.parseFloat(h.created_tdh);
+    totalDestroyedTdh += Number.parseFloat(h.destroyed_tdh);
+    totalNetTdh += Number.parseFloat(h.net_tdh);
+    totalCreatedBoostedTdh += Number.parseFloat(h.created_boosted_tdh);
+    totalDestroyedBoostedTdh += Number.parseFloat(h.destroyed_boosted_tdh);
+    totalNetBoostedTdh += Number.parseFloat(h.net_boosted_tdh);
+    totalCreatedTdhRaw += Number.parseFloat(h.created_tdh__raw);
+    totalDestroyedTdhRaw += Number.parseFloat(h.destroyed_tdh__raw);
+    totalNetTdhRaw += Number.parseFloat(h.net_tdh__raw);
+    totalCreatedBalance += Number.parseFloat(h.created_balance);
+    totalDestroyedBalance += Number.parseFloat(h.destroyed_balance);
+    totalNetBalance += Number.parseFloat(h.net_balance);
   });
 
   let totalBoostedTdh = 0;
@@ -604,15 +604,15 @@ async function calculateGlobalTDHHistory(
   let nextgenLength = 0;
 
   tdhData.forEach((h: any) => {
-    totalBoostedTdh += parseFloat(h.boosted_tdh);
-    totalTdh += parseFloat(h.tdh);
-    totalTdhRaw += parseFloat(h.tdh__raw);
-    totalGradientsBoostedTdh += parseFloat(h.boosted_gradients_tdh);
-    totalGradientsTdh += parseFloat(h.gradients_tdh);
-    totalGradientsTdhRaw += parseFloat(h.gradients_tdh__raw);
-    totalMemesBoostedTdh += parseFloat(h.boosted_memes_tdh);
-    totalMemesTdh += parseFloat(h.memes_tdh);
-    totalMemesTdhRaw += parseFloat(h.memes_tdh__raw);
+    totalBoostedTdh += Number.parseFloat(h.boosted_tdh);
+    totalTdh += Number.parseFloat(h.tdh);
+    totalTdhRaw += Number.parseFloat(h.tdh__raw);
+    totalGradientsBoostedTdh += Number.parseFloat(h.boosted_gradients_tdh);
+    totalGradientsTdh += Number.parseFloat(h.gradients_tdh);
+    totalGradientsTdhRaw += Number.parseFloat(h.gradients_tdh__raw);
+    totalMemesBoostedTdh += Number.parseFloat(h.boosted_memes_tdh);
+    totalMemesTdh += Number.parseFloat(h.memes_tdh);
+    totalMemesTdhRaw += Number.parseFloat(h.memes_tdh__raw);
 
     walletsLength += h.wallets.length;
     memesLength += h.memes.length;
