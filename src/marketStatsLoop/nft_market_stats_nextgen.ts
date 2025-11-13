@@ -1,16 +1,16 @@
 import { EntityManager } from 'typeorm';
+import { collections } from '../collections';
 import { getDataSource } from '../db';
 import { NextGenToken, NextGenTokenListing } from '../entities/INextGen';
+import { ethTools } from '../eth-tools';
 import { Logger } from '../logging';
 import {
   fetchNextgenTokens,
   persitNextgenTokenListings
 } from '../nextgen/nextgen.db';
 import { NEXTGEN_ROYALTIES_ADDRESS } from '../nextgen/nextgen_constants';
-import { Time } from '../time';
 import { equalIgnoreCase } from '../strings';
-import { collections } from '../collections';
-import { ethTools } from '../eth-tools';
+import { Time } from '../time';
 
 const logger = Logger.get('NEXTGEN_MARKET_STATS');
 
@@ -48,7 +48,10 @@ export const findNextgenMarketStats = async (contract: string) => {
   logger.info(`[CONTRACT ${contract}] [RUNNING]`);
 
   const blurListings = await getBlurListings(contract);
-  const meListings = await getMagicEdenListings(contract);
+
+  //Disabling Magic Eden listings for now
+  // const meListings = await getMagicEdenListings(contract);
+  const meListings: any[] = [];
 
   const dataSource = getDataSource();
   await dataSource.transaction(async (entityManager) => {
@@ -176,12 +179,12 @@ async function getMagicEdenListings(contract: string): Promise<any[]> {
         continuation ? `&continuation=${continuation}` : ''
       }`;
       const response = await fetch(url);
+      const responseText = await response.text();
 
       try {
-        jsonResponse = await response.json();
+        jsonResponse = JSON.parse(responseText);
         break;
       } catch (error: any) {
-        const responseText = await response.text();
         if (attempt === 3) {
           const message = `Error getting JSON response from Magic Eden: ${JSON.stringify(
             error

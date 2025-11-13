@@ -384,15 +384,31 @@ export class ProfileProxiesDb extends LazyDbAccessCompatibleService {
     await this.db.execute(query, params, { wrappedConnection: connection });
   }
 
-  async updateCreditSpentForAction(
-    param: { credit_spent: number; id: string },
+  async incrementCreditSpentForAction(
+    param: { credit_spent_delta: number; id: string },
     connection: ConnectionWrapper<any>
-  ) {
-    await this.db.execute(
-      `update ${PROFILE_PROXY_ACTIONS_TABLE} set credit_spent = :credit_spent where id = :id`,
+  ): Promise<boolean> {
+    const result = await this.db.execute(
+      `update ${PROFILE_PROXY_ACTIONS_TABLE}
+        set credit_spent = IFNULL(credit_spent, 0) + :credit_spent_delta
+        where id = :id
+          and (credit_amount is null or credit_amount - IFNULL(credit_spent, 0) >= :credit_spent_delta)`,
       param,
       { wrappedConnection: connection }
     );
+    return this.getAffectedRows(result) === 1;
+  }
+
+  private getAffectedRows(result: any): number {
+    if (!result) {
+      return 0;
+    }
+    if (typeof result === 'object' && 'affectedRows' in result) {
+      return (result as any).affectedRows ?? 0;
+    }
+    return Array.isArray(result) && typeof result[1] === 'number'
+      ? (result as any)[1]
+      : 0;
   }
 
   async deleteAllProxiesAndActionsForProfile(
