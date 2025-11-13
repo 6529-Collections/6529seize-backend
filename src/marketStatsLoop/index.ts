@@ -15,18 +15,18 @@ import { findNextgenMarketStats } from './nft_market_stats_nextgen';
 
 const logger = Logger.get('MARKET_STATS_LOOP');
 
-const batchContracts = [
-  MEMES_CONTRACT,
-  MEMELAB_CONTRACT,
-  GRADIENT_CONTRACT
-].map((c) => c.toLowerCase());
+const batchContracts = new Set(
+  [MEMES_CONTRACT, MEMELAB_CONTRACT, GRADIENT_CONTRACT].map((c) =>
+    c.toLowerCase()
+  )
+);
 
 export const handler = sentryContext.wrapLambdaHandler(async () => {
   await doInDbContext(
     async () => {
       const envContract = process.env.MARKET_STATS_CONTRACT?.toLowerCase();
       if (envContract) {
-        if (batchContracts.includes(envContract)) {
+        if (batchContracts.has(envContract)) {
           await findNftMarketStats(envContract);
         } else if (envContract === 'nextgen') {
           await findNextgenMarketStats(NEXTGEN_CORE[mainnet.id].toLowerCase());
