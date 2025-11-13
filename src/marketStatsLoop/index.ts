@@ -23,14 +23,14 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
         MEMELAB_CONTRACT,
         GRADIENT_CONTRACT
       ].map((c) => c.toLowerCase());
-      const contract = process.env.MARKET_STATS_CONTRACT?.toLowerCase();
-      if (contract) {
-        if (batchContracts.includes(contract)) {
-          await findNftMarketStats(contract);
-        } else if (contract === 'nextgen') {
+      const envContract = process.env.MARKET_STATS_CONTRACT?.toLowerCase();
+      if (envContract) {
+        if (batchContracts.includes(envContract)) {
+          await findNftMarketStats(envContract);
+        } else if (envContract === 'nextgen') {
           await findNextgenMarketStats(NEXTGEN_CORE[mainnet.id].toLowerCase());
         } else {
-          logger.info(`[INVALID CONTRACT ${contract}]`);
+          logger.info(`[INVALID CONTRACT ${envContract}]`);
         }
       } else {
         logger.info('[MISSING process.env.MARKET_STATS_CONTRACT]');
