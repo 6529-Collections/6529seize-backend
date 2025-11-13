@@ -1,4 +1,5 @@
 import { RequestInfo, RequestInit } from 'node-fetch';
+import { Readable } from 'stream';
 import { consolidationTools } from '../consolidation-tools';
 import {
   HISTORIC_CONSOLIDATED_WALLETS_TDH_TABLE,
@@ -103,11 +104,142 @@ function matchesConsolidationKey(d: any, yd: any) {
 }
 
 async function fetchConsolidatedTDH(block: number): Promise<ConsolidatedTDH[]> {
+  // Primary: Try to get data from historic_tdh_consolidation table
   const results = await sqlExecutor.execute<ConsolidatedTDH>(
     `SELECT * FROM ${HISTORIC_CONSOLIDATED_WALLETS_TDH_TABLE} WHERE block = :block`,
     { block }
   );
-  return results.map(parseTdhDataFromDB);
+
+  if (results.length > 0) {
+    return results.map(parseTdhDataFromDB);
+  }
+
+  // Fallback: If no results in DB, try to fetch from arweave uploads
+  logger.info(
+    `[BLOCK ${block}] [NO RESULTS IN DB] [FALLING BACK TO ARWEAVE UPLOADS]`
+  );
+
+  try {
+    // Call the consolidated_uploads API endpoint
+    const apiUrl = `https://api.6529.io/api/consolidated_uploads?block=${block}&page_size=1`;
+    const apiResponse = await fetch(apiUrl);
+
+    if (!apiResponse.ok) {
+      throw new Error(
+        `Failed to fetch consolidated uploads: ${apiResponse.status} ${apiResponse.statusText}`
+      );
+    }
+
+    const apiData = await apiResponse.json();
+
+    // Validate that results[0] block matches the requested block
+    if (!apiData.data || apiData.data.length === 0) {
+      throw new Error(
+        `No consolidated uploads found for block ${block} in API response`
+      );
+    }
+
+    const uploadEntry = apiData.data[0];
+    if (uploadEntry.block !== block) {
+      throw new Error(
+        `Block mismatch: requested ${block}, but API returned block ${uploadEntry.block}`
+      );
+    }
+
+    if (!uploadEntry.url) {
+      throw new Error(
+        `No URL found in consolidated uploads response for block ${block}`
+      );
+    }
+
+    logger.info(
+      `[BLOCK ${block}] [FOUND ARWEAVE URL] [${uploadEntry.url}] [FETCHING CSV DATA]`
+    );
+
+    // Fetch CSV data from arweave URL
+    const csvResponse = await fetch(uploadEntry.url);
+    if (!csvResponse.ok) {
+      throw new Error(
+        `Failed to fetch CSV from arweave: ${csvResponse.status} ${csvResponse.statusText}`
+      );
+    }
+
+    // Parse CSV data
+    const csvText = await csvResponse.text();
+    const csvData = await parseCsvFromText(csvText);
+
+    // Convert CSV rows to ConsolidatedTDH format
+    const consolidatedTdh: ConsolidatedTDH[] = csvData.map((row: any) => {
+      // Map CSV fields to ConsolidatedTDH structure
+      const tdh: any = {
+        block: parseInt(row.block) || block,
+        date: new Date(
+          row.date
+            ? `${row.date.substring(0, 4)}-${row.date.substring(4, 6)}-${row.date.substring(6, 8)}`
+            : new Date()
+        ),
+        consolidation_key: row.consolidation_key || '',
+        consolidation_display: row.consolidation_display || '',
+        wallets: row.wallets || '[]',
+        balance: parseInt(row.total_balance) || 0,
+        unique_memes: parseInt(row.unique_memes) || 0,
+        memes_cards_sets: parseInt(row.memes_cards_sets) || 0,
+        tdh: parseInt(row.tdh) || 0,
+        boost: parseFloat(row.boost) || 0,
+        boosted_tdh: parseInt(row.boosted_tdh) || 0,
+        tdh__raw: parseInt(row.tdh__raw) || 0,
+        tdh_rank: parseInt(row.tdh_rank) || 0,
+        tdh_rank_memes: parseInt(row.tdh_rank_memes) || 0,
+        tdh_rank_gradients: parseInt(row.tdh_rank_gradients) || 0,
+        tdh_rank_nextgen: 0, // Not in CSV, default to 0
+        genesis: parseInt(row.genesis) || 0,
+        nakamoto: parseInt(row.nakamoto) || 0,
+        boosted_memes_tdh: parseInt(row.boosted_memes_tdh) || 0,
+        memes_tdh: parseInt(row.memes_tdh) || 0,
+        memes_tdh__raw: parseInt(row.memes_tdh__raw) || 0,
+        memes_balance: parseInt(row.memes_balance) || 0,
+        memes: row.memes || '[]',
+        memes_ranks: '[]', // Not in CSV, default to empty array
+        gradients_balance: parseInt(row.gradients_balance) || 0,
+        boosted_gradients_tdh: parseInt(row.boosted_gradients_tdh) || 0,
+        gradients_tdh: parseInt(row.gradients_tdh) || 0,
+        gradients_tdh__raw: parseInt(row.gradients_tdh__raw) || 0,
+        gradients: row.gradients || '[]',
+        gradients_ranks: '[]', // Not in CSV, default to empty array
+        nextgen_balance: parseInt(row.nextgen_balance) || 0,
+        boosted_nextgen_tdh: parseInt(row.boosted_nextgen_tdh) || 0,
+        nextgen_tdh: parseInt(row.nextgen_tdh) || 0,
+        nextgen_tdh__raw: parseInt(row.nextgen_tdh__raw) || 0,
+        nextgen: row.nextgen || '[]',
+        nextgen_ranks: '[]', // Not in CSV, default to empty array
+        boost_breakdown: row.boost_breakdown || '{}'
+      };
+      return tdh;
+    });
+
+    // Apply parseTdhDataFromDB to parse JSON fields
+    return consolidatedTdh.map(parseTdhDataFromDB);
+  } catch (error: any) {
+    logger.error(
+      `[BLOCK ${block}] [FALLBACK FAILED] [${error.message}] [THROWING ERROR]`
+    );
+    throw new Error(
+      `No results found in historic_tdh_consolidation table and no valid arweave URL from uploads endpoint for block ${block}: ${error.message}`
+    );
+  }
+}
+
+async function parseCsvFromText(csvText: string): Promise<any[]> {
+  return new Promise((resolve, reject) => {
+    const results: any[] = [];
+    const stream = Readable.from([csvText]);
+
+    stream
+      .pipe(csvParser())
+      .on('data', (data: any) => results.push(data))
+      .on('end', () => resolve(results))
+      .on('error', reject);
+  });
 }
 
 function hasMatchingWallet(d: any, yd: any) {
@@ -240,11 +372,13 @@ async function tdhHistory(date: Date) {
   const todayBlock = await fetchTDHBlock(todayTime);
   const yesterdayBlock = await fetchTDHBlock(yesterdayTime);
 
-  logger.info({
-    message: 'CALCULATING TDH CHANGE',
-    from: `${todayBlock.timestamp} (BLOCK ${todayBlock.block_number})`,
-    to: `${yesterdayBlock.timestamp} (BLOCK ${yesterdayBlock.block_number})`
-  });
+  logger.info(
+    [
+      'CALCULATING TDH CHANGE',
+      `[FROM BLOCK ${todayBlock.block_number} (${todayTime.toIsoDateString()})]`,
+      `[TO BLOCK ${yesterdayBlock.block_number} (${yesterdayTime.toIsoDateString()})]`
+    ].join(' ')
+  );
 
   const todayData: ConsolidatedTDH[] = await fetchConsolidatedTDH(
     todayBlock.block_number
