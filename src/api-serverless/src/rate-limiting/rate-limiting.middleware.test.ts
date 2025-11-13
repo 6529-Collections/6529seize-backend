@@ -165,7 +165,10 @@ describe('rateLimitingMiddleware', () => {
     const middleware = rateLimitingMiddleware();
     await middleware(req as Request, res as Response, next);
 
-    expect(mockSetHeader).toHaveBeenCalledWith('Retry-After', expect.any(String));
+    expect(mockSetHeader).toHaveBeenCalledWith(
+      'Retry-After',
+      expect.any(String)
+    );
     expect(mockStatus).toHaveBeenCalledWith(429);
     expect(mockJson).toHaveBeenCalledWith({
       error: 'Rate limit exceeded',
@@ -221,4 +224,3 @@ describe('rateLimitingMiddleware', () => {
     );
   });
 });
-

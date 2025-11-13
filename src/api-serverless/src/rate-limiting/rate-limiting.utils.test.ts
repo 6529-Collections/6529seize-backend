@@ -85,8 +85,8 @@ describe('rate-limiting.utils', () => {
 
   describe('generateSustainedKey', () => {
     it('generates correct key format', () => {
-      const key = generateSustainedKey('test-identifier', 1234567890);
-      expect(key).toBe('rate_limit:sustained:test-identifier:1234567890');
+      const key = generateSustainedKey('test-identifier');
+      expect(key).toBe('rate_limit:sustained:test-identifier');
     });
   });
 
@@ -140,4 +140,3 @@ describe('rate-limiting.utils', () => {
     });
   });
 });
-

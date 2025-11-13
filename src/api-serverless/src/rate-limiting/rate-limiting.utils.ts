@@ -32,15 +32,17 @@ export function getRateLimitConfig(): {
   };
 }
 
-export function generateBurstKey(identifier: string, windowStart: number): string {
-  return `rate_limit:burst:${identifier}:${windowStart}`;
-}
-
-export function generateSustainedKey(
+export function generateBurstKey(
   identifier: string,
   windowStart: number
 ): string {
-  return `rate_limit:sustained:${identifier}:${windowStart}`;
+  return `rate_limit:burst:${identifier}:${windowStart}`;
+}
+
+export function generateSustainedKey(identifier: string): string {
+  // Use a single key per identifier for sliding window tracking
+  // The sliding window is managed via timestamps in the sorted set, not separate keys
+  return `rate_limit:sustained:${identifier}`;
 }
 
 export function calculateRetryAfter(resetTime: number): number {
@@ -53,4 +55,3 @@ export function sanitizeIdentifier(identifier: string): string {
   // Remove any characters that could be problematic in Redis keys
   return identifier.replace(/[^a-zA-Z0-9:._-]/g, '_');
 }
-

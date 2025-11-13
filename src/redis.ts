@@ -154,7 +154,7 @@ export async function redisSortedSetAddAndCount(
   pipeline.expire(key, expireSeconds);
 
   const results = await pipeline.exec();
-  if (!results || results.length < 3) {
+  if (!results || results.length !== 4) {
     throw new Error('Unexpected Redis pipeline result');
   }
   const count = results[2] as number;

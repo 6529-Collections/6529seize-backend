@@ -116,8 +116,8 @@ export class RateLimitingService {
     currentSecond: number
   ): Promise<RateLimitResult> {
     // Use a sliding window approach
-    // We track requests in the last `windowSeconds` seconds
-    const key = generateSustainedKey(identifier, currentSecond);
+    // We track requests in the last `windowSeconds` seconds using a single key per identifier
+    const key = generateSustainedKey(identifier);
     const now = Date.now();
     const windowStart = now - windowSeconds * 1000;
 
