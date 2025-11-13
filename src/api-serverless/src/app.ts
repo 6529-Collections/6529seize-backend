@@ -99,6 +99,7 @@ import { ApiTransactionPage } from './generated/models/ApiTransactionPage';
 import { ApiUploadItem } from './generated/models/ApiUploadItem';
 import { ApiUploadsPage } from './generated/models/ApiUploadsPage';
 import { DEFAULT_MAX_SIZE } from './page-request';
+import { rateLimitingMiddleware } from './rate-limiting/rate-limiting.middleware';
 import rpcRoutes from './rpc/rpc.routes';
 import sitemapRoutes from './sitemap/sitemap.routes';
 import subscriptionsRoutes from './subscriptions/api.subscriptions.routes';
@@ -1077,6 +1078,9 @@ loadApi().then(async () => {
   rootRouter.use(`/oracle`, oracleRoutes);
   rootRouter.use(`/rpc`, rpcRoutes);
   rootRouter.use(`/sitemap`, sitemapRoutes);
+
+  // Apply rate limiting after cache check (cached responses bypass rate limiting)
+  app.use(rateLimitingMiddleware());
   app.use(rootRouter);
 
   app.use(customErrorMiddleware());

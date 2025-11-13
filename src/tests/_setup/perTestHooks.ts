@@ -85,5 +85,33 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  pool.end();
+  if (pool) {
+    try {
+      // Close pool with timeout to prevent hanging
+      const timeoutPromise = new Promise<void>((resolve) => {
+        const timeout = setTimeout(() => {
+          logger.warn('[POOL CLOSE TIMEOUT] Forcing pool cleanup');
+          resolve();
+        }, 500);
+        // Use unref() so timer doesn't keep process alive
+        timeout.unref();
+      });
+
+      await Promise.race([
+        new Promise<void>((resolve) => {
+          pool.end((err) => {
+            if (err) {
+              logger.error(`[POOL CLOSE ERROR] ${err}`);
+            }
+            resolve();
+          });
+        }),
+        timeoutPromise
+      ]);
+    } catch (error) {
+      // Ignore errors during cleanup
+      logger.error(`[POOL CLEANUP ERROR] ${error}`);
+    }
+    pool = undefined as any;
+  }
 });
