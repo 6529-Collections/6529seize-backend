@@ -1,4 +1,4 @@
-import { randomBytes } from 'crypto';
+import { randomBytes } from 'node:crypto';
 import { Logger } from '../../../logging';
 import { getRedisClient, redisSortedSetAddAndCount } from '../../../redis';
 import {

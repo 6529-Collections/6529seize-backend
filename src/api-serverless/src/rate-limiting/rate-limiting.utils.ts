@@ -53,5 +53,5 @@ export function calculateRetryAfter(resetTime: number): number {
 
 export function sanitizeIdentifier(identifier: string): string {
   // Remove any characters that could be problematic in Redis keys
-  return identifier.replace(/[^a-zA-Z0-9:._-]/g, '_');
+  return identifier.replaceAll(/[^a-zA-Z0-9:._-]/g, '_');
 }
