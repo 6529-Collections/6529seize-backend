@@ -21,11 +21,14 @@ import { appFeatures } from '../../../app-features';
 import { ApiTdhGrantsPage } from '../generated/models/ApiTdhGrantsPage';
 import {
   TdhGrantSearchRequestApiModel,
-  TdhGrantSearchRequestApiModelSchema
+  TdhGrantSearchRequestApiModelSchema,
+  TdhGrantTokensSearchRequestApiModel,
+  TdhGrantTokensSearchRequestApiModelSchema
 } from './tdh-grant-search-request.api-model';
 import { RequestContext } from '../../../request.context';
 import { tdhGrantsFinder } from '../../../tdh-grants/tdh-grants.finder';
 import { identityFetcher } from '../identities/identity.fetcher';
+import { ApiTdhGrantTokensPage } from '../generated/models/ApiTdhGrantTokensPage';
 
 const router = asyncRouter();
 
@@ -33,13 +36,7 @@ router.get(
   '/',
   maybeAuthenticatedUser(),
   async (
-    req: Request<
-      any,
-      any,
-      ApiCreateTdhGrant,
-      TdhGrantSearchRequestApiModel,
-      any
-    >,
+    req: Request<any, any, any, TdhGrantSearchRequestApiModel, any>,
     res: Response<ApiResponse<ApiTdhGrantsPage>>
   ) => {
     const timer = Timer.getFromRequest(req);
@@ -64,6 +61,37 @@ router.get(
       page: results.page,
       next: results.next,
       data: apiItems
+    });
+  }
+);
+
+router.get(
+  '/:grant/tokens',
+  maybeAuthenticatedUser(),
+  async (
+    req: Request<
+      { grant: string },
+      any,
+      any,
+      TdhGrantTokensSearchRequestApiModel,
+      any
+    >,
+    res: Response<ApiResponse<ApiTdhGrantTokensPage>>
+  ) => {
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
+    const ctx: RequestContext = { timer, authenticationContext };
+    const searchModel = getValidatedByJoiOrThrow(
+      { ...req.query, grant_id: req.params.grant },
+      TdhGrantTokensSearchRequestApiModelSchema
+    );
+    const results = await tdhGrantsFinder.searchForTokens(searchModel, ctx);
+    const data = results.items.map((token) => ({ token }));
+    res.send({
+      count: results.count,
+      page: results.page,
+      next: results.next,
+      data
     });
   }
 );

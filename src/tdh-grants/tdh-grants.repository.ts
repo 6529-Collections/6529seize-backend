@@ -1,9 +1,14 @@
 import { dbSupplier, LazyDbAccessCompatibleService } from '../sql-executor';
-import { TdhGrantEntity, TdhGrantStatus } from '../entities/ITdhGrant';
+import {
+  TdhGrantEntity,
+  TdhGrantStatus,
+  TdhGrantTokenMode
+} from '../entities/ITdhGrant';
 import { RequestContext } from '../request.context';
 import {
   CONSOLIDATED_TDH_EDITIONS_TABLE,
   CONSOLIDATED_WALLETS_TDH_TABLE,
+  EXTERNAL_INDEXED_OWNERSHIP_721_HISTORY_TABLE,
   IDENTITIES_TABLE,
   TDH_GRANT_TOKENS_TABLE,
   TDH_GRANTS_TABLE,
@@ -14,6 +19,7 @@ import { Logger } from '../logging';
 import { TdhGrantTokenEntity } from '../entities/ITdhGrantToken';
 import { bulkInsert } from '../db/my-sql.helpers';
 import { numbers } from '../numbers';
+import { PageSortDirection } from '../api-serverless/src/page-request';
 
 export type GrantWithCap = TdhGrantEntity & { grantor_x_tdh_rate: number };
 
@@ -78,7 +84,6 @@ export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
        target_partition,
        target_chain,
        target_contract,
-       target_tokens,
        token_mode,
        created_at,
        updated_at,
@@ -96,7 +101,6 @@ export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
        :target_partition,
        :target_chain,
        :target_contract,
-       :target_tokens,
        :token_mode,
        :created_at,
        :updated_at,
@@ -139,7 +143,7 @@ export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
       readonly grantor_id: string | null;
       readonly target_contract: string | null;
       readonly target_chain: number | null;
-      readonly status: TdhGrantStatus | null;
+      readonly status: TdhGrantStatus[];
       readonly sort_direction: 'ASC' | 'DESC' | null;
       readonly sort:
         | 'created_at'
@@ -183,7 +187,7 @@ export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
       readonly grantor_id: string | null;
       readonly target_contract: string | null;
       readonly target_chain: number | null;
-      readonly status: TdhGrantStatus | null;
+      readonly status: TdhGrantStatus[];
     },
     ctx: RequestContext
   ): Promise<number> {
@@ -211,7 +215,7 @@ export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
     grantor_id: string | null,
     target_contract: string | null,
     target_chain: number | null,
-    status: TdhGrantStatus | null
+    status: TdhGrantStatus[]
   ) {
     const whereAnds: string[] = [];
     const params: Record<string, any> = {};
@@ -227,8 +231,8 @@ export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
       whereAnds.push(`t.target_chain = :target_chain`);
       params['target_chain'] = target_chain;
     }
-    if (status) {
-      whereAnds.push(`t.status = :status`);
+    if (status.length) {
+      whereAnds.push(`t.status in (:status)`);
       params['status'] = status;
     }
     return { whereAnds, params };
@@ -526,7 +530,6 @@ export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
         'target_contract',
         'target_partition',
         'token_mode',
-        'target_tokens',
         'created_at',
         'updated_at',
         'valid_from',
@@ -538,6 +541,142 @@ export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
       ],
       ctx
     );
+  }
+
+  async getGrantsTokenCounts(
+    grantIds: string[],
+    ctx: RequestContext
+  ): Promise<Record<string, number>> {
+    try {
+      ctx.timer?.start(`${this.constructor.name}->getGrantsTokenCounts`);
+      const dbResults = await this.db.execute<{
+        grant_id: string;
+        token_count: number;
+      }>(
+        `
+              SELECT
+                  g.id AS grant_id,
+                  CASE
+                      WHEN g.token_mode = 'ALL' THEN (
+                          SELECT COUNT(DISTINCT h.token_id)
+                          FROM ${EXTERNAL_INDEXED_OWNERSHIP_721_HISTORY_TABLE} h
+                          WHERE h.\`partition\` = g.target_partition
+                      )
+                      WHEN g.token_mode = 'INCLUDE' THEN (
+                          SELECT COUNT(DISTINCT t.token_id)
+                          FROM ${TDH_GRANT_TOKENS_TABLE} t
+                          WHERE t.tokenset_id      = g.tokenset_id
+                            AND t.target_partition = g.target_partition
+                            AND EXISTS (
+                              SELECT 1
+                              FROM ${EXTERNAL_INDEXED_OWNERSHIP_721_HISTORY_TABLE} h
+                              WHERE h.\`partition\` = t.target_partition
+                                AND h.token_id    = t.token_id
+                          )
+                      )
+                      ELSE 0
+                      END AS token_count
+              FROM tdh_grants g
+              WHERE g.id IN (:grantIds)
+        `,
+        { grantIds },
+        { wrappedConnection: ctx.connection }
+      );
+      return dbResults.reduce(
+        (acc, it) => {
+          acc[it.grant_id] = it.token_count;
+          return acc;
+        },
+        {} as Record<string, number>
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->getGrantsTokenCounts`);
+    }
+  }
+
+  async getGrantTokensPage(
+    param: {
+      grant_id: string;
+      sort_direction: PageSortDirection;
+      sort: 'token';
+      limit: number;
+      offset: number;
+    },
+    ctx: RequestContext
+  ): Promise<string[]> {
+    try {
+      ctx.timer?.start(`${this.constructor.name}->getGrantTokensPage`);
+
+      const { grant_id, sort_direction, limit, offset } = param;
+      const grant = await this.db.oneOrNull<{
+        token_mode: TdhGrantTokenMode;
+        target_partition: string;
+        tokenset_id: string | null;
+      }>(
+        `
+        SELECT token_mode, target_partition, tokenset_id
+        FROM ${TDH_GRANTS_TABLE}
+        WHERE id = :grant_id
+      `,
+        { grant_id },
+        { wrappedConnection: ctx.connection }
+      );
+
+      if (!grant) {
+        return [];
+      }
+
+      const direction = sort_direction === 'DESC' ? 'DESC' : 'ASC';
+
+      let sql: string;
+      const params: Record<string, unknown> = {
+        limit,
+        offset
+      };
+
+      if (grant.token_mode === TdhGrantTokenMode.ALL) {
+        sql = `
+        SELECT DISTINCT h.token_id AS token
+        FROM ${EXTERNAL_INDEXED_OWNERSHIP_721_HISTORY_TABLE} h
+        WHERE h.\`partition\` = :partition
+        ORDER BY h.token_id ${direction}
+        LIMIT :limit OFFSET :offset
+      `;
+        params.partition = grant.target_partition;
+      } else if (
+        grant.token_mode === TdhGrantTokenMode.INCLUDE &&
+        grant.tokenset_id
+      ) {
+        sql = `
+        SELECT DISTINCT t.token_id AS token
+        FROM ${TDH_GRANT_TOKENS_TABLE} t
+        WHERE t.tokenset_id      = :tokenset_id
+          AND t.target_partition = :partition
+          AND EXISTS (
+            SELECT 1
+            FROM ${EXTERNAL_INDEXED_OWNERSHIP_721_HISTORY_TABLE} h
+            WHERE h.\`partition\` = t.target_partition
+              AND h.token_id      = t.token_id
+          )
+        ORDER BY t.token_id ${direction}
+        LIMIT :limit OFFSET :offset
+      `;
+        params.tokenset_id = grant.tokenset_id;
+        params.partition = grant.target_partition;
+      } else {
+        return [];
+      }
+
+      const rows = await this.db.execute<{ token: string | number }>(
+        sql,
+        params,
+        { wrappedConnection: ctx.connection }
+      );
+
+      return rows.map((r) => String(r.token));
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->getGrantTokensPage`);
+    }
   }
 }
 

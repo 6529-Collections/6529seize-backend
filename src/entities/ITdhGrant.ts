@@ -25,8 +25,6 @@ export class TdhGrantEntity {
   readonly target_partition!: string;
   @Column({ type: 'varchar', length: 20, nullable: false })
   readonly token_mode!: TdhGrantTokenMode;
-  @Column({ type: 'text', nullable: true })
-  readonly target_tokens!: string | null;
   @Column({ type: 'bigint', nullable: false })
   readonly created_at!: number;
   @Column({ type: 'bigint', nullable: false })

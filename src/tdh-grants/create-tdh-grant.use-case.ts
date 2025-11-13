@@ -94,9 +94,6 @@ export class CreateTdhGrantUseCase {
             target_chain: command.target_chain,
             target_contract: command.target_contract,
             token_mode: tokenMode,
-            target_tokens: command.target_tokens.length
-              ? command.target_tokens.join(`,`)
-              : null,
             created_at: currentMillis,
             updated_at: currentMillis,
             valid_from: null,
@@ -111,7 +108,16 @@ export class CreateTdhGrantUseCase {
             tokenEntities,
             ctxWithConnection
           );
-          return fromTdhGrantEntityToModel(entity);
+          const targetTokenCounts =
+            await this.tdhGrantsRepository.getGrantsTokenCounts(
+              [entity.id],
+              ctx
+            );
+          const targetTokenCount = targetTokenCounts[entity.id] ?? 0;
+          return fromTdhGrantEntityToModel({
+            ...entity,
+            target_token_count: targetTokenCount
+          });
         }
       );
     } finally {
