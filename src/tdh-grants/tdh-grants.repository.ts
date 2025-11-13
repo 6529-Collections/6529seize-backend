@@ -549,6 +549,9 @@ export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
   ): Promise<Record<string, number>> {
     try {
       ctx.timer?.start(`${this.constructor.name}->getGrantsTokenCounts`);
+      if (!grantIds.length) {
+        return {};
+      }
       const dbResults = await this.db.execute<{
         grant_id: string;
         token_count: number;
