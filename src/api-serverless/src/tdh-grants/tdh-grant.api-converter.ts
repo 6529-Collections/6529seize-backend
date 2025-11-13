@@ -17,6 +17,7 @@ import { ApiTdhGrantStatus } from '../generated/models/ApiTdhGrantStatus';
 import { enums } from '../../../enums';
 import { RequestContext } from '../../../request.context';
 import { TdhGrantSearchRequestApiModel } from './tdh-grant-search-request.api-model';
+import { BadRequestException } from '../../../exceptions';
 
 export class TdhGrantApiConverter {
   constructor(private readonly identityFetcher: IdentityFetcher) {}
@@ -84,7 +85,7 @@ export class TdhGrantApiConverter {
         grantId: model.id
       }),
       target_contract: model.target_contract,
-      target_tokens: model.target_tokens,
+      target_tokens_count: model.target_token_count,
       tdh_rate: model.tdh_rate,
       status: this.resolveApiStatusFromModelValue({
         grantId: model.id,
@@ -133,19 +134,17 @@ export class TdhGrantApiConverter {
   }): ApiTdhGrantStatus {
     const result = enums.resolve(ApiTdhGrantStatus, status);
     if (!result) {
-      throw new Error(
+      throw new BadRequestException(
         `Unknown TDH Grant status ${status} for grant ${grantId}`
       );
     }
     return result;
   }
 
-  private resolveModelStatusFromApiValue(
-    status: ApiTdhGrantStatus
-  ): TdhGrantStatus {
+  private resolveModelStatusFromApiValue(status: string): TdhGrantStatus {
     const result = enums.resolve(TdhGrantStatus, status);
     if (!result) {
-      throw new Error(`Unknown TDH Grant status ${status}`);
+      throw new BadRequestException(`Unknown TDH Grant status ${status}`);
     }
     return result;
   }
@@ -157,7 +156,7 @@ export class TdhGrantApiConverter {
     readonly grantor_id: string | null;
     readonly target_contract: string | null;
     readonly target_chain: number | null;
-    readonly status: TdhGrantStatus | null;
+    readonly status: TdhGrantStatus[];
     readonly sort_direction: 'ASC' | 'DESC' | null;
     readonly sort: 'created_at' | 'valid_from' | 'valid_to' | 'tdh_rate' | null;
     readonly page: number;
@@ -176,9 +175,9 @@ export class TdhGrantApiConverter {
         ? null
         : this.resolveTargetChainFromApiValue(apiModel.target_chain);
     const status =
-      apiModel.status === null
-        ? null
-        : this.resolveModelStatusFromApiValue(apiModel.status);
+      apiModel.status
+        ?.split(',')
+        ?.map((it) => this.resolveModelStatusFromApiValue(it)) ?? [];
     return {
       grantor_id: grantorId,
       target_contract: apiModel.target_contract,

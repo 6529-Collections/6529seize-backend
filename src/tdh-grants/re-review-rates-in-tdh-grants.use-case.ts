@@ -198,7 +198,6 @@ export class ReReviewRatesInTdhGrantsUseCase {
       target_contract: source.g.target_contract,
       target_partition: source.g.target_partition,
       token_mode: source.g.token_mode,
-      target_tokens: source.g.target_tokens ?? null,
       created_at: nowMillis,
       updated_at: nowMillis,
       valid_from: segStart,
@@ -272,7 +271,6 @@ export class ReReviewRatesInTdhGrantsUseCase {
         last.target_contract === seg.target_contract &&
         last.target_partition === seg.target_partition &&
         last.token_mode === seg.token_mode &&
-        last.target_tokens === seg.target_tokens &&
         last.is_irrevocable === seg.is_irrevocable;
 
       if (canMerge) {
