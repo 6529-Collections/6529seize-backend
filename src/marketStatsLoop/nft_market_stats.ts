@@ -37,13 +37,15 @@ export const findNftMarketStats = async (contract: string) => {
     throw new Error(`Unknown contract: ${contract}`);
   }
 
-  logger.info(
-    `[COLLECTION ${collectionSlug}] [PROCESSING STATS FOR ${contract}]`
-  );
+  logger.info(`[COLLECTION ${collectionSlug}] FINDING BEST PRICES...`);
 
   const offersMap = await fetchBestOffersForCollection(
     collectionSlug,
     itemType
+  );
+
+  logger.info(
+    `[COLLECTION ${collectionSlug}] FOUND ${offersMap.size} BEST OFFERS`
   );
   const listingsMap = await fetchBestListingsForCollection(
     collectionSlug,
