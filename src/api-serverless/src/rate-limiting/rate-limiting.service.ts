@@ -1,3 +1,4 @@
+import { randomBytes } from 'crypto';
 import { Logger } from '../../../logging';
 import { getRedisClient, redisSortedSetAddAndCount } from '../../../redis';
 import {
@@ -8,6 +9,13 @@ import {
 } from './rate-limiting.utils';
 
 const logger = Logger.get('RATE_LIMIT_SERVICE');
+
+// Generate a unique value for Redis sorted set entries
+function generateUniqueValue(timestamp: number): string {
+  // Use 4 random bytes (8 hex chars) for uniqueness
+  const randomSuffix = randomBytes(4).toString('hex');
+  return `${timestamp}-${randomSuffix}`;
+}
 
 export interface RateLimitResult {
   allowed: boolean;
@@ -93,7 +101,7 @@ export class RateLimitingService {
     const count = await redisSortedSetAddAndCount(
       key,
       now,
-      `${now}-${Math.random()}`,
+      generateUniqueValue(now),
       windowStart - 1,
       2 // Expire after 2 seconds
     );
@@ -124,7 +132,7 @@ export class RateLimitingService {
     const count = await redisSortedSetAddAndCount(
       key,
       now,
-      `${now}-${Math.random()}`,
+      generateUniqueValue(now),
       windowStart,
       windowSeconds + 1 // Expire after window + 1 second
     );

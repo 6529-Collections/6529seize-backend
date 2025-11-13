@@ -1,11 +1,15 @@
 import { disconnect } from '../../db-api';
+import { Logger } from '../../logging';
+
+const logger = Logger.get('GLOBAL_TEARDOWN');
 
 module.exports = async () => {
   // Close database connection pools first
   try {
     await disconnect();
   } catch (error) {
-    // Ignore errors during teardown
+    // Log but don't throw - teardown should complete even if cleanup fails
+    logger.error(`Error disconnecting database: ${error}`);
   }
 
   // Give a small delay to ensure connections are fully closed
@@ -17,7 +21,8 @@ module.exports = async () => {
     try {
       await container.stop();
     } catch (error) {
-      // Ignore errors during container stop
+      // Log but don't throw - teardown should complete even if cleanup fails
+      logger.error(`Error stopping MySQL container: ${error}`);
     }
   }
 };

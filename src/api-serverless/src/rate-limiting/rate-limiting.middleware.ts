@@ -10,9 +10,7 @@ const logger = Logger.get('RATE_LIMIT_MIDDLEWARE');
 let configCache: ReturnType<typeof getRateLimitConfig> | null = null;
 
 function getConfig() {
-  if (!configCache) {
-    configCache = getRateLimitConfig();
-  }
+  configCache ??= getRateLimitConfig();
   return configCache;
 }
 
