@@ -52,8 +52,6 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
 });
 
 async function tdhHistoryLoop(iterations: number) {
-  // TODO: Remove this after testing
-  throw new Error('Test error');
   for (let i = iterations - 1; i >= 0; i--) {
     const start = Time.now();
     const myDate = new Date();
