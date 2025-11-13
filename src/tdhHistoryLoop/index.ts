@@ -189,7 +189,7 @@ async function fetchConsolidatedTDH(block: number): Promise<ConsolidatedTDH[]> {
         unique_memes: Number.parseInt(row.unique_memes) || 0,
         memes_cards_sets: Number.parseInt(row.memes_cards_sets) || 0,
         tdh: Number.parseInt(row.tdh) || 0,
-        boost: parseFloat(row.boost) || 0,
+        boost: Number.parseFloat(row.boost) || 0,
         boosted_tdh: Number.parseInt(row.boosted_tdh) || 0,
         tdh__raw: Number.parseInt(row.tdh__raw) || 0,
         tdh_rank: Number.parseInt(row.tdh_rank) || 0,
@@ -575,18 +575,18 @@ async function calculateGlobalTDHHistory(
   let totalNetBalance = 0;
 
   tdhHistory.forEach((h: any) => {
-    totalCreatedTdh += parseFloat(h.created_tdh);
-    totalDestroyedTdh += parseFloat(h.destroyed_tdh);
-    totalNetTdh += parseFloat(h.net_tdh);
-    totalCreatedBoostedTdh += parseFloat(h.created_boosted_tdh);
-    totalDestroyedBoostedTdh += parseFloat(h.destroyed_boosted_tdh);
-    totalNetBoostedTdh += parseFloat(h.net_boosted_tdh);
-    totalCreatedTdhRaw += parseFloat(h.created_tdh__raw);
-    totalDestroyedTdhRaw += parseFloat(h.destroyed_tdh__raw);
-    totalNetTdhRaw += parseFloat(h.net_tdh__raw);
-    totalCreatedBalance += parseFloat(h.created_balance);
-    totalDestroyedBalance += parseFloat(h.destroyed_balance);
-    totalNetBalance += parseFloat(h.net_balance);
+    totalCreatedTdh += Number.parseFloat(h.created_tdh);
+    totalDestroyedTdh += Number.parseFloat(h.destroyed_tdh);
+    totalNetTdh += Number.parseFloat(h.net_tdh);
+    totalCreatedBoostedTdh += Number.parseFloat(h.created_boosted_tdh);
+    totalDestroyedBoostedTdh += Number.parseFloat(h.destroyed_boosted_tdh);
+    totalNetBoostedTdh += Number.parseFloat(h.net_boosted_tdh);
+    totalCreatedTdhRaw += Number.parseFloat(h.created_tdh__raw);
+    totalDestroyedTdhRaw += Number.parseFloat(h.destroyed_tdh__raw);
+    totalNetTdhRaw += Number.parseFloat(h.net_tdh__raw);
+    totalCreatedBalance += Number.parseFloat(h.created_balance);
+    totalDestroyedBalance += Number.parseFloat(h.destroyed_balance);
+    totalNetBalance += Number.parseFloat(h.net_balance);
   });
 
   let totalBoostedTdh = 0;
@@ -604,15 +604,15 @@ async function calculateGlobalTDHHistory(
   let nextgenLength = 0;
 
   tdhData.forEach((h: any) => {
-    totalBoostedTdh += parseFloat(h.boosted_tdh);
-    totalTdh += parseFloat(h.tdh);
-    totalTdhRaw += parseFloat(h.tdh__raw);
-    totalGradientsBoostedTdh += parseFloat(h.boosted_gradients_tdh);
-    totalGradientsTdh += parseFloat(h.gradients_tdh);
-    totalGradientsTdhRaw += parseFloat(h.gradients_tdh__raw);
-    totalMemesBoostedTdh += parseFloat(h.boosted_memes_tdh);
-    totalMemesTdh += parseFloat(h.memes_tdh);
-    totalMemesTdhRaw += parseFloat(h.memes_tdh__raw);
+    totalBoostedTdh += Number.parseFloat(h.boosted_tdh);
+    totalTdh += Number.parseFloat(h.tdh);
+    totalTdhRaw += Number.parseFloat(h.tdh__raw);
+    totalGradientsBoostedTdh += Number.parseFloat(h.boosted_gradients_tdh);
+    totalGradientsTdh += Number.parseFloat(h.gradients_tdh);
+    totalGradientsTdhRaw += Number.parseFloat(h.gradients_tdh__raw);
+    totalMemesBoostedTdh += Number.parseFloat(h.boosted_memes_tdh);
+    totalMemesTdh += Number.parseFloat(h.memes_tdh);
+    totalMemesTdhRaw += Number.parseFloat(h.memes_tdh__raw);
 
     walletsLength += h.wallets.length;
     memesLength += h.memes.length;
