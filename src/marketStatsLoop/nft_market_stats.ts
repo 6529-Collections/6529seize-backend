@@ -44,9 +44,7 @@ export const findNftMarketStats = async (contract: string) => {
     itemType
   );
 
-  logger.info(
-    `[COLLECTION ${collectionSlug}] FOUND ${offersMap.size} BEST OFFERS`
-  );
+  logger.info(`[COLLECTION ${collectionSlug}] FINDING BEST LISTINGS...`);
   const listingsMap = await fetchBestListingsForCollection(
     collectionSlug,
     itemType
