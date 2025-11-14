@@ -54,14 +54,23 @@ export class IdentityFetcher {
     ctx: RequestContext
   ): Promise<ApiIdentity | null> {
     const key = identityKey.toLowerCase();
-    if (UUID_REGEX.exec(key)) {
-      return this.getIdentityAndConsolidationsByProfileId(key, ctx);
-    } else if (key.endsWith('.eth')) {
-      return await this.getIdentityAndConsolidationsByEnsName(key, ctx);
-    } else if (WALLET_REGEX.exec(key)) {
-      return await this.getIdentityAndConsolidationsByWallet(key, ctx);
+    try {
+      ctx.timer?.start(
+        `${this.constructor.name}->getIdentityAndConsolidationsByIdentityKey(${key})`
+      );
+      if (UUID_REGEX.exec(key)) {
+        return this.getIdentityAndConsolidationsByProfileId(key, ctx);
+      } else if (key.endsWith('.eth')) {
+        return await this.getIdentityAndConsolidationsByEnsName(key, ctx);
+      } else if (WALLET_REGEX.exec(key)) {
+        return await this.getIdentityAndConsolidationsByWallet(key, ctx);
+      }
+      return await this.getIdentityAndConsolidationsByHandle(key, ctx);
+    } finally {
+      ctx.timer?.stop(
+        `${this.constructor.name}->getIdentityAndConsolidationsByIdentityKey(${key})`
+      );
     }
-    return await this.getIdentityAndConsolidationsByHandle(key, ctx);
   }
 
   public async getOverviewsByIds(

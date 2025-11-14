@@ -25,7 +25,7 @@ import {
   Rating
 } from '../entities/IRating';
 import { Logger } from '../logging';
-import { Time } from '../time';
+import { Time, Timer } from '../time';
 import { ConnectionWrapper } from '../sql-executor';
 import { FullPageRequest, Page } from '../api-serverless/src/page-request';
 import { calculateLevel } from '../profiles/profile-level';
@@ -101,80 +101,106 @@ export class RatingsService {
   }
 
   public async updateRating(
-    request: UpdateRatingViaApiRequest
+    request: UpdateRatingViaApiRequest,
+    ctx: RequestContext
   ): Promise<{ total: number; byUser: number }> {
-    return await this.ratingsDb.executeNativeQueriesInTransaction(
-      async (connection) => {
-        const identityUpdates = await this.updateRatingInternal(
-          request,
-          connection
-        );
-
-        if (identityUpdates.length > 0) {
-          await this.ratingsDb.applyBulkIdentityUpdates(
-            identityUpdates,
+    try {
+      ctx.timer?.start(`${this.constructor.name}->updateRating`);
+      return await this.ratingsDb.executeNativeQueriesInTransaction(
+        async (connection) => {
+          const identityUpdates = await this.updateRatingInternal(request, {
+            ...ctx,
             connection
-          );
-        }
+          });
 
-        return await this.ratingsDb.getTotalAndUserRepRatingForCategoryToProfile(
-          {
-            matter: request.matter,
-            from_profile_id: request.rater_profile_id,
-            to_profile_id: request.matter_target_id,
-            category: request.matter_category
-          },
-          connection
-        );
-      }
-    );
+          if (identityUpdates.length > 0) {
+            ctx.timer?.start(
+              `${this.constructor.name}->ratingsDb->applyBulkIdentityUpdates`
+            );
+            await this.ratingsDb.applyBulkIdentityUpdates(
+              identityUpdates,
+              connection
+            );
+            ctx.timer?.stop(
+              `${this.constructor.name}->ratingsDb->applyBulkIdentityUpdates`
+            );
+          }
+          ctx.timer?.start(
+            `${this.constructor.name}->ratingsDb->getTotalAndUserRepRatingForCategoryToProfile`
+          );
+          const result =
+            await this.ratingsDb.getTotalAndUserRepRatingForCategoryToProfile(
+              {
+                matter: request.matter,
+                from_profile_id: request.rater_profile_id,
+                to_profile_id: request.matter_target_id,
+                category: request.matter_category
+              },
+              connection
+            );
+          ctx.timer?.stop(
+            `${this.constructor.name}->ratingsDb->getTotalAndUserRepRatingForCategoryToProfile`
+          );
+          return result;
+        }
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->updateRating`);
+    }
   }
 
   private async updateRatingInternal(
     request: UpdateRatingViaApiRequest,
-    connection: ConnectionWrapper<any>
+    ctx: RequestContext
   ): Promise<IdentityUpdate[]> {
-    const authenticatedProfileId =
-      request.authenticationContext.getActingAsId();
-    if (!authenticatedProfileId) {
-      throw new ForbiddenException(`Create a profile before you rate`);
-    }
-    if (!request.authenticationContext.isAuthenticatedAsProxy()) {
-      const identityUpdate = await this.updateRatingUnsafe({
-        request,
-        changeReason: 'USER_EDIT',
-        proxyContext: null,
-        connection
-      });
-      return identityUpdate ? [identityUpdate] : [];
-    } else {
-      const action =
-        request.matter === RateMatter.REP
-          ? request.authenticationContext.activeProxyActions[
-              ProfileProxyActionType.ALLOCATE_REP
-            ]
-          : request.authenticationContext.activeProxyActions[
-              ProfileProxyActionType.ALLOCATE_CIC
-            ];
-      if (!action) {
-        throw new ForbiddenException(
-          `Proxy is not allowed to give ${request.matter} ratings`
-        );
+    try {
+      ctx.timer?.start(`${this.constructor.name}->updateRatingInternal`);
+      const authenticatedProfileId =
+        request.authenticationContext.getActingAsId();
+      if (!authenticatedProfileId) {
+        throw new ForbiddenException(`Create a profile before you rate`);
       }
-      const proxyContext: RatingProxyContext = {
-        authenticatedProfileId:
-          request.authenticationContext.authenticatedProfileId!,
-        action_id: action.id,
-        credit_amount: action.credit_amount,
-        credit_spent: action.credit_spent
-      };
-      const identityUpdate = await this.updateRatingUnsafe({
-        request,
-        changeReason: 'USER_EDIT',
-        proxyContext,
-        connection
-      });
-      return identityUpdate ? [identityUpdate] : [];
+      if (!request.authenticationContext.isAuthenticatedAsProxy()) {
+        const identityUpdate = await this.updateRatingUnsafe({
+          request,
+          changeReason: 'USER_EDIT',
+          proxyContext: null,
+          connection: ctx.connection!,
+          timer: ctx.timer
+        });
+        return identityUpdate ? [identityUpdate] : [];
+      } else {
+        const action =
+          request.matter === RateMatter.REP
+            ? request.authenticationContext.activeProxyActions[
+                ProfileProxyActionType.ALLOCATE_REP
+              ]
+            : request.authenticationContext.activeProxyActions[
+                ProfileProxyActionType.ALLOCATE_CIC
+              ];
+        if (!action) {
+          throw new ForbiddenException(
+            `Proxy is not allowed to give ${request.matter} ratings`
+          );
+        }
+        const proxyContext: RatingProxyContext = {
+          authenticatedProfileId:
+            request.authenticationContext.authenticatedProfileId!,
+          action_id: action.id,
+          credit_amount: action.credit_amount,
+          credit_spent: action.credit_spent
+        };
+        const identityUpdate = await this.updateRatingUnsafe({
+          request,
+          changeReason: 'USER_EDIT',
+          proxyContext,
+          connection: ctx.connection!,
+          timer: ctx.timer
+        });
+        return identityUpdate ? [identityUpdate] : [];
+      }
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->updateRatingInternal`);
     }
   }
 
@@ -184,7 +210,8 @@ export class RatingsService {
     proxyContext,
     connection,
     skipTdhCheck,
-    skipLogCreation
+    skipLogCreation,
+    timer
   }: {
     request: UpdateRatingRequest;
     changeReason: string;
@@ -192,57 +219,91 @@ export class RatingsService {
     connection: ConnectionWrapper<any>;
     skipTdhCheck?: boolean;
     skipLogCreation?: boolean;
+    timer?: Timer;
   }): Promise<IdentityUpdate | null> {
-    const profileId = request.rater_profile_id;
-    if (
-      getMattersWhereTargetIsProfile().includes(request.matter) &&
-      request.matter_target_id === profileId
-    ) {
-      throw new BadRequestException(`User can not rate their own profile`);
-    }
-    const currentRating = await this.ratingsDb.getRating(request, connection);
-    if (currentRating.rating === request.rating) {
-      return null;
-    }
-    if (!skipTdhCheck) {
-      const totalTdhSpentOnMatter = currentRating.total_tdh_spent_on_matter;
-      const tdhSpentOnThisRequest =
-        Math.abs(request.rating) - Math.abs(currentRating.rating);
-      if (proxyContext) {
-        await this.checkAndUpdateProxyRatingCredit(
-          currentRating,
+    try {
+      timer?.start(`${this.constructor.name}->updateRatingUnsafe`);
+      const profileId = request.rater_profile_id;
+      if (
+        getMattersWhereTargetIsProfile().includes(request.matter) &&
+        request.matter_target_id === profileId
+      ) {
+        throw new BadRequestException(`User can not rate their own profile`);
+      }
+      timer?.start(
+        `${this.constructor.name}->updateRatingUnsafe->ratinsDb->getRating`
+      );
+      const currentRating = await this.ratingsDb.getRating(request, connection);
+      timer?.stop(
+        `${this.constructor.name}->updateRatingUnsafe->ratinsDb->getRating`
+      );
+      if (currentRating.rating === request.rating) {
+        return null;
+      }
+      if (!skipTdhCheck) {
+        const totalTdhSpentOnMatter = currentRating.total_tdh_spent_on_matter;
+        const tdhSpentOnThisRequest =
+          Math.abs(request.rating) - Math.abs(currentRating.rating);
+        if (proxyContext) {
+          timer?.start(
+            `${this.constructor.name}->updateRatingUnsafe->ratinsDb->checkAndUpdateProxyRatingCredit`
+          );
+          await this.checkAndUpdateProxyRatingCredit(
+            currentRating,
+            request,
+            proxyContext,
+            connection
+          );
+          timer?.stop(
+            `${this.constructor.name}->updateRatingUnsafe->ratinsDb->checkAndUpdateProxyRatingCredit`
+          );
+        }
+        const profileTdh = await identitiesDb.getProfileTdh(profileId);
+        if (totalTdhSpentOnMatter + tdhSpentOnThisRequest > profileTdh) {
+          throw new BadRequestException(
+            `Not enough TDH left to spend on this matter. Changing this vote would spend ${tdhSpentOnThisRequest} TDH, but profile only has ${
+              profileTdh - totalTdhSpentOnMatter
+            } left to spend`
+          );
+        }
+      }
+      timer?.start(
+        `${this.constructor.name}->updateRatingUnsafe->ratinsDb->updateRating`
+      );
+      const identityUpdate = await this.ratingsDb.updateRating(
+        request,
+        request.rating - currentRating.rating,
+        connection
+      );
+      timer?.stop(
+        `${this.constructor.name}->updateRatingUnsafe->ratinsDb->updateRating`
+      );
+
+      timer?.start(
+        `${this.constructor.name}->updateRatingUnsafe->scheduleEvents`
+      );
+      await this.scheduleEvents(request, currentRating, connection);
+      timer?.stop(
+        `${this.constructor.name}->updateRatingUnsafe->scheduleEvents`
+      );
+      if (!skipLogCreation) {
+        timer?.start(
+          `${this.constructor.name}->updateRatingUnsafe->insertLogs`
+        );
+        await this.insertLogs(
           request,
+          currentRating,
+          changeReason,
           proxyContext,
           connection
         );
+        timer?.stop(`${this.constructor.name}->updateRatingUnsafe->insertLogs`);
       }
-      const profileTdh = await identitiesDb.getProfileTdh(profileId);
-      if (totalTdhSpentOnMatter + tdhSpentOnThisRequest > profileTdh) {
-        throw new BadRequestException(
-          `Not enough TDH left to spend on this matter. Changing this vote would spend ${tdhSpentOnThisRequest} TDH, but profile only has ${
-            profileTdh - totalTdhSpentOnMatter
-          } left to spend`
-        );
-      }
-    }
-    const identityUpdate = await this.ratingsDb.updateRating(
-      request,
-      request.rating - currentRating.rating,
-      connection
-    );
 
-    await this.scheduleEvents(request, currentRating, connection);
-    if (!skipLogCreation) {
-      await this.insertLogs(
-        request,
-        currentRating,
-        changeReason,
-        proxyContext,
-        connection
-      );
+      return identityUpdate;
+    } finally {
+      timer?.stop(`${this.constructor.name}->updateRatingUnsafe`);
     }
-
-    return identityUpdate;
   }
 
   private async insertLogs(
@@ -1008,7 +1069,7 @@ export class RatingsService {
                 rating: newRating,
                 authenticationContext: authContext
               },
-              connection
+              { connection }
             );
             allIdentityUpdates.push(...identityUpdates);
           } catch (e: any) {
