@@ -386,7 +386,7 @@ export class ProfileProxiesDb extends LazyDbAccessCompatibleService {
 
   async incrementCreditSpentForAction(
     param: { credit_spent_delta: number; id: string },
-    connection: ConnectionWrapper<any>
+    connection?: ConnectionWrapper<any>
   ): Promise<boolean> {
     const result = await this.db.execute(
       `update ${PROFILE_PROXY_ACTIONS_TABLE}
@@ -394,7 +394,7 @@ export class ProfileProxiesDb extends LazyDbAccessCompatibleService {
         where id = :id
           and (credit_amount is null or credit_amount - IFNULL(credit_spent, 0) >= :credit_spent_delta)`,
       param,
-      { wrappedConnection: connection }
+      connection ? { wrappedConnection: connection } : undefined
     );
     return this.getAffectedRows(result) === 1;
   }

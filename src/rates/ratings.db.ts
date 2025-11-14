@@ -253,7 +253,6 @@ from general_stats
   ): Promise<void> {
     if (identityUpdates.length === 0) return;
 
-    // Consolidate updates by profileId and sort for consistent ordering to prevent deadlocks
     const repUpdatesByProfileId = new Map<string, number>();
     const cicUpdatesByProfileId = new Map<string, number>();
 

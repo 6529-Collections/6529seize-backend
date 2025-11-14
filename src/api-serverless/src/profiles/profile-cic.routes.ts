@@ -22,7 +22,6 @@ import {
 } from './rating.helper';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import { ApiChangeProfileCicRating } from '../generated/models/ApiChangeProfileCicRating';
-import { ApiChangeProfileCicRatingResponse } from '../generated/models/ApiChangeProfileCicRatingResponse';
 import { ApiRatingWithProfileInfoAndLevelPage } from '../generated/models/ApiRatingWithProfileInfoAndLevelPage';
 import { identityFetcher } from '../identities/identity.fetcher';
 import { Timer } from '../../../time';
@@ -103,26 +102,26 @@ router.post(
   needsAuthenticatedUser(),
   async function (
     req: RateProfileRequest<ApiChangeProfileCicRating>,
-    res: Response<ApiResponse<ApiChangeProfileCicRatingResponse>>
+    res: Response<ApiResponse<any>>
   ) {
     const { amount } = getValidatedByJoiOrThrow(
       req.body,
       ChangeProfileCicRatingSchema
     );
     const { authContext, targetProfileId } = await getRaterInfoFromRequest(req);
-    const { total, byUser } = await ratingsService.updateRating({
-      authenticationContext: authContext,
-      rater_profile_id: authContext.getActingAsId()!,
-      matter: RateMatter.CIC,
-      matter_category: 'CIC',
-      matter_target_id: targetProfileId,
-      rating: amount
-    });
+    await ratingsService.updateRating(
+      {
+        authenticationContext: authContext,
+        rater_profile_id: authContext.getActingAsId()!,
+        matter: RateMatter.CIC,
+        matter_category: 'CIC',
+        matter_target_id: targetProfileId,
+        rating: amount
+      },
+      { authenticationContext: authContext, timer: Timer.getFromRequest(req) }
+    );
     await giveReadReplicaTimeToCatchUp();
-    res.status(201).send({
-      total_cic_rating: total,
-      cic_rating_by_user: byUser
-    });
+    res.status(201).send({});
   }
 );
 

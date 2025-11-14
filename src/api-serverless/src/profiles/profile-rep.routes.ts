@@ -16,7 +16,6 @@ import { getRaterInfoFromRequest, RateProfileRequest } from './rating.helper';
 import { RatingStats } from '../../../rates/ratings.db';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import { ApiChangeProfileRepRating } from '../generated/models/ApiChangeProfileRepRating';
-import { ApiChangeProfileRepRatingResponse } from '../generated/models/ApiChangeProfileRepRatingResponse';
 import { ApiRepRating } from '../generated/models/ApiRepRating';
 import { ApiRatingWithProfileInfoAndLevel } from '../generated/models/ApiRatingWithProfileInfoAndLevel';
 import { ApiRatingWithProfileInfoAndLevelPage } from '../generated/models/ApiRatingWithProfileInfoAndLevelPage';
@@ -158,12 +157,14 @@ router.post(
   needsAuthenticatedUser(),
   async function (
     req: RateProfileRequest<ApiChangeProfileRepRating>,
-    res: Response<ApiResponse<ApiChangeProfileRepRatingResponse>>
+    res: Response<ApiResponse<any>>
   ) {
+    const timer = Timer.getFromRequest(req);
     const { amount, category } = getValidatedByJoiOrThrow(
       req.body,
       ChangeProfileRepRatingSchema
     );
+    timer.start(`abusivenessDetection`);
     const proposedCategory = category?.trim() ?? '';
     if (proposedCategory !== '') {
       const abusivenessDetectionResult =
@@ -175,20 +176,25 @@ router.post(
         );
       }
     }
+    timer.stop(`abusivenessDetection`);
+    timer.start(`getRaterInfoFromRequest`);
     const { authContext, targetProfileId } = await getRaterInfoFromRequest(req);
-    const { total, byUser } = await ratingsService.updateRating({
-      authenticationContext: authContext,
-      rater_profile_id: authContext.getActingAsId()!,
-      matter: RateMatter.REP,
-      matter_category: proposedCategory,
-      matter_target_id: targetProfileId,
-      rating: amount
-    });
+    timer.stop(`getRaterInfoFromRequest`);
+    await ratingsService.updateRating(
+      {
+        authenticationContext: authContext,
+        rater_profile_id: authContext.getActingAsId()!,
+        matter: RateMatter.REP,
+        matter_category: proposedCategory,
+        matter_target_id: targetProfileId,
+        rating: amount
+      },
+      { authenticationContext: authContext, timer }
+    );
+    timer.start(`artificial500msLag`);
     await giveReadReplicaTimeToCatchUp();
-    res.send({
-      total_rep_rating_for_category: total,
-      rep_rating_for_category_by_user: byUser
-    });
+    timer.stop(`artificial500msLag`);
+    res.send({});
   }
 );
 
