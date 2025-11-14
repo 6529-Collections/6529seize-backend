@@ -65,6 +65,21 @@ import { enums } from '../enums';
 import { ids } from '../ids';
 import { collections } from '../collections';
 
+interface ProxyCreditSpend {
+  readonly actionId: string;
+  readonly amount: number;
+}
+
+interface UpdateRatingInternalResult {
+  readonly identityUpdates: IdentityUpdate[];
+  readonly proxyCreditSpends: ProxyCreditSpend[];
+}
+
+interface UpdateRatingUnsafeResult {
+  readonly identityUpdate: IdentityUpdate | null;
+  readonly proxyCreditDelta: number;
+}
+
 export class RatingsService {
   private readonly logger = Logger.get('RATINGS_SERVICE');
 
@@ -103,15 +118,16 @@ export class RatingsService {
   public async updateRating(
     request: UpdateRatingViaApiRequest,
     ctx: RequestContext
-  ): Promise<{ total: number; byUser: number }> {
+  ) {
     try {
       ctx.timer?.start(`${this.constructor.name}->updateRating`);
       return await this.ratingsDb.executeNativeQueriesInTransaction(
         async (connection) => {
-          const identityUpdates = await this.updateRatingInternal(request, {
-            ...ctx,
-            connection
-          });
+          const { identityUpdates, proxyCreditSpends } =
+            await this.updateRatingInternal(request, {
+              ...ctx,
+              connection
+            });
 
           if (identityUpdates.length > 0) {
             ctx.timer?.start(
@@ -125,23 +141,7 @@ export class RatingsService {
               `${this.constructor.name}->ratingsDb->applyBulkIdentityUpdates`
             );
           }
-          ctx.timer?.start(
-            `${this.constructor.name}->ratingsDb->getTotalAndUserRepRatingForCategoryToProfile`
-          );
-          const result =
-            await this.ratingsDb.getTotalAndUserRepRatingForCategoryToProfile(
-              {
-                matter: request.matter,
-                from_profile_id: request.rater_profile_id,
-                to_profile_id: request.matter_target_id,
-                category: request.matter_category
-              },
-              connection
-            );
-          ctx.timer?.stop(
-            `${this.constructor.name}->ratingsDb->getTotalAndUserRepRatingForCategoryToProfile`
-          );
-          return result;
+          await this.applyProxyCreditSpends(proxyCreditSpends, ctx.timer);
         }
       );
     } finally {
@@ -152,7 +152,7 @@ export class RatingsService {
   private async updateRatingInternal(
     request: UpdateRatingViaApiRequest,
     ctx: RequestContext
-  ): Promise<IdentityUpdate[]> {
+  ): Promise<UpdateRatingInternalResult> {
     try {
       ctx.timer?.start(`${this.constructor.name}->updateRatingInternal`);
       const authenticatedProfileId =
@@ -161,14 +161,17 @@ export class RatingsService {
         throw new ForbiddenException(`Create a profile before you rate`);
       }
       if (!request.authenticationContext.isAuthenticatedAsProxy()) {
-        const identityUpdate = await this.updateRatingUnsafe({
+        const { identityUpdate } = await this.updateRatingUnsafe({
           request,
           changeReason: 'USER_EDIT',
           proxyContext: null,
           connection: ctx.connection!,
           timer: ctx.timer
         });
-        return identityUpdate ? [identityUpdate] : [];
+        return {
+          identityUpdates: identityUpdate ? [identityUpdate] : [],
+          proxyCreditSpends: []
+        };
       } else {
         const action =
           request.matter === RateMatter.REP
@@ -190,14 +193,26 @@ export class RatingsService {
           credit_amount: action.credit_amount,
           credit_spent: action.credit_spent
         };
-        const identityUpdate = await this.updateRatingUnsafe({
-          request,
-          changeReason: 'USER_EDIT',
-          proxyContext,
-          connection: ctx.connection!,
-          timer: ctx.timer
-        });
-        return identityUpdate ? [identityUpdate] : [];
+        const { identityUpdate, proxyCreditDelta } =
+          await this.updateRatingUnsafe({
+            request,
+            changeReason: 'USER_EDIT',
+            proxyContext,
+            connection: ctx.connection!,
+            timer: ctx.timer
+          });
+        return {
+          identityUpdates: identityUpdate ? [identityUpdate] : [],
+          proxyCreditSpends:
+            proxyCreditDelta > 0
+              ? [
+                  {
+                    actionId: proxyContext.action_id,
+                    amount: proxyCreditDelta
+                  }
+                ]
+              : []
+        };
       }
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->updateRatingInternal`);
@@ -220,7 +235,7 @@ export class RatingsService {
     skipTdhCheck?: boolean;
     skipLogCreation?: boolean;
     timer?: Timer;
-  }): Promise<IdentityUpdate | null> {
+  }): Promise<UpdateRatingUnsafeResult> {
     try {
       timer?.start(`${this.constructor.name}->updateRatingUnsafe`);
       const profileId = request.rater_profile_id;
@@ -238,26 +253,24 @@ export class RatingsService {
         `${this.constructor.name}->updateRatingUnsafe->ratinsDb->getRating`
       );
       if (currentRating.rating === request.rating) {
-        return null;
+        return { identityUpdate: null, proxyCreditDelta: 0 };
+      }
+      const ratingChange = Math.abs(currentRating.rating - request.rating);
+      let proxyCreditDelta = 0;
+      if (proxyContext && proxyContext.credit_amount !== null) {
+        const creditLeft =
+          proxyContext.credit_amount - (proxyContext.credit_spent ?? 0);
+        if (creditLeft < ratingChange) {
+          throw new BadRequestException(
+            `Not enough proxy credit left to rate.`
+          );
+        }
+        proxyCreditDelta = ratingChange;
       }
       if (!skipTdhCheck) {
         const totalTdhSpentOnMatter = currentRating.total_tdh_spent_on_matter;
         const tdhSpentOnThisRequest =
           Math.abs(request.rating) - Math.abs(currentRating.rating);
-        if (proxyContext) {
-          timer?.start(
-            `${this.constructor.name}->updateRatingUnsafe->ratinsDb->checkAndUpdateProxyRatingCredit`
-          );
-          await this.checkAndUpdateProxyRatingCredit(
-            currentRating,
-            request,
-            proxyContext,
-            connection
-          );
-          timer?.stop(
-            `${this.constructor.name}->updateRatingUnsafe->ratinsDb->checkAndUpdateProxyRatingCredit`
-          );
-        }
         const profileTdh = await identitiesDb.getProfileTdh(profileId);
         if (totalTdhSpentOnMatter + tdhSpentOnThisRequest > profileTdh) {
           throw new BadRequestException(
@@ -300,7 +313,7 @@ export class RatingsService {
         timer?.stop(`${this.constructor.name}->updateRatingUnsafe->insertLogs`);
       }
 
-      return identityUpdate;
+      return { identityUpdate, proxyCreditDelta };
     } finally {
       timer?.stop(`${this.constructor.name}->updateRatingUnsafe`);
     }
@@ -335,33 +348,46 @@ export class RatingsService {
     );
   }
 
-  private async checkAndUpdateProxyRatingCredit(
-    currentRating: Rating & {
-      total_tdh_spent_on_matter: number;
-    },
-    request: UpdateRatingRequest,
-    proxyContext: RatingProxyContext,
-    connection: ConnectionWrapper<any>
+  private async applyProxyCreditSpends(
+    proxyCreditSpends: ProxyCreditSpend[],
+    timer?: Timer
   ) {
-    const ratingChange = Math.abs(currentRating.rating - request.rating);
-    const creditAmount = proxyContext.credit_amount;
-    const creditSpent = proxyContext.credit_spent ?? 0;
-    if (creditAmount !== null) {
-      const creditLeft = creditAmount - creditSpent;
-      if (creditLeft < ratingChange) {
-        throw new BadRequestException(`Not enough proxy credit left to rate.`);
+    if (proxyCreditSpends.length === 0) {
+      return;
+    }
+    const aggregatedSpends = proxyCreditSpends.reduce(
+      (acc, spend) => {
+        acc[spend.actionId] = (acc[spend.actionId] ?? 0) + spend.amount;
+        return acc;
+      },
+      {} as Record<string, number>
+    );
+    const timerLabel = `${this.constructor.name}->profileProxiesDb->checkAndUpdateProxyRatingCredit`;
+    timer?.start(timerLabel);
+    try {
+      for (const [actionId, amount] of Object.entries(aggregatedSpends)) {
+        if (amount <= 0) {
+          continue;
+        }
+        try {
+          const creditUpdated =
+            await this.profileProxiesDb.incrementCreditSpentForAction({
+              id: actionId,
+              credit_spent_delta: amount
+            });
+          if (!creditUpdated) {
+            this.logger.warn(
+              `Best-effort proxy credit spend failed (action=${actionId}, amount=${amount})`
+            );
+          }
+        } catch (error) {
+          this.logger.warn(
+            `Best-effort proxy credit spend threw (action=${actionId}, amount=${amount}): ${(error as Error).message}`
+          );
+        }
       }
-      const creditUpdated =
-        await this.profileProxiesDb.incrementCreditSpentForAction(
-          {
-            id: proxyContext.action_id,
-            credit_spent_delta: ratingChange
-          },
-          connection
-        );
-      if (!creditUpdated) {
-        throw new BadRequestException(`Not enough proxy credit left to rate.`);
-      }
+    } finally {
+      timer?.stop(timerLabel);
     }
   }
 
@@ -604,7 +630,7 @@ export class RatingsService {
     const identityUpdates: IdentityUpdate[] = [];
 
     for (const rating of ratings) {
-      const identityUpdate = await this.updateRatingUnsafe({
+      const { identityUpdate } = await this.updateRatingUnsafe({
         request: {
           ...rating,
           rating: 0
@@ -754,7 +780,7 @@ export class RatingsService {
         connectionHolder
       );
 
-      const identityUpdate = await this.updateRatingUnsafe({
+      const { identityUpdate } = await this.updateRatingUnsafe({
         request: { ...rating, rating: rating.rating + targetRating.rating },
         changeReason: `Profile ${sourceHandle} archived, ratings transferred to ${targetHandle}`,
         proxyContext: null,
@@ -918,7 +944,7 @@ export class RatingsService {
     authContext: AuthenticationContext,
     apiRequest: ApiBulkRateRequest
   ): Promise<{ skipped: { identity: string; reason: string }[] }> {
-    const errors = await this.ratingsDb.executeNativeQueriesInTransaction(
+    const result = await this.ratingsDb.executeNativeQueriesInTransaction(
       async (connection) => {
         const actingAsId = authContext.getActingAsId();
         if (!actingAsId) {
@@ -1054,24 +1080,27 @@ export class RatingsService {
           {} as Record<string, number>
         );
         const allIdentityUpdates: IdentityUpdate[] = [];
+        const allProxyCreditSpends: ProxyCreditSpend[] = [];
 
         for (const [profileId, newRating] of Object.entries(
           newRatingsByProfileId
         )) {
           try {
-            const identityUpdates = await this.updateRatingInternal(
-              {
-                matter,
-                matter_category:
-                  matter === RateMatter.CIC ? 'CIC' : apiRequest.category!,
-                matter_target_id: profileId,
-                rater_profile_id: actingAsId,
-                rating: newRating,
-                authenticationContext: authContext
-              },
-              { connection }
-            );
+            const { identityUpdates, proxyCreditSpends } =
+              await this.updateRatingInternal(
+                {
+                  matter,
+                  matter_category:
+                    matter === RateMatter.CIC ? 'CIC' : apiRequest.category!,
+                  matter_target_id: profileId,
+                  rater_profile_id: actingAsId,
+                  rating: newRating,
+                  authenticationContext: authContext
+                },
+                { connection }
+              );
             allIdentityUpdates.push(...identityUpdates);
+            allProxyCreditSpends.push(...proxyCreditSpends);
           } catch (e: any) {
             if (
               e.message.startsWith(
@@ -1091,10 +1120,11 @@ export class RatingsService {
             connection
           );
         }
-        return skipped;
+        return { skipped, proxyCreditSpends: allProxyCreditSpends };
       }
     );
-    return { skipped: errors };
+    await this.applyProxyCreditSpends(result.proxyCreditSpends);
+    return { skipped: result.skipped };
   }
 
   async getCreditLeft({
@@ -1159,176 +1189,175 @@ export class RatingsService {
     const targetAddresses = collections.distinct(
       targets.map((it) => it.address)
     );
-    await this.identitiesDb.executeNativeQueriesInTransaction(
-      async (connection) => {
-        const ctxWithConnection = { ...ctx, connection };
-        ctx.timer?.stop(`${this.constructor.name}->bulkRep->createProfiles`);
-        const profileIdsByTargetAddresses =
-          await profilesService.makeSureProfilesAreCreatedAndGetProfileIdsByAddresses(
-            targetAddresses,
-            ctxWithConnection
-          );
-        const isRatingItself = Object.values(profileIdsByTargetAddresses).find(
-          (it) => it === authenticationContext.getActingAsId()
-        );
-        if (isRatingItself) {
-          throw new BadRequestException(`User can't rate themselves`);
-        }
-        const newRatingsByCategoryAndProfile = targets.reduce(
-          (acc, target) => {
-            const targetAddress = target.address;
-            const targetProfileId = profileIdsByTargetAddresses[targetAddress];
-            if (targetProfileId) {
-              if (!acc[targetProfileId]) {
-                acc[targetProfileId] = {};
+    const proxyCreditSpends =
+      await this.identitiesDb.executeNativeQueriesInTransaction(
+        async (connection) => {
+          const collectedProxyCreditSpends: ProxyCreditSpend[] = [];
+          const ctxWithConnection = { ...ctx, connection };
+          ctx.timer?.stop(`${this.constructor.name}->bulkRep->createProfiles`);
+          const profileIdsByTargetAddresses =
+            await profilesService.makeSureProfilesAreCreatedAndGetProfileIdsByAddresses(
+              targetAddresses,
+              ctxWithConnection
+            );
+          const isRatingItself = Object.values(
+            profileIdsByTargetAddresses
+          ).find((it) => it === authenticationContext.getActingAsId());
+          if (isRatingItself) {
+            throw new BadRequestException(`User can't rate themselves`);
+          }
+          const newRatingsByCategoryAndProfile = targets.reduce(
+            (acc, target) => {
+              const targetAddress = target.address;
+              const targetProfileId =
+                profileIdsByTargetAddresses[targetAddress];
+              if (targetProfileId) {
+                if (!acc[targetProfileId]) {
+                  acc[targetProfileId] = {};
+                }
+                acc[targetProfileId][target.category] =
+                  target.amount + (acc[targetProfileId][target.category] ?? 0);
               }
-              acc[targetProfileId][target.category] =
-                target.amount + (acc[targetProfileId][target.category] ?? 0);
-            }
-            return acc;
-          },
-          {} as Record<string, Record<string, number>>
-        );
-        const ratingChanges = await this.getRatingChanges(
-          { newRatingsByCategoryAndProfile, proposedCategories },
-          ctxWithConnection
-        );
-        const tdhWastedDuringThisBulkRating = ratingChanges.reduce(
-          (acc, { changes }) =>
-            acc +
-            changes.reduce(
-              (cAcc, red) =>
-                cAcc + (Math.abs(red.newRating) - Math.abs(red.oldRating)),
-              0
-            ),
-          0
-        );
-        const [totalTdh, historicallyWastedTdh] = await Promise.all([
-          this.ratingsDb.getTdh(authenticationContext.getActingAsId()!, ctx),
-          this.ratingsDb.getTotalTdhSpent(
-            RateMatter.REP,
-            authenticationContext.getActingAsId()!,
-            ctxWithConnection
-          )
-        ]);
-        const tdhLeft = totalTdh - historicallyWastedTdh;
-        if (tdhLeft < tdhWastedDuringThisBulkRating) {
-          throw new BadRequestException(
-            `Not enough TDH left to go through with this bulk rating`
+              return acc;
+            },
+            {} as Record<string, Record<string, number>>
           );
-        }
-        if (authenticationContext.isAuthenticatedAsProxy()) {
-          const repAction =
-            authenticationContext.activeProxyActions[
-              ProfileProxyActionType.ALLOCATE_REP
-            ];
-          if (!repAction) {
-            throw new ForbiddenException(
-              `Proxy is not allowed to give REP ratings`
-            );
-          }
-          const creditLeft =
-            (repAction.credit_amount ?? 0) - (repAction.credit_spent ?? 0);
-          if (creditLeft < tdhWastedDuringThisBulkRating) {
-            throw new BadRequestException(
-              `Not enough proxy credit left to rate.`
-            );
-          }
-          const creditSpentInThisBulk = ratingChanges.reduce(
+          const ratingChanges = await this.getRatingChanges(
+            { newRatingsByCategoryAndProfile, proposedCategories },
+            ctxWithConnection
+          );
+          const tdhWastedDuringThisBulkRating = ratingChanges.reduce(
             (acc, { changes }) =>
               acc +
               changes.reduce(
-                (cAcc, red) => cAcc + Math.abs(red.newRating - red.oldRating),
+                (cAcc, red) =>
+                  cAcc + (Math.abs(red.newRating) - Math.abs(red.oldRating)),
                 0
               ),
             0
           );
-          const creditUpdated =
-            await this.profileProxiesDb.incrementCreditSpentForAction(
-              {
-                id: repAction.id,
-                credit_spent_delta: creditSpentInThisBulk
-              },
-              connection
-            );
-          if (!creditUpdated) {
+          const [totalTdh, historicallyWastedTdh] = await Promise.all([
+            this.ratingsDb.getTdh(authenticationContext.getActingAsId()!, ctx),
+            this.ratingsDb.getTotalTdhSpent(
+              RateMatter.REP,
+              authenticationContext.getActingAsId()!,
+              ctxWithConnection
+            )
+          ]);
+          const tdhLeft = totalTdh - historicallyWastedTdh;
+          if (tdhLeft < tdhWastedDuringThisBulkRating) {
             throw new BadRequestException(
-              `Not enough proxy credit left to rate.`
+              `Not enough TDH left to go through with this bulk rating`
             );
           }
-        }
-        const now = Time.now().toDate();
-        const raterId = ctx.authenticationContext!.getActingAsId()!;
-        const newRatingEntities = ratingChanges
-          .map<Rating[]>((profileChange) =>
-            profileChange.changes.map<Rating>((ratingChange) => ({
-              matter: RateMatter.REP,
-              matter_category: ratingChange.category,
-              matter_target_id: profileChange.profileId,
-              rater_profile_id: raterId,
-              rating: ratingChange.newRating,
-              authenticationContext: ctx.authenticationContext!,
-              last_modified: now
-            }))
-          )
-          .flat();
-        const logs = ratingChanges
-          .map<ProfileActivityLog[]>((profileChange) =>
-            profileChange.changes.map<ProfileActivityLog>((ratingChange) => ({
-              id: ids.uniqueShortId(),
-              created_at: now,
-              profile_id: raterId,
-              target_id: profileChange.profileId,
-              type: ProfileActivityLogType.RATING_EDIT,
-              contents: JSON.stringify({
-                old_rating: ratingChange.oldRating,
-                new_rating: ratingChange.newRating,
-                rating_matter: RateMatter.REP,
-                rating_category: ratingChange.category,
-                change_reason: 'USER_EDIT'
-              }),
-              proxy_id: authenticationContext.isAuthenticatedAsProxy()
-                ? authenticationContext.getLoggedInUsersProfileId()
-                : null,
-              additional_data_1: RateMatter.REP,
-              additional_data_2: ratingChange.category
-            }))
-          )
-          .flat();
-        const events = ratingChanges
-          .map<ProfileRepRatedEventData[]>((profileChange) =>
-            profileChange.changes.map<ProfileRepRatedEventData>(
-              (ratingChange) => ({
+          if (authenticationContext.isAuthenticatedAsProxy()) {
+            const repAction =
+              authenticationContext.activeProxyActions[
+                ProfileProxyActionType.ALLOCATE_REP
+              ];
+            if (!repAction) {
+              throw new ForbiddenException(
+                `Proxy is not allowed to give REP ratings`
+              );
+            }
+            const creditLeft =
+              (repAction.credit_amount ?? 0) - (repAction.credit_spent ?? 0);
+            if (creditLeft < tdhWastedDuringThisBulkRating) {
+              throw new BadRequestException(
+                `Not enough proxy credit left to rate.`
+              );
+            }
+            const creditSpentInThisBulk = ratingChanges.reduce(
+              (acc, { changes }) =>
+                acc +
+                changes.reduce(
+                  (cAcc, red) => cAcc + Math.abs(red.newRating - red.oldRating),
+                  0
+                ),
+              0
+            );
+            collectedProxyCreditSpends.push({
+              actionId: repAction.id,
+              amount: creditSpentInThisBulk
+            });
+          }
+          const now = Time.now().toDate();
+          const raterId = ctx.authenticationContext!.getActingAsId()!;
+          const newRatingEntities = ratingChanges
+            .map<Rating[]>((profileChange) =>
+              profileChange.changes.map<Rating>((ratingChange) => ({
+                matter: RateMatter.REP,
+                matter_category: ratingChange.category,
+                matter_target_id: profileChange.profileId,
                 rater_profile_id: raterId,
-                target_profile_id: profileChange.profileId,
-                category: ratingChange.category,
-                old_score: ratingChange.oldRating,
-                new_score: ratingChange.newRating
-              })
+                rating: ratingChange.newRating,
+                authenticationContext: ctx.authenticationContext!,
+                last_modified: now
+              }))
             )
-          )
-          .flat();
-        const repBulkUpdates = ratingChanges.map((profileChange) => ({
-          profileId: profileChange.profileId,
-          newRep: profileChange.changes.reduce(
-            (acc, red) => acc - red.oldRating + red.newRating,
-            0
-          )
-        }));
-        await Promise.all([
-          this.identitiesDb.bulkUpdateReps(repBulkUpdates, ctxWithConnection),
-          this.eventScheduler.scheduleBulkRepRatingChangedEvents(
-            events,
-            connection
-          ),
-          profileActivityLogsDb.bulkInsertProfileActivityLogs(
-            logs,
-            ctxWithConnection
-          ),
-          this.ratingsDb.bulkUpsertRatings(newRatingEntities, ctxWithConnection)
-        ]);
-      }
-    );
+            .flat();
+          const logs = ratingChanges
+            .map<ProfileActivityLog[]>((profileChange) =>
+              profileChange.changes.map<ProfileActivityLog>((ratingChange) => ({
+                id: ids.uniqueShortId(),
+                created_at: now,
+                profile_id: raterId,
+                target_id: profileChange.profileId,
+                type: ProfileActivityLogType.RATING_EDIT,
+                contents: JSON.stringify({
+                  old_rating: ratingChange.oldRating,
+                  new_rating: ratingChange.newRating,
+                  rating_matter: RateMatter.REP,
+                  rating_category: ratingChange.category,
+                  change_reason: 'USER_EDIT'
+                }),
+                proxy_id: authenticationContext.isAuthenticatedAsProxy()
+                  ? authenticationContext.getLoggedInUsersProfileId()
+                  : null,
+                additional_data_1: RateMatter.REP,
+                additional_data_2: ratingChange.category
+              }))
+            )
+            .flat();
+          const events = ratingChanges
+            .map<ProfileRepRatedEventData[]>((profileChange) =>
+              profileChange.changes.map<ProfileRepRatedEventData>(
+                (ratingChange) => ({
+                  rater_profile_id: raterId,
+                  target_profile_id: profileChange.profileId,
+                  category: ratingChange.category,
+                  old_score: ratingChange.oldRating,
+                  new_score: ratingChange.newRating
+                })
+              )
+            )
+            .flat();
+          const repBulkUpdates = ratingChanges.map((profileChange) => ({
+            profileId: profileChange.profileId,
+            newRep: profileChange.changes.reduce(
+              (acc, red) => acc - red.oldRating + red.newRating,
+              0
+            )
+          }));
+          await Promise.all([
+            this.identitiesDb.bulkUpdateReps(repBulkUpdates, ctxWithConnection),
+            this.eventScheduler.scheduleBulkRepRatingChangedEvents(
+              events,
+              connection
+            ),
+            profileActivityLogsDb.bulkInsertProfileActivityLogs(
+              logs,
+              ctxWithConnection
+            ),
+            this.ratingsDb.bulkUpsertRatings(
+              newRatingEntities,
+              ctxWithConnection
+            )
+          ]);
+          return collectedProxyCreditSpends;
+        }
+      );
+    await this.applyProxyCreditSpends(proxyCreditSpends, ctx.timer);
   }
 
   private async getRatingChanges(

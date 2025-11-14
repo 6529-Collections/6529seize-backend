@@ -19,9 +19,7 @@ export * from '../models/ApiBulkRepRequest';
 export * from '../models/ApiBulkRepTarget';
 export * from '../models/ApiChangeGroupVisibility';
 export * from '../models/ApiChangeProfileCicRating';
-export * from '../models/ApiChangeProfileCicRatingResponse';
 export * from '../models/ApiChangeProfileRepRating';
-export * from '../models/ApiChangeProfileRepRatingResponse';
 export * from '../models/ApiCommunityMemberMinimal';
 export * from '../models/ApiCompleteMultipartUploadRequest';
 export * from '../models/ApiCompleteMultipartUploadRequestPart';
@@ -202,9 +200,7 @@ import { ApiBulkRepRequest } from '../models/ApiBulkRepRequest';
 import { ApiBulkRepTarget } from '../models/ApiBulkRepTarget';
 import { ApiChangeGroupVisibility } from '../models/ApiChangeGroupVisibility';
 import { ApiChangeProfileCicRating } from '../models/ApiChangeProfileCicRating';
-import { ApiChangeProfileCicRatingResponse } from '../models/ApiChangeProfileCicRatingResponse';
 import { ApiChangeProfileRepRating } from '../models/ApiChangeProfileRepRating';
-import { ApiChangeProfileRepRatingResponse } from '../models/ApiChangeProfileRepRatingResponse';
 import { ApiCommunityMemberMinimal } from '../models/ApiCommunityMemberMinimal';
 import { ApiCompleteMultipartUploadRequest } from '../models/ApiCompleteMultipartUploadRequest';
 import { ApiCompleteMultipartUploadRequestPart } from '../models/ApiCompleteMultipartUploadRequestPart';
@@ -429,9 +425,7 @@ let typeMap: {[index: string]: any} = {
     "ApiBulkRepTarget": ApiBulkRepTarget,
     "ApiChangeGroupVisibility": ApiChangeGroupVisibility,
     "ApiChangeProfileCicRating": ApiChangeProfileCicRating,
-    "ApiChangeProfileCicRatingResponse": ApiChangeProfileCicRatingResponse,
     "ApiChangeProfileRepRating": ApiChangeProfileRepRating,
-    "ApiChangeProfileRepRatingResponse": ApiChangeProfileRepRatingResponse,
     "ApiCommunityMemberMinimal": ApiCommunityMemberMinimal,
     "ApiCompleteMultipartUploadRequest": ApiCompleteMultipartUploadRequest,
     "ApiCompleteMultipartUploadRequestPart": ApiCompleteMultipartUploadRequestPart,

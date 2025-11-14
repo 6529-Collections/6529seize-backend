@@ -16,7 +16,6 @@ import { getRaterInfoFromRequest, RateProfileRequest } from './rating.helper';
 import { RatingStats } from '../../../rates/ratings.db';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import { ApiChangeProfileRepRating } from '../generated/models/ApiChangeProfileRepRating';
-import { ApiChangeProfileRepRatingResponse } from '../generated/models/ApiChangeProfileRepRatingResponse';
 import { ApiRepRating } from '../generated/models/ApiRepRating';
 import { ApiRatingWithProfileInfoAndLevel } from '../generated/models/ApiRatingWithProfileInfoAndLevel';
 import { ApiRatingWithProfileInfoAndLevelPage } from '../generated/models/ApiRatingWithProfileInfoAndLevelPage';
@@ -158,7 +157,7 @@ router.post(
   needsAuthenticatedUser(),
   async function (
     req: RateProfileRequest<ApiChangeProfileRepRating>,
-    res: Response<ApiResponse<ApiChangeProfileRepRatingResponse>>
+    res: Response<ApiResponse<any>>
   ) {
     const timer = Timer.getFromRequest(req);
     const { amount, category } = getValidatedByJoiOrThrow(
@@ -181,7 +180,7 @@ router.post(
     timer.start(`getRaterInfoFromRequest`);
     const { authContext, targetProfileId } = await getRaterInfoFromRequest(req);
     timer.stop(`getRaterInfoFromRequest`);
-    const { total, byUser } = await ratingsService.updateRating(
+    await ratingsService.updateRating(
       {
         authenticationContext: authContext,
         rater_profile_id: authContext.getActingAsId()!,
@@ -195,10 +194,7 @@ router.post(
     timer.start(`artificial500msLag`);
     await giveReadReplicaTimeToCatchUp();
     timer.stop(`artificial500msLag`);
-    res.send({
-      total_rep_rating_for_category: total,
-      rep_rating_for_category_by_user: byUser
-    });
+    res.send({});
   }
 );
 
