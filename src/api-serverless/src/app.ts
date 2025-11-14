@@ -1,4 +1,3 @@
-import fetch from 'node-fetch';
 import * as db from '../../db-api';
 import { ids } from '../../ids';
 
@@ -99,6 +98,7 @@ import { ApiTransactionPage } from './generated/models/ApiTransactionPage';
 import { ApiUploadItem } from './generated/models/ApiUploadItem';
 import { ApiUploadsPage } from './generated/models/ApiUploadsPage';
 import { DEFAULT_MAX_SIZE } from './page-request';
+import { rateLimitingMiddleware } from './rate-limiting/rate-limiting.middleware';
 import rpcRoutes from './rpc/rpc.routes';
 import sitemapRoutes from './sitemap/sitemap.routes';
 import subscriptionsRoutes from './subscriptions/api.subscriptions.routes';
@@ -919,25 +919,6 @@ loadApi().then(async () => {
     }
   );
 
-  rootRouter.get(`/floor_price`, async function (req: any, res: any) {
-    const contract = req.query.contract;
-    const id = req.query.id;
-
-    if (!contract || !id) {
-      res.status(400).send('Missing contract or id');
-      return;
-    }
-    const url = `https://api.opensea.io/v2/orders/ethereum/seaport/listings?asset_contract_address=${contract}&limit=1&token_ids=${id}&order_by=eth_price&order_direction=asc`;
-    const response = await fetch(url, {
-      headers: {
-        'X-API-KEY': process.env.OPENSEA_API_KEY!,
-        accept: 'application/json'
-      }
-    });
-    const json = await response.json();
-    return res.send(json);
-  });
-
   apiRouter.get(`/rememes_uploads`, async function (req: any, res: any) {
     const pageSize: number =
       req.query.page_size && req.query.page_size < DISTRIBUTION_PAGE_SIZE
@@ -1077,6 +1058,9 @@ loadApi().then(async () => {
   rootRouter.use(`/oracle`, oracleRoutes);
   rootRouter.use(`/rpc`, rpcRoutes);
   rootRouter.use(`/sitemap`, sitemapRoutes);
+
+  // Apply rate limiting after cache check (cached responses bypass rate limiting)
+  app.use(rateLimitingMiddleware());
   app.use(rootRouter);
 
   app.use(customErrorMiddleware());

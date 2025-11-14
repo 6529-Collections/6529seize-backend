@@ -164,6 +164,56 @@ export async function connect() {
   logger.info(`[CONNECTION POOLS CREATED]`);
 }
 
+export async function disconnect() {
+  const promises: Promise<void>[] = [];
+  if (read_pool) {
+    promises.push(
+      new Promise<void>((resolve, reject) => {
+        read_pool.end((err) => {
+          if (err) {
+            logger.error(`[READ POOL CLOSE ERROR] ${err}`);
+            // Don't reject - allow cleanup to continue even if there's an error
+            resolve();
+          } else {
+            logger.info(`[READ POOL CLOSED]`);
+            resolve();
+          }
+        });
+      })
+    );
+  }
+  if (write_pool) {
+    promises.push(
+      new Promise<void>((resolve, reject) => {
+        write_pool.end((err) => {
+          if (err) {
+            logger.error(`[WRITE POOL CLOSE ERROR] ${err}`);
+            // Don't reject - allow cleanup to continue even if there's an error
+            resolve();
+          } else {
+            logger.info(`[WRITE POOL CLOSED]`);
+            resolve();
+          }
+        });
+      })
+    );
+  }
+  if (promises.length > 0) {
+    // Wait for pools to close, but with a shorter timeout for tests
+    const timeoutPromise = new Promise<void>((resolve) => {
+      const timeout = setTimeout(() => {
+        logger.warn(`[POOL CLOSE TIMEOUT] Forcing cleanup`);
+        resolve();
+      }, 2000);
+      // Use unref() so timer doesn't keep process alive
+      timeout.unref();
+    });
+    await Promise.race([Promise.all(promises), timeoutPromise]);
+  }
+  read_pool = undefined as any;
+  write_pool = undefined as any;
+}
+
 function getPoolNameBySql(sql: string): DbPoolName {
   return WRITE_OPERATIONS.some((op) => sql.trim().toUpperCase().startsWith(op))
     ? DbPoolName.WRITE
