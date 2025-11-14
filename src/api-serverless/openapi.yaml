@@ -1625,10 +1625,6 @@ paths:
       responses:
         "201":
           description: successful operation
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ApiChangeProfileCicRatingResponse"
         "400":
           description: Invalid request
   /profiles/{identity}/cic/ratings/by-rater:
@@ -1709,10 +1705,6 @@ paths:
       responses:
         "201":
           description: successful operation
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ApiChangeProfileRepRatingResponse"
         "400":
           description: Invalid request
     get:
@@ -3820,18 +3812,6 @@ components:
         amount:
           type: number
           format: int64
-    ApiChangeProfileCicRatingResponse:
-      type: object
-      required:
-        - total_cic_rating
-        - cic_rating_by_user
-      properties:
-        total_cic_rating:
-          type: number
-          format: int64
-        cic_rating_by_user:
-          type: number
-          format: int64
     ApiChangeProfileRepRating:
       type: object
       required:
@@ -3846,18 +3826,6 @@ components:
           maxLength: 100
           minLength: 1
           pattern: ^[a-zA-Z0-9?!,."() ]{1,100}$
-    ApiChangeProfileRepRatingResponse:
-      type: object
-      required:
-        - total_rep_rating_for_category
-        - rep_rating_for_category_by_user
-      properties:
-        total_rep_rating_for_category:
-          type: number
-          format: int64
-        rep_rating_for_category_by_user:
-          type: number
-          format: int64
     ApiCommunityMemberMinimal:
       type: object
       required:
