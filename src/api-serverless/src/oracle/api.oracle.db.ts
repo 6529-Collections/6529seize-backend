@@ -17,6 +17,7 @@ import {
 } from '../../../nextgen/nextgen_constants';
 import { sqlExecutor } from '../../../sql-executor';
 import { getIpInfo } from '../policies/policies';
+import { appFeatures } from '../../../app-features';
 
 const formatNumber = (num: number) => {
   return parseFloat(num.toFixed(0));
@@ -254,11 +255,13 @@ export const fetchSingleAddressTDHMemesSeasons = async (address: string) => {
 export async function fetchTDHAbove(value: number, includeEntries: boolean) {
   const block = await getBlock();
   const merkleRoot = await getMerkleRoot(block);
-
+  const selectableField = appFeatures.isXTdhEnabled()
+    ? 'total_tdh'
+    : 'boosted_tdh';
   const sql = `
     SELECT * from ${CONSOLIDATED_WALLETS_TDH_TABLE} 
-    WHERE boosted_tdh >= ${value}
-    ORDER BY boosted_tdh DESC
+    WHERE ${selectableField} >= ${value}
+    ORDER BY ${selectableField} DESC
   `;
   const tdh = await sqlExecutor.execute(sql);
   const response: any = {
@@ -270,7 +273,7 @@ export async function fetchTDHAbove(value: number, includeEntries: boolean) {
     response.entries = tdh.map((t: any) => {
       return {
         consolidation_key: t.consolidation_key,
-        tdh: t.boosted_tdh,
+        tdh: t[selectableField],
         addresses: JSON.parse(t.wallets).map((w: string) => w.toLowerCase()),
         block,
         merkle_root: merkleRoot
@@ -322,17 +325,20 @@ export async function fetchTDHCutoff(cutoff: number) {
   const block = await getBlock();
   const merkleRoot = await getMerkleRoot(block);
 
+  const selectableField = appFeatures.isXTdhEnabled()
+    ? 'total_tdh'
+    : 'boosted_tdh';
   const query = `
     SELECT * from ${CONSOLIDATED_WALLETS_TDH_TABLE} 
-    ORDER BY boosted_tdh DESC
+    ORDER BY ${selectableField} DESC
     LIMIT :cutoff
   `;
   const tdh = await sqlExecutor.execute(query, { cutoff });
-  const leastTdh = tdh[tdh.length - 1].boosted_tdh;
+  const leastTdh = tdh.at(-1)?.[selectableField];
   const entries = tdh.map((t: any) => {
     return {
       consolidation_key: t.consolidation_key,
-      tdh: t.boosted_tdh,
+      tdh: t[selectableField],
       addresses: JSON.parse(t.wallets).map((w: string) => w.toLowerCase())
     };
   });

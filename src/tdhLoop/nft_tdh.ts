@@ -24,10 +24,9 @@ export const findNftTDH = async () => {
 
   const nextgenNfts: NextGenToken[] = await fetchNextgenTokens();
   const nextgenTdh: NextGenTokenTDH[] = [];
-
   tdhs.forEach((tdh) => {
-    tdh.memes.map((meme: any) => {
-      const existing = nftTDH.some(
+    tdh.memes?.map((meme: any) => {
+      const existing = nftTDH?.some(
         (n) => n.id == meme.id && equalIgnoreCase(n.contract, MEMES_CONTRACT)
       );
       if (existing) {
@@ -52,8 +51,8 @@ export const findNftTDH = async () => {
         }
       }
     });
-    tdh.gradients.map((gradient: any) => {
-      const existing = nftTDH.some(
+    tdh.gradients?.map((gradient: any) => {
+      const existing = nftTDH?.some(
         (n) =>
           n.id == gradient.id && equalIgnoreCase(n.contract, GRADIENT_CONTRACT)
       );
@@ -88,7 +87,7 @@ export const findNftTDH = async () => {
       }
     });
     tdh.nextgen?.map((nextgen: any) => {
-      const token = nextgenNfts.find((n) => n.id == nextgen.id);
+      const token = nextgenNfts?.find((n) => n.id == nextgen.id);
       if (token) {
         nextgenTdh.push({
           id: nextgen.id,

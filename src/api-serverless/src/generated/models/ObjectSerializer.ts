@@ -24,6 +24,7 @@ export * from '../models/ApiCommunityMemberMinimal';
 export * from '../models/ApiCompleteMultipartUploadRequest';
 export * from '../models/ApiCompleteMultipartUploadRequestPart';
 export * from '../models/ApiCompleteMultipartUploadResponse';
+export * from '../models/ApiContract';
 export * from '../models/ApiCreateDropPart';
 export * from '../models/ApiCreateDropRequest';
 export * from '../models/ApiCreateGroup';
@@ -105,6 +106,7 @@ export * from '../models/ApiOwnerBalancePage';
 export * from '../models/ApiPageBase';
 export * from '../models/ApiPageSortDirection';
 export * from '../models/ApiPageWithNextUriBase';
+export * from '../models/ApiPageWithoutCount';
 export * from '../models/ApiProfileClassification';
 export * from '../models/ApiProfileMin';
 export * from '../models/ApiProfileProxy';
@@ -129,7 +131,10 @@ export * from '../models/ApiTdhEditionsPage';
 export * from '../models/ApiTdhGrant';
 export * from '../models/ApiTdhGrantStatus';
 export * from '../models/ApiTdhGrantTargetChain';
+export * from '../models/ApiTdhGrantToken';
+export * from '../models/ApiTdhGrantTokensPage';
 export * from '../models/ApiTdhGrantsPage';
+export * from '../models/ApiTdhStats';
 export * from '../models/ApiTransaction';
 export * from '../models/ApiTransactionPage';
 export * from '../models/ApiUpdateDropRequest';
@@ -176,6 +181,9 @@ export * from '../models/ApiWaveVotersPage';
 export * from '../models/ApiWaveVotingConfig';
 export * from '../models/ApiWavesOverviewType';
 export * from '../models/ApiWavesPinFilter';
+export * from '../models/ApiXTdhToken';
+export * from '../models/ApiXTdhTokenGrantor';
+export * from '../models/ApiXTdhTokensPage';
 export * from '../models/CreateDirectMessageWaveRequest';
 export * from '../models/GetWaveSubscription200Response';
 
@@ -205,6 +213,7 @@ import { ApiCommunityMemberMinimal } from '../models/ApiCommunityMemberMinimal';
 import { ApiCompleteMultipartUploadRequest } from '../models/ApiCompleteMultipartUploadRequest';
 import { ApiCompleteMultipartUploadRequestPart } from '../models/ApiCompleteMultipartUploadRequestPart';
 import { ApiCompleteMultipartUploadResponse } from '../models/ApiCompleteMultipartUploadResponse';
+import { ApiContract } from '../models/ApiContract';
 import { ApiCreateDropPart } from '../models/ApiCreateDropPart';
 import { ApiCreateDropRequest             } from '../models/ApiCreateDropRequest';
 import { ApiCreateGroup } from '../models/ApiCreateGroup';
@@ -286,6 +295,7 @@ import { ApiOwnerBalancePage } from '../models/ApiOwnerBalancePage';
 import { ApiPageBase } from '../models/ApiPageBase';
 import { ApiPageSortDirection } from '../models/ApiPageSortDirection';
 import { ApiPageWithNextUriBase } from '../models/ApiPageWithNextUriBase';
+import { ApiPageWithoutCount } from '../models/ApiPageWithoutCount';
 import { ApiProfileClassification } from '../models/ApiProfileClassification';
 import { ApiProfileMin } from '../models/ApiProfileMin';
 import { ApiProfileProxy } from '../models/ApiProfileProxy';
@@ -310,7 +320,10 @@ import { ApiTdhEditionsPage } from '../models/ApiTdhEditionsPage';
 import { ApiTdhGrant             } from '../models/ApiTdhGrant';
 import { ApiTdhGrantStatus } from '../models/ApiTdhGrantStatus';
 import { ApiTdhGrantTargetChain } from '../models/ApiTdhGrantTargetChain';
+import { ApiTdhGrantToken } from '../models/ApiTdhGrantToken';
+import { ApiTdhGrantTokensPage } from '../models/ApiTdhGrantTokensPage';
 import { ApiTdhGrantsPage } from '../models/ApiTdhGrantsPage';
+import { ApiTdhStats } from '../models/ApiTdhStats';
 import { ApiTransaction } from '../models/ApiTransaction';
 import { ApiTransactionPage } from '../models/ApiTransactionPage';
 import { ApiUpdateDropRequest } from '../models/ApiUpdateDropRequest';
@@ -357,6 +370,9 @@ import { ApiWaveVotersPage } from '../models/ApiWaveVotersPage';
 import { ApiWaveVotingConfig         } from '../models/ApiWaveVotingConfig';
 import { ApiWavesOverviewType } from '../models/ApiWavesOverviewType';
 import { ApiWavesPinFilter } from '../models/ApiWavesPinFilter';
+import { ApiXTdhToken } from '../models/ApiXTdhToken';
+import { ApiXTdhTokenGrantor } from '../models/ApiXTdhTokenGrantor';
+import { ApiXTdhTokensPage } from '../models/ApiXTdhTokensPage';
 import { CreateDirectMessageWaveRequest } from '../models/CreateDirectMessageWaveRequest';
 import { GetWaveSubscription200Response } from '../models/GetWaveSubscription200Response';
 
@@ -430,6 +446,7 @@ let typeMap: {[index: string]: any} = {
     "ApiCompleteMultipartUploadRequest": ApiCompleteMultipartUploadRequest,
     "ApiCompleteMultipartUploadRequestPart": ApiCompleteMultipartUploadRequestPart,
     "ApiCompleteMultipartUploadResponse": ApiCompleteMultipartUploadResponse,
+    "ApiContract": ApiContract,
     "ApiCreateDropPart": ApiCreateDropPart,
     "ApiCreateDropRequest": ApiCreateDropRequest,
     "ApiCreateGroup": ApiCreateGroup,
@@ -502,6 +519,7 @@ let typeMap: {[index: string]: any} = {
     "ApiOwnerBalancePage": ApiOwnerBalancePage,
     "ApiPageBase": ApiPageBase,
     "ApiPageWithNextUriBase": ApiPageWithNextUriBase,
+    "ApiPageWithoutCount": ApiPageWithoutCount,
     "ApiProfileMin": ApiProfileMin,
     "ApiProfileProxy": ApiProfileProxy,
     "ApiProfileProxyAction": ApiProfileProxyAction,
@@ -521,7 +539,10 @@ let typeMap: {[index: string]: any} = {
     "ApiTdhEdition": ApiTdhEdition,
     "ApiTdhEditionsPage": ApiTdhEditionsPage,
     "ApiTdhGrant": ApiTdhGrant,
+    "ApiTdhGrantToken": ApiTdhGrantToken,
+    "ApiTdhGrantTokensPage": ApiTdhGrantTokensPage,
     "ApiTdhGrantsPage": ApiTdhGrantsPage,
+    "ApiTdhStats": ApiTdhStats,
     "ApiTransaction": ApiTransaction,
     "ApiTransactionPage": ApiTransactionPage,
     "ApiUpdateDropRequest": ApiUpdateDropRequest,
@@ -557,6 +578,9 @@ let typeMap: {[index: string]: any} = {
     "ApiWaveVoter": ApiWaveVoter,
     "ApiWaveVotersPage": ApiWaveVotersPage,
     "ApiWaveVotingConfig": ApiWaveVotingConfig,
+    "ApiXTdhToken": ApiXTdhToken,
+    "ApiXTdhTokenGrantor": ApiXTdhTokenGrantor,
+    "ApiXTdhTokensPage": ApiXTdhTokensPage,
     "CreateDirectMessageWaveRequest": CreateDirectMessageWaveRequest,
     "GetWaveSubscription200Response": GetWaveSubscription200Response,
 }

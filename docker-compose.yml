@@ -1,6 +1,6 @@
 version: '3.7'
 services:
-  mariadb:
+  mysql:
     build:
       context: ./dockerfiles/devmysql
     restart: always
@@ -8,13 +8,17 @@ services:
       MYSQL_ROOT_PASSWORD: password
       TZ: UTC
     ports:
-      - 3306:3306
-    command:
-      - --mysql-native-password=ON
-      - --default-time-zone=UTC
+      - "3306:3306"
+    volumes:
+      - dbdata:/var/lib/mysql
+      - ./dockerfiles/devmysql/my.cnf:/etc/mysql/conf.d/z-custom.cnf:ro
+
   redis:
     image: redis:latest
     restart: always
     command: redis-server
     ports:
-      - 6379:6379
+      - "6379:6379"
+
+volumes:
+  dbdata:

@@ -74,6 +74,7 @@ import { Logger } from './logging';
 import { NEXTGEN_TOKENS_TABLE } from './nextgen/nextgen_constants';
 import { equalIgnoreCase } from './strings';
 import { Time } from './time';
+import { appFeatures } from './app-features';
 
 let read_pool: mysql.Pool;
 let write_pool: mysql.Pool;
@@ -1463,14 +1464,17 @@ export async function addRememe(by: string, rememe: any) {
 }
 
 export async function getTdhForAddress(address: string) {
-  const sql = `SELECT boosted_tdh FROM ${CONSOLIDATED_WALLETS_TDH_TABLE} WHERE LOWER(${CONSOLIDATED_WALLETS_TDH_TABLE}.wallets) LIKE :address`;
+  const selectableField = appFeatures.isXTdhEnabled()
+    ? 'total_tdh'
+    : 'boosted_tdh';
+  const sql = `SELECT ${selectableField} as tdh FROM ${CONSOLIDATED_WALLETS_TDH_TABLE} WHERE LOWER(${CONSOLIDATED_WALLETS_TDH_TABLE}.wallets) LIKE :address`;
   const result = await sqlExecutor.execute(sql, {
     address: `%${address.toLowerCase()}%`
   });
   if (result.length === 0) {
     return 0;
   }
-  return result[0].boosted_tdh;
+  return result[0].tdh;
 }
 
 export async function fetchTDHGlobalHistory(pageSize: number, page: number) {

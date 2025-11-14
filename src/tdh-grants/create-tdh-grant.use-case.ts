@@ -10,7 +10,7 @@ import {
   TdhGrantStatus,
   TdhGrantTokenMode
 } from '../entities/ITdhGrant';
-import { randomUUID } from 'crypto';
+import { randomUUID } from 'node:crypto';
 import { Time } from '../time';
 import {
   tdhGrantsRepository,
@@ -65,6 +65,7 @@ export class CreateTdhGrantUseCase {
             : TdhGrantTokenMode.ALL;
           const grantId = randomUUID();
           const targetPartition = `${command.target_chain}:${command.target_contract}`;
+          const tokensetId = randomUUID();
           const tokenEntities = command.target_tokens
             .flatMap((tokenOrTokenSpan) => {
               if (tokenOrTokenSpan.includes('-')) {
@@ -81,19 +82,18 @@ export class CreateTdhGrantUseCase {
             })
             .map<TdhGrantTokenEntity>((token) => ({
               token_id: token,
-              grant_id: grantId,
+              tokenset_id: tokensetId,
               target_partition: targetPartition
             }));
           const entity: TdhGrantEntity = {
             id: grantId,
+            tokenset_id: tokensetId,
+            replaced_grant_id: null,
             grantor_id: command.grantor_id,
             target_partition: targetPartition,
             target_chain: command.target_chain,
             target_contract: command.target_contract,
             token_mode: tokenMode,
-            target_tokens: command.target_tokens.length
-              ? command.target_tokens.join(`,`)
-              : null,
             created_at: currentMillis,
             updated_at: currentMillis,
             valid_from: null,
@@ -108,7 +108,16 @@ export class CreateTdhGrantUseCase {
             tokenEntities,
             ctxWithConnection
           );
-          return fromTdhGrantEntityToModel(entity);
+          const targetTokenCounts =
+            await this.tdhGrantsRepository.getGrantsTokenCounts(
+              [entity.id],
+              ctx
+            );
+          const targetTokenCount = targetTokenCounts[entity.id] ?? 0;
+          return fromTdhGrantEntityToModel({
+            ...entity,
+            target_token_count: targetTokenCount
+          });
         }
       );
     } finally {
