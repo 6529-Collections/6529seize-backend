@@ -927,16 +927,16 @@ export async function calculateRanks(
       .filter(
         (w) =>
           (equalIgnoreCase(nft.contract, MEMES_CONTRACT) &&
-            w.memes.some((m: any) => m.id == nft.id)) ||
+            w.memes?.some((m: any) => m.id == nft.id)) ||
           (equalIgnoreCase(nft.contract, GRADIENT_CONTRACT) &&
             w.gradients_tdh > 0)
       )
       .sort((a, b) => {
         const aNftBalance = equalIgnoreCase(nft.contract, MEMES_CONTRACT)
-          ? a.memes.find((m: any) => m.id == nft.id).tdh
+          ? a.memes?.find((m: any) => m.id == nft.id).tdh
           : a.gradients_tdh;
         const bNftBalance = equalIgnoreCase(nft.contract, MEMES_CONTRACT)
-          ? b.memes.find((m: any) => m.id == nft.id).tdh
+          ? b.memes?.find((m: any) => m.id == nft.id).tdh
           : b.gradients_tdh;
 
         if (aNftBalance > bNftBalance) {
@@ -972,7 +972,7 @@ export async function calculateRanks(
 
     if (equalIgnoreCase(nft.contract, MEMES_CONTRACT)) {
       const wallets = [...boostedTDH].filter((w) =>
-        w.memes.some((m: any) => m.id == nft.id)
+        w.memes?.some((m: any) => m.id == nft.id)
       );
 
       wallets.sort((a, b) => {
@@ -998,9 +998,9 @@ export async function calculateRanks(
 
   NEXTGEN_NFTS.forEach((nft) => {
     boostedTDH
-      .filter((w) => w.nextgen.some((n: any) => n.id == nft.id && n.tdh > 0))
+      .filter((w) => w.nextgen?.some((n: any) => n.id == nft.id && n.tdh > 0))
       .forEach((w) => {
-        const nextgen = w.nextgen.find((g: any) => g.id == nft.id);
+        const nextgen = w.nextgen?.find((g: any) => g.id == nft.id);
         if (nextgen) {
           w.nextgen_ranks.push({
             id: nft.id,
