@@ -107,7 +107,7 @@ export class RateLimitingService {
     );
 
     const remaining = Math.max(0, limit - count);
-    const allowed = count < limit;
+    const allowed = count <= limit;
 
     return {
       allowed,
@@ -140,7 +140,7 @@ export class RateLimitingService {
     // Calculate allowed requests per second in the window
     const maxRequests = rpsLimit * windowSeconds;
     const remaining = Math.max(0, maxRequests - count);
-    const allowed = count < maxRequests;
+    const allowed = count <= maxRequests;
 
     // Reset time is when the oldest request in the window expires
     const resetTime = now + windowSeconds * 1000;

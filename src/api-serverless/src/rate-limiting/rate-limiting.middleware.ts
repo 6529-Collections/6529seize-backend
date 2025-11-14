@@ -71,7 +71,8 @@ export function rateLimitingMiddleware() {
         res.status(429).json({
           error: 'Rate limit exceeded',
           message: 'Too many requests, please try again later',
-          retryAfter
+          retryAfter,
+          source: '6529-api'
         });
         return;
       }

@@ -1,9 +1,9 @@
-import { Request, Response, NextFunction } from 'express';
-import { rateLimitingService } from './rate-limiting.service';
+import { NextFunction, Request, Response } from 'express';
 import { getAuthenticatedWalletOrNull } from '../auth/auth';
 import { getIp } from '../policies/policies';
-import { getRateLimitConfig } from './rate-limiting.utils';
 import { clearConfigCache } from './rate-limiting.middleware';
+import { rateLimitingService } from './rate-limiting.service';
+import { getRateLimitConfig } from './rate-limiting.utils';
 
 jest.mock('./rate-limiting.service');
 jest.mock('../auth/auth');
@@ -173,7 +173,8 @@ describe('rateLimitingMiddleware', () => {
     expect(mockJson).toHaveBeenCalledWith({
       error: 'Rate limit exceeded',
       message: 'Too many requests, please try again later',
-      retryAfter: expect.any(Number)
+      retryAfter: expect.any(Number),
+      source: '6529-api'
     });
     expect(next).not.toHaveBeenCalled();
   });

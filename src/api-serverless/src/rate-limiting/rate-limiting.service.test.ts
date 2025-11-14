@@ -124,10 +124,27 @@ describe('RateLimitingService', () => {
       expect(result.limit).toBe(limit);
     });
 
-    it('blocks when count equals limit', async () => {
+    it('allows when count equals limit (last allowed request)', async () => {
       const limit = 30;
       const currentSecond = Math.floor(Date.now() / 1000);
       const count = 30;
+
+      (redisSortedSetAddAndCount as jest.Mock).mockResolvedValue(count);
+
+      const result = await (service as any).checkBurstLimit(
+        'test-id',
+        limit,
+        currentSecond
+      );
+
+      expect(result.allowed).toBe(true);
+      expect(result.remaining).toBe(0);
+    });
+
+    it('blocks when count exceeds limit', async () => {
+      const limit = 30;
+      const currentSecond = Math.floor(Date.now() / 1000);
+      const count = 31;
 
       (redisSortedSetAddAndCount as jest.Mock).mockResolvedValue(count);
 
