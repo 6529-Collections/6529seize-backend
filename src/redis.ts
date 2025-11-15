@@ -72,6 +72,22 @@ export async function redisCached<T>(
   return value;
 }
 
+export async function redisSetJson<T>(
+  key: string,
+  value: T,
+  ttl?: Time
+): Promise<void> {
+  if (!redis) {
+    return;
+  }
+  const payload = JSON.stringify(value);
+  if (ttl) {
+    await redis.set(key, payload, { EX: ttl.toSeconds() });
+  } else {
+    await redis.set(key, payload);
+  }
+}
+
 export async function evictKeyFromRedisCache(key: string): Promise<any> {
   await redis.del(key);
 }
