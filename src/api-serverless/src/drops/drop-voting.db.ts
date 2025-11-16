@@ -163,6 +163,8 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
     ctx: RequestContext
   ) {
     ctx.timer?.start(`${this.constructor.name}->mergeOnProfileIdChange`);
+    const queryOptions = { wrappedConnection: ctx.connection };
+    const params = { previous_id, new_id };
     await Promise.all([
       this.db.execute(
         `
@@ -170,29 +172,53 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
         set voter_id = :new_id
         where voter_id = :previous_id
       `,
-        { previous_id, new_id },
-        { wrappedConnection: ctx.connection }
-      ),
-      this.db.execute(
-        `
-        update ${DROP_VOTER_STATE_TABLE} 
-        set voter_id = :new_id
-        where voter_id = :previous_id
-      `,
-        { previous_id, new_id },
-        { wrappedConnection: ctx.connection }
+        params,
+        queryOptions
       ),
       this.db.execute(
         `update ${DROP_REAL_VOTER_VOTE_IN_TIME_TABLE} set voter_id = :new_id where voter_id = :previous_id`,
-        { new_id, previous_id },
-        { wrappedConnection: ctx.connection }
-      ),
-      this.db.execute(
-        `update ${WINNER_DROP_VOTER_VOTES_TABLE} set voter_id = :new_id where voter_id = :previous_id`,
-        { new_id, previous_id },
-        { wrappedConnection: ctx.connection }
+        params,
+        queryOptions
       )
     ]);
+    await this.db.execute(
+      `
+        insert into ${WINNER_DROP_VOTER_VOTES_TABLE} (voter_id, drop_id, votes, wave_id)
+        select :new_id as voter_id, v.drop_id, v.votes, v.wave_id
+        from ${WINNER_DROP_VOTER_VOTES_TABLE} v
+        where v.voter_id = :previous_id
+        on duplicate key update ${WINNER_DROP_VOTER_VOTES_TABLE}.votes = ${WINNER_DROP_VOTER_VOTES_TABLE}.votes + VALUES(votes)
+      `,
+      params,
+      queryOptions
+    );
+    await this.db.execute(
+      `
+      delete from ${WINNER_DROP_VOTER_VOTES_TABLE}
+      where voter_id = :previous_id
+    `,
+      { previous_id },
+      queryOptions
+    );
+    await this.db.execute(
+      `
+      insert into ${DROP_VOTER_STATE_TABLE} (voter_id, drop_id, votes, wave_id)
+      select :new_id as voter_id, s.drop_id, s.votes, s.wave_id
+      from ${DROP_VOTER_STATE_TABLE} s
+      where s.voter_id = :previous_id
+      on duplicate key update ${DROP_VOTER_STATE_TABLE}.votes = ${DROP_VOTER_STATE_TABLE}.votes + VALUES(votes)
+    `,
+      params,
+      queryOptions
+    );
+    await this.db.execute(
+      `
+      delete from ${DROP_VOTER_STATE_TABLE}
+      where voter_id = :previous_id
+    `,
+      { previous_id },
+      queryOptions
+    );
     ctx.timer?.stop(`${this.constructor.name}->mergeOnProfileIdChange`);
   }
 
