@@ -79,9 +79,9 @@ resources:
                 - !GetAtt XTdhStatsNormalisationStartQueue.Arn
     XTdhStatsNormalisationLoopOOMFilter:
       Type: AWS::Logs::MetricFilter
+      DependsOn:
+        - XTdhStatsNormalisationLoopLogGroup
       Properties:
-        DependsOn:
-          - XTdhStatsNormalisationLoopLogGroup
         LogGroupName:
           Ref: XTdhStatsNormalisationLoopLogGroup
         FilterPattern: "Runtime.OutOfMemory"
