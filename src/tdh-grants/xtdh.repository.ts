@@ -9,7 +9,9 @@ import {
   IDENTITIES_TABLE,
   TDH_GRANT_TOKENS_TABLE,
   TDH_GRANTS_TABLE,
-  X_TDH_COEFFICIENT
+  X_TDH_COEFFICIENT,
+  XTDH_STATS_META_TABLE,
+  XTDH_TOKEN_GRANT_STATS_TABLE_PREFIX
 } from '../constants';
 import { Logger } from '../logging';
 import { env } from '../env';
@@ -17,6 +19,8 @@ import { Time } from '../time';
 import { TdhGrantStatus, TdhGrantTokenMode } from '../entities/ITdhGrant';
 import { redisCached } from '../redis';
 import { collections } from '../collections';
+import { XTdhStatsMetaEntity } from '../entities/IXTdhStatsMeta';
+import { NotFoundException } from '../exceptions';
 
 const CTE_EPOCH = `
 epoch AS (
@@ -1566,6 +1570,340 @@ SET cw.xtdh_rate = COALESCE(pd.produced, 0) - COALESCE(go.granted_out, 0) + COAL
       ctx.timer?.stop(
         `${this.constructor.name}->getReceivedContractsByIdentity`
       );
+    }
+  }
+
+  public async getStatsMetaOrNull(
+    ctx: RequestContext
+  ): Promise<XTdhStatsMetaEntity | null> {
+    try {
+      ctx.timer?.start(`${this.constructor.name}->getStatsMetaOrNull`);
+      return this.db.oneOrNull<XTdhStatsMetaEntity>(
+        `select * from ${XTDH_STATS_META_TABLE} where id = 1`
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->getStatsMetaOrNull`);
+    }
+  }
+
+  public async getStatsMetaOrThrow(
+    ctx: RequestContext
+  ): Promise<XTdhStatsMetaEntity | null> {
+    try {
+      ctx.timer?.start(`${this.constructor.name}->getStatsMetaOrThrow`);
+      const meta = this.getStatsMetaOrNull(ctx);
+      if (!meta) {
+        throw new NotFoundException(
+          `${XTDH_STATS_META_TABLE} is missing an entry`
+        );
+      }
+      return meta;
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->getStatsMetaOrThrow`);
+    }
+  }
+
+  public async refillXTdhTokenStats(
+    {
+      slot
+    }: {
+      slot: 'a' | 'b';
+    },
+    ctx: RequestContext
+  ) {
+    const TABLE = slot === 'a' ? 'xtdh_token_stats_a' : 'xtdh_token_stats_b';
+
+    const GRANT_TABLE =
+      slot === 'a' ? 'xtdh_token_grant_stats_a' : 'xtdh_token_grant_stats_b';
+
+    try {
+      ctx.timer?.start(`${this.constructor.name}->refillXTdhTokenStats`);
+
+      const cutoffSql = `SELECT UNIX_TIMESTAMP(DATE(UTC_TIMESTAMP())) * 1000 AS cut_ms`;
+      const [{ cut_ms }] = await this.db.execute<{ cut_ms: number }>(
+        cutoffSql,
+        {},
+        { wrappedConnection: ctx.connection }
+      );
+      await this.db.execute(
+        `TRUNCATE TABLE ${TABLE}`,
+        {},
+        { wrappedConnection: ctx.connection }
+      );
+
+      const sql = `
+        INSERT INTO ${TABLE} (
+          \`partition\`,
+          token_id,
+          owner,
+          xtdh_total,
+          xtdh_rate_daily,
+          grant_count
+        )
+      WITH
+        cutoff AS (
+          SELECT :cut_ms AS cut_ms
+        ),
+        owners_at_cut AS (
+          SELECT
+            h.\`partition\`,
+        h.token_id,
+        h.owner,
+        ROW_NUMBER() OVER (
+        PARTITION BY h.\`partition\`, h.token_id
+      ORDER BY h.since_time DESC, h.block_number DESC, h.log_index DESC
+    ) AS rn
+      FROM external_indexed_ownership_721_histories h
+      JOIN cutoff c ON h.since_time < c.cut_ms
+    ),
+      token_agg AS (
+        SELECT
+      g.\`partition\`,
+        g.token_id,
+        SUM(g.xtdh_total)      AS xtdh_total,
+        SUM(g.xtdh_rate_daily) AS xtdh_rate_daily,
+      COUNT(*)               AS grant_count
+      FROM ${GRANT_TABLE} g
+      GROUP BY g.\`partition\`, g.token_id
+    )
+      SELECT
+      ta.\`partition\`,
+        ta.token_id,
+        COALESCE(o.owner, '0x0000000000000000000000000000000000000000') AS owner,
+        ta.xtdh_total,
+        ta.xtdh_rate_daily,
+        ta.grant_count
+      FROM token_agg ta
+      LEFT JOIN owners_at_cut o
+      ON o.\`partition\` = ta.\`partition\`
+      AND o.token_id     = ta.token_id
+      AND o.rn = 1
+        `;
+
+      await this.db.execute(
+        sql,
+        { cut_ms },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->refillXTdhTokenStats`);
+    }
+  }
+
+  public async refillXTdhGrantStats(
+    {
+      slot
+    }: {
+      slot: 'a' | 'b';
+    },
+    ctx: RequestContext
+  ) {
+    const TABLE = XTDH_TOKEN_GRANT_STATS_TABLE_PREFIX + slot;
+
+    try {
+      ctx.timer?.start(`${this.constructor.name}->refillXTdhGrantStats`);
+
+      const epochMs = this.getXTdhEpochMillis();
+
+      await this.db.execute(`TRUNCATE TABLE ${TABLE}`, undefined, {
+        wrappedConnection: ctx.connection
+      });
+
+      const sql = `
+      INSERT INTO ${TABLE} (
+        grant_id,
+        \`partition\`,
+        token_id,
+        xtdh_total,
+        xtdh_rate_daily
+      )
+      WITH
+        epoch AS (
+          SELECT :x_tdh_epoch_ms AS epoch_ms
+        ),
+        cutoff AS (
+          -- last UTC midnight in ms
+          SELECT UNIX_TIMESTAMP(DATE(UTC_TIMESTAMP())) * 1000 AS cut_ms
+        ),
+        -- eligible grants
+        gr AS (
+          SELECT
+            g.id,
+            g.target_partition,
+            g.token_mode,
+            g.tdh_rate,
+            g.valid_from,
+            g.valid_to
+          FROM ${TDH_GRANTS_TABLE} g
+          WHERE g.status = '${TdhGrantStatus.GRANTED}'
+            AND g.tdh_rate > 0
+            AND g.valid_from < (SELECT cut_ms FROM cutoff)
+        ),
+        -- include-counts only for INCLUDE grants (for denom)
+        inc_counts AS (
+          SELECT
+            g.id AS grant_id,
+            COUNT(*) AS inc_cnt
+          FROM ${TDH_GRANTS_TABLE} g
+          JOIN ${TDH_GRANT_TOKENS_TABLE} t
+            ON t.tokenset_id      = g.tokenset_id
+           AND t.target_partition = g.target_partition
+          WHERE g.status = '${TdhGrantStatus.GRANTED}'
+            AND g.token_mode = '${TdhGrantTokenMode.INCLUDE}'
+          GROUP BY g.id
+        ),
+        grant_divisor AS (
+          SELECT
+            gr.id,
+            CASE
+              WHEN gr.token_mode = '${TdhGrantTokenMode.ALL}' THEN COALESCE(c.total_supply, 0)
+              ELSE COALESCE(ic.inc_cnt, 0)
+            END AS denom
+          FROM gr
+          LEFT JOIN ${EXTERNAL_INDEXED_CONTRACTS_TABLE} c
+            ON c.\`partition\` = gr.target_partition
+          LEFT JOIN inc_counts ic
+            ON ic.grant_id = gr.id
+        ),
+        -- universe of targeted (grant_id, partition, token_id)
+        grant_tokens AS (
+          -- ALL-mode: all tokens that have ever appeared in history
+          SELECT DISTINCT
+            gr.id               AS grant_id,
+            gr.target_partition AS \`partition\`,
+            h.token_id          AS token_id
+          FROM gr
+          JOIN ${EXTERNAL_INDEXED_OWNERSHIP_721_HISTORY_TABLE} h
+            ON h.\`partition\` = gr.target_partition
+          WHERE gr.token_mode = '${TdhGrantTokenMode.ALL}'
+
+          UNION ALL
+
+          -- INCLUDE-mode: tokens from tdh_grant_tokens
+          SELECT DISTINCT
+            g.id               AS grant_id,
+            g.target_partition AS \`partition\`,
+            t.token_id         AS token_id
+          FROM ${TDH_GRANTS_TABLE} g
+          JOIN ${TDH_GRANT_TOKENS_TABLE} t
+            ON t.tokenset_id      = g.tokenset_id
+           AND t.target_partition = g.target_partition
+          JOIN gr ON gr.id = g.id
+          WHERE gr.token_mode = '${TdhGrantTokenMode.INCLUDE}'
+        ),
+        bounded_windows AS (
+          SELECT
+            gt.grant_id,
+            gt.\`partition\`,
+            gt.token_id,
+            GREATEST(
+              gr.valid_from,
+              (SELECT epoch_ms FROM epoch)
+            ) AS start_ms,
+            LEAST(
+              COALESCE(gr.valid_to, (SELECT cut_ms FROM cutoff)),
+              (SELECT cut_ms FROM cutoff)
+            ) AS end_ms,
+            gr.tdh_rate,
+            gd.denom,
+            (SELECT cut_ms FROM cutoff) AS cut_ms
+          FROM grant_tokens gt
+          JOIN gr  ON gr.id = gt.grant_id
+          JOIN grant_divisor gd ON gd.id = gr.id
+        ),
+        days_owned AS (
+          SELECT
+            bw.grant_id,
+            bw.\`partition\`,
+            bw.token_id,
+            GREATEST(
+              0,
+              DATEDIFF(
+                DATE(FROM_UNIXTIME(bw.end_ms   / 1000)),
+                DATE(FROM_UNIXTIME(bw.start_ms / 1000))
+              ) - 1
+            ) AS full_days,
+            TIMESTAMPDIFF(
+              DAY,
+              FROM_UNIXTIME(bw.start_ms / 1000),
+              FROM_UNIXTIME(bw.cut_ms   / 1000)
+            ) AS days_since_start,
+            bw.tdh_rate,
+            bw.denom
+          FROM bounded_windows bw
+          WHERE bw.end_ms > bw.start_ms
+        ),
+        grant_token_xtdh AS (
+          SELECT
+            d.grant_id,
+            d.\`partition\`,
+            d.token_id,
+            -- TOTAL: sum over all full days
+            SUM(
+              (d.tdh_rate / NULLIF(d.denom, 0)) * d.full_days
+            ) AS raw_xtdh,
+            -- RATE for last midnight: one-day increment if "matured" (>= 2 days since start)
+            SUM(
+              CASE
+                WHEN d.denom > 0 AND d.full_days > 0 AND d.days_since_start >= 2
+                  THEN (d.tdh_rate / d.denom)
+                ELSE 0
+              END
+            ) AS raw_xtdh_rate
+          FROM days_owned d
+          GROUP BY d.grant_id, d.\`partition\`, d.token_id
+        )
+      SELECT
+        gtx.grant_id,
+        gtx.\`partition\`,
+        gtx.token_id,
+        gtx.raw_xtdh      * ${X_TDH_COEFFICIENT} AS xtdh_total,
+        gtx.raw_xtdh_rate * ${X_TDH_COEFFICIENT} AS xtdh_rate_daily
+      FROM grant_token_xtdh gtx
+      WHERE gtx.raw_xtdh > 0
+    `;
+
+      await this.db.execute(
+        sql,
+        { x_tdh_epoch_ms: epochMs },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->refillXTdhGrantStats`);
+    }
+  }
+
+  async markStatsJustReindexed(
+    { slot }: { slot: 'a' | 'b' },
+    ctx: RequestContext
+  ) {
+    try {
+      ctx.timer?.start(`${this.constructor.name}->markStatsJustReindexed`);
+      const lastMidnightMillis = Time.latestUtcMidnight().toMillis();
+      const now = Time.now().toDate();
+      await this.db.execute(
+        `
+            insert into ${XTDH_STATS_META_TABLE} (
+                                      id, 
+                                      active_slot, 
+                                      as_of_midnight_ms, 
+                                      last_updated_at
+                                    ) values (
+                                      :id,
+                                      :active_slot,
+                                      :as_of_midnight_ms,
+                                      :last_updated_at
+                                    ) on duplicate key update active_slot = :active_slot, as_of_midnight_ms = :as_of_midnight_ms, last_updated_at = :last_updated_at
+    `,
+        {
+          id: 1,
+          active_slot: slot,
+          as_of_midnight_ms: lastMidnightMillis,
+          last_updated_at: now
+        }
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->markStatsJustReindexed`);
     }
   }
 }
