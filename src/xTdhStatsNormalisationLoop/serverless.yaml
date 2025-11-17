@@ -36,6 +36,11 @@ functions:
 
 resources:
   Resources:
+    XTdhStatsNormalisationLoopLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/xTdhStatsNormalisationLoop
+        RetentionInDays: 60
     XTdhStatsNormalisationStartQueue:
       Type: "AWS::SQS::Queue"
       Properties:
@@ -75,7 +80,10 @@ resources:
     XTdhStatsNormalisationLoopOOMFilter:
       Type: AWS::Logs::MetricFilter
       Properties:
-        LogGroupName: /aws/lambda/xTdhStatsNormalisationLoop
+        DependsOn:
+          - XTdhStatsNormalisationLoopLogGroup
+        LogGroupName:
+          Ref: XTdhStatsNormalisationLoopLogGroup
         FilterPattern: "Runtime.OutOfMemory"
         MetricTransformations:
           - MetricNamespace: "Lambda/OOM"
