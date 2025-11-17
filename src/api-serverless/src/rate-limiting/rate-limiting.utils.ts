@@ -1,3 +1,5 @@
+import { Request } from 'express';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { env } from '../../../env';
 
 export interface RateLimitConfig {
@@ -54,4 +56,59 @@ export function calculateRetryAfter(resetTime: number): number {
 export function sanitizeIdentifier(identifier: string): string {
   // Remove any characters that could be problematic in Redis keys
   return identifier.replace(/[^a-zA-Z0-9:._-]/g, '_');
+}
+
+/**
+ * Verifies a signed internal request using HMAC with timestamp
+ * The web app should sign: HMAC-SHA256(secret, `${clientId}\n${timestamp}\n${method}\n${path}`)
+ * @param req - Express request object
+ * @returns true if the signature is valid
+ */
+export function verifyInternalRequest(req: Request): boolean {
+  const clientId = req.headers['x-6529-internal-id'] as string | undefined;
+  const timestamp = req.headers['x-6529-internal-timestamp'] as
+    | string
+    | undefined;
+  const signature = req.headers['x-6529-internal-signature'] as
+    | string
+    | undefined;
+
+  const expectedInternalId = env.getStringOrNull('RATE_LIMIT_INTERNAL_ID');
+  if (!expectedInternalId) {
+    return false;
+  }
+
+  if (clientId !== expectedInternalId) {
+    return false;
+  }
+
+  if (!timestamp || !signature) {
+    return false;
+  }
+
+  const timestampNum = parseInt(timestamp, 10);
+  if (!timestampNum) {
+    return false;
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  if (Math.abs(now - timestampNum) > 300) {
+    return false;
+  }
+
+  const secret = env.getStringOrNull('RATE_LIMIT_INTERNAL_SECRET');
+  if (!secret) {
+    return false;
+  }
+
+  try {
+    const payload = `${clientId}\n${timestampNum}\n${req.method}\n${req.path}`;
+    const expected = createHmac('sha256', secret).update(payload).digest('hex');
+
+    const signatureBuffer = new Uint8Array(Buffer.from(signature, 'hex'));
+    const expectedBuffer = new Uint8Array(Buffer.from(expected, 'hex'));
+    return timingSafeEqual(signatureBuffer, expectedBuffer);
+  } catch (error) {
+    return false;
+  }
 }

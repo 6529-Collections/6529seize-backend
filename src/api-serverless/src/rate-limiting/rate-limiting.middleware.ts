@@ -3,7 +3,11 @@ import { Logger } from '../../../logging';
 import { getAuthenticatedWalletOrNull } from '../auth/auth';
 import { getIp } from '../policies/policies';
 import { rateLimitingService } from './rate-limiting.service';
-import { calculateRetryAfter, getRateLimitConfig } from './rate-limiting.utils';
+import {
+  calculateRetryAfter,
+  getRateLimitConfig,
+  verifyInternalRequest
+} from './rate-limiting.utils';
 
 const logger = Logger.get('RATE_LIMIT_MIDDLEWARE');
 
@@ -28,11 +32,38 @@ export function rateLimitingMiddleware() {
       return next();
     }
 
-    // Get user identifier: authenticated wallet or IP address
+    // Get user identifier with priority:
+    // 1. Authenticated wallet (highest priority - most specific)
+    // 2. Signed Internal Request (for server-side requests from web app)
+    //    - Must include: X-6529-Internal-Id, X-6529-Internal-Timestamp, X-6529-Internal-Signature
+    //    - Signature: HMAC-SHA256(secret, `${clientId}\n${timestamp}\n${method}\n${path}`)
+    //    - Timestamp tolerance: 5 minutes
+    // 3. IP address (fallback)
     const authenticatedWallet = getAuthenticatedWalletOrNull(req);
-    const identifier = authenticatedWallet
-      ? `wallet:${authenticatedWallet.toLowerCase()}`
-      : `ip:${getIp(req)}`;
+    const ip = getIp(req);
+
+    let identifier: string;
+    let isAuthenticated: boolean;
+
+    if (authenticatedWallet) {
+      identifier = `wallet:${authenticatedWallet.toLowerCase()}`;
+      isAuthenticated = true;
+    } else if (verifyInternalRequest(req)) {
+      // Use internal request identifier for server-side requests (e.g., from Elastic Beanstalk)
+      // The signature ensures only the web app (with the secret) can generate valid requests
+      // This allows SSR requests to bypass IP-based rate limiting
+      identifier = 'internal:ssr';
+      isAuthenticated = false; // Use unauthenticated config for internal requests
+      logger.info(
+        `[SSR REQUEST] Received signed internal request for path ${req.path}, skipping IP-based rate limiting`
+      );
+    } else if (ip) {
+      identifier = `ip:${ip}`;
+      isAuthenticated = false;
+    } else {
+      identifier = '';
+      isAuthenticated = false;
+    }
 
     if (!identifier || identifier === 'ip:') {
       // If we can't identify the user, allow the request
@@ -43,7 +74,7 @@ export function rateLimitingMiddleware() {
     }
 
     // Select appropriate config based on authentication status
-    const rateLimitConfig = authenticatedWallet
+    const rateLimitConfig = isAuthenticated
       ? config.authenticated
       : config.unauthenticated;
 
