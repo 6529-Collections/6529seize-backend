@@ -71,7 +71,7 @@ resources:
                 - sqs:ListQueueTags
                 - sqs:ChangeMessageVisibility
               Resource:
-                - !GetAtt OXTdhStatsNormalisationStartQueue.Arn
+                - !GetAtt XTdhStatsNormalisationStartQueue.Arn
     XTdhStatsNormalisationLoopOOMFilter:
       Type: AWS::Logs::MetricFilter
       Properties:
