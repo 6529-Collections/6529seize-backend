@@ -17,7 +17,6 @@ import { Logger } from '../logging';
 import { env } from '../env';
 import { Time } from '../time';
 import { TdhGrantStatus, TdhGrantTokenMode } from '../entities/ITdhGrant';
-import { redisCached } from '../redis';
 import { collections } from '../collections';
 import { XTdhStatsMetaEntity } from '../entities/IXTdhStatsMeta';
 import { NotFoundException } from '../exceptions';
@@ -968,196 +967,67 @@ SET cw.xtdh_rate = COALESCE(pd.produced, 0) - COALESCE(go.granted_out, 0) + COAL
       offset = 0,
       limit = 100
     } = filters ?? {};
+
     const partition = collection ? `1:${collection}` : null;
     if (token && !partition) {
       return [];
     }
+
     try {
       ctx.timer?.start(`${this.constructor.name}->getXTdhTokens`);
+
+      const meta = await this.getStatsMetaOrThrow(ctx);
+      const slot = meta.active_slot;
+      const TABLE = slot === 'a' ? 'xtdh_token_stats_a' : 'xtdh_token_stats_b';
+
+      const where: string[] = ['1=1'];
       const params: Record<string, unknown> = {
-        identityId,
         partition,
-        token, // pass token as string; we CAST history/grant side to CHAR
-        x_tdh_epoch_ms: this.getXTdhEpochMillis(),
+        token,
+        identityId,
         offset,
         limit
       };
 
+      if (partition) {
+        where.push(`ts.\`partition\` = :partition`);
+      }
+      if (token) {
+        where.push(`ts.token_id = :token`);
+      }
+
+      let identityJoin = '';
+      if (identityId) {
+        identityJoin = `
+        JOIN address_consolidation_keys ack ON ack.address = ts.owner
+        JOIN identities i ON i.consolidation_key = ack.consolidation_key
+      `;
+        where.push(`i.profile_id = :identityId`);
+      }
       const sql = `
-      WITH
-      epoch AS (
-        SELECT :x_tdh_epoch_ms AS epoch_ms
-      ),
-      cutoff AS (
-        -- last UTC midnight in ms
-        SELECT UNIX_TIMESTAMP(DATE(UTC_TIMESTAMP())) * 1000 AS cut_ms
-      ),
-      -- eligible grants
-      gr AS (
-        SELECT id, target_partition, token_mode, tdh_rate, valid_from, valid_to
-        FROM ${TDH_GRANTS_TABLE}
-        WHERE status = 'GRANTED'
-      ),
-      -- include-counts only for INCLUDE grants
-      inc_counts AS (
-        SELECT g.id AS grant_id, COUNT(*) AS inc_cnt
-        FROM ${TDH_GRANTS_TABLE} g
-        JOIN ${TDH_GRANT_TOKENS_TABLE} t
-          ON t.tokenset_id      = g.tokenset_id
-         AND t.target_partition = g.target_partition
-        WHERE g.status = 'GRANTED' AND g.token_mode = 'INCLUDE'
-        GROUP BY g.id
-      ),
-      grant_divisor AS (
-        SELECT
-          gr.id,
-          CASE
-            WHEN gr.token_mode = 'ALL' THEN COALESCE(c.total_supply, 0)
-            ELSE COALESCE(ic.inc_cnt, 0)
-          END AS denom
-        FROM gr
-        LEFT JOIN ${EXTERNAL_INDEXED_CONTRACTS_TABLE} c
-          ON c.\`partition\` = gr.target_partition
-        LEFT JOIN inc_counts ic ON ic.grant_id = gr.id
-      ),
-      -- universe of targeted (contract, token) pairs
-      grant_tokens AS (
-        SELECT DISTINCT
-          gr.id               AS grant_id,
-          gr.target_partition AS \`partition\`,
-          CAST(h.token_id AS CHAR) AS token_id
-        FROM gr
-        JOIN ${EXTERNAL_INDEXED_OWNERSHIP_721_HISTORY_TABLE} h
-          ON h.\`partition\` = gr.target_partition
-        WHERE gr.token_mode = 'ALL'
-
-        UNION ALL
-
-        SELECT DISTINCT
-          g.id               AS grant_id,
-          g.target_partition AS \`partition\`,
-          CAST(t.token_id AS CHAR) AS token_id
-        FROM ${TDH_GRANTS_TABLE} g
-        JOIN ${TDH_GRANT_TOKENS_TABLE} t
-          ON t.tokenset_id      = g.tokenset_id
-         AND t.target_partition = g.target_partition
-        JOIN gr ON gr.id = g.id
-        WHERE gr.token_mode = 'INCLUDE'
-      ),
-      -- at-cutoff owners for optional grantee (identity) filter
-      owners_at_cut AS (
-        SELECT
-          h.\`partition\`,
-          CAST(h.token_id AS CHAR) AS token_id,
-          h.owner,
-          ROW_NUMBER() OVER (
-            PARTITION BY h.\`partition\`, h.token_id
-            ORDER BY h.since_time DESC, h.block_number DESC, h.log_index DESC
-          ) AS rn
-        FROM ${EXTERNAL_INDEXED_OWNERSHIP_721_HISTORY_TABLE} h
-        JOIN cutoff c
-          ON h.since_time < c.cut_ms
-      ),
-      -- optionally restrict tokens to those owned by the identity at cutoff
-      eligible_tokens AS (
-        SELECT gt.\`partition\`, gt.token_id
-        FROM grant_tokens gt
-        -- collection / token filters
-        WHERE (:partition IS NULL OR gt.\`partition\` = :partition)
-          AND (:token      IS NULL OR gt.token_id     = CAST(:token AS CHAR))
-
-        INTERSECT
-        -- if identityId provided, keep only tokens owned by that identity at cutoff
-        SELECT o.\`partition\`, o.token_id
-        FROM owners_at_cut o
-        JOIN ${ADDRESS_CONSOLIDATION_KEY} ack
-          ON ack.address = o.owner
-        JOIN ${IDENTITIES_TABLE} i
-          ON i.consolidation_key = ack.consolidation_key
-        WHERE o.rn = 1
-          AND (:identityId IS NULL OR i.profile_id = :identityId)
-      ),
-      bounded_windows AS (
-        SELECT
-          gt.grant_id,
-          gt.\`partition\`,
-          gt.token_id,
-          GREATEST(gr.valid_from, (SELECT epoch_ms FROM epoch)) AS start_ms,
-          LEAST(COALESCE(gr.valid_to, (SELECT cut_ms FROM cutoff)),
-                (SELECT cut_ms FROM cutoff)) AS end_ms,
-          gr.tdh_rate,
-          gd.denom,
-          (SELECT cut_ms FROM cutoff) AS cut_ms
-        FROM grant_tokens gt
-        JOIN eligible_tokens et
-          ON et.\`partition\` = gt.\`partition\`
-         AND et.token_id     = gt.token_id
-        JOIN gr  ON gr.id = gt.grant_id
-        JOIN grant_divisor gd ON gd.id = gr.id
-      ),
-      days_owned AS (
-        SELECT
-          bw.\`partition\`,
-        bw.token_id,
-        GREATEST(
-          0,
-          DATEDIFF(
-            DATE(FROM_UNIXTIME(bw.end_ms   / 1000)),
-            DATE(FROM_UNIXTIME(bw.start_ms / 1000))
-          ) - 1
-        ) AS full_days,
-        TIMESTAMPDIFF(
-          DAY,
-          FROM_UNIXTIME(bw.start_ms / 1000),
-          FROM_UNIXTIME(bw.cut_ms   / 1000)
-        ) AS days_since_start,
-        bw.tdh_rate,
-        bw.denom
-      FROM bounded_windows bw
-      WHERE bw.end_ms > bw.start_ms
-    ),
-      token_xtdh AS (
-        SELECT
-      d.\`partition\`,
-          d.token_id,
-          SUM( (d.tdh_rate / NULLIF(d.denom, 0)) * d.full_days ) AS raw_xtdh,
-          SUM(
-            CASE
-              WHEN d.denom > 0 AND d.full_days > 0 AND d.days_since_start >= 2
-              THEN (d.tdh_rate / d.denom)
-              ELSE 0
-            END
-          ) AS raw_xtdh_rate
-        FROM days_owned d
-        GROUP BY d.\`partition\`, d.token_id
-      )
       SELECT
-        tx.\`partition\` AS contract,
-        tx.token_id      AS token,
-        tx.raw_xtdh      * ${X_TDH_COEFFICIENT} AS xtdh,
-        tx.raw_xtdh_rate * ${X_TDH_COEFFICIENT} AS xtdh_rate
-      FROM token_xtdh tx
-      WHERE tx.raw_xtdh > 0
-      ORDER BY xtdh DESC limit :limit offset :offset
+        ts.\`partition\` AS contract,
+        ts.token_id      AS token,
+        ts.xtdh_total    AS xtdh,
+        ts.xtdh_rate_daily AS xtdh_rate
+      FROM ${TABLE} ts
+      ${identityJoin}
+      WHERE ${where.join(' AND ')}
+      ORDER BY ts.xtdh_total DESC
+      LIMIT :limit OFFSET :offset
     `;
 
-      return await redisCached(
-        `${this.constructor.name}->getXTdhTokens({identityId:${filters.identityId},collection:${filters.collection},token:${filters.token},offset:${filters.offset},limit:${filters.limit})`,
-        Time.minutes(2),
-        async () => {
-          const rows = await this.db.execute<{
-            contract: string;
-            token: string;
-            xtdh: number;
-            xtdh_rate: number;
-          }>(sql, params, { wrappedConnection: ctx.connection });
+      const rows = await this.db.execute<{
+        contract: string;
+        token: string;
+        xtdh: number;
+        xtdh_rate: number;
+      }>(sql, params, { wrappedConnection: ctx.connection });
 
-          return rows.map((it) => ({
-            ...it,
-            contract: it.contract.substring(2)
-          }));
-        }
-      );
+      return rows.map((it) => ({
+        ...it,
+        contract: it.contract.substring(2) // remove "1:"
+      }));
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->getXTdhTokens`);
     }
@@ -1168,148 +1038,41 @@ SET cw.xtdh_rate = COALESCE(pd.produced, 0) - COALESCE(go.granted_out, 0) + COAL
     ctx: RequestContext
   ): Promise<Array<{ profile_id: string; xtdh: number; xtdh_rate: number }>> {
     const { contract, token } = param;
+
     try {
       ctx.timer?.start(`${this.constructor.name}->getTokenGrantors`);
+
+      const meta = await this.getStatsMetaOrThrow(ctx);
+      const slot = meta.active_slot;
+
+      const GRANT_TABLE =
+        slot === 'a' ? 'xtdh_token_grant_stats_a' : 'xtdh_token_grant_stats_b';
+
+      const params = {
+        partition: `1:${contract}`,
+        token
+      };
+
       const sql = `
-      WITH
-        epoch AS (
-          SELECT :x_tdh_epoch_ms AS epoch_ms
-        ),
-        cutoff AS (
-          SELECT UNIX_TIMESTAMP(DATE(UTC_TIMESTAMP())) * 1000 AS cut_ms
-        ),
-        gr AS (
-          SELECT id, grantor_id, target_partition, token_mode, tdh_rate, valid_from, valid_to
-          FROM tdh_grants
-          WHERE status = 'GRANTED'
-        ),
-        inc_counts AS (
-          SELECT g.id AS grant_id, COUNT(*) AS inc_cnt
-          FROM tdh_grants g
-          JOIN tdh_grant_tokens t
-            ON t.tokenset_id      = g.tokenset_id
-           AND t.target_partition = g.target_partition
-          WHERE g.status = 'GRANTED' AND g.token_mode = 'INCLUDE'
-          GROUP BY g.id
-        ),
-        grant_divisor AS (
-          SELECT
-            gr.id,
-            CASE
-              WHEN gr.token_mode = 'ALL' THEN COALESCE(c.total_supply, 0)
-              ELSE COALESCE(ic.inc_cnt, 0)
-            END AS denom
-          FROM gr
-          LEFT JOIN external_indexed_contracts c
-            ON c.\`partition\` = gr.target_partition
-          LEFT JOIN inc_counts ic ON ic.grant_id = gr.id
-        ),
-        grant_tokens AS (
-          SELECT DISTINCT
-            gr.id               AS grant_id,
-            gr.target_partition AS \`partition\`,
-            CAST(h.token_id AS CHAR) COLLATE utf8mb4_general_ci AS token_id
-          FROM gr
-          JOIN external_indexed_ownership_721_histories h
-            ON h.\`partition\` = gr.target_partition
-          WHERE gr.token_mode = 'ALL'
-      
-          UNION ALL
-      
-          SELECT DISTINCT
-            g.id               AS grant_id,
-            g.target_partition AS \`partition\`,
-            CAST(t.token_id AS CHAR) COLLATE utf8mb4_general_ci AS token_id
-          FROM tdh_grants g
-          JOIN tdh_grant_tokens t
-            ON t.tokenset_id      = g.tokenset_id
-           AND t.target_partition = g.target_partition
-          JOIN gr ON gr.id = g.id
-          WHERE gr.token_mode = 'INCLUDE'
-        ),
-        target_rows AS (
-          SELECT gt.grant_id, gt.\`partition\`, gt.token_id
-          FROM grant_tokens gt
-          WHERE gt.\`partition\` COLLATE utf8mb4_general_ci = CAST(:partition AS CHAR) COLLATE utf8mb4_general_ci
-            AND gt.token_id  COLLATE utf8mb4_general_ci   = CAST(:token     AS CHAR) COLLATE utf8mb4_general_ci
-        ),
-        bounded_windows AS (
-          SELECT
-            tr.grant_id,
-            gr.grantor_id,
-            tr.\`partition\`,
-            tr.token_id,
-            GREATEST(gr.valid_from, (SELECT epoch_ms FROM epoch)) AS start_ms,
-            LEAST(COALESCE(gr.valid_to, (SELECT cut_ms FROM cutoff)),
-                  (SELECT cut_ms FROM cutoff)) AS end_ms,
-            gr.tdh_rate,
-            gd.denom,
-            (SELECT cut_ms FROM cutoff) AS cut_ms
-          FROM target_rows tr
-          JOIN gr  ON gr.id = tr.grant_id
-          JOIN grant_divisor gd ON gd.id = gr.id
-        ),
-        days_owned AS (
-          SELECT
-            bw.grantor_id,
-            GREATEST(
-              0,
-              DATEDIFF(
-                DATE(FROM_UNIXTIME(bw.end_ms   / 1000)),
-                DATE(FROM_UNIXTIME(bw.start_ms / 1000))
-              ) - 1
-            ) AS full_days,
-            TIMESTAMPDIFF(
-              DAY,
-              FROM_UNIXTIME(bw.start_ms / 1000),
-              FROM_UNIXTIME(bw.cut_ms   / 1000)
-            ) AS days_since_start,
-            bw.tdh_rate,
-            bw.denom
-          FROM bounded_windows bw
-          WHERE bw.end_ms > bw.start_ms
-        ),
-        grantor_totals AS (
-          SELECT
-            d.grantor_id AS profile_id,
-            SUM( (d.tdh_rate / NULLIF(d.denom, 0)) * d.full_days ) AS raw_xtdh,
-            SUM(
-              CASE
-                WHEN d.denom > 0 AND d.full_days > 0 AND d.days_since_start >= 2
-                THEN (d.tdh_rate / d.denom)
-                ELSE 0
-              END
-            ) AS raw_xtdh_rate
-          FROM days_owned d
-          GROUP BY d.grantor_id
-        )
       SELECT
-        gt.profile_id,
-        gt.raw_xtdh      * 0.1 AS xtdh,
-        gt.raw_xtdh_rate * 0.1 AS xtdh_rate
-      FROM grantor_totals gt
-      WHERE gt.raw_xtdh > 0
-      ORDER BY xtdh DESC;
+        g.grantor_id AS profile_id,
+        SUM(s.xtdh_total)      AS xtdh,
+        SUM(s.xtdh_rate_daily) AS xtdh_rate
+      FROM ${GRANT_TABLE} s
+      JOIN tdh_grants g
+        ON g.id = s.grant_id
+      WHERE s.\`partition\` = :partition
+        AND s.token_id       = :token
+      GROUP BY g.grantor_id
+      HAVING SUM(s.xtdh_total) > 0
+      ORDER BY xtdh DESC
     `;
-      return await redisCached(
-        `${this.constructor.name}->getTokenGrantors({contract:${contract},token:${token}})`,
-        Time.minutes(2),
-        async () => {
-          return await this.db.execute<{
-            profile_id: string;
-            xtdh: number;
-            xtdh_rate: number;
-          }>(
-            sql,
-            {
-              partition: `1:${contract}`,
-              token,
-              x_tdh_epoch_ms: this.getXTdhEpochMillis()
-            },
-            { wrappedConnection: ctx.connection }
-          );
-        }
-      );
+
+      return await this.db.execute<{
+        profile_id: string;
+        xtdh: number;
+        xtdh_rate: number;
+      }>(sql, params, { wrappedConnection: ctx.connection });
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->getTokenGrantors`);
     }
@@ -1323,249 +1086,34 @@ SET cw.xtdh_rate = COALESCE(pd.produced, 0) - COALESCE(go.granted_out, 0) + COAL
       ctx.timer?.start(
         `${this.constructor.name}->getReceivedContractsByIdentity`
       );
+
+      // 1) Find active stats slot (a or b)
+      const meta = await this.getStatsMetaOrThrow(ctx);
+      const slot = meta.active_slot;
+
+      const STATS_TABLE =
+        slot === 'a' ? 'xtdh_token_stats_a' : 'xtdh_token_stats_b';
+
       const sql = `
-      WITH
-      epoch AS (
-        SELECT :x_tdh_epoch_ms AS epoch_ms
-      ),
-      cutoff AS (
-        SELECT UNIX_TIMESTAMP(DATE(UTC_TIMESTAMP())) * 1000 AS cut_ms
-      ),
-      -- target identity's consolidation key
-      target_ck AS (
-        SELECT i.consolidation_key AS ck
-        FROM ${IDENTITIES_TABLE} i
-        WHERE i.profile_id = :profile_id
-        LIMIT 1
-      ),
-      -- map addresses -> consolidation keys
-      ck_map AS (
-        SELECT ack.address AS addr, ack.consolidation_key AS ck
-        FROM ${ADDRESS_CONSOLIDATION_KEY} ack
-      ),
-
-      -- GRANTED grants universe
-      gr AS (
-        SELECT
-          g.id,
-          g.target_partition,
-          g.token_mode,
-          g.tdh_rate,
-          g.valid_from,
-          g.valid_to
-        FROM ${TDH_GRANTS_TABLE} g
-        WHERE g.status = 'GRANTED'
-      ),
-      -- denom for INCLUDE mode
-      inc_counts AS (
-        SELECT g.id AS grant_id, COUNT(*) AS inc_cnt
-        FROM ${TDH_GRANTS_TABLE} g
-        JOIN ${TDH_GRANT_TOKENS_TABLE} t
-          ON t.tokenset_id      = g.tokenset_id
-         AND t.target_partition = g.target_partition
-        WHERE g.status = 'GRANTED'
-          AND g.token_mode = '${TdhGrantTokenMode.INCLUDE}'
-        GROUP BY g.id
-      ),
-      grant_divisor AS (
-        SELECT
-          gr.id,
-          CASE
-            WHEN gr.token_mode = '${TdhGrantTokenMode.ALL}' THEN COALESCE(c.total_supply, 0)
-            ELSE COALESCE(ic.inc_cnt, 0)
-          END AS denom
-        FROM gr
-        LEFT JOIN ${EXTERNAL_INDEXED_CONTRACTS_TABLE} c
-               ON c.\`partition\` = gr.target_partition
-        LEFT JOIN inc_counts ic
-               ON ic.grant_id = gr.id
-      ),
-      -- tokens targeted by grants (normalize token_id to CHAR for joins)
-      grant_tokens AS (
-        SELECT DISTINCT
-          gr.id               AS grant_id,
-          gr.target_partition AS \`partition\`,
-          CAST(h.token_id AS CHAR) COLLATE utf8mb4_general_ci AS token_id
-        FROM gr
-        JOIN ${EXTERNAL_INDEXED_OWNERSHIP_721_HISTORY_TABLE} h
-          ON h.\`partition\` = gr.target_partition
-        WHERE gr.token_mode = '${TdhGrantTokenMode.ALL}'
-
-        UNION ALL
-
-        SELECT DISTINCT
-          g.id               AS grant_id,
-          g.target_partition AS \`partition\`,
-          CAST(t.token_id AS CHAR) COLLATE utf8mb4_general_ci AS token_id
-        FROM ${TDH_GRANTS_TABLE} g
-        JOIN ${TDH_GRANT_TOKENS_TABLE} t
-          ON t.tokenset_id      = g.tokenset_id
-         AND t.target_partition = g.target_partition
-        JOIN gr ON gr.id = g.id
-        WHERE gr.token_mode = '${TdhGrantTokenMode.INCLUDE}'
-      ),
-
-      -- owners at last midnight + owner CK (we'll filter to our CK)
-      owners_at_cut AS (
-        SELECT
-          h.\`partition\`,
-          h.token_id,
-          h.owner,
-          cm.ck AS owner_ck,
-          ROW_NUMBER() OVER (
-            PARTITION BY h.\`partition\`, h.token_id
-            ORDER BY h.since_time DESC, h.block_number DESC, h.log_index DESC
-          ) AS rn
-        FROM ${EXTERNAL_INDEXED_OWNERSHIP_721_HISTORY_TABLE} h
-        JOIN cutoff c
-          ON h.since_time < c.cut_ms
-        LEFT JOIN ck_map cm ON cm.addr = h.owner
-      ),
-
-      -- full history up to cutoff for reset detection
-      hist_pre_cut AS (
-        SELECT
-          h.\`partition\`,
-          h.token_id,
-          h.owner AS new_owner,
-          h.acquired_as_sale,
-          h.since_time,
-          h.block_number,
-          h.log_index,
-          LAG(h.owner) OVER (
-            PARTITION BY h.\`partition\`, h.token_id
-            ORDER BY h.since_time, h.block_number, h.log_index
-          ) AS prev_owner
-        FROM ${EXTERNAL_INDEXED_OWNERSHIP_721_HISTORY_TABLE} h
-        JOIN cutoff c
-          ON h.since_time <= (SELECT cut_ms FROM cutoff)
-      ),
-      -- attach CK to both sides of the history to detect cross-CK changes
-      hist_with_ck AS (
-        SELECT
-          hp.\`partition\`,
-          hp.token_id,
-          hp.new_owner,
-          cm_new.ck  AS new_ck,
-          hp.prev_owner,
-          cm_prev.ck AS prev_ck,
-          hp.acquired_as_sale,
-          hp.since_time,
-          hp.block_number,
-          hp.log_index
-        FROM hist_pre_cut hp
-        LEFT JOIN ck_map cm_new  ON cm_new.addr  = hp.new_owner
-        LEFT JOIN ck_map cm_prev ON cm_prev.addr = hp.prev_owner
-      ),
-      -- last reset time for tokens owned at cut by our CK (sale or cross-CK)
-      last_reset AS (
-        SELECT
-          o.\`partition\`,
-          o.token_id,
-          o.owner,
-          o.owner_ck,
-          MAX(h.since_time) AS reset_since_time
-        FROM owners_at_cut o
-        JOIN target_ck tck ON tck.ck = o.owner_ck
-        JOIN hist_with_ck h
-          ON h.\`partition\` = o.\`partition\`
-         AND h.token_id    = o.token_id
-         AND h.new_owner   = o.owner
-         AND (h.acquired_as_sale = 1 OR h.prev_ck IS NULL OR h.prev_ck <> h.new_ck)
-        WHERE o.rn = 1
-        GROUP BY o.\`partition\`, o.token_id, o.owner, o.owner_ck
-      ),
-
-      -- intersect: tokens owned by this identity at cut ∩ tokens targeted by any grant
-      owned_grant_targets AS (
-        SELECT
-          gt.grant_id,
-          gt.\`partition\`,
-          gt.token_id
-        FROM grant_tokens gt
-        JOIN owners_at_cut o
-          ON o.\`partition\` = gt.\`partition\`
-         AND CAST(o.token_id AS CHAR) COLLATE utf8mb4_general_ci = gt.token_id
-         AND o.rn = 1
-        JOIN target_ck tck ON tck.ck = o.owner_ck
-      ),
-
-      bounded_windows AS (
-        SELECT
-          ogt.grant_id,
-          ogt.\`partition\`,
-          ogt.token_id,
-          GREATEST(
-            COALESCE(lr.reset_since_time, 0),
-            gr.valid_from,
-            (SELECT epoch_ms FROM epoch)
-          ) AS start_ms,
-          LEAST(
-            COALESCE(gr.valid_to, (SELECT cut_ms FROM cutoff)),
-            (SELECT cut_ms FROM cutoff)
-          ) AS end_ms,
-          gr.tdh_rate,
-          gd.denom,
-          (SELECT cut_ms FROM cutoff) AS cut_ms
-        FROM owned_grant_targets ogt
-        JOIN gr  ON gr.id = ogt.grant_id
-        JOIN grant_divisor gd ON gd.id = gr.id
-        LEFT JOIN last_reset lr
-          ON lr.\`partition\` = ogt.\`partition\`
-         AND CAST(lr.token_id AS CHAR) COLLATE utf8mb4_general_ci = ogt.token_id
-      ),
-
-      days_owned AS (
-        SELECT
-          bw.\`partition\`,
-          GREATEST(
-            0,
-            DATEDIFF(
-              DATE(FROM_UNIXTIME(bw.end_ms   / 1000)),
-              DATE(FROM_UNIXTIME(bw.start_ms / 1000))
-            ) - 1
-          ) AS full_days,
-          TIMESTAMPDIFF(
-            DAY,
-            FROM_UNIXTIME(bw.start_ms / 1000),
-            FROM_UNIXTIME(bw.cut_ms   / 1000)
-          ) AS days_since_start,
-          bw.tdh_rate,
-          bw.denom
-        FROM bounded_windows bw
-        WHERE bw.end_ms > bw.start_ms
-      ),
-
-      contributors AS (
-        SELECT d.\`partition\`
-        FROM days_owned d
-        WHERE d.tdh_rate > 0
-          AND d.denom   > 0
-          AND d.full_days > 0
-          AND d.days_since_start >= 2
-        GROUP BY d.\`partition\`
-      )
-
-      SELECT DISTINCT c.\`partition\` AS contract
-      FROM contributors c
-      ORDER BY c.\`partition\`;
+      SELECT DISTINCT
+        ts.\`partition\` AS contract
+      FROM ${STATS_TABLE} ts
+      JOIN ${ADDRESS_CONSOLIDATION_KEY} ack
+        ON ack.address = ts.owner
+      JOIN ${IDENTITIES_TABLE} i
+        ON i.consolidation_key = ack.consolidation_key
+      WHERE i.profile_id = :profileId
+        AND ts.xtdh_rate_daily > 0
+      ORDER BY ts.\`partition\`
     `;
 
-      return await redisCached<string[]>(
-        `${this.constructor.name}->getReceivedContractsByIdentity(${profileId})`,
-        Time.minutes(2),
-        async () => {
-          const rows = await this.db.execute<{ contract: string }>(
-            sql,
-            {
-              profile_id: profileId,
-              x_tdh_epoch_ms: this.getXTdhEpochMillis()
-            },
-            { wrappedConnection: ctx.connection }
-          );
-          return rows.map((r) => r.contract.substring(2));
-        }
+      const rows = await this.db.execute<{ contract: string }>(
+        sql,
+        { profileId },
+        { wrappedConnection: ctx.connection }
       );
+
+      return rows.map((r) => r.contract.substring(2));
     } finally {
       ctx.timer?.stop(
         `${this.constructor.name}->getReceivedContractsByIdentity`
@@ -1588,10 +1136,10 @@ SET cw.xtdh_rate = COALESCE(pd.produced, 0) - COALESCE(go.granted_out, 0) + COAL
 
   public async getStatsMetaOrThrow(
     ctx: RequestContext
-  ): Promise<XTdhStatsMetaEntity | null> {
+  ): Promise<XTdhStatsMetaEntity> {
     try {
       ctx.timer?.start(`${this.constructor.name}->getStatsMetaOrThrow`);
-      const meta = this.getStatsMetaOrNull(ctx);
+      const meta = await this.getStatsMetaOrNull(ctx);
       if (!meta) {
         throw new NotFoundException(
           `${XTDH_STATS_META_TABLE} is missing an entry`
