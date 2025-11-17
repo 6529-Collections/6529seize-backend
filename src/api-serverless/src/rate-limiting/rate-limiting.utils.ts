@@ -105,7 +105,13 @@ export function verifyInternalRequest(req: Request): boolean {
   }
 
   try {
-    const payload = `${clientId}\n${timestampNum}\n${req.method}\n${req.path}`;
+    // Use path with query string to match web app's pathname + search format
+    // Uppercase method to match web app's .toUpperCase() call
+    const pathWithQuery =
+      req.path +
+      (req.url.includes('?') ? req.url.substring(req.url.indexOf('?')) : '');
+    const method = req.method.toUpperCase();
+    const payload = `${clientId}\n${timestampNum}\n${method}\n${pathWithQuery}`;
     const expected = createHmac('sha256', secret).update(payload).digest('hex');
 
     const signatureBuffer = new Uint8Array(Buffer.from(signature, 'hex'));
