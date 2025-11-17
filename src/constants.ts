@@ -144,6 +144,10 @@ export const IDENTITY_SUBSCRIPTIONS_TABLE = 'identity_subscriptions';
 export const IDENTITY_NOTIFICATIONS_TABLE = 'identity_notifications';
 export const ACTIVITY_EVENTS_TABLE = 'activity_events';
 
+export const XTDH_TOKEN_GRANT_STATS_TABLE_PREFIX = 'xtdh_token_grant_stats_';
+export const XTDH_TOKEN_STATS_TABLE_PREFIX = 'xtdh_token_stats_';
+export const XTDH_STATS_META_TABLE = 'xtdh_stats_meta';
+
 export const WS_CONNECTIONS_TABLE = 'ws_connections';
 
 export const MEMES_CONTRACT = '0x33FD426905F149f8376e227d0C9D3340AaD17aF1';

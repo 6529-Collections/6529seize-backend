@@ -58,6 +58,7 @@ on:
           - transactionsProcessingLoop
           - waveDecisionExecutionLoop
           - waveLeaderboardSnapshotterLoop
+          - xTdhStatsNormalisationLoop
 
 env:
   SENTRY_DSN: ${{ secrets.SENTRY_DSN }}

@@ -130,3 +130,9 @@ export { WaveLeaderboardEntryEntity } from './IWaveLeaderboardEntry';
 export { WaveMetricEntity } from './IWaveMetric';
 export { WinnerDropVoterVoteEntity } from './IWinnerDropVoterVote';
 export { WSConnectionEntity } from './IWSConnection';
+export {
+  XTdhTokenGrantStatsA,
+  XTdhTokenGrantStatsB
+} from './IXTdhTokenGrantStats';
+export { XTdhTokenStatsA, XTdhTokenStatsB } from './IXTdhTokenStats';
+export { XTdhStatsMetaEntity } from './IXTdhStatsMeta';
