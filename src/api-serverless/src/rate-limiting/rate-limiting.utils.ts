@@ -1,6 +1,9 @@
 import { Request } from 'express';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { env } from '../../../env';
+import { Logger } from '../../../logging';
+
+const logger = Logger.get('RATE_LIMIT_UTILS');
 
 export interface RateLimitConfig {
   burst: number;
@@ -86,7 +89,7 @@ export function verifyInternalRequest(req: Request): boolean {
     return false;
   }
 
-  const timestampNum = parseInt(timestamp, 10);
+  const timestampNum = Number.parseInt(timestamp, 10);
   if (!timestampNum) {
     return false;
   }
@@ -109,6 +112,7 @@ export function verifyInternalRequest(req: Request): boolean {
     const expectedBuffer = new Uint8Array(Buffer.from(expected, 'hex'));
     return timingSafeEqual(signatureBuffer, expectedBuffer);
   } catch (error) {
+    logger.error(`Error verifying internal request signature: ${error}`);
     return false;
   }
 }
