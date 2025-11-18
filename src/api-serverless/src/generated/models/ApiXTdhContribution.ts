@@ -11,12 +11,12 @@
  */
 
 import { ApiProfileMin } from '../models/ApiProfileMin';
+import { ApiTdhGrant } from '../models/ApiTdhGrant';
 import { HttpFile } from '../http/http';
 
-export class ApiXTdhToken {
-    'contract': string;
-    'token': number;
-    'owner': ApiProfileMin;
+export class ApiXTdhContribution {
+    'grant'?: ApiTdhGrant;
+    'grantor'?: ApiProfileMin;
     'xtdh': number;
     'xtdh_rate': number;
     'grant_count'?: number;
@@ -25,20 +25,14 @@ export class ApiXTdhToken {
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
         {
-            "name": "contract",
-            "baseName": "contract",
-            "type": "string",
+            "name": "grant",
+            "baseName": "grant",
+            "type": "ApiTdhGrant",
             "format": ""
         },
         {
-            "name": "token",
-            "baseName": "token",
-            "type": "number",
-            "format": "int64"
-        },
-        {
-            "name": "owner",
-            "baseName": "owner",
+            "name": "grantor",
+            "baseName": "grantor",
             "type": "ApiProfileMin",
             "format": ""
         },
@@ -62,7 +56,7 @@ export class ApiXTdhToken {
         }    ];
 
     static getAttributeTypeMap() {
-        return ApiXTdhToken.attributeTypeMap;
+        return ApiXTdhContribution.attributeTypeMap;
     }
 
     public constructor() {

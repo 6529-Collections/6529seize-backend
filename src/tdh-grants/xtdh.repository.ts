@@ -11,7 +11,8 @@ import {
   TDH_GRANTS_TABLE,
   X_TDH_COEFFICIENT,
   XTDH_STATS_META_TABLE,
-  XTDH_TOKEN_GRANT_STATS_TABLE_PREFIX
+  XTDH_TOKEN_GRANT_STATS_TABLE_PREFIX,
+  XTDH_TOKEN_STATS_TABLE_PREFIX
 } from '../constants';
 import { Logger } from '../logging';
 import { env } from '../env';
@@ -20,6 +21,7 @@ import { TdhGrantStatus, TdhGrantTokenMode } from '../entities/ITdhGrant';
 import { collections } from '../collections';
 import { XTdhStatsMetaEntity } from '../entities/IXTdhStatsMeta';
 import { NotFoundException } from '../exceptions';
+import { numbers } from '../numbers';
 
 const CTE_EPOCH = `
 epoch AS (
@@ -948,179 +950,6 @@ SET cw.xtdh_rate = COALESCE(pd.produced, 0) - COALESCE(go.granted_out, 0) + COAL
     }
   }
 
-  async getXTdhTokens(
-    filters: {
-      identityId?: string | null;
-      collection?: string | null;
-      token?: string | null;
-      offset?: number | null;
-      limit?: number | null;
-    },
-    ctx: RequestContext
-  ): Promise<
-    Array<{ contract: string; token: string; xtdh: number; xtdh_rate: number }>
-  > {
-    const {
-      identityId = null,
-      collection = null,
-      token = null,
-      offset = 0,
-      limit = 100
-    } = filters ?? {};
-
-    const partition = collection ? `1:${collection}` : null;
-    if (token && !partition) {
-      return [];
-    }
-
-    try {
-      ctx.timer?.start(`${this.constructor.name}->getXTdhTokens`);
-
-      const meta = await this.getStatsMetaOrThrow(ctx);
-      const slot = meta.active_slot;
-      const TABLE = slot === 'a' ? 'xtdh_token_stats_a' : 'xtdh_token_stats_b';
-
-      const where: string[] = ['1=1'];
-      const params: Record<string, unknown> = {
-        partition,
-        token,
-        identityId,
-        offset,
-        limit
-      };
-
-      if (partition) {
-        where.push(`ts.\`partition\` = :partition`);
-      }
-      if (token) {
-        where.push(`ts.token_id = :token`);
-      }
-
-      let identityJoin = '';
-      if (identityId) {
-        identityJoin = `
-        JOIN address_consolidation_keys ack ON ack.address = ts.owner
-        JOIN identities i ON i.consolidation_key = ack.consolidation_key
-      `;
-        where.push(`i.profile_id = :identityId`);
-      }
-      const sql = `
-      SELECT
-        ts.\`partition\` AS contract,
-        ts.token_id      AS token,
-        ts.xtdh_total    AS xtdh,
-        ts.xtdh_rate_daily AS xtdh_rate
-      FROM ${TABLE} ts
-      ${identityJoin}
-      WHERE ${where.join(' AND ')}
-      ORDER BY ts.xtdh_total DESC
-      LIMIT :limit OFFSET :offset
-    `;
-
-      const rows = await this.db.execute<{
-        contract: string;
-        token: string;
-        xtdh: number;
-        xtdh_rate: number;
-      }>(sql, params, { wrappedConnection: ctx.connection });
-
-      return rows.map((it) => ({
-        ...it,
-        contract: it.contract.substring(2) // remove "1:"
-      }));
-    } finally {
-      ctx.timer?.stop(`${this.constructor.name}->getXTdhTokens`);
-    }
-  }
-
-  async getTokenGrantors(
-    param: { contract: string; token: string },
-    ctx: RequestContext
-  ): Promise<Array<{ profile_id: string; xtdh: number; xtdh_rate: number }>> {
-    const { contract, token } = param;
-
-    try {
-      ctx.timer?.start(`${this.constructor.name}->getTokenGrantors`);
-
-      const meta = await this.getStatsMetaOrThrow(ctx);
-      const slot = meta.active_slot;
-
-      const GRANT_TABLE =
-        slot === 'a' ? 'xtdh_token_grant_stats_a' : 'xtdh_token_grant_stats_b';
-
-      const params = {
-        partition: `1:${contract}`,
-        token
-      };
-
-      const sql = `
-      SELECT
-        g.grantor_id AS profile_id,
-        SUM(s.xtdh_total)      AS xtdh,
-        SUM(s.xtdh_rate_daily) AS xtdh_rate
-      FROM ${GRANT_TABLE} s
-      JOIN tdh_grants g
-        ON g.id = s.grant_id
-      WHERE s.\`partition\` = :partition
-        AND s.token_id       = :token
-      GROUP BY g.grantor_id
-      HAVING SUM(s.xtdh_total) > 0
-      ORDER BY xtdh DESC
-    `;
-
-      return await this.db.execute<{
-        profile_id: string;
-        xtdh: number;
-        xtdh_rate: number;
-      }>(sql, params, { wrappedConnection: ctx.connection });
-    } finally {
-      ctx.timer?.stop(`${this.constructor.name}->getTokenGrantors`);
-    }
-  }
-
-  async getReceivedContractsByIdentity(
-    profileId: string,
-    ctx: RequestContext
-  ): Promise<string[]> {
-    try {
-      ctx.timer?.start(
-        `${this.constructor.name}->getReceivedContractsByIdentity`
-      );
-
-      // 1) Find active stats slot (a or b)
-      const meta = await this.getStatsMetaOrThrow(ctx);
-      const slot = meta.active_slot;
-
-      const STATS_TABLE =
-        slot === 'a' ? 'xtdh_token_stats_a' : 'xtdh_token_stats_b';
-
-      const sql = `
-      SELECT DISTINCT
-        ts.\`partition\` AS contract
-      FROM ${STATS_TABLE} ts
-      JOIN ${ADDRESS_CONSOLIDATION_KEY} ack
-        ON ack.address = ts.owner
-      JOIN ${IDENTITIES_TABLE} i
-        ON i.consolidation_key = ack.consolidation_key
-      WHERE i.profile_id = :profileId
-        AND ts.xtdh_rate_daily > 0
-      ORDER BY ts.\`partition\`
-    `;
-
-      const rows = await this.db.execute<{ contract: string }>(
-        sql,
-        { profileId },
-        { wrappedConnection: ctx.connection }
-      );
-
-      return rows.map((r) => r.contract.substring(2));
-    } finally {
-      ctx.timer?.stop(
-        `${this.constructor.name}->getReceivedContractsByIdentity`
-      );
-    }
-  }
-
   public async getStatsMetaOrNull(
     ctx: RequestContext
   ): Promise<XTdhStatsMetaEntity | null> {
@@ -1452,6 +1281,348 @@ SET cw.xtdh_rate = COALESCE(pd.produced, 0) - COALESCE(go.granted_out, 0) + COAL
       );
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->markStatsJustReindexed`);
+    }
+  }
+
+  private async getActiveStatsTables(ctx: RequestContext): Promise<{
+    tokenStatsTable: string;
+    grantStatsTable: string;
+  }> {
+    const meta = await this.getStatsMetaOrThrow(ctx);
+    const slot = meta.active_slot;
+    return {
+      tokenStatsTable: `${XTDH_TOKEN_STATS_TABLE_PREFIX}${slot}`,
+      grantStatsTable: `${XTDH_TOKEN_GRANT_STATS_TABLE_PREFIX}${slot}`
+    };
+  }
+
+  async getXTdhCollections(
+    {
+      identityId,
+      offset,
+      limit,
+      sort,
+      order
+    }: {
+      identityId: string | null;
+      offset: number;
+      limit: number;
+      sort: 'xtdh' | 'xtdh_rate';
+      order: 'ASC' | 'DESC';
+    },
+    ctx: RequestContext
+  ): Promise<
+    Array<{
+      contract: string;
+      xtdh: number;
+      xtdh_rate: number;
+      token_count: number;
+      grant_count: number;
+    }>
+  > {
+    try {
+      ctx.timer?.start(`${this.constructor.name}->getXTdhCollections`);
+      const { tokenStatsTable } = await this.getActiveStatsTables(ctx);
+
+      const sql = `
+      WITH ts AS (
+        SELECT
+          s.\`partition\`,
+          SUM(s.xtdh_total)      AS xtdh,
+          SUM(s.xtdh_rate_daily) AS xtdh_rate,
+          COUNT(*)               AS token_count,
+          SUM(s.grant_count)     AS grant_count
+        FROM ${tokenStatsTable} s
+        LEFT JOIN ${ADDRESS_CONSOLIDATION_KEY} ack
+          ON ack.address = s.owner
+        LEFT JOIN ${IDENTITIES_TABLE} i
+          ON i.consolidation_key = ack.consolidation_key
+        WHERE (:identityId IS NULL OR i.profile_id = :identityId)
+        GROUP BY s.\`partition\`
+      )
+      SELECT
+        \`partition\`,
+        xtdh,
+        xtdh_rate,
+        token_count,
+        grant_count
+      FROM ts
+      ORDER BY ${sort} ${order}
+      LIMIT :limit OFFSET :offset
+    `;
+
+      return await this.db
+        .execute<{
+          partition: string;
+          xtdh: number;
+          xtdh_rate: number;
+          token_count: number;
+          grant_count: number;
+        }>(
+          sql,
+          { identityId, limit, offset },
+          { wrappedConnection: ctx.connection }
+        )
+        .then((results) =>
+          results.map((it) => ({
+            contract: it.partition.substring(2),
+            xtdh: +it.xtdh,
+            xtdh_rate: +it.xtdh_rate,
+            token_count: +it.token_count,
+            grant_count: +it.grant_count
+          }))
+        );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->getXTdhCollections`);
+    }
+  }
+
+  async getXTdhTokens(
+    {
+      identityId,
+      contract,
+      tokenId,
+      offset,
+      limit,
+      sort,
+      order
+    }: {
+      identityId: string | null;
+      contract: string | null;
+      tokenId: number | null;
+      offset: number | null;
+      limit: number | null;
+      sort: 'xtdh' | 'xtdh_rate';
+      order: 'ASC' | 'DESC';
+    },
+    ctx: RequestContext
+  ): Promise<
+    Array<{
+      contract: string;
+      token_id: number;
+      owner_id: string;
+      xtdh: number;
+      xtdh_rate: number;
+      grant_count: number;
+    }>
+  > {
+    const partition = contract ? `1:${contract}` : null;
+
+    try {
+      ctx.timer?.start(`${this.constructor.name}->getXTdhTokens`);
+      const { tokenStatsTable } = await this.getActiveStatsTables(ctx);
+
+      const sql = `
+      SELECT
+        s.\`partition\`,
+        s.token_id,
+        s.owner as owner_id,
+        s.xtdh_total      AS xtdh,
+        s.xtdh_rate_daily AS xtdh_rate,
+        s.grant_count     AS grant_count
+      FROM ${tokenStatsTable} s
+      LEFT JOIN ${ADDRESS_CONSOLIDATION_KEY} ack
+        ON ack.address = s.owner
+      LEFT JOIN ${IDENTITIES_TABLE} i
+        ON i.consolidation_key = ack.consolidation_key
+      WHERE (:identityId IS NULL OR i.profile_id = :identityId)
+        AND (:partition  IS NULL OR s.\`partition\` = :partition)
+        AND (:tokenId  IS NULL OR s.\`token_id\` = :tokenId)
+      ORDER BY ${sort} ${order}
+      LIMIT :limit OFFSET :offset
+    `;
+
+      return await this.db
+        .execute<{
+          partition: string;
+          token_id: number;
+          owner_id: string;
+          xtdh: number;
+          xtdh_rate: number;
+          grant_count: number;
+        }>(
+          sql,
+          { identityId, partition, tokenId, limit, offset },
+          { wrappedConnection: ctx.connection }
+        )
+        .then((results) =>
+          results.map((it) => ({
+            contract: it.partition.substring(2),
+            owner_id: it.owner_id,
+            token_id: +it.token_id,
+            xtdh: +it.xtdh,
+            xtdh_rate: +it.xtdh_rate,
+            grant_count: +it.grant_count
+          }))
+        );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->getXTdhTokens`);
+    }
+  }
+
+  async getTokenContributors(
+    {
+      token,
+      contract,
+      groupBy,
+      offset,
+      limit,
+      sort,
+      order
+    }: {
+      token: number;
+      contract: string;
+      groupBy: 'grant' | 'grantor';
+      offset: number | null;
+      limit: number | null;
+      sort: 'xtdh' | 'xtdh_rate';
+      order: 'ASC' | 'DESC';
+    },
+    ctx: RequestContext
+  ): Promise<
+    Array<{
+      grant_id?: string;
+      grantor_id?: string;
+      grant_count?: number;
+      xtdh: number;
+      xtdh_rate: number;
+    }>
+  > {
+    const partition = `1:${contract}`;
+
+    try {
+      ctx.timer?.start(`${this.constructor.name}->getTokenContributors`);
+      const { grantStatsTable } = await this.getActiveStatsTables(ctx);
+      const selectPart =
+        groupBy === 'grant'
+          ? `SELECT
+        tg.grant_id,
+        gr.grantor_id AS grantor_id,
+        tg.xtdh_total      AS xtdh,
+        tg.xtdh_rate_daily AS xtdh_rate
+      FROM token_grants tg
+      JOIN ${TDH_GRANTS_TABLE} gr
+        ON gr.id = tg.grant_id`
+          : `SELECT
+        gr.grantor_id AS grantor_id,
+        COUNT(*)                      AS grant_count,
+        SUM(tg.xtdh_total)            AS xtdh,
+        SUM(tg.xtdh_rate_daily)       AS xtdh_rate
+      FROM token_grants tg
+      JOIN tdh_grants gr ON gr.id = tg.grant_id
+      GROUP BY gr.grantor_id`;
+      const sql = `
+      WITH token_grants AS (
+        SELECT
+          gts.grant_id,
+          gts.xtdh_total,
+          gts.xtdh_rate_daily
+        FROM ${grantStatsTable} gts
+        WHERE gts.\`partition\` = :partition
+          AND gts.token_id    = :token_id
+      ) ${selectPart}
+      ORDER BY ${sort} ${order}
+      LIMIT :limit OFFSET :offset
+    `;
+
+      return await this.db
+        .execute<{
+          grant_id?: string;
+          grantor_id?: string;
+          grant_count?: number;
+          xtdh: number;
+          xtdh_rate: number;
+        }>(
+          sql,
+          { partition, token_id: token, limit, offset },
+          { wrappedConnection: ctx.connection }
+        )
+        .then((results) =>
+          results.map((it) => ({
+            grant_id: it.grant_id,
+            grantor_id: it.grantor_id,
+            grant_count:
+              it.grant_count === undefined
+                ? undefined
+                : numbers.parseNumberOrNull(it.grant_count)!,
+            xtdh: +it.xtdh,
+            xtdh_rate: +it.xtdh_rate
+          }))
+        );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->getTokenContributors`);
+    }
+  }
+
+  async getXTdhTopGrantees(
+    {
+      contract,
+      offset,
+      limit,
+      sort,
+      order
+    }: {
+      contract: string | null;
+      offset: number;
+      limit: number;
+      sort: 'xtdh' | 'xtdh_rate';
+      order: 'ASC' | 'DESC';
+    },
+    ctx: RequestContext
+  ): Promise<
+    Array<{
+      grantee_id: string;
+      xtdh: number;
+      xtdh_rate: number;
+      collections_count: number;
+      tokens_count: number;
+    }>
+  > {
+    try {
+      ctx.timer?.start(`${this.constructor.name}->getXTdhTopGrantees`);
+
+      const { tokenStatsTable } = await this.getActiveStatsTables(ctx);
+      const partition = contract ? `1:${contract}` : null;
+
+      const sql = `
+      SELECT
+        i.profile_id as grantee_id,
+        SUM(ts.xtdh_total)      AS xtdh,
+        SUM(ts.xtdh_rate_daily) AS xtdh_rate,
+        COUNT(*)                AS tokens_count,
+        COUNT(DISTINCT ts.\`partition\`) AS collections_count
+      FROM ${tokenStatsTable} ts
+      JOIN ${ADDRESS_CONSOLIDATION_KEY} ack
+        ON ack.address = ts.owner
+      JOIN ${IDENTITIES_TABLE} i
+        ON i.consolidation_key = ack.consolidation_key
+      WHERE (:partition IS NULL OR ts.\`partition\` = :partition)
+      GROUP BY i.profile_id
+      ORDER BY ${sort} ${order}
+      LIMIT :limit OFFSET :offset
+    `;
+
+      const rows = await this.db.execute<{
+        grantee_id: string;
+        xtdh: number;
+        xtdh_rate: number;
+        tokens_count: number;
+        collections_count: number;
+      }>(
+        sql,
+        { partition, offset, limit },
+        { wrappedConnection: ctx.connection }
+      );
+
+      return rows.map((it) => ({
+        grantee_id: it.grantee_id,
+        xtdh: +it.xtdh,
+        xtdh_rate: +it.xtdh_rate,
+        collections_count: +it.collections_count,
+        tokens_count: +it.tokens_count
+      }));
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->getXTdhTopGrantees`);
     }
   }
 }
