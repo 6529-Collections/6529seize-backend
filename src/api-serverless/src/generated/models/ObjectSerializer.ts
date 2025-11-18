@@ -26,7 +26,6 @@ export * from '../models/ApiCommunityMemberMinimal';
 export * from '../models/ApiCompleteMultipartUploadRequest';
 export * from '../models/ApiCompleteMultipartUploadRequestPart';
 export * from '../models/ApiCompleteMultipartUploadResponse';
-export * from '../models/ApiContract';
 export * from '../models/ApiCreateDropPart';
 export * from '../models/ApiCreateDropRequest';
 export * from '../models/ApiCreateGroup';
@@ -183,8 +182,13 @@ export * from '../models/ApiWaveVotersPage';
 export * from '../models/ApiWaveVotingConfig';
 export * from '../models/ApiWavesOverviewType';
 export * from '../models/ApiWavesPinFilter';
+export * from '../models/ApiXTdhCollection';
+export * from '../models/ApiXTdhCollectionsPage';
+export * from '../models/ApiXTdhContribution';
+export * from '../models/ApiXTdhContributionsPage';
+export * from '../models/ApiXTdhGrantee';
+export * from '../models/ApiXTdhGranteesPage';
 export * from '../models/ApiXTdhToken';
-export * from '../models/ApiXTdhTokenGrantor';
 export * from '../models/ApiXTdhTokensPage';
 export * from '../models/CreateDirectMessageWaveRequest';
 export * from '../models/GetWaveSubscription200Response';
@@ -217,7 +221,6 @@ import { ApiCommunityMemberMinimal } from '../models/ApiCommunityMemberMinimal';
 import { ApiCompleteMultipartUploadRequest } from '../models/ApiCompleteMultipartUploadRequest';
 import { ApiCompleteMultipartUploadRequestPart } from '../models/ApiCompleteMultipartUploadRequestPart';
 import { ApiCompleteMultipartUploadResponse } from '../models/ApiCompleteMultipartUploadResponse';
-import { ApiContract } from '../models/ApiContract';
 import { ApiCreateDropPart } from '../models/ApiCreateDropPart';
 import { ApiCreateDropRequest             } from '../models/ApiCreateDropRequest';
 import { ApiCreateGroup } from '../models/ApiCreateGroup';
@@ -374,8 +377,13 @@ import { ApiWaveVotersPage } from '../models/ApiWaveVotersPage';
 import { ApiWaveVotingConfig         } from '../models/ApiWaveVotingConfig';
 import { ApiWavesOverviewType } from '../models/ApiWavesOverviewType';
 import { ApiWavesPinFilter } from '../models/ApiWavesPinFilter';
+import { ApiXTdhCollection } from '../models/ApiXTdhCollection';
+import { ApiXTdhCollectionsPage } from '../models/ApiXTdhCollectionsPage';
+import { ApiXTdhContribution } from '../models/ApiXTdhContribution';
+import { ApiXTdhContributionsPage } from '../models/ApiXTdhContributionsPage';
+import { ApiXTdhGrantee } from '../models/ApiXTdhGrantee';
+import { ApiXTdhGranteesPage } from '../models/ApiXTdhGranteesPage';
 import { ApiXTdhToken } from '../models/ApiXTdhToken';
-import { ApiXTdhTokenGrantor } from '../models/ApiXTdhTokenGrantor';
 import { ApiXTdhTokensPage } from '../models/ApiXTdhTokensPage';
 import { CreateDirectMessageWaveRequest } from '../models/CreateDirectMessageWaveRequest';
 import { GetWaveSubscription200Response } from '../models/GetWaveSubscription200Response';
@@ -452,7 +460,6 @@ let typeMap: {[index: string]: any} = {
     "ApiCompleteMultipartUploadRequest": ApiCompleteMultipartUploadRequest,
     "ApiCompleteMultipartUploadRequestPart": ApiCompleteMultipartUploadRequestPart,
     "ApiCompleteMultipartUploadResponse": ApiCompleteMultipartUploadResponse,
-    "ApiContract": ApiContract,
     "ApiCreateDropPart": ApiCreateDropPart,
     "ApiCreateDropRequest": ApiCreateDropRequest,
     "ApiCreateGroup": ApiCreateGroup,
@@ -584,8 +591,13 @@ let typeMap: {[index: string]: any} = {
     "ApiWaveVoter": ApiWaveVoter,
     "ApiWaveVotersPage": ApiWaveVotersPage,
     "ApiWaveVotingConfig": ApiWaveVotingConfig,
+    "ApiXTdhCollection": ApiXTdhCollection,
+    "ApiXTdhCollectionsPage": ApiXTdhCollectionsPage,
+    "ApiXTdhContribution": ApiXTdhContribution,
+    "ApiXTdhContributionsPage": ApiXTdhContributionsPage,
+    "ApiXTdhGrantee": ApiXTdhGrantee,
+    "ApiXTdhGranteesPage": ApiXTdhGranteesPage,
     "ApiXTdhToken": ApiXTdhToken,
-    "ApiXTdhTokenGrantor": ApiXTdhTokenGrantor,
     "ApiXTdhTokensPage": ApiXTdhTokensPage,
     "CreateDirectMessageWaveRequest": CreateDirectMessageWaveRequest,
     "GetWaveSubscription200Response": GetWaveSubscription200Response,

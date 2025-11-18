@@ -681,6 +681,25 @@ export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
       ctx.timer?.stop(`${this.constructor.name}->getGrantTokensPage`);
     }
   }
+
+  public async getGrantsByIds(
+    grantIds: string[],
+    ctx: RequestContext
+  ): Promise<TdhGrantEntity[]> {
+    try {
+      ctx.timer?.start(`${this.constructor.name}->getGrantsByIds`);
+      if (!grantIds) {
+        return [];
+      }
+      return this.db.execute<TdhGrantEntity>(
+        `select * from ${TDH_GRANTS_TABLE} where id in (:grantIds)`,
+        { grantIds },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->getGrantsByIds`);
+    }
+  }
 }
 
 export const tdhGrantsRepository = new TdhGrantsRepository(dbSupplier);

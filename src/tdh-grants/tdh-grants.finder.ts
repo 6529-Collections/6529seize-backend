@@ -136,6 +136,27 @@ export class TdhGrantsFinder {
       ctx.timer?.stop(`${this.constructor.name}->searchForTokens`);
     }
   }
+
+  public async getGrantsByIds(
+    grantIds: string[],
+    ctx: RequestContext
+  ): Promise<TdhGrantModel[]> {
+    try {
+      ctx.timer?.start(`${this.constructor.name}->getGrantsByIds`);
+      const [entities, tokenCounts] = await Promise.all([
+        this.tdhGrantsRepository.getGrantsByIds(grantIds, ctx),
+        this.tdhGrantsRepository.getGrantsTokenCounts(grantIds, ctx)
+      ]);
+      return entities.map((it) =>
+        fromTdhGrantEntityToModel({
+          ...it,
+          target_token_count: tokenCounts[it.id] ?? 0
+        })
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->getGrantsByIds`);
+    }
+  }
 }
 
 export const tdhGrantsFinder = new TdhGrantsFinder(tdhGrantsRepository);

@@ -13,35 +13,49 @@
 import { ApiProfileMin } from '../models/ApiProfileMin';
 import { HttpFile } from '../http/http';
 
-export class ApiXTdhTokenGrantor {
-    'xtdh_rate': number;
+export class ApiXTdhGrantee {
+    'grantee': ApiProfileMin;
     'xtdh': number;
-    'grantor': ApiProfileMin;
+    'xtdh_rate': number;
+    'collections_count': number;
+    'tokens_count': number;
 
     static readonly discriminator: string | undefined = undefined;
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
         {
-            "name": "xtdh_rate",
-            "baseName": "xtdh_rate",
-            "type": "number",
-            "format": "double"
+            "name": "grantee",
+            "baseName": "grantee",
+            "type": "ApiProfileMin",
+            "format": ""
         },
         {
             "name": "xtdh",
             "baseName": "xtdh",
             "type": "number",
-            "format": "double"
+            "format": "float"
         },
         {
-            "name": "grantor",
-            "baseName": "grantor",
-            "type": "ApiProfileMin",
-            "format": ""
+            "name": "xtdh_rate",
+            "baseName": "xtdh_rate",
+            "type": "number",
+            "format": "float"
+        },
+        {
+            "name": "collections_count",
+            "baseName": "collections_count",
+            "type": "number",
+            "format": "int64"
+        },
+        {
+            "name": "tokens_count",
+            "baseName": "tokens_count",
+            "type": "number",
+            "format": "int64"
         }    ];
 
     static getAttributeTypeMap() {
-        return ApiXTdhTokenGrantor.attributeTypeMap;
+        return ApiXTdhGrantee.attributeTypeMap;
     }
 
     public constructor() {
