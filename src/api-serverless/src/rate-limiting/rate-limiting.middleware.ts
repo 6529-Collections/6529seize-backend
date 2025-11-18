@@ -49,14 +49,12 @@ export function rateLimitingMiddleware() {
       identifier = `wallet:${authenticatedWallet.toLowerCase()}`;
       isAuthenticated = true;
     } else if (verifyInternalRequest(req)) {
-      // Use internal request identifier for server-side requests (e.g., from Elastic Beanstalk)
+      // Verified internal requests skip rate limiting entirely
       // The signature ensures only the web app (with the secret) can generate valid requests
-      // This allows SSR requests to bypass IP-based rate limiting
-      identifier = 'internal:ssr';
-      isAuthenticated = false; // Use unauthenticated config for internal requests
       logger.info(
-        `[SSR REQUEST] Received signed internal request for path ${req.path}, skipping IP-based rate limiting`
+        '[SSR REQUEST] Received signed internal request, skipping rate limiting'
       );
+      return next();
     } else if (ip) {
       identifier = `ip:${ip}`;
       isAuthenticated = false;

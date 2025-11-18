@@ -229,7 +229,7 @@ describe('rateLimitingMiddleware', () => {
     );
   });
 
-  it('uses internal request headers when verified (for server-side requests)', async () => {
+  it('skips rate limiting for verified internal requests (for server-side requests)', async () => {
     const { rateLimitingMiddleware } = require('./rate-limiting.middleware');
     (getAuthenticatedWalletOrNull as jest.Mock).mockReturnValue(null);
     (getIp as jest.Mock).mockReturnValue('192.168.1.1');
@@ -241,29 +241,16 @@ describe('rateLimitingMiddleware', () => {
     };
     req.method = 'GET';
     req.path = '/api/nfts';
-    (rateLimitingService.checkRateLimit as jest.Mock).mockResolvedValue({
-      allowed: true,
-      remaining: 15,
-      resetTime: Date.now() + 1000,
-      limit: 20
-    });
 
     const middleware = rateLimitingMiddleware();
     await middleware(req as Request, res as Response, next);
 
     expect(verifyInternalRequest).toHaveBeenCalledWith(req);
-    expect(rateLimitingService.checkRateLimit).toHaveBeenCalledWith(
-      'internal:ssr',
-      expect.objectContaining({
-        burst: 20,
-        sustainedRps: 5,
-        sustainedWindowSeconds: 60
-      })
-    );
+    expect(rateLimitingService.checkRateLimit).not.toHaveBeenCalled();
     expect(next).toHaveBeenCalled();
   });
 
-  it('internal request takes priority over IP address', async () => {
+  it('internal request skips rate limiting and takes priority over IP address', async () => {
     const { rateLimitingMiddleware } = require('./rate-limiting.middleware');
     (getAuthenticatedWalletOrNull as jest.Mock).mockReturnValue(null);
     (getIp as jest.Mock).mockReturnValue('192.168.1.1');
@@ -275,24 +262,12 @@ describe('rateLimitingMiddleware', () => {
     };
     req.method = 'GET';
     req.path = '/api/nfts';
-    (rateLimitingService.checkRateLimit as jest.Mock).mockResolvedValue({
-      allowed: true,
-      remaining: 15,
-      resetTime: Date.now() + 1000,
-      limit: 20
-    });
 
     const middleware = rateLimitingMiddleware();
     await middleware(req as Request, res as Response, next);
 
-    expect(rateLimitingService.checkRateLimit).toHaveBeenCalledWith(
-      'internal:ssr',
-      expect.any(Object)
-    );
-    expect(rateLimitingService.checkRateLimit).not.toHaveBeenCalledWith(
-      expect.stringContaining('ip:'),
-      expect.any(Object)
-    );
+    expect(rateLimitingService.checkRateLimit).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalled();
   });
 
   it('authenticated wallet takes priority over internal request', async () => {
@@ -331,7 +306,7 @@ describe('rateLimitingMiddleware', () => {
     );
   });
 
-  it('internal request is used when wallet is not authenticated', async () => {
+  it('internal request skips rate limiting when wallet is not authenticated', async () => {
     const { rateLimitingMiddleware } = require('./rate-limiting.middleware');
     (getAuthenticatedWalletOrNull as jest.Mock).mockReturnValue(null);
     (getIp as jest.Mock).mockReturnValue('192.168.1.1');
@@ -343,24 +318,12 @@ describe('rateLimitingMiddleware', () => {
     };
     req.method = 'GET';
     req.path = '/api/nfts';
-    (rateLimitingService.checkRateLimit as jest.Mock).mockResolvedValue({
-      allowed: true,
-      remaining: 15,
-      resetTime: Date.now() + 1000,
-      limit: 20
-    });
 
     const middleware = rateLimitingMiddleware();
     await middleware(req as Request, res as Response, next);
 
-    expect(rateLimitingService.checkRateLimit).toHaveBeenCalledWith(
-      'internal:ssr',
-      expect.objectContaining({
-        burst: 20,
-        sustainedRps: 5,
-        sustainedWindowSeconds: 60
-      })
-    );
+    expect(rateLimitingService.checkRateLimit).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalled();
   });
 
   it('falls back to IP when internal request verification fails', async () => {
