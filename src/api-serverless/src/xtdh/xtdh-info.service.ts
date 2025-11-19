@@ -268,7 +268,8 @@ export class XTdhInfoService {
                 ? grantorProfiles[it.grantor_id]
                 : undefined,
             grant: it.grant_id ? relatedGrantApiModels[it.grant_id] : undefined,
-            grant_count: it.grant_count,
+            total_grant_count: it.total_grant_count,
+            active_grant_count: it.active_grant_count,
             xtdh: it.xtdh,
             xtdh_rate: it.xtdh_rate
           }))

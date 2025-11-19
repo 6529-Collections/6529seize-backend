@@ -21,7 +21,6 @@ import { TdhGrantStatus, TdhGrantTokenMode } from '../entities/ITdhGrant';
 import { collections } from '../collections';
 import { XTdhStatsMetaEntity } from '../entities/IXTdhStatsMeta';
 import { NotFoundException } from '../exceptions';
-import { numbers } from '../numbers';
 
 const CTE_EPOCH = `
 epoch AS (
@@ -1699,7 +1698,8 @@ SET cw.xtdh_rate = COALESCE(pd.produced, 0) - COALESCE(go.granted_out, 0) + COAL
     Array<{
       grant_id?: string;
       grantor_id?: string;
-      grant_count?: number;
+      total_grant_count: number;
+      active_grant_count: number;
       xtdh: number;
       xtdh_rate: number;
     }>
@@ -1709,62 +1709,69 @@ SET cw.xtdh_rate = COALESCE(pd.produced, 0) - COALESCE(go.granted_out, 0) + COAL
     try {
       ctx.timer?.start(`${this.constructor.name}->getTokenContributors`);
       const { grantStatsTable } = await this.getActiveStatsTables(ctx);
+
       const selectPart =
         groupBy === 'grant'
-          ? `SELECT
+          ? `
+      SELECT
         tg.grant_id,
         gr.grantor_id AS grantor_id,
         tg.xtdh_total      AS xtdh,
-        tg.xtdh_rate_daily AS xtdh_rate
+        tg.xtdh_rate_daily AS xtdh_rate,
+        1                  AS total_grant_count,
+        CASE WHEN tg.xtdh_rate_daily > 0 THEN 1 ELSE 0 END AS active_grant_count
       FROM token_grants tg
       JOIN ${TDH_GRANTS_TABLE} gr
-        ON gr.id = tg.grant_id`
-          : `SELECT
+        ON gr.id = tg.grant_id
+    `
+          : `
+      SELECT
         gr.grantor_id AS grantor_id,
-        COUNT(*)                      AS grant_count,
-        SUM(tg.xtdh_total)            AS xtdh,
-        SUM(tg.xtdh_rate_daily)       AS xtdh_rate
+        COUNT(*) AS total_grant_count,
+        SUM(CASE WHEN tg.xtdh_rate_daily > 0 THEN 1 ELSE 0 END) AS active_grant_count,
+        SUM(tg.xtdh_total)      AS xtdh,
+        SUM(tg.xtdh_rate_daily) AS xtdh_rate
       FROM token_grants tg
-      JOIN tdh_grants gr ON gr.id = tg.grant_id
-      GROUP BY gr.grantor_id`;
-      const sql = `
-      WITH token_grants AS (
-        SELECT
-          gts.grant_id,
-          gts.xtdh_total,
-          gts.xtdh_rate_daily
-        FROM ${grantStatsTable} gts
-        WHERE gts.\`partition\` = :partition
-          AND gts.token_id    = :token_id
-      ) ${selectPart}
-      ORDER BY ${sort} ${order}
-      LIMIT :limit OFFSET :offset
+      JOIN ${TDH_GRANTS_TABLE} gr
+        ON gr.id = tg.grant_id
+      GROUP BY gr.grantor_id
     `;
 
-      return await this.db
-        .execute<{
-          grant_id?: string;
-          grantor_id?: string;
-          grant_count?: number;
-          xtdh: number;
-          xtdh_rate: number;
-        }>(
-          sql,
-          { partition, token_id: token, limit, offset },
-          { wrappedConnection: ctx.connection }
-        )
-        .then((results) =>
-          results.map((it) => ({
-            grant_id: it.grant_id,
-            grantor_id: it.grantor_id,
-            grant_count:
-              it.grant_count === undefined
-                ? undefined
-                : numbers.parseNumberOrNull(it.grant_count)!,
-            xtdh: +it.xtdh,
-            xtdh_rate: +it.xtdh_rate
-          }))
-        );
+      const sql = `
+        WITH token_grants AS (
+          SELECT
+            gts.grant_id,
+            gts.xtdh_total,
+            gts.xtdh_rate_daily
+          FROM ${grantStatsTable} gts
+          WHERE gts.\`partition\` = :partition
+            AND gts.token_id      = :token_id
+        ) ${selectPart}
+        ORDER BY ${sort} ${order}
+        LIMIT :limit OFFSET :offset
+      `;
+
+      const rows = await this.db.execute<{
+        grant_id?: string;
+        grantor_id?: string;
+        total_grant_count: number;
+        active_grant_count: number;
+        xtdh: number;
+        xtdh_rate: number;
+      }>(
+        sql,
+        { partition, token_id: token, limit, offset },
+        { wrappedConnection: ctx.connection }
+      );
+
+      return rows.map((it) => ({
+        grant_id: it.grant_id,
+        grantor_id: it.grantor_id,
+        total_grant_count: Number(it.total_grant_count ?? 0),
+        active_grant_count: Number(it.active_grant_count ?? 0),
+        xtdh: +it.xtdh,
+        xtdh_rate: +it.xtdh_rate
+      }));
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->getTokenContributors`);
     }

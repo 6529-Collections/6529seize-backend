@@ -7647,7 +7647,10 @@ components:
         xtdh_rate:
           type: number
           format: float
-        grant_count:
+        total_grant_count:
+          type: number
+          format: int64
+        active_grant_count:
           type: number
           format: int64
     ApiXTdhContributionsPage:
