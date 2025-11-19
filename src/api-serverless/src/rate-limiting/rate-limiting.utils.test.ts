@@ -41,11 +41,11 @@ describe('rate-limiting.utils', () => {
       const config = getRateLimitConfig();
 
       expect(config.enabled).toBe(false);
-      expect(config.authenticated.burst).toBe(30);
-      expect(config.authenticated.sustainedRps).toBe(10);
+      expect(config.authenticated.burst).toBe(45);
+      expect(config.authenticated.sustainedRps).toBe(15);
       expect(config.authenticated.sustainedWindowSeconds).toBe(60);
-      expect(config.unauthenticated.burst).toBe(20);
-      expect(config.unauthenticated.sustainedRps).toBe(5);
+      expect(config.unauthenticated.burst).toBe(30);
+      expect(config.unauthenticated.sustainedRps).toBe(10);
       expect(config.unauthenticated.sustainedWindowSeconds).toBe(60);
       expect(config.internal.enabled).toBe(false);
       expect(config.internal.clientId).toBeNull();

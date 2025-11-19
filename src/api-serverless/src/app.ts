@@ -1144,7 +1144,7 @@ loadApi().then(async () => {
   });
 
   rootRouter.get('/health', async (req, res) => {
-    let isDbHealthy: boolean;
+    let isDbHealthy = false;
     try {
       await sqlExecutor.execute('SELECT 1');
       isDbHealthy = true;
@@ -1152,25 +1152,25 @@ loadApi().then(async () => {
       isDbHealthy = false;
     }
 
-    let isRedisEnabled: boolean;
+    let redis: ReturnType<typeof getRedisClient> | null = null;
     let isRedisHealthy: boolean | undefined;
+
     try {
-      const redis = getRedisClient();
+      redis = getRedisClient();
       if (redis) {
-        isRedisEnabled = true;
         await redis.ping();
         isRedisHealthy = true;
-      } else {
-        isRedisEnabled = false;
       }
     } catch (err) {
       isRedisHealthy = false;
     }
 
+    const redisEnabled = !!redis;
+
     const redisResponse: any = {
-      enabled: isRedisEnabled
+      enabled: redisEnabled
     };
-    if (isRedisEnabled) {
+    if (redisEnabled) {
       redisResponse.healthy = isRedisHealthy;
     }
 
@@ -1205,8 +1205,8 @@ loadApi().then(async () => {
       };
     }
 
-    const overallStatus =
-      isDbHealthy && (!isRedisEnabled || isRedisHealthy) ? 'ok' : 'degraded';
+    const isRedisOk = !redisEnabled || isRedisHealthy === true;
+    const overallStatus = isDbHealthy && isRedisOk ? 'ok' : 'degraded';
 
     return res.json({
       status: overallStatus,
