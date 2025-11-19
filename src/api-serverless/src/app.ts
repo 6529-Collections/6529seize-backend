@@ -1,3 +1,4 @@
+import fetch from 'node-fetch';
 import * as db from '../../db-api';
 import { ids } from '../../ids';
 
@@ -67,7 +68,8 @@ import { loadLocalConfig, loadSecrets } from '../../env';
 import { loggerContext } from '../../logger-context';
 import { Logger } from '../../logging';
 import { numbers } from '../../numbers';
-import { initRedis, redisGet } from '../../redis';
+import { getRedisClient, initRedis, redisGet } from '../../redis';
+import { sqlExecutor } from '../../sql-executor';
 import { parseTdhResultsFromDB } from '../../sql_helpers';
 import {
   corsOptions,
@@ -102,6 +104,7 @@ import {
   initRateLimiting,
   rateLimitingMiddleware
 } from './rate-limiting/rate-limiting.middleware';
+import { getRateLimitConfig } from './rate-limiting/rate-limiting.utils';
 import { cacheRequest, isRequestCacheEntry } from './request-cache';
 import rpcRoutes from './rpc/rpc.routes';
 import sitemapRoutes from './sitemap/sitemap.routes';
@@ -1131,7 +1134,8 @@ loadApi().then(async () => {
     const image = await db.fetchRandomImage();
     await returnJsonResult(
       {
-        message: 'FOR 6529 SEIZE API GO TO /api',
+        message: 'WELCOME TO 6529 API',
+        health: '/health',
         image: image[0].scaled ? image[0].scaled : image[0].image
       },
       req,
@@ -1139,11 +1143,86 @@ loadApi().then(async () => {
     );
   });
 
+  rootRouter.get('/health', async (req, res) => {
+    let isDbHealthy: boolean;
+    try {
+      await sqlExecutor.execute('SELECT 1');
+      isDbHealthy = true;
+    } catch (err) {
+      isDbHealthy = false;
+    }
+
+    let isRedisEnabled: boolean;
+    let isRedisHealthy: boolean | undefined;
+    try {
+      const redis = getRedisClient();
+      if (redis) {
+        isRedisEnabled = true;
+        await redis.ping();
+        isRedisHealthy = true;
+      } else {
+        isRedisEnabled = false;
+      }
+    } catch (err) {
+      isRedisHealthy = false;
+    }
+
+    const redisResponse: any = {
+      enabled: isRedisEnabled
+    };
+    if (isRedisEnabled) {
+      redisResponse.healthy = isRedisHealthy;
+    }
+
+    let rateLimitResponse: any;
+    try {
+      const rateLimitingConfig = getRateLimitConfig();
+      if (rateLimitingConfig.enabled) {
+        rateLimitResponse = {
+          enabled: true,
+          authenticated: {
+            burst: rateLimitingConfig.authenticated.burst,
+            sustained_rps: rateLimitingConfig.authenticated.sustainedRps,
+            sustained_window_seconds:
+              rateLimitingConfig.authenticated.sustainedWindowSeconds
+          },
+          unauthenticated: {
+            burst: rateLimitingConfig.unauthenticated.burst,
+            sustained_rps: rateLimitingConfig.unauthenticated.sustainedRps,
+            sustained_window_seconds:
+              rateLimitingConfig.unauthenticated.sustainedWindowSeconds
+          },
+          internal_enabled: rateLimitingConfig.internal.enabled
+        };
+      } else {
+        rateLimitResponse = {
+          enabled: false
+        };
+      }
+    } catch (err) {
+      rateLimitResponse = {
+        enabled: false
+      };
+    }
+
+    const overallStatus =
+      isDbHealthy && (!isRedisEnabled || isRedisHealthy) ? 'ok' : 'degraded';
+
+    return res.json({
+      status: overallStatus,
+      db: isDbHealthy ? 'ok' : 'degraded',
+      redis: redisResponse,
+      rate_limit: rateLimitResponse
+    });
+  });
+
   rootRouter.get(``, async function (req: any, res: any) {
     const image = await db.fetchRandomImage();
     await returnJsonResult(
       {
-        message: 'FOR 6529 SEIZE API GO TO /api',
+        message: 'WELCOME TO 6529 API',
+        api: '/api',
+        health: '/health',
         image: image[0].scaled ? image[0].scaled : image[0].image
       },
       req,
@@ -1206,7 +1285,7 @@ loadApi().then(async () => {
     SwaggerUI.setup(
       swaggerDocument,
       {
-        customSiteTitle: 'Seize API Docs',
+        customSiteTitle: '6529 API Docs',
         customCss: '.topbar { display: none }'
       },
       { explorer: true }
