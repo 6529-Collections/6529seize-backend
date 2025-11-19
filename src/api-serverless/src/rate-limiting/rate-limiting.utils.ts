@@ -16,6 +16,11 @@ export function getRateLimitConfig(): {
   enabled: boolean;
   authenticated: RateLimitConfig;
   unauthenticated: RateLimitConfig;
+  internal: {
+    enabled: boolean;
+    clientId: string | null;
+    secret: string | null;
+  };
 } {
   const rateLimitEnabled =
     env.getStringOrNull('API_RATE_LIMIT_ENABLED') === 'true';
@@ -29,19 +34,29 @@ export function getRateLimitConfig(): {
 
   const enabled = rateLimitEnabled && redis ? true : false;
 
+  const internalId = env.getStringOrNull('API_RATE_LIMIT_INTERNAL_ID');
+  const internalSecret = env.getStringOrNull('API_RATE_LIMIT_INTERNAL_SECRET');
+  const internalEnabled = !!(internalId && internalSecret);
+
   return {
     enabled,
     authenticated: {
-      burst: env.getIntOrNull('RATE_LIMIT_AUTH_BURST') ?? 30,
-      sustainedRps: env.getIntOrNull('RATE_LIMIT_AUTH_SUSTAINED_RPS') ?? 10,
+      burst: env.getIntOrNull('API_RATE_LIMIT_AUTH_BURST') ?? 30,
+      sustainedRps: env.getIntOrNull('API_RATE_LIMIT_AUTH_SUSTAINED_RPS') ?? 10,
       sustainedWindowSeconds:
-        env.getIntOrNull('RATE_LIMIT_AUTH_SUSTAINED_WINDOW_SECONDS') ?? 60
+        env.getIntOrNull('API_RATE_LIMIT_AUTH_SUSTAINED_WINDOW_SECONDS') ?? 60
     },
     unauthenticated: {
-      burst: env.getIntOrNull('RATE_LIMIT_UNAUTH_BURST') ?? 20,
-      sustainedRps: env.getIntOrNull('RATE_LIMIT_UNAUTH_SUSTAINED_RPS') ?? 5,
+      burst: env.getIntOrNull('API_RATE_LIMIT_UNAUTH_BURST') ?? 20,
+      sustainedRps:
+        env.getIntOrNull('API_RATE_LIMIT_UNAUTH_SUSTAINED_RPS') ?? 5,
       sustainedWindowSeconds:
-        env.getIntOrNull('RATE_LIMIT_UNAUTH_SUSTAINED_WINDOW_SECONDS') ?? 60
+        env.getIntOrNull('API_RATE_LIMIT_UNAUTH_SUSTAINED_WINDOW_SECONDS') ?? 60
+    },
+    internal: {
+      enabled: internalEnabled,
+      clientId: internalId,
+      secret: internalSecret
     }
   };
 }
@@ -74,9 +89,25 @@ export function sanitizeIdentifier(identifier: string): string {
  * Verifies a signed internal request using HMAC with timestamp
  * The web app should sign: HMAC-SHA256(secret, `${clientId}\n${timestamp}\n${method}\n${path}`)
  * @param req - Express request object
+ * @param internalConfig - Internal configuration object with clientId and secret
  * @returns true if the signature is valid
  */
-export function verifyInternalRequest(req: Request): boolean {
+export function verifyInternalRequest(
+  req: Request,
+  internalConfig: {
+    enabled: boolean;
+    clientId: string | null;
+    secret: string | null;
+  }
+): boolean {
+  if (
+    !internalConfig.enabled ||
+    !internalConfig.clientId ||
+    !internalConfig.secret
+  ) {
+    return false;
+  }
+
   const clientId = req.headers['x-6529-internal-id'] as string | undefined;
   const timestamp = req.headers['x-6529-internal-timestamp'] as
     | string
@@ -85,12 +116,7 @@ export function verifyInternalRequest(req: Request): boolean {
     | string
     | undefined;
 
-  const expectedInternalId = env.getStringOrNull('API_RATE_LIMIT_INTERNAL_ID');
-  if (!expectedInternalId) {
-    return false;
-  }
-
-  if (clientId !== expectedInternalId) {
+  if (clientId !== internalConfig.clientId) {
     return false;
   }
 
@@ -108,11 +134,6 @@ export function verifyInternalRequest(req: Request): boolean {
     return false;
   }
 
-  const secret = env.getStringOrNull('API_RATE_LIMIT_INTERNAL_SECRET');
-  if (!secret) {
-    return false;
-  }
-
   try {
     // Use path with query string to match web app's pathname + search format
     // Uppercase method to match web app's .toUpperCase() call
@@ -121,7 +142,9 @@ export function verifyInternalRequest(req: Request): boolean {
       (req.url.includes('?') ? req.url.substring(req.url.indexOf('?')) : '');
     const method = req.method.toUpperCase();
     const payload = `${clientId}\n${timestampNum}\n${method}\n${pathWithQuery}`;
-    const expected = createHmac('sha256', secret).update(payload).digest('hex');
+    const expected = createHmac('sha256', internalConfig.secret)
+      .update(payload)
+      .digest('hex');
 
     const signatureBuffer = new Uint8Array(Buffer.from(signature, 'hex'));
     const expectedBuffer = new Uint8Array(Buffer.from(expected, 'hex'));

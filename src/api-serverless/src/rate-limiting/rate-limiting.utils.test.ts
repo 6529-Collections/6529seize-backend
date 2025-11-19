@@ -29,12 +29,14 @@ describe('rate-limiting.utils', () => {
 
     it('returns disabled when env vars are not set (API_RATE_LIMIT_ENABLED must be true)', () => {
       delete process.env.API_RATE_LIMIT_ENABLED;
-      delete process.env.RATE_LIMIT_AUTH_BURST;
-      delete process.env.RATE_LIMIT_AUTH_SUSTAINED_RPS;
-      delete process.env.RATE_LIMIT_AUTH_SUSTAINED_WINDOW_SECONDS;
-      delete process.env.RATE_LIMIT_UNAUTH_BURST;
-      delete process.env.RATE_LIMIT_UNAUTH_SUSTAINED_RPS;
-      delete process.env.RATE_LIMIT_UNAUTH_SUSTAINED_WINDOW_SECONDS;
+      delete process.env.API_RATE_LIMIT_AUTH_BURST;
+      delete process.env.API_RATE_LIMIT_AUTH_SUSTAINED_RPS;
+      delete process.env.API_RATE_LIMIT_AUTH_SUSTAINED_WINDOW_SECONDS;
+      delete process.env.API_RATE_LIMIT_UNAUTH_BURST;
+      delete process.env.API_RATE_LIMIT_UNAUTH_SUSTAINED_RPS;
+      delete process.env.API_RATE_LIMIT_UNAUTH_SUSTAINED_WINDOW_SECONDS;
+      delete process.env.API_RATE_LIMIT_INTERNAL_ID;
+      delete process.env.API_RATE_LIMIT_INTERNAL_SECRET;
 
       const config = getRateLimitConfig();
 
@@ -45,16 +47,19 @@ describe('rate-limiting.utils', () => {
       expect(config.unauthenticated.burst).toBe(20);
       expect(config.unauthenticated.sustainedRps).toBe(5);
       expect(config.unauthenticated.sustainedWindowSeconds).toBe(60);
+      expect(config.internal.enabled).toBe(false);
+      expect(config.internal.clientId).toBeNull();
+      expect(config.internal.secret).toBeNull();
     });
 
     it('enables rate limiting when API_RATE_LIMIT_ENABLED is true and Redis is available', () => {
       process.env.API_RATE_LIMIT_ENABLED = 'true';
-      process.env.RATE_LIMIT_AUTH_BURST = '50';
-      process.env.RATE_LIMIT_AUTH_SUSTAINED_RPS = '20';
-      process.env.RATE_LIMIT_AUTH_SUSTAINED_WINDOW_SECONDS = '120';
-      process.env.RATE_LIMIT_UNAUTH_BURST = '30';
-      process.env.RATE_LIMIT_UNAUTH_SUSTAINED_RPS = '10';
-      process.env.RATE_LIMIT_UNAUTH_SUSTAINED_WINDOW_SECONDS = '90';
+      process.env.API_RATE_LIMIT_AUTH_BURST = '50';
+      process.env.API_RATE_LIMIT_AUTH_SUSTAINED_RPS = '20';
+      process.env.API_RATE_LIMIT_AUTH_SUSTAINED_WINDOW_SECONDS = '120';
+      process.env.API_RATE_LIMIT_UNAUTH_BURST = '30';
+      process.env.API_RATE_LIMIT_UNAUTH_SUSTAINED_RPS = '10';
+      process.env.API_RATE_LIMIT_UNAUTH_SUSTAINED_WINDOW_SECONDS = '90';
       mockGetRedisClient.mockReturnValue({} as any);
 
       const config = getRateLimitConfig();
@@ -102,6 +107,42 @@ describe('rate-limiting.utils', () => {
       const config = getRateLimitConfig();
 
       expect(config.enabled).toBe(false);
+    });
+
+    it('enables internal config when both ID and secret are provided', () => {
+      process.env.API_RATE_LIMIT_INTERNAL_ID = 'test-id';
+      process.env.API_RATE_LIMIT_INTERNAL_SECRET = 'test-secret';
+      mockGetRedisClient.mockReturnValue({} as any);
+
+      const config = getRateLimitConfig();
+
+      expect(config.internal.enabled).toBe(true);
+      expect(config.internal.clientId).toBe('test-id');
+      expect(config.internal.secret).toBe('test-secret');
+    });
+
+    it('disables internal config when ID is missing', () => {
+      delete process.env.API_RATE_LIMIT_INTERNAL_ID;
+      process.env.API_RATE_LIMIT_INTERNAL_SECRET = 'test-secret';
+      mockGetRedisClient.mockReturnValue({} as any);
+
+      const config = getRateLimitConfig();
+
+      expect(config.internal.enabled).toBe(false);
+      expect(config.internal.clientId).toBeNull();
+      expect(config.internal.secret).toBe('test-secret');
+    });
+
+    it('disables internal config when secret is missing', () => {
+      process.env.API_RATE_LIMIT_INTERNAL_ID = 'test-id';
+      delete process.env.API_RATE_LIMIT_INTERNAL_SECRET;
+      mockGetRedisClient.mockReturnValue({} as any);
+
+      const config = getRateLimitConfig();
+
+      expect(config.internal.enabled).toBe(false);
+      expect(config.internal.clientId).toBe('test-id');
+      expect(config.internal.secret).toBeNull();
     });
   });
 

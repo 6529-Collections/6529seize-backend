@@ -221,15 +221,15 @@ Rate limiting is configured via environment variables (see `.env.sample`):
 
 **Authenticated Users:**
 
-- `RATE_LIMIT_AUTH_BURST`: Burst limit per second (default: 30)
-- `RATE_LIMIT_AUTH_SUSTAINED_RPS`: Sustained requests per second (default: 10)
-- `RATE_LIMIT_AUTH_SUSTAINED_WINDOW_SECONDS`: Time window for sustained limit (default: 60)
+- `API_RATE_LIMIT_AUTH_BURST`: Burst limit per second (default: 30)
+- `API_RATE_LIMIT_AUTH_SUSTAINED_RPS`: Sustained requests per second (default: 10)
+- `API_RATE_LIMIT_AUTH_SUSTAINED_WINDOW_SECONDS`: Time window for sustained limit (default: 60)
 
 **Unauthenticated Users:**
 
-- `RATE_LIMIT_UNAUTH_BURST`: Burst limit per second (default: 20)
-- `RATE_LIMIT_UNAUTH_SUSTAINED_RPS`: Sustained requests per second (default: 5)
-- `RATE_LIMIT_UNAUTH_SUSTAINED_WINDOW_SECONDS`: Time window for sustained limit (default: 60)
+- `API_RATE_LIMIT_UNAUTH_BURST`: Burst limit per second (default: 20)
+- `API_RATE_LIMIT_UNAUTH_SUSTAINED_RPS`: Sustained requests per second (default: 5)
+- `API_RATE_LIMIT_UNAUTH_SUSTAINED_WINDOW_SECONDS`: Time window for sustained limit (default: 60)
 
 **Internal Requests (SSR):**
 

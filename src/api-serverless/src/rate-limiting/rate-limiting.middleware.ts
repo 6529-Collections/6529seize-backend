@@ -17,8 +17,11 @@ export function initRateLimiting() {
   const config = getConfig();
 
   if (config.enabled) {
+    const internalStatus = config.internal.enabled
+      ? 'Internal: enabled'
+      : 'Internal: disabled';
     logger.info(
-      `RATE LIMIT ENABLED - Authenticated: ${config.authenticated.burst} burst, ${config.authenticated.sustainedRps} RPS | Unauthenticated: ${config.unauthenticated.burst} burst, ${config.unauthenticated.sustainedRps} RPS`
+      `RATE LIMIT ENABLED - Authenticated: ${config.authenticated.burst} burst, ${config.authenticated.sustainedRps} RPS | Unauthenticated: ${config.unauthenticated.burst} burst, ${config.unauthenticated.sustainedRps} RPS | ${internalStatus}`
     );
   } else {
     logger.info('RATE LIMIT DISABLED');
@@ -60,7 +63,7 @@ export function rateLimitingMiddleware() {
     if (authenticatedWallet) {
       identifier = `wallet:${authenticatedWallet.toLowerCase()}`;
       isAuthenticated = true;
-    } else if (verifyInternalRequest(req)) {
+    } else if (verifyInternalRequest(req, config.internal)) {
       // Verified internal requests skip rate limiting entirely
       // The signature ensures only the web app (with the secret) can generate valid requests
       logger.info(

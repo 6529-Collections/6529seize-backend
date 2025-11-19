@@ -55,6 +55,11 @@ describe('rateLimitingMiddleware', () => {
         burst: 20,
         sustainedRps: 5,
         sustainedWindowSeconds: 60
+      },
+      internal: {
+        enabled: true,
+        clientId: 'test-id',
+        secret: 'test-secret'
       }
     });
   });
@@ -68,7 +73,12 @@ describe('rateLimitingMiddleware', () => {
     (getRateLimitConfig as jest.Mock).mockReturnValue({
       enabled: false,
       authenticated: {},
-      unauthenticated: {}
+      unauthenticated: {},
+      internal: {
+        enabled: false,
+        clientId: null,
+        secret: null
+      }
     });
 
     const { rateLimitingMiddleware } = require('./rate-limiting.middleware');
@@ -245,7 +255,14 @@ describe('rateLimitingMiddleware', () => {
     const middleware = rateLimitingMiddleware();
     await middleware(req as Request, res as Response, next);
 
-    expect(verifyInternalRequest).toHaveBeenCalledWith(req);
+    expect(verifyInternalRequest).toHaveBeenCalledWith(
+      req,
+      expect.objectContaining({
+        enabled: true,
+        clientId: 'test-id',
+        secret: 'test-secret'
+      })
+    );
     expect(rateLimitingService.checkRateLimit).not.toHaveBeenCalled();
     expect(next).toHaveBeenCalled();
   });
