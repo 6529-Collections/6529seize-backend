@@ -1219,7 +1219,11 @@ async function initializeApp() {
       status: overallStatus,
       db: isDbHealthy ? 'ok' : 'degraded',
       redis: redisResponse,
-      rate_limit: rateLimitResponse
+      rate_limit: rateLimitResponse,
+      version: {
+        commit: process.env.GIT_COMMIT || 'unknown',
+        node_env: process.env.NODE_ENV || 'unknown'
+      }
     });
   });
 
