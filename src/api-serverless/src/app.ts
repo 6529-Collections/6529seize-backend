@@ -302,6 +302,7 @@ loadApi().then(async () => {
         if (!cachedBody) {
           return next();
         }
+        // this checks if old cache already caches it. temporary thing.
         if (isRequestCacheEntry(cachedBody)) {
           return next();
         }
