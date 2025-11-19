@@ -32,7 +32,7 @@ export function getRateLimitConfig(): {
     );
   }
 
-  const enabled = rateLimitEnabled && redis ? true : false;
+  const enabled = rateLimitEnabled && !!redis;
 
   const internalId = env.getStringOrNull('API_RATE_LIMIT_INTERNAL_ID');
   const internalSecret = env.getStringOrNull('API_RATE_LIMIT_INTERNAL_SECRET');
@@ -41,15 +41,15 @@ export function getRateLimitConfig(): {
   return {
     enabled,
     authenticated: {
-      burst: env.getIntOrNull('API_RATE_LIMIT_AUTH_BURST') ?? 30,
-      sustainedRps: env.getIntOrNull('API_RATE_LIMIT_AUTH_SUSTAINED_RPS') ?? 10,
+      burst: env.getIntOrNull('API_RATE_LIMIT_AUTH_BURST') ?? 45,
+      sustainedRps: env.getIntOrNull('API_RATE_LIMIT_AUTH_SUSTAINED_RPS') ?? 15,
       sustainedWindowSeconds:
         env.getIntOrNull('API_RATE_LIMIT_AUTH_SUSTAINED_WINDOW_SECONDS') ?? 60
     },
     unauthenticated: {
-      burst: env.getIntOrNull('API_RATE_LIMIT_UNAUTH_BURST') ?? 20,
+      burst: env.getIntOrNull('API_RATE_LIMIT_UNAUTH_BURST') ?? 30,
       sustainedRps:
-        env.getIntOrNull('API_RATE_LIMIT_UNAUTH_SUSTAINED_RPS') ?? 5,
+        env.getIntOrNull('API_RATE_LIMIT_UNAUTH_SUSTAINED_RPS') ?? 10,
       sustainedWindowSeconds:
         env.getIntOrNull('API_RATE_LIMIT_UNAUTH_SUSTAINED_WINDOW_SECONDS') ?? 60
     },
