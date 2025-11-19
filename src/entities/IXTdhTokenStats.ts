@@ -19,6 +19,12 @@ export class XTdhTokenStatsEntity {
 
   @Column({ type: 'int', nullable: false })
   readonly grant_count!: number;
+
+  @Column({ type: 'int', nullable: false, default: 0 })
+  readonly total_contributor_count!: number;
+
+  @Column({ type: 'int', nullable: false, default: 0 })
+  readonly active_contributor_count!: number;
 }
 
 @Entity(`${XTDH_TOKEN_STATS_TABLE_PREFIX}a`)

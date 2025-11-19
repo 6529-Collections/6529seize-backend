@@ -688,7 +688,7 @@ export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
   ): Promise<TdhGrantEntity[]> {
     try {
       ctx.timer?.start(`${this.constructor.name}->getGrantsByIds`);
-      if (!grantIds) {
+      if (!grantIds.length) {
         return [];
       }
       return this.db.execute<TdhGrantEntity>(
