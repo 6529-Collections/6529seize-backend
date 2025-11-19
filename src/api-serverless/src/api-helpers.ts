@@ -1,7 +1,6 @@
 import { Request, Response } from 'express';
 import {
   ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
-  CACHE_TIME_MS,
   CONTENT_TYPE_HEADER,
   corsOptions,
   DEFAULT_PAGE_SIZE,
@@ -11,7 +10,6 @@ import {
 } from './api-constants';
 import { Time } from '../../time';
 import { numbers } from '../../numbers';
-import { redisCached } from '../../redis';
 
 const converter = require('json-2-csv');
 
@@ -62,14 +60,6 @@ export async function returnJsonResult(
   response: Response,
   skipCache?: boolean
 ) {
-  if (!skipCache && result.count > 0) {
-    await redisCached(
-      cacheKey(request),
-      Time.millis(CACHE_TIME_MS),
-      () => result
-    );
-  }
-
   response.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
   response.setHeader(
     ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,

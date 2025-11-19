@@ -18,6 +18,7 @@ import { ApiXTdhCollectionsPage } from '../generated/models/ApiXTdhCollectionsPa
 import { ApiXTdhTokensPage } from '../generated/models/ApiXTdhTokensPage';
 import { ApiXTdhContributionsPage } from '../generated/models/ApiXTdhContributionsPage';
 import { ApiXTdhGranteesPage } from '../generated/models/ApiXTdhGranteesPage';
+import { cacheRequest } from '../request-cache';
 
 const XTdhCollectionsQueryParamsSchema: Joi.ObjectSchema<XTdhCollectionsQueryParams> =
   Joi.object<XTdhCollectionsQueryParams>({
@@ -90,6 +91,7 @@ const router = asyncRouter();
 
 router.get(
   '/collections',
+  cacheRequest(),
   maybeAuthenticatedUser(),
   async (
     req: Request<any, any, any, XTdhCollectionsQueryParams, any>,
@@ -111,6 +113,7 @@ router.get(
 
 router.get(
   '/tokens',
+  cacheRequest(),
   maybeAuthenticatedUser(),
   async (
     req: Request<any, any, any, XTdhTokensQueryParams, any>,
