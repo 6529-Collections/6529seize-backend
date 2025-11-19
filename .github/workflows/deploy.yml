@@ -116,13 +116,14 @@ jobs:
       - name: Deploy API
         if: github.event.inputs.service == 'api'
         run: |
-          GIT_COMMIT=$(git rev-parse --short HEAD)
+          GIT_COMMIT=$(git rev-parse HEAD)
           aws lambda update-function-code --function-name  seizeAPI --zip-file fileb://src/api-serverless/dist/index.zip
           sleep 10
-          CURRENT_ENV=$(aws lambda get-function-configuration --function-name seizeAPI --query 'Environment.Variables' --output json)
-          UPDATED_ENV=$(echo "$CURRENT_ENV" | jq --arg commit "$GIT_COMMIT" 'if . == null then {GIT_COMMIT: $commit} else . + {GIT_COMMIT: $commit} end')
-          ENV_JSON=$(echo "{\"Variables\": $UPDATED_ENV}" | jq -c .)
-          aws lambda update-function-configuration --function-name seizeAPI --description "$(date) - $(git rev-parse --abbrev-ref HEAD) - $(git show -s --format=%s)" --environment "$ENV_JSON"
+          aws lambda get-function-configuration --function-name seizeAPI --query 'Environment.Variables' --output json > /tmp/current_env.json 2>/dev/null || echo 'null' > /tmp/current_env.json
+          jq --arg commit "$GIT_COMMIT" 'if . == null then {GIT_COMMIT: $commit} else . + {GIT_COMMIT: $commit} end' /tmp/current_env.json > /tmp/updated_env.json
+          jq -n --slurpfile vars /tmp/updated_env.json '{"Variables": $vars[0]}' > /tmp/env_config.json
+          aws lambda update-function-configuration --function-name seizeAPI --description "$(date) - $(git rev-parse --abbrev-ref HEAD) - $(git show -s --format=%s)" --environment file:///tmp/env_config.json > /dev/null 2>&1
+          rm -f /tmp/current_env.json /tmp/updated_env.json /tmp/env_config.json
       - name: Deploy mediaResizerLoop
         if: github.event.inputs.service == 'mediaResizerLoop'
         run: |
