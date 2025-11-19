@@ -1208,6 +1208,10 @@ loadApi().then(async () => {
     const isRedisOk = !redisEnabled || isRedisHealthy === true;
     const overallStatus = isDbHealthy && isRedisOk ? 'ok' : 'degraded';
 
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+
     return res.json({
       status: overallStatus,
       db: isDbHealthy ? 'ok' : 'degraded',
