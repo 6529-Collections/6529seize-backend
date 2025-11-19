@@ -1,14 +1,14 @@
 import * as mysql from 'mysql';
-import { setSqlExecutor } from '../../sql-executor';
 import { DbQueryOptions } from '../../db-query.options';
-import { Time } from '../../time';
-import { env } from '../../env';
-import { Logger } from '../../logging';
 import {
   CustomTypeCaster,
   execNativeTransactionally,
   execSQLWithParams
 } from '../../db/my-sql.helpers';
+import { env } from '../../env';
+import { Logger } from '../../logging';
+import { setSqlExecutor } from '../../sql-executor';
+import { Time } from '../../time';
 
 const logger = Logger.get('TEST');
 
@@ -85,5 +85,50 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  pool.end();
+  if (pool) {
+    try {
+      // Close pool with timeout to prevent hanging
+      let timeoutHandle: NodeJS.Timeout | null = null;
+      const timeoutPromise = new Promise<void>((resolve) => {
+        timeoutHandle = setTimeout(() => {
+          try {
+            logger.warn('[POOL CLOSE TIMEOUT] Forcing pool cleanup');
+          } catch {
+            // Ignore - Jest environment may be torn down
+          }
+          resolve();
+        }, 500);
+        // Use unref() so timer doesn't keep process alive
+        timeoutHandle.unref();
+      });
+
+      await Promise.race([
+        new Promise<void>((resolve) => {
+          pool.end((err) => {
+            // Clear timeout if pool closes successfully
+            if (timeoutHandle) {
+              clearTimeout(timeoutHandle);
+            }
+            if (err) {
+              try {
+                logger.error(`[POOL CLOSE ERROR] ${err}`);
+              } catch {
+                // Ignore - Jest environment may be torn down
+              }
+            }
+            resolve();
+          });
+        }),
+        timeoutPromise
+      ]);
+    } catch (error) {
+      // Ignore errors during cleanup
+      try {
+        logger.error(`[POOL CLEANUP ERROR] ${error}`);
+      } catch {
+        // Ignore - Jest environment may be torn down
+      }
+    }
+    pool = undefined as any;
+  }
 });
