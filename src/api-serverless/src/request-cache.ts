@@ -22,9 +22,12 @@ export interface RequestCacheOptions {
   key?: (req: Request) => string | null;
   methods?: string[];
   shouldCacheResponse?: (req: Request, res: Response) => boolean;
+  authDependent?: boolean;
 }
 
 const DEFAULT_TTL = Time.millis(CACHE_TIME_MS);
+const AUTH_CACHE_KEY_SEPARATOR = '__AUTH__';
+const ANONYMOUS_CACHE_KEY = 'anonymous';
 
 export function cacheRequest(options?: RequestCacheOptions): RequestHandler {
   const ttl = options?.ttl ?? DEFAULT_TTL;
@@ -36,10 +39,13 @@ export function cacheRequest(options?: RequestCacheOptions): RequestHandler {
       return next();
     }
 
-    const key = options?.key?.(req) ?? cacheKey(req);
-    if (!key) {
+    const baseKey = options?.key?.(req) ?? cacheKey(req);
+    if (!baseKey) {
       return next();
     }
+    const key = options?.authDependent
+      ? withAuthCacheDependency(baseKey, req)
+      : baseKey;
 
     try {
       const cached = await redisGet<CachedResponsePayload>(key);
@@ -109,7 +115,7 @@ export function cacheRequest(options?: RequestCacheOptions): RequestHandler {
       restoreOriginalStreamMethods();
       const shouldCache =
         options?.shouldCacheResponse?.(req, res) ??
-        (res.statusCode >= 200 && res.statusCode < 300);
+        isDefaultCacheableStatus(res.statusCode);
       if (!shouldCache) {
         return;
       }
@@ -180,4 +186,15 @@ function sanitizeHeaders(
     accumulator[header] = value as string | number | string[];
     return accumulator;
   }, {});
+}
+
+function withAuthCacheDependency(baseKey: string, req: Request): string {
+  const rawHeader = req.headers?.authorization;
+  const header = Array.isArray(rawHeader) ? rawHeader[0] : rawHeader;
+  const normalizedAuth = header?.trim() || ANONYMOUS_CACHE_KEY;
+  return `${baseKey}${AUTH_CACHE_KEY_SEPARATOR}${normalizedAuth}`;
+}
+
+function isDefaultCacheableStatus(statusCode: number) {
+  return (statusCode >= 200 && statusCode < 300) || statusCode === 304;
 }
