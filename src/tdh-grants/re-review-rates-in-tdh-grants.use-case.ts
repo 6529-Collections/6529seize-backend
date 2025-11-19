@@ -95,7 +95,15 @@ export class ReReviewRatesInTdhGrantsUseCase {
       out.push(...merged);
     }
 
-    return out;
+    return out.filter((grant) => {
+      const { tdh_rate, valid_from, valid_to } = grant;
+
+      if (tdh_rate <= 0) return false;
+      if (valid_to == null || valid_from == null) return true;
+
+      const duration = Time.millis(valid_to).diff(Time.millis(valid_from));
+      return duration.gte(Time.days(1));
+    });
   }
 
   private groupByGrantor(rows: GrantWithCap[]): Record<string, GrantWithCap[]> {

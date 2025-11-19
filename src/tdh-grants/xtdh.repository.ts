@@ -996,12 +996,15 @@ SET cw.xtdh_rate = COALESCE(pd.produced, 0) - COALESCE(go.granted_out, 0) + COAL
     try {
       ctx.timer?.start(`${this.constructor.name}->refillXTdhTokenStats`);
 
+      // Midnight cutoff
       const cutoffSql = `SELECT UNIX_TIMESTAMP(DATE(UTC_TIMESTAMP())) * 1000 AS cut_ms`;
       const [{ cut_ms }] = await this.db.execute<{ cut_ms: number }>(
         cutoffSql,
         {},
         { wrappedConnection: ctx.connection }
       );
+
+      // Recreate table
       await this.db.execute(
         `TRUNCATE TABLE ${TABLE}`,
         {},
@@ -1009,21 +1012,24 @@ SET cw.xtdh_rate = COALESCE(pd.produced, 0) - COALESCE(go.granted_out, 0) + COAL
       );
 
       const sql = `
-        INSERT INTO ${TABLE} (
-          \`partition\`,
-          token_id,
-          owner,
-          xtdh_total,
-          xtdh_rate_daily,
-          grant_count
-        )
+      INSERT INTO ${TABLE} (
+        \`partition\`,
+        token_id,
+        owner,
+        xtdh_total,
+        xtdh_rate_daily,
+        total_contributor_count,
+        active_contributor_count
+      )
+
       WITH
-        cutoff AS (
-          SELECT :cut_ms AS cut_ms
-        ),
-        owners_at_cut AS (
-          SELECT
-            h.\`partition\`,
+      cutoff AS (
+        SELECT :cut_ms AS cut_ms
+      ),
+
+      owners_at_cut AS (
+        SELECT
+          h.\`partition\`,
         h.token_id,
         h.owner,
         ROW_NUMBER() OVER (
@@ -1033,28 +1039,67 @@ SET cw.xtdh_rate = COALESCE(pd.produced, 0) - COALESCE(go.granted_out, 0) + COAL
       FROM external_indexed_ownership_721_histories h
       JOIN cutoff c ON h.since_time < c.cut_ms
     ),
+
+      -- basic token aggregates (xtdh + rate)
       token_agg AS (
         SELECT
       g.\`partition\`,
         g.token_id,
         SUM(g.xtdh_total)      AS xtdh_total,
-        SUM(g.xtdh_rate_daily) AS xtdh_rate_daily,
-      COUNT(*)               AS grant_count
+        SUM(g.xtdh_rate_daily) AS xtdh_rate_daily
       FROM ${GRANT_TABLE} g
       GROUP BY g.\`partition\`, g.token_id
+    ),
+
+      -- contributor map: use GRANT_TABLE.grant_id → join tdh_grants
+      contrib AS (
+        SELECT
+      gts.\`partition\`,
+        gts.token_id,
+        tg.grantor_id,
+        (gts.xtdh_rate_daily > 0) AS contributed_last_midnight
+      FROM ${GRANT_TABLE} gts
+      JOIN tdh_grants tg ON tg.id = gts.grant_id
+    ),
+
+      total_contrib AS (
+        SELECT
+          \`partition\`,
+        token_id,
+        COUNT(DISTINCT grantor_id) AS total_contributor_count
+      FROM contrib
+      GROUP BY \`partition\`, token_id
+    ),
+
+      active_contrib AS (
+        SELECT
+          \`partition\`,
+        token_id,
+        COUNT(DISTINCT grantor_id) AS active_contributor_count
+      FROM contrib
+      WHERE contributed_last_midnight = 1
+      GROUP BY \`partition\`, token_id
     )
+
       SELECT
       ta.\`partition\`,
         ta.token_id,
         COALESCE(o.owner, '0x0000000000000000000000000000000000000000') AS owner,
         ta.xtdh_total,
         ta.xtdh_rate_daily,
-        ta.grant_count
+        COALESCE(tc.total_contributor_count, 0),
+        COALESCE(ac.active_contributor_count, 0)
       FROM token_agg ta
       LEFT JOIN owners_at_cut o
       ON o.\`partition\` = ta.\`partition\`
       AND o.token_id     = ta.token_id
       AND o.rn = 1
+      LEFT JOIN total_contrib tc
+      ON tc.\`partition\` = ta.\`partition\`
+      AND tc.token_id     = ta.token_id
+      LEFT JOIN active_contrib ac
+      ON ac.\`partition\` = ta.\`partition\`
+      AND ac.token_id     = ta.token_id
         `;
 
       await this.db.execute(
@@ -1316,62 +1361,230 @@ SET cw.xtdh_rate = COALESCE(pd.produced, 0) - COALESCE(go.granted_out, 0) + COAL
       contract: string;
       xtdh: number;
       xtdh_rate: number;
-      token_count: number;
-      grant_count: number;
+      total_token_count: number;
+      active_token_count: number;
+      total_contributors_count: number;
+      active_contributors_count: number;
     }>
   > {
     try {
       ctx.timer?.start(`${this.constructor.name}->getXTdhCollections`);
-      const { tokenStatsTable } = await this.getActiveStatsTables(ctx);
+      const { tokenStatsTable, grantStatsTable } =
+        await this.getActiveStatsTables(ctx);
 
-      const sql = `
+      // --- FAST PATH: global leaderboard (no identity filter) ---
+      if (!identityId) {
+        const sql = `
+        WITH
+        coll_agg AS (
+          SELECT
+            s.\`partition\`,
+            SUM(s.xtdh_total)      AS xtdh,
+            SUM(s.xtdh_rate_daily) AS xtdh_rate
+          FROM ${tokenStatsTable} s
+          GROUP BY s.\`partition\`
+        ),
+
+        token_totals AS (
+          SELECT
+            s.\`partition\`,
+            COUNT(*) AS total_token_count
+          FROM ${tokenStatsTable} s
+          WHERE s.xtdh_total > 0
+          GROUP BY s.\`partition\`
+        ),
+
+        token_active AS (
+          SELECT
+            s.\`partition\`,
+            COUNT(*) AS active_token_count
+          FROM ${tokenStatsTable} s
+          WHERE s.xtdh_rate_daily > 0
+          GROUP BY s.\`partition\`
+        ),
+
+        contrib_base AS (
+          SELECT DISTINCT
+            gts.\`partition\`,
+            g.grantor_id,
+            (gts.xtdh_rate_daily > 0) AS contributed_last_midnight
+          FROM ${grantStatsTable} gts
+          JOIN ${TDH_GRANTS_TABLE} g
+            ON g.id = gts.grant_id
+          WHERE g.status = '${TdhGrantStatus.GRANTED}'
+            AND gts.xtdh_total > 0
+        ),
+
+        total_contrib AS (
+          SELECT
+            cb.\`partition\`,
+            COUNT(DISTINCT cb.grantor_id) AS total_contributors_count
+          FROM contrib_base cb
+          GROUP BY cb.\`partition\`
+        ),
+
+        active_contrib AS (
+          SELECT
+            cb.\`partition\`,
+            COUNT(DISTINCT cb.grantor_id) AS active_contributors_count
+          FROM contrib_base cb
+          WHERE cb.contributed_last_midnight = 1
+          GROUP BY cb.\`partition\`
+        )
+
+        SELECT
+          ca.\`partition\`,
+          ca.xtdh,
+          ca.xtdh_rate,
+          COALESCE(tt.total_token_count, 0)          AS total_token_count,
+          COALESCE(ta.active_token_count, 0)         AS active_token_count,
+          COALESCE(tc.total_contributors_count, 0)   AS total_contributors_count,
+          COALESCE(ac.active_contributors_count, 0)  AS active_contributors_count
+        FROM coll_agg ca
+        LEFT JOIN token_totals   tt ON tt.\`partition\` = ca.\`partition\`
+        LEFT JOIN token_active   ta ON ta.\`partition\` = ca.\`partition\`
+        LEFT JOIN total_contrib  tc ON tc.\`partition\` = ca.\`partition\`
+        LEFT JOIN active_contrib ac ON ac.\`partition\` = ca.\`partition\`
+        ORDER BY ${sort} ${order}
+        LIMIT :limit OFFSET :offset
+      `;
+
+        const rows = await this.db.execute<{
+          partition: string;
+          xtdh: number;
+          xtdh_rate: number;
+          total_token_count: number;
+          active_token_count: number;
+          total_contributors_count: number;
+          active_contributors_count: number;
+        }>(sql, { limit, offset }, { wrappedConnection: ctx.connection });
+
+        return rows.map((it) => ({
+          contract: it.partition.substring(2),
+          xtdh: +it.xtdh,
+          xtdh_rate: +it.xtdh_rate,
+          total_token_count: +it.total_token_count,
+          active_token_count: +it.active_token_count,
+          total_contributors_count: +it.total_contributors_count,
+          active_contributors_count: +it.active_contributors_count
+        }));
+      }
+
+      const sqlWithIdentity = `
       WITH ts AS (
         SELECT
           s.\`partition\`,
-          SUM(s.xtdh_total)      AS xtdh,
-          SUM(s.xtdh_rate_daily) AS xtdh_rate,
-          COUNT(*)               AS token_count,
-          SUM(s.grant_count)     AS grant_count
+          s.token_id,
+          s.owner,
+          s.xtdh_total,
+          s.xtdh_rate_daily,
+          s.grant_count
         FROM ${tokenStatsTable} s
         LEFT JOIN ${ADDRESS_CONSOLIDATION_KEY} ack
           ON ack.address = s.owner
         LEFT JOIN ${IDENTITIES_TABLE} i
           ON i.consolidation_key = ack.consolidation_key
         WHERE (:identityId IS NULL OR i.profile_id = :identityId)
-        GROUP BY s.\`partition\`
+      ),
+
+      coll_agg AS (
+        SELECT
+          ts.\`partition\`,
+          SUM(ts.xtdh_total)      AS xtdh,
+          SUM(ts.xtdh_rate_daily) AS xtdh_rate
+        FROM ts
+        GROUP BY ts.\`partition\`
+      ),
+
+      token_totals AS (
+        SELECT
+          ts.\`partition\`,
+          COUNT(*) AS total_token_count
+        FROM ts
+        WHERE ts.xtdh_total > 0
+        GROUP BY ts.\`partition\`
+      ),
+
+      token_active AS (
+        SELECT
+          ts.\`partition\`,
+          COUNT(*) AS active_token_count
+        FROM ts
+        WHERE ts.xtdh_rate_daily > 0
+        GROUP BY ts.\`partition\`
+      ),
+
+      contrib_base AS (
+        SELECT DISTINCT
+          ts.\`partition\`,
+          g.grantor_id,
+          (gts.xtdh_rate_daily > 0) AS contributed_last_midnight
+        FROM ts
+        JOIN ${grantStatsTable} gts
+          ON gts.\`partition\` = ts.\`partition\`
+         AND gts.token_id    = ts.token_id
+        JOIN ${TDH_GRANTS_TABLE} g
+          ON g.id = gts.grant_id
+        WHERE g.status = '${TdhGrantStatus.GRANTED}'
+      ),
+
+      total_contrib AS (
+        SELECT
+          cb.\`partition\`,
+          COUNT(DISTINCT cb.grantor_id) AS total_contributors_count
+        FROM contrib_base cb
+        GROUP BY cb.\`partition\`
+      ),
+
+      active_contrib AS (
+        SELECT
+          cb.\`partition\`,
+          COUNT(DISTINCT cb.grantor_id) AS active_contributors_count
+        FROM contrib_base cb
+        WHERE cb.contributed_last_midnight = 1
+        GROUP BY cb.\`partition\`
       )
+
       SELECT
-        \`partition\`,
-        xtdh,
-        xtdh_rate,
-        token_count,
-        grant_count
-      FROM ts
+        ca.\`partition\`,
+        ca.xtdh,
+        ca.xtdh_rate,
+        COALESCE(tt.total_token_count, 0)          AS total_token_count,
+        COALESCE(ta.active_token_count, 0)         AS active_token_count,
+        COALESCE(tc.total_contributors_count, 0)   AS total_contributors_count,
+        COALESCE(ac.active_contributors_count, 0)  AS active_contributors_count
+      FROM coll_agg ca
+      LEFT JOIN token_totals   tt ON tt.\`partition\` = ca.\`partition\`
+      LEFT JOIN token_active   ta ON ta.\`partition\` = ca.\`partition\`
+      LEFT JOIN total_contrib  tc ON tc.\`partition\` = ca.\`partition\`
+      LEFT JOIN active_contrib ac ON ac.\`partition\` = ca.\`partition\`
       ORDER BY ${sort} ${order}
       LIMIT :limit OFFSET :offset
     `;
 
-      return await this.db
-        .execute<{
-          partition: string;
-          xtdh: number;
-          xtdh_rate: number;
-          token_count: number;
-          grant_count: number;
-        }>(
-          sql,
-          { identityId, limit, offset },
-          { wrappedConnection: ctx.connection }
-        )
-        .then((results) =>
-          results.map((it) => ({
-            contract: it.partition.substring(2),
-            xtdh: +it.xtdh,
-            xtdh_rate: +it.xtdh_rate,
-            token_count: +it.token_count,
-            grant_count: +it.grant_count
-          }))
-        );
+      const rows = await this.db.execute<{
+        partition: string;
+        xtdh: number;
+        xtdh_rate: number;
+        total_token_count: number;
+        active_token_count: number;
+        total_contributors_count: number;
+        active_contributors_count: number;
+      }>(
+        sqlWithIdentity,
+        { identityId, limit, offset },
+        { wrappedConnection: ctx.connection }
+      );
+
+      return rows.map((it) => ({
+        contract: it.partition.substring(2),
+        xtdh: +it.xtdh,
+        xtdh_rate: +it.xtdh_rate,
+        total_token_count: +it.total_token_count,
+        active_token_count: +it.active_token_count,
+        total_contributors_count: +it.total_contributors_count,
+        active_contributors_count: +it.active_contributors_count
+      }));
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->getXTdhCollections`);
     }
@@ -1403,23 +1616,26 @@ SET cw.xtdh_rate = COALESCE(pd.produced, 0) - COALESCE(go.granted_out, 0) + COAL
       owner_id: string;
       xtdh: number;
       xtdh_rate: number;
-      grant_count: number;
+      total_contributor_count: number;
+      active_contributor_count: number;
     }>
   > {
     const partition = contract ? `1:${contract}` : null;
 
     try {
       ctx.timer?.start(`${this.constructor.name}->getXTdhTokens`);
+
       const { tokenStatsTable } = await this.getActiveStatsTables(ctx);
 
       const sql = `
       SELECT
         s.\`partition\`,
         s.token_id,
-        s.owner as owner_id,
+        s.owner AS owner_id,
         s.xtdh_total      AS xtdh,
         s.xtdh_rate_daily AS xtdh_rate,
-        s.grant_count     AS grant_count
+        s.total_contributor_count,
+        s.active_contributor_count
       FROM ${tokenStatsTable} s
       LEFT JOIN ${ADDRESS_CONSOLIDATION_KEY} ack
         ON ack.address = s.owner
@@ -1427,34 +1643,34 @@ SET cw.xtdh_rate = COALESCE(pd.produced, 0) - COALESCE(go.granted_out, 0) + COAL
         ON i.consolidation_key = ack.consolidation_key
       WHERE (:identityId IS NULL OR i.profile_id = :identityId)
         AND (:partition  IS NULL OR s.\`partition\` = :partition)
-        AND (:tokenId  IS NULL OR s.\`token_id\` = :tokenId)
+        AND (:tokenId    IS NULL OR s.token_id    = :tokenId)
       ORDER BY ${sort} ${order}
       LIMIT :limit OFFSET :offset
     `;
 
-      return await this.db
-        .execute<{
-          partition: string;
-          token_id: number;
-          owner_id: string;
-          xtdh: number;
-          xtdh_rate: number;
-          grant_count: number;
-        }>(
-          sql,
-          { identityId, partition, tokenId, limit, offset },
-          { wrappedConnection: ctx.connection }
-        )
-        .then((results) =>
-          results.map((it) => ({
-            contract: it.partition.substring(2),
-            owner_id: it.owner_id,
-            token_id: +it.token_id,
-            xtdh: +it.xtdh,
-            xtdh_rate: +it.xtdh_rate,
-            grant_count: +it.grant_count
-          }))
-        );
+      const rows = await this.db.execute<{
+        partition: string;
+        token_id: number;
+        owner_id: string;
+        xtdh: number;
+        xtdh_rate: number;
+        total_contributor_count: number;
+        active_contributor_count: number;
+      }>(
+        sql,
+        { identityId, partition, tokenId, limit, offset },
+        { wrappedConnection: ctx.connection }
+      );
+
+      return rows.map((it) => ({
+        contract: it.partition.substring(2),
+        owner_id: it.owner_id,
+        token_id: +it.token_id,
+        xtdh: +it.xtdh,
+        xtdh_rate: +it.xtdh_rate,
+        total_contributor_count: +it.total_contributor_count,
+        active_contributor_count: +it.active_contributor_count
+      }));
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->getXTdhTokens`);
     }

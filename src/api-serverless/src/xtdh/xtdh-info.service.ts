@@ -108,8 +108,10 @@ export class XTdhInfoService {
         data: collectionEntities
           .map<ApiXTdhCollection>((it) => ({
             contract: it.contract,
-            grant_count: it.grant_count,
-            token_count: it.token_count,
+            total_contributor_count: it.total_contributors_count,
+            active_contributor_count: it.active_contributors_count,
+            total_token_count: it.total_token_count,
+            active_token_count: it.active_token_count,
             xtdh: it.xtdh,
             xtdh_rate: it.xtdh_rate
           }))
@@ -181,7 +183,8 @@ export class XTdhInfoService {
             contract: it.contract,
             token: it.token_id,
             owner: ownerProfiles[it.owner_id]!,
-            grant_count: it.grant_count,
+            total_contributor_count: it.total_contributor_count,
+            active_contributor_count: it.active_contributor_count,
             xtdh: it.xtdh,
             xtdh_rate: it.xtdh_rate
           }))
