@@ -13,6 +13,18 @@ const logger = Logger.get('RATE_LIMIT_MIDDLEWARE');
 
 let configCache: ReturnType<typeof getRateLimitConfig> | null = null;
 
+export function initRateLimiting() {
+  const config = getConfig();
+
+  if (config.enabled) {
+    logger.info(
+      `RATE LIMIT ENABLED - Authenticated: ${config.authenticated.burst} burst, ${config.authenticated.sustainedRps} RPS | Unauthenticated: ${config.unauthenticated.burst} burst, ${config.unauthenticated.sustainedRps} RPS`
+    );
+  } else {
+    logger.info('RATE LIMIT DISABLED');
+  }
+}
+
 function getConfig() {
   configCache ??= getRateLimitConfig();
   return configCache;

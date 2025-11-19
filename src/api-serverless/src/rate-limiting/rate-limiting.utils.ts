@@ -2,6 +2,7 @@ import { Request } from 'express';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { env } from '../../../env';
 import { Logger } from '../../../logging';
+import { getRedisClient } from '../../../redis';
 
 const logger = Logger.get('RATE_LIMIT_UTILS');
 
@@ -16,9 +17,17 @@ export function getRateLimitConfig(): {
   authenticated: RateLimitConfig;
   unauthenticated: RateLimitConfig;
 } {
-  const enabled =
-    env.getStringOrNull('RATE_LIMIT_ENABLED') !== 'false' &&
-    env.getStringOrNull('RATE_LIMIT_ENABLED') !== '0';
+  const rateLimitEnabled =
+    env.getStringOrNull('API_RATE_LIMIT_ENABLED') === 'true';
+
+  const redis = getRedisClient();
+  if (rateLimitEnabled && !redis) {
+    logger.warn(
+      'API_RATE_LIMIT_ENABLED SET TO TRUE BUT REDIS NOT AVAILABLE - Rate Limiting will be disabled'
+    );
+  }
+
+  const enabled = rateLimitEnabled && redis ? true : false;
 
   return {
     enabled,
@@ -76,7 +85,7 @@ export function verifyInternalRequest(req: Request): boolean {
     | string
     | undefined;
 
-  const expectedInternalId = env.getStringOrNull('RATE_LIMIT_INTERNAL_ID');
+  const expectedInternalId = env.getStringOrNull('API_RATE_LIMIT_INTERNAL_ID');
   if (!expectedInternalId) {
     return false;
   }
@@ -99,7 +108,7 @@ export function verifyInternalRequest(req: Request): boolean {
     return false;
   }
 
-  const secret = env.getStringOrNull('RATE_LIMIT_INTERNAL_SECRET');
+  const secret = env.getStringOrNull('API_RATE_LIMIT_INTERNAL_SECRET');
   if (!secret) {
     return false;
   }

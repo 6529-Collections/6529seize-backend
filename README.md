@@ -120,6 +120,8 @@ The API is also configured to run as an AWS lambda and can be built and deployed
 
 The API implements rate limiting to protect against abuse and ensure fair usage. Rate limiting is applied to all API requests and uses Redis for distributed rate limit tracking.
 
+**Important:** Rate limiting requires Redis to be available. If Redis is not available, rate limiting will be automatically disabled even if `API_RATE_LIMIT_ENABLED` is set to `true`.
+
 #### 2.7.1 How It Works
 
 Rate limiting uses a two-tier approach:
@@ -143,8 +145,8 @@ The rate limiter identifies users in the following priority order:
 
    - Used for server-side requests from the web app (e.g., AWS Elastic Beanstalk)
    - Requires signed headers to prevent spoofing
-   - Uses unauthenticated rate limits but bypasses IP-based limiting
-   - Format: `internal:ssr`
+   - **Skips rate limiting entirely** (bypasses all rate limit checks)
+   - The signature ensures only the web app (with the secret) can generate valid requests
 
 3. **IP Address** (fallback)
    - Used when no authentication or internal request headers are present
@@ -157,7 +159,7 @@ For server-side requests from the web app, you can bypass IP-based rate limiting
 
 **Required Headers:**
 
-- `X-6529-Internal-Id`: The internal ID (must match `RATE_LIMIT_INTERNAL_ID` env var)
+- `X-6529-Internal-Id`: The internal ID (must match `API_RATE_LIMIT_INTERNAL_ID` env var)
 - `X-6529-Internal-Timestamp`: Unix timestamp in seconds
 - `X-6529-Internal-Signature`: HMAC-SHA256 signature
 
@@ -170,8 +172,8 @@ HMAC-SHA256(secret, `${internalId}\n${timestamp}\n${method}\n${path}`)
 
 Where:
 
-- `secret` = `RATE_LIMIT_INTERNAL_SECRET` (shared secret)
-- `internalId` = `RATE_LIMIT_INTERNAL_ID` (from env)
+- `secret` = `API_RATE_LIMIT_INTERNAL_SECRET` (shared secret)
+- `internalId` = `API_RATE_LIMIT_INTERNAL_ID` (from env)
 - `timestamp` = Current Unix timestamp in seconds
 - `method` = HTTP method (GET, POST, etc.)
 - `path` = Request path (e.g., `/api/nfts`)
@@ -187,8 +189,8 @@ Where:
 ```javascript
 const crypto = require('crypto');
 
-const internalId = process.env.RATE_LIMIT_INTERNAL_ID;
-const secret = process.env.RATE_LIMIT_INTERNAL_SECRET;
+const internalId = process.env.API_RATE_LIMIT_INTERNAL_ID;
+const secret = process.env.API_RATE_LIMIT_INTERNAL_SECRET;
 const method = 'GET';
 const path = '/api/nfts';
 const timestamp = Math.floor(Date.now() / 1000);
@@ -213,7 +215,9 @@ Rate limiting is configured via environment variables (see `.env.sample`):
 
 **Enable/Disable:**
 
-- `RATE_LIMIT_ENABLED`: Set to `false` or `0` to disable (default: enabled)
+- `API_RATE_LIMIT_ENABLED`: Must be set to `'true'` to enable rate limiting (default: disabled)
+  - Rate limiting also requires Redis to be available
+  - If Redis is not available, rate limiting will be disabled even if this is set to `'true'`
 
 **Authenticated Users:**
 
@@ -229,8 +233,8 @@ Rate limiting is configured via environment variables (see `.env.sample`):
 
 **Internal Requests (SSR):**
 
-- `RATE_LIMIT_INTERNAL_ID`: Internal ID for signed requests (required)
-- `RATE_LIMIT_INTERNAL_SECRET`: Shared secret for signing requests (required)
+- `API_RATE_LIMIT_INTERNAL_ID`: Internal ID for signed requests (required)
+- `API_RATE_LIMIT_INTERNAL_SECRET`: Shared secret for signing requests (required)
 
 #### 2.7.5 Response Headers
 
@@ -247,7 +251,8 @@ When rate limited (429 response):
 #### 2.7.6 Implementation Details
 
 - **Storage**: Uses Redis sorted sets for efficient sliding window tracking
-- **Fail Open**: If Redis is unavailable, requests are allowed (fail open behavior)
+- **Redis Required**: Rate limiting requires Redis to be available. If Redis is not available, rate limiting is automatically disabled at startup
+- **Fail Open**: If rate limiting middleware encounters an error during request processing, requests are allowed (fail open behavior)
 - **Distributed**: Works across multiple API instances using shared Redis
 - **Efficient**: Uses sorted sets with automatic expiration for memory management
 

@@ -1,26 +1,34 @@
+import { getRedisClient } from '../../../redis';
 import {
-  getRateLimitConfig,
+  calculateRetryAfter,
   generateBurstKey,
   generateSustainedKey,
-  calculateRetryAfter,
+  getRateLimitConfig,
   sanitizeIdentifier
 } from './rate-limiting.utils';
+
+jest.mock('../../../redis');
 
 describe('rate-limiting.utils', () => {
   describe('getRateLimitConfig', () => {
     const originalEnv = process.env;
+    const mockGetRedisClient = getRedisClient as jest.MockedFunction<
+      typeof getRedisClient
+    >;
 
     beforeEach(() => {
       jest.resetModules();
       process.env = { ...originalEnv };
+      mockGetRedisClient.mockReturnValue({} as any);
     });
 
     afterEach(() => {
       process.env = originalEnv;
+      jest.clearAllMocks();
     });
 
-    it('returns default values when env vars are not set', () => {
-      delete process.env.RATE_LIMIT_ENABLED;
+    it('returns disabled when env vars are not set (API_RATE_LIMIT_ENABLED must be true)', () => {
+      delete process.env.API_RATE_LIMIT_ENABLED;
       delete process.env.RATE_LIMIT_AUTH_BURST;
       delete process.env.RATE_LIMIT_AUTH_SUSTAINED_RPS;
       delete process.env.RATE_LIMIT_AUTH_SUSTAINED_WINDOW_SECONDS;
@@ -30,7 +38,7 @@ describe('rate-limiting.utils', () => {
 
       const config = getRateLimitConfig();
 
-      expect(config.enabled).toBe(true);
+      expect(config.enabled).toBe(false);
       expect(config.authenticated.burst).toBe(30);
       expect(config.authenticated.sustainedRps).toBe(10);
       expect(config.authenticated.sustainedWindowSeconds).toBe(60);
@@ -39,14 +47,15 @@ describe('rate-limiting.utils', () => {
       expect(config.unauthenticated.sustainedWindowSeconds).toBe(60);
     });
 
-    it('reads custom values from env vars', () => {
-      process.env.RATE_LIMIT_ENABLED = 'true';
+    it('enables rate limiting when API_RATE_LIMIT_ENABLED is true and Redis is available', () => {
+      process.env.API_RATE_LIMIT_ENABLED = 'true';
       process.env.RATE_LIMIT_AUTH_BURST = '50';
       process.env.RATE_LIMIT_AUTH_SUSTAINED_RPS = '20';
       process.env.RATE_LIMIT_AUTH_SUSTAINED_WINDOW_SECONDS = '120';
       process.env.RATE_LIMIT_UNAUTH_BURST = '30';
       process.env.RATE_LIMIT_UNAUTH_SUSTAINED_RPS = '10';
       process.env.RATE_LIMIT_UNAUTH_SUSTAINED_WINDOW_SECONDS = '90';
+      mockGetRedisClient.mockReturnValue({} as any);
 
       const config = getRateLimitConfig();
 
@@ -59,16 +68,36 @@ describe('rate-limiting.utils', () => {
       expect(config.unauthenticated.sustainedWindowSeconds).toBe(90);
     });
 
-    it('disables rate limiting when RATE_LIMIT_ENABLED is false', () => {
-      process.env.RATE_LIMIT_ENABLED = 'false';
+    it('disables rate limiting when API_RATE_LIMIT_ENABLED is false', () => {
+      process.env.API_RATE_LIMIT_ENABLED = 'false';
+      mockGetRedisClient.mockReturnValue({} as any);
 
       const config = getRateLimitConfig();
 
       expect(config.enabled).toBe(false);
     });
 
-    it('disables rate limiting when RATE_LIMIT_ENABLED is 0', () => {
-      process.env.RATE_LIMIT_ENABLED = '0';
+    it('disables rate limiting when API_RATE_LIMIT_ENABLED is 0', () => {
+      process.env.API_RATE_LIMIT_ENABLED = '0';
+      mockGetRedisClient.mockReturnValue({} as any);
+
+      const config = getRateLimitConfig();
+
+      expect(config.enabled).toBe(false);
+    });
+
+    it('disables rate limiting when API_RATE_LIMIT_ENABLED is true but Redis is not available', () => {
+      process.env.API_RATE_LIMIT_ENABLED = 'true';
+      mockGetRedisClient.mockReturnValue(null);
+
+      const config = getRateLimitConfig();
+
+      expect(config.enabled).toBe(false);
+    });
+
+    it('disables rate limiting when API_RATE_LIMIT_ENABLED is not explicitly true', () => {
+      process.env.API_RATE_LIMIT_ENABLED = 'yes';
+      mockGetRedisClient.mockReturnValue({} as any);
 
       const config = getRateLimitConfig();
 
