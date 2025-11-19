@@ -29,12 +29,20 @@ const DEFAULT_TTL = Time.millis(CACHE_TIME_MS);
 const AUTH_CACHE_KEY_SEPARATOR = '__AUTH__';
 const ANONYMOUS_CACHE_KEY = 'anonymous';
 
-export function cacheRequest(options?: RequestCacheOptions): RequestHandler {
+type CacheRequestHandler = RequestHandler<any, any, any, any, any>;
+
+export function cacheRequest(
+  options?: RequestCacheOptions
+): CacheRequestHandler {
   const ttl = options?.ttl ?? DEFAULT_TTL;
   const allowedMethods = options?.methods?.map((method) =>
     method.toUpperCase()
   ) ?? ['GET'];
-  return async (req: Request, res: Response, next: NextFunction) => {
+  return async (
+    req: Request<any, any, any, any, any>,
+    res: Response<any, any>,
+    next: NextFunction
+  ) => {
     if (!allowedMethods.includes(req.method.toUpperCase())) {
       return next();
     }
