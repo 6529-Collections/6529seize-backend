@@ -191,6 +191,8 @@ const rootRouter = asyncRouter();
 const storage = multer.memoryStorage();
 multer({ storage: storage });
 
+let isInitialized = false;
+
 async function loadApiSecrets() {
   if (process.env.API_LOAD_SECRETS === 'true') {
     await loadSecrets();
@@ -202,7 +204,8 @@ async function loadApi() {
   await db.connect();
 }
 
-loadApi().then(async () => {
+async function initializeApp() {
+  await loadApi();
   logger.info(
     `[DB HOST ${process.env.DB_HOST_READ}] [API PASSWORD ACTIVE ${process.env.ACTIVATE_API_PASSWORD}] [LOAD SECRETS ENABLED ${process.env.API_LOAD_SECRETS}]`
   );
@@ -1400,6 +1403,32 @@ loadApi().then(async () => {
       );
     });
   }
-});
+}
+
+function initializationGuard() {
+  return async (req: Request, res: Response, next: NextFunction) => {
+    if (isInitialized) {
+      return next();
+    }
+    try {
+      await initializationPromise;
+      return next();
+    } catch (err) {
+      logger.error('[REQUEST DURING FAILED INIT]', err);
+      return res.status(500).json({ error: 'Initialization failed' });
+    }
+  };
+}
+
+app.use(initializationGuard());
+
+const initializationPromise = initializeApp()
+  .then(() => {
+    isInitialized = true;
+  })
+  .catch((err) => {
+    logger.error(`[INITIALIZATION FAILED] ${err}`);
+    throw err;
+  });
 
 export { app };
