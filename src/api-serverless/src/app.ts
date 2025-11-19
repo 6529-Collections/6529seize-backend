@@ -102,6 +102,7 @@ import {
   initRateLimiting,
   rateLimitingMiddleware
 } from './rate-limiting/rate-limiting.middleware';
+import { cacheRequest, isRequestCacheEntry } from './request-cache';
 import rpcRoutes from './rpc/rpc.routes';
 import sitemapRoutes from './sitemap/sitemap.routes';
 import subscriptionsRoutes from './subscriptions/api.subscriptions.routes';
@@ -302,15 +303,19 @@ loadApi().then(async () => {
   const checkCache = async function (req: any, res: any, next: any) {
     return redisGet(cacheKey(req))
       .then((cachedBody) => {
-        if (cachedBody) {
-          return returnPaginatedResult(
-            cachedBody as PaginatedResponse<any>,
-            req,
-            res,
-            true
-          );
+        if (!cachedBody) {
+          return next();
         }
-        return next();
+        // this checks if old cache already caches it. temporary thing.
+        if (isRequestCacheEntry(cachedBody)) {
+          return next();
+        }
+        return returnPaginatedResult(
+          cachedBody as PaginatedResponse<any>,
+          req,
+          res,
+          true
+        );
       })
       .catch(() => next());
   };
@@ -323,6 +328,7 @@ loadApi().then(async () => {
 
   apiRouter.get(
     `/blocks`,
+    cacheRequest(),
     async function (req: any, res: Response<ApiResponse<ApiBlocksPage>>) {
       const pageSize: number =
         req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
@@ -355,6 +361,7 @@ loadApi().then(async () => {
 
   apiRouter.get(
     `/uploads`,
+    cacheRequest(),
     async function (req: any, res: Response<ApiResponse<ApiUploadsPage>>) {
       const pageSize: number =
         req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
@@ -386,6 +393,7 @@ loadApi().then(async () => {
 
   apiRouter.get(
     `/consolidated_uploads`,
+    cacheRequest(),
     async function (req: any, res: Response<ApiResponse<ApiUploadsPage>>) {
       const pageSize: number =
         req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
@@ -417,6 +425,7 @@ loadApi().then(async () => {
 
   apiRouter.get(
     `/artists`,
+    cacheRequest(),
     async function (req: any, res: Response<ApiResponse<ApiArtistsPage>>) {
       const pageSize: number =
         req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
@@ -450,6 +459,7 @@ loadApi().then(async () => {
 
   apiRouter.get(
     `/memes/artists_names`,
+    cacheRequest(),
     async function (req: any, res: Response<ApiResponse<ApiArtistNameItem[]>>) {
       await db.fetchArtistsNamesMemes().then(async (result) => {
         return await returnJsonResult(result, req, res);
@@ -459,6 +469,7 @@ loadApi().then(async () => {
 
   apiRouter.get(
     `/memelab/artists_names`,
+    cacheRequest(),
     async function (req: any, res: Response<ApiResponse<ApiArtistNameItem[]>>) {
       await db.fetchArtistsNamesMemeLab().then(async (result) => {
         return await returnJsonResult(result, req, res);
@@ -466,198 +477,234 @@ loadApi().then(async () => {
     }
   );
 
-  apiRouter.get(`/nfts`, async function (req: any, res: Response<ApiNftsPage>) {
-    const pageSize: number =
-      req.query.page_size && req.query.page_size <= NFTS_PAGE_SIZE
-        ? parseInt(req.query.page_size)
-        : DEFAULT_PAGE_SIZE;
-    const page: number = req.query.page ? parseInt(req.query.page) : 1;
+  apiRouter.get(
+    `/nfts`,
+    cacheRequest(),
+    async function (req: any, res: Response<ApiNftsPage>) {
+      const pageSize: number =
+        req.query.page_size && req.query.page_size <= NFTS_PAGE_SIZE
+          ? parseInt(req.query.page_size)
+          : DEFAULT_PAGE_SIZE;
+      const page: number = req.query.page ? parseInt(req.query.page) : 1;
 
-    const sortDir =
-      req.query.sort_direction &&
-      SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
-        ? req.query.sort_direction
-        : 'desc';
+      const sortDir =
+        req.query.sort_direction &&
+        SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
+          ? req.query.sort_direction
+          : 'desc';
 
-    const contracts = req.query.contract;
-    const nfts = req.query.id;
-    await db
-      .fetchNFTs(pageSize, page, contracts, nfts, sortDir)
-      .then(async (result) => {
-        await returnPaginatedResult(
-          transformPaginatedResponse(
-            (orig: NFT & { has_distribution: boolean }): ApiNft => {
-              const metadata = JSON.parse(orig.metadata!);
-              return {
-                ...orig,
-                name: orig.name!,
-                token_type: orig.token_type as any,
-                uri: orig.uri ?? null,
-                thumbnail: orig.thumbnail!,
-                image: orig.image ?? null,
-                animation: orig.animation ?? null,
-                metadata: {
-                  ...metadata,
-                  animation_details:
-                    typeof metadata.animation_details === 'string'
-                      ? JSON.parse(metadata.animation_details)
-                      : metadata.animation_details
-                },
-                scaled: orig.scaled!,
-                compressed_animation: orig.compressed_animation ?? null,
-                icon: orig.icon!,
-                mint_date: orig.mint_date ?? null
-              };
-            },
-            result
-          ),
-          req,
-          res
-        );
-      });
-  });
-
-  apiRouter.get(`/nfts/gradients`, async function (req: any, res: any) {
-    const id = req.query.id;
-    const pageSize: number =
-      req.query.page_size && req.query.page_size <= NFTS_PAGE_SIZE
-        ? parseInt(req.query.page_size)
-        : DEFAULT_PAGE_SIZE;
-    const page: number = req.query.page ? parseInt(req.query.page) : 1;
-
-    const sortDir =
-      req.query.sort_direction &&
-      SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
-        ? req.query.sort_direction
-        : 'asc';
-
-    const sort =
-      req.query.sort && ['id', 'tdh'].includes(req.query.sort)
-        ? req.query.sort
-        : 'id';
-
-    await db
-      .fetchGradients(id, pageSize, page, sort, sortDir)
-      .then(async (result) => {
-        result.data.map((d: any) => {
-          d.metadata = JSON.parse(d.metadata);
+      const contracts = req.query.contract;
+      const nfts = req.query.id;
+      await db
+        .fetchNFTs(pageSize, page, contracts, nfts, sortDir)
+        .then(async (result) => {
+          await returnPaginatedResult(
+            transformPaginatedResponse(
+              (orig: NFT & { has_distribution: boolean }): ApiNft => {
+                const metadata = JSON.parse(orig.metadata!);
+                return {
+                  ...orig,
+                  name: orig.name!,
+                  token_type: orig.token_type as any,
+                  uri: orig.uri ?? null,
+                  thumbnail: orig.thumbnail!,
+                  image: orig.image ?? null,
+                  animation: orig.animation ?? null,
+                  metadata: {
+                    ...metadata,
+                    animation_details:
+                      typeof metadata.animation_details === 'string'
+                        ? JSON.parse(metadata.animation_details)
+                        : metadata.animation_details
+                  },
+                  scaled: orig.scaled!,
+                  compressed_animation: orig.compressed_animation ?? null,
+                  icon: orig.icon!,
+                  mint_date: orig.mint_date ?? null
+                };
+              },
+              result
+            ),
+            req,
+            res
+          );
         });
-        await returnPaginatedResult(result, req, res);
-      });
-  });
+    }
+  );
 
-  apiRouter.get(`/nfts/:contract/media`, async function (req: any, res: any) {
-    const contract = req.params.contract;
+  apiRouter.get(
+    `/nfts/gradients`,
+    cacheRequest(),
+    async function (req: any, res: any) {
+      const id = req.query.id;
+      const pageSize: number =
+        req.query.page_size && req.query.page_size <= NFTS_PAGE_SIZE
+          ? parseInt(req.query.page_size)
+          : DEFAULT_PAGE_SIZE;
+      const page: number = req.query.page ? parseInt(req.query.page) : 1;
 
-    await db.fetchNFTMedia(contract).then(async (result) => {
-      await returnJsonResult(result, req, res);
-    });
-  });
+      const sortDir =
+        req.query.sort_direction &&
+        SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
+          ? req.query.sort_direction
+          : 'asc';
 
-  apiRouter.get(`/nfts_memelab`, async function (req: any, res: any) {
-    const pageSize: number =
-      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-        ? parseInt(req.query.page_size)
-        : DEFAULT_PAGE_SIZE;
-    const page: number = req.query.page ? parseInt(req.query.page) : 1;
+      const sort =
+        req.query.sort && ['id', 'tdh'].includes(req.query.sort)
+          ? req.query.sort
+          : 'id';
 
-    const sortDir =
-      req.query.sort_direction &&
-      SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
-        ? req.query.sort_direction
-        : 'desc';
-
-    const nfts = req.query.id;
-    const memeIds = req.query.meme_id;
-
-    await db
-      .fetchLabNFTs(memeIds, pageSize, page, nfts, sortDir)
-      .then(async (result) => {
-        result.data.map((d: any) => {
-          d.meme_references = JSON.parse(d.meme_references);
-          d.metadata = JSON.parse(d.metadata);
-          if (
-            d.metadata.animation_details &&
-            typeof d.metadata.animation_details === 'string'
-          ) {
-            d.metadata.animation_details = JSON.parse(
-              d.metadata.animation_details
-            );
-          }
+      await db
+        .fetchGradients(id, pageSize, page, sort, sortDir)
+        .then(async (result) => {
+          result.data.map((d: any) => {
+            d.metadata = JSON.parse(d.metadata);
+          });
+          await returnPaginatedResult(result, req, res);
         });
-        await returnPaginatedResult(result, req, res);
+    }
+  );
+
+  apiRouter.get(
+    `/nfts/:contract/media`,
+    cacheRequest(),
+    async function (req: any, res: any) {
+      const contract = req.params.contract;
+
+      await db.fetchNFTMedia(contract).then(async (result) => {
+        await returnJsonResult(result, req, res);
       });
-  });
+    }
+  );
 
-  apiRouter.get(`/memes_extended_data`, async function (req: any, res: any) {
-    const pageSize: number =
-      req.query.page_size && req.query.page_size <= NFTS_PAGE_SIZE
-        ? parseInt(req.query.page_size)
-        : DEFAULT_PAGE_SIZE;
-    const page: number = req.query.page ? parseInt(req.query.page) : 1;
+  apiRouter.get(
+    `/nfts_memelab`,
+    cacheRequest(),
+    async function (req: any, res: any) {
+      const pageSize: number =
+        req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+          ? parseInt(req.query.page_size)
+          : DEFAULT_PAGE_SIZE;
+      const page: number = req.query.page ? parseInt(req.query.page) : 1;
 
-    const nfts = req.query.id;
-    const seasons = req.query.season;
+      const sortDir =
+        req.query.sort_direction &&
+        SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
+          ? req.query.sort_direction
+          : 'desc';
 
-    const sort =
-      req.query.sort && MEMES_EXTENDED_SORT.includes(req.query.sort)
-        ? req.query.sort
-        : MEMES_EXTENDED_SORT[0];
+      const nfts = req.query.id;
+      const memeIds = req.query.meme_id;
 
-    const sortDir =
-      req.query.sort_direction &&
-      SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
-        ? req.query.sort_direction
-        : 'desc';
+      await db
+        .fetchLabNFTs(memeIds, pageSize, page, nfts, sortDir)
+        .then(async (result) => {
+          result.data.map((d: any) => {
+            d.meme_references = JSON.parse(d.meme_references);
+            d.metadata = JSON.parse(d.metadata);
+            if (
+              d.metadata.animation_details &&
+              typeof d.metadata.animation_details === 'string'
+            ) {
+              d.metadata.animation_details = JSON.parse(
+                d.metadata.animation_details
+              );
+            }
+          });
+          await returnPaginatedResult(result, req, res);
+        });
+    }
+  );
 
-    await db
-      .fetchMemesExtended(pageSize, page, nfts, seasons, sort, sortDir)
-      .then(async (result) => {
-        await returnPaginatedResult(result, req, res);
+  apiRouter.get(
+    `/memes_extended_data`,
+    cacheRequest(),
+    async function (req: any, res: any) {
+      const pageSize: number =
+        req.query.page_size && req.query.page_size <= NFTS_PAGE_SIZE
+          ? parseInt(req.query.page_size)
+          : DEFAULT_PAGE_SIZE;
+      const page: number = req.query.page ? parseInt(req.query.page) : 1;
+
+      const nfts = req.query.id;
+      const seasons = req.query.season;
+
+      const sort =
+        req.query.sort && MEMES_EXTENDED_SORT.includes(req.query.sort)
+          ? req.query.sort
+          : MEMES_EXTENDED_SORT[0];
+
+      const sortDir =
+        req.query.sort_direction &&
+        SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
+          ? req.query.sort_direction
+          : 'desc';
+
+      await db
+        .fetchMemesExtended(pageSize, page, nfts, seasons, sort, sortDir)
+        .then(async (result) => {
+          await returnPaginatedResult(result, req, res);
+        });
+    }
+  );
+
+  apiRouter.get(
+    `/memes_seasons`,
+    cacheRequest(),
+    async function (req: any, res: any) {
+      const sortDir =
+        req.query.sort_direction &&
+        SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
+          ? req.query.sort_direction
+          : 'asc';
+
+      await db.fetchMemesSeasons(sortDir).then(async (result) => {
+        await returnPaginatedResult(result as unknown as any, req, res);
       });
-  });
+    }
+  );
 
-  apiRouter.get(`/memes_seasons`, async function (req: any, res: any) {
-    const sortDir =
-      req.query.sort_direction &&
-      SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
-        ? req.query.sort_direction
-        : 'asc';
+  apiRouter.get(
+    `/new_memes_seasons`,
+    cacheRequest(),
+    async function (req: any, res: any) {
+      await db.fetchNewMemesSeasons().then(async (result) => {
+        await returnJsonResult(result, req, res);
+      });
+    }
+  );
 
-    await db.fetchMemesSeasons(sortDir).then(async (result) => {
-      await returnPaginatedResult(result as unknown as any, req, res);
-    });
-  });
+  apiRouter.get(
+    `/memes_lite`,
+    cacheRequest(),
+    async function (req: any, res: any) {
+      const sortDir =
+        req.query.sort_direction &&
+        SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
+          ? req.query.sort_direction
+          : 'asc';
 
-  apiRouter.get(`/new_memes_seasons`, async function (req: any, res: any) {
-    await db.fetchNewMemesSeasons().then(async (result) => {
-      await returnJsonResult(result, req, res);
-    });
-  });
+      await db.fetchMemesLite(sortDir).then(async (result) => {
+        return await returnPaginatedResult(result, req, res);
+      });
+    }
+  );
 
-  apiRouter.get(`/memes_lite`, async function (req: any, res: any) {
-    const sortDir =
-      req.query.sort_direction &&
-      SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
-        ? req.query.sort_direction
-        : 'asc';
+  apiRouter.get(
+    `/memelab_lite`,
+    cacheRequest(),
+    async function (req: any, res: any) {
+      const sortDir =
+        req.query.sort_direction &&
+        SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
+          ? req.query.sort_direction
+          : 'asc';
 
-    await db.fetchMemesLite(sortDir).then(async (result) => {
-      return await returnPaginatedResult(result, req, res);
-    });
-  });
-
-  apiRouter.get(`/memelab_lite`, async function (req: any, res: any) {
-    const sortDir =
-      req.query.sort_direction &&
-      SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
-        ? req.query.sort_direction
-        : 'asc';
-
-    await db.fetchMemelabLite(sortDir).then(async (result) => {
-      return await returnPaginatedResult(result, req, res);
-    });
-  });
+      await db.fetchMemelabLite(sortDir).then(async (result) => {
+        return await returnPaginatedResult(result, req, res);
+      });
+    }
+  );
 
   apiRouter.get(`/test`, async function (req: any, res: any) {
     await appWebSockets.send({
@@ -667,49 +714,62 @@ loadApi().then(async () => {
     res.send('HEllo');
   });
 
-  apiRouter.get(`/memes_latest`, async function (req: any, res: any) {
-    await db.fetchMemesLatest().then(async (result) => {
-      result.metadata = JSON.parse(result.metadata);
-      result.metadata.animation_details =
-        typeof result.metadata.animation_details === 'string'
-          ? JSON.parse(result.metadata.animation_details)
-          : result.metadata.animation_details;
-      return await returnJsonResult(result, req, res);
-    });
-  });
-
-  apiRouter.get(`/nfts_search`, async function (req: any, res: any) {
-    const pageSize: number =
-      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-        ? parseInt(req.query.page_size)
-        : DEFAULT_PAGE_SIZE;
-
-    const search = req.query.search;
-
-    await db.searchNfts(search, pageSize).then(async (result) => {
-      return await returnJsonResult(result, req, res);
-    });
-  });
-
-  apiRouter.get(`/lab_extended_data`, async function (req: any, res: any) {
-    const pageSize: number =
-      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-        ? parseInt(req.query.page_size)
-        : DEFAULT_PAGE_SIZE;
-    const page: number = req.query.page ? parseInt(req.query.page) : 1;
-
-    const nfts = req.query.id;
-    const collections = req.query.collection;
-
-    await db
-      .fetchLabExtended(pageSize, page, nfts, collections)
-      .then(async (result) => {
-        await returnPaginatedResult(result, req, res);
+  apiRouter.get(
+    `/memes_latest`,
+    cacheRequest(),
+    async function (req: any, res: any) {
+      await db.fetchMemesLatest().then(async (result) => {
+        result.metadata = JSON.parse(result.metadata);
+        result.metadata.animation_details =
+          typeof result.metadata.animation_details === 'string'
+            ? JSON.parse(result.metadata.animation_details)
+            : result.metadata.animation_details;
+        return await returnJsonResult(result, req, res);
       });
-  });
+    }
+  );
+
+  apiRouter.get(
+    `/nfts_search`,
+    cacheRequest(),
+    async function (req: any, res: any) {
+      const pageSize: number =
+        req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+          ? parseInt(req.query.page_size)
+          : DEFAULT_PAGE_SIZE;
+
+      const search = req.query.search;
+
+      await db.searchNfts(search, pageSize).then(async (result) => {
+        return await returnJsonResult(result, req, res);
+      });
+    }
+  );
+
+  apiRouter.get(
+    `/lab_extended_data`,
+    cacheRequest(),
+    async function (req: any, res: any) {
+      const pageSize: number =
+        req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+          ? parseInt(req.query.page_size)
+          : DEFAULT_PAGE_SIZE;
+      const page: number = req.query.page ? parseInt(req.query.page) : 1;
+
+      const nfts = req.query.id;
+      const collections = req.query.collection;
+
+      await db
+        .fetchLabExtended(pageSize, page, nfts, collections)
+        .then(async (result) => {
+          await returnPaginatedResult(result, req, res);
+        });
+    }
+  );
 
   apiRouter.get(
     `/transactions`,
+    cacheRequest(),
     async function (req: any, res: Response<ApiResponse<ApiTransactionPage>>) {
       const pageSize: number =
         req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
@@ -733,64 +793,80 @@ loadApi().then(async () => {
     }
   );
 
-  apiRouter.get(`/transactions/:hash`, async function (req: any, res: any) {
-    const hash = req.params.hash;
-    await db.fetchTransactionByHash(hash).then(async (result) => {
-      if (result.data.length == 1) {
-        await returnJsonResult(result.data[0], req, res);
-      } else {
-        await returnJsonResult({}, req, res);
-      }
-    });
-  });
+  apiRouter.get(
+    `/transactions/:hash`,
+    cacheRequest(),
+    async function (req: any, res: any) {
+      const hash = req.params.hash;
+      await db.fetchTransactionByHash(hash).then(async (result) => {
+        if (result.data.length == 1) {
+          await returnJsonResult(result.data[0], req, res);
+        } else {
+          await returnJsonResult({}, req, res);
+        }
+      });
+    }
+  );
 
-  apiRouter.get(`/transactions_memelab`, async function (req: any, res: any) {
-    const pageSize: number =
-      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-        ? parseInt(req.query.page_size)
-        : DEFAULT_PAGE_SIZE;
-    const page: number = req.query.page ? parseInt(req.query.page) : 1;
+  apiRouter.get(
+    `/transactions_memelab`,
+    cacheRequest(),
+    async function (req: any, res: any) {
+      const pageSize: number =
+        req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+          ? parseInt(req.query.page_size)
+          : DEFAULT_PAGE_SIZE;
+      const page: number = req.query.page ? parseInt(req.query.page) : 1;
 
-    const wallets = req.query.wallet;
-    const nfts = req.query.id;
+      const wallets = req.query.wallet;
+      const nfts = req.query.id;
 
-    const filter =
-      req.query.filter && TRANSACTION_FILTERS.includes(req.query.filter)
-        ? req.query.filter
-        : null;
+      const filter =
+        req.query.filter && TRANSACTION_FILTERS.includes(req.query.filter)
+          ? req.query.filter
+          : null;
 
-    await db
-      .fetchLabTransactions(pageSize, page, wallets, nfts, filter)
-      .then(async (result) => {
+      await db
+        .fetchLabTransactions(pageSize, page, wallets, nfts, filter)
+        .then(async (result) => {
+          await returnPaginatedResult(result, req, res);
+        });
+    }
+  );
+
+  apiRouter.get(
+    `/tdh/gradients/`,
+    cacheRequest(),
+    async function (req: any, res: any) {
+      const pageSize: number =
+        req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+          ? parseInt(req.query.page_size)
+          : DEFAULT_PAGE_SIZE;
+      const page: number = req.query.page ? parseInt(req.query.page) : 1;
+      await db.fetchGradientTdh(pageSize, page).then(async (result) => {
+        result = parseTdhResultsFromDB(result);
         await returnPaginatedResult(result, req, res);
       });
-  });
+    }
+  );
 
-  apiRouter.get(`/tdh/gradients/`, async function (req: any, res: any) {
-    const pageSize: number =
-      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-        ? parseInt(req.query.page_size)
-        : DEFAULT_PAGE_SIZE;
-    const page: number = req.query.page ? parseInt(req.query.page) : 1;
-    await db.fetchGradientTdh(pageSize, page).then(async (result) => {
-      result = parseTdhResultsFromDB(result);
-      await returnPaginatedResult(result, req, res);
-    });
-  });
+  apiRouter.get(
+    `/ens/:address/`,
+    cacheRequest(),
+    async function (req: any, res: any) {
+      const address = req.params.address;
 
-  apiRouter.get(`/ens/:address/`, async function (req: any, res: any) {
-    const address = req.params.address;
+      await db.fetchEns(address).then(async (result) => {
+        if (result.length == 1) {
+          await returnJsonResult(result[0], req, res);
+        } else {
+          await returnJsonResult({}, req, res);
+        }
+      });
+    }
+  );
 
-    await db.fetchEns(address).then(async (result) => {
-      if (result.length == 1) {
-        await returnJsonResult(result[0], req, res);
-      } else {
-        await returnJsonResult({}, req, res);
-      }
-    });
-  });
-
-  apiRouter.get(`/team`, async function (req: any, res: any) {
+  apiRouter.get(`/team`, cacheRequest(), async function (req: any, res: any) {
     const pageSize: number =
       req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
         ? parseInt(req.query.page_size)
@@ -804,6 +880,7 @@ loadApi().then(async () => {
 
   apiRouter.get(
     `/distribution_photos/:contract/:nft_id`,
+    cacheRequest(),
     async function (req: any, res: any) {
       const contract = req.params.contract;
       const nftId = req.params.nft_id;
@@ -824,6 +901,7 @@ loadApi().then(async () => {
 
   apiRouter.get(
     `/distribution_phases/:contract/:nft_id`,
+    cacheRequest(),
     async function (req: any, res: any) {
       const contract = req.params.contract;
       const nftId = req.params.nft_id;
@@ -833,54 +911,69 @@ loadApi().then(async () => {
     }
   );
 
-  apiRouter.get(`/distributions`, async function (req: any, res: any) {
-    const search = req.query.search;
-    const cards = req.query.card_id;
-    const contracts = req.query.contract;
-    const wallets = req.query.wallet;
+  apiRouter.get(
+    `/distributions`,
+    cacheRequest(),
+    async function (req: any, res: any) {
+      const search = req.query.search;
+      const cards = req.query.card_id;
+      const contracts = req.query.contract;
+      const wallets = req.query.wallet;
 
-    const pageSize: number =
-      req.query.page_size && req.query.page_size < DISTRIBUTION_PAGE_SIZE
-        ? parseInt(req.query.page_size)
-        : DEFAULT_PAGE_SIZE;
-    const page: number = req.query.page ? parseInt(req.query.page) : 1;
-    await db
-      .fetchDistributions(search, cards, contracts, wallets, pageSize, page)
-      .then(async (result) => {
-        await returnPaginatedResult(result, req, res);
-      });
-  });
+      const pageSize: number =
+        req.query.page_size && req.query.page_size < DISTRIBUTION_PAGE_SIZE
+          ? parseInt(req.query.page_size)
+          : DEFAULT_PAGE_SIZE;
+      const page: number = req.query.page ? parseInt(req.query.page) : 1;
+      await db
+        .fetchDistributions(search, cards, contracts, wallets, pageSize, page)
+        .then(async (result) => {
+          await returnPaginatedResult(result, req, res);
+        });
+    }
+  );
 
-  apiRouter.get(`/consolidations/:wallet`, async function (req: any, res: any) {
-    const wallet = req.params.wallet;
-    const showIncomplete = !!(
-      req.query.show_incomplete && req.query.show_incomplete == 'true'
-    );
-    await db
-      .fetchConsolidationsForWallet(wallet, showIncomplete)
-      .then(async (result) => {
-        await returnPaginatedResult(result, req, res);
-      });
-  });
+  apiRouter.get(
+    `/consolidations/:wallet`,
+    cacheRequest(),
+    async function (req: any, res: any) {
+      const wallet = req.params.wallet;
+      const showIncomplete = !!(
+        req.query.show_incomplete && req.query.show_incomplete == 'true'
+      );
+      await db
+        .fetchConsolidationsForWallet(wallet, showIncomplete)
+        .then(async (result) => {
+          await returnPaginatedResult(result, req, res);
+        });
+    }
+  );
 
-  apiRouter.get(`/consolidations`, async function (req: any, res: any) {
-    const block = req.query.block;
-    const pageSize: number =
-      req.query.page_size && req.query.page_size < DEFAULT_MAX_SIZE
-        ? parseInt(req.query.page_size)
-        : DEFAULT_PAGE_SIZE;
-    const page: number = req.query.page ? parseInt(req.query.page) : 1;
+  apiRouter.get(
+    `/consolidations`,
+    cacheRequest(),
+    async function (req: any, res: any) {
+      const block = req.query.block;
+      const pageSize: number =
+        req.query.page_size && req.query.page_size < DEFAULT_MAX_SIZE
+          ? parseInt(req.query.page_size)
+          : DEFAULT_PAGE_SIZE;
+      const page: number = req.query.page ? parseInt(req.query.page) : 1;
 
-    await db.fetchConsolidations(pageSize, page, block).then(async (result) => {
-      result.data.map((a: any) => {
-        a.wallets = JSON.parse(a.wallets);
-      });
-      await returnPaginatedResult(result, req, res);
-    });
-  });
+      await db
+        .fetchConsolidations(pageSize, page, block)
+        .then(async (result) => {
+          result.data.map((a: any) => {
+            a.wallets = JSON.parse(a.wallets);
+          });
+          await returnPaginatedResult(result, req, res);
+        });
+    }
+  );
 
   apiRouter.get(
     `/consolidation_transactions`,
+    cacheRequest(),
     async function (req: any, res: any) {
       const pageSize: number =
         req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
@@ -902,6 +995,7 @@ loadApi().then(async () => {
 
   apiRouter.get(
     `/nft_history/:contract/:nft_id`,
+    cacheRequest(),
     async function (req: any, res: any) {
       const contract = req.params.contract;
       const nftId = req.params.nft_id;
@@ -923,62 +1017,98 @@ loadApi().then(async () => {
     }
   );
 
-  apiRouter.get(`/rememes_uploads`, async function (req: any, res: any) {
-    const pageSize: number =
-      req.query.page_size && req.query.page_size < DISTRIBUTION_PAGE_SIZE
-        ? parseInt(req.query.page_size)
-        : DEFAULT_PAGE_SIZE;
-    const page: number = req.query.page ? parseInt(req.query.page) : 1;
+  rootRouter.get(
+    `/floor_price`,
+    cacheRequest(),
+    async function (req: any, res: any) {
+      const contract = req.query.contract;
+      const id = req.query.id;
 
-    await db.fetchRememesUploads(pageSize, page).then(async (result) => {
-      result.data.forEach((e: any) => {
-        e.date = e.created_at;
-        delete e.created_at;
+      if (!contract || !id) {
+        res.status(400).send('Missing contract or id');
+        return;
+      }
+      const url = `https://api.opensea.io/v2/orders/ethereum/seaport/listings?asset_contract_address=${contract}&limit=1&token_ids=${id}&order_by=eth_price&order_direction=asc`;
+      const response = await fetch(url, {
+        headers: {
+          'X-API-KEY': process.env.OPENSEA_API_KEY!,
+          accept: 'application/json'
+        }
       });
-      await returnPaginatedResult(result, req, res);
-    });
-  });
+      const json = await response.json();
+      return res.send(json);
+    }
+  );
 
-  apiRouter.get(`/tdh_global_history`, async function (req: any, res: any) {
-    const pageSize: number =
-      req.query.page_size && req.query.page_size < DISTRIBUTION_PAGE_SIZE
-        ? parseInt(req.query.page_size)
-        : DEFAULT_PAGE_SIZE;
-    const page: number = req.query.page ? parseInt(req.query.page) : 1;
-    await db.fetchTDHGlobalHistory(pageSize, page).then(async (result) => {
-      result.data.map((d: any) => {
-        const date = new Date(d.date);
-        const year = date.getUTCFullYear();
-        const month = String(date.getUTCMonth() + 1).padStart(2, '0');
-        const day = String(date.getUTCDate()).padStart(2, '0');
-        d.date = `${year}-${month}-${day}`;
-      });
-      await returnPaginatedResult(result, req, res);
-    });
-  });
+  apiRouter.get(
+    `/rememes_uploads`,
+    cacheRequest(),
+    async function (req: any, res: any) {
+      const pageSize: number =
+        req.query.page_size && req.query.page_size < DISTRIBUTION_PAGE_SIZE
+          ? parseInt(req.query.page_size)
+          : DEFAULT_PAGE_SIZE;
+      const page: number = req.query.page ? parseInt(req.query.page) : 1;
 
-  apiRouter.get(`/tdh_history`, async function (req: any, res: any) {
-    const pageSize: number =
-      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-        ? parseInt(req.query.page_size)
-        : DEFAULT_PAGE_SIZE;
-    const page: number = req.query.page ? parseInt(req.query.page) : 1;
-    const wallets = req.query.wallet;
-    await db.fetchTDHHistory(wallets, pageSize, page).then(async (result) => {
-      result.data.map((d: any) => {
-        d.wallets = JSON.parse(d.wallets);
-        const date = new Date(d.date);
-        const year = date.getUTCFullYear();
-        const month = String(date.getUTCMonth() + 1).padStart(2, '0');
-        const day = String(date.getUTCDate()).padStart(2, '0');
-        d.date = `${year}-${month}-${day}`;
+      await db.fetchRememesUploads(pageSize, page).then(async (result) => {
+        result.data.forEach((e: any) => {
+          e.date = e.created_at;
+          delete e.created_at;
+        });
+        await returnPaginatedResult(result, req, res);
       });
-      await returnPaginatedResult(result, req, res);
-    });
-  });
+    }
+  );
+
+  apiRouter.get(
+    `/tdh_global_history`,
+    cacheRequest(),
+    async function (req: any, res: any) {
+      const pageSize: number =
+        req.query.page_size && req.query.page_size < DISTRIBUTION_PAGE_SIZE
+          ? parseInt(req.query.page_size)
+          : DEFAULT_PAGE_SIZE;
+      const page: number = req.query.page ? parseInt(req.query.page) : 1;
+      await db.fetchTDHGlobalHistory(pageSize, page).then(async (result) => {
+        result.data.map((d: any) => {
+          const date = new Date(d.date);
+          const year = date.getUTCFullYear();
+          const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+          const day = String(date.getUTCDate()).padStart(2, '0');
+          d.date = `${year}-${month}-${day}`;
+        });
+        await returnPaginatedResult(result, req, res);
+      });
+    }
+  );
+
+  apiRouter.get(
+    `/tdh_history`,
+    cacheRequest(),
+    async function (req: any, res: any) {
+      const pageSize: number =
+        req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+          ? parseInt(req.query.page_size)
+          : DEFAULT_PAGE_SIZE;
+      const page: number = req.query.page ? parseInt(req.query.page) : 1;
+      const wallets = req.query.wallet;
+      await db.fetchTDHHistory(wallets, pageSize, page).then(async (result) => {
+        result.data.map((d: any) => {
+          d.wallets = JSON.parse(d.wallets);
+          const date = new Date(d.date);
+          const year = date.getUTCFullYear();
+          const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+          const day = String(date.getUTCDate()).padStart(2, '0');
+          d.date = `${year}-${month}-${day}`;
+        });
+        await returnPaginatedResult(result, req, res);
+      });
+    }
+  );
 
   apiRouter.get(
     `/recent_tdh_history/:consolidation_key`,
+    cacheRequest(),
     async function (req: any, res: any) {
       const consolidationKey = req.params.consolidation_key;
       await db.fetchRecentTDHHistory(consolidationKey).then(async (result) => {

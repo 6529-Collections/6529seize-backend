@@ -35,6 +35,7 @@ import {
 } from '../../../nextgen/nextgen_constants';
 import { PageSortDirection } from '../page-request';
 import { BadRequestException } from '../../../exceptions';
+import { cacheRequest } from '../request-cache';
 
 const logger = Logger.get('NEXTGEN_API');
 
@@ -247,13 +248,13 @@ router.get(
   }
 );
 
-router.get(`/featured`, async function (req: any, res: any) {
+router.get(`/featured`, cacheRequest(), async function (req: any, res: any) {
   await db.fetchFeaturedCollection().then(async (result) => {
     return await returnJsonResult(result, req, res);
   });
 });
 
-router.get(`/collections`, async function (req: any, res: any) {
+router.get(`/collections`, cacheRequest(), async function (req: any, res: any) {
   const pageSize: number =
     req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
       ? parseInt(req.query.page_size)
@@ -272,27 +273,32 @@ router.get(`/collections`, async function (req: any, res: any) {
     });
 });
 
-router.get(`/collections/:id`, async function (req: any, res: any) {
-  const id: number = parseInt(req.params.id);
-  let result: any;
-  if (!isNaN(id)) {
-    logger.info(`[FETCHING COLLECTION BY ID ${id}]`);
-    result = await db.fetchNextGenCollectionById(id);
-  } else {
-    const name = req.params.id.replace(/-/g, ' ');
-    logger.info(`[FETCHING COLLECTION BY NAME ${name}]`);
-    result = await db.fetchNextGenCollectionByName(name);
+router.get(
+  `/collections/:id`,
+  cacheRequest(),
+  async function (req: any, res: any) {
+    const id: number = parseInt(req.params.id);
+    let result: any;
+    if (!isNaN(id)) {
+      logger.info(`[FETCHING COLLECTION BY ID ${id}]`);
+      result = await db.fetchNextGenCollectionById(id);
+    } else {
+      const name = req.params.id.replace(/-/g, ' ');
+      logger.info(`[FETCHING COLLECTION BY NAME ${name}]`);
+      result = await db.fetchNextGenCollectionByName(name);
+    }
+    if (result?.id) {
+      return await returnJsonResult(result, req, res);
+    } else {
+      return res.status(404).send({});
+    }
   }
-  if (result?.id) {
-    return await returnJsonResult(result, req, res);
-  } else {
-    return res.status(404).send({});
-  }
-});
+);
 
 router.get(
   `/collections/:id/tokens`,
   validateCollectionId,
+  cacheRequest(),
   async function (req: any, res: any) {
     const id: number = req.params.id;
     const pageSize: number =
@@ -342,6 +348,7 @@ router.get(
 router.get(
   `/collections/:id/tokens/:token`,
   validateCollectionId,
+  cacheRequest(),
   async function (req: any, res: any) {
     const id: number = req.params.id;
     const token: number = parseInt(req.params.token);
@@ -364,6 +371,7 @@ router.get(
 router.get(
   `/collections/:id/logs`,
   validateCollectionId,
+  cacheRequest(),
   async function (req: any, res: any) {
     const id: number = req.params.id;
     const pageSize: number =
@@ -383,6 +391,7 @@ router.get(
 router.get(
   `/collections/:id/logs/:tokenId`,
   validateCollectionId,
+  cacheRequest(),
   async function (req: any, res: any) {
     const id: number = req.params.id;
     const tokenId = parseInt(req.params.tokenId);
@@ -408,6 +417,7 @@ router.get(
 router.get(
   `/collections/:id/traits`,
   validateCollectionId,
+  cacheRequest(),
   async function (req: any, res: any) {
     const id: number = req.params.id;
 
@@ -451,6 +461,7 @@ router.get(
 router.get(
   `/collections/:id/ultimate_trait_set`,
   validateCollectionId,
+  cacheRequest(),
   async function (req: any, res: any) {
     const id: number = req.params.id;
     const traits = req.query.trait;
@@ -476,6 +487,7 @@ router.get(
 router.get(
   `/collections/:id/trait_sets/:trait`,
   validateCollectionId,
+  cacheRequest(),
   async function (req: any, res: any) {
     const id: number = req.params.id;
     const trait: string = req.params.trait;
@@ -495,7 +507,7 @@ router.get(
   }
 );
 
-router.get(`/tokens/:id`, async function (req: any, res: any) {
+router.get(`/tokens/:id`, cacheRequest(), async function (req: any, res: any) {
   const id: number = parseInt(req.params.id);
   if (isNaN(id)) {
     throw new BadRequestException('Token ID must be a number.');
@@ -510,37 +522,45 @@ router.get(`/tokens/:id`, async function (req: any, res: any) {
   });
 });
 
-router.get(`/tokens/:id/transactions`, async function (req: any, res: any) {
-  const id: number = parseInt(req.params.id);
-  if (isNaN(id)) {
-    throw new BadRequestException('Token ID must be a number.');
+router.get(
+  `/tokens/:id/transactions`,
+  cacheRequest(),
+  async function (req: any, res: any) {
+    const id: number = parseInt(req.params.id);
+    if (isNaN(id)) {
+      throw new BadRequestException('Token ID must be a number.');
+    }
+
+    const pageSize: number =
+      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+        ? parseInt(req.query.page_size)
+        : DEFAULT_PAGE_SIZE;
+    const page: number = req.query.page ? parseInt(req.query.page) : 1;
+
+    await db
+      .fetchNextGenTokenTransactions(id, pageSize, page)
+      .then(async (result) => {
+        return await returnJsonResult(result, req, res);
+      });
   }
+);
 
-  const pageSize: number =
-    req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-      ? parseInt(req.query.page_size)
-      : DEFAULT_PAGE_SIZE;
-  const page: number = req.query.page ? parseInt(req.query.page) : 1;
+router.get(
+  `/tokens/:id/traits`,
+  cacheRequest(),
+  async function (req: any, res: any) {
+    const id: number = parseInt(req.params.id);
+    if (isNaN(id)) {
+      throw new BadRequestException('Token ID must be a number.');
+    }
 
-  await db
-    .fetchNextGenTokenTransactions(id, pageSize, page)
-    .then(async (result) => {
+    await db.fetchNextGenTokenTraits(id).then(async (result) => {
       return await returnJsonResult(result, req, res);
     });
-});
-
-router.get(`/tokens/:id/traits`, async function (req: any, res: any) {
-  const id: number = parseInt(req.params.id);
-  if (isNaN(id)) {
-    throw new BadRequestException('Token ID must be a number.');
   }
+);
 
-  await db.fetchNextGenTokenTraits(id).then(async (result) => {
-    return await returnJsonResult(result, req, res);
-  });
-});
-
-router.get(`/tdh`, async function (req: any, res: any) {
+router.get(`/tdh`, cacheRequest(), async function (req: any, res: any) {
   const pageSize: number =
     req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
       ? parseInt(req.query.page_size)

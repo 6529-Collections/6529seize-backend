@@ -16,6 +16,7 @@ import {
 } from '../api-helpers';
 import * as mcache from 'memory-cache';
 import { fetchRoyalties, RoyaltyResponse } from './royalties.db';
+import { cacheRequest } from '../request-cache';
 
 const router = asyncRouter();
 
@@ -74,6 +75,7 @@ router.get(
 
 router.get(
   `/uploads`,
+  cacheRequest(),
   async function (
     req: Request<
       any,

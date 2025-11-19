@@ -45,6 +45,7 @@ import { fetchAirdropAddressForConsolidationKey } from '../../../delegationsLoop
 import { fetchEns } from '../../../db-api';
 import { equalIgnoreCase } from '../../../strings';
 import { PaginatedResponse } from '../api-constants';
+import { cacheRequest } from '../request-cache';
 
 const router = asyncRouter();
 
@@ -52,6 +53,7 @@ export default router;
 
 router.get(
   `/consolidation/details/:consolidation_key`,
+  cacheRequest(),
   async function (
     req: Request<
       {
@@ -76,6 +78,7 @@ router.get(
 
 router.get(
   `/consolidation/top-up/:consolidation_key`,
+  cacheRequest(),
   async function (
     req: Request<
       {
@@ -166,6 +169,7 @@ async function isAuthenticatedForConsolidationKey(
 
 router.get(
   `/consolidation/upcoming-memes/:consolidation_key`,
+  cacheRequest(),
   async function (
     req: Request<
       {
@@ -192,6 +196,7 @@ router.get(
 
 router.get(
   `/upcoming-memes-counts`,
+  cacheRequest(),
   async function (
     req: Request<
       any,
@@ -451,6 +456,7 @@ router.get(
 router.get(
   `/allowlists/:contract/:token_id/:allowlist_id/:phase_id`,
   needsAuthenticatedUser(),
+  cacheRequest(),
   async function (
     req: Request<
       {
