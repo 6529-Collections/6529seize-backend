@@ -4,7 +4,7 @@ import { profilesService } from '../../../profiles/profiles.service';
 import { NotFoundException } from '../../../exceptions';
 import { ProfileClassification } from '../../../entities/IProfile';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
-import { Time } from '../../../time';
+import { Time, Timer } from '../../../time';
 import { identityFetcher } from '../identities/identity.fetcher';
 import { getWalletFromEns } from '../../../alchemy';
 import { ethTools } from '../../../eth-tools';
@@ -14,10 +14,11 @@ export async function getRaterInfoFromRequest(
 ) {
   const identity = req.params.identity.toLowerCase();
   const authContext = await getAuthenticationContext(req);
+  const timer = Timer.getFromRequest(req);
   let targetProfile =
     await identityFetcher.getIdentityAndConsolidationsByIdentityKey(
       { identityKey: identity },
-      { authenticationContext: authContext }
+      { authenticationContext: authContext, timer }
     );
   if (!targetProfile?.id) {
     let wallet = identity.toLowerCase();
@@ -29,6 +30,7 @@ export async function getRaterInfoFromRequest(
         return w;
       });
     }
+    timer.start(`profilesService->createOrUpdateProfile(${wallet})`);
     targetProfile = await profilesService.createOrUpdateProfile({
       handle: `id-${wallet}`,
       creator_or_updater_wallet: wallet,
@@ -36,7 +38,10 @@ export async function getRaterInfoFromRequest(
       sub_classification: null,
       pfp_url: null
     });
+    timer.stop(`profilesService->createOrUpdateProfile(${wallet})`);
+    timer.start(`artificial2SecondLag`);
     await giveReadReplicaTimeToCatchUp(Time.seconds(2).toMillis());
+    timer.stop(`artificial2SecondLag`);
   }
   if (!authContext.authenticatedProfileId) {
     throw new NotFoundException(

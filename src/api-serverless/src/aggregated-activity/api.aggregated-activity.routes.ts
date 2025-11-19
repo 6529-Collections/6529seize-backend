@@ -18,10 +18,10 @@ import {
 } from './api.aggregated-activity.db';
 import { NotFoundException } from '../../../exceptions';
 import { ApiResponse } from '../api-response';
-import { ApiAggregatedActivityPage } from '../generated/models/ApiAggregatedActivityPage';
 import { ApiAggregatedActivity } from '../generated/models/ApiAggregatedActivity';
 import { ApiAggregatedActivityMemes } from '../generated/models/ApiAggregatedActivityMemes';
 import { enums } from '../../../enums';
+import { cacheRequest } from '../request-cache';
 
 const router = asyncRouter();
 
@@ -42,6 +42,7 @@ export const AGGREGATED_ACTIVITY_SORT = [
 
 router.get(
   '/',
+  cacheRequest(),
   async function (
     req: Request<
       any,
@@ -60,7 +61,7 @@ router.get(
         download_all?: boolean;
       }
     >,
-    res: Response<ApiResponse<ApiAggregatedActivityPage>>
+    res: any
   ) {
     let page = req.query.page ?? 1;
     let pageSize = req.query.page_size ?? DEFAULT_PAGE_SIZE;
@@ -99,6 +100,7 @@ router.get(
 
 router.get(
   '/consolidation/:consolidation_key',
+  cacheRequest(),
   async function (
     req: Request<
       {
@@ -125,6 +127,7 @@ router.get(
 
 router.get(
   '/consolidation/:consolidation_key/memes',
+  cacheRequest(),
   async function (
     req: Request<
       {
@@ -150,6 +153,7 @@ router.get(
 
 router.get(
   '/wallet/:wallet',
+  cacheRequest(),
   async function (
     req: Request<
       {
@@ -175,6 +179,7 @@ router.get(
 
 router.get(
   '/wallet/:wallet/memes',
+  cacheRequest(),
   async function (
     req: Request<
       {

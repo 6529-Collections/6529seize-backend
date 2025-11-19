@@ -1,18 +1,18 @@
 import {
+  GRADIENT_CONTRACT,
+  MEMELAB_CONTRACT,
+  MEMES_CONTRACT
+} from '../constants';
+import {
   fetchAllMemeLabNFTs,
   fetchNftsForContract,
   findVolume,
   persistLabNFTS,
   persistNFTs
 } from '../db';
-import {
-  GRADIENT_CONTRACT,
-  MEMELAB_CONTRACT,
-  MEMES_CONTRACT
-} from '../constants';
+import { BaseNFT } from '../entities/INFT';
 import { Logger } from '../logging';
 import { equalIgnoreCase } from '../strings';
-import { BaseNFT } from '../entities/INFT';
 import {
   fetchBestListingsForCollection,
   fetchBestOffersForCollection,
@@ -24,27 +24,27 @@ const logger = Logger.get('NFT_MARKET_STATS');
 export const findNftMarketStats = async (contract: string) => {
   let collectionSlug = '';
   let itemType = 0;
-  switch (contract) {
-    case MEMES_CONTRACT:
-      collectionSlug = 'thememes6529';
-      itemType = 3;
-      break;
-    case MEMELAB_CONTRACT:
-      collectionSlug = 'memelab6529';
-      itemType = 3;
-      break;
-    case GRADIENT_CONTRACT:
-      collectionSlug = '6529-gradient';
-      itemType = 2;
-      break;
-    default:
-      throw new Error(`Unknown contract: ${contract}`);
+  if (equalIgnoreCase(contract, MEMES_CONTRACT)) {
+    collectionSlug = 'thememes6529';
+    itemType = 3;
+  } else if (equalIgnoreCase(contract, MEMELAB_CONTRACT)) {
+    collectionSlug = 'memelab6529';
+    itemType = 3;
+  } else if (equalIgnoreCase(contract, GRADIENT_CONTRACT)) {
+    collectionSlug = '6529-gradient';
+    itemType = 2;
+  } else {
+    throw new Error(`Unknown contract: ${contract}`);
   }
+
+  logger.info(`[COLLECTION ${collectionSlug}] FINDING BEST PRICES...`);
 
   const offersMap = await fetchBestOffersForCollection(
     collectionSlug,
     itemType
   );
+
+  logger.info(`[COLLECTION ${collectionSlug}] FINDING BEST LISTINGS...`);
   const listingsMap = await fetchBestListingsForCollection(
     collectionSlug,
     itemType

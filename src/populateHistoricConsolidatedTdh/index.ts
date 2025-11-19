@@ -6,7 +6,11 @@ import {
   persistTDHBlock
 } from '../db';
 import { MemesSeason } from '../entities/ISeason';
-import { HistoricConsolidatedTDH, TDHBlock } from '../entities/ITDH';
+import {
+  ConsolidatedTDH,
+  HistoricConsolidatedTDH,
+  TDHBlock
+} from '../entities/ITDH';
 import { Logger } from '../logging';
 import { doInDbContext } from '../secrets';
 import * as sentryContext from '../sentry.context';
@@ -24,7 +28,12 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
     },
     {
       logger,
-      entities: [HistoricConsolidatedTDH, MemesSeason, TDHBlock]
+      entities: [
+        HistoricConsolidatedTDH,
+        MemesSeason,
+        TDHBlock,
+        ConsolidatedTDH
+      ]
     }
   );
 
