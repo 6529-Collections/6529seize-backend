@@ -1,14 +1,5 @@
 import type { AWS } from '@serverless/typescript';
-import { execSync } from 'child_process';
 import { handler } from './src/handler';
-
-let gitCommit: string;
-
-try {
-  gitCommit = execSync('git rev-parse --short HEAD').toString().trim();
-} catch {
-  gitCommit = 'unknown';
-}
 
 const serverlessConfiguration: AWS = {
   service: 'api-serverless',
@@ -23,8 +14,7 @@ const serverlessConfiguration: AWS = {
     },
     environment: {
       AWS_NODEJS_CONNECTION_REUSE_ENABLED: '1',
-      NODE_OPTIONS: '--enable-source-maps --stack-trace-limit=1000',
-      GIT_COMMIT: gitCommit
+      NODE_OPTIONS: '--enable-source-maps --stack-trace-limit=1000'
     }
   },
   // import the function via paths
