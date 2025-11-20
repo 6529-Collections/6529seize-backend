@@ -37,6 +37,7 @@ import {
   fetchAllAutoSubscriptions,
   fetchAllNftSubscriptionBalances,
   fetchAllNftSubscriptions,
+  fetchSubscriptionEligibility,
   persistNFTFinalSubscriptions,
   persistSubscriptions
 } from './db.subscriptions';
@@ -101,19 +102,33 @@ async function populateAutoSubscriptionsForMemeId(
     const newSubscriptions: NFTSubscription[] = [];
     const newSubscriptionLogs: SubscriptionLog[] = [];
 
-    autoSubscriptionsDelta.forEach((s) => {
-      const sub: NFTSubscription = {
-        consolidation_key: s.consolidation_key,
-        contract: MEMES_CONTRACT,
-        token_id: newMeme,
-        subscribed: true
-      };
-      newSubscriptions.push(sub);
-      newSubscriptionLogs.push({
-        consolidation_key: s.consolidation_key,
-        log: `Auto-Subscribed to Meme #${newMeme}`
-      });
-    });
+    await Promise.all(
+      autoSubscriptionsDelta.map(async (s) => {
+        let subscribedCount = 1;
+        const eligibilityCount = await fetchSubscriptionEligibility(
+          s.consolidation_key
+        );
+        if (s.subscribe_all_editions) {
+          subscribedCount = eligibilityCount;
+        }
+        const sub: NFTSubscription = {
+          consolidation_key: s.consolidation_key,
+          contract: MEMES_CONTRACT,
+          token_id: newMeme,
+          subscribed: true,
+          subscribed_count: subscribedCount
+        };
+        newSubscriptions.push(sub);
+        let logText = `Auto-Subscribed to Meme #${newMeme}`;
+        if (subscribedCount > 1) {
+          logText += ` (${subscribedCount}/${eligibilityCount})`;
+        }
+        newSubscriptionLogs.push({
+          consolidation_key: s.consolidation_key,
+          log: logText
+        });
+      })
+    );
     await persistSubscriptions(newSubscriptions, newSubscriptionLogs);
     logger.info(
       `[NEW MEME ID ${newMeme}] : [CREATED ${newSubscriptions.length} AUTO SUBSCRIPTIONS]`
@@ -191,22 +206,35 @@ async function createFinalSubscriptions(
           createdAt = autoSub.updated_at?.getTime() ?? Time.now().toMillis();
         }
         const subscribedAt = Time.millis(createdAt).toIsoString();
+        const eligibilityCount = await fetchSubscriptionEligibility(
+          sub.consolidation_key
+        );
+        const subscribedCount = Math.min(
+          eligibilityCount,
+          sub.subscribed_count
+        );
         const finalSub: NFTFinalSubscription = {
           subscribed_at: subscribedAt,
           consolidation_key: sub.consolidation_key,
           contract: sub.contract,
           token_id: sub.token_id,
+          subscribed_count: subscribedCount,
           airdrop_address: airdropAddress.airdrop_address,
           balance: balance.balance,
           phase: null,
           phase_subscriptions: -1,
           phase_position: -1,
-          redeemed: false
+          redeemed: false,
+          redeemed_count: 0
         };
         finalSubscriptions.push(finalSub);
+        let logText = `Added  to Final Subscription for Meme #${newMeme} on ${dateStr}`;
+        if (subscribedCount > 1) {
+          logText += ` (${subscribedCount} / ${eligibilityCount})`;
+        }
         newSubscriptionLogs.push({
           consolidation_key: sub.consolidation_key,
-          log: `Added to Final Subscription for Meme #${newMeme} on ${dateStr}`,
+          log: logText,
           additional_info: `Airdrop Address: ${finalSub.airdrop_address} - Balance: ${finalSub.balance} ETH`
         });
       } else {

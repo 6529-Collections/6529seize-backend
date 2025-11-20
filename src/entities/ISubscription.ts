@@ -127,7 +127,7 @@ export class NFTFinalSubscription extends NFTSubscriptionFields {
   @Column({ type: 'boolean', default: false })
   redeemed!: boolean;
 
-  @Column({ type: 'int', default: 1 })
+  @Column({ type: 'int', default: 0 })
   redeemed_count!: number;
 }
 

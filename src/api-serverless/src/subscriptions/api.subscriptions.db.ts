@@ -1,10 +1,8 @@
 import {
   ADDRESS_CONSOLIDATION_KEY,
-  CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE,
   MEMES_CONTRACT,
   MEMES_EXTENDED_DATA_TABLE,
   MEMES_MINT_PRICE,
-  MEMES_SEASONS_TABLE,
   NFTS_TABLE,
   SUBSCRIPTIONS_BALANCES_TABLE,
   SUBSCRIPTIONS_LOGS_TABLE,
@@ -27,6 +25,7 @@ import { BadRequestException } from '../../../exceptions';
 import { getMaxMemeId } from '../../../nftsLoop/db.nfts';
 import { sqlExecutor } from '../../../sql-executor';
 import { equalIgnoreCase } from '../../../strings';
+import { fetchSubscriptionEligibility } from '../../../subscriptionsDaily/db.subscriptions';
 import { PaginatedResponse } from '../api-constants';
 import { constructFilters } from '../api-helpers';
 
@@ -596,37 +595,4 @@ export async function fetchPastMemeSubscriptionCounts(
       ORDER BY ${NFTS_TABLE}.id DESC`
     );
   }
-}
-
-async function fetchSubscriptionEligibility(
-  consolidationKey: string
-): Promise<number> {
-  const maxSeasonId = await sqlExecutor.execute<{ max_id: number }>(
-    `SELECT MAX(id) as max_id FROM ${MEMES_SEASONS_TABLE}`
-  );
-
-  if (!maxSeasonId || maxSeasonId.length === 0 || !maxSeasonId[0].max_id) {
-    return 1;
-  }
-
-  const seasonId = maxSeasonId[0].max_id;
-
-  const cardSetsResult = await sqlExecutor.execute<{
-    sets: number;
-  }>(
-    `SELECT sets FROM ${CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE} 
-     WHERE consolidation_key = :consolidationKey AND season = :seasonId`,
-    { consolidationKey, seasonId }
-  );
-
-  if (
-    !cardSetsResult ||
-    cardSetsResult.length === 0 ||
-    !cardSetsResult[0].sets ||
-    cardSetsResult[0].sets === 0
-  ) {
-    return 1;
-  }
-
-  return cardSetsResult[0].sets;
 }
