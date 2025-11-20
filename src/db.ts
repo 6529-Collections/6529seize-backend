@@ -88,6 +88,7 @@ import { env } from './env';
 import { computeMerkleRoot } from './tdhLoop/tdh_merkle';
 import { Time } from './time';
 import { revokeTdhBasedDropWavesOverVotes } from './drops/participation-drops-over-vote-revocation';
+import { sqs } from './sqs';
 
 const mysql = require('mysql');
 
@@ -1054,6 +1055,15 @@ export async function persistConsolidatedTDH(
     await syncIdentitiesWithTdhConsolidations(qrHolder);
   });
 
+  const xtdhLoopQueueUrl = env.getStringOrNull(`XTDH_LOOP_QUEUE_URL`);
+  if (!xtdhLoopQueueUrl) {
+    logger.warn(`XTDH_LOOP_QUEUE_URL not configured. Skipping loop call.`);
+  } else {
+    await sqs.send({
+      message: {},
+      queue: xtdhLoopQueueUrl
+    });
+  }
   logger.info(`[CONSOLIDATED TDH] PERSISTED ALL WALLETS TDH [${tdh.length}]`);
 }
 
