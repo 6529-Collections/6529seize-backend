@@ -22,12 +22,20 @@ export const LOGO_SVG = `<?xml version="1.0" encoding="UTF-8"?>
   </g>
 </svg>`;
 
-function getStatusClass(isOk: boolean): string {
-  return isOk ? 'status-ok' : 'status-degraded';
+function getStatusClassOk(): string {
+  return 'status-ok';
 }
 
-function getStatusDisplay(isOk: boolean): string {
-  return isOk ? 'OK' : 'Degraded';
+function getStatusClassDegraded(): string {
+  return 'status-degraded';
+}
+
+function getStatusDisplayOk(): string {
+  return 'OK';
+}
+
+function getStatusDisplayDegraded(): string {
+  return 'Degraded';
 }
 
 function getRedisStatusClass(redis: HealthData['redis']): string {
@@ -82,7 +90,9 @@ function buildRateLimitUnauthenticatedHtml(
 }
 
 function buildRateLimitHtml(rateLimit: HealthData['rate_limit']): string {
-  const statusClass = getStatusClass(rateLimit.enabled);
+  const statusClass = rateLimit.enabled
+    ? getStatusClassOk()
+    : getStatusClassDegraded();
   const enabledText = rateLimit.enabled ? 'Enabled' : 'Disabled';
   let html = `<span class="status-badge ${statusClass}">${enabledText}</span>`;
 
@@ -103,10 +113,14 @@ function buildRateLimitHtml(rateLimit: HealthData['rate_limit']): string {
 }
 
 export function renderHealthUI(data: HealthData): string {
-  const statusDisplay = getStatusDisplay(data.status === 'ok');
-  const statusClass = getStatusClass(data.status === 'ok');
-  const dbDisplay = getStatusDisplay(data.db === 'ok');
-  const dbClass = getStatusClass(data.db === 'ok');
+  const statusDisplay =
+    data.status === 'ok' ? getStatusDisplayOk() : getStatusDisplayDegraded();
+  const statusClass =
+    data.status === 'ok' ? getStatusClassOk() : getStatusClassDegraded();
+  const dbDisplay =
+    data.db === 'ok' ? getStatusDisplayOk() : getStatusDisplayDegraded();
+  const dbClass =
+    data.db === 'ok' ? getStatusClassOk() : getStatusClassDegraded();
 
   const redisStatusClass = getRedisStatusClass(data.redis);
   const redisHtml = buildRedisHtml(data.redis, redisStatusClass);
