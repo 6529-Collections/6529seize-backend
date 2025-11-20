@@ -17,7 +17,6 @@ import {
 } from '../../../nextgen/nextgen_constants';
 import { sqlExecutor } from '../../../sql-executor';
 import { getIpInfo } from '../policies/policies';
-import { appFeatures } from '../../../app-features';
 
 const formatNumber = (num: number) => {
   return parseFloat(num.toFixed(0));
@@ -153,13 +152,13 @@ export const fetchTotalTDH = async () => {
   const block = await getBlock();
   const merkleRoot = await getMerkleRoot(block);
   const sql = `
-    SELECT SUM(boosted_tdh) as total_tdh, SUM(boosted_memes_tdh) as memes_tdh, SUM(boosted_gradients_tdh) as gradients_tdh, SUM(boosted_nextgen_tdh) as nextgen_tdh from ${CONSOLIDATED_WALLETS_TDH_TABLE}
+    SELECT SUM(boosted_tdh) as boosted_tdh, SUM(boosted_memes_tdh) as memes_tdh, SUM(boosted_gradients_tdh) as gradients_tdh, SUM(boosted_nextgen_tdh) as nextgen_tdh from ${CONSOLIDATED_WALLETS_TDH_TABLE}
   `;
   const tdh = await sqlExecutor.execute(sql);
   const seasonTdh = await fetchSeasonsTDH();
 
   const totals: any = {
-    tdh: formatNumber(tdh[0]?.total_tdh ?? 0),
+    tdh: formatNumber(tdh[0]?.boosted_tdh ?? 0),
     memes_tdh: formatNumber(tdh[0]?.memes_tdh ?? 0),
     gradients_tdh: formatNumber(tdh[0]?.gradients_tdh ?? 0),
     nextgen_tdh: formatNumber(tdh[0]?.nextgen_tdh ?? 0)
@@ -255,13 +254,10 @@ export const fetchSingleAddressTDHMemesSeasons = async (address: string) => {
 export async function fetchTDHAbove(value: number, includeEntries: boolean) {
   const block = await getBlock();
   const merkleRoot = await getMerkleRoot(block);
-  const selectableField = appFeatures.isXTdhEnabled()
-    ? 'total_tdh'
-    : 'boosted_tdh';
   const sql = `
     SELECT * from ${CONSOLIDATED_WALLETS_TDH_TABLE} 
-    WHERE ${selectableField} >= ${value}
-    ORDER BY ${selectableField} DESC
+    WHERE boosted_tdh >= ${value}
+    ORDER BY boosted_tdh DESC
   `;
   const tdh = await sqlExecutor.execute(sql);
   const response: any = {
@@ -273,7 +269,7 @@ export async function fetchTDHAbove(value: number, includeEntries: boolean) {
     response.entries = tdh.map((t: any) => {
       return {
         consolidation_key: t.consolidation_key,
-        tdh: t[selectableField],
+        tdh: t.boosted_tdh,
         addresses: JSON.parse(t.wallets).map((w: string) => w.toLowerCase()),
         block,
         merkle_root: merkleRoot
@@ -325,20 +321,17 @@ export async function fetchTDHCutoff(cutoff: number) {
   const block = await getBlock();
   const merkleRoot = await getMerkleRoot(block);
 
-  const selectableField = appFeatures.isXTdhEnabled()
-    ? 'total_tdh'
-    : 'boosted_tdh';
   const query = `
     SELECT * from ${CONSOLIDATED_WALLETS_TDH_TABLE} 
-    ORDER BY ${selectableField} DESC
+    ORDER BY boosted_tdh DESC
     LIMIT :cutoff
   `;
   const tdh = await sqlExecutor.execute(query, { cutoff });
-  const leastTdh = tdh.at(-1)?.[selectableField];
+  const leastTdh = tdh.at(-1)?.boosted_tdh;
   const entries = tdh.map((t: any) => {
     return {
       consolidation_key: t.consolidation_key,
-      tdh: t[selectableField],
+      tdh: t.boosted_tdh,
       addresses: JSON.parse(t.wallets).map((w: string) => w.toLowerCase())
     };
   });
@@ -391,9 +384,9 @@ export async function validatePrenode(
   const tdh =
     (
       await sqlExecutor.execute(`
-        SELECT SUM(boosted_tdh) as total_tdh FROM ${CONSOLIDATED_WALLETS_TDH_TABLE}
+        SELECT SUM(boosted_tdh) as boosted_tdh FROM ${CONSOLIDATED_WALLETS_TDH_TABLE}
       `)
-    )[0]?.total_tdh ?? 0;
+    )[0]?.boosted_tdh ?? 0;
 
   const tdh_sync = prenodeTdh === tdh;
   const block_sync = prenodeBlock === block;

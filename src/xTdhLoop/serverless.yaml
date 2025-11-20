@@ -1,4 +1,4 @@
-service: xTdhStatsNormalisationLoop
+service: xTdhLoop
 
 package:
   artifact: dist/index.zip
@@ -15,16 +15,16 @@ provider:
   logRetentionInDays: 60
 
 functions:
-  xTdhStatsNormalisationLoop:
+  xTdhLoop:
     handler: index.handler
     reservedConcurrency: 1
-    name: xTdhStatsNormalisationLoop
+    name: xTdhLoop
     description: ${env:VERSION_DESCRIPTION}
     events:
       - sqs:
           arn:
             Fn::GetAtt:
-              - XTdhStatsNormalisationStartQueue
+              - XTdhStartQueue
               - Arn
     role: arn:aws:iam::987989283142:role/lambda-vpc-role
     vpc:
@@ -32,36 +32,36 @@ functions:
       subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
     environment:
       SENTRY_DSN: ${env:SENTRY_DSN}
-      SENTRY_ENVIRONMENT: "xTdhStatsNormalisationLoop_${opt:stage, self:provider.stage}"
+      SENTRY_ENVIRONMENT: "xTdhLoop_${opt:stage, self:provider.stage}"
 
 resources:
   Resources:
-    XTdhStatsNormalisationLoopLogGroup:
+    XTdhLoopLogGroup:
       Type: AWS::Logs::LogGroup
       Properties:
-        LogGroupName: /aws/lambda/xTdhStatsNormalisationLoop
+        LogGroupName: /aws/lambda/xTdhLoop
         RetentionInDays: 60
-    XTdhStatsNormalisationStartQueue:
+    XTdhStartQueue:
       Type: "AWS::SQS::Queue"
       Properties:
-        QueueName: "xtdh-stats-normalisation-start.fifo"
+        QueueName: "xtdh-start.fifo"
         FifoQueue: true
         VisibilityTimeout: 1000
         ContentBasedDeduplication: true
-    XTdhStatsNormalisationSubscription:
+    XTdhSubscription:
       Type: AWS::SNS::Subscription
       Properties:
         TopicArn: arn:aws:sns:${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):region}:987989283142:tdh-calculation-done.fifo
         Protocol: sqs
         Endpoint: !GetAtt
-          - XTdhStatsNormalisationStartQueue
+          - XTdhStartQueue
           - Arn
         RawMessageDelivery: true
-    XTdhStatsNormalisationStartQueuePolicy:
+    XTdhStartQueuePolicy:
       Type: "AWS::SQS::QueuePolicy"
       Properties:
         Queues:
-          - Ref: "XTdhStatsNormalisationStartQueue"
+          - Ref: "XTdhStartQueue"
         PolicyDocument:
           Statement:
             - Effect: "Allow"
@@ -76,29 +76,29 @@ resources:
                 - sqs:ListQueueTags
                 - sqs:ChangeMessageVisibility
               Resource:
-                - !GetAtt XTdhStatsNormalisationStartQueue.Arn
-    XTdhStatsNormalisationLoopOOMFilter:
+                - !GetAtt XTdhStartQueue.Arn
+    XTdhLoopOOMFilter:
       Type: AWS::Logs::MetricFilter
       DependsOn:
-        - XTdhStatsNormalisationLoopLogGroup
+        - XTdhLoopLogGroup
       Properties:
         LogGroupName:
-          Ref: XTdhStatsNormalisationLoopLogGroup
+          Ref: XTdhLoopLogGroup
         FilterPattern: "Runtime.OutOfMemory"
         MetricTransformations:
           - MetricNamespace: "Lambda/OOM"
-            MetricName: "xTdhStatsNormalisationLoop_OOMErrorCount"
+            MetricName: "xTdhLoop_OOMErrorCount"
             MetricValue: "1"
             DefaultValue: 0
 
-    XTdhStatsNormalisationLoopOOMAlarm:
+    XTdhLoopOOMAlarm:
       Type: AWS::CloudWatch::Alarm
-      DependsOn: XTdhStatsNormalisationLoopOOMFilter
+      DependsOn: XTdhLoopOOMFilter
       Properties:
-        AlarmName: !Sub "${AWS::StackName}-xTdhStatsNormalisationLoop-OOM"
-        AlarmDescription: !Sub "Lambda xTdhStatsNormalisationLoop OutOfMemory in ${AWS::Region}"
+        AlarmName: !Sub "${AWS::StackName}-xTdhLoop-OOM"
+        AlarmDescription: !Sub "Lambda xTdhLoop OutOfMemory in ${AWS::Region}"
         Namespace: "Lambda/OOM"
-        MetricName: "xTdhStatsNormalisationLoop_OOMErrorCount"
+        MetricName: "xTdhLoop_OOMErrorCount"
         Statistic: Sum
         Period: 60
         EvaluationPeriods: 1

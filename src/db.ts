@@ -28,7 +28,6 @@ import {
 import { Artist } from './entities/IArtist';
 import { ENS } from './entities/IENS';
 import { DbQueryOptions } from './db-query.options';
-import { revokeTdhBasedDropWavesOverVotes } from './drops/participation-drops-over-vote-revocation';
 import {
   Consolidation,
   ConsolidationEvent,
@@ -86,10 +85,9 @@ import { getConsolidationsSql, parseTdhDataFromDB } from './sql_helpers';
 import { equalIgnoreCase } from './strings';
 import { consolidationTools } from './consolidation-tools';
 import { env } from './env';
-import { reReviewRatesInTdhGrantsUseCase } from './tdh-grants/re-review-rates-in-tdh-grants.use-case';
 import { computeMerkleRoot } from './tdhLoop/tdh_merkle';
-import { Time, Timer } from './time';
-import { recalculateXTdhUseCase } from './tdh-grants/recalculate-xtdh.use-case';
+import { Time } from './time';
+import { revokeTdhBasedDropWavesOverVotes } from './drops/participation-drops-over-vote-revocation';
 
 const mysql = require('mysql');
 
@@ -1047,15 +1045,13 @@ export async function persistConsolidatedTDH(
       await insertWithoutUpdate(tdhMemesRepo, memesTdh);
       await insertWithoutUpdate(tdhEditionsRepo, tdhEditions);
 
+      await syncIdentitiesMetrics({ connection: qrHolder });
+      await revokeTdhBasedDropWavesOverVotes({ connection: qrHolder });
+
       logger.info(`[CONSOLIDATED TDH] [PERSISTING HISTORIC TDH]`);
     }
     await persistHistoricConsolidatedTDH(manager, block, tdh, wallets);
     await syncIdentitiesWithTdhConsolidations(qrHolder);
-    const ctx = { connection: qrHolder, timer: new Timer('PERSIST_TDH') };
-    await reReviewRatesInTdhGrantsUseCase.handle(ctx);
-    await recalculateXTdhUseCase.handle(ctx);
-    await syncIdentitiesMetrics(qrHolder);
-    await revokeTdhBasedDropWavesOverVotes(qrHolder);
   });
 
   logger.info(`[CONSOLIDATED TDH] PERSISTED ALL WALLETS TDH [${tdh.length}]`);

@@ -1,5 +1,5 @@
 import * as dbMigrationsLoop from './dbMigrationsLoop';
-import * as xTdhStatsNormalisationLoop from './xTdhStatsNormalisationLoop';
+import * as xTdhLoop from './xTdhLoop';
 import { Logger } from './logging';
 import { doInDbContext } from './secrets';
 import { dbSupplier } from './sql-executor';
@@ -14,11 +14,7 @@ async function start() {
     undefined as any,
     undefined as any
   );
-  await xTdhStatsNormalisationLoop.handler(
-    undefined as any,
-    undefined as any,
-    undefined as any
-  );
+  await xTdhLoop.handler(undefined as any, undefined as any, undefined as any);
   // await tdhLoop.handler(undefined as any, undefined as any, undefined as any);
   await testInLocal();
 

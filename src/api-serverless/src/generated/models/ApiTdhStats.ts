@@ -15,7 +15,6 @@ import { HttpFile } from '../http/http';
 
 export class ApiTdhStats {
     'identity': ApiIdentity;
-    'total_tdh': number;
     'base_tdh': number;
     'tdh_rate': number;
     'xtdh': number;
@@ -36,12 +35,6 @@ export class ApiTdhStats {
             "baseName": "identity",
             "type": "ApiIdentity",
             "format": ""
-        },
-        {
-            "name": "total_tdh",
-            "baseName": "total_tdh",
-            "type": "number",
-            "format": "double"
         },
         {
             "name": "base_tdh",

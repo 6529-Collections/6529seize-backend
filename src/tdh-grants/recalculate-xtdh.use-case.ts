@@ -2,11 +2,23 @@ import { RequestContext } from '../request.context';
 import { xTdhRepository, XTdhRepository } from './xtdh.repository';
 import { Logger } from '../logging';
 import { identitiesService } from '../api-serverless/src/identities/identities.service';
+import {
+  reReviewRatesInTdhGrantsUseCase,
+  ReReviewRatesInTdhGrantsUseCase
+} from './re-review-rates-in-tdh-grants.use-case';
+import {
+  recalculateXTdhStatsUseCase,
+  RecalculateXTdhStatsUseCase
+} from './recalculate-xtdh-stats.use-case';
 
 export class RecalculateXTdhUseCase {
   private readonly logger = Logger.get(this.constructor.name);
 
-  constructor(private readonly xtdhRepository: XTdhRepository) {}
+  constructor(
+    private readonly xtdhRepository: XTdhRepository,
+    private readonly reReviewRatesInTdhGrants: ReReviewRatesInTdhGrantsUseCase,
+    private readonly recalculateXTdhStats: RecalculateXTdhStatsUseCase
+  ) {}
 
   public async handle(ctx: RequestContext) {
     if (ctx.connection) {
@@ -17,13 +29,15 @@ export class RecalculateXTdhUseCase {
           await this.recalculateXTdh({ ...ctx, connection });
         }
       );
+      await this.recalculateXTdhStats.handle(ctx);
     }
   }
 
   private async recalculateXTdh(ctx: RequestContext) {
-    this.logger.info(`Recalculating the xTDH universe`);
     try {
       ctx.timer?.start(`${this.constructor.name}->recalculateXTdh`);
+      this.logger.info(`Recalculating the xTDH universe`);
+      await this.reReviewRatesInTdhGrants.handle(ctx);
       if (!ctx.connection) {
         throw new Error(
           `Can not recalculateXTdh outside of active transaction`
@@ -47,10 +61,6 @@ export class RecalculateXTdhUseCase {
         this.logger.info(`Missing identities created`);
       }
 
-      this.logger.info(`Creating missing tdh_consolidations`);
-      await this.xtdhRepository.createMissingTdhConsolidations(ctx);
-      this.logger.info(`Created missing tdh_consolidations`);
-
       this.logger.info(`Updating all produced xTDHs`);
       await this.xtdhRepository.updateProducedXTDH(ctx);
       this.logger.info(`Updated all produced xTDHs`);
@@ -71,9 +81,6 @@ export class RecalculateXTdhUseCase {
       this.logger.info(`Updating xTDH rates`);
       await this.xtdhRepository.updateXtdhRate(ctx);
       this.logger.info(`Updated xTDH rates`);
-      this.logger.info(`Updating total TDHs`);
-      await this.xtdhRepository.updateTotalTdhs(ctx);
-      this.logger.info(`Total TDHs updated`);
       this.logger.info(`xTDH universe has been recalculated`);
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->recalculateXTdh`);
@@ -82,5 +89,7 @@ export class RecalculateXTdhUseCase {
 }
 
 export const recalculateXTdhUseCase = new RecalculateXTdhUseCase(
-  xTdhRepository
+  xTdhRepository,
+  reReviewRatesInTdhGrantsUseCase,
+  recalculateXTdhStatsUseCase
 );

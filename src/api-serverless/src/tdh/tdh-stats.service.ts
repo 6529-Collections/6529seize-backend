@@ -69,7 +69,6 @@ export class TdhStatsService {
       received_xtdh:
         identityEntity.xtdh -
         (identityEntity.produced_xtdh - identityEntity.granted_xtdh),
-      total_tdh: identityEntity.total_tdh,
       xtdh_multiplier: X_TDH_COEFFICIENT,
       xtdh_rate: identityEntity.xtdh_rate,
       base_tdh: baseTdh,

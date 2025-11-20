@@ -41,8 +41,6 @@ export const fetchOwnerBalancesForConsolidationKey = async (
     ${CONSOLIDATED_OWNERS_BALANCES_TABLE}.*,
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boost,
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh,
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.x_tdh,
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.total_tdh,
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_memes_tdh,
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_gradients_tdh,
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_nextgen_tdh`;
@@ -113,22 +111,14 @@ export const fetchOwnerBalancesForConsolidationKey = async (
         WHERE boosted_gradients_tdh > :ownerBoostedGradientsTdh) AS boosted_gradients_tdh_rank,
       (SELECT COUNT(DISTINCT consolidation_key) + 1
         FROM ${CONSOLIDATED_WALLETS_TDH_TABLE}
-        WHERE boosted_nextgen_tdh > :ownerBoostedNextgenTdh) AS boosted_nextgen_tdh_rank,
-      (SELECT COUNT(DISTINCT consolidation_key) + 1
-        FROM ${CONSOLIDATED_WALLETS_TDH_TABLE}
-        WHERE total_tdh > :ownerTotalTdh) AS total_tdh_rank,
-      (SELECT COUNT(DISTINCT consolidation_key) + 1
-        FROM ${CONSOLIDATED_WALLETS_TDH_TABLE}
-        WHERE xtdh > :ownerXtdh) AS xtdh_rank
+        WHERE boosted_nextgen_tdh > :ownerBoostedNextgenTdh) AS boosted_nextgen_tdh_rank
     FROM dual;
   `;
   const tdhRanks = await sqlExecutor.execute(tdhRanksSql, {
     ownerBoostedTdh: result.boosted_tdh,
     ownerBoostedMemesTdh: result.boosted_memes_tdh,
     ownerBoostedGradientsTdh: result.boosted_gradients_tdh,
-    ownerBoostedNextgenTdh: result.boosted_nextgen_tdh,
-    ownerTotalTdh: result.total_tdh,
-    ownerXtdh: result.xtdh
+    ownerBoostedNextgenTdh: result.boosted_nextgen_tdh
   });
 
   return {
