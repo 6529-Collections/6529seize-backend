@@ -978,7 +978,6 @@ export class RatingsService {
                   cic: 0,
                   rep: 0,
                   tdh: 0,
-                  total_tdh: 0,
                   xtdh: 0,
                   produced_xtdh: 0,
                   granted_xtdh: 0,

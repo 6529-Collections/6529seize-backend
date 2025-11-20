@@ -25,9 +25,6 @@ export class IdentityEntity {
   @Column({ type: 'bigint', nullable: false })
   public readonly tdh!: number;
 
-  @Column({ type: 'double', nullable: false, default: 0 })
-  public readonly total_tdh!: number;
-
   @Index('identity_rep_index_idx')
   @Column({ type: 'bigint', nullable: false })
   public readonly rep!: number;

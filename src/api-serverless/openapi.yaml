@@ -5902,8 +5902,6 @@ components:
         - memelab_balance_rank
         - unique_memelab_rank
         - boosted_tdh_rank
-        - total_tdh
-        - total_tdh_rank
         - xtdh
         - xtdh_rank
         - boosted_memes_tdh_rank
@@ -6000,12 +5998,6 @@ components:
           type: integer
           format: int64
         boosted_nextgen_tdh_rank:
-          type: integer
-          format: int64
-        total_tdh:
-          type: number
-          format: double
-        total_tdh_rank:
           type: integer
           format: int64
         xtdh:
@@ -6606,7 +6598,6 @@ components:
       type: object
       required:
         - identity
-        - total_tdh
         - base_tdh
         - tdh_rate
         - xtdh
@@ -6621,9 +6612,6 @@ components:
       properties:
         identity:
           $ref: "#/components/schemas/ApiIdentity"
-        total_tdh:
-          type: number
-          format: double
         base_tdh:
           type: number
           format: int64

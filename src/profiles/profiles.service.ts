@@ -201,7 +201,6 @@ export class ProfilesService {
           handle: null,
           normalised_handle: null,
           tdh: 0,
-          total_tdh: 0,
           rep: 0,
           cic: 0,
           level_raw: 0,

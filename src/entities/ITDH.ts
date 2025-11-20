@@ -145,21 +145,6 @@ export class BaseConsolidatedTDH extends BaseTDH {
   consolidation_key!: string;
 
   @Column({ type: 'double', nullable: false, default: 0 })
-  produced_xtdh!: number;
-
-  @Column({ type: 'double', nullable: false, default: 0 })
-  xtdh!: number;
-
-  @Column({ type: 'double', nullable: false, default: 0 })
-  xtdh_rate!: number;
-
-  @Column({ type: 'double', nullable: false, default: 0 })
-  total_tdh!: number;
-
-  @Column({ type: 'double', nullable: false, default: 0 })
-  granted_xtdh!: number;
-
-  @Column({ type: 'double', nullable: false, default: 0 })
   boosted_tdh_rate!: number;
 
   @Column({ type: 'json', nullable: false })

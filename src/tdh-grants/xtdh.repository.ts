@@ -282,7 +282,7 @@ export class XTdhRepository extends LazyDbAccessCompatibleService {
     try {
       ctx.timer?.start(`${this.constructor.name}->deleteXTdhState`);
       await this.db.execute(
-        `UPDATE ${CONSOLIDATED_WALLETS_TDH_TABLE} SET xtdh = 0, xtdh_rate = 0`,
+        `UPDATE ${IDENTITIES_TABLE} SET xtdh = 0, xtdh_rate = 0`,
         undefined,
         {
           wrappedConnection: ctx.connection
@@ -314,23 +314,19 @@ export class XTdhRepository extends LazyDbAccessCompatibleService {
   async updateProducedXTDH(ctx: RequestContext) {
     try {
       ctx.timer?.start(`${this.constructor.name}->updateProducedXTDH`);
-      this.logger.info(
-        `Clearing produced xTDH in ${CONSOLIDATED_WALLETS_TDH_TABLE}`
-      );
+      this.logger.info(`Clearing produced xTDH in ${IDENTITIES_TABLE}`);
       await this.db.execute(
         `
-        UPDATE ${CONSOLIDATED_WALLETS_TDH_TABLE}
+        UPDATE ${IDENTITIES_TABLE}
         SET produced_xtdh = 0
         WHERE produced_xtdh <> 0
       `,
         undefined,
         { wrappedConnection: ctx.connection }
       );
-      this.logger.info(
-        `Setting produced xTDH in ${CONSOLIDATED_WALLETS_TDH_TABLE}`
-      );
+      this.logger.info(`Setting produced xTDH in ${IDENTITIES_TABLE}`);
       const sql = `
-        UPDATE ${CONSOLIDATED_WALLETS_TDH_TABLE} c
+        UPDATE ${IDENTITIES_TABLE} c
           LEFT JOIN (
             SELECT
               c.consolidation_key,
@@ -359,6 +355,17 @@ export class XTdhRepository extends LazyDbAccessCompatibleService {
       ctx.timer?.start(
         `${this.constructor.name}->updateAllGrantedXTdhsOnConsolidated`
       );
+      this.logger.info(`Zeroing out granted_xtdh`);
+      await this.db.execute(
+        `
+        UPDATE ${IDENTITIES_TABLE}
+        SET granted_xtdh = 0
+        WHERE granted_xtdh <> 0
+      `,
+        undefined,
+        { wrappedConnection: ctx.connection }
+      );
+      this.logger.info(`Zeroed out granted_xtdh`);
 
       const sql = withSql(
         [
@@ -447,7 +454,7 @@ ck_xtdh AS (
 )`
         ],
         `
-          UPDATE ${CONSOLIDATED_WALLETS_TDH_TABLE} cw
+          UPDATE ${IDENTITIES_TABLE} cw
             LEFT JOIN ck_xtdh gx
             ON gx.consolidation_key = cw.consolidation_key
           SET cw.granted_xtdh = COALESCE(gx.total_granted_xtdh, 0)
@@ -566,7 +573,7 @@ ck_xtdh AS (
         `
         ],
         `
-        UPDATE ${CONSOLIDATED_WALLETS_TDH_TABLE} cw
+        UPDATE ${IDENTITIES_TABLE} cw
         LEFT JOIN consolidated_xtdh cx
           ON cx.consolidation_key = cw.consolidation_key
         SET cw.xtdh = COALESCE(cx.total_xtdh, 0)
@@ -590,7 +597,7 @@ ck_xtdh AS (
     try {
       ctx.timer?.start(`${this.constructor.name}->giveOutUngrantedXTdh`);
       await this.db.execute(
-        `UPDATE ${CONSOLIDATED_WALLETS_TDH_TABLE} SET xtdh = xtdh + (produced_xtdh - granted_xtdh)`,
+        `UPDATE ${IDENTITIES_TABLE} SET xtdh = xtdh + (produced_xtdh - granted_xtdh)`,
         undefined,
         { wrappedConnection: ctx.connection }
       );
@@ -623,185 +630,6 @@ ck_xtdh AS (
       });
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->updateBoostedTdhRate`);
-    }
-  }
-
-  async updateTotalTdhs(ctx: RequestContext) {
-    try {
-      ctx.timer?.start(`${this.constructor.name}->updateTotalTdhs`);
-      await this.db.execute(
-        `UPDATE ${CONSOLIDATED_WALLETS_TDH_TABLE} SET total_tdh = xtdh + boosted_tdh`,
-        undefined,
-        { wrappedConnection: ctx.connection }
-      );
-    } finally {
-      ctx.timer?.stop(`${this.constructor.name}->updateTotalTdhs`);
-    }
-  }
-
-  async createMissingTdhConsolidations(ctx: RequestContext) {
-    try {
-      ctx.timer?.start(
-        `${this.constructor.name}->createMissingTdhConsolidations`
-      );
-      await this.db.execute(
-        `
-              INSERT INTO ${CONSOLIDATED_WALLETS_TDH_TABLE} (
-                  \`date\`,
-                  consolidation_display,
-                  wallets,
-                  \`block\`,
-                  boost,
-                  tdh_rank,
-                  tdh_rank_memes,
-                  tdh_rank_gradients,
-                  balance,
-                  genesis,
-                  memes_cards_sets,
-                  unique_memes,
-                  memes_balance,
-                  memes,
-                  memes_ranks,
-                  gradients_balance,
-                  gradients,
-                  gradients_ranks,
-                  consolidation_key,
-                  tdh_rank_nextgen,
-                  nextgen_balance,
-                  nextgen,
-                  nextgen_ranks,
-                  boost_breakdown,
-                  nakamoto,
-                  tdh,
-                  boosted_tdh,
-                  tdh__raw,
-                  boosted_memes_tdh,
-                  memes_tdh,
-                  memes_tdh__raw,
-                  boosted_gradients_tdh,
-                  gradients_tdh,
-                  gradients_tdh__raw,
-                  boosted_nextgen_tdh,
-                  nextgen_tdh,
-                  nextgen_tdh__raw,
-                  produced_xtdh,
-                  xtdh,
-                  total_tdh,
-                  granted_xtdh
-              )
-              WITH
-                  cutoff AS (
-                      SELECT UNIX_TIMESTAMP(DATE(UTC_TIMESTAMP())) * 1000 AS cut_ms
-                  ),
-                  gr AS (
-                      SELECT g.id, g.target_partition, g.token_mode, g.tokenset_id
-                      FROM ${TDH_GRANTS_TABLE} g
-                      WHERE g.status = '${TdhGrantStatus.GRANTED}'
-                  ),
-                  grant_tokens AS (
-                      SELECT gr.id AS grant_id, gr.target_partition AS \`partition\`, h.token_id
-                      FROM gr
-                               JOIN  ${EXTERNAL_INDEXED_OWNERSHIP_721_HISTORY_TABLE} h
-                                    ON h.\`partition\` = gr.target_partition
-                      WHERE gr.token_mode = '${TdhGrantTokenMode.ALL}'
-                      GROUP BY gr.id, gr.target_partition, h.token_id
-              
-                      UNION ALL
-              
-                      SELECT gr.id AS grant_id, t.target_partition AS \`partition\`, t.token_id
-                      FROM gr
-                               JOIN  ${TDH_GRANT_TOKENS_TABLE} t
-                                    ON t.tokenset_id = gr.tokenset_id
-                                        AND t.target_partition = gr.target_partition
-                      WHERE gr.token_mode = '${TdhGrantTokenMode.INCLUDE}'
-                  ),
-                  owners_at_cut AS (
-                      SELECT
-                          h.\`partition\`,
-                          h.token_id,
-                          h.owner,
-                          ROW_NUMBER() OVER (
-                              PARTITION BY h.\`partition\`, h.token_id
-                              ORDER BY h.since_time DESC, h.block_number DESC, h.log_index DESC
-                              ) AS rn
-                      FROM  ${EXTERNAL_INDEXED_OWNERSHIP_721_HISTORY_TABLE} h
-                               CROSS JOIN cutoff c
-                               JOIN grant_tokens gt
-                                    ON gt.\`partition\` = h.\`partition\`
-                                        AND gt.token_id    = h.token_id
-                      WHERE h.since_time < c.cut_ms
-                  ),
-                  candidates AS (
-                      SELECT DISTINCT ack.consolidation_key
-                      FROM owners_at_cut o
-                               JOIN ${ADDRESS_CONSOLIDATION_KEY} ack
-                                    ON ack.address = o.owner
-                               LEFT JOIN ${CONSOLIDATED_WALLETS_TDH_TABLE} tc
-                                         ON tc.consolidation_key = ack.consolidation_key
-                      WHERE o.rn = 1
-                        AND tc.consolidation_key IS NULL
-                  ),
-                  max_block AS (
-                      SELECT COALESCE(MAX(\`block\`), 0) AS blk, UTC_TIMESTAMP() AS dt
-                      FROM tdh_consolidation
-                  )
-              SELECT *
-              FROM (
-                       SELECT
-                           mb.dt AS \`date\`,
-                           c.consolidation_key AS consolidation_display,
-                           JSON_ARRAY(c.consolidation_key) AS wallets,
-                           mb.blk AS \`block\`,
-                           0 AS boost,
-                           0 AS tdh_rank,
-                           0 AS tdh_rank_memes,
-                           0 AS tdh_rank_gradients,
-                           0 AS balance,
-                           0 AS genesis,
-                           0 AS memes_cards_sets,
-                           0 AS unique_memes,
-                           0 AS memes_balance,
-                           NULL AS memes,
-                           NULL AS memes_ranks,
-                           0 AS gradients_balance,
-                           NULL AS gradients,
-                           NULL AS gradients_ranks,
-                           c.consolidation_key AS consolidation_key,
-                           0 AS tdh_rank_nextgen,
-                           0 AS nextgen_balance,
-                           NULL AS nextgen,
-                           NULL AS nextgen_ranks,
-                           NULL AS boost_breakdown,
-                           0 AS nakamoto,
-                           0 AS tdh,
-                           0 AS boosted_tdh,
-                           0 AS tdh__raw,
-                           0 AS boosted_memes_tdh,
-                           0 AS memes_tdh,
-                           0 AS memes_tdh__raw,
-                           0 AS boosted_gradients_tdh,
-                           0 AS gradients_tdh,
-                           0 AS gradients_tdh__raw,
-                           0 AS boosted_nextgen_tdh,
-                           0 AS nextgen_tdh,
-                           0 AS nextgen_tdh__raw,
-                           0 AS produced_xtdh,
-                           0 AS xtdh,
-                           0 AS total_tdh,
-                           0 AS granted_xtdh
-                       FROM candidates c
-                                CROSS JOIN max_block mb
-                   ) AS new_rows
-              ON DUPLICATE KEY UPDATE
-                  consolidation_key = new_rows.consolidation_key
-      `,
-        undefined,
-        { wrappedConnection: ctx.connection }
-      );
-    } finally {
-      ctx.timer?.stop(
-        `${this.constructor.name}->createMissingTdhConsolidations`
-      );
     }
   }
 
@@ -928,7 +756,7 @@ received_day AS (
 )`
         ],
         `
-UPDATE ${CONSOLIDATED_WALLETS_TDH_TABLE} cw
+UPDATE ${IDENTITIES_TABLE} cw
 LEFT JOIN produced_day pd
   ON pd.consolidation_key = cw.consolidation_key
 LEFT JOIN grant_out_day go
@@ -987,15 +815,12 @@ SET cw.xtdh_rate = COALESCE(pd.produced, 0) - COALESCE(go.granted_out, 0) + COAL
     },
     ctx: RequestContext
   ) {
-    const TABLE = slot === 'a' ? 'xtdh_token_stats_a' : 'xtdh_token_stats_b';
-
-    const GRANT_TABLE =
-      slot === 'a' ? 'xtdh_token_grant_stats_a' : 'xtdh_token_grant_stats_b';
+    const TABLE = `${XTDH_TOKEN_STATS_TABLE_PREFIX}${slot}`;
+    const GRANT_TABLE = `${XTDH_TOKEN_GRANT_STATS_TABLE_PREFIX}${slot}`;
 
     try {
       ctx.timer?.start(`${this.constructor.name}->refillXTdhTokenStats`);
 
-      // Midnight cutoff
       const cutoffSql = `SELECT UNIX_TIMESTAMP(DATE(UTC_TIMESTAMP())) * 1000 AS cut_ms`;
       const [{ cut_ms }] = await this.db.execute<{ cut_ms: number }>(
         cutoffSql,
@@ -1003,7 +828,6 @@ SET cw.xtdh_rate = COALESCE(pd.produced, 0) - COALESCE(go.granted_out, 0) + COAL
         { wrappedConnection: ctx.connection }
       );
 
-      // Recreate table
       await this.db.execute(
         `TRUNCATE TABLE ${TABLE}`,
         {},
@@ -1011,95 +835,100 @@ SET cw.xtdh_rate = COALESCE(pd.produced, 0) - COALESCE(go.granted_out, 0) + COAL
       );
 
       const sql = `
-      INSERT INTO ${TABLE} (
-        \`partition\`,
-        token_id,
-        owner,
-        xtdh_total,
-        xtdh_rate_daily,
-        total_contributor_count,
-        active_contributor_count
-      )
-
-      WITH
-      cutoff AS (
-        SELECT :cut_ms AS cut_ms
-      ),
-
-      owners_at_cut AS (
-        SELECT
-          h.\`partition\`,
-        h.token_id,
-        h.owner,
-        ROW_NUMBER() OVER (
-        PARTITION BY h.\`partition\`, h.token_id
-      ORDER BY h.since_time DESC, h.block_number DESC, h.log_index DESC
-    ) AS rn
-      FROM external_indexed_ownership_721_histories h
-      JOIN cutoff c ON h.since_time < c.cut_ms
-    ),
-
-      -- basic token aggregates (xtdh + rate)
-      token_agg AS (
-        SELECT
-      g.\`partition\`,
-        g.token_id,
-        SUM(g.xtdh_total)      AS xtdh_total,
-        SUM(g.xtdh_rate_daily) AS xtdh_rate_daily
-      FROM ${GRANT_TABLE} g
-      GROUP BY g.\`partition\`, g.token_id
-    ),
-
-      -- contributor map: use GRANT_TABLE.grant_id → join tdh_grants
-      contrib AS (
-        SELECT
-      gts.\`partition\`,
-        gts.token_id,
-        tg.grantor_id,
-        (gts.xtdh_rate_daily > 0) AS contributed_last_midnight
-      FROM ${GRANT_TABLE} gts
-      JOIN tdh_grants tg ON tg.id = gts.grant_id
-    ),
-
-      total_contrib AS (
-        SELECT
+        INSERT INTO ${TABLE} (
           \`partition\`,
-        token_id,
-        COUNT(DISTINCT grantor_id) AS total_contributor_count
-      FROM contrib
-      GROUP BY \`partition\`, token_id
-    ),
+          token_id,
+          owner,
+          xtdh_total,
+          xtdh_rate_daily,
+          grant_count,
+          total_contributor_count,
+          active_contributor_count
+        )
+        WITH
+          cutoff AS (
+            SELECT :cut_ms AS cut_ms
+          ),
 
-      active_contrib AS (
+          owners_at_cut AS (
+            SELECT
+              h.\`partition\`,
+              h.token_id,
+              h.owner,
+              ROW_NUMBER() OVER (
+                PARTITION BY h.\`partition\`, h.token_id
+                ORDER BY h.since_time DESC, h.block_number DESC, h.log_index DESC
+                ) AS rn
+            FROM external_indexed_ownership_721_histories h
+                   JOIN cutoff c ON h.since_time < c.cut_ms
+          ),
+
+          -- per-token aggregates: xtdh, rate, grant_count
+          token_agg AS (
+            SELECT
+              g.\`partition\`,
+              g.token_id,
+              SUM(g.xtdh_total)      AS xtdh_total,
+              SUM(g.xtdh_rate_daily) AS xtdh_rate_daily,
+              COUNT(DISTINCT g.grant_id) AS grant_count
+            FROM ${GRANT_TABLE} g
+            GROUP BY g.\`partition\`, g.token_id
+          ),
+
+          -- contributor map: distinct grantors per token
+          contrib AS (
+            SELECT
+              gts.\`partition\`,
+              gts.token_id,
+              tg.grantor_id,
+              (gts.xtdh_rate_daily > 0) AS contributed_last_midnight
+            FROM ${GRANT_TABLE} gts
+                   JOIN tdh_grants tg ON tg.id = gts.grant_id
+          ),
+
+          total_contrib AS (
+            SELECT
+              \`partition\`,
+              token_id,
+              COUNT(DISTINCT grantor_id) AS total_contributor_count
+            FROM contrib
+            GROUP BY \`partition\`, token_id
+          ),
+
+          active_contrib AS (
+            SELECT
+              \`partition\`,
+              token_id,
+              COUNT(DISTINCT grantor_id) AS active_contributor_count
+            FROM contrib
+            WHERE contributed_last_midnight = 1
+            GROUP BY \`partition\`, token_id
+          )
+
         SELECT
-          \`partition\`,
-        token_id,
-        COUNT(DISTINCT grantor_id) AS active_contributor_count
-      FROM contrib
-      WHERE contributed_last_midnight = 1
-      GROUP BY \`partition\`, token_id
-    )
-
-      SELECT
-      ta.\`partition\`,
-        ta.token_id,
-        COALESCE(o.owner, '0x0000000000000000000000000000000000000000') AS owner,
-        ta.xtdh_total,
-        ta.xtdh_rate_daily,
-        COALESCE(tc.total_contributor_count, 0),
-        COALESCE(ac.active_contributor_count, 0)
-      FROM token_agg ta
-      LEFT JOIN owners_at_cut o
-      ON o.\`partition\` = ta.\`partition\`
-      AND o.token_id     = ta.token_id
-      AND o.rn = 1
-      LEFT JOIN total_contrib tc
-      ON tc.\`partition\` = ta.\`partition\`
-      AND tc.token_id     = ta.token_id
-      LEFT JOIN active_contrib ac
-      ON ac.\`partition\` = ta.\`partition\`
-      AND ac.token_id     = ta.token_id
-        `;
+          ta.\`partition\`,
+          ta.token_id,
+          COALESCE(
+            o.owner,
+            '0x0000000000000000000000000000000000000000'
+          ) AS owner,
+          ta.xtdh_total,
+          ta.xtdh_rate_daily,
+          ta.grant_count,
+          COALESCE(tc.total_contributor_count, 0)  AS total_contributor_count,
+          COALESCE(ac.active_contributor_count, 0) AS active_contributor_count
+        FROM token_agg ta
+               LEFT JOIN owners_at_cut o
+                         ON o.\`partition\` = ta.\`partition\`
+                           AND o.token_id      = ta.token_id
+                           AND o.rn = 1
+               LEFT JOIN total_contrib tc
+                         ON tc.\`partition\` = ta.\`partition\`
+                           AND tc.token_id      = ta.token_id
+               LEFT JOIN active_contrib ac
+                         ON ac.\`partition\` = ta.\`partition\`
+                           AND ac.token_id      = ta.token_id
+      `;
 
       await this.db.execute(
         sql,

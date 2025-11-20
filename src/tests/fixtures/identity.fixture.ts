@@ -27,7 +27,6 @@ const defaultBaseIdentity: BaseIdentity = {
   xtdh: 0,
   produced_xtdh: 0,
   granted_xtdh: 0,
-  total_tdh: 0,
   xtdh_rate: 0,
   basetdh_rate: 0
 };

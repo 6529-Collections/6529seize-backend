@@ -193,7 +193,7 @@ export class WsListenersNotifier {
       banner2_color: identityEntity.banner2,
       cic: identityEntity.cic,
       rep: identityEntity.rep,
-      tdh: identityEntity.total_tdh,
+      tdh: identityEntity.tdh,
       tdh_rate: tdhRates[identityId] ?? 0,
       level: getLevelFromScore(identityEntity.level_raw),
       archived: false,

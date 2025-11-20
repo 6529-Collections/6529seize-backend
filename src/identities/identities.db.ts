@@ -6,7 +6,6 @@ import {
 import { IdentityEntity } from '../entities/IIdentity';
 import {
   ADDRESS_CONSOLIDATION_KEY,
-  CONSOLIDATED_TDH_EDITIONS_TABLE,
   CONSOLIDATED_WALLETS_TDH_TABLE,
   DROPS_TABLE,
   ENS_TABLE,
@@ -124,7 +123,6 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
                                          banner2,
                                          classification,
                                          sub_classification,
-                                         total_tdh,
                                          xtdh,
                                          produced_xtdh,
                                          granted_xtdh)
@@ -142,7 +140,6 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
                 :banner2,
                 :classification,
                 :sub_classification,
-                :total_tdh,
                 :xtdh,
                 :produced_xtdh,
                 :granted_xtdh)
@@ -719,7 +716,6 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
       | 'xtdh'
       | 'produced_xtdh'
       | 'granted_xtdh'
-      | 'total_tdh'
       | 'xtdh_rate'
       | 'basetdh_rate'
     >,
