@@ -112,6 +112,7 @@ export function rateLimitingMiddleware() {
       if (!result.allowed) {
         const retryAfter = calculateRetryAfter(resetTime);
         res.setHeader('Retry-After', retryAfter.toString());
+        res.setHeader('Access-Control-Allow-Origin', '*');
         res.status(429).json({
           error: 'Rate limit exceeded',
           message: 'Too many requests, please try again later',

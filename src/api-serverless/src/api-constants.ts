@@ -19,8 +19,7 @@ export const seizeSettings = (): ApiSeizeSettings => {
   };
 };
 
-export const ACCESS_CONTROL_ALLOW_ORIGIN_HEADER =
-  'Access-Control-Allow-Headers';
+export const ACCESS_CONTROL_ALLOW_ORIGIN_HEADER = 'Access-Control-Allow-Origin';
 export const CONTENT_TYPE_HEADER = 'Content-Type';
 export const JSON_HEADER_VALUE = 'application/json';
 export const DEFAULT_PAGE_SIZE = 50;

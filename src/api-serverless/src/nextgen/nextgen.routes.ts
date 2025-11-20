@@ -1,10 +1,4 @@
 import {
-  NextGenAllowlistType,
-  validateNextgen,
-  validateNextgenBurn
-} from './validation';
-import { sqlExecutor } from '../../../sql-executor';
-import {
   extractNextGenAllowlistBurnInsert,
   extractNextGenAllowlistInsert,
   extractNextGenCollectionBurnInsert,
@@ -14,10 +8,14 @@ import {
   NextGenAllowlistCollection,
   NextGenCollectionBurn
 } from '../../../entities/INextGen';
-import * as db from './nextgen.db-api';
-import { asyncRouter } from '../async.router';
-import { initMulterSingleMiddleware } from '../multer-middleware';
+import { BadRequestException } from '../../../exceptions';
 import { Logger } from '../../../logging';
+import {
+  NEXTGEN_ALLOWLIST_BURN_TABLE,
+  NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE,
+  NEXTGEN_ALLOWLIST_TABLE
+} from '../../../nextgen/nextgen_constants';
+import { sqlExecutor } from '../../../sql-executor';
 import {
   ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
   CONTENT_TYPE_HEADER,
@@ -26,16 +24,18 @@ import {
   DISTRIBUTION_PAGE_SIZE,
   JSON_HEADER_VALUE
 } from '../api-constants';
-import { returnJsonResult, returnPaginatedResult } from '../api-helpers';
 import { NextGenCollectionStatus } from '../api-filters';
-import {
-  NEXTGEN_ALLOWLIST_BURN_TABLE,
-  NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE,
-  NEXTGEN_ALLOWLIST_TABLE
-} from '../../../nextgen/nextgen_constants';
+import { returnJsonResult, returnPaginatedResult } from '../api-helpers';
+import { asyncRouter } from '../async.router';
+import { initMulterSingleMiddleware } from '../multer-middleware';
 import { PageSortDirection } from '../page-request';
-import { BadRequestException } from '../../../exceptions';
 import { cacheRequest } from '../request-cache';
+import * as db from './nextgen.db-api';
+import {
+  NextGenAllowlistType,
+  validateNextgen,
+  validateNextgenBurn
+} from './validation';
 
 const logger = Logger.get('NEXTGEN_API');
 
@@ -72,10 +72,7 @@ router.post(
     });
     const valid = body.valid;
     res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
-    res.setHeader(
-      ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
-      corsOptions.allowedHeaders
-    );
+    res.setHeader(ACCESS_CONTROL_ALLOW_ORIGIN_HEADER, corsOptions.origin);
     if (valid) {
       await persistAllowlist(body);
       res
@@ -99,10 +96,7 @@ router.post(
     logger.info(`[VALID ${valid}]`);
 
     res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
-    res.setHeader(
-      ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
-      corsOptions.allowedHeaders
-    );
+    res.setHeader(ACCESS_CONTROL_ALLOW_ORIGIN_HEADER, corsOptions.origin);
     if (valid) {
       await persistCollectionBurn(body);
       res.status(200).send(JSON.stringify({ body }));
@@ -124,10 +118,7 @@ router.get(`/merkle_roots/:merkle_root`, async function (req: any, res: any) {
       result = null;
     }
     res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
-    res.setHeader(
-      ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
-      corsOptions.allowedHeaders
-    );
+    res.setHeader(ACCESS_CONTROL_ALLOW_ORIGIN_HEADER, corsOptions.origin);
     res.end(JSON.stringify(result));
   });
 });
@@ -154,10 +145,7 @@ router.get(
         page
       ).then((result) => {
         res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
-        res.setHeader(
-          ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
-          corsOptions.allowedHeaders
-        );
+        res.setHeader(ACCESS_CONTROL_ALLOW_ORIGIN_HEADER, corsOptions.origin);
         res.end(JSON.stringify(result));
       });
     } else {
@@ -176,10 +164,7 @@ router.get(`/proofs`, async function (req: any, res: any) {
 
   db.fetchNextGenProofs(addresses, pageSize, page).then((result) => {
     res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
-    res.setHeader(
-      ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
-      corsOptions.allowedHeaders
-    );
+    res.setHeader(ACCESS_CONTROL_ALLOW_ORIGIN_HEADER, corsOptions.origin);
     res.end(JSON.stringify(result));
   });
 });
@@ -192,10 +177,7 @@ router.get(
 
     db.fetchNextGenAllowlist(merkleRoot, address).then((result) => {
       res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
-      res.setHeader(
-        ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
-        corsOptions.allowedHeaders
-      );
+      res.setHeader(ACCESS_CONTROL_ALLOW_ORIGIN_HEADER, corsOptions.origin);
       res.end(JSON.stringify(result));
     });
   }
@@ -209,10 +191,7 @@ router.get(
 
     db.fetchNextGenBurnAllowlist(merkleRoot, tokenId).then((result) => {
       res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
-      res.setHeader(
-        ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
-        corsOptions.allowedHeaders
-      );
+      res.setHeader(ACCESS_CONTROL_ALLOW_ORIGIN_HEADER, corsOptions.origin);
       res.end(JSON.stringify(result));
     });
   }
