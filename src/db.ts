@@ -87,7 +87,6 @@ import { consolidationTools } from './consolidation-tools';
 import { env } from './env';
 import { computeMerkleRoot } from './tdhLoop/tdh_merkle';
 import { Time } from './time';
-import { Time } from './time';
 import { revokeTdhBasedDropWavesOverVotes } from './drops/participation-drops-over-vote-revocation';
 import { sqs } from './sqs';
 
