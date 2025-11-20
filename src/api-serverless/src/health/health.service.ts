@@ -30,6 +30,9 @@ export interface HealthData {
     commit: string;
     node_env: string;
   };
+  links: {
+    api_documentation: string;
+  };
 }
 
 export async function getHealthData(): Promise<HealthData> {
@@ -108,6 +111,9 @@ export async function getHealthData(): Promise<HealthData> {
     version: {
       commit: process.env.GIT_COMMIT || 'unknown',
       node_env: process.env.NODE_ENV || 'unknown'
+    },
+    links: {
+      api_documentation: '/docs'
     }
   };
 }
