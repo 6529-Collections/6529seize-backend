@@ -13,7 +13,7 @@ import {
   SUBSCRIPTIONS_REDEEMED_TABLE,
   SUBSCRIPTIONS_TOP_UP_TABLE
 } from '../../../constants';
-import { sqlExecutor } from '../../../sql-executor';
+import { fetchPaginated } from '../../../db-api';
 import {
   NFTFinalSubscription,
   RedeemedSubscription,
@@ -21,12 +21,13 @@ import {
   SubscriptionMode,
   SubscriptionTopUp
 } from '../../../entities/ISubscription';
-import { constructFilters } from '../api-helpers';
-import { fetchPaginated } from '../../../db-api';
-import { getMaxMemeId } from '../../../nftsLoop/db.nfts';
 import { BadRequestException } from '../../../exceptions';
-import { PaginatedResponse } from '../api-constants';
+import { getMaxMemeId } from '../../../nftsLoop/db.nfts';
+import { sqlExecutor } from '../../../sql-executor';
 import { equalIgnoreCase } from '../../../strings';
+import { fetchSubscriptionEligibility } from '../../../subscriptionsDaily/db.subscriptions';
+import { PaginatedResponse } from '../api-constants';
+import { constructFilters } from '../api-helpers';
 
 const SUBSCRIPTIONS_START_ID = 220;
 
@@ -35,6 +36,8 @@ export interface SubscriptionDetails {
   last_update: number;
   balance: number;
   automatic: boolean;
+  subscribe_all_editions: boolean;
+  subscription_eligibility_count: number;
 }
 
 export interface NFTSubscription {
@@ -42,6 +45,7 @@ export interface NFTSubscription {
   contract: string;
   token_id: number;
   subscribed: boolean;
+  subscribed_count: number;
 }
 
 export interface SubscriptionCounts {
@@ -92,11 +96,16 @@ export async function fetchDetailsForConsolidationKey(
     ? new Date(mode.updated_at.toString()).getTime()
     : 0;
 
+  const subscriptionEligibility =
+    await fetchSubscriptionEligibility(consolidationKey);
+
   return {
     consolidation_key: consolidationKey,
     last_update: Math.max(lastUpdateBalance, lastUpdateMode),
     balance: balance?.balance ?? 0,
-    automatic: !!mode?.automatic
+    automatic: !!mode?.automatic,
+    subscribe_all_editions: !!mode?.subscribe_all_editions,
+    subscription_eligibility_count: subscriptionEligibility
   };
 }
 
@@ -279,6 +288,8 @@ export async function fetchUpcomingMemeSubscriptions(
   );
 
   const subscriptions: NFTSubscription[] = [];
+  const subscriptionEligibility =
+    await fetchSubscriptionEligibility(consolidationKey);
   for (let i = 1; i <= cardCount; i++) {
     const id = maxMemeId + i;
     const sub = results.find((r) => r.token_id === id);
@@ -287,14 +298,16 @@ export async function fetchUpcomingMemeSubscriptions(
         consolidation_key: sub.consolidation_key,
         contract: sub.contract,
         token_id: sub.token_id,
-        subscribed: sub.subscribed
+        subscribed: sub.subscribed,
+        subscribed_count: sub.subscribed_count
       });
     } else {
       subscriptions.push({
         consolidation_key: consolidationKey,
         contract: MEMES_CONTRACT,
         token_id: id,
-        subscribed: mode?.automatic ?? false
+        subscribed: mode?.automatic ?? false,
+        subscribed_count: mode?.automatic ? subscriptionEligibility : 1
       });
     }
   }
