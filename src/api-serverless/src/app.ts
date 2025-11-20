@@ -68,8 +68,7 @@ import { loadLocalConfig, loadSecrets } from '../../env';
 import { loggerContext } from '../../logger-context';
 import { Logger } from '../../logging';
 import { numbers } from '../../numbers';
-import { getRedisClient, initRedis, redisGet } from '../../redis';
-import { sqlExecutor } from '../../sql-executor';
+import { initRedis, redisGet } from '../../redis';
 import { parseTdhResultsFromDB } from '../../sql_helpers';
 import {
   corsOptions,
@@ -99,12 +98,13 @@ import { ApiSeizeSettings } from './generated/models/ApiSeizeSettings';
 import { ApiTransactionPage } from './generated/models/ApiTransactionPage';
 import { ApiUploadItem } from './generated/models/ApiUploadItem';
 import { ApiUploadsPage } from './generated/models/ApiUploadsPage';
+import { renderHealthUI, LOGO_SVG } from './health/health-ui.renderer';
+import { getHealthData } from './health/health.service';
 import { DEFAULT_MAX_SIZE } from './page-request';
 import {
   initRateLimiting,
   rateLimitingMiddleware
 } from './rate-limiting/rate-limiting.middleware';
-import { getRateLimitConfig } from './rate-limiting/rate-limiting.utils';
 import { cacheRequest, isRequestCacheEntry } from './request-cache';
 import rpcRoutes from './rpc/rpc.routes';
 import sitemapRoutes from './sitemap/sitemap.routes';
@@ -1147,84 +1147,31 @@ async function initializeApp() {
   });
 
   rootRouter.get('/health', async (req, res) => {
-    let isDbHealthy = false;
-    try {
-      await sqlExecutor.execute('SELECT 1');
-      isDbHealthy = true;
-    } catch (err) {
-      isDbHealthy = false;
-    }
-
-    let redis: ReturnType<typeof getRedisClient> | null = null;
-    let isRedisHealthy: boolean | undefined;
-
-    try {
-      redis = getRedisClient();
-      if (redis) {
-        await redis.ping();
-        isRedisHealthy = true;
-      }
-    } catch (err) {
-      isRedisHealthy = false;
-    }
-
-    const redisEnabled = !!redis;
-
-    const redisResponse: any = {
-      enabled: redisEnabled
-    };
-    if (redisEnabled) {
-      redisResponse.healthy = isRedisHealthy;
-    }
-
-    let rateLimitResponse: any;
-    try {
-      const rateLimitingConfig = getRateLimitConfig();
-      if (rateLimitingConfig.enabled) {
-        rateLimitResponse = {
-          enabled: true,
-          authenticated: {
-            burst: rateLimitingConfig.authenticated.burst,
-            sustained_rps: rateLimitingConfig.authenticated.sustainedRps,
-            sustained_window_seconds:
-              rateLimitingConfig.authenticated.sustainedWindowSeconds
-          },
-          unauthenticated: {
-            burst: rateLimitingConfig.unauthenticated.burst,
-            sustained_rps: rateLimitingConfig.unauthenticated.sustainedRps,
-            sustained_window_seconds:
-              rateLimitingConfig.unauthenticated.sustainedWindowSeconds
-          },
-          internal_enabled: rateLimitingConfig.internal.enabled
-        };
-      } else {
-        rateLimitResponse = {
-          enabled: false
-        };
-      }
-    } catch (err) {
-      rateLimitResponse = {
-        enabled: false
-      };
-    }
-
-    const isRedisOk = !redisEnabled || isRedisHealthy === true;
-    const overallStatus = isDbHealthy && isRedisOk ? 'ok' : 'degraded';
+    const healthData = await getHealthData();
 
     res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
     res.setHeader('Pragma', 'no-cache');
     res.setHeader('Expires', '0');
 
-    return res.json({
-      status: overallStatus,
-      db: isDbHealthy ? 'ok' : 'degraded',
-      redis: redisResponse,
-      rate_limit: rateLimitResponse,
-      version: {
-        commit: process.env.GIT_COMMIT || 'unknown',
-        node_env: process.env.NODE_ENV || 'unknown'
-      }
-    });
+    return res.json(healthData);
+  });
+
+  rootRouter.get('/health/ui', async (req, res) => {
+    const healthData = await getHealthData();
+    const html = renderHealthUI(healthData);
+
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.setHeader('Content-Type', 'text/html');
+
+    return res.send(html);
+  });
+
+  rootRouter.get('/favicon.svg', async (req, res) => {
+    res.setHeader('Content-Type', 'image/svg+xml');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    return res.send(LOGO_SVG);
   });
 
   rootRouter.get(``, async function (req: any, res: any) {
@@ -1297,7 +1244,8 @@ async function initializeApp() {
       swaggerDocument,
       {
         customSiteTitle: '6529 API Docs',
-        customCss: '.topbar { display: none }'
+        customCss: '.topbar { display: none }',
+        customfavIcon: '/favicon.svg'
       },
       { explorer: true }
     )
