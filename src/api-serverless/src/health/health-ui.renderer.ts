@@ -258,6 +258,15 @@ export function renderHealthUI(data: HealthData): string {
       margin-left: 0.5rem;
     }
 
+    a {
+      color: #10b981;
+      text-decoration: none;
+    }
+
+    a:hover {
+      text-decoration: underline;
+    }
+
     .footer {
       margin-top: 2rem;
       text-align: center;
@@ -300,6 +309,14 @@ export function renderHealthUI(data: HealthData): string {
             <div class="nested-object">
               <div class="nested-key">Commit: <span class="nested-value">${data.version.commit}</span></div>
               <div class="nested-key">Environment: <span class="nested-value">${data.version.node_env}</span></div>
+            </div>
+          </td>
+        </tr>
+        <tr>
+          <td><strong>Links</strong></td>
+          <td class="value-cell">
+            <div class="nested-object">
+              <div class="nested-key"><a href="${data.links.api_documentation}" target="_blank" rel="noopener noreferrer">🔗 API Documentation</a></div>
             </div>
           </td>
         </tr>
