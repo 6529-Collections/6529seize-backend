@@ -1,4 +1,6 @@
+import converter from 'json-2-csv';
 import { arweaveFileUploader } from '../arweave';
+import { collections } from '../collections';
 import {
   CONSOLIDATED_WALLETS_TDH_TABLE,
   MEMES_CONTRACT,
@@ -29,6 +31,7 @@ import { Logger } from '../logging';
 import { getMaxMemeId } from '../nftsLoop/db.nfts';
 import { sendDiscordUpdate } from '../notifier-discord';
 import { sqlExecutor } from '../sql-executor';
+import { equalIgnoreCase } from '../strings';
 import { Time } from '../time';
 import {
   fetchAllAutoSubscriptions,
@@ -37,9 +40,6 @@ import {
   persistNFTFinalSubscriptions,
   persistSubscriptions
 } from './db.subscriptions';
-import converter from 'json-2-csv';
-import { collections } from '../collections';
-import { equalIgnoreCase } from '../strings';
 
 const logger = Logger.get('SUBSCRIPTIONS');
 
