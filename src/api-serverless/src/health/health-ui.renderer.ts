@@ -112,7 +112,7 @@ function buildRateLimitHtml(rateLimit: HealthData['rate_limit']): string {
   return html;
 }
 
-export function renderHealthUI(data: HealthData): string {
+export function renderHealthUI(data: HealthData, baseUrl?: string): string {
   const statusDisplay =
     data.status === 'ok' ? getStatusDisplayOk() : getStatusDisplayDegraded();
   const statusClass =
@@ -133,6 +133,11 @@ export function renderHealthUI(data: HealthData): string {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>6529 API Health</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <meta property="og:title" content="6529 API Health Status">
+  <meta property="og:description" content="Real-time health status of the 6529 API">
+  <meta property="og:type" content="website">
+  ${baseUrl ? `<meta property="og:url" content="${baseUrl}/health/ui">` : ''}
+  ${baseUrl ? `<meta property="og:image" content="${baseUrl}/favicon.svg">` : ''}
   <style>
     * {
       margin: 0;
