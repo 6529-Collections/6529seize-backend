@@ -39,6 +39,7 @@ import {
   ConsolidatedTDH,
   ConsolidatedTDHEditions,
   ConsolidatedTDHMemes,
+  HistoricConsolidatedTDH,
   NftTDH,
   TDH,
   TDHBlock,
@@ -58,7 +59,7 @@ import * as sentryContext from '../sentry.context';
 import { dbSupplier, sqlExecutor } from '../sql-executor';
 import { consolidateSubscriptions } from '../subscriptionsDaily/subscriptions';
 import { updateTDH } from '../tdhLoop/tdh';
-import { consolidateTDH } from '../tdhLoop/tdh_consolidation';
+import { consolidateAndPersistTDH } from '../tdhLoop/tdh_consolidation';
 import { Time } from '../time';
 
 const logger = Logger.get('DELEGATIONS_LOOP');
@@ -87,6 +88,7 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
         NFTDelegationBlock,
         TDH,
         ConsolidatedTDH,
+        HistoricConsolidatedTDH,
         NextGenTokenTDH,
         TDHMemes,
         ConsolidatedTDHMemes,
@@ -198,9 +200,11 @@ async function reconsolidateWallets(events: ConsolidationEvent[]) {
     const lastTDHCalc = Time.latestUtcMidnight().toDate();
     const walletsArray = Array.from(affectedWallets);
 
-    const { block, timestamp } = await updateTDH(lastTDHCalc, walletsArray);
-    await consolidateTDH(lastTDHCalc, block, timestamp, walletsArray);
-
+    const { block, blockTimestamp } = await updateTDH(
+      lastTDHCalc,
+      walletsArray
+    );
+    await consolidateAndPersistTDH(block, blockTimestamp, walletsArray);
     await consolidateNftOwners(affectedWallets);
     await consolidateOwnerBalances(affectedWallets);
     await consolidateActivity(affectedWallets);

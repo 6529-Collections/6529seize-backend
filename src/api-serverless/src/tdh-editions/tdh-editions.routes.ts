@@ -1,4 +1,4 @@
-import { Request, Response } from 'express';
+import { Request } from 'express';
 import * as Joi from 'joi';
 import { WALLET_REGEX } from '../../../constants';
 import { NotFoundException } from '../../../exceptions';
@@ -7,17 +7,16 @@ import {
   returnPaginatedResult,
   transformPaginatedResponse
 } from '../api-helpers';
-import { ApiResponse } from '../api-response';
 import { asyncRouter } from '../async.router';
 import { ApiProfileMin } from '../generated/models/ApiProfileMin';
 import { identityFetcher } from '../identities/identity.fetcher';
-import { Page } from '../page-request';
 import { getValidatedByJoiOrThrow } from '../validation';
 import {
   fetchConsolidatedTdhEditions,
   fetchWalletTdhEditions,
   TdhEditionFilters
 } from './tdh-editions.db';
+import { cacheRequest } from '../request-cache';
 
 const router = asyncRouter();
 export default router;
@@ -106,10 +105,8 @@ function toApiEdition(row: TdhEditionRow, profile?: ApiProfileMin | null) {
 
 router.get(
   '/wallet/:wallet',
-  async (
-    req: Request<any, any, any, TdhEditionsQuery, any>,
-    res: Response<ApiResponse<Page<TdhEditionRow>>>
-  ) => {
+  cacheRequest(),
+  async (req: Request<any, any, any, TdhEditionsQuery, any>, res: any) => {
     const { wallet } = getValidatedByJoiOrThrow(req.params, WalletParamsSchema);
     const query = getValidatedByJoiOrThrow(req.query, TdhEditionsQuerySchema);
 
@@ -132,10 +129,11 @@ router.get(
 
 router.get(
   '/consolidation/:consolidation_key',
-  async (
+  cacheRequest(),
+  async function (
     req: Request<any, any, any, TdhEditionsQuery, any>,
-    res: Response<ApiResponse<Page<TdhEditionRow>>>
-  ) => {
+    res: any
+  ) {
     const { consolidation_key } = getValidatedByJoiOrThrow(
       req.params,
       ConsolidationParamsSchema
@@ -161,10 +159,8 @@ router.get(
 
 router.get(
   '/identity/:identity',
-  async (
-    req: Request<any, any, any, TdhEditionsQuery, any>,
-    res: Response<ApiResponse<Page<TdhEditionRow>>>
-  ) => {
+  cacheRequest(),
+  async (req: Request<any, any, any, TdhEditionsQuery, any>, res: any) => {
     const { identity: identityParam } = getValidatedByJoiOrThrow(
       req.params,
       IdentityParamsSchema

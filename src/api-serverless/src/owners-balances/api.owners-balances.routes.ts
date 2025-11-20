@@ -16,9 +16,9 @@ import {
 import { NotFoundException } from '../../../exceptions';
 import { DEFAULT_PAGE_SIZE } from '../page-request';
 import { ApiResponse } from '../api-response';
-import { ApiOwnerBalancePage } from '../generated/models/ApiOwnerBalancePage';
 import { ApiOwnerBalance } from '../generated/models/ApiOwnerBalance';
 import { ApiOwnerBalanceMemes } from '../generated/models/ApiOwnerBalanceMemes';
+import { cacheRequest } from '../request-cache';
 
 const router = asyncRouter();
 
@@ -26,6 +26,7 @@ export default router;
 
 router.get(
   '/',
+  cacheRequest(),
   async function (
     req: Request<
       any,
@@ -37,7 +38,7 @@ router.get(
         page_size?: number;
       }
     >,
-    res: Response<ApiResponse<ApiOwnerBalancePage>>
+    res: any
   ) {
     const page = req.query.page ?? 1;
     const pageSize = req.query.page_size ?? DEFAULT_PAGE_SIZE;
@@ -49,6 +50,7 @@ router.get(
 
 router.get(
   '/consolidation/:consolidation_key',
+  cacheRequest(),
   async function (
     req: Request<
       {
@@ -75,6 +77,7 @@ router.get(
 
 router.get(
   '/consolidation/:consolidation_key/memes',
+  cacheRequest(),
   async function (
     req: Request<
       {
@@ -100,6 +103,7 @@ router.get(
 
 router.get(
   '/wallet/:wallet',
+  cacheRequest(),
   async function (
     req: Request<
       {
@@ -122,6 +126,7 @@ router.get(
 
 router.get(
   '/wallet/:wallet/memes',
+  cacheRequest(),
   async function (
     req: Request<
       {

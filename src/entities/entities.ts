@@ -93,6 +93,7 @@ export {
   ConsolidatedTDH,
   ConsolidatedTDHEditions,
   ConsolidatedTDHMemes,
+  HistoricConsolidatedTDH,
   NftTDH,
   TDH,
   TDHBlock,

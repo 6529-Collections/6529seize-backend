@@ -189,13 +189,13 @@ export function createMemesData() {
   };
 }
 
-export const getAdjustedMemesAndSeasons = async (lastTDHCalc: Date) => {
+export const getAdjustedMemesAndSeasons = async (timestamp: Date) => {
   const nfts: NFT[] = await fetchAllNFTs();
   const ADJUSTED_NFTS = [...nfts].filter(
     (nft) =>
       nft.mint_date &&
       Time.fromString(nft.mint_date.toString()).lte(
-        Time.fromDate(lastTDHCalc).minusDays(1)
+        Time.fromDate(timestamp).minusDays(1)
       )
   );
 
@@ -222,7 +222,7 @@ export const getAdjustedMemesAndSeasons = async (lastTDHCalc: Date) => {
 export const updateTDH = async (
   lastTDHCalc: Date,
   startingWallets?: string[]
-) => {
+): Promise<{ block: number; blockTimestamp: Date; tdh: TDH[] }> => {
   alchemy = new Alchemy({
     ...ALCHEMY_SETTINGS,
     apiKey: process.env.ALCHEMY_API_KEY
@@ -280,15 +280,15 @@ export const updateTDH = async (
 
   logger.info(`[UNIQUE WALLETS ${combinedAddresses.size}]`);
 
-  const { ADJUSTED_NFTS, MEMES_COUNT, ADJUSTED_SEASONS } =
-    await getAdjustedMemesAndSeasons(lastTDHCalc);
-
-  const timestamp = new Date(
+  const blockTimestamp = new Date(
     (await alchemy.core.getBlock(block)).timestamp * 1000
   );
 
+  const { ADJUSTED_NFTS, MEMES_COUNT, ADJUSTED_SEASONS } =
+    await getAdjustedMemesAndSeasons(blockTimestamp);
+
   logger.info(
-    `[BLOCK ${block} - ${timestamp.toUTCString()}] [LAST TDH ${lastTDHCalc.toUTCString()}] [ADJUSTED_NFTS ${
+    `[BLOCK ${block} - ${blockTimestamp.toUTCString()}] [ADJUSTED_NFTS ${
       ADJUSTED_NFTS.length
     }] : [ADJUSTED_MEMES_SEASONS ${ADJUSTED_SEASONS.length}] : [NEXTGEN_NFTS ${
       NEXTGEN_NFTS.length
@@ -368,8 +368,12 @@ export const updateTDH = async (
           ? MEMES_HODL_INDEX / memesEditionSizes[nft.id]
           : nft.hodl_rate;
 
+        if (tokenConsolidatedTransactions.length === 0) {
+          return;
+        }
+
         const tokenTDH = getTokenTdh(
-          lastTDHCalc,
+          blockTimestamp,
           nft.id,
           hodlRate,
           wallet,
@@ -407,7 +411,7 @@ export const updateTDH = async (
         );
 
         const tokenTDH = getTokenTdh(
-          lastTDHCalc,
+          blockTimestamp,
           nft.id,
           nft.hodl_rate,
           wallet,
@@ -439,7 +443,7 @@ export const updateTDH = async (
 
       if (totalTDH > 0 || totalBalance > 0 || consolidations.length > 1) {
         const tdh: TDH = {
-          date: new Date(),
+          date: blockTimestamp,
           wallet: wallet,
           tdh_rank: 0, //assigned later
           tdh_rank_memes: 0, //assigned later
@@ -534,7 +538,7 @@ export const updateTDH = async (
 
   return {
     block: block,
-    timestamp: timestamp,
+    blockTimestamp,
     tdh: rankedTdh
   };
 };
@@ -704,7 +708,7 @@ function getFullDaysBetweenDates(t1: Date, t2: Date) {
 }
 
 function getTokenTdh(
-  lastTDHCalc: Date,
+  timestamp: Date,
   id: number,
   hodlRate: number,
   wallet: string,
@@ -720,7 +724,7 @@ function getTokenTdh(
   let tdh__raw = 0;
   const daysHeldPerEdition: number[] = [];
   tokenDatesForWallet.forEach((e) => {
-    const daysDiff = getFullDaysBetweenDates(lastTDHCalc, e);
+    const daysDiff = getFullDaysBetweenDates(timestamp, e);
     if (daysDiff > 0) {
       tdh__raw += daysDiff;
       daysHeldPerEdition.push(daysDiff);
@@ -885,8 +889,6 @@ export async function calculateBoosts(
         Math.round(boostedGradientsTdh) +
         Math.round(boostedNextgenTdh);
 
-      logger.info(`hi i am boosted [BOOSTED_TDH ${boostedTdh}]`);
-
       w.boost = boost;
       w.boost_breakdown = boostBreakdown.breakdown;
       w.boosted_tdh = boostedTdh;
@@ -925,16 +927,16 @@ export async function calculateRanks(
       .filter(
         (w) =>
           (equalIgnoreCase(nft.contract, MEMES_CONTRACT) &&
-            w.memes.some((m: any) => m.id == nft.id)) ||
+            w.memes?.some((m: any) => m.id == nft.id)) ||
           (equalIgnoreCase(nft.contract, GRADIENT_CONTRACT) &&
             w.gradients_tdh > 0)
       )
       .sort((a, b) => {
         const aNftBalance = equalIgnoreCase(nft.contract, MEMES_CONTRACT)
-          ? a.memes.find((m: any) => m.id == nft.id).tdh
+          ? a.memes?.find((m: any) => m.id == nft.id).tdh
           : a.gradients_tdh;
         const bNftBalance = equalIgnoreCase(nft.contract, MEMES_CONTRACT)
-          ? b.memes.find((m: any) => m.id == nft.id).tdh
+          ? b.memes?.find((m: any) => m.id == nft.id).tdh
           : b.gradients_tdh;
 
         if (aNftBalance > bNftBalance) {
@@ -970,7 +972,7 @@ export async function calculateRanks(
 
     if (equalIgnoreCase(nft.contract, MEMES_CONTRACT)) {
       const wallets = [...boostedTDH].filter((w) =>
-        w.memes.some((m: any) => m.id == nft.id)
+        w.memes?.some((m: any) => m.id == nft.id)
       );
 
       wallets.sort((a, b) => {
@@ -996,9 +998,9 @@ export async function calculateRanks(
 
   NEXTGEN_NFTS.forEach((nft) => {
     boostedTDH
-      .filter((w) => w.nextgen.some((n: any) => n.id == nft.id && n.tdh > 0))
+      .filter((w) => w.nextgen?.some((n: any) => n.id == nft.id && n.tdh > 0))
       .forEach((w) => {
-        const nextgen = w.nextgen.find((g: any) => g.id == nft.id);
+        const nextgen = w.nextgen?.find((g: any) => g.id == nft.id);
         if (nextgen) {
           w.nextgen_ranks.push({
             id: nft.id,

@@ -1,31 +1,20 @@
-import { ConsolidatedTDH, TDHENS } from '../entities/ITDH';
-import { SIX529_MUSEUM } from '../constants';
 import converter from 'json-2-csv';
-import {
-  fetchAllConsolidatedTdh,
-  fetchAllTDH,
-  fetchLastConsolidatedUpload,
-  fetchLastUpload,
-  persistConsolidatedTdhUpload,
-  persistTdhUpload
-} from '../db';
-import { Logger } from '../logging';
+import { persistConsolidatedTdhUpload, persistTdhUpload } from '../db';
 import {
   ConsolidatedOwnerBalances,
   OwnerBalances
 } from '../entities/IOwnerBalances';
-import {
-  fetchAllConsolidatedOwnerBalances,
-  fetchAllOwnerBalances
-} from '../ownersBalancesLoop/db.owners_balances';
+import { ConsolidatedTDH, TDH } from '../entities/ITDH';
 import {
   UploadFieldsConsolidation,
   UploadFieldsWallet
 } from '../entities/IUpload';
+import { Logger } from '../logging';
+import { fetchAllOwnerBalances } from '../ownersBalancesLoop/db.owners_balances';
 import { equalIgnoreCase } from '../strings';
 import { Time } from '../time';
 
-const logger = Logger.get('TDH_UPLOAD');
+let logger: Logger;
 
 const Arweave = require('arweave');
 
@@ -39,58 +28,51 @@ type TDHUpload = (UploadFieldsWallet | UploadFieldsConsolidation)[];
 
 export async function uploadTDH(
   block: number,
+  blockTimestamp: Date,
+  tdh: TDH[] | ConsolidatedTDH[],
   isConsolidation: boolean,
-  force?: boolean
-) {
-  let title;
-  let lastUpload;
-  let tdh: TDHENS[] | ConsolidatedTDH[];
-  let ownerBalances: OwnerBalances[] | ConsolidatedOwnerBalances[];
-  if (isConsolidation) {
-    title = 'CONSOLIDATED_TDH';
-    lastUpload = await fetchLastConsolidatedUpload();
-    tdh = await fetchAllConsolidatedTdh();
-    ownerBalances = await fetchAllConsolidatedOwnerBalances();
-  } else {
-    title = 'WALLETS_TDH';
-    lastUpload = await fetchLastUpload();
-    tdh = await fetchAllTDH(block);
-    ownerBalances = await fetchAllOwnerBalances();
-  }
+  useOwnerBalances: boolean
+): Promise<string> {
+  logger = Logger.get(
+    isConsolidation ? 'CONSOLIDATED_TDH_UPLOAD' : 'TDH_UPLOAD'
+  );
 
-  const dateString = Time.now().toPaddedDateString();
+  const ownerBalances = useOwnerBalances
+    ? await fetchAllOwnerBalances()
+    : undefined;
 
-  const exists = lastUpload && lastUpload.date == dateString;
+  logger.info(
+    `[${isConsolidation ? 'CONSOLIDATED' : 'WALLETS'}_TDH] [BLOCK ${block}] [TDH ${tdh.length}] [OWNER BALANCES ${ownerBalances?.length ?? 'Not used'}]`
+  );
 
-  if (!exists || force) {
-    logger.info(
-      `[${title}] [BLOCK ${block}] [TDH ${tdh.length}] [OWNER BALANCES ${ownerBalances.length}]`
-    );
-    const tdhUpload: TDHUpload = buildUpload(
-      tdh,
-      ownerBalances,
-      dateString,
-      isConsolidation
-    );
-    await persistUpload(tdhUpload, block, dateString, isConsolidation);
-  } else {
-    logger.info(
-      `[TODAY'S UPLOAD ALREADY EXISTS AT ${lastUpload.tdh}] [SKIPPING...]`
-    );
-  }
+  const { dateString, tdhUpload } = buildUpload(
+    blockTimestamp,
+    tdh,
+    isConsolidation,
+    ownerBalances
+  );
+  return await persistUpload(tdhUpload, block, dateString, isConsolidation);
 }
 
 function buildUpload(
-  tdh: TDHENS[] | ConsolidatedTDH[],
-  ownerBalances: OwnerBalances[] | ConsolidatedOwnerBalances[],
-  dateString: string,
-  isConsolidation: boolean
-): TDHUpload {
+  blockTimestamp: Date,
+  tdh: TDH[] | ConsolidatedTDH[],
+  isConsolidation: boolean,
+  ownerBalances?: OwnerBalances[] | ConsolidatedOwnerBalances[]
+): {
+  dateString: string;
+  tdhUpload: TDHUpload;
+} {
+  const dateString = Time.fromDate(blockTimestamp)
+    .plusDays(1)
+    .toIsoDateString()
+    .replace(/-/g, '');
+
   const tdhUpload: TDHUpload = tdh.map((tdh) => {
     let balance: OwnerBalances | ConsolidatedOwnerBalances | undefined;
     const uniqueFields: any = {};
     if (isConsolidation) {
-      balance = ownerBalances.find((om) =>
+      balance = ownerBalances?.find((om) =>
         equalIgnoreCase(
           (om as ConsolidatedOwnerBalances).consolidation_key,
           (tdh as ConsolidatedTDH).consolidation_key
@@ -104,15 +86,10 @@ function buildUpload(
       ).consolidation_display;
       uniqueFields.wallets = (tdh as ConsolidatedTDH).wallets;
     } else {
-      balance = ownerBalances.find((om) =>
-        equalIgnoreCase((om as OwnerBalances).wallet, (tdh as TDHENS).wallet)
+      balance = ownerBalances?.find((om) =>
+        equalIgnoreCase((om as OwnerBalances).wallet, (tdh as TDH).wallet)
       );
-      uniqueFields.wallet = (tdh as TDHENS).wallet;
-      let ens = (tdh as TDHENS).ens;
-      if (equalIgnoreCase((tdh as TDHENS).wallet, SIX529_MUSEUM)) {
-        ens = '6529Museum';
-      }
-      uniqueFields.ens = ens;
+      uniqueFields.wallet = (tdh as TDH).wallet;
     }
 
     const memes = tdh.memes.map((meme) => {
@@ -172,7 +149,7 @@ function buildUpload(
   });
 
   tdhUpload.sort((a, b) => a.tdh_rank - b.tdh_rank);
-  return tdhUpload;
+  return { dateString, tdhUpload };
 }
 
 async function persistUpload(
@@ -229,4 +206,5 @@ async function persistUpload(
   }
 
   logger.info(`[ARWEAVE LINK ${url}]`);
+  return url;
 }

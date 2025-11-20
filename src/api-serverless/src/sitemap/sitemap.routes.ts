@@ -14,6 +14,7 @@ import {
   NEXTGEN_COLLECTIONS_TABLE,
   NEXTGEN_TOKENS_TABLE
 } from '../../../nextgen/nextgen_constants';
+import { cacheRequest } from '../request-cache';
 
 const router = asyncRouter();
 
@@ -69,34 +70,34 @@ async function handlePaginatedRequest(
   );
 }
 
-router.get('/memes', (req, res) =>
+router.get('/memes', cacheRequest(), (req, res) =>
   handlePaginatedRequest(req, res, {
     contract: MEMES_CONTRACT,
     table: NFTS_TABLE
   })
 );
 
-router.get('/gradient', (req, res) =>
+router.get('/gradient', cacheRequest(), (req, res) =>
   handlePaginatedRequest(req, res, {
     contract: GRADIENT_CONTRACT,
     table: NFTS_TABLE
   })
 );
 
-router.get('/meme-lab', (req, res) =>
+router.get('/meme-lab', cacheRequest(), (req, res) =>
   handlePaginatedRequest(req, res, {
     contract: MEMELAB_CONTRACT,
     table: NFTS_MEME_LAB_TABLE
   })
 );
 
-router.get('/nextgen/tokens', (req, res) =>
+router.get('/nextgen/tokens', cacheRequest(), (req, res) =>
   handlePaginatedRequest(req, res, {
     table: NEXTGEN_TOKENS_TABLE
   })
 );
 
-router.get('/nextgen/collections', (req, res) =>
+router.get('/nextgen/collections', cacheRequest(), (req, res) =>
   handlePaginatedRequest(req, res, {
     table: NEXTGEN_COLLECTIONS_TABLE,
     field: 'name'

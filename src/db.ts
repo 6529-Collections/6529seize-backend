@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 import {
   DataSource,
+  EntityManager,
   IsNull,
   LessThan,
   MoreThanOrEqual,
@@ -59,6 +60,7 @@ import {
   ConsolidatedTDH,
   ConsolidatedTDHEditions,
   ConsolidatedTDHMemes,
+  HistoricConsolidatedTDH,
   NftTDH,
   TDH,
   TDHBlock,
@@ -81,7 +83,7 @@ import {
   syncIdentitiesWithTdhConsolidations
 } from './identity';
 import { Logger } from './logging';
-import { insertWithoutUpdate, resetRepository } from './orm_helpers';
+import { deleteAll, insertWithoutUpdate, resetRepository } from './orm_helpers';
 import { ConnectionWrapper, setSqlExecutor, sqlExecutor } from './sql-executor';
 import { getConsolidationsSql, parseTdhDataFromDB } from './sql_helpers';
 import { equalIgnoreCase } from './strings';
@@ -274,6 +276,148 @@ export async function retrieveWalletConsolidations(wallet: string) {
   return consolidationTools.extractConsolidationWallets(consolidations, wallet);
 }
 
+export async function retrieveConsolidationsForWallets(
+  wallets: string[]
+): Promise<Record<string, string>> {
+  if (!wallets.length) {
+    return {};
+  }
+  const sql = `
+  WITH
+    -- 1) All confirmed edges as unordered pairs (w1 < w2)
+    confirmed_pairs AS (
+        SELECT
+            CASE WHEN wallet1 < wallet2 THEN wallet1 ELSE wallet2 END AS w1,
+            CASE WHEN wallet1 < wallet2 THEN wallet2 ELSE wallet1 END AS w2,
+            block
+        FROM ${CONSOLIDATIONS_TABLE}
+        WHERE confirmed = 1
+    ),
+    
+    -- 2) For each pair, keep only latest block
+    pair_edges AS (
+        SELECT
+            w1,
+            w2,
+            MAX(block) AS pair_block
+        FROM confirmed_pairs
+        GROUP BY w1, w2
+    ),
+    
+    -- 3) For each wallet, its latest confirmed edge block (vs anyone)
+    wallet_last AS (
+        SELECT wallet, MAX(block) AS last_block
+        FROM (
+            SELECT wallet1 AS wallet, block
+            FROM ${CONSOLIDATIONS_TABLE}
+            WHERE confirmed = 1
+            UNION ALL
+            SELECT wallet2 AS wallet, block
+            FROM ${CONSOLIDATIONS_TABLE}
+            WHERE confirmed = 1
+        ) x
+        GROUP BY wallet
+    ),
+    
+    -- 4) Candidate 2-wallet consolidations:
+    --    both wallets' last activity is exactly this pair edge
+    pairs_candidate AS (
+        SELECT
+            p.w1,
+            p.w2,
+            p.pair_block,
+            CONCAT(LOWER(p.w1), '-', LOWER(p.w2)) AS consolidation_key
+        FROM pair_edges p
+        JOIN wallet_last wl1
+          ON wl1.wallet = p.w1 AND wl1.last_block = p.pair_block
+        JOIN wallet_last wl2
+          ON wl2.wallet = p.w2 AND wl2.last_block = p.pair_block
+    ),
+    
+    -- 5) All 3-wallet triangles (a < b < c), with individual pair blocks
+    triangles AS (
+        SELECT
+            ab.w1 AS a,
+            ab.w2 AS b,
+            ac.w2 AS c,
+            ab.pair_block AS ab_block,
+            ac.pair_block AS ac_block,
+            bc.pair_block AS bc_block
+        FROM pair_edges ab               -- A-B
+        JOIN pair_edges ac               -- A-C
+          ON ac.w1 = ab.w1
+         AND ac.w2 > ab.w2               -- enforce a < b < c
+        JOIN pair_edges bc               -- B-C
+          ON bc.w1 = ab.w2
+         AND bc.w2 = ac.w2
+    ),
+    
+    -- 6) Final 3-wallet consolidations:
+    --    for each wallet, its last_block is one of its triangle edges
+    triangles_final AS (
+        SELECT
+            a,
+            b,
+            c,
+            CONCAT(LOWER(a), '-', LOWER(b), '-', LOWER(c)) AS consolidation_key
+        FROM triangles t
+        JOIN wallet_last wl_a
+          ON wl_a.wallet = t.a
+         AND wl_a.last_block IN (t.ab_block, t.ac_block)
+        JOIN wallet_last wl_b
+          ON wl_b.wallet = t.b
+         AND wl_b.last_block IN (t.ab_block, t.bc_block)
+        JOIN wallet_last wl_c
+          ON wl_c.wallet = t.c
+         AND wl_c.last_block IN (t.ac_block, t.bc_block)
+    ),
+    
+    -- 7) Exclude 2-wallet consolidations that are part of any valid 3-wallet
+    pairs_final AS (
+        SELECT pc.consolidation_key
+        FROM pairs_candidate pc
+        LEFT JOIN (
+            SELECT a, b FROM triangles_final
+            UNION
+            SELECT a, c FROM triangles_final
+            UNION
+            SELECT b, c FROM triangles_final
+        ) tf(a, b)
+          ON pc.w1 = tf.a AND pc.w2 = tf.b
+        WHERE tf.a IS NULL
+    )
+    
+    -- 8) Output all consolidation keys
+    SELECT lower(consolidation_key) AS consolidation_key
+    FROM (
+        SELECT consolidation_key FROM triangles_final
+        UNION
+        SELECT consolidation_key FROM pairs_final
+    ) AS all_keys
+    ORDER BY consolidation_key
+  `;
+  const consolidations = await sqlExecutor.execute<{
+    consolidation_key: string;
+  }>(sql);
+  return wallets
+    .map((it) => it.toLowerCase())
+    .reduce(
+      (acc, wallet) => {
+        const consolidation = consolidations.find((c) => {
+          const consolidationKey = c.consolidation_key;
+          return consolidationKey.includes(wallet);
+        });
+        if (consolidation) {
+          acc[wallet] = consolidation.consolidation_key;
+        } else {
+          acc[wallet] = wallet;
+        }
+        return acc;
+      },
+      {} as Record<string, string>
+    );
+}
+
 export async function fetchLatestConsolidationsBlockNumber() {
   const block = await AppDataSource.getRepository(Consolidation)
     .createQueryBuilder()
@@ -305,11 +449,11 @@ export async function fetchLatestTDHBDate(): Promise<{
   block: number;
   timestamp: Time;
 }> {
-  const sql = `SELECT timestamp FROM ${TDH_BLOCKS_TABLE} order by block_number desc limit 1;`;
+  const sql = `SELECT block_number, timestamp FROM ${TDH_BLOCKS_TABLE} order by block_number desc limit 1;`;
   const r = await sqlExecutor.execute(sql);
   return r.length > 0
     ? {
-        block: r[0].block_number,
+        block: +r[0].block_number,
         timestamp: Time.fromString(r[0].timestamp)
       }
     : { block: 0, timestamp: Time.millis(0) };
@@ -418,6 +562,51 @@ export async function fetchConsolidationDisplay(
     return displayArray[0];
   }
   return displayArray.map((d) => shortFormatIfAddress(d)).join(' - ');
+}
+
+export async function fetchConsolidationDisplays(
+  consolidationKeys: string[]
+): Promise<Record<string, string>> {
+  const sql = `SELECT * FROM ${ENS_TABLE} WHERE wallet IN (:wallets)`;
+  const wallets = consolidationKeys
+    .flatMap((it) => it.split('-'))
+    .map((it) => it.toLowerCase());
+  const sliceMaxSize = 500;
+  const allRelatedDisplays: Record<string, string> = {};
+  for (let i = 0; i < wallets.length; i += sliceMaxSize) {
+    const chunk = wallets.slice(i, i + sliceMaxSize);
+    if (!chunk.length) {
+      break;
+    }
+    const results = await sqlExecutor.execute<ENS>(sql, {
+      wallets: chunk
+    });
+    for (const ens of results) {
+      const display = ens.display;
+      if (display && !display.includes('?')) {
+        allRelatedDisplays[ens.wallet.toLowerCase()] = display;
+      }
+    }
+  }
+  for (const wallet of wallets) {
+    if (!allRelatedDisplays[wallet]) {
+      allRelatedDisplays[wallet] = wallet;
+    }
+  }
+  return consolidationKeys.reduce(
+    (acc, key) => {
+      const displays = key
+        .split('-')
+        .map((wallet) => allRelatedDisplays[wallet.toLowerCase()]!);
+      if (displays.length === 1) {
+        acc[key] = displays[0];
+      } else {
+        acc[key] = displays.map((it) => shortFormatIfAddress(it)).join(' - ');
+      }
+      return acc;
+    },
+    {} as Record<string, string>
+  );
 }
 
 export async function fetchAllConsolidatedOwnerMetrics() {
@@ -764,8 +953,8 @@ export async function persistTDH(
     } else {
       logger.info(`[TDH] [DELETING ALL WALLETS FOR BLOCK ${block}]`);
       await tdhRepo.delete({ block: block });
-      await tdhMemesRepo.clear();
-      await tdhEditionsRepo.clear();
+      await deleteAll(tdhMemesRepo);
+      await deleteAll(tdhEditionsRepo);
       logger.info(`[TDH AND TDH_MEMES CLEARED]`);
       await insertWithoutUpdate(tdhRepo, tdh);
       await insertWithoutUpdate(tdhMemesRepo, memesTdh);
@@ -776,26 +965,29 @@ export async function persistTDH(
   logger.info(`[TDH] PERSISTED ALL WALLETS TDH [${tdh.length}]`);
 }
 
-export async function persistTDHBlock(block: number, timestamp: Date) {
+export async function persistTDHBlock(
+  block: number,
+  timestamp: Date,
+  tdh: ConsolidatedTDH[]
+) {
   logger.info(`[TDH BLOCK] PERSISTING BLOCK [${block}]`);
 
-  const merkleRoot = await computeMerkleRoot();
+  const merkleRoot = await computeMerkleRoot(block);
 
   logger.info(`[TDH BLOCK] MERKLE ROOT [${merkleRoot}]`);
 
-  await AppDataSource.getRepository(TDHBlock).upsert(
-    [
-      {
-        block_number: block,
-        timestamp: timestamp,
-        merkle_root: merkleRoot
-      }
-    ],
-    ['block_number']
-  );
+  const repo = AppDataSource.getRepository(TDHBlock);
+
+  await repo.delete({ block_number: block });
+  await repo.insert({
+    block_number: block,
+    timestamp,
+    merkle_root: merkleRoot
+  });
 }
 
 export async function persistConsolidatedTDH(
+  block: number,
   tdh: ConsolidatedTDH[],
   memesTdh: ConsolidatedTDHMemes[],
   tdhEditions: ConsolidatedTDHEditions[],
@@ -808,6 +1000,7 @@ export async function persistConsolidatedTDH(
     const tdhRepo = manager.getRepository(ConsolidatedTDH);
     const tdhMemesRepo = manager.getRepository(ConsolidatedTDHMemes);
     const tdhEditionsRepo = manager.getRepository(ConsolidatedTDHEditions);
+
     if (wallets) {
       logger.info(`[CONSOLIDATED TDH] [DELETING ${wallets.length} WALLETS]`);
       await Promise.all(
@@ -837,25 +1030,61 @@ export async function persistConsolidatedTDH(
         })
       );
       await tdhRepo.save(tdh);
+
       await tdhMemesRepo.save(memesTdh);
       await tdhEditionsRepo.save(tdhEditions);
     } else {
       logger.info(`[CONSOLIDATED TDH] [DELETING ALL WALLETS]`);
-      await tdhRepo.clear();
-      await tdhMemesRepo.clear();
-      await tdhEditionsRepo.clear();
-      logger.info(`[CONSOLIDATED TDH] [TDH AND TDH_MEMES CLEARED]`);
+      await deleteAll(tdhRepo);
+      await deleteAll(tdhMemesRepo);
+      await deleteAll(tdhEditionsRepo);
+
+      logger.info(
+        `[CONSOLIDATED TDH] [TDH AND TDH_MEMES CLEARED, PERSISTING NEW TDH]`
+      );
       await insertWithoutUpdate(tdhRepo, tdh);
       await insertWithoutUpdate(tdhMemesRepo, memesTdh);
       await insertWithoutUpdate(tdhEditionsRepo, tdhEditions);
-    }
 
+      logger.info(`[CONSOLIDATED TDH] [PERSISTING HISTORIC TDH]`);
+    }
+    await persistHistoricConsolidatedTDH(manager, block, tdh, wallets);
     await syncIdentitiesWithTdhConsolidations(qrHolder);
     await syncIdentitiesMetrics(qrHolder);
     await revokeTdhBasedDropWavesOverVotes(qrHolder);
   });
 
   logger.info(`[CONSOLIDATED TDH] PERSISTED ALL WALLETS TDH [${tdh.length}]`);
+}
+
+export async function persistHistoricConsolidatedTDH(
+  entityManager: EntityManager,
+  block: number,
+  tdh: ConsolidatedTDH[],
+  wallets?: string[]
+) {
+  logger.info(`[HISTORIC CONSOLIDATED TDH] PERSISTING BLOCK [${block}]`);
+  const historicTdhRepo = entityManager.getRepository(HistoricConsolidatedTDH);
+  if (wallets) {
+    await Promise.all(
+      wallets.map(async (wallet) => {
+        const walletPattern = `%${wallet}%`;
+        await historicTdhRepo
+          .createQueryBuilder()
+          .delete()
+          .where('consolidation_key like :walletPattern and block = :block', {
+            walletPattern,
+            block
+          })
+          .execute();
+      })
+    );
+    await historicTdhRepo.save(tdh);
+  } else {
+    await historicTdhRepo.delete({ block: block });
+    await insertWithoutUpdate(historicTdhRepo, tdh);
+  }
+  logger.info(`[HISTORIC CONSOLIDATED TDH] PERSISTED BLOCK [${block}]`);
 }
 
 export async function persistNftTdh(nftTdh: NftTDH[], wallets?: string[]) {
@@ -881,7 +1110,7 @@ export async function persistNftTdh(nftTdh: NftTDH[], wallets?: string[]) {
       await nftTdhRepo.save(nftTdh);
     } else {
       logger.info(`[NFT TDH] [DELETING ALL WALLETS]`);
-      await nftTdhRepo.clear();
+      await deleteAll(nftTdhRepo);
       logger.info(`[NFT TDH] [TDH AND TDH_MEMES CLEARED]`);
       await insertWithoutUpdate(nftTdhRepo, nftTdh);
     }
@@ -982,7 +1211,7 @@ function constructFilters(f: string, newF: string) {
 
 export async function replaceTeam(team: Team[]) {
   const repo = AppDataSource.getRepository(Team);
-  await repo.clear();
+  await deleteAll(repo);
   await repo.save(team);
 }
 

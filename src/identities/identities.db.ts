@@ -6,6 +6,7 @@ import {
 import { IdentityEntity } from '../entities/IIdentity';
 import {
   ADDRESS_CONSOLIDATION_KEY,
+  CONSOLIDATED_TDH_EDITIONS_TABLE,
   CONSOLIDATED_WALLETS_TDH_TABLE,
   DROPS_TABLE,
   ENS_TABLE,
@@ -28,6 +29,7 @@ import { collections } from '../collections';
 import { env } from '../env';
 import { DropType } from '../entities/IDrop';
 import { appFeatures } from '../app-features';
+import { bulkUpsert } from '../db/my-sql.helpers';
 
 const mysql = require('mysql');
 
@@ -259,64 +261,79 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     if (!identities.length) {
       return;
     }
-    const identitiesSql = `insert into ${IDENTITIES_TABLE} (
-                                         profile_id,
-                                         consolidation_key,
-                                         primary_address,
-                                         handle,
-                                         normalised_handle,
-                                         tdh,
-                                         rep,
-                                         cic,
-                                         level_raw,
-                                         pfp,
-                                         banner1,
-                                         banner2,
-                                         classification,
-                                         sub_classification)
-        values ${identities
-          .map(
-            (identity) =>
-              `(${mysql.escape(identity.profile_id!)}, ${mysql.escape(
-                identity.consolidation_key
-              )}, ${mysql.escape(identity.primary_address)}, ${mysql.escape(
-                identity.handle
-              )}, ${mysql.escape(identity.normalised_handle)}, ${mysql.escape(
-                identity.tdh
-              )}, 0, 0, ${mysql.escape(identity.level_raw)}, ${mysql.escape(
-                identity.pfp
-              )}, ${mysql.escape(identity.banner1)}, ${mysql.escape(
-                identity.banner2
-              )}, ${mysql.escape(identity.classification)}, ${mysql.escape(
-                identity.sub_classification
-              )})`
-          )
-          .join(',')}`;
-    await this.db.execute(identitiesSql, undefined, {
-      wrappedConnection: connection
-    });
-    const addressesSql = `insert into ${ADDRESS_CONSOLIDATION_KEY} (address, consolidation_key)
-        values ${identities
-          .map((identity) =>
-            identity.consolidation_key
-              .split('-')
-              .map((address) => ({
-                address,
-                consolidationKey: identity.consolidation_key
-              }))
-              .flat()
-              .map(
-                ({ address, consolidationKey }) =>
-                  `(${mysql.escape(address)}, ${mysql.escape(
-                    consolidationKey
-                  )})`
-              )
-          )
-          .flat()
-          .join(',')}`;
-    await this.db.execute(addressesSql, undefined, {
-      wrappedConnection: connection
-    });
+
+    const identityRows = identities.map((identity) => ({
+      profile_id: identity.profile_id ?? null,
+      consolidation_key: identity.consolidation_key,
+      primary_address: identity.primary_address,
+      handle: identity.handle ?? null,
+      normalised_handle: identity.normalised_handle ?? null,
+      tdh: identity.tdh ?? 0,
+      rep: identity.rep ?? 0,
+      cic: identity.cic ?? 0,
+      level_raw: identity.level_raw ?? 0,
+      pfp: identity.pfp ?? null,
+      banner1: identity.banner1 ?? null,
+      banner2: identity.banner2 ?? null,
+      classification: identity.classification ?? null,
+      sub_classification: identity.sub_classification ?? null
+    }));
+
+    await bulkUpsert(
+      this.db,
+      IDENTITIES_TABLE,
+      identityRows,
+      [
+        'profile_id',
+        'consolidation_key',
+        'primary_address',
+        'handle',
+        'normalised_handle',
+        'tdh',
+        'rep',
+        'cic',
+        'level_raw',
+        'pfp',
+        'banner1',
+        'banner2',
+        'classification',
+        'sub_classification'
+      ],
+      [
+        'profile_id',
+        'primary_address',
+        'handle',
+        'normalised_handle',
+        'tdh',
+        'rep',
+        'cic',
+        'level_raw',
+        'pfp',
+        'banner1',
+        'banner2',
+        'classification',
+        'sub_classification'
+      ],
+      undefined,
+      { connection }
+    );
+
+    const addressRows = identities.flatMap((identity) =>
+      identity.consolidation_key.split('-').map((address) => ({
+        address,
+        consolidation_key: identity.consolidation_key
+      }))
+    );
+
+    await bulkUpsert(
+      this.db,
+      ADDRESS_CONSOLIDATION_KEY,
+      addressRows,
+      ['address', 'consolidation_key'],
+      ['consolidation_key'],
+      undefined,
+      { connection }
+    );
   }
 
   async getIdentityByProfileId(
@@ -1008,8 +1025,15 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
       tdh_rate: string;
     }>(
       `
-      select i.profile_id as profile_id, ifnull(t.created_boosted_tdh, 0) as tdh_rate from ${IDENTITIES_TABLE} i
-    left join ${LATEST_TDH_HISTORY_TABLE} t on t.consolidation_key = i.consolidation_key where i.profile_id in (:ids)
+    SELECT
+        i.profile_id as profile_id,
+        ROUND(SUM(e.hodl_rate) * COALESCE(MAX(c.boost), 1.0)) AS tdh_rate
+    FROM ${CONSOLIDATED_WALLETS_TDH_TABLE} c
+        join ${IDENTITIES_TABLE} i on i.consolidation_key = c.consolidation_key
+             LEFT JOIN ${CONSOLIDATED_TDH_EDITIONS_TABLE} e
+                       ON e.consolidation_key = c.consolidation_key
+    where i.profile_id in (:ids)
+    GROUP BY c.consolidation_key
     `,
       { ids },
       { wrappedConnection: ctx.connection }

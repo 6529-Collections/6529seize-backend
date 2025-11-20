@@ -1,7 +1,7 @@
 import { createClient, RedisClientType as Redis } from 'redis';
 import { Logger } from './logging';
-import { Time } from './time';
 import { numbers } from './numbers';
+import { Time } from './time';
 
 let redis: Redis;
 
@@ -72,6 +72,22 @@ export async function redisCached<T>(
   return value;
 }
 
+export async function redisSetJson<T>(
+  key: string,
+  value: T,
+  ttl?: Time
+): Promise<void> {
+  if (!redis) {
+    return;
+  }
+  const payload = JSON.stringify(value);
+  if (ttl) {
+    await redis.set(key, payload, { EX: ttl.toSeconds() });
+  } else {
+    await redis.set(key, payload);
+  }
+}
+
 export async function evictKeyFromRedisCache(key: string): Promise<any> {
   await redis.del(key);
 }
@@ -126,4 +142,40 @@ export async function initRedis() {
 
 export async function clearWaveGroupsCache() {
   await evictKeyFromRedisCache('cache_6529_wave_groups');
+}
+
+export function getRedisClient(): Redis | null {
+  return redis || null;
+}
+
+/**
+ * Rate limiting helper: Add entry to sorted set and get count in window
+ * Uses pipeline for atomic operations
+ */
+export async function redisSortedSetAddAndCount(
+  key: string,
+  score: number,
+  value: string,
+  minScore: number,
+  expireSeconds: number
+): Promise<number> {
+  if (!redis) {
+    throw new Error('Redis client is not initialized');
+  }
+
+  const pipeline = redis.multi();
+  pipeline.zAdd(key, { score, value });
+  pipeline.zRemRangeByScore(key, 0, minScore);
+  pipeline.zCard(key);
+  pipeline.expire(key, expireSeconds);
+
+  const results = await pipeline.exec();
+  if (results?.length !== 4) {
+    throw new TypeError('Unexpected Redis pipeline result');
+  }
+  const count = results[2] as number;
+  if (typeof count !== 'number') {
+    throw new TypeError('Invalid count from Redis pipeline');
+  }
+  return count;
 }

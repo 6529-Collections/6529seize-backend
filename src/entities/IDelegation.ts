@@ -1,4 +1,10 @@
-import { Entity, Column, PrimaryColumn, CreateDateColumn } from 'typeorm';
+import {
+  Column,
+  CreateDateColumn,
+  Entity,
+  Index,
+  PrimaryColumn
+} from 'typeorm';
 import {
   CONSOLIDATIONS_TABLE,
   DELEGATIONS_TABLE,
@@ -8,6 +14,8 @@ import {
 import { BlockEntity } from './IBlock';
 
 @Entity(CONSOLIDATIONS_TABLE)
+@Index('idx_conf_wallet1', ['confirmed', 'wallet1'])
+@Index('idx_conf_wallet2', ['confirmed', 'wallet2'])
 export class Consolidation {
   @CreateDateColumn()
   created_at!: Date;

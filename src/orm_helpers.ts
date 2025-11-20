@@ -1,5 +1,9 @@
 import { ObjectLiteral, Repository } from 'typeorm';
 
+export async function deleteAll<T extends ObjectLiteral>(repo: Repository<T>) {
+  await repo.createQueryBuilder().delete().execute();
+}
+
 export async function insertWithoutUpdate<T extends ObjectLiteral>(
   repo: Repository<T>,
   data: T[]
@@ -16,7 +20,7 @@ export async function resetRepository<T extends ObjectLiteral>(
   repo: Repository<T>,
   data: T[]
 ) {
-  await repo.clear();
+  await deleteAll(repo);
   await insertWithoutUpdate(repo, data);
 }
 

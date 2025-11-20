@@ -1,9 +1,13 @@
+import { seizeSettings } from '../api-serverless/src/api-constants';
+import { identitySubscriptionsDb } from '../api-serverless/src/identity-subscriptions/identity-subscriptions.db';
+import { IdentityNotificationCause } from '../entities/IIdentityNotification';
+import { RequestContext } from '../request.context';
+import { ConnectionWrapper } from '../sql-executor';
+import { Timer } from '../time';
 import {
   identityNotificationsDb,
   IdentityNotificationsDb
 } from './identity-notifications.db';
-import { ConnectionWrapper } from '../sql-executor';
-import { IdentityNotificationCause } from '../entities/IIdentityNotification';
 import {
   DropQuoteNotificationData,
   DropReactionNotificationData,
@@ -12,10 +16,6 @@ import {
   IdentityMentionNotificationData,
   IdentitySubscriptionNotificationData
 } from './user-notification.types';
-import { Timer } from '../time';
-import { RequestContext } from '../request.context';
-import { seizeSettings } from '../api-serverless/src/api-constants';
-import { identitySubscriptionsDb } from '../api-serverless/src/identity-subscriptions/identity-subscriptions.db';
 
 export class UserNotifier {
   constructor(

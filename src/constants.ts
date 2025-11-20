@@ -16,6 +16,8 @@ export const MEMES_EXTENDED_DATA_TABLE = 'memes_extended_data';
 export const LAB_EXTENDED_DATA_TABLE = 'lab_extended_data';
 export const WALLETS_TDH_TABLE = 'tdh';
 export const CONSOLIDATED_WALLETS_TDH_TABLE = 'tdh_consolidation';
+export const HISTORIC_CONSOLIDATED_WALLETS_TDH_TABLE =
+  'historic_tdh_consolidation';
 export const WALLETS_TDH_MEMES_TABLE = 'tdh_memes';
 export const CONSOLIDATED_WALLETS_TDH_MEMES_TABLE = 'tdh_memes_consolidation';
 export const TDH_NFT_TABLE = 'tdh_nft';

@@ -10,13 +10,16 @@ const region = process.env.AWS_REGION;
 
 const sqs = new SQSClient({ region });
 
-const isActivated = process.env.PUSH_NOTIFICATIONS_ACTIVATED === 'true';
+export function isActivated() {
+  return !!process.env.PUSH_NOTIFICATIONS_ACTIVATED;
+}
 
 export const sendIdentityPushNotification = async (id: number) => {
-  if (!isActivated) {
+  if (!isActivated()) {
     logger.info('Push notifications are not activated');
     return;
   }
+
   try {
     const message = {
       identity_notification_id: id
