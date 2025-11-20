@@ -62,7 +62,7 @@ router.get(``, async function (req: any, res: any) {
 router.post(`/validate`, validateRememe, function (req: any, res: any) {
   const body = req.validatedBody;
   res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
-  res.setHeader(ACCESS_CONTROL_ALLOW_ORIGIN_HEADER, corsOptions.allowedHeaders);
+  res.setHeader(ACCESS_CONTROL_ALLOW_ORIGIN_HEADER, corsOptions.origin);
   res
     .status(body.valid ? 200 : 400)
     .send(JSON.stringify(body))
@@ -73,7 +73,7 @@ router.post(`/add`, validateRememeAdd, function (req: any, res: any) {
   const body = req.validatedBody;
   const valid = body.valid;
   res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
-  res.setHeader(ACCESS_CONTROL_ALLOW_ORIGIN_HEADER, corsOptions.allowedHeaders);
+  res.setHeader(ACCESS_CONTROL_ALLOW_ORIGIN_HEADER, corsOptions.origin);
   if (valid) {
     db.addRememe(req.body.address, body).then(() => {
       res.status(201).send(JSON.stringify(body));

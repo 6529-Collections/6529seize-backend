@@ -29,10 +29,7 @@ function isValidIP(ip: string): boolean {
 
 function returnJsonResult(result: any, response: Response) {
   response.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
-  response.setHeader(
-    ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
-    corsOptions.allowedHeaders
-  );
+  response.setHeader(ACCESS_CONTROL_ALLOW_ORIGIN_HEADER, corsOptions.origin);
   response.json(result);
 }
 
