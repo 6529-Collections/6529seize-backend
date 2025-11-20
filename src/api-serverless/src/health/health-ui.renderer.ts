@@ -22,61 +22,95 @@ export const LOGO_SVG = `<?xml version="1.0" encoding="UTF-8"?>
   </g>
 </svg>`;
 
-export function renderHealthUI(data: HealthData): string {
-  const statusDisplay = data.status === 'ok' ? 'OK' : 'Degraded';
-  const statusClass = data.status === 'ok' ? 'status-ok' : 'status-degraded';
-  const dbDisplay = data.db === 'ok' ? 'OK' : 'Degraded';
-  const dbClass = data.db === 'ok' ? 'status-ok' : 'status-degraded';
+function getStatusClass(isOk: boolean): string {
+  return isOk ? 'status-ok' : 'status-degraded';
+}
 
-  const redisStatusClass = data.redis.enabled
-    ? data.redis.healthy
-      ? 'status-ok'
-      : 'status-degraded'
-    : 'status-degraded';
+function getStatusDisplay(isOk: boolean): string {
+  return isOk ? 'OK' : 'Degraded';
+}
 
-  const rateLimitStatusClass = data.rate_limit.enabled
-    ? 'status-ok'
-    : 'status-degraded';
+function getRedisStatusClass(redis: HealthData['redis']): string {
+  if (!redis.enabled) {
+    return 'status-degraded';
+  }
+  return redis.healthy ? 'status-ok' : 'status-degraded';
+}
 
-  const redisHtml = data.redis.enabled
-    ? `
-              <span class="status-badge ${redisStatusClass}">Enabled</span>
+function buildRedisHtml(
+  redis: HealthData['redis'],
+  statusClass: string
+): string {
+  if (redis.enabled) {
+    return `
+              <span class="status-badge ${statusClass}">Enabled</span>
               <div class="nested-object">
-                <div class="nested-key">Healthy: <span class="nested-value">${data.redis.healthy ? 'Yes' : 'No'}</span></div>
-              </div>`
-    : `<span class="status-badge ${redisStatusClass}">Disabled</span>`;
+                <div class="nested-key">Healthy: <span class="nested-value">${redis.healthy ? 'Yes' : 'No'}</span></div>
+              </div>`;
+  }
+  return `<span class="status-badge ${statusClass}">Disabled</span>`;
+}
 
-  let rateLimitHtml = `<span class="status-badge ${rateLimitStatusClass}">${data.rate_limit.enabled ? 'Enabled' : 'Disabled'}</span>`;
-
-  if (data.rate_limit.enabled) {
-    rateLimitHtml += '<div class="nested-object">';
-
-    if (data.rate_limit.authenticated) {
-      rateLimitHtml += `
+function buildRateLimitAuthenticatedHtml(
+  authenticated: HealthData['rate_limit']['authenticated']
+): string {
+  if (!authenticated) {
+    return '';
+  }
+  return `
                 <div class="nested-key">Authenticated:</div>
                 <div class="nested-object">
-                  <div class="nested-key">Burst: <span class="nested-value">${data.rate_limit.authenticated.burst}</span></div>
-                  <div class="nested-key">Sustained RPS: <span class="nested-value">${data.rate_limit.authenticated.sustained_rps}</span></div>
-                  <div class="nested-key">Window: <span class="nested-value">${data.rate_limit.authenticated.sustained_window_seconds}s</span></div>
+                  <div class="nested-key">Burst: <span class="nested-value">${authenticated.burst}</span></div>
+                  <div class="nested-key">Sustained RPS: <span class="nested-value">${authenticated.sustained_rps}</span></div>
+                  <div class="nested-key">Window: <span class="nested-value">${authenticated.sustained_window_seconds}s</span></div>
                 </div>`;
-    }
+}
 
-    if (data.rate_limit.unauthenticated) {
-      rateLimitHtml += `
+function buildRateLimitUnauthenticatedHtml(
+  unauthenticated: HealthData['rate_limit']['unauthenticated']
+): string {
+  if (!unauthenticated) {
+    return '';
+  }
+  return `
                 <div class="nested-key">Unauthenticated:</div>
                 <div class="nested-object">
-                  <div class="nested-key">Burst: <span class="nested-value">${data.rate_limit.unauthenticated.burst}</span></div>
-                  <div class="nested-key">Sustained RPS: <span class="nested-value">${data.rate_limit.unauthenticated.sustained_rps}</span></div>
-                  <div class="nested-key">Window: <span class="nested-value">${data.rate_limit.unauthenticated.sustained_window_seconds}s</span></div>
+                  <div class="nested-key">Burst: <span class="nested-value">${unauthenticated.burst}</span></div>
+                  <div class="nested-key">Sustained RPS: <span class="nested-value">${unauthenticated.sustained_rps}</span></div>
+                  <div class="nested-key">Window: <span class="nested-value">${unauthenticated.sustained_window_seconds}s</span></div>
                 </div>`;
-    }
+}
 
-    if (data.rate_limit.internal_enabled) {
-      rateLimitHtml += `<div class="nested-key">Internal: <span class="nested-value">Enabled</span></div>`;
-    }
+function buildRateLimitHtml(rateLimit: HealthData['rate_limit']): string {
+  const statusClass = getStatusClass(rateLimit.enabled);
+  const enabledText = rateLimit.enabled ? 'Enabled' : 'Disabled';
+  let html = `<span class="status-badge ${statusClass}">${enabledText}</span>`;
 
-    rateLimitHtml += '</div>';
+  if (!rateLimit.enabled) {
+    return html;
   }
+
+  html += '<div class="nested-object">';
+  html += buildRateLimitAuthenticatedHtml(rateLimit.authenticated);
+  html += buildRateLimitUnauthenticatedHtml(rateLimit.unauthenticated);
+
+  if (rateLimit.internal_enabled) {
+    html += `<div class="nested-key">Internal: <span class="nested-value">Enabled</span></div>`;
+  }
+
+  html += '</div>';
+  return html;
+}
+
+export function renderHealthUI(data: HealthData): string {
+  const statusDisplay = getStatusDisplay(data.status === 'ok');
+  const statusClass = getStatusClass(data.status === 'ok');
+  const dbDisplay = getStatusDisplay(data.db === 'ok');
+  const dbClass = getStatusClass(data.db === 'ok');
+
+  const redisStatusClass = getRedisStatusClass(data.redis);
+  const redisHtml = buildRedisHtml(data.redis, redisStatusClass);
+  const rateLimitHtml = buildRateLimitHtml(data.rate_limit);
 
   return `<!DOCTYPE html>
 <html lang="en">

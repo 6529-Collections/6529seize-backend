@@ -1,6 +1,9 @@
+import { Logger } from '../../../logging';
 import { getRedisClient } from '../../../redis';
 import { sqlExecutor } from '../../../sql-executor';
 import { getRateLimitConfig } from '../rate-limiting/rate-limiting.utils';
+
+const logger = Logger.get('HEALTH');
 
 export interface HealthData {
   status: 'ok' | 'degraded';
@@ -35,6 +38,7 @@ export async function getHealthData(): Promise<HealthData> {
     await sqlExecutor.execute('SELECT 1');
     isDbHealthy = true;
   } catch (err) {
+    logger.warn('Database health check failed', err);
     isDbHealthy = false;
   }
 
@@ -48,6 +52,7 @@ export async function getHealthData(): Promise<HealthData> {
       isRedisHealthy = true;
     }
   } catch (err) {
+    logger.warn('Redis health check failed', err);
     isRedisHealthy = false;
   }
 
@@ -86,6 +91,7 @@ export async function getHealthData(): Promise<HealthData> {
       };
     }
   } catch (err) {
+    logger.warn('Rate limit config check failed', err);
     rateLimitResponse = {
       enabled: false
     };
