@@ -1246,25 +1246,7 @@ async function initializeApp() {
       {
         customSiteTitle: '6529 API Docs',
         customCss: '.topbar { display: none }',
-        customfavIcon: '/favicon.svg',
-        customJs: `
-          (function() {
-            const baseUrl = window.location.origin;
-            const metaTags = [
-              { property: 'og:title', content: '6529 API Documentation' },
-              { property: 'og:description', content: 'Interactive API documentation for the 6529 API. Explore endpoints, request/response schemas, and test API calls.' },
-              { property: 'og:type', content: 'website' },
-              { property: 'og:url', content: baseUrl + '/docs' },
-              { property: 'og:image', content: baseUrl + '/favicon.svg' }
-            ];
-            metaTags.forEach(function(tag) {
-              const meta = document.createElement('meta');
-              meta.setAttribute('property', tag.property);
-              meta.setAttribute('content', tag.content);
-              document.head.appendChild(meta);
-            });
-          })();
-        `
+        customfavIcon: '/favicon.svg'
       },
       { explorer: true }
     )

@@ -137,7 +137,7 @@ export function renderHealthUI(data: HealthData, baseUrl?: string): string {
   <meta property="og:description" content="Real-time health status of the 6529 API">
   <meta property="og:type" content="website">
   ${baseUrl ? `<meta property="og:url" content="${baseUrl}/health/ui">` : ''}
-  ${baseUrl ? `<meta property="og:image" content="${baseUrl}/favicon.svg">` : ''}
+  <meta property="og:image" content="https://6529.io/6529io.png">
   <style>
     * {
       margin: 0;
