@@ -70,7 +70,8 @@ import { loadLocalConfig, loadSecrets } from '../../env';
 import { loggerContext } from '../../logger-context';
 import { Logger } from '../../logging';
 import { numbers } from '../../numbers';
-import { initRedis, redisGet } from '../../redis';
+import { getRedisClient, initRedis, redisGet } from '../../redis';
+import { sqlExecutor } from '../../sql-executor';
 import { parseTdhResultsFromDB } from '../../sql_helpers';
 import {
   corsOptions,
@@ -101,6 +102,12 @@ import { ApiTransactionPage } from './generated/models/ApiTransactionPage';
 import { ApiUploadItem } from './generated/models/ApiUploadItem';
 import { ApiUploadsPage } from './generated/models/ApiUploadsPage';
 import { DEFAULT_MAX_SIZE } from './page-request';
+import {
+  initRateLimiting,
+  rateLimitingMiddleware
+} from './rate-limiting/rate-limiting.middleware';
+import { getRateLimitConfig } from './rate-limiting/rate-limiting.utils';
+import { cacheRequest, isRequestCacheEntry } from './request-cache';
 import rpcRoutes from './rpc/rpc.routes';
 import sitemapRoutes from './sitemap/sitemap.routes';
 import subscriptionsRoutes from './subscriptions/api.subscriptions.routes';
@@ -111,7 +118,6 @@ import {
 } from './ws/ws';
 import { wsListenersNotifier } from './ws/ws-listeners-notifier';
 import { WsMessageType } from './ws/ws-message';
-import { cacheRequest, isRequestCacheEntry } from './request-cache';
 
 const YAML = require('yamljs');
 const compression = require('compression');
@@ -187,6 +193,8 @@ const rootRouter = asyncRouter();
 const storage = multer.memoryStorage();
 multer({ storage: storage });
 
+let isInitialized = false;
+
 async function loadApiSecrets() {
   if (process.env.API_LOAD_SECRETS === 'true') {
     await loadSecrets();
@@ -198,13 +206,15 @@ async function loadApi() {
   await db.connect();
 }
 
-loadApi().then(async () => {
+async function initializeApp() {
+  await loadApi();
   logger.info(
     `[DB HOST ${process.env.DB_HOST_READ}] [API PASSWORD ACTIVE ${process.env.ACTIVATE_API_PASSWORD}] [LOAD SECRETS ENABLED ${process.env.API_LOAD_SECRETS}]`
   );
 
   await loadApiSecrets();
   await initRedis();
+  initRateLimiting();
   passport.use(
     new JwtStrategy(
       {
@@ -1129,7 +1139,8 @@ loadApi().then(async () => {
     const image = await db.fetchRandomImage();
     await returnJsonResult(
       {
-        message: 'FOR 6529 SEIZE API GO TO /api',
+        message: 'WELCOME TO 6529 API',
+        health: '/health',
         image: image[0].scaled ? image[0].scaled : image[0].image
       },
       req,
@@ -1137,11 +1148,94 @@ loadApi().then(async () => {
     );
   });
 
+  rootRouter.get('/health', async (req, res) => {
+    let isDbHealthy = false;
+    try {
+      await sqlExecutor.execute('SELECT 1');
+      isDbHealthy = true;
+    } catch (err) {
+      isDbHealthy = false;
+    }
+
+    let redis: ReturnType<typeof getRedisClient> | null = null;
+    let isRedisHealthy: boolean | undefined;
+
+    try {
+      redis = getRedisClient();
+      if (redis) {
+        await redis.ping();
+        isRedisHealthy = true;
+      }
+    } catch (err) {
+      isRedisHealthy = false;
+    }
+
+    const redisEnabled = !!redis;
+
+    const redisResponse: any = {
+      enabled: redisEnabled
+    };
+    if (redisEnabled) {
+      redisResponse.healthy = isRedisHealthy;
+    }
+
+    let rateLimitResponse: any;
+    try {
+      const rateLimitingConfig = getRateLimitConfig();
+      if (rateLimitingConfig.enabled) {
+        rateLimitResponse = {
+          enabled: true,
+          authenticated: {
+            burst: rateLimitingConfig.authenticated.burst,
+            sustained_rps: rateLimitingConfig.authenticated.sustainedRps,
+            sustained_window_seconds:
+              rateLimitingConfig.authenticated.sustainedWindowSeconds
+          },
+          unauthenticated: {
+            burst: rateLimitingConfig.unauthenticated.burst,
+            sustained_rps: rateLimitingConfig.unauthenticated.sustainedRps,
+            sustained_window_seconds:
+              rateLimitingConfig.unauthenticated.sustainedWindowSeconds
+          },
+          internal_enabled: rateLimitingConfig.internal.enabled
+        };
+      } else {
+        rateLimitResponse = {
+          enabled: false
+        };
+      }
+    } catch (err) {
+      rateLimitResponse = {
+        enabled: false
+      };
+    }
+
+    const isRedisOk = !redisEnabled || isRedisHealthy === true;
+    const overallStatus = isDbHealthy && isRedisOk ? 'ok' : 'degraded';
+
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+
+    return res.json({
+      status: overallStatus,
+      db: isDbHealthy ? 'ok' : 'degraded',
+      redis: redisResponse,
+      rate_limit: rateLimitResponse,
+      version: {
+        commit: process.env.GIT_COMMIT || 'unknown',
+        node_env: process.env.NODE_ENV || 'unknown'
+      }
+    });
+  });
+
   rootRouter.get(``, async function (req: any, res: any) {
     const image = await db.fetchRandomImage();
     await returnJsonResult(
       {
-        message: 'FOR 6529 SEIZE API GO TO /api',
+        message: 'WELCOME TO 6529 API',
+        api: '/api',
+        health: '/health',
         image: image[0].scaled ? image[0].scaled : image[0].image
       },
       req,
@@ -1192,6 +1286,9 @@ loadApi().then(async () => {
   rootRouter.use(`/oracle`, oracleRoutes);
   rootRouter.use(`/rpc`, rpcRoutes);
   rootRouter.use(`/sitemap`, sitemapRoutes);
+
+  // Apply rate limiting after cache check (cached responses bypass rate limiting)
+  app.use(rateLimitingMiddleware());
   app.use(rootRouter);
 
   app.use(customErrorMiddleware());
@@ -1203,7 +1300,7 @@ loadApi().then(async () => {
     SwaggerUI.setup(
       swaggerDocument,
       {
-        customSiteTitle: 'Seize API Docs',
+        customSiteTitle: '6529 API Docs',
         customCss: '.topbar { display: none }'
       },
       { explorer: true }
@@ -1314,6 +1411,32 @@ loadApi().then(async () => {
       );
     });
   }
-});
+}
+
+function initializationGuard() {
+  return async (req: Request, res: Response, next: NextFunction) => {
+    if (isInitialized) {
+      return next();
+    }
+    try {
+      await initializationPromise;
+      return next();
+    } catch (err) {
+      logger.error('[REQUEST DURING FAILED INIT]', err);
+      return res.status(500).json({ error: 'Initialization failed' });
+    }
+  };
+}
+
+app.use(initializationGuard());
+
+const initializationPromise = initializeApp()
+  .then(() => {
+    isInitialized = true;
+  })
+  .catch((err) => {
+    logger.error(`[INITIALIZATION FAILED] ${err}`);
+    throw err;
+  });
 
 export { app };

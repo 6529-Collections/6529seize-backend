@@ -117,9 +117,14 @@ jobs:
       - name: Deploy API
         if: github.event.inputs.service == 'api'
         run: |
-          aws lambda update-function-code --function-name  seizeAPI --zip-file fileb://src/api-serverless/dist/index.zip
+          set +x
+          GIT_COMMIT=$(git rev-parse HEAD)
+          aws lambda update-function-code --function-name seizeAPI --zip-file fileb://src/api-serverless/dist/index.zip --no-cli-pager > /dev/null 2>&1
           sleep 10
-          aws lambda update-function-configuration --function-name seizeAPI --description "$(date) - $(git rev-parse --abbrev-ref HEAD) - $(git show -s --format=%s)"
+          aws lambda get-function-configuration --function-name seizeAPI --query 'Environment.Variables' --output json --no-cli-pager > /tmp/current_env.json 2>/dev/null || echo '{}' > /tmp/current_env.json
+          jq --arg commit "$GIT_COMMIT" '. + {GIT_COMMIT: $commit} | {Variables: .}' /tmp/current_env.json > /tmp/env_config.json
+          aws lambda update-function-configuration --function-name seizeAPI --description "$(date) - $(git rev-parse --abbrev-ref HEAD) - $(git show -s --format=%s)" --environment file:///tmp/env_config.json --no-cli-pager > /dev/null 2>&1
+          rm -f /tmp/current_env.json /tmp/env_config.json
       - name: Deploy mediaResizerLoop
         if: github.event.inputs.service == 'mediaResizerLoop'
         run: |

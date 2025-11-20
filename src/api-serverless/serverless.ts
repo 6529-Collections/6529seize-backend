@@ -1,5 +1,4 @@
 import type { AWS } from '@serverless/typescript';
-
 import { handler } from './src/handler';
 
 const serverlessConfiguration: AWS = {
