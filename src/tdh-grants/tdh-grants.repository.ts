@@ -327,7 +327,7 @@ export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
             SELECT GREATEST(
                      (SELECT base_rate FROM base),
                      COALESCE((SELECT MAX(running_rate) FROM scan), 0)
-                   ) AS max_spent_rate
+                   ) AS spent_rate
         `,
           param,
           {
