@@ -63,7 +63,7 @@ export class TdhStatsService {
     ]);
     return {
       identity,
-      tdh_rate: identityEntity.basetdh_rate + identityEntity.xtdh_rate,
+      tdh_rate: identityEntity.basetdh_rate,
       xtdh: identityEntity.xtdh,
       granted_xtdh: identityEntity.granted_xtdh,
       received_xtdh:

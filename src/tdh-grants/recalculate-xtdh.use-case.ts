@@ -45,9 +45,6 @@ export class RecalculateXTdhUseCase {
           `Can not recalculateXTdh outside of active transaction`
         );
       }
-      this.logger.info(`Updating baseTdh rate`);
-      await this.xtdhRepository.updateBoostedTdhRate(ctx);
-      this.logger.info(`Updated baseTdh rate`);
       this.logger.info(`Getting wallets without identities`);
       const walletsWithoutIdentities =
         await this.xtdhRepository.getWalletsWithoutIdentities(ctx);
