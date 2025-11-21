@@ -35,7 +35,6 @@ export { ExternalIndexedContractEntity } from './IExternalIndexedContract';
 export { ExternalIndexedOwnership721Entity } from './IExternalIndexedOwnership721';
 export { ExternalIndexedOwnership721HistoryEntity } from './IExternalIndexedOwnership721History';
 export { ExternalIndexedTransfersEntity } from './IExternalIndexedTransfer';
-export { ExternalTokenOwnerEntity } from './IExternalTokenOwner';
 export { IdentityEntity } from './IIdentity';
 export { IdentityNotificationEntity } from './IIdentityNotification';
 export { IdentitySubscriptionEntity } from './IIdentitySubscription';
@@ -131,3 +130,9 @@ export { WaveLeaderboardEntryEntity } from './IWaveLeaderboardEntry';
 export { WaveMetricEntity } from './IWaveMetric';
 export { WinnerDropVoterVoteEntity } from './IWinnerDropVoterVote';
 export { WSConnectionEntity } from './IWSConnection';
+export {
+  XTdhTokenGrantStatsA,
+  XTdhTokenGrantStatsB
+} from './IXTdhTokenGrantStats';
+export { XTdhTokenStatsA, XTdhTokenStatsB } from './IXTdhTokenStats';
+export { XTdhStatsMetaEntity } from './IXTdhStatsMeta';

@@ -144,6 +144,9 @@ export class BaseConsolidatedTDH extends BaseTDH {
   @PrimaryColumn({ type: 'varchar', length: 200 })
   consolidation_key!: string;
 
+  @Column({ type: 'double', nullable: false, default: 0 })
+  boosted_tdh_rate!: number;
+
   @Column({ type: 'json', nullable: false })
   wallets?: any;
 }
@@ -238,6 +241,7 @@ export class BaseTDHEditionsFields {
 }
 
 @Entity(TDH_EDITIONS_TABLE)
+@Index(['wallet', 'hodl_rate'])
 export class TDHEditions extends BaseTDHEditionsFields {
   @PrimaryColumn({ type: 'varchar', length: 50 })
   wallet!: string;
@@ -245,6 +249,7 @@ export class TDHEditions extends BaseTDHEditionsFields {
 
 @Entity(CONSOLIDATED_TDH_EDITIONS_TABLE)
 export class ConsolidatedTDHEditions extends BaseTDHEditionsFields {
+  @Index()
   @PrimaryColumn({ type: 'varchar', length: 500 })
   consolidation_key!: string;
 }

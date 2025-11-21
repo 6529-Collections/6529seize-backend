@@ -44,6 +44,8 @@ export class ApiOwnerBalance {
     'boosted_memes_tdh_rank': number;
     'boosted_gradients_tdh_rank': number;
     'boosted_nextgen_tdh_rank': number;
+    'xtdh': number;
+    'xtdh_rank': number;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -231,6 +233,18 @@ export class ApiOwnerBalance {
         {
             "name": "boosted_nextgen_tdh_rank",
             "baseName": "boosted_nextgen_tdh_rank",
+            "type": "number",
+            "format": "int64"
+        },
+        {
+            "name": "xtdh",
+            "baseName": "xtdh",
+            "type": "number",
+            "format": "double"
+        },
+        {
+            "name": "xtdh_rank",
+            "baseName": "xtdh_rank",
             "type": "number",
             "format": "int64"
         }    ];

@@ -1513,14 +1513,14 @@ export async function addRememe(by: string, rememe: any) {
 }
 
 export async function getTdhForAddress(address: string) {
-  const sql = `SELECT boosted_tdh FROM ${CONSOLIDATED_WALLETS_TDH_TABLE} WHERE LOWER(${CONSOLIDATED_WALLETS_TDH_TABLE}.wallets) LIKE :address`;
+  const sql = `SELECT boosted_tdh as tdh FROM ${CONSOLIDATED_WALLETS_TDH_TABLE} WHERE LOWER(${CONSOLIDATED_WALLETS_TDH_TABLE}.wallets) LIKE :address`;
   const result = await sqlExecutor.execute(sql, {
     address: `%${address.toLowerCase()}%`
   });
   if (result.length === 0) {
     return 0;
   }
-  return result[0].boosted_tdh;
+  return result[0].tdh;
 }
 
 export async function fetchTDHGlobalHistory(pageSize: number, page: number) {

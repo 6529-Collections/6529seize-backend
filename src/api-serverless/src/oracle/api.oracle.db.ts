@@ -152,13 +152,13 @@ export const fetchTotalTDH = async () => {
   const block = await getBlock();
   const merkleRoot = await getMerkleRoot(block);
   const sql = `
-    SELECT SUM(boosted_tdh) as total_tdh, SUM(boosted_memes_tdh) as memes_tdh, SUM(boosted_gradients_tdh) as gradients_tdh, SUM(boosted_nextgen_tdh) as nextgen_tdh from ${CONSOLIDATED_WALLETS_TDH_TABLE}
+    SELECT SUM(boosted_tdh) as boosted_tdh, SUM(boosted_memes_tdh) as memes_tdh, SUM(boosted_gradients_tdh) as gradients_tdh, SUM(boosted_nextgen_tdh) as nextgen_tdh from ${CONSOLIDATED_WALLETS_TDH_TABLE}
   `;
   const tdh = await sqlExecutor.execute(sql);
   const seasonTdh = await fetchSeasonsTDH();
 
   const totals: any = {
-    tdh: formatNumber(tdh[0]?.total_tdh ?? 0),
+    tdh: formatNumber(tdh[0]?.boosted_tdh ?? 0),
     memes_tdh: formatNumber(tdh[0]?.memes_tdh ?? 0),
     gradients_tdh: formatNumber(tdh[0]?.gradients_tdh ?? 0),
     nextgen_tdh: formatNumber(tdh[0]?.nextgen_tdh ?? 0)
@@ -254,7 +254,6 @@ export const fetchSingleAddressTDHMemesSeasons = async (address: string) => {
 export async function fetchTDHAbove(value: number, includeEntries: boolean) {
   const block = await getBlock();
   const merkleRoot = await getMerkleRoot(block);
-
   const sql = `
     SELECT * from ${CONSOLIDATED_WALLETS_TDH_TABLE} 
     WHERE boosted_tdh >= ${value}
@@ -328,7 +327,7 @@ export async function fetchTDHCutoff(cutoff: number) {
     LIMIT :cutoff
   `;
   const tdh = await sqlExecutor.execute(query, { cutoff });
-  const leastTdh = tdh[tdh.length - 1].boosted_tdh;
+  const leastTdh = tdh.at(-1)?.boosted_tdh;
   const entries = tdh.map((t: any) => {
     return {
       consolidation_key: t.consolidation_key,
@@ -385,9 +384,9 @@ export async function validatePrenode(
   const tdh =
     (
       await sqlExecutor.execute(`
-        SELECT SUM(boosted_tdh) as total_tdh FROM ${CONSOLIDATED_WALLETS_TDH_TABLE}
+        SELECT SUM(boosted_tdh) as boosted_tdh FROM ${CONSOLIDATED_WALLETS_TDH_TABLE}
       `)
-    )[0]?.total_tdh ?? 0;
+    )[0]?.boosted_tdh ?? 0;
 
   const tdh_sync = prenodeTdh === tdh;
   const block_sync = prenodeBlock === block;

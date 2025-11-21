@@ -105,6 +105,7 @@ export * from '../models/ApiOwnerBalancePage';
 export * from '../models/ApiPageBase';
 export * from '../models/ApiPageSortDirection';
 export * from '../models/ApiPageWithNextUriBase';
+export * from '../models/ApiPageWithoutCount';
 export * from '../models/ApiProfileClassification';
 export * from '../models/ApiProfileMin';
 export * from '../models/ApiProfileProxy';
@@ -126,10 +127,14 @@ export * from '../models/ApiStartMultipartMediaUploadResponse';
 export * from '../models/ApiTargetAndSubscriptionActions';
 export * from '../models/ApiTdhEdition';
 export * from '../models/ApiTdhEditionsPage';
+export * from '../models/ApiTdhGlobalStats';
 export * from '../models/ApiTdhGrant';
 export * from '../models/ApiTdhGrantStatus';
 export * from '../models/ApiTdhGrantTargetChain';
+export * from '../models/ApiTdhGrantToken';
+export * from '../models/ApiTdhGrantTokensPage';
 export * from '../models/ApiTdhGrantsPage';
+export * from '../models/ApiTdhStats';
 export * from '../models/ApiTransaction';
 export * from '../models/ApiTransactionPage';
 export * from '../models/ApiUpdateDropRequest';
@@ -176,6 +181,14 @@ export * from '../models/ApiWaveVotersPage';
 export * from '../models/ApiWaveVotingConfig';
 export * from '../models/ApiWavesOverviewType';
 export * from '../models/ApiWavesPinFilter';
+export * from '../models/ApiXTdhCollection';
+export * from '../models/ApiXTdhCollectionsPage';
+export * from '../models/ApiXTdhContribution';
+export * from '../models/ApiXTdhContributionsPage';
+export * from '../models/ApiXTdhGrantee';
+export * from '../models/ApiXTdhGranteesPage';
+export * from '../models/ApiXTdhToken';
+export * from '../models/ApiXTdhTokensPage';
 export * from '../models/CreateDirectMessageWaveRequest';
 export * from '../models/GetWaveSubscription200Response';
 
@@ -286,6 +299,7 @@ import { ApiOwnerBalancePage } from '../models/ApiOwnerBalancePage';
 import { ApiPageBase } from '../models/ApiPageBase';
 import { ApiPageSortDirection } from '../models/ApiPageSortDirection';
 import { ApiPageWithNextUriBase } from '../models/ApiPageWithNextUriBase';
+import { ApiPageWithoutCount } from '../models/ApiPageWithoutCount';
 import { ApiProfileClassification } from '../models/ApiProfileClassification';
 import { ApiProfileMin } from '../models/ApiProfileMin';
 import { ApiProfileProxy } from '../models/ApiProfileProxy';
@@ -307,10 +321,14 @@ import { ApiStartMultipartMediaUploadResponse } from '../models/ApiStartMultipar
 import { ApiTargetAndSubscriptionActions } from '../models/ApiTargetAndSubscriptionActions';
 import { ApiTdhEdition } from '../models/ApiTdhEdition';
 import { ApiTdhEditionsPage } from '../models/ApiTdhEditionsPage';
+import { ApiTdhGlobalStats } from '../models/ApiTdhGlobalStats';
 import { ApiTdhGrant             } from '../models/ApiTdhGrant';
 import { ApiTdhGrantStatus } from '../models/ApiTdhGrantStatus';
 import { ApiTdhGrantTargetChain } from '../models/ApiTdhGrantTargetChain';
+import { ApiTdhGrantToken } from '../models/ApiTdhGrantToken';
+import { ApiTdhGrantTokensPage } from '../models/ApiTdhGrantTokensPage';
 import { ApiTdhGrantsPage } from '../models/ApiTdhGrantsPage';
+import { ApiTdhStats } from '../models/ApiTdhStats';
 import { ApiTransaction } from '../models/ApiTransaction';
 import { ApiTransactionPage } from '../models/ApiTransactionPage';
 import { ApiUpdateDropRequest } from '../models/ApiUpdateDropRequest';
@@ -357,6 +375,14 @@ import { ApiWaveVotersPage } from '../models/ApiWaveVotersPage';
 import { ApiWaveVotingConfig         } from '../models/ApiWaveVotingConfig';
 import { ApiWavesOverviewType } from '../models/ApiWavesOverviewType';
 import { ApiWavesPinFilter } from '../models/ApiWavesPinFilter';
+import { ApiXTdhCollection } from '../models/ApiXTdhCollection';
+import { ApiXTdhCollectionsPage } from '../models/ApiXTdhCollectionsPage';
+import { ApiXTdhContribution } from '../models/ApiXTdhContribution';
+import { ApiXTdhContributionsPage } from '../models/ApiXTdhContributionsPage';
+import { ApiXTdhGrantee } from '../models/ApiXTdhGrantee';
+import { ApiXTdhGranteesPage } from '../models/ApiXTdhGranteesPage';
+import { ApiXTdhToken } from '../models/ApiXTdhToken';
+import { ApiXTdhTokensPage } from '../models/ApiXTdhTokensPage';
 import { CreateDirectMessageWaveRequest } from '../models/CreateDirectMessageWaveRequest';
 import { GetWaveSubscription200Response } from '../models/GetWaveSubscription200Response';
 
@@ -502,6 +528,7 @@ let typeMap: {[index: string]: any} = {
     "ApiOwnerBalancePage": ApiOwnerBalancePage,
     "ApiPageBase": ApiPageBase,
     "ApiPageWithNextUriBase": ApiPageWithNextUriBase,
+    "ApiPageWithoutCount": ApiPageWithoutCount,
     "ApiProfileMin": ApiProfileMin,
     "ApiProfileProxy": ApiProfileProxy,
     "ApiProfileProxyAction": ApiProfileProxyAction,
@@ -520,8 +547,12 @@ let typeMap: {[index: string]: any} = {
     "ApiTargetAndSubscriptionActions": ApiTargetAndSubscriptionActions,
     "ApiTdhEdition": ApiTdhEdition,
     "ApiTdhEditionsPage": ApiTdhEditionsPage,
+    "ApiTdhGlobalStats": ApiTdhGlobalStats,
     "ApiTdhGrant": ApiTdhGrant,
+    "ApiTdhGrantToken": ApiTdhGrantToken,
+    "ApiTdhGrantTokensPage": ApiTdhGrantTokensPage,
     "ApiTdhGrantsPage": ApiTdhGrantsPage,
+    "ApiTdhStats": ApiTdhStats,
     "ApiTransaction": ApiTransaction,
     "ApiTransactionPage": ApiTransactionPage,
     "ApiUpdateDropRequest": ApiUpdateDropRequest,
@@ -557,6 +588,14 @@ let typeMap: {[index: string]: any} = {
     "ApiWaveVoter": ApiWaveVoter,
     "ApiWaveVotersPage": ApiWaveVotersPage,
     "ApiWaveVotingConfig": ApiWaveVotingConfig,
+    "ApiXTdhCollection": ApiXTdhCollection,
+    "ApiXTdhCollectionsPage": ApiXTdhCollectionsPage,
+    "ApiXTdhContribution": ApiXTdhContribution,
+    "ApiXTdhContributionsPage": ApiXTdhContributionsPage,
+    "ApiXTdhGrantee": ApiXTdhGrantee,
+    "ApiXTdhGranteesPage": ApiXTdhGranteesPage,
+    "ApiXTdhToken": ApiXTdhToken,
+    "ApiXTdhTokensPage": ApiXTdhTokensPage,
     "CreateDirectMessageWaveRequest": CreateDirectMessageWaveRequest,
     "GetWaveSubscription200Response": GetWaveSubscription200Response,
 }

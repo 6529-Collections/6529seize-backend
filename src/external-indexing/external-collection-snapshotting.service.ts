@@ -270,6 +270,10 @@ export class ExternalCollectionSnapshottingService {
   ): Promise<bigint[]> {
     const maxIds = env.getIntOrNull('SNAPSHOT_MAX_IDS') ?? 250_000;
     const stopAfterEmpty = env.getIntOrNull('SNAPSHOT_STOP_AFTER_EMPTY') ?? 500;
+    const probeBatch = Math.max(
+      1,
+      env.getIntOrNull('SNAPSHOT_OWNEROF_PROBE_BATCH') ?? 64
+    );
 
     const start = await this.pickStartId(erc721, atBlock);
     const ids: bigint[] = [];
@@ -282,21 +286,56 @@ export class ExternalCollectionSnapshottingService {
       maxIds
     });
 
-    while (emptyStreak < stopAfterEmpty && ids.length < maxIds) {
-      const owner = await this.ownerOfExists(erc721, probe, atBlock);
-      if (owner) {
-        ids.push(probe);
-        emptyStreak = 0;
-        if (ids.length % 250 === 0) {
-          log.info('ownerOf() probe progress', {
-            found: ids.length,
-            lastId: probe.toString()
-          });
-        }
-      } else {
-        emptyStreak++;
+    outer: while (emptyStreak < stopAfterEmpty && ids.length < maxIds) {
+      const remainingIds = maxIds - ids.length;
+      const remainingUntilEmpty = stopAfterEmpty - emptyStreak;
+      const chunkSize = Math.max(
+        1,
+        Math.min(probeBatch, remainingIds, remainingUntilEmpty)
+      );
+      const chunkIds: bigint[] = new Array(chunkSize);
+      for (let i = 0; i < chunkSize; i++) {
+        chunkIds[i] = probe + BigInt(i);
       }
-      probe++;
+
+      const owners = await this.ownerOfProbeBatch(
+        erc721,
+        chunkIds,
+        atBlock,
+        log
+      );
+
+      let advanced = 0;
+      for (let i = 0; i < owners.length; i++) {
+        const tokenId = chunkIds[i];
+        const owner = owners[i];
+        advanced++;
+
+        if (owner) {
+          ids.push(tokenId);
+          emptyStreak = 0;
+          if (ids.length % 250 === 0) {
+            log.info('ownerOf() probe progress', {
+              found: ids.length,
+              lastId: tokenId.toString()
+            });
+          }
+          if (ids.length >= maxIds) {
+            break;
+          }
+        } else {
+          emptyStreak++;
+          if (emptyStreak >= stopAfterEmpty) {
+            break;
+          }
+        }
+      }
+
+      probe += BigInt(advanced);
+
+      if (emptyStreak >= stopAfterEmpty || ids.length >= maxIds) {
+        break outer;
+      }
     }
 
     log.info('ownerOf() probing finished', {
@@ -304,6 +343,66 @@ export class ExternalCollectionSnapshottingService {
       lastProbed: (probe - BigInt(1)).toString()
     });
     return ids;
+  }
+
+  private async ownerOfProbeBatch(
+    erc721: Contract,
+    tokenIds: bigint[],
+    atBlock: number,
+    log: Logger
+  ): Promise<(string | null)[]> {
+    if (tokenIds.length === 0) {
+      return [];
+    }
+
+    const mc = new Contract(
+      this.multicallAddr(),
+      MULTICALL3_ABI,
+      this.rpc.provider
+    );
+    const erc721Iface = new ethers.utils.Interface(ERC721_ABI);
+
+    const calls = tokenIds.map((tid) => ({
+      target: erc721.address,
+      callData: erc721Iface.encodeFunctionData('ownerOf', [tid])
+    }));
+
+    try {
+      const ret: { success: boolean; returnData: string }[] =
+        await mc.tryAggregate(false, calls, {
+          blockTag: atBlock
+        });
+
+      return ret.map((r, idx) => {
+        if (!r?.success || !r.returnData || r.returnData === '0x') {
+          return null;
+        }
+        try {
+          const decoded: ethers.utils.Result = erc721Iface.decodeFunctionResult(
+            'ownerOf',
+            r.returnData
+          );
+          const owner = (decoded[0] as string) ?? null;
+          return owner && owner !== ethers.constants.AddressZero ? owner : null;
+        } catch {
+          return null;
+        }
+      });
+    } catch (e) {
+      log.warn(
+        'ownerOf() probe multicall failed; falling back to single calls',
+        {
+          error: String(e),
+          chunk: tokenIds.length
+        }
+      );
+    }
+
+    const owners: (string | null)[] = new Array(tokenIds.length);
+    for (let i = 0; i < tokenIds.length; i++) {
+      owners[i] = await this.ownerOfExists(erc721, tokenIds[i], atBlock);
+    }
+    return owners;
   }
 
   private async getBestBlock(): Promise<number> {

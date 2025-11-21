@@ -1,0 +1,111 @@
+service: xTdhLoop
+
+package:
+  artifact: dist/index.zip
+
+plugins:
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs18.x
+  memorySize: 512
+  timeout: 900
+  architecture: arm64
+  logRetentionInDays: 60
+
+functions:
+  xTdhLoop:
+    handler: index.handler
+    reservedConcurrency: 1
+    name: xTdhLoop
+    description: ${env:VERSION_DESCRIPTION}
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - XTdhStartQueue
+              - Arn
+    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    vpc:
+      securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
+      subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
+    environment:
+      SENTRY_DSN: ${env:SENTRY_DSN}
+      SENTRY_ENVIRONMENT: "xTdhLoop_${opt:stage, self:provider.stage}"
+
+resources:
+  Resources:
+    XTdhLoopLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/xTdhLoop
+        RetentionInDays: 60
+    XTdhStartQueue:
+      Type: "AWS::SQS::Queue"
+      Properties:
+        QueueName: "xtdh-start.fifo"
+        FifoQueue: true
+        VisibilityTimeout: 1000
+        ContentBasedDeduplication: true
+    XTdhSubscription:
+      Type: AWS::SNS::Subscription
+      Properties:
+        TopicArn: arn:aws:sns:${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):region}:987989283142:tdh-calculation-done.fifo
+        Protocol: sqs
+        Endpoint: !GetAtt
+          - XTdhStartQueue
+          - Arn
+        RawMessageDelivery: true
+    XTdhStartQueuePolicy:
+      Type: "AWS::SQS::QueuePolicy"
+      Properties:
+        Queues:
+          - Ref: "XTdhStartQueue"
+        PolicyDocument:
+          Statement:
+            - Effect: "Allow"
+              Principal:
+                Service: "sns.amazonaws.com"
+              Action:
+                - sqs:SendMessage
+                - sqs:ReceiveMessage
+                - sqs:DeleteMessage
+                - sqs:GetQueueUrl
+                - sqs:GetQueueAttributes
+                - sqs:ListQueueTags
+                - sqs:ChangeMessageVisibility
+              Resource:
+                - !GetAtt XTdhStartQueue.Arn
+    XTdhLoopOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      DependsOn:
+        - XTdhLoopLogGroup
+      Properties:
+        LogGroupName:
+          Ref: XTdhLoopLogGroup
+        FilterPattern: "Runtime.OutOfMemory"
+        MetricTransformations:
+          - MetricNamespace: "Lambda/OOM"
+            MetricName: "xTdhLoop_OOMErrorCount"
+            MetricValue: "1"
+            DefaultValue: 0
+
+    XTdhLoopOOMAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: XTdhLoopOOMFilter
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-xTdhLoop-OOM"
+        AlarmDescription: !Sub "Lambda xTdhLoop OutOfMemory in ${AWS::Region}"
+        Namespace: "Lambda/OOM"
+        MetricName: "xTdhLoop_OOMErrorCount"
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}

@@ -11,7 +11,6 @@ import {
   persistNftDelegationBlock
 } from '../db';
 import { findDelegationTransactions } from '../delegations';
-import { revokeTdhBasedDropWavesOverVotes } from '../drops/participation-drops-over-vote-revocation';
 import { discoverEnsConsolidations, discoverEnsDelegations } from '../ens';
 import {
   AggregatedActivity,
@@ -46,17 +45,12 @@ import {
   TDHEditions,
   TDHMemes
 } from '../entities/ITDH';
-import {
-  syncIdentitiesMetrics,
-  syncIdentitiesPrimaryWallets,
-  syncIdentitiesWithTdhConsolidations
-} from '../identity';
 import { Logger } from '../logging';
 import { consolidateNftOwners } from '../nftOwnersLoop/nft_owners';
 import { consolidateOwnerBalances } from '../ownersBalancesLoop/owners_balances';
 import { doInDbContext } from '../secrets';
 import * as sentryContext from '../sentry.context';
-import { dbSupplier, sqlExecutor } from '../sql-executor';
+import { sqlExecutor } from '../sql-executor';
 import { consolidateSubscriptions } from '../subscriptionsDaily/subscriptions';
 import { updateTDH } from '../tdhLoop/tdh';
 import { consolidateAndPersistTDH } from '../tdhLoop/tdh_consolidation';
@@ -132,13 +126,6 @@ async function handleDelegations(startBlock: number | undefined) {
     ...delegationsResponse.revocation
   ].filter((e) => e.use_case === USE_CASE_PRIMARY_ADDRESS);
   await updatePrimaryAddresses(primaryAddressEvents);
-
-  await dbSupplier().executeNativeQueriesInTransaction(async (connection) => {
-    await syncIdentitiesWithTdhConsolidations(connection);
-    await syncIdentitiesPrimaryWallets(connection);
-    await syncIdentitiesMetrics(connection);
-    await revokeTdhBasedDropWavesOverVotes(connection);
-  });
 
   return delegationsResponse;
 }
