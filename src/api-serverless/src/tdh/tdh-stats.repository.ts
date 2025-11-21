@@ -492,18 +492,18 @@ export class TdhStatsRepository extends LazyDbAccessCompatibleService {
     ctx: RequestContext
   ): Promise<number> {
     try {
-      ctx.timer?.start(`${this.constructor.name}->getBaseTdh`);
+      ctx.timer?.start(`${this.constructor.name}->getIncomingXTdhRate`);
       const GRANT_TABLE = `${XTDH_TOKEN_GRANT_STATS_TABLE_PREFIX}${slot}`;
-      const TOKEN_STATA_TABLE = `${XTDH_TOKEN_STATS_TABLE_PREFIX}${slot}`;
+      const TOKEN_STATS_TABLE = `${XTDH_TOKEN_STATS_TABLE_PREFIX}${slot}`;
       return await this.db
-        .oneOrNull<{ boosted_tdh: number }>(
+        .oneOrNull<{ received_rate: number }>(
           `
           SELECT
               SUM(gts.xtdh_rate_daily) AS received_rate
           FROM ${GRANT_TABLE} gts
                    JOIN ${TDH_GRANTS_TABLE} g
                         ON g.id = gts.grant_id
-                   JOIN ${TOKEN_STATA_TABLE} ts
+                   JOIN ${TOKEN_STATS_TABLE} ts
                         ON ts.partition = gts.partition
                             AND ts.token_id = gts.token_id
                    JOIN ${ADDRESS_CONSOLIDATION_KEY} ack
@@ -511,14 +511,13 @@ export class TdhStatsRepository extends LazyDbAccessCompatibleService {
                    JOIN ${IDENTITIES_TABLE} i
                         ON i.consolidation_key = ack.consolidation_key
           WHERE i.profile_id = :identityId
-            AND g.grantor_id != i.profile_id
       `,
           { identityId },
           { wrappedConnection: ctx.connection }
         )
-        .then((it) => it?.boosted_tdh ?? 0);
+        .then((it) => it?.received_rate ?? 0);
     } finally {
-      ctx.timer?.stop(`${this.constructor.name}->getBaseTdh`);
+      ctx.timer?.stop(`${this.constructor.name}->getIncomingXTdhRate`);
     }
   }
 
