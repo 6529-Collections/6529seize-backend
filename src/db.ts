@@ -1046,13 +1046,13 @@ export async function persistConsolidatedTDH(
       await insertWithoutUpdate(tdhMemesRepo, memesTdh);
       await insertWithoutUpdate(tdhEditionsRepo, tdhEditions);
 
-      await syncIdentitiesMetrics({ connection: qrHolder });
-      await revokeTdhBasedDropWavesOverVotes({ connection: qrHolder });
+      await syncIdentitiesMetrics({ connection: queryRunner });
+      await revokeTdhBasedDropWavesOverVotes({ connection: queryRunner });
 
       logger.info(`[CONSOLIDATED TDH] [PERSISTING HISTORIC TDH]`);
     }
     await persistHistoricConsolidatedTDH(manager, block, tdh, wallets);
-    await syncIdentitiesWithTdhConsolidations(qrHolder);
+    await syncIdentitiesWithTdhConsolidations(queryRunner);
   });
 
   const xtdhLoopQueueUrl = env.getStringOrNull(`XTDH_LOOP_QUEUE_URL`);
