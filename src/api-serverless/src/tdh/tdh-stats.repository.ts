@@ -17,6 +17,76 @@ import { Time } from '../../../time';
 import { TdhGrantStatus, TdhGrantTokenMode } from '../../../entities/ITdhGrant';
 
 export class TdhStatsRepository extends LazyDbAccessCompatibleService {
+  async getGrantedTdhCollectionsGlobalCount(
+    { slot }: { slot: 'a' | 'b' },
+    ctx: RequestContext
+  ): Promise<number> {
+    try {
+      ctx.timer?.start(
+        `${this.constructor.name}->getGrantedTdhCollectionsGlobalCount`
+      );
+      const sql = `SELECT COUNT(DISTINCT s.partition) AS collections_count
+        FROM ${XTDH_TOKEN_STATS_TABLE_PREFIX}${slot} s
+        WHERE s.xtdh_total > 0`;
+      const res = await this.db.oneOrNull<{ collections_count: number }>(
+        sql,
+        undefined,
+        { wrappedConnection: ctx.connection }
+      );
+      return res?.collections_count ?? 0;
+    } finally {
+      ctx.timer?.stop(
+        `${this.constructor.name}->getGrantedTdhCollectionsGlobalCount`
+      );
+    }
+  }
+
+  async getGrantedTdhTokensGlobalCount(
+    { slot }: { slot: 'a' | 'b' },
+    ctx: RequestContext
+  ): Promise<number> {
+    try {
+      ctx.timer?.start(
+        `${this.constructor.name}->getGrantedTdhTokensGlobalCount`
+      );
+      const sql = `SELECT COUNT(*) as cnt FROM ${XTDH_TOKEN_STATS_TABLE_PREFIX}${slot} where xtdh_total > 0`;
+      const res = await this.db.oneOrNull<{ cnt: number }>(sql, undefined, {
+        wrappedConnection: ctx.connection
+      });
+      return res?.cnt ?? 0;
+    } finally {
+      ctx.timer?.stop(
+        `${this.constructor.name}->getGrantedTdhTokensGlobalCount`
+      );
+    }
+  }
+
+  async getGrantedTdhTotalSumPerDayGlobal(
+    { slot }: { slot: 'a' | 'b' },
+    ctx: RequestContext
+  ): Promise<number> {
+    try {
+      ctx.timer?.start(
+        `${this.constructor.name}->getGrantedTdhTotalSumPerDayGlobal`
+      );
+
+      const sql = `
+      SELECT COALESCE(SUM(gts.xtdh_rate_daily), 0) AS total_granted_tdh_per_day
+      FROM ${XTDH_TOKEN_GRANT_STATS_TABLE_PREFIX}${slot} gts
+    `;
+
+      const res = await this.db.oneOrNull<{
+        total_granted_tdh_per_day: number;
+      }>(sql, undefined, { wrappedConnection: ctx.connection });
+
+      return res?.total_granted_tdh_per_day ?? 0;
+    } finally {
+      ctx.timer?.stop(
+        `${this.constructor.name}->getGrantedTdhTotalSumPerDayGlobal`
+      );
+    }
+  }
+
   async getGrantedTdhCollectionsCount(
     id: string,
     ctx: RequestContext
@@ -449,6 +519,60 @@ export class TdhStatsRepository extends LazyDbAccessCompatibleService {
         .then((it) => it?.boosted_tdh ?? 0);
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->getBaseTdh`);
+    }
+  }
+
+  async getGlobalIdentityStats(ctx: RequestContext): Promise<{
+    tdh: number;
+    tdh_rate: number;
+    xtdh: number;
+    xtdh_rate: number;
+  }> {
+    try {
+      ctx.timer?.start(`${this.constructor.name}->getGlobalIdentityStats`);
+      return this.db
+        .oneOrNull<{
+          tdh: number;
+          tdh_rate: number;
+          xtdh: number;
+          xtdh_rate: number;
+        }>(
+          `select sum(tdh) as tdh, sum(basetdh_rate) as tdh_rate, sum(xtdh) as xtdh, sum(xtdh_rate) as xtdh_rate from ${IDENTITIES_TABLE}`
+        )
+        .then((it) => it ?? { tdh: 0, tdh_rate: 0, xtdh: 0, xtdh_rate: 0 });
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->getGlobalIdentityStats`);
+    }
+  }
+
+  async getGrantedXTdhRateGlobal(
+    { slot }: { slot: 'a' | 'b' },
+    ctx: RequestContext
+  ) {
+    try {
+      ctx.timer?.start(
+        `${this.constructor.name}->getXTdhGrantedLastMidnightGlobal`
+      );
+
+      const res = await this.db.oneOrNull<{
+        total_xtdh_granted_last_midnight: number;
+      }>(
+        `
+          SELECT
+            COALESCE(SUM(gts.xtdh_rate_daily), 0) AS total_xtdh_granted_last_midnight
+          FROM ${XTDH_TOKEN_GRANT_STATS_TABLE_PREFIX}${slot} gts
+        `,
+        undefined,
+        {
+          wrappedConnection: ctx.connection
+        }
+      );
+
+      return res?.total_xtdh_granted_last_midnight ?? 0;
+    } finally {
+      ctx.timer?.stop(
+        `${this.constructor.name}->getXTdhGrantedLastMidnightGlobal`
+      );
     }
   }
 }

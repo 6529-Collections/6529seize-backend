@@ -327,7 +327,7 @@ export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
             SELECT GREATEST(
                      (SELECT base_rate FROM base),
                      COALESCE((SELECT MAX(running_rate) FROM scan), 0)
-                   ) AS max_spent_rate
+                   ) AS spent_rate
         `,
           param,
           {
@@ -338,6 +338,37 @@ export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
     } finally {
       ctx.timer?.stop(
         `${this.constructor.name}->getGrantorsMaxSpentTdhRateInTimeSpan`
+      );
+    }
+  }
+
+  async getGrantorsLooseMaxRateToStillSpend(
+    grantorId: string,
+    ctx: RequestContext
+  ): Promise<number> {
+    try {
+      ctx.timer?.start(
+        `${this.constructor.name}->getGrantorsLooseMaxRateToStillSpend`
+      );
+      return this.db
+        .oneOrNull<{ spent_rate: number }>(
+          `
+            SELECT
+              COALESCE(SUM(g.tdh_rate), 0) AS spent_rate
+            FROM ${TDH_GRANTS_TABLE} g
+            WHERE g.grantor_id = :grantorId
+              AND g.status IN ('${TdhGrantStatus.GRANTED}', '${TdhGrantStatus.PENDING}')
+              AND (g.valid_to IS NULL OR g.valid_to > :nowMillis)
+        `,
+          { grantorId, nowMillis: Time.currentMillis() },
+          {
+            wrappedConnection: ctx.connection
+          }
+        )
+        ?.then((res) => +(res?.spent_rate ?? 0));
+    } finally {
+      ctx.timer?.stop(
+        `${this.constructor.name}->getGrantorsLooseMaxRateToStillSpend`
       );
     }
   }
