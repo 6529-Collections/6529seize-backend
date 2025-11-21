@@ -88,7 +88,7 @@ import { env } from './env';
 import { computeMerkleRoot } from './tdhLoop/tdh_merkle';
 import { Time } from './time';
 import { revokeTdhBasedDropWavesOverVotes } from './drops/participation-drops-over-vote-revocation';
-import { sqs } from './sqs';
+import { recalculateXTdhUseCase } from './tdh-grants/recalculate-xtdh.use-case';
 
 const mysql = require('mysql');
 
@@ -1046,24 +1046,16 @@ export async function persistConsolidatedTDH(
       await insertWithoutUpdate(tdhMemesRepo, memesTdh);
       await insertWithoutUpdate(tdhEditionsRepo, tdhEditions);
 
-      await syncIdentitiesMetrics({ connection: queryRunner });
-      await revokeTdhBasedDropWavesOverVotes({ connection: queryRunner });
+      await syncIdentitiesWithTdhConsolidations(qrHolder);
+      await syncIdentitiesMetrics(qrHolder);
+      await revokeTdhBasedDropWavesOverVotes(qrHolder);
 
       logger.info(`[CONSOLIDATED TDH] [PERSISTING HISTORIC TDH]`);
     }
     await persistHistoricConsolidatedTDH(manager, block, tdh, wallets);
-    await syncIdentitiesWithTdhConsolidations(queryRunner);
   });
 
-  const xtdhLoopQueueUrl = env.getStringOrNull(`XTDH_LOOP_QUEUE_URL`);
-  if (!xtdhLoopQueueUrl) {
-    logger.warn(`XTDH_LOOP_QUEUE_URL not configured. Skipping loop call.`);
-  } else {
-    await sqs.send({
-      message: {},
-      queue: xtdhLoopQueueUrl
-    });
-  }
+  await recalculateXTdhUseCase.activateLoop({});
   logger.info(`[CONSOLIDATED TDH] PERSISTED ALL WALLETS TDH [${tdh.length}]`);
 }
 
