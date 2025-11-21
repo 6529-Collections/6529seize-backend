@@ -608,31 +608,6 @@ ck_xtdh AS (
     }
   }
 
-  async updateBoostedTdhRate(ctx: RequestContext) {
-    try {
-      ctx.timer?.start(`${this.constructor.name}->updateBoostedTdhRate`);
-      const sql = `
-      UPDATE ${CONSOLIDATED_WALLETS_TDH_TABLE} cw
-      LEFT JOIN (
-        SELECT
-          c.consolidation_key,
-          SUM(e.hodl_rate) * COALESCE(MAX(c.boost), 1.0) AS boosted_tdh_rate
-        FROM ${CONSOLIDATED_WALLETS_TDH_TABLE} c
-        LEFT JOIN ${CONSOLIDATED_TDH_EDITIONS_TABLE} e
-          ON e.consolidation_key = c.consolidation_key
-        GROUP BY c.consolidation_key
-      ) x
-        ON x.consolidation_key = cw.consolidation_key
-      SET cw.boosted_tdh_rate = COALESCE(x.boosted_tdh_rate, 0)
-    `;
-      await this.db.execute(sql, undefined, {
-        wrappedConnection: ctx.connection
-      });
-    } finally {
-      ctx.timer?.stop(`${this.constructor.name}->updateBoostedTdhRate`);
-    }
-  }
-
   async updateXtdhRate(ctx: RequestContext) {
     try {
       ctx.timer?.start(`${this.constructor.name}->updateXtdhRate`);
