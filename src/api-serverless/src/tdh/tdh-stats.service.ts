@@ -12,11 +12,11 @@ import {
   tdhGrantsRepository,
   TdhGrantsRepository
 } from '../../../tdh-grants/tdh-grants.repository';
-import { Time } from '../../../time';
 import {
   xTdhRepository,
   XTdhRepository
 } from '../../../tdh-grants/xtdh.repository';
+import { ApiTdhGlobalStats } from '../generated/models/ApiTdhGlobalStats';
 
 export class TdhStatsService {
   constructor(
@@ -26,6 +26,37 @@ export class TdhStatsService {
     private readonly tdhGrantsRepository: TdhGrantsRepository,
     private readonly xTdhRepository: XTdhRepository
   ) {}
+
+  async getGlobalStats(ctx: RequestContext): Promise<ApiTdhGlobalStats> {
+    const slot = await this.xTdhRepository.getActiveStatsSlot(ctx);
+    const [
+      identityStats,
+      grantedTargetCollectionsCount,
+      grantedTargetTokensCount,
+      grantedXTdhTotalSum,
+      grantedXTdhRate
+    ] = await Promise.all([
+      this.tdhStatsRepository.getGlobalIdentityStats(ctx),
+      this.tdhStatsRepository.getGrantedTdhCollectionsGlobalCount(
+        { slot },
+        ctx
+      ),
+      this.tdhStatsRepository.getGrantedTdhTokensGlobalCount({ slot }, ctx),
+      this.tdhStatsRepository.getGrantedTdhTotalSumPerDayGlobal({ slot }, ctx),
+      this.tdhStatsRepository.getGrantedXTdhRateGlobal({ slot }, ctx)
+    ]);
+    return {
+      tdh_rate: identityStats.tdh_rate,
+      xtdh: identityStats.xtdh,
+      granted_xtdh: grantedXTdhTotalSum,
+      xtdh_multiplier: X_TDH_COEFFICIENT,
+      xtdh_rate: identityStats.xtdh_rate,
+      tdh: identityStats.tdh,
+      granted_xtdh_rate: grantedXTdhRate,
+      granted_target_collections_count: grantedTargetCollectionsCount,
+      granted_target_tokens_count: grantedTargetTokensCount
+    };
+  }
 
   async getIdentityStats(
     identityKey: string,
@@ -44,28 +75,22 @@ export class TdhStatsService {
       identityId,
       ctx.connection
     ))!;
-    const now = Time.now();
-    const dayLater = now.plusDays(1);
     const slot = await this.xTdhRepository.getActiveStatsSlot(ctx);
     const [
       grantedTargetCollectionsCount,
       grantedTargetTokensCount,
       grantedXTdhPerDay,
-      spentGrantRate,
-      incomingXTdhRate
+      incomingXTdhRate,
+      availableXTdhRate
     ] = await Promise.all([
       this.tdhStatsRepository.getGrantedTdhCollectionsCount(identityId, ctx),
       this.tdhStatsRepository.getGrantedTdhTokensCount(identityId, ctx),
       this.tdhStatsRepository.getGrantedTdhTotalSumPerDay(identityId, ctx),
-      this.tdhGrantsRepository.getGrantorsMaxSpentTdhRateInTimeSpan(
-        {
-          grantorId: identityId,
-          validFrom: now.toMillis(),
-          validTo: dayLater.toMillis()
-        },
+      this.tdhStatsRepository.getIncomingXTdhRate({ identityId, slot }, ctx),
+      this.tdhGrantsRepository.getGrantorsLooseMaxRateToStillSpend(
+        identityId,
         ctx
-      ),
-      this.tdhStatsRepository.getIncomingXTdhRate({ identityId, slot }, ctx)
+      )
     ]);
     return {
       identity,
@@ -82,7 +107,7 @@ export class TdhStatsService {
       granted_target_collections_count: grantedTargetCollectionsCount,
       granted_target_tokens_count: grantedTargetTokensCount,
       available_grant_rate:
-        identityEntity.basetdh_rate * X_TDH_COEFFICIENT - spentGrantRate,
+        identityEntity.basetdh_rate * X_TDH_COEFFICIENT - availableXTdhRate,
       received_xtdh_rate: incomingXTdhRate
     };
   }
