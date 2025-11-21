@@ -15,14 +15,15 @@ import { HttpFile } from '../http/http';
 
 export class ApiTdhStats {
     'identity': ApiIdentity;
-    'base_tdh': number;
+    'tdh': number;
     'tdh_rate': number;
     'xtdh': number;
     'xtdh_rate': number;
     'xtdh_multiplier': number;
-    'granted_xtdh_per_day': number;
+    'granted_xtdh_rate': number;
     'granted_xtdh': number;
     'received_xtdh': number;
+    'received_xtdh_rate': number;
     'granted_target_collections_count': number;
     'granted_target_tokens_count': number;
     'available_grant_rate': number;
@@ -37,8 +38,8 @@ export class ApiTdhStats {
             "format": ""
         },
         {
-            "name": "base_tdh",
-            "baseName": "base_tdh",
+            "name": "tdh",
+            "baseName": "tdh",
             "type": "number",
             "format": "int64"
         },
@@ -67,8 +68,8 @@ export class ApiTdhStats {
             "format": "double"
         },
         {
-            "name": "granted_xtdh_per_day",
-            "baseName": "granted_xtdh_per_day",
+            "name": "granted_xtdh_rate",
+            "baseName": "granted_xtdh_rate",
             "type": "number",
             "format": "double"
         },
@@ -81,6 +82,12 @@ export class ApiTdhStats {
         {
             "name": "received_xtdh",
             "baseName": "received_xtdh",
+            "type": "number",
+            "format": "double"
+        },
+        {
+            "name": "received_xtdh_rate",
+            "baseName": "received_xtdh_rate",
             "type": "number",
             "format": "double"
         },

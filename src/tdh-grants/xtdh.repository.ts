@@ -1136,12 +1136,16 @@ SET cw.xtdh_rate = COALESCE(pd.produced, 0) - COALESCE(go.granted_out, 0) + COAL
     tokenStatsTable: string;
     grantStatsTable: string;
   }> {
-    const meta = await this.getStatsMetaOrThrow(ctx);
-    const slot = meta.active_slot;
+    const slot = await this.getActiveStatsSlot(ctx);
     return {
       tokenStatsTable: `${XTDH_TOKEN_STATS_TABLE_PREFIX}${slot}`,
       grantStatsTable: `${XTDH_TOKEN_GRANT_STATS_TABLE_PREFIX}${slot}`
     };
+  }
+
+  public async getActiveStatsSlot(ctx: RequestContext): Promise<'a' | 'b'> {
+    const meta = await this.getStatsMetaOrThrow(ctx);
+    return meta.active_slot;
   }
 
   async getXTdhCollections(
