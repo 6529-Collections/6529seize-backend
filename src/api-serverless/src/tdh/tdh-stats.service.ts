@@ -13,13 +13,18 @@ import {
   TdhGrantsRepository
 } from '../../../tdh-grants/tdh-grants.repository';
 import { Time } from '../../../time';
+import {
+  xTdhRepository,
+  XTdhRepository
+} from '../../../tdh-grants/xtdh.repository';
 
 export class TdhStatsService {
   constructor(
     private readonly identityFetcher: IdentityFetcher,
     private readonly identitiesDb: IdentitiesDb,
     private readonly tdhStatsRepository: TdhStatsRepository,
-    private readonly tdhGrantsRepository: TdhGrantsRepository
+    private readonly tdhGrantsRepository: TdhGrantsRepository,
+    private readonly xTdhRepository: XTdhRepository
   ) {}
 
   async getIdentityStats(
@@ -41,17 +46,17 @@ export class TdhStatsService {
     ))!;
     const now = Time.now();
     const dayLater = now.plusDays(1);
+    const slot = await this.xTdhRepository.getActiveStatsSlot(ctx);
     const [
       grantedTargetCollectionsCount,
       grantedTargetTokensCount,
       grantedXTdhPerDay,
-      baseTdh,
-      spentGrantRate
+      spentGrantRate,
+      incomingXTdhRate
     ] = await Promise.all([
       this.tdhStatsRepository.getGrantedTdhCollectionsCount(identityId, ctx),
       this.tdhStatsRepository.getGrantedTdhTokensCount(identityId, ctx),
       this.tdhStatsRepository.getGrantedTdhTotalSumPerDay(identityId, ctx),
-      this.tdhStatsRepository.getBaseTdh(identityId, ctx),
       this.tdhGrantsRepository.getGrantorsMaxSpentTdhRateInTimeSpan(
         {
           grantorId: identityId,
@@ -59,7 +64,8 @@ export class TdhStatsService {
           validTo: dayLater.toMillis()
         },
         ctx
-      )
+      ),
+      this.tdhStatsRepository.getIncomingXTdhRate({ identityId, slot }, ctx)
     ]);
     return {
       identity,
@@ -71,12 +77,13 @@ export class TdhStatsService {
         (identityEntity.produced_xtdh - identityEntity.granted_xtdh),
       xtdh_multiplier: X_TDH_COEFFICIENT,
       xtdh_rate: identityEntity.xtdh_rate,
-      base_tdh: baseTdh,
-      granted_xtdh_per_day: grantedXTdhPerDay,
+      tdh: identityEntity.tdh,
+      granted_xtdh_rate: grantedXTdhPerDay,
       granted_target_collections_count: grantedTargetCollectionsCount,
       granted_target_tokens_count: grantedTargetTokensCount,
       available_grant_rate:
-        identityEntity.basetdh_rate * X_TDH_COEFFICIENT - spentGrantRate
+        identityEntity.basetdh_rate * X_TDH_COEFFICIENT - spentGrantRate,
+      received_xtdh_rate: incomingXTdhRate
     };
   }
 }
@@ -85,5 +92,6 @@ export const tdhStatsService = new TdhStatsService(
   identityFetcher,
   identitiesDb,
   tdhStatsRepository,
-  tdhGrantsRepository
+  tdhGrantsRepository,
+  xTdhRepository
 );

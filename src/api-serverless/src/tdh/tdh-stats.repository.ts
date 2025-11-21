@@ -5,12 +5,13 @@ import {
 import { RequestContext } from '../../../request.context';
 import {
   ADDRESS_CONSOLIDATION_KEY,
-  CONSOLIDATED_WALLETS_TDH_TABLE,
   EXTERNAL_INDEXED_CONTRACTS_TABLE,
   EXTERNAL_INDEXED_OWNERSHIP_721_HISTORY_TABLE,
   IDENTITIES_TABLE,
   TDH_GRANT_TOKENS_TABLE,
-  TDH_GRANTS_TABLE
+  TDH_GRANTS_TABLE,
+  XTDH_TOKEN_GRANT_STATS_TABLE_PREFIX,
+  XTDH_TOKEN_STATS_TABLE_PREFIX
 } from '../../../constants';
 import { Time } from '../../../time';
 import { TdhGrantStatus, TdhGrantTokenMode } from '../../../entities/ITdhGrant';
@@ -416,15 +417,31 @@ export class TdhStatsRepository extends LazyDbAccessCompatibleService {
     }
   }
 
-  async getBaseTdh(identityId: string, ctx: RequestContext): Promise<number> {
+  async getIncomingXTdhRate(
+    { identityId, slot }: { identityId: string; slot: 'a' | 'b' },
+    ctx: RequestContext
+  ): Promise<number> {
     try {
       ctx.timer?.start(`${this.constructor.name}->getBaseTdh`);
+      const GRANT_TABLE = `${XTDH_TOKEN_GRANT_STATS_TABLE_PREFIX}${slot}`;
+      const TOKEN_STATA_TABLE = `${XTDH_TOKEN_STATS_TABLE_PREFIX}${slot}`;
       return await this.db
         .oneOrNull<{ boosted_tdh: number }>(
           `
-      select c.boosted_tdh from ${CONSOLIDATED_WALLETS_TDH_TABLE} c
-      join ${IDENTITIES_TABLE} i on c.consolidation_key = i.consolidation_key
-      where i.profile_id = :identityId
+          SELECT
+              SUM(gts.xtdh_rate_daily) AS received_rate
+          FROM ${GRANT_TABLE} gts
+                   JOIN ${TDH_GRANTS_TABLE} g
+                        ON g.id = gts.grant_id
+                   JOIN ${TOKEN_STATA_TABLE} ts
+                        ON ts.partition = gts.partition
+                            AND ts.token_id = gts.token_id
+                   JOIN ${ADDRESS_CONSOLIDATION_KEY} ack
+                        ON ack.address = ts.owner
+                   JOIN ${IDENTITIES_TABLE} i
+                        ON i.consolidation_key = ack.consolidation_key
+          WHERE i.profile_id = :identityId
+            AND g.grantor_id != i.profile_id
       `,
           { identityId },
           { wrappedConnection: ctx.connection }

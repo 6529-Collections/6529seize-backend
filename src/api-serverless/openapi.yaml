@@ -6598,21 +6598,22 @@ components:
       type: object
       required:
         - identity
-        - base_tdh
+        - tdh
         - tdh_rate
         - xtdh
         - xtdh_rate
         - xtdh_multiplier
-        - granted_xtdh_per_day
+        - granted_xtdh_rate
         - granted_xtdh
         - received_xtdh
         - granted_target_collections_count
         - granted_target_tokens_count
         - available_grant_rate
+        - received_xtdh_rate
       properties:
         identity:
           $ref: "#/components/schemas/ApiIdentity"
-        base_tdh:
+        tdh:
           type: number
           format: int64
         tdh_rate:
@@ -6627,13 +6628,16 @@ components:
         xtdh_multiplier:
           type: number
           format: double
-        granted_xtdh_per_day:
+        granted_xtdh_rate:
           type: number
           format: double
         granted_xtdh:
           type: number
           format: double
         received_xtdh:
+          type: number
+          format: double
+        received_xtdh_rate:
           type: number
           format: double
         granted_target_collections_count:
