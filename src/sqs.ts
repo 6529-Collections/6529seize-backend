@@ -2,6 +2,8 @@ import { SendMessageCommand, SQSClient } from '@aws-sdk/client-sqs';
 import { env } from './env';
 import { Logger } from './logging';
 
+const DEFAULT_MESSAGE_GROUP_ID = 'default';
+
 export class SQS {
   private readonly logger = Logger.get(this.constructor.name);
   private client: SQSClient;
@@ -15,11 +17,25 @@ export class SQS {
     return this.client;
   }
 
-  async send({ message, queue }: { message: any; queue: string }) {
+  async send({
+    message,
+    queue,
+    messageGroupId
+  }: {
+    message: any;
+    queue: string;
+    messageGroupId?: string;
+  }) {
+    const needsMessageGroupId = queue.endsWith('.fifo');
+    const resolvedMessageGroupId =
+      messageGroupId ?? (needsMessageGroupId ? DEFAULT_MESSAGE_GROUP_ID : null);
     const response = await this.getClient().send(
       new SendMessageCommand({
         QueueUrl: queue,
-        MessageBody: JSON.stringify(message)
+        MessageBody: JSON.stringify(message),
+        ...(resolvedMessageGroupId && {
+          MessageGroupId: resolvedMessageGroupId
+        })
       })
     );
     this.logger.info(
