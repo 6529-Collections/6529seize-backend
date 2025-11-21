@@ -1,5 +1,6 @@
 import * as dbMigrationsLoop from './dbMigrationsLoop';
 import * as xTdhLoop from './xTdhLoop';
+import * as tdhLoop from './tdhLoop';
 import { Logger } from './logging';
 import { doInDbContext } from './secrets';
 import { dbSupplier } from './sql-executor';
@@ -14,6 +15,7 @@ async function start() {
     undefined as any,
     undefined as any
   );
+  await tdhLoop.handler(undefined as any, undefined as any, undefined as any);
   await xTdhLoop.handler(undefined as any, undefined as any, undefined as any);
   // await tdhLoop.handler(undefined as any, undefined as any, undefined as any);
   await testInLocal();

@@ -10,6 +10,8 @@ import {
   recalculateXTdhStatsUseCase,
   RecalculateXTdhStatsUseCase
 } from './recalculate-xtdh-stats.use-case';
+import { sqs } from '../sqs';
+import { env } from '../env';
 
 export class RecalculateXTdhUseCase {
   private readonly logger = Logger.get(this.constructor.name);
@@ -84,6 +86,25 @@ export class RecalculateXTdhUseCase {
       this.logger.info(`xTDH universe has been recalculated`);
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->recalculateXTdh`);
+    }
+  }
+
+  public async activateLoop(ctx: RequestContext) {
+    try {
+      ctx.timer?.start(`${this.constructor.name}->activateLoop`);
+      const xtdhLoopQueueUrl = env.getStringOrNull('XTDH_LOOP_QUEUE_URL');
+      if (!xtdhLoopQueueUrl) {
+        this.logger.warn(
+          `XTDH_LOOP_QUEUE_URL not configured. Skipping loop call.`
+        );
+      } else {
+        await sqs.send({
+          message: {},
+          queue: xtdhLoopQueueUrl
+        });
+      }
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->activateLoop`);
     }
   }
 }
