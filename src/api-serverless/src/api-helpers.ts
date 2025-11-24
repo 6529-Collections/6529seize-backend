@@ -1,4 +1,6 @@
 import { Request, Response } from 'express';
+import { numbers } from '../../numbers';
+import { Time } from '../../time';
 import {
   ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
   CONTENT_TYPE_HEADER,
@@ -8,8 +10,6 @@ import {
   PaginatedResponse,
   SORT_DIRECTIONS
 } from './api-constants';
-import { Time } from '../../time';
-import { numbers } from '../../numbers';
 
 const converter = require('json-2-csv');
 
@@ -61,10 +61,7 @@ export async function returnJsonResult(
   skipCache?: boolean
 ) {
   response.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
-  response.setHeader(
-    ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
-    corsOptions.allowedHeaders
-  );
+  response.setHeader(ACCESS_CONTROL_ALLOW_ORIGIN_HEADER, corsOptions.origin);
   response.json(result);
 }
 
