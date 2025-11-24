@@ -1,6 +1,35 @@
 import { Request, Response } from 'express';
-import { asyncRouter } from '../async.router';
+import * as Joi from 'joi';
+import { fetchEns } from '../../../db-api';
+import { fetchAirdropAddressForConsolidationKey } from '../../../delegationsLoop/db.delegations';
+import {
+  NFTFinalSubscription,
+  SubscriptionBalance,
+  SubscriptionLog,
+  SubscriptionTopUp
+} from '../../../entities/ISubscription';
+import {
+  BadRequestException,
+  ForbiddenException,
+  UnauthorisedException
+} from '../../../exceptions';
+import { getNft } from '../../../nftsLoop/db.nfts';
+import { equalIgnoreCase } from '../../../strings';
+import { PaginatedResponse } from '../api-constants';
 import { giveReadReplicaTimeToCatchUp, returnJsonResult } from '../api-helpers';
+import { asyncRouter } from '../async.router';
+import { getWalletOrThrow, needsAuthenticatedUser } from '../auth/auth';
+import { cacheRequest } from '../request-cache';
+import { getValidatedByJoiOrThrow } from '../validation';
+import {
+  authenticateSubscriptionsAdmin,
+  fetchPhaseName,
+  fetchPhaseResults,
+  getPublicSubscriptions,
+  resetAllowlist,
+  splitAllowlistResults,
+  validateDistribution
+} from './api.subscriptions.allowlist';
 import {
   fetchConsolidationAddresses,
   fetchDetailsForConsolidationKey,
@@ -14,38 +43,10 @@ import {
   fetchUpcomingMemeSubscriptions,
   RedeemedSubscriptionCounts,
   SubscriptionCounts,
+  updateSubscribeAllEditions,
   updateSubscription,
   updateSubscriptionMode
 } from './api.subscriptions.db';
-import {
-  NFTFinalSubscription,
-  SubscriptionBalance,
-  SubscriptionLog,
-  SubscriptionTopUp
-} from '../../../entities/ISubscription';
-import { getWalletOrThrow, needsAuthenticatedUser } from '../auth/auth';
-import {
-  BadRequestException,
-  ForbiddenException,
-  UnauthorisedException
-} from '../../../exceptions';
-import { getValidatedByJoiOrThrow } from '../validation';
-import * as Joi from 'joi';
-import {
-  authenticateSubscriptionsAdmin,
-  fetchPhaseName,
-  fetchPhaseResults,
-  getPublicSubscriptions,
-  resetAllowlist,
-  splitAllowlistResults,
-  validateDistribution
-} from './api.subscriptions.allowlist';
-import { getNft } from '../../../nftsLoop/db.nfts';
-import { fetchAirdropAddressForConsolidationKey } from '../../../delegationsLoop/db.delegations';
-import { fetchEns } from '../../../db-api';
-import { equalIgnoreCase } from '../../../strings';
-import { PaginatedResponse } from '../api-constants';
-import { cacheRequest } from '../request-cache';
 
 const router = asyncRouter();
 
@@ -147,6 +148,49 @@ router.post(
     const response = await updateSubscriptionMode(
       consolidationKey,
       requestPayload.automatic
+    );
+    await giveReadReplicaTimeToCatchUp();
+    res.status(201).send(response);
+  }
+);
+
+router.post(
+  `/:consolidation_key/subscribe-all-editions`,
+  needsAuthenticatedUser(),
+  async function (
+    req: Request<
+      {
+        consolidation_key: string;
+      },
+      any,
+      {
+        subscribe_all_editions: boolean;
+      },
+      any,
+      any
+    >,
+    res: Response
+  ) {
+    const consolidationKey = req.params.consolidation_key.toLowerCase();
+
+    const isAuthenticated = await isAuthenticatedForConsolidationKey(
+      req,
+      consolidationKey
+    );
+    if (!isAuthenticated) {
+      throw new ForbiddenException(
+        `User can only change subscription mode for their own consolidation`
+      );
+    }
+    const requestPayload = getValidatedByJoiOrThrow(
+      req.body,
+      Joi.object({
+        subscribe_all_editions: Joi.boolean().required()
+      })
+    );
+    const response = await updateSubscribeAllEditions(
+      consolidationKey,
+      requestPayload.subscribe_all_editions
     );
     await giveReadReplicaTimeToCatchUp();
     res.status(201).send(response);

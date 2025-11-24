@@ -189,7 +189,8 @@ async function updateSubscriptionModeInternal(
     `,
     {
       consolidation_key: consolidationKey,
-      automatic: automatic
+      automatic: automatic,
+      subscribe_all_editions: false
     },
     { wrappedConnection }
   );
@@ -242,6 +243,120 @@ async function updateSubscriptionsAfterModeChange(
           contract: subscription.contract,
           tokenId: subscription.token_id,
           subscribed: automatic
+        },
+        { wrappedConnection }
+      )
+    );
+    promises.push(
+      sqlExecutor.execute(
+        `
+        INSERT INTO ${SUBSCRIPTIONS_LOGS_TABLE} (consolidation_key, log)
+        VALUES (:consolidationKey, :log)
+        `,
+        {
+          consolidationKey,
+          log: `${logLine} Meme #${subscription.token_id}`
+        },
+        { wrappedConnection }
+      )
+    );
+  });
+  await Promise.all(promises);
+}
+
+export async function updateSubscribeAllEditions(
+  consolidationKey: string,
+  subscribe_all_editions: boolean,
+  connection?: any
+) {
+  const mode: SubscriptionMode = await getForConsolidationKey(
+    consolidationKey,
+    SUBSCRIPTIONS_MODE_TABLE,
+    connection
+  );
+  if (!mode.automatic) {
+    throw new BadRequestException(
+      `Subscription mode must be Automatic to update subscribe to all eligible editions.`
+    );
+  }
+
+  const connectionToUse =
+    connection ||
+    (await sqlExecutor.executeNativeQueriesInTransaction(
+      async (wrappedConnection) => wrappedConnection
+    ));
+
+  await updateSubscribeAllEditionsInternal(
+    consolidationKey,
+    subscribe_all_editions,
+    connectionToUse
+  );
+
+  return {
+    consolidation_key: consolidationKey,
+    subscribe_all_editions
+  };
+}
+
+async function updateSubscribeAllEditionsInternal(
+  consolidationKey: string,
+  subscribe_all_editions: boolean,
+  wrappedConnection?: any
+) {
+  await sqlExecutor.execute(
+    `INSERT INTO ${SUBSCRIPTIONS_MODE_TABLE} (consolidation_key, subscribe_all_editions) VALUES (:consolidation_key, :subscribe_all_editions) ON DUPLICATE KEY UPDATE subscribe_all_editions = VALUES(subscribe_all_editions)`,
+    { consolidationKey, subscribe_all_editions },
+    { wrappedConnection }
+  );
+
+  await updateSubscriptionsAfterSubscribeAllEditionsChange(
+    consolidationKey,
+    subscribe_all_editions,
+    wrappedConnection
+  );
+}
+
+async function updateSubscriptionsAfterSubscribeAllEditionsChange(
+  consolidationKey: string,
+  subscribe_all_editions: boolean,
+  wrappedConnection: any
+) {
+  let subscribedCount = 1;
+  if (subscribe_all_editions) {
+    const subscriptionEligibility =
+      await fetchSubscriptionEligibility(consolidationKey);
+    subscribedCount = subscriptionEligibility;
+  }
+  const promises: Promise<any>[] = [];
+  const maxMemeId = await getMaxMemeId();
+  const upcomingSubscriptions: NFTSubscription[] = await sqlExecutor.execute(
+    `SELECT * FROM ${SUBSCRIPTIONS_NFTS_TABLE} WHERE consolidation_key = :consolidationKey AND contract = :memesContract AND token_id > :maxMemeId AND subscribed = :subscribed`,
+    {
+      consolidationKey,
+      memesContract: MEMES_CONTRACT,
+      maxMemeId,
+      subscribed: true
+    },
+    { wrappedConnection }
+  );
+
+  const logLine = subscribe_all_editions
+    ? 'Subscribed to all eligible editions'
+    : 'Subscribed to a one edition';
+
+  upcomingSubscriptions.forEach((subscription) => {
+    promises.push(
+      sqlExecutor.execute(
+        `
+        INSERT INTO ${SUBSCRIPTIONS_NFTS_TABLE} (consolidation_key, contract, token_id, subscribed)
+        VALUES (:consolidationKey, :contract, :tokenId, :subscribedCount)
+        ON DUPLICATE KEY UPDATE subscribed = VALUES(subscribed)
+        `,
+        {
+          consolidationKey,
+          contract: subscription.contract,
+          tokenId: subscription.token_id,
+          subscribedCount
         },
         { wrappedConnection }
       )
