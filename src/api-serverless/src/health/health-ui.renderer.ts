@@ -130,9 +130,17 @@ export function renderHealthUI(data: HealthData, baseUrl?: string): string {
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
   <title>6529 API Health</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <meta name="description" content="Real-time health status of the 6529 API">
+  <meta name="theme-color" content="#0a0a0a">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="6529 API Health">
+  <link rel="apple-touch-icon" href="/favicon.svg">
+  <link rel="apple-touch-icon" sizes="180x180" href="/favicon.svg">
+  <link rel="icon" type="image/svg+xml" sizes="any" href="/favicon.svg">
   <meta property="og:title" content="6529 API Health Status">
   <meta property="og:description" content="Real-time health status of the 6529 API">
   <meta property="og:type" content="website">
@@ -150,7 +158,7 @@ export function renderHealthUI(data: HealthData, baseUrl?: string): string {
       background: linear-gradient(135deg, #0a0a0a 0%, #1a1a1a 100%);
       color: #e0e0e0;
       min-height: 100vh;
-      padding: 2rem;
+      padding: 1rem;
       display: flex;
       flex-direction: column;
       align-items: center;
@@ -161,14 +169,14 @@ export function renderHealthUI(data: HealthData, baseUrl?: string): string {
       width: 100%;
       background: #1e1e1e;
       border-radius: 12px;
-      padding: 2rem;
+      padding: 1.5rem;
       box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
       border: 1px solid #333;
     }
 
     .header {
       text-align: center;
-      margin-bottom: 2rem;
+      margin-bottom: 1.5rem;
     }
 
     .logo {
@@ -187,7 +195,7 @@ export function renderHealthUI(data: HealthData, baseUrl?: string): string {
 
     h1 {
       color: #ffffff;
-      font-size: 2rem;
+      font-size: 1.75rem;
       font-weight: 600;
       margin-bottom: 0.5rem;
     }
@@ -199,6 +207,7 @@ export function renderHealthUI(data: HealthData, baseUrl?: string): string {
       font-weight: 600;
       font-size: 0.9rem;
       margin-top: 0.5rem;
+      word-break: break-word;
     }
 
     .status-ok {
@@ -211,10 +220,17 @@ export function renderHealthUI(data: HealthData, baseUrl?: string): string {
       color: #ffffff;
     }
 
+    .table-wrapper {
+      width: 100%;
+      overflow-x: auto;
+      margin-top: 1.5rem;
+      -webkit-overflow-scrolling: touch;
+    }
+
     table {
       width: 100%;
       border-collapse: collapse;
-      margin-top: 1.5rem;
+      min-width: 300px;
     }
 
     thead {
@@ -222,18 +238,29 @@ export function renderHealthUI(data: HealthData, baseUrl?: string): string {
     }
 
     th {
-      padding: 1rem;
+      padding: 0.75rem;
       text-align: left;
       font-weight: 600;
       color: #ffffff;
       border-bottom: 2px solid #3a3a3a;
-      font-size: 0.95rem;
+      font-size: 0.9rem;
     }
 
     td {
-      padding: 1rem;
+      padding: 0.75rem;
       border-bottom: 1px solid #2a2a2a;
       color: #d0d0d0;
+      word-wrap: break-word;
+      overflow-wrap: break-word;
+    }
+
+    td:first-child {
+      width: 30%;
+      max-width: 150px;
+    }
+
+    td:last-child {
+      width: 70%;
     }
 
     tr:hover {
@@ -242,25 +269,28 @@ export function renderHealthUI(data: HealthData, baseUrl?: string): string {
 
     .value-cell {
       font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
-      font-size: 0.9rem;
+      font-size: 0.85rem;
+      word-break: break-word;
     }
 
     .nested-object {
-      margin-left: 1rem;
-      padding-left: 1rem;
+      margin-left: 0.5rem;
+      padding-left: 0.75rem;
       border-left: 2px solid #3a3a3a;
       margin-top: 0.5rem;
     }
 
     .nested-key {
       color: #a0a0a0;
-      font-size: 0.85rem;
+      font-size: 0.8rem;
       margin-top: 0.25rem;
+      word-break: break-word;
     }
 
     .nested-value {
       color: #e0e0e0;
       margin-left: 0.5rem;
+      word-break: break-word;
     }
 
     a {
@@ -273,10 +303,80 @@ export function renderHealthUI(data: HealthData, baseUrl?: string): string {
     }
 
     .footer {
-      margin-top: 2rem;
+      margin-top: 1.5rem;
       text-align: center;
       color: #888;
-      font-size: 0.85rem;
+      font-size: 0.8rem;
+    }
+
+    @media (max-width: 768px) {
+      body {
+        padding: 0.5rem;
+      }
+
+      .container {
+        padding: 1rem;
+        border-radius: 8px;
+      }
+
+      h1 {
+        font-size: 1.5rem;
+      }
+
+      .logo {
+        width: 50px;
+        height: 50px;
+      }
+
+      th, td {
+        padding: 0.5rem;
+        font-size: 0.85rem;
+      }
+
+      .value-cell {
+        font-size: 0.75rem;
+      }
+
+      .nested-key {
+        font-size: 0.75rem;
+      }
+
+      .status-badge {
+        font-size: 0.8rem;
+        padding: 0.4rem 0.8rem;
+      }
+
+      table {
+        font-size: 0.9rem;
+      }
+    }
+
+    @media (max-width: 480px) {
+      body {
+        padding: 0.25rem;
+      }
+
+      .container {
+        padding: 0.75rem;
+      }
+
+      h1 {
+        font-size: 1.25rem;
+      }
+
+      th, td {
+        padding: 0.4rem;
+        font-size: 0.8rem;
+      }
+
+      .value-cell {
+        font-size: 0.7rem;
+      }
+
+      .nested-object {
+        margin-left: 0.25rem;
+        padding-left: 0.5rem;
+      }
     }
   </style>
 </head>
@@ -288,45 +388,47 @@ export function renderHealthUI(data: HealthData, baseUrl?: string): string {
       <span class="status-badge ${statusClass}">${statusDisplay}</span>
     </div>
 
-    <table>
-      <tbody>
-        <tr style="border-top: 1px solid #2a2a2a;">
-          <td><strong>Database</strong></td>
-          <td class="value-cell">
-            <span class="status-badge ${dbClass}">${dbDisplay}</span>
-          </td>
-        </tr>
-        <tr>
-          <td><strong>Redis</strong></td>
-          <td class="value-cell">
-            ${redisHtml}
-          </td>
-        </tr>
-        <tr>
-          <td><strong>Rate Limiting</strong></td>
-          <td class="value-cell">
-            ${rateLimitHtml}
-          </td>
-        </tr>
-        <tr>
-          <td><strong>Version</strong></td>
-          <td class="value-cell">
-            <div class="nested-object">
-              <div class="nested-key">Commit: <span class="nested-value">${data.version.commit}</span></div>
-              <div class="nested-key">Environment: <span class="nested-value">${data.version.node_env}</span></div>
-            </div>
-          </td>
-        </tr>
-        <tr>
-          <td><strong>Links</strong></td>
-          <td class="value-cell">
-            <div class="nested-object">
-              <div class="nested-key"><a href="${data.links.api_documentation}" target="_blank" rel="noopener noreferrer">🔗 API Documentation</a></div>
-            </div>
-          </td>
-        </tr>
-      </tbody>
-    </table>
+    <div class="table-wrapper">
+      <table>
+        <tbody>
+          <tr style="border-top: 1px solid #2a2a2a;">
+            <td><strong>Database</strong></td>
+            <td class="value-cell">
+              <span class="status-badge ${dbClass}">${dbDisplay}</span>
+            </td>
+          </tr>
+          <tr>
+            <td><strong>Redis</strong></td>
+            <td class="value-cell">
+              ${redisHtml}
+            </td>
+          </tr>
+          <tr>
+            <td><strong>Rate Limiting</strong></td>
+            <td class="value-cell">
+              ${rateLimitHtml}
+            </td>
+          </tr>
+          <tr>
+            <td><strong>Version</strong></td>
+            <td class="value-cell">
+              <div class="nested-object">
+                <div class="nested-key">Commit: <span class="nested-value">${data.version.commit}</span></div>
+                <div class="nested-key">Environment: <span class="nested-value">${data.version.node_env}</span></div>
+              </div>
+            </td>
+          </tr>
+          <tr>
+            <td><strong>Links</strong></td>
+            <td class="value-cell">
+              <div class="nested-object">
+                <div class="nested-key"><a href="${data.links.api_documentation}" target="_blank" rel="noopener noreferrer">🔗 API Documentation</a></div>
+              </div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
 
     <div class="footer">
       <p>Last updated: ${new Date().toLocaleString()}</p>
