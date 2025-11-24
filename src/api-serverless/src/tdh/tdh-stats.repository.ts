@@ -146,8 +146,6 @@ export class TdhStatsRepository extends LazyDbAccessCompatibleService {
   ): Promise<number> {
     try {
       ctx.timer?.start(`${this.constructor.name}->getGrantedTdhTotalSum`);
-      const lastUtcMidnightMillis = Time.latestUtcMidnight().toMillis();
-
       const sql = `
       SELECT COALESCE(SUM(gts.xtdh_rate_daily), 0) AS total_granted_tdh_rate
       FROM ${XTDH_TOKEN_GRANT_STATS_TABLE_PREFIX}${slot} gts
@@ -156,14 +154,10 @@ export class TdhStatsRepository extends LazyDbAccessCompatibleService {
       WHERE g.grantor_id = :profile_id
     `;
       const res = await this.db.oneOrNull<{
-        total_granted_tdh_for_last_midnight: number;
-      }>(
-        sql,
-        { profile_id: id, lastUtcMidnightMillis },
-        { wrappedConnection: ctx.connection }
-      );
+        total_granted_tdh_rate: number;
+      }>(sql, { profile_id: id }, { wrappedConnection: ctx.connection });
 
-      return res?.total_granted_tdh_for_last_midnight ?? 0;
+      return res?.total_granted_tdh_rate ?? 0;
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->getGrantedTdhTotalSum`);
     }
