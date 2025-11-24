@@ -353,14 +353,13 @@ export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
       return this.db
         .oneOrNull<{ spent_rate: number }>(
           `
-            SELECT
-              COALESCE(SUM(g.tdh_rate), 0) AS spent_rate
-            FROM ${TDH_GRANTS_TABLE} g
+            SELECT COALESCE(SUM(gts.xtdh_rate_daily), 0) AS total_granted_tdh_rate
+            FROM xtdh_token_grant_stats_a gts
+            JOIN tdh_grants g
+              ON g.id = gts.grant_id
             WHERE g.grantor_id = :grantorId
-              AND g.status IN ('${TdhGrantStatus.GRANTED}', '${TdhGrantStatus.PENDING}')
-              AND (g.valid_to IS NULL OR g.valid_to > :nowMillis)
         `,
-          { grantorId, nowMillis: Time.currentMillis() },
+          { grantorId },
           {
             wrappedConnection: ctx.connection
           }
