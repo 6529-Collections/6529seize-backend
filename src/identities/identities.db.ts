@@ -1031,7 +1031,7 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
       tdh_rate: string;
     }>(
       `
-      select i.profile_id as profile_id, i.basetdh_rate + i.xtdh_rate as tdh_rate from ${IDENTITIES_TABLE} i where i.profile_id in (:ids)
+      select i.profile_id as profile_id, i.basetdh_rate as tdh_rate from ${IDENTITIES_TABLE} i where i.profile_id in (:ids)
     `,
       { ids },
       { wrappedConnection: ctx.connection }
