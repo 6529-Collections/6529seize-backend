@@ -108,7 +108,9 @@ export class TdhStatsService {
       granted_target_tokens_count: grantedTargetTokensCount,
       available_grant_rate:
         identityEntity.basetdh_rate * X_TDH_COEFFICIENT - availableXTdhRate,
-      received_xtdh_rate: incomingXTdhRate
+      received_xtdh_rate: incomingXTdhRate,
+      produced_xtdh: identityEntity.produced_xtdh,
+      produced_xtdh_rate: identityEntity.basetdh_rate * X_TDH_COEFFICIENT
     };
   }
 }
