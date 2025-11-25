@@ -342,33 +342,31 @@ export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
     }
   }
 
-  async getGrantorsLooseMaxRateToStillSpend(
+  async getGrantorsLooseSpentTdhRate(
     grantorId: string,
     ctx: RequestContext
   ): Promise<number> {
     try {
       ctx.timer?.start(
-        `${this.constructor.name}->getGrantorsLooseMaxRateToStillSpend`
+        `${this.constructor.name}->getGrantorsLooseSpentTdhRate`
       );
       return this.db
         .oneOrNull<{ spent_rate: number }>(
           `
-            SELECT COALESCE(SUM(gts.xtdh_rate_daily), 0) AS total_granted_tdh_rate
-            FROM xtdh_token_grant_stats_a gts
-            JOIN tdh_grants g
-              ON g.id = gts.grant_id
-            WHERE g.grantor_id = :grantorId
+            SELECT sum(tdh_rate) as spent_rate from ${TDH_GRANTS_TABLE} g where g.grantor_id = :grantorId and g.status in (:statuses) and (valid_to is null or valid_to > :now)
         `,
-          { grantorId },
+          {
+            grantorId,
+            statuses: [TdhGrantStatus.GRANTED, TdhGrantStatus.PENDING],
+            now: Time.currentMillis()
+          },
           {
             wrappedConnection: ctx.connection
           }
         )
         ?.then((res) => +(res?.spent_rate ?? 0));
     } finally {
-      ctx.timer?.stop(
-        `${this.constructor.name}->getGrantorsLooseMaxRateToStillSpend`
-      );
+      ctx.timer?.stop(`${this.constructor.name}->getGrantorsLooseSpentTdhRate`);
     }
   }
 

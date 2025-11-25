@@ -81,7 +81,6 @@ export class IdentityFetcher {
       identities,
       subscribedActions,
       mainStageSubscriptions,
-      tdhRates,
       mainStageWins
     ] = await Promise.all([
       this.identitiesDb.getIdentitiesByIds(ids, ctx.connection),
@@ -90,7 +89,6 @@ export class IdentityFetcher {
         ids
       }),
       this.identitiesDb.getActiveMainStageDropIds(ids, ctx),
-      this.identitiesDb.getTdhRates(ids, ctx),
       this.identitiesDb.getMainStageWinnerDropIds(ids, ctx)
     ]);
     const notFoundProfileIds = ids.filter(
@@ -105,9 +103,10 @@ export class IdentityFetcher {
       rep: p.rep,
       tdh: p.tdh,
       xtdh: p.xtdh,
+      xtdh_rate: p.xtdh_rate,
       produced_xtdh: p.produced_xtdh,
       granted_xtdh: p.granted_xtdh,
-      tdh_rate: tdhRates[p.profile_id!] ?? 0,
+      tdh_rate: p.basetdh_rate,
       level: getLevelFromScore(p.level_raw),
       pfp: p.pfp,
       archived: true,
@@ -132,6 +131,7 @@ export class IdentityFetcher {
           rep: 0,
           tdh: 0,
           xtdh: 0,
+          xtdh_rate: 0,
           granted_xtdh: 0,
           produced_xtdh: 0,
           tdh_rate: 0,
@@ -248,6 +248,8 @@ export class IdentityFetcher {
         rep: 0,
         tdh: 0,
         tdh_rate: 0,
+        xtdh: 0,
+        xtdh_rate: 0,
         level: 0,
         display: query,
         primary_wallet: query,
@@ -329,14 +331,9 @@ export class IdentityFetcher {
       },
       ctx
     );
-    const [wallets, tdhRate, mainStageDropIds, mainStageWinnerDrops] =
-      await Promise.all([
+    const [wallets, mainStageDropIds, mainStageWinnerDrops] = await Promise.all(
+      [
         this.identitiesDb.getPrediscoveredEnsNames(consolidatedWallets, ctx),
-        this.identitiesDb
-          .getTdhRates(identity.profile_id ? [identity.profile_id] : [], ctx)
-          .then((it) =>
-            identity.profile_id ? (it[identity.profile_id] ?? 0) : 0
-          ),
         this.identitiesDb
           .getActiveMainStageDropIds(
             identity.profile_id ? [identity.profile_id] : [],
@@ -353,7 +350,8 @@ export class IdentityFetcher {
           .then((it) =>
             identity.profile_id ? (it[identity.profile_id] ?? []) : []
           )
-      ]);
+      ]
+    );
     const classification = identity.classification
       ? (enums.resolve(
           ApiProfileClassification,
@@ -367,7 +365,9 @@ export class IdentityFetcher {
       cic: identity.cic,
       rep: identity.rep,
       tdh: identity.tdh,
-      tdh_rate: tdhRate,
+      tdh_rate: identity.basetdh_rate,
+      xtdh: identity.xtdh,
+      xtdh_rate: identity.xtdh_rate,
       level: getLevelFromScore(identity.level_raw),
       display: consolidation_display,
       primary_wallet: identity.primary_address,
