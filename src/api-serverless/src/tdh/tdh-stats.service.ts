@@ -81,7 +81,7 @@ export class TdhStatsService {
       grantedTargetTokensCount,
       grantedXTdhPerDay,
       incomingXTdhRate,
-      availableXTdhRate
+      spentXTdhRate
     ] = await Promise.all([
       this.tdhStatsRepository.getGrantedTdhCollectionsCount(
         { id: identityId, slot },
@@ -96,10 +96,7 @@ export class TdhStatsService {
         ctx
       ),
       this.tdhStatsRepository.getIncomingXTdhRate({ identityId, slot }, ctx),
-      this.tdhGrantsRepository.getGrantorsLooseMaxRateToStillSpend(
-        identityId,
-        ctx
-      )
+      this.tdhGrantsRepository.getGrantorsLooseSpentTdhRate(identityId, ctx)
     ]);
     return {
       identity,
@@ -115,8 +112,10 @@ export class TdhStatsService {
       granted_xtdh_rate: grantedXTdhPerDay,
       granted_target_collections_count: grantedTargetCollectionsCount,
       granted_target_tokens_count: grantedTargetTokensCount,
-      available_grant_rate:
-        identityEntity.basetdh_rate * X_TDH_COEFFICIENT - availableXTdhRate,
+      available_grant_rate: Math.max(
+        identityEntity.basetdh_rate * X_TDH_COEFFICIENT - spentXTdhRate,
+        0
+      ),
       received_xtdh_rate: incomingXTdhRate,
       produced_xtdh: identityEntity.produced_xtdh,
       produced_xtdh_rate: identityEntity.basetdh_rate * X_TDH_COEFFICIENT

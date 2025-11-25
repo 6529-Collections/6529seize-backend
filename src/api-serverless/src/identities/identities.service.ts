@@ -424,10 +424,9 @@ export class IdentitiesService {
     const identityIds = identityEntities
       .map((it) => it.profile_id)
       .filter((it) => !!it) as string[];
-    const [mainStageSubmissions, mainStageWins, tdhRates] = await Promise.all([
+    const [mainStageSubmissions, mainStageWins] = await Promise.all([
       this.identitiesDb.getActiveMainStageDropIds(identityIds, ctx),
-      this.identitiesDb.getMainStageWinnerDropIds(identityIds, ctx),
-      this.identitiesDb.getTdhRates(identityIds, ctx)
+      this.identitiesDb.getMainStageWinnerDropIds(identityIds, ctx)
     ]);
     return identityEntities.map<ApiIdentity>((it) => {
       const classification = it.classification
@@ -446,10 +445,11 @@ export class IdentitiesService {
         cic: it.cic,
         level: getLevelFromScore(it.level_raw),
         xtdh: it.xtdh,
+        xtdh_rate: it.xtdh_rate,
         tdh: it.tdh,
         produced_xtdh: it.produced_xtdh,
         granted_xtdh: it.granted_xtdh,
-        tdh_rate: it.profile_id ? (tdhRates[it.profile_id] ?? 0) : 0,
+        tdh_rate: it.basetdh_rate,
         display: it.display ?? it.primary_address,
         banner1: it.banner1,
         banner2: it.banner2,

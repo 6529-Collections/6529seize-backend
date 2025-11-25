@@ -1019,32 +1019,6 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     );
   }
 
-  async getTdhRates(
-    ids: string[],
-    ctx: RequestContext
-  ): Promise<Record<string, number>> {
-    if (!ids.length) {
-      return {};
-    }
-    const tdhRates = await this.db.execute<{
-      profile_id: string;
-      tdh_rate: string;
-    }>(
-      `
-      select i.profile_id as profile_id, i.basetdh_rate as tdh_rate from ${IDENTITIES_TABLE} i where i.profile_id in (:ids)
-    `,
-      { ids },
-      { wrappedConnection: ctx.connection }
-    );
-    return tdhRates.reduce(
-      (acc, it) => {
-        acc[it.profile_id] = +it.tdh_rate;
-        return acc;
-      },
-      {} as Record<string, number>
-    );
-  }
-
   async getProducedXTdhRate(id: string, ctx: RequestContext): Promise<number> {
     const row = await this.db.oneOrNull<{ basetdh_rate: number }>(
       `
