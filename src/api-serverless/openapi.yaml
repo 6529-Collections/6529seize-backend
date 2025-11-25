@@ -2492,6 +2492,11 @@ paths:
           required: false
           schema:
             type: string
+        - name: target_collection_name
+          in: query
+          required: false
+          schema:
+            type: string
         - name: target_chain
           in: query
           required: false
@@ -6584,6 +6589,7 @@ components:
         - target_chain
         - target_contract
         - target_tokens_count
+        - target_collection_name
         - created_at
         - valid_from
         - valid_to
@@ -6603,6 +6609,9 @@ components:
         target_tokens_count:
           type: number
           format: int64
+        target_collection_name:
+          type: string
+          nullable: true
         created_at:
           type: number
           format: int64

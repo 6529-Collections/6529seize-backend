@@ -15,6 +15,7 @@ export interface TdhGrantModel {
   id: string;
   target_chain: number;
   target_contract: string;
+  target_collection_name: string | null;
   target_token_count: number;
   valid_to: Time | null;
   valid_from: Time | null;
@@ -27,12 +28,16 @@ export interface TdhGrantModel {
 }
 
 export function fromTdhGrantEntityToModel(
-  entity: TdhGrantEntity & { target_token_count: number }
+  entity: TdhGrantEntity & {
+    target_token_count: number;
+    target_collection_name: string;
+  }
 ): TdhGrantModel {
   return {
     id: entity.id,
     target_chain: entity.target_chain,
     target_contract: entity.target_contract,
+    target_collection_name: entity.target_collection_name,
     target_token_count: entity.target_token_count,
     valid_from:
       entity.valid_from === null ? null : Time.millis(entity.valid_from),

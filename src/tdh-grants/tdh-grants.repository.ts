@@ -8,6 +8,7 @@ import { RequestContext } from '../request.context';
 import {
   CONSOLIDATED_TDH_EDITIONS_TABLE,
   CONSOLIDATED_WALLETS_TDH_TABLE,
+  EXTERNAL_INDEXED_CONTRACTS_TABLE,
   EXTERNAL_INDEXED_OWNERSHIP_721_HISTORY_TABLE,
   IDENTITIES_TABLE,
   TDH_GRANT_TOKENS_TABLE,
@@ -20,6 +21,7 @@ import { TdhGrantTokenEntity } from '../entities/ITdhGrantToken';
 import { bulkInsert } from '../db/my-sql.helpers';
 import { numbers } from '../numbers';
 import { PageSortDirection } from '../api-serverless/src/page-request';
+import { collections } from '../collections';
 
 export type GrantWithCap = TdhGrantEntity & { grantor_x_tdh_rate: number };
 
@@ -132,7 +134,7 @@ export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
   public async getPageItems(
     {
       grantor_id,
-      target_contract,
+      target_contracts,
       target_chain,
       status,
       sort_direction,
@@ -141,7 +143,7 @@ export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
       offset
     }: {
       readonly grantor_id: string | null;
-      readonly target_contract: string | null;
+      readonly target_contracts: string[];
       readonly target_chain: number | null;
       readonly status: TdhGrantStatus[];
       readonly sort_direction: 'ASC' | 'DESC' | null;
@@ -161,7 +163,7 @@ export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
       const select = `SELECT t.* FROM ${TDH_GRANTS_TABLE} t`;
       const { whereAnds, params } = this.getSearchWhereAnds(
         grantor_id,
-        target_contract,
+        target_contracts,
         target_chain,
         status
       );
@@ -180,12 +182,12 @@ export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
   public async countItems(
     {
       grantor_id,
-      target_contract,
+      target_contracts,
       target_chain,
       status
     }: {
       readonly grantor_id: string | null;
-      readonly target_contract: string | null;
+      readonly target_contracts: string[];
       readonly target_chain: number | null;
       readonly status: TdhGrantStatus[];
     },
@@ -196,7 +198,7 @@ export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
       const select = `SELECT count(*) as cnt FROM ${TDH_GRANTS_TABLE} t`;
       const { whereAnds, params } = this.getSearchWhereAnds(
         grantor_id,
-        target_contract,
+        target_contracts,
         target_chain,
         status
       );
@@ -213,7 +215,7 @@ export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
 
   private getSearchWhereAnds(
     grantor_id: string | null,
-    target_contract: string | null,
+    target_contracts: string[],
     target_chain: number | null,
     status: TdhGrantStatus[]
   ) {
@@ -223,9 +225,9 @@ export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
       whereAnds.push(`t.grantor_id = :grantor_id`);
       params['grantor_id'] = grantor_id;
     }
-    if (target_contract) {
-      whereAnds.push(`t.target_contract = :target_contract`);
-      params['target_contract'] = target_contract;
+    if (target_contracts.length) {
+      whereAnds.push(`t.target_contract in (:target_contracts)`);
+      params['target_contracts'] = target_contracts;
     }
     if (target_chain) {
       whereAnds.push(`t.target_chain = :target_chain`);
@@ -727,6 +729,49 @@ export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->getGrantsByIds`);
     }
+  }
+
+  async getCollectionNames(
+    grantIds: string[],
+    ctx: RequestContext
+  ): Promise<Record<string, string>> {
+    if (!grantIds.length) {
+      return {};
+    }
+    const dbResults = await this.db.execute<{
+      collection_name: string;
+      grant_id: string;
+    }>(
+      `select g.id as grant_id, c.collection_name from ${TDH_GRANTS_TABLE} g join ${EXTERNAL_INDEXED_CONTRACTS_TABLE} c on c.partition = g.target_partition where g.id in (:grantIds)`,
+      { grantIds },
+      { wrappedConnection: ctx.connection }
+    );
+    return dbResults.reduce(
+      (acc, it) => {
+        acc[it.grant_id] = it.collection_name;
+        return acc;
+      },
+      {} as Record<string, string>
+    );
+  }
+
+  async getContractsOfExternalAddressesWhereNameLike(
+    name: string,
+    ctx: RequestContext
+  ): Promise<string[]> {
+    if (!name.length) {
+      return [];
+    }
+    const dbResults = await this.db.execute<{
+      partition: string;
+    }>(
+      `select distinct c.partition from ${TDH_GRANTS_TABLE} g join ${EXTERNAL_INDEXED_CONTRACTS_TABLE} c on c.partition = g.target_partition where c.collection_name like :cName`,
+      { cName: `%${name}%` },
+      { wrappedConnection: ctx.connection }
+    );
+    return collections.distinct(
+      dbResults.map((it) => it.partition.substring(2))
+    );
   }
 }
 

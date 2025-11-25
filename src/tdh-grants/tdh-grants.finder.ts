@@ -13,16 +13,17 @@ export class TdhGrantsFinder {
   public async searchForPage(
     {
       grantor_id,
-      target_contract,
+      target_contracts,
       target_chain,
       status,
       sort_direction,
       sort,
       page,
-      page_size
+      page_size,
+      conflictingRequest
     }: {
       readonly grantor_id: string | null;
-      readonly target_contract: string | null;
+      readonly target_contracts: string[];
       readonly target_chain: number | null;
       readonly status: TdhGrantStatus[];
       readonly sort_direction: 'ASC' | 'DESC' | null;
@@ -34,6 +35,7 @@ export class TdhGrantsFinder {
         | null;
       readonly page: number;
       readonly page_size: number;
+      readonly conflictingRequest: boolean;
     },
     ctx: RequestContext
   ): Promise<{
@@ -46,12 +48,20 @@ export class TdhGrantsFinder {
       ctx.timer?.start(`${this.constructor.name}->searchForPage`);
       const limit = page_size;
       const offset = page_size * (page - 1);
+      if (conflictingRequest) {
+        return {
+          count: 0,
+          items: [],
+          next: false,
+          page
+        };
+      }
       const [items, count] = await Promise.all([
         this.tdhGrantsRepository
           .getPageItems(
             {
               grantor_id,
-              target_contract,
+              target_contracts,
               target_chain,
               status,
               sort_direction,
@@ -62,22 +72,23 @@ export class TdhGrantsFinder {
             ctx
           )
           .then(async (dbResults) => {
-            const tokenCounts =
-              await this.tdhGrantsRepository.getGrantsTokenCounts(
-                dbResults.map((it) => it.id),
-                ctx
-              );
+            const grantIds = dbResults.map((it) => it.id);
+            const [tokenCounts, collectionNames] = await Promise.all([
+              this.tdhGrantsRepository.getGrantsTokenCounts(grantIds, ctx),
+              this.tdhGrantsRepository.getCollectionNames(grantIds, ctx)
+            ]);
             return dbResults.map((entity) =>
               fromTdhGrantEntityToModel({
                 ...entity,
-                target_token_count: tokenCounts[entity.id] ?? 0
+                target_token_count: tokenCounts[entity.id] ?? 0,
+                target_collection_name: collectionNames[entity.id] ?? null
               })
             );
           }),
         this.tdhGrantsRepository.countItems(
           {
             grantor_id,
-            target_contract,
+            target_contracts,
             target_chain,
             status
           },
@@ -143,14 +154,16 @@ export class TdhGrantsFinder {
   ): Promise<TdhGrantModel[]> {
     try {
       ctx.timer?.start(`${this.constructor.name}->getGrantsByIds`);
-      const [entities, tokenCounts] = await Promise.all([
+      const [entities, tokenCounts, collectionNames] = await Promise.all([
         this.tdhGrantsRepository.getGrantsByIds(grantIds, ctx),
-        this.tdhGrantsRepository.getGrantsTokenCounts(grantIds, ctx)
+        this.tdhGrantsRepository.getGrantsTokenCounts(grantIds, ctx),
+        this.tdhGrantsRepository.getCollectionNames(grantIds, ctx)
       ]);
       return entities.map((it) =>
         fromTdhGrantEntityToModel({
           ...it,
-          target_token_count: tokenCounts[it.id] ?? 0
+          target_token_count: tokenCounts[it.id] ?? 0,
+          target_collection_name: collectionNames[it.id] ?? null
         })
       );
     } finally {
