@@ -322,7 +322,7 @@ import { ApiTargetAndSubscriptionActions } from '../models/ApiTargetAndSubscript
 import { ApiTdhEdition } from '../models/ApiTdhEdition';
 import { ApiTdhEditionsPage } from '../models/ApiTdhEditionsPage';
 import { ApiTdhGlobalStats } from '../models/ApiTdhGlobalStats';
-import { ApiTdhGrant             } from '../models/ApiTdhGrant';
+import { ApiTdhGrant              } from '../models/ApiTdhGrant';
 import { ApiTdhGrantStatus } from '../models/ApiTdhGrantStatus';
 import { ApiTdhGrantTargetChain } from '../models/ApiTdhGrantTargetChain';
 import { ApiTdhGrantToken } from '../models/ApiTdhGrantToken';

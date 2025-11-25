@@ -63,7 +63,7 @@ export const ApiCreateTdhGrantSchema: Joi.ObjectSchema<ApiCreateTdhGrant> =
       .optional()
       .allow(null)
       .default(null),
-    tdh_rate: Joi.number().integer().min(1).required(),
+    tdh_rate: Joi.number().positive().required(),
     is_irrevocable: Joi.boolean().required()
   });
 

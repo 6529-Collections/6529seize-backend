@@ -113,10 +113,14 @@ export class CreateTdhGrantUseCase {
               [entity.id],
               ctx
             );
+          const targetCollectionNames =
+            await this.tdhGrantsRepository.getCollectionNames([entity.id], ctx);
           const targetTokenCount = targetTokenCounts[entity.id] ?? 0;
+          const targetCollectionName = targetCollectionNames[entity.id] ?? null;
           return fromTdhGrantEntityToModel({
             ...entity,
-            target_token_count: targetTokenCount
+            target_token_count: targetTokenCount,
+            target_collection_name: targetCollectionName
           });
         }
       );

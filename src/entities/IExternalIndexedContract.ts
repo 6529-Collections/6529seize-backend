@@ -28,6 +28,10 @@ export class ExternalIndexedContractEntity {
   @Column({ type: 'varchar', length: 42 })
   readonly contract!: string;
 
+  @Index()
+  @Column({ type: 'varchar', length: 255, nullable: true, default: null })
+  readonly collection_name!: string | null;
+
   @Column({
     type: 'varchar',
     length: 50,

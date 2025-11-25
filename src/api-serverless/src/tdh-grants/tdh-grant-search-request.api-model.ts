@@ -8,6 +8,7 @@ import { DEFAULT_PAGE_SIZE } from '../api-constants';
 export interface TdhGrantSearchRequestApiModel {
   readonly grantor: string | null;
   readonly target_contract: string | null;
+  readonly target_collection_name: string | null;
   readonly target_chain: ApiTdhGrantTargetChain | null;
   readonly status?: string | null;
   readonly sort_direction: PageSortDirection | null;
@@ -28,6 +29,7 @@ export const TdhGrantSearchRequestApiModelSchema: Joi.ObjectSchema<TdhGrantSearc
   Joi.object<TdhGrantSearchRequestApiModel>({
     grantor: Joi.string().default(null),
     target_contract: Joi.string().pattern(WALLET_REGEX).default(null),
+    target_collection_name: Joi.string().optional().default(null),
     target_chain: Joi.string()
       .valid(...Object.values(ApiTdhGrantTargetChain))
       .default(null),

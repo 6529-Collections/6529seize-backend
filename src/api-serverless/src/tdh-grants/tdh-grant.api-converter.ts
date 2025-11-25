@@ -18,9 +18,16 @@ import { enums } from '../../../enums';
 import { RequestContext } from '../../../request.context';
 import { TdhGrantSearchRequestApiModel } from './tdh-grant-search-request.api-model';
 import { BadRequestException } from '../../../exceptions';
+import {
+  tdhGrantsRepository,
+  TdhGrantsRepository
+} from '../../../tdh-grants/tdh-grants.repository';
 
 export class TdhGrantApiConverter {
-  constructor(private readonly identityFetcher: IdentityFetcher) {}
+  constructor(
+    private readonly identityFetcher: IdentityFetcher,
+    private readonly tdhGrantsRepository: TdhGrantsRepository
+  ) {}
 
   public fromApiCreateTdhGrantToModel({
     apiCreateTdhGrant,
@@ -86,11 +93,13 @@ export class TdhGrantApiConverter {
       }),
       target_contract: model.target_contract,
       target_tokens_count: model.target_token_count,
+
       tdh_rate: model.tdh_rate,
       status: this.resolveApiStatusFromModelValue({
         grantId: model.id,
         status: model.status
       }),
+      target_collection_name: model.target_collection_name,
       error_details: model.error_details,
       created_at: model.created_at.toMillis(),
       valid_from: model.valid_from?.toMillis() ?? null,
@@ -154,13 +163,14 @@ export class TdhGrantApiConverter {
     ctx: RequestContext
   ): Promise<{
     readonly grantor_id: string | null;
-    readonly target_contract: string | null;
+    readonly target_contracts: string[];
     readonly target_chain: number | null;
     readonly status: TdhGrantStatus[];
     readonly sort_direction: 'ASC' | 'DESC' | null;
     readonly sort: 'created_at' | 'valid_from' | 'valid_to' | 'tdh_rate' | null;
     readonly page: number;
     readonly page_size: number;
+    readonly conflictingRequest: boolean;
   }> {
     const grantorId = apiModel.grantor
       ? await identityFetcher.getProfileIdByIdentityKeyOrThrow(
@@ -178,17 +188,44 @@ export class TdhGrantApiConverter {
       apiModel.status
         ?.split(',')
         ?.map((it) => this.resolveModelStatusFromApiValue(it)) ?? [];
+    const targetCollectionName = apiModel.target_collection_name;
+    let targetContracts: string[] = [];
+    const targetContract = apiModel.target_contract;
+    let conflictingRequest = false;
+    if (targetCollectionName?.length > 0) {
+      const targets =
+        await this.tdhGrantsRepository.getContractsOfExternalAddressesWhereNameLike(
+          targetCollectionName,
+          ctx
+        );
+      if (!targets.length) {
+        conflictingRequest = true;
+      }
+      if (targetContract) {
+        if (!targets.includes(targetContract)) {
+          conflictingRequest = true;
+        } else {
+          targetContracts = [targetContract];
+        }
+      } else {
+        targetContracts = targets;
+      }
+    }
     return {
       grantor_id: grantorId,
-      target_contract: apiModel.target_contract,
+      target_contracts: targetContracts,
       target_chain: targetChain,
       status: status,
       sort_direction: apiModel.sort_direction,
       sort: apiModel.sort,
       page: apiModel.page,
-      page_size: apiModel.page_size
+      page_size: apiModel.page_size,
+      conflictingRequest
     };
   }
 }
 
-export const tdhGrantApiConverter = new TdhGrantApiConverter(identityFetcher);
+export const tdhGrantApiConverter = new TdhGrantApiConverter(
+  identityFetcher,
+  tdhGrantsRepository
+);

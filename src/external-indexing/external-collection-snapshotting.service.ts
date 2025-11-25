@@ -15,7 +15,10 @@ import { randomUUID } from 'crypto';
 import { ExternalIndexerRpc, externalIndexerRpc } from './external-indexer-rpc';
 
 const CRYPTOPUNKS_MAINNET = '0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb';
-const ERC721_ABI = ['function ownerOf(uint256) view returns (address)'];
+const ERC721_ABI = [
+  'function ownerOf(uint256) view returns (address)',
+  'function name() view returns (string)'
+];
 const ERC165_ABI = [
   'function supportsInterface(bytes4 interfaceId) view returns (bool)'
 ];
@@ -85,17 +88,22 @@ export class ExternalCollectionSnapshottingService {
     let adapterName: string | null = validation.adapter ?? null;
     let ids: bigint[] = [];
     let totalSupply: number | null = null;
+    let collectionName: string | null = null;
     let succeeded = false;
 
     try {
       if (contractLc === CRYPTOPUNKS_MAINNET) {
         standard = IndexedContractStandard.LEGACY_721;
         adapterName = 'cryptopunks';
+        collectionName = 'CryptoPunks';
         ids = this.enumerateCryptoPunksIds();
         totalSupply = env.getIntOrNull('PUNKS_SUPPLY') ?? 10000;
         log.info('CryptoPunks adapter engaged', { count: ids.length });
       } else {
         const erc721 = new Contract(contract, ERC721_ABI, this.rpc.provider);
+        if (standard === IndexedContractStandard.ERC721) {
+          collectionName = await this.tryGetName(erc721, atBlock, log);
+        }
         const supportsEnum = await this.supportsEnumerable(contract, atBlock);
 
         if (supportsEnum) {
@@ -223,7 +231,8 @@ export class ExternalCollectionSnapshottingService {
             adapter: adapterName,
             total_supply: totalSupply,
             lag_blocks: 0,
-            lag_seconds: lagSeconds
+            lag_seconds: lagSeconds,
+            collection_name: collectionName
           },
           ctx
         );
@@ -435,6 +444,29 @@ export class ExternalCollectionSnapshottingService {
       }));
     } catch {
       return false;
+    }
+  }
+
+  private async tryGetName(
+    erc721: Contract,
+    atBlock: number,
+    log: Logger
+  ): Promise<string | null> {
+    try {
+      const name: string = await erc721.name({ blockTag: atBlock });
+      if (typeof name !== 'string') return null;
+
+      const trimmed = name.trim();
+      const limited = trimmed.slice(0, 255);
+      if (trimmed.length > limited.length) {
+        log.warn('Truncated collection name from name()', {
+          originalLength: trimmed.length
+        });
+      }
+      return limited;
+    } catch (e) {
+      log.warn('name() call failed', { error: String(e) });
+      return null;
     }
   }
 
