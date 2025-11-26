@@ -149,6 +149,7 @@ export class BaseConsolidatedTDH extends BaseTDH {
 }
 
 @Entity(CONSOLIDATED_WALLETS_TDH_TABLE)
+@Index('idx_tc_c_key_boost', ['consolidation_key', 'boost'])
 export class ConsolidatedTDH extends BaseConsolidatedTDH {}
 
 @Entity(HISTORIC_CONSOLIDATED_WALLETS_TDH_TABLE)
@@ -245,6 +246,7 @@ export class TDHEditions extends BaseTDHEditionsFields {
 
 @Entity(CONSOLIDATED_TDH_EDITIONS_TABLE)
 export class ConsolidatedTDHEditions extends BaseTDHEditionsFields {
+  @Index()
   @PrimaryColumn({ type: 'varchar', length: 500 })
   consolidation_key!: string;
 }
