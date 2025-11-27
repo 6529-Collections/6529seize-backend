@@ -7,7 +7,7 @@ let redis: Redis;
 
 export async function redisGet<T>(key: string): Promise<T | null> {
   if (!redis) {
-    throw new Error('Redis client is not initialized');
+    return null;
   }
   const valueFromRedisRaw = await redis.get(key);
   return valueFromRedisRaw ? JSON.parse(valueFromRedisRaw) : null;
@@ -36,7 +36,7 @@ export async function redisGetMany<T>(
   keys: string[]
 ): Promise<Record<string, T>> {
   if (!redis) {
-    throw new Error('Redis client is not initialized');
+    return {};
   }
   if (keys.length === 0) {
     return {};
@@ -89,6 +89,9 @@ export async function redisSetJson<T>(
 }
 
 export async function evictKeyFromRedisCache(key: string): Promise<any> {
+  if (!redis) {
+    return;
+  }
   await redis.del(key);
 }
 export async function evictAllKeysMatchingPatternFromRedisCache(
@@ -160,7 +163,7 @@ export async function redisSortedSetAddAndCount(
   expireSeconds: number
 ): Promise<number> {
   if (!redis) {
-    throw new Error('Redis client is not initialized');
+    return 0;
   }
 
   const pipeline = redis.multi();
