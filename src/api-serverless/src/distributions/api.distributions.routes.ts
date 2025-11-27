@@ -104,22 +104,15 @@ router.post(
       });
     }
 
-    try {
-      await populateDistributionNormalized(contract, cardId);
-      return await returnJsonResult(
-        {
-          success: true,
-          message: 'Distribution normalized successfully'
-        },
-        req,
-        res
-      );
-    } catch (err) {
-      return res.status(500).send({
-        success: false,
-        error: err
-      });
-    }
+    await populateDistributionNormalized(contract, cardId);
+    return await returnJsonResult(
+      {
+        success: true,
+        message: 'Distribution normalized successfully'
+      },
+      req,
+      res
+    );
   }
 );
 

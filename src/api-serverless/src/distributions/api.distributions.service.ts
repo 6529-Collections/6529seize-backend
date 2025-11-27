@@ -176,7 +176,7 @@ export async function populateDistributionNormalized(
 
   if (distributions.length === 0) {
     throw new BadRequestException(
-      `No distributions found for card ${cardId} and contract ${contract}`
+      `No distributions found for ${contract}#${cardId}`
     );
   }
 
