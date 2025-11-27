@@ -147,6 +147,7 @@ async function buildFinalSubscription(
   const { finalSubscriptions, newSubscriptionLogs } =
     await createFinalSubscriptions(newMeme, dateStr, autoSubscriptions);
 
+  // TODO: Uncomment this when we have a way to upload the final subscriptions to Arweave
   // const upload: NFTFinalSubscriptionUpload = await uploadFinalSubscriptions(
   //   MEMES_CONTRACT,
   //   newMeme,
