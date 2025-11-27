@@ -19,9 +19,9 @@ router.get(``, async function (req: any, res: any) {
   const memeIds = req.query.meme_id;
   const pageSize: number =
     req.query.page_size && req.query.page_size < DISTRIBUTION_PAGE_SIZE
-      ? parseInt(req.query.page_size)
+      ? Number.parseInt(req.query.page_size)
       : DEFAULT_PAGE_SIZE;
-  const page: number = req.query.page ? parseInt(req.query.page) : 1;
+  const page: number = req.query.page ? Number.parseInt(req.query.page) : 1;
   const contract = req.query.contract;
   const id = req.query.id;
   const tokenType = req.query.token_type;

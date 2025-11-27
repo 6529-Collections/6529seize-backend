@@ -340,9 +340,9 @@ async function initializeApp() {
     async function (req: any, res: Response<ApiResponse<ApiBlocksPage>>) {
       const pageSize: number =
         req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-          ? parseInt(req.query.page_size)
+          ? Number.parseInt(req.query.page_size)
           : DEFAULT_PAGE_SIZE;
-      const page: number = req.query.page ? parseInt(req.query.page) : 1;
+      const page: number = req.query.page ? Number.parseInt(req.query.page) : 1;
       await db.fetchBlocks(pageSize, page).then(async (result) => {
         await returnPaginatedResult(
           transformPaginatedResponse(
@@ -373,11 +373,11 @@ async function initializeApp() {
     async function (req: any, res: Response<ApiResponse<ApiUploadsPage>>) {
       const pageSize: number =
         req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-          ? parseInt(req.query.page_size)
+          ? Number.parseInt(req.query.page_size)
           : DEFAULT_PAGE_SIZE;
-      const page: number = req.query.page ? parseInt(req.query.page) : 1;
+      const page: number = req.query.page ? Number.parseInt(req.query.page) : 1;
       const block = numbers.isNumber(req.query.block)
-        ? parseInt(req.query.block)
+        ? Number.parseInt(req.query.block)
         : 0;
       const date = req.query.date;
       await db
@@ -405,11 +405,11 @@ async function initializeApp() {
     async function (req: any, res: Response<ApiResponse<ApiUploadsPage>>) {
       const pageSize: number =
         req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-          ? parseInt(req.query.page_size)
+          ? Number.parseInt(req.query.page_size)
           : DEFAULT_PAGE_SIZE;
-      const page: number = req.query.page ? parseInt(req.query.page) : 1;
+      const page: number = req.query.page ? Number.parseInt(req.query.page) : 1;
       const block = numbers.isNumber(req.query.block)
-        ? parseInt(req.query.block)
+        ? Number.parseInt(req.query.block)
         : 0;
       const date = req.query.date;
       await db
@@ -437,9 +437,9 @@ async function initializeApp() {
     async function (req: any, res: Response<ApiResponse<ApiArtistsPage>>) {
       const pageSize: number =
         req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-          ? parseInt(req.query.page_size)
+          ? Number.parseInt(req.query.page_size)
           : DEFAULT_PAGE_SIZE;
-      const page: number = req.query.page ? parseInt(req.query.page) : 1;
+      const page: number = req.query.page ? Number.parseInt(req.query.page) : 1;
 
       const meme_nfts = req.query.meme_id;
 
@@ -491,9 +491,9 @@ async function initializeApp() {
     async function (req: any, res: Response<ApiNftsPage>) {
       const pageSize: number =
         req.query.page_size && req.query.page_size <= NFTS_PAGE_SIZE
-          ? parseInt(req.query.page_size)
+          ? Number.parseInt(req.query.page_size)
           : DEFAULT_PAGE_SIZE;
-      const page: number = req.query.page ? parseInt(req.query.page) : 1;
+      const page: number = req.query.page ? Number.parseInt(req.query.page) : 1;
 
       const sortDir =
         req.query.sort_direction &&
@@ -547,9 +547,9 @@ async function initializeApp() {
       const id = req.query.id;
       const pageSize: number =
         req.query.page_size && req.query.page_size <= NFTS_PAGE_SIZE
-          ? parseInt(req.query.page_size)
+          ? Number.parseInt(req.query.page_size)
           : DEFAULT_PAGE_SIZE;
-      const page: number = req.query.page ? parseInt(req.query.page) : 1;
+      const page: number = req.query.page ? Number.parseInt(req.query.page) : 1;
 
       const sortDir =
         req.query.sort_direction &&
@@ -591,9 +591,9 @@ async function initializeApp() {
     async function (req: any, res: any) {
       const pageSize: number =
         req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-          ? parseInt(req.query.page_size)
+          ? Number.parseInt(req.query.page_size)
           : DEFAULT_PAGE_SIZE;
-      const page: number = req.query.page ? parseInt(req.query.page) : 1;
+      const page: number = req.query.page ? Number.parseInt(req.query.page) : 1;
 
       const sortDir =
         req.query.sort_direction &&
@@ -630,9 +630,9 @@ async function initializeApp() {
     async function (req: any, res: any) {
       const pageSize: number =
         req.query.page_size && req.query.page_size <= NFTS_PAGE_SIZE
-          ? parseInt(req.query.page_size)
+          ? Number.parseInt(req.query.page_size)
           : DEFAULT_PAGE_SIZE;
-      const page: number = req.query.page ? parseInt(req.query.page) : 1;
+      const page: number = req.query.page ? Number.parseInt(req.query.page) : 1;
 
       const nfts = req.query.id;
       const seasons = req.query.season;
@@ -743,7 +743,7 @@ async function initializeApp() {
     async function (req: any, res: any) {
       const pageSize: number =
         req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-          ? parseInt(req.query.page_size)
+          ? Number.parseInt(req.query.page_size)
           : DEFAULT_PAGE_SIZE;
 
       const search = req.query.search;
@@ -760,9 +760,9 @@ async function initializeApp() {
     async function (req: any, res: any) {
       const pageSize: number =
         req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-          ? parseInt(req.query.page_size)
+          ? Number.parseInt(req.query.page_size)
           : DEFAULT_PAGE_SIZE;
-      const page: number = req.query.page ? parseInt(req.query.page) : 1;
+      const page: number = req.query.page ? Number.parseInt(req.query.page) : 1;
 
       const nfts = req.query.id;
       const collections = req.query.collection;
@@ -781,9 +781,9 @@ async function initializeApp() {
     async function (req: any, res: Response<ApiResponse<ApiTransactionPage>>) {
       const pageSize: number =
         req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-          ? parseInt(req.query.page_size)
+          ? Number.parseInt(req.query.page_size)
           : DEFAULT_PAGE_SIZE;
-      const page: number = req.query.page ? parseInt(req.query.page) : 1;
+      const page: number = req.query.page ? Number.parseInt(req.query.page) : 1;
 
       const wallets = req.query.wallet;
       const contracts = req.query.contract;
@@ -822,9 +822,9 @@ async function initializeApp() {
     async function (req: any, res: any) {
       const pageSize: number =
         req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-          ? parseInt(req.query.page_size)
+          ? Number.parseInt(req.query.page_size)
           : DEFAULT_PAGE_SIZE;
-      const page: number = req.query.page ? parseInt(req.query.page) : 1;
+      const page: number = req.query.page ? Number.parseInt(req.query.page) : 1;
 
       const wallets = req.query.wallet;
       const nfts = req.query.id;
@@ -848,9 +848,9 @@ async function initializeApp() {
     async function (req: any, res: any) {
       const pageSize: number =
         req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-          ? parseInt(req.query.page_size)
+          ? Number.parseInt(req.query.page_size)
           : DEFAULT_PAGE_SIZE;
-      const page: number = req.query.page ? parseInt(req.query.page) : 1;
+      const page: number = req.query.page ? Number.parseInt(req.query.page) : 1;
       await db.fetchGradientTdh(pageSize, page).then(async (result) => {
         result = parseTdhResultsFromDB(result);
         await returnPaginatedResult(result, req, res);
@@ -877,9 +877,9 @@ async function initializeApp() {
   apiRouter.get(`/team`, cacheRequest(), async function (req: any, res: any) {
     const pageSize: number =
       req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-        ? parseInt(req.query.page_size)
+        ? Number.parseInt(req.query.page_size)
         : DEFAULT_PAGE_SIZE;
-    const page: number = req.query.page ? parseInt(req.query.page) : 1;
+    const page: number = req.query.page ? Number.parseInt(req.query.page) : 1;
 
     await db.fetchTeam(pageSize, page).then(async (result) => {
       await returnPaginatedResult(result, req, res);
@@ -909,9 +909,9 @@ async function initializeApp() {
       const block = req.query.block;
       const pageSize: number =
         req.query.page_size && req.query.page_size < DEFAULT_MAX_SIZE
-          ? parseInt(req.query.page_size)
+          ? Number.parseInt(req.query.page_size)
           : DEFAULT_PAGE_SIZE;
-      const page: number = req.query.page ? parseInt(req.query.page) : 1;
+      const page: number = req.query.page ? Number.parseInt(req.query.page) : 1;
 
       await db
         .fetchConsolidations(pageSize, page, block)
@@ -930,9 +930,9 @@ async function initializeApp() {
     async function (req: any, res: any) {
       const pageSize: number =
         req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-          ? parseInt(req.query.page_size)
+          ? Number.parseInt(req.query.page_size)
           : DEFAULT_PAGE_SIZE;
-      const page: number = req.query.page ? parseInt(req.query.page) : 1;
+      const page: number = req.query.page ? Number.parseInt(req.query.page) : 1;
 
       const block = req.query.block;
       const showIncomplete = !!(
@@ -955,9 +955,9 @@ async function initializeApp() {
 
       const pageSize: number =
         req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-          ? parseInt(req.query.page_size)
+          ? Number.parseInt(req.query.page_size)
           : DEFAULT_PAGE_SIZE;
-      const page: number = req.query.page ? parseInt(req.query.page) : 1;
+      const page: number = req.query.page ? Number.parseInt(req.query.page) : 1;
 
       await db
         .fetchNftHistory(pageSize, page, contract, nftId)
@@ -999,9 +999,9 @@ async function initializeApp() {
     async function (req: any, res: any) {
       const pageSize: number =
         req.query.page_size && req.query.page_size < DISTRIBUTION_PAGE_SIZE
-          ? parseInt(req.query.page_size)
+          ? Number.parseInt(req.query.page_size)
           : DEFAULT_PAGE_SIZE;
-      const page: number = req.query.page ? parseInt(req.query.page) : 1;
+      const page: number = req.query.page ? Number.parseInt(req.query.page) : 1;
 
       await db.fetchRememesUploads(pageSize, page).then(async (result) => {
         result.data.forEach((e: any) => {
@@ -1019,9 +1019,9 @@ async function initializeApp() {
     async function (req: any, res: any) {
       const pageSize: number =
         req.query.page_size && req.query.page_size < DISTRIBUTION_PAGE_SIZE
-          ? parseInt(req.query.page_size)
+          ? Number.parseInt(req.query.page_size)
           : DEFAULT_PAGE_SIZE;
-      const page: number = req.query.page ? parseInt(req.query.page) : 1;
+      const page: number = req.query.page ? Number.parseInt(req.query.page) : 1;
       await db.fetchTDHGlobalHistory(pageSize, page).then(async (result) => {
         result.data.map((d: any) => {
           const date = new Date(d.date);
@@ -1041,9 +1041,9 @@ async function initializeApp() {
     async function (req: any, res: any) {
       const pageSize: number =
         req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-          ? parseInt(req.query.page_size)
+          ? Number.parseInt(req.query.page_size)
           : DEFAULT_PAGE_SIZE;
-      const page: number = req.query.page ? parseInt(req.query.page) : 1;
+      const page: number = req.query.page ? Number.parseInt(req.query.page) : 1;
       const wallets = req.query.wallet;
       await db.fetchTDHHistory(wallets, pageSize, page).then(async (result) => {
         result.data.map((d: any) => {

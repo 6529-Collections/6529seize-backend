@@ -705,8 +705,8 @@ export async function searchNfts(
   let idQuery = '';
 
   if (search) {
-    const id = parseInt(search);
-    if (!isNaN(id)) {
+    const id = Number.parseInt(search);
+    if (!Number.isNaN(id)) {
       idQuery = search;
     }
 

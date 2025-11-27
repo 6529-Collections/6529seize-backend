@@ -30,7 +30,7 @@ function fullUrl(req: Request, next: string | null) {
   const params = newUrl.searchParams;
 
   if (params.has('page')) {
-    const page = parseInt(params.get('page')!);
+    const page = Number.parseInt(params.get('page')!);
     newUrl.searchParams.delete('page');
     newUrl.searchParams.append('page', String(page + 1));
     return newUrl.toString();
@@ -103,8 +103,8 @@ export function constructFiltersOR(f: string, newF: string) {
 
 export function resolveIntParam(param: string | string[] | undefined) {
   if (param) {
-    const parsed = parseInt(param as string);
-    if (!isNaN(parsed)) {
+    const parsed = Number.parseInt(param as string);
+    if (!Number.isNaN(parsed)) {
       return parsed;
     }
   }
@@ -143,10 +143,10 @@ export function getSearchFilters(columnNames: string[], search: string) {
 
 export function getPageSize(req: any): number {
   return req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-    ? parseInt(req.query.page_size)
+    ? Number.parseInt(req.query.page_size)
     : DEFAULT_PAGE_SIZE;
 }
 
 export function getPage(req: any): number {
-  return req.query.page ? parseInt(req.query.page) : 1;
+  return req.query.page ? Number.parseInt(req.query.page) : 1;
 }

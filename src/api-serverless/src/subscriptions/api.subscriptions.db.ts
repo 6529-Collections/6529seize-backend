@@ -382,9 +382,7 @@ async function updateSubscriptionsAfterSubscribeAllEditionsChange(
           subscribed_count: subscribedCount
         },
         { wrappedConnection }
-      )
-    );
-    promises.push(
+      ),
       sqlExecutor.execute(
         `
         INSERT INTO ${SUBSCRIPTIONS_LOGS_TABLE} (consolidation_key, log, additional_info)
@@ -821,8 +819,8 @@ export async function fetchPastMemeSubscriptionCounts(
   RedeemedSubscriptionCounts[] | PaginatedResponse<RedeemedSubscriptionCounts>
 > {
   if (pageSize && page) {
-    const pageSizeNumber = parseInt(pageSize);
-    const pageNumber = parseInt(page);
+    const pageSizeNumber = Number.parseInt(pageSize);
+    const pageNumber = Number.parseInt(page);
 
     const joins = `
       LEFT JOIN ${SUBSCRIPTIONS_REDEEMED_TABLE} 

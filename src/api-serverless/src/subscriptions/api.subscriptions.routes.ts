@@ -97,8 +97,8 @@ router.get(
     res: Response<SubscriptionTopUp[] | string>
   ) {
     const consolidationKey = req.params.consolidation_key.toLowerCase();
-    const pageSize = parseInt(req.query.page_size ?? '20');
-    const page = parseInt(req.query.page ?? '1');
+    const pageSize = Number.parseInt(req.query.page_size ?? '20');
+    const page = Number.parseInt(req.query.page ?? '1');
 
     const result = await fetchTopUpsForConsolidationKey(
       consolidationKey,
@@ -230,7 +230,7 @@ router.get(
     res: Response<SubscriptionTopUp[] | string>
   ) {
     const consolidationKey = req.params.consolidation_key.toLowerCase();
-    const cardCount = parseInt(req.query.card_count ?? '3');
+    const cardCount = Number.parseInt(req.query.card_count ?? '3');
 
     const result = await fetchUpcomingMemeSubscriptions(
       consolidationKey,
@@ -254,7 +254,7 @@ router.get(
     >,
     res: Response<SubscriptionCounts[]>
   ) {
-    const cardCount = parseInt(req.query.card_count ?? '3');
+    const cardCount = Number.parseInt(req.query.card_count ?? '3');
 
     const result = await fetchUpcomingMemeSubscriptionCounts(cardCount);
     return await returnJsonResult(result, req, res);
@@ -407,8 +407,8 @@ router.get(
     res: Response<SubscriptionLog[] | string>
   ) {
     const consolidationKey = req.params.consolidation_key.toLowerCase();
-    const pageSize = parseInt(req.query.page_size ?? '20');
-    const page = parseInt(req.query.page ?? '1');
+    const pageSize = Number.parseInt(req.query.page_size ?? '20');
+    const page = Number.parseInt(req.query.page ?? '1');
 
     const result = await fetchLogsForConsolidationKey(
       consolidationKey,
@@ -440,8 +440,8 @@ router.get(
     res: Response<SubscriptionLog[] | string>
   ) {
     const consolidationKey = req.params.consolidation_key.toLowerCase();
-    const pageSize = parseInt(req.query.page_size ?? '20');
-    const page = parseInt(req.query.page ?? '1');
+    const pageSize = Number.parseInt(req.query.page_size ?? '20');
+    const page = Number.parseInt(req.query.page ?? '1');
 
     const result = await fetchRedeemedSubscriptionsForConsolidationKey(
       consolidationKey,
@@ -509,7 +509,7 @@ router.get(
   ) {
     const consolidationKey = req.params.consolidation_key.toLowerCase();
     const contract = req.params.contract;
-    const tokenId = parseInt(req.params.token_id);
+    const tokenId = Number.parseInt(req.params.token_id);
 
     const result = await fetchFinalSubscription(
       consolidationKey,
@@ -543,8 +543,8 @@ router.get(
     if (!contract) {
       throw new BadRequestException('Contract is required');
     }
-    const pageSize = parseInt(req.query.page_size ?? '20');
-    const page = parseInt(req.query.page ?? '1');
+    const pageSize = Number.parseInt(req.query.page_size ?? '20');
+    const page = Number.parseInt(req.query.page ?? '1');
 
     const result = await fetchSubscriptionUploads(contract, pageSize, page);
     return await returnJsonResult(result, req, res, true);
@@ -575,8 +575,8 @@ router.get(
     const allowlistId = req.params.allowlist_id;
     const phaseId = req.params.phase_id;
 
-    const tokenId = parseInt(tokenIdStr);
-    if (isNaN(tokenId)) {
+    const tokenId = Number.parseInt(tokenIdStr);
+    if (Number.isNaN(tokenId)) {
       return res.status(400).send({
         valid: false,
         statusText: 'Invalid token ID'
@@ -636,8 +636,8 @@ router.post(
     const tokenIdStr = req.params.token_id;
     const allowlistId = req.params.allowlist_id;
 
-    const tokenId = parseInt(tokenIdStr);
-    if (isNaN(tokenId)) {
+    const tokenId = Number.parseInt(tokenIdStr);
+    if (Number.isNaN(tokenId)) {
       return res.status(400).send({
         valid: false,
         statusText: 'Invalid token ID'

@@ -17,7 +17,15 @@ import {
 
 const multer = require('multer');
 const storage = multer.memoryStorage();
-const upload = multer({ storage: storage });
+const upload = multer({
+  storage: storage,
+  limits: {
+    fileSize: 10 * 1024 * 1024,
+    files: 20,
+    fieldSize: 10 * 1024 * 1024,
+    fieldNameSize: 100
+  }
+});
 
 const logger = Logger.get('DISTRIBUTION_PHOTOS');
 
@@ -32,9 +40,9 @@ router.get(
 
     const pageSize: number =
       req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-        ? parseInt(req.query.page_size)
+        ? Number.parseInt(req.query.page_size)
         : DEFAULT_PAGE_SIZE;
-    const page: number = req.query.page ? parseInt(req.query.page) : 1;
+    const page: number = req.query.page ? Number.parseInt(req.query.page) : 1;
 
     await fetchDistributionPhotos(contract, nftId, pageSize, page).then(
       async (result) => {
@@ -57,9 +65,9 @@ router.post(
     }
 
     const contract = req.params.contract;
-    const nftId = parseInt(req.params.nft_id);
+    const nftId = Number.parseInt(req.params.nft_id);
 
-    if (isNaN(nftId)) {
+    if (Number.isNaN(nftId)) {
       return res.status(400).send({
         success: false,
         error: 'Invalid nft_id parameter'

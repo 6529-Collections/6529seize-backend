@@ -39,9 +39,9 @@ router.get(
 
     const pageSize: number =
       req.query.page_size && req.query.page_size < DISTRIBUTION_PAGE_SIZE
-        ? parseInt(req.query.page_size)
+        ? Number.parseInt(req.query.page_size)
         : DEFAULT_PAGE_SIZE;
-    const page: number = req.query.page ? parseInt(req.query.page) : 1;
+    const page: number = req.query.page ? Number.parseInt(req.query.page) : 1;
 
     await fetchDistributions(
       search,
@@ -69,9 +69,9 @@ router.get(
     }
 
     const contract = req.params.contract;
-    const cardId = parseInt(req.params.id);
+    const cardId = Number.parseInt(req.params.id);
 
-    if (isNaN(cardId)) {
+    if (Number.isNaN(cardId)) {
       return res.status(400).send({
         success: false,
         error: 'Invalid id parameter'
@@ -95,9 +95,9 @@ router.post(
     }
 
     const contract = req.params.contract;
-    const cardId = parseInt(req.params.id);
+    const cardId = Number.parseInt(req.params.id);
 
-    if (isNaN(cardId)) {
+    if (Number.isNaN(cardId)) {
       return res.status(400).send({
         success: false,
         error: 'Invalid id parameter'
