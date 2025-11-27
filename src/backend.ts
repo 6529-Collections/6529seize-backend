@@ -22,6 +22,12 @@ async function start() {
   // await tdhLoop.handler(undefined as any, undefined as any, undefined as any);
   await testInLocal();
 
+  // await subscriptionsDaily.handler(
+  //   undefined as any,
+  //   undefined as any,
+  //   undefined as any
+  // );
+
   process.exit(0);
 }
 

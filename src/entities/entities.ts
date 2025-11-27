@@ -12,6 +12,8 @@ export { CicStatement } from './ICICStatement';
 export { CookiesConsent } from './ICookieConsent';
 export { Consolidation, Delegation, NFTDelegationBlock } from './IDelegation';
 export { DeletedDropEntity } from './IDeletedDrop';
+export { Distribution, DistributionNormalized } from './IDistribution';
+export { DistributionPhoto } from './IDistributionPhoto';
 export {
   DropEntity,
   DropMediaEntity,

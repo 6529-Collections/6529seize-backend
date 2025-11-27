@@ -1,24 +1,26 @@
+import { Request } from 'express';
 import fetch from 'node-fetch';
 import {
-  fetchAllNftFinalSubscriptionsForContractAndToken,
-  fetchAllPublicFinalSubscriptionsForContractAndToken
-} from './api.subscriptions.db';
-import {
+  DISTRIBUTION_NORMALIZED_TABLE,
+  DISTRIBUTION_TABLE,
   MEMES_CONTRACT,
   SUBSCRIPTIONS_ADMIN_WALLETS,
   SUBSCRIPTIONS_NFTS_FINAL_TABLE,
   USE_CASE_MINTING
 } from '../../../constants';
 import { fetchProcessedDelegations } from '../../../delegationsLoop/db.delegations';
+import { NFTFinalSubscription } from '../../../entities/ISubscription';
 import {
   BadRequestException,
   CustomApiCompliantException
 } from '../../../exceptions';
 import { sqlExecutor } from '../../../sql-executor';
-import { NFTFinalSubscription } from '../../../entities/ISubscription';
-import { getAuthenticatedWalletOrNull } from '../auth/auth';
-import { Request } from 'express';
 import { equalIgnoreCase } from '../../../strings';
+import { getAuthenticatedWalletOrNull } from '../auth/auth';
+import {
+  fetchAllNftFinalSubscriptionsForContractAndToken,
+  fetchAllPublicFinalSubscriptionsForContractAndToken
+} from './api.subscriptions.db';
 
 export interface AllowlistResponse {
   allowlist_id: string;
@@ -164,7 +166,7 @@ export async function splitAllowlistResults(
   for (const sub of filteredSubscriptions) {
     airdrops.push({
       wallet: sub.airdrop_address,
-      amount: 1
+      amount: sub.subscribed_count
     });
     const rank = subscriptionRanks.get(sub.consolidation_key);
     const updateQuery = `
@@ -304,16 +306,42 @@ function filterSubscriptions(
 }
 
 export async function resetAllowlist(contract: string, tokenId: number) {
-  const updateQuery = `
-    UPDATE ${SUBSCRIPTIONS_NFTS_FINAL_TABLE} 
-    SET 
-      phase = NULL, 
-      phase_subscriptions = -1,
-      phase_position = -1
-    WHERE contract = :contract AND token_id = :tokenId`;
+  await sqlExecutor.executeNativeQueriesInTransaction(
+    async (wrappedConnection) => {
+      const updateQuery = `
+        UPDATE ${SUBSCRIPTIONS_NFTS_FINAL_TABLE} 
+        SET 
+          phase = NULL, 
+          phase_subscriptions = -1,
+          phase_position = -1
+        WHERE contract = :contract AND token_id = :tokenId`;
 
-  await sqlExecutor.execute(updateQuery, {
-    contract,
-    tokenId
-  });
+      await sqlExecutor.execute(
+        updateQuery,
+        {
+          contract,
+          tokenId
+        },
+        { wrappedConnection }
+      );
+
+      await sqlExecutor.execute(
+        `DELETE FROM ${DISTRIBUTION_TABLE} WHERE contract = :contract AND card_id = :tokenId`,
+        {
+          contract: contract.toLowerCase(),
+          tokenId
+        },
+        { wrappedConnection }
+      );
+
+      await sqlExecutor.execute(
+        `DELETE FROM ${DISTRIBUTION_NORMALIZED_TABLE} WHERE contract = :contract AND card_id = :tokenId`,
+        {
+          contract: contract.toLowerCase(),
+          tokenId
+        },
+        { wrappedConnection }
+      );
+    }
+  );
 }

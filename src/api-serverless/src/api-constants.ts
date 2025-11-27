@@ -3,10 +3,10 @@ import { ApiSeizeSettings } from './generated/models/ApiSeizeSettings';
 import { PageSortDirection } from './page-request';
 
 export const seizeSettings = (): ApiSeizeSettings => {
-  const rememes_submission_tdh_threshold = parseInt(
+  const rememes_submission_tdh_threshold = Number.parseInt(
     process.env.REMEMED_SUBMISSION_TDH_THRESHOLD ?? '6942'
   );
-  const all_drops_notifications_subscribers_limit = parseInt(
+  const all_drops_notifications_subscribers_limit = Number.parseInt(
     process.env.ALL_DROPS_NOTIFICATIONS_SUBSCRIBERS_LIMIT ?? '15'
   );
 
