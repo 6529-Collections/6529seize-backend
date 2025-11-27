@@ -12,12 +12,6 @@ async function start() {
     undefined as any
   );
 
-  // await subscriptionsDaily.handler(
-  //   undefined as any,
-  //   undefined as any,
-  //   undefined as any
-  // );
-
   process.exit(0);
 }
 
