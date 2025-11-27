@@ -102,6 +102,7 @@ export class TdhGrantApiConverter {
       target_collection_name: model.target_collection_name,
       error_details: model.error_details,
       created_at: model.created_at.toMillis(),
+      updated_at: model.updated_at.toMillis(),
       valid_from: model.valid_from?.toMillis() ?? null,
       valid_to: model.valid_to?.toMillis() ?? null,
       is_irrevocable: model.is_irrevocable
@@ -192,7 +193,7 @@ export class TdhGrantApiConverter {
     let targetContracts: string[] = [];
     const targetContract = apiModel.target_contract;
     let conflictingRequest = false;
-    if (targetCollectionName?.length > 0) {
+    if (targetCollectionName?.length) {
       const targets =
         await this.tdhGrantsRepository.getContractsOfExternalAddressesWhereNameLike(
           targetCollectionName,

@@ -71,6 +71,28 @@ export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
     }
   }
 
+  public async lockGrantById(
+    id: string,
+    ctx: RequestContext
+  ): Promise<TdhGrantEntity | null> {
+    try {
+      ctx.timer?.start(`${this.constructor.name}->lockGrantById`);
+      const connection = ctx.connection;
+      if (!connection) {
+        throw new Error(`Can not acquire db locks without a transaction`);
+      }
+      return await this.db.oneOrNull<TdhGrantEntity>(
+        `
+      select * from ${TDH_GRANTS_TABLE} where id = :id for update
+    `,
+        { id },
+        { wrappedConnection: connection }
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->lockOldestPendingGrant`);
+    }
+  }
+
   public async insertGrant(
     tdhGrantEntity: TdhGrantEntity,
     tokens: TdhGrantTokenEntity[],
