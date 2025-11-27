@@ -163,4 +163,3 @@ export async function fetchDistributionOverview(
     is_normalized
   };
 }
-
