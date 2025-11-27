@@ -11,6 +11,7 @@ import {
   AllowlistNormalizedEntry,
   Distribution
 } from '../../../entities/IDistribution';
+import { BadRequestException } from '../../../exceptions';
 import { sqlExecutor } from '../../../sql-executor';
 
 interface ResultsResponse {
@@ -172,6 +173,12 @@ export async function populateDistributionNormalized(
       contract: contract.toLowerCase()
     }
   );
+
+  if (distributions.length === 0) {
+    throw new BadRequestException(
+      `No distributions found for card ${cardId} and contract ${contract}`
+    );
+  }
 
   if (distributions.length === 0) {
     await sqlExecutor.execute(
