@@ -9,17 +9,15 @@ import { ApiResponse } from '../api-response';
 import { ApiCreateTdhGrant } from '../generated/models/ApiCreateTdhGrant';
 import { ApiTdhGrant } from '../generated/models/ApiTdhGrant';
 import { getValidatedByJoiOrThrow } from '../validation';
-import {
-  ApiCreateTdhGrantBackdoorSchema,
-  ApiCreateTdhGrantSchema
-} from './tdh-grants.validator';
+import { ApiCreateTdhGrantSchema } from './tdh-grants.validator';
 import { ForbiddenException } from '../../../exceptions';
-import { Timer } from '../../../time';
+import { Time, Timer } from '../../../time';
 import { createTdhGrantUseCase } from '../../../tdh-grants/create-tdh-grant.use-case';
 import { tdhGrantApiConverter } from './tdh-grant.api-converter';
 import { appFeatures } from '../../../app-features';
 import { ApiTdhGrantsPage } from '../generated/models/ApiTdhGrantsPage';
 import {
+  ApiTdhGrantUpdateRequestSchema,
   TdhGrantSearchRequestApiModel,
   TdhGrantSearchRequestApiModelSchema,
   TdhGrantTokensSearchRequestApiModel,
@@ -27,8 +25,8 @@ import {
 } from './tdh-grant-search-request.api-model';
 import { RequestContext } from '../../../request.context';
 import { tdhGrantsFinder } from '../../../tdh-grants/tdh-grants.finder';
-import { identityFetcher } from '../identities/identity.fetcher';
 import { ApiTdhGrantTokensPage } from '../generated/models/ApiTdhGrantTokensPage';
+import { ApiTdhGrantUpdateRequest } from '../generated/models/ApiTdhGrantUpdateRequest';
 
 const router = asyncRouter();
 
@@ -66,11 +64,59 @@ router.get(
 );
 
 router.get(
-  '/:grant/tokens',
+  '/:id',
+  maybeAuthenticatedUser(),
+  async (
+    req: Request<{ id: string }, any, any, any, any>,
+    res: Response<ApiResponse<ApiTdhGrant>>
+  ) => {
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
+    const ctx: RequestContext = { timer, authenticationContext };
+    const grantId = req.params.id;
+    const grantModel = await tdhGrantsFinder.getGrantByIdOrThrow(grantId, ctx);
+    const grant = await tdhGrantApiConverter.fromTdhGrantModelToApiTdhGrant(
+      grantModel,
+      ctx
+    );
+    res.send(grant);
+  }
+);
+
+router.post(
+  '/:id',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<{ id: string }, any, ApiTdhGrantUpdateRequest, any, any>,
+    res: Response<ApiResponse<ApiTdhGrant>>
+  ) => {
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
+    const ctx: RequestContext = { timer, authenticationContext };
+    const grantId = req.params.id;
+    const { valid_to } = getValidatedByJoiOrThrow(
+      req.body,
+      ApiTdhGrantUpdateRequestSchema
+    );
+    const updatedGrantModel = await tdhGrantsFinder.updateTdhGrant(
+      { grantId, proposedValidTo: valid_to ? Time.millis(valid_to) : null },
+      ctx
+    );
+    const updatedGrant =
+      await tdhGrantApiConverter.fromTdhGrantModelToApiTdhGrant(
+        updatedGrantModel,
+        ctx
+      );
+    res.send(updatedGrant);
+  }
+);
+
+router.get(
+  '/:id/tokens',
   maybeAuthenticatedUser(),
   async (
     req: Request<
-      { grant: string },
+      { id: string },
       any,
       any,
       TdhGrantTokensSearchRequestApiModel,
@@ -82,7 +128,7 @@ router.get(
     const authenticationContext = await getAuthenticationContext(req, timer);
     const ctx: RequestContext = { timer, authenticationContext };
     const searchModel = getValidatedByJoiOrThrow(
-      { ...req.query, grant_id: req.params.grant },
+      { ...req.query, grant_id: req.params.id },
       TdhGrantTokensSearchRequestApiModelSchema
     );
     const results = await tdhGrantsFinder.searchForTokens(searchModel, ctx);
@@ -134,47 +180,6 @@ router.post(
     const apiResponse =
       await tdhGrantApiConverter.fromTdhGrantModelToApiTdhGrant(model, {
         authenticationContext,
-        timer
-      });
-    res.send(apiResponse);
-  }
-);
-
-router.post(
-  '/backdoor',
-  async (
-    req: Request<any, any, ApiCreateTdhGrant & { user: string }, any, any>,
-    res: Response<ApiResponse<ApiTdhGrant>>
-  ) => {
-    if (!appFeatures.isXTdhEnabled()) {
-      throw new ForbiddenException(
-        `This endpoint is part of an ongoing development and is not yet enabled`
-      );
-    }
-    const apiCreateTdhGrant = getValidatedByJoiOrThrow(
-      req.body,
-      ApiCreateTdhGrantBackdoorSchema
-    );
-    const timer = Timer.getFromRequest(req);
-    const grantorId = await identityFetcher.getProfileIdByIdentityKey(
-      { identityKey: apiCreateTdhGrant.user },
-      { timer }
-    );
-    if (!grantorId) {
-      throw new ForbiddenException(
-        `No profile found for user ${apiCreateTdhGrant.user}`
-      );
-    }
-
-    const createCommand = tdhGrantApiConverter.fromApiCreateTdhGrantToModel({
-      apiCreateTdhGrant,
-      grantorId
-    });
-    const model = await createTdhGrantUseCase.handle(createCommand, {
-      timer
-    });
-    const apiResponse =
-      await tdhGrantApiConverter.fromTdhGrantModelToApiTdhGrant(model, {
         timer
       });
     res.send(apiResponse);

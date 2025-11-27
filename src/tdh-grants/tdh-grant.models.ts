@@ -22,6 +22,7 @@ export interface TdhGrantModel {
   status: TdhGrantStatus;
   error_details: string | null;
   created_at: Time;
+  updated_at: Time;
   tdh_rate: number;
   is_irrevocable: boolean;
   grantor_id: string;
@@ -43,6 +44,7 @@ export function fromTdhGrantEntityToModel(
       entity.valid_from === null ? null : Time.millis(entity.valid_from),
     valid_to: entity.valid_to ? Time.millis(entity.valid_to) : null,
     created_at: Time.millis(entity.created_at),
+    updated_at: Time.millis(entity.updated_at),
     status: entity.status,
     error_details: entity.error_details,
     tdh_rate: entity.tdh_rate,

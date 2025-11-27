@@ -4,6 +4,7 @@ import { PageSortDirection } from '../page-request';
 import * as Joi from 'joi';
 import { WALLET_REGEX } from '../../../constants';
 import { DEFAULT_PAGE_SIZE } from '../api-constants';
+import { ApiTdhGrantUpdateRequest } from '../generated/models/ApiTdhGrantUpdateRequest';
 
 export interface TdhGrantSearchRequestApiModel {
   readonly grantor: string | null;
@@ -63,4 +64,9 @@ export const TdhGrantTokensSearchRequestApiModelSchema: Joi.ObjectSchema<TdhGran
       .min(1)
       .max(2000)
       .default(DEFAULT_PAGE_SIZE)
+  });
+
+export const ApiTdhGrantUpdateRequestSchema: Joi.ObjectSchema<ApiTdhGrantUpdateRequest> =
+  Joi.object<ApiTdhGrantUpdateRequest>({
+    valid_to: Joi.number().optional().allow(null).integer().positive()
   });
