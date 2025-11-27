@@ -6,7 +6,6 @@ import {
   DELEGATION_ALL_ADDRESS,
   DELEGATIONS_TABLE,
   DISTRIBUTION_NORMALIZED_TABLE,
-  DISTRIBUTION_PHOTO_TABLE,
   DISTRIBUTION_TABLE,
   ENS_TABLE,
   GRADIENT_CONTRACT,
@@ -1019,31 +1018,6 @@ export async function fetchLabExtended(
   );
 }
 
-export async function fetchDistributionPhotos(
-  contract: string,
-  cardId: number,
-  pageSize: number,
-  page: number
-) {
-  let filters = constructFilters('', `contract = :contract`);
-  filters = constructFilters(filters, `card_id = :card_id`);
-  const params = {
-    contract: contract,
-    card_id: cardId
-  };
-
-  return fetchPaginated(
-    DISTRIBUTION_PHOTO_TABLE,
-    params,
-    `link asc`,
-    pageSize,
-    page,
-    filters,
-    ``,
-    ``
-  );
-}
-
 export async function fetchDistributionPhases(
   contract: string,
   cardId: number
@@ -1602,3 +1576,12 @@ export const fetchNFTMedia = async (
 
   return [];
 };
+
+export async function fetchNft(
+  contract: string,
+  id: number
+): Promise<NFT | null> {
+  const sql = `SELECT * FROM ${NFTS_TABLE} WHERE contract = :contract AND id = :id LIMIT 1`;
+  const result = await sqlExecutor.execute(sql, { contract, id });
+  return result[0] ?? null;
+}

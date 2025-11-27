@@ -1,7 +1,5 @@
 import * as dbMigrationsLoop from './dbMigrationsLoop';
 import { Logger } from './logging';
-import * as nftsLoop from './nftsLoop';
-import * as ownersBalancesLoop from './ownersBalancesLoop';
 
 const logger = Logger.get('BACKEND');
 
@@ -14,35 +12,11 @@ async function start() {
     undefined as any
   );
 
-  await nftsLoop.handler(
-    {
-      mode: 'discover'
-    },
-    undefined as any,
-    undefined as any
-  );
-
-  await nftsLoop.handler(
-    {
-      mode: 'refresh'
-    },
-    undefined as any,
-    undefined as any
-  );
-
-  await ownersBalancesLoop.handler(
-    undefined as any,
-    undefined as any,
-    undefined as any
-  );
-
-  await nftsLoop.handler(
-    {
-      mode: 'refresh'
-    },
-    undefined as any,
-    undefined as any
-  );
+  // await subscriptionsDaily.handler(
+  //   undefined as any,
+  //   undefined as any,
+  //   undefined as any
+  // );
 
   process.exit(0);
 }

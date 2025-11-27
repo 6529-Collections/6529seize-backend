@@ -193,7 +193,7 @@ async function processSubscription(
       WHERE ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}.contract = ?
       AND ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}.token_id = ?
       AND ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}.airdrop_address = ?
-      AND ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}.redeemed = false
+      AND ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}.redeemed_count < ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}.subscribed_count
       ORDER BY phase ASC, phase_position ASC;`,
       [transaction.contract, transaction.token_id, transaction.to_address]
     )
@@ -276,6 +276,7 @@ async function processSubscription(
     .save(redeemedSubscription);
 
   finalSubscription.redeemed = true;
+  finalSubscription.redeemed_count++;
   await entityManager
     .getRepository(NFTFinalSubscription)
     .save(finalSubscription);

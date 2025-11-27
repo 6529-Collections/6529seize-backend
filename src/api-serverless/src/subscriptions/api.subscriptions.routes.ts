@@ -19,6 +19,7 @@ import { PaginatedResponse } from '../api-constants';
 import { giveReadReplicaTimeToCatchUp, returnJsonResult } from '../api-helpers';
 import { asyncRouter } from '../async.router';
 import { getWalletOrThrow, needsAuthenticatedUser } from '../auth/auth';
+import { populateDistribution } from '../distributions/api.distributions.service';
 import { cacheRequest } from '../request-cache';
 import { getValidatedByJoiOrThrow } from '../validation';
 import {
@@ -45,6 +46,7 @@ import {
   SubscriptionCounts,
   updateSubscribeAllEditions,
   updateSubscription,
+  updateSubscriptionCount,
   updateSubscriptionMode
 } from './api.subscriptions.db';
 
@@ -336,6 +338,58 @@ router.post(
   }
 );
 
+router.post(
+  `/:consolidation_key/subscription-count`,
+  needsAuthenticatedUser(),
+  async function (
+    req: Request<
+      {
+        consolidation_key: string;
+      },
+      any,
+      {
+        contract: string;
+        token_id: number;
+        count: number;
+      },
+      any,
+      any
+    >,
+    res: Response
+  ) {
+    const consolidationKey = req.params.consolidation_key.toLowerCase();
+    const isAuthenticated = await isAuthenticatedForConsolidationKey(
+      req,
+      consolidationKey
+    );
+    if (!isAuthenticated) {
+      throw new ForbiddenException(
+        `User can only change subscription mode for their own consolidation`
+      );
+    }
+    const requestPayload = getValidatedByJoiOrThrow(
+      req.body,
+      Joi.object({
+        contract: Joi.string().required(),
+        token_id: Joi.number().required(),
+        count: Joi.number().required()
+      })
+    );
+    const nft = await getNft(requestPayload.contract, requestPayload.token_id);
+    if (nft) {
+      throw new BadRequestException('NFT already released');
+    }
+    const response = await updateSubscriptionCount(
+      consolidationKey,
+      requestPayload.contract,
+      requestPayload.token_id,
+      requestPayload.count
+    );
+    await giveReadReplicaTimeToCatchUp();
+    res.status(201).send(response);
+  }
+);
+
 router.get(
   `/consolidation/logs/:consolidation_key`,
   async function (
@@ -547,12 +601,15 @@ router.get(
     } else {
       const phaseResults = await fetchPhaseResults(auth, allowlistId, phaseId);
       const phaseName = await fetchPhaseName(auth, allowlistId, phaseId);
+
       const results = await splitAllowlistResults(
         contract,
         tokenId,
         phaseName,
         phaseResults
       );
+
+      await populateDistribution(contract, tokenId, phaseName, results);
       return await returnJsonResult(results, req, res);
     }
   }

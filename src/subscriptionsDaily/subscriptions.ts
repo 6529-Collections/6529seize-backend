@@ -119,13 +119,12 @@ async function populateAutoSubscriptionsForMemeId(
           subscribed_count: subscribedCount
         };
         newSubscriptions.push(sub);
-        let logText = `Auto-Subscribed to Meme #${newMeme}`;
-        if (subscribedCount > 1) {
-          logText += ` (${subscribedCount}/${eligibilityCount})`;
-        }
+        const logText = `Auto-Subscribed to Meme #${newMeme}`;
+        const additionalInfo = `Edition Preference: ${s.subscribe_all_editions ? 'All eligible' : 'One edition'} - Eligibility: x${eligibilityCount} - Subscription Count: x${subscribedCount}`;
         newSubscriptionLogs.push({
           consolidation_key: s.consolidation_key,
-          log: logText
+          log: logText,
+          additional_info: additionalInfo
         });
       })
     );
@@ -148,11 +147,17 @@ async function buildFinalSubscription(
   const { finalSubscriptions, newSubscriptionLogs } =
     await createFinalSubscriptions(newMeme, dateStr, autoSubscriptions);
 
-  const upload: NFTFinalSubscriptionUpload = await uploadFinalSubscriptions(
-    MEMES_CONTRACT,
-    newMeme,
-    finalSubscriptions
-  );
+  // const upload: NFTFinalSubscriptionUpload = await uploadFinalSubscriptions(
+  //   MEMES_CONTRACT,
+  //   newMeme,
+  //   finalSubscriptions
+  // );
+  const upload: NFTFinalSubscriptionUpload = {
+    date: Time.now().toIsoDateString(),
+    contract: MEMES_CONTRACT,
+    token_id: newMeme,
+    upload_url: 'https://example.com'
+  };
 
   await persistNFTFinalSubscriptions(
     MEMES_CONTRACT,
@@ -196,12 +201,13 @@ async function createFinalSubscriptions(
       sub.consolidation_key
     );
 
+    const autoSub = autoSubscriptions.find((a) =>
+      equalIgnoreCase(a.consolidation_key, sub.consolidation_key)
+    );
+
     if (balance) {
       if (balance.balance >= MEMES_MINT_PRICE) {
         let createdAt = sub.updated_at?.getTime() ?? Time.now().toMillis();
-        const autoSub = autoSubscriptions.find((a) =>
-          equalIgnoreCase(a.consolidation_key, sub.consolidation_key)
-        );
         if (autoSub) {
           createdAt = autoSub.updated_at?.getTime() ?? Time.now().toMillis();
         }
@@ -228,19 +234,22 @@ async function createFinalSubscriptions(
           redeemed_count: 0
         };
         finalSubscriptions.push(finalSub);
-        let logText = `Added  to Final Subscription for Meme #${newMeme} on ${dateStr}`;
-        if (subscribedCount > 1) {
-          logText += ` (${subscribedCount} / ${eligibilityCount})`;
-        }
+        const logText = `Added to Final Subscription for Meme #${newMeme} on ${dateStr}`;
+        const additionalInfo = `Airdrop Address: ${finalSub.airdrop_address} - Subscription Count: x${subscribedCount} - Balance: ${finalSub.balance} ETH`;
+
         newSubscriptionLogs.push({
           consolidation_key: sub.consolidation_key,
           log: logText,
-          additional_info: `Airdrop Address: ${finalSub.airdrop_address} - Balance: ${finalSub.balance} ETH`
+          additional_info: additionalInfo
         });
       } else {
         logger.info(
           `[INSUFFICIENT BALANCE FOR ${sub.consolidation_key}] : [SKIPPING]`
         );
+        if (autoSub) {
+          autoSub.updated_at = new Date();
+          await getDataSource().getRepository(SubscriptionMode).save(autoSub);
+        }
         newSubscriptionLogs.push({
           consolidation_key: sub.consolidation_key,
           log: `Insufficient Balance for Meme #${newMeme} on ${dateStr} - Not Added to Final Subscription`,

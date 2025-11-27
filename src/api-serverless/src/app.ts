@@ -10,6 +10,8 @@ import communityMembersRoutes from './community-members/community-members.routes
 import userGroupsImEligibleForRoutes from './community-members/user-groups-im-elgigible-for.routes';
 import userGroupsRoutes from './community-members/user-groups.routes';
 import delegationsRoutes from './delegations/delegations.routes';
+import distributionPhotosRoutes from './distribution-photos/api.distribution_photos.routes';
+import distributionsRoutes from './distributions/api.distributions.routes';
 import dropsMediaRoutes from './drops/drops-media.routes';
 import dropsRoutes from './drops/drops.routes';
 import lightDropsRoutes from './drops/light-drops.routes';
@@ -885,61 +887,6 @@ async function initializeApp() {
   });
 
   apiRouter.get(
-    `/distribution_photos/:contract/:nft_id`,
-    cacheRequest(),
-    async function (req: any, res: any) {
-      const contract = req.params.contract;
-      const nftId = req.params.nft_id;
-
-      const pageSize: number =
-        req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-          ? parseInt(req.query.page_size)
-          : DEFAULT_PAGE_SIZE;
-      const page: number = req.query.page ? parseInt(req.query.page) : 1;
-
-      await db
-        .fetchDistributionPhotos(contract, nftId, pageSize, page)
-        .then(async (result) => {
-          await returnPaginatedResult(result, req, res);
-        });
-    }
-  );
-
-  apiRouter.get(
-    `/distribution_phases/:contract/:nft_id`,
-    cacheRequest(),
-    async function (req: any, res: any) {
-      const contract = req.params.contract;
-      const nftId = req.params.nft_id;
-      await db.fetchDistributionPhases(contract, nftId).then(async (result) => {
-        await returnPaginatedResult(result, req, res);
-      });
-    }
-  );
-
-  apiRouter.get(
-    `/distributions`,
-    cacheRequest(),
-    async function (req: any, res: any) {
-      const search = req.query.search;
-      const cards = req.query.card_id;
-      const contracts = req.query.contract;
-      const wallets = req.query.wallet;
-
-      const pageSize: number =
-        req.query.page_size && req.query.page_size < DISTRIBUTION_PAGE_SIZE
-          ? parseInt(req.query.page_size)
-          : DEFAULT_PAGE_SIZE;
-      const page: number = req.query.page ? parseInt(req.query.page) : 1;
-      await db
-        .fetchDistributions(search, cards, contracts, wallets, pageSize, page)
-        .then(async (result) => {
-          await returnPaginatedResult(result, req, res);
-        });
-    }
-  );
-
-  apiRouter.get(
     `/consolidations/:wallet`,
     cacheRequest(),
     async function (req: any, res: any) {
@@ -1221,6 +1168,8 @@ async function initializeApp() {
   apiRouter.use(`/wave-media`, waveMediaRoutes);
   apiRouter.use(`/profile-subclassifications`, profileSubClassificationsRoutes);
   apiRouter.use(`/delegations`, delegationsRoutes);
+  apiRouter.use(`/distribution_photos`, distributionPhotosRoutes);
+  apiRouter.use(``, distributionsRoutes);
   apiRouter.use(`/waves`, wavesRoutes);
   apiRouter.use(`/public/waves`, publicWavesRoutes);
   apiRouter.use(`/policies`, policiesRoutes);

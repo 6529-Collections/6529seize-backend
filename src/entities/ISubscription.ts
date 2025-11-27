@@ -66,7 +66,7 @@ export class SubscriptionMode {
   @PrimaryColumn({ type: 'varchar', length: 200 })
   consolidation_key!: string;
 
-  @Column({ type: 'boolean' })
+  @Column({ type: 'boolean', default: false })
   automatic!: boolean;
 
   @Column({ type: 'boolean', default: false })
