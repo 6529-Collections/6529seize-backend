@@ -65,7 +65,7 @@ export async function populateDistribution(
     }
   >();
 
-  for (const wallet of allWallets) {
+  for (const wallet of Array.from(allWallets)) {
     const tdh = tdhResult.find((r) =>
       JSON.parse(r.wallets as any).some(
         (w: string) => wallet === w.toLowerCase()
@@ -100,7 +100,7 @@ export async function populateDistribution(
     count_allowlist: number;
   }> = [];
 
-  for (const wallet of allWallets) {
+  for (const wallet of Array.from(allWallets)) {
     const walletData = walletTdhMap.get(wallet)!;
     const countAirdrop = walletAirdropCountMap.get(wallet) || 0;
     const countAllowlist = walletAllowlistCountMap.get(wallet) || 0;
@@ -184,9 +184,9 @@ export async function populateDistributionNormalized(
     return;
   }
 
-  const uniqueWallets = [
-    ...new Set(distributions.map((d: any) => d.wallet.toLowerCase()))
-  ];
+  const uniqueWallets = Array.from(
+    new Set(distributions.map((d: Distribution) => d.wallet.toLowerCase()))
+  );
 
   const ensResults = await sqlExecutor.execute(
     `SELECT wallet, display FROM ${ENS_TABLE} WHERE LOWER(wallet) IN (:wallets)`,

@@ -488,7 +488,7 @@ export async function updateSubscription(
   await sqlExecutor.executeNativeQueriesInTransaction(
     async (wrappedConnection) => {
       let log: string;
-      let additionalInfo: string;
+      let additionalInfo: string = '';
       if (subscribed) {
         log = `Subscribed for Meme #${tokenId}`;
         additionalInfo = `Edition Preference: ${mode?.subscribe_all_editions ? 'All eligible' : 'One edition'} - Eligibility: x${subscriptionEligibility} - Subscription Count: x${subscribedCount}`;
@@ -888,7 +888,7 @@ export async function fetchPastMemeSubscriptionCounts(
 
 async function fetchSubscriptionModeForConsolidationKey(
   consolidationKey: string
-): Promise<SubscriptionMode> {
+): Promise<SubscriptionMode | undefined> {
   const result = await sqlExecutor.execute(
     `SELECT * FROM ${SUBSCRIPTIONS_MODE_TABLE} WHERE consolidation_key = :consolidationKey`,
     { consolidationKey }
@@ -896,14 +896,14 @@ async function fetchSubscriptionModeForConsolidationKey(
   if (result.length === 1) {
     return result[0];
   }
-  return null;
+  return undefined;
 }
 
 async function fetchSubscriptionForConsolidationKey(
   consolidationKey: string,
   contract: string,
   tokenId: number
-): Promise<NFTSubscription> {
+): Promise<NFTSubscription | undefined> {
   const result = await sqlExecutor.execute(
     `SELECT * FROM ${SUBSCRIPTIONS_NFTS_TABLE} WHERE consolidation_key = :consolidationKey AND contract = :contract AND token_id = :tokenId`,
     { consolidationKey, contract, tokenId }
@@ -911,5 +911,5 @@ async function fetchSubscriptionForConsolidationKey(
   if (result.length === 1) {
     return result[0];
   }
-  return null;
+  return undefined;
 }

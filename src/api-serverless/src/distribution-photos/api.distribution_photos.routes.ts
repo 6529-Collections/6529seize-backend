@@ -1,5 +1,4 @@
 import { Request, Response } from 'express';
-import { needsAuthenticatedUser } from 'src/auth/auth';
 import { invalidateCloudFront } from '../../../cloudfront';
 import { CLOUDFRONT_DISTRIBUTION } from '../../../constants';
 import { UnauthorisedException } from '../../../exceptions';
@@ -7,6 +6,7 @@ import { Logger } from '../../../logging';
 import { DEFAULT_PAGE_SIZE } from '../api-constants';
 import { returnJsonResult, returnPaginatedResult } from '../api-helpers';
 import { asyncRouter } from '../async.router';
+import { needsAuthenticatedUser } from '../auth/auth';
 import { cacheRequest } from '../request-cache';
 import { authenticateSubscriptionsAdmin } from '../subscriptions/api.subscriptions.allowlist';
 import { fetchDistributionPhotos } from './api.distribution_photos.db';
