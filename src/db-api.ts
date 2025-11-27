@@ -6,7 +6,6 @@ import {
   DELEGATION_ALL_ADDRESS,
   DELEGATIONS_TABLE,
   DISTRIBUTION_NORMALIZED_TABLE,
-  DISTRIBUTION_TABLE,
   ENS_TABLE,
   GRADIENT_CONTRACT,
   LAB_EXTENDED_DATA_TABLE,
@@ -47,8 +46,7 @@ import {
 } from './api-serverless/src/api-constants';
 import {
   constructFilters,
-  constructFiltersOR,
-  getSearchFilters
+  constructFiltersOR
 } from './api-serverless/src/api-helpers';
 import { ApiNftMedia } from './api-serverless/src/generated/models/ApiNftMedia';
 import { ApiTransaction } from './api-serverless/src/generated/models/ApiTransaction';
