@@ -3,6 +3,7 @@ import { IDENTITIES_TABLE } from '../constants';
 import { ProfileClassification } from './IProfile';
 
 @Entity(IDENTITIES_TABLE)
+@Index('idx_identities_p_id_c_key', ['profile_id', 'consolidation_key'])
 export class IdentityEntity {
   @PrimaryColumn({ type: 'varchar', length: 200, nullable: false })
   public readonly consolidation_key!: string;
