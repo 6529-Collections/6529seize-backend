@@ -81,7 +81,7 @@ export const redeemSubscriptions = async (reset?: boolean) => {
   });
 };
 
-async function processAirdrop(
+export async function processAirdrop(
   transaction: Transaction,
   entityManager: EntityManager
 ) {
@@ -275,7 +275,6 @@ async function processSubscription(
     .getRepository(RedeemedSubscription)
     .save(redeemedSubscription);
 
-  finalSubscription.redeemed = true;
   finalSubscription.redeemed_count++;
   await entityManager
     .getRepository(NFTFinalSubscription)
