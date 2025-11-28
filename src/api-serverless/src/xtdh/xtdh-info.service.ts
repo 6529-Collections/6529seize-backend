@@ -30,6 +30,7 @@ import { ApiXTdhGrantee } from '../generated/models/ApiXTdhGrantee';
 
 export interface XTdhCollectionsQueryParams {
   identity: string | null;
+  collection_name: string | null;
   page: number;
   page_size: number;
   sort: 'xtdh' | 'xtdh_rate';
@@ -73,7 +74,14 @@ export class XTdhInfoService {
   ) {}
 
   public async getXTdhCollections(
-    { identity, page, page_size, sort, order }: XTdhCollectionsQueryParams,
+    {
+      identity,
+      collection_name,
+      page,
+      page_size,
+      sort,
+      order
+    }: XTdhCollectionsQueryParams,
     ctx: RequestContext
   ): Promise<ApiXTdhCollectionsPage> {
     try {
@@ -95,6 +103,7 @@ export class XTdhInfoService {
       const collectionEntities = await this.xtdhRepository.getXTdhCollections(
         {
           identityId,
+          collectionName: collection_name,
           limit,
           offset,
           order,
@@ -108,6 +117,7 @@ export class XTdhInfoService {
         data: collectionEntities
           .map<ApiXTdhCollection>((it) => ({
             contract: it.contract,
+            collection_name: it.collection_name,
             total_contributor_count: it.total_contributors_count,
             active_contributor_count: it.active_contributors_count,
             total_token_count: it.total_token_count,

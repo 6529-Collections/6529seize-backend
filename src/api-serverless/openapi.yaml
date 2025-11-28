@@ -3446,6 +3446,11 @@ paths:
           required: false
           schema:
             type: string
+        - name: collection_name
+          in: query
+          required: false
+          schema:
+            type: string
         - name: page
           in: query
           required: false
@@ -7705,6 +7710,7 @@ components:
       type: object
       required:
         - contract
+        - collection_name
         - xtdh
         - xtdh_rate
         - total_token_count
@@ -7714,6 +7720,9 @@ components:
       properties:
         contract:
           type: string
+        collection_name:
+          type: string
+          nullable: true
         xtdh:
           type: number
           format: float

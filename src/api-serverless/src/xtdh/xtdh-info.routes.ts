@@ -23,6 +23,7 @@ import { cacheRequest } from '../request-cache';
 const XTdhCollectionsQueryParamsSchema: Joi.ObjectSchema<XTdhCollectionsQueryParams> =
   Joi.object<XTdhCollectionsQueryParams>({
     identity: Joi.string().optional().default(null),
+    collection_name: Joi.string().optional().default(null),
     page: Joi.number().optional().integer().min(1).default(1),
     page_size: Joi.number().optional().integer().min(1).max(100).default(20),
     sort: Joi.string()
