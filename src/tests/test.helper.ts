@@ -1,9 +1,9 @@
+import { when } from 'jest-when';
+import { Mock, mock } from 'ts-jest-mocker';
 import {
   ConnectionWrapper,
   LazyDbAccessCompatibleService
 } from '../sql-executor';
-import { Mock, mock } from 'ts-jest-mocker';
-import { when } from 'jest-when';
 
 export async function expectExceptionWithMessage(
   scenario: () => unknown,
