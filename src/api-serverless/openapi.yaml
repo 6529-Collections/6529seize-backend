@@ -2502,6 +2502,30 @@ paths:
           required: false
           schema:
             type: string
+        - name: valid_from_gt
+          in: query
+          required: false
+          schema:
+            type: number
+            format: int64
+        - name: valid_from_lt
+          in: query
+          required: false
+          schema:
+            type: number
+            format: int64
+        - name: valid_to_gt
+          in: query
+          required: false
+          schema:
+            type: number
+            format: int64
+        - name: valid_to_lt
+          in: query
+          required: false
+          schema:
+            type: number
+            format: int64
         - name: status
           in: query
           required: false

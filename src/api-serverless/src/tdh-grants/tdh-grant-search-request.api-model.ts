@@ -11,6 +11,10 @@ export interface TdhGrantSearchRequestApiModel {
   readonly target_contract: string | null;
   readonly target_collection_name: string | null;
   readonly target_chain: ApiTdhGrantTargetChain | null;
+  readonly valid_from_lt: number | null;
+  readonly valid_from_gt: number | null;
+  readonly valid_to_lt: number | null;
+  readonly valid_to_gt: number | null;
   readonly status?: string | null;
   readonly sort_direction: PageSortDirection | null;
   readonly sort: 'created_at' | 'valid_from' | 'valid_to' | 'tdh_rate' | null;
@@ -34,6 +38,10 @@ export const TdhGrantSearchRequestApiModelSchema: Joi.ObjectSchema<TdhGrantSearc
     target_chain: Joi.string()
       .valid(...Object.values(ApiTdhGrantTargetChain))
       .default(null),
+    valid_from_lt: Joi.number().integer().positive().optional().default(null),
+    valid_from_gt: Joi.number().integer().positive().optional().default(null),
+    valid_to_lt: Joi.number().integer().positive().optional().default(null),
+    valid_to_gt: Joi.number().integer().positive().optional().default(null),
     status: Joi.string(),
     sort_direction: Joi.string()
       .valid(...Object.values(ApiPageSortDirection))

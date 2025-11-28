@@ -158,6 +158,10 @@ export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
       grantor_id,
       target_contracts,
       target_chain,
+      valid_from_lt,
+      valid_from_gt,
+      valid_to_lt,
+      valid_to_gt,
       status,
       sort_direction,
       sort,
@@ -167,6 +171,10 @@ export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
       readonly grantor_id: string | null;
       readonly target_contracts: string[];
       readonly target_chain: number | null;
+      readonly valid_from_lt: number | null;
+      readonly valid_from_gt: number | null;
+      readonly valid_to_lt: number | null;
+      readonly valid_to_gt: number | null;
       readonly status: TdhGrantStatus[];
       readonly sort_direction: 'ASC' | 'DESC' | null;
       readonly sort:
@@ -187,7 +195,11 @@ export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
         grantor_id,
         target_contracts,
         target_chain,
-        status
+        status,
+        valid_from_lt,
+        valid_from_gt,
+        valid_to_lt,
+        valid_to_gt
       );
       const ordering = `order by t.${sort ?? 'created_at'} ${sort_direction ?? ''} limit :limit offset :offset`;
       params.limit = limit;
@@ -206,11 +218,19 @@ export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
       grantor_id,
       target_contracts,
       target_chain,
-      status
+      status,
+      valid_from_lt,
+      valid_from_gt,
+      valid_to_lt,
+      valid_to_gt
     }: {
       readonly grantor_id: string | null;
       readonly target_contracts: string[];
       readonly target_chain: number | null;
+      readonly valid_from_lt: number | null;
+      readonly valid_from_gt: number | null;
+      readonly valid_to_lt: number | null;
+      readonly valid_to_gt: number | null;
       readonly status: TdhGrantStatus[];
     },
     ctx: RequestContext
@@ -222,7 +242,11 @@ export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
         grantor_id,
         target_contracts,
         target_chain,
-        status
+        status,
+        valid_from_lt,
+        valid_from_gt,
+        valid_to_lt,
+        valid_to_gt
       );
       const sql = `${select} ${whereAnds.length ? ` where ` : ``} ${whereAnds.join(' and ')}`;
       return await this.db
@@ -239,7 +263,11 @@ export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
     grantor_id: string | null,
     target_contracts: string[],
     target_chain: number | null,
-    status: TdhGrantStatus[]
+    status: TdhGrantStatus[],
+    valid_from_lt: number | null,
+    valid_from_gt: number | null,
+    valid_to_lt: number | null,
+    valid_to_gt: number | null
   ) {
     const whereAnds: string[] = [];
     const params: Record<string, any> = {};
@@ -258,6 +286,22 @@ export class TdhGrantsRepository extends LazyDbAccessCompatibleService {
     if (status.length) {
       whereAnds.push(`t.status in (:status)`);
       params['status'] = status;
+    }
+    if (valid_from_lt !== null) {
+      whereAnds.push(`t.valid_from < :valid_from_lt`);
+      params['valid_from_lt'] = valid_from_lt;
+    }
+    if (valid_from_gt !== null) {
+      whereAnds.push(`t.valid_from > :valid_from_gt`);
+      params['valid_from_gt'] = valid_from_gt;
+    }
+    if (valid_to_lt !== null) {
+      whereAnds.push(`(t.valid_to is not null and t.valid_to < :valid_to_lt)`);
+      params['valid_to_lt'] = valid_to_lt;
+    }
+    if (valid_to_gt !== null) {
+      whereAnds.push(`(t.valid_to is null or t.valid_to > :valid_to_gt)`);
+      params['valid_to_gt'] = valid_to_gt;
     }
     return { whereAnds, params };
   }

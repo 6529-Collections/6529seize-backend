@@ -22,6 +22,10 @@ export class TdhGrantsFinder {
       grantor_id,
       target_contracts,
       target_chain,
+      valid_from_lt,
+      valid_from_gt,
+      valid_to_lt,
+      valid_to_gt,
       status,
       sort_direction,
       sort,
@@ -32,6 +36,10 @@ export class TdhGrantsFinder {
       readonly grantor_id: string | null;
       readonly target_contracts: string[];
       readonly target_chain: number | null;
+      readonly valid_from_lt: number | null;
+      readonly valid_from_gt: number | null;
+      readonly valid_to_lt: number | null;
+      readonly valid_to_gt: number | null;
       readonly status: TdhGrantStatus[];
       readonly sort_direction: 'ASC' | 'DESC' | null;
       readonly sort:
@@ -70,6 +78,10 @@ export class TdhGrantsFinder {
               grantor_id,
               target_contracts,
               target_chain,
+              valid_from_lt,
+              valid_from_gt,
+              valid_to_lt,
+              valid_to_gt,
               status,
               sort_direction,
               sort,
@@ -97,6 +109,10 @@ export class TdhGrantsFinder {
             grantor_id,
             target_contracts,
             target_chain,
+            valid_from_lt,
+            valid_from_gt,
+            valid_to_lt,
+            valid_to_gt,
             status
           },
           ctx
