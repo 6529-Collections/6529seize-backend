@@ -81,7 +81,7 @@ class NFTSubscriptionFields {
   updated_at?: Date;
 
   @PrimaryGeneratedColumn()
-  id!: number;
+  id?: number;
 
   @Column({ type: 'varchar', length: 200 })
   consolidation_key!: string;
@@ -163,7 +163,7 @@ export class SubscriptionLog {
   created_at?: Date;
 
   @PrimaryGeneratedColumn()
-  id!: number;
+  id?: number;
 
   @Column({ type: 'varchar', length: 200 })
   consolidation_key!: string;
