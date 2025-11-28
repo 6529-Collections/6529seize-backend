@@ -21,7 +21,10 @@ import {
   processAirdrop,
   validateNonSubscriptionAirdrop
 } from '../transactionsProcessingLoop/subscriptions';
-import { buildTransaction, generateRandomTokenId } from './test.helper';
+import {
+  buildTransaction,
+  generateRandomTokenId
+} from './test.transactions.helpers';
 
 jest.mock('../notifier-discord', () => ({
   sendDiscordUpdate: jest.fn()
@@ -222,13 +225,22 @@ describe('SubscriptionTests', () => {
         ),
         1
       );
-      redeemedSubscriptionRepo.save.mockResolvedValue({} as any);
+      redeemedSubscriptionRepo.findOne.mockResolvedValue(null);
+      let savedRedeemed: RedeemedSubscription | null = null;
+      redeemedSubscriptionRepo.save.mockImplementation((record: any) => {
+        savedRedeemed = record;
+        return Promise.resolve(record);
+      });
+      redeemedSubscriptionRepo.findOne.mockImplementation(() => {
+        return Promise.resolve(savedRedeemed);
+      });
       nftFinalSubscriptionRepo.save.mockResolvedValue({} as any);
 
       await processAirdrop(transaction, entityManager);
 
       expect(mockFetchBalance).toHaveBeenCalledTimes(1);
       expect(subscriptionBalanceRepo.save).toHaveBeenCalledTimes(1);
+      expect(redeemedSubscriptionRepo.findOne).toHaveBeenCalledTimes(1);
       expect(redeemedSubscriptionRepo.save).toHaveBeenCalledTimes(1);
       expect(nftFinalSubscriptionRepo.save).toHaveBeenCalledTimes(1);
 
@@ -240,6 +252,7 @@ describe('SubscriptionTests', () => {
       const redeemedSave = redeemedSubscriptionRepo.save.mock.calls[0][0];
       expect(redeemedSave.consolidation_key).toBe(consolidationKey);
       expect(redeemedSave.value).toBe(MEMES_MINT_PRICE);
+      expect(redeemedSave.count).toBe(1);
       expect(redeemedSave.contract).toBe(transaction.contract);
       expect(redeemedSave.token_id).toBe(transaction.token_id);
 
@@ -284,13 +297,21 @@ describe('SubscriptionTests', () => {
         ),
         3
       );
-      redeemedSubscriptionRepo.save.mockResolvedValue({} as any);
+      let savedRedeemed: RedeemedSubscription | null = null;
+      redeemedSubscriptionRepo.findOne
+        .mockResolvedValueOnce(null)
+        .mockImplementation(() => Promise.resolve(savedRedeemed));
+      redeemedSubscriptionRepo.save.mockImplementation((record: any) => {
+        savedRedeemed = { ...record };
+        return Promise.resolve(record);
+      });
       nftFinalSubscriptionRepo.save.mockResolvedValue({} as any);
 
       await processAirdrop(transaction, entityManager);
 
       expect(mockFetchBalance).toHaveBeenCalledTimes(3);
       expect(subscriptionBalanceRepo.save).toHaveBeenCalledTimes(3);
+      expect(redeemedSubscriptionRepo.findOne).toHaveBeenCalledTimes(3);
       expect(redeemedSubscriptionRepo.save).toHaveBeenCalledTimes(3);
       expect(nftFinalSubscriptionRepo.save).toHaveBeenCalledTimes(3);
 
@@ -307,9 +328,16 @@ describe('SubscriptionTests', () => {
 
       const redeemedSaves = redeemedSubscriptionRepo.save.mock.calls;
       expect(redeemedSaves).toHaveLength(3);
+      expect(redeemedSaves[0][0].consolidation_key).toBe(consolidationKey);
+      expect(redeemedSaves[0][0].value).toBe(MEMES_MINT_PRICE);
+      expect(redeemedSaves[0][0].count).toBe(1);
+      expect(redeemedSaves[1][0].consolidation_key).toBe(consolidationKey);
+      expect(redeemedSaves[1][0].value).toBe(MEMES_MINT_PRICE * 2);
+      expect(redeemedSaves[1][0].count).toBe(2);
+      expect(redeemedSaves[2][0].consolidation_key).toBe(consolidationKey);
+      expect(redeemedSaves[2][0].value).toBe(MEMES_MINT_PRICE * 3);
+      expect(redeemedSaves[2][0].count).toBe(3);
       redeemedSaves.forEach((call) => {
-        expect(call[0].consolidation_key).toBe(consolidationKey);
-        expect(call[0].value).toBe(MEMES_MINT_PRICE);
         expect(call[0].contract).toBe(transaction.contract);
         expect(call[0].token_id).toBe(transaction.token_id);
       });
@@ -357,13 +385,21 @@ describe('SubscriptionTests', () => {
         ),
         2
       );
-      redeemedSubscriptionRepo.save.mockResolvedValue({} as any);
+      let savedRedeemed: RedeemedSubscription | null = null;
+      redeemedSubscriptionRepo.findOne
+        .mockResolvedValueOnce(null)
+        .mockImplementation(() => Promise.resolve(savedRedeemed));
+      redeemedSubscriptionRepo.save.mockImplementation((record: any) => {
+        savedRedeemed = { ...record };
+        return Promise.resolve(record);
+      });
       nftFinalSubscriptionRepo.save.mockResolvedValue({} as any);
 
       await processAirdrop(transaction, entityManager);
 
       expect(mockFetchBalance).toHaveBeenCalledTimes(2);
       expect(subscriptionBalanceRepo.save).toHaveBeenCalledTimes(2);
+      expect(redeemedSubscriptionRepo.findOne).toHaveBeenCalledTimes(2);
       expect(redeemedSubscriptionRepo.save).toHaveBeenCalledTimes(2);
       expect(nftFinalSubscriptionRepo.save).toHaveBeenCalledTimes(2);
 
@@ -374,6 +410,12 @@ describe('SubscriptionTests', () => {
       expect(balanceSaves[1][0].balance).toBe(
         Math.round((initialBalance - MEMES_MINT_PRICE * 2) * 100000) / 100000
       );
+
+      const redeemedSaves = redeemedSubscriptionRepo.save.mock.calls;
+      expect(redeemedSaves[0][0].count).toBe(1);
+      expect(redeemedSaves[0][0].value).toBe(MEMES_MINT_PRICE);
+      expect(redeemedSaves[1][0].count).toBe(2);
+      expect(redeemedSaves[1][0].value).toBe(MEMES_MINT_PRICE * 2);
 
       const subscriptionSaves = nftFinalSubscriptionRepo.save.mock.calls;
       expect(subscriptionSaves[0][0].redeemed_count).toBe(1);
@@ -418,13 +460,21 @@ describe('SubscriptionTests', () => {
         2
       );
       whenRequestSubscription(entityManager, transaction, undefined, 1);
-      redeemedSubscriptionRepo.save.mockResolvedValue({} as any);
+      let savedRedeemed: RedeemedSubscription | null = null;
+      redeemedSubscriptionRepo.findOne
+        .mockResolvedValueOnce(null)
+        .mockImplementation(() => Promise.resolve(savedRedeemed));
+      redeemedSubscriptionRepo.save.mockImplementation((record: any) => {
+        savedRedeemed = { ...record };
+        return Promise.resolve(record);
+      });
       nftFinalSubscriptionRepo.save.mockResolvedValue({} as any);
 
       await processAirdrop(transaction, entityManager);
 
       expect(mockFetchBalance).toHaveBeenCalledTimes(2);
       expect(subscriptionBalanceRepo.save).toHaveBeenCalledTimes(2);
+      expect(redeemedSubscriptionRepo.findOne).toHaveBeenCalledTimes(2);
       expect(redeemedSubscriptionRepo.save).toHaveBeenCalledTimes(2);
       expect(nftFinalSubscriptionRepo.save).toHaveBeenCalledTimes(2);
 
@@ -473,7 +523,14 @@ describe('SubscriptionTests', () => {
         ),
         2
       );
-      redeemedSubscriptionRepo.save.mockResolvedValue({} as any);
+      let savedRedeemed: RedeemedSubscription | null = null;
+      redeemedSubscriptionRepo.findOne
+        .mockResolvedValueOnce(null)
+        .mockImplementation(() => Promise.resolve(savedRedeemed));
+      redeemedSubscriptionRepo.save.mockImplementation((record: any) => {
+        savedRedeemed = { ...record };
+        return Promise.resolve(record);
+      });
       nftFinalSubscriptionRepo.save.mockResolvedValue({} as any);
 
       await processAirdrop(transaction, entityManager);
@@ -487,6 +544,7 @@ describe('SubscriptionTests', () => {
       );
 
       expect(subscriptionBalanceRepo.save).toHaveBeenCalledTimes(2);
+      expect(redeemedSubscriptionRepo.findOne).toHaveBeenCalledTimes(2);
       expect(redeemedSubscriptionRepo.save).toHaveBeenCalledTimes(2);
       expect(nftFinalSubscriptionRepo.save).toHaveBeenCalledTimes(2);
     });
@@ -517,6 +575,7 @@ describe('SubscriptionTests', () => {
       );
       mockFetchBalance.mockResolvedValue(null);
       subscriptionBalanceRepo.save.mockResolvedValue({} as any);
+      redeemedSubscriptionRepo.findOne.mockResolvedValue(null);
       redeemedSubscriptionRepo.save.mockResolvedValue({} as any);
       nftFinalSubscriptionRepo.save.mockResolvedValue({} as any);
 
@@ -606,20 +665,32 @@ describe('SubscriptionTests', () => {
         ),
         1
       );
-      redeemedSubscriptionRepo.save.mockResolvedValue({} as any);
+      const savedRedeemedByKey = new Map<string, RedeemedSubscription>();
+      redeemedSubscriptionRepo.findOne.mockImplementation((options: any) => {
+        const key = options.where.consolidation_key;
+        return Promise.resolve(savedRedeemedByKey.get(key) || null);
+      });
+      redeemedSubscriptionRepo.save.mockImplementation((record: any) => {
+        savedRedeemedByKey.set(record.consolidation_key, { ...record });
+        return Promise.resolve(record);
+      });
       nftFinalSubscriptionRepo.save.mockResolvedValue({} as any);
 
       await processAirdrop(transaction, entityManager);
 
       expect(mockFetchBalance).toHaveBeenCalledTimes(3);
       expect(subscriptionBalanceRepo.save).toHaveBeenCalledTimes(3);
+      expect(redeemedSubscriptionRepo.findOne).toHaveBeenCalledTimes(3);
       expect(redeemedSubscriptionRepo.save).toHaveBeenCalledTimes(3);
       expect(nftFinalSubscriptionRepo.save).toHaveBeenCalledTimes(3);
 
       const redeemedSaves = redeemedSubscriptionRepo.save.mock.calls;
       expect(redeemedSaves[0][0].consolidation_key).toBe(consolidationKey1);
+      expect(redeemedSaves[0][0].count).toBe(1);
       expect(redeemedSaves[1][0].consolidation_key).toBe(consolidationKey1);
+      expect(redeemedSaves[1][0].count).toBe(2);
       expect(redeemedSaves[2][0].consolidation_key).toBe(consolidationKey2);
+      expect(redeemedSaves[2][0].count).toBe(1);
     });
   });
 });

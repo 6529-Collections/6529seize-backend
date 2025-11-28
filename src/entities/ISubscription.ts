@@ -203,6 +203,9 @@ export class RedeemedSubscription {
 
   @Column({ type: 'double' })
   balance_after!: number;
+
+  @Column({ type: 'int' })
+  count!: number;
 }
 
 @Entity(SUBSCRIPTIONS_TOP_UP_LATEST_BLOCK_TABLE)
