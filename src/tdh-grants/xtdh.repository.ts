@@ -1151,12 +1151,14 @@ SET cw.xtdh_rate = COALESCE(pd.produced, 0) - COALESCE(go.granted_out, 0) + COAL
   async getXTdhCollections(
     {
       identityId,
+      collectionName,
       offset,
       limit,
       sort,
       order
     }: {
       identityId: string | null;
+      collectionName: string | null;
       offset: number;
       limit: number;
       sort: 'xtdh' | 'xtdh_rate';
@@ -1166,6 +1168,7 @@ SET cw.xtdh_rate = COALESCE(pd.produced, 0) - COALESCE(go.granted_out, 0) + COAL
   ): Promise<
     Array<{
       contract: string;
+      collection_name: string | null;
       xtdh: number;
       xtdh_rate: number;
       total_token_count: number;
@@ -1179,6 +1182,9 @@ SET cw.xtdh_rate = COALESCE(pd.produced, 0) - COALESCE(go.granted_out, 0) + COAL
       const { tokenStatsTable, grantStatsTable } =
         await this.getActiveStatsTables(ctx);
 
+      const collectionNameLike = collectionName?.length
+        ? `%${collectionName}%`
+        : null;
       // --- FAST PATH: global leaderboard (no identity filter) ---
       if (!identityId) {
         const sql = `
@@ -1186,9 +1192,11 @@ SET cw.xtdh_rate = COALESCE(pd.produced, 0) - COALESCE(go.granted_out, 0) + COAL
         coll_agg AS (
           SELECT
             s.\`partition\`,
+            c.collection_name,
             SUM(s.xtdh_total)      AS xtdh,
             SUM(s.xtdh_rate_daily) AS xtdh_rate
           FROM ${tokenStatsTable} s
+          JOIN ${EXTERNAL_INDEXED_CONTRACTS_TABLE} c on s.\`partition\` = c.\`partition\`
           GROUP BY s.\`partition\`
         ),
 
@@ -1241,6 +1249,7 @@ SET cw.xtdh_rate = COALESCE(pd.produced, 0) - COALESCE(go.granted_out, 0) + COAL
 
         SELECT
           ca.\`partition\`,
+          ca.collection_name,
           ca.xtdh,
           ca.xtdh_rate,
           COALESCE(tt.total_token_count, 0)          AS total_token_count,
@@ -1251,23 +1260,30 @@ SET cw.xtdh_rate = COALESCE(pd.produced, 0) - COALESCE(go.granted_out, 0) + COAL
         LEFT JOIN token_totals   tt ON tt.\`partition\` = ca.\`partition\`
         LEFT JOIN token_active   ta ON ta.\`partition\` = ca.\`partition\`
         LEFT JOIN total_contrib  tc ON tc.\`partition\` = ca.\`partition\`
-        LEFT JOIN active_contrib ac ON ac.\`partition\` = ca.\`partition\`
+        LEFT JOIN active_contrib ac ON ac.\`partition\` = ca.\`partition\` 
+        ${collectionNameLike ? `WHERE ca.collection_name LIKE :collectionNameLike` : ``}
         ORDER BY ${sort} ${order}
         LIMIT :limit OFFSET :offset
       `;
 
         const rows = await this.db.execute<{
           partition: string;
+          collection_name: string | null;
           xtdh: number;
           xtdh_rate: number;
           total_token_count: number;
           active_token_count: number;
           total_contributors_count: number;
           active_contributors_count: number;
-        }>(sql, { limit, offset }, { wrappedConnection: ctx.connection });
+        }>(
+          sql,
+          { limit, offset, collectionNameLike },
+          { wrappedConnection: ctx.connection }
+        );
 
         return rows.map((it) => ({
           contract: it.partition.substring(2),
+          collection_name: it.collection_name,
           xtdh: +it.xtdh,
           xtdh_rate: +it.xtdh_rate,
           total_token_count: +it.total_token_count,
@@ -1297,10 +1313,12 @@ SET cw.xtdh_rate = COALESCE(pd.produced, 0) - COALESCE(go.granted_out, 0) + COAL
       coll_agg AS (
         SELECT
           ts.\`partition\`,
+          c.collection_name,
           SUM(ts.xtdh_total)      AS xtdh,
           SUM(ts.xtdh_rate_daily) AS xtdh_rate
         FROM ts
-        GROUP BY ts.\`partition\`
+        JOIN ${EXTERNAL_INDEXED_CONTRACTS_TABLE} c on ts.\`partition\` = c.\`partition\`
+        GROUP BY ts.\`partition\`, c.collection_name
       ),
 
       token_totals AS (
@@ -1354,6 +1372,7 @@ SET cw.xtdh_rate = COALESCE(pd.produced, 0) - COALESCE(go.granted_out, 0) + COAL
 
       SELECT
         ca.\`partition\`,
+        ca.collection_name,
         ca.xtdh,
         ca.xtdh_rate,
         COALESCE(tt.total_token_count, 0)          AS total_token_count,
@@ -1365,12 +1384,14 @@ SET cw.xtdh_rate = COALESCE(pd.produced, 0) - COALESCE(go.granted_out, 0) + COAL
       LEFT JOIN token_active   ta ON ta.\`partition\` = ca.\`partition\`
       LEFT JOIN total_contrib  tc ON tc.\`partition\` = ca.\`partition\`
       LEFT JOIN active_contrib ac ON ac.\`partition\` = ca.\`partition\`
+      ${collectionNameLike ? `WHERE ca.collection_name LIKE :collectionNameLike` : ``}
       ORDER BY ${sort} ${order}
       LIMIT :limit OFFSET :offset
     `;
 
       const rows = await this.db.execute<{
         partition: string;
+        collection_name: string | null;
         xtdh: number;
         xtdh_rate: number;
         total_token_count: number;
@@ -1385,6 +1406,7 @@ SET cw.xtdh_rate = COALESCE(pd.produced, 0) - COALESCE(go.granted_out, 0) + COAL
 
       return rows.map((it) => ({
         contract: it.partition.substring(2),
+        collection_name: it.collection_name,
         xtdh: +it.xtdh,
         xtdh_rate: +it.xtdh_rate,
         total_token_count: +it.total_token_count,

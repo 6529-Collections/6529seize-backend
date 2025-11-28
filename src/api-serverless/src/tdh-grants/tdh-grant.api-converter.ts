@@ -167,6 +167,10 @@ export class TdhGrantApiConverter {
     readonly target_contracts: string[];
     readonly target_chain: number | null;
     readonly status: TdhGrantStatus[];
+    readonly valid_from_lt: number | null;
+    readonly valid_from_gt: number | null;
+    readonly valid_to_lt: number | null;
+    readonly valid_to_gt: number | null;
     readonly sort_direction: 'ASC' | 'DESC' | null;
     readonly sort: 'created_at' | 'valid_from' | 'valid_to' | 'tdh_rate' | null;
     readonly page: number;
@@ -216,6 +220,10 @@ export class TdhGrantApiConverter {
       grantor_id: grantorId,
       target_contracts: targetContracts,
       target_chain: targetChain,
+      valid_from_lt: apiModel.valid_from_lt,
+      valid_from_gt: apiModel.valid_from_gt,
+      valid_to_lt: apiModel.valid_to_lt,
+      valid_to_gt: apiModel.valid_to_gt,
       status: status,
       sort_direction: apiModel.sort_direction,
       sort: apiModel.sort,
