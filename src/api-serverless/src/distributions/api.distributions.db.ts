@@ -4,9 +4,10 @@ import {
   DISTRIBUTION_TABLE
 } from '../../../constants';
 import { fetchPaginated } from '../../../db-api';
-import { constructFilters, getSearchFilters } from '../api-helpers';
-import { PaginatedResponse } from '../api-constants';
 import { sqlExecutor } from '../../../sql-executor';
+import { PaginatedResponse } from '../api-constants';
+import { constructFilters, getSearchFilters } from '../api-helpers';
+import { checkIsNormalized } from './api.distributions.service';
 
 export async function fetchDistributionPhases(
   contract: string,
@@ -137,7 +138,7 @@ export async function fetchDistributionOverview(
   }
 
   const normalizedResult = await sqlExecutor.execute<{ phases: string }>(
-    `SELECT phases FROM ${DISTRIBUTION_NORMALIZED_TABLE} WHERE contract = :contract AND card_id = :cardId LIMIT 1`,
+    `SELECT DISTINCT phases FROM ${DISTRIBUTION_NORMALIZED_TABLE} WHERE contract = :contract AND card_id = :cardId`,
     {
       contract: contractLower,
       cardId
@@ -154,8 +155,9 @@ export async function fetchDistributionOverview(
   const normalizedPhases = JSON.parse(normalizedResult[0].phases) as string[];
   const normalizedPhasesSet = new Set(normalizedPhases);
 
-  const is_normalized = Array.from(distributionPhases).every((phase) =>
-    normalizedPhasesSet.has(phase)
+  const is_normalized = checkIsNormalized(
+    distributionPhases,
+    normalizedPhasesSet
   );
 
   return {

@@ -19,6 +19,57 @@ interface ResultsResponse {
   amount: number;
 }
 
+export function checkIsNormalized(
+  distributionPhases: Set<string>,
+  normalizedPhases: Set<string>
+): boolean {
+  if (distributionPhases.size === 0) {
+    return false;
+  }
+
+  return Array.from(distributionPhases).every((phase) =>
+    normalizedPhases.has(phase)
+  );
+}
+
+function validateNormalization(
+  distributions: Distribution[],
+  distributionsNormalized: Map<
+    string,
+    {
+      phases: string[];
+    }
+  >,
+  contract: string,
+  cardId: number
+): void {
+  const distributionPhases = new Set(distributions.map((d) => d.phase));
+
+  if (distributionPhases.size === 0) {
+    throw new BadRequestException(
+      `No distribution phases found for ${contract}#${cardId}. Cannot normalize.`
+    );
+  }
+
+  const allNormalizedPhases = new Set<string>();
+  for (const dn of distributionsNormalized.values()) {
+    for (const phase of dn.phases) {
+      allNormalizedPhases.add(phase);
+    }
+  }
+
+  const isNormalized = checkIsNormalized(distributionPhases, allNormalizedPhases);
+
+  if (!isNormalized) {
+    const missingPhases = Array.from(distributionPhases).filter(
+      (phase) => !allNormalizedPhases.has(phase)
+    );
+    throw new BadRequestException(
+      `Cannot normalize distribution for ${contract}#${cardId}. Missing phases in normalized data: ${missingPhases.join(', ')}`
+    );
+  }
+}
+
 export async function populateDistribution(
   contract: string,
   cardId: number,
@@ -66,11 +117,14 @@ export async function populateDistribution(
     }
   >();
 
-  const tdhWalletMap = new Map<string, {
-    wallet_tdh: number;
-    wallet_balance: number;
-    wallet_unique_balance: number;
-  }>();
+  const tdhWalletMap = new Map<
+    string,
+    {
+      wallet_tdh: number;
+      wallet_balance: number;
+      wallet_unique_balance: number;
+    }
+  >();
 
   for (const tdh of tdhResult) {
     try {
@@ -87,6 +141,7 @@ export async function populateDistribution(
         }
       }
     } catch (e) {
+      // Ignore parsing errors for individual TDH entries
     }
   }
 
@@ -299,6 +354,13 @@ export async function populateDistributionNormalized(
       dn.phases.push(d.phase);
     }
   }
+
+  validateNormalization(
+    distributions,
+    distributionsNormalized,
+    contract,
+    cardId
+  );
 
   await sqlExecutor.executeNativeQueriesInTransaction(
     async (wrappedConnection) => {
