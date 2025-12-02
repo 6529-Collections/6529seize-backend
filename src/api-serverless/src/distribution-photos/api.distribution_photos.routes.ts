@@ -3,17 +3,22 @@ import { invalidateCloudFront } from '../../../cloudfront';
 import { CLOUDFRONT_DISTRIBUTION } from '../../../constants';
 import { UnauthorisedException } from '../../../exceptions';
 import { Logger } from '../../../logging';
+import { evictKeyFromRedisCache } from '../../../redis';
 import { DEFAULT_PAGE_SIZE } from '../api-constants';
-import { returnJsonResult, returnPaginatedResult } from '../api-helpers';
+import {
+  getCacheKeyPatternForPath,
+  returnJsonResult,
+  returnPaginatedResult
+} from '../api-helpers';
 import { asyncRouter } from '../async.router';
 import { needsAuthenticatedUser } from '../auth/auth';
 import { cacheRequest } from '../request-cache';
 import { authenticateSubscriptionsAdmin } from '../subscriptions/api.subscriptions.allowlist';
+import { uploadPhotos } from './api.distribution-photos.upload.service';
 import {
   fetchDistributionPhotos,
   saveDistributionPhotos
 } from './api.distribution_photos.db';
-import { uploadPhotos } from './api.distribution-photos.upload.service';
 
 const multer = require('multer');
 const storage = multer.memoryStorage();
@@ -93,6 +98,11 @@ router.post(
 
     const invalidationPath = `/distribution/${process.env.NODE_ENV}/${contract}/${nftId}/*`;
     await invalidateCloudFront(CLOUDFRONT_DISTRIBUTION, [invalidationPath]);
+
+    const overviewCacheKey = getCacheKeyPatternForPath(
+      `/api/distributions/${contract}/${nftId}/overview`
+    );
+    await evictKeyFromRedisCache(overviewCacheKey);
 
     return await returnJsonResult(
       {
