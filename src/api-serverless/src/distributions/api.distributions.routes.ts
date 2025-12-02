@@ -1,7 +1,11 @@
 import { Request, Response } from 'express';
 import { UnauthorisedException } from '../../../exceptions';
 import { DEFAULT_PAGE_SIZE, DISTRIBUTION_PAGE_SIZE } from '../api-constants';
-import { returnJsonResult, returnPaginatedResult } from '../api-helpers';
+import {
+  giveReadReplicaTimeToCatchUp,
+  returnJsonResult,
+  returnPaginatedResult
+} from '../api-helpers';
 import { asyncRouter } from '../async.router';
 import { needsAuthenticatedUser } from '../auth/auth';
 import { cacheRequest } from '../request-cache';
@@ -105,6 +109,8 @@ router.post(
     }
 
     await populateDistributionNormalized(contract, cardId);
+
+    await giveReadReplicaTimeToCatchUp();
 
     return await returnJsonResult(
       {
