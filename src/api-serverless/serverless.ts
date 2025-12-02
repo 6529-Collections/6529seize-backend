@@ -19,7 +19,12 @@ const serverlessConfiguration: AWS = {
     }
   },
   // import the function via paths
-  functions: { handler: handler as any },
+  functions: {
+    handler: {
+      handler: handler as any,
+      timeout: 300
+    }
+  },
   package: { individually: true },
   custom: {
     esbuild: {
