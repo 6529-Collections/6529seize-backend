@@ -1,5 +1,4 @@
 import { Request, Response } from 'express';
-import { Readable } from 'stream';
 import { UnauthorisedException } from '../../../exceptions';
 import { DEFAULT_PAGE_SIZE, DISTRIBUTION_PAGE_SIZE } from '../api-constants';
 import {
@@ -21,9 +20,32 @@ import {
   populateDistributionNormalized
 } from './api.distributions.service';
 
-const csv = require('csv-parser');
-
 const router = asyncRouter();
+
+function validateSubscriptionAdminAndParams(
+  req: Request<any, any, any, any>,
+  res: Response
+): { contract: string; cardId: number } | null {
+  const authenticated = authenticateSubscriptionsAdmin(req);
+  if (!authenticated) {
+    throw new UnauthorisedException(
+      'Only Subscription Admins can perform this action'
+    );
+  }
+
+  const contract = req.params.contract;
+  const cardId = Number.parseInt(req.params.id);
+
+  if (Number.isNaN(cardId)) {
+    res.status(400).send({
+      success: false,
+      error: 'Invalid id parameter'
+    });
+    return null;
+  }
+
+  return { contract, cardId };
+}
 
 router.get(
   `/distribution_phases/:contract/:nft_id`,
@@ -97,22 +119,11 @@ router.post(
   `/distributions/:contract/:id/normalize`,
   needsAuthenticatedUser(),
   async function (req: Request<any, any, any, any>, res: Response) {
-    const authenticated = authenticateSubscriptionsAdmin(req);
-    if (!authenticated) {
-      throw new UnauthorisedException(
-        'Only Subscription Admins can normalize distributions'
-      );
+    const params = validateSubscriptionAdminAndParams(req, res);
+    if (!params) {
+      return;
     }
-
-    const contract = req.params.contract;
-    const cardId = Number.parseInt(req.params.id);
-
-    if (Number.isNaN(cardId)) {
-      return res.status(400).send({
-        success: false,
-        error: 'Invalid id parameter'
-      });
-    }
+    const { contract, cardId } = params;
 
     await populateDistributionNormalized(contract, cardId);
 
@@ -133,22 +144,11 @@ router.post(
   `/distributions/:contract/:id/automatic_airdrops`,
   needsAuthenticatedUser(),
   async function (req: Request<any, any, any, any>, res: Response) {
-    const authenticated = authenticateSubscriptionsAdmin(req);
-    if (!authenticated) {
-      throw new UnauthorisedException(
-        'Only Subscription Admins can create automatic airdrops'
-      );
+    const params = validateSubscriptionAdminAndParams(req, res);
+    if (!params) {
+      return;
     }
-
-    const contract = req.params.contract;
-    const cardId = Number.parseInt(req.params.id);
-
-    if (Number.isNaN(cardId)) {
-      return res.status(400).send({
-        success: false,
-        error: 'Invalid id parameter'
-      });
-    }
+    const { contract, cardId } = params;
 
     const { csv: csvData } = req.body;
     if (!csvData || typeof csvData !== 'string') {
@@ -159,35 +159,23 @@ router.post(
     }
 
     const airdrops: Array<{ address: string; count: number }> = [];
+    const lines = csvData.trim().split('\n');
 
-    const bufferStream = new Readable();
-    bufferStream.push(csvData);
-    bufferStream.push(null);
+    for (const line of lines) {
+      const parts = line.split(',');
+      const address = parts[0]?.trim();
+      const count = Number.parseInt(parts[1]?.trim() || '0');
 
-    await new Promise<void>((resolve, reject) => {
-      bufferStream
-        .pipe(csv({ headers: false }))
-        .on('data', (data: any) => {
-          const address = data[0]?.trim();
-          const count = Number.parseInt(data[1]?.trim() || '0');
+      if (!address) {
+        continue;
+      }
 
-          if (!address) {
-            return;
-          }
+      if (Number.isNaN(count) || count <= 0) {
+        continue;
+      }
 
-          if (Number.isNaN(count) || count <= 0) {
-            return;
-          }
-
-          airdrops.push({ address, count });
-        })
-        .on('end', () => {
-          resolve();
-        })
-        .on('error', (err: Error) => {
-          reject(err);
-        });
-    });
+      airdrops.push({ address, count });
+    }
 
     if (airdrops.length === 0) {
       return res.status(400).send({

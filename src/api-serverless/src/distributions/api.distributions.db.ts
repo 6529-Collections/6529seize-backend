@@ -221,7 +221,8 @@ export async function fetchWalletTdhData(
         }
       }
     } catch (e) {
-      // Ignore parsing errors for individual TDH entries
+      // Continue processing other entries if this one fails to parse
+      continue;
     }
   }
 
