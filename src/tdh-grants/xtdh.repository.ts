@@ -1400,7 +1400,7 @@ SET cw.xtdh_rate = COALESCE(pd.produced, 0) - COALESCE(go.granted_out, 0) + COAL
         active_contributors_count: number;
       }>(
         sqlWithIdentity,
-        { identityId, limit, offset },
+        { identityId, limit, offset, collectionNameLike },
         { wrappedConnection: ctx.connection }
       );
 
