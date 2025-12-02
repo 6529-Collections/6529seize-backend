@@ -58,7 +58,10 @@ function validateNormalization(
     }
   }
 
-  const isNormalized = checkIsNormalized(distributionPhases, allNormalizedPhases);
+  const isNormalized = checkIsNormalized(
+    distributionPhases,
+    allNormalizedPhases
+  );
 
   if (!isNormalized) {
     const missingPhases = Array.from(distributionPhases).filter(
