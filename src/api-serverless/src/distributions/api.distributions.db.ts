@@ -1,4 +1,5 @@
 import {
+  CONSOLIDATED_WALLETS_TDH_TABLE,
   DISTRIBUTION_NORMALIZED_TABLE,
   DISTRIBUTION_PHOTO_TABLE,
   DISTRIBUTION_TABLE
@@ -102,6 +103,7 @@ export async function fetchDistributions(
 export interface DistributionOverview {
   photos_count: number;
   is_normalized: boolean;
+  automatic_airdrops: number;
 }
 
 export async function fetchDistributionOverview(
@@ -130,10 +132,20 @@ export async function fetchDistributionOverview(
     distributionPhasesResult.map((r) => r.phase)
   );
 
+  const automaticAirdropsResult = await sqlExecutor.execute<{ count: number }>(
+    `SELECT COUNT(*) as count FROM ${DISTRIBUTION_TABLE} WHERE contract = :contract AND card_id = :cardId AND phase = 'Airdrop'`,
+    {
+      contract: contractLower,
+      cardId
+    }
+  );
+  const automatic_airdrops = automaticAirdropsResult[0]?.count || 0;
+
   if (distributionPhases.size === 0) {
     return {
       photos_count,
-      is_normalized: false
+      is_normalized: false,
+      automatic_airdrops
     };
   }
 
@@ -148,7 +160,8 @@ export async function fetchDistributionOverview(
   if (normalizedResult.length === 0) {
     return {
       photos_count,
-      is_normalized: false
+      is_normalized: false,
+      automatic_airdrops
     };
   }
 
@@ -167,6 +180,109 @@ export async function fetchDistributionOverview(
 
   return {
     photos_count,
-    is_normalized
+    is_normalized,
+    automatic_airdrops
   };
+}
+
+export interface WalletTdhData {
+  wallet_tdh: number;
+  wallet_balance: number;
+  wallet_unique_balance: number;
+}
+
+export async function fetchWalletTdhData(
+  wallets: string[]
+): Promise<Map<string, WalletTdhData>> {
+  const tdhResult: {
+    wallets: string;
+    boosted_tdh: number;
+    memes_balance: number;
+    unique_memes: number;
+    gradients_balance: number;
+  }[] = await sqlExecutor.execute(
+    `SELECT wallets, boosted_tdh, memes_balance, unique_memes, gradients_balance FROM ${CONSOLIDATED_WALLETS_TDH_TABLE}`
+  );
+
+  const tdhWalletMap = new Map<string, WalletTdhData>();
+
+  for (const tdh of tdhResult) {
+    try {
+      const walletList = JSON.parse(tdh.wallets as any) as string[];
+      const tdhData: WalletTdhData = {
+        wallet_tdh: tdh.boosted_tdh,
+        wallet_balance: tdh.memes_balance + tdh.gradients_balance,
+        wallet_unique_balance: tdh.unique_memes + tdh.gradients_balance
+      };
+      for (const w of walletList) {
+        const walletKey = w.toLowerCase();
+        if (!tdhWalletMap.has(walletKey)) {
+          tdhWalletMap.set(walletKey, tdhData);
+        }
+      }
+    } catch (e) {
+      // Ignore parsing errors for individual TDH entries
+    }
+  }
+
+  return tdhWalletMap;
+}
+
+export interface DistributionInsert {
+  card_id: number;
+  contract: string;
+  phase: string;
+  wallet: string;
+  wallet_tdh: number;
+  wallet_balance: number;
+  wallet_unique_balance: number;
+  count: number;
+  count_airdrop: number;
+  count_allowlist: number;
+}
+
+export async function insertDistributions(
+  distributions: DistributionInsert[]
+): Promise<void> {
+  if (distributions.length === 0) {
+    return;
+  }
+
+  const params: Record<string, any> = {};
+  distributions.forEach((dist, index) => {
+    params[`card_id_${index}`] = dist.card_id;
+    params[`contract_${index}`] = dist.contract;
+    params[`phase_${index}`] = dist.phase;
+    params[`wallet_${index}`] = dist.wallet;
+    params[`wallet_tdh_${index}`] = dist.wallet_tdh;
+    params[`wallet_balance_${index}`] = dist.wallet_balance;
+    params[`wallet_unique_balance_${index}`] = dist.wallet_unique_balance;
+    params[`count_${index}`] = dist.count;
+    params[`count_airdrop_${index}`] = dist.count_airdrop;
+    params[`count_allowlist_${index}`] = dist.count_allowlist;
+  });
+
+  const placeholders = distributions
+    .map(
+      (_, index) =>
+        `(:card_id_${index}, :contract_${index}, :phase_${index}, :wallet_${index}, :wallet_tdh_${index}, :wallet_balance_${index}, :wallet_unique_balance_${index}, :count_${index}, :count_airdrop_${index}, :count_allowlist_${index})`
+    )
+    .join(', ');
+
+  const insertSql = `
+    INSERT INTO ${DISTRIBUTION_TABLE} 
+      (card_id, contract, phase, wallet, wallet_tdh, wallet_balance, wallet_unique_balance, count, count_airdrop, count_allowlist)
+    VALUES
+      ${placeholders}
+    ON DUPLICATE KEY UPDATE
+      wallet_tdh = VALUES(wallet_tdh),
+      wallet_balance = VALUES(wallet_balance),
+      wallet_unique_balance = VALUES(wallet_unique_balance),
+      count = VALUES(count),
+      count_airdrop = VALUES(count_airdrop),
+      count_allowlist = VALUES(count_allowlist),
+      updated_at = CURRENT_TIMESTAMP(6)
+  `;
+
+  await sqlExecutor.execute(insertSql, params);
 }

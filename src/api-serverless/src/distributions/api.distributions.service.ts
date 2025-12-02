@@ -1,5 +1,4 @@
 import {
-  CONSOLIDATED_WALLETS_TDH_TABLE,
   DISTRIBUTION_NORMALIZED_TABLE,
   DISTRIBUTION_TABLE,
   ENS_TABLE,
@@ -13,6 +12,11 @@ import {
 } from '../../../entities/IDistribution';
 import { BadRequestException } from '../../../exceptions';
 import { sqlExecutor } from '../../../sql-executor';
+import {
+  DistributionInsert,
+  fetchWalletTdhData,
+  insertDistributions
+} from './api.distributions.db';
 
 interface ResultsResponse {
   wallet: string;
@@ -52,7 +56,7 @@ function validateNormalization(
   }
 
   const allNormalizedPhases = new Set<string>();
-  for (const dn of distributionsNormalized.values()) {
+  for (const dn of Array.from(distributionsNormalized.values())) {
     for (const phase of dn.phases) {
       allNormalizedPhases.add(phase);
     }
@@ -83,16 +87,6 @@ export async function populateDistribution(
     allowlists: ResultsResponse[];
   }
 ): Promise<void> {
-  const tdhResult: {
-    wallets: string;
-    boosted_tdh: number;
-    memes_balance: number;
-    unique_memes: number;
-    gradients_balance: number;
-  }[] = await sqlExecutor.execute(
-    `SELECT wallets, boosted_tdh, memes_balance, unique_memes, gradients_balance FROM ${CONSOLIDATED_WALLETS_TDH_TABLE}`
-  );
-
   const walletAirdropCountMap = new Map<string, number>();
   const walletAllowlistCountMap = new Map<string, number>();
   const allWallets = new Set<string>();
@@ -111,71 +105,16 @@ export async function populateDistribution(
     walletAllowlistCountMap.set(wallet, currentCount + allowlist.amount);
   }
 
-  const walletTdhMap = new Map<
-    string,
-    {
-      wallet_tdh: number;
-      wallet_balance: number;
-      wallet_unique_balance: number;
-    }
-  >();
+  const tdhWalletMap = await fetchWalletTdhData(Array.from(allWallets));
 
-  const tdhWalletMap = new Map<
-    string,
-    {
-      wallet_tdh: number;
-      wallet_balance: number;
-      wallet_unique_balance: number;
-    }
-  >();
-
-  for (const tdh of tdhResult) {
-    try {
-      const wallets = JSON.parse(tdh.wallets as any) as string[];
-      const tdhData = {
-        wallet_tdh: tdh.boosted_tdh,
-        wallet_balance: tdh.memes_balance + tdh.gradients_balance,
-        wallet_unique_balance: tdh.unique_memes + tdh.gradients_balance
-      };
-      for (const w of wallets) {
-        const walletKey = w.toLowerCase();
-        if (!tdhWalletMap.has(walletKey)) {
-          tdhWalletMap.set(walletKey, tdhData);
-        }
-      }
-    } catch (e) {
-      // Ignore parsing errors for individual TDH entries
-    }
-  }
+  const distributionInserts: DistributionInsert[] = [];
 
   for (const wallet of Array.from(allWallets)) {
-    const tdhData = tdhWalletMap.get(wallet);
-    if (tdhData) {
-      walletTdhMap.set(wallet, tdhData);
-    } else {
-      walletTdhMap.set(wallet, {
-        wallet_tdh: 0,
-        wallet_balance: 0,
-        wallet_unique_balance: 0
-      });
-    }
-  }
-
-  const distributionInserts: Array<{
-    card_id: number;
-    contract: string;
-    phase: string;
-    wallet: string;
-    wallet_tdh: number;
-    wallet_balance: number;
-    wallet_unique_balance: number;
-    count: number;
-    count_airdrop: number;
-    count_allowlist: number;
-  }> = [];
-
-  for (const wallet of Array.from(allWallets)) {
-    const walletData = walletTdhMap.get(wallet)!;
+    const walletData = tdhWalletMap.get(wallet) || {
+      wallet_tdh: 0,
+      wallet_balance: 0,
+      wallet_unique_balance: 0
+    };
     const countAirdrop = walletAirdropCountMap.get(wallet) || 0;
     const countAllowlist = walletAllowlistCountMap.get(wallet) || 0;
     const count = countAirdrop + countAllowlist;
@@ -194,45 +133,57 @@ export async function populateDistribution(
     });
   }
 
-  if (distributionInserts.length > 0) {
-    const params: Record<string, any> = {};
-    distributionInserts.forEach((dist, index) => {
-      params[`card_id_${index}`] = dist.card_id;
-      params[`contract_${index}`] = dist.contract;
-      params[`phase_${index}`] = dist.phase;
-      params[`wallet_${index}`] = dist.wallet;
-      params[`wallet_tdh_${index}`] = dist.wallet_tdh;
-      params[`wallet_balance_${index}`] = dist.wallet_balance;
-      params[`wallet_unique_balance_${index}`] = dist.wallet_unique_balance;
-      params[`count_${index}`] = dist.count;
-      params[`count_airdrop_${index}`] = dist.count_airdrop;
-      params[`count_allowlist_${index}`] = dist.count_allowlist;
-    });
+  await insertDistributions(distributionInserts);
+}
 
-    const placeholders = distributionInserts
-      .map(
-        (_, index) =>
-          `(:card_id_${index}, :contract_${index}, :phase_${index}, :wallet_${index}, :wallet_tdh_${index}, :wallet_balance_${index}, :wallet_unique_balance_${index}, :count_${index}, :count_airdrop_${index}, :count_allowlist_${index})`
-      )
-      .join(', ');
-
-    const insertSql = `
-      INSERT INTO ${DISTRIBUTION_TABLE} 
-        (card_id, contract, phase, wallet, wallet_tdh, wallet_balance, wallet_unique_balance, count, count_airdrop, count_allowlist)
-      VALUES
-        ${placeholders}
-      ON DUPLICATE KEY UPDATE
-        wallet_tdh = VALUES(wallet_tdh),
-        wallet_balance = VALUES(wallet_balance),
-        wallet_unique_balance = VALUES(wallet_unique_balance),
-        count = VALUES(count),
-        count_airdrop = VALUES(count_airdrop),
-        count_allowlist = VALUES(count_allowlist),
-        updated_at = CURRENT_TIMESTAMP(6)
-    `;
-
-    await sqlExecutor.execute(insertSql, params);
+export async function insertAutomaticAirdrops(
+  contract: string,
+  cardId: number,
+  airdrops: Array<{ address: string; count: number }>
+): Promise<void> {
+  if (airdrops.length === 0) {
+    return;
   }
+
+  const allWallets = new Set<string>();
+  for (const airdrop of airdrops) {
+    allWallets.add(airdrop.address.toLowerCase());
+  }
+
+  const tdhWalletMap = await fetchWalletTdhData(Array.from(allWallets));
+
+  const walletCountMap = new Map<string, number>();
+  for (const airdrop of airdrops) {
+    const wallet = airdrop.address.toLowerCase();
+    const currentCount = walletCountMap.get(wallet) || 0;
+    walletCountMap.set(wallet, currentCount + airdrop.count);
+  }
+
+  const distributionInserts: DistributionInsert[] = [];
+
+  for (const wallet of Array.from(allWallets)) {
+    const tdhData = tdhWalletMap.get(wallet) || {
+      wallet_tdh: 0,
+      wallet_balance: 0,
+      wallet_unique_balance: 0
+    };
+    const count = walletCountMap.get(wallet) || 0;
+
+    distributionInserts.push({
+      card_id: cardId,
+      contract: contract.toLowerCase(),
+      phase: 'Airdrop',
+      wallet,
+      wallet_tdh: tdhData.wallet_tdh,
+      wallet_balance: tdhData.wallet_balance,
+      wallet_unique_balance: tdhData.wallet_unique_balance,
+      count,
+      count_airdrop: count,
+      count_allowlist: 0
+    });
+  }
+
+  await insertDistributions(distributionInserts);
 }
 
 export async function populateDistributionNormalized(
