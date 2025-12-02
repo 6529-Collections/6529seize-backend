@@ -105,6 +105,7 @@ router.post(
     }
 
     await populateDistributionNormalized(contract, cardId);
+
     return await returnJsonResult(
       {
         success: true,
