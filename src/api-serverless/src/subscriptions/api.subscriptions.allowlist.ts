@@ -392,7 +392,7 @@ export async function resetAllowlist(contract: string, tokenId: number) {
       );
 
       await sqlExecutor.execute(
-        `DELETE FROM ${DISTRIBUTION_TABLE} WHERE contract = :contract AND card_id = :tokenId`,
+        `DELETE FROM ${DISTRIBUTION_TABLE} WHERE contract = :contract AND card_id = :tokenId AND phase != 'Airdrop'`,
         {
           contract: contract.toLowerCase(),
           tokenId
