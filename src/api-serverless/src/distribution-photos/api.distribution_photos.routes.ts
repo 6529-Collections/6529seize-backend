@@ -9,11 +9,11 @@ import { asyncRouter } from '../async.router';
 import { needsAuthenticatedUser } from '../auth/auth';
 import { cacheRequest } from '../request-cache';
 import { authenticateSubscriptionsAdmin } from '../subscriptions/api.subscriptions.allowlist';
-import { fetchDistributionPhotos } from './api.distribution_photos.db';
 import {
-  saveDistributionPhotos,
-  uploadPhotos
-} from './distribution-photos.upload.service';
+  fetchDistributionPhotos,
+  saveDistributionPhotos
+} from './api.distribution_photos.db';
+import { uploadPhotos } from './api.distribution-photos.upload.service';
 
 const multer = require('multer');
 const storage = multer.memoryStorage();
