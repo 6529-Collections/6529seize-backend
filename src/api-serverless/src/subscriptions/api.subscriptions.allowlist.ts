@@ -156,32 +156,54 @@ export async function splitAllowlistResults(
   const filteredSubscriptions = filterSubscriptions(wallets, subscriptions);
 
   const subscriptionRanks = new Map<string, number>();
+  const subscriptionMap = new Map<string, NFTFinalSubscription>();
+
   for (let i = 0; i < filteredSubscriptions.length; i++) {
-    subscriptionRanks.set(filteredSubscriptions[i].consolidation_key, i + 1);
+    const sub = filteredSubscriptions[i];
+    subscriptionRanks.set(sub.consolidation_key, i + 1);
+    const subWallets = sub.consolidation_key.split('-');
+    for (const wallet of subWallets) {
+      const walletKey = wallet.toLowerCase();
+      if (!subscriptionMap.has(walletKey)) {
+        subscriptionMap.set(walletKey, sub);
+      }
+    }
   }
 
   const phaseSubscriptions = filteredSubscriptions.length;
 
   const airdrops: ResultsResponse[] = [];
-  for (const sub of filteredSubscriptions) {
+  const updateParams: Record<string, any> = {};
+
+  for (let i = 0; i < filteredSubscriptions.length; i++) {
+    const sub = filteredSubscriptions[i];
     airdrops.push({
       wallet: sub.airdrop_address,
       amount: sub.subscribed_count
     });
     const rank = subscriptionRanks.get(sub.consolidation_key);
-    const updateQuery = `
-        UPDATE ${SUBSCRIPTIONS_NFTS_FINAL_TABLE} 
-        SET 
-          phase = :phaseName, 
-          phase_subscriptions = :phaseSubscriptions,
-          phase_position = :rank
-        WHERE id = :id`;
-    await sqlExecutor.execute(updateQuery, {
-      phaseName,
-      phaseSubscriptions,
-      rank,
-      id: sub.id
-    });
+    updateParams[`phaseName_${i}`] = phaseName;
+    updateParams[`phaseSubscriptions_${i}`] = phaseSubscriptions;
+    updateParams[`rank_${i}`] = rank;
+    updateParams[`id_${i}`] = sub.id;
+  }
+
+  if (filteredSubscriptions.length > 0) {
+    const batchUpdateQuery = `
+      UPDATE ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}
+      SET
+        phase = CASE id
+          ${filteredSubscriptions.map((_, i) => `WHEN :id_${i} THEN :phaseName_${i}`).join(' ')}
+        END,
+        phase_subscriptions = CASE id
+          ${filteredSubscriptions.map((_, i) => `WHEN :id_${i} THEN :phaseSubscriptions_${i}`).join(' ')}
+        END,
+        phase_position = CASE id
+          ${filteredSubscriptions.map((_, i) => `WHEN :id_${i} THEN :rank_${i}`).join(' ')}
+        END
+      WHERE id IN (${filteredSubscriptions.map((_, i) => `:id_${i}`).join(', ')})
+    `;
+    await sqlExecutor.execute(batchUpdateQuery, updateParams);
   }
 
   const allowlists: ResultsResponse[] = [];
@@ -199,11 +221,7 @@ export async function splitAllowlistResults(
   for (const result of results) {
     const walletAddress = result.wallet.toLowerCase();
 
-    const subscription = filteredSubscriptions.find((s) =>
-      s.consolidation_key
-        .split('-')
-        .some((k) => equalIgnoreCase(k, walletAddress))
-    );
+    const subscription = subscriptionMap.get(walletAddress);
 
     if (
       subscription &&
@@ -254,25 +272,37 @@ export async function getPublicSubscriptions(
   const phaseSubscriptions = publicSubscriptions.length;
 
   const airdrops: ResultsResponse[] = [];
-  for (const sub of publicSubscriptions) {
+  const updateParams: Record<string, any> = {};
+
+  for (let i = 0; i < publicSubscriptions.length; i++) {
+    const sub = publicSubscriptions[i];
     airdrops.push({
       wallet: sub.airdrop_address,
       amount: 1
     });
     const rank = subscriptionRanks.get(sub.consolidation_key);
-    const updateQuery = `
-        UPDATE ${SUBSCRIPTIONS_NFTS_FINAL_TABLE} 
-        SET 
-          phase = :phaseName, 
-          phase_subscriptions = :phaseSubscriptions,
-          phase_position = :rank
-        WHERE id = :id`;
-    await sqlExecutor.execute(updateQuery, {
-      phaseName: 'Public',
-      phaseSubscriptions,
-      rank,
-      id: sub.id
-    });
+    updateParams[`phaseName_${i}`] = 'Public';
+    updateParams[`phaseSubscriptions_${i}`] = phaseSubscriptions;
+    updateParams[`rank_${i}`] = rank;
+    updateParams[`id_${i}`] = sub.id;
+  }
+
+  if (publicSubscriptions.length > 0) {
+    const batchUpdateQuery = `
+      UPDATE ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}
+      SET
+        phase = CASE id
+          ${publicSubscriptions.map((_, i) => `WHEN :id_${i} THEN :phaseName_${i}`).join(' ')}
+        END,
+        phase_subscriptions = CASE id
+          ${publicSubscriptions.map((_, i) => `WHEN :id_${i} THEN :phaseSubscriptions_${i}`).join(' ')}
+        END,
+        phase_position = CASE id
+          ${publicSubscriptions.map((_, i) => `WHEN :id_${i} THEN :rank_${i}`).join(' ')}
+        END
+      WHERE id IN (${publicSubscriptions.map((_, i) => `:id_${i}`).join(', ')})
+    `;
+    await sqlExecutor.execute(batchUpdateQuery, updateParams);
   }
 
   const mergedAirDrops = mergeDuplicateWallets(airdrops);

@@ -66,19 +66,34 @@ export async function populateDistribution(
     }
   >();
 
-  for (const wallet of Array.from(allWallets)) {
-    const tdh = tdhResult.find((r) =>
-      JSON.parse(r.wallets as any).some(
-        (w: string) => wallet === w.toLowerCase()
-      )
-    );
+  const tdhWalletMap = new Map<string, {
+    wallet_tdh: number;
+    wallet_balance: number;
+    wallet_unique_balance: number;
+  }>();
 
-    if (tdh) {
-      walletTdhMap.set(wallet, {
+  for (const tdh of tdhResult) {
+    try {
+      const wallets = JSON.parse(tdh.wallets as any) as string[];
+      const tdhData = {
         wallet_tdh: tdh.boosted_tdh,
         wallet_balance: tdh.memes_balance + tdh.gradients_balance,
         wallet_unique_balance: tdh.unique_memes + tdh.gradients_balance
-      });
+      };
+      for (const w of wallets) {
+        const walletKey = w.toLowerCase();
+        if (!tdhWalletMap.has(walletKey)) {
+          tdhWalletMap.set(walletKey, tdhData);
+        }
+      }
+    } catch (e) {
+    }
+  }
+
+  for (const wallet of Array.from(allWallets)) {
+    const tdhData = tdhWalletMap.get(wallet);
+    if (tdhData) {
+      walletTdhMap.set(wallet, tdhData);
     } else {
       walletTdhMap.set(wallet, {
         wallet_tdh: 0,
