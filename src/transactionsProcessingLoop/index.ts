@@ -1,17 +1,17 @@
-import { updateDistributionMints } from './distribution';
-import { Logger } from '../logging';
-import * as sentryContext from '../sentry.context';
-import {
-  TransactionsProcessedDistributionBlock,
-  TransactionsProcessedSubscriptionsBlock
-} from '../entities/ITransactionsProcessing';
-import { redeemSubscriptions } from './subscriptions';
 import {
   NFTFinalSubscription,
   RedeemedSubscription,
   SubscriptionBalance
 } from '../entities/ISubscription';
+import {
+  TransactionsProcessedDistributionBlock,
+  TransactionsProcessedSubscriptionsBlock
+} from '../entities/ITransactionsProcessing';
+import { Logger } from '../logging';
 import { doInDbContext } from '../secrets';
+import * as sentryContext from '../sentry.context';
+import { updateDistributionMints } from './distribution';
+import { redeemSubscriptions } from './subscriptions';
 
 const logger = Logger.get('TRANSACTIONS_PROCESSING_LOOP');
 

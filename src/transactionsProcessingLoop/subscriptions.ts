@@ -30,7 +30,7 @@ import {
 const logger = Logger.get('TRANSACTIONS_PROCESSING_SUBSCRIPTIONS');
 
 export const redeemSubscriptions = async (reset?: boolean) => {
-  let blockRepo = getDataSource().getRepository(
+  const blockRepo = getDataSource().getRepository(
     TransactionsProcessedSubscriptionsBlock
   );
   const lastProcessingBlock = await getLastProcessingBlock(blockRepo, reset);
@@ -48,8 +48,8 @@ export const redeemSubscriptions = async (reset?: boolean) => {
     return;
   }
   const airdrops: Transaction[] = await sqlExecutor.execute(
-    `SELECT * FROM ${TRANSACTIONS_TABLE} 
-    WHERE block > :lastProcessingBlock 
+    `SELECT * FROM ${TRANSACTIONS_TABLE}
+    WHERE block > :lastProcessingBlock
     AND from_address = :nullAddress
     AND value = 0
     AND token_count > 0
@@ -73,15 +73,15 @@ export const redeemSubscriptions = async (reset?: boolean) => {
     for (const drop of airdrops) {
       await processAirdrop(drop, entityManager);
     }
-    blockRepo = entityManager.getRepository(
+    const transactionBlockRepo = entityManager.getRepository(
       TransactionsProcessedSubscriptionsBlock
     );
-    await persistBlock(blockRepo, maxBlockTransaction);
+    await persistBlock(transactionBlockRepo, maxBlockTransaction);
     logger.info(`[BLOCK ${maxBlockTransaction.block} PERSISTED]`);
   });
 };
 
-async function processAirdrop(
+export async function processAirdrop(
   transaction: Transaction,
   entityManager: EntityManager
 ) {
@@ -193,7 +193,7 @@ async function processSubscription(
       WHERE ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}.contract = ?
       AND ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}.token_id = ?
       AND ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}.airdrop_address = ?
-      AND ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}.redeemed = false
+      AND ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}.redeemed_count < ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}.subscribed_count
       ORDER BY phase ASC, phase_position ASC;`,
       [transaction.contract, transaction.token_id, transaction.to_address]
     )
@@ -260,22 +260,44 @@ async function processSubscription(
 
   await entityManager.getRepository(SubscriptionBalance).save(balance);
 
-  const redeemedSubscription: RedeemedSubscription = {
-    contract: transaction.contract,
-    token_id: transaction.token_id,
-    address: transaction.to_address,
-    transaction: transaction.transaction,
-    transaction_date: transaction.transaction_date,
-    consolidation_key: finalSubscription.consolidation_key,
-    value: MEMES_MINT_PRICE,
-    balance_after: balanceAfter
-  };
-
-  await entityManager
+  const existingRedeemed = await entityManager
     .getRepository(RedeemedSubscription)
-    .save(redeemedSubscription);
+    .findOne({
+      where: {
+        contract: transaction.contract,
+        token_id: transaction.token_id,
+        address: transaction.to_address,
+        transaction: transaction.transaction,
+        consolidation_key: finalSubscription.consolidation_key
+      }
+    });
 
-  finalSubscription.redeemed = true;
+  if (existingRedeemed) {
+    existingRedeemed.value += MEMES_MINT_PRICE;
+    existingRedeemed.count++;
+    existingRedeemed.balance_after = balanceAfter;
+    await entityManager
+      .getRepository(RedeemedSubscription)
+      .save(existingRedeemed);
+  } else {
+    const redeemedSubscription: RedeemedSubscription = {
+      contract: transaction.contract,
+      token_id: transaction.token_id,
+      address: transaction.to_address,
+      transaction: transaction.transaction,
+      transaction_date: transaction.transaction_date,
+      consolidation_key: finalSubscription.consolidation_key,
+      value: MEMES_MINT_PRICE,
+      balance_after: balanceAfter,
+      count: 1
+    };
+
+    await entityManager
+      .getRepository(RedeemedSubscription)
+      .save(redeemedSubscription);
+  }
+
+  finalSubscription.redeemed_count++;
   await entityManager
     .getRepository(NFTFinalSubscription)
     .save(finalSubscription);

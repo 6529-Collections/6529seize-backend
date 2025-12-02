@@ -8,7 +8,7 @@ export interface NextGenContract {
 
 export function getNextGenChainId() {
   if (process.env.NEXTGEN_CHAIN_ID) {
-    const chainId: number = parseInt(process.env.NEXTGEN_CHAIN_ID);
+    const chainId: number = Number.parseInt(process.env.NEXTGEN_CHAIN_ID);
     if (chainId == sepolia.id) {
       return sepolia.id;
     }

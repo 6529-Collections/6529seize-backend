@@ -379,6 +379,13 @@ export class Time {
   public isInInterval(start: Time, end: Time): boolean {
     return this.gte(start) && this.lte(end);
   }
+
+  public isToday(): boolean {
+    return (
+      this.toDate().toISOString().split('T')[0] ===
+      new Date().toISOString().split('T')[0]
+    );
+  }
 }
 
 enum TimeUnit {

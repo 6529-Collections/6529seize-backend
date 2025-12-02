@@ -237,7 +237,7 @@ async function readAllowlist(
   bufferStream.pipe(csv({ headers: false })).on('data', (data: any) => {
     allowlist.push({
       address: data[0],
-      spots: parseInt(data[1]),
+      spots: Number.parseInt(data[1]),
       info: data[2]
     });
   });
@@ -315,7 +315,7 @@ async function computeMerkleBurn(
   allowlist: UploadAllowlistBurn[]
 ): Promise<any> {
   const processedAllowlist = allowlist.map((al) => {
-    const tokenId = parseInt(al.token_id);
+    const tokenId = Number.parseInt(al.token_id);
     const info = al.info;
     const parsedTokenId = tokenId.toString(16).padStart(64, '0');
     const parsedInfo = stringToHex(info);
