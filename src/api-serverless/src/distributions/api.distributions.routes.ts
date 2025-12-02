@@ -25,6 +25,31 @@ const csv = require('csv-parser');
 
 const router = asyncRouter();
 
+function validateSubscriptionAdminAndParams(
+  req: Request<any, any, any, any>,
+  res: Response
+): { contract: string; cardId: number } | null {
+  const authenticated = authenticateSubscriptionsAdmin(req);
+  if (!authenticated) {
+    throw new UnauthorisedException(
+      'Only Subscription Admins can perform this action'
+    );
+  }
+
+  const contract = req.params.contract;
+  const cardId = Number.parseInt(req.params.id);
+
+  if (Number.isNaN(cardId)) {
+    res.status(400).send({
+      success: false,
+      error: 'Invalid id parameter'
+    });
+    return null;
+  }
+
+  return { contract, cardId };
+}
+
 router.get(
   `/distribution_phases/:contract/:nft_id`,
   cacheRequest(),
@@ -97,22 +122,11 @@ router.post(
   `/distributions/:contract/:id/normalize`,
   needsAuthenticatedUser(),
   async function (req: Request<any, any, any, any>, res: Response) {
-    const authenticated = authenticateSubscriptionsAdmin(req);
-    if (!authenticated) {
-      throw new UnauthorisedException(
-        'Only Subscription Admins can normalize distributions'
-      );
+    const params = validateSubscriptionAdminAndParams(req, res);
+    if (!params) {
+      return;
     }
-
-    const contract = req.params.contract;
-    const cardId = Number.parseInt(req.params.id);
-
-    if (Number.isNaN(cardId)) {
-      return res.status(400).send({
-        success: false,
-        error: 'Invalid id parameter'
-      });
-    }
+    const { contract, cardId } = params;
 
     await populateDistributionNormalized(contract, cardId);
 
@@ -133,22 +147,11 @@ router.post(
   `/distributions/:contract/:id/automatic_airdrops`,
   needsAuthenticatedUser(),
   async function (req: Request<any, any, any, any>, res: Response) {
-    const authenticated = authenticateSubscriptionsAdmin(req);
-    if (!authenticated) {
-      throw new UnauthorisedException(
-        'Only Subscription Admins can create automatic airdrops'
-      );
+    const params = validateSubscriptionAdminAndParams(req, res);
+    if (!params) {
+      return;
     }
-
-    const contract = req.params.contract;
-    const cardId = Number.parseInt(req.params.id);
-
-    if (Number.isNaN(cardId)) {
-      return res.status(400).send({
-        success: false,
-        error: 'Invalid id parameter'
-      });
-    }
+    const { contract, cardId } = params;
 
     const { csv: csvData } = req.body;
     if (!csvData || typeof csvData !== 'string') {
