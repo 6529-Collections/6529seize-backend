@@ -152,8 +152,13 @@ export async function fetchDistributionOverview(
     };
   }
 
-  const normalizedPhases = JSON.parse(normalizedResult[0].phases) as string[];
-  const normalizedPhasesSet = new Set(normalizedPhases);
+  const normalizedPhasesSet = new Set<string>();
+  for (const row of normalizedResult) {
+    const phases = JSON.parse(row.phases) as string[];
+    for (const phase of phases) {
+      normalizedPhasesSet.add(phase);
+    }
+  }
 
   const is_normalized = checkIsNormalized(
     distributionPhases,
