@@ -191,6 +191,14 @@ export interface WalletTdhData {
   wallet_unique_balance: number;
 }
 
+function safeParseJson<T>(jsonString: string): T | null {
+  try {
+    return JSON.parse(jsonString) as T;
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchWalletTdhData(
   wallets: string[]
 ): Promise<Map<string, WalletTdhData>> {
@@ -207,22 +215,21 @@ export async function fetchWalletTdhData(
   const tdhWalletMap = new Map<string, WalletTdhData>();
 
   for (const tdh of tdhResult) {
-    try {
-      const walletList = JSON.parse(tdh.wallets as any) as string[];
-      const tdhData: WalletTdhData = {
-        wallet_tdh: tdh.boosted_tdh,
-        wallet_balance: tdh.memes_balance + tdh.gradients_balance,
-        wallet_unique_balance: tdh.unique_memes + tdh.gradients_balance
-      };
-      for (const w of walletList) {
-        const walletKey = w.toLowerCase();
-        if (!tdhWalletMap.has(walletKey)) {
-          tdhWalletMap.set(walletKey, tdhData);
-        }
-      }
-    } catch (e) {
-      // Continue processing other entries if this one fails to parse
+    const walletList = safeParseJson<string[]>(tdh.wallets as any);
+    if (!walletList) {
       continue;
+    }
+
+    const tdhData: WalletTdhData = {
+      wallet_tdh: tdh.boosted_tdh,
+      wallet_balance: tdh.memes_balance + tdh.gradients_balance,
+      wallet_unique_balance: tdh.unique_memes + tdh.gradients_balance
+    };
+    for (const w of walletList) {
+      const walletKey = w.toLowerCase();
+      if (!tdhWalletMap.has(walletKey)) {
+        tdhWalletMap.set(walletKey, tdhData);
+      }
     }
   }
 
