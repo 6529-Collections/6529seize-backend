@@ -14,9 +14,14 @@ import {
   UnauthorisedException
 } from '../../../exceptions';
 import { getNft } from '../../../nftsLoop/db.nfts';
+import { evictKeyFromRedisCache } from '../../../redis';
 import { equalIgnoreCase } from '../../../strings';
 import { PaginatedResponse } from '../api-constants';
-import { giveReadReplicaTimeToCatchUp, returnJsonResult } from '../api-helpers';
+import {
+  getCacheKeyPatternForPath,
+  giveReadReplicaTimeToCatchUp,
+  returnJsonResult
+} from '../api-helpers';
 import { asyncRouter } from '../async.router';
 import { getWalletOrThrow, needsAuthenticatedUser } from '../auth/auth';
 import { populateDistribution } from '../distributions/api.distributions.service';
@@ -657,6 +662,12 @@ router.post(
     }
 
     await resetAllowlist(contract, tokenId);
+
+    const overviewCacheKey = getCacheKeyPatternForPath(
+      `/api/distributions/${contract}/${tokenId}/overview`
+    );
+    await evictKeyFromRedisCache(overviewCacheKey);
+
     return await returnJsonResult(
       {
         success: true,
