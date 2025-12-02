@@ -249,8 +249,24 @@ export interface DistributionInsert {
   count_allowlist: number;
 }
 
+export async function deleteAirdropDistributions(
+  contract: string,
+  cardId: number,
+  wrappedConnection?: any
+): Promise<void> {
+  await sqlExecutor.execute(
+    `DELETE FROM ${DISTRIBUTION_TABLE} WHERE contract = :contract AND card_id = :cardId AND phase = 'Airdrop'`,
+    {
+      contract: contract.toLowerCase(),
+      cardId
+    },
+    wrappedConnection ? { wrappedConnection } : {}
+  );
+}
+
 export async function insertDistributions(
-  distributions: DistributionInsert[]
+  distributions: DistributionInsert[],
+  wrappedConnection?: any
 ): Promise<void> {
   if (distributions.length === 0) {
     return;
@@ -292,5 +308,9 @@ export async function insertDistributions(
       updated_at = CURRENT_TIMESTAMP(6)
   `;
 
-  await sqlExecutor.execute(insertSql, params);
+  await sqlExecutor.execute(
+    insertSql,
+    params,
+    wrappedConnection ? { wrappedConnection } : {}
+  );
 }

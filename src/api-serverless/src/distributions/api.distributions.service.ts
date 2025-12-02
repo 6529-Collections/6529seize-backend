@@ -13,6 +13,7 @@ import {
 import { BadRequestException } from '../../../exceptions';
 import { sqlExecutor } from '../../../sql-executor';
 import {
+  deleteAirdropDistributions,
   DistributionInsert,
   fetchWalletTdhData,
   insertDistributions
@@ -141,10 +142,6 @@ export async function insertAutomaticAirdrops(
   cardId: number,
   airdrops: Array<{ address: string; count: number }>
 ): Promise<void> {
-  if (airdrops.length === 0) {
-    return;
-  }
-
   const allWallets = new Set<string>();
   for (const airdrop of airdrops) {
     allWallets.add(airdrop.address.toLowerCase());
@@ -183,7 +180,12 @@ export async function insertAutomaticAirdrops(
     });
   }
 
-  await insertDistributions(distributionInserts);
+  await sqlExecutor.executeNativeQueriesInTransaction(
+    async (wrappedConnection) => {
+      await deleteAirdropDistributions(contract, cardId, wrappedConnection);
+      await insertDistributions(distributionInserts, wrappedConnection);
+    }
+  );
 }
 
 export async function populateDistributionNormalized(
