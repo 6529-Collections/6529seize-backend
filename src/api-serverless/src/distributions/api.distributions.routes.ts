@@ -131,6 +131,11 @@ router.post(
 
     await giveReadReplicaTimeToCatchUp();
 
+    const overviewCacheKey = getCacheKeyPatternForPath(
+      `/api/distributions/${contract}/${cardId}/overview`
+    );
+    await evictKeyFromRedisCache(overviewCacheKey);
+
     return await returnJsonResult(
       {
         success: true,
