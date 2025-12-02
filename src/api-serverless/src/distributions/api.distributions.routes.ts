@@ -1,7 +1,9 @@
 import { Request, Response } from 'express';
 import { UnauthorisedException } from '../../../exceptions';
+import { evictAllKeysMatchingPatternFromRedisCache } from '../../../redis';
 import { DEFAULT_PAGE_SIZE, DISTRIBUTION_PAGE_SIZE } from '../api-constants';
 import {
+  getCacheKeyPatternForPath,
   giveReadReplicaTimeToCatchUp,
   returnJsonResult,
   returnPaginatedResult
@@ -187,6 +189,11 @@ router.post(
     await insertAutomaticAirdrops(contract, cardId, airdrops);
 
     await giveReadReplicaTimeToCatchUp();
+
+    const cacheKeyPattern = `${getCacheKeyPatternForPath(
+      `/api/distributions/${contract}/${cardId}/overview`
+    )}*`;
+    await evictAllKeysMatchingPatternFromRedisCache(cacheKeyPattern);
 
     return await returnJsonResult(
       {

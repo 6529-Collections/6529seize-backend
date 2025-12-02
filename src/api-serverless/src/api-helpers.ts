@@ -13,8 +13,16 @@ import {
 
 const converter = require('json-2-csv');
 
+function getCacheKeyPrefix(): string {
+  return `__SEIZE_CACHE_${process.env.NODE_ENV}__`;
+}
+
 export function cacheKey(req: Request) {
-  return `__SEIZE_CACHE_${process.env.NODE_ENV}__` + req.originalUrl || req.url;
+  return getCacheKeyPrefix() + (req.originalUrl || req.url);
+}
+
+export function getCacheKeyPatternForPath(path: string): string {
+  return `${getCacheKeyPrefix()}${path}`;
 }
 
 function fullUrl(req: Request, next: string | null) {
