@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { UnauthorisedException } from '../../../exceptions';
-import { evictAllKeysMatchingPatternFromRedisCache } from '../../../redis';
+import { evictKeyFromRedisCache } from '../../../redis';
 import { DEFAULT_PAGE_SIZE, DISTRIBUTION_PAGE_SIZE } from '../api-constants';
 import {
   getCacheKeyPatternForPath,
@@ -190,10 +190,10 @@ router.post(
 
     await giveReadReplicaTimeToCatchUp();
 
-    const cacheKeyPattern = `${getCacheKeyPatternForPath(
+    const baseCacheKey = getCacheKeyPatternForPath(
       `/api/distributions/${contract}/${cardId}/overview`
-    )}*`;
-    await evictAllKeysMatchingPatternFromRedisCache(cacheKeyPattern);
+    );
+    await evictKeyFromRedisCache(baseCacheKey);
 
     return await returnJsonResult(
       {
