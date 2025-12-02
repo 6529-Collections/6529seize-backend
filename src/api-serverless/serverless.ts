@@ -8,7 +8,6 @@ const serverlessConfiguration: AWS = {
   provider: {
     name: 'aws',
     runtime: 'nodejs14.x',
-    timeout: 300,
     apiGateway: {
       minimumCompressionSize: 1024,
       shouldStartNameWithService: true
@@ -19,12 +18,7 @@ const serverlessConfiguration: AWS = {
     }
   },
   // import the function via paths
-  functions: {
-    handler: {
-      handler: handler as any,
-      timeout: 300
-    }
-  },
+  functions: { handler: handler as any },
   package: { individually: true },
   custom: {
     esbuild: {
