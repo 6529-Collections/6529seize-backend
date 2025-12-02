@@ -1,5 +1,4 @@
 import { Request, Response } from 'express';
-import { Readable } from 'stream';
 import { UnauthorisedException } from '../../../exceptions';
 import { DEFAULT_PAGE_SIZE, DISTRIBUTION_PAGE_SIZE } from '../api-constants';
 import {
@@ -20,8 +19,6 @@ import {
   insertAutomaticAirdrops,
   populateDistributionNormalized
 } from './api.distributions.service';
-
-const csv = require('csv-parser');
 
 const router = asyncRouter();
 
@@ -162,35 +159,23 @@ router.post(
     }
 
     const airdrops: Array<{ address: string; count: number }> = [];
+    const lines = csvData.trim().split('\n');
 
-    const bufferStream = new Readable();
-    bufferStream.push(csvData);
-    bufferStream.push(null);
+    for (const line of lines) {
+      const parts = line.split(',');
+      const address = parts[0]?.trim();
+      const count = Number.parseInt(parts[1]?.trim() || '0');
 
-    await new Promise<void>((resolve, reject) => {
-      bufferStream
-        .pipe(csv({ headers: false }))
-        .on('data', (data: any) => {
-          const address = data[0]?.trim();
-          const count = Number.parseInt(data[1]?.trim() || '0');
+      if (!address) {
+        continue;
+      }
 
-          if (!address) {
-            return;
-          }
+      if (Number.isNaN(count) || count <= 0) {
+        continue;
+      }
 
-          if (Number.isNaN(count) || count <= 0) {
-            return;
-          }
-
-          airdrops.push({ address, count });
-        })
-        .on('end', () => {
-          resolve();
-        })
-        .on('error', (err: Error) => {
-          reject(err);
-        });
-    });
+      airdrops.push({ address, count });
+    }
 
     if (airdrops.length === 0) {
       return res.status(400).send({

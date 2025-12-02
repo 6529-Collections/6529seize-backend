@@ -132,29 +132,10 @@ export async function fetchPhaseResults(
   return json;
 }
 
-export async function splitAllowlistResults(
-  contract: string,
-  tokenId: number,
-  phaseName: string,
-  results: ALResultsResponse[]
-): Promise<{
-  airdrops: ResultsResponse[];
-  airdrops_unconsolidated: ResultsResponse[];
-  allowlists: ResultsResponse[];
-}> {
-  const wallets = results.map((r) => r.wallet.toLowerCase());
-  const listHasDuplicates = new Set(wallets).size !== wallets.length;
-  if (listHasDuplicates) {
-    throw new BadRequestException('List has duplicates. Cannot process!');
-  }
-
-  const [subscriptions, walletMintingDelegations] = await Promise.all([
-    fetchAllNftFinalSubscriptionsForContractAndToken(contract, tokenId),
-    fetchProcessedDelegations(MEMES_CONTRACT, USE_CASE_MINTING)
-  ]);
-
-  const filteredSubscriptions = filterSubscriptions(wallets, subscriptions);
-
+function buildSubscriptionMaps(filteredSubscriptions: NFTFinalSubscription[]): {
+  subscriptionRanks: Map<string, number>;
+  subscriptionMap: Map<string, NFTFinalSubscription>;
+} {
   const subscriptionRanks = new Map<string, number>();
   const subscriptionMap = new Map<string, NFTFinalSubscription>();
 
@@ -170,8 +151,15 @@ export async function splitAllowlistResults(
     }
   }
 
-  const phaseSubscriptions = filteredSubscriptions.length;
+  return { subscriptionRanks, subscriptionMap };
+}
 
+async function buildAirdropsAndUpdateSubscriptions(
+  filteredSubscriptions: NFTFinalSubscription[],
+  subscriptionRanks: Map<string, number>,
+  phaseName: string
+): Promise<ResultsResponse[]> {
+  const phaseSubscriptions = filteredSubscriptions.length;
   const airdrops: ResultsResponse[] = [];
   const updateParams: Record<string, any> = {};
 
@@ -206,8 +194,18 @@ export async function splitAllowlistResults(
     await sqlExecutor.execute(batchUpdateQuery, updateParams);
   }
 
-  const allowlists: ResultsResponse[] = [];
+  return airdrops;
+}
 
+function buildAllowlists(
+  results: ALResultsResponse[],
+  subscriptionMap: Map<string, NFTFinalSubscription>,
+  walletMintingDelegations: Array<{
+    from_address: string;
+    to_address: string;
+  }>
+): ResultsResponse[] {
+  const allowlists: ResultsResponse[] = [];
   const mintingMap = new Map(
     walletMintingDelegations.map((d) => [
       d.from_address.toLowerCase(),
@@ -220,7 +218,6 @@ export async function splitAllowlistResults(
   const usedSubscriptions = new Set<string>();
   for (const result of results) {
     const walletAddress = result.wallet.toLowerCase();
-
     const subscription = subscriptionMap.get(walletAddress);
 
     if (
@@ -241,6 +238,45 @@ export async function splitAllowlistResults(
       });
     }
   }
+
+  return allowlists;
+}
+
+export async function splitAllowlistResults(
+  contract: string,
+  tokenId: number,
+  phaseName: string,
+  results: ALResultsResponse[]
+): Promise<{
+  airdrops: ResultsResponse[];
+  airdrops_unconsolidated: ResultsResponse[];
+  allowlists: ResultsResponse[];
+}> {
+  const wallets = results.map((r) => r.wallet.toLowerCase());
+  const listHasDuplicates = new Set(wallets).size !== wallets.length;
+  if (listHasDuplicates) {
+    throw new BadRequestException('List has duplicates. Cannot process!');
+  }
+
+  const [subscriptions, walletMintingDelegations] = await Promise.all([
+    fetchAllNftFinalSubscriptionsForContractAndToken(contract, tokenId),
+    fetchProcessedDelegations(MEMES_CONTRACT, USE_CASE_MINTING)
+  ]);
+
+  const filteredSubscriptions = filterSubscriptions(wallets, subscriptions);
+  const { subscriptionRanks, subscriptionMap } = buildSubscriptionMaps(
+    filteredSubscriptions
+  );
+  const airdrops = await buildAirdropsAndUpdateSubscriptions(
+    filteredSubscriptions,
+    subscriptionRanks,
+    phaseName
+  );
+  const allowlists = buildAllowlists(
+    results,
+    subscriptionMap,
+    walletMintingDelegations
+  );
 
   const mergedAirdrops = mergeDuplicateWallets(airdrops);
   const mergedAllowlists = mergeDuplicateWallets(allowlists);
