@@ -21,7 +21,7 @@ import {
   ExternalIndexingRepository
 } from '../external-indexing/external-indexing.repository';
 import { numbers } from '../numbers';
-import { TdhGrantTokenEntity } from '../entities/ITdhGrantToken';
+import { XTdhGrantTokenEntity } from '../entities/IXTdhGrantToken';
 
 export class CreateXTdhGrantUseCase {
   constructor(
@@ -80,7 +80,7 @@ export class CreateXTdhGrantUseCase {
                 return [tokenOrTokenSpan];
               }
             })
-            .map<TdhGrantTokenEntity>((token) => ({
+            .map<XTdhGrantTokenEntity>((token) => ({
               token_id: token,
               tokenset_id: tokensetId,
               target_partition: targetPartition
@@ -98,7 +98,7 @@ export class CreateXTdhGrantUseCase {
             updated_at: currentMillis,
             valid_from: null,
             valid_to: command.valid_to?.toMillis() ?? null,
-            tdh_rate: command.rate,
+            rate: command.rate,
             status: XTdhGrantStatus.PENDING,
             error_details: null,
             is_irrevocable: command.is_irrevocable

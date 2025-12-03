@@ -7,8 +7,8 @@ import {
   EXTERNAL_INDEXED_CONTRACTS_TABLE,
   EXTERNAL_INDEXED_OWNERSHIP_721_HISTORY_TABLE,
   IDENTITIES_TABLE,
-  TDH_GRANT_TOKENS_TABLE,
   X_TDH_COEFFICIENT,
+  XTDH_GRANT_TOKENS_TABLE,
   XTDH_GRANTS_TABLE,
   XTDH_STATS_META_TABLE,
   XTDH_TOKEN_GRANT_STATS_TABLE_PREFIX,
@@ -38,7 +38,7 @@ gr AS (
     g.id,
     g.target_partition,
     g.token_mode,
-    g.tdh_rate,
+    g.rate,
     g.valid_from,
     g.valid_to
   FROM ${XTDH_GRANTS_TABLE} g
@@ -53,7 +53,7 @@ gr AS (
     g.grantor_id,
     g.target_partition,
     g.token_mode,
-    g.tdh_rate,
+    g.rate,
     g.valid_from,
     g.valid_to
   FROM ${XTDH_GRANTS_TABLE} g
@@ -67,7 +67,7 @@ inc_counts AS (
     g.id AS grant_id,
     COUNT(*) AS inc_cnt
   FROM ${XTDH_GRANTS_TABLE} g
-  JOIN ${TDH_GRANT_TOKENS_TABLE} t
+  JOIN ${XTDH_GRANT_TOKENS_TABLE} t
     ON t.tokenset_id      = g.tokenset_id
    AND t.target_partition = g.target_partition
   WHERE g.status = 'GRANTED'
@@ -109,7 +109,7 @@ grant_tokens AS (
     g.target_partition AS \`partition\`,
     CAST(t.token_id AS CHAR) AS token_id
   FROM ${XTDH_GRANTS_TABLE} g
-  JOIN ${TDH_GRANT_TOKENS_TABLE} t
+  JOIN ${XTDH_GRANT_TOKENS_TABLE} t
     ON t.tokenset_id      = g.tokenset_id
    AND t.target_partition = g.target_partition
   JOIN gr ON gr.id = g.id
@@ -231,7 +231,7 @@ export class XTdhRepository extends LazyDbAccessCompatibleService {
                 g.target_partition AS \`partition\`,
                 CAST(t.token_id AS CHAR) AS token_id
               FROM ${XTDH_GRANTS_TABLE} g
-              JOIN ${TDH_GRANT_TOKENS_TABLE} t
+              JOIN ${XTDH_GRANT_TOKENS_TABLE} t
                 ON t.tokenset_id     = g.tokenset_id
                AND t.target_partition = g.target_partition
               JOIN gr ON gr.id = g.id
@@ -392,7 +392,7 @@ bounded_windows AS (
       (SELECT epoch_ms FROM epoch)
     ) AS start_ms,
     LEAST((SELECT cut_ms FROM cutoff), COALESCE(gr.valid_to, (SELECT cut_ms FROM cutoff))) AS end_ms,
-    gr.tdh_rate,
+    gr.rate,
     gd.denom,
     gr.grantor_id
   FROM (
@@ -430,7 +430,7 @@ days_owned AS (
         DATE(FROM_UNIXTIME(bw.start_ms / 1000))
       ) - 1
     ) AS full_days,
-    bw.tdh_rate,
+    bw.rate,
     bw.denom
   FROM bounded_windows bw
   WHERE bw.end_ms > bw.start_ms
@@ -439,7 +439,7 @@ days_owned AS (
 token_contrib AS (
   SELECT
     grantor_id,
-    CASE WHEN denom > 0 THEN (tdh_rate / denom) * full_days ELSE 0 END AS x
+    CASE WHEN denom > 0 THEN (rate / denom) * full_days ELSE 0 END AS x
   FROM days_owned
 )`,
           `
@@ -502,7 +502,7 @@ ck_xtdh AS (
               gto.owner,
               GREATEST(gto.group_start_ms, gr.valid_from, (SELECT epoch_ms FROM epoch)) AS start_ms,
               LEAST((SELECT cut_ms FROM cutoff), COALESCE(gr.valid_to, (SELECT cut_ms FROM cutoff))) AS end_ms,
-              gr.tdh_rate,
+              gr.rate,
               gd.denom
             FROM (
               SELECT
@@ -540,7 +540,7 @@ ck_xtdh AS (
                   DATE(FROM_UNIXTIME(bw.start_ms / 1000))
                 ) - 1
               ) AS full_days,
-              bw.tdh_rate,
+              bw.rate,
               bw.denom
             FROM bounded_windows bw
             WHERE bw.end_ms > bw.start_ms
@@ -550,7 +550,7 @@ ck_xtdh AS (
           token_contrib AS (
             SELECT
               owner,
-              CASE WHEN denom > 0 THEN (tdh_rate / denom) * full_days ELSE 0 END AS x
+              CASE WHEN denom > 0 THEN (rate / denom) * full_days ELSE 0 END AS x
             FROM days_owned
           )
           `,
@@ -649,7 +649,7 @@ bounded_windows AS (
       (SELECT epoch_ms FROM epoch)
     ) AS start_ms,
     LEAST((SELECT cut_ms FROM cutoff), COALESCE(gr.valid_to, (SELECT cut_ms FROM cutoff))) AS end_ms,
-    gr.tdh_rate,
+    gr.rate,
     gd.denom,
     gr.grantor_id
   FROM (
@@ -681,7 +681,7 @@ days_owned AS (
     bw.token_id,
     bw.owner,
     bw.grantor_id,
-    bw.tdh_rate,
+    bw.rate,
     bw.denom,
     bw.start_ms,
     (SELECT cut_ms FROM cutoff) AS cut_ms,
@@ -708,7 +708,7 @@ grant_out_day AS (
     SUM(CASE WHEN d.denom > 0
              AND d.full_days > 0
              AND d.days_since_start >= 2
-             THEN (d.tdh_rate / d.denom)
+             THEN (d.rate / d.denom)
              ELSE 0 END) AS granted_out
   FROM days_owned d
   JOIN ${IDENTITIES_TABLE} i
@@ -722,7 +722,7 @@ received_day AS (
     SUM(CASE WHEN d.denom > 0
              AND d.full_days > 0
              AND d.days_since_start >= 2
-             THEN (d.tdh_rate / d.denom)
+             THEN (d.rate / d.denom)
              ELSE 0 END) AS received
   FROM days_owned d
   LEFT JOIN ${ADDRESS_CONSOLIDATION_KEY} ack
@@ -858,7 +858,7 @@ SET cw.xtdh_rate = COALESCE(pd.produced, 0) - COALESCE(go.granted_out, 0) + COAL
               tg.grantor_id,
               (gts.xtdh_rate_daily > 0) AS contributed_last_midnight
             FROM ${GRANT_TABLE} gts
-                   JOIN tdh_grants tg ON tg.id = gts.grant_id
+                   JOIN ${XTDH_GRANTS_TABLE} tg ON tg.id = gts.grant_id
           ),
 
           total_contrib AS (
@@ -956,12 +956,12 @@ SET cw.xtdh_rate = COALESCE(pd.produced, 0) - COALESCE(go.granted_out, 0) + COAL
               g.id,
               g.target_partition,
               g.token_mode,
-              g.tdh_rate,
+              g.rate,
               g.valid_from,
               g.valid_to
             FROM ${XTDH_GRANTS_TABLE} g
             WHERE g.status = '${XTdhGrantStatus.GRANTED}'
-              AND g.tdh_rate > 0
+              AND g.rate > 0
               AND g.valid_from < (SELECT cut_ms FROM cutoff)
           ),
           -- include-counts only for INCLUDE grants (for denom)
@@ -970,7 +970,7 @@ SET cw.xtdh_rate = COALESCE(pd.produced, 0) - COALESCE(go.granted_out, 0) + COAL
               g.id AS grant_id,
               COUNT(*) AS inc_cnt
             FROM ${XTDH_GRANTS_TABLE} g
-                   JOIN ${TDH_GRANT_TOKENS_TABLE} t
+                   JOIN ${XTDH_GRANT_TOKENS_TABLE} t
                         ON t.tokenset_id      = g.tokenset_id
                           AND t.target_partition = g.target_partition
             WHERE g.status = '${XTdhGrantStatus.GRANTED}'
@@ -1004,13 +1004,12 @@ SET cw.xtdh_rate = COALESCE(pd.produced, 0) - COALESCE(go.granted_out, 0) + COAL
 
             UNION ALL
 
-            -- INCLUDE-mode: tokens from tdh_grant_tokens
             SELECT DISTINCT
               g.id               AS grant_id,
               g.target_partition AS \`partition\`,
               t.token_id         AS token_id
             FROM ${XTDH_GRANTS_TABLE} g
-                   JOIN ${TDH_GRANT_TOKENS_TABLE} t
+                   JOIN ${XTDH_GRANT_TOKENS_TABLE} t
                         ON t.tokenset_id      = g.tokenset_id
                           AND t.target_partition = g.target_partition
                    JOIN gr ON gr.id = g.id
@@ -1029,7 +1028,7 @@ SET cw.xtdh_rate = COALESCE(pd.produced, 0) - COALESCE(go.granted_out, 0) + COAL
                 COALESCE(gr.valid_to, (SELECT cut_ms FROM cutoff)),
                 (SELECT cut_ms FROM cutoff)
               ) AS end_ms,
-              gr.tdh_rate,
+              gr.rate,
               gd.denom,
               (SELECT cut_ms FROM cutoff) AS cut_ms
             FROM grant_tokens gt
@@ -1053,7 +1052,7 @@ SET cw.xtdh_rate = COALESCE(pd.produced, 0) - COALESCE(go.granted_out, 0) + COAL
                 FROM_UNIXTIME(bw.start_ms / 1000),
                 FROM_UNIXTIME(bw.cut_ms   / 1000)
               ) AS days_since_start,
-              bw.tdh_rate,
+              bw.rate,
               bw.denom
             FROM bounded_windows bw
             WHERE bw.end_ms > bw.start_ms
@@ -1065,13 +1064,13 @@ SET cw.xtdh_rate = COALESCE(pd.produced, 0) - COALESCE(go.granted_out, 0) + COAL
               d.token_id,
               -- TOTAL: sum over all full days (xTDH already)
               SUM(
-                (d.tdh_rate / NULLIF(d.denom, 0)) * d.full_days
+                (d.rate / NULLIF(d.denom, 0)) * d.full_days
               ) AS xtdh_total,
               -- RATE for last midnight: one-day increment if "matured" (>= 2 days since start)
               SUM(
                 CASE
                   WHEN d.denom > 0 AND d.full_days > 0 AND d.days_since_start >= 2
-                    THEN (d.tdh_rate / d.denom)
+                    THEN (d.rate / d.denom)
                   ELSE 0
                   END
               ) AS xtdh_rate_daily
@@ -1794,7 +1793,7 @@ SET cw.xtdh_rate = COALESCE(pd.produced, 0) - COALESCE(go.granted_out, 0) + COAL
       const sql = `
       SELECT COUNT(DISTINCT gts.partition) AS collections_count
       FROM ${grantStatsTable} gts
-      JOIN tdh_grants g
+      JOIN ${XTDH_GRANTS_TABLE} g
         ON g.id = gts.grant_id
       WHERE g.grantor_id = :profile_id
         AND gts.xtdh_rate_daily > 0
@@ -1848,17 +1847,17 @@ SET cw.xtdh_rate = COALESCE(pd.produced, 0) - COALESCE(go.granted_out, 0) + COAL
       ctx.timer?.start(`${this.constructor.name}->getGrantedTdhTotalSum`);
       const { grantStatsTable } = await this.getActiveStatsTables(ctx);
       const sql = `
-      SELECT COALESCE(SUM(gts.xtdh_rate_daily), 0) AS total_granted_tdh_rate
+      SELECT COALESCE(SUM(gts.xtdh_rate_daily), 0) AS total_granted_rate
       FROM ${grantStatsTable} gts
       JOIN ${XTDH_GRANTS_TABLE} g
         ON g.id = gts.grant_id
       WHERE g.grantor_id = :profile_id
     `;
       const res = await this.db.oneOrNull<{
-        total_granted_tdh_rate: number;
+        total_granted_rate: number;
       }>(sql, { profile_id: profileId }, { wrappedConnection: ctx.connection });
 
-      return res?.total_granted_tdh_rate ?? 0;
+      return res?.total_granted_rate ?? 0;
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->getGrantedTdhTotalSum`);
     }

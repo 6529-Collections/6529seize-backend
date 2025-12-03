@@ -1,4 +1,8 @@
-import { dbSupplier, LazyDbAccessCompatibleService } from '../sql-executor';
+import {
+  ConnectionWrapper,
+  dbSupplier,
+  LazyDbAccessCompatibleService
+} from '../sql-executor';
 import {
   XTdhGrantEntity,
   XTdhGrantStatus,
@@ -11,13 +15,13 @@ import {
   EXTERNAL_INDEXED_CONTRACTS_TABLE,
   EXTERNAL_INDEXED_OWNERSHIP_721_HISTORY_TABLE,
   IDENTITIES_TABLE,
-  TDH_GRANT_TOKENS_TABLE,
   X_TDH_COEFFICIENT,
+  XTDH_GRANT_TOKENS_TABLE,
   XTDH_GRANTS_TABLE
 } from '../constants';
 import { Time } from '../time';
 import { Logger } from '../logging';
-import { TdhGrantTokenEntity } from '../entities/ITdhGrantToken';
+import { XTdhGrantTokenEntity } from '../entities/IXTdhGrantToken';
 import { bulkInsert } from '../db/my-sql.helpers';
 import { numbers } from '../numbers';
 import { PageSortDirection } from '../api-serverless/src/page-request';
@@ -59,7 +63,7 @@ export class XTdhGrantsRepository extends LazyDbAccessCompatibleService {
           .execute<{
             token_id: string;
           }>(
-            `select token_id from ${TDH_GRANT_TOKENS_TABLE} where tokenset_id = :tokenset_id`,
+            `select token_id from ${XTDH_GRANT_TOKENS_TABLE} where tokenset_id = :tokenset_id`,
             { tokenset_id: grant.tokenset_id },
             { wrappedConnection: connection }
           )
@@ -95,7 +99,7 @@ export class XTdhGrantsRepository extends LazyDbAccessCompatibleService {
 
   public async insertGrant(
     tdhGrantEntity: XTdhGrantEntity,
-    tokens: TdhGrantTokenEntity[],
+    tokens: XTdhGrantTokenEntity[],
     ctx: RequestContext
   ) {
     ctx.timer?.start(`${this.constructor.name}->insertGrant`);
@@ -113,7 +117,7 @@ export class XTdhGrantsRepository extends LazyDbAccessCompatibleService {
        updated_at,
        valid_from,
        valid_to,
-       tdh_rate,
+       rate,
        status,
        error_details,
        is_irrevocable,
@@ -130,7 +134,7 @@ export class XTdhGrantsRepository extends LazyDbAccessCompatibleService {
        :updated_at,
        :valid_from,
        :valid_to,
-       :tdh_rate,
+       :rate,
        :status,
        :error_details,
        :is_irrevocable,
@@ -145,7 +149,7 @@ export class XTdhGrantsRepository extends LazyDbAccessCompatibleService {
     );
     await bulkInsert(
       this.db,
-      TDH_GRANT_TOKENS_TABLE,
+      XTDH_GRANT_TOKENS_TABLE,
       tokens as unknown as Record<string, any>[],
       ['tokenset_id', 'token_id', 'target_partition'],
       ctx
@@ -185,10 +189,6 @@ export class XTdhGrantsRepository extends LazyDbAccessCompatibleService {
   ): Promise<XTdhGrantEntity[]> {
     try {
       ctx.timer?.start(`${this.constructor.name}->getPageItems`);
-      let orderBy: string | null = sort;
-      if (orderBy === 'rate') {
-        orderBy = 'tdh_rate';
-      }
       const select = `SELECT t.* FROM ${XTDH_GRANTS_TABLE} t`;
       const { whereAnds, params } = this.getSearchWhereAnds(
         grantor_id,
@@ -200,7 +200,7 @@ export class XTdhGrantsRepository extends LazyDbAccessCompatibleService {
         valid_to_lt,
         valid_to_gt
       );
-      const ordering = `order by t.${orderBy ?? 'created_at'} ${sort_direction ?? ''} limit :limit offset :offset`;
+      const ordering = `order by t.${sort ?? 'created_at'} ${sort_direction ?? ''} limit :limit offset :offset`;
       params.limit = limit;
       params.offset = offset;
       const sql = `${select} ${whereAnds.length ? ` where ` : ``} ${whereAnds.join(' and ')} ${ordering}`;
@@ -351,7 +351,7 @@ export class XTdhGrantsRepository extends LazyDbAccessCompatibleService {
           `
             WITH
               base AS (
-                SELECT COALESCE(SUM(g.tdh_rate), 0) AS base_rate
+                SELECT COALESCE(SUM(g.rate), 0) AS base_rate
                 FROM ${XTDH_GRANTS_TABLE} g
                 WHERE g.grantor_id = :grantorId
                   AND g.status = '${XTdhGrantStatus.GRANTED}'
@@ -360,7 +360,7 @@ export class XTdhGrantsRepository extends LazyDbAccessCompatibleService {
               ),
               edges AS (
                 -- +rate at starts strictly inside the window
-                SELECT g.valid_from AS ts, g.tdh_rate AS delta
+                SELECT g.valid_from AS ts, g.rate AS delta
                 FROM ${XTDH_GRANTS_TABLE} g
                 WHERE g.grantor_id = :grantorId
                   AND g.status = '${XTdhGrantStatus.GRANTED}'
@@ -371,7 +371,7 @@ export class XTdhGrantsRepository extends LazyDbAccessCompatibleService {
                 UNION ALL
 
                 -- -rate at ends inside the window
-                SELECT g.valid_to AS ts, -g.tdh_rate AS delta
+                SELECT g.valid_to AS ts, -g.rate AS delta
                 FROM ${XTDH_GRANTS_TABLE} g
                 WHERE g.grantor_id = :grantorId
                   AND g.status = '${XTdhGrantStatus.GRANTED}'
@@ -420,7 +420,7 @@ export class XTdhGrantsRepository extends LazyDbAccessCompatibleService {
       return this.db
         .oneOrNull<{ spent_rate: number }>(
           `
-            SELECT sum(tdh_rate) as spent_rate from ${XTDH_GRANTS_TABLE} g where g.grantor_id = :grantorId and g.status in (:statuses) and (valid_to is null or valid_to > :now)
+            SELECT sum(rate) as spent_rate from ${XTDH_GRANTS_TABLE} g where g.grantor_id = :grantorId and g.status in (:statuses) and (valid_to is null or valid_to > :now)
         `,
           {
             grantorId,
@@ -492,7 +492,7 @@ export class XTdhGrantsRepository extends LazyDbAccessCompatibleService {
                 SELECT
                   grantor_id,
                   :windowStart AS ts,
-                  COALESCE(SUM(tdh_rate), 0) AS delta
+                  COALESCE(SUM(rate), 0) AS delta
                 FROM gr
                 WHERE valid_from <= :windowStart
                   AND (valid_to   IS NULL OR valid_to   >  :windowStart)
@@ -500,12 +500,12 @@ export class XTdhGrantsRepository extends LazyDbAccessCompatibleService {
               ),
 
               edges AS (
-                SELECT grantor_id, valid_from AS ts,  tdh_rate AS delta
+                SELECT grantor_id, valid_from AS ts,  rate AS delta
                 FROM gr
                 WHERE valid_from IS NOT NULL
                   AND valid_from > :windowStart AND valid_from < :windowEnd
                 UNION ALL
-                SELECT grantor_id, valid_to   AS ts, -tdh_rate AS delta
+                SELECT grantor_id, valid_to   AS ts, -rate AS delta
                 FROM gr
                 WHERE valid_to IS NOT NULL
                   AND valid_to > :windowStart AND valid_to <= :windowEnd
@@ -629,7 +629,7 @@ export class XTdhGrantsRepository extends LazyDbAccessCompatibleService {
         'updated_at',
         'valid_from',
         'valid_to',
-        'tdh_rate',
+        'rate',
         'status',
         'error_details',
         'is_irrevocable'
@@ -662,7 +662,7 @@ export class XTdhGrantsRepository extends LazyDbAccessCompatibleService {
                       )
                       WHEN g.token_mode = 'INCLUDE' THEN (
                           SELECT COUNT(DISTINCT t.token_id)
-                          FROM ${TDH_GRANT_TOKENS_TABLE} t
+                          FROM ${XTDH_GRANT_TOKENS_TABLE} t
                           WHERE t.tokenset_id      = g.tokenset_id
                             AND t.target_partition = g.target_partition
                             AND EXISTS (
@@ -674,7 +674,7 @@ export class XTdhGrantsRepository extends LazyDbAccessCompatibleService {
                       )
                       ELSE 0
                       END AS token_count
-              FROM tdh_grants g
+              FROM ${XTDH_GRANTS_TABLE} g
               WHERE g.id IN (:grantIds)
         `,
         { grantIds },
@@ -747,7 +747,7 @@ export class XTdhGrantsRepository extends LazyDbAccessCompatibleService {
       ) {
         sql = `
         SELECT DISTINCT t.token_id AS token
-        FROM ${TDH_GRANT_TOKENS_TABLE} t
+        FROM ${XTDH_GRANT_TOKENS_TABLE} t
         WHERE t.tokenset_id      = :tokenset_id
           AND t.target_partition = :partition
           AND EXISTS (
@@ -836,6 +836,20 @@ export class XTdhGrantsRepository extends LazyDbAccessCompatibleService {
     );
     return collections.distinct(
       dbResults.map((it) => it.partition.substring(2))
+    );
+  }
+
+  async migrateGrantorId(
+    source: string,
+    target: string,
+    connectionHolder: ConnectionWrapper<any>
+  ) {
+    await this.db.execute(
+      `
+        update ${XTDH_GRANTS_TABLE} set grantor_id = :target where grantor_id = :source
+      `,
+      { source, target },
+      { wrappedConnection: connectionHolder.connection }
     );
   }
 }

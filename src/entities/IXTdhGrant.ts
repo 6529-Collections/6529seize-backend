@@ -34,7 +34,7 @@ export class XTdhGrantEntity {
   @Column({ type: 'bigint', nullable: true })
   readonly valid_to!: number | null;
   @Column({ type: 'double', nullable: false })
-  readonly tdh_rate!: number;
+  readonly rate!: number;
   @Column({ type: 'varchar', length: 100, nullable: false })
   @Index()
   readonly status!: XTdhGrantStatus;

@@ -50,7 +50,7 @@ export function fromXTdhGrantEntityToModel(
     updated_at: Time.millis(entity.updated_at),
     status: entity.status,
     error_details: entity.error_details,
-    rate: entity.tdh_rate,
+    rate: entity.rate,
     is_irrevocable: entity.is_irrevocable,
     grantor_id: entity.grantor_id,
     total_granted: metadata.total_granted
