@@ -50,7 +50,7 @@ on:
           - s3Loop
           - subscriptionsDaily
           - subscriptionsTopUpLoop
-          - tdhGrantsReviewerLoop
+          - xTdhGrantsReviewerLoop
           - tdhHistoryLoop
           - tdhLoop
           - teamLoop

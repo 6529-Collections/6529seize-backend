@@ -1,0 +1,73 @@
+service: xTdhGrantsReviewerLoop
+
+package:
+  artifact: dist/index.zip
+
+plugins:
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs18.x
+  memorySize: 1024
+  timeout: 900
+  architecture: arm64
+  logRetentionInDays: 60
+
+functions:
+  xTdhGrantsReviewerLoop:
+    handler: index.handler
+    name: xTdhGrantsReviewerLoop
+    description: ${env:VERSION_DESCRIPTION}
+    events:
+      - schedule: rate(1 minute)
+    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    reservedConcurrency: 1
+    vpc:
+      securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
+      subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
+    environment:
+      SENTRY_DSN: ${env:SENTRY_DSN}
+      SENTRY_ENVIRONMENT: "xTdhGrantsReviewerLoop_${opt:stage, self:provider.stage}"
+      NFT_INDEXER_REORG_DEPTH_BLOCKS: 20
+      NFT_INDEXER_LIVE_TAIL_RANGE: 2000
+
+resources:
+  Resources:
+    XTdhGrantsReviewerLoopLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/xTdhGrantsReviewerLoop
+        RetentionInDays: 60
+    XTdhGrantsReviewerLoopOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      DependsOn:
+        - XTdhGrantsReviewerLoopLogGroup
+      Properties:
+        LogGroupName:
+          Ref: XTdhGrantsReviewerLoopLogGroup
+        FilterPattern: "Runtime.OutOfMemory"
+        MetricTransformations:
+          - MetricNamespace: "Lambda/OOM"
+            MetricName: "xTdhGrantsReviewerLoop_OOMErrorCount"
+            MetricValue: "1"
+            DefaultValue: 0
+
+    XTdhGrantsReviewerLoopOOMAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: XTdhGrantsReviewerLoopOOMFilter
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-xTdhGrantsReviewerLoop-OOM"
+        AlarmDescription: !Sub "Lambda xTdhGrantsReviewerLoop OutOfMemory in ${AWS::Region}"
+        Namespace: "Lambda/OOM"
+        MetricName: "xTdhGrantsReviewerLoop_OOMErrorCount"
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}

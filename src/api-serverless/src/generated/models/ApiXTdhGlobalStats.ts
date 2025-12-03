@@ -10,60 +10,65 @@
  * Do not edit the class manually.
  */
 
-import { ApiProfileMin } from '../models/ApiProfileMin';
-import { ApiXTdhGrant } from '../models/ApiXTdhGrant';
 import { HttpFile } from '../http/http';
 
-export class ApiXTdhContribution {
-    'grant'?: ApiXTdhGrant;
-    'grantor'?: ApiProfileMin;
+export class ApiXTdhGlobalStats {
     'xtdh': number;
     'xtdh_rate': number;
-    'total_grant_count'?: number;
-    'active_grant_count'?: number;
+    'multiplier': number;
+    'outgoing_rate': number;
+    'outgoing_total': number;
+    'outgoing_collections_count': number;
+    'outgoing_tokens_count': number;
 
     static readonly discriminator: string | undefined = undefined;
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
         {
-            "name": "grant",
-            "baseName": "grant",
-            "type": "ApiXTdhGrant",
-            "format": ""
-        },
-        {
-            "name": "grantor",
-            "baseName": "grantor",
-            "type": "ApiProfileMin",
-            "format": ""
-        },
-        {
             "name": "xtdh",
             "baseName": "xtdh",
             "type": "number",
-            "format": "float"
+            "format": "double"
         },
         {
             "name": "xtdh_rate",
             "baseName": "xtdh_rate",
             "type": "number",
-            "format": "float"
+            "format": "double"
         },
         {
-            "name": "total_grant_count",
-            "baseName": "total_grant_count",
+            "name": "multiplier",
+            "baseName": "multiplier",
+            "type": "number",
+            "format": "double"
+        },
+        {
+            "name": "outgoing_rate",
+            "baseName": "outgoing_rate",
+            "type": "number",
+            "format": "double"
+        },
+        {
+            "name": "outgoing_total",
+            "baseName": "outgoing_total",
+            "type": "number",
+            "format": "double"
+        },
+        {
+            "name": "outgoing_collections_count",
+            "baseName": "outgoing_collections_count",
             "type": "number",
             "format": "int64"
         },
         {
-            "name": "active_grant_count",
-            "baseName": "active_grant_count",
+            "name": "outgoing_tokens_count",
+            "baseName": "outgoing_tokens_count",
             "type": "number",
             "format": "int64"
         }    ];
 
     static getAttributeTypeMap() {
-        return ApiXTdhContribution.attributeTypeMap;
+        return ApiXTdhGlobalStats.attributeTypeMap;
     }
 
     public constructor() {
