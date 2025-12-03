@@ -295,7 +295,7 @@ export class ExternalCollectionSnapshottingService {
       maxIds
     });
 
-    outer: while (emptyStreak < stopAfterEmpty && ids.length < maxIds) {
+    while (emptyStreak < stopAfterEmpty && ids.length < maxIds) {
       const remainingIds = maxIds - ids.length;
       const remainingUntilEmpty = stopAfterEmpty - emptyStreak;
       const chunkSize = Math.max(
@@ -343,7 +343,7 @@ export class ExternalCollectionSnapshottingService {
       probe += BigInt(advanced);
 
       if (emptyStreak >= stopAfterEmpty || ids.length >= maxIds) {
-        break outer;
+        break;
       }
     }
 
