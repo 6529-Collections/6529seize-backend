@@ -1,9 +1,9 @@
 import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
-import { TDH_GRANT_TOKENS_TABLE } from '../constants';
+import { XTDH_GRANT_TOKENS_TABLE } from '../constants';
 
-@Entity(TDH_GRANT_TOKENS_TABLE)
+@Entity(XTDH_GRANT_TOKENS_TABLE)
 @Index(['target_partition', 'token_id'])
-export class TdhGrantTokenEntity {
+export class XTdhGrantTokenEntity {
   @PrimaryColumn({ type: 'varchar', length: 100, nullable: false })
   readonly tokenset_id!: string;
 

@@ -175,7 +175,7 @@ export class ReviewXTdhGrantsInQueueUseCase {
       )
     ]);
 
-    return grantorsTotalRate - grantorsSpentRate < grant.tdh_rate;
+    return grantorsTotalRate - grantorsSpentRate < grant.rate;
   }
 
   private async approveGrant(

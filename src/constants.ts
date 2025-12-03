@@ -110,8 +110,8 @@ export const SUBSCRIPTIONS_ADMIN_WALLETS = [
   '0xFe49A85E98941F1A115aCD4bEB98521023a25802'
 ];
 
-export const XTDH_GRANTS_TABLE = 'tdh_grants';
-export const TDH_GRANT_TOKENS_TABLE = 'tdh_grant_tokens';
+export const XTDH_GRANTS_TABLE = 'xtdh_grants';
+export const XTDH_GRANT_TOKENS_TABLE = 'xtdh_grant_tokens';
 
 export const DELETED_DROPS_TABLE = 'deleted_drops';
 export const DROPS_TABLE = 'drops';

@@ -41,6 +41,10 @@ import { identityFetcher } from '../api-serverless/src/identities/identity.fetch
 import { enums } from '../enums';
 import { collections } from '../collections';
 import { identitiesService } from '../api-serverless/src/identities/identities.service';
+import {
+  XTdhGrantsRepository,
+  xTdhGrantsRepository
+} from '../xtdh-grants/xtdh-grants.repository';
 
 export class ProfilesService {
   private readonly logger = Logger.get('PROFILES_SERVICE');
@@ -54,7 +58,8 @@ export class ProfilesService {
     private readonly identitiesDb: IdentitiesDb,
     private readonly notificationsDb: IdentityNotificationsDb,
     private readonly reactionsDb: ReactionsDb,
-    private readonly dropVotingDb: DropVotingDb
+    private readonly dropVotingDb: DropVotingDb,
+    private readonly xTdhGrantsRepository: XTdhGrantsRepository
   ) {}
 
   public async getProfileAndConsolidationsByIdentity(
@@ -364,6 +369,7 @@ export class ProfilesService {
         await this.mergeWaves(sourceIdentity, target, connectionHolder);
         await this.mergeDrops(sourceIdentity, target, connectionHolder);
         await this.mergeNotifications(sourceIdentity, target, connectionHolder);
+        await this.mergeXTdhGrants(sourceIdentity, target, connectionHolder);
         await this.mergeIdentitySubscriptions(
           sourceIdentity,
           target,
@@ -737,6 +743,18 @@ export class ProfilesService {
       connectionHolder
     );
   }
+
+  private async mergeXTdhGrants(
+    source: string,
+    target: string,
+    connectionHolder: ConnectionWrapper<any>
+  ) {
+    await this.xTdhGrantsRepository.migrateGrantorId(
+      source,
+      target,
+      connectionHolder
+    );
+  }
 }
 
 export const profilesService = new ProfilesService(
@@ -748,5 +766,6 @@ export const profilesService = new ProfilesService(
   identitiesDb,
   identityNotificationsDb,
   reactionsDb,
-  dropVotingDb
+  dropVotingDb,
+  xTdhGrantsRepository
 );

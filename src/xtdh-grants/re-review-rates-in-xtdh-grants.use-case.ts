@@ -96,9 +96,9 @@ export class ReReviewRatesInXTdhGrantsUseCase {
     }
 
     return out.filter((grant) => {
-      const { tdh_rate, valid_from, valid_to } = grant;
+      const { rate, valid_from, valid_to } = grant;
 
-      if (tdh_rate <= 0) return false;
+      if (rate <= 0) return false;
       if (valid_to == null || valid_from == null) return true;
 
       const duration = Time.millis(valid_to).diff(Time.millis(valid_from));
@@ -182,7 +182,7 @@ export class ReReviewRatesInXTdhGrantsUseCase {
   private computeScale(active: Span[], capacity: number): number {
     if (!active.length) return 1;
     let total = 0;
-    for (const a of active) total += a.g.tdh_rate;
+    for (const a of active) total += a.g.rate;
     if (total <= 0) return 1;
     return Math.min(1, capacity / total);
   }
@@ -210,7 +210,7 @@ export class ReReviewRatesInXTdhGrantsUseCase {
       updated_at: nowMillis,
       valid_from: segStart,
       valid_to: segValidTo,
-      tdh_rate: newRate,
+      rate: newRate,
       status: XTdhGrantStatus.GRANTED,
       error_details: null,
       is_irrevocable: source.g.is_irrevocable
@@ -240,7 +240,7 @@ export class ReReviewRatesInXTdhGrantsUseCase {
         const end = Math.min(segEnd, s.to);
         if (start >= end) continue;
 
-        const newRate = s.g.tdh_rate * scale;
+        const newRate = s.g.rate * scale;
         segments.push(
           this.makeReplacementEntity(s, start, end, newRate, nowMillis)
         );
@@ -274,7 +274,7 @@ export class ReReviewRatesInXTdhGrantsUseCase {
         !!last &&
         last.replaced_grant_id === seg.replaced_grant_id &&
         (last.valid_to ?? WINDOW_END) === seg.valid_from &&
-        Math.abs(last.tdh_rate - seg.tdh_rate) <= 1e-9 &&
+        Math.abs(last.rate - seg.rate) <= 1e-9 &&
         last.status === seg.status &&
         last.grantor_id === seg.grantor_id &&
         last.target_chain === seg.target_chain &&

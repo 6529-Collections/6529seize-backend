@@ -100,7 +100,7 @@ export {
   TDHMemes
 } from './ITDH';
 export { XTdhGrantEntity } from './IXTdhGrant';
-export { TdhGrantTokenEntity } from './ITdhGrantToken';
+export { XTdhGrantTokenEntity } from './IXTdhGrantToken';
 export {
   GlobalTDHHistory,
   LatestGlobalTDHHistory,
