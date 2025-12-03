@@ -83,8 +83,6 @@ router.get(
   }
 );
 
-class ApiTdhGrantUpdateRequest {}
-
 router.post(
   '/:id',
   needsAuthenticatedUser(),

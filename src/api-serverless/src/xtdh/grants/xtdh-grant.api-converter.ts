@@ -86,7 +86,7 @@ export class XTdhGrantApiConverter {
     );
     return models.map<ApiXTdhGrant>((model) => ({
       id: model.id,
-      grantor: grantorIdentities[model.grantor_id]!,
+      grantor: grantorIdentities[model.grantor_id],
       target_chain: this.resolveApiTargetChainFromModelValue({
         chainId: model.target_chain,
         grantId: model.id

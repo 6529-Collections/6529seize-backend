@@ -17,10 +17,10 @@ const targetTokensSchema = Joi.array()
   .custom((arr: any, helpers) => {
     const intervals = arr.map((tok: string) => {
       const parts = tok.split('-');
-      const start = parseInt(parts[0], 10);
-      const end = parts.length === 2 ? parseInt(parts[1], 10) : start;
+      const start = Number.parseInt(parts[0], 10);
+      const end = parts.length === 2 ? Number.parseInt(parts[1], 10) : start;
 
-      if (parts.length === 2 && !(start < end)) {
+      if (parts.length === 2 && start >= end) {
         return helpers.error('any.invalid', {
           message: `Range "${tok}" must be in smaller-larger form (e.g., "3-10").`
         });

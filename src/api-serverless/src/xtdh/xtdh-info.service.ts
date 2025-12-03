@@ -192,7 +192,7 @@ export class XTdhInfoService {
           .map<ApiXTdhToken>((it) => ({
             contract: it.contract,
             token: it.token_id,
-            owner: ownerProfiles[it.owner_id]!,
+            owner: ownerProfiles[it.owner_id],
             total_contributor_count: it.total_contributor_count,
             active_contributor_count: it.active_contributor_count,
             xtdh: it.xtdh,
@@ -320,7 +320,7 @@ export class XTdhInfoService {
         next: granteeEntities.length === limit,
         data: granteeEntities
           .map<ApiXTdhGrantee>((it) => ({
-            grantee: granteeProfiles[it.grantee_id]!,
+            grantee: granteeProfiles[it.grantee_id],
             collections_count: it.collections_count,
             tokens_count: it.tokens_count,
             xtdh: it.xtdh,
