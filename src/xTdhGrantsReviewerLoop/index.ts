@@ -1,20 +1,20 @@
 import { Logger } from '../logging';
 import * as sentryContext from '../sentry.context';
 import { doInDbContext } from '../secrets';
-import { RequestContext } from '../request.context';
 import { Timer } from '../time';
-import { recalculateXTdhUseCase } from '../xtdh-grants/recalculate-xtdh.use-case';
+import { RequestContext } from '../request.context';
+import { reviewXTdhGrantUseCase } from '../xtdh-grants/review-xtdh-grants-in-queue.use-case';
 
-const logger = Logger.get('XTDH_LOOP');
+const logger = Logger.get('TDH_GRANTS_REVIEWER_LOOP');
 
 export const handler = sentryContext.wrapLambdaHandler(async () => {
   await doInDbContext(
     async () => {
       const ctx: RequestContext = {
-        timer: new Timer('XTDH_LOOP')
+        timer: new Timer('TDH_GRANTS_REVIEWER_LOOP')
       };
-      await recalculateXTdhUseCase.handle(ctx);
-      logger.info(`Loop finished ${JSON.stringify(ctx?.timer)}`);
+      await reviewXTdhGrantUseCase.handle(ctx);
+      logger.info(ctx.timer!.getReport());
     },
     {
       logger

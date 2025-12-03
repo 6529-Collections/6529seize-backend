@@ -1,7 +1,7 @@
 import {
   xTdhRepository,
   XTdhRepository
-} from '../../../tdh-grants/xtdh.repository';
+} from '../../../xtdh-grants/xtdh.repository';
 import {
   identityFetcher,
   IdentityFetcher
@@ -16,17 +16,17 @@ import { ApiXTdhTokensPage } from '../generated/models/ApiXTdhTokensPage';
 import { ApiXTdhContribution } from '../generated/models/ApiXTdhContribution';
 import { collections } from '../../../collections';
 import {
-  tdhGrantApiConverter,
-  TdhGrantApiConverter
-} from '../tdh-grants/tdh-grant.api-converter';
+  xTdhGrantApiConverter,
+  XTdhGrantApiConverter
+} from './grants/xtdh-grant.api-converter';
 import {
-  tdhGrantsFinder,
-  TdhGrantsFinder
-} from '../../../tdh-grants/tdh-grants.finder';
-import { ApiTdhGrant } from '../generated/models/ApiTdhGrant';
+  xTdhGrantsFinder,
+  XTdhGrantsFinder
+} from '../../../xtdh-grants/xtdh-grants.finder';
 import { ApiXTdhToken } from '../generated/models/ApiXTdhToken';
 import { ApiXTdhGranteesPage } from '../generated/models/ApiXTdhGranteesPage';
 import { ApiXTdhGrantee } from '../generated/models/ApiXTdhGrantee';
+import { ApiXTdhGrant } from '../generated/models/ApiXTdhGrant';
 
 export interface XTdhCollectionsQueryParams {
   identity: string | null;
@@ -67,10 +67,10 @@ export interface XTdhGranteesQueryParams {
 
 export class XTdhInfoService {
   constructor(
-    private readonly xtdhRepository: XTdhRepository,
+    private readonly xTdhRepository: XTdhRepository,
     private readonly identityFetcher: IdentityFetcher,
-    private readonly tdhGrantsFinder: TdhGrantsFinder,
-    private readonly tdhGrantApiConverter: TdhGrantApiConverter
+    private readonly xTdhGrantsFinder: XTdhGrantsFinder,
+    private readonly xTdhGrantApiConverter: XTdhGrantApiConverter
   ) {}
 
   public async getXTdhCollections(
@@ -100,7 +100,7 @@ export class XTdhInfoService {
           throw new NotFoundException(`Identity ${identity} not found`);
         }
       }
-      const collectionEntities = await this.xtdhRepository.getXTdhCollections(
+      const collectionEntities = await this.xTdhRepository.getXTdhCollections(
         {
           identityId,
           collectionName: collection_name,
@@ -165,7 +165,7 @@ export class XTdhInfoService {
           throw new NotFoundException(`Identity ${identity} not found`);
         }
       }
-      const tokenEntities = await this.xtdhRepository.getXTdhTokens(
+      const tokenEntities = await this.xTdhRepository.getXTdhTokens(
         {
           identityId,
           contract,
@@ -227,7 +227,7 @@ export class XTdhInfoService {
       const limit = page_size + 1;
       const offset = page_size * (page - 1);
       const contributorEntities =
-        await this.xtdhRepository.getTokenContributors(
+        await this.xTdhRepository.getTokenContributors(
           {
             contract,
             groupBy: group_by,
@@ -249,19 +249,19 @@ export class XTdhInfoService {
           .map((it) => it.grant_id)
           .filter((it) => !!it) as string[]
       );
-      const relatedGrantModels = await this.tdhGrantsFinder.getGrantsByIds(
+      const relatedGrantModels = await this.xTdhGrantsFinder.getGrantsByIds(
         relatedGrantIds,
         ctx
       );
-      const relatedGrantApiModels = await this.tdhGrantApiConverter
-        .fromTdhGrantModelsToApiTdhGrants(relatedGrantModels, ctx)
+      const relatedGrantApiModels = await this.xTdhGrantApiConverter
+        .fromXTdhGrantModelsToApiXTdhGrants(relatedGrantModels, ctx)
         .then((res) =>
           res.reduce(
             (acc, it) => {
               acc[it.id] = it;
               return acc;
             },
-            {} as Record<string, ApiTdhGrant>
+            {} as Record<string, ApiXTdhGrant>
           )
         );
       const grantorProfiles = await this.identityFetcher.getOverviewsByIds(
@@ -298,7 +298,7 @@ export class XTdhInfoService {
       ctx.timer?.start(`${this.constructor.name}->getXTdhGrantees`);
       const limit = page_size + 1;
       const offset = page_size * (page - 1);
-      const granteeEntities = await this.xtdhRepository.getXTdhTopGrantees(
+      const granteeEntities = await this.xTdhRepository.getXTdhTopGrantees(
         {
           contract,
           limit,
@@ -334,9 +334,9 @@ export class XTdhInfoService {
   }
 }
 
-export const xtdhInfoService = new XTdhInfoService(
+export const xTdhInfoService = new XTdhInfoService(
   xTdhRepository,
   identityFetcher,
-  tdhGrantsFinder,
-  tdhGrantApiConverter
+  xTdhGrantsFinder,
+  xTdhGrantApiConverter
 );

@@ -99,7 +99,7 @@ export {
   TDHEditions,
   TDHMemes
 } from './ITDH';
-export { TdhGrantEntity } from './ITdhGrant';
+export { XTdhGrantEntity } from './IXTdhGrant';
 export { TdhGrantTokenEntity } from './ITdhGrantToken';
 export {
   GlobalTDHHistory,
