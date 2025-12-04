@@ -1,14 +1,14 @@
 import { RequestContext } from '../request.context';
 import { Logger } from '../logging';
-import {
-  GrantWithCap,
-  xTdhGrantsRepository,
-  XTdhGrantsRepository
-} from './xtdh-grants.repository';
 import { XTdhGrantEntity, XTdhGrantStatus } from '../entities/IXTdhGrant';
 import { randomUUID } from 'node:crypto';
 import { Time } from '../time';
 import { collections } from '../collections';
+import {
+  GrantWithCap,
+  xTdhRepository,
+  XTdhRepository
+} from './xtdh.repository';
 
 type Span = {
   g: GrantWithCap;
@@ -23,7 +23,7 @@ export class ReReviewRatesInXTdhGrantsUseCase {
   private static readonly WINDOW_START = 0;
   private static readonly WINDOW_END = 99_999_999_999_999;
 
-  constructor(private readonly tdhGrantsRepository: XTdhGrantsRepository) {}
+  constructor(private readonly xTdhRepository: XTdhRepository) {}
 
   public async handle(ctx: RequestContext) {
     try {
@@ -36,7 +36,7 @@ export class ReReviewRatesInXTdhGrantsUseCase {
         throw new Error(`This action can only be done in a transaction`);
       }
       const overFlowedGrantsWithGrantorRates =
-        await this.tdhGrantsRepository.getOverflowedGrantsWithGrantorRates(ctx);
+        await this.xTdhRepository.getOverflowedGrantsWithGrantorRates(ctx);
       if (!overFlowedGrantsWithGrantorRates.length) {
         this.logger.info(`Found no overflowed grants`);
         return;
@@ -48,10 +48,10 @@ export class ReReviewRatesInXTdhGrantsUseCase {
         overFlowedGrantsWithGrantorRates
       );
       this.logger.info(`Replacements prepared. Inserting them`);
-      await this.tdhGrantsRepository.bulkInsert(replacements, ctx);
+      await this.xTdhRepository.bulkInsert(replacements, ctx);
       this.logger.info(`Replacement grants inserted.`);
       this.logger.info(`Disabling old versions of grants`);
-      await this.tdhGrantsRepository.bulkUpdateStatus(
+      await this.xTdhRepository.bulkUpdateStatus(
         {
           ids: collections.distinct(
             overFlowedGrantsWithGrantorRates.map((it) => it.id)
@@ -295,4 +295,4 @@ export class ReReviewRatesInXTdhGrantsUseCase {
 }
 
 export const reReviewRatesInXTdhGrantsUseCase =
-  new ReReviewRatesInXTdhGrantsUseCase(xTdhGrantsRepository);
+  new ReReviewRatesInXTdhGrantsUseCase(xTdhRepository);

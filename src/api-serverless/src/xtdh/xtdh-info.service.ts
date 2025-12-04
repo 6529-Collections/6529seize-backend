@@ -1,7 +1,4 @@
-import {
-  xTdhRepository,
-  XTdhRepository
-} from '../../../xtdh-grants/xtdh.repository';
+import { xTdhRepository, XTdhRepository } from '../../../xtdh/xtdh.repository';
 import {
   identityFetcher,
   IdentityFetcher
@@ -22,7 +19,7 @@ import {
 import {
   xTdhGrantsFinder,
   XTdhGrantsFinder
-} from '../../../xtdh-grants/xtdh-grants.finder';
+} from '../../../xtdh/xtdh-grants.finder';
 import { ApiXTdhToken } from '../generated/models/ApiXTdhToken';
 import { ApiXTdhGranteesPage } from '../generated/models/ApiXTdhGranteesPage';
 import { ApiXTdhGrantee } from '../generated/models/ApiXTdhGrantee';

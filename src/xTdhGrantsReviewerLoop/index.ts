@@ -3,7 +3,7 @@ import * as sentryContext from '../sentry.context';
 import { doInDbContext } from '../secrets';
 import { Timer } from '../time';
 import { RequestContext } from '../request.context';
-import { reviewXTdhGrantUseCase } from '../xtdh-grants/review-xtdh-grants-in-queue.use-case';
+import { reviewXTdhGrantUseCase } from '../xtdh/review-xtdh-grants-in-queue.use-case';
 
 const logger = Logger.get('TDH_GRANTS_REVIEWER_LOOP');
 

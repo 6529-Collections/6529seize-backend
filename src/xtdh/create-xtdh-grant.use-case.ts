@@ -13,19 +13,16 @@ import {
 import { randomUUID } from 'node:crypto';
 import { Time } from '../time';
 import {
-  xTdhGrantsRepository,
-  XTdhGrantsRepository
-} from './xtdh-grants.repository';
-import {
   externalIndexingRepository,
   ExternalIndexingRepository
 } from '../external-indexing/external-indexing.repository';
 import { numbers } from '../numbers';
 import { XTdhGrantTokenEntity } from '../entities/IXTdhGrantToken';
+import { xTdhRepository, XTdhRepository } from './xtdh.repository';
 
 export class CreateXTdhGrantUseCase {
   constructor(
-    private readonly xTdhGrantsRepository: XTdhGrantsRepository,
+    private readonly xTdhRepository: XTdhRepository,
     private readonly externalIndexingRepository: ExternalIndexingRepository
   ) {}
 
@@ -56,7 +53,7 @@ export class CreateXTdhGrantUseCase {
           `There is a problem snapshotting given address. Please let the dev team know.`
         );
       }
-      return await this.xTdhGrantsRepository.executeNativeQueriesInTransaction(
+      return await this.xTdhRepository.executeNativeQueriesInTransaction(
         async (connection) => {
           const ctxWithConnection = { ...ctx, connection };
           const currentMillis = Time.currentMillis();
@@ -103,21 +100,15 @@ export class CreateXTdhGrantUseCase {
             error_details: null,
             is_irrevocable: command.is_irrevocable
           };
-          await this.xTdhGrantsRepository.insertGrant(
+          await this.xTdhRepository.insertGrant(
             entity,
             tokenEntities,
             ctxWithConnection
           );
           const targetTokenCounts =
-            await this.xTdhGrantsRepository.getGrantsTokenCounts(
-              [entity.id],
-              ctx
-            );
+            await this.xTdhRepository.getGrantsTokenCounts([entity.id], ctx);
           const targetCollectionNames =
-            await this.xTdhGrantsRepository.getCollectionNames(
-              [entity.id],
-              ctx
-            );
+            await this.xTdhRepository.getCollectionNames([entity.id], ctx);
           const targetTokenCount = targetTokenCounts[entity.id] ?? 0;
           const targetCollectionName = targetCollectionNames[entity.id] ?? null;
           return fromXTdhGrantEntityToModel(entity, {
@@ -134,6 +125,6 @@ export class CreateXTdhGrantUseCase {
 }
 
 export const createXTdhGrantUseCase = new CreateXTdhGrantUseCase(
-  xTdhGrantsRepository,
+  xTdhRepository,
   externalIndexingRepository
 );

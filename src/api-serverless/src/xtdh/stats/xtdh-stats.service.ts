@@ -10,13 +10,9 @@ import {
   IdentitiesDb
 } from '../../../../identities/identities.db';
 import {
-  xTdhGrantsRepository,
-  XTdhGrantsRepository
-} from '../../../../xtdh-grants/xtdh-grants.repository';
-import {
   xTdhRepository,
   XTdhRepository
-} from '../../../../xtdh-grants/xtdh.repository';
+} from '../../../../xtdh/xtdh.repository';
 import { ApiXTdhGlobalStats } from '../../generated/models/ApiXTdhGlobalStats';
 import { ApiXTdhStats } from '../../generated/models/ApiXTdhStats';
 
@@ -24,7 +20,6 @@ export class XTdhStatsService {
   constructor(
     private readonly identityFetcher: IdentityFetcher,
     private readonly identitiesDb: IdentitiesDb,
-    private readonly xTdhGrantsRepository: XTdhGrantsRepository,
     private readonly xTdhRepository: XTdhRepository
   ) {}
 
@@ -81,7 +76,7 @@ export class XTdhStatsService {
       this.xTdhRepository.getGrantedTdhTokensCount(identityId, ctx),
       this.xTdhRepository.getGrantedTdhTotalSumPerDay(identityId, ctx),
       this.xTdhRepository.getIncomingXTdhRate(identityId, ctx),
-      this.xTdhGrantsRepository.getGrantorsLooseSpentTdhRate(identityId, ctx)
+      this.xTdhRepository.getGrantorsLooseSpentTdhRate(identityId, ctx)
     ]);
     return {
       identity,
@@ -109,6 +104,5 @@ export class XTdhStatsService {
 export const xTdhStatsService = new XTdhStatsService(
   identityFetcher,
   identitiesDb,
-  xTdhGrantsRepository,
   xTdhRepository
 );

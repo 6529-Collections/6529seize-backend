@@ -41,10 +41,7 @@ import { identityFetcher } from '../api-serverless/src/identities/identity.fetch
 import { enums } from '../enums';
 import { collections } from '../collections';
 import { identitiesService } from '../api-serverless/src/identities/identities.service';
-import {
-  XTdhGrantsRepository,
-  xTdhGrantsRepository
-} from '../xtdh-grants/xtdh-grants.repository';
+import { xTdhRepository, XTdhRepository } from '../xtdh/xtdh.repository';
 
 export class ProfilesService {
   private readonly logger = Logger.get('PROFILES_SERVICE');
@@ -59,7 +56,7 @@ export class ProfilesService {
     private readonly notificationsDb: IdentityNotificationsDb,
     private readonly reactionsDb: ReactionsDb,
     private readonly dropVotingDb: DropVotingDb,
-    private readonly xTdhGrantsRepository: XTdhGrantsRepository
+    private readonly xTdhRepository: XTdhRepository
   ) {}
 
   public async getProfileAndConsolidationsByIdentity(
@@ -749,7 +746,7 @@ export class ProfilesService {
     target: string,
     connectionHolder: ConnectionWrapper<any>
   ) {
-    await this.xTdhGrantsRepository.migrateGrantorId(
+    await this.xTdhRepository.migrateGrantorId(
       source,
       target,
       connectionHolder
@@ -767,5 +764,5 @@ export const profilesService = new ProfilesService(
   identityNotificationsDb,
   reactionsDb,
   dropVotingDb,
-  xTdhGrantsRepository
+  xTdhRepository
 );
