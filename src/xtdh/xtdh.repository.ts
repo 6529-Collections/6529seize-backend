@@ -927,162 +927,138 @@ SET cw.xtdh_rate = COALESCE(pd.produced, 0) - COALESCE(go.granted_out, 0) + COAL
 
       const epochMs = this.getXTdhEpochMillis();
 
+      // Clear existing stats
       await this.db.execute(`TRUNCATE TABLE ${TABLE}`, undefined, {
         wrappedConnection: ctx.connection
       });
 
-      const sql = `
-        INSERT INTO ${TABLE} (
-          grant_id,
-          \`partition\`,
-          token_id,
-          xtdh_total,
-          xtdh_rate_daily
-        )
-        WITH
-          epoch AS (
-            SELECT :x_tdh_epoch_ms AS epoch_ms
-          ),
-          cutoff AS (
-            -- last UTC midnight in ms
-            SELECT UNIX_TIMESTAMP(DATE(UTC_TIMESTAMP())) * 1000 AS cut_ms
-          ),
-          -- eligible grants
-          gr AS (
-            SELECT
-              g.id,
-              g.target_partition,
-              g.token_mode,
-              g.rate,
-              g.valid_from,
-              g.valid_to
-            FROM ${XTDH_GRANTS_TABLE} g
-            WHERE g.status = '${XTdhGrantStatus.GRANTED}'
-              AND g.rate > 0
-              AND g.valid_from < (SELECT cut_ms FROM cutoff)
-          ),
-          -- include-counts only for INCLUDE grants (for denom)
-          inc_counts AS (
-            SELECT
-              g.id AS grant_id,
-              COUNT(*) AS inc_cnt
-            FROM ${XTDH_GRANTS_TABLE} g
-                   JOIN ${XTDH_GRANT_TOKENS_TABLE} t
-                        ON t.tokenset_id      = g.tokenset_id
-                          AND t.target_partition = g.target_partition
-            WHERE g.status = '${XTdhGrantStatus.GRANTED}'
-              AND g.token_mode = '${XTdhGrantTokenMode.INCLUDE}'
-            GROUP BY g.id
-          ),
-          grant_divisor AS (
-            SELECT
-              gr.id,
-              CASE
-                WHEN gr.token_mode = '${XTdhGrantTokenMode.ALL}' THEN COALESCE(c.total_supply, 0)
-                ELSE COALESCE(ic.inc_cnt, 0)
-                END AS denom
-            FROM gr
-                   LEFT JOIN ${EXTERNAL_INDEXED_CONTRACTS_TABLE} c
-                             ON c.\`partition\` = gr.target_partition
-                   LEFT JOIN inc_counts ic
-                             ON ic.grant_id = gr.id
-          ),
-          -- universe of targeted (grant_id, partition, token_id)
-          grant_tokens AS (
-            -- ALL-mode: all tokens that have ever appeared in history
-            SELECT DISTINCT
-              gr.id               AS grant_id,
-              gr.target_partition AS \`partition\`,
-              h.token_id          AS token_id
-            FROM gr
-                   JOIN ${EXTERNAL_INDEXED_OWNERSHIP_721_HISTORY_TABLE} h
-                        ON h.\`partition\` = gr.target_partition
-            WHERE gr.token_mode = '${XTdhGrantTokenMode.ALL}'
+      const sql =
+        `INSERT INTO ${TABLE} (
+        grant_id,
+        \`partition\`,
+        token_id,
+        xtdh_total,
+        xtdh_rate_daily
+      ) ` +
+        withSql(
+          [
+            // Shared CTEs – SAME building blocks as identity pipeline
+            CTE_EPOCH,
+            CTE_CUTOFF,
+            CTE_GR_BASE,
+            CTE_INC_COUNTS,
+            CTE_GRANT_DIVISOR,
+            CTE_GRANT_TOKENS,
+            CTE_CK_MAP,
+            CTE_OWNERS_AT_CUT,
+            CTE_HIST_PRE_CUT,
+            CTE_LAST_RESET,
 
-            UNION ALL
-
-            SELECT DISTINCT
-              g.id               AS grant_id,
-              g.target_partition AS \`partition\`,
-              t.token_id         AS token_id
-            FROM ${XTDH_GRANTS_TABLE} g
-                   JOIN ${XTDH_GRANT_TOKENS_TABLE} t
-                        ON t.tokenset_id      = g.tokenset_id
-                          AND t.target_partition = g.target_partition
-                   JOIN gr ON gr.id = g.id
-            WHERE gr.token_mode = '${XTdhGrantTokenMode.INCLUDE}'
-          ),
-          bounded_windows AS (
+            // Ownership-aware, reset-aware bounded windows
+            `
+        bounded_windows AS (
+          SELECT
+            gto.grant_id,
+            gto.\`partition\`,
+            gto.token_id,
+            GREATEST(
+              gto.group_start_ms,
+              gr.valid_from,
+              (SELECT epoch_ms FROM epoch)
+            ) AS start_ms,
+            LEAST(
+              (SELECT cut_ms FROM cutoff),
+              COALESCE(gr.valid_to, (SELECT cut_ms FROM cutoff))
+            ) AS end_ms,
+            gr.rate,
+            gd.denom,
+            (SELECT cut_ms FROM cutoff) AS cut_ms
+          FROM (
             SELECT
               gt.grant_id,
               gt.\`partition\`,
               gt.token_id,
-              GREATEST(
-                gr.valid_from,
-                (SELECT epoch_ms FROM epoch)
-              ) AS start_ms,
-              LEAST(
-                COALESCE(gr.valid_to, (SELECT cut_ms FROM cutoff)),
-                (SELECT cut_ms FROM cutoff)
-              ) AS end_ms,
-              gr.rate,
-              gd.denom,
-              (SELECT cut_ms FROM cutoff) AS cut_ms
+              lr.reset_since_time AS group_start_ms
             FROM grant_tokens gt
-                   JOIN gr  ON gr.id = gt.grant_id
-                   JOIN grant_divisor gd ON gd.id = gr.id
-          ),
-          days_owned AS (
-            SELECT
-              bw.grant_id,
-              bw.\`partition\`,
-              bw.token_id,
-              GREATEST(
-                0,
-                DATEDIFF(
-                  DATE(FROM_UNIXTIME(bw.end_ms   / 1000)),
-                  DATE(FROM_UNIXTIME(bw.start_ms / 1000))
-                ) - 1
-              ) AS full_days,
-              TIMESTAMPDIFF(
-                DAY,
-                FROM_UNIXTIME(bw.start_ms / 1000),
-                FROM_UNIXTIME(bw.cut_ms   / 1000)
-              ) AS days_since_start,
-              bw.rate,
-              bw.denom
-            FROM bounded_windows bw
-            WHERE bw.end_ms > bw.start_ms
-          ),
-          grant_token_xtdh AS (
-            SELECT
-              d.grant_id,
-              d.\`partition\`,
-              d.token_id,
-              -- TOTAL: sum over all full days (xTDH already)
-              SUM(
-                (d.rate / NULLIF(d.denom, 0)) * d.full_days
-              ) AS xtdh_total,
-              -- RATE for last midnight: one-day increment if "matured" (>= 2 days since start)
-              SUM(
-                CASE
-                  WHEN d.denom > 0 AND d.full_days > 0 AND d.days_since_start >= 2
-                    THEN (d.rate / d.denom)
-                  ELSE 0
-                  END
-              ) AS xtdh_rate_daily
-            FROM days_owned d
-            GROUP BY d.grant_id, d.\`partition\`, d.token_id
-          )
-        SELECT
-          gtx.grant_id,
-          gtx.\`partition\`,
-          gtx.token_id,
-          gtx.xtdh_total,
-          gtx.xtdh_rate_daily
-        FROM grant_token_xtdh gtx
-        WHERE gtx.xtdh_total > 0
-      `;
+            JOIN owners_at_cut o
+              ON o.\`partition\` = gt.\`partition\`
+             AND o.token_id    = gt.token_id
+             AND o.rn = 1
+            LEFT JOIN last_reset lr
+              ON lr.\`partition\` = gt.\`partition\`
+             AND lr.token_id    = gt.token_id
+             AND lr.owner       = o.owner
+          ) gto
+          JOIN gr  ON gr.id = gto.grant_id
+          JOIN grant_divisor gd ON gd.id = gr.id
+          -- if we have no reset_since_time for this (token, owner),
+          -- we treat it as having no active "run" in the current snapshot
+          WHERE gto.group_start_ms IS NOT NULL
+        )
+        `,
+
+            // Same day math as in identity pipeline
+            `
+        days_owned AS (
+          SELECT
+            bw.grant_id,
+            bw.\`partition\`,
+            bw.token_id,
+            GREATEST(
+              0,
+              DATEDIFF(
+                DATE(FROM_UNIXTIME(bw.end_ms   / 1000)),
+                DATE(FROM_UNIXTIME(bw.start_ms / 1000))
+              ) - 1
+            ) AS full_days,
+            TIMESTAMPDIFF(
+              DAY,
+              FROM_UNIXTIME(bw.start_ms / 1000),
+              FROM_UNIXTIME(bw.cut_ms   / 1000)
+            ) AS days_since_start,
+            bw.rate,
+            bw.denom
+          FROM bounded_windows bw
+          WHERE bw.end_ms > bw.start_ms
+        )
+        `,
+
+            // Aggregate to per (grant, token) stats in EXACTLY the same way
+            // you conceptually use for identities.
+            `
+        grant_token_xtdh AS (
+          SELECT
+            d.grant_id,
+            d.\`partition\`,
+            d.token_id,
+            -- TOTAL xTDH for the current "run" of this token under this grant
+            SUM(
+              (d.rate / NULLIF(d.denom, 0)) * d.full_days
+            ) AS xtdh_total,
+            -- RATE for last midnight: only if matured (>= 2 days since start)
+            SUM(
+              CASE
+                WHEN d.denom > 0 AND d.full_days > 0 AND d.days_since_start >= 2
+                  THEN (d.rate / d.denom)
+                ELSE 0
+              END
+            ) AS xtdh_rate_daily
+          FROM days_owned d
+          GROUP BY d.grant_id, d.\`partition\`, d.token_id
+        )
+        `
+          ],
+          `
+      SELECT
+        gtx.grant_id,
+        gtx.\`partition\`,
+        gtx.token_id,
+        gtx.xtdh_total,
+        gtx.xtdh_rate_daily
+      FROM grant_token_xtdh gtx
+      WHERE gtx.xtdh_total > 0
+      `
+        );
 
       await this.db.execute(
         sql,
