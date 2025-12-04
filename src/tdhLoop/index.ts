@@ -28,8 +28,7 @@ import { Time } from '../time';
 import { findNftTDH } from './nft_tdh';
 import { updateTDH } from './tdh';
 import { consolidateAndPersistTDH } from './tdh_consolidation';
-// TODO: add back in when ready
-// import { uploadTDH } from './tdh_upload';
+import { uploadTDH } from './tdh_upload';
 
 const logger = Logger.get('TDH_LOOP');
 const ALERT_TITLE = 'TDH Loop';
@@ -85,8 +84,7 @@ async function tdh(force?: boolean) {
     );
     // Disabled for now
     // await uploadTDH(block, blockTimestamp, tdh, false, true);
-    // TODO: add back in when ready
-    // await uploadTDH(block, blockTimestamp, consolidatedTdh, true, true);
+    await uploadTDH(block, blockTimestamp, consolidatedTdh, true, true);
     return block;
   } else {
     logger.info(
