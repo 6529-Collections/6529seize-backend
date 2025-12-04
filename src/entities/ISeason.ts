@@ -23,4 +23,7 @@ export class MemesSeason {
 
   @Column({ type: 'text' })
   display!: string;
+
+  @Column({ type: 'float' })
+  boost!: number;
 }
