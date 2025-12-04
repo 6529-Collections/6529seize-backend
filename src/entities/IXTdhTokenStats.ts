@@ -32,6 +32,7 @@ export class XTdhTokenStatsEntity {
 @Index('idx_xts_a_xtdh_total', ['xtdh_total'])
 @Index('idx_xts_a_partition', ['partition'])
 @Index('idx_xts_a_owner_partition', ['owner', 'partition'])
+@Index('idx_xts_a_partition_token_id', ['partition', 'token_id'])
 export class XTdhTokenStatsA extends XTdhTokenStatsEntity {}
 
 @Entity(`${XTDH_TOKEN_STATS_TABLE_PREFIX}b`)
@@ -39,4 +40,5 @@ export class XTdhTokenStatsA extends XTdhTokenStatsEntity {}
 @Index('idx_xts_b_xtdh_total', ['xtdh_total'])
 @Index('idx_xts_b_partition', ['partition'])
 @Index('idx_xts_b_owner_partition', ['owner', 'partition'])
+@Index('idx_xts_b_partition_token_id', ['partition', 'token_id'])
 export class XTdhTokenStatsB extends XTdhTokenStatsEntity {}
