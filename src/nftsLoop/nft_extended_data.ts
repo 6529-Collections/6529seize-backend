@@ -19,9 +19,10 @@ import {
   NFT
 } from '../entities/INFT';
 import { NFTOwner } from '../entities/INFTOwner';
+import { MemesSeason } from '../entities/ISeason';
+import { ethTools } from '../eth-tools';
 import { Logger } from '../logging';
 import { equalIgnoreCase } from '../strings';
-import { ethTools } from '../eth-tools';
 
 const logger = Logger.get('NFT_EXTENDED_DATA');
 
@@ -230,17 +231,23 @@ export async function findMemesExtendedData() {
 
   // Seasons
   const seasons = Array.from(new Set(extended.map((e) => e.season)));
-  const memesSeasons = seasons.map((s) => {
+  const memesSeasons: MemesSeason[] = seasons.map((s) => {
     const inSeason = extended.filter((e) => e.season === s);
-    return {
+    let boost = 0;
+    if (s <= 20) {
+      boost = 0.05;
+    }
+    const memesSeason: MemesSeason = {
       id: s,
       created_at: new Date(),
       start_index: Math.min(...inSeason.map((m) => m.id)),
       end_index: Math.max(...inSeason.map((m) => m.id)),
       count: inSeason.length,
       name: `Season ${s}`,
-      display: `SZN${s}`
+      display: `SZN${s}`,
+      boost
     };
+    return memesSeason;
   });
 
   await persistMemesExtendedData(extended);
