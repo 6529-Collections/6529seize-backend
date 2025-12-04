@@ -30,11 +30,11 @@ const XTdhCollectionsQueryParamsSchema: Joi.ObjectSchema<XTdhCollectionsQueryPar
     page_size: Joi.number().optional().integer().min(1).max(100).default(20),
     sort: Joi.string()
       .optional()
-      .allow(...['xtdh', 'xtdh_rate'])
+      .valid(...['xtdh', 'xtdh_rate'])
       .default('xtdh'),
     order: Joi.string()
       .optional()
-      .allow(...Object.values(ApiPageSortDirection))
+      .valid(...Object.values(ApiPageSortDirection))
       .default(ApiPageSortDirection.Desc)
   });
 
@@ -47,11 +47,11 @@ const XTdhTokensQueryParamsSchema: Joi.ObjectSchema<XTdhTokensQueryParams> =
     page_size: Joi.number().optional().integer().min(1).max(100).default(20),
     sort: Joi.string()
       .optional()
-      .allow(...['xtdh', 'xtdh_rate'])
+      .valid(...['xtdh', 'xtdh_rate'])
       .default('xtdh'),
     order: Joi.string()
       .optional()
-      .allow(...Object.values(ApiPageSortDirection))
+      .valid(...Object.values(ApiPageSortDirection))
       .default(ApiPageSortDirection.Desc)
   });
 
@@ -61,17 +61,17 @@ const XTdhContributorsQueryParamsSchema: Joi.ObjectSchema<XTdhContributorsQueryP
     token: Joi.number().required(),
     group_by: Joi.string()
       .optional()
-      .allow(...['grant', 'grantor'])
+      .valid(...['grant', 'grantor'])
       .default('grant'),
     page: Joi.number().optional().integer().min(1).default(1),
     page_size: Joi.number().optional().integer().min(1).max(100).default(20),
     sort: Joi.string()
       .optional()
-      .allow(...['xtdh', 'xtdh_rate'])
+      .valid(...['xtdh', 'xtdh_rate'])
       .default('xtdh'),
     order: Joi.string()
       .optional()
-      .allow(...Object.values(ApiPageSortDirection))
+      .valid(...Object.values(ApiPageSortDirection))
       .default(ApiPageSortDirection.Desc)
   });
 
@@ -82,11 +82,11 @@ const XTdhGranteesQueryParamsSchema: Joi.ObjectSchema<XTdhGranteesQueryParams> =
     page_size: Joi.number().optional().integer().min(1).max(100).default(20),
     sort: Joi.string()
       .optional()
-      .allow(...['xtdh', 'xtdh_rate'])
+      .valid(...['xtdh', 'xtdh_rate'])
       .default('xtdh'),
     order: Joi.string()
       .optional()
-      .allow(...Object.values(ApiPageSortDirection))
+      .valid(...Object.values(ApiPageSortDirection))
       .default(ApiPageSortDirection.Desc)
   });
 

@@ -744,11 +744,11 @@ const WaveVisibilitySchema = Joi.object<ApiCreateNewWaveVisibilityConfig>({
 const WaveVotingSchema = Joi.object<ApiCreateNewWaveVotingConfig>({
   scope: WaveScopeSchema.required(),
   credit_type: Joi.string()
-    .allow(...Object.values(ApiWaveCreditType))
+    .valid(...Object.values(ApiWaveCreditType))
     .required(),
   credit_scope: Joi.string()
     .optional()
-    .allow(...Object.values(ApiWaveCreditScope))
+    .valid(...Object.values(ApiWaveCreditScope))
     .default(ApiWaveCreditScope.Wave),
   credit_category: Joi.when('credit_type', {
     is: Joi.string().valid(ApiWaveCreditType.Rep),
@@ -769,7 +769,7 @@ const WaveRequiredMetadataSchema = Joi.object<ApiWaveRequiredMetadata>({
   name: Joi.string().required().max(250).min(1),
   type: Joi.string()
     .required()
-    .allow(...Object.values(ApiWaveParticipationRequirement))
+    .valid(...Object.values(ApiWaveParticipationRequirement))
 });
 
 const WaveParticipationSchema = Joi.object<ApiCreateNewWaveParticipationConfig>(
@@ -817,7 +817,7 @@ const WaveConfigSchema = Joi.object<
 >({
   type: Joi.string()
     .required()
-    .allow(...Object.values(ApiWaveType)),
+    .valid(...Object.values(ApiWaveType)),
   winning_thresholds: Joi.when('type', {
     is: Joi.string().valid(ApiWaveType.Approve),
     then: IntRangeSchema.required().or('min', 'max'),

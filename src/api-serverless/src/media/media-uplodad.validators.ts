@@ -36,7 +36,7 @@ export function createMediaPrepRequestSchema({
     author: Joi.string().required(),
     content_type: Joi.string()
       .required()
-      .allow(...allowedMimeTypes),
+      .valid(...allowedMimeTypes),
     file_name: Joi.string().required()
   });
 }

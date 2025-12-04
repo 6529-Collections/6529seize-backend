@@ -47,6 +47,7 @@ export const XTdhGrantSearchRequestApiModelSchema: Joi.ObjectSchema<XTdhGrantSea
       .valid(...Object.values(ApiPageSortDirection))
       .default(null),
     sort: Joi.string()
+      .optional()
       .valid(...['created_at', 'valid_from', 'valid_to', 'rate'])
       .default('created_at'),
     page: Joi.number().integer().min(1).default(1),
@@ -64,6 +65,7 @@ export const XTdhGrantTokensSearchRequestApiModelSchema: Joi.ObjectSchema<XTdhGr
       .valid(...Object.values(PageSortDirection))
       .default(PageSortDirection.ASC),
     sort: Joi.string()
+      .optional()
       .valid(...['token'])
       .default('token'),
     page: Joi.number().integer().min(1).default(1),
