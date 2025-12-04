@@ -10,7 +10,7 @@ import { getValidatedByJoiOrThrow } from '../../validation';
 import { ApiXTdhCreateGrantSchema } from './xtdh-grants.validator';
 import { ForbiddenException } from '../../../../exceptions';
 import { Time, Timer } from '../../../../time';
-import { createXTdhGrantUseCase } from '../../../../xtdh-grants/create-xtdh-grant.use-case';
+import { createXTdhGrantUseCase } from '../../../../xtdh/create-xtdh-grant.use-case';
 import { xTdhGrantApiConverter } from './xtdh-grant.api-converter';
 import { appFeatures } from '../../../../app-features';
 import {
@@ -21,7 +21,7 @@ import {
   XTdhGrantTokensSearchRequestApiModelSchema
 } from './xtdh-grant-search-request.api-model';
 import { RequestContext } from '../../../../request.context';
-import { xTdhGrantsFinder } from '../../../../xtdh-grants/xtdh-grants.finder';
+import { xTdhGrantsFinder } from '../../../../xtdh/xtdh-grants.finder';
 import { ApiXTdhGrantsPage } from '../../generated/models/ApiXTdhGrantsPage';
 import { ApiXTdhGrant } from '../../generated/models/ApiXTdhGrant';
 import { ApiXTdhGrantUpdateRequest } from '../../generated/models/ApiXTdhGrantUpdateRequest';
@@ -132,12 +132,11 @@ router.get(
       XTdhGrantTokensSearchRequestApiModelSchema
     );
     const results = await xTdhGrantsFinder.searchForTokens(searchModel, ctx);
-    const data = results.items.map((token) => ({ token }));
     res.send({
       count: results.count,
       page: results.page,
       next: results.next,
-      data
+      data: results.items
     });
   }
 );

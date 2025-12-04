@@ -3,7 +3,7 @@ import { Time } from '../../../../time';
 import {
   CreateXTdhGrantCommand,
   XTdhGrantModel
-} from '../../../../xtdh-grants/xtdh-grant.models';
+} from '../../../../xtdh/xtdh-grant.models';
 import { collections } from '../../../../collections';
 import {
   IdentityFetcher,
@@ -14,19 +14,19 @@ import { enums } from '../../../../enums';
 import { RequestContext } from '../../../../request.context';
 import { XTdhGrantSearchRequestApiModel } from './xtdh-grant-search-request.api-model';
 import { BadRequestException } from '../../../../exceptions';
-import {
-  xTdhGrantsRepository,
-  XTdhGrantsRepository
-} from '../../../../xtdh-grants/xtdh-grants.repository';
 import { ApiXTdhCreateGrant } from '../../generated/models/ApiXTdhCreateGrant';
 import { ApiXTdhGrant } from '../../generated/models/ApiXTdhGrant';
 import { ApiXTdhGrantTargetChain } from '../../generated/models/ApiXTdhGrantTargetChain';
 import { ApiXTdhGrantStatus } from '../../generated/models/ApiXTdhGrantStatus';
+import {
+  xTdhRepository,
+  XTdhRepository
+} from '../../../../xtdh/xtdh.repository';
 
 export class XTdhGrantApiConverter {
   constructor(
     private readonly identityFetcher: IdentityFetcher,
-    private readonly xTdhGrantsRepository: XTdhGrantsRepository
+    private readonly xTdhRepository: XTdhRepository
   ) {}
 
   public fromApiCreateXTdhGrantToModel({
@@ -200,7 +200,7 @@ export class XTdhGrantApiConverter {
     let conflictingRequest = false;
     if (targetCollectionName?.length) {
       const targets =
-        await this.xTdhGrantsRepository.getContractsOfExternalAddressesWhereNameLike(
+        await this.xTdhRepository.getContractsOfExternalAddressesWhereNameLike(
           targetCollectionName,
           ctx
         );
@@ -237,5 +237,5 @@ export class XTdhGrantApiConverter {
 
 export const xTdhGrantApiConverter = new XTdhGrantApiConverter(
   identityFetcher,
-  xTdhGrantsRepository
+  xTdhRepository
 );

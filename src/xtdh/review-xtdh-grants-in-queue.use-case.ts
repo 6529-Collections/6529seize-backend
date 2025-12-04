@@ -1,10 +1,6 @@
 import { RequestContext } from '../request.context';
 import { Time, Timer } from '../time';
 import {
-  xTdhGrantsRepository,
-  XTdhGrantsRepository
-} from './xtdh-grants.repository';
-import {
   externalIndexingRepository,
   ExternalIndexingRepository
 } from '../external-indexing/external-indexing.repository';
@@ -13,6 +9,7 @@ import { XTdhGrantEntity, XTdhGrantStatus } from '../entities/IXTdhGrant';
 import { IndexedContractStatus } from '../entities/IExternalIndexedContract';
 import { identitiesDb, IdentitiesDb } from '../identities/identities.db';
 import { assertUnreachable } from '../assertions';
+import { xTdhRepository, XTdhRepository } from './xtdh.repository';
 
 const GRANT_VALIDATION_FAILED_CODE = 'GRANT_VALIDATION_DENIED';
 
@@ -23,7 +20,7 @@ class GrantValidationDenied extends Error {
 export class ReviewXTdhGrantsInQueueUseCase {
   private readonly logger = Logger.get(this.constructor.name);
   constructor(
-    private readonly xTdhGrantsRepository: XTdhGrantsRepository,
+    private readonly xTdhRepository: XTdhRepository,
     private readonly externalIndexingRepository: ExternalIndexingRepository,
     private readonly identityRepository: IdentitiesDb
   ) {}
@@ -42,7 +39,7 @@ export class ReviewXTdhGrantsInQueueUseCase {
         const thereIsMoreTime = timer.getTotalTimePassed().lt(loopTimeout);
         tryMoreCandidates =
           thereIsMoreTime &&
-          (await this.xTdhGrantsRepository.executeNativeQueriesInTransaction(
+          (await this.xTdhRepository.executeNativeQueriesInTransaction(
             async (connection) => {
               return await this.attemptOneGrantVerification(seenGrants, {
                 ...ctx,
@@ -63,7 +60,7 @@ export class ReviewXTdhGrantsInQueueUseCase {
     ctx: RequestContext
   ): Promise<boolean> {
     const grantCandidate =
-      await this.xTdhGrantsRepository.lockOldestPendingGrant(ctx);
+      await this.xTdhRepository.lockOldestPendingGrant(ctx);
     if (!grantCandidate) {
       this.logger.info(`Found no pending grants in the queue`);
       return false;
@@ -141,7 +138,7 @@ export class ReviewXTdhGrantsInQueueUseCase {
       }
     } catch (e: any) {
       if (e.code === GRANT_VALIDATION_FAILED_CODE) {
-        await this.xTdhGrantsRepository.updateStatus(
+        await this.xTdhRepository.updateStatus(
           {
             grantId: grantId,
             status: XTdhGrantStatus.FAILED,
@@ -165,7 +162,7 @@ export class ReviewXTdhGrantsInQueueUseCase {
         grant.grantor_id,
         ctxWithConnection
       ),
-      this.xTdhGrantsRepository.getGrantorsMaxSpentTdhRateInTimeSpan(
+      this.xTdhRepository.getGrantorsMaxSpentTdhRateInTimeSpan(
         {
           grantorId: grant.grantor_id,
           validFrom: grant.valid_from ?? now,
@@ -182,7 +179,7 @@ export class ReviewXTdhGrantsInQueueUseCase {
     { grantId, validFrom }: { grantId: string; validFrom: number },
     ctx: RequestContext
   ) {
-    await this.xTdhGrantsRepository.updateStatus(
+    await this.xTdhRepository.updateStatus(
       {
         grantId: grantId,
         status: XTdhGrantStatus.GRANTED,
@@ -213,7 +210,7 @@ export class ReviewXTdhGrantsInQueueUseCase {
     { grantId }: { grantId: string },
     ctx: RequestContext
   ) {
-    await this.xTdhGrantsRepository.updateStatus(
+    await this.xTdhRepository.updateStatus(
       {
         grantId: grantId,
         status: XTdhGrantStatus.PENDING,
@@ -225,7 +222,7 @@ export class ReviewXTdhGrantsInQueueUseCase {
 }
 
 export const reviewXTdhGrantUseCase = new ReviewXTdhGrantsInQueueUseCase(
-  xTdhGrantsRepository,
+  xTdhRepository,
   externalIndexingRepository,
   identitiesDb
 );

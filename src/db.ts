@@ -95,7 +95,7 @@ import { env } from './env';
 import { computeMerkleRoot } from './tdhLoop/tdh_merkle';
 import { Time } from './time';
 import { revokeTdhBasedDropWavesOverVotes } from './drops/participation-drops-over-vote-revocation';
-import { recalculateXTdhUseCase } from './xtdh-grants/recalculate-xtdh.use-case';
+import { recalculateXTdhUseCase } from './xtdh/recalculate-xtdh.use-case';
 
 const mysql = require('mysql');
 

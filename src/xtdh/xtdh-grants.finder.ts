@@ -1,7 +1,3 @@
-import {
-  xTdhGrantsRepository,
-  XTdhGrantsRepository
-} from './xtdh-grants.repository';
 import { RequestContext } from '../request.context';
 import {
   fromXTdhGrantEntityToModel,
@@ -19,10 +15,7 @@ import { randomUUID } from 'node:crypto';
 import { xTdhRepository, XTdhRepository } from './xtdh.repository';
 
 export class XTdhGrantsFinder {
-  constructor(
-    private readonly tdhGrantsRepository: XTdhGrantsRepository,
-    private readonly xTdhRepository: XTdhRepository
-  ) {}
+  constructor(private readonly xTdhRepository: XTdhRepository) {}
 
   public async searchForPage(
     {
@@ -74,7 +67,7 @@ export class XTdhGrantsFinder {
         };
       }
       const [items, count] = await Promise.all([
-        this.tdhGrantsRepository
+        this.xTdhRepository
           .getPageItems(
             {
               grantor_id,
@@ -96,8 +89,8 @@ export class XTdhGrantsFinder {
             const grantIds = dbResults.map((it) => it.id);
             const [tokenCounts, collectionNames, totalGranteds] =
               await Promise.all([
-                this.tdhGrantsRepository.getGrantsTokenCounts(grantIds, ctx),
-                this.tdhGrantsRepository.getCollectionNames(grantIds, ctx),
+                this.xTdhRepository.getGrantsTokenCounts(grantIds, ctx),
+                this.xTdhRepository.getCollectionNames(grantIds, ctx),
                 this.xTdhRepository.getXTdhGrantedByGrantIds(grantIds, ctx)
               ]);
             return dbResults.map((entity) =>
@@ -108,7 +101,7 @@ export class XTdhGrantsFinder {
               })
             );
           }),
-        this.tdhGrantsRepository.countItems(
+        this.xTdhRepository.countItems(
           {
             grantor_id,
             target_contracts,
@@ -150,7 +143,7 @@ export class XTdhGrantsFinder {
       const limit = pageSize;
       const offset = pageSize * (page - 1);
       const [items, count] = await Promise.all([
-        this.tdhGrantsRepository.getGrantTokensPage(
+        this.xTdhRepository.getGrantTokensPage(
           {
             grant_id: searchModel.grant_id,
             sort_direction: searchModel.sort_direction,
@@ -160,7 +153,7 @@ export class XTdhGrantsFinder {
           },
           ctx
         ),
-        this.tdhGrantsRepository
+        this.xTdhRepository
           .getGrantsTokenCounts([searchModel.grant_id], ctx)
           .then((tokenCounts) => tokenCounts[searchModel.grant_id] ?? 0)
       ]);
@@ -200,9 +193,9 @@ export class XTdhGrantsFinder {
       ctx.timer?.start(`${this.constructor.name}->getGrantsByIds`);
       const [entities, tokenCounts, collectionNames, xTdhGranteds] =
         await Promise.all([
-          this.tdhGrantsRepository.getGrantsByIds(grantIds, ctx),
-          this.tdhGrantsRepository.getGrantsTokenCounts(grantIds, ctx),
-          this.tdhGrantsRepository.getCollectionNames(grantIds, ctx),
+          this.xTdhRepository.getGrantsByIds(grantIds, ctx),
+          this.xTdhRepository.getGrantsTokenCounts(grantIds, ctx),
+          this.xTdhRepository.getCollectionNames(grantIds, ctx),
           this.xTdhRepository.getXTdhGrantedByGrantIds(grantIds, ctx)
         ]);
       return entities.map((it) =>
@@ -226,14 +219,13 @@ export class XTdhGrantsFinder {
   ): Promise<XTdhGrantModel> {
     try {
       ctx.timer?.start(`${this.constructor.name}->updateTdhGrant`);
-      return await this.tdhGrantsRepository.executeNativeQueriesInTransaction(
+      return await this.xTdhRepository.executeNativeQueriesInTransaction(
         async (connection) => {
           const ctxWithConnection = { ...ctx, connection };
-          const grantBeforeUpdate =
-            await this.tdhGrantsRepository.lockGrantById(
-              grantId,
-              ctxWithConnection
-            );
+          const grantBeforeUpdate = await this.xTdhRepository.lockGrantById(
+            grantId,
+            ctxWithConnection
+          );
           if (!grantBeforeUpdate) {
             throw new NotFoundException(`Grant ${grantId} not found`);
           }
@@ -279,7 +271,7 @@ export class XTdhGrantsFinder {
               proposedValidTo.minus(Time.now()).gt(Time.days(1))) ||
             (validFrom !== null &&
               proposedValidTo.minus(validFrom).gt(Time.days(1)));
-          await this.tdhGrantsRepository.updateStatus(
+          await this.xTdhRepository.updateStatus(
             {
               grantId,
               status: XTdhGrantStatus.DISABLED,
@@ -291,7 +283,7 @@ export class XTdhGrantsFinder {
           );
           if (replacementGrantNeeded) {
             const replacementGrantId = randomUUID();
-            await this.tdhGrantsRepository.insertGrant(
+            await this.xTdhRepository.insertGrant(
               {
                 ...grantBeforeUpdate,
                 id: replacementGrantId,
@@ -314,7 +306,4 @@ export class XTdhGrantsFinder {
   }
 }
 
-export const xTdhGrantsFinder = new XTdhGrantsFinder(
-  xTdhGrantsRepository,
-  xTdhRepository
-);
+export const xTdhGrantsFinder = new XTdhGrantsFinder(xTdhRepository);
