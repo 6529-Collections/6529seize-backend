@@ -12,6 +12,7 @@ import {
 } from './recalculate-xtdh-stats.use-case';
 import { sqs } from '../sqs';
 import { env } from '../env';
+import { appFeatures } from '../app-features';
 
 export class RecalculateXTdhUseCase {
   private readonly logger = Logger.get(this.constructor.name);
@@ -38,6 +39,10 @@ export class RecalculateXTdhUseCase {
   private async recalculateXTdh(ctx: RequestContext) {
     try {
       ctx.timer?.start(`${this.constructor.name}->recalculateXTdh`);
+      if (!appFeatures.isXTdhEnabled()) {
+        this.logger.warn(`XTDH is disabled`);
+        return;
+      }
       this.logger.info(`Recalculating the xTDH universe`);
       await this.reReviewRatesInXTdhGrants.handle(ctx);
       if (!ctx.connection) {

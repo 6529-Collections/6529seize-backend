@@ -10,6 +10,7 @@ import { IndexedContractStatus } from '../entities/IExternalIndexedContract';
 import { identitiesDb, IdentitiesDb } from '../identities/identities.db';
 import { assertUnreachable } from '../assertions';
 import { xTdhRepository, XTdhRepository } from './xtdh.repository';
+import { appFeatures } from '../app-features';
 
 const GRANT_VALIDATION_FAILED_CODE = 'GRANT_VALIDATION_DENIED';
 
@@ -26,17 +27,26 @@ export class ReviewXTdhGrantsInQueueUseCase {
   ) {}
 
   public async handle(ctx: RequestContext) {
-    ctx.timer?.start(`${this.constructor.name}->handle`);
-    const timer = ctx.timer ?? new Timer(`${this.constructor.name}->handle`);
-    this.logger.info(
-      `Starting to check if there are any pending grants in the queue`
-    );
-    const loopTimeout = Time.minutes(10);
+    const ctxWithGuaranteedTimer = {
+      ...ctx,
+      timer: ctx.timer ?? new Timer(`${this.constructor.name}`)
+    };
     try {
+      ctxWithGuaranteedTimer.timer?.start(`handle`);
+      if (!appFeatures.isXTdhEnabled()) {
+        this.logger.warn(`XTDH is disabled`);
+        return;
+      }
+      this.logger.info(
+        `Starting to check if there are any pending grants in the queue`
+      );
+      const loopTimeout = Time.minutes(10);
       const seenGrants = new Set<string>();
       let tryMoreCandidates = true;
       do {
-        const thereIsMoreTime = timer.getTotalTimePassed().lt(loopTimeout);
+        const thereIsMoreTime = ctxWithGuaranteedTimer.timer
+          ?.getTotalTimePassed()
+          .lt(loopTimeout);
         tryMoreCandidates =
           thereIsMoreTime &&
           (await this.xTdhRepository.executeNativeQueriesInTransaction(
@@ -51,7 +61,7 @@ export class ReviewXTdhGrantsInQueueUseCase {
 
       this.logger.info(`Stopping to look for pending grants in the queue`);
     } finally {
-      ctx.timer?.stop(`${this.constructor.name}->handle`);
+      ctxWithGuaranteedTimer.timer?.stop(`handle`);
     }
   }
 
