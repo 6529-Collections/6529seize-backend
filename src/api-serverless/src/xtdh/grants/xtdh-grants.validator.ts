@@ -53,7 +53,7 @@ const targetTokensSchema = Joi.array()
 export const ApiXTdhCreateGrantSchema: Joi.ObjectSchema<ApiXTdhCreateGrant> =
   Joi.object<ApiXTdhCreateGrant>({
     target_chain: Joi.string()
-      .allow(...Object.values(ApiXTdhGrantTargetChain))
+      .valid(...Object.values(ApiXTdhGrantTargetChain))
       .required(),
     target_contract: Joi.string().required().regex(WALLET_REGEX).lowercase(),
     target_tokens: targetTokensSchema,
