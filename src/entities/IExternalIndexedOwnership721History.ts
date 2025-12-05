@@ -3,6 +3,7 @@ import { EXTERNAL_INDEXED_OWNERSHIP_721_HISTORY_TABLE } from '../constants';
 
 @Entity(EXTERNAL_INDEXED_OWNERSHIP_721_HISTORY_TABLE)
 @Index(['partition', 'token_id', 'block_number', 'log_index'])
+@Index(['partition', 'token_id', 'since_time', 'block_number', 'log_index'])
 export class ExternalIndexedOwnership721HistoryEntity {
   @PrimaryColumn({ type: 'varchar', length: 90, nullable: false })
   readonly partition!: string;

@@ -64,7 +64,6 @@ export const DROP_VOTER_STATE_TABLE = 'drop_voter_states';
 export const DROP_REACTIONS_TABLE = 'drop_reactions';
 export const DROP_REAL_VOTER_VOTE_IN_TIME_TABLE =
   'drop_real_voter_vote_in_time';
-export const EXTERNAL_TOKEN_OWNERS_TABLE = 'external_token_owners';
 export const EXTERNAL_INDEXED_CONTRACTS_TABLE = 'external_indexed_contracts';
 export const EXTERNAL_INDEXED_OWNERSHIP_721_TABLE =
   'external_indexed_ownership_721s';
@@ -111,8 +110,8 @@ export const SUBSCRIPTIONS_ADMIN_WALLETS = [
   '0xFe49A85E98941F1A115aCD4bEB98521023a25802'
 ];
 
-export const TDH_GRANTS_TABLE = 'tdh_grants';
-export const TDH_GRANT_TOKENS_TABLE = 'tdh_grant_tokens';
+export const XTDH_GRANTS_TABLE = 'xtdh_grants';
+export const XTDH_GRANT_TOKENS_TABLE = 'xtdh_grant_tokens';
 
 export const DELETED_DROPS_TABLE = 'deleted_drops';
 export const DROPS_TABLE = 'drops';
@@ -144,6 +143,10 @@ export const PUSH_NOTIFICATION_DEVICES_TABLE = 'push_notification_devices';
 export const IDENTITY_SUBSCRIPTIONS_TABLE = 'identity_subscriptions';
 export const IDENTITY_NOTIFICATIONS_TABLE = 'identity_notifications';
 export const ACTIVITY_EVENTS_TABLE = 'activity_events';
+
+export const XTDH_TOKEN_GRANT_STATS_TABLE_PREFIX = 'xtdh_token_grant_stats_';
+export const XTDH_TOKEN_STATS_TABLE_PREFIX = 'xtdh_token_stats_';
+export const XTDH_STATS_META_TABLE = 'xtdh_stats_meta';
 
 export const WS_CONNECTIONS_TABLE = 'ws_connections';
 

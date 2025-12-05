@@ -10,7 +10,9 @@ import {
 import {
   ADDRESS_CONSOLIDATION_KEY,
   ARTISTS_TABLE,
+  CONSOLIDATED_TDH_EDITIONS_TABLE,
   CONSOLIDATED_UPLOADS_TABLE,
+  CONSOLIDATED_WALLETS_TDH_TABLE,
   CONSOLIDATIONS_TABLE,
   ENS_TABLE,
   MEME_LAB_ROYALTIES_TABLE,
@@ -27,10 +29,7 @@ import {
 } from './constants';
 import { Artist } from './entities/IArtist';
 import { ENS } from './entities/IENS';
-
-import { consolidationTools } from './consolidation-tools';
 import { DbQueryOptions } from './db-query.options';
-import { revokeTdhBasedDropWavesOverVotes } from './drops/participation-drops-over-vote-revocation';
 import {
   Consolidation,
   ConsolidationEvent,
@@ -76,7 +75,6 @@ import {
 } from './entities/ITDHHistory';
 import { Team } from './entities/ITeam';
 import { BaseTransaction, Transaction } from './entities/ITransaction';
-import { env } from './env';
 import { ethTools } from './eth-tools';
 import {
   syncIdentitiesMetrics,
@@ -84,11 +82,20 @@ import {
 } from './identity';
 import { Logger } from './logging';
 import { deleteAll, insertWithoutUpdate, resetRepository } from './orm_helpers';
-import { ConnectionWrapper, setSqlExecutor, sqlExecutor } from './sql-executor';
+import {
+  ConnectionWrapper,
+  dbSupplier,
+  setSqlExecutor,
+  sqlExecutor
+} from './sql-executor';
 import { getConsolidationsSql, parseTdhDataFromDB } from './sql_helpers';
 import { equalIgnoreCase } from './strings';
+import { consolidationTools } from './consolidation-tools';
+import { env } from './env';
 import { computeMerkleRoot } from './tdhLoop/tdh_merkle';
 import { Time } from './time';
+import { revokeTdhBasedDropWavesOverVotes } from './drops/participation-drops-over-vote-revocation';
+import { recalculateXTdhUseCase } from './xtdh/recalculate-xtdh.use-case';
 
 const mysql = require('mysql');
 
@@ -1045,16 +1052,38 @@ export async function persistConsolidatedTDH(
       await insertWithoutUpdate(tdhRepo, tdh);
       await insertWithoutUpdate(tdhMemesRepo, memesTdh);
       await insertWithoutUpdate(tdhEditionsRepo, tdhEditions);
+      await updateBoostedTdhRates(qrHolder);
+      await syncIdentitiesWithTdhConsolidations(qrHolder);
+      await syncIdentitiesMetrics(qrHolder);
+      await revokeTdhBasedDropWavesOverVotes(qrHolder);
 
       logger.info(`[CONSOLIDATED TDH] [PERSISTING HISTORIC TDH]`);
     }
     await persistHistoricConsolidatedTDH(manager, block, tdh, wallets);
-    await syncIdentitiesWithTdhConsolidations(qrHolder);
-    await syncIdentitiesMetrics(qrHolder);
-    await revokeTdhBasedDropWavesOverVotes(qrHolder);
   });
 
+  await recalculateXTdhUseCase.activateLoop({});
   logger.info(`[CONSOLIDATED TDH] PERSISTED ALL WALLETS TDH [${tdh.length}]`);
+}
+
+async function updateBoostedTdhRates(connection: ConnectionWrapper<any>) {
+  const sql = `
+      UPDATE ${CONSOLIDATED_WALLETS_TDH_TABLE} cw
+      LEFT JOIN (
+        SELECT
+          c.consolidation_key,
+          SUM(e.hodl_rate) * COALESCE(MAX(c.boost), 1.0) AS boosted_tdh_rate
+        FROM ${CONSOLIDATED_WALLETS_TDH_TABLE} c
+        LEFT JOIN ${CONSOLIDATED_TDH_EDITIONS_TABLE} e
+          ON e.consolidation_key = c.consolidation_key
+        GROUP BY c.consolidation_key
+      ) x
+        ON x.consolidation_key = cw.consolidation_key
+      SET cw.boosted_tdh_rate = COALESCE(x.boosted_tdh_rate, 0)
+    `;
+  await dbSupplier().execute(sql, undefined, {
+    wrappedConnection: connection
+  });
 }
 
 export async function persistHistoricConsolidatedTDH(

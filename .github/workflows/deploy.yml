@@ -50,7 +50,7 @@ on:
           - s3Loop
           - subscriptionsDaily
           - subscriptionsTopUpLoop
-          - tdhGrantsReviewerLoop
+          - xTdhGrantsReviewerLoop
           - tdhHistoryLoop
           - tdhLoop
           - teamLoop
@@ -58,6 +58,7 @@ on:
           - transactionsProcessingLoop
           - waveDecisionExecutionLoop
           - waveLeaderboardSnapshotterLoop
+          - xTdhLoop
 
 env:
   SENTRY_DSN: ${{ secrets.SENTRY_DSN }}

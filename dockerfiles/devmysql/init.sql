@@ -1,4 +1,5 @@
-CREATE USER '6529backend'@'%' identified with mysql_native_password by 'backend9256';
-CREATE DATABASE OM6529;
-GRANT ALL PRIVILEGES ON OM6529.* TO '6529backend';
+CREATE DATABASE IF NOT EXISTS OM6529;
+CREATE USER IF NOT EXISTS '6529backend'@'%' IDENTIFIED WITH mysql_native_password BY 'backend9256';
+ALTER USER '6529backend'@'%' IDENTIFIED WITH mysql_native_password BY 'backend9256';
+GRANT ALL PRIVILEGES ON OM6529.* TO '6529backend'@'%';
 FLUSH PRIVILEGES;
