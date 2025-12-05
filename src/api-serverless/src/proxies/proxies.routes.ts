@@ -286,7 +286,7 @@ const NewProfileProxyRateWaveDropActionSchema =
 const AcceptActionRequestSchema = Joi.object<AcceptActionRequest>({
   action: Joi.string()
     .required()
-    .allow(...Object.values(AcceptActionRequestActionEnum))
+    .valid(...Object.values(AcceptActionRequestActionEnum))
 });
 
 const UpdateActionRequestSchema = Joi.object<ApiUpdateProxyActionRequest>({

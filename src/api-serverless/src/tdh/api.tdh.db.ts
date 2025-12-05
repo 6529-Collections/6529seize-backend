@@ -5,26 +5,20 @@ import {
   CONSOLIDATED_WALLETS_TDH_MEMES_TABLE,
   CONSOLIDATED_WALLETS_TDH_TABLE,
   IDENTITIES_TABLE,
+  LATEST_TDH_HISTORY_TABLE,
   MEME_8_EDITION_BURN_ADJUSTMENT,
   MEMES_CONTRACT,
   MEMES_SEASONS_TABLE,
   NFT_OWNERS_CONSOLIDATION_TABLE,
   NULL_ADDRESS,
-  LATEST_TDH_HISTORY_TABLE,
   TDH_NFT_TABLE
 } from '../../../constants';
-import { NftTDH } from '../../../entities/ITDH';
 import { fetchPaginated } from '../../../db-api';
 import {
   calculateLevel,
   getLevelFromScore
 } from '../../../profiles/profile-level';
 import { sqlExecutor } from '../../../sql-executor';
-
-export interface NftTdhResponse extends NftTDH {
-  total_balance: number;
-  total_boosted_tdh: number;
-}
 
 export enum MetricsContent {
   MEMES = 'Memes',

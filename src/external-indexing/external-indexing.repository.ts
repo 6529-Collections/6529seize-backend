@@ -192,6 +192,7 @@ export class ExternalIndexingRepository extends LazyDbAccessCompatibleService {
       total_supply: number | null;
       lag_blocks: number;
       lag_seconds: number;
+      collection_name: string | null;
     },
     ctx: RequestContext
   ): Promise<boolean> {
@@ -214,6 +215,7 @@ export class ExternalIndexingRepository extends LazyDbAccessCompatibleService {
                 snapshot_lock_owner   = NULL,
                 snapshot_lock_at      = NULL,
                 snapshot_target_block = NULL,
+                collection_name       = :collection_name,
                 error_message         = NULL,          -- ✅ clear error on success
                 updated_at            = :last_event_time
             WHERE \`partition\` = :partition
