@@ -1955,7 +1955,7 @@ SET cw.xtdh_rate = COALESCE(pd.produced, 0) - COALESCE(go.granted_out, 0) + COAL
       }
       const now = Time.currentMillis();
       await this.db.execute(
-        `update ${XTDH_GRANTS_TABLE}set updated_at = :now where id = :grant_id`,
+        `update ${XTDH_GRANTS_TABLE} set updated_at = :now where id = :grant_id`,
         { now, grant_id: grant.id },
         { wrappedConnection: connection }
       );
