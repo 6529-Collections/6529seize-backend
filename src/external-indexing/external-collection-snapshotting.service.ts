@@ -89,6 +89,7 @@ export class ExternalCollectionSnapshottingService {
     let ids: bigint[] = [];
     let totalSupply: number | null = null;
     let collectionName: string | null = null;
+    let tokenByIndexZero: bigint | null = null;
     let succeeded = false;
 
     try {
@@ -109,12 +110,17 @@ export class ExternalCollectionSnapshottingService {
         if (supportsEnum) {
           const ts = await this.tryGetTotalSupply(contract, atBlock);
           if (ts) totalSupply = numbers.parseIntOrNull(ts);
+          tokenByIndexZero = await this.tryGetTokenByIndexZero(
+            contract,
+            atBlock
+          );
         }
 
         const fast = await this.enumerateContiguousFast(
           erc721,
           contract,
           atBlock,
+          tokenByIndexZero,
           log
         );
         if (fast) {
@@ -127,7 +133,12 @@ export class ExternalCollectionSnapshottingService {
               totalSupply,
               maxIds
             });
-            ids = await this.enumerateByOwnerOf(erc721, atBlock, log);
+            ids = await this.enumerateByOwnerOf(
+              erc721,
+              atBlock,
+              tokenByIndexZero,
+              log
+            );
           } else {
             try {
               ids = await this.enumerateByTokenByIndexMulticall(
@@ -141,11 +152,21 @@ export class ExternalCollectionSnapshottingService {
                 'Enumerable (multicall) failed; falling back to ownerOf()',
                 { error: String(e) }
               );
-              ids = await this.enumerateByOwnerOf(erc721, atBlock, log);
+              ids = await this.enumerateByOwnerOf(
+                erc721,
+                atBlock,
+                tokenByIndexZero,
+                log
+              );
             }
           }
         } else {
-          ids = await this.enumerateByOwnerOf(erc721, atBlock, log);
+          ids = await this.enumerateByOwnerOf(
+            erc721,
+            atBlock,
+            tokenByIndexZero,
+            log
+          );
         }
       }
 
@@ -275,6 +296,7 @@ export class ExternalCollectionSnapshottingService {
   private async enumerateByOwnerOf(
     erc721: Contract,
     atBlock: number,
+    startHint: bigint | null,
     log: Logger
   ): Promise<bigint[]> {
     const maxIds = env.getIntOrNull('SNAPSHOT_MAX_IDS') ?? 250_000;
@@ -284,7 +306,7 @@ export class ExternalCollectionSnapshottingService {
       env.getIntOrNull('SNAPSHOT_OWNEROF_PROBE_BATCH') ?? 64
     );
 
-    const start = await this.pickStartId(erc721, atBlock);
+    const start = await this.pickStartId(erc721, atBlock, startHint, log);
     const ids: bigint[] = [];
     let probe = start;
     let emptyStreak = 0;
@@ -480,7 +502,8 @@ export class ExternalCollectionSnapshottingService {
       this.rpc.provider
     );
     try {
-      return await erc721Enum.totalSupply({ blockTag: atBlock });
+      const ts = await erc721Enum.totalSupply({ blockTag: atBlock });
+      return BigInt(ts.toString());
     } catch {
       return null;
     }
@@ -490,6 +513,7 @@ export class ExternalCollectionSnapshottingService {
     erc721: Contract,
     contractAddr: string,
     atBlock: number,
+    startHint: bigint | null,
     log: Logger
   ): Promise<{ ids: bigint[]; totalSupply: number } | null> {
     const ts = await this.tryGetTotalSupply(contractAddr, atBlock);
@@ -503,7 +527,7 @@ export class ExternalCollectionSnapshottingService {
       return null;
     }
 
-    const start = await this.pickStartId(erc721, atBlock);
+    const start = await this.pickStartId(erc721, atBlock, startHint, log);
     const ids = Array.from({ length: Number(ts) }, (_, i) => start + BigInt(i));
 
     log.info('Trying FAST contiguous enumeration', {
@@ -533,10 +557,38 @@ export class ExternalCollectionSnapshottingService {
     }
   }
 
+  private async tryGetTokenByIndexZero(
+    contractAddr: string,
+    atBlock: number
+  ): Promise<bigint | null> {
+    const erc721Enum = new Contract(
+      contractAddr,
+      ERC721_ENUM_ABI,
+      this.rpc.provider
+    );
+    try {
+      const tid = await erc721Enum.tokenByIndex(BigInt(0), {
+        blockTag: atBlock
+      });
+      return BigInt(tid.toString());
+    } catch {
+      return null;
+    }
+  }
+
   private async pickStartId(
     erc721: Contract,
-    atBlock: number
+    atBlock: number,
+    startHint: bigint | null,
+    log: Logger
   ): Promise<bigint> {
+    if (startHint != null) {
+      const start = BigInt(startHint.toString());
+      log.info('Using start hint from tokenByIndex(0)', {
+        start: start.toString()
+      });
+      return start;
+    }
     return (await this.ownerOfExists(erc721, BigInt(0), atBlock))
       ? BigInt(0)
       : BigInt(1);
