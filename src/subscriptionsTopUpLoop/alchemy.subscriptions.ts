@@ -20,7 +20,7 @@ export async function getAllSubscriptionTopUps(
     pageKey = result.pageKey;
   } while (pageKey);
 
-  const topUps = subscriptions.map((subscription) => {
+  return subscriptions.map((subscription) => {
     const topUp: SubscriptionTopUp = {
       block: parseInt(subscription.blockNum, 16),
       transaction_date: new Date(subscription.metadata.blockTimestamp),
@@ -30,8 +30,6 @@ export async function getAllSubscriptionTopUps(
     };
     return topUp;
   });
-
-  return topUps;
 }
 
 async function getSubscriptions(
@@ -39,7 +37,10 @@ async function getSubscriptions(
   fromBlock: number,
   toBlock: number,
   pageKey?: string
-) {
+): Promise<{
+  transfers: AssetTransfersWithMetadataResult[];
+  pageKey?: string;
+}> {
   const subscriptions = await alchemy.core.getAssetTransfers({
     category: [
       AssetTransfersCategory.EXTERNAL,
@@ -53,5 +54,12 @@ async function getSubscriptions(
     toAddress: SUBSCRIPTIONS_ADDRESS,
     pageKey: pageKey
   });
-  return subscriptions;
+  const transfers = subscriptions.transfers.filter(
+    (subscriptions) =>
+      subscriptions.to?.toLowerCase() === SUBSCRIPTIONS_ADDRESS.toLowerCase()
+  );
+  return {
+    transfers,
+    pageKey: subscriptions.pageKey
+  };
 }
