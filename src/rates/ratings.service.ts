@@ -824,7 +824,7 @@ export class RatingsService {
     return result.map((it) => ({
       ...it,
       level: calculateLevel({
-        tdh: it.tdh,
+        tdh: it.tdh + it.xtdh,
         rep: profileReps[it.profile_id] ?? 0
       })
     }));
@@ -869,7 +869,7 @@ export class RatingsService {
           data: page.data.map<ApiRatingWithProfileInfoAndLevel>((result) => ({
             ...result,
             level: calculateLevel({
-              tdh: result.tdh,
+              tdh: result.tdh + result.xtdh,
               rep: profileReps[result.profile_id] ?? 0
             })
           }))

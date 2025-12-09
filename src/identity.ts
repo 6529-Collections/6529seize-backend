@@ -384,12 +384,19 @@ export async function syncIdentitiesMetrics(
     undefined,
     { wrappedConnection: connection }
   );
+  await updateAllIdentitiesLevels(connection);
+  logger.info(`Syncing identities metrics done`);
+}
+
+export async function updateAllIdentitiesLevels(
+  connection: ConnectionWrapper<any>
+) {
+  const db = dbSupplier();
   await db.execute(
     `
-        update ${IDENTITIES_TABLE} set level_raw = (rep+tdh) where level_raw <> (rep+tdh)
+        update ${IDENTITIES_TABLE} set level_raw = (rep+tdh+xtdh) where level_raw <> (rep+tdh+xtdh)
   `,
     undefined,
     { wrappedConnection: connection }
   );
-  logger.info(`Syncing identities metrics done`);
 }
