@@ -109,7 +109,7 @@ export class ExternalCollectionSnapshottingService {
 
         if (supportsEnum) {
           const ts = await this.tryGetTotalSupply(contract, atBlock);
-          if (ts) totalSupply = numbers.parseIntOrNull(ts);
+          if (ts) totalSupply = numbers.parseIntOrNull(ts.toString());
           tokenByIndexZero = await this.tryGetTokenByIndexZero(
             contract,
             atBlock
@@ -126,20 +126,23 @@ export class ExternalCollectionSnapshottingService {
         if (fast) {
           ids = fast.ids;
           totalSupply = fast.totalSupply;
-        } else if (supportsEnum && totalSupply && totalSupply > 0) {
+        } else {
+          if (totalSupply == null) {
+            const ts = await this.tryGetTotalSupply(contract, atBlock);
+            if (ts) totalSupply = numbers.parseIntOrNull(ts.toString());
+          }
+
           const maxIds = env.getIntOrNull('SNAPSHOT_MAX_IDS') ?? 250_000;
-          if (totalSupply > maxIds) {
-            log.warn('Enumerable supply too large; falling back to ownerOf()', {
+          if (totalSupply && totalSupply > maxIds) {
+            const msg = `Given collections totalSupply of ${totalSupply} is too big so unfortunately it can't be indexed automatically.`;
+            log.warn('Enumerable supply too large; aborting snapshot', {
               totalSupply,
               maxIds
             });
-            ids = await this.enumerateByOwnerOf(
-              erc721,
-              atBlock,
-              tokenByIndexZero,
-              log
-            );
-          } else {
+            throw new Error(msg);
+          }
+
+          if (supportsEnum && totalSupply && totalSupply > 0) {
             try {
               ids = await this.enumerateByTokenByIndexMulticall(
                 contract,
@@ -159,19 +162,27 @@ export class ExternalCollectionSnapshottingService {
                 log
               );
             }
+          } else {
+            ids = await this.enumerateByOwnerOf(
+              erc721,
+              atBlock,
+              tokenByIndexZero,
+              log
+            );
           }
-        } else {
-          ids = await this.enumerateByOwnerOf(
-            erc721,
-            atBlock,
-            tokenByIndexZero,
-            log
-          );
         }
       }
 
       if (totalSupply == null) totalSupply = ids.length;
       log.info('Enumerated token ids', { count: ids.length });
+      if (totalSupply != null && ids.length < totalSupply) {
+        const msg = `Given collections totalSupply of ${totalSupply} is too big so unfortunately it can't be indexed automatically.`;
+        log.error('Partial enumeration detected; aborting snapshot', {
+          totalSupply,
+          enumerated: ids.length
+        });
+        throw new Error(msg);
+      }
 
       const tsSec = await this.getBlockTimestamp(atBlock);
       const sinceTimeMs = Time.seconds(tsSec).toMillis();
