@@ -175,14 +175,6 @@ export class ExternalCollectionSnapshottingService {
 
       if (totalSupply == null) totalSupply = ids.length;
       log.info('Enumerated token ids', { count: ids.length });
-      if (totalSupply != null && ids.length < totalSupply) {
-        const msg = `Given collections totalSupply of ${totalSupply} is too big so unfortunately it can't be indexed automatically.`;
-        log.error('Partial enumeration detected; aborting snapshot', {
-          totalSupply,
-          enumerated: ids.length
-        });
-        throw new Error(msg);
-      }
 
       const tsSec = await this.getBlockTimestamp(atBlock);
       const sinceTimeMs = Time.seconds(tsSec).toMillis();
