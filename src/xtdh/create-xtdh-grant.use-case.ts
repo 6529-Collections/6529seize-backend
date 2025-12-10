@@ -37,25 +37,25 @@ export class CreateXTdhGrantUseCase {
           `Irrevocable grants are not supported yet`
         );
       }
-      const indexerState =
-        await this.externalIndexingRepository.upsertOrSelectCollection(
-          {
-            chain: command.target_chain,
-            contract: command.target_contract
-          },
-          ctx
-        );
-      if (
-        indexerState.status === 'ERROR_SNAPSHOTTING' ||
-        indexerState.status === 'UNINDEXABLE'
-      ) {
-        throw new BadRequestException(
-          `There is a problem snapshotting given address. Please let the dev team know.`
-        );
-      }
       return await this.xTdhRepository.executeNativeQueriesInTransaction(
         async (connection) => {
           const ctxWithConnection = { ...ctx, connection };
+          const indexerState =
+            await this.externalIndexingRepository.upsertOrSelectCollection(
+              {
+                chain: command.target_chain,
+                contract: command.target_contract
+              },
+              ctxWithConnection
+            );
+          if (
+            indexerState.status === 'ERROR_SNAPSHOTTING' ||
+            indexerState.status === 'UNINDEXABLE'
+          ) {
+            throw new BadRequestException(
+              `There is a problem snapshotting given address. Please let the dev team know.`
+            );
+          }
           const currentMillis = Time.currentMillis();
           const tokenMode = command.target_tokens.length
             ? XTdhGrantTokenMode.INCLUDE
