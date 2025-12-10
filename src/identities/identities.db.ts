@@ -918,6 +918,16 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
       .then((result) => result?.tdh ?? 0);
   }
 
+  async getTdhAndXTdhCombinedAndFloored(profileId: string): Promise<number> {
+    return this.db
+      .oneOrNull<{ res: number }>(
+        `
+        select floor(tdh + xtdh) as res from ${IDENTITIES_TABLE} where profile_id = :profileId`,
+        { profileId }
+      )
+      .then((result) => result?.res ?? 0);
+  }
+
   async getProfileHandlesByIds(
     profileIds: string[],
     ctx: RequestContext

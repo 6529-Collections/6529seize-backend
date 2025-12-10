@@ -133,7 +133,7 @@ from general_stats
   async getRating(
     ratingLockRequest: UpdateRatingRequest,
     connection: ConnectionWrapper<any>
-  ): Promise<Rating & { total_tdh_spent_on_matter: number }> {
+  ): Promise<Rating & { total_credit_spent_on_matter: number }> {
     await this.db.execute(
       `
         insert into ${RATINGS_TABLE} (
@@ -155,7 +155,7 @@ from general_stats
       },
       { wrappedConnection: connection }
     );
-    const [searchedMatter, total_tdh_spent_on_matter] = await Promise.all([
+    const [searchedMatter, total_credit_spent_on_matter] = await Promise.all([
       this.db.oneOrNull<Rating>(
         `
           select * from ${RATINGS_TABLE}
@@ -167,9 +167,9 @@ from general_stats
         ratingLockRequest,
         { wrappedConnection: connection }
       ),
-      this.db.oneOrNull<{ total_tdh_spent_on_matter: number }>(
+      this.db.oneOrNull<{ total_credit_spent_on_matter: number }>(
         `
-          select sum(rating) as total_tdh_spent_on_matter from ${RATINGS_TABLE}
+          select sum(rating) as total_credit_spent_on_matter from ${RATINGS_TABLE}
           where rater_profile_id = :rater_profile_id
             and matter = :matter
       `,
@@ -178,13 +178,13 @@ from general_stats
       )
     ]);
     return {
-      total_tdh_spent_on_matter:
-        total_tdh_spent_on_matter?.total_tdh_spent_on_matter ?? 0,
+      total_credit_spent_on_matter:
+        total_credit_spent_on_matter?.total_credit_spent_on_matter ?? 0,
       ...searchedMatter!
     };
   }
 
-  async getTotalTdhSpent(
+  async getTotalCreditSpent(
     matter: RateMatter,
     rater_profile_id: string,
     ctx: RequestContext
@@ -328,7 +328,7 @@ from general_stats
           select rt.rater_profile_id, rt.matter, rt.tally, i.tdh as rater_tdh
           from rate_tallies rt
                    left join ${IDENTITIES_TABLE} i on rt.rater_profile_id = i.profile_id
-          where i.tdh < abs(rt.tally)
+          where floor(i.tdh + i.xtdh) < abs(rt.tally)
       `
     );
   }
@@ -799,18 +799,6 @@ from grouped_rates r
     return results;
   }
 
-  async getTdh(profleId: string, ctx: RequestContext): Promise<number> {
-    return this.db
-      .oneOrNull<{
-        tdh: number;
-      }>(
-        `select tdh from ${IDENTITIES_TABLE} where profile_id = :profileId`,
-        { profileId: profleId },
-        { wrappedConnection: ctx.connection }
-      )
-      .then((result) => result?.tdh ?? 0);
-  }
-
   async bulkUpsertRatings(ratings: Rating[], ctx: RequestContext) {
     if (!ratings.length) {
       return;
@@ -902,7 +890,7 @@ export interface OverRateMatter {
   rater_profile_id: string;
   matter: RateMatter;
   tally: number;
-  rater_tdh: number;
+  rater_credit: number;
 }
 
 export interface AggregatedRatingRequest {
