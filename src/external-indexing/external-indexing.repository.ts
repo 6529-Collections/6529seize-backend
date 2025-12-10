@@ -163,7 +163,8 @@ export class ExternalIndexingRepository extends LazyDbAccessCompatibleService {
           chain,
           contract_lc: contract.toLowerCase(),
           now_ms
-        }
+        },
+        { wrappedConnection: ctx.connection }
       );
 
       return (await this.db.oneOrNull<ExternalIndexedContractEntity>(
@@ -174,7 +175,8 @@ export class ExternalIndexingRepository extends LazyDbAccessCompatibleService {
       WHERE \`partition\` = :partition
       LIMIT 1
       `,
-        { partition }
+        { partition },
+        { wrappedConnection: ctx.connection }
       ))!;
     } finally {
       ctx.timer?.stop(timerKey);
