@@ -13,6 +13,7 @@ import {
 import { sqs } from '../sqs';
 import { env } from '../env';
 import { appFeatures } from '../app-features';
+import { updateAllIdentitiesLevels } from '../identity';
 
 export class RecalculateXTdhUseCase {
   private readonly logger = Logger.get(this.constructor.name);
@@ -85,6 +86,9 @@ export class RecalculateXTdhUseCase {
       this.logger.info(`Updating xTDH rates`);
       await this.xtdhRepository.updateXtdhRate(ctx);
       this.logger.info(`Updated xTDH rates`);
+      this.logger.info(`Updating identity levels`);
+      await updateAllIdentitiesLevels(ctx.connection!);
+      this.logger.info(`Updated identity levels`);
       this.logger.info(`xTDH universe has been recalculated`);
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->recalculateXTdh`);

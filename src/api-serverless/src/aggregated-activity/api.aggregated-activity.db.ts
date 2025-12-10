@@ -210,6 +210,7 @@ export const fetchAggregatedActivity = async (
     ${IDENTITIES_TABLE}.rep as rep_score,
     ${IDENTITIES_TABLE}.cic as cic_score,
     ${IDENTITIES_TABLE}.primary_address as primary_wallet,
+    ${IDENTITIES_TABLE}.xtdh as xtdh,
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display as consolidation_display,
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh as boosted_tdh,
     ${IDENTITIES_TABLE}.level_raw as level`;
@@ -245,7 +246,7 @@ export const fetchAggregatedActivity = async (
 
   results.data.forEach((d: any) => {
     d.level = calculateLevel({
-      tdh: d.boosted_tdh ?? 0,
+      tdh: (d.boosted_tdh ?? 0) + (d.xtdh ?? 0),
       rep: d.rep_score
     });
   });

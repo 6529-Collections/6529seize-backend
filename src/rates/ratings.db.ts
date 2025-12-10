@@ -526,6 +526,7 @@ from general_stats
       this.db.execute(
         `${sql_start} select i.handle                           as handle,
        i.tdh as tdh,
+       i.xtdh as xtdh,
        i.profile_id as profile_id,
        r.rating,
        r.last_modified,
@@ -891,6 +892,7 @@ export interface RatingWithProfileInfo {
   handle: string;
   wallets: string[];
   tdh: number;
+  xtdh: number;
   rating: number;
   cic: number;
   last_modified: string;

@@ -5,6 +5,7 @@ export interface CommunityMemberOverview {
   readonly detail_view_key: string;
   readonly level: number;
   readonly tdh: number;
+  readonly xtdh: number;
   readonly rep: number;
   readonly cic: number;
   readonly pfp: string | null;

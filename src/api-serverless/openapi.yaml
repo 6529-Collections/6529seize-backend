@@ -6395,6 +6395,7 @@ components:
         - handle
         - wallets
         - tdh
+        - xtdh
         - rating
         - cic
         - last_modified
@@ -6411,6 +6412,9 @@ components:
         tdh:
           type: number
           format: int64
+        xtdh:
+          type: number
+          format: float
         rating:
           type: number
           format: int64
