@@ -42,6 +42,7 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
                                             rep_category,
                                             tdh_min,
                                             tdh_max,
+                                            tdh_inclusion_strategy,
                                             level_min,
                                             level_max,
                                             created_at,
@@ -72,6 +73,7 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
                   :rep_category,
                   :tdh_min,
                   :tdh_max,
+                  :tdh_inclusion_strategy,
                   :level_min,
                   :level_max,
                   :created_at,
@@ -309,6 +311,7 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
       cic: +res.cic,
       rep: +res.rep,
       tdh: +res.tdh,
+      xtdh: +res.xtdh,
       level_raw: +res.level_raw
     };
   }
@@ -386,6 +389,7 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
       }>(sql, { profileId })
       .then((res) => res.map((it) => it.group_id));
   }
+
   async getRatings(
     profileId: string,
     users: string[],

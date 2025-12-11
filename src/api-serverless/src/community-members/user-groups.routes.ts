@@ -18,7 +18,10 @@ import { ApiGroupFilterDirection } from '../generated/models/ApiGroupFilterDirec
 import { ApiGroupRepFilter } from '../generated/models/ApiGroupRepFilter';
 import { ApiGroupLevelFilter } from '../generated/models/ApiGroupLevelFilter';
 import { ApiGroupTdhFilter } from '../generated/models/ApiGroupTdhFilter';
-import { FilterDirection } from '../../../entities/IUserGroup';
+import {
+  FilterDirection,
+  GroupTdhInclusionStrategy
+} from '../../../entities/IUserGroup';
 import {
   ApiGroupOwnsNft,
   ApiGroupOwnsNftNameEnum
@@ -31,6 +34,7 @@ import { enums } from '../../../enums';
 import { numbers } from '../../../numbers';
 import { collections } from '../../../collections';
 import { WALLET_REGEX } from '../../../constants';
+import { ApiGroupTdhInclusionStrategy } from '../generated/models/ApiGroupTdhInclusionStrategy';
 
 const router = asyncRouter();
 
@@ -212,6 +216,10 @@ router.post(
       rep_category: apiUserGroup.group.rep.category,
       tdh_min: apiUserGroup.group.tdh.min,
       tdh_max: apiUserGroup.group.tdh.max,
+      tdh_inclusion_strategy: enums.resolveOrThrow(
+        GroupTdhInclusionStrategy,
+        apiUserGroup.group.tdh.inclusion_strategy
+      ),
       level_min: apiUserGroup.group.level.min,
       level_max: apiUserGroup.group.level.max,
       owns_meme: !!ownsMemes,
@@ -302,7 +310,10 @@ const NullableStringSchema: Joi.StringSchema = Joi.string()
 const GroupTdhFilterSchema: Joi.ObjectSchema<ApiGroupTdhFilter> =
   Joi.object<ApiGroupTdhFilter>({
     min: NullablePositiveIntegerSchema,
-    max: NullablePositiveIntegerSchema
+    max: NullablePositiveIntegerSchema,
+    inclusion_strategy: Joi.string()
+      .allow(...Object.values(ApiGroupTdhInclusionStrategy))
+      .default(ApiGroupTdhInclusionStrategy.Tdh)
   });
 
 const GroupLevelFilterSchema: Joi.ObjectSchema<ApiGroupLevelFilter> =

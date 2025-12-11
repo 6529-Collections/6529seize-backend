@@ -12,7 +12,10 @@ import {
   getLevelComponentsBorderByLevel,
   getLevelFromScore
 } from '../../../profiles/profile-level';
-import { UserGroupEntity } from '../../../entities/IUserGroup';
+import {
+  GroupTdhInclusionStrategy,
+  UserGroupEntity
+} from '../../../entities/IUserGroup';
 import {
   userGroupsDb,
   UserGroupsDb
@@ -61,6 +64,8 @@ import { ids } from '../../../ids';
 import { collections } from '../../../collections';
 import { clearWaveGroupsCache, redisCached } from '../../../redis';
 import { env } from '../../../env';
+import { ApiGroupTdhInclusionStrategy } from '../generated/models/ApiGroupTdhInclusionStrategy';
+import { assertUnreachable } from '../../../assertions';
 
 export type NewUserGroupEntity = Omit<
   UserGroupEntity,
@@ -178,6 +183,7 @@ export class UserGroupsService {
       rep_category: null,
       tdh_min: null,
       tdh_max: null,
+      tdh_inclusion_strategy: GroupTdhInclusionStrategy.TDH,
       level_min: null,
       level_max: null,
       owns_meme: false,
@@ -223,6 +229,7 @@ export class UserGroupsService {
       rep: identityEntity.rep,
       cic: identityEntity.cic,
       tdh: identityEntity.tdh,
+      xtdh: identityEntity.xtdh,
       level: getLevelFromScore(identityEntity.level_raw)
     };
     const givenGroupEntities = await this.getGivenGroupEntities(
@@ -684,7 +691,8 @@ export class UserGroupsService {
           },
           tdh: {
             min: null,
-            max: null
+            max: null,
+            inclusion_strategy: ApiGroupTdhInclusionStrategy.Tdh
           },
           owns_nfts: [],
           identity_group_id: null,
@@ -992,12 +1000,20 @@ export class UserGroupsService {
       cmPart += ` join nextgens_owners_of_group on i.profile_id = nextgens_owners_of_group.profile_id `;
     }
     cmPart += ` where true `;
+    const tdhInclusionStrategy = enums.resolveOrThrow(
+      GroupTdhInclusionStrategy,
+      group.tdh.inclusion_strategy
+    );
+    const identitySideTdhPart = this.getIdentitySideTdhPart(
+      'i',
+      tdhInclusionStrategy
+    );
     if (group.tdh.min !== null) {
-      cmPart += `and i.tdh >= :tdh_min `;
+      cmPart += `and ${identitySideTdhPart} >= :tdh_min `;
       params.tdh_min = group.tdh.min;
     }
     if (group.tdh.max !== null) {
-      cmPart += `and i.tdh <= :tdh_max `;
+      cmPart += `and ${identitySideTdhPart} <= :tdh_max `;
       params.tdh_max = group.tdh.max;
     }
     if (group.level.min !== null) {
@@ -1249,7 +1265,11 @@ export class UserGroupsService {
         },
         tdh: {
           min: it.tdh_min,
-          max: it.tdh_max
+          max: it.tdh_max,
+          inclusion_strategy: enums.resolveOrThrow(
+            ApiGroupTdhInclusionStrategy,
+            it.tdh_inclusion_strategy
+          )
         },
         owns_nfts: [
           it.owns_meme
@@ -1318,6 +1338,22 @@ export class UserGroupsService {
     ctx: RequestContext
   ): Promise<string[]> {
     return await this.userGroupsDb.findIdentitiesInGroups(groupIds, ctx);
+  }
+
+  private getIdentitySideTdhPart(
+    identityAlias: string,
+    tdhInclusionStrategy: GroupTdhInclusionStrategy
+  ): string {
+    switch (tdhInclusionStrategy) {
+      case GroupTdhInclusionStrategy.TDH:
+        return `${identityAlias}.tdh`;
+      case GroupTdhInclusionStrategy.XTDH:
+        return `${identityAlias}.xtdh`;
+      case GroupTdhInclusionStrategy.BOTH:
+        return `(${identityAlias}.tdh + ${identityAlias}.xtdh)`;
+      default:
+        return assertUnreachable(tdhInclusionStrategy);
+    }
   }
 }
 
