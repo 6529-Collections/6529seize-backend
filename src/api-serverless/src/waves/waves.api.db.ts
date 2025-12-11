@@ -814,10 +814,6 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         }
       >(
         `
-            with subscription_counts as (select target_id as wave_id, count(*) as count
-                                         from ${IDENTITY_SUBSCRIPTIONS_TABLE}
-                                         where target_type = 'WAVE'
-                                         group by target_id)
             select w.*
             from ${WAVES_TABLE} w
               ${
@@ -835,8 +831,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                   ? `join ${IDENTITY_SUBSCRIPTIONS_TABLE} f on f.target_type = 'WAVE' and f.target_action = 'DROP_CREATED' and f.target_id = w.id`
                   : ``
               }
-                   join subscription_counts sc
-            on sc.wave_id = w.id
+                   join ${WAVE_METRICS_TABLE} wm on wm.wave_id = w.id
             where ${pinned === ApiWavesPinFilter.NotPinned && authenticated_user_id ? ` pw.profile_id is null and ` : ``} ${
               only_waves_followed_by_authenticated_user
                 ? `f.subscriber_id = :authenticated_user_id and`
@@ -850,7 +845,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                 ? `or w.visibility_group_id in (:eligibleGroups)`
                 : ``
             })
-            order by sc.count
+            order by wm.subscribers_count
             desc, w.id desc
                 limit :limit offset :offset
         `,
@@ -858,7 +853,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           limit,
           offset,
           eligibleGroups,
-          authenticated_user_id
+          authenticated_user_id,
+          direct_message
         }
       )
       .then((res) =>
