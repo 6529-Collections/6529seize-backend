@@ -1,6 +1,12 @@
 import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
 import { USER_GROUPS_TABLE } from '../constants';
 
+export enum GroupTdhInclusionStrategy {
+  TDH = 'TDH',
+  XTDH = 'XTDH',
+  BOTH = 'BOTH'
+}
+
 @Entity(USER_GROUPS_TABLE)
 @Index(['id', 'visible'])
 @Index(['profile_group_id', 'visible', 'id'])
@@ -32,6 +38,13 @@ export class UserGroupEntity {
   readonly tdh_min!: number | null;
   @Column({ type: 'bigint', nullable: true })
   readonly tdh_max!: number | null;
+  @Column({
+    type: 'varchar',
+    length: 20,
+    nullable: false,
+    default: GroupTdhInclusionStrategy.TDH
+  })
+  readonly tdh_inclusion_strategy!: GroupTdhInclusionStrategy;
   @Column({ type: 'bigint', nullable: true })
   readonly level_min!: number | null;
   @Column({ type: 'bigint', nullable: true })
