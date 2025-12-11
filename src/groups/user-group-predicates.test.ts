@@ -39,7 +39,11 @@ import {
   isRatingOutOfBounds,
   ProfileSimpleMetrics
 } from './user-group-predicates';
-import { FilterDirection, UserGroupEntity } from '../entities/IUserGroup';
+import {
+  FilterDirection,
+  GroupTdhInclusionStrategy,
+  UserGroupEntity
+} from '../entities/IUserGroup';
 import { Time } from '../time';
 import { NEXTGEN_CORE_CONTRACT } from '../nextgen/nextgen_constants';
 import { Network } from 'alchemy-sdk';
@@ -52,11 +56,13 @@ import { RateMatter } from '../entities/IRating';
 
 function aProfile({
   tdh,
+  xtdh,
   level,
   cic,
   rep
 }: {
   tdh?: number;
+  xtdh?: number;
   level?: number;
   cic?: number;
   rep?: number;
@@ -64,6 +70,7 @@ function aProfile({
   return {
     profile_id: 'a-profile-id',
     tdh: tdh ?? 0,
+    xtdh: xtdh ?? 0,
     level: level ?? 0,
     cic: cic ?? 0,
     rep: rep ?? 0
@@ -82,6 +89,7 @@ function aGroup({
   rep_category,
   tdh_min,
   tdh_max,
+  tdh_inclusion_strategy,
   level_min,
   level_max,
   owns_meme,
@@ -106,6 +114,7 @@ function aGroup({
   rep_category?: string | null;
   tdh_min?: number | null;
   tdh_max?: number | null;
+  tdh_inclusion_strategy?: GroupTdhInclusionStrategy | null;
   level_min?: number | null;
   level_max?: number | null;
   owns_meme?: boolean | null;
@@ -133,6 +142,8 @@ function aGroup({
     rep_category: rep_category ?? null,
     tdh_min: tdh_min ?? null,
     tdh_max: tdh_max ?? null,
+    tdh_inclusion_strategy:
+      tdh_inclusion_strategy ?? GroupTdhInclusionStrategy.TDH,
     level_min: level_min ?? null,
     level_max: level_max ?? null,
     owns_meme: owns_meme ?? null,
@@ -2192,6 +2203,84 @@ describe('UserGroupPredicates', () => {
         isProfileViolatingGroupsProfileTdhCriteria(
           aProfile({ tdh: 4 }),
           aGroup({ tdh_min: 5, tdh_max: 5 })
+        )
+      ).toBe(true);
+    });
+    it('xtdh does not count', () => {
+      expect(
+        isProfileViolatingGroupsProfileTdhCriteria(
+          aProfile({ xtdh: 5 }),
+          aGroup({
+            tdh_min: 5,
+            tdh_max: 5,
+            tdh_inclusion_strategy: GroupTdhInclusionStrategy.TDH
+          })
+        )
+      ).toBe(true);
+    });
+  });
+
+  describe('isProfileViolatingGroupsProfileTdhCriteria_XTDH', () => {
+    it('condition - not violating', () => {
+      expect(
+        isProfileViolatingGroupsProfileTdhCriteria(
+          aProfile({ xtdh: 5 }),
+          aGroup({
+            tdh_min: 5,
+            tdh_max: 5,
+            tdh_inclusion_strategy: GroupTdhInclusionStrategy.XTDH
+          })
+        )
+      ).toBe(false);
+    });
+    it('condition - violating', () => {
+      expect(
+        isProfileViolatingGroupsProfileTdhCriteria(
+          aProfile({ xtdh: 4 }),
+          aGroup({
+            tdh_min: 5,
+            tdh_max: 5,
+            tdh_inclusion_strategy: GroupTdhInclusionStrategy.XTDH
+          })
+        )
+      ).toBe(true);
+    });
+    it('tdh does not count', () => {
+      expect(
+        isProfileViolatingGroupsProfileTdhCriteria(
+          aProfile({ tdh: 5 }),
+          aGroup({
+            tdh_min: 5,
+            tdh_max: 5,
+            tdh_inclusion_strategy: GroupTdhInclusionStrategy.XTDH
+          })
+        )
+      ).toBe(true);
+    });
+  });
+
+  describe('isProfileViolatingGroupsProfileTdhCriteria_BOTH', () => {
+    it('condition - not violating', () => {
+      expect(
+        isProfileViolatingGroupsProfileTdhCriteria(
+          aProfile({ xtdh: 3, tdh: 2 }),
+          aGroup({
+            tdh_min: 5,
+            tdh_max: 5,
+            tdh_inclusion_strategy: GroupTdhInclusionStrategy.BOTH
+          })
+        )
+      ).toBe(false);
+    });
+    it('condition - violating', () => {
+      expect(
+        isProfileViolatingGroupsProfileTdhCriteria(
+          aProfile({ xtdh: 2, tdh: 2 }),
+          aGroup({
+            tdh_min: 5,
+            tdh_max: 5,
+            tdh_inclusion_strategy: GroupTdhInclusionStrategy.BOTH
+          })
         )
       ).toBe(true);
     });
