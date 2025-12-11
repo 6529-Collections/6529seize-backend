@@ -800,6 +800,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     direct_message?: boolean;
     pinned: ApiWavesPinFilter | null;
   }): Promise<WaveEntity[]> {
+    const prefetchLimit = offset + limit * 5; // grab extra ids to survive post-filtering
     return this.db
       .execute<
         Omit<
@@ -814,47 +815,53 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         }
       >(
         `
-            select w.*
-            from ${WAVES_TABLE} w
-              ${
-                pinned === ApiWavesPinFilter.Pinned && authenticated_user_id
-                  ? ` join ${PINNED_WAVES_TABLE} pw on pw.wave_id = w.id and pw.profile_id = :authenticated_user_id `
-                  : ``
-              }
-              ${
-                pinned === ApiWavesPinFilter.NotPinned && authenticated_user_id
-                  ? ` left join ${PINNED_WAVES_TABLE} pw on pw.wave_id = w.id and pw.profile_id = :authenticated_user_id `
-                  : ``
-              }
-              ${
-                only_waves_followed_by_authenticated_user
-                  ? `join ${IDENTITY_SUBSCRIPTIONS_TABLE} f on f.target_type = 'WAVE' and f.target_action = 'DROP_CREATED' and f.target_id = w.id`
-                  : ``
-              }
-                   join ${WAVE_METRICS_TABLE} wm on wm.wave_id = w.id
-            where ${pinned === ApiWavesPinFilter.NotPinned && authenticated_user_id ? ` pw.profile_id is null and ` : ``} ${
-              only_waves_followed_by_authenticated_user
-                ? `f.subscriber_id = :authenticated_user_id and`
-                : ``
-            }${
-              direct_message !== undefined
-                ? ` w.is_direct_message = :direct_message and `
-                : ``
-            } (w.visibility_group_id is null ${
-              eligibleGroups.length
-                ? `or w.visibility_group_id in (:eligibleGroups)`
-                : ``
-            })
-            order by wm.subscribers_count
-            desc, w.id desc
-                limit :limit offset :offset
+      with sorted as (
+        select wm.wave_id, wm.subscribers_count
+        from ${WAVE_METRICS_TABLE} wm
+        order by wm.subscribers_count desc, wm.wave_id desc
+        limit :prefetchLimit
+      )
+      select w.*
+      from sorted s
+        join ${WAVES_TABLE} w on w.id = s.wave_id
+        ${
+          pinned === ApiWavesPinFilter.Pinned && authenticated_user_id
+            ? ` join ${PINNED_WAVES_TABLE} pw on pw.wave_id = w.id and pw.profile_id = :authenticated_user_id `
+            : ``
+        }
+        ${
+          pinned === ApiWavesPinFilter.NotPinned && authenticated_user_id
+            ? ` left join ${PINNED_WAVES_TABLE} pw on pw.wave_id = w.id and pw.profile_id = :authenticated_user_id `
+            : ``
+        }
+        ${
+          only_waves_followed_by_authenticated_user
+            ? `join ${IDENTITY_SUBSCRIPTIONS_TABLE} f on f.target_type = 'WAVE' and f.target_action = 'DROP_CREATED' and f.target_id = w.id`
+            : ``
+        }
+      where ${pinned === ApiWavesPinFilter.NotPinned && authenticated_user_id ? ` pw.profile_id is null and ` : ``} ${
+        only_waves_followed_by_authenticated_user
+          ? `f.subscriber_id = :authenticated_user_id and`
+          : ``
+      }${
+        direct_message !== undefined
+          ? ` w.is_direct_message = :direct_message and `
+          : ``
+      } (w.visibility_group_id is null ${
+        eligibleGroups.length
+          ? `or w.visibility_group_id in (:eligibleGroups)`
+          : ``
+      })
+      order by s.subscribers_count desc, s.wave_id desc
+      limit :limit offset :offset
         `,
         {
           limit,
           offset,
           eligibleGroups,
           authenticated_user_id,
-          direct_message
+          direct_message,
+          prefetchLimit
         }
       )
       .then((res) =>
