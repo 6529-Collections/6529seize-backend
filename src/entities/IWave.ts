@@ -202,7 +202,9 @@ export interface WaveDecisionStrategy {
 
 export enum WaveCreditType {
   TDH = 'TDH',
-  REP = 'REP'
+  REP = 'REP',
+  XTDH = 'XTDH',
+  TDH_PLUS_XTDH = 'TDH_PLUS_XTDH'
 }
 
 export enum WaveType {
