@@ -12,6 +12,7 @@ import { ConnectionWrapper } from '../../../sql-executor';
 import { ratingsDb, RatingsDb } from '../../../rates/ratings.db';
 import { Rating } from '../../../entities/IRating';
 import { collections } from '../../../collections';
+import { assertUnreachable } from '../../../assertions';
 
 export class DropVotingService {
   constructor(
@@ -63,7 +64,7 @@ export class DropVotingService {
       collections.distinct(
         repWaveConditions.map((it) => `${it.category}-${it.rater_id}`)
       ).length === 1;
-    const [activeVotes, totalVotesInRelevantWaves, tdh, repRatings] =
+    const [activeVotes, totalVotesInRelevantWaves, { tdh, xtdh }, repRatings] =
       await Promise.all([
         this.votingDb.getVotersActiveVoteForDrops(
           {
@@ -78,7 +79,10 @@ export class DropVotingService {
         ),
         this.identitiesDb
           .getIdentityByProfileId(profileId)
-          ?.then((identity) => identity?.tdh ?? 0),
+          ?.then((identity) => ({
+            tdh: identity?.tdh ?? 0,
+            xtdh: identity?.xtdh ?? 0
+          })),
         repWaves.length > 0
           ? this.ratingsDb.getAllProfilesRepRatings(
               profileId,
@@ -100,18 +104,35 @@ export class DropVotingService {
         if (waveId) {
           const wave = relevantWaves.find((it) => it.id === waveId)!;
           const waveVotingCreditType = wave.voting_credit_type;
-          const totalCredit =
-            waveVotingCreditType === WaveCreditType.TDH
-              ? tdh
-              : repRatings
-                  .filter(
-                    (it) =>
-                      (wave.voting_credit_creditor === null ||
-                        wave.voting_credit_creditor === it.rater_profile_id) &&
-                      (wave.voting_credit_category === null ||
-                        wave.voting_credit_category === it.matter_category)
-                  )
-                  .reduce((acc, it) => acc + it.rating, 0);
+          let totalCredit: number;
+          switch (waveVotingCreditType) {
+            case WaveCreditType.REP: {
+              totalCredit = repRatings
+                .filter(
+                  (it) =>
+                    (wave.voting_credit_creditor === null ||
+                      wave.voting_credit_creditor === it.rater_profile_id) &&
+                    (wave.voting_credit_category === null ||
+                      wave.voting_credit_category === it.matter_category)
+                )
+                .reduce((acc, it) => acc + it.rating, 0);
+              break;
+            }
+            case WaveCreditType.TDH: {
+              totalCredit = tdh;
+              break;
+            }
+            case WaveCreditType.XTDH: {
+              totalCredit = Math.floor(xtdh);
+              break;
+            }
+            case WaveCreditType.TDH_PLUS_XTDH: {
+              totalCredit = Math.floor(tdh + xtdh);
+              break;
+            }
+            default:
+              throw assertUnreachable(waveVotingCreditType);
+          }
           const totalVotesInWave = totalVotesInRelevantWaves[waveId];
           const activeVote = activeVotes[dropId];
           if (totalVotesInWave !== undefined && activeVote !== undefined) {
