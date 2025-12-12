@@ -65,11 +65,15 @@ export class DropPartEntity {
   @PrimaryColumn({ type: 'bigint' })
   readonly drop_part_id!: number;
   @Column({ type: 'text', nullable: true })
+  @Index('idx_drop_part_content_fulltext', {
+    fulltext: true
+  })
   readonly content!: string | null;
   @Column({ type: 'varchar', length: 100, nullable: true })
   readonly quoted_drop_id!: string | null;
   @Column({ type: 'bigint', nullable: true })
   readonly quoted_drop_part_id!: number | null;
+  @Index('idx_drop_part_wave_id')
   @Column({ type: 'varchar', length: 100, nullable: true, default: null })
   readonly wave_id!: string | null;
 }
