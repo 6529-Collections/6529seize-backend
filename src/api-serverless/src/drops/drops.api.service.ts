@@ -55,6 +55,7 @@ import {
 import { ApiLightDrop } from '../generated/models/ApiLightDrop';
 import { ApiDropMedia } from '../generated/models/ApiDropMedia';
 import { enums } from '../../../enums';
+import { ApiDropWithoutWavesPageWithoutCount } from '../generated/models/ApiDropWithoutWavesPageWithoutCount';
 
 export class DropsApiService {
   constructor(
@@ -834,6 +835,48 @@ export class DropsApiService {
         different_drops_voted: it.different_drops_voted,
         average_vote: it.average_vote
       }))
+    };
+  }
+
+  async searchDropsContainingPhraseInWave(
+    {
+      wave_id,
+      term,
+      size,
+      page
+    }: { term: string; page: number; size: number; wave_id: string },
+    ctx: RequestContext
+  ): Promise<ApiDropWithoutWavesPageWithoutCount> {
+    const wave = await this.dropsDb.findWaveByIdOrNull(wave_id, ctx.connection);
+    if (!wave) {
+      throw new NotFoundException(`Wave ${wave_id} not found`);
+    }
+    const contextProfileId = this.getDropsReadContextProfileId(
+      ctx.authenticationContext
+    );
+    const visibilityGroupId = wave.visibility_group_id;
+    if (visibilityGroupId) {
+      const group_ids_user_is_eligible_for =
+        await this.userGroupsService.getGroupsUserIsEligibleFor(
+          contextProfileId
+        );
+      if (!group_ids_user_is_eligible_for.includes(visibilityGroupId)) {
+        throw new NotFoundException(`Wave ${wave_id} not found`);
+      }
+    }
+    const offset = size * (page - 1);
+    const entities = await this.dropsDb.searchDropsContainingPhraseInWave(
+      { wave_id, term, limit: size + 1, offset },
+      ctx
+    );
+    const converted = await this.dropsMappers.convertToDropsWithoutWaves(
+      entities.slice(0, size),
+      ctx
+    );
+    return {
+      data: converted,
+      next: entities.length > size,
+      page: page
     };
   }
 }
