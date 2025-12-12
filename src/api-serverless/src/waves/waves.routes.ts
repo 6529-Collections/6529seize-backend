@@ -72,6 +72,7 @@ import { enums } from '../../../enums';
 import { numbers } from '../../../numbers';
 import { ApiUpdateWaveDecisionPause } from '../generated/models/ApiUpdateWaveDecisionPause';
 import { clearWaveGroupsCache } from '../../../redis';
+import { ApiDropWithoutWavesPageWithoutCount } from '../generated/models/ApiDropWithoutWavesPageWithoutCount';
 
 const router = asyncRouter();
 
@@ -616,6 +617,41 @@ router.get(
       authenticationContext,
       timer
     });
+    res.send(result);
+  }
+);
+
+router.get(
+  '/:wave_id/search',
+  maybeAuthenticatedUser(),
+  async (
+    req: Request<
+      { wave_id: string },
+      any,
+      any,
+      { term: string; page: number; size: number },
+      any
+    >,
+    res: Response<ApiResponse<ApiDropWithoutWavesPageWithoutCount>>
+  ) => {
+    const { wave_id } = req.params;
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req);
+    const { term, page, size } = getValidatedByJoiOrThrow(
+      req.query,
+      Joi.object<{ term: string; page: number; size: number }>({
+        term: Joi.string().min(1).required(),
+        size: Joi.number().integer().min(1).max(100).optional().default(20),
+        page: Joi.number().integer().min(1).optional().default(1)
+      })
+    );
+    const result = await dropsService.searchDropsContainingPhraseInWave(
+      { term, page, size, wave_id },
+      {
+        authenticationContext,
+        timer
+      }
+    );
     res.send(result);
   }
 );

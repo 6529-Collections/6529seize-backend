@@ -712,7 +712,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
 
   async findWaveByIdOrNull(
     id: string,
-    connection: ConnectionWrapper<any>
+    connection?: ConnectionWrapper<any>
   ): Promise<WaveEntity | null> {
     return this.db.oneOrNull<WaveEntity>(
       `select * from ${WAVES_TABLE} where id = :id`,
@@ -1495,6 +1495,40 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         { wrappedConnection: ctx.connection }
       )
       .then((res) => res?.cnt ?? 0);
+  }
+
+  async searchDropsContainingPhraseInWave(
+    param: {
+      wave_id: string;
+      term: string;
+      limit: number;
+      offset: number;
+    },
+    ctx: RequestContext
+  ): Promise<DropEntity[]> {
+    try {
+      ctx.timer?.start(
+        `${this.constructor.name}->searchDropsContainingPhraseInWave`
+      );
+      return this.db.execute<DropEntity>(
+        `
+        SELECT
+            d.*
+        FROM drops_parts p
+        JOIN drops d on p.drop_id = d.id
+        WHERE d.wave_id = :wave_id AND
+              MATCH(p.content) AGAINST (:term) > 0
+        ORDER BY d.created_at DESC
+        LIMIT :limit OFFSET :offset
+      `,
+        param,
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(
+        `${this.constructor.name}->searchDropsContainingPhraseInWave`
+      );
+    }
   }
 }
 
