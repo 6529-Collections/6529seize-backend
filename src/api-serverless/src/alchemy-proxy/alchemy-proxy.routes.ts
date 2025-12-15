@@ -510,6 +510,77 @@ router.get(
   }
 );
 
+type TokenFetchInput = { contract: string; tokenId: string };
+
+function parseTokensFromRequest(body: {
+  address?: string;
+  tokenIds?: string[];
+  tokens?: TokenFetchInput[];
+}): { tokens: TokenFetchInput[]; error?: string; emptyResult?: boolean } {
+  const { address, tokenIds, tokens } = body;
+
+  if (tokens && tokens.length > 0) {
+    return { tokens: [...tokens] };
+  }
+
+  if (!address || !Array.isArray(tokenIds) || tokenIds.length === 0) {
+    return {
+      tokens: [],
+      error: 'Either tokens OR (address and tokenIds) are required'
+    };
+  }
+
+  if (!isValidEthAddress(address)) {
+    return { tokens: [], error: 'Invalid contract address' };
+  }
+
+  const checksum = normaliseAddress(address);
+  if (!checksum) {
+    return { tokens: [], emptyResult: true };
+  }
+
+  return {
+    tokens: tokenIds.map((tokenId: string) => ({ contract: checksum, tokenId }))
+  };
+}
+
+async function fetchMetadataBatch(
+  url: string,
+  tokens: TokenFetchInput[]
+): Promise<{ results: TokenMetadata[]; error?: string }> {
+  const body = {
+    tokens: tokens.map((t) => ({
+      contractAddress: t.contract,
+      tokenId: t.tokenId
+    }))
+  };
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(body)
+  });
+
+  if (!response.ok) {
+    logger.error(
+      `[TOKEN-METADATA] Failed to fetch token metadata: ${response.status}`
+    );
+    return { results: [], error: 'Failed to fetch token metadata' };
+  }
+
+  const payload = (await response.json()) as Record<string, unknown>;
+  const tokenResults =
+    (payload.tokens as Record<string, unknown>[]) ??
+    (payload.nfts as Record<string, unknown>[]) ??
+    [];
+
+  const results = tokenResults
+    .map((token) => normaliseTokenMetadata(token))
+    .filter((t): t is TokenMetadata => t !== null);
+
+  return { results };
+}
+
 router.post(
   '/token-metadata',
   async function (
@@ -525,33 +596,18 @@ router.post(
     >,
     res: Response
   ) {
-    const { address, tokenIds, tokens, chain = 'ethereum' } = req.body ?? {};
+    const { chain = 'ethereum', ...rest } = req.body ?? {};
+    const parsed = parseTokensFromRequest(rest);
 
-    let tokensToFetch: { contract: string; tokenId: string }[] = [];
-
-    if (tokens && tokens.length > 0) {
-      tokensToFetch = [...tokens];
-    } else if (address && Array.isArray(tokenIds) && tokenIds.length > 0) {
-      if (!isValidEthAddress(address)) {
-        return res.status(400).json({ error: 'Invalid contract address' });
-      }
-      const checksum = normaliseAddress(address);
-      if (!checksum) {
-        setNoCacheHeaders(res);
-        return await returnJsonResult([], req, res);
-      }
-      tokensToFetch = tokenIds.map((tokenId: string) => ({
-        contract: checksum,
-        tokenId
-      }));
+    if (parsed.error) {
+      return res.status(400).json({ error: parsed.error });
+    }
+    if (parsed.emptyResult) {
+      setNoCacheHeaders(res);
+      return await returnJsonResult([], req, res);
     }
 
-    if (tokensToFetch.length === 0) {
-      return res.status(400).json({
-        error: 'Either tokens OR (address and tokenIds) are required'
-      });
-    }
-
+    const tokensToFetch = parsed.tokens;
     logger.info(
       `[TOKEN-METADATA] Fetching metadata for ${tokensToFetch.length} tokens`
     );
@@ -564,49 +620,16 @@ router.post(
 
     for (let i = 0; i < tokensToFetch.length; i += MAX_BATCH_SIZE) {
       const slice = tokensToFetch.slice(i, i + MAX_BATCH_SIZE);
-      const body = {
-        tokens: slice.map((t) => ({
-          contractAddress: t.contract,
-          tokenId: t.tokenId
-        }))
-      };
-
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json'
-        },
-        body: JSON.stringify(body)
-      });
-
-      if (!response.ok) {
-        logger.error(
-          `[TOKEN-METADATA] Failed to fetch token metadata: ${response.status}`
-        );
-        return res
-          .status(400)
-          .json({ error: 'Failed to fetch token metadata' });
+      const batch = await fetchMetadataBatch(url, slice);
+      if (batch.error) {
+        return res.status(400).json({ error: batch.error });
       }
-
-      const payload = (await response.json()) as Record<string, unknown>;
-      const tokenResults =
-        (payload.tokens as Record<string, unknown>[]) ??
-        (payload.nfts as Record<string, unknown>[]) ??
-        [];
-
-      for (const token of tokenResults) {
-        const normalised = normaliseTokenMetadata(token);
-        if (normalised) {
-          results.push(normalised);
-        }
-      }
+      results.push(...batch.results);
     }
 
     logger.info(
       `[TOKEN-METADATA] Successfully fetched ${results.length} tokens`
     );
-
     setNoCacheHeaders(res);
     return await returnJsonResult(results, req, res);
   }
