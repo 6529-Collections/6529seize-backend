@@ -70,6 +70,7 @@ import { Logger } from '../../logging';
 import { numbers } from '../../numbers';
 import { initRedis, redisGet } from '../../redis';
 import { parseTdhResultsFromDB } from '../../sql_helpers';
+import alchemyProxyRoutes from './alchemy-proxy/alchemy-proxy.routes';
 import {
   corsOptions,
   DEFAULT_PAGE_SIZE,
@@ -1230,6 +1231,7 @@ async function initializeApp() {
   rootRouter.use(`/oracle`, oracleRoutes);
   rootRouter.use(`/rpc`, rpcRoutes);
   rootRouter.use(`/sitemap`, sitemapRoutes);
+  rootRouter.use(`/alchemy-proxy`, alchemyProxyRoutes);
 
   // Apply rate limiting after cache check (cached responses bypass rate limiting)
   app.use(rateLimitingMiddleware());
