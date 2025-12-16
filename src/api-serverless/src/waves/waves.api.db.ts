@@ -854,8 +854,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         })
         order by sc.subscribers_count desc, sc.wave_id desc
         limit :limit offset :offset
-      )
-      select w.*
+      ), wids as (
+      select w.id
       from sorted s
         join ${WAVES_TABLE} w on w.id = s.wave_id
         ${
@@ -887,7 +887,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           : ``
       })
       order by s.subscribers_count desc, s.wave_id desc
-      limit :limit offset :offset
+      limit :limit offset :offset) select w.* from wids join ${WAVES_TABLE} w on w.id = wids.id
         `,
         {
           limit,
