@@ -1510,6 +1510,12 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       ctx.timer?.start(
         `${this.constructor.name}->searchDropsContainingPhraseInWave`
       );
+      const normalizedTerm = param.term.trim().replace(/\s+/g, ' ');
+      if (!normalizedTerm.length) {
+        return [];
+      }
+      const booleanPhrase = `"${normalizedTerm}"`;
+      const likeTerm = normalizedTerm.replace(/[\\%_]/g, '\\$&');
       return this.db.execute<DropEntity>(
         `
         SELECT
@@ -1517,11 +1523,12 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         FROM drops_parts p
         JOIN drops d on p.drop_id = d.id
         WHERE d.wave_id = :wave_id AND
-              MATCH(p.content) AGAINST (:term) > 0
+              MATCH(p.content) AGAINST (:term IN BOOLEAN MODE) > 0 AND
+              LOWER(p.content) LIKE LOWER(CONCAT('%', :likeTerm, '%')) ESCAPE '\\\\'
         ORDER BY d.created_at DESC
         LIMIT :limit OFFSET :offset
       `,
-        param,
+        { ...param, term: booleanPhrase, likeTerm },
         { wrappedConnection: ctx.connection }
       );
     } finally {
