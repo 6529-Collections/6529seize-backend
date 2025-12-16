@@ -180,7 +180,7 @@ router.post(
       for (let i = 0; i < tokensToFetch.length; i += MAX_BATCH_SIZE) {
         const slice = tokensToFetch.slice(i, i + MAX_BATCH_SIZE);
         const batchResult = await alchemy.nft.getNftMetadataBatch(slice);
-        allTokens.push(...batchResult);
+        allTokens.push(...batchResult.nfts);
       }
 
       return res.json({ tokens: allTokens });
