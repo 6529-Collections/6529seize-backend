@@ -132,7 +132,7 @@ router.get(
 router.post(
   '/token-metadata',
   cacheRequest({
-    ttl: Time.minutes(10),
+    ttl: Time.minutes(5),
     methods: ['POST'],
     key: (req) => {
       const { address, tokenIds, tokens, chain } = req.body ?? {};
