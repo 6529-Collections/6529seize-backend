@@ -1219,7 +1219,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           decisions_strategy: string;
         }
       >(
-        `select w.* from ${WAVES_TABLE} w
+        `with wids as (select w.id from ${WAVES_TABLE} w
         ${
           pinned === ApiWavesPinFilter.Pinned && authenticated_user_id
             ? ` join ${PINNED_WAVES_TABLE} pw on pw.wave_id = w.id and pw.profile_id = :authenticated_user_id `
@@ -1251,7 +1251,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
              eligibleGroups.length
                ? `or w.visibility_group_id in (:eligibleGroups)`
                : ``
-           }) order by wm.drops_count desc limit :limit offset :offset`,
+           }) order by wm.drops_count desc limit :limit offset :offset) select w.* from ${WAVES_TABLE} w join wids on w.id = wids.id`,
         { limit, eligibleGroups, offset, authenticated_user_id }
       )
       .then((res) =>
@@ -1279,6 +1279,40 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     direct_message?: boolean;
     pinned: ApiWavesPinFilter | null;
   }): Promise<WaveEntity[]> {
+    const sql = `with wids as (select w.id from ${WAVES_TABLE} w 
+    ${
+      param.pinned === ApiWavesPinFilter.Pinned && param.authenticated_user_id
+        ? ` join ${PINNED_WAVES_TABLE} pw on pw.wave_id = w.id and pw.profile_id = :authenticated_user_id `
+        : ``
+    }
+   ${
+     param.pinned === ApiWavesPinFilter.NotPinned && param.authenticated_user_id
+       ? ` left join ${PINNED_WAVES_TABLE} pw on pw.wave_id = w.id and pw.profile_id = :authenticated_user_id `
+       : ``
+   }
+    ${
+      param.only_waves_followed_by_authenticated_user
+        ? `join ${IDENTITY_SUBSCRIPTIONS_TABLE} f on f.target_type = 'WAVE' and f.target_action = 'DROP_CREATED' and f.target_id = w.id`
+        : ``
+    }
+    join ${WAVE_METRICS_TABLE} wm on wm.wave_id = w.id 
+     where
+     ${param.pinned === ApiWavesPinFilter.NotPinned && param.authenticated_user_id ? ` pw.profile_id is null and ` : ``}
+    ${
+      param.only_waves_followed_by_authenticated_user
+        ? `f.subscriber_id = :authenticated_user_id and`
+        : ``
+    }
+    ${
+      param.direct_message !== undefined
+        ? ` w.is_direct_message = :direct_message and `
+        : ``
+    }
+     (w.visibility_group_id is null ${
+       param.eligibleGroups.length
+         ? `or w.visibility_group_id in (:eligibleGroups)`
+         : ``
+     }) order by wm.latest_drop_timestamp desc limit :limit offset :offset) select w.* from ${WAVES_TABLE} w join wids on w.id = wids.id`;
     return this.db
       .execute<
         Omit<
@@ -1291,45 +1325,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           participation_required_metadata: string;
           decisions_strategy: string;
         }
-      >(
-        `select w.* from ${WAVES_TABLE} w 
-        ${
-          param.pinned === ApiWavesPinFilter.Pinned &&
-          param.authenticated_user_id
-            ? ` join ${PINNED_WAVES_TABLE} pw on pw.wave_id = w.id and pw.profile_id = :authenticated_user_id `
-            : ``
-        }
-       ${
-         param.pinned === ApiWavesPinFilter.NotPinned &&
-         param.authenticated_user_id
-           ? ` left join ${PINNED_WAVES_TABLE} pw on pw.wave_id = w.id and pw.profile_id = :authenticated_user_id `
-           : ``
-       }
-        ${
-          param.only_waves_followed_by_authenticated_user
-            ? `join ${IDENTITY_SUBSCRIPTIONS_TABLE} f on f.target_type = 'WAVE' and f.target_action = 'DROP_CREATED' and f.target_id = w.id`
-            : ``
-        }
-        join ${WAVE_METRICS_TABLE} wm on wm.wave_id = w.id 
-         where
-         ${param.pinned === ApiWavesPinFilter.NotPinned && param.authenticated_user_id ? ` pw.profile_id is null and ` : ``}
-        ${
-          param.only_waves_followed_by_authenticated_user
-            ? `f.subscriber_id = :authenticated_user_id and`
-            : ``
-        }
-        ${
-          param.direct_message !== undefined
-            ? ` w.is_direct_message = :direct_message and `
-            : ``
-        }
-         (w.visibility_group_id is null ${
-           param.eligibleGroups.length
-             ? `or w.visibility_group_id in (:eligibleGroups)`
-             : ``
-         }) order by wm.latest_drop_timestamp desc limit :limit offset :offset`,
-        param
-      )
+      >(sql, param)
       .then((res) =>
         res.map((it) => ({
           ...it,
@@ -1369,7 +1365,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           decisions_strategy: string;
         }
       >(
-        `select w.* from ${WAVES_TABLE} w
+        `with wids as (select w.id from ${WAVES_TABLE} w
         ${
           param.pinned === ApiWavesPinFilter.Pinned &&
           param.authenticated_user_id
@@ -1404,7 +1400,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
             param.eligibleGroups.length
               ? `or w.visibility_group_id in (:eligibleGroups)`
               : ``
-          }) order by wm.latest_drop_timestamp desc limit :limit offset :offset`,
+          }) order by wm.latest_drop_timestamp desc limit :limit offset :offset)  select w.* from ${WAVES_TABLE} w join wids on w.id = wids.id`,
         param
       )
       .then((res) =>
@@ -1446,7 +1442,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           decisions_strategy: string;
         }
       >(
-        `select w.* from ${WAVES_TABLE} w
+        `with wids as ( select w.id from ${WAVES_TABLE} w
         ${
           param.pinned === ApiWavesPinFilter.Pinned &&
           param.authenticated_user_id
@@ -1480,7 +1476,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
             param.eligibleGroups.length
               ? `or w.visibility_group_id in (:eligibleGroups)`
               : ``
-          }) order by wm.drops_count desc limit :limit offset :offset`,
+          }) order by wm.drops_count desc limit :limit offset :offset) select w.* from ${WAVES_TABLE} w join wids on w.id = wids.id`,
         param
       )
       .then((res) =>
