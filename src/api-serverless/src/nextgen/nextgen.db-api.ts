@@ -374,6 +374,7 @@ export async function fetchNextGenCollectionTokens(
       ${IDENTITIES_TABLE}.handle,
       0 as level,
       ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh as tdh,
+      ${IDENTITIES_TABLE}.xtdh as xtdh,
       ${IDENTITIES_TABLE}.rep as rep_score`;
 
   if (sort === TokensSort.LAST_SALE) {
@@ -402,7 +403,7 @@ export async function fetchNextGenCollectionTokens(
     token.generator = JSON.parse(token.generator);
     token.mint_data = JSON.parse(token.mint_data);
     token.level = calculateLevel({
-      tdh: token.tdh ?? 0,
+      tdh: (token.tdh ?? 0) + (token.xtdh ?? 0),
       rep: token.rep_score
     });
   });
@@ -749,6 +750,7 @@ export async function fetchNextGenCollectionTraitSets(
     ${NEXTGEN_TOKENS_TABLE}.owner, 
     ${IDENTITIES_TABLE}.normalised_handle,
     ${IDENTITIES_TABLE}.handle,
+    ${IDENTITIES_TABLE}.xtdh,
     0 as level,
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh as tdh,
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display as consolidation_display,
@@ -765,6 +767,7 @@ export async function fetchNextGenCollectionTraitSets(
     ${NEXTGEN_TOKENS_TABLE}.owner, 
     ${IDENTITIES_TABLE}.normalised_handle, 
     ${IDENTITIES_TABLE}.handle, 
+    ${IDENTITIES_TABLE}.xtdh,
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh, 
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display, 
     ${IDENTITIES_TABLE}.rep`;
@@ -815,7 +818,7 @@ export async function fetchNextGenCollectionTraitSets(
 
   results.data.forEach((d: any) => {
     d.level = calculateLevel({
-      tdh: d.tdh ?? 0,
+      tdh: (d.tdh ?? 0) + (d.xtdh ?? 0),
       rep: d.rep_score
     });
 
@@ -865,7 +868,8 @@ export async function fetchNextGenCollectionTraitSetsUltimate(
     0 as level,
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh as tdh,
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display as consolidation_display,
-    ${IDENTITIES_TABLE}.rep as rep_score`;
+    ${IDENTITIES_TABLE}.rep as rep_score
+    ${IDENTITIES_TABLE}.xtdh as xtdh`;
 
   const params: any = {
     traits: traits,
@@ -900,7 +904,8 @@ export async function fetchNextGenCollectionTraitSetsUltimate(
     ${IDENTITIES_TABLE}.handle, 
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh, 
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display, 
-    ${IDENTITIES_TABLE}.rep`;
+    ${IDENTITIES_TABLE}.rep
+    ${IDENTITIES_TABLE}.xtdh`;
 
   const limit = `LIMIT ${pageSize}`;
   const offset = page > 1 ? `OFFSET ${pageSize * (page - 1)}` : '';
@@ -914,7 +919,7 @@ export async function fetchNextGenCollectionTraitSetsUltimate(
 
   data.forEach((d: any) => {
     d.level = calculateLevel({
-      tdh: d.tdh ?? 0,
+      tdh: (d.tdh ?? 0) + (d.xtdh ?? 0),
       rep: d.rep_score
     });
   });

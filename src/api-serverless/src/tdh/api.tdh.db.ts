@@ -5,26 +5,20 @@ import {
   CONSOLIDATED_WALLETS_TDH_MEMES_TABLE,
   CONSOLIDATED_WALLETS_TDH_TABLE,
   IDENTITIES_TABLE,
+  LATEST_TDH_HISTORY_TABLE,
   MEME_8_EDITION_BURN_ADJUSTMENT,
   MEMES_CONTRACT,
   MEMES_SEASONS_TABLE,
   NFT_OWNERS_CONSOLIDATION_TABLE,
   NULL_ADDRESS,
-  LATEST_TDH_HISTORY_TABLE,
   TDH_NFT_TABLE
 } from '../../../constants';
-import { NftTDH } from '../../../entities/ITDH';
 import { fetchPaginated } from '../../../db-api';
 import {
   calculateLevel,
   getLevelFromScore
 } from '../../../profiles/profile-level';
 import { sqlExecutor } from '../../../sql-executor';
-
-export interface NftTdhResponse extends NftTDH {
-  total_balance: number;
-  total_boosted_tdh: number;
-}
 
 export enum MetricsContent {
   MEMES = 'Memes',
@@ -105,6 +99,7 @@ export const fetchNftTdh = async (
     ${IDENTITIES_TABLE}.rep as rep_score,
     ${IDENTITIES_TABLE}.cic as cic_score,
     ${IDENTITIES_TABLE}.primary_address as primary_wallet,
+    ${IDENTITIES_TABLE}.xtdh as xtdh,
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display as consolidation_display, 
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.balance as total_balance, 
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh as total_tdh,
@@ -127,7 +122,7 @@ export const fetchNftTdh = async (
   );
   results.data.forEach((d: any) => {
     d.level = calculateLevel({
-      tdh: d.total_boosted_tdh ?? 0,
+      tdh: d.total_boosted_tdh ?? 0 + (d.xtdh ?? 0),
       rep: d.rep_score
     });
   });

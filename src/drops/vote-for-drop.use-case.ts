@@ -96,7 +96,16 @@ export class VoteForDropUseCase {
           )
         : this.identitiesDb
             .getIdentityByProfileId(voter_id, ctx.connection)
-            ?.then((identity) => identity?.tdh ?? 0)
+            ?.then((identity) => {
+              const tdh = identity?.tdh ?? 0;
+              const xtdh = identity?.xtdh ?? 0;
+              if (wave?.voting_credit_type === WaveCreditType.TDH) return tdh;
+              if (wave?.voting_credit_type === WaveCreditType.XTDH) return xtdh;
+              if (wave?.voting_credit_type === WaveCreditType.TDH_PLUS_XTDH) {
+                return tdh + xtdh;
+              }
+              return 0;
+            })
     ]);
 
     if (!drop || drop.wave_id !== wave?.id) {

@@ -1,4 +1,7 @@
-import { UserGroupEntity } from '../../entities/IUserGroup';
+import {
+  GroupTdhInclusionStrategy,
+  UserGroupEntity
+} from '../../entities/IUserGroup';
 import { Time } from '../../time';
 import { randomUUID } from 'node:crypto';
 import { Seed } from '../_setup/seed';
@@ -18,6 +21,7 @@ const aDefaultUserGroup: BaseUserGroup = {
   rep_category: null,
   tdh_min: null,
   tdh_max: null,
+  tdh_inclusion_strategy: GroupTdhInclusionStrategy.TDH,
   level_min: null,
   level_max: null,
   owns_meme: false,

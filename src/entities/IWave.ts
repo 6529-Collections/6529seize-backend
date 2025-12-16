@@ -151,6 +151,7 @@ export class WaveBase implements WaveBaseType {
 }
 
 @Entity(WAVES_TABLE)
+@Index('idx_wave_serialno_id', ['serial_no', 'id'])
 export class WaveEntity extends WaveBase {
   @Column({ type: 'varchar', length: 100, unique: true, nullable: false })
   readonly id!: string;
@@ -201,7 +202,9 @@ export interface WaveDecisionStrategy {
 
 export enum WaveCreditType {
   TDH = 'TDH',
-  REP = 'REP'
+  REP = 'REP',
+  XTDH = 'XTDH',
+  TDH_PLUS_XTDH = 'TDH_PLUS_XTDH'
 }
 
 export enum WaveType {

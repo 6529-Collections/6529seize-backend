@@ -24,9 +24,11 @@ const defaultBaseIdentity: BaseIdentity = {
   banner2: null,
   classification: ProfileClassification.PSEUDONYM,
   sub_classification: randomUUID(),
-  x_tdh: 0,
-  produced_x_tdh: 0,
-  granted_x_tdh: 0
+  xtdh: 0,
+  produced_xtdh: 0,
+  granted_xtdh: 0,
+  xtdh_rate: 0,
+  basetdh_rate: 0
 };
 
 export function aRandomIdentityKey(): {
