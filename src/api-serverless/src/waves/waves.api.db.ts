@@ -547,7 +547,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         }
       >(
         `
-      select w.* from ${WAVES_TABLE} w
+      with wids as (select w.id from ${WAVES_TABLE} w
        ${
          pinned === ApiWavesPinFilter.Pinned && authenticated_user_id
            ? ` join ${PINNED_WAVES_TABLE} pw on pw.wave_id = w.id and pw.profile_id = :authenticated_user_id `
@@ -574,7 +574,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
          eligibleGroups.length
            ? `or w.visibility_group_id in (:eligibleGroups)`
            : ``
-       }) order by w.serial_no desc, w.id limit :limit offset :offset
+       }) order by w.serial_no desc, w.id limit :limit offset :offset) select w.* from wids join ${WAVES_TABLE} w on wids.id = w.id
     `,
         { limit, eligibleGroups, offset, authenticated_user_id }
       )
