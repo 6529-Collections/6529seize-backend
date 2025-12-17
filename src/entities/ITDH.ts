@@ -278,18 +278,7 @@ export interface BoostInfo {
 
 export interface DefaultBoost {
   memes_card_sets: BoostInfo;
-  memes_szn1: BoostInfo;
-  memes_szn2: BoostInfo;
-  memes_szn3: BoostInfo;
-  memes_szn4: BoostInfo;
-  memes_szn5: BoostInfo;
-  memes_szn6: BoostInfo;
-  memes_szn7: BoostInfo;
-  memes_szn8: BoostInfo;
-  memes_szn9: BoostInfo;
-  memes_szn10: BoostInfo;
-  memes_szn11: BoostInfo;
-  memes_szn12: BoostInfo;
+  [key: `memes_szn${number}`]: BoostInfo;
   memes_genesis: BoostInfo;
   memes_nakamoto: BoostInfo;
   gradients: BoostInfo;
