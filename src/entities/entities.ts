@@ -119,7 +119,9 @@ export { UserGroupEntity } from './IUserGroup';
 export {
   WaveArchiveEntity,
   WaveDecisionPauseEntity,
-  WaveEntity
+  WaveEntity,
+  WaveOutcomeEntity,
+  WaveOutcomeDistributionItemEntity
 } from './IWave';
 export {
   WaveDecisionEntity,

@@ -119,6 +119,9 @@ export const DROPS_PARTS_TABLE = 'drops_parts';
 export const PROFILE_PROXIES_TABLE = 'profile_proxies';
 export const PROFILE_PROXY_ACTIONS_TABLE = 'profile_proxy_actions';
 export const WAVES_TABLE = 'waves';
+export const WAVE_OUTCOMES_TABLE = 'wave_outcomes';
+export const WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE =
+  'wave_outcome_distribution_items';
 export const WAVES_DECISION_PAUSES_TABLE = 'waves_decision_pauses';
 export const WAVES_ARCHIVE_TABLE = 'waves_archive';
 export const WAVES_DECISIONS_TABLE = 'wave_decisions';
