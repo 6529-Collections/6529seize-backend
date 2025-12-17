@@ -1,10 +1,4 @@
-import {
-  Alchemy,
-  AssetTransfersCategory,
-  AssetTransfersParams,
-  Network,
-  Utils
-} from 'alchemy-sdk';
+import { Alchemy, Network, Utils } from 'alchemy-sdk';
 import { BigNumber, ethers } from 'ethers';
 import { SEAPORT_IFACE } from './abis/seaport';
 import {
@@ -26,9 +20,11 @@ import { Logger } from './logging';
 import {
   getNextgenNetwork,
   NEXTGEN_CORE_CONTRACT,
+  NEXTGEN_MINTER_CONTRACT,
   NEXTGEN_ROYALTIES_ADDRESS
 } from './nextgen/nextgen_constants';
 import { equalIgnoreCase } from './strings';
+import { getInternalEthTransfers } from './transaction_values.traces';
 
 const logger = Logger.get('TRANSACTION_VALUES');
 
@@ -116,15 +112,17 @@ async function resolveValue(t: Transaction) {
     royaltiesAddress = NEXTGEN_ROYALTIES_ADDRESS;
   }
 
-  if (transaction) {
-    const receipt = await alchemy.core.getTransactionReceipt(transaction?.hash);
-    const logCount =
-      receipt?.logs.filter(
-        (l) =>
-          equalIgnoreCase(l.topics[0], TRANSFER_EVENT) &&
-          equalIgnoreCase(resolveLogAddress(l.topics[2]), t.to_address)
-      ).length || 1;
+  const receipt = transaction
+    ? await alchemy.core.getTransactionReceipt(transaction.hash)
+    : null;
+  const logCount =
+    receipt?.logs.filter(
+      (l) =>
+        equalIgnoreCase(l.topics[0], TRANSFER_EVENT) &&
+        equalIgnoreCase(resolveLogAddress(l.topics[2]), t.to_address)
+    ).length || 1;
 
+  if (transaction) {
     if (receipt?.gasUsed) {
       const gasUnits = receipt.gasUsed.toNumber();
       const gasPrice = parseFloat(Utils.formatEther(receipt.effectiveGasPrice));
@@ -211,21 +209,18 @@ async function resolveValue(t: Transaction) {
       equalIgnoreCase(t.contract, MEMELAB_CONTRACT) &&
       t.token_id == 12)
   ) {
-    const block = `0x${t.block.toString(16)}`;
-    const settings: AssetTransfersParams = {
-      category: [AssetTransfersCategory.INTERNAL],
-      excludeZeroValue: true,
-      fromBlock: block,
-      toBlock: block
-    };
+    const internlTrfs = await getInternalEthTransfers(t.transaction);
 
-    const internlTrfs = await alchemy.core.getAssetTransfers(settings);
-    const filteredInternalTrfs = internlTrfs.transfers.filter(
+    const nextgenNetwork = getNextgenNetwork();
+    const nextgenCoreContract = NEXTGEN_CORE_CONTRACT[nextgenNetwork];
+    const nextgenMinterContract = NEXTGEN_MINTER_CONTRACT[nextgenNetwork];
+
+    const filteredInternalTrfs = internlTrfs.filter(
       (it) =>
-        it.hash == t.transaction &&
-        (equalIgnoreCase(it.from, t.to_address) ||
-          equalIgnoreCase(it.from, MANIFOLD) ||
-          (it.to && equalIgnoreCase(it.to, MEMES_DEPLOYER)))
+        (equalIgnoreCase(t.contract, nextgenCoreContract) &&
+          equalIgnoreCase(it.to, nextgenMinterContract)) ||
+        equalIgnoreCase(it.from, MANIFOLD) ||
+        equalIgnoreCase(it.to, MEMES_DEPLOYER)
     );
 
     if (filteredInternalTrfs.length > 0) {
@@ -236,13 +231,12 @@ async function resolveValue(t: Transaction) {
         }
       });
       if (primaryProceeds) {
-        t.primary_proceeds = primaryProceeds;
-        t.value = primaryProceeds;
+        t.primary_proceeds = primaryProceeds / logCount;
       }
     }
 
     if (!t.primary_proceeds) {
-      t.primary_proceeds = t.value;
+      t.primary_proceeds = t.value / logCount;
     }
   }
 
@@ -413,7 +407,12 @@ export const debugValues = async () => {
 
   // SAMPLE TRX HASHES
   const transactions = [
-    '0x68896a9377b8bb04c50d6952006317f3c85971f80a2def180853798c4ab5556b'
+    '0x8a9e9c7c2a043fcaba80f4340cec8720a7acb7680ecfb5a581c8888035de9ea8'
+    // '0xff029cb27271315caed65e709b21fe23f90f4a16a6498714547c72d19cc173bd'
+    // '0xe69d5e443113aa39c0756cb37df850bd911c16df7dc6273c980cb402c9531333',
+    // '0xe1eebd3c32c112d63100b987344373b2f4cfe1b16d9d0cc8c972e0d195b88b5a'
+    // '0xe1eebd3c32c112d63100b987344373b2f4cfe1b16d9d0cc8c972e0d195b88b5a'
+    // '0x68896a9377b8bb04c50d6952006317f3c85971f80a2def180853798c4ab5556b'
     // '0xccec0c96bf05130b09906bd13045a21aa2eef2aa78849cd14600d433dc1f7e26'
     // '0xf95a5c52cef7473a32254e9442fb00e38116345b86695010969b9db73c942223'
     // '0xb956e461bc029f1c4c059ef5f23b94e2f8cf0727229d2d236390cddfa667641f'
