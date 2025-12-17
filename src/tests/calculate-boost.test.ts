@@ -3,289 +3,191 @@ import { TokenTDH } from '../entities/ITDH';
 
 import { calculateBoost } from '../tdhLoop/tdh';
 
-const seasons: MemesSeason[] = [
-  {
-    id: 1,
-    start_index: 1,
-    end_index: 47,
-    count: 47,
-    name: 'SZN1',
-    display: 'SZN1'
-  },
-  {
-    id: 2,
-    start_index: 48,
-    end_index: 86,
-    count: 39,
-    name: 'SZN2',
-    display: 'SZN2'
-  },
-  {
-    id: 3,
-    start_index: 87,
-    end_index: 118,
-    count: 32,
-    name: 'SZN3',
-    display: 'SZN3'
-  },
-  {
-    id: 4,
-    start_index: 119,
-    end_index: 151,
-    count: 33,
-    name: 'SZN4',
-    display: 'SZN4'
-  },
-  {
-    id: 5,
-    start_index: 152,
-    end_index: 180,
-    count: 29,
-    name: 'SZN5',
-    display: 'SZN5'
-  },
-  {
-    id: 6,
-    start_index: 181,
-    end_index: 212,
-    count: 32,
-    name: 'SZN6',
-    display: 'SZN6'
-  },
-  {
-    id: 7,
-    start_index: 213,
-    end_index: 245,
-    count: 33,
-    name: 'SZN7',
-    display: 'SZN7'
-  },
-  {
-    id: 8,
-    start_index: 246,
-    end_index: 278,
-    count: 33,
-    name: 'SZN8',
-    display: 'SZN8'
-  },
-  {
-    id: 9,
-    start_index: 279,
-    end_index: 310,
-    count: 32,
-    name: 'SZN9',
-    display: 'SZN9'
-  },
-  {
-    id: 10,
-    start_index: 311,
-    end_index: 342,
-    count: 32,
-    name: 'SZN10',
-    display: 'SZN10'
-  },
-  {
-    id: 11,
-    start_index: 343,
-    end_index: 374,
-    count: 32,
-    name: 'SZN11',
-    display: 'SZN11'
-  },
-  {
-    id: 12,
-    start_index: 375,
-    end_index: 406,
-    count: 32,
-    name: 'SZN12',
-    display: 'SZN12'
-  }
+const seasonData = [
+  { start_index: 1, end_index: 47, count: 47 },
+  { start_index: 48, end_index: 86, count: 39 },
+  { start_index: 87, end_index: 118, count: 32 },
+  { start_index: 119, end_index: 151, count: 33 },
+  { start_index: 152, end_index: 180, count: 29 },
+  { start_index: 181, end_index: 212, count: 32 },
+  { start_index: 213, end_index: 245, count: 33 },
+  { start_index: 246, end_index: 278, count: 33 },
+  { start_index: 279, end_index: 310, count: 32 },
+  { start_index: 311, end_index: 342, count: 32 },
+  { start_index: 343, end_index: 374, count: 32 },
+  { start_index: 375, end_index: 406, count: 32 }
 ];
 
-describe('calculateBoost', () => {
-  describe('single season set baseline (no genesis/naka, no gradients)', () => {
-    const cases: Array<{
-      seasonId: number;
-      expected: number;
-      extras?: Partial<{ genesis: number; nakamoto: number }>;
-    }> = [
-      { seasonId: 1, expected: 1.05 },
-      { seasonId: 2, expected: 1.05 },
-      { seasonId: 3, expected: 1.05 },
-      { seasonId: 4, expected: 1.05 },
-      { seasonId: 5, expected: 1.05 },
-      { seasonId: 6, expected: 1.05 },
-      { seasonId: 7, expected: 1.05 },
-      // s8 special cases are covered below; still verify base without genesis
-      { seasonId: 8, expected: 1.05 },
-      { seasonId: 9, expected: 1.05 },
-      { seasonId: 10, expected: 1.05 },
-      { seasonId: 11, expected: 1.05 },
-      { seasonId: 12, expected: 1.05 }
-    ];
+const seasons: MemesSeason[] = seasonData.map((data, index) => ({
+  id: index + 1,
+  ...data,
+  name: `SZN${index + 1}`,
+  display: `SZN${index + 1}`,
+  boost: 0.05
+}));
 
-    test.each(cases)('S%p baseline = %p', ({ seasonId, expected }) => {
+function getSeasonSet(id: number): TokenTDH[] {
+  const season = seasons.find((s) => s.id === id);
+  if (!season) return [];
+
+  return Array.from({ length: season.count }, (_, i) => ({
+    id: season.start_index + i,
+    balance: 1,
+    tdh: 1,
+    tdh__raw: 1,
+    hodl_rate: 1,
+    days_held_per_edition: [1]
+  }));
+}
+
+function createGradients(count: number) {
+  return Array.from({ length: count }, (_, i) => ({ id: i + 1 }));
+}
+
+describe('calculateBoost', () => {
+  describe('baseline season sets', () => {
+    test.each([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])(
+      'S%p baseline = 1.05',
+      (seasonId) => {
+        const result = calculateBoost(
+          seasons,
+          0,
+          { genesis: 0, nakamoto: 0 },
+          getSeasonSet(seasonId),
+          []
+        );
+        expect(result.total).toBe(1.05);
+      }
+    );
+
+    it('S12 (max season) has no boost = 1.0', () => {
       const result = calculateBoost(
         seasons,
         0,
         { genesis: 0, nakamoto: 0 },
-        getSeasonSet(seasonId),
+        getSeasonSet(12),
         []
+      );
+      expect(result.total).toBe(1.0);
+    });
+  });
+
+  describe('genesis and nakamoto modifiers', () => {
+    const genesisNakamotoCases = [
+      {
+        seasonId: 2,
+        genesis: 1,
+        nakamoto: 0,
+        expected: 1.06,
+        desc: 'S2 + genesis'
+      },
+      {
+        seasonId: 2,
+        genesis: 0,
+        nakamoto: 1,
+        expected: 1.06,
+        desc: 'S2 + nakamoto'
+      },
+      {
+        seasonId: 2,
+        genesis: 1,
+        nakamoto: 1,
+        expected: 1.07,
+        desc: 'S2 + genesis + nakamoto'
+      },
+      {
+        seasonId: 3,
+        genesis: 1,
+        nakamoto: 0,
+        expected: 1.06,
+        desc: 'S3 + genesis'
+      },
+      {
+        seasonId: 3,
+        genesis: 0,
+        nakamoto: 1,
+        expected: 1.06,
+        desc: 'S3 + nakamoto'
+      },
+      {
+        seasonId: 3,
+        genesis: 1,
+        nakamoto: 1,
+        expected: 1.07,
+        desc: 'S3 + genesis + nakamoto'
+      },
+      {
+        seasonId: 8,
+        genesis: 1,
+        nakamoto: 0,
+        expected: 1.06,
+        desc: 'S8 + genesis'
+      }
+    ];
+
+    test.each(genesisNakamotoCases)(
+      '$desc = $expected',
+      ({ seasonId, genesis, nakamoto, expected }) => {
+        const result = calculateBoost(
+          seasons,
+          0,
+          { genesis, nakamoto },
+          getSeasonSet(seasonId),
+          []
+        );
+        expect(result.total).toBe(expected);
+      }
+    );
+  });
+
+  describe('gradient modifiers', () => {
+    const gradientCases = [
+      {
+        count: 1,
+        expected: 1.09,
+        desc: 'S2 + genesis + nakamoto + 1 gradient'
+      },
+      {
+        count: 2,
+        expected: 1.11,
+        desc: 'S2 + genesis + nakamoto + 2 gradients'
+      },
+      {
+        count: 3,
+        expected: 1.13,
+        desc: 'S2 + genesis + nakamoto + 3 gradients'
+      },
+      {
+        count: 4,
+        expected: 1.15,
+        desc: 'S2 + genesis + nakamoto + 4 gradients'
+      },
+      {
+        count: 5,
+        expected: 1.17,
+        desc: 'S2 + genesis + nakamoto + 5 gradients'
+      },
+      {
+        count: 6,
+        expected: 1.17,
+        desc: 'S2 + genesis + nakamoto + 6 gradients (capped at 5)'
+      }
+    ];
+
+    test.each(gradientCases)('$desc = $expected', ({ count, expected }) => {
+      const result = calculateBoost(
+        seasons,
+        0,
+        { genesis: 1, nakamoto: 1 },
+        getSeasonSet(2),
+        createGradients(count)
       );
       expect(result.total).toBe(expected);
     });
   });
 
-  describe('genesis / nakamoto / gradients modifiers', () => {
-    it('S8 set with genesis should be 1.06', () => {
-      const result = calculateBoost(
-        seasons,
-        0,
-        { genesis: 1, nakamoto: 0 },
-        getSeasonSet(8),
-        []
-      );
-      expect(result.total).toBe(1.06);
-    });
-
-    it('S8 set (explicitly no genesis/naka) should be 1.05', () => {
-      const result = calculateBoost(
-        seasons,
-        0,
-        { genesis: 0, nakamoto: 0 },
-        getSeasonSet(8),
-        []
-      );
-      expect(result.total).toBe(1.05);
-    });
-
-    it('S2 set + genesis = 1.06', () => {
-      const result = calculateBoost(
-        seasons,
-        0,
-        { genesis: 1, nakamoto: 0 },
-        getSeasonSet(2),
-        []
-      );
-      expect(result.total).toBe(1.06);
-    });
-
-    it('S2 set + nakamoto = 1.06', () => {
-      const result = calculateBoost(
-        seasons,
-        0,
-        { genesis: 0, nakamoto: 1 },
-        getSeasonSet(2),
-        []
-      );
-      expect(result.total).toBe(1.06);
-    });
-
-    it('S2 set + genesis + nakamoto = 1.07', () => {
-      const result = calculateBoost(
-        seasons,
-        0,
-        { genesis: 1, nakamoto: 1 },
-        getSeasonSet(2),
-        []
-      );
-      expect(result.total).toBe(1.07);
-    });
-
-    it('S2 set + genesis + nakamoto + gradients(1..6 cap at 5)', () => {
-      expect(
-        calculateBoost(
-          seasons,
-          0,
-          { genesis: 1, nakamoto: 1 },
-          getSeasonSet(2),
-          [{ id: 1 }]
-        ).total
-      ).toBe(1.09);
-      expect(
-        calculateBoost(
-          seasons,
-          0,
-          { genesis: 1, nakamoto: 1 },
-          getSeasonSet(2),
-          [{ id: 1 }, { id: 2 }]
-        ).total
-      ).toBe(1.11);
-      expect(
-        calculateBoost(
-          seasons,
-          0,
-          { genesis: 1, nakamoto: 1 },
-          getSeasonSet(2),
-          [{ id: 1 }, { id: 2 }, { id: 3 }]
-        ).total
-      ).toBe(1.13);
-      expect(
-        calculateBoost(
-          seasons,
-          0,
-          { genesis: 1, nakamoto: 1 },
-          getSeasonSet(2),
-          [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }]
-        ).total
-      ).toBe(1.15);
-      expect(
-        calculateBoost(
-          seasons,
-          0,
-          { genesis: 1, nakamoto: 1 },
-          getSeasonSet(2),
-          [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }, { id: 5 }]
-        ).total
-      ).toBe(1.17);
-      // 6th gradient should be capped
-      expect(
-        calculateBoost(
-          seasons,
-          0,
-          { genesis: 1, nakamoto: 1 },
-          getSeasonSet(2),
-          [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }, { id: 5 }, { id: 6 }]
-        ).total
-      ).toBe(1.17);
-    });
-
-    it('S3 set + genesis = 1.06', () => {
-      const result = calculateBoost(
-        seasons,
-        0,
-        { genesis: 1, nakamoto: 0 },
-        getSeasonSet(3),
-        []
-      );
-      expect(result.total).toBe(1.06);
-    });
-
-    it('S3 set + nakamoto = 1.06', () => {
-      const result = calculateBoost(
-        seasons,
-        0,
-        { genesis: 0, nakamoto: 1 },
-        getSeasonSet(3),
-        []
-      );
-      expect(result.total).toBe(1.06);
-    });
-
-    it('S3 set + genesis + nakamoto = 1.07', () => {
-      const result = calculateBoost(
-        seasons,
-        0,
-        { genesis: 1, nakamoto: 1 },
-        getSeasonSet(3),
-        []
-      );
-      expect(result.total).toBe(1.07);
-    });
-  });
-
-  describe('multiple complete sets modifier', () => {
-    const cases = [
+  describe('multiple complete sets', () => {
+    const cardSetCases = [
       { sets: 1, expected: 1.6 },
       { sets: 2, expected: 1.65 },
       { sets: 3, expected: 1.68 },
@@ -294,93 +196,72 @@ describe('calculateBoost', () => {
       { sets: 10, expected: 1.74 }
     ];
 
-    test.each(cases)('%p complete set(s) (S3) => %p', ({ sets, expected }) => {
+    test.each(cardSetCases)(
+      '$sets set(s) on S3 = $expected',
+      ({ sets, expected }) => {
+        const result = calculateBoost(
+          seasons,
+          sets,
+          { genesis: 1, nakamoto: 0 },
+          getSeasonSet(3),
+          []
+        );
+        expect(result.total).toBe(expected);
+      }
+    );
+
+    const combinedCases = [
+      {
+        sets: 1,
+        gradients: 4,
+        expected: 1.68,
+        desc: '1 set + 4 gradients on S3'
+      },
+      {
+        sets: 3,
+        gradients: 3,
+        expected: 1.74,
+        desc: '3 sets + 3 gradients on S3'
+      },
+      {
+        sets: 3,
+        gradients: 3,
+        genesis: 1,
+        nakamoto: 1,
+        expected: 1.74,
+        desc: '3 sets + genesis + nakamoto + 3 gradients on S3'
+      }
+    ];
+
+    test.each(combinedCases)(
+      '$desc = $expected',
+      ({ sets, gradients, genesis = 1, nakamoto = 0, expected }) => {
+        const result = calculateBoost(
+          seasons,
+          sets,
+          { genesis, nakamoto },
+          getSeasonSet(3),
+          createGradients(gradients)
+        );
+        expect(result.total).toBe(expected);
+      }
+    );
+  });
+
+  describe('multiple season sets', () => {
+    test.each([
+      { seasons: [3, 4], expected: 1.1 },
+      { seasons: [4, 5], expected: 1.1 }
+    ])('S$seasons = $expected', ({ seasons: seasonIds, expected }) => {
+      const tokens = seasonIds.flatMap((id) => getSeasonSet(id));
       const result = calculateBoost(
         seasons,
-        sets,
-        { genesis: 1, nakamoto: 0 },
-        getSeasonSet(3),
+        0,
+        { genesis: 0, nakamoto: 0 },
+        tokens,
         []
       );
       expect(result.total).toBe(expected);
     });
-
-    it('1 set + 4 gradients on S3 => 1.68', () => {
-      const result = calculateBoost(
-        seasons,
-        1,
-        { genesis: 1, nakamoto: 0 },
-        getSeasonSet(3),
-        [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }]
-      );
-      expect(result.total).toBe(1.68);
-    });
-
-    it('3 sets + 3 gradients on S3 => 1.74', () => {
-      const result = calculateBoost(
-        seasons,
-        3,
-        { genesis: 1, nakamoto: 0 },
-        getSeasonSet(3),
-        [{ id: 1 }, { id: 2 }, { id: 3 }]
-      );
-      expect(result.total).toBe(1.74);
-    });
-
-    it('3 sets + genesis + nakamoto + 3 gradients on S3 => 1.74', () => {
-      const result = calculateBoost(
-        seasons,
-        3,
-        { genesis: 1, nakamoto: 1 },
-        getSeasonSet(3),
-        [{ id: 1 }, { id: 2 }, { id: 3 }]
-      );
-      expect(result.total).toBe(1.74);
-    });
-  });
-
-  describe('two-season combos', () => {
-    it('S3 + S4 set => 1.1', () => {
-      const result = calculateBoost(
-        seasons,
-        0,
-        { genesis: 0, nakamoto: 0 },
-        [...getSeasonSet(3), ...getSeasonSet(4)],
-        []
-      );
-      expect(result.total).toBe(1.1);
-    });
-
-    it('S4 + S5 set => 1.1', () => {
-      const result = calculateBoost(
-        seasons,
-        0,
-        { genesis: 0, nakamoto: 0 },
-        [...getSeasonSet(4), ...getSeasonSet(5)],
-        []
-      );
-      expect(result.total).toBe(1.1);
-    });
   });
 });
-
-function getSeasonSet(id: number): TokenTDH[] {
-  const s = seasons.find((s) => s.id === id);
-
-  if (!s) {
-    return [];
-  }
-
-  const tokens: TokenTDH[] = [];
-  for (let i = s.start_index; i <= s.end_index; i++) {
-    tokens.push({
-      id: i,
-      balance: 1,
-      tdh: 1,
-      tdh__raw: 1,
-      hodl_rate: 1,
-      days_held_per_edition: [1]
-    });
-  }
-  return tokens;
-}
