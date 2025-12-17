@@ -712,7 +712,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
 
   async findWaveByIdOrNull(
     id: string,
-    connection: ConnectionWrapper<any>
+    connection?: ConnectionWrapper<any>
   ): Promise<WaveEntity | null> {
     return this.db.oneOrNull<WaveEntity>(
       `select * from ${WAVES_TABLE} where id = :id`,
@@ -1122,23 +1122,49 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     ctx.timer?.start(
       `${this.constructor.name}->findWaveScopeTdhBasedSubmissionDropOvervotersWithOvervoteAmounts`
     );
-    const results = await this.db.execute<ProfileOverVoteAmountInWave>(
-      `
+    const optionPairs: {
+      credit_type:
+        | WaveCreditType.TDH
+        | WaveCreditType.XTDH
+        | WaveCreditType.TDH_PLUS_XTDH;
+      identity_field: 'i.tdh' | 'i.xtdh' | '(i.tdh + i.xtdh)';
+    }[] = [
+      {
+        credit_type: WaveCreditType.TDH,
+        identity_field: 'i.tdh'
+      },
+      {
+        credit_type: WaveCreditType.XTDH,
+        identity_field: 'i.xtdh'
+      },
+      {
+        credit_type: WaveCreditType.TDH_PLUS_XTDH,
+        identity_field: '(i.tdh + i.xtdh)'
+      }
+    ];
+    const results = (
+      await Promise.all(
+        optionPairs.map(({ credit_type, identity_field }) =>
+          this.db.execute<ProfileOverVoteAmountInWave>(
+            `
         with given_tdh_votes as (select ${DROP_VOTER_STATE_TABLE}.voter_id, ${DROP_VOTER_STATE_TABLE}.wave_id, sum(abs(${DROP_VOTER_STATE_TABLE}.votes)) as total_given_votes
                                  from ${DROP_VOTER_STATE_TABLE}
                                  join ${DROPS_TABLE} on ${DROPS_TABLE}.id = ${DROP_VOTER_STATE_TABLE}.drop_id
                                  where ${DROPS_TABLE}.drop_type = '${DropType.PARTICIPATORY}'
                                  group by 1, 2)
-        select v.voter_id as profile_id, wave_id, i.tdh as tdh, v.total_given_votes as total_given_votes
+        select v.voter_id as profile_id, wave_id, ${identity_field} as credit_limit, v.total_given_votes as total_given_votes
                              from given_tdh_votes v
                                       join ${IDENTITIES_TABLE} i on v.voter_id = i.profile_id
                                       join ${WAVES_TABLE} w on v.wave_id = w.id
-                             where w.voting_credit_type = '${WaveCreditType.TDH}'
-                               and v.total_given_votes > i.tdh
+                             where w.voting_credit_type = '${credit_type}'
+                               and v.total_given_votes > ${identity_field}
     `,
-      {},
-      { wrappedConnection: ctx.connection }
-    );
+            {},
+            { wrappedConnection: ctx.connection }
+          )
+        )
+      )
+    ).flat();
     ctx.timer?.stop(
       `${this.constructor.name}->findWaveScopeTdhBasedSubmissionDropOvervotersWithOvervoteAmounts`
     );
@@ -1470,6 +1496,47 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       )
       .then((res) => res?.cnt ?? 0);
   }
+
+  async searchDropsContainingPhraseInWave(
+    param: {
+      wave_id: string;
+      term: string;
+      limit: number;
+      offset: number;
+    },
+    ctx: RequestContext
+  ): Promise<DropEntity[]> {
+    try {
+      ctx.timer?.start(
+        `${this.constructor.name}->searchDropsContainingPhraseInWave`
+      );
+      const normalizedTerm = param.term.trim().replace(/\s+/g, ' ');
+      if (!normalizedTerm.length) {
+        return [];
+      }
+      const booleanPhrase = `"${normalizedTerm}"`;
+      const likeTerm = normalizedTerm.replace(/[\\%_]/g, '\\$&');
+      return this.db.execute<DropEntity>(
+        `
+        SELECT
+            d.*
+        FROM drops_parts p
+        JOIN drops d on p.drop_id = d.id
+        WHERE d.wave_id = :wave_id AND
+              MATCH(p.content) AGAINST (:term IN BOOLEAN MODE) > 0 AND
+              LOWER(p.content) LIKE LOWER(CONCAT('%', :likeTerm, '%')) ESCAPE '\\\\'
+        ORDER BY d.created_at DESC
+        LIMIT :limit OFFSET :offset
+      `,
+        { ...param, term: booleanPhrase, likeTerm },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(
+        `${this.constructor.name}->searchDropsContainingPhraseInWave`
+      );
+    }
+  }
 }
 
 export interface DropVotersInfoFromDb {
@@ -1486,7 +1553,7 @@ export interface DropVotersInfoFromDb {
 
 export interface ProfileOverVoteAmountInWave extends TotalGivenVotesInWave {
   profile_id: string;
-  tdh: number;
+  credit_limit: number;
 }
 
 export interface TotalGivenVotesInWave {

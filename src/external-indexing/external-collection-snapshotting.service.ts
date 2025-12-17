@@ -15,7 +15,10 @@ import { randomUUID } from 'crypto';
 import { ExternalIndexerRpc, externalIndexerRpc } from './external-indexer-rpc';
 
 const CRYPTOPUNKS_MAINNET = '0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb';
-const ERC721_ABI = ['function ownerOf(uint256) view returns (address)'];
+const ERC721_ABI = [
+  'function ownerOf(uint256) view returns (address)',
+  'function name() view returns (string)'
+];
 const ERC165_ABI = [
   'function supportsInterface(bytes4 interfaceId) view returns (bool)'
 ];
@@ -85,42 +88,61 @@ export class ExternalCollectionSnapshottingService {
     let adapterName: string | null = validation.adapter ?? null;
     let ids: bigint[] = [];
     let totalSupply: number | null = null;
+    let collectionName: string | null = null;
+    let tokenByIndexZero: bigint | null = null;
     let succeeded = false;
 
     try {
       if (contractLc === CRYPTOPUNKS_MAINNET) {
         standard = IndexedContractStandard.LEGACY_721;
         adapterName = 'cryptopunks';
+        collectionName = 'CryptoPunks';
         ids = this.enumerateCryptoPunksIds();
         totalSupply = env.getIntOrNull('PUNKS_SUPPLY') ?? 10000;
         log.info('CryptoPunks adapter engaged', { count: ids.length });
       } else {
         const erc721 = new Contract(contract, ERC721_ABI, this.rpc.provider);
+        if (standard === IndexedContractStandard.ERC721) {
+          collectionName = await this.tryGetName(erc721, atBlock, log);
+        }
         const supportsEnum = await this.supportsEnumerable(contract, atBlock);
 
         if (supportsEnum) {
           const ts = await this.tryGetTotalSupply(contract, atBlock);
-          if (ts) totalSupply = numbers.parseIntOrNull(ts);
+          if (ts) totalSupply = numbers.parseIntOrNull(ts.toString());
+          tokenByIndexZero = await this.tryGetTokenByIndexZero(
+            contract,
+            atBlock
+          );
         }
 
         const fast = await this.enumerateContiguousFast(
           erc721,
           contract,
           atBlock,
+          tokenByIndexZero,
           log
         );
         if (fast) {
           ids = fast.ids;
           totalSupply = fast.totalSupply;
-        } else if (supportsEnum && totalSupply && totalSupply > 0) {
+        } else {
+          if (totalSupply == null) {
+            const ts = await this.tryGetTotalSupply(contract, atBlock);
+            if (ts) totalSupply = numbers.parseIntOrNull(ts.toString());
+          }
+
           const maxIds = env.getIntOrNull('SNAPSHOT_MAX_IDS') ?? 250_000;
-          if (totalSupply > maxIds) {
-            log.warn('Enumerable supply too large; falling back to ownerOf()', {
+          if (totalSupply && totalSupply > maxIds) {
+            const msg = `Given collections totalSupply of ${totalSupply} is too big so unfortunately it can't be indexed automatically.`;
+            log.warn('Enumerable supply too large; aborting snapshot', {
               totalSupply,
               maxIds
             });
-            ids = await this.enumerateByOwnerOf(erc721, atBlock, log);
-          } else {
+            throw new Error(msg);
+          }
+
+          if (supportsEnum && totalSupply && totalSupply > 0) {
             try {
               ids = await this.enumerateByTokenByIndexMulticall(
                 contract,
@@ -133,11 +155,21 @@ export class ExternalCollectionSnapshottingService {
                 'Enumerable (multicall) failed; falling back to ownerOf()',
                 { error: String(e) }
               );
-              ids = await this.enumerateByOwnerOf(erc721, atBlock, log);
+              ids = await this.enumerateByOwnerOf(
+                erc721,
+                atBlock,
+                tokenByIndexZero,
+                log
+              );
             }
+          } else {
+            ids = await this.enumerateByOwnerOf(
+              erc721,
+              atBlock,
+              tokenByIndexZero,
+              log
+            );
           }
-        } else {
-          ids = await this.enumerateByOwnerOf(erc721, atBlock, log);
         }
       }
 
@@ -223,7 +255,8 @@ export class ExternalCollectionSnapshottingService {
             adapter: adapterName,
             total_supply: totalSupply,
             lag_blocks: 0,
-            lag_seconds: lagSeconds
+            lag_seconds: lagSeconds,
+            collection_name: collectionName
           },
           ctx
         );
@@ -266,12 +299,17 @@ export class ExternalCollectionSnapshottingService {
   private async enumerateByOwnerOf(
     erc721: Contract,
     atBlock: number,
+    startHint: bigint | null,
     log: Logger
   ): Promise<bigint[]> {
     const maxIds = env.getIntOrNull('SNAPSHOT_MAX_IDS') ?? 250_000;
     const stopAfterEmpty = env.getIntOrNull('SNAPSHOT_STOP_AFTER_EMPTY') ?? 500;
+    const probeBatch = Math.max(
+      1,
+      env.getIntOrNull('SNAPSHOT_OWNEROF_PROBE_BATCH') ?? 64
+    );
 
-    const start = await this.pickStartId(erc721, atBlock);
+    const start = await this.pickStartId(erc721, atBlock, startHint, log);
     const ids: bigint[] = [];
     let probe = start;
     let emptyStreak = 0;
@@ -283,20 +321,55 @@ export class ExternalCollectionSnapshottingService {
     });
 
     while (emptyStreak < stopAfterEmpty && ids.length < maxIds) {
-      const owner = await this.ownerOfExists(erc721, probe, atBlock);
-      if (owner) {
-        ids.push(probe);
-        emptyStreak = 0;
-        if (ids.length % 250 === 0) {
-          log.info('ownerOf() probe progress', {
-            found: ids.length,
-            lastId: probe.toString()
-          });
-        }
-      } else {
-        emptyStreak++;
+      const remainingIds = maxIds - ids.length;
+      const remainingUntilEmpty = stopAfterEmpty - emptyStreak;
+      const chunkSize = Math.max(
+        1,
+        Math.min(probeBatch, remainingIds, remainingUntilEmpty)
+      );
+      const chunkIds: bigint[] = new Array(chunkSize);
+      for (let i = 0; i < chunkSize; i++) {
+        chunkIds[i] = probe + BigInt(i);
       }
-      probe++;
+
+      const owners = await this.ownerOfProbeBatch(
+        erc721,
+        chunkIds,
+        atBlock,
+        log
+      );
+
+      let advanced = 0;
+      for (let i = 0; i < owners.length; i++) {
+        const tokenId = chunkIds[i];
+        const owner = owners[i];
+        advanced++;
+
+        if (owner) {
+          ids.push(tokenId);
+          emptyStreak = 0;
+          if (ids.length % 250 === 0) {
+            log.info('ownerOf() probe progress', {
+              found: ids.length,
+              lastId: tokenId.toString()
+            });
+          }
+          if (ids.length >= maxIds) {
+            break;
+          }
+        } else {
+          emptyStreak++;
+          if (emptyStreak >= stopAfterEmpty) {
+            break;
+          }
+        }
+      }
+
+      probe += BigInt(advanced);
+
+      if (emptyStreak >= stopAfterEmpty || ids.length >= maxIds) {
+        break;
+      }
     }
 
     log.info('ownerOf() probing finished', {
@@ -304,6 +377,66 @@ export class ExternalCollectionSnapshottingService {
       lastProbed: (probe - BigInt(1)).toString()
     });
     return ids;
+  }
+
+  private async ownerOfProbeBatch(
+    erc721: Contract,
+    tokenIds: bigint[],
+    atBlock: number,
+    log: Logger
+  ): Promise<(string | null)[]> {
+    if (tokenIds.length === 0) {
+      return [];
+    }
+
+    const mc = new Contract(
+      this.multicallAddr(),
+      MULTICALL3_ABI,
+      this.rpc.provider
+    );
+    const erc721Iface = new ethers.utils.Interface(ERC721_ABI);
+
+    const calls = tokenIds.map((tid) => ({
+      target: erc721.address,
+      callData: erc721Iface.encodeFunctionData('ownerOf', [tid])
+    }));
+
+    try {
+      const ret: { success: boolean; returnData: string }[] =
+        await mc.tryAggregate(false, calls, {
+          blockTag: atBlock
+        });
+
+      return ret.map((r, idx) => {
+        if (!r?.success || !r.returnData || r.returnData === '0x') {
+          return null;
+        }
+        try {
+          const decoded: ethers.utils.Result = erc721Iface.decodeFunctionResult(
+            'ownerOf',
+            r.returnData
+          );
+          const owner = (decoded[0] as string) ?? null;
+          return owner && owner !== ethers.constants.AddressZero ? owner : null;
+        } catch {
+          return null;
+        }
+      });
+    } catch (e) {
+      log.warn(
+        'ownerOf() probe multicall failed; falling back to single calls',
+        {
+          error: String(e),
+          chunk: tokenIds.length
+        }
+      );
+    }
+
+    const owners: (string | null)[] = new Array(tokenIds.length);
+    for (let i = 0; i < tokenIds.length; i++) {
+      owners[i] = await this.ownerOfExists(erc721, tokenIds[i], atBlock);
+    }
+    return owners;
   }
 
   private async getBestBlock(): Promise<number> {
@@ -339,6 +472,29 @@ export class ExternalCollectionSnapshottingService {
     }
   }
 
+  private async tryGetName(
+    erc721: Contract,
+    atBlock: number,
+    log: Logger
+  ): Promise<string | null> {
+    try {
+      const name: string = await erc721.name({ blockTag: atBlock });
+      if (typeof name !== 'string') return null;
+
+      const trimmed = name.trim();
+      const limited = trimmed.slice(0, 255);
+      if (trimmed.length > limited.length) {
+        log.warn('Truncated collection name from name()', {
+          originalLength: trimmed.length
+        });
+      }
+      return limited;
+    } catch (e) {
+      log.warn('name() call failed', { error: String(e) });
+      return null;
+    }
+  }
+
   private async tryGetTotalSupply(
     contractAddr: string,
     atBlock: number
@@ -349,7 +505,8 @@ export class ExternalCollectionSnapshottingService {
       this.rpc.provider
     );
     try {
-      return await erc721Enum.totalSupply({ blockTag: atBlock });
+      const ts = await erc721Enum.totalSupply({ blockTag: atBlock });
+      return BigInt(ts.toString());
     } catch {
       return null;
     }
@@ -359,6 +516,7 @@ export class ExternalCollectionSnapshottingService {
     erc721: Contract,
     contractAddr: string,
     atBlock: number,
+    startHint: bigint | null,
     log: Logger
   ): Promise<{ ids: bigint[]; totalSupply: number } | null> {
     const ts = await this.tryGetTotalSupply(contractAddr, atBlock);
@@ -372,7 +530,7 @@ export class ExternalCollectionSnapshottingService {
       return null;
     }
 
-    const start = await this.pickStartId(erc721, atBlock);
+    const start = await this.pickStartId(erc721, atBlock, startHint, log);
     const ids = Array.from({ length: Number(ts) }, (_, i) => start + BigInt(i));
 
     log.info('Trying FAST contiguous enumeration', {
@@ -402,10 +560,38 @@ export class ExternalCollectionSnapshottingService {
     }
   }
 
+  private async tryGetTokenByIndexZero(
+    contractAddr: string,
+    atBlock: number
+  ): Promise<bigint | null> {
+    const erc721Enum = new Contract(
+      contractAddr,
+      ERC721_ENUM_ABI,
+      this.rpc.provider
+    );
+    try {
+      const tid = await erc721Enum.tokenByIndex(BigInt(0), {
+        blockTag: atBlock
+      });
+      return BigInt(tid.toString());
+    } catch {
+      return null;
+    }
+  }
+
   private async pickStartId(
     erc721: Contract,
-    atBlock: number
+    atBlock: number,
+    startHint: bigint | null,
+    log: Logger
   ): Promise<bigint> {
+    if (startHint != null) {
+      const start = BigInt(startHint.toString());
+      log.info('Using start hint from tokenByIndex(0)', {
+        start: start.toString()
+      });
+      return start;
+    }
     return (await this.ownerOfExists(erc721, BigInt(0), atBlock))
       ? BigInt(0)
       : BigInt(1);

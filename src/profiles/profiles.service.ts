@@ -41,6 +41,7 @@ import { identityFetcher } from '../api-serverless/src/identities/identity.fetch
 import { enums } from '../enums';
 import { collections } from '../collections';
 import { identitiesService } from '../api-serverless/src/identities/identities.service';
+import { xTdhRepository, XTdhRepository } from '../xtdh/xtdh.repository';
 
 export class ProfilesService {
   private readonly logger = Logger.get('PROFILES_SERVICE');
@@ -54,7 +55,8 @@ export class ProfilesService {
     private readonly identitiesDb: IdentitiesDb,
     private readonly notificationsDb: IdentityNotificationsDb,
     private readonly reactionsDb: ReactionsDb,
-    private readonly dropVotingDb: DropVotingDb
+    private readonly dropVotingDb: DropVotingDb,
+    private readonly xTdhRepository: XTdhRepository
   ) {}
 
   public async getProfileAndConsolidationsByIdentity(
@@ -209,9 +211,11 @@ export class ProfilesService {
           banner2: null,
           classification: null,
           sub_classification: null,
-          x_tdh: 0,
-          produced_x_tdh: 0,
-          granted_x_tdh: 0
+          xtdh: 0,
+          produced_xtdh: 0,
+          granted_xtdh: 0,
+          xtdh_rate: 0,
+          basetdh_rate: 0
         },
         ctx.connection!
       );
@@ -362,6 +366,7 @@ export class ProfilesService {
         await this.mergeWaves(sourceIdentity, target, connectionHolder);
         await this.mergeDrops(sourceIdentity, target, connectionHolder);
         await this.mergeNotifications(sourceIdentity, target, connectionHolder);
+        await this.mergeXTdhGrants(sourceIdentity, target, connectionHolder);
         await this.mergeIdentitySubscriptions(
           sourceIdentity,
           target,
@@ -735,6 +740,18 @@ export class ProfilesService {
       connectionHolder
     );
   }
+
+  private async mergeXTdhGrants(
+    source: string,
+    target: string,
+    connectionHolder: ConnectionWrapper<any>
+  ) {
+    await this.xTdhRepository.migrateGrantorId(
+      source,
+      target,
+      connectionHolder
+    );
+  }
 }
 
 export const profilesService = new ProfilesService(
@@ -746,5 +763,6 @@ export const profilesService = new ProfilesService(
   identitiesDb,
   identityNotificationsDb,
   reactionsDb,
-  dropVotingDb
+  dropVotingDb,
+  xTdhRepository
 );

@@ -1,6 +1,8 @@
 const INT_LIKE = /^[+-]?(?:0|[1-9]\d*)(?:\.0+)?$/;
 
 export class Numbers {
+  private readonly NUMERIC_LIKE = /^[+-]?\d+(\.\d+)?$/;
+
   public parseIntOrNull(value: any): number | null {
     if (typeof value === 'number') {
       return Number.isFinite(value) && Number.isInteger(value) ? value : null;
@@ -37,6 +39,32 @@ export class Numbers {
 
   public range(start: number, end: number): number[] {
     return Array.from({ length: end - start + 1 }, (_, i) => i + start);
+  }
+
+  public parseNumberOrNull(value: any): number | null {
+    if (typeof value === 'number') {
+      return Number.isFinite(value) ? value : null;
+    }
+
+    // Reject anything that isn’t a string
+    if (typeof value !== 'string') return null;
+
+    // Trim all whitespace (including NBSP, tabs, etc.)
+    const trimmed = value.trim();
+
+    // Must match numeric format exactly (int or float)
+    if (!this.NUMERIC_LIKE.test(trimmed)) return null;
+
+    const parsed = Number(trimmed);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  public parseNumberOrThrow(value: any): number {
+    const result = this.parseNumberOrNull(value);
+    if (result === null) {
+      throw new Error(`${value} is not an number`);
+    }
+    return result;
   }
 }
 

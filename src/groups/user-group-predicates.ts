@@ -1,4 +1,8 @@
-import { FilterDirection, UserGroupEntity } from '../entities/IUserGroup';
+import {
+  FilterDirection,
+  GroupTdhInclusionStrategy,
+  UserGroupEntity
+} from '../entities/IUserGroup';
 import {
   GRADIENT_CONTRACT,
   MEMELAB_CONTRACT,
@@ -8,6 +12,7 @@ import { RateMatter } from '../entities/IRating';
 import { NEXTGEN_CORE_CONTRACT } from '../nextgen/nextgen_constants';
 import { Network } from 'alchemy-sdk';
 import { numbers } from '../numbers';
+import { assertUnreachable } from '../assertions';
 
 export const isRatingOutOfBounds = ({
   min,
@@ -518,11 +523,27 @@ export const isProfileViolatingTotalSentCicCriteria = (
   );
 };
 
+const getTdhMetricFromProfile = (
+  profile: ProfileSimpleMetrics,
+  strategy: GroupTdhInclusionStrategy
+): number => {
+  switch (strategy) {
+    case GroupTdhInclusionStrategy.TDH:
+      return profile.tdh;
+    case GroupTdhInclusionStrategy.XTDH:
+      return Math.floor(profile.xtdh);
+    case GroupTdhInclusionStrategy.BOTH:
+      return Math.floor(profile.xtdh + profile.tdh);
+    default:
+      return assertUnreachable(strategy);
+  }
+};
+
 const isProfileTdhOutOfGroupsBounds = (
   profile: ProfileSimpleMetrics,
   entity: UserGroupEntity
 ) => {
-  const real = profile.tdh;
+  const real = getTdhMetricFromProfile(profile, entity.tdh_inclusion_strategy);
   const min = entity.tdh_min;
   const max = entity.tdh_max;
   return isRatingOutOfBounds({
@@ -590,6 +611,7 @@ export const isAnyGroupByTotalSentCicOrRepCriteria = (
 export interface ProfileSimpleMetrics {
   readonly profile_id: string;
   readonly tdh: number;
+  readonly xtdh: number;
   readonly level: number;
   readonly cic: number;
   readonly rep: number;

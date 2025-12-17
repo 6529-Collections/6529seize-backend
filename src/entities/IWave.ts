@@ -1,5 +1,7 @@
 import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
 import {
+  WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE,
+  WAVE_OUTCOMES_TABLE,
   WAVES_ARCHIVE_TABLE,
   WAVES_DECISION_PAUSES_TABLE,
   WAVES_TABLE
@@ -151,6 +153,7 @@ export class WaveBase implements WaveBaseType {
 }
 
 @Entity(WAVES_TABLE)
+@Index('idx_wave_serialno_id', ['serial_no', 'id'])
 export class WaveEntity extends WaveBase {
   @Column({ type: 'varchar', length: 100, unique: true, nullable: false })
   readonly id!: string;
@@ -201,7 +204,9 @@ export interface WaveDecisionStrategy {
 
 export enum WaveCreditType {
   TDH = 'TDH',
-  REP = 'REP'
+  REP = 'REP',
+  XTDH = 'XTDH',
+  TDH_PLUS_XTDH = 'TDH_PLUS_XTDH'
 }
 
 export enum WaveType {
@@ -246,6 +251,41 @@ export interface WaveOutcome {
   rep_category?: string;
   amount?: number;
   distribution?: Array<WaveOutcomeDistributionItem>;
+}
+
+@Entity(WAVE_OUTCOMES_TABLE)
+export class WaveOutcomeEntity {
+  @PrimaryGeneratedColumn({ type: 'bigint' })
+  readonly id!: number;
+  @Index()
+  @Column({ type: 'varchar', length: 100, nullable: false })
+  readonly wave_id!: string;
+  @Column({ type: 'varchar', length: 20, nullable: false })
+  readonly type!: WaveOutcomeType;
+  @Column({ type: 'varchar', length: 20, nullable: true })
+  readonly subtype!: WaveOutcomeSubType | null;
+  @Column({ type: 'text', nullable: false })
+  readonly description!: string;
+  @Column({ type: 'varchar', length: 20, nullable: true })
+  readonly credit!: WaveOutcomeCredit | null;
+  @Column({ type: 'text', nullable: true })
+  readonly rep_category!: string | null;
+  @Column({ type: 'bigint', nullable: true })
+  readonly amount!: number | null;
+}
+
+@Entity(WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE)
+export class WaveOutcomeDistributionItemEntity {
+  @PrimaryGeneratedColumn({ type: 'bigint' })
+  readonly id!: number;
+  @Index()
+  @Column({ type: 'varchar', length: 100, nullable: false })
+  readonly wave_id!: string;
+  @Index()
+  @Column({ type: 'bigint', nullable: true })
+  readonly amount!: number | null;
+  @Column({ type: 'text', nullable: true })
+  readonly description!: string | null;
 }
 
 export interface WaveOutcomeDistributionItem {

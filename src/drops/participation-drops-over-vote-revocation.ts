@@ -83,12 +83,8 @@ export async function revokeTdhBasedDropWavesOverVotes(
     await dropsDb.findTdhBasedSubmissionDropOvervotersWithOvervoteAmounts(ctx);
 
   for (const overratedWave of overratedWaves) {
-    const {
-      profile_id,
-      wave_id,
-      tdh: credit_limit,
-      total_given_votes
-    } = overratedWave;
+    const { profile_id, wave_id, credit_limit, total_given_votes } =
+      overratedWave;
     await reduceVotesForDrops(
       {
         profile_id,

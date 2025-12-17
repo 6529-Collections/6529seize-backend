@@ -163,7 +163,8 @@ export class ExternalIndexingRepository extends LazyDbAccessCompatibleService {
           chain,
           contract_lc: contract.toLowerCase(),
           now_ms
-        }
+        },
+        { wrappedConnection: ctx.connection }
       );
 
       return (await this.db.oneOrNull<ExternalIndexedContractEntity>(
@@ -174,7 +175,8 @@ export class ExternalIndexingRepository extends LazyDbAccessCompatibleService {
       WHERE \`partition\` = :partition
       LIMIT 1
       `,
-        { partition }
+        { partition },
+        { wrappedConnection: ctx.connection }
       ))!;
     } finally {
       ctx.timer?.stop(timerKey);
@@ -192,6 +194,7 @@ export class ExternalIndexingRepository extends LazyDbAccessCompatibleService {
       total_supply: number | null;
       lag_blocks: number;
       lag_seconds: number;
+      collection_name: string | null;
     },
     ctx: RequestContext
   ): Promise<boolean> {
@@ -214,6 +217,7 @@ export class ExternalIndexingRepository extends LazyDbAccessCompatibleService {
                 snapshot_lock_owner   = NULL,
                 snapshot_lock_at      = NULL,
                 snapshot_target_block = NULL,
+                collection_name       = :collection_name,
                 error_message         = NULL,          -- ✅ clear error on success
                 updated_at            = :last_event_time
             WHERE \`partition\` = :partition

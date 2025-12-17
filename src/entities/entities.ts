@@ -37,7 +37,6 @@ export { ExternalIndexedContractEntity } from './IExternalIndexedContract';
 export { ExternalIndexedOwnership721Entity } from './IExternalIndexedOwnership721';
 export { ExternalIndexedOwnership721HistoryEntity } from './IExternalIndexedOwnership721History';
 export { ExternalIndexedTransfersEntity } from './IExternalIndexedTransfer';
-export { ExternalTokenOwnerEntity } from './IExternalTokenOwner';
 export { IdentityEntity } from './IIdentity';
 export { IdentityNotificationEntity } from './IIdentityNotification';
 export { IdentitySubscriptionEntity } from './IIdentitySubscription';
@@ -102,8 +101,8 @@ export {
   TDHEditions,
   TDHMemes
 } from './ITDH';
-export { TdhGrantEntity } from './ITdhGrant';
-export { TdhGrantTokenEntity } from './ITdhGrantToken';
+export { XTdhGrantEntity } from './IXTdhGrant';
+export { XTdhGrantTokenEntity } from './IXTdhGrantToken';
 export {
   GlobalTDHHistory,
   LatestGlobalTDHHistory,
@@ -122,7 +121,9 @@ export { UserGroupEntity } from './IUserGroup';
 export {
   WaveArchiveEntity,
   WaveDecisionPauseEntity,
-  WaveEntity
+  WaveEntity,
+  WaveOutcomeEntity,
+  WaveOutcomeDistributionItemEntity
 } from './IWave';
 export {
   WaveDecisionEntity,
@@ -133,3 +134,9 @@ export { WaveLeaderboardEntryEntity } from './IWaveLeaderboardEntry';
 export { WaveMetricEntity } from './IWaveMetric';
 export { WinnerDropVoterVoteEntity } from './IWinnerDropVoterVote';
 export { WSConnectionEntity } from './IWSConnection';
+export {
+  XTdhTokenGrantStatsA,
+  XTdhTokenGrantStatsB
+} from './IXTdhTokenGrantStats';
+export { XTdhTokenStatsA, XTdhTokenStatsB } from './IXTdhTokenStats';
+export { XTdhStatsMetaEntity } from './IXTdhStatsMeta';

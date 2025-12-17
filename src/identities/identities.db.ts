@@ -6,12 +6,10 @@ import {
 import { IdentityEntity } from '../entities/IIdentity';
 import {
   ADDRESS_CONSOLIDATION_KEY,
-  CONSOLIDATED_TDH_EDITIONS_TABLE,
   CONSOLIDATED_WALLETS_TDH_TABLE,
   DROPS_TABLE,
   ENS_TABLE,
   IDENTITIES_TABLE,
-  LATEST_TDH_HISTORY_TABLE,
   MEMES_CONTRACT,
   NFTS_TABLE,
   PROFILES_ARCHIVE_TABLE,
@@ -124,7 +122,10 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
                                          banner1,
                                          banner2,
                                          classification,
-                                         sub_classification)
+                                         sub_classification,
+                                         xtdh,
+                                         produced_xtdh,
+                                         granted_xtdh)
         values (:consolidation_key,
                 :profile_id,
                 :primary_address,
@@ -138,7 +139,10 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
                 :banner1,
                 :banner2,
                 :classification,
-                :sub_classification)
+                :sub_classification,
+                :xtdh,
+                :produced_xtdh,
+                :granted_xtdh)
     `,
       identityEntity,
       { wrappedConnection: connection }
@@ -709,9 +713,11 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
       | 'tdh'
       | 'level_raw'
       | 'consolidation_key'
-      | 'x_tdh'
-      | 'produced_x_tdh'
-      | 'granted_x_tdh'
+      | 'xtdh'
+      | 'produced_xtdh'
+      | 'granted_xtdh'
+      | 'xtdh_rate'
+      | 'basetdh_rate'
     >,
     connection: ConnectionWrapper<any>
   ) {
@@ -912,6 +918,16 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
       .then((result) => result?.tdh ?? 0);
   }
 
+  async getTdhAndXTdhCombinedAndFloored(profileId: string): Promise<number> {
+    return this.db
+      .oneOrNull<{ res: number }>(
+        `
+        select floor(tdh + xtdh) as res from ${IDENTITIES_TABLE} where profile_id = :profileId`,
+        { profileId }
+      )
+      .then((result) => result?.res ?? 0);
+  }
+
   async getProfileHandlesByIds(
     profileIds: string[],
     ctx: RequestContext
@@ -1013,53 +1029,16 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     );
   }
 
-  async getTdhRates(
-    ids: string[],
-    ctx: RequestContext
-  ): Promise<Record<string, number>> {
-    if (!ids.length) {
-      return {};
-    }
-    const tdhRates = await this.db.execute<{
-      profile_id: string;
-      tdh_rate: string;
-    }>(
+  async getProducedXTdhRate(id: string, ctx: RequestContext): Promise<number> {
+    const row = await this.db.oneOrNull<{ basetdh_rate: number }>(
       `
-    SELECT
-        i.profile_id as profile_id,
-        ROUND(SUM(e.hodl_rate) * COALESCE(MAX(c.boost), 1.0)) AS tdh_rate
-    FROM ${CONSOLIDATED_WALLETS_TDH_TABLE} c
-        join ${IDENTITIES_TABLE} i on i.consolidation_key = c.consolidation_key
-             LEFT JOIN ${CONSOLIDATED_TDH_EDITIONS_TABLE} e
-                       ON e.consolidation_key = c.consolidation_key
-    where i.profile_id in (:ids)
-    GROUP BY c.consolidation_key
+    select basetdh_rate from identities where profile_id = :id
     `,
-      { ids },
+      { id },
       { wrappedConnection: ctx.connection }
     );
-    return tdhRates.reduce(
-      (acc, it) => {
-        acc[it.profile_id] = +it.tdh_rate;
-        return acc;
-      },
-      {} as Record<string, number>
-    );
-  }
 
-  async getXTdhRate(id: string, ctx: RequestContext): Promise<number> {
-    return this.db
-      .oneOrNull<{
-        tdh_rate: number;
-      }>(
-        `
-      select ifnull(t.created_boosted_tdh, 0) as tdh_rate from ${IDENTITIES_TABLE} i
-    left join ${LATEST_TDH_HISTORY_TABLE} t on t.consolidation_key = i.consolidation_key where i.profile_id = :id
-    `,
-        { id },
-        { wrappedConnection: ctx.connection }
-      )
-      .then((res) => (res?.tdh_rate ?? 0) * X_TDH_COEFFICIENT);
+    return (row?.basetdh_rate ?? 0) * X_TDH_COEFFICIENT;
   }
 }
 

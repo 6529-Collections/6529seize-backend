@@ -72,6 +72,7 @@ import { enums } from '../../../enums';
 import { numbers } from '../../../numbers';
 import { ApiUpdateWaveDecisionPause } from '../generated/models/ApiUpdateWaveDecisionPause';
 import { clearWaveGroupsCache } from '../../../redis';
+import { ApiDropWithoutWavesPageWithoutCount } from '../generated/models/ApiDropWithoutWavesPageWithoutCount';
 
 const router = asyncRouter();
 
@@ -621,6 +622,41 @@ router.get(
 );
 
 router.get(
+  '/:wave_id/search',
+  maybeAuthenticatedUser(),
+  async (
+    req: Request<
+      { wave_id: string },
+      any,
+      any,
+      { term: string; page: number; size: number },
+      any
+    >,
+    res: Response<ApiResponse<ApiDropWithoutWavesPageWithoutCount>>
+  ) => {
+    const { wave_id } = req.params;
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req);
+    const { term, page, size } = getValidatedByJoiOrThrow(
+      req.query,
+      Joi.object<{ term: string; page: number; size: number }>({
+        term: Joi.string().min(1).required(),
+        size: Joi.number().integer().min(1).max(100).optional().default(20),
+        page: Joi.number().integer().min(1).optional().default(1)
+      })
+    );
+    const result = await dropsService.searchDropsContainingPhraseInWave(
+      { term, page, size, wave_id },
+      {
+        authenticationContext,
+        timer
+      }
+    );
+    res.send(result);
+  }
+);
+
+router.get(
   '/:id/decisions',
   maybeAuthenticatedUser(),
   async (
@@ -744,11 +780,11 @@ const WaveVisibilitySchema = Joi.object<ApiCreateNewWaveVisibilityConfig>({
 const WaveVotingSchema = Joi.object<ApiCreateNewWaveVotingConfig>({
   scope: WaveScopeSchema.required(),
   credit_type: Joi.string()
-    .allow(...Object.values(ApiWaveCreditType))
+    .valid(...Object.values(ApiWaveCreditType))
     .required(),
   credit_scope: Joi.string()
     .optional()
-    .allow(...Object.values(ApiWaveCreditScope))
+    .valid(...Object.values(ApiWaveCreditScope))
     .default(ApiWaveCreditScope.Wave),
   credit_category: Joi.when('credit_type', {
     is: Joi.string().valid(ApiWaveCreditType.Rep),
@@ -769,7 +805,7 @@ const WaveRequiredMetadataSchema = Joi.object<ApiWaveRequiredMetadata>({
   name: Joi.string().required().max(250).min(1),
   type: Joi.string()
     .required()
-    .allow(...Object.values(ApiWaveParticipationRequirement))
+    .valid(...Object.values(ApiWaveParticipationRequirement))
 });
 
 const WaveParticipationSchema = Joi.object<ApiCreateNewWaveParticipationConfig>(
@@ -817,7 +853,7 @@ const WaveConfigSchema = Joi.object<
 >({
   type: Joi.string()
     .required()
-    .allow(...Object.values(ApiWaveType)),
+    .valid(...Object.values(ApiWaveType)),
   winning_thresholds: Joi.when('type', {
     is: Joi.string().valid(ApiWaveType.Approve),
     then: IntRangeSchema.required().or('min', 'max'),

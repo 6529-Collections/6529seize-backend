@@ -54,11 +54,17 @@ export class IdentityEntity {
   public readonly sub_classification!: string | null;
 
   @Column({ type: 'double', nullable: false, default: 0 })
-  readonly x_tdh!: number;
+  readonly xtdh!: number;
 
   @Column({ type: 'double', nullable: false, default: 0 })
-  readonly produced_x_tdh!: number;
+  readonly xtdh_rate!: number;
 
   @Column({ type: 'double', nullable: false, default: 0 })
-  readonly granted_x_tdh!: number;
+  readonly basetdh_rate!: number;
+
+  @Column({ type: 'double', nullable: false, default: 0 })
+  readonly produced_xtdh!: number;
+
+  @Column({ type: 'double', nullable: false, default: 0 })
+  readonly granted_xtdh!: number;
 }

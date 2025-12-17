@@ -102,7 +102,7 @@ export const IncomingIdentitySubscriptionsParamsSchema =
     page_size: Joi.number().optional().integer().min(1).max(100).default(10),
     target_id: Joi.string().required(),
     target_type: Joi.string()
-      .allow(...Object.values(ActivityEventTargetType))
+      .valid(...Object.values(ActivityEventTargetType))
       .required()
   });
 
@@ -112,7 +112,7 @@ export const OutgoingIdentitySubscriptionsParamsSchema =
     page_size: Joi.number().optional().integer().min(1).max(100).default(10),
     subscriber_id: Joi.string().required(),
     target_type: Joi.string()
-      .allow(...Object.values(ActivityEventTargetType))
+      .valid(...Object.values(ActivityEventTargetType))
       .required()
   });
 

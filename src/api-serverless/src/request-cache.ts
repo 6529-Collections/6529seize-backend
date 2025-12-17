@@ -1,8 +1,8 @@
 import { NextFunction, Request, RequestHandler, Response } from 'express';
 import { OutgoingHttpHeaders } from 'http';
-import { Time } from '../../time';
 import { Logger } from '../../logging';
 import { redisGet, redisSetJson } from '../../redis';
+import { Time } from '../../time';
 import { CACHE_TIME_MS } from './api-constants';
 import { cacheKey } from './api-helpers';
 
@@ -128,7 +128,11 @@ export function cacheRequest(
         return;
       }
       try {
-        const bufferedBody = Buffer.concat(chunks);
+        const bufferedBody = Buffer.concat(
+          chunks.map(
+            (c) => new Uint8Array(c.buffer, c.byteOffset, c.byteLength)
+          )
+        );
         const headers = sanitizeHeaders(res.getHeaders());
         const payload: CachedResponsePayload = {
           [REQUEST_CACHE_MARKER]: true,

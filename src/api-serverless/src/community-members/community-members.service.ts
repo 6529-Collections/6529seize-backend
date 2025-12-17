@@ -44,8 +44,12 @@ export class CommunityMembersService {
         return members.map((member) => ({
           display: member.display,
           detail_view_key: member.detail_view_key,
-          level: calculateLevel({ tdh: member.tdh, rep: member.rep }),
+          level: calculateLevel({
+            tdh: member.tdh + member.xtdh,
+            rep: member.rep
+          }),
           tdh: member.tdh,
+          xtdh: member.xtdh,
           rep: member.rep,
           cic: member.cic,
           last_activity: lastActivities[member.consolidation_key] ?? null,

@@ -144,6 +144,9 @@ export class BaseConsolidatedTDH extends BaseTDH {
   @PrimaryColumn({ type: 'varchar', length: 200 })
   consolidation_key!: string;
 
+  @Column({ type: 'double', nullable: false, default: 0 })
+  boosted_tdh_rate!: number;
+
   @Column({ type: 'json', nullable: false })
   wallets?: any;
 }
@@ -239,6 +242,7 @@ export class BaseTDHEditionsFields {
 }
 
 @Entity(TDH_EDITIONS_TABLE)
+@Index(['wallet', 'hodl_rate'])
 export class TDHEditions extends BaseTDHEditionsFields {
   @PrimaryColumn({ type: 'varchar', length: 50 })
   wallet!: string;
@@ -274,18 +278,7 @@ export interface BoostInfo {
 
 export interface DefaultBoost {
   memes_card_sets: BoostInfo;
-  memes_szn1: BoostInfo;
-  memes_szn2: BoostInfo;
-  memes_szn3: BoostInfo;
-  memes_szn4: BoostInfo;
-  memes_szn5: BoostInfo;
-  memes_szn6: BoostInfo;
-  memes_szn7: BoostInfo;
-  memes_szn8: BoostInfo;
-  memes_szn9: BoostInfo;
-  memes_szn10: BoostInfo;
-  memes_szn11: BoostInfo;
-  memes_szn12: BoostInfo;
+  [key: `memes_szn${number}`]: BoostInfo;
   memes_genesis: BoostInfo;
   memes_nakamoto: BoostInfo;
   gradients: BoostInfo;

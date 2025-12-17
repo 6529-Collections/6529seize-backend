@@ -111,8 +111,9 @@ export class RatingsService {
       profile_id,
       matter
     });
-    const tdh = await identitiesDb.getProfileTdh(profile_id);
-    return tdh - ratesSpent;
+    const totalCredit =
+      await identitiesDb.getTdhAndXTdhCombinedAndFloored(profile_id);
+    return totalCredit - ratesSpent;
   }
 
   public async updateRating(
@@ -224,7 +225,7 @@ export class RatingsService {
     changeReason,
     proxyContext,
     connection,
-    skipTdhCheck,
+    skipCreditCheck,
     skipLogCreation,
     timer
   }: {
@@ -232,7 +233,7 @@ export class RatingsService {
     changeReason: string;
     proxyContext: RatingProxyContext | null;
     connection: ConnectionWrapper<any>;
-    skipTdhCheck?: boolean;
+    skipCreditCheck?: boolean;
     skipLogCreation?: boolean;
     timer?: Timer;
   }): Promise<UpdateRatingUnsafeResult> {
@@ -267,15 +268,17 @@ export class RatingsService {
         }
         proxyCreditDelta = ratingChange;
       }
-      if (!skipTdhCheck) {
-        const totalTdhSpentOnMatter = currentRating.total_tdh_spent_on_matter;
-        const tdhSpentOnThisRequest =
+      if (!skipCreditCheck) {
+        const totalCreditSpentOnMatter =
+          currentRating.total_credit_spent_on_matter;
+        const creditSpentOnThisRequest =
           Math.abs(request.rating) - Math.abs(currentRating.rating);
-        const profileTdh = await identitiesDb.getProfileTdh(profileId);
-        if (totalTdhSpentOnMatter + tdhSpentOnThisRequest > profileTdh) {
+        const totalCredit =
+          await identitiesDb.getTdhAndXTdhCombinedAndFloored(profileId);
+        if (totalCreditSpentOnMatter + creditSpentOnThisRequest > totalCredit) {
           throw new BadRequestException(
-            `Not enough TDH left to spend on this matter. Changing this vote would spend ${tdhSpentOnThisRequest} TDH, but profile only has ${
-              profileTdh - totalTdhSpentOnMatter
+            `Not enough credit left to spend on this matter. Changing this vote would spend ${creditSpentOnThisRequest}, but profile only has ${
+              totalCredit - totalCreditSpentOnMatter
             } left to spend`
           );
         }
@@ -321,9 +324,7 @@ export class RatingsService {
 
   private async insertLogs(
     request: UpdateRatingRequest,
-    currentRating: Rating & {
-      total_tdh_spent_on_matter: number;
-    },
+    currentRating: Rating,
     changeReason: string,
     proxyContext: RatingProxyContext | null,
     connection: ConnectionWrapper<any>
@@ -492,7 +493,7 @@ export class RatingsService {
 
   public async reduceOverRates() {
     const start = Time.now();
-    this.logger.info('Revoking rates for profiles which have lost TDH');
+    this.logger.info('Revoking rates for profiles which have lost credit');
     const overRateMatters = await this.ratingsDb.getOverRateMatters();
     const overRateMattersByProfileIds = overRateMatters.reduce(
       (acc, overRateMatter) => {
@@ -511,7 +512,7 @@ export class RatingsService {
       await this.reduceGivenProfileOverRates(raterProfileId, profileMatters);
     }
     this.logger.info(
-      `All rates revoked profiles which have lost TDH in ${start.diffFromNow()}`
+      `All rates revoked profiles which have lost credit in ${start.diffFromNow()}`
     );
     await this.ratingsDb.executeNativeQueriesInTransaction(
       async (connection) => {
@@ -527,7 +528,7 @@ export class RatingsService {
   ) {
     this.logger.info(`Reducing rates for profile ${raterProfileId}`);
     for (const overRatedMatter of profileMatters) {
-      const coefficient = overRatedMatter.rater_tdh / overRatedMatter.tally;
+      const coefficient = overRatedMatter.rater_credit / overRatedMatter.tally;
       await this.ratingsDb.executeNativeQueriesInTransaction(
         async (connection) => {
           const ratings = await this.ratingsDb.getRatingsOnMatter(
@@ -537,8 +538,8 @@ export class RatingsService {
             },
             connection
           );
-          let overTdh =
-            Math.abs(overRatedMatter.tally) - overRatedMatter.rater_tdh;
+          let overCredit =
+            Math.abs(overRatedMatter.tally) - overRatedMatter.rater_credit;
           const identityUpdates: IdentityUpdate[] = [];
 
           for (const rating of ratings) {
@@ -546,9 +547,9 @@ export class RatingsService {
               const newRating =
                 Math.floor(Math.abs(rating.rating * coefficient)) *
                 (rating.rating / Math.abs(rating.rating));
-              overTdh =
-                overTdh - (Math.abs(rating.rating) - Math.abs(newRating));
-              const identityUpdate = await this.insertLostTdhRating(
+              overCredit =
+                overCredit - (Math.abs(rating.rating) - Math.abs(newRating));
+              const identityUpdate = await this.insertLostCreditRating(
                 rating,
                 newRating,
                 connection
@@ -558,7 +559,7 @@ export class RatingsService {
               }
             }
 
-            if (overTdh <= 0) {
+            if (overCredit <= 0) {
               break;
             }
           }
@@ -575,7 +576,7 @@ export class RatingsService {
     this.logger.info(`Reduced rates for profile ${raterProfileId}`);
   }
 
-  private async insertLostTdhRating(
+  private async insertLostCreditRating(
     oldRating: Rating,
     newRating: number,
     connection: ConnectionWrapper<any>
@@ -639,7 +640,7 @@ export class RatingsService {
         proxyContext: null,
         connection: connectionHolder,
         skipLogCreation: true,
-        skipTdhCheck: true
+        skipCreditCheck: true
       });
 
       if (identityUpdate) {
@@ -785,7 +786,7 @@ export class RatingsService {
         changeReason: `Profile ${sourceHandle} archived, ratings transferred to ${targetHandle}`,
         proxyContext: null,
         connection: connectionHolder,
-        skipTdhCheck: true,
+        skipCreditCheck: true,
         skipLogCreation: true
       });
 
@@ -824,7 +825,7 @@ export class RatingsService {
     return result.map((it) => ({
       ...it,
       level: calculateLevel({
-        tdh: it.tdh,
+        tdh: it.tdh + it.xtdh,
         rep: profileReps[it.profile_id] ?? 0
       })
     }));
@@ -869,7 +870,7 @@ export class RatingsService {
           data: page.data.map<ApiRatingWithProfileInfoAndLevel>((result) => ({
             ...result,
             level: calculateLevel({
-              tdh: result.tdh,
+              tdh: result.tdh + result.xtdh,
               rep: profileReps[result.profile_id] ?? 0
             })
           }))
@@ -978,10 +979,12 @@ export class RatingsService {
                   cic: 0,
                   rep: 0,
                   tdh: 0,
-                  x_tdh: 0,
-                  produced_x_tdh: 0,
-                  granted_x_tdh: 0,
-                  level_raw: 0
+                  xtdh: 0,
+                  produced_xtdh: 0,
+                  granted_xtdh: 0,
+                  level_raw: 0,
+                  xtdh_rate: 0,
+                  basetdh_rate: 0
                 },
                 connection
               )
@@ -1104,11 +1107,11 @@ export class RatingsService {
           } catch (e: any) {
             if (
               e.message.startsWith(
-                `Not enough TDH left to spend on this matter`
+                `Not enough credit left to spend on this matter`
               )
             ) {
               throw new BadRequestException(
-                `Not enough TDH to go through with this bulk rating`
+                `Not enough credit to go through with this bulk rating`
               );
             }
           }
@@ -1134,7 +1137,8 @@ export class RatingsService {
     rater_id: string;
     rater_representative_id: string | null;
   }): Promise<ApiAvailableRatingCredit> {
-    const currentTdh = await identitiesDb.getProfileTdh(rater_id);
+    const totalProfileCredits =
+      await identitiesDb.getTdhAndXTdhCombinedAndFloored(rater_id);
     const [repSpent, cicSpent] = await Promise.all([
       this.ratingsDb.getRatesSpentOnMatterByProfile({
         profile_id: rater_id,
@@ -1145,8 +1149,8 @@ export class RatingsService {
         matter: RateMatter.CIC
       })
     ]);
-    let repLeft = currentTdh - repSpent;
-    let cicLeft = currentTdh - cicSpent;
+    let repLeft = totalProfileCredits - repSpent;
+    let cicLeft = totalProfileCredits - cicSpent;
     if (rater_representative_id && rater_representative_id !== rater_id) {
       const proxies =
         await this.profileProxiesDb.findProfileProxiesByGrantorAndGrantee({
@@ -1226,7 +1230,7 @@ export class RatingsService {
             { newRatingsByCategoryAndProfile, proposedCategories },
             ctxWithConnection
           );
-          const tdhWastedDuringThisBulkRating = ratingChanges.reduce(
+          const creditWastedDuringThisBulkRating = ratingChanges.reduce(
             (acc, { changes }) =>
               acc +
               changes.reduce(
@@ -1236,18 +1240,20 @@ export class RatingsService {
               ),
             0
           );
-          const [totalTdh, historicallyWastedTdh] = await Promise.all([
-            this.ratingsDb.getTdh(authenticationContext.getActingAsId()!, ctx),
-            this.ratingsDb.getTotalTdhSpent(
+          const [totalCredit, historicallySpentCredit] = await Promise.all([
+            this.identitiesDb.getTdhAndXTdhCombinedAndFloored(
+              authenticationContext.getActingAsId()!
+            ),
+            this.ratingsDb.getTotalCreditSpent(
               RateMatter.REP,
               authenticationContext.getActingAsId()!,
               ctxWithConnection
             )
           ]);
-          const tdhLeft = totalTdh - historicallyWastedTdh;
-          if (tdhLeft < tdhWastedDuringThisBulkRating) {
+          const creditLeft = totalCredit - historicallySpentCredit;
+          if (creditLeft < creditWastedDuringThisBulkRating) {
             throw new BadRequestException(
-              `Not enough TDH left to go through with this bulk rating`
+              `Not enough credit left to go through with this bulk rating`
             );
           }
           if (authenticationContext.isAuthenticatedAsProxy()) {
@@ -1262,7 +1268,7 @@ export class RatingsService {
             }
             const creditLeft =
               (repAction.credit_amount ?? 0) - (repAction.credit_spent ?? 0);
-            if (creditLeft < tdhWastedDuringThisBulkRating) {
+            if (creditLeft < creditWastedDuringThisBulkRating) {
               throw new BadRequestException(
                 `Not enough proxy credit left to rate.`
               );
