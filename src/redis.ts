@@ -97,10 +97,18 @@ export async function evictKeyFromRedisCache(key: string): Promise<any> {
 export async function evictAllKeysMatchingPatternFromRedisCache(
   pattern: string
 ) {
-  if (redis) {
-    const keys = await redis.keys(pattern);
-    await Promise.all(keys.map((it) => redis.del(it)));
+  logger.info(`Evicting all keys matching pattern: ${pattern}`);
+  if (!redis) {
+    return;
   }
+  let cursor = 0;
+  do {
+    const result = await redis.scan(cursor, { MATCH: pattern, COUNT: 100 });
+    cursor = result.cursor;
+    if (result.keys.length > 0) {
+      await redis.del(result.keys);
+    }
+  } while (cursor !== 0);
 }
 
 const logger = Logger.get('REDIS_CLIENT');
