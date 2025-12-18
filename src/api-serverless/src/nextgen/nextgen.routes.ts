@@ -189,6 +189,10 @@ router.get(
     const merkleRoot = req.params.merkle_root;
     const tokenId = numbers.parseIntOrNull(req.params.tokenId);
 
+    if (tokenId === null) {
+      return res.status(400).send({});
+    }
+
     db.fetchNextGenBurnAllowlist(merkleRoot, tokenId).then((result) => {
       res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
       res.setHeader(ACCESS_CONTROL_ALLOW_ORIGIN_HEADER, corsOptions.origin);
