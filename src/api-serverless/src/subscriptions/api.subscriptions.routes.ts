@@ -14,7 +14,7 @@ import {
   UnauthorisedException
 } from '../../../exceptions';
 import { getNft } from '../../../nftsLoop/db.nfts';
-import { evictKeyFromRedisCache } from '../../../redis';
+import { evictAllKeysMatchingPatternFromRedisCache } from '../../../redis';
 import { equalIgnoreCase } from '../../../strings';
 import { PaginatedResponse } from '../api-constants';
 import {
@@ -55,20 +55,20 @@ import {
   updateSubscriptionMode
 } from './api.subscriptions.db';
 
+async function evictCacheForPath(path: string) {
+  await evictAllKeysMatchingPatternFromRedisCache(
+    getCacheKeyPatternForPath(`${path}*`)
+  );
+}
+
 async function invalidateSubscriptionCache(consolidationKey: string) {
-  await evictKeyFromRedisCache(
-    getCacheKeyPatternForPath(
-      `/api/subscriptions/consolidation/details/${consolidationKey}`
-    )
+  await evictCacheForPath(
+    `/api/subscriptions/consolidation/details/${consolidationKey}`
   );
-  await evictKeyFromRedisCache(
-    getCacheKeyPatternForPath(
-      `/api/subscriptions/consolidation/upcoming-memes/${consolidationKey}`
-    )
+  await evictCacheForPath(
+    `/api/subscriptions/consolidation/upcoming-memes/${consolidationKey}`
   );
-  await evictKeyFromRedisCache(
-    getCacheKeyPatternForPath(`/api/subscriptions/upcoming-memes-counts`)
-  );
+  await evictCacheForPath(`/api/subscriptions/upcoming-memes-counts`);
   await giveReadReplicaTimeToCatchUp();
 }
 
@@ -680,10 +680,9 @@ router.post(
 
     await resetAllowlist(contract, tokenId);
 
-    const overviewCacheKey = getCacheKeyPatternForPath(
+    await evictCacheForPath(
       `/api/distributions/${contract}/${tokenId}/overview`
     );
-    await evictKeyFromRedisCache(overviewCacheKey);
 
     return await returnJsonResult(
       {
