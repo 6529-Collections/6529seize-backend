@@ -223,7 +223,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                   :next_decision_time,
                   :forbid_negative_votes,
                   :is_direct_message,
-                  ${wave.serial_no !== null ? ', :serial_no' : ''})`,
+                  :outcomes${wave.serial_no !== null ? ', :serial_no' : ''})`,
         params,
         { wrappedConnection: ctx.connection }
       )
