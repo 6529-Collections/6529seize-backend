@@ -156,6 +156,10 @@ router.post(
       consolidationKey,
       requestPayload.automatic
     );
+    const cacheKey = getCacheKeyPatternForPath(
+      `/api/subscriptions/consolidation/details/${consolidationKey}`
+    );
+    await evictKeyFromRedisCache(cacheKey);
     await giveReadReplicaTimeToCatchUp();
     res.status(201).send(response);
   }
@@ -199,6 +203,10 @@ router.post(
       consolidationKey,
       requestPayload.subscribe_all_editions
     );
+    const cacheKey = getCacheKeyPatternForPath(
+      `/api/subscriptions/consolidation/details/${consolidationKey}`
+    );
+    await evictKeyFromRedisCache(cacheKey);
     await giveReadReplicaTimeToCatchUp();
     res.status(201).send(response);
   }
@@ -338,6 +346,19 @@ router.post(
       requestPayload.token_id,
       requestPayload.subscribed
     );
+    await evictKeyFromRedisCache(
+      getCacheKeyPatternForPath(
+        `/api/subscriptions/consolidation/details/${consolidationKey}`
+      )
+    );
+    await evictKeyFromRedisCache(
+      getCacheKeyPatternForPath(
+        `/api/subscriptions/consolidation/upcoming-memes/${consolidationKey}`
+      )
+    );
+    await evictKeyFromRedisCache(
+      getCacheKeyPatternForPath(`/api/subscriptions/upcoming-memes-counts`)
+    );
     await giveReadReplicaTimeToCatchUp();
     res.status(201).send(response);
   }
@@ -389,6 +410,19 @@ router.post(
       requestPayload.contract,
       requestPayload.token_id,
       requestPayload.count
+    );
+    await evictKeyFromRedisCache(
+      getCacheKeyPatternForPath(
+        `/api/subscriptions/consolidation/details/${consolidationKey}`
+      )
+    );
+    await evictKeyFromRedisCache(
+      getCacheKeyPatternForPath(
+        `/api/subscriptions/consolidation/upcoming-memes/${consolidationKey}`
+      )
+    );
+    await evictKeyFromRedisCache(
+      getCacheKeyPatternForPath(`/api/subscriptions/upcoming-memes-counts`)
     );
     await giveReadReplicaTimeToCatchUp();
     res.status(201).send(response);

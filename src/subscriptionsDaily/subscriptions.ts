@@ -224,6 +224,7 @@ async function createFinalSubscriptions(
           phase: null,
           phase_subscriptions: -1,
           phase_position: -1,
+          redeemed: false,
           redeemed_count: 0
         };
         finalSubscriptions.push(finalSub);
