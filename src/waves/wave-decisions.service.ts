@@ -1,7 +1,12 @@
 import { waveDecisionsDb, WaveDecisionsDb } from './wave-decisions.db';
 import { Time, Timer } from '../time';
 import { RequestContext } from '../request.context';
-import { WaveDecisionStrategy, WaveOutcome } from '../entities/IWave';
+import {
+  WaveDecisionStrategy,
+  WaveOutcomeCredit,
+  WaveOutcomeSubType,
+  WaveOutcomeType
+} from '../entities/IWave';
 import {
   WaveDecisionWinnerDropEntity,
   WaveDecisionWinnerPrize
@@ -18,6 +23,23 @@ import {
 import { DropsDb, dropsDb } from '../drops/drops.db';
 import { DropRealVoterVoteInTimeEntityWithoutId } from '../entities/IDropRealVoterVoteInTime';
 import { WinnerDropVoterVoteEntity } from '../entities/IWinnerDropVoterVote';
+import { collections } from '../collections';
+import { wavesApiDb } from '../api-serverless/src/waves/waves.api.db';
+
+interface WaveOutcome {
+  type: WaveOutcomeType;
+  subtype?: WaveOutcomeSubType;
+  description: string;
+  credit?: WaveOutcomeCredit;
+  rep_category?: string;
+  amount?: number;
+  distribution?: Array<WaveOutcomeDistributionItem>;
+}
+
+interface WaveOutcomeDistributionItem {
+  amount?: number | null;
+  description?: string | null;
+}
 
 export class WaveDecisionsService {
   private readonly logger: Logger = Logger.get(this.constructor.name);
@@ -38,10 +60,50 @@ export class WaveDecisionsService {
         currentMillis,
         { timer }
       );
+    const waveIds = collections.distinct(
+      wavesLatestDecisionTimesWithStrategies.map((it) => it.wave_id)
+    );
+    const outcomes = await wavesApiDb.getWavesOutcomes(waveIds, { timer });
+    const distributionItems =
+      await wavesApiDb.getWavesOutcomesDistributionItems(waveIds, { timer });
+    const withOutcomes = wavesLatestDecisionTimesWithStrategies.map((it) => {
+      const outcomeEntities = outcomes[it.wave_id] ?? [];
+      const distributionEntities = distributionItems[it.wave_id] ?? [];
+      const result = outcomeEntities
+        .sort((a, d) => a.wave_outcome_position - d.wave_outcome_position)
+        .map<WaveOutcome>((outcome) => {
+          const distributions = distributionEntities
+            .filter(
+              (it) => it.wave_outcome_position === outcome.wave_outcome_position
+            )
+            .sort(
+              (a, d) =>
+                a.wave_outcome_distribution_item_position -
+                d.wave_outcome_distribution_item_position
+            )
+            .map<WaveOutcomeDistributionItem>((item) => ({
+              amount: item.amount,
+              description: item.description
+            }));
+          return {
+            type: outcome.type,
+            subtype: outcome.subtype ?? undefined,
+            description: outcome.description,
+            credit: outcome.credit ?? undefined,
+            rep_category: outcome.rep_category ?? undefined,
+            amount: outcome.amount === null ? undefined : outcome.amount,
+            distribution: distributions
+          };
+        });
+      return {
+        ...it,
+        outcomes: result
+      };
+    });
     this.logger.info(
       `Found ${wavesLatestDecisionTimesWithStrategies.length} waves with past execution deadlines. Starting to execute decisions`
     );
-    for (const wavesLatestDecisionTimesWithStrategy of wavesLatestDecisionTimesWithStrategies) {
+    for (const wavesLatestDecisionTimesWithStrategy of withOutcomes) {
       await this.createDecisionsForWave(
         wavesLatestDecisionTimesWithStrategy,
         currentMillis,

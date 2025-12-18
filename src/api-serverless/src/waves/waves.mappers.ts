@@ -5,6 +5,8 @@ import {
   WaveCreditType,
   WaveDecisionPauseEntity,
   WaveEntity,
+  WaveOutcomeDistributionItemEntity,
+  WaveOutcomeEntity,
   WaveRequiredMetadataItemType,
   WaveType
 } from '../../../entities/IWave';
@@ -49,6 +51,10 @@ import {
 import { enums } from '../../../enums';
 import { collections } from '../../../collections';
 import { ApiWaveOutcome } from '../generated/models/ApiWaveOutcome';
+import { ApiWaveOutcomeDistributionItem } from '../generated/models/ApiWaveOutcomeDistributionItem';
+import { ApiWaveOutcomeType } from '../generated/models/ApiWaveOutcomeType';
+import { ApiWaveOutcomeSubType } from '../generated/models/ApiWaveOutcomeSubType';
+import { ApiWaveOutcomeCredit } from '../generated/models/ApiWaveOutcomeCredit';
 
 export class WavesMappers {
   constructor(
@@ -195,7 +201,9 @@ export class WavesMappers {
       authenticatedUserMetrics,
       yourParticipationDropsCountByWaveId,
       wavePauses,
-      pinnedWaveIds
+      pinnedWaveIds,
+      waveOutcomes,
+      waveDistributionItems
     } = await this.getRelatedData(waveEntities, groupIdsUserIsEligibleFor, ctx);
     return waveEntities.map<ApiWave>((waveEntity) =>
       this.mapWaveEntityToApiWave({
@@ -212,7 +220,9 @@ export class WavesMappers {
         authenticatedUserMetrics,
         yourParticipationDropsCountByWaveId,
         wavePauses,
-        pinnedWaveIds
+        pinnedWaveIds,
+        waveOutcomes,
+        waveDistributionItems
       })
     );
   }
@@ -231,6 +241,8 @@ export class WavesMappers {
     authenticatedUserMetrics,
     yourParticipationDropsCountByWaveId,
     wavePauses,
+    waveOutcomes,
+    waveDistributionItems,
     pinnedWaveIds
   }: {
     waveEntity: WaveEntity;
@@ -252,8 +264,42 @@ export class WavesMappers {
     authenticatedUserMetrics: Record<string, WaveDropperMetricEntity>;
     yourParticipationDropsCountByWaveId: Record<string, number>;
     wavePauses: Record<string, WaveDecisionPauseEntity[]>;
+    waveOutcomes: Record<string, WaveOutcomeEntity[]>;
+    waveDistributionItems: Record<string, WaveOutcomeDistributionItemEntity[]>;
     pinnedWaveIds: Set<string>;
   }): ApiWave {
+    const outcomeEntities = waveOutcomes[waveEntity.id] ?? [];
+    const distributionEntities = waveDistributionItems[waveEntity.id] ?? [];
+    const apiWaveOutcomes = outcomeEntities
+      .sort((a, d) => a.wave_outcome_position - d.wave_outcome_position)
+      .map<ApiWaveOutcome>((outcome) => {
+        const distributions = distributionEntities
+          .filter(
+            (it) => it.wave_outcome_position === outcome.wave_outcome_position
+          )
+          .sort(
+            (a, d) =>
+              a.wave_outcome_distribution_item_position -
+              d.wave_outcome_distribution_item_position
+          )
+          .map<ApiWaveOutcomeDistributionItem>((item) => ({
+            amount: item.amount,
+            description: item.description
+          }));
+        return {
+          type: enums.resolve(ApiWaveOutcomeType, outcome.type)!,
+          subtype: outcome.subtype
+            ? enums.resolve(ApiWaveOutcomeSubType, outcome.subtype)
+            : undefined,
+          description: outcome.description,
+          credit: outcome.credit
+            ? enums.resolve(ApiWaveOutcomeCredit, outcome.credit)
+            : undefined,
+          rep_category: outcome.rep_category ?? undefined,
+          amount: outcome.amount === null ? undefined : outcome.amount,
+          distribution: distributions
+        };
+      });
     const contributorsOverview: ApiWaveContributorOverview[] =
       contributors[waveEntity.id]?.map((it) => ({
         contributor_identity: it.contributor_identity,
@@ -382,7 +428,7 @@ export class WavesMappers {
       participation: participation,
       chat: chat,
       wave: waveConf,
-      outcomes: JSON.parse(waveEntity.outcomes),
+      outcomes: apiWaveOutcomes,
       subscribed_actions: subscribedActions[waveEntity.id] ?? [],
       metrics: apiWaveMetrics,
       pauses,
@@ -408,6 +454,8 @@ export class WavesMappers {
     yourParticipationDropsCountByWaveId: Record<string, number>;
     wavePauses: Record<string, WaveDecisionPauseEntity[]>;
     pinnedWaveIds: Set<string>;
+    waveOutcomes: Record<string, WaveOutcomeEntity[]>;
+    waveDistributionItems: Record<string, WaveOutcomeDistributionItemEntity[]>;
   }> {
     ctx.timer?.start('wavesMappers->getRelatedData');
     const waveIds = waveEntities.map((it) => it.id);
@@ -425,7 +473,9 @@ export class WavesMappers {
       subscribedActions,
       yourParticipationDropsCountByWaveId,
       wavePauses,
-      pinnedWaveIds
+      pinnedWaveIds,
+      waveOutcomes,
+      waveDistributionItems
     ] = await Promise.all([
       this.userGroupsService.getByIds(
         waveEntities
@@ -496,7 +546,9 @@ export class WavesMappers {
           profileId: authenticatedUserId
         },
         ctx
-      )
+      ),
+      this.wavesApiDb.getWavesOutcomes(waveIds, ctx),
+      this.wavesApiDb.getWavesOutcomesDistributionItems(waveIds, ctx)
     ]);
     const profileIds = collections.distinct([
       ...waveEntities
@@ -556,7 +608,9 @@ export class WavesMappers {
       authenticatedUserMetrics,
       yourParticipationDropsCountByWaveId,
       wavePauses,
-      pinnedWaveIds
+      pinnedWaveIds,
+      waveOutcomes,
+      waveDistributionItems
     };
   }
 }

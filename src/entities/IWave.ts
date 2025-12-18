@@ -249,16 +249,6 @@ export enum WaveOutcomeCredit {
   CIC = 'CIC'
 }
 
-export interface WaveOutcome {
-  type: WaveOutcomeType;
-  subtype?: WaveOutcomeSubType;
-  description: string;
-  credit?: WaveOutcomeCredit;
-  rep_category?: string;
-  amount?: number;
-  distribution?: Array<WaveOutcomeDistributionItem>;
-}
-
 @Entity(WAVE_OUTCOMES_TABLE)
 export class WaveOutcomeEntity {
   @Index()
@@ -297,9 +287,4 @@ export class WaveOutcomeDistributionItemEntity {
   readonly amount!: number | null;
   @Column({ type: 'text', nullable: true })
   readonly description!: string | null;
-}
-
-export interface WaveOutcomeDistributionItem {
-  amount?: number | null;
-  description?: string | null;
 }

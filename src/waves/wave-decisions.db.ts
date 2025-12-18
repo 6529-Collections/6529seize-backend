@@ -16,8 +16,7 @@ import {
 } from '../constants';
 import {
   WaveDecisionPauseEntity,
-  WaveDecisionStrategy,
-  WaveOutcome
+  WaveDecisionStrategy
 } from '../entities/IWave';
 import { DropType } from '../entities/IDrop';
 import { collections } from '../collections';
@@ -93,7 +92,6 @@ export class WaveDecisionsDb extends LazyDbAccessCompatibleService {
       wave_id: string;
       latest_decision_time: number | null;
       decisions_strategy: WaveDecisionStrategy;
-      outcomes: WaveOutcome[];
       time_lock_ms: number | null;
     }[]
   > {
@@ -104,10 +102,9 @@ export class WaveDecisionsDb extends LazyDbAccessCompatibleService {
         latest_decision_time: number | null;
         decisions_strategy: string;
         time_lock_ms: number | null;
-        outcomes: string;
       }>(
         `
-      select w.id as wave_id, w.time_lock_ms as time_lock_ms, w.decisions_strategy, w.outcomes as outcomes, max(d.decision_time) as latest_decision_time from ${WAVES_TABLE} w
+      select w.id as wave_id, w.time_lock_ms as time_lock_ms, w.decisions_strategy, max(d.decision_time) as latest_decision_time from ${WAVES_TABLE} w
       left join ${WAVES_DECISIONS_TABLE} d on d.wave_id = w.id where w.next_decision_time is not null and w.next_decision_time < :givenTime group by 1, 2, 3
     `,
         { givenTime },
@@ -116,8 +113,7 @@ export class WaveDecisionsDb extends LazyDbAccessCompatibleService {
       .then((res) =>
         res.map((it) => ({
           ...it,
-          decisions_strategy: JSON.parse(it.decisions_strategy),
-          outcomes: JSON.parse(it.outcomes)
+          decisions_strategy: JSON.parse(it.decisions_strategy)
         }))
       );
     ctx.timer?.stop(`${this.constructor.name}->getWavesLatestDecisionTimes`);
