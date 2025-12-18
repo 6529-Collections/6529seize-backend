@@ -59,6 +59,7 @@ export function cacheRequest(
       const cached = await redisGet<CachedResponsePayload>(key);
       if (isRequestCacheEntry(cached)) {
         applyCachedHeaders(res, cached.headers);
+        res.setHeader('X-Cache', 'HIT');
         res.status(cached.statusCode);
         const body = Buffer.from(cached.body, 'base64');
         res.send(body);
@@ -148,6 +149,7 @@ export function cacheRequest(
 
     res.on('close', restoreOriginalStreamMethods);
 
+    res.setHeader('X-Cache', 'MISS');
     next();
   };
 }
