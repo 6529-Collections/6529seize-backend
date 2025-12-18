@@ -23,6 +23,7 @@ import {
 } from '../../../entities/ISubscription';
 import { BadRequestException } from '../../../exceptions';
 import { getMaxMemeId } from '../../../nftsLoop/db.nfts';
+import { numbers } from '../../../numbers';
 import { sqlExecutor } from '../../../sql-executor';
 import { equalIgnoreCase } from '../../../strings';
 import { fetchSubscriptionEligibility } from '../../../subscriptionsDaily/db.subscriptions';
@@ -759,8 +760,8 @@ export async function fetchPastMemeSubscriptionCounts(
   RedeemedSubscriptionCounts[] | PaginatedResponse<RedeemedSubscriptionCounts>
 > {
   if (pageSize && page) {
-    const pageSizeNumber = Number.parseInt(pageSize);
-    const pageNumber = Number.parseInt(page);
+    const pageSizeNumber = numbers.parseIntOrNull(pageSize) ?? 20;
+    const pageNumber = numbers.parseIntOrNull(page) ?? 1;
 
     const joins = `
       LEFT JOIN ${SUBSCRIPTIONS_REDEEMED_TABLE} 

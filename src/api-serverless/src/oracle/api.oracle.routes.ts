@@ -10,6 +10,7 @@ import {
 import * as SwaggerUI from 'swagger-ui-express';
 import { getIp, isLocalhost } from '../policies/policies';
 import { getPage, getPageSize } from '../api-helpers';
+import { numbers } from '../../../numbers';
 
 const YAML = require('yamljs');
 
@@ -191,8 +192,8 @@ router.get(
     const result = await db.fetchSingleAddressTDHMemesSeasons(address);
     if (season) {
       try {
-        const seasonNumber = Number.parseInt(season);
-        if (Number.isNaN(seasonNumber)) {
+        const seasonNumber = numbers.parseIntOrNull(season);
+        if (seasonNumber === null) {
           throw new Error('Invalid season number');
         }
         const seasonResult = result.seasons.filter(
@@ -234,8 +235,8 @@ router.get(
     const address = req.params.address;
     const contract = req.params.contract;
     const id = req.params.id;
-    const tokenId = Number.parseInt(id);
-    if (Number.isNaN(tokenId)) {
+    const tokenId = numbers.parseIntOrNull(id);
+    if (tokenId === null) {
       return res.status(400).send({ error: 'Invalid token id' });
     }
     const result = await db.fetchSingleAddressTDHForNft(
@@ -263,8 +264,8 @@ router.get(
     const season = req.params.season;
     const result = await db.fetchSeasonsTDH(season);
     if (season) {
-      const seasonNumber = Number.parseInt(season);
-      if (Number.isNaN(seasonNumber)) {
+      const seasonNumber = numbers.parseIntOrNull(season);
+      if (seasonNumber === null) {
         return res.status(400).send({ error: 'Invalid season number' });
       }
       if (result.seasons.length === 0) {

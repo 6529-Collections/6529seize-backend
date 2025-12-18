@@ -57,6 +57,7 @@ import {
 } from './api-serverless/src/nextgen/abis';
 import { consolidationTools } from './consolidation-tools';
 import { DbPoolName, DbQueryOptions } from './db-query.options';
+import { numbers } from './numbers';
 import {
   CustomTypeCaster,
   execNativeTransactionally,
@@ -703,8 +704,8 @@ export async function searchNfts(
   let idQuery = '';
 
   if (search) {
-    const id = Number.parseInt(search);
-    if (!Number.isNaN(id)) {
+    const id = numbers.parseIntOrNull(search);
+    if (id !== null) {
       idQuery = search;
     }
 

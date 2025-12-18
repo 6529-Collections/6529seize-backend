@@ -4,9 +4,12 @@ import { CLOUDFRONT_DISTRIBUTION } from '../../../constants';
 import { UnauthorisedException } from '../../../exceptions';
 import { Logger } from '../../../logging';
 import { evictKeyFromRedisCache } from '../../../redis';
+import { numbers } from '../../../numbers';
 import { DEFAULT_PAGE_SIZE } from '../api-constants';
 import {
   getCacheKeyPatternForPath,
+  getPage,
+  getPageSize,
   returnJsonResult,
   returnPaginatedResult
 } from '../api-helpers';
@@ -43,11 +46,8 @@ router.get(
     const contract = req.params.contract;
     const nftId = req.params.nft_id;
 
-    const pageSize: number =
-      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-        ? Number.parseInt(req.query.page_size)
-        : DEFAULT_PAGE_SIZE;
-    const page: number = req.query.page ? Number.parseInt(req.query.page) : 1;
+    const pageSize = getPageSize(req);
+    const page = getPage(req);
 
     await fetchDistributionPhotos(contract, nftId, pageSize, page).then(
       async (result) => {
@@ -70,9 +70,9 @@ router.post(
     }
 
     const contract = req.params.contract;
-    const nftId = Number.parseInt(req.params.nft_id);
+    const nftId = numbers.parseIntOrNull(req.params.nft_id);
 
-    if (Number.isNaN(nftId)) {
+    if (nftId === null) {
       return res.status(400).send({
         success: false,
         error: 'Invalid nft_id parameter'

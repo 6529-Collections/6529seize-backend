@@ -38,7 +38,7 @@ function fullUrl(req: Request, next: string | null) {
   const params = newUrl.searchParams;
 
   if (params.has('page')) {
-    const page = Number.parseInt(params.get('page')!);
+    const page = numbers.parseIntOrNull(params.get('page')!) ?? 1;
     newUrl.searchParams.delete('page');
     newUrl.searchParams.append('page', String(page + 1));
     return newUrl.toString();
@@ -111,10 +111,7 @@ export function constructFiltersOR(f: string, newF: string) {
 
 export function resolveIntParam(param: string | string[] | undefined) {
   if (param) {
-    const parsed = Number.parseInt(param as string);
-    if (!Number.isNaN(parsed)) {
-      return parsed;
-    }
+    return numbers.parseIntOrNull(param as string) ?? undefined;
   }
   return undefined;
 }
@@ -149,12 +146,12 @@ export function getSearchFilters(columnNames: string[], search: string) {
   return { filters, params };
 }
 
-export function getPageSize(req: any): number {
-  return req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-    ? Number.parseInt(req.query.page_size)
-    : DEFAULT_PAGE_SIZE;
+export function getPageSize(req: any, maxSize?: number): number {
+  const max = maxSize ?? DEFAULT_PAGE_SIZE;
+  const parsed = numbers.parseIntOrNull(req.query.page_size);
+  return parsed !== null && parsed < max ? parsed : max;
 }
 
 export function getPage(req: any): number {
-  return req.query.page ? Number.parseInt(req.query.page) : 1;
+  return numbers.parseIntOrNull(req.query.page) ?? 1;
 }

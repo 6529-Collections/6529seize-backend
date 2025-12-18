@@ -9,6 +9,7 @@ import {
   NEXTGEN_SET_COLLECTION_PHASES_SELECTOR
 } from './abis';
 import { Logger } from '../../../logging';
+import { numbers } from '../../../numbers';
 import { equalIgnoreCase } from '../../../strings';
 import { getRpcUrl } from '../../../alchemy';
 
@@ -237,7 +238,7 @@ async function readAllowlist(
   bufferStream.pipe(csv({ headers: false })).on('data', (data: any) => {
     allowlist.push({
       address: data[0],
-      spots: Number.parseInt(data[1]),
+      spots: numbers.parseIntOrNull(data[1]) ?? 0,
       info: data[2]
     });
   });
@@ -315,7 +316,7 @@ async function computeMerkleBurn(
   allowlist: UploadAllowlistBurn[]
 ): Promise<any> {
   const processedAllowlist = allowlist.map((al) => {
-    const tokenId = Number.parseInt(al.token_id);
+    const tokenId = numbers.parseIntOrNull(al.token_id) ?? 0;
     const info = al.info;
     const parsedTokenId = tokenId.toString(16).padStart(64, '0');
     const parsedInfo = stringToHex(info);

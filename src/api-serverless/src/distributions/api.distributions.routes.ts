@@ -2,8 +2,11 @@ import { Request, Response } from 'express';
 import { UnauthorisedException } from '../../../exceptions';
 import { evictKeyFromRedisCache } from '../../../redis';
 import { DEFAULT_PAGE_SIZE, DISTRIBUTION_PAGE_SIZE } from '../api-constants';
+import { numbers } from '../../../numbers';
 import {
   getCacheKeyPatternForPath,
+  getPage,
+  getPageSize,
   giveReadReplicaTimeToCatchUp,
   returnJsonResult,
   returnPaginatedResult
@@ -36,9 +39,9 @@ function validateSubscriptionAdminAndParams(
   }
 
   const contract = req.params.contract;
-  const cardId = Number.parseInt(req.params.id);
+  const cardId = numbers.parseIntOrNull(req.params.id);
 
-  if (Number.isNaN(cardId)) {
+  if (cardId === null) {
     res.status(400).send({
       success: false,
       error: 'Invalid id parameter'
@@ -71,11 +74,8 @@ router.get(
     const contracts = req.query.contract;
     const wallets = req.query.wallet;
 
-    const pageSize: number =
-      req.query.page_size && req.query.page_size < DISTRIBUTION_PAGE_SIZE
-        ? Number.parseInt(req.query.page_size)
-        : DEFAULT_PAGE_SIZE;
-    const page: number = req.query.page ? Number.parseInt(req.query.page) : 1;
+    const pageSize = getPageSize(req, DISTRIBUTION_PAGE_SIZE);
+    const page = getPage(req);
 
     await fetchDistributions(
       search,
@@ -103,9 +103,9 @@ router.get(
     }
 
     const contract = req.params.contract;
-    const cardId = Number.parseInt(req.params.id);
+    const cardId = numbers.parseIntOrNull(req.params.id);
 
-    if (Number.isNaN(cardId)) {
+    if (cardId === null) {
       return res.status(400).send({
         success: false,
         error: 'Invalid id parameter'
@@ -171,7 +171,7 @@ router.post(
     for (const line of lines) {
       const parts = line.split(',');
       const address = parts[0]?.trim();
-      const count = Number.parseInt(parts[1]?.trim() || '0');
+      const count = numbers.parseIntOrNull(parts[1]?.trim()) ?? 0;
 
       if (!address) {
         continue;
