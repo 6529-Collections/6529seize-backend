@@ -1,4 +1,10 @@
-import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
+import {
+  Column,
+  Entity,
+  Index,
+  PrimaryColumn,
+  PrimaryGeneratedColumn
+} from 'typeorm';
 import {
   WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE,
   WAVE_OUTCOMES_TABLE,
@@ -255,11 +261,12 @@ export interface WaveOutcome {
 
 @Entity(WAVE_OUTCOMES_TABLE)
 export class WaveOutcomeEntity {
-  @PrimaryGeneratedColumn({ type: 'bigint' })
-  readonly id!: number;
   @Index()
-  @Column({ type: 'varchar', length: 100, nullable: false })
+  @PrimaryColumn({ type: 'varchar', length: 100, nullable: false })
   readonly wave_id!: string;
+  @Index()
+  @PrimaryColumn({ type: 'int', nullable: false })
+  readonly wave_outcome_position: number;
   @Column({ type: 'varchar', length: 20, nullable: false })
   readonly type!: WaveOutcomeType;
   @Column({ type: 'varchar', length: 20, nullable: true })
@@ -276,11 +283,15 @@ export class WaveOutcomeEntity {
 
 @Entity(WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE)
 export class WaveOutcomeDistributionItemEntity {
-  @PrimaryGeneratedColumn({ type: 'bigint' })
-  readonly id!: number;
   @Index()
-  @Column({ type: 'varchar', length: 100, nullable: false })
+  @PrimaryColumn({ type: 'varchar', length: 100, nullable: false })
   readonly wave_id!: string;
+  @Index()
+  @PrimaryColumn({ type: 'int', nullable: false })
+  readonly wave_outcome_position: number;
+  @Index()
+  @PrimaryColumn({ type: 'int', nullable: false })
+  readonly wave_outcome_distribution_item_position: number;
   @Index()
   @Column({ type: 'bigint', nullable: true })
   readonly amount!: number | null;
