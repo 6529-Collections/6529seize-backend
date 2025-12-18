@@ -397,6 +397,11 @@ export class Time {
       new Date().toISOString().split('T')[0]
     );
   }
+
+  static isMemeDropDay(): boolean {
+    const today = new Date().getDay();
+    return today === 1 || today === 3 || today === 5;
+  }
 }
 
 enum TimeUnit {

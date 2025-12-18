@@ -209,15 +209,9 @@ async function updateSubscriptionModeInternal(
   );
 }
 
-async function updateSubscriptionsAfterModeChange(
-  consolidationKey: string,
-  automatic: boolean,
-  wrappedConnection: any
-) {
-  const promises: Promise<any>[] = [];
+async function getEffectiveMaxMemeId(): Promise<number> {
   let maxMemeId = await getMaxMemeId();
-  const today = new Date().getDay();
-  if (today === 1 || today === 3 || today === 5) {
+  if (Time.isMemeDropDay()) {
     const lastMinted = await fetchNft(MEMES_CONTRACT, maxMemeId);
     const lastMintedDate = lastMinted?.mint_date
       ? Time.fromDate(new Date(lastMinted.mint_date))
@@ -226,6 +220,16 @@ async function updateSubscriptionsAfterModeChange(
       maxMemeId++;
     }
   }
+  return maxMemeId;
+}
+
+async function updateSubscriptionsAfterModeChange(
+  consolidationKey: string,
+  automatic: boolean,
+  wrappedConnection: any
+) {
+  const promises: Promise<any>[] = [];
+  const maxMemeId = await getEffectiveMaxMemeId();
   const upcomingSubscriptions: NFTSubscription[] = await sqlExecutor.execute(
     `SELECT * FROM ${SUBSCRIPTIONS_NFTS_TABLE} WHERE consolidation_key = :consolidationKey AND contract = :memesContract AND token_id > :maxMemeId AND subscribed = :subscribed`,
     {
@@ -343,17 +347,7 @@ async function updateSubscriptionsAfterSubscribeAllEditionsChange(
     subscribedCount = subscriptionEligibility;
   }
   const promises: Promise<any>[] = [];
-  let maxMemeId = await getMaxMemeId();
-  const today = new Date().getDay();
-  if (today === 1 || today === 3 || today === 5) {
-    const lastMinted = await fetchNft(MEMES_CONTRACT, maxMemeId);
-    const lastMintedDate = lastMinted?.mint_date
-      ? Time.fromDate(new Date(lastMinted.mint_date))
-      : Time.now();
-    if (lastMinted && !lastMintedDate.isToday()) {
-      maxMemeId++;
-    }
-  }
+  const maxMemeId = await getEffectiveMaxMemeId();
   const upcomingSubscriptions: NFTSubscription[] = await sqlExecutor.execute(
     `SELECT * FROM ${SUBSCRIPTIONS_NFTS_TABLE} WHERE consolidation_key = :consolidation_key AND contract = :memesContract AND token_id > :maxMemeId AND subscribed = :subscribed`,
     {
@@ -540,9 +534,9 @@ export async function updateSubscriptionCount(
     contract,
     tokenId
   );
-  if (!subscription) {
+  if (!subscription || !subscription.subscribed) {
     throw new BadRequestException(
-      `Subscription not found for Meme #${tokenId}`
+      `Active subscription not found for Meme #${tokenId}`
     );
   }
 
@@ -552,6 +546,17 @@ export async function updateSubscriptionCount(
   if (count > subscriptionEligibility) {
     throw new BadRequestException(
       `Eligibility count for Meme #${tokenId} is ${subscriptionEligibility}. You cannot increase the subscription count beyond this limit.`
+    );
+  }
+
+  const balance = await getForConsolidationKey(
+    consolidationKey,
+    SUBSCRIPTIONS_BALANCES_TABLE
+  );
+  const requiredBalance = count * MEMES_MINT_PRICE;
+  if (!balance || balance.balance < requiredBalance) {
+    throw new BadRequestException(
+      `Not enough balance to subscribe for ${count} editions. Need at least ${requiredBalance} ETH.`
     );
   }
 
