@@ -6805,7 +6805,6 @@ components:
         - participation
         - chat
         - wave
-        - outcomes
       properties:
         name:
           description: The name of the wave
@@ -6826,10 +6825,6 @@ components:
           $ref: "#/components/schemas/ApiCreateNewWaveChatConfig"
         wave:
           $ref: "#/components/schemas/ApiCreateWaveConfig"
-        outcomes:
-          type: array
-          items:
-            $ref: "#/components/schemas/ApiWaveOutcome"
     ApiUploadItem:
       type: object
       required:

@@ -16,7 +16,14 @@ import {
 } from '../../../entities/IActivityEvent';
 import { ProfileProxyActionType } from '../../../entities/IProfileProxyAction';
 import { UserGroupEntity } from '../../../entities/IUserGroup';
-import { WaveEntity } from '../../../entities/IWave';
+import {
+  WaveEntity,
+  WaveOutcomeCredit,
+  WaveOutcomeDistributionItemEntity,
+  WaveOutcomeEntity,
+  WaveOutcomeSubType,
+  WaveOutcomeType
+} from '../../../entities/IWave';
 import { enums } from '../../../enums';
 import {
   BadRequestException,
@@ -92,6 +99,7 @@ export class WaveApiService {
     const authenticationContext = ctx.authenticationContext!;
     timer.start(`${this.constructor.name}->createWave`);
     await this.validateWaveRelations(createWaveRequest, ctx);
+    this.validateOutcomes(createWaveRequest);
     const createdWave = await this.wavesApiDb.executeNativeQueriesInTransaction(
       async (connection) => {
         const ctxWithConnection = { ...ctx, connection };
@@ -109,9 +117,59 @@ export class WaveApiService {
             waveCreationTime,
             createWaveRequest.wave.decisions_strategy
           ),
+          outcomes: createWaveRequest.outcomes,
           isDirectMessage
         });
         await this.wavesApiDb.insertWave(newEntity, ctxWithConnection);
+        const apiOutcomes = createWaveRequest.outcomes;
+        const outcomeEntities: WaveOutcomeEntity[] = [];
+        const distiributionItemEntities: WaveOutcomeDistributionItemEntity[] =
+          [];
+        for (
+          let outcomeIndex = 1;
+          outcomeIndex <= apiOutcomes.length;
+          outcomeIndex++
+        ) {
+          const apiOutcome = apiOutcomes[outcomeIndex - 1]!;
+          outcomeEntities.push({
+            wave_id: id,
+            type: enums.resolveOrThrow(WaveOutcomeType, apiOutcome.type),
+            subtype: apiOutcome.subtype
+              ? enums.resolveOrThrow(WaveOutcomeSubType, apiOutcome.subtype)
+              : null,
+            description: apiOutcome.description,
+            credit: apiOutcome.credit
+              ? enums.resolveOrThrow(WaveOutcomeCredit, apiOutcome.credit)
+              : null,
+            rep_category: apiOutcome.rep_category ?? null,
+            amount: apiOutcome.amount ?? null,
+            wave_outcome_position: outcomeIndex
+          });
+          const apiDistributionItems = apiOutcome.distribution ?? [];
+          for (
+            let distributionItemIndex = 1;
+            distributionItemIndex <= apiDistributionItems.length;
+            distributionItemIndex++
+          ) {
+            const apiDistributionItem =
+              apiDistributionItems[distributionItemIndex - 1]!;
+            distiributionItemEntities.push({
+              amount: numbers.parseIntOrNull(apiDistributionItem.amount),
+              description: apiDistributionItem.description ?? null,
+              wave_outcome_position: outcomeIndex,
+              wave_outcome_distribution_item_position: distributionItemIndex,
+              wave_id: id
+            });
+          }
+        }
+        await this.wavesApiDb.insertOutcomes(
+          outcomeEntities,
+          ctxWithConnection
+        );
+        await this.wavesApiDb.insertOutcomeDistributionItems(
+          distiributionItemEntities,
+          ctxWithConnection
+        );
         const authorId = authenticationContext.getActingAsId()!;
         const descriptionDropModel =
           this.dropsMappers.createDropApiToUseCaseModel({
@@ -520,7 +578,6 @@ export class WaveApiService {
         );
       }
     }
-    this.validateOutcomes(request);
     const referencedGroupIds = collections.distinct(
       [
         request.visibility.scope.group_id,
@@ -560,9 +617,7 @@ export class WaveApiService {
     timer?.stop(`${this.constructor.name}->validateWaveRelations`);
   }
 
-  private validateOutcomes(
-    createWave: ApiCreateNewWave | ApiUpdateWaveRequest
-  ) {
+  private validateOutcomes(createWave: ApiCreateNewWave) {
     const waveType = createWave.wave.type;
     switch (waveType) {
       case ApiWaveType.Approve: {
@@ -1138,6 +1193,11 @@ export class WaveApiService {
           this.wavesApiDb.deleteDropEntitiesByWaveId(waveId, ctxWithConnection),
           this.wavesApiDb.deleteWaveMetrics(waveId, ctxWithConnection),
           this.wavesApiDb.deleteWave(waveId, ctxWithConnection),
+          this.wavesApiDb.deleteWaveOutcomes(waveId, ctxWithConnection),
+          this.wavesApiDb.deleteWaveOutcomeDistributionItems(
+            waveId,
+            ctxWithConnection
+          ),
           this.wavesApiDb.deleteDropRelations(waveId, ctxWithConnection)
         ]);
       }
@@ -1206,6 +1266,7 @@ export class WaveApiService {
             waveUpdateTime,
             request.wave.decisions_strategy
           ),
+          outcomes: JSON.parse(waveBeforeUpdate.outcomes),
           isDirectMessage: waveBeforeUpdate.is_direct_message ?? false
         });
 
