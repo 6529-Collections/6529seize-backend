@@ -3,7 +3,12 @@ import {
   dbSupplier,
   LazyDbAccessCompatibleService
 } from '../../../sql-executor';
-import { WaveDecisionPauseEntity, WaveEntity } from '../../../entities/IWave';
+import {
+  WaveDecisionPauseEntity,
+  WaveEntity,
+  WaveOutcomeDistributionItemEntity,
+  WaveOutcomeEntity
+} from '../../../entities/IWave';
 import {
   ACTIVITY_EVENTS_TABLE,
   DROP_MEDIA_TABLE,
@@ -20,6 +25,8 @@ import {
   RATINGS_TABLE,
   WAVE_DROPPER_METRICS_TABLE,
   WAVE_METRICS_TABLE,
+  WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE,
+  WAVE_OUTCOMES_TABLE,
   WAVES_ARCHIVE_TABLE,
   WAVES_DECISION_PAUSES_TABLE,
   WAVES_TABLE
@@ -37,6 +44,7 @@ import { WaveDropperMetricEntity } from '../../../entities/IWaveDropperMetric';
 import { DropType } from '../../../entities/IDrop';
 import { Time } from '../../../time';
 import { ApiWavesPinFilter } from '../generated/models/ApiWavesPinFilter';
+import { bulkInsert } from '../../../db/my-sql.helpers';
 
 export class WavesApiDb extends LazyDbAccessCompatibleService {
   public async findWaveById(
@@ -1016,6 +1024,71 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       { wrappedConnection: ctx.connection }
     );
     ctx.timer?.stop('wavesApiDb->deleteWave');
+  }
+
+  async insertOutcomes(entities: WaveOutcomeEntity[], ctx: RequestContext) {
+    ctx.timer?.start('wavesApiDb->insertOutcomes');
+    await bulkInsert(
+      this.db,
+      WAVE_OUTCOMES_TABLE,
+      entities as unknown as Record<string, any>[],
+      [
+        'wave_id',
+        'wave_outcome_position',
+        'type',
+        'subtype',
+        'description',
+        'credit',
+        'rep_category',
+        'amount'
+      ],
+      ctx
+    );
+    ctx.timer?.stop('wavesApiDb->insertOutcomes');
+  }
+
+  async insertOutcomeDistributionItems(
+    entities: WaveOutcomeDistributionItemEntity[],
+    ctx: RequestContext
+  ) {
+    ctx.timer?.start('wavesApiDb->insertOutcomeDistributionItems');
+    await bulkInsert(
+      this.db,
+      WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE,
+      entities as unknown as Record<string, any>[],
+      [
+        'wave_id',
+        'wave_outcome_position',
+        'wave_outcome_distribution_item_position',
+        'amount',
+        'description'
+      ],
+      ctx
+    );
+    ctx.timer?.stop('wavesApiDb->insertOutcomeDistributionItems');
+  }
+
+  async deleteWaveOutcomes(waveId: string, ctx: RequestContext) {
+    ctx.timer?.start('wavesApiDb->deleteWaveOutcomes');
+    await this.db.execute(
+      `delete from ${WAVE_OUTCOMES_TABLE} where wave_id = :waveId`,
+      { waveId },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop('wavesApiDb->deleteWaveOutcomes');
+  }
+
+  async deleteWaveOutcomeDistributionItems(
+    waveId: string,
+    ctx: RequestContext
+  ) {
+    ctx.timer?.start('wavesApiDb->deleteWaveOutcomeDistributionItems');
+    await this.db.execute(
+      `delete from ${WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE} where wave_id = :waveId`,
+      { waveId },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop('wavesApiDb->deleteWaveOutcomeDistributionItems');
   }
 
   async deleteWaveMetrics(waveId: string, ctx: RequestContext) {

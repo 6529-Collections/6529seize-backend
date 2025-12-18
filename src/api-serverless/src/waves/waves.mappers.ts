@@ -48,6 +48,7 @@ import {
 } from '../identities/identity.fetcher';
 import { enums } from '../../../enums';
 import { collections } from '../../../collections';
+import { ApiWaveOutcome } from '../generated/models/ApiWaveOutcome';
 
 export class WavesMappers {
   constructor(
@@ -66,7 +67,8 @@ export class WavesMappers {
     created_by,
     descriptionDropId,
     nextDecisionTime,
-    isDirectMessage
+    isDirectMessage,
+    outcomes
   }: {
     id: string;
     serial_no: number | null;
@@ -77,6 +79,7 @@ export class WavesMappers {
     descriptionDropId: string;
     nextDecisionTime: number | null;
     isDirectMessage: boolean;
+    outcomes: ApiWaveOutcome[];
   }): Promise<InsertWaveEntity> {
     let creditorId = request.voting.creditor_id;
     if (creditorId) {
@@ -131,7 +134,7 @@ export class WavesMappers {
       winning_max_threshold: request.wave.winning_thresholds?.max ?? null,
       max_winners: request.wave.max_winners ?? null,
       time_lock_ms: request.wave.time_lock_ms ?? null,
-      outcomes: JSON.stringify(request.outcomes),
+      outcomes: JSON.stringify(outcomes),
       decisions_strategy: request.wave.decisions_strategy ?? null,
       next_decision_time: nextDecisionTime,
       participation_signature_required:
