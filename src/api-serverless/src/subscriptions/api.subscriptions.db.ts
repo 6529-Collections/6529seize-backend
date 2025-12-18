@@ -534,7 +534,7 @@ export async function updateSubscriptionCount(
     contract,
     tokenId
   );
-  if (!subscription || !subscription.subscribed) {
+  if (!subscription?.subscribed) {
     throw new BadRequestException(
       `Active subscription not found for Meme #${tokenId}`
     );
