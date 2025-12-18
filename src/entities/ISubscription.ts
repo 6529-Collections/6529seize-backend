@@ -124,6 +124,9 @@ export class NFTFinalSubscription extends NFTSubscriptionFields {
   @Column({ type: 'int', default: -1 })
   phase_position!: number;
 
+  @Column({ type: 'boolean', default: false })
+  redeemed!: boolean;
+
   @Column({ type: 'int', default: 0 })
   redeemed_count!: number;
 }
@@ -204,7 +207,7 @@ export class RedeemedSubscription {
   @Column({ type: 'double' })
   balance_after!: number;
 
-  @Column({ type: 'int' })
+  @Column({ type: 'int', default: 1 })
   count!: number;
 }
 
