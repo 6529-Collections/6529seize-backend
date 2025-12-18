@@ -15,13 +15,12 @@ import {
   NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE,
   NEXTGEN_ALLOWLIST_TABLE
 } from '../../../nextgen/nextgen_constants';
-import { sqlExecutor } from '../../../sql-executor';
 import { numbers } from '../../../numbers';
+import { sqlExecutor } from '../../../sql-executor';
 import {
   ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
   CONTENT_TYPE_HEADER,
   corsOptions,
-  DEFAULT_PAGE_SIZE,
   DISTRIBUTION_PAGE_SIZE,
   JSON_HEADER_VALUE
 } from '../api-constants';
@@ -133,27 +132,27 @@ router.get(
   `/:collection_id/allowlist_merkle/:merkle_root?`,
   async function (req: any, res: any) {
     const id = numbers.parseIntOrNull(req.params.collection_id);
-    if (id !== null) {
-      const addresses = req.query.address;
-      const merkleRoot = req.params.merkle_root;
-
-      const pageSize = getPageSize(req, DISTRIBUTION_PAGE_SIZE);
-      const page = getPage(req);
-
-      db.fetchNextGenAllowlistByPhase(
-        id,
-        addresses,
-        merkleRoot,
-        pageSize,
-        page
-      ).then((result) => {
-        res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
-        res.setHeader(ACCESS_CONTROL_ALLOW_ORIGIN_HEADER, corsOptions.origin);
-        res.end(JSON.stringify(result));
-      });
-    } else {
+    if (id === null) {
       return res.status(404).send({});
     }
+
+    const addresses = req.query.address;
+    const merkleRoot = req.params.merkle_root;
+
+    const pageSize = getPageSize(req, DISTRIBUTION_PAGE_SIZE);
+    const page = getPage(req);
+
+    db.fetchNextGenAllowlistByPhase(
+      id,
+      addresses,
+      merkleRoot,
+      pageSize,
+      page
+    ).then((result) => {
+      res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
+      res.setHeader(ACCESS_CONTROL_ALLOW_ORIGIN_HEADER, corsOptions.origin);
+      res.end(JSON.stringify(result));
+    });
   }
 );
 
@@ -217,14 +216,14 @@ router.get(
   `/allowlist_phases/:collection_id`,
   async function (req: any, res: any) {
     const id = numbers.parseIntOrNull(req.params.collection_id);
-    if (id !== null) {
-      logger.info(`[FETCHING ALLOWLIST PHASES COLLECTION ID ${id}]`);
-      await db.fetchAllowlistPhasesForCollection(id).then(async (result) => {
-        return await returnPaginatedResult(result as unknown as any, req, res);
-      });
-    } else {
+    if (id === null) {
       return res.status(404).send({});
     }
+
+    logger.info(`[FETCHING ALLOWLIST PHASES COLLECTION ID ${id}]`);
+    await db.fetchAllowlistPhasesForCollection(id).then(async (result) => {
+      return await returnPaginatedResult(result as unknown as any, req, res);
+    });
   }
 );
 
@@ -256,19 +255,18 @@ router.get(
   async function (req: any, res: any) {
     const id = numbers.parseIntOrNull(req.params.id);
     let result: any;
-    if (id !== null) {
-      logger.info(`[FETCHING COLLECTION BY ID ${id}]`);
-      result = await db.fetchNextGenCollectionById(id);
-    } else {
+    if (id === null) {
       const name = req.params.id.replace(/-/g, ' ');
       logger.info(`[FETCHING COLLECTION BY NAME ${name}]`);
       result = await db.fetchNextGenCollectionByName(name);
+    } else {
+      logger.info(`[FETCHING COLLECTION BY ID ${id}]`);
+      result = await db.fetchNextGenCollectionById(id);
     }
     if (result?.id) {
       return await returnJsonResult(result, req, res);
-    } else {
-      return res.status(404).send({});
     }
+    return res.status(404).send({});
   }
 );
 

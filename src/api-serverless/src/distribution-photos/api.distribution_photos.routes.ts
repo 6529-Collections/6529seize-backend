@@ -3,9 +3,8 @@ import { invalidateCloudFront } from '../../../cloudfront';
 import { CLOUDFRONT_DISTRIBUTION } from '../../../constants';
 import { UnauthorisedException } from '../../../exceptions';
 import { Logger } from '../../../logging';
-import { evictKeyFromRedisCache } from '../../../redis';
 import { numbers } from '../../../numbers';
-import { DEFAULT_PAGE_SIZE } from '../api-constants';
+import { evictKeyFromRedisCache } from '../../../redis';
 import {
   getCacheKeyPatternForPath,
   getPage,

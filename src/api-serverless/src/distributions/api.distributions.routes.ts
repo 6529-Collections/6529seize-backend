@@ -1,8 +1,8 @@
 import { Request, Response } from 'express';
 import { UnauthorisedException } from '../../../exceptions';
-import { evictKeyFromRedisCache } from '../../../redis';
-import { DEFAULT_PAGE_SIZE, DISTRIBUTION_PAGE_SIZE } from '../api-constants';
 import { numbers } from '../../../numbers';
+import { evictKeyFromRedisCache } from '../../../redis';
+import { DISTRIBUTION_PAGE_SIZE } from '../api-constants';
 import {
   getCacheKeyPatternForPath,
   getPage,
