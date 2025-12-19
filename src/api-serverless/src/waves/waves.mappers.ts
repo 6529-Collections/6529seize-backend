@@ -283,6 +283,7 @@ export class WavesMappers {
               d.wave_outcome_distribution_item_position
           )
           .map<ApiWaveOutcomeDistributionItem>((item) => ({
+            index: item.wave_outcome_distribution_item_position,
             amount: item.amount,
             description: item.description
           }));
@@ -297,7 +298,8 @@ export class WavesMappers {
             : undefined,
           rep_category: outcome.rep_category ?? undefined,
           amount: outcome.amount === null ? undefined : outcome.amount,
-          distribution: distributions
+          distribution: distributions,
+          index: outcome.wave_outcome_position
         };
       });
     const contributorsOverview: ApiWaveContributorOverview[] =
