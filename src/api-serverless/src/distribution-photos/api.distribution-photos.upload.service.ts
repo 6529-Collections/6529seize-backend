@@ -1,6 +1,5 @@
 import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { CLOUDFRONT_LINK } from '../../../constants';
-import { CustomApiCompliantException } from '../../../exceptions';
 
 interface PhotoFile {
   name: string;
@@ -34,10 +33,7 @@ export async function uploadPhotos(
       if (uploadedImage.$metadata.httpStatusCode === 200) {
         keys.push(`${CLOUDFRONT_LINK}/${key}`);
       } else {
-        throw new CustomApiCompliantException(
-          500,
-          `Failed to upload image: ${name}`
-        );
+        throw new Error(`Failed to upload image: ${name}`);
       }
     })
   );

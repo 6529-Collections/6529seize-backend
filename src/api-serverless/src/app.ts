@@ -45,6 +45,7 @@ import xtdhRoutes from './xtdh/xtdh.routes';
 
 import * as Sentry from '@sentry/serverless';
 import { NextFunction, Request, Response } from 'express';
+import * as Joi from 'joi';
 import * as passport from 'passport';
 import {
   ExtractJwt,
@@ -114,6 +115,7 @@ import { cacheRequest, isRequestCacheEntry } from './request-cache';
 import rpcRoutes from './rpc/rpc.routes';
 import sitemapRoutes from './sitemap/sitemap.routes';
 import subscriptionsRoutes from './subscriptions/api.subscriptions.routes';
+import { getValidatedByJoiOrThrow } from './validation';
 import {
   appWebSockets,
   authenticateWebSocketJwtOrGetByConnectionId,
@@ -367,16 +369,24 @@ async function initializeApp() {
     }
   );
 
+  const UploadsQuerySchema = Joi.object({
+    page_size: Joi.number()
+      .integer()
+      .min(1)
+      .max(DEFAULT_PAGE_SIZE)
+      .default(DEFAULT_PAGE_SIZE),
+    page: Joi.number().integer().min(1).default(1),
+    block: Joi.number().integer().min(0).default(0),
+    date: Joi.string().optional()
+  });
+
   apiRouter.get(
     `/uploads`,
     cacheRequest(),
     async function (req: any, res: Response<ApiResponse<ApiUploadsPage>>) {
-      const pageSize = getPageSize(req);
-      const page = getPage(req);
-      const block = numbers.parseIntOrNull(req.query.block) ?? 0;
-      const date = req.query.date;
+      const params = getValidatedByJoiOrThrow(req.query, UploadsQuerySchema);
       await db
-        .fetchUploads(pageSize, page, block, date)
+        .fetchUploads(params.page_size, params.page, params.block, params.date)
         .then(async (result) => {
           await returnPaginatedResult(
             transformPaginatedResponse(
@@ -398,12 +408,14 @@ async function initializeApp() {
     `/consolidated_uploads`,
     cacheRequest(),
     async function (req: any, res: Response<ApiResponse<ApiUploadsPage>>) {
-      const pageSize = getPageSize(req);
-      const page = getPage(req);
-      const block = numbers.parseIntOrNull(req.query.block) ?? 0;
-      const date = req.query.date;
+      const params = getValidatedByJoiOrThrow(req.query, UploadsQuerySchema);
       await db
-        .fetchConsolidatedUploads(pageSize, page, block, date)
+        .fetchConsolidatedUploads(
+          params.page_size,
+          params.page,
+          params.block,
+          params.date
+        )
         .then(async (result) => {
           await returnPaginatedResult(
             transformPaginatedResponse(
