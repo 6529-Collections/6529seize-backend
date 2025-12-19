@@ -1763,6 +1763,112 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       );
     }
   }
+
+  async findOutcomes(
+    param: {
+      wave_id: string;
+      limit: number;
+      offset: number;
+      order: 'ASC' | 'DESC';
+    },
+    ctx: RequestContext
+  ): Promise<WaveOutcomeEntity[]> {
+    try {
+      ctx.timer?.start(`${this.constructor.name}->findOutcomes`);
+      return this.db.execute<WaveOutcomeEntity>(
+        `
+        select * from ${WAVE_OUTCOMES_TABLE} where wave_id = :wave_id order by wave_outcome_position ${param.order} limit :limit offset :offset
+      `,
+        param,
+        {
+          wrappedConnection: ctx.connection
+        }
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->findOutcomes`);
+    }
+  }
+
+  async countOutcomes(
+    param: {
+      wave_id: string;
+    },
+    ctx: RequestContext
+  ): Promise<number> {
+    try {
+      ctx.timer?.start(`${this.constructor.name}->countOutcomes`);
+      return this.db
+        .oneOrNull<{ cnt: number }>(
+          `
+        select count(*) as cnt from ${WAVE_OUTCOMES_TABLE} where wave_id = :wave_id
+      `,
+          param,
+          {
+            wrappedConnection: ctx.connection
+          }
+        )
+        .then((it) => it?.cnt ?? 0);
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->countOutcomes`);
+    }
+  }
+
+  async findOutcomeDistributionItems(
+    param: {
+      wave_id: string;
+      wave_outcome_position: number;
+      limit: number;
+      offset: number;
+      order: 'ASC' | 'DESC';
+    },
+    ctx: RequestContext
+  ): Promise<WaveOutcomeDistributionItemEntity[]> {
+    try {
+      ctx.timer?.start(
+        `${this.constructor.name}->findOutcomeDistributionItems`
+      );
+      return this.db.execute<WaveOutcomeDistributionItemEntity>(
+        `
+        select * from ${WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE} where wave_id = :wave_id and wave_outcome_position = :wave_outcome_position order by wave_outcome_distribution_item_position ${param.order} limit :limit offset :offset
+      `,
+        param,
+        {
+          wrappedConnection: ctx.connection
+        }
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->findOutcomeDistributionItems`);
+    }
+  }
+
+  async countOutcomeDistributionItems(
+    param: {
+      wave_id: string;
+      wave_outcome_position: number;
+    },
+    ctx: RequestContext
+  ): Promise<number> {
+    try {
+      ctx.timer?.start(
+        `${this.constructor.name}->countOutcomeDistributionItems`
+      );
+      return this.db
+        .oneOrNull<{ cnt: number }>(
+          `
+        select count(*) as cnt from ${WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE} where wave_id = :wave_id and wave_outcome_position = :wave_outcome_position
+      `,
+          param,
+          {
+            wrappedConnection: ctx.connection
+          }
+        )
+        .then((it) => it?.cnt ?? 0);
+    } finally {
+      ctx.timer?.stop(
+        `${this.constructor.name}->countOutcomeDistributionItems`
+      );
+    }
+  }
 }
 
 export interface InsertWaveEntity extends Omit<WaveEntity, 'serial_no'> {
