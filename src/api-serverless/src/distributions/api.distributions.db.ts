@@ -8,6 +8,7 @@ import { fetchPaginated } from '../../../db-api';
 import { sqlExecutor } from '../../../sql-executor';
 import { PaginatedResponse } from '../api-constants';
 import { constructFilters, getSearchFilters } from '../api-helpers';
+import { DistributionNormalized } from '../generated/models/DistributionNormalized';
 import { checkIsNormalized } from './api.distributions.service';
 
 export async function fetchDistributionPhases(
@@ -36,7 +37,7 @@ export async function fetchDistributions(
   wallets: string,
   pageSize: number,
   page: number
-): Promise<PaginatedResponse<any>> {
+): Promise<PaginatedResponse<DistributionNormalized>> {
   if (!search && !cards && !contracts && !wallets) {
     return {
       count: 0,

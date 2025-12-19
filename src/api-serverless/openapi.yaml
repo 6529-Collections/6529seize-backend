@@ -2403,9 +2403,7 @@ paths:
             application/json:
               schema:
                 oneOf:
-                  - type: array
-                    items:
-                      $ref: "#/components/schemas/RedeemedSubscriptionCounts"
+                  - $ref: "#/components/schemas/RedeemedSubscriptionCountsArray"
                   - $ref: "#/components/schemas/RedeemedSubscriptionCountsPage"
   /subscriptions/consolidation/logs/{consolidation_key}:
     get:
@@ -8840,6 +8838,10 @@ components:
         szn:
           type: integer
           format: int64
+    RedeemedSubscriptionCountsArray:
+      type: array
+      items:
+        $ref: "#/components/schemas/RedeemedSubscriptionCounts"
     RedeemedSubscriptionCountsPage:
       type: object
       required:

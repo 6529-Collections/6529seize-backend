@@ -9,7 +9,6 @@ import {
   USE_CASE_MINTING
 } from '../../../constants';
 import { fetchProcessedDelegations } from '../../../delegationsLoop/db.delegations';
-import { NFTFinalSubscription } from '../../../entities/ISubscription';
 import {
   BadRequestException,
   CustomApiCompliantException
@@ -17,6 +16,7 @@ import {
 import { sqlExecutor } from '../../../sql-executor';
 import { equalIgnoreCase } from '../../../strings';
 import { getAuthenticatedWalletOrNull } from '../auth/auth';
+import { NFTFinalSubscription } from '../generated/models/NFTFinalSubscription';
 import {
   fetchAllNftFinalSubscriptionsForContractAndToken,
   fetchAllPublicFinalSubscriptionsForContractAndToken

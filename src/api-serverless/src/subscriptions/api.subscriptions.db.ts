@@ -15,11 +15,8 @@ import {
 } from '../../../constants';
 import { fetchNft, fetchPaginated } from '../../../db-api';
 import {
-  NFTFinalSubscription,
-  RedeemedSubscription,
   SubscriptionBalance,
-  SubscriptionMode,
-  SubscriptionTopUp
+  SubscriptionMode
 } from '../../../entities/ISubscription';
 import { BadRequestException } from '../../../exceptions';
 import { getMaxMemeId } from '../../../nftsLoop/db.nfts';
@@ -30,38 +27,15 @@ import { fetchSubscriptionEligibility } from '../../../subscriptionsDaily/db.sub
 import { Time } from '../../../time';
 import { PaginatedResponse } from '../api-constants';
 import { constructFilters } from '../api-helpers';
+import { NFTFinalSubscription } from '../generated/models/NFTFinalSubscription';
+import { NFTSubscription } from '../generated/models/NFTSubscription';
+import { RedeemedSubscription } from '../generated/models/RedeemedSubscription';
+import { RedeemedSubscriptionCounts } from '../generated/models/RedeemedSubscriptionCounts';
+import { SubscriptionCounts } from '../generated/models/SubscriptionCounts';
+import { SubscriptionDetails } from '../generated/models/SubscriptionDetails';
+import { SubscriptionTopUp } from '../generated/models/SubscriptionTopUp';
 
 const SUBSCRIPTIONS_START_ID = 220;
-
-export interface SubscriptionDetails {
-  consolidation_key: string;
-  last_update: number;
-  balance: number;
-  automatic: boolean;
-  subscribe_all_editions: boolean;
-  subscription_eligibility_count: number;
-}
-
-export interface NFTSubscription {
-  consolidation_key: string;
-  contract: string;
-  token_id: number;
-  subscribed: boolean;
-  subscribed_count: number;
-}
-
-export interface SubscriptionCounts {
-  contract: string;
-  token_id: number;
-  count: number;
-}
-
-export interface RedeemedSubscriptionCounts extends SubscriptionCounts {
-  name: string;
-  image_url: string;
-  mint_date: string;
-  szn: number;
-}
 
 async function getForConsolidationKey(
   consolidationKey: string,

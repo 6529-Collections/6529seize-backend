@@ -1,9 +1,9 @@
 import { DISTRIBUTION_PHOTO_TABLE } from '../../../constants';
 import { fetchPaginated } from '../../../db-api';
-import { DistributionPhoto } from '../../../entities/IDistributionPhoto';
 import { sqlExecutor } from '../../../sql-executor';
 import { PaginatedResponse } from '../api-constants';
 import { constructFilters } from '../api-helpers';
+import { DistributionPhoto } from '../generated/models/DistributionPhoto';
 
 export async function fetchDistributionPhotos(
   contract: string,

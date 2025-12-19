@@ -3,12 +3,6 @@ import * as Joi from 'joi';
 import { fetchEns } from '../../../db-api';
 import { fetchAirdropAddressForConsolidationKey } from '../../../delegationsLoop/db.delegations';
 import {
-  NFTFinalSubscription,
-  SubscriptionBalance,
-  SubscriptionLog,
-  SubscriptionTopUp
-} from '../../../entities/ISubscription';
-import {
   BadRequestException,
   ForbiddenException,
   UnauthorisedException
@@ -28,6 +22,12 @@ import {
 import { asyncRouter } from '../async.router';
 import { getWalletOrThrow, needsAuthenticatedUser } from '../auth/auth';
 import { populateDistribution } from '../distributions/api.distributions.service';
+import { NFTFinalSubscription } from '../generated/models/NFTFinalSubscription';
+import { RedeemedSubscriptionCounts } from '../generated/models/RedeemedSubscriptionCounts';
+import { SubscriptionCounts } from '../generated/models/SubscriptionCounts';
+import { SubscriptionDetails } from '../generated/models/SubscriptionDetails';
+import { SubscriptionLog } from '../generated/models/SubscriptionLog';
+import { SubscriptionTopUp } from '../generated/models/SubscriptionTopUp';
 import { cacheRequest } from '../request-cache';
 import { getValidatedByJoiOrThrow } from '../validation';
 import {
@@ -50,8 +50,6 @@ import {
   fetchTopUpsForConsolidationKey,
   fetchUpcomingMemeSubscriptionCounts,
   fetchUpcomingMemeSubscriptions,
-  RedeemedSubscriptionCounts,
-  SubscriptionCounts,
   updateSubscribeAllEditions,
   updateSubscription,
   updateSubscriptionCount,
@@ -91,7 +89,7 @@ router.get(
       any,
       any
     >,
-    res: Response<SubscriptionBalance | string>
+    res: Response<SubscriptionDetails | string>
   ) {
     const consolidationKey = req.params.consolidation_key.toLowerCase();
 
