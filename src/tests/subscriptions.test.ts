@@ -770,7 +770,6 @@ function buildSubscription(
     contract,
     token_id: tokenId,
     subscribed_count: subscribedCount,
-    redeemed: redeemedCount > 0,
     redeemed_count: redeemedCount,
     airdrop_address: airdropAddress,
     balance: 0,
