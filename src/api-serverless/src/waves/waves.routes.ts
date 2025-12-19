@@ -24,7 +24,6 @@ import { ApiCreateNewWaveParticipationConfig } from '../generated/models/ApiCrea
 import { ApiWaveRequiredMetadata } from '../generated/models/ApiWaveRequiredMetadata';
 import { ApiWaveConfig } from '../generated/models/ApiWaveConfig';
 import { ApiWaveType } from '../generated/models/ApiWaveType';
-import { ApiWaveOutcome } from '../generated/models/ApiWaveOutcome';
 import { getValidatedByJoiOrThrow } from '../validation';
 import { waveApiService } from './wave.api.service';
 import { SearchWavesParams } from './waves.api.db';
@@ -65,7 +64,9 @@ import { ApiWaveDecisionsPage } from '../generated/models/ApiWaveDecisionsPage';
 import {
   waveDecisionsApiService,
   WaveDecisionsQuery,
-  WaveDecisionsQuerySort
+  WaveDecisionsQuerySort,
+  WaveOutcomeDistributionQuery,
+  WaveOutcomesQuery
 } from './wave-decisions-api.service';
 import { identityFetcher } from '../identities/identity.fetcher';
 import { enums } from '../../../enums';
@@ -73,6 +74,9 @@ import { numbers } from '../../../numbers';
 import { ApiUpdateWaveDecisionPause } from '../generated/models/ApiUpdateWaveDecisionPause';
 import { clearWaveGroupsCache } from '../../../redis';
 import { ApiDropWithoutWavesPageWithoutCount } from '../generated/models/ApiDropWithoutWavesPageWithoutCount';
+import { ApiWaveOutcomesPage } from '../generated/models/ApiWaveOutcomesPage';
+import { ApiWaveOutcomeDistributionItemsPage } from '../generated/models/ApiWaveOutcomeDistributionItemsPage';
+import { ApiCreateWaveOutcome } from '../generated/models/ApiCreateWaveOutcome';
 
 const router = asyncRouter();
 
@@ -700,6 +704,86 @@ router.get(
   }
 );
 
+router.get(
+  '/:wave_id/outcomes',
+  maybeAuthenticatedUser(),
+  async (
+    req: Request<
+      { wave_id: string },
+      any,
+      any,
+      Omit<WaveOutcomesQuery, 'wave_id'>,
+      any
+    >,
+    res: Response<ApiResponse<ApiWaveOutcomesPage>>
+  ) => {
+    const { wave_id } = req.params;
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
+
+    const params: WaveOutcomesQuery = {
+      wave_id: wave_id,
+      ...getValidatedByJoiOrThrow(
+        req.query,
+        Joi.object<Omit<WaveDecisionsQuery, 'wave_id'>>({
+          page_size: Joi.number().integer().min(1).max(2000).default(100),
+          page: Joi.number().integer().min(1).default(1),
+          sort_direction: Joi.string()
+            .valid(...Object.values(PageSortDirection))
+            .default(PageSortDirection.DESC)
+        })
+      )
+    };
+    const result = await waveDecisionsApiService.getOutcomes(params, {
+      authenticationContext,
+      timer
+    });
+    res.send(result);
+  }
+);
+
+router.get(
+  '/:wave_id/outcomes/:index/distribution',
+  maybeAuthenticatedUser(),
+  async (
+    req: Request<
+      { wave_id: string; index: number },
+      any,
+      any,
+      Omit<WaveOutcomeDistributionQuery, 'wave_id' | 'outcome_index'>,
+      any
+    >,
+    res: Response<ApiResponse<ApiWaveOutcomeDistributionItemsPage>>
+  ) => {
+    const { wave_id } = req.params;
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
+
+    const params: WaveOutcomeDistributionQuery = {
+      wave_id: wave_id,
+      ...getValidatedByJoiOrThrow(
+        { ...req.query, outcome_index: req.params.index },
+        Joi.object<Omit<WaveOutcomeDistributionQuery, 'wave_id'>>({
+          page_size: Joi.number().integer().min(1).max(2000).default(100),
+          page: Joi.number().integer().min(1).default(1),
+          sort_direction: Joi.string()
+            .valid(...Object.values(PageSortDirection))
+            .default(PageSortDirection.DESC),
+          outcome_index: Joi.number().required().integer().min(1)
+        })
+      )
+    };
+    const result = await waveDecisionsApiService.getOutcomeDistribution(
+      params,
+      {
+        authenticationContext,
+        timer
+      }
+    );
+    res.send(result);
+  }
+);
+
 router.post(
   '/:id/pauses',
   needsAuthenticatedUser(),
@@ -881,7 +965,7 @@ const WaveOutcomeDistributionItemSchema =
     description: Joi.string().optional().min(1).max(500).allow(null)
   });
 
-const WaveOutcomeSchema = Joi.object<ApiWaveOutcome>({
+const WaveOutcomeSchema = Joi.object<ApiCreateWaveOutcome>({
   type: Joi.string()
     .required()
     .valid(...Object.values(ApiWaveOutcomeType)),
