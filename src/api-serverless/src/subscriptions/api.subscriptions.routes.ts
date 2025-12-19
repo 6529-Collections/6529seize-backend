@@ -296,13 +296,10 @@ router.get(
         page?: string;
       }
     >,
-    res: Response<
-      | RedeemedSubscriptionCounts[]
-      | PaginatedResponse<RedeemedSubscriptionCounts>
-    >
+    res: Response<PaginatedResponse<RedeemedSubscriptionCounts>>
   ) {
-    const pageSize = req.query.page_size;
-    const page = req.query.page;
+    const pageSize = getPageSize(req, 20);
+    const page = getPage(req);
 
     const result = await fetchPastMemeSubscriptionCounts(pageSize, page);
     return await returnJsonResult(result, req, res);
