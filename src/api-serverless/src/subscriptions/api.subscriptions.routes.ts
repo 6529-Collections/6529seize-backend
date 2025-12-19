@@ -1,6 +1,44 @@
 import { Request, Response } from 'express';
+import * as Joi from 'joi';
+import { fetchEns } from '../../../db-api';
+import { fetchAirdropAddressForConsolidationKey } from '../../../delegationsLoop/db.delegations';
+import {
+  BadRequestException,
+  ForbiddenException,
+  UnauthorisedException
+} from '../../../exceptions';
+import { getNft } from '../../../nftsLoop/db.nfts';
+import { numbers } from '../../../numbers';
+import { evictAllKeysMatchingPatternFromRedisCache } from '../../../redis';
+import { equalIgnoreCase } from '../../../strings';
+import { PaginatedResponse } from '../api-constants';
+import {
+  getCacheKeyPatternForPath,
+  getPage,
+  getPageSize,
+  giveReadReplicaTimeToCatchUp,
+  returnJsonResult
+} from '../api-helpers';
 import { asyncRouter } from '../async.router';
-import { giveReadReplicaTimeToCatchUp, returnJsonResult } from '../api-helpers';
+import { getWalletOrThrow, needsAuthenticatedUser } from '../auth/auth';
+import { populateDistribution } from '../distributions/api.distributions.service';
+import { NFTFinalSubscription } from '../generated/models/NFTFinalSubscription';
+import { RedeemedSubscriptionCounts } from '../generated/models/RedeemedSubscriptionCounts';
+import { SubscriptionCounts } from '../generated/models/SubscriptionCounts';
+import { SubscriptionDetails } from '../generated/models/SubscriptionDetails';
+import { SubscriptionLog } from '../generated/models/SubscriptionLog';
+import { SubscriptionTopUp } from '../generated/models/SubscriptionTopUp';
+import { cacheRequest } from '../request-cache';
+import { getValidatedByJoiOrThrow } from '../validation';
+import {
+  authenticateSubscriptionsAdmin,
+  fetchPhaseName,
+  fetchPhaseResults,
+  getPublicSubscriptions,
+  resetAllowlist,
+  splitAllowlistResults,
+  validateDistribution
+} from './api.subscriptions.allowlist';
 import {
   fetchConsolidationAddresses,
   fetchDetailsForConsolidationKey,
@@ -12,40 +50,28 @@ import {
   fetchTopUpsForConsolidationKey,
   fetchUpcomingMemeSubscriptionCounts,
   fetchUpcomingMemeSubscriptions,
-  RedeemedSubscriptionCounts,
-  SubscriptionCounts,
+  updateSubscribeAllEditions,
   updateSubscription,
+  updateSubscriptionCount,
   updateSubscriptionMode
 } from './api.subscriptions.db';
-import {
-  NFTFinalSubscription,
-  SubscriptionBalance,
-  SubscriptionLog,
-  SubscriptionTopUp
-} from '../../../entities/ISubscription';
-import { getWalletOrThrow, needsAuthenticatedUser } from '../auth/auth';
-import {
-  BadRequestException,
-  ForbiddenException,
-  UnauthorisedException
-} from '../../../exceptions';
-import { getValidatedByJoiOrThrow } from '../validation';
-import * as Joi from 'joi';
-import {
-  authenticateSubscriptionsAdmin,
-  fetchPhaseName,
-  fetchPhaseResults,
-  getPublicSubscriptions,
-  resetAllowlist,
-  splitAllowlistResults,
-  validateDistribution
-} from './api.subscriptions.allowlist';
-import { getNft } from '../../../nftsLoop/db.nfts';
-import { fetchAirdropAddressForConsolidationKey } from '../../../delegationsLoop/db.delegations';
-import { fetchEns } from '../../../db-api';
-import { equalIgnoreCase } from '../../../strings';
-import { PaginatedResponse } from '../api-constants';
-import { cacheRequest } from '../request-cache';
+
+async function evictCacheForPath(path: string) {
+  await evictAllKeysMatchingPatternFromRedisCache(
+    getCacheKeyPatternForPath(`${path}*`)
+  );
+}
+
+async function invalidateSubscriptionCache(consolidationKey: string) {
+  await evictCacheForPath(
+    `/api/subscriptions/consolidation/details/${consolidationKey}`
+  );
+  await evictCacheForPath(
+    `/api/subscriptions/consolidation/upcoming-memes/${consolidationKey}`
+  );
+  await evictCacheForPath(`/api/subscriptions/upcoming-memes-counts`);
+  await giveReadReplicaTimeToCatchUp();
+}
 
 const router = asyncRouter();
 
@@ -63,7 +89,7 @@ router.get(
       any,
       any
     >,
-    res: Response<SubscriptionBalance | string>
+    res: Response<SubscriptionDetails | string>
   ) {
     const consolidationKey = req.params.consolidation_key.toLowerCase();
 
@@ -94,8 +120,8 @@ router.get(
     res: Response<SubscriptionTopUp[] | string>
   ) {
     const consolidationKey = req.params.consolidation_key.toLowerCase();
-    const pageSize = parseInt(req.query.page_size ?? '20');
-    const page = parseInt(req.query.page ?? '1');
+    const pageSize = getPageSize(req, 20);
+    const page = getPage(req);
 
     const result = await fetchTopUpsForConsolidationKey(
       consolidationKey,
@@ -148,7 +174,50 @@ router.post(
       consolidationKey,
       requestPayload.automatic
     );
-    await giveReadReplicaTimeToCatchUp();
+    await invalidateSubscriptionCache(consolidationKey);
+    res.status(201).send(response);
+  }
+);
+
+router.post(
+  `/:consolidation_key/subscribe-all-editions`,
+  needsAuthenticatedUser(),
+  async function (
+    req: Request<
+      {
+        consolidation_key: string;
+      },
+      any,
+      {
+        subscribe_all_editions: boolean;
+      },
+      any,
+      any
+    >,
+    res: Response
+  ) {
+    const consolidationKey = req.params.consolidation_key.toLowerCase();
+
+    const isAuthenticated = await isAuthenticatedForConsolidationKey(
+      req,
+      consolidationKey
+    );
+    if (!isAuthenticated) {
+      throw new ForbiddenException(
+        `User can only change subscription mode for their own consolidation`
+      );
+    }
+    const requestPayload = getValidatedByJoiOrThrow(
+      req.body,
+      Joi.object({
+        subscribe_all_editions: Joi.boolean().required()
+      })
+    );
+    const response = await updateSubscribeAllEditions(
+      consolidationKey,
+      requestPayload.subscribe_all_editions
+    );
+    await invalidateSubscriptionCache(consolidationKey);
     res.status(201).send(response);
   }
 );
@@ -184,7 +253,7 @@ router.get(
     res: Response<SubscriptionTopUp[] | string>
   ) {
     const consolidationKey = req.params.consolidation_key.toLowerCase();
-    const cardCount = parseInt(req.query.card_count ?? '3');
+    const cardCount = numbers.parseIntOrNull(req.query.card_count) ?? 3;
 
     const result = await fetchUpcomingMemeSubscriptions(
       consolidationKey,
@@ -208,7 +277,7 @@ router.get(
     >,
     res: Response<SubscriptionCounts[]>
   ) {
-    const cardCount = parseInt(req.query.card_count ?? '3');
+    const cardCount = numbers.parseIntOrNull(req.query.card_count) ?? 3;
 
     const result = await fetchUpcomingMemeSubscriptionCounts(cardCount);
     return await returnJsonResult(result, req, res);
@@ -227,13 +296,10 @@ router.get(
         page?: string;
       }
     >,
-    res: Response<
-      | RedeemedSubscriptionCounts[]
-      | PaginatedResponse<RedeemedSubscriptionCounts>
-    >
+    res: Response<PaginatedResponse<RedeemedSubscriptionCounts>>
   ) {
-    const pageSize = req.query.page_size;
-    const page = req.query.page;
+    const pageSize = getPageSize(req, 20);
+    const page = getPage(req);
 
     const result = await fetchPastMemeSubscriptionCounts(pageSize, page);
     return await returnJsonResult(result, req, res);
@@ -287,7 +353,59 @@ router.post(
       requestPayload.token_id,
       requestPayload.subscribed
     );
-    await giveReadReplicaTimeToCatchUp();
+    await invalidateSubscriptionCache(consolidationKey);
+    res.status(201).send(response);
+  }
+);
+
+router.post(
+  `/:consolidation_key/subscription-count`,
+  needsAuthenticatedUser(),
+  async function (
+    req: Request<
+      {
+        consolidation_key: string;
+      },
+      any,
+      {
+        contract: string;
+        token_id: number;
+        count: number;
+      },
+      any,
+      any
+    >,
+    res: Response
+  ) {
+    const consolidationKey = req.params.consolidation_key.toLowerCase();
+    const isAuthenticated = await isAuthenticatedForConsolidationKey(
+      req,
+      consolidationKey
+    );
+    if (!isAuthenticated) {
+      throw new ForbiddenException(
+        `User can only change subscription mode for their own consolidation`
+      );
+    }
+    const requestPayload = getValidatedByJoiOrThrow(
+      req.body,
+      Joi.object({
+        contract: Joi.string().required(),
+        token_id: Joi.number().required(),
+        count: Joi.number().required()
+      })
+    );
+    const nft = await getNft(requestPayload.contract, requestPayload.token_id);
+    if (nft) {
+      throw new BadRequestException('NFT already released');
+    }
+    const response = await updateSubscriptionCount(
+      consolidationKey,
+      requestPayload.contract,
+      requestPayload.token_id,
+      requestPayload.count
+    );
+    await invalidateSubscriptionCache(consolidationKey);
     res.status(201).send(response);
   }
 );
@@ -309,8 +427,8 @@ router.get(
     res: Response<SubscriptionLog[] | string>
   ) {
     const consolidationKey = req.params.consolidation_key.toLowerCase();
-    const pageSize = parseInt(req.query.page_size ?? '20');
-    const page = parseInt(req.query.page ?? '1');
+    const pageSize = getPageSize(req, 20);
+    const page = getPage(req);
 
     const result = await fetchLogsForConsolidationKey(
       consolidationKey,
@@ -342,8 +460,8 @@ router.get(
     res: Response<SubscriptionLog[] | string>
   ) {
     const consolidationKey = req.params.consolidation_key.toLowerCase();
-    const pageSize = parseInt(req.query.page_size ?? '20');
-    const page = parseInt(req.query.page ?? '1');
+    const pageSize = getPageSize(req, 20);
+    const page = getPage(req);
 
     const result = await fetchRedeemedSubscriptionsForConsolidationKey(
       consolidationKey,
@@ -411,7 +529,10 @@ router.get(
   ) {
     const consolidationKey = req.params.consolidation_key.toLowerCase();
     const contract = req.params.contract;
-    const tokenId = parseInt(req.params.token_id);
+    const tokenId = numbers.parseIntOrNull(req.params.token_id);
+    if (tokenId === null) {
+      return res.status(400).send('Invalid token ID');
+    }
 
     const result = await fetchFinalSubscription(
       consolidationKey,
@@ -445,8 +566,8 @@ router.get(
     if (!contract) {
       throw new BadRequestException('Contract is required');
     }
-    const pageSize = parseInt(req.query.page_size ?? '20');
-    const page = parseInt(req.query.page ?? '1');
+    const pageSize = getPageSize(req, 20);
+    const page = getPage(req);
 
     const result = await fetchSubscriptionUploads(contract, pageSize, page);
     return await returnJsonResult(result, req, res, true);
@@ -477,8 +598,8 @@ router.get(
     const allowlistId = req.params.allowlist_id;
     const phaseId = req.params.phase_id;
 
-    const tokenId = parseInt(tokenIdStr);
-    if (isNaN(tokenId)) {
+    const tokenId = numbers.parseIntOrNull(tokenIdStr);
+    if (tokenId === null) {
       return res.status(400).send({
         valid: false,
         statusText: 'Invalid token ID'
@@ -503,12 +624,15 @@ router.get(
     } else {
       const phaseResults = await fetchPhaseResults(auth, allowlistId, phaseId);
       const phaseName = await fetchPhaseName(auth, allowlistId, phaseId);
+
       const results = await splitAllowlistResults(
         contract,
         tokenId,
         phaseName,
         phaseResults
       );
+
+      await populateDistribution(contract, tokenId, phaseName, results);
       return await returnJsonResult(results, req, res);
     }
   }
@@ -535,8 +659,8 @@ router.post(
     const tokenIdStr = req.params.token_id;
     const allowlistId = req.params.allowlist_id;
 
-    const tokenId = parseInt(tokenIdStr);
-    if (isNaN(tokenId)) {
+    const tokenId = numbers.parseIntOrNull(tokenIdStr);
+    if (tokenId === null) {
       return res.status(400).send({
         valid: false,
         statusText: 'Invalid token ID'
@@ -556,6 +680,11 @@ router.post(
     }
 
     await resetAllowlist(contract, tokenId);
+
+    await evictCacheForPath(
+      `/api/distributions/${contract}/${tokenId}/overview`
+    );
+
     return await returnJsonResult(
       {
         success: true,

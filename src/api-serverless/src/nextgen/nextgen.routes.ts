@@ -15,17 +15,22 @@ import {
   NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE,
   NEXTGEN_ALLOWLIST_TABLE
 } from '../../../nextgen/nextgen_constants';
+import { numbers } from '../../../numbers';
 import { sqlExecutor } from '../../../sql-executor';
 import {
   ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
   CONTENT_TYPE_HEADER,
   corsOptions,
-  DEFAULT_PAGE_SIZE,
   DISTRIBUTION_PAGE_SIZE,
   JSON_HEADER_VALUE
 } from '../api-constants';
 import { NextGenCollectionStatus } from '../api-filters';
-import { returnJsonResult, returnPaginatedResult } from '../api-helpers';
+import {
+  getPage,
+  getPageSize,
+  returnJsonResult,
+  returnPaginatedResult
+} from '../api-helpers';
 import { asyncRouter } from '../async.router';
 import { initMulterSingleMiddleware } from '../multer-middleware';
 import { PageSortDirection } from '../page-request';
@@ -52,8 +57,8 @@ interface TokenTraitWithCount {
 }
 
 function validateCollectionId(req: any, _: any, next: any) {
-  const id: number = parseInt(req.params.id);
-  if (isNaN(id)) {
+  const id = numbers.parseIntOrNull(req.params.id);
+  if (id === null) {
     throw new BadRequestException('Collection ID must be a number.');
   }
   req.params.id = id;
@@ -126,40 +131,34 @@ router.get(`/merkle_roots/:merkle_root`, async function (req: any, res: any) {
 router.get(
   `/:collection_id/allowlist_merkle/:merkle_root?`,
   async function (req: any, res: any) {
-    const id: number = parseInt(req.params.collection_id);
-    if (!isNaN(id)) {
-      const addresses = req.query.address;
-      const merkleRoot = req.params.merkle_root;
-
-      const pageSize: number =
-        req.query.page_size && req.query.page_size < DISTRIBUTION_PAGE_SIZE
-          ? parseInt(req.query.page_size)
-          : DISTRIBUTION_PAGE_SIZE;
-      const page: number = req.query.page ? parseInt(req.query.page) : 1;
-
-      db.fetchNextGenAllowlistByPhase(
-        id,
-        addresses,
-        merkleRoot,
-        pageSize,
-        page
-      ).then((result) => {
-        res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
-        res.setHeader(ACCESS_CONTROL_ALLOW_ORIGIN_HEADER, corsOptions.origin);
-        res.end(JSON.stringify(result));
-      });
-    } else {
+    const id = numbers.parseIntOrNull(req.params.collection_id);
+    if (id === null) {
       return res.status(404).send({});
     }
+
+    const addresses = req.query.address;
+    const merkleRoot = req.params.merkle_root;
+
+    const pageSize = getPageSize(req, DISTRIBUTION_PAGE_SIZE);
+    const page = getPage(req);
+
+    db.fetchNextGenAllowlistByPhase(
+      id,
+      addresses,
+      merkleRoot,
+      pageSize,
+      page
+    ).then((result) => {
+      res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
+      res.setHeader(ACCESS_CONTROL_ALLOW_ORIGIN_HEADER, corsOptions.origin);
+      res.end(JSON.stringify(result));
+    });
   }
 );
 
 router.get(`/proofs`, async function (req: any, res: any) {
-  const pageSize: number =
-    req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-      ? parseInt(req.query.page_size)
-      : DEFAULT_PAGE_SIZE;
-  const page: number = req.query.page ? parseInt(req.query.page) : 1;
+  const pageSize = getPageSize(req);
+  const page = getPage(req);
   const addresses = req.query.address;
 
   db.fetchNextGenProofs(addresses, pageSize, page).then((result) => {
@@ -187,7 +186,11 @@ router.get(
   `/burn_proofs/:merkle_root/:tokenId`,
   async function (req: any, res: any) {
     const merkleRoot = req.params.merkle_root;
-    const tokenId = parseInt(req.params.tokenId);
+    const tokenId = numbers.parseIntOrNull(req.params.tokenId);
+
+    if (tokenId === null) {
+      return res.status(400).send({});
+    }
 
     db.fetchNextGenBurnAllowlist(merkleRoot, tokenId).then((result) => {
       res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
@@ -198,11 +201,8 @@ router.get(
 );
 
 router.get(`/allowlist_phases`, async function (req: any, res: any) {
-  const pageSize: number =
-    req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-      ? parseInt(req.query.page_size)
-      : DEFAULT_PAGE_SIZE;
-  const page: number = req.query.page ? parseInt(req.query.page) : 1;
+  const pageSize = getPageSize(req);
+  const page = getPage(req);
 
   logger.info(
     `[FETCHING ALLOWLIST PHASES FOR ALL COLLECTIONS] : [PAGE SIZE ${pageSize}] : [PAGE ${page}]`
@@ -215,15 +215,15 @@ router.get(`/allowlist_phases`, async function (req: any, res: any) {
 router.get(
   `/allowlist_phases/:collection_id`,
   async function (req: any, res: any) {
-    const id: number = parseInt(req.params.collection_id);
-    if (!isNaN(id)) {
-      logger.info(`[FETCHING ALLOWLIST PHASES COLLECTION ID ${id}]`);
-      await db.fetchAllowlistPhasesForCollection(id).then(async (result) => {
-        return await returnPaginatedResult(result as unknown as any, req, res);
-      });
-    } else {
+    const id = numbers.parseIntOrNull(req.params.collection_id);
+    if (id === null) {
       return res.status(404).send({});
     }
+
+    logger.info(`[FETCHING ALLOWLIST PHASES COLLECTION ID ${id}]`);
+    await db.fetchAllowlistPhasesForCollection(id).then(async (result) => {
+      return await returnPaginatedResult(result as unknown as any, req, res);
+    });
   }
 );
 
@@ -234,11 +234,8 @@ router.get(`/featured`, cacheRequest(), async function (req: any, res: any) {
 });
 
 router.get(`/collections`, cacheRequest(), async function (req: any, res: any) {
-  const pageSize: number =
-    req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-      ? parseInt(req.query.page_size)
-      : DEFAULT_PAGE_SIZE;
-  const page: number = req.query.page ? parseInt(req.query.page) : 1;
+  const pageSize = getPageSize(req);
+  const page = getPage(req);
   const statusKey =
     req.query.status?.toUpperCase() as keyof typeof NextGenCollectionStatus;
   const status =
@@ -256,21 +253,20 @@ router.get(
   `/collections/:id`,
   cacheRequest(),
   async function (req: any, res: any) {
-    const id: number = parseInt(req.params.id);
+    const id = numbers.parseIntOrNull(req.params.id);
     let result: any;
-    if (!isNaN(id)) {
-      logger.info(`[FETCHING COLLECTION BY ID ${id}]`);
-      result = await db.fetchNextGenCollectionById(id);
-    } else {
+    if (id === null) {
       const name = req.params.id.replace(/-/g, ' ');
       logger.info(`[FETCHING COLLECTION BY NAME ${name}]`);
       result = await db.fetchNextGenCollectionByName(name);
+    } else {
+      logger.info(`[FETCHING COLLECTION BY ID ${id}]`);
+      result = await db.fetchNextGenCollectionById(id);
     }
     if (result?.id) {
       return await returnJsonResult(result, req, res);
-    } else {
-      return res.status(404).send({});
     }
+    return res.status(404).send({});
   }
 );
 
@@ -280,11 +276,8 @@ router.get(
   cacheRequest(),
   async function (req: any, res: any) {
     const id: number = req.params.id;
-    const pageSize: number =
-      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-        ? parseInt(req.query.page_size)
-        : DEFAULT_PAGE_SIZE;
-    const page: number = req.query.page ? parseInt(req.query.page) : 1;
+    const pageSize = getPageSize(req);
+    const page = getPage(req);
     const traits = req.query.traits ? req.query.traits.split(',') : [];
     const sortDir: PageSortDirection =
       PageSortDirection[
@@ -330,9 +323,9 @@ router.get(
   cacheRequest(),
   async function (req: any, res: any) {
     const id: number = req.params.id;
-    const token: number = parseInt(req.params.token);
+    const token = numbers.parseIntOrNull(req.params.token);
 
-    if (isNaN(token)) {
+    if (token === null) {
       throw new BadRequestException('Token must be a number.');
     }
 
@@ -353,11 +346,8 @@ router.get(
   cacheRequest(),
   async function (req: any, res: any) {
     const id: number = req.params.id;
-    const pageSize: number =
-      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-        ? parseInt(req.query.page_size)
-        : DEFAULT_PAGE_SIZE;
-    const page: number = req.query.page ? parseInt(req.query.page) : 1;
+    const pageSize = getPageSize(req);
+    const page = getPage(req);
 
     await db
       .fetchNextGenCollectionLogs(id, pageSize, page)
@@ -373,17 +363,14 @@ router.get(
   cacheRequest(),
   async function (req: any, res: any) {
     const id: number = req.params.id;
-    const tokenId = parseInt(req.params.tokenId);
+    const tokenId = numbers.parseIntOrNull(req.params.tokenId);
 
-    if (isNaN(tokenId)) {
+    if (tokenId === null) {
       throw new BadRequestException('Token ID must be a number.');
     }
 
-    const pageSize: number =
-      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-        ? parseInt(req.query.page_size)
-        : DEFAULT_PAGE_SIZE;
-    const page: number = req.query.page ? parseInt(req.query.page) : 1;
+    const pageSize = getPageSize(req);
+    const page = getPage(req);
 
     await db
       .fetchNextGenCollectionOnlyLogs(id, pageSize, page)
@@ -449,11 +436,8 @@ router.get(
       throw new BadRequestException('Traits must be supplied.');
     }
 
-    const pageSize: number =
-      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-        ? parseInt(req.query.page_size)
-        : DEFAULT_PAGE_SIZE;
-    const page: number = req.query.page ? parseInt(req.query.page) : 1;
+    const pageSize = getPageSize(req);
+    const page = getPage(req);
 
     await db
       .fetchNextGenCollectionTraitSetsUltimate(id, traits, pageSize, page)
@@ -471,11 +455,8 @@ router.get(
     const id: number = req.params.id;
     const trait: string = req.params.trait;
 
-    const pageSize: number =
-      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-        ? parseInt(req.query.page_size)
-        : DEFAULT_PAGE_SIZE;
-    const page: number = req.query.page ? parseInt(req.query.page) : 1;
+    const pageSize = getPageSize(req);
+    const page = getPage(req);
     const search = req.query.search;
 
     await db
@@ -487,8 +468,8 @@ router.get(
 );
 
 router.get(`/tokens/:id`, cacheRequest(), async function (req: any, res: any) {
-  const id: number = parseInt(req.params.id);
-  if (isNaN(id)) {
+  const id = numbers.parseIntOrNull(req.params.id);
+  if (id === null) {
     throw new BadRequestException('Token ID must be a number.');
   }
 
@@ -505,16 +486,13 @@ router.get(
   `/tokens/:id/transactions`,
   cacheRequest(),
   async function (req: any, res: any) {
-    const id: number = parseInt(req.params.id);
-    if (isNaN(id)) {
+    const id = numbers.parseIntOrNull(req.params.id);
+    if (id === null) {
       throw new BadRequestException('Token ID must be a number.');
     }
 
-    const pageSize: number =
-      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-        ? parseInt(req.query.page_size)
-        : DEFAULT_PAGE_SIZE;
-    const page: number = req.query.page ? parseInt(req.query.page) : 1;
+    const pageSize = getPageSize(req);
+    const page = getPage(req);
 
     await db
       .fetchNextGenTokenTransactions(id, pageSize, page)
@@ -528,8 +506,8 @@ router.get(
   `/tokens/:id/traits`,
   cacheRequest(),
   async function (req: any, res: any) {
-    const id: number = parseInt(req.params.id);
-    if (isNaN(id)) {
+    const id = numbers.parseIntOrNull(req.params.id);
+    if (id === null) {
       throw new BadRequestException('Token ID must be a number.');
     }
 
@@ -540,11 +518,8 @@ router.get(
 );
 
 router.get(`/tdh`, cacheRequest(), async function (req: any, res: any) {
-  const pageSize: number =
-    req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-      ? parseInt(req.query.page_size)
-      : DEFAULT_PAGE_SIZE;
-  const page: number = req.query.page ? parseInt(req.query.page) : 1;
+  const pageSize = getPageSize(req);
+  const page = getPage(req);
 
   const consolidationKeys = req.query.consolidation_key;
   const tokenIds = req.query.token_id;

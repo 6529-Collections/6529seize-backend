@@ -1,4 +1,5 @@
 import { goerli, mainnet, sepolia } from '@wagmi/chains';
+import { env } from '../../../env';
 
 export interface NextGenContract {
   [goerli.id]: string;
@@ -7,8 +8,8 @@ export interface NextGenContract {
 }
 
 export function getNextGenChainId() {
-  if (process.env.NEXTGEN_CHAIN_ID) {
-    const chainId: number = parseInt(process.env.NEXTGEN_CHAIN_ID);
+  const chainId = env.getIntOrNull('NEXTGEN_CHAIN_ID');
+  if (chainId !== null) {
     if (chainId == sepolia.id) {
       return sepolia.id;
     }

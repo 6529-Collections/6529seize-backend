@@ -5,23 +5,19 @@ import {
   ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
   CONTENT_TYPE_HEADER,
   corsOptions,
-  DEFAULT_PAGE_SIZE,
   DISTRIBUTION_PAGE_SIZE,
   JSON_HEADER_VALUE,
   SORT_DIRECTIONS
 } from '../api-constants';
 import { REMEMES_SORT } from '../api-filters';
-import { returnPaginatedResult } from '../api-helpers';
+import { getPage, getPageSize, returnPaginatedResult } from '../api-helpers';
 
 const router = asyncRouter();
 
 router.get(``, async function (req: any, res: any) {
   const memeIds = req.query.meme_id;
-  const pageSize: number =
-    req.query.page_size && req.query.page_size < DISTRIBUTION_PAGE_SIZE
-      ? parseInt(req.query.page_size)
-      : DEFAULT_PAGE_SIZE;
-  const page: number = req.query.page ? parseInt(req.query.page) : 1;
+  const pageSize = getPageSize(req, DISTRIBUTION_PAGE_SIZE);
+  const page = getPage(req);
   const contract = req.query.contract;
   const id = req.query.id;
   const tokenType = req.query.token_type;

@@ -1,3 +1,7 @@
+import {
+  CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE,
+  MEMES_SEASONS_TABLE
+} from '../constants';
 import { getDataSource } from '../db';
 import {
   NFTFinalSubscription,
@@ -8,11 +12,20 @@ import {
   SubscriptionMode
 } from '../entities/ISubscription';
 import { insertWithoutUpdate } from '../orm_helpers';
+import { sqlExecutor } from '../sql-executor';
 
 export async function fetchAllAutoSubscriptions() {
   return await getDataSource()
     .getRepository(SubscriptionMode)
     .find({ where: { automatic: true }, order: { created_at: 'ASC' } });
+}
+
+export async function fetchSubscriptionModeForConsolidationKey(
+  consolidationKey: string
+) {
+  return await getDataSource()
+    .getRepository(SubscriptionMode)
+    .findOne({ where: { consolidation_key: consolidationKey } });
 }
 
 export async function fetchAllNftSubscriptions(contract: string, id: number) {
@@ -80,4 +93,37 @@ export async function persistNFTFinalSubscriptions(
 
     await manager.getRepository(SubscriptionLog).insert(logs);
   });
+}
+
+export async function fetchSubscriptionEligibility(
+  consolidationKey: string
+): Promise<number> {
+  const maxSeasonId = await sqlExecutor.execute<{ max_id: number }>(
+    `SELECT MAX(id) as max_id FROM ${MEMES_SEASONS_TABLE}`
+  );
+
+  if (!maxSeasonId || maxSeasonId.length === 0 || !maxSeasonId[0].max_id) {
+    return 1;
+  }
+
+  const seasonId = maxSeasonId[0].max_id;
+
+  const cardSetsResult = await sqlExecutor.execute<{
+    sets: number;
+  }>(
+    `SELECT sets FROM ${CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE} 
+     WHERE consolidation_key = :consolidationKey AND season = :seasonId`,
+    { consolidationKey, seasonId }
+  );
+
+  if (
+    !cardSetsResult ||
+    cardSetsResult.length === 0 ||
+    !cardSetsResult[0].sets ||
+    cardSetsResult[0].sets === 0
+  ) {
+    return 1;
+  }
+
+  return cardSetsResult[0].sets;
 }

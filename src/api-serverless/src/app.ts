@@ -10,6 +10,8 @@ import communityMembersRoutes from './community-members/community-members.routes
 import userGroupsImEligibleForRoutes from './community-members/user-groups-im-elgigible-for.routes';
 import userGroupsRoutes from './community-members/user-groups.routes';
 import delegationsRoutes from './delegations/delegations.routes';
+import distributionPhotosRoutes from './distribution-photos/api.distribution_photos.routes';
+import distributionsRoutes from './distributions/api.distributions.routes';
 import dropsMediaRoutes from './drops/drops-media.routes';
 import dropsRoutes from './drops/drops.routes';
 import lightDropsRoutes from './drops/light-drops.routes';
@@ -43,6 +45,7 @@ import xtdhRoutes from './xtdh/xtdh.routes';
 
 import * as Sentry from '@sentry/serverless';
 import { NextFunction, Request, Response } from 'express';
+import * as Joi from 'joi';
 import * as passport from 'passport';
 import {
   ExtractJwt,
@@ -83,6 +86,8 @@ import {
 import { MEMES_EXTENDED_SORT, TRANSACTION_FILTERS } from './api-filters';
 import {
   cacheKey,
+  getPage,
+  getPageSize,
   returnJsonResult,
   returnPaginatedResult,
   transformPaginatedResponse
@@ -110,6 +115,7 @@ import { cacheRequest, isRequestCacheEntry } from './request-cache';
 import rpcRoutes from './rpc/rpc.routes';
 import sitemapRoutes from './sitemap/sitemap.routes';
 import subscriptionsRoutes from './subscriptions/api.subscriptions.routes';
+import { getValidatedByJoiOrThrow } from './validation';
 import {
   appWebSockets,
   authenticateWebSocketJwtOrGetByConnectionId,
@@ -337,11 +343,8 @@ async function initializeApp() {
     `/blocks`,
     cacheRequest(),
     async function (req: any, res: Response<ApiResponse<ApiBlocksPage>>) {
-      const pageSize: number =
-        req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-          ? parseInt(req.query.page_size)
-          : DEFAULT_PAGE_SIZE;
-      const page: number = req.query.page ? parseInt(req.query.page) : 1;
+      const pageSize = getPageSize(req);
+      const page = getPage(req);
       await db.fetchBlocks(pageSize, page).then(async (result) => {
         await returnPaginatedResult(
           transformPaginatedResponse(
@@ -366,21 +369,24 @@ async function initializeApp() {
     }
   );
 
+  const UploadsQuerySchema = Joi.object({
+    page_size: Joi.number()
+      .integer()
+      .min(1)
+      .max(DEFAULT_PAGE_SIZE)
+      .default(DEFAULT_PAGE_SIZE),
+    page: Joi.number().integer().min(1).default(1),
+    block: Joi.number().integer().min(0).default(0),
+    date: Joi.string().optional()
+  });
+
   apiRouter.get(
     `/uploads`,
     cacheRequest(),
     async function (req: any, res: Response<ApiResponse<ApiUploadsPage>>) {
-      const pageSize: number =
-        req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-          ? parseInt(req.query.page_size)
-          : DEFAULT_PAGE_SIZE;
-      const page: number = req.query.page ? parseInt(req.query.page) : 1;
-      const block = numbers.isNumber(req.query.block)
-        ? parseInt(req.query.block)
-        : 0;
-      const date = req.query.date;
+      const params = getValidatedByJoiOrThrow(req.query, UploadsQuerySchema);
       await db
-        .fetchUploads(pageSize, page, block, date)
+        .fetchUploads(params.page_size, params.page, params.block, params.date)
         .then(async (result) => {
           await returnPaginatedResult(
             transformPaginatedResponse(
@@ -402,17 +408,14 @@ async function initializeApp() {
     `/consolidated_uploads`,
     cacheRequest(),
     async function (req: any, res: Response<ApiResponse<ApiUploadsPage>>) {
-      const pageSize: number =
-        req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-          ? parseInt(req.query.page_size)
-          : DEFAULT_PAGE_SIZE;
-      const page: number = req.query.page ? parseInt(req.query.page) : 1;
-      const block = numbers.isNumber(req.query.block)
-        ? parseInt(req.query.block)
-        : 0;
-      const date = req.query.date;
+      const params = getValidatedByJoiOrThrow(req.query, UploadsQuerySchema);
       await db
-        .fetchConsolidatedUploads(pageSize, page, block, date)
+        .fetchConsolidatedUploads(
+          params.page_size,
+          params.page,
+          params.block,
+          params.date
+        )
         .then(async (result) => {
           await returnPaginatedResult(
             transformPaginatedResponse(
@@ -434,11 +437,8 @@ async function initializeApp() {
     `/artists`,
     cacheRequest(),
     async function (req: any, res: Response<ApiResponse<ApiArtistsPage>>) {
-      const pageSize: number =
-        req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-          ? parseInt(req.query.page_size)
-          : DEFAULT_PAGE_SIZE;
-      const page: number = req.query.page ? parseInt(req.query.page) : 1;
+      const pageSize = getPageSize(req);
+      const page = getPage(req);
 
       const meme_nfts = req.query.meme_id;
 
@@ -488,11 +488,8 @@ async function initializeApp() {
     `/nfts`,
     cacheRequest(),
     async function (req: any, res: Response<ApiNftsPage>) {
-      const pageSize: number =
-        req.query.page_size && req.query.page_size <= NFTS_PAGE_SIZE
-          ? parseInt(req.query.page_size)
-          : DEFAULT_PAGE_SIZE;
-      const page: number = req.query.page ? parseInt(req.query.page) : 1;
+      const pageSize = getPageSize(req, NFTS_PAGE_SIZE);
+      const page = getPage(req);
 
       const sortDir =
         req.query.sort_direction &&
@@ -544,11 +541,8 @@ async function initializeApp() {
     cacheRequest(),
     async function (req: any, res: any) {
       const id = req.query.id;
-      const pageSize: number =
-        req.query.page_size && req.query.page_size <= NFTS_PAGE_SIZE
-          ? parseInt(req.query.page_size)
-          : DEFAULT_PAGE_SIZE;
-      const page: number = req.query.page ? parseInt(req.query.page) : 1;
+      const pageSize = getPageSize(req, NFTS_PAGE_SIZE);
+      const page = getPage(req);
 
       const sortDir =
         req.query.sort_direction &&
@@ -588,11 +582,8 @@ async function initializeApp() {
     `/nfts_memelab`,
     cacheRequest(),
     async function (req: any, res: any) {
-      const pageSize: number =
-        req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-          ? parseInt(req.query.page_size)
-          : DEFAULT_PAGE_SIZE;
-      const page: number = req.query.page ? parseInt(req.query.page) : 1;
+      const pageSize = getPageSize(req);
+      const page = getPage(req);
 
       const sortDir =
         req.query.sort_direction &&
@@ -627,11 +618,8 @@ async function initializeApp() {
     `/memes_extended_data`,
     cacheRequest(),
     async function (req: any, res: any) {
-      const pageSize: number =
-        req.query.page_size && req.query.page_size <= NFTS_PAGE_SIZE
-          ? parseInt(req.query.page_size)
-          : DEFAULT_PAGE_SIZE;
-      const page: number = req.query.page ? parseInt(req.query.page) : 1;
+      const pageSize = getPageSize(req, NFTS_PAGE_SIZE);
+      const page = getPage(req);
 
       const nfts = req.query.id;
       const seasons = req.query.season;
@@ -740,11 +728,7 @@ async function initializeApp() {
     `/nfts_search`,
     cacheRequest(),
     async function (req: any, res: any) {
-      const pageSize: number =
-        req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-          ? parseInt(req.query.page_size)
-          : DEFAULT_PAGE_SIZE;
-
+      const pageSize = getPageSize(req);
       const search = req.query.search;
 
       await db.searchNfts(search, pageSize).then(async (result) => {
@@ -757,11 +741,8 @@ async function initializeApp() {
     `/lab_extended_data`,
     cacheRequest(),
     async function (req: any, res: any) {
-      const pageSize: number =
-        req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-          ? parseInt(req.query.page_size)
-          : DEFAULT_PAGE_SIZE;
-      const page: number = req.query.page ? parseInt(req.query.page) : 1;
+      const pageSize = getPageSize(req);
+      const page = getPage(req);
 
       const nfts = req.query.id;
       const collections = req.query.collection;
@@ -778,11 +759,8 @@ async function initializeApp() {
     `/transactions`,
     cacheRequest(),
     async function (req: any, res: Response<ApiResponse<ApiTransactionPage>>) {
-      const pageSize: number =
-        req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-          ? parseInt(req.query.page_size)
-          : DEFAULT_PAGE_SIZE;
-      const page: number = req.query.page ? parseInt(req.query.page) : 1;
+      const pageSize = getPageSize(req);
+      const page = getPage(req);
 
       const wallets = req.query.wallet;
       const contracts = req.query.contract;
@@ -819,11 +797,8 @@ async function initializeApp() {
     `/transactions_memelab`,
     cacheRequest(),
     async function (req: any, res: any) {
-      const pageSize: number =
-        req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-          ? parseInt(req.query.page_size)
-          : DEFAULT_PAGE_SIZE;
-      const page: number = req.query.page ? parseInt(req.query.page) : 1;
+      const pageSize = getPageSize(req);
+      const page = getPage(req);
 
       const wallets = req.query.wallet;
       const nfts = req.query.id;
@@ -845,11 +820,8 @@ async function initializeApp() {
     `/tdh/gradients/`,
     cacheRequest(),
     async function (req: any, res: any) {
-      const pageSize: number =
-        req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-          ? parseInt(req.query.page_size)
-          : DEFAULT_PAGE_SIZE;
-      const page: number = req.query.page ? parseInt(req.query.page) : 1;
+      const pageSize = getPageSize(req);
+      const page = getPage(req);
       await db.fetchGradientTdh(pageSize, page).then(async (result) => {
         result = parseTdhResultsFromDB(result);
         await returnPaginatedResult(result, req, res);
@@ -874,71 +846,13 @@ async function initializeApp() {
   );
 
   apiRouter.get(`/team`, cacheRequest(), async function (req: any, res: any) {
-    const pageSize: number =
-      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-        ? parseInt(req.query.page_size)
-        : DEFAULT_PAGE_SIZE;
-    const page: number = req.query.page ? parseInt(req.query.page) : 1;
+    const pageSize = getPageSize(req);
+    const page = getPage(req);
 
     await db.fetchTeam(pageSize, page).then(async (result) => {
       await returnPaginatedResult(result, req, res);
     });
   });
-
-  apiRouter.get(
-    `/distribution_photos/:contract/:nft_id`,
-    cacheRequest(),
-    async function (req: any, res: any) {
-      const contract = req.params.contract;
-      const nftId = req.params.nft_id;
-
-      const pageSize: number =
-        req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-          ? parseInt(req.query.page_size)
-          : DEFAULT_PAGE_SIZE;
-      const page: number = req.query.page ? parseInt(req.query.page) : 1;
-
-      await db
-        .fetchDistributionPhotos(contract, nftId, pageSize, page)
-        .then(async (result) => {
-          await returnPaginatedResult(result, req, res);
-        });
-    }
-  );
-
-  apiRouter.get(
-    `/distribution_phases/:contract/:nft_id`,
-    cacheRequest(),
-    async function (req: any, res: any) {
-      const contract = req.params.contract;
-      const nftId = req.params.nft_id;
-      await db.fetchDistributionPhases(contract, nftId).then(async (result) => {
-        await returnPaginatedResult(result, req, res);
-      });
-    }
-  );
-
-  apiRouter.get(
-    `/distributions`,
-    cacheRequest(),
-    async function (req: any, res: any) {
-      const search = req.query.search;
-      const cards = req.query.card_id;
-      const contracts = req.query.contract;
-      const wallets = req.query.wallet;
-
-      const pageSize: number =
-        req.query.page_size && req.query.page_size < DISTRIBUTION_PAGE_SIZE
-          ? parseInt(req.query.page_size)
-          : DEFAULT_PAGE_SIZE;
-      const page: number = req.query.page ? parseInt(req.query.page) : 1;
-      await db
-        .fetchDistributions(search, cards, contracts, wallets, pageSize, page)
-        .then(async (result) => {
-          await returnPaginatedResult(result, req, res);
-        });
-    }
-  );
 
   apiRouter.get(
     `/consolidations/:wallet`,
@@ -961,11 +875,8 @@ async function initializeApp() {
     cacheRequest(),
     async function (req: any, res: any) {
       const block = req.query.block;
-      const pageSize: number =
-        req.query.page_size && req.query.page_size < DEFAULT_MAX_SIZE
-          ? parseInt(req.query.page_size)
-          : DEFAULT_PAGE_SIZE;
-      const page: number = req.query.page ? parseInt(req.query.page) : 1;
+      const pageSize = getPageSize(req, DEFAULT_MAX_SIZE);
+      const page = getPage(req);
 
       await db
         .fetchConsolidations(pageSize, page, block)
@@ -982,11 +893,8 @@ async function initializeApp() {
     `/consolidation_transactions`,
     cacheRequest(),
     async function (req: any, res: any) {
-      const pageSize: number =
-        req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-          ? parseInt(req.query.page_size)
-          : DEFAULT_PAGE_SIZE;
-      const page: number = req.query.page ? parseInt(req.query.page) : 1;
+      const pageSize = getPageSize(req);
+      const page = getPage(req);
 
       const block = req.query.block;
       const showIncomplete = !!(
@@ -1007,11 +915,8 @@ async function initializeApp() {
       const contract = req.params.contract;
       const nftId = req.params.nft_id;
 
-      const pageSize: number =
-        req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-          ? parseInt(req.query.page_size)
-          : DEFAULT_PAGE_SIZE;
-      const page: number = req.query.page ? parseInt(req.query.page) : 1;
+      const pageSize = getPageSize(req);
+      const page = getPage(req);
 
       await db
         .fetchNftHistory(pageSize, page, contract, nftId)
@@ -1051,11 +956,8 @@ async function initializeApp() {
     `/rememes_uploads`,
     cacheRequest(),
     async function (req: any, res: any) {
-      const pageSize: number =
-        req.query.page_size && req.query.page_size < DISTRIBUTION_PAGE_SIZE
-          ? parseInt(req.query.page_size)
-          : DEFAULT_PAGE_SIZE;
-      const page: number = req.query.page ? parseInt(req.query.page) : 1;
+      const pageSize = getPageSize(req, DISTRIBUTION_PAGE_SIZE);
+      const page = getPage(req);
 
       await db.fetchRememesUploads(pageSize, page).then(async (result) => {
         result.data.forEach((e: any) => {
@@ -1071,11 +973,8 @@ async function initializeApp() {
     `/tdh_global_history`,
     cacheRequest(),
     async function (req: any, res: any) {
-      const pageSize: number =
-        req.query.page_size && req.query.page_size < DISTRIBUTION_PAGE_SIZE
-          ? parseInt(req.query.page_size)
-          : DEFAULT_PAGE_SIZE;
-      const page: number = req.query.page ? parseInt(req.query.page) : 1;
+      const pageSize = getPageSize(req, DISTRIBUTION_PAGE_SIZE);
+      const page = getPage(req);
       await db.fetchTDHGlobalHistory(pageSize, page).then(async (result) => {
         result.data.map((d: any) => {
           const date = new Date(d.date);
@@ -1093,11 +992,8 @@ async function initializeApp() {
     `/tdh_history`,
     cacheRequest(),
     async function (req: any, res: any) {
-      const pageSize: number =
-        req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-          ? parseInt(req.query.page_size)
-          : DEFAULT_PAGE_SIZE;
-      const page: number = req.query.page ? parseInt(req.query.page) : 1;
+      const pageSize = getPageSize(req);
+      const page = getPage(req);
       const wallets = req.query.wallet;
       await db.fetchTDHHistory(wallets, pageSize, page).then(async (result) => {
         result.data.map((d: any) => {
@@ -1221,6 +1117,8 @@ async function initializeApp() {
   apiRouter.use(`/wave-media`, waveMediaRoutes);
   apiRouter.use(`/profile-subclassifications`, profileSubClassificationsRoutes);
   apiRouter.use(`/delegations`, delegationsRoutes);
+  apiRouter.use(`/distribution_photos`, distributionPhotosRoutes);
+  apiRouter.use(``, distributionsRoutes);
   apiRouter.use(`/waves`, wavesRoutes);
   apiRouter.use(`/public/waves`, publicWavesRoutes);
   apiRouter.use(`/policies`, policiesRoutes);

@@ -10,6 +10,7 @@ import {
 import * as SwaggerUI from 'swagger-ui-express';
 import { getIp, isLocalhost } from '../policies/policies';
 import { getPage, getPageSize } from '../api-helpers';
+import { numbers } from '../../../numbers';
 
 const YAML = require('yamljs');
 
@@ -67,7 +68,7 @@ router.get(
   ) {
     const value = req.params.value;
     const includeEntries = req.params.extra === 'entries';
-    if (isNaN(value)) {
+    if (Number.isNaN(value)) {
       return res.status(400).send({ error: 'Invalid value' });
     }
     const result = await db.fetchTDHAbove(Number(value), includeEntries);
@@ -91,7 +92,7 @@ router.get(
     const percentile = req.params.value;
     if (
       !percentile ||
-      isNaN(percentile) ||
+      Number.isNaN(percentile) ||
       !Number.isInteger(Number(percentile)) ||
       percentile <= 0 ||
       percentile > 10000
@@ -191,8 +192,8 @@ router.get(
     const result = await db.fetchSingleAddressTDHMemesSeasons(address);
     if (season) {
       try {
-        const seasonNumber = parseInt(season);
-        if (isNaN(seasonNumber)) {
+        const seasonNumber = numbers.parseIntOrNull(season);
+        if (seasonNumber === null) {
           throw new Error('Invalid season number');
         }
         const seasonResult = result.seasons.filter(
@@ -234,8 +235,8 @@ router.get(
     const address = req.params.address;
     const contract = req.params.contract;
     const id = req.params.id;
-    const tokenId = parseInt(id);
-    if (isNaN(tokenId)) {
+    const tokenId = numbers.parseIntOrNull(id);
+    if (tokenId === null) {
       return res.status(400).send({ error: 'Invalid token id' });
     }
     const result = await db.fetchSingleAddressTDHForNft(
@@ -263,8 +264,8 @@ router.get(
     const season = req.params.season;
     const result = await db.fetchSeasonsTDH(season);
     if (season) {
-      const seasonNumber = parseInt(season);
-      if (isNaN(seasonNumber)) {
+      const seasonNumber = numbers.parseIntOrNull(season);
+      if (seasonNumber === null) {
         return res.status(400).send({ error: 'Invalid season number' });
       }
       if (result.seasons.length === 0) {

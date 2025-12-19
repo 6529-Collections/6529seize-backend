@@ -13,8 +13,16 @@ import {
 
 const converter = require('json-2-csv');
 
+function getCacheKeyPrefix(): string {
+  return `__SEIZE_CACHE_${process.env.NODE_ENV}__`;
+}
+
 export function cacheKey(req: Request) {
-  return `__SEIZE_CACHE_${process.env.NODE_ENV}__` + req.originalUrl || req.url;
+  return getCacheKeyPrefix() + (req.originalUrl || req.url);
+}
+
+export function getCacheKeyPatternForPath(path: string): string {
+  return `${getCacheKeyPrefix()}${path}`;
 }
 
 function fullUrl(req: Request, next: string | null) {
@@ -30,7 +38,7 @@ function fullUrl(req: Request, next: string | null) {
   const params = newUrl.searchParams;
 
   if (params.has('page')) {
-    const page = parseInt(params.get('page')!);
+    const page = numbers.parseIntOrNull(params.get('page')!) ?? 1;
     newUrl.searchParams.delete('page');
     newUrl.searchParams.append('page', String(page + 1));
     return newUrl.toString();
@@ -103,10 +111,7 @@ export function constructFiltersOR(f: string, newF: string) {
 
 export function resolveIntParam(param: string | string[] | undefined) {
   if (param) {
-    const parsed = parseInt(param as string);
-    if (!isNaN(parsed)) {
-      return parsed;
-    }
+    return numbers.parseIntOrNull(param as string) ?? undefined;
   }
   return undefined;
 }
@@ -141,12 +146,12 @@ export function getSearchFilters(columnNames: string[], search: string) {
   return { filters, params };
 }
 
-export function getPageSize(req: any): number {
-  return req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-    ? parseInt(req.query.page_size)
-    : DEFAULT_PAGE_SIZE;
+export function getPageSize(req: any, maxSize?: number): number {
+  const max = maxSize ?? DEFAULT_PAGE_SIZE;
+  const parsed = numbers.parseIntOrNull(req.query.page_size);
+  return parsed !== null && parsed < max ? parsed : max;
 }
 
 export function getPage(req: any): number {
-  return req.query.page ? parseInt(req.query.page) : 1;
+  return numbers.parseIntOrNull(req.query.page) ?? 1;
 }

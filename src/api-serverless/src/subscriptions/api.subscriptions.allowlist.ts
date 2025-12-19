@@ -1,9 +1,8 @@
+import { Request } from 'express';
 import fetch from 'node-fetch';
 import {
-  fetchAllNftFinalSubscriptionsForContractAndToken,
-  fetchAllPublicFinalSubscriptionsForContractAndToken
-} from './api.subscriptions.db';
-import {
+  DISTRIBUTION_NORMALIZED_TABLE,
+  DISTRIBUTION_TABLE,
   MEMES_CONTRACT,
   SUBSCRIPTIONS_ADMIN_WALLETS,
   SUBSCRIPTIONS_NFTS_FINAL_TABLE,
@@ -15,10 +14,13 @@ import {
   CustomApiCompliantException
 } from '../../../exceptions';
 import { sqlExecutor } from '../../../sql-executor';
-import { NFTFinalSubscription } from '../../../entities/ISubscription';
-import { getAuthenticatedWalletOrNull } from '../auth/auth';
-import { Request } from 'express';
 import { equalIgnoreCase } from '../../../strings';
+import { getAuthenticatedWalletOrNull } from '../auth/auth';
+import { NFTFinalSubscription } from '../generated/models/NFTFinalSubscription';
+import {
+  fetchAllNftFinalSubscriptionsForContractAndToken,
+  fetchAllPublicFinalSubscriptionsForContractAndToken
+} from './api.subscriptions.db';
 
 export interface AllowlistResponse {
   allowlist_id: string;
@@ -130,6 +132,116 @@ export async function fetchPhaseResults(
   return json;
 }
 
+function buildSubscriptionMaps(filteredSubscriptions: NFTFinalSubscription[]): {
+  subscriptionRanks: Map<string, number>;
+  subscriptionMap: Map<string, NFTFinalSubscription>;
+} {
+  const subscriptionRanks = new Map<string, number>();
+  const subscriptionMap = new Map<string, NFTFinalSubscription>();
+
+  for (let i = 0; i < filteredSubscriptions.length; i++) {
+    const sub = filteredSubscriptions[i];
+    subscriptionRanks.set(sub.consolidation_key, i + 1);
+    const subWallets = sub.consolidation_key.split('-');
+    for (const wallet of subWallets) {
+      const walletKey = wallet.toLowerCase();
+      if (!subscriptionMap.has(walletKey)) {
+        subscriptionMap.set(walletKey, sub);
+      }
+    }
+  }
+
+  return { subscriptionRanks, subscriptionMap };
+}
+
+async function buildAirdropsAndUpdateSubscriptions(
+  filteredSubscriptions: NFTFinalSubscription[],
+  subscriptionRanks: Map<string, number>,
+  phaseName: string
+): Promise<ResultsResponse[]> {
+  const phaseSubscriptions = filteredSubscriptions.length;
+  const airdrops: ResultsResponse[] = [];
+  const updateParams: Record<string, any> = {};
+
+  for (let i = 0; i < filteredSubscriptions.length; i++) {
+    const sub = filteredSubscriptions[i];
+    airdrops.push({
+      wallet: sub.airdrop_address,
+      amount: sub.subscribed_count
+    });
+    const rank = subscriptionRanks.get(sub.consolidation_key);
+    updateParams[`phaseName_${i}`] = phaseName;
+    updateParams[`phaseSubscriptions_${i}`] = phaseSubscriptions;
+    updateParams[`rank_${i}`] = rank;
+    updateParams[`id_${i}`] = sub.id;
+  }
+
+  if (filteredSubscriptions.length > 0) {
+    const batchUpdateQuery = `
+      UPDATE ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}
+      SET
+        phase = CASE id
+          ${filteredSubscriptions.map((_, i) => `WHEN :id_${i} THEN :phaseName_${i}`).join(' ')}
+        END,
+        phase_subscriptions = CASE id
+          ${filteredSubscriptions.map((_, i) => `WHEN :id_${i} THEN :phaseSubscriptions_${i}`).join(' ')}
+        END,
+        phase_position = CASE id
+          ${filteredSubscriptions.map((_, i) => `WHEN :id_${i} THEN :rank_${i}`).join(' ')}
+        END
+      WHERE id IN (${filteredSubscriptions.map((_, i) => `:id_${i}`).join(', ')})
+    `;
+    await sqlExecutor.execute(batchUpdateQuery, updateParams);
+  }
+
+  return airdrops;
+}
+
+function buildAllowlists(
+  results: ALResultsResponse[],
+  subscriptionMap: Map<string, NFTFinalSubscription>,
+  walletMintingDelegations: Array<{
+    from_address: string;
+    to_address: string;
+  }>
+): ResultsResponse[] {
+  const allowlists: ResultsResponse[] = [];
+  const mintingMap = new Map(
+    walletMintingDelegations.map((d) => [
+      d.from_address.toLowerCase(),
+      d.to_address.toLowerCase()
+    ])
+  );
+  const mapToMintingAddress = (wallet: string) =>
+    mintingMap.get(wallet) ?? wallet;
+
+  const usedSubscriptions = new Set<string>();
+  for (const result of results) {
+    const walletAddress = result.wallet.toLowerCase();
+    const subscription = subscriptionMap.get(walletAddress);
+
+    if (
+      subscription &&
+      !usedSubscriptions.has(subscription.consolidation_key)
+    ) {
+      usedSubscriptions.add(subscription.consolidation_key);
+      if (result.amount > 1) {
+        allowlists.push({
+          wallet: mapToMintingAddress(walletAddress),
+          amount: result.amount - 1
+        });
+      }
+    } else {
+      allowlists.push({
+        wallet: mapToMintingAddress(walletAddress),
+        amount: result.amount
+      });
+    }
+  }
+
+  return allowlists;
+}
+
 export async function splitAllowlistResults(
   contract: string,
   tokenId: number,
@@ -152,75 +264,19 @@ export async function splitAllowlistResults(
   ]);
 
   const filteredSubscriptions = filterSubscriptions(wallets, subscriptions);
-
-  const subscriptionRanks = new Map<string, number>();
-  for (let i = 0; i < filteredSubscriptions.length; i++) {
-    subscriptionRanks.set(filteredSubscriptions[i].consolidation_key, i + 1);
-  }
-
-  const phaseSubscriptions = filteredSubscriptions.length;
-
-  const airdrops: ResultsResponse[] = [];
-  for (const sub of filteredSubscriptions) {
-    airdrops.push({
-      wallet: sub.airdrop_address,
-      amount: 1
-    });
-    const rank = subscriptionRanks.get(sub.consolidation_key);
-    const updateQuery = `
-        UPDATE ${SUBSCRIPTIONS_NFTS_FINAL_TABLE} 
-        SET 
-          phase = :phaseName, 
-          phase_subscriptions = :phaseSubscriptions,
-          phase_position = :rank
-        WHERE id = :id`;
-    await sqlExecutor.execute(updateQuery, {
-      phaseName,
-      phaseSubscriptions,
-      rank,
-      id: sub.id
-    });
-  }
-
-  const allowlists: ResultsResponse[] = [];
-
-  const mintingMap = new Map(
-    walletMintingDelegations.map((d) => [
-      d.from_address.toLowerCase(),
-      d.to_address.toLowerCase()
-    ])
+  const { subscriptionRanks, subscriptionMap } = buildSubscriptionMaps(
+    filteredSubscriptions
   );
-  const mapToMintingAddress = (wallet: string) =>
-    mintingMap.get(wallet) ?? wallet;
-
-  const usedSubscriptions = new Set<string>();
-  for (const result of results) {
-    const walletAddress = result.wallet.toLowerCase();
-
-    const subscription = filteredSubscriptions.find((s) =>
-      s.consolidation_key
-        .split('-')
-        .some((k) => equalIgnoreCase(k, walletAddress))
-    );
-
-    if (
-      subscription &&
-      !usedSubscriptions.has(subscription.consolidation_key)
-    ) {
-      usedSubscriptions.add(subscription.consolidation_key);
-      if (result.amount > 1) {
-        allowlists.push({
-          wallet: mapToMintingAddress(walletAddress),
-          amount: result.amount - 1
-        });
-      }
-    } else {
-      allowlists.push({
-        wallet: mapToMintingAddress(walletAddress),
-        amount: result.amount
-      });
-    }
-  }
+  const airdrops = await buildAirdropsAndUpdateSubscriptions(
+    filteredSubscriptions,
+    subscriptionRanks,
+    phaseName
+  );
+  const allowlists = buildAllowlists(
+    results,
+    subscriptionMap,
+    walletMintingDelegations
+  );
 
   const mergedAirdrops = mergeDuplicateWallets(airdrops);
   const mergedAllowlists = mergeDuplicateWallets(allowlists);
@@ -252,25 +308,37 @@ export async function getPublicSubscriptions(
   const phaseSubscriptions = publicSubscriptions.length;
 
   const airdrops: ResultsResponse[] = [];
-  for (const sub of publicSubscriptions) {
+  const updateParams: Record<string, any> = {};
+
+  for (let i = 0; i < publicSubscriptions.length; i++) {
+    const sub = publicSubscriptions[i];
     airdrops.push({
       wallet: sub.airdrop_address,
       amount: 1
     });
     const rank = subscriptionRanks.get(sub.consolidation_key);
-    const updateQuery = `
-        UPDATE ${SUBSCRIPTIONS_NFTS_FINAL_TABLE} 
-        SET 
-          phase = :phaseName, 
-          phase_subscriptions = :phaseSubscriptions,
-          phase_position = :rank
-        WHERE id = :id`;
-    await sqlExecutor.execute(updateQuery, {
-      phaseName: 'Public',
-      phaseSubscriptions,
-      rank,
-      id: sub.id
-    });
+    updateParams[`phaseName_${i}`] = 'Public';
+    updateParams[`phaseSubscriptions_${i}`] = phaseSubscriptions;
+    updateParams[`rank_${i}`] = rank;
+    updateParams[`id_${i}`] = sub.id;
+  }
+
+  if (publicSubscriptions.length > 0) {
+    const batchUpdateQuery = `
+      UPDATE ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}
+      SET
+        phase = CASE id
+          ${publicSubscriptions.map((_, i) => `WHEN :id_${i} THEN :phaseName_${i}`).join(' ')}
+        END,
+        phase_subscriptions = CASE id
+          ${publicSubscriptions.map((_, i) => `WHEN :id_${i} THEN :phaseSubscriptions_${i}`).join(' ')}
+        END,
+        phase_position = CASE id
+          ${publicSubscriptions.map((_, i) => `WHEN :id_${i} THEN :rank_${i}`).join(' ')}
+        END
+      WHERE id IN (${publicSubscriptions.map((_, i) => `:id_${i}`).join(', ')})
+    `;
+    await sqlExecutor.execute(batchUpdateQuery, updateParams);
   }
 
   const mergedAirDrops = mergeDuplicateWallets(airdrops);
@@ -304,16 +372,42 @@ function filterSubscriptions(
 }
 
 export async function resetAllowlist(contract: string, tokenId: number) {
-  const updateQuery = `
-    UPDATE ${SUBSCRIPTIONS_NFTS_FINAL_TABLE} 
-    SET 
-      phase = NULL, 
-      phase_subscriptions = -1,
-      phase_position = -1
-    WHERE contract = :contract AND token_id = :tokenId`;
+  await sqlExecutor.executeNativeQueriesInTransaction(
+    async (wrappedConnection) => {
+      const updateQuery = `
+        UPDATE ${SUBSCRIPTIONS_NFTS_FINAL_TABLE} 
+        SET 
+          phase = NULL, 
+          phase_subscriptions = -1,
+          phase_position = -1
+        WHERE contract = :contract AND token_id = :tokenId`;
 
-  await sqlExecutor.execute(updateQuery, {
-    contract,
-    tokenId
-  });
+      await sqlExecutor.execute(
+        updateQuery,
+        {
+          contract,
+          tokenId
+        },
+        { wrappedConnection }
+      );
+
+      await sqlExecutor.execute(
+        `DELETE FROM ${DISTRIBUTION_TABLE} WHERE contract = :contract AND card_id = :tokenId AND phase != 'Airdrop'`,
+        {
+          contract: contract.toLowerCase(),
+          tokenId
+        },
+        { wrappedConnection }
+      );
+
+      await sqlExecutor.execute(
+        `DELETE FROM ${DISTRIBUTION_NORMALIZED_TABLE} WHERE contract = :contract AND card_id = :tokenId`,
+        {
+          contract: contract.toLowerCase(),
+          tokenId
+        },
+        { wrappedConnection }
+      );
+    }
+  );
 }

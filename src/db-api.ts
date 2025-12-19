@@ -6,8 +6,6 @@ import {
   DELEGATION_ALL_ADDRESS,
   DELEGATIONS_TABLE,
   DISTRIBUTION_NORMALIZED_TABLE,
-  DISTRIBUTION_PHOTO_TABLE,
-  DISTRIBUTION_TABLE,
   ENS_TABLE,
   GRADIENT_CONTRACT,
   LAB_EXTENDED_DATA_TABLE,
@@ -48,8 +46,7 @@ import {
 } from './api-serverless/src/api-constants';
 import {
   constructFilters,
-  constructFiltersOR,
-  getSearchFilters
+  constructFiltersOR
 } from './api-serverless/src/api-helpers';
 import { ApiNftMedia } from './api-serverless/src/generated/models/ApiNftMedia';
 import { ApiTransaction } from './api-serverless/src/generated/models/ApiTransaction';
@@ -60,6 +57,7 @@ import {
 } from './api-serverless/src/nextgen/abis';
 import { consolidationTools } from './consolidation-tools';
 import { DbPoolName, DbQueryOptions } from './db-query.options';
+import { numbers } from './numbers';
 import {
   CustomTypeCaster,
   execNativeTransactionally,
@@ -706,8 +704,8 @@ export async function searchNfts(
   let idQuery = '';
 
   if (search) {
-    const id = parseInt(search);
-    if (!isNaN(id)) {
+    const id = numbers.parseIntOrNull(search);
+    if (id !== null) {
       idQuery = search;
     }
 
@@ -1017,116 +1015,6 @@ export async function fetchLabExtended(
     page,
     filters
   );
-}
-
-export async function fetchDistributionPhotos(
-  contract: string,
-  cardId: number,
-  pageSize: number,
-  page: number
-) {
-  let filters = constructFilters('', `contract = :contract`);
-  filters = constructFilters(filters, `card_id = :card_id`);
-  const params = {
-    contract: contract,
-    card_id: cardId
-  };
-
-  return fetchPaginated(
-    DISTRIBUTION_PHOTO_TABLE,
-    params,
-    `link asc`,
-    pageSize,
-    page,
-    filters,
-    ``,
-    ``
-  );
-}
-
-export async function fetchDistributionPhases(
-  contract: string,
-  cardId: number
-) {
-  const sql = `SELECT DISTINCT phase FROM ${DISTRIBUTION_TABLE} WHERE contract=:contract AND card_id=:card_id ORDER BY phase ASC`;
-  const results = await sqlExecutor.execute(sql, {
-    contract: contract,
-    card_id: cardId
-  });
-  const phases = results.map((r: any) => r.phase);
-
-  return {
-    count: phases.length,
-    page: 1,
-    next: null,
-    data: phases
-  };
-}
-
-export async function fetchDistributions(
-  search: string,
-  cards: string,
-  contracts: string,
-  wallets: string,
-  pageSize: number,
-  page: number
-) {
-  if (!search && !cards && !contracts && !wallets) {
-    return returnEmpty();
-  }
-
-  let filters = '';
-  let params: any = {};
-
-  if (search) {
-    const searchFilters = getSearchFilters(
-      [
-        `${DISTRIBUTION_NORMALIZED_TABLE}.wallet`,
-        `${DISTRIBUTION_NORMALIZED_TABLE}.wallet_display`
-      ],
-      search
-    );
-    filters = constructFilters(filters, `(${searchFilters.filters})`);
-    params = {
-      ...params,
-      ...searchFilters.params
-    };
-  }
-  if (cards) {
-    filters = constructFilters(
-      filters,
-      `${DISTRIBUTION_NORMALIZED_TABLE}.card_id in (:cards)`
-    );
-    params.cards = cards.split(',');
-  }
-  if (contracts) {
-    filters = constructFilters(
-      filters,
-      `${DISTRIBUTION_NORMALIZED_TABLE}.contract in (:contracts)`
-    );
-    params.contracts = contracts.split(',');
-  }
-  if (wallets) {
-    filters = constructFilters(
-      filters,
-      `LOWER(${DISTRIBUTION_NORMALIZED_TABLE}.wallet) in (:wallets)`
-    );
-    params.wallets = wallets.split(',').map((w: string) => w.toLowerCase());
-  }
-
-  const results = await fetchPaginated(
-    DISTRIBUTION_NORMALIZED_TABLE,
-    params,
-    `mint_date desc, airdrops desc, total_count desc, total_spots desc, wallet desc, wallet_display desc`,
-    pageSize,
-    page,
-    filters
-  );
-  results.data.forEach((d: any) => {
-    d.phases = JSON.parse(d.phases);
-    d.allowlist = JSON.parse(d.allowlist);
-  });
-  return results;
 }
 
 export async function fetchConsolidationsForWallet(
@@ -1602,3 +1490,12 @@ export const fetchNFTMedia = async (
 
   return [];
 };
+
+export async function fetchNft(
+  contract: string,
+  id: number
+): Promise<NFT | null> {
+  const sql = `SELECT * FROM ${NFTS_TABLE} WHERE contract = :contract AND id = :id LIMIT 1`;
+  const result = await sqlExecutor.execute(sql, { contract, id });
+  return result[0] ?? null;
+}
