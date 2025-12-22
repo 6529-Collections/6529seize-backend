@@ -185,8 +185,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
            decisions_strategy,
            next_decision_time,
            forbid_negative_votes,
-           is_direct_message,
-           outcomes${wave.serial_no !== null ? ', serial_no' : ''})
+           is_direct_message${wave.serial_no !== null ? ', serial_no' : ''})
           values (:id,
                   :name,
                   :picture,
@@ -222,8 +221,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                   :decisions_strategy,
                   :next_decision_time,
                   :forbid_negative_votes,
-                  :is_direct_message,
-                  :outcomes${wave.serial_no !== null ? ', :serial_no' : ''})`,
+                  :is_direct_message${wave.serial_no !== null ? ', :serial_no' : ''})`,
         params,
         { wrappedConnection: ctx.connection }
       )
@@ -268,7 +266,6 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                             max_winners,
                             time_lock_ms,
                             decisions_strategy,
-                            outcomes, 
                             serial_no,
                             forbid_negative_votes,
                             is_direct_message
@@ -308,7 +305,6 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                                    :max_winners,
                                    :time_lock_ms,
                                    :decisions_strategy,
-                                   :outcomes,
                                    :serial_no,
                                    :forbid_negative_votes,
                                    :is_direct_message
