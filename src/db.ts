@@ -998,13 +998,13 @@ export async function persistConsolidatedTDH(
       await insertWithoutUpdate(tdhRepo, tdh);
       await insertWithoutUpdate(tdhMemesRepo, memesTdh);
       await insertWithoutUpdate(tdhEditionsRepo, tdhEditions);
-      await updateBoostedTdhRates(qrHolder);
-      await syncIdentitiesWithTdhConsolidations(qrHolder);
-      await syncIdentitiesMetrics(qrHolder);
-      await revokeTdhBasedDropWavesOverVotes(qrHolder);
-
-      logger.info(`[CONSOLIDATED TDH] [PERSISTING HISTORIC TDH]`);
     }
+
+    await updateBoostedTdhRates(qrHolder);
+    await syncIdentitiesWithTdhConsolidations(qrHolder);
+    await syncIdentitiesMetrics(qrHolder);
+    await revokeTdhBasedDropWavesOverVotes(qrHolder);
+
     await persistHistoricConsolidatedTDH(manager, block, tdh, wallets);
   });
 
