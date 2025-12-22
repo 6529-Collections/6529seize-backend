@@ -295,7 +295,8 @@ async function uploadFinalSubscriptions(
         profile: profile?.handle ?? '-',
         consolidation_key: sub.consolidation_key,
         airdrop_address: sub.airdrop_address,
-        balance: sub.balance
+        balance: sub.balance,
+        count: sub.subscribed_count
       };
     });
   const csv = await converter.json2csvAsync(finalUpload);
