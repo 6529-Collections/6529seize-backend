@@ -17,7 +17,7 @@ export class ConsolidationTools {
     return [wallet];
   }
 
-  private extractConsolidations(consolidations: Consolidation[]): string[][] {
+  public extractConsolidations(consolidations: Consolidation[]): string[][] {
     // Sort by block descending
     consolidations.sort((a, b) => b.block - a.block);
 

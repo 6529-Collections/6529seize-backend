@@ -7,6 +7,7 @@ import {
   MoreThanOrEqual,
   QueryRunner
 } from 'typeorm';
+import { consolidationTools } from './consolidation-tools';
 import {
   ADDRESS_CONSOLIDATION_KEY,
   ARTISTS_TABLE,
@@ -27,9 +28,9 @@ import {
   UPLOADS_TABLE,
   WALLETS_TDH_TABLE
 } from './constants';
-import { Artist } from './entities/IArtist';
-import { ENS } from './entities/IENS';
 import { DbQueryOptions } from './db-query.options';
+import { revokeTdhBasedDropWavesOverVotes } from './drops/participation-drops-over-vote-revocation';
+import { Artist } from './entities/IArtist';
 import {
   Consolidation,
   ConsolidationEvent,
@@ -39,6 +40,7 @@ import {
   NFTDelegationBlock,
   WalletConsolidationKey
 } from './entities/IDelegation';
+import { ENS } from './entities/IENS';
 import { NextGenTokenTDH } from './entities/INextGen';
 import {
   LabExtendedData,
@@ -75,6 +77,7 @@ import {
 } from './entities/ITDHHistory';
 import { Team } from './entities/ITeam';
 import { BaseTransaction, Transaction } from './entities/ITransaction';
+import { env } from './env';
 import { ethTools } from './eth-tools';
 import {
   syncIdentitiesMetrics,
@@ -90,11 +93,8 @@ import {
 } from './sql-executor';
 import { getConsolidationsSql, parseTdhDataFromDB } from './sql_helpers';
 import { equalIgnoreCase } from './strings';
-import { consolidationTools } from './consolidation-tools';
-import { env } from './env';
 import { computeMerkleRoot } from './tdhLoop/tdh_merkle';
 import { Time } from './time';
-import { revokeTdhBasedDropWavesOverVotes } from './drops/participation-drops-over-vote-revocation';
 import { recalculateXTdhUseCase } from './xtdh/recalculate-xtdh.use-case';
 
 const mysql = require('mysql');
@@ -289,140 +289,86 @@ export async function retrieveConsolidationsForWallets(
   if (!wallets.length) {
     return {};
   }
+  const uniqueWallets = Array.from(
+    new Set(wallets.map((w) => w.toLowerCase()))
+  );
+  const walletPlaceholders = uniqueWallets
+    .map((_, i) => `:wallet${i}`)
+    .join(', ');
+  const walletParams = uniqueWallets.reduce(
+    (acc, w, i) => {
+      acc[`wallet${i}`] = w;
+      return acc;
+    },
+    {} as Record<string, string>
+  );
+
   const sql = `
-  WITH
-    -- 1) All confirmed edges as unordered pairs (w1 < w2)
-    confirmed_pairs AS (
-        SELECT
-            CASE WHEN wallet1 < wallet2 THEN wallet1 ELSE wallet2 END AS w1,
-            CASE WHEN wallet1 < wallet2 THEN wallet2 ELSE wallet1 END AS w2,
-            block
-        FROM ${CONSOLIDATIONS_TABLE}
-        WHERE confirmed = 1
-    ),
-    
-    -- 2) For each pair, keep only latest block
-    pair_edges AS (
-        SELECT
-            w1,
-            w2,
-            MAX(block) AS pair_block
-        FROM confirmed_pairs
-        GROUP BY w1, w2
-    ),
-    
-    -- 3) For each wallet, its latest confirmed edge block (vs anyone)
-    wallet_last AS (
-        SELECT wallet, MAX(block) AS last_block
-        FROM (
-            SELECT wallet1 AS wallet, block
-            FROM ${CONSOLIDATIONS_TABLE}
-            WHERE confirmed = 1
-            UNION ALL
-            SELECT wallet2 AS wallet, block
-            FROM ${CONSOLIDATIONS_TABLE}
-            WHERE confirmed = 1
-        ) x
-        GROUP BY wallet
-    ),
-    
-    -- 4) Candidate 2-wallet consolidations:
-    --    both wallets' last activity is exactly this pair edge
-    pairs_candidate AS (
-        SELECT
-            p.w1,
-            p.w2,
-            p.pair_block,
-            CONCAT(LOWER(p.w1), '-', LOWER(p.w2)) AS consolidation_key
-        FROM pair_edges p
-        JOIN wallet_last wl1
-          ON wl1.wallet = p.w1 AND wl1.last_block = p.pair_block
-        JOIN wallet_last wl2
-          ON wl2.wallet = p.w2 AND wl2.last_block = p.pair_block
-    ),
-    
-    -- 5) All 3-wallet triangles (a < b < c), with individual pair blocks
-    triangles AS (
-        SELECT
-            ab.w1 AS a,
-            ab.w2 AS b,
-            ac.w2 AS c,
-            ab.pair_block AS ab_block,
-            ac.pair_block AS ac_block,
-            bc.pair_block AS bc_block
-        FROM pair_edges ab               -- A-B
-        JOIN pair_edges ac               -- A-C
-          ON ac.w1 = ab.w1
-         AND ac.w2 > ab.w2               -- enforce a < b < c
-        JOIN pair_edges bc               -- B-C
-          ON bc.w1 = ab.w2
-         AND bc.w2 = ac.w2
-    ),
-    
-    -- 6) Final 3-wallet consolidations:
-    --    for each wallet, its last_block is one of its triangle edges
-    triangles_final AS (
-        SELECT
-            a,
-            b,
-            c,
-            CONCAT(LOWER(a), '-', LOWER(b), '-', LOWER(c)) AS consolidation_key
-        FROM triangles t
-        JOIN wallet_last wl_a
-          ON wl_a.wallet = t.a
-         AND wl_a.last_block IN (t.ab_block, t.ac_block)
-        JOIN wallet_last wl_b
-          ON wl_b.wallet = t.b
-         AND wl_b.last_block IN (t.ab_block, t.bc_block)
-        JOIN wallet_last wl_c
-          ON wl_c.wallet = t.c
-         AND wl_c.last_block IN (t.ac_block, t.bc_block)
-    ),
-    
-    -- 7) Exclude 2-wallet consolidations that are part of any valid 3-wallet
-    pairs_final AS (
-        SELECT pc.consolidation_key
-        FROM pairs_candidate pc
-        LEFT JOIN (
-            SELECT a, b FROM triangles_final
-            UNION
-            SELECT a, c FROM triangles_final
-            UNION
-            SELECT b, c FROM triangles_final
-        ) tf(a, b)
-          ON pc.w1 = tf.a AND pc.w2 = tf.b
-        WHERE tf.a IS NULL
+    WITH RECURSIVE wallet_cluster AS (
+      SELECT 
+        LOWER(wallet1) AS wallet1, 
+        LOWER(wallet2) AS wallet2
+      FROM ${CONSOLIDATIONS_TABLE}
+      WHERE confirmed = true
+        AND (LOWER(wallet1) IN (${walletPlaceholders}) OR LOWER(wallet2) IN (${walletPlaceholders}))
+
+      UNION
+
+      SELECT 
+        LOWER(c.wallet1) AS wallet1, 
+        LOWER(c.wallet2) AS wallet2
+      FROM ${CONSOLIDATIONS_TABLE} c
+      INNER JOIN wallet_cluster wc
+        ON LOWER(c.wallet1) = wc.wallet2
+        OR LOWER(c.wallet2) = wc.wallet1
+        OR LOWER(c.wallet1) = wc.wallet1
+        OR LOWER(c.wallet2) = wc.wallet2
+      WHERE c.confirmed = true
     )
-    
-    -- 8) Output all consolidation keys
-    SELECT lower(consolidation_key) AS consolidation_key
-    FROM (
-        SELECT consolidation_key FROM triangles_final
-        UNION
-        SELECT consolidation_key FROM pairs_final
-    ) AS all_keys
-    ORDER BY consolidation_key
+
+    SELECT DISTINCT
+      LOWER(wallet1) AS wallet1,
+      LOWER(wallet2) AS wallet2,
+      block
+    FROM ${CONSOLIDATIONS_TABLE}
+    WHERE confirmed = true
+      AND (
+        LOWER(wallet1) IN (
+          SELECT wallet1 FROM wallet_cluster
+          UNION
+          SELECT wallet2 FROM wallet_cluster
+        )
+        OR
+        LOWER(wallet2) IN (
+          SELECT wallet1 FROM wallet_cluster
+          UNION
+          SELECT wallet2 FROM wallet_cluster
+        )
+      )
+    ORDER BY block DESC;
   `;
-  const consolidations = await sqlExecutor.execute<{
-    consolidation_key: string;
-  }>(sql);
-  return wallets
-    .map((it) => it.toLowerCase())
-    .reduce(
-      (acc, wallet) => {
-        const consolidation = consolidations.find((c) => {
-          const consolidationKey = c.consolidation_key;
-          return consolidationKey.includes(wallet);
-        });
-        if (consolidation) {
-          acc[wallet] = consolidation.consolidation_key;
-        } else {
-          acc[wallet] = wallet;
-        }
-        return acc;
-      },
-      {} as Record<string, string>
-    );
+
+  const consolidations = await sqlExecutor.execute<Consolidation>(
+    sql,
+    walletParams
+  );
+
+  const clusters = consolidationTools.extractConsolidations(consolidations);
+
+  const walletToKey: Record<string, string> = {};
+  for (const cluster of clusters) {
+    const key = consolidationTools.buildConsolidationKey(cluster);
+    for (const w of cluster) {
+      walletToKey[w.toLowerCase()] = key;
+    }
+  }
+
+  const results: Record<string, string> = {};
+  for (const wallet of uniqueWallets) {
+    results[wallet] = walletToKey[wallet] ?? wallet;
+  }
+
+  return results;
 }
 
 export async function fetchLatestConsolidationsBlockNumber() {
