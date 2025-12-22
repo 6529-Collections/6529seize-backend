@@ -1,9 +1,9 @@
+import { DROP_REACTIONS_TABLE } from '../../../constants';
+import { RequestContext } from '../../../request.context';
 import {
   dbSupplier,
   LazyDbAccessCompatibleService
 } from '../../../sql-executor';
-import { RequestContext } from '../../../request.context';
-import { DROP_REACTIONS_TABLE } from '../../../constants';
 import { ApiDropReaction } from '../generated/models/ApiDropReaction';
 import { identityFetcher } from '../identities/identity.fetcher';
 
@@ -164,17 +164,28 @@ export class ReactionsDb extends LazyDbAccessCompatibleService {
     ctx: RequestContext
   ) {
     ctx.timer?.start(`${this.constructor.name}->mergeOnProfileIdChange`);
-    await Promise.all([
-      this.db.execute(
-        `
+    await this.db.execute(
+      `
+        delete old_reactions
+        from ${DROP_REACTIONS_TABLE} old_reactions
+        inner join ${DROP_REACTIONS_TABLE} new_reactions
+          on old_reactions.wave_id = new_reactions.wave_id
+          and old_reactions.drop_id = new_reactions.drop_id
+        where old_reactions.profile_id = :previous_id
+          and new_reactions.profile_id = :new_id
+      `,
+      { previous_id, new_id },
+      { wrappedConnection: ctx.connection }
+    );
+    await this.db.execute(
+      `
         update ${DROP_REACTIONS_TABLE} 
         set profile_id = :new_id
         where profile_id = :previous_id
       `,
-        { previous_id, new_id },
-        { wrappedConnection: ctx.connection }
-      )
-    ]);
+      { previous_id, new_id },
+      { wrappedConnection: ctx.connection }
+    );
     ctx.timer?.stop(`${this.constructor.name}->mergeOnProfileIdChange`);
   }
 }
