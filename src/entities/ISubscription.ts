@@ -155,6 +155,7 @@ export interface NFTFinalSubscriptionUploadFields {
   consolidation_key: string;
   airdrop_address: string;
   balance: number;
+  count: number;
 }
 
 @Entity(SUBSCRIPTIONS_LOGS_TABLE)
