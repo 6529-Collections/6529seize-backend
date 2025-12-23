@@ -1945,7 +1945,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     );
   }
 
-  async findIdentityUnreadNotificationsCountByWaveId(
+  async findIdentityUnreadDropsCountByWaveId(
     param: {
       identityId: string;
       waveIds: string[];
@@ -1956,20 +1956,19 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       return {};
     }
 
-    const timerLabel = `${this.constructor.name}->findIdentityUnreadNotificationsCountByWaveId`;
+    const timerLabel = `${this.constructor.name}->findIdentityUnreadDropsCountByWaveId`;
     ctx.timer?.start(timerLabel);
 
     const dbresult = await this.db.execute<{ wave_id: string; cnt: number }>(
       `
-        SELECT n.wave_id AS wave_id, COUNT(n.id) AS cnt
-        FROM ${IDENTITY_NOTIFICATIONS_TABLE} n
+        SELECT d.wave_id AS wave_id, COUNT(d.id) AS cnt
+        FROM ${DROPS_TABLE} d
         LEFT JOIN ${WAVE_READER_METRICS_TABLE} r
-          ON r.wave_id = n.wave_id
-          AND r.reader_id = n.identity_id
-        WHERE n.identity_id = :identityId
-          AND n.wave_id IN (:waveIds)
-          AND n.created_at > COALESCE(r.latest_read_timestamp, 0)
-        GROUP BY n.wave_id
+          ON r.wave_id = d.wave_id
+          AND r.reader_id = :identityId
+        WHERE d.wave_id IN (:waveIds)
+          AND d.created_at > COALESCE(r.latest_read_timestamp, 0)
+        GROUP BY d.wave_id
     `,
       param,
       { wrappedConnection: ctx.connection }

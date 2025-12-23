@@ -7970,8 +7970,7 @@ components:
         - latest_drop_timestamp
         - your_participation_drops_count
         - your_latest_drop_timestamp
-        - you_have_unread_drops
-        - your_unread_notifications_count
+        - your_unread_drops_count
         - your_latest_read_timestamp
       properties:
         subscribers_count:
@@ -7992,9 +7991,7 @@ components:
         your_latest_drop_timestamp:
           type: number
           format: int64
-        you_have_unread_drops:
-          type: boolean
-        your_unread_notifications_count:
+        your_unread_drops_count:
           type: number
           format: int64
         your_latest_read_timestamp:
