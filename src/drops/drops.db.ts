@@ -1544,13 +1544,11 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     dropperId: string,
     ctx: RequestContext
   ) {
-    console.log('updating latest read timestamp', waveId, dropperId);
     await this.db.execute(
       `update ${WAVE_DROPPER_METRICS_TABLE} set latest_read_timestamp = :now where wave_id = :waveId and dropper_id = :dropperId`,
       { waveId, dropperId, now: Time.now().toMillis() },
       { wrappedConnection: ctx.connection }
     );
-    console.log('updated latest read timestamp', waveId, dropperId);
   }
 }
 
