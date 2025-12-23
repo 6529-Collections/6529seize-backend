@@ -1961,15 +1961,15 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
 
     const dbresult = await this.db.execute<{ wave_id: string; cnt: number }>(
       `
-        SELECT r.wave_id AS wave_id, COUNT(n.id) AS cnt
-        FROM ${WAVE_READER_METRICS_TABLE} r
-        JOIN ${IDENTITY_NOTIFICATIONS_TABLE} n
+        SELECT n.wave_id AS wave_id, COUNT(n.id) AS cnt
+        FROM ${IDENTITY_NOTIFICATIONS_TABLE} n
+        LEFT JOIN ${WAVE_READER_METRICS_TABLE} r
           ON r.wave_id = n.wave_id
-        AND r.reader_id = n.identity_id
-        WHERE r.reader_id = :identityId
-          AND r.wave_id IN (:waveIds)
-          AND n.created_at > r.latest_read_timestamp
-        GROUP BY r.wave_id
+          AND r.reader_id = n.identity_id
+        WHERE n.identity_id = :identityId
+          AND n.wave_id IN (:waveIds)
+          AND n.created_at > COALESCE(r.latest_read_timestamp, 0)
+        GROUP BY n.wave_id
     `,
       param,
       { wrappedConnection: ctx.connection }
