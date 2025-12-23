@@ -1,7 +1,7 @@
 import { assertUnreachable } from '../../../assertions';
 import { AuthenticationContext } from '../../../auth-context';
 import { collections } from '../../../collections';
-import { DropsDb } from '../../../drops/drops.db';
+import { dropsDb, DropsDb } from '../../../drops/drops.db';
 import { IdentityNotificationCause } from '../../../entities/IIdentityNotification';
 import { enums } from '../../../enums';
 import { BadRequestException } from '../../../exceptions';
@@ -396,5 +396,6 @@ export const notificationsApiService = new NotificationsApiService(
   identityFetcher,
   dropsService,
   identityNotificationsDb,
-  identitySubscriptionsDb
+  identitySubscriptionsDb,
+  dropsDb
 );
