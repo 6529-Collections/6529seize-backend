@@ -101,8 +101,6 @@ export {
   TDHEditions,
   TDHMemes
 } from './ITDH';
-export { XTdhGrantEntity } from './IXTdhGrant';
-export { XTdhGrantTokenEntity } from './IXTdhGrantToken';
 export {
   GlobalTDHHistory,
   LatestGlobalTDHHistory,
@@ -122,8 +120,8 @@ export {
   WaveArchiveEntity,
   WaveDecisionPauseEntity,
   WaveEntity,
-  WaveOutcomeEntity,
-  WaveOutcomeDistributionItemEntity
+  WaveOutcomeDistributionItemEntity,
+  WaveOutcomeEntity
 } from './IWave';
 export {
   WaveDecisionEntity,
@@ -132,11 +130,14 @@ export {
 export { WaveDropperMetricEntity } from './IWaveDropperMetric';
 export { WaveLeaderboardEntryEntity } from './IWaveLeaderboardEntry';
 export { WaveMetricEntity } from './IWaveMetric';
+export { WaveReaderMetricEntity } from './IWaveReaderMetric';
 export { WinnerDropVoterVoteEntity } from './IWinnerDropVoterVote';
 export { WSConnectionEntity } from './IWSConnection';
+export { XTdhGrantEntity } from './IXTdhGrant';
+export { XTdhGrantTokenEntity } from './IXTdhGrantToken';
+export { XTdhStatsMetaEntity } from './IXTdhStatsMeta';
 export {
   XTdhTokenGrantStatsA,
   XTdhTokenGrantStatsB
 } from './IXTdhTokenGrantStats';
 export { XTdhTokenStatsA, XTdhTokenStatsB } from './IXTdhTokenStats';
-export { XTdhStatsMetaEntity } from './IXTdhStatsMeta';
