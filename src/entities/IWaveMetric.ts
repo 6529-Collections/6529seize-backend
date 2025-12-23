@@ -1,5 +1,6 @@
 import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
 import { WAVE_METRICS_TABLE } from '../constants';
+import { Time } from '../time';
 
 @Entity(WAVE_METRICS_TABLE)
 @Index('idx_wmet_dc_wi', ['drops_count', 'wave_id'])
@@ -16,4 +17,6 @@ export class WaveMetricEntity {
   readonly subscribers_count!: number;
   @Column({ type: 'bigint', nullable: false, default: 0 })
   readonly latest_drop_timestamp!: number;
+  @Column({ type: 'bigint', nullable: false, default: Time.now().toMillis() })
+  readonly latest_read_timestamp!: number;
 }

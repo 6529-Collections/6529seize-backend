@@ -1,6 +1,7 @@
 import { assertUnreachable } from '../../../assertions';
 import { AuthenticationContext } from '../../../auth-context';
 import { collections } from '../../../collections';
+import { DropsDb } from '../../../drops/drops.db';
 import { IdentityNotificationCause } from '../../../entities/IIdentityNotification';
 import { enums } from '../../../enums';
 import { BadRequestException } from '../../../exceptions';
@@ -42,7 +43,8 @@ export class NotificationsApiService {
     private readonly identityFetcher: IdentityFetcher,
     private readonly dropsService: DropsApiService,
     private readonly identityNotificationsDb: IdentityNotificationsDb,
-    private readonly identitySubscriptionsDb: IdentitySubscriptionsDb
+    private readonly identitySubscriptionsDb: IdentitySubscriptionsDb,
+    private readonly dropsDb: DropsDb
   ) {}
 
   public async markNotificationAsRead(param: {
@@ -84,6 +86,11 @@ export class NotificationsApiService {
   ) {
     ctx.timer?.start(`${this.constructor.name}->markWaveNotificationsAsRead`);
     await this.identityNotificationsDb.markWaveNotificationsAsRead(
+      waveId,
+      identityId,
+      ctx
+    );
+    await this.dropsDb.updateWaveDropperMetricLatestReadTimestamp(
       waveId,
       identityId,
       ctx

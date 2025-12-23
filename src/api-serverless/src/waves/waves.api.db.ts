@@ -1,15 +1,4 @@
 import {
-  ConnectionWrapper,
-  dbSupplier,
-  LazyDbAccessCompatibleService
-} from '../../../sql-executor';
-import {
-  WaveDecisionPauseEntity,
-  WaveEntity,
-  WaveOutcomeDistributionItemEntity,
-  WaveOutcomeEntity
-} from '../../../entities/IWave';
-import {
   ACTIVITY_EVENTS_TABLE,
   DROP_MEDIA_TABLE,
   DROP_METADATA_TABLE,
@@ -31,20 +20,31 @@ import {
   WAVES_DECISION_PAUSES_TABLE,
   WAVES_TABLE
 } from '../../../constants';
+import { bulkInsert } from '../../../db/my-sql.helpers';
+import { ActivityEventTargetType } from '../../../entities/IActivityEvent';
+import { DropType } from '../../../entities/IDrop';
+import { RateMatter } from '../../../entities/IRating';
+import {
+  WaveDecisionPauseEntity,
+  WaveEntity,
+  WaveOutcomeDistributionItemEntity,
+  WaveOutcomeEntity
+} from '../../../entities/IWave';
+import { WaveDropperMetricEntity } from '../../../entities/IWaveDropperMetric';
+import { WaveMetricEntity } from '../../../entities/IWaveMetric';
+import { getLevelComponentsBorderByLevel } from '../../../profiles/profile-level';
+import { RequestContext } from '../../../request.context';
+import {
+  ConnectionWrapper,
+  dbSupplier,
+  LazyDbAccessCompatibleService
+} from '../../../sql-executor';
+import { Time } from '../../../time';
 import {
   userGroupsService,
   UserGroupsService
 } from '../community-members/user-groups.service';
-import { getLevelComponentsBorderByLevel } from '../../../profiles/profile-level';
-import { RateMatter } from '../../../entities/IRating';
-import { WaveMetricEntity } from '../../../entities/IWaveMetric';
-import { RequestContext } from '../../../request.context';
-import { ActivityEventTargetType } from '../../../entities/IActivityEvent';
-import { WaveDropperMetricEntity } from '../../../entities/IWaveDropperMetric';
-import { DropType } from '../../../entities/IDrop';
-import { Time } from '../../../time';
 import { ApiWavesPinFilter } from '../generated/models/ApiWavesPinFilter';
-import { bulkInsert } from '../../../db/my-sql.helpers';
 
 export class WavesApiDb extends LazyDbAccessCompatibleService {
   public async findWaveById(
@@ -943,7 +943,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
               subscribers_count: 0,
               drops_count: 0,
               participatory_drops_count: 0,
-              latest_drop_timestamp: 0
+              latest_drop_timestamp: 0,
+              latest_read_timestamp: 0
             };
             return acc;
           },
@@ -976,7 +977,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
               dropper_id: params.dropperId,
               drops_count: 0,
               participatory_drops_count: 0,
-              latest_drop_timestamp: 0
+              latest_drop_timestamp: 0,
+              latest_read_timestamp: 0
             };
             return acc;
           },
@@ -1593,6 +1595,49 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     ctx.timer?.stop(
       `${this.constructor.name}->findIdentityParticipationDropsCountByWaveId`
     );
+    return result;
+  }
+
+  async findIdentityUnreadNotificationsCountByWaveId(
+    param: {
+      identityId: string;
+      waveIds: string[];
+    },
+    ctx: RequestContext
+  ): Promise<Record<string, number>> {
+    if (!param.waveIds.length) {
+      return {};
+    }
+
+    const timerLabel = `${this.constructor.name}->findIdentityUnreadNotificationsCountByWaveId`;
+    ctx.timer?.start(timerLabel);
+
+    const dbresult = await this.db.execute<{ wave_id: string; cnt: number }>(
+      `
+        SELECT m.wave_id AS wave_id, COUNT(n.id) AS cnt
+        FROM ${WAVE_DROPPER_METRICS_TABLE} m
+        JOIN ${IDENTITY_NOTIFICATIONS_TABLE} n
+          ON m.wave_id = n.wave_id
+        AND m.dropper_id = n.identity_id
+        WHERE m.dropper_id = :identityId
+          AND m.wave_id IN (:waveIds)
+          AND n.created_at > m.latest_read_timestamp
+        GROUP BY m.wave_id
+    `,
+      param,
+      { wrappedConnection: ctx.connection }
+    );
+
+    const result = dbresult.reduce(
+      (acc, row) => {
+        acc[row.wave_id] = row.cnt;
+        return acc;
+      },
+      {} as Record<string, number>
+    );
+
+    ctx.timer?.stop(timerLabel);
+
     return result;
   }
 
