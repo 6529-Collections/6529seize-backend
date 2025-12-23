@@ -21,6 +21,7 @@ export class ApiWaveMetrics {
     'your_latest_drop_timestamp': number;
     'you_have_unread_drops': boolean;
     'your_unread_notifications_count': number;
+    'your_latest_read_timestamp': number;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -70,6 +71,12 @@ export class ApiWaveMetrics {
         {
             "name": "your_unread_notifications_count",
             "baseName": "your_unread_notifications_count",
+            "type": "number",
+            "format": "int64"
+        },
+        {
+            "name": "your_latest_read_timestamp",
+            "baseName": "your_latest_read_timestamp",
             "type": "number",
             "format": "int64"
         }    ];
