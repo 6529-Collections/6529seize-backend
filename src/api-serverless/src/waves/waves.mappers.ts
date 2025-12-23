@@ -15,6 +15,7 @@ import {
 } from '../../../entities/IWave';
 import { WaveDropperMetricEntity } from '../../../entities/IWaveDropperMetric';
 import { WaveMetricEntity } from '../../../entities/IWaveMetric';
+import { WaveReaderMetricEntity } from '../../../entities/IWaveReaderMetric';
 import { enums } from '../../../enums';
 import { RequestContext } from '../../../request.context';
 import {
@@ -199,6 +200,7 @@ export class WavesMappers {
       subscribedActions,
       metrics,
       authenticatedUserMetrics,
+      authenticatedUserReaderMetrics,
       yourParticipationDropsCountByWaveId,
       yourUnreadNotificationsCountByWaveId,
       wavePauses,
@@ -219,6 +221,7 @@ export class WavesMappers {
         noRightToParticipate,
         metrics,
         authenticatedUserMetrics,
+        authenticatedUserReaderMetrics,
         yourParticipationDropsCountByWaveId,
         yourUnreadNotificationsCountByWaveId,
         wavePauses,
@@ -241,6 +244,7 @@ export class WavesMappers {
     noRightToParticipate,
     metrics,
     authenticatedUserMetrics,
+    authenticatedUserReaderMetrics,
     yourParticipationDropsCountByWaveId,
     yourUnreadNotificationsCountByWaveId,
     wavePauses,
@@ -265,6 +269,7 @@ export class WavesMappers {
     noRightToParticipate: boolean;
     metrics: Record<string, WaveMetricEntity>;
     authenticatedUserMetrics: Record<string, WaveDropperMetricEntity>;
+    authenticatedUserReaderMetrics: Record<string, WaveReaderMetricEntity>;
     yourParticipationDropsCountByWaveId: Record<string, number>;
     yourUnreadNotificationsCountByWaveId: Record<string, number>;
     wavePauses: Record<string, WaveDecisionPauseEntity[]>;
@@ -402,6 +407,8 @@ export class WavesMappers {
     const waveMetrics = metrics[waveEntity.id];
     const waveAuthenticatedUserMetrics =
       authenticatedUserMetrics[waveEntity.id];
+    const waveAuthenticatedUserReaderMetrics =
+      authenticatedUserReaderMetrics[waveEntity.id];
 
     const apiWaveMetrics: ApiWaveMetrics = {
       drops_count: waveMetrics.drops_count,
@@ -411,12 +418,14 @@ export class WavesMappers {
       your_latest_drop_timestamp:
         waveAuthenticatedUserMetrics?.latest_drop_timestamp,
       you_have_unread_drops:
-        waveAuthenticatedUserMetrics?.latest_read_timestamp <
+        (waveAuthenticatedUserReaderMetrics?.latest_read_timestamp ?? 0) <
         waveMetrics.latest_drop_timestamp,
       your_participation_drops_count:
         yourParticipationDropsCountByWaveId[waveEntity.id] ?? 0,
       your_unread_notifications_count:
-        yourUnreadNotificationsCountByWaveId[waveEntity.id] ?? 0
+        yourUnreadNotificationsCountByWaveId[waveEntity.id] ?? 0,
+      your_latest_read_timestamp:
+        waveAuthenticatedUserReaderMetrics?.latest_read_timestamp ?? 0
     };
     const pauses = (wavePauses[waveEntity.id] ?? [])
       .sort((a, d) => a.start_time - d.start_time)
@@ -462,6 +471,7 @@ export class WavesMappers {
     subscribedActions: Record<string, ApiWaveSubscriptionTargetAction[]>;
     metrics: Record<string, WaveMetricEntity>;
     authenticatedUserMetrics: Record<string, WaveDropperMetricEntity>;
+    authenticatedUserReaderMetrics: Record<string, WaveReaderMetricEntity>;
     yourParticipationDropsCountByWaveId: Record<string, number>;
     yourUnreadNotificationsCountByWaveId: Record<string, number>;
     wavePauses: Record<string, WaveDecisionPauseEntity[]>;
@@ -480,6 +490,7 @@ export class WavesMappers {
       curationEntities,
       metrics,
       authenticatedUserMetrics,
+      authenticatedUserReaderMetrics,
       contributorsOverViews,
       creationDropsByDropId,
       subscribedActions,
@@ -512,6 +523,12 @@ export class WavesMappers {
             ctx
           )
         : Promise.resolve({} as Record<string, WaveDropperMetricEntity>),
+      authenticatedUserId
+        ? this.wavesApiDb.findWaveReaderMetricsByWaveIds(
+            { waveIds, readerId: authenticatedUserId },
+            ctx
+          )
+        : Promise.resolve({} as Record<string, WaveReaderMetricEntity>),
       this.wavesApiDb.getWavesContributorsOverviews(waveIds, ctx),
 
       dropsService
@@ -628,6 +645,7 @@ export class WavesMappers {
       ),
       metrics,
       authenticatedUserMetrics,
+      authenticatedUserReaderMetrics,
       yourParticipationDropsCountByWaveId,
       yourUnreadNotificationsCountByWaveId,
       wavePauses,

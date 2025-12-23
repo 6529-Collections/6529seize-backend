@@ -1,7 +1,6 @@
 import { assertUnreachable } from '../../../assertions';
 import { AuthenticationContext } from '../../../auth-context';
 import { collections } from '../../../collections';
-import { dropsDb, DropsDb } from '../../../drops/drops.db';
 import { IdentityNotificationCause } from '../../../entities/IIdentityNotification';
 import { enums } from '../../../enums';
 import { BadRequestException } from '../../../exceptions';
@@ -35,6 +34,7 @@ import {
   identitySubscriptionsDb,
   IdentitySubscriptionsDb
 } from '../identity-subscriptions/identity-subscriptions.db';
+import { wavesApiDb, WavesApiDb } from '../waves/waves.api.db';
 
 export class NotificationsApiService {
   constructor(
@@ -44,7 +44,7 @@ export class NotificationsApiService {
     private readonly dropsService: DropsApiService,
     private readonly identityNotificationsDb: IdentityNotificationsDb,
     private readonly identitySubscriptionsDb: IdentitySubscriptionsDb,
-    private readonly dropsDb: DropsDb
+    private readonly wavesApiDb: WavesApiDb
   ) {}
 
   public async markNotificationAsRead(param: {
@@ -90,7 +90,7 @@ export class NotificationsApiService {
       identityId,
       ctx
     );
-    await this.dropsDb.updateWaveDropperMetricLatestReadTimestamp(
+    await this.wavesApiDb.updateWaveReaderMetricLatestReadTimestamp(
       waveId,
       identityId,
       ctx
@@ -397,5 +397,5 @@ export const notificationsApiService = new NotificationsApiService(
   dropsService,
   identityNotificationsDb,
   identitySubscriptionsDb,
-  dropsDb
+  wavesApiDb
 );

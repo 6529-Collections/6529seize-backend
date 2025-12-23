@@ -16,6 +16,7 @@ import {
   WAVE_METRICS_TABLE,
   WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE,
   WAVE_OUTCOMES_TABLE,
+  WAVE_READER_METRICS_TABLE,
   WAVES_ARCHIVE_TABLE,
   WAVES_DECISION_PAUSES_TABLE,
   WAVES_TABLE
@@ -32,6 +33,7 @@ import {
 } from '../../../entities/IWave';
 import { WaveDropperMetricEntity } from '../../../entities/IWaveDropperMetric';
 import { WaveMetricEntity } from '../../../entities/IWaveMetric';
+import { WaveReaderMetricEntity } from '../../../entities/IWaveReaderMetric';
 import { getLevelComponentsBorderByLevel } from '../../../profiles/profile-level';
 import { RequestContext } from '../../../request.context';
 import {
@@ -943,8 +945,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
               subscribers_count: 0,
               drops_count: 0,
               participatory_drops_count: 0,
-              latest_drop_timestamp: 0,
-              latest_read_timestamp: 0
+              latest_drop_timestamp: 0
             };
             return acc;
           },
@@ -977,8 +978,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
               dropper_id: params.dropperId,
               drops_count: 0,
               participatory_drops_count: 0,
-              latest_drop_timestamp: 0,
-              latest_read_timestamp: 0
+              latest_drop_timestamp: 0
             };
             return acc;
           },
@@ -1598,49 +1598,6 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     return result;
   }
 
-  async findIdentityUnreadNotificationsCountByWaveId(
-    param: {
-      identityId: string;
-      waveIds: string[];
-    },
-    ctx: RequestContext
-  ): Promise<Record<string, number>> {
-    if (!param.waveIds.length) {
-      return {};
-    }
-
-    const timerLabel = `${this.constructor.name}->findIdentityUnreadNotificationsCountByWaveId`;
-    ctx.timer?.start(timerLabel);
-
-    const dbresult = await this.db.execute<{ wave_id: string; cnt: number }>(
-      `
-        SELECT m.wave_id AS wave_id, COUNT(n.id) AS cnt
-        FROM ${WAVE_DROPPER_METRICS_TABLE} m
-        JOIN ${IDENTITY_NOTIFICATIONS_TABLE} n
-          ON m.wave_id = n.wave_id
-        AND m.dropper_id = n.identity_id
-        WHERE m.dropper_id = :identityId
-          AND m.wave_id IN (:waveIds)
-          AND n.created_at > m.latest_read_timestamp
-        GROUP BY m.wave_id
-    `,
-      param,
-      { wrappedConnection: ctx.connection }
-    );
-
-    const result = dbresult.reduce(
-      (acc, row) => {
-        acc[row.wave_id] = row.cnt;
-        return acc;
-      },
-      {} as Record<string, number>
-    );
-
-    ctx.timer?.stop(timerLabel);
-
-    return result;
-  }
-
   public async findWaveByGroupId(groupId: string, ctx: RequestContext) {
     const result = await this.db.execute<WaveEntity>(
       `SELECT * FROM ${WAVES_TABLE} WHERE admin_group_id = :groupId OR chat_group_id = :groupId OR voting_group_id = :groupId OR participation_group_id = :groupId ORDER BY created_at DESC LIMIT 1`,
@@ -1913,6 +1870,122 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         `${this.constructor.name}->countOutcomeDistributionItems`
       );
     }
+  }
+
+  async findWaveReaderMetricsByWaveIds(
+    params: { readerId: string; waveIds: string[] },
+    { connection, timer }: RequestContext
+  ): Promise<Record<string, WaveReaderMetricEntity>> {
+    if (!params.waveIds.length) {
+      return {};
+    }
+    timer?.start('wavesApiDb->findWaveReaderMetricsByWaveIds');
+    const result = await this.db
+      .execute<WaveReaderMetricEntity>(
+        `select * from ${WAVE_READER_METRICS_TABLE} where wave_id in (:waveIds) and reader_id = :readerId`,
+        params,
+        { wrappedConnection: connection }
+      )
+      .then((results) =>
+        params.waveIds.reduce(
+          (acc, waveId) => {
+            acc[waveId] = results.find((it) => it.wave_id === waveId) ?? {
+              wave_id: waveId,
+              reader_id: params.readerId,
+              latest_read_timestamp: 0
+            };
+            return acc;
+          },
+          {} as Record<string, WaveReaderMetricEntity>
+        )
+      );
+    timer?.stop('wavesApiDb->findWaveReaderMetricsByWaveIds');
+    return result;
+  }
+
+  async updateWaveReaderMetricLatestReadTimestamp(
+    waveId: string,
+    readerId: string,
+    ctx: RequestContext
+  ) {
+    ctx.timer?.start(
+      `${this.constructor.name}->updateWaveReaderMetricLatestReadTimestamp`
+    );
+    const now = Time.now().toMillis();
+    await this.db.execute(
+      `insert into ${WAVE_READER_METRICS_TABLE} (wave_id, reader_id, latest_read_timestamp)
+       values (:waveId, :readerId, :now)
+       on duplicate key update latest_read_timestamp = :now`,
+      { waveId, readerId, now },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop(
+      `${this.constructor.name}->updateWaveReaderMetricLatestReadTimestamp`
+    );
+  }
+
+  async setWaveReaderMetricLatestReadTimestamp(
+    waveId: string,
+    readerId: string,
+    timestamp: number,
+    ctx: RequestContext
+  ) {
+    ctx.timer?.start(
+      `${this.constructor.name}->setWaveReaderMetricLatestReadTimestamp`
+    );
+    await this.db.execute(
+      `insert into ${WAVE_READER_METRICS_TABLE} (wave_id, reader_id, latest_read_timestamp)
+       values (:waveId, :readerId, :timestamp)
+       on duplicate key update latest_read_timestamp = :timestamp`,
+      { waveId, readerId, timestamp },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop(
+      `${this.constructor.name}->setWaveReaderMetricLatestReadTimestamp`
+    );
+  }
+
+  async findIdentityUnreadNotificationsCountByWaveId(
+    param: {
+      identityId: string;
+      waveIds: string[];
+    },
+    ctx: RequestContext
+  ): Promise<Record<string, number>> {
+    if (!param.waveIds.length) {
+      return {};
+    }
+
+    const timerLabel = `${this.constructor.name}->findIdentityUnreadNotificationsCountByWaveId`;
+    ctx.timer?.start(timerLabel);
+
+    const dbresult = await this.db.execute<{ wave_id: string; cnt: number }>(
+      `
+        SELECT r.wave_id AS wave_id, COUNT(n.id) AS cnt
+        FROM ${WAVE_READER_METRICS_TABLE} r
+        JOIN ${IDENTITY_NOTIFICATIONS_TABLE} n
+          ON r.wave_id = n.wave_id
+        AND r.reader_id = n.identity_id
+        WHERE r.reader_id = :identityId
+          AND r.wave_id IN (:waveIds)
+          AND n.created_at > r.latest_read_timestamp
+        GROUP BY r.wave_id
+    `,
+      param,
+      { wrappedConnection: ctx.connection }
+    );
+
+    const result = dbresult.reduce(
+      (acc, row) => {
+        acc[row.wave_id] = row.cnt;
+        return acc;
+      },
+      {} as Record<string, number>
+    );
+
+    ctx.timer?.stop(timerLabel);
+
+    return result;
   }
 }
 

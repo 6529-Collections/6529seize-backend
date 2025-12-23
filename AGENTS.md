@@ -1,5 +1,7 @@
 # Commiting to Git
-Every time you commit something add a DCO signature to footer with my name and the corresponding accountcode+username@users.noreply.github.com email address. Example:
+**NEVER commit unless explicitly asked to by the user.** Do not assume the user wants you to commit. Wait for explicit instructions like "commit" or "commit this".
+
+When you DO commit (only when explicitly asked), add a DCO signature to footer with my name and the corresponding accountcode+username@users.noreply.github.com email address. Example:
 ```
 Add tests for address comparison
 Signed-off-by: IAmAUser <1234567+IAmAUser@users.noreply.github.com>
