@@ -192,7 +192,7 @@ export class WavesMappers {
       authenticatedUserMetrics,
       authenticatedUserReaderMetrics,
       yourParticipationDropsCountByWaveId,
-      yourUnreadNotificationsCountByWaveId,
+      yourUnreadDropsCountByWaveId,
       wavePauses,
       pinnedWaveIds
     } = await this.getRelatedData(waveEntities, groupIdsUserIsEligibleFor, ctx);
@@ -211,7 +211,7 @@ export class WavesMappers {
         authenticatedUserMetrics,
         authenticatedUserReaderMetrics,
         yourParticipationDropsCountByWaveId,
-        yourUnreadNotificationsCountByWaveId,
+        yourUnreadDropsCountByWaveId,
         wavePauses,
         pinnedWaveIds
       })
@@ -232,7 +232,7 @@ export class WavesMappers {
     authenticatedUserMetrics,
     authenticatedUserReaderMetrics,
     yourParticipationDropsCountByWaveId,
-    yourUnreadNotificationsCountByWaveId,
+    yourUnreadDropsCountByWaveId,
     wavePauses,
     pinnedWaveIds
   }: {
@@ -255,7 +255,7 @@ export class WavesMappers {
     authenticatedUserMetrics: Record<string, WaveDropperMetricEntity>;
     authenticatedUserReaderMetrics: Record<string, WaveReaderMetricEntity>;
     yourParticipationDropsCountByWaveId: Record<string, number>;
-    yourUnreadNotificationsCountByWaveId: Record<string, number>;
+    yourUnreadDropsCountByWaveId: Record<string, number>;
     wavePauses: Record<string, WaveDecisionPauseEntity[]>;
     pinnedWaveIds: Set<string>;
   }): ApiWave {
@@ -365,13 +365,9 @@ export class WavesMappers {
       your_drops_count: waveAuthenticatedUserMetrics?.drops_count,
       your_latest_drop_timestamp:
         waveAuthenticatedUserMetrics?.latest_drop_timestamp,
-      you_have_unread_drops:
-        (waveAuthenticatedUserReaderMetrics?.latest_read_timestamp ?? 0) <
-        waveMetrics.latest_drop_timestamp,
       your_participation_drops_count:
         yourParticipationDropsCountByWaveId[waveEntity.id] ?? 0,
-      your_unread_notifications_count:
-        yourUnreadNotificationsCountByWaveId[waveEntity.id] ?? 0,
+      your_unread_drops_count: yourUnreadDropsCountByWaveId[waveEntity.id] ?? 0,
       your_latest_read_timestamp:
         waveAuthenticatedUserReaderMetrics?.latest_read_timestamp ?? 0
     };
@@ -420,7 +416,7 @@ export class WavesMappers {
     authenticatedUserMetrics: Record<string, WaveDropperMetricEntity>;
     authenticatedUserReaderMetrics: Record<string, WaveReaderMetricEntity>;
     yourParticipationDropsCountByWaveId: Record<string, number>;
-    yourUnreadNotificationsCountByWaveId: Record<string, number>;
+    yourUnreadDropsCountByWaveId: Record<string, number>;
     wavePauses: Record<string, WaveDecisionPauseEntity[]>;
     pinnedWaveIds: Set<string>;
   }> {
@@ -440,7 +436,7 @@ export class WavesMappers {
       creationDropsByDropId,
       subscribedActions,
       yourParticipationDropsCountByWaveId,
-      yourUnreadNotificationsCountByWaveId,
+      yourUnreadDropsCountByWaveId,
       wavePauses,
       pinnedWaveIds
     ] = await Promise.all([
@@ -513,7 +509,7 @@ export class WavesMappers {
           )
         : Promise.resolve({} as Record<string, number>),
       authenticatedUserId
-        ? this.wavesApiDb.findIdentityUnreadNotificationsCountByWaveId(
+        ? this.wavesApiDb.findIdentityUnreadDropsCountByWaveId(
             {
               identityId: authenticatedUserId,
               waveIds
@@ -588,7 +584,7 @@ export class WavesMappers {
       authenticatedUserMetrics,
       authenticatedUserReaderMetrics,
       yourParticipationDropsCountByWaveId,
-      yourUnreadNotificationsCountByWaveId,
+      yourUnreadDropsCountByWaveId,
       wavePauses,
       pinnedWaveIds
     };
