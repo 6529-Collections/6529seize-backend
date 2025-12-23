@@ -1,17 +1,10 @@
 import {
-  ConnectionWrapper,
-  dbSupplier,
-  LazyDbAccessCompatibleService
-} from '../sql-executor';
-import {
-  DropEntity,
-  DropMediaEntity,
-  DropMentionEntity,
-  DropMetadataEntity,
-  DropPartEntity,
-  DropReferencedNftEntity,
-  DropType
-} from '../entities/IDrop';
+  userGroupsService,
+  UserGroupsService
+} from '../api-serverless/src/community-members/user-groups.service';
+import { ApiDropSearchStrategy } from '../api-serverless/src/generated/models/ApiDropSearchStrategy';
+import { PageSortDirection } from '../api-serverless/src/page-request';
+import { assertUnreachable } from '../assertions';
 import {
   ACTIVITY_EVENTS_TABLE,
   DELETED_DROPS_TABLE,
@@ -36,23 +29,30 @@ import {
   WAVES_TABLE,
   WINNER_DROP_VOTER_VOTES_TABLE
 } from '../constants';
-import {
-  userGroupsService,
-  UserGroupsService
-} from '../api-serverless/src/community-members/user-groups.service';
-import { Time, Timer } from '../time';
-import { PageSortDirection } from '../api-serverless/src/page-request';
-import { WaveCreditType, WaveEntity } from '../entities/IWave';
-import { RequestContext } from '../request.context';
 import { ActivityEventTargetType } from '../entities/IActivityEvent';
 import { DeletedDropEntity } from '../entities/IDeletedDrop';
+import {
+  DropEntity,
+  DropMediaEntity,
+  DropMentionEntity,
+  DropMetadataEntity,
+  DropPartEntity,
+  DropReferencedNftEntity,
+  DropType
+} from '../entities/IDrop';
 import { DropRelationEntity } from '../entities/IDropRelation';
-import { ApiDropSearchStrategy } from '../api-serverless/src/generated/models/ApiDropSearchStrategy';
 import { DropVoterStateEntity } from '../entities/IDropVoterState';
 import { ProfileActivityLog } from '../entities/IProfileActivityLog';
-import { assertUnreachable } from '../assertions';
+import { WaveCreditType, WaveEntity } from '../entities/IWave';
 import { WaveDecisionWinnerDropEntity } from '../entities/IWaveDecision';
 import { WinnerDropVoterVoteEntity } from '../entities/IWinnerDropVoterVote';
+import { RequestContext } from '../request.context';
+import {
+  ConnectionWrapper,
+  dbSupplier,
+  LazyDbAccessCompatibleService
+} from '../sql-executor';
+import { Time, Timer } from '../time';
 
 const mysql = require('mysql');
 
@@ -109,12 +109,12 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       this.db.execute(
         `
             insert into ${WAVE_DROPPER_METRICS_TABLE}
-            (wave_id, dropper_id, drops_count, participatory_drops_count, latest_drop_timestamp)
+            (wave_id, dropper_id, drops_count, participatory_drops_count, latest_drop_timestamp, latest_read_timestamp)
             values (:waveId, :dropperId, ${
               newDropEntity.drop_type === DropType.CHAT ? 1 : 0
             }, ${
               newDropEntity.drop_type === DropType.PARTICIPATORY ? 1 : 0
-            }, :now)
+            }, :now, :now)
             on duplicate key update drops_count = (drops_count + ${
               newDropEntity.drop_type === DropType.CHAT ? 1 : 0
             }),
@@ -124,7 +124,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                                         ? 1
                                         : 0
                                     }),
-                                    latest_drop_timestamp     = :now
+                                    latest_drop_timestamp     = :now,
+                                    latest_read_timestamp     = :now
         `,
         { waveId, dropperId: newDropEntity.author_id, now },
         { wrappedConnection: connection }
@@ -1536,6 +1537,20 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         `${this.constructor.name}->searchDropsContainingPhraseInWave`
       );
     }
+  }
+
+  async updateWaveDropperMetricLatestReadTimestamp(
+    waveId: string,
+    dropperId: string,
+    ctx: RequestContext
+  ) {
+    console.log('updating latest read timestamp', waveId, dropperId);
+    await this.db.execute(
+      `update ${WAVE_DROPPER_METRICS_TABLE} set latest_read_timestamp = :now where wave_id = :waveId and dropper_id = :dropperId`,
+      { waveId, dropperId, now: Time.now().toMillis() },
+      { wrappedConnection: ctx.connection }
+    );
+    console.log('updated latest read timestamp', waveId, dropperId);
   }
 }
 

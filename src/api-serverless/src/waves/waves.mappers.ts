@@ -1,5 +1,8 @@
-import { ApiCreateNewWave } from '../generated/models/ApiCreateNewWave';
-import { InsertWaveEntity, wavesApiDb, WavesApiDb } from './waves.api.db';
+import { collections } from '../../../collections';
+import {
+  ActivityEventAction,
+  ActivityEventTargetType
+} from '../../../entities/IActivityEvent';
 import {
   ParticipationRequiredMedia,
   WaveCreditType,
@@ -8,46 +11,43 @@ import {
   WaveRequiredMetadataItemType,
   WaveType
 } from '../../../entities/IWave';
-import { ApiWave } from '../generated/models/ApiWave';
-import { ApiProfileMin } from '../generated/models/ApiProfileMin';
-import { ApiWaveCreditType as WaveCreditTypeApi } from '../generated/models/ApiWaveCreditType';
-import { ApiWaveType as WaveTypeApi } from '../generated/models/ApiWaveType';
+import { WaveDropperMetricEntity } from '../../../entities/IWaveDropperMetric';
+import { WaveMetricEntity } from '../../../entities/IWaveMetric';
+import { enums } from '../../../enums';
+import { RequestContext } from '../../../request.context';
 import {
   userGroupsService,
   UserGroupsService
 } from '../community-members/user-groups.service';
-import { ApiGroup } from '../generated/models/ApiGroup';
-import { ApiWaveParticipationRequirement } from '../generated/models/ApiWaveParticipationRequirement';
-import { ApiDrop } from '../generated/models/ApiDrop';
-import { ApiWaveVotingConfig } from '../generated/models/ApiWaveVotingConfig';
-import { ApiWaveScope } from '../generated/models/ApiWaveScope';
-import { ApiWaveContributorOverview } from '../generated/models/ApiWaveContributorOverview';
-import { ApiWaveVisibilityConfig } from '../generated/models/ApiWaveVisibilityConfig';
-import { ApiWaveParticipationConfig } from '../generated/models/ApiWaveParticipationConfig';
-import { ApiWaveConfig } from '../generated/models/ApiWaveConfig';
-import {
-  identitySubscriptionsDb,
-  IdentitySubscriptionsDb
-} from '../identity-subscriptions/identity-subscriptions.db';
-import { ApiWaveSubscriptionTargetAction } from '../generated/models/ApiWaveSubscriptionTargetAction';
-import {
-  ActivityEventAction,
-  ActivityEventTargetType
-} from '../../../entities/IActivityEvent';
-import { WaveMetricEntity } from '../../../entities/IWaveMetric';
-import { ApiWaveMetrics } from '../generated/models/ApiWaveMetrics';
-import { RequestContext } from '../../../request.context';
 import { dropsService } from '../drops/drops.api.service';
+import { ApiCreateNewWave } from '../generated/models/ApiCreateNewWave';
+import { ApiDrop } from '../generated/models/ApiDrop';
+import { ApiGroup } from '../generated/models/ApiGroup';
+import { ApiProfileMin } from '../generated/models/ApiProfileMin';
 import { ApiUpdateWaveRequest } from '../generated/models/ApiUpdateWaveRequest';
-import { ApiWaveMetadataType } from '../generated/models/ApiWaveMetadataType';
-import { WaveDropperMetricEntity } from '../../../entities/IWaveDropperMetric';
+import { ApiWave } from '../generated/models/ApiWave';
 import { ApiWaveChatConfig } from '../generated/models/ApiWaveChatConfig';
+import { ApiWaveConfig } from '../generated/models/ApiWaveConfig';
+import { ApiWaveContributorOverview } from '../generated/models/ApiWaveContributorOverview';
+import { ApiWaveCreditType as WaveCreditTypeApi } from '../generated/models/ApiWaveCreditType';
+import { ApiWaveMetadataType } from '../generated/models/ApiWaveMetadataType';
+import { ApiWaveMetrics } from '../generated/models/ApiWaveMetrics';
+import { ApiWaveParticipationConfig } from '../generated/models/ApiWaveParticipationConfig';
+import { ApiWaveParticipationRequirement } from '../generated/models/ApiWaveParticipationRequirement';
+import { ApiWaveScope } from '../generated/models/ApiWaveScope';
+import { ApiWaveSubscriptionTargetAction } from '../generated/models/ApiWaveSubscriptionTargetAction';
+import { ApiWaveType as WaveTypeApi } from '../generated/models/ApiWaveType';
+import { ApiWaveVisibilityConfig } from '../generated/models/ApiWaveVisibilityConfig';
+import { ApiWaveVotingConfig } from '../generated/models/ApiWaveVotingConfig';
 import {
   identityFetcher,
   IdentityFetcher
 } from '../identities/identity.fetcher';
-import { enums } from '../../../enums';
-import { collections } from '../../../collections';
+import {
+  identitySubscriptionsDb,
+  IdentitySubscriptionsDb
+} from '../identity-subscriptions/identity-subscriptions.db';
+import { InsertWaveEntity, wavesApiDb, WavesApiDb } from './waves.api.db';
 
 export class WavesMappers {
   constructor(
@@ -190,6 +190,7 @@ export class WavesMappers {
       metrics,
       authenticatedUserMetrics,
       yourParticipationDropsCountByWaveId,
+      yourUnreadNotificationsCountByWaveId,
       wavePauses,
       pinnedWaveIds
     } = await this.getRelatedData(waveEntities, groupIdsUserIsEligibleFor, ctx);
@@ -207,6 +208,7 @@ export class WavesMappers {
         metrics,
         authenticatedUserMetrics,
         yourParticipationDropsCountByWaveId,
+        yourUnreadNotificationsCountByWaveId,
         wavePauses,
         pinnedWaveIds
       })
@@ -226,6 +228,7 @@ export class WavesMappers {
     metrics,
     authenticatedUserMetrics,
     yourParticipationDropsCountByWaveId,
+    yourUnreadNotificationsCountByWaveId,
     wavePauses,
     pinnedWaveIds
   }: {
@@ -247,6 +250,7 @@ export class WavesMappers {
     metrics: Record<string, WaveMetricEntity>;
     authenticatedUserMetrics: Record<string, WaveDropperMetricEntity>;
     yourParticipationDropsCountByWaveId: Record<string, number>;
+    yourUnreadNotificationsCountByWaveId: Record<string, number>;
     wavePauses: Record<string, WaveDecisionPauseEntity[]>;
     pinnedWaveIds: Set<string>;
   }): ApiWave {
@@ -354,8 +358,13 @@ export class WavesMappers {
       your_drops_count: waveAuthenticatedUserMetrics?.drops_count,
       your_latest_drop_timestamp:
         waveAuthenticatedUserMetrics?.latest_drop_timestamp,
+      you_have_unread_drops:
+        waveAuthenticatedUserMetrics?.latest_read_timestamp <
+        waveMetrics.latest_drop_timestamp,
       your_participation_drops_count:
-        yourParticipationDropsCountByWaveId[waveEntity.id] ?? 0
+        yourParticipationDropsCountByWaveId[waveEntity.id] ?? 0,
+      your_unread_notifications_count:
+        yourUnreadNotificationsCountByWaveId[waveEntity.id] ?? 0
     };
     const pauses = (wavePauses[waveEntity.id] ?? [])
       .sort((a, d) => a.start_time - d.start_time)
@@ -401,6 +410,7 @@ export class WavesMappers {
     metrics: Record<string, WaveMetricEntity>;
     authenticatedUserMetrics: Record<string, WaveDropperMetricEntity>;
     yourParticipationDropsCountByWaveId: Record<string, number>;
+    yourUnreadNotificationsCountByWaveId: Record<string, number>;
     wavePauses: Record<string, WaveDecisionPauseEntity[]>;
     pinnedWaveIds: Set<string>;
   }> {
@@ -419,6 +429,7 @@ export class WavesMappers {
       creationDropsByDropId,
       subscribedActions,
       yourParticipationDropsCountByWaveId,
+      yourUnreadNotificationsCountByWaveId,
       wavePauses,
       pinnedWaveIds
     ] = await Promise.all([
@@ -477,6 +488,15 @@ export class WavesMappers {
         : Promise.resolve({} as Record<string, ActivityEventAction[]>),
       authenticatedUserId
         ? this.wavesApiDb.findIdentityParticipationDropsCountByWaveId(
+            {
+              identityId: authenticatedUserId,
+              waveIds
+            },
+            ctx
+          )
+        : Promise.resolve({} as Record<string, number>),
+      authenticatedUserId
+        ? this.wavesApiDb.findIdentityUnreadNotificationsCountByWaveId(
             {
               identityId: authenticatedUserId,
               waveIds
@@ -550,6 +570,7 @@ export class WavesMappers {
       metrics,
       authenticatedUserMetrics,
       yourParticipationDropsCountByWaveId,
+      yourUnreadNotificationsCountByWaveId,
       wavePauses,
       pinnedWaveIds
     };
