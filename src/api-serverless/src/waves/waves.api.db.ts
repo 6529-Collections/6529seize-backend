@@ -1,15 +1,4 @@
 import {
-  ConnectionWrapper,
-  dbSupplier,
-  LazyDbAccessCompatibleService
-} from '../../../sql-executor';
-import {
-  WaveDecisionPauseEntity,
-  WaveEntity,
-  WaveOutcomeDistributionItemEntity,
-  WaveOutcomeEntity
-} from '../../../entities/IWave';
-import {
   ACTIVITY_EVENTS_TABLE,
   DROP_MEDIA_TABLE,
   DROP_METADATA_TABLE,
@@ -27,24 +16,37 @@ import {
   WAVE_METRICS_TABLE,
   WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE,
   WAVE_OUTCOMES_TABLE,
+  WAVE_READER_METRICS_TABLE,
   WAVES_ARCHIVE_TABLE,
   WAVES_DECISION_PAUSES_TABLE,
   WAVES_TABLE
 } from '../../../constants';
+import { bulkInsert } from '../../../db/my-sql.helpers';
+import { ActivityEventTargetType } from '../../../entities/IActivityEvent';
+import { DropType } from '../../../entities/IDrop';
+import { RateMatter } from '../../../entities/IRating';
+import {
+  WaveDecisionPauseEntity,
+  WaveEntity,
+  WaveOutcomeDistributionItemEntity,
+  WaveOutcomeEntity
+} from '../../../entities/IWave';
+import { WaveDropperMetricEntity } from '../../../entities/IWaveDropperMetric';
+import { WaveMetricEntity } from '../../../entities/IWaveMetric';
+import { WaveReaderMetricEntity } from '../../../entities/IWaveReaderMetric';
+import { getLevelComponentsBorderByLevel } from '../../../profiles/profile-level';
+import { RequestContext } from '../../../request.context';
+import {
+  ConnectionWrapper,
+  dbSupplier,
+  LazyDbAccessCompatibleService
+} from '../../../sql-executor';
+import { Time } from '../../../time';
 import {
   userGroupsService,
   UserGroupsService
 } from '../community-members/user-groups.service';
-import { getLevelComponentsBorderByLevel } from '../../../profiles/profile-level';
-import { RateMatter } from '../../../entities/IRating';
-import { WaveMetricEntity } from '../../../entities/IWaveMetric';
-import { RequestContext } from '../../../request.context';
-import { ActivityEventTargetType } from '../../../entities/IActivityEvent';
-import { WaveDropperMetricEntity } from '../../../entities/IWaveDropperMetric';
-import { DropType } from '../../../entities/IDrop';
-import { Time } from '../../../time';
 import { ApiWavesPinFilter } from '../generated/models/ApiWavesPinFilter';
-import { bulkInsert } from '../../../db/my-sql.helpers';
 
 export class WavesApiDb extends LazyDbAccessCompatibleService {
   public async findWaveById(
@@ -1868,6 +1870,121 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         `${this.constructor.name}->countOutcomeDistributionItems`
       );
     }
+  }
+
+  async findWaveReaderMetricsByWaveIds(
+    params: { readerId: string; waveIds: string[] },
+    { connection, timer }: RequestContext
+  ): Promise<Record<string, WaveReaderMetricEntity>> {
+    if (!params.waveIds.length) {
+      return {};
+    }
+    timer?.start('wavesApiDb->findWaveReaderMetricsByWaveIds');
+    const result = await this.db
+      .execute<WaveReaderMetricEntity>(
+        `select * from ${WAVE_READER_METRICS_TABLE} where wave_id in (:waveIds) and reader_id = :readerId`,
+        params,
+        { wrappedConnection: connection }
+      )
+      .then((results) =>
+        params.waveIds.reduce(
+          (acc, waveId) => {
+            acc[waveId] = results.find((it) => it.wave_id === waveId) ?? {
+              wave_id: waveId,
+              reader_id: params.readerId,
+              latest_read_timestamp: 0
+            };
+            return acc;
+          },
+          {} as Record<string, WaveReaderMetricEntity>
+        )
+      );
+    timer?.stop('wavesApiDb->findWaveReaderMetricsByWaveIds');
+    return result;
+  }
+
+  async updateWaveReaderMetricLatestReadTimestamp(
+    waveId: string,
+    readerId: string,
+    ctx: RequestContext
+  ) {
+    ctx.timer?.start(
+      `${this.constructor.name}->updateWaveReaderMetricLatestReadTimestamp`
+    );
+    const now = Time.now().toMillis();
+    await this.db.execute(
+      `insert into ${WAVE_READER_METRICS_TABLE} (wave_id, reader_id, latest_read_timestamp)
+       values (:waveId, :readerId, :now)
+       on duplicate key update latest_read_timestamp = :now`,
+      { waveId, readerId, now },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop(
+      `${this.constructor.name}->updateWaveReaderMetricLatestReadTimestamp`
+    );
+  }
+
+  async setWaveReaderMetricLatestReadTimestamp(
+    waveId: string,
+    readerId: string,
+    timestamp: number,
+    ctx: RequestContext
+  ) {
+    ctx.timer?.start(
+      `${this.constructor.name}->setWaveReaderMetricLatestReadTimestamp`
+    );
+    await this.db.execute(
+      `insert into ${WAVE_READER_METRICS_TABLE} (wave_id, reader_id, latest_read_timestamp)
+       values (:waveId, :readerId, :timestamp)
+       on duplicate key update latest_read_timestamp = :timestamp`,
+      { waveId, readerId, timestamp },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop(
+      `${this.constructor.name}->setWaveReaderMetricLatestReadTimestamp`
+    );
+  }
+
+  async findIdentityUnreadDropsCountByWaveId(
+    param: {
+      identityId: string;
+      waveIds: string[];
+    },
+    ctx: RequestContext
+  ): Promise<Record<string, number>> {
+    if (!param.waveIds.length) {
+      return {};
+    }
+
+    const timerLabel = `${this.constructor.name}->findIdentityUnreadDropsCountByWaveId`;
+    ctx.timer?.start(timerLabel);
+
+    const dbresult = await this.db.execute<{ wave_id: string; cnt: number }>(
+      `
+        SELECT d.wave_id AS wave_id, COUNT(d.id) AS cnt
+        FROM ${DROPS_TABLE} d
+        LEFT JOIN ${WAVE_READER_METRICS_TABLE} r
+          ON r.wave_id = d.wave_id
+          AND r.reader_id = :identityId
+        WHERE d.wave_id IN (:waveIds)
+          AND d.created_at > COALESCE(r.latest_read_timestamp, 0)
+        GROUP BY d.wave_id
+    `,
+      param,
+      { wrappedConnection: ctx.connection }
+    );
+
+    const result = dbresult.reduce(
+      (acc, row) => {
+        acc[row.wave_id] = row.cnt;
+        return acc;
+      },
+      {} as Record<string, number>
+    );
+
+    ctx.timer?.stop(timerLabel);
+
+    return result;
   }
 }
 
