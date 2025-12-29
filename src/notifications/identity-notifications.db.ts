@@ -1,19 +1,19 @@
-import {
-  ConnectionWrapper,
-  dbSupplier,
-  LazyDbAccessCompatibleService
-} from '../sql-executor';
-import { IdentityNotificationEntity } from '../entities/IIdentityNotification';
+import { sendIdentityPushNotification } from '../api-serverless/src/push-notifications/push-notifications.service';
 import {
   IDENTITIES_TABLE,
   IDENTITY_NOTIFICATIONS_TABLE,
   WAVE_READER_METRICS_TABLE
 } from '../constants';
-import { Time } from '../time';
-import { sendIdentityPushNotification } from '../api-serverless/src/push-notifications/push-notifications.service';
+import { IdentityNotificationEntity } from '../entities/IIdentityNotification';
 import { Logger } from '../logging';
-import { RequestContext } from '../request.context';
 import { numbers } from '../numbers';
+import { RequestContext } from '../request.context';
+import {
+  ConnectionWrapper,
+  dbSupplier,
+  LazyDbAccessCompatibleService
+} from '../sql-executor';
+import { Time } from '../time';
 
 export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
   private readonly logger = Logger.get(IdentityNotificationsDb.name);
