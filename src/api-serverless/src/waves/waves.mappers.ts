@@ -193,6 +193,7 @@ export class WavesMappers {
       authenticatedUserReaderMetrics,
       yourParticipationDropsCountByWaveId,
       yourUnreadDropsCountByWaveId,
+      firstUnreadDropSerialNoByWaveId,
       wavePauses,
       pinnedWaveIds
     } = await this.getRelatedData(waveEntities, groupIdsUserIsEligibleFor, ctx);
@@ -212,6 +213,7 @@ export class WavesMappers {
         authenticatedUserReaderMetrics,
         yourParticipationDropsCountByWaveId,
         yourUnreadDropsCountByWaveId,
+        firstUnreadDropSerialNoByWaveId,
         wavePauses,
         pinnedWaveIds
       })
@@ -233,6 +235,7 @@ export class WavesMappers {
     authenticatedUserReaderMetrics,
     yourParticipationDropsCountByWaveId,
     yourUnreadDropsCountByWaveId,
+    firstUnreadDropSerialNoByWaveId,
     wavePauses,
     pinnedWaveIds
   }: {
@@ -256,6 +259,7 @@ export class WavesMappers {
     authenticatedUserReaderMetrics: Record<string, WaveReaderMetricEntity>;
     yourParticipationDropsCountByWaveId: Record<string, number>;
     yourUnreadDropsCountByWaveId: Record<string, number>;
+    firstUnreadDropSerialNoByWaveId: Record<string, number | null>;
     wavePauses: Record<string, WaveDecisionPauseEntity[]>;
     pinnedWaveIds: Set<string>;
   }): ApiWave {
@@ -368,8 +372,11 @@ export class WavesMappers {
       your_participation_drops_count:
         yourParticipationDropsCountByWaveId[waveEntity.id] ?? 0,
       your_unread_drops_count: yourUnreadDropsCountByWaveId[waveEntity.id] ?? 0,
+      first_unread_drop_serial_no:
+        firstUnreadDropSerialNoByWaveId[waveEntity.id] ?? undefined,
       your_latest_read_timestamp:
-        waveAuthenticatedUserReaderMetrics?.latest_read_timestamp ?? 0
+        waveAuthenticatedUserReaderMetrics?.latest_read_timestamp ?? 0,
+      muted: waveAuthenticatedUserReaderMetrics?.muted ?? false
     };
     const pauses = (wavePauses[waveEntity.id] ?? [])
       .sort((a, d) => a.start_time - d.start_time)
@@ -417,6 +424,7 @@ export class WavesMappers {
     authenticatedUserReaderMetrics: Record<string, WaveReaderMetricEntity>;
     yourParticipationDropsCountByWaveId: Record<string, number>;
     yourUnreadDropsCountByWaveId: Record<string, number>;
+    firstUnreadDropSerialNoByWaveId: Record<string, number | null>;
     wavePauses: Record<string, WaveDecisionPauseEntity[]>;
     pinnedWaveIds: Set<string>;
   }> {
@@ -437,6 +445,7 @@ export class WavesMappers {
       subscribedActions,
       yourParticipationDropsCountByWaveId,
       yourUnreadDropsCountByWaveId,
+      firstUnreadDropSerialNoByWaveId,
       wavePauses,
       pinnedWaveIds
     ] = await Promise.all([
@@ -517,6 +526,15 @@ export class WavesMappers {
             ctx
           )
         : Promise.resolve({} as Record<string, number>),
+      authenticatedUserId
+        ? this.wavesApiDb.findFirstUnreadDropSerialNoByWaveId(
+            {
+              identityId: authenticatedUserId,
+              waveIds
+            },
+            ctx
+          )
+        : Promise.resolve({} as Record<string, number | null>),
       this.wavesApiDb.getWavesPauses(waveIds, ctx),
       this.wavesApiDb.whichOfWavesArePinnedByGivenProfile(
         {
@@ -585,6 +603,7 @@ export class WavesMappers {
       authenticatedUserReaderMetrics,
       yourParticipationDropsCountByWaveId,
       yourUnreadDropsCountByWaveId,
+      firstUnreadDropSerialNoByWaveId,
       wavePauses,
       pinnedWaveIds
     };

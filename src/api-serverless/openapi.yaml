@@ -3687,6 +3687,45 @@ paths:
               schema:
                 type: object
                 additionalProperties: false
+  /waves/{id}/mute:
+    post:
+      tags:
+        - Waves
+      summary: Mute a wave
+      operationId: muteWave
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+    delete:
+      tags:
+        - Waves
+      summary: Unmute a wave
+      operationId: unmuteWave
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
   /waves/{id}/leaderboard:
     get:
       tags:
@@ -7967,6 +8006,7 @@ components:
         - your_latest_drop_timestamp
         - your_unread_drops_count
         - your_latest_read_timestamp
+        - muted
       properties:
         subscribers_count:
           type: number
@@ -7989,9 +8029,14 @@ components:
         your_unread_drops_count:
           type: number
           format: int64
+        first_unread_drop_serial_no:
+          type: number
+          format: int64
         your_latest_read_timestamp:
           type: number
           format: int64
+        muted:
+          type: boolean
     ApiWaveMin:
       required:
         - id

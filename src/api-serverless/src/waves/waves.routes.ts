@@ -1,53 +1,5 @@
-import { asyncRouter } from '../async.router';
-import {
-  getAuthenticationContext,
-  maybeAuthenticatedUser,
-  needsAuthenticatedUser
-} from '../auth/auth';
 import { Request, Response } from 'express';
-import { ApiResponse } from '../api-response';
-import { ApiWave } from '../generated/models/ApiWave';
-import { ApiCreateNewWave } from '../generated/models/ApiCreateNewWave';
-import {
-  BadRequestException,
-  ForbiddenException,
-  NotFoundException
-} from '../../../exceptions';
 import * as Joi from 'joi';
-import { ApiCreateNewWaveScope } from '../generated/models/ApiCreateNewWaveScope';
-import { ApiCreateNewWaveVisibilityConfig } from '../generated/models/ApiCreateNewWaveVisibilityConfig';
-import { ApiCreateNewWaveVotingConfig } from '../generated/models/ApiCreateNewWaveVotingConfig';
-import { ApiWaveCreditType } from '../generated/models/ApiWaveCreditType';
-import { ApiWaveCreditScope } from '../generated/models/ApiWaveCreditScope';
-import { ApiIntRange } from '../generated/models/ApiIntRange';
-import { ApiCreateNewWaveParticipationConfig } from '../generated/models/ApiCreateNewWaveParticipationConfig';
-import { ApiWaveRequiredMetadata } from '../generated/models/ApiWaveRequiredMetadata';
-import { ApiWaveConfig } from '../generated/models/ApiWaveConfig';
-import { ApiWaveType } from '../generated/models/ApiWaveType';
-import { getValidatedByJoiOrThrow } from '../validation';
-import { waveApiService } from './wave.api.service';
-import { SearchWavesParams } from './waves.api.db';
-import { ProfileProxyActionType } from '../../../entities/IProfileProxyAction';
-import { userGroupsService } from '../community-members/user-groups.service';
-import { NewWaveDropSchema } from '../drops/drop.validator';
-import { ApiWaveParticipationRequirement } from '../generated/models/ApiWaveParticipationRequirement';
-import { ApiWaveOutcomeType } from '../generated/models/ApiWaveOutcomeType';
-import { ApiWaveOutcomeSubType } from '../generated/models/ApiWaveOutcomeSubType';
-import { ApiWaveOutcomeCredit } from '../generated/models/ApiWaveOutcomeCredit';
-import { REP_CATEGORY_PATTERN } from '../../../entities/IAbusivenessDetectionResult';
-import { ApiWaveSubscriptionActions } from '../generated/models/ApiWaveSubscriptionActions';
-import { ApiWaveSubscriptionTargetAction } from '../generated/models/ApiWaveSubscriptionTargetAction';
-import { Time, Timer } from '../../../time';
-import { RequestContext } from '../../../request.context';
-import { ApiUpdateWaveRequest } from '../generated/models/ApiUpdateWaveRequest';
-import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
-import { dropsService } from '../drops/drops.api.service';
-import { ApiWaveDropsFeed } from '../generated/models/ApiWaveDropsFeed';
-import { ApiDropSearchStrategy } from '../generated/models/ApiDropSearchStrategy';
-import { ApiDropType } from '../generated/models/ApiDropType';
-import { ApiCreateNewWaveChatConfig } from '../generated/models/ApiCreateNewWaveChatConfig';
-import { PageSortDirection } from '../page-request';
-import { ApiDropsLeaderboardPage } from '../generated/models/ApiDropsLeaderboardPage';
 import {
   DropLogsQueryParams,
   DropVotersStatsParams,
@@ -55,12 +7,67 @@ import {
   LeaderboardParams,
   LeaderboardSort
 } from '../../../drops/drops.db';
+import { REP_CATEGORY_PATTERN } from '../../../entities/IAbusivenessDetectionResult';
 import { DROP_LOG_TYPES } from '../../../entities/IProfileActivityLog';
-import { ApiWaveLog } from '../generated/models/ApiWaveLog';
-import { ApiWaveVotersPage } from '../generated/models/ApiWaveVotersPage';
-import { ApiWaveOutcomeDistributionItem } from '../generated/models/ApiWaveOutcomeDistributionItem';
-import { ApiWaveDecisionsStrategy } from '../generated/models/ApiWaveDecisionsStrategy';
+import { ProfileProxyActionType } from '../../../entities/IProfileProxyAction';
+import { enums } from '../../../enums';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException
+} from '../../../exceptions';
+import { numbers } from '../../../numbers';
+import { clearWaveGroupsCache } from '../../../redis';
+import { RequestContext } from '../../../request.context';
+import { Time, Timer } from '../../../time';
+import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
+import { ApiResponse } from '../api-response';
+import { asyncRouter } from '../async.router';
+import {
+  getAuthenticationContext,
+  maybeAuthenticatedUser,
+  needsAuthenticatedUser
+} from '../auth/auth';
+import { userGroupsService } from '../community-members/user-groups.service';
+import { NewWaveDropSchema } from '../drops/drop.validator';
+import { dropsService } from '../drops/drops.api.service';
+import { ApiCreateNewWave } from '../generated/models/ApiCreateNewWave';
+import { ApiCreateNewWaveChatConfig } from '../generated/models/ApiCreateNewWaveChatConfig';
+import { ApiCreateNewWaveParticipationConfig } from '../generated/models/ApiCreateNewWaveParticipationConfig';
+import { ApiCreateNewWaveScope } from '../generated/models/ApiCreateNewWaveScope';
+import { ApiCreateNewWaveVisibilityConfig } from '../generated/models/ApiCreateNewWaveVisibilityConfig';
+import { ApiCreateNewWaveVotingConfig } from '../generated/models/ApiCreateNewWaveVotingConfig';
+import { ApiCreateWaveOutcome } from '../generated/models/ApiCreateWaveOutcome';
+import { ApiDropSearchStrategy } from '../generated/models/ApiDropSearchStrategy';
+import { ApiDropsLeaderboardPage } from '../generated/models/ApiDropsLeaderboardPage';
+import { ApiDropType } from '../generated/models/ApiDropType';
+import { ApiDropWithoutWavesPageWithoutCount } from '../generated/models/ApiDropWithoutWavesPageWithoutCount';
+import { ApiIntRange } from '../generated/models/ApiIntRange';
+import { ApiUpdateWaveDecisionPause } from '../generated/models/ApiUpdateWaveDecisionPause';
+import { ApiUpdateWaveRequest } from '../generated/models/ApiUpdateWaveRequest';
+import { ApiWave } from '../generated/models/ApiWave';
+import { ApiWaveConfig } from '../generated/models/ApiWaveConfig';
+import { ApiWaveCreditScope } from '../generated/models/ApiWaveCreditScope';
+import { ApiWaveCreditType } from '../generated/models/ApiWaveCreditType';
 import { ApiWaveDecisionsPage } from '../generated/models/ApiWaveDecisionsPage';
+import { ApiWaveDecisionsStrategy } from '../generated/models/ApiWaveDecisionsStrategy';
+import { ApiWaveDropsFeed } from '../generated/models/ApiWaveDropsFeed';
+import { ApiWaveLog } from '../generated/models/ApiWaveLog';
+import { ApiWaveOutcomeCredit } from '../generated/models/ApiWaveOutcomeCredit';
+import { ApiWaveOutcomeDistributionItem } from '../generated/models/ApiWaveOutcomeDistributionItem';
+import { ApiWaveOutcomeDistributionItemsPage } from '../generated/models/ApiWaveOutcomeDistributionItemsPage';
+import { ApiWaveOutcomesPage } from '../generated/models/ApiWaveOutcomesPage';
+import { ApiWaveOutcomeSubType } from '../generated/models/ApiWaveOutcomeSubType';
+import { ApiWaveOutcomeType } from '../generated/models/ApiWaveOutcomeType';
+import { ApiWaveParticipationRequirement } from '../generated/models/ApiWaveParticipationRequirement';
+import { ApiWaveRequiredMetadata } from '../generated/models/ApiWaveRequiredMetadata';
+import { ApiWaveSubscriptionActions } from '../generated/models/ApiWaveSubscriptionActions';
+import { ApiWaveSubscriptionTargetAction } from '../generated/models/ApiWaveSubscriptionTargetAction';
+import { ApiWaveType } from '../generated/models/ApiWaveType';
+import { ApiWaveVotersPage } from '../generated/models/ApiWaveVotersPage';
+import { identityFetcher } from '../identities/identity.fetcher';
+import { PageSortDirection } from '../page-request';
+import { getValidatedByJoiOrThrow } from '../validation';
 import {
   waveDecisionsApiService,
   WaveDecisionsQuery,
@@ -68,17 +75,35 @@ import {
   WaveOutcomeDistributionQuery,
   WaveOutcomesQuery
 } from './wave-decisions-api.service';
-import { identityFetcher } from '../identities/identity.fetcher';
-import { enums } from '../../../enums';
-import { numbers } from '../../../numbers';
-import { ApiUpdateWaveDecisionPause } from '../generated/models/ApiUpdateWaveDecisionPause';
-import { clearWaveGroupsCache } from '../../../redis';
-import { ApiDropWithoutWavesPageWithoutCount } from '../generated/models/ApiDropWithoutWavesPageWithoutCount';
-import { ApiWaveOutcomesPage } from '../generated/models/ApiWaveOutcomesPage';
-import { ApiWaveOutcomeDistributionItemsPage } from '../generated/models/ApiWaveOutcomeDistributionItemsPage';
-import { ApiCreateWaveOutcome } from '../generated/models/ApiCreateWaveOutcome';
+import { waveApiService } from './wave.api.service';
+import { SearchWavesParams } from './waves.api.db';
 
 const router = asyncRouter();
+
+async function handleSimpleWaveAction(
+  req: Request<{ id: string }, any, any, any, any>,
+  res: Response<ApiResponse<any>>,
+  action: (waveId: string, ctx: RequestContext) => Promise<void>,
+  options?: { disallowProxy?: boolean; proxyErrorMessage?: string }
+) {
+  const timer = Timer.getFromRequest(req);
+  const authenticationContext = await getAuthenticationContext(req);
+  const authenticatedProfileId = authenticationContext.getActingAsId();
+  if (!authenticatedProfileId) {
+    throw new ForbiddenException(`Please create a profile first`);
+  }
+  if (
+    options?.disallowProxy &&
+    authenticationContext.isAuthenticatedAsProxy()
+  ) {
+    throw new ForbiddenException(
+      options.proxyErrorMessage ?? `Proxy is not allowed to perform this action`
+    );
+  }
+  await action(req.params.id, { authenticationContext, timer });
+  await giveReadReplicaTimeToCatchUp();
+  res.send({});
+}
 
 router.post(
   '/',
@@ -328,59 +353,41 @@ router.post(
   }
 );
 
-router.post(
-  '/:id/pins',
-  needsAuthenticatedUser(),
-  async (
-    req: Request<{ id: string }, any, any, any, any>,
-    res: Response<ApiResponse<any>>
-  ) => {
-    const timer = Timer.getFromRequest(req);
-    const authenticationContext = await getAuthenticationContext(req);
-    const authenticatedProfileId = authenticationContext.getActingAsId();
-    if (!authenticatedProfileId) {
-      throw new ForbiddenException(`Please create a profile first`);
+router.post('/:id/pins', needsAuthenticatedUser(), async (req, res) => {
+  await handleSimpleWaveAction(
+    req,
+    res,
+    (waveId, ctx) => waveApiService.pinWave({ waveId }, ctx),
+    {
+      disallowProxy: true,
+      proxyErrorMessage: `Proxy is not allowed to pin waves`
     }
-    if (authenticationContext.isAuthenticatedAsProxy()) {
-      throw new ForbiddenException(`Proxy is not allowed to pin waves`);
-    }
-    await waveApiService.pinWave(
-      {
-        waveId: req.params.id
-      },
-      { authenticationContext, timer }
-    );
-    await giveReadReplicaTimeToCatchUp();
-    res.send({});
-  }
-);
+  );
+});
 
-router.delete(
-  '/:id/pins',
-  needsAuthenticatedUser(),
-  async (
-    req: Request<{ id: string }, any, any, any, any>,
-    res: Response<ApiResponse<any>>
-  ) => {
-    const timer = Timer.getFromRequest(req);
-    const authenticationContext = await getAuthenticationContext(req);
-    const authenticatedProfileId = authenticationContext.getActingAsId();
-    if (!authenticatedProfileId) {
-      throw new ForbiddenException(`Please create a profile first`);
+router.delete('/:id/pins', needsAuthenticatedUser(), async (req, res) => {
+  await handleSimpleWaveAction(
+    req,
+    res,
+    (waveId, ctx) => waveApiService.unPinWave({ waveId }, ctx),
+    {
+      disallowProxy: true,
+      proxyErrorMessage: `Proxy is not allowed to unpin waves`
     }
-    if (authenticationContext.isAuthenticatedAsProxy()) {
-      throw new ForbiddenException(`Proxy is not allowed to unpin waves`);
-    }
-    await waveApiService.unPinWave(
-      {
-        waveId: req.params.id
-      },
-      { authenticationContext, timer }
-    );
-    await giveReadReplicaTimeToCatchUp();
-    res.send({});
-  }
-);
+  );
+});
+
+router.post('/:id/mute', needsAuthenticatedUser(), async (req, res) => {
+  await handleSimpleWaveAction(req, res, (waveId, ctx) =>
+    waveApiService.muteWave({ waveId }, ctx)
+  );
+});
+
+router.delete('/:id/mute', needsAuthenticatedUser(), async (req, res) => {
+  await handleSimpleWaveAction(req, res, (waveId, ctx) =>
+    waveApiService.unmuteWave({ waveId }, ctx)
+  );
+});
 
 router.delete(
   '/:id/subscriptions',
