@@ -696,6 +696,24 @@ paths:
                 $ref: "#/components/schemas/ApiDropSubscriptionActions"
         "404":
           description: Wave not found
+  /drops/{dropId}/mark-unread:
+    post:
+      tags:
+        - Drops
+      summary: Mark a drop and all subsequent drops in the wave as unread
+      description: Sets the user's latest_read_timestamp to just before this drop's created_at, making this drop and all newer drops unread.
+      operationId: markDropUnread
+      parameters:
+        - name: dropId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: successful operation
+        "404":
+          description: Drop not found
   /drop-media/prep:
     post:
       tags:
