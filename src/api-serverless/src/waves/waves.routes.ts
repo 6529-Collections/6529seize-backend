@@ -80,6 +80,31 @@ import { ApiCreateWaveOutcome } from '../generated/models/ApiCreateWaveOutcome';
 
 const router = asyncRouter();
 
+async function handleSimpleWaveAction(
+  req: Request<{ id: string }, any, any, any, any>,
+  res: Response<ApiResponse<any>>,
+  action: (
+    waveId: string,
+    ctx: RequestContext
+  ) => Promise<void>,
+  options?: { disallowProxy?: boolean; proxyErrorMessage?: string }
+) {
+  const timer = Timer.getFromRequest(req);
+  const authenticationContext = await getAuthenticationContext(req);
+  const authenticatedProfileId = authenticationContext.getActingAsId();
+  if (!authenticatedProfileId) {
+    throw new ForbiddenException(`Please create a profile first`);
+  }
+  if (options?.disallowProxy && authenticationContext.isAuthenticatedAsProxy()) {
+    throw new ForbiddenException(
+      options.proxyErrorMessage ?? `Proxy is not allowed to perform this action`
+    );
+  }
+  await action(req.params.id, { authenticationContext, timer });
+  await giveReadReplicaTimeToCatchUp();
+  res.send({});
+}
+
 router.post(
   '/',
   needsAuthenticatedUser(),
@@ -328,103 +353,35 @@ router.post(
   }
 );
 
-router.post(
-  '/:id/pins',
-  needsAuthenticatedUser(),
-  async (
-    req: Request<{ id: string }, any, any, any, any>,
-    res: Response<ApiResponse<any>>
-  ) => {
-    const timer = Timer.getFromRequest(req);
-    const authenticationContext = await getAuthenticationContext(req);
-    const authenticatedProfileId = authenticationContext.getActingAsId();
-    if (!authenticatedProfileId) {
-      throw new ForbiddenException(`Please create a profile first`);
-    }
-    if (authenticationContext.isAuthenticatedAsProxy()) {
-      throw new ForbiddenException(`Proxy is not allowed to pin waves`);
-    }
-    await waveApiService.pinWave(
-      {
-        waveId: req.params.id
-      },
-      { authenticationContext, timer }
-    );
-    await giveReadReplicaTimeToCatchUp();
-    res.send({});
-  }
-);
+router.post('/:id/pins', needsAuthenticatedUser(), async (req, res) => {
+  await handleSimpleWaveAction(
+    req,
+    res,
+    (waveId, ctx) => waveApiService.pinWave({ waveId }, ctx),
+    { disallowProxy: true, proxyErrorMessage: `Proxy is not allowed to pin waves` }
+  );
+});
 
-router.delete(
-  '/:id/pins',
-  needsAuthenticatedUser(),
-  async (
-    req: Request<{ id: string }, any, any, any, any>,
-    res: Response<ApiResponse<any>>
-  ) => {
-    const timer = Timer.getFromRequest(req);
-    const authenticationContext = await getAuthenticationContext(req);
-    const authenticatedProfileId = authenticationContext.getActingAsId();
-    if (!authenticatedProfileId) {
-      throw new ForbiddenException(`Please create a profile first`);
-    }
-    if (authenticationContext.isAuthenticatedAsProxy()) {
-      throw new ForbiddenException(`Proxy is not allowed to unpin waves`);
-    }
-    await waveApiService.unPinWave(
-      {
-        waveId: req.params.id
-      },
-      { authenticationContext, timer }
-    );
-    await giveReadReplicaTimeToCatchUp();
-    res.send({});
-  }
-);
+router.delete('/:id/pins', needsAuthenticatedUser(), async (req, res) => {
+  await handleSimpleWaveAction(
+    req,
+    res,
+    (waveId, ctx) => waveApiService.unPinWave({ waveId }, ctx),
+    { disallowProxy: true, proxyErrorMessage: `Proxy is not allowed to unpin waves` }
+  );
+});
 
-router.post(
-  '/:id/mute',
-  needsAuthenticatedUser(),
-  async (
-    req: Request<{ id: string }, any, any, any, any>,
-    res: Response<ApiResponse<any>>
-  ) => {
-    const timer = Timer.getFromRequest(req);
-    const authenticationContext = await getAuthenticationContext(req);
-    const authenticatedProfileId = authenticationContext.getActingAsId();
-    if (!authenticatedProfileId) {
-      throw new ForbiddenException(`Please create a profile first`);
-    }
-    await waveApiService.muteWave(
-      { waveId: req.params.id },
-      { authenticationContext, timer }
-    );
-    await giveReadReplicaTimeToCatchUp();
-    res.send({});
-  }
-);
+router.post('/:id/mute', needsAuthenticatedUser(), async (req, res) => {
+  await handleSimpleWaveAction(req, res, (waveId, ctx) =>
+    waveApiService.muteWave({ waveId }, ctx)
+  );
+});
 
-router.delete(
-  '/:id/mute',
-  needsAuthenticatedUser(),
-  async (
-    req: Request<{ id: string }, any, any, any, any>,
-    res: Response<ApiResponse<any>>
-  ) => {
-    const timer = Timer.getFromRequest(req);
-    const authenticationContext = await getAuthenticationContext(req);
-    const authenticatedProfileId = authenticationContext.getActingAsId();
-    if (!authenticatedProfileId) {
-      throw new ForbiddenException(`Please create a profile first`);
-    }
-    await waveApiService.unmuteWave(
-      { waveId: req.params.id },
-      { authenticationContext, timer }
-    );
-    await giveReadReplicaTimeToCatchUp();
-    res.send({});
-  }
-);
+router.delete('/:id/mute', needsAuthenticatedUser(), async (req, res) => {
+  await handleSimpleWaveAction(req, res, (waveId, ctx) =>
+    waveApiService.unmuteWave({ waveId }, ctx)
+  );
+});
 
 router.delete(
   '/:id/subscriptions',
