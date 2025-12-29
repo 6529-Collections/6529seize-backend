@@ -10,6 +10,7 @@ import {
 } from '../entities/IIdentityNotification';
 import { PushNotificationDevice } from '../entities/IPushNotification';
 import { WaveEntity } from '../entities/IWave';
+import { WaveReaderMetricEntity } from '../entities/IWaveReaderMetric';
 import { Logger } from '../logging';
 import { IdentityNotificationsDb } from '../notifications/identity-notifications.db';
 import { dbSupplier } from '../sql-executor';
@@ -35,6 +36,21 @@ export async function sendIdentityNotification(id: number) {
       `[ID ${notification.id}] Notification already read at ${notification.read_at}`
     );
     return;
+  }
+
+  if (notification.wave_id) {
+    const readerMetric = await getDataSource()
+      .getRepository(WaveReaderMetricEntity)
+      .findOneBy({
+        wave_id: notification.wave_id,
+        reader_id: notification.identity_id
+      });
+    if (readerMetric?.muted) {
+      logger.info(
+        `[ID ${notification.id}] Wave ${notification.wave_id} is muted by user ${notification.identity_id}`
+      );
+      return;
+    }
   }
 
   const userDevices = await getDataSource()
