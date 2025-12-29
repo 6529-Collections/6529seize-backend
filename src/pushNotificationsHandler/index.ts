@@ -1,12 +1,13 @@
-import { doInDbContext } from '../secrets';
-import { Logger } from '../logging';
-import * as sentryContext from '../sentry.context';
-import { IdentityNotificationEntity } from '../entities/IIdentityNotification';
-import { DropEntity, DropPartEntity } from '../entities/IDrop';
-import { PushNotificationDevice } from '../entities/IPushNotification';
 import { SQSHandler } from 'aws-lambda';
-import { sendIdentityNotification } from './identityPushNotifications';
+import { DropEntity, DropPartEntity } from '../entities/IDrop';
+import { IdentityNotificationEntity } from '../entities/IIdentityNotification';
+import { PushNotificationDevice } from '../entities/IPushNotification';
 import { WaveEntity } from '../entities/IWave';
+import { WaveReaderMetricEntity } from '../entities/IWaveReaderMetric';
+import { Logger } from '../logging';
+import { doInDbContext } from '../secrets';
+import * as sentryContext from '../sentry.context';
+import { sendIdentityNotification } from './identityPushNotifications';
 
 const logger = Logger.get('PUSH_NOTIFICATIONS_HANDLER');
 
@@ -26,6 +27,7 @@ const sqsHandler: SQSHandler = async (event) => {
         IdentityNotificationEntity,
         PushNotificationDevice,
         WaveEntity,
+        WaveReaderMetricEntity,
         DropEntity,
         DropPartEntity
       ]
