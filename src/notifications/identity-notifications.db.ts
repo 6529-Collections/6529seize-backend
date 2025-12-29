@@ -163,7 +163,7 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
           ON r.wave_id = n.wave_id
           AND r.reader_id = n.identity_id
         WHERE n.identity_id = :identity_id ${
-          param.id_less_than !== null ? `AND n.id < :id_less_than` : ``
+          param.id_less_than === null ? `` : `AND n.id < :id_less_than`
         }
         AND (n.visibility_group_id IS NULL ${
           param.eligible_group_ids.length
