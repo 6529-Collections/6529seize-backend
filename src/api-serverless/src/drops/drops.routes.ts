@@ -485,7 +485,8 @@ router.post(
   ) => {
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
-    if (!authenticationContext.getActingAsId()) {
+    const identityId = authenticationContext.getActingAsId();
+    if (!identityId) {
       throw new ForbiddenException(
         `You need to create a profile before you can mark drops as unread`
       );
@@ -496,13 +497,29 @@ router.post(
       throw new NotFoundException(`Drop ${dropId} not found`);
     }
     const drop = drops[0];
+    const waveId = drop.wave_id;
+    const newTimestamp = drop.created_at - 1;
     await wavesApiDb.setWaveReaderMetricLatestReadTimestamp(
-      drop.wave_id,
-      authenticationContext.getActingAsId()!,
-      drop.created_at - 1,
+      waveId,
+      identityId,
+      newTimestamp,
       { timer }
     );
-    res.send({});
+    const ctx = { timer };
+    const [unreadCounts, firstUnreadSerials] = await Promise.all([
+      wavesApiDb.findIdentityUnreadDropsCountByWaveId(
+        { identityId, waveIds: [waveId] },
+        ctx
+      ),
+      wavesApiDb.findFirstUnreadDropSerialNoByWaveId(
+        { identityId, waveIds: [waveId] },
+        ctx
+      )
+    ]);
+    res.send({
+      your_unread_drops_count: unreadCounts[waveId] ?? 0,
+      first_unread_drop_serial_no: firstUnreadSerials[waveId] ?? null
+    });
   }
 );
 

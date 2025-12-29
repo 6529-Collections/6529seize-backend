@@ -712,6 +712,10 @@ paths:
       responses:
         "200":
           description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiMarkDropUnreadResponse"
         "404":
           description: Drop not found
   /drop-media/prep:
@@ -5930,6 +5934,16 @@ components:
       enum:
         - DROP_REPLIED
         - DROP_VOTED
+    ApiMarkDropUnreadResponse:
+      type: object
+      required:
+        - your_unread_drops_count
+      properties:
+        your_unread_drops_count:
+          type: integer
+        first_unread_drop_serial_no:
+          type: integer
+          nullable: true
     ApiDropTraceItem:
       type: object
       required:
