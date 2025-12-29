@@ -1371,6 +1371,11 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         : ``
     }
     join ${WAVE_METRICS_TABLE} wm on wm.wave_id = w.id 
+    ${
+      param.authenticated_user_id
+        ? `left join ${WAVE_READER_METRICS_TABLE} wrm on wrm.wave_id = w.id and wrm.reader_id = :authenticated_user_id`
+        : ``
+    }
      where
      ${param.pinned === ApiWavesPinFilter.NotPinned && param.authenticated_user_id ? ` pw.profile_id is null and ` : ``}
     ${
@@ -1387,7 +1392,11 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
        param.eligibleGroups.length
          ? `or w.visibility_group_id in (:eligibleGroups)`
          : ``
-     }) order by wm.latest_drop_timestamp desc limit :limit offset :offset) select w.* from ${WAVES_TABLE} w join wids on w.id = wids.id`;
+     }) order by ${
+       param.authenticated_user_id
+         ? `CASE WHEN COALESCE(wrm.muted, false) = true THEN 0 ELSE wm.latest_drop_timestamp END`
+         : `wm.latest_drop_timestamp`
+     } desc limit :limit offset :offset) select w.* from ${WAVES_TABLE} w join wids on w.id = wids.id`;
     return this.db
       .execute<
         Omit<
@@ -1464,6 +1473,11 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
              : ``
          }
          join ${WAVE_DROPPER_METRICS_TABLE} wm on wm.wave_id = w.id 
+         ${
+           param.authenticated_user_id
+             ? `left join ${WAVE_READER_METRICS_TABLE} wrm on wrm.wave_id = w.id and wrm.reader_id = :authenticated_user_id`
+             : ``
+         }
           where
           ${param.pinned === ApiWavesPinFilter.NotPinned && param.authenticated_user_id ? ` pw.profile_id is null and ` : ``}
         ${
@@ -1475,7 +1489,11 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
             param.eligibleGroups.length
               ? `or w.visibility_group_id in (:eligibleGroups)`
               : ``
-          }) order by wm.latest_drop_timestamp desc limit :limit offset :offset)  select w.* from ${WAVES_TABLE} w join wids on w.id = wids.id`,
+          }) order by ${
+            param.authenticated_user_id
+              ? `CASE WHEN COALESCE(wrm.muted, false) = true THEN 0 ELSE wm.latest_drop_timestamp END`
+              : `wm.latest_drop_timestamp`
+          } desc limit :limit offset :offset)  select w.* from ${WAVES_TABLE} w join wids on w.id = wids.id`,
         param
       )
       .then((res) =>
@@ -1945,6 +1963,21 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  async setWaveMuted(
+    param: { waveId: string; readerId: string; muted: boolean },
+    ctx: RequestContext
+  ) {
+    ctx.timer?.start(`${this.constructor.name}->setWaveMuted`);
+    await this.db.execute(
+      `insert into ${WAVE_READER_METRICS_TABLE} (wave_id, reader_id, muted)
+       values (:waveId, :readerId, :muted)
+       on duplicate key update muted = :muted`,
+      param,
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop(`${this.constructor.name}->setWaveMuted`);
+  }
+
   async findIdentityUnreadDropsCountByWaveId(
     param: {
       identityId: string;
@@ -1968,6 +2001,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           AND r.reader_id = :identityId
         WHERE d.wave_id IN (:waveIds)
           AND d.created_at > COALESCE(r.latest_read_timestamp, 0)
+          AND COALESCE(r.muted, false) = false
         GROUP BY d.wave_id
     `,
       param,
@@ -1980,6 +2014,52 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         return acc;
       },
       {} as Record<string, number>
+    );
+
+    ctx.timer?.stop(timerLabel);
+
+    return result;
+  }
+
+  async findFirstUnreadDropSerialNoByWaveId(
+    param: {
+      identityId: string;
+      waveIds: string[];
+    },
+    ctx: RequestContext
+  ): Promise<Record<string, number | null>> {
+    if (!param.waveIds.length) {
+      return {};
+    }
+
+    const timerLabel = `${this.constructor.name}->findFirstUnreadDropSerialNoByWaveId`;
+    ctx.timer?.start(timerLabel);
+
+    const dbresult = await this.db.execute<{
+      wave_id: string;
+      serial_no: number;
+    }>(
+      `
+        SELECT d.wave_id, MIN(d.serial_no) AS serial_no
+        FROM ${DROPS_TABLE} d
+        LEFT JOIN ${WAVE_READER_METRICS_TABLE} r
+          ON r.wave_id = d.wave_id
+          AND r.reader_id = :identityId
+        WHERE d.wave_id IN (:waveIds)
+          AND d.created_at > COALESCE(r.latest_read_timestamp, 0)
+          AND COALESCE(r.muted, false) = false
+        GROUP BY d.wave_id
+    `,
+      param,
+      { wrappedConnection: ctx.connection }
+    );
+
+    const result = dbresult.reduce(
+      (acc, row) => {
+        acc[row.wave_id] = row.serial_no;
+        return acc;
+      },
+      {} as Record<string, number | null>
     );
 
     ctx.timer?.stop(timerLabel);

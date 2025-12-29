@@ -1393,6 +1393,46 @@ export class WaveApiService {
     );
   }
 
+  async muteWave({ waveId }: { waveId: string }, ctx: RequestContext) {
+    await this.wavesApiDb.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const ctxWithConnection = { ...ctx, connection };
+        await this.assertWaveExistsForAuthenticatedUser(
+          waveId,
+          ctxWithConnection
+        );
+        await this.wavesApiDb.setWaveMuted(
+          {
+            waveId,
+            readerId: ctx.authenticationContext!.getActingAsId()!,
+            muted: true
+          },
+          ctxWithConnection
+        );
+      }
+    );
+  }
+
+  async unmuteWave({ waveId }: { waveId: string }, ctx: RequestContext) {
+    await this.wavesApiDb.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const ctxWithConnection = { ...ctx, connection };
+        await this.assertWaveExistsForAuthenticatedUser(
+          waveId,
+          ctxWithConnection
+        );
+        await this.wavesApiDb.setWaveMuted(
+          {
+            waveId,
+            readerId: ctx.authenticationContext!.getActingAsId()!,
+            muted: false
+          },
+          ctxWithConnection
+        );
+      }
+    );
+  }
+
   private async assertWaveExistsForAuthenticatedUser(
     waveId: string,
     ctx: RequestContext

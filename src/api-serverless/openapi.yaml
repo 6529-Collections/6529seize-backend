@@ -7972,6 +7972,7 @@ components:
         - your_latest_drop_timestamp
         - your_unread_drops_count
         - your_latest_read_timestamp
+        - muted
       properties:
         subscribers_count:
           type: number
@@ -7994,9 +7995,14 @@ components:
         your_unread_drops_count:
           type: number
           format: int64
+        first_unread_drop_serial_no:
+          type: number
+          format: int64
         your_latest_read_timestamp:
           type: number
           format: int64
+        muted:
+          type: boolean
     ApiWaveMin:
       required:
         - id

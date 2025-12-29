@@ -382,6 +382,50 @@ router.delete(
   }
 );
 
+router.post(
+  '/:id/mute',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<{ id: string }, any, any, any, any>,
+    res: Response<ApiResponse<any>>
+  ) => {
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req);
+    const authenticatedProfileId = authenticationContext.getActingAsId();
+    if (!authenticatedProfileId) {
+      throw new ForbiddenException(`Please create a profile first`);
+    }
+    await waveApiService.muteWave(
+      { waveId: req.params.id },
+      { authenticationContext, timer }
+    );
+    await giveReadReplicaTimeToCatchUp();
+    res.send({});
+  }
+);
+
+router.delete(
+  '/:id/mute',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<{ id: string }, any, any, any, any>,
+    res: Response<ApiResponse<any>>
+  ) => {
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req);
+    const authenticatedProfileId = authenticationContext.getActingAsId();
+    if (!authenticatedProfileId) {
+      throw new ForbiddenException(`Please create a profile first`);
+    }
+    await waveApiService.unmuteWave(
+      { waveId: req.params.id },
+      { authenticationContext, timer }
+    );
+    await giveReadReplicaTimeToCatchUp();
+    res.send({});
+  }
+);
+
 router.delete(
   '/:id/subscriptions',
   needsAuthenticatedUser(),

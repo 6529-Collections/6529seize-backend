@@ -9,4 +9,6 @@ export class WaveReaderMetricEntity {
   readonly reader_id!: string;
   @Column({ type: 'bigint', nullable: false, default: 0 })
   readonly latest_read_timestamp!: number;
+  @Column({ type: 'boolean', nullable: false, default: false })
+  readonly muted!: boolean;
 }
