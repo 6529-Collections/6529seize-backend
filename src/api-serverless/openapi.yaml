@@ -3687,6 +3687,45 @@ paths:
               schema:
                 type: object
                 additionalProperties: false
+  /waves/{id}/mute:
+    post:
+      tags:
+        - Waves
+      summary: Mute a wave
+      operationId: muteWave
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+    delete:
+      tags:
+        - Waves
+      summary: Unmute a wave
+      operationId: unmuteWave
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
   /waves/{id}/leaderboard:
     get:
       tags:

@@ -1910,7 +1910,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
             acc[waveId] = results.find((it) => it.wave_id === waveId) ?? {
               wave_id: waveId,
               reader_id: params.readerId,
-              latest_read_timestamp: 0
+              latest_read_timestamp: 0,
+              muted: false
             };
             return acc;
           },
