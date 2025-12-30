@@ -1354,7 +1354,10 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     direct_message?: boolean;
     pinned: ApiWavesPinFilter | null;
   }): Promise<WaveEntity[]> {
-    const sql = `with wids as (select w.id from ${WAVES_TABLE} w 
+    const sortExpr = param.authenticated_user_id
+      ? `CASE WHEN COALESCE(wrm.muted, false) = true THEN 0 ELSE wm.latest_drop_timestamp END`
+      : `wm.latest_drop_timestamp`;
+    const sql = `with wids as (select w.id, ${sortExpr} as sort_val from ${WAVES_TABLE} w 
     ${
       param.pinned === ApiWavesPinFilter.Pinned && param.authenticated_user_id
         ? ` join ${PINNED_WAVES_TABLE} pw on pw.wave_id = w.id and pw.profile_id = :authenticated_user_id `
@@ -1392,11 +1395,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
        param.eligibleGroups.length
          ? `or w.visibility_group_id in (:eligibleGroups)`
          : ``
-     }) order by ${
-       param.authenticated_user_id
-         ? `CASE WHEN COALESCE(wrm.muted, false) = true THEN 0 ELSE wm.latest_drop_timestamp END`
-         : `wm.latest_drop_timestamp`
-     } desc limit :limit offset :offset) select w.* from ${WAVES_TABLE} w join wids on w.id = wids.id`;
+     }) order by sort_val desc limit :limit offset :offset) select w.* from ${WAVES_TABLE} w join wids on w.id = wids.id order by wids.sort_val desc`;
     return this.db
       .execute<
         Omit<
@@ -1436,6 +1435,9 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     direct_message?: boolean;
     pinned: ApiWavesPinFilter | null;
   }): Promise<WaveEntity[]> {
+    const sortExpr = param.authenticated_user_id
+      ? `CASE WHEN COALESCE(wrm.muted, false) = true THEN 0 ELSE wm.latest_drop_timestamp END`
+      : `wm.latest_drop_timestamp`;
     return this.db
       .execute<
         Omit<
@@ -1449,7 +1451,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           decisions_strategy: string;
         }
       >(
-        `with wids as (select w.id from ${WAVES_TABLE} w
+        `with wids as (select w.id, ${sortExpr} as sort_val from ${WAVES_TABLE} w
         ${
           param.pinned === ApiWavesPinFilter.Pinned &&
           param.authenticated_user_id
@@ -1489,11 +1491,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
             param.eligibleGroups.length
               ? `or w.visibility_group_id in (:eligibleGroups)`
               : ``
-          }) order by ${
-            param.authenticated_user_id
-              ? `CASE WHEN COALESCE(wrm.muted, false) = true THEN 0 ELSE wm.latest_drop_timestamp END`
-              : `wm.latest_drop_timestamp`
-          } desc limit :limit offset :offset)  select w.* from ${WAVES_TABLE} w join wids on w.id = wids.id`,
+          }) order by sort_val desc limit :limit offset :offset) select w.* from ${WAVES_TABLE} w join wids on w.id = wids.id order by wids.sort_val desc`,
         param
       )
       .then((res) =>
