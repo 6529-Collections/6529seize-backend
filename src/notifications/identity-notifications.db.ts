@@ -1,15 +1,19 @@
+import { sendIdentityPushNotification } from '../api-serverless/src/push-notifications/push-notifications.service';
+import {
+  IDENTITIES_TABLE,
+  IDENTITY_NOTIFICATIONS_TABLE,
+  WAVE_READER_METRICS_TABLE
+} from '../constants';
+import { IdentityNotificationEntity } from '../entities/IIdentityNotification';
+import { Logger } from '../logging';
+import { numbers } from '../numbers';
+import { RequestContext } from '../request.context';
 import {
   ConnectionWrapper,
   dbSupplier,
   LazyDbAccessCompatibleService
 } from '../sql-executor';
-import { IdentityNotificationEntity } from '../entities/IIdentityNotification';
-import { IDENTITIES_TABLE, IDENTITY_NOTIFICATIONS_TABLE } from '../constants';
 import { Time } from '../time';
-import { sendIdentityPushNotification } from '../api-serverless/src/push-notifications/push-notifications.service';
-import { Logger } from '../logging';
-import { RequestContext } from '../request.context';
-import { numbers } from '../numbers';
 
 export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
   private readonly logger = Logger.get(IdentityNotificationsDb.name);
@@ -153,19 +157,23 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
     return this.db
       .execute<IdentityNotificationEntity>(
         `
-        select n.* from ${IDENTITY_NOTIFICATIONS_TABLE} n
-        join ${IDENTITIES_TABLE} i on n.additional_identity_id = i.profile_id
-        where n.identity_id = :identity_id ${
-          param.id_less_than !== null ? `and id < :id_less_than` : ``
+        SELECT n.* FROM ${IDENTITY_NOTIFICATIONS_TABLE} n
+        JOIN ${IDENTITIES_TABLE} i ON n.additional_identity_id = i.profile_id
+        LEFT JOIN ${WAVE_READER_METRICS_TABLE} r
+          ON r.wave_id = n.wave_id
+          AND r.reader_id = n.identity_id
+        WHERE n.identity_id = :identity_id ${
+          param.id_less_than === null ? `` : `AND n.id < :id_less_than`
         }
-        and (n.visibility_group_id is null ${
+        AND (n.visibility_group_id IS NULL ${
           param.eligible_group_ids.length
-            ? ` or n.visibility_group_id in (:eligible_group_ids) `
+            ? ` OR n.visibility_group_id IN (:eligible_group_ids) `
             : ``
         })
-        ${causes ? ` and n.cause in (:causes)` : ``}
-        ${param.unread_only ? ` and n.read_at is null` : ``}
-        order by n.id desc limit :limit
+        ${causes ? ` AND n.cause IN (:causes)` : ``}
+        ${param.unread_only ? ` AND n.read_at IS NULL` : ``}
+        AND COALESCE(r.muted, FALSE) = FALSE
+        ORDER BY n.id DESC LIMIT :limit
       `,
         { ...param, causes },
         connection ? { wrappedConnection: connection } : undefined
@@ -195,11 +203,19 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
     return this.db
       .oneOrNull<{ cnt: number }>(
         `
-        select count(*) as cnt from ${IDENTITY_NOTIFICATIONS_TABLE} where identity_id = :identity_id and read_at is null and (visibility_group_id is null ${
-          eligibleGroupIds.length
-            ? ` or visibility_group_id in (:eligibleGroupIds) `
-            : ``
-        })
+        SELECT COUNT(*) AS cnt
+        FROM ${IDENTITY_NOTIFICATIONS_TABLE} n
+        LEFT JOIN ${WAVE_READER_METRICS_TABLE} r
+          ON r.wave_id = n.wave_id
+          AND r.reader_id = n.identity_id
+        WHERE n.identity_id = :identity_id
+          AND n.read_at IS NULL
+          AND (n.visibility_group_id IS NULL ${
+            eligibleGroupIds.length
+              ? ` OR n.visibility_group_id IN (:eligibleGroupIds) `
+              : ``
+          })
+          AND COALESCE(r.muted, FALSE) = FALSE
       `,
         {
           identity_id,

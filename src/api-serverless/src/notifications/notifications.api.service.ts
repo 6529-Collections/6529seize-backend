@@ -34,6 +34,7 @@ import {
   identitySubscriptionsDb,
   IdentitySubscriptionsDb
 } from '../identity-subscriptions/identity-subscriptions.db';
+import { wavesApiDb, WavesApiDb } from '../waves/waves.api.db';
 
 export class NotificationsApiService {
   constructor(
@@ -42,7 +43,8 @@ export class NotificationsApiService {
     private readonly identityFetcher: IdentityFetcher,
     private readonly dropsService: DropsApiService,
     private readonly identityNotificationsDb: IdentityNotificationsDb,
-    private readonly identitySubscriptionsDb: IdentitySubscriptionsDb
+    private readonly identitySubscriptionsDb: IdentitySubscriptionsDb,
+    private readonly wavesApiDb: WavesApiDb
   ) {}
 
   public async markNotificationAsRead(param: {
@@ -84,6 +86,11 @@ export class NotificationsApiService {
   ) {
     ctx.timer?.start(`${this.constructor.name}->markWaveNotificationsAsRead`);
     await this.identityNotificationsDb.markWaveNotificationsAsRead(
+      waveId,
+      identityId,
+      ctx
+    );
+    await this.wavesApiDb.updateWaveReaderMetricLatestReadTimestamp(
       waveId,
       identityId,
       ctx
@@ -389,5 +396,6 @@ export const notificationsApiService = new NotificationsApiService(
   identityFetcher,
   dropsService,
   identityNotificationsDb,
-  identitySubscriptionsDb
+  identitySubscriptionsDb,
+  wavesApiDb
 );

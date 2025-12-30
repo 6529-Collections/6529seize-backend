@@ -128,6 +128,7 @@ export const WAVES_DECISIONS_TABLE = 'wave_decisions';
 export const WAVES_DECISION_WINNER_DROPS_TABLE = 'wave_decision_winner_drops';
 export const WAVE_METRICS_TABLE = 'wave_metrics';
 export const WAVE_DROPPER_METRICS_TABLE = 'wave_dropper_metrics';
+export const WAVE_READER_METRICS_TABLE = 'wave_reader_metrics';
 export const DROPS_MENTIONS_TABLE = 'drops_mentions';
 export const DROP_REFERENCED_NFTS_TABLE = 'drops_referenced_nfts';
 export const DROP_METADATA_TABLE = 'drops_metadatas';

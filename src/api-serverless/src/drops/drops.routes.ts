@@ -1,25 +1,36 @@
+import { Request, Response } from 'express';
+import * as Joi from 'joi';
+import { dropsDb } from '../../../drops/drops.db';
+import { ProfileProxyActionType } from '../../../entities/IProfileProxyAction';
+import { enums } from '../../../enums';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException
+} from '../../../exceptions';
+import { numbers } from '../../../numbers';
+import { Timer } from '../../../time';
+import { ApiResponse } from '../api-response';
 import { asyncRouter } from '../async.router';
 import {
   getAuthenticationContext,
   maybeAuthenticatedUser,
   needsAuthenticatedUser
 } from '../auth/auth';
-import { Request, Response } from 'express';
-import { ApiResponse } from '../api-response';
-import * as Joi from 'joi';
-import { getValidatedByJoiOrThrow } from '../validation';
-import {
-  BadRequestException,
-  ForbiddenException,
-  NotFoundException
-} from '../../../exceptions';
-import { dropCreationService } from './drop-creation.api.service';
-import { dropsService } from './drops.api.service';
-import { dropCheeringService } from './drop-cheering.service';
-import { ApiDrop } from '../generated/models/ApiDrop';
-import { ApiCreateDropRequest } from '../generated/models/ApiCreateDropRequest';
 import { userGroupsService } from '../community-members/user-groups.service';
-import { ProfileProxyActionType } from '../../../entities/IProfileProxyAction';
+import { ApiAddReactionToDropRequest } from '../generated/models/ApiAddReactionToDropRequest';
+import { ApiCreateDropRequest } from '../generated/models/ApiCreateDropRequest';
+import { ApiDrop } from '../generated/models/ApiDrop';
+import { ApiDropSubscriptionActions } from '../generated/models/ApiDropSubscriptionActions';
+import { ApiDropSubscriptionTargetAction } from '../generated/models/ApiDropSubscriptionTargetAction';
+import { ApiDropType } from '../generated/models/ApiDropType';
+import { ApiUpdateDropRequest } from '../generated/models/ApiUpdateDropRequest';
+import { identityFetcher } from '../identities/identity.fetcher';
+import { getValidatedByJoiOrThrow } from '../validation';
+import { wavesApiDb } from '../waves/waves.api.db';
+import { dropCheeringService } from './drop-cheering.service';
+import { dropCreationService } from './drop-creation.api.service';
+import { dropSignatureVerifier } from './drop-signature-verifier';
 import {
   ApiAddRatingToDropRequest,
   ApiAddRatingToDropRequestSchema,
@@ -27,19 +38,8 @@ import {
   NewDropSchema,
   UpdateDropSchema
 } from './drop.validator';
-import { ApiDropSubscriptionActions } from '../generated/models/ApiDropSubscriptionActions';
-import { ApiDropSubscriptionTargetAction } from '../generated/models/ApiDropSubscriptionTargetAction';
-import { Timer } from '../../../time';
-import { ApiUpdateDropRequest } from '../generated/models/ApiUpdateDropRequest';
-import { ApiDropType } from '../generated/models/ApiDropType';
-import { wavesApiDb } from '../waves/waves.api.db';
-import { dropSignatureVerifier } from './drop-signature-verifier';
-import { dropsDb } from '../../../drops/drops.db';
-import { identityFetcher } from '../identities/identity.fetcher';
-import { enums } from '../../../enums';
-import { numbers } from '../../../numbers';
+import { dropsService } from './drops.api.service';
 import { reactionsService } from './reactions.service';
-import { ApiAddReactionToDropRequest } from '../generated/models/ApiAddReactionToDropRequest';
 
 const router = asyncRouter();
 
@@ -473,6 +473,53 @@ router.delete(
     );
 
     return res.send(drop);
+  }
+);
+
+router.post(
+  '/:drop_id/mark-unread',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<{ drop_id: string }, any, any, any, any>,
+    res: Response<ApiResponse<any>>
+  ) => {
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
+    const identityId = authenticationContext.getActingAsId();
+    if (!identityId) {
+      throw new ForbiddenException(
+        `You need to create a profile before you can mark drops as unread`
+      );
+    }
+    const dropId = req.params.drop_id;
+    const drops = await dropsDb.getDropsByIds([dropId]);
+    if (!drops.length) {
+      throw new NotFoundException(`Drop ${dropId} not found`);
+    }
+    const drop = drops[0];
+    const waveId = drop.wave_id;
+    const newTimestamp = drop.created_at - 1;
+    await wavesApiDb.setWaveReaderMetricLatestReadTimestamp(
+      waveId,
+      identityId,
+      newTimestamp,
+      { timer }
+    );
+    const ctx = { timer };
+    const [unreadCounts, firstUnreadSerials] = await Promise.all([
+      wavesApiDb.findIdentityUnreadDropsCountByWaveId(
+        { identityId, waveIds: [waveId] },
+        ctx
+      ),
+      wavesApiDb.findFirstUnreadDropSerialNoByWaveId(
+        { identityId, waveIds: [waveId] },
+        ctx
+      )
+    ]);
+    res.send({
+      your_unread_drops_count: unreadCounts[waveId] ?? 0,
+      first_unread_drop_serial_no: firstUnreadSerials[waveId] ?? null
+    });
   }
 );
 

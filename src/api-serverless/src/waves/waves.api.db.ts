@@ -1,15 +1,4 @@
 import {
-  ConnectionWrapper,
-  dbSupplier,
-  LazyDbAccessCompatibleService
-} from '../../../sql-executor';
-import {
-  WaveDecisionPauseEntity,
-  WaveEntity,
-  WaveOutcomeDistributionItemEntity,
-  WaveOutcomeEntity
-} from '../../../entities/IWave';
-import {
   ACTIVITY_EVENTS_TABLE,
   DROP_MEDIA_TABLE,
   DROP_METADATA_TABLE,
@@ -27,24 +16,37 @@ import {
   WAVE_METRICS_TABLE,
   WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE,
   WAVE_OUTCOMES_TABLE,
+  WAVE_READER_METRICS_TABLE,
   WAVES_ARCHIVE_TABLE,
   WAVES_DECISION_PAUSES_TABLE,
   WAVES_TABLE
 } from '../../../constants';
+import { bulkInsert } from '../../../db/my-sql.helpers';
+import { ActivityEventTargetType } from '../../../entities/IActivityEvent';
+import { DropType } from '../../../entities/IDrop';
+import { RateMatter } from '../../../entities/IRating';
+import {
+  WaveDecisionPauseEntity,
+  WaveEntity,
+  WaveOutcomeDistributionItemEntity,
+  WaveOutcomeEntity
+} from '../../../entities/IWave';
+import { WaveDropperMetricEntity } from '../../../entities/IWaveDropperMetric';
+import { WaveMetricEntity } from '../../../entities/IWaveMetric';
+import { WaveReaderMetricEntity } from '../../../entities/IWaveReaderMetric';
+import { getLevelComponentsBorderByLevel } from '../../../profiles/profile-level';
+import { RequestContext } from '../../../request.context';
+import {
+  ConnectionWrapper,
+  dbSupplier,
+  LazyDbAccessCompatibleService
+} from '../../../sql-executor';
+import { Time } from '../../../time';
 import {
   userGroupsService,
   UserGroupsService
 } from '../community-members/user-groups.service';
-import { getLevelComponentsBorderByLevel } from '../../../profiles/profile-level';
-import { RateMatter } from '../../../entities/IRating';
-import { WaveMetricEntity } from '../../../entities/IWaveMetric';
-import { RequestContext } from '../../../request.context';
-import { ActivityEventTargetType } from '../../../entities/IActivityEvent';
-import { WaveDropperMetricEntity } from '../../../entities/IWaveDropperMetric';
-import { DropType } from '../../../entities/IDrop';
-import { Time } from '../../../time';
 import { ApiWavesPinFilter } from '../generated/models/ApiWavesPinFilter';
-import { bulkInsert } from '../../../db/my-sql.helpers';
 
 export class WavesApiDb extends LazyDbAccessCompatibleService {
   public async findWaveById(
@@ -1352,7 +1354,10 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     direct_message?: boolean;
     pinned: ApiWavesPinFilter | null;
   }): Promise<WaveEntity[]> {
-    const sql = `with wids as (select w.id from ${WAVES_TABLE} w 
+    const sortExpr = param.authenticated_user_id
+      ? `CASE WHEN COALESCE(wrm.muted, false) = true THEN 0 ELSE wm.latest_drop_timestamp END`
+      : `wm.latest_drop_timestamp`;
+    const sql = `with wids as (select w.id, ${sortExpr} as sort_val from ${WAVES_TABLE} w 
     ${
       param.pinned === ApiWavesPinFilter.Pinned && param.authenticated_user_id
         ? ` join ${PINNED_WAVES_TABLE} pw on pw.wave_id = w.id and pw.profile_id = :authenticated_user_id `
@@ -1369,6 +1374,11 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         : ``
     }
     join ${WAVE_METRICS_TABLE} wm on wm.wave_id = w.id 
+    ${
+      param.authenticated_user_id
+        ? `left join ${WAVE_READER_METRICS_TABLE} wrm on wrm.wave_id = w.id and wrm.reader_id = :authenticated_user_id`
+        : ``
+    }
      where
      ${param.pinned === ApiWavesPinFilter.NotPinned && param.authenticated_user_id ? ` pw.profile_id is null and ` : ``}
     ${
@@ -1385,7 +1395,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
        param.eligibleGroups.length
          ? `or w.visibility_group_id in (:eligibleGroups)`
          : ``
-     }) order by wm.latest_drop_timestamp desc limit :limit offset :offset) select w.* from ${WAVES_TABLE} w join wids on w.id = wids.id`;
+     }) order by sort_val desc limit :limit offset :offset) select w.* from ${WAVES_TABLE} w join wids on w.id = wids.id order by wids.sort_val desc`;
     return this.db
       .execute<
         Omit<
@@ -1425,6 +1435,9 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     direct_message?: boolean;
     pinned: ApiWavesPinFilter | null;
   }): Promise<WaveEntity[]> {
+    const sortExpr = param.authenticated_user_id
+      ? `CASE WHEN COALESCE(wrm.muted, false) = true THEN 0 ELSE wm.latest_drop_timestamp END`
+      : `wm.latest_drop_timestamp`;
     return this.db
       .execute<
         Omit<
@@ -1438,7 +1451,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           decisions_strategy: string;
         }
       >(
-        `with wids as (select w.id from ${WAVES_TABLE} w
+        `with wids as (select w.id, ${sortExpr} as sort_val from ${WAVES_TABLE} w
         ${
           param.pinned === ApiWavesPinFilter.Pinned &&
           param.authenticated_user_id
@@ -1462,6 +1475,11 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
              : ``
          }
          join ${WAVE_DROPPER_METRICS_TABLE} wm on wm.wave_id = w.id 
+         ${
+           param.authenticated_user_id
+             ? `left join ${WAVE_READER_METRICS_TABLE} wrm on wrm.wave_id = w.id and wrm.reader_id = :authenticated_user_id`
+             : ``
+         }
           where
           ${param.pinned === ApiWavesPinFilter.NotPinned && param.authenticated_user_id ? ` pw.profile_id is null and ` : ``}
         ${
@@ -1473,7 +1491,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
             param.eligibleGroups.length
               ? `or w.visibility_group_id in (:eligibleGroups)`
               : ``
-          }) order by wm.latest_drop_timestamp desc limit :limit offset :offset)  select w.* from ${WAVES_TABLE} w join wids on w.id = wids.id`,
+          }) order by sort_val desc limit :limit offset :offset) select w.* from ${WAVES_TABLE} w join wids on w.id = wids.id order by wids.sort_val desc`,
         param
       )
       .then((res) =>
@@ -1868,6 +1886,186 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         `${this.constructor.name}->countOutcomeDistributionItems`
       );
     }
+  }
+
+  async findWaveReaderMetricsByWaveIds(
+    params: { readerId: string; waveIds: string[] },
+    { connection, timer }: RequestContext
+  ): Promise<Record<string, WaveReaderMetricEntity>> {
+    if (!params.waveIds.length) {
+      return {};
+    }
+    timer?.start('wavesApiDb->findWaveReaderMetricsByWaveIds');
+    const result = await this.db
+      .execute<WaveReaderMetricEntity>(
+        `select * from ${WAVE_READER_METRICS_TABLE} where wave_id in (:waveIds) and reader_id = :readerId`,
+        params,
+        { wrappedConnection: connection }
+      )
+      .then((results) =>
+        params.waveIds.reduce(
+          (acc, waveId) => {
+            acc[waveId] = results.find((it) => it.wave_id === waveId) ?? {
+              wave_id: waveId,
+              reader_id: params.readerId,
+              latest_read_timestamp: 0,
+              muted: false
+            };
+            return acc;
+          },
+          {} as Record<string, WaveReaderMetricEntity>
+        )
+      );
+    timer?.stop('wavesApiDb->findWaveReaderMetricsByWaveIds');
+    return result;
+  }
+
+  async updateWaveReaderMetricLatestReadTimestamp(
+    waveId: string,
+    readerId: string,
+    ctx: RequestContext
+  ) {
+    ctx.timer?.start(
+      `${this.constructor.name}->updateWaveReaderMetricLatestReadTimestamp`
+    );
+    const now = Time.now().toMillis();
+    await this.db.execute(
+      `insert into ${WAVE_READER_METRICS_TABLE} (wave_id, reader_id, latest_read_timestamp)
+       values (:waveId, :readerId, :now)
+       on duplicate key update latest_read_timestamp = :now`,
+      { waveId, readerId, now },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop(
+      `${this.constructor.name}->updateWaveReaderMetricLatestReadTimestamp`
+    );
+  }
+
+  async setWaveReaderMetricLatestReadTimestamp(
+    waveId: string,
+    readerId: string,
+    timestamp: number,
+    ctx: RequestContext
+  ) {
+    ctx.timer?.start(
+      `${this.constructor.name}->setWaveReaderMetricLatestReadTimestamp`
+    );
+    await this.db.execute(
+      `insert into ${WAVE_READER_METRICS_TABLE} (wave_id, reader_id, latest_read_timestamp)
+       values (:waveId, :readerId, :timestamp)
+       on duplicate key update latest_read_timestamp = :timestamp`,
+      { waveId, readerId, timestamp },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop(
+      `${this.constructor.name}->setWaveReaderMetricLatestReadTimestamp`
+    );
+  }
+
+  async setWaveMuted(
+    param: { waveId: string; readerId: string; muted: boolean },
+    ctx: RequestContext
+  ) {
+    ctx.timer?.start(`${this.constructor.name}->setWaveMuted`);
+    await this.db.execute(
+      `insert into ${WAVE_READER_METRICS_TABLE} (wave_id, reader_id, muted, latest_read_timestamp)
+       values (:waveId, :readerId, :muted, ROUND(UNIX_TIMESTAMP(NOW(3)) * 1000))
+       on duplicate key update muted = :muted`,
+      param,
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop(`${this.constructor.name}->setWaveMuted`);
+  }
+
+  async findIdentityUnreadDropsCountByWaveId(
+    param: {
+      identityId: string;
+      waveIds: string[];
+    },
+    ctx: RequestContext
+  ): Promise<Record<string, number>> {
+    if (!param.waveIds.length) {
+      return {};
+    }
+
+    const timerLabel = `${this.constructor.name}->findIdentityUnreadDropsCountByWaveId`;
+    ctx.timer?.start(timerLabel);
+
+    const dbresult = await this.db.execute<{ wave_id: string; cnt: number }>(
+      `
+        SELECT d.wave_id AS wave_id, COUNT(d.id) AS cnt
+        FROM ${DROPS_TABLE} d
+        LEFT JOIN ${WAVE_READER_METRICS_TABLE} r
+          ON r.wave_id = d.wave_id
+          AND r.reader_id = :identityId
+        WHERE d.wave_id IN (:waveIds)
+          AND r.latest_read_timestamp IS NOT NULL
+          AND d.created_at > r.latest_read_timestamp
+          AND COALESCE(r.muted, false) = false
+        GROUP BY d.wave_id
+    `,
+      param,
+      { wrappedConnection: ctx.connection }
+    );
+
+    const result = dbresult.reduce(
+      (acc, row) => {
+        acc[row.wave_id] = row.cnt;
+        return acc;
+      },
+      {} as Record<string, number>
+    );
+
+    ctx.timer?.stop(timerLabel);
+
+    return result;
+  }
+
+  async findFirstUnreadDropSerialNoByWaveId(
+    param: {
+      identityId: string;
+      waveIds: string[];
+    },
+    ctx: RequestContext
+  ): Promise<Record<string, number | null>> {
+    if (!param.waveIds.length) {
+      return {};
+    }
+
+    const timerLabel = `${this.constructor.name}->findFirstUnreadDropSerialNoByWaveId`;
+    ctx.timer?.start(timerLabel);
+
+    const dbresult = await this.db.execute<{
+      wave_id: string;
+      serial_no: number;
+    }>(
+      `
+        SELECT d.wave_id, MIN(d.serial_no) AS serial_no
+        FROM ${DROPS_TABLE} d
+        LEFT JOIN ${WAVE_READER_METRICS_TABLE} r
+          ON r.wave_id = d.wave_id
+          AND r.reader_id = :identityId
+        WHERE d.wave_id IN (:waveIds)
+          AND r.latest_read_timestamp IS NOT NULL
+          AND d.created_at > r.latest_read_timestamp
+          AND COALESCE(r.muted, false) = false
+        GROUP BY d.wave_id
+    `,
+      param,
+      { wrappedConnection: ctx.connection }
+    );
+
+    const result = dbresult.reduce(
+      (acc, row) => {
+        acc[row.wave_id] = row.serial_no;
+        return acc;
+      },
+      {} as Record<string, number | null>
+    );
+
+    ctx.timer?.stop(timerLabel);
+
+    return result;
   }
 }
 
