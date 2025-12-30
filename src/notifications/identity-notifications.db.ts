@@ -1,19 +1,19 @@
-import {
-  ConnectionWrapper,
-  dbSupplier,
-  LazyDbAccessCompatibleService
-} from '../sql-executor';
-import { IdentityNotificationEntity } from '../entities/IIdentityNotification';
+import { sendIdentityPushNotification } from '../api-serverless/src/push-notifications/push-notifications.service';
 import {
   IDENTITIES_TABLE,
   IDENTITY_NOTIFICATIONS_TABLE,
   WAVE_READER_METRICS_TABLE
 } from '../constants';
-import { Time } from '../time';
-import { sendIdentityPushNotification } from '../api-serverless/src/push-notifications/push-notifications.service';
+import { IdentityNotificationEntity } from '../entities/IIdentityNotification';
 import { Logger } from '../logging';
-import { RequestContext } from '../request.context';
 import { numbers } from '../numbers';
+import { RequestContext } from '../request.context';
+import {
+  ConnectionWrapper,
+  dbSupplier,
+  LazyDbAccessCompatibleService
+} from '../sql-executor';
+import { Time } from '../time';
 
 export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
   private readonly logger = Logger.get(IdentityNotificationsDb.name);
@@ -163,7 +163,7 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
           ON r.wave_id = n.wave_id
           AND r.reader_id = n.identity_id
         WHERE n.identity_id = :identity_id ${
-          param.id_less_than !== null ? `AND n.id < :id_less_than` : ``
+          param.id_less_than === null ? `` : `AND n.id < :id_less_than`
         }
         AND (n.visibility_group_id IS NULL ${
           param.eligible_group_ids.length
