@@ -1966,8 +1966,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
   ) {
     ctx.timer?.start(`${this.constructor.name}->setWaveMuted`);
     await this.db.execute(
-      `insert into ${WAVE_READER_METRICS_TABLE} (wave_id, reader_id, muted)
-       values (:waveId, :readerId, :muted)
+      `insert into ${WAVE_READER_METRICS_TABLE} (wave_id, reader_id, muted, latest_read_timestamp)
+       values (:waveId, :readerId, :muted, ROUND(UNIX_TIMESTAMP(NOW(3)) * 1000))
        on duplicate key update muted = :muted`,
       param,
       { wrappedConnection: ctx.connection }
@@ -1997,7 +1997,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           ON r.wave_id = d.wave_id
           AND r.reader_id = :identityId
         WHERE d.wave_id IN (:waveIds)
-          AND d.created_at > COALESCE(r.latest_read_timestamp, 0)
+          AND r.latest_read_timestamp IS NOT NULL
+          AND d.created_at > r.latest_read_timestamp
           AND COALESCE(r.muted, false) = false
         GROUP BY d.wave_id
     `,
@@ -2043,7 +2044,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           ON r.wave_id = d.wave_id
           AND r.reader_id = :identityId
         WHERE d.wave_id IN (:waveIds)
-          AND d.created_at > COALESCE(r.latest_read_timestamp, 0)
+          AND r.latest_read_timestamp IS NOT NULL
+          AND d.created_at > r.latest_read_timestamp
           AND COALESCE(r.muted, false) = false
         GROUP BY d.wave_id
     `,
