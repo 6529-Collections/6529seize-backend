@@ -89,7 +89,7 @@
     "dotenv": "^16.0.3",
     "ethereum-block-by-date": "^1.4.9",
     "ethers": "^5.7.2",
-    "express": "^4.18.2",
+    "express": "^4.22.0",
     "firebase-admin": "^12.5.0",
     "fluent-ffmpeg": "^2.1.2",
     "helmet": "^6.2.0",
