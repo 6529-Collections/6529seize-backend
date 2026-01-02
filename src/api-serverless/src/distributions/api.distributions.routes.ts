@@ -184,10 +184,6 @@ router.post(
       const countStr = parts[1]?.trim();
       const count = numbers.parseIntOrNull(countStr);
 
-      if (i === 0 && count === null) {
-        continue;
-      }
-
       if (!address) {
         return res.status(400).send({
           success: false,
