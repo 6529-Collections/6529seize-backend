@@ -1,3 +1,4 @@
+import { ethers } from 'ethers';
 import { Request, Response } from 'express';
 import { UnauthorisedException } from '../../../exceptions';
 import { numbers } from '../../../numbers';
@@ -168,17 +169,51 @@ router.post(
     const airdrops: Array<{ address: string; count: number }> = [];
     const lines = csvData.trim().split('\n');
 
-    for (const line of lines) {
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
       const parts = line.split(',');
-      const address = parts[0]?.trim();
-      const count = numbers.parseIntOrNull(parts[1]?.trim()) ?? 0;
 
-      if (!address) {
+      if (parts.length !== 2) {
+        return res.status(400).send({
+          success: false,
+          error: `Invalid CSV format at line ${i + 1}: expected 2 columns, got ${parts.length}`
+        });
+      }
+
+      const address = parts[0]?.trim();
+      const countStr = parts[1]?.trim();
+      const count = numbers.parseIntOrNull(countStr);
+
+      if (i === 0 && count === null) {
         continue;
       }
 
-      if (Number.isNaN(count) || count <= 0) {
-        continue;
+      if (!address) {
+        return res.status(400).send({
+          success: false,
+          error: `Invalid CSV format at line ${i + 1}: address is empty`
+        });
+      }
+
+      if (!ethers.utils.isAddress(address)) {
+        return res.status(400).send({
+          success: false,
+          error: `Invalid CSV format at line ${i + 1}: "${address}" is not a valid Ethereum address`
+        });
+      }
+
+      if (count === null) {
+        return res.status(400).send({
+          success: false,
+          error: `Invalid CSV format at line ${i + 1}: count "${countStr}" is not a valid number`
+        });
+      }
+
+      if (count <= 0) {
+        return res.status(400).send({
+          success: false,
+          error: `Invalid CSV format at line ${i + 1}: count must be greater than 0, got ${count}`
+        });
       }
 
       airdrops.push({ address, count });
