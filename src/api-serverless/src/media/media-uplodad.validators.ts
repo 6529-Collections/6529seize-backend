@@ -40,3 +40,16 @@ export function createMediaPrepRequestSchema({
     file_name: Joi.string().required()
   });
 }
+
+export function createDistributionPhotoMediaPrepRequestSchema({
+  allowedMimeTypes
+}: {
+  allowedMimeTypes: string[];
+}): Joi.ObjectSchema<ApiCreateMediaUploadUrlRequest> {
+  return Joi.object({
+    content_type: Joi.string()
+      .required()
+      .valid(...allowedMimeTypes),
+    file_name: Joi.string().required()
+  });
+}
