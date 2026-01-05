@@ -246,7 +246,7 @@ router.post(
     if (!parseResult.success) {
       return res.status(400).send({
         success: false,
-        error: (parseResult as CsvParseError).error
+        error: parseResult.error
       });
     }
 
