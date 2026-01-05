@@ -143,7 +143,7 @@ class ApiGatewayClientConnections extends ClientConnections {
         })
       );
     } catch (err: any) {
-      this.logger.error(`Connection ${connectionId} is already gone.`);
+      // ignore
     }
   }
 }
