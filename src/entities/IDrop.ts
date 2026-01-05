@@ -123,7 +123,7 @@ export class DropMetadataEntity {
   readonly drop_id!: string;
   @Column({ type: 'varchar', length: 500 })
   readonly data_key!: string;
-  @Column({ type: 'varchar', length: 500 })
+  @Column({ type: 'text' })
   readonly data_value!: string;
   @Index()
   @Column({ type: 'varchar', length: 100, nullable: true, default: null })
