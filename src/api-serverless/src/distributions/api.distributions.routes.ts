@@ -31,17 +31,14 @@ interface AirdropEntry {
   count: number;
 }
 
-interface CsvParseResult {
-  success: true;
-  airdrops: AirdropEntry[];
+class CsvParseError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'CsvParseError';
+  }
 }
 
-interface CsvParseError {
-  success: false;
-  error: string;
-}
-
-function parseAirdropCsv(csvData: string): CsvParseResult | CsvParseError {
+function parseAirdropCsv(csvData: string): AirdropEntry[] {
   const airdrops: AirdropEntry[] = [];
   const lines = csvData.trim().split('\n');
 
@@ -51,10 +48,9 @@ function parseAirdropCsv(csvData: string): CsvParseResult | CsvParseError {
     const lineNum = i + 1;
 
     if (parts.length !== 2) {
-      return {
-        success: false,
-        error: `Invalid CSV format at line ${lineNum}: expected 2 columns, got ${parts.length}`
-      };
+      throw new CsvParseError(
+        `Invalid CSV format at line ${lineNum}: expected 2 columns, got ${parts.length}`
+      );
     }
 
     const address = parts[0]?.trim();
@@ -62,44 +58,37 @@ function parseAirdropCsv(csvData: string): CsvParseResult | CsvParseError {
     const count = numbers.parseIntOrNull(countStr);
 
     if (!address) {
-      return {
-        success: false,
-        error: `Invalid CSV format at line ${lineNum}: address is empty`
-      };
+      throw new CsvParseError(
+        `Invalid CSV format at line ${lineNum}: address is empty`
+      );
     }
 
     if (!ethers.utils.isAddress(address)) {
-      return {
-        success: false,
-        error: `Invalid CSV format at line ${lineNum}: "${address}" is not a valid Ethereum address`
-      };
+      throw new CsvParseError(
+        `Invalid CSV format at line ${lineNum}: "${address}" is not a valid Ethereum address`
+      );
     }
 
     if (count === null) {
-      return {
-        success: false,
-        error: `Invalid CSV format at line ${lineNum}: count "${countStr}" is not a valid number`
-      };
+      throw new CsvParseError(
+        `Invalid CSV format at line ${lineNum}: count "${countStr}" is not a valid number`
+      );
     }
 
     if (count <= 0) {
-      return {
-        success: false,
-        error: `Invalid CSV format at line ${lineNum}: count must be greater than 0, got ${count}`
-      };
+      throw new CsvParseError(
+        `Invalid CSV format at line ${lineNum}: count must be greater than 0, got ${count}`
+      );
     }
 
     airdrops.push({ address, count });
   }
 
   if (airdrops.length === 0) {
-    return {
-      success: false,
-      error: 'No valid airdrop entries found in CSV'
-    };
+    throw new CsvParseError('No valid airdrop entries found in CSV');
   }
 
-  return { success: true, airdrops };
+  return airdrops;
 }
 
 const router = asyncRouter();
@@ -242,15 +231,18 @@ router.post(
       });
     }
 
-    const parseResult = parseAirdropCsv(csvData);
-    if (!parseResult.success) {
-      return res.status(400).send({
-        success: false,
-        error: parseResult.error
-      });
+    let airdrops: AirdropEntry[];
+    try {
+      airdrops = parseAirdropCsv(csvData);
+    } catch (e) {
+      if (e instanceof CsvParseError) {
+        return res.status(400).send({
+          success: false,
+          error: e.message
+        });
+      }
+      throw e;
     }
-
-    const { airdrops } = parseResult;
 
     await insertAutomaticAirdrops(contract, cardId, airdrops);
 

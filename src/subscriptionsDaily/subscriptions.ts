@@ -289,14 +289,14 @@ async function uploadFinalSubscriptions(
       );
       return {
         date: Time.now().toIsoDateString(),
-        subscribed_at: sub.subscribed_at,
         contract: contract,
         token_id: newMeme,
+        count: sub.subscribed_count,
         profile: profile?.handle ?? '-',
-        consolidation_key: sub.consolidation_key,
         airdrop_address: sub.airdrop_address,
+        consolidation_key: sub.consolidation_key,
         balance: sub.balance,
-        count: sub.subscribed_count
+        subscribed_at: sub.subscribed_at
       };
     });
   const csv = await converter.json2csvAsync(finalUpload);

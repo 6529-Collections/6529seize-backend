@@ -148,14 +148,14 @@ export class NFTFinalSubscriptionUpload {
 
 export interface NFTFinalSubscriptionUploadFields {
   date: string;
-  subscribed_at: string;
   contract: string;
   token_id: number;
-  profile: string;
-  consolidation_key: string;
-  airdrop_address: string;
-  balance: number;
   count: number;
+  profile: string;
+  airdrop_address: string;
+  consolidation_key: string;
+  balance: number;
+  subscribed_at: string;
 }
 
 @Entity(SUBSCRIPTIONS_LOGS_TABLE)
