@@ -1,6 +1,6 @@
 import { ethers } from 'ethers';
 import { Request, Response } from 'express';
-import { UnauthorisedException } from '../../../exceptions';
+import { ForbiddenException } from '../../../exceptions';
 import { numbers } from '../../../numbers';
 import { evictKeyFromRedisCache } from '../../../redis';
 import { DISTRIBUTION_PAGE_SIZE } from '../api-constants';
@@ -99,7 +99,7 @@ function validateSubscriptionAdminAndParams(
 ): { contract: string; cardId: number } | null {
   const authenticated = authenticateSubscriptionsAdmin(req);
   if (!authenticated) {
-    throw new UnauthorisedException(
+    throw new ForbiddenException(
       'Only Subscription Admins can perform this action'
     );
   }
@@ -163,7 +163,7 @@ router.get(
   async function (req: any, res: any) {
     const authenticated = authenticateSubscriptionsAdmin(req);
     if (!authenticated) {
-      throw new UnauthorisedException(
+      throw new ForbiddenException(
         'Only Subscription Admins can fetch distribution overview'
       );
     }

@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import * as Joi from 'joi';
 import { invalidateCloudFront } from '../../../cloudfront';
 import { CLOUDFRONT_DISTRIBUTION } from '../../../constants';
-import { UnauthorisedException } from '../../../exceptions';
+import { BadRequestException, ForbiddenException } from '../../../exceptions';
 import { numbers } from '../../../numbers';
 import { evictKeyFromRedisCache } from '../../../redis';
 import {
@@ -12,21 +12,23 @@ import {
   returnJsonResult,
   returnPaginatedResult
 } from '../api-helpers';
+import { ApiResponse } from '../api-response';
 import { asyncRouter } from '../async.router';
 import { needsAuthenticatedUser } from '../auth/auth';
-import { ApiCreateMediaUploadUrlRequest } from '../generated/models/ApiCreateMediaUploadUrlRequest';
-import { ApiCreateMediaUrlResponse } from '../generated/models/ApiCreateMediaUrlResponse';
 import { ApiCompleteMultipartUploadRequest } from '../generated/models/ApiCompleteMultipartUploadRequest';
 import { ApiCompleteMultipartUploadResponse } from '../generated/models/ApiCompleteMultipartUploadResponse';
+import { ApiCreateMediaUploadUrlRequest } from '../generated/models/ApiCreateMediaUploadUrlRequest';
+import { ApiCreateMediaUrlResponse } from '../generated/models/ApiCreateMediaUrlResponse';
 import { ApiStartMultipartMediaUploadResponse } from '../generated/models/ApiStartMultipartMediaUploadResponse';
 import { ApiUploadPartOfMultipartUploadRequest } from '../generated/models/ApiUploadPartOfMultipartUploadRequest';
 import { ApiUploadPartOfMultipartUploadResponse } from '../generated/models/ApiUploadPartOfMultipartUploadResponse';
-import { uploadMediaService } from '../media/upload-media.service';
+import { DistributionPhotoCompleteRequest } from '../generated/models/DistributionPhotoCompleteRequest';
 import {
   ApiCompleteMultipartUploadRequestSchema,
   ApiUploadPartOfMultipartUploadRequestSchema,
   createDistributionPhotoMediaPrepRequestSchema
 } from '../media/media-uplodad.validators';
+import { uploadMediaService } from '../media/upload-media.service';
 import { cacheRequest } from '../request-cache';
 import { authenticateSubscriptionsAdmin } from '../subscriptions/api.subscriptions.allowlist';
 import { getValidatedByJoiOrThrow } from '../validation';
@@ -34,7 +36,6 @@ import {
   fetchDistributionPhotos,
   saveDistributionPhotos
 } from './api.distribution_photos.db';
-import { ApiResponse } from '../api-response';
 
 const router = asyncRouter();
 
@@ -71,7 +72,7 @@ router.post(
   ) => {
     const authenticated = authenticateSubscriptionsAdmin(req);
     if (!authenticated) {
-      throw new UnauthorisedException(
+      throw new ForbiddenException(
         'Only Subscription Admins can upload photos'
       );
     }
@@ -80,11 +81,7 @@ router.post(
     const nftId = numbers.parseIntOrNull(req.params.nft_id);
 
     if (nftId === null) {
-      res.status(400).send({
-        success: false,
-        error: 'Invalid nft_id parameter'
-      } as any);
-      return;
+      throw new BadRequestException('Invalid nft_id parameter');
     }
 
     const validatedRequest = getValidatedByJoiOrThrow(
@@ -118,7 +115,7 @@ router.post(
   ) => {
     const authenticated = authenticateSubscriptionsAdmin(req);
     if (!authenticated) {
-      throw new UnauthorisedException(
+      throw new ForbiddenException(
         'Only Subscription Admins can upload photos'
       );
     }
@@ -127,11 +124,7 @@ router.post(
     const nftId = numbers.parseIntOrNull(req.params.nft_id);
 
     if (nftId === null) {
-      res.status(400).send({
-        success: false,
-        error: 'Invalid nft_id parameter'
-      } as any);
-      return;
+      throw new BadRequestException('Invalid nft_id parameter');
     }
 
     const validatedRequest = getValidatedByJoiOrThrow(
@@ -171,7 +164,7 @@ router.post(
   ) => {
     const authenticated = authenticateSubscriptionsAdmin(req);
     if (!authenticated) {
-      throw new UnauthorisedException(
+      throw new ForbiddenException(
         'Only Subscription Admins can upload photos'
       );
     }
@@ -191,12 +184,6 @@ router.post(
     });
   }
 );
-
-interface DistributionPhotoCompleteRequest {
-  photos: Array<{
-    media_url: string;
-  }>;
-}
 
 const DistributionPhotoCompleteRequestSchema: Joi.ObjectSchema<DistributionPhotoCompleteRequest> =
   Joi.object({
@@ -224,7 +211,7 @@ router.post(
   ) {
     const authenticated = authenticateSubscriptionsAdmin(req);
     if (!authenticated) {
-      throw new UnauthorisedException(
+      throw new ForbiddenException(
         'Only Subscription Admins can upload photos'
       );
     }
@@ -233,10 +220,7 @@ router.post(
     const nftId = numbers.parseIntOrNull(req.params.nft_id);
 
     if (nftId === null) {
-      return res.status(400).send({
-        success: false,
-        error: 'Invalid nft_id parameter'
-      });
+      throw new BadRequestException('Invalid nft_id parameter');
     }
 
     const validatedRequest = getValidatedByJoiOrThrow(
@@ -282,7 +266,7 @@ router.post(
   ) => {
     const authenticated = authenticateSubscriptionsAdmin(req);
     if (!authenticated) {
-      throw new UnauthorisedException(
+      throw new ForbiddenException(
         'Only Subscription Admins can upload photos'
       );
     }
