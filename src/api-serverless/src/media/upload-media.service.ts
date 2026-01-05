@@ -177,8 +177,7 @@ export class UploadMediaService {
     contract: string;
     card_id: number;
   }): string {
-    const fileExtension = this.getFileExtension(file_name);
-    return `distribution/${process.env.NODE_ENV}/${contract.toLowerCase()}/${card_id}/${randomUUID()}${fileExtension}`;
+    return `distribution/${process.env.NODE_ENV}/${contract.toLowerCase()}/${card_id}/${file_name}`;
   }
 
   private createWaveMediaKey({

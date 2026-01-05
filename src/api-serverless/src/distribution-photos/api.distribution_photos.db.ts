@@ -50,13 +50,11 @@ export async function saveDistributionPhotos(
       await bulkInsert(
         sqlExecutor,
         DISTRIBUTION_PHOTO_TABLE,
-        photoUrls
-          .sort((a, b) => a.localeCompare(b))
-          .map((link) => ({
-            contract: contract.toLowerCase(),
-            card_id: cardId,
-            link
-          })),
+        photoUrls.map((link) => ({
+          contract: contract.toLowerCase(),
+          card_id: cardId,
+          link
+        })),
         ['contract', 'card_id', 'link'],
         undefined,
         { connection: connectionHolder }
