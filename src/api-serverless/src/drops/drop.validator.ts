@@ -39,7 +39,7 @@ const MentionedUserSchema: Joi.ObjectSchema<ApiDropReferencedNFT> = Joi.object({
 
 const MetadataSchema: Joi.ObjectSchema<DropMetadataEntity> = Joi.object({
   data_key: Joi.string().min(1).max(100).required(),
-  data_value: Joi.string().min(1).max(500).required()
+  data_value: Joi.string().min(1).max(5000).required()
 });
 
 const QuotedDropSchema: Joi.ObjectSchema<ApiQuotedDrop> = Joi.object({
