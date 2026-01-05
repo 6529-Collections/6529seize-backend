@@ -9,6 +9,7 @@ import { sqlExecutor } from '../../../sql-executor';
 import { PaginatedResponse } from '../api-constants';
 import { constructFilters, getSearchFilters } from '../api-helpers';
 import { DistributionNormalized } from '../generated/models/DistributionNormalized';
+import { DistributionOverview } from '../generated/models/DistributionOverview';
 import { checkIsNormalized } from './api.distributions.service';
 
 export async function fetchDistributionPhases(
@@ -101,12 +102,6 @@ export async function fetchDistributions(
   return results;
 }
 
-export interface DistributionOverview {
-  photos_count: number;
-  is_normalized: boolean;
-  automatic_airdrops: number;
-}
-
 export async function fetchDistributionOverview(
   contract: string,
   cardId: number
@@ -133,20 +128,26 @@ export async function fetchDistributionOverview(
     distributionPhasesResult.map((r) => r.phase)
   );
 
-  const automaticAirdropsResult = await sqlExecutor.execute<{ count: number }>(
-    `SELECT COUNT(*) as count FROM ${DISTRIBUTION_TABLE} WHERE contract = :contract AND card_id = :cardId AND phase = 'Airdrop'`,
+  const automaticAirdropsResult = await sqlExecutor.execute<{
+    addresses_count: number;
+    total_count: number;
+  }>(
+    `SELECT COUNT(DISTINCT wallet) as addresses_count, COALESCE(SUM(count), 0) as total_count FROM ${DISTRIBUTION_TABLE} WHERE contract = :contract AND card_id = :cardId AND phase = 'Airdrop'`,
     {
       contract: contractLower,
       cardId
     }
   );
-  const automatic_airdrops = automaticAirdropsResult[0]?.count || 0;
+  const automatic_airdrops_addresses =
+    automaticAirdropsResult[0]?.addresses_count || 0;
+  const automatic_airdrops_count = automaticAirdropsResult[0]?.total_count || 0;
 
   if (distributionPhases.size === 0) {
     return {
       photos_count,
       is_normalized: false,
-      automatic_airdrops
+      automatic_airdrops_addresses,
+      automatic_airdrops_count
     };
   }
 
@@ -162,7 +163,8 @@ export async function fetchDistributionOverview(
     return {
       photos_count,
       is_normalized: false,
-      automatic_airdrops
+      automatic_airdrops_addresses,
+      automatic_airdrops_count
     };
   }
 
@@ -182,7 +184,8 @@ export async function fetchDistributionOverview(
   return {
     photos_count,
     is_normalized,
-    automatic_airdrops
+    automatic_airdrops_addresses,
+    automatic_airdrops_count
   };
 }
 

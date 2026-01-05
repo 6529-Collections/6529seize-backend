@@ -1,5 +1,6 @@
+import { ethers } from 'ethers';
 import { Request, Response } from 'express';
-import { UnauthorisedException } from '../../../exceptions';
+import { ForbiddenException } from '../../../exceptions';
 import { numbers } from '../../../numbers';
 import { evictKeyFromRedisCache } from '../../../redis';
 import { DISTRIBUTION_PAGE_SIZE } from '../api-constants';
@@ -25,6 +26,71 @@ import {
   populateDistributionNormalized
 } from './api.distributions.service';
 
+interface AirdropEntry {
+  address: string;
+  count: number;
+}
+
+class CsvParseError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'CsvParseError';
+  }
+}
+
+function parseAirdropCsv(csvData: string): AirdropEntry[] {
+  const airdrops: AirdropEntry[] = [];
+  const lines = csvData.trim().split('\n');
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const parts = line.split(',');
+    const lineNum = i + 1;
+
+    if (parts.length !== 2) {
+      throw new CsvParseError(
+        `Invalid CSV format at line ${lineNum}: expected 2 columns, got ${parts.length}`
+      );
+    }
+
+    const address = parts[0]?.trim();
+    const countStr = parts[1]?.trim();
+    const count = numbers.parseIntOrNull(countStr);
+
+    if (!address) {
+      throw new CsvParseError(
+        `Invalid CSV format at line ${lineNum}: address is empty`
+      );
+    }
+
+    if (!ethers.utils.isAddress(address)) {
+      throw new CsvParseError(
+        `Invalid CSV format at line ${lineNum}: "${address}" is not a valid Ethereum address`
+      );
+    }
+
+    if (count === null) {
+      throw new CsvParseError(
+        `Invalid CSV format at line ${lineNum}: count "${countStr}" is not a valid number`
+      );
+    }
+
+    if (count <= 0) {
+      throw new CsvParseError(
+        `Invalid CSV format at line ${lineNum}: count must be greater than 0, got ${count}`
+      );
+    }
+
+    airdrops.push({ address, count });
+  }
+
+  if (airdrops.length === 0) {
+    throw new CsvParseError('No valid airdrop entries found in CSV');
+  }
+
+  return airdrops;
+}
+
 const router = asyncRouter();
 
 function validateSubscriptionAdminAndParams(
@@ -33,7 +99,7 @@ function validateSubscriptionAdminAndParams(
 ): { contract: string; cardId: number } | null {
   const authenticated = authenticateSubscriptionsAdmin(req);
   if (!authenticated) {
-    throw new UnauthorisedException(
+    throw new ForbiddenException(
       'Only Subscription Admins can perform this action'
     );
   }
@@ -97,7 +163,7 @@ router.get(
   async function (req: any, res: any) {
     const authenticated = authenticateSubscriptionsAdmin(req);
     if (!authenticated) {
-      throw new UnauthorisedException(
+      throw new ForbiddenException(
         'Only Subscription Admins can fetch distribution overview'
       );
     }
@@ -165,30 +231,17 @@ router.post(
       });
     }
 
-    const airdrops: Array<{ address: string; count: number }> = [];
-    const lines = csvData.trim().split('\n');
-
-    for (const line of lines) {
-      const parts = line.split(',');
-      const address = parts[0]?.trim();
-      const count = numbers.parseIntOrNull(parts[1]?.trim()) ?? 0;
-
-      if (!address) {
-        continue;
+    let airdrops: AirdropEntry[];
+    try {
+      airdrops = parseAirdropCsv(csvData);
+    } catch (e) {
+      if (e instanceof CsvParseError) {
+        return res.status(400).send({
+          success: false,
+          error: e.message
+        });
       }
-
-      if (Number.isNaN(count) || count <= 0) {
-        continue;
-      }
-
-      airdrops.push({ address, count });
-    }
-
-    if (airdrops.length === 0) {
-      return res.status(400).send({
-        success: false,
-        error: 'No valid airdrop entries found in CSV'
-      });
+      throw e;
     }
 
     await insertAutomaticAirdrops(contract, cardId, airdrops);

@@ -126,6 +126,60 @@ export class UploadMediaService {
     return `https://d3lqz0a4bldqgf.cloudfront.net/${completeResp.Key}`;
   }
 
+  public async createSignedDistributionPhotoUploadUrl({
+    content_type,
+    file_name,
+    contract,
+    card_id
+  }: {
+    content_type: string;
+    file_name: string;
+    contract: string;
+    card_id: number;
+  }): Promise<{ upload_url: string; media_url: string; content_type: string }> {
+    const key = this.createDistributionPhotoKey({
+      file_name,
+      contract,
+      card_id
+    });
+    return await this.createSignedMediaUrl({ key, content_type });
+  }
+
+  async getDistributionPhotoMultipartUploadKeyAndUploadId({
+    content_type,
+    file_name,
+    contract,
+    card_id
+  }: {
+    content_type: string;
+    file_name: string;
+    contract: string;
+    card_id: number;
+  }): Promise<{ key: string; upload_id: string }> {
+    const key = this.createDistributionPhotoKey({
+      file_name,
+      contract,
+      card_id
+    });
+    const uploadId = await this.createMultipartUploadId({ key, content_type });
+    return {
+      key,
+      upload_id: uploadId
+    };
+  }
+
+  private createDistributionPhotoKey({
+    file_name,
+    contract,
+    card_id
+  }: {
+    file_name: string;
+    contract: string;
+    card_id: number;
+  }): string {
+    return `distribution/${process.env.NODE_ENV}/${contract.toLowerCase()}/${card_id}/${file_name}`;
+  }
+
   private createWaveMediaKey({
     file_name,
     author_id
