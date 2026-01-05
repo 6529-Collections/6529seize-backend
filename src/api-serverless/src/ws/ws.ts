@@ -115,8 +115,13 @@ class ApiGatewayClientConnections extends ClientConnections {
         })
       );
     } catch (err: any) {
+      const isInvalidConnectionId =
+        err.name === 'BadRequestException' &&
+        typeof err.message === 'string' &&
+        err.message.includes('Invalid connectionId');
       if (
         err.name === 'GoneException' ||
+        isInvalidConnectionId ||
         err.$metadata?.httpStatusCode === 410
       ) {
         throw new SocketNotAvailableException();
