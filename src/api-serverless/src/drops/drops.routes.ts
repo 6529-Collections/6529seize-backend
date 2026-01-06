@@ -38,8 +38,11 @@ import {
   NewDropSchema,
   UpdateDropSchema
 } from './drop.validator';
-import { dropsService } from './drops.api.service';
+import { dropsService, GetDropPinsRequest } from './drops.api.service';
 import { reactionsService } from './reactions.service';
+import { ApiDropPinsPage } from '../generated/models/ApiDropPinsPage';
+import { ApiPageSortDirection } from '../generated/models/ApiPageSortDirection';
+import { DEFAULT_MAX_SIZE, DEFAULT_PAGE_SIZE } from '../page-request';
 
 const router = asyncRouter();
 
@@ -523,6 +526,70 @@ router.post(
   }
 );
 
+router.get(
+  '/:drop_id/pins',
+  maybeAuthenticatedUser(),
+  async (
+    req: Request<
+      { drop_id: string },
+      any,
+      any,
+      Omit<GetDropPinsRequest, 'drop_id'>,
+      any
+    >,
+    res: Response<ApiResponse<ApiDropPinsPage>>
+  ) => {
+    const timer = Timer.getFromRequest(req);
+
+    const authenticationContext = await getAuthenticationContext(req, timer);
+    const dropId = req.params.drop_id;
+    const ctx = { timer, authenticationContext };
+    const searchRequest: GetDropPinsRequest = getValidatedByJoiOrThrow(
+      { drop_id: dropId, ...req.query },
+      GetDropPinsRequestSchema
+    );
+    const resultingPage = await dropsService.findPageOfDropPins(
+      searchRequest,
+      ctx
+    );
+    res.send(resultingPage);
+  }
+);
+
+router.post(
+  '/:drop_id/pins',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<{ drop_id: string }, any, any, any, any>,
+    res: Response<ApiResponse<any>>
+  ) => {
+    const timer = Timer.getFromRequest(req);
+
+    const authenticationContext = await getAuthenticationContext(req, timer);
+    const dropId = req.params.drop_id;
+    const ctx = { timer, authenticationContext };
+    await dropsService.pinDrop(dropId, ctx);
+    res.send({});
+  }
+);
+
+router.delete(
+  '/:drop_id/pins',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<{ drop_id: string }, any, any, any, any>,
+    res: Response<ApiResponse<any>>
+  ) => {
+    const timer = Timer.getFromRequest(req);
+
+    const authenticationContext = await getAuthenticationContext(req, timer);
+    const dropId = req.params.drop_id;
+    const ctx = { timer, authenticationContext };
+    await dropsService.unpinDrop(dropId, ctx);
+    res.send({});
+  }
+);
+
 export async function prepLatestDropsSearchQuery(
   req: Request<
     any,
@@ -568,6 +635,20 @@ const DropSubscriptionActionsSchema = Joi.object<ApiDropSubscriptionActions>({
       Joi.string().valid(...Object.values(ApiDropSubscriptionTargetAction))
     )
     .required()
+});
+
+const GetDropPinsRequestSchema = Joi.object<GetDropPinsRequest>({
+  drop_id: Joi.string().required(),
+  page_size: Joi.number()
+    .integer()
+    .default(DEFAULT_PAGE_SIZE)
+    .max(DEFAULT_MAX_SIZE)
+    .min(1),
+  page: Joi.number().integer().default(1).min(1),
+  sort_direction: Joi.string()
+    .valid(...Object.values(ApiPageSortDirection))
+    .default(ApiPageSortDirection.Desc),
+  sort: Joi.string().valid('timestamp').default('timestamp')
 });
 
 async function assertDropIsCorrectlySigned(

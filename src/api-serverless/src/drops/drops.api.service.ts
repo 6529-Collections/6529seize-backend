@@ -56,6 +56,9 @@ import { ApiLightDrop } from '../generated/models/ApiLightDrop';
 import { ApiDropMedia } from '../generated/models/ApiDropMedia';
 import { enums } from '../../../enums';
 import { ApiDropWithoutWavesPageWithoutCount } from '../generated/models/ApiDropWithoutWavesPageWithoutCount';
+import { ApiPageSortDirection } from '../generated/models/ApiPageSortDirection';
+import { ApiDropPinsPage } from '../generated/models/ApiDropPinsPage';
+import { ApiDropsPage } from '../generated/models/ApiDropsPage';
 
 export class DropsApiService {
   constructor(
@@ -879,6 +882,175 @@ export class DropsApiService {
       page: page
     };
   }
+
+  async findPageOfDropPins(
+    searchRequest: GetDropPinsRequest,
+    ctx: RequestContext
+  ): Promise<ApiDropPinsPage> {
+    try {
+      ctx.timer?.start(`${this.constructor.name}->findPageOfDropPins`);
+      await this.findDropByIdOrThrow({ dropId: searchRequest.drop_id }, ctx);
+      const offset = searchRequest.page_size * (searchRequest.page - 1);
+      const [data, count] = await Promise.all([
+        this.dropsDb.getDropsPins(
+          {
+            drop_id: searchRequest.drop_id,
+            limit: searchRequest.page_size,
+            offset,
+            order_by: searchRequest.sort,
+            order: searchRequest.sort_direction
+          },
+          ctx
+        ),
+        this.dropsDb.countDropsPins({ drop_id: searchRequest.drop_id }, ctx)
+      ]);
+      const pinnerProfiles = await this.identityFetcher.getOverviewsByIds(
+        data.map((it) => it.pinner_id),
+        ctx
+      );
+      return {
+        data: data.map((it) => ({
+          pinner: pinnerProfiles[it.pinner_id],
+          pinned_at: it.timestamp
+        })),
+        count,
+        page: searchRequest.page,
+        next: count > searchRequest.page_size * searchRequest.page
+      };
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->findPageOfDropPins`);
+    }
+  }
+
+  async pinDrop(dropId: string, ctx: RequestContext) {
+    try {
+      ctx.timer?.start(`${this.constructor.name}->pinDrop`);
+      const pinnerId = ctx.authenticationContext?.getActingAsId();
+      if (!pinnerId) {
+        throw new ForbiddenException(
+          `Can't pin a drop without logging in and creating a profile`
+        );
+      }
+      const apiDrop = await this.findDropByIdOrThrow({ dropId }, ctx);
+      await this.dropsDb.pinDrop(
+        { drop_id: dropId, pinner_id: pinnerId, wave_id: apiDrop.wave.id },
+        ctx
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->pinDrop`);
+    }
+  }
+
+  async unpinDrop(dropId: string, ctx: RequestContext) {
+    try {
+      ctx.timer?.start(`${this.constructor.name}->unpinDrop`);
+      const pinnerId = ctx.authenticationContext?.getActingAsId();
+      if (!pinnerId) {
+        throw new ForbiddenException(
+          `Can't unpin a drop without logging in and creating a profile`
+        );
+      }
+      await this.findDropByIdOrThrow({ dropId }, ctx);
+      await this.dropsDb.unpinDrop(
+        { drop_id: dropId, pinner_id: pinnerId },
+        ctx
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->unpinDrop`);
+    }
+  }
+
+  async findPinnedDrops(
+    searchRequest: FindPinnedDropsRequest,
+    ctx: RequestContext
+  ): Promise<ApiDropsPage> {
+    try {
+      ctx.timer?.start(`${this.constructor.name}->findPinnedDrops`);
+      const contextProfileId = this.getDropsReadContextProfileId(
+        ctx.authenticationContext
+      );
+      const group_ids_user_is_eligible_for =
+        await this.userGroupsService.getGroupsUserIsEligibleFor(
+          contextProfileId
+        );
+      const pinnerId =
+        searchRequest.pinner === null
+          ? null
+          : await this.identityFetcher.getProfileIdByIdentityKeyOrThrow(
+              { identityKey: searchRequest.pinner },
+              ctx
+            );
+      const authorId =
+        searchRequest.author === null
+          ? null
+          : await this.identityFetcher.getProfileIdByIdentityKeyOrThrow(
+              { identityKey: searchRequest.author },
+              ctx
+            );
+      const offset = searchRequest.page_size * (searchRequest.page - 1);
+      const [data, count] = await Promise.all([
+        this.dropsDb.getPinnedDrops(
+          {
+            wave_id: searchRequest.wave_id,
+            eligibile_groups: group_ids_user_is_eligible_for,
+            limit: searchRequest.page_size,
+            offset,
+            pinner_id: pinnerId,
+            author_id: authorId,
+            order_by: searchRequest.sort,
+            order: searchRequest.sort_direction,
+            min_pins: searchRequest.min_pins
+          },
+          ctx
+        ),
+        this.dropsDb.countPinnedDrops(
+          {
+            wave_id: searchRequest.wave_id,
+            eligibile_groups: group_ids_user_is_eligible_for,
+            pinner_id: pinnerId,
+            author_id: authorId,
+            min_pins: searchRequest.min_pins
+          },
+          ctx
+        )
+      ]);
+      const apiDrops = await this.dropsMappers.convertToDropFulls(
+        { dropEntities: data, contextProfileId },
+        ctx.connection
+      );
+      return {
+        data: apiDrops,
+        count,
+        page: searchRequest.page,
+        next: count > searchRequest.page_size * searchRequest.page
+      };
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->findPinnedDrops`);
+    }
+  }
+}
+
+export interface GetDropPinsRequest {
+  drop_id: string;
+  page_size: number;
+  page: number;
+  sort_direction: ApiPageSortDirection;
+  sort: 'timestamp';
+}
+
+export interface FindPinnedDropsRequest {
+  author: string | null;
+  pinner: string | null;
+  wave_id: string | null;
+  min_pins: number | null;
+  page_size: number;
+  page: number;
+  sort_direction: ApiPageSortDirection;
+  sort:
+    | 'last_pin_timestamp'
+    | 'first_pin_timestamp'
+    | 'drop_created_at'
+    | 'pins_count';
 }
 
 export const dropsService = new DropsApiService(

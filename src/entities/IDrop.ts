@@ -8,6 +8,7 @@ import {
 import {
   DROP_MEDIA_TABLE,
   DROP_METADATA_TABLE,
+  DROP_PINS_TABLE,
   DROP_REFERENCED_NFTS_TABLE,
   DROPS_MENTIONS_TABLE,
   DROPS_PARTS_TABLE,
@@ -145,5 +146,21 @@ export class DropMediaEntity {
   readonly mime_type!: string;
   @Index()
   @Column({ type: 'varchar', length: 100, nullable: true, default: null })
+  readonly wave_id!: string | null;
+}
+
+@Entity(DROP_PINS_TABLE)
+export class DropPinEntity {
+  @PrimaryColumn({ type: 'varchar', length: 100, nullable: false })
+  @Index()
+  readonly drop_id!: string;
+  @Index()
+  @PrimaryColumn({ type: 'varchar', length: 100, nullable: false })
+  readonly pinner_id!: string;
+  @Column({ type: 'bigint', nullable: false })
+  @Index()
+  readonly timestamp!: number;
+  @Index()
+  @Column({ type: 'varchar', length: 100, nullable: false })
   readonly wave_id!: string | null;
 }

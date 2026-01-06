@@ -9,6 +9,7 @@ import {
   DropMentionEntity,
   DropMetadataEntity,
   DropPartEntity,
+  DropPinEntity,
   DropReferencedNftEntity,
   DropType
 } from '../entities/IDrop';
@@ -17,6 +18,7 @@ import {
   DELETED_DROPS_TABLE,
   DROP_MEDIA_TABLE,
   DROP_METADATA_TABLE,
+  DROP_PINS_TABLE,
   DROP_REAL_VOTER_VOTE_IN_TIME_TABLE,
   DROP_REFERENCED_NFTS_TABLE,
   DROP_RELATIONS_TABLE,
@@ -53,6 +55,7 @@ import { ProfileActivityLog } from '../entities/IProfileActivityLog';
 import { assertUnreachable } from '../assertions';
 import { WaveDecisionWinnerDropEntity } from '../entities/IWaveDecision';
 import { WinnerDropVoterVoteEntity } from '../entities/IWinnerDropVoterVote';
+import { collections } from '../collections';
 
 const mysql = require('mysql');
 
@@ -1535,6 +1538,271 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       ctx.timer?.stop(
         `${this.constructor.name}->searchDropsContainingPhraseInWave`
       );
+    }
+  }
+
+  public async countPinsOfDrops(
+    dropIds: string[],
+    ctx: RequestContext
+  ): Promise<Record<string, number>> {
+    try {
+      ctx.timer?.start(`${this.constructor.name}->countPinsOfDrops`);
+      if (!dropIds.length) {
+        return {};
+      }
+      const res = await this.db.execute<{ drop_id: string; cnt: number }>(
+        `
+          select drop_id, count(*) as cnt from ${DROP_PINS_TABLE} where drop_id in (:dropIds) group by 1
+        `,
+        { dropIds },
+        { wrappedConnection: ctx.connection }
+      );
+      return res.reduce(
+        (acc, it) => {
+          acc[it.drop_id] = +it.cnt;
+          return acc;
+        },
+        {} as Record<string, number>
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->countPinsOfDrops`);
+    }
+  }
+
+  public async getPinsOfUser(
+    dropIds: string[],
+    identityId: string,
+    ctx: RequestContext
+  ): Promise<Set<string>> {
+    try {
+      ctx.timer?.start(`${this.constructor.name}->getPinsOfUser`);
+      if (!dropIds.length) {
+        return new Set<string>();
+      }
+      const res = await this.db.execute<{ drop_id: string }>(
+        `
+          select drop_id from ${DROP_PINS_TABLE} where pinner_id = :identityId and drop_id in (:dropIds)
+        `,
+        { dropIds, identityId },
+        { wrappedConnection: ctx.connection }
+      );
+      return collections.toSet(res.map((it) => it.drop_id));
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->getPinsOfUser`);
+    }
+  }
+
+  public async getPinnedDrops(
+    {
+      wave_id,
+      eligibile_groups,
+      limit,
+      offset,
+      pinner_id,
+      author_id,
+      min_pins,
+      order_by,
+      order
+    }: {
+      wave_id: string | null;
+      eligibile_groups: string[];
+      limit: number;
+      offset: number;
+      pinner_id: string | null;
+      author_id: string | null;
+      min_pins: number | null;
+      order_by:
+        | 'last_pin_timestamp'
+        | 'first_pin_timestamp'
+        | 'drop_created_at'
+        | 'pins_count';
+      order: 'ASC' | 'DESC';
+    },
+    ctx: RequestContext
+  ): Promise<DropEntity[]> {
+    try {
+      ctx.timer?.start(`${this.constructor.name}->getPinnedDropsOfWave`);
+      const aggregateSql = `
+        select 
+          d.id as drop_id,
+          d.created_at as drop_created_at,
+          count(*) as pins_count, 
+          min(p.timestamp) as first_pin_timestamp, 
+          max(p.timestamp) as last_pin_timestamp,
+          sum(if(p.pinner_id = :pinner_id or :pinner_id is null, 1, 0)) as includes_pinner
+        from ${DROPS_TABLE} d 
+        JOIN ${DROP_PINS_TABLE} p on p.drop_id = d.id
+        join ${WAVES_TABLE} w on w.id = d.wave_id
+        where (w.visibility_group_id is null ${eligibile_groups.length ? `or w.visibility_group_id in (:eligibile_groups)` : ''})
+        ${author_id ? ` and d.author_id = :author_id ` : ''}
+        ${wave_id ? ` and d.wave_id = :wave_id ` : ''}
+        group by 1, 2
+      `;
+      const sql = `
+        with pins_aggregate as (${aggregateSql}) 
+        select d.* from pins_aggregate a
+        join ${DROPS_TABLE} d on a.drop_id = d.id
+        where a.includes_pinner > 0
+        ${min_pins !== null ? ` and a.pins_count >= :min_pins ` : ''}
+        order by ${order_by} ${order} limit :limit offset :offset
+      `;
+      return await this.db.execute<DropEntity>(
+        sql,
+        {
+          wave_id,
+          eligibile_groups,
+          limit,
+          offset,
+          pinner_id,
+          author_id,
+          min_pins,
+          order_by,
+          order
+        },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->getPinnedDropsOfWave`);
+    }
+  }
+
+  public async countPinnedDrops(
+    {
+      wave_id,
+      pinner_id,
+      author_id,
+      eligibile_groups,
+      min_pins
+    }: {
+      wave_id: string | null;
+      eligibile_groups: string[];
+      pinner_id: string | null;
+      author_id: string | null;
+      min_pins: number | null;
+    },
+    ctx: RequestContext
+  ): Promise<number> {
+    try {
+      ctx.timer?.start(`${this.constructor.name}->countPinnedDrops`);
+      const aggregateSql = `
+        select 
+          d.id as drop_id,
+          d.created_at as drop_created_at,
+          count(*) as pins_count, 
+          min(p.timestamp) as first_pin_timestamp, 
+          max(p.timestamp) as last_pin_timestamp,
+          sum(if(p.pinner_id = :pinner_id or :pinner_id is null, 1, 0)) as includes_pinner
+        from ${DROPS_TABLE} d 
+        join ${DROP_PINS_TABLE} p on p.drop_id = d.id
+        join ${WAVES_TABLE} w on w.id = d.wave_id
+        where (w.visibility_group_id is null ${eligibile_groups.length ? `or w.visibility_group_id in (:eligibile_groups)` : ''})
+        ${author_id ? ` and d.author_id = :author_id ` : ''}
+        ${wave_id ? ` and d.wave_id = :wave_id ` : ''}
+        group by 1, 2 
+      `;
+      const sql = `
+        with pins_aggregate as (${aggregateSql}) 
+        select count(a.drop_id) as cnt from pins_aggregate a
+        where a.includes_pinner > 0
+        ${min_pins !== null ? ` and a.pins_count >= :min_pins ` : ''}
+      `;
+      const res = await this.db.oneOrNull<{ cnt: number }>(
+        sql,
+        {
+          wave_id,
+          pinner_id,
+          author_id,
+          min_pins,
+          eligibile_groups
+        },
+        { wrappedConnection: ctx.connection }
+      );
+      return res?.cnt ?? 0;
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->countPinnedDrops`);
+    }
+  }
+
+  async pinDrop(
+    {
+      drop_id,
+      pinner_id,
+      wave_id
+    }: { drop_id: string; pinner_id: string; wave_id: string },
+    ctx: RequestContext
+  ) {
+    await this.db.execute(
+      `insert into ${DROP_PINS_TABLE} (drop_id, pinner_id, wave_id, timestamp) values (:drop_id, :pinner_id, :wave_id, :now) on duplicate key update pinner_id = values(pinner_id)`,
+      { drop_id, pinner_id, now: Time.currentMillis(), wave_id },
+      { wrappedConnection: ctx.connection }
+    );
+  }
+
+  async unpinDrop(
+    { drop_id, pinner_id }: { drop_id: string; pinner_id: string },
+    ctx: RequestContext
+  ) {
+    await this.db.execute(
+      `delete from ${DROP_PINS_TABLE} where drop_id = :drop_id and pinner_id = :pinner_id`,
+      { drop_id, pinner_id },
+      { wrappedConnection: ctx.connection }
+    );
+  }
+
+  async getDropsPins(
+    {
+      drop_id,
+      order_by,
+      order,
+      limit,
+      offset
+    }: {
+      drop_id: string;
+      order_by: 'timestamp';
+      order: 'ASC' | 'DESC';
+      limit: number;
+      offset: number;
+    },
+    ctx: RequestContext
+  ): Promise<DropPinEntity[]> {
+    try {
+      ctx.timer?.start(`${this.constructor.name}->getDropsPins`);
+      return await this.db.execute<DropPinEntity>(
+        `select * from ${DROP_PINS_TABLE} where drop_id = :drop_id order by ${order_by} ${order} limit :limit offset :offset`,
+        {
+          drop_id,
+          order_by,
+          order,
+          limit,
+          offset
+        },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->getDropsPins`);
+    }
+  }
+
+  async countDropsPins(
+    {
+      drop_id
+    }: {
+      drop_id: string;
+    },
+    ctx: RequestContext
+  ): Promise<number> {
+    try {
+      ctx.timer?.start(`${this.constructor.name}->countDropsPins`);
+      const res = await this.db.oneOrNull<{ cnt: number }>(
+        `select count(*) as cnt from ${DROP_PINS_TABLE} where drop_id = :drop_id`,
+        {
+          drop_id
+        },
+        { wrappedConnection: ctx.connection }
+      );
+      return res?.cnt ?? 0;
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->countDropsPins`);
     }
   }
 }
