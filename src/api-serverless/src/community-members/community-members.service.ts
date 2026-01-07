@@ -50,6 +50,8 @@ export class CommunityMembersService {
           tdh_rate: member.tdh_rate,
           xtdh: member.xtdh,
           xtdh_rate: member.xtdh_rate,
+          xtdh_outgoing: member.xtdh_outgoing,
+          xtdh_incoming: member.xtdh_incoming,
           combined_tdh: member.combined_tdh,
           rep: member.rep,
           cic: member.cic,

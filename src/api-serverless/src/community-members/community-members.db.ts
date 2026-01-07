@@ -59,6 +59,8 @@ export class CommunityMembersDb extends LazyDbAccessCompatibleService {
         cm.primary_address as wallet,
         cm.xtdh as xtdh,
         cm.xtdh_rate as xtdh_rate,
+        cm.granted_xtdh as xtdh_outgoing,
+        (cm.xtdh - (cm.produced_xtdh - cm.granted_xtdh)) as xtdh_incoming,
         (cm.tdh + cm.xtdh) as combined_tdh,
         cm.cic as cic,
         cm.rep as rep,

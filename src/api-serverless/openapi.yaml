@@ -5388,6 +5388,8 @@ components:
         - tdh_rate
         - xtdh
         - xtdh_rate
+        - xtdh_outgoing
+        - xtdh_incoming
         - combined_tdh
         - rep
         - cic
@@ -5412,6 +5414,12 @@ components:
           type: number
           format: double
         xtdh_rate:
+          type: number
+          format: double
+        xtdh_outgoing:
+          type: number
+          format: double
+        xtdh_incoming:
           type: number
           format: double
         combined_tdh:
