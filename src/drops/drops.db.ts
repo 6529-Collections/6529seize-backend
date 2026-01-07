@@ -1606,6 +1606,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       author_id,
       min_boosts,
       order_by,
+      count_only_boosts_after,
       order
     }: {
       wave_id: string | null;
@@ -1620,6 +1621,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         | 'first_boosted_at'
         | 'drop_created_at'
         | 'boosts';
+      count_only_boosts_after: number;
       order: 'ASC' | 'DESC';
     },
     ctx: RequestContext
@@ -1637,7 +1639,9 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         from ${DROPS_TABLE} d 
         JOIN ${DROP_BOOSTS_TABLE} p on p.drop_id = d.id
         join ${WAVES_TABLE} w on w.id = d.wave_id
-        where (w.visibility_group_id is null ${eligibile_groups.length ? `or w.visibility_group_id in (:eligibile_groups)` : ''})
+        where 
+        where boosted_at > :count_only_boosts_after
+        and (w.visibility_group_id is null ${eligibile_groups.length ? `or w.visibility_group_id in (:eligibile_groups)` : ''})
         ${author_id ? ` and d.author_id = :author_id ` : ''}
         ${wave_id ? ` and d.wave_id = :wave_id ` : ''}
         group by 1, 2
@@ -1660,6 +1664,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
           author_id,
           min_boosts,
           order_by,
+          count_only_boosts_after,
           order
         },
         { wrappedConnection: ctx.connection }
@@ -1675,13 +1680,15 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       booster_id,
       author_id,
       eligibile_groups,
-      min_boosts
+      min_boosts,
+      count_only_boosts_after
     }: {
       wave_id: string | null;
       eligibile_groups: string[];
       booster_id: string | null;
       author_id: string | null;
       min_boosts: number | null;
+      count_only_boosts_after: number;
     },
     ctx: RequestContext
   ): Promise<number> {
@@ -1698,7 +1705,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         from ${DROPS_TABLE} d 
         join ${DROP_BOOSTS_TABLE} p on p.drop_id = d.id
         join ${WAVES_TABLE} w on w.id = d.wave_id
-        where (w.visibility_group_id is null ${eligibile_groups.length ? `or w.visibility_group_id in (:eligibile_groups)` : ''})
+        where boosted_at > :count_only_boosts_after
+        and (w.visibility_group_id is null ${eligibile_groups.length ? `or w.visibility_group_id in (:eligibile_groups)` : ''})
         ${author_id ? ` and d.author_id = :author_id ` : ''}
         ${wave_id ? ` and d.wave_id = :wave_id ` : ''}
         group by 1, 2 
@@ -1715,7 +1723,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
           booster_id,
           author_id,
           min_boosts,
-          eligibile_groups
+          eligibile_groups,
+          count_only_boosts_after
         },
         { wrappedConnection: ctx.connection }
       );

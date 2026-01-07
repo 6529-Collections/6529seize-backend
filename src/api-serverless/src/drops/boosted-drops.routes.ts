@@ -40,6 +40,7 @@ const FindBoostedDropsRequestSchema = Joi.object<FindBoostedDropsRequest>({
   booster: Joi.string().default(null),
   wave_id: Joi.string().default(null),
   min_boosts: Joi.number().integer().default(null),
+  count_only_boosts_after: Joi.number().integer().positive().default(1),
   page_size: Joi.number()
     .integer()
     .default(DEFAULT_PAGE_SIZE)

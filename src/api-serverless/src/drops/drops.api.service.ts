@@ -999,7 +999,8 @@ export class DropsApiService {
             author_id: authorId,
             order_by: req.sort,
             order: req.sort_direction,
-            min_boosts: req.min_boosts
+            min_boosts: req.min_boosts,
+            count_only_boosts_after: req.count_only_boosts_after
           },
           ctx
         ),
@@ -1009,7 +1010,8 @@ export class DropsApiService {
             eligibile_groups: group_ids_user_is_eligible_for,
             booster_id: boosterId,
             author_id: authorId,
-            min_boosts: req.min_boosts
+            min_boosts: req.min_boosts,
+            count_only_boosts_after: req.count_only_boosts_after
           },
           ctx
         )
@@ -1043,6 +1045,7 @@ export interface FindBoostedDropsRequest {
   booster: string | null;
   wave_id: string | null;
   min_boosts: number | null;
+  count_only_boosts_after: number;
   page_size: number;
   page: number;
   sort_direction: ApiPageSortDirection;
