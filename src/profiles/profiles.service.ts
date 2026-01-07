@@ -393,6 +393,7 @@ export class ProfilesService {
             connectionHolder
           );
         }
+        await this.mergeBoosts(sourceIdentity, target, connectionHolder);
         await profileActivityLogsDb.changeSourceProfileIdInLogs(
           {
             oldSourceId: sourceIdentity,
@@ -500,6 +501,17 @@ export class ProfilesService {
     connectionHolder: ConnectionWrapper<any>
   ) {
     await this.reactionsDb.mergeOnProfileIdChange(
+      { previous_id: sourceIdentity, new_id: target },
+      { connection: connectionHolder }
+    );
+  }
+
+  private async mergeBoosts(
+    sourceIdentity: string,
+    target: string | undefined,
+    connectionHolder: ConnectionWrapper<any>
+  ) {
+    await this.identitiesDb.migrateBoosterIdsInBoosts(
       { previous_id: sourceIdentity, new_id: target },
       { connection: connectionHolder }
     );

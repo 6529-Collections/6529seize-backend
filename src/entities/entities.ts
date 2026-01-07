@@ -20,7 +20,7 @@ export {
   DropMentionEntity,
   DropMetadataEntity,
   DropPartEntity,
-  DropPinEntity,
+  DropBoostEntity,
   DropReferencedNftEntity
 } from './IDrop';
 export { DropRankEntity } from './IDropRank';

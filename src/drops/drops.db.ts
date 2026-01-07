@@ -4,21 +4,21 @@ import {
   LazyDbAccessCompatibleService
 } from '../sql-executor';
 import {
+  DropBoostEntity,
   DropEntity,
   DropMediaEntity,
   DropMentionEntity,
   DropMetadataEntity,
   DropPartEntity,
-  DropPinEntity,
   DropReferencedNftEntity,
   DropType
 } from '../entities/IDrop';
 import {
   ACTIVITY_EVENTS_TABLE,
   DELETED_DROPS_TABLE,
+  DROP_BOOSTS_TABLE,
   DROP_MEDIA_TABLE,
   DROP_METADATA_TABLE,
-  DROP_PINS_TABLE,
   DROP_REAL_VOTER_VOTE_IN_TIME_TABLE,
   DROP_REFERENCED_NFTS_TABLE,
   DROP_RELATIONS_TABLE,
@@ -1541,18 +1541,18 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     }
   }
 
-  public async countPinsOfDrops(
+  public async countBoostsOfGivenDrops(
     dropIds: string[],
     ctx: RequestContext
   ): Promise<Record<string, number>> {
     try {
-      ctx.timer?.start(`${this.constructor.name}->countPinsOfDrops`);
+      ctx.timer?.start(`${this.constructor.name}->countBoostsOfGivenDrops`);
       if (!dropIds.length) {
         return {};
       }
       const res = await this.db.execute<{ drop_id: string; cnt: number }>(
         `
-          select drop_id, count(*) as cnt from ${DROP_PINS_TABLE} where drop_id in (:dropIds) group by 1
+          select drop_id, count(*) as cnt from ${DROP_BOOSTS_TABLE} where drop_id in (:dropIds) group by 1
         `,
         { dropIds },
         { wrappedConnection: ctx.connection }
@@ -1565,42 +1565,46 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         {} as Record<string, number>
       );
     } finally {
-      ctx.timer?.stop(`${this.constructor.name}->countPinsOfDrops`);
+      ctx.timer?.stop(`${this.constructor.name}->countBoostsOfGivenDrops`);
     }
   }
 
-  public async getPinsOfUser(
+  public async whichOfGivenDropsAreBoostedByIdentity(
     dropIds: string[],
     identityId: string,
     ctx: RequestContext
   ): Promise<Set<string>> {
     try {
-      ctx.timer?.start(`${this.constructor.name}->getPinsOfUser`);
+      ctx.timer?.start(
+        `${this.constructor.name}->whichOfGivenDropsAreBoostedByIdentity`
+      );
       if (!dropIds.length) {
         return new Set<string>();
       }
       const res = await this.db.execute<{ drop_id: string }>(
         `
-          select drop_id from ${DROP_PINS_TABLE} where pinner_id = :identityId and drop_id in (:dropIds)
+          select drop_id from ${DROP_BOOSTS_TABLE} where booster_id = :identityId and drop_id in (:dropIds)
         `,
         { dropIds, identityId },
         { wrappedConnection: ctx.connection }
       );
       return collections.toSet(res.map((it) => it.drop_id));
     } finally {
-      ctx.timer?.stop(`${this.constructor.name}->getPinsOfUser`);
+      ctx.timer?.stop(
+        `${this.constructor.name}->whichOfGivenDropsAreBoostedByIdentity`
+      );
     }
   }
 
-  public async getPinnedDrops(
+  public async findBoostedDrops(
     {
       wave_id,
       eligibile_groups,
       limit,
       offset,
-      pinner_id,
+      booster_id,
       author_id,
-      min_pins,
+      min_boosts,
       order_by,
       order
     }: {
@@ -1608,30 +1612,30 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       eligibile_groups: string[];
       limit: number;
       offset: number;
-      pinner_id: string | null;
+      booster_id: string | null;
       author_id: string | null;
-      min_pins: number | null;
+      min_boosts: number | null;
       order_by:
-        | 'last_pin_timestamp'
-        | 'first_pin_timestamp'
+        | 'last_boosted_at'
+        | 'first_boosted_at'
         | 'drop_created_at'
-        | 'pins_count';
+        | 'boosts';
       order: 'ASC' | 'DESC';
     },
     ctx: RequestContext
   ): Promise<DropEntity[]> {
     try {
-      ctx.timer?.start(`${this.constructor.name}->getPinnedDropsOfWave`);
+      ctx.timer?.start(`${this.constructor.name}->findBoostedDrops`);
       const aggregateSql = `
         select 
           d.id as drop_id,
           d.created_at as drop_created_at,
-          count(*) as pins_count, 
-          min(p.timestamp) as first_pin_timestamp, 
-          max(p.timestamp) as last_pin_timestamp,
-          sum(if(p.pinner_id = :pinner_id or :pinner_id is null, 1, 0)) as includes_pinner
+          count(*) as boosts, 
+          min(p.boosted_at) as first_boosted_at, 
+          max(p.boosted_at) as last_boosted_at,
+          sum(if(p.booster_id = :booster_id or :booster_id is null, 1, 0)) as includes_booster
         from ${DROPS_TABLE} d 
-        JOIN ${DROP_PINS_TABLE} p on p.drop_id = d.id
+        JOIN ${DROP_BOOSTS_TABLE} p on p.drop_id = d.id
         join ${WAVES_TABLE} w on w.id = d.wave_id
         where (w.visibility_group_id is null ${eligibile_groups.length ? `or w.visibility_group_id in (:eligibile_groups)` : ''})
         ${author_id ? ` and d.author_id = :author_id ` : ''}
@@ -1639,11 +1643,10 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         group by 1, 2
       `;
       const sql = `
-        with pins_aggregate as (${aggregateSql}) 
-        select d.* from pins_aggregate a
+        with boosts_aggregate as (${aggregateSql}) select d.* from boosts_aggregate a
         join ${DROPS_TABLE} d on a.drop_id = d.id
-        where a.includes_pinner > 0
-        ${min_pins !== null ? ` and a.pins_count >= :min_pins ` : ''}
+        where a.includes_booster > 0
+        ${min_boosts !== null ? ` and a.boosts >= :min_boosts ` : ''}
         order by ${order_by} ${order} limit :limit offset :offset
       `;
       return await this.db.execute<DropEntity>(
@@ -1653,47 +1656,47 @@ export class DropsDb extends LazyDbAccessCompatibleService {
           eligibile_groups,
           limit,
           offset,
-          pinner_id,
+          booster_id,
           author_id,
-          min_pins,
+          min_boosts,
           order_by,
           order
         },
         { wrappedConnection: ctx.connection }
       );
     } finally {
-      ctx.timer?.stop(`${this.constructor.name}->getPinnedDropsOfWave`);
+      ctx.timer?.stop(`${this.constructor.name}->findBoostedDrops`);
     }
   }
 
-  public async countPinnedDrops(
+  public async countBoostedDrops(
     {
       wave_id,
-      pinner_id,
+      booster_id,
       author_id,
       eligibile_groups,
-      min_pins
+      min_boosts
     }: {
       wave_id: string | null;
       eligibile_groups: string[];
-      pinner_id: string | null;
+      booster_id: string | null;
       author_id: string | null;
-      min_pins: number | null;
+      min_boosts: number | null;
     },
     ctx: RequestContext
   ): Promise<number> {
     try {
-      ctx.timer?.start(`${this.constructor.name}->countPinnedDrops`);
+      ctx.timer?.start(`${this.constructor.name}->countBoostedDrops`);
       const aggregateSql = `
         select 
           d.id as drop_id,
           d.created_at as drop_created_at,
-          count(*) as pins_count, 
-          min(p.timestamp) as first_pin_timestamp, 
-          max(p.timestamp) as last_pin_timestamp,
-          sum(if(p.pinner_id = :pinner_id or :pinner_id is null, 1, 0)) as includes_pinner
+          count(*) as boosts, 
+          min(p.boosted_at) as first_boosted_at, 
+          max(p.boosted_at) as last_boosted_at,
+          sum(if(p.booster_id = :booster_id or :booster_id is null, 1, 0)) as includes_booster
         from ${DROPS_TABLE} d 
-        join ${DROP_PINS_TABLE} p on p.drop_id = d.id
+        join ${DROP_BOOSTS_TABLE} p on p.drop_id = d.id
         join ${WAVES_TABLE} w on w.id = d.wave_id
         where (w.visibility_group_id is null ${eligibile_groups.length ? `or w.visibility_group_id in (:eligibile_groups)` : ''})
         ${author_id ? ` and d.author_id = :author_id ` : ''}
@@ -1701,55 +1704,59 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         group by 1, 2 
       `;
       const sql = `
-        with pins_aggregate as (${aggregateSql}) 
-        select count(a.drop_id) as cnt from pins_aggregate a
-        where a.includes_pinner > 0
-        ${min_pins !== null ? ` and a.pins_count >= :min_pins ` : ''}
+        with boosts_aggregate as (${aggregateSql}) select count(a.drop_id) as cnt from boosts_aggregate a
+        where a.includes_booster > 0
+        ${min_boosts !== null ? ` and a.boosts >= :min_boosts ` : ''}
       `;
       const res = await this.db.oneOrNull<{ cnt: number }>(
         sql,
         {
           wave_id,
-          pinner_id,
+          booster_id,
           author_id,
-          min_pins,
+          min_boosts,
           eligibile_groups
         },
         { wrappedConnection: ctx.connection }
       );
       return res?.cnt ?? 0;
     } finally {
-      ctx.timer?.stop(`${this.constructor.name}->countPinnedDrops`);
+      ctx.timer?.stop(`${this.constructor.name}->countBoostedDrops`);
     }
   }
 
-  async pinDrop(
+  async boostDrop(
     {
       drop_id,
-      pinner_id,
+      booster_id,
       wave_id
-    }: { drop_id: string; pinner_id: string; wave_id: string },
+    }: { drop_id: string; booster_id: string; wave_id: string },
     ctx: RequestContext
   ) {
     await this.db.execute(
-      `insert into ${DROP_PINS_TABLE} (drop_id, pinner_id, wave_id, timestamp) values (:drop_id, :pinner_id, :wave_id, :now) on duplicate key update pinner_id = values(pinner_id)`,
-      { drop_id, pinner_id, now: Time.currentMillis(), wave_id },
+      `insert into ${DROP_BOOSTS_TABLE} (drop_id, booster_id, wave_id, boosted_at) values (:drop_id, :booster_id, :wave_id, :boosted_at) on duplicate key update booster_id = values(booster_id)`,
+      {
+        drop_id,
+        booster_id,
+        boosted_at: Time.currentMillis(),
+        wave_id
+      },
       { wrappedConnection: ctx.connection }
     );
   }
 
-  async unpinDrop(
-    { drop_id, pinner_id }: { drop_id: string; pinner_id: string },
+  async deleteDropBoost(
+    { drop_id, booster_id }: { drop_id: string; booster_id: string },
     ctx: RequestContext
   ) {
     await this.db.execute(
-      `delete from ${DROP_PINS_TABLE} where drop_id = :drop_id and pinner_id = :pinner_id`,
-      { drop_id, pinner_id },
+      `delete from ${DROP_BOOSTS_TABLE} where drop_id = :drop_id and booster_id = :booster_id`,
+      { drop_id, booster_id },
       { wrappedConnection: ctx.connection }
     );
   }
 
-  async getDropsPins(
+  async getDropBoosts(
     {
       drop_id,
       order_by,
@@ -1758,17 +1765,17 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       offset
     }: {
       drop_id: string;
-      order_by: 'timestamp';
+      order_by: 'boosted_at';
       order: 'ASC' | 'DESC';
       limit: number;
       offset: number;
     },
     ctx: RequestContext
-  ): Promise<DropPinEntity[]> {
+  ): Promise<DropBoostEntity[]> {
     try {
-      ctx.timer?.start(`${this.constructor.name}->getDropsPins`);
-      return await this.db.execute<DropPinEntity>(
-        `select * from ${DROP_PINS_TABLE} where drop_id = :drop_id order by ${order_by} ${order} limit :limit offset :offset`,
+      ctx.timer?.start(`${this.constructor.name}->getDropBoosts`);
+      return await this.db.execute<DropBoostEntity>(
+        `select * from ${DROP_BOOSTS_TABLE} where drop_id = :drop_id order by ${order_by} ${order} limit :limit offset :offset`,
         {
           drop_id,
           order_by,
@@ -1779,11 +1786,11 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         { wrappedConnection: ctx.connection }
       );
     } finally {
-      ctx.timer?.stop(`${this.constructor.name}->getDropsPins`);
+      ctx.timer?.stop(`${this.constructor.name}->getDropBoosts`);
     }
   }
 
-  async countDropsPins(
+  async countDropBoosts(
     {
       drop_id
     }: {
@@ -1792,9 +1799,9 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     ctx: RequestContext
   ): Promise<number> {
     try {
-      ctx.timer?.start(`${this.constructor.name}->countDropsPins`);
+      ctx.timer?.start(`${this.constructor.name}->countDropBoosts`);
       const res = await this.db.oneOrNull<{ cnt: number }>(
-        `select count(*) as cnt from ${DROP_PINS_TABLE} where drop_id = :drop_id`,
+        `select count(*) as cnt from ${DROP_BOOSTS_TABLE} where drop_id = :drop_id`,
         {
           drop_id
         },
@@ -1802,7 +1809,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       );
       return res?.cnt ?? 0;
     } finally {
-      ctx.timer?.stop(`${this.constructor.name}->countDropsPins`);
+      ctx.timer?.stop(`${this.constructor.name}->countDropBoosts`);
     }
   }
 }
