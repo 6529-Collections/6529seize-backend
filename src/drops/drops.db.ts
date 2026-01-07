@@ -1639,8 +1639,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         from ${DROPS_TABLE} d 
         JOIN ${DROP_BOOSTS_TABLE} p on p.drop_id = d.id
         join ${WAVES_TABLE} w on w.id = d.wave_id
-        where 
-        where boosted_at > :count_only_boosts_after
+        where p.boosted_at > :count_only_boosts_after
         and (w.visibility_group_id is null ${eligibile_groups.length ? `or w.visibility_group_id in (:eligibile_groups)` : ''})
         ${author_id ? ` and d.author_id = :author_id ` : ''}
         ${wave_id ? ` and d.wave_id = :wave_id ` : ''}
@@ -1705,7 +1704,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         from ${DROPS_TABLE} d 
         join ${DROP_BOOSTS_TABLE} p on p.drop_id = d.id
         join ${WAVES_TABLE} w on w.id = d.wave_id
-        where boosted_at > :count_only_boosts_after
+        where p.boosted_at > :count_only_boosts_after
         and (w.visibility_group_id is null ${eligibile_groups.length ? `or w.visibility_group_id in (:eligibile_groups)` : ''})
         ${author_id ? ` and d.author_id = :author_id ` : ''}
         ${wave_id ? ` and d.wave_id = :wave_id ` : ''}
