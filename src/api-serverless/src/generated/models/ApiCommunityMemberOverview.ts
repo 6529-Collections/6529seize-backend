@@ -20,6 +20,8 @@ export class ApiCommunityMemberOverview {
     'tdh_rate': number;
     'xtdh': number;
     'xtdh_rate': number;
+    'xtdh_outgoing': number;
+    'xtdh_incoming': number;
     'combined_tdh': number;
     'rep': number;
     'cic': number;
@@ -69,6 +71,18 @@ export class ApiCommunityMemberOverview {
         {
             "name": "xtdh_rate",
             "baseName": "xtdh_rate",
+            "type": "number",
+            "format": "double"
+        },
+        {
+            "name": "xtdh_outgoing",
+            "baseName": "xtdh_outgoing",
+            "type": "number",
+            "format": "double"
+        },
+        {
+            "name": "xtdh_incoming",
+            "baseName": "xtdh_incoming",
             "type": "number",
             "format": "double"
         },
