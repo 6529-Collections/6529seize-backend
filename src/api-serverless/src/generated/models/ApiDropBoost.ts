@@ -13,28 +13,28 @@
 import { ApiProfileMin } from '../models/ApiProfileMin';
 import { HttpFile } from '../http/http';
 
-export class ApiDropPin {
-    'pinner': ApiProfileMin;
-    'pinned_at': number | null;
+export class ApiDropBoost {
+    'booster': ApiProfileMin;
+    'boosted_at': number | null;
 
     static readonly discriminator: string | undefined = undefined;
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
         {
-            "name": "pinner",
-            "baseName": "pinner",
+            "name": "booster",
+            "baseName": "booster",
             "type": "ApiProfileMin",
             "format": ""
         },
         {
-            "name": "pinned_at",
-            "baseName": "pinned_at",
+            "name": "boosted_at",
+            "baseName": "boosted_at",
             "type": "number",
             "format": "int64"
         }    ];
 
     static getAttributeTypeMap() {
-        return ApiDropPin.attributeTypeMap;
+        return ApiDropBoost.attributeTypeMap;
     }
 
     public constructor() {

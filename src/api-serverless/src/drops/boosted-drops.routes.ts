@@ -5,7 +5,7 @@ import { ApiResponse } from '../api-response';
 import { asyncRouter } from '../async.router';
 import { getAuthenticationContext, maybeAuthenticatedUser } from '../auth/auth';
 import { getValidatedByJoiOrThrow } from '../validation';
-import { dropsService, FindPinnedDropsRequest } from './drops.api.service';
+import { dropsService, FindBoostedDropsRequest } from './drops.api.service';
 import { ApiPageSortDirection } from '../generated/models/ApiPageSortDirection';
 import { DEFAULT_MAX_SIZE, DEFAULT_PAGE_SIZE } from '../page-request';
 import { ApiDropsPage } from '../generated/models/ApiDropsPage';
@@ -16,18 +16,18 @@ router.get(
   '/',
   maybeAuthenticatedUser(),
   async (
-    req: Request<any, any, FindPinnedDropsRequest, any>,
+    req: Request<any, any, FindBoostedDropsRequest, any>,
     res: Response<ApiResponse<ApiDropsPage>>
   ) => {
     const timer = Timer.getFromRequest(req);
 
     const authenticationContext = await getAuthenticationContext(req, timer);
     const ctx = { timer, authenticationContext };
-    const searchRequest: FindPinnedDropsRequest = getValidatedByJoiOrThrow(
+    const searchRequest: FindBoostedDropsRequest = getValidatedByJoiOrThrow(
       req.query,
-      FindPinnedDropsRequestSchema
+      FindBoostedDropsRequestSchema
     );
-    const resultingPage = await dropsService.findPinnedDrops(
+    const resultingPage = await dropsService.findBoostedDrops(
       searchRequest,
       ctx
     );
@@ -35,11 +35,11 @@ router.get(
   }
 );
 
-const FindPinnedDropsRequestSchema = Joi.object<FindPinnedDropsRequest>({
+const FindBoostedDropsRequestSchema = Joi.object<FindBoostedDropsRequest>({
   author: Joi.string().default(null),
-  pinner: Joi.string().default(null),
+  booster: Joi.string().default(null),
   wave_id: Joi.string().default(null),
-  min_pins: Joi.number().integer().default(null),
+  min_boosts: Joi.number().integer().default(null),
   page_size: Joi.number()
     .integer()
     .default(DEFAULT_PAGE_SIZE)
@@ -50,13 +50,8 @@ const FindPinnedDropsRequestSchema = Joi.object<FindPinnedDropsRequest>({
     .valid(...Object.values(ApiPageSortDirection))
     .default(ApiPageSortDirection.Desc),
   sort: Joi.string()
-    .valid(
-      'last_pin_timestamp',
-      'first_pin_timestamp',
-      'drop_created_at',
-      'pins_count'
-    )
-    .default('last_pin_timestamp')
+    .valid('last_boosted_at', 'first_boosted_at', 'drop_created_at', 'boosts')
+    .default('last_boosted_at')
 });
 
 export default router;

@@ -38,11 +38,11 @@ import {
   NewDropSchema,
   UpdateDropSchema
 } from './drop.validator';
-import { dropsService, GetDropPinsRequest } from './drops.api.service';
+import { dropsService, GetDropsBoostsRequest } from './drops.api.service';
 import { reactionsService } from './reactions.service';
-import { ApiDropPinsPage } from '../generated/models/ApiDropPinsPage';
 import { ApiPageSortDirection } from '../generated/models/ApiPageSortDirection';
 import { DEFAULT_MAX_SIZE, DEFAULT_PAGE_SIZE } from '../page-request';
+import { ApiDropBoostsPage } from '../generated/models/ApiDropBoostsPage';
 
 const router = asyncRouter();
 
@@ -527,28 +527,28 @@ router.post(
 );
 
 router.get(
-  '/:drop_id/pins',
+  '/:drop_id/boosts',
   maybeAuthenticatedUser(),
   async (
     req: Request<
       { drop_id: string },
       any,
       any,
-      Omit<GetDropPinsRequest, 'drop_id'>,
+      Omit<GetDropsBoostsRequest, 'drop_id'>,
       any
     >,
-    res: Response<ApiResponse<ApiDropPinsPage>>
+    res: Response<ApiResponse<ApiDropBoostsPage>>
   ) => {
     const timer = Timer.getFromRequest(req);
 
     const authenticationContext = await getAuthenticationContext(req, timer);
     const dropId = req.params.drop_id;
     const ctx = { timer, authenticationContext };
-    const searchRequest: GetDropPinsRequest = getValidatedByJoiOrThrow(
+    const searchRequest: GetDropsBoostsRequest = getValidatedByJoiOrThrow(
       { drop_id: dropId, ...req.query },
-      GetDropPinsRequestSchema
+      GetDropBoostsRequestSchema
     );
-    const resultingPage = await dropsService.findPageOfDropPins(
+    const resultingPage = await dropsService.findPageOfDropBoosts(
       searchRequest,
       ctx
     );
@@ -557,7 +557,7 @@ router.get(
 );
 
 router.post(
-  '/:drop_id/pins',
+  '/:drop_id/boosts',
   needsAuthenticatedUser(),
   async (
     req: Request<{ drop_id: string }, any, any, any, any>,
@@ -568,13 +568,13 @@ router.post(
     const authenticationContext = await getAuthenticationContext(req, timer);
     const dropId = req.params.drop_id;
     const ctx = { timer, authenticationContext };
-    await dropsService.pinDrop(dropId, ctx);
+    await dropsService.boostDrop(dropId, ctx);
     res.send({});
   }
 );
 
 router.delete(
-  '/:drop_id/pins',
+  '/:drop_id/boosts',
   needsAuthenticatedUser(),
   async (
     req: Request<{ drop_id: string }, any, any, any, any>,
@@ -585,7 +585,7 @@ router.delete(
     const authenticationContext = await getAuthenticationContext(req, timer);
     const dropId = req.params.drop_id;
     const ctx = { timer, authenticationContext };
-    await dropsService.unpinDrop(dropId, ctx);
+    await dropsService.deleteDropBoost(dropId, ctx);
     res.send({});
   }
 );
@@ -637,7 +637,7 @@ const DropSubscriptionActionsSchema = Joi.object<ApiDropSubscriptionActions>({
     .required()
 });
 
-const GetDropPinsRequestSchema = Joi.object<GetDropPinsRequest>({
+const GetDropBoostsRequestSchema = Joi.object<GetDropsBoostsRequest>({
   drop_id: Joi.string().required(),
   page_size: Joi.number()
     .integer()
@@ -648,7 +648,7 @@ const GetDropPinsRequestSchema = Joi.object<GetDropPinsRequest>({
   sort_direction: Joi.string()
     .valid(...Object.values(ApiPageSortDirection))
     .default(ApiPageSortDirection.Desc),
-  sort: Joi.string().valid('timestamp').default('timestamp')
+  sort: Joi.string().valid('boosted_at').default('boosted_at')
 });
 
 async function assertDropIsCorrectlySigned(

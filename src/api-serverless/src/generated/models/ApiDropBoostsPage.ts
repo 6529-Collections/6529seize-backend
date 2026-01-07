@@ -10,11 +10,11 @@
  * Do not edit the class manually.
  */
 
-import { ApiDropPin } from '../models/ApiDropPin';
+import { ApiDropBoost } from '../models/ApiDropBoost';
 import { HttpFile } from '../http/http';
 
-export class ApiDropPinsPage {
-    'data': Array<ApiDropPin>;
+export class ApiDropBoostsPage {
+    'data': Array<ApiDropBoost>;
     'count': number;
     'page': number;
     'next': boolean;
@@ -25,7 +25,7 @@ export class ApiDropPinsPage {
         {
             "name": "data",
             "baseName": "data",
-            "type": "Array<ApiDropPin>",
+            "type": "Array<ApiDropBoost>",
             "format": ""
         },
         {
@@ -48,7 +48,7 @@ export class ApiDropPinsPage {
         }    ];
 
     static getAttributeTypeMap() {
-        return ApiDropPinsPage.attributeTypeMap;
+        return ApiDropBoostsPage.attributeTypeMap;
     }
 
     public constructor() {

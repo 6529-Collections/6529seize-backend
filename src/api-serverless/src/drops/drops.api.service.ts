@@ -57,8 +57,8 @@ import { ApiDropMedia } from '../generated/models/ApiDropMedia';
 import { enums } from '../../../enums';
 import { ApiDropWithoutWavesPageWithoutCount } from '../generated/models/ApiDropWithoutWavesPageWithoutCount';
 import { ApiPageSortDirection } from '../generated/models/ApiPageSortDirection';
-import { ApiDropPinsPage } from '../generated/models/ApiDropPinsPage';
 import { ApiDropsPage } from '../generated/models/ApiDropsPage';
+import { ApiDropBoostsPage } from '../generated/models/ApiDropBoostsPage';
 
 export class DropsApiService {
   constructor(
@@ -883,16 +883,16 @@ export class DropsApiService {
     };
   }
 
-  async findPageOfDropPins(
-    searchRequest: GetDropPinsRequest,
+  async findPageOfDropBoosts(
+    searchRequest: GetDropsBoostsRequest,
     ctx: RequestContext
-  ): Promise<ApiDropPinsPage> {
+  ): Promise<ApiDropBoostsPage> {
     try {
-      ctx.timer?.start(`${this.constructor.name}->findPageOfDropPins`);
+      ctx.timer?.start(`${this.constructor.name}->findPageOfDropBoosts`);
       await this.findDropByIdOrThrow({ dropId: searchRequest.drop_id }, ctx);
       const offset = searchRequest.page_size * (searchRequest.page - 1);
       const [data, count] = await Promise.all([
-        this.dropsDb.getDropsPins(
+        this.dropsDb.getDropBoosts(
           {
             drop_id: searchRequest.drop_id,
             limit: searchRequest.page_size,
@@ -902,70 +902,70 @@ export class DropsApiService {
           },
           ctx
         ),
-        this.dropsDb.countDropsPins({ drop_id: searchRequest.drop_id }, ctx)
+        this.dropsDb.countDropBoosts({ drop_id: searchRequest.drop_id }, ctx)
       ]);
-      const pinnerProfiles = await this.identityFetcher.getOverviewsByIds(
-        data.map((it) => it.pinner_id),
+      const boostersProfiles = await this.identityFetcher.getOverviewsByIds(
+        data.map((it) => it.booster_id),
         ctx
       );
       return {
         data: data.map((it) => ({
-          pinner: pinnerProfiles[it.pinner_id],
-          pinned_at: it.timestamp
+          booster: boostersProfiles[it.booster_id],
+          boosted_at: it.boosted_at
         })),
         count,
         page: searchRequest.page,
         next: count > searchRequest.page_size * searchRequest.page
       };
     } finally {
-      ctx.timer?.stop(`${this.constructor.name}->findPageOfDropPins`);
+      ctx.timer?.stop(`${this.constructor.name}->findPageOfDropBoosts`);
     }
   }
 
-  async pinDrop(dropId: string, ctx: RequestContext) {
+  async boostDrop(dropId: string, ctx: RequestContext) {
     try {
-      ctx.timer?.start(`${this.constructor.name}->pinDrop`);
-      const pinnerId = ctx.authenticationContext?.getActingAsId();
-      if (!pinnerId) {
+      ctx.timer?.start(`${this.constructor.name}->boostDrop`);
+      const boosterId = ctx.authenticationContext?.getActingAsId();
+      if (!boosterId) {
         throw new ForbiddenException(
-          `Can't pin a drop without logging in and creating a profile`
+          `Can't boost a drop without logging in and creating a profile`
         );
       }
       const apiDrop = await this.findDropByIdOrThrow({ dropId }, ctx);
-      await this.dropsDb.pinDrop(
-        { drop_id: dropId, pinner_id: pinnerId, wave_id: apiDrop.wave.id },
+      await this.dropsDb.boostDrop(
+        { drop_id: dropId, booster_id: boosterId, wave_id: apiDrop.wave.id },
         ctx
       );
     } finally {
-      ctx.timer?.stop(`${this.constructor.name}->pinDrop`);
+      ctx.timer?.stop(`${this.constructor.name}->boostDrop`);
     }
   }
 
-  async unpinDrop(dropId: string, ctx: RequestContext) {
+  async deleteDropBoost(dropId: string, ctx: RequestContext) {
     try {
-      ctx.timer?.start(`${this.constructor.name}->unpinDrop`);
-      const pinnerId = ctx.authenticationContext?.getActingAsId();
-      if (!pinnerId) {
+      ctx.timer?.start(`${this.constructor.name}->deleteDropBoost`);
+      const boosterId = ctx.authenticationContext?.getActingAsId();
+      if (!boosterId) {
         throw new ForbiddenException(
-          `Can't unpin a drop without logging in and creating a profile`
+          `Can't delete a boost from drop without logging in and creating a profile`
         );
       }
       await this.findDropByIdOrThrow({ dropId }, ctx);
-      await this.dropsDb.unpinDrop(
-        { drop_id: dropId, pinner_id: pinnerId },
+      await this.dropsDb.deleteDropBoost(
+        { drop_id: dropId, booster_id: boosterId },
         ctx
       );
     } finally {
-      ctx.timer?.stop(`${this.constructor.name}->unpinDrop`);
+      ctx.timer?.stop(`${this.constructor.name}->deleteDropBoost`);
     }
   }
 
-  async findPinnedDrops(
-    searchRequest: FindPinnedDropsRequest,
+  async findBoostedDrops(
+    req: FindBoostedDropsRequest,
     ctx: RequestContext
   ): Promise<ApiDropsPage> {
     try {
-      ctx.timer?.start(`${this.constructor.name}->findPinnedDrops`);
+      ctx.timer?.start(`${this.constructor.name}->findBoostedDrops`);
       const contextProfileId = this.getDropsReadContextProfileId(
         ctx.authenticationContext
       );
@@ -973,43 +973,43 @@ export class DropsApiService {
         await this.userGroupsService.getGroupsUserIsEligibleFor(
           contextProfileId
         );
-      const pinnerId =
-        searchRequest.pinner === null
+      const boosterId =
+        req.booster === null
           ? null
           : await this.identityFetcher.getProfileIdByIdentityKeyOrThrow(
-              { identityKey: searchRequest.pinner },
+              { identityKey: req.booster },
               ctx
             );
       const authorId =
-        searchRequest.author === null
+        req.author === null
           ? null
           : await this.identityFetcher.getProfileIdByIdentityKeyOrThrow(
-              { identityKey: searchRequest.author },
+              { identityKey: req.author },
               ctx
             );
-      const offset = searchRequest.page_size * (searchRequest.page - 1);
+      const offset = req.page_size * (req.page - 1);
       const [data, count] = await Promise.all([
-        this.dropsDb.getPinnedDrops(
+        this.dropsDb.findBoostedDrops(
           {
-            wave_id: searchRequest.wave_id,
+            wave_id: req.wave_id,
             eligibile_groups: group_ids_user_is_eligible_for,
-            limit: searchRequest.page_size,
+            limit: req.page_size,
             offset,
-            pinner_id: pinnerId,
+            booster_id: boosterId,
             author_id: authorId,
-            order_by: searchRequest.sort,
-            order: searchRequest.sort_direction,
-            min_pins: searchRequest.min_pins
+            order_by: req.sort,
+            order: req.sort_direction,
+            min_boosts: req.min_boosts
           },
           ctx
         ),
-        this.dropsDb.countPinnedDrops(
+        this.dropsDb.countBoostedDrops(
           {
-            wave_id: searchRequest.wave_id,
+            wave_id: req.wave_id,
             eligibile_groups: group_ids_user_is_eligible_for,
-            pinner_id: pinnerId,
+            booster_id: boosterId,
             author_id: authorId,
-            min_pins: searchRequest.min_pins
+            min_boosts: req.min_boosts
           },
           ctx
         )
@@ -1021,36 +1021,32 @@ export class DropsApiService {
       return {
         data: apiDrops,
         count,
-        page: searchRequest.page,
-        next: count > searchRequest.page_size * searchRequest.page
+        page: req.page,
+        next: count > req.page_size * req.page
       };
     } finally {
-      ctx.timer?.stop(`${this.constructor.name}->findPinnedDrops`);
+      ctx.timer?.stop(`${this.constructor.name}->findBoostedDrops`);
     }
   }
 }
 
-export interface GetDropPinsRequest {
+export interface GetDropsBoostsRequest {
   drop_id: string;
   page_size: number;
   page: number;
   sort_direction: ApiPageSortDirection;
-  sort: 'timestamp';
+  sort: 'boosted_at';
 }
 
-export interface FindPinnedDropsRequest {
+export interface FindBoostedDropsRequest {
   author: string | null;
-  pinner: string | null;
+  booster: string | null;
   wave_id: string | null;
-  min_pins: number | null;
+  min_boosts: number | null;
   page_size: number;
   page: number;
   sort_direction: ApiPageSortDirection;
-  sort:
-    | 'last_pin_timestamp'
-    | 'first_pin_timestamp'
-    | 'drop_created_at'
-    | 'pins_count';
+  sort: 'last_boosted_at' | 'first_boosted_at' | 'drop_created_at' | 'boosts';
 }
 
 export const dropsService = new DropsApiService(
