@@ -1,23 +1,21 @@
 import {
-  dbSupplier,
-  LazyDbAccessCompatibleService,
-  SqlExecutor
-} from '../../../sql-executor';
-import {
-  CommunityMemberOverview,
-  CommunityMembersQuery
-} from './community-members.types';
-import {
   ADDRESS_CONSOLIDATION_KEY,
   IDENTITIES_TABLE,
   PROFILE_LATEST_LOG_TABLE,
   TRANSACTIONS_TABLE
 } from '../../../constants';
-import { UserGroupsService, userGroupsService } from './user-groups.service';
 import { RequestContext } from '../../../request.context';
+import {
+  dbSupplier,
+  LazyDbAccessCompatibleService,
+  SqlExecutor
+} from '../../../sql-executor';
+import { ApiCommunityMemberOverview } from '../generated/models/ApiCommunityMemberOverview';
+import { CommunityMembersQuery } from './community-members.types';
+import { UserGroupsService, userGroupsService } from './user-groups.service';
 
 export interface CommunityMemberFromDb
-  extends Omit<CommunityMemberOverview, 'last_activity'> {
+  extends Omit<ApiCommunityMemberOverview, 'last_activity'> {
   readonly consolidation_key: string;
 }
 
@@ -44,7 +42,12 @@ export class CommunityMembersDb extends LazyDbAccessCompatibleService {
     let sort: string = query.sort;
     if (sort === 'level') {
       sort = 'level_raw';
+    } else if (sort === 'combined_tdh') {
+      sort = '(cm.tdh + cm.xtdh)';
+    } else if (sort === 'tdh_rate') {
+      sort = 'basetdh_rate';
     }
+    const orderByClause = sort === '(cm.tdh + cm.xtdh)' ? sort : `cm.${sort}`;
     const sql = `
       ${viewResult.sql} 
       select
@@ -52,13 +55,16 @@ export class CommunityMembersDb extends LazyDbAccessCompatibleService {
         ifnull(cm.handle, cm.primary_address) as detail_view_key,
         cm.level_raw as level,
         cm.tdh as tdh,
+        cm.basetdh_rate as tdh_rate,
         cm.primary_address as wallet,
         cm.xtdh as xtdh,
+        cm.xtdh_rate as xtdh_rate,
+        (cm.tdh + cm.xtdh) as combined_tdh,
         cm.cic as cic,
         cm.rep as rep,
         cm.pfp as pfp,
         cm.consolidation_key as consolidation_key
-      from ${UserGroupsService.GENERATED_VIEW} cm order by cm.${sort} ${query.sort_direction} limit ${query.page_size} offset ${offset}
+      from ${UserGroupsService.GENERATED_VIEW} cm order by ${orderByClause} ${query.sort_direction} limit ${query.page_size} offset ${offset}
     `;
     const params = viewResult.params;
     ctx.timer?.start(`${this.constructor.name}->getCommunityMembers`);

@@ -24,6 +24,9 @@ export * from '../models/ApiChangeGroupVisibility';
 export * from '../models/ApiChangeProfileCicRating';
 export * from '../models/ApiChangeProfileRepRating';
 export * from '../models/ApiCommunityMemberMinimal';
+export * from '../models/ApiCommunityMemberOverview';
+export * from '../models/ApiCommunityMembersPage';
+export * from '../models/ApiCommunityMembersSortOption';
 export * from '../models/ApiCompleteMultipartUploadRequest';
 export * from '../models/ApiCompleteMultipartUploadRequestPart';
 export * from '../models/ApiCompleteMultipartUploadResponse';
@@ -261,6 +264,9 @@ import { ApiChangeGroupVisibility } from '../models/ApiChangeGroupVisibility';
 import { ApiChangeProfileCicRating } from '../models/ApiChangeProfileCicRating';
 import { ApiChangeProfileRepRating } from '../models/ApiChangeProfileRepRating';
 import { ApiCommunityMemberMinimal } from '../models/ApiCommunityMemberMinimal';
+import { ApiCommunityMemberOverview } from '../models/ApiCommunityMemberOverview';
+import { ApiCommunityMembersPage } from '../models/ApiCommunityMembersPage';
+import { ApiCommunityMembersSortOption } from '../models/ApiCommunityMembersSortOption';
 import { ApiCompleteMultipartUploadRequest } from '../models/ApiCompleteMultipartUploadRequest';
 import { ApiCompleteMultipartUploadRequestPart } from '../models/ApiCompleteMultipartUploadRequestPart';
 import { ApiCompleteMultipartUploadResponse } from '../models/ApiCompleteMultipartUploadResponse';
@@ -486,6 +492,7 @@ let primitives = [
 
 let enumsMap: Set<string> = new Set<string>([
     "AcceptActionRequestActionEnum",
+    "ApiCommunityMembersSortOption",
     "ApiDropSearchStrategy",
     "ApiDropSubscriptionTargetAction",
     "ApiDropType",
@@ -543,6 +550,8 @@ let typeMap: {[index: string]: any} = {
     "ApiChangeProfileCicRating": ApiChangeProfileCicRating,
     "ApiChangeProfileRepRating": ApiChangeProfileRepRating,
     "ApiCommunityMemberMinimal": ApiCommunityMemberMinimal,
+    "ApiCommunityMemberOverview": ApiCommunityMemberOverview,
+    "ApiCommunityMembersPage": ApiCommunityMembersPage,
     "ApiCompleteMultipartUploadRequest": ApiCompleteMultipartUploadRequest,
     "ApiCompleteMultipartUploadRequestPart": ApiCompleteMultipartUploadRequestPart,
     "ApiCompleteMultipartUploadResponse": ApiCompleteMultipartUploadResponse,
