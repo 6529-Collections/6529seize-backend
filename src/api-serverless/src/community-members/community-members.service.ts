@@ -1,9 +1,9 @@
-import { CommunityMembersQuery } from './community-members.types';
-import { communityMembersDb, CommunityMembersDb } from './community-members.db';
 import { calculateLevel } from '../../../profiles/profile-level';
 import { RequestContext } from '../../../request.context';
 import { ApiCommunityMemberOverview } from '../generated/models/ApiCommunityMemberOverview';
 import { ApiCommunityMembersPage } from '../generated/models/ApiCommunityMembersPage';
+import { communityMembersDb, CommunityMembersDb } from './community-members.db';
+import { CommunityMembersQuery } from './community-members.types';
 
 export class CommunityMembersService {
   constructor(private readonly communityMembersDb: CommunityMembersDb) {}

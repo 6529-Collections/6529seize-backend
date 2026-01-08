@@ -50,7 +50,8 @@ export class CommunityMembersDb extends LazyDbAccessCompatibleService {
       sort = '(cm.basetdh_rate + cm.xtdh_rate)';
     }
     const orderByClause =
-      sort === '(cm.tdh + cm.xtdh)' || sort === '(cm.basetdh_rate + cm.xtdh_rate)'
+      sort === '(cm.tdh + cm.xtdh)' ||
+      sort === '(cm.basetdh_rate + cm.xtdh_rate)'
         ? sort
         : `cm.${sort}`;
     const sql = `
