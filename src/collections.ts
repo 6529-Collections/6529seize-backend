@@ -31,7 +31,11 @@ export class Collections {
   }
 
   public distinct<T>(arr: T[]): T[] {
-    return Array.from(new Set(arr));
+    return Array.from(this.toSet(arr));
+  }
+
+  public toSet<T>(arr: T[]): Set<T> {
+    return new Set(arr);
   }
 }
 

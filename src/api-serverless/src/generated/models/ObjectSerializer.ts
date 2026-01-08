@@ -53,6 +53,8 @@ export * from '../models/ApiCreateWaveOutcome';
 export * from '../models/ApiCreateWaveOutcomeDistributionItem';
 export * from '../models/ApiDrop';
 export * from '../models/ApiDropAndDropVote';
+export * from '../models/ApiDropBoost';
+export * from '../models/ApiDropBoostsPage';
 export * from '../models/ApiDropContextProfileContext';
 export * from '../models/ApiDropMedia';
 export * from '../models/ApiDropMentionedUser';
@@ -288,8 +290,10 @@ import { ApiCreateWaveConfig        } from '../models/ApiCreateWaveConfig';
 import { ApiCreateWaveDropRequest } from '../models/ApiCreateWaveDropRequest';
 import { ApiCreateWaveOutcome        } from '../models/ApiCreateWaveOutcome';
 import { ApiCreateWaveOutcomeDistributionItem } from '../models/ApiCreateWaveOutcomeDistributionItem';
-import { ApiDrop                          } from '../models/ApiDrop';
+import { ApiDrop                           } from '../models/ApiDrop';
 import { ApiDropAndDropVote } from '../models/ApiDropAndDropVote';
+import { ApiDropBoost } from '../models/ApiDropBoost';
+import { ApiDropBoostsPage } from '../models/ApiDropBoostsPage';
 import { ApiDropContextProfileContext } from '../models/ApiDropContextProfileContext';
 import { ApiDropMedia } from '../models/ApiDropMedia';
 import { ApiDropMentionedUser } from '../models/ApiDropMentionedUser';
@@ -306,7 +310,7 @@ import { ApiDropTraceItem } from '../models/ApiDropTraceItem';
 import { ApiDropType } from '../models/ApiDropType';
 import { ApiDropVote } from '../models/ApiDropVote';
 import { ApiDropWinningContext } from '../models/ApiDropWinningContext';
-import { ApiDropWithoutWave                         } from '../models/ApiDropWithoutWave';
+import { ApiDropWithoutWave                          } from '../models/ApiDropWithoutWave';
 import { ApiDropWithoutWavesPageWithoutCount } from '../models/ApiDropWithoutWavesPageWithoutCount';
 import { ApiDropsLeaderboardPage } from '../models/ApiDropsLeaderboardPage';
 import { ApiDropsPage } from '../models/ApiDropsPage';
@@ -572,6 +576,8 @@ let typeMap: {[index: string]: any} = {
     "ApiCreateWaveOutcomeDistributionItem": ApiCreateWaveOutcomeDistributionItem,
     "ApiDrop": ApiDrop,
     "ApiDropAndDropVote": ApiDropAndDropVote,
+    "ApiDropBoost": ApiDropBoost,
+    "ApiDropBoostsPage": ApiDropBoostsPage,
     "ApiDropContextProfileContext": ApiDropContextProfileContext,
     "ApiDropMedia": ApiDropMedia,
     "ApiDropMentionedUser": ApiDropMentionedUser,

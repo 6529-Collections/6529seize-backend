@@ -1,5 +1,6 @@
 import {
   ACTIVITY_EVENTS_TABLE,
+  DROP_BOOSTS_TABLE,
   DROP_MEDIA_TABLE,
   DROP_METADATA_TABLE,
   DROP_REFERENCED_NFTS_TABLE,
@@ -2066,6 +2067,14 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     ctx.timer?.stop(timerLabel);
 
     return result;
+  }
+
+  async deleteBoosts(waveId: string, ctx: RequestContext) {
+    await this.db.execute(
+      `DELETE FROM ${DROP_BOOSTS_TABLE} where wave_id = :waveId`,
+      { waveId },
+      { wrappedConnection: ctx.connection }
+    );
   }
 }
 
