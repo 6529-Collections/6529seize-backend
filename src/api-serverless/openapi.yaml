@@ -3262,7 +3262,9 @@ paths:
       tags:
         - TDH
       summary: Get consolidated TDH for an identity
-      description: Returns the consolidated TDH data for a given identity. The identity can be a profile handle, wallet address, ENS name, or consolidation key.
+      description: >-
+        Returns the consolidated TDH data for a given identity. The identity can
+        be a profile handle, wallet address, ENS name, or consolidation key.
       operationId: getConsolidatedTdh
       parameters:
         - name: identity
@@ -5526,6 +5528,168 @@ components:
           maxLength: 100
           minLength: 1
           pattern: ^[a-zA-Z0-9?!,."() ]{1,100}$
+    ApiCommunityMemberMinimal:
+      type: object
+      required:
+        - profile_id
+        - handle
+        - normalised_handle
+        - primary_wallet
+        - display
+        - tdh
+        - level
+        - cic_rating
+        - wallet
+        - pfp
+      properties:
+        profile_id:
+          type: string
+          nullable: true
+        handle:
+          type: string
+          nullable: true
+        normalised_handle:
+          type: string
+          nullable: true
+        primary_wallet:
+          type: string
+          nullable: true
+        display:
+          type: string
+          nullable: true
+        tdh:
+          type: number
+          format: int64
+        level:
+          type: number
+          format: int64
+        cic_rating:
+          type: number
+          format: int64
+        wallet:
+          type: string
+        pfp:
+          type: string
+          nullable: true
+    ApiCommunityMemberOverview:
+      type: object
+      required:
+        - display
+        - detail_view_key
+        - level
+        - tdh
+        - tdh_rate
+        - xtdh
+        - xtdh_rate
+        - xtdh_outgoing
+        - xtdh_incoming
+        - combined_tdh
+        - combined_tdh_rate
+        - rep
+        - cic
+        - pfp
+        - last_activity
+        - wallet
+      properties:
+        display:
+          type: string
+        detail_view_key:
+          type: string
+        level:
+          type: number
+          format: int64
+        tdh:
+          type: number
+          format: int64
+        tdh_rate:
+          type: number
+          format: double
+        xtdh:
+          type: number
+          format: double
+        xtdh_rate:
+          type: number
+          format: double
+        xtdh_outgoing:
+          type: number
+          format: double
+        xtdh_incoming:
+          type: number
+          format: double
+        combined_tdh:
+          type: number
+          format: double
+        combined_tdh_rate:
+          type: number
+          format: double
+        rep:
+          type: number
+          format: int64
+        cic:
+          type: number
+          format: int64
+        pfp:
+          type: string
+          nullable: true
+        last_activity:
+          type: number
+          format: int64
+          nullable: true
+        wallet:
+          type: string
+    ApiCommunityMembersPage:
+      type: object
+      required:
+        - data
+      allOf:
+        - $ref: "#/components/schemas/ApiPageBase"
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiCommunityMemberOverview"
+    ApiCommunityMembersSortOption:
+      type: string
+      enum:
+        - display
+        - level
+        - tdh
+        - tdh_rate
+        - rep
+        - cic
+        - xtdh_rate
+        - combined_tdh
+        - combined_tdh_rate
+    ApiCompleteMultipartUploadRequest:
+      required:
+        - upload_id
+        - key
+        - parts
+      properties:
+        upload_id:
+          type: string
+        key:
+          type: string
+        parts:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiCompleteMultipartUploadRequestPart"
+    ApiCompleteMultipartUploadRequestPart:
+      required:
+        - etag
+        - part_no
+      properties:
+        etag:
+          type: string
+        part_no:
+          type: integer
+          format: int64
+    ApiCompleteMultipartUploadResponse:
+      required:
+        - media_url
+      properties:
+        media_url:
+          type: string
     ApiConsolidatedTdh:
       type: object
       properties:
@@ -5647,195 +5811,6 @@ components:
             $ref: "#/components/schemas/ApiTokenTdhRank"
         boost_breakdown:
           type: object
-    ApiTokenTdh:
-      type: object
-      properties:
-        id:
-          type: integer
-          format: int64
-        balance:
-          type: integer
-          format: int64
-        hodl_rate:
-          type: number
-          format: double
-        tdh:
-          type: integer
-          format: int64
-        tdh__raw:
-          type: integer
-          format: int64
-        days_held_per_edition:
-          type: array
-          items:
-            type: integer
-            format: int64
-    ApiTokenTdhRank:
-      type: object
-      properties:
-        id:
-          type: integer
-          format: int64
-        rank:
-          type: integer
-          format: int64
-    ApiCommunityMemberMinimal:
-      type: object
-      required:
-        - profile_id
-        - handle
-        - normalised_handle
-        - primary_wallet
-        - display
-        - tdh
-        - level
-        - cic_rating
-        - wallet
-        - pfp
-      properties:
-        profile_id:
-          type: string
-          nullable: true
-        handle:
-          type: string
-          nullable: true
-        normalised_handle:
-          type: string
-          nullable: true
-        primary_wallet:
-          type: string
-          nullable: true
-        display:
-          type: string
-          nullable: true
-        tdh:
-          type: number
-          format: int64
-        level:
-          type: number
-          format: int64
-        cic_rating:
-          type: number
-          format: int64
-        wallet:
-          type: string
-        pfp:
-          type: string
-          nullable: true
-    ApiCommunityMemberOverview:
-      type: object
-      required:
-        - display
-        - detail_view_key
-        - level
-        - tdh
-        - tdh_rate
-        - xtdh
-        - xtdh_rate
-        - xtdh_outgoing
-        - xtdh_incoming
-        - combined_tdh
-        - rep
-        - cic
-        - pfp
-        - last_activity
-        - wallet
-      properties:
-        display:
-          type: string
-        detail_view_key:
-          type: string
-        level:
-          type: number
-          format: int64
-        tdh:
-          type: number
-          format: int64
-        tdh_rate:
-          type: number
-          format: double
-        xtdh:
-          type: number
-          format: double
-        xtdh_rate:
-          type: number
-          format: double
-        xtdh_outgoing:
-          type: number
-          format: double
-        xtdh_incoming:
-          type: number
-          format: double
-        combined_tdh:
-          type: number
-          format: double
-        rep:
-          type: number
-          format: int64
-        cic:
-          type: number
-          format: int64
-        pfp:
-          type: string
-          nullable: true
-        last_activity:
-          type: number
-          format: int64
-          nullable: true
-        wallet:
-          type: string
-    ApiCommunityMembersPage:
-      type: object
-      required:
-        - data
-      allOf:
-        - $ref: "#/components/schemas/ApiPageBase"
-      properties:
-        data:
-          type: array
-          items:
-            $ref: "#/components/schemas/ApiCommunityMemberOverview"
-    ApiCommunityMembersSortOption:
-      type: string
-      enum:
-        - display
-        - level
-        - tdh
-        - tdh_rate
-        - rep
-        - cic
-        - xtdh_rate
-        - combined_tdh
-    ApiCompleteMultipartUploadRequest:
-      required:
-        - upload_id
-        - key
-        - parts
-      properties:
-        upload_id:
-          type: string
-        key:
-          type: string
-        parts:
-          type: array
-          items:
-            $ref: "#/components/schemas/ApiCompleteMultipartUploadRequestPart"
-    ApiCompleteMultipartUploadRequestPart:
-      required:
-        - etag
-        - part_no
-      properties:
-        etag:
-          type: string
-        part_no:
-          type: integer
-          format: int64
-    ApiCompleteMultipartUploadResponse:
-      required:
-        - media_url
-      properties:
-        media_url:
-          type: string
     ApiCreateDropPart:
       type: object
       required:
@@ -8213,6 +8188,38 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ApiTdhEdition"
+    ApiTokenTdh:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        balance:
+          type: integer
+          format: int64
+        hodl_rate:
+          type: number
+          format: double
+        tdh:
+          type: integer
+          format: int64
+        tdh__raw:
+          type: integer
+          format: int64
+        days_held_per_edition:
+          type: array
+          items:
+            type: integer
+            format: int64
+    ApiTokenTdhRank:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        rank:
+          type: integer
+          format: int64
     ApiTransaction:
       type: object
       required:
