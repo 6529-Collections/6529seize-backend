@@ -56,6 +56,9 @@ import { ApiLightDrop } from '../generated/models/ApiLightDrop';
 import { ApiDropMedia } from '../generated/models/ApiDropMedia';
 import { enums } from '../../../enums';
 import { ApiDropWithoutWavesPageWithoutCount } from '../generated/models/ApiDropWithoutWavesPageWithoutCount';
+import { ApiPageSortDirection } from '../generated/models/ApiPageSortDirection';
+import { ApiDropsPage } from '../generated/models/ApiDropsPage';
+import { ApiDropBoostsPage } from '../generated/models/ApiDropBoostsPage';
 
 export class DropsApiService {
   constructor(
@@ -879,6 +882,174 @@ export class DropsApiService {
       page: page
     };
   }
+
+  async findPageOfDropBoosts(
+    searchRequest: GetDropsBoostsRequest,
+    ctx: RequestContext
+  ): Promise<ApiDropBoostsPage> {
+    try {
+      ctx.timer?.start(`${this.constructor.name}->findPageOfDropBoosts`);
+      await this.findDropByIdOrThrow({ dropId: searchRequest.drop_id }, ctx);
+      const offset = searchRequest.page_size * (searchRequest.page - 1);
+      const [data, count] = await Promise.all([
+        this.dropsDb.getDropBoosts(
+          {
+            drop_id: searchRequest.drop_id,
+            limit: searchRequest.page_size,
+            offset,
+            order_by: searchRequest.sort,
+            order: searchRequest.sort_direction
+          },
+          ctx
+        ),
+        this.dropsDb.countDropBoosts({ drop_id: searchRequest.drop_id }, ctx)
+      ]);
+      const boostersProfiles = await this.identityFetcher.getOverviewsByIds(
+        data.map((it) => it.booster_id),
+        ctx
+      );
+      return {
+        data: data.map((it) => ({
+          booster: boostersProfiles[it.booster_id],
+          boosted_at: it.boosted_at
+        })),
+        count,
+        page: searchRequest.page,
+        next: count > searchRequest.page_size * searchRequest.page
+      };
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->findPageOfDropBoosts`);
+    }
+  }
+
+  async boostDrop(dropId: string, ctx: RequestContext) {
+    try {
+      ctx.timer?.start(`${this.constructor.name}->boostDrop`);
+      const boosterId = ctx.authenticationContext?.getActingAsId();
+      if (!boosterId) {
+        throw new ForbiddenException(
+          `Can't boost a drop without logging in and creating a profile`
+        );
+      }
+      const apiDrop = await this.findDropByIdOrThrow({ dropId }, ctx);
+      await this.dropsDb.boostDrop(
+        { drop_id: dropId, booster_id: boosterId, wave_id: apiDrop.wave.id },
+        ctx
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->boostDrop`);
+    }
+  }
+
+  async deleteDropBoost(dropId: string, ctx: RequestContext) {
+    try {
+      ctx.timer?.start(`${this.constructor.name}->deleteDropBoost`);
+      const boosterId = ctx.authenticationContext?.getActingAsId();
+      if (!boosterId) {
+        throw new ForbiddenException(
+          `Can't delete a boost from drop without logging in and creating a profile`
+        );
+      }
+      await this.findDropByIdOrThrow({ dropId }, ctx);
+      await this.dropsDb.deleteDropBoost(
+        { drop_id: dropId, booster_id: boosterId },
+        ctx
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->deleteDropBoost`);
+    }
+  }
+
+  async findBoostedDrops(
+    req: FindBoostedDropsRequest,
+    ctx: RequestContext
+  ): Promise<ApiDropsPage> {
+    try {
+      ctx.timer?.start(`${this.constructor.name}->findBoostedDrops`);
+      const contextProfileId = this.getDropsReadContextProfileId(
+        ctx.authenticationContext
+      );
+      const group_ids_user_is_eligible_for =
+        await this.userGroupsService.getGroupsUserIsEligibleFor(
+          contextProfileId
+        );
+      const boosterId =
+        req.booster === null
+          ? null
+          : await this.identityFetcher.getProfileIdByIdentityKeyOrThrow(
+              { identityKey: req.booster },
+              ctx
+            );
+      const authorId =
+        req.author === null
+          ? null
+          : await this.identityFetcher.getProfileIdByIdentityKeyOrThrow(
+              { identityKey: req.author },
+              ctx
+            );
+      const offset = req.page_size * (req.page - 1);
+      const [data, count] = await Promise.all([
+        this.dropsDb.findBoostedDrops(
+          {
+            wave_id: req.wave_id,
+            eligibile_groups: group_ids_user_is_eligible_for,
+            limit: req.page_size,
+            offset,
+            booster_id: boosterId,
+            author_id: authorId,
+            order_by: req.sort,
+            order: req.sort_direction,
+            min_boosts: req.min_boosts,
+            count_only_boosts_after: req.count_only_boosts_after
+          },
+          ctx
+        ),
+        this.dropsDb.countBoostedDrops(
+          {
+            wave_id: req.wave_id,
+            eligibile_groups: group_ids_user_is_eligible_for,
+            booster_id: boosterId,
+            author_id: authorId,
+            min_boosts: req.min_boosts,
+            count_only_boosts_after: req.count_only_boosts_after
+          },
+          ctx
+        )
+      ]);
+      const apiDrops = await this.dropsMappers.convertToDropFulls(
+        { dropEntities: data, contextProfileId },
+        ctx.connection
+      );
+      return {
+        data: apiDrops,
+        count,
+        page: req.page,
+        next: count > req.page_size * req.page
+      };
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->findBoostedDrops`);
+    }
+  }
+}
+
+export interface GetDropsBoostsRequest {
+  drop_id: string;
+  page_size: number;
+  page: number;
+  sort_direction: ApiPageSortDirection;
+  sort: 'boosted_at';
+}
+
+export interface FindBoostedDropsRequest {
+  author: string | null;
+  booster: string | null;
+  wave_id: string | null;
+  min_boosts: number | null;
+  count_only_boosts_after: number;
+  page_size: number;
+  page: number;
+  sort_direction: ApiPageSortDirection;
+  sort: 'last_boosted_at' | 'first_boosted_at' | 'drop_created_at' | 'boosts';
 }
 
 export const dropsService = new DropsApiService(

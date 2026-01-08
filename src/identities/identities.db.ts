@@ -7,6 +7,7 @@ import { IdentityEntity } from '../entities/IIdentity';
 import {
   ADDRESS_CONSOLIDATION_KEY,
   CONSOLIDATED_WALLETS_TDH_TABLE,
+  DROP_BOOSTS_TABLE,
   DROPS_TABLE,
   ENS_TABLE,
   IDENTITIES_TABLE,
@@ -1039,6 +1040,30 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     );
 
     return (row?.basetdh_rate ?? 0) * X_TDH_COEFFICIENT;
+  }
+
+  async migrateBoosterIdsInBoosts(
+    param: { previous_id: string; new_id: string | undefined },
+    ctx: RequestContext
+  ) {
+    if (param.new_id) {
+      await this.db.execute(
+        `INSERT INTO ${DROP_BOOSTS_TABLE} (drop_id, booster_id, boosted_at, wave_id)
+       SELECT drop_id, :new_id, boosted_at, wave_id
+       FROM ${DROP_BOOSTS_TABLE}
+       WHERE booster_id = :previous_id
+       ON DUPLICATE KEY UPDATE booster_id = VALUES(booster_id)`,
+        param,
+        { wrappedConnection: ctx.connection }
+      );
+    }
+
+    await this.db.execute(
+      `DELETE FROM ${DROP_BOOSTS_TABLE}
+     WHERE booster_id = :previous_id`,
+      param,
+      { wrappedConnection: ctx.connection }
+    );
   }
 }
 

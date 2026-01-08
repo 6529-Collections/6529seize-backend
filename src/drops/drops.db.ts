@@ -4,6 +4,7 @@ import {
   LazyDbAccessCompatibleService
 } from '../sql-executor';
 import {
+  DropBoostEntity,
   DropEntity,
   DropMediaEntity,
   DropMentionEntity,
@@ -15,6 +16,7 @@ import {
 import {
   ACTIVITY_EVENTS_TABLE,
   DELETED_DROPS_TABLE,
+  DROP_BOOSTS_TABLE,
   DROP_MEDIA_TABLE,
   DROP_METADATA_TABLE,
   DROP_REAL_VOTER_VOTE_IN_TIME_TABLE,
@@ -53,6 +55,7 @@ import { ProfileActivityLog } from '../entities/IProfileActivityLog';
 import { assertUnreachable } from '../assertions';
 import { WaveDecisionWinnerDropEntity } from '../entities/IWaveDecision';
 import { WinnerDropVoterVoteEntity } from '../entities/IWinnerDropVoterVote';
+import { collections } from '../collections';
 
 const mysql = require('mysql');
 
@@ -1535,6 +1538,286 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       ctx.timer?.stop(
         `${this.constructor.name}->searchDropsContainingPhraseInWave`
       );
+    }
+  }
+
+  public async countBoostsOfGivenDrops(
+    dropIds: string[],
+    ctx: RequestContext
+  ): Promise<Record<string, number>> {
+    try {
+      ctx.timer?.start(`${this.constructor.name}->countBoostsOfGivenDrops`);
+      if (!dropIds.length) {
+        return {};
+      }
+      const res = await this.db.execute<{ drop_id: string; cnt: number }>(
+        `
+          select drop_id, count(*) as cnt from ${DROP_BOOSTS_TABLE} where drop_id in (:dropIds) group by 1
+        `,
+        { dropIds },
+        { wrappedConnection: ctx.connection }
+      );
+      return res.reduce(
+        (acc, it) => {
+          acc[it.drop_id] = +it.cnt;
+          return acc;
+        },
+        {} as Record<string, number>
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->countBoostsOfGivenDrops`);
+    }
+  }
+
+  public async whichOfGivenDropsAreBoostedByIdentity(
+    dropIds: string[],
+    identityId: string,
+    ctx: RequestContext
+  ): Promise<Set<string>> {
+    try {
+      ctx.timer?.start(
+        `${this.constructor.name}->whichOfGivenDropsAreBoostedByIdentity`
+      );
+      if (!dropIds.length) {
+        return new Set<string>();
+      }
+      const res = await this.db.execute<{ drop_id: string }>(
+        `
+          select drop_id from ${DROP_BOOSTS_TABLE} where booster_id = :identityId and drop_id in (:dropIds)
+        `,
+        { dropIds, identityId },
+        { wrappedConnection: ctx.connection }
+      );
+      return collections.toSet(res.map((it) => it.drop_id));
+    } finally {
+      ctx.timer?.stop(
+        `${this.constructor.name}->whichOfGivenDropsAreBoostedByIdentity`
+      );
+    }
+  }
+
+  public async findBoostedDrops(
+    {
+      wave_id,
+      eligibile_groups,
+      limit,
+      offset,
+      booster_id,
+      author_id,
+      min_boosts,
+      order_by,
+      count_only_boosts_after,
+      order
+    }: {
+      wave_id: string | null;
+      eligibile_groups: string[];
+      limit: number;
+      offset: number;
+      booster_id: string | null;
+      author_id: string | null;
+      min_boosts: number | null;
+      order_by:
+        | 'last_boosted_at'
+        | 'first_boosted_at'
+        | 'drop_created_at'
+        | 'boosts';
+      count_only_boosts_after: number;
+      order: 'ASC' | 'DESC';
+    },
+    ctx: RequestContext
+  ): Promise<DropEntity[]> {
+    try {
+      ctx.timer?.start(`${this.constructor.name}->findBoostedDrops`);
+      const aggregateSql = `
+        select 
+          d.id as drop_id,
+          d.created_at as drop_created_at,
+          count(*) as boosts, 
+          min(p.boosted_at) as first_boosted_at, 
+          max(p.boosted_at) as last_boosted_at,
+          sum(if(p.booster_id = :booster_id or :booster_id is null, 1, 0)) as includes_booster
+        from ${DROPS_TABLE} d 
+        JOIN ${DROP_BOOSTS_TABLE} p on p.drop_id = d.id
+        join ${WAVES_TABLE} w on w.id = d.wave_id
+        where p.boosted_at > :count_only_boosts_after
+        and (w.visibility_group_id is null ${eligibile_groups.length ? `or w.visibility_group_id in (:eligibile_groups)` : ''})
+        ${author_id ? ` and d.author_id = :author_id ` : ''}
+        ${wave_id ? ` and d.wave_id = :wave_id ` : ''}
+        group by 1, 2
+      `;
+      const sql = `
+        with boosts_aggregate as (${aggregateSql}) select d.* from boosts_aggregate a
+        join ${DROPS_TABLE} d on a.drop_id = d.id
+        where a.includes_booster > 0
+        ${min_boosts !== null ? ` and a.boosts >= :min_boosts ` : ''}
+        order by ${order_by} ${order} limit :limit offset :offset
+      `;
+      return await this.db.execute<DropEntity>(
+        sql,
+        {
+          wave_id,
+          eligibile_groups,
+          limit,
+          offset,
+          booster_id,
+          author_id,
+          min_boosts,
+          order_by,
+          count_only_boosts_after,
+          order
+        },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->findBoostedDrops`);
+    }
+  }
+
+  public async countBoostedDrops(
+    {
+      wave_id,
+      booster_id,
+      author_id,
+      eligibile_groups,
+      min_boosts,
+      count_only_boosts_after
+    }: {
+      wave_id: string | null;
+      eligibile_groups: string[];
+      booster_id: string | null;
+      author_id: string | null;
+      min_boosts: number | null;
+      count_only_boosts_after: number;
+    },
+    ctx: RequestContext
+  ): Promise<number> {
+    try {
+      ctx.timer?.start(`${this.constructor.name}->countBoostedDrops`);
+      const aggregateSql = `
+        select 
+          d.id as drop_id,
+          d.created_at as drop_created_at,
+          count(*) as boosts, 
+          min(p.boosted_at) as first_boosted_at, 
+          max(p.boosted_at) as last_boosted_at,
+          sum(if(p.booster_id = :booster_id or :booster_id is null, 1, 0)) as includes_booster
+        from ${DROPS_TABLE} d 
+        join ${DROP_BOOSTS_TABLE} p on p.drop_id = d.id
+        join ${WAVES_TABLE} w on w.id = d.wave_id
+        where p.boosted_at > :count_only_boosts_after
+        and (w.visibility_group_id is null ${eligibile_groups.length ? `or w.visibility_group_id in (:eligibile_groups)` : ''})
+        ${author_id ? ` and d.author_id = :author_id ` : ''}
+        ${wave_id ? ` and d.wave_id = :wave_id ` : ''}
+        group by 1, 2 
+      `;
+      const sql = `
+        with boosts_aggregate as (${aggregateSql}) select count(a.drop_id) as cnt from boosts_aggregate a
+        where a.includes_booster > 0
+        ${min_boosts !== null ? ` and a.boosts >= :min_boosts ` : ''}
+      `;
+      const res = await this.db.oneOrNull<{ cnt: number }>(
+        sql,
+        {
+          wave_id,
+          booster_id,
+          author_id,
+          min_boosts,
+          eligibile_groups,
+          count_only_boosts_after
+        },
+        { wrappedConnection: ctx.connection }
+      );
+      return res?.cnt ?? 0;
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->countBoostedDrops`);
+    }
+  }
+
+  async boostDrop(
+    {
+      drop_id,
+      booster_id,
+      wave_id
+    }: { drop_id: string; booster_id: string; wave_id: string },
+    ctx: RequestContext
+  ) {
+    await this.db.execute(
+      `insert into ${DROP_BOOSTS_TABLE} (drop_id, booster_id, wave_id, boosted_at) values (:drop_id, :booster_id, :wave_id, :boosted_at) on duplicate key update booster_id = values(booster_id)`,
+      {
+        drop_id,
+        booster_id,
+        boosted_at: Time.currentMillis(),
+        wave_id
+      },
+      { wrappedConnection: ctx.connection }
+    );
+  }
+
+  async deleteDropBoost(
+    { drop_id, booster_id }: { drop_id: string; booster_id: string },
+    ctx: RequestContext
+  ) {
+    await this.db.execute(
+      `delete from ${DROP_BOOSTS_TABLE} where drop_id = :drop_id and booster_id = :booster_id`,
+      { drop_id, booster_id },
+      { wrappedConnection: ctx.connection }
+    );
+  }
+
+  async getDropBoosts(
+    {
+      drop_id,
+      order_by,
+      order,
+      limit,
+      offset
+    }: {
+      drop_id: string;
+      order_by: 'boosted_at';
+      order: 'ASC' | 'DESC';
+      limit: number;
+      offset: number;
+    },
+    ctx: RequestContext
+  ): Promise<DropBoostEntity[]> {
+    try {
+      ctx.timer?.start(`${this.constructor.name}->getDropBoosts`);
+      return await this.db.execute<DropBoostEntity>(
+        `select * from ${DROP_BOOSTS_TABLE} where drop_id = :drop_id order by ${order_by} ${order} limit :limit offset :offset`,
+        {
+          drop_id,
+          order_by,
+          order,
+          limit,
+          offset
+        },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->getDropBoosts`);
+    }
+  }
+
+  async countDropBoosts(
+    {
+      drop_id
+    }: {
+      drop_id: string;
+    },
+    ctx: RequestContext
+  ): Promise<number> {
+    try {
+      ctx.timer?.start(`${this.constructor.name}->countDropBoosts`);
+      const res = await this.db.oneOrNull<{ cnt: number }>(
+        `select count(*) as cnt from ${DROP_BOOSTS_TABLE} where drop_id = :drop_id`,
+        {
+          drop_id
+        },
+        { wrappedConnection: ctx.connection }
+      );
+      return res?.cnt ?? 0;
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->countDropBoosts`);
     }
   }
 }
