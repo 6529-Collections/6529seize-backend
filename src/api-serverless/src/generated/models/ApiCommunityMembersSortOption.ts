@@ -20,6 +20,8 @@ export enum ApiCommunityMembersSortOption {
     Rep = 'rep',
     Cic = 'cic',
     XtdhRate = 'xtdh_rate',
+    XtdhOutgoing = 'xtdh_outgoing',
+    XtdhIncoming = 'xtdh_incoming',
     CombinedTdh = 'combined_tdh',
     CombinedTdhRate = 'combined_tdh_rate'
 }

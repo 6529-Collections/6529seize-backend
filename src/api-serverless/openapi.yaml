@@ -5658,6 +5658,8 @@ components:
         - rep
         - cic
         - xtdh_rate
+        - xtdh_outgoing
+        - xtdh_incoming
         - combined_tdh
         - combined_tdh_rate
     ApiCompleteMultipartUploadRequest:

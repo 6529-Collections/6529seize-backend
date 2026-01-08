@@ -48,12 +48,17 @@ export class CommunityMembersDb extends LazyDbAccessCompatibleService {
       sort = 'basetdh_rate';
     } else if (sort === 'combined_tdh_rate') {
       sort = '(cm.basetdh_rate + cm.xtdh_rate)';
+    } else if (sort === 'xtdh_outgoing') {
+      sort = 'granted_xtdh';
+    } else if (sort === 'xtdh_incoming') {
+      sort = '(cm.xtdh - (cm.produced_xtdh - cm.granted_xtdh))';
     }
-    const orderByClause =
-      sort === '(cm.tdh + cm.xtdh)' ||
-      sort === '(cm.basetdh_rate + cm.xtdh_rate)'
-        ? sort
-        : `cm.${sort}`;
+    const expressionSorts = [
+      '(cm.tdh + cm.xtdh)',
+      '(cm.basetdh_rate + cm.xtdh_rate)',
+      '(cm.xtdh - (cm.produced_xtdh - cm.granted_xtdh))'
+    ];
+    const orderByClause = expressionSorts.includes(sort) ? sort : `cm.${sort}`;
     const sql = `
       ${viewResult.sql} 
       select
