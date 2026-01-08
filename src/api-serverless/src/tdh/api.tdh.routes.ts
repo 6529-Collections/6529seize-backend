@@ -1,4 +1,4 @@
-import { Request } from 'express';
+import { Request, Response } from 'express';
 import {
   CONSOLIDATED_WALLETS_TDH_TABLE,
   WALLETS_TDH_TABLE
@@ -14,7 +14,9 @@ import {
   returnJsonResult,
   returnPaginatedResult
 } from '../api-helpers';
+import { ApiResponse } from '../api-response';
 import { asyncRouter } from '../async.router';
+import { ApiConsolidatedTdh } from '../generated/models/ApiConsolidatedTdh';
 import { identityFetcher } from '../identities/identity.fetcher';
 import { DEFAULT_PAGE_SIZE } from '../page-request';
 import { cacheRequest } from '../request-cache';
@@ -144,15 +146,8 @@ router.get(
   '/consolidation/:identity',
   cacheRequest(),
   async function (
-    req: Request<
-      {
-        identity: string;
-      },
-      any,
-      any,
-      any
-    >,
-    res: any
+    req: Request<{ identity: string }, any, any, any>,
+    res: Response<ApiResponse<ApiConsolidatedTdh>>
   ) {
     const identity = req.params.identity;
     const timer = Timer.getFromRequest(req);
