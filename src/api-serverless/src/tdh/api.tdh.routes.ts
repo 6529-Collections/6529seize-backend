@@ -1,5 +1,23 @@
 import { Request } from 'express';
+import {
+  CONSOLIDATED_WALLETS_TDH_TABLE,
+  WALLETS_TDH_TABLE
+} from '../../../constants';
+import { enums } from '../../../enums';
+import { NotFoundException } from '../../../exceptions';
+import { parseTdhDataFromDB } from '../../../sql_helpers';
+import { Timer } from '../../../time';
+import { NFT_TDH_SORT } from '../api-filters';
+import {
+  resolveSortDirection,
+  returnCSVResult,
+  returnJsonResult,
+  returnPaginatedResult
+} from '../api-helpers';
 import { asyncRouter } from '../async.router';
+import { identityFetcher } from '../identities/identity.fetcher';
+import { DEFAULT_PAGE_SIZE } from '../page-request';
+import { cacheRequest } from '../request-cache';
 import {
   fetchConsolidatedMetrics,
   fetchNftTdh,
@@ -7,22 +25,6 @@ import {
   MetricsCollector,
   MetricsContent
 } from './api.tdh.db';
-import { DEFAULT_PAGE_SIZE } from '../page-request';
-import {
-  resolveSortDirection,
-  returnCSVResult,
-  returnJsonResult,
-  returnPaginatedResult
-} from '../api-helpers';
-import { parseTdhDataFromDB } from '../../../sql_helpers';
-import {
-  CONSOLIDATED_WALLETS_TDH_TABLE,
-  WALLETS_TDH_TABLE
-} from '../../../constants';
-import { NotFoundException } from '../../../exceptions';
-import { NFT_TDH_SORT } from '../api-filters';
-import { enums } from '../../../enums';
-import { cacheRequest } from '../request-cache';
 
 const router = asyncRouter();
 
@@ -139,12 +141,12 @@ router.get(
 );
 
 router.get(
-  '/consolidation/:consolidation_key',
+  '/consolidation/:identity',
   cacheRequest(),
   async function (
     req: Request<
       {
-        consolidation_key: string;
+        identity: string;
       },
       any,
       any,
@@ -152,7 +154,14 @@ router.get(
     >,
     res: any
   ) {
-    const consolidationKey = req.params.consolidation_key;
+    const identity = req.params.identity;
+    const timer = Timer.getFromRequest(req);
+    const consolidationKey = await identityFetcher
+      .getIdentityAndConsolidationsByIdentityKey(
+        { identityKey: identity },
+        { timer }
+      )
+      .then((result) => result?.consolidation_key ?? identity);
 
     const result = await fetchTDH(
       'consolidation_key',
@@ -163,9 +172,7 @@ router.get(
       const parsedResult = parseTdhDataFromDB(result);
       return await returnJsonResult(parsedResult, req, res);
     }
-    throw new NotFoundException(
-      `Consolidated TDH for ${consolidationKey} not found`
-    );
+    throw new NotFoundException(`Consolidated TDH for ${identity} not found`);
   }
 );
 
