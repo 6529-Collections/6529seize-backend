@@ -12,49 +12,28 @@
 
 import { HttpFile } from '../http/http';
 
-export class ApiDropContextProfileContext {
-    'rating': number;
-    'min_rating': number;
-    'max_rating': number;
-    'reaction': string | null;
-    'boosted': boolean;
+export class ApiTokenTdhRank {
+    'id'?: number;
+    'rank'?: number;
 
     static readonly discriminator: string | undefined = undefined;
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
         {
-            "name": "rating",
-            "baseName": "rating",
+            "name": "id",
+            "baseName": "id",
             "type": "number",
             "format": "int64"
         },
         {
-            "name": "min_rating",
-            "baseName": "min_rating",
+            "name": "rank",
+            "baseName": "rank",
             "type": "number",
             "format": "int64"
-        },
-        {
-            "name": "max_rating",
-            "baseName": "max_rating",
-            "type": "number",
-            "format": "int64"
-        },
-        {
-            "name": "reaction",
-            "baseName": "reaction",
-            "type": "string",
-            "format": ""
-        },
-        {
-            "name": "boosted",
-            "baseName": "boosted",
-            "type": "boolean",
-            "format": ""
         }    ];
 
     static getAttributeTypeMap() {
-        return ApiDropContextProfileContext.attributeTypeMap;
+        return ApiTokenTdhRank.attributeTypeMap;
     }
 
     public constructor() {

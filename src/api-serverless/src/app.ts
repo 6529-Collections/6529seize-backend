@@ -29,6 +29,7 @@ import profileActivityLogsRoutes from './profiles/profile-activity-logs.routes';
 import profileSubClassificationsRoutes from './profiles/profiles-sub-classifications.routes';
 import profilesRoutes from './profiles/profiles.routes';
 import repCategorySearchRoutes from './profiles/rep-category-search.routes';
+import boostedDropsRoutes from './drops/boosted-drops.routes';
 import proxiesRoutes from './proxies/proxies.routes';
 import pushNotificationsRoutes from './push-notifications/push-notifications.routes';
 import bulkRepRoutes from './ratings/bulk-rep.routes';
@@ -1086,6 +1087,7 @@ async function initializeApp() {
     );
   });
 
+  apiRouter.use(`/boosted-drops`, boostedDropsRoutes);
   apiRouter.use(`/feed`, feedRoutes);
   apiRouter.use(`/notifications`, notificationsRoutes);
   apiRouter.use(`/identity-subscriptions`, identitySubscriptionsRoutes);

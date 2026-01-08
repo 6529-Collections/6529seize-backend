@@ -293,7 +293,9 @@ export class DropsMappers {
       weightedDropsRates,
       deletedDrops,
       dropsInWavesWhereNegativeVotesAreNotAllowed,
-      dropReactions
+      dropReactions,
+      boostsCount,
+      boostsByAuthenticatedUser
     ] = await Promise.all([
       this.dropVotingDb.getParticipationDropsRealtimeRanks(
         participatoryDropIds,
@@ -354,7 +356,17 @@ export class DropsMappers {
       ),
       this.reactionsDb.getByDropIds(allDropIds, contextProfileId ?? null, {
         connection
-      })
+      }),
+      this.dropsDb.countBoostsOfGivenDrops(allDropIds, { connection }),
+      contextProfileId
+        ? this.dropsDb.whichOfGivenDropsAreBoostedByIdentity(
+            allDropIds,
+            contextProfileId,
+            {
+              connection
+            }
+          )
+        : Promise.resolve(new Set<string>())
     ]);
     return {
       dropsRanks,
@@ -384,7 +396,9 @@ export class DropsMappers {
       weightedDropsRanks,
       weightedDropsRates,
       dropsInWavesWhereNegativeVotesAreNotAllowed,
-      dropReactions
+      dropReactions,
+      boostsCount,
+      boostsByAuthenticatedUser
     };
   }
 
@@ -413,7 +427,9 @@ export class DropsMappers {
       weightedDropsRanks,
       weightedDropsRates,
       dropsInWavesWhereNegativeVotesAreNotAllowed,
-      dropReactions
+      dropReactions,
+      boostsCount,
+      boostsByAuthenticatedUser
     } = await this.getAllDropsRelatedData(
       {
         dropEntities: entities,
@@ -497,7 +513,9 @@ export class DropsMappers {
         weightedDropsRanks,
         weightedDropsRates,
         dropsInWavesWhereNegativeVotesAreNotAllowed,
-        dropReactions
+        dropReactions,
+        boostsCount,
+        boostsByAuthenticatedUser
       });
     });
   }
@@ -525,7 +543,9 @@ export class DropsMappers {
     weightedDropsRanks,
     weightedDropsRates,
     dropsInWavesWhereNegativeVotesAreNotAllowed,
-    dropReactions
+    dropReactions,
+    boostsCount,
+    boostsByAuthenticatedUser
   }: {
     dropEntity: DropEntity;
     deletedDrops: Record<string, DeletedDropEntity>;
@@ -556,6 +576,8 @@ export class DropsMappers {
     weightedDropsRates: Record<string, { current: number; prediction: number }>;
     dropsInWavesWhereNegativeVotesAreNotAllowed: string[];
     dropReactions: Map<string, DropReactionsResult>;
+    boostsCount: Record<string, number>;
+    boostsByAuthenticatedUser: Set<string>;
   }): ApiDropWithoutWave {
     const replyToDropId = dropEntity.reply_to_drop_id;
     const dropWinDecision = winDecisions[dropEntity.id];
@@ -594,7 +616,8 @@ export class DropsMappers {
         rating: 0,
         min_rating: 0,
         max_rating: 0,
-        reaction: contextProfileReaction
+        reaction: contextProfileReaction,
+        boosted: boostsByAuthenticatedUser.has(dropEntity.id)
       };
     }
     if (dropEntity.drop_type === DropType.WINNER) {
@@ -613,7 +636,8 @@ export class DropsMappers {
           rating: winningDropsRatingsByVoter[dropEntity.id] ?? 0,
           min_rating: winningDropsRatingsByVoter[dropEntity.id] ?? 0,
           max_rating: winningDropsRatingsByVoter[dropEntity.id] ?? 0,
-          reaction: contextProfileReaction
+          reaction: contextProfileReaction,
+          boosted: boostsByAuthenticatedUser.has(dropEntity.id)
         };
       }
     } else if (dropEntity.drop_type === DropType.PARTICIPATORY) {
@@ -641,7 +665,8 @@ export class DropsMappers {
           rating: submissionDropsVotingRanges[dropEntity.id]?.current ?? 0,
           min_rating: minRating,
           max_rating: submissionDropsVotingRanges[dropEntity.id]?.max ?? 0,
-          reaction: contextProfileReaction
+          reaction: contextProfileReaction,
+          boosted: boostsByAuthenticatedUser.has(dropEntity.id)
         };
       }
     }
@@ -684,7 +709,9 @@ export class DropsMappers {
                   weightedDropsRanks,
                   weightedDropsRates,
                   dropsInWavesWhereNegativeVotesAreNotAllowed,
-                  dropReactions
+                  dropReactions,
+                  boostsCount,
+                  boostsByAuthenticatedUser
                 })
               : undefined
           }
@@ -726,7 +753,9 @@ export class DropsMappers {
                           weightedDropsRanks,
                           weightedDropsRates,
                           dropsInWavesWhereNegativeVotesAreNotAllowed,
-                          dropReactions
+                          dropReactions,
+                          boostsCount,
+                          boostsByAuthenticatedUser
                         })
                       : undefined
                   }
@@ -773,7 +802,8 @@ export class DropsMappers {
       subscribed_actions: subscribedActions[dropEntity.id] ?? [],
       winning_context: winningContext,
       is_signed: !!dropEntity.signature,
-      reactions: dropReactions.get(dropEntity.id)?.reactions ?? []
+      reactions: dropReactions.get(dropEntity.id)?.reactions ?? [],
+      boosts: boostsCount[dropEntity.id] ?? 0
     };
   }
 }

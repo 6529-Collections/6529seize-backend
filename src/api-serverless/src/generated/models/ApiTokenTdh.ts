@@ -12,49 +12,56 @@
 
 import { HttpFile } from '../http/http';
 
-export class ApiDropContextProfileContext {
-    'rating': number;
-    'min_rating': number;
-    'max_rating': number;
-    'reaction': string | null;
-    'boosted': boolean;
+export class ApiTokenTdh {
+    'id'?: number;
+    'balance'?: number;
+    'hodl_rate'?: number;
+    'tdh'?: number;
+    'tdh__raw'?: number;
+    'days_held_per_edition'?: Array<number>;
 
     static readonly discriminator: string | undefined = undefined;
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
         {
-            "name": "rating",
-            "baseName": "rating",
+            "name": "id",
+            "baseName": "id",
             "type": "number",
             "format": "int64"
         },
         {
-            "name": "min_rating",
-            "baseName": "min_rating",
+            "name": "balance",
+            "baseName": "balance",
             "type": "number",
             "format": "int64"
         },
         {
-            "name": "max_rating",
-            "baseName": "max_rating",
+            "name": "hodl_rate",
+            "baseName": "hodl_rate",
+            "type": "number",
+            "format": "double"
+        },
+        {
+            "name": "tdh",
+            "baseName": "tdh",
             "type": "number",
             "format": "int64"
         },
         {
-            "name": "reaction",
-            "baseName": "reaction",
-            "type": "string",
-            "format": ""
+            "name": "tdh__raw",
+            "baseName": "tdh__raw",
+            "type": "number",
+            "format": "int64"
         },
         {
-            "name": "boosted",
-            "baseName": "boosted",
-            "type": "boolean",
-            "format": ""
+            "name": "days_held_per_edition",
+            "baseName": "days_held_per_edition",
+            "type": "Array<number>",
+            "format": "int64"
         }    ];
 
     static getAttributeTypeMap() {
-        return ApiDropContextProfileContext.attributeTypeMap;
+        return ApiTokenTdh.attributeTypeMap;
     }
 
     public constructor() {
