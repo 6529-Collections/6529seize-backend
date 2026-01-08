@@ -46,8 +46,13 @@ export class CommunityMembersDb extends LazyDbAccessCompatibleService {
       sort = '(cm.tdh + cm.xtdh)';
     } else if (sort === 'tdh_rate') {
       sort = 'basetdh_rate';
+    } else if (sort === 'combined_tdh_rate') {
+      sort = '(cm.basetdh_rate + cm.xtdh_rate)';
     }
-    const orderByClause = sort === '(cm.tdh + cm.xtdh)' ? sort : `cm.${sort}`;
+    const orderByClause =
+      sort === '(cm.tdh + cm.xtdh)' || sort === '(cm.basetdh_rate + cm.xtdh_rate)'
+        ? sort
+        : `cm.${sort}`;
     const sql = `
       ${viewResult.sql} 
       select
@@ -62,6 +67,7 @@ export class CommunityMembersDb extends LazyDbAccessCompatibleService {
         cm.granted_xtdh as xtdh_outgoing,
         (cm.xtdh - (cm.produced_xtdh - cm.granted_xtdh)) as xtdh_incoming,
         (cm.tdh + cm.xtdh) as combined_tdh,
+        (cm.basetdh_rate + cm.xtdh_rate) as combined_tdh_rate,
         cm.cic as cic,
         cm.rep as rep,
         cm.pfp as pfp,

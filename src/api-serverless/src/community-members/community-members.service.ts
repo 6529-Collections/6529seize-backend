@@ -53,6 +53,7 @@ export class CommunityMembersService {
           xtdh_outgoing: member.xtdh_outgoing,
           xtdh_incoming: member.xtdh_incoming,
           combined_tdh: member.combined_tdh,
+          combined_tdh_rate: member.combined_tdh_rate,
           rep: member.rep,
           cic: member.cic,
           last_activity: lastActivities[member.consolidation_key] ?? null,
