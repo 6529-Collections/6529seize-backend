@@ -80,6 +80,7 @@ export { Rememe, RememeUpload } from './IRememe';
 export { ProfileTotalRepScoreAggregation } from './IRepScoreAggregations';
 export { RoyaltiesUpload } from './IRoyalties';
 export { MemesSeason } from './ISeason';
+export { MetricRollupHourEntity } from './IMetricRollupHour';
 export {
   NFTFinalSubscription,
   NFTFinalSubscriptionUpload,

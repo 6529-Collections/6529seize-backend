@@ -65,6 +65,7 @@ import { identityFetcher } from '../api-serverless/src/identities/identity.fetch
 import { identitiesDb } from '../identities/identities.db';
 import { numbers } from '../numbers';
 import { collections } from '../collections';
+import { metricsRecorder, MetricsRecorder } from '../metrics/MetricsRecorder';
 
 export class CreateOrUpdateDropUseCase {
   public constructor(
@@ -76,7 +77,8 @@ export class CreateOrUpdateDropUseCase {
     private readonly activityRecorder: ActivityRecorder,
     private readonly identitySubscriptionsDb: IdentitySubscriptionsDb,
     private readonly proxyService: ProfileProxyApiService,
-    private readonly deleteDropUseCase: DeleteDropUseCase
+    private readonly deleteDropUseCase: DeleteDropUseCase,
+    private readonly metricsRecorder: MetricsRecorder
   ) {}
 
   public async execute(
@@ -213,6 +215,7 @@ export class CreateOrUpdateDropUseCase {
         },
         { connection, timer }
       );
+      await this.metricsRecorder.recordDrop({ timer, connection });
     }
     timer.stop(`${CreateOrUpdateDropUseCase.name}->execute`);
     return { drop_id: dropId };
@@ -922,5 +925,6 @@ export const createOrUpdateDrop = new CreateOrUpdateDropUseCase(
   activityRecorder,
   identitySubscriptionsDb,
   profileProxyApiService,
-  deleteDrop
+  deleteDrop,
+  metricsRecorder
 );

@@ -7,6 +7,7 @@ import WebSocket, { WebSocketServer } from 'ws';
 import aggregatedActivityRoutes from './aggregated-activity/api.aggregated-activity.routes';
 import authRoutes from './auth/auth.routes';
 import communityMembersRoutes from './community-members/community-members.routes';
+import communityMetricsRoutes from './community-metrics/community-metrics.routes';
 import userGroupsImEligibleForRoutes from './community-members/user-groups-im-elgigible-for.routes';
 import userGroupsRoutes from './community-members/user-groups.routes';
 import delegationsRoutes from './delegations/delegations.routes';
@@ -1095,6 +1096,7 @@ async function initializeApp() {
   apiRouter.use(`/identities`, identitiesRoutes);
   apiRouter.use(`/profiles`, profilesRoutes);
   apiRouter.use(`/community-members`, communityMembersRoutes);
+  apiRouter.use(`/community-metrics`, communityMetricsRoutes);
   apiRouter.use(`/groups`, userGroupsRoutes);
   apiRouter.use(`/groups_im_eligible_for`, userGroupsImEligibleForRoutes);
   apiRouter.use(`/auth`, authRoutes);
