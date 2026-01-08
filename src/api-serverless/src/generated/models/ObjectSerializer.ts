@@ -24,6 +24,9 @@ export * from '../models/ApiChangeGroupVisibility';
 export * from '../models/ApiChangeProfileCicRating';
 export * from '../models/ApiChangeProfileRepRating';
 export * from '../models/ApiCommunityMemberMinimal';
+export * from '../models/ApiCommunityMetric';
+export * from '../models/ApiCommunityMetricSample';
+export * from '../models/ApiCommunityMetrics';
 export * from '../models/ApiCompleteMultipartUploadRequest';
 export * from '../models/ApiCompleteMultipartUploadRequestPart';
 export * from '../models/ApiCompleteMultipartUploadResponse';
@@ -266,6 +269,9 @@ import { ApiChangeGroupVisibility } from '../models/ApiChangeGroupVisibility';
 import { ApiChangeProfileCicRating } from '../models/ApiChangeProfileCicRating';
 import { ApiChangeProfileRepRating } from '../models/ApiChangeProfileRepRating';
 import { ApiCommunityMemberMinimal } from '../models/ApiCommunityMemberMinimal';
+import { ApiCommunityMetric } from '../models/ApiCommunityMetric';
+import { ApiCommunityMetricSample } from '../models/ApiCommunityMetricSample';
+import { ApiCommunityMetrics } from '../models/ApiCommunityMetrics';
 import { ApiCompleteMultipartUploadRequest } from '../models/ApiCompleteMultipartUploadRequest';
 import { ApiCompleteMultipartUploadRequestPart } from '../models/ApiCompleteMultipartUploadRequestPart';
 import { ApiCompleteMultipartUploadResponse } from '../models/ApiCompleteMultipartUploadResponse';
@@ -553,6 +559,9 @@ let typeMap: {[index: string]: any} = {
     "ApiChangeProfileCicRating": ApiChangeProfileCicRating,
     "ApiChangeProfileRepRating": ApiChangeProfileRepRating,
     "ApiCommunityMemberMinimal": ApiCommunityMemberMinimal,
+    "ApiCommunityMetric": ApiCommunityMetric,
+    "ApiCommunityMetricSample": ApiCommunityMetricSample,
+    "ApiCommunityMetrics": ApiCommunityMetrics,
     "ApiCompleteMultipartUploadRequest": ApiCompleteMultipartUploadRequest,
     "ApiCompleteMultipartUploadRequestPart": ApiCompleteMultipartUploadRequestPart,
     "ApiCompleteMultipartUploadResponse": ApiCompleteMultipartUploadResponse,

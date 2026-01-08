@@ -255,6 +255,29 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/ApiCommunityMemberMinimal"
+  /community-metrics:
+    get:
+      tags:
+        - CommunityMetrics
+      summary: Get community metrics.
+      operationId: getCommunityMetrics
+      parameters:
+        - name: interval
+          in: query
+          description: Metrics interval
+          required: true
+          schema:
+            type: string
+            enum:
+              - DAY
+              - WEEK
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiCommunityMetrics"
   /distribution_phases/{contract}/{nft_id}:
     get:
       tags:
@@ -3210,7 +3233,9 @@ paths:
       tags:
         - TDH
       summary: Get consolidated TDH for an identity
-      description: Returns the consolidated TDH data for a given identity. The identity can be a profile handle, wallet address, ENS name, or consolidation key.
+      description: >-
+        Returns the consolidated TDH data for a given identity. The identity can
+        be a profile handle, wallet address, ENS name, or consolidation key.
       operationId: getConsolidatedTdh
       parameters:
         - name: identity
@@ -5474,6 +5499,112 @@ components:
           maxLength: 100
           minLength: 1
           pattern: ^[a-zA-Z0-9?!,."() ]{1,100}$
+    ApiCommunityMemberMinimal:
+      type: object
+      required:
+        - profile_id
+        - handle
+        - normalised_handle
+        - primary_wallet
+        - display
+        - tdh
+        - level
+        - cic_rating
+        - wallet
+        - pfp
+      properties:
+        profile_id:
+          type: string
+          nullable: true
+        handle:
+          type: string
+          nullable: true
+        normalised_handle:
+          type: string
+          nullable: true
+        primary_wallet:
+          type: string
+          nullable: true
+        display:
+          type: string
+          nullable: true
+        tdh:
+          type: number
+          format: int64
+        level:
+          type: number
+          format: int64
+        cic_rating:
+          type: number
+          format: int64
+        wallet:
+          type: string
+        pfp:
+          type: string
+          nullable: true
+    ApiCommunityMetric:
+      type: object
+      required:
+        - older
+        - newer
+      properties:
+        older:
+          $ref: "#/components/schemas/ApiCommunityMetricSample"
+        newer:
+          $ref: "#/components/schemas/ApiCommunityMetricSample"
+    ApiCommunityMetrics:
+      type: object
+      required:
+        - drops_created
+      properties:
+        drops_created:
+          $ref: "#/components/schemas/ApiCommunityMetric"
+    ApiCommunityMetricSample:
+      type: object
+      required:
+        - period_start
+        - period_end
+        - event_count
+        - value_count
+      properties:
+        period_start:
+          type: number
+        period_end:
+          type: number
+        event_count:
+          type: number
+        value_count:
+          type: number
+    ApiCompleteMultipartUploadRequest:
+      required:
+        - upload_id
+        - key
+        - parts
+      properties:
+        upload_id:
+          type: string
+        key:
+          type: string
+        parts:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiCompleteMultipartUploadRequestPart"
+    ApiCompleteMultipartUploadRequestPart:
+      required:
+        - etag
+        - part_no
+      properties:
+        etag:
+          type: string
+        part_no:
+          type: integer
+          format: int64
+    ApiCompleteMultipartUploadResponse:
+      required:
+        - media_url
+      properties:
+        media_url:
+          type: string
     ApiConsolidatedTdh:
       type: object
       properties:
@@ -5595,111 +5726,6 @@ components:
             $ref: "#/components/schemas/ApiTokenTdhRank"
         boost_breakdown:
           type: object
-    ApiTokenTdh:
-      type: object
-      properties:
-        id:
-          type: integer
-          format: int64
-        balance:
-          type: integer
-          format: int64
-        hodl_rate:
-          type: number
-          format: double
-        tdh:
-          type: integer
-          format: int64
-        tdh__raw:
-          type: integer
-          format: int64
-        days_held_per_edition:
-          type: array
-          items:
-            type: integer
-            format: int64
-    ApiTokenTdhRank:
-      type: object
-      properties:
-        id:
-          type: integer
-          format: int64
-        rank:
-          type: integer
-          format: int64
-    ApiCommunityMemberMinimal:
-      type: object
-      required:
-        - profile_id
-        - handle
-        - normalised_handle
-        - primary_wallet
-        - display
-        - tdh
-        - level
-        - cic_rating
-        - wallet
-        - pfp
-      properties:
-        profile_id:
-          type: string
-          nullable: true
-        handle:
-          type: string
-          nullable: true
-        normalised_handle:
-          type: string
-          nullable: true
-        primary_wallet:
-          type: string
-          nullable: true
-        display:
-          type: string
-          nullable: true
-        tdh:
-          type: number
-          format: int64
-        level:
-          type: number
-          format: int64
-        cic_rating:
-          type: number
-          format: int64
-        wallet:
-          type: string
-        pfp:
-          type: string
-          nullable: true
-    ApiCompleteMultipartUploadRequest:
-      required:
-        - upload_id
-        - key
-        - parts
-      properties:
-        upload_id:
-          type: string
-        key:
-          type: string
-        parts:
-          type: array
-          items:
-            $ref: "#/components/schemas/ApiCompleteMultipartUploadRequestPart"
-    ApiCompleteMultipartUploadRequestPart:
-      required:
-        - etag
-        - part_no
-      properties:
-        etag:
-          type: string
-        part_no:
-          type: integer
-          format: int64
-    ApiCompleteMultipartUploadResponse:
-      required:
-        - media_url
-      properties:
-        media_url:
-          type: string
     ApiCreateDropPart:
       type: object
       required:
@@ -8077,6 +8103,38 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ApiTdhEdition"
+    ApiTokenTdh:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        balance:
+          type: integer
+          format: int64
+        hodl_rate:
+          type: number
+          format: double
+        tdh:
+          type: integer
+          format: int64
+        tdh__raw:
+          type: integer
+          format: int64
+        days_held_per_edition:
+          type: array
+          items:
+            type: integer
+            format: int64
+    ApiTokenTdhRank:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        rank:
+          type: integer
+          format: int64
     ApiTransaction:
       type: object
       required:
