@@ -98,14 +98,14 @@ paths:
               - MemeLab
               - NextGen
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/ApiAggregatedActivityPage'
+                  $ref: "#/components/schemas/ApiAggregatedActivityPage"
   /aggregated-activity/consolidation/{consolidation_key}:
     get:
       tags:
@@ -119,13 +119,13 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiAggregatedActivity'
-        '404':
+                $ref: "#/components/schemas/ApiAggregatedActivity"
+        "404":
           description: Aggregated Activity for consolidation key not found
   /aggregated-activity/consolidation/{consolidation_key}/memes:
     get:
@@ -140,15 +140,15 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/ApiAggregatedActivityMemes'
-        '404':
+                  $ref: "#/components/schemas/ApiAggregatedActivityMemes"
+        "404":
           description: Memes Aggregated Activity for consolidation key not found
   /auth/nonce:
     get:
@@ -172,12 +172,12 @@ paths:
           schema:
             type: boolean
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiNonceResponse'
+                $ref: "#/components/schemas/ApiNonceResponse"
   /auth/login:
     post:
       tags:
@@ -196,15 +196,15 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ApiLoginRequest'
+              $ref: "#/components/schemas/ApiLoginRequest"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiLoginResponse'
-        '400':
+                $ref: "#/components/schemas/ApiLoginResponse"
+        "400":
           description: Invalid request
   /auth/redeem-refresh-token:
     post:
@@ -217,15 +217,15 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ApiRedeemRefreshTokenRequest'
+              $ref: "#/components/schemas/ApiRedeemRefreshTokenRequest"
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiRedeemRefreshTokenResponse'
-        '400':
+                $ref: "#/components/schemas/ApiRedeemRefreshTokenResponse"
+        "400":
           description: Invalid request
   /community-members:
     get:
@@ -247,14 +247,14 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/ApiCommunityMemberMinimal'
+                  $ref: "#/components/schemas/ApiCommunityMemberMinimal"
   /community-members/top:
     get:
       tags:
@@ -293,7 +293,7 @@ paths:
           description: Default is level
           required: false
           schema:
-            $ref: '#/components/schemas/ApiCommunityMembersSortOption'
+            $ref: "#/components/schemas/ApiCommunityMembersSortOption"
         - name: group_id
           in: query
           description: Filter by group ID
@@ -301,12 +301,12 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiCommunityMembersPage'
+                $ref: "#/components/schemas/ApiCommunityMembersPage"
   /community-metrics:
     get:
       tags:
@@ -324,12 +324,12 @@ paths:
               - DAY
               - WEEK
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiCommunityMetrics'
+                $ref: "#/components/schemas/ApiCommunityMetrics"
   /distribution_phases/{contract}/{nft_id}:
     get:
       tags:
@@ -351,12 +351,12 @@ paths:
             type: integer
             format: int64
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DistributionPhasesPage'
+                $ref: "#/components/schemas/DistributionPhasesPage"
   /distribution_photos/{contract}/{nft_id}:
     get:
       tags:
@@ -395,12 +395,12 @@ paths:
             format: int64
             minimum: 1
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DistributionPhotosPage'
+                $ref: "#/components/schemas/DistributionPhotosPage"
   /distribution_photos/{contract}/{nft_id}/prep:
     post:
       tags:
@@ -427,17 +427,17 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ApiCreateMediaUploadUrlRequest'
+              $ref: "#/components/schemas/ApiCreateMediaUploadUrlRequest"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiCreateMediaUrlResponse'
-        '400':
+                $ref: "#/components/schemas/ApiCreateMediaUrlResponse"
+        "400":
           description: Invalid request
-        '401':
+        "401":
           description: Unauthorized
   /distribution_photos/{contract}/{nft_id}/multipart-upload:
     post:
@@ -465,17 +465,17 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ApiCreateMediaUploadUrlRequest'
+              $ref: "#/components/schemas/ApiCreateMediaUploadUrlRequest"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiStartMultipartMediaUploadResponse'
-        '400':
+                $ref: "#/components/schemas/ApiStartMultipartMediaUploadResponse"
+        "400":
           description: Invalid request
-        '401':
+        "401":
           description: Unauthorized
   /distribution_photos/{contract}/{nft_id}/multipart-upload/part:
     post:
@@ -503,17 +503,17 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ApiUploadPartOfMultipartUploadRequest'
+              $ref: "#/components/schemas/ApiUploadPartOfMultipartUploadRequest"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiUploadPartOfMultipartUploadResponse'
-        '400':
+                $ref: "#/components/schemas/ApiUploadPartOfMultipartUploadResponse"
+        "400":
           description: Invalid request
-        '401':
+        "401":
           description: Unauthorized
   /distribution_photos/{contract}/{nft_id}/multipart-upload/completion:
     post:
@@ -541,17 +541,17 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ApiCompleteMultipartUploadRequest'
+              $ref: "#/components/schemas/ApiCompleteMultipartUploadRequest"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiCompleteMultipartUploadResponse'
-        '400':
+                $ref: "#/components/schemas/ApiCompleteMultipartUploadResponse"
+        "400":
           description: Invalid request
-        '401':
+        "401":
           description: Unauthorized
   /distribution_photos/{contract}/{nft_id}/complete:
     post:
@@ -581,17 +581,17 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/DistributionPhotoCompleteRequest'
+              $ref: "#/components/schemas/DistributionPhotoCompleteRequest"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DistributionPhotoCompleteResponse'
-        '400':
+                $ref: "#/components/schemas/DistributionPhotoCompleteResponse"
+        "400":
           description: Invalid request
-        '401':
+        "401":
           description: Unauthorized
   /distributions:
     get:
@@ -645,12 +645,12 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DistributionNormalizedPage'
+                $ref: "#/components/schemas/DistributionNormalizedPage"
   /distributions/{contract}/{id}/overview:
     get:
       tags:
@@ -673,15 +673,15 @@ paths:
             type: integer
             format: int64
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DistributionOverview'
-        '400':
+                $ref: "#/components/schemas/DistributionOverview"
+        "400":
           description: Invalid request
-        '403':
+        "403":
           description: Forbidden - not a Subscription Admin
   /light-drops:
     get:
@@ -713,14 +713,14 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/ApiLightDrop'
+                  $ref: "#/components/schemas/ApiLightDrop"
   /drops:
     get:
       tags:
@@ -775,16 +775,16 @@ paths:
           description: Filter by drop type
           required: false
           schema:
-            $ref: '#/components/schemas/ApiDropType'
+            $ref: "#/components/schemas/ApiDropType"
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/ApiDrop'
+                  $ref: "#/components/schemas/ApiDrop"
     post:
       tags:
         - Drops
@@ -796,15 +796,15 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ApiCreateDropRequest'
+              $ref: "#/components/schemas/ApiCreateDropRequest"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiDrop'
-        '400':
+                $ref: "#/components/schemas/ApiDrop"
+        "400":
           description: Invalid request
   /boosted-drops/:
     get:
@@ -859,7 +859,7 @@ paths:
           description: Default is DESC
           required: false
           schema:
-            $ref: '#/components/schemas/ApiPageSortDirection'
+            $ref: "#/components/schemas/ApiPageSortDirection"
         - name: sort
           in: query
           description: Default is last_boosted_at
@@ -880,12 +880,12 @@ paths:
             format: int64
             minimum: 1
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiDropsPage'
+                $ref: "#/components/schemas/ApiDropsPage"
   /drops/{dropId}/boosts:
     get:
       tags:
@@ -918,7 +918,7 @@ paths:
           description: Default is DESC
           required: false
           schema:
-            $ref: '#/components/schemas/ApiPageSortDirection'
+            $ref: "#/components/schemas/ApiPageSortDirection"
         - name: sort
           in: query
           description: Default is boosted_at
@@ -928,13 +928,13 @@ paths:
             enum:
               - boosted_at
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiDropBoostsPage'
-        '404':
+                $ref: "#/components/schemas/ApiDropBoostsPage"
+        "404":
           description: Drop not found
     post:
       tags:
@@ -948,11 +948,11 @@ paths:
           schema:
             type: string
       responses:
-        '201':
+        "201":
           description: successful operation
-        '400':
+        "400":
           description: Invalid request
-        '404':
+        "404":
           description: Drop not found
     delete:
       tags:
@@ -966,9 +966,9 @@ paths:
           schema:
             type: string
       responses:
-        '201':
+        "201":
           description: successful operation
-        '404':
+        "404":
           description: Drop not found
   /drops/{dropId}:
     get:
@@ -983,13 +983,13 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiDrop'
-        '404':
+                $ref: "#/components/schemas/ApiDrop"
+        "404":
           description: Drop not found
     post:
       tags:
@@ -1007,17 +1007,17 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ApiUpdateDropRequest'
+              $ref: "#/components/schemas/ApiUpdateDropRequest"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiDrop'
-        '400':
+                $ref: "#/components/schemas/ApiDrop"
+        "400":
           description: Invalid request
-        '404':
+        "404":
           description: Drop not found
     delete:
       tags:
@@ -1031,9 +1031,9 @@ paths:
           schema:
             type: string
       responses:
-        '201':
+        "201":
           description: successful operation
-        '404':
+        "404":
           description: Drop not found
   /drops/{dropId}/ratings:
     post:
@@ -1053,17 +1053,17 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ApiDropRatingRequest'
+              $ref: "#/components/schemas/ApiDropRatingRequest"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiDrop'
-        '400':
+                $ref: "#/components/schemas/ApiDrop"
+        "400":
           description: Invalid request
-        '404':
+        "404":
           description: Drop not found
   /drops/{dropId}/reactions:
     post:
@@ -1082,9 +1082,9 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ApiAddReactionToDropRequest'
+              $ref: "#/components/schemas/ApiAddReactionToDropRequest"
       responses:
-        '201':
+        "201":
           description: successful operation
     delete:
       tags:
@@ -1102,9 +1102,9 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ApiAddReactionToDropRequest'
+              $ref: "#/components/schemas/ApiAddReactionToDropRequest"
       responses:
-        '201':
+        "201":
           description: successful operation
   /drops/{dropId}/subscriptions:
     post:
@@ -1123,15 +1123,15 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ApiDropSubscriptionActions'
+              $ref: "#/components/schemas/ApiDropSubscriptionActions"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiDropSubscriptionActions'
-        '404':
+                $ref: "#/components/schemas/ApiDropSubscriptionActions"
+        "404":
           description: Wave not found
     delete:
       tags:
@@ -1149,15 +1149,15 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ApiDropSubscriptionActions'
+              $ref: "#/components/schemas/ApiDropSubscriptionActions"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiDropSubscriptionActions'
-        '404':
+                $ref: "#/components/schemas/ApiDropSubscriptionActions"
+        "404":
           description: Wave not found
   /drops/{dropId}/mark-unread:
     post:
@@ -1175,13 +1175,13 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiMarkDropUnreadResponse'
-        '404':
+                $ref: "#/components/schemas/ApiMarkDropUnreadResponse"
+        "404":
           description: Drop not found
   /drop-media/prep:
     post:
@@ -1195,15 +1195,15 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ApiCreateMediaUploadUrlRequest'
+              $ref: "#/components/schemas/ApiCreateMediaUploadUrlRequest"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiCreateMediaUrlResponse'
-        '400':
+                $ref: "#/components/schemas/ApiCreateMediaUrlResponse"
+        "400":
           description: Invalid request
   /drop-media/multipart-upload:
     post:
@@ -1217,15 +1217,15 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ApiCreateMediaUploadUrlRequest'
+              $ref: "#/components/schemas/ApiCreateMediaUploadUrlRequest"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiStartMultipartMediaUploadResponse'
-        '400':
+                $ref: "#/components/schemas/ApiStartMultipartMediaUploadResponse"
+        "400":
           description: Invalid request
   /drop-media/multipart-upload/part:
     post:
@@ -1239,15 +1239,15 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ApiUploadPartOfMultipartUploadRequest'
+              $ref: "#/components/schemas/ApiUploadPartOfMultipartUploadRequest"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiUploadPartOfMultipartUploadResponse'
-        '400':
+                $ref: "#/components/schemas/ApiUploadPartOfMultipartUploadResponse"
+        "400":
           description: Invalid request
   /drop-media/multipart-upload/completion:
     post:
@@ -1261,15 +1261,15 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ApiCompleteMultipartUploadRequest'
+              $ref: "#/components/schemas/ApiCompleteMultipartUploadRequest"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiCompleteMultipartUploadResponse'
-        '400':
+                $ref: "#/components/schemas/ApiCompleteMultipartUploadResponse"
+        "400":
           description: Invalid request
   /wave-media/multipart-upload:
     post:
@@ -1283,15 +1283,15 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ApiCreateMediaUploadUrlRequest'
+              $ref: "#/components/schemas/ApiCreateMediaUploadUrlRequest"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiStartMultipartMediaUploadResponse'
-        '400':
+                $ref: "#/components/schemas/ApiStartMultipartMediaUploadResponse"
+        "400":
           description: Invalid request
   /wave-media/multipart-upload/part:
     post:
@@ -1305,15 +1305,15 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ApiUploadPartOfMultipartUploadRequest'
+              $ref: "#/components/schemas/ApiUploadPartOfMultipartUploadRequest"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiUploadPartOfMultipartUploadResponse'
-        '400':
+                $ref: "#/components/schemas/ApiUploadPartOfMultipartUploadResponse"
+        "400":
           description: Invalid request
   /wave-media/multipart-upload/completion:
     post:
@@ -1327,15 +1327,15 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ApiCompleteMultipartUploadRequest'
+              $ref: "#/components/schemas/ApiCompleteMultipartUploadRequest"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiCompleteMultipartUploadResponse'
-        '400':
+                $ref: "#/components/schemas/ApiCompleteMultipartUploadResponse"
+        "400":
           description: Invalid request
   /feed:
     get:
@@ -1352,14 +1352,14 @@ paths:
             type: integer
             format: int64
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/ApiFeedItem'
+                  $ref: "#/components/schemas/ApiFeedItem"
   /groups:
     get:
       tags:
@@ -1387,14 +1387,14 @@ paths:
             type: number
             format: int64
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/ApiGroupFull'
+                  $ref: "#/components/schemas/ApiGroupFull"
     post:
       tags:
         - Groups
@@ -1405,15 +1405,15 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ApiCreateGroup'
+              $ref: "#/components/schemas/ApiCreateGroup"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiGroupFull'
-        '400':
+                $ref: "#/components/schemas/ApiGroupFull"
+        "400":
           description: Invalid request
   /groups/{id}/visible:
     post:
@@ -1432,17 +1432,17 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ApiChangeGroupVisibility'
+              $ref: "#/components/schemas/ApiChangeGroupVisibility"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiGroupFull'
-        '400':
+                $ref: "#/components/schemas/ApiGroupFull"
+        "400":
           description: Invalid request
-        '404':
+        "404":
           description: Group not found
   /groups/{id}/identity_groups/{identity_group_id}:
     get:
@@ -1464,7 +1464,7 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
@@ -1472,7 +1472,7 @@ paths:
                 type: array
                 items:
                   type: string
-        '404':
+        "404":
           description: Group not found
   /identities:
     get:
@@ -1515,14 +1515,14 @@ paths:
           schema:
             type: boolean
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/ApiIdentity'
+                  $ref: "#/components/schemas/ApiIdentity"
   /identities/{identity_key}:
     get:
       tags:
@@ -1538,12 +1538,12 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiIdentity'
+                $ref: "#/components/schemas/ApiIdentity"
   /identities/by-wallet/{wallet}:
     get:
       tags:
@@ -1557,12 +1557,12 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiIdentity'
+                $ref: "#/components/schemas/ApiIdentity"
   /identities/{id}/subscriptions:
     get:
       tags:
@@ -1576,13 +1576,13 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiIdentitySubscriptionActions'
-        '404':
+                $ref: "#/components/schemas/ApiIdentitySubscriptionActions"
+        "404":
           description: Identity not found
     post:
       tags:
@@ -1600,15 +1600,15 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ApiIdentitySubscriptionActions'
+              $ref: "#/components/schemas/ApiIdentitySubscriptionActions"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiIdentitySubscriptionActions'
-        '404':
+                $ref: "#/components/schemas/ApiIdentitySubscriptionActions"
+        "404":
           description: Identity not found
     delete:
       tags:
@@ -1626,14 +1626,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ApiIdentitySubscriptionActions'
+              $ref: "#/components/schemas/ApiIdentitySubscriptionActions"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiIdentitySubscriptionActions'
+                $ref: "#/components/schemas/ApiIdentitySubscriptionActions"
   /nft-owners:
     get:
       tags:
@@ -1680,13 +1680,13 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
                 items:
-                  $ref: '#/components/schemas/ApiNftOwnerPage'
+                  $ref: "#/components/schemas/ApiNftOwnerPage"
   /nft-owners/consolidation/{consolidation_key}:
     get:
       tags:
@@ -1738,13 +1738,13 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
                 items:
-                  $ref: '#/components/schemas/ApiNftOwnerPage'
+                  $ref: "#/components/schemas/ApiNftOwnerPage"
   /nfts:
     get:
       tags:
@@ -1791,14 +1791,14 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/ApiNftsPage'
+                  $ref: "#/components/schemas/ApiNftsPage"
   /nfts/{contract}/media:
     get:
       tags:
@@ -1813,14 +1813,14 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: Successful operation, returns an array of NFT media
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/ApiNftMedia'
+                  $ref: "#/components/schemas/ApiNftMedia"
   /notifications:
     get:
       tags:
@@ -1845,12 +1845,12 @@ paths:
             type: number
             format: int64
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiNotificationsResponse'
+                $ref: "#/components/schemas/ApiNotificationsResponse"
   /notifications/read:
     post:
       tags:
@@ -1858,7 +1858,7 @@ paths:
       summary: Mark all notifications as read
       operationId: markAllNotificationsAsRead
       responses:
-        '200':
+        "200":
           description: successful operation
   /notifications/{id}/read:
     post:
@@ -1874,7 +1874,7 @@ paths:
             type: string
           description: Notification ID or string "all" to mark all notifications as read
       responses:
-        '201':
+        "201":
           description: successful operation
   /notifications/wave/{wave_id}/read:
     post:
@@ -1889,7 +1889,7 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: successful operation
   /notifications/wave-subscription/{wave_id}:
     get:
@@ -1904,7 +1904,7 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
@@ -1925,7 +1925,7 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
@@ -1946,7 +1946,7 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
@@ -1975,12 +1975,12 @@ paths:
             type: integer
             format: int64
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiBlocksPage'
+                $ref: "#/components/schemas/ApiBlocksPage"
   /uploads:
     get:
       tags:
@@ -2013,12 +2013,12 @@ paths:
             type: string
             format: date-time
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiUploadsPage'
+                $ref: "#/components/schemas/ApiUploadsPage"
   /consolidated_uploads:
     get:
       tags:
@@ -2051,12 +2051,12 @@ paths:
             type: string
             format: date-time
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiUploadsPage'
+                $ref: "#/components/schemas/ApiUploadsPage"
   /settings:
     get:
       tags:
@@ -2064,12 +2064,12 @@ paths:
       summary: Seize settings
       operationId: getSettings
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiSeizeSettings'
+                $ref: "#/components/schemas/ApiSeizeSettings"
   /artists:
     get:
       tags:
@@ -2096,12 +2096,12 @@ paths:
             type: integer
             format: int64
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiArtistsPage'
+                $ref: "#/components/schemas/ApiArtistsPage"
   /memes/artists_names:
     get:
       tags:
@@ -2109,14 +2109,14 @@ paths:
       summary: meme artists names
       operationId: getMemeArtistsNames
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/ApiArtistNameItem'
+                  $ref: "#/components/schemas/ApiArtistNameItem"
   /memelab/artists_names:
     get:
       tags:
@@ -2124,14 +2124,14 @@ paths:
       summary: memelab artists names
       operationId: getMemelabArtistsNames
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/ApiArtistNameItem'
+                  $ref: "#/components/schemas/ApiArtistNameItem"
   /owners-balances:
     get:
       tags:
@@ -2166,14 +2166,14 @@ paths:
               - ASC
               - DESC
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/ApiOwnerBalancePage'
+                  $ref: "#/components/schemas/ApiOwnerBalancePage"
   /owners-balances/consolidation/{consolidation_key}:
     get:
       tags:
@@ -2187,13 +2187,13 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiOwnerBalance'
-        '404':
+                $ref: "#/components/schemas/ApiOwnerBalance"
+        "404":
           description: Owner Balance for consolidation key not found
   /owners-balances/consolidation/{consolidation_key}/memes:
     get:
@@ -2208,15 +2208,15 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/ApiOwnerBalanceMemes'
-        '404':
+                  $ref: "#/components/schemas/ApiOwnerBalanceMemes"
+        "404":
           description: Memes Owner Balance for consolidation key not found
   /profiles/{identity}/cic/rating:
     post:
@@ -2237,11 +2237,11 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ApiChangeProfileCicRating'
+              $ref: "#/components/schemas/ApiChangeProfileCicRating"
       responses:
-        '201':
+        "201":
           description: successful operation
-        '400':
+        "400":
           description: Invalid request
   /profiles/{identity}/cic/ratings/by-rater:
     get:
@@ -2290,13 +2290,13 @@ paths:
               - last_modified
               - rating
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiRatingWithProfileInfoAndLevelPage'
-        '404':
+                $ref: "#/components/schemas/ApiRatingWithProfileInfoAndLevelPage"
+        "404":
           description: Profile not found
   /profiles/{identity}/rep/rating:
     post:
@@ -2317,11 +2317,11 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ApiChangeProfileRepRating'
+              $ref: "#/components/schemas/ApiChangeProfileRepRating"
       responses:
-        '201':
+        "201":
           description: successful operation
-        '400':
+        "400":
           description: Invalid request
     get:
       tags:
@@ -2345,13 +2345,13 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiRepRating'
-        '404':
+                $ref: "#/components/schemas/ApiRepRating"
+        "404":
           description: Profile not found
   /profiles/{identity}/rep/ratings/by-rater:
     get:
@@ -2405,13 +2405,13 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiRatingWithProfileInfoAndLevelPage'
-        '404':
+                $ref: "#/components/schemas/ApiRatingWithProfileInfoAndLevelPage"
+        "404":
           description: Profile not found
   /profiles:
     post:
@@ -2424,15 +2424,15 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ApiCreateOrUpdateProfileRequest'
+              $ref: "#/components/schemas/ApiCreateOrUpdateProfileRequest"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiIdentity'
-        '400':
+                $ref: "#/components/schemas/ApiIdentity"
+        "400":
           description: Invalid request
   /profiles/{identity}/proxies:
     get:
@@ -2447,15 +2447,15 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/ApiProfileProxy'
-        '404':
+                  $ref: "#/components/schemas/ApiProfileProxy"
+        "404":
           description: Profile not found
   /profiles/{identity}/proxies/received:
     get:
@@ -2470,15 +2470,15 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/ApiProfileProxy'
-        '404':
+                  $ref: "#/components/schemas/ApiProfileProxy"
+        "404":
           description: Profile not found
   /profiles/{identity}/proxies/granted:
     get:
@@ -2493,15 +2493,15 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/ApiProfileProxy'
-        '404':
+                  $ref: "#/components/schemas/ApiProfileProxy"
+        "404":
           description: Profile not found
   /proxies:
     post:
@@ -2515,15 +2515,15 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ApiCreateNewProfileProxy'
+              $ref: "#/components/schemas/ApiCreateNewProfileProxy"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiProfileProxy'
-        '400':
+                $ref: "#/components/schemas/ApiProfileProxy"
+        "400":
           description: Invalid request
   /proxies/{proxyId}:
     get:
@@ -2538,13 +2538,13 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiProfileProxy'
-        '404':
+                $ref: "#/components/schemas/ApiProfileProxy"
+        "404":
           description: Proxy not found
   /proxies/{proxyId}/actions:
     post:
@@ -2571,19 +2571,19 @@ paths:
                     #/components/schemas/ApiCreateNewProfileProxyAllocateCicAction
                 - $ref: >-
                     #/components/schemas/ApiCreateNewProfileProxyCreateWaveAction
-                - $ref: '#/components/schemas/ApiCreateNewProfileProxyReadWaveAction'
+                - $ref: "#/components/schemas/ApiCreateNewProfileProxyReadWaveAction"
                 - $ref: >-
                     #/components/schemas/ApiCreateNewProfileProxyCreateWaveParticipationDropAction
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiProfileProxyAction'
-        '400':
+                $ref: "#/components/schemas/ApiProfileProxyAction"
+        "400":
           description: Invalid request
-        '404':
+        "404":
           description: Proxy not found
   /proxies/{proxyId}/actions/{actionId}/acceptance:
     post:
@@ -2619,11 +2619,11 @@ paths:
                     - REVOKE
                     - RESTORE
       responses:
-        '201':
+        "201":
           description: successful operation
-        '400':
+        "400":
           description: Invalid request
-        '404':
+        "404":
           description: Proxy or action not found
   /proxies/{proxyId}/actions/{actionId}:
     put:
@@ -2647,13 +2647,13 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ApiUpdateProxyActionRequest'
+              $ref: "#/components/schemas/ApiUpdateProxyActionRequest"
       responses:
-        '201':
+        "201":
           description: successful operation
-        '400':
+        "400":
           description: Invalid request
-        '404':
+        "404":
           description: Proxy or action not found
   /push-notifications/register:
     post:
@@ -2666,13 +2666,13 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ApiRegisterPushNotificationTokenRequest'
+              $ref: "#/components/schemas/ApiRegisterPushNotificationTokenRequest"
       responses:
-        '201':
+        "201":
           description: Push notification token registered successfully
-        '400':
+        "400":
           description: Invalid request
-        '401':
+        "401":
           description: Unauthorized
   /bulk-rep:
     post:
@@ -2689,11 +2689,11 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ApiBulkRepRequest'
+              $ref: "#/components/schemas/ApiBulkRepRequest"
       responses:
-        '201':
+        "201":
           description: successful operation
-        '400':
+        "400":
           description: Invalid request
   /ratings:
     post:
@@ -2712,15 +2712,15 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ApiBulkRateRequest'
+              $ref: "#/components/schemas/ApiBulkRateRequest"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiBulkRateResponse'
-        '400':
+                $ref: "#/components/schemas/ApiBulkRateResponse"
+        "400":
           description: Invalid request
   /ratings/credit:
     get:
@@ -2740,12 +2740,12 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiAvailableRatingCredit'
+                $ref: "#/components/schemas/ApiAvailableRatingCredit"
   /subscriptions/consolidation/details/{consolidation_key}:
     get:
       tags:
@@ -2760,13 +2760,13 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SubscriptionDetails'
-        '404':
+                $ref: "#/components/schemas/SubscriptionDetails"
+        "404":
           description: Not found
   /subscriptions/consolidation/top-up/{consolidation_key}:
     get:
@@ -2798,13 +2798,13 @@ paths:
             format: int64
             minimum: 1
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SubscriptionTopUpPage'
-        '404':
+                $ref: "#/components/schemas/SubscriptionTopUpPage"
+        "404":
           description: Not found
   /subscriptions/consolidation/upcoming-memes/{consolidation_key}:
     get:
@@ -2828,14 +2828,14 @@ paths:
             format: int64
             minimum: 1
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/NFTSubscription'
+                  $ref: "#/components/schemas/NFTSubscription"
   /subscriptions/upcoming-memes-counts:
     get:
       tags:
@@ -2852,14 +2852,14 @@ paths:
             format: int64
             minimum: 1
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/SubscriptionCounts'
+                  $ref: "#/components/schemas/SubscriptionCounts"
   /subscriptions/redeemed-memes-counts:
     get:
       tags:
@@ -2884,12 +2884,12 @@ paths:
             format: int64
             minimum: 1
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/RedeemedSubscriptionCountsPage'
+                $ref: "#/components/schemas/RedeemedSubscriptionCountsPage"
   /subscriptions/consolidation/logs/{consolidation_key}:
     get:
       tags:
@@ -2920,13 +2920,13 @@ paths:
             format: int64
             minimum: 1
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SubscriptionLogPage'
-        '404':
+                $ref: "#/components/schemas/SubscriptionLogPage"
+        "404":
           description: Not found
   /subscriptions/consolidation/redeemed/{consolidation_key}:
     get:
@@ -2958,13 +2958,13 @@ paths:
             format: int64
             minimum: 1
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/RedeemedSubscriptionPage'
-        '404':
+                $ref: "#/components/schemas/RedeemedSubscriptionPage"
+        "404":
           description: Not found
   /subscriptions/consolidation/{consolidation_key}/airdrop-address:
     get:
@@ -2980,12 +2980,12 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AirdropAddressResponse'
+                $ref: "#/components/schemas/AirdropAddressResponse"
   /subscriptions/consolidation/final/{consolidation_key}/{contract}/{token_id}:
     get:
       tags:
@@ -3013,15 +3013,15 @@ paths:
             type: integer
             format: int64
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/NFTFinalSubscription'
-        '400':
+                $ref: "#/components/schemas/NFTFinalSubscription"
+        "400":
           description: Invalid token ID
-        '404':
+        "404":
           description: Not found
   /subscriptions/uploads:
     get:
@@ -3053,13 +3053,13 @@ paths:
             format: int64
             minimum: 1
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/NFTFinalSubscriptionUploadPage'
-        '400':
+                $ref: "#/components/schemas/NFTFinalSubscriptionUploadPage"
+        "400":
           description: Contract is required
   /subscriptions/{consolidation_key}/subscription-mode:
     post:
@@ -3082,17 +3082,17 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/UpdateSubscriptionModeRequest'
+              $ref: "#/components/schemas/UpdateSubscriptionModeRequest"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SubscriptionModeResponse'
-        '400':
+                $ref: "#/components/schemas/SubscriptionModeResponse"
+        "400":
           description: Not enough balance
-        '403':
+        "403":
           description: User can only change subscription mode for their own consolidation
   /subscriptions/{consolidation_key}/subscribe-all-editions:
     post:
@@ -3115,15 +3115,15 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/UpdateSubscribeAllEditionsRequest'
+              $ref: "#/components/schemas/UpdateSubscribeAllEditionsRequest"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SubscribeAllEditionsResponse'
-        '403':
+                $ref: "#/components/schemas/SubscribeAllEditionsResponse"
+        "403":
           description: User can only change subscription mode for their own consolidation
   /subscriptions/{consolidation_key}/subscription:
     post:
@@ -3146,17 +3146,17 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/UpdateSubscriptionRequest'
+              $ref: "#/components/schemas/UpdateSubscriptionRequest"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SubscriptionResponse'
-        '400':
+                $ref: "#/components/schemas/SubscriptionResponse"
+        "400":
           description: Not enough balance or NFT already released
-        '403':
+        "403":
           description: User can only change subscription mode for their own consolidation
   /subscriptions/{consolidation_key}/subscription-count:
     post:
@@ -3179,17 +3179,17 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/UpdateSubscriptionCountRequest'
+              $ref: "#/components/schemas/UpdateSubscriptionCountRequest"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SubscriptionCountResponse'
-        '400':
+                $ref: "#/components/schemas/SubscriptionCountResponse"
+        "400":
           description: Not enough balance, NFT already released, or exceeds eligibility
-        '403':
+        "403":
           description: User can only change subscription mode for their own consolidation
   /identity-subscriptions/outgoing/{target_type}:
     get:
@@ -3225,14 +3225,14 @@ paths:
             default: 1
             minimum: 1
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/ApiOutgoingIdentitySubscriptionsPage'
+                  $ref: "#/components/schemas/ApiOutgoingIdentitySubscriptionsPage"
   /identity-subscriptions/incoming/{target_type}/{target_id}:
     get:
       tags:
@@ -3272,14 +3272,14 @@ paths:
             default: 1
             minimum: 1
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/ApiIncomingIdentitySubscriptionsPage'
+                  $ref: "#/components/schemas/ApiIncomingIdentitySubscriptionsPage"
   /tdh/consolidation/{identity}:
     get:
       tags:
@@ -3297,13 +3297,13 @@ paths:
             type: string
           description: Profile handle, wallet address, ENS name, or consolidation key
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiConsolidatedTdh'
-        '404':
+                $ref: "#/components/schemas/ApiConsolidatedTdh"
+        "404":
           description: Consolidated TDH not found
   /tdh-editions/wallet/{wallet}:
     get:
@@ -3351,7 +3351,7 @@ paths:
           in: query
           required: false
           schema:
-            $ref: '#/components/schemas/ApiPageSortDirection'
+            $ref: "#/components/schemas/ApiPageSortDirection"
         - name: page
           in: query
           required: false
@@ -3370,13 +3370,13 @@ paths:
             maximum: 100
             default: 50
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiTdhEditionsPage'
-        '400':
+                $ref: "#/components/schemas/ApiTdhEditionsPage"
+        "400":
           description: Invalid wallet
   /tdh-editions/consolidation/{consolidation_key}:
     get:
@@ -3424,7 +3424,7 @@ paths:
           in: query
           required: false
           schema:
-            $ref: '#/components/schemas/ApiPageSortDirection'
+            $ref: "#/components/schemas/ApiPageSortDirection"
         - name: page
           in: query
           required: false
@@ -3443,13 +3443,13 @@ paths:
             maximum: 100
             default: 50
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiTdhEditionsPage'
-        '404':
+                $ref: "#/components/schemas/ApiTdhEditionsPage"
+        "404":
           description: Consolidation key not found
   /tdh-editions/identity/{identity}:
     get:
@@ -3498,7 +3498,7 @@ paths:
           in: query
           required: false
           schema:
-            $ref: '#/components/schemas/ApiPageSortDirection'
+            $ref: "#/components/schemas/ApiPageSortDirection"
         - name: page
           in: query
           required: false
@@ -3517,13 +3517,13 @@ paths:
             maximum: 100
             default: 50
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiTdhEditionsPage'
-        '404':
+                $ref: "#/components/schemas/ApiTdhEditionsPage"
+        "404":
           description: Identity not found
   /transactions:
     get:
@@ -3580,14 +3580,14 @@ paths:
               - airdrops
               - burns
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/ApiTransactionPage'
+                  $ref: "#/components/schemas/ApiTransactionPage"
   /waves/{waveId}/outcomes:
     get:
       tags:
@@ -3627,13 +3627,13 @@ paths:
             maximum: 2000
             default: 100
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiWaveOutcomesPage'
-        '404':
+                $ref: "#/components/schemas/ApiWaveOutcomesPage"
+        "404":
           description: Wave not found
   /waves/{waveId}/outcomes/{outcomeIndex}/distribution:
     get:
@@ -3679,13 +3679,13 @@ paths:
             maximum: 2000
             default: 100
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiWaveOutcomeDistributionItemsPage'
-        '404':
+                $ref: "#/components/schemas/ApiWaveOutcomeDistributionItemsPage"
+        "404":
           description: Wave not found
   /waves/{id}/decisions:
     get:
@@ -3734,13 +3734,13 @@ paths:
             maximum: 2000
             default: 100
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiWaveDecisionsPage'
-        '404':
+                $ref: "#/components/schemas/ApiWaveDecisionsPage"
+        "404":
           description: Wave not found
   /waves/{id}/pauses:
     post:
@@ -3760,15 +3760,15 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ApiUpdateWaveDecisionPause'
+              $ref: "#/components/schemas/ApiUpdateWaveDecisionPause"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiWave'
-        '404':
+                $ref: "#/components/schemas/ApiWave"
+        "404":
           description: Wave not found
   /waves/{waveId}/pauses/{id}:
     delete:
@@ -3794,13 +3794,13 @@ paths:
             type: integer
             format: int64
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiWave'
-        '404':
+                $ref: "#/components/schemas/ApiWave"
+        "404":
           description: Wave or pause not found
   /waves/{waveId}/search:
     get:
@@ -3837,13 +3837,13 @@ paths:
             minimum: 1
             default: 20
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiDropWithoutWavesPageWithoutCount'
-        '404':
+                $ref: "#/components/schemas/ApiDropWithoutWavesPageWithoutCount"
+        "404":
           description: Wave not found
   /wave-media/prep:
     post:
@@ -3857,15 +3857,15 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ApiCreateMediaUploadUrlRequest'
+              $ref: "#/components/schemas/ApiCreateMediaUploadUrlRequest"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiCreateMediaUrlResponse'
-        '400':
+                $ref: "#/components/schemas/ApiCreateMediaUrlResponse"
+        "400":
           description: Invalid request
   /waves-overview:
     get:
@@ -3897,13 +3897,13 @@ paths:
           description: Filter only PINNED or UNPINNED waves
           required: false
           schema:
-            $ref: '#/components/schemas/ApiWavesPinFilter'
+            $ref: "#/components/schemas/ApiWavesPinFilter"
         - name: type
           in: query
           description: Type of overview
           required: true
           schema:
-            $ref: '#/components/schemas/ApiWavesOverviewType'
+            $ref: "#/components/schemas/ApiWavesOverviewType"
         - name: only_waves_followed_by_authenticated_user
           in: query
           description: >-
@@ -3919,14 +3919,14 @@ paths:
           schema:
             type: boolean
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/ApiWave'
+                  $ref: "#/components/schemas/ApiWave"
   /waves:
     get:
       tags:
@@ -3975,14 +3975,14 @@ paths:
           schema:
             type: boolean
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/ApiWave'
+                  $ref: "#/components/schemas/ApiWave"
     post:
       tags:
         - Waves
@@ -3994,15 +3994,15 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ApiCreateNewWave'
+              $ref: "#/components/schemas/ApiCreateNewWave"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiWave'
-        '400':
+                $ref: "#/components/schemas/ApiWave"
+        "400":
           description: Invalid request
   /waves/direct-message/new:
     post:
@@ -4022,13 +4022,13 @@ paths:
                   items:
                     type: string
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiWave'
-        '400':
+                $ref: "#/components/schemas/ApiWave"
+        "400":
           description: Invalid request
   /waves/{id}:
     get:
@@ -4043,13 +4043,13 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiWave'
-        '404':
+                $ref: "#/components/schemas/ApiWave"
+        "404":
           description: Wave not found
     delete:
       tags:
@@ -4063,9 +4063,9 @@ paths:
           schema:
             type: string
       responses:
-        '201':
+        "201":
           description: successful operation
-        '404':
+        "404":
           description: Wave not found
     post:
       tags:
@@ -4083,17 +4083,17 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ApiUpdateWaveRequest'
+              $ref: "#/components/schemas/ApiUpdateWaveRequest"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiWave'
-        '400':
+                $ref: "#/components/schemas/ApiWave"
+        "400":
           description: Invalid request
-        '404':
+        "404":
           description: Drop not found
   /waves/{id}/drops:
     get:
@@ -4139,7 +4139,7 @@ paths:
             FIND_OLDER is used. If serial_no_less_than is set then this is
             ignored.
           schema:
-            $ref: '#/components/schemas/ApiDropSearchStrategy'
+            $ref: "#/components/schemas/ApiDropSearchStrategy"
         - name: serial_no_less_than
           in: query
           required: false
@@ -4152,14 +4152,14 @@ paths:
           description: Filter by drop type
           required: false
           schema:
-            $ref: '#/components/schemas/ApiDropType'
+            $ref: "#/components/schemas/ApiDropType"
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiWaveDropsFeed'
+                $ref: "#/components/schemas/ApiWaveDropsFeed"
   /waves/{id}/pins:
     post:
       tags:
@@ -4173,7 +4173,7 @@ paths:
           schema:
             type: string
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
@@ -4192,7 +4192,7 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
@@ -4212,7 +4212,7 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
@@ -4231,7 +4231,7 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
@@ -4289,12 +4289,12 @@ paths:
               - CREATED_AT
               - RATING_PREDICTION
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiDropsLeaderboardPage'
+                $ref: "#/components/schemas/ApiDropsLeaderboardPage"
   /waves/{id}/logs:
     get:
       tags:
@@ -4346,15 +4346,15 @@ paths:
               - ASC
               - DESC
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/ApiWaveLog'
-        '404':
+                  $ref: "#/components/schemas/ApiWaveLog"
+        "404":
           description: Wave not found
   /waves/{id}/voters:
     get:
@@ -4410,12 +4410,12 @@ paths:
               - POSITIVE
               - NEGATIVE
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiWaveVotersPage'
+                $ref: "#/components/schemas/ApiWaveVotersPage"
   /waves/{id}/subscriptions:
     post:
       tags:
@@ -4433,15 +4433,15 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ApiWaveSubscriptionActions'
+              $ref: "#/components/schemas/ApiWaveSubscriptionActions"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiWaveSubscriptionActions'
-        '404':
+                $ref: "#/components/schemas/ApiWaveSubscriptionActions"
+        "404":
           description: Wave not found
     delete:
       tags:
@@ -4459,15 +4459,15 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ApiWaveSubscriptionActions'
+              $ref: "#/components/schemas/ApiWaveSubscriptionActions"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiWaveSubscriptionActions'
-        '404':
+                $ref: "#/components/schemas/ApiWaveSubscriptionActions"
+        "404":
           description: Wave not found
   /xtdh/stats:
     get:
@@ -4476,13 +4476,13 @@ paths:
       summary: Get global xTDH stats
       operationId: getGlobalXTdhStats
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiXTdhGlobalStats'
-        '404':
+                $ref: "#/components/schemas/ApiXTdhGlobalStats"
+        "404":
           description: Not found
   /xtdh/stats/{identity}:
     get:
@@ -4497,13 +4497,13 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiXTdhStats'
-        '404':
+                $ref: "#/components/schemas/ApiXTdhStats"
+        "404":
           description: Not found
   /xtdh/grants:
     get:
@@ -4566,7 +4566,7 @@ paths:
           in: query
           required: false
           schema:
-            $ref: '#/components/schemas/ApiPageSortDirection'
+            $ref: "#/components/schemas/ApiPageSortDirection"
         - name: sort
           in: query
           required: false
@@ -4596,13 +4596,13 @@ paths:
             maximum: 2000
             default: 100
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiXTdhGrantsPage'
-        '400':
+                $ref: "#/components/schemas/ApiXTdhGrantsPage"
+        "400":
           description: Invalid request
     post:
       tags:
@@ -4614,15 +4614,15 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ApiXTdhCreateGrant'
+              $ref: "#/components/schemas/ApiXTdhCreateGrant"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiXTdhGrant'
-        '400':
+                $ref: "#/components/schemas/ApiXTdhGrant"
+        "400":
           description: Invalid request
   /xtdh/grants/{id}:
     get:
@@ -4637,13 +4637,13 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiXTdhGrant'
-        '404':
+                $ref: "#/components/schemas/ApiXTdhGrant"
+        "404":
           description: Not Found
     post:
       tags:
@@ -4661,17 +4661,17 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ApiXTdhGrantUpdateRequest'
+              $ref: "#/components/schemas/ApiXTdhGrantUpdateRequest"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiXTdhGrant'
-        '403':
+                $ref: "#/components/schemas/ApiXTdhGrant"
+        "403":
           description: Invalid input
-        '404':
+        "404":
           description: Not Found
   /xtdh/grants/{id}/tokens:
     get:
@@ -4689,7 +4689,7 @@ paths:
           in: query
           required: false
           schema:
-            $ref: '#/components/schemas/ApiPageSortDirection'
+            $ref: "#/components/schemas/ApiPageSortDirection"
         - name: sort
           in: query
           required: false
@@ -4716,13 +4716,13 @@ paths:
             maximum: 2000
             default: 100
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiXTdhGrantTokensPage'
-        '400':
+                $ref: "#/components/schemas/ApiXTdhGrantTokensPage"
+        "400":
           description: Invalid request
   /xtdh/collections:
     get:
@@ -4777,12 +4777,12 @@ paths:
               - asc
               - desc
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiXTdhCollectionsPage'
+                $ref: "#/components/schemas/ApiXTdhCollectionsPage"
   /xtdh/tokens:
     get:
       tags:
@@ -4844,12 +4844,12 @@ paths:
               - asc
               - desc
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiXTdhTokensPage'
+                $ref: "#/components/schemas/ApiXTdhTokensPage"
   /xtdh/tokens/{contract}/{token}/contributors:
     get:
       tags:
@@ -4912,12 +4912,12 @@ paths:
               - asc
               - desc
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiXTdhContributionsPage'
+                $ref: "#/components/schemas/ApiXTdhContributionsPage"
   /xtdh/grantees:
     get:
       tags:
@@ -4965,12 +4965,12 @@ paths:
               - asc
               - desc
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiXTdhGranteesPage'
+                $ref: "#/components/schemas/ApiXTdhGranteesPage"
 components:
   securitySchemes:
     bearerAuth:
@@ -5308,12 +5308,12 @@ components:
       required:
         - data
       allOf:
-        - $ref: '#/components/schemas/ApiPageWithNextUriBase'
+        - $ref: "#/components/schemas/ApiPageWithNextUriBase"
       properties:
         data:
           type: array
           items:
-            $ref: '#/components/schemas/ApiAggregatedActivity'
+            $ref: "#/components/schemas/ApiAggregatedActivity"
     ApiArtistItem:
       type: object
       required:
@@ -5337,11 +5337,11 @@ components:
         memes:
           type: array
           items:
-            $ref: '#/components/schemas/ApiArtistsNft'
+            $ref: "#/components/schemas/ApiArtistsNft"
         memelab:
           type: array
           items:
-            $ref: '#/components/schemas/ApiArtistsNft'
+            $ref: "#/components/schemas/ApiArtistsNft"
         gradients:
           type: array
           items:
@@ -5350,7 +5350,7 @@ components:
         work:
           type: array
           items:
-            $ref: '#/components/schemas/ApiArtistsWork'
+            $ref: "#/components/schemas/ApiArtistsWork"
         social_links:
           type: array
           items:
@@ -5386,12 +5386,12 @@ components:
       required:
         - data
       allOf:
-        - $ref: '#/components/schemas/ApiPageWithNextUriBase'
+        - $ref: "#/components/schemas/ApiPageWithNextUriBase"
       properties:
         data:
           type: array
           items:
-            $ref: '#/components/schemas/ApiArtistItem'
+            $ref: "#/components/schemas/ApiArtistItem"
     ApiArtistsWork:
       type: object
       required:
@@ -5434,12 +5434,12 @@ components:
       required:
         - data
       allOf:
-        - $ref: '#/components/schemas/ApiPageWithNextUriBase'
+        - $ref: "#/components/schemas/ApiPageWithNextUriBase"
       properties:
         data:
           type: array
           items:
-            $ref: '#/components/schemas/ApiBlockItem'
+            $ref: "#/components/schemas/ApiBlockItem"
     ApiBulkRateRequest:
       type: object
       required:
@@ -5449,7 +5449,7 @@ components:
         - target_wallet_addresses
       properties:
         matter:
-          $ref: '#/components/schemas/ApiRateMatter'
+          $ref: "#/components/schemas/ApiRateMatter"
         category:
           type: string
           maxLength: 100
@@ -5478,7 +5478,7 @@ components:
         skipped:
           type: array
           items:
-            $ref: '#/components/schemas/ApiBulkRateSkippedIdentity'
+            $ref: "#/components/schemas/ApiBulkRateSkippedIdentity"
     ApiBulkRateSkippedIdentity:
       type: object
       required:
@@ -5498,7 +5498,7 @@ components:
           type: array
           maxLength: 200
           items:
-            $ref: '#/components/schemas/ApiBulkRepTarget'
+            $ref: "#/components/schemas/ApiBulkRepTarget"
     ApiBulkRepTarget:
       type: object
       required:
@@ -5665,12 +5665,12 @@ components:
       required:
         - data
       allOf:
-        - $ref: '#/components/schemas/ApiPageBase'
+        - $ref: "#/components/schemas/ApiPageBase"
       properties:
         data:
           type: array
           items:
-            $ref: '#/components/schemas/ApiCommunityMemberOverview'
+            $ref: "#/components/schemas/ApiCommunityMemberOverview"
     ApiCommunityMembersSortOption:
       type: string
       enum:
@@ -5693,16 +5693,16 @@ components:
         - newer
       properties:
         older:
-          $ref: '#/components/schemas/ApiCommunityMetricSample'
+          $ref: "#/components/schemas/ApiCommunityMetricSample"
         newer:
-          $ref: '#/components/schemas/ApiCommunityMetricSample'
+          $ref: "#/components/schemas/ApiCommunityMetricSample"
     ApiCommunityMetrics:
       type: object
       required:
         - drops_created
       properties:
         drops_created:
-          $ref: '#/components/schemas/ApiCommunityMetric'
+          $ref: "#/components/schemas/ApiCommunityMetric"
     ApiCommunityMetricSample:
       type: object
       required:
@@ -5732,7 +5732,7 @@ components:
         parts:
           type: array
           items:
-            $ref: '#/components/schemas/ApiCompleteMultipartUploadRequestPart'
+            $ref: "#/components/schemas/ApiCompleteMultipartUploadRequestPart"
     ApiCompleteMultipartUploadRequestPart:
       required:
         - etag
@@ -5823,11 +5823,11 @@ components:
         memes:
           type: array
           items:
-            $ref: '#/components/schemas/ApiTokenTdh'
+            $ref: "#/components/schemas/ApiTokenTdh"
         memes_ranks:
           type: array
           items:
-            $ref: '#/components/schemas/ApiTokenTdhRank'
+            $ref: "#/components/schemas/ApiTokenTdhRank"
         gradients_balance:
           type: integer
           format: int64
@@ -5843,11 +5843,11 @@ components:
         gradients:
           type: array
           items:
-            $ref: '#/components/schemas/ApiTokenTdh'
+            $ref: "#/components/schemas/ApiTokenTdh"
         gradients_ranks:
           type: array
           items:
-            $ref: '#/components/schemas/ApiTokenTdhRank'
+            $ref: "#/components/schemas/ApiTokenTdhRank"
         nextgen_balance:
           type: integer
           format: int64
@@ -5863,11 +5863,11 @@ components:
         nextgen:
           type: array
           items:
-            $ref: '#/components/schemas/ApiTokenTdh'
+            $ref: "#/components/schemas/ApiTokenTdh"
         nextgen_ranks:
           type: array
           items:
-            $ref: '#/components/schemas/ApiTokenTdhRank'
+            $ref: "#/components/schemas/ApiTokenTdhRank"
         boost_breakdown:
           type: object
     ApiCreateDropPart:
@@ -5881,26 +5881,26 @@ components:
           nullable: true
         quoted_drop:
           anyOf:
-            - $ref: '#/components/schemas/ApiQuotedDrop'
-            - type: 'null'
+            - $ref: "#/components/schemas/ApiQuotedDrop"
+            - type: "null"
         media:
           type: array
           items:
-            $ref: '#/components/schemas/ApiDropMedia'
+            $ref: "#/components/schemas/ApiDropMedia"
     ApiCreateDropRequest:
       type: object
       required:
         - wave_id
         - type
       allOf:
-        - $ref: '#/components/schemas/ApiCreateWaveDropRequest'
+        - $ref: "#/components/schemas/ApiCreateWaveDropRequest"
       properties:
         wave_id:
           type: string
         reply_to:
-          $ref: '#/components/schemas/ApiReplyToDrop'
+          $ref: "#/components/schemas/ApiReplyToDrop"
         drop_type:
-          $ref: '#/components/schemas/ApiDropType'
+          $ref: "#/components/schemas/ApiDropType"
         mentions_all:
           type: boolean
     ApiCreateGroup:
@@ -5912,7 +5912,7 @@ components:
         name:
           type: string
         group:
-          $ref: '#/components/schemas/ApiCreateGroupDescription'
+          $ref: "#/components/schemas/ApiCreateGroupDescription"
         is_private:
           type: boolean
     ApiCreateGroupDescription:
@@ -5927,33 +5927,33 @@ components:
         - excluded_identity_addresses
       properties:
         tdh:
-          $ref: '#/components/schemas/ApiGroupTdhFilter'
+          $ref: "#/components/schemas/ApiGroupTdhFilter"
         rep:
-          $ref: '#/components/schemas/ApiGroupRepFilter'
+          $ref: "#/components/schemas/ApiGroupRepFilter"
         cic:
-          $ref: '#/components/schemas/ApiGroupCicFilter'
+          $ref: "#/components/schemas/ApiGroupCicFilter"
         level:
-          $ref: '#/components/schemas/ApiGroupLevelFilter'
+          $ref: "#/components/schemas/ApiGroupLevelFilter"
         owns_nfts:
           type: array
           items:
-            $ref: '#/components/schemas/ApiGroupOwnsNft'
+            $ref: "#/components/schemas/ApiGroupOwnsNft"
         identity_addresses:
           anyOf:
-            - type: 'null'
+            - type: "null"
             - type: array
               items:
                 type: string
           example:
-            - '0x1234567890123456789012345678901234567890'
+            - "0x1234567890123456789012345678901234567890"
         excluded_identity_addresses:
           anyOf:
-            - type: 'null'
+            - type: "null"
             - type: array
               items:
                 type: string
           example:
-            - '0x1234567890123456789012345678901234567890'
+            - "0x1234567890123456789012345678901234567890"
     ApiCreateMediaUploadUrlRequest:
       required:
         - content_type
@@ -5996,10 +5996,10 @@ components:
         - credit_amount
       properties:
         action_type:
-          $ref: '#/components/schemas/ApiProfileProxyActionType'
+          $ref: "#/components/schemas/ApiProfileProxyActionType"
         end_time:
           anyOf:
-            - type: 'null'
+            - type: "null"
             - type: number
               format: int64
         credit_amount:
@@ -6014,10 +6014,10 @@ components:
         - credit_amount
       properties:
         action_type:
-          $ref: '#/components/schemas/ApiProfileProxyActionType'
+          $ref: "#/components/schemas/ApiProfileProxyActionType"
         end_time:
           anyOf:
-            - type: 'null'
+            - type: "null"
             - type: number
               format: int64
           example: 1719850339996
@@ -6032,10 +6032,10 @@ components:
         - end_time
       properties:
         action_type:
-          $ref: '#/components/schemas/ApiProfileProxyActionType'
+          $ref: "#/components/schemas/ApiProfileProxyActionType"
         end_time:
           anyOf:
-            - type: 'null'
+            - type: "null"
             - type: number
               format: int64
     ApiCreateNewProfileProxyCreateWaveParticipationDropAction:
@@ -6045,10 +6045,10 @@ components:
         - end_time
       properties:
         action_type:
-          $ref: '#/components/schemas/ApiProfileProxyActionType'
+          $ref: "#/components/schemas/ApiProfileProxyActionType"
         end_time:
           anyOf:
-            - type: 'null'
+            - type: "null"
             - type: number
               format: int64
     ApiCreateNewProfileProxyRateWaveDropAction:
@@ -6058,10 +6058,10 @@ components:
         - end_time
       properties:
         action_type:
-          $ref: '#/components/schemas/ApiProfileProxyActionType'
+          $ref: "#/components/schemas/ApiProfileProxyActionType"
         end_time:
           anyOf:
-            - type: 'null'
+            - type: "null"
             - type: number
               format: int64
     ApiCreateNewProfileProxyReadWaveAction:
@@ -6071,10 +6071,10 @@ components:
         - end_time
       properties:
         action_type:
-          $ref: '#/components/schemas/ApiProfileProxyActionType'
+          $ref: "#/components/schemas/ApiProfileProxyActionType"
         end_time:
           anyOf:
-            - type: 'null'
+            - type: "null"
             - type: number
               format: int64
     ApiCreateNewWave:
@@ -6100,21 +6100,21 @@ components:
           example: https://example.com/picture.jpg
           nullable: true
         description_drop:
-          $ref: '#/components/schemas/ApiCreateWaveDropRequest'
+          $ref: "#/components/schemas/ApiCreateWaveDropRequest"
         voting:
-          $ref: '#/components/schemas/ApiCreateNewWaveVotingConfig'
+          $ref: "#/components/schemas/ApiCreateNewWaveVotingConfig"
         visibility:
-          $ref: '#/components/schemas/ApiCreateNewWaveVisibilityConfig'
+          $ref: "#/components/schemas/ApiCreateNewWaveVisibilityConfig"
         participation:
-          $ref: '#/components/schemas/ApiCreateNewWaveParticipationConfig'
+          $ref: "#/components/schemas/ApiCreateNewWaveParticipationConfig"
         chat:
-          $ref: '#/components/schemas/ApiCreateNewWaveChatConfig'
+          $ref: "#/components/schemas/ApiCreateNewWaveChatConfig"
         wave:
-          $ref: '#/components/schemas/ApiCreateWaveConfig'
+          $ref: "#/components/schemas/ApiCreateWaveConfig"
         outcomes:
           type: array
           items:
-            $ref: '#/components/schemas/ApiCreateWaveOutcome'
+            $ref: "#/components/schemas/ApiCreateWaveOutcome"
     ApiCreateNewWaveChatConfig:
       type: object
       required:
@@ -6122,7 +6122,7 @@ components:
         - enabled
       properties:
         scope:
-          $ref: '#/components/schemas/ApiCreateNewWaveScope'
+          $ref: "#/components/schemas/ApiCreateNewWaveScope"
         enabled:
           type: boolean
     ApiCreateNewWaveParticipationConfig:
@@ -6136,7 +6136,7 @@ components:
         - terms
       properties:
         scope:
-          $ref: '#/components/schemas/ApiCreateNewWaveScope'
+          $ref: "#/components/schemas/ApiCreateNewWaveScope"
         no_of_applications_allowed_per_participant:
           description: >-
             The number of applications allowed per participant. Infinite if
@@ -6148,14 +6148,14 @@ components:
         required_media:
           type: array
           items:
-            $ref: '#/components/schemas/ApiWaveParticipationRequirement'
+            $ref: "#/components/schemas/ApiWaveParticipationRequirement"
         required_metadata:
           description: |
             The metadata that must be provided by the participant. 
             Empty array if nothing is required.
           type: array
           items:
-            $ref: '#/components/schemas/ApiWaveRequiredMetadata'
+            $ref: "#/components/schemas/ApiWaveRequiredMetadata"
         signature_required:
           description: If true then the votes must be signed by voters.
           type: boolean
@@ -6166,7 +6166,7 @@ components:
           type: string
           nullable: true
         period:
-          $ref: '#/components/schemas/ApiIntRange'
+          $ref: "#/components/schemas/ApiIntRange"
     ApiCreateNewWaveScope:
       type: object
       required:
@@ -6182,7 +6182,7 @@ components:
         - scope
       properties:
         scope:
-          $ref: '#/components/schemas/ApiCreateNewWaveScope'
+          $ref: "#/components/schemas/ApiCreateNewWaveScope"
     ApiCreateNewWaveVotingConfig:
       type: object
       required:
@@ -6194,11 +6194,11 @@ components:
         - forbid_negative_votes
       properties:
         scope:
-          $ref: '#/components/schemas/ApiCreateNewWaveScope'
+          $ref: "#/components/schemas/ApiCreateNewWaveScope"
         credit_type:
-          $ref: '#/components/schemas/ApiWaveCreditType'
+          $ref: "#/components/schemas/ApiWaveCreditType"
         credit_scope:
-          $ref: '#/components/schemas/ApiWaveCreditScope'
+          $ref: "#/components/schemas/ApiWaveCreditScope"
         credit_category:
           description: >-
             Only relevant when credit_type=REP. The REP category which is usable
@@ -6214,7 +6214,7 @@ components:
           description: If true then the votes must be signed by voters.
           type: boolean
         period:
-          $ref: '#/components/schemas/ApiIntRange'
+          $ref: "#/components/schemas/ApiIntRange"
         forbid_negative_votes:
           type: boolean
     ApiCreateOrUpdateProfileRequest:
@@ -6237,7 +6237,7 @@ components:
           type: string
           nullable: true
         classification:
-          $ref: '#/components/schemas/ApiProfileClassification'
+          $ref: "#/components/schemas/ApiProfileClassification"
         sub_classification:
           type: string
           nullable: true
@@ -6256,14 +6256,14 @@ components:
         - admin_drop_deletion_enabled
       properties:
         type:
-          $ref: '#/components/schemas/ApiWaveType'
+          $ref: "#/components/schemas/ApiWaveType"
         winning_thresholds:
           description: >-
             Drops which rate tally ends up in this range will win. Must be set
             if and only if type is APPROVE
           anyOf:
-            - type: 'null'
-            - $ref: '#/components/schemas/ApiIntRange'
+            - type: "null"
+            - $ref: "#/components/schemas/ApiIntRange"
         max_winners:
           description: >-
             This amount of top rated drops will win. Must be set if and only if
@@ -6283,12 +6283,12 @@ components:
           minimum: 1
         admin_group:
           oneOf:
-            - type: 'null'
-            - $ref: '#/components/schemas/ApiCreateNewWaveScope'
+            - type: "null"
+            - $ref: "#/components/schemas/ApiCreateNewWaveScope"
         decisions_strategy:
           anyOf:
-            - type: 'null'
-            - $ref: '#/components/schemas/ApiWaveDecisionsStrategy'
+            - type: "null"
+            - $ref: "#/components/schemas/ApiWaveDecisionsStrategy"
         admin_drop_deletion_enabled:
           type: boolean
     ApiCreateWaveDropRequest:
@@ -6308,19 +6308,19 @@ components:
           type: array
           minItems: 1
           items:
-            $ref: '#/components/schemas/ApiCreateDropPart'
+            $ref: "#/components/schemas/ApiCreateDropPart"
         referenced_nfts:
           type: array
           items:
-            $ref: '#/components/schemas/ApiDropReferencedNFT'
+            $ref: "#/components/schemas/ApiDropReferencedNFT"
         mentioned_users:
           type: array
           items:
-            $ref: '#/components/schemas/ApiDropMentionedUser'
+            $ref: "#/components/schemas/ApiDropMentionedUser"
         metadata:
           type: array
           items:
-            $ref: '#/components/schemas/ApiDropMetadata'
+            $ref: "#/components/schemas/ApiDropMetadata"
         signature:
           description: >-
             If wave requires drop signatures then this needs to be set.
@@ -6340,13 +6340,13 @@ components:
         - description
       properties:
         type:
-          $ref: '#/components/schemas/ApiWaveOutcomeType'
+          $ref: "#/components/schemas/ApiWaveOutcomeType"
         subtype:
-          $ref: '#/components/schemas/ApiWaveOutcomeSubType'
+          $ref: "#/components/schemas/ApiWaveOutcomeSubType"
         description:
           type: string
         credit:
-          $ref: '#/components/schemas/ApiWaveOutcomeCredit'
+          $ref: "#/components/schemas/ApiWaveOutcomeCredit"
         rep_category:
           type: string
         amount:
@@ -6355,7 +6355,7 @@ components:
         distribution:
           type: array
           items:
-            $ref: '#/components/schemas/ApiCreateWaveOutcomeDistributionItem'
+            $ref: "#/components/schemas/ApiCreateWaveOutcomeDistributionItem"
     ApiCreateWaveOutcomeDistributionItem:
       type: object
       properties:
@@ -6401,19 +6401,19 @@ components:
           type: number
           format: int64
         drop_type:
-          $ref: '#/components/schemas/ApiDropType'
+          $ref: "#/components/schemas/ApiDropType"
         rank:
           type: number
           format: int64
           nullable: true
         winning_context:
-          $ref: '#/components/schemas/ApiDropWinningContext'
+          $ref: "#/components/schemas/ApiDropWinningContext"
         wave:
-          $ref: '#/components/schemas/ApiWaveMin'
+          $ref: "#/components/schemas/ApiWaveMin"
         reply_to:
-          $ref: '#/components/schemas/ApiReplyToDropResponse'
+          $ref: "#/components/schemas/ApiReplyToDropResponse"
         author:
-          $ref: '#/components/schemas/ApiProfileMin'
+          $ref: "#/components/schemas/ApiProfileMin"
         created_at:
           description: >-
             Time when the drop was created in milliseconds since 1-1-1970
@@ -6434,7 +6434,7 @@ components:
         parts:
           type: array
           items:
-            $ref: '#/components/schemas/ApiDropPart'
+            $ref: "#/components/schemas/ApiDropPart"
         parts_count:
           description: Number of drops in the storm
           type: number
@@ -6442,15 +6442,15 @@ components:
         referenced_nfts:
           type: array
           items:
-            $ref: '#/components/schemas/ApiDropReferencedNFT'
+            $ref: "#/components/schemas/ApiDropReferencedNFT"
         mentioned_users:
           type: array
           items:
-            $ref: '#/components/schemas/ApiDropMentionedUser'
+            $ref: "#/components/schemas/ApiDropMentionedUser"
         metadata:
           type: array
           items:
-            $ref: '#/components/schemas/ApiDropMetadata'
+            $ref: "#/components/schemas/ApiDropMetadata"
         rating:
           type: number
           format: int64
@@ -6463,24 +6463,24 @@ components:
         top_raters:
           type: array
           items:
-            $ref: '#/components/schemas/ApiDropRater'
+            $ref: "#/components/schemas/ApiDropRater"
         raters_count:
           type: number
           format: int64
         context_profile_context:
           anyOf:
-            - type: 'null'
-            - $ref: '#/components/schemas/ApiDropContextProfileContext'
+            - type: "null"
+            - $ref: "#/components/schemas/ApiDropContextProfileContext"
         subscribed_actions:
           type: array
           items:
-            $ref: '#/components/schemas/ApiDropSubscriptionTargetAction'
+            $ref: "#/components/schemas/ApiDropSubscriptionTargetAction"
         is_signed:
           type: boolean
         reactions:
           type: array
           items:
-            $ref: '#/components/schemas/ApiDropReaction'
+            $ref: "#/components/schemas/ApiDropReaction"
         boosts:
           type: number
           format: int64
@@ -6491,9 +6491,9 @@ components:
         - vote
       properties:
         drop:
-          $ref: '#/components/schemas/ApiDrop'
+          $ref: "#/components/schemas/ApiDrop"
         vote:
-          $ref: '#/components/schemas/ApiDropVote'
+          $ref: "#/components/schemas/ApiDropVote"
     ApiDropBoost:
       type: object
       required:
@@ -6501,7 +6501,7 @@ components:
         - boosted_at
       properties:
         booster:
-          $ref: '#/components/schemas/ApiProfileMin'
+          $ref: "#/components/schemas/ApiProfileMin"
         boosted_at:
           type: number
           format: int64
@@ -6511,12 +6511,12 @@ components:
       required:
         - data
       allOf:
-        - $ref: '#/components/schemas/ApiPageBase'
+        - $ref: "#/components/schemas/ApiPageBase"
       properties:
         data:
           type: array
           items:
-            $ref: '#/components/schemas/ApiDropBoost'
+            $ref: "#/components/schemas/ApiDropBoost"
     ApiDropContextProfileContext:
       type: object
       required:
@@ -6599,11 +6599,11 @@ components:
         media:
           type: array
           items:
-            $ref: '#/components/schemas/ApiDropMedia'
+            $ref: "#/components/schemas/ApiDropMedia"
         quoted_drop:
           anyOf:
-            - $ref: '#/components/schemas/ApiQuotedDropResponse'
-            - type: 'null'
+            - $ref: "#/components/schemas/ApiQuotedDropResponse"
+            - type: "null"
     ApiDropRater:
       type: object
       required:
@@ -6611,7 +6611,7 @@ components:
         - rating
       properties:
         profile:
-          $ref: '#/components/schemas/ApiProfileMin'
+          $ref: "#/components/schemas/ApiProfileMin"
         rating:
           type: number
           format: int64
@@ -6638,7 +6638,7 @@ components:
         profiles:
           type: array
           items:
-            $ref: '#/components/schemas/ApiProfileMin'
+            $ref: "#/components/schemas/ApiProfileMin"
     ApiDropReferencedNFT:
       type: object
       required:
@@ -6667,25 +6667,25 @@ components:
         - drops
         - wave
       allOf:
-        - $ref: '#/components/schemas/ApiPageBase'
+        - $ref: "#/components/schemas/ApiPageBase"
       properties:
         drops:
           type: array
           items:
-            $ref: '#/components/schemas/ApiDropWithoutWave'
+            $ref: "#/components/schemas/ApiDropWithoutWave"
         wave:
-          $ref: '#/components/schemas/ApiWaveMin'
+          $ref: "#/components/schemas/ApiWaveMin"
     ApiDropsPage:
       type: object
       required:
         - data
       allOf:
-        - $ref: '#/components/schemas/ApiPageBase'
+        - $ref: "#/components/schemas/ApiPageBase"
       properties:
         data:
           type: array
           items:
-            $ref: '#/components/schemas/ApiDrop'
+            $ref: "#/components/schemas/ApiDrop"
     ApiDropSubscriptionActions:
       type: object
       required:
@@ -6694,7 +6694,7 @@ components:
         actions:
           type: array
           items:
-            $ref: '#/components/schemas/ApiDropSubscriptionTargetAction'
+            $ref: "#/components/schemas/ApiDropSubscriptionTargetAction"
     ApiDropSubscriptionTargetAction:
       type: string
       enum:
@@ -6727,7 +6727,7 @@ components:
           type: number
           format: int64
         voter:
-          $ref: '#/components/schemas/ApiProfileMin'
+          $ref: "#/components/schemas/ApiProfileMin"
         time:
           type: number
           format: int64
@@ -6744,7 +6744,7 @@ components:
         awards:
           type: array
           items:
-            $ref: '#/components/schemas/ApiWaveDecisionAward'
+            $ref: "#/components/schemas/ApiWaveDecisionAward"
         decision_time:
           type: integer
           format: int64
@@ -6782,17 +6782,17 @@ components:
           type: number
           format: int64
         drop_type:
-          $ref: '#/components/schemas/ApiDropType'
+          $ref: "#/components/schemas/ApiDropType"
         rank:
           type: number
           format: int64
           nullable: true
         winning_context:
-          $ref: '#/components/schemas/ApiDropWinningContext'
+          $ref: "#/components/schemas/ApiDropWinningContext"
         reply_to:
-          $ref: '#/components/schemas/ApiReplyToDropResponse'
+          $ref: "#/components/schemas/ApiReplyToDropResponse"
         author:
-          $ref: '#/components/schemas/ApiProfileMin'
+          $ref: "#/components/schemas/ApiProfileMin"
         created_at:
           description: >-
             Time when the drop was created in milliseconds since 1-1-1970
@@ -6813,7 +6813,7 @@ components:
         parts:
           type: array
           items:
-            $ref: '#/components/schemas/ApiDropPart'
+            $ref: "#/components/schemas/ApiDropPart"
         parts_count:
           description: Number of drops in the storm
           type: number
@@ -6821,15 +6821,15 @@ components:
         referenced_nfts:
           type: array
           items:
-            $ref: '#/components/schemas/ApiDropReferencedNFT'
+            $ref: "#/components/schemas/ApiDropReferencedNFT"
         mentioned_users:
           type: array
           items:
-            $ref: '#/components/schemas/ApiDropMentionedUser'
+            $ref: "#/components/schemas/ApiDropMentionedUser"
         metadata:
           type: array
           items:
-            $ref: '#/components/schemas/ApiDropMetadata'
+            $ref: "#/components/schemas/ApiDropMetadata"
         rating:
           type: number
           format: int64
@@ -6842,24 +6842,24 @@ components:
         top_raters:
           type: array
           items:
-            $ref: '#/components/schemas/ApiDropRater'
+            $ref: "#/components/schemas/ApiDropRater"
         raters_count:
           type: number
           format: int64
         context_profile_context:
           anyOf:
-            - type: 'null'
-            - $ref: '#/components/schemas/ApiDropContextProfileContext'
+            - type: "null"
+            - $ref: "#/components/schemas/ApiDropContextProfileContext"
         subscribed_actions:
           type: array
           items:
-            $ref: '#/components/schemas/ApiDropSubscriptionTargetAction'
+            $ref: "#/components/schemas/ApiDropSubscriptionTargetAction"
         is_signed:
           type: boolean
         reactions:
           type: array
           items:
-            $ref: '#/components/schemas/ApiDropReaction'
+            $ref: "#/components/schemas/ApiDropReaction"
         boosts:
           type: number
           format: int64
@@ -6868,12 +6868,12 @@ components:
       required:
         - data
       allOf:
-        - $ref: '#/components/schemas/ApiPageWithoutCount'
+        - $ref: "#/components/schemas/ApiPageWithoutCount"
       properties:
         data:
           type: array
           items:
-            $ref: '#/components/schemas/ApiDropWithoutWave'
+            $ref: "#/components/schemas/ApiDropWithoutWave"
     ApiFeedItem:
       type: object
       required:
@@ -6885,7 +6885,7 @@ components:
           type: number
           format: int64
         type:
-          $ref: '#/components/schemas/ApiFeedItemType'
+          $ref: "#/components/schemas/ApiFeedItemType"
         item:
           type: object
     ApiFeedItemType:
@@ -6904,7 +6904,7 @@ components:
         name:
           type: string
         author:
-          $ref: '#/components/schemas/ApiProfileMin'
+          $ref: "#/components/schemas/ApiProfileMin"
         created_at:
           type: number
           format: int64
@@ -6936,8 +6936,8 @@ components:
         direction:
           example: RECEIVED
           anyOf:
-            - type: 'null'
-            - $ref: '#/components/schemas/ApiGroupFilterDirection'
+            - type: "null"
+            - $ref: "#/components/schemas/ApiGroupFilterDirection"
     ApiGroupDescription:
       type: object
       required:
@@ -6952,17 +6952,17 @@ components:
         - excluded_identity_group_identities_count
       properties:
         tdh:
-          $ref: '#/components/schemas/ApiGroupTdhFilter'
+          $ref: "#/components/schemas/ApiGroupTdhFilter"
         rep:
-          $ref: '#/components/schemas/ApiGroupRepFilter'
+          $ref: "#/components/schemas/ApiGroupRepFilter"
         cic:
-          $ref: '#/components/schemas/ApiGroupCicFilter'
+          $ref: "#/components/schemas/ApiGroupCicFilter"
         level:
-          $ref: '#/components/schemas/ApiGroupLevelFilter'
+          $ref: "#/components/schemas/ApiGroupLevelFilter"
         owns_nfts:
           type: array
           items:
-            $ref: '#/components/schemas/ApiGroupOwnsNft'
+            $ref: "#/components/schemas/ApiGroupOwnsNft"
         identity_group_id:
           type: string
           nullable: true
@@ -6998,12 +6998,12 @@ components:
         name:
           type: string
         group:
-          $ref: '#/components/schemas/ApiGroupDescription'
+          $ref: "#/components/schemas/ApiGroupDescription"
         created_at:
           type: number
           format: int64
         created_by:
-          $ref: '#/components/schemas/ApiProfileMin'
+          $ref: "#/components/schemas/ApiProfileMin"
         visible:
           type: boolean
         is_private:
@@ -7071,8 +7071,8 @@ components:
         direction:
           example: RECEIVED
           anyOf:
-            - type: 'null'
-            - $ref: '#/components/schemas/ApiGroupFilterDirection'
+            - type: "null"
+            - $ref: "#/components/schemas/ApiGroupFilterDirection"
     ApiGroupTdhFilter:
       type: object
       required:
@@ -7091,7 +7091,7 @@ components:
           format: int64
           nullable: true
         inclusion_strategy:
-          $ref: '#/components/schemas/ApiGroupTdhInclusionStrategy'
+          $ref: "#/components/schemas/ApiGroupTdhInclusionStrategy"
     ApiGroupTdhInclusionStrategy:
       type: string
       enum:
@@ -7168,7 +7168,7 @@ components:
           type: string
           nullable: true
         classification:
-          $ref: '#/components/schemas/ApiProfileClassification'
+          $ref: "#/components/schemas/ApiProfileClassification"
         sub_classification:
           type: string
           nullable: true
@@ -7178,7 +7178,7 @@ components:
         wallets:
           type: array
           items:
-            $ref: '#/components/schemas/ApiWallet'
+            $ref: "#/components/schemas/ApiWallet"
         active_main_stage_submission_ids:
           type: array
           items:
@@ -7194,11 +7194,11 @@ components:
         - actions
       properties:
         identity:
-          $ref: '#/components/schemas/ApiProfileMin'
+          $ref: "#/components/schemas/ApiProfileMin"
         actions:
           type: array
           items:
-            $ref: '#/components/schemas/ApiIdentitySubscriptionTargetAction'
+            $ref: "#/components/schemas/ApiIdentitySubscriptionTargetAction"
     ApiIdentitySubscriptionActions:
       type: object
       required:
@@ -7207,7 +7207,7 @@ components:
         actions:
           type: array
           items:
-            $ref: '#/components/schemas/ApiIdentitySubscriptionTargetAction'
+            $ref: "#/components/schemas/ApiIdentitySubscriptionTargetAction"
     ApiIdentitySubscriptionTargetAction:
       type: string
       enum:
@@ -7226,12 +7226,12 @@ components:
       required:
         - data
       allOf:
-        - $ref: '#/components/schemas/ApiPageBase'
+        - $ref: "#/components/schemas/ApiPageBase"
       properties:
         data:
           type: array
           items:
-            $ref: '#/components/schemas/ApiIdentityAndSubscriptionActions'
+            $ref: "#/components/schemas/ApiIdentityAndSubscriptionActions"
     ApiIntRange:
       type: object
       required:
@@ -7267,7 +7267,7 @@ components:
           type: number
           format: int64
         drop_type:
-          $ref: '#/components/schemas/ApiDropType'
+          $ref: "#/components/schemas/ApiDropType"
         title:
           type: string
           maxLength: 250
@@ -7278,7 +7278,7 @@ components:
         part_1_medias:
           type: array
           items:
-            $ref: '#/components/schemas/ApiDropMedia'
+            $ref: "#/components/schemas/ApiDropMedia"
         has_quote:
           type: boolean
         is_reply_drop:
@@ -7507,23 +7507,23 @@ components:
       required:
         - data
       allOf:
-        - $ref: '#/components/schemas/ApiPageWithNextUriBase'
+        - $ref: "#/components/schemas/ApiPageWithNextUriBase"
       properties:
         data:
           type: array
           items:
-            $ref: '#/components/schemas/ApiNftOwner'
+            $ref: "#/components/schemas/ApiNftOwner"
     ApiNftsPage:
       type: object
       required:
         - data
       allOf:
-        - $ref: '#/components/schemas/ApiPageWithNextUriBase'
+        - $ref: "#/components/schemas/ApiPageWithNextUriBase"
       properties:
         data:
           type: array
           items:
-            $ref: '#/components/schemas/ApiNft'
+            $ref: "#/components/schemas/ApiNft"
     ApiNonceResponse:
       type: object
       required:
@@ -7549,7 +7549,7 @@ components:
           type: number
           format: int64
         cause:
-          $ref: '#/components/schemas/ApiNotificationCause'
+          $ref: "#/components/schemas/ApiNotificationCause"
         created_at:
           type: number
           format: int64
@@ -7558,11 +7558,11 @@ components:
           format: int64
           nullable: true
         related_identity:
-          $ref: '#/components/schemas/ApiProfileMin'
+          $ref: "#/components/schemas/ApiProfileMin"
         related_drops:
           type: array
           items:
-            $ref: '#/components/schemas/ApiDrop'
+            $ref: "#/components/schemas/ApiDrop"
         additional_context:
           type: object
     ApiNotificationCause:
@@ -7586,7 +7586,7 @@ components:
         notifications:
           type: array
           items:
-            $ref: '#/components/schemas/ApiNotification'
+            $ref: "#/components/schemas/ApiNotification"
         unread_count:
           type: number
           format: int64
@@ -7595,12 +7595,12 @@ components:
       required:
         - data
       allOf:
-        - $ref: '#/components/schemas/ApiPageBase'
+        - $ref: "#/components/schemas/ApiPageBase"
       properties:
         data:
           type: array
           items:
-            $ref: '#/components/schemas/ApiTargetAndSubscriptionActions'
+            $ref: "#/components/schemas/ApiTargetAndSubscriptionActions"
     ApiOwnerBalance:
       type: object
       required:
@@ -7780,12 +7780,12 @@ components:
       required:
         - data
       allOf:
-        - $ref: '#/components/schemas/ApiPageWithNextUriBase'
+        - $ref: "#/components/schemas/ApiPageWithNextUriBase"
       properties:
         data:
           type: array
           items:
-            $ref: '#/components/schemas/ApiOwnerBalance'
+            $ref: "#/components/schemas/ApiOwnerBalance"
     ApiPageBase:
       type: object
       required:
@@ -7905,7 +7905,7 @@ components:
         subscribed_actions:
           type: array
           items:
-            $ref: '#/components/schemas/ApiIdentitySubscriptionTargetAction'
+            $ref: "#/components/schemas/ApiIdentitySubscriptionTargetAction"
         archived:
           type: boolean
         active_main_stage_submission_ids:
@@ -7928,15 +7928,15 @@ components:
         id:
           type: string
         granted_to:
-          $ref: '#/components/schemas/ApiProfileMin'
+          $ref: "#/components/schemas/ApiProfileMin"
         created_at:
           type: number
         created_by:
-          $ref: '#/components/schemas/ApiProfileMin'
+          $ref: "#/components/schemas/ApiProfileMin"
         actions:
           type: array
           items:
-            $ref: '#/components/schemas/ApiProfileProxyAction'
+            $ref: "#/components/schemas/ApiProfileProxyAction"
     ApiProfileProxyAction:
       type: object
       required:
@@ -7958,16 +7958,16 @@ components:
         proxy_id:
           type: string
         action_type:
-          $ref: '#/components/schemas/ApiProfileProxyActionType'
+          $ref: "#/components/schemas/ApiProfileProxyActionType"
         credit_amount:
           anyOf:
-            - type: 'null'
+            - type: "null"
             - type: number
               format: int64
           example: 1000
         credit_spent:
           anyOf:
-            - type: 'null'
+            - type: "null"
             - type: number
               format: int64
           example: 1000
@@ -7977,7 +7977,7 @@ components:
           example: 1719850339996
         end_time:
           anyOf:
-            - type: 'null'
+            - type: "null"
             - type: number
               format: int64
           example: 1719850339996
@@ -7987,19 +7987,19 @@ components:
           example: 1719850339996
         accepted_at:
           anyOf:
-            - type: 'null'
+            - type: "null"
             - type: number
               format: int64
           example: 1719850339996
         rejected_at:
           anyOf:
-            - type: 'null'
+            - type: "null"
             - type: number
               format: int64
           example: 1719850339996
         revoked_at:
           anyOf:
-            - type: 'null'
+            - type: "null"
             - type: number
               format: int64
           example: 1719850339996
@@ -8037,7 +8037,7 @@ components:
           type: number
           format: int64
         drop:
-          $ref: '#/components/schemas/ApiDropWithoutWave'
+          $ref: "#/components/schemas/ApiDropWithoutWave"
     ApiRateMatter:
       type: string
       enum:
@@ -8083,12 +8083,12 @@ components:
       required:
         - data
       allOf:
-        - $ref: '#/components/schemas/ApiPageBase'
+        - $ref: "#/components/schemas/ApiPageBase"
       properties:
         data:
           type: array
           items:
-            $ref: '#/components/schemas/ApiRatingWithProfileInfoAndLevel'
+            $ref: "#/components/schemas/ApiRatingWithProfileInfoAndLevel"
     ApiRedeemRefreshTokenRequest:
       type: object
       required:
@@ -8153,7 +8153,7 @@ components:
         is_deleted:
           type: boolean
         drop:
-          $ref: '#/components/schemas/ApiDropWithoutWave'
+          $ref: "#/components/schemas/ApiDropWithoutWave"
     ApiRepRating:
       type: object
       required:
@@ -8199,7 +8199,7 @@ components:
         actions:
           type: array
           items:
-            $ref: '#/components/schemas/ApiIdentitySubscriptionTargetAction'
+            $ref: "#/components/schemas/ApiIdentitySubscriptionTargetAction"
     ApiTdhEdition:
       type: object
       required:
@@ -8234,19 +8234,19 @@ components:
           type: string
           nullable: true
         profile:
-          $ref: '#/components/schemas/ApiProfileMin'
+          $ref: "#/components/schemas/ApiProfileMin"
           nullable: true
     ApiTdhEditionsPage:
       type: object
       required:
         - data
       allOf:
-        - $ref: '#/components/schemas/ApiPageWithNextUriBase'
+        - $ref: "#/components/schemas/ApiPageWithNextUriBase"
       properties:
         data:
           type: array
           items:
-            $ref: '#/components/schemas/ApiTdhEdition'
+            $ref: "#/components/schemas/ApiTdhEdition"
     ApiTokenTdh:
       type: object
       properties:
@@ -8367,16 +8367,16 @@ components:
       required:
         - data
       allOf:
-        - $ref: '#/components/schemas/ApiPageWithNextUriBase'
+        - $ref: "#/components/schemas/ApiPageWithNextUriBase"
       properties:
         data:
           type: array
           items:
-            $ref: '#/components/schemas/ApiTransaction'
+            $ref: "#/components/schemas/ApiTransaction"
     ApiUpdateDropRequest:
       type: object
       allOf:
-        - $ref: '#/components/schemas/ApiCreateWaveDropRequest'
+        - $ref: "#/components/schemas/ApiCreateWaveDropRequest"
       properties:
         mentions_all:
           type: boolean
@@ -8440,15 +8440,15 @@ components:
           example: https://example.com/picture.jpg
           nullable: true
         voting:
-          $ref: '#/components/schemas/ApiCreateNewWaveVotingConfig'
+          $ref: "#/components/schemas/ApiCreateNewWaveVotingConfig"
         visibility:
-          $ref: '#/components/schemas/ApiCreateNewWaveVisibilityConfig'
+          $ref: "#/components/schemas/ApiCreateNewWaveVisibilityConfig"
         participation:
-          $ref: '#/components/schemas/ApiCreateNewWaveParticipationConfig'
+          $ref: "#/components/schemas/ApiCreateNewWaveParticipationConfig"
         chat:
-          $ref: '#/components/schemas/ApiCreateNewWaveChatConfig'
+          $ref: "#/components/schemas/ApiCreateNewWaveChatConfig"
         wave:
-          $ref: '#/components/schemas/ApiCreateWaveConfig'
+          $ref: "#/components/schemas/ApiCreateWaveConfig"
     ApiUploadItem:
       type: object
       required:
@@ -8488,12 +8488,12 @@ components:
       required:
         - data
       allOf:
-        - $ref: '#/components/schemas/ApiPageWithNextUriBase'
+        - $ref: "#/components/schemas/ApiPageWithNextUriBase"
       properties:
         data:
           type: array
           items:
-            $ref: '#/components/schemas/ApiUploadItem'
+            $ref: "#/components/schemas/ApiUploadItem"
     ApiWallet:
       type: object
       required:
@@ -8538,7 +8538,7 @@ components:
           type: number
           format: int64
         author:
-          $ref: '#/components/schemas/ApiProfileMin'
+          $ref: "#/components/schemas/ApiProfileMin"
         name:
           description: The name of the wave
           type: string
@@ -8551,35 +8551,35 @@ components:
           type: number
           format: int64
         description_drop:
-          $ref: '#/components/schemas/ApiDrop'
+          $ref: "#/components/schemas/ApiDrop"
         voting:
-          $ref: '#/components/schemas/ApiWaveVotingConfig'
+          $ref: "#/components/schemas/ApiWaveVotingConfig"
         visibility:
-          $ref: '#/components/schemas/ApiWaveVisibilityConfig'
+          $ref: "#/components/schemas/ApiWaveVisibilityConfig"
         participation:
-          $ref: '#/components/schemas/ApiWaveParticipationConfig'
+          $ref: "#/components/schemas/ApiWaveParticipationConfig"
         chat:
-          $ref: '#/components/schemas/ApiWaveChatConfig'
+          $ref: "#/components/schemas/ApiWaveChatConfig"
         wave:
-          $ref: '#/components/schemas/ApiWaveConfig'
+          $ref: "#/components/schemas/ApiWaveConfig"
         outcomes:
           type: array
           items:
-            $ref: '#/components/schemas/ApiWaveOutcomeOld'
+            $ref: "#/components/schemas/ApiWaveOutcomeOld"
         contributors_overview:
           type: array
           items:
-            $ref: '#/components/schemas/ApiWaveContributorOverview'
+            $ref: "#/components/schemas/ApiWaveContributorOverview"
         subscribed_actions:
           type: array
           items:
-            $ref: '#/components/schemas/ApiWaveSubscriptionTargetAction'
+            $ref: "#/components/schemas/ApiWaveSubscriptionTargetAction"
         metrics:
-          $ref: '#/components/schemas/ApiWaveMetrics'
+          $ref: "#/components/schemas/ApiWaveMetrics"
         pauses:
           type: array
           items:
-            $ref: '#/components/schemas/ApiWaveDecisionPause'
+            $ref: "#/components/schemas/ApiWaveDecisionPause"
         pinned:
           type: boolean
     ApiWaveChatConfig:
@@ -8590,7 +8590,7 @@ components:
         - authenticated_user_eligible
       properties:
         scope:
-          $ref: '#/components/schemas/ApiWaveScope'
+          $ref: "#/components/schemas/ApiWaveScope"
         enabled:
           type: boolean
         authenticated_user_eligible:
@@ -8609,14 +8609,14 @@ components:
         - admin_drop_deletion_enabled
       properties:
         type:
-          $ref: '#/components/schemas/ApiWaveType'
+          $ref: "#/components/schemas/ApiWaveType"
         winning_thresholds:
           description: >-
             Drops which rate tally ends up in this range will win. Must be set
             if and only if type is APPROVE
           anyOf:
-            - type: 'null'
-            - $ref: '#/components/schemas/ApiIntRange'
+            - type: "null"
+            - $ref: "#/components/schemas/ApiIntRange"
         max_winners:
           description: >-
             This amount of top rated drops will win. Must be set if and only if
@@ -8635,13 +8635,13 @@ components:
           format: int64
           minimum: 1
         admin_group:
-          $ref: '#/components/schemas/ApiWaveScope'
+          $ref: "#/components/schemas/ApiWaveScope"
         authenticated_user_eligible_for_admin:
           type: boolean
         decisions_strategy:
           anyOf:
-            - type: 'null'
-            - $ref: '#/components/schemas/ApiWaveDecisionsStrategy'
+            - type: "null"
+            - $ref: "#/components/schemas/ApiWaveDecisionsStrategy"
         next_decision_time:
           type: number
           format: int64
@@ -8684,7 +8684,7 @@ components:
         winners:
           type: array
           items:
-            $ref: '#/components/schemas/ApiWaveDecisionWinner'
+            $ref: "#/components/schemas/ApiWaveDecisionWinner"
     ApiWaveDecisionAward:
       type: object
       required:
@@ -8692,13 +8692,13 @@ components:
         - description
       properties:
         type:
-          $ref: '#/components/schemas/ApiWaveOutcomeType'
+          $ref: "#/components/schemas/ApiWaveOutcomeType"
         subtype:
-          $ref: '#/components/schemas/ApiWaveOutcomeSubType'
+          $ref: "#/components/schemas/ApiWaveOutcomeSubType"
         description:
           type: string
         credit:
-          $ref: '#/components/schemas/ApiWaveOutcomeCredit'
+          $ref: "#/components/schemas/ApiWaveOutcomeCredit"
         rep_category:
           type: string
         amount:
@@ -8727,12 +8727,12 @@ components:
       required:
         - data
       allOf:
-        - $ref: '#/components/schemas/ApiPageBase'
+        - $ref: "#/components/schemas/ApiPageBase"
       properties:
         data:
           type: array
           items:
-            $ref: '#/components/schemas/ApiWaveDecision'
+            $ref: "#/components/schemas/ApiWaveDecision"
     ApiWaveDecisionsStrategy:
       type: object
       required:
@@ -8779,9 +8779,9 @@ components:
         awards:
           type: array
           items:
-            $ref: '#/components/schemas/ApiWaveDecisionAward'
+            $ref: "#/components/schemas/ApiWaveDecisionAward"
         drop:
-          $ref: '#/components/schemas/ApiDrop'
+          $ref: "#/components/schemas/ApiDrop"
     ApiWaveDropsFeed:
       type: object
       required:
@@ -8789,17 +8789,17 @@ components:
         - drops
       properties:
         wave:
-          $ref: '#/components/schemas/ApiWaveMin'
+          $ref: "#/components/schemas/ApiWaveMin"
         drops:
           type: array
           items:
-            $ref: '#/components/schemas/ApiDropWithoutWave'
+            $ref: "#/components/schemas/ApiDropWithoutWave"
         root_drop:
-          $ref: '#/components/schemas/ApiDropWithoutWave'
+          $ref: "#/components/schemas/ApiDropWithoutWave"
         trace:
           type: array
           items:
-            $ref: '#/components/schemas/ApiDropTraceItem'
+            $ref: "#/components/schemas/ApiDropTraceItem"
     ApiWaveLog:
       type: object
       required:
@@ -8820,11 +8820,11 @@ components:
         drop_id:
           type: string
         drop_author:
-          $ref: '#/components/schemas/ApiProfileMin'
+          $ref: "#/components/schemas/ApiProfileMin"
         invoker:
-          $ref: '#/components/schemas/ApiProfileMin'
+          $ref: "#/components/schemas/ApiProfileMin"
         invoker_proxy:
-          $ref: '#/components/schemas/ApiProfileMin'
+          $ref: "#/components/schemas/ApiProfileMin"
         created_at:
           type: string
           format: date-time
@@ -8939,7 +8939,7 @@ components:
           format: int64
           nullable: true
         voting_credit_type:
-          $ref: '#/components/schemas/ApiWaveCreditType'
+          $ref: "#/components/schemas/ApiWaveCreditType"
         admin_drop_deletion_enabled:
           type: boolean
         forbid_negative_votes:
@@ -8954,13 +8954,13 @@ components:
         - index
       properties:
         type:
-          $ref: '#/components/schemas/ApiWaveOutcomeType'
+          $ref: "#/components/schemas/ApiWaveOutcomeType"
         subtype:
-          $ref: '#/components/schemas/ApiWaveOutcomeSubType'
+          $ref: "#/components/schemas/ApiWaveOutcomeSubType"
         description:
           type: string
         credit:
-          $ref: '#/components/schemas/ApiWaveOutcomeCredit'
+          $ref: "#/components/schemas/ApiWaveOutcomeCredit"
         rep_category:
           type: string
         amount:
@@ -8994,12 +8994,12 @@ components:
       required:
         - data
       allOf:
-        - $ref: '#/components/schemas/ApiPageBase'
+        - $ref: "#/components/schemas/ApiPageBase"
       properties:
         data:
           type: array
           items:
-            $ref: '#/components/schemas/ApiWaveOutcomeDistributionItem'
+            $ref: "#/components/schemas/ApiWaveOutcomeDistributionItem"
     ApiWaveOutcomeOld:
       type: object
       required:
@@ -9008,13 +9008,13 @@ components:
         - index
       properties:
         type:
-          $ref: '#/components/schemas/ApiWaveOutcomeType'
+          $ref: "#/components/schemas/ApiWaveOutcomeType"
         subtype:
-          $ref: '#/components/schemas/ApiWaveOutcomeSubType'
+          $ref: "#/components/schemas/ApiWaveOutcomeSubType"
         description:
           type: string
         credit:
-          $ref: '#/components/schemas/ApiWaveOutcomeCredit'
+          $ref: "#/components/schemas/ApiWaveOutcomeCredit"
         rep_category:
           type: string
         amount:
@@ -9023,7 +9023,7 @@ components:
         distribution:
           type: array
           items:
-            $ref: '#/components/schemas/ApiWaveOutcomeDistributionItem'
+            $ref: "#/components/schemas/ApiWaveOutcomeDistributionItem"
         index:
           type: number
           format: int64
@@ -9032,12 +9032,12 @@ components:
       required:
         - data
       allOf:
-        - $ref: '#/components/schemas/ApiPageBase'
+        - $ref: "#/components/schemas/ApiPageBase"
       properties:
         data:
           type: array
           items:
-            $ref: '#/components/schemas/ApiWaveOutcome'
+            $ref: "#/components/schemas/ApiWaveOutcome"
     ApiWaveOutcomeSubType:
       type: string
       enum:
@@ -9059,7 +9059,7 @@ components:
         - terms
       properties:
         scope:
-          $ref: '#/components/schemas/ApiWaveScope'
+          $ref: "#/components/schemas/ApiWaveScope"
         no_of_applications_allowed_per_participant:
           description: >-
             The number of applications allowed per participant. Infinite if
@@ -9074,16 +9074,16 @@ components:
             Empty array if nothing is required.
           type: array
           items:
-            $ref: '#/components/schemas/ApiWaveRequiredMetadata'
+            $ref: "#/components/schemas/ApiWaveRequiredMetadata"
         required_media:
           type: array
           items:
-            $ref: '#/components/schemas/ApiWaveParticipationRequirement'
+            $ref: "#/components/schemas/ApiWaveParticipationRequirement"
         signature_required:
           description: If true then the votes must be signed by voters.
           type: boolean
         period:
-          $ref: '#/components/schemas/ApiIntRange'
+          $ref: "#/components/schemas/ApiIntRange"
         authenticated_user_eligible:
           type: boolean
         terms:
@@ -9105,7 +9105,7 @@ components:
           description: Metadata key
           type: string
         type:
-          $ref: '#/components/schemas/ApiWaveMetadataType'
+          $ref: "#/components/schemas/ApiWaveMetadataType"
     ApiWaveScope:
       description: A scope of audience
       type: object
@@ -9115,8 +9115,8 @@ components:
         group:
           description: If null, everyone is included
           anyOf:
-            - type: 'null'
-            - $ref: '#/components/schemas/ApiGroup'
+            - type: "null"
+            - $ref: "#/components/schemas/ApiGroup"
     ApiWavesOverviewType:
       type: string
       enum:
@@ -9141,7 +9141,7 @@ components:
         actions:
           type: array
           items:
-            $ref: '#/components/schemas/ApiWaveSubscriptionTargetAction'
+            $ref: "#/components/schemas/ApiWaveSubscriptionTargetAction"
     ApiWaveSubscriptionTargetAction:
       type: string
       enum:
@@ -9158,7 +9158,7 @@ components:
         - scope
       properties:
         scope:
-          $ref: '#/components/schemas/ApiWaveScope'
+          $ref: "#/components/schemas/ApiWaveScope"
     ApiWaveVoter:
       type: object
       required:
@@ -9173,7 +9173,7 @@ components:
         - average_vote
       properties:
         voter:
-          $ref: '#/components/schemas/ApiProfileMin'
+          $ref: "#/components/schemas/ApiProfileMin"
         votes_summed:
           type: integer
           format: int64
@@ -9203,12 +9203,12 @@ components:
       required:
         - data
       allOf:
-        - $ref: '#/components/schemas/ApiPageBase'
+        - $ref: "#/components/schemas/ApiPageBase"
       properties:
         data:
           type: array
           items:
-            $ref: '#/components/schemas/ApiWaveVoter'
+            $ref: "#/components/schemas/ApiWaveVoter"
     ApiWaveVotingConfig:
       type: object
       required:
@@ -9221,9 +9221,9 @@ components:
         - forbid_negative_votes
       properties:
         scope:
-          $ref: '#/components/schemas/ApiWaveScope'
+          $ref: "#/components/schemas/ApiWaveScope"
         credit_type:
-          $ref: '#/components/schemas/ApiWaveCreditType'
+          $ref: "#/components/schemas/ApiWaveCreditType"
         credit_category:
           description: >-
             Only relevant when credit_type=REP. The REP category which is usable
@@ -9234,13 +9234,13 @@ components:
         creditor:
           description: Only relevant when credit_type=REP
           anyOf:
-            - type: 'null'
-            - $ref: '#/components/schemas/ApiProfileMin'
+            - type: "null"
+            - $ref: "#/components/schemas/ApiProfileMin"
         signature_required:
           description: If true then the votes must be signed by voters.
           type: boolean
         period:
-          $ref: '#/components/schemas/ApiIntRange'
+          $ref: "#/components/schemas/ApiIntRange"
         authenticated_user_eligible:
           type: boolean
         forbid_negative_votes:
@@ -9285,12 +9285,12 @@ components:
       required:
         - data
       allOf:
-        - $ref: '#/components/schemas/ApiPageWithoutCount'
+        - $ref: "#/components/schemas/ApiPageWithoutCount"
       properties:
         data:
           type: array
           items:
-            $ref: '#/components/schemas/ApiXTdhCollection'
+            $ref: "#/components/schemas/ApiXTdhCollection"
     ApiXTdhContribution:
       type: object
       required:
@@ -9298,9 +9298,9 @@ components:
         - xtdh_rate
       properties:
         grant:
-          $ref: '#/components/schemas/ApiXTdhGrant'
+          $ref: "#/components/schemas/ApiXTdhGrant"
         grantor:
-          $ref: '#/components/schemas/ApiProfileMin'
+          $ref: "#/components/schemas/ApiProfileMin"
         xtdh:
           type: number
           format: float
@@ -9318,12 +9318,12 @@ components:
       required:
         - data
       allOf:
-        - $ref: '#/components/schemas/ApiPageWithoutCount'
+        - $ref: "#/components/schemas/ApiPageWithoutCount"
       properties:
         data:
           type: array
           items:
-            $ref: '#/components/schemas/ApiXTdhContribution'
+            $ref: "#/components/schemas/ApiXTdhContribution"
     ApiXTdhCreateGrant:
       type: object
       required:
@@ -9335,7 +9335,7 @@ components:
         - is_irrevocable
       properties:
         target_chain:
-          $ref: '#/components/schemas/ApiXTdhGrantTargetChain'
+          $ref: "#/components/schemas/ApiXTdhGrantTargetChain"
         target_contract:
           type: string
         target_tokens:
@@ -9409,9 +9409,9 @@ components:
         id:
           type: string
         grantor:
-          $ref: '#/components/schemas/ApiProfileMin'
+          $ref: "#/components/schemas/ApiProfileMin"
         target_chain:
-          $ref: '#/components/schemas/ApiXTdhGrantTargetChain'
+          $ref: "#/components/schemas/ApiXTdhGrantTargetChain"
         target_contract:
           type: string
         target_tokens_count:
@@ -9441,7 +9441,7 @@ components:
           type: string
           nullable: true
         status:
-          $ref: '#/components/schemas/ApiXTdhGrantStatus'
+          $ref: "#/components/schemas/ApiXTdhGrantStatus"
         is_irrevocable:
           type: boolean
           description: If true then the grant must be covered with lock contracts
@@ -9458,7 +9458,7 @@ components:
         - xtdh_rate
       properties:
         grantee:
-          $ref: '#/components/schemas/ApiProfileMin'
+          $ref: "#/components/schemas/ApiProfileMin"
         xtdh:
           type: number
           format: float
@@ -9476,23 +9476,23 @@ components:
       required:
         - data
       allOf:
-        - $ref: '#/components/schemas/ApiPageWithoutCount'
+        - $ref: "#/components/schemas/ApiPageWithoutCount"
       properties:
         data:
           type: array
           items:
-            $ref: '#/components/schemas/ApiXTdhGrantee'
+            $ref: "#/components/schemas/ApiXTdhGrantee"
     ApiXTdhGrantsPage:
       type: object
       required:
         - data
       allOf:
-        - $ref: '#/components/schemas/ApiPageBase'
+        - $ref: "#/components/schemas/ApiPageBase"
       properties:
         data:
           type: array
           items:
-            $ref: '#/components/schemas/ApiXTdhGrant'
+            $ref: "#/components/schemas/ApiXTdhGrant"
     ApiXTdhGrantStatus:
       type: string
       enum:
@@ -9520,12 +9520,12 @@ components:
       required:
         - data
       allOf:
-        - $ref: '#/components/schemas/ApiPageBase'
+        - $ref: "#/components/schemas/ApiPageBase"
       properties:
         data:
           type: array
           items:
-            $ref: '#/components/schemas/ApiXTdhGrantToken'
+            $ref: "#/components/schemas/ApiXTdhGrantToken"
     ApiXTdhGrantUpdateRequest:
       type: object
       required:
@@ -9555,7 +9555,7 @@ components:
         - unused_rate
       properties:
         identity:
-          $ref: '#/components/schemas/ApiIdentity'
+          $ref: "#/components/schemas/ApiIdentity"
         xtdh:
           type: number
           format: double
@@ -9609,7 +9609,7 @@ components:
           type: number
           format: int64
         owner:
-          $ref: '#/components/schemas/ApiProfileMin'
+          $ref: "#/components/schemas/ApiProfileMin"
         xtdh:
           type: number
           format: float
@@ -9627,12 +9627,12 @@ components:
       required:
         - data
       allOf:
-        - $ref: '#/components/schemas/ApiPageWithoutCount'
+        - $ref: "#/components/schemas/ApiPageWithoutCount"
       properties:
         data:
           type: array
           items:
-            $ref: '#/components/schemas/ApiXTdhToken'
+            $ref: "#/components/schemas/ApiXTdhToken"
     DistributionNormalized:
       type: object
       required:
@@ -9677,7 +9677,7 @@ components:
           type: array
           nullable: true
           items:
-            $ref: '#/components/schemas/AllowlistNormalizedEntry'
+            $ref: "#/components/schemas/AllowlistNormalizedEntry"
         phases:
           type: array
           nullable: true
@@ -9688,12 +9688,12 @@ components:
       required:
         - data
       allOf:
-        - $ref: '#/components/schemas/ApiPageWithNextUriBase'
+        - $ref: "#/components/schemas/ApiPageWithNextUriBase"
       properties:
         data:
           type: array
           items:
-            $ref: '#/components/schemas/DistributionNormalized'
+            $ref: "#/components/schemas/DistributionNormalized"
     DistributionOverview:
       type: object
       required:
@@ -9722,7 +9722,7 @@ components:
       required:
         - data
       allOf:
-        - $ref: '#/components/schemas/ApiPageWithNextUriBase'
+        - $ref: "#/components/schemas/ApiPageWithNextUriBase"
       properties:
         data:
           type: array
@@ -9761,7 +9761,7 @@ components:
           type: array
           minItems: 1
           items:
-            $ref: '#/components/schemas/DistributionPhotoCompleteRequestPhoto'
+            $ref: "#/components/schemas/DistributionPhotoCompleteRequestPhoto"
     DistributionPhotoCompleteRequestPhoto:
       type: object
       required:
@@ -9788,12 +9788,12 @@ components:
       required:
         - data
       allOf:
-        - $ref: '#/components/schemas/ApiPageWithNextUriBase'
+        - $ref: "#/components/schemas/ApiPageWithNextUriBase"
       properties:
         data:
           type: array
           items:
-            $ref: '#/components/schemas/DistributionPhoto'
+            $ref: "#/components/schemas/DistributionPhoto"
     NFTFinalSubscription:
       type: object
       required:
@@ -9868,12 +9868,12 @@ components:
       required:
         - data
       allOf:
-        - $ref: '#/components/schemas/ApiPageWithNextUriBase'
+        - $ref: "#/components/schemas/ApiPageWithNextUriBase"
       properties:
         data:
           type: array
           items:
-            $ref: '#/components/schemas/NFTFinalSubscriptionUpload'
+            $ref: "#/components/schemas/NFTFinalSubscriptionUpload"
     NFTSubscription:
       type: object
       required:
@@ -9967,23 +9967,23 @@ components:
       required:
         - data
       allOf:
-        - $ref: '#/components/schemas/ApiPageWithNextUriBase'
+        - $ref: "#/components/schemas/ApiPageWithNextUriBase"
       properties:
         data:
           type: array
           items:
-            $ref: '#/components/schemas/RedeemedSubscriptionCounts'
+            $ref: "#/components/schemas/RedeemedSubscriptionCounts"
     RedeemedSubscriptionPage:
       type: object
       required:
         - data
       allOf:
-        - $ref: '#/components/schemas/ApiPageWithNextUriBase'
+        - $ref: "#/components/schemas/ApiPageWithNextUriBase"
       properties:
         data:
           type: array
           items:
-            $ref: '#/components/schemas/RedeemedSubscription'
+            $ref: "#/components/schemas/RedeemedSubscription"
     SubscribeAllEditionsResponse:
       type: object
       required:
@@ -10076,12 +10076,12 @@ components:
       required:
         - data
       allOf:
-        - $ref: '#/components/schemas/ApiPageWithNextUriBase'
+        - $ref: "#/components/schemas/ApiPageWithNextUriBase"
       properties:
         data:
           type: array
           items:
-            $ref: '#/components/schemas/SubscriptionLog'
+            $ref: "#/components/schemas/SubscriptionLog"
     SubscriptionModeResponse:
       type: object
       required:
@@ -10143,12 +10143,12 @@ components:
       required:
         - data
       allOf:
-        - $ref: '#/components/schemas/ApiPageWithNextUriBase'
+        - $ref: "#/components/schemas/ApiPageWithNextUriBase"
       properties:
         data:
           type: array
           items:
-            $ref: '#/components/schemas/SubscriptionTopUp'
+            $ref: "#/components/schemas/SubscriptionTopUp"
     UpdateSubscribeAllEditionsRequest:
       type: object
       required:
