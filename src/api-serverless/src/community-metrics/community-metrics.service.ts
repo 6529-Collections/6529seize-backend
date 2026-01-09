@@ -49,6 +49,20 @@ export class CommunityMetricsService {
             periodStart,
             periodEnd
           )
+        },
+        distinct_droppers: {
+          older: this.toMetricCountSample(
+            MetricRollupHourMetric.DROPPER_DROP,
+            olderGroups,
+            olderPeriodStart,
+            olderPeriodEnd
+          ),
+          newer: this.toMetricCountSample(
+            MetricRollupHourMetric.DROPPER_DROP,
+            newerGroups,
+            periodStart,
+            periodEnd
+          )
         }
       };
     } finally {
@@ -76,6 +90,21 @@ export class CommunityMetricsService {
       period_end: numbers.parseIntOrThrow(group.period_end),
       event_count: numbers.parseIntOrThrow(group.event_count),
       value_count: numbers.parseNumberOrThrow(group.value_sum)
+    };
+  }
+
+  private toMetricCountSample(
+    metricToGet: MetricRollupHourMetric,
+    groups: MetricRollupHourGroup[],
+    fallbackStart: Time,
+    fallbackEnd: Time
+  ): ApiCommunityMetricSample {
+    const count = groups.filter((row) => row.metric === metricToGet).length;
+    return {
+      period_start: fallbackStart.toMillis(),
+      period_end: fallbackEnd.toMillis(),
+      event_count: count,
+      value_count: count
     };
   }
 }
