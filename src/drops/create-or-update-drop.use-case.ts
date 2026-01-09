@@ -216,7 +216,11 @@ export class CreateOrUpdateDropUseCase {
         { connection, timer }
       );
       await this.metricsRecorder.recordDrop(
-        { identityId: model.author_id! },
+        {
+          identityId: model.author_id!,
+          waveId: model.wave_id,
+          dropType: model.drop_type
+        },
         { timer, connection }
       );
     }

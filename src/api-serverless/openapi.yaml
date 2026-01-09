@@ -5701,10 +5701,13 @@ components:
       required:
         - drops_created
         - distinct_droppers
+        - main_stage_submissions
       properties:
         drops_created:
           $ref: "#/components/schemas/ApiCommunityMetric"
         distinct_droppers:
+          $ref: "#/components/schemas/ApiCommunityMetric"
+        main_stage_submissions:
           $ref: "#/components/schemas/ApiCommunityMetric"
     ApiCommunityMetricSample:
       type: object
