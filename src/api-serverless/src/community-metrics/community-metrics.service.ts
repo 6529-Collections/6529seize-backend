@@ -32,11 +32,16 @@ export class CommunityMetricsService {
       if (periodStart.gte(periodEnd)) {
         throw new Error('Invalid metrics period');
       }
-      const [olderGroups, newerGroups] = await Promise.all([
+      const [
+        olderGroups,
+        newerGroups,
+        olderNetworkTdh,
+        newerNetworkTdh,
+        olderMainStageTdh,
+        newerMainStageTdh
+      ] = await Promise.all([
         this.metricsDb.getMetricGroups(interval, olderPeriodEnd, ctx),
-        this.metricsDb.getMetricGroups(interval, periodEnd, ctx)
-      ]);
-      const [olderNetworkTdh, newerNetworkTdh] = await Promise.all([
+        this.metricsDb.getMetricGroups(interval, periodEnd, ctx),
         this.metricsDb.getLatestMetricSample(
           MetricRollupHourMetric.NETWORK_TDH,
           olderPeriodStart,
@@ -45,6 +50,18 @@ export class CommunityMetricsService {
         ),
         this.metricsDb.getLatestMetricSample(
           MetricRollupHourMetric.NETWORK_TDH,
+          periodStart,
+          periodEnd,
+          ctx
+        ),
+        this.metricsDb.getLatestMetricSample(
+          MetricRollupHourMetric.TDH_ON_MAIN_STAGE_SUBMISSIONS,
+          olderPeriodStart,
+          olderPeriodEnd,
+          ctx
+        ),
+        this.metricsDb.getLatestMetricSample(
+          MetricRollupHourMetric.TDH_ON_MAIN_STAGE_SUBMISSIONS,
           periodStart,
           periodEnd,
           ctx
@@ -129,6 +146,18 @@ export class CommunityMetricsService {
           ),
           newer: this.toLatestMetricSample(
             newerNetworkTdh,
+            periodStart,
+            periodEnd
+          )
+        },
+        tdh_on_main_stage_submissions: {
+          older: this.toLatestMetricSample(
+            olderMainStageTdh,
+            olderPeriodStart,
+            olderPeriodEnd
+          ),
+          newer: this.toLatestMetricSample(
+            newerMainStageTdh,
             periodStart,
             periodEnd
           )

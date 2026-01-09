@@ -85,6 +85,21 @@ export class MetricsRecorder {
       ctx
     );
   }
+
+  async recordTdhOnMainStageSubmissions(
+    { tdhOnMainStageSubmissions }: { tdhOnMainStageSubmissions: number },
+    ctx: RequestContext
+  ) {
+    await this.metricsDb.upsertMetricRollupHour(
+      {
+        metric: MetricRollupHourMetric.TDH_ON_MAIN_STAGE_SUBMISSIONS,
+        event_count: 1,
+        value_sum: tdhOnMainStageSubmissions,
+        overwrite: true
+      },
+      ctx
+    );
+  }
 }
 
 export const metricsRecorder = new MetricsRecorder(metricsDb);

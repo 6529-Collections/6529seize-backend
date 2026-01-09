@@ -19,11 +19,16 @@ import {
   TDHMemes
 } from '../entities/ITDH';
 import { ConsolidatedTDHUpload } from '../entities/IUpload';
+import { DROP_VOTER_STATE_TABLE } from '../constants';
+import { env } from '../env';
 import { Logger } from '../logging';
+import { metricsRecorder } from '../metrics/MetricsRecorder';
+import { numbers } from '../numbers';
 import * as notifier from '../notifier';
 import * as priorityAlertsContext from '../priority-alerts.context';
 import { doInDbContext } from '../secrets';
 import * as sentryContext from '../sentry.context';
+import { dbSupplier } from '../sql-executor';
 import { Time } from '../time';
 import { findNftTDH } from './nft_tdh';
 import { updateTDH } from './tdh';
@@ -70,6 +75,25 @@ export async function tdhLoop(force?: boolean) {
   await notifier.notifyTdhCalculationsDone();
 }
 
+async function recordTotalVotesGivenInMainStage() {
+  const mainStageWaveId = env.getStringOrNull(`MAIN_STAGE_WAVE_ID`);
+  if (mainStageWaveId) {
+    const totalVotes = await dbSupplier().oneOrNull<{
+      total_votes: number;
+    }>(
+      `select sum(abs(votes)) as total_votes from ${DROP_VOTER_STATE_TABLE} where wave_id = :wave_id`,
+      { wave_id: mainStageWaveId }
+    );
+    const tdhOnMainStageSubmissions = numbers.parseNumberOrThrow(
+      totalVotes?.total_votes ?? 0
+    );
+    await metricsRecorder.recordTdhOnMainStageSubmissions(
+      { tdhOnMainStageSubmissions },
+      {}
+    );
+  }
+}
+
 async function tdh(force?: boolean) {
   const lastTDHCalc = Time.latestUtcMidnight().toDate();
 
@@ -82,6 +106,7 @@ async function tdh(force?: boolean) {
       block,
       blockTimestamp
     );
+    await recordTotalVotesGivenInMainStage();
     // Disabled for now
     // await uploadTDH(block, blockTimestamp, tdh, false, true);
     await uploadTDH(block, blockTimestamp, consolidatedTdh, true, true);
