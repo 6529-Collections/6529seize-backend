@@ -1,11 +1,9 @@
-import {
-  CommunityMemberOverview,
-  CommunityMembersQuery
-} from './community-members.types';
-import { communityMembersDb, CommunityMembersDb } from './community-members.db';
 import { calculateLevel } from '../../../profiles/profile-level';
-import { Page } from '../page-request';
 import { RequestContext } from '../../../request.context';
+import { ApiCommunityMemberOverview } from '../generated/models/ApiCommunityMemberOverview';
+import { ApiCommunityMembersPage } from '../generated/models/ApiCommunityMembersPage';
+import { communityMembersDb, CommunityMembersDb } from './community-members.db';
+import { CommunityMembersQuery } from './community-members.types';
 
 export class CommunityMembersService {
   constructor(private readonly communityMembersDb: CommunityMembersDb) {}
@@ -13,7 +11,7 @@ export class CommunityMembersService {
   async getCommunityMembersPage(
     query: CommunityMembersQuery,
     ctx: RequestContext
-  ): Promise<Page<CommunityMemberOverview>> {
+  ): Promise<ApiCommunityMembersPage> {
     const [data, count] = await Promise.all([
       this.getAndConvertCommunityMembers(query, ctx),
       this.communityMembersDb.countCommunityMembers(query, ctx)
@@ -29,7 +27,7 @@ export class CommunityMembersService {
   private async getAndConvertCommunityMembers(
     query: CommunityMembersQuery,
     ctx: RequestContext
-  ): Promise<CommunityMemberOverview[]> {
+  ): Promise<ApiCommunityMemberOverview[]> {
     return await this.communityMembersDb
       .getCommunityMembers(query, ctx)
       .then(async (members) => {
@@ -49,7 +47,13 @@ export class CommunityMembersService {
             rep: member.rep
           }),
           tdh: member.tdh,
+          tdh_rate: member.tdh_rate,
           xtdh: member.xtdh,
+          xtdh_rate: member.xtdh_rate,
+          xtdh_outgoing: member.xtdh_outgoing,
+          xtdh_incoming: member.xtdh_incoming,
+          combined_tdh: member.combined_tdh,
+          combined_tdh_rate: member.combined_tdh_rate,
           rep: member.rep,
           cic: member.cic,
           last_activity: lastActivities[member.consolidation_key] ?? null,

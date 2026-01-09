@@ -3,21 +3,18 @@ import { Request, Response } from 'express';
 import {
   DEFAULT_MAX_SIZE,
   DEFAULT_PAGE_SIZE,
-  Page,
   PageSortDirection
 } from '../page-request';
 import { getValidatedByJoiOrThrow } from '../validation';
 import * as Joi from 'joi';
 import { ApiResponse } from '../api-response';
-import {
-  CommunityMemberOverview,
-  CommunityMembersQuery,
-  CommunityMembersSortOption
-} from './community-members.types';
+import { CommunityMembersQuery } from './community-members.types';
 import { communityMembersService } from './community-members.service';
 import { getAuthenticationContext, maybeAuthenticatedUser } from '../auth/auth';
 import { Timer } from '../../../time';
 import { ApiCommunityMemberMinimal } from '../generated/models/ApiCommunityMemberMinimal';
+import { ApiCommunityMembersPage } from '../generated/models/ApiCommunityMembersPage';
+import { ApiCommunityMembersSortOption } from '../generated/models/ApiCommunityMembersSortOption';
 import { identityFetcher } from '../identities/identity.fetcher';
 
 const router = asyncRouter();
@@ -59,7 +56,7 @@ router.get(
   maybeAuthenticatedUser(),
   async (
     req: Request<any, any, any, CommunityMembersQuery, any>,
-    res: Response<ApiResponse<Page<CommunityMemberOverview>>>
+    res: Response<ApiResponse<ApiCommunityMembersPage>>
   ) => {
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
@@ -84,8 +81,8 @@ const CommunityMembersQuerySchema: Joi.ObjectSchema<CommunityMembersQuery> =
       .allow(null),
     sort: Joi.string()
       .optional()
-      .default(CommunityMembersSortOption.LEVEL)
-      .valid(...Object.values(CommunityMembersSortOption))
+      .default(ApiCommunityMembersSortOption.Level)
+      .valid(...Object.values(ApiCommunityMembersSortOption))
       .allow(null),
     page: Joi.number().integer().min(1).optional().allow(null).default(1),
     page_size: Joi.number()

@@ -1,23 +1,21 @@
 import {
-  dbSupplier,
-  LazyDbAccessCompatibleService,
-  SqlExecutor
-} from '../../../sql-executor';
-import {
-  CommunityMemberOverview,
-  CommunityMembersQuery
-} from './community-members.types';
-import {
   ADDRESS_CONSOLIDATION_KEY,
   IDENTITIES_TABLE,
   PROFILE_LATEST_LOG_TABLE,
   TRANSACTIONS_TABLE
 } from '../../../constants';
-import { UserGroupsService, userGroupsService } from './user-groups.service';
 import { RequestContext } from '../../../request.context';
+import {
+  dbSupplier,
+  LazyDbAccessCompatibleService,
+  SqlExecutor
+} from '../../../sql-executor';
+import { ApiCommunityMemberOverview } from '../generated/models/ApiCommunityMemberOverview';
+import { CommunityMembersQuery } from './community-members.types';
+import { UserGroupsService, userGroupsService } from './user-groups.service';
 
 export interface CommunityMemberFromDb
-  extends Omit<CommunityMemberOverview, 'last_activity'> {
+  extends Omit<ApiCommunityMemberOverview, 'last_activity'> {
   readonly consolidation_key: string;
 }
 
@@ -44,7 +42,23 @@ export class CommunityMembersDb extends LazyDbAccessCompatibleService {
     let sort: string = query.sort;
     if (sort === 'level') {
       sort = 'level_raw';
+    } else if (sort === 'combined_tdh') {
+      sort = '(cm.tdh + cm.xtdh)';
+    } else if (sort === 'tdh_rate') {
+      sort = 'basetdh_rate';
+    } else if (sort === 'combined_tdh_rate') {
+      sort = '(cm.basetdh_rate + cm.xtdh_rate)';
+    } else if (sort === 'xtdh_outgoing') {
+      sort = 'granted_xtdh';
+    } else if (sort === 'xtdh_incoming') {
+      sort = '(cm.xtdh - (cm.produced_xtdh - cm.granted_xtdh))';
     }
+    const expressionSorts = [
+      '(cm.tdh + cm.xtdh)',
+      '(cm.basetdh_rate + cm.xtdh_rate)',
+      '(cm.xtdh - (cm.produced_xtdh - cm.granted_xtdh))'
+    ];
+    const orderByClause = expressionSorts.includes(sort) ? sort : `cm.${sort}`;
     const sql = `
       ${viewResult.sql} 
       select
@@ -52,13 +66,19 @@ export class CommunityMembersDb extends LazyDbAccessCompatibleService {
         ifnull(cm.handle, cm.primary_address) as detail_view_key,
         cm.level_raw as level,
         cm.tdh as tdh,
+        cm.basetdh_rate as tdh_rate,
         cm.primary_address as wallet,
         cm.xtdh as xtdh,
+        cm.xtdh_rate as xtdh_rate,
+        cm.granted_xtdh as xtdh_outgoing,
+        (cm.xtdh - (cm.produced_xtdh - cm.granted_xtdh)) as xtdh_incoming,
+        (cm.tdh + cm.xtdh) as combined_tdh,
+        (cm.basetdh_rate + cm.xtdh_rate) as combined_tdh_rate,
         cm.cic as cic,
         cm.rep as rep,
         cm.pfp as pfp,
         cm.consolidation_key as consolidation_key
-      from ${UserGroupsService.GENERATED_VIEW} cm order by cm.${sort} ${query.sort_direction} limit ${query.page_size} offset ${offset}
+      from ${UserGroupsService.GENERATED_VIEW} cm order by ${orderByClause} ${query.sort_direction} limit ${query.page_size} offset ${offset}
     `;
     const params = viewResult.params;
     ctx.timer?.start(`${this.constructor.name}->getCommunityMembers`);
