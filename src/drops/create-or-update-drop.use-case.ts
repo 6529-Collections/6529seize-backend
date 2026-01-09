@@ -215,7 +215,10 @@ export class CreateOrUpdateDropUseCase {
         },
         { connection, timer }
       );
-      await this.metricsRecorder.recordDrop({ timer, connection });
+      await this.metricsRecorder.recordDrop(
+        { identityId: model.author_id! },
+        { timer, connection }
+      );
     }
     timer.stop(`${CreateOrUpdateDropUseCase.name}->execute`);
     return { drop_id: dropId };
