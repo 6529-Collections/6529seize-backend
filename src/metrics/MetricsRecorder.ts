@@ -1,15 +1,22 @@
 import { metricsDb, MetricsDb } from './MetricsDb';
 import { MetricRollupHourMetric } from '../entities/IMetricRollupHour';
+import { DropType } from '../entities/IDrop';
+import { env } from '../env';
 import { RequestContext } from '../request.context';
 
 export class MetricsRecorder {
   constructor(private readonly metricsDb: MetricsDb) {}
 
   async recordDrop(
-    { identityId }: { identityId: string },
+    {
+      identityId,
+      waveId,
+      dropType
+    }: { identityId: string; waveId: string; dropType: DropType },
     ctx: RequestContext
   ) {
-    await Promise.all([
+    const mainStageWaveId = env.getStringOrNull(`MAIN_STAGE_WAVE_ID`);
+    const promises = [
       this.metricsDb.upsertMetricRollupHour(
         {
           metric: MetricRollupHourMetric.DROP,
@@ -25,7 +32,23 @@ export class MetricsRecorder {
         },
         ctx
       )
-    ]);
+    ];
+    if (
+      mainStageWaveId &&
+      waveId === mainStageWaveId &&
+      dropType === DropType.PARTICIPATORY
+    ) {
+      promises.push(
+        this.metricsDb.upsertMetricRollupHour(
+          {
+            metric: MetricRollupHourMetric.MAIN_STAGE_SUBMISSION,
+            event_count: 1
+          },
+          ctx
+        )
+      );
+    }
+    await Promise.all(promises);
   }
 }
 

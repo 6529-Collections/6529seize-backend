@@ -3,7 +3,8 @@ import { METRIC_ROLLUP_HOUR_TABLE } from '../constants';
 
 export enum MetricRollupHourMetric {
   DROP = 'DROP',
-  DROPPER_DROP = 'DROPPER_DROP'
+  DROPPER_DROP = 'DROPPER_DROP',
+  MAIN_STAGE_SUBMISSION = 'MAIN_STAGE_SUBMISSION'
 }
 
 @Entity(METRIC_ROLLUP_HOUR_TABLE)
