@@ -77,6 +77,34 @@ export class CommunityMetricsService {
             periodStart,
             periodEnd
           )
+        },
+        main_stage_distinct_voters: {
+          older: this.toMetricCountSample(
+            MetricRollupHourMetric.MAIN_STAGE_VOTE,
+            olderGroups,
+            olderPeriodStart,
+            olderPeriodEnd
+          ),
+          newer: this.toMetricCountSample(
+            MetricRollupHourMetric.MAIN_STAGE_VOTE,
+            newerGroups,
+            periodStart,
+            periodEnd
+          )
+        },
+        main_stage_votes: {
+          older: this.toMetricSumSample(
+            MetricRollupHourMetric.MAIN_STAGE_VOTE,
+            olderGroups,
+            olderPeriodStart,
+            olderPeriodEnd
+          ),
+          newer: this.toMetricSumSample(
+            MetricRollupHourMetric.MAIN_STAGE_VOTE,
+            newerGroups,
+            periodStart,
+            periodEnd
+          )
         }
       };
     } finally {
@@ -119,6 +147,37 @@ export class CommunityMetricsService {
       period_end: fallbackEnd.toMillis(),
       event_count: count,
       value_count: count
+    };
+  }
+
+  private toMetricSumSample(
+    metricToGet: MetricRollupHourMetric,
+    groups: MetricRollupHourGroup[],
+    fallbackStart: Time,
+    fallbackEnd: Time
+  ): ApiCommunityMetricSample {
+    const metricGroups = groups.filter((row) => row.metric === metricToGet);
+    if (!metricGroups.length) {
+      return {
+        period_start: fallbackStart.toMillis(),
+        period_end: fallbackEnd.toMillis(),
+        event_count: 0,
+        value_count: 0
+      };
+    }
+    const eventCount = metricGroups.reduce(
+      (acc, row) => acc + numbers.parseIntOrThrow(row.event_count),
+      0
+    );
+    const valueSum = metricGroups.reduce(
+      (acc, row) => acc + numbers.parseNumberOrThrow(row.value_sum),
+      0
+    );
+    return {
+      period_start: fallbackStart.toMillis(),
+      period_end: fallbackEnd.toMillis(),
+      event_count: eventCount,
+      value_count: valueSum
     };
   }
 }
