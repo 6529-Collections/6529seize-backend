@@ -50,6 +50,29 @@ export class MetricsRecorder {
     }
     await Promise.all(promises);
   }
+
+  async recordVote(
+    {
+      wave_id,
+      vote_change,
+      voter_id
+    }: { wave_id: string; vote_change: number; voter_id: string },
+    ctx: RequestContext
+  ) {
+    const mainStageWaveId = env.getStringOrNull(`MAIN_STAGE_WAVE_ID`);
+    if (!mainStageWaveId || wave_id !== mainStageWaveId) {
+      return;
+    }
+    await this.metricsDb.upsertMetricRollupHour(
+      {
+        metric: MetricRollupHourMetric.MAIN_STAGE_VOTE,
+        scope: voter_id,
+        event_count: 1,
+        value_sum: vote_change
+      },
+      ctx
+    );
+  }
 }
 
 export const metricsRecorder = new MetricsRecorder(metricsDb);

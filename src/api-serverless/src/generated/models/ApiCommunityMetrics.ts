@@ -17,6 +17,8 @@ export class ApiCommunityMetrics {
     'drops_created': ApiCommunityMetric;
     'distinct_droppers': ApiCommunityMetric;
     'main_stage_submissions': ApiCommunityMetric;
+    'main_stage_distinct_voters': ApiCommunityMetric;
+    'main_stage_votes': ApiCommunityMetric;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -36,6 +38,18 @@ export class ApiCommunityMetrics {
         {
             "name": "main_stage_submissions",
             "baseName": "main_stage_submissions",
+            "type": "ApiCommunityMetric",
+            "format": ""
+        },
+        {
+            "name": "main_stage_distinct_voters",
+            "baseName": "main_stage_distinct_voters",
+            "type": "ApiCommunityMetric",
+            "format": ""
+        },
+        {
+            "name": "main_stage_votes",
+            "baseName": "main_stage_votes",
             "type": "ApiCommunityMetric",
             "format": ""
         }    ];
