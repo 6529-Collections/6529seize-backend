@@ -73,6 +73,18 @@ export class MetricsRecorder {
       ctx
     );
   }
+
+  async recordNetworkTdh({ tdh }: { tdh: number }, ctx: RequestContext) {
+    await this.metricsDb.upsertMetricRollupHour(
+      {
+        metric: MetricRollupHourMetric.NETWORK_TDH,
+        event_count: 1,
+        value_sum: tdh,
+        overwrite: true
+      },
+      ctx
+    );
+  }
 }
 
 export const metricsRecorder = new MetricsRecorder(metricsDb);
