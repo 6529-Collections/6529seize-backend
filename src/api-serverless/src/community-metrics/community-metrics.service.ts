@@ -63,6 +63,20 @@ export class CommunityMetricsService {
             periodStart,
             periodEnd
           )
+        },
+        main_stage_submissions: {
+          older: this.toMetricSample(
+            MetricRollupHourMetric.MAIN_STAGE_SUBMISSION,
+            olderGroups,
+            olderPeriodStart,
+            olderPeriodEnd
+          ),
+          newer: this.toMetricSample(
+            MetricRollupHourMetric.MAIN_STAGE_SUBMISSION,
+            newerGroups,
+            periodStart,
+            periodEnd
+          )
         }
       };
     } finally {
