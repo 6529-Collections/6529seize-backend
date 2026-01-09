@@ -2,7 +2,8 @@ import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
 import { METRIC_ROLLUP_HOUR_TABLE } from '../constants';
 
 export enum MetricRollupHourMetric {
-  DROP = 'DROP'
+  DROP = 'DROP',
+  DROPPER_DROP = 'DROPPER_DROP'
 }
 
 @Entity(METRIC_ROLLUP_HOUR_TABLE)
@@ -16,7 +17,7 @@ export class MetricRollupHourEntity {
 
   @PrimaryColumn({
     type: 'varchar',
-    length: 32,
+    length: 100,
     nullable: false,
     default: 'global'
   })

@@ -5700,8 +5700,11 @@ components:
       type: object
       required:
         - drops_created
+        - distinct_droppers
       properties:
         drops_created:
+          $ref: "#/components/schemas/ApiCommunityMetric"
+        distinct_droppers:
           $ref: "#/components/schemas/ApiCommunityMetric"
     ApiCommunityMetricSample:
       type: object

@@ -15,6 +15,7 @@ import { HttpFile } from '../http/http';
 
 export class ApiCommunityMetrics {
     'drops_created': ApiCommunityMetric;
+    'distinct_droppers': ApiCommunityMetric;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -22,6 +23,12 @@ export class ApiCommunityMetrics {
         {
             "name": "drops_created",
             "baseName": "drops_created",
+            "type": "ApiCommunityMetric",
+            "format": ""
+        },
+        {
+            "name": "distinct_droppers",
+            "baseName": "distinct_droppers",
             "type": "ApiCommunityMetric",
             "format": ""
         }    ];
