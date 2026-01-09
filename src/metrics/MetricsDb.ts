@@ -14,6 +14,7 @@ export type MetricRollupHourUpsertParams = {
   key2?: string;
   event_count: number;
   value_sum?: number;
+  overwrite?: boolean;
 };
 
 export type MetricGroupInterval = 'DAY' | 'WEEK';
@@ -26,6 +27,8 @@ export type MetricRollupHourGroup = Omit<
   period_end: number;
 };
 
+export type MetricRollupHourLatest = MetricRollupHourEntity;
+
 export class MetricsDb extends LazyDbAccessCompatibleService {
   public async upsertMetricRollupHour(
     {
@@ -34,10 +37,20 @@ export class MetricsDb extends LazyDbAccessCompatibleService {
       key1 = '',
       key2 = '',
       event_count,
-      value_sum = event_count
+      value_sum = event_count,
+      overwrite = false
     }: MetricRollupHourUpsertParams,
     ctx: RequestContext
   ) {
+    const updateClause = overwrite
+      ? `
+          event_count = values(event_count),
+          value_sum = values(value_sum)
+        `
+      : `
+          event_count = event_count + values(event_count),
+          value_sum = value_sum + values(value_sum)
+        `;
     ctx.timer?.start(`${this.constructor.name}->upsertMetricRollupHour`);
     await this.db.execute(
       `
@@ -54,8 +67,7 @@ export class MetricsDb extends LazyDbAccessCompatibleService {
             :value_sum
           )
         on duplicate key update
-          event_count = event_count + values(event_count),
-          value_sum = value_sum + values(value_sum)
+          ${updateClause}
       `,
       {
         metric,
@@ -102,6 +114,46 @@ export class MetricsDb extends LazyDbAccessCompatibleService {
       );
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->getMetricGroups`);
+    }
+  }
+
+  public async getLatestMetricSample(
+    metric: MetricRollupHourMetric,
+    periodStart: Time,
+    periodEnd: Time,
+    ctx: RequestContext,
+    scope = 'global'
+  ): Promise<MetricRollupHourLatest | null> {
+    try {
+      ctx.timer?.start(`${this.constructor.name}->getLatestMetricSample`);
+      return await this.db.oneOrNull<MetricRollupHourLatest>(
+        `
+          select
+            hour_start,
+            metric,
+            scope,
+            key1,
+            key2,
+            event_count,
+            value_sum
+          from ${METRIC_ROLLUP_HOUR_TABLE}
+          where metric = :metric
+            and scope = :scope
+            and hour_start >= from_unixtime(:start_time / 1000)
+            and hour_start < from_unixtime(:end_time / 1000)
+          order by hour_start desc
+          limit 1
+        `,
+        {
+          metric,
+          scope,
+          start_time: periodStart.toMillis(),
+          end_time: periodEnd.toMillis()
+        },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->getLatestMetricSample`);
     }
   }
 }

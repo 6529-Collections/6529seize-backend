@@ -84,6 +84,7 @@ import {
   syncIdentitiesWithTdhConsolidations
 } from './identity';
 import { Logger } from './logging';
+import { metricsRecorder } from './metrics/MetricsRecorder';
 import { deleteAll, insertWithoutUpdate, resetRepository } from './orm_helpers';
 import {
   ConnectionWrapper,
@@ -1530,6 +1531,11 @@ export async function persistGlobalTDHHistory(globalHistory: GlobalTDHHistory) {
       [globalHistory]
     );
   });
+
+  await metricsRecorder.recordNetworkTdh(
+    { tdh: globalHistory.total_boosted_tdh },
+    {}
+  );
 }
 export async function persistMemesSeasons(seasons: MemesSeason[]) {
   await AppDataSource.getRepository(MemesSeason).save(seasons);

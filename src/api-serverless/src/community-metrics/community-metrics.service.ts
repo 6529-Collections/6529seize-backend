@@ -3,6 +3,7 @@ import { ApiCommunityMetricSample } from '../generated/models/ApiCommunityMetric
 import {
   MetricGroupInterval,
   MetricRollupHourGroup,
+  MetricRollupHourLatest,
   MetricsDb,
   metricsDb
 } from '../../../metrics/MetricsDb';
@@ -34,6 +35,20 @@ export class CommunityMetricsService {
       const [olderGroups, newerGroups] = await Promise.all([
         this.metricsDb.getMetricGroups(interval, olderPeriodEnd, ctx),
         this.metricsDb.getMetricGroups(interval, periodEnd, ctx)
+      ]);
+      const [olderNetworkTdh, newerNetworkTdh] = await Promise.all([
+        this.metricsDb.getLatestMetricSample(
+          MetricRollupHourMetric.NETWORK_TDH,
+          olderPeriodStart,
+          olderPeriodEnd,
+          ctx
+        ),
+        this.metricsDb.getLatestMetricSample(
+          MetricRollupHourMetric.NETWORK_TDH,
+          periodStart,
+          periodEnd,
+          ctx
+        )
       ]);
       return {
         drops_created: {
@@ -102,6 +117,18 @@ export class CommunityMetricsService {
           newer: this.toMetricSumSample(
             MetricRollupHourMetric.MAIN_STAGE_VOTE,
             newerGroups,
+            periodStart,
+            periodEnd
+          )
+        },
+        network_tdh: {
+          older: this.toLatestMetricSample(
+            olderNetworkTdh,
+            olderPeriodStart,
+            olderPeriodEnd
+          ),
+          newer: this.toLatestMetricSample(
+            newerNetworkTdh,
             periodStart,
             periodEnd
           )
@@ -178,6 +205,27 @@ export class CommunityMetricsService {
       period_end: fallbackEnd.toMillis(),
       event_count: eventCount,
       value_count: valueSum
+    };
+  }
+
+  private toLatestMetricSample(
+    latest: MetricRollupHourLatest | null,
+    fallbackStart: Time,
+    fallbackEnd: Time
+  ): ApiCommunityMetricSample {
+    if (!latest) {
+      return {
+        period_start: fallbackStart.toMillis(),
+        period_end: fallbackEnd.toMillis(),
+        event_count: 0,
+        value_count: 0
+      };
+    }
+    return {
+      period_start: fallbackStart.toMillis(),
+      period_end: fallbackEnd.toMillis(),
+      event_count: numbers.parseIntOrThrow(latest.event_count),
+      value_count: numbers.parseNumberOrThrow(latest.value_sum)
     };
   }
 }
