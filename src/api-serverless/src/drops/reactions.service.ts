@@ -26,6 +26,10 @@ import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import { ApiDrop } from '../generated/models/ApiDrop';
 import { DropEntity } from '../../../entities/IDrop';
 import { WaveEntity } from '../../../entities/IWave';
+import {
+  metricsRecorder,
+  MetricsRecorder
+} from '../../../metrics/MetricsRecorder';
 
 export class ReactionsService {
   constructor(
@@ -35,7 +39,8 @@ export class ReactionsService {
     private readonly userGroupsService: UserGroupsService,
     private readonly userNotifier: UserNotifier,
     private readonly wsListenersNotifier: WsListenersNotifier,
-    private readonly dropsService: DropsApiService
+    private readonly dropsService: DropsApiService,
+    private readonly metricsRecorder: MetricsRecorder
   ) {}
 
   private async handleReaction(
@@ -108,6 +113,10 @@ export class ReactionsService {
         );
         await Promise.all([
           reactionPromise,
+          this.metricsRecorder.recordActiveIdentity(
+            { identityId: profileId },
+            ctx
+          ),
           profileActivityLogsDb.insert(
             {
               profile_id: profileId,
@@ -244,5 +253,6 @@ export const reactionsService = new ReactionsService(
   userGroupsService,
   userNotifier,
   wsListenersNotifier,
-  dropsService
+  dropsService,
+  metricsRecorder
 );

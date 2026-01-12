@@ -130,6 +130,20 @@ export class MetricsRecorder {
       ctx
     );
   }
+
+  async recordActiveIdentity(
+    { identityId }: { identityId: string },
+    ctx: RequestContext
+  ) {
+    await this.metricsDb.upsertMetricRollupHour(
+      {
+        metric: MetricRollupHourMetric.ACTIVE_IDENTITY,
+        scope: identityId,
+        event_count: 1
+      },
+      ctx
+    );
+  }
 }
 
 export const metricsRecorder = new MetricsRecorder(metricsDb);
