@@ -5707,6 +5707,7 @@ components:
         - network_tdh
         - tdh_on_main_stage_submissions
         - consolidations_formed
+        - xtdh_granted
       properties:
         drops_created:
           $ref: "#/components/schemas/ApiCommunityMetric"
@@ -5723,6 +5724,8 @@ components:
         tdh_on_main_stage_submissions:
           $ref: "#/components/schemas/ApiCommunityMetric"
         consolidations_formed:
+          $ref: "#/components/schemas/ApiCommunityMetric"
+        xtdh_granted:
           $ref: "#/components/schemas/ApiCommunityMetric"
     ApiCommunityMetricSample:
       type: object

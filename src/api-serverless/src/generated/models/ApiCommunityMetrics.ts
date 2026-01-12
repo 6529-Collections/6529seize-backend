@@ -22,6 +22,7 @@ export class ApiCommunityMetrics {
     'network_tdh': ApiCommunityMetric;
     'tdh_on_main_stage_submissions': ApiCommunityMetric;
     'consolidations_formed': ApiCommunityMetric;
+    'xtdh_granted': ApiCommunityMetric;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -71,6 +72,12 @@ export class ApiCommunityMetrics {
         {
             "name": "consolidations_formed",
             "baseName": "consolidations_formed",
+            "type": "ApiCommunityMetric",
+            "format": ""
+        },
+        {
+            "name": "xtdh_granted",
+            "baseName": "xtdh_granted",
             "type": "ApiCommunityMetric",
             "format": ""
         }    ];

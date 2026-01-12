@@ -1,6 +1,7 @@
 import { RequestContext } from '../request.context';
 import { xTdhRepository, XTdhRepository } from './xtdh.repository';
 import { Logger } from '../logging';
+import { metricsRecorder } from '../metrics/MetricsRecorder';
 
 export class RecalculateXTdhStatsUseCase {
   private readonly logger = Logger.get(this.constructor.name);
@@ -29,6 +30,11 @@ export class RecalculateXTdhStatsUseCase {
         },
         ctx
       );
+      const xtdhGranted = await this.xtdhRepository.getTotalGrantedXTdh(
+        { slot },
+        ctx
+      );
+      await metricsRecorder.recordXtdhGranted({ xtdhGranted }, ctx);
       this.logger.info(`Token stats indexed`);
       this.logger.info(`Activating slot ${slot}`);
       await this.xtdhRepository.markStatsJustReindexed(

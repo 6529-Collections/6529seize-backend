@@ -115,6 +115,21 @@ export class MetricsRecorder {
       ctx
     );
   }
+
+  async recordXtdhGranted(
+    { xtdhGranted }: { xtdhGranted: number },
+    ctx: RequestContext
+  ) {
+    await this.metricsDb.upsertMetricRollupHour(
+      {
+        metric: MetricRollupHourMetric.XTDH_GRANTED,
+        event_count: 1,
+        value_sum: xtdhGranted,
+        overwrite: true
+      },
+      ctx
+    );
+  }
 }
 
 export const metricsRecorder = new MetricsRecorder(metricsDb);
