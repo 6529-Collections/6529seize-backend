@@ -21,6 +21,7 @@ import {
 import { Logger } from '../logging';
 import { env } from '../env';
 import { Time } from '../time';
+import { DbPoolName } from '../db-query.options';
 import {
   XTdhGrantEntity,
   XTdhGrantStatus,
@@ -909,6 +910,24 @@ SET cw.xtdh_rate = COALESCE(pd.produced, 0) - COALESCE(go.granted_out, 0) + COAL
       );
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->refillXTdhTokenStats`);
+    }
+  }
+
+  public async getTotalGrantedXTdh(
+    { slot }: { slot: 'a' | 'b' },
+    ctx: RequestContext
+  ): Promise<number> {
+    const TABLE = `${XTDH_TOKEN_STATS_TABLE_PREFIX}${slot}`;
+    try {
+      ctx.timer?.start(`${this.constructor.name}->getTotalGrantedXTdh`);
+      const result = await this.db.oneOrNull<{ total: number | string }>(
+        `select floor(sum(xtdh_total)) as total from ${TABLE}`,
+        {},
+        { forcePool: DbPoolName.WRITE, wrappedConnection: ctx.connection }
+      );
+      return numbers.parseNumberOrThrow(result?.total ?? 0);
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->getTotalGrantedXTdh`);
     }
   }
 
