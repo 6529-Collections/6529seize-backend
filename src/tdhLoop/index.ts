@@ -75,7 +75,7 @@ export async function tdhLoop(force?: boolean) {
   await notifier.notifyTdhCalculationsDone();
 }
 
-async function recordTotalVotesGivenInMainStage() {
+async function recordMetrics() {
   const mainStageWaveId = env.getStringOrNull(`MAIN_STAGE_WAVE_ID`);
   if (mainStageWaveId) {
     const totalVotes = await dbSupplier().oneOrNull<{
@@ -89,6 +89,18 @@ async function recordTotalVotesGivenInMainStage() {
     );
     await metricsRecorder.recordTdhOnMainStageSubmissions(
       { tdhOnMainStageSubmissions },
+      {}
+    );
+    const consolidationsFormedRow = await dbSupplier().oneOrNull<{
+      cnt: number;
+    }>(
+      `select count(*) as cnt from tdh_consolidation where consolidation_key like ('%-%')`
+    );
+    const consolidationsFormed = numbers.parseNumberOrThrow(
+      consolidationsFormedRow?.cnt ?? 0
+    );
+    await metricsRecorder.recordConsolidationsFormed(
+      { consolidationsFormed },
       {}
     );
   }
@@ -106,7 +118,7 @@ async function tdh(force?: boolean) {
       block,
       blockTimestamp
     );
-    await recordTotalVotesGivenInMainStage();
+    await recordMetrics();
     // Disabled for now
     // await uploadTDH(block, blockTimestamp, tdh, false, true);
     await uploadTDH(block, blockTimestamp, consolidatedTdh, true, true);
