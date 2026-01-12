@@ -215,14 +215,20 @@ export class CreateOrUpdateDropUseCase {
         },
         { connection, timer }
       );
-      await this.metricsRecorder.recordDrop(
-        {
-          identityId: model.author_id!,
-          waveId: model.wave_id,
-          dropType: model.drop_type
-        },
-        { timer, connection }
-      );
+      await Promise.all([
+        this.metricsRecorder.recordDrop(
+          {
+            identityId: model.author_id!,
+            waveId: model.wave_id,
+            dropType: model.drop_type
+          },
+          { timer, connection }
+        ),
+        this.metricsRecorder.recordActiveIdentity(
+          { identityId: model.author_id! },
+          { timer, connection }
+        )
+      ]);
     }
     timer.stop(`${CreateOrUpdateDropUseCase.name}->execute`);
     return { drop_id: dropId };

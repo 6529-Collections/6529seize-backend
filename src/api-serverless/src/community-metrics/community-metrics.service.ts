@@ -213,6 +213,20 @@ export class CommunityMetricsService {
             periodStart,
             periodEnd
           )
+        },
+        active_identities: {
+          older: this.toMetricCountSample(
+            MetricRollupHourMetric.ACTIVE_IDENTITY,
+            olderGroups,
+            olderPeriodStart,
+            olderPeriodEnd
+          ),
+          newer: this.toMetricCountSample(
+            MetricRollupHourMetric.ACTIVE_IDENTITY,
+            newerGroups,
+            periodStart,
+            periodEnd
+          )
         }
       };
     } finally {
