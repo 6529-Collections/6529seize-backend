@@ -59,6 +59,10 @@ import { ApiDropWithoutWavesPageWithoutCount } from '../generated/models/ApiDrop
 import { ApiPageSortDirection } from '../generated/models/ApiPageSortDirection';
 import { ApiDropsPage } from '../generated/models/ApiDropsPage';
 import { ApiDropBoostsPage } from '../generated/models/ApiDropBoostsPage';
+import {
+  metricsRecorder,
+  MetricsRecorder
+} from '../../../metrics/MetricsRecorder';
 
 export class DropsApiService {
   constructor(
@@ -66,7 +70,8 @@ export class DropsApiService {
     private readonly dropsDb: DropsDb,
     private readonly userGroupsService: UserGroupsService,
     private readonly identitySubscriptionsDb: IdentitySubscriptionsDb,
-    private readonly identityFetcher: IdentityFetcher
+    private readonly identityFetcher: IdentityFetcher,
+    private readonly metricsRecorder: MetricsRecorder
   ) {}
 
   public async findDropByIdOrThrow(
@@ -319,6 +324,10 @@ export class DropsApiService {
             connection
           );
         }
+        await this.metricsRecorder.recordActiveIdentity(
+          { identityId: subscriber },
+          { connection }
+        );
         return await this.identitySubscriptionsDb
           .findIdentitySubscriptionActionsOfTarget(
             {
@@ -367,6 +376,10 @@ export class DropsApiService {
             connection
           );
         }
+        await this.metricsRecorder.recordActiveIdentity(
+          { identityId: subscriber },
+          { connection }
+        );
         return await this.identitySubscriptionsDb
           .findIdentitySubscriptionActionsOfTarget(
             {
@@ -936,6 +949,10 @@ export class DropsApiService {
         { drop_id: dropId, booster_id: boosterId, wave_id: apiDrop.wave.id },
         ctx
       );
+      await this.metricsRecorder.recordActiveIdentity(
+        { identityId: boosterId },
+        ctx
+      );
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->boostDrop`);
     }
@@ -953,6 +970,10 @@ export class DropsApiService {
       await this.findDropByIdOrThrow({ dropId }, ctx);
       await this.dropsDb.deleteDropBoost(
         { drop_id: dropId, booster_id: boosterId },
+        ctx
+      );
+      await this.metricsRecorder.recordActiveIdentity(
+        { identityId: boosterId },
         ctx
       );
     } finally {
@@ -1057,5 +1078,6 @@ export const dropsService = new DropsApiService(
   dropsDb,
   userGroupsService,
   identitySubscriptionsDb,
-  identityFetcher
+  identityFetcher,
+  metricsRecorder
 );

@@ -177,6 +177,10 @@ export class VoteForDropUseCase {
       this.metricsRecorder.recordVote(
         { wave_id, vote_change: change, voter_id },
         ctx
+      ),
+      this.metricsRecorder.recordActiveIdentity(
+        { identityId: drop.author_id },
+        ctx
       )
     ]);
     await Promise.all([

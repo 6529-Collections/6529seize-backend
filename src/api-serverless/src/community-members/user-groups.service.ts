@@ -66,6 +66,10 @@ import { clearWaveGroupsCache, redisCached } from '../../../redis';
 import { env } from '../../../env';
 import { ApiGroupTdhInclusionStrategy } from '../generated/models/ApiGroupTdhInclusionStrategy';
 import { assertUnreachable } from '../../../assertions';
+import {
+  metricsRecorder,
+  MetricsRecorder
+} from '../../../metrics/MetricsRecorder';
 
 export type NewUserGroupEntity = Omit<
   UserGroupEntity,
@@ -77,7 +81,8 @@ export class UserGroupsService {
 
   constructor(
     private readonly userGroupsDb: UserGroupsDb,
-    private readonly abusivenessCheckService: AbusivenessCheckService
+    private readonly abusivenessCheckService: AbusivenessCheckService,
+    private readonly metricsRecorder: MetricsRecorder
   ) {}
 
   async save(
@@ -129,6 +134,10 @@ export class UserGroupsService {
                 exclusionGroups?.profile_group_id ?? null
             },
             connection
+          );
+          await this.metricsRecorder.recordActiveIdentity(
+            { identityId: createdBy },
+            ctxWithConnection
           );
           return await this.getByIdOrThrow(id, ctxWithConnection);
         }
@@ -613,6 +622,10 @@ export class UserGroupsService {
               visibility: visible
             },
             connection
+          );
+          await this.metricsRecorder.recordActiveIdentity(
+            { identityId: profile_id },
+            ctxWithConnection
           );
           return await this.getByIdOrThrow(
             old_version_id ?? group_id,
@@ -1359,5 +1372,6 @@ export class UserGroupsService {
 
 export const userGroupsService = new UserGroupsService(
   userGroupsDb,
-  abusivenessCheckService
+  abusivenessCheckService,
+  metricsRecorder
 );

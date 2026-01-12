@@ -64,6 +64,7 @@ import { appFeatures } from '../app-features';
 import { enums } from '../enums';
 import { ids } from '../ids';
 import { collections } from '../collections';
+import { metricsRecorder, MetricsRecorder } from '../metrics/MetricsRecorder';
 
 interface ProxyCreditSpend {
   readonly actionId: string;
@@ -90,7 +91,8 @@ export class RatingsService {
     private readonly arweaveFileUploader: ArweaveFileUploader,
     private readonly profileProxiesDb: ProfileProxiesDb,
     private readonly abusivenessCheckService: AbusivenessCheckService,
-    private readonly identitiesDb: IdentitiesDb
+    private readonly identitiesDb: IdentitiesDb,
+    private readonly metricsRecorder: MetricsRecorder
   ) {}
 
   public async getAggregatedRatingOnMatter(
@@ -143,6 +145,13 @@ export class RatingsService {
             );
           }
           await this.applyProxyCreditSpends(proxyCreditSpends, ctx.timer);
+          const ratorId = request.authenticationContext.getActingAsId();
+          if (ratorId) {
+            await this.metricsRecorder.recordActiveIdentity(
+              { identityId: ratorId },
+              { ...ctx, connection }
+            );
+          }
         }
       );
     } finally {
@@ -1478,5 +1487,6 @@ export const ratingsService: RatingsService = new RatingsService(
   arweaveFileUploader,
   profileProxiesDb,
   abusivenessCheckService,
-  identitiesDb
+  identitiesDb,
+  metricsRecorder
 );
