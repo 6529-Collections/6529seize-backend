@@ -100,6 +100,21 @@ export class MetricsRecorder {
       ctx
     );
   }
+
+  async recordConsolidationsFormed(
+    { consolidationsFormed }: { consolidationsFormed: number },
+    ctx: RequestContext
+  ) {
+    await this.metricsDb.upsertMetricRollupHour(
+      {
+        metric: MetricRollupHourMetric.CONSOLIDATIONS_FORMED,
+        event_count: 1,
+        value_sum: consolidationsFormed,
+        overwrite: true
+      },
+      ctx
+    );
+  }
 }
 
 export const metricsRecorder = new MetricsRecorder(metricsDb);

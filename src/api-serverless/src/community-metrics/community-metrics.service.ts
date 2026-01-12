@@ -38,7 +38,9 @@ export class CommunityMetricsService {
         olderNetworkTdh,
         newerNetworkTdh,
         olderMainStageTdh,
-        newerMainStageTdh
+        newerMainStageTdh,
+        olderConsolidationsFormed,
+        newerConsolidationsFormed
       ] = await Promise.all([
         this.metricsDb.getMetricGroups(interval, olderPeriodEnd, ctx),
         this.metricsDb.getMetricGroups(interval, periodEnd, ctx),
@@ -62,6 +64,18 @@ export class CommunityMetricsService {
         ),
         this.metricsDb.getLatestMetricSample(
           MetricRollupHourMetric.TDH_ON_MAIN_STAGE_SUBMISSIONS,
+          periodStart,
+          periodEnd,
+          ctx
+        ),
+        this.metricsDb.getLatestMetricSample(
+          MetricRollupHourMetric.CONSOLIDATIONS_FORMED,
+          olderPeriodStart,
+          olderPeriodEnd,
+          ctx
+        ),
+        this.metricsDb.getLatestMetricSample(
+          MetricRollupHourMetric.CONSOLIDATIONS_FORMED,
           periodStart,
           periodEnd,
           ctx
@@ -158,6 +172,18 @@ export class CommunityMetricsService {
           ),
           newer: this.toLatestMetricSample(
             newerMainStageTdh,
+            periodStart,
+            periodEnd
+          )
+        },
+        consolidations_formed: {
+          older: this.toLatestMetricSample(
+            olderConsolidationsFormed,
+            olderPeriodStart,
+            olderPeriodEnd
+          ),
+          newer: this.toLatestMetricSample(
+            newerConsolidationsFormed,
             periodStart,
             periodEnd
           )
