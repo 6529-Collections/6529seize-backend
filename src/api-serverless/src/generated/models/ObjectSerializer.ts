@@ -105,6 +105,8 @@ export * from '../models/ApiLightDrop';
 export * from '../models/ApiLoginRequest';
 export * from '../models/ApiLoginResponse';
 export * from '../models/ApiMarkDropUnreadResponse';
+export * from '../models/ApiMintMetrics';
+export * from '../models/ApiMintMetricsPage';
 export * from '../models/ApiNft';
 export * from '../models/ApiNftMedia';
 export * from '../models/ApiNftOwner';
@@ -353,6 +355,8 @@ import { ApiLightDrop         } from '../models/ApiLightDrop';
 import { ApiLoginRequest } from '../models/ApiLoginRequest';
 import { ApiLoginResponse } from '../models/ApiLoginResponse';
 import { ApiMarkDropUnreadResponse } from '../models/ApiMarkDropUnreadResponse';
+import { ApiMintMetrics } from '../models/ApiMintMetrics';
+import { ApiMintMetricsPage } from '../models/ApiMintMetricsPage';
 import { ApiNft      , ApiNftTokenTypeEnum                               } from '../models/ApiNft';
 import { ApiNftMedia } from '../models/ApiNftMedia';
 import { ApiNftOwner } from '../models/ApiNftOwner';
@@ -638,6 +642,8 @@ let typeMap: {[index: string]: any} = {
     "ApiLoginRequest": ApiLoginRequest,
     "ApiLoginResponse": ApiLoginResponse,
     "ApiMarkDropUnreadResponse": ApiMarkDropUnreadResponse,
+    "ApiMintMetrics": ApiMintMetrics,
+    "ApiMintMetricsPage": ApiMintMetricsPage,
     "ApiNft": ApiNft,
     "ApiNftMedia": ApiNftMedia,
     "ApiNftOwner": ApiNftOwner,
