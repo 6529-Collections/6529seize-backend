@@ -19,7 +19,11 @@ import {
   TDHMemes
 } from '../entities/ITDH';
 import { ConsolidatedTDHUpload } from '../entities/IUpload';
-import { DROP_VOTER_STATE_TABLE } from '../constants';
+import {
+  CONSOLIDATED_WALLETS_TDH_TABLE,
+  DROP_VOTER_STATE_TABLE,
+  IDENTITIES_TABLE
+} from '../constants';
 import { env } from '../env';
 import { Logger } from '../logging';
 import { metricsRecorder } from '../metrics/MetricsRecorder';
@@ -78,31 +82,52 @@ export async function tdhLoop(force?: boolean) {
 async function recordMetrics() {
   const mainStageWaveId = env.getStringOrNull(`MAIN_STAGE_WAVE_ID`);
   if (mainStageWaveId) {
-    const totalVotes = await dbSupplier().oneOrNull<{
-      total_votes: number;
-    }>(
-      `select sum(abs(votes)) as total_votes from ${DROP_VOTER_STATE_TABLE} where wave_id = :wave_id`,
-      { wave_id: mainStageWaveId }
-    );
-    const tdhOnMainStageSubmissions = numbers.parseNumberOrThrow(
-      totalVotes?.total_votes ?? 0
-    );
-    await metricsRecorder.recordTdhOnMainStageSubmissions(
-      { tdhOnMainStageSubmissions },
-      {}
-    );
-    const consolidationsFormedRow = await dbSupplier().oneOrNull<{
-      cnt: number;
-    }>(
-      `select count(*) as cnt from tdh_consolidation where consolidation_key like ('%-%')`
-    );
-    const consolidationsFormed = numbers.parseNumberOrThrow(
-      consolidationsFormedRow?.cnt ?? 0
-    );
-    await metricsRecorder.recordConsolidationsFormed(
-      { consolidationsFormed },
-      {}
-    );
+    const db = dbSupplier();
+    await Promise.all([
+      db
+        .oneOrNull<{
+          total_votes: number;
+        }>(
+          `select sum(abs(votes)) as total_votes from ${DROP_VOTER_STATE_TABLE} where wave_id = :wave_id`,
+          { wave_id: mainStageWaveId }
+        )
+        .then(async (totalVotes) => {
+          const tdhOnMainStageSubmissions = numbers.parseNumberOrThrow(
+            totalVotes?.total_votes ?? 0
+          );
+          await metricsRecorder.recordTdhOnMainStageSubmissions(
+            { tdhOnMainStageSubmissions },
+            {}
+          );
+        }),
+      db
+        .oneOrNull<{
+          cnt: number;
+        }>(
+          `select count(*) as cnt from ${CONSOLIDATED_WALLETS_TDH_TABLE} where consolidation_key like ('%-%')`
+        )
+        .then(async (consolidationsFormedRow) => {
+          const consolidationsFormed = numbers.parseNumberOrThrow(
+            consolidationsFormedRow?.cnt ?? 0
+          );
+          await metricsRecorder.recordConsolidationsFormed(
+            { consolidationsFormed },
+            {}
+          );
+        }),
+      db
+        .oneOrNull<{
+          cnt: number;
+        }>(
+          `select count(*) as cnt from ${IDENTITIES_TABLE} where normalised_handle is not null and normalised_handle not like 'id-0x%'`
+        )
+        .then(async (profileCountRow) => {
+          const profileCount = numbers.parseNumberOrThrow(
+            profileCountRow?.cnt ?? 0
+          );
+          await metricsRecorder.recordProfileCount({ profileCount }, {});
+        })
+    ]);
   }
 }
 

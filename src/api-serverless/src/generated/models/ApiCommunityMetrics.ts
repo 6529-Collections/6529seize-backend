@@ -24,6 +24,7 @@ export class ApiCommunityMetrics {
     'consolidations_formed': ApiCommunityMetric;
     'xtdh_granted': ApiCommunityMetric;
     'active_identities': ApiCommunityMetric;
+    'profile_count': ApiCommunityMetric;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -85,6 +86,12 @@ export class ApiCommunityMetrics {
         {
             "name": "active_identities",
             "baseName": "active_identities",
+            "type": "ApiCommunityMetric",
+            "format": ""
+        },
+        {
+            "name": "profile_count",
+            "baseName": "profile_count",
             "type": "ApiCommunityMetric",
             "format": ""
         }    ];

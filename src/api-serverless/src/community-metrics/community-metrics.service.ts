@@ -42,7 +42,9 @@ export class CommunityMetricsService {
         olderConsolidationsFormed,
         newerConsolidationsFormed,
         olderXtdhGranted,
-        newerXtdhGranted
+        newerXtdhGranted,
+        olderProfileCount,
+        newerProfileCount
       ] = await Promise.all([
         this.metricsDb.getMetricGroups(interval, olderPeriodEnd, ctx),
         this.metricsDb.getMetricGroups(interval, periodEnd, ctx),
@@ -90,6 +92,18 @@ export class CommunityMetricsService {
         ),
         this.metricsDb.getLatestMetricSample(
           MetricRollupHourMetric.XTDH_GRANTED,
+          periodStart,
+          periodEnd,
+          ctx
+        ),
+        this.metricsDb.getLatestMetricSample(
+          MetricRollupHourMetric.PROFILE_COUNT,
+          olderPeriodStart,
+          olderPeriodEnd,
+          ctx
+        ),
+        this.metricsDb.getLatestMetricSample(
+          MetricRollupHourMetric.PROFILE_COUNT,
           periodStart,
           periodEnd,
           ctx
@@ -224,6 +238,18 @@ export class CommunityMetricsService {
           newer: this.toMetricCountSample(
             MetricRollupHourMetric.ACTIVE_IDENTITY,
             newerGroups,
+            periodStart,
+            periodEnd
+          )
+        },
+        profile_count: {
+          older: this.toLatestMetricSample(
+            olderProfileCount,
+            olderPeriodStart,
+            olderPeriodEnd
+          ),
+          newer: this.toLatestMetricSample(
+            newerProfileCount,
             periodStart,
             periodEnd
           )
