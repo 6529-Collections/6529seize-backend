@@ -4326,6 +4326,7 @@ paths:
               - MY_REALTIME_VOTE
               - CREATED_AT
               - RATING_PREDICTION
+              - TREND
       responses:
         "200":
           description: successful operation
