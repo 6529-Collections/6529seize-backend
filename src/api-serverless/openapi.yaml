@@ -5709,6 +5709,7 @@ components:
         - consolidations_formed
         - xtdh_granted
         - active_identities
+        - profile_count
       properties:
         drops_created:
           $ref: "#/components/schemas/ApiCommunityMetric"
@@ -5729,6 +5730,8 @@ components:
         xtdh_granted:
           $ref: "#/components/schemas/ApiCommunityMetric"
         active_identities:
+          $ref: "#/components/schemas/ApiCommunityMetric"
+        profile_count:
           $ref: "#/components/schemas/ApiCommunityMetric"
     ApiCommunityMetricSample:
       type: object
