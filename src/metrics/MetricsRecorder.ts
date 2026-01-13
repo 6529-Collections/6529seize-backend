@@ -144,6 +144,21 @@ export class MetricsRecorder {
       ctx
     );
   }
+
+  async recordProfileCount(
+    { profileCount }: { profileCount: number },
+    ctx: RequestContext
+  ) {
+    await this.metricsDb.upsertMetricRollupHour(
+      {
+        metric: MetricRollupHourMetric.PROFILE_COUNT,
+        event_count: 1,
+        value_sum: profileCount,
+        overwrite: true
+      },
+      ctx
+    );
+  }
 }
 
 export const metricsRecorder = new MetricsRecorder(metricsDb);
