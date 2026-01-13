@@ -986,6 +986,30 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     return results;
   }
 
+  async findWeightedLeaderboardDropsOrderedByTrend(
+    params: LeaderboardParams,
+    ctx: RequestContext
+  ): Promise<DropEntity[]> {
+    ctx.timer?.start(
+      `${this.constructor.name}->findWeightedLeaderboardDropsOrderedByTrend`
+    );
+    const sql = `
+        select d.* from ${WAVE_LEADERBOARD_ENTRIES_TABLE} r join ${DROPS_TABLE} d on d.id = r.drop_id where d.wave_id = :wave_id order by (r.vote_on_decision_time - r.vote) ${params.sort_direction} limit :page_size offset :offset
+    `;
+    const sqlParams = {
+      wave_id: params.wave_id,
+      page_size: params.page_size,
+      offset: params.page_size * (params.page - 1)
+    };
+    const results = await this.db.execute<DropEntity>(sql, sqlParams, {
+      wrappedConnection: ctx.connection
+    });
+    ctx.timer?.stop(
+      `${this.constructor.name}->findWeightedLeaderboardDropsOrderedByTrend`
+    );
+    return results;
+  }
+
   async findWaveParticipationDropsOrderedByCreatedAt(
     params: {
       offset: number;
@@ -1853,7 +1877,8 @@ export enum LeaderboardSort {
   REALTIME_VOTE = 'REALTIME_VOTE',
   MY_REALTIME_VOTE = 'MY_REALTIME_VOTE',
   CREATED_AT = 'CREATED_AT',
-  RATING_PREDICTION = 'RATING_PREDICTION'
+  RATING_PREDICTION = 'RATING_PREDICTION',
+  TREND = 'TREND'
 }
 
 export interface LeaderboardParams {
