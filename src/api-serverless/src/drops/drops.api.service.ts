@@ -676,6 +676,11 @@ export class DropsApiService {
           params,
           ctx
         );
+      } else if (params.sort === LeaderboardSort.TREND) {
+        return this.dropsDb.findWeightedLeaderboardDropsOrderedByTrend(
+          params,
+          ctx
+        );
       }
     }
     if (params.sort === LeaderboardSort.MY_REALTIME_VOTE) {
