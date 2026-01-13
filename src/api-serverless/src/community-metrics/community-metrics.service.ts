@@ -1,5 +1,6 @@
 import { ApiCommunityMetrics } from '../generated/models/ApiCommunityMetrics';
 import { ApiCommunityMetricSample } from '../generated/models/ApiCommunityMetricSample';
+import { ApiMintMetricsPage } from '../generated/models/ApiMintMetricsPage';
 import {
   MetricGroupInterval,
   MetricRollupHourGroup,
@@ -11,11 +12,10 @@ import { RequestContext } from '../../../request.context';
 import { Time } from '../../../time';
 import { MetricRollupHourMetric } from '../../../entities/IMetricRollupHour';
 import { numbers } from '../../../numbers';
-
 export class CommunityMetricsService {
   constructor(private readonly metricsDb: MetricsDb) {}
 
-  async getCommunityMetrics(
+  async getCommunityMetricsSummary(
     interval: MetricGroupInterval,
     ctx: RequestContext
   ): Promise<ApiCommunityMetrics> {
@@ -260,6 +260,32 @@ export class CommunityMetricsService {
     }
   }
 
+  async getCommunityMintMetrics(
+    query: MintMetricsQuery,
+    ctx: RequestContext
+  ): Promise<ApiMintMetricsPage> {
+    ctx.timer?.start(`${this.constructor.name}->getCommunityMintMetrics`);
+    try {
+      const [data, count] = await Promise.all([
+        this.metricsDb.getCommunityMintMetrics(query, ctx),
+        this.metricsDb.countCommunityMintMetrics(ctx)
+      ]);
+      return {
+        data: data.map((row) => ({
+          card: row.token_id,
+          mint_time: row.mint_date,
+          mints: row.minted,
+          subscriptions: row.subscriptions
+        })),
+        count,
+        page: query.page,
+        next: count > query.page_size * query.page
+      };
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->getCommunityMintMetrics`);
+    }
+  }
+
   private toMetricSample(
     metricToGet: MetricRollupHourMetric,
     groups: MetricRollupHourGroup[],
@@ -350,5 +376,12 @@ export class CommunityMetricsService {
     };
   }
 }
+
+export type MintMetricsQuery = {
+  page: number;
+  page_size: number;
+  sort_direction: 'ASC' | 'DESC';
+  sort: 'mint_time';
+};
 
 export const communityMetricsService = new CommunityMetricsService(metricsDb);
