@@ -28,6 +28,13 @@ export interface DropReactionNotificationData {
   wave_id: string;
 }
 
+export interface DropBoostNotificationData {
+  booster_id: string;
+  drop_id: string;
+  drop_author_id: string;
+  wave_id: string;
+}
+
 export interface DropReplyNotificationData {
   reply_drop_id: string;
   reply_drop_author_id: string;
@@ -89,6 +96,11 @@ export interface DropReactionNotification extends UserNotificationBase {
   data: DropReactionNotificationData;
 }
 
+export interface DropBoostNotification extends UserNotificationBase {
+  cause: IdentityNotificationCause.DROP_BOOSTED;
+  data: DropBoostNotificationData;
+}
+
 export interface DropReplyNotification extends UserNotificationBase {
   cause: IdentityNotificationCause.DROP_REPLIED;
   data: DropReplyNotificationData;
@@ -119,6 +131,7 @@ export type UserNotification =
   | IdentityMentionNotification
   | DropVoteNotification
   | DropReactionNotification
+  | DropBoostNotification
   | DropReplyNotification
   | DropQuoteNotification
   | WaveCreatedNotification
