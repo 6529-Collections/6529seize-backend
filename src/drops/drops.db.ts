@@ -1,18 +1,11 @@
 import {
-  ConnectionWrapper,
-  dbSupplier,
-  LazyDbAccessCompatibleService
-} from '../sql-executor';
-import {
-  DropBoostEntity,
-  DropEntity,
-  DropMediaEntity,
-  DropMentionEntity,
-  DropMetadataEntity,
-  DropPartEntity,
-  DropReferencedNftEntity,
-  DropType
-} from '../entities/IDrop';
+  userGroupsService,
+  UserGroupsService
+} from '../api-serverless/src/community-members/user-groups.service';
+import { ApiDropSearchStrategy } from '../api-serverless/src/generated/models/ApiDropSearchStrategy';
+import { PageSortDirection } from '../api-serverless/src/page-request';
+import { assertUnreachable } from '../assertions';
+import { collections } from '../collections';
 import {
   ACTIVITY_EVENTS_TABLE,
   DELETED_DROPS_TABLE,
@@ -38,24 +31,31 @@ import {
   WAVES_TABLE,
   WINNER_DROP_VOTER_VOTES_TABLE
 } from '../constants';
-import {
-  userGroupsService,
-  UserGroupsService
-} from '../api-serverless/src/community-members/user-groups.service';
-import { Time, Timer } from '../time';
-import { PageSortDirection } from '../api-serverless/src/page-request';
-import { WaveCreditType, WaveEntity } from '../entities/IWave';
-import { RequestContext } from '../request.context';
 import { ActivityEventTargetType } from '../entities/IActivityEvent';
 import { DeletedDropEntity } from '../entities/IDeletedDrop';
+import {
+  DropBoostEntity,
+  DropEntity,
+  DropMediaEntity,
+  DropMentionEntity,
+  DropMetadataEntity,
+  DropPartEntity,
+  DropReferencedNftEntity,
+  DropType
+} from '../entities/IDrop';
 import { DropRelationEntity } from '../entities/IDropRelation';
-import { ApiDropSearchStrategy } from '../api-serverless/src/generated/models/ApiDropSearchStrategy';
 import { DropVoterStateEntity } from '../entities/IDropVoterState';
 import { ProfileActivityLog } from '../entities/IProfileActivityLog';
-import { assertUnreachable } from '../assertions';
+import { WaveCreditType, WaveEntity } from '../entities/IWave';
 import { WaveDecisionWinnerDropEntity } from '../entities/IWaveDecision';
 import { WinnerDropVoterVoteEntity } from '../entities/IWinnerDropVoterVote';
-import { collections } from '../collections';
+import { RequestContext } from '../request.context';
+import {
+  ConnectionWrapper,
+  dbSupplier,
+  LazyDbAccessCompatibleService
+} from '../sql-executor';
+import { Time, Timer } from '../time';
 
 const mysql = require('mysql');
 
@@ -1819,6 +1819,25 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->countDropBoosts`);
     }
+  }
+
+  async updateHideLinkPreview(
+    {
+      drop_id,
+      hide_link_preview
+    }: {
+      drop_id: string;
+      hide_link_preview: boolean;
+    },
+    ctx: RequestContext
+  ): Promise<void> {
+    ctx.timer?.start(`${this.constructor.name}->updateHideLinkPreview`);
+    await this.db.execute(
+      `update ${DROPS_TABLE} set hide_link_preview = :hide_link_preview where id = :drop_id`,
+      { drop_id, hide_link_preview },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop(`${this.constructor.name}->updateHideLinkPreview`);
   }
 }
 
