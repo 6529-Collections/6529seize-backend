@@ -137,6 +137,43 @@ export class DropCreationApiService {
     timer?.stop('dropCreationApiService->deleteDrop');
   }
 
+  async toggleHideLinkPreview(
+    { dropId }: { dropId: string },
+    ctx: RequestContext
+  ): Promise<ApiDrop> {
+    ctx.timer?.start('dropCreationApiService->toggleHideLinkPreview');
+    const authenticatedProfileId = ctx.authenticationContext?.getActingAsId();
+    if (!authenticatedProfileId) {
+      throw new ForbiddenException(`Please create a profile first`);
+    }
+    if (ctx.authenticationContext?.isAuthenticatedAsProxy()) {
+      throw new ForbiddenException(
+        `Proxy is not allowed to toggle hide link preview`
+      );
+    }
+    const drop = await this.dropsDb.findDropById(dropId);
+    if (!drop) {
+      throw new NotFoundException(`Drop ${dropId} not found`);
+    }
+    if (drop.author_id !== authenticatedProfileId) {
+      throw new ForbiddenException(
+        `Only the author can toggle hide link preview`
+      );
+    }
+    const newValue = !drop.hide_link_preview;
+    await this.dropsDb.updateHideLinkPreview(
+      { drop_id: dropId, hide_link_preview: newValue },
+      ctx
+    );
+    const apiDrop = await this.dropsService.findDropByIdOrThrow(
+      { dropId, skipEligibilityCheck: true },
+      ctx
+    );
+    await this.wsListenersNotifier.notifyAboutDropUpdate(apiDrop, ctx);
+    ctx.timer?.stop('dropCreationApiService->toggleHideLinkPreview');
+    return apiDrop;
+  }
+
   async updateDrop(
     {
       dropId,

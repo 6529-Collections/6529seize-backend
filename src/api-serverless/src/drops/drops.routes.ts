@@ -252,6 +252,23 @@ router.delete(
 );
 
 router.post(
+  '/:drop_id/toggle-hide-link-preview',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<{ drop_id: string }, any, any, any, any>,
+    res: Response<ApiResponse<ApiDrop>>
+  ) => {
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
+    const drop = await dropCreationService.toggleHideLinkPreview(
+      { dropId: req.params.drop_id },
+      { timer, authenticationContext }
+    );
+    res.send(drop);
+  }
+);
+
+router.post(
   `/:drop_id/ratings`,
   needsAuthenticatedUser(),
   async (

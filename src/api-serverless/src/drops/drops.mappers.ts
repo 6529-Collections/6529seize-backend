@@ -803,7 +803,8 @@ export class DropsMappers {
       winning_context: winningContext,
       is_signed: !!dropEntity.signature,
       reactions: dropReactions.get(dropEntity.id)?.reactions ?? [],
-      boosts: boostsCount[dropEntity.id] ?? 0
+      boosts: boostsCount[dropEntity.id] ?? 0,
+      hide_link_preview: !!dropEntity.hide_link_preview
     };
   }
 }
