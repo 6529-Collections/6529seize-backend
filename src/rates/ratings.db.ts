@@ -317,7 +317,7 @@ from general_stats
   }
 
   public async getOverRateMatters(): Promise<OverRateMatter[]> {
-    return this.db.execute(
+    return this.db.execute<OverRateMatter>(
       `
           with rate_tallies as (select r.rater_profile_id,
                                        r.matter,
@@ -325,7 +325,7 @@ from general_stats
                                 from ${RATINGS_TABLE} r
                                 where r.matter in ('REP', 'CIC')
                                 group by 1, 2)
-          select rt.rater_profile_id, rt.matter, rt.tally, i.tdh as rater_tdh
+          select rt.rater_profile_id, rt.matter, rt.tally , i.tdh + i.xtdh as rater_credit
           from rate_tallies rt
                    left join ${IDENTITIES_TABLE} i on rt.rater_profile_id = i.profile_id
           where floor(i.tdh + i.xtdh) < abs(rt.tally)
