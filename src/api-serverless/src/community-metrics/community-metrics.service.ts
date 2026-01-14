@@ -1,8 +1,10 @@
 import { ApiCommunityMetrics } from '../generated/models/ApiCommunityMetrics';
 import { ApiCommunityMetricSample } from '../generated/models/ApiCommunityMetricSample';
+import { ApiMintMetricsPage } from '../generated/models/ApiMintMetricsPage';
 import {
   MetricGroupInterval,
   MetricRollupHourGroup,
+  MetricRollupHourLatest,
   MetricsDb,
   metricsDb
 } from '../../../metrics/MetricsDb';
@@ -10,11 +12,10 @@ import { RequestContext } from '../../../request.context';
 import { Time } from '../../../time';
 import { MetricRollupHourMetric } from '../../../entities/IMetricRollupHour';
 import { numbers } from '../../../numbers';
-
 export class CommunityMetricsService {
   constructor(private readonly metricsDb: MetricsDb) {}
 
-  async getCommunityMetrics(
+  async getCommunityMetricsSummary(
     interval: MetricGroupInterval,
     ctx: RequestContext
   ): Promise<ApiCommunityMetrics> {
@@ -31,9 +32,82 @@ export class CommunityMetricsService {
       if (periodStart.gte(periodEnd)) {
         throw new Error('Invalid metrics period');
       }
-      const [olderGroups, newerGroups] = await Promise.all([
+      const [
+        olderGroups,
+        newerGroups,
+        olderNetworkTdh,
+        newerNetworkTdh,
+        olderMainStageTdh,
+        newerMainStageTdh,
+        olderConsolidationsFormed,
+        newerConsolidationsFormed,
+        olderXtdhGranted,
+        newerXtdhGranted,
+        olderProfileCount,
+        newerProfileCount
+      ] = await Promise.all([
         this.metricsDb.getMetricGroups(interval, olderPeriodEnd, ctx),
-        this.metricsDb.getMetricGroups(interval, periodEnd, ctx)
+        this.metricsDb.getMetricGroups(interval, periodEnd, ctx),
+        this.metricsDb.getLatestMetricSample(
+          MetricRollupHourMetric.NETWORK_TDH,
+          olderPeriodStart,
+          olderPeriodEnd,
+          ctx
+        ),
+        this.metricsDb.getLatestMetricSample(
+          MetricRollupHourMetric.NETWORK_TDH,
+          periodStart,
+          periodEnd,
+          ctx
+        ),
+        this.metricsDb.getLatestMetricSample(
+          MetricRollupHourMetric.TDH_ON_MAIN_STAGE_SUBMISSIONS,
+          olderPeriodStart,
+          olderPeriodEnd,
+          ctx
+        ),
+        this.metricsDb.getLatestMetricSample(
+          MetricRollupHourMetric.TDH_ON_MAIN_STAGE_SUBMISSIONS,
+          periodStart,
+          periodEnd,
+          ctx
+        ),
+        this.metricsDb.getLatestMetricSample(
+          MetricRollupHourMetric.CONSOLIDATIONS_FORMED,
+          olderPeriodStart,
+          olderPeriodEnd,
+          ctx
+        ),
+        this.metricsDb.getLatestMetricSample(
+          MetricRollupHourMetric.CONSOLIDATIONS_FORMED,
+          periodStart,
+          periodEnd,
+          ctx
+        ),
+        this.metricsDb.getLatestMetricSample(
+          MetricRollupHourMetric.XTDH_GRANTED,
+          olderPeriodStart,
+          olderPeriodEnd,
+          ctx
+        ),
+        this.metricsDb.getLatestMetricSample(
+          MetricRollupHourMetric.XTDH_GRANTED,
+          periodStart,
+          periodEnd,
+          ctx
+        ),
+        this.metricsDb.getLatestMetricSample(
+          MetricRollupHourMetric.PROFILE_COUNT,
+          olderPeriodStart,
+          olderPeriodEnd,
+          ctx
+        ),
+        this.metricsDb.getLatestMetricSample(
+          MetricRollupHourMetric.PROFILE_COUNT,
+          periodStart,
+          periodEnd,
+          ctx
+        )
       ]);
       return {
         drops_created: {
@@ -77,10 +151,138 @@ export class CommunityMetricsService {
             periodStart,
             periodEnd
           )
+        },
+        main_stage_distinct_voters: {
+          older: this.toMetricCountSample(
+            MetricRollupHourMetric.MAIN_STAGE_VOTE,
+            olderGroups,
+            olderPeriodStart,
+            olderPeriodEnd
+          ),
+          newer: this.toMetricCountSample(
+            MetricRollupHourMetric.MAIN_STAGE_VOTE,
+            newerGroups,
+            periodStart,
+            periodEnd
+          )
+        },
+        main_stage_votes: {
+          older: this.toMetricSumSample(
+            MetricRollupHourMetric.MAIN_STAGE_VOTE,
+            olderGroups,
+            olderPeriodStart,
+            olderPeriodEnd
+          ),
+          newer: this.toMetricSumSample(
+            MetricRollupHourMetric.MAIN_STAGE_VOTE,
+            newerGroups,
+            periodStart,
+            periodEnd
+          )
+        },
+        network_tdh: {
+          older: this.toLatestMetricSample(
+            olderNetworkTdh,
+            olderPeriodStart,
+            olderPeriodEnd
+          ),
+          newer: this.toLatestMetricSample(
+            newerNetworkTdh,
+            periodStart,
+            periodEnd
+          )
+        },
+        tdh_on_main_stage_submissions: {
+          older: this.toLatestMetricSample(
+            olderMainStageTdh,
+            olderPeriodStart,
+            olderPeriodEnd
+          ),
+          newer: this.toLatestMetricSample(
+            newerMainStageTdh,
+            periodStart,
+            periodEnd
+          )
+        },
+        consolidations_formed: {
+          older: this.toLatestMetricSample(
+            olderConsolidationsFormed,
+            olderPeriodStart,
+            olderPeriodEnd
+          ),
+          newer: this.toLatestMetricSample(
+            newerConsolidationsFormed,
+            periodStart,
+            periodEnd
+          )
+        },
+        xtdh_granted: {
+          older: this.toLatestMetricSample(
+            olderXtdhGranted,
+            olderPeriodStart,
+            olderPeriodEnd
+          ),
+          newer: this.toLatestMetricSample(
+            newerXtdhGranted,
+            periodStart,
+            periodEnd
+          )
+        },
+        active_identities: {
+          older: this.toMetricCountSample(
+            MetricRollupHourMetric.ACTIVE_IDENTITY,
+            olderGroups,
+            olderPeriodStart,
+            olderPeriodEnd
+          ),
+          newer: this.toMetricCountSample(
+            MetricRollupHourMetric.ACTIVE_IDENTITY,
+            newerGroups,
+            periodStart,
+            periodEnd
+          )
+        },
+        profile_count: {
+          older: this.toLatestMetricSample(
+            olderProfileCount,
+            olderPeriodStart,
+            olderPeriodEnd
+          ),
+          newer: this.toLatestMetricSample(
+            newerProfileCount,
+            periodStart,
+            periodEnd
+          )
         }
       };
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->getCommunityMetrics`);
+    }
+  }
+
+  async getCommunityMintMetrics(
+    query: MintMetricsQuery,
+    ctx: RequestContext
+  ): Promise<ApiMintMetricsPage> {
+    ctx.timer?.start(`${this.constructor.name}->getCommunityMintMetrics`);
+    try {
+      const [data, count] = await Promise.all([
+        this.metricsDb.getCommunityMintMetrics(query, ctx),
+        this.metricsDb.countCommunityMintMetrics(ctx)
+      ]);
+      return {
+        data: data.map((row) => ({
+          card: row.token_id,
+          mint_time: row.mint_date,
+          mints: row.minted,
+          subscriptions: row.subscriptions
+        })),
+        count,
+        page: query.page,
+        next: count > query.page_size * query.page
+      };
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->getCommunityMintMetrics`);
     }
   }
 
@@ -121,6 +323,65 @@ export class CommunityMetricsService {
       value_count: count
     };
   }
+
+  private toMetricSumSample(
+    metricToGet: MetricRollupHourMetric,
+    groups: MetricRollupHourGroup[],
+    fallbackStart: Time,
+    fallbackEnd: Time
+  ): ApiCommunityMetricSample {
+    const metricGroups = groups.filter((row) => row.metric === metricToGet);
+    if (!metricGroups.length) {
+      return {
+        period_start: fallbackStart.toMillis(),
+        period_end: fallbackEnd.toMillis(),
+        event_count: 0,
+        value_count: 0
+      };
+    }
+    const eventCount = metricGroups.reduce(
+      (acc, row) => acc + numbers.parseIntOrThrow(row.event_count),
+      0
+    );
+    const valueSum = metricGroups.reduce(
+      (acc, row) => acc + numbers.parseNumberOrThrow(row.value_sum),
+      0
+    );
+    return {
+      period_start: fallbackStart.toMillis(),
+      period_end: fallbackEnd.toMillis(),
+      event_count: eventCount,
+      value_count: valueSum
+    };
+  }
+
+  private toLatestMetricSample(
+    latest: MetricRollupHourLatest | null,
+    fallbackStart: Time,
+    fallbackEnd: Time
+  ): ApiCommunityMetricSample {
+    if (!latest) {
+      return {
+        period_start: fallbackStart.toMillis(),
+        period_end: fallbackEnd.toMillis(),
+        event_count: 0,
+        value_count: 0
+      };
+    }
+    return {
+      period_start: fallbackStart.toMillis(),
+      period_end: fallbackEnd.toMillis(),
+      event_count: numbers.parseIntOrThrow(latest.event_count),
+      value_count: numbers.parseNumberOrThrow(latest.value_sum)
+    };
+  }
 }
+
+export type MintMetricsQuery = {
+  page: number;
+  page_size: number;
+  sort_direction: 'ASC' | 'DESC';
+  sort: 'mint_time';
+};
 
 export const communityMetricsService = new CommunityMetricsService(metricsDb);

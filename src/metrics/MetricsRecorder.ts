@@ -50,6 +50,115 @@ export class MetricsRecorder {
     }
     await Promise.all(promises);
   }
+
+  async recordVote(
+    {
+      wave_id,
+      vote_change,
+      voter_id
+    }: { wave_id: string; vote_change: number; voter_id: string },
+    ctx: RequestContext
+  ) {
+    const mainStageWaveId = env.getStringOrNull(`MAIN_STAGE_WAVE_ID`);
+    if (!mainStageWaveId || wave_id !== mainStageWaveId) {
+      return;
+    }
+    await this.metricsDb.upsertMetricRollupHour(
+      {
+        metric: MetricRollupHourMetric.MAIN_STAGE_VOTE,
+        scope: voter_id,
+        event_count: 1,
+        value_sum: vote_change
+      },
+      ctx
+    );
+  }
+
+  async recordNetworkTdh({ tdh }: { tdh: number }, ctx: RequestContext) {
+    await this.metricsDb.upsertMetricRollupHour(
+      {
+        metric: MetricRollupHourMetric.NETWORK_TDH,
+        event_count: 1,
+        value_sum: tdh,
+        overwrite: true
+      },
+      ctx
+    );
+  }
+
+  async recordTdhOnMainStageSubmissions(
+    { tdhOnMainStageSubmissions }: { tdhOnMainStageSubmissions: number },
+    ctx: RequestContext
+  ) {
+    await this.metricsDb.upsertMetricRollupHour(
+      {
+        metric: MetricRollupHourMetric.TDH_ON_MAIN_STAGE_SUBMISSIONS,
+        event_count: 1,
+        value_sum: tdhOnMainStageSubmissions,
+        overwrite: true
+      },
+      ctx
+    );
+  }
+
+  async recordConsolidationsFormed(
+    { consolidationsFormed }: { consolidationsFormed: number },
+    ctx: RequestContext
+  ) {
+    await this.metricsDb.upsertMetricRollupHour(
+      {
+        metric: MetricRollupHourMetric.CONSOLIDATIONS_FORMED,
+        event_count: 1,
+        value_sum: consolidationsFormed,
+        overwrite: true
+      },
+      ctx
+    );
+  }
+
+  async recordXtdhGranted(
+    { xtdhGranted }: { xtdhGranted: number },
+    ctx: RequestContext
+  ) {
+    await this.metricsDb.upsertMetricRollupHour(
+      {
+        metric: MetricRollupHourMetric.XTDH_GRANTED,
+        event_count: 1,
+        value_sum: xtdhGranted,
+        overwrite: true
+      },
+      ctx
+    );
+  }
+
+  async recordActiveIdentity(
+    { identityId }: { identityId: string },
+    ctx: RequestContext
+  ) {
+    await this.metricsDb.upsertMetricRollupHour(
+      {
+        metric: MetricRollupHourMetric.ACTIVE_IDENTITY,
+        scope: identityId,
+        event_count: 1
+      },
+      ctx
+    );
+  }
+
+  async recordProfileCount(
+    { profileCount }: { profileCount: number },
+    ctx: RequestContext
+  ) {
+    await this.metricsDb.upsertMetricRollupHour(
+      {
+        metric: MetricRollupHourMetric.PROFILE_COUNT,
+        event_count: 1,
+        value_sum: profileCount,
+        overwrite: true
+      },
+      ctx
+    );
+  }
 }
 
 export const metricsRecorder = new MetricsRecorder(metricsDb);

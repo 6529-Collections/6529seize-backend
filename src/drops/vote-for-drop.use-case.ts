@@ -22,6 +22,7 @@ import { WaveCreditType, WaveType } from '../entities/IWave';
 import { BadRequestException, ForbiddenException } from '../exceptions';
 import { DropType } from '../entities/IDrop';
 import { ProfileActivityLogType } from '../entities/IProfileActivityLog';
+import { metricsRecorder, MetricsRecorder } from '../metrics/MetricsRecorder';
 
 export class VoteForDropUseCase {
   constructor(
@@ -31,7 +32,8 @@ export class VoteForDropUseCase {
     private readonly dropsDb: DropsDb,
     private readonly ratingsDb: RatingsDb,
     private readonly userGroupsService: UserGroupsService,
-    private readonly userNotifier: UserNotifier
+    private readonly userNotifier: UserNotifier,
+    private readonly metricsRecorder: MetricsRecorder
   ) {}
 
   public async execute(
@@ -171,6 +173,14 @@ export class VoteForDropUseCase {
           change
         },
         ctx
+      ),
+      this.metricsRecorder.recordVote(
+        { wave_id, vote_change: change, voter_id },
+        ctx
+      ),
+      this.metricsRecorder.recordActiveIdentity(
+        { identityId: drop.author_id },
+        ctx
       )
     ]);
     await Promise.all([
@@ -237,5 +247,6 @@ export const voteForDropUseCase = new VoteForDropUseCase(
   dropsDb,
   ratingsDb,
   userGroupsService,
-  userNotifier
+  userNotifier,
+  metricsRecorder
 );

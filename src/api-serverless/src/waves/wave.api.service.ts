@@ -74,6 +74,10 @@ import {
 import { SearchWavesParams, wavesApiDb, WavesApiDb } from './waves.api.db';
 import { wavesMappers, WavesMappers } from './waves.mappers';
 import { clearWaveGroupsCache } from '../../../redis';
+import {
+  metricsRecorder,
+  MetricsRecorder
+} from '../../../metrics/MetricsRecorder';
 
 export class WaveApiService {
   constructor(
@@ -87,7 +91,8 @@ export class WaveApiService {
     private readonly dropVotingService: DropVotingService,
     private readonly reactionsService: ReactionsService,
     private readonly userNotifier: UserNotifier,
-    private readonly identityFetcher: IdentityFetcher
+    private readonly identityFetcher: IdentityFetcher,
+    private readonly metricsRecorder: MetricsRecorder
   ) {}
 
   public async createWave(
@@ -192,6 +197,10 @@ export class WaveApiService {
             newDescriptionDropId: descriptionDropId
           },
           connection
+        );
+        await this.metricsRecorder.recordActiveIdentity(
+          { identityId: newEntity.created_by },
+          ctxWithConnection
         );
         await this.identitySubscriptionsDb.addIdentitySubscription(
           {
@@ -871,6 +880,10 @@ export class WaveApiService {
             connection
           );
         }
+        await this.metricsRecorder.recordActiveIdentity(
+          { identityId: subscriber },
+          { connection }
+        );
         return await this.identitySubscriptionsDb
           .findIdentitySubscriptionActionsOfTarget(
             {
@@ -914,6 +927,10 @@ export class WaveApiService {
             connection
           );
         }
+        await this.metricsRecorder.recordActiveIdentity(
+          { identityId: subscriber },
+          { connection }
+        );
         return await this.identitySubscriptionsDb
           .findIdentitySubscriptionActionsOfTarget(
             {
@@ -1199,7 +1216,11 @@ export class WaveApiService {
             ctxWithConnection
           ),
           this.wavesApiDb.deleteDropRelations(waveId, ctxWithConnection),
-          this.wavesApiDb.deleteBoosts(waveId, ctxWithConnection)
+          this.wavesApiDb.deleteBoosts(waveId, ctxWithConnection),
+          this.metricsRecorder.recordActiveIdentity(
+            { identityId: authenticatedUserId },
+            ctxWithConnection
+          )
         ]);
       }
     );
@@ -1272,6 +1293,10 @@ export class WaveApiService {
         });
 
         await this.wavesApiDb.insertWave(updatedEntity, ctxWithConnection);
+        await this.metricsRecorder.recordActiveIdentity(
+          { identityId: authenticatedProfileId },
+          ctxWithConnection
+        );
         const newVisibilityGroupId = request.visibility.scope.group_id;
         const oldVisibilityGroupId = waveBeforeUpdate.visibility_group_id;
         if (newVisibilityGroupId !== oldVisibilityGroupId) {
@@ -1367,10 +1392,17 @@ export class WaveApiService {
           waveId,
           ctxWithConnection
         );
+        const actingAsId = ctx.authenticationContext?.getActingAsId();
         await this.wavesApiDb.insertPin(
-          { waveId, profileId: ctx.authenticationContext!.getActingAsId()! },
+          { waveId, profileId: actingAsId! },
           ctxWithConnection
         );
+        if (actingAsId) {
+          await this.metricsRecorder.recordActiveIdentity(
+            { identityId: actingAsId },
+            ctxWithConnection
+          );
+        }
       }
     );
   }
@@ -1386,10 +1418,17 @@ export class WaveApiService {
           waveId,
           ctxWithConnection
         );
+        const actingAsId = ctx.authenticationContext?.getActingAsId();
         await this.wavesApiDb.deletePin(
-          { waveId, profileId: ctx.authenticationContext!.getActingAsId()! },
+          { waveId, profileId: actingAsId! },
           ctxWithConnection
         );
+        if (actingAsId) {
+          await this.metricsRecorder.recordActiveIdentity(
+            { identityId: actingAsId },
+            ctxWithConnection
+          );
+        }
       }
     );
   }
@@ -1402,14 +1441,21 @@ export class WaveApiService {
           waveId,
           ctxWithConnection
         );
+        const actingAsId = ctx.authenticationContext?.getActingAsId();
         await this.wavesApiDb.setWaveMuted(
           {
             waveId,
-            readerId: ctx.authenticationContext!.getActingAsId()!,
+            readerId: actingAsId!,
             muted: true
           },
           ctxWithConnection
         );
+        if (actingAsId) {
+          await this.metricsRecorder.recordActiveIdentity(
+            { identityId: actingAsId },
+            ctxWithConnection
+          );
+        }
       }
     );
   }
@@ -1422,14 +1468,21 @@ export class WaveApiService {
           waveId,
           ctxWithConnection
         );
+        const actingAsId = ctx.authenticationContext?.getActingAsId();
         await this.wavesApiDb.setWaveMuted(
           {
             waveId,
-            readerId: ctx.authenticationContext!.getActingAsId()!,
+            readerId: actingAsId!,
             muted: false
           },
           ctxWithConnection
         );
+        if (actingAsId) {
+          await this.metricsRecorder.recordActiveIdentity(
+            { identityId: actingAsId },
+            ctxWithConnection
+          );
+        }
       }
     );
   }
@@ -1479,5 +1532,6 @@ export const waveApiService = new WaveApiService(
   dropVotingService,
   reactionsService,
   userNotifier,
-  identityFetcher
+  identityFetcher,
+  metricsRecorder
 );

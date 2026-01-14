@@ -330,6 +330,44 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiCommunityMetrics"
+  /community-metrics/mints:
+    get:
+      tags:
+        - CommunityMetrics
+      summary: Get community mint metrics.
+      operationId: getCommunityMintMetrics
+      parameters:
+        - name: page_size
+          in: query
+          required: false
+          schema:
+            type: number
+            format: int64
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: number
+            format: int64
+        - name: sort_direction
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/ApiPageSortDirection"
+        - name: sort
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - mint_time
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiMintMetricsPage"
   /distribution_phases/{contract}/{nft_id}:
     get:
       tags:
@@ -4314,6 +4352,7 @@ paths:
               - MY_REALTIME_VOTE
               - CREATED_AT
               - RATING_PREDICTION
+              - TREND
       responses:
         "200":
           description: successful operation
@@ -5728,12 +5767,36 @@ components:
         - drops_created
         - distinct_droppers
         - main_stage_submissions
+        - main_stage_distinct_voters
+        - main_stage_votes
+        - network_tdh
+        - tdh_on_main_stage_submissions
+        - consolidations_formed
+        - xtdh_granted
+        - active_identities
+        - profile_count
       properties:
         drops_created:
           $ref: "#/components/schemas/ApiCommunityMetric"
         distinct_droppers:
           $ref: "#/components/schemas/ApiCommunityMetric"
         main_stage_submissions:
+          $ref: "#/components/schemas/ApiCommunityMetric"
+        main_stage_distinct_voters:
+          $ref: "#/components/schemas/ApiCommunityMetric"
+        main_stage_votes:
+          $ref: "#/components/schemas/ApiCommunityMetric"
+        network_tdh:
+          $ref: "#/components/schemas/ApiCommunityMetric"
+        tdh_on_main_stage_submissions:
+          $ref: "#/components/schemas/ApiCommunityMetric"
+        consolidations_formed:
+          $ref: "#/components/schemas/ApiCommunityMetric"
+        xtdh_granted:
+          $ref: "#/components/schemas/ApiCommunityMetric"
+        active_identities:
+          $ref: "#/components/schemas/ApiCommunityMetric"
+        profile_count:
           $ref: "#/components/schemas/ApiCommunityMetric"
     ApiCommunityMetricSample:
       type: object
@@ -5751,6 +5814,37 @@ components:
           type: number
         value_count:
           type: number
+    ApiMintMetrics:
+      type: object
+      required:
+        - card
+        - mint_time
+        - subscriptions
+        - mints
+      properties:
+        card:
+          type: number
+          format: int64
+        mint_time:
+          type: number
+          format: int64
+        subscriptions:
+          type: number
+          format: int64
+        mints:
+          type: number
+          format: int64
+    ApiMintMetricsPage:
+      type: object
+      required:
+        - data
+      allOf:
+        - $ref: "#/components/schemas/ApiPageBase"
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiMintMetrics"
     ApiCompleteMultipartUploadRequest:
       required:
         - upload_id
