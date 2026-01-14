@@ -1,4 +1,3 @@
-import { fetchLatestTDHBDate } from '../db';
 import { NextGenTokenTDH } from '../entities/INextGen';
 import { NFT } from '../entities/INFT';
 import { NFTOwner } from '../entities/INFTOwner';
@@ -22,7 +21,8 @@ import { ConsolidatedTDHUpload } from '../entities/IUpload';
 import {
   CONSOLIDATED_WALLETS_TDH_TABLE,
   DROP_VOTER_STATE_TABLE,
-  IDENTITIES_TABLE
+  IDENTITIES_TABLE,
+  WAVES_DECISION_WINNER_DROPS_TABLE
 } from '../constants';
 import { env } from '../env';
 import { Logger } from '../logging';
@@ -38,6 +38,7 @@ import { findNftTDH } from './nft_tdh';
 import { updateTDH } from './tdh';
 import { consolidateAndPersistTDH } from './tdh_consolidation';
 import { uploadTDH } from './tdh_upload';
+import { fetchLatestTDHBDate } from '../db';
 
 const logger = Logger.get('TDH_LOOP');
 const ALERT_TITLE = 'TDH Loop';
@@ -88,7 +89,12 @@ async function recordMetrics() {
         .oneOrNull<{
           total_votes: number;
         }>(
-          `select sum(abs(votes)) as total_votes from ${DROP_VOTER_STATE_TABLE} where wave_id = :wave_id`,
+          `
+            select sum(abs(votes)) as total_votes
+            from ${DROP_VOTER_STATE_TABLE} v
+            left join ${WAVES_DECISION_WINNER_DROPS_TABLE} w on w.drop_id = v.drop_id
+            where v.wave_id = :wave_id and w.drop_id is null
+          `,
           { wave_id: mainStageWaveId }
         )
         .then(async (totalVotes) => {

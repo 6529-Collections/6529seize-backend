@@ -12,6 +12,7 @@ import {
 import { RequestContext } from '../request.context';
 import { Time } from '../time';
 import { dbSupplier, LazyDbAccessCompatibleService } from '../sql-executor';
+import { Logger } from '../logging';
 
 export type MetricRollupHourUpsertParams = {
   metric: MetricRollupHourMetric;
@@ -48,6 +49,8 @@ type CommunityMintMetricsQueryParams = {
 };
 
 export class MetricsDb extends LazyDbAccessCompatibleService {
+  private readonly logger = Logger.get(MetricsDb.name);
+
   public async upsertMetricRollupHour(
     {
       metric,
@@ -60,6 +63,7 @@ export class MetricsDb extends LazyDbAccessCompatibleService {
     }: MetricRollupHourUpsertParams,
     ctx: RequestContext
   ) {
+    this.logger.info(`Recorded metric ${metric}`);
     const updateClause = overwrite
       ? `
           event_count = values(event_count),

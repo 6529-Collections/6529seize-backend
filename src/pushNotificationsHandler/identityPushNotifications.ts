@@ -131,6 +131,8 @@ async function generateNotificationData(
       return handleDropVoted(notification, additionalEntity);
     case IdentityNotificationCause.DROP_REACTED:
       return handleDropReacted(notification, additionalEntity);
+    case IdentityNotificationCause.DROP_BOOSTED:
+      return handleDropBoosted(notification, additionalEntity);
     case IdentityNotificationCause.WAVE_CREATED:
       return handleWaveCreated(notification, additionalEntity);
     case IdentityNotificationCause.ALL_DROPS:
@@ -249,6 +251,23 @@ async function handleDropReacted(
     );
   }
   const title = `${additionalEntity.handle} reacted ${reaction} to your drop`;
+  const imageUrl = additionalEntity.pfp;
+  const dropPart = await getDropPart(notification);
+  const dropSerialNo = await getDropSerialNo(notification.related_drop_id);
+  const body = dropPart?.content ?? 'View drop';
+  const data = {
+    redirect: 'waves',
+    wave_id: notification.wave_id,
+    drop_id: dropSerialNo
+  };
+  return { title, body, data, imageUrl };
+}
+
+async function handleDropBoosted(
+  notification: IdentityNotificationEntity,
+  additionalEntity: ApiIdentity
+) {
+  const title = `${additionalEntity.handle} boosted your drop`;
   const imageUrl = additionalEntity.pfp;
   const dropPart = await getDropPart(notification);
   const dropSerialNo = await getDropSerialNo(notification.related_drop_id);

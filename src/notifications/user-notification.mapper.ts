@@ -4,6 +4,7 @@ import { numbers } from '../numbers';
 import { IdentityNotificationDeserialized } from './identity-notifications.db';
 import {
   AllDropsNotification,
+  DropBoostNotification,
   DropQuoteNotification,
   DropReactionNotification,
   DropReplyNotification,
@@ -35,6 +36,8 @@ export class UserNotificationMapper {
         return this.mapDropVoteNotification(entity);
       case IdentityNotificationCause.DROP_REACTED:
         return this.mapDropReactionNotification(entity);
+      case IdentityNotificationCause.DROP_BOOSTED:
+        return this.mapDropBoostNotification(entity);
       case IdentityNotificationCause.DROP_REPLIED:
         return this.mapDropReplyNotification(entity);
       case IdentityNotificationCause.DROP_QUOTED:
@@ -114,6 +117,23 @@ export class UserNotificationMapper {
         drop_author_id: entity.identity_id,
         drop_id: entity.related_drop_id!,
         reaction: entity.additional_data.reaction,
+        wave_id: entity.wave_id!
+      }
+    };
+  }
+
+  private mapDropBoostNotification(
+    entity: IdentityNotificationDeserialized
+  ): DropBoostNotification {
+    return {
+      id: entity.id,
+      created_at: entity.created_at,
+      read_at: entity.read_at,
+      cause: IdentityNotificationCause.DROP_BOOSTED,
+      data: {
+        booster_id: entity.additional_identity_id!,
+        drop_author_id: entity.identity_id,
+        drop_id: entity.related_drop_id!,
         wave_id: entity.wave_id!
       }
     };
