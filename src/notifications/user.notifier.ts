@@ -9,6 +9,7 @@ import {
   IdentityNotificationsDb
 } from './identity-notifications.db';
 import {
+  DropBoostNotificationData,
   DropQuoteNotificationData,
   DropReactionNotificationData,
   DropReplyNotificationData,
@@ -129,6 +130,30 @@ export class UserNotifier {
       },
       connection
     );
+  }
+
+  public async notifyOfDropBoost(
+    { booster_id, drop_id, drop_author_id, wave_id }: DropBoostNotificationData,
+    visibility_group_id: string | null,
+    connection?: ConnectionWrapper<any>
+  ) {
+    if (booster_id !== drop_author_id) {
+      await this.identityNotificationsDb.insertNotification(
+        {
+          identity_id: drop_author_id,
+          additional_identity_id: booster_id,
+          related_drop_id: drop_id,
+          related_drop_part_no: null,
+          related_drop_2_id: null,
+          related_drop_2_part_no: null,
+          cause: IdentityNotificationCause.DROP_BOOSTED,
+          additional_data: {},
+          wave_id,
+          visibility_group_id
+        },
+        connection
+      );
+    }
   }
 
   public async notifyOfDropReply(

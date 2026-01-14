@@ -63,6 +63,7 @@ import {
   metricsRecorder,
   MetricsRecorder
 } from '../../../metrics/MetricsRecorder';
+import { userNotifier } from '../../../notifications/user.notifier';
 
 export class DropsApiService {
   constructor(
@@ -953,6 +954,16 @@ export class DropsApiService {
       await this.dropsDb.boostDrop(
         { drop_id: dropId, booster_id: boosterId, wave_id: apiDrop.wave.id },
         ctx
+      );
+      await userNotifier.notifyOfDropBoost(
+        {
+          booster_id: boosterId,
+          drop_id: dropId,
+          drop_author_id: apiDrop.author.id,
+          wave_id: apiDrop.wave.id
+        },
+        apiDrop.wave.visibility_group_id,
+        ctx.connection
       );
       await this.metricsRecorder.recordActiveIdentity(
         { identityId: boosterId },
