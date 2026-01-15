@@ -122,13 +122,19 @@ grant_tokens AS (
   SELECT DISTINCT
     g.id               AS grant_id,
     g.target_partition AS \`partition\`,
-    CAST(t.token_id AS CHAR) AS token_id
+    t.token_id         AS token_id
   FROM ${XTDH_GRANTS_TABLE} g
   JOIN ${XTDH_GRANT_TOKENS_TABLE} t
     ON t.tokenset_id      = g.tokenset_id
    AND t.target_partition = g.target_partition
   JOIN gr ON gr.id = g.id
   WHERE gr.token_mode = '${XTdhGrantTokenMode.INCLUDE}'
+)`;
+
+const CTE_RELEVANT_TOKENS = `
+relevant_tokens AS (
+  SELECT DISTINCT \`partition\`, token_id
+  FROM grant_tokens
 )`;
 
 const CTE_CK_MAP = `
@@ -152,6 +158,9 @@ owners_at_cut AS (
       ORDER BY h.since_time DESC, h.block_number DESC, h.log_index DESC
     ) AS rn
   FROM ${EXTERNAL_INDEXED_OWNERSHIP_721_HISTORY_TABLE} h
+  JOIN relevant_tokens rt
+    ON rt.\`partition\` = h.\`partition\`
+   AND rt.token_id     = h.token_id
   JOIN cutoff c
     ON h.since_time < c.cut_ms
   LEFT JOIN ck_map cm ON cm.addr = h.owner
@@ -164,6 +173,7 @@ hist_pre_cut AS (
     h.\`partition\`,
     h.token_id,
     h.owner AS new_owner,
+    cm_new.ck AS new_ck,
     h.acquired_as_sale,
     h.since_time,
     h.block_number,
@@ -171,10 +181,18 @@ hist_pre_cut AS (
     LAG(h.owner) OVER (
       PARTITION BY h.\`partition\`, h.token_id
       ORDER BY h.since_time, h.block_number, h.log_index
-    ) AS prev_owner
+    ) AS prev_owner,
+    LAG(cm_new.ck) OVER (
+      PARTITION BY h.\`partition\`, h.token_id
+      ORDER BY h.since_time, h.block_number, h.log_index
+    ) AS prev_ck
   FROM ${EXTERNAL_INDEXED_OWNERSHIP_721_HISTORY_TABLE} h
+  JOIN relevant_tokens rt
+    ON rt.\`partition\` = h.\`partition\`
+   AND rt.token_id     = h.token_id
   JOIN cutoff c
-    ON h.since_time <= (SELECT cut_ms FROM cutoff)
+    ON h.since_time <= c.cut_ms
+  LEFT JOIN ck_map cm_new ON cm_new.addr = h.owner
 )
 `;
 
@@ -189,16 +207,15 @@ last_reset AS (
   FROM owners_at_cut o
   JOIN hist_pre_cut h
     ON h.\`partition\` = o.\`partition\`
-   AND h.token_id    = o.token_id
-   AND h.new_owner   = o.owner
-   AND h.since_time <= (SELECT cut_ms FROM cutoff)
-  LEFT JOIN ck_map cm_prev ON cm_prev.addr = h.prev_owner
+   AND h.token_id     = o.token_id
+   AND h.new_ck       = o.owner_ck
+   AND h.since_time  <= (SELECT cut_ms FROM cutoff)
   WHERE o.rn = 1
     AND (
       h.acquired_as_sale = 1
       OR h.prev_owner IS NULL
-      OR cm_prev.ck IS NULL
-      OR cm_prev.ck <> o.owner_ck
+      OR h.prev_ck IS NULL
+      OR NOT (h.prev_ck <=> o.owner_ck)
     )
   GROUP BY o.\`partition\`, o.token_id, o.owner, o.owner_ck
 )
@@ -391,6 +408,7 @@ export class XTdhRepository extends LazyDbAccessCompatibleService {
           CTE_INC_COUNTS,
           CTE_GRANT_DIVISOR,
           CTE_GRANT_TOKENS,
+          CTE_RELEVANT_TOKENS,
           CTE_OWNERS_AT_CUT,
           CTE_HIST_PRE_CUT,
           CTE_LAST_RESET,
@@ -505,6 +523,7 @@ ck_xtdh AS (
           CTE_INC_COUNTS,
           CTE_GRANT_DIVISOR,
           CTE_GRANT_TOKENS,
+          CTE_RELEVANT_TOKENS,
           CTE_OWNERS_AT_CUT,
           CTE_HIST_PRE_CUT,
           CTE_LAST_RESET,
@@ -647,6 +666,7 @@ produced_day AS (
           CTE_INC_COUNTS,
           CTE_GRANT_DIVISOR,
           CTE_GRANT_TOKENS,
+          CTE_RELEVANT_TOKENS,
           CTE_OWNERS_AT_CUT,
           CTE_HIST_PRE_CUT,
           CTE_LAST_RESET,
@@ -968,6 +988,7 @@ SET cw.xtdh_rate = COALESCE(pd.produced, 0) - COALESCE(go.granted_out, 0) + COAL
             CTE_INC_COUNTS,
             CTE_GRANT_DIVISOR,
             CTE_GRANT_TOKENS,
+            CTE_RELEVANT_TOKENS,
             CTE_CK_MAP,
             CTE_OWNERS_AT_CUT,
             CTE_HIST_PRE_CUT,
