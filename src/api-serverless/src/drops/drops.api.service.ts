@@ -176,7 +176,8 @@ export class DropsApiService {
       serial_no_less_than,
       author_id,
       include_replies,
-      drop_type
+      drop_type,
+      ids
     }: {
       group_id: string | null;
       serial_no_less_than: number | null;
@@ -185,6 +186,7 @@ export class DropsApiService {
       author_id: string | null;
       include_replies: boolean;
       drop_type: ApiDropType | null;
+      ids: string[] | null;
     },
     ctx: RequestContext
   ): Promise<ApiDrop[]> {
@@ -208,7 +210,8 @@ export class DropsApiService {
         wave_id,
         author_id,
         include_replies,
-        drop_type: drop_type ? enums.resolveOrThrow(DropType, drop_type) : null
+        drop_type: drop_type ? enums.resolveOrThrow(DropType, drop_type) : null,
+        ids
       },
       ctx
     );

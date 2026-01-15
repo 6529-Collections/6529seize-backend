@@ -62,6 +62,7 @@ router.get(
         wave_id?: string;
         include_replies?: string;
         drop_type?: ApiDropType;
+        ids?: string;
       },
       any
     >,
@@ -69,8 +70,15 @@ router.get(
   ) => {
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
-    const { limit, wave_id, group_id, author_id, include_replies, drop_type } =
-      await prepLatestDropsSearchQuery(req);
+    const {
+      limit,
+      wave_id,
+      group_id,
+      author_id,
+      include_replies,
+      drop_type,
+      ids
+    } = await prepLatestDropsSearchQuery(req);
     const latestDrops = await dropsService.findLatestDrops(
       {
         amount: limit < 0 || limit > 20 ? 10 : limit,
@@ -81,7 +89,8 @@ router.get(
         wave_id,
         author_id,
         include_replies,
-        drop_type
+        drop_type,
+        ids
       },
       { timer, authenticationContext }
     );
@@ -620,6 +629,7 @@ export async function prepLatestDropsSearchQuery(
       wave_id?: string;
       include_replies?: string;
       drop_type?: ApiDropType;
+      ids?: string;
     },
     any
   >
@@ -636,13 +646,20 @@ export async function prepLatestDropsSearchQuery(
         { timer: Timer.getFromRequest(req) }
       )
     : null;
+  const ids = req.query.ids
+    ? req.query.ids
+        .split(',')
+        .map((id) => id.trim())
+        .filter((id) => id.length > 0)
+    : null;
   return {
     limit,
     wave_id,
     group_id,
     author_id,
     include_replies,
-    drop_type: drop_type_enum
+    drop_type: drop_type_enum,
+    ids
   };
 }
 
