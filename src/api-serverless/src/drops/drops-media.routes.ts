@@ -144,7 +144,8 @@ const MediaPrepRequestSchema = createMediaPrepRequestSchema({
     'audio/wav',
     'audio/aac',
     'audio/x-aac',
-    'model/gltf-binary'
+    'model/gltf-binary',
+    'video/quicktime'
   ]
 });
 
