@@ -122,7 +122,6 @@ export class WaveApiService {
             waveCreationTime,
             createWaveRequest.wave.decisions_strategy
           ),
-          outcomes: [],
           isDirectMessage
         });
         await this.wavesApiDb.insertWave(newEntity, ctxWithConnection);
@@ -1288,7 +1287,6 @@ export class WaveApiService {
             waveUpdateTime,
             request.wave.decisions_strategy
           ),
-          outcomes: [],
           isDirectMessage: waveBeforeUpdate.is_direct_message ?? false
         });
 

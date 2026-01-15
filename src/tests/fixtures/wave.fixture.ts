@@ -34,7 +34,6 @@ const aBaseWave: BaseWave = {
   winning_max_threshold: null,
   max_winners: null,
   time_lock_ms: null,
-  outcomes: '[]',
   decisions_strategy: null,
   participation_signature_required: false,
   participation_terms: null,

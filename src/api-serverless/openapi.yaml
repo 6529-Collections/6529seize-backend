@@ -8655,7 +8655,6 @@ components:
         - participation
         - chat
         - wave
-        - outcomes
         - created_at
         - contributors_overview
         - subscribed_actions
@@ -8695,10 +8694,6 @@ components:
           $ref: "#/components/schemas/ApiWaveChatConfig"
         wave:
           $ref: "#/components/schemas/ApiWaveConfig"
-        outcomes:
-          type: array
-          items:
-            $ref: "#/components/schemas/ApiWaveOutcomeOld"
         contributors_overview:
           type: array
           items:
@@ -9133,33 +9128,6 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ApiWaveOutcomeDistributionItem"
-    ApiWaveOutcomeOld:
-      type: object
-      required:
-        - type
-        - description
-        - index
-      properties:
-        type:
-          $ref: "#/components/schemas/ApiWaveOutcomeType"
-        subtype:
-          $ref: "#/components/schemas/ApiWaveOutcomeSubType"
-        description:
-          type: string
-        credit:
-          $ref: "#/components/schemas/ApiWaveOutcomeCredit"
-        rep_category:
-          type: string
-        amount:
-          type: number
-          format: int64
-        distribution:
-          type: array
-          items:
-            $ref: "#/components/schemas/ApiWaveOutcomeDistributionItem"
-        index:
-          type: number
-          format: int64
     ApiWaveOutcomesPage:
       type: object
       required:
