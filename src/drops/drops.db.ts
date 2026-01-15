@@ -366,7 +366,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       wave_id,
       author_id,
       include_replies,
-      drop_type
+      drop_type,
+      ids
     }: {
       group_id: string | null;
       group_ids_user_is_eligible_for: string[];
@@ -376,6 +377,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       author_id: string | null;
       include_replies: boolean;
       drop_type: DropType | null;
+      ids: string[] | null;
     },
     ctx: RequestContext
   ): Promise<DropEntity[]> {
@@ -400,8 +402,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
            drop_type ? ` d.drop_type = :drop_type and ` : ``
          } d.serial_no < :serialNoLessThan ${
            !include_replies ? `and reply_to_drop_id is null` : ``
-         } ${
-           author_id ? ` and d.author_id = :author_id ` : ``
+         } ${author_id ? ` and d.author_id = :author_id ` : ``}${
+           ids?.length ? ` and d.id in (:ids) ` : ``
          } order by d.serial_no desc limit ${amount}`;
     const params: Record<string, any> = {
       ...sqlAndParams.params,
@@ -409,7 +411,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       groupsUserIsEligibleFor: group_ids_user_is_eligible_for,
       author_id,
       wave_id,
-      drop_type
+      drop_type,
+      ids
     };
     return this.db.execute<DropEntity>(sql, params);
   }
