@@ -814,6 +814,12 @@ paths:
           required: false
           schema:
             $ref: "#/components/schemas/ApiDropType"
+        - name: ids
+          in: query
+          description: Comma-separated list of drop IDs to fetch
+          required: false
+          schema:
+            type: string
       responses:
         "200":
           description: successful operation
