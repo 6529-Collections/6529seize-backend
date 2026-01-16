@@ -249,7 +249,17 @@ async function initializeApp() {
   app.use(requestLogMiddleware());
   app.use(compression());
   app.use(cors(corsOptions));
-  app.use(express.json({ limit: '5mb' }));
+  app.use(
+    express.json({
+      limit: '5mb',
+      verify: (req: any, _res, buf) => {
+        // Store raw body only for webhook endpoints that need signature verification
+        if (req.url === '/gh-hook') {
+          req.rawBody = buf;
+        }
+      }
+    })
+  );
   app.use(
     helmet({
       contentSecurityPolicy: {
@@ -1066,29 +1076,31 @@ async function initializeApp() {
     const body = req.body;
     const action = body?.action;
     const html_url = body?.issue?.html_url;
-    const sig256 = req.get("x-hub-signature-256"); // e.g. "sha256=abc123..."
+    const sig256 = req.get('x-hub-signature-256'); // e.g. "sha256=abc123..."
     if (!sig256) {
-      console.log(`Missing x-hub-signature-256`)
-      return res.status(400).send("Missing x-hub-signature-256");
+      console.log(`Missing x-hub-signature-256`);
+      return res.status(400).send('Missing x-hub-signature-256');
     }
 
     const rawBody = req.rawBody; // Buffer from verify()
     if (!rawBody) {
-      console.log(`Raw body not available`)
-      return res.status(500).send("Raw body not available");
+      console.log(`Raw body not available`);
+      return res.status(500).send('Raw body not available');
     }
-    const expected = "sha256=" + crypto
-      .createHmac("sha256", 'wSzBfdefTF4bvFvU')
-      .update(rawBody)
-      .digest("hex");
+    const expected =
+      'sha256=' +
+      crypto
+        .createHmac('sha256', 'wSzBfdefTF4bvFvU')
+        .update(rawBody)
+        .digest('hex');
     if (!timingSafeEqual(expected, sig256)) {
-      console.log("Invalid signature")
-      return res.status(401).send("Invalid signature");
+      console.log('Invalid signature');
+      return res.status(401).send('Invalid signature');
     }
     if (action === 'opened' && html_url) {
       console.log(`New issue was opened: ${html_url}`);
     } else {
-      console.log('something is off')
+      console.log('something is off');
     }
     res.send({});
   });
