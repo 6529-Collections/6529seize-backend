@@ -125,6 +125,7 @@ import {
 } from './ws/ws';
 import { wsListenersNotifier } from './ws/ws-listeners-notifier';
 import { WsMessageType } from './ws/ws-message';
+import * as crypto from 'node:crypto';
 
 const YAML = require('yamljs');
 const compression = require('compression');
@@ -1056,10 +1057,41 @@ async function initializeApp() {
   });
 
   rootRouter.post('/gh-hook', async (req: any, res: any) => {
-    console.log(req.body);
-    console.log(JSON.stringify(req.headers));
+    function timingSafeEqual(a, b) {
+      const aBuf = Buffer.from(a);
+      const bBuf = Buffer.from(b);
+      if (aBuf.length !== bBuf.length) return false;
+      return crypto.timingSafeEqual(aBuf, bBuf);
+    }
+    const body = req.body;
+    const action = body?.action;
+    const html_url = body?.issue?.html_url;
+    const sig256 = req.get("x-hub-signature-256"); // e.g. "sha256=abc123..."
+    if (!sig256) {
+      console.log(`Missing x-hub-signature-256`)
+      return res.status(400).send("Missing x-hub-signature-256");
+    }
+
+    const rawBody = req.rawBody; // Buffer from verify()
+    if (!rawBody) {
+      console.log(`Raw body not available`)
+      return res.status(500).send("Raw body not available");
+    }
+    const expected = "sha256=" + crypto
+      .createHmac("sha256", 'wSzBfdefTF4bvFvU')
+      .update(rawBody)
+      .digest("hex");
+    if (!timingSafeEqual(expected, sig256)) {
+      console.log("Invalid signature")
+      return res.status(401).send("Invalid signature");
+    }
+    if (action === 'opened' && html_url) {
+      console.log(`New issue was opened: ${html_url}`);
+    } else {
+      console.log('something is off')
+    }
     res.send({});
-  })
+  });
 
   rootRouter.get('/health/ui', async (req, res) => {
     const healthData = await getHealthData();
