@@ -275,7 +275,8 @@ export class CommunityMetricsService {
           card: row.token_id,
           mint_time: row.mint_date,
           mints: row.minted,
-          subscriptions: row.subscriptions
+          subscriptions: row.subscriptions,
+          edition_size: row.edition_size
         })),
         count,
         page: query.page,

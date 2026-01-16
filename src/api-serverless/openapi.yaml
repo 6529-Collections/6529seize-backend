@@ -7435,6 +7435,7 @@ components:
         - mint_time
         - subscriptions
         - mints
+        - edition_size
       properties:
         card:
           type: number
@@ -7448,6 +7449,10 @@ components:
         mints:
           type: number
           format: int64
+        edition_size:
+          type: number
+          format: int64
+          nullable: true
     ApiMintMetricsPage:
       type: object
       required:

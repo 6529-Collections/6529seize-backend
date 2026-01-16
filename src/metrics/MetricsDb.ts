@@ -1,5 +1,6 @@
 import {
   MEMES_CONTRACT,
+  MEMES_EXTENDED_DATA_TABLE,
   METRIC_ROLLUP_HOUR_TABLE,
   NFTS_TABLE,
   SUBSCRIPTIONS_NFTS_FINAL_TABLE,
@@ -40,6 +41,7 @@ export type CommunityMintMetricRow = {
   mint_date: number;
   minted: number;
   subscriptions: number;
+  edition_size: number | null;
 };
 
 type CommunityMintMetricsQueryParams = {
@@ -193,8 +195,10 @@ export class MetricsDb extends LazyDbAccessCompatibleService {
             n.id as token_id,
             unix_timestamp(n.mint_date) * 1000 as mint_date,
             ifnull(r.minters_count, 0) as minted,
-            ifnull(s.subscriptions, 0) as subscriptions
+            ifnull(s.subscriptions, 0) as subscriptions,
+            m.edition_size
           from ${NFTS_TABLE} n
+          left join ${MEMES_EXTENDED_DATA_TABLE} m on m.id = n.id
           left join (
             select token_id, sum(token_count) as minters_count
             from ${TRANSACTIONS_TABLE}
