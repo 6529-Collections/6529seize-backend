@@ -64,6 +64,11 @@ import {
   MetricsRecorder
 } from '../../../metrics/MetricsRecorder';
 import { userNotifier } from '../../../notifications/user.notifier';
+import {
+  wsListenersNotifier,
+  WsListenersNotifier
+} from '../ws/ws-listeners-notifier';
+import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 
 export class DropsApiService {
   constructor(
@@ -72,7 +77,8 @@ export class DropsApiService {
     private readonly userGroupsService: UserGroupsService,
     private readonly identitySubscriptionsDb: IdentitySubscriptionsDb,
     private readonly identityFetcher: IdentityFetcher,
-    private readonly metricsRecorder: MetricsRecorder
+    private readonly metricsRecorder: MetricsRecorder,
+    private readonly wsListenersNotifier: WsListenersNotifier
   ) {}
 
   public async findDropByIdOrThrow(
@@ -954,24 +960,39 @@ export class DropsApiService {
         );
       }
       const apiDrop = await this.findDropByIdOrThrow({ dropId }, ctx);
-      await this.dropsDb.boostDrop(
-        { drop_id: dropId, booster_id: boosterId, wave_id: apiDrop.wave.id },
-        ctx
+      const updatedDrop = await this.dropsDb.executeNativeQueriesInTransaction(
+        async (connection) => {
+          await this.dropsDb.boostDrop(
+            {
+              drop_id: dropId,
+              booster_id: boosterId,
+              wave_id: apiDrop.wave.id
+            },
+            { ...ctx, connection }
+          );
+          await userNotifier.notifyOfDropBoost(
+            {
+              booster_id: boosterId,
+              drop_id: dropId,
+              drop_author_id: apiDrop.author.id,
+              wave_id: apiDrop.wave.id
+            },
+            apiDrop.wave.visibility_group_id,
+            connection
+          );
+          await this.metricsRecorder.recordActiveIdentity(
+            { identityId: boosterId },
+            { ...ctx, connection }
+          );
+          return await this.findDropByIdOrThrow(
+            { dropId, skipEligibilityCheck: true },
+            ctx
+          );
+        }
       );
-      await userNotifier.notifyOfDropBoost(
-        {
-          booster_id: boosterId,
-          drop_id: dropId,
-          drop_author_id: apiDrop.author.id,
-          wave_id: apiDrop.wave.id
-        },
-        apiDrop.wave.visibility_group_id,
-        ctx.connection
-      );
-      await this.metricsRecorder.recordActiveIdentity(
-        { identityId: boosterId },
-        ctx
-      );
+      await giveReadReplicaTimeToCatchUp();
+
+      await this.wsListenersNotifier.notifyAboutDropUpdate(updatedDrop, ctx);
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->boostDrop`);
     }
@@ -987,14 +1008,24 @@ export class DropsApiService {
         );
       }
       await this.findDropByIdOrThrow({ dropId }, ctx);
-      await this.dropsDb.deleteDropBoost(
-        { drop_id: dropId, booster_id: boosterId },
-        ctx
+      const updatedDrop = await this.dropsDb.executeNativeQueriesInTransaction(
+        async (connection) => {
+          await this.dropsDb.deleteDropBoost(
+            { drop_id: dropId, booster_id: boosterId },
+            { ...ctx, connection }
+          );
+          await this.metricsRecorder.recordActiveIdentity(
+            { identityId: boosterId },
+            { ...ctx, connection }
+          );
+          return await this.findDropByIdOrThrow(
+            { dropId, skipEligibilityCheck: true },
+            ctx
+          );
+        }
       );
-      await this.metricsRecorder.recordActiveIdentity(
-        { identityId: boosterId },
-        ctx
-      );
+      await giveReadReplicaTimeToCatchUp();
+      await this.wsListenersNotifier.notifyAboutDropUpdate(updatedDrop, ctx);
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->deleteDropBoost`);
     }
@@ -1098,5 +1129,6 @@ export const dropsService = new DropsApiService(
   userGroupsService,
   identitySubscriptionsDb,
   identityFetcher,
-  metricsRecorder
+  metricsRecorder,
+  wsListenersNotifier
 );
