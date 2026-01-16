@@ -276,7 +276,8 @@ export class CommunityMetricsService {
           mint_time: row.mint_date,
           mints: row.minted,
           subscriptions: row.subscriptions,
-          edition_size: row.edition_size
+          edition_size: row.edition_size,
+          unminted: row.unminted
         })),
         count,
         page: query.page,

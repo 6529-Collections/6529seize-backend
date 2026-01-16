@@ -7436,6 +7436,7 @@ components:
         - subscriptions
         - mints
         - edition_size
+        - unminted
       properties:
         card:
           type: number
@@ -7453,6 +7454,9 @@ components:
           type: number
           format: int64
           nullable: true
+        unminted:
+          type: number
+          format: int64
     ApiMintMetricsPage:
       type: object
       required:

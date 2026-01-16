@@ -1,8 +1,11 @@
 import {
+  MANIFOLD,
   MEMES_CONTRACT,
   MEMES_EXTENDED_DATA_TABLE,
   METRIC_ROLLUP_HOUR_TABLE,
   NFTS_TABLE,
+  NULL_ADDRESS,
+  RESEARCH_6529_ADDRESS,
   SUBSCRIPTIONS_NFTS_FINAL_TABLE,
   TRANSACTIONS_TABLE
 } from '../constants';
@@ -42,6 +45,7 @@ export type CommunityMintMetricRow = {
   minted: number;
   subscriptions: number;
   edition_size: number | null;
+  unminted: number;
 };
 
 type CommunityMintMetricsQueryParams = {
@@ -196,7 +200,8 @@ export class MetricsDb extends LazyDbAccessCompatibleService {
             unix_timestamp(n.mint_date) * 1000 as mint_date,
             ifnull(r.minters_count, 0) as minted,
             ifnull(s.subscriptions, 0) as subscriptions,
-            m.edition_size
+            m.edition_size,
+            ifnull(u.unminted_count, 0) as unminted
           from ${NFTS_TABLE} n
           left join ${MEMES_EXTENDED_DATA_TABLE} m on m.id = n.id
           left join (
@@ -204,13 +209,19 @@ export class MetricsDb extends LazyDbAccessCompatibleService {
             from ${TRANSACTIONS_TABLE}
             where contract = :contract
               and value > 0
-              and from_address in (
-                '0x3A3548e060Be10c2614d0a4Cb0c03CC9093fD799',
-                '0x0000000000000000000000000000000000000000'
-              )
+              and from_address in (:zero)
             group by 1
             order by 1
           ) r on r.token_id = n.id
+          left join (
+            select token_id, sum(token_count) as unminted_count
+            from ${TRANSACTIONS_TABLE}
+            where contract = :contract
+              and value = 0
+              and from_address in (:zero)
+              and to_address = :research_address
+            group by 1
+          ) u on u.token_id = n.id
           left join (
             select token_id, sum(redeemed_count) as subscriptions
             from ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}
@@ -224,7 +235,9 @@ export class MetricsDb extends LazyDbAccessCompatibleService {
         `,
         {
           contract: MEMES_CONTRACT,
+          research_address: RESEARCH_6529_ADDRESS,
           limit: query.page_size,
+          zero: [MANIFOLD, NULL_ADDRESS],
           offset
         },
         { wrappedConnection: ctx.connection }
