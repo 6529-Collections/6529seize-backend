@@ -1055,6 +1055,12 @@ async function initializeApp() {
     return res.json(healthData);
   });
 
+  rootRouter.post('/gh-hook', async (req: any, res: any) => {
+    console.log(req.body);
+    console.log(JSON.stringify(req.headers));
+    res.send({});
+  })
+
   rootRouter.get('/health/ui', async (req, res) => {
     const healthData = await getHealthData();
     const baseUrl = `${req.protocol}://${req.get('host')}`;
