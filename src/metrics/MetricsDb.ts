@@ -1,8 +1,10 @@
 import {
+  MANIFOLD,
   MEMES_CONTRACT,
   MEMES_EXTENDED_DATA_TABLE,
   METRIC_ROLLUP_HOUR_TABLE,
   NFTS_TABLE,
+  NULL_ADDRESS,
   RESEARCH_6529_ADDRESS,
   SUBSCRIPTIONS_NFTS_FINAL_TABLE,
   TRANSACTIONS_TABLE
@@ -235,10 +237,7 @@ export class MetricsDb extends LazyDbAccessCompatibleService {
           contract: MEMES_CONTRACT,
           research_address: RESEARCH_6529_ADDRESS,
           limit: query.page_size,
-          zero: [
-            '0x3A3548e060Be10c2614d0a4Cb0c03CC9093fD799',
-            '0x0000000000000000000000000000000000000000'
-          ],
+          zero: [MANIFOLD, NULL_ADDRESS],
           offset
         },
         { wrappedConnection: ctx.connection }
