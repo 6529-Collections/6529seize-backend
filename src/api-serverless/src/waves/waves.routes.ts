@@ -1024,13 +1024,13 @@ const waveSchemaBaseValidations = {
   visibility: WaveVisibilitySchema.required(),
   participation: WaveParticipationSchema.required(),
   chat: WaveChatSchema.optional().default({ scope: { group_id: null } }),
-  wave: WaveConfigSchema.required(),
-  outcomes: Joi.array().required().min(0).items(WaveOutcomeSchema)
+  wave: WaveConfigSchema.required()
 };
 
 const WaveSchema = Joi.object<ApiCreateNewWave>({
   ...waveSchemaBaseValidations,
-  description_drop: NewWaveDropSchema.required()
+  description_drop: NewWaveDropSchema.required(),
+  outcomes: Joi.array().required().min(0).items(WaveOutcomeSchema)
 });
 
 const UpdateWaveSchema = Joi.object<ApiUpdateWaveRequest>({
