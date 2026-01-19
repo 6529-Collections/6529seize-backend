@@ -240,7 +240,8 @@ async function handleIdentityRep(
   const imageUrl = additionalEntity.pfp;
   const data = {
     redirect: 'profile',
-    handle: additionalEntity.normalised_handle
+    handle: additionalEntity.normalised_handle,
+    subroute: 'rep'
   };
   return { title, body, data, imageUrl };
 }
@@ -251,12 +252,13 @@ async function handleIdentityCic(
 ) {
   const cicAmount = (notification.additional_data as any).cic_amount;
   const sign = cicAmount > 0 ? '+' : '';
-  const title = `${sign}${cicAmount} NIC rating by ${additionalEntity.handle}`;
+  const title = `${sign}${cicAmount} NIC by ${additionalEntity.handle}`;
   const body = 'View profile';
   const imageUrl = additionalEntity.pfp;
   const data = {
     redirect: 'profile',
-    handle: additionalEntity.normalised_handle
+    handle: additionalEntity.normalised_handle,
+    subroute: 'nic'
   };
   return { title, body, data, imageUrl };
 }
