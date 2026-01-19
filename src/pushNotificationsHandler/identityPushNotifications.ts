@@ -252,7 +252,7 @@ async function handleIdentityCic(
 ) {
   const cicAmount = (notification.additional_data as any).cic_amount;
   const sign = cicAmount > 0 ? '+' : '';
-  const title = `${sign}${cicAmount} NIC by ${additionalEntity.handle}`;
+  const title = `${sign}${cicAmount} NIC from ${additionalEntity.handle}`;
   const body = 'View profile';
   const imageUrl = additionalEntity.pfp;
   const data = {
