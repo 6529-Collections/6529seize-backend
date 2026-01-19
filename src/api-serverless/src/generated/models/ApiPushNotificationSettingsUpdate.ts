@@ -16,7 +16,7 @@ export class ApiPushNotificationSettingsUpdate {
     'identity_subscribed'?: boolean;
     'identity_mentioned'?: boolean;
     'identity_rep'?: boolean;
-    'identity_cic'?: boolean;
+    'identity'?: boolean;
     'drop_quoted'?: boolean;
     'drop_replied'?: boolean;
     'drop_voted'?: boolean;
@@ -46,8 +46,8 @@ export class ApiPushNotificationSettingsUpdate {
             "format": ""
         },
         {
-            "name": "identity_cic",
-            "baseName": "identity_cic",
+            "name": "identity",
+            "baseName": "identity",
             "type": "boolean",
             "format": ""
         },

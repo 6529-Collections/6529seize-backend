@@ -16,7 +16,7 @@ export enum ApiNotificationCause {
     IdentitySubscribed = 'IDENTITY_SUBSCRIBED',
     IdentityMentioned = 'IDENTITY_MENTIONED',
     IdentityRep = 'IDENTITY_REP',
-    IdentityCic = 'IDENTITY_CIC',
+    Identity = 'IDENTITY',
     DropQuoted = 'DROP_QUOTED',
     DropReplied = 'DROP_REPLIED',
     DropVoted = 'DROP_VOTED',

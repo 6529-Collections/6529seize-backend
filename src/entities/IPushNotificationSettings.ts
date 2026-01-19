@@ -12,7 +12,7 @@ export const PUSH_NOTIFICATION_TYPES = [
   'identity_subscribed',
   'identity_mentioned',
   'identity_rep',
-  'identity_cic',
+  'identity',
   'drop_quoted',
   'drop_replied',
   'drop_voted',
@@ -27,7 +27,7 @@ export interface PushNotificationSettingsData {
   identity_subscribed: boolean;
   identity_mentioned: boolean;
   identity_rep: boolean;
-  identity_cic: boolean;
+  identity: boolean;
   drop_quoted: boolean;
   drop_replied: boolean;
   drop_voted: boolean;
@@ -41,7 +41,7 @@ export const DEFAULT_PUSH_NOTIFICATION_SETTINGS: PushNotificationSettingsData =
     identity_subscribed: true,
     identity_mentioned: true,
     identity_rep: true,
-    identity_cic: true,
+    identity: true,
     drop_quoted: true,
     drop_replied: true,
     drop_voted: true,
@@ -68,7 +68,7 @@ export class PushNotificationSettingsEntity {
   identity_rep!: boolean;
 
   @Column({ type: 'boolean', default: true })
-  identity_cic!: boolean;
+  identity!: boolean;
 
   @Column({ type: 'boolean', default: true })
   drop_quoted!: boolean;

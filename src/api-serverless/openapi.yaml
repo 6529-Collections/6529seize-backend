@@ -7830,7 +7830,7 @@ components:
         - IDENTITY_SUBSCRIBED
         - IDENTITY_MENTIONED
         - IDENTITY_REP
-        - IDENTITY_CIC
+        - IDENTITY
         - DROP_QUOTED
         - DROP_REPLIED
         - DROP_VOTED
@@ -8300,7 +8300,7 @@ components:
         - identity_subscribed
         - identity_mentioned
         - identity_rep
-        - identity_cic
+        - identity
         - drop_quoted
         - drop_replied
         - drop_voted
@@ -8317,9 +8317,9 @@ components:
         identity_rep:
           type: boolean
           description: Notify when someone gives you REP
-        identity_cic:
+        identity:
           type: boolean
-          description: Notify when someone gives you NIC
+          description: Notify for identity-related notifications (e.g. NIC)
         drop_quoted:
           type: boolean
           description: Notify when someone quotes your drop
@@ -8347,7 +8347,7 @@ components:
           type: boolean
         identity_rep:
           type: boolean
-        identity_cic:
+        identity:
           type: boolean
         drop_quoted:
           type: boolean
