@@ -253,7 +253,7 @@ async function initializeApp() {
   app.use(
     express.json({
       limit: '5mb',
-      verify: (req: any, _res, buf) => {
+      verify: (req: any, _res: any, buf: Buffer) => {
         // Store raw body only for webhook endpoints that need signature verification
         if (req.url === '/gh-hook') {
           req.rawBody = buf;
@@ -1068,7 +1068,7 @@ async function initializeApp() {
   });
 
   rootRouter.post('/gh-hook', async (req: any, res: any) => {
-    function timingSafeEqual(a, b) {
+    function timingSafeEqual(a: string, b: string) {
       const aBuf = Buffer.from(a);
       const bBuf = Buffer.from(b);
       if (aBuf.length !== bBuf.length) return false;
