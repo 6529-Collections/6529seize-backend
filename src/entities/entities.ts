@@ -74,6 +74,7 @@ export { ProfileLatestLogEntity } from './IProfileLatestLog';
 export { ProfileProxyEntity } from './IProfileProxy';
 export { ProfileProxyActionEntity } from './IProfileProxyAction';
 export { PushNotificationDevice } from './IPushNotification';
+export { PushNotificationSettingsEntity } from './IPushNotificationSettings';
 export { Rating } from './IRating';
 export { RefreshToken } from './IRefreshToken';
 export { Rememe, RememeUpload } from './IRememe';

@@ -9,6 +9,11 @@ import {
   IdentityNotificationEntity
 } from '../entities/IIdentityNotification';
 import { PushNotificationDevice } from '../entities/IPushNotification';
+import {
+  DEFAULT_PUSH_NOTIFICATION_SETTINGS,
+  PushNotificationSettingsData,
+  PushNotificationSettingsEntity
+} from '../entities/IPushNotificationSettings';
 import { WaveEntity } from '../entities/IWave';
 import { WaveReaderMetricEntity } from '../entities/IWaveReaderMetric';
 import { Logger } from '../logging';
@@ -16,9 +21,61 @@ import { IdentityNotificationsDb } from '../notifications/identity-notifications
 import { dbSupplier } from '../sql-executor';
 import { sendMessage } from './sendPushNotifications';
 
+const CAUSE_TO_SETTING_KEY: Partial<
+  Record<IdentityNotificationCause, keyof PushNotificationSettingsData>
+> = {
+  [IdentityNotificationCause.IDENTITY_SUBSCRIBED]: 'identity_subscribed',
+  [IdentityNotificationCause.IDENTITY_MENTIONED]: 'identity_mentioned',
+  [IdentityNotificationCause.IDENTITY_REP]: 'identity_rep',
+  [IdentityNotificationCause.IDENTITY_CIC]: 'identity_cic',
+  [IdentityNotificationCause.DROP_QUOTED]: 'drop_quoted',
+  [IdentityNotificationCause.DROP_REPLIED]: 'drop_replied',
+  [IdentityNotificationCause.DROP_VOTED]: 'drop_voted',
+  [IdentityNotificationCause.DROP_REACTED]: 'drop_reacted',
+  [IdentityNotificationCause.DROP_BOOSTED]: 'drop_boosted',
+  [IdentityNotificationCause.WAVE_CREATED]: 'wave_created'
+};
+
 const logger = Logger.get('PUSH_NOTIFICATIONS_HANDLER_IDENTITY');
 
 const identityNotificationsDb = new IdentityNotificationsDb(dbSupplier);
+
+async function getDeviceSettings(
+  profileId: string,
+  deviceId: string
+): Promise<PushNotificationSettingsData> {
+  const result = await getDataSource()
+    .getRepository(PushNotificationSettingsEntity)
+    .findOneBy({ profile_id: profileId, device_id: deviceId });
+
+  if (!result) {
+    return { ...DEFAULT_PUSH_NOTIFICATION_SETTINGS };
+  }
+
+  return {
+    identity_subscribed: result.identity_subscribed,
+    identity_mentioned: result.identity_mentioned,
+    identity_rep: result.identity_rep,
+    identity_cic: result.identity_cic,
+    drop_quoted: result.drop_quoted,
+    drop_replied: result.drop_replied,
+    drop_voted: result.drop_voted,
+    drop_reacted: result.drop_reacted,
+    drop_boosted: result.drop_boosted,
+    wave_created: result.wave_created
+  };
+}
+
+function isNotificationEnabledForDevice(
+  cause: IdentityNotificationCause,
+  settings: PushNotificationSettingsData
+): boolean {
+  const settingKey = CAUSE_TO_SETTING_KEY[cause];
+  if (!settingKey) {
+    return true;
+  }
+  return settings[settingKey];
+}
 
 export async function sendIdentityNotification(id: number) {
   logger.info(`Sending identity notification: ${id}`);
@@ -80,8 +137,19 @@ export async function sendIdentityNotification(id: number) {
       );
 
     await Promise.all(
-      userDevices.map((device) =>
-        sendMessage(
+      userDevices.map(async (device) => {
+        const settings = await getDeviceSettings(
+          notification.identity_id,
+          device.device_id
+        );
+        if (!isNotificationEnabledForDevice(notification.cause, settings)) {
+          logger.info(
+            `[ID ${notification.id}] Notification type ${notification.cause} disabled for device ${device.device_id}`
+          );
+          return;
+        }
+
+        return sendMessage(
           title,
           body,
           device.token,
@@ -105,8 +173,8 @@ export async function sendIdentityNotification(id: number) {
             });
             throw error;
           }
-        })
-      )
+        });
+      })
     );
   } else {
     logger.error(`Failed to generate notification data: ${notification.id}`);
