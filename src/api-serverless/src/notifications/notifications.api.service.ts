@@ -163,11 +163,7 @@ export class NotificationsApiService {
           dropIds.push(data.drop_id);
           break;
         }
-        case IdentityNotificationCause.IDENTITY_REP: {
-          const data = notification.data;
-          profileIds.push(data.rater_id);
-          break;
-        }
+        case IdentityNotificationCause.IDENTITY_REP:
         case IdentityNotificationCause.IDENTITY_CIC: {
           const data = notification.data;
           profileIds.push(data.rater_id);
