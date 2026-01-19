@@ -163,6 +163,16 @@ export class NotificationsApiService {
           dropIds.push(data.drop_id);
           break;
         }
+        case IdentityNotificationCause.IDENTITY_REP: {
+          const data = notification.data;
+          profileIds.push(data.rater_id);
+          break;
+        }
+        case IdentityNotificationCause.IDENTITY_CIC: {
+          const data = notification.data;
+          profileIds.push(data.rater_id);
+          break;
+        }
         case IdentityNotificationCause.DROP_VOTED: {
           const data = notification.data;
           profileIds.push(data.voter_id);
@@ -251,6 +261,35 @@ export class NotificationsApiService {
           related_identity: profiles[data.mentioner_identity_id],
           related_drops: [drops[data.drop_id]],
           additional_context: {}
+        };
+      }
+      case IdentityNotificationCause.IDENTITY_REP: {
+        const data = notification.data;
+        return {
+          id: notification.id,
+          created_at: notification.created_at,
+          read_at: notification.read_at,
+          cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
+          related_identity: profiles[data.rater_id],
+          related_drops: [],
+          additional_context: {
+            rep_amount: data.rep_amount,
+            category: data.category
+          }
+        };
+      }
+      case IdentityNotificationCause.IDENTITY_CIC: {
+        const data = notification.data;
+        return {
+          id: notification.id,
+          created_at: notification.created_at,
+          read_at: notification.read_at,
+          cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
+          related_identity: profiles[data.rater_id],
+          related_drops: [],
+          additional_context: {
+            cic_amount: data.cic_amount
+          }
         };
       }
       case IdentityNotificationCause.DROP_VOTED: {

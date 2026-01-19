@@ -7717,6 +7717,8 @@ components:
       enum:
         - IDENTITY_SUBSCRIBED
         - IDENTITY_MENTIONED
+        - IDENTITY_REP
+        - IDENTITY_CIC
         - DROP_QUOTED
         - DROP_REPLIED
         - DROP_VOTED

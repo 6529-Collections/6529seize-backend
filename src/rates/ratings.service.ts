@@ -65,6 +65,7 @@ import { enums } from '../enums';
 import { ids } from '../ids';
 import { collections } from '../collections';
 import { metricsRecorder, MetricsRecorder } from '../metrics/MetricsRecorder';
+import { userNotifier } from '../notifications/user.notifier';
 
 interface ProxyCreditSpend {
   readonly actionId: string;
@@ -311,6 +312,30 @@ export class RatingsService {
       timer?.stop(
         `${this.constructor.name}->updateRatingUnsafe->scheduleEvents`
       );
+
+      if (request.matter === RateMatter.REP) {
+        const repChange = request.rating - currentRating.rating;
+        await userNotifier.notifyOfIdentityRep(
+          {
+            rater_id: request.rater_profile_id,
+            rated_id: request.matter_target_id,
+            rep_amount: repChange,
+            category: request.matter_category
+          },
+          connection
+        );
+      } else if (request.matter === RateMatter.CIC) {
+        const cicChange = request.rating - currentRating.rating;
+        await userNotifier.notifyOfIdentityCic(
+          {
+            rater_id: request.rater_profile_id,
+            rated_id: request.matter_target_id,
+            cic_amount: cicChange
+          },
+          connection
+        );
+      }
+
       if (!skipLogCreation) {
         timer?.start(
           `${this.constructor.name}->updateRatingUnsafe->insertLogs`

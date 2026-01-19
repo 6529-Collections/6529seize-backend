@@ -123,6 +123,10 @@ async function generateNotificationData(
       return handleIdentitySubscribed(additionalEntity);
     case IdentityNotificationCause.IDENTITY_MENTIONED:
       return handleIdentityMentioned(notification, additionalEntity);
+    case IdentityNotificationCause.IDENTITY_REP:
+      return handleIdentityRep(notification, additionalEntity);
+    case IdentityNotificationCause.IDENTITY_CIC:
+      return handleIdentityCic(notification, additionalEntity);
     case IdentityNotificationCause.DROP_QUOTED:
       return handleDropQuoted(notification, additionalEntity);
     case IdentityNotificationCause.DROP_REPLIED:
@@ -146,6 +150,40 @@ async function generateNotificationData(
 
 async function handleIdentitySubscribed(additionalEntity: ApiIdentity) {
   const title = `${additionalEntity.handle} is now following you`;
+  const body = 'View profile';
+  const imageUrl = additionalEntity.pfp;
+  const data = {
+    redirect: 'profile',
+    handle: additionalEntity.normalised_handle
+  };
+  return { title, body, data, imageUrl };
+}
+
+async function handleIdentityRep(
+  notification: IdentityNotificationEntity,
+  additionalEntity: ApiIdentity
+) {
+  const repAmount = (notification.additional_data as any).rep_amount;
+  const category = (notification.additional_data as any).category;
+  const sign = repAmount > 0 ? '+' : '';
+  const categoryText = category ? ` for ${category}` : '';
+  const title = `${sign}${repAmount} REP from ${additionalEntity.handle}${categoryText}`;
+  const body = 'View profile';
+  const imageUrl = additionalEntity.pfp;
+  const data = {
+    redirect: 'profile',
+    handle: additionalEntity.normalised_handle
+  };
+  return { title, body, data, imageUrl };
+}
+
+async function handleIdentityCic(
+  notification: IdentityNotificationEntity,
+  additionalEntity: ApiIdentity
+) {
+  const cicAmount = (notification.additional_data as any).cic_amount;
+  const sign = cicAmount > 0 ? '+' : '';
+  const title = `${sign}${cicAmount} NIC rating by ${additionalEntity.handle}`;
   const body = 'View profile';
   const imageUrl = additionalEntity.pfp;
   const data = {
@@ -267,7 +305,7 @@ async function handleDropBoosted(
   notification: IdentityNotificationEntity,
   additionalEntity: ApiIdentity
 ) {
-  const title = `${additionalEntity.handle} boosted your drop`;
+  const title = `${additionalEntity.handle} boosted your drop 🔥`;
   const imageUrl = additionalEntity.pfp;
   const dropPart = await getDropPart(notification);
   const dropSerialNo = await getDropSerialNo(notification.related_drop_id);

@@ -9,7 +9,9 @@ import {
   DropReactionNotification,
   DropReplyNotification,
   DropVoteNotification,
+  IdentityCicNotification,
   IdentityMentionNotification,
+  IdentityRepNotification,
   IdentitySubscriptionNotification,
   PriorityAlertNotification,
   UserNotification,
@@ -32,6 +34,10 @@ export class UserNotificationMapper {
         return this.mapIdentitySubscriptionNotification(entity);
       case IdentityNotificationCause.IDENTITY_MENTIONED:
         return this.mapIdentityMentionNotification(entity);
+      case IdentityNotificationCause.IDENTITY_REP:
+        return this.mapIdentityRepNotification(entity);
+      case IdentityNotificationCause.IDENTITY_CIC:
+        return this.mapIdentityCicNotification(entity);
       case IdentityNotificationCause.DROP_VOTED:
         return this.mapDropVoteNotification(entity);
       case IdentityNotificationCause.DROP_REACTED:
@@ -82,6 +88,39 @@ export class UserNotificationMapper {
         drop_id: entity.related_drop_id!,
         mentioner_identity_id: entity.additional_identity_id!,
         wave_id: entity.wave_id!
+      }
+    };
+  }
+
+  private mapIdentityRepNotification(
+    entity: IdentityNotificationDeserialized
+  ): IdentityRepNotification {
+    return {
+      id: entity.id,
+      created_at: entity.created_at,
+      read_at: entity.read_at,
+      cause: IdentityNotificationCause.IDENTITY_REP,
+      data: {
+        rater_id: entity.additional_identity_id!,
+        rated_id: entity.identity_id,
+        rep_amount: numbers.parseIntOrNull(entity.additional_data.rep_amount)!,
+        category: entity.additional_data.category ?? ''
+      }
+    };
+  }
+
+  private mapIdentityCicNotification(
+    entity: IdentityNotificationDeserialized
+  ): IdentityCicNotification {
+    return {
+      id: entity.id,
+      created_at: entity.created_at,
+      read_at: entity.read_at,
+      cause: IdentityNotificationCause.IDENTITY_CIC,
+      data: {
+        rater_id: entity.additional_identity_id!,
+        rated_id: entity.identity_id,
+        cic_amount: numbers.parseIntOrNull(entity.additional_data.cic_amount)!
       }
     };
   }
