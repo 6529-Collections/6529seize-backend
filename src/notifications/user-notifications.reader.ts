@@ -1,3 +1,4 @@
+import { ConnectionWrapper } from '../sql-executor';
 import {
   identityNotificationsDb,
   IdentityNotificationsDb
@@ -6,7 +7,6 @@ import {
   UserNotificationMapper,
   userNotificationsMapper
 } from './user-notification.mapper';
-import { ConnectionWrapper } from '../sql-executor';
 import { UserNotificationsResponse } from './user-notification.types';
 
 export class UserNotificationsReader {
