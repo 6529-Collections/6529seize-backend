@@ -1,22 +1,27 @@
 import { Request, Response } from 'express';
-import { ApiResponse } from '../api-response';
-import { getValidatedByJoiOrThrow } from '../validation';
-import { asyncRouter } from '../async.router';
 import * as Joi from 'joi';
+import { PushNotificationDevice } from '../../../entities/IPushNotification';
+import { PushNotificationSettingsData } from '../../../entities/IPushNotificationSettings';
+import { ForbiddenException, UnauthorisedException } from '../../../exceptions';
+import { ApiResponse } from '../api-response';
+import { asyncRouter } from '../async.router';
 import {
   getAuthenticationContext,
   maybeAuthenticatedUser,
   needsAuthenticatedUser
 } from '../auth/auth';
-import { ForbiddenException, UnauthorisedException } from '../../../exceptions';
+import { ApiPushNotificationDevice } from '../generated/models/ApiPushNotificationDevice';
 import { ApiRegisterPushNotificationTokenRequest } from '../generated/models/ApiRegisterPushNotificationTokenRequest';
-import { PushNotificationDevice } from '../../../entities/IPushNotification';
-import { savePushNotificationDevice } from './push-notifications.db';
+import { getValidatedByJoiOrThrow } from '../validation';
 import {
   getPushNotificationSettings,
   upsertPushNotificationSettings
 } from './push-notification-settings.db';
-import { PushNotificationSettingsData } from '../../../entities/IPushNotificationSettings';
+import {
+  deleteDevice,
+  getDevicesForProfile,
+  savePushNotificationDevice
+} from './push-notifications.db';
 
 const registerPushNotificationTokenRequestSchema: Joi.ObjectSchema<ApiRegisterPushNotificationTokenRequest> =
   Joi.object({
@@ -83,6 +88,47 @@ const settingsSchema: Joi.ObjectSchema<Partial<PushNotificationSettingsData>> =
     drop_boosted: Joi.boolean().optional(),
     wave_created: Joi.boolean().optional()
   });
+
+router.get(
+  `/devices`,
+  needsAuthenticatedUser(),
+  async function (
+    req: Request<any, any, any, any, any>,
+    res: Response<ApiResponse<ApiPushNotificationDevice[]>>
+  ) {
+    const authenticationContext = await getAuthenticationContext(req);
+    const profileId = authenticationContext.getActingAsId();
+    if (!profileId) {
+      throw new ForbiddenException(
+        'You need to create a profile to view devices'
+      );
+    }
+
+    const devices = await getDevicesForProfile(profileId);
+    res.send(devices);
+  }
+);
+
+router.delete(
+  `/devices/:device_id`,
+  needsAuthenticatedUser(),
+  async function (
+    req: Request<{ device_id: string }, any, any, any, any>,
+    res: Response<ApiResponse<void>>
+  ) {
+    const authenticationContext = await getAuthenticationContext(req);
+    const profileId = authenticationContext.getActingAsId();
+    if (!profileId) {
+      throw new ForbiddenException(
+        'You need to create a profile to delete devices'
+      );
+    }
+
+    const deviceId = req.params.device_id;
+    await deleteDevice(profileId, deviceId);
+    res.status(204).send();
+  }
+);
 
 router.get(
   `/settings/:device_id`,
