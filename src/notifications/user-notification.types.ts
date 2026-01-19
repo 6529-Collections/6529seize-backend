@@ -77,10 +77,10 @@ export interface IdentityRepNotificationData {
   category: string;
 }
 
-export interface IdentityCicNotificationData {
+export interface IdentityNicNotificationData {
   rater_id: string;
   rated_id: string;
-  cic_amount: number;
+  nic_amount: number;
 }
 
 export interface UserNotificationBase {
@@ -104,9 +104,9 @@ export interface IdentityRepNotification extends UserNotificationBase {
   data: IdentityRepNotificationData;
 }
 
-export interface IdentityCicNotification extends UserNotificationBase {
+export interface IdentityNicNotification extends UserNotificationBase {
   cause: IdentityNotificationCause.IDENTITY_CIC;
-  data: IdentityCicNotificationData;
+  data: IdentityNicNotificationData;
 }
 
 export interface DropVoteNotification extends UserNotificationBase {
@@ -153,7 +153,7 @@ export type UserNotification =
   | IdentitySubscriptionNotification
   | IdentityMentionNotification
   | IdentityRepNotification
-  | IdentityCicNotification
+  | IdentityNicNotification
   | DropVoteNotification
   | DropReactionNotification
   | DropBoostNotification

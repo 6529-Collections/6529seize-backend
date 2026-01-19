@@ -149,11 +149,15 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
       limit: number;
       eligible_group_ids: string[];
       cause: string | null;
+      cause_exclude: string | null;
       unread_only: boolean;
     },
     connection?: ConnectionWrapper<any>
   ): Promise<IdentityNotificationDeserialized[]> {
     const causes = param.cause?.split(',').map((it) => it.trim());
+    const causesExclude = param.cause_exclude
+      ?.split(',')
+      .map((it) => it.trim());
     return this.db
       .execute<IdentityNotificationEntity>(
         `
@@ -171,11 +175,12 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
             : ``
         })
         ${causes ? ` AND n.cause IN (:causes)` : ``}
+        ${causesExclude ? ` AND n.cause NOT IN (:causesExclude)` : ``}
         ${param.unread_only ? ` AND n.read_at IS NULL` : ``}
         AND COALESCE(r.muted, FALSE) = FALSE
         ORDER BY n.id DESC LIMIT :limit
       `,
-        { ...param, causes },
+        { ...param, causes, causesExclude },
         connection ? { wrappedConnection: connection } : undefined
       )
       .then((results) =>

@@ -14,8 +14,8 @@ import {
   DropReactionNotificationData,
   DropReplyNotificationData,
   DropVoteNotificationData,
-  IdentityCicNotificationData,
   IdentityMentionNotificationData,
+  IdentityNicNotificationData,
   IdentityRepNotificationData,
   IdentitySubscriptionNotificationData
 } from './user-notification.types';
@@ -69,8 +69,8 @@ export class UserNotifier {
     }
   }
 
-  public async notifyOfIdentityCic(
-    { rater_id, rated_id, cic_amount }: IdentityCicNotificationData,
+  public async notifyOfIdentityNic(
+    { rater_id, rated_id, nic_amount }: IdentityNicNotificationData,
     connection?: ConnectionWrapper<any>
   ) {
     if (rater_id !== rated_id) {
@@ -84,7 +84,7 @@ export class UserNotifier {
           related_drop_2_part_no: null,
           wave_id: null,
           cause: IdentityNotificationCause.IDENTITY_CIC,
-          additional_data: { cic_amount },
+          additional_data: { nic_amount },
           visibility_group_id: null
         },
         connection

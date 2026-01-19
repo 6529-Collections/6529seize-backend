@@ -9,8 +9,8 @@ import {
   DropReactionNotification,
   DropReplyNotification,
   DropVoteNotification,
-  IdentityCicNotification,
   IdentityMentionNotification,
+  IdentityNicNotification,
   IdentityRepNotification,
   IdentitySubscriptionNotification,
   PriorityAlertNotification,
@@ -37,7 +37,7 @@ export class UserNotificationMapper {
       case IdentityNotificationCause.IDENTITY_REP:
         return this.mapIdentityRepNotification(entity);
       case IdentityNotificationCause.IDENTITY_CIC:
-        return this.mapIdentityCicNotification(entity);
+        return this.mapIdentityNicNotification(entity);
       case IdentityNotificationCause.DROP_VOTED:
         return this.mapDropVoteNotification(entity);
       case IdentityNotificationCause.DROP_REACTED:
@@ -109,9 +109,9 @@ export class UserNotificationMapper {
     };
   }
 
-  private mapIdentityCicNotification(
+  private mapIdentityNicNotification(
     entity: IdentityNotificationDeserialized
-  ): IdentityCicNotification {
+  ): IdentityNicNotification {
     return {
       id: entity.id,
       created_at: entity.created_at,
@@ -120,7 +120,7 @@ export class UserNotificationMapper {
       data: {
         rater_id: entity.additional_identity_id!,
         rated_id: entity.identity_id,
-        cic_amount: numbers.parseIntOrNull(entity.additional_data.cic_amount)!
+        nic_amount: numbers.parseIntOrNull(entity.additional_data.nic_amount)!
       }
     };
   }

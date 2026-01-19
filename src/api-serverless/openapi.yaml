@@ -1914,6 +1914,24 @@ paths:
           schema:
             type: number
             format: int64
+        - name: cause
+          in: query
+          description: Comma-separated list of notification causes to include
+          required: false
+          schema:
+            type: string
+        - name: cause_exclude
+          in: query
+          description: Comma-separated list of notification causes to exclude
+          required: false
+          schema:
+            type: string
+        - name: unread_only
+          in: query
+          description: Only return unread notifications
+          required: false
+          schema:
+            type: boolean
       responses:
         "200":
           description: successful operation

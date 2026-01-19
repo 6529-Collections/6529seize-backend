@@ -22,6 +22,7 @@ export class UserNotificationsReader {
       limit: number;
       eligible_group_ids: string[];
       cause: string | null;
+      cause_exclude: string | null;
       unread_only: boolean;
     },
     connection?: ConnectionWrapper<any>

@@ -327,13 +327,13 @@ export class RatingsService {
           );
         }
       } else if (request.matter === RateMatter.CIC) {
-        const cicChange = request.rating - currentRating.rating;
-        if (cicChange !== 0) {
-          await userNotifier.notifyOfIdentityCic(
+        const nicChange = request.rating - currentRating.rating;
+        if (nicChange !== 0) {
+          await userNotifier.notifyOfIdentityNic(
             {
               rater_id: request.rater_profile_id,
               rated_id: request.matter_target_id,
-              cic_amount: cicChange
+              nic_amount: nicChange
             },
             connection
           );

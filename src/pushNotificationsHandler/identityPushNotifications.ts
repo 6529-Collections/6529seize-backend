@@ -250,9 +250,9 @@ async function handleIdentityCic(
   notification: IdentityNotificationEntity,
   additionalEntity: ApiIdentity
 ) {
-  const cicAmount = (notification.additional_data as any).cic_amount;
-  const sign = cicAmount > 0 ? '+' : '';
-  const title = `${sign}${cicAmount} NIC from ${additionalEntity.handle}`;
+  const nicAmount = (notification.additional_data as any).nic_amount;
+  const sign = nicAmount > 0 ? '+' : '';
+  const title = `${sign}${nicAmount} NIC from ${additionalEntity.handle}`;
   const body = 'View profile';
   const imageUrl = additionalEntity.pfp;
   const data = {

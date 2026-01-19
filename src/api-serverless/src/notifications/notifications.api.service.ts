@@ -103,6 +103,7 @@ export class NotificationsApiService {
       id_less_than: number | null;
       limit: number;
       cause: string | null;
+      cause_exclude: string | null;
       unread_only: boolean;
     },
     authenticationContext: AuthenticationContext
@@ -284,7 +285,7 @@ export class NotificationsApiService {
           related_identity: profiles[data.rater_id],
           related_drops: [],
           additional_context: {
-            cic_amount: data.cic_amount
+            nic_amount: data.nic_amount
           }
         };
       }
