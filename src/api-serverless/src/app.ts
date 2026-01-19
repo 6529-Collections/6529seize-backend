@@ -255,7 +255,7 @@ async function initializeApp() {
       limit: '5mb',
       verify: (req: any, _res: any, buf: Buffer) => {
         // Store raw body only for webhook endpoints that need signature verification
-        if (req.url === '/gh-hook') {
+        if (req.url === '/gh-hooks') {
           req.rawBody = buf;
         }
       }
