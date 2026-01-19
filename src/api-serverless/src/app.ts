@@ -1067,7 +1067,7 @@ async function initializeApp() {
     return res.json(healthData);
   });
 
-  rootRouter.post('/gh-hook', async (req: any, res: any) => {
+  rootRouter.post('/gh-hooks', async (req: any, res: any) => {
     function timingSafeEqual(a: string, b: string) {
       const aBuf = Buffer.from(a);
       const bBuf = Buffer.from(b);
