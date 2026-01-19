@@ -315,25 +315,29 @@ export class RatingsService {
 
       if (request.matter === RateMatter.REP) {
         const repChange = request.rating - currentRating.rating;
-        await userNotifier.notifyOfIdentityRep(
-          {
-            rater_id: request.rater_profile_id,
-            rated_id: request.matter_target_id,
-            rep_amount: repChange,
-            category: request.matter_category
-          },
-          connection
-        );
+        if (repChange !== 0) {
+          await userNotifier.notifyOfIdentityRep(
+            {
+              rater_id: request.rater_profile_id,
+              rated_id: request.matter_target_id,
+              rep_amount: repChange,
+              category: request.matter_category
+            },
+            connection
+          );
+        }
       } else if (request.matter === RateMatter.CIC) {
         const cicChange = request.rating - currentRating.rating;
-        await userNotifier.notifyOfIdentityCic(
-          {
-            rater_id: request.rater_profile_id,
-            rated_id: request.matter_target_id,
-            cic_amount: cicChange
-          },
-          connection
-        );
+        if (cicChange !== 0) {
+          await userNotifier.notifyOfIdentityCic(
+            {
+              rater_id: request.rater_profile_id,
+              rated_id: request.matter_target_id,
+              cic_amount: cicChange
+            },
+            connection
+          );
+        }
       }
 
       if (!skipLogCreation) {
