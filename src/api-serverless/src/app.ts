@@ -69,11 +69,11 @@ import { Artist } from '../../entities/IArtist';
 import { NFT } from '../../entities/INFT';
 import { TDHBlock } from '../../entities/ITDH';
 import { Upload } from '../../entities/IUpload';
-import { loadLocalConfig, loadSecrets } from '../../env';
+import { env, loadLocalConfig, loadSecrets } from '../../env';
 import { loggerContext } from '../../logger-context';
 import { Logger } from '../../logging';
 import { numbers } from '../../numbers';
-import { initRedis, redisGet } from '../../redis';
+import { getRedisClient, initRedis, redisGet } from '../../redis';
 import { parseTdhResultsFromDB } from '../../sql_helpers';
 import alchemyProxyRoutes from './alchemy-proxy/alchemy-proxy.routes';
 import {
@@ -125,6 +125,8 @@ import {
 } from './ws/ws';
 import { wsListenersNotifier } from './ws/ws-listeners-notifier';
 import { WsMessageType } from './ws/ws-message';
+import * as crypto from 'node:crypto';
+import { githubIssueDropService } from './github/github-issue-drop.service';
 
 const YAML = require('yamljs');
 const compression = require('compression');
@@ -248,7 +250,17 @@ async function initializeApp() {
   app.use(requestLogMiddleware());
   app.use(compression());
   app.use(cors(corsOptions));
-  app.use(express.json({ limit: '5mb' }));
+  app.use(
+    express.json({
+      limit: '5mb',
+      verify: (req: any, _res: any, buf: Buffer) => {
+        // Store raw body only for webhook endpoints that need signature verification
+        if (req.url === '/gh-hooks') {
+          req.rawBody = buf;
+        }
+      }
+    })
+  );
   app.use(
     helmet({
       contentSecurityPolicy: {
@@ -1053,6 +1065,54 @@ async function initializeApp() {
     res.setHeader('Expires', '0');
 
     return res.json(healthData);
+  });
+
+  rootRouter.post('/gh-hooks', async (req: any, res: any) => {
+    function timingSafeEqual(a: string, b: string) {
+      const aBuf = Buffer.from(a);
+      const bBuf = Buffer.from(b);
+      if (aBuf.length !== bBuf.length) return false;
+      return crypto.timingSafeEqual(aBuf, bBuf);
+    }
+    const body = req.body;
+    const action = body?.action;
+    const html_url = body?.issue?.html_url;
+    const sig256 = req.get('x-hub-signature-256');
+    if (!sig256) {
+      return res.status(400).send('Missing x-hub-signature-256');
+    }
+
+    const rawBody = req.rawBody;
+    if (!rawBody) {
+      return res.status(500).send('Raw body not available');
+    }
+    const expected =
+      'sha256=' +
+      crypto
+        .createHmac('sha256', env.getStringOrThrow(`GH_WEBHOOK_SECRET`))
+        .update(rawBody)
+        .digest('hex');
+    if (!timingSafeEqual(expected, sig256)) {
+      return res.status(401).send('Invalid signature');
+    }
+    if (action === 'opened' && html_url) {
+      const redis = getRedisClient();
+      if (redis) {
+        const cacheKey = `gh-webhook:${html_url}`;
+        const wasSet = await redis.set(cacheKey, '1', { NX: true, EX: 86400 });
+        if (!wasSet) {
+          logger.info(`Duplicate webhook for ${html_url}, skipping`);
+          return res.send({});
+        }
+      }
+      logger.info(`New issue was opened: ${html_url}`);
+      try {
+        await githubIssueDropService.postGhIssueDrop(html_url);
+      } catch (err) {
+        logger.error(`Failed to post drop for issue ${html_url}: ${err}`);
+      }
+    }
+    res.send({});
   });
 
   rootRouter.get('/health/ui', async (req, res) => {
