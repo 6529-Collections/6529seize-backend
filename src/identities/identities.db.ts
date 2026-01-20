@@ -16,6 +16,7 @@ import {
   PROFILES_ARCHIVE_TABLE,
   PROFILES_TABLE,
   WALLETS_TDH_TABLE,
+  WAVES_TABLE,
   X_TDH_COEFFICIENT
 } from '../constants';
 import { Profile, ProfileClassification } from '../entities/IProfile';
@@ -1064,6 +1065,21 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
       param,
       { wrappedConnection: ctx.connection }
     );
+  }
+
+  async getWaveCreatorProfileIds(
+    profileIds: string[],
+    connection?: ConnectionWrapper<any>
+  ): Promise<Set<string>> {
+    if (!profileIds.length) {
+      return new Set();
+    }
+    const results = await this.db.execute<{ created_by: string }>(
+      `SELECT DISTINCT created_by FROM ${WAVES_TABLE} WHERE created_by IN (:profileIds) AND is_direct_message = false`,
+      { profileIds },
+      connection ? { wrappedConnection: connection } : undefined
+    );
+    return new Set(results.map((it) => it.created_by));
   }
 }
 

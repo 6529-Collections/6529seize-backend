@@ -424,10 +424,12 @@ export class IdentitiesService {
     const identityIds = identityEntities
       .map((it) => it.profile_id)
       .filter((it) => !!it) as string[];
-    const [mainStageSubmissions, mainStageWins] = await Promise.all([
-      this.identitiesDb.getActiveMainStageDropIds(identityIds, ctx),
-      this.identitiesDb.getMainStageWinnerDropIds(identityIds, ctx)
-    ]);
+    const [mainStageSubmissions, mainStageWins, waveCreatorIds] =
+      await Promise.all([
+        this.identitiesDb.getActiveMainStageDropIds(identityIds, ctx),
+        this.identitiesDb.getMainStageWinnerDropIds(identityIds, ctx),
+        this.identitiesDb.getWaveCreatorProfileIds(identityIds, ctx.connection)
+      ]);
     return identityEntities.map<ApiIdentity>((it) => {
       const classification = it.classification
         ? (enums.resolve(
@@ -461,7 +463,10 @@ export class IdentitiesService {
           : [],
         winner_main_stage_drop_ids: it.profile_id
           ? (mainStageWins[it.profile_id] ?? [])
-          : []
+          : [],
+        is_wave_creator: it.profile_id
+          ? waveCreatorIds.has(it.profile_id)
+          : false
       };
     });
   }
