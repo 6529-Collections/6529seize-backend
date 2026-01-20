@@ -81,7 +81,8 @@ export class IdentityFetcher {
       identities,
       subscribedActions,
       mainStageSubscriptions,
-      mainStageWins
+      mainStageWins,
+      waveCreatorIds
     ] = await Promise.all([
       this.identitiesDb.getIdentitiesByIds(ids, ctx.connection),
       this.getSubscribedActions({
@@ -89,7 +90,8 @@ export class IdentityFetcher {
         ids
       }),
       this.identitiesDb.getActiveMainStageDropIds(ids, ctx),
-      this.identitiesDb.getMainStageWinnerDropIds(ids, ctx)
+      this.identitiesDb.getMainStageWinnerDropIds(ids, ctx),
+      this.identitiesDb.getWaveCreatorProfileIds(ids, ctx.connection)
     ]);
     const notFoundProfileIds = ids.filter(
       (id) => !identities.find((p) => p.profile_id === id)
@@ -109,12 +111,13 @@ export class IdentityFetcher {
       tdh_rate: p.basetdh_rate,
       level: getLevelFromScore(p.level_raw),
       pfp: p.pfp,
-      archived: true,
+      archived: false,
       subscribed_actions: subscribedActions[p.profile_id!] ?? [],
       primary_address: p.primary_address,
       active_main_stage_submission_ids:
         mainStageSubscriptions[p.profile_id!] ?? [],
-      winner_main_stage_drop_ids: mainStageWins[p.profile_id!] ?? []
+      winner_main_stage_drop_ids: mainStageWins[p.profile_id!] ?? [],
+      is_wave_creator: waveCreatorIds.has(p.profile_id!)
     }));
     const archivedProfiles = await this.identitiesDb
       .getNewestVersionHandlesOfArchivedProfiles(
@@ -142,7 +145,8 @@ export class IdentityFetcher {
           subscribed_actions: subscribedActions[p.external_id] ?? [],
           active_main_stage_submission_ids:
             mainStageSubscriptions[p.external_id] ?? [],
-          winner_main_stage_drop_ids: mainStageWins[p.external_id] ?? []
+          winner_main_stage_drop_ids: mainStageWins[p.external_id] ?? [],
+          is_wave_creator: waveCreatorIds.has(p.external_id)
         }))
       );
     return [...notArchivedProfiles, ...archivedProfiles].reduce(
@@ -268,7 +272,8 @@ export class IdentityFetcher {
         sub_classification: null,
         consolidation_key: query,
         active_main_stage_submission_ids: [],
-        winner_main_stage_drop_ids: []
+        winner_main_stage_drop_ids: [],
+        is_wave_creator: false
       };
     }
     return await this.mapToApiIdentity(identity, query, ctx);
@@ -331,8 +336,8 @@ export class IdentityFetcher {
       },
       ctx
     );
-    const [wallets, mainStageDropIds, mainStageWinnerDrops] = await Promise.all(
-      [
+    const [wallets, mainStageDropIds, mainStageWinnerDrops, waveCreatorIds] =
+      await Promise.all([
         this.identitiesDb.getPrediscoveredEnsNames(consolidatedWallets, ctx),
         this.identitiesDb
           .getActiveMainStageDropIds(
@@ -349,9 +354,12 @@ export class IdentityFetcher {
           )
           .then((it) =>
             identity.profile_id ? (it[identity.profile_id] ?? []) : []
-          )
-      ]
-    );
+          ),
+        this.identitiesDb.getWaveCreatorProfileIds(
+          identity.profile_id ? [identity.profile_id] : [],
+          ctx.connection
+        )
+      ]);
     const classification = identity.classification
       ? (enums.resolve(
           ApiProfileClassification,
@@ -384,7 +392,10 @@ export class IdentityFetcher {
       consolidation_key: identity.consolidation_key,
       query: query,
       active_main_stage_submission_ids: mainStageDropIds,
-      winner_main_stage_drop_ids: mainStageWinnerDrops
+      winner_main_stage_drop_ids: mainStageWinnerDrops,
+      is_wave_creator: identity.profile_id
+        ? waveCreatorIds.has(identity.profile_id)
+        : false
     };
   }
 
