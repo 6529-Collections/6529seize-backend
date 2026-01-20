@@ -235,9 +235,10 @@ async function handleIdentityRep(
   const total = (notification.additional_data as any).total;
   const category = (notification.additional_data as any).category;
   const categoryText = category ? ` for category '${category}'` : '';
-  const title = `Updated REP${categoryText}`;
+  const emoji = amount > 0 ? '🚀' : '💔';
+  const title = `${emoji} Updated REP${categoryText}`;
   const sign = amount > 0 ? '+' : '';
-  const body = `${additionalEntity.handle} updated your REP by ${sign}${amount}\nNew Total: ${total}`;
+  const body = `\n${additionalEntity.handle} updated your REP by ${sign}${amount}\nNew Total: ${total}`;
   const imageUrl = additionalEntity.pfp;
   const receiverProfile = await getIdentityOrThrow(notification.identity_id);
   const data = {
@@ -254,9 +255,10 @@ async function handleIdentityNic(
 ) {
   const amount = (notification.additional_data as any).amount;
   const total = (notification.additional_data as any).total;
-  const title = `Updated NIC Rating`;
+  const emoji = amount > 0 ? '🚀' : '💔';
+  const title = `${emoji} Updated NIC Rating`;
   const sign = amount > 0 ? '+' : '';
-  const body = `${additionalEntity.handle} updated your NIC by ${sign}${amount}\nNew Total: ${total}`;
+  const body = `\n${additionalEntity.handle} updated your NIC by ${sign}${amount}\nNew Total: ${total}`;
   const imageUrl = additionalEntity.pfp;
   const receiverProfile = await getIdentityOrThrow(notification.identity_id);
   const data = {
