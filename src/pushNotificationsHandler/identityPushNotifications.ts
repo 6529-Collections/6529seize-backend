@@ -27,7 +27,7 @@ const CAUSE_TO_SETTING_KEY: Partial<
   [IdentityNotificationCause.IDENTITY_SUBSCRIBED]: 'identity_subscribed',
   [IdentityNotificationCause.IDENTITY_MENTIONED]: 'identity_mentioned',
   [IdentityNotificationCause.IDENTITY_REP]: 'identity_rep',
-  [IdentityNotificationCause.IDENTITY_CIC]: 'identity_nic',
+  [IdentityNotificationCause.IDENTITY_NIC]: 'identity_nic',
   [IdentityNotificationCause.DROP_QUOTED]: 'drop_quoted',
   [IdentityNotificationCause.DROP_REPLIED]: 'drop_replied',
   [IdentityNotificationCause.DROP_VOTED]: 'drop_voted',
@@ -193,8 +193,8 @@ async function generateNotificationData(
       return handleIdentityMentioned(notification, additionalEntity);
     case IdentityNotificationCause.IDENTITY_REP:
       return handleIdentityRep(notification, additionalEntity);
-    case IdentityNotificationCause.IDENTITY_CIC:
-      return handleIdentityCic(notification, additionalEntity);
+    case IdentityNotificationCause.IDENTITY_NIC:
+      return handleIdentityNic(notification, additionalEntity);
     case IdentityNotificationCause.DROP_QUOTED:
       return handleDropQuoted(notification, additionalEntity);
     case IdentityNotificationCause.DROP_REPLIED:
@@ -234,19 +234,20 @@ async function handleIdentityRep(
   const repAmount = (notification.additional_data as any).rep_amount;
   const category = (notification.additional_data as any).category;
   const sign = repAmount > 0 ? '+' : '';
-  const categoryText = category ? ` for ${category}` : '';
+  const categoryText = category ? ` for '${category}' category` : '';
   const title = `${sign}${repAmount} REP from ${additionalEntity.handle}${categoryText}`;
   const body = 'View profile';
   const imageUrl = additionalEntity.pfp;
+  const receiverProfile = await getIdentityOrThrow(notification.identity_id);
   const data = {
     redirect: 'profile',
-    handle: additionalEntity.normalised_handle,
+    handle: receiverProfile.normalised_handle,
     subroute: 'rep'
   };
   return { title, body, data, imageUrl };
 }
 
-async function handleIdentityCic(
+async function handleIdentityNic(
   notification: IdentityNotificationEntity,
   additionalEntity: ApiIdentity
 ) {
@@ -255,9 +256,10 @@ async function handleIdentityCic(
   const title = `${sign}${nicAmount} NIC from ${additionalEntity.handle}`;
   const body = 'View profile';
   const imageUrl = additionalEntity.pfp;
+  const receiverProfile = await getIdentityOrThrow(notification.identity_id);
   const data = {
     redirect: 'profile',
-    handle: additionalEntity.normalised_handle,
+    handle: receiverProfile.normalised_handle,
     subroute: 'nic'
   };
   return { title, body, data, imageUrl };
@@ -388,24 +390,25 @@ async function handleDropBoosted(
   return { title, body, data, imageUrl };
 }
 
+async function getIdentityOrThrow(identityId: string | null) {
+  if (!identityId) {
+    throw new Error(`Identity id not provided`);
+  }
+  const profile =
+    await identityFetcher.getIdentityAndConsolidationsByIdentityKey(
+      { identityKey: identityId },
+      {}
+    );
+  if (!profile?.id) {
+    throw new Error(`Profile not found for identity ${identityId}`);
+  }
+  return profile;
+}
+
 async function getAdditionalIdOrThrow(
   notification: IdentityNotificationEntity
 ) {
-  const additionalId = notification.additional_identity_id;
-  if (!additionalId) {
-    throw new Error(`[ID ${notification.id}] Additional id not found`);
-  }
-  const additionalProfile =
-    await identityFetcher.getIdentityAndConsolidationsByIdentityKey(
-      {
-        identityKey: additionalId
-      },
-      {}
-    );
-  if (!additionalProfile?.id) {
-    throw new Error(`[ID ${notification.id}] Additional profile not found`);
-  }
-  return additionalProfile;
+  return getIdentityOrThrow(notification.additional_identity_id);
 }
 
 async function getDrop(notification: IdentityNotificationEntity) {

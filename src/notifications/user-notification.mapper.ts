@@ -36,7 +36,7 @@ export class UserNotificationMapper {
         return this.mapIdentityMentionNotification(entity);
       case IdentityNotificationCause.IDENTITY_REP:
         return this.mapIdentityRepNotification(entity);
-      case IdentityNotificationCause.IDENTITY_CIC:
+      case IdentityNotificationCause.IDENTITY_NIC:
         return this.mapIdentityNicNotification(entity);
       case IdentityNotificationCause.DROP_VOTED:
         return this.mapDropVoteNotification(entity);
@@ -116,7 +116,7 @@ export class UserNotificationMapper {
       id: entity.id,
       created_at: entity.created_at,
       read_at: entity.read_at,
-      cause: IdentityNotificationCause.IDENTITY_CIC,
+      cause: IdentityNotificationCause.IDENTITY_NIC,
       data: {
         rater_id: entity.additional_identity_id!,
         rated_id: entity.identity_id,

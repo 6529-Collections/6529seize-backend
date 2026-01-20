@@ -165,7 +165,7 @@ export class NotificationsApiService {
           break;
         }
         case IdentityNotificationCause.IDENTITY_REP:
-        case IdentityNotificationCause.IDENTITY_CIC: {
+        case IdentityNotificationCause.IDENTITY_NIC: {
           const data = notification.data;
           profileIds.push(data.rater_id);
           break;
@@ -275,7 +275,7 @@ export class NotificationsApiService {
           }
         };
       }
-      case IdentityNotificationCause.IDENTITY_CIC: {
+      case IdentityNotificationCause.IDENTITY_NIC: {
         const data = notification.data;
         return {
           id: notification.id,

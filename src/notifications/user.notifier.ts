@@ -83,7 +83,7 @@ export class UserNotifier {
           related_drop_2_id: null,
           related_drop_2_part_no: null,
           wave_id: null,
-          cause: IdentityNotificationCause.IDENTITY_CIC,
+          cause: IdentityNotificationCause.IDENTITY_NIC,
           additional_data: { nic_amount },
           visibility_group_id: null
         },

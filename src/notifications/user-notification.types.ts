@@ -105,7 +105,7 @@ export interface IdentityRepNotification extends UserNotificationBase {
 }
 
 export interface IdentityNicNotification extends UserNotificationBase {
-  cause: IdentityNotificationCause.IDENTITY_CIC;
+  cause: IdentityNotificationCause.IDENTITY_NIC;
   data: IdentityNicNotificationData;
 }
 
