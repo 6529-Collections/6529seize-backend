@@ -1,8 +1,12 @@
 import { ApiCommunityMetrics } from '../generated/models/ApiCommunityMetrics';
+import { ApiCommunityMetricsSeries } from '../generated/models/ApiCommunityMetricsSeries';
 import { ApiCommunityMetricSample } from '../generated/models/ApiCommunityMetricSample';
 import { ApiMintMetricsPage } from '../generated/models/ApiMintMetricsPage';
 import {
   MetricGroupInterval,
+  MetricBucketDistinctCountRow,
+  MetricBucketSumRow,
+  MetricSampleRow,
   MetricRollupHourGroup,
   MetricRollupHourLatest,
   MetricsDb,
@@ -288,6 +292,143 @@ export class CommunityMetricsService {
     }
   }
 
+  async getCommunityMetricsSeries(
+    query: CommunityMetricsSeriesQuery,
+    ctx: RequestContext
+  ): Promise<ApiCommunityMetricsSeries> {
+    ctx.timer?.start(`${this.constructor.name}->getCommunityMetricsSeries`);
+    try {
+      const stepMs = Time.days(1).toMillis();
+      const stepsStartTimes: number[] = [];
+      for (
+        let cursor = query.since;
+        cursor <= query.to - stepMs;
+        cursor += stepMs
+      ) {
+        stepsStartTimes.push(cursor);
+      }
+
+      const seriesEnd = stepsStartTimes[stepsStartTimes.length - 1] + stepMs;
+      const seriesStartTime = Time.millis(query.since);
+      const seriesEndTime = Time.millis(seriesEnd);
+
+      const sumMetrics = [
+        MetricRollupHourMetric.DROP,
+        MetricRollupHourMetric.MAIN_STAGE_SUBMISSION,
+        MetricRollupHourMetric.MAIN_STAGE_VOTE
+      ];
+      const distinctMetrics = [
+        MetricRollupHourMetric.DROPPER_DROP,
+        MetricRollupHourMetric.MAIN_STAGE_VOTE,
+        MetricRollupHourMetric.ACTIVE_IDENTITY
+      ];
+      const latestMetrics = [
+        MetricRollupHourMetric.NETWORK_TDH,
+        MetricRollupHourMetric.TDH_ON_MAIN_STAGE_SUBMISSIONS,
+        MetricRollupHourMetric.CONSOLIDATIONS_FORMED,
+        MetricRollupHourMetric.XTDH_GRANTED,
+        MetricRollupHourMetric.PROFILE_COUNT
+      ];
+
+      const [
+        bucketSums,
+        bucketDistinctCounts,
+        latestSamples,
+        latestBeforeSamples
+      ] = await Promise.all([
+        this.metricsDb.getMetricBucketSums(
+          sumMetrics,
+          seriesStartTime,
+          seriesEndTime,
+          stepMs,
+          ctx
+        ),
+        this.metricsDb.getMetricBucketDistinctCounts(
+          distinctMetrics,
+          seriesStartTime,
+          seriesEndTime,
+          stepMs,
+          ctx
+        ),
+        this.metricsDb.getMetricSamplesInRange(
+          latestMetrics,
+          seriesStartTime,
+          seriesEndTime,
+          ctx
+        ),
+        this.metricsDb.getLatestMetricSamplesBefore(
+          latestMetrics,
+          seriesStartTime,
+          ctx
+        )
+      ]);
+
+      const bucketCount = stepsStartTimes.length;
+      const dropsCreated = this.fillMetricBuckets(bucketCount, bucketSums, {
+        metric: MetricRollupHourMetric.DROP,
+        useValueSum: false
+      });
+      const mainStageSubmissions = this.fillMetricBuckets(
+        bucketCount,
+        bucketSums,
+        {
+          metric: MetricRollupHourMetric.MAIN_STAGE_SUBMISSION,
+          useValueSum: false
+        }
+      );
+      const mainStageVotes = this.fillMetricBuckets(bucketCount, bucketSums, {
+        metric: MetricRollupHourMetric.MAIN_STAGE_VOTE,
+        useValueSum: true
+      });
+      const distinctDroppers = this.fillDistinctBuckets(
+        bucketCount,
+        bucketDistinctCounts,
+        MetricRollupHourMetric.DROPPER_DROP
+      );
+      const mainStageDistinctVoters = this.fillDistinctBuckets(
+        bucketCount,
+        bucketDistinctCounts,
+        MetricRollupHourMetric.MAIN_STAGE_VOTE
+      );
+      const activeIdentities = this.fillDistinctBuckets(
+        bucketCount,
+        bucketDistinctCounts,
+        MetricRollupHourMetric.ACTIVE_IDENTITY
+      );
+      const latestSeries = this.fillLatestMetricBuckets(
+        bucketCount,
+        query.since,
+        stepMs,
+        latestMetrics,
+        latestSamples,
+        latestBeforeSamples
+      );
+
+      return {
+        steps_start_times: stepsStartTimes,
+        drops_created: dropsCreated,
+        distinct_droppers: distinctDroppers,
+        main_stage_submissions: mainStageSubmissions,
+        main_stage_distinct_voters: mainStageDistinctVoters,
+        main_stage_votes: mainStageVotes,
+        network_tdh: latestSeries.get(MetricRollupHourMetric.NETWORK_TDH) ?? [],
+        tdh_on_main_stage_submissions:
+          latestSeries.get(
+            MetricRollupHourMetric.TDH_ON_MAIN_STAGE_SUBMISSIONS
+          ) ?? [],
+        consolidations_formed:
+          latestSeries.get(MetricRollupHourMetric.CONSOLIDATIONS_FORMED) ?? [],
+        xtdh_granted:
+          latestSeries.get(MetricRollupHourMetric.XTDH_GRANTED) ?? [],
+        active_identities: activeIdentities,
+        profile_count:
+          latestSeries.get(MetricRollupHourMetric.PROFILE_COUNT) ?? []
+      };
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->getCommunityMetricsSeries`);
+    }
+  }
+
   private toMetricSample(
     metricToGet: MetricRollupHourMetric,
     groups: MetricRollupHourGroup[],
@@ -377,6 +518,118 @@ export class CommunityMetricsService {
       value_count: numbers.parseNumberOrThrow(latest.value_sum)
     };
   }
+
+  private fillMetricBuckets(
+    bucketCount: number,
+    rows: MetricBucketSumRow[],
+    {
+      metric,
+      useValueSum
+    }: {
+      metric: MetricRollupHourMetric;
+      useValueSum: boolean;
+    }
+  ): number[] {
+    const buckets = Array.from({ length: bucketCount }, () => 0);
+    for (const row of rows) {
+      if (row.metric !== metric) {
+        continue;
+      }
+      const bucket = numbers.parseIntOrThrow(row.bucket);
+      if (bucket < 0 || bucket >= bucketCount) {
+        continue;
+      }
+      const value = useValueSum
+        ? numbers.parseNumberOrThrow(row.value_sum)
+        : numbers.parseIntOrThrow(row.event_count);
+      buckets[bucket] = value;
+    }
+    return buckets;
+  }
+
+  private fillDistinctBuckets(
+    bucketCount: number,
+    rows: MetricBucketDistinctCountRow[],
+    metric: MetricRollupHourMetric
+  ): number[] {
+    const buckets = Array.from({ length: bucketCount }, () => 0);
+    for (const row of rows) {
+      if (row.metric !== metric) {
+        continue;
+      }
+      const bucket = numbers.parseIntOrThrow(row.bucket);
+      if (bucket < 0 || bucket >= bucketCount) {
+        continue;
+      }
+      buckets[bucket] = numbers.parseIntOrThrow(row.distinct_count);
+    }
+    return buckets;
+  }
+
+  private fillLatestMetricBuckets(
+    bucketCount: number,
+    since: number,
+    bucketMs: number,
+    metrics: MetricRollupHourMetric[],
+    rows: MetricSampleRow[],
+    latestBeforeRows: MetricSampleRow[]
+  ): Map<MetricRollupHourMetric, number[]> {
+    const bucketsByMetric = new Map<MetricRollupHourMetric, number[]>();
+    const latestByMetric = new Map<MetricRollupHourMetric, number>();
+    for (const metric of metrics) {
+      bucketsByMetric.set(
+        metric,
+        Array.from({ length: bucketCount }, () => 0)
+      );
+      latestByMetric.set(metric, 0);
+    }
+
+    for (const row of latestBeforeRows) {
+      latestByMetric.set(row.metric, numbers.parseNumberOrThrow(row.value_sum));
+    }
+
+    const bucketLatest = new Map<
+      MetricRollupHourMetric,
+      Map<number, { hourStart: number; value: number }>
+    >();
+    for (const metric of metrics) {
+      bucketLatest.set(metric, new Map());
+    }
+    for (const row of rows) {
+      const hourStart = numbers.parseIntOrThrow(row.hour_start);
+      const bucket = Math.floor((hourStart - since) / bucketMs);
+      if (bucket < 0 || bucket >= bucketCount) {
+        continue;
+      }
+      const perMetric = bucketLatest.get(row.metric);
+      if (!perMetric) {
+        continue;
+      }
+      const value = numbers.parseNumberOrThrow(row.value_sum);
+      const existing = perMetric.get(bucket);
+      if (!existing || existing.hourStart < hourStart) {
+        perMetric.set(bucket, { hourStart, value });
+      }
+    }
+
+    for (const metric of metrics) {
+      const perMetric = bucketLatest.get(metric);
+      const values = bucketsByMetric.get(metric);
+      if (!perMetric || !values) {
+        continue;
+      }
+      let lastValue = latestByMetric.get(metric) ?? 0;
+      for (let bucket = 0; bucket < bucketCount; bucket += 1) {
+        const latest = perMetric.get(bucket);
+        if (latest) {
+          lastValue = latest.value;
+        }
+        values[bucket] = lastValue;
+      }
+    }
+
+    return bucketsByMetric;
+  }
 }
 
 export type MintMetricsQuery = {
@@ -384,6 +637,11 @@ export type MintMetricsQuery = {
   page_size: number;
   sort_direction: 'ASC' | 'DESC';
   sort: 'mint_time';
+};
+
+export type CommunityMetricsSeriesQuery = {
+  since: number;
+  to: number;
 };
 
 export const communityMetricsService = new CommunityMetricsService(metricsDb);
