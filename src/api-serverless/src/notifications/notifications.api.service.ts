@@ -103,6 +103,7 @@ export class NotificationsApiService {
       id_less_than: number | null;
       limit: number;
       cause: string | null;
+      cause_exclude: string | null;
       unread_only: boolean;
     },
     authenticationContext: AuthenticationContext
@@ -161,6 +162,12 @@ export class NotificationsApiService {
           const data = notification.data;
           profileIds.push(data.mentioner_identity_id);
           dropIds.push(data.drop_id);
+          break;
+        }
+        case IdentityNotificationCause.IDENTITY_REP:
+        case IdentityNotificationCause.IDENTITY_NIC: {
+          const data = notification.data;
+          profileIds.push(data.rater_id);
           break;
         }
         case IdentityNotificationCause.DROP_VOTED: {
@@ -251,6 +258,37 @@ export class NotificationsApiService {
           related_identity: profiles[data.mentioner_identity_id],
           related_drops: [drops[data.drop_id]],
           additional_context: {}
+        };
+      }
+      case IdentityNotificationCause.IDENTITY_REP: {
+        const data = notification.data;
+        return {
+          id: notification.id,
+          created_at: notification.created_at,
+          read_at: notification.read_at,
+          cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
+          related_identity: profiles[data.rater_id],
+          related_drops: [],
+          additional_context: {
+            amount: data.amount,
+            total: data.total,
+            category: data.category
+          }
+        };
+      }
+      case IdentityNotificationCause.IDENTITY_NIC: {
+        const data = notification.data;
+        return {
+          id: notification.id,
+          created_at: notification.created_at,
+          read_at: notification.read_at,
+          cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
+          related_identity: profiles[data.rater_id],
+          related_drops: [],
+          additional_context: {
+            amount: data.amount,
+            total: data.total
+          }
         };
       }
       case IdentityNotificationCause.DROP_VOTED: {

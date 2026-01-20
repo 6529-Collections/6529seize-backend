@@ -9,6 +9,11 @@ import {
   IdentityNotificationEntity
 } from '../entities/IIdentityNotification';
 import { PushNotificationDevice } from '../entities/IPushNotification';
+import {
+  DEFAULT_PUSH_NOTIFICATION_SETTINGS,
+  PushNotificationSettingsData,
+  PushNotificationSettingsEntity
+} from '../entities/IPushNotificationSettings';
 import { WaveEntity } from '../entities/IWave';
 import { WaveReaderMetricEntity } from '../entities/IWaveReaderMetric';
 import { Logger } from '../logging';
@@ -16,9 +21,61 @@ import { IdentityNotificationsDb } from '../notifications/identity-notifications
 import { dbSupplier } from '../sql-executor';
 import { sendMessage } from './sendPushNotifications';
 
+const CAUSE_TO_SETTING_KEY: Partial<
+  Record<IdentityNotificationCause, keyof PushNotificationSettingsData>
+> = {
+  [IdentityNotificationCause.IDENTITY_SUBSCRIBED]: 'identity_subscribed',
+  [IdentityNotificationCause.IDENTITY_MENTIONED]: 'identity_mentioned',
+  [IdentityNotificationCause.IDENTITY_REP]: 'identity_rep',
+  [IdentityNotificationCause.IDENTITY_NIC]: 'identity_nic',
+  [IdentityNotificationCause.DROP_QUOTED]: 'drop_quoted',
+  [IdentityNotificationCause.DROP_REPLIED]: 'drop_replied',
+  [IdentityNotificationCause.DROP_VOTED]: 'drop_voted',
+  [IdentityNotificationCause.DROP_REACTED]: 'drop_reacted',
+  [IdentityNotificationCause.DROP_BOOSTED]: 'drop_boosted',
+  [IdentityNotificationCause.WAVE_CREATED]: 'wave_created'
+};
+
 const logger = Logger.get('PUSH_NOTIFICATIONS_HANDLER_IDENTITY');
 
 const identityNotificationsDb = new IdentityNotificationsDb(dbSupplier);
+
+async function getDeviceSettings(
+  profileId: string,
+  deviceId: string
+): Promise<PushNotificationSettingsData> {
+  const result = await getDataSource()
+    .getRepository(PushNotificationSettingsEntity)
+    .findOneBy({ profile_id: profileId, device_id: deviceId });
+
+  if (!result) {
+    return { ...DEFAULT_PUSH_NOTIFICATION_SETTINGS };
+  }
+
+  return {
+    identity_subscribed: result.identity_subscribed,
+    identity_mentioned: result.identity_mentioned,
+    identity_rep: result.identity_rep,
+    identity_nic: result.identity_nic,
+    drop_quoted: result.drop_quoted,
+    drop_replied: result.drop_replied,
+    drop_voted: result.drop_voted,
+    drop_reacted: result.drop_reacted,
+    drop_boosted: result.drop_boosted,
+    wave_created: result.wave_created
+  };
+}
+
+function isNotificationEnabledForDevice(
+  cause: IdentityNotificationCause,
+  settings: PushNotificationSettingsData
+): boolean {
+  const settingKey = CAUSE_TO_SETTING_KEY[cause];
+  if (!settingKey) {
+    return true;
+  }
+  return settings[settingKey];
+}
 
 export async function sendIdentityNotification(id: number) {
   logger.info(`Sending identity notification: ${id}`);
@@ -80,8 +137,19 @@ export async function sendIdentityNotification(id: number) {
       );
 
     await Promise.all(
-      userDevices.map((device) =>
-        sendMessage(
+      userDevices.map(async (device) => {
+        const settings = await getDeviceSettings(
+          notification.identity_id,
+          device.device_id
+        );
+        if (!isNotificationEnabledForDevice(notification.cause, settings)) {
+          logger.info(
+            `[ID ${notification.id}] Notification type ${notification.cause} disabled for device ${device.device_id}`
+          );
+          return;
+        }
+
+        return sendMessage(
           title,
           body,
           device.token,
@@ -105,8 +173,8 @@ export async function sendIdentityNotification(id: number) {
             });
             throw error;
           }
-        })
-      )
+        });
+      })
     );
   } else {
     logger.error(`Failed to generate notification data: ${notification.id}`);
@@ -123,6 +191,10 @@ async function generateNotificationData(
       return handleIdentitySubscribed(additionalEntity);
     case IdentityNotificationCause.IDENTITY_MENTIONED:
       return handleIdentityMentioned(notification, additionalEntity);
+    case IdentityNotificationCause.IDENTITY_REP:
+      return handleIdentityRep(notification, additionalEntity);
+    case IdentityNotificationCause.IDENTITY_NIC:
+      return handleIdentityNic(notification, additionalEntity);
     case IdentityNotificationCause.DROP_QUOTED:
       return handleDropQuoted(notification, additionalEntity);
     case IdentityNotificationCause.DROP_REPLIED:
@@ -151,6 +223,48 @@ async function handleIdentitySubscribed(additionalEntity: ApiIdentity) {
   const data = {
     redirect: 'profile',
     handle: additionalEntity.normalised_handle
+  };
+  return { title, body, data, imageUrl };
+}
+
+async function handleIdentityRep(
+  notification: IdentityNotificationEntity,
+  additionalEntity: ApiIdentity
+) {
+  const amount = (notification.additional_data as any).amount;
+  const total = (notification.additional_data as any).total;
+  const category = (notification.additional_data as any).category;
+  const categoryText = category ? ` for category '${category}'` : '';
+  const emoji = amount > 0 ? '🚀' : '💔';
+  const title = `${emoji} Updated REP${categoryText}`;
+  const sign = amount > 0 ? '+' : '';
+  const body = `${additionalEntity.handle} updated your REP by ${sign}${amount}\nNew Total: ${total}`;
+  const imageUrl = additionalEntity.pfp;
+  const receiverProfile = await getIdentityOrThrow(notification.identity_id);
+  const data = {
+    redirect: 'profile',
+    handle: receiverProfile.normalised_handle,
+    subroute: 'rep'
+  };
+  return { title, body, data, imageUrl };
+}
+
+async function handleIdentityNic(
+  notification: IdentityNotificationEntity,
+  additionalEntity: ApiIdentity
+) {
+  const amount = (notification.additional_data as any).amount;
+  const total = (notification.additional_data as any).total;
+  const emoji = amount > 0 ? '🚀' : '💔';
+  const title = `${emoji} Updated NIC Rating`;
+  const sign = amount > 0 ? '+' : '';
+  const body = `${additionalEntity.handle} updated your NIC by ${sign}${amount}\nNew Total: ${total}`;
+  const imageUrl = additionalEntity.pfp;
+  const receiverProfile = await getIdentityOrThrow(notification.identity_id);
+  const data = {
+    redirect: 'profile',
+    handle: receiverProfile.normalised_handle,
+    subroute: 'identity'
   };
   return { title, body, data, imageUrl };
 }
@@ -267,7 +381,7 @@ async function handleDropBoosted(
   notification: IdentityNotificationEntity,
   additionalEntity: ApiIdentity
 ) {
-  const title = `${additionalEntity.handle} boosted your drop`;
+  const title = `${additionalEntity.handle} boosted your drop 🔥`;
   const imageUrl = additionalEntity.pfp;
   const dropPart = await getDropPart(notification);
   const dropSerialNo = await getDropSerialNo(notification.related_drop_id);
@@ -280,24 +394,25 @@ async function handleDropBoosted(
   return { title, body, data, imageUrl };
 }
 
+async function getIdentityOrThrow(identityId: string | null) {
+  if (!identityId) {
+    throw new Error(`Identity id not provided`);
+  }
+  const profile =
+    await identityFetcher.getIdentityAndConsolidationsByIdentityKey(
+      { identityKey: identityId },
+      {}
+    );
+  if (!profile?.id) {
+    throw new Error(`Profile not found for identity ${identityId}`);
+  }
+  return profile;
+}
+
 async function getAdditionalIdOrThrow(
   notification: IdentityNotificationEntity
 ) {
-  const additionalId = notification.additional_identity_id;
-  if (!additionalId) {
-    throw new Error(`[ID ${notification.id}] Additional id not found`);
-  }
-  const additionalProfile =
-    await identityFetcher.getIdentityAndConsolidationsByIdentityKey(
-      {
-        identityKey: additionalId
-      },
-      {}
-    );
-  if (!additionalProfile?.id) {
-    throw new Error(`[ID ${notification.id}] Additional profile not found`);
-  }
-  return additionalProfile;
+  return getIdentityOrThrow(notification.additional_identity_id);
 }
 
 async function getDrop(notification: IdentityNotificationEntity) {

@@ -10,6 +10,8 @@ import {
   DropReplyNotification,
   DropVoteNotification,
   IdentityMentionNotification,
+  IdentityNicNotification,
+  IdentityRepNotification,
   IdentitySubscriptionNotification,
   PriorityAlertNotification,
   UserNotification,
@@ -32,6 +34,10 @@ export class UserNotificationMapper {
         return this.mapIdentitySubscriptionNotification(entity);
       case IdentityNotificationCause.IDENTITY_MENTIONED:
         return this.mapIdentityMentionNotification(entity);
+      case IdentityNotificationCause.IDENTITY_REP:
+        return this.mapIdentityRepNotification(entity);
+      case IdentityNotificationCause.IDENTITY_NIC:
+        return this.mapIdentityNicNotification(entity);
       case IdentityNotificationCause.DROP_VOTED:
         return this.mapDropVoteNotification(entity);
       case IdentityNotificationCause.DROP_REACTED:
@@ -82,6 +88,41 @@ export class UserNotificationMapper {
         drop_id: entity.related_drop_id!,
         mentioner_identity_id: entity.additional_identity_id!,
         wave_id: entity.wave_id!
+      }
+    };
+  }
+
+  private mapIdentityRepNotification(
+    entity: IdentityNotificationDeserialized
+  ): IdentityRepNotification {
+    return {
+      id: entity.id,
+      created_at: entity.created_at,
+      read_at: entity.read_at,
+      cause: IdentityNotificationCause.IDENTITY_REP,
+      data: {
+        rater_id: entity.additional_identity_id!,
+        rated_id: entity.identity_id,
+        amount: numbers.parseIntOrNull(entity.additional_data.amount)!,
+        total: numbers.parseIntOrNull(entity.additional_data.total)!,
+        category: entity.additional_data.category ?? ''
+      }
+    };
+  }
+
+  private mapIdentityNicNotification(
+    entity: IdentityNotificationDeserialized
+  ): IdentityNicNotification {
+    return {
+      id: entity.id,
+      created_at: entity.created_at,
+      read_at: entity.read_at,
+      cause: IdentityNotificationCause.IDENTITY_NIC,
+      data: {
+        rater_id: entity.additional_identity_id!,
+        rated_id: entity.identity_id,
+        amount: numbers.parseIntOrNull(entity.additional_data.amount)!,
+        total: numbers.parseIntOrNull(entity.additional_data.total)!
       }
     };
   }

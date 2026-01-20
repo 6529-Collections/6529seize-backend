@@ -15,6 +15,8 @@ import {
   DropReplyNotificationData,
   DropVoteNotificationData,
   IdentityMentionNotificationData,
+  IdentityNicNotificationData,
+  IdentityRepNotificationData,
   IdentitySubscriptionNotificationData
 } from './user-notification.types';
 
@@ -42,6 +44,58 @@ export class UserNotifier {
       },
       connection
     );
+  }
+
+  public async notifyOfIdentityRep(
+    {
+      rater_id,
+      rated_id,
+      amount,
+      total,
+      category
+    }: IdentityRepNotificationData,
+    connection?: ConnectionWrapper<any>
+  ) {
+    if (rater_id !== rated_id) {
+      await this.identityNotificationsDb.insertNotification(
+        {
+          identity_id: rated_id,
+          additional_identity_id: rater_id,
+          related_drop_id: null,
+          related_drop_part_no: null,
+          related_drop_2_id: null,
+          related_drop_2_part_no: null,
+          wave_id: null,
+          cause: IdentityNotificationCause.IDENTITY_REP,
+          additional_data: { amount, total, category },
+          visibility_group_id: null
+        },
+        connection
+      );
+    }
+  }
+
+  public async notifyOfIdentityNic(
+    { rater_id, rated_id, amount, total }: IdentityNicNotificationData,
+    connection?: ConnectionWrapper<any>
+  ) {
+    if (rater_id !== rated_id) {
+      await this.identityNotificationsDb.insertNotification(
+        {
+          identity_id: rated_id,
+          additional_identity_id: rater_id,
+          related_drop_id: null,
+          related_drop_part_no: null,
+          related_drop_2_id: null,
+          related_drop_2_part_no: null,
+          wave_id: null,
+          cause: IdentityNotificationCause.IDENTITY_NIC,
+          additional_data: { amount, total },
+          visibility_group_id: null
+        },
+        connection
+      );
+    }
   }
 
   public async notifyOfIdentityMention(

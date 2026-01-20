@@ -14,6 +14,18 @@ import { numbers } from '../../../numbers';
 
 const router = asyncRouter();
 
+const causesValidator = (value: unknown, helpers: Joi.CustomHelpers) => {
+  if (typeof value !== 'string') return null;
+  const values = value.split(',').map((v) => v.trim());
+  const validCauses = Object.values(IdentityNotificationCause);
+  for (const val of values) {
+    if (!validCauses.includes(val as IdentityNotificationCause)) {
+      return helpers.error('any.invalid');
+    }
+  }
+  return value;
+};
+
 router.get(
   '/',
   needsAuthenticatedUser(),
@@ -26,6 +38,7 @@ router.get(
         id_less_than: number | null;
         limit: number;
         cause: string | null;
+        cause_exclude: string | null;
         unread_only: boolean;
       },
       any
@@ -47,26 +60,24 @@ router.get(
         id_less_than: number | null;
         limit: number;
         cause: string | null;
+        cause_exclude: string | null;
         unread_only: boolean;
       }>({
         id_less_than: Joi.number().optional().integer().default(null),
         limit: Joi.number().optional().integer().default(10).min(1).max(100),
         cause: Joi.string()
           .optional()
-          .custom((value, helpers) => {
-            if (typeof value !== 'string') return null;
-
-            const values = value.split(',').map((v) => v.trim());
-
-            const validCauses = Object.values(IdentityNotificationCause);
-            for (const val of values) {
-              if (!validCauses.includes(val as IdentityNotificationCause)) {
-                return helpers.error('any.invalid');
-              }
-            }
-
-            return value;
-          }, 'Comma-separated IdentityNotificationCause validation')
+          .custom(
+            causesValidator,
+            'Comma-separated IdentityNotificationCause validation'
+          )
+          .default(null),
+        cause_exclude: Joi.string()
+          .optional()
+          .custom(
+            causesValidator,
+            'Comma-separated IdentityNotificationCause validation'
+          )
           .default(null),
         unread_only: Joi.boolean().optional().default(false)
       })

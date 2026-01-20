@@ -70,6 +70,21 @@ export interface PriorityAlertNotificationData {
   drop_id: string;
 }
 
+export interface IdentityRepNotificationData {
+  rater_id: string;
+  rated_id: string;
+  amount: number;
+  total: number;
+  category: string;
+}
+
+export interface IdentityNicNotificationData {
+  rater_id: string;
+  rated_id: string;
+  amount: number;
+  total: number;
+}
+
 export interface UserNotificationBase {
   id: number;
   created_at: number;
@@ -84,6 +99,16 @@ export interface IdentitySubscriptionNotification extends UserNotificationBase {
 export interface IdentityMentionNotification extends UserNotificationBase {
   cause: IdentityNotificationCause.IDENTITY_MENTIONED;
   data: IdentityMentionNotificationData;
+}
+
+export interface IdentityRepNotification extends UserNotificationBase {
+  cause: IdentityNotificationCause.IDENTITY_REP;
+  data: IdentityRepNotificationData;
+}
+
+export interface IdentityNicNotification extends UserNotificationBase {
+  cause: IdentityNotificationCause.IDENTITY_NIC;
+  data: IdentityNicNotificationData;
 }
 
 export interface DropVoteNotification extends UserNotificationBase {
@@ -129,6 +154,8 @@ export interface PriorityAlertNotification extends UserNotificationBase {
 export type UserNotification =
   | IdentitySubscriptionNotification
   | IdentityMentionNotification
+  | IdentityRepNotification
+  | IdentityNicNotification
   | DropVoteNotification
   | DropReactionNotification
   | DropBoostNotification

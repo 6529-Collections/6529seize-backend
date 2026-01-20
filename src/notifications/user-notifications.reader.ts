@@ -1,3 +1,4 @@
+import { ConnectionWrapper } from '../sql-executor';
 import {
   identityNotificationsDb,
   IdentityNotificationsDb
@@ -6,7 +7,6 @@ import {
   UserNotificationMapper,
   userNotificationsMapper
 } from './user-notification.mapper';
-import { ConnectionWrapper } from '../sql-executor';
 import { UserNotificationsResponse } from './user-notification.types';
 
 export class UserNotificationsReader {
@@ -22,6 +22,7 @@ export class UserNotificationsReader {
       limit: number;
       eligible_group_ids: string[];
       cause: string | null;
+      cause_exclude: string | null;
       unread_only: boolean;
     },
     connection?: ConnectionWrapper<any>

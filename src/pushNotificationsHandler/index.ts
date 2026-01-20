@@ -2,6 +2,7 @@ import { SQSHandler } from 'aws-lambda';
 import { DropEntity, DropPartEntity } from '../entities/IDrop';
 import { IdentityNotificationEntity } from '../entities/IIdentityNotification';
 import { PushNotificationDevice } from '../entities/IPushNotification';
+import { PushNotificationSettingsEntity } from '../entities/IPushNotificationSettings';
 import { WaveEntity } from '../entities/IWave';
 import { WaveReaderMetricEntity } from '../entities/IWaveReaderMetric';
 import { Logger } from '../logging';
@@ -26,6 +27,7 @@ const sqsHandler: SQSHandler = async (event) => {
       entities: [
         IdentityNotificationEntity,
         PushNotificationDevice,
+        PushNotificationSettingsEntity,
         WaveEntity,
         WaveReaderMetricEntity,
         DropEntity,

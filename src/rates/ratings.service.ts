@@ -1,3 +1,60 @@
+import { Request } from 'express';
+import converter from 'json-2-csv';
+import { ApiAvailableRatingCredit } from '../api-serverless/src/generated/models/ApiAvailableRatingCredit';
+import { ApiBulkRateRequest } from '../api-serverless/src/generated/models/ApiBulkRateRequest';
+import { ApiBulkRepRequest } from '../api-serverless/src/generated/models/ApiBulkRepRequest';
+import { ApiRatingWithProfileInfoAndLevel } from '../api-serverless/src/generated/models/ApiRatingWithProfileInfoAndLevel';
+import { ApiRatingWithProfileInfoAndLevelPage } from '../api-serverless/src/generated/models/ApiRatingWithProfileInfoAndLevelPage';
+import { identityFetcher } from '../api-serverless/src/identities/identity.fetcher';
+import { FullPageRequest, Page } from '../api-serverless/src/page-request';
+import {
+  repService,
+  RepService
+} from '../api-serverless/src/profiles/rep.service';
+import { appFeatures } from '../app-features';
+import { arweaveFileUploader, ArweaveFileUploader } from '../arweave';
+import { AuthenticationContext } from '../auth-context';
+import { collections } from '../collections';
+import { revokeTdhBasedDropWavesOverVotes } from '../drops/participation-drops-over-vote-revocation';
+import { ProfileClassification } from '../entities/IProfile';
+import {
+  ProfileActivityLog,
+  ProfileActivityLogType
+} from '../entities/IProfileActivityLog';
+import { ProfileProxyActionType } from '../entities/IProfileProxyAction';
+import {
+  getMattersWhereTargetIsProfile,
+  RateMatter,
+  Rating
+} from '../entities/IRating';
+import { RatingsSnapshot } from '../entities/IRatingsSnapshots';
+import { enums } from '../enums';
+import { ProfileRepRatedEventData } from '../events/datatypes/profile-rep-rated.event-data';
+import { eventScheduler, EventScheduler } from '../events/event.scheduler';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException
+} from '../exceptions';
+import { IdentitiesDb, identitiesDb } from '../identities/identities.db';
+import { ids } from '../ids';
+import { Logger } from '../logging';
+import { metricsRecorder, MetricsRecorder } from '../metrics/MetricsRecorder';
+import { userNotifier } from '../notifications/user.notifier';
+import {
+  profileProxiesDb,
+  ProfileProxiesDb
+} from '../profile-proxies/profile-proxies.db';
+import { profileActivityLogsDb } from '../profileActivityLogs/profile-activity-logs.db';
+import {
+  abusivenessCheckService,
+  AbusivenessCheckService
+} from '../profiles/abusiveness-check.service';
+import { calculateLevel } from '../profiles/profile-level';
+import { profilesService } from '../profiles/profiles.service';
+import { RequestContext } from '../request.context';
+import { ConnectionWrapper } from '../sql-executor';
+import { Time, Timer } from '../time';
 import {
   AggregatedRating,
   AggregatedRatingRequest,
@@ -9,62 +66,6 @@ import {
   RatingStats,
   UpdateRatingRequest
 } from './ratings.db';
-import {
-  BadRequestException,
-  ForbiddenException,
-  NotFoundException
-} from '../exceptions';
-import {
-  ProfileActivityLog,
-  ProfileActivityLogType
-} from '../entities/IProfileActivityLog';
-import { profileActivityLogsDb } from '../profileActivityLogs/profile-activity-logs.db';
-import {
-  getMattersWhereTargetIsProfile,
-  RateMatter,
-  Rating
-} from '../entities/IRating';
-import { Logger } from '../logging';
-import { Time, Timer } from '../time';
-import { ConnectionWrapper } from '../sql-executor';
-import { FullPageRequest, Page } from '../api-serverless/src/page-request';
-import { calculateLevel } from '../profiles/profile-level';
-import {
-  repService,
-  RepService
-} from '../api-serverless/src/profiles/rep.service';
-import { profilesService } from '../profiles/profiles.service';
-import { Request } from 'express';
-import { eventScheduler, EventScheduler } from '../events/event.scheduler';
-import converter from 'json-2-csv';
-import { arweaveFileUploader, ArweaveFileUploader } from '../arweave';
-import { RatingsSnapshot } from '../entities/IRatingsSnapshots';
-import { AuthenticationContext } from '../auth-context';
-import { ProfileProxyActionType } from '../entities/IProfileProxyAction';
-import {
-  profileProxiesDb,
-  ProfileProxiesDb
-} from '../profile-proxies/profile-proxies.db';
-import { ApiBulkRateRequest } from '../api-serverless/src/generated/models/ApiBulkRateRequest';
-import { ApiAvailableRatingCredit } from '../api-serverless/src/generated/models/ApiAvailableRatingCredit';
-import { ApiRatingWithProfileInfoAndLevel } from '../api-serverless/src/generated/models/ApiRatingWithProfileInfoAndLevel';
-import { ApiRatingWithProfileInfoAndLevelPage } from '../api-serverless/src/generated/models/ApiRatingWithProfileInfoAndLevelPage';
-import { IdentitiesDb, identitiesDb } from '../identities/identities.db';
-import { RequestContext } from '../request.context';
-import { ApiBulkRepRequest } from '../api-serverless/src/generated/models/ApiBulkRepRequest';
-import {
-  abusivenessCheckService,
-  AbusivenessCheckService
-} from '../profiles/abusiveness-check.service';
-import { ProfileRepRatedEventData } from '../events/datatypes/profile-rep-rated.event-data';
-import { ProfileClassification } from '../entities/IProfile';
-import { identityFetcher } from '../api-serverless/src/identities/identity.fetcher';
-import { revokeTdhBasedDropWavesOverVotes } from '../drops/participation-drops-over-vote-revocation';
-import { appFeatures } from '../app-features';
-import { enums } from '../enums';
-import { ids } from '../ids';
-import { collections } from '../collections';
-import { metricsRecorder, MetricsRecorder } from '../metrics/MetricsRecorder';
 
 interface ProxyCreditSpend {
   readonly actionId: string;
@@ -311,6 +312,36 @@ export class RatingsService {
       timer?.stop(
         `${this.constructor.name}->updateRatingUnsafe->scheduleEvents`
       );
+
+      if (request.matter === RateMatter.REP) {
+        const change = request.rating - currentRating.rating;
+        if (change !== 0) {
+          await userNotifier.notifyOfIdentityRep(
+            {
+              rater_id: request.rater_profile_id,
+              rated_id: request.matter_target_id,
+              amount: change,
+              total: request.rating,
+              category: request.matter_category
+            },
+            connection
+          );
+        }
+      } else if (request.matter === RateMatter.CIC) {
+        const change = request.rating - currentRating.rating;
+        if (change !== 0) {
+          await userNotifier.notifyOfIdentityNic(
+            {
+              rater_id: request.rater_profile_id,
+              rated_id: request.matter_target_id,
+              amount: change,
+              total: request.rating
+            },
+            connection
+          );
+        }
+      }
+
       if (!skipLogCreation) {
         timer?.start(
           `${this.constructor.name}->updateRatingUnsafe->insertLogs`
