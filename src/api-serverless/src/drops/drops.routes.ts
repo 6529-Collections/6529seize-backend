@@ -63,6 +63,7 @@ router.get(
         include_replies?: string;
         drop_type?: ApiDropType;
         ids?: string;
+        contains_media?: string;
       },
       any
     >,
@@ -77,7 +78,8 @@ router.get(
       author_id,
       include_replies,
       drop_type,
-      ids
+      ids,
+      contains_media
     } = await prepLatestDropsSearchQuery(req);
     const latestDrops = await dropsService.findLatestDrops(
       {
@@ -90,7 +92,8 @@ router.get(
         author_id,
         include_replies,
         drop_type,
-        ids
+        ids,
+        contains_media
       },
       { timer, authenticationContext }
     );
@@ -630,6 +633,7 @@ export async function prepLatestDropsSearchQuery(
       include_replies?: string;
       drop_type?: ApiDropType;
       ids?: string;
+      contains_media?: string;
     },
     any
   >
@@ -652,6 +656,7 @@ export async function prepLatestDropsSearchQuery(
         .map((id) => id.trim())
         .filter((id) => id.length > 0)
     : null;
+  const contains_media = req.query.contains_media === 'true';
   return {
     limit,
     wave_id,
@@ -659,7 +664,8 @@ export async function prepLatestDropsSearchQuery(
     author_id,
     include_replies,
     drop_type: drop_type_enum,
-    ids
+    ids,
+    contains_media
   };
 }
 

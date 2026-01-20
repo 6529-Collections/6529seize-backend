@@ -367,7 +367,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       author_id,
       include_replies,
       drop_type,
-      ids
+      ids,
+      contains_media
     }: {
       group_id: string | null;
       group_ids_user_is_eligible_for: string[];
@@ -378,6 +379,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       include_replies: boolean;
       drop_type: DropType | null;
       ids: string[] | null;
+      contains_media: boolean;
     },
     ctx: RequestContext
   ): Promise<DropEntity[]> {
@@ -404,6 +406,10 @@ export class DropsDb extends LazyDbAccessCompatibleService {
            !include_replies ? `and reply_to_drop_id is null` : ``
          } ${author_id ? ` and d.author_id = :author_id ` : ``}${
            ids?.length ? ` and d.id in (:ids) ` : ``
+         }${
+           contains_media
+             ? ` and exists (select 1 from ${DROP_MEDIA_TABLE} dm where dm.drop_id = d.id) `
+             : ``
          } order by d.serial_no desc limit ${amount}`;
     const params: Record<string, any> = {
       ...sqlAndParams.params,
