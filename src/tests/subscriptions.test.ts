@@ -25,6 +25,7 @@ import {
   buildTransaction,
   generateRandomTokenId
 } from './test.transactions.helpers';
+import { Env } from '../env';
 
 jest.mock('../notifier-discord', () => ({
   sendDiscordUpdate: jest.fn()
@@ -45,12 +46,14 @@ describe('SubscriptionTests', () => {
   let subscriptionBalanceRepo: Mock<Repository<SubscriptionBalance>>;
   let redeemedSubscriptionRepo: Mock<Repository<RedeemedSubscription>>;
   let nftFinalSubscriptionRepo: Mock<Repository<NFTFinalSubscription>>;
+  let env: Mock<Env>;
 
   beforeEach(() => {
     entityManager = mock(EntityManager);
     subscriptionBalanceRepo = mock(Repository) as any;
     redeemedSubscriptionRepo = mock(Repository) as any;
     nftFinalSubscriptionRepo = mock(Repository) as any;
+    env = mock(Env) as any;
 
     entityManager.getRepository = jest.fn((entity: any) => {
       if (entity === SubscriptionBalance) {
@@ -64,6 +67,10 @@ describe('SubscriptionTests', () => {
       }
       return mock(Repository);
     }) as any;
+
+    env.getStringOrThrow = jest.fn((str: string) => {
+      return 'test';
+    });
 
     jest.clearAllMocks();
   });
@@ -236,7 +243,7 @@ describe('SubscriptionTests', () => {
       });
       nftFinalSubscriptionRepo.save.mockResolvedValue({} as any);
 
-      await processAirdrop(transaction, entityManager);
+      await processAirdrop(transaction, entityManager, env);
 
       expect(mockFetchBalance).toHaveBeenCalledTimes(1);
       expect(subscriptionBalanceRepo.save).toHaveBeenCalledTimes(1);
@@ -307,7 +314,7 @@ describe('SubscriptionTests', () => {
       });
       nftFinalSubscriptionRepo.save.mockResolvedValue({} as any);
 
-      await processAirdrop(transaction, entityManager);
+      await processAirdrop(transaction, entityManager, env);
 
       expect(mockFetchBalance).toHaveBeenCalledTimes(3);
       expect(subscriptionBalanceRepo.save).toHaveBeenCalledTimes(3);
@@ -395,7 +402,7 @@ describe('SubscriptionTests', () => {
       });
       nftFinalSubscriptionRepo.save.mockResolvedValue({} as any);
 
-      await processAirdrop(transaction, entityManager);
+      await processAirdrop(transaction, entityManager, env);
 
       expect(mockFetchBalance).toHaveBeenCalledTimes(2);
       expect(subscriptionBalanceRepo.save).toHaveBeenCalledTimes(2);
@@ -470,7 +477,7 @@ describe('SubscriptionTests', () => {
       });
       nftFinalSubscriptionRepo.save.mockResolvedValue({} as any);
 
-      await processAirdrop(transaction, entityManager);
+      await processAirdrop(transaction, entityManager, env);
 
       expect(mockFetchBalance).toHaveBeenCalledTimes(2);
       expect(subscriptionBalanceRepo.save).toHaveBeenCalledTimes(2);
@@ -533,7 +540,7 @@ describe('SubscriptionTests', () => {
       });
       nftFinalSubscriptionRepo.save.mockResolvedValue({} as any);
 
-      await processAirdrop(transaction, entityManager);
+      await processAirdrop(transaction, entityManager, env);
 
       expect(mockFetchBalance).toHaveBeenCalledTimes(2);
       expect(mockSendDiscordUpdate).toHaveBeenCalledWith(
@@ -579,7 +586,7 @@ describe('SubscriptionTests', () => {
       redeemedSubscriptionRepo.save.mockResolvedValue({} as any);
       nftFinalSubscriptionRepo.save.mockResolvedValue({} as any);
 
-      await processAirdrop(transaction, entityManager);
+      await processAirdrop(transaction, entityManager, env);
 
       expect(mockFetchBalance).toHaveBeenCalledTimes(1);
       expect(mockSendDiscordUpdate).toHaveBeenCalledWith(
@@ -676,7 +683,7 @@ describe('SubscriptionTests', () => {
       });
       nftFinalSubscriptionRepo.save.mockResolvedValue({} as any);
 
-      await processAirdrop(transaction, entityManager);
+      await processAirdrop(transaction, entityManager, env);
 
       expect(mockFetchBalance).toHaveBeenCalledTimes(3);
       expect(subscriptionBalanceRepo.save).toHaveBeenCalledTimes(3);

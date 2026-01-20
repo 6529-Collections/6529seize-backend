@@ -12,6 +12,7 @@ import { doInDbContext } from '../secrets';
 import * as sentryContext from '../sentry.context';
 import { updateDistributionMints } from './distribution';
 import { redeemSubscriptions } from './subscriptions';
+import { env } from '../env';
 
 const logger = Logger.get('TRANSACTIONS_PROCESSING_LOOP');
 
@@ -22,6 +23,7 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
         process.env.TRANSACTIONS_PROCESSING_RESET == 'true'
       );
       await redeemSubscriptions(
+        env,
         process.env.TRANSACTIONS_PROCESSING_RESET == 'true'
       );
     },
