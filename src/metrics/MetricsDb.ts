@@ -47,6 +47,22 @@ export type CommunityMintMetricRow = {
   edition_size: number | null;
   unminted: number;
 };
+export type MetricBucketSumRow = {
+  bucket: number;
+  metric: MetricRollupHourMetric;
+  event_count: number;
+  value_sum: number;
+};
+export type MetricBucketDistinctCountRow = {
+  bucket: number;
+  metric: MetricRollupHourMetric;
+  distinct_count: number;
+};
+export type MetricSampleRow = {
+  hour_start: number;
+  metric: MetricRollupHourMetric;
+  value_sum: number;
+};
 
 type CommunityMintMetricsQueryParams = {
   page: number;
@@ -182,6 +198,155 @@ export class MetricsDb extends LazyDbAccessCompatibleService {
       );
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->getLatestMetricSample`);
+    }
+  }
+
+  public async getMetricBucketSums(
+    metrics: MetricRollupHourMetric[],
+    since: Time,
+    end: Time,
+    bucketMs: number,
+    ctx: RequestContext
+  ): Promise<MetricBucketSumRow[]> {
+    try {
+      ctx.timer?.start(`${this.constructor.name}->getMetricBucketSums`);
+      return await this.db.execute<MetricBucketSumRow>(
+        `
+          select
+            floor((unix_timestamp(hour_start) * 1000 - :since) / :bucket_ms) as bucket,
+            metric,
+            sum(event_count) as event_count,
+            sum(value_sum) as value_sum
+          from ${METRIC_ROLLUP_HOUR_TABLE}
+          where hour_start >= from_unixtime(:since / 1000)
+            and hour_start < from_unixtime(:end / 1000)
+            and metric in (:metrics)
+          group by bucket, metric
+        `,
+        {
+          since: since.toMillis(),
+          end: end.toMillis(),
+          bucket_ms: bucketMs,
+          metrics
+        },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->getMetricBucketSums`);
+    }
+  }
+
+  public async getMetricBucketDistinctCounts(
+    metrics: MetricRollupHourMetric[],
+    since: Time,
+    end: Time,
+    bucketMs: number,
+    ctx: RequestContext
+  ): Promise<MetricBucketDistinctCountRow[]> {
+    try {
+      ctx.timer?.start(
+        `${this.constructor.name}->getMetricBucketDistinctCounts`
+      );
+      return await this.db.execute<MetricBucketDistinctCountRow>(
+        `
+          select
+            floor((unix_timestamp(hour_start) * 1000 - :since) / :bucket_ms) as bucket,
+            metric,
+            count(distinct concat(scope, '||', key1, '||', key2)) as distinct_count
+          from ${METRIC_ROLLUP_HOUR_TABLE}
+          where hour_start >= from_unixtime(:since / 1000)
+            and hour_start < from_unixtime(:end / 1000)
+            and metric in (:metrics)
+          group by bucket, metric
+        `,
+        {
+          since: since.toMillis(),
+          end: end.toMillis(),
+          bucket_ms: bucketMs,
+          metrics
+        },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(
+        `${this.constructor.name}->getMetricBucketDistinctCounts`
+      );
+    }
+  }
+
+  public async getMetricSamplesInRange(
+    metrics: MetricRollupHourMetric[],
+    since: Time,
+    end: Time,
+    ctx: RequestContext,
+    scope = 'global'
+  ): Promise<MetricSampleRow[]> {
+    try {
+      ctx.timer?.start(`${this.constructor.name}->getMetricSamplesInRange`);
+      return await this.db.execute<MetricSampleRow>(
+        `
+          select
+            unix_timestamp(hour_start) * 1000 as hour_start,
+            metric,
+            value_sum
+          from ${METRIC_ROLLUP_HOUR_TABLE}
+          where hour_start >= from_unixtime(:since / 1000)
+            and hour_start < from_unixtime(:end / 1000)
+            and metric in (:metrics)
+            and scope = :scope
+        `,
+        {
+          since: since.toMillis(),
+          end: end.toMillis(),
+          metrics,
+          scope
+        },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->getMetricSamplesInRange`);
+    }
+  }
+
+  public async getLatestMetricSamplesBefore(
+    metrics: MetricRollupHourMetric[],
+    before: Time,
+    ctx: RequestContext,
+    scope = 'global'
+  ): Promise<MetricSampleRow[]> {
+    try {
+      ctx.timer?.start(
+        `${this.constructor.name}->getLatestMetricSamplesBefore`
+      );
+      return await this.db.execute<MetricSampleRow>(
+        `
+          select
+            unix_timestamp(latest.hour_start) * 1000 as hour_start,
+            latest.metric,
+            latest.value_sum
+          from ${METRIC_ROLLUP_HOUR_TABLE} latest
+          inner join (
+            select metric, max(hour_start) as hour_start
+            from ${METRIC_ROLLUP_HOUR_TABLE}
+            where metric in (:metrics)
+              and scope = :scope
+              and hour_start < from_unixtime(:before / 1000)
+            group by metric
+          ) latest_by_metric
+            on latest.metric = latest_by_metric.metric
+            and latest.hour_start = latest_by_metric.hour_start
+          where latest.metric in (:metrics)
+            and latest.scope = :scope
+        `,
+        {
+          before: before.toMillis(),
+          metrics,
+          scope
+        },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->getLatestMetricSamplesBefore`);
     }
   }
 
