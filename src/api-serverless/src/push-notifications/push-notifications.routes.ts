@@ -80,7 +80,7 @@ const settingsSchema: Joi.ObjectSchema<Partial<PushNotificationSettingsData>> =
     identity_subscribed: Joi.boolean().optional(),
     identity_mentioned: Joi.boolean().optional(),
     identity_rep: Joi.boolean().optional(),
-    identity: Joi.boolean().optional(),
+    identity_nic: Joi.boolean().optional(),
     drop_quoted: Joi.boolean().optional(),
     drop_replied: Joi.boolean().optional(),
     drop_voted: Joi.boolean().optional(),

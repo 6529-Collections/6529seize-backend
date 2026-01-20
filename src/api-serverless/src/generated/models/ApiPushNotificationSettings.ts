@@ -26,9 +26,9 @@ export class ApiPushNotificationSettings {
     */
     'identity_rep': boolean;
     /**
-    * Notify for identity-related notifications (e.g. NIC)
+    * Notify when someone gives you NIC
     */
-    'identity': boolean;
+    'identity_nic': boolean;
     /**
     * Notify when someone quotes your drop
     */
@@ -76,8 +76,8 @@ export class ApiPushNotificationSettings {
             "format": ""
         },
         {
-            "name": "identity",
-            "baseName": "identity",
+            "name": "identity_nic",
+            "baseName": "identity_nic",
             "type": "boolean",
             "format": ""
         },
