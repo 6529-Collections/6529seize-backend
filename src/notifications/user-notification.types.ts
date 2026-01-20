@@ -73,14 +73,16 @@ export interface PriorityAlertNotificationData {
 export interface IdentityRepNotificationData {
   rater_id: string;
   rated_id: string;
-  rep_amount: number;
+  amount: number;
+  total: number;
   category: string;
 }
 
 export interface IdentityNicNotificationData {
   rater_id: string;
   rated_id: string;
-  nic_amount: number;
+  amount: number;
+  total: number;
 }
 
 export interface UserNotificationBase {

@@ -103,7 +103,8 @@ export class UserNotificationMapper {
       data: {
         rater_id: entity.additional_identity_id!,
         rated_id: entity.identity_id,
-        rep_amount: numbers.parseIntOrNull(entity.additional_data.rep_amount)!,
+        amount: numbers.parseIntOrNull(entity.additional_data.amount)!,
+        total: numbers.parseIntOrNull(entity.additional_data.total)!,
         category: entity.additional_data.category ?? ''
       }
     };
@@ -120,7 +121,8 @@ export class UserNotificationMapper {
       data: {
         rater_id: entity.additional_identity_id!,
         rated_id: entity.identity_id,
-        nic_amount: numbers.parseIntOrNull(entity.additional_data.nic_amount)!
+        amount: numbers.parseIntOrNull(entity.additional_data.amount)!,
+        total: numbers.parseIntOrNull(entity.additional_data.total)!
       }
     };
   }

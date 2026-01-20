@@ -231,12 +231,13 @@ async function handleIdentityRep(
   notification: IdentityNotificationEntity,
   additionalEntity: ApiIdentity
 ) {
-  const repAmount = (notification.additional_data as any).rep_amount;
+  const amount = (notification.additional_data as any).amount;
+  const total = (notification.additional_data as any).total;
   const category = (notification.additional_data as any).category;
-  const sign = repAmount > 0 ? '+' : '';
-  const categoryText = category ? ` for '${category}' category` : '';
-  const title = `${sign}${repAmount} REP from ${additionalEntity.handle}${categoryText}`;
-  const body = 'View profile';
+  const categoryText = category ? ` for category '${category}'` : '';
+  const title = `Updated REP${categoryText}`;
+  const sign = amount > 0 ? '+' : '';
+  const body = `${additionalEntity.handle} updated your REP by ${sign}${amount}\nNew Total: ${total}`;
   const imageUrl = additionalEntity.pfp;
   const receiverProfile = await getIdentityOrThrow(notification.identity_id);
   const data = {
@@ -251,16 +252,17 @@ async function handleIdentityNic(
   notification: IdentityNotificationEntity,
   additionalEntity: ApiIdentity
 ) {
-  const nicAmount = (notification.additional_data as any).nic_amount;
-  const sign = nicAmount > 0 ? '+' : '';
-  const title = `${sign}${nicAmount} NIC from ${additionalEntity.handle}`;
-  const body = 'View profile';
+  const amount = (notification.additional_data as any).amount;
+  const total = (notification.additional_data as any).total;
+  const title = `Updated NIC Rating`;
+  const sign = amount > 0 ? '+' : '';
+  const body = `${additionalEntity.handle} updated your NIC by ${sign}${amount}\nNew Total: ${total}`;
   const imageUrl = additionalEntity.pfp;
   const receiverProfile = await getIdentityOrThrow(notification.identity_id);
   const data = {
     redirect: 'profile',
     handle: receiverProfile.normalised_handle,
-    subroute: 'nic'
+    subroute: 'identity'
   };
   return { title, body, data, imageUrl };
 }

@@ -47,7 +47,13 @@ export class UserNotifier {
   }
 
   public async notifyOfIdentityRep(
-    { rater_id, rated_id, rep_amount, category }: IdentityRepNotificationData,
+    {
+      rater_id,
+      rated_id,
+      amount,
+      total,
+      category
+    }: IdentityRepNotificationData,
     connection?: ConnectionWrapper<any>
   ) {
     if (rater_id !== rated_id) {
@@ -61,7 +67,7 @@ export class UserNotifier {
           related_drop_2_part_no: null,
           wave_id: null,
           cause: IdentityNotificationCause.IDENTITY_REP,
-          additional_data: { rep_amount, category },
+          additional_data: { amount, total, category },
           visibility_group_id: null
         },
         connection
@@ -70,7 +76,7 @@ export class UserNotifier {
   }
 
   public async notifyOfIdentityNic(
-    { rater_id, rated_id, nic_amount }: IdentityNicNotificationData,
+    { rater_id, rated_id, amount, total }: IdentityNicNotificationData,
     connection?: ConnectionWrapper<any>
   ) {
     if (rater_id !== rated_id) {
@@ -84,7 +90,7 @@ export class UserNotifier {
           related_drop_2_part_no: null,
           wave_id: null,
           cause: IdentityNotificationCause.IDENTITY_NIC,
-          additional_data: { nic_amount },
+          additional_data: { amount, total },
           visibility_group_id: null
         },
         connection

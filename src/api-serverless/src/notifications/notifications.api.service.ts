@@ -270,7 +270,8 @@ export class NotificationsApiService {
           related_identity: profiles[data.rater_id],
           related_drops: [],
           additional_context: {
-            rep_amount: data.rep_amount,
+            amount: data.amount,
+            total: data.total,
             category: data.category
           }
         };
@@ -285,7 +286,8 @@ export class NotificationsApiService {
           related_identity: profiles[data.rater_id],
           related_drops: [],
           additional_context: {
-            nic_amount: data.nic_amount
+            amount: data.amount,
+            total: data.total
           }
         };
       }
