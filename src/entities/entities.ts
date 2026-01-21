@@ -23,6 +23,7 @@ export {
   DropBoostEntity,
   DropReferencedNftEntity
 } from './IDrop';
+export { DropBookmarkEntity } from './IDropBookmark';
 export { DropRankEntity } from './IDropRank';
 export { DropReactionsEntity } from './IDropReactions';
 export { DropRealVoteInTimeEntity } from './IDropRealVoteInTime';

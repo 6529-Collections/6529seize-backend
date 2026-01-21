@@ -15,6 +15,10 @@ import {
   dropVotingService,
   DropVotingService
 } from '../api-serverless/src/drops/drop-voting.service';
+import {
+  dropBookmarksDb,
+  DropBookmarksDb
+} from '../api-serverless/src/drops/drop-bookmarks.db';
 import { userGroupsService } from '../api-serverless/src/community-members/user-groups.service';
 import { WaveEntity } from '../entities/IWave';
 import { DropEntity } from '../entities/IDrop';
@@ -24,7 +28,8 @@ export class DeleteDropUseCase {
   public constructor(
     private readonly reactionsService: ReactionsService,
     private readonly dropVotingService: DropVotingService,
-    private readonly dropsDb: DropsDb
+    private readonly dropsDb: DropsDb,
+    private readonly dropBookmarksDb: DropBookmarksDb
   ) {}
 
   public async execute(
@@ -88,7 +93,8 @@ export class DeleteDropUseCase {
         this.dropVotingService.deleteVotes(dropId, { timer, connection }),
         this.dropsDb.deleteDropFeedItems(dropId, { timer, connection }),
         this.dropsDb.deleteDropNotifications(dropId, { timer, connection }),
-        this.dropsDb.deleteDropSubscriptions(dropId, { timer, connection })
+        this.dropsDb.deleteDropSubscriptions(dropId, { timer, connection }),
+        this.dropBookmarksDb.deleteBookmarksByDropId(dropId, connection)
       ]);
       if (model.deletion_purpose === 'DELETE') {
         await this.dropsDb.resyncParticipatoryDropCountsForWaves(
@@ -152,5 +158,6 @@ export class DeleteDropUseCase {
 export const deleteDrop = new DeleteDropUseCase(
   reactionsService,
   dropVotingService,
-  dropsDb
+  dropsDb,
+  dropBookmarksDb
 );

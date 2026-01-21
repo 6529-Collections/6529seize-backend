@@ -61,6 +61,7 @@ import { enums } from '../../../enums';
 import { numbers } from '../../../numbers';
 import { collections } from '../../../collections';
 import { DropReactionsResult, reactionsDb, ReactionsDb } from './reactions.db';
+import { dropBookmarksDb, DropBookmarksDb } from './drop-bookmarks.db';
 
 export class DropsMappers {
   constructor(
@@ -71,7 +72,8 @@ export class DropsMappers {
     private readonly identitySubscriptionsDb: IdentitySubscriptionsDb,
     private readonly dropVotingDb: DropVotingDb,
     private readonly dropVotingService: DropVotingService,
-    private readonly reactionsDb: ReactionsDb
+    private readonly reactionsDb: ReactionsDb,
+    private readonly dropBookmarksDb: DropBookmarksDb
   ) {}
 
   public createDropApiToUseCaseModel({
@@ -295,7 +297,8 @@ export class DropsMappers {
       dropsInWavesWhereNegativeVotesAreNotAllowed,
       dropReactions,
       boostsCount,
-      boostsByAuthenticatedUser
+      boostsByAuthenticatedUser,
+      bookmarksByAuthenticatedUser
     ] = await Promise.all([
       this.dropVotingDb.getParticipationDropsRealtimeRanks(
         participatoryDropIds,
@@ -366,6 +369,15 @@ export class DropsMappers {
               connection
             }
           )
+        : Promise.resolve(new Set<string>()),
+      contextProfileId
+        ? this.dropBookmarksDb.findBookmarkedDropIds(
+            {
+              identity_id: contextProfileId,
+              drop_ids: allDropIds
+            },
+            connection
+          )
         : Promise.resolve(new Set<string>())
     ]);
     return {
@@ -398,7 +410,8 @@ export class DropsMappers {
       dropsInWavesWhereNegativeVotesAreNotAllowed,
       dropReactions,
       boostsCount,
-      boostsByAuthenticatedUser
+      boostsByAuthenticatedUser,
+      bookmarksByAuthenticatedUser
     };
   }
 
@@ -429,7 +442,8 @@ export class DropsMappers {
       dropsInWavesWhereNegativeVotesAreNotAllowed,
       dropReactions,
       boostsCount,
-      boostsByAuthenticatedUser
+      boostsByAuthenticatedUser,
+      bookmarksByAuthenticatedUser
     } = await this.getAllDropsRelatedData(
       {
         dropEntities: entities,
@@ -516,7 +530,8 @@ export class DropsMappers {
         dropsInWavesWhereNegativeVotesAreNotAllowed,
         dropReactions,
         boostsCount,
-        boostsByAuthenticatedUser
+        boostsByAuthenticatedUser,
+        bookmarksByAuthenticatedUser
       });
     });
   }
@@ -546,7 +561,8 @@ export class DropsMappers {
     dropsInWavesWhereNegativeVotesAreNotAllowed,
     dropReactions,
     boostsCount,
-    boostsByAuthenticatedUser
+    boostsByAuthenticatedUser,
+    bookmarksByAuthenticatedUser
   }: {
     dropEntity: DropEntity;
     deletedDrops: Record<string, DeletedDropEntity>;
@@ -579,6 +595,7 @@ export class DropsMappers {
     dropReactions: Map<string, DropReactionsResult>;
     boostsCount: Record<string, number>;
     boostsByAuthenticatedUser: Set<string>;
+    bookmarksByAuthenticatedUser: Set<string>;
   }): ApiDropWithoutWave {
     const replyToDropId = dropEntity.reply_to_drop_id;
     const dropWinDecision = winDecisions[dropEntity.id];
@@ -618,7 +635,8 @@ export class DropsMappers {
         min_rating: 0,
         max_rating: 0,
         reaction: contextProfileReaction,
-        boosted: boostsByAuthenticatedUser.has(dropEntity.id)
+        boosted: boostsByAuthenticatedUser.has(dropEntity.id),
+        bookmarked: bookmarksByAuthenticatedUser.has(dropEntity.id)
       };
     }
     if (dropEntity.drop_type === DropType.WINNER) {
@@ -638,7 +656,8 @@ export class DropsMappers {
           min_rating: winningDropsRatingsByVoter[dropEntity.id] ?? 0,
           max_rating: winningDropsRatingsByVoter[dropEntity.id] ?? 0,
           reaction: contextProfileReaction,
-          boosted: boostsByAuthenticatedUser.has(dropEntity.id)
+          boosted: boostsByAuthenticatedUser.has(dropEntity.id),
+          bookmarked: bookmarksByAuthenticatedUser.has(dropEntity.id)
         };
       }
     } else if (dropEntity.drop_type === DropType.PARTICIPATORY) {
@@ -667,7 +686,8 @@ export class DropsMappers {
           min_rating: minRating,
           max_rating: submissionDropsVotingRanges[dropEntity.id]?.max ?? 0,
           reaction: contextProfileReaction,
-          boosted: boostsByAuthenticatedUser.has(dropEntity.id)
+          boosted: boostsByAuthenticatedUser.has(dropEntity.id),
+          bookmarked: bookmarksByAuthenticatedUser.has(dropEntity.id)
         };
       }
     }
@@ -712,7 +732,8 @@ export class DropsMappers {
                   dropsInWavesWhereNegativeVotesAreNotAllowed,
                   dropReactions,
                   boostsCount,
-                  boostsByAuthenticatedUser
+                  boostsByAuthenticatedUser,
+                  bookmarksByAuthenticatedUser
                 })
               : undefined
           }
@@ -756,7 +777,8 @@ export class DropsMappers {
                           dropsInWavesWhereNegativeVotesAreNotAllowed,
                           dropReactions,
                           boostsCount,
-                          boostsByAuthenticatedUser
+                          boostsByAuthenticatedUser,
+                          bookmarksByAuthenticatedUser
                         })
                       : undefined
                   }
@@ -818,5 +840,6 @@ export const dropsMappers = new DropsMappers(
   identitySubscriptionsDb,
   dropVotingDb,
   dropVotingService,
-  reactionsDb
+  reactionsDb,
+  dropBookmarksDb
 );
