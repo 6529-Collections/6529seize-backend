@@ -4234,6 +4234,22 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/ApiWave"
+  /waves-overview/hot:
+    get:
+      tags:
+        - Waves
+      summary: Get hot waves overview.
+      description: Returns up to 25 public waves ranked by activity in the last 24 hours.
+      operationId: getHotWavesOverview
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ApiWave"
   /waves:
     get:
       tags:

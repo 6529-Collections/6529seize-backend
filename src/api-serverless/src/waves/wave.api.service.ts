@@ -1023,6 +1023,52 @@ export class WaveApiService {
     );
   }
 
+  public async getHotWaves(ctx: RequestContext): Promise<ApiWave[]> {
+    const authenticationContext = ctx?.authenticationContext;
+    const authenticatedProfileId =
+      authenticationContext?.getActingAsId() ?? null;
+    const eligibleGroups =
+      !authenticationContext ||
+      !authenticatedProfileId ||
+      (authenticationContext.isAuthenticatedAsProxy() &&
+        !authenticationContext.activeProxyActions[
+          ProfileProxyActionType.READ_WAVE
+        ])
+        ? []
+        : await this.userGroupsService.getGroupsUserIsEligibleFor(
+            authenticatedProfileId,
+            ctx.timer
+          );
+    const cutoffTimestamp = Time.currentMillis() - Time.hours(24).toMillis();
+    const waveEntities = await this.wavesApiDb.findHotWaves({
+      cutoffTimestamp,
+      limit: 25
+    });
+    const noRightToVote =
+      !authenticationContext ||
+      !authenticatedProfileId ||
+      (authenticationContext.isAuthenticatedAsProxy() &&
+        !authenticationContext.activeProxyActions[
+          ProfileProxyActionType.RATE_WAVE_DROP
+        ]);
+    const noRightToParticipate =
+      !authenticationContext ||
+      !authenticatedProfileId ||
+      (authenticationContext.isAuthenticatedAsProxy() &&
+        !authenticationContext.activeProxyActions[
+          ProfileProxyActionType.CREATE_DROP_TO_WAVE
+        ]);
+    return this.waveMappers.waveEntitiesToApiWaves(
+      {
+        waveEntities,
+        groupIdsUserIsEligibleFor: eligibleGroups,
+        noRightToVote,
+        noRightToParticipate
+      },
+      ctx
+    );
+  }
+
   private async findWaveEntitiesByType({
     eligibleGroups,
     type,

@@ -1342,6 +1342,59 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       );
   }
 
+  async findHotWaves({
+    cutoffTimestamp,
+    limit
+  }: {
+    cutoffTimestamp: number;
+    limit: number;
+  }): Promise<WaveEntity[]> {
+    return this.db
+      .execute<
+        Omit<
+          WaveEntity,
+          | 'participation_required_media'
+          | 'participation_required_metadata'
+          | 'decisions_strategy'
+        > & {
+          participation_required_media: string;
+          participation_required_metadata: string;
+          decisions_strategy: string;
+        }
+      >(
+        `with hot_waves as (
+          select w.id, count(*) as drop_count
+          from ${WAVES_TABLE} w
+          join ${DROPS_TABLE} d on d.wave_id = w.id
+          where d.created_at >= :cutoffTimestamp
+            and w.visibility_group_id is null
+            and w.chat_group_id is null
+          group by w.id
+          having count(distinct d.author_id) >= 3
+          order by drop_count desc
+          limit :limit
+        )
+        select w.* from ${WAVES_TABLE} w
+        join hot_waves hw on hw.id = w.id
+        order by hw.drop_count desc, w.id`,
+        { cutoffTimestamp, limit }
+      )
+      .then((res) =>
+        res.map((it) => ({
+          ...it,
+          participation_required_media: JSON.parse(
+            it.participation_required_media
+          ),
+          participation_required_metadata: JSON.parse(
+            it.participation_required_metadata
+          ),
+          decisions_strategy: it.decisions_strategy
+            ? JSON.parse(it.decisions_strategy)
+            : null
+        }))
+      );
+  }
+
   async findRecentlyDroppedToWaves(param: {
     authenticated_user_id: string | null;
     only_waves_followed_by_authenticated_user: boolean;

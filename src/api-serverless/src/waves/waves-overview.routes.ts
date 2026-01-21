@@ -9,8 +9,27 @@ import { waveApiService, WavesOverviewParams } from './wave.api.service';
 import { ApiWavesOverviewType } from '../generated/models/ApiWavesOverviewType';
 import { Timer } from '../../../time';
 import { ApiWavesPinFilter } from '../generated/models/ApiWavesPinFilter';
+import { cacheRequest } from '../request-cache';
 
 const router = asyncRouter();
+
+router.get(
+  '/hot',
+  maybeAuthenticatedUser(),
+  cacheRequest({ authDependent: true }),
+  async (
+    req: Request<any, any, any, any, any>,
+    res: Response<ApiResponse<ApiWave[]>>
+  ) => {
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
+    const waves = await waveApiService.getHotWaves({
+      timer,
+      authenticationContext
+    });
+    res.send(waves);
+  }
+);
 
 router.get(
   '/',
