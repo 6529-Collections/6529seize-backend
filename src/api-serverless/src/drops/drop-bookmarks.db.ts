@@ -24,7 +24,6 @@ export class DropBookmarksDb extends LazyDbAccessCompatibleService {
       },
       connection ? { wrappedConnection: connection } : undefined
     );
-    console.log(`Insert ${param.identity_id} to ${param.drop_id}`);
   }
 
   async deleteBookmark(
