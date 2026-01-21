@@ -40,6 +40,7 @@ import {
 } from './drop.validator';
 import { dropsService, GetDropsBoostsRequest } from './drops.api.service';
 import { reactionsService } from './reactions.service';
+import { dropBookmarksApiService } from './drop-bookmarks.api.service';
 import { ApiPageSortDirection } from '../generated/models/ApiPageSortDirection';
 import { DEFAULT_MAX_SIZE, DEFAULT_PAGE_SIZE } from '../page-request';
 import { ApiDropBoostsPage } from '../generated/models/ApiDropBoostsPage';
@@ -616,6 +617,38 @@ router.delete(
     const ctx = { timer, authenticationContext };
     await dropsService.deleteDropBoost(dropId, ctx);
     res.send({});
+  }
+);
+
+router.post(
+  '/:drop_id/bookmark',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<{ drop_id: string }, any, any, any, any>,
+    res: Response<ApiResponse<ApiDrop>>
+  ) => {
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
+    const dropId = req.params.drop_id;
+    const ctx = { timer, authenticationContext };
+    const drop = await dropBookmarksApiService.bookmarkDrop(dropId, ctx);
+    res.send(drop);
+  }
+);
+
+router.delete(
+  '/:drop_id/bookmark',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<{ drop_id: string }, any, any, any, any>,
+    res: Response<ApiResponse<ApiDrop>>
+  ) => {
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
+    const dropId = req.params.drop_id;
+    const ctx = { timer, authenticationContext };
+    const drop = await dropBookmarksApiService.unbookmarkDrop(dropId, ctx);
+    res.send(drop);
   }
 );
 
