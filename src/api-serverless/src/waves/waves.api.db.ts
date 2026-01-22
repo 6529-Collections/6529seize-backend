@@ -344,16 +344,16 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
          } cm on cm.profile_id = w.created_by
          where ${searchParams.author ? ` w.created_by = :author and ` : ``} ${
            searchParams.name ? ` w.name like :name and ` : ``
-         } (${
+         } ${
+           searchParams.direct_message !== undefined
+             ? ` w.is_direct_message = :direct_message and `
+             : ``
+         }(${
            groupsUserIsEligibleFor.length
              ? `w.visibility_group_id in (:groupsUserIsEligibleFor) or w.admin_group_id in (:groupsUserIsEligibleFor) or`
              : ``
          } w.visibility_group_id is null) and w.serial_no < :serialNoLessThan order by w.serial_no desc limit ${
            searchParams.limit
-         }${
-           searchParams.direct_message !== undefined
-             ? ` and w.is_direct_message = :direct_message`
-             : ``
          }`;
     const params: Record<string, any> = {
       ...sqlAndParams.params,
