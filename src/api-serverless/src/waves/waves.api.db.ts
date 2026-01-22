@@ -2043,16 +2043,16 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
 
     const dbresult = await this.db.execute<{ wave_id: string; cnt: number }>(
       `
-        SELECT d.wave_id AS wave_id, COUNT(d.id) AS cnt
-        FROM ${DROPS_TABLE} d
-        LEFT JOIN ${WAVE_READER_METRICS_TABLE} r
-          ON r.wave_id = d.wave_id
-          AND r.reader_id = :identityId
-        WHERE d.wave_id IN (:waveIds)
-          AND r.latest_read_timestamp IS NOT NULL
+        SELECT r.wave_id AS wave_id, COUNT(d.id) AS cnt
+        FROM ${WAVE_READER_METRICS_TABLE} r
+        INNER JOIN ${DROPS_TABLE} d
+          ON d.wave_id = r.wave_id
           AND d.created_at > r.latest_read_timestamp
+        WHERE r.reader_id = :identityId
+          AND r.wave_id IN (:waveIds)
+          AND r.latest_read_timestamp IS NOT NULL
           AND COALESCE(r.muted, false) = false
-        GROUP BY d.wave_id
+        GROUP BY r.wave_id
     `,
       param,
       { wrappedConnection: ctx.connection }
@@ -2090,16 +2090,16 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       serial_no: number;
     }>(
       `
-        SELECT d.wave_id, MIN(d.serial_no) AS serial_no
-        FROM ${DROPS_TABLE} d
-        LEFT JOIN ${WAVE_READER_METRICS_TABLE} r
-          ON r.wave_id = d.wave_id
-          AND r.reader_id = :identityId
-        WHERE d.wave_id IN (:waveIds)
-          AND r.latest_read_timestamp IS NOT NULL
+        SELECT r.wave_id, MIN(d.serial_no) AS serial_no
+        FROM ${WAVE_READER_METRICS_TABLE} r
+        INNER JOIN ${DROPS_TABLE} d
+          ON d.wave_id = r.wave_id
           AND d.created_at > r.latest_read_timestamp
+        WHERE r.reader_id = :identityId
+          AND r.wave_id IN (:waveIds)
+          AND r.latest_read_timestamp IS NOT NULL
           AND COALESCE(r.muted, false) = false
-        GROUP BY d.wave_id
+        GROUP BY r.wave_id
     `,
       param,
       { wrappedConnection: ctx.connection }
