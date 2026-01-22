@@ -508,18 +508,21 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
       `
           WITH needed_waves AS (SELECT DISTINCT wave_id
                                 FROM ${DROPS_TABLE}
-                                WHERE id IN (:dropIds))
-          SELECT d.id  AS drop_id,
-                 RANK() OVER (
-                     PARTITION BY d.wave_id
-                     ORDER BY IFNULL(r.vote, 0) DESC,
-                         IFNULL(r.last_increased, d.created_at)
-                     ) AS rnk
-          FROM ${DROPS_TABLE} d
-                   LEFT JOIN ${DROP_RANK_TABLE} r
-                             ON r.drop_id = d.id
-          WHERE d.drop_type = 'PARTICIPATORY'
-            AND d.wave_id IN (SELECT wave_id FROM needed_waves)
+                                WHERE id IN (:dropIds)),
+               all_ranks AS (
+                   SELECT d.id  AS drop_id,
+                          RANK() OVER (
+                              PARTITION BY d.wave_id
+                              ORDER BY IFNULL(r.vote, 0) DESC,
+                                  IFNULL(r.last_increased, d.created_at)
+                              ) AS rnk
+                   FROM ${DROPS_TABLE} d
+                            LEFT JOIN ${DROP_RANK_TABLE} r
+                                      ON r.drop_id = d.id
+                   WHERE d.drop_type = 'PARTICIPATORY'
+                     AND d.wave_id IN (SELECT wave_id FROM needed_waves)
+               )
+          SELECT * FROM all_ranks WHERE drop_id IN (:dropIds)
       `,
       { dropIds },
       { wrappedConnection: ctx.connection }
