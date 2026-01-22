@@ -2045,7 +2045,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       `
         SELECT r.wave_id AS wave_id, COUNT(d.id) AS cnt
         FROM ${WAVE_READER_METRICS_TABLE} r
-        INNER JOIN ${DROPS_TABLE} d
+        INNER JOIN ${DROPS_TABLE} d USE INDEX (idx_drop_wave_created_at)
           ON d.wave_id = r.wave_id
           AND d.created_at > r.latest_read_timestamp
         WHERE r.reader_id = :identityId
@@ -2092,7 +2092,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       `
         SELECT r.wave_id, MIN(d.serial_no) AS serial_no
         FROM ${WAVE_READER_METRICS_TABLE} r
-        INNER JOIN ${DROPS_TABLE} d
+        INNER JOIN ${DROPS_TABLE} d USE INDEX (idx_drop_wave_created_at)
           ON d.wave_id = r.wave_id
           AND d.created_at > r.latest_read_timestamp
         WHERE r.reader_id = :identityId
