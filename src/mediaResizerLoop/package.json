@@ -13,7 +13,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "esbuild": "^0.19.10",
+    "esbuild": "^0.27.2",
     "sharp": "^0.33.2"
   },
   "devDependencies": {
