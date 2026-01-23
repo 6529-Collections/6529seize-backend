@@ -97,7 +97,7 @@
     "joi": "^17.11.0",
     "json-2-csv": "^3.18.0",
     "memory-cache": "^0.2.0",
-    "merkletreejs": "^0.3.10",
+    "merkletreejs": "^0.6.0",
     "moment-timezone": "^0.5.45",
     "mysql": "^2.18.1",
     "node-cron": "^3.0.2",
