@@ -1,13 +1,13 @@
-# DCO sign-off missing for PR #1315 commits
+# DCO signoff required for PR #1315 commits
 
 ## Context
-PR #1315 is blocked by the DCO check because two commits on the branch are missing `Signed-off-by` lines.
+The DCO check for PR #1315 reports three commits without a Signed-off-by line, so the PR is blocked on DCO compliance.
 
 ## Impact
-The PR cannot be merged until the commits are rewritten with proper DCO sign-offs.
+CI remains red until all commits in the PR include a valid Signed-off-by footer. This blocks merge.
 
 ## Proposed fix
-Rebase the branch with sign-off (e.g. `git rebase HEAD~2 --signoff`) and force-push, or cherry-pick into a new branch with `-s`.
+Rebase the PR branch and add signoffs (e.g., `git rebase HEAD~3 --signoff`) and force-push the updated history. Ensure each commit includes `Signed-off-by: <name> <accountcode+username@users.noreply.github.com>`.
 
 ## Owner
-TBD
+PR author/maintainer of branch `evolvecoder-auto/Review-this-repo-in-the-role-of-a-world--20260123-065000`.
