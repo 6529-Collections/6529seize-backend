@@ -77,7 +77,7 @@
     "@wagmi/chains": "^1.8.0",
     "alchemy-sdk": "^3.0.0",
     "arweave": "^1.11.6",
-    "axios": "^1.6.4",
+    "axios": "^1.13.2",
     "axios-retry": "^4.5.0",
     "bignumber.js": "^9.1.1",
     "bottleneck": "^2.19.5",
