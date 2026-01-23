@@ -19,7 +19,7 @@
   "dependencies": {
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@ffmpeg-installer/linux-x64": "^4.1.0",
-    "detect-libc": "^2.0.1",
+    "detect-libc": "^2.1.2",
     "esbuild": "^0.27.2",
     "fluent-ffmpeg": "^2.1.2",
     "imagescript": "^1.2.17",
