@@ -73,7 +73,7 @@
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@sentry/serverless": "^7.91.0",
     "@smithy/node-http-handler": "^4.0.4",
-    "@types/multer": "^1.4.9",
+    "@types/multer": "^2.0.0",
     "@wagmi/chains": "^1.8.0",
     "alchemy-sdk": "^3.0.0",
     "arweave": "^1.11.6",
