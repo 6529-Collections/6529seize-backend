@@ -24,8 +24,9 @@ export interface CollectedCard {
   readonly szn: string | null;
 }
 
-export interface CollectedQuery
-  extends FullPageRequest<'token_id' | 'tdh' | 'rank'> {
+export interface CollectedQuery extends FullPageRequest<
+  'token_id' | 'tdh' | 'rank'
+> {
   readonly identity: string;
   readonly collection: CollectionType | null;
   readonly account_for_consolidations: boolean;
