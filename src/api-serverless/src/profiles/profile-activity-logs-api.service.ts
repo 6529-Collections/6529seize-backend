@@ -118,10 +118,8 @@ export class ProfileActivityLogsApiService {
   }
 }
 
-export interface ApiProfileActivityLog extends Omit<
-  ProfileActivityLog,
-  'contents'
-> {
+export interface ApiProfileActivityLog
+  extends Omit<ProfileActivityLog, 'contents'> {
   readonly contents: object;
   readonly profile_handle: string;
   readonly proxy_handle: string | null;

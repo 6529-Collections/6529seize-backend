@@ -14,10 +14,8 @@ import { ApiCommunityMemberOverview } from '../generated/models/ApiCommunityMemb
 import { CommunityMembersQuery } from './community-members.types';
 import { UserGroupsService, userGroupsService } from './user-groups.service';
 
-export interface CommunityMemberFromDb extends Omit<
-  ApiCommunityMemberOverview,
-  'last_activity'
-> {
+export interface CommunityMemberFromDb
+  extends Omit<ApiCommunityMemberOverview, 'last_activity'> {
   readonly consolidation_key: string;
 }
 
