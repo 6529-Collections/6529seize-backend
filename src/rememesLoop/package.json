@@ -14,13 +14,13 @@
   "license": "ISC",
   "devDependencies": {
     "@types/aws-lambda": "^8.10.110",
-    "esbuild": "^0.17.5"
+    "esbuild": "^0.27.2"
   },
   "dependencies": {
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@ffmpeg-installer/linux-x64": "^4.1.0",
-    "detect-libc": "^2.0.1",
-    "esbuild": "^0.19.6",
+    "detect-libc": "^2.1.2",
+    "esbuild": "^0.27.2",
     "fluent-ffmpeg": "^2.1.2",
     "imagescript": "^1.2.17",
     "sharp": "^0.33.2"
