@@ -85,7 +85,7 @@
     "csv-parser": "^3.0.0",
     "db-migrate": "^0.11.14",
     "db-migrate-mysql": "^3.0.0",
-    "discord.js": "^14.19.3",
+    "discord.js": "^14.25.1",
     "dotenv": "^16.0.3",
     "ethereum-block-by-date": "^1.4.9",
     "ethers": "^5.7.2",

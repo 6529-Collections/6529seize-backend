@@ -16,6 +16,6 @@
     "esbuild": "^0.27.2"
   },
   "dependencies": {
-    "discord.js": "^14.12.1"
+    "discord.js": "^14.25.1"
   }
 }
