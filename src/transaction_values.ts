@@ -5,7 +5,7 @@ import {
   Network,
   Utils
 } from 'alchemy-sdk';
-import { BigNumber, ethers } from 'ethers';
+import { ethers } from 'ethers';
 import { SEAPORT_IFACE } from './abis/seaport';
 import {
   ACK_DEPLOYER,
@@ -61,7 +61,7 @@ function resolveLogAddress(address: string) {
     return NULL_ADDRESS;
   }
   const addressHex = '0x' + address.slice(-40);
-  return ethers.utils.getAddress(addressHex);
+  return ethers.getAddress(addressHex);
 }
 
 function resolveLogValue(data: string) {
@@ -126,7 +126,7 @@ async function resolveValue(t: Transaction) {
       ).length || 1;
 
     if (receipt?.gasUsed) {
-      const gasUnits = receipt.gasUsed.toNumber();
+      const gasUnits = Number(receipt.gasUsed);
       const gasPrice = parseFloat(Utils.formatEther(receipt.effectiveGasPrice));
       const gasPriceGwei =
         Math.round(gasPrice * 1000000000 * 100000000) / 100000000;
@@ -262,7 +262,7 @@ async function resolveValue(t: Transaction) {
   return t;
 }
 
-const isSeaportEvent = (receipt: ethers.providers.TransactionReceipt) => {
+const isSeaportEvent = (receipt: { logs: { topics: string[] }[] }) => {
   return receipt.logs.some((log) =>
     equalIgnoreCase(log.topics[0], OPENSEA_EVENT)
   );
@@ -271,11 +271,11 @@ const isSeaportEvent = (receipt: ethers.providers.TransactionReceipt) => {
 const parseSeaportLog = async (
   t: Transaction,
   royaltiesAddress: string,
-  log: ethers.providers.Log
+  log: { topics: string[]; data: string; address: string }
 ) => {
   let seaResult;
   try {
-    seaResult = SEAPORT_IFACE.parseLog(log);
+    seaResult = SEAPORT_IFACE.parseLog(log)!;
   } catch (e: any) {
     logger.debug(
       `SEAPORT PARSE ERROR for transaction ${t.transaction} [ERROR: ${e.message}]`
@@ -372,7 +372,7 @@ const parseSeaportLog = async (
   }
 };
 
-const isBlurEvent = (log: ethers.providers.Log) => {
+const isBlurEvent = (log: { topics: string[] }) => {
   return equalIgnoreCase(log.topics[0], BLUR_EVENT);
 };
 
@@ -488,7 +488,7 @@ const ItemType = {
   ERC1155_WITH_CRITERIA: 5
 } as const;
 
-const IFACE = new ethers.utils.Interface([
+const IFACE = new ethers.Interface([
   // Seaport v1.6 events
   'event OrderFulfilled(bytes32 orderHash,address offerer,address zone,address recipient,(uint8 itemType,address token,uint256 identifier,uint256 amount)[] offer,(uint8 itemType,address token,uint256 identifier,uint256 amount,address recipient)[] consideration)',
   // ERC721 & ERC1155 Transfer events
@@ -515,7 +515,7 @@ const isCurrencyItemType = (t: number) =>
  * - `seaportAddress` is Seaport v1.6 address for the chain you’re on.
  */
 function attributeRowFromSeaportTx(
-  receipt: ethers.providers.TransactionReceipt,
+  receipt: { logs: { topics: string[]; data: string; address: string }[] },
   row: Transaction,
   royaltiesAddress: string
 ): RowAttribution | null {
@@ -533,11 +533,11 @@ function attributeRowFromSeaportTx(
     // ERC721 Transfer
     if (
       lg.topics.length === 4 &&
-      lg.topics[0] === IFACE.getEventTopic('Transfer')
+      lg.topics[0] === IFACE.getEvent('Transfer')!.topicHash
     ) {
-      const from = ethers.utils.getAddress('0x' + lg.topics[1].slice(26));
-      const to = ethers.utils.getAddress('0x' + lg.topics[2].slice(26));
-      const tokenId = ethers.BigNumber.from(lg.topics[3]).toString();
+      const from = ethers.getAddress('0x' + lg.topics[1].slice(26));
+      const to = ethers.getAddress('0x' + lg.topics[2].slice(26));
+      const tokenId = BigInt(lg.topics[3]).toString();
       nftEdges.push({
         from,
         to,
@@ -549,7 +549,7 @@ function attributeRowFromSeaportTx(
     }
 
     // ERC1155 TransferSingle
-    if (lg.topics[0] === IFACE.getEventTopic('TransferSingle')) {
+    if (lg.topics[0] === IFACE.getEvent('TransferSingle')!.topicHash) {
       const decoded = IFACE.decodeEventLog(
         'TransferSingle',
         lg.data,
@@ -557,8 +557,8 @@ function attributeRowFromSeaportTx(
       );
       const from = decoded.from as string;
       const to = decoded.to as string;
-      const id = (decoded.id as ethers.BigNumber).toString();
-      const value = BigInt((decoded.value as ethers.BigNumber).toString());
+      const id = (decoded.id as bigint).toString();
+      const value = decoded.value as bigint;
       nftEdges.push({
         from,
         to,
@@ -570,23 +570,19 @@ function attributeRowFromSeaportTx(
     }
 
     // ERC1155 TransferBatch
-    if (lg.topics[0] === IFACE.getEventTopic('TransferBatch')) {
+    if (lg.topics[0] === IFACE.getEvent('TransferBatch')!.topicHash) {
       const decoded = IFACE.decodeEventLog('TransferBatch', lg.data, lg.topics);
       const from = decoded.from as string;
       const to = decoded.to as string;
-      const ids: BigNumber[] = Array.isArray(decoded.ids)
-        ? (decoded.ids as unknown as BigNumber[])
-        : [];
-      const values: BigNumber[] = Array.isArray(decoded.values)
-        ? (decoded.values as unknown as BigNumber[])
-        : [];
+      const ids = decoded.ids as bigint[];
+      const decodedValues = decoded[4] as bigint[]; // values is at index 4 in the result
       ids.forEach((bn, i) => {
         nftEdges.push({
           from,
           to,
           contract: lg.address,
           tokenId: bn.toString(),
-          amount: BigInt(values?.[i]?.toString() ?? '0')
+          amount: decodedValues?.[i] ?? BigInt(0)
         });
       });
     }
@@ -617,7 +613,7 @@ function attributeRowFromSeaportTx(
   const OrderEvts: OrderEvt[] = [];
 
   for (const lg of receipt.logs) {
-    let parsed: ethers.utils.LogDescription | null = null;
+    let parsed: ethers.LogDescription | null = null;
     try {
       parsed = SEAPORT_IFACE.parseLog(lg);
     } catch {
@@ -648,16 +644,16 @@ function attributeRowFromSeaportTx(
       .filter((o) => isNftItemType(Number(o.itemType)))
       .map((o) => ({
         contract: o.token as string,
-        tokenId: (o.identifier as ethers.BigNumber).toString(),
-        amount: BigInt((o.amount as ethers.BigNumber).toString())
+        tokenId: (o.identifier as bigint).toString(),
+        amount: o.amount as bigint
       }));
 
     const considerationNfts = consideration
       .filter((c) => isNftItemType(Number(c.itemType)))
       .map((c) => ({
         contract: c.token as string,
-        tokenId: (c.identifier as ethers.BigNumber).toString(),
-        amount: BigInt((c.amount as ethers.BigNumber).toString())
+        tokenId: (c.identifier as bigint).toString(),
+        amount: c.amount as bigint
       }));
 
     // currency totals on both sides
@@ -667,9 +663,7 @@ function attributeRowFromSeaportTx(
       const it = Number(o.itemType);
       if (isCurrencyItemType(it)) {
         try {
-          totalOfferCurrency += BigInt(
-            (o.amount as ethers.BigNumber).toString()
-          );
+          totalOfferCurrency += o.amount as bigint;
           currency ??= { itemType: it, token: o.token as string };
         } catch (e: any) {
           logger.debug(
@@ -824,7 +818,7 @@ function attributeRowFromSeaportTx(
       equalIgnoreCase(lg.topics?.[0], OPENSEA_MATCH_EVENT)
     );
     for (const ml of matchLogs) {
-      let parsedMatch: ethers.utils.LogDescription | null = null;
+      let parsedMatch: ethers.LogDescription | null = null;
       try {
         parsedMatch = SEAPORT_IFACE.parseLog(ml);
       } catch {
@@ -949,7 +943,7 @@ function attributeRowFromSeaportTx(
   // This only applies for ERC20 currency (e.g., WETH). ERC20 Transfer has 3 topics: [Transfer, from, to] and amount in data.
   try {
     if (mergedCurrency && mergedCurrency.itemType === ItemType.ERC20) {
-      const erc20TransferTopic = IFACE.getEventTopic('Transfer'); // same signature as ERC721, but ERC20 uses 3 topics
+      const erc20TransferTopic = IFACE.getEvent('Transfer')!.topicHash; // same signature as ERC721, but ERC20 uses 3 topics
       let buyerOut = BigInt(0);
       for (const lg of receipt.logs) {
         if (
@@ -958,7 +952,7 @@ function attributeRowFromSeaportTx(
           lg.topics[0] === erc20TransferTopic &&
           equalIgnoreCase(lg.address, mergedCurrency.token)
         ) {
-          const from = ethers.utils.getAddress('0x' + lg.topics[1].slice(26));
+          const from = ethers.getAddress('0x' + lg.topics[1].slice(26));
           if (equalIgnoreCase(from, row.to_address)) {
             // amount is in data for ERC20 Transfer
             const amt = BigInt(lg.data);

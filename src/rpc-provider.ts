@@ -1,6 +1,6 @@
-import { ethers } from 'ethers';
+import { JsonRpcProvider } from 'ethers';
 
-const providers = new Map<number, ethers.providers.JsonRpcProvider>();
+const providers = new Map<number, JsonRpcProvider>();
 
 function getAlchemyPathForNetwork(networkId: number): string {
   switch (networkId) {
@@ -22,13 +22,9 @@ function getAlchemyUrl(networkId: number): string {
   return `https://${networkPrefix}.g.alchemy.com/v2/${alchemyApiKey}`;
 }
 
-export function getRpcProvider(
-  networkId = 1
-): ethers.providers.JsonRpcProvider {
+export function getRpcProvider(networkId = 1): JsonRpcProvider {
   if (!providers.has(networkId)) {
-    const provider = new ethers.providers.JsonRpcProvider(
-      getAlchemyUrl(networkId)
-    );
+    const provider = new JsonRpcProvider(getAlchemyUrl(networkId));
     providers.set(networkId, provider);
   }
   return providers.get(networkId)!;

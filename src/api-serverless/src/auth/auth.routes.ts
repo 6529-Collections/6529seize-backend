@@ -37,7 +37,7 @@ router.get(
   ) {
     const shortNonce = req.query.short_nonce?.toLowerCase() === 'true';
     const signerAddress = req.query.signer_address?.toLocaleLowerCase();
-    if (!signerAddress || !ethers.utils.isAddress(signerAddress)) {
+    if (!signerAddress || !ethers.isAddress(signerAddress)) {
       throw new UnauthorisedException(
         `Invalid signer address ${signerAddress}`
       );
@@ -197,13 +197,13 @@ async function verifyClientSignature(
         `client_address is mandatory in safe signatures`
       );
     }
-    const messageHash = ethers.utils.hashMessage(nonce); // returns bytes32
+    const messageHash = ethers.hashMessage(nonce); // returns bytes32
 
     const EIP1271_ABI = [
       'function isValidSignature(bytes32 _messageHash, bytes _signature) public view returns (bytes4)'
     ];
 
-    const provider = new ethers.providers.JsonRpcProvider(
+    const provider = new ethers.JsonRpcProvider(
       `https://eth-mainnet.alchemyapi.io/v2/${env.getStringOrThrow(`ALCHEMY_API_KEY`)}`
     );
     const safeContract = new ethers.Contract(
@@ -223,7 +223,7 @@ async function verifyClientSignature(
       throw new Error('Invalid client signature');
     }
   } else {
-    const signingAddress = ethers.utils
+    const signingAddress = ethers
       .verifyMessage(nonce, clientSignature)
       ?.toLowerCase();
     if (
