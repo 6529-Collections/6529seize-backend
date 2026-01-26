@@ -66,7 +66,6 @@ import { randomUUID } from 'crypto';
 import { Strategy as AnonymousStrategy } from 'passport-anonymous';
 import * as process from 'process';
 import * as SwaggerUI from 'swagger-ui-express';
-import { Artist } from '../../entities/IArtist';
 import { NFT } from '../../entities/INFT';
 import { TDHBlock } from '../../entities/ITDH';
 import { Upload } from '../../entities/IUpload';
@@ -96,9 +95,7 @@ import {
   transformPaginatedResponse
 } from './api-helpers';
 import { ApiResponse } from './api-response';
-import { ApiArtistItem } from './generated/models/ApiArtistItem';
 import { ApiArtistNameItem } from './generated/models/ApiArtistNameItem';
-import { ApiArtistsPage } from './generated/models/ApiArtistsPage';
 import { ApiBlockItem } from './generated/models/ApiBlockItem';
 import { ApiBlocksPage } from './generated/models/ApiBlocksPage';
 import { ApiNft } from './generated/models/ApiNft';
@@ -447,37 +444,6 @@ async function initializeApp() {
             res
           );
         });
-    }
-  );
-
-  apiRouter.get(
-    `/artists`,
-    cacheRequest(),
-    async function (req: any, res: Response<ApiResponse<ApiArtistsPage>>) {
-      const pageSize = getPageSize(req);
-      const page = getPage(req);
-
-      const meme_nfts = req.query.meme_id;
-
-      await db.fetchArtists(pageSize, page, meme_nfts).then(async (result) => {
-        await returnPaginatedResult(
-          transformPaginatedResponse(
-            (orig: Artist): ApiArtistItem => ({
-              name: orig.name,
-              bio: orig.bio ?? null,
-              pfp: orig.pfp ?? null,
-              memes: JSON.parse(orig.memes as any),
-              memelab: JSON.parse(orig.memelab as any),
-              gradients: JSON.parse(orig.gradients as any),
-              work: JSON.parse(orig.work as any),
-              social_links: JSON.parse(orig.social_links as any)
-            }),
-            result
-          ),
-          req,
-          res
-        );
-      });
     }
   );
 

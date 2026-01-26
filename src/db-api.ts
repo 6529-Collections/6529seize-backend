@@ -1,6 +1,5 @@
 import {
   ADDRESS_CONSOLIDATION_KEY,
-  ARTISTS_TABLE,
   CONSOLIDATED_UPLOADS_TABLE,
   CONSOLIDATED_WALLETS_TDH_TABLE,
   CONSOLIDATIONS_TABLE,
@@ -63,7 +62,6 @@ import {
   execNativeTransactionally,
   execSQLWithParams
 } from './db/my-sql.helpers';
-import { Artist } from './entities/IArtist';
 import { NFT } from './entities/INFT';
 import { TDHBlock } from './entities/ITDH';
 import { TDHHistory } from './entities/ITDHHistory';
@@ -166,7 +164,7 @@ export async function disconnect() {
   const promises: Promise<void>[] = [];
   if (read_pool) {
     promises.push(
-      new Promise<void>((resolve, reject) => {
+      new Promise<void>((resolve) => {
         read_pool.end((err) => {
           if (err) {
             logger.error(`[READ POOL CLOSE ERROR] ${err}`);
@@ -182,7 +180,7 @@ export async function disconnect() {
   }
   if (write_pool) {
     promises.push(
-      new Promise<void>((resolve, reject) => {
+      new Promise<void>((resolve) => {
         write_pool.end((err) => {
           if (err) {
             logger.error(`[WRITE POOL CLOSE ERROR] ${err}`);
@@ -396,39 +394,6 @@ async function fetchUploadsByTable(
     page,
     filters,
     ''
-  );
-}
-
-export async function fetchArtists(
-  pageSize: number,
-  page: number,
-  meme_nfts: string
-) {
-  let filters = '';
-  const params: any = {};
-  if (meme_nfts) {
-    meme_nfts.split(',').forEach((nft_id, index) => {
-      const paramName = `nft_id${index}`;
-      const query = `%"id": ${nft_id}%`;
-
-      if (index === 0) {
-        filters += 'WHERE ';
-      } else {
-        filters += ' OR ';
-      }
-
-      filters += `memes LIKE :${paramName}`;
-      params[paramName] = query;
-    });
-  }
-
-  return fetchPaginated<Artist>(
-    ARTISTS_TABLE,
-    params,
-    'created_at desc',
-    pageSize,
-    page,
-    filters
   );
 }
 
@@ -980,12 +945,6 @@ export function returnEmpty() {
 export async function fetchEns(address: string) {
   const sql = `SELECT * FROM ${ENS_TABLE} WHERE LOWER(wallet)=LOWER(:address) OR LOWER(display)=LOWER(:address)`;
   return sqlExecutor.execute(sql, { address: address });
-}
-
-export async function fetchRanksForWallet(address: string) {
-  const tdhBlock = await fetchLatestTDHBlockNumber();
-  const sqlTdh = `SELECT * FROM ${WALLETS_TDH_TABLE} WHERE block=${tdhBlock} and wallet=:address`;
-  return await sqlExecutor.execute(sqlTdh, { address: address });
 }
 
 export async function fetchLabExtended(
