@@ -1,4 +1,5 @@
 import {
+  ADDRESS_CONSOLIDATION_KEY,
   ARTISTS_TABLE,
   CONSOLIDATED_UPLOADS_TABLE,
   CONSOLIDATED_WALLETS_TDH_TABLE,
@@ -1401,14 +1402,15 @@ export async function addRememe(by: string, rememe: any) {
 }
 
 export async function getTdhForAddress(address: string) {
-  const sql = `SELECT boosted_tdh as tdh FROM ${CONSOLIDATED_WALLETS_TDH_TABLE} WHERE LOWER(${CONSOLIDATED_WALLETS_TDH_TABLE}.wallets) LIKE :address`;
-  const result = await sqlExecutor.execute(sql, {
-    address: `%${address.toLowerCase()}%`
+  const sql = `
+    SELECT c.boosted_tdh as tdh from ${CONSOLIDATED_WALLETS_TDH_TABLE} c
+    JOIN ${ADDRESS_CONSOLIDATION_KEY} ac on ac.consolidation_key = c.consolidation_key
+    where ac.address = :address
+  `;
+  const result = await sqlExecutor.oneOrNull<{ tdh: number }>(sql, {
+    address: address.toLowerCase()
   });
-  if (result.length === 0) {
-    return 0;
-  }
-  return result[0].tdh;
+  return result?.tdh ?? 0;
 }
 
 export async function fetchTDHGlobalHistory(pageSize: number, page: number) {
