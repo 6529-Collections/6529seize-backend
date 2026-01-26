@@ -1,7 +1,7 @@
 import { refreshNextgenMetadata } from './nextgen_metadata_refresh';
 import * as db from '../db';
 import * as logging from '../logging';
-import * as owners from '../nftOwnersLoop/owners';
+import * as nftOwnersDb from '../nftOwnersLoop/db.nft_owners';
 import * as nextgenDb from './nextgen.db';
 import * as constants from './nextgen_constants';
 import * as coreEvents from './nextgen_core_events';
@@ -47,7 +47,7 @@ describe('refreshNextgenMetadata', () => {
       }
     ] as any);
     jest
-      .spyOn(owners, 'getOwnersForContracts')
+      .spyOn(nftOwnersDb, 'fetchAllNftOwners')
       .mockResolvedValue([{ token_id: 1, wallet: 'NEW' }] as any);
     jest.spyOn(coreEvents, 'upsertToken').mockResolvedValue(undefined);
     jest.spyOn(tokens, 'refreshNextgenTokens').mockResolvedValue(undefined);

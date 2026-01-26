@@ -58,7 +58,11 @@ export {
 } from './INextGen';
 export { LabExtendedData, LabNFT, MemesExtendedData, NFT } from './INFT';
 export { NFTHistory, NFTHistoryBlock, NFTHistoryClaim } from './INFTHistory';
-export { ConsolidatedNFTOwner, NFTOwner } from './INFTOwner';
+export {
+  ConsolidatedNFTOwner,
+  NFTOwner,
+  NftOwnersSyncState
+} from './INFTOwner';
 export {
   ConsolidatedOwnerBalances,
   ConsolidatedOwnerBalancesMemes,
