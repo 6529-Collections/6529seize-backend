@@ -34,7 +34,7 @@ function parseDeltaKey(
 ): { wallet: string; contract: string; token_id: number } | null {
   const parts = key.split('-');
   if (parts.length !== 3) return null;
-  const tokenId = parseInt(parts[2], 10);
+  const tokenId = Number.parseInt(parts[2], 10);
   if (!Number.isFinite(tokenId)) return null;
   return {
     wallet: parts[0].toLowerCase(),
@@ -72,7 +72,7 @@ function buildBalanceMapFromTransactions(
   for (const tx of deduped) {
     const contract = tx.contract.toLowerCase();
     const tokenId = Number(tx.token_id);
-    const count = tx.token_count != null ? Number(tx.token_count) : 0;
+    const count = tx.token_count == null ? 0 : Number(tx.token_count);
     const fromKey = deltaKey(tx.from_address, contract, tokenId);
     const toKey = deltaKey(tx.to_address, contract, tokenId);
     balance.set(fromKey, (balance.get(fromKey) ?? 0) - count);

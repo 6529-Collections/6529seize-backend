@@ -1,11 +1,11 @@
+import { NFT_OWNERS_TABLE } from '../constants';
 import { getDataSource } from '../db';
-import { Logger } from '../logging';
 import {
   ConsolidatedNFTOwner,
   NFTOwner,
   NftOwnersSyncState
 } from '../entities/INFTOwner';
-import { NFT_OWNERS_TABLE } from '../constants';
+import { Logger } from '../logging';
 import {
   deleteConsolidations,
   insertWithoutUpdate,
@@ -134,7 +134,11 @@ export async function persistConsolidatedNftOwners(
       const repo = manager.getRepository(ConsolidatedNFTOwner);
       const deleted = await deleteConsolidations(repo, deleteDelta);
       logger.info(`[DELETED ${deleted} CONSOLIDATED NFT OWNERS]`);
-      for (let i = 0; i < upsertDelta.length; i += CONSOLIDATED_INSERT_BATCH_SIZE) {
+      for (
+        let i = 0;
+        i < upsertDelta.length;
+        i += CONSOLIDATED_INSERT_BATCH_SIZE
+      ) {
         const chunk = upsertDelta.slice(i, i + CONSOLIDATED_INSERT_BATCH_SIZE);
         await insertWithoutUpdate(repo, chunk);
       }
