@@ -124,17 +124,7 @@ function buildFullOwnersFromTransactions(
   blockReference: number,
   transactions: Transaction[]
 ): { ownersDelta: NFTOwner[]; addresses: Set<string> } {
-  const deduped = dedupeTransactionsByTransfer(transactions);
-  const balance = new Map<string, number>();
-  for (const tx of deduped) {
-    const contract = tx.contract.toLowerCase();
-    const tokenId = Number(tx.token_id);
-    const count = tx.token_count != null ? Number(tx.token_count) : 0;
-    const fromKey = deltaKey(tx.from_address, contract, tokenId);
-    const toKey = deltaKey(tx.to_address, contract, tokenId);
-    balance.set(fromKey, (balance.get(fromKey) ?? 0) - count);
-    balance.set(toKey, (balance.get(toKey) ?? 0) + count);
-  }
+  const balance = buildBalanceMapFromTransactions(transactions);
   const ownersDelta: NFTOwner[] = [];
   const addresses = new Set<string>();
   for (const [key, bal] of Array.from(balance)) {
