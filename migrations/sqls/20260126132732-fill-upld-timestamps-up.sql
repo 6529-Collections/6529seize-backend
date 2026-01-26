@@ -1,0 +1,1 @@
+update uploads set timestamp = unix_timestamp(STR_TO_DATE(date, '%Y%m%d')) * 1000;

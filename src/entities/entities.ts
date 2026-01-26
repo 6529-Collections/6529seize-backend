@@ -118,7 +118,7 @@ export {
   TransactionsProcessedDistributionBlock,
   TransactionsProcessedSubscriptionsBlock
 } from './ITransactionsProcessing';
-export { ConsolidatedTDHUpload } from './IUpload';
+export { ConsolidatedTDHUpload, UploadEntity } from './IUpload';
 export { UserGroupEntity } from './IUserGroup';
 export {
   WaveArchiveEntity,

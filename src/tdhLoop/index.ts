@@ -144,14 +144,14 @@ async function tdh(force?: boolean) {
   const lastTdhFromNow = lastTdhDB.timestamp.diffFromNow();
 
   if (lastTdhFromNow.gt(Time.hours(24)) || force) {
-    const { block, blockTimestamp } = await updateTDH(lastTDHCalc);
+    const { block, blockTimestamp, tdh } = await updateTDH(lastTDHCalc);
     const consolidatedTdh = await consolidateAndPersistTDH(
       block,
       blockTimestamp
     );
     await recordMetrics();
     // Disabled for now
-    // await uploadTDH(block, blockTimestamp, tdh, false, true);
+    await uploadTDH(block, blockTimestamp, tdh, false, true);
     await uploadTDH(block, blockTimestamp, consolidatedTdh, true, true);
     return block;
   } else {
