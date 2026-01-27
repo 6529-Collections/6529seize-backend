@@ -16,14 +16,18 @@ import {
 import {
   GRADIENT_CONTRACT,
   MEMELAB_CONTRACT,
-  MEMES_CONTRACT
+  MEMES_CONTRACT,
+  NULL_ADDRESS
 } from '../constants';
 import {
   fetchMaxTransactionsBlockNumber,
   fetchTransactionsAfterBlock,
   fetchWalletConsolidationKeysViewForWallet
 } from '../db';
-import { ethTools } from '../eth-tools';
+
+function normalizeAddress(addr: string): string {
+  return addr.toLowerCase();
+}
 
 function deltaKey(wallet: string, contract: string, tokenId: number): string {
   return `${wallet.toLowerCase()}-${contract.toLowerCase()}-${tokenId}`;
@@ -48,7 +52,7 @@ function dedupeTransactionsByTransfer(
 ): Transaction[] {
   const seen = new Set<string>();
   return transactions.filter((tx) => {
-    const key = `${tx.transaction}-${tx.from_address}-${tx.to_address}-${tx.contract}-${tx.token_id}`;
+    const key = `${tx.transaction}-${normalizeAddress(tx.from_address)}-${normalizeAddress(tx.to_address)}-${tx.contract}-${tx.token_id}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -68,14 +72,19 @@ function buildBalanceMapFromTransactions(
   transactions: Transaction[]
 ): Map<string, number> {
   const deduped = dedupeTransactionsByTransfer(transactions);
+  const zeroAddr = NULL_ADDRESS.toLowerCase();
   const balance = new Map<string, number>();
   for (const tx of deduped) {
     const contract = tx.contract.toLowerCase();
     const tokenId = Number(tx.token_id);
     const count = tx.token_count == null ? 0 : Number(tx.token_count);
-    const fromKey = deltaKey(tx.from_address, contract, tokenId);
-    const toKey = deltaKey(tx.to_address, contract, tokenId);
-    balance.set(fromKey, (balance.get(fromKey) ?? 0) - count);
+    const fromAddr = normalizeAddress(tx.from_address);
+    const toAddr = normalizeAddress(tx.to_address);
+    const fromKey = deltaKey(fromAddr, contract, tokenId);
+    const toKey = deltaKey(toAddr, contract, tokenId);
+    if (fromAddr !== zeroAddr) {
+      balance.set(fromKey, (balance.get(fromKey) ?? 0) - count);
+    }
     balance.set(toKey, (balance.get(toKey) ?? 0) + count);
   }
   return balance;
@@ -130,7 +139,7 @@ function buildFullOwnersFromTransactions(
   for (const [key, bal] of Array.from(balance)) {
     if (bal <= 0) continue;
     const parsed = parseDeltaKey(key);
-    if (!parsed || ethTools.isNullOrDeadAddress(parsed.wallet)) continue;
+    if (!parsed) continue;
     addresses.add(parsed.wallet);
     ownersDelta.push({
       wallet: parsed.wallet,
@@ -203,12 +212,8 @@ export const updateNftOwners = async (reset?: boolean) => {
       blockReference
     );
     for (const tx of transactions) {
-      if (!ethTools.isNullOrDeadAddress(tx.from_address)) {
-        addresses.add(tx.from_address.toLowerCase());
-      }
-      if (!ethTools.isNullOrDeadAddress(tx.to_address)) {
-        addresses.add(tx.to_address.toLowerCase());
-      }
+      addresses.add(normalizeAddress(tx.from_address));
+      addresses.add(normalizeAddress(tx.to_address));
     }
     logger.info({
       transactions: transactions.length.toLocaleString(),
