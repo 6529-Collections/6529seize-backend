@@ -37,6 +37,11 @@ const MentionedUserSchema: Joi.ObjectSchema<ApiDropReferencedNFT> = Joi.object({
   handle_in_content: Joi.string().min(1).max(100).required()
 });
 
+const MentionedWaveSchema: Joi.ObjectSchema = Joi.object({
+  wave_name_in_content: Joi.string().min(1).required(),
+  wave_id: Joi.string().min(1).max(100).required()
+});
+
 const MetadataSchema: Joi.ObjectSchema<DropMetadataEntity> = Joi.object({
   data_key: Joi.string().min(1).max(100).required(),
   data_value: Joi.string().min(1).max(5000).required()
@@ -50,6 +55,10 @@ const QuotedDropSchema: Joi.ObjectSchema<ApiQuotedDrop> = Joi.object({
 const NewDropPartSchema: Joi.ObjectSchema<ApiCreateDropPart> = Joi.object({
   content: Joi.string().optional().default(null).allow(null),
   quoted_drop: QuotedDropSchema.optional().default(null).allow(null),
+  mentioned_waves: Joi.array()
+    .optional()
+    .items(MentionedWaveSchema)
+    .default([]),
   media: Joi.array()
     .optional()
     .items(

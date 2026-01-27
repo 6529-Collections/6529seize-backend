@@ -9,6 +9,7 @@ import {
   DROP_BOOSTS_TABLE,
   DROP_MEDIA_TABLE,
   DROP_METADATA_TABLE,
+  DROP_MENTIONED_WAVES_TABLE,
   DROP_REFERENCED_NFTS_TABLE,
   DROPS_MENTIONS_TABLE,
   DROPS_PARTS_TABLE,
@@ -96,6 +97,22 @@ export class DropMentionEntity {
   readonly handle_in_content!: string;
   @Column({ type: 'varchar', length: 100, nullable: true, default: null })
   readonly wave_id!: string | null;
+}
+
+@Entity(DROP_MENTIONED_WAVES_TABLE)
+export class DropMentionedWaveEntity {
+  @PrimaryGeneratedColumn('increment', { type: 'bigint' })
+  readonly id!: string;
+  @Column({ type: 'varchar', length: 100 })
+  @Index()
+  readonly drop_id!: string;
+  @Column({ type: 'bigint' })
+  readonly drop_part_id!: number;
+  @Column({ type: 'text' })
+  readonly wave_name_in_content!: string;
+  @Column({ type: 'varchar', length: 100 })
+  @Index()
+  readonly wave_id!: string;
 }
 
 @Entity(DROP_REFERENCED_NFTS_TABLE)

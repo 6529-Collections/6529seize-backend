@@ -3,6 +3,7 @@ import {
   DROP_BOOSTS_TABLE,
   DROP_MEDIA_TABLE,
   DROP_METADATA_TABLE,
+  DROP_MENTIONED_WAVES_TABLE,
   DROP_REFERENCED_NFTS_TABLE,
   DROP_RELATIONS_TABLE,
   DROPS_MENTIONS_TABLE,
@@ -113,6 +114,51 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         `SELECT * FROM ${WAVES_TABLE} WHERE id in (:ids) and (visibility_group_id is null ${
           groupIdsUserIsEligibleFor.length
             ? `or visibility_group_id in (:groupIdsUserIsEligibleFor)`
+            : ``
+        })`,
+        { ids, groupIdsUserIsEligibleFor },
+        connection ? { wrappedConnection: connection } : undefined
+      )
+      .then((res) =>
+        res.map((it) => ({
+          ...it,
+          participation_required_media: JSON.parse(
+            it.participation_required_media
+          ),
+          participation_required_metadata: JSON.parse(
+            it.participation_required_metadata
+          ),
+          decisions_strategy: it.decisions_strategy
+            ? JSON.parse(it.decisions_strategy)
+            : null
+        }))
+      );
+  }
+
+  public async findWavesByIdsEligibleForRead(
+    ids: string[],
+    groupIdsUserIsEligibleFor: string[],
+    connection?: ConnectionWrapper<any>
+  ): Promise<WaveEntity[]> {
+    if (!ids.length) {
+      return [];
+    }
+    return this.db
+      .execute<
+        Omit<
+          WaveEntity,
+          | 'participation_required_media'
+          | 'participation_required_metadata'
+          | 'decisions_strategy'
+        > & {
+          participation_required_media: string;
+          participation_required_metadata: string;
+          decisions_strategy: string;
+        }
+      >(
+        `SELECT * FROM ${WAVES_TABLE} WHERE id in (:ids) and (visibility_group_id is null ${
+          groupIdsUserIsEligibleFor.length
+            ? `or visibility_group_id in (:groupIdsUserIsEligibleFor) or admin_group_id in (:groupIdsUserIsEligibleFor)`
             : ``
         })`,
         { ids, groupIdsUserIsEligibleFor },
@@ -1118,6 +1164,16 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       { wrappedConnection: ctx.connection }
     );
     ctx.timer?.stop('wavesApiDb->deleteDropMentionsByWaveId');
+  }
+
+  async deleteDropMentionedWavesByWaveId(waveId: string, ctx: RequestContext) {
+    ctx.timer?.start('wavesApiDb->deleteDropMentionedWavesByWaveId');
+    await this.db.execute(
+      `delete from ${DROP_MENTIONED_WAVES_TABLE} where wave_id = :waveId`,
+      { waveId },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop('wavesApiDb->deleteDropMentionedWavesByWaveId');
   }
 
   public async deleteDropMediaByWaveId(waveId: string, ctx: RequestContext) {

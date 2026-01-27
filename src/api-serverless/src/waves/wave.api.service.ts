@@ -1225,6 +1225,10 @@ export class WaveApiService {
         await Promise.all([
           this.wavesApiDb.deleteDropPartsByWaveId(waveId, ctxWithConnection),
           this.wavesApiDb.deleteDropMentionsByWaveId(waveId, ctxWithConnection),
+          this.wavesApiDb.deleteDropMentionedWavesByWaveId(
+            waveId,
+            ctxWithConnection
+          ),
           this.wavesApiDb.deleteDropMediaByWaveId(waveId, ctxWithConnection),
           this.wavesApiDb.deleteDropReferencedNftsByWaveId(
             waveId,
