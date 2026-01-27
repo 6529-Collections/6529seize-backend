@@ -7,11 +7,7 @@ export * from '../models/ApiAddReactionToDropRequest';
 export * from '../models/ApiAggregatedActivity';
 export * from '../models/ApiAggregatedActivityMemes';
 export * from '../models/ApiAggregatedActivityPage';
-export * from '../models/ApiArtistItem';
 export * from '../models/ApiArtistNameItem';
-export * from '../models/ApiArtistsNft';
-export * from '../models/ApiArtistsPage';
-export * from '../models/ApiArtistsWork';
 export * from '../models/ApiAvailableRatingCredit';
 export * from '../models/ApiBlockItem';
 export * from '../models/ApiBlocksPage';
@@ -260,11 +256,7 @@ import { ApiAddReactionToDropRequest } from '../models/ApiAddReactionToDropReque
 import { ApiAggregatedActivity } from '../models/ApiAggregatedActivity';
 import { ApiAggregatedActivityMemes } from '../models/ApiAggregatedActivityMemes';
 import { ApiAggregatedActivityPage } from '../models/ApiAggregatedActivityPage';
-import { ApiArtistItem } from '../models/ApiArtistItem';
 import { ApiArtistNameItem } from '../models/ApiArtistNameItem';
-import { ApiArtistsNft } from '../models/ApiArtistsNft';
-import { ApiArtistsPage } from '../models/ApiArtistsPage';
-import { ApiArtistsWork } from '../models/ApiArtistsWork';
 import { ApiAvailableRatingCredit } from '../models/ApiAvailableRatingCredit';
 import { ApiBlockItem } from '../models/ApiBlockItem';
 import { ApiBlocksPage } from '../models/ApiBlocksPage';
@@ -559,11 +551,7 @@ let typeMap: {[index: string]: any} = {
     "ApiAggregatedActivity": ApiAggregatedActivity,
     "ApiAggregatedActivityMemes": ApiAggregatedActivityMemes,
     "ApiAggregatedActivityPage": ApiAggregatedActivityPage,
-    "ApiArtistItem": ApiArtistItem,
     "ApiArtistNameItem": ApiArtistNameItem,
-    "ApiArtistsNft": ApiArtistsNft,
-    "ApiArtistsPage": ApiArtistsPage,
-    "ApiArtistsWork": ApiArtistsWork,
     "ApiAvailableRatingCredit": ApiAvailableRatingCredit,
     "ApiBlockItem": ApiBlockItem,
     "ApiBlocksPage": ApiBlocksPage,
