@@ -1006,27 +1006,6 @@ async function initializeApp() {
   );
 
   apiRouter.get(
-    `/tdh_history`,
-    cacheRequest(),
-    async function (req: any, res: any) {
-      const pageSize = getPageSize(req);
-      const page = getPage(req);
-      const wallets = req.query.wallet;
-      await db.fetchTDHHistory(wallets, pageSize, page).then(async (result) => {
-        result.data.map((d: any) => {
-          d.wallets = JSON.parse(d.wallets);
-          const date = new Date(d.date);
-          const year = date.getUTCFullYear();
-          const month = String(date.getUTCMonth() + 1).padStart(2, '0');
-          const day = String(date.getUTCDate()).padStart(2, '0');
-          d.date = `${year}-${month}-${day}`;
-        });
-        await returnPaginatedResult(result, req, res);
-      });
-    }
-  );
-
-  apiRouter.get(
     `/recent_tdh_history/:consolidation_key`,
     cacheRequest(),
     async function (req: any, res: any) {

@@ -27,7 +27,6 @@ import {
   ROYALTIES_UPLOADS_TABLE,
   TDH_BLOCKS_TABLE,
   TDH_GLOBAL_HISTORY_TABLE,
-  TDH_HISTORY_TABLE,
   TEAM_TABLE,
   TRANSACTIONS_TABLE,
   UPLOADS_TABLE,
@@ -1422,32 +1421,6 @@ export async function fetchTDHGlobalHistory(pageSize: number, page: number) {
     pageSize,
     page,
     ''
-  );
-}
-
-export async function fetchTDHHistory(
-  wallets: string,
-  pageSize: number,
-  page: number
-) {
-  let filters = '';
-  const params: any = {};
-  if (wallets) {
-    const resolvedWallets = await resolveEns(wallets);
-    resolvedWallets.forEach((w, index) => {
-      const paramName = `wallet${index}`;
-      filters = constructFilters(filters, `LOWER(wallets) LIKE :${paramName}`);
-      params[paramName] = `%${w.toLowerCase()}%`;
-    });
-  }
-
-  return fetchPaginated(
-    TDH_HISTORY_TABLE,
-    params,
-    ` date desc, block desc, net_boosted_tdh desc `,
-    pageSize,
-    page,
-    filters
   );
 }
 
