@@ -1,4 +1,5 @@
 import {
+  ADDRESS_CONSOLIDATION_KEY,
   ARTISTS_TABLE,
   CONSOLIDATED_UPLOADS_TABLE,
   CONSOLIDATED_WALLETS_TDH_TABLE,
@@ -26,7 +27,6 @@ import {
   ROYALTIES_UPLOADS_TABLE,
   TDH_BLOCKS_TABLE,
   TDH_GLOBAL_HISTORY_TABLE,
-  TDH_HISTORY_TABLE,
   TEAM_TABLE,
   TRANSACTIONS_TABLE,
   UPLOADS_TABLE,
@@ -383,8 +383,9 @@ async function fetchUploadsByTable(
     params.block = block;
   }
   if (date) {
-    filters = constructFilters(filters, `STR_TO_DATE(date, '%Y%m%d') <= :date`);
-    params.date = date;
+    const timeEqualOrLess = Time.fromYyyyMmDdDateOnlyToUtcMidnight(date);
+    filters = constructFilters(filters, `timestamp <= :date`);
+    params.date = timeEqualOrLess.toMillis();
   }
 
   return fetchPaginated(
@@ -1401,14 +1402,15 @@ export async function addRememe(by: string, rememe: any) {
 }
 
 export async function getTdhForAddress(address: string) {
-  const sql = `SELECT boosted_tdh as tdh FROM ${CONSOLIDATED_WALLETS_TDH_TABLE} WHERE LOWER(${CONSOLIDATED_WALLETS_TDH_TABLE}.wallets) LIKE :address`;
-  const result = await sqlExecutor.execute(sql, {
-    address: `%${address.toLowerCase()}%`
+  const sql = `
+    SELECT c.boosted_tdh as tdh from ${CONSOLIDATED_WALLETS_TDH_TABLE} c
+    JOIN ${ADDRESS_CONSOLIDATION_KEY} ac on ac.consolidation_key = c.consolidation_key
+    where ac.address = :address
+  `;
+  const result = await sqlExecutor.oneOrNull<{ tdh: number }>(sql, {
+    address: address.toLowerCase()
   });
-  if (result.length === 0) {
-    return 0;
-  }
-  return result[0].tdh;
+  return result?.tdh ?? 0;
 }
 
 export async function fetchTDHGlobalHistory(pageSize: number, page: number) {
@@ -1419,32 +1421,6 @@ export async function fetchTDHGlobalHistory(pageSize: number, page: number) {
     pageSize,
     page,
     ''
-  );
-}
-
-export async function fetchTDHHistory(
-  wallets: string,
-  pageSize: number,
-  page: number
-) {
-  let filters = '';
-  const params: any = {};
-  if (wallets) {
-    const resolvedWallets = await resolveEns(wallets);
-    resolvedWallets.forEach((w, index) => {
-      const paramName = `wallet${index}`;
-      filters = constructFilters(filters, `LOWER(wallets) LIKE :${paramName}`);
-      params[paramName] = `%${w.toLowerCase()}%`;
-    });
-  }
-
-  return fetchPaginated(
-    TDH_HISTORY_TABLE,
-    params,
-    ` date desc, block desc, net_boosted_tdh desc `,
-    pageSize,
-    page,
-    filters
   );
 }
 

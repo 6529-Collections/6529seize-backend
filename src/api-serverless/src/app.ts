@@ -392,7 +392,9 @@ async function initializeApp() {
       .default(DEFAULT_PAGE_SIZE),
     page: Joi.number().integer().min(1).default(1),
     block: Joi.number().integer().min(0).default(0),
-    date: Joi.string().optional()
+    date: Joi.string()
+      .optional()
+      .pattern(/\d\d\d\d\d\d\d\d/)
   });
 
   apiRouter.get(
@@ -992,27 +994,6 @@ async function initializeApp() {
       const page = getPage(req);
       await db.fetchTDHGlobalHistory(pageSize, page).then(async (result) => {
         result.data.map((d: any) => {
-          const date = new Date(d.date);
-          const year = date.getUTCFullYear();
-          const month = String(date.getUTCMonth() + 1).padStart(2, '0');
-          const day = String(date.getUTCDate()).padStart(2, '0');
-          d.date = `${year}-${month}-${day}`;
-        });
-        await returnPaginatedResult(result, req, res);
-      });
-    }
-  );
-
-  apiRouter.get(
-    `/tdh_history`,
-    cacheRequest(),
-    async function (req: any, res: any) {
-      const pageSize = getPageSize(req);
-      const page = getPage(req);
-      const wallets = req.query.wallet;
-      await db.fetchTDHHistory(wallets, pageSize, page).then(async (result) => {
-        result.data.map((d: any) => {
-          d.wallets = JSON.parse(d.wallets);
           const date = new Date(d.date);
           const year = date.getUTCFullYear();
           const month = String(date.getUTCMonth() + 1).padStart(2, '0');
