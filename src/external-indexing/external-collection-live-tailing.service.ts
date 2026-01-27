@@ -21,15 +21,11 @@ const PUNKS_ABI_EVENTS = [
   'event Assign(address indexed to, uint256 punkIndex)'
 ];
 
-const PUNKS_TRANSFER_TOPIC = ethers.utils.id(
-  'PunkTransfer(address,address,uint256)'
-);
-const PUNKS_ASSIGN_TOPIC = ethers.utils.id('Assign(address,uint256)');
-const ERC721_TRANSFER_TOPIC = ethers.utils.id(
-  'Transfer(address,address,uint256)'
-);
+const PUNKS_TRANSFER_TOPIC = ethers.id('PunkTransfer(address,address,uint256)');
+const PUNKS_ASSIGN_TOPIC = ethers.id('Assign(address,uint256)');
+const ERC721_TRANSFER_TOPIC = ethers.id('Transfer(address,address,uint256)');
 
-const IFACE_ERC721 = new ethers.utils.Interface([
+const IFACE_ERC721 = new ethers.Interface([
   'event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)'
 ]);
 
@@ -79,10 +75,7 @@ export class ExternalCollectionLiveTailService {
     });
   }
 
-  private async normalizeTransferLogs(
-    contract: string,
-    logs: ethers.providers.Log[]
-  ) {
+  private async normalizeTransferLogs(contract: string, logs: ethers.Log[]) {
     if (contract.toLowerCase() !== CRYPTOPUNKS_MAINNET) {
       const erc721Logs = logs.filter(
         (l) => l.topics?.length === 4 && (l.data === '0x' || l.data === '0x0')
@@ -95,9 +88,10 @@ export class ExternalCollectionLiveTailService {
       return erc721Logs
         .map((l) => {
           const dec = IFACE_ERC721.parseLog(l);
+          if (!dec) return null;
           return {
             blockNumber: l.blockNumber,
-            logIndex: l.logIndex,
+            logIndex: l.index,
             tx: l.transactionHash,
             tokenId: dec.args.tokenId.toString(),
             from: (dec.args.from as string).toLowerCase(),
@@ -105,12 +99,13 @@ export class ExternalCollectionLiveTailService {
             timestampMs: Time.seconds(ts.get(l.blockNumber)!).toMillis()
           };
         })
+        .filter((x): x is NonNullable<typeof x> => x !== null)
         .sort(
           (a, b) => a.blockNumber - b.blockNumber || a.logIndex - b.logIndex
         );
     }
 
-    const ifacePunks = new ethers.utils.Interface(PUNKS_ABI_EVENTS);
+    const ifacePunks = new ethers.Interface(PUNKS_ABI_EVENTS);
 
     const blocks = Array.from(new Set(logs.map((l) => l.blockNumber)));
     const ts = new Map<number, number>();
@@ -124,6 +119,7 @@ export class ExternalCollectionLiveTailService {
       } catch {
         continue;
       }
+      if (!dec) continue;
 
       if (dec.name === 'PunkTransfer') {
         const from = (dec.args.from as string).toLowerCase();
@@ -131,7 +127,7 @@ export class ExternalCollectionLiveTailService {
         const tokenId = dec.args.punkIndex.toString();
         out.push({
           blockNumber: l.blockNumber,
-          logIndex: l.logIndex,
+          logIndex: l.index,
           tx: l.transactionHash,
           tokenId,
           from,
@@ -143,10 +139,10 @@ export class ExternalCollectionLiveTailService {
         const tokenId = dec.args.punkIndex.toString();
         out.push({
           blockNumber: l.blockNumber,
-          logIndex: l.logIndex,
+          logIndex: l.index,
           tx: l.transactionHash,
           tokenId,
-          from: ethers.constants.AddressZero,
+          from: ethers.ZeroAddress,
           to,
           timestampMs: Time.seconds(ts.get(l.blockNumber)!).toMillis()
         });
@@ -169,7 +165,7 @@ export class ExternalCollectionLiveTailService {
       `${this.log.name} ${JSON.stringify({ chain, contract })}`
     );
 
-    let rawLogs: ethers.providers.Log[] = [];
+    let rawLogs: ethers.Log[] = [];
     try {
       rawLogs = await this.getLogs(contract, fromBlock, toBlock);
     } catch (e) {
@@ -203,7 +199,7 @@ export class ExternalCollectionLiveTailService {
 
     for (const ev of events) {
       // Never classify mints as sales
-      const isMint = ev.from === ethers.constants.AddressZero;
+      const isMint = ev.from === ethers.ZeroAddress;
 
       const isSale = isMint ? false : await getIsSale(ev.tx);
 

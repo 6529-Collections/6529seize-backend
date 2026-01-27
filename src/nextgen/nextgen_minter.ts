@@ -55,7 +55,7 @@ export async function findMinterTransactions(
       const parsedReceipt = NEXTGEN_MINTER_IFACE.parseTransaction({
         data: receipt.data,
         value: 0
-      });
+      })!;
       const methodName = parsedReceipt.name;
       const args = parsedReceipt.args;
       const processedLogs = await processLog(entityManager, methodName, args);
@@ -92,7 +92,7 @@ export async function findMinterTransactions(
 export async function processLog(
   entityManager: EntityManager,
   methodName: string,
-  args: ethers.utils.Result
+  args: ethers.Result
 ): Promise<
   {
     id: number;
@@ -149,7 +149,7 @@ export async function processLog(
 
 async function initializeBurn(
   entityManager: EntityManager,
-  args: ethers.utils.Result
+  args: ethers.Result
 ): Promise<
   {
     id: number;
@@ -195,7 +195,7 @@ async function initializeBurn(
   ];
 }
 
-async function initializeExternalBurnOrSwap(args: ethers.utils.Result): Promise<
+async function initializeExternalBurnOrSwap(args: ethers.Result): Promise<
   {
     id: number;
     title: string;
@@ -230,7 +230,7 @@ async function initializeExternalBurnOrSwap(args: ethers.utils.Result): Promise<
   ];
 }
 
-async function setCollectionCosts(args: ethers.utils.Result): Promise<
+async function setCollectionCosts(args: ethers.Result): Promise<
   {
     id: number;
     title: string;
@@ -286,7 +286,7 @@ async function setCollectionCosts(args: ethers.utils.Result): Promise<
 
 async function setCollectionPhases(
   entityManager: EntityManager,
-  args: ethers.utils.Result
+  args: ethers.Result
 ): Promise<
   {
     id: number;
@@ -344,7 +344,7 @@ async function setCollectionPhases(
   ];
 }
 
-async function payArtist(args: ethers.utils.Result): Promise<
+async function payArtist(args: ethers.Result): Promise<
   {
     id: number;
     title: string;
@@ -381,7 +381,7 @@ async function payArtist(args: ethers.utils.Result): Promise<
   ];
 }
 
-async function setPrimaryAndSecondarySplits(args: ethers.utils.Result): Promise<
+async function setPrimaryAndSecondarySplits(args: ethers.Result): Promise<
   {
     id: number;
     title: string;
@@ -405,9 +405,7 @@ async function setPrimaryAndSecondarySplits(args: ethers.utils.Result): Promise<
   ];
 }
 
-async function acceptAddressesAndPercentages(
-  args: ethers.utils.Result
-): Promise<
+async function acceptAddressesAndPercentages(args: ethers.Result): Promise<
   {
     id: number;
     title: string;
@@ -432,7 +430,7 @@ async function acceptAddressesAndPercentages(
 
 async function proposeAddressesAndPercentages(
   type: 'Primary' | 'Secondary',
-  args: ethers.utils.Result
+  args: ethers.Result
 ): Promise<
   {
     id: number;
@@ -488,7 +486,7 @@ async function proposeAddressesAndPercentages(
   ];
 }
 
-async function updateCoreContract(args: ethers.utils.Result): Promise<
+async function updateCoreContract(args: ethers.Result): Promise<
   {
     id: number;
     title: string;

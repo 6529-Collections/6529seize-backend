@@ -2,11 +2,11 @@ import { ethers } from 'ethers';
 import { env } from '../env';
 
 export class ExternalIndexerRpc {
-  private instance: ethers.providers.JsonRpcProvider | undefined;
+  private instance: ethers.JsonRpcProvider | undefined;
 
-  public get provider(): ethers.providers.JsonRpcProvider {
+  public get provider(): ethers.JsonRpcProvider {
     if (!this.instance) {
-      this.instance = new ethers.providers.JsonRpcProvider(
+      this.instance = new ethers.JsonRpcProvider(
         env.getStringOrThrow('NFT_INDEXER_RPC')
       );
     }

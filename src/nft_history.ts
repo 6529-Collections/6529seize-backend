@@ -78,7 +78,7 @@ const findDetailsFromTransaction = async (tx: TransactionResponse) => {
         data,
         value: 0
       });
-      if (parsed.args.uris) {
+      if (parsed && parsed.args.uris) {
         const tokenUri = parsed.args.uris[0];
         const receipt = await alchemy.core.getTransactionReceipt(tx.hash);
         const logData = receipt?.logs[0].data;
@@ -87,7 +87,10 @@ const findDetailsFromTransaction = async (tx: TransactionResponse) => {
             topics: receipt?.logs[0].topics,
             data: logData
           });
-          const tokenId = parsedReceipt.args.id.toNumber();
+          if (!parsedReceipt) {
+            return null;
+          }
+          const tokenId = Number(parsedReceipt.args.id);
           if (equalIgnoreCase(MEMES_CONTRACT, tx.to)) {
             return {
               contract: MEMES_CONTRACT,
@@ -104,18 +107,18 @@ const findDetailsFromTransaction = async (tx: TransactionResponse) => {
           }
         }
       }
-      if (parsed.args.uri_ && parsed.args.tokenId && tx.to) {
+      if (parsed && parsed.args.uri_ && parsed.args.tokenId && tx.to) {
         if (equalIgnoreCase(MEMES_CONTRACT, tx.to)) {
           return {
             contract: MEMES_CONTRACT,
-            tokenId: parsed.args.tokenId.toNumber(),
+            tokenId: Number(parsed.args.tokenId),
             tokenUri: parsed.args.uri_
           };
         }
         if (equalIgnoreCase(MEMELAB_CONTRACT, tx.to)) {
           return {
             contract: MEMELAB_CONTRACT,
-            tokenId: parsed.args.tokenId.toNumber(),
+            tokenId: Number(parsed.args.tokenId),
             tokenUri: parsed.args.uri_
           };
         }
@@ -339,7 +342,10 @@ export const getDeployerTransactions = async (
           data,
           value: 0
         });
-        const claimIndex = parsed.args.claimIndex.toNumber();
+        if (!parsed) {
+          throw new Error('Failed to parse transaction');
+        }
+        const claimIndex = Number(parsed.args.claimIndex);
         const location = parsed.args.claimParameters.location;
         const contract = parsed.args.creatorContractAddress;
         const claim: NFTHistoryClaim = {
@@ -358,7 +364,10 @@ export const getDeployerTransactions = async (
           data,
           value: 0
         });
-        const claimIndex = parsed.args.claimIndex.toNumber();
+        if (!parsed) {
+          throw new Error('Failed to parse transaction');
+        }
+        const claimIndex = Number(parsed.args.claimIndex);
         const location = parsed.args.claimParameters.location;
         const contract = parsed.args.creatorContractAddress;
         const receipt = await alchemy.core.getTransactionReceipt(tx.hash);
@@ -368,7 +377,10 @@ export const getDeployerTransactions = async (
             topics: receipt?.logs[0].topics,
             data: logData
           });
-          const tokenId = parsedReceipt.args.id.toNumber();
+          if (!parsedReceipt) {
+            throw new Error('Failed to parse receipt');
+          }
+          const tokenId = Number(parsedReceipt.args.id);
           const nftMint: NFTHistory = {
             created_at: new Date(),
             nft_id: tokenId,
@@ -401,7 +413,10 @@ export const getDeployerTransactions = async (
           data,
           value: 0
         });
-        const instanceId = parsed.args.instanceId.toNumber();
+        if (!parsed) {
+          throw new Error('Failed to parse transaction');
+        }
+        const instanceId = Number(parsed.args.instanceId);
         const location = parsed.args.claimParameters.location;
         const contract = parsed.args.creatorContractAddress;
         const claim: NFTHistoryClaim = {
@@ -420,6 +435,9 @@ export const getDeployerTransactions = async (
           data,
           value: 0
         });
+        if (!parsed) {
+          throw new Error('Failed to parse transaction');
+        }
         const location = parsed.args.burnRedeemParameters.location;
         const contract = parsed.args.creatorContractAddress;
         const receipt = await alchemy.core.getTransactionReceipt(tx.hash);
@@ -429,7 +447,10 @@ export const getDeployerTransactions = async (
             topics: receipt?.logs[1].topics,
             data: logData
           });
-          const tokenId = parsedReceipt.args.id.toNumber();
+          if (!parsedReceipt) {
+            throw new Error('Failed to parse receipt');
+          }
+          const tokenId = Number(parsedReceipt.args.id);
           const nftMint: NFTHistory = {
             created_at: new Date(),
             nft_id: tokenId,
@@ -478,7 +499,10 @@ export const getDeployerTransactions = async (
           data,
           value: 0
         });
-        const claimIndex = parsed.args.claimIndex.toNumber();
+        if (!parsed) {
+          throw new Error('Failed to parse transaction');
+        }
+        const claimIndex = Number(parsed.args.claimIndex);
         const receipt = await alchemy.core.getTransactionReceipt(tx.hash);
         const logData = receipt?.logs[0].data;
         if (logData && tx.to) {
@@ -486,9 +510,12 @@ export const getDeployerTransactions = async (
             topics: receipt?.logs[0].topics,
             data: logData
           });
+          if (!parsedReceipt) {
+            throw new Error('Failed to parse receipt');
+          }
           const claims = await findClaim(claimIndex, -1);
           for (const claim of claims) {
-            const tokenId = parsedReceipt.args.id.toNumber();
+            const tokenId = Number(parsedReceipt.args.id);
             claim.nft_id = tokenId;
             const nftMint: NFTHistory = {
               created_at: new Date(),
@@ -521,9 +548,13 @@ export const getDeployerTransactions = async (
           data,
           value: 0
         });
+        if (!parsed) {
+          throw new Error('Failed to parse transaction');
+        }
         const claimIndex =
-          parsed.args.claimIndex?.toNumber() ??
-          parsed.args.instanceId?.toNumber();
+          parsed.args.claimIndex != null
+            ? Number(parsed.args.claimIndex)
+            : Number(parsed.args.instanceId);
         const location = parsed.args.claimParameters.location;
         const contract = parsed.args.creatorContractAddress;
         const existingClaims = await findClaim(claimIndex);

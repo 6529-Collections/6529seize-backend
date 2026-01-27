@@ -394,7 +394,7 @@ export class ExternalCollectionSnapshottingService {
       MULTICALL3_ABI,
       this.rpc.provider
     );
-    const erc721Iface = new ethers.utils.Interface(ERC721_ABI);
+    const erc721Iface = new ethers.Interface(ERC721_ABI);
 
     const calls = tokenIds.map((tid) => ({
       target: erc721.address,
@@ -412,12 +412,12 @@ export class ExternalCollectionSnapshottingService {
           return null;
         }
         try {
-          const decoded: ethers.utils.Result = erc721Iface.decodeFunctionResult(
+          const decoded: ethers.Result = erc721Iface.decodeFunctionResult(
             'ownerOf',
             r.returnData
           );
           const owner = (decoded[0] as string) ?? null;
-          return owner && owner !== ethers.constants.AddressZero ? owner : null;
+          return owner && owner !== ethers.ZeroAddress ? owner : null;
         } catch {
           return null;
         }
@@ -642,7 +642,7 @@ export class ExternalCollectionSnapshottingService {
       MULTICALL3_ABI,
       this.rpc.provider
     );
-    const erc721EnumIface = new ethers.utils.Interface(ERC721_ENUM_ABI);
+    const erc721EnumIface = new ethers.Interface(ERC721_ENUM_ABI);
 
     const batchSize = env.getIntOrNull('SNAPSHOT_MULTICALL_BATCH') ?? 300;
     const ids: bigint[] = new Array(totalSupply);
@@ -742,7 +742,7 @@ export class ExternalCollectionSnapshottingService {
       MULTICALL3_ABI,
       this.rpc.provider
     );
-    const punksIface = new ethers.utils.Interface(PUNKS_ABI);
+    const punksIface = new ethers.Interface(PUNKS_ABI);
 
     const batchSize = env.getIntOrNull('SNAPSHOT_MULTICALL_BATCH') ?? 150;
     const results: (string | null)[] = new Array(tokenIds.length).fill(null);
@@ -771,7 +771,7 @@ export class ExternalCollectionSnapshottingService {
               blockTag: atBlock
             });
             results[i + j] =
-              owner && owner !== ethers.constants.AddressZero
+              owner && owner !== ethers.ZeroAddress
                 ? owner.toLowerCase()
                 : null;
           } catch {
@@ -788,15 +788,13 @@ export class ExternalCollectionSnapshottingService {
           continue;
         }
         try {
-          const decoded: ethers.utils.Result = punksIface.decodeFunctionResult(
+          const decoded: ethers.Result = punksIface.decodeFunctionResult(
             'punkIndexToAddress',
             r.returnData
           );
           const owner = (decoded[0] as string) ?? null;
           results[i + j] =
-            owner && owner !== ethers.constants.AddressZero
-              ? owner.toLowerCase()
-              : null;
+            owner && owner !== ethers.ZeroAddress ? owner.toLowerCase() : null;
         } catch {
           results[i + j] = null;
         }
@@ -817,7 +815,7 @@ export class ExternalCollectionSnapshottingService {
       MULTICALL3_ABI,
       this.rpc.provider
     );
-    const erc721Iface = new ethers.utils.Interface(ERC721_ABI);
+    const erc721Iface = new ethers.Interface(ERC721_ABI);
     const c = new Contract(contractAddr, ERC721_ABI, this.rpc.provider);
 
     const batchSize = env.getIntOrNull('SNAPSHOT_MULTICALL_BATCH') ?? 150;
@@ -846,7 +844,7 @@ export class ExternalCollectionSnapshottingService {
               blockTag: atBlock
             });
             results[i + j] =
-              owner && owner !== ethers.constants.AddressZero
+              owner && owner !== ethers.ZeroAddress
                 ? owner.toLowerCase()
                 : null;
           } catch {
@@ -863,15 +861,13 @@ export class ExternalCollectionSnapshottingService {
           continue;
         }
         try {
-          const decoded: ethers.utils.Result = erc721Iface.decodeFunctionResult(
+          const decoded: ethers.Result = erc721Iface.decodeFunctionResult(
             'ownerOf',
             r.returnData
           );
           const owner = (decoded[0] as string) ?? null;
           results[i + j] =
-            owner && owner !== ethers.constants.AddressZero
-              ? owner.toLowerCase()
-              : null;
+            owner && owner !== ethers.ZeroAddress ? owner.toLowerCase() : null;
         } catch {
           results[i + j] = null;
         }
