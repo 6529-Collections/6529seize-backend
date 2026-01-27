@@ -848,11 +848,13 @@ async function persistTdhUploadByTable(
   const sql = `REPLACE INTO ${table} SET
       date = :date,
           block = :block,
-    tdh = :tdh`;
+    tdh = :tdh,
+    timestamp = :timestamp`;
   await sqlExecutor.execute(sql, {
     date: dateString,
     block: block,
-    tdh: location
+    tdh: location,
+    timestamp: Time.fromYyyyMmDdDateOnlyToUtcMidnight(dateString).toMillis()
   });
 
   logger.info(`[TDH UPLOAD IN ${table} PERSISTED]`);
