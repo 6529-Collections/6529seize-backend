@@ -18,6 +18,7 @@ export {
   DropEntity,
   DropMediaEntity,
   DropMentionEntity,
+  DropMentionedWaveEntity,
   DropMetadataEntity,
   DropPartEntity,
   DropBoostEntity,

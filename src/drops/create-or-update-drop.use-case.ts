@@ -30,6 +30,7 @@ import { randomUUID } from 'crypto';
 import {
   DropMediaEntity,
   DropMentionEntity,
+  DropMentionedWaveEntity,
   DropPartEntity,
   DropType
 } from '../entities/IDrop';
@@ -247,6 +248,10 @@ export class CreateOrUpdateDropUseCase {
     await Promise.all([
       this.verifyWaveLimitations(
         { model, groupIdsUserIsEligibleFor, isDescriptionDrop },
+        { timer, connection }
+      ),
+      this.verifyMentionedWaves(
+        { model, groupIdsUserIsEligibleFor },
         { timer, connection }
       ),
       this.verifyQuotedDrops(model, { timer, connection }),
@@ -675,6 +680,23 @@ export class CreateOrUpdateDropUseCase {
         timer
       ),
       this.insertMentionsInDrop({ model, wave }, { timer, connection }),
+      this.dropsDb.insertMentionedWaves(
+        parts
+          .map(
+            (part, index) =>
+              part.mentioned_waves?.map<Omit<DropMentionedWaveEntity, 'id'>>(
+                (mentionedWave) => ({
+                  drop_id: dropId,
+                  drop_part_id: index + 1,
+                  wave_id: mentionedWave.wave_id,
+                  wave_name_in_content: mentionedWave.wave_name_in_content
+                })
+              ) ?? []
+          )
+          .flat(),
+        connection,
+        timer
+      ),
       this.dropsDb.insertReferencedNfts(
         Object.values(
           model.referenced_nfts.reduce<Record<string, DropReferencedNftModel>>(
@@ -756,6 +778,38 @@ export class CreateOrUpdateDropUseCase {
       )
     ]);
     timer.stop(`${CreateOrUpdateDropUseCase.name}->insertAllDropComponents`);
+  }
+
+  private async verifyMentionedWaves(
+    {
+      model,
+      groupIdsUserIsEligibleFor
+    }: {
+      model: CreateOrUpdateDropModel;
+      groupIdsUserIsEligibleFor: string[];
+    },
+    { timer, connection }: { timer: Timer; connection: ConnectionWrapper<any> }
+  ) {
+    timer.start(`${CreateOrUpdateDropUseCase.name}->verifyMentionedWaves`);
+    const mentionedWaveIds = collections.distinct(
+      model.parts.flatMap((part) =>
+        part.mentioned_waves.map((mentionedWave) => mentionedWave.wave_id)
+      )
+    );
+    if (!mentionedWaveIds.length) {
+      timer.stop(`${CreateOrUpdateDropUseCase.name}->verifyMentionedWaves`);
+      return;
+    }
+    const eligibleMentionedWaves =
+      await this.wavesApiDb.findWavesByIdsEligibleForRead(
+        mentionedWaveIds,
+        groupIdsUserIsEligibleFor,
+        connection
+      );
+    if (eligibleMentionedWaves.length !== mentionedWaveIds.length) {
+      throw new NotFoundException('Wave not found');
+    }
+    timer.stop(`${CreateOrUpdateDropUseCase.name}->verifyMentionedWaves`);
   }
 
   private async recordQuoteNotifications(

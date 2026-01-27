@@ -27,7 +27,7 @@ function resolveNetworkByChainId(chainId: number): Network {
 function checksumAddress(address: string): string | null {
   if (!isValidEthAddress(address)) return null;
   try {
-    return ethers.utils.getAddress(address);
+    return ethers.getAddress(address);
   } catch {
     return address;
   }

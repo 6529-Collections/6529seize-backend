@@ -59,6 +59,7 @@ import { ApiDropWithoutWavesPageWithoutCount } from '../generated/models/ApiDrop
 import { ApiPageSortDirection } from '../generated/models/ApiPageSortDirection';
 import { ApiDropsPage } from '../generated/models/ApiDropsPage';
 import { ApiDropBoostsPage } from '../generated/models/ApiDropBoostsPage';
+import { ApiDropId } from '../generated/models/ApiDropId';
 import {
   metricsRecorder,
   MetricsRecorder
@@ -228,6 +229,41 @@ export class DropsApiService {
       dropEntities: dropEntities,
       contextProfileId: context_profile_id
     });
+  }
+
+  public async findDropIdsInWaveRange(
+    {
+      wave_id,
+      min_serial_no,
+      max_serial_no,
+      limit
+    }: {
+      wave_id: string;
+      min_serial_no: number;
+      max_serial_no: number | null;
+      limit: number;
+    },
+    ctx: RequestContext
+  ): Promise<ApiDropId[]> {
+    const authenticationContext = ctx.authenticationContext;
+    const context_profile_id = this.getDropsReadContextProfileId(
+      authenticationContext
+    );
+    const group_ids_user_is_eligible_for =
+      await this.userGroupsService.getGroupsUserIsEligibleFor(
+        context_profile_id
+      );
+    const maxSerialNo = max_serial_no ?? Number.MAX_SAFE_INTEGER;
+    return this.dropsDb.findDropIdsInWaveRange(
+      {
+        wave_id,
+        min_serial_no,
+        max_serial_no: maxSerialNo,
+        limit,
+        group_ids_user_is_eligible_for
+      },
+      ctx
+    );
   }
 
   private getDropsReadContextProfileId(

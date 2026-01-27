@@ -72,7 +72,7 @@ describe('findDelegationTransactions', () => {
         collectionAddress: MEMES_CONTRACT,
         delegator: '0xA',
         delegationAddress: '0xB',
-        useCase: { toNumber: () => USE_CASE_CONSOLIDATION }
+        useCase: BigInt(USE_CASE_CONSOLIDATION)
       }
     });
     mockEqual.mockReturnValue(false);
@@ -93,7 +93,7 @@ describe('findDelegationTransactions', () => {
         collectionAddress: '0xC',
         delegator: '0xA',
         delegationAddress: '0xB',
-        useCase: { toNumber: () => USE_CASE_SUB_DELEGATION }
+        useCase: BigInt(USE_CASE_SUB_DELEGATION)
       }
     });
     mockEqual.mockReturnValue(false);
@@ -121,14 +121,14 @@ describe('findDelegationTransactions', () => {
         collectionAddress: '0xC',
         from: '0xA',
         delegationAddress: '0xB',
-        useCase: { toNumber: () => 5 }
+        useCase: BigInt(5)
       }
     });
     mockParseTx.mockReturnValueOnce({
       args: {
-        _expiryDate: { toNumber: () => 9 },
+        _expiryDate: BigInt(9),
         _allTokens: true,
-        _tokenId: { toNumber: () => 7 }
+        _tokenId: BigInt(7)
       }
     });
     alchemyMock.core.getTransaction.mockResolvedValue({ data: '0x' });
@@ -158,7 +158,7 @@ describe('findDelegationTransactions', () => {
         collectionAddress: '0xC',
         from: '0xA',
         delegationAddress: '0xB',
-        useCase: { toNumber: () => 5 }
+        useCase: BigInt(5)
       }
     });
     mockEqual.mockReturnValue(false);

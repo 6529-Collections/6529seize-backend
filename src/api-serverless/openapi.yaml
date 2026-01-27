@@ -886,6 +886,52 @@ paths:
                 $ref: "#/components/schemas/ApiDrop"
         "400":
           description: Invalid request
+  /drop-ids:
+    get:
+      tags:
+        - Drops
+      summary: Get drop IDs in wave by serial range.
+      operationId: getDropIds
+      parameters:
+        - name: wave_id
+          in: query
+          description: Drops in wave with given ID
+          required: true
+          schema:
+            type: string
+        - name: min_serial_no
+          in: query
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+        - name: max_serial_no
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+        - name: limit
+          in: query
+          description: How many IDs to return (100 by default)
+          required: false
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+            maximum: 5000
+            default: 100
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ApiDropId"
   /boosted-drops/:
     get:
       tags:
@@ -6206,6 +6252,10 @@ components:
           anyOf:
             - $ref: "#/components/schemas/ApiQuotedDrop"
             - type: "null"
+        mentioned_waves:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiCreateMentionedWave"
         media:
           type: array
           items:
@@ -6897,6 +6947,41 @@ components:
           type: string
           maxLength: 100
           nullable: true
+    ApiDropId:
+      type: object
+      required:
+        - id
+        - serial_no
+      properties:
+        id:
+          type: string
+        serial_no:
+          type: integer
+          format: int64
+    ApiMentionedWave:
+      type: object
+      required:
+        - wave_name_in_content
+        - wave
+      properties:
+        wave_name_in_content:
+          type: string
+          minLength: 1
+        wave:
+          $ref: "#/components/schemas/ApiWaveMin"
+    ApiCreateMentionedWave:
+      type: object
+      required:
+        - wave_name_in_content
+        - wave_id
+      properties:
+        wave_name_in_content:
+          type: string
+          minLength: 1
+        wave_id:
+          type: string
+          maxLength: 100
+          minLength: 1
     ApiDropMetadata:
       type: object
       required:
@@ -6916,6 +7001,7 @@ components:
         - media
         - quoted_drop
         - content
+        - mentioned_waves
       properties:
         part_id:
           description: Which drop in the storm is this drop
@@ -6933,6 +7019,10 @@ components:
           anyOf:
             - $ref: "#/components/schemas/ApiQuotedDropResponse"
             - type: "null"
+        mentioned_waves:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiMentionedWave"
     ApiDropRater:
       type: object
       required:
