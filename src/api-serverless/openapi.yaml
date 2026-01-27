@@ -6206,6 +6206,10 @@ components:
           anyOf:
             - $ref: "#/components/schemas/ApiQuotedDrop"
             - type: "null"
+        mentioned_waves:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiCreateMentionedWave"
         media:
           type: array
           items:
@@ -6897,6 +6901,30 @@ components:
           type: string
           maxLength: 100
           nullable: true
+    ApiMentionedWave:
+      type: object
+      required:
+        - wave_name_in_content
+        - wave
+      properties:
+        wave_name_in_content:
+          type: string
+          minLength: 1
+        wave:
+          $ref: "#/components/schemas/ApiWaveMin"
+    ApiCreateMentionedWave:
+      type: object
+      required:
+        - wave_name_in_content
+        - wave_id
+      properties:
+        wave_name_in_content:
+          type: string
+          minLength: 1
+        wave_id:
+          type: string
+          maxLength: 100
+          minLength: 1
     ApiDropMetadata:
       type: object
       required:
@@ -6916,6 +6944,7 @@ components:
         - media
         - quoted_drop
         - content
+        - mentioned_waves
       properties:
         part_id:
           description: Which drop in the storm is this drop
@@ -6933,6 +6962,10 @@ components:
           anyOf:
             - $ref: "#/components/schemas/ApiQuotedDropResponse"
             - type: "null"
+        mentioned_waves:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiMentionedWave"
     ApiDropRater:
       type: object
       required:

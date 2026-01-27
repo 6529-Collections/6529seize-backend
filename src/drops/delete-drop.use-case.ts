@@ -82,6 +82,7 @@ export class DeleteDropUseCase {
       await Promise.all([
         this.dropsDb.deleteDropParts(dropId, { timer, connection }),
         this.dropsDb.deleteDropMentions(dropId, { timer, connection }),
+        this.dropsDb.deleteDropMentionedWaves(dropId, { timer, connection }),
         this.dropsDb.deleteDropMedia(dropId, { timer, connection }),
         this.dropsDb.deleteDropReferencedNfts(dropId, { timer, connection }),
         this.dropsDb.deleteDropMetadata(dropId, { timer, connection }),
