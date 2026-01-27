@@ -1,12 +1,8 @@
 import { externalIndexerRpc, ExternalIndexerRpc } from './external-indexer-rpc';
-import { BigNumber, ethers } from 'ethers';
+import { ethers } from 'ethers';
 
-const ERC20_TRANSFER_TOPIC = ethers.utils.id(
-  'Transfer(address,address,uint256)'
-);
-const ERC721_TRANSFER_TOPIC = ethers.utils.id(
-  'Transfer(address,address,uint256)'
-); // same sig; we exclude NFT logs by address
+const ERC20_TRANSFER_TOPIC = ethers.id('Transfer(address,address,uint256)');
+const ERC721_TRANSFER_TOPIC = ethers.id('Transfer(address,address,uint256)'); // same sig; we exclude NFT logs by address
 
 // Seaport (v1.1 + v1.5), Blur Exchange, Blur Pool (common helper)
 const DEFAULT_MARKET_ADDRESSES = new Set<string>(
@@ -40,8 +36,8 @@ export class ExternalCollectionSaleDetector {
     if (!tx || !receipt) return false;
 
     // 1) ETH payment
-    const ethValue: BigNumber = tx.value ?? BigNumber.from(0);
-    const ethPaid = ethValue.gt(0);
+    const ethValue = tx.value ?? BigInt(0);
+    const ethPaid = ethValue > BigInt(0);
 
     // 2) ERC-20 payment: any ERC-20 Transfer in the tx that wasn't emitted by the NFT contract
     const erc20Paid = receipt.logs.some(

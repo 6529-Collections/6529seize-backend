@@ -173,7 +173,7 @@ export const updateTDH = async (
     apiKey: process.env.ALCHEMY_API_KEY
   });
 
-  const provider = new ethers.providers.JsonRpcProvider(
+  const provider = new ethers.JsonRpcProvider(
     `https://eth-mainnet.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`
   );
   const beforeBlock = await findLatestBlockBeforeTimestamp(
@@ -1057,7 +1057,7 @@ export function getGenesisAndNaka(memes: TokenTDH[]) {
 }
 
 export async function findLatestBlockBeforeTimestamp(
-  provider: ethers.providers.JsonRpcProvider,
+  provider: ethers.JsonRpcProvider,
   targetTimestamp: number
 ) {
   logger.info(`FINDING LATEST BLOCK BEFORE TIMESTAMP [${targetTimestamp}]`);
