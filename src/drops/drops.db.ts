@@ -553,6 +553,47 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     return results;
   }
 
+  async findDropIdsInWaveRange(
+    {
+      wave_id,
+      min_serial_no,
+      max_serial_no,
+      limit,
+      group_ids_user_is_eligible_for
+    }: {
+      wave_id: string;
+      min_serial_no: number;
+      max_serial_no: number;
+      limit: number;
+      group_ids_user_is_eligible_for: string[];
+    },
+    ctx: RequestContext
+  ): Promise<{ id: string; serial_no: number }[]> {
+    const sql = `select d.id, d.serial_no
+      from ${DROPS_TABLE} d
+      join ${WAVES_TABLE} w on d.wave_id = w.id and (${
+        group_ids_user_is_eligible_for.length
+          ? `w.visibility_group_id in (:groupsUserIsEligibleFor) or w.admin_group_id in (:groupsUserIsEligibleFor) or`
+          : ``
+      } w.visibility_group_id is null)
+      where d.wave_id = :wave_id
+        and d.serial_no >= :min_serial_no
+        and d.serial_no <= :max_serial_no
+      order by d.serial_no asc
+      limit :limit`;
+    return this.db.execute(
+      sql,
+      {
+        wave_id,
+        min_serial_no,
+        max_serial_no,
+        limit,
+        groupsUserIsEligibleFor: group_ids_user_is_eligible_for
+      },
+      { wrappedConnection: ctx.connection }
+    );
+  }
+
   async findLatestDropRepliesSimple(
     {
       amount,
