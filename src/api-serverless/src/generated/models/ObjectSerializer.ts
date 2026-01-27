@@ -37,6 +37,7 @@ export * from '../models/ApiCreateGroup';
 export * from '../models/ApiCreateGroupDescription';
 export * from '../models/ApiCreateMediaUploadUrlRequest';
 export * from '../models/ApiCreateMediaUrlResponse';
+export * from '../models/ApiCreateMentionedWave';
 export * from '../models/ApiCreateNewProfileProxy';
 export * from '../models/ApiCreateNewProfileProxyAllocateCicAction';
 export * from '../models/ApiCreateNewProfileProxyAllocateRepAction';
@@ -102,6 +103,7 @@ export * from '../models/ApiLightDrop';
 export * from '../models/ApiLoginRequest';
 export * from '../models/ApiLoginResponse';
 export * from '../models/ApiMarkDropUnreadResponse';
+export * from '../models/ApiMentionedWave';
 export * from '../models/ApiMintMetrics';
 export * from '../models/ApiMintMetricsPage';
 export * from '../models/ApiNft';
@@ -286,6 +288,7 @@ import { ApiCreateGroup } from '../models/ApiCreateGroup';
 import { ApiCreateGroupDescription } from '../models/ApiCreateGroupDescription';
 import { ApiCreateMediaUploadUrlRequest } from '../models/ApiCreateMediaUploadUrlRequest';
 import { ApiCreateMediaUrlResponse } from '../models/ApiCreateMediaUrlResponse';
+import { ApiCreateMentionedWave } from '../models/ApiCreateMentionedWave';
 import { ApiCreateNewProfileProxy } from '../models/ApiCreateNewProfileProxy';
 import { ApiCreateNewProfileProxyAllocateCicAction    } from '../models/ApiCreateNewProfileProxyAllocateCicAction';
 import { ApiCreateNewProfileProxyAllocateRepAction    } from '../models/ApiCreateNewProfileProxyAllocateRepAction';
@@ -351,6 +354,7 @@ import { ApiLightDrop         } from '../models/ApiLightDrop';
 import { ApiLoginRequest } from '../models/ApiLoginRequest';
 import { ApiLoginResponse } from '../models/ApiLoginResponse';
 import { ApiMarkDropUnreadResponse } from '../models/ApiMarkDropUnreadResponse';
+import { ApiMentionedWave } from '../models/ApiMentionedWave';
 import { ApiMintMetrics } from '../models/ApiMintMetrics';
 import { ApiMintMetricsPage } from '../models/ApiMintMetricsPage';
 import { ApiNft      , ApiNftTokenTypeEnum                               } from '../models/ApiNft';
@@ -580,6 +584,7 @@ let typeMap: {[index: string]: any} = {
     "ApiCreateGroupDescription": ApiCreateGroupDescription,
     "ApiCreateMediaUploadUrlRequest": ApiCreateMediaUploadUrlRequest,
     "ApiCreateMediaUrlResponse": ApiCreateMediaUrlResponse,
+    "ApiCreateMentionedWave": ApiCreateMentionedWave,
     "ApiCreateNewProfileProxy": ApiCreateNewProfileProxy,
     "ApiCreateNewProfileProxyAllocateCicAction": ApiCreateNewProfileProxyAllocateCicAction,
     "ApiCreateNewProfileProxyAllocateRepAction": ApiCreateNewProfileProxyAllocateRepAction,
@@ -637,6 +642,7 @@ let typeMap: {[index: string]: any} = {
     "ApiLoginRequest": ApiLoginRequest,
     "ApiLoginResponse": ApiLoginResponse,
     "ApiMarkDropUnreadResponse": ApiMarkDropUnreadResponse,
+    "ApiMentionedWave": ApiMentionedWave,
     "ApiMintMetrics": ApiMintMetrics,
     "ApiMintMetricsPage": ApiMintMetricsPage,
     "ApiNft": ApiNft,

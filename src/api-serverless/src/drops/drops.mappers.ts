@@ -2,6 +2,7 @@ import {
   DropEntity,
   DropMediaEntity,
   DropMentionEntity,
+  DropMentionedWaveEntity,
   DropMetadataEntity,
   DropPartEntity,
   DropReferencedNftEntity,
@@ -14,6 +15,7 @@ import { ApiDropPart } from '../generated/models/ApiDropPart';
 import { ApiDropMedia } from '../generated/models/ApiDropMedia';
 import { ApiDropReferencedNFT } from '../generated/models/ApiDropReferencedNFT';
 import { ApiDropMentionedUser } from '../generated/models/ApiDropMentionedUser';
+import { ApiMentionedWave } from '../generated/models/ApiMentionedWave';
 import { ApiDropMetadata } from '../generated/models/ApiDropMetadata';
 import { ApiDropRater } from '../generated/models/ApiDropRater';
 import {
@@ -130,6 +132,10 @@ export class DropsMappers {
         media: it.media.map((media) => ({
           url: media.url,
           mime_type: media.mime_type
+        })),
+        mentioned_waves: (it.mentioned_waves ?? []).map((mentionedWave) => ({
+          wave_id: mentionedWave.wave_id,
+          wave_name_in_content: mentionedWave.wave_name_in_content
         })),
         quoted_drop: it.quoted_drop
           ? {
@@ -281,6 +287,7 @@ export class DropsMappers {
       dropsRanks,
       submissionDropsVotingRanges,
       mentions,
+      mentionedWaves,
       referencedNfts,
       metadata,
       dropsTopVoters,
@@ -312,6 +319,7 @@ export class DropsMappers {
         connection
       ),
       this.dropsDb.findMentionsByDropIds(allDropIds, connection),
+      this.dropsDb.findMentionedWavesByDropIds(allDropIds, connection),
       this.dropsDb.findReferencedNftsByDropIds(allDropIds, connection),
       this.dropsDb.findMetadataByDropIds(allDropIds, connection),
       this.dropVotingDb.findDropsTopContributors(participatoryDropIds, {
@@ -384,6 +392,7 @@ export class DropsMappers {
       dropsRanks,
       submissionDropsVotingRanges,
       mentions,
+      mentionedWaves,
       referencedNfts,
       metadata,
       dropsVoteCounts,
@@ -423,6 +432,7 @@ export class DropsMappers {
     const {
       submissionDropsVotingRanges,
       mentions,
+      mentionedWaves,
       referencedNfts,
       metadata,
       dropsTopVoters,
@@ -450,6 +460,68 @@ export class DropsMappers {
         contextProfileId
       },
       ctx.connection
+    );
+    const mentionedWaveIds = collections.distinct(
+      mentionedWaves.map((it) => it.wave_id)
+    );
+    const groupIdsUserIsEligibleFor =
+      await this.userGroupsService.getGroupsUserIsEligibleFor(
+        contextProfileId ?? null
+      );
+    const [mentionedWaveEntities, pinnedMentionedWaveIds] = await Promise.all([
+      mentionedWaveIds.length
+        ? this.wavesApiDb.findWavesByIdsEligibleForRead(
+            mentionedWaveIds,
+            groupIdsUserIsEligibleFor,
+            ctx.connection
+          )
+        : Promise.resolve([]),
+      this.wavesApiDb.whichOfWavesArePinnedByGivenProfile(
+        {
+          waveIds: mentionedWaveIds,
+          profileId: contextProfileId
+        },
+        { connection: ctx.connection }
+      )
+    ]);
+    const mentionedWavesById = mentionedWaveEntities.reduce(
+      (acc, wave) => {
+        acc[wave.id] = {
+          id: wave.id,
+          name: wave.name,
+          picture: wave.picture,
+          description_drop_id: wave.description_drop_id,
+          authenticated_user_eligible_to_chat:
+            wave.chat_enabled &&
+            (wave.chat_group_id === null ||
+              groupIdsUserIsEligibleFor.includes(wave.chat_group_id)),
+          authenticated_user_eligible_to_vote:
+            wave.voting_group_id === null ||
+            groupIdsUserIsEligibleFor.includes(wave.voting_group_id),
+          authenticated_user_eligible_to_participate:
+            wave.participation_group_id === null ||
+            groupIdsUserIsEligibleFor.includes(wave.participation_group_id),
+          authenticated_user_admin:
+            wave.admin_group_id !== null &&
+            groupIdsUserIsEligibleFor.includes(wave.admin_group_id),
+          voting_credit_type: enums.resolveOrThrow(
+            WaveCreditTypeApi,
+            wave.voting_credit_type
+          ),
+          voting_period_start: wave.voting_period_start,
+          voting_period_end: wave.voting_period_end,
+          visibility_group_id: wave.visibility_group_id,
+          chat_group_id: wave.chat_group_id,
+          admin_group_id: wave.admin_group_id,
+          participation_group_id: wave.participation_group_id,
+          voting_group_id: wave.voting_group_id,
+          admin_drop_deletion_enabled: wave.admin_drop_deletion_enabled,
+          forbid_negative_votes: wave.forbid_negative_votes,
+          pinned: pinnedMentionedWaveIds.has(wave.id)
+        };
+        return acc;
+      },
+      {} as Record<string, ApiWaveMin>
     );
     const voterProfileIds = Object.values(dropsTopVoters)
       .map((it) => it.map((r) => r.voter_id))
@@ -508,6 +580,8 @@ export class DropsMappers {
         contextProfileId,
         referencedNfts,
         mentions,
+        mentionedWaves,
+        mentionedWavesById,
         metadata,
         dropsVoteCounts,
         dropsTopVoters,
@@ -545,6 +619,8 @@ export class DropsMappers {
     contextProfileId,
     referencedNfts,
     mentions,
+    mentionedWaves,
+    mentionedWavesById,
     metadata,
     dropsTopVoters,
     subscribedActions,
@@ -572,6 +648,8 @@ export class DropsMappers {
     contextProfileId: string | undefined | null;
     referencedNfts: DropReferencedNftEntity[];
     mentions: DropMentionEntity[];
+    mentionedWaves: DropMentionedWaveEntity[];
+    mentionedWavesById: Record<string, ApiWaveMin>;
     metadata: DropMetadataEntity[];
     dropsTopVoters: Record<string, { votes: number; voter_id: string }[]>;
     dropsVoteCounts: Record<
@@ -716,6 +794,8 @@ export class DropsMappers {
                   contextProfileId,
                   referencedNfts,
                   mentions,
+                  mentionedWaves,
+                  mentionedWavesById,
                   metadata,
                   dropsTopVoters,
                   dropsVoteCounts,
@@ -743,6 +823,17 @@ export class DropsMappers {
       parts:
         dropsParts[dropEntity.id]?.map<ApiDropPart>((it) => {
           const quotedDropId = it.quoted_drop_id;
+          const mentionedWaveParts = mentionedWaves
+            .filter(
+              (mentionedWave) =>
+                mentionedWave.drop_id === dropEntity.id &&
+                mentionedWave.drop_part_id === it.drop_part_id &&
+                !!mentionedWavesById[mentionedWave.wave_id]
+            )
+            .map<ApiMentionedWave>((mentionedWave) => ({
+              wave_name_in_content: mentionedWave.wave_name_in_content,
+              wave: mentionedWavesById[mentionedWave.wave_id]
+            }));
           return {
             content: it.content,
             quoted_drop:
@@ -761,6 +852,8 @@ export class DropsMappers {
                           contextProfileId,
                           referencedNfts,
                           mentions,
+                          mentionedWaves,
+                          mentionedWavesById,
                           metadata,
                           dropsVoteCounts,
                           dropsTopVoters,
@@ -784,6 +877,7 @@ export class DropsMappers {
                   }
                 : null,
             part_id: it.drop_part_id,
+            mentioned_waves: mentionedWaveParts,
             media:
               (dropMedia[dropEntity.id] ?? [])
                 .filter((m) => m.drop_part_id === it.drop_part_id)
