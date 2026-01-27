@@ -50,44 +50,44 @@ import {
 } from '../community-members/user-groups.service';
 import { ApiWavesPinFilter } from '../generated/models/ApiWavesPinFilter';
 
+type RawWaveEntity = Omit<
+  WaveEntity,
+  | 'participation_required_media'
+  | 'participation_required_metadata'
+  | 'decisions_strategy'
+> & {
+  participation_required_media: string;
+  participation_required_metadata: string;
+  decisions_strategy: string;
+};
+
 export class WavesApiDb extends LazyDbAccessCompatibleService {
+  private parseWaveEntity(entity: RawWaveEntity): WaveEntity {
+    return {
+      ...entity,
+      participation_required_media: JSON.parse(
+        entity.participation_required_media
+      ),
+      participation_required_metadata: JSON.parse(
+        entity.participation_required_metadata
+      ),
+      decisions_strategy: entity.decisions_strategy
+        ? JSON.parse(entity.decisions_strategy)
+        : null
+    };
+  }
+
   public async findWaveById(
     id: string,
     connection?: ConnectionWrapper<any>
   ): Promise<WaveEntity | null> {
     return this.db
-      .oneOrNull<
-        Omit<
-          WaveEntity,
-          | 'participation_required_media'
-          | 'participation_required_metadata'
-          | 'decisions_strategy'
-        > & {
-          participation_required_media: string;
-          participation_required_metadata: string;
-          decisions_strategy: string;
-        }
-      >(
+      .oneOrNull<RawWaveEntity>(
         `SELECT * FROM ${WAVES_TABLE} WHERE id = :id`,
         { id },
         connection ? { wrappedConnection: connection } : undefined
       )
-      .then((it) =>
-        it
-          ? {
-              ...it,
-              participation_required_media: JSON.parse(
-                it.participation_required_media
-              ),
-              participation_required_metadata: JSON.parse(
-                it.participation_required_metadata
-              ),
-              decisions_strategy: it.decisions_strategy
-                ? JSON.parse(it.decisions_strategy)
-                : null
-            }
-          : null
-      );
+      .then((it) => (it ? this.parseWaveEntity(it) : null));
   }
 
   public async findWavesByIds(
@@ -99,18 +99,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       return [];
     }
     return this.db
-      .execute<
-        Omit<
-          WaveEntity,
-          | 'participation_required_media'
-          | 'participation_required_metadata'
-          | 'decisions_strategy'
-        > & {
-          participation_required_media: string;
-          participation_required_metadata: string;
-          decisions_strategy: string;
-        }
-      >(
+      .execute<RawWaveEntity>(
         `SELECT * FROM ${WAVES_TABLE} WHERE id in (:ids) and (visibility_group_id is null ${
           groupIdsUserIsEligibleFor.length
             ? `or visibility_group_id in (:groupIdsUserIsEligibleFor)`
@@ -119,20 +108,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         { ids, groupIdsUserIsEligibleFor },
         connection ? { wrappedConnection: connection } : undefined
       )
-      .then((res) =>
-        res.map((it) => ({
-          ...it,
-          participation_required_media: JSON.parse(
-            it.participation_required_media
-          ),
-          participation_required_metadata: JSON.parse(
-            it.participation_required_metadata
-          ),
-          decisions_strategy: it.decisions_strategy
-            ? JSON.parse(it.decisions_strategy)
-            : null
-        }))
-      );
+      .then((res) => res.map((it) => this.parseWaveEntity(it)));
   }
 
   public async findWavesByIdsEligibleForRead(
@@ -144,18 +120,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       return [];
     }
     return this.db
-      .execute<
-        Omit<
-          WaveEntity,
-          | 'participation_required_media'
-          | 'participation_required_metadata'
-          | 'decisions_strategy'
-        > & {
-          participation_required_media: string;
-          participation_required_metadata: string;
-          decisions_strategy: string;
-        }
-      >(
+      .execute<RawWaveEntity>(
         `SELECT * FROM ${WAVES_TABLE} WHERE id in (:ids) and (visibility_group_id is null ${
           groupIdsUserIsEligibleFor.length
             ? `or visibility_group_id in (:groupIdsUserIsEligibleFor) or admin_group_id in (:groupIdsUserIsEligibleFor)`
@@ -164,20 +129,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         { ids, groupIdsUserIsEligibleFor },
         connection ? { wrappedConnection: connection } : undefined
       )
-      .then((res) =>
-        res.map((it) => ({
-          ...it,
-          participation_required_media: JSON.parse(
-            it.participation_required_media
-          ),
-          participation_required_metadata: JSON.parse(
-            it.participation_required_metadata
-          ),
-          decisions_strategy: it.decisions_strategy
-            ? JSON.parse(it.decisions_strategy)
-            : null
-        }))
-      );
+      .then((res) => res.map((it) => this.parseWaveEntity(it)));
   }
 
   public async insertWave(wave: InsertWaveEntity, ctx: RequestContext) {
