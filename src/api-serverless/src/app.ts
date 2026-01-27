@@ -392,7 +392,9 @@ async function initializeApp() {
       .default(DEFAULT_PAGE_SIZE),
     page: Joi.number().integer().min(1).default(1),
     block: Joi.number().integer().min(0).default(0),
-    date: Joi.string().optional()
+    date: Joi.string()
+      .optional()
+      .pattern(/\d\d\d\d\d\d\d\d/)
   });
 
   apiRouter.get(

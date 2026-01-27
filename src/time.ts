@@ -38,6 +38,17 @@ export class Time {
     return Time.millis(Date.UTC(yyyy, mm - 1, dd));
   }
 
+  static fromYyyyMmDdDateOnlyToUtcMidnight(s: string): Time {
+    const m = /^(\d{4})(\d{1,2})(\d{1,2})$/.exec(s);
+    if (!m) {
+      throw new Error(`Input '${s}' is not in the required format yyyyMMdd'`);
+    }
+    const dd = Number(m[3]),
+      mm = Number(m[2]),
+      yyyy = Number(m[1]);
+    return Time.millis(Date.UTC(yyyy, mm - 1, dd));
+  }
+
   static todayUtcMidnight(): Time {
     const now = new Date();
     const nowUtc = new Date(

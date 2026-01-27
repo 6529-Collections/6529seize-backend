@@ -1,5 +1,5 @@
-import { Column, Entity, PrimaryColumn } from 'typeorm';
-import { CONSOLIDATED_UPLOADS_TABLE } from '../constants';
+import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
+import { CONSOLIDATED_UPLOADS_TABLE, UPLOADS_TABLE } from '../constants';
 
 export class Upload {
   @PrimaryColumn({ type: 'varchar', length: 8 })
@@ -10,10 +10,20 @@ export class Upload {
 
   @Column({ type: 'text' })
   tdh!: string;
+
+  @Index()
+  @Column({ type: 'bigint', default: 0, nullable: false })
+  timestamp!: number;
 }
 
 @Entity({ name: CONSOLIDATED_UPLOADS_TABLE })
 export class ConsolidatedTDHUpload extends Upload {}
+
+@Entity({ name: UPLOADS_TABLE })
+export class UploadEntity extends Upload {}
+
+@Entity({ name: CONSOLIDATED_UPLOADS_TABLE })
+export class UploadE extends Upload {}
 
 export interface UploadFields {
   block: number;

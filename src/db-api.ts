@@ -384,8 +384,9 @@ async function fetchUploadsByTable(
     params.block = block;
   }
   if (date) {
-    filters = constructFilters(filters, `STR_TO_DATE(date, '%Y%m%d') <= :date`);
-    params.date = date;
+    const timeEqualOrLess = Time.fromYyyyMmDdDateOnlyToUtcMidnight(date);
+    filters = constructFilters(filters, `timestamp <= :date`);
+    params.date = timeEqualOrLess.toMillis();
   }
 
   return fetchPaginated(
