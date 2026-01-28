@@ -1,4 +1,3 @@
-import fetch from 'node-fetch';
 import * as db from '../../db-api';
 import { ids } from '../../ids';
 
@@ -628,22 +627,6 @@ async function initializeApp() {
   );
 
   apiRouter.get(
-    `/memes_seasons`,
-    cacheRequest(),
-    async function (req: any, res: any) {
-      const sortDir =
-        req.query.sort_direction &&
-        SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
-          ? req.query.sort_direction
-          : 'asc';
-
-      await db.fetchMemesSeasons(sortDir).then(async (result) => {
-        await returnPaginatedResult(result as unknown as any, req, res);
-      });
-    }
-  );
-
-  apiRouter.get(
     `/new_memes_seasons`,
     cacheRequest(),
     async function (req: any, res: any) {
@@ -684,14 +667,6 @@ async function initializeApp() {
       });
     }
   );
-
-  apiRouter.get(`/test`, async function (req: any, res: any) {
-    await appWebSockets.send({
-      connectionId: req.query.p,
-      message: 'Hello from server'
-    });
-    res.send('HEllo');
-  });
 
   apiRouter.get(
     `/memes_latest`,
@@ -763,21 +738,6 @@ async function initializeApp() {
   );
 
   apiRouter.get(
-    `/transactions/:hash`,
-    cacheRequest(),
-    async function (req: any, res: any) {
-      const hash = req.params.hash;
-      await db.fetchTransactionByHash(hash).then(async (result) => {
-        if (result.data.length == 1) {
-          await returnJsonResult(result.data[0], req, res);
-        } else {
-          await returnJsonResult({}, req, res);
-        }
-      });
-    }
-  );
-
-  apiRouter.get(
     `/transactions_memelab`,
     cacheRequest(),
     async function (req: any, res: any) {
@@ -812,31 +772,6 @@ async function initializeApp() {
       });
     }
   );
-
-  apiRouter.get(
-    `/ens/:address/`,
-    cacheRequest(),
-    async function (req: any, res: any) {
-      const address = req.params.address;
-
-      await db.fetchEns(address).then(async (result) => {
-        if (result.length == 1) {
-          await returnJsonResult(result[0], req, res);
-        } else {
-          await returnJsonResult({}, req, res);
-        }
-      });
-    }
-  );
-
-  apiRouter.get(`/team`, cacheRequest(), async function (req: any, res: any) {
-    const pageSize = getPageSize(req);
-    const page = getPage(req);
-
-    await db.fetchTeam(pageSize, page).then(async (result) => {
-      await returnPaginatedResult(result, req, res);
-    });
-  });
 
   apiRouter.get(
     `/consolidations/:wallet`,
@@ -874,25 +809,6 @@ async function initializeApp() {
   );
 
   apiRouter.get(
-    `/consolidation_transactions`,
-    cacheRequest(),
-    async function (req: any, res: any) {
-      const pageSize = getPageSize(req);
-      const page = getPage(req);
-
-      const block = req.query.block;
-      const showIncomplete = !!(
-        req.query.show_incomplete && req.query.show_incomplete == 'true'
-      );
-      await db
-        .fetchConsolidationTransactions(pageSize, page, block, showIncomplete)
-        .then(async (result) => {
-          await returnPaginatedResult(result, req, res);
-        });
-    }
-  );
-
-  apiRouter.get(
     `/nft_history/:contract/:nft_id`,
     cacheRequest(),
     async function (req: any, res: any) {
@@ -910,29 +826,6 @@ async function initializeApp() {
           });
           await returnPaginatedResult(result, req, res);
         });
-    }
-  );
-
-  rootRouter.get(
-    `/floor_price`,
-    cacheRequest(),
-    async function (req: any, res: any) {
-      const contract = req.query.contract;
-      const id = req.query.id;
-
-      if (!contract || !id) {
-        res.status(400).send('Missing contract or id');
-        return;
-      }
-      const url = `https://api.opensea.io/v2/orders/ethereum/seaport/listings?asset_contract_address=${contract}&limit=1&token_ids=${id}&order_by=eth_price&order_direction=asc`;
-      const response = await fetch(url, {
-        headers: {
-          'X-API-KEY': process.env.OPENSEA_API_KEY!,
-          accept: 'application/json'
-        }
-      });
-      const json = await response.json();
-      return res.send(json);
     }
   );
 
