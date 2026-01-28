@@ -14,15 +14,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v3
       - name: Install dependencies
-        run: npm ci && pushd src/api-serverless && npm ci && popd
+        run: npm i && pushd src/api-serverless && npm i && popd
       - name: Lint
         run: |
           npm run lint -- --max-warnings=0
-          git diff --exit-code
+          if ! git diff --exit-code -- 'src/**/*.ts'; then
+            echo "::error::Lint --fix changed source files. Commit the fixes."
+            git diff --stat -- 'src/**/*.ts'
+            exit 1
+          fi
       - name: Format
         run: |
           npm run format
-          git diff --exit-code
+          if ! git diff --exit-code -- 'src/**/*.ts'; then
+            echo "::error::Format changed source files. Run 'npm run format' and commit."
+            git diff --stat -- 'src/**/*.ts'
+            exit 1
+          fi
       - name: Build backend
         run: npm run build
       - name: Build API
