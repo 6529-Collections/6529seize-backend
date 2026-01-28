@@ -1,6 +1,7 @@
 import { ethers } from 'ethers';
 import { Request, Response } from 'express';
 import fetch from 'node-fetch';
+import { PDFDocument } from 'pdf-lib';
 import { BadRequestException, ForbiddenException } from '../../../exceptions';
 import { Logger } from '../../../logging';
 import { numbers } from '../../../numbers';
@@ -282,6 +283,25 @@ function getFileExtensionFromUrl(url: string): string {
   return urlPath.substring(lastDot + 1).toLowerCase();
 }
 
+async function mergeImagesIntoPdf(
+  images: { fileName: string; content: Buffer }[]
+): Promise<Buffer> {
+  const doc = await PDFDocument.create();
+  for (const img of images) {
+    const ext = img.fileName.replace(/^.*\./, '').toLowerCase();
+    const isPng = ext === 'png';
+    const embed = isPng
+      ? await doc.embedPng(img.content)
+      : await doc.embedJpg(img.content);
+    const width = embed.width;
+    const height = embed.height;
+    const page = doc.addPage([width, height]);
+    page.drawImage(embed, { x: 0, y: 0, width, height });
+  }
+  const bytes = await doc.save();
+  return Buffer.from(bytes);
+}
+
 interface PhaseCsvFiles {
   phaseIndex: number;
   phaseName: string;
@@ -410,6 +430,11 @@ router.post(
       photoBuffers.push({ fileName, content: buffer });
     }
 
+    const pdfBuffer = await mergeImagesIntoPdf(photoBuffers);
+    const photoFilesForUpload = [
+      { fileName: `Meme_Card_${cardId}.pdf`, content: pdfBuffer }
+    ];
+
     const airdropLines: string[] = [];
     for (const airdrop of airdrops) {
       airdropLines.push(`${airdrop.wallet},${airdrop.count}`);
@@ -424,7 +449,7 @@ router.post(
     const { uploadedFiles, deletedFiles } =
       await githubDistributionService.uploadDistributionFiles(
         cardId,
-        photoBuffers,
+        photoFilesForUpload,
         airdropFinalCsv,
         phaseCsvFiles
       );
