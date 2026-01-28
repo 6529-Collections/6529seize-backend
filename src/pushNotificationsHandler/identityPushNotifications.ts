@@ -157,7 +157,7 @@ export async function sendIdentityNotification(id: number) {
           data,
           badge,
           imageUrl ?? undefined
-        ).catch(async (error) => {
+        ).catch(async (error: { code?: string; message?: string }) => {
           if (
             error.code === 'messaging/registration-token-not-registered' ||
             error.code === 'messaging/invalid-registration-token'
