@@ -49,6 +49,8 @@ export async function updateDistributionInfoFor<T extends BaseNFT>(
     `[${entityClass.name}] Missing info count: ${missingInfo.length}`
   );
 
+  const stillMissing: { contract: string; card_id: number }[] = [];
+
   for (const { contract, card_id } of missingInfo) {
     const nft = await repo.findOneBy({ contract, id: card_id } as any);
 
@@ -69,6 +71,15 @@ export async function updateDistributionInfoFor<T extends BaseNFT>(
           mintDate
         }
       );
+    } else {
+      stillMissing.push({ contract, card_id });
     }
+  }
+
+  if (stillMissing.length > 0) {
+    const tokens = stillMissing
+      .map(({ contract, card_id }) => `${contract}#${card_id}`)
+      .join(', ');
+    logger.info(`[${entityClass.name}] Still missing for tokens: ${tokens}`);
   }
 }
