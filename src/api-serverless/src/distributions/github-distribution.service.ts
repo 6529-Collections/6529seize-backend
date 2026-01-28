@@ -47,7 +47,10 @@ export class GitHubDistributionService {
   private api(path: string, options: NodeFetchRequestInit = {}) {
     const token = this.getToken();
     const extraHeaders =
-      options.headers && typeof options.headers === 'object' && !Array.isArray(options.headers) && !(options.headers instanceof Headers)
+      options.headers &&
+      typeof options.headers === 'object' &&
+      !Array.isArray(options.headers) &&
+      !(options.headers instanceof Headers)
         ? (options.headers as Record<string, string>)
         : {};
     const init: NodeFetchRequestInit = {
