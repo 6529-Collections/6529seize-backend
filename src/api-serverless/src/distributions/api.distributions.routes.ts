@@ -19,11 +19,11 @@ import { needsAuthenticatedUser } from '../auth/auth';
 import { cacheRequest } from '../request-cache';
 import { authenticateSubscriptionsAdmin } from '../subscriptions/api.subscriptions.allowlist';
 import {
+  fetchDistributionAirdrops,
   fetchDistributionOverview,
   fetchDistributionPhases,
-  fetchDistributions,
   fetchDistributionPhotos,
-  fetchDistributionAirdrops,
+  fetchDistributions,
   fetchDistributionsByPhase,
   PhaseDistributionData
 } from './api.distributions.db';
@@ -314,7 +314,9 @@ function buildPhaseCsvFiles(
     }
   }
 
-  const sortedPhases = Array.from(phaseMap.keys()).sort();
+  const sortedPhases = Array.from(phaseMap.keys()).sort((a, b) =>
+    a.localeCompare(b)
+  );
   const result: PhaseCsvFiles[] = [];
 
   for (let i = 0; i < sortedPhases.length; i++) {
