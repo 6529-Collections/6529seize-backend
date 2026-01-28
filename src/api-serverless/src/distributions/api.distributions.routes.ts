@@ -394,7 +394,13 @@ router.post(
       const fileName = `card${cardId}_${i + 1}.${extension}`;
 
       logger.info(`Fetching photo ${i + 1}/${photos.length}: ${photoUrl}`);
-      const photoResp = await fetch(photoUrl);
+      const photoResp = await fetch(photoUrl, {
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (compatible; 6529DistributionBot/1.0; +https://6529.io)',
+          Accept: 'image/*,*/*;q=0.8'
+        }
+      });
       if (!photoResp.ok) {
         throw new BadRequestException(
           `Failed to fetch photo from ${photoUrl}: ${photoResp.status} ${photoResp.statusText}`
