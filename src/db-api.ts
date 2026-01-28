@@ -26,7 +26,6 @@ import {
   ROYALTIES_UPLOADS_TABLE,
   TDH_BLOCKS_TABLE,
   TDH_GLOBAL_HISTORY_TABLE,
-  TEAM_TABLE,
   TRANSACTIONS_TABLE,
   UPLOADS_TABLE,
   USE_CASE_ALL,
@@ -476,19 +475,6 @@ export async function fetchLabNFTs(
   );
 }
 
-export async function fetchTeam(pageSize: number, page: number) {
-  return fetchPaginated(
-    TEAM_TABLE,
-    {},
-    `created_at desc`,
-    pageSize,
-    page,
-    '',
-    '',
-    ''
-  );
-}
-
 export async function fetchNFTs(
   pageSize: number,
   page: number,
@@ -600,11 +586,6 @@ export async function fetchMemesExtended(
     '',
     joins
   );
-}
-
-export async function fetchMemesSeasons(sortDir: string) {
-  const sql = `SELECT season, COUNT(id) as count, GROUP_CONCAT(id) AS token_ids FROM ${MEMES_EXTENDED_DATA_TABLE} GROUP BY season order by season ${sortDir}`;
-  return await sqlExecutor.execute(sql);
 }
 
 export async function fetchNewMemesSeasons() {
@@ -875,15 +856,6 @@ export async function fetchTransactions(
   return fetchPaginatedTransactions(pageSize, page, filters);
 }
 
-export async function fetchTransactionByHash(hash: string) {
-  const filters = constructFilters('', `transaction = :hash`);
-  const params = {
-    hash
-  };
-
-  return fetchPaginatedTransactions(1, 1, { filters, params });
-}
-
 async function fetchPaginatedTransactions(
   pageSize: number,
   page: number,
@@ -1061,36 +1033,6 @@ export async function fetchConsolidations(
   );
 
   return results;
-}
-
-export async function fetchConsolidationTransactions(
-  pageSize: number,
-  page: number,
-  block: string,
-  showIncomplete: boolean
-) {
-  let filters = '';
-  const params: any = {};
-  if (block) {
-    filters = constructFilters('', `block <= :block`);
-    params.block = block;
-  }
-  if (!showIncomplete) {
-    filters = constructFilters(filters, `confirmed=1`);
-  }
-  let joins = `LEFT JOIN ${ENS_TABLE} e1 ON ${CONSOLIDATIONS_TABLE}.wallet1=e1.wallet`;
-  joins += ` LEFT JOIN ${ENS_TABLE} e2 ON ${CONSOLIDATIONS_TABLE}.wallet2=e2.wallet`;
-
-  return fetchPaginated(
-    CONSOLIDATIONS_TABLE,
-    params,
-    'block desc',
-    pageSize,
-    page,
-    filters,
-    `${CONSOLIDATIONS_TABLE}.*, e1.display as wallet1_display, e2.display as wallet2_display`,
-    joins
-  );
 }
 
 export async function fetchDelegations(
