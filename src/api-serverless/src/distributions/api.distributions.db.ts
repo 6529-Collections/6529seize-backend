@@ -102,6 +102,55 @@ export async function fetchDistributions(
   return results;
 }
 
+export async function fetchDistributionPhotos(
+  contract: string,
+  cardId: number
+): Promise<{ link: string }[]> {
+  return sqlExecutor.execute<{ link: string }>(
+    `SELECT link FROM ${DISTRIBUTION_PHOTO_TABLE} WHERE contract = :contract AND card_id = :cardId ORDER BY link ASC`,
+    {
+      contract: contract.toLowerCase(),
+      cardId
+    }
+  );
+}
+
+export async function fetchDistributionAirdrops(
+  contract: string,
+  cardId: number
+): Promise<{ wallet: string; count: number }[]> {
+  return sqlExecutor.execute<{ wallet: string; count: number }>(
+    `SELECT wallet, count FROM ${DISTRIBUTION_TABLE} WHERE contract = :contract AND card_id = :cardId AND phase = 'Airdrop' ORDER BY wallet ASC`,
+    {
+      contract: contract.toLowerCase(),
+      cardId
+    }
+  );
+}
+
+export interface PhaseDistributionData {
+  phase: string;
+  wallet: string;
+  count_airdrop: number;
+  count_allowlist: number;
+}
+
+export async function fetchDistributionsByPhase(
+  contract: string,
+  cardId: number
+): Promise<PhaseDistributionData[]> {
+  return sqlExecutor.execute<PhaseDistributionData>(
+    `SELECT phase, wallet, count_airdrop, count_allowlist 
+     FROM ${DISTRIBUTION_TABLE} 
+     WHERE contract = :contract AND card_id = :cardId AND phase != 'Airdrop'
+     ORDER BY phase ASC, wallet ASC`,
+    {
+      contract: contract.toLowerCase(),
+      cardId
+    }
+  );
+}
+
 export async function fetchDistributionOverview(
   contract: string,
   cardId: number
