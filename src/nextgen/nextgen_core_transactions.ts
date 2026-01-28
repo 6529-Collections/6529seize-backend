@@ -10,17 +10,17 @@ import { Logger } from '../logging';
 import { NEXTGEN_CORE_IFACE } from '../abis/nextgen';
 import { NextGenCollection, NextGenLog } from '../entities/INextGen';
 import {
-  persistNextGenCollection,
-  persistNextGenLogs,
   fetchNextGenCollection,
   fetchNextGenCollectionIndex,
+  persistNextGenCollection,
+  persistNextGenLogs,
   wasTransactionLogProcessed
 } from './nextgen.db';
 import { EntityManager } from 'typeorm';
 import {
+  getNextgenNetwork,
   NEXTGEN_CF_BASE_PATH,
-  NEXTGEN_CORE_CONTRACT,
-  getNextgenNetwork
+  NEXTGEN_CORE_CONTRACT
 } from './nextgen_constants';
 import { CLOUDFRONT_LINK } from '../constants';
 import { getEns } from '../alchemy';
@@ -69,7 +69,7 @@ export async function findCoreTransactions(
       const parsedReceipt = NEXTGEN_CORE_IFACE.parseTransaction({
         data: receipt.data,
         value: 0
-      });
+      })!;
       const methodName = parsedReceipt.name;
       const args = parsedReceipt.args;
       const processedLogs = await processLog(entityManager, methodName, args);
@@ -109,7 +109,7 @@ export async function findCoreTransactions(
 export async function processLog(
   entityManager: EntityManager,
   methodName: string,
-  args: ethers.utils.Result
+  args: ethers.Result
 ): Promise<
   {
     id: number;
@@ -163,7 +163,7 @@ export async function processLog(
 
 async function createCollection(
   entityManager: EntityManager,
-  args: ethers.utils.Result
+  args: ethers.Result
 ): Promise<
   {
     id: number;
@@ -210,7 +210,7 @@ async function createCollection(
 
 async function updateCollectionInfo(
   entityManager: EntityManager,
-  args: ethers.utils.Result
+  args: ethers.Result
 ): Promise<
   {
     id: number;
@@ -264,7 +264,7 @@ async function updateCollectionInfo(
 
 async function artistSignature(
   entityManager: EntityManager,
-  args: ethers.utils.Result
+  args: ethers.Result
 ): Promise<
   {
     id: number;
@@ -310,7 +310,7 @@ async function artistSignature(
 
 async function setCollectionData(
   entityManager: EntityManager,
-  args: ethers.utils.Result
+  args: ethers.Result
 ): Promise<
   {
     id: number;
@@ -356,7 +356,7 @@ async function setCollectionData(
 
 async function changeMetadataView(
   entityManager: EntityManager,
-  args: ethers.utils.Result
+  args: ethers.Result
 ): Promise<
   {
     id: number;
@@ -390,7 +390,7 @@ async function changeMetadataView(
 
 async function updateImagesAndAttributes(
   entityManager: EntityManager,
-  args: ethers.utils.Result
+  args: ethers.Result
 ): Promise<
   {
     id: number;
@@ -422,7 +422,7 @@ async function updateImagesAndAttributes(
   return logs;
 }
 
-async function addRandomizer(args: ethers.utils.Result): Promise<
+async function addRandomizer(args: ethers.Result): Promise<
   {
     id: number;
     title: string;
@@ -444,7 +444,7 @@ async function addRandomizer(args: ethers.utils.Result): Promise<
   ];
 }
 
-async function changeTokenData(args: ethers.utils.Result): Promise<
+async function changeTokenData(args: ethers.Result): Promise<
   {
     id: number;
     token_id: number;
@@ -467,7 +467,7 @@ async function changeTokenData(args: ethers.utils.Result): Promise<
   ];
 }
 
-async function updateContracts(args: ethers.utils.Result): Promise<
+async function updateContracts(args: ethers.Result): Promise<
   {
     id: number;
     title: string;

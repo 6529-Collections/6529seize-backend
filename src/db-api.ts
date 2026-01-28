@@ -1,5 +1,5 @@
 import {
-  ARTISTS_TABLE,
+  ADDRESS_CONSOLIDATION_KEY,
   CONSOLIDATED_UPLOADS_TABLE,
   CONSOLIDATED_WALLETS_TDH_TABLE,
   CONSOLIDATIONS_TABLE,
@@ -26,8 +26,6 @@ import {
   ROYALTIES_UPLOADS_TABLE,
   TDH_BLOCKS_TABLE,
   TDH_GLOBAL_HISTORY_TABLE,
-  TDH_HISTORY_TABLE,
-  TEAM_TABLE,
   TRANSACTIONS_TABLE,
   UPLOADS_TABLE,
   USE_CASE_ALL,
@@ -63,7 +61,6 @@ import {
   execNativeTransactionally,
   execSQLWithParams
 } from './db/my-sql.helpers';
-import { Artist } from './entities/IArtist';
 import { NFT } from './entities/INFT';
 import { TDHBlock } from './entities/ITDH';
 import { TDHHistory } from './entities/ITDHHistory';
@@ -166,7 +163,7 @@ export async function disconnect() {
   const promises: Promise<void>[] = [];
   if (read_pool) {
     promises.push(
-      new Promise<void>((resolve, reject) => {
+      new Promise<void>((resolve) => {
         read_pool.end((err) => {
           if (err) {
             logger.error(`[READ POOL CLOSE ERROR] ${err}`);
@@ -182,7 +179,7 @@ export async function disconnect() {
   }
   if (write_pool) {
     promises.push(
-      new Promise<void>((resolve, reject) => {
+      new Promise<void>((resolve) => {
         write_pool.end((err) => {
           if (err) {
             logger.error(`[WRITE POOL CLOSE ERROR] ${err}`);
@@ -383,8 +380,9 @@ async function fetchUploadsByTable(
     params.block = block;
   }
   if (date) {
-    filters = constructFilters(filters, `STR_TO_DATE(date, '%Y%m%d') <= :date`);
-    params.date = date;
+    const timeEqualOrLess = Time.fromYyyyMmDdDateOnlyToUtcMidnight(date);
+    filters = constructFilters(filters, `timestamp <= :date`);
+    params.date = timeEqualOrLess.toMillis();
   }
 
   return fetchPaginated(
@@ -395,39 +393,6 @@ async function fetchUploadsByTable(
     page,
     filters,
     ''
-  );
-}
-
-export async function fetchArtists(
-  pageSize: number,
-  page: number,
-  meme_nfts: string
-) {
-  let filters = '';
-  const params: any = {};
-  if (meme_nfts) {
-    meme_nfts.split(',').forEach((nft_id, index) => {
-      const paramName = `nft_id${index}`;
-      const query = `%"id": ${nft_id}%`;
-
-      if (index === 0) {
-        filters += 'WHERE ';
-      } else {
-        filters += ' OR ';
-      }
-
-      filters += `memes LIKE :${paramName}`;
-      params[paramName] = query;
-    });
-  }
-
-  return fetchPaginated<Artist>(
-    ARTISTS_TABLE,
-    params,
-    'created_at desc',
-    pageSize,
-    page,
-    filters
   );
 }
 
@@ -507,19 +472,6 @@ export async function fetchLabNFTs(
     fields,
     joinClause,
     groupBy
-  );
-}
-
-export async function fetchTeam(pageSize: number, page: number) {
-  return fetchPaginated(
-    TEAM_TABLE,
-    {},
-    `created_at desc`,
-    pageSize,
-    page,
-    '',
-    '',
-    ''
   );
 }
 
@@ -634,11 +586,6 @@ export async function fetchMemesExtended(
     '',
     joins
   );
-}
-
-export async function fetchMemesSeasons(sortDir: string) {
-  const sql = `SELECT season, COUNT(id) as count, GROUP_CONCAT(id) AS token_ids FROM ${MEMES_EXTENDED_DATA_TABLE} GROUP BY season order by season ${sortDir}`;
-  return await sqlExecutor.execute(sql);
 }
 
 export async function fetchNewMemesSeasons() {
@@ -909,15 +856,6 @@ export async function fetchTransactions(
   return fetchPaginatedTransactions(pageSize, page, filters);
 }
 
-export async function fetchTransactionByHash(hash: string) {
-  const filters = constructFilters('', `transaction = :hash`);
-  const params = {
-    hash
-  };
-
-  return fetchPaginatedTransactions(1, 1, { filters, params });
-}
-
 async function fetchPaginatedTransactions(
   pageSize: number,
   page: number,
@@ -979,12 +917,6 @@ export function returnEmpty() {
 export async function fetchEns(address: string) {
   const sql = `SELECT * FROM ${ENS_TABLE} WHERE LOWER(wallet)=LOWER(:address) OR LOWER(display)=LOWER(:address)`;
   return sqlExecutor.execute(sql, { address: address });
-}
-
-export async function fetchRanksForWallet(address: string) {
-  const tdhBlock = await fetchLatestTDHBlockNumber();
-  const sqlTdh = `SELECT * FROM ${WALLETS_TDH_TABLE} WHERE block=${tdhBlock} and wallet=:address`;
-  return await sqlExecutor.execute(sqlTdh, { address: address });
 }
 
 export async function fetchLabExtended(
@@ -1101,36 +1033,6 @@ export async function fetchConsolidations(
   );
 
   return results;
-}
-
-export async function fetchConsolidationTransactions(
-  pageSize: number,
-  page: number,
-  block: string,
-  showIncomplete: boolean
-) {
-  let filters = '';
-  const params: any = {};
-  if (block) {
-    filters = constructFilters('', `block <= :block`);
-    params.block = block;
-  }
-  if (!showIncomplete) {
-    filters = constructFilters(filters, `confirmed=1`);
-  }
-  let joins = `LEFT JOIN ${ENS_TABLE} e1 ON ${CONSOLIDATIONS_TABLE}.wallet1=e1.wallet`;
-  joins += ` LEFT JOIN ${ENS_TABLE} e2 ON ${CONSOLIDATIONS_TABLE}.wallet2=e2.wallet`;
-
-  return fetchPaginated(
-    CONSOLIDATIONS_TABLE,
-    params,
-    'block desc',
-    pageSize,
-    page,
-    filters,
-    `${CONSOLIDATIONS_TABLE}.*, e1.display as wallet1_display, e2.display as wallet2_display`,
-    joins
-  );
 }
 
 export async function fetchDelegations(
@@ -1401,14 +1303,15 @@ export async function addRememe(by: string, rememe: any) {
 }
 
 export async function getTdhForAddress(address: string) {
-  const sql = `SELECT boosted_tdh as tdh FROM ${CONSOLIDATED_WALLETS_TDH_TABLE} WHERE LOWER(${CONSOLIDATED_WALLETS_TDH_TABLE}.wallets) LIKE :address`;
-  const result = await sqlExecutor.execute(sql, {
-    address: `%${address.toLowerCase()}%`
+  const sql = `
+    SELECT c.boosted_tdh as tdh from ${CONSOLIDATED_WALLETS_TDH_TABLE} c
+    JOIN ${ADDRESS_CONSOLIDATION_KEY} ac on ac.consolidation_key = c.consolidation_key
+    where ac.address = :address
+  `;
+  const result = await sqlExecutor.oneOrNull<{ tdh: number }>(sql, {
+    address: address.toLowerCase()
   });
-  if (result.length === 0) {
-    return 0;
-  }
-  return result[0].tdh;
+  return result?.tdh ?? 0;
 }
 
 export async function fetchTDHGlobalHistory(pageSize: number, page: number) {
@@ -1419,32 +1322,6 @@ export async function fetchTDHGlobalHistory(pageSize: number, page: number) {
     pageSize,
     page,
     ''
-  );
-}
-
-export async function fetchTDHHistory(
-  wallets: string,
-  pageSize: number,
-  page: number
-) {
-  let filters = '';
-  const params: any = {};
-  if (wallets) {
-    const resolvedWallets = await resolveEns(wallets);
-    resolvedWallets.forEach((w, index) => {
-      const paramName = `wallet${index}`;
-      filters = constructFilters(filters, `LOWER(wallets) LIKE :${paramName}`);
-      params[paramName] = `%${w.toLowerCase()}%`;
-    });
-  }
-
-  return fetchPaginated(
-    TDH_HISTORY_TABLE,
-    params,
-    ` date desc, block desc, net_boosted_tdh desc `,
-    pageSize,
-    page,
-    filters
   );
 }
 

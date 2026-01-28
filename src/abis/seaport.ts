@@ -1,4 +1,4 @@
-import { ethers } from 'ethers';
+import { Interface } from 'ethers';
 
 const SEAPORT_ABI = [
   {
@@ -1708,4 +1708,4 @@ const SEAPORT_ABI = [
   { stateMutability: 'payable', type: 'receive' }
 ];
 
-export const SEAPORT_IFACE = new ethers.utils.Interface(SEAPORT_ABI);
+export const SEAPORT_IFACE = new Interface(SEAPORT_ABI);

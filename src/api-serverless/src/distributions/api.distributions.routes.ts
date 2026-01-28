@@ -72,7 +72,7 @@ function parseAirdropCsv(csvData: string): AirdropEntry[] {
       );
     }
 
-    if (!ethers.utils.isAddress(address)) {
+    if (!ethers.isAddress(address)) {
       throw new CsvParseError(
         `Invalid CSV format at line ${lineNum}: "${address}" is not a valid Ethereum address`
       );

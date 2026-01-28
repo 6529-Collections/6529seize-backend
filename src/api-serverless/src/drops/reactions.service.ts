@@ -98,12 +98,11 @@ export class ReactionsService {
     return await this.handleReaction(
       dropId,
       profileId,
-      async (dropEntity, groupIdsUserIsEligibleFor) => {
-        const wave = await this.validateReaction(
-          dropEntity,
-          groupIdsUserIsEligibleFor,
-          { ...ctx, connection }
-        );
+      async (dropEntity) => {
+        const wave = await this.validateReaction(dropEntity, {
+          ...ctx,
+          connection
+        });
         const reactionPromise = this.reactionsDb.addReaction(
           profileId,
           dropId,
@@ -172,8 +171,8 @@ export class ReactionsService {
     return await this.handleReaction(
       dropId,
       profileId,
-      async (dropEntity, groupIdsUserIsEligibleFor) => {
-        await this.validateReaction(dropEntity, groupIdsUserIsEligibleFor, {
+      async (dropEntity) => {
+        await this.validateReaction(dropEntity, {
           ...ctx,
           connection
         });
@@ -208,7 +207,6 @@ export class ReactionsService {
 
   private async validateReaction(
     dropEntity: DropEntity,
-    groupIdsUserIsEligibleFor: string[],
     ctx: RequestContext
   ): Promise<WaveEntity> {
     ctx.timer?.start(`${this.constructor.name}->validateDrop`);
@@ -219,14 +217,6 @@ export class ReactionsService {
 
     if (!wave) {
       throw new BadRequestException('Wave not found');
-    }
-    if (
-      wave.chat_group_id !== null &&
-      !groupIdsUserIsEligibleFor.includes(wave.chat_group_id)
-    ) {
-      throw new ForbiddenException(
-        'User is not eligible to react in this wave'
-      );
     }
     if (!wave.chat_enabled) {
       throw new ForbiddenException(

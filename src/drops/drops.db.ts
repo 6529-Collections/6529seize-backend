@@ -12,6 +12,7 @@ import {
   DROP_BOOSTS_TABLE,
   DROP_MEDIA_TABLE,
   DROP_METADATA_TABLE,
+  DROP_MENTIONED_WAVES_TABLE,
   DROP_REAL_VOTER_VOTE_IN_TIME_TABLE,
   DROP_REFERENCED_NFTS_TABLE,
   DROP_RELATIONS_TABLE,
@@ -38,6 +39,7 @@ import {
   DropEntity,
   DropMediaEntity,
   DropMentionEntity,
+  DropMentionedWaveEntity,
   DropMetadataEntity,
   DropPartEntity,
   DropReferencedNftEntity,
@@ -244,6 +246,31 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         { wrappedConnection: connection }
       );
     }
+  }
+
+  async insertMentionedWaves(
+    mentionedWaves: Omit<DropMentionedWaveEntity, 'id'>[],
+    connection: ConnectionWrapper<any>,
+    timer: Timer
+  ) {
+    timer.start(`dropsDb->insertMentionedWaves`);
+    await Promise.all(
+      mentionedWaves.map((mentionedWave) =>
+        this.db.execute(
+          `insert into ${DROP_MENTIONED_WAVES_TABLE} (drop_id,
+                                                     drop_part_id,
+                                                     wave_name_in_content,
+                                                     wave_id)
+           values (:drop_id,
+                   :drop_part_id,
+                   :wave_name_in_content,
+                   :wave_id)`,
+          mentionedWave,
+          { wrappedConnection: connection }
+        )
+      )
+    );
+    timer.stop(`dropsDb->insertMentionedWaves`);
   }
 
   async insertReferencedNfts(
@@ -526,6 +553,47 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     return results;
   }
 
+  async findDropIdsInWaveRange(
+    {
+      wave_id,
+      min_serial_no,
+      max_serial_no,
+      limit,
+      group_ids_user_is_eligible_for
+    }: {
+      wave_id: string;
+      min_serial_no: number;
+      max_serial_no: number;
+      limit: number;
+      group_ids_user_is_eligible_for: string[];
+    },
+    ctx: RequestContext
+  ): Promise<{ id: string; serial_no: number }[]> {
+    const sql = `select d.id, d.serial_no
+      from ${DROPS_TABLE} d
+      join ${WAVES_TABLE} w on d.wave_id = w.id and (${
+        group_ids_user_is_eligible_for.length
+          ? `w.visibility_group_id in (:groupsUserIsEligibleFor) or w.admin_group_id in (:groupsUserIsEligibleFor) or`
+          : ``
+      } w.visibility_group_id is null)
+      where d.wave_id = :wave_id
+        and d.serial_no >= :min_serial_no
+        and d.serial_no <= :max_serial_no
+      order by d.serial_no asc
+      limit :limit`;
+    return this.db.execute(
+      sql,
+      {
+        wave_id,
+        min_serial_no,
+        max_serial_no,
+        limit,
+        groupsUserIsEligibleFor: group_ids_user_is_eligible_for
+      },
+      { wrappedConnection: ctx.connection }
+    );
+  }
+
   async findLatestDropRepliesSimple(
     {
       amount,
@@ -585,6 +653,20 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     }
     return this.db.execute(
       `select * from ${DROPS_MENTIONS_TABLE} where drop_id in (:dropIds)`,
+      { dropIds },
+      connection ? { wrappedConnection: connection } : undefined
+    );
+  }
+
+  async findMentionedWavesByDropIds(
+    dropIds: string[],
+    connection?: ConnectionWrapper<any>
+  ): Promise<DropMentionedWaveEntity[]> {
+    if (dropIds.length === 0) {
+      return [];
+    }
+    return this.db.execute(
+      `select * from ${DROP_MENTIONED_WAVES_TABLE} where drop_id in (:dropIds)`,
       { dropIds },
       connection ? { wrappedConnection: connection } : undefined
     );
@@ -751,6 +833,16 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       { wrappedConnection: ctx.connection }
     );
     ctx.timer?.stop('dropsDb->deleteDropMentions');
+  }
+
+  public async deleteDropMentionedWaves(dropId: string, ctx: RequestContext) {
+    ctx.timer?.start('dropsDb->deleteDropMentionedWaves');
+    await this.db.execute(
+      `delete from ${DROP_MENTIONED_WAVES_TABLE} where drop_id = :dropId`,
+      { dropId },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop('dropsDb->deleteDropMentionedWaves');
   }
 
   public async deleteDropMedia(dropId: string, ctx: RequestContext) {

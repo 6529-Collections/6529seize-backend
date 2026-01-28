@@ -1,19 +1,43 @@
-import { DISTRIBUTION_NORMALIZED_TABLE } from '../constants';
+import {
+  DISTRIBUTION_NORMALIZED_TABLE,
+  GRADIENT_CONTRACT,
+  MEMELAB_CONTRACT,
+  MEMES_CONTRACT
+} from '../constants';
 import { getDataSource } from '../db';
+import { BaseNFT, LabNFT, NFT } from '../entities/INFT';
 import { Logger } from '../logging';
 import { sqlExecutor } from '../sql-executor';
-import { BaseNFT } from '../entities/INFT';
 
 const logger = Logger.get('NFT_DISTRIBUTION');
+
+const CONTRACTS_BY_ENTITY: Record<string, string[]> = {
+  [NFT.name]: [MEMES_CONTRACT, GRADIENT_CONTRACT],
+  [LabNFT.name]: [MEMELAB_CONTRACT]
+};
+
+function getContractsForEntity<T extends BaseNFT>(
+  entityClass: new () => T
+): string[] {
+  const contracts = CONTRACTS_BY_ENTITY[entityClass.name];
+  if (!contracts) {
+    throw new Error(`Unknown entity for distribution: ${entityClass.name}`);
+  }
+  return contracts;
+}
 
 export async function updateDistributionInfoFor<T extends BaseNFT>(
   entityClass: new () => T
 ) {
+  const contracts = getContractsForEntity(entityClass);
+  const repo = getDataSource().getRepository(entityClass);
+
   const missingInfo: { contract: string; card_id: number }[] =
     await getDataSource().manager.query(
       `SELECT DISTINCT contract, card_id
        FROM ${DISTRIBUTION_NORMALIZED_TABLE}
-       WHERE is_missing_info = 1`
+       WHERE is_missing_info = 1 AND contract IN (${contracts.map(() => '?').join(',')})`,
+      contracts
     );
 
   if (missingInfo.length === 0) {
@@ -22,10 +46,10 @@ export async function updateDistributionInfoFor<T extends BaseNFT>(
   }
 
   logger.info(
-    `[${entityClass.name}] Missing info count: ${missingInfo.length}]`
+    `[${entityClass.name}] Missing info count: ${missingInfo.length}`
   );
 
-  const repo = getDataSource().getRepository(entityClass);
+  const stillMissing: { contract: string; card_id: number }[] = [];
 
   for (const { contract, card_id } of missingInfo) {
     const nft = await repo.findOneBy({ contract, id: card_id } as any);
@@ -47,6 +71,15 @@ export async function updateDistributionInfoFor<T extends BaseNFT>(
           mintDate
         }
       );
+    } else {
+      stillMissing.push({ contract, card_id });
     }
+  }
+
+  if (stillMissing.length > 0) {
+    const tokens = stillMissing
+      .map(({ contract, card_id }) => `${contract}#${card_id}`)
+      .join(', ');
+    logger.info(`[${entityClass.name}] Still missing for tokens: ${tokens}`);
   }
 }

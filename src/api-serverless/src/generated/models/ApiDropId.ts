@@ -10,45 +10,30 @@
  * Do not edit the class manually.
  */
 
-import { ApiArtistItem } from '../models/ApiArtistItem';
 import { HttpFile } from '../http/http';
 
-export class ApiArtistsPage {
-    'data': Array<ApiArtistItem>;
-    'count': number;
-    'page': number;
-    'next': string | null;
+export class ApiDropId {
+    'id': string;
+    'serial_no': number;
 
     static readonly discriminator: string | undefined = undefined;
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
         {
-            "name": "data",
-            "baseName": "data",
-            "type": "Array<ApiArtistItem>",
-            "format": ""
-        },
-        {
-            "name": "count",
-            "baseName": "count",
-            "type": "number",
-            "format": "int64"
-        },
-        {
-            "name": "page",
-            "baseName": "page",
-            "type": "number",
-            "format": "int64"
-        },
-        {
-            "name": "next",
-            "baseName": "next",
+            "name": "id",
+            "baseName": "id",
             "type": "string",
             "format": ""
+        },
+        {
+            "name": "serial_no",
+            "baseName": "serial_no",
+            "type": "number",
+            "format": "int64"
         }    ];
 
     static getAttributeTypeMap() {
-        return ApiArtistsPage.attributeTypeMap;
+        return ApiDropId.attributeTypeMap;
     }
 
     public constructor() {

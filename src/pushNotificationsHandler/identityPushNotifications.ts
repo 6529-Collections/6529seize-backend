@@ -157,7 +157,7 @@ export async function sendIdentityNotification(id: number) {
           data,
           badge,
           imageUrl ?? undefined
-        ).catch(async (error) => {
+        ).catch(async (error: { code?: string; message?: string }) => {
           if (
             error.code === 'messaging/registration-token-not-registered' ||
             error.code === 'messaging/invalid-registration-token'
@@ -238,7 +238,7 @@ async function handleIdentityRep(
   const emoji = amount > 0 ? '🚀' : '💔';
   const title = `${emoji} Updated REP${categoryText}`;
   const sign = amount > 0 ? '+' : '';
-  const body = `${additionalEntity.handle} updated your REP by ${sign}${amount}\nNew Total: ${total}`;
+  const body = `${additionalEntity.handle} updated your REP by ${sign}${Number(amount).toLocaleString()}\nNew Total: ${Number(total).toLocaleString()}`;
   const imageUrl = additionalEntity.pfp;
   const receiverProfile = await getIdentityOrThrow(notification.identity_id);
   const data = {
@@ -258,7 +258,7 @@ async function handleIdentityNic(
   const emoji = amount > 0 ? '🚀' : '💔';
   const title = `${emoji} Updated NIC Rating`;
   const sign = amount > 0 ? '+' : '';
-  const body = `${additionalEntity.handle} updated your NIC by ${sign}${amount}\nNew Total: ${total}`;
+  const body = `${additionalEntity.handle} updated your NIC by ${sign}${Number(amount).toLocaleString()}\nNew Total: ${Number(total).toLocaleString()}`;
   const imageUrl = additionalEntity.pfp;
   const receiverProfile = await getIdentityOrThrow(notification.identity_id);
   const data = {

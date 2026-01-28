@@ -10,30 +10,31 @@
  * Do not edit the class manually.
  */
 
+import { ApiWaveMin } from '../models/ApiWaveMin';
 import { HttpFile } from '../http/http';
 
-export class ApiArtistsWork {
-    'title': string;
-    'link': string;
+export class ApiMentionedWave {
+    'wave_name_in_content': string;
+    'wave': ApiWaveMin;
 
     static readonly discriminator: string | undefined = undefined;
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
         {
-            "name": "title",
-            "baseName": "title",
+            "name": "wave_name_in_content",
+            "baseName": "wave_name_in_content",
             "type": "string",
             "format": ""
         },
         {
-            "name": "link",
-            "baseName": "link",
-            "type": "string",
+            "name": "wave",
+            "baseName": "wave",
+            "type": "ApiWaveMin",
             "format": ""
         }    ];
 
     static getAttributeTypeMap() {
-        return ApiArtistsWork.attributeTypeMap;
+        return ApiMentionedWave.attributeTypeMap;
     }
 
     public constructor() {

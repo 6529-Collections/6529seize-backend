@@ -18,6 +18,7 @@ export {
   DropEntity,
   DropMediaEntity,
   DropMentionEntity,
+  DropMentionedWaveEntity,
   DropMetadataEntity,
   DropPartEntity,
   DropBoostEntity,
@@ -58,7 +59,11 @@ export {
 } from './INextGen';
 export { LabExtendedData, LabNFT, MemesExtendedData, NFT } from './INFT';
 export { NFTHistory, NFTHistoryBlock, NFTHistoryClaim } from './INFTHistory';
-export { ConsolidatedNFTOwner, NFTOwner } from './INFTOwner';
+export {
+  ConsolidatedNFTOwner,
+  NFTOwner,
+  NftOwnersSyncState
+} from './INFTOwner';
 export {
   ConsolidatedOwnerBalances,
   ConsolidatedOwnerBalancesMemes,
@@ -118,7 +123,7 @@ export {
   TransactionsProcessedDistributionBlock,
   TransactionsProcessedSubscriptionsBlock
 } from './ITransactionsProcessing';
-export { ConsolidatedTDHUpload } from './IUpload';
+export { ConsolidatedTDHUpload, UploadEntity } from './IUpload';
 export { UserGroupEntity } from './IUserGroup';
 export {
   WaveArchiveEntity,

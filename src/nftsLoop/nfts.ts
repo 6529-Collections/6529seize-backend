@@ -49,9 +49,9 @@ const URI_ABI = [
 const contractInstances = new Map<string, ethers.Contract>();
 function getContractInstance(
   contract: string,
-  provider: ethers.providers.JsonRpcProvider
+  provider: ethers.JsonRpcProvider
 ) {
-  const key = ethers.utils.getAddress(contract);
+  const key = ethers.getAddress(contract);
   if (!contractInstances.has(key)) {
     contractInstances.set(key, new ethers.Contract(key, URI_ABI, provider));
   }
@@ -144,7 +144,7 @@ async function processNFTsForType(
   EntityClass: typeof NFT | typeof LabNFT,
   contracts: ContractConfig[],
   mode: NFT_MODE,
-  provider: ethers.providers.JsonRpcProvider,
+  provider: ethers.JsonRpcProvider,
   updateHodlRate: boolean
 ) {
   const repo = getDataSource().getRepository(EntityClass);
@@ -203,7 +203,7 @@ async function discoverNewNFTs(
   contracts: ContractConfig[],
   contractMap: Map<string, number>,
   nftMap: Map<string, { nft: NFT | LabNFT; changed: boolean }>,
-  provider: ethers.providers.JsonRpcProvider,
+  provider: ethers.JsonRpcProvider,
   EntityClass: typeof NFT | typeof LabNFT
 ) {
   await Promise.all(
@@ -217,7 +217,7 @@ async function discoverForContract(
   config: ContractConfig,
   contractMap: Map<string, number>,
   nftMap: Map<string, { nft: NFT | LabNFT; changed: boolean }>,
-  provider: ethers.providers.JsonRpcProvider,
+  provider: ethers.JsonRpcProvider,
   EntityClass: typeof NFT | typeof LabNFT
 ) {
   const { contract, tokenType } = config;
@@ -463,7 +463,7 @@ function extractMemeRefs(
 
 async function refreshExistingNFTs(
   nftMap: Map<string, { nft: NFT | LabNFT; changed: boolean }>,
-  provider: ethers.providers.JsonRpcProvider
+  provider: ethers.JsonRpcProvider
 ) {
   await Promise.all(
     Array.from(nftMap.values()).map(async (entry) => {

@@ -8,7 +8,7 @@ import {
   NextGenToken,
   NextGenTokenTrait
 } from '../entities/INextGen';
-import { LogDescription } from 'ethers/lib/utils';
+import { LogDescription } from 'ethers';
 import { findTransactionValues } from '../transaction_values';
 import {
   fetchNextGenCollection,
@@ -83,6 +83,9 @@ export async function processLog(
   description: string;
 } | null> {
   const parsedLog = NEXTGEN_CORE_IFACE.parseLog(log);
+  if (!parsedLog) {
+    return null;
+  }
 
   const previousOwner = parsedLog.args.previousOwner;
   const newOwner = parsedLog.args.newOwner;

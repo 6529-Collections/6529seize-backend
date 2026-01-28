@@ -9,7 +9,7 @@ plugins:
 provider:
   name: aws
   runtime: nodejs18.x
-  memorySize: 1500
+  memorySize: 2048
   timeout: 900
   architecture: arm64
   logRetentionInDays: 60

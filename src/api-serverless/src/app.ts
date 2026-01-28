@@ -1,4 +1,3 @@
-import fetch from 'node-fetch';
 import * as db from '../../db-api';
 import { ids } from '../../ids';
 
@@ -15,6 +14,7 @@ import distributionPhotosRoutes from './distribution-photos/api.distribution_pho
 import distributionsRoutes from './distributions/api.distributions.routes';
 import dropsMediaRoutes from './drops/drops-media.routes';
 import dropsRoutes from './drops/drops.routes';
+import dropIdsRoutes from './drops/drop-ids.routes';
 import lightDropsRoutes from './drops/light-drops.routes';
 import feedRoutes from './feed/feed.routes';
 import gasRoutes from './gas/gas.routes';
@@ -66,7 +66,6 @@ import { randomUUID } from 'crypto';
 import { Strategy as AnonymousStrategy } from 'passport-anonymous';
 import * as process from 'process';
 import * as SwaggerUI from 'swagger-ui-express';
-import { Artist } from '../../entities/IArtist';
 import { NFT } from '../../entities/INFT';
 import { TDHBlock } from '../../entities/ITDH';
 import { Upload } from '../../entities/IUpload';
@@ -96,9 +95,7 @@ import {
   transformPaginatedResponse
 } from './api-helpers';
 import { ApiResponse } from './api-response';
-import { ApiArtistItem } from './generated/models/ApiArtistItem';
 import { ApiArtistNameItem } from './generated/models/ApiArtistNameItem';
-import { ApiArtistsPage } from './generated/models/ApiArtistsPage';
 import { ApiBlockItem } from './generated/models/ApiBlockItem';
 import { ApiBlocksPage } from './generated/models/ApiBlocksPage';
 import { ApiNft } from './generated/models/ApiNft';
@@ -392,7 +389,9 @@ async function initializeApp() {
       .default(DEFAULT_PAGE_SIZE),
     page: Joi.number().integer().min(1).default(1),
     block: Joi.number().integer().min(0).default(0),
-    date: Joi.string().optional()
+    date: Joi.string()
+      .optional()
+      .pattern(/\d\d\d\d\d\d\d\d/)
   });
 
   apiRouter.get(
@@ -445,37 +444,6 @@ async function initializeApp() {
             res
           );
         });
-    }
-  );
-
-  apiRouter.get(
-    `/artists`,
-    cacheRequest(),
-    async function (req: any, res: Response<ApiResponse<ApiArtistsPage>>) {
-      const pageSize = getPageSize(req);
-      const page = getPage(req);
-
-      const meme_nfts = req.query.meme_id;
-
-      await db.fetchArtists(pageSize, page, meme_nfts).then(async (result) => {
-        await returnPaginatedResult(
-          transformPaginatedResponse(
-            (orig: Artist): ApiArtistItem => ({
-              name: orig.name,
-              bio: orig.bio ?? null,
-              pfp: orig.pfp ?? null,
-              memes: JSON.parse(orig.memes as any),
-              memelab: JSON.parse(orig.memelab as any),
-              gradients: JSON.parse(orig.gradients as any),
-              work: JSON.parse(orig.work as any),
-              social_links: JSON.parse(orig.social_links as any)
-            }),
-            result
-          ),
-          req,
-          res
-        );
-      });
     }
   );
 
@@ -659,22 +627,6 @@ async function initializeApp() {
   );
 
   apiRouter.get(
-    `/memes_seasons`,
-    cacheRequest(),
-    async function (req: any, res: any) {
-      const sortDir =
-        req.query.sort_direction &&
-        SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
-          ? req.query.sort_direction
-          : 'asc';
-
-      await db.fetchMemesSeasons(sortDir).then(async (result) => {
-        await returnPaginatedResult(result as unknown as any, req, res);
-      });
-    }
-  );
-
-  apiRouter.get(
     `/new_memes_seasons`,
     cacheRequest(),
     async function (req: any, res: any) {
@@ -715,14 +667,6 @@ async function initializeApp() {
       });
     }
   );
-
-  apiRouter.get(`/test`, async function (req: any, res: any) {
-    await appWebSockets.send({
-      connectionId: req.query.p,
-      message: 'Hello from server'
-    });
-    res.send('HEllo');
-  });
 
   apiRouter.get(
     `/memes_latest`,
@@ -794,21 +738,6 @@ async function initializeApp() {
   );
 
   apiRouter.get(
-    `/transactions/:hash`,
-    cacheRequest(),
-    async function (req: any, res: any) {
-      const hash = req.params.hash;
-      await db.fetchTransactionByHash(hash).then(async (result) => {
-        if (result.data.length == 1) {
-          await returnJsonResult(result.data[0], req, res);
-        } else {
-          await returnJsonResult({}, req, res);
-        }
-      });
-    }
-  );
-
-  apiRouter.get(
     `/transactions_memelab`,
     cacheRequest(),
     async function (req: any, res: any) {
@@ -843,31 +772,6 @@ async function initializeApp() {
       });
     }
   );
-
-  apiRouter.get(
-    `/ens/:address/`,
-    cacheRequest(),
-    async function (req: any, res: any) {
-      const address = req.params.address;
-
-      await db.fetchEns(address).then(async (result) => {
-        if (result.length == 1) {
-          await returnJsonResult(result[0], req, res);
-        } else {
-          await returnJsonResult({}, req, res);
-        }
-      });
-    }
-  );
-
-  apiRouter.get(`/team`, cacheRequest(), async function (req: any, res: any) {
-    const pageSize = getPageSize(req);
-    const page = getPage(req);
-
-    await db.fetchTeam(pageSize, page).then(async (result) => {
-      await returnPaginatedResult(result, req, res);
-    });
-  });
 
   apiRouter.get(
     `/consolidations/:wallet`,
@@ -905,25 +809,6 @@ async function initializeApp() {
   );
 
   apiRouter.get(
-    `/consolidation_transactions`,
-    cacheRequest(),
-    async function (req: any, res: any) {
-      const pageSize = getPageSize(req);
-      const page = getPage(req);
-
-      const block = req.query.block;
-      const showIncomplete = !!(
-        req.query.show_incomplete && req.query.show_incomplete == 'true'
-      );
-      await db
-        .fetchConsolidationTransactions(pageSize, page, block, showIncomplete)
-        .then(async (result) => {
-          await returnPaginatedResult(result, req, res);
-        });
-    }
-  );
-
-  apiRouter.get(
     `/nft_history/:contract/:nft_id`,
     cacheRequest(),
     async function (req: any, res: any) {
@@ -941,29 +826,6 @@ async function initializeApp() {
           });
           await returnPaginatedResult(result, req, res);
         });
-    }
-  );
-
-  rootRouter.get(
-    `/floor_price`,
-    cacheRequest(),
-    async function (req: any, res: any) {
-      const contract = req.query.contract;
-      const id = req.query.id;
-
-      if (!contract || !id) {
-        res.status(400).send('Missing contract or id');
-        return;
-      }
-      const url = `https://api.opensea.io/v2/orders/ethereum/seaport/listings?asset_contract_address=${contract}&limit=1&token_ids=${id}&order_by=eth_price&order_direction=asc`;
-      const response = await fetch(url, {
-        headers: {
-          'X-API-KEY': process.env.OPENSEA_API_KEY!,
-          accept: 'application/json'
-        }
-      });
-      const json = await response.json();
-      return res.send(json);
     }
   );
 
@@ -992,27 +854,6 @@ async function initializeApp() {
       const page = getPage(req);
       await db.fetchTDHGlobalHistory(pageSize, page).then(async (result) => {
         result.data.map((d: any) => {
-          const date = new Date(d.date);
-          const year = date.getUTCFullYear();
-          const month = String(date.getUTCMonth() + 1).padStart(2, '0');
-          const day = String(date.getUTCDate()).padStart(2, '0');
-          d.date = `${year}-${month}-${day}`;
-        });
-        await returnPaginatedResult(result, req, res);
-      });
-    }
-  );
-
-  apiRouter.get(
-    `/tdh_history`,
-    cacheRequest(),
-    async function (req: any, res: any) {
-      const pageSize = getPageSize(req);
-      const page = getPage(req);
-      const wallets = req.query.wallet;
-      await db.fetchTDHHistory(wallets, pageSize, page).then(async (result) => {
-        result.data.map((d: any) => {
-          d.wallets = JSON.parse(d.wallets);
           const date = new Date(d.date);
           const year = date.getUTCFullYear();
           const month = String(date.getUTCMonth() + 1).padStart(2, '0');
@@ -1150,6 +991,7 @@ async function initializeApp() {
   });
 
   apiRouter.use(`/boosted-drops`, boostedDropsRoutes);
+  apiRouter.use(`/drop-ids`, dropIdsRoutes);
   apiRouter.use(`/drops-bookmarked`, bookmarkedDropsRoutes);
   apiRouter.use(`/feed`, feedRoutes);
   apiRouter.use(`/notifications`, notificationsRoutes);

@@ -47,6 +47,7 @@ describe('SubscriptionTests', () => {
   let nftFinalSubscriptionRepo: Mock<Repository<NFTFinalSubscription>>;
 
   beforeEach(() => {
+    process.env.SUBSCRIPTIONS_DISCORD_WEBHOOK = 'https://test-discord-webhook';
     entityManager = mock(EntityManager);
     subscriptionBalanceRepo = mock(Repository) as any;
     redeemedSubscriptionRepo = mock(Repository) as any;
@@ -479,7 +480,7 @@ describe('SubscriptionTests', () => {
       expect(nftFinalSubscriptionRepo.save).toHaveBeenCalledTimes(2);
 
       expect(mockSendDiscordUpdate).toHaveBeenCalledWith(
-        expect.any(String),
+        'https://test-discord-webhook',
         expect.stringContaining('No subscription found'),
         'Subscriptions',
         'warn'
@@ -537,7 +538,7 @@ describe('SubscriptionTests', () => {
 
       expect(mockFetchBalance).toHaveBeenCalledTimes(2);
       expect(mockSendDiscordUpdate).toHaveBeenCalledWith(
-        expect.any(String),
+        'https://test-discord-webhook',
         expect.stringContaining('Insufficient balance'),
         'Subscriptions',
         'error'
@@ -583,7 +584,7 @@ describe('SubscriptionTests', () => {
 
       expect(mockFetchBalance).toHaveBeenCalledTimes(1);
       expect(mockSendDiscordUpdate).toHaveBeenCalledWith(
-        expect.any(String),
+        'https://test-discord-webhook',
         expect.stringContaining('No balance found'),
         'Subscriptions',
         'error'

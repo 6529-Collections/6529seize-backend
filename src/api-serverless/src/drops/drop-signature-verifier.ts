@@ -60,7 +60,7 @@ export class DropSignatureVerifier {
           'function isValidSignature(bytes32 _messageHash, bytes _signature) public view returns (bytes4)'
         ];
 
-        const provider = new ethers.providers.JsonRpcProvider(
+        const provider = new ethers.JsonRpcProvider(
           `https://eth-mainnet.alchemyapi.io/v2/${env.getStringOrThrow(`ALCHEMY_API_KEY`)}`
         );
         const safeContract = new ethers.Contract(
@@ -80,7 +80,7 @@ export class DropSignatureVerifier {
           return null;
         }
       }
-      const signingAddress = ethers.utils
+      const signingAddress = ethers
         .verifyMessage(hash, clientSignature)
         ?.toLowerCase();
       if (signerAddress && signingAddress !== signerAddress?.toLowerCase()) {

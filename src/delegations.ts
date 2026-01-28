@@ -43,11 +43,11 @@ const getDelegationDetails = async (txHash: string) => {
     const data = tx.data;
     try {
       const parsed = DELEGATIONS_IFACE.parseTransaction({ data, value: 0 });
-      if (parsed.args._expiryDate) {
+      if (parsed && parsed.args._expiryDate) {
         return {
-          expiry: parsed.args._expiryDate.toNumber(),
+          expiry: Number(parsed.args._expiryDate),
           allTokens: parsed.args._allTokens,
-          tokenId: parsed.args._tokenId.toNumber()
+          tokenId: Number(parsed.args._tokenId)
         };
       }
     } catch (e) {
@@ -92,12 +92,15 @@ export const findDelegationTransactions = async (
   await Promise.all(
     allDelegations.map(async (d) => {
       const delResult = DELEGATIONS_IFACE.parseLog(d);
+      if (!delResult) {
+        return;
+      }
       const collection = delResult.args.collectionAddress;
       const from = delResult.args.delegator
         ? delResult.args.delegator
         : delResult.args.from;
       const to = delResult.args.delegationAddress;
-      const useCase = delResult.args.useCase.toNumber();
+      const useCase = Number(delResult.args.useCase);
 
       if (!equalIgnoreCase(from, to) || useCase === USE_CASE_PRIMARY_ADDRESS) {
         if (
