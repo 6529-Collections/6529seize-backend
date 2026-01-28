@@ -1,19 +1,19 @@
-import {
-  ConnectionWrapper,
-  dbSupplier,
-  LazyDbAccessCompatibleService
-} from '../sql-executor';
-import { RateMatter, Rating } from '../entities/IRating';
+import { Page } from '../api-serverless/src/page-request';
 import {
   IDENTITIES_TABLE,
   RATINGS_SNAPSHOTS_TABLE,
   RATINGS_TABLE
 } from '../constants';
-import { Page } from '../api-serverless/src/page-request';
-import { RatingsSnapshot } from '../entities/IRatingsSnapshots';
-import { RatingsSnapshotsPageRequest } from './ratings.service';
-import { RequestContext } from '../request.context';
 import { revokeRepBasedDropOverVotes } from '../drops/participation-drops-over-vote-revocation';
+import { RateMatter, Rating } from '../entities/IRating';
+import { RatingsSnapshot } from '../entities/IRatingsSnapshots';
+import { RequestContext } from '../request.context';
+import {
+  ConnectionWrapper,
+  dbSupplier,
+  LazyDbAccessCompatibleService
+} from '../sql-executor';
+import { RatingsSnapshotsPageRequest } from './ratings.service';
 
 const mysql = require('mysql');
 
@@ -697,43 +697,26 @@ from grouped_rates r
     return this.db.execute(sql, params).then((results) => results[0]?.cnt ?? 0);
   }
 
-  async getTotalAndUserRepRatingForCategoryToProfile(
+  async getTotalRatingForMatter(
     param: {
-      category: string | null;
-      from_profile_id: string;
-      to_profile_id: string;
       matter: RateMatter;
+      target_profile_id: string;
+      category: string | null;
     },
     connection: ConnectionWrapper<any>
-  ): Promise<{ total: number; byUser: number }> {
-    const [total, byUser] = await Promise.all([
-      this.db
-        .execute<{ rating: number }>(
-          `
-      select sum(rating) as rating from ${RATINGS_TABLE} where matter = :matter ${
-        param.category ? `and matter_category = :category` : ``
-      } and matter_target_id = :to_profile_id
-    `,
-          param,
-          { wrappedConnection: connection }
-        )
-        .then((results) => results[0]?.rating ?? 0),
-      this.db
-        .execute<{ rating: number }>(
-          `
-      select sum(rating) as rating from ${RATINGS_TABLE} where matter = :matter ${
-        param.category ? `and matter_category = :category` : ``
-      } and matter_target_id = :to_profile_id and rater_profile_id = :from_profile_id
-    `,
-          param,
-          { wrappedConnection: connection }
-        )
-        .then((results) => results[0]?.rating ?? 0)
-    ]);
-    return {
-      total,
-      byUser
+  ): Promise<number> {
+    const sqlParam: Record<string, any> = {
+      matter: param.matter,
+      target_profile_id: param.target_profile_id
     };
+    let sql = `select sum(rating) as rating from ${RATINGS_TABLE} where matter = :matter and matter_target_id = :target_profile_id`;
+    if (param.category) {
+      sqlParam.category = param.category;
+      sql += ` and matter_category = :category`;
+    }
+    return this.db
+      .execute(sql, sqlParam, { wrappedConnection: connection })
+      .then((results) => results[0]?.rating ?? 0);
   }
 
   async getRepRating(

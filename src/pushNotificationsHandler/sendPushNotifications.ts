@@ -12,6 +12,16 @@ const logger = Logger.get('PUSH_NOTIFICATIONS_HANDLER_SEND');
 const MAX_TITLE_LENGTH = 50;
 const MAX_BODY_LENGTH = 250;
 
+function isFcmAcceptableImageUrl(url: string | undefined): boolean {
+  if (!url || typeof url !== 'string' || !url.trim()) return false;
+  try {
+    const u = new URL(url.trim());
+    return u.protocol === 'https:' || u.protocol === 'http:';
+  } catch {
+    return false;
+  }
+}
+
 function init() {
   if (!admin.apps.length) {
     const projectId = process.env.FIREBASE_PROJECT_ID;
@@ -60,8 +70,8 @@ export async function sendMessage(
     title,
     body
   };
-  if (imageUrl) {
-    notification.imageUrl = imageUrl;
+  if (isFcmAcceptableImageUrl(imageUrl)) {
+    notification.imageUrl = imageUrl!.trim();
   }
 
   const data: any = {
@@ -92,13 +102,13 @@ export async function sendMessage(
     const response = await admin.messaging().send(message);
     logger.info(`Successfully sent notification: ${response}`);
   } catch (error: any) {
-    logger.error(`Error sending notification: ${error}`);
-    // if the error is invalid payload and we have imageUrl, try to resend without it
     if (imageUrl && error.code === 'messaging/invalid-payload') {
-      logger.info('Invalid payload, trying to resend without imageUrl');
+      logger.info(
+        `Invalid payload (e.g. imageUrl), retrying without image: ${error.message}`
+      );
       return sendMessage(title, body, token, notification_id, extra_data);
     }
-
+    logger.error(`Error sending notification: ${error}`);
     throw error;
   }
 }
