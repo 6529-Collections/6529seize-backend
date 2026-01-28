@@ -14,7 +14,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v3
       - name: Install dependencies
-        run: npm i && pushd src/api-serverless && npm i && popd
+        run: npm ci && pushd src/api-serverless && npm ci && popd
       - name: Lint
         run: |
           npm run lint -- --max-warnings=0
