@@ -1,5 +1,6 @@
 import { Logger } from '../logging';
 import * as sentryContext from '../sentry.context';
+import { NFTOwner } from '../entities/INFTOwner';
 import {
   NextGenCollection,
   NextGenToken,
@@ -18,6 +19,7 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
     },
     {
       entities: [
+        NFTOwner,
         NextGenCollection,
         NextGenToken,
         NextGenTokenTrait,

@@ -1,6 +1,6 @@
 import { getDataSource } from '../db';
 import { Logger } from '../logging';
-import { getOwnersForContracts } from '../nftOwnersLoop/owners';
+import { fetchAllNftOwners } from '../nftOwnersLoop/db.nft_owners';
 import {
   fetchNextGenCollections,
   fetchNextGenTokensForCollection
@@ -23,8 +23,8 @@ export async function refreshNextgenMetadata() {
         entityManager,
         collection
       );
-      const owners = await getOwnersForContracts([
-        NEXTGEN_CORE_CONTRACT[network]
+      const owners = await fetchAllNftOwners([
+        NEXTGEN_CORE_CONTRACT[network].toLowerCase()
       ]);
       await Promise.all(
         collectionTokens.map(async (token) => {

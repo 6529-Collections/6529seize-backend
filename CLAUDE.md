@@ -261,6 +261,7 @@ The API (`src/api-serverless/src/`) is an Express application with:
 - Serverless Framework configuration in `serverless-config/`
 - Most loops have their own serverless.yaml files in their roots. Those are used to set up lambdas (via Github Actions). All new lambdas should also use serverless.yaml and make sure they are wired in build scripts and `.github/workflows/deploy.yaml`
 - API deployable as single Lambda with API Gateway
+- **memorySize:** Use a multiple of 512 (MB), e.g. 512, 1024, 1536, 2048, 3072, 4096, 5120
 
 ### Code Patterns
 

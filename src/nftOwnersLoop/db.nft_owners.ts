@@ -1,7 +1,11 @@
-import { getDataSource } from '../db';
-import { Logger } from '../logging';
-import { ConsolidatedNFTOwner, NFTOwner } from '../entities/INFTOwner';
 import { NFT_OWNERS_TABLE } from '../constants';
+import { getDataSource } from '../db';
+import {
+  ConsolidatedNFTOwner,
+  NFTOwner,
+  NftOwnersSyncState
+} from '../entities/INFTOwner';
+import { Logger } from '../logging';
 import {
   deleteConsolidations,
   insertWithoutUpdate,
@@ -18,6 +22,21 @@ export async function getMaxNftOwnersBlockReference(): Promise<number> {
     .getRawOne();
 
   return maxBlock.max_block ?? 0;
+}
+
+const SYNC_STATE_ROW_ID = 1;
+
+export async function getNftOwnersSyncBlock(): Promise<number> {
+  const row = await getDataSource()
+    .getRepository(NftOwnersSyncState)
+    .findOne({ where: { id: SYNC_STATE_ROW_ID } });
+  return row ? Number(row.block_reference ?? 0) : 0;
+}
+
+export async function setNftOwnersSyncBlock(block: number): Promise<void> {
+  await getDataSource()
+    .getRepository(NftOwnersSyncState)
+    .save({ id: SYNC_STATE_ROW_ID, block_reference: block });
 }
 
 export async function fetchAllNftOwners(
@@ -80,12 +99,13 @@ export async function persistNftOwners(
     logger.info(`[UPSERTING NFT OWNERS...]`);
     await getDataSource().transaction(async (manager) => {
       const repo = manager.getRepository(NFTOwner);
+      const addressesList = Array.from(addresses).map((a) => a.toLowerCase());
       const deleted = await repo
         .createQueryBuilder()
         .delete()
         .from(NFTOwner)
-        .where('wallet IN (:...addresses)', {
-          addresses: Array.from(addresses)
+        .where('LOWER(wallet) IN (:...addresses)', {
+          addresses: addressesList
         })
         .execute();
       await insertWithoutUpdate(repo, ownersDelta);
@@ -95,6 +115,8 @@ export async function persistNftOwners(
     });
   }
 }
+
+const CONSOLIDATED_INSERT_BATCH_SIZE = 2500;
 
 export async function persistConsolidatedNftOwners(
   upsertDelta: ConsolidatedNFTOwner[],
@@ -112,7 +134,14 @@ export async function persistConsolidatedNftOwners(
       const repo = manager.getRepository(ConsolidatedNFTOwner);
       const deleted = await deleteConsolidations(repo, deleteDelta);
       logger.info(`[DELETED ${deleted} CONSOLIDATED NFT OWNERS]`);
-      await insertWithoutUpdate(repo, upsertDelta);
+      for (
+        let i = 0;
+        i < upsertDelta.length;
+        i += CONSOLIDATED_INSERT_BATCH_SIZE
+      ) {
+        const chunk = upsertDelta.slice(i, i + CONSOLIDATED_INSERT_BATCH_SIZE);
+        await insertWithoutUpdate(repo, chunk);
+      }
       logger.info(`[INSERTED ${upsertDelta.length} CONSOLIDATED NFT OWNERS]`);
     });
   }
