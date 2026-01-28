@@ -290,9 +290,8 @@ async function mergeImagesIntoPdf(
   for (const img of images) {
     const ext = img.fileName.replace(/^.*\./, '').toLowerCase();
     const isPng = ext === 'png';
-    const embed = isPng
-      ? await doc.embedPng(img.content)
-      : await doc.embedJpg(img.content);
+    const bytes = new Uint8Array(img.content);
+    const embed = isPng ? await doc.embedPng(bytes) : await doc.embedJpg(bytes);
     const width = embed.width;
     const height = embed.height;
     const page = doc.addPage([width, height]);
