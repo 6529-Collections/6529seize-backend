@@ -316,12 +316,20 @@ export class RatingsService {
       if (request.matter === RateMatter.REP) {
         const change = request.rating - currentRating.rating;
         if (change !== 0) {
+          const totalRep = await this.ratingsDb.getTotalRatingForMatter(
+            {
+              matter: RateMatter.REP,
+              target_profile_id: request.matter_target_id,
+              category: request.matter_category
+            },
+            connection
+          );
           await userNotifier.notifyOfIdentityRep(
             {
               rater_id: request.rater_profile_id,
               rated_id: request.matter_target_id,
               amount: change,
-              total: request.rating,
+              total: totalRep,
               category: request.matter_category
             },
             connection
@@ -330,12 +338,20 @@ export class RatingsService {
       } else if (request.matter === RateMatter.CIC) {
         const change = request.rating - currentRating.rating;
         if (change !== 0) {
+          const totalNic = await this.ratingsDb.getTotalRatingForMatter(
+            {
+              matter: RateMatter.CIC,
+              target_profile_id: request.matter_target_id,
+              category: request.matter_category
+            },
+            connection
+          );
           await userNotifier.notifyOfIdentityNic(
             {
               rater_id: request.rater_profile_id,
               rated_id: request.matter_target_id,
               amount: change,
-              total: request.rating
+              total: totalNic
             },
             connection
           );
