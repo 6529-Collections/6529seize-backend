@@ -914,7 +914,7 @@ async function initializeApp() {
       const aBuf = Buffer.from(a);
       const bBuf = Buffer.from(b);
       if (aBuf.length !== bBuf.length) return false;
-      return crypto.timingSafeEqual(aBuf, bBuf);
+      return crypto.timingSafeEqual(aBuf as Uint8Array, bBuf as Uint8Array);
     }
     const body = req.body;
     const action = body?.action;
