@@ -1,6 +1,15 @@
 import fetch, { RequestInit as NodeFetchRequestInit } from 'node-fetch';
+import { PDFDocument } from 'pdf-lib';
 import { env } from '../../../env';
+import { BadRequestException } from '../../../exceptions';
 import { Logger } from '../../../logging';
+import {
+  fetchDistributionAirdrops,
+  fetchDistributionOverview,
+  fetchDistributionPhotos,
+  fetchDistributionsByPhase,
+  PhaseDistributionData
+} from './api.distributions.db';
 
 interface PhotoUpload {
   fileName: string;
@@ -31,6 +40,192 @@ export class GitHubDistributionService {
 
   private getToken(): string {
     return env.getStringOrThrow('GH_MEMECARDS_TOKEN');
+  }
+
+  private getFileExtensionFromUrl(url: string): string {
+    const urlPath = new URL(url).pathname;
+    const lastDot = urlPath.lastIndexOf('.');
+    if (lastDot === -1) {
+      return 'jpg';
+    }
+    return urlPath.substring(lastDot + 1).toLowerCase();
+  }
+
+  private async mergeImagesIntoPdf(
+    images: { fileName: string; content: Buffer }[]
+  ): Promise<Buffer> {
+    const doc = await PDFDocument.create();
+    for (const img of images) {
+      const ext = img.fileName.replace(/^.*\./, '').toLowerCase();
+      const isPng = ext === 'png';
+      const bytes = new Uint8Array(img.content);
+      const embed = isPng
+        ? await doc.embedPng(bytes)
+        : await doc.embedJpg(bytes);
+      const width = embed.width;
+      const height = embed.height;
+      const page = doc.addPage([width, height]);
+      page.drawImage(embed, { x: 0, y: 0, width, height });
+    }
+    const bytes = await doc.save();
+    return Buffer.from(bytes);
+  }
+
+  private buildPhaseCsvFiles(
+    phaseData: PhaseDistributionData[]
+  ): PhaseCsvFiles[] {
+    const phaseMap = new Map<
+      string,
+      { airdrops: Map<string, number>; allowlists: Map<string, number> }
+    >();
+
+    for (const row of phaseData) {
+      let phase = phaseMap.get(row.phase);
+      if (!phase) {
+        phase = { airdrops: new Map(), allowlists: new Map() };
+        phaseMap.set(row.phase, phase);
+      }
+
+      if (row.count_airdrop > 0) {
+        const current = phase.airdrops.get(row.wallet) || 0;
+        phase.airdrops.set(row.wallet, current + row.count_airdrop);
+      }
+      if (row.count_allowlist > 0) {
+        const current = phase.allowlists.get(row.wallet) || 0;
+        phase.allowlists.set(row.wallet, current + row.count_allowlist);
+      }
+    }
+
+    const sortedPhases = Array.from(phaseMap.keys()).sort((a, b) =>
+      a.localeCompare(b)
+    );
+    const result: PhaseCsvFiles[] = [];
+
+    for (let i = 0; i < sortedPhases.length; i++) {
+      const phaseName = sortedPhases[i];
+      const phase = phaseMap.get(phaseName)!;
+
+      const airdropLines: string[] = [];
+      const sortedAirdrops = Array.from(phase.airdrops.entries()).sort((a, b) =>
+        a[0].localeCompare(b[0])
+      );
+      for (const [wallet, count] of sortedAirdrops) {
+        airdropLines.push(`${wallet},${count}`);
+      }
+
+      const allowlistLines: string[] = [];
+      const sortedAllowlists = Array.from(phase.allowlists.entries()).sort(
+        (a, b) => a[0].localeCompare(b[0])
+      );
+      for (const [wallet, count] of sortedAllowlists) {
+        allowlistLines.push(`${wallet},${count}`);
+      }
+
+      result.push({
+        phaseIndex: i,
+        phaseName,
+        airdropsCsv: airdropLines.join('\n'),
+        allowlistsCsv: allowlistLines.join('\n')
+      });
+    }
+
+    return result;
+  }
+
+  async uploadDistributionForCard(
+    contract: string,
+    cardId: number
+  ): Promise<{
+    success: boolean;
+    message: string;
+    github_folder: string;
+    deleted_files: string[];
+    uploaded_files: string[];
+  }> {
+    const overview = await fetchDistributionOverview(contract, cardId);
+    if (!overview.is_normalized) {
+      throw new BadRequestException(
+        `Cannot upload to GitHub: Distribution for ${contract}#${cardId} is not normalized. Please call /normalize first.`
+      );
+    }
+
+    const photos = await fetchDistributionPhotos(contract, cardId);
+    if (photos.length === 0) {
+      throw new BadRequestException(
+        `Cannot upload to GitHub: No photos found for ${contract}#${cardId}. Please upload photos first.`
+      );
+    }
+
+    const airdrops = await fetchDistributionAirdrops(contract, cardId);
+    if (airdrops.length === 0) {
+      throw new BadRequestException(
+        `Cannot upload to GitHub: No automatic airdrops found for ${contract}#${cardId}. Please upload airdrops first.`
+      );
+    }
+
+    const phaseData = await fetchDistributionsByPhase(contract, cardId);
+
+    this.logger.info(
+      `GitHub upload for ${contract}#${cardId}: ${photos.length} photos, ${airdrops.length} airdrop entries, ${phaseData.length} phase distribution rows`
+    );
+
+    const photoBuffers: { fileName: string; content: Buffer }[] = [];
+    for (let i = 0; i < photos.length; i++) {
+      const photoUrl = photos[i].link;
+      const extension = this.getFileExtensionFromUrl(photoUrl);
+      const fileName = `card${cardId}_${i + 1}.${extension}`;
+
+      this.logger.info(`Fetching photo ${i + 1}/${photos.length}: ${photoUrl}`);
+      const photoResp = await fetch(photoUrl, {
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (compatible; 6529DistributionBot/1.0; +https://6529.io)',
+          Accept: 'image/*,*/*;q=0.8'
+        }
+      });
+      if (!photoResp.ok) {
+        throw new BadRequestException(
+          `Failed to fetch photo from ${photoUrl}: ${photoResp.status} ${photoResp.statusText}`
+        );
+      }
+      const buffer = Buffer.from(await photoResp.arrayBuffer());
+      photoBuffers.push({ fileName, content: buffer });
+    }
+
+    const pdfBuffer = await this.mergeImagesIntoPdf(photoBuffers);
+    const photoFilesForUpload = [
+      { fileName: `Meme_Card_${cardId}.pdf`, content: pdfBuffer }
+    ];
+
+    const airdropLines: string[] = [];
+    for (const airdrop of airdrops) {
+      airdropLines.push(`${airdrop.wallet},${airdrop.count}`);
+    }
+    const airdropFinalCsv = airdropLines.join('\n');
+
+    const phaseCsvFiles = this.buildPhaseCsvFiles(phaseData);
+
+    this.logger.info(
+      `Uploading to GitHub for card${cardId} (will replace existing folder)...`
+    );
+    const { uploadedFiles, deletedFiles } = await this.uploadDistributionFiles(
+      cardId,
+      photoFilesForUpload,
+      airdropFinalCsv,
+      phaseCsvFiles
+    );
+
+    this.logger.info(
+      `GitHub upload complete for ${contract}#${cardId}. Deleted ${deletedFiles.length} files, uploaded ${uploadedFiles.length} files.`
+    );
+
+    return {
+      success: true,
+      message: 'Distribution uploaded to GitHub',
+      github_folder: `card${cardId}`,
+      deleted_files: deletedFiles,
+      uploaded_files: uploadedFiles
+    };
   }
 
   private getCommitterInfo() {
