@@ -11,7 +11,6 @@ import { NFT_TDH_SORT } from '../api-filters';
 import {
   resolveSortDirection,
   returnCSVResult,
-  returnJsonResult,
   returnPaginatedResult
 } from '../api-helpers';
 import { ApiResponse } from '../api-response';
@@ -81,7 +80,9 @@ router.get(
       page,
       pageSize,
       search
-    ).then(async (result) => await returnPaginatedResult(result, req, res));
+    ).then((result) => {
+      return returnPaginatedResult(result, req, res);
+    });
   }
 );
 
@@ -132,11 +133,11 @@ router.get(
       content,
       collector,
       season
-    }).then(async (result) => {
+    }).then((result) => {
       if (downloadAll || downloadPage) {
-        return await returnCSVResult('consolidated_metrics', result.data, res);
+        return returnCSVResult('consolidated_metrics', result.data, res);
       } else {
-        return await returnPaginatedResult(result, req, res);
+        return returnPaginatedResult(result, req, res);
       }
     });
   }
@@ -165,7 +166,7 @@ router.get(
     );
     if (result) {
       const parsedResult = parseTdhDataFromDB(result);
-      return await returnJsonResult(parsedResult, req, res);
+      return res.json(parsedResult);
     }
     throw new NotFoundException(`Consolidated TDH for ${identity} not found`);
   }
@@ -190,7 +191,7 @@ router.get(
     const result = await fetchTDH('wallet', wallet, WALLETS_TDH_TABLE);
     if (result) {
       const parsedResult = parseTdhDataFromDB(result);
-      return await returnJsonResult(parsedResult, req, res);
+      return res.json(parsedResult);
     }
     throw new NotFoundException(`Wallet TDH for ${wallet} not found`);
   }

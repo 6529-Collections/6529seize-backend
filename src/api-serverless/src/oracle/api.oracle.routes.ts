@@ -1,12 +1,6 @@
 import { Request, Response } from 'express';
 import * as db from './api.oracle.db';
 import { asyncRouter } from '../async.router';
-import {
-  ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
-  CONTENT_TYPE_HEADER,
-  corsOptions,
-  JSON_HEADER_VALUE
-} from '../api-constants';
 import * as SwaggerUI from 'swagger-ui-express';
 import { getIp, isLocalhost } from '../policies/policies';
 import { getPage, getPageSize } from '../api-helpers';
@@ -28,12 +22,6 @@ function isValidIP(ip: string): boolean {
   return octets.every((octet) => octet >= 0 && octet <= 255);
 }
 
-function returnJsonResult(result: any, response: Response) {
-  response.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
-  response.setHeader(ACCESS_CONTROL_ALLOW_ORIGIN_HEADER, corsOptions.origin);
-  response.json(result);
-}
-
 const swaggerDocumentOracle = YAML.load('openapi.oracle.yaml');
 router.use(
   '/docs',
@@ -48,7 +36,7 @@ router.get(
   '/tdh/total',
   async function (req: Request<any, any, any, any>, res: any) {
     const result = await db.fetchTotalTDH();
-    return returnJsonResult(result, res);
+    return res.json(result);
   }
 );
 
@@ -72,7 +60,7 @@ router.get(
       return res.status(400).send({ error: 'Invalid value' });
     }
     const result = await db.fetchTDHAbove(Number(value), includeEntries);
-    return returnJsonResult(result, res);
+    return res.json(result);
   }
 );
 
@@ -106,7 +94,7 @@ router.get(
 
     const resolvedPercentile = Number(percentile) / 100;
     const result = await db.fetchTDHPercentile(resolvedPercentile);
-    return returnJsonResult(result, res);
+    return res.json(result);
   }
 );
 
@@ -131,7 +119,7 @@ router.get(
     }
 
     const result = await db.fetchTDHCutoff(Number(cutoff));
-    return returnJsonResult(result, res);
+    return res.json(result);
   }
 );
 
@@ -150,7 +138,7 @@ router.get(
   ) {
     const address = req.params.address;
     const result = await db.fetchSingleAddressTDH(address);
-    return returnJsonResult(result, res);
+    return res.json(result);
   }
 );
 
@@ -169,7 +157,7 @@ router.get(
   ) {
     const address = req.params.address;
     const result = await db.fetchSingleAddressTDHBreakdown(address);
-    return returnJsonResult(result, res);
+    return res.json(result);
   }
 );
 
@@ -202,18 +190,15 @@ router.get(
         if (seasonResult.length === 0) {
           throw new Error('Season not found');
         }
-        return returnJsonResult(
-          {
-            ...seasonResult[0],
-            block: result.block
-          },
-          res
-        );
+        return res.json({
+          ...seasonResult[0],
+          block: result.block
+        });
       } catch (e: any) {
         return res.status(400).send({ error: e.message });
       }
     }
-    return returnJsonResult(result, res);
+    return res.json(result);
   }
 );
 
@@ -244,7 +229,7 @@ router.get(
       contract,
       tokenId
     );
-    return returnJsonResult(result, res);
+    return res.json(result);
   }
 );
 
@@ -271,15 +256,12 @@ router.get(
       if (result.seasons.length === 0) {
         return res.status(404).send({ error: 'Season not found' });
       }
-      return returnJsonResult(
-        {
-          ...result.seasons[0],
-          block: result.block
-        },
-        res
-      );
+      return res.json({
+        ...result.seasons[0],
+        block: result.block
+      });
     }
-    return returnJsonResult(result, res);
+    return res.json(result);
   }
 );
 
@@ -304,16 +286,13 @@ router.get(
       if (result.nfts.length === 0) {
         return res.status(404).send({ error: 'NFT not found' });
       } else {
-        return returnJsonResult(
-          {
-            ...result.nfts[0],
-            block: result.block
-          },
-          res
-        );
+        return res.json({
+          ...result.nfts[0],
+          block: result.block
+        });
       }
     }
-    return returnJsonResult(result, res);
+    return res.json(result);
   }
 );
 

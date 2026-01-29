@@ -6,15 +6,17 @@ import WebSocket, { WebSocketServer } from 'ws';
 import aggregatedActivityRoutes from './aggregated-activity/api.aggregated-activity.routes';
 import authRoutes from './auth/auth.routes';
 import communityMembersRoutes from './community-members/community-members.routes';
-import communityMetricsRoutes from './community-metrics/community-metrics.routes';
 import userGroupsImEligibleForRoutes from './community-members/user-groups-im-elgigible-for.routes';
 import userGroupsRoutes from './community-members/user-groups.routes';
+import communityMetricsRoutes from './community-metrics/community-metrics.routes';
 import delegationsRoutes from './delegations/delegations.routes';
 import distributionPhotosRoutes from './distribution-photos/api.distribution_photos.routes';
 import distributionsRoutes from './distributions/api.distributions.routes';
+import bookmarkedDropsRoutes from './drops/bookmarked-drops.routes';
+import boostedDropsRoutes from './drops/boosted-drops.routes';
+import dropIdsRoutes from './drops/drop-ids.routes';
 import dropsMediaRoutes from './drops/drops-media.routes';
 import dropsRoutes from './drops/drops.routes';
-import dropIdsRoutes from './drops/drop-ids.routes';
 import lightDropsRoutes from './drops/light-drops.routes';
 import feedRoutes from './feed/feed.routes';
 import gasRoutes from './gas/gas.routes';
@@ -30,8 +32,6 @@ import profileActivityLogsRoutes from './profiles/profile-activity-logs.routes';
 import profileSubClassificationsRoutes from './profiles/profiles-sub-classifications.routes';
 import profilesRoutes from './profiles/profiles.routes';
 import repCategorySearchRoutes from './profiles/rep-category-search.routes';
-import boostedDropsRoutes from './drops/boosted-drops.routes';
-import bookmarkedDropsRoutes from './drops/bookmarked-drops.routes';
 import proxiesRoutes from './proxies/proxies.routes';
 import pushNotificationsRoutes from './push-notifications/push-notifications.routes';
 import bulkRepRoutes from './ratings/bulk-rep.routes';
@@ -63,6 +63,7 @@ import { getJwtSecret } from './auth/auth';
 
 import * as awsServerlessExpressMiddleware from 'aws-serverless-express/middleware';
 import { randomUUID } from 'crypto';
+import * as crypto from 'node:crypto';
 import { Strategy as AnonymousStrategy } from 'passport-anonymous';
 import * as process from 'process';
 import * as SwaggerUI from 'swagger-ui-express';
@@ -90,7 +91,6 @@ import {
   cacheKey,
   getPage,
   getPageSize,
-  returnJsonResult,
   returnPaginatedResult,
   transformPaginatedResponse
 } from './api-helpers';
@@ -104,6 +104,7 @@ import { ApiSeizeSettings } from './generated/models/ApiSeizeSettings';
 import { ApiTransactionPage } from './generated/models/ApiTransactionPage';
 import { ApiUploadItem } from './generated/models/ApiUploadItem';
 import { ApiUploadsPage } from './generated/models/ApiUploadsPage';
+import { githubIssueDropService } from './github/github-issue-drop.service';
 import { LOGO_SVG, renderHealthUI } from './health/health-ui.renderer';
 import { getHealthData } from './health/health.service';
 import { DEFAULT_MAX_SIZE } from './page-request';
@@ -123,8 +124,6 @@ import {
 } from './ws/ws';
 import { wsListenersNotifier } from './ws/ws-listeners-notifier';
 import { WsMessageType } from './ws/ws-message';
-import * as crypto from 'node:crypto';
-import { githubIssueDropService } from './github/github-issue-drop.service';
 
 const YAML = require('yamljs');
 const compression = require('compression');
@@ -310,13 +309,9 @@ async function initializeApp() {
         logger.info(`Unauthorized request for ${req.path} auth: ${auth}`);
         res.statusCode = 401;
         const image = await db.fetchRandomImage();
-        await returnJsonResult(
-          {
-            image: image[0].scaled ? image[0].scaled : image[0].image
-          },
-          req,
-          res
-        );
+        return res.json({
+          image: image[0].scaled ? image[0].scaled : image[0].image
+        });
       } else {
         next();
       }
@@ -338,8 +333,7 @@ async function initializeApp() {
         return returnPaginatedResult(
           cachedBody as PaginatedResponse<any>,
           req,
-          res,
-          true
+          res
         );
       })
       .catch(() => next());
@@ -357,8 +351,8 @@ async function initializeApp() {
     async function (req: any, res: Response<ApiResponse<ApiBlocksPage>>) {
       const pageSize = getPageSize(req);
       const page = getPage(req);
-      await db.fetchBlocks(pageSize, page).then(async (result) => {
-        await returnPaginatedResult(
+      await db.fetchBlocks(pageSize, page).then((result) => {
+        return returnPaginatedResult(
           transformPaginatedResponse(
             (orig: TDHBlock): ApiBlockItem => ({
               block_number: orig.block_number,
@@ -377,7 +371,7 @@ async function initializeApp() {
   apiRouter.get(
     `/settings`,
     async function (req: any, res: Response<ApiResponse<ApiSeizeSettings>>) {
-      await returnJsonResult(seizeSettings(), req, res);
+      return res.json(seizeSettings());
     }
   );
 
@@ -401,8 +395,8 @@ async function initializeApp() {
       const params = getValidatedByJoiOrThrow(req.query, UploadsQuerySchema);
       await db
         .fetchUploads(params.page_size, params.page, params.block, params.date)
-        .then(async (result) => {
-          await returnPaginatedResult(
+        .then((result) => {
+          return returnPaginatedResult(
             transformPaginatedResponse(
               (orig: Upload): ApiUploadItem => ({
                 date: orig.date,
@@ -430,8 +424,8 @@ async function initializeApp() {
           params.block,
           params.date
         )
-        .then(async (result) => {
-          await returnPaginatedResult(
+        .then((result) => {
+          return returnPaginatedResult(
             transformPaginatedResponse(
               (orig: Upload): ApiUploadItem => ({
                 date: orig.date,
@@ -451,8 +445,8 @@ async function initializeApp() {
     `/memes/artists_names`,
     cacheRequest(),
     async function (req: any, res: Response<ApiResponse<ApiArtistNameItem[]>>) {
-      await db.fetchArtistsNamesMemes().then(async (result) => {
-        return await returnJsonResult(result, req, res);
+      await db.fetchArtistsNamesMemes().then((result) => {
+        return res.json(result);
       });
     }
   );
@@ -461,8 +455,8 @@ async function initializeApp() {
     `/memelab/artists_names`,
     cacheRequest(),
     async function (req: any, res: Response<ApiResponse<ApiArtistNameItem[]>>) {
-      await db.fetchArtistsNamesMemeLab().then(async (result) => {
-        return await returnJsonResult(result, req, res);
+      await db.fetchArtistsNamesMemeLab().then((result) => {
+        return res.json(result);
       });
     }
   );
@@ -484,8 +478,8 @@ async function initializeApp() {
       const nfts = req.query.id;
       await db
         .fetchNFTs(pageSize, page, contracts, nfts, sortDir)
-        .then(async (result) => {
-          await returnPaginatedResult(
+        .then((result) => {
+          return returnPaginatedResult(
             transformPaginatedResponse(
               (orig: NFT & { has_distribution: boolean }): ApiNft => {
                 const metadata = JSON.parse(orig.metadata!);
@@ -540,11 +534,11 @@ async function initializeApp() {
 
       await db
         .fetchGradients(id, pageSize, page, sort, sortDir)
-        .then(async (result) => {
+        .then((result) => {
           result.data.map((d: any) => {
             d.metadata = JSON.parse(d.metadata);
           });
-          await returnPaginatedResult(result, req, res);
+          return returnPaginatedResult(result, req, res);
         });
     }
   );
@@ -555,8 +549,8 @@ async function initializeApp() {
     async function (req: any, res: any) {
       const contract = req.params.contract;
 
-      await db.fetchNFTMedia(contract).then(async (result) => {
-        await returnJsonResult(result, req, res);
+      await db.fetchNFTMedia(contract).then((result) => {
+        return res.json(result);
       });
     }
   );
@@ -592,7 +586,7 @@ async function initializeApp() {
               );
             }
           });
-          await returnPaginatedResult(result, req, res);
+          return returnPaginatedResult(result, req, res);
         });
     }
   );
@@ -620,8 +614,8 @@ async function initializeApp() {
 
       await db
         .fetchMemesExtended(pageSize, page, nfts, seasons, sort, sortDir)
-        .then(async (result) => {
-          await returnPaginatedResult(result, req, res);
+        .then((result) => {
+          return returnPaginatedResult(result, req, res);
         });
     }
   );
@@ -630,8 +624,8 @@ async function initializeApp() {
     `/new_memes_seasons`,
     cacheRequest(),
     async function (req: any, res: any) {
-      await db.fetchNewMemesSeasons().then(async (result) => {
-        await returnJsonResult(result, req, res);
+      await db.fetchNewMemesSeasons().then((result) => {
+        return res.json(result);
       });
     }
   );
@@ -646,8 +640,8 @@ async function initializeApp() {
           ? req.query.sort_direction
           : 'asc';
 
-      await db.fetchMemesLite(sortDir).then(async (result) => {
-        return await returnPaginatedResult(result, req, res);
+      await db.fetchMemesLite(sortDir).then((result) => {
+        return returnPaginatedResult(result, req, res);
       });
     }
   );
@@ -662,8 +656,8 @@ async function initializeApp() {
           ? req.query.sort_direction
           : 'asc';
 
-      await db.fetchMemelabLite(sortDir).then(async (result) => {
-        return await returnPaginatedResult(result, req, res);
+      await db.fetchMemelabLite(sortDir).then((result) => {
+        return returnPaginatedResult(result, req, res);
       });
     }
   );
@@ -672,13 +666,13 @@ async function initializeApp() {
     `/memes_latest`,
     cacheRequest(),
     async function (req: any, res: any) {
-      await db.fetchMemesLatest().then(async (result) => {
+      await db.fetchMemesLatest().then((result) => {
         result.metadata = JSON.parse(result.metadata);
         result.metadata.animation_details =
           typeof result.metadata.animation_details === 'string'
             ? JSON.parse(result.metadata.animation_details)
             : result.metadata.animation_details;
-        return await returnJsonResult(result, req, res);
+        return res.json(result);
       });
     }
   );
@@ -690,8 +684,8 @@ async function initializeApp() {
       const pageSize = getPageSize(req);
       const search = req.query.search;
 
-      await db.searchNfts(search, pageSize).then(async (result) => {
-        return await returnJsonResult(result, req, res);
+      await db.searchNfts(search, pageSize).then((result) => {
+        return res.json(result);
       });
     }
   );
@@ -708,8 +702,8 @@ async function initializeApp() {
 
       await db
         .fetchLabExtended(pageSize, page, nfts, collections)
-        .then(async (result) => {
-          await returnPaginatedResult(result, req, res);
+        .then((result) => {
+          return returnPaginatedResult(result, req, res);
         });
     }
   );
@@ -731,8 +725,8 @@ async function initializeApp() {
           : null;
       await db
         .fetchTransactions(pageSize, page, wallets, contracts, nfts, filter)
-        .then(async (result) => {
-          await returnPaginatedResult(result, req, res);
+        .then((result) => {
+          return returnPaginatedResult(result, req, res);
         });
     }
   );
@@ -754,8 +748,8 @@ async function initializeApp() {
 
       await db
         .fetchLabTransactions(pageSize, page, wallets, nfts, filter)
-        .then(async (result) => {
-          await returnPaginatedResult(result, req, res);
+        .then((result) => {
+          return returnPaginatedResult(result, req, res);
         });
     }
   );
@@ -766,9 +760,9 @@ async function initializeApp() {
     async function (req: any, res: any) {
       const pageSize = getPageSize(req);
       const page = getPage(req);
-      await db.fetchGradientTdh(pageSize, page).then(async (result) => {
+      await db.fetchGradientTdh(pageSize, page).then((result) => {
         result = parseTdhResultsFromDB(result);
-        await returnPaginatedResult(result, req, res);
+        return returnPaginatedResult(result, req, res);
       });
     }
   );
@@ -783,8 +777,8 @@ async function initializeApp() {
       );
       await db
         .fetchConsolidationsForWallet(wallet, showIncomplete)
-        .then(async (result) => {
-          await returnPaginatedResult(result, req, res);
+        .then((result) => {
+          return returnPaginatedResult(result, req, res);
         });
     }
   );
@@ -797,14 +791,12 @@ async function initializeApp() {
       const pageSize = getPageSize(req, DEFAULT_MAX_SIZE);
       const page = getPage(req);
 
-      await db
-        .fetchConsolidations(pageSize, page, block)
-        .then(async (result) => {
-          result.data.map((a: any) => {
-            a.wallets = JSON.parse(a.wallets);
-          });
-          await returnPaginatedResult(result, req, res);
+      await db.fetchConsolidations(pageSize, page, block).then((result) => {
+        result.data.map((a: any) => {
+          a.wallets = JSON.parse(a.wallets);
         });
+        return returnPaginatedResult(result, req, res);
+      });
     }
   );
 
@@ -820,11 +812,11 @@ async function initializeApp() {
 
       await db
         .fetchNftHistory(pageSize, page, contract, nftId)
-        .then(async (result) => {
+        .then((result) => {
           result.data.map((a: any) => {
             a.description = JSON.parse(a.description);
           });
-          await returnPaginatedResult(result, req, res);
+          return returnPaginatedResult(result, req, res);
         });
     }
   );
@@ -836,12 +828,12 @@ async function initializeApp() {
       const pageSize = getPageSize(req, DISTRIBUTION_PAGE_SIZE);
       const page = getPage(req);
 
-      await db.fetchRememesUploads(pageSize, page).then(async (result) => {
+      await db.fetchRememesUploads(pageSize, page).then((result) => {
         result.data.forEach((e: any) => {
           e.date = e.created_at;
           delete e.created_at;
         });
-        await returnPaginatedResult(result, req, res);
+        return returnPaginatedResult(result, req, res);
       });
     }
   );
@@ -852,7 +844,7 @@ async function initializeApp() {
     async function (req: any, res: any) {
       const pageSize = getPageSize(req, DISTRIBUTION_PAGE_SIZE);
       const page = getPage(req);
-      await db.fetchTDHGlobalHistory(pageSize, page).then(async (result) => {
+      await db.fetchTDHGlobalHistory(pageSize, page).then((result) => {
         result.data.map((d: any) => {
           const date = new Date(d.date);
           const year = date.getUTCFullYear();
@@ -860,7 +852,7 @@ async function initializeApp() {
           const day = String(date.getUTCDate()).padStart(2, '0');
           d.date = `${year}-${month}-${day}`;
         });
-        await returnPaginatedResult(result, req, res);
+        return returnPaginatedResult(result, req, res);
       });
     }
   );
@@ -870,7 +862,7 @@ async function initializeApp() {
     cacheRequest(),
     async function (req: any, res: any) {
       const consolidationKey = req.params.consolidation_key;
-      await db.fetchRecentTDHHistory(consolidationKey).then(async (result) => {
+      await db.fetchRecentTDHHistory(consolidationKey).then((result) => {
         result.map((d: any) => {
           if (d.wallets && !Array.isArray(d.wallets)) {
             d.wallets = JSON.parse(d.wallets);
@@ -881,22 +873,18 @@ async function initializeApp() {
           const day = String(date.getDate()).padStart(2, '0');
           d.date = `${year}-${month}-${day}`;
         });
-        await returnJsonResult(result, req, res);
+        return res.json(result);
       });
     }
   );
 
   apiRouter.get(``, async function (req: any, res: any) {
     const image = await db.fetchRandomImage();
-    await returnJsonResult(
-      {
-        message: 'WELCOME TO 6529 API',
-        health: '/health',
-        image: image[0].scaled ? image[0].scaled : image[0].image
-      },
-      req,
-      res
-    );
+    return res.json({
+      message: 'WELCOME TO 6529 API',
+      health: '/health',
+      image: image[0].scaled ? image[0].scaled : image[0].image
+    });
   });
 
   rootRouter.get('/health', async (req, res) => {
@@ -978,16 +966,12 @@ async function initializeApp() {
 
   rootRouter.get(``, async function (req: any, res: any) {
     const image = await db.fetchRandomImage();
-    await returnJsonResult(
-      {
-        message: 'WELCOME TO 6529 API',
-        api: '/api',
-        health: '/health',
-        image: image[0].scaled ? image[0].scaled : image[0].image
-      },
-      req,
-      res
-    );
+    return res.json({
+      message: 'WELCOME TO 6529 API',
+      api: '/api',
+      health: '/health',
+      image: image[0].scaled ? image[0].scaled : image[0].image
+    });
   });
 
   apiRouter.use(`/boosted-drops`, boostedDropsRoutes);

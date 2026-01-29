@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
+import * as mcache from 'memory-cache';
 import { fetchRoyaltiesUploads } from '../../../db-api';
 import { Logger } from '../../../logging';
-import { asyncRouter } from '../async.router';
 import {
   CACHE_TIME_MS,
   DEFAULT_PAGE_SIZE,
@@ -11,12 +11,11 @@ import {
   cacheKey,
   resolveIntParam,
   returnCSVResult,
-  returnJsonResult,
   returnPaginatedResult
 } from '../api-helpers';
-import * as mcache from 'memory-cache';
-import { fetchRoyalties, RoyaltyResponse } from './royalties.db';
+import { asyncRouter } from '../async.router';
 import { cacheRequest } from '../request-cache';
+import { fetchRoyalties, RoyaltyResponse } from './royalties.db';
 
 const router = asyncRouter();
 
@@ -93,8 +92,8 @@ router.get(
         ? req.query.page_size
         : DEFAULT_PAGE_SIZE;
     const page: number = req.query.page ? req.query.page : 1;
-    await fetchRoyaltiesUploads(pageSize, page).then(async (result) => {
-      await returnPaginatedResult<RoyaltyUploadResponse>(result, req, res);
+    await fetchRoyaltiesUploads(pageSize, page).then((result) => {
+      return returnPaginatedResult<RoyaltyUploadResponse>(result, req, res);
     });
   }
 );
@@ -134,7 +133,7 @@ function returnRoyalties(
       results.forEach((r) => delete r.thumbnail);
       return await returnCSVResult(`royalties_${type}`, results, res);
     } else {
-      return await returnJsonResult(results, req, res);
+      return res.json(results);
     }
   });
 }

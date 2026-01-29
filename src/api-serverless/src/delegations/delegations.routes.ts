@@ -1,12 +1,12 @@
 import { asyncRouter } from '../async.router';
 
-import { DEFAULT_PAGE_SIZE } from '../page-request';
-import { returnPaginatedResult } from '../api-helpers';
 import {
   fetchDelegations,
   fetchDelegationsByUseCase,
   fetchMintingDelegations
 } from '../../../db-api';
+import { returnPaginatedResult } from '../api-helpers';
+import { DEFAULT_PAGE_SIZE } from '../page-request';
 import { cacheRequest } from '../request-cache';
 
 const router = asyncRouter();
@@ -33,8 +33,8 @@ router.get(`/`, cacheRequest(), async function (req: any, res: any) {
     pageSize,
     page,
     block
-  ).then(async (result) => {
-    await returnPaginatedResult(result, req, res);
+  ).then((result) => {
+    return returnPaginatedResult(result, req, res);
   });
 });
 
@@ -50,11 +50,9 @@ router.get(
         : DEFAULT_PAGE_SIZE;
     const page: number = req.query.page ? parseInt(req.query.page) : 1;
 
-    await fetchMintingDelegations(wallet, pageSize, page).then(
-      async (result) => {
-        await returnPaginatedResult(result, req, res);
-      }
-    );
+    await fetchMintingDelegations(wallet, pageSize, page).then((result) => {
+      return returnPaginatedResult(result, req, res);
+    });
   }
 );
 
@@ -67,7 +65,7 @@ router.get(`/:wallet`, cacheRequest(), async function (req: any, res: any) {
       : DEFAULT_PAGE_SIZE;
   const page: number = req.query.page ? parseInt(req.query.page) : 1;
 
-  await fetchDelegations(wallet, pageSize, page).then(async (result) => {
-    await returnPaginatedResult(result, req, res);
+  await fetchDelegations(wallet, pageSize, page).then((result) => {
+    return returnPaginatedResult(result, req, res);
   });
 });

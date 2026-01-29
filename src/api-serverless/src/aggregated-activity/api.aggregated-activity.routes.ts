@@ -1,13 +1,18 @@
 import { Request, Response } from 'express';
 import { asyncRouter } from '../async.router';
 
-import { DEFAULT_PAGE_SIZE } from '../page-request';
+import { enums } from '../../../enums';
+import { NotFoundException } from '../../../exceptions';
 import {
   resolveSortDirection,
   returnCSVResult,
-  returnJsonResult,
   returnPaginatedResult
 } from '../api-helpers';
+import { ApiResponse } from '../api-response';
+import { ApiAggregatedActivity } from '../generated/models/ApiAggregatedActivity';
+import { ApiAggregatedActivityMemes } from '../generated/models/ApiAggregatedActivityMemes';
+import { DEFAULT_PAGE_SIZE } from '../page-request';
+import { cacheRequest } from '../request-cache';
 import { MetricsCollector, MetricsContent } from '../tdh/api.tdh.db';
 import {
   fetchAggregatedActivity,
@@ -16,12 +21,6 @@ import {
   fetchMemesAggregatedActivityForConsolidationKey,
   fetchMemesAggregatedActivityForWallet
 } from './api.aggregated-activity.db';
-import { NotFoundException } from '../../../exceptions';
-import { ApiResponse } from '../api-response';
-import { ApiAggregatedActivity } from '../generated/models/ApiAggregatedActivity';
-import { ApiAggregatedActivityMemes } from '../generated/models/ApiAggregatedActivityMemes';
-import { enums } from '../../../enums';
-import { cacheRequest } from '../request-cache';
 
 const router = asyncRouter();
 
@@ -88,11 +87,11 @@ router.get(
       content,
       collector,
       season
-    }).then(async (result) => {
+    }).then((result) => {
       if (downloadAll || downloadPage) {
-        return await returnCSVResult('consolidated_metrics', result.data, res);
+        return returnCSVResult('consolidated_metrics', result.data, res);
       } else {
-        return await returnPaginatedResult(result, req, res);
+        return returnPaginatedResult(result, req, res);
       }
     });
   }
@@ -117,7 +116,7 @@ router.get(
     const result =
       await fetchAggregatedActivityForConsolidationKey(consolidationKey);
     if (result) {
-      return await returnJsonResult(result, req, res);
+      return res.json(result);
     }
     throw new NotFoundException(
       `Consolidated Aggregated activity for ${consolidationKey} not found`
@@ -137,13 +136,13 @@ router.get(
       any,
       any
     >,
-    res: Response<ApiResponse<ApiAggregatedActivityMemes>>
+    res: Response<ApiResponse<ApiAggregatedActivityMemes[]>>
   ) {
     const consolidationKey = req.params.consolidation_key;
     const result =
       await fetchMemesAggregatedActivityForConsolidationKey(consolidationKey);
     if (result) {
-      return await returnJsonResult(result, req, res);
+      return res.json(result);
     }
     throw new NotFoundException(
       `Consolidated Memes Aggregated activity for ${consolidationKey} not found`
@@ -169,7 +168,7 @@ router.get(
 
     const result = await fetchAggregatedActivityForWallet(wallet);
     if (result) {
-      return await returnJsonResult(result, req, res);
+      return res.json(result);
     }
     throw new NotFoundException(
       `Wallet Aggregated activity for ${wallet} not found`
@@ -189,13 +188,13 @@ router.get(
       any,
       any
     >,
-    res: any
+    res: Response<ApiResponse<ApiAggregatedActivityMemes[]>>
   ) {
     const wallet = req.params.wallet;
 
     const result = await fetchMemesAggregatedActivityForWallet(wallet);
     if (result) {
-      return await returnJsonResult(result, req, res);
+      return res.json(result);
     }
     throw new NotFoundException(
       `Wallet Memes Aggregated activity for ${wallet} not found`

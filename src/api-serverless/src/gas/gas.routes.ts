@@ -1,14 +1,9 @@
 import { Request, Response } from 'express';
-import { Logger } from '../../../logging';
-import { asyncRouter } from '../async.router';
-import { CACHE_TIME_MS } from '../api-constants';
-import {
-  cacheKey,
-  resolveIntParam,
-  returnCSVResult,
-  returnJsonResult
-} from '../api-helpers';
 import * as mcache from 'memory-cache';
+import { Logger } from '../../../logging';
+import { CACHE_TIME_MS } from '../api-constants';
+import { cacheKey, resolveIntParam, returnCSVResult } from '../api-helpers';
+import { asyncRouter } from '../async.router';
 import { fetchGas, GasResponse } from './gas.db';
 
 const router = asyncRouter();
@@ -95,7 +90,7 @@ async function returnGas(
       results.forEach((r) => delete r.thumbnail);
       return returnCSVResult(`gas_${type}`, results, res);
     } else {
-      return await returnJsonResult(results, req, res);
+      return res.json(results);
     }
   });
 }

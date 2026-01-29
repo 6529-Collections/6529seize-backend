@@ -10,13 +10,13 @@ import {
 import { asyncRouter } from '../async.router';
 import { ApiProfileMin } from '../generated/models/ApiProfileMin';
 import { identityFetcher } from '../identities/identity.fetcher';
+import { cacheRequest } from '../request-cache';
 import { getValidatedByJoiOrThrow } from '../validation';
 import {
   fetchConsolidatedTdhEditions,
   fetchWalletTdhEditions,
   TdhEditionFilters
 } from './tdh-editions.db';
-import { cacheRequest } from '../request-cache';
 
 const router = asyncRouter();
 export default router;
@@ -123,7 +123,7 @@ router.get(
       (row: TdhEditionRow) => toApiEdition(row),
       result
     );
-    await returnPaginatedResult(response, req, res);
+    return returnPaginatedResult(response, req, res);
   }
 );
 
@@ -153,7 +153,7 @@ router.get(
       (row: TdhEditionRow) => toApiEdition(row),
       result
     );
-    await returnPaginatedResult(response, req, res);
+    return returnPaginatedResult(response, req, res);
   }
 );
 
@@ -204,6 +204,6 @@ router.get(
       result
     );
 
-    await returnPaginatedResult(response, req, res);
+    return returnPaginatedResult(response, req, res);
   }
 );
