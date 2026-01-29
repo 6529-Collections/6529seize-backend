@@ -278,7 +278,7 @@ router.post(
       contract,
       cardId
     );
-    return await returnJsonResult(result, req, res);
+    res.json(result);
   }
 );
 
