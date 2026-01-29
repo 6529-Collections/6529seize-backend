@@ -90,6 +90,7 @@ import {
   ConnectionWrapper,
   dbSupplier,
   setSqlExecutor,
+  SqlExecutor,
   sqlExecutor
 } from './sql-executor';
 import { getConsolidationsSql, parseTdhDataFromDB } from './sql_helpers';
@@ -126,23 +127,23 @@ export async function connect(entities: any[] = [], syncEntities = false) {
   await AppDataSource.initialize().catch((error) =>
     logger.error(`DB INIT ERROR: ${error}`)
   );
+  class DbImpl extends SqlExecutor {
+    async execute(
+      sql: string,
+      params?: Record<string, any>,
+      options?: DbQueryOptions
+    ) {
+      return execSQLWithParams(sql, params, options);
+    }
 
-  setSqlExecutor({
-    execute: (
-      sql: string,
-      params?: Record<string, any>,
-      options?: DbQueryOptions
-    ) => execSQLWithParams(sql, params, options),
-    executeNativeQueriesInTransaction(executable) {
+    async executeNativeQueriesInTransaction<T>(
+      executable: (connectionHolder: ConnectionWrapper<any>) => Promise<T>
+    ) {
       return execNativeTransactionally(executable);
-    },
-    oneOrNull: (
-      sql: string,
-      params?: Record<string, any>,
-      options?: DbQueryOptions
-    ) =>
-      execSQLWithParams(sql, params, options).then((r) => (r[0] as any) ?? null)
-  });
+    }
+  }
+
+  setSqlExecutor(new DbImpl());
   logger.info(
     `[CONNECTION CREATED] [APP DATA SOURCE ${
       !AppDataSource.isInitialized ? 'NOT ' : ''

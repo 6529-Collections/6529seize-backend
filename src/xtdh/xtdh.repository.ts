@@ -33,7 +33,6 @@ import { NotFoundException } from '../exceptions';
 import { XTdhGrantTokenEntity } from '../entities/IXTdhGrantToken';
 import { numbers } from '../numbers';
 import { PageSortDirection } from '../api-serverless/src/page-request';
-import { bulkInsert } from '../db/my-sql.helpers';
 
 export type GrantWithCap = XTdhGrantEntity & { grantor_x_tdh_rate: number };
 
@@ -2089,10 +2088,9 @@ SET cw.xtdh_rate = COALESCE(pd.produced, 0) - COALESCE(go.granted_out, 0) + COAL
         wrappedConnection: ctx.connection
       }
     );
-    await bulkInsert(
-      this.db,
+    await this.db.bulkInsert(
       XTDH_GRANT_TOKENS_TABLE,
-      tokens as unknown as Record<string, any>[],
+      tokens,
       ['tokenset_id', 'token_id', 'target_partition'],
       ctx
     );
@@ -2554,10 +2552,9 @@ SET cw.xtdh_rate = COALESCE(pd.produced, 0) - COALESCE(go.granted_out, 0) + COAL
   }
 
   async bulkInsert(entities: XTdhGrantEntity[], ctx: RequestContext) {
-    await bulkInsert(
-      this.db,
+    await this.db.bulkInsert(
       XTDH_GRANTS_TABLE,
-      entities as unknown as Record<string, any>[],
+      entities,
       [
         'id',
         'tokenset_id',

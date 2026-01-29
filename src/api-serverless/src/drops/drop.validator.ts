@@ -55,10 +55,6 @@ const QuotedDropSchema: Joi.ObjectSchema<ApiQuotedDrop> = Joi.object({
 const NewDropPartSchema: Joi.ObjectSchema<ApiCreateDropPart> = Joi.object({
   content: Joi.string().optional().default(null).allow(null),
   quoted_drop: QuotedDropSchema.optional().default(null).allow(null),
-  mentioned_waves: Joi.array()
-    .optional()
-    .items(MentionedWaveSchema)
-    .default([]),
   media: Joi.array()
     .optional()
     .items(
@@ -83,6 +79,10 @@ const baseDropFieldsValidators = {
     .items(MentionedUserSchema)
     .default([])
     .allow(null),
+  mentioned_waves: Joi.array()
+    .optional()
+    .items(MentionedWaveSchema)
+    .default([]),
   metadata: Joi.array().optional().items(MetadataSchema).default([]),
   mentions_all: Joi.boolean().optional(),
   signature: Joi.string().optional().allow(null).default(null),
