@@ -6252,10 +6252,6 @@ components:
           anyOf:
             - $ref: "#/components/schemas/ApiQuotedDrop"
             - type: "null"
-        mentioned_waves:
-          type: array
-          items:
-            $ref: "#/components/schemas/ApiCreateMentionedWave"
         media:
           type: array
           items:
@@ -6690,6 +6686,10 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ApiDropMentionedUser"
+        mentioned_waves:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiCreateMentionedWave"
         metadata:
           type: array
           items:
@@ -6751,6 +6751,7 @@ components:
         - updated_at
         - referenced_nfts
         - mentioned_users
+        - mentioned_waves
         - metadata
         - parts
         - parts_count
@@ -6821,6 +6822,10 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ApiDropMentionedUser"
+        mentioned_waves:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiMentionedWave"
         metadata:
           type: array
           items:
@@ -6962,11 +6967,13 @@ components:
       type: object
       required:
         - wave_name_in_content
-        - wave
+        - wave_id
       properties:
         wave_name_in_content:
           type: string
           minLength: 1
+        wave_id:
+          type: string
         wave:
           $ref: "#/components/schemas/ApiWaveMin"
     ApiCreateMentionedWave:
@@ -7001,7 +7008,6 @@ components:
         - media
         - quoted_drop
         - content
-        - mentioned_waves
       properties:
         part_id:
           description: Which drop in the storm is this drop
@@ -7019,10 +7025,6 @@ components:
           anyOf:
             - $ref: "#/components/schemas/ApiQuotedDropResponse"
             - type: "null"
-        mentioned_waves:
-          type: array
-          items:
-            $ref: "#/components/schemas/ApiMentionedWave"
     ApiDropRater:
       type: object
       required:
@@ -7178,6 +7180,7 @@ components:
         - updated_at
         - referenced_nfts
         - mentioned_users
+        - mentioned_waves
         - metadata
         - parts
         - parts_count
@@ -7246,6 +7249,10 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ApiDropMentionedUser"
+        mentioned_waves:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiMentionedWave"
         metadata:
           type: array
           items:

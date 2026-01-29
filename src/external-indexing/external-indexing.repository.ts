@@ -13,7 +13,6 @@ import {
 } from '../entities/IExternalIndexedContract';
 import { ExternalIndexedOwnership721HistoryEntity } from '../entities/IExternalIndexedOwnership721History';
 import { ExternalIndexedOwnership721Entity } from '../entities/IExternalIndexedOwnership721';
-import { bulkUpsert } from '../db/my-sql.helpers';
 import { Time } from '../time';
 import { ExternalIndexedTransfersEntity } from '../entities/IExternalIndexedTransfer';
 
@@ -351,8 +350,7 @@ export class ExternalIndexingRepository extends LazyDbAccessCompatibleService {
   ): Promise<void> {
     if (!owners.length) return;
 
-    await bulkUpsert(
-      this.db,
+    await this.db.bulkUpsert(
       EXTERNAL_INDEXED_OWNERSHIP_721_TABLE,
       owners,
       [
@@ -387,8 +385,7 @@ export class ExternalIndexingRepository extends LazyDbAccessCompatibleService {
   ): Promise<void> {
     if (!owners.length) return;
 
-    await bulkUpsert(
-      this.db,
+    await this.db.bulkUpsert(
       EXTERNAL_INDEXED_OWNERSHIP_721_HISTORY_TABLE,
       owners,
       [
@@ -530,10 +527,9 @@ export class ExternalIndexingRepository extends LazyDbAccessCompatibleService {
   ): Promise<void> {
     if (!transfers.length) return;
 
-    await bulkUpsert(
-      this.db,
+    await this.db.bulkUpsert(
       EXTERNAL_INDEXED_TRANSFERS_TABLE,
-      transfers as unknown as Record<string, any>[],
+      transfers,
       [
         'partition',
         'block_number',
