@@ -33,7 +33,12 @@ import {
   WALLETS_TDH_TABLE
 } from './constants';
 import { RememeSource } from './entities/IRememe';
-import { ConnectionWrapper, setSqlExecutor, sqlExecutor } from './sql-executor';
+import {
+  ConnectionWrapper,
+  setSqlExecutor,
+  SqlExecutor,
+  sqlExecutor
+} from './sql-executor';
 import { getConsolidationsSql } from './sql_helpers';
 
 import { Nft } from 'alchemy-sdk';
@@ -123,12 +128,12 @@ export async function connect() {
     database: process.env.DB_NAME,
     typeCast: CustomTypeCaster
   });
-  setSqlExecutor({
-    execute: async <T>(
+  class DbImpl extends SqlExecutor {
+    async execute<T>(
       sql: string,
       params?: Record<string, any>,
       options?: DbQueryOptions
-    ) => {
+    ) {
       const connection = await getConnection(options, sql);
       return await execSQLWithParams<T>(
         sql,
@@ -136,26 +141,18 @@ export async function connect() {
         !options?.wrappedConnection?.connection,
         params
       );
-    },
-    async executeNativeQueriesInTransaction(executable) {
+    }
+
+    async executeNativeQueriesInTransaction<T>(
+      executable: (connectionHolder: ConnectionWrapper<any>) => Promise<T>
+    ) {
       return getDbConnectionByPoolName(DbPoolName.WRITE).then((con) =>
         execNativeTransactionally(executable, con)
       );
-    },
-    oneOrNull: async (
-      sql: string,
-      params?: Record<string, any>,
-      options?: DbQueryOptions
-    ) => {
-      const connection = await getConnection(options, sql);
-      return await execSQLWithParams(
-        sql,
-        connection,
-        !options?.wrappedConnection?.connection,
-        params
-      ).then((r) => (r[0] as any) ?? null);
     }
-  });
+  }
+
+  setSqlExecutor(new DbImpl());
   logger.info(`[CONNECTION POOLS CREATED]`);
 }
 

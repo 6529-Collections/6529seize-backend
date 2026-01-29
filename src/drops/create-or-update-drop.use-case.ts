@@ -29,8 +29,8 @@ import { assertUnreachable } from '../assertions';
 import { randomUUID } from 'crypto';
 import {
   DropMediaEntity,
-  DropMentionEntity,
   DropMentionedWaveEntity,
+  DropMentionEntity,
   DropPartEntity,
   DropType
 } from '../entities/IDrop';
@@ -681,21 +681,14 @@ export class CreateOrUpdateDropUseCase {
       ),
       this.insertMentionsInDrop({ model, wave }, { timer, connection }),
       this.dropsDb.insertMentionedWaves(
-        parts
-          .map(
-            (part, index) =>
-              part.mentioned_waves?.map<Omit<DropMentionedWaveEntity, 'id'>>(
-                (mentionedWave) => ({
-                  drop_id: dropId,
-                  drop_part_id: index + 1,
-                  wave_id: mentionedWave.wave_id,
-                  wave_name_in_content: mentionedWave.wave_name_in_content
-                })
-              ) ?? []
-          )
-          .flat(),
-        connection,
-        timer
+        model.mentioned_waves?.map<Omit<DropMentionedWaveEntity, 'id'>>(
+          (mentionedWave) => ({
+            drop_id: dropId,
+            wave_id: mentionedWave.wave_id,
+            wave_name_in_content: mentionedWave.wave_name_in_content
+          })
+        ),
+        { connection, timer }
       ),
       this.dropsDb.insertReferencedNfts(
         Object.values(
@@ -792,9 +785,7 @@ export class CreateOrUpdateDropUseCase {
   ) {
     timer.start(`${CreateOrUpdateDropUseCase.name}->verifyMentionedWaves`);
     const mentionedWaveIds = collections.distinct(
-      model.parts.flatMap((part) =>
-        part.mentioned_waves.map((mentionedWave) => mentionedWave.wave_id)
-      )
+      model.mentioned_waves.map((mentionedWave) => mentionedWave.wave_id)
     );
     if (!mentionedWaveIds.length) {
       timer.stop(`${CreateOrUpdateDropUseCase.name}->verifyMentionedWaves`);
