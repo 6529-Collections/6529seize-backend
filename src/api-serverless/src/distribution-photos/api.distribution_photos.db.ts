@@ -1,6 +1,5 @@
 import { DISTRIBUTION_PHOTO_TABLE } from '../../../constants';
 import { fetchPaginated } from '../../../db-api';
-import { bulkInsert } from '../../../db/my-sql.helpers';
 import { sqlExecutor } from '../../../sql-executor';
 import { PaginatedResponse } from '../api-constants';
 import { constructFilters } from '../api-helpers';
@@ -47,8 +46,7 @@ export async function saveDistributionPhotos(
         { wrappedConnection: connectionHolder }
       );
 
-      await bulkInsert(
-        sqlExecutor,
+      await sqlExecutor.bulkInsert(
         DISTRIBUTION_PHOTO_TABLE,
         photoUrls.map((link) => ({
           contract: contract.toLowerCase(),

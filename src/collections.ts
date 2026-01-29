@@ -37,6 +37,17 @@ export class Collections {
   public toSet<T>(arr: T[]): Set<T> {
     return new Set(arr);
   }
+  public distinctBy<T>(arr: T[], keygen: (e: T) => string): T[] {
+    const keySet = new Set<string>();
+    return arr.filter((elem: T) => {
+      const key = keygen(elem);
+      if (keySet.has(key)) {
+        return false;
+      }
+      keySet.add(key);
+      return true;
+    });
+  }
 }
 
 export const collections = new Collections();

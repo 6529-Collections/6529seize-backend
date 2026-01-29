@@ -2,8 +2,8 @@ import {
   ACTIVITY_EVENTS_TABLE,
   DROP_BOOSTS_TABLE,
   DROP_MEDIA_TABLE,
-  DROP_METADATA_TABLE,
   DROP_MENTIONED_WAVES_TABLE,
+  DROP_METADATA_TABLE,
   DROP_REFERENCED_NFTS_TABLE,
   DROP_RELATIONS_TABLE,
   DROPS_MENTIONS_TABLE,
@@ -23,7 +23,6 @@ import {
   WAVES_DECISION_PAUSES_TABLE,
   WAVES_TABLE
 } from '../../../constants';
-import { bulkInsert } from '../../../db/my-sql.helpers';
 import { ActivityEventTargetType } from '../../../entities/IActivityEvent';
 import { DropType } from '../../../entities/IDrop';
 import { RateMatter } from '../../../entities/IRating';
@@ -1025,10 +1024,9 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
 
   async insertOutcomes(entities: WaveOutcomeEntity[], ctx: RequestContext) {
     ctx.timer?.start('wavesApiDb->insertOutcomes');
-    await bulkInsert(
-      this.db,
+    await this.db.bulkInsert(
       WAVE_OUTCOMES_TABLE,
-      entities as unknown as Record<string, any>[],
+      entities,
       [
         'wave_id',
         'wave_outcome_position',
@@ -1049,10 +1047,9 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     ctx: RequestContext
   ) {
     ctx.timer?.start('wavesApiDb->insertOutcomeDistributionItems');
-    await bulkInsert(
-      this.db,
+    await this.db.bulkInsert(
       WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE,
-      entities as unknown as Record<string, any>[],
+      entities,
       [
         'wave_id',
         'wave_outcome_position',

@@ -8,6 +8,7 @@ export interface CreateOrUpdateDropModel {
   readonly parts: CreateOrUpdateDropPartModel[];
   readonly referenced_nfts: DropReferencedNftModel[];
   readonly mentioned_users: DropMentionedUserModel[];
+  readonly mentioned_waves: DropMentionedWaveModel[];
   readonly metadata: DropMetadataModel[];
   readonly author_identity: string;
   readonly author_id?: string;
@@ -22,7 +23,6 @@ export interface CreateOrUpdateDropPartModel {
   readonly content: string | null;
   readonly quoted_drop: DropPartIdentifierModel | null;
   readonly media: DropMediaModel[];
-  readonly mentioned_waves: DropMentionedWaveModel[];
 }
 
 export interface DropPartIdentifierModel {

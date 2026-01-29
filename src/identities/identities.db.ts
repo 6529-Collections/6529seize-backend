@@ -29,7 +29,6 @@ import { collections } from '../collections';
 import { env } from '../env';
 import { DropType } from '../entities/IDrop';
 import { appFeatures } from '../app-features';
-import { bulkUpsert } from '../db/my-sql.helpers';
 
 const mysql = require('mysql');
 
@@ -285,8 +284,7 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
       sub_classification: identity.sub_classification ?? null
     }));
 
-    await bulkUpsert(
-      this.db,
+    await this.db.bulkUpsert(
       IDENTITIES_TABLE,
       identityRows,
       [
@@ -331,8 +329,7 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
       }))
     );
 
-    await bulkUpsert(
-      this.db,
+    await this.db.bulkUpsert(
       ADDRESS_CONSOLIDATION_KEY,
       addressRows,
       ['address', 'consolidation_key'],
