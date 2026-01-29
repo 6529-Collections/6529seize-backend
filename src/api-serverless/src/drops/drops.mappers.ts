@@ -1,8 +1,8 @@
 import {
   DropEntity,
   DropMediaEntity,
-  DropMentionEntity,
   DropMentionedWaveEntity,
+  DropMentionEntity,
   DropMetadataEntity,
   DropPartEntity,
   DropReferencedNftEntity,
@@ -127,15 +127,15 @@ export class DropsMappers {
       wave_id: waveId,
       reply_to: replyTo,
       title: request.title ?? null,
+      mentioned_waves: (request.mentioned_waves ?? []).map((mentionedWave) => ({
+        wave_id: mentionedWave.wave_id,
+        wave_name_in_content: mentionedWave.wave_name_in_content
+      })),
       parts: request.parts.map((it) => ({
         content: it.content ?? null,
         media: it.media.map((media) => ({
           url: media.url,
           mime_type: media.mime_type
-        })),
-        mentioned_waves: (it.mentioned_waves ?? []).map((mentionedWave) => ({
-          wave_id: mentionedWave.wave_id,
-          wave_name_in_content: mentionedWave.wave_name_in_content
         })),
         quoted_drop: it.quoted_drop
           ? {
@@ -773,7 +773,13 @@ export class DropsMappers {
     const dropType = enums.resolveOrThrow(ApiDropType, dropEntity.drop_type);
     const rank: number | null =
       weightedDropsRanks[dropEntity.id] ?? dropsRanks[dropEntity.id] ?? null;
-
+    const mentionedWavesOfDrop = mentionedWaves
+      .filter((mentionedWave) => mentionedWave.drop_id === dropEntity.id)
+      .map<ApiMentionedWave>((mentionedWave) => ({
+        wave_name_in_content: mentionedWave.wave_name_in_content,
+        wave_id: mentionedWave.wave_id,
+        wave: mentionedWavesById[mentionedWave.wave_id]
+      }));
     return {
       id: dropEntity.id,
       serial_no: dropEntity.serial_no,
@@ -823,17 +829,6 @@ export class DropsMappers {
       parts:
         dropsParts[dropEntity.id]?.map<ApiDropPart>((it) => {
           const quotedDropId = it.quoted_drop_id;
-          const mentionedWaveParts = mentionedWaves
-            .filter(
-              (mentionedWave) =>
-                mentionedWave.drop_id === dropEntity.id &&
-                mentionedWave.drop_part_id === it.drop_part_id &&
-                !!mentionedWavesById[mentionedWave.wave_id]
-            )
-            .map<ApiMentionedWave>((mentionedWave) => ({
-              wave_name_in_content: mentionedWave.wave_name_in_content,
-              wave: mentionedWavesById[mentionedWave.wave_id]
-            }));
           return {
             content: it.content,
             quoted_drop:
@@ -877,7 +872,6 @@ export class DropsMappers {
                   }
                 : null,
             part_id: it.drop_part_id,
-            mentioned_waves: mentionedWaveParts,
             media:
               (dropMedia[dropEntity.id] ?? [])
                 .filter((m) => m.drop_part_id === it.drop_part_id)
@@ -890,6 +884,7 @@ export class DropsMappers {
       parts_count: dropEntity.parts_count,
       created_at: dropEntity.created_at,
       updated_at: numbers.parseIntOrNull(dropEntity.updated_at),
+      mentioned_waves: mentionedWavesOfDrop,
       referenced_nfts: referencedNfts
         .filter((it) => it.drop_id === dropEntity.id)
         .map<ApiDropReferencedNFT>((it) => ({

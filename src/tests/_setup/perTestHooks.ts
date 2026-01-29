@@ -7,7 +7,11 @@ import {
 } from '../../db/my-sql.helpers';
 import { env } from '../../env';
 import { Logger } from '../../logging';
-import { setSqlExecutor } from '../../sql-executor';
+import {
+  ConnectionWrapper,
+  setSqlExecutor,
+  SqlExecutor
+} from '../../sql-executor';
 import { Time } from '../../time';
 
 const logger = Logger.get('TEST');
@@ -29,6 +33,33 @@ function getConnectionsFromPool(): Promise<mysql.PoolConnection> {
   });
 }
 
+class DbImpl extends SqlExecutor {
+  async execute<T>(
+    sql: string,
+    params?: Record<string, any>,
+    options?: DbQueryOptions
+  ): Promise<any> {
+    return options?.wrappedConnection?.connection
+      ? execSQLWithParams<T>(
+          sql,
+          options.wrappedConnection.connection! as mysql.PoolConnection,
+          false,
+          params
+        )
+      : getConnectionsFromPool().then((connection) =>
+          execSQLWithParams<T>(sql, connection, true, params)
+        );
+  }
+
+  async executeNativeQueriesInTransaction<T>(
+    executable: (connectionHolder: ConnectionWrapper<any>) => Promise<T>
+  ) {
+    return getConnectionsFromPool().then((connection) =>
+      execNativeTransactionally(executable, connection)
+    );
+  }
+}
+
 beforeEach(async () => {
   pool = mysql.createPool({
     connectionLimit: 5,
@@ -44,44 +75,7 @@ beforeEach(async () => {
     typeCast: CustomTypeCaster
   });
 
-  setSqlExecutor({
-    execute: <T>(
-      sql: string,
-      params?: Record<string, any>,
-      options?: DbQueryOptions
-    ) =>
-      options?.wrappedConnection?.connection
-        ? execSQLWithParams<T>(
-            sql,
-            options.wrappedConnection.connection! as mysql.PoolConnection,
-            false,
-            params
-          )
-        : getConnectionsFromPool().then((connection) =>
-            execSQLWithParams<T>(sql, connection, true, params)
-          ),
-    executeNativeQueriesInTransaction(executable) {
-      return getConnectionsFromPool().then((connection) =>
-        execNativeTransactionally(executable, connection)
-      );
-    },
-    oneOrNull: <T>(
-      sql: string,
-      params?: Record<string, any>,
-      options?: DbQueryOptions
-    ) =>
-      (options?.wrappedConnection?.connection
-        ? execSQLWithParams<T>(
-            sql,
-            options.wrappedConnection.connection! as mysql.PoolConnection,
-            false,
-            params
-          )
-        : getConnectionsFromPool().then((connection) =>
-            execSQLWithParams<T>(sql, connection, true, params)
-          )
-      ).then((r) => (r[0] as any) ?? null)
-  });
+  setSqlExecutor(new DbImpl());
 });
 
 afterEach(async () => {

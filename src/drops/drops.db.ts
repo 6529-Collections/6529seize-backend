@@ -11,8 +11,8 @@ import {
   DELETED_DROPS_TABLE,
   DROP_BOOSTS_TABLE,
   DROP_MEDIA_TABLE,
-  DROP_METADATA_TABLE,
   DROP_MENTIONED_WAVES_TABLE,
+  DROP_METADATA_TABLE,
   DROP_REAL_VOTER_VOTE_IN_TIME_TABLE,
   DROP_REFERENCED_NFTS_TABLE,
   DROP_RELATIONS_TABLE,
@@ -38,8 +38,8 @@ import {
   DropBoostEntity,
   DropEntity,
   DropMediaEntity,
-  DropMentionEntity,
   DropMentionedWaveEntity,
+  DropMentionEntity,
   DropMetadataEntity,
   DropPartEntity,
   DropReferencedNftEntity,
@@ -250,27 +250,23 @@ export class DropsDb extends LazyDbAccessCompatibleService {
 
   async insertMentionedWaves(
     mentionedWaves: Omit<DropMentionedWaveEntity, 'id'>[],
-    connection: ConnectionWrapper<any>,
-    timer: Timer
+    ctx: RequestContext
   ) {
-    timer.start(`dropsDb->insertMentionedWaves`);
-    await Promise.all(
-      mentionedWaves.map((mentionedWave) =>
-        this.db.execute(
-          `insert into ${DROP_MENTIONED_WAVES_TABLE} (drop_id,
-                                                     drop_part_id,
-                                                     wave_name_in_content,
-                                                     wave_id)
-           values (:drop_id,
-                   :drop_part_id,
-                   :wave_name_in_content,
-                   :wave_id)`,
-          mentionedWave,
-          { wrappedConnection: connection }
-        )
-      )
+    const distinctEntities = collections.distinctBy(
+      mentionedWaves,
+      (w) => `${w.wave_id}-${w.drop_id}-${w.wave_name_in_content}`
     );
-    timer.stop(`dropsDb->insertMentionedWaves`);
+    ctx.timer?.start(`${this.constructor.name}->insertMentionedWaves`);
+    try {
+      await this.db.bulkInsert(
+        DROP_MENTIONED_WAVES_TABLE,
+        distinctEntities,
+        ['wave_id', 'drop_id', 'wave_name_in_content'],
+        ctx
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->insertMentionedWaves`);
+    }
   }
 
   async insertReferencedNfts(
