@@ -25,6 +25,7 @@ import {
   insertAutomaticAirdrops,
   populateDistributionNormalized
 } from './api.distributions.service';
+import { githubDistributionService } from './github-distribution.service';
 
 interface AirdropEntry {
   address: string;
@@ -261,6 +262,23 @@ router.post(
       req,
       res
     );
+  }
+);
+
+router.post(
+  `/distributions/:contract/:id/github-upload`,
+  needsAuthenticatedUser(),
+  async function (req: Request<any, any, any, any>, res: Response) {
+    const params = validateSubscriptionAdminAndParams(req, res);
+    if (!params) {
+      return;
+    }
+    const { contract, cardId } = params;
+    const result = await githubDistributionService.uploadDistributionForCard(
+      contract,
+      cardId
+    );
+    res.json(result);
   }
 );
 
