@@ -39,7 +39,7 @@
     "slugify": "^1.6.6",
     "swagger-jsdoc": "^6.2.8",
     "swagger-ui-express": "^5.0.0",
-    "ws": "^8.18.1",
+    "ws": "^8.19.0",
     "yamljs": "^0.3.0"
   },
   "devDependencies": {
