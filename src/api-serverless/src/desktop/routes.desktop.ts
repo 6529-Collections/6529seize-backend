@@ -17,6 +17,8 @@ router.get('/splash', async (req: Request, res: Response) => {
     artist: row.artist,
     artist_seize_handle: row.artist_seize_handle,
     season: row.season,
+    width: row.width,
+    height: row.height,
     icon: row.icon,
     thumbnail: row.thumbnail,
     scaled: row.scaled,

@@ -7,6 +7,8 @@ export async function fetchRandomVerticalImage(): Promise<
     artist?: string;
     artist_seize_handle?: string;
     season?: number;
+    width?: number;
+    height?: number;
     icon?: string;
     thumbnail?: string;
     scaled?: string;
@@ -16,6 +18,8 @@ export async function fetchRandomVerticalImage(): Promise<
   const sql = `
     SELECT n.id, n.artist, n.artist_seize_handle,
       CAST(jt.value AS UNSIGNED) AS season,
+      CAST(JSON_UNQUOTE(JSON_EXTRACT(n.metadata, '$.image_details.width')) AS UNSIGNED) AS width,
+      CAST(JSON_UNQUOTE(JSON_EXTRACT(n.metadata, '$.image_details.height')) AS UNSIGNED) AS height,
       n.icon, n.thumbnail, n.scaled, n.image
     FROM ${NFTS_TABLE} n
     LEFT JOIN JSON_TABLE(
