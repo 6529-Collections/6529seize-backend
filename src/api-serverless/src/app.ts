@@ -25,6 +25,7 @@ import identitySubscriptionsRoutes from './identity-subscriptions/identity-subsc
 import nextgenRoutes from './nextgen/nextgen.routes';
 import nftOwnersRoutes from './nft-owners/api.nft-owners.routes';
 import notificationsRoutes from './notifications/notifications.routes';
+import desktopRoutes from './desktop/routes.desktop';
 import oracleRoutes from './oracle/api.oracle.routes';
 import ownersBalancesRoutes from './owners-balances/api.owners-balances.routes';
 import policiesRoutes from './policies/policies.routes';
@@ -1018,6 +1019,7 @@ async function initializeApp() {
   apiRouter.use(`/xtdh`, xtdhRoutes);
 
   rootRouter.use(BASE_PATH, apiRouter);
+  rootRouter.use(`/desktop`, desktopRoutes);
   rootRouter.use(`/oracle`, oracleRoutes);
   rootRouter.use(`/rpc`, rpcRoutes);
   rootRouter.use(`/sitemap`, sitemapRoutes);
