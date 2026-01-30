@@ -101,7 +101,8 @@ function aGroup({
   owns_lab,
   owns_lab_tokens,
   profile_group_id,
-  excluded_profile_group_id
+  excluded_profile_group_id,
+  is_beneficiary_of_grant_id
 }: {
   cic_min?: number | null;
   cic_max?: number | null;
@@ -127,6 +128,7 @@ function aGroup({
   owns_lab_tokens?: string | null;
   profile_group_id?: string | null;
   excluded_profile_group_id?: string | null;
+  is_beneficiary_of_grant_id?: string | null;
 }): UserGroupEntity {
   return {
     id: 'a-group-id',
@@ -160,7 +162,8 @@ function aGroup({
     created_by: 'a-creator-id',
     visible: true,
     is_private: false,
-    is_direct_message: false
+    is_direct_message: false,
+    is_beneficiary_of_grant_id: is_beneficiary_of_grant_id ?? null
   };
 }
 
@@ -2180,6 +2183,13 @@ describe('UserGroupPredicates', () => {
     it('cic user condition', () => {
       expect(
         hasGroupGotAnyNonIdentityConditions(aGroup({ cic_user: 'a-user' }))
+      ).toBe(true);
+    });
+    it('beneficiary grant condition', () => {
+      expect(
+        hasGroupGotAnyNonIdentityConditions(
+          aGroup({ is_beneficiary_of_grant_id: 'an_id' })
+        )
       ).toBe(true);
     });
   });

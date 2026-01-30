@@ -1,12 +1,15 @@
 import {
   ADDRESS_CONSOLIDATION_KEY,
+  EXTERNAL_INDEXED_OWNERSHIP_721_TABLE,
   GRADIENT_CONTRACT,
   IDENTITIES_TABLE,
   MEMELAB_CONTRACT,
   MEMES_CONTRACT,
   NFT_OWNERS_TABLE,
   PROFILE_GROUPS_TABLE,
-  RATINGS_TABLE
+  RATINGS_TABLE,
+  XTDH_GRANT_TOKENS_TABLE,
+  XTDH_GRANTS_TABLE
 } from '../../../constants';
 import {
   getLevelComponentsBorderByLevel,
@@ -70,10 +73,24 @@ import {
   metricsRecorder,
   MetricsRecorder
 } from '../../../metrics/MetricsRecorder';
+import { xTdhRepository } from '../../../xtdh/xtdh.repository';
+import {
+  XTdhGrantStatus,
+  XTdhGrantTokenMode
+} from '../../../entities/IXTdhGrant';
+import { xTdhGrantsFinder } from '../../../xtdh/xtdh-grants.finder';
+import { xTdhGrantApiConverter } from '../xtdh/grants/xtdh-grant.api-converter';
 
 export type NewUserGroupEntity = Omit<
   UserGroupEntity,
   'id' | 'created_at' | 'created_by'
+>;
+
+type GClean = Omit<
+  ApiGroupDescription,
+  | 'identity_group_identities_count'
+  | 'excluded_identity_group_identities_count'
+  | 'is_beneficiary_of_grant'
 >;
 
 export class UserGroupsService {
@@ -109,6 +126,18 @@ export class UserGroupsService {
             }).slice(0, 50) +
             '-' +
             ids.uniqueShortId();
+          const beneficiaryOfGrantId = group.is_beneficiary_of_grant_id;
+          if (beneficiaryOfGrantId) {
+            const grantEntity = await xTdhRepository.getGrantById(
+              beneficiaryOfGrantId,
+              ctxWithConnection
+            );
+            if (!grantEntity) {
+              throw new NotFoundException(
+                `Can't create group based on grant ${beneficiaryOfGrantId} as it doesn't exist`
+              );
+            }
+          }
           const inclusionGroups = group.addresses.length
             ? await this.userGroupsDb.insertGroupEntriesAndGetGroupIds(
                 group.addresses,
@@ -207,7 +236,8 @@ export class UserGroupsService {
       excluded_addresses: [],
       visible: true,
       is_private: true,
-      is_direct_message: true
+      is_direct_message: true,
+      is_beneficiary_of_grant_id: null
     };
 
     return await this.save(userGroup, creatorProfile.id!, ctx, true);
@@ -265,6 +295,9 @@ export class UserGroupsService {
         .then((groups) => this.eliminateGroupsByOwnings(groups, profile))
         .then((groups) =>
           this.eliminateGroupsByGranularRatings(groups, profile)
+        )
+        .then((groups) =>
+          this.eliminateGroupsByBeneficiaryGrants(groups, profile, { timer })
         );
     return [
       ...groupEntitiesWhichPassedAllChecks.map((it) => it.id),
@@ -292,6 +325,34 @@ export class UserGroupsService {
         this.userGroupsDb.getByIds(givenGroups, {
           timer
         })
+    );
+  }
+
+  private async eliminateGroupsByBeneficiaryGrants(
+    groups: UserGroupEntity[],
+    profile: ProfileSimpleMetrics,
+    ctx: RequestContext
+  ) {
+    const beneficiaryGrantIds = groups
+      .map((group) => group.is_beneficiary_of_grant_id)
+      .filter((it) => !!it) as string[];
+    if (!beneficiaryGrantIds.length) {
+      return groups;
+    }
+    const grantsWhereProfileIsBeneficiary =
+      await this.userGroupsDb.inWhichOfGrantsIsProfileBeneficiary(
+        {
+          beneficiaryGrantIds,
+          profileId: profile.profile_id
+        },
+        ctx
+      );
+    return groups.filter(
+      (group) =>
+        !group.is_beneficiary_of_grant_id ||
+        grantsWhereProfileIsBeneficiary.includes(
+          group.is_beneficiary_of_grant_id
+        )
     );
   }
 
@@ -541,12 +602,7 @@ export class UserGroupsService {
       return [];
     }
     const key = `eligible-groups-${profileId}`;
-    const ignoreCache = profileId
-      ? await this.userGroupsDb.profileHasRecentGroupChanges(
-          profileId,
-          Time.minutes(1)
-        )
-      : false;
+    const ignoreCache = true;
     if (!ignoreCache) {
       const cachedGroupsUserIsEligibleFor = mcache.get(key);
       if (cachedGroupsUserIsEligibleFor) {
@@ -709,7 +765,8 @@ export class UserGroupsService {
           },
           owns_nfts: [],
           identity_group_id: null,
-          excluded_identity_group_id: null
+          excluded_identity_group_id: null,
+          is_beneficiary_of_grant_id: null
         },
         null,
         ctx
@@ -721,11 +778,7 @@ export class UserGroupsService {
   }
 
   private async getSqlAndParams(
-    group: Omit<
-      ApiGroupDescription,
-      | 'identity_group_identities_count'
-      | 'excluded_identity_group_identities_count'
-    >,
+    group: GClean,
     group_id: string | null,
     ctx: RequestContext
   ): Promise<{
@@ -768,6 +821,10 @@ export class UserGroupsService {
       : null;
 
     const params: Record<string, any> = {};
+    const beneficiaryOwnersPart = this.getBeneficiaryOwnersPart(
+      group.is_beneficiary_of_grant_id,
+      params
+    );
     const repPart = this.getRepPart(group, params);
     const cicPart = this.getCicPart(group, params, repPart);
     const nftsPart = this.getNftsPart(
@@ -781,6 +838,7 @@ export class UserGroupsService {
       repPart,
       cicPart,
       nftsPart,
+      beneficiaryOwnersPart,
       group,
       params
     );
@@ -799,11 +857,7 @@ export class UserGroupsService {
   }
 
   private getInclusionExclusionPart(
-    group: Omit<
-      ApiGroupDescription,
-      | 'identity_group_identities_count'
-      | 'excluded_identity_group_identities_count'
-    >,
+    group: GClean,
     params: Record<string, any>
   ): string {
     const anyOtherDescriptionButInclusion = !!(
@@ -818,7 +872,8 @@ export class UserGroupsService {
       group.rep.category ||
       group.cic.max !== null ||
       group.cic.min !== null ||
-      group.cic.user_identity
+      group.cic.user_identity ||
+      group.is_beneficiary_of_grant_id !== null
     );
     if (
       !anyOtherDescriptionButInclusion &&
@@ -902,11 +957,7 @@ export class UserGroupsService {
   }
 
   private getNftsPart(
-    group: Omit<
-      ApiGroupDescription,
-      | 'identity_group_identities_count'
-      | 'excluded_identity_group_identities_count'
-    >,
+    group: GClean,
     group_id: string | null,
     params: Record<string, any>,
     repPart: string | null,
@@ -956,24 +1007,58 @@ export class UserGroupsService {
     return ` ${repPart || cicPart ? ',' : ''} ${nftsPart}`;
   }
 
+  private getBeneficiaryOwnersPart(
+    is_beneficiary_of_grant_id: string | null,
+    params: Record<string, any>
+  ): string | null {
+    if (!is_beneficiary_of_grant_id) {
+      return null;
+    }
+    const beneficiariesPart = `
+      beneficiaries as (select
+          distinct i.profile_id as beneficiary_id
+      from ${ADDRESS_CONSOLIDATION_KEY} a
+               join ${IDENTITIES_TABLE} i on a.consolidation_key = i.consolidation_key
+               join ${EXTERNAL_INDEXED_OWNERSHIP_721_TABLE} eto on eto.owner = a.address
+               join ${XTDH_GRANTS_TABLE} xg on xg.target_partition = eto.\`partition\`
+      where xg.status = '${XTdhGrantStatus.GRANTED}' and xg.token_mode = '${XTdhGrantTokenMode.ALL}'
+        and xg.id = :is_beneficiary_of_grant_id
+      union all
+      select
+          distinct i.profile_id as beneficiary_id
+      from ${XTDH_GRANTS_TABLE} xg
+               join ${XTDH_GRANT_TOKENS_TABLE} xtk on xg.token_mode = 'INCLUDE' and xtk.tokenset_id = xg.tokenset_id
+               join ${EXTERNAL_INDEXED_OWNERSHIP_721_TABLE} eto on eto.\`partition\` = xg.target_partition and eto.token_id = xtk.token_id
+               join ${ADDRESS_CONSOLIDATION_KEY} ack on ack.address = eto.owner
+               join ${IDENTITIES_TABLE} i on i.consolidation_key = ack.consolidation_key
+      where xg.status = '${XTdhGrantStatus.GRANTED}' and xg.token_mode = '${XTdhGrantTokenMode.INCLUDE}'
+        and xg.id = :is_beneficiary_of_grant_id)
+    `;
+    params['is_beneficiary_of_grant_id'] = is_beneficiary_of_grant_id;
+    return beneficiariesPart;
+  }
+
   private getGeneralPart(
     repPart: string | null,
     cicPart: string | null,
     nftsPart: string | null,
-    group: Omit<
-      ApiGroupDescription,
-      | 'identity_group_identities_count'
-      | 'excluded_identity_group_identities_count'
-    >,
+    beneficiariesPart: string | null,
+    group: GClean,
     params: Record<string, any>
   ) {
     let cmPart = ` ${repPart || cicPart || nftsPart ? ', ' : ' '}`;
+    if (beneficiariesPart) {
+      cmPart = ` ${beneficiariesPart}, ${cmPart} `;
+    }
     cmPart += ` cm_view as (select i.* from ${IDENTITIES_TABLE} i `;
     if (repPart !== null) {
       cmPart += `join rep_exchanges on i.profile_id = rep_exchanges.profile_id `;
     }
     if (cicPart !== null) {
       cmPart += `join cic_exchanges on i.profile_id = cic_exchanges.profile_id `;
+    }
+    if (beneficiariesPart) {
+      cmPart += ` join beneficiaries b on b.beneficiary_id = i.profile_id `;
     }
     const {
       joinMemeOwnerships,
@@ -1042,11 +1127,7 @@ export class UserGroupsService {
   }
 
   private getCicPart(
-    group: Omit<
-      ApiGroupDescription,
-      | 'identity_group_identities_count'
-      | 'excluded_identity_group_identities_count'
-    >,
+    group: GClean,
     params: Record<string, any>,
     repPart: string | null
   ) {
@@ -1092,14 +1173,7 @@ export class UserGroupsService {
     return cicPart;
   }
 
-  private getRepPart(
-    group: Omit<
-      ApiGroupDescription,
-      | 'identity_group_identities_count'
-      | 'excluded_identity_group_identities_count'
-    >,
-    params: Record<string, any>
-  ) {
+  private getRepPart(group: GClean, params: Record<string, any>) {
     let repPart = null;
     const repGroup = group.rep;
     if (
@@ -1244,6 +1318,17 @@ export class UserGroupsService {
         groups.map((it) => it.id),
         ctx
       );
+    const grantsModels = await xTdhGrantsFinder.getGrantsByIds(
+      groups
+        .map((it) => it.is_beneficiary_of_grant_id)
+        .filter((it) => !!it) as string[],
+      ctx
+    );
+    const grantsApiModels =
+      await xTdhGrantApiConverter.fromXTdhGrantModelsToApiXTdhGrants(
+        grantsModels,
+        ctx
+      );
     const result = groups.map<ApiGroupFull>((it) => ({
       id: it.id,
       name: it.name,
@@ -1326,7 +1411,11 @@ export class UserGroupsService {
             ?.excluded_identity_group_id ?? null,
         excluded_identity_group_identities_count:
           groupsIdentityGroupsIdsAndIdentityCounts[it.id]
-            ?.excluded_identity_count ?? 0
+            ?.excluded_identity_count ?? 0,
+        is_beneficiary_of_grant_id: it.is_beneficiary_of_grant_id,
+        is_beneficiary_of_grant:
+          grantsApiModels.find((g) => g.id === it.is_beneficiary_of_grant_id) ??
+          null
       },
       created_by: relatedProfiles[it.created_by] ?? null
     }));

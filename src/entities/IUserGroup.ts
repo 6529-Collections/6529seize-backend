@@ -82,6 +82,9 @@ export class UserGroupEntity {
   @Index('idx_user_group_is_direct_message')
   @Column({ type: 'boolean', nullable: false, default: false })
   readonly is_direct_message!: boolean;
+  @Index('idx_beneficiary_grant')
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  readonly is_beneficiary_of_grant_id!: string | null;
 }
 
 export enum FilterDirection {
