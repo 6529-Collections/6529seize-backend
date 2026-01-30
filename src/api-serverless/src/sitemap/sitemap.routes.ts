@@ -1,5 +1,3 @@
-import { ApiResponse } from '../api-response';
-import { asyncRouter } from '../async.router';
 import { Request, Response } from 'express';
 import {
   GRADIENT_CONTRACT,
@@ -9,11 +7,13 @@ import {
   NFTS_TABLE
 } from '../../../constants';
 import { fetchPaginated } from '../../../db-api';
-import { returnPaginatedResult } from '../api-helpers';
 import {
   NEXTGEN_COLLECTIONS_TABLE,
   NEXTGEN_TOKENS_TABLE
 } from '../../../nextgen/nextgen_constants';
+import { returnPaginatedResult } from '../api-helpers';
+import { ApiResponse } from '../api-response';
+import { asyncRouter } from '../async.router';
 import { cacheRequest } from '../request-cache';
 
 const router = asyncRouter();
@@ -58,7 +58,7 @@ async function handlePaginatedRequest(
   );
 
   const ids = results.data.map((r) => r[field ?? 'id']);
-  return await returnPaginatedResult(
+  return returnPaginatedResult(
     {
       count: results.count,
       page: results.page,

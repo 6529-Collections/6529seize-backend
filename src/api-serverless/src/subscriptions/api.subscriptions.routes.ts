@@ -16,17 +16,17 @@ import {
   getCacheKeyPatternForPath,
   getPage,
   getPageSize,
-  giveReadReplicaTimeToCatchUp,
-  returnJsonResult
+  giveReadReplicaTimeToCatchUp
 } from '../api-helpers';
 import { asyncRouter } from '../async.router';
 import { getWalletOrThrow, needsAuthenticatedUser } from '../auth/auth';
 import { populateDistribution } from '../distributions/api.distributions.service';
 import { NFTFinalSubscription } from '../generated/models/NFTFinalSubscription';
+import { NFTSubscription } from '../generated/models/NFTSubscription';
+import { RedeemedSubscription } from '../generated/models/RedeemedSubscription';
 import { RedeemedSubscriptionCounts } from '../generated/models/RedeemedSubscriptionCounts';
 import { SubscriptionCounts } from '../generated/models/SubscriptionCounts';
 import { SubscriptionDetails } from '../generated/models/SubscriptionDetails';
-import { SubscriptionLog } from '../generated/models/SubscriptionLog';
 import { SubscriptionTopUp } from '../generated/models/SubscriptionTopUp';
 import { cacheRequest } from '../request-cache';
 import { getValidatedByJoiOrThrow } from '../validation';
@@ -95,7 +95,7 @@ router.get(
 
     const result = await fetchDetailsForConsolidationKey(consolidationKey);
     if (result) {
-      return await returnJsonResult(result, req, res);
+      return res.json(result);
     } else {
       return res.status(404).send('Not found');
     }
@@ -117,7 +117,7 @@ router.get(
         page?: string;
       }
     >,
-    res: Response<SubscriptionTopUp[] | string>
+    res: Response<PaginatedResponse<SubscriptionTopUp> | string>
   ) {
     const consolidationKey = req.params.consolidation_key.toLowerCase();
     const pageSize = getPageSize(req, 20);
@@ -129,7 +129,7 @@ router.get(
       page
     );
     if (result) {
-      return returnJsonResult(result, req, res);
+      return res.json(result);
     } else {
       return res.status(404).send('Not found');
     }
@@ -250,7 +250,7 @@ router.get(
         card_count?: string;
       }
     >,
-    res: Response<SubscriptionTopUp[] | string>
+    res: Response<NFTSubscription[] | string>
   ) {
     const consolidationKey = req.params.consolidation_key.toLowerCase();
     const cardCount = numbers.parseIntOrNull(req.query.card_count) ?? 3;
@@ -259,7 +259,7 @@ router.get(
       consolidationKey,
       cardCount
     );
-    return await returnJsonResult(result, req, res);
+    return res.json(result);
   }
 );
 
@@ -280,7 +280,7 @@ router.get(
     const cardCount = numbers.parseIntOrNull(req.query.card_count) ?? 3;
 
     const result = await fetchUpcomingMemeSubscriptionCounts(cardCount);
-    return await returnJsonResult(result, req, res);
+    return res.json(result);
   }
 );
 
@@ -302,7 +302,7 @@ router.get(
     const page = getPage(req);
 
     const result = await fetchPastMemeSubscriptionCounts(pageSize, page);
-    return await returnJsonResult(result, req, res);
+    return res.json(result);
   }
 );
 
@@ -424,7 +424,7 @@ router.get(
         page?: string;
       }
     >,
-    res: Response<SubscriptionLog[] | string>
+    res: Response<PaginatedResponse<SubscriptionTopUp> | string>
   ) {
     const consolidationKey = req.params.consolidation_key.toLowerCase();
     const pageSize = getPageSize(req, 20);
@@ -436,7 +436,7 @@ router.get(
       page
     );
     if (result) {
-      return await returnJsonResult(result, req, res, true);
+      return res.json(result);
     } else {
       return res.status(404).send('Not found');
     }
@@ -457,7 +457,7 @@ router.get(
         page?: string;
       }
     >,
-    res: Response<SubscriptionLog[] | string>
+    res: Response<PaginatedResponse<RedeemedSubscription> | string>
   ) {
     const consolidationKey = req.params.consolidation_key.toLowerCase();
     const pageSize = getPageSize(req, 20);
@@ -469,7 +469,7 @@ router.get(
       page
     );
     if (result) {
-      return await returnJsonResult(result, req, res, true);
+      return res.json(result);
     } else {
       return res.status(404).send('Not found');
     }
@@ -487,28 +487,29 @@ router.get(
       any,
       any
     >,
-    res: Response<{ address: string; ens: string }>
+    res: Response<
+      | {
+          tdh_wallet: { address: string; ens: string };
+          airdrop_address: { address: string; ens: string };
+        }
+      | string
+    >
   ) {
     const consolidationKey = req.params.consolidation_key.toLowerCase();
     const result =
       await fetchAirdropAddressForConsolidationKey(consolidationKey);
     const ensTdhWallet = await fetchEns(result.tdh_wallet);
     const ensAirdrop = await fetchEns(result.airdrop_address);
-    return await returnJsonResult(
-      {
-        tdh_wallet: {
-          address: result.tdh_wallet,
-          ens: ensTdhWallet[0]?.display ?? ''
-        },
-        airdrop_address: {
-          address: result.airdrop_address,
-          ens: ensAirdrop[0]?.display ?? ''
-        }
+    return res.json({
+      tdh_wallet: {
+        address: result.tdh_wallet,
+        ens: ensTdhWallet[0]?.display ?? ''
       },
-      req,
-      res,
-      true
-    );
+      airdrop_address: {
+        address: result.airdrop_address,
+        ens: ensAirdrop[0]?.display ?? ''
+      }
+    });
   }
 );
 
@@ -540,7 +541,7 @@ router.get(
       tokenId
     );
     if (result) {
-      return await returnJsonResult(result, req, res, true);
+      return res.json(result);
     } else {
       return res.status(404).send('Not found');
     }
@@ -560,7 +561,7 @@ router.get(
         page?: string;
       }
     >,
-    res: Response<SubscriptionLog[] | string>
+    res: Response<PaginatedResponse<SubscriptionTopUp> | string>
   ) {
     const contract = req.query.contract;
     if (!contract) {
@@ -570,7 +571,7 @@ router.get(
     const page = getPage(req);
 
     const result = await fetchSubscriptionUploads(contract, pageSize, page);
-    return await returnJsonResult(result, req, res, true);
+    return res.json(result);
   }
 );
 
@@ -620,7 +621,7 @@ router.get(
 
     if (phaseId === 'public') {
       const results = await getPublicSubscriptions(contract, tokenId);
-      return await returnJsonResult(results, req, res);
+      return res.json(results);
     } else {
       const phaseResults = await fetchPhaseResults(auth, allowlistId, phaseId);
       const phaseName = await fetchPhaseName(auth, allowlistId, phaseId);
@@ -633,7 +634,7 @@ router.get(
       );
 
       await populateDistribution(contract, tokenId, phaseName, results);
-      return await returnJsonResult(results, req, res);
+      return res.json(results);
     }
   }
 );
@@ -685,13 +686,9 @@ router.post(
       `/api/distributions/${contract}/${tokenId}/overview`
     );
 
-    return await returnJsonResult(
-      {
-        success: true,
-        statusText: 'Reset successful'
-      },
-      req,
-      res
-    );
+    return res.json({
+      success: true,
+      statusText: 'Reset successful'
+    });
   }
 );

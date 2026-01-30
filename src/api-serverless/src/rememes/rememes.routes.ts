@@ -1,6 +1,4 @@
-import { validateRememe, validateRememeAdd } from './rememes_validation';
 import * as db from '../../../db-api';
-import { asyncRouter } from '../async.router';
 import {
   ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
   CONTENT_TYPE_HEADER,
@@ -11,6 +9,8 @@ import {
 } from '../api-constants';
 import { REMEMES_SORT } from '../api-filters';
 import { getPage, getPageSize, returnPaginatedResult } from '../api-helpers';
+import { asyncRouter } from '../async.router';
+import { validateRememe, validateRememeAdd } from './rememes_validation';
 
 const router = asyncRouter();
 
@@ -43,7 +43,7 @@ router.get(``, async function (req: any, res: any) {
       sort,
       sortDir
     )
-    .then(async (result) => {
+    .then((result) => {
       result.data.map((a: any) => {
         a.metadata = JSON.parse(a.metadata);
         a.media = JSON.parse(a.media);
@@ -51,7 +51,7 @@ router.get(``, async function (req: any, res: any) {
         a.meme_references = JSON.parse(a.meme_references);
         a.replicas = a.replicas.split(',');
       });
-      await returnPaginatedResult(result, req, res, true);
+      return returnPaginatedResult(result, req, res);
     });
 });
 

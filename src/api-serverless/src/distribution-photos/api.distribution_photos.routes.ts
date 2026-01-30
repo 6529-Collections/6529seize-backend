@@ -9,7 +9,6 @@ import {
   getCacheKeyPatternForPath,
   getPage,
   getPageSize,
-  returnJsonResult,
   returnPaginatedResult
 } from '../api-helpers';
 import { ApiResponse } from '../api-response';
@@ -50,8 +49,8 @@ router.get(
     const page = getPage(req);
 
     await fetchDistributionPhotos(contract, nftId, pageSize, page).then(
-      async (result) => {
-        await returnPaginatedResult(result, req, res);
+      (result) => {
+        return returnPaginatedResult(result, req, res);
       }
     );
   }
@@ -240,14 +239,10 @@ router.post(
     );
     await evictKeyFromRedisCache(overviewCacheKey);
 
-    return await returnJsonResult(
-      {
-        success: true,
-        photos: photoUrls
-      },
-      req,
-      res
-    );
+    return res.json({
+      success: true,
+      photos: photoUrls
+    });
   }
 );
 

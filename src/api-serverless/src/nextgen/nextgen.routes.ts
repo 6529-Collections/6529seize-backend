@@ -25,12 +25,7 @@ import {
   JSON_HEADER_VALUE
 } from '../api-constants';
 import { NextGenCollectionStatus } from '../api-filters';
-import {
-  getPage,
-  getPageSize,
-  returnJsonResult,
-  returnPaginatedResult
-} from '../api-helpers';
+import { getPage, getPageSize, returnPaginatedResult } from '../api-helpers';
 import { asyncRouter } from '../async.router';
 import { initMulterSingleMiddleware } from '../multer-middleware';
 import { PageSortDirection } from '../page-request';
@@ -208,7 +203,7 @@ router.get(`/allowlist_phases`, async function (req: any, res: any) {
     `[FETCHING ALLOWLIST PHASES FOR ALL COLLECTIONS] : [PAGE SIZE ${pageSize}] : [PAGE ${page}]`
   );
   await db.fetchAllAllowlistPhases(pageSize, page).then(async (result) => {
-    return await returnPaginatedResult(result, req, res);
+    return returnPaginatedResult(result, req, res);
   });
 });
 
@@ -222,14 +217,14 @@ router.get(
 
     logger.info(`[FETCHING ALLOWLIST PHASES COLLECTION ID ${id}]`);
     await db.fetchAllowlistPhasesForCollection(id).then(async (result) => {
-      return await returnPaginatedResult(result as unknown as any, req, res);
+      return returnPaginatedResult(result as unknown as any, req, res);
     });
   }
 );
 
 router.get(`/featured`, cacheRequest(), async function (req: any, res: any) {
   await db.fetchFeaturedCollection().then(async (result) => {
-    return await returnJsonResult(result, req, res);
+    return res.json(result);
   });
 });
 
@@ -245,7 +240,7 @@ router.get(`/collections`, cacheRequest(), async function (req: any, res: any) {
   await db
     .fetchNextGenCollections(pageSize, page, status)
     .then(async (result) => {
-      return await returnPaginatedResult(result, req, res);
+      return returnPaginatedResult(result, req, res);
     });
 });
 
@@ -264,7 +259,7 @@ router.get(
       result = await db.fetchNextGenCollectionById(id);
     }
     if (result?.id) {
-      return await returnJsonResult(result, req, res);
+      return res.json(result);
     }
     return res.status(404).send({});
   }
@@ -312,7 +307,7 @@ router.get(
         listed
       )
       .then(async (result) => {
-        return await returnPaginatedResult(result, req, res);
+        return returnPaginatedResult(result, req, res);
       });
   }
 );
@@ -332,7 +327,7 @@ router.get(
     const tokenId = id * 10000000000 + token;
     await db.fetchNextGenToken(tokenId).then(async (result) => {
       if (result.id) {
-        return await returnJsonResult(result, req, res);
+        return res.json(result);
       } else {
         return res.status(404).send({});
       }
@@ -352,7 +347,7 @@ router.get(
     await db
       .fetchNextGenCollectionLogs(id, pageSize, page)
       .then(async (result) => {
-        return await returnJsonResult(result, req, res);
+        return res.json(result);
       });
   }
 );
@@ -375,7 +370,7 @@ router.get(
     await db
       .fetchNextGenCollectionOnlyLogs(id, pageSize, page)
       .then(async (result) => {
-        return await returnJsonResult(result, req, res);
+        return res.json(result);
       });
   }
 );
@@ -419,7 +414,7 @@ router.get(
       const sortedTraits = traits
         .sort((a, b) => a.trait.localeCompare(b.trait))
         .sort((a, b) => b.values.length - a.values.length);
-      return await returnJsonResult(sortedTraits, req, res);
+      return res.json(sortedTraits);
     });
   }
 );
@@ -442,7 +437,7 @@ router.get(
     await db
       .fetchNextGenCollectionTraitSetsUltimate(id, traits, pageSize, page)
       .then(async (result) => {
-        return await returnJsonResult(result, req, res);
+        return res.json(result);
       });
   }
 );
@@ -462,7 +457,7 @@ router.get(
     await db
       .fetchNextGenCollectionTraitSets(id, trait, pageSize, page, search)
       .then(async (result) => {
-        return await returnJsonResult(result, req, res);
+        return res.json(result);
       });
   }
 );
@@ -475,7 +470,7 @@ router.get(`/tokens/:id`, cacheRequest(), async function (req: any, res: any) {
 
   await db.fetchNextGenToken(id).then(async (result) => {
     if (result.id) {
-      return await returnJsonResult(result, req, res);
+      return res.json(result);
     } else {
       return res.status(404).send({});
     }
@@ -497,7 +492,7 @@ router.get(
     await db
       .fetchNextGenTokenTransactions(id, pageSize, page)
       .then(async (result) => {
-        return await returnJsonResult(result, req, res);
+        return res.json(result);
       });
   }
 );
@@ -512,7 +507,7 @@ router.get(
     }
 
     await db.fetchNextGenTokenTraits(id).then(async (result) => {
-      return await returnJsonResult(result, req, res);
+      return res.json(result);
     });
   }
 );
@@ -529,7 +524,7 @@ router.get(`/tdh`, cacheRequest(), async function (req: any, res: any) {
   await db
     .fetchNextGenTokenTDH(consolidationKeys, tokenIds, pageSize, page)
     .then(async (result) => {
-      return await returnJsonResult(result, req, res);
+      return res.json(result);
     });
 });
 

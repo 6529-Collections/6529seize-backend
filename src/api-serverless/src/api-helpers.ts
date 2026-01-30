@@ -2,11 +2,8 @@ import { Request, Response } from 'express';
 import { numbers } from '../../numbers';
 import { Time } from '../../time';
 import {
-  ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
   CONTENT_TYPE_HEADER,
-  corsOptions,
   DEFAULT_PAGE_SIZE,
-  JSON_HEADER_VALUE,
   PaginatedResponse,
   SORT_DIRECTIONS
 } from './api-constants';
@@ -62,17 +59,6 @@ export async function returnCSVResult(
   return response.send(csv);
 }
 
-export async function returnJsonResult(
-  result: any,
-  request: Request,
-  response: Response,
-  skipCache?: boolean
-) {
-  response.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
-  response.setHeader(ACCESS_CONTROL_ALLOW_ORIGIN_HEADER, corsOptions.origin);
-  response.json(result);
-}
-
 export function transformPaginatedResponse<K, V>(
   transformer: (original: K) => V,
   original: PaginatedResponse<K>
@@ -85,14 +71,13 @@ export function transformPaginatedResponse<K, V>(
   };
 }
 
-export async function returnPaginatedResult<T>(
+export function returnPaginatedResult<T>(
   result: PaginatedResponse<T>,
   request: Request<any, any, any, any>,
-  response: Response,
-  skipCache?: boolean
-) {
+  response: Response
+): Response {
   result.next = fullUrl(request, result.next);
-  await returnJsonResult(result, request, response, skipCache);
+  return response.json(result);
 }
 
 export function constructFilters(f: string, newF: string) {

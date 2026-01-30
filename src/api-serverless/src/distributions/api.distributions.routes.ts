@@ -9,7 +9,6 @@ import {
   getPage,
   getPageSize,
   giveReadReplicaTimeToCatchUp,
-  returnJsonResult,
   returnPaginatedResult
 } from '../api-helpers';
 import { asyncRouter } from '../async.router';
@@ -126,8 +125,8 @@ router.get(
     const contract = req.params.contract;
     const nftId = req.params.nft_id;
 
-    await fetchDistributionPhases(contract, nftId).then(async (result) => {
-      await returnPaginatedResult(result, req, res);
+    await fetchDistributionPhases(contract, nftId).then((result) => {
+      return returnPaginatedResult(result, req, res);
     });
   }
 );
@@ -151,8 +150,8 @@ router.get(
       wallets,
       pageSize,
       page
-    ).then(async (result) => {
-      await returnPaginatedResult(result, req, res);
+    ).then((result) => {
+      return returnPaginatedResult(result, req, res);
     });
   }
 );
@@ -180,7 +179,7 @@ router.get(
     }
 
     const overview = await fetchDistributionOverview(contract, cardId);
-    return await returnJsonResult(overview, req, res);
+    return res.json(overview);
   }
 );
 
@@ -203,14 +202,10 @@ router.post(
     );
     await evictKeyFromRedisCache(overviewCacheKey);
 
-    return await returnJsonResult(
-      {
-        success: true,
-        message: 'Distribution normalized successfully'
-      },
-      req,
-      res
-    );
+    return res.json({
+      success: true,
+      message: 'Distribution normalized successfully'
+    });
   }
 );
 
@@ -254,14 +249,10 @@ router.post(
     );
     await evictKeyFromRedisCache(baseCacheKey);
 
-    return await returnJsonResult(
-      {
-        success: true,
-        message: 'Successfully uploaded automatic airdrops'
-      },
-      req,
-      res
-    );
+    return res.json({
+      success: true,
+      message: 'Successfully uploaded automatic airdrops'
+    });
   }
 );
 

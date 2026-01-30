@@ -1,12 +1,12 @@
 import { Request } from 'express';
+import { resolveSortDirection, returnPaginatedResult } from '../api-helpers';
 import { asyncRouter } from '../async.router';
 import { DEFAULT_PAGE_SIZE } from '../page-request';
-import { resolveSortDirection, returnPaginatedResult } from '../api-helpers';
+import { cacheRequest } from '../request-cache';
 import {
   fetchAllNftOwners,
   fetchNftOwnersForConsolidation
 } from './api.nft-owners.db';
-import { cacheRequest } from '../request-cache';
 
 const router = asyncRouter();
 
@@ -42,7 +42,7 @@ router.get(
       pageSize,
       sortDir
     );
-    return await returnPaginatedResult(result, req, res);
+    return returnPaginatedResult(result, req, res);
   }
 );
 
@@ -79,6 +79,6 @@ router.get(
       page,
       pageSize
     );
-    return await returnPaginatedResult(results, req, res);
+    return returnPaginatedResult(results, req, res);
   }
 );
