@@ -6323,6 +6323,9 @@ components:
                 type: string
           example:
             - "0x1234567890123456789012345678901234567890"
+        is_beneficiary_of_grant_id:
+          type: string
+          nullable: true
     ApiCreateMediaUploadUrlRequest:
       required:
         - content_type
@@ -7379,6 +7382,8 @@ components:
         - identity_group_identities_count
         - excluded_identity_group_id
         - excluded_identity_group_identities_count
+        - is_beneficiary_of_grant_id
+        - is_beneficiary_of_grant
       properties:
         tdh:
           $ref: "#/components/schemas/ApiGroupTdhFilter"
@@ -7406,6 +7411,13 @@ components:
           type: number
           format: int64
           nullable: false
+        is_beneficiary_of_grant_id:
+          type: string
+          nullable: true
+        is_beneficiary_of_grant:
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/ApiXTdhGrant"
     ApiGroupFilterDirection:
       type: string
       enum:

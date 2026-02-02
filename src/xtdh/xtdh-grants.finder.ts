@@ -191,6 +191,9 @@ export class XTdhGrantsFinder {
   ): Promise<XTdhGrantModel[]> {
     try {
       ctx.timer?.start(`${this.constructor.name}->getGrantsByIds`);
+      if (!grantIds.length) {
+        return [];
+      }
       const [entities, tokenCounts, collectionNames, xTdhGranteds] =
         await Promise.all([
           this.xTdhRepository.getGrantsByIds(grantIds, ctx),
