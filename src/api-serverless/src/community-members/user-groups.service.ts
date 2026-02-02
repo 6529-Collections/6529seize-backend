@@ -602,7 +602,12 @@ export class UserGroupsService {
       return [];
     }
     const key = `eligible-groups-${profileId}`;
-    const ignoreCache = true;
+    const ignoreCache = profileId
+      ? await this.userGroupsDb.profileHasRecentGroupChanges(
+          profileId,
+          Time.minutes(1)
+        )
+      : false;
     if (!ignoreCache) {
       const cachedGroupsUserIsEligibleFor = mcache.get(key);
       if (cachedGroupsUserIsEligibleFor) {
