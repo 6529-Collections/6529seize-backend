@@ -2016,6 +2016,24 @@ SET cw.xtdh_rate = COALESCE(pd.produced, 0) - COALESCE(go.granted_out, 0) + COAL
     }
   }
 
+  public async getGrantById(
+    id: string,
+    ctx: RequestContext
+  ): Promise<XTdhGrantEntity | null> {
+    try {
+      ctx.timer?.start(`${this.constructor.name}->getGrantById`);
+      return await this.db.oneOrNull<XTdhGrantEntity>(
+        `
+      select * from ${XTDH_GRANTS_TABLE} where id = :id
+    `,
+        { id },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->getGrantById`);
+    }
+  }
+
   public async lockGrantById(
     id: string,
     ctx: RequestContext

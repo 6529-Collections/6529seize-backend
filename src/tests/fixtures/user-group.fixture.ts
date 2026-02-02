@@ -38,7 +38,8 @@ const aDefaultUserGroup: BaseUserGroup = {
   created_at: Time.millis(0).toDate(),
   created_by: randomUUID(),
   profile_group_id: null,
-  excluded_profile_group_id: null
+  excluded_profile_group_id: null,
+  is_beneficiary_of_grant_id: null
 };
 
 export function aUserGroup(

@@ -449,7 +449,8 @@ export const hasGroupGotAnyNonIdentityConditions = (
     entity.cic_max !== null ||
     entity.cic_user !== null ||
     entity.rep_user !== null ||
-    entity.rep_category !== null
+    entity.rep_category !== null ||
+    entity.is_beneficiary_of_grant_id !== null
   );
 };
 

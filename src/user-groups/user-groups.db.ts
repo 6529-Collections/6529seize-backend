@@ -6,13 +6,16 @@ import {
 import { UserGroupEntity } from '../entities/IUserGroup';
 import {
   ADDRESS_CONSOLIDATION_KEY,
+  EXTERNAL_INDEXED_OWNERSHIP_721_TABLE,
   IDENTITIES_TABLE,
   IDENTITY_SUBSCRIPTIONS_TABLE,
   NFT_OWNERS_TABLE,
   PROFILE_GROUP_CHANGES,
   PROFILE_GROUPS_TABLE,
   RATINGS_TABLE,
-  USER_GROUPS_TABLE
+  USER_GROUPS_TABLE,
+  XTDH_GRANT_TOKENS_TABLE,
+  XTDH_GRANTS_TABLE
 } from '../constants';
 import { RateMatter } from '../entities/IRating';
 import { randomUUID } from 'crypto';
@@ -59,7 +62,8 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
                                             profile_group_id,
                                             excluded_profile_group_id,
                                             is_private,
-                                            is_direct_message)
+                                            is_direct_message,
+                                            is_beneficiary_of_grant_id)
           values (:id,
                   :name,
                   :cic_min,
@@ -90,7 +94,8 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
                   :profile_group_id,
                   :excluded_profile_group_id,
                   :is_private,
-                  :is_direct_message)
+                  :is_direct_message,
+                  :is_beneficiary_of_grant_id)
     `,
       { ...entity },
       { wrappedConnection: connection }
@@ -820,6 +825,49 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
     const currentMillis = Time.currentMillis();
     const sql = `INSERT INTO ${PROFILE_GROUP_CHANGES} (profile_id, chg_time) values ${profileIds.map((profileId) => `(${mysql.escape(profileId)}, ${currentMillis})`).join(', ')}`;
     await this.db.execute(sql);
+  }
+
+  async inWhichOfGrantsIsProfileBeneficiary(
+    param: {
+      beneficiaryGrantIds: string[];
+      profileId: string;
+    },
+    ctx: RequestContext
+  ): Promise<string[]> {
+    ctx.timer?.start(
+      `${this.constructor.name}->inWhichOfGrantsIsProfileBeneficiary`
+    );
+    try {
+      const dbResults = await this.db.execute<{ grant_id: string }>(
+        `
+              select
+                  distinct xg.id as grant_id
+              from ${ADDRESS_CONSOLIDATION_KEY} a
+                       join ${IDENTITIES_TABLE} i on a.consolidation_key = i.consolidation_key
+                       join ${EXTERNAL_INDEXED_OWNERSHIP_721_TABLE} eto on eto.owner = a.address
+                       join ${XTDH_GRANTS_TABLE} xg on xg.target_partition = eto.\`partition\`
+              where i.profile_id = :profileId and xg.status = 'GRANTED' and xg.token_mode = 'ALL'
+              and xg.id in (:beneficiaryGrantIds)
+              union all
+              select
+                  distinct xg.id as grant_id
+              from ${XTDH_GRANTS_TABLE} xg
+                      join ${XTDH_GRANT_TOKENS_TABLE} xtk on xg.token_mode = 'INCLUDE' and xtk.tokenset_id = xg.tokenset_id
+                      join ${EXTERNAL_INDEXED_OWNERSHIP_721_TABLE} eto on eto.\`partition\` = xg.target_partition and eto.token_id = xtk.token_id
+                      join ${ADDRESS_CONSOLIDATION_KEY} ack on ack.address = eto.owner
+                      join ${IDENTITIES_TABLE} i on i.consolidation_key = ack.consolidation_key
+              where i.profile_id = :profileId and xg.status = 'GRANTED' and xg.token_mode = 'INCLUDE'
+                and xg.id in (:beneficiaryGrantIds)
+          `,
+        param,
+        { wrappedConnection: ctx.connection }
+      );
+      return dbResults.map((it) => it.grant_id);
+    } finally {
+      ctx.timer?.stop(
+        `${this.constructor.name}->inWhichOfGrantsIsProfileBeneficiary`
+      );
+    }
   }
 }
 

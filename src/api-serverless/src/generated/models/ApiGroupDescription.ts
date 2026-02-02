@@ -15,6 +15,7 @@ import { ApiGroupLevelFilter } from '../models/ApiGroupLevelFilter';
 import { ApiGroupOwnsNft } from '../models/ApiGroupOwnsNft';
 import { ApiGroupRepFilter } from '../models/ApiGroupRepFilter';
 import { ApiGroupTdhFilter } from '../models/ApiGroupTdhFilter';
+import { ApiXTdhGrant } from '../models/ApiXTdhGrant';
 import { HttpFile } from '../http/http';
 
 export class ApiGroupDescription {
@@ -27,6 +28,8 @@ export class ApiGroupDescription {
     'identity_group_identities_count': number;
     'excluded_identity_group_id': string | null;
     'excluded_identity_group_identities_count': number;
+    'is_beneficiary_of_grant_id': string | null;
+    'is_beneficiary_of_grant': ApiXTdhGrant | null;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -84,6 +87,18 @@ export class ApiGroupDescription {
             "baseName": "excluded_identity_group_identities_count",
             "type": "number",
             "format": "int64"
+        },
+        {
+            "name": "is_beneficiary_of_grant_id",
+            "baseName": "is_beneficiary_of_grant_id",
+            "type": "string",
+            "format": ""
+        },
+        {
+            "name": "is_beneficiary_of_grant",
+            "baseName": "is_beneficiary_of_grant",
+            "type": "ApiXTdhGrant",
+            "format": ""
         }    ];
 
     static getAttributeTypeMap() {

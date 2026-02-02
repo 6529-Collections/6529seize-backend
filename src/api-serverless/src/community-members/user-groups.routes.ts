@@ -242,7 +242,9 @@ router.post(
       excluded_addresses: apiUserGroup.group.excluded_identity_addresses ?? [],
       visible: false,
       is_private: isPrivate,
-      is_direct_message: false
+      is_direct_message: false,
+      is_beneficiary_of_grant_id:
+        apiUserGroup.group.is_beneficiary_of_grant_id ?? null
     };
     const response = await userGroupsService.save(userGroup, savingProfileId, {
       authenticationContext,
@@ -364,7 +366,8 @@ const GroupDescriptionSchema: Joi.ObjectSchema<ApiCreateGroupDescription> =
       .items(Joi.string().regex(WALLET_REGEX).lowercase())
       .allow(null)
       .default([])
-      .max(20000)
+      .max(20000),
+    is_beneficiary_of_grant_id: Joi.string().optional()
   });
 
 const NewUserGroupSchema = Joi.object<ApiCreateGroup>({
