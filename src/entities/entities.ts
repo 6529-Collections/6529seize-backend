@@ -15,13 +15,13 @@ export { DeletedDropEntity } from './IDeletedDrop';
 export { Distribution, DistributionNormalized } from './IDistribution';
 export { DistributionPhoto } from './IDistributionPhoto';
 export {
+  DropBoostEntity,
   DropEntity,
   DropMediaEntity,
   DropMentionEntity,
   DropMentionedWaveEntity,
   DropMetadataEntity,
   DropPartEntity,
-  DropBoostEntity,
   DropReferencedNftEntity
 } from './IDrop';
 export { DropBookmarkEntity } from './IDropBookmark';
@@ -32,6 +32,7 @@ export { DropRealVoterVoteInTimeEntity } from './IDropRealVoterVoteInTime';
 export { DropRelationEntity } from './IDropRelation';
 export { DropVoteCreditSpending } from './IDropVoteCreditSpending';
 export { DropVoterStateEntity } from './IDropVoterState';
+export { DropWinnerMemeEntity } from './IDropWinnerMeme';
 export { ENS } from './IENS';
 export { EthPrice } from './IEthPrice';
 export { EULAConsent } from './IEULAPolicy';
@@ -43,6 +44,7 @@ export { ExternalIndexedTransfersEntity } from './IExternalIndexedTransfer';
 export { IdentityEntity } from './IIdentity';
 export { IdentityNotificationEntity } from './IIdentityNotification';
 export { IdentitySubscriptionEntity } from './IIdentitySubscription';
+export { MetricRollupHourEntity } from './IMetricRollupHour';
 export {
   NextGenAllowlist,
   NextGenAllowlistBurn,
@@ -87,7 +89,6 @@ export { Rememe, RememeUpload } from './IRememe';
 export { ProfileTotalRepScoreAggregation } from './IRepScoreAggregations';
 export { RoyaltiesUpload } from './IRoyalties';
 export { MemesSeason } from './ISeason';
-export { MetricRollupHourEntity } from './IMetricRollupHour';
 export {
   NFTFinalSubscription,
   NFTFinalSubscriptionUpload,

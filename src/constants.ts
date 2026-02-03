@@ -127,6 +127,7 @@ export const WAVES_DECISION_PAUSES_TABLE = 'waves_decision_pauses';
 export const WAVES_ARCHIVE_TABLE = 'waves_archive';
 export const WAVES_DECISIONS_TABLE = 'wave_decisions';
 export const WAVES_DECISION_WINNER_DROPS_TABLE = 'wave_decision_winner_drops';
+export const DROP_WINNER_MEME_TABLE = 'drop_winner_meme';
 export const WAVE_METRICS_TABLE = 'wave_metrics';
 export const WAVE_DROPPER_METRICS_TABLE = 'wave_dropper_metrics';
 export const WAVE_READER_METRICS_TABLE = 'wave_reader_metrics';

@@ -1,25 +1,26 @@
-import { dbSupplier, LazyDbAccessCompatibleService } from '../sql-executor';
-import {
-  WaveDecisionEntity,
-  WaveDecisionWinnerDropEntity,
-  WaveDecisionWinnerPrize
-} from '../entities/IWaveDecision';
-import { RequestContext } from '../request.context';
+import { collections } from '../collections';
 import {
   DROP_RANK_TABLE,
   DROP_REAL_VOTE_IN_TIME_TABLE,
+  DROP_WINNER_MEME_TABLE,
   DROPS_TABLE,
   WAVES_DECISION_PAUSES_TABLE,
   WAVES_DECISION_WINNER_DROPS_TABLE,
   WAVES_DECISIONS_TABLE,
   WAVES_TABLE
 } from '../constants';
+import { DropType } from '../entities/IDrop';
 import {
   WaveDecisionPauseEntity,
   WaveDecisionStrategy
 } from '../entities/IWave';
-import { DropType } from '../entities/IDrop';
-import { collections } from '../collections';
+import {
+  WaveDecisionEntity,
+  WaveDecisionWinnerDropEntity,
+  WaveDecisionWinnerPrize
+} from '../entities/IWaveDecision';
+import { RequestContext } from '../request.context';
+import { dbSupplier, LazyDbAccessCompatibleService } from '../sql-executor';
 import { Time } from '../time';
 
 const mysql = require('mysql');
@@ -82,6 +83,30 @@ export class WaveDecisionsDb extends LazyDbAccessCompatibleService {
       });
     }
     ctx?.timer?.stop(`${this.constructor.name}->insertDecisionWinners`);
+  }
+
+  public async insertDropWinnerMemes(
+    rows: { drop_id: string; meme_id: number }[],
+    ctx: RequestContext
+  ): Promise<void> {
+    if (!rows.length) {
+      return;
+    }
+    const connection = ctx.connection;
+    if (!connection) {
+      throw new Error(`Drop winner memes can only be saved in a transaction`);
+    }
+    ctx?.timer?.start(`${this.constructor.name}->insertDropWinnerMemes`);
+    const sql = `
+      INSERT INTO ${DROP_WINNER_MEME_TABLE} (drop_id, meme_id)
+      VALUES ${rows
+        .map((r) => `(${mysql.escape(r.drop_id)}, ${mysql.escape(r.meme_id)})`)
+        .join(', ')}
+    `;
+    await this.db.execute(sql, undefined, {
+      wrappedConnection: connection
+    });
+    ctx?.timer?.stop(`${this.constructor.name}->insertDropWinnerMemes`);
   }
 
   public async getWavesWithDecisionTimesBeforeGivenTime(

@@ -1,6 +1,11 @@
-import { waveDecisionsDb, WaveDecisionsDb } from './wave-decisions.db';
-import { Time, Timer } from '../time';
-import { RequestContext } from '../request.context';
+import {
+  dropVotingDb,
+  DropVotingDb
+} from '../api-serverless/src/drops/drop-voting.db';
+import { wavesApiDb } from '../api-serverless/src/waves/waves.api.db';
+import { collections } from '../collections';
+import { DropsDb, dropsDb } from '../drops/drops.db';
+import { DropRealVoterVoteInTimeEntityWithoutId } from '../entities/IDropRealVoterVoteInTime';
 import {
   WaveDecisionStrategy,
   WaveOutcomeCredit,
@@ -11,20 +16,17 @@ import {
   WaveDecisionWinnerDropEntity,
   WaveDecisionWinnerPrize
 } from '../entities/IWaveDecision';
+import { WinnerDropVoterVoteEntity } from '../entities/IWinnerDropVoterVote';
+import { env } from '../env';
 import { Logger } from '../logging';
+import { getMaxMemeId } from '../nftsLoop/db.nfts';
+import { RequestContext } from '../request.context';
+import { Time, Timer } from '../time';
+import { waveDecisionsDb, WaveDecisionsDb } from './wave-decisions.db';
 import {
   waveLeaderboardCalculationService,
   WaveLeaderboardCalculationService
 } from './wave-leaderboard-calculation.service';
-import {
-  dropVotingDb,
-  DropVotingDb
-} from '../api-serverless/src/drops/drop-voting.db';
-import { DropsDb, dropsDb } from '../drops/drops.db';
-import { DropRealVoterVoteInTimeEntityWithoutId } from '../entities/IDropRealVoterVoteInTime';
-import { WinnerDropVoterVoteEntity } from '../entities/IWinnerDropVoterVote';
-import { collections } from '../collections';
-import { wavesApiDb } from '../api-serverless/src/waves/waves.api.db';
 
 interface WaveOutcome {
   type: WaveOutcomeType;
@@ -316,6 +318,18 @@ export class WaveDecisionsService {
       ctx
     );
     await this.waveDecisionsDb.insertDecisionWinners(decisionWinners, ctx);
+    const memesWaveId = env.getStringOrNull('MEMES_WAVE_ID');
+    if (memesWaveId && waveId === memesWaveId && winnerDrops.length > 0) {
+      const winner = winnerDrops[0];
+      const nextMemeId =
+        (await getMaxMemeId(false, {
+          wrappedConnection: ctx.connection
+        })) + 1;
+      await this.waveDecisionsDb.insertDropWinnerMemes(
+        [{ drop_id: winner.drop_id, meme_id: nextMemeId }],
+        ctx
+      );
+    }
     await this.waveDecisionsDb.updateDropsToWinners(winnerDropIds, ctx);
     await this.waveDecisionsDb.deleteDropsRanks(winnerDropIds, ctx);
     await this.dropsDb.resyncParticipatoryDropCountsForWaves([waveId], ctx);
