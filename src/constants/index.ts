@@ -1,8 +1,8 @@
 import { Network } from 'alchemy-sdk';
 
 export * from './db-tables';
-export * from './media';
 export * from './delegations';
+export * from './media';
 
 export const DISTRIBUTION_ADMIN_WALLETS = [
   '0x0187C9a182736ba18b44eE8134eE438374cf87DC',
@@ -42,7 +42,7 @@ export const CONSOLIDATIONS_LIMIT = 3;
 export const NEVER_DATE = 64060588800;
 
 export const WALLET_REGEX = /^0x[a-fA-F0-9]{40}$/;
-export const PROFILE_HANDLE_REGEX = /^[a-zA-Z0-9_]{3,15}$/;
+export const PROFILE_HANDLE_REGEX = /^\w{3,15}$/;
 export const UUID_REGEX =
   /^[0-9a-fA-F]{8}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{12}$/;
 export const MEMES_ROYALTIES_RATE = 0.5;
