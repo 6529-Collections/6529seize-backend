@@ -1,5 +1,5 @@
 import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
-import { EXTERNAL_INDEXED_CONTRACTS_TABLE } from '../constants';
+import { EXTERNAL_INDEXED_CONTRACTS_TABLE } from '@/constants';
 
 export enum IndexedContractStandard {
   ERC721 = 'ERC721',

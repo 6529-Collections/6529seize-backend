@@ -1,5 +1,5 @@
 import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
-import { EVENTS_TABLE, LISTENER_PROCESSED_EVENTS_TABLE } from '../constants';
+import { EVENTS_TABLE, LISTENER_PROCESSED_EVENTS_TABLE } from '@/constants';
 
 @Entity(LISTENER_PROCESSED_EVENTS_TABLE)
 @Index('l_proc_event_idx', ['event_id', 'listener_key'], { unique: true })

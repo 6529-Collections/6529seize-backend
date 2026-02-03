@@ -14,7 +14,7 @@ import {
   IDENTITY_SUBSCRIPTIONS_TABLE,
   WAVE_METRICS_TABLE,
   WAVES_TABLE
-} from '../../../constants';
+} from '@/constants';
 import {
   IncomingIdentitySubscriptionsParams,
   OutgoingIdentitySubscriptionsParams

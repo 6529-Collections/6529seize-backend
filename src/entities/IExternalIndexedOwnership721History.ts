@@ -1,5 +1,5 @@
 import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
-import { EXTERNAL_INDEXED_OWNERSHIP_721_HISTORY_TABLE } from '../constants';
+import { EXTERNAL_INDEXED_OWNERSHIP_721_HISTORY_TABLE } from '@/constants';
 
 @Entity(EXTERNAL_INDEXED_OWNERSHIP_721_HISTORY_TABLE)
 @Index(['partition', 'token_id', 'block_number', 'log_index'])

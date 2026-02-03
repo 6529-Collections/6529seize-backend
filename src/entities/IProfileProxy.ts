@@ -1,5 +1,5 @@
 import { Column, Entity, PrimaryColumn } from 'typeorm';
-import { PROFILE_PROXIES_TABLE } from '../constants';
+import { PROFILE_PROXIES_TABLE } from '@/constants';
 
 @Entity(PROFILE_PROXIES_TABLE)
 export class ProfileProxyEntity {

@@ -4,7 +4,7 @@ import {
   MEMELAB_CONTRACT,
   MEMES_CONTRACT,
   NULL_ADDRESS
-} from '../constants';
+} from '@/constants';
 import {
   fetchAllOwnerBalances,
   fetchRefreshOutdatedBalances,

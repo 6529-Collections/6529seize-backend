@@ -1,5 +1,5 @@
 import { Alchemy, Log } from 'alchemy-sdk';
-import { NULL_ADDRESS, NULL_ADDRESS_DEAD } from '../constants';
+import { NULL_ADDRESS, NULL_ADDRESS_DEAD } from '@/constants';
 import { Logger } from '../logging';
 import { NEXTGEN_CORE_IFACE } from '../abis/nextgen';
 import {

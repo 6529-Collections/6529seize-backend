@@ -1,5 +1,5 @@
 import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
-import { CIC_SCORE_AGGREGATIONS_TABLE } from '../constants';
+import { CIC_SCORE_AGGREGATIONS_TABLE } from '@/constants';
 
 @Entity(CIC_SCORE_AGGREGATIONS_TABLE)
 @Index('cic_score_aggregation_score_idx', ['score'])

@@ -1,5 +1,5 @@
 import { Entity, Column, PrimaryColumn } from 'typeorm';
-import { COOKIES_CONSENT_TABLE } from '../constants';
+import { COOKIES_CONSENT_TABLE } from '@/constants';
 
 @Entity(COOKIES_CONSENT_TABLE)
 export class CookiesConsent {

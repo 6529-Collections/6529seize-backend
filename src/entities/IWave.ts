@@ -11,7 +11,7 @@ import {
   WAVES_ARCHIVE_TABLE,
   WAVES_DECISION_PAUSES_TABLE,
   WAVES_TABLE
-} from '../constants';
+} from '@/constants';
 
 export interface WaveBaseType {
   readonly name: string;

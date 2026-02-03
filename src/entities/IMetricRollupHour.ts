@@ -1,5 +1,5 @@
 import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
-import { METRIC_ROLLUP_HOUR_TABLE } from '../constants';
+import { METRIC_ROLLUP_HOUR_TABLE } from '@/constants';
 
 export enum MetricRollupHourMetric {
   DROP = 'DROP',

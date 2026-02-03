@@ -5,7 +5,7 @@ import {
   CreateDateColumn,
   Index
 } from 'typeorm';
-import { DROP_REACTIONS_TABLE } from '../constants';
+import { DROP_REACTIONS_TABLE } from '@/constants';
 
 @Entity(DROP_REACTIONS_TABLE)
 @Index(['profile_id', 'wave_id', 'drop_id'], { unique: true })

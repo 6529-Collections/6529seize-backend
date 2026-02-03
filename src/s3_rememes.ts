@@ -6,7 +6,7 @@ import {
 import sharp from 'sharp';
 import { RequestInfo, RequestInit } from 'node-fetch';
 import { Rememe } from './entities/IRememe';
-import { CLOUDFRONT_LINK } from './constants';
+import { CLOUDFRONT_LINK } from '@/constants';
 import { persistRememes } from './db';
 import { Logger } from './logging';
 import { ipfs } from './ipfs';

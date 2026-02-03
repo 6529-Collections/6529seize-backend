@@ -1,5 +1,5 @@
 import { Column, Entity, PrimaryColumn } from 'typeorm';
-import { ABUSIVENESS_DETECTION_RESULTS_TABLE } from '../constants';
+import { ABUSIVENESS_DETECTION_RESULTS_TABLE } from '@/constants';
 
 @Entity(ABUSIVENESS_DETECTION_RESULTS_TABLE)
 export class AbusivenessDetectionResult {

@@ -3,7 +3,7 @@ import {
   MEMES_CONTRACT,
   NULL_ADDRESS,
   SIX529_MUSEUM
-} from '../constants';
+} from '@/constants';
 import {
   fetchAllMemeLabNFTs,
   fetchNftsForContract,

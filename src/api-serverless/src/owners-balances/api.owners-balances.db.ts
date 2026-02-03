@@ -8,7 +8,7 @@ import {
   OWNERS_BALANCES_TABLE,
   WALLETS_TDH_MEMES_TABLE,
   WALLETS_TDH_TABLE
-} from '../../../constants';
+} from '@/constants';
 import { fetchLatestTDHBlockNumber, fetchPaginated } from '../../../db-api';
 import { sqlExecutor } from '../../../sql-executor';
 import { ApiOwnerBalancePage } from '../generated/models/ApiOwnerBalancePage';

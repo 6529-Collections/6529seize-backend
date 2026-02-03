@@ -27,7 +27,7 @@ import {
   TRANSACTIONS_TABLE,
   UPLOADS_TABLE,
   WALLETS_TDH_TABLE
-} from './constants';
+} from '@/constants';
 import { DbQueryOptions } from './db-query.options';
 import { revokeTdhBasedDropWavesOverVotes } from './drops/participation-drops-over-vote-revocation';
 import { Artist } from './entities/IArtist';

@@ -1,5 +1,5 @@
 import { getAlchemyInstance } from '../alchemy';
-import { WALLETS_TDH_TABLE } from '../constants';
+import { WALLETS_TDH_TABLE } from '@/constants';
 import {
   getDataSource,
   persistHistoricConsolidatedTDH,

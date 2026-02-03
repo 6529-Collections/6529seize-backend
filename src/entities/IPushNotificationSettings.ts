@@ -5,7 +5,7 @@ import {
   PrimaryColumn,
   UpdateDateColumn
 } from 'typeorm';
-import { PUSH_NOTIFICATION_SETTINGS_TABLE } from '../constants';
+import { PUSH_NOTIFICATION_SETTINGS_TABLE } from '@/constants';
 import { Time } from '../time';
 
 export const PUSH_NOTIFICATION_TYPES = [

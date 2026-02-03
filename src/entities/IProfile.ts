@@ -5,7 +5,7 @@ import {
   PrimaryColumn,
   PrimaryGeneratedColumn
 } from 'typeorm';
-import { PROFILES_ARCHIVE_TABLE, PROFILES_TABLE } from '../constants';
+import { PROFILES_ARCHIVE_TABLE, PROFILES_TABLE } from '@/constants';
 
 export interface ProfileType {
   external_id: string;

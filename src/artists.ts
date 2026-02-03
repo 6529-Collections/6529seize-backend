@@ -2,7 +2,7 @@ import {
   GRADIENT_CONTRACT,
   MEMELAB_CONTRACT,
   MEMES_CONTRACT
-} from './constants';
+} from '@/constants';
 import { Artist } from './entities/IArtist';
 import { BaseNFT } from './entities/INFT';
 import { Logger } from './logging';

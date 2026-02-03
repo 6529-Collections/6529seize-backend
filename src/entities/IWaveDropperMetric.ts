@@ -1,5 +1,5 @@
 import { Column, Entity, PrimaryColumn } from 'typeorm';
-import { WAVE_DROPPER_METRICS_TABLE } from '../constants';
+import { WAVE_DROPPER_METRICS_TABLE } from '@/constants';
 
 @Entity(WAVE_DROPPER_METRICS_TABLE)
 export class WaveDropperMetricEntity {

@@ -16,7 +16,7 @@ import {
   USER_GROUPS_TABLE,
   XTDH_GRANT_TOKENS_TABLE,
   XTDH_GRANTS_TABLE
-} from '../constants';
+} from '@/constants';
 import { RateMatter } from '../entities/IRating';
 import { randomUUID } from 'crypto';
 import { identitiesDb } from '../identities/identities.db';

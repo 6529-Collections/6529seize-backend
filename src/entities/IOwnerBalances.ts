@@ -11,7 +11,7 @@ import {
   CONSOLIDATED_OWNERS_BALANCES_TABLE,
   OWNERS_BALANCES_MEMES_TABLE,
   OWNERS_BALANCES_TABLE
-} from '../constants';
+} from '@/constants';
 
 export abstract class OwnerBalancesBase {
   @CreateDateColumn()

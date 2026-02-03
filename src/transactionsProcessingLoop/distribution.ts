@@ -4,7 +4,7 @@ import {
   MANIFOLD,
   NULL_ADDRESS,
   TRANSACTIONS_TABLE
-} from '../constants';
+} from '@/constants';
 import { fetchMaxTransactionByBlockNumber, getDataSource } from '../db';
 import { DistributionNormalized } from '../entities/IDistribution';
 import { Transaction } from '../entities/ITransaction';

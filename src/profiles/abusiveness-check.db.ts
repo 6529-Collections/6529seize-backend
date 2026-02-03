@@ -1,5 +1,5 @@
 import { dbSupplier, LazyDbAccessCompatibleService } from '../sql-executor';
-import { ABUSIVENESS_DETECTION_RESULTS_TABLE } from '../constants';
+import { ABUSIVENESS_DETECTION_RESULTS_TABLE } from '@/constants';
 import { AbusivenessDetectionResult } from '../entities/IAbusivenessDetectionResult';
 import { RequestContext } from '../request.context';
 

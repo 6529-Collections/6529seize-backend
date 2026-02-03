@@ -12,7 +12,7 @@ import {
   SUBSCRIPTIONS_NFTS_TABLE,
   SUBSCRIPTIONS_REDEEMED_TABLE,
   SUBSCRIPTIONS_TOP_UP_TABLE
-} from '../../../constants';
+} from '@/constants';
 import { fetchNft, fetchPaginated } from '../../../db-api';
 import {
   SubscriptionBalance,

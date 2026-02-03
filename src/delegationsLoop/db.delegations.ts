@@ -6,7 +6,7 @@ import {
   USE_CASE_ALL,
   USE_CASE_PRIMARY_ADDRESS,
   WALLETS_TDH_TABLE
-} from '../constants';
+} from '@/constants';
 import { fetchLatestTDHBlockNumber } from '../db';
 import { Delegation } from '../entities/IDelegation';
 import { sqlExecutor } from '../sql-executor';

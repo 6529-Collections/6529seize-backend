@@ -1,5 +1,5 @@
 import { Entity, Column, PrimaryColumn } from 'typeorm';
-import { EULA_CONSENT_TABLE } from '../constants';
+import { EULA_CONSENT_TABLE } from '@/constants';
 
 @Entity(EULA_CONSENT_TABLE)
 export class EULAConsent {

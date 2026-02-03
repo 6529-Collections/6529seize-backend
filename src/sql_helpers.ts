@@ -1,4 +1,4 @@
-import { CONSOLIDATIONS_TABLE } from './constants';
+import { CONSOLIDATIONS_TABLE } from '@/constants';
 
 export function getConsolidationsSql() {
   return `

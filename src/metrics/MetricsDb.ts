@@ -8,7 +8,7 @@ import {
   RESEARCH_6529_ADDRESS,
   SUBSCRIPTIONS_NFTS_FINAL_TABLE,
   TRANSACTIONS_TABLE
-} from '../constants';
+} from '@/constants';
 import {
   MetricRollupHourEntity,
   MetricRollupHourMetric

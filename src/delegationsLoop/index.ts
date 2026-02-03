@@ -3,7 +3,7 @@ import { identitiesService } from '../api-serverless/src/identities/identities.s
 import {
   CONSOLIDATED_WALLETS_TDH_TABLE,
   USE_CASE_PRIMARY_ADDRESS
-} from '../constants';
+} from '@/constants';
 import {
   fetchLatestNftDelegationBlock,
   persistConsolidations,

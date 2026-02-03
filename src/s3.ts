@@ -4,7 +4,7 @@ import {
   GRADIENT_CONTRACT,
   MEMELAB_CONTRACT,
   MEMES_CONTRACT
-} from './constants';
+} from '@/constants';
 import sharp from 'sharp';
 import { Stream } from 'stream';
 import { Logger } from './logging';

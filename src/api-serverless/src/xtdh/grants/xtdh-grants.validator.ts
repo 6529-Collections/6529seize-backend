@@ -1,6 +1,6 @@
 import * as Joi from 'joi';
 import { ValidationError } from 'joi';
-import { WALLET_REGEX } from '../../../../constants';
+import { WALLET_REGEX } from '@/constants';
 import { Time } from '../../../../time';
 import { ApiXTdhCreateGrant } from '../../generated/models/ApiXTdhCreateGrant';
 import { ApiXTdhGrantTargetChain } from '../../generated/models/ApiXTdhGrantTargetChain';

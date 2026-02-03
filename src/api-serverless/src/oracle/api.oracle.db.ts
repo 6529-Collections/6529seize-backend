@@ -7,7 +7,7 @@ import {
   PRENODES_TABLE,
   TDH_BLOCKS_TABLE,
   TDH_NFT_TABLE
-} from '../../../constants';
+} from '@/constants';
 import { fetchPaginated } from '../../../db-api';
 import { MemesExtendedData } from '../../../entities/INFT';
 import { NftTDH } from '../../../entities/ITDH';

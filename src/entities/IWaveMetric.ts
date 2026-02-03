@@ -1,5 +1,5 @@
 import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
-import { WAVE_METRICS_TABLE } from '../constants';
+import { WAVE_METRICS_TABLE } from '@/constants';
 
 @Entity(WAVE_METRICS_TABLE)
 @Index('idx_wmet_dc_wi', ['drops_count', 'wave_id'])

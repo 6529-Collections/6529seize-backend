@@ -1,4 +1,4 @@
-import { COOKIES_CONSENT_TABLE, EULA_CONSENT_TABLE } from '../../../constants';
+import { COOKIES_CONSENT_TABLE, EULA_CONSENT_TABLE } from '@/constants';
 import { sqlExecutor } from '../../../sql-executor';
 import { Time } from '../../../time';
 

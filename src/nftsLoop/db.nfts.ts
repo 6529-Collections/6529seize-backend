@@ -1,4 +1,4 @@
-import { NFTS_TABLE, MEMES_CONTRACT } from '../constants';
+import { NFTS_TABLE, MEMES_CONTRACT } from '@/constants';
 import { NFT } from '../entities/INFT';
 import { sqlExecutor } from '../sql-executor';
 

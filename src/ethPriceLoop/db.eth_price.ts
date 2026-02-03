@@ -1,4 +1,4 @@
-import { ETH_PRICE_TABLE } from '../constants';
+import { ETH_PRICE_TABLE } from '@/constants';
 import { getDataSource } from '../db';
 import { EthPrice } from '../entities/IEthPrice';
 

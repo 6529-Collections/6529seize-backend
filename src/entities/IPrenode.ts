@@ -5,7 +5,7 @@ import {
   PrimaryColumn,
   UpdateDateColumn
 } from 'typeorm';
-import { PRENODES_TABLE } from '../constants';
+import { PRENODES_TABLE } from '@/constants';
 import { Time } from '../time';
 
 @Entity(PRENODES_TABLE)

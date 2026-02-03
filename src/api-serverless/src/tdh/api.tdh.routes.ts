@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import {
   CONSOLIDATED_WALLETS_TDH_TABLE,
   WALLETS_TDH_TABLE
-} from '../../../constants';
+} from '@/constants';
 import { enums } from '../../../enums';
 import { NotFoundException } from '../../../exceptions';
 import { parseTdhDataFromDB } from '../../../sql_helpers';

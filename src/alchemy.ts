@@ -1,5 +1,5 @@
 import { Alchemy, Network } from 'alchemy-sdk';
-import { ALCHEMY_SETTINGS } from './constants';
+import { ALCHEMY_SETTINGS } from '@/constants';
 import * as mcache from 'memory-cache';
 import { Time } from './time';
 import { ethTools } from './eth-tools';

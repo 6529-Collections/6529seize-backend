@@ -1,5 +1,5 @@
 import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
-import { RATINGS_SNAPSHOTS_TABLE } from '../constants';
+import { RATINGS_SNAPSHOTS_TABLE } from '@/constants';
 import { RateMatter } from './IRating';
 
 @Entity(RATINGS_SNAPSHOTS_TABLE)

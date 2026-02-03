@@ -3,7 +3,7 @@ import {
   DISTRIBUTION_NORMALIZED_TABLE,
   DISTRIBUTION_PHOTO_TABLE,
   DISTRIBUTION_TABLE
-} from '../../../constants';
+} from '@/constants';
 import { fetchPaginated } from '../../../db-api';
 import { sqlExecutor } from '../../../sql-executor';
 import { PaginatedResponse } from '../api-constants';

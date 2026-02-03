@@ -1,6 +1,6 @@
 import * as Joi from 'joi';
 import { ApiDropReferencedNFT } from '../generated/models/ApiDropReferencedNFT';
-import { WALLET_REGEX } from '../../../constants';
+import { WALLET_REGEX } from '@/constants';
 import { DropMetadataEntity } from '../../../entities/IDrop';
 import { ApiQuotedDrop } from '../generated/models/ApiQuotedDrop';
 import { ApiCreateDropPart } from '../generated/models/ApiCreateDropPart';

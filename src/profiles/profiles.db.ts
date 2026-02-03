@@ -3,7 +3,7 @@ import {
   dbSupplier,
   LazyDbAccessCompatibleService
 } from '../sql-executor';
-import { DROPS_TABLE, PROFILES_TABLE, WAVES_TABLE } from '../constants';
+import { DROPS_TABLE, PROFILES_TABLE, WAVES_TABLE } from '@/constants';
 import { Profile } from '../entities/IProfile';
 import { CreateOrUpdateProfileCommand } from './profile.types';
 import { RequestContext } from '../request.context';

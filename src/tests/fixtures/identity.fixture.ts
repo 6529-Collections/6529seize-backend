@@ -3,7 +3,7 @@ import { ProfileClassification } from '../../entities/IProfile';
 import { Wallet } from 'ethers';
 import { randomUUID } from 'node:crypto';
 import { Seed } from '../_setup/seed';
-import { IDENTITIES_TABLE } from '../../constants';
+import { IDENTITIES_TABLE } from '@/constants';
 
 type BaseIdentity = Omit<
   IdentityEntity,

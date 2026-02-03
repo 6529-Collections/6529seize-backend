@@ -7,7 +7,7 @@ import {
   SUBSCRIPTIONS_ADMIN_WALLETS,
   SUBSCRIPTIONS_NFTS_FINAL_TABLE,
   USE_CASE_MINTING
-} from '../../../constants';
+} from '@/constants';
 import { fetchProcessedDelegations } from '../../../delegationsLoop/db.delegations';
 import {
   BadRequestException,

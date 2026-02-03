@@ -3,7 +3,7 @@ import {
   dbSupplier,
   LazyDbAccessCompatibleService
 } from '../sql-executor';
-import { PROFILE_TOTAL_REP_SCORE_AGGREGATIONS_TABLE } from '../constants';
+import { PROFILE_TOTAL_REP_SCORE_AGGREGATIONS_TABLE } from '@/constants';
 import { ProfileTotalRepScoreAggregation } from '../entities/IRepScoreAggregations';
 
 export class RepScoreAggregationDb extends LazyDbAccessCompatibleService {

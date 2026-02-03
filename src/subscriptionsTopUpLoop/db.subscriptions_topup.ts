@@ -3,7 +3,7 @@ import { updateSubscriptionMode } from '../api-serverless/src/subscriptions/api.
 import {
   ADDRESS_CONSOLIDATION_KEY,
   SUBSCRIPTIONS_TOP_UP_TABLE
-} from '../constants';
+} from '@/constants';
 import { getDataSource } from '../db';
 import {
   SubscriptionBalance,

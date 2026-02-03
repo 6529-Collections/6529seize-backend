@@ -6,7 +6,7 @@ import {
   USE_CASE_CONSOLIDATION,
   USE_CASE_PRIMARY_ADDRESS,
   USE_CASE_SUB_DELEGATION
-} from './constants';
+} from '@/constants';
 import { DELEGATIONS_IFACE } from './abis/delegations';
 import {
   ConsolidationEvent,

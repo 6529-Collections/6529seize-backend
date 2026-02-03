@@ -1,6 +1,6 @@
 import { ProfileGroupEntity } from '../../entities/IProfileGroup';
 import { Seed } from '../_setup/seed';
-import { PROFILE_GROUPS_TABLE } from '../../constants';
+import { PROFILE_GROUPS_TABLE } from '@/constants';
 
 export function aProfileGroup(params: ProfileGroupEntity): ProfileGroupEntity {
   return {

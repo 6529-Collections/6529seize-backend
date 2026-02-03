@@ -10,7 +10,7 @@ import {
   AGGREGATED_ACTIVITY_TABLE,
   CONSOLIDATED_AGGREGATED_ACTIVITY_MEMES_TABLE,
   CONSOLIDATED_AGGREGATED_ACTIVITY_TABLE
-} from '../constants';
+} from '@/constants';
 
 export abstract class AggregatedActivityBase {
   @CreateDateColumn()

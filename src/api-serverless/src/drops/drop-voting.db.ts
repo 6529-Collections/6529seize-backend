@@ -13,7 +13,7 @@ import {
   WAVE_LEADERBOARD_ENTRIES_TABLE,
   WAVES_TABLE,
   WINNER_DROP_VOTER_VOTES_TABLE
-} from '../../../constants';
+} from '@/constants';
 import { DropVoterStateEntity } from '../../../entities/IDropVoterState';
 import { DropVoteCreditSpending } from '../../../entities/IDropVoteCreditSpending';
 import { Time } from '../../../time';

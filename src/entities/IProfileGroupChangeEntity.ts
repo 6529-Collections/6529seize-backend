@@ -1,5 +1,5 @@
 import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
-import { PROFILE_GROUP_CHANGES } from '../constants';
+import { PROFILE_GROUP_CHANGES } from '@/constants';
 
 @Entity(PROFILE_GROUP_CHANGES)
 @Index(['profile_id', 'chg_time'])

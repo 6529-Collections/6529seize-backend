@@ -9,7 +9,7 @@ import {
   MEME_8_EDITION_BURN_ADJUSTMENT,
   NULL_ADDRESS,
   WALLET_REGEX
-} from '../../../../constants';
+} from '@/constants';
 import {
   collectedDb,
   CollectedDb,

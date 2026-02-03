@@ -12,7 +12,7 @@ import {
   NFT_OWNERS_CONSOLIDATION_TABLE,
   NULL_ADDRESS,
   TDH_NFT_TABLE
-} from '../../../constants';
+} from '@/constants';
 import { fetchPaginated } from '../../../db-api';
 import {
   calculateLevel,

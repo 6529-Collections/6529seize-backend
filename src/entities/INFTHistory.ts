@@ -3,7 +3,7 @@ import {
   NFTS_HISTORY_BLOCKS_TABLE,
   NFTS_HISTORY_CLAIMS_TABLE,
   NFTS_HISTORY_TABLE
-} from '../constants';
+} from '@/constants';
 
 @Entity(NFTS_HISTORY_BLOCKS_TABLE)
 export class NFTHistoryBlock {

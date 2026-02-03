@@ -1,5 +1,5 @@
 import { Column, Entity, PrimaryColumn } from 'typeorm';
-import { PROFILE_LATEST_LOG_TABLE } from '../constants';
+import { PROFILE_LATEST_LOG_TABLE } from '@/constants';
 
 @Entity(PROFILE_LATEST_LOG_TABLE)
 export class ProfileLatestLogEntity {

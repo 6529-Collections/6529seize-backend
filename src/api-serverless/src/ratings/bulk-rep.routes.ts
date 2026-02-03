@@ -6,7 +6,7 @@ import * as Joi from 'joi';
 import { ratingsService } from '../../../rates/ratings.service';
 import { getAuthenticationContext, needsAuthenticatedUser } from '../auth/auth';
 import { REP_CATEGORY_PATTERN } from '../../../entities/IAbusivenessDetectionResult';
-import { WALLET_REGEX } from '../../../constants';
+import { WALLET_REGEX } from '@/constants';
 import { ApiBulkRepRequest } from '../generated/models/ApiBulkRepRequest';
 import { Timer } from '../../../time';
 import { ApiBulkRepTarget } from '../generated/models/ApiBulkRepTarget';

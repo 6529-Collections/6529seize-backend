@@ -1,5 +1,5 @@
 import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
-import { WS_CONNECTIONS_TABLE } from '../constants';
+import { WS_CONNECTIONS_TABLE } from '@/constants';
 
 @Entity(WS_CONNECTIONS_TABLE)
 export class WSConnectionEntity {
