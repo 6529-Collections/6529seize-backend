@@ -1,6 +1,7 @@
 import { MySqlContainer } from '@testcontainers/mysql';
-import * as dbMigrationsLoop from '../../dbMigrationsLoop';
+import 'tsconfig-paths/register';
 import { connect } from '../../db-api';
+import * as dbMigrationsLoop from '../../dbMigrationsLoop';
 
 module.exports = async () => {
   // 1️⃣  Start MySQL ⤵

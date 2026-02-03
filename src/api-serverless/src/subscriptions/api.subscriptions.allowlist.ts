@@ -4,7 +4,7 @@ import {
   DISTRIBUTION_NORMALIZED_TABLE,
   DISTRIBUTION_TABLE,
   MEMES_CONTRACT,
-  SUBSCRIPTIONS_ADMIN_WALLETS,
+  DISTRIBUTION_ADMIN_WALLETS,
   SUBSCRIPTIONS_NFTS_FINAL_TABLE,
   USE_CASE_MINTING
 } from '@/constants';
@@ -53,7 +53,7 @@ export function authenticateSubscriptionsAdmin(
   const wallet = getAuthenticatedWalletOrNull(req);
   const isAdmin =
     wallet &&
-    SUBSCRIPTIONS_ADMIN_WALLETS.some((a) => equalIgnoreCase(a, wallet));
+    DISTRIBUTION_ADMIN_WALLETS.some((a) => equalIgnoreCase(a, wallet));
   return isAdmin;
 }
 

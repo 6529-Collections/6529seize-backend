@@ -4,7 +4,7 @@ export * from './db-tables';
 export * from './media';
 export * from './delegations';
 
-export const SUBSCRIPTIONS_ADMIN_WALLETS = [
+export const DISTRIBUTION_ADMIN_WALLETS = [
   '0x0187C9a182736ba18b44eE8134eE438374cf87DC',
   '0xFe49A85E98941F1A115aCD4bEB98521023a25802'
 ];

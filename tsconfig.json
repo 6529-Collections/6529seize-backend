@@ -8,9 +8,9 @@
     "allowJs": true,
     "outDir": "build",
     "rootDir": ".",
-    "baseUrl": "src",
+    "baseUrl": ".",
     "paths": {
-      "@/*": ["./*"]
+      "@/*": ["src/*"]
     },
     "strict": true,
     "noImplicitAny": true,
