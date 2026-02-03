@@ -209,10 +209,17 @@ async function createFinalSubscriptions(
         const eligibilityCount = await fetchSubscriptionEligibility(
           sub.consolidation_key
         );
+        const affordableCount = Math.floor(balance.balance / MEMES_MINT_PRICE);
         const subscribedCount = Math.min(
           eligibilityCount,
-          sub.subscribed_count
+          sub.subscribed_count,
+          affordableCount
         );
+        if (affordableCount < sub.subscribed_count) {
+          logger.info(
+            `[CAPPED BY BALANCE] ${sub.consolidation_key} requested x${sub.subscribed_count}, affordable x${affordableCount}, final x${subscribedCount}`
+          );
+        }
         const finalSub: NFTFinalSubscription = {
           subscribed_at: subscribedAt,
           consolidation_key: sub.consolidation_key,
