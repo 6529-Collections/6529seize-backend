@@ -5,7 +5,7 @@ import {
   CreateDateColumn,
   UpdateDateColumn
 } from 'typeorm';
-import { REMEMES_TABLE, REMEMES_UPLOADS } from '../constants';
+import { REMEMES_TABLE, REMEMES_UPLOADS } from '@/constants';
 
 export enum RememeSource {
   FILE = 'file',

@@ -8,7 +8,7 @@ import {
   NFTS_TABLE,
   TDH_BLOCKS_TABLE,
   WALLETS_TDH_TABLE
-} from '../../../../constants';
+} from '@/constants';
 import {
   NEXTGEN_TOKENS_TABLE,
   NEXTGEN_TOKENS_TDH_TABLE

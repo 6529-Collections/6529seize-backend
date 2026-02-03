@@ -3,7 +3,7 @@ import {
   dbSupplier,
   LazyDbAccessCompatibleService
 } from '../sql-executor';
-import { CIC_SCORE_AGGREGATIONS_TABLE } from '../constants';
+import { CIC_SCORE_AGGREGATIONS_TABLE } from '@/constants';
 import { CicScoreAggregation } from '../entities/ICicScoreAggregation';
 
 export class CicScoreAggregationDb extends LazyDbAccessCompatibleService {

@@ -5,7 +5,7 @@ import {
   RECENT_TDH_HISTORY_TABLE,
   TDH_GLOBAL_HISTORY_TABLE,
   TDH_HISTORY_TABLE
-} from '../constants';
+} from '@/constants';
 
 abstract class BaseTDHHistory {
   @PrimaryColumn({ type: 'date' })

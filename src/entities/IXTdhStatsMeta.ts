@@ -1,5 +1,5 @@
 import { Column, Entity, PrimaryColumn } from 'typeorm';
-import { XTDH_STATS_META_TABLE } from '../constants';
+import { XTDH_STATS_META_TABLE } from '@/constants';
 
 @Entity(`${XTDH_STATS_META_TABLE}`)
 export class XTdhStatsMetaEntity {

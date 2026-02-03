@@ -8,6 +8,10 @@
     "allowJs": true,
     "outDir": "build",
     "rootDir": ".",
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"]
+    },
     "strict": true,
     "noImplicitAny": true,
     "esModuleInterop": true,
@@ -16,10 +20,12 @@
     "strictPropertyInitialization": false
   },
   "exclude": [
+    "build",
     "jest.config",
     "serverless-config/**/*",
     "ffmpeg-installer.js",
     "**/*.js",
+    "**/*.mjs",
     "eslint.config.*"
   ]
 }

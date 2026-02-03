@@ -1,7 +1,7 @@
 import {
   AGGREGATED_ACTIVITY_MEMES_TABLE,
   AGGREGATED_ACTIVITY_TABLE
-} from '../constants';
+} from '@/constants';
 import { getDataSource } from '../db';
 import {
   AggregatedActivity,

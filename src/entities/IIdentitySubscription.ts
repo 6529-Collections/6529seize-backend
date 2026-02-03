@@ -1,5 +1,5 @@
 import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
-import { IDENTITY_SUBSCRIPTIONS_TABLE } from '../constants';
+import { IDENTITY_SUBSCRIPTIONS_TABLE } from '@/constants';
 import { ActivityEventAction, ActivityEventTargetType } from './IActivityEvent';
 
 @Entity(IDENTITY_SUBSCRIPTIONS_TABLE)

@@ -5,7 +5,7 @@ import {
   IDENTITIES_TABLE,
   NULL_ADDRESS,
   TRANSACTIONS_TABLE
-} from '../../../constants';
+} from '@/constants';
 import { fetchPaginated, resolveEns, returnEmpty } from '../../../db-api';
 import { getProof } from '../../../merkle_proof';
 import {

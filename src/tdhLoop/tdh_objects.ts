@@ -2,7 +2,7 @@ import {
   MEME_8_EDITION_BURN_ADJUSTMENT,
   MEMES_CONTRACT,
   NULL_ADDRESS
-} from '../constants';
+} from '@/constants';
 import { NFTOwner } from '../entities/INFTOwner';
 import { Transaction } from '../entities/ITransaction';
 import { equalIgnoreCase } from '../strings';

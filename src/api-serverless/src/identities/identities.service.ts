@@ -48,7 +48,7 @@ import { Time } from '../../../time';
 import { Profile, ProfileClassification } from '../../../entities/IProfile';
 import { ids } from '../../../ids';
 import { profilesDb } from '../../../profiles/profiles.db';
-import { NULL_ADDRESS } from '../../../constants';
+import { NULL_ADDRESS } from '@/constants';
 
 export class IdentitiesService {
   constructor(

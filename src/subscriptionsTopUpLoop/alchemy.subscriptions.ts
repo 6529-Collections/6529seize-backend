@@ -4,7 +4,7 @@ import {
   AssetTransfersWithMetadataResult,
   SortingOrder
 } from 'alchemy-sdk';
-import { SUBSCRIPTIONS_ADDRESS } from '../constants';
+import { SUBSCRIPTIONS_ADDRESS } from '@/constants';
 import { SubscriptionTopUp } from '../entities/ISubscription';
 
 export async function getAllSubscriptionTopUps(

@@ -1,5 +1,5 @@
 import { Entity, PrimaryColumn, Column } from 'typeorm';
-import { REFRESH_TOKENS_TABLE } from '../constants';
+import { REFRESH_TOKENS_TABLE } from '@/constants';
 
 @Entity(REFRESH_TOKENS_TABLE)
 export class RefreshToken {

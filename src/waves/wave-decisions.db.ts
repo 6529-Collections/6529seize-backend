@@ -13,7 +13,7 @@ import {
   WAVES_DECISION_WINNER_DROPS_TABLE,
   WAVES_DECISIONS_TABLE,
   WAVES_TABLE
-} from '../constants';
+} from '@/constants';
 import {
   WaveDecisionPauseEntity,
   WaveDecisionStrategy

@@ -17,7 +17,7 @@ import {
   SUBSCRIPTIONS_REDEEMED_TABLE,
   SUBSCRIPTIONS_TOP_UP_LATEST_BLOCK_TABLE,
   SUBSCRIPTIONS_TOP_UP_TABLE
-} from '../constants';
+} from '@/constants';
 
 @Entity(SUBSCRIPTIONS_TOP_UP_TABLE)
 export class SubscriptionTopUp {

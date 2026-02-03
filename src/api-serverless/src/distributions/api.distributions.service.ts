@@ -5,7 +5,7 @@ import {
   MEMELAB_CONTRACT,
   NFTS_MEME_LAB_TABLE,
   NFTS_TABLE
-} from '../../../constants';
+} from '@/constants';
 import {
   AllowlistNormalizedEntry,
   Distribution

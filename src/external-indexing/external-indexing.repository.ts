@@ -5,7 +5,7 @@ import {
   EXTERNAL_INDEXED_OWNERSHIP_721_HISTORY_TABLE,
   EXTERNAL_INDEXED_OWNERSHIP_721_TABLE,
   EXTERNAL_INDEXED_TRANSFERS_TABLE
-} from '../constants';
+} from '@/constants';
 import {
   ExternalIndexedContractEntity,
   IndexedContractStandard,

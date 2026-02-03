@@ -1,5 +1,5 @@
 import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
-import { DROPS_VOTES_CREDIT_SPENDINGS_TABLE } from '../constants';
+import { DROPS_VOTES_CREDIT_SPENDINGS_TABLE } from '@/constants';
 
 @Entity(DROPS_VOTES_CREDIT_SPENDINGS_TABLE)
 export class DropVoteCreditSpending {

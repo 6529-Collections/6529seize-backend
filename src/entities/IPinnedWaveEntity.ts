@@ -1,5 +1,5 @@
 import { Entity, PrimaryColumn } from 'typeorm';
-import { PINNED_WAVES_TABLE } from '../constants';
+import { PINNED_WAVES_TABLE } from '@/constants';
 
 @Entity(PINNED_WAVES_TABLE)
 export class PinnedWaveEntity {

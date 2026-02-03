@@ -2,7 +2,7 @@ import { randomUUID } from 'crypto';
 import {
   PROFILE_PROXIES_TABLE,
   PROFILE_PROXY_ACTIONS_TABLE
-} from '../constants';
+} from '@/constants';
 import { ProfileProxyEntity } from '../entities/IProfileProxy';
 import {
   ProfileProxyActionEntity,

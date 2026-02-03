@@ -4,7 +4,7 @@ import {
   LazyDbAccessCompatibleService
 } from '../sql-executor';
 import { EventStatus, EventType, ProcessableEvent } from '../entities/IEvent';
-import { EVENTS_TABLE, LISTENER_PROCESSED_EVENTS_TABLE } from '../constants';
+import { EVENTS_TABLE, LISTENER_PROCESSED_EVENTS_TABLE } from '@/constants';
 import { Time } from '../time';
 
 const mysql = require('mysql');

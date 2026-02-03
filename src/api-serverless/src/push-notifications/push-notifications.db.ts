@@ -1,7 +1,7 @@
 import {
   PUSH_NOTIFICATION_DEVICES_TABLE,
   PUSH_NOTIFICATION_SETTINGS_TABLE
-} from '../../../constants';
+} from '@/constants';
 import { PushNotificationDevice } from '../../../entities/IPushNotification';
 import { sqlExecutor } from '../../../sql-executor';
 import { ApiPushNotificationDevice } from '../generated/models/ApiPushNotificationDevice';

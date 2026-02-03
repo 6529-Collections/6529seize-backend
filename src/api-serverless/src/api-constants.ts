@@ -9,7 +9,7 @@ export const seizeSettings = (): ApiSeizeSettings => {
   const all_drops_notifications_subscribers_limit =
     env.getIntOrNull('ALL_DROPS_NOTIFICATIONS_SUBSCRIBERS_LIMIT') ?? 15;
 
-  const memes_wave_id = env.getStringOrNull('MEMES_WAVE_ID');
+  const memes_wave_id = env.getStringOrNull('MAIN_STAGE_WAVE_ID');
 
   return {
     rememes_submission_tdh_threshold,

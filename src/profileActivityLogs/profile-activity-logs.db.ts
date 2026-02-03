@@ -12,7 +12,7 @@ import {
 import {
   PROFILE_LATEST_LOG_TABLE,
   PROFILES_ACTIVITY_LOGS_TABLE
-} from '../constants';
+} from '@/constants';
 import { PageRequest } from '../api-serverless/src/page-request';
 import { RateMatter } from '../entities/IRating';
 import {

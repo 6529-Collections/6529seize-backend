@@ -1,5 +1,5 @@
 import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
-import { RATINGS_TABLE } from '../constants';
+import { RATINGS_TABLE } from '@/constants';
 
 @Entity(RATINGS_TABLE)
 @Index('idx_ratings_1', ['matter_target_id', 'rater_profile_id', 'rating'])

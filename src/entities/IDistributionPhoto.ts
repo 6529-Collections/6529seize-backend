@@ -5,7 +5,7 @@ import {
   PrimaryGeneratedColumn,
   UpdateDateColumn
 } from 'typeorm';
-import { DISTRIBUTION_PHOTO_TABLE } from '../constants';
+import { DISTRIBUTION_PHOTO_TABLE } from '@/constants';
 
 @Entity({ name: DISTRIBUTION_PHOTO_TABLE })
 export class DistributionPhoto {

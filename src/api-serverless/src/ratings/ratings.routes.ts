@@ -18,7 +18,7 @@ import { RateMatter } from '../../../entities/IRating';
 import { ApiRateMatter } from '../generated/models/ApiRateMatter';
 import { getAuthenticationContext, needsAuthenticatedUser } from '../auth/auth';
 import { REP_CATEGORY_PATTERN } from '../../../entities/IAbusivenessDetectionResult';
-import { WALLET_REGEX } from '../../../constants';
+import { WALLET_REGEX } from '@/constants';
 import { abusivenessCheckService } from '../../../profiles/abusiveness-check.service';
 import { BadRequestException } from '../../../exceptions';
 import { ApiBulkRateResponse } from '../generated/models/ApiBulkRateResponse';

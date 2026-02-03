@@ -15,7 +15,7 @@ import {
   NFT_SCALED60_IMAGE_LINK,
   NFT_VIDEO_LINK,
   NULL_ADDRESS
-} from '../constants';
+} from '@/constants';
 import {
   fetchAllArtists,
   fetchMemesWithSeason,

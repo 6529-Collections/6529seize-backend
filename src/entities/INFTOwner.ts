@@ -10,7 +10,7 @@ import {
   NFT_OWNERS_CONSOLIDATION_TABLE,
   NFT_OWNERS_SYNC_STATE_TABLE,
   NFT_OWNERS_TABLE
-} from '../constants';
+} from '@/constants';
 
 class NFTOwnerBase {
   @CreateDateColumn()

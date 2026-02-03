@@ -22,7 +22,7 @@ import {
   WAVES_ARCHIVE_TABLE,
   WAVES_DECISION_PAUSES_TABLE,
   WAVES_TABLE
-} from '../../../constants';
+} from '@/constants';
 import { ActivityEventTargetType } from '../../../entities/IActivityEvent';
 import { DropType } from '../../../entities/IDrop';
 import { RateMatter } from '../../../entities/IRating';

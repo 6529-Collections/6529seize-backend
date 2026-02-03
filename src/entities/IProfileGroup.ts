@@ -1,5 +1,5 @@
 import { Entity, Index, PrimaryColumn } from 'typeorm';
-import { PROFILE_GROUPS_TABLE } from '../constants';
+import { PROFILE_GROUPS_TABLE } from '@/constants';
 
 @Entity(PROFILE_GROUPS_TABLE)
 export class ProfileGroupEntity {

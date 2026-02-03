@@ -1,5 +1,5 @@
 import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
-import { DROP_BOOKMARKS_TABLE } from '../constants';
+import { DROP_BOOKMARKS_TABLE } from '@/constants';
 
 @Entity(DROP_BOOKMARKS_TABLE)
 @Index('idx_drop_bookmarks_identity_drop', ['identity_id', 'drop_id'], {

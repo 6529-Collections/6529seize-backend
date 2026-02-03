@@ -1,5 +1,5 @@
 import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
-import { ADDRESS_CONSOLIDATION_KEY } from '../constants';
+import { ADDRESS_CONSOLIDATION_KEY } from '@/constants';
 
 @Entity(ADDRESS_CONSOLIDATION_KEY)
 export class AddressConsolidationKey {

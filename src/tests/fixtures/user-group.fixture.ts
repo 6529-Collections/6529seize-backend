@@ -5,7 +5,7 @@ import {
 import { Time } from '../../time';
 import { randomUUID } from 'node:crypto';
 import { Seed } from '../_setup/seed';
-import { USER_GROUPS_TABLE } from '../../constants';
+import { USER_GROUPS_TABLE } from '@/constants';
 
 type BaseUserGroup = Omit<UserGroupEntity, 'id' | 'name'>;
 

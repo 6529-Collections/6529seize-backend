@@ -11,7 +11,7 @@ import {
   MEMELAB_CONTRACT,
   MEMES_CONTRACT,
   MEMES_DEPLOYER
-} from './constants';
+} from '@/constants';
 import {
   fetchLatestNftHistoryBlockNumber,
   fetchLatestNftUri,

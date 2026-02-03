@@ -1,4 +1,4 @@
-import { GRADIENT_CONTRACT, MEMES_CONTRACT } from '../constants';
+import { GRADIENT_CONTRACT, MEMES_CONTRACT } from '@/constants';
 import { ConsolidatedTDH, TDH } from '../entities/ITDH';
 import {
   getNextgenNetwork,

@@ -1,5 +1,5 @@
 import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
-import { CONSOLIDATED_UPLOADS_TABLE, UPLOADS_TABLE } from '../constants';
+import { CONSOLIDATED_UPLOADS_TABLE, UPLOADS_TABLE } from '@/constants';
 
 export class Upload {
   @PrimaryColumn({ type: 'varchar', length: 8 })

@@ -1,5 +1,5 @@
 import { Column, Entity, PrimaryColumn } from 'typeorm';
-import { CIC_STATEMENTS_TABLE } from '../constants';
+import { CIC_STATEMENTS_TABLE } from '@/constants';
 
 @Entity(CIC_STATEMENTS_TABLE)
 export class CicStatement {

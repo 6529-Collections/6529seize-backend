@@ -23,7 +23,7 @@ import {
   DROP_VOTER_STATE_TABLE,
   IDENTITIES_TABLE,
   WAVES_DECISION_WINNER_DROPS_TABLE
-} from '../constants';
+} from '@/constants';
 import { env } from '../env';
 import { Logger } from '../logging';
 import { metricsRecorder } from '../metrics/MetricsRecorder';

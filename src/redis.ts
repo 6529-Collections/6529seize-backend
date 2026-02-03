@@ -43,7 +43,7 @@ export async function redisGetMany<T>(
   }
   const valuesFromRedisRaw = await redis.mGet(keys);
   return valuesFromRedisRaw.reduce(
-    (acc, value, index) => {
+    (acc: Record<string, T>, value: string | null, index: number) => {
       if (value) {
         acc[keys[index]] = JSON.parse(value);
       }
@@ -144,7 +144,7 @@ export async function initRedis() {
     },
     password: password
   });
-  redis.on('error', (error) =>
+  redis.on('error', (error: Error) =>
     logger.error('Error connecting to Redis: ' + error)
   );
   redis.on('connect', () => logger.info('Redis connected!'));

@@ -1,4 +1,4 @@
-import { NULL_ADDRESS, NULL_ADDRESS_DEAD, WALLET_REGEX } from './constants';
+import { NULL_ADDRESS, NULL_ADDRESS_DEAD, WALLET_REGEX } from '@/constants';
 import { equalIgnoreCase } from './strings';
 import { goerli, sepolia } from '@wagmi/chains';
 

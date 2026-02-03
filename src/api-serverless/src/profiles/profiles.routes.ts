@@ -7,7 +7,7 @@ import {
   needsAuthenticatedUser
 } from '../auth/auth';
 import * as Joi from 'joi';
-import { PROFILE_HANDLE_REGEX } from '../../../constants';
+import { PROFILE_HANDLE_REGEX } from '@/constants';
 import { getValidatedByJoiOrThrow } from '../validation';
 import { NotFoundException } from '../../../exceptions';
 import { initMulterSingleMiddleware } from '../multer-middleware';

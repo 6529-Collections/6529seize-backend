@@ -51,7 +51,7 @@ import {
   GRADIENT_CONTRACT,
   MEMELAB_CONTRACT,
   MEMES_CONTRACT
-} from '../constants';
+} from '@/constants';
 import { RateMatter } from '../entities/IRating';
 
 function aProfile({

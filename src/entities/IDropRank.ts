@@ -1,5 +1,5 @@
 import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
-import { DROP_RANK_TABLE } from '../constants';
+import { DROP_RANK_TABLE } from '@/constants';
 
 @Entity(DROP_RANK_TABLE)
 export class DropRankEntity {

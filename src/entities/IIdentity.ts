@@ -1,5 +1,5 @@
 import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
-import { IDENTITIES_TABLE } from '../constants';
+import { IDENTITIES_TABLE } from '@/constants';
 import { ProfileClassification } from './IProfile';
 
 @Entity(IDENTITIES_TABLE)

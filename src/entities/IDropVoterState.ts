@@ -1,5 +1,5 @@
 import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
-import { DROP_VOTER_STATE_TABLE } from '../constants';
+import { DROP_VOTER_STATE_TABLE } from '@/constants';
 
 @Entity(DROP_VOTER_STATE_TABLE)
 export class DropVoterStateEntity {

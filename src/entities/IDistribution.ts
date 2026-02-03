@@ -7,10 +7,7 @@ import {
   PrimaryGeneratedColumn,
   UpdateDateColumn
 } from 'typeorm';
-import {
-  DISTRIBUTION_NORMALIZED_TABLE,
-  DISTRIBUTION_TABLE
-} from '../constants';
+import { DISTRIBUTION_NORMALIZED_TABLE, DISTRIBUTION_TABLE } from '@/constants';
 
 export interface AllowlistNormalizedEntry {
   phase: string;

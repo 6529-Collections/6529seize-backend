@@ -1,5 +1,5 @@
 import { Column, CreateDateColumn, Entity, PrimaryColumn } from 'typeorm';
-import { MEMES_SEASONS_TABLE } from '../constants';
+import { MEMES_SEASONS_TABLE } from '@/constants';
 
 @Entity(MEMES_SEASONS_TABLE)
 export class MemesSeason {

@@ -3,7 +3,7 @@ import {
   dbSupplier,
   LazyDbAccessCompatibleService
 } from '../../../sql-executor';
-import { ACTIVITY_EVENTS_TABLE } from '../../../constants';
+import { ACTIVITY_EVENTS_TABLE } from '@/constants';
 import {
   ActivityEventAction,
   ActivityEventEntity

@@ -1,7 +1,7 @@
 import {
   CONSOLIDATED_TDH_EDITIONS_TABLE,
   TDH_EDITIONS_TABLE
-} from '../../../constants';
+} from '@/constants';
 import { fetchPaginated } from '../../../db-api';
 import { constructFilters } from '../api-helpers';
 

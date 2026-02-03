@@ -1,5 +1,5 @@
 import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
-import { USER_GROUPS_TABLE } from '../constants';
+import { USER_GROUPS_TABLE } from '@/constants';
 
 export enum GroupTdhInclusionStrategy {
   TDH = 'TDH',

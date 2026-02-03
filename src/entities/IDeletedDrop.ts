@@ -1,5 +1,5 @@
 import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
-import { DELETED_DROPS_TABLE } from '../constants';
+import { DELETED_DROPS_TABLE } from '@/constants';
 
 @Entity(DELETED_DROPS_TABLE)
 export class DeletedDropEntity {

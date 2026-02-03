@@ -1,4 +1,4 @@
-import { DISTRIBUTION_PHOTO_TABLE } from '../../../constants';
+import { DISTRIBUTION_PHOTO_TABLE } from '@/constants';
 import { fetchPaginated } from '../../../db-api';
 import { sqlExecutor } from '../../../sql-executor';
 import { PaginatedResponse } from '../api-constants';

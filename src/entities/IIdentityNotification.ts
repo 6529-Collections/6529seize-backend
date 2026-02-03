@@ -1,5 +1,5 @@
 import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
-import { IDENTITY_NOTIFICATIONS_TABLE } from '../constants';
+import { IDENTITY_NOTIFICATIONS_TABLE } from '@/constants';
 
 @Entity(IDENTITY_NOTIFICATIONS_TABLE)
 @Index(['identity_id', 'created_at', 'read_at'])

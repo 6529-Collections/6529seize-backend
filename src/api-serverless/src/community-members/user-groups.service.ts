@@ -10,7 +10,7 @@ import {
   RATINGS_TABLE,
   XTDH_GRANT_TOKENS_TABLE,
   XTDH_GRANTS_TABLE
-} from '../../../constants';
+} from '@/constants';
 import {
   getLevelComponentsBorderByLevel,
   getLevelFromScore

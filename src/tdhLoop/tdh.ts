@@ -8,7 +8,7 @@ import {
   NULL_ADDRESS,
   TRANSACTIONS_TABLE,
   WALLETS_TDH_TABLE
-} from '../constants';
+} from '@/constants';
 import {
   consolidateTransactions,
   fetchAllConsolidationAddresses,

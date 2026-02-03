@@ -18,7 +18,7 @@ import { ApiIdentitySubscriptionTargetAction } from '../generated/models/ApiIden
 import { identitiesService } from './identities.service';
 import { ApiIdentity } from '../generated/models/ApiIdentity';
 import { Timer } from '../../../time';
-import { WALLET_REGEX } from '../../../constants';
+import { WALLET_REGEX } from '@/constants';
 import { identityFetcher } from './identity.fetcher';
 import { numbers } from '../../../numbers';
 

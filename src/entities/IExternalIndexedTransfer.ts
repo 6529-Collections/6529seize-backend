@@ -1,5 +1,5 @@
 import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
-import { EXTERNAL_INDEXED_TRANSFERS_TABLE } from '../constants';
+import { EXTERNAL_INDEXED_TRANSFERS_TABLE } from '@/constants';
 
 @Entity(EXTERNAL_INDEXED_TRANSFERS_TABLE)
 @Index(['partition', 'block_number', 'log_index'])

@@ -3,7 +3,7 @@ import {
   IDENTITIES_TABLE,
   PROFILE_LATEST_LOG_TABLE,
   TRANSACTIONS_TABLE
-} from '../../../constants';
+} from '@/constants';
 import { RequestContext } from '../../../request.context';
 import {
   dbSupplier,

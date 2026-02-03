@@ -31,7 +31,7 @@ import {
   WAVES_DECISION_WINNER_DROPS_TABLE,
   WAVES_TABLE,
   WINNER_DROP_VOTER_VOTES_TABLE
-} from '../constants';
+} from '@/constants';
 import { ActivityEventTargetType } from '../entities/IActivityEvent';
 import { DeletedDropEntity } from '../entities/IDeletedDrop';
 import {

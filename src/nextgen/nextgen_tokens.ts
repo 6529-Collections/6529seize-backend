@@ -14,7 +14,7 @@ import {
 } from '../entities/INextGen';
 import { Logger } from '../logging';
 import { EntityManager } from 'typeorm';
-import { NFTS_TABLE } from '../constants';
+import { NFTS_TABLE } from '@/constants';
 import { MINT_TYPE_TRAIT } from './nextgen_constants';
 
 const logger = Logger.get('NEXTGEN_TOKENS');

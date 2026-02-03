@@ -1,5 +1,5 @@
 import { Column, CreateDateColumn, Entity, PrimaryColumn } from 'typeorm';
-import { ENS_TABLE } from '../constants';
+import { ENS_TABLE } from '@/constants';
 
 @Entity(ENS_TABLE)
 export class ENS {

@@ -1,4 +1,4 @@
-import { NFT_OWNERS_TABLE } from '../constants';
+import { NFT_OWNERS_TABLE } from '@/constants';
 import { getDataSource } from '../db';
 import {
   ConsolidatedNFTOwner,

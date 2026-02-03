@@ -14,7 +14,7 @@ import {
   DROPS_MENTIONS_TABLE,
   DROPS_PARTS_TABLE,
   DROPS_TABLE
-} from '../constants';
+} from '@/constants';
 
 export enum DropType {
   CHAT = 'CHAT',

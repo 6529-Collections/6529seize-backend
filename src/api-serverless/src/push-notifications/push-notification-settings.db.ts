@@ -1,4 +1,4 @@
-import { PUSH_NOTIFICATION_SETTINGS_TABLE } from '../../../constants';
+import { PUSH_NOTIFICATION_SETTINGS_TABLE } from '@/constants';
 import {
   DEFAULT_PUSH_NOTIFICATION_SETTINGS,
   PushNotificationSettingsData,

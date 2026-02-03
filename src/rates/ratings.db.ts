@@ -3,7 +3,7 @@ import {
   IDENTITIES_TABLE,
   RATINGS_SNAPSHOTS_TABLE,
   RATINGS_TABLE
-} from '../constants';
+} from '@/constants';
 import { revokeRepBasedDropOverVotes } from '../drops/participation-drops-over-vote-revocation';
 import { RateMatter, Rating } from '../entities/IRating';
 import { RatingsSnapshot } from '../entities/IRatingsSnapshots';

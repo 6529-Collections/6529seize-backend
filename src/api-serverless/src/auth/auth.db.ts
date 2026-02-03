@@ -3,7 +3,7 @@ import {
   LazyDbAccessCompatibleService
 } from '../../../sql-executor';
 import { RefreshToken } from '../../../entities/IRefreshToken';
-import { REFRESH_TOKENS_TABLE } from '../../../constants';
+import { REFRESH_TOKENS_TABLE } from '@/constants';
 import { randomBytes } from 'crypto';
 import { equalIgnoreCase } from '../../../strings';
 
