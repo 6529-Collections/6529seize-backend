@@ -32,7 +32,6 @@ export { DropRealVoterVoteInTimeEntity } from './IDropRealVoterVoteInTime';
 export { DropRelationEntity } from './IDropRelation';
 export { DropVoteCreditSpending } from './IDropVoteCreditSpending';
 export { DropVoterStateEntity } from './IDropVoterState';
-export { DropWinnerMemeEntity } from './IDropWinnerMeme';
 export { ENS } from './IENS';
 export { EthPrice } from './IEthPrice';
 export { EULAConsent } from './IEULAPolicy';
@@ -44,6 +43,7 @@ export { ExternalIndexedTransfersEntity } from './IExternalIndexedTransfer';
 export { IdentityEntity } from './IIdentity';
 export { IdentityNotificationEntity } from './IIdentityNotification';
 export { IdentitySubscriptionEntity } from './IIdentitySubscription';
+export { MemeClaimEntity } from './IMemeClaim';
 export { MetricRollupHourEntity } from './IMetricRollupHour';
 export {
   NextGenAllowlist,

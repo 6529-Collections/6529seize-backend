@@ -318,19 +318,23 @@ export class WaveDecisionsService {
       ctx
     );
     await this.waveDecisionsDb.insertDecisionWinners(decisionWinners, ctx);
-    const memesWaveId = env.getStringOrNull('MEMES_WAVE_ID');
-    if (memesWaveId && waveId === memesWaveId && winnerDrops.length > 0) {
+    await this.waveDecisionsDb.updateDropsToWinners(winnerDropIds, ctx);
+    const mainStageWaveId = env.getStringOrNull('MAIN_STAGE_WAVE_ID');
+    if (
+      mainStageWaveId &&
+      waveId === mainStageWaveId &&
+      winnerDrops.length > 0
+    ) {
       const winner = winnerDrops[0];
       const nextMemeId =
         (await getMaxMemeId(false, {
           wrappedConnection: ctx.connection
         })) + 1;
-      await this.waveDecisionsDb.insertDropWinnerMemes(
+      await this.waveDecisionsDb.createMemeClaim(
         [{ drop_id: winner.drop_id, meme_id: nextMemeId }],
         ctx
       );
     }
-    await this.waveDecisionsDb.updateDropsToWinners(winnerDropIds, ctx);
     await this.waveDecisionsDb.deleteDropsRanks(winnerDropIds, ctx);
     await this.dropsDb.resyncParticipatoryDropCountsForWaves([waveId], ctx);
     await this.dropVotingDb.deleteStaleLeaderboardEntries(ctx);
