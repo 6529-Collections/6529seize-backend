@@ -213,7 +213,7 @@ router.post(
 
 const HEX_COLOR_REGEX = /^#[0-9a-fA-F]{6}$/;
 const ALLOWED_BANNER_URL_PREFIX = 'https://d3lqz0a4bldqgf.cloudfront.net/';
-const BANNER_IMAGE_EXTENSION_REGEX = /\.(png|jpeg|jpg|gif)$/i;
+const BANNER_IMAGE_EXTENSION_REGEX = /\.(png|jpeg|jpg|gif|webp)$/i;
 
 const ApiCreateOrUpdateProfileRequestSchema: Joi.ObjectSchema<ApiCreateOrUpdateProfileRequest> =
   Joi.object({
@@ -249,7 +249,7 @@ const ApiCreateOrUpdateProfileRequestSchema: Joi.ObjectSchema<ApiCreateOrUpdateP
         if (value.startsWith(ALLOWED_BANNER_URL_PREFIX)) {
           if (!BANNER_IMAGE_EXTENSION_REGEX.test(value)) {
             return helpers.message({
-              custom: `Banner URL must end with .png, .jpeg, .jpg, or .gif`
+              custom: `Banner URL must end with .png, .jpeg, .jpg, webp, or .gif`
             });
           }
           return value;
