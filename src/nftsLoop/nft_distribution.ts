@@ -3,7 +3,7 @@ import {
   GRADIENT_CONTRACT,
   MEMELAB_CONTRACT,
   MEMES_CONTRACT
-} from '../constants';
+} from '@/constants';
 import { getDataSource } from '../db';
 import { BaseNFT, LabNFT, NFT } from '../entities/INFT';
 import { Logger } from '../logging';

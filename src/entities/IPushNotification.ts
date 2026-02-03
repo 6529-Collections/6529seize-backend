@@ -5,7 +5,7 @@ import {
   PrimaryColumn,
   UpdateDateColumn
 } from 'typeorm';
-import { PUSH_NOTIFICATION_DEVICES_TABLE } from '../constants';
+import { PUSH_NOTIFICATION_DEVICES_TABLE } from '@/constants';
 import { Time } from '../time';
 
 @Entity(PUSH_NOTIFICATION_DEVICES_TABLE)

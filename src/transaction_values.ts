@@ -18,7 +18,7 @@ import {
   ROYALTIES_ADDRESS,
   TRANSACTIONS_TABLE,
   WETH_TOKEN_ADDRESS
-} from './constants';
+} from '@/constants';
 import { findTransactionsByHash } from './db';
 import { Transaction } from './entities/ITransaction';
 import { getClosestEthUsdPrice } from './ethPriceLoop/db.eth_price';

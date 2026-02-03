@@ -1,5 +1,5 @@
 import { Entity, Column, PrimaryColumn } from 'typeorm';
-import { MEMES_EXTENDED_DATA_TABLE } from '../constants';
+import { MEMES_EXTENDED_DATA_TABLE } from '@/constants';
 
 export class BaseNFT {
   @PrimaryColumn({ type: 'int' })

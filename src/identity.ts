@@ -9,7 +9,7 @@ import {
   IDENTITIES_TABLE,
   PROFILES_TABLE,
   RATINGS_TABLE
-} from './constants';
+} from '@/constants';
 import { randomUUID } from 'crypto';
 import { identitySubscriptionsDb } from './api-serverless/src/identity-subscriptions/identity-subscriptions.db';
 import { identitiesService } from './api-serverless/src/identities/identities.service';

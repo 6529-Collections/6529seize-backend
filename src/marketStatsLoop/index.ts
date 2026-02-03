@@ -4,7 +4,7 @@ import {
   GRADIENT_CONTRACT,
   MEMELAB_CONTRACT,
   MEMES_CONTRACT
-} from '../constants';
+} from '@/constants';
 import { NextGenToken, NextGenTokenListing } from '../entities/INextGen';
 import { LabNFT, NFT } from '../entities/INFT';
 import { Logger } from '../logging';

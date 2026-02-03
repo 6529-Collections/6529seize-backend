@@ -1,5 +1,5 @@
 import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
-import { ACTIVITY_EVENTS_TABLE } from '../constants';
+import { ACTIVITY_EVENTS_TABLE } from '@/constants';
 
 @Entity(ACTIVITY_EVENTS_TABLE)
 export class ActivityEventEntity {

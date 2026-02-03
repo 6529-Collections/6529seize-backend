@@ -33,7 +33,7 @@ import { identityFetcher } from '../identities/identity.fetcher';
 import { enums } from '../../../enums';
 import { numbers } from '../../../numbers';
 import { collections } from '../../../collections';
-import { WALLET_REGEX } from '../../../constants';
+import { WALLET_REGEX } from '@/constants';
 import { ApiGroupTdhInclusionStrategy } from '../generated/models/ApiGroupTdhInclusionStrategy';
 
 const router = asyncRouter();

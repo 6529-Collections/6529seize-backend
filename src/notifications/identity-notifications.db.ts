@@ -3,7 +3,7 @@ import {
   IDENTITIES_TABLE,
   IDENTITY_NOTIFICATIONS_TABLE,
   WAVE_READER_METRICS_TABLE
-} from '../constants';
+} from '@/constants';
 import { IdentityNotificationEntity } from '../entities/IIdentityNotification';
 import { Logger } from '../logging';
 import { numbers } from '../numbers';

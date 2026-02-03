@@ -22,7 +22,7 @@ import {
   NEXTGEN_CF_BASE_PATH,
   NEXTGEN_CORE_CONTRACT
 } from './nextgen_constants';
-import { CLOUDFRONT_LINK } from '../constants';
+import { CLOUDFRONT_LINK } from '@/constants';
 import { getEns } from '../alchemy';
 import { getSourceCodeForContract } from '../etherscan';
 

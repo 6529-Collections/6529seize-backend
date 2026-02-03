@@ -1,5 +1,5 @@
 import { identitiesDb, IdentitiesDb } from '../../../identities/identities.db';
-import { UUID_REGEX, WALLET_REGEX } from '../../../constants';
+import { UUID_REGEX, WALLET_REGEX } from '@/constants';
 import { Alchemy } from 'alchemy-sdk';
 import { getAlchemyInstance } from '../../../alchemy';
 import { IdentityEntity } from '../../../entities/IIdentity';

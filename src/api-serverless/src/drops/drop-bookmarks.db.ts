@@ -3,7 +3,7 @@ import {
   dbSupplier,
   LazyDbAccessCompatibleService
 } from '../../../sql-executor';
-import { DROP_BOOKMARKS_TABLE } from '../../../constants';
+import { DROP_BOOKMARKS_TABLE } from '@/constants';
 import { Time } from '../../../time';
 
 export class DropBookmarksDb extends LazyDbAccessCompatibleService {

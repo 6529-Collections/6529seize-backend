@@ -10,7 +10,7 @@ import {
   NFTS_TABLE,
   NULL_ADDRESS,
   TRANSACTIONS_TABLE
-} from '../../../constants';
+} from '@/constants';
 import { Time } from '../../../time';
 import { sqlExecutor } from '../../../sql-executor';
 import * as mysql from 'mysql';

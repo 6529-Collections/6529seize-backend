@@ -1,5 +1,5 @@
 import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
-import { XTDH_GRANTS_TABLE } from '../constants';
+import { XTDH_GRANTS_TABLE } from '@/constants';
 
 @Entity(XTDH_GRANTS_TABLE)
 @Index(['target_chain', 'target_contract'])

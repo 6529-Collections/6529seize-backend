@@ -1,5 +1,5 @@
 import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
-import { WAVE_LEADERBOARD_ENTRIES_TABLE } from '../constants';
+import { WAVE_LEADERBOARD_ENTRIES_TABLE } from '@/constants';
 
 @Entity(WAVE_LEADERBOARD_ENTRIES_TABLE)
 export class WaveLeaderboardEntryEntity {

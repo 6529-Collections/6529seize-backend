@@ -15,7 +15,7 @@ import {
   TDH_NFT_TABLE,
   WALLETS_TDH_MEMES_TABLE,
   WALLETS_TDH_TABLE
-} from '../constants';
+} from '@/constants';
 
 export class BaseTDHFields {
   @Column({ type: 'int', nullable: false })

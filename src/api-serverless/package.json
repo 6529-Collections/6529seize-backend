@@ -9,7 +9,7 @@
     "restructure-openapi": "ts-node restructure-openapi.ts",
     "generate": "rm -rf dist && rm -rf tmp_gen_outp && node ./node_modules/@openapitools/openapi-generator-cli/main generate -i openapi.yaml -g typescript -o tmp_gen_outp --additional-properties=modelPropertyNaming=snake_case && rm -rf src/generated && mkdir src/generated && mv tmp_gen_outp/models src/generated/models && rm -rf tmp_gen_outp && mkdir src/generated/http && echo 'export type HttpFile = any;' > src/generated/http/http.ts && rm src/generated/models/all.ts",
     "prebuild": "npm run generate",
-    "build": "esbuild src/handler.ts --bundle --sourcemap --platform=node --target=es2020 --outfile=dist/index.js && cp openapi.yaml dist/ && cp openapi.oracle.yaml dist/ && mkdir dist/tmp && cp node_modules/swagger-ui-dist/* dist/tmp && rm dist/tmp/index.js && cp dist/tmp/* dist/ && rm -rf dist/tmp",
+    "build": "node esbuild.config.mjs && cp openapi.yaml dist/ && cp openapi.oracle.yaml dist/ && mkdir dist/tmp && cp node_modules/swagger-ui-dist/* dist/tmp && rm dist/tmp/index.js && cp dist/tmp/* dist/ && rm -rf dist/tmp",
     "postbuild": "cd dist && zip -r index.zip *"
   },
   "dependencies": {

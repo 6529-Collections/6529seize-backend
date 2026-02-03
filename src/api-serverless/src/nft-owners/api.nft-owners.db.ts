@@ -1,5 +1,5 @@
 import { constructFilters } from '../api-helpers';
-import { NFT_OWNERS_CONSOLIDATION_TABLE } from '../../../constants';
+import { NFT_OWNERS_CONSOLIDATION_TABLE } from '@/constants';
 import { fetchPaginated } from '../../../db-api';
 import { ApiNftOwnerPage } from '../generated/models/ApiNftOwnerPage';
 import { ApiNftOwner } from '../generated/models/ApiNftOwner';

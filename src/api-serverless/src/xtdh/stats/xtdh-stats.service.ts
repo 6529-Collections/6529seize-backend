@@ -4,7 +4,7 @@ import {
   IdentityFetcher
 } from '../../identities/identity.fetcher';
 import { NotFoundException } from '../../../../exceptions';
-import { X_TDH_COEFFICIENT } from '../../../../constants';
+import { X_TDH_COEFFICIENT } from '@/constants';
 import {
   identitiesDb,
   IdentitiesDb

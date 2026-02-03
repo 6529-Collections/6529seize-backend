@@ -31,7 +31,7 @@ import {
   USE_CASE_ALL,
   USE_CASE_MINTING,
   WALLETS_TDH_TABLE
-} from './constants';
+} from '@/constants';
 import { RememeSource } from './entities/IRememe';
 import {
   ConnectionWrapper,

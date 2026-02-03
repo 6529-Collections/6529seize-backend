@@ -4,7 +4,7 @@ import {
   CONSOLIDATIONS_TABLE,
   DELEGATIONS_TABLE,
   ENS_TABLE
-} from './constants';
+} from '@/constants';
 import { ENS } from './entities/IENS';
 import {
   fetchEnsRefresh,

@@ -9,7 +9,7 @@ import {
   IDENTITIES_TABLE,
   RATINGS_TABLE,
   WS_CONNECTIONS_TABLE
-} from '../../../constants';
+} from '@/constants';
 import { RequestContext } from '../../../request.context';
 import {
   userGroupsService,

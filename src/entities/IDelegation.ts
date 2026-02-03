@@ -10,7 +10,7 @@ import {
   DELEGATIONS_TABLE,
   NEVER_DATE,
   NFTDELEGATION_BLOCKS_TABLE
-} from '../constants';
+} from '@/constants';
 import { BlockEntity } from './IBlock';
 
 @Entity(CONSOLIDATIONS_TABLE)

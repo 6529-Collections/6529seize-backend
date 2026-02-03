@@ -3,7 +3,7 @@ import {
   dbSupplier,
   LazyDbAccessCompatibleService
 } from '../sql-executor';
-import { CIC_STATEMENTS_TABLE } from '../constants';
+import { CIC_STATEMENTS_TABLE } from '@/constants';
 import { CicStatement } from '../entities/ICICStatement';
 import { DbPoolName } from '../db-query.options';
 import { ids } from '../ids';

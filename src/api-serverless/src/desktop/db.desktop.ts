@@ -1,4 +1,4 @@
-import { MEMES_CONTRACT, NFTS_TABLE } from '../../../constants';
+import { MEMES_CONTRACT, NFTS_TABLE } from '@/constants';
 import { sqlExecutor } from '../../../sql-executor';
 
 export async function fetchRandomVerticalImage(): Promise<

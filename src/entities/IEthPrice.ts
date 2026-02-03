@@ -1,5 +1,5 @@
 import { Entity, Column, PrimaryColumn } from 'typeorm';
-import { ETH_PRICE_TABLE } from '../constants';
+import { ETH_PRICE_TABLE } from '@/constants';
 
 @Entity(ETH_PRICE_TABLE)
 export class EthPrice {

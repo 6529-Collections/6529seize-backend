@@ -7,7 +7,7 @@ import {
   MEMES_DEPLOYER,
   NULL_ADDRESS,
   PUNK_6529
-} from '../constants';
+} from '@/constants';
 import { Transaction } from '../entities/ITransaction';
 import {
   fetchAllSeasons,

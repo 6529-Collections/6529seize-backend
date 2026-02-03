@@ -1,5 +1,5 @@
+import { MEMES_CLAIMS_TABLE } from '@/constants';
 import { Column, Entity, PrimaryColumn } from 'typeorm';
-import { MEMES_CLAIMS_TABLE } from '../constants';
 
 @Entity(MEMES_CLAIMS_TABLE)
 export class MemeClaimEntity {

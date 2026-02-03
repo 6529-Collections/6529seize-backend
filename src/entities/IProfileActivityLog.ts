@@ -1,5 +1,5 @@
 import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
-import { PROFILES_ACTIVITY_LOGS_TABLE } from '../constants';
+import { PROFILES_ACTIVITY_LOGS_TABLE } from '@/constants';
 
 @Entity(PROFILES_ACTIVITY_LOGS_TABLE)
 @Index(['profile_id', 'additional_data_1', 'type', 'created_at'])

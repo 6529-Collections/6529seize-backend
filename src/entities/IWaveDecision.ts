@@ -2,7 +2,7 @@ import { Column, Entity, PrimaryColumn } from 'typeorm';
 import {
   WAVES_DECISION_WINNER_DROPS_TABLE,
   WAVES_DECISIONS_TABLE
-} from '../constants';
+} from '@/constants';
 import {
   WaveOutcomeCredit,
   WaveOutcomeSubType,

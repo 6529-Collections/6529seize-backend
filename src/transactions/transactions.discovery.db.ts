@@ -1,5 +1,5 @@
 import { dbSupplier, LazyDbAccessCompatibleService } from '../sql-executor';
-import { TRANSACTIONS_TABLE } from '../constants';
+import { TRANSACTIONS_TABLE } from '@/constants';
 import { Transaction } from '../entities/ITransaction';
 
 export class TransactionsDiscoveryDb extends LazyDbAccessCompatibleService {

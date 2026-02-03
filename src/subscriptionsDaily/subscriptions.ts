@@ -11,7 +11,7 @@ import {
   SUBSCRIPTIONS_NFTS_FINAL_TABLE,
   SUBSCRIPTIONS_NFTS_TABLE,
   SUBSCRIPTIONS_REDEEMED_TABLE
-} from '../constants';
+} from '@/constants';
 import {
   fetchAllProfiles,
   fetchWalletConsolidationKeysViewForWallet,

@@ -4,7 +4,7 @@ import {
   LazyDbAccessCompatibleService
 } from '../sql-executor';
 import { NewActivityEvent } from './new-activity-event';
-import { ACTIVITY_EVENTS_TABLE } from '../constants';
+import { ACTIVITY_EVENTS_TABLE } from '@/constants';
 import { Time, Timer } from '../time';
 import {
   ActivityEventAction,

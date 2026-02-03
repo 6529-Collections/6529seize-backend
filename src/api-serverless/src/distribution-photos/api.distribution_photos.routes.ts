@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import * as Joi from 'joi';
 import { invalidateCloudFront } from '../../../cloudfront';
-import { CLOUDFRONT_DISTRIBUTION } from '../../../constants';
+import { CLOUDFRONT_DISTRIBUTION } from '@/constants';
 import { BadRequestException, ForbiddenException } from '../../../exceptions';
 import { numbers } from '../../../numbers';
 import { evictKeyFromRedisCache } from '../../../redis';

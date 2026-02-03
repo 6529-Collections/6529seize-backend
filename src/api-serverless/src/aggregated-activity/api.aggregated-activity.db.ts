@@ -9,7 +9,7 @@ import {
   CONSOLIDATED_WALLETS_TDH_TABLE,
   IDENTITIES_TABLE,
   MANIFOLD
-} from '../../../constants';
+} from '@/constants';
 import { fetchPaginated } from '../../../db-api';
 import { calculateLevel } from '../../../profiles/profile-level';
 import { MetricsCollector, MetricsContent } from '../tdh/api.tdh.db';

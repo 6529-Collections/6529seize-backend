@@ -1,5 +1,5 @@
 import { equalIgnoreCase } from './strings';
-import { CONSOLIDATIONS_LIMIT } from './constants';
+import { CONSOLIDATIONS_LIMIT } from '@/constants';
 import { Consolidation } from './entities/IDelegation';
 
 export class ConsolidationTools {

@@ -1,5 +1,5 @@
 import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
-import { DROP_REAL_VOTE_IN_TIME_TABLE } from '../constants';
+import { DROP_REAL_VOTE_IN_TIME_TABLE } from '@/constants';
 
 @Index('drop_real_vote_in_time_drop_id_timestamp_idx', ['drop_id', 'timestamp'])
 @Entity(DROP_REAL_VOTE_IN_TIME_TABLE)

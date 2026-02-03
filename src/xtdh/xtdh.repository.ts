@@ -17,7 +17,7 @@ import {
   XTDH_STATS_META_TABLE,
   XTDH_TOKEN_GRANT_STATS_TABLE_PREFIX,
   XTDH_TOKEN_STATS_TABLE_PREFIX
-} from '../constants';
+} from '@/constants';
 import { Logger } from '../logging';
 import { env } from '../env';
 import { Time } from '../time';

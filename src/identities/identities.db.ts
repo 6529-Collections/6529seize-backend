@@ -18,7 +18,7 @@ import {
   WALLETS_TDH_TABLE,
   WAVES_TABLE,
   X_TDH_COEFFICIENT
-} from '../constants';
+} from '@/constants';
 import { Profile, ProfileClassification } from '../entities/IProfile';
 import { AddressConsolidationKey } from '../entities/IAddressConsolidationKey';
 import { randomUUID } from 'crypto';

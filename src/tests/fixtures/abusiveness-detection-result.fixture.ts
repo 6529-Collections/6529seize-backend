@@ -1,5 +1,5 @@
 import { Seed } from '../_setup/seed';
-import { ABUSIVENESS_DETECTION_RESULTS_TABLE } from '../../constants';
+import { ABUSIVENESS_DETECTION_RESULTS_TABLE } from '@/constants';
 import { AbusivenessDetectionResult } from '../../entities/IAbusivenessDetectionResult';
 import { Time } from '../../time';
 

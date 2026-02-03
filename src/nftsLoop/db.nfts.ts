@@ -1,5 +1,5 @@
-import { MEMES_CONTRACT, NFTS_TABLE } from '../constants';
-import { DbQueryOptions } from '../db-query.options';
+import { MEMES_CONTRACT, NFTS_TABLE } from '@/constants';
+import { DbQueryOptions } from '@/db-query.options';
 import { NFT } from '../entities/INFT';
 import { sqlExecutor } from '../sql-executor';
 

@@ -5,7 +5,7 @@ import {
   DELEGATIONS_TABLE,
   NFTDELEGATION_BLOCKS_TABLE,
   TRANSACTIONS_TABLE
-} from '../constants';
+} from '@/constants';
 import { sqlExecutor } from '../sql-executor';
 import converter from 'json-2-csv';
 import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';

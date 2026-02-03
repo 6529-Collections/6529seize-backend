@@ -1,6 +1,6 @@
 import { Request } from 'express';
 import * as Joi from 'joi';
-import { WALLET_REGEX } from '../../../constants';
+import { WALLET_REGEX } from '@/constants';
 import { NotFoundException } from '../../../exceptions';
 import { Timer } from '../../../time';
 import {

@@ -2,7 +2,7 @@ import { WaveCreditType, WaveEntity, WaveType } from '../../entities/IWave';
 import { Time } from '../../time';
 import { randomUUID } from 'node:crypto';
 import { Seed } from '../_setup/seed';
-import { WAVES_TABLE } from '../../constants';
+import { WAVES_TABLE } from '@/constants';
 
 type BaseWave = Omit<WaveEntity, 'serial_no' | 'id' | 'name'>;
 const aBaseWave: BaseWave = {

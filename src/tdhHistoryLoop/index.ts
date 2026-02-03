@@ -4,7 +4,7 @@ import { consolidationTools } from '../consolidation-tools';
 import {
   HISTORIC_CONSOLIDATED_WALLETS_TDH_TABLE,
   TDH_BLOCKS_TABLE
-} from '../constants';
+} from '@/constants';
 import { persistGlobalTDHHistory, persistTDHHistory } from '../db';
 import { ConsolidatedTDH, TDHBlock, TokenTDH } from '../entities/ITDH';
 import {

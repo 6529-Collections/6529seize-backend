@@ -3,7 +3,7 @@ import {
   MEMES_CONTRACT,
   USE_CASE_CONSOLIDATION,
   USE_CASE_SUB_DELEGATION
-} from '../constants';
+} from '@/constants';
 
 type AlchemyMock = {
   core: {

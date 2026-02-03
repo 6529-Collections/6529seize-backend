@@ -1,7 +1,7 @@
 import {
   CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE,
   MEMES_SEASONS_TABLE
-} from '../constants';
+} from '@/constants';
 import { getDataSource } from '../db';
 import {
   NFTFinalSubscription,

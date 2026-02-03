@@ -1,5 +1,5 @@
 import { LessThan, Repository } from 'typeorm';
-import { OWNERS_BALANCES_TABLE } from '../constants';
+import { OWNERS_BALANCES_TABLE } from '@/constants';
 import { getDataSource } from '../db';
 import {
   ConsolidatedOwnerBalances,

@@ -1,5 +1,5 @@
 import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
-import { XTDH_TOKEN_GRANT_STATS_TABLE_PREFIX } from '../constants';
+import { XTDH_TOKEN_GRANT_STATS_TABLE_PREFIX } from '@/constants';
 
 export class XTdhTokenGrantStatsEntity {
   @PrimaryColumn({ type: 'varchar', length: 100, nullable: false })

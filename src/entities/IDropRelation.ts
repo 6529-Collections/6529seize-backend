@@ -1,5 +1,5 @@
 import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
-import { DROP_RELATIONS_TABLE } from '../constants';
+import { DROP_RELATIONS_TABLE } from '@/constants';
 
 @Entity(DROP_RELATIONS_TABLE)
 export class DropRelationEntity {

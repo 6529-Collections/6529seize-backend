@@ -1,5 +1,5 @@
 import { Column, Entity, PrimaryColumn } from 'typeorm';
-import { WAVE_READER_METRICS_TABLE } from '../constants';
+import { WAVE_READER_METRICS_TABLE } from '@/constants';
 
 @Entity(WAVE_READER_METRICS_TABLE)
 export class WaveReaderMetricEntity {

@@ -1,4 +1,4 @@
-import { DROP_REACTIONS_TABLE } from '../../../constants';
+import { DROP_REACTIONS_TABLE } from '@/constants';
 import { RequestContext } from '../../../request.context';
 import {
   dbSupplier,

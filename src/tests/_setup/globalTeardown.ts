@@ -1,3 +1,4 @@
+import 'tsconfig-paths/register';
 import { disconnect } from '../../db-api';
 import { Logger } from '../../logging';
 

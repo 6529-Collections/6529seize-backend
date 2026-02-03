@@ -1,7 +1,7 @@
 import { ApiPageSortDirection } from '../../generated/models/ApiPageSortDirection';
 import { PageSortDirection } from '../../page-request';
 import * as Joi from 'joi';
-import { WALLET_REGEX } from '../../../../constants';
+import { WALLET_REGEX } from '@/constants';
 import { DEFAULT_PAGE_SIZE } from '../../api-constants';
 import { ApiXTdhGrantTargetChain } from '../../generated/models/ApiXTdhGrantTargetChain';
 import { ApiXTdhGrantUpdateRequest } from '../../generated/models/ApiXTdhGrantUpdateRequest';
