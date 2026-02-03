@@ -211,6 +211,10 @@ router.post(
   }
 );
 
+const HEX_COLOR_REGEX = /^#[0-9a-fA-F]{6}$/;
+const ALLOWED_BANNER_URL_PREFIX = 'https://d3lqz0a4bldqgf.cloudfront.net/';
+const BANNER_IMAGE_EXTENSION_REGEX = /\.(png|jpeg|jpg|gif)$/i;
+
 const ApiCreateOrUpdateProfileRequestSchema: Joi.ObjectSchema<ApiCreateOrUpdateProfileRequest> =
   Joi.object({
     handle: Joi.string()
@@ -232,8 +236,29 @@ const ApiCreateOrUpdateProfileRequestSchema: Joi.ObjectSchema<ApiCreateOrUpdateP
       .messages({
         'string.pattern.base': `Invalid username. Use 3-15 letters, numbers, or underscores.`
       }),
-    banner_1: Joi.string().optional(),
-    banner_2: Joi.string().optional(),
+    banner_1: Joi.string()
+      .optional()
+      .allow(null)
+      .custom((value, helpers) => {
+        if (value === null || value === undefined) {
+          return value;
+        }
+        if (HEX_COLOR_REGEX.test(value)) {
+          return value;
+        }
+        if (value.startsWith(ALLOWED_BANNER_URL_PREFIX)) {
+          if (!BANNER_IMAGE_EXTENSION_REGEX.test(value)) {
+            return helpers.message({
+              custom: `Banner URL must end with .png, .jpeg, .jpg, or .gif`
+            });
+          }
+          return value;
+        }
+        return helpers.message({
+          custom: `Banner must be either a hex color code (e.g., #0f3BAc) or an image URL starting with ${ALLOWED_BANNER_URL_PREFIX}`
+        });
+      }),
+    banner_2: Joi.string().optional().allow(null),
     website: Joi.string().uri().optional().messages({
       'string.uri': `Please enter a valid website link, starting with 'http://' or 'https://'.`
     }),
@@ -246,6 +271,39 @@ const ApiCreateOrUpdateProfileRequestSchema: Joi.ObjectSchema<ApiCreateOrUpdateP
       .regex(/^(?:ipfs:\/\/|https:\/\/d3lqz0a4bldqgf).+$/)
       .allow(null)
       .default(null)
+  }).custom((value, helpers) => {
+    const { banner_1, banner_2 } = value;
+
+    if (banner_1 === null || banner_1 === undefined) {
+      if (banner_2 !== null && banner_2 !== undefined) {
+        return helpers.message({
+          custom: `Banner 2 must be null or missing when banner 1 is not set`
+        });
+      }
+      return value;
+    }
+
+    if (HEX_COLOR_REGEX.test(banner_1)) {
+      if (banner_2 === null || banner_2 === undefined) {
+        return helpers.message({
+          custom: `Banner 2 is required when banner 1 is a hex color`
+        });
+      }
+      if (!HEX_COLOR_REGEX.test(banner_2)) {
+        return helpers.message({
+          custom: `Banner 2 must be a valid hex color code (e.g., #0f3BAc) when banner 1 is a hex color`
+        });
+      }
+      return value;
+    }
+
+    if (banner_2 !== null && banner_2 !== undefined) {
+      return helpers.message({
+        custom: `Banner 2 must be null or missing when banner 1 is a URL`
+      });
+    }
+
+    return value;
   });
 
 interface ApiUploadProfilePictureRequest {
