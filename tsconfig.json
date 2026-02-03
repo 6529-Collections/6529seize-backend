@@ -20,10 +20,12 @@
     "strictPropertyInitialization": false
   },
   "exclude": [
+    "build",
     "jest.config",
     "serverless-config/**/*",
     "ffmpeg-installer.js",
     "**/*.js",
+    "**/*.mjs",
     "eslint.config.*"
   ]
 }
