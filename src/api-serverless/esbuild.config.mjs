@@ -1,9 +1,9 @@
 import * as esbuild from 'esbuild';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { TsconfigPathsPlugin } from '@esbuild-plugins/tsconfig-paths';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const repoSrc = path.resolve(__dirname, '..');
 
 await esbuild.build({
   entryPoints: ['src/handler.ts'],
@@ -12,7 +12,9 @@ await esbuild.build({
   platform: 'node',
   target: 'es2020',
   outfile: 'dist/index.js',
-  alias: {
-    '@/constants': path.join(repoSrc, 'constants')
-  }
+  plugins: [
+    TsconfigPathsPlugin({
+      tsconfig: path.join(__dirname, 'tsconfig.paths.json')
+    })
+  ]
 });

@@ -43,6 +43,7 @@ import {
   LazyDbAccessCompatibleService
 } from '../../../sql-executor';
 import { Time } from '../../../time';
+import { wavesOutcomesDb } from '@/waves/waves-outcomes.db';
 import {
   userGroupsService,
   UserGroupsService
@@ -1779,62 +1780,14 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     waveIds: string[],
     ctx: RequestContext
   ): Promise<Record<string, WaveOutcomeEntity[]>> {
-    try {
-      ctx.timer?.start(`${this.constructor.name}->getWaveOutcomes`);
-      if (!waveIds.length) {
-        return {};
-      }
-      const dbResult = await this.db.execute<WaveOutcomeEntity>(
-        `select * from ${WAVE_OUTCOMES_TABLE} where wave_id in (:waveIds)`,
-        { waveIds },
-        { wrappedConnection: ctx.connection }
-      );
-      return dbResult.reduce(
-        (acc, it) => {
-          if (!acc[it.wave_id]) {
-            acc[it.wave_id] = [];
-          }
-          acc[it.wave_id].push(it);
-          return acc;
-        },
-        {} as Record<string, WaveOutcomeEntity[]>
-      );
-    } finally {
-      ctx.timer?.stop(`${this.constructor.name}->getWaveOutcomes`);
-    }
+    return wavesOutcomesDb.getWavesOutcomes(waveIds, ctx);
   }
 
   async getWavesOutcomesDistributionItems(
     waveIds: string[],
     ctx: RequestContext
   ): Promise<Record<string, WaveOutcomeDistributionItemEntity[]>> {
-    try {
-      ctx.timer?.start(
-        `${this.constructor.name}->getWavesOutcomesDistributionItems`
-      );
-      if (!waveIds.length) {
-        return {};
-      }
-      const dbResult = await this.db.execute<WaveOutcomeDistributionItemEntity>(
-        `select * from ${WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE} where wave_id in (:waveIds)`,
-        { waveIds },
-        { wrappedConnection: ctx.connection }
-      );
-      return dbResult.reduce(
-        (acc, it) => {
-          if (!acc[it.wave_id]) {
-            acc[it.wave_id] = [];
-          }
-          acc[it.wave_id].push(it);
-          return acc;
-        },
-        {} as Record<string, WaveOutcomeDistributionItemEntity[]>
-      );
-    } finally {
-      ctx.timer?.stop(
-        `${this.constructor.name}->getWavesOutcomesDistributionItems`
-      );
-    }
+    return wavesOutcomesDb.getWavesOutcomesDistributionItems(waveIds, ctx);
   }
 
   async findOutcomes(

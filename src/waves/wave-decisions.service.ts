@@ -24,7 +24,7 @@ import { DropsDb, dropsDb } from '../drops/drops.db';
 import { DropRealVoterVoteInTimeEntityWithoutId } from '../entities/IDropRealVoterVoteInTime';
 import { WinnerDropVoterVoteEntity } from '../entities/IWinnerDropVoterVote';
 import { collections } from '../collections';
-import { wavesApiDb } from '../api-serverless/src/waves/waves.api.db';
+import { wavesOutcomesDb } from './waves-outcomes.db';
 import { env } from '@/env';
 import { deployerDropper, DeployerDropper } from '@/deployer-dropper';
 
@@ -66,9 +66,13 @@ export class WaveDecisionsService {
     const waveIds = collections.distinct(
       wavesLatestDecisionTimesWithStrategies.map((it) => it.wave_id)
     );
-    const outcomes = await wavesApiDb.getWavesOutcomes(waveIds, { timer });
+    const outcomes = await wavesOutcomesDb.getWavesOutcomes(waveIds, {
+      timer
+    });
     const distributionItems =
-      await wavesApiDb.getWavesOutcomesDistributionItems(waveIds, { timer });
+      await wavesOutcomesDb.getWavesOutcomesDistributionItems(waveIds, {
+        timer
+      });
     const withOutcomes = wavesLatestDecisionTimesWithStrategies.map((it) => {
       const outcomeEntities = outcomes[it.wave_id] ?? [];
       const distributionEntities = distributionItems[it.wave_id] ?? [];
