@@ -107,9 +107,9 @@ export class UserNotifier {
     }: IdentityMentionNotificationData,
     visibility_group_id: string | null,
     connection: ConnectionWrapper<any>,
-    timer: Timer
+    timer?: Timer
   ) {
-    timer.start('userNotifier->notifyOfIdentityMention');
+    timer?.start('userNotifier->notifyOfIdentityMention');
     if (mentioned_identity_id !== mentioner_identity_id) {
       await this.identityNotificationsDb.insertNotification(
         {
@@ -127,7 +127,7 @@ export class UserNotifier {
         connection
       );
     }
-    timer.stop('userNotifier->notifyOfIdentityMention');
+    timer?.stop('userNotifier->notifyOfIdentityMention');
   }
 
   public async notifyOfDropVote(
@@ -221,9 +221,9 @@ export class UserNotifier {
     }: DropReplyNotificationData,
     visibility_group_id: string | null,
     connection: ConnectionWrapper<any>,
-    timer: Timer
+    timer?: Timer
   ) {
-    timer.start('userNotifier->notifyOfDropReply');
+    timer?.start('userNotifier->notifyOfDropReply');
     if (reply_drop_author_id !== replied_drop_author_id) {
       await this.identityNotificationsDb.insertNotification(
         {
@@ -241,7 +241,7 @@ export class UserNotifier {
         connection
       );
     }
-    timer.stop('userNotifier->notifyOfDropReply');
+    timer?.stop('userNotifier->notifyOfDropReply');
   }
 
   public async notifyOfDropQuote(
@@ -256,9 +256,9 @@ export class UserNotifier {
     }: DropQuoteNotificationData,
     visibility_group_id: string | null,
     connection: ConnectionWrapper<any>,
-    timer: Timer
+    timer?: Timer
   ) {
-    timer.start('userNotifier->notifyOfDropQuote');
+    timer?.start('userNotifier->notifyOfDropQuote');
     if (quote_drop_author_id !== quoted_drop_author_id) {
       await this.identityNotificationsDb.insertNotification(
         {
@@ -276,7 +276,7 @@ export class UserNotifier {
         connection
       );
     }
-    timer.stop('userNotifier->notifyOfDropQuote');
+    timer?.stop('userNotifier->notifyOfDropQuote');
   }
 
   public async notifyOfWaveCreated(

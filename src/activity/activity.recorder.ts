@@ -46,9 +46,9 @@ export class ActivityRecorder extends LazyDbAccessCompatibleService {
       } | null;
     },
     connection: ConnectionWrapper<any>,
-    timer: Timer
+    timer?: Timer
   ) {
-    timer.start('activityRecorder->recordDropCreated');
+    timer?.start('activityRecorder->recordDropCreated');
     const events: NewActivityEvent[] = [
       {
         target_id: creator_id,
@@ -86,7 +86,7 @@ export class ActivityRecorder extends LazyDbAccessCompatibleService {
       });
     }
     await this.recordEvents(events, connection);
-    timer.stop('activityRecorder->recordDropCreated');
+    timer?.stop('activityRecorder->recordDropCreated');
   }
 
   async recordWaveCreated(
