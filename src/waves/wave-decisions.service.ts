@@ -443,7 +443,7 @@ export class WaveDecisionsService {
         const dropUrl = waveDropUrlTemplate
           .replace('{waveId}', mainStageWaveId)
           .replace('{dropId}', dropId);
-        const message = `🎉🎉🎉\nWe have a new Main Stage winner!\n${dropUrl}\nCongratulations${winnerHandle ? ` to @[${winnerHandle}` : ``}]!\n🎉🎉🎉`;
+        const message = `🏆 New Main Stage Winner!\n${dropUrl}${winnerHandle ? `\nGG @[${winnerHandle}] :sgt_pinched_fingers:` : ``}]`;
         await this.deployerDropper.drop(
           {
             message,
