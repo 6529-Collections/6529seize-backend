@@ -18,8 +18,11 @@ import {
 } from '../entities/IWaveDecision';
 import { WinnerDropVoterVoteEntity } from '../entities/IWinnerDropVoterVote';
 import { env } from '../env';
+import {
+  memeClaimsService,
+  MemeClaimsService
+} from '@/meme-claims/meme-claims.service';
 import { Logger } from '../logging';
-import { getMaxMemeId } from '../nftsLoop/db.nfts';
 import { RequestContext } from '../request.context';
 import { Time, Timer } from '../time';
 import { waveDecisionsDb, WaveDecisionsDb } from './wave-decisions.db';
@@ -50,7 +53,8 @@ export class WaveDecisionsService {
     private readonly waveDecisionsDb: WaveDecisionsDb,
     private readonly waveLeaderboardCalculationService: WaveLeaderboardCalculationService,
     private readonly dropVotingDb: DropVotingDb,
-    private readonly dropsDb: DropsDb
+    private readonly dropsDb: DropsDb,
+    private readonly memeClaimsService: MemeClaimsService
   ) {}
 
   public async createMissingDecisionsForAllWaves(timer: Timer): Promise<void> {
@@ -326,14 +330,7 @@ export class WaveDecisionsService {
       winnerDrops.length > 0
     ) {
       const winner = winnerDrops[0];
-      const nextMemeId =
-        (await getMaxMemeId(false, {
-          wrappedConnection: ctx.connection
-        })) + 1;
-      await this.waveDecisionsDb.createMemeClaim(
-        [{ drop_id: winner.drop_id, meme_id: nextMemeId }],
-        ctx
-      );
+      await this.memeClaimsService.createClaimForDrop(winner.drop_id, ctx);
     }
     await this.waveDecisionsDb.deleteDropsRanks(winnerDropIds, ctx);
     await this.dropsDb.resyncParticipatoryDropCountsForWaves([waveId], ctx);
@@ -441,5 +438,6 @@ export const waveDecisionsService = new WaveDecisionsService(
   waveDecisionsDb,
   waveLeaderboardCalculationService,
   dropVotingDb,
-  dropsDb
+  dropsDb,
+  memeClaimsService
 );

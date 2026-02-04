@@ -14,6 +14,8 @@ export { Consolidation, Delegation, NFTDelegationBlock } from './IDelegation';
 export { DeletedDropEntity } from './IDeletedDrop';
 export { Distribution, DistributionNormalized } from './IDistribution';
 export { DistributionPhoto } from './IDistributionPhoto';
+export { MintingMerkleProof } from './IMintingMerkleProof';
+export { MintingMerkleRoot } from './IMintingMerkleRoot';
 export {
   DropBoostEntity,
   DropEntity,

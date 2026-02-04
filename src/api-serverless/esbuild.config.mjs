@@ -13,6 +13,10 @@ await esbuild.build({
   target: 'es2020',
   outfile: 'dist/index.js',
   alias: {
-    '@/constants': path.join(repoSrc, 'constants')
+    '@/constants': path.join(repoSrc, 'constants'),
+    '@/meme-claims': path.join(repoSrc, 'meme-claims'),
+    '@/entities': path.join(repoSrc, 'entities'),
+    '@/numbers': path.join(repoSrc, 'numbers'),
+    '@/strings': path.join(repoSrc, 'strings')
   }
 });

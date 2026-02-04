@@ -1875,6 +1875,188 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiIdentitySubscriptionActions"
+  /memes-minting/proofs/{merkle_root}:
+    get:
+      tags:
+        - Memes minting
+      summary: Get merkle proofs
+      description: >
+        Returns allowlist merkle proofs for the given merkle root. If address
+        query param is provided, returns proofs for that address only
+        (MemesMintingProofsResponse). If address is omitted, returns proofs for
+        all addresses (MemesMintingProofsByAddressResponse).
+      operationId: getMemesMintingProofs
+      parameters:
+        - name: merkle_root
+          in: path
+          required: true
+          description: 0x-prefixed 66-character hex merkle root
+          schema:
+            type: string
+            pattern: ^0x[a-fA-F0-9]{64}$
+        - name: address
+          in: query
+          required: false
+          description: Wallet address. If omitted, returns proofs for all addresses.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/MemesMintingProofsResponse"
+                  - $ref: "#/components/schemas/MemesMintingProofsByAddressResponse"
+        "400":
+          description: Invalid request (missing or invalid parameters)
+        "404":
+          description: No proofs found for the given merkle_root (and address if provided)
+  /memes-minting/roots/{contract}/{card_id}:
+    get:
+      tags:
+        - Memes minting
+      summary: Get merkle roots for a token
+      description: Returns merkle roots (one per phase) for the given contract and card.
+      operationId: getMemesMintingRoots
+      parameters:
+        - name: contract
+          in: path
+          required: true
+          description: Contract address
+          schema:
+            type: string
+        - name: card_id
+          in: path
+          required: true
+          description: Card (token) ID
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemesMintingRootsResponse"
+        "400":
+          description: Invalid request (missing or invalid parameters)
+  /memes-minting/claims:
+    get:
+      tags:
+        - Memes minting
+      summary: Get meme claim(s) (admin only)
+      description: >
+        Returns one claim by meme_id query param, or all claims if no query.
+        Only DISTRIBUTION_ADMIN_WALLETS can call this.
+      operationId: getMemesMintingClaims
+      parameters:
+        - name: meme_id
+          in: query
+          required: false
+          description: If provided, returns the claim with this meme_id.
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemesMintingClaimsResponse"
+        "403":
+          description: Forbidden - only distribution admins can access
+  /memes-minting/claims/{drop_id}:
+    get:
+      tags:
+        - Memes minting
+      summary: Get meme claim by drop_id (admin only)
+      description: >-
+        Returns the meme claim for the given drop_id. Only
+        DISTRIBUTION_ADMIN_WALLETS can call this.
+      operationId: getMemesMintingClaimByDropId
+      parameters:
+        - name: drop_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemeClaim"
+        "403":
+          description: Forbidden - only distribution admins can access
+        "404":
+          description: Claim not found
+    patch:
+      tags:
+        - Memes minting
+      summary: Update meme claim (admin only)
+      description: >
+        Partial update. Any field can be provided; only provided fields are
+        updated. Only DISTRIBUTION_ADMIN_WALLETS can call this.
+      operationId: patchMemesMintingClaim
+      parameters:
+        - name: drop_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MemeClaimUpdateRequest"
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemeClaim"
+        "403":
+          description: Forbidden - only distribution admins can access
+        "404":
+          description: Claim not found
+  /memes-minting/claims/{drop_id}/arweave-upload:
+    post:
+      tags:
+        - Memes minting
+      summary: Upload meme claim metadata and media to Arweave (admin only)
+      description: >-
+        Uploads claim metadata and media (image, and animation if not HTML) to
+        Arweave. Requires claim to have an image URL. If already synced returns
+        409. Only DISTRIBUTION_ADMIN_WALLETS can call this.
+      operationId: postMemesMintingClaimArweaveUpload
+      parameters:
+        - name: drop_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemeClaim"
+        "400":
+          description: Bad Request - claim has no image URL or edition_size not set
+        "403":
+          description: Forbidden - only distribution admins can access
+        "404":
+          description: Claim not found
+        "409":
+          description: Conflict - claim already synced to Arweave
   /nft-owners:
     get:
       tags:
@@ -6353,6 +6535,19 @@ components:
         media_url:
           type: string
           example: https://example.com/final/image.png
+    ApiCreateMentionedWave:
+      type: object
+      required:
+        - wave_name_in_content
+        - wave_id
+      properties:
+        wave_name_in_content:
+          type: string
+          minLength: 1
+        wave_id:
+          type: string
+          maxLength: 100
+          minLength: 1
     ApiCreateNewProfileProxy:
       type: object
       required:
@@ -6927,6 +7122,17 @@ components:
           type: boolean
         bookmarked:
           type: boolean
+    ApiDropId:
+      type: object
+      required:
+        - id
+        - serial_no
+      properties:
+        id:
+          type: string
+        serial_no:
+          type: integer
+          format: int64
     ApiDropMedia:
       type: object
       required:
@@ -6955,43 +7161,6 @@ components:
           type: string
           maxLength: 100
           nullable: true
-    ApiDropId:
-      type: object
-      required:
-        - id
-        - serial_no
-      properties:
-        id:
-          type: string
-        serial_no:
-          type: integer
-          format: int64
-    ApiMentionedWave:
-      type: object
-      required:
-        - wave_name_in_content
-        - wave_id
-      properties:
-        wave_name_in_content:
-          type: string
-          minLength: 1
-        wave_id:
-          type: string
-        wave:
-          $ref: "#/components/schemas/ApiWaveMin"
-    ApiCreateMentionedWave:
-      type: object
-      required:
-        - wave_name_in_content
-        - wave_id
-      properties:
-        wave_name_in_content:
-          type: string
-          minLength: 1
-        wave_id:
-          type: string
-          maxLength: 100
-          minLength: 1
     ApiDropMetadata:
       type: object
       required:
@@ -7765,6 +7934,19 @@ components:
         first_unread_drop_serial_no:
           type: integer
           nullable: true
+    ApiMentionedWave:
+      type: object
+      required:
+        - wave_name_in_content
+        - wave_id
+      properties:
+        wave_name_in_content:
+          type: string
+          minLength: 1
+        wave_id:
+          type: string
+        wave:
+          $ref: "#/components/schemas/ApiWaveMin"
     ApiMintMetrics:
       type: object
       required:
@@ -10337,6 +10519,261 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/DistributionPhoto"
+    MemeClaim:
+      type: object
+      required:
+        - drop_id
+        - meme_id
+        - description
+        - name
+        - attributes
+      properties:
+        drop_id:
+          type: string
+        meme_id:
+          type: integer
+          format: int64
+        image_location:
+          type: string
+          nullable: true
+        animation_location:
+          type: string
+          nullable: true
+        metadata_location:
+          type: string
+          nullable: true
+        arweave_synced_at:
+          type: integer
+          format: int64
+          nullable: true
+        edition_size:
+          type: integer
+          format: int32
+          minimum: 1
+          nullable: true
+        description:
+          type: string
+        name:
+          type: string
+        image:
+          type: string
+          nullable: true
+        attributes:
+          type: array
+          items:
+            $ref: "#/components/schemas/MemeClaimAttribute"
+        image_details:
+          $ref: "#/components/schemas/MemeClaimImageDetails"
+          nullable: true
+        animation_url:
+          type: string
+          nullable: true
+        animation_details:
+          oneOf:
+            - $ref: "#/components/schemas/MemeClaimAnimationDetailsVideo"
+            - $ref: "#/components/schemas/MemeClaimAnimationDetailsHtml"
+            - $ref: "#/components/schemas/MemeClaimAnimationDetailsGlb"
+          nullable: true
+    MemeClaimAnimationDetailsHtml:
+      type: object
+      required:
+        - format
+      properties:
+        format:
+          type: string
+          enum:
+            - HTML
+    MemeClaimAnimationDetailsVideo:
+      type: object
+      required:
+        - bytes
+        - format
+        - duration
+        - sha256
+        - width
+        - height
+        - codecs
+      properties:
+        bytes:
+          type: integer
+          format: int64
+        format:
+          type: string
+        duration:
+          type: number
+        sha256:
+          type: string
+        width:
+          type: integer
+          format: int32
+        height:
+          type: integer
+          format: int32
+        codecs:
+          type: array
+          items:
+            type: string
+    MemeClaimAnimationDetailsGlb:
+      type: object
+      required:
+        - bytes
+        - format
+        - sha256
+      properties:
+        bytes:
+          type: integer
+          format: int64
+        format:
+          type: string
+          enum:
+            - GLB
+        sha256:
+          type: string
+    MemeClaimAttribute:
+      type: object
+      required:
+        - trait_type
+        - value
+      properties:
+        trait_type:
+          type: string
+        value:
+          oneOf:
+            - type: string
+            - type: number
+        display_type:
+          type: string
+        max_value:
+          type: number
+    MemeClaimImageDetails:
+      type: object
+      required:
+        - bytes
+        - format
+        - sha256
+        - width
+        - height
+      properties:
+        bytes:
+          type: integer
+          format: int64
+        format:
+          type: string
+        sha256:
+          type: string
+        width:
+          type: integer
+          format: int32
+        height:
+          type: integer
+          format: int32
+    MemeClaimUpdateRequest:
+      type: object
+      properties:
+        image_location:
+          type: string
+          nullable: true
+        animation_location:
+          type: string
+          nullable: true
+        metadata_location:
+          type: string
+          nullable: true
+        edition_size:
+          type: integer
+          format: int32
+          minimum: 1
+          nullable: true
+        description:
+          type: string
+        name:
+          type: string
+        image:
+          type: string
+          nullable: true
+        attributes:
+          type: array
+          items:
+            $ref: "#/components/schemas/MemeClaimAttribute"
+        animation_url:
+          type: string
+          nullable: true
+    MemesMintingClaimsResponse:
+      type: object
+      required:
+        - claims
+      properties:
+        claims:
+          type: array
+          items:
+            $ref: "#/components/schemas/MemeClaim"
+    MemesMintingProofItem:
+      type: object
+      required:
+        - merkle_proof
+        - value
+      properties:
+        merkle_proof:
+          type: array
+          items:
+            type: string
+          description: Hex merkle proof hashes
+        value:
+          type: integer
+          format: int64
+          description: Spot index (value) for this proof
+    MemesMintingProofsByAddressEntry:
+      type: object
+      required:
+        - address
+        - proofs
+      properties:
+        address:
+          type: string
+          description: Wallet address
+        proofs:
+          type: array
+          items:
+            $ref: "#/components/schemas/MemesMintingProofItem"
+    MemesMintingProofsByAddressResponse:
+      type: object
+      required:
+        - proofs_by_address
+      properties:
+        proofs_by_address:
+          type: array
+          items:
+            $ref: "#/components/schemas/MemesMintingProofsByAddressEntry"
+    MemesMintingProofsResponse:
+      type: object
+      required:
+        - proofs
+      properties:
+        proofs:
+          type: array
+          items:
+            $ref: "#/components/schemas/MemesMintingProofItem"
+    MemesMintingRootItem:
+      type: object
+      required:
+        - phase
+        - merkle_root
+      properties:
+        phase:
+          type: string
+          description: Phase name
+        merkle_root:
+          type: string
+          description: 0x-prefixed hex merkle root
+    MemesMintingRootsResponse:
+      type: object
+      required:
+        - roots
+      properties:
+        roots:
+          type: array
+          items:
+            $ref: "#/components/schemas/MemesMintingRootItem"
     NFTFinalSubscription:
       type: object
       required:

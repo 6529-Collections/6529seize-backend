@@ -12,6 +12,7 @@ import communityMetricsRoutes from './community-metrics/community-metrics.routes
 import delegationsRoutes from './delegations/delegations.routes';
 import distributionPhotosRoutes from './distribution-photos/api.distribution_photos.routes';
 import distributionsRoutes from './distributions/api.distributions.routes';
+import memesMintingRoutes from './memes-minting/api.memes-minting.routes';
 import bookmarkedDropsRoutes from './drops/bookmarked-drops.routes';
 import boostedDropsRoutes from './drops/boosted-drops.routes';
 import dropIdsRoutes from './drops/drop-ids.routes';
@@ -1012,6 +1013,7 @@ async function initializeApp() {
   apiRouter.use(`/delegations`, delegationsRoutes);
   apiRouter.use(`/distribution_photos`, distributionPhotosRoutes);
   apiRouter.use(``, distributionsRoutes);
+  apiRouter.use(`/memes-minting`, memesMintingRoutes);
   apiRouter.use(`/waves`, wavesRoutes);
   apiRouter.use(`/public/waves`, publicWavesRoutes);
   apiRouter.use(`/policies`, policiesRoutes);

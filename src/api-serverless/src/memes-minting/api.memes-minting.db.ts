@@ -1,0 +1,213 @@
+import {
+  MEMES_CLAIMS_TABLE,
+  MINTING_MERKLE_PROOFS_TABLE,
+  MINTING_MERKLE_ROOTS_TABLE
+} from '@/constants';
+import { sqlExecutor } from '@/sql-executor';
+import type { AllowlistMerkleProofItem } from './allowlist-merkle';
+
+export async function deleteMintingMerkleForPhase(
+  contract: string,
+  cardId: number,
+  phase: string,
+  wrappedConnection?: any
+): Promise<void> {
+  const opts = wrappedConnection ? { wrappedConnection } : {};
+  const contractLower = contract.toLowerCase();
+  const roots = await sqlExecutor.execute<{ merkle_root: string }>(
+    `SELECT merkle_root FROM ${MINTING_MERKLE_ROOTS_TABLE} WHERE contract = :contract AND card_id = :cardId AND phase = :phase`,
+    { contract: contractLower, cardId, phase },
+    opts
+  );
+  if (roots.length > 0) {
+    const merkleRoot = roots[0].merkle_root;
+    await sqlExecutor.execute(
+      `DELETE FROM ${MINTING_MERKLE_PROOFS_TABLE} WHERE merkle_root = :merkleRoot`,
+      { merkleRoot },
+      opts
+    );
+  }
+  await sqlExecutor.execute(
+    `DELETE FROM ${MINTING_MERKLE_ROOTS_TABLE} WHERE contract = :contract AND card_id = :cardId AND phase = :phase`,
+    { contract: contractLower, cardId, phase },
+    opts
+  );
+}
+
+export async function insertMintingMerkleRoot(
+  contract: string,
+  cardId: number,
+  phase: string,
+  merkleRoot: string,
+  wrappedConnection?: any
+): Promise<void> {
+  await sqlExecutor.execute(
+    `INSERT INTO ${MINTING_MERKLE_ROOTS_TABLE} (card_id, contract, phase, merkle_root) VALUES (:cardId, :contract, :phase, :merkleRoot)`,
+    {
+      cardId,
+      contract: contract.toLowerCase(),
+      phase,
+      merkleRoot
+    },
+    wrappedConnection ? { wrappedConnection } : {}
+  );
+}
+
+export async function insertMintingMerkleProofs(
+  merkleRoot: string,
+  proofsByAddress: Record<string, AllowlistMerkleProofItem[]>,
+  wrappedConnection?: any
+): Promise<void> {
+  const entries = Object.entries(proofsByAddress);
+  if (entries.length === 0) return;
+  const opts = wrappedConnection ? { wrappedConnection } : {};
+  const params: Record<string, unknown> = {};
+  const placeholders = entries
+    .map((_, i) => `(:merkle_root_${i}, :address_${i}, :proofs_${i})`)
+    .join(', ');
+  entries.forEach(([address, proofs], i) => {
+    params[`merkle_root_${i}`] = merkleRoot;
+    params[`address_${i}`] = address.toLowerCase();
+    params[`proofs_${i}`] = JSON.stringify(proofs);
+  });
+  await sqlExecutor.execute(
+    `INSERT INTO ${MINTING_MERKLE_PROOFS_TABLE} (merkle_root, address, proofs) VALUES ${placeholders}`,
+    params,
+    opts
+  );
+}
+
+export interface MintingMerkleProofRow {
+  proofs: string;
+}
+
+export async function fetchMintingMerkleProofs(
+  merkleRoot: string,
+  address: string
+): Promise<AllowlistMerkleProofItem[] | null> {
+  const addressLower = address.toLowerCase();
+  const rows = await sqlExecutor.execute<MintingMerkleProofRow>(
+    `SELECT proofs FROM ${MINTING_MERKLE_PROOFS_TABLE} WHERE merkle_root = :merkleRoot AND address = :address LIMIT 1`,
+    { merkleRoot, address: addressLower }
+  );
+  if (rows.length === 0) return null;
+  return JSON.parse(rows[0].proofs) as AllowlistMerkleProofItem[];
+}
+
+export interface MintingMerkleProofByAddressRow {
+  address: string;
+  proofs: string;
+}
+
+export async function fetchAllMintingMerkleProofsForRoot(
+  merkleRoot: string
+): Promise<{ address: string; proofs: AllowlistMerkleProofItem[] }[]> {
+  const rows = await sqlExecutor.execute<MintingMerkleProofByAddressRow>(
+    `SELECT address, proofs FROM ${MINTING_MERKLE_PROOFS_TABLE} WHERE merkle_root = :merkleRoot ORDER BY address ASC`,
+    { merkleRoot }
+  );
+  return rows.map((r) => ({
+    address: r.address,
+    proofs: JSON.parse(r.proofs) as AllowlistMerkleProofItem[]
+  }));
+}
+
+export interface MintingMerkleRootRow {
+  phase: string;
+  merkle_root: string;
+}
+
+export async function fetchMintingMerkleRoots(
+  cardId: number,
+  contract: string
+): Promise<MintingMerkleRootRow[]> {
+  return sqlExecutor.execute<MintingMerkleRootRow>(
+    `SELECT phase, merkle_root FROM ${MINTING_MERKLE_ROOTS_TABLE} WHERE card_id = :cardId AND contract = :contract ORDER BY phase ASC`,
+    { cardId, contract: contract.toLowerCase() }
+  );
+}
+
+export interface MemeClaimRow {
+  drop_id: string;
+  meme_id: number;
+  image_location: string | null;
+  animation_location: string | null;
+  metadata_location: string | null;
+  arweave_synced_at: number | null;
+  edition_size: number | null;
+  description: string;
+  name: string;
+  image: string | null;
+  attributes: string;
+  image_details: string | null;
+  animation_url: string | null;
+  animation_details: string | null;
+}
+
+export async function fetchMemeClaimByDropId(
+  dropId: string
+): Promise<MemeClaimRow | null> {
+  const rows = await sqlExecutor.execute<MemeClaimRow>(
+    `SELECT drop_id, meme_id, image_location, animation_location, metadata_location, arweave_synced_at, edition_size, description, name, image, attributes, image_details, animation_url, animation_details FROM ${MEMES_CLAIMS_TABLE} WHERE drop_id = :dropId LIMIT 1`,
+    { dropId }
+  );
+  return rows.length > 0 ? rows[0] : null;
+}
+
+export async function fetchMemeClaimByMemeId(
+  memeId: number
+): Promise<MemeClaimRow | null> {
+  const rows = await sqlExecutor.execute<MemeClaimRow>(
+    `SELECT drop_id, meme_id, image_location, animation_location, metadata_location, arweave_synced_at, edition_size, description, name, image, attributes, image_details, animation_url, animation_details FROM ${MEMES_CLAIMS_TABLE} WHERE meme_id = :memeId LIMIT 1`,
+    { memeId }
+  );
+  return rows.length > 0 ? rows[0] : null;
+}
+
+export async function fetchAllMemeClaims(): Promise<MemeClaimRow[]> {
+  return sqlExecutor.execute<MemeClaimRow>(
+    `SELECT drop_id, meme_id, image_location, animation_location, metadata_location, arweave_synced_at, edition_size, description, name, image, attributes, image_details, animation_url, animation_details FROM ${MEMES_CLAIMS_TABLE} ORDER BY meme_id ASC`
+  );
+}
+
+export async function updateMemeClaim(
+  dropId: string,
+  updates: {
+    image_location?: string | null;
+    animation_location?: string | null;
+    metadata_location?: string | null;
+    arweave_synced_at?: number | null;
+    edition_size?: number | null;
+    description?: string;
+    name?: string;
+    image?: string | null;
+    attributes?: unknown;
+    image_details?: unknown;
+    animation_url?: string | null;
+    animation_details?: unknown;
+  }
+): Promise<void> {
+  const keys = Object.keys(updates) as (keyof typeof updates)[];
+  if (keys.length === 0) return;
+  const setClauses: string[] = [];
+  const params: Record<string, unknown> = { dropId };
+  for (const key of keys) {
+    const val = updates[key];
+    if (val === undefined) continue;
+    const col = key;
+    setClauses.push(`${col} = :${col}`);
+    params[col] =
+      col === 'attributes' ||
+      col === 'image_details' ||
+      col === 'animation_details'
+        ? JSON.stringify(val)
+        : col === 'arweave_synced_at' && val != null
+          ? Number(val)
+          : val;
+  }
+  if (setClauses.length === 0) return;
+  await sqlExecutor.execute(
+    `UPDATE ${MEMES_CLAIMS_TABLE} SET ${setClauses.join(', ')} WHERE drop_id = :dropId`,
+    params
+  );
+}

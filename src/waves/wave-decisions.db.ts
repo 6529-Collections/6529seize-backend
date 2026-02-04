@@ -3,7 +3,6 @@ import {
   DROP_RANK_TABLE,
   DROP_REAL_VOTE_IN_TIME_TABLE,
   DROPS_TABLE,
-  MEMES_CLAIMS_TABLE,
   WAVES_DECISION_PAUSES_TABLE,
   WAVES_DECISION_WINNER_DROPS_TABLE,
   WAVES_DECISIONS_TABLE,
@@ -83,38 +82,6 @@ export class WaveDecisionsDb extends LazyDbAccessCompatibleService {
       });
     }
     ctx?.timer?.stop(`${this.constructor.name}->insertDecisionWinners`);
-  }
-
-  public async createMemeClaim(
-    rows: {
-      drop_id: string;
-      meme_id: number;
-      image_location?: string | null;
-      animation_location?: string | null;
-    }[],
-    ctx: RequestContext
-  ): Promise<void> {
-    if (!rows.length) {
-      return;
-    }
-    const connection = ctx.connection;
-    if (!connection) {
-      throw new Error(`Meme claims can only be saved in a transaction`);
-    }
-    ctx?.timer?.start(`${this.constructor.name}->createMemeClaim`);
-    const sql = `
-      INSERT INTO ${MEMES_CLAIMS_TABLE} (drop_id, meme_id, image_location, animation_location)
-      VALUES ${rows
-        .map(
-          (r) =>
-            `(${mysql.escape(r.drop_id)}, ${mysql.escape(r.meme_id)}, ${mysql.escape(r.image_location ?? null)}, ${mysql.escape(r.animation_location ?? null)})`
-        )
-        .join(', ')}
-    `;
-    await this.db.execute(sql, undefined, {
-      wrappedConnection: connection
-    });
-    ctx?.timer?.stop(`${this.constructor.name}->createMemeClaim`);
   }
 
   public async getWavesWithDecisionTimesBeforeGivenTime(
