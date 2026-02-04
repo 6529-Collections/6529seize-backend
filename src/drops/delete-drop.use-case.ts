@@ -34,7 +34,7 @@ export class DeleteDropUseCase {
 
   public async execute(
     model: DeleteDropModel,
-    { timer, connection }: { timer: Timer; connection: ConnectionWrapper<any> }
+    { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
   ): Promise<{
     id: string;
     visibility_group_id: string | null;
@@ -137,7 +137,7 @@ export class DeleteDropUseCase {
     deleterId: string;
     wave: WaveEntity | null;
     model: DeleteDropModel;
-    timer: Timer;
+    timer?: Timer;
   }) {
     if (drop.author_id !== deleterId) {
       const adminGroupId = wave?.admin_group_id;

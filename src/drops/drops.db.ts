@@ -272,9 +272,9 @@ export class DropsDb extends LazyDbAccessCompatibleService {
   async insertReferencedNfts(
     references: Omit<DropReferencedNftEntity, 'id'>[],
     connection: ConnectionWrapper<any>,
-    timer: Timer
+    timer?: Timer
   ) {
-    timer.start('dropsDb->insertReferencedNfts');
+    timer?.start('dropsDb->insertReferencedNfts');
     await Promise.all(
       references.map((reference) =>
         this.db.execute(
@@ -293,15 +293,15 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         )
       )
     );
-    timer.stop('dropsDb->insertReferencedNfts');
+    timer?.stop('dropsDb->insertReferencedNfts');
   }
 
   async insertDropMetadata(
     metadatas: Omit<DropMetadataEntity, 'id'>[],
     connection: ConnectionWrapper<any>,
-    timer: Timer
+    timer?: Timer
   ) {
-    timer.start(`dropsDb->insertDropMetadata`);
+    timer?.start(`dropsDb->insertDropMetadata`);
     await Promise.all(
       metadatas.map((metadata) =>
         this.db.execute(
@@ -318,7 +318,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         )
       )
     );
-    timer.stop(`dropsDb->insertDropMetadata`);
+    timer?.stop(`dropsDb->insertDropMetadata`);
   }
 
   async findDropById(
@@ -699,9 +699,9 @@ export class DropsDb extends LazyDbAccessCompatibleService {
   async insertDropMedia(
     media: Omit<DropMediaEntity, 'id'>[],
     connection: ConnectionWrapper<any>,
-    timer: Timer
+    timer?: Timer
   ) {
-    timer.start(`dropsDb->insertDropMedia`);
+    timer?.start(`dropsDb->insertDropMedia`);
     await Promise.all(
       media.map((medium) =>
         this.db.execute(
@@ -712,7 +712,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         )
       )
     );
-    timer.stop(`dropsDb->insertDropMedia`);
+    timer?.stop(`dropsDb->insertDropMedia`);
   }
 
   async getDropMedia(
@@ -783,9 +783,9 @@ export class DropsDb extends LazyDbAccessCompatibleService {
   async insertDropParts(
     parts: DropPartEntity[],
     connection: ConnectionWrapper<any>,
-    timer: Timer
+    timer?: Timer
   ) {
-    timer.start(`dropsDb->insertDropParts`);
+    timer?.start(`dropsDb->insertDropParts`);
     await Promise.all(
       parts.map((part) =>
         this.db.execute(
@@ -797,7 +797,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         )
       )
     );
-    timer.stop(`dropsDb->insertDropParts`);
+    timer?.stop(`dropsDb->insertDropParts`);
   }
 
   async findWaveByIdOrNull(
@@ -1959,6 +1959,23 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       { wrappedConnection: ctx.connection }
     );
     ctx.timer?.stop(`${this.constructor.name}->updateHideLinkPreview`);
+  }
+
+  async getDropAuthorHandle(
+    dropId: string,
+    ctx: RequestContext
+  ): Promise<string | null> {
+    return await this.db
+      .oneOrNull<{ handle: string }>(
+        `
+        select i.handle as handle from ${DROPS_TABLE} d
+        join ${IDENTITIES_TABLE} i on i.profile_id = d.author_id
+        where d.id = :dropId
+      `,
+        { dropId },
+        { wrappedConnection: ctx.connection }
+      )
+      .then((it) => it?.handle ?? null);
   }
 }
 
