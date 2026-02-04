@@ -437,7 +437,13 @@ export class WaveDecisionsService {
           dropId,
           ctx
         );
-        const message = `🎉🎉🎉\nWe have a new Main Stage winner!\nhttps://6529.io/waves?&wave=${mainStageWaveId}&drop=${dropId}\nCongratulations${winnerHandle ? ` to @[${winnerHandle}` : ``}]!\n🎉🎉🎉`;
+        const waveDropUrlTemplate =
+          env.getStringOrNull(`FE_WAVE_DROP_URL_TEMPLATE`) ??
+          'https://6529.io/waves?&wave={waveId}&drop={dropId}';
+        const dropUrl = waveDropUrlTemplate
+          .replace('{waveId}', mainStageWaveId)
+          .replace('{dropId}', dropId);
+        const message = `🎉🎉🎉\nWe have a new Main Stage winner!\n${dropUrl}\nCongratulations${winnerHandle ? ` to @[${winnerHandle}` : ``}]!\n🎉🎉🎉`;
         await this.deployerDropper.drop(
           {
             message,
