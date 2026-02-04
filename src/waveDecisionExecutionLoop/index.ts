@@ -2,10 +2,12 @@ import * as sentryContext from '../sentry.context';
 import { Transaction } from '../entities/ITransaction';
 import { Logger } from '../logging';
 import { doInDbContext } from '../secrets';
-import { waveDecisionsService } from '../waves/wave-decisions.service';
+import { createWaveDecisionsService } from '../waves/wave-decisions.service';
+import { dropsDbForWaveDecisions } from '../drops/drops-wave-decisions.db';
 import { Timer } from '../time';
 
 const logger = Logger.get('WAVE_DECISION_EXECUTION_LOOP');
+const waveDecisionsService = createWaveDecisionsService(dropsDbForWaveDecisions);
 
 export const handler = sentryContext.wrapLambdaHandler(async () => {
   await doInDbContext(

@@ -20,7 +20,7 @@ import {
   dropVotingDb,
   DropVotingDb
 } from '../api-serverless/src/drops/drop-voting.db';
-import { DropsDb, dropsDb } from '../drops/drops.db';
+import type { IDropsDbForWaveDecisions } from '../drops/drops-wave-decisions.db';
 import { DropRealVoterVoteInTimeEntityWithoutId } from '../entities/IDropRealVoterVoteInTime';
 import { WinnerDropVoterVoteEntity } from '../entities/IWinnerDropVoterVote';
 import { collections } from '../collections';
@@ -50,7 +50,7 @@ export class WaveDecisionsService {
     private readonly waveDecisionsDb: WaveDecisionsDb,
     private readonly waveLeaderboardCalculationService: WaveLeaderboardCalculationService,
     private readonly dropVotingDb: DropVotingDb,
-    private readonly dropsDb: DropsDb,
+    private readonly dropsDb: IDropsDbForWaveDecisions,
     private readonly deployerDropper: DeployerDropper
   ) {}
 
@@ -461,10 +461,12 @@ export class WaveDecisionsService {
   }
 }
 
-export const waveDecisionsService = new WaveDecisionsService(
-  waveDecisionsDb,
-  waveLeaderboardCalculationService,
-  dropVotingDb,
-  dropsDb,
-  deployerDropper
-);
+export function createWaveDecisionsService(dropsDb: IDropsDbForWaveDecisions) {
+  return new WaveDecisionsService(
+    waveDecisionsDb,
+    waveLeaderboardCalculationService,
+    dropVotingDb,
+    dropsDb,
+    deployerDropper
+  );
+}

@@ -1,9 +1,9 @@
 import * as esbuild from 'esbuild';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { TsconfigPathsPlugin } from '@esbuild-plugins/tsconfig-paths';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const repoSrc = path.resolve(__dirname, '..');
 
 await esbuild.build({
   entryPoints: ['src/handler.ts'],
@@ -12,9 +12,14 @@ await esbuild.build({
   platform: 'node',
   target: 'es2020',
   outfile: 'dist/index.js',
-  plugins: [
-    TsconfigPathsPlugin({
-      tsconfig: path.join(__dirname, 'tsconfig.paths.json')
-    })
-  ]
+  alias: {
+    '@/constants': path.join(repoSrc, 'constants'),
+    '@/meme-claims': path.join(repoSrc, 'meme-claims'),
+    '@/entities': path.join(repoSrc, 'entities'),
+    '@/numbers': path.join(repoSrc, 'numbers'),
+    '@/strings': path.join(repoSrc, 'strings'),
+    '@/waves': path.join(repoSrc, 'waves'),
+    '@/env': path.join(repoSrc, 'env'),
+    '@/deployer-dropper': path.join(repoSrc, 'deployer-dropper')
+  }
 });
