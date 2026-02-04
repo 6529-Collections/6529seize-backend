@@ -63,6 +63,7 @@
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.974.0",
     "@aws-sdk/client-cloudfront": "^3.974.0",
+    "@aws-sdk/client-apigatewaymanagementapi": "^3.974.0",
     "@aws-sdk/client-mediaconvert": "^3.974.0",
     "@aws-sdk/client-s3": "^3.974.0",
     "@aws-sdk/client-secrets-manager": "^3.974.0",
@@ -104,6 +105,9 @@
     "node-emoji": "^2.2.0",
     "node-fetch": "^2.7.0",
     "openai": "^4.24.1",
+    "passport": "^0.7.0",
+    "passport-anonymous": "^1.0.1",
+    "passport-jwt": "^4.0.1",
     "redis": "^4.7.0",
     "sharp": "^0.34.5",
     "short-uuid": "^4.2.2",
