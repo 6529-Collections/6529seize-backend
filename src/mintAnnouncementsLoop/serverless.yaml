@@ -35,8 +35,15 @@ functions:
 
 resources:
   Resources:
+    MintAnnouncementsLoopLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/mintAnnouncementsLoop
+        RetentionInDays: 60
+
     MintAnnouncementsLoopOOMFilter:
       Type: AWS::Logs::MetricFilter
+      DependsOn: MintAnnouncementsLoopLogGroup
       Properties:
         LogGroupName: /aws/lambda/mintAnnouncementsLoop
         FilterPattern: "Runtime.OutOfMemory"
