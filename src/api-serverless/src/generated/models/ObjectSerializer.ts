@@ -237,6 +237,7 @@ export * from '../models/MemeClaimAttribute';
 export * from '../models/MemeClaimAttributeValue';
 export * from '../models/MemeClaimImageDetails';
 export * from '../models/MemeClaimUpdateRequest';
+export * from '../models/MemesMintingClaimsPageResponse';
 export * from '../models/MemesMintingClaimsResponse';
 export * from '../models/MemesMintingProofItem';
 export * from '../models/MemesMintingProofsByAddressEntry';
@@ -506,6 +507,7 @@ import { MemeClaimAttribute } from '../models/MemeClaimAttribute';
 import { MemeClaimAttributeValue } from '../models/MemeClaimAttributeValue';
 import { MemeClaimImageDetails } from '../models/MemeClaimImageDetails';
 import { MemeClaimUpdateRequest } from '../models/MemeClaimUpdateRequest';
+import { MemesMintingClaimsPageResponse } from '../models/MemesMintingClaimsPageResponse';
 import { MemesMintingClaimsResponse } from '../models/MemesMintingClaimsResponse';
 import { MemesMintingProofItem } from '../models/MemesMintingProofItem';
 import { MemesMintingProofsByAddressEntry } from '../models/MemesMintingProofsByAddressEntry';
@@ -797,6 +799,7 @@ let typeMap: {[index: string]: any} = {
     "MemeClaimAttributeValue": MemeClaimAttributeValue,
     "MemeClaimImageDetails": MemeClaimImageDetails,
     "MemeClaimUpdateRequest": MemeClaimUpdateRequest,
+    "MemesMintingClaimsPageResponse": MemesMintingClaimsPageResponse,
     "MemesMintingClaimsResponse": MemesMintingClaimsResponse,
     "MemesMintingProofItem": MemesMintingProofItem,
     "MemesMintingProofsByAddressEntry": MemesMintingProofsByAddressEntry,

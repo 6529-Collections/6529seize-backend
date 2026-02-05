@@ -1950,8 +1950,8 @@ paths:
         - Memes minting
       summary: Get meme claims (paginated, admin only)
       description: >
-        Returns a page of meme claims, ordered by meme_id ascending.
-        Default page_size 10, max 20. Only DISTRIBUTION_ADMIN_WALLETS can call this.
+        Returns a page of meme claims, ordered by meme_id ascending. Default
+        page_size 10, max 20. Only DISTRIBUTION_ADMIN_WALLETS can call this.
       operationId: getMemesMintingClaims
       parameters:
         - name: page
@@ -10587,6 +10587,22 @@ components:
             - $ref: "#/components/schemas/MemeClaimAnimationDetailsHtml"
             - $ref: "#/components/schemas/MemeClaimAnimationDetailsGlb"
           nullable: true
+    MemeClaimAnimationDetailsGlb:
+      type: object
+      required:
+        - bytes
+        - format
+        - sha256
+      properties:
+        bytes:
+          type: integer
+          format: int64
+        format:
+          type: string
+          enum:
+            - GLB
+        sha256:
+          type: string
     MemeClaimAnimationDetailsHtml:
       type: object
       required:
@@ -10626,22 +10642,6 @@ components:
           type: array
           items:
             type: string
-    MemeClaimAnimationDetailsGlb:
-      type: object
-      required:
-        - bytes
-        - format
-        - sha256
-      properties:
-        bytes:
-          type: integer
-          format: int64
-        format:
-          type: string
-          enum:
-            - GLB
-        sha256:
-          type: string
     MemeClaimAttribute:
       type: object
       required:
@@ -10711,15 +10711,6 @@ components:
         animation_url:
           type: string
           nullable: true
-    MemesMintingClaimsResponse:
-      type: object
-      required:
-        - claims
-      properties:
-        claims:
-          type: array
-          items:
-            $ref: "#/components/schemas/MemeClaim"
     MemesMintingClaimsPageResponse:
       type: object
       required:
@@ -10746,6 +10737,15 @@ components:
         next:
           type: boolean
           description: True if there is a next page
+    MemesMintingClaimsResponse:
+      type: object
+      required:
+        - claims
+      properties:
+        claims:
+          type: array
+          items:
+            $ref: "#/components/schemas/MemeClaim"
     MemesMintingProofItem:
       type: object
       required:
