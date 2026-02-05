@@ -1948,43 +1948,54 @@ paths:
     get:
       tags:
         - Memes minting
-      summary: Get meme claim(s) (admin only)
+      summary: Get meme claims (paginated, admin only)
       description: >
-        Returns one claim by meme_id query param, or all claims if no query.
-        Only DISTRIBUTION_ADMIN_WALLETS can call this.
+        Returns a page of meme claims, ordered by meme_id ascending.
+        Default page_size 10, max 20. Only DISTRIBUTION_ADMIN_WALLETS can call this.
       operationId: getMemesMintingClaims
       parameters:
-        - name: meme_id
+        - name: page
           in: query
           required: false
-          description: If provided, returns the claim with this meme_id.
           schema:
             type: integer
             format: int64
+            minimum: 1
+            default: 1
+        - name: page_size
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+            maximum: 20
+            default: 10
       responses:
         "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/MemesMintingClaimsResponse"
+                $ref: "#/components/schemas/MemesMintingClaimsPageResponse"
         "403":
           description: Forbidden - only distribution admins can access
-  /memes-minting/claims/{drop_id}:
+  /memes-minting/claims/{meme_id}:
     get:
       tags:
         - Memes minting
-      summary: Get meme claim by drop_id (admin only)
+      summary: Get meme claim by meme_id (admin only)
       description: >-
-        Returns the meme claim for the given drop_id. Only
+        Returns the meme claim for the given meme_id (card number). Only
         DISTRIBUTION_ADMIN_WALLETS can call this.
-      operationId: getMemesMintingClaimByDropId
+      operationId: getMemesMintingClaimByMemeId
       parameters:
-        - name: drop_id
+        - name: meme_id
           in: path
           required: true
           schema:
-            type: string
+            type: integer
+            format: int64
       responses:
         "200":
           description: successful operation
@@ -2001,15 +2012,16 @@ paths:
         - Memes minting
       summary: Update meme claim (admin only)
       description: >
-        Partial update. Any field can be provided; only provided fields are
-        updated. Only DISTRIBUTION_ADMIN_WALLETS can call this.
+        Partial update by meme_id. Any field can be provided; only provided
+        fields are updated. Only DISTRIBUTION_ADMIN_WALLETS can call this.
       operationId: patchMemesMintingClaim
       parameters:
-        - name: drop_id
+        - name: meme_id
           in: path
           required: true
           schema:
-            type: string
+            type: integer
+            format: int64
       requestBody:
         content:
           application/json:
@@ -2026,22 +2038,23 @@ paths:
           description: Forbidden - only distribution admins can access
         "404":
           description: Claim not found
-  /memes-minting/claims/{drop_id}/arweave-upload:
+  /memes-minting/claims/{meme_id}/arweave-upload:
     post:
       tags:
         - Memes minting
       summary: Upload meme claim metadata and media to Arweave (admin only)
       description: >-
         Uploads claim metadata and media (image, and animation if not HTML) to
-        Arweave. Requires claim to have an image URL. If already synced returns
-        409. Only DISTRIBUTION_ADMIN_WALLETS can call this.
+        Arweave, by meme_id. Requires claim to have an image URL. If already
+        synced returns 409. Only DISTRIBUTION_ADMIN_WALLETS can call this.
       operationId: postMemesMintingClaimArweaveUpload
       parameters:
-        - name: drop_id
+        - name: meme_id
           in: path
           required: true
           schema:
-            type: string
+            type: integer
+            format: int64
       responses:
         "200":
           description: successful operation
@@ -10707,6 +10720,32 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/MemeClaim"
+    MemesMintingClaimsPageResponse:
+      type: object
+      required:
+        - claims
+        - count
+        - page
+        - page_size
+        - next
+      properties:
+        claims:
+          type: array
+          items:
+            $ref: "#/components/schemas/MemeClaim"
+        count:
+          type: integer
+          format: int64
+          description: Total number of claims
+        page:
+          type: integer
+          format: int64
+        page_size:
+          type: integer
+          format: int64
+        next:
+          type: boolean
+          description: True if there is a next page
     MemesMintingProofItem:
       type: object
       required:

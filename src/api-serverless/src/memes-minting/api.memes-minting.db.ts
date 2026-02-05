@@ -164,14 +164,28 @@ export async function fetchMemeClaimByMemeId(
   return rows.length > 0 ? rows[0] : null;
 }
 
-export async function fetchAllMemeClaims(): Promise<MemeClaimRow[]> {
+const MEMES_CLAIMS_SELECT =
+  `SELECT drop_id, meme_id, image_location, animation_location, metadata_location, arweave_synced_at, edition_size, description, name, image, attributes, image_details, animation_url, animation_details FROM ${MEMES_CLAIMS_TABLE}`;
+
+export async function fetchMemeClaimsTotalCount(): Promise<number> {
+  const rows = await sqlExecutor.execute<{ total: number }>(
+    `SELECT COUNT(*) as total FROM ${MEMES_CLAIMS_TABLE}`
+  );
+  return rows[0]?.total ?? 0;
+}
+
+export async function fetchMemeClaimsPage(
+  limit: number,
+  offset: number
+): Promise<MemeClaimRow[]> {
   return sqlExecutor.execute<MemeClaimRow>(
-    `SELECT drop_id, meme_id, image_location, animation_location, metadata_location, arweave_synced_at, edition_size, description, name, image, attributes, image_details, animation_url, animation_details FROM ${MEMES_CLAIMS_TABLE} ORDER BY meme_id ASC`
+    `${MEMES_CLAIMS_SELECT} ORDER BY meme_id ASC LIMIT :limit OFFSET :offset`,
+    { limit, offset }
   );
 }
 
 export async function updateMemeClaim(
-  dropId: string,
+  memeId: number,
   updates: {
     image_location?: string | null;
     animation_location?: string | null;
@@ -190,7 +204,7 @@ export async function updateMemeClaim(
   const keys = Object.keys(updates) as (keyof typeof updates)[];
   if (keys.length === 0) return;
   const setClauses: string[] = [];
-  const params: Record<string, unknown> = { dropId };
+  const params: Record<string, unknown> = { memeId };
   for (const key of keys) {
     const val = updates[key];
     if (val === undefined) continue;
@@ -207,7 +221,7 @@ export async function updateMemeClaim(
   }
   if (setClauses.length === 0) return;
   await sqlExecutor.execute(
-    `UPDATE ${MEMES_CLAIMS_TABLE} SET ${setClauses.join(', ')} WHERE drop_id = :dropId`,
+    `UPDATE ${MEMES_CLAIMS_TABLE} SET ${setClauses.join(', ')} WHERE meme_id = :memeId`,
     params
   );
 }

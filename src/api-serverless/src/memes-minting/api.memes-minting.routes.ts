@@ -7,9 +7,9 @@ import type { MemesMintingProofsByAddressResponse } from '@/api/generated/models
 import type { MemesMintingProofsResponse } from '@/api/generated/models/MemesMintingProofsResponse';
 import type { MemesMintingRootsResponse } from '@/api/generated/models/MemesMintingRootsResponse';
 import {
-  fetchAllMemeClaims,
-  fetchMemeClaimByDropId,
   fetchMemeClaimByMemeId,
+  fetchMemeClaimsPage,
+  fetchMemeClaimsTotalCount,
   fetchAllMintingMerkleProofsForRoot,
   fetchMintingMerkleProofs,
   fetchMintingMerkleRoots,
@@ -182,58 +182,79 @@ router.get(
   }
 );
 
+const DEFAULT_PAGE_SIZE = 10;
+const MAX_PAGE_SIZE = 20;
+
+interface MemesMintingClaimsPageResponse {
+  claims: MemeClaim[];
+  count: number;
+  page: number;
+  page_size: number;
+  next: boolean;
+}
+
+const ClaimsListQuerySchema = Joi.object({
+  page: Joi.number().integer().min(1).default(1),
+  page_size: Joi.number()
+    .integer()
+    .min(1)
+    .max(MAX_PAGE_SIZE)
+    .default(DEFAULT_PAGE_SIZE)
+});
+
 router.get(
   '/claims',
   needsAuthenticatedUser(),
   cacheRequest(),
   async function (
-    req: Request<any, any, any, { meme_id?: string }, any>,
-    res: Response<ApiResponse<MemesMintingClaimsResponse>>
+    req: Request<any, any, any, { page?: string; page_size?: string }, any>,
+    res: Response<ApiResponse<MemesMintingClaimsPageResponse>>
   ) {
     if (!isDistributionAdmin(req)) {
       throw new ForbiddenException(
         'Only distribution admins can access meme claims'
       );
     }
-    const memeIdParam = req.query.meme_id;
-    if (memeIdParam !== undefined) {
-      const memeId = numbers.parseIntOrNull(memeIdParam);
-      if (memeId === null || memeId < 0) {
-        return res.status(400).json({
-          error: 'meme_id must be a non-negative integer'
-        });
-      }
-      const row = await fetchMemeClaimByMemeId(memeId);
-      if (!row) {
-        return res.status(404).json({ error: 'Claim not found' });
-      }
-      const response: MemesMintingClaimsResponse = {
-        claims: [rowToMemeClaim(row)]
-      };
-      return res.json(response);
-    }
-    const rows = await fetchAllMemeClaims();
-    const response: MemesMintingClaimsResponse = {
-      claims: rows.map(rowToMemeClaim)
+    const query = getValidatedByJoiOrThrow(
+      {
+        page: req.query.page != null ? Number(req.query.page) : undefined,
+        page_size:
+          req.query.page_size != null ? Number(req.query.page_size) : undefined
+      },
+      ClaimsListQuerySchema
+    );
+    const page = query.page ?? 1;
+    const pageSize = query.page_size ?? DEFAULT_PAGE_SIZE;
+    const offset = (page - 1) * pageSize;
+    const [rows, total] = await Promise.all([
+      fetchMemeClaimsPage(pageSize, offset),
+      fetchMemeClaimsTotalCount()
+    ]);
+    const response: MemesMintingClaimsPageResponse = {
+      claims: rows.map(rowToMemeClaim),
+      count: total,
+      page,
+      page_size: pageSize,
+      next: page * pageSize < total
     };
     return res.json(response);
   }
 );
 
-type ClaimDropIdParams = { drop_id: string };
+type ClaimMemeIdParams = { meme_id: string };
 
-const ClaimDropIdParamsSchema: Joi.ObjectSchema<ClaimDropIdParams> = Joi.object(
+const ClaimMemeIdParamsSchema: Joi.ObjectSchema<ClaimMemeIdParams> = Joi.object(
   {
-    drop_id: Joi.string().trim().required()
+    meme_id: Joi.string().trim().required().pattern(/^\d+$/)
   }
 );
 
 router.get(
-  '/claims/:drop_id',
+  '/claims/:meme_id',
   needsAuthenticatedUser(),
   cacheRequest(),
   async function (
-    req: Request<ClaimDropIdParams, any, any, any, any>,
+    req: Request<ClaimMemeIdParams, any, any, any, any>,
     res: Response<ApiResponse<MemeClaim>>
   ) {
     if (!isDistributionAdmin(req)) {
@@ -243,9 +264,10 @@ router.get(
     }
     const params = getValidatedByJoiOrThrow(
       req.params,
-      ClaimDropIdParamsSchema
+      ClaimMemeIdParamsSchema
     );
-    const row = await fetchMemeClaimByDropId(params.drop_id);
+    const memeId = parseInt(params.meme_id, 10);
+    const row = await fetchMemeClaimByMemeId(memeId);
     if (!row) {
       return res.status(404).json({ error: 'Claim not found' });
     }
@@ -254,10 +276,10 @@ router.get(
 );
 
 router.patch(
-  '/claims/:drop_id',
+  '/claims/:meme_id',
   needsAuthenticatedUser(),
   async function (
-    req: Request<ClaimDropIdParams, any, MemeClaimUpdateRequest, any, any>,
+    req: Request<ClaimMemeIdParams, any, MemeClaimUpdateRequest, any, any>,
     res: Response<ApiResponse<MemeClaim>>
   ) {
     if (!isDistributionAdmin(req)) {
@@ -267,9 +289,10 @@ router.patch(
     }
     const params = getValidatedByJoiOrThrow(
       req.params,
-      ClaimDropIdParamsSchema
+      ClaimMemeIdParamsSchema
     );
-    const existing = await fetchMemeClaimByDropId(params.drop_id);
+    const memeId = parseInt(params.meme_id, 10);
+    const existing = await fetchMemeClaimByMemeId(memeId);
     if (!existing) {
       return res.status(404).json({ error: 'Claim not found' });
     }
@@ -328,8 +351,8 @@ router.patch(
       }
     }
     updates.arweave_synced_at = null;
-    await updateMemeClaim(params.drop_id, updates);
-    const updated = await fetchMemeClaimByDropId(params.drop_id);
+    await updateMemeClaim(memeId, updates);
+    const updated = await fetchMemeClaimByMemeId(memeId);
     return res.json(rowToMemeClaim(updated!));
   }
 );
@@ -354,10 +377,10 @@ async function fetchUrlToBuffer(
 }
 
 router.post(
-  '/claims/:drop_id/arweave-upload',
+  '/claims/:meme_id/arweave-upload',
   needsAuthenticatedUser(),
   async function (
-    req: Request<ClaimDropIdParams, any, any, any, any>,
+    req: Request<ClaimMemeIdParams, any, any, any, any>,
     res: Response<ApiResponse<MemeClaim>>
   ) {
     if (!isDistributionAdmin(req)) {
@@ -367,9 +390,10 @@ router.post(
     }
     const params = getValidatedByJoiOrThrow(
       req.params,
-      ClaimDropIdParamsSchema
+      ClaimMemeIdParamsSchema
     );
-    const claim = await fetchMemeClaimByDropId(params.drop_id);
+    const memeId = parseInt(params.meme_id, 10);
+    const claim = await fetchMemeClaimByMemeId(memeId);
     if (!claim) {
       return res.status(404).json({ error: 'Claim not found' });
     }
@@ -467,13 +491,13 @@ router.post(
         error: 'Failed to upload metadata to Arweave'
       });
     }
-    await updateMemeClaim(params.drop_id, {
+    await updateMemeClaim(memeId, {
       image_location: imageLocation,
       animation_location: animationLocation,
       metadata_location: metadataLocation,
       arweave_synced_at: Date.now()
     });
-    const updated = await fetchMemeClaimByDropId(params.drop_id);
+    const updated = await fetchMemeClaimByMemeId(memeId);
     return res.json(rowToMemeClaim(updated!));
   }
 );
