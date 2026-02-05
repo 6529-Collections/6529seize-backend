@@ -3,29 +3,21 @@ import {
   DropPartIdentifierModel,
   DropReferencedNftModel
 } from './create-or-update-drop.model';
-import { Time, Timer } from '../time';
-import { ConnectionWrapper } from '../sql-executor';
+import { Time, Timer } from '@/time';
+import { ConnectionWrapper } from '@/sql-executor';
 import { dropsDb, DropsDb } from './drops.db';
-import {
-  userGroupsService,
-  UserGroupsService
-} from '../api-serverless/src/community-members/user-groups.service';
-import {
-  wavesApiDb,
-  WavesApiDb
-} from '../api-serverless/src/waves/waves.api.db';
 import {
   BadRequestException,
   ForbiddenException,
   NotFoundException
-} from '../exceptions';
+} from '@/exceptions';
 import {
   ParticipationRequiredMedia,
   WaveEntity,
   WaveRequiredMetadataItemType,
   WaveType
-} from '../entities/IWave';
-import { assertUnreachable } from '../assertions';
+} from '@/entities/IWave';
+import { assertUnreachable } from '@/assertions';
 import { randomUUID } from 'crypto';
 import {
   DropMediaEntity,
@@ -33,40 +25,42 @@ import {
   DropMentionEntity,
   DropPartEntity,
   DropType
-} from '../entities/IDrop';
+} from '@/entities/IDrop';
 import {
   identitySubscriptionsDb,
   IdentitySubscriptionsDb
-} from '../api-serverless/src/identity-subscriptions/identity-subscriptions.db';
+} from '@/api/identity-subscriptions/identity-subscriptions.db';
 import {
   ActivityEventAction,
   ActivityEventTargetType
-} from '../entities/IActivityEvent';
-import { ProfileActivityLogType } from '../entities/IProfileActivityLog';
-import { DropQuoteNotificationData } from '../notifications/user-notification.types';
-import { userNotifier, UserNotifier } from '../notifications/user.notifier';
+} from '@/entities/IActivityEvent';
+import { ProfileActivityLogType } from '@/entities/IProfileActivityLog';
+import { DropQuoteNotificationData } from '@/notifications/user-notification.types';
+import { userNotifier, UserNotifier } from '@/notifications/user.notifier';
 import {
   activityRecorder,
   ActivityRecorder
-} from '../activity/activity.recorder';
-import { profileActivityLogsDb } from '../profileActivityLogs/profile-activity-logs.db';
+} from '@/activity/activity.recorder';
+import { profileActivityLogsDb } from '@/profileActivityLogs/profile-activity-logs.db';
 import {
   profileProxyApiService,
   ProfileProxyApiService
-} from '../api-serverless/src/proxies/proxy.api.service';
-import { ProfileProxyActionType } from '../entities/IProfileProxyAction';
+} from '@/api/proxies/proxy.api.service';
+import { ProfileProxyActionType } from '@/entities/IProfileProxyAction';
 import process from 'node:process';
 import { deleteDrop, DeleteDropUseCase } from './delete-drop.use-case';
-import { seizeSettings } from '../api-serverless/src/api-constants';
+import { dropVotingDb, DropVotingDb } from '@/api/drops/drop-voting.db';
+import { identityFetcher } from '@/api/identities/identity.fetcher';
+import { identitiesDb } from '@/identities/identities.db';
+import { numbers } from '@/numbers';
+import { collections } from '@/collections';
+import { metricsRecorder, MetricsRecorder } from '@/metrics/MetricsRecorder';
 import {
-  dropVotingDb,
-  DropVotingDb
-} from '../api-serverless/src/drops/drop-voting.db';
-import { identityFetcher } from '../api-serverless/src/identities/identity.fetcher';
-import { identitiesDb } from '../identities/identities.db';
-import { numbers } from '../numbers';
-import { collections } from '../collections';
-import { metricsRecorder, MetricsRecorder } from '../metrics/MetricsRecorder';
+  userGroupsService,
+  UserGroupsService
+} from '@/api/community-members/user-groups.service';
+import { wavesApiDb, WavesApiDb } from '@/api/waves/waves.api.db';
+import { seizeSettings } from '@/api/api-constants';
 
 export class CreateOrUpdateDropUseCase {
   public constructor(
@@ -85,9 +79,9 @@ export class CreateOrUpdateDropUseCase {
   public async execute(
     model: CreateOrUpdateDropModel,
     isDescriptionDrop: boolean,
-    { timer, connection }: { timer: Timer; connection: ConnectionWrapper<any> }
+    { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
   ): Promise<{ drop_id: string }> {
-    timer.start(`${CreateOrUpdateDropUseCase.name}->execute`);
+    timer?.start(`${CreateOrUpdateDropUseCase.name}->execute`);
     const authorId = model.author_id;
     const proxyIdNecessary = !!model.proxy_identity && !model.proxy_id;
     if (!authorId) {
@@ -139,7 +133,7 @@ export class CreateOrUpdateDropUseCase {
   private async createOrUpdateDrop(
     model: CreateOrUpdateDropModel,
     isDescriptionDrop: boolean,
-    { timer, connection }: { timer: Timer; connection: ConnectionWrapper<any> }
+    { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
   ): Promise<{ drop_id: string }> {
     if (model.drop_type === DropType.WINNER) {
       throw new BadRequestException(`Can't modify a winner drop`);
@@ -231,16 +225,16 @@ export class CreateOrUpdateDropUseCase {
         )
       ]);
     }
-    timer.stop(`${CreateOrUpdateDropUseCase.name}->execute`);
+    timer?.stop(`${CreateOrUpdateDropUseCase.name}->execute`);
     return { drop_id: dropId };
   }
 
   private async validateReferences(
     model: CreateOrUpdateDropModel,
     isDescriptionDrop: boolean,
-    { timer, connection }: { timer: Timer; connection: ConnectionWrapper<any> }
+    { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
   ) {
-    timer.start(`${CreateOrUpdateDropUseCase.name}->validateReferences`);
+    timer?.start(`${CreateOrUpdateDropUseCase.name}->validateReferences`);
     const authorId = model.author_id!;
     const groupIdsUserIsEligibleFor =
       await this.userGroupsService.getGroupsUserIsEligibleFor(authorId, timer);
@@ -257,7 +251,7 @@ export class CreateOrUpdateDropUseCase {
       this.verifyQuotedDrops(model, { timer, connection }),
       this.verifyReplyDrop(model, { timer, connection })
     ]);
-    timer.stop(`${CreateOrUpdateDropUseCase.name}->validateReferences`);
+    timer?.stop(`${CreateOrUpdateDropUseCase.name}->validateReferences`);
   }
 
   private async verifyWaveLimitations(
@@ -270,9 +264,9 @@ export class CreateOrUpdateDropUseCase {
       model: CreateOrUpdateDropModel;
       groupIdsUserIsEligibleFor: string[];
     },
-    { timer, connection }: { timer: Timer; connection: ConnectionWrapper<any> }
+    { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
   ) {
-    timer.start(`${CreateOrUpdateDropUseCase.name}->verifyWaveLimitations`);
+    timer?.start(`${CreateOrUpdateDropUseCase.name}->verifyWaveLimitations`);
     const waveId = model.wave_id;
     const wave = await this.wavesApiDb.findById(waveId, connection);
     if (!wave) {
@@ -313,7 +307,7 @@ export class CreateOrUpdateDropUseCase {
         { timer, connection }
       )
     ]);
-    timer.stop(`${CreateOrUpdateDropUseCase.name}->verifyWaveLimitations`);
+    timer?.stop(`${CreateOrUpdateDropUseCase.name}->verifyWaveLimitations`);
   }
 
   private async verifyParticipatoryLimitations(
@@ -326,9 +320,9 @@ export class CreateOrUpdateDropUseCase {
       wave: WaveEntity;
       model: CreateOrUpdateDropModel;
     },
-    { timer, connection }: { timer: Timer; connection: ConnectionWrapper<any> }
+    { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
   ) {
-    timer.start(
+    timer?.start(
       `${CreateOrUpdateDropUseCase.name}->verifyParticipatoryLimitations`
     );
     if (
@@ -379,7 +373,7 @@ export class CreateOrUpdateDropUseCase {
           { timer, connection }
         )
         .then((it) => it[model.wave_id] ?? 0);
-      timer.stop(
+      timer?.stop(
         `${CreateOrUpdateDropUseCase.name}->verifyParticipatoryLimitations`
       );
       if (
@@ -396,7 +390,7 @@ export class CreateOrUpdateDropUseCase {
         );
       }
     } else {
-      timer.stop(
+      timer?.stop(
         `${CreateOrUpdateDropUseCase.name}->verifyParticipatoryLimitations`
       );
     }
@@ -410,9 +404,9 @@ export class CreateOrUpdateDropUseCase {
       wave: WaveEntity;
       model: CreateOrUpdateDropModel;
     },
-    { timer }: { timer: Timer; connection: ConnectionWrapper<any> }
+    { timer }: { timer?: Timer; connection: ConnectionWrapper<any> }
   ) {
-    timer.start(`${CreateOrUpdateDropUseCase.name}->verifyMedia`);
+    timer?.start(`${CreateOrUpdateDropUseCase.name}->verifyMedia`);
     for (const part of model.parts) {
       for (const media of part.media) {
         const mimeType = media.mime_type;
@@ -468,7 +462,7 @@ export class CreateOrUpdateDropUseCase {
         }
       }
     }
-    timer.stop(`${CreateOrUpdateDropUseCase.name}->verifyMedia`);
+    timer?.stop(`${CreateOrUpdateDropUseCase.name}->verifyMedia`);
   }
 
   private async verifyMetadata(
@@ -479,9 +473,9 @@ export class CreateOrUpdateDropUseCase {
       wave: WaveEntity;
       model: CreateOrUpdateDropModel;
     },
-    { timer }: { timer: Timer; connection: ConnectionWrapper<any> }
+    { timer }: { timer?: Timer; connection: ConnectionWrapper<any> }
   ) {
-    timer.start(`${CreateOrUpdateDropUseCase.name}->verifyMetadata`);
+    timer?.start(`${CreateOrUpdateDropUseCase.name}->verifyMetadata`);
     if (model.drop_type === DropType.PARTICIPATORY) {
       const requiredMetadatas = wave.participation_required_metadata;
       for (const requiredMetadata of requiredMetadatas) {
@@ -506,7 +500,7 @@ export class CreateOrUpdateDropUseCase {
         }
       }
     }
-    timer.stop(`${CreateOrUpdateDropUseCase.name}->verifyMetadata`);
+    timer?.stop(`${CreateOrUpdateDropUseCase.name}->verifyMetadata`);
   }
 
   private async verifyQuotedDrops(
@@ -514,11 +508,11 @@ export class CreateOrUpdateDropUseCase {
     {
       timer
     }: {
-      timer: Timer;
+      timer?: Timer;
       connection: ConnectionWrapper<any>;
     }
   ) {
-    timer.start(`${CreateOrUpdateDropUseCase.name}->verifyQuotedDrops`);
+    timer?.start(`${CreateOrUpdateDropUseCase.name}->verifyQuotedDrops`);
     const quotedDrops = model.parts
       .map<DropPartIdentifierModel | null | undefined>((it) => it.quoted_drop)
       .filter(
@@ -551,7 +545,7 @@ export class CreateOrUpdateDropUseCase {
         }
       }
     }
-    timer.stop(`${CreateOrUpdateDropUseCase.name}->verifyQuotedDrops`);
+    timer?.stop(`${CreateOrUpdateDropUseCase.name}->verifyQuotedDrops`);
   }
 
   private async verifyReplyDrop(
@@ -559,12 +553,12 @@ export class CreateOrUpdateDropUseCase {
     {
       timer
     }: {
-      timer: Timer;
+      timer?: Timer;
       connection: ConnectionWrapper<any>;
     }
   ) {
     const replyTo = model.reply_to;
-    timer.start(`${CreateOrUpdateDropUseCase.name}->verifyReplyDrop`);
+    timer?.start(`${CreateOrUpdateDropUseCase.name}->verifyReplyDrop`);
     if (replyTo) {
       if (model.drop_type === DropType.PARTICIPATORY) {
         throw new BadRequestException(
@@ -592,7 +586,7 @@ export class CreateOrUpdateDropUseCase {
         );
       }
     }
-    timer.stop(`${CreateOrUpdateDropUseCase.name}->verifyReplyDrop`);
+    timer?.stop(`${CreateOrUpdateDropUseCase.name}->verifyReplyDrop`);
   }
 
   private async insertAllDropComponents(
@@ -609,9 +603,9 @@ export class CreateOrUpdateDropUseCase {
       updatedAt: number | null;
       serialNo: number | null;
     },
-    { connection, timer }: { connection: ConnectionWrapper<any>; timer: Timer }
+    { connection, timer }: { connection: ConnectionWrapper<any>; timer?: Timer }
   ) {
-    timer.start(`${CreateOrUpdateDropUseCase.name}->insertAllDropComponents`);
+    timer?.start(`${CreateOrUpdateDropUseCase.name}->insertAllDropComponents`);
     const dropId = model.drop_id!;
     const authorId = model.author_id!;
     const parts = model.parts;
@@ -770,7 +764,7 @@ export class CreateOrUpdateDropUseCase {
         { timer, connection }
       )
     ]);
-    timer.stop(`${CreateOrUpdateDropUseCase.name}->insertAllDropComponents`);
+    timer?.stop(`${CreateOrUpdateDropUseCase.name}->insertAllDropComponents`);
   }
 
   private async verifyMentionedWaves(
@@ -781,14 +775,14 @@ export class CreateOrUpdateDropUseCase {
       model: CreateOrUpdateDropModel;
       groupIdsUserIsEligibleFor: string[];
     },
-    { timer, connection }: { timer: Timer; connection: ConnectionWrapper<any> }
+    { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
   ) {
-    timer.start(`${CreateOrUpdateDropUseCase.name}->verifyMentionedWaves`);
+    timer?.start(`${CreateOrUpdateDropUseCase.name}->verifyMentionedWaves`);
     const mentionedWaveIds = collections.distinct(
       model.mentioned_waves.map((mentionedWave) => mentionedWave.wave_id)
     );
     if (!mentionedWaveIds.length) {
-      timer.stop(`${CreateOrUpdateDropUseCase.name}->verifyMentionedWaves`);
+      timer?.stop(`${CreateOrUpdateDropUseCase.name}->verifyMentionedWaves`);
       return;
     }
     const eligibleMentionedWaves =
@@ -800,14 +794,14 @@ export class CreateOrUpdateDropUseCase {
     if (eligibleMentionedWaves.length !== mentionedWaveIds.length) {
       throw new NotFoundException('Wave not found');
     }
-    timer.stop(`${CreateOrUpdateDropUseCase.name}->verifyMentionedWaves`);
+    timer?.stop(`${CreateOrUpdateDropUseCase.name}->verifyMentionedWaves`);
   }
 
   private async recordQuoteNotifications(
     { model, wave }: { model: CreateOrUpdateDropModel; wave: WaveEntity },
-    { timer, connection }: { timer: Timer; connection: ConnectionWrapper<any> }
+    { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
   ) {
-    timer.start(`${CreateOrUpdateDropUseCase.name}->recordQuoteNotifications`);
+    timer?.start(`${CreateOrUpdateDropUseCase.name}->recordQuoteNotifications`);
     let idx = 1;
     const quoteNotificationDatas: DropQuoteNotificationData[] = [];
     for (const createDropPart of model.parts) {
@@ -838,21 +832,21 @@ export class CreateOrUpdateDropUseCase {
         )
       )
     );
-    timer.stop(`${CreateOrUpdateDropUseCase.name}->recordQuoteNotifications`);
+    timer?.stop(`${CreateOrUpdateDropUseCase.name}->recordQuoteNotifications`);
   }
 
   private async createDropReplyNotifications(
     { model, wave }: { model: CreateOrUpdateDropModel; wave: WaveEntity },
-    { timer, connection }: { timer: Timer; connection: ConnectionWrapper<any> }
+    { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
   ) {
     const replyTo = model.reply_to;
     if (replyTo) {
-      timer.start(`${CreateOrUpdateDropUseCase.name}->getReplyDropEntity`);
+      timer?.start(`${CreateOrUpdateDropUseCase.name}->getReplyDropEntity`);
       const replyToEntity = await this.dropsDb
         .getDropsByIds([replyTo.drop_id], connection)
         .then((r) => r[0]);
-      timer.stop(`${CreateOrUpdateDropUseCase.name}->getReplyDropEntity`);
-      timer.start(`${CreateOrUpdateDropUseCase.name}->notifyOfDropReply`);
+      timer?.stop(`${CreateOrUpdateDropUseCase.name}->getReplyDropEntity`);
+      timer?.start(`${CreateOrUpdateDropUseCase.name}->notifyOfDropReply`);
       await this.userNotifier.notifyOfDropReply(
         {
           reply_drop_id: model.drop_id!,
@@ -866,15 +860,15 @@ export class CreateOrUpdateDropUseCase {
         connection,
         timer
       );
-      timer.stop(`${CreateOrUpdateDropUseCase.name}->notifyOfDropReply`);
+      timer?.stop(`${CreateOrUpdateDropUseCase.name}->notifyOfDropReply`);
     }
   }
 
   private async insertMentionsInDrop(
     { model, wave }: { model: CreateOrUpdateDropModel; wave: WaveEntity },
-    { timer, connection }: { connection: ConnectionWrapper<any>; timer: Timer }
+    { timer, connection }: { connection: ConnectionWrapper<any>; timer?: Timer }
   ) {
-    timer.start(`${CreateOrUpdateDropUseCase.name}->insertMentionsInDrop`);
+    timer?.start(`${CreateOrUpdateDropUseCase.name}->insertMentionsInDrop`);
 
     const mentionedHandles = model.mentioned_users.map((it) => it.handle);
     const mentionedHandlesWithIds = Object.entries(
@@ -921,12 +915,12 @@ export class CreateOrUpdateDropUseCase {
       ),
       this.dropsDb.insertMentions(mentionEntities, connection)
     ]);
-    timer.stop(`${CreateOrUpdateDropUseCase.name}->insertMentionsInDrop`);
+    timer?.stop(`${CreateOrUpdateDropUseCase.name}->insertMentionsInDrop`);
   }
 
   private async recordDropCreatedActivity(
     { model, wave }: { model: CreateOrUpdateDropModel; wave: WaveEntity },
-    { timer, connection }: { connection: ConnectionWrapper<any>; timer: Timer }
+    { timer, connection }: { connection: ConnectionWrapper<any>; timer?: Timer }
   ) {
     const replyTo = model.reply_to;
     await this.activityRecorder.recordDropCreated(
@@ -949,7 +943,7 @@ export class CreateOrUpdateDropUseCase {
 
   private async recordAllNotificationsSubscribers(
     { model, wave }: { model: CreateOrUpdateDropModel; wave: WaveEntity },
-    { timer, connection }: { timer: Timer; connection: ConnectionWrapper<any> }
+    { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
   ) {
     const subscriberIds =
       await this.identitySubscriptionsDb.findWaveSubscribedAllSubscribers(

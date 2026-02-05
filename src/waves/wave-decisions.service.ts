@@ -18,6 +18,7 @@ import {
 } from '../entities/IWaveDecision';
 import { WinnerDropVoterVoteEntity } from '../entities/IWinnerDropVoterVote';
 import { env } from '../env';
+import { deployerDropper, DeployerDropper } from '@/deployer-dropper';
 import {
   memeClaimsService,
   MemeClaimsService
@@ -54,7 +55,8 @@ export class WaveDecisionsService {
     private readonly waveLeaderboardCalculationService: WaveLeaderboardCalculationService,
     private readonly dropVotingDb: DropVotingDb,
     private readonly dropsDb: DropsDb,
-    private readonly memeClaimsService: MemeClaimsService
+    private readonly memeClaimsService: MemeClaimsService,
+    private readonly deployerDropper: DeployerDropper
   ) {}
 
   public async createMissingDecisionsForAllWaves(timer: Timer): Promise<void> {
@@ -335,6 +337,7 @@ export class WaveDecisionsService {
     await this.waveDecisionsDb.deleteDropsRanks(winnerDropIds, ctx);
     await this.dropsDb.resyncParticipatoryDropCountsForWaves([waveId], ctx);
     await this.dropVotingDb.deleteStaleLeaderboardEntries(ctx);
+    await this.createAnnouncementDrop(waveId, winnerDropIds, ctx);
     ctx?.timer?.stop(`${this.constructor.name}->createDecision`);
   }
 
@@ -432,6 +435,40 @@ export class WaveDecisionsService {
       ctx
     );
   }
+
+  private async createAnnouncementDrop(
+    waveId: string,
+    winnerDropIds: string[],
+    ctx: RequestContext
+  ) {
+    const mainStageWaveId = env.getStringOrNull('MAIN_STAGE_WAVE_ID');
+    const wavesToDropWinnerAnnouncementsTo = env.getStringArray(
+      'DEPLOYER_ANNOUNCEMENTS_WAVE_IDS'
+    );
+    if (wavesToDropWinnerAnnouncementsTo.length && waveId === mainStageWaveId) {
+      for (const dropId of winnerDropIds) {
+        const winnerHandle = await this.dropsDb.getDropAuthorHandle(
+          dropId,
+          ctx
+        );
+        const waveDropUrlTemplate =
+          env.getStringOrNull(`FE_WAVE_DROP_URL_TEMPLATE`) ??
+          'https://6529.io/waves?&wave={waveId}&drop={dropId}';
+        const dropUrl = waveDropUrlTemplate
+          .replace('{waveId}', mainStageWaveId)
+          .replace('{dropId}', dropId);
+        const message = `🏆 New Main Stage Winner!\n${dropUrl}${winnerHandle ? `\nGG @[${winnerHandle}] :sgt_pinched_fingers:` : ``}]`;
+        await this.deployerDropper.drop(
+          {
+            message,
+            waves: wavesToDropWinnerAnnouncementsTo,
+            mentionedUsers: winnerHandle ? [winnerHandle] : []
+          },
+          ctx
+        );
+      }
+    }
+  }
 }
 
 export const waveDecisionsService = new WaveDecisionsService(
@@ -439,5 +476,6 @@ export const waveDecisionsService = new WaveDecisionsService(
   waveLeaderboardCalculationService,
   dropVotingDb,
   dropsDb,
-  memeClaimsService
+  memeClaimsService,
+  deployerDropper
 );

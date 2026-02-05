@@ -298,3 +298,10 @@ The API (`src/api-serverless/src/`) is an Express application with:
 - This will generate response models to `src/api-serverless/src/generated/models`, but only response models and POST/DELETE request bodies, not routes and query param models.
 - Routes themselves are manually created into `api-servless` into files ending with `.routes.ts` and are wired in `app.ts` file.
 - Generated API models are used in those routes. For query param based requests, types are created manually.
+
+### Imports and path aliases
+
+Use path aliases for **new** imports where applicable. Do not change existing imports to aliases just for consistency, to avoid unnecessary noise and large diffs.
+
+- In **api-serverless** (see `src/api-serverless/tsconfig.paths.json`): Use `@/` for repo `src/` (e.g. `@/constants`, `@/numbers`, `@/sql-executor`). Use `@/api/*` for files under api-serverless `src/` (e.g. `@/api/memes-minting/allowlist-merkle`, `@/api/memes-minting/api.memes-minting.db`). New code in api-serverless must use these aliases, not relative paths for cross-folder imports.
+- In **root** (e.g. loops, src outside api-serverless): root `tsconfig.json` has `@/*` → `src/*`; use `@/constants`, `@/entities`, etc. when adding new code.
