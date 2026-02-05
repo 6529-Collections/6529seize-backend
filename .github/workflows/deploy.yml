@@ -31,6 +31,7 @@ on:
           - externalCollectionSnapshottingLoop
           - marketStatsLoop
           - mediaResizerLoop
+          - mintAnnouncementsLoop
           - nextgenContractLoop
           - nextgenMediaImageResolutions
           - nextgenMediaProxyInterceptor
