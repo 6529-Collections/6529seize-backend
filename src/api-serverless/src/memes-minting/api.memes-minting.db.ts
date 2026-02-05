@@ -178,7 +178,7 @@ export async function fetchMemeClaimsPage(
   offset: number
 ): Promise<MemeClaimRow[]> {
   return sqlExecutor.execute<MemeClaimRow>(
-    `${MEMES_CLAIMS_SELECT} ORDER BY meme_id ASC LIMIT :limit OFFSET :offset`,
+    `${MEMES_CLAIMS_SELECT} ORDER BY meme_id DESC LIMIT :limit OFFSET :offset`,
     { limit, offset }
   );
 }

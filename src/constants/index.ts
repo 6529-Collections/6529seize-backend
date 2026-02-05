@@ -6,8 +6,9 @@ export * from './media';
 
 export const DISTRIBUTION_ADMIN_WALLETS = [
   '0x0187C9a182736ba18b44eE8134eE438374cf87DC', // teexels
-  '0xFe49A85E98941F1A115aCD4bEB98521023a25802', // prxt
-  '0x4b76837f8d8ad0a28590d06e53dcd44b6b7d4554' // deployer
+  '0xFe49A85E98941F1A115aCD4bEB98521023a25802', // phoebeum
+  '0x4b76837f8d8ad0a28590d06e53dcd44b6b7d4554', // deployer
+  '0x7f3774eadae4beb01919dec7f32a72e417ab5de3' // prxt
 ];
 
 export const MEMES_CONTRACT = '0x33FD426905F149f8376e227d0C9D3340AaD17aF1';

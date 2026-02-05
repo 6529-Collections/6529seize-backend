@@ -378,7 +378,7 @@ router.post(
     const imageUrl = claim.image?.trim() || null;
     if (imageUrl === null || imageUrl === '') {
       throw new BadRequestException(
-        'Claim has no image URL; set image via PATCH before uploading to Arweave'
+        'Claim has no image URL! Set image before uploading to Arweave.'
       );
     }
     const editionSize =
@@ -389,7 +389,7 @@ router.post(
       editionSize < 1;
     if (isInvalidEditionSize) {
       throw new BadRequestException(
-        'Claim has no edition_size or it is not a positive integer; set edition_size via PATCH before uploading to Arweave'
+        'Claim has no edition_size or it is not a positive integer! Set edition_size before uploading to Arweave.'
       );
     }
     let imageLocation: string;
