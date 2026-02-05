@@ -7,6 +7,9 @@ import {
   ManifoldClaimService,
   manifoldClaimService
 } from './manifold-claim.service';
+import { getNewestMeme } from '@/nftsLoop/db.nfts';
+import { sqlExecutor } from '@/sql-executor';
+import { MINT_ANNOUNCEMENTS_DONE_MEME_TOKENS_TABLE } from '@/constants';
 
 interface PhaseConfig {
   readonly name: string;
@@ -16,14 +19,14 @@ interface PhaseConfig {
 }
 
 const PHASES: readonly PhaseConfig[] = [
-  { name: 'Phase0', startHour: 17, startMinute: 40, closesAt: '18:20' },
-  { name: 'Phase1', startHour: 18, startMinute: 30, closesAt: '18:50' },
-  { name: 'Phase2', startHour: 19, startMinute: 0, closesAt: '19:20' },
+  { name: 'Phase0', startHour: 15, startMinute: 40, closesAt: '16:20' },
+  { name: 'Phase1', startHour: 16, startMinute: 30, closesAt: '16:50' },
+  { name: 'Phase2', startHour: 17, startMinute: 0, closesAt: '17:20' },
   {
     name: 'Public Phase',
-    startHour: 19,
+    startHour: 17,
     startMinute: 20,
-    closesAt: 'tomorrow at 17:00'
+    closesAt: 'tomorrow at 15:00'
   }
 ];
 
@@ -50,16 +53,71 @@ export class AnnounceMintStateChangeUseCase {
         return;
       }
 
-      const remainingEditions =
-        await this.manifoldClaimService.getRemainingEditionsForLatestMeme(ctx);
+      const mintingMeme = await getNewestMeme();
+      if (!mintingMeme?.id) {
+        throw new Error('No meme tokens found');
+      }
+      const mintAnnouncementsDoneForThisToken =
+        (await sqlExecutor.oneOrNull<{ id: number }>(
+          `select id from ${MINT_ANNOUNCEMENTS_DONE_MEME_TOKENS_TABLE} where id = :id`,
+          { id: mintingMeme.id }
+        )) != null;
+      if (mintAnnouncementsDoneForThisToken) {
+        this.logger.info(
+          `All mint announcements are already done for token #${mintingMeme.id}`
+        );
+        return;
+      }
+      const { total, remaining } =
+        await this.manifoldClaimService.getMintStatsFromMemeClaim(
+          mintingMeme.id,
+          ctx
+        );
       const waves = this.env.getStringArray('DEPLOYER_ANNOUNCEMENTS_WAVE_IDS');
-      const message =
-        remainingEditions > 0
-          ? `${currentPhase.name} is live, ${remainingEditions} remaining editions, this phase closes at ${currentPhase.closesAt} UTC`
-          : 'Mint Complete';
-
+      let message = `Meme #${mintingMeme.id}`;
+      if (mintingMeme.name) {
+        message += ` - ${mintingMeme.name}`;
+      }
+      const mentionedUsers: string[] = [];
+      const cardPage = (
+        this.env.getStringOrNull(`FE_MEMES_CARD_PAGE_URL_TEMPLATE`) ??
+        'https://6529.io/the-memes/{cardNo}'
+      ).replace('{cardNo}', mintingMeme.id.toString());
+      message += `\n\n${cardPage}`;
+      const cardSoldOut = remaining <= 0;
+      if (cardSoldOut) {
+        message += `\n\nMint Complete!`;
+        message += `\n\nEdition got fully minted before the public phase 🚀🚀🚀`;
+        const artistHandles = mintingMeme.artist_seize_handle
+          .split(',')
+          .map((it) => it.trim());
+        message += `\n\nGG ${artistHandles
+          .map((it) => `@[${it}]`)
+          .join(', ')} and all the minters :sgt_pinched_fingers:`;
+        mentionedUsers.push(...artistHandles);
+      } else {
+        message += `\n\n${currentPhase.name} is Live!`;
+        message += `\nEdition Size: ${total}`;
+        message += `\nRemaining: ${remaining}`;
+        message += `\n\nMinting closes at ${currentPhase.closesAt} UTC`;
+      }
       this.logger.info(message);
-      await this.deployerDropper.drop({ message, waves }, ctx);
+      await sqlExecutor.executeNativeQueriesInTransaction(
+        async (connection) => {
+          const ctxWithConnection = { ...ctx, connection };
+          await this.deployerDropper.drop(
+            { message, mentionedUsers, waves },
+            ctxWithConnection
+          );
+          if (cardSoldOut) {
+            await sqlExecutor.execute(
+              `insert into ${MINT_ANNOUNCEMENTS_DONE_MEME_TOKENS_TABLE} (id) values (:id)`,
+              { id: mintingMeme.id },
+              { wrappedConnection: connection }
+            );
+          }
+        }
+      );
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->handle`);
     }

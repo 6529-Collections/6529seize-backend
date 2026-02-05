@@ -1,8 +1,6 @@
 import { ethers } from 'ethers';
 import { MEMES_CONTRACT } from '@/constants';
 import { getRpcUrl } from '@/alchemy';
-import { getMaxMemeId } from '@/nftsLoop/db.nfts';
-import { Logger } from '@/logging';
 import { numbers } from '@/numbers';
 import { RequestContext } from '@/request.context';
 
@@ -14,19 +12,14 @@ const MANIFOLD_LAZY_CLAIM_ABI = [
 ];
 
 export class ManifoldClaimService {
-  private readonly logger = Logger.get(this.constructor.name);
-
-  async getRemainingEditionsForLatestMeme(
+  async getMintStatsFromMemeClaim(
+    tokenId: number,
     ctx: RequestContext
-  ): Promise<number> {
+  ): Promise<{ total: number; remaining: number }> {
     try {
       ctx.timer?.start(
         `${this.constructor.name}->getRemainingEditionsForLatestMeme`
       );
-      const tokenId = await getMaxMemeId();
-      if (!tokenId) {
-        throw new Error('No meme tokens found');
-      }
 
       const provider = new ethers.JsonRpcProvider(getRpcUrl(1));
       const contract = new ethers.Contract(
@@ -39,15 +32,11 @@ export class ManifoldClaimService {
         MEMES_CONTRACT,
         tokenId
       );
-      const total = numbers.parseIntOrThrow(claim.total);
-      const totalMax = numbers.parseIntOrThrow(claim.totalMax);
-      const remainingEditions = totalMax - total;
+      const minted = numbers.parseIntOrThrow(claim.total);
+      const total = numbers.parseIntOrThrow(claim.totalMax);
+      const remaining = total - minted;
 
-      this.logger.info(
-        `Claim info for token ${tokenId}: total=${total}, totalMax=${totalMax}, remaining=${remainingEditions}`
-      );
-
-      return remainingEditions;
+      return { total, remaining };
     } finally {
       ctx.timer?.stop(
         `${this.constructor.name}->getRemainingEditionsForLatestMeme`
