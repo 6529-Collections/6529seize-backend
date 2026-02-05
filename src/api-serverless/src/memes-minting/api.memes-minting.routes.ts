@@ -185,13 +185,12 @@ router.get(
 const DEFAULT_PAGE_SIZE = 10;
 const MAX_PAGE_SIZE = 20;
 
-interface MemesMintingClaimsPageResponse {
-  claims: MemeClaim[];
+type MemesMintingClaimsPageResponse = MemesMintingClaimsResponse & {
   count: number;
   page: number;
   page_size: number;
   next: boolean;
-}
+};
 
 const ClaimsListQuerySchema = Joi.object({
   page: Joi.number().integer().min(1).default(1),
@@ -266,12 +265,12 @@ router.get(
       req.params,
       ClaimMemeIdParamsSchema
     );
-    const memeId = parseInt(params.meme_id, 10);
+    const memeId = Number.parseInt(params.meme_id, 10);
     const row = await fetchMemeClaimByMemeId(memeId);
-    if (!row) {
-      return res.status(404).json({ error: 'Claim not found' });
+    if (row) {
+      return res.json(rowToMemeClaim(row));
     }
-    return res.json(rowToMemeClaim(row));
+    return res.status(404).json({ error: 'Claim not found' });
   }
 );
 
@@ -291,9 +290,9 @@ router.patch(
       req.params,
       ClaimMemeIdParamsSchema
     );
-    const memeId = parseInt(params.meme_id, 10);
+    const memeId = Number.parseInt(params.meme_id, 10);
     const existing = await fetchMemeClaimByMemeId(memeId);
-    if (!existing) {
+    if (existing === null) {
       return res.status(404).json({ error: 'Claim not found' });
     }
     const body = req.body ?? {};
@@ -324,9 +323,9 @@ router.patch(
       }
     }
     if (body.animation_url !== undefined) {
-      if (!body.animation_url || typeof body.animation_url !== 'string') {
-        updates.animation_details = null;
-      } else {
+      const hasValidAnimationUrl =
+        typeof body.animation_url === 'string' && body.animation_url.length > 0;
+      if (hasValidAnimationUrl) {
         const existingDetails = existing.animation_details
           ? (JSON.parse(existing.animation_details) as { format?: string })
           : undefined;
@@ -348,6 +347,8 @@ router.patch(
         } catch {
           // keep existing animation_details on compute failure
         }
+      } else {
+        updates.animation_details = null;
       }
     }
     updates.arweave_synced_at = null;
@@ -366,14 +367,55 @@ async function fetchUrlToBuffer(
   url: string
 ): Promise<{ buffer: Buffer; contentType: string }> {
   const res = await fetch(url);
-  if (!res.ok) {
-    throw new Error(`Fetch failed: ${res.status} ${url}`);
+  if (res.ok) {
+    const buffer = Buffer.from(await res.arrayBuffer());
+    const contentType =
+      res.headers.get('content-type')?.split(';')[0]?.trim() ||
+      'application/octet-stream';
+    return { buffer, contentType };
   }
-  const buffer = Buffer.from(await res.arrayBuffer());
-  const contentType =
-    res.headers.get('content-type')?.split(';')[0]?.trim() ||
-    'application/octet-stream';
-  return { buffer, contentType };
+  throw new Error(`Fetch failed: ${res.status} ${url}`);
+}
+
+async function uploadImageToArweaveOrThrow(imageUrl: string): Promise<string> {
+  const { buffer, contentType } = await fetchUrlToBuffer(imageUrl);
+  const { url } = await arweaveFileUploader.uploadFile(buffer, contentType);
+  return url;
+}
+
+async function uploadAnimationToArweaveIfPresent(
+  claim: MemeClaimRow
+): Promise<string | null> {
+  const animationUrl = claim.animation_url?.trim() || null;
+  if (animationUrl === null || animationUrl === '') return null;
+  const details = claim.animation_details
+    ? (JSON.parse(claim.animation_details) as { format?: string })
+    : null;
+  if (details?.format === 'HTML') return null;
+  const { buffer, contentType } = await fetchUrlToBuffer(animationUrl);
+  const { url } = await arweaveFileUploader.uploadFile(buffer, contentType);
+  return url;
+}
+
+async function uploadClaimMetadataToArweave(
+  claim: MemeClaimRow,
+  imageLocation: string,
+  animationLocation: string | null
+): Promise<string> {
+  const attributes = JSON.parse(claim.attributes) as unknown;
+  const metadata = {
+    name: claim.name,
+    description: claim.description ?? '',
+    image: imageLocation,
+    ...(animationLocation ? { animation_url: animationLocation } : {}),
+    attributes
+  };
+  const buffer = Buffer.from(JSON.stringify(metadata), 'utf8');
+  const { url } = await arweaveFileUploader.uploadFile(
+    buffer,
+    'application/json'
+  );
+  return url;
 }
 
 router.post(
@@ -392,9 +434,9 @@ router.post(
       req.params,
       ClaimMemeIdParamsSchema
     );
-    const memeId = parseInt(params.meme_id, 10);
+    const memeId = Number.parseInt(params.meme_id, 10);
     const claim = await fetchMemeClaimByMemeId(memeId);
-    if (!claim) {
+    if (claim === null) {
       return res.status(404).json({ error: 'Claim not found' });
     }
     if (claim.arweave_synced_at != null) {
@@ -404,92 +446,35 @@ router.post(
       );
     }
     const imageUrl = claim.image?.trim() || null;
-    if (!imageUrl) {
+    if (imageUrl === null || imageUrl === '') {
       throw new BadRequestException(
         'Claim has no image URL; set image via PATCH before uploading to Arweave'
       );
     }
     const editionSize =
       claim.edition_size != null ? Number(claim.edition_size) : null;
-    if (
-      editionSize == null ||
-      !Number.isInteger(editionSize) ||
-      editionSize < 1
-    ) {
+    const hasValidEditionSize =
+      editionSize != null && Number.isInteger(editionSize) && editionSize >= 1;
+    if (!hasValidEditionSize) {
       throw new BadRequestException(
         'Claim has no edition_size or it is not a positive integer; set edition_size via PATCH before uploading to Arweave'
       );
     }
     let imageLocation: string;
-    let animationLocation: string | null = null;
-    try {
-      const { buffer: imageBuffer, contentType: imageContentType } =
-        await fetchUrlToBuffer(imageUrl);
-      const { url: imageArweaveUrl } = await arweaveFileUploader.uploadFile(
-        imageBuffer,
-        imageContentType
-      );
-      imageLocation = arweaveTxIdFromUrl(imageArweaveUrl);
-    } catch (e) {
-      return res.status(500).json({
-        error: 'Failed to fetch or upload image to Arweave'
-      });
-    }
-    const animationUrl = claim.animation_url?.trim() || null;
-    const animationDetails = claim.animation_details
-      ? (JSON.parse(claim.animation_details) as { format?: string })
-      : null;
-    const isHtmlAnimation = animationDetails?.format === 'HTML';
-    if (animationUrl) {
-      if (isHtmlAnimation) {
-        animationLocation = animationUrl;
-      } else {
-        try {
-          const { buffer: animBuffer, contentType: animContentType } =
-            await fetchUrlToBuffer(animationUrl);
-          const { url: animArweaveUrl } = await arweaveFileUploader.uploadFile(
-            animBuffer,
-            animContentType
-          );
-          animationLocation = arweaveTxIdFromUrl(animArweaveUrl);
-        } catch (e) {
-          return res.status(500).json({
-            error: 'Failed to fetch or upload animation to Arweave'
-          });
-        }
-      }
-    }
-    const metadataImageUrl = `https://arweave.net/${imageLocation}`;
-    const metadataAnimationUrl = animationLocation
-      ? animationLocation.startsWith('http')
-        ? animationLocation
-        : `https://arweave.net/${animationLocation}`
-      : undefined;
-    const metadata = {
-      name: claim.name,
-      description: claim.description,
-      image: metadataImageUrl,
-      ...(metadataAnimationUrl && { animation_url: metadataAnimationUrl }),
-      attributes: JSON.parse(claim.attributes),
-      ...(claim.image_details && {
-        image_details: JSON.parse(claim.image_details)
-      }),
-      ...(claim.animation_details && {
-        animation_details: JSON.parse(claim.animation_details)
-      })
-    };
+    let animationLocation: string | null;
     let metadataLocation: string;
     try {
-      const metadataBuffer = Buffer.from(JSON.stringify(metadata), 'utf-8');
-      const { url: metadataArweaveUrl } = await arweaveFileUploader.uploadFile(
-        metadataBuffer,
-        'application/json'
+      imageLocation = await uploadImageToArweaveOrThrow(imageUrl);
+      animationLocation = await uploadAnimationToArweaveIfPresent(claim);
+      metadataLocation = await uploadClaimMetadataToArweave(
+        claim,
+        imageLocation,
+        animationLocation
       );
-      metadataLocation = arweaveTxIdFromUrl(metadataArweaveUrl);
-    } catch (e) {
-      return res.status(500).json({
-        error: 'Failed to upload metadata to Arweave'
-      });
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : 'Arweave upload failed';
+      return res.status(500).json({ error: message });
     }
     await updateMemeClaim(memeId, {
       image_location: imageLocation,

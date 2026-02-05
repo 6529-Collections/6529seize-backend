@@ -164,8 +164,7 @@ export async function fetchMemeClaimByMemeId(
   return rows.length > 0 ? rows[0] : null;
 }
 
-const MEMES_CLAIMS_SELECT =
-  `SELECT drop_id, meme_id, image_location, animation_location, metadata_location, arweave_synced_at, edition_size, description, name, image, attributes, image_details, animation_url, animation_details FROM ${MEMES_CLAIMS_TABLE}`;
+const MEMES_CLAIMS_SELECT = `SELECT drop_id, meme_id, image_location, animation_location, metadata_location, arweave_synced_at, edition_size, description, name, image, attributes, image_details, animation_url, animation_details FROM ${MEMES_CLAIMS_TABLE}`;
 
 export async function fetchMemeClaimsTotalCount(): Promise<number> {
   const rows = await sqlExecutor.execute<{ total: number }>(
