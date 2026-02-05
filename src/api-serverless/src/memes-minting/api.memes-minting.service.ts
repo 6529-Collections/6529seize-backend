@@ -63,13 +63,11 @@ async function applyAnimationFromBody(
       animationUrl.toLowerCase().endsWith('.glb') ||
       existingDetails?.format === 'GLB'
     ) {
-      updates.animation_details = await computeAnimationDetailsGlb(
-        animationUrl
-      );
+      updates.animation_details =
+        await computeAnimationDetailsGlb(animationUrl);
     } else {
-      updates.animation_details = await computeAnimationDetailsVideo(
-        animationUrl
-      );
+      updates.animation_details =
+        await computeAnimationDetailsVideo(animationUrl);
     }
   } catch {
     // keep existing on compute failure
