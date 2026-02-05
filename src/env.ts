@@ -61,7 +61,7 @@ export async function loadLocalConfig() {
   }
 }
 
-class Env {
+export class Env {
   constructor(private readonly numbers: Numbers) {}
 
   public getStringOrNull(name: string): string | null {

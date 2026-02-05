@@ -8,7 +8,11 @@ export class Numbers {
       return Number.isFinite(value) && Number.isInteger(value) ? value : null;
     }
 
-    // anything that isn’t a string is automatically rejected
+    if (typeof value === 'bigint') {
+      return Number(value);
+    }
+
+    // anything that isn't a string is automatically rejected
     if (typeof value !== 'string') return null;
 
     // trim *all* whitespace (including NBSP, tabs, new lines…)

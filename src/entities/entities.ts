@@ -88,6 +88,7 @@ export { ProfileTotalRepScoreAggregation } from './IRepScoreAggregations';
 export { RoyaltiesUpload } from './IRoyalties';
 export { MemesSeason } from './ISeason';
 export { MetricRollupHourEntity } from './IMetricRollupHour';
+export { MintAnnouncementsDoneMemeToken } from './IMintAnnouncementsDoneMemeToken';
 export {
   NFTFinalSubscription,
   NFTFinalSubscriptionUpload,
