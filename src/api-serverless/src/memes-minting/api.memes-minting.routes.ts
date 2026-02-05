@@ -382,10 +382,12 @@ router.post(
       );
     }
     const editionSize =
-      claim.edition_size != null ? Number(claim.edition_size) : null;
-    const hasValidEditionSize =
-      editionSize != null && Number.isInteger(editionSize) && editionSize >= 1;
-    if (!hasValidEditionSize) {
+      claim.edition_size == null ? null : Number(claim.edition_size);
+    const isInvalidEditionSize =
+      editionSize == null ||
+      Number.isInteger(editionSize) === false ||
+      editionSize < 1;
+    if (isInvalidEditionSize) {
       throw new BadRequestException(
         'Claim has no edition_size or it is not a positive integer; set edition_size via PATCH before uploading to Arweave'
       );
