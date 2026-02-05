@@ -2,7 +2,7 @@ import { ApiResponse } from '@/api/api-response';
 import { asyncRouter } from '@/api/async.router';
 import type { MemeClaim } from '@/api/generated/models/MemeClaim';
 import type { MemeClaimUpdateRequest } from '@/api/generated/models/MemeClaimUpdateRequest';
-import type { MemesMintingClaimsResponse } from '@/api/generated/models/MemesMintingClaimsResponse';
+import type { MemesMintingClaimsPageResponse } from '@/api/generated/models/MemesMintingClaimsPageResponse';
 import type { MemesMintingProofsByAddressResponse } from '@/api/generated/models/MemesMintingProofsByAddressResponse';
 import type { MemesMintingProofsResponse } from '@/api/generated/models/MemesMintingProofsResponse';
 import type { MemesMintingRootsResponse } from '@/api/generated/models/MemesMintingRootsResponse';
@@ -16,6 +16,7 @@ import {
   type MemeClaimRow,
   updateMemeClaim
 } from '@/api/memes-minting/api.memes-minting.db';
+import { patchMemeClaim } from '@/api/memes-minting/api.memes-minting.service';
 import { cacheRequest } from '@/api/request-cache';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
 import {
@@ -29,12 +30,6 @@ import {
   CustomApiCompliantException
 } from '@/exceptions';
 import { arweaveFileUploader } from '@/arweave';
-import {
-  computeImageDetails,
-  computeAnimationDetailsVideo,
-  computeAnimationDetailsGlb,
-  animationDetailsHtml
-} from '@/meme-claims/media-inspector';
 import { numbers } from '@/numbers';
 import { equalIgnoreCase } from '@/strings';
 import { Request, Response } from 'express';
@@ -52,9 +47,9 @@ function isDistributionAdmin(req: Request): boolean {
 
 function rowToMemeClaim(row: MemeClaimRow): MemeClaim {
   const arweaveSyncedAt =
-    row.arweave_synced_at != null ? Number(row.arweave_synced_at) : undefined;
+    row.arweave_synced_at == null ? undefined : Number(row.arweave_synced_at);
   const editionSize =
-    row.edition_size != null ? Number(row.edition_size) : undefined;
+    row.edition_size == null ? undefined : Number(row.edition_size);
   return {
     drop_id: row.drop_id,
     meme_id: row.meme_id,
@@ -185,13 +180,6 @@ router.get(
 const DEFAULT_PAGE_SIZE = 10;
 const MAX_PAGE_SIZE = 20;
 
-type MemesMintingClaimsPageResponse = MemesMintingClaimsResponse & {
-  count: number;
-  page: number;
-  page_size: number;
-  next: boolean;
-};
-
 const ClaimsListQuerySchema = Joi.object({
   page: Joi.number().integer().min(1).default(1),
   page_size: Joi.number()
@@ -216,9 +204,9 @@ router.get(
     }
     const query = getValidatedByJoiOrThrow(
       {
-        page: req.query.page != null ? Number(req.query.page) : undefined,
+        page: req.query.page == null ? undefined : Number(req.query.page),
         page_size:
-          req.query.page_size != null ? Number(req.query.page_size) : undefined
+          req.query.page_size == null ? undefined : Number(req.query.page_size)
       },
       ClaimsListQuerySchema
     );
@@ -291,70 +279,12 @@ router.patch(
       ClaimMemeIdParamsSchema
     );
     const memeId = Number.parseInt(params.meme_id, 10);
-    const existing = await fetchMemeClaimByMemeId(memeId);
-    if (existing === null) {
+    const body = req.body ?? {};
+    const updated = await patchMemeClaim(memeId, body);
+    if (updated === null) {
       return res.status(404).json({ error: 'Claim not found' });
     }
-    const body = req.body ?? {};
-    const updates: Parameters<typeof updateMemeClaim>[1] = {};
-    if (body.image_location !== undefined)
-      updates.image_location = body.image_location;
-    if (body.animation_location !== undefined)
-      updates.animation_location = body.animation_location;
-    if (body.metadata_location !== undefined)
-      updates.metadata_location = body.metadata_location;
-    if (body.edition_size !== undefined)
-      updates.edition_size = body.edition_size;
-    if (body.description !== undefined) updates.description = body.description;
-    if (body.name !== undefined) updates.name = body.name;
-    if (body.image !== undefined) updates.image = body.image;
-    if (body.attributes !== undefined) updates.attributes = body.attributes;
-    if (body.animation_url !== undefined)
-      updates.animation_url = body.animation_url;
-    if (body.image !== undefined) {
-      if (body.image && typeof body.image === 'string') {
-        try {
-          updates.image_details = await computeImageDetails(body.image);
-        } catch {
-          // keep existing image_details on compute failure
-        }
-      } else {
-        updates.image_details = null;
-      }
-    }
-    if (body.animation_url !== undefined) {
-      const hasValidAnimationUrl =
-        typeof body.animation_url === 'string' && body.animation_url.length > 0;
-      if (hasValidAnimationUrl) {
-        const existingDetails = existing.animation_details
-          ? (JSON.parse(existing.animation_details) as { format?: string })
-          : undefined;
-        try {
-          if (existingDetails?.format === 'HTML') {
-            updates.animation_details = animationDetailsHtml();
-          } else if (
-            body.animation_url.toLowerCase().endsWith('.glb') ||
-            existingDetails?.format === 'GLB'
-          ) {
-            updates.animation_details = await computeAnimationDetailsGlb(
-              body.animation_url
-            );
-          } else {
-            updates.animation_details = await computeAnimationDetailsVideo(
-              body.animation_url
-            );
-          }
-        } catch {
-          // keep existing animation_details on compute failure
-        }
-      } else {
-        updates.animation_details = null;
-      }
-    }
-    updates.arweave_synced_at = null;
-    await updateMemeClaim(memeId, updates);
-    const updated = await fetchMemeClaimByMemeId(memeId);
-    return res.json(rowToMemeClaim(updated!));
+    return res.json(rowToMemeClaim(updated));
   }
 );
 

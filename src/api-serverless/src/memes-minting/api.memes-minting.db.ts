@@ -209,14 +209,19 @@ export async function updateMemeClaim(
     if (val === undefined) continue;
     const col = key;
     setClauses.push(`${col} = :${col}`);
-    params[col] =
+    let paramVal: unknown;
+    if (
       col === 'attributes' ||
       col === 'image_details' ||
       col === 'animation_details'
-        ? JSON.stringify(val)
-        : col === 'arweave_synced_at' && val != null
-          ? Number(val)
-          : val;
+    ) {
+      paramVal = JSON.stringify(val);
+    } else if (col === 'arweave_synced_at' && val != null) {
+      paramVal = Number(val);
+    } else {
+      paramVal = val;
+    }
+    params[col] = paramVal;
   }
   if (setClauses.length === 0) return;
   await sqlExecutor.execute(

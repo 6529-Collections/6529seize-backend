@@ -53,7 +53,7 @@ export function computeAllowlistMerkle(
   const proofsByAddress: Record<string, AllowlistMerkleProofItem[]> = {};
   expanded.forEach((entry, idx) => {
     const address = '0x' + entry.address;
-    const proof = merkleTree.getHexProof(leaves[idx] as Buffer);
+    const proof = merkleTree.getHexProof(leaves[idx]);
     if (!proofsByAddress[address]) {
       proofsByAddress[address] = [];
     }

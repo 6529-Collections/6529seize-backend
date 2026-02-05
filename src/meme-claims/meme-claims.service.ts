@@ -10,11 +10,33 @@ import {
   animationDetailsHtml,
   computeAnimationDetailsGlb
 } from '@/meme-claims/media-inspector';
+import type { MemeClaimAnimationDetails } from '@/entities/IMemeClaim';
 import type { MemeClaimRowInput } from '@/meme-claims/meme-claim-from-drop.builder';
 import { getMaxMemeId } from '@/nftsLoop/db.nfts';
 import { RequestContext } from '@/request.context';
 import { sqlExecutor } from '@/sql-executor';
 import { ethers } from 'ethers';
+
+async function resolveAnimationDetails(
+  animationUrl: string,
+  existing: MemeClaimAnimationDetails | null | undefined
+): Promise<MemeClaimAnimationDetails | null | undefined> {
+  if (existing && 'format' in existing && existing.format === 'HTML') {
+    return animationDetailsHtml();
+  }
+  if (existing && 'format' in existing && existing.format === 'GLB') {
+    try {
+      return await computeAnimationDetailsGlb(animationUrl);
+    } catch {
+      return existing;
+    }
+  }
+  try {
+    return await computeAnimationDetailsVideo(animationUrl);
+  } catch {
+    return existing;
+  }
+}
 
 function parseAirdropConfigFromMetadatas(
   metadatas: DropMetadataEntity[]
@@ -107,7 +129,6 @@ export class MemeClaimsService {
     row: MemeClaimRowInput
   ): Promise<MemeClaimRowInput> {
     let image_details = row.image_details;
-    let animation_details = row.animation_details;
     if (row.image) {
       try {
         image_details = await computeImageDetails(row.image);
@@ -115,34 +136,13 @@ export class MemeClaimsService {
         image_details = row.image_details;
       }
     }
+    let animation_details = row.animation_details;
     if (row.animation_url) {
-      if (
-        animation_details &&
-        'format' in animation_details &&
-        animation_details.format === 'HTML'
-      ) {
-        animation_details = animationDetailsHtml();
-      } else if (
-        animation_details &&
-        'format' in animation_details &&
-        animation_details.format === 'GLB'
-      ) {
-        try {
-          animation_details = await computeAnimationDetailsGlb(
-            row.animation_url
-          );
-        } catch {
-          animation_details = row.animation_details;
-        }
-      } else {
-        try {
-          animation_details = await computeAnimationDetailsVideo(
-            row.animation_url
-          );
-        } catch {
-          animation_details = row.animation_details;
-        }
-      }
+      const resolved = await resolveAnimationDetails(
+        row.animation_url,
+        row.animation_details ?? undefined
+      );
+      animation_details = resolved ?? row.animation_details;
     }
     return {
       ...row,
