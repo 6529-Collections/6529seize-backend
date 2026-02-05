@@ -22,10 +22,10 @@ functions:
     role: arn:aws:iam::987989283142:role/lambda-vpc-role
     reservedConcurrency: 1
     events:
-      - schedule: cron(40 17 ? * MON,WED,FRI *)
-      - schedule: cron(30 18 ? * MON,WED,FRI *)
-      - schedule: cron(0 19 ? * MON,WED,FRI *)
-      - schedule: cron(20 19 ? * MON,WED,FRI *)
+      - schedule: cron(40 15 ? * MON,WED,FRI *)
+      - schedule: cron(30 16 ? * MON,WED,FRI *)
+      - schedule: cron(0 17 ? * MON,WED,FRI *)
+      - schedule: cron(20 17 ? * MON,WED,FRI *)
     vpc:
       securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
       subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}

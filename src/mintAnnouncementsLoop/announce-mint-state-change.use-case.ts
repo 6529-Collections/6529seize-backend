@@ -19,9 +19,9 @@ interface PhaseConfig {
 }
 
 const PHASES: readonly PhaseConfig[] = [
-  { name: 'Phase0', startHour: 15, startMinute: 40, closesAt: '16:20' },
-  { name: 'Phase1', startHour: 16, startMinute: 30, closesAt: '16:50' },
-  { name: 'Phase2', startHour: 17, startMinute: 0, closesAt: '17:20' },
+  { name: 'Phase0', startHour: 15, startMinute: 40, closesAt: 'at 16:20' },
+  { name: 'Phase1', startHour: 16, startMinute: 30, closesAt: 'at 16:50' },
+  { name: 'Phase2', startHour: 17, startMinute: 0, closesAt: 'at 17:20' },
   {
     name: 'Public Phase',
     startHour: 17,
@@ -99,7 +99,7 @@ export class AnnounceMintStateChangeUseCase {
         message += `\n\n${currentPhase.name} is Live!`;
         message += `\nEdition Size: ${total}`;
         message += `\nRemaining: ${remaining}`;
-        message += `\n\nMinting closes at ${currentPhase.closesAt} UTC`;
+        message += `\n\nMinting closes ${currentPhase.closesAt} UTC`;
       }
       this.logger.info(message);
       await sqlExecutor.executeNativeQueriesInTransaction(
