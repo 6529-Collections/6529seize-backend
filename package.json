@@ -52,7 +52,7 @@
     "prettier": "^3.5.3",
     "reflect-metadata": "^0.1.13",
     "rimraf": "^3.0.2",
-    "serverless": "^4.31.2",
+    "serverless": "^3.38.0",
     "serverless-offline": "^14.4.0",
     "testcontainers": "^11.0.3",
     "ts-jest": "^29.1.1",
