@@ -25,7 +25,7 @@ export class MemeClaim {
     'edition_size'?: number | null;
     'description': string;
     'name': string;
-    'image'?: string | null;
+    'image_url'?: string | null;
     'attributes': Array<MemeClaimAttribute>;
     'image_details'?: MemeClaimImageDetails;
     'animation_url'?: string | null;
@@ -89,8 +89,8 @@ export class MemeClaim {
             "format": ""
         },
         {
-            "name": "image",
-            "baseName": "image",
+            "name": "image_url",
+            "baseName": "image_url",
             "type": "string",
             "format": ""
         },

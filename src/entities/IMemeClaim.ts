@@ -70,8 +70,8 @@ export class MemeClaimEntity {
   @Column({ type: 'varchar', length: 255 })
   readonly name!: string;
 
-  @Column({ type: 'varchar', length: 1024, nullable: true })
-  readonly image!: string | null;
+  @Column({ type: 'varchar', length: 1024, nullable: true, name: 'image' })
+  readonly image_url!: string | null;
 
   @Column({ type: 'json' })
   readonly attributes!: MemeClaimAttribute[];

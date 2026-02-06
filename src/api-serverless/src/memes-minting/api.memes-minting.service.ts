@@ -28,10 +28,10 @@ async function applyImageFromBody(
   body: MemeClaimUpdateRequest,
   updates: MemeClaimUpdates
 ): Promise<void> {
-  if (body.image === undefined) return;
-  if (body.image && typeof body.image === 'string') {
+  if (body.image_url === undefined) return;
+  if (body.image_url && typeof body.image_url === 'string') {
     try {
-      updates.image_details = await computeImageDetails(body.image);
+      updates.image_details = await computeImageDetails(body.image_url);
     } catch {
       // keep existing on compute failure
     }
@@ -88,11 +88,11 @@ export async function buildUpdatesForClaimPatch(
   if (body.edition_size !== undefined) updates.edition_size = body.edition_size;
   if (body.description !== undefined) updates.description = body.description;
   if (body.name !== undefined) updates.name = body.name;
-  if (body.image !== undefined) updates.image = body.image;
+  if (body.image_url !== undefined) updates.image = body.image_url;
   if (body.attributes !== undefined) updates.attributes = body.attributes;
   if (body.animation_url !== undefined)
     updates.animation_url = body.animation_url;
-  if (body.image !== undefined) {
+  if (body.image_url !== undefined) {
     await applyImageFromBody(body, updates);
   }
   if (body.animation_url !== undefined) {

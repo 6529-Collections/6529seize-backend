@@ -60,7 +60,7 @@ function rowToMemeClaim(row: MemeClaimRow): MemeClaim {
     edition_size: editionSize,
     description: row.description,
     name: row.name,
-    image: row.image ?? undefined,
+    image_url: row.image_url ?? undefined,
     attributes: JSON.parse(row.attributes),
     image_details: row.image_details
       ? JSON.parse(row.image_details)
@@ -336,7 +336,7 @@ async function uploadClaimMetadataToArweave(
   const metadata = {
     name: claim.name,
     description: claim.description ?? '',
-    image: imageLocation,
+    image_url: imageLocation,
     ...(animationLocation ? { animation_url: animationLocation } : {}),
     attributes
   };
@@ -375,7 +375,7 @@ router.post(
         'Claim already synced to Arweave'
       );
     }
-    const imageUrl = claim.image?.trim() || null;
+    const imageUrl = claim.image_url?.trim() || null;
     if (imageUrl === null || imageUrl === '') {
       throw new BadRequestException(
         'Claim has no image URL! Set image before uploading to Arweave.'

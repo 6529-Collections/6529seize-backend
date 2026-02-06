@@ -30,7 +30,7 @@ export class MemeClaimsDb extends LazyDbAccessCompatibleService {
       VALUES ${rows
         .map(
           (r) =>
-            `(${mysql.escape(r.drop_id)}, ${mysql.escape(r.meme_id)}, ${mysql.escape(r.image_location)}, ${mysql.escape(r.animation_location)}, ${mysql.escape(r.metadata_location)}, NULL, NULL, ${mysql.escape(r.description)}, ${mysql.escape(r.name)}, ${mysql.escape(r.image)}, ${mysql.escape(JSON.stringify(r.attributes))}, ${r.image_details ? mysql.escape(JSON.stringify(r.image_details)) : mysql.escape(null)}, ${mysql.escape(r.animation_url)}, ${r.animation_details ? mysql.escape(JSON.stringify(r.animation_details)) : mysql.escape(null)})`
+            `(${mysql.escape(r.drop_id)}, ${mysql.escape(r.meme_id)}, ${mysql.escape(r.image_location)}, ${mysql.escape(r.animation_location)}, ${mysql.escape(r.metadata_location)}, NULL, NULL, ${mysql.escape(r.description)}, ${mysql.escape(r.name)}, ${mysql.escape(r.image_url)}, ${mysql.escape(JSON.stringify(r.attributes))}, ${r.image_details ? mysql.escape(JSON.stringify(r.image_details)) : mysql.escape(null)}, ${mysql.escape(r.animation_url)}, ${r.animation_details ? mysql.escape(JSON.stringify(r.animation_details)) : mysql.escape(null)})`
         )
         .join(', ')}
     `;

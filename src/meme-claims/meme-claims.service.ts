@@ -129,9 +129,9 @@ export class MemeClaimsService {
     row: MemeClaimRowInput
   ): Promise<MemeClaimRowInput> {
     let image_details = row.image_details;
-    if (row.image) {
+    if (row.image_url) {
       try {
-        image_details = await computeImageDetails(row.image);
+        image_details = await computeImageDetails(row.image_url);
       } catch {
         image_details = row.image_details;
       }

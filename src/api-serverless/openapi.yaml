@@ -10568,7 +10568,7 @@ components:
           type: string
         name:
           type: string
-        image:
+        image_url:
           type: string
           nullable: true
         attributes:
@@ -10701,7 +10701,7 @@ components:
           type: string
         name:
           type: string
-        image:
+        image_url:
           type: string
           nullable: true
         attributes:

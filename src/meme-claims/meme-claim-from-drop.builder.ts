@@ -166,7 +166,7 @@ export type MemeClaimRowInput = {
   metadata_location: string | null;
   description: string;
   name: string;
-  image: string | null;
+  image_url: string | null;
   attributes: MemeClaimAttribute[];
   image_details: MemeClaimImageDetails | null;
   animation_url: string | null;
@@ -206,7 +206,7 @@ export function buildMemeClaimRowFromDrop(
       metadata_location: null,
       description: description || ' ',
       name: title || ' ',
-      image: null,
+      image_url: null,
       attributes: buildAttributes(metadatas, memeId, maxSeasonId),
       image_details: null,
       animation_url: null,
@@ -219,13 +219,13 @@ export function buildMemeClaimRowFromDrop(
   const isVideo = mime.startsWith('video/');
   const isImage = !isHtml && !isVideo;
 
-  let image: string | null = null;
+  let image_url: string | null = null;
   let image_details: MemeClaimImageDetails | null = null;
   let animation_url: string | null = null;
   let animation_details: MemeClaimAnimationDetails | null = null;
 
   if (isImage) {
-    image = primaryMedia.url;
+    image_url = primaryMedia.url;
     image_details = imageDetailsFromMime(primaryMedia.mime_type);
   } else {
     animation_url = primaryMedia.url;
@@ -248,7 +248,7 @@ export function buildMemeClaimRowFromDrop(
       }
     }
     if (previewImageUrl) {
-      image = previewImageUrl;
+      image_url = previewImageUrl;
       image_details = imageDetailsFromMime('image/png');
     }
   }
@@ -261,7 +261,7 @@ export function buildMemeClaimRowFromDrop(
     metadata_location: null,
     description: description || ' ',
     name: title || ' ',
-    image,
+    image_url,
     attributes: buildAttributes(metadatas, memeId, maxSeasonId),
     image_details,
     animation_url,
