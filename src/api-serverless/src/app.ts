@@ -902,8 +902,10 @@ async function initializeApp() {
     function timingSafeEqual(a: string, b: string) {
       const aBuf = Buffer.from(a);
       const bBuf = Buffer.from(b);
-      if (aBuf.length !== bBuf.length) return false;
-      return crypto.timingSafeEqual(aBuf, bBuf);
+      const aView = new Uint8Array(aBuf.buffer, aBuf.byteOffset, aBuf.byteLength);
+      const bView = new Uint8Array(bBuf.buffer, bBuf.byteOffset, bBuf.byteLength);
+      if (aView.length !== bView.length) return false;
+      return crypto.timingSafeEqual(aView, bView);
     }
     const body = req.body;
     const action = body?.action;
