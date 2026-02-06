@@ -8,7 +8,7 @@ plugins:
 
 provider:
   name: aws
-  runtime: nodejs18.x
+  runtime: nodejs22.x
   memorySize: 512
   timeout: 120
   architecture: arm64

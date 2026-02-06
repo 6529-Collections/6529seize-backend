@@ -10,7 +10,7 @@ plugins:
 provider:
   name: aws
   region: eu-west-1
-  runtime: nodejs18.x
+  runtime: nodejs22.x
   memorySize: 1024
   timeout: 900
   role: arn:aws:iam::987989283142:role/lambda-vpc-role

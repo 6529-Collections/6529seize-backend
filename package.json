@@ -75,7 +75,7 @@
     "@aws-sdk/s3-request-presigner": "^3.980.0",
     "@emoji-mart/data": "^1.2.1",
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
-    "@sentry/serverless": "^7.91.0",
+    "@sentry/serverless": "^7.120.4",
     "@smithy/node-http-handler": "^4.0.4",
     "@types/multer": "^2.0.0",
     "@wagmi/chains": "^1.8.0",
