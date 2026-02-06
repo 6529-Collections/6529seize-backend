@@ -393,7 +393,7 @@ plugins:
 
 provider:
   name: aws
-  runtime: nodejs18.x
+  runtime: nodejs22.x
   memorySize: 1028
   timeout: 900
 
