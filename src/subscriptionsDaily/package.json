@@ -7,8 +7,8 @@
     "prebuild": "rm -rf dist",
     "build": "esbuild index.ts --bundle --sourcemap --platform=node --target=es2020 --outfile=dist/index.js",
     "postbuild": "cd dist && zip -r index.zip index.js*",
-    "sls-deploy:prod": "node ../../node_modules/serverless/bin/run.js deploy --stage=prod --region=us-east-1",
-    "sls-deploy:staging": "node ../../node_modules/serverless/bin/run.js deploy --stage=staging --region=eu-west-1"
+    "sls-deploy:prod": "node ../../node_modules/serverless/run.js deploy --stage=prod --region=us-east-1",
+    "sls-deploy:staging": "node ../../node_modules/serverless/run.js deploy --stage=staging --region=eu-west-1"
   },
   "author": "",
   "license": "ISC",
