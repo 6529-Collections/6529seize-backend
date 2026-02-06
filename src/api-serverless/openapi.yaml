@@ -10537,6 +10537,7 @@ components:
       required:
         - drop_id
         - meme_id
+        - season
         - description
         - name
         - attributes
@@ -10546,6 +10547,10 @@ components:
         meme_id:
           type: integer
           format: int64
+        season:
+          type: integer
+          format: int32
+          minimum: 1
         image_location:
           type: string
           nullable: true
@@ -10683,6 +10688,10 @@ components:
     MemeClaimUpdateRequest:
       type: object
       properties:
+        season:
+          type: integer
+          format: int32
+          minimum: 1
         image_location:
           type: string
           nullable: true

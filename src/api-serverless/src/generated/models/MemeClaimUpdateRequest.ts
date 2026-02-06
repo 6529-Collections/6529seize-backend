@@ -14,6 +14,7 @@ import { MemeClaimAttribute } from '../models/MemeClaimAttribute';
 import { HttpFile } from '../http/http';
 
 export class MemeClaimUpdateRequest {
+    'season'?: number;
     'image_location'?: string | null;
     'animation_location'?: string | null;
     'metadata_location'?: string | null;
@@ -27,6 +28,12 @@ export class MemeClaimUpdateRequest {
     static readonly discriminator: string | undefined = undefined;
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
+        {
+            "name": "season",
+            "baseName": "season",
+            "type": "number",
+            "format": "int32"
+        },
         {
             "name": "image_location",
             "baseName": "image_location",

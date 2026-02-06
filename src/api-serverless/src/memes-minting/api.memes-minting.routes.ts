@@ -54,6 +54,7 @@ function rowToMemeClaim(row: MemeClaimRow): MemeClaim {
   return {
     drop_id: row.drop_id,
     meme_id: row.meme_id,
+    season: row.season,
     image_location: row.image_location ?? undefined,
     animation_location: row.animation_location ?? undefined,
     metadata_location: row.metadata_location ?? undefined,
@@ -525,21 +526,45 @@ router.post(
         'Claim already synced to Arweave'
       );
     }
+    const missing: string[] = [];
     const imageUrl = claim.image_url?.trim() || null;
-    if (imageUrl === null || imageUrl === '') {
-      throw new BadRequestException(
-        'Claim has no image URL! Set image before uploading to Arweave.'
-      );
-    }
+    if (imageUrl === null || imageUrl === '') missing.push('image_url');
     const editionSize =
       claim.edition_size == null ? null : Number(claim.edition_size);
-    const isInvalidEditionSize =
+    if (
       editionSize == null ||
-      Number.isInteger(editionSize) === false ||
-      editionSize < 1;
-    if (isInvalidEditionSize) {
+      !Number.isInteger(editionSize) ||
+      editionSize < 1
+    )
+      missing.push('edition_size');
+    const name = claim.name?.trim() ?? '';
+    if (name === '') missing.push('name');
+    const description = claim.description?.trim();
+    if (description == null || description === '') missing.push('description');
+    if (
+      claim.season == null ||
+      claim.season === undefined ||
+      !Number.isInteger(Number(claim.season)) ||
+      Number(claim.season) < 1
+    )
+      missing.push('season');
+    let rawAttrs: unknown;
+    try {
+      rawAttrs = JSON.parse(claim.attributes);
+    } catch {
+      missing.push('attributes (invalid JSON)');
+    }
+    if (rawAttrs != null && !Array.isArray(rawAttrs))
+      missing.push('attributes (must be an array)');
+    if (Array.isArray(rawAttrs)) {
+      const hasMemeName = rawAttrs.some(
+        (a: any) => (a.trait_type ?? a.traitType) === MEME_NAME_TRAIT
+      );
+      if (!hasMemeName) missing.push('Meme Name attribute');
+    }
+    if (missing.length > 0) {
       throw new BadRequestException(
-        'Claim has no edition_size or it is not a positive integer! Set edition_size before uploading to Arweave.'
+        `Missing required fields for Arweave upload: ${missing.join(', ')}. Only animation is optional.`
       );
     }
     let imageLocation: string;

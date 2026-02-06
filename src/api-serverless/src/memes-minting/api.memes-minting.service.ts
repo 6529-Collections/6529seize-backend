@@ -79,6 +79,7 @@ export async function buildUpdatesForClaimPatch(
   existing: MemeClaimRow
 ): Promise<MemeClaimUpdates> {
   const updates: MemeClaimUpdates = {};
+  if (body.season !== undefined) updates.season = body.season;
   if (body.image_location !== undefined)
     updates.image_location = body.image_location;
   if (body.animation_location !== undefined)

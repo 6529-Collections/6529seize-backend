@@ -18,6 +18,7 @@ import { HttpFile } from '../http/http';
 export class MemeClaim {
     'drop_id': string;
     'meme_id': number;
+    'season': number;
     'image_location'?: string | null;
     'animation_location'?: string | null;
     'metadata_location'?: string | null;
@@ -45,6 +46,12 @@ export class MemeClaim {
             "baseName": "meme_id",
             "type": "number",
             "format": "int64"
+        },
+        {
+            "name": "season",
+            "baseName": "season",
+            "type": "number",
+            "format": "int32"
         },
         {
             "name": "image_location",
