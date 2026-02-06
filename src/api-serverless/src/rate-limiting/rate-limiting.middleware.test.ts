@@ -250,7 +250,7 @@ describe('rateLimitingMiddleware', () => {
       'x-6529-internal-signature': 'test-signature'
     };
     req.method = 'GET';
-    req.path = '/api/nfts';
+    (req.path as any) = '/api/nfts';
 
     const middleware = rateLimitingMiddleware();
     await middleware(req as Request, res as Response, next);
@@ -278,7 +278,7 @@ describe('rateLimitingMiddleware', () => {
       'x-6529-internal-signature': 'test-signature'
     };
     req.method = 'GET';
-    req.path = '/api/nfts';
+    (req.path as any) = '/api/nfts';
 
     const middleware = rateLimitingMiddleware();
     await middleware(req as Request, res as Response, next);
@@ -298,7 +298,7 @@ describe('rateLimitingMiddleware', () => {
       'x-6529-internal-signature': 'test-signature'
     };
     req.method = 'GET';
-    req.path = '/api/nfts';
+    (req.path as any) = '/api/nfts';
     (rateLimitingService.checkRateLimit as jest.Mock).mockResolvedValue({
       allowed: true,
       remaining: 25,
@@ -334,7 +334,7 @@ describe('rateLimitingMiddleware', () => {
       'x-6529-internal-signature': 'test-signature'
     };
     req.method = 'GET';
-    req.path = '/api/nfts';
+    (req.path as any) = '/api/nfts';
 
     const middleware = rateLimitingMiddleware();
     await middleware(req as Request, res as Response, next);
@@ -354,7 +354,7 @@ describe('rateLimitingMiddleware', () => {
       'x-6529-internal-signature': 'invalid-signature'
     };
     req.method = 'GET';
-    req.path = '/api/nfts';
+    (req.path as any) = '/api/nfts';
     (rateLimitingService.checkRateLimit as jest.Mock).mockResolvedValue({
       allowed: true,
       remaining: 15,

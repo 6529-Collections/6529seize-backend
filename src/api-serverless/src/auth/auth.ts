@@ -16,7 +16,7 @@ import { identityFetcher } from '../identities/identity.fetcher';
 import { enums } from '../../../enums';
 import { loggerContext } from '../../../logger-context';
 
-export function getJwtSecret() {
+export function getJwtSecret(): string {
   const jwtsecret = process.env.JWT_SECRET;
   if (!jwtsecret) {
     throw new Error('JWT_SECRET env var not found');
@@ -24,7 +24,7 @@ export function getJwtSecret() {
   return jwtsecret;
 }
 
-export function getJwtExpiry(): string {
+export function getJwtExpiry(): number {
   const jwtExpiry = process.env.JWT_EXPIRY_SECONDS;
   if (!jwtExpiry || typeof jwtExpiry !== 'string') {
     throw new Error('JWT_EXPIRY_SECONDS env var not found');
@@ -33,7 +33,7 @@ export function getJwtExpiry(): string {
   if (isNaN(jwtExpiryNumber) || jwtExpiryNumber <= 0) {
     throw new Error('JWT_EXPIRY_SECONDS env var must be a positive integer');
   }
-  return `${jwtExpiryNumber}s`;
+  return jwtExpiryNumber;
 }
 
 function updateJwtContext(user: any) {
