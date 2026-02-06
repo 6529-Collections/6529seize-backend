@@ -91,42 +91,13 @@ jobs:
         with:
           ref: ${{ steps.extract_branch.outputs.branch }}
       - name: Install root dependencies
-        run: |
-          set -e
-          install_with_retry() {
-            npm i && return 0
-            echo "npm install failed, cleaning cache and retrying..."
-            npm cache clean --force
-            npm i
-          }
-          install_with_retry
+        run: npm i
       - name: Install lambda dependencies
         if: github.event.inputs.service != 'api'
-        run: |
-          set -e
-          install_with_retry() {
-            npm i && return 0
-            echo "npm install failed, cleaning cache and retrying..."
-            npm cache clean --force
-            npm i
-          }
-          install_with_retry
-          pushd src/${{ github.event.inputs.service }}
-          install_with_retry
-          popd
+        run: npm i && pushd src/${{ github.event.inputs.service }} && npm i && popd
       - name: Install api dependencies
         if: github.event.inputs.service == 'api'
-        run: |
-          set -e
-          install_with_retry() {
-            npm i && return 0
-            echo "npm install failed, cleaning cache and retrying..."
-            npm cache clean --force
-            npm i
-          }
-          pushd src/api-serverless
-          install_with_retry
-          popd
+        run: pushd src/api-serverless && npm i && popd
       - name: Build service
         if: github.event.inputs.service != 'api'
         run: pushd src/${{ github.event.inputs.service }} && npm run build && popd
