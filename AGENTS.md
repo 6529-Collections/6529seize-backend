@@ -296,7 +296,7 @@ The API (`src/api-serverless/src/`) is an Express application with:
 - API endpoints are described in `openapi.yaml` file.
 - Any time you change this file run `cd src/api-serverless && npm run restructure-openapi && npm run generate`
 - This will generate response models to `src/api-serverless/src/generated/models`, but only response models and POST/DELETE request bodies, not routes and query param models.
-- Routes themselves are manually created into `api-servless` into files ending with `.routes.ts` and are wired in `app.ts` file.
+- Routes themselves are manually created into `api-serverless` into files ending with `.routes.ts` and are wired in `app.ts` file.
 - Generated API models are used in those routes. For query param based requests, types are created manually.
 
 ### Imports and path aliases
@@ -305,3 +305,6 @@ Use path aliases for **new** imports where applicable. Do not change existing im
 
 - In **api-serverless** (see `src/api-serverless/tsconfig.paths.json`): Use `@/` for repo `src/` (e.g. `@/constants`, `@/numbers`, `@/sql-executor`). Use `@/api/*` for files under api-serverless `src/` (e.g. `@/api/memes-minting/allowlist-merkle`, `@/api/memes-minting/api.memes-minting.db`). New code in api-serverless must use these aliases, not relative paths for cross-folder imports.
 - In **root** (e.g. loops, src outside api-serverless): root `tsconfig.json` has `@/*` → `src/*`; use `@/constants`, `@/entities`, etc. when adding new code.
+
+## Commiting to Git
+**NEVER commit unless explicitly asked to by the user.** Do not assume the user wants you to commit. Wait for explicit instructions like "commit" or "commit this".
