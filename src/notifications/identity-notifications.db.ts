@@ -270,8 +270,10 @@ export type NewIdentityNotification = Omit<
   'id' | 'created_at' | 'read_at'
 >;
 
-export interface IdentityNotificationDeserialized
-  extends Omit<IdentityNotificationEntity, 'additional_data'> {
+export interface IdentityNotificationDeserialized extends Omit<
+  IdentityNotificationEntity,
+  'additional_data'
+> {
   readonly additional_data: any;
 }
 
