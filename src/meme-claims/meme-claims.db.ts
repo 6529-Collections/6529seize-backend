@@ -26,11 +26,11 @@ export class MemeClaimsDb extends LazyDbAccessCompatibleService {
     }
     ctx?.timer?.start(`${this.constructor.name}->createMemeClaim`);
     const sql = `
-      INSERT INTO ${MEMES_CLAIMS_TABLE} (drop_id, meme_id, image_location, animation_location, metadata_location, arweave_synced_at, edition_size, description, name, image, attributes, image_details, animation_url, animation_details)
+      INSERT INTO ${MEMES_CLAIMS_TABLE} (drop_id, meme_id, season, image_location, animation_location, metadata_location, arweave_synced_at, edition_size, description, name, image_url, attributes, image_details, animation_url, animation_details)
       VALUES ${rows
         .map(
           (r) =>
-            `(${mysql.escape(r.drop_id)}, ${mysql.escape(r.meme_id)}, ${mysql.escape(r.image_location)}, ${mysql.escape(r.animation_location)}, ${mysql.escape(r.metadata_location)}, NULL, NULL, ${mysql.escape(r.description)}, ${mysql.escape(r.name)}, ${mysql.escape(r.image_url)}, ${mysql.escape(JSON.stringify(r.attributes))}, ${r.image_details ? mysql.escape(JSON.stringify(r.image_details)) : mysql.escape(null)}, ${mysql.escape(r.animation_url)}, ${r.animation_details ? mysql.escape(JSON.stringify(r.animation_details)) : mysql.escape(null)})`
+            `(${mysql.escape(r.drop_id)}, ${mysql.escape(r.meme_id)}, ${mysql.escape(r.season)}, ${mysql.escape(r.image_location)}, ${mysql.escape(r.animation_location)}, ${mysql.escape(r.metadata_location)}, NULL, NULL, ${mysql.escape(r.description)}, ${mysql.escape(r.name)}, ${mysql.escape(r.image_url)}, ${mysql.escape(JSON.stringify(r.attributes))}, ${r.image_details ? mysql.escape(JSON.stringify(r.image_details)) : mysql.escape(null)}, ${mysql.escape(r.animation_url)}, ${r.animation_details ? mysql.escape(JSON.stringify(r.animation_details)) : mysql.escape(null)})`
         )
         .join(', ')}
     `;

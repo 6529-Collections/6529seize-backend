@@ -105,9 +105,7 @@ function attrValue(dataKey: string, dataValue: string): string | number {
 }
 
 function buildAttributes(
-  metadatas: DropMetadataEntity[],
-  memeId: number,
-  maxSeasonId: number
+  metadatas: DropMetadataEntity[]
 ): MemeClaimAttribute[] {
   const attrs: MemeClaimAttribute[] = [];
 
@@ -121,28 +119,10 @@ function buildAttributes(
     if (POINTS_KEYS.has(m.data_key)) {
       attr.display_type = 'boost_percentage';
       attr.max_value = 100;
-    }
-    if (NUMBER_KEYS.has(m.data_key)) {
+    } else if (NUMBER_KEYS.has(m.data_key)) {
       attr.display_type = 'number';
     }
     attrs.push(attr);
-  }
-
-  const hasTypeSeason = metadatas.some((m) => m.data_key === 'typeSeason');
-  if (!hasTypeSeason) {
-    attrs.push({
-      trait_type: 'Type - Season',
-      value: maxSeasonId,
-      display_type: 'number'
-    });
-  }
-  const hasTypeCard = metadatas.some((m) => m.data_key === 'typeCard');
-  if (!hasTypeCard) {
-    attrs.push({
-      trait_type: 'Type - Card',
-      value: memeId,
-      display_type: 'number'
-    });
   }
 
   return attrs;
@@ -161,6 +141,7 @@ function imageDetailsFromMime(mimeType: string): MemeClaimImageDetails {
 export type MemeClaimRowInput = {
   drop_id: string;
   meme_id: number;
+  season: number;
   image_location: string | null;
   animation_location: string | null;
   metadata_location: string | null;
@@ -207,7 +188,8 @@ export function buildMemeClaimRowFromDrop(
       description: description || ' ',
       name: title || ' ',
       image_url: null,
-      attributes: buildAttributes(metadatas, memeId, maxSeasonId),
+      season: maxSeasonId,
+      attributes: buildAttributes(metadatas),
       image_details: null,
       animation_url: null,
       animation_details: null
@@ -256,13 +238,14 @@ export function buildMemeClaimRowFromDrop(
   return {
     drop_id: dropId,
     meme_id: memeId,
+    season: maxSeasonId,
     image_location: null,
     animation_location: null,
     metadata_location: null,
     description: description || ' ',
     name: title || ' ',
     image_url,
-    attributes: buildAttributes(metadatas, memeId, maxSeasonId),
+    attributes: buildAttributes(metadatas),
     image_details,
     animation_url,
     animation_details

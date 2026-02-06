@@ -10,6 +10,7 @@ import {
   fetchMemeClaimByMemeId,
   fetchMemeClaimsPage,
   fetchMemeClaimsTotalCount,
+  fetchMemeIdByMemeName,
   fetchAllMintingMerkleProofsForRoot,
   fetchMintingMerkleProofs,
   fetchMintingMerkleRoots,
@@ -293,10 +294,28 @@ function arweaveTxIdFromUrl(url: string): string {
   return url.startsWith(base) ? url.slice(base.length) : url;
 }
 
+const FETCH_IMAGE_TIMEOUT_MS = 60_000;
+
 async function fetchUrlToBuffer(
   url: string
 ): Promise<{ buffer: Buffer; contentType: string }> {
-  const res = await fetch(url);
+  const timeoutPromise = new Promise<never>((_, reject) =>
+    setTimeout(
+      () =>
+        reject(
+          new Error(`Fetch timed out after ${FETCH_IMAGE_TIMEOUT_MS}ms: ${url}`)
+        ),
+      FETCH_IMAGE_TIMEOUT_MS
+    )
+  );
+  const fetchPromise = fetch(url, {
+    headers: {
+      'User-Agent':
+        'Mozilla/5.0 (compatible; 6529ArweaveUpload/1.0; +https://6529.io)',
+      Accept: 'image/*,*/*;q=0.8'
+    }
+  });
+  const res = await Promise.race([fetchPromise, timeoutPromise]);
   if (res.ok) {
     const buffer = Buffer.from(await res.arrayBuffer());
     const contentType =
@@ -327,19 +346,150 @@ async function uploadAnimationToArweaveIfPresent(
   return url;
 }
 
+const ARWEAVE_METADATA_CREATED_BY = '6529 Collections';
+const ARWEAVE_METADATA_EXTERNAL_URL_BASE = 'https://6529.io/the-memes';
+
+const ARWEAVE_POINTS_TRAIT_PREFIX = 'Points - ';
+const ARWEAVE_TYPE_NUMBER_TRAITS = new Set([
+  'Type - Meme',
+  'Type - Season',
+  'Type - Card'
+]);
+
+function normalizeAttributesForArweave(attributes: unknown): unknown[] {
+  if (!Array.isArray(attributes)) return [];
+  return attributes.map((a: any) => {
+    const traitType = a.trait_type ?? a.traitType;
+    const value = a.value;
+    const existingDisplayType = a.display_type ?? a.displayType ?? undefined;
+    const existingMaxValue = a.max_value ?? a.maxValue ?? undefined;
+    let displayType: string | undefined;
+    let maxValue: number | undefined;
+    if (
+      typeof traitType === 'string' &&
+      traitType.startsWith(ARWEAVE_POINTS_TRAIT_PREFIX)
+    ) {
+      displayType = existingDisplayType ?? 'boost_percentage';
+      maxValue = existingMaxValue ?? 100;
+    } else if (ARWEAVE_TYPE_NUMBER_TRAITS.has(traitType)) {
+      displayType = existingDisplayType ?? 'number';
+    } else if (traitType === 'Artist') {
+      displayType = existingDisplayType ?? 'text';
+    } else {
+      displayType = undefined;
+      maxValue = undefined;
+    }
+    if (displayType === undefined) {
+      return { trait_type: traitType, value };
+    }
+    if (
+      displayType === 'boost_percentage' ||
+      ARWEAVE_TYPE_NUMBER_TRAITS.has(traitType)
+    ) {
+      const out: Record<string, unknown> = {
+        display_type: displayType,
+        trait_type: traitType,
+        value
+      };
+      if (maxValue !== undefined) out.max_value = maxValue;
+      return out;
+    }
+    return { trait_type: traitType, value, display_type: displayType };
+  });
+}
+
+const TYPE_MEME_TRAIT = 'Type - Meme';
+const TYPE_SEASON_TRAIT = 'Type - Season';
+const TYPE_CARD_TRAIT = 'Type - Card';
+const MEME_NAME_TRAIT = 'Meme Name';
+
+function getMemeNameFromAttributes(attributes: unknown): string {
+  if (!Array.isArray(attributes))
+    throw new BadRequestException('Claim has no attributes');
+  const memeNameAttr = attributes.find(
+    (a: any) => (a.trait_type ?? a.traitType) === MEME_NAME_TRAIT
+  );
+  const value = memeNameAttr?.value;
+  if (value == null || typeof value !== 'string' || value.trim() === '')
+    throw new BadRequestException(
+      `Claim has no "Meme Name" attribute; cannot resolve Type - Meme for Arweave upload`
+    );
+  return value.trim();
+}
+
+function attributesWithTypeTraits(
+  rawAttributes: unknown[],
+  typeMemeValue: number,
+  seasonValue: number,
+  memeId: number
+): unknown[] {
+  const filtered = rawAttributes.filter((a: any) => {
+    const tt = a.trait_type ?? a.traitType;
+    return (
+      tt !== TYPE_MEME_TRAIT &&
+      tt !== TYPE_SEASON_TRAIT &&
+      tt !== TYPE_CARD_TRAIT
+    );
+  });
+  filtered.push(
+    {
+      display_type: 'number',
+      trait_type: TYPE_MEME_TRAIT,
+      value: typeMemeValue
+    },
+    {
+      display_type: 'number',
+      trait_type: TYPE_SEASON_TRAIT,
+      value: seasonValue
+    },
+    { display_type: 'number', trait_type: TYPE_CARD_TRAIT, value: memeId }
+  );
+  return filtered;
+}
+
 async function uploadClaimMetadataToArweave(
+  memeId: number,
   claim: MemeClaimRow,
   imageLocation: string,
   animationLocation: string | null
 ): Promise<string> {
-  const attributes = JSON.parse(claim.attributes) as unknown;
-  const metadata = {
-    name: claim.name,
+  const rawAttributes = JSON.parse(claim.attributes) as unknown;
+  if (!Array.isArray(rawAttributes))
+    throw new BadRequestException('Claim attributes must be an array');
+  const memeName = getMemeNameFromAttributes(rawAttributes);
+  const typeMemeId = await fetchMemeIdByMemeName(memeName);
+  if (typeMemeId === null)
+    throw new BadRequestException(
+      `No meme found in memes_extended_data for Meme Name "${memeName}"; cannot upload to Arweave`
+    );
+  const attributesWithTypes = attributesWithTypeTraits(
+    rawAttributes,
+    typeMemeId,
+    claim.season,
+    memeId
+  );
+  const attributes = normalizeAttributesForArweave(attributesWithTypes);
+  const imageDetails = claim.image_details
+    ? (JSON.parse(claim.image_details) as Record<string, unknown>)
+    : null;
+  const animationDetails = claim.animation_details
+    ? (JSON.parse(claim.animation_details) as Record<string, unknown>)
+    : null;
+  const metadata: Record<string, unknown> = {
+    created_by: ARWEAVE_METADATA_CREATED_BY,
     description: claim.description ?? '',
-    image_url: imageLocation,
-    ...(animationLocation ? { animation_url: animationLocation } : {}),
+    name: claim.name,
+    external_url: `${ARWEAVE_METADATA_EXTERNAL_URL_BASE}/${memeId}`,
     attributes
   };
+  if (imageDetails != null) metadata.image_details = imageDetails;
+  metadata.image = imageLocation;
+  metadata.image_url = imageLocation;
+  if (animationLocation != null) {
+    metadata.animation = animationLocation;
+    metadata.animation_url = animationLocation;
+  }
+  if (animationDetails != null) metadata.animation_details = animationDetails;
   const buffer = Buffer.from(JSON.stringify(metadata), 'utf8');
   const { url } = await arweaveFileUploader.uploadFile(
     buffer,
@@ -399,6 +549,7 @@ router.post(
       imageLocation = await uploadImageToArweaveOrThrow(imageUrl);
       animationLocation = await uploadAnimationToArweaveIfPresent(claim);
       metadataLocation = await uploadClaimMetadataToArweave(
+        memeId,
         claim,
         imageLocation,
         animationLocation
@@ -409,9 +560,11 @@ router.post(
       return res.status(500).json({ error: message });
     }
     await updateMemeClaim(memeId, {
-      image_location: imageLocation,
-      animation_location: animationLocation,
-      metadata_location: metadataLocation,
+      image_location: arweaveTxIdFromUrl(imageLocation),
+      animation_location: animationLocation
+        ? arweaveTxIdFromUrl(animationLocation)
+        : null,
+      metadata_location: arweaveTxIdFromUrl(metadataLocation),
       arweave_synced_at: Date.now()
     });
     const updated = await fetchMemeClaimByMemeId(memeId);

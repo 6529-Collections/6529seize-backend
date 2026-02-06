@@ -88,7 +88,7 @@ export async function buildUpdatesForClaimPatch(
   if (body.edition_size !== undefined) updates.edition_size = body.edition_size;
   if (body.description !== undefined) updates.description = body.description;
   if (body.name !== undefined) updates.name = body.name;
-  if (body.image_url !== undefined) updates.image = body.image_url;
+  if (body.image_url !== undefined) updates.image_url = body.image_url;
   if (body.attributes !== undefined) updates.attributes = body.attributes;
   if (body.animation_url !== undefined)
     updates.animation_url = body.animation_url;

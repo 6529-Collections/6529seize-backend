@@ -49,6 +49,9 @@ export class MemeClaimEntity {
   @Column({ type: 'int', unique: true })
   readonly meme_id!: number;
 
+  @Column({ type: 'int' })
+  readonly season!: number;
+
   @Column({ type: 'varchar', length: 255, nullable: true })
   readonly image_location!: string | null;
 
@@ -70,7 +73,7 @@ export class MemeClaimEntity {
   @Column({ type: 'varchar', length: 255 })
   readonly name!: string;
 
-  @Column({ type: 'varchar', length: 1024, nullable: true, name: 'image' })
+  @Column({ type: 'varchar', length: 1024, nullable: true })
   readonly image_url!: string | null;
 
   @Column({ type: 'json' })

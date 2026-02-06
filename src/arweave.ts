@@ -1,9 +1,10 @@
-import Arweave from 'arweave';
 import { Logger } from './logging';
 
-let arweaveAndKey: { arweave: Arweave; key: any } | null = null;
+const Arweave = require('arweave');
 
-export function getArweaveInstance(): { arweave: Arweave; key: any } {
+let arweaveAndKey: { arweave: any; key: any } | null = null;
+
+export function getArweaveInstance(): { arweave: any; key: any } {
   if (!arweaveAndKey) {
     if (!process.env.ARWEAVE_KEY) {
       throw new Error('ARWEAVE_KEY not set');
@@ -23,7 +24,7 @@ export class ArweaveFileUploader {
   private readonly logger = Logger.get(ArweaveFileUploader.name);
 
   constructor(
-    private readonly arweaveAndKeySupplier: () => { arweave: Arweave; key: any }
+    private readonly arweaveAndKeySupplier: () => { arweave: any; key: any }
   ) {}
 
   public async uploadFile(
