@@ -52,7 +52,7 @@
     "js-yaml": "^4.1.1",
     "serverless": "^3.38.0",
     "serverless-esbuild": "^1.57.0",
-    "serverless-offline": "^12.0.4",
+    "serverless-offline": "^11.6.0",
     "swagger-autogen": "^2.23.0",
     "ts-node": "^10.4.0",
     "tsconfig-paths": "^3.9.0",
