@@ -32,8 +32,13 @@ export class ArweaveFileUploader {
     contentType: string
   ): Promise<{ url: string }> {
     const { arweave, key: arweaveKey } = this.arweaveAndKeySupplier();
+    const dataView = new Uint8Array(
+      fileBuffer.buffer,
+      fileBuffer.byteOffset,
+      fileBuffer.byteLength
+    );
     const areweaveTransaction = await arweave.createTransaction(
-      { data: fileBuffer },
+      { data: dataView },
       arweaveKey
     );
     areweaveTransaction.addTag('Content-Type', contentType);
