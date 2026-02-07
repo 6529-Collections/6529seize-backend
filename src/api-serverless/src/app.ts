@@ -1190,7 +1190,6 @@ function getInitializationPromise(): Promise<void> {
     })
     .catch((err) => {
       logger.error('[INITIALIZATION FAILED]', err);
-      initializationPromise = null;
       throw err;
     });
 
@@ -1199,6 +1198,14 @@ function getInitializationPromise(): Promise<void> {
 
 app.use(initializationGuard());
 
-void getInitializationPromise();
+export async function ensureInitialized(): Promise<void> {
+  await getInitializationPromise();
+}
+
+if (!process.env.AWS_LAMBDA_FUNCTION_NAME) {
+  ensureInitialized().catch((err) => {
+    logger.error('[EAGER INIT FAILED]', err);
+  });
+}
 
 export { app };
