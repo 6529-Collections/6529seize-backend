@@ -1,6 +1,7 @@
 import {
   MEMES_CLAIMS_TABLE,
   MEMES_EXTENDED_DATA_TABLE,
+  MEMES_SEASONS_TABLE,
   MINTING_MERKLE_PROOFS_TABLE,
   MINTING_MERKLE_ROOTS_TABLE
 } from '@/constants';
@@ -183,6 +184,13 @@ export async function fetchMemeClaimsPage(
     `${MEMES_CLAIMS_SELECT} ORDER BY meme_id DESC LIMIT :limit OFFSET :offset`,
     { limit, offset }
   );
+}
+
+export async function fetchMaxSeasonId(): Promise<number> {
+  const rows = await sqlExecutor.execute<{ max_id: number }>(
+    `SELECT COALESCE(MAX(id), 0) as max_id FROM ${MEMES_SEASONS_TABLE}`
+  );
+  return rows[0]?.max_id ?? 0;
 }
 
 export async function fetchMemeIdByMemeName(

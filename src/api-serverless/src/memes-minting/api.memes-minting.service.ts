@@ -1,8 +1,10 @@
 import {
+  fetchMaxSeasonId,
   fetchMemeClaimByMemeId,
   updateMemeClaim,
   type MemeClaimRow
 } from '@/api/memes-minting/api.memes-minting.db';
+import { BadRequestException } from '@/exceptions';
 import type { MemeClaimUpdateRequest } from '@/api/generated/models/MemeClaimUpdateRequest';
 import {
   computeImageDetails,
@@ -79,7 +81,20 @@ export async function buildUpdatesForClaimPatch(
   existing: MemeClaimRow
 ): Promise<MemeClaimUpdates> {
   const updates: MemeClaimUpdates = {};
-  if (body.season !== undefined) updates.season = body.season;
+  if (body.season !== undefined) {
+    const maxSeason = await fetchMaxSeasonId();
+    const requested = Number(body.season);
+    if (
+      !Number.isInteger(requested) ||
+      requested < maxSeason ||
+      requested > maxSeason + 1
+    ) {
+      throw new BadRequestException(
+        `season must be ${maxSeason} or ${maxSeason + 1} (current max season is ${maxSeason}), got ${body.season}`
+      );
+    }
+    updates.season = requested;
+  }
   if (body.image_location !== undefined)
     updates.image_location = body.image_location;
   if (body.animation_location !== undefined)
