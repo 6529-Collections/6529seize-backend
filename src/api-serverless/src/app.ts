@@ -1168,7 +1168,7 @@ function initializationGuard() {
       return next();
     }
     try {
-      await initializationPromise;
+      await getInitializationPromise();
       return next();
     } catch (err) {
       logger.error('[REQUEST DURING FAILED INIT]', err);
@@ -1177,15 +1177,28 @@ function initializationGuard() {
   };
 }
 
+let initializationPromise: Promise<void> | null = null;
+
+function getInitializationPromise(): Promise<void> {
+  if (initializationPromise) {
+    return initializationPromise;
+  }
+
+  initializationPromise = initializeApp()
+    .then(() => {
+      isInitialized = true;
+    })
+    .catch((err) => {
+      logger.error('[INITIALIZATION FAILED]', err);
+      initializationPromise = null;
+      throw err;
+    });
+
+  return initializationPromise;
+}
+
 app.use(initializationGuard());
 
-const initializationPromise = initializeApp()
-  .then(() => {
-    isInitialized = true;
-  })
-  .catch((err) => {
-    logger.error(`[INITIALIZATION FAILED] ${err}`);
-    throw err;
-  });
+void getInitializationPromise();
 
 export { app };
