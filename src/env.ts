@@ -3,12 +3,15 @@ import {
   GetSecretValueCommandOutput,
   SecretsManager
 } from '@aws-sdk/client-secrets-manager';
+import { NodeHttpHandler } from '@smithy/node-http-handler';
 import { numbers, Numbers } from './numbers';
 import { Time } from './time';
 
 const SECRET = 'prod/lambdas';
 const LOAD_SECRETS_MAX_ATTEMPTS = 5;
 const LOAD_SECRETS_BASE_RETRY_DELAY_MS = 250;
+const SECRETS_MANAGER_CONNECTION_TIMEOUT_MS = 2_000;
+const SECRETS_MANAGER_SOCKET_TIMEOUT_MS = 10_000;
 
 const dotenv = require('dotenv');
 const path = require('path');
@@ -30,7 +33,12 @@ function parseAwsTimestampOrNull(value: string): number | null {
   );
 }
 
-function extractClockSkewOffsetMsOrNull(errorMessage: string): number | null {
+function extractAwsSigV4TimingOrNull(errorMessage: string): {
+  signedAtMs: number;
+  serverTimeMs: number;
+  requestAgeMs: number;
+  localClockSkewMs: number;
+} | null {
   const signedAtMatch = /Signature expired:\s*(\d{8}T\d{6}Z)/.exec(
     errorMessage
   );
@@ -43,7 +51,9 @@ function extractClockSkewOffsetMsOrNull(errorMessage: string): number | null {
   if (signedAtMs === null || serverTimeMs === null) {
     return null;
   }
-  return serverTimeMs - signedAtMs;
+  const requestAgeMs = serverTimeMs - signedAtMs;
+  const localClockSkewMs = serverTimeMs - Date.now();
+  return { signedAtMs, serverTimeMs, requestAgeMs, localClockSkewMs };
 }
 
 function getErrorName(error: unknown): string {
@@ -83,10 +93,21 @@ export async function loadSecrets() {
   let lastError: unknown = null;
 
   for (let attempt = 1; attempt <= LOAD_SECRETS_MAX_ATTEMPTS; attempt++) {
+    const connectionTimeoutMs =
+      numbers.parseIntOrNull(process.env.SECRETS_MANAGER_CONNECTION_TIMEOUT_MS) ??
+      SECRETS_MANAGER_CONNECTION_TIMEOUT_MS;
+    const socketTimeoutMs =
+      numbers.parseIntOrNull(process.env.SECRETS_MANAGER_SOCKET_TIMEOUT_MS) ??
+      SECRETS_MANAGER_SOCKET_TIMEOUT_MS;
+
     const secretsManager = new SecretsManager({
       region: process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION,
       maxAttempts: 2,
-      systemClockOffset: clockOffsetMs
+      systemClockOffset: clockOffsetMs,
+      requestHandler: new NodeHttpHandler({
+        connectionTimeout: connectionTimeoutMs,
+        socketTimeout: socketTimeoutMs
+      })
     });
 
     try {
@@ -95,13 +116,31 @@ export async function loadSecrets() {
     } catch (error) {
       lastError = error;
       const errorMessage = getErrorMessage(error);
-      const inferredClockOffsetMs =
-        extractClockSkewOffsetMsOrNull(errorMessage);
-      if (inferredClockOffsetMs !== null) {
-        clockOffsetMs = inferredClockOffsetMs;
-        logger.warn(
-          `[SECRETS LOAD CLOCK SKEW ADJUSTMENT] [ATTEMPT ${attempt}] [OFFSET_MS ${clockOffsetMs}]`
-        );
+      const timing = extractAwsSigV4TimingOrNull(errorMessage);
+      if (timing !== null) {
+        const localSkewMsAbs = Math.abs(timing.localClockSkewMs);
+        const requestAgeMsAbs = Math.abs(timing.requestAgeMs);
+        if (localSkewMsAbs <= Time.seconds(60).toMillis()) {
+          logger.warn(
+            `[SECRETS LOAD STALE SIGNATURE] [ATTEMPT ${attempt}] [REQUEST_AGE_MS ${timing.requestAgeMs}] [LOCAL_CLOCK_SKEW_MS ${timing.localClockSkewMs}]`
+          );
+        } else if (localSkewMsAbs <= Time.minutes(15).toMillis()) {
+          clockOffsetMs = timing.localClockSkewMs;
+          logger.warn(
+            `[SECRETS LOAD CLOCK SKEW ADJUSTMENT] [ATTEMPT ${attempt}] [OFFSET_MS ${clockOffsetMs}] [REQUEST_AGE_MS ${timing.requestAgeMs}]`
+          );
+        } else {
+          logger.warn(
+            `[SECRETS LOAD CLOCK SKEW TOO LARGE] [ATTEMPT ${attempt}] [LOCAL_CLOCK_SKEW_MS ${timing.localClockSkewMs}] [REQUEST_AGE_MS ${timing.requestAgeMs}]`
+          );
+        }
+
+        // If request age looks too large, emphasize that timeouts are the primary mitigation.
+        if (requestAgeMsAbs > Time.minutes(5).toMillis()) {
+          logger.warn(
+            `[SECRETS LOAD REQUEST AGE EXCEEDED SIGV4 WINDOW] [ATTEMPT ${attempt}] [REQUEST_AGE_MS ${timing.requestAgeMs}] [TIMEOUTS] [CONNECTION_TIMEOUT_MS ${connectionTimeoutMs}] [SOCKET_TIMEOUT_MS ${socketTimeoutMs}]`
+          );
+        }
       }
 
       if (attempt === LOAD_SECRETS_MAX_ATTEMPTS) {
