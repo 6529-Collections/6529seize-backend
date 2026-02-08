@@ -1,3 +1,9 @@
+import { computeAllowlistMerkle } from '@/api/memes-minting/allowlist-merkle';
+import {
+  deleteMintingMerkleForPhase,
+  insertMintingMerkleProofs,
+  insertMintingMerkleRoot
+} from '@/api/memes-minting/api.memes-minting.db';
 import {
   DISTRIBUTION_NORMALIZED_TABLE,
   DISTRIBUTION_TABLE,
@@ -135,6 +141,39 @@ export async function populateDistribution(
   }
 
   await insertDistributions(distributionInserts);
+
+  if (splitResults.allowlists.length > 0) {
+    const allowlistEntries = splitResults.allowlists.map((a) => ({
+      address: a.wallet,
+      amount: a.amount
+    }));
+    const { merkleRoot, proofsByAddress } =
+      computeAllowlistMerkle(allowlistEntries);
+    if (merkleRoot) {
+      await sqlExecutor.executeNativeQueriesInTransaction(
+        async (wrappedConnection) => {
+          await deleteMintingMerkleForPhase(
+            contract,
+            cardId,
+            phase,
+            wrappedConnection
+          );
+          await insertMintingMerkleRoot(
+            contract,
+            cardId,
+            phase,
+            merkleRoot,
+            wrappedConnection
+          );
+          await insertMintingMerkleProofs(
+            merkleRoot,
+            proofsByAddress,
+            wrappedConnection
+          );
+        }
+      );
+    }
+  }
 }
 
 export async function insertAutomaticAirdrops(

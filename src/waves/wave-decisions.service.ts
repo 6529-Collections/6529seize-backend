@@ -1,6 +1,11 @@
-import { waveDecisionsDb, WaveDecisionsDb } from './wave-decisions.db';
-import { Time, Timer } from '../time';
-import { RequestContext } from '../request.context';
+import {
+  dropVotingDb,
+  DropVotingDb
+} from '../api-serverless/src/drops/drop-voting.db';
+import { wavesApiDb } from '../api-serverless/src/waves/waves.api.db';
+import { collections } from '../collections';
+import { DropsDb, dropsDb } from '../drops/drops.db';
+import { DropRealVoterVoteInTimeEntityWithoutId } from '../entities/IDropRealVoterVoteInTime';
 import {
   WaveDecisionStrategy,
   WaveOutcomeCredit,
@@ -11,22 +16,21 @@ import {
   WaveDecisionWinnerDropEntity,
   WaveDecisionWinnerPrize
 } from '../entities/IWaveDecision';
+import { WinnerDropVoterVoteEntity } from '../entities/IWinnerDropVoterVote';
+import { env } from '../env';
+import { deployerDropper, DeployerDropper } from '@/deployer-dropper';
+import {
+  memeClaimsService,
+  MemeClaimsService
+} from '@/meme-claims/meme-claims.service';
 import { Logger } from '../logging';
+import { RequestContext } from '../request.context';
+import { Time, Timer } from '../time';
+import { waveDecisionsDb, WaveDecisionsDb } from './wave-decisions.db';
 import {
   waveLeaderboardCalculationService,
   WaveLeaderboardCalculationService
 } from './wave-leaderboard-calculation.service';
-import {
-  dropVotingDb,
-  DropVotingDb
-} from '../api-serverless/src/drops/drop-voting.db';
-import { DropsDb, dropsDb } from '../drops/drops.db';
-import { DropRealVoterVoteInTimeEntityWithoutId } from '../entities/IDropRealVoterVoteInTime';
-import { WinnerDropVoterVoteEntity } from '../entities/IWinnerDropVoterVote';
-import { collections } from '../collections';
-import { wavesApiDb } from '../api-serverless/src/waves/waves.api.db';
-import { env } from '@/env';
-import { deployerDropper, DeployerDropper } from '@/deployer-dropper';
 
 interface WaveOutcome {
   type: WaveOutcomeType;
@@ -51,6 +55,7 @@ export class WaveDecisionsService {
     private readonly waveLeaderboardCalculationService: WaveLeaderboardCalculationService,
     private readonly dropVotingDb: DropVotingDb,
     private readonly dropsDb: DropsDb,
+    private readonly memeClaimsService: MemeClaimsService,
     private readonly deployerDropper: DeployerDropper
   ) {}
 
@@ -320,6 +325,15 @@ export class WaveDecisionsService {
     );
     await this.waveDecisionsDb.insertDecisionWinners(decisionWinners, ctx);
     await this.waveDecisionsDb.updateDropsToWinners(winnerDropIds, ctx);
+    const mainStageWaveId = env.getStringOrNull('MAIN_STAGE_WAVE_ID');
+    if (
+      mainStageWaveId &&
+      waveId === mainStageWaveId &&
+      winnerDrops.length > 0
+    ) {
+      const winner = winnerDrops[0];
+      await this.memeClaimsService.createClaimForDrop(winner.drop_id, ctx);
+    }
     await this.waveDecisionsDb.deleteDropsRanks(winnerDropIds, ctx);
     await this.dropsDb.resyncParticipatoryDropCountsForWaves([waveId], ctx);
     await this.dropVotingDb.deleteStaleLeaderboardEntries(ctx);
@@ -462,5 +476,6 @@ export const waveDecisionsService = new WaveDecisionsService(
   waveLeaderboardCalculationService,
   dropVotingDb,
   dropsDb,
+  memeClaimsService,
   deployerDropper
 );

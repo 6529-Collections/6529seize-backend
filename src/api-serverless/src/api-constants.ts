@@ -29,7 +29,7 @@ export const CACHE_TIME_MS = Time.minutes(1).toMillis();
 
 export const corsOptions = {
   origin: '*',
-  methods: ['GET', 'POST', 'PUT', 'OPTIONS', 'HEAD', 'DELETE'],
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'OPTIONS', 'HEAD', 'DELETE'],
   allowedHeaders: [
     'Content-Type',
     'x-6529-auth',
