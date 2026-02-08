@@ -161,6 +161,7 @@ export function buildMemeClaimRowFromDrop(
   metadatas: DropMetadataEntity[],
   maxSeasonId: number
 ): MemeClaimRowInput {
+  const season = Math.max(1, Number.isFinite(maxSeasonId) ? maxSeasonId : 1);
   const title = metadatas.find((m) => m.data_key === 'title')?.data_value ?? '';
   const description =
     metadatas.find((m) => m.data_key === 'description')?.data_value ?? '';
@@ -188,7 +189,7 @@ export function buildMemeClaimRowFromDrop(
       description: description || ' ',
       name: title || ' ',
       image_url: null,
-      season: maxSeasonId,
+      season,
       attributes: buildAttributes(metadatas),
       image_details: null,
       animation_url: null,
@@ -238,7 +239,7 @@ export function buildMemeClaimRowFromDrop(
   return {
     drop_id: dropId,
     meme_id: memeId,
-    season: maxSeasonId,
+    season,
     image_location: null,
     animation_location: null,
     metadata_location: null,

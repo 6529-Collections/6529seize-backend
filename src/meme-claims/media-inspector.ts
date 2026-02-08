@@ -5,7 +5,7 @@ import type {
   MemeClaimAnimationDetailsVideo,
   MemeClaimImageDetails
 } from '@/entities/IMemeClaim';
-import fetch from 'node-fetch';
+import { fetchPublicUrlToBuffer } from '@/http/safe-fetch';
 import { imageSize } from 'image-size';
 import * as MP4Box from 'mp4box';
 
@@ -39,12 +39,15 @@ function sniffKindAndFormat(
 async function fetchUrlToBuffer(
   url: string
 ): Promise<{ buffer: Buffer; contentType: string | null }> {
-  const res = await fetch(url);
-  if (!res.ok) {
-    throw new Error(`Fetch failed: ${res.status} ${url}`);
-  }
-  const buffer = Buffer.from(await res.arrayBuffer());
-  const contentType = res.headers.get('content-type');
+  const { buffer, contentType } = await fetchPublicUrlToBuffer(url, {
+    timeoutMs: 30_000,
+    maxBytes: 50 * 1024 * 1024,
+    headers: {
+      'User-Agent':
+        'Mozilla/5.0 (compatible; 6529MediaInspector/1.0; +https://6529.io)',
+      Accept: '*/*'
+    }
+  });
   return { buffer, contentType };
 }
 

@@ -26,16 +26,31 @@ function parseExistingAnimationFormat(
   }
 }
 
+function inferAnimationKind(
+  animationUrl: string,
+  existing: { format?: string } | undefined
+): 'HTML' | 'GLB' | 'VIDEO' {
+  const lower = animationUrl.toLowerCase();
+  if (lower.endsWith('.glb')) return 'GLB';
+  if (lower.endsWith('.mp4') || lower.endsWith('.mov')) return 'VIDEO';
+  if (lower.endsWith('.html') || lower.endsWith('.htm')) return 'HTML';
+  if (existing?.format === 'HTML') return 'HTML';
+  if (existing?.format === 'GLB') return 'GLB';
+  return 'VIDEO';
+}
+
 async function applyImageFromBody(
   body: MemeClaimUpdateRequest,
+  existing: MemeClaimRow,
   updates: MemeClaimUpdates
 ): Promise<void> {
   if (body.image_url === undefined) return;
   if (body.image_url && typeof body.image_url === 'string') {
+    const urlChanged = (existing.image_url ?? '').trim() !== body.image_url;
     try {
       updates.image_details = await computeImageDetails(body.image_url);
     } catch {
-      // keep existing on compute failure
+      if (urlChanged) updates.image_details = null;
     }
   } else {
     updates.image_details = null;
@@ -58,13 +73,12 @@ async function applyAnimationFromBody(
   const existingDetails = parseExistingAnimationFormat(
     existing.animation_details
   );
+  const urlChanged = (existing.animation_url ?? '').trim() !== animationUrl;
   try {
-    if (existingDetails?.format === 'HTML') {
+    const kind = inferAnimationKind(animationUrl, existingDetails);
+    if (kind === 'HTML') {
       updates.animation_details = animationDetailsHtml();
-    } else if (
-      animationUrl.toLowerCase().endsWith('.glb') ||
-      existingDetails?.format === 'GLB'
-    ) {
+    } else if (kind === 'GLB') {
       updates.animation_details =
         await computeAnimationDetailsGlb(animationUrl);
     } else {
@@ -72,7 +86,7 @@ async function applyAnimationFromBody(
         await computeAnimationDetailsVideo(animationUrl);
     }
   } catch {
-    // keep existing on compute failure
+    if (urlChanged) updates.animation_details = null;
   }
 }
 
@@ -81,19 +95,23 @@ export async function buildUpdatesForClaimPatch(
   existing: MemeClaimRow
 ): Promise<MemeClaimUpdates> {
   const updates: MemeClaimUpdates = {};
+  let shouldResetArweaveSyncedAt = false;
   if (body.season !== undefined) {
     const maxSeason = await fetchMaxSeasonId();
     const requested = Number(body.season);
+    const minSeason = 1;
     if (
       !Number.isInteger(requested) ||
-      requested < maxSeason ||
-      requested > maxSeason + 1
+      requested < minSeason ||
+      requested < Math.max(minSeason, maxSeason) ||
+      requested > Math.max(minSeason, maxSeason) + 1
     ) {
       throw new BadRequestException(
-        `season must be ${maxSeason} or ${maxSeason + 1} (current max season is ${maxSeason}), got ${body.season}`
+        `season must be ${Math.max(minSeason, maxSeason)} or ${Math.max(minSeason, maxSeason) + 1} (current max season is ${maxSeason}), got ${body.season}`
       );
     }
     updates.season = requested;
+    shouldResetArweaveSyncedAt = true;
   }
   if (body.image_location !== undefined)
     updates.image_location = body.image_location;
@@ -101,20 +119,38 @@ export async function buildUpdatesForClaimPatch(
     updates.animation_location = body.animation_location;
   if (body.metadata_location !== undefined)
     updates.metadata_location = body.metadata_location;
-  if (body.edition_size !== undefined) updates.edition_size = body.edition_size;
-  if (body.description !== undefined) updates.description = body.description;
-  if (body.name !== undefined) updates.name = body.name;
-  if (body.image_url !== undefined) updates.image_url = body.image_url;
-  if (body.attributes !== undefined) updates.attributes = body.attributes;
+  if (body.edition_size !== undefined) {
+    updates.edition_size = body.edition_size;
+    shouldResetArweaveSyncedAt = true;
+  }
+  if (body.description !== undefined) {
+    updates.description = body.description;
+    shouldResetArweaveSyncedAt = true;
+  }
+  if (body.name !== undefined) {
+    updates.name = body.name;
+    shouldResetArweaveSyncedAt = true;
+  }
+  if (body.image_url !== undefined) {
+    updates.image_url = body.image_url;
+    shouldResetArweaveSyncedAt = true;
+  }
+  if (body.attributes !== undefined) {
+    updates.attributes = body.attributes;
+    shouldResetArweaveSyncedAt = true;
+  }
   if (body.animation_url !== undefined)
     updates.animation_url = body.animation_url;
   if (body.image_url !== undefined) {
-    await applyImageFromBody(body, updates);
+    await applyImageFromBody(body, existing, updates);
   }
   if (body.animation_url !== undefined) {
     await applyAnimationFromBody(body, existing, updates);
+    shouldResetArweaveSyncedAt = true;
   }
-  updates.arweave_synced_at = null;
+  if (shouldResetArweaveSyncedAt) {
+    updates.arweave_synced_at = null;
+  }
   return updates;
 }
 
