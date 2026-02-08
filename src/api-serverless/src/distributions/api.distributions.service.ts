@@ -142,38 +142,50 @@ export async function populateDistribution(
 
   await insertDistributions(distributionInserts);
 
-  if (splitResults.allowlists.length > 0) {
-    const allowlistEntries = splitResults.allowlists.map((a) => ({
-      address: a.wallet,
-      amount: a.amount
-    }));
-    const { merkleRoot, proofsByAddress } =
-      computeAllowlistMerkle(allowlistEntries);
-    if (merkleRoot) {
-      await sqlExecutor.executeNativeQueriesInTransaction(
-        async (wrappedConnection) => {
-          await deleteMintingMerkleForPhase(
-            contract,
-            cardId,
-            phase,
-            wrappedConnection
-          );
-          await insertMintingMerkleRoot(
-            contract,
-            cardId,
-            phase,
-            merkleRoot,
-            wrappedConnection
-          );
-          await insertMintingMerkleProofs(
-            merkleRoot,
-            proofsByAddress,
-            wrappedConnection
-          );
-        }
+  const allowlistEntries = splitResults.allowlists.map((a) => ({
+    address: a.wallet,
+    amount: a.amount
+  }));
+  if (allowlistEntries.length === 0) {
+    await sqlExecutor.executeNativeQueriesInTransaction(
+      async (wrappedConnection) => {
+        await deleteMintingMerkleForPhase(
+          contract,
+          cardId,
+          phase,
+          wrappedConnection
+        );
+      }
+    );
+    return;
+  }
+
+  const { merkleRoot, proofsByAddress } =
+    computeAllowlistMerkle(allowlistEntries);
+  if (!merkleRoot) return;
+
+  await sqlExecutor.executeNativeQueriesInTransaction(
+    async (wrappedConnection) => {
+      await deleteMintingMerkleForPhase(
+        contract,
+        cardId,
+        phase,
+        wrappedConnection
+      );
+      await insertMintingMerkleRoot(
+        contract,
+        cardId,
+        phase,
+        merkleRoot,
+        wrappedConnection
+      );
+      await insertMintingMerkleProofs(
+        merkleRoot,
+        proofsByAddress,
+        wrappedConnection
       );
     }
-  }
+  );
 }
 
 export async function insertAutomaticAirdrops(

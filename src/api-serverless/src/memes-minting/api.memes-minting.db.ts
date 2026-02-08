@@ -21,11 +21,11 @@ export async function deleteMintingMerkleForPhase(
     { contract: contractLower, cardId, phase },
     opts
   );
-  if (roots.length > 0) {
-    const merkleRoot = roots[0].merkle_root;
+  const merkleRoots = roots.map((r) => r.merkle_root).filter(Boolean);
+  if (merkleRoots.length > 0) {
     await sqlExecutor.execute(
-      `DELETE FROM ${MINTING_MERKLE_PROOFS_TABLE} WHERE merkle_root = :merkleRoot`,
-      { merkleRoot },
+      `DELETE FROM ${MINTING_MERKLE_PROOFS_TABLE} WHERE merkle_root IN (:merkleRoots)`,
+      { merkleRoots },
       opts
     );
   }
@@ -63,24 +63,27 @@ export async function insertMintingMerkleProofs(
   const entries = Object.entries(proofsByAddress);
   if (entries.length === 0) return;
   const opts = wrappedConnection ? { wrappedConnection } : {};
-  const params: Record<string, unknown> = {};
-  const placeholders = entries
-    .map((_, i) => `(:merkle_root_${i}, :address_${i}, :proofs_${i})`)
-    .join(', ');
-  entries.forEach(([address, proofs], i) => {
-    params[`merkle_root_${i}`] = merkleRoot;
-    params[`address_${i}`] = address.toLowerCase();
-    params[`proofs_${i}`] = JSON.stringify(proofs);
-  });
-  await sqlExecutor.execute(
-    `INSERT INTO ${MINTING_MERKLE_PROOFS_TABLE} (merkle_root, address, proofs) VALUES ${placeholders}`,
-    params,
-    opts
-  );
+  const batchSize = 200;
+  for (let start = 0; start < entries.length; start += batchSize) {
+    const chunk = entries.slice(start, start + batchSize);
+    const params: Record<string, unknown> = { merkleRoot };
+    const placeholders = chunk
+      .map((_, i) => `(:merkleRoot, :address_${i}, :proofs_${i})`)
+      .join(', ');
+    chunk.forEach(([address, proofs], i) => {
+      params[`address_${i}`] = address.toLowerCase();
+      params[`proofs_${i}`] = JSON.stringify(proofs);
+    });
+    await sqlExecutor.execute(
+      `INSERT INTO ${MINTING_MERKLE_PROOFS_TABLE} (merkle_root, address, proofs) VALUES ${placeholders}`,
+      params,
+      opts
+    );
+  }
 }
 
 export interface MintingMerkleProofRow {
-  proofs: string;
+  proofs: unknown;
 }
 
 export async function fetchMintingMerkleProofs(
@@ -93,12 +96,17 @@ export async function fetchMintingMerkleProofs(
     { merkleRoot, address: addressLower }
   );
   if (rows.length === 0) return null;
-  return JSON.parse(rows[0].proofs) as AllowlistMerkleProofItem[];
+  const proofsRaw = rows[0].proofs;
+  if (Array.isArray(proofsRaw)) return proofsRaw as AllowlistMerkleProofItem[];
+  if (typeof proofsRaw === 'string') {
+    return JSON.parse(proofsRaw) as AllowlistMerkleProofItem[];
+  }
+  return [];
 }
 
 export interface MintingMerkleProofByAddressRow {
   address: string;
-  proofs: string;
+  proofs: unknown;
 }
 
 export async function fetchAllMintingMerkleProofsForRoot(
@@ -110,7 +118,11 @@ export async function fetchAllMintingMerkleProofsForRoot(
   );
   return rows.map((r) => ({
     address: r.address,
-    proofs: JSON.parse(r.proofs) as AllowlistMerkleProofItem[]
+    proofs: Array.isArray(r.proofs)
+      ? (r.proofs as AllowlistMerkleProofItem[])
+      : typeof r.proofs === 'string'
+        ? (JSON.parse(r.proofs) as AllowlistMerkleProofItem[])
+        : []
   }));
 }
 
