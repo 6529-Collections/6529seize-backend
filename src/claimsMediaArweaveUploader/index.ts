@@ -54,7 +54,14 @@ async function processMemeClaimUpload(memeId: number): Promise<void> {
       media_uploading: false
     });
   } catch (error) {
-    await updateMemeClaim(memeId, { media_uploading: false });
+    try {
+      await updateMemeClaim(memeId, { media_uploading: false });
+    } catch (rollbackError) {
+      logger.error('Failed to reset media_uploading after upload error', {
+        memeId,
+        rollbackError
+      });
+    }
     await priorityAlertsContext.sendPriorityAlert(ALERT_TITLE, error);
     throw error;
   }

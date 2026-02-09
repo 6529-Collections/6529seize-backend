@@ -58,7 +58,11 @@ function parseAndValidateMerkleTree(merkle_tree: string): Buffer[] {
 export function getProof(merkle_tree: string, keccak: string): string[] {
   const leaves = parseAndValidateMerkleTree(merkle_tree);
   const merkleTree = new MerkleTree(leaves, hashToBuffer, { sortPairs: true });
-  const leafBuffer = Buffer.from(keccak.replace(/^0x/, ''), 'hex');
+  const normalizedKeccak = keccak.replace(/^0x/, '');
+  if (!/^[0-9a-fA-F]{64}$/.test(normalizedKeccak)) {
+    throw new Error(`Invalid keccak: expected 32-byte hex string`);
+  }
+  const leafBuffer = Buffer.from(normalizedKeccak, 'hex');
   const proof = merkleTree.getProof(leafBuffer);
   return proof.map((p: { data: Buffer }) => '0x' + p.data.toString('hex'));
 }

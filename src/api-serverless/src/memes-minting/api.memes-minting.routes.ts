@@ -298,7 +298,7 @@ const MemeClaimUpdateRequestSchema = Joi.object({
   animation_url: Joi.string().allow(null).optional()
 });
 
-function assertCanStartArweaveUpload(claim: MemeClaimRow): void {
+async function assertCanStartArweaveUpload(claim: MemeClaimRow): Promise<void> {
   if (claim.arweave_synced_at != null) {
     throw new CustomApiCompliantException(
       409,
@@ -311,7 +311,7 @@ function assertCanStartArweaveUpload(claim: MemeClaimRow): void {
       'Claim media upload is already in progress'
     );
   }
-  validateMemeClaimReadyForArweaveUpload(claim);
+  await validateMemeClaimReadyForArweaveUpload(claim);
 }
 
 async function queueArweaveUploadOrRollback(memeId: number): Promise<void> {
@@ -320,11 +320,18 @@ async function queueArweaveUploadOrRollback(memeId: number): Promise<void> {
   });
   try {
     await enqueueClaimMediaArweaveUpload(memeId);
-  } catch (err) {
-    await updateMemeClaim(memeId, {
-      media_uploading: false
-    });
-    throw err;
+  } catch (enqueueError) {
+    try {
+      await updateMemeClaim(memeId, {
+        media_uploading: false
+      });
+    } catch (rollbackError) {
+      Logger.get('api.memes-minting.routes').error(
+        'Failed to rollback media_uploading after enqueue error',
+        { memeId, rollbackError }
+      );
+    }
+    throw enqueueError;
   }
 }
 
@@ -409,7 +416,7 @@ router.post(
     if (claim === null) {
       return res.status(404).json({ error: 'Claim not found' });
     }
-    assertCanStartArweaveUpload(claim);
+    await assertCanStartArweaveUpload(claim);
     await queueArweaveUploadOrRollback(memeId);
     const updated = await fetchMemeClaimByMemeId(memeId);
     return res.json(rowToMemeClaim(updated ?? claim));

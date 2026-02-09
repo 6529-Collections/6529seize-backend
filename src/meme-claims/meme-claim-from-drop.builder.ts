@@ -138,6 +138,19 @@ function imageDetailsFromMime(mimeType: string): MemeClaimImageDetails {
   };
 }
 
+function imageDetailsFromPreviewUrl(
+  previewUrl: string
+): MemeClaimImageDetails | null {
+  const normalized = previewUrl.toLowerCase();
+  if (normalized.endsWith('.png')) return imageDetailsFromMime('image/png');
+  if (normalized.endsWith('.jpg') || normalized.endsWith('.jpeg')) {
+    return imageDetailsFromMime('image/jpeg');
+  }
+  if (normalized.endsWith('.gif')) return imageDetailsFromMime('image/gif');
+  if (normalized.endsWith('.webp')) return imageDetailsFromMime('image/webp');
+  return null;
+}
+
 export type MemeClaimRowInput = {
   drop_id: string;
   meme_id: number;
@@ -183,7 +196,11 @@ export function buildMemeClaimRowFromDrop(
     const mt = m.mime_type.toLowerCase();
     return mt.startsWith('image/') || mt === 'image/gif';
   });
-  const primaryMedia = htmlMedia ?? videoMedia ?? imageMedia ?? medias[0];
+  const glbMedia = medias.find((m) => {
+    const mt = m.mime_type.toLowerCase();
+    return mt === 'model/gltf-binary' || mimeToFormat(m.mime_type) === 'GLB';
+  });
+  const primaryMedia = htmlMedia ?? videoMedia ?? imageMedia ?? glbMedia;
   if (!primaryMedia) {
     return {
       drop_id: dropId,
@@ -238,7 +255,7 @@ export function buildMemeClaimRowFromDrop(
     }
     if (previewImageUrl) {
       image_url = previewImageUrl;
-      image_details = imageDetailsFromMime('image/png');
+      image_details = imageDetailsFromPreviewUrl(previewImageUrl);
     }
   }
 

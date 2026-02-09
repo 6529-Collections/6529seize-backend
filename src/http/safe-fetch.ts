@@ -137,25 +137,28 @@ async function readResponseToBufferOrThrow(
 
   const body = response.body;
   if (!body) return Buffer.alloc(0);
+  const stream = body as AsyncIterable<unknown>;
+  const destroyableStream = body as { destroy?: () => void };
 
   const chunks: Uint8Array[] = [];
   let total = 0;
-  for await (const chunk of body) {
+  for await (const chunk of stream) {
+    const unknownChunk: unknown = chunk;
     let asChunk: Uint8Array;
-    if (typeof chunk === 'string') {
-      asChunk = new Uint8Array(Buffer.from(chunk, 'utf8'));
-    } else if (Buffer.isBuffer(chunk)) {
-      asChunk = new Uint8Array(chunk);
-    } else if (chunk instanceof Uint8Array) {
-      asChunk = chunk;
-    } else if (chunk instanceof ArrayBuffer) {
-      asChunk = new Uint8Array(chunk);
+    if (typeof unknownChunk === 'string') {
+      asChunk = new Uint8Array(Buffer.from(unknownChunk, 'utf8'));
+    } else if (Buffer.isBuffer(unknownChunk)) {
+      asChunk = new Uint8Array(unknownChunk);
+    } else if (unknownChunk instanceof Uint8Array) {
+      asChunk = unknownChunk;
+    } else if (unknownChunk instanceof ArrayBuffer) {
+      asChunk = new Uint8Array(unknownChunk);
     } else {
-      asChunk = new Uint8Array(Buffer.from(String(chunk), 'utf8'));
+      asChunk = new Uint8Array(Buffer.from(String(unknownChunk), 'utf8'));
     }
     total += asChunk.byteLength;
     if (total > maxBytes) {
-      body.destroy?.();
+      destroyableStream.destroy?.();
       throw new Error(`Response exceeded max size of ${maxBytes} bytes`);
     }
     chunks.push(asChunk);

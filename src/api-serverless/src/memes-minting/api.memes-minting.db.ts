@@ -281,3 +281,57 @@ export async function updateMemeClaim(
     params
   );
 }
+
+export async function updateMemeClaimIfNotUploading(
+  memeId: number,
+  updates: {
+    season?: number;
+    image_location?: string | null;
+    animation_location?: string | null;
+    metadata_location?: string | null;
+    arweave_synced_at?: number | null;
+    media_uploading?: boolean;
+    edition_size?: number | null;
+    description?: string;
+    name?: string;
+    image_url?: string | null;
+    attributes?: unknown;
+    image_details?: unknown;
+    animation_url?: string | null;
+    animation_details?: unknown;
+  }
+): Promise<boolean> {
+  const keys = Object.keys(updates) as (keyof typeof updates)[];
+  if (keys.length === 0) return true;
+  const setClauses: string[] = [];
+  const params: Record<string, unknown> = { memeId };
+  for (const key of keys) {
+    const val = updates[key];
+    if (val === undefined) continue;
+    const col = key;
+    setClauses.push(`${col} = :${col}`);
+    let paramVal: unknown;
+    if (
+      col === 'attributes' ||
+      col === 'image_details' ||
+      col === 'animation_details'
+    ) {
+      paramVal = JSON.stringify(val);
+    } else if (col === 'arweave_synced_at' && val != null) {
+      paramVal = Number(val);
+    } else {
+      paramVal = val;
+    }
+    params[col] = paramVal;
+  }
+  if (setClauses.length === 0) return true;
+  const result = await sqlExecutor.execute<{ affectedRows: number }>(
+    `UPDATE ${MEMES_CLAIMS_TABLE}
+     SET ${setClauses.join(', ')}
+     WHERE meme_id = :memeId
+       AND COALESCE(media_uploading, 0) = 0`,
+    params
+  );
+  const affectedRows = Number(result?.[0]?.affectedRows ?? 0);
+  return affectedRows > 0;
+}

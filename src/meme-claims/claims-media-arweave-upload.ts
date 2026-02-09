@@ -134,9 +134,14 @@ async function uploadAnimationToArweaveIfPresent(
   })();
   const expectsGlb = details?.format === 'GLB' || lowerPath.endsWith('.glb');
   const { buffer, contentType } = await fetchUrlToBuffer(animationUrl);
+  const hasGenericContentType =
+    contentType === '' ||
+    contentType === 'application/octet-stream' ||
+    contentType === 'binary/octet-stream';
   if (expectsGlb) {
     const isValidGlb =
-      contentType === 'model/gltf-binary' || lowerPath.endsWith('.glb');
+      contentType === 'model/gltf-binary' ||
+      (hasGenericContentType && lowerPath.endsWith('.glb'));
     if (!isValidGlb) {
       throw new BadRequestException(
         `animation_url did not resolve to a GLB (content-type: ${contentType})`
@@ -145,8 +150,8 @@ async function uploadAnimationToArweaveIfPresent(
   } else {
     const isValidVideo =
       contentType.startsWith('video/') ||
-      lowerPath.endsWith('.mp4') ||
-      lowerPath.endsWith('.mov');
+      (hasGenericContentType &&
+        (lowerPath.endsWith('.mp4') || lowerPath.endsWith('.mov')));
     if (!isValidVideo) {
       throw new BadRequestException(
         `animation_url did not resolve to a video (content-type: ${contentType})`
@@ -250,17 +255,10 @@ async function uploadClaimMetadataToArweave(
   memeId: number,
   claim: MemeClaimRow,
   imageLocation: string,
-  animationLocation: string | null
+  animationLocation: string | null,
+  typeMemeId: number
 ): Promise<string> {
   const rawAttributes = safeParseJson(claim.attributes, [], 'attributes');
-  const memeName = getMemeNameFromAttributes(rawAttributes);
-  const typeMemeId = await fetchMemeIdByMemeName(memeName);
-  if (typeMemeId === null) {
-    throw new BadRequestException(
-      `No meme found in memes_extended_data for Meme Name "${memeName}"; cannot upload to Arweave`
-    );
-  }
-
   const attributesWithTypes = attributesWithTypeTraits(
     rawAttributes,
     typeMemeId,
@@ -331,9 +329,9 @@ function validateAttributes(raw: unknown): string[] {
   return issues;
 }
 
-export function validateMemeClaimReadyForArweaveUpload(claim: MemeClaimRow): {
-  imageUrl: string;
-} {
+export async function validateMemeClaimReadyForArweaveUpload(
+  claim: MemeClaimRow
+): Promise<{ imageUrl: string; typeMemeId: number }> {
   const missing: string[] = [];
   const imageUrl = claim.image_url?.trim() || null;
   if (imageUrl === null || imageUrl === '') missing.push('image_url');
@@ -362,15 +360,26 @@ export function validateMemeClaimReadyForArweaveUpload(claim: MemeClaimRow): {
     missing.push('season');
   }
 
-  const rawAttrs = parseJsonOrNull<unknown>(claim.attributes);
-  missing.push(...validateAttributes(rawAttrs));
+  const rawAttributes = parseJsonOrNull<unknown>(claim.attributes);
+  missing.push(...validateAttributes(rawAttributes));
+
+  let typeMemeId: number | null = null;
+  if (missing.length === 0) {
+    const memeName = getMemeNameFromAttributes(rawAttributes);
+    typeMemeId = await fetchMemeIdByMemeName(memeName);
+    if (typeMemeId === null) {
+      throw new BadRequestException(
+        `No meme found in memes_extended_data for Meme Name "${memeName}"; cannot upload to Arweave`
+      );
+    }
+  }
 
   if (missing.length > 0) {
     throw new BadRequestException(
       `Missing required fields for Arweave upload: ${missing.join(', ')}. Only animation is optional.`
     );
   }
-  return { imageUrl: imageUrl as string };
+  return { imageUrl: imageUrl as string, typeMemeId: typeMemeId as number };
 }
 
 export async function uploadMemeClaimToArweave(
@@ -381,14 +390,16 @@ export async function uploadMemeClaimToArweave(
   animationLocationUrl: string | null;
   metadataLocationUrl: string;
 }> {
-  const { imageUrl } = validateMemeClaimReadyForArweaveUpload(claim);
+  const { imageUrl, typeMemeId } =
+    await validateMemeClaimReadyForArweaveUpload(claim);
   const imageLocationUrl = await uploadImageToArweaveOrThrow(imageUrl);
   const animationLocationUrl = await uploadAnimationToArweaveIfPresent(claim);
   const metadataLocationUrl = await uploadClaimMetadataToArweave(
     memeId,
     claim,
     imageLocationUrl,
-    animationLocationUrl
+    animationLocationUrl,
+    typeMemeId
   );
   return {
     imageLocationUrl,
