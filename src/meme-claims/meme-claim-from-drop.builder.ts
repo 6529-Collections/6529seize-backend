@@ -161,6 +161,12 @@ export function buildMemeClaimRowFromDrop(
   metadatas: DropMetadataEntity[],
   maxSeasonId: number
 ): MemeClaimRowInput {
+  if (!Number.isInteger(maxSeasonId) || maxSeasonId < 1) {
+    throw new Error(
+      `Invalid maxSeasonId: ${maxSeasonId}. Expected a positive integer`
+    );
+  }
+  const season = maxSeasonId;
   const title = metadatas.find((m) => m.data_key === 'title')?.data_value ?? '';
   const description =
     metadatas.find((m) => m.data_key === 'description')?.data_value ?? '';
@@ -188,7 +194,7 @@ export function buildMemeClaimRowFromDrop(
       description: description || ' ',
       name: title || ' ',
       image_url: null,
-      season: maxSeasonId,
+      season,
       attributes: buildAttributes(metadatas),
       image_details: null,
       animation_url: null,
@@ -199,7 +205,10 @@ export function buildMemeClaimRowFromDrop(
   const mime = primaryMedia.mime_type.toLowerCase();
   const isHtml = mime === 'text/html';
   const isVideo = mime.startsWith('video/');
-  const isImage = !isHtml && !isVideo;
+  const isGlb =
+    mime === 'model/gltf-binary' ||
+    mimeToFormat(primaryMedia.mime_type) === 'GLB';
+  const isImage = !isHtml && !isVideo && !isGlb;
 
   let image_url: string | null = null;
   let image_details: MemeClaimImageDetails | null = null;
@@ -213,21 +222,19 @@ export function buildMemeClaimRowFromDrop(
     animation_url = primaryMedia.url;
     if (isHtml) {
       animation_details = { format: 'HTML' };
+    } else if (isGlb) {
+      animation_details = { format: 'GLB', bytes: 0, sha256: '' };
     } else {
       const format = mimeToFormat(primaryMedia.mime_type);
-      if (format === 'GLB') {
-        animation_details = { format: 'GLB', bytes: 0, sha256: '' };
-      } else {
-        animation_details = {
-          format,
-          bytes: 0,
-          duration: 0,
-          sha256: '',
-          width: 0,
-          height: 0,
-          codecs: []
-        };
-      }
+      animation_details = {
+        format,
+        bytes: 0,
+        duration: 0,
+        sha256: '',
+        width: 0,
+        height: 0,
+        codecs: []
+      };
     }
     if (previewImageUrl) {
       image_url = previewImageUrl;
@@ -238,7 +245,7 @@ export function buildMemeClaimRowFromDrop(
   return {
     drop_id: dropId,
     meme_id: memeId,
-    season: maxSeasonId,
+    season,
     image_location: null,
     animation_location: null,
     metadata_location: null,

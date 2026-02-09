@@ -60,7 +60,7 @@ import {
   UserGroupsService
 } from '@/api/community-members/user-groups.service';
 import { wavesApiDb, WavesApiDb } from '@/api/waves/waves.api.db';
-import { seizeSettings } from '@/api/api-constants';
+import { seizeSettings } from '@/api/seize-settings';
 
 export class CreateOrUpdateDropUseCase {
   public constructor(

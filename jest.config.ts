@@ -4,6 +4,7 @@ const config: Config = {
   preset: 'ts-jest',
   testEnvironment: 'node',
   moduleNameMapper: {
+    '^@/api/(.*)$': '<rootDir>/src/api-serverless/src/$1',
     '^@/(.*)$': '<rootDir>/src/$1'
   },
   transform: {

@@ -142,44 +142,57 @@ export async function populateDistribution(
 
   await insertDistributions(distributionInserts);
 
-  if (splitResults.allowlists.length > 0) {
-    const allowlistEntries = splitResults.allowlists.map((a) => ({
-      address: a.wallet,
-      amount: a.amount
-    }));
-    const { merkleRoot, proofsByAddress } =
-      computeAllowlistMerkle(allowlistEntries);
-    if (merkleRoot) {
-      await sqlExecutor.executeNativeQueriesInTransaction(
-        async (wrappedConnection) => {
-          await deleteMintingMerkleForPhase(
-            contract,
-            cardId,
-            phase,
-            wrappedConnection
-          );
-          await insertMintingMerkleRoot(
-            contract,
-            cardId,
-            phase,
-            merkleRoot,
-            wrappedConnection
-          );
-          await insertMintingMerkleProofs(
-            merkleRoot,
-            proofsByAddress,
-            wrappedConnection
-          );
-        }
+  const allowlistEntries = splitResults.allowlists.map((a) => ({
+    address: a.wallet,
+    amount: a.amount
+  }));
+  if (allowlistEntries.length === 0) {
+    await sqlExecutor.executeNativeQueriesInTransaction(
+      async (wrappedConnection) => {
+        await deleteMintingMerkleForPhase(
+          contract,
+          cardId,
+          phase,
+          wrappedConnection
+        );
+      }
+    );
+    return;
+  }
+
+  const { merkleRoot, proofsByAddress } =
+    computeAllowlistMerkle(allowlistEntries);
+  if (!merkleRoot) return;
+
+  await sqlExecutor.executeNativeQueriesInTransaction(
+    async (wrappedConnection) => {
+      await deleteMintingMerkleForPhase(
+        contract,
+        cardId,
+        phase,
+        wrappedConnection
+      );
+      await insertMintingMerkleRoot(
+        contract,
+        cardId,
+        phase,
+        merkleRoot,
+        wrappedConnection
+      );
+      await insertMintingMerkleProofs(
+        merkleRoot,
+        proofsByAddress,
+        wrappedConnection
       );
     }
-  }
+  );
 }
 
 export async function insertAutomaticAirdrops(
   contract: string,
   cardId: number,
-  airdrops: Array<{ address: string; count: number }>
+  airdrops: Array<{ address: string; count: number }>,
+  wrappedConnection?: any
 ): Promise<void> {
   const allWallets = new Set<string>();
   for (const airdrop of airdrops) {
@@ -219,12 +232,15 @@ export async function insertAutomaticAirdrops(
     });
   }
 
-  await sqlExecutor.executeNativeQueriesInTransaction(
-    async (wrappedConnection) => {
-      await deleteAirdropDistributions(contract, cardId, wrappedConnection);
-      await insertDistributions(distributionInserts, wrappedConnection);
-    }
-  );
+  if (wrappedConnection != null) {
+    await deleteAirdropDistributions(contract, cardId, wrappedConnection);
+    await insertDistributions(distributionInserts, wrappedConnection);
+  } else {
+    await sqlExecutor.executeNativeQueriesInTransaction(async (conn) => {
+      await deleteAirdropDistributions(contract, cardId, conn);
+      await insertDistributions(distributionInserts, conn);
+    });
+  }
 }
 
 export async function populateDistributionNormalized(

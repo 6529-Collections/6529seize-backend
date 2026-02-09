@@ -31,6 +31,7 @@ import {
   waveLeaderboardCalculationService,
   WaveLeaderboardCalculationService
 } from './wave-leaderboard-calculation.service';
+import * as priorityAlertsContext from '../priority-alerts.context';
 
 interface WaveOutcome {
   type: WaveOutcomeType;
@@ -332,7 +333,25 @@ export class WaveDecisionsService {
       winnerDrops.length > 0
     ) {
       const winner = winnerDrops[0];
-      await this.memeClaimsService.createClaimForDrop(winner.drop_id, ctx);
+      try {
+        await this.memeClaimsService.createClaimForDrop(winner.drop_id, ctx);
+      } catch (err) {
+        const rawMessage = err instanceof Error ? err.message : String(err);
+        const alertError = new Error(
+          `createClaimForDrop failed for drop ${winner.drop_id} in wave ${waveId}: ${rawMessage}`
+        );
+        if (err instanceof Error && err.stack) {
+          alertError.stack = `${alertError.stack}\nCaused by:\n${err.stack}`;
+        }
+        await priorityAlertsContext.sendPriorityAlert(
+          'Wave Decision Loop - Meme Claim Build',
+          alertError
+        );
+        this.logger.warn(
+          'createClaimForDrop failed (decision still committed)',
+          { dropId: winner.drop_id, waveId, err }
+        );
+      }
     }
     await this.waveDecisionsDb.deleteDropsRanks(winnerDropIds, ctx);
     await this.dropsDb.resyncParticipatoryDropCountsForWaves([waveId], ctx);

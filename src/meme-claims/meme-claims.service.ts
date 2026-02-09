@@ -121,7 +121,12 @@ export class MemeClaimsService {
       ([wallet, count]) => ({ address: wallet, count })
     );
     if (airdrops.length > 0) {
-      await insertAutomaticAirdrops(MEMES_CONTRACT, nextMemeId, airdrops);
+      await insertAutomaticAirdrops(
+        MEMES_CONTRACT,
+        nextMemeId,
+        airdrops,
+        ctx.connection
+      );
     }
   }
 

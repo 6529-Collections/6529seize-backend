@@ -10,9 +10,9 @@ import userGroupsImEligibleForRoutes from './community-members/user-groups-im-el
 import userGroupsRoutes from './community-members/user-groups.routes';
 import communityMetricsRoutes from './community-metrics/community-metrics.routes';
 import delegationsRoutes from './delegations/delegations.routes';
+import desktopRoutes from './desktop/routes.desktop';
 import distributionPhotosRoutes from './distribution-photos/api.distribution_photos.routes';
 import distributionsRoutes from './distributions/api.distributions.routes';
-import memesMintingRoutes from './memes-minting/api.memes-minting.routes';
 import bookmarkedDropsRoutes from './drops/bookmarked-drops.routes';
 import boostedDropsRoutes from './drops/boosted-drops.routes';
 import dropIdsRoutes from './drops/drop-ids.routes';
@@ -23,10 +23,10 @@ import feedRoutes from './feed/feed.routes';
 import gasRoutes from './gas/gas.routes';
 import identitiesRoutes from './identities/identities.routes';
 import identitySubscriptionsRoutes from './identity-subscriptions/identity-subscriptions.routes';
+import memesMintingRoutes from './memes-minting/api.memes-minting.routes';
 import nextgenRoutes from './nextgen/nextgen.routes';
 import nftOwnersRoutes from './nft-owners/api.nft-owners.routes';
 import notificationsRoutes from './notifications/notifications.routes';
-import desktopRoutes from './desktop/routes.desktop';
 import oracleRoutes from './oracle/api.oracle.routes';
 import ownersBalancesRoutes from './owners-balances/api.owners-balances.routes';
 import policiesRoutes from './policies/policies.routes';
@@ -85,9 +85,9 @@ import {
   DISTRIBUTION_PAGE_SIZE,
   NFTS_PAGE_SIZE,
   PaginatedResponse,
-  seizeSettings,
   SORT_DIRECTIONS
 } from './api-constants';
+import { seizeSettings } from '@/api/seize-settings';
 import { MEMES_EXTENDED_SORT, TRANSACTION_FILTERS } from './api-filters';
 import {
   cacheKey,

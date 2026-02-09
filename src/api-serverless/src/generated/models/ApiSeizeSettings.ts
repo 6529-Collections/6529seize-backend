@@ -16,6 +16,8 @@ export class ApiSeizeSettings {
     'rememes_submission_tdh_threshold': number;
     'all_drops_notifications_subscribers_limit': number;
     'memes_wave_id': string | null;
+    'distribution_admin_wallets': Array<string>;
+    'claims_admin_wallets': Array<string>;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -36,6 +38,18 @@ export class ApiSeizeSettings {
             "name": "memes_wave_id",
             "baseName": "memes_wave_id",
             "type": "string",
+            "format": ""
+        },
+        {
+            "name": "distribution_admin_wallets",
+            "baseName": "distribution_admin_wallets",
+            "type": "Array<string>",
+            "format": ""
+        },
+        {
+            "name": "claims_admin_wallets",
+            "baseName": "claims_admin_wallets",
+            "type": "Array<string>",
             "format": ""
         }    ];
 

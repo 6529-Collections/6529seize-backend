@@ -5,7 +5,7 @@ import type {
   MemeClaimAnimationDetailsVideo,
   MemeClaimImageDetails
 } from '@/entities/IMemeClaim';
-import fetch from 'node-fetch';
+import { fetchPublicUrlToBuffer } from '@/http/safe-fetch';
 import { imageSize } from 'image-size';
 import * as MP4Box from 'mp4box';
 
@@ -36,27 +36,33 @@ function sniffKindAndFormat(
   );
 }
 
+const FETCH_TIMEOUT_MS = 30_000;
+const MAX_MEDIA_BYTES = 100 * 1024 * 1024;
+
 async function fetchUrlToBuffer(
   url: string
 ): Promise<{ buffer: Buffer; contentType: string | null }> {
-  const res = await fetch(url);
-  if (!res.ok) {
-    throw new Error(`Fetch failed: ${res.status} ${url}`);
-  }
-  const buffer = Buffer.from(await res.arrayBuffer());
-  const contentType = res.headers.get('content-type');
+  const { buffer, contentType } = await fetchPublicUrlToBuffer(url, {
+    timeoutMs: FETCH_TIMEOUT_MS,
+    maxBytes: MAX_MEDIA_BYTES
+  });
   return { buffer, contentType };
+}
+
+function asUint8Array(buffer: Buffer): Uint8Array {
+  return new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
 }
 
 function extractImageDetailsFromBuffer(
   buffer: Buffer,
   format: string
 ): MemeClaimImageDetails {
-  const size = imageSize(buffer);
+  const bytes = asUint8Array(buffer);
+  const size = imageSize(bytes);
   if (!size?.width || !size?.height) {
     throw new Error('Could not read image dimensions');
   }
-  const sha256 = createHash('sha256').update(buffer).digest('hex');
+  const sha256 = createHash('sha256').update(bytes).digest('hex');
   return {
     bytes: buffer.length,
     format,
@@ -66,14 +72,36 @@ function extractImageDetailsFromBuffer(
   };
 }
 
+const MP4BOX_PARSE_TIMEOUT_MS = 10_000;
+
 function extractVideoDetailsFromBuffer(
   buffer: Buffer,
   format: string
 ): Promise<MemeClaimAnimationDetailsVideo> {
   return new Promise((resolve, reject) => {
+    let settled = false;
     const mp4boxFile = MP4Box.createFile();
+    const timeoutId = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      mp4boxFile.onError = () => {};
+      mp4boxFile.onReady = () => {};
+      reject(new Error('mp4box parse timeout'));
+    }, MP4BOX_PARSE_TIMEOUT_MS);
+    const finish = (
+      result: MemeClaimAnimationDetailsVideo | null,
+      err: Error | null
+    ) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
+      mp4boxFile.onError = () => {};
+      mp4boxFile.onReady = () => {};
+      if (err) reject(err);
+      else if (result) resolve(result);
+    };
     mp4boxFile.onError = (e: unknown) =>
-      reject(new Error(`mp4box parse error: ${String(e)}`));
+      finish(null, new Error(`mp4box parse error: ${String(e)}`));
     mp4boxFile.onReady = (info: {
       duration?: number;
       timescale?: number;
@@ -89,13 +117,13 @@ function extractVideoDetailsFromBuffer(
         (t: { video?: unknown }) => t.video != null
       );
       if (!videoTrack) {
-        reject(new Error('No video track found'));
+        finish(null, new Error('No video track found'));
         return;
       }
       const width = videoTrack.video?.width ?? videoTrack.track_width ?? 0;
       const height = videoTrack.video?.height ?? videoTrack.track_height ?? 0;
       if (!width || !height) {
-        reject(new Error('Could not read video dimensions'));
+        finish(null, new Error('Could not read video dimensions'));
         return;
       }
       const dur = Number(info?.duration ?? 0);
@@ -104,17 +132,21 @@ function extractVideoDetailsFromBuffer(
       const codecs = (info?.tracks ?? [])
         .map((t) => t.codec)
         .filter((c): c is string => typeof c === 'string' && c.length > 0);
-      const sha256 = createHash('sha256').update(buffer).digest('hex');
-      resolve({
-        bytes: buffer.length,
-        format,
-        duration,
-        sha256,
-        width,
-        height,
-        codecs:
-          codecs.length > 0 ? Array.from(new Set(codecs)) : ['H.264', 'AAC']
-      });
+      const sha256 = createHash('sha256')
+        .update(asUint8Array(buffer))
+        .digest('hex');
+      finish(
+        {
+          bytes: buffer.length,
+          format,
+          duration,
+          sha256,
+          width,
+          height,
+          codecs: codecs.length > 0 ? Array.from(new Set(codecs)) : []
+        },
+        null
+      );
     };
     const ab = buffer.buffer.slice(
       buffer.byteOffset,
@@ -130,7 +162,9 @@ function extractVideoDetailsFromBuffer(
 function extractGlbDetailsFromBuffer(
   buffer: Buffer
 ): MemeClaimAnimationDetailsGlb {
-  const sha256 = createHash('sha256').update(buffer).digest('hex');
+  const sha256 = createHash('sha256')
+    .update(asUint8Array(buffer))
+    .digest('hex');
   return {
     bytes: buffer.length,
     format: 'GLB',

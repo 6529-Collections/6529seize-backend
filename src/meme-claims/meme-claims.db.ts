@@ -25,7 +25,8 @@ export class MemeClaimsDb extends LazyDbAccessCompatibleService {
       throw new Error('Meme claims can only be saved in a transaction');
     }
     ctx?.timer?.start(`${this.constructor.name}->createMemeClaim`);
-    const sql = `
+    try {
+      const sql = `
       INSERT INTO ${MEMES_CLAIMS_TABLE} (drop_id, meme_id, season, image_location, animation_location, metadata_location, arweave_synced_at, edition_size, description, name, image_url, attributes, image_details, animation_url, animation_details)
       VALUES ${rows
         .map(
@@ -34,10 +35,12 @@ export class MemeClaimsDb extends LazyDbAccessCompatibleService {
         )
         .join(', ')}
     `;
-    await this.db.execute(sql, undefined, {
-      wrappedConnection: connection
-    });
-    ctx?.timer?.stop(`${this.constructor.name}->createMemeClaim`);
+      await this.db.execute(sql, undefined, {
+        wrappedConnection: connection
+      });
+    } finally {
+      ctx?.timer?.stop(`${this.constructor.name}->createMemeClaim`);
+    }
   }
 }
 

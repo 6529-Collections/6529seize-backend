@@ -22,28 +22,53 @@ import { cacheRequest } from '@/api/request-cache';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
 import {
   getAuthenticatedWalletOrNull,
+  maybeAuthenticatedUser,
   needsAuthenticatedUser
 } from '@/api/auth/auth';
-import { DISTRIBUTION_ADMIN_WALLETS } from '@/constants';
+import { getDistributionAdminWallets } from '@/api/seize-settings';
 import {
   BadRequestException,
   ForbiddenException,
   CustomApiCompliantException
 } from '@/exceptions';
 import { arweaveFileUploader } from '@/arweave';
+import { fetchPublicUrlToBuffer } from '@/http/safe-fetch';
+import { Logger } from '@/logging';
 import { numbers } from '@/numbers';
 import { equalIgnoreCase } from '@/strings';
-import { Request, Response } from 'express';
+import { NextFunction, Request, Response } from 'express';
 import * as Joi from 'joi';
-import fetch from 'node-fetch';
 
 const router = asyncRouter();
 
 function isDistributionAdmin(req: Request): boolean {
   const wallet = getAuthenticatedWalletOrNull(req);
   return !!(
-    wallet && DISTRIBUTION_ADMIN_WALLETS.some((a) => equalIgnoreCase(a, wallet))
+    wallet &&
+    getDistributionAdminWallets().some((a) => equalIgnoreCase(a, wallet))
   );
+}
+
+function safeParseJson<T>(raw: string | null, fallback: T, label: string): T {
+  if (raw == null || raw === '') return fallback;
+  try {
+    return JSON.parse(raw) as T;
+  } catch (err) {
+    Logger.get('api.memes-minting.routes').warn(`Failed to parse ${label}`, {
+      raw: raw.slice(0, 200),
+      err
+    });
+    return fallback;
+  }
+}
+
+function parseJsonOrNull<T>(raw: string | null): T | null {
+  if (raw == null || raw === '') return null;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return null;
+  }
 }
 
 function rowToMemeClaim(row: MemeClaimRow): MemeClaim {
@@ -63,14 +88,14 @@ function rowToMemeClaim(row: MemeClaimRow): MemeClaim {
     description: row.description,
     name: row.name,
     image_url: row.image_url ?? undefined,
-    attributes: JSON.parse(row.attributes),
-    image_details: row.image_details
-      ? JSON.parse(row.image_details)
-      : undefined,
+    attributes: safeParseJson(row.attributes, [], 'attributes'),
+    image_details: safeParseJson(row.image_details, undefined, 'image_details'),
     animation_url: row.animation_url ?? undefined,
-    animation_details: row.animation_details
-      ? JSON.parse(row.animation_details)
-      : undefined
+    animation_details: safeParseJson(
+      row.animation_details,
+      undefined,
+      'animation_details'
+    )
   };
 }
 
@@ -99,17 +124,32 @@ const ProofsParamsSchema: Joi.ObjectSchema<ProofsParams> = Joi.object({
 });
 
 const ProofsQuerySchema: Joi.ObjectSchema<ProofsQuery> = Joi.object({
-  address: Joi.string().trim().optional()
+  address: Joi.string()
+    .trim()
+    .pattern(/^0x[a-fA-F0-9]{40}$/)
+    .optional()
+    .messages({
+      'string.pattern.base':
+        'address must be a 0x-prefixed 42-character hex string'
+    })
 });
 
 const RootsParamsSchema: Joi.ObjectSchema<RootsParams> = Joi.object({
-  contract: Joi.string().trim().required(),
-  card_id: Joi.string().trim().required()
+  contract: Joi.string()
+    .trim()
+    .pattern(/^0x[a-fA-F0-9]{40}$/)
+    .required()
+    .messages({
+      'string.pattern.base':
+        'contract must be a 0x-prefixed 42-character hex string'
+    }),
+  card_id: Joi.string().trim().required().pattern(/^\d+$/)
 });
 
 router.get(
   '/proofs/:merkle_root',
-  cacheRequest(),
+  maybeAuthenticatedUser(),
+  cacheRequest({ authDependent: true }),
   async function (
     req: Request<ProofsParams, any, any, ProofsQuery, any>,
     res: Response<
@@ -121,6 +161,12 @@ router.get(
     const params = getValidatedByJoiOrThrow(req.params, ProofsParamsSchema);
     const query = getValidatedByJoiOrThrow(req.query, ProofsQuerySchema);
     const merkleRoot = params.merkle_root;
+
+    if (!query.address && !isDistributionAdmin(req)) {
+      throw new ForbiddenException(
+        'Only distribution admins can list all proofs for a merkle root'
+      );
+    }
 
     if (query.address) {
       const proofs = await fetchMintingMerkleProofs(merkleRoot, query.address);
@@ -181,6 +227,7 @@ router.get(
 
 const DEFAULT_PAGE_SIZE = 10;
 const MAX_PAGE_SIZE = 20;
+const MIN_EDITION_SIZE = 300;
 
 const ClaimsListQuerySchema = Joi.object({
   page: Joi.number().integer().min(1).default(1),
@@ -194,7 +241,7 @@ const ClaimsListQuerySchema = Joi.object({
 router.get(
   '/claims',
   needsAuthenticatedUser(),
-  cacheRequest(),
+  cacheRequest({ authDependent: true }),
   async function (
     req: Request<any, any, any, { page?: string; page_size?: string }, any>,
     res: Response<ApiResponse<MemesMintingClaimsPageResponse>>
@@ -238,10 +285,34 @@ const ClaimMemeIdParamsSchema: Joi.ObjectSchema<ClaimMemeIdParams> = Joi.object(
   }
 );
 
+const MemeClaimAttributeSchema = Joi.object({
+  trait_type: Joi.string(),
+  value: Joi.alternatives().try(Joi.string(), Joi.number()),
+  display_type: Joi.string().optional(),
+  max_value: Joi.number().optional()
+});
+
+const MemeClaimUpdateRequestSchema = Joi.object({
+  season: Joi.number().integer().optional(),
+  image_location: Joi.string().allow(null).optional(),
+  animation_location: Joi.string().allow(null).optional(),
+  metadata_location: Joi.string().allow(null).optional(),
+  edition_size: Joi.number()
+    .integer()
+    .min(MIN_EDITION_SIZE)
+    .allow(null)
+    .optional(),
+  description: Joi.string().optional(),
+  name: Joi.string().optional(),
+  image_url: Joi.string().allow(null).optional(),
+  attributes: Joi.array().items(MemeClaimAttributeSchema).optional(),
+  animation_url: Joi.string().allow(null).optional()
+});
+
 router.get(
   '/claims/:meme_id',
   needsAuthenticatedUser(),
-  cacheRequest(),
+  cacheRequest({ authDependent: true }),
   async function (
     req: Request<ClaimMemeIdParams, any, any, any, any>,
     res: Response<ApiResponse<MemeClaim>>
@@ -269,66 +340,100 @@ router.patch(
   needsAuthenticatedUser(),
   async function (
     req: Request<ClaimMemeIdParams, any, MemeClaimUpdateRequest, any, any>,
-    res: Response<ApiResponse<MemeClaim>>
+    res: Response<ApiResponse<MemeClaim>>,
+    next: NextFunction
   ) {
-    if (!isDistributionAdmin(req)) {
-      throw new ForbiddenException(
-        'Only distribution admins can update meme claims'
+    try {
+      if (!isDistributionAdmin(req)) {
+        throw new ForbiddenException(
+          'Only distribution admins can update meme claims'
+        );
+      }
+      const params = getValidatedByJoiOrThrow(
+        req.params,
+        ClaimMemeIdParamsSchema
       );
+      const memeId = Number.parseInt(params.meme_id, 10);
+      const body = getValidatedByJoiOrThrow(
+        req.body ?? {},
+        MemeClaimUpdateRequestSchema
+      );
+      const updated = await patchMemeClaim(memeId, body);
+      if (updated === null) {
+        return res.status(404).json({ error: 'Claim not found' });
+      }
+      return res.json(rowToMemeClaim(updated));
+    } catch (error) {
+      return next(error);
     }
-    const params = getValidatedByJoiOrThrow(
-      req.params,
-      ClaimMemeIdParamsSchema
-    );
-    const memeId = Number.parseInt(params.meme_id, 10);
-    const body = req.body ?? {};
-    const updated = await patchMemeClaim(memeId, body);
-    if (updated === null) {
-      return res.status(404).json({ error: 'Claim not found' });
-    }
-    return res.json(rowToMemeClaim(updated));
   }
 );
 
 function arweaveTxIdFromUrl(url: string): string {
+  const trimmed = url.trim();
+  if (!trimmed) return trimmed;
+  if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
+    return trimmed;
+  }
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.hostname.toLowerCase() === 'arweave.net') {
+      const firstPathSegment = parsed.pathname.split('/').filter(Boolean)[0];
+      return firstPathSegment ?? trimmed;
+    }
+  } catch {
+    // Keep original string below for malformed URLs.
+  }
   const base = 'https://arweave.net/';
-  return url.startsWith(base) ? url.slice(base.length) : url;
+  return trimmed.startsWith(base) ? trimmed.slice(base.length) : trimmed;
 }
 
-const FETCH_IMAGE_TIMEOUT_MS = 60_000;
+const FETCH_MEDIA_TIMEOUT_MS = 60_000;
+const MAX_ARWEAVE_UPLOAD_BYTES = 100 * 1024 * 1024;
 
 async function fetchUrlToBuffer(
   url: string
 ): Promise<{ buffer: Buffer; contentType: string }> {
-  const timeoutPromise = new Promise<never>((_, reject) =>
-    setTimeout(
-      () =>
-        reject(
-          new Error(`Fetch timed out after ${FETCH_IMAGE_TIMEOUT_MS}ms: ${url}`)
-        ),
-      FETCH_IMAGE_TIMEOUT_MS
-    )
-  );
-  const fetchPromise = fetch(url, {
+  const { buffer, contentType } = await fetchPublicUrlToBuffer(url, {
+    timeoutMs: FETCH_MEDIA_TIMEOUT_MS,
+    maxBytes: MAX_ARWEAVE_UPLOAD_BYTES,
     headers: {
       'User-Agent':
         'Mozilla/5.0 (compatible; 6529ArweaveUpload/1.0; +https://6529.io)',
-      Accept: 'image/*,*/*;q=0.8'
+      Accept: '*/*'
     }
   });
-  const res = await Promise.race([fetchPromise, timeoutPromise]);
-  if (res.ok) {
-    const buffer = Buffer.from(await res.arrayBuffer());
-    const contentType =
-      res.headers.get('content-type')?.split(';')[0]?.trim() ||
-      'application/octet-stream';
-    return { buffer, contentType };
+  return {
+    buffer,
+    contentType: contentType ?? 'application/octet-stream'
+  };
+}
+
+function inferImageContentTypeFromUrl(url: string): string | null {
+  try {
+    const path = new URL(url).pathname.toLowerCase();
+    if (path.endsWith('.png')) return 'image/png';
+    if (path.endsWith('.jpg') || path.endsWith('.jpeg')) return 'image/jpeg';
+    if (path.endsWith('.gif')) return 'image/gif';
+    if (path.endsWith('.webp')) return 'image/webp';
+    return null;
+  } catch {
+    return null;
   }
-  throw new Error(`Fetch failed: ${res.status} ${url}`);
 }
 
 async function uploadImageToArweaveOrThrow(imageUrl: string): Promise<string> {
-  const { buffer, contentType } = await fetchUrlToBuffer(imageUrl);
+  const fetched = await fetchUrlToBuffer(imageUrl);
+  const inferred = inferImageContentTypeFromUrl(imageUrl);
+  const contentType = fetched.contentType.startsWith('image/')
+    ? fetched.contentType
+    : (inferred ?? fetched.contentType);
+  if (!contentType.startsWith('image/')) {
+    throw new BadRequestException(
+      `image_url did not resolve to an image (content-type: ${fetched.contentType})`
+    );
+  }
+  const buffer = fetched.buffer;
   const { url } = await arweaveFileUploader.uploadFile(buffer, contentType);
   return url;
 }
@@ -338,11 +443,37 @@ async function uploadAnimationToArweaveIfPresent(
 ): Promise<string | null> {
   const animationUrl = claim.animation_url?.trim() || null;
   if (animationUrl === null || animationUrl === '') return null;
-  const details = claim.animation_details
-    ? (JSON.parse(claim.animation_details) as { format?: string })
-    : null;
+  const details =
+    parseJsonOrNull<{ format?: string }>(claim.animation_details) ?? null;
   if (details?.format === 'HTML') return null;
+  const lowerPath = (() => {
+    try {
+      return new URL(animationUrl).pathname.toLowerCase();
+    } catch {
+      return '';
+    }
+  })();
+  const expectsGlb = details?.format === 'GLB' || lowerPath.endsWith('.glb');
   const { buffer, contentType } = await fetchUrlToBuffer(animationUrl);
+  if (expectsGlb) {
+    const isValidGlb =
+      contentType === 'model/gltf-binary' || lowerPath.endsWith('.glb');
+    if (!isValidGlb) {
+      throw new BadRequestException(
+        `animation_url did not resolve to a GLB (content-type: ${contentType})`
+      );
+    }
+  } else {
+    const isValidVideo =
+      contentType.startsWith('video/') ||
+      lowerPath.endsWith('.mp4') ||
+      lowerPath.endsWith('.mov');
+    if (!isValidVideo) {
+      throw new BadRequestException(
+        `animation_url did not resolve to a video (content-type: ${contentType})`
+      );
+    }
+  }
   const { url } = await arweaveFileUploader.uploadFile(buffer, contentType);
   return url;
 }
@@ -454,9 +585,10 @@ async function uploadClaimMetadataToArweave(
   imageLocation: string,
   animationLocation: string | null
 ): Promise<string> {
-  const rawAttributes = JSON.parse(claim.attributes) as unknown;
-  if (!Array.isArray(rawAttributes))
+  const rawAttributes = parseJsonOrNull<unknown>(claim.attributes);
+  if (!Array.isArray(rawAttributes)) {
     throw new BadRequestException('Claim attributes must be an array');
+  }
   const memeName = getMemeNameFromAttributes(rawAttributes);
   const typeMemeId = await fetchMemeIdByMemeName(memeName);
   if (typeMemeId === null)
@@ -470,12 +602,14 @@ async function uploadClaimMetadataToArweave(
     memeId
   );
   const attributes = normalizeAttributesForArweave(attributesWithTypes);
-  const imageDetails = claim.image_details
-    ? (JSON.parse(claim.image_details) as Record<string, unknown>)
-    : null;
-  const animationDetails = claim.animation_details
-    ? (JSON.parse(claim.animation_details) as Record<string, unknown>)
-    : null;
+  const imageDetails =
+    parseJsonOrNull<Record<string, unknown>>(claim.image_details) ?? null;
+  const animationDetails =
+    parseJsonOrNull<Record<string, unknown>>(claim.animation_details) ?? null;
+  const htmlAnimationUrl =
+    (animationDetails as { format?: string } | null)?.format === 'HTML'
+      ? claim.animation_url?.trim() || null
+      : null;
   const metadata: Record<string, unknown> = {
     created_by: ARWEAVE_METADATA_CREATED_BY,
     description: claim.description ?? '',
@@ -489,6 +623,9 @@ async function uploadClaimMetadataToArweave(
   if (animationLocation != null) {
     metadata.animation = animationLocation;
     metadata.animation_url = animationLocation;
+  } else if (htmlAnimationUrl) {
+    metadata.animation = htmlAnimationUrl;
+    metadata.animation_url = htmlAnimationUrl;
   }
   if (animationDetails != null) metadata.animation_details = animationDetails;
   const buffer = Buffer.from(JSON.stringify(metadata), 'utf8');
@@ -534,7 +671,7 @@ router.post(
     if (
       editionSize == null ||
       !Number.isInteger(editionSize) ||
-      editionSize < 1
+      editionSize < MIN_EDITION_SIZE
     )
       missing.push('edition_size');
     const name = claim.name?.trim() ?? '';
@@ -548,15 +685,21 @@ router.post(
       Number(claim.season) < 1
     )
       missing.push('season');
-    let rawAttrs: unknown;
-    try {
-      rawAttrs = JSON.parse(claim.attributes);
-    } catch {
-      missing.push('attributes (invalid JSON)');
-    }
+    const rawAttrs = parseJsonOrNull<unknown>(claim.attributes);
+    if (rawAttrs == null) missing.push('attributes (invalid JSON)');
     if (rawAttrs != null && !Array.isArray(rawAttrs))
       missing.push('attributes (must be an array)');
     if (Array.isArray(rawAttrs)) {
+      const hasInvalidItems = rawAttrs.some((a: any) => {
+        const traitType = a?.trait_type ?? a?.traitType;
+        return (
+          typeof traitType !== 'string' ||
+          traitType.trim() === '' ||
+          a?.value === undefined ||
+          a?.value === null
+        );
+      });
+      if (hasInvalidItems) missing.push('attributes (invalid items)');
       const hasMemeName = rawAttrs.some(
         (a: any) => (a.trait_type ?? a.traitType) === MEME_NAME_TRAIT
       );
@@ -566,6 +709,9 @@ router.post(
       throw new BadRequestException(
         `Missing required fields for Arweave upload: ${missing.join(', ')}. Only animation is optional.`
       );
+    }
+    if (imageUrl === null) {
+      throw new Error('image_url unexpectedly null after validation');
     }
     let imageLocation: string;
     let animationLocation: string | null;
@@ -582,7 +728,16 @@ router.post(
     } catch (err) {
       const message =
         err instanceof Error ? err.message : 'Arweave upload failed';
-      return res.status(500).json({ error: message });
+      const isClientError =
+        message.includes('Invalid URL') ||
+        message.includes('Unsupported URL protocol') ||
+        message.includes('Forbidden') ||
+        message.includes('Response too large') ||
+        message.includes('exceeded max size') ||
+        message.includes('did not resolve to an image') ||
+        message.includes('did not resolve to a GLB') ||
+        message.includes('did not resolve to a video');
+      return res.status(isClientError ? 400 : 500).json({ error: message });
     }
     await updateMemeClaim(memeId, {
       image_location: arweaveTxIdFromUrl(imageLocation),

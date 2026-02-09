@@ -1,22 +1,5 @@
-import { env } from '../../env';
 import { Time } from '../../time';
-import { ApiSeizeSettings } from './generated/models/ApiSeizeSettings';
 import { PageSortDirection } from './page-request';
-
-export const seizeSettings = (): ApiSeizeSettings => {
-  const rememes_submission_tdh_threshold =
-    env.getIntOrNull('REMEMED_SUBMISSION_TDH_THRESHOLD') ?? 6942;
-  const all_drops_notifications_subscribers_limit =
-    env.getIntOrNull('ALL_DROPS_NOTIFICATIONS_SUBSCRIBERS_LIMIT') ?? 15;
-
-  const memes_wave_id = env.getStringOrNull('MAIN_STAGE_WAVE_ID');
-
-  return {
-    rememes_submission_tdh_threshold,
-    all_drops_notifications_subscribers_limit,
-    memes_wave_id
-  };
-};
 
 export const ACCESS_CONTROL_ALLOW_ORIGIN_HEADER = 'Access-Control-Allow-Origin';
 export const CONTENT_TYPE_HEADER = 'Content-Type';

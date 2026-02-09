@@ -1884,7 +1884,8 @@ paths:
         Returns allowlist merkle proofs for the given merkle root. If address
         query param is provided, returns proofs for that address only
         (MemesMintingProofsResponse). If address is omitted, returns proofs for
-        all addresses (MemesMintingProofsByAddressResponse).
+        all addresses (MemesMintingProofsByAddressResponse). Listing all
+        addresses requires DISTRIBUTION_ADMIN_WALLETS.
       operationId: getMemesMintingProofs
       parameters:
         - name: merkle_root
@@ -1900,6 +1901,7 @@ paths:
           description: Wallet address. If omitted, returns proofs for all addresses.
           schema:
             type: string
+            pattern: ^0x[a-fA-F0-9]{40}$
       responses:
         "200":
           description: successful operation
@@ -1911,6 +1913,10 @@ paths:
                   - $ref: "#/components/schemas/MemesMintingProofsByAddressResponse"
         "400":
           description: Invalid request (missing or invalid parameters)
+        "403":
+          description: >
+            Forbidden - only distribution admins can list all proofs for a
+            merkle_root
         "404":
           description: No proofs found for the given merkle_root (and address if provided)
   /memes-minting/roots/{contract}/{card_id}:
@@ -1927,6 +1933,7 @@ paths:
           description: Contract address
           schema:
             type: string
+            pattern: ^0x[a-fA-F0-9]{40}$
         - name: card_id
           in: path
           required: true
@@ -1950,7 +1957,7 @@ paths:
         - Memes minting
       summary: Get meme claims (paginated, admin only)
       description: >
-        Returns a page of meme claims, ordered by meme_id ascending. Default
+        Returns a page of meme claims, ordered by meme_id descending. Default
         page_size 10, max 20. Only DISTRIBUTION_ADMIN_WALLETS can call this.
       operationId: getMemesMintingClaims
       parameters:
@@ -1978,6 +1985,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/MemesMintingClaimsPageResponse"
+        "401":
+          description: Unauthorized - authentication required
         "403":
           description: Forbidden - only distribution admins can access
   /memes-minting/claims/{meme_id}:
@@ -2003,6 +2012,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/MemeClaim"
+        "401":
+          description: Unauthorized - authentication required
         "403":
           description: Forbidden - only distribution admins can access
         "404":
@@ -2034,6 +2045,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/MemeClaim"
+        "401":
+          description: Unauthorized - authentication required
         "403":
           description: Forbidden - only distribution admins can access
         "404":
@@ -2063,7 +2076,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/MemeClaim"
         "400":
-          description: Bad Request - claim has no image URL or edition_size not set
+          description: Bad Request - claim data or media URL/content-type is invalid
+        "401":
+          description: Unauthorized - authentication required
         "403":
           description: Forbidden - only distribution admins can access
         "404":
@@ -8938,6 +8953,8 @@ components:
         - rememes_submission_tdh_threshold
         - all_drops_notifications_subscribers_limit
         - memes_wave_id
+        - distribution_admin_wallets
+        - claims_admin_wallets
       properties:
         rememes_submission_tdh_threshold:
           type: integer
@@ -8948,6 +8965,14 @@ components:
         memes_wave_id:
           type: string
           nullable: true
+        distribution_admin_wallets:
+          type: array
+          items:
+            type: string
+        claims_admin_wallets:
+          type: array
+          items:
+            type: string
     ApiStartMultipartMediaUploadResponse:
       required:
         - upload_id
@@ -10567,7 +10592,7 @@ components:
         edition_size:
           type: integer
           format: int32
-          minimum: 1
+          minimum: 300
           nullable: true
         description:
           type: string
@@ -10704,7 +10729,7 @@ components:
         edition_size:
           type: integer
           format: int32
-          minimum: 1
+          minimum: 300
           nullable: true
         description:
           type: string
