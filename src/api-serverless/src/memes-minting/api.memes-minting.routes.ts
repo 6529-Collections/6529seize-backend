@@ -1,5 +1,10 @@
 import { ApiResponse } from '@/api/api-response';
 import { asyncRouter } from '@/api/async.router';
+import {
+  getAuthenticatedWalletOrNull,
+  maybeAuthenticatedUser,
+  needsAuthenticatedUser
+} from '@/api/auth/auth';
 import type { MemeClaim } from '@/api/generated/models/MemeClaim';
 import type { MemeClaimUpdateRequest } from '@/api/generated/models/MemeClaimUpdateRequest';
 import type { MemesMintingClaimsPageResponse } from '@/api/generated/models/MemesMintingClaimsPageResponse';
@@ -7,25 +12,21 @@ import type { MemesMintingProofsByAddressResponse } from '@/api/generated/models
 import type { MemesMintingProofsResponse } from '@/api/generated/models/MemesMintingProofsResponse';
 import type { MemesMintingRootsResponse } from '@/api/generated/models/MemesMintingRootsResponse';
 import {
+  fetchAllMintingMerkleProofsForRoot,
   fetchMemeClaimByMemeId,
   fetchMemeClaimsPage,
   fetchMemeClaimsTotalCount,
-  fetchAllMintingMerkleProofsForRoot,
   fetchMintingMerkleProofs,
   fetchMintingMerkleRoots,
   type MemeClaimRow,
   updateMemeClaim
 } from '@/api/memes-minting/api.memes-minting.db';
 import { patchMemeClaim } from '@/api/memes-minting/api.memes-minting.service';
+import { enqueueClaimMediaArweaveUpload } from '@/api/memes-minting/claims-media-arweave-upload-publisher';
 import { cacheRequest } from '@/api/request-cache';
-import { getValidatedByJoiOrThrow } from '@/api/validation';
-import {
-  getAuthenticatedWalletOrNull,
-  maybeAuthenticatedUser,
-  needsAuthenticatedUser
-} from '@/api/auth/auth';
 import { getDistributionAdminWallets } from '@/api/seize-settings';
-import { ForbiddenException, CustomApiCompliantException } from '@/exceptions';
+import { getValidatedByJoiOrThrow } from '@/api/validation';
+import { CustomApiCompliantException, ForbiddenException } from '@/exceptions';
 import { Logger } from '@/logging';
 import {
   MIN_EDITION_SIZE,
@@ -35,7 +36,6 @@ import { numbers } from '@/numbers';
 import { equalIgnoreCase } from '@/strings';
 import { NextFunction, Request, Response } from 'express';
 import * as Joi from 'joi';
-import { enqueueClaimMediaArweaveUpload } from '@/api/memes-minting/claims-media-arweave-upload-publisher';
 
 const router = asyncRouter();
 
@@ -279,6 +279,19 @@ const MemeClaimAttributeSchema = Joi.object({
   value: Joi.alternatives().try(Joi.string(), Joi.number()),
   display_type: Joi.string().optional(),
   max_value: Joi.number().optional()
+}).custom((attribute: any, helpers) => {
+  const value = attribute?.value;
+  if (typeof value === 'string' && value.trim() === '') {
+    const traitType =
+      typeof attribute?.trait_type === 'string' && attribute.trait_type !== ''
+        ? attribute.trait_type
+        : 'unknown';
+    const path = helpers.state.path.join('.');
+    return helpers.message({
+      custom: `Invalid attributes entry (${path}): trait_type "${traitType}" has an empty value`
+    });
+  }
+  return attribute;
 });
 
 const MemeClaimUpdateRequestSchema = Joi.object({
