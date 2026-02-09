@@ -4,6 +4,7 @@ import { sqlExecutor } from '../../../sql-executor';
 export async function fetchRandomVerticalImage(): Promise<
   {
     id?: number;
+    name?: string;
     artist?: string;
     artist_seize_handle?: string;
     season?: number;
@@ -16,7 +17,7 @@ export async function fetchRandomVerticalImage(): Promise<
   }[]
 > {
   const sql = `
-    SELECT n.id, n.artist, n.artist_seize_handle,
+    SELECT n.id, n.name, n.artist, n.artist_seize_handle,
       CAST(jt.value AS UNSIGNED) AS season,
       CAST(JSON_UNQUOTE(JSON_EXTRACT(n.metadata, '$.image_details.width')) AS UNSIGNED) AS width,
       CAST(JSON_UNQUOTE(JSON_EXTRACT(n.metadata, '$.image_details.height')) AS UNSIGNED) AS height,
