@@ -19,10 +19,14 @@ import {
   fetchMintingMerkleProofs,
   fetchMintingMerkleRoots,
   type MemeClaimRow,
-  updateMemeClaim
+  updateMemeClaim,
+  updateMemeClaimIfNotUploading
 } from '@/api/memes-minting/api.memes-minting.db';
 import { patchMemeClaim } from '@/api/memes-minting/api.memes-minting.service';
-import { enqueueClaimMediaArweaveUpload } from '@/api/memes-minting/claims-media-arweave-upload-publisher';
+import {
+  enqueueClaimMediaArweaveUpload,
+  isClaimsMediaArweaveUploadActivated
+} from '@/api/memes-minting/claims-media-arweave-upload-publisher';
 import { cacheRequest } from '@/api/request-cache';
 import { getDistributionAdminWallets } from '@/api/seize-settings';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
@@ -275,8 +279,10 @@ const ClaimMemeIdParamsSchema: Joi.ObjectSchema<ClaimMemeIdParams> = Joi.object(
 );
 
 const MemeClaimAttributeSchema = Joi.object({
-  trait_type: Joi.string(),
-  value: Joi.alternatives().try(Joi.string(), Joi.number()),
+  trait_type: Joi.string().required(),
+  value: Joi.alternatives()
+    .try(Joi.string().allow(''), Joi.number())
+    .required(),
   display_type: Joi.string().optional(),
   max_value: Joi.number().optional()
 }).custom((attribute: any, helpers) => {
@@ -286,7 +292,7 @@ const MemeClaimAttributeSchema = Joi.object({
       typeof attribute?.trait_type === 'string' && attribute.trait_type !== ''
         ? attribute.trait_type
         : 'unknown';
-    const path = helpers.state.path.join('.');
+    const path = (helpers.state.path ?? []).join('.');
     return helpers.message({
       custom: `Invalid attributes entry (${path}): trait_type "${traitType}" has an empty value`
     });
@@ -295,7 +301,7 @@ const MemeClaimAttributeSchema = Joi.object({
 });
 
 const MemeClaimUpdateRequestSchema = Joi.object({
-  season: Joi.number().integer().optional(),
+  season: Joi.number().integer().optional().label('Season'),
   image_location: Joi.string().allow(null).optional(),
   animation_location: Joi.string().allow(null).optional(),
   metadata_location: Joi.string().allow(null).optional(),
@@ -303,7 +309,8 @@ const MemeClaimUpdateRequestSchema = Joi.object({
     .integer()
     .min(MIN_EDITION_SIZE)
     .allow(null)
-    .optional(),
+    .optional()
+    .label('Edition Size'),
   description: Joi.string().optional(),
   name: Joi.string().optional(),
   image_url: Joi.string().allow(null).optional(),
@@ -328,11 +335,25 @@ async function assertCanStartArweaveUpload(claim: MemeClaimRow): Promise<void> {
 }
 
 async function queueArweaveUploadOrRollback(memeId: number): Promise<void> {
-  await updateMemeClaim(memeId, {
+  if (!isClaimsMediaArweaveUploadActivated()) {
+    return;
+  }
+  const locked = await updateMemeClaimIfNotUploading(memeId, {
     media_uploading: true
   });
+  if (!locked) {
+    throw new CustomApiCompliantException(
+      409,
+      'Claim media upload is already in progress'
+    );
+  }
   try {
-    await enqueueClaimMediaArweaveUpload(memeId);
+    const enqueued = await enqueueClaimMediaArweaveUpload(memeId);
+    if (!enqueued) {
+      await updateMemeClaim(memeId, {
+        media_uploading: false
+      });
+    }
   } catch (enqueueError) {
     try {
       await updateMemeClaim(memeId, {

@@ -1,4 +1,5 @@
 import { Logger } from '@/logging';
+import { BadRequestException } from '@/exceptions';
 import { keccak256 } from 'ethers';
 import { MerkleTree } from 'merkletreejs';
 
@@ -18,7 +19,7 @@ function parseAndValidateMerkleTree(merkle_tree: string): Buffer[] {
       inputLength: merkle_tree?.length,
       err
     });
-    throw new Error(`Invalid merkle_tree: JSON parse failed`);
+    throw new BadRequestException(`Invalid merkle_tree: JSON parse failed`);
   }
   if (
     parsed == null ||
@@ -28,7 +29,9 @@ function parseAndValidateMerkleTree(merkle_tree: string): Buffer[] {
     logger.warn('Invalid merkle_tree: missing or invalid leaves array', {
       inputLength: merkle_tree?.length
     });
-    throw new Error('Invalid merkle_tree: expected object with leaves array');
+    throw new BadRequestException(
+      'Invalid merkle_tree: expected object with leaves array'
+    );
   }
   const leaves = (parsed as { leaves: { data?: number[] }[] }).leaves;
   const buffers: Buffer[] = [];
@@ -36,7 +39,7 @@ function parseAndValidateMerkleTree(merkle_tree: string): Buffer[] {
     const leaf = leaves[i];
     const data = leaf?.data;
     if (data == null || !Array.isArray(data)) {
-      throw new Error(
+      throw new BadRequestException(
         `Invalid merkle_tree: leaf at index ${i} has no valid data`
       );
     }
@@ -47,7 +50,7 @@ function parseAndValidateMerkleTree(merkle_tree: string): Buffer[] {
         index: i,
         err
       });
-      throw new Error(
+      throw new BadRequestException(
         `Invalid merkle_tree: leaf at index ${i} could not be converted to Buffer`
       );
     }
@@ -60,7 +63,9 @@ export function getProof(merkle_tree: string, keccak: string): string[] {
   const merkleTree = new MerkleTree(leaves, hashToBuffer, { sortPairs: true });
   const normalizedKeccak = keccak.replace(/^0x/, '');
   if (!/^[0-9a-fA-F]{64}$/.test(normalizedKeccak)) {
-    throw new Error(`Invalid keccak: expected 32-byte hex string`);
+    throw new BadRequestException(
+      `Invalid keccak: expected 32-byte hex string`
+    );
   }
   const leafBuffer = Buffer.from(normalizedKeccak, 'hex');
   const proof = merkleTree.getProof(leafBuffer);

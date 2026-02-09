@@ -3,17 +3,30 @@ import {
   fetchMemeClaimByMemeId,
   updateMemeClaim
 } from '@/api/memes-minting/api.memes-minting.db';
+import { getCacheKeyPatternForPath } from '@/api/api-helpers';
 import {
   arweaveTxIdFromUrl,
   uploadMemeClaimToArweave
 } from '@/meme-claims/claims-media-arweave-upload';
 import { Logger } from '@/logging';
+import { evictAllKeysMatchingPatternFromRedisCache } from '@/redis';
 import * as priorityAlertsContext from '@/priority-alerts.context';
 import { doInDbContext } from '@/secrets';
 import * as sentryContext from '@/sentry.context';
 
 const logger = Logger.get('CLAIMS_MEDIA_ARWEAVE_UPLOADER');
 const ALERT_TITLE = 'Claims Media Arweave Uploader';
+
+async function invalidateClaimCache(memeId: number): Promise<void> {
+  const pattern = getCacheKeyPatternForPath(
+    `/api/memes-minting/claims/${memeId}*`
+  );
+  try {
+    await evictAllKeysMatchingPatternFromRedisCache(pattern);
+  } catch (error) {
+    logger.warn('Failed to invalidate meme claim cache', { memeId, error });
+  }
+}
 
 function parseRecordBody(body: string): { meme_id: number } {
   const parsed = JSON.parse(body) as { meme_id?: unknown };
@@ -33,6 +46,7 @@ async function processMemeClaimUpload(memeId: number): Promise<void> {
   if (claim.arweave_synced_at != null) {
     if (claim.media_uploading) {
       await updateMemeClaim(memeId, { media_uploading: false });
+      await invalidateClaimCache(memeId);
     }
     logger.info(
       `Skipping upload - claim already synced for meme_id=${memeId} (arweave_synced_at=${claim.arweave_synced_at})`
@@ -53,9 +67,11 @@ async function processMemeClaimUpload(memeId: number): Promise<void> {
       arweave_synced_at: Date.now(),
       media_uploading: false
     });
+    await invalidateClaimCache(memeId);
   } catch (error) {
     try {
       await updateMemeClaim(memeId, { media_uploading: false });
+      await invalidateClaimCache(memeId);
     } catch (rollbackError) {
       logger.error('Failed to reset media_uploading after upload error', {
         memeId,

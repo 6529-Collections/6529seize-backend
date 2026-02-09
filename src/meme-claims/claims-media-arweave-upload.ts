@@ -1,5 +1,8 @@
 import type { MemeClaimRow } from '@/api/memes-minting/api.memes-minting.db';
-import { fetchMemeIdByMemeName } from '@/api/memes-minting/api.memes-minting.db';
+import {
+  fetchMaxSeasonId,
+  fetchMemeIdByMemeName
+} from '@/api/memes-minting/api.memes-minting.db';
 import { arweaveFileUploader } from '@/arweave';
 import { BadRequestException } from '@/exceptions';
 import { fetchPublicUrlToBuffer } from '@/http/safe-fetch';
@@ -138,6 +141,7 @@ async function uploadAnimationToArweaveIfPresent(
     contentType === '' ||
     contentType === 'application/octet-stream' ||
     contentType === 'binary/octet-stream';
+  let contentTypeToUpload = contentType;
   if (expectsGlb) {
     const isValidGlb =
       contentType === 'model/gltf-binary' ||
@@ -147,6 +151,7 @@ async function uploadAnimationToArweaveIfPresent(
         `animation_url did not resolve to a GLB (content-type: ${contentType})`
       );
     }
+    contentTypeToUpload = 'model/gltf-binary';
   } else {
     const isValidVideo =
       contentType.startsWith('video/') ||
@@ -157,8 +162,18 @@ async function uploadAnimationToArweaveIfPresent(
         `animation_url did not resolve to a video (content-type: ${contentType})`
       );
     }
+    if (hasGenericContentType) {
+      if (lowerPath.endsWith('.mp4')) {
+        contentTypeToUpload = 'video/mp4';
+      } else if (lowerPath.endsWith('.mov')) {
+        contentTypeToUpload = 'video/quicktime';
+      }
+    }
   }
-  const { url } = await arweaveFileUploader.uploadFile(buffer, contentType);
+  const { url } = await arweaveFileUploader.uploadFile(
+    buffer,
+    contentTypeToUpload
+  );
   return url;
 }
 
@@ -305,11 +320,11 @@ async function uploadClaimMetadataToArweave(
 function validateAttributes(raw: unknown): string[] {
   const issues: string[] = [];
   if (raw == null) {
-    issues.push('attributes (invalid JSON)');
+    issues.push('Attributes (invalid JSON)');
     return issues;
   }
   if (!Array.isArray(raw)) {
-    issues.push('attributes (must be an array)');
+    issues.push('Attributes (must be an array)');
     return issues;
   }
   const hasInvalidItems = raw.some((a: any) => {
@@ -321,11 +336,11 @@ function validateAttributes(raw: unknown): string[] {
       a?.value === null
     );
   });
-  if (hasInvalidItems) issues.push('attributes (invalid items)');
+  if (hasInvalidItems) issues.push('Attributes (invalid items)');
   const hasMemeName = raw.some(
     (a: any) => (a.trait_type ?? a.traitType) === MEME_NAME_TRAIT
   );
-  if (!hasMemeName) issues.push('Meme Name attribute');
+  if (!hasMemeName) issues.push('Meme Name Attribute');
   return issues;
 }
 
@@ -333,31 +348,39 @@ export async function validateMemeClaimReadyForArweaveUpload(
   claim: MemeClaimRow
 ): Promise<{ imageUrl: string; typeMemeId: number }> {
   const missing: string[] = [];
+  const invalid: string[] = [];
   const imageUrl = claim.image_url?.trim() || null;
-  if (imageUrl === null || imageUrl === '') missing.push('image_url');
+  if (imageUrl === null || imageUrl === '') missing.push('Image URL');
 
   const editionSize =
     claim.edition_size == null ? null : Number(claim.edition_size);
-  if (
-    editionSize == null ||
-    !Number.isInteger(editionSize) ||
-    editionSize < MIN_EDITION_SIZE
-  ) {
-    missing.push('edition_size');
+  if (editionSize == null) {
+    missing.push('Edition Size');
+  } else if (!Number.isInteger(editionSize) || editionSize < MIN_EDITION_SIZE) {
+    invalid.push(`Edition Size (must be an integer >= ${MIN_EDITION_SIZE})`);
   }
 
   const name = claim.name?.trim() ?? '';
-  if (name === '') missing.push('name');
+  if (name === '') missing.push('Name');
 
   const description = claim.description?.trim();
-  if (description == null || description === '') missing.push('description');
+  if (description == null || description === '') missing.push('Description');
 
-  if (
-    claim.season == null ||
-    !Number.isInteger(Number(claim.season)) ||
-    Number(claim.season) < 1
-  ) {
-    missing.push('season');
+  if (claim.season == null) {
+    missing.push('Season');
+  } else {
+    const season = Number(claim.season);
+    const maxSeasonId = await fetchMaxSeasonId();
+    const requiredMinSeason = Math.max(1, maxSeasonId);
+    if (
+      !Number.isInteger(season) ||
+      season < requiredMinSeason ||
+      season > requiredMinSeason + 1
+    ) {
+      invalid.push(
+        `Season (must be ${requiredMinSeason} or ${requiredMinSeason + 1}; current max season is ${maxSeasonId}, got ${claim.season})`
+      );
+    }
   }
 
   const rawAttributes = parseJsonOrNull<unknown>(claim.attributes);
@@ -374,10 +397,17 @@ export async function validateMemeClaimReadyForArweaveUpload(
     }
   }
 
-  if (missing.length > 0) {
-    throw new BadRequestException(
-      `Missing required fields for Arweave upload: ${missing.join(', ')}. Only animation is optional.`
-    );
+  if (missing.length > 0 || invalid.length > 0) {
+    const parts: string[] = [];
+    if (missing.length > 0) {
+      parts.push(
+        `Missing required fields for Arweave upload: ${missing.join(', ')}.`
+      );
+    }
+    if (invalid.length > 0) {
+      parts.push(`Invalid fields for Arweave upload: ${invalid.join(', ')}.`);
+    }
+    throw new BadRequestException(parts.join(' '));
   }
   return { imageUrl: imageUrl as string, typeMemeId: typeMemeId as number };
 }

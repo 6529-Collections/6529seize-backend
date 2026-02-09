@@ -332,6 +332,21 @@ export async function updateMemeClaimIfNotUploading(
        AND COALESCE(media_uploading, 0) = 0`,
     params
   );
-  const affectedRows = Number(result?.[0]?.affectedRows ?? 0);
+  let affectedRows = 0;
+  if (
+    result != null &&
+    typeof result === 'object' &&
+    'affectedRows' in (result as object)
+  ) {
+    affectedRows = Number((result as { affectedRows?: unknown }).affectedRows);
+  } else if (Array.isArray(result)) {
+    const first = result[0] as unknown;
+    const second = result[1] as unknown;
+    if (first != null && typeof first === 'object' && 'affectedRows' in first) {
+      affectedRows = Number((first as { affectedRows?: unknown }).affectedRows);
+    } else {
+      affectedRows = Number(second ?? 0);
+    }
+  }
   return affectedRows > 0;
 }

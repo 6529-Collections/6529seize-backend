@@ -70,13 +70,16 @@ const POINTS_KEYS = new Set([
 const NUMBER_KEYS = new Set(['typeMeme', 'typeSeason', 'typeCard']);
 
 function mimeToFormat(mime: string): string {
-  if (mime.startsWith('image/'))
-    return mime.replace('image/', '').toUpperCase();
-  if (mime === 'text/html') return 'HTML';
-  if (mime.startsWith('video/'))
-    return mime.replace('video/', '').toUpperCase();
-  if (mime === 'model/gltf-binary') return 'GLB';
-  return mime;
+  const normalized = mime.trim().toLowerCase();
+  if (normalized.startsWith('image/')) {
+    return normalized.replace('image/', '').toUpperCase();
+  }
+  if (normalized === 'text/html') return 'HTML';
+  if (normalized.startsWith('video/')) {
+    return normalized.replace('video/', '').toUpperCase();
+  }
+  if (normalized === 'model/gltf-binary') return 'GLB';
+  return normalized;
 }
 
 function parseAdditionalMedia(metadatas: DropMetadataEntity[]): {
@@ -94,7 +97,7 @@ function parseAdditionalMedia(metadatas: DropMetadataEntity[]): {
 }
 
 function attrValue(dataKey: string, dataValue: string): string | number {
-  if (NUMBER_KEYS.has(dataKey)) {
+  if (NUMBER_KEYS.has(dataKey) || POINTS_KEYS.has(dataKey)) {
     const n = Number(dataValue);
     return Number.isFinite(n) ? n : dataValue;
   }
@@ -141,7 +144,14 @@ function imageDetailsFromMime(mimeType: string): MemeClaimImageDetails {
 function imageDetailsFromPreviewUrl(
   previewUrl: string
 ): MemeClaimImageDetails | null {
-  const normalized = previewUrl.toLowerCase();
+  let path = '';
+  try {
+    path = new URL(previewUrl).pathname;
+  } catch {
+    const noFragment = previewUrl.split('#', 1)[0] ?? '';
+    path = noFragment.split('?', 1)[0] ?? '';
+  }
+  const normalized = path.toLowerCase();
   if (normalized.endsWith('.png')) return imageDetailsFromMime('image/png');
   if (normalized.endsWith('.jpg') || normalized.endsWith('.jpeg')) {
     return imageDetailsFromMime('image/jpeg');

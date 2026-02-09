@@ -12,9 +12,22 @@ function getSnsClient(): SNSClient {
   return snsClient;
 }
 
+export function isClaimsMediaArweaveUploadActivated(): boolean {
+  return (
+    process.env.CLAIMS_MEDIA_ARWEAVE_UPLOAD_DEACTIVATED?.toLowerCase() !==
+    'true'
+  );
+}
+
 export async function enqueueClaimMediaArweaveUpload(
   memeId: number
-): Promise<void> {
+): Promise<boolean> {
+  if (!isClaimsMediaArweaveUploadActivated()) {
+    logger.info(
+      `Claims media Arweave upload is not activated, skipping enqueue for meme_id=${memeId}`
+    );
+    return false;
+  }
   const topicArn = process.env.CLAIMS_MEDIA_ARWEAVE_UPLOAD_SNS;
   if (!topicArn) {
     throw new Error('CLAIMS_MEDIA_ARWEAVE_UPLOAD_SNS is not configured');
@@ -29,4 +42,5 @@ export async function enqueueClaimMediaArweaveUpload(
   logger.info(
     `Queued claim media Arweave upload for meme_id=${memeId}, messageId=${response.MessageId}`
   );
+  return true;
 }

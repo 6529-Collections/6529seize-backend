@@ -55,7 +55,7 @@ function validateRequestedSeason(
     requested > requiredMinSeason + 1
   ) {
     throw new BadRequestException(
-      `season must be ${requiredMinSeason} or ${requiredMinSeason + 1} (current max season is ${maxSeason}), got ${requestedSeason}`
+      `Season must be ${requiredMinSeason} or ${requiredMinSeason + 1} (current max season is ${maxSeason}), got ${requestedSeason}`
     );
   }
   return requested;
