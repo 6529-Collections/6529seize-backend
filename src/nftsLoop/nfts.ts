@@ -307,7 +307,10 @@ async function announceNewMemeDiscoveries(newlyDiscoveredNfts: NFT[]) {
     if (meme.name) {
       memeDescriptor += ` - ${meme.name}`;
     }
-    const memeLink = cardPageUrlTemplate.replace('{cardNo}', meme.id.toString());
+    const memeLink = cardPageUrlTemplate.replace(
+      '{cardNo}',
+      meme.id.toString()
+    );
     const message = `🚀 ${memeDescriptor} is Live!\n${memeLink}`;
     try {
       await deployerDropper.drop({ message, waves }, {});
