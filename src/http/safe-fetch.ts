@@ -154,8 +154,12 @@ function safeLookup(
 ): void {
   const familyRaw =
     typeof options === 'number' ? options : (options?.family ?? 0);
-  const family =
-    familyRaw === 'IPv4' ? 4 : familyRaw === 'IPv6' ? 6 : Number(familyRaw);
+  let family = Number(familyRaw);
+  if (familyRaw === 'IPv4') {
+    family = 4;
+  } else if (familyRaw === 'IPv6') {
+    family = 6;
+  }
   resolveAndValidatePublicAddress(hostname, family)
     .then((result) => callback(null, result.address, result.family))
     .catch((error) => callback(error as NodeJS.ErrnoException, '', 0));

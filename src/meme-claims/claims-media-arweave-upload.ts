@@ -141,7 +141,30 @@ async function uploadAnimationToArweaveIfPresent(
     contentType === '' ||
     contentType === 'application/octet-stream' ||
     contentType === 'binary/octet-stream';
-  let contentTypeToUpload = contentType;
+  const contentTypeToUpload = resolveAnimationContentTypeForUpload({
+    contentType,
+    hasGenericContentType,
+    lowerPath,
+    expectsGlb
+  });
+  const { url } = await arweaveFileUploader.uploadFile(
+    buffer,
+    contentTypeToUpload
+  );
+  return url;
+}
+
+function resolveAnimationContentTypeForUpload({
+  contentType,
+  hasGenericContentType,
+  lowerPath,
+  expectsGlb
+}: {
+  contentType: string;
+  hasGenericContentType: boolean;
+  lowerPath: string;
+  expectsGlb: boolean;
+}): string {
   if (expectsGlb) {
     const isValidGlb =
       contentType === 'model/gltf-binary' ||
@@ -151,30 +174,21 @@ async function uploadAnimationToArweaveIfPresent(
         `animation_url did not resolve to a GLB (content-type: ${contentType})`
       );
     }
-    contentTypeToUpload = 'model/gltf-binary';
-  } else {
-    const isValidVideo =
-      contentType.startsWith('video/') ||
-      (hasGenericContentType &&
-        (lowerPath.endsWith('.mp4') || lowerPath.endsWith('.mov')));
-    if (!isValidVideo) {
-      throw new BadRequestException(
-        `animation_url did not resolve to a video (content-type: ${contentType})`
-      );
-    }
-    if (hasGenericContentType) {
-      if (lowerPath.endsWith('.mp4')) {
-        contentTypeToUpload = 'video/mp4';
-      } else if (lowerPath.endsWith('.mov')) {
-        contentTypeToUpload = 'video/quicktime';
-      }
-    }
+    return 'model/gltf-binary';
   }
-  const { url } = await arweaveFileUploader.uploadFile(
-    buffer,
-    contentTypeToUpload
-  );
-  return url;
+  const isValidVideo =
+    contentType.startsWith('video/') ||
+    (hasGenericContentType &&
+      (lowerPath.endsWith('.mp4') || lowerPath.endsWith('.mov')));
+  if (!isValidVideo) {
+    throw new BadRequestException(
+      `animation_url did not resolve to a video (content-type: ${contentType})`
+    );
+  }
+  if (!hasGenericContentType) return contentType;
+  if (lowerPath.endsWith('.mp4')) return 'video/mp4';
+  if (lowerPath.endsWith('.mov')) return 'video/quicktime';
+  return contentType;
 }
 
 function normalizeAttributesForArweave(attributes: unknown): unknown[] {
@@ -351,51 +365,19 @@ export async function validateMemeClaimReadyForArweaveUpload(
   const invalid: string[] = [];
   const imageUrl = claim.image_url?.trim() || null;
   if (imageUrl === null || imageUrl === '') missing.push('Image URL');
-
-  const editionSize =
-    claim.edition_size == null ? null : Number(claim.edition_size);
-  if (editionSize == null) {
-    missing.push('Edition Size');
-  } else if (!Number.isInteger(editionSize) || editionSize < MIN_EDITION_SIZE) {
-    invalid.push(`Edition Size (must be an integer >= ${MIN_EDITION_SIZE})`);
-  }
+  appendEditionSizeIssues(claim, missing, invalid);
 
   const name = claim.name?.trim() ?? '';
   if (name === '') missing.push('Name');
 
   const description = claim.description?.trim();
   if (description == null || description === '') missing.push('Description');
-
-  if (claim.season == null) {
-    missing.push('Season');
-  } else {
-    const season = Number(claim.season);
-    const maxSeasonId = await fetchMaxSeasonId();
-    const requiredMinSeason = Math.max(1, maxSeasonId);
-    if (
-      !Number.isInteger(season) ||
-      season < requiredMinSeason ||
-      season > requiredMinSeason + 1
-    ) {
-      invalid.push(
-        `Season (must be ${requiredMinSeason} or ${requiredMinSeason + 1}; current max season is ${maxSeasonId}, got ${claim.season})`
-      );
-    }
-  }
+  await appendSeasonIssues(claim, missing, invalid);
 
   const rawAttributes = parseJsonOrNull<unknown>(claim.attributes);
-  missing.push(...validateAttributes(rawAttributes));
+  appendAttributeIssues(rawAttributes, missing, invalid);
 
-  let typeMemeId: number | null = null;
-  if (missing.length === 0) {
-    const memeName = getMemeNameFromAttributes(rawAttributes);
-    typeMemeId = await fetchMemeIdByMemeName(memeName);
-    if (typeMemeId === null) {
-      throw new BadRequestException(
-        `No meme found in memes_extended_data for Meme Name "${memeName}"; cannot upload to Arweave`
-      );
-    }
-  }
+  const typeMemeId = await resolveTypeMemeId(rawAttributes, missing, invalid);
 
   if (missing.length > 0 || invalid.length > 0) {
     const parts: string[] = [];
@@ -410,6 +392,86 @@ export async function validateMemeClaimReadyForArweaveUpload(
     throw new BadRequestException(parts.join(' '));
   }
   return { imageUrl: imageUrl as string, typeMemeId: typeMemeId as number };
+}
+
+function appendEditionSizeIssues(
+  claim: MemeClaimRow,
+  missing: string[],
+  invalid: string[]
+) {
+  const editionSize =
+    claim.edition_size == null ? null : Number(claim.edition_size);
+  if (editionSize == null) {
+    missing.push('Edition Size');
+    return;
+  }
+  if (!Number.isInteger(editionSize) || editionSize < MIN_EDITION_SIZE) {
+    invalid.push(`Edition Size (must be an integer >= ${MIN_EDITION_SIZE})`);
+  }
+}
+
+async function appendSeasonIssues(
+  claim: MemeClaimRow,
+  missing: string[],
+  invalid: string[]
+) {
+  if (claim.season == null) {
+    missing.push('Season');
+    return;
+  }
+  const season = Number(claim.season);
+  const maxSeasonId = await fetchMaxSeasonId();
+  const requiredMinSeason = Math.max(1, maxSeasonId);
+  if (
+    !Number.isInteger(season) ||
+    season < requiredMinSeason ||
+    season > requiredMinSeason + 1
+  ) {
+    invalid.push(
+      `Season (must be ${requiredMinSeason} or ${requiredMinSeason + 1}; current max season is ${maxSeasonId}, got ${claim.season})`
+    );
+  }
+}
+
+function appendAttributeIssues(
+  rawAttributes: unknown,
+  missing: string[],
+  invalid: string[]
+) {
+  const attributeIssues = validateAttributes(rawAttributes);
+  for (const issue of attributeIssues) {
+    if (issue.startsWith('Attributes (')) {
+      invalid.push(issue);
+      continue;
+    }
+    missing.push(issue);
+  }
+}
+
+async function resolveTypeMemeId(
+  rawAttributes: unknown,
+  missing: string[],
+  invalid: string[]
+): Promise<number | null> {
+  if (missing.length > 0 || invalid.length > 0) return null;
+  try {
+    const memeName = getMemeNameFromAttributes(rawAttributes);
+    const typeMemeId = await fetchMemeIdByMemeName(memeName);
+    if (typeMemeId === null) {
+      invalid.push(
+        `Meme Name Attribute (no meme found in memes_extended_data for "${memeName}")`
+      );
+      return null;
+    }
+    return typeMemeId;
+  } catch (error) {
+    invalid.push(
+      error instanceof Error
+        ? `Meme Name Attribute (${error.message})`
+        : 'Meme Name Attribute (invalid)'
+    );
+    return null;
+  }
 }
 
 export async function uploadMemeClaimToArweave(

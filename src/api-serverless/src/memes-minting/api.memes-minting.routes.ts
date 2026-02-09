@@ -23,10 +23,7 @@ import {
   updateMemeClaimIfNotUploading
 } from '@/api/memes-minting/api.memes-minting.db';
 import { patchMemeClaim } from '@/api/memes-minting/api.memes-minting.service';
-import {
-  enqueueClaimMediaArweaveUpload,
-  isClaimsMediaArweaveUploadActivated
-} from '@/api/memes-minting/claims-media-arweave-upload-publisher';
+import { enqueueClaimMediaArweaveUpload } from '@/api/memes-minting/claims-media-arweave-upload-publisher';
 import { cacheRequest } from '@/api/request-cache';
 import { getDistributionAdminWallets } from '@/api/seize-settings';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
@@ -335,9 +332,6 @@ async function assertCanStartArweaveUpload(claim: MemeClaimRow): Promise<void> {
 }
 
 async function queueArweaveUploadOrRollback(memeId: number): Promise<void> {
-  if (!isClaimsMediaArweaveUploadActivated()) {
-    return;
-  }
   const locked = await updateMemeClaimIfNotUploading(memeId, {
     media_uploading: true
   });
@@ -348,12 +342,7 @@ async function queueArweaveUploadOrRollback(memeId: number): Promise<void> {
     );
   }
   try {
-    const enqueued = await enqueueClaimMediaArweaveUpload(memeId);
-    if (!enqueued) {
-      await updateMemeClaim(memeId, {
-        media_uploading: false
-      });
-    }
+    await enqueueClaimMediaArweaveUpload(memeId);
   } catch (enqueueError) {
     try {
       await updateMemeClaim(memeId, {

@@ -252,8 +252,35 @@ export async function updateMemeClaim(
     animation_details?: unknown;
   }
 ): Promise<void> {
+  const { setClauses, params } = buildMemeClaimUpdateStatement(memeId, updates);
+  if (setClauses.length === 0) return;
+  await sqlExecutor.execute(
+    `UPDATE ${MEMES_CLAIMS_TABLE} SET ${setClauses.join(', ')} WHERE meme_id = :memeId`,
+    params
+  );
+}
+
+function buildMemeClaimUpdateStatement(
+  memeId: number,
+  updates: {
+    season?: number;
+    image_location?: string | null;
+    animation_location?: string | null;
+    metadata_location?: string | null;
+    arweave_synced_at?: number | null;
+    media_uploading?: boolean;
+    edition_size?: number | null;
+    description?: string;
+    name?: string;
+    image_url?: string | null;
+    attributes?: unknown;
+    image_details?: unknown;
+    animation_url?: string | null;
+    animation_details?: unknown;
+  }
+): { setClauses: string[]; params: Record<string, unknown> } {
   const keys = Object.keys(updates) as (keyof typeof updates)[];
-  if (keys.length === 0) return;
+  if (keys.length === 0) return { setClauses: [], params: { memeId } };
   const setClauses: string[] = [];
   const params: Record<string, unknown> = { memeId };
   for (const key of keys) {
@@ -275,11 +302,26 @@ export async function updateMemeClaim(
     }
     params[col] = paramVal;
   }
-  if (setClauses.length === 0) return;
-  await sqlExecutor.execute(
-    `UPDATE ${MEMES_CLAIMS_TABLE} SET ${setClauses.join(', ')} WHERE meme_id = :memeId`,
-    params
-  );
+  return { setClauses, params };
+}
+
+function getAffectedRowsFromUpdateResult(result: unknown): number {
+  if (
+    result != null &&
+    typeof result === 'object' &&
+    'affectedRows' in (result as object)
+  ) {
+    return Number((result as { affectedRows?: unknown }).affectedRows);
+  }
+  if (!Array.isArray(result)) {
+    return 0;
+  }
+  const first = result[0] as unknown;
+  const second = result[1] as unknown;
+  if (first != null && typeof first === 'object' && 'affectedRows' in first) {
+    return Number((first as { affectedRows?: unknown }).affectedRows);
+  }
+  return Number(second ?? 0);
 }
 
 export async function updateMemeClaimIfNotUploading(
@@ -301,29 +343,7 @@ export async function updateMemeClaimIfNotUploading(
     animation_details?: unknown;
   }
 ): Promise<boolean> {
-  const keys = Object.keys(updates) as (keyof typeof updates)[];
-  if (keys.length === 0) return true;
-  const setClauses: string[] = [];
-  const params: Record<string, unknown> = { memeId };
-  for (const key of keys) {
-    const val = updates[key];
-    if (val === undefined) continue;
-    const col = key;
-    setClauses.push(`${col} = :${col}`);
-    let paramVal: unknown;
-    if (
-      col === 'attributes' ||
-      col === 'image_details' ||
-      col === 'animation_details'
-    ) {
-      paramVal = JSON.stringify(val);
-    } else if (col === 'arweave_synced_at' && val != null) {
-      paramVal = Number(val);
-    } else {
-      paramVal = val;
-    }
-    params[col] = paramVal;
-  }
+  const { setClauses, params } = buildMemeClaimUpdateStatement(memeId, updates);
   if (setClauses.length === 0) return true;
   const result = await sqlExecutor.execute<{ affectedRows: number }>(
     `UPDATE ${MEMES_CLAIMS_TABLE}
@@ -332,21 +352,6 @@ export async function updateMemeClaimIfNotUploading(
        AND COALESCE(media_uploading, 0) = 0`,
     params
   );
-  let affectedRows = 0;
-  if (
-    result != null &&
-    typeof result === 'object' &&
-    'affectedRows' in (result as object)
-  ) {
-    affectedRows = Number((result as { affectedRows?: unknown }).affectedRows);
-  } else if (Array.isArray(result)) {
-    const first = result[0] as unknown;
-    const second = result[1] as unknown;
-    if (first != null && typeof first === 'object' && 'affectedRows' in first) {
-      affectedRows = Number((first as { affectedRows?: unknown }).affectedRows);
-    } else {
-      affectedRows = Number(second ?? 0);
-    }
-  }
+  const affectedRows = getAffectedRowsFromUpdateResult(result);
   return affectedRows > 0;
 }
