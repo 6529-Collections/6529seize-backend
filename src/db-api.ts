@@ -83,6 +83,15 @@ const WRITE_OPERATIONS = ['INSERT', 'UPDATE', 'DELETE', 'REPLACE'];
 const logger = Logger.get('DB_API');
 
 export async function connect() {
+  if (read_pool && write_pool) {
+    logger.info('[CONNECTION POOLS ALREADY CREATED]');
+    return;
+  }
+  if (read_pool || write_pool) {
+    logger.warn('[PARTIAL DB POOLS DETECTED] [REINITIALIZING]');
+    await disconnect();
+  }
+
   if (
     !process.env.DB_HOST ||
     !process.env.DB_USER ||

@@ -1,4 +1,4 @@
-import { app } from './app';
+import { app, ensureInitialized } from './app';
 import * as sentryContext from '../../sentry.context';
 import type {
   APIGatewayEvent,
@@ -22,6 +22,7 @@ export const handler = sentryContext.wrapLambdaHandler(
     event: APIGatewayEvent,
     context: Context
   ): Promise<APIGatewayProxyResult> => {
+    await ensureInitialized();
     if (event.requestContext && event.requestContext.routeKey) {
       return wsHandler(event);
     } else {
