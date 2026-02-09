@@ -1,18 +1,18 @@
-import type { SQSHandler } from 'aws-lambda';
+import { getCacheKeyPatternForPath } from '@/api/api-helpers';
 import {
   fetchMemeClaimByMemeId,
   updateMemeClaim
 } from '@/api/memes-minting/api.memes-minting.db';
-import { getCacheKeyPatternForPath } from '@/api/api-helpers';
+import { Logger } from '@/logging';
 import {
   arweaveTxIdFromUrl,
   uploadMemeClaimToArweave
 } from '@/meme-claims/claims-media-arweave-upload';
-import { Logger } from '@/logging';
-import { evictAllKeysMatchingPatternFromRedisCache } from '@/redis';
 import * as priorityAlertsContext from '@/priority-alerts.context';
+import { evictAllKeysMatchingPatternFromRedisCache } from '@/redis';
 import { doInDbContext } from '@/secrets';
 import * as sentryContext from '@/sentry.context';
+import type { SQSHandler } from 'aws-lambda';
 
 const logger = Logger.get('CLAIMS_MEDIA_ARWEAVE_UPLOADER');
 const ALERT_TITLE = 'Claims Media Arweave Uploader';
@@ -38,23 +38,25 @@ function parseRecordBody(body: string): { meme_id: number } {
 }
 
 async function processMemeClaimUpload(memeId: number): Promise<void> {
+  logger.info(`Processing meme claim media upload for meme_id=${memeId}`);
   const claim = await fetchMemeClaimByMemeId(memeId);
   if (!claim) {
     logger.warn(`Skipping upload - claim not found for meme_id=${memeId}`);
     return;
   }
-  if (claim.arweave_synced_at != null) {
-    if (claim.media_uploading) {
-      await updateMemeClaim(memeId, { media_uploading: false });
-      await invalidateClaimCache(memeId);
-    }
+  if (!claim.media_uploading) {
     logger.info(
-      `Skipping upload - claim already synced for meme_id=${memeId} (arweave_synced_at=${claim.arweave_synced_at})`
+      `Skipping upload - claim is not uploading for meme_id=${memeId}`
     );
     return;
   }
 
-  await updateMemeClaim(memeId, { media_uploading: true });
+  await updateMemeClaim(memeId, {
+    media_uploading: true,
+    arweave_synced_at: null
+  });
+
+  logger.info(`Uploading claim media to Arweave for meme_id=${memeId}`);
 
   try {
     const uploadResult = await uploadMemeClaimToArweave(memeId, claim);
@@ -69,6 +71,9 @@ async function processMemeClaimUpload(memeId: number): Promise<void> {
     });
     await invalidateClaimCache(memeId);
   } catch (error) {
+    logger.error(
+      `Failed to upload claim media to Arweave for meme_id=${memeId}, error=${error}`
+    );
     try {
       await updateMemeClaim(memeId, { media_uploading: false });
       await invalidateClaimCache(memeId);

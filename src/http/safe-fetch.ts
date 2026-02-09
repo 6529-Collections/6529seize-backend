@@ -1,9 +1,6 @@
 import type { RequestInit as NodeFetchRequestInit, Response } from 'node-fetch';
 import fetch from 'node-fetch';
-import type { LookupAddress } from 'node:dns';
 import { promises as dnsPromises } from 'node:dns';
-import * as http from 'node:http';
-import * as https from 'node:https';
 import { isIP } from 'node:net';
 
 export type SafeFetchOptions = {
@@ -127,51 +124,6 @@ async function assertHostnameResolvesToPublicIps(hostname: string) {
   }
 }
 
-type LookupCallback = (
-  error: NodeJS.ErrnoException | null,
-  address: string,
-  family: number
-) => void;
-
-async function resolveAndValidatePublicAddress(
-  hostname: string,
-  family?: number
-): Promise<LookupAddress> {
-  const result = await dnsPromises.lookup(hostname, {
-    family: family === 4 || family === 6 ? family : 0,
-    all: false
-  });
-  if (isPrivateIp(result.address)) {
-    throw new Error(`DNS resolved to forbidden IP for ${hostname}`);
-  }
-  return result;
-}
-
-function safeLookup(
-  hostname: string,
-  options: { family?: number | 'IPv4' | 'IPv6' } | number,
-  callback: LookupCallback
-): void {
-  const familyRaw =
-    typeof options === 'number' ? options : (options?.family ?? 0);
-  let family = Number(familyRaw);
-  if (familyRaw === 'IPv4') {
-    family = 4;
-  } else if (familyRaw === 'IPv6') {
-    family = 6;
-  }
-  resolveAndValidatePublicAddress(hostname, family)
-    .then((result) => callback(null, result.address, result.family))
-    .catch((error) => callback(error as NodeJS.ErrnoException, '', 0));
-}
-
-const httpSafeAgent = new http.Agent({
-  ...({ lookup: safeLookup } as any)
-});
-const httpsSafeAgent = new https.Agent({
-  ...({ lookup: safeLookup } as any)
-});
-
 async function readResponseToBufferOrThrow(
   response: Response,
   maxBytes: number
@@ -251,11 +203,7 @@ async function fetchWithTimeout(
       method: 'GET',
       redirect: 'manual',
       headers,
-      signal: controller.signal as never,
-      agent: ((parsedUrl: URL) =>
-        parsedUrl.protocol === 'https:' ? httpsSafeAgent : httpSafeAgent) as
-        | NodeFetchRequestInit['agent']
-        | undefined
+      signal: controller.signal as never
     };
     return await fetch(url.toString(), init);
   } catch (err) {

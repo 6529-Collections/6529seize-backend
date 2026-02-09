@@ -333,7 +333,8 @@ async function assertCanStartArweaveUpload(claim: MemeClaimRow): Promise<void> {
 
 async function queueArweaveUploadOrRollback(memeId: number): Promise<void> {
   const locked = await updateMemeClaimIfNotUploading(memeId, {
-    media_uploading: true
+    media_uploading: true,
+    arweave_synced_at: null
   });
   if (!locked) {
     throw new CustomApiCompliantException(

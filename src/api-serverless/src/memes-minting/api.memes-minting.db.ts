@@ -309,7 +309,7 @@ function getAffectedRowsFromUpdateResult(result: unknown): number {
   if (
     result != null &&
     typeof result === 'object' &&
-    'affectedRows' in (result as object)
+    'affectedRows' in result
   ) {
     return Number((result as { affectedRows?: unknown }).affectedRows);
   }
@@ -349,7 +349,8 @@ export async function updateMemeClaimIfNotUploading(
     `UPDATE ${MEMES_CLAIMS_TABLE}
      SET ${setClauses.join(', ')}
      WHERE meme_id = :memeId
-       AND COALESCE(media_uploading, 0) = 0`,
+       AND COALESCE(media_uploading, 0) = 0
+       AND arweave_synced_at IS NULL`,
     params
   );
   const affectedRows = getAffectedRowsFromUpdateResult(result);
