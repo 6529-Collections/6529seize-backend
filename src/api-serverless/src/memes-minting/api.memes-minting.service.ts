@@ -42,6 +42,79 @@ function inferAnimationKind(
   return 'VIDEO';
 }
 
+function validateRequestedSeason(
+  requestedSeason: number,
+  maxSeason: number
+): number {
+  const requested = Number(requestedSeason);
+  const minSeason = 1;
+  const requiredMinSeason = Math.max(minSeason, maxSeason);
+  if (
+    !Number.isInteger(requested) ||
+    requested < requiredMinSeason ||
+    requested > requiredMinSeason + 1
+  ) {
+    throw new BadRequestException(
+      `season must be ${requiredMinSeason} or ${requiredMinSeason + 1} (current max season is ${maxSeason}), got ${requestedSeason}`
+    );
+  }
+  return requested;
+}
+
+function applyPrimitiveUpdates(
+  body: MemeClaimUpdateRequest,
+  updates: MemeClaimUpdates
+): boolean {
+  let shouldResetArweaveSyncedAt = false;
+  if (body.image_location !== undefined)
+    updates.image_location = body.image_location;
+  if (body.animation_location !== undefined) {
+    updates.animation_location = body.animation_location;
+  }
+  if (body.metadata_location !== undefined) {
+    updates.metadata_location = body.metadata_location;
+  }
+  if (body.description !== undefined) {
+    updates.description = body.description;
+    shouldResetArweaveSyncedAt = true;
+  }
+  if (body.name !== undefined) {
+    updates.name = body.name;
+    shouldResetArweaveSyncedAt = true;
+  }
+  if (body.image_url !== undefined) {
+    updates.image_url = body.image_url;
+    shouldResetArweaveSyncedAt = true;
+  }
+  if (body.attributes !== undefined) {
+    updates.attributes = body.attributes;
+    shouldResetArweaveSyncedAt = true;
+  }
+  if (body.animation_url !== undefined) {
+    updates.animation_url = body.animation_url;
+    shouldResetArweaveSyncedAt = true;
+  }
+  return shouldResetArweaveSyncedAt;
+}
+
+function applyEditionSizeUpdate(
+  body: MemeClaimUpdateRequest,
+  updates: MemeClaimUpdates
+): boolean {
+  if (body.edition_size === undefined) return false;
+  if (
+    body.edition_size !== null &&
+    (!Number.isInteger(body.edition_size) ||
+      body.edition_size < MIN_EDITION_SIZE)
+  ) {
+    throw new BadRequestException(
+      `edition_size must be at least ${MIN_EDITION_SIZE}`
+    );
+  }
+  updates.edition_size = body.edition_size;
+  return true;
+}
+
 async function applyImageFromBody(
   body: MemeClaimUpdateRequest,
   existing: MemeClaimRow,
@@ -104,59 +177,16 @@ export async function buildUpdatesForClaimPatch(
   const updates: MemeClaimUpdates = {};
   let shouldResetArweaveSyncedAt = false;
   if (body.season !== undefined) {
-    const maxSeason = await fetchMaxSeasonId();
-    const requested = Number(body.season);
-    const minSeason = 1;
-    const requiredMinSeason = Math.max(minSeason, maxSeason);
-    if (
-      !Number.isInteger(requested) ||
-      requested < requiredMinSeason ||
-      requested > requiredMinSeason + 1
-    ) {
-      throw new BadRequestException(
-        `season must be ${requiredMinSeason} or ${requiredMinSeason + 1} (current max season is ${maxSeason}), got ${body.season}`
-      );
-    }
-    updates.season = requested;
+    updates.season = validateRequestedSeason(
+      Number(body.season),
+      await fetchMaxSeasonId()
+    );
     shouldResetArweaveSyncedAt = true;
   }
-  if (body.image_location !== undefined)
-    updates.image_location = body.image_location;
-  if (body.animation_location !== undefined)
-    updates.animation_location = body.animation_location;
-  if (body.metadata_location !== undefined)
-    updates.metadata_location = body.metadata_location;
-  if (body.edition_size !== undefined) {
-    if (
-      body.edition_size !== null &&
-      (!Number.isInteger(body.edition_size) ||
-        body.edition_size < MIN_EDITION_SIZE)
-    ) {
-      throw new BadRequestException(
-        `edition_size must be at least ${MIN_EDITION_SIZE}`
-      );
-    }
-    updates.edition_size = body.edition_size;
-    shouldResetArweaveSyncedAt = true;
-  }
-  if (body.description !== undefined) {
-    updates.description = body.description;
-    shouldResetArweaveSyncedAt = true;
-  }
-  if (body.name !== undefined) {
-    updates.name = body.name;
-    shouldResetArweaveSyncedAt = true;
-  }
-  if (body.image_url !== undefined) {
-    updates.image_url = body.image_url;
-    shouldResetArweaveSyncedAt = true;
-  }
-  if (body.attributes !== undefined) {
-    updates.attributes = body.attributes;
-    shouldResetArweaveSyncedAt = true;
-  }
-  if (body.animation_url !== undefined)
-    updates.animation_url = body.animation_url;
+  shouldResetArweaveSyncedAt =
+    applyPrimitiveUpdates(body, updates) || shouldResetArweaveSyncedAt;
+  shouldResetArweaveSyncedAt =
+    applyEditionSizeUpdate(body, updates) || shouldResetArweaveSyncedAt;
   if (body.image_url !== undefined) {
     await applyImageFromBody(body, existing, updates);
   }

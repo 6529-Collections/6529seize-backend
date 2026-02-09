@@ -232,14 +232,14 @@ export async function insertAutomaticAirdrops(
     });
   }
 
-  if (wrappedConnection != null) {
-    await deleteAirdropDistributions(contract, cardId, wrappedConnection);
-    await insertDistributions(distributionInserts, wrappedConnection);
-  } else {
+  if (wrappedConnection == null) {
     await sqlExecutor.executeNativeQueriesInTransaction(async (conn) => {
       await deleteAirdropDistributions(contract, cardId, conn);
       await insertDistributions(distributionInserts, conn);
     });
+  } else {
+    await deleteAirdropDistributions(contract, cardId, wrappedConnection);
+    await insertDistributions(distributionInserts, wrappedConnection);
   }
 }
 

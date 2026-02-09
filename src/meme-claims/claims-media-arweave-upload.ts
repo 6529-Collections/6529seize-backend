@@ -54,7 +54,9 @@ export function arweaveTxIdFromUrl(url: string): string {
   try {
     const parsed = new URL(trimmed);
     if (parsed.hostname.toLowerCase() === 'arweave.net') {
-      const firstPathSegment = parsed.pathname.split('/').filter(Boolean)[0];
+      const firstPathSegment = parsed.pathname
+        .split('/')
+        .find((segment) => segment.length > 0);
       return firstPathSegment ?? trimmed;
     }
   } catch {

@@ -1,4 +1,4 @@
-import { promises as dnsPromises } from 'dns';
+import { promises as dnsPromises } from 'node:dns';
 import { isIP } from 'node:net';
 import type { RequestInit as NodeFetchRequestInit, Response } from 'node-fetch';
 import fetch from 'node-fetch';
@@ -17,10 +17,14 @@ const DEFAULT_MAX_REDIRECTS = 3;
 function parseIpv4ToInt(ip: string): number | null {
   const parts = ip.split('.');
   if (parts.length !== 4) return null;
-  const nums = parts.map((p) => Number(p));
+  const nums = parts.map(Number);
   if (nums.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return null;
   return (
-    ((nums[0] << 24) + (nums[1] << 16) + (nums[2] << 8) + (nums[3] << 0)) >>> 0
+    ((nums[0] << 24) +
+      (nums[1] << 16) +
+      (nums[2] << 8) +
+      Math.trunc(nums[3])) >>>
+    0
   );
 }
 
@@ -50,11 +54,11 @@ function isPrivateIpv6(ip: string): boolean {
   if (s === '::1' || s === '::') return true;
   if (s.startsWith('fe80:')) return true;
   if (s.startsWith('fc') || s.startsWith('fd')) return true;
-  const dotted = s.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+  const dotted = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(s);
   if (dotted?.[1]) {
     return isPrivateIp(dotted[1]);
   }
-  const hexMapped = s.match(/(?:^|:)ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+  const hexMapped = /(?:^|:)ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(s);
   if (hexMapped?.[1] && hexMapped?.[2]) {
     const hi = Number.parseInt(hexMapped[1], 16);
     const lo = Number.parseInt(hexMapped[2], 16);
@@ -136,8 +140,7 @@ async function readResponseToBufferOrThrow(
 
   const chunks: Uint8Array[] = [];
   let total = 0;
-  const stream = body as AsyncIterable<unknown> & { destroy?: () => void };
-  for await (const chunk of stream) {
+  for await (const chunk of body) {
     let asChunk: Uint8Array;
     if (typeof chunk === 'string') {
       asChunk = new Uint8Array(Buffer.from(chunk, 'utf8'));
@@ -152,7 +155,7 @@ async function readResponseToBufferOrThrow(
     }
     total += asChunk.byteLength;
     if (total > maxBytes) {
-      stream.destroy?.();
+      body.destroy?.();
       throw new Error(`Response exceeded max size of ${maxBytes} bytes`);
     }
     chunks.push(asChunk);
@@ -173,6 +176,48 @@ function contentTypeFromResponse(response: Response): string | null {
   return contentType.split(';')[0]?.trim() || null;
 }
 
+function isRedirectStatus(status: number): boolean {
+  return (
+    status === 301 ||
+    status === 302 ||
+    status === 303 ||
+    status === 307 ||
+    status === 308
+  );
+}
+
+async function fetchWithTimeout(
+  url: URL,
+  timeoutMs: number,
+  headers?: Record<string, string>
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  timeout.unref?.();
+  try {
+    const init: NodeFetchRequestInit = {
+      method: 'GET',
+      redirect: 'manual',
+      headers,
+      signal: controller.signal as never
+    };
+    return await fetch(url.toString(), init);
+  } catch (err) {
+    if (
+      err instanceof Error &&
+      (err.name === 'AbortError' ||
+        (err as { type?: string }).type === 'request-timeout')
+    ) {
+      throw new Error(
+        `Fetch timed out after ${timeoutMs}ms: ${url.toString()}`
+      );
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 export async function fetchPublicUrlToBuffer(
   url: string,
   options: SafeFetchOptions = {}
@@ -186,42 +231,13 @@ export async function fetchPublicUrlToBuffer(
   await assertHostnameResolvesToPublicIps(currentUrl.hostname);
 
   while (true) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
-    timeout.unref?.();
+    const response = await fetchWithTimeout(
+      currentUrl,
+      timeoutMs,
+      options.headers
+    );
 
-    let response: Response;
-    try {
-      const init: NodeFetchRequestInit = {
-        method: 'GET',
-        redirect: 'manual',
-        headers: options.headers,
-        signal: controller.signal as never
-      };
-      response = await fetch(currentUrl.toString(), init);
-    } catch (err) {
-      if (err instanceof Error) {
-        if (
-          err.name === 'AbortError' ||
-          (err as { type?: string }).type === 'request-timeout'
-        ) {
-          throw new Error(
-            `Fetch timed out after ${timeoutMs}ms: ${currentUrl.toString()}`
-          );
-        }
-      }
-      throw err;
-    } finally {
-      clearTimeout(timeout);
-    }
-
-    if (
-      response.status === 301 ||
-      response.status === 302 ||
-      response.status === 303 ||
-      response.status === 307 ||
-      response.status === 308
-    ) {
+    if (isRedirectStatus(response.status)) {
       if (redirectsRemaining <= 0) {
         throw new Error(`Too many redirects fetching ${url}`);
       }

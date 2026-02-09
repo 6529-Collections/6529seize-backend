@@ -187,7 +187,7 @@ The API (`src/api-serverless/src/`) is an Express application with:
 - TypeORM for schema synchronization (entities in `src/entities/`)
 - Entities files are prefixed with `I` (e.g., `IIdentity.ts`, `IDrop.ts`) but the entity classes in them don't have this prefix. Instead they have `Entity` suffix (e.g., `IdentityEntiy`, `ProfileEntity`)
 - Schema auto-syncs on startup; migrations are only used for data migrations (and rarely for views).
-- Every time a new Entity is added it also needs to be exported in `entitites.ts`.
+- Every time a new Entity is added it also needs to be exported in `entities.ts`.
 
 **Constants:**
 - All table names defined in `src/constants.ts` (e.g., `NFTS_TABLE`, `DROPS_TABLE`, `PROFILES_TABLE`)

@@ -298,6 +298,36 @@ const MemeClaimUpdateRequestSchema = Joi.object({
   animation_url: Joi.string().allow(null).optional()
 });
 
+function assertCanStartArweaveUpload(claim: MemeClaimRow): void {
+  if (claim.arweave_synced_at != null) {
+    throw new CustomApiCompliantException(
+      409,
+      'Claim already synced to Arweave'
+    );
+  }
+  if (claim.media_uploading) {
+    throw new CustomApiCompliantException(
+      409,
+      'Claim media upload is already in progress'
+    );
+  }
+  validateMemeClaimReadyForArweaveUpload(claim);
+}
+
+async function queueArweaveUploadOrRollback(memeId: number): Promise<void> {
+  await updateMemeClaim(memeId, {
+    media_uploading: true
+  });
+  try {
+    await enqueueClaimMediaArweaveUpload(memeId);
+  } catch (err) {
+    await updateMemeClaim(memeId, {
+      media_uploading: false
+    });
+    throw err;
+  }
+}
+
 router.get(
   '/claims/:meme_id',
   needsAuthenticatedUser(),
@@ -379,30 +409,8 @@ router.post(
     if (claim === null) {
       return res.status(404).json({ error: 'Claim not found' });
     }
-    if (claim.arweave_synced_at != null) {
-      throw new CustomApiCompliantException(
-        409,
-        'Claim already synced to Arweave'
-      );
-    }
-    if (claim.media_uploading) {
-      throw new CustomApiCompliantException(
-        409,
-        'Claim media upload is already in progress'
-      );
-    }
-    validateMemeClaimReadyForArweaveUpload(claim);
-    await updateMemeClaim(memeId, {
-      media_uploading: true
-    });
-    try {
-      await enqueueClaimMediaArweaveUpload(memeId);
-    } catch (err) {
-      await updateMemeClaim(memeId, {
-        media_uploading: false
-      });
-      throw err;
-    }
+    assertCanStartArweaveUpload(claim);
+    await queueArweaveUploadOrRollback(memeId);
     const updated = await fetchMemeClaimByMemeId(memeId);
     return res.json(rowToMemeClaim(updated ?? claim));
   }
