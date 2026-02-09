@@ -1,9 +1,3 @@
-import axios from 'axios';
-import { ethers } from 'ethers';
-import { In, MoreThan } from 'typeorm';
-import { processArtists } from '../artists';
-import { deployerDropper } from '@/deployer-dropper';
-import { env } from '@/env';
 import {
   GRADIENT_CONTRACT,
   MANIFOLD,
@@ -18,6 +12,12 @@ import {
   NFT_VIDEO_LINK,
   NULL_ADDRESS
 } from '@/constants';
+import { deployerDropper } from '@/deployer-dropper';
+import { env } from '@/env';
+import axios from 'axios';
+import { ethers } from 'ethers';
+import { In, MoreThan } from 'typeorm';
+import { processArtists } from '../artists';
 import {
   fetchAllArtists,
   fetchMemesWithSeason,
@@ -292,6 +292,9 @@ async function discoverForContract(
 async function announceNewMemeDiscoveries(newlyDiscoveredNfts: NFT[]) {
   const waves = env.getStringArray('DEPLOYER_ANNOUNCEMENTS_WAVE_IDS');
   if (!waves.length) {
+    logger.info(
+      'No DEPLOYER_ANNOUNCEMENTS_WAVE_IDS waves found, skipping announcement'
+    );
     return;
   }
 
