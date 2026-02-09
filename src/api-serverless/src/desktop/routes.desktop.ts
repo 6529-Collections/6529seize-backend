@@ -14,6 +14,7 @@ router.get('/splash', async (req: Request, res: Response) => {
   }
   return res.json({
     id: row.id,
+    name: row.name,
     artist: row.artist,
     artist_seize_handle: row.artist_seize_handle,
     season: row.season,

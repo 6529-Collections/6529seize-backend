@@ -12,6 +12,8 @@ import {
   NFT_VIDEO_LINK,
   NULL_ADDRESS
 } from '@/constants';
+import { deployerDropper } from '@/deployer-dropper';
+import { env } from '@/env';
 import axios from 'axios';
 import { ethers } from 'ethers';
 import { In, MoreThan } from 'typeorm';
@@ -154,6 +156,7 @@ async function processNFTsForType(
   const repo = getDataSource().getRepository(EntityClass);
   const existing = await repo.find();
   const nftMap = new Map<string, { nft: NFT | LabNFT; changed: boolean }>();
+  const newlyDiscoveredNfts: Array<NFT | LabNFT> = [];
 
   existing.forEach((n) =>
     nftMap.set(`${n.contract.toLowerCase()}-${n.id}`, {
@@ -175,7 +178,8 @@ async function processNFTsForType(
       contractMap,
       nftMap,
       provider,
-      EntityClass
+      EntityClass,
+      newlyDiscoveredNfts
     );
   } else {
     logger.info(`🔄 Refreshing existing ${EntityClass.name}s`);
@@ -198,6 +202,16 @@ async function processNFTsForType(
     const artists = await fetchAllArtists();
     const newArtists = await processArtists(artists, toSave);
     await persistArtists(newArtists);
+
+    if (mode === NFT_MODE.DISCOVER && EntityClass === NFT) {
+      try {
+        await announceNewMemeDiscoveries(newlyDiscoveredNfts as NFT[]);
+      } catch (error: any) {
+        logger.error(
+          `announceNewMemeDiscoveries failed: ${error?.message ?? String(error)}`
+        );
+      }
+    }
   } else {
     logger.info(`✅ No changes detected for ${EntityClass.name}s`);
   }
@@ -208,11 +222,19 @@ async function discoverNewNFTs(
   contractMap: Map<string, number>,
   nftMap: Map<string, { nft: NFT | LabNFT; changed: boolean }>,
   provider: ethers.JsonRpcProvider,
-  EntityClass: typeof NFT | typeof LabNFT
+  EntityClass: typeof NFT | typeof LabNFT,
+  newlyDiscoveredNfts: Array<NFT | LabNFT>
 ) {
   await Promise.all(
     contracts.map((config) =>
-      discoverForContract(config, contractMap, nftMap, provider, EntityClass)
+      discoverForContract(
+        config,
+        contractMap,
+        nftMap,
+        provider,
+        EntityClass,
+        newlyDiscoveredNfts
+      )
     )
   );
 }
@@ -222,7 +244,8 @@ async function discoverForContract(
   contractMap: Map<string, number>,
   nftMap: Map<string, { nft: NFT | LabNFT; changed: boolean }>,
   provider: ethers.JsonRpcProvider,
-  EntityClass: typeof NFT | typeof LabNFT
+  EntityClass: typeof NFT | typeof LabNFT,
+  newlyDiscoveredNfts: Array<NFT | LabNFT>
 ) {
   const { contract, tokenType } = config;
   const instance = getContractInstance(contract, provider);
@@ -247,10 +270,12 @@ async function discoverForContract(
         EntityClass
       );
 
+      const discoveredNft = Object.assign(new EntityClass(), baseNft);
       nftMap.set(`${contract.toLowerCase()}-${nextId}`, {
-        nft: Object.assign(new EntityClass(), baseNft),
+        nft: discoveredNft,
         changed: true
       });
+      newlyDiscoveredNfts.push(discoveredNft);
 
       logger.info(`🆕 Discovered token for ${contract} #${nextId}: ${uri}`);
       nextId++;
@@ -264,6 +289,45 @@ async function discoverForContract(
         break;
       }
       throw err;
+    }
+  }
+}
+
+async function announceNewMemeDiscoveries(newlyDiscoveredNfts: NFT[]) {
+  const waves = env.getStringArray('DEPLOYER_ANNOUNCEMENTS_WAVE_IDS');
+  if (!waves.length) {
+    logger.info(
+      'No DEPLOYER_ANNOUNCEMENTS_WAVE_IDS waves found, skipping announcement'
+    );
+    return;
+  }
+
+  const cardPageUrlTemplate =
+    env.getStringOrNull('FE_MEMES_CARD_PAGE_URL_TEMPLATE') ??
+    'https://6529.io/the-memes/{cardNo}';
+  const discoveredMemes = newlyDiscoveredNfts
+    .filter((nft) => equalIgnoreCase(nft.contract, MEMES_CONTRACT))
+    .sort((a, b) => a.id - b.id);
+
+  for (const meme of discoveredMemes) {
+    let memeDescriptor = `Meme #${meme.id}`;
+    if (meme.name) {
+      memeDescriptor += ` - ${meme.name}`;
+    }
+    const memeLink = cardPageUrlTemplate.replace(
+      '{cardNo}',
+      meme.id.toString()
+    );
+    const message = `🚀 ${memeDescriptor} is Live!\n${memeLink}`;
+    try {
+      await deployerDropper.drop({ message, waves }, {});
+      logger.info(`📣 Posted discovery announcement for meme #${meme.id}`);
+    } catch (error: any) {
+      logger.error(
+        `Failed to post discovery announcement for meme #${meme.id}: ${
+          error?.message ?? String(error)
+        }`
+      );
     }
   }
 }
