@@ -1,0 +1,114 @@
+service: claimsMediaArweaveUploader
+
+package:
+  artifact: dist/index.zip
+
+plugins:
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs22.x
+  memorySize: 1024
+  timeout: 900
+  architecture: arm64
+  logRetentionInDays: 60
+
+functions:
+  claimsMediaArweaveUploader:
+    handler: index.handler
+    name: claimsMediaArweaveUploader
+    description: ${env:VERSION_DESCRIPTION}
+    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    reservedConcurrency: 2
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt: [ClaimsMediaArweaveUploadQueue, Arn]
+          batchSize: 1
+    vpc:
+      securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
+      subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
+    environment:
+      SENTRY_DSN: ${env:SENTRY_DSN}
+      SENTRY_ENVIRONMENT: 'claimsMediaArweaveUploader_${opt:stage, self:provider.stage}'
+
+resources:
+  Resources:
+    ClaimsMediaArweaveUploadTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: claims-media-arweave-upload
+
+    ClaimsMediaArweaveUploadQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: claims-media-arweave-upload
+        VisibilityTimeout: 930
+        RedrivePolicy:
+          deadLetterTargetArn:
+            Fn::GetAtt: [ClaimsMediaArweaveUploadDLQ, Arn]
+          maxReceiveCount: 10
+
+    ClaimsMediaArweaveUploadDLQ:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: claims-media-arweave-upload-dlq
+
+    ClaimsMediaArweaveUploadSubscription:
+      Type: AWS::SNS::Subscription
+      Properties:
+        TopicArn: !Ref ClaimsMediaArweaveUploadTopic
+        Protocol: sqs
+        Endpoint: !GetAtt
+          - ClaimsMediaArweaveUploadQueue
+          - Arn
+        RawMessageDelivery: true
+
+    ClaimsMediaArweaveUploadQueuePolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+          - Ref: ClaimsMediaArweaveUploadQueue
+        PolicyDocument:
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: sns.amazonaws.com
+              Action:
+                - sqs:SendMessage
+              Resource:
+                - !GetAtt ClaimsMediaArweaveUploadQueue.Arn
+              Condition:
+                ArnEquals:
+                  aws:SourceArn: !Ref ClaimsMediaArweaveUploadTopic
+
+    ClaimsMediaArweaveUploaderOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      Properties:
+        LogGroupName: /aws/lambda/claimsMediaArweaveUploader
+        FilterPattern: 'Runtime.OutOfMemory'
+        MetricTransformations:
+          - MetricNamespace: 'Lambda/OOM'
+            MetricName: 'claimsMediaArweaveUploader_OOMErrorCount'
+            MetricValue: '1'
+            DefaultValue: 0
+
+    ClaimsMediaArweaveUploaderOOMAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: ClaimsMediaArweaveUploaderOOMFilter
+      Properties:
+        AlarmName: !Sub '${AWS::StackName}-claimsMediaArweaveUploader-OOM'
+        AlarmDescription: !Sub 'Lambda claimsMediaArweaveUploader OutOfMemory in ${AWS::Region}'
+        Namespace: 'Lambda/OOM'
+        MetricName: 'claimsMediaArweaveUploader_OOMErrorCount'
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}

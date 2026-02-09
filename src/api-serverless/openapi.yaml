@@ -2018,6 +2018,8 @@ paths:
           description: Forbidden - only distribution admins can access
         "404":
           description: Claim not found
+        "409":
+          description: Conflict - claim media upload already in progress
     patch:
       tags:
         - Memes minting
@@ -2058,8 +2060,10 @@ paths:
       summary: Upload meme claim metadata and media to Arweave (admin only)
       description: >-
         Uploads claim metadata and media (image, and animation if not HTML) to
-        Arweave, by meme_id. Requires claim to have an image URL. If already
-        synced returns 409. Only DISTRIBUTION_ADMIN_WALLETS can call this.
+        Arweave, by meme_id, asynchronously via background queue. Requires claim
+        to have an image URL and valid metadata fields. If already synced or
+        already uploading returns 409. Only DISTRIBUTION_ADMIN_WALLETS can call
+        this.
       operationId: postMemesMintingClaimArweaveUpload
       parameters:
         - name: meme_id
@@ -2084,7 +2088,7 @@ paths:
         "404":
           description: Claim not found
         "409":
-          description: Conflict - claim already synced to Arweave
+          description: Conflict - claim already synced or upload already in progress
   /nft-owners:
     get:
       tags:
@@ -10589,6 +10593,8 @@ components:
           type: integer
           format: int64
           nullable: true
+        media_uploading:
+          type: boolean
         edition_size:
           type: integer
           format: int32

@@ -166,6 +166,7 @@ export interface MemeClaimRow {
   animation_location: string | null;
   metadata_location: string | null;
   arweave_synced_at: number | null;
+  media_uploading: boolean | number;
   edition_size: number | null;
   description: string;
   name: string;
@@ -180,7 +181,7 @@ export async function fetchMemeClaimByDropId(
   dropId: string
 ): Promise<MemeClaimRow | null> {
   const rows = await sqlExecutor.execute<MemeClaimRow>(
-    `SELECT drop_id, meme_id, season, image_location, animation_location, metadata_location, arweave_synced_at, edition_size, description, name, image_url, attributes, image_details, animation_url, animation_details FROM ${MEMES_CLAIMS_TABLE} WHERE drop_id = :dropId LIMIT 1`,
+    `SELECT drop_id, meme_id, season, image_location, animation_location, metadata_location, arweave_synced_at, media_uploading, edition_size, description, name, image_url, attributes, image_details, animation_url, animation_details FROM ${MEMES_CLAIMS_TABLE} WHERE drop_id = :dropId LIMIT 1`,
     { dropId }
   );
   return rows.length > 0 ? rows[0] : null;
@@ -190,13 +191,13 @@ export async function fetchMemeClaimByMemeId(
   memeId: number
 ): Promise<MemeClaimRow | null> {
   const rows = await sqlExecutor.execute<MemeClaimRow>(
-    `SELECT drop_id, meme_id, season, image_location, animation_location, metadata_location, arweave_synced_at, edition_size, description, name, image_url, attributes, image_details, animation_url, animation_details FROM ${MEMES_CLAIMS_TABLE} WHERE meme_id = :memeId LIMIT 1`,
+    `SELECT drop_id, meme_id, season, image_location, animation_location, metadata_location, arweave_synced_at, media_uploading, edition_size, description, name, image_url, attributes, image_details, animation_url, animation_details FROM ${MEMES_CLAIMS_TABLE} WHERE meme_id = :memeId LIMIT 1`,
     { memeId }
   );
   return rows.length > 0 ? rows[0] : null;
 }
 
-const MEMES_CLAIMS_SELECT = `SELECT drop_id, meme_id, season, image_location, animation_location, metadata_location, arweave_synced_at, edition_size, description, name, image_url, attributes, image_details, animation_url, animation_details FROM ${MEMES_CLAIMS_TABLE}`;
+const MEMES_CLAIMS_SELECT = `SELECT drop_id, meme_id, season, image_location, animation_location, metadata_location, arweave_synced_at, media_uploading, edition_size, description, name, image_url, attributes, image_details, animation_url, animation_details FROM ${MEMES_CLAIMS_TABLE}`;
 
 export async function fetchMemeClaimsTotalCount(): Promise<number> {
   const rows = await sqlExecutor.execute<{ total: number }>(
@@ -240,6 +241,7 @@ export async function updateMemeClaim(
     animation_location?: string | null;
     metadata_location?: string | null;
     arweave_synced_at?: number | null;
+    media_uploading?: boolean;
     edition_size?: number | null;
     description?: string;
     name?: string;

@@ -64,6 +64,9 @@ export class MemeClaimEntity {
   @Column({ type: 'bigint', nullable: true })
   readonly arweave_synced_at!: number | null;
 
+  @Column({ type: 'boolean', default: false })
+  readonly media_uploading!: boolean;
+
   @Column({ type: 'int', nullable: true })
   readonly edition_size!: number | null;
 

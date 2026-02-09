@@ -4,7 +4,7 @@ import {
   updateMemeClaim,
   type MemeClaimRow
 } from '@/api/memes-minting/api.memes-minting.db';
-import { BadRequestException } from '@/exceptions';
+import { BadRequestException, CustomApiCompliantException } from '@/exceptions';
 import type { MemeClaimUpdateRequest } from '@/api/generated/models/MemeClaimUpdateRequest';
 import {
   computeImageDetails,
@@ -176,6 +176,12 @@ export async function patchMemeClaim(
 ): Promise<MemeClaimRow | null> {
   const existing = await fetchMemeClaimByMemeId(memeId);
   if (existing === null) return null;
+  if (existing.media_uploading) {
+    throw new CustomApiCompliantException(
+      409,
+      'Claim media upload in progress; updates are temporarily blocked'
+    );
+  }
   const updates = await buildUpdatesForClaimPatch(body, existing);
   await updateMemeClaim(memeId, updates);
   return fetchMemeClaimByMemeId(memeId);

@@ -5,6 +5,7 @@ SERVICES=(
   api
   aggregatedActivityLoop
   cloudwatchAlarmsToDiscordLoop
+  claimsMediaArweaveUploader
   customReplayLoop
   dbDumpsDaily
   dbMigrationsLoop
