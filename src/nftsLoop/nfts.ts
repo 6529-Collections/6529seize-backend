@@ -200,7 +200,13 @@ async function processNFTsForType(
     await persistArtists(newArtists);
 
     if (mode === NFT_MODE.DISCOVER && EntityClass === NFT) {
-      await announceNewMemeDiscoveries(newlyDiscoveredNfts as NFT[]);
+      try {
+        await announceNewMemeDiscoveries(newlyDiscoveredNfts as NFT[]);
+      } catch (error: any) {
+        logger.error(
+          `announceNewMemeDiscoveries failed: ${error?.message ?? String(error)}`
+        );
+      }
     }
   } else {
     logger.info(`✅ No changes detected for ${EntityClass.name}s`);
@@ -303,8 +309,16 @@ async function announceNewMemeDiscoveries(newlyDiscoveredNfts: NFT[]) {
     }
     const memeLink = cardPageUrlTemplate.replace('{cardNo}', meme.id.toString());
     const message = `🚀 ${memeDescriptor} is Live!\n${memeLink}`;
-    await deployerDropper.drop({ message, waves }, {});
-    logger.info(`📣 Posted discovery announcement for meme #${meme.id}`);
+    try {
+      await deployerDropper.drop({ message, waves }, {});
+      logger.info(`📣 Posted discovery announcement for meme #${meme.id}`);
+    } catch (error: any) {
+      logger.error(
+        `Failed to post discovery announcement for meme #${meme.id}: ${
+          error?.message ?? String(error)
+        }`
+      );
+    }
   }
 }
 
