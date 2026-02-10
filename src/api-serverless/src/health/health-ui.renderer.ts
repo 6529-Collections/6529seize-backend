@@ -45,6 +45,52 @@ function getRedisStatusClass(redis: HealthData['redis']): string {
   return redis.healthy ? 'status-ok' : 'status-degraded';
 }
 
+function getArweaveStatusClass(arweave: HealthData['arweave']): string {
+  return arweave.healthy ? 'status-ok' : 'status-degraded';
+}
+
+function buildArweaveHtml(arweave: HealthData['arweave']): string {
+  const formatIntegerLike = (value: string): string => {
+    try {
+      return BigInt(value).toLocaleString();
+    } catch {
+      return value;
+    }
+  };
+  const formatArRounded = (value: string): string => {
+    const parsed = Number.parseFloat(value);
+    if (!Number.isFinite(parsed)) {
+      return value;
+    }
+    return parsed.toLocaleString(undefined, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    });
+  };
+
+  const statusClass = getArweaveStatusClass(arweave);
+  const statusText = arweave.healthy ? 'Healthy' : 'Degraded';
+  let html = `<span class="status-badge ${statusClass}">${statusText}</span>`;
+
+  html += '<div class="nested-object">';
+
+  if (arweave.wallet_address) {
+    html += `<div class="nested-key">Wallet: <span class="nested-value">${arweave.wallet_address}</span></div>`;
+  }
+  if (arweave.balance) {
+    html += `<div class="nested-key">Balance: <span class="nested-value">${formatArRounded(arweave.balance.ar)} AR (${arweave.balance.level})</span></div>`;
+    if (arweave.balance.estimated_50mb_uploads) {
+      html += `<div class="nested-key">Est. 50MB uploads: <span class="nested-value">~${formatIntegerLike(arweave.balance.estimated_50mb_uploads)}</span></div>`;
+    }
+    if (arweave.balance.estimated_3500mb_uploads) {
+      html += `<div class="nested-key">Est. 3.5GB uploads: <span class="nested-value">~${formatIntegerLike(arweave.balance.estimated_3500mb_uploads)}</span></div>`;
+    }
+  }
+
+  html += '</div>';
+  return html;
+}
+
 function buildRedisHtml(
   redis: HealthData['redis'],
   statusClass: string
@@ -123,6 +169,7 @@ export function renderHealthUI(data: HealthData, baseUrl?: string): string {
     data.db === 'ok' ? getStatusClassOk() : getStatusClassDegraded();
 
   const redisStatusClass = getRedisStatusClass(data.redis);
+  const arweaveHtml = buildArweaveHtml(data.arweave);
   const redisHtml = buildRedisHtml(data.redis, redisStatusClass);
   const rateLimitHtml = buildRateLimitHtml(data.rate_limit);
 
@@ -392,6 +439,23 @@ export function renderHealthUI(data: HealthData, baseUrl?: string): string {
       <table>
         <tbody>
           <tr style="border-top: 1px solid #2a2a2a;">
+            <td><strong>Version</strong></td>
+            <td class="value-cell">
+              <div class="nested-object">
+                <div class="nested-key">Commit: <span class="nested-value">${data.version.commit}</span></div>
+                <div class="nested-key">Environment: <span class="nested-value">${data.version.node_env}</span></div>
+              </div>
+            </td>
+          </tr>
+          <tr>
+            <td><strong>Links</strong></td>
+            <td class="value-cell">
+              <div class="nested-object">
+                <div class="nested-key"><a href="${data.links.api_documentation}" target="_blank" rel="noopener noreferrer">🔗 API Documentation</a></div>
+              </div>
+            </td>
+          </tr>
+          <tr>
             <td><strong>Database</strong></td>
             <td class="value-cell">
               <span class="status-badge ${dbClass}">${dbDisplay}</span>
@@ -410,20 +474,9 @@ export function renderHealthUI(data: HealthData, baseUrl?: string): string {
             </td>
           </tr>
           <tr>
-            <td><strong>Version</strong></td>
+            <td><strong>Arweave</strong></td>
             <td class="value-cell">
-              <div class="nested-object">
-                <div class="nested-key">Commit: <span class="nested-value">${data.version.commit}</span></div>
-                <div class="nested-key">Environment: <span class="nested-value">${data.version.node_env}</span></div>
-              </div>
-            </td>
-          </tr>
-          <tr>
-            <td><strong>Links</strong></td>
-            <td class="value-cell">
-              <div class="nested-object">
-                <div class="nested-key"><a href="${data.links.api_documentation}" target="_blank" rel="noopener noreferrer">🔗 API Documentation</a></div>
-              </div>
+              ${arweaveHtml}
             </td>
           </tr>
         </tbody>
