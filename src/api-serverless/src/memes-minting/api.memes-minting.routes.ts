@@ -10,7 +10,7 @@ import type { MemeClaimUpdateRequest } from '@/api/generated/models/MemeClaimUpd
 import type { MemesMintingClaimsPageResponse } from '@/api/generated/models/MemesMintingClaimsPageResponse';
 import type { MemesMintingProofsByAddressResponse } from '@/api/generated/models/MemesMintingProofsByAddressResponse';
 import type { MemesMintingProofsResponse } from '@/api/generated/models/MemesMintingProofsResponse';
-import type { MemesMintingRootsResponse } from '@/api/generated/models/MemesMintingRootsResponse';
+import type { MemesMintingRootItem } from '@/api/generated/models/MemesMintingRootItem';
 import {
   fetchAllMintingMerkleProofsForRoot,
   fetchMemeClaimByMemeId,
@@ -220,7 +220,7 @@ router.get(
   cacheRequest(),
   async function (
     req: Request<RootsParams, any, any, any, any>,
-    res: Response<ApiResponse<MemesMintingRootsResponse>>
+    res: Response<ApiResponse<MemesMintingRootItem[]>>
   ) {
     const params = getValidatedByJoiOrThrow(req.params, RootsParamsSchema);
     const cardId = numbers.parseIntOrNull(params.card_id);
@@ -230,14 +230,12 @@ router.get(
       });
     }
     const rows = await fetchMintingMerkleRoots(cardId, params.contract);
-    const response: MemesMintingRootsResponse = {
-      roots: rows.map((r) => ({
-        phase: r.phase,
-        merkle_root: r.merkle_root,
-        addresses_count: r.addresses_count ?? 0,
-        total_spots: r.total_spots ?? 0
-      }))
-    };
+    const response: MemesMintingRootItem[] = rows.map((r) => ({
+      phase: r.phase,
+      merkle_root: r.merkle_root,
+      addresses_count: r.addresses_count ?? 0,
+      total_spots: r.total_spots ?? 0
+    }));
     return res.json(response);
   }
 );

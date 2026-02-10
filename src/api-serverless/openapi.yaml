@@ -1948,7 +1948,9 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/MemesMintingRootsResponse"
+                type: array
+                items:
+                  $ref: "#/components/schemas/MemesMintingRootItem"
         "400":
           description: Invalid request (missing or invalid parameters)
   /memes-minting/claims:
@@ -10854,15 +10856,6 @@ components:
           type: integer
           format: int64
           description: Sum of mint spots for this phase
-    MemesMintingRootsResponse:
-      type: object
-      required:
-        - roots
-      properties:
-        roots:
-          type: array
-          items:
-            $ref: "#/components/schemas/MemesMintingRootItem"
     NFTFinalSubscription:
       type: object
       required:

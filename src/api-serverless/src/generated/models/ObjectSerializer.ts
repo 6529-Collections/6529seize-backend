@@ -244,7 +244,6 @@ export * from '../models/MemesMintingProofsByAddressEntry';
 export * from '../models/MemesMintingProofsByAddressResponse';
 export * from '../models/MemesMintingProofsResponse';
 export * from '../models/MemesMintingRootItem';
-export * from '../models/MemesMintingRootsResponse';
 export * from '../models/NFTFinalSubscription';
 export * from '../models/NFTFinalSubscriptionUpload';
 export * from '../models/NFTFinalSubscriptionUploadPage';
@@ -514,7 +513,6 @@ import { MemesMintingProofsByAddressEntry } from '../models/MemesMintingProofsBy
 import { MemesMintingProofsByAddressResponse } from '../models/MemesMintingProofsByAddressResponse';
 import { MemesMintingProofsResponse } from '../models/MemesMintingProofsResponse';
 import { MemesMintingRootItem } from '../models/MemesMintingRootItem';
-import { MemesMintingRootsResponse } from '../models/MemesMintingRootsResponse';
 import { NFTFinalSubscription } from '../models/NFTFinalSubscription';
 import { NFTFinalSubscriptionUpload } from '../models/NFTFinalSubscriptionUpload';
 import { NFTFinalSubscriptionUploadPage } from '../models/NFTFinalSubscriptionUploadPage';
@@ -806,7 +804,6 @@ let typeMap: {[index: string]: any} = {
     "MemesMintingProofsByAddressResponse": MemesMintingProofsByAddressResponse,
     "MemesMintingProofsResponse": MemesMintingProofsResponse,
     "MemesMintingRootItem": MemesMintingRootItem,
-    "MemesMintingRootsResponse": MemesMintingRootsResponse,
     "NFTFinalSubscription": NFTFinalSubscription,
     "NFTFinalSubscriptionUpload": NFTFinalSubscriptionUpload,
     "NFTFinalSubscriptionUploadPage": NFTFinalSubscriptionUploadPage,
