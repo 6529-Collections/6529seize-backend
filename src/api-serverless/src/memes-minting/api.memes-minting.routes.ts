@@ -34,11 +34,14 @@ import {
   validateMemeClaimReadyForArweaveUpload
 } from '@/meme-claims/claims-media-arweave-upload';
 import { numbers } from '@/numbers';
+import { getCacheKeyPatternForPath } from '@/api/api-helpers';
+import { evictAllKeysMatchingPatternFromRedisCache } from '@/redis';
 import { equalIgnoreCase } from '@/strings';
 import { NextFunction, Request, Response } from 'express';
 import * as Joi from 'joi';
 
 const router = asyncRouter();
+const logger = Logger.get('api.memes-minting.routes');
 
 function isDistributionAdmin(req: Request): boolean {
   const wallet = getAuthenticatedWalletOrNull(req);
@@ -58,6 +61,24 @@ function safeParseJson<T>(raw: string | null, fallback: T, label: string): T {
       err
     });
     return fallback;
+  }
+}
+
+async function evictMemesMintingClaimCache(memeId: number): Promise<void> {
+  const patterns = [
+    getCacheKeyPatternForPath(`/api/memes-minting/claims/${memeId}*`),
+    getCacheKeyPatternForPath('/api/memes-minting/claims*')
+  ];
+  for (const pattern of patterns) {
+    try {
+      await evictAllKeysMatchingPatternFromRedisCache(pattern);
+    } catch (error) {
+      logger.warn('Failed to evict memes-minting cache pattern', {
+        pattern,
+        memeId,
+        error
+      });
+    }
   }
 }
 
@@ -210,7 +231,12 @@ router.get(
     }
     const rows = await fetchMintingMerkleRoots(cardId, params.contract);
     const response: MemesMintingRootsResponse = {
-      roots: rows.map((r) => ({ phase: r.phase, merkle_root: r.merkle_root }))
+      roots: rows.map((r) => ({
+        phase: r.phase,
+        merkle_root: r.merkle_root,
+        addresses_count: r.addresses_count ?? 0,
+        total_spots: r.total_spots ?? 0
+      }))
     };
     return res.json(response);
   }
@@ -350,10 +376,10 @@ async function queueArweaveUploadOrRollback(memeId: number): Promise<void> {
         media_uploading: false
       });
     } catch (rollbackError) {
-      Logger.get('api.memes-minting.routes').error(
-        'Failed to rollback media_uploading after enqueue error',
-        { memeId, rollbackError }
-      );
+      logger.error('Failed to rollback media_uploading after enqueue error', {
+        memeId,
+        rollbackError
+      });
     }
     throw enqueueError;
   }
@@ -412,6 +438,7 @@ router.patch(
       if (updated === null) {
         return res.status(404).json({ error: 'Claim not found' });
       }
+      await evictMemesMintingClaimCache(memeId);
       return res.json(rowToMemeClaim(updated));
     } catch (error) {
       return next(error);
@@ -442,6 +469,7 @@ router.post(
     }
     await assertCanStartArweaveUpload(claim);
     await queueArweaveUploadOrRollback(memeId);
+    await evictMemesMintingClaimCache(memeId);
     const updated = await fetchMemeClaimByMemeId(memeId);
     return res.json(rowToMemeClaim(updated ?? claim));
   }

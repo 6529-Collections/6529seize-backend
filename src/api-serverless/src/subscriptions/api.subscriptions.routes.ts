@@ -62,6 +62,14 @@ async function evictCacheForPath(path: string) {
   );
 }
 
+async function invalidateMemesMintingPhaseCache(
+  contract: string,
+  tokenId: number
+) {
+  await evictCacheForPath(`/api/memes-minting/roots/${contract}/${tokenId}`);
+  await evictCacheForPath(`/api/memes-minting/proofs/`);
+}
+
 async function invalidateSubscriptionCache(consolidationKey: string) {
   await evictCacheForPath(
     `/api/subscriptions/consolidation/details/${consolidationKey}`
@@ -634,6 +642,7 @@ router.get(
       );
 
       await populateDistribution(contract, tokenId, phaseName, results);
+      await invalidateMemesMintingPhaseCache(contract, tokenId);
       return res.json(results);
     }
   }
@@ -681,6 +690,7 @@ router.post(
     }
 
     await resetAllowlist(contract, tokenId);
+    await invalidateMemesMintingPhaseCache(contract, tokenId);
 
     await evictCacheForPath(
       `/api/distributions/${contract}/${tokenId}/overview`

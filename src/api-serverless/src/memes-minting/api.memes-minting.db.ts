@@ -146,16 +146,66 @@ export async function fetchAllMintingMerkleProofsForRoot(
 export interface MintingMerkleRootRow {
   phase: string;
   merkle_root: string;
+  addresses_count?: number;
+  total_spots?: number;
 }
 
 export async function fetchMintingMerkleRoots(
   cardId: number,
   contract: string
 ): Promise<MintingMerkleRootRow[]> {
-  return sqlExecutor.execute<MintingMerkleRootRow>(
+  const roots = await sqlExecutor.execute<MintingMerkleRootRow>(
     `SELECT phase, merkle_root FROM ${MINTING_MERKLE_ROOTS_TABLE} WHERE card_id = :cardId AND contract = :contract ORDER BY phase ASC`,
     { cardId, contract: contract.toLowerCase() }
   );
+  if (roots.length === 0) {
+    return roots;
+  }
+
+  const merkleRoots = roots.map((r) => r.merkle_root).filter(Boolean);
+  if (merkleRoots.length === 0) {
+    return roots.map((root) => ({
+      ...root,
+      addresses_count: 0,
+      total_spots: 0
+    }));
+  }
+
+  const proofRows = await sqlExecutor.execute<{
+    merkle_root: string;
+    proofs: StoredMerkleProofs;
+  }>(
+    `SELECT merkle_root, proofs FROM ${MINTING_MERKLE_PROOFS_TABLE} WHERE merkle_root IN (:merkleRoots)`,
+    { merkleRoots }
+  );
+
+  const countsByRoot = new Map<
+    string,
+    { addresses_count: number; total_spots: number }
+  >();
+
+  for (const row of proofRows) {
+    const root = row.merkle_root;
+    const current = countsByRoot.get(root) ?? {
+      addresses_count: 0,
+      total_spots: 0
+    };
+    const parsed = parseStoredMerkleProofs(row.proofs);
+    const rowSpots = parsed.reduce((sum, item) => sum + item.value, 0);
+    countsByRoot.set(root, {
+      addresses_count: current.addresses_count + 1,
+      total_spots: current.total_spots + rowSpots
+    });
+  }
+
+  return roots.map((root) => {
+    const counts = countsByRoot.get(root.merkle_root);
+    return {
+      ...root,
+      addresses_count: counts?.addresses_count ?? 0,
+      total_spots: counts?.total_spots ?? 0
+    };
+  });
 }
 
 export interface MemeClaimRow {

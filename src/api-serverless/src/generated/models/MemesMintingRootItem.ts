@@ -21,6 +21,14 @@ export class MemesMintingRootItem {
     * 0x-prefixed hex merkle root
     */
     'merkle_root': string;
+    /**
+    * Number of unique addresses in this phase
+    */
+    'addresses_count': number;
+    /**
+    * Sum of mint spots for this phase
+    */
+    'total_spots': number;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -36,6 +44,18 @@ export class MemesMintingRootItem {
             "baseName": "merkle_root",
             "type": "string",
             "format": ""
+        },
+        {
+            "name": "addresses_count",
+            "baseName": "addresses_count",
+            "type": "number",
+            "format": "int64"
+        },
+        {
+            "name": "total_spots",
+            "baseName": "total_spots",
+            "type": "number",
+            "format": "int64"
         }    ];
 
     static getAttributeTypeMap() {

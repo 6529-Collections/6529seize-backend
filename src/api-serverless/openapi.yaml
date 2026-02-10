@@ -10837,6 +10837,8 @@ components:
       required:
         - phase
         - merkle_root
+        - addresses_count
+        - total_spots
       properties:
         phase:
           type: string
@@ -10844,6 +10846,14 @@ components:
         merkle_root:
           type: string
           description: 0x-prefixed hex merkle root
+        addresses_count:
+          type: integer
+          format: int64
+          description: Number of unique addresses in this phase
+        total_spots:
+          type: integer
+          format: int64
+          description: Sum of mint spots for this phase
     MemesMintingRootsResponse:
       type: object
       required:
