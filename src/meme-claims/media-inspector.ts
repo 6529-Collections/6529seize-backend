@@ -38,13 +38,19 @@ function sniffKindAndFormat(
 
 const FETCH_TIMEOUT_MS = 30_000;
 const MAX_MEDIA_BYTES = 100 * 1024 * 1024;
+const FETCH_HEADERS = {
+  'User-Agent':
+    'Mozilla/5.0 (compatible; 6529ArweaveUpload/1.0; +https://6529.io)',
+  Accept: '*/*'
+};
 
 async function fetchUrlToBuffer(
   url: string
 ): Promise<{ buffer: Buffer; contentType: string | null }> {
   const { buffer, contentType } = await fetchPublicUrlToBuffer(url, {
     timeoutMs: FETCH_TIMEOUT_MS,
-    maxBytes: MAX_MEDIA_BYTES
+    maxBytes: MAX_MEDIA_BYTES,
+    headers: FETCH_HEADERS
   });
   return { buffer, contentType };
 }

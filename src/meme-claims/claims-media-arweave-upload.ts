@@ -7,6 +7,7 @@ import { arweaveFileUploader } from '@/arweave';
 import { BadRequestException } from '@/exceptions';
 import { fetchPublicUrlToBuffer } from '@/http/safe-fetch';
 import { Logger } from '@/logging';
+import { createHash } from 'node:crypto';
 
 const logger = Logger.get('claims-media-arweave-upload');
 export const MIN_EDITION_SIZE = 300;
@@ -100,7 +101,36 @@ function inferImageContentTypeFromUrl(url: string): string | null {
   }
 }
 
-async function uploadImageToArweaveOrThrow(imageUrl: string): Promise<string> {
+function normalizeSha256(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(normalized)) return null;
+  return normalized;
+}
+
+function buildArweaveUrl(location: string | null | undefined): string | null {
+  if (location == null) return null;
+  const trimmed = location.trim();
+  if (trimmed === '') return null;
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    return trimmed;
+  }
+  return `https://arweave.net/${trimmed}`;
+}
+
+function computeSha256Hex(buffer: Buffer): string {
+  const bytes = new Uint8Array(
+    buffer.buffer,
+    buffer.byteOffset,
+    buffer.byteLength
+  );
+  return createHash('sha256').update(bytes).digest('hex');
+}
+
+async function uploadImageToArweaveOrThrow(
+  claim: MemeClaimRow,
+  imageUrl: string
+): Promise<string> {
   const fetched = await fetchUrlToBuffer(imageUrl);
   const inferred = inferImageContentTypeFromUrl(imageUrl);
   const contentType = fetched.contentType.startsWith('image/')
@@ -110,6 +140,19 @@ async function uploadImageToArweaveOrThrow(imageUrl: string): Promise<string> {
     throw new BadRequestException(
       `image_url did not resolve to an image (content-type: ${fetched.contentType})`
     );
+  }
+  const currentSha256 = computeSha256Hex(fetched.buffer);
+  const existingDetails =
+    parseJsonOrNull<{ sha256?: unknown }>(claim.image_details) ?? null;
+  const existingSha256 = normalizeSha256(existingDetails?.sha256);
+  const existingArweaveUrl = buildArweaveUrl(claim.image_location);
+  if (existingSha256 != null && existingSha256 === currentSha256) {
+    if (existingArweaveUrl != null) {
+      logger.info(
+        `Reusing existing image_location for meme_id=${claim.meme_id} based on matching sha256`
+      );
+      return existingArweaveUrl;
+    }
   }
   const { url } = await arweaveFileUploader.uploadFile(
     fetched.buffer,
@@ -147,6 +190,19 @@ async function uploadAnimationToArweaveIfPresent(
     lowerPath,
     expectsGlb
   });
+  const currentSha256 = computeSha256Hex(buffer);
+  const existingSha256 = normalizeSha256(
+    (details as { sha256?: unknown }).sha256
+  );
+  const existingArweaveUrl = buildArweaveUrl(claim.animation_location);
+  if (existingSha256 != null && existingSha256 === currentSha256) {
+    if (existingArweaveUrl != null) {
+      logger.info(
+        `Reusing existing animation_location for meme_id=${claim.meme_id} based on matching sha256`
+      );
+      return existingArweaveUrl;
+    }
+  }
   const { url } = await arweaveFileUploader.uploadFile(
     buffer,
     contentTypeToUpload
@@ -484,7 +540,7 @@ export async function uploadMemeClaimToArweave(
 }> {
   const { imageUrl, typeMemeId } =
     await validateMemeClaimReadyForArweaveUpload(claim);
-  const imageLocationUrl = await uploadImageToArweaveOrThrow(imageUrl);
+  const imageLocationUrl = await uploadImageToArweaveOrThrow(claim, imageUrl);
   const animationLocationUrl = await uploadAnimationToArweaveIfPresent(claim);
   const metadataLocationUrl = await uploadClaimMetadataToArweave(
     memeId,
