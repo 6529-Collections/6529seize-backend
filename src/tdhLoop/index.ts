@@ -1,3 +1,10 @@
+import {
+  CONSOLIDATED_WALLETS_TDH_TABLE,
+  DROP_VOTER_STATE_TABLE,
+  IDENTITIES_TABLE,
+  WAVES_DECISION_WINNER_DROPS_TABLE
+} from '@/constants';
+import { fetchLatestTDHBDate } from '../db';
 import { NextGenTokenTDH } from '../entities/INextGen';
 import { NFT } from '../entities/INFT';
 import { NFTOwner } from '../entities/INFTOwner';
@@ -18,17 +25,11 @@ import {
   TDHMemes
 } from '../entities/ITDH';
 import { ConsolidatedTDHUpload } from '../entities/IUpload';
-import {
-  CONSOLIDATED_WALLETS_TDH_TABLE,
-  DROP_VOTER_STATE_TABLE,
-  IDENTITIES_TABLE,
-  WAVES_DECISION_WINNER_DROPS_TABLE
-} from '@/constants';
 import { env } from '../env';
 import { Logger } from '../logging';
 import { metricsRecorder } from '../metrics/MetricsRecorder';
-import { numbers } from '../numbers';
 import * as notifier from '../notifier';
+import { numbers } from '../numbers';
 import * as priorityAlertsContext from '../priority-alerts.context';
 import { doInDbContext } from '../secrets';
 import * as sentryContext from '../sentry.context';
@@ -38,7 +39,6 @@ import { findNftTDH } from './nft_tdh';
 import { updateTDH } from './tdh';
 import { consolidateAndPersistTDH } from './tdh_consolidation';
 import { uploadTDH } from './tdh_upload';
-import { fetchLatestTDHBDate } from '../db';
 
 const logger = Logger.get('TDH_LOOP');
 const ALERT_TITLE = 'TDH Loop';
@@ -150,7 +150,6 @@ async function tdh(force?: boolean) {
       blockTimestamp
     );
     await recordMetrics();
-    // Disabled for now
     await uploadTDH(block, blockTimestamp, tdh, false, true);
     await uploadTDH(block, blockTimestamp, consolidatedTdh, true, true);
     return block;
