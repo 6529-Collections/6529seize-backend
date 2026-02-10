@@ -450,5 +450,6 @@ export const RESERVED_HANDLES = [
   'username',
   'community-activity',
   'open-data',
-  'stream'
+  'stream',
+  'drop-control'
 ];
