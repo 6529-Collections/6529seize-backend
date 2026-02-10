@@ -38,6 +38,15 @@ function getStatusDisplayDegraded(): string {
   return 'Degraded';
 }
 
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function getRedisStatusClass(redis: HealthData['redis']): string {
   if (!redis.enabled) {
     return 'status-degraded';
@@ -70,20 +79,20 @@ function buildArweaveHtml(arweave: HealthData['arweave']): string {
 
   const statusClass = getArweaveStatusClass(arweave);
   const statusText = arweave.healthy ? 'Healthy' : 'Degraded';
-  let html = `<span class="status-badge ${statusClass}">${statusText}</span>`;
+  let html = `<span class="status-badge ${statusClass}">${escapeHtml(statusText)}</span>`;
 
   html += '<div class="nested-object">';
 
   if (arweave.wallet_address) {
-    html += `<div class="nested-key">Wallet: <span class="nested-value">${arweave.wallet_address}</span></div>`;
+    html += `<div class="nested-key">Wallet: <span class="nested-value">${escapeHtml(arweave.wallet_address)}</span></div>`;
   }
   if (arweave.balance) {
-    html += `<div class="nested-key">Balance: <span class="nested-value">${formatArRounded(arweave.balance.ar)} AR (${arweave.balance.level})</span></div>`;
+    html += `<div class="nested-key">Balance: <span class="nested-value">${escapeHtml(formatArRounded(arweave.balance.ar))} AR (${escapeHtml(arweave.balance.level)})</span></div>`;
     if (arweave.balance.estimated_50mb_uploads) {
-      html += `<div class="nested-key">Est. 50MB uploads: <span class="nested-value">~${formatIntegerLike(arweave.balance.estimated_50mb_uploads)}</span></div>`;
+      html += `<div class="nested-key">Est. 50MB uploads: <span class="nested-value">~${escapeHtml(formatIntegerLike(arweave.balance.estimated_50mb_uploads))}</span></div>`;
     }
     if (arweave.balance.estimated_3500mb_uploads) {
-      html += `<div class="nested-key">Est. 3.5GB uploads: <span class="nested-value">~${formatIntegerLike(arweave.balance.estimated_3500mb_uploads)}</span></div>`;
+      html += `<div class="nested-key">Est. 3.5GB uploads: <span class="nested-value">~${escapeHtml(formatIntegerLike(arweave.balance.estimated_3500mb_uploads))}</span></div>`;
     }
   }
 
