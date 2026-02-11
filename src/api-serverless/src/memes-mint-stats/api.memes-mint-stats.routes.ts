@@ -7,7 +7,7 @@ import { ApiResponse } from '@/api/api-response';
 import { DEFAULT_MAX_SIZE, DEFAULT_PAGE_SIZE } from '@/api/page-request';
 import { ApiPageSortDirection } from '@/api/generated/models/ApiPageSortDirection';
 import { cacheRequest } from '@/api/request-cache';
-import { resolveSortDirection, returnPaginatedResult } from '@/api/api-helpers';
+import { returnPaginatedResult } from '@/api/api-helpers';
 import { ApiMemesMintStat } from '@/api/generated/models/ApiMemesMintStat';
 import { ApiMemesMintStatsPage } from '@/api/generated/models/ApiMemesMintStatsPage';
 import { ApiMemesMintStatsTotals } from '@/api/generated/models/ApiMemesMintStatsTotals';
@@ -53,7 +53,7 @@ router.get(
     const result = await fetchMemesMintStats(
       query.page,
       query.page_size,
-      resolveSortDirection(query.sort_direction)
+      query.sort_direction
     );
     return returnPaginatedResult(result, req, res);
   }

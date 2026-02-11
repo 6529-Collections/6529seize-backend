@@ -35,7 +35,7 @@ paths:
             minimum: 1
         - name: sort_direction
           in: query
-          description: Default is ASC
+          description: Default is ASC; applied to id sort
           required: false
           schema:
             type: string

@@ -42,6 +42,7 @@ const logger = Logger.get('nfts');
 
 const MINT_DATE_GRACE_PERIOD_DAYS = 7;
 const MEMES_MINT_STATS_CLOSE_HOUR = 17;
+const ARTIST_SPLIT_RATIO = 0.5;
 
 export enum NFT_MODE {
   DISCOVER = 'discover',
@@ -711,12 +712,20 @@ async function populateMintStatsForEligibleNFTs(
       continue;
     }
 
-    if (!isMintStatsEligible(new Date(nft.mint_date))) {
+    const mintDate = new Date(nft.mint_date);
+    if (isNaN(mintDate.getTime())) {
+      logger.warn(
+        `⚠️ Skipping mint stats for meme #${nft.id}, invalid mint_date ${nft.mint_date}`
+      );
+      continue;
+    }
+
+    if (!isMintStatsEligible(mintDate)) {
       continue;
     }
 
     logger.info(`🔄 Populating mint stats for meme #${nft.id}`);
-    await populateMintStatsIfMissing(nft.id, nft.mint_date, statsRepo, txRepo);
+    await populateMintStatsIfMissing(nft.id, mintDate, statsRepo, txRepo);
   }
 }
 
@@ -764,6 +773,13 @@ async function populateMintStatsIfMissing(
       value: MoreThan(0)
     }
   });
+  const nonZeroEthUsd = mintTransactions
+    .map((tx) => Number(tx.eth_price_usd ?? 0))
+    .filter((v) => v > 0);
+  const fallbackEthUsd =
+    nonZeroEthUsd.length > 0
+      ? nonZeroEthUsd.reduce((sum, v) => sum + v, 0) / nonZeroEthUsd.length
+      : 0;
 
   const redeemedRepo = getDataSource().getRepository(RedeemedSubscription);
   const redeemedAgg = await redeemedRepo
@@ -775,12 +791,13 @@ async function populateMintStatsIfMissing(
     )
     .select('COALESCE(SUM(rs.count), 0)', 'redeemedCount')
     .addSelect(
-      'COALESCE(SUM(rs.count * :mintPrice * COALESCE(t.eth_price_usd, 0)), 0)',
+      'COALESCE(SUM(rs.count * :mintPrice * COALESCE(t.eth_price_usd, :fallbackEthUsd)), 0)',
       'redeemedUsdPrice'
     )
     .where('rs.contract = :contract', { contract: MEMES_CONTRACT })
     .andWhere('rs.token_id = :tokenId', { tokenId })
     .setParameter('mintPrice', MEMES_MINT_PRICE)
+    .setParameter('fallbackEthUsd', fallbackEthUsd)
     .getRawOne<{
       redeemedCount: string | number;
       redeemedUsdPrice: string | number;
@@ -803,8 +820,8 @@ async function populateMintStatsIfMissing(
   const totalMintCount = mintCount + redeemedCount;
   const proceedsEth = totalMintCount * MEMES_MINT_PRICE;
   const proceedsUsd = roundUsd(mintedUsdPrice + redeemedUsdPrice);
-  const artistSplitEth = proceedsEth * 0.5;
-  const artistSplitUsd = roundUsd(proceedsUsd * 0.5);
+  const artistSplitEth = proceedsEth * ARTIST_SPLIT_RATIO;
+  const artistSplitUsd = roundUsd(proceedsUsd * ARTIST_SPLIT_RATIO);
 
   await statsRepo.save({
     id: tokenId,
