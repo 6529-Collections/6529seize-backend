@@ -15,28 +15,28 @@ import {
 } from '@/constants';
 import { deployerDropper } from '@/deployer-dropper';
 import { env } from '@/env';
-import axios from 'axios';
-import { ethers } from 'ethers';
-import { In, MoreThan, Not, Repository } from 'typeorm';
-import { processArtists } from '../artists';
+import { processArtists } from '@/artists';
 import {
   deleteArtistsNotIn,
   fetchAllArtists,
   fetchMemesWithSeason,
   getDataSource,
   persistArtists
-} from '../db';
-import { MemesMintStat } from '../entities/IMemesMintStat';
-import { LabNFT, NFT, NFTWithExtendedData } from '../entities/INFT';
-import { NFTOwner } from '../entities/INFTOwner';
-import { RedeemedSubscription } from '../entities/ISubscription';
-import { Transaction } from '../entities/ITransaction';
-import { TokenType } from '../enums';
-import { Logger } from '../logging';
-import { getRpcProvider } from '../rpc-provider';
-import { equalIgnoreCase } from '../strings';
-import { text } from '../text';
-import { Time } from '../time';
+} from '@/db';
+import { MemesMintStat } from '@/entities/IMemesMintStat';
+import { LabNFT, NFT, NFTWithExtendedData } from '@/entities/INFT';
+import { NFTOwner } from '@/entities/INFTOwner';
+import { RedeemedSubscription } from '@/entities/ISubscription';
+import { Transaction } from '@/entities/ITransaction';
+import { TokenType } from '@/enums';
+import { Logger } from '@/logging';
+import { getRpcProvider } from '@/rpc-provider';
+import { equalIgnoreCase } from '@/strings';
+import { text } from '@/text';
+import { Time } from '@/time';
+import axios from 'axios';
+import { ethers } from 'ethers';
+import { In, MoreThan, Not, Repository } from 'typeorm';
 
 const logger = Logger.get('nfts');
 

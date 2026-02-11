@@ -9,7 +9,7 @@ import { ApiMemesMintStatsYearly } from '@/api/generated/models/ApiMemesMintStat
 export async function fetchMemesMintStats(
   page: number,
   pageSize: number,
-  sortDir: string
+  sortDir: 'ASC' | 'DESC'
 ): Promise<ApiMemesMintStatsPage> {
   return fetchPaginated<ApiMemesMintStat>(
     MEMES_MINT_STATS_TABLE,

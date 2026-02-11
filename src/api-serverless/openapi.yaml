@@ -7865,16 +7865,16 @@ components:
           format: int64
         proceeds_eth:
           type: number
-          format: float
+          format: double
         proceeds_usd:
           type: number
-          format: float
+          format: double
         artist_split_eth:
           type: number
-          format: float
+          format: double
         artist_split_usd:
           type: number
-          format: float
+          format: double
     ApiMemesMintStatsPage:
       type: object
       required:
@@ -7901,16 +7901,16 @@ components:
           format: int64
         proceeds_eth:
           type: number
-          format: float
+          format: double
         proceeds_usd:
           type: number
-          format: float
+          format: double
         artist_split_eth:
           type: number
-          format: float
+          format: double
         artist_split_usd:
           type: number
-          format: float
+          format: double
         artists_count:
           type: integer
           format: int64
@@ -7932,16 +7932,16 @@ components:
           format: int64
         proceeds_eth:
           type: number
-          format: float
+          format: double
         proceeds_usd:
           type: number
-          format: float
+          format: double
         artist_split_eth:
           type: number
-          format: float
+          format: double
         artist_split_usd:
           type: number
-          format: float
+          format: double
     ApiMentionedWave:
       type: object
       required:

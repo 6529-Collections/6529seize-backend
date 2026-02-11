@@ -39,25 +39,25 @@ export class ApiMemesMintStatsYearly {
             "name": "proceeds_eth",
             "baseName": "proceeds_eth",
             "type": "number",
-            "format": "float"
+            "format": "double"
         },
         {
             "name": "proceeds_usd",
             "baseName": "proceeds_usd",
             "type": "number",
-            "format": "float"
+            "format": "double"
         },
         {
             "name": "artist_split_eth",
             "baseName": "artist_split_eth",
             "type": "number",
-            "format": "float"
+            "format": "double"
         },
         {
             "name": "artist_split_usd",
             "baseName": "artist_split_usd",
             "type": "number",
-            "format": "float"
+            "format": "double"
         }    ];
 
     static getAttributeTypeMap() {

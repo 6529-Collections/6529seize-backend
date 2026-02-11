@@ -17,7 +17,7 @@ import {
   fetchMemesMintStats,
   fetchMemesMintStatsTotals,
   fetchMemesMintStatsYearly
-} from './api.memes-mint-stats.db';
+} from '@/api/memes-mint-stats/api.memes-mint-stats.db';
 
 const router = asyncRouter();
 
