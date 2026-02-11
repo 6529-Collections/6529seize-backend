@@ -8,6 +8,7 @@ import {
 import { Logger } from '../logging';
 import * as sentryContext from '../sentry.context';
 import { MemesSeason } from '../entities/ISeason';
+import { MemesMintStat } from '../entities/IMemesMintStat';
 import { NFTOwner } from '../entities/INFTOwner';
 import { NFT_MODE, processNFTs } from './nfts';
 import {
@@ -15,6 +16,7 @@ import {
   findMemesExtendedData
 } from './nft_extended_data';
 import { Transaction } from '../entities/ITransaction';
+import { RedeemedSubscription } from '../entities/ISubscription';
 import { updateDistributionInfoFor } from './nft_distribution';
 import { enums } from '../enums';
 
@@ -34,7 +36,9 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
         NFTOwner,
         LabNFT,
         LabExtendedData,
-        Transaction
+        Transaction,
+        MemesMintStat,
+        RedeemedSubscription
       ]
     }
   );

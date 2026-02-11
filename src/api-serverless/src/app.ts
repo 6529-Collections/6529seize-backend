@@ -41,6 +41,7 @@ import rememesRoutes from './rememes/rememes.routes';
 import royaltiesRoutes from './royalties/royalties.routes';
 import tdhEditionsRoutes from './tdh-editions/tdh-editions.routes';
 import tdhRoutes from './tdh/api.tdh.routes';
+import memesMintStatsRoutes from './memes-mint-stats/api.memes-mint-stats.routes';
 import waveMediaRoutes from './waves/wave-media.routes';
 import wavesOverviewRoutes from './waves/waves-overview.routes';
 import publicWavesRoutes from './waves/waves-public.routes';
@@ -1007,6 +1008,7 @@ async function initializeApp() {
   apiRouter.use(`/rep/categories`, repCategorySearchRoutes);
   apiRouter.use(`/tdh`, tdhRoutes);
   apiRouter.use(`/tdh-editions`, tdhEditionsRoutes);
+  apiRouter.use(`/memes_mint_stats`, memesMintStatsRoutes);
   apiRouter.use(`/aggregated-activity`, aggregatedActivityRoutes);
   apiRouter.use(`/owners-balances`, ownersBalancesRoutes);
   apiRouter.use(`/ratings`, ratingsRoutes);
