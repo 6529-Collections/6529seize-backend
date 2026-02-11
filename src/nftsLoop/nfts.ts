@@ -799,14 +799,11 @@ async function populateMintStatsIfMissing(
     (sum, tx) => sum + Number(tx.token_count ?? 0),
     0
   );
-  const mintedUsdPrice = mintTransactions.reduce(
-    (sum, tx) => {
-      const ethUsdRaw = Number(tx.eth_price_usd ?? 0);
-      const ethUsd = ethUsdRaw > 0 ? ethUsdRaw : fallbackEthUsd;
-      return sum + Number(tx.token_count ?? 0) * MEMES_MINT_PRICE * ethUsd;
-    },
-    0
-  );
+  const mintedUsdPrice = mintTransactions.reduce((sum, tx) => {
+    const ethUsdRaw = Number(tx.eth_price_usd ?? 0);
+    const ethUsd = ethUsdRaw > 0 ? ethUsdRaw : fallbackEthUsd;
+    return sum + Number(tx.token_count ?? 0) * MEMES_MINT_PRICE * ethUsd;
+  }, 0);
   const redeemedCount = Number(redeemedAgg?.redeemedCount ?? 0);
   const redeemedUsdPrice = Number(redeemedAgg?.redeemedUsdPrice ?? 0);
   const totalMintCount = mintCount + redeemedCount;
