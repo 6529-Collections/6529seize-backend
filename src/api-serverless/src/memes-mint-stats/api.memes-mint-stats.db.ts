@@ -24,16 +24,14 @@ export async function fetchMemesMintStats(
 export async function fetchMemesMintStatById(
   id: number
 ): Promise<ApiMemesMintStat | null> {
-  const rows = await sqlExecutor.execute<ApiMemesMintStat>(
+  return sqlExecutor.oneOrNull<ApiMemesMintStat>(
     `SELECT * FROM ${MEMES_MINT_STATS_TABLE} WHERE id = :id LIMIT 1`,
     { id }
   );
-
-  return rows[0] ?? null;
 }
 
 export async function fetchMemesMintStatsTotals(): Promise<ApiMemesMintStatsTotals> {
-  const rows = await sqlExecutor.execute<ApiMemesMintStatsTotals>(
+  const result = await sqlExecutor.oneOrNull<ApiMemesMintStatsTotals>(
     `SELECT
       COALESCE(SUM(mint_count), 0) AS mint_count,
       COALESCE(SUM(proceeds_eth), 0) AS proceeds_eth,
@@ -45,7 +43,7 @@ export async function fetchMemesMintStatsTotals(): Promise<ApiMemesMintStatsTota
   );
 
   return (
-    rows[0] ?? {
+    result ?? {
       mint_count: 0,
       proceeds_eth: 0,
       proceeds_usd: 0,
