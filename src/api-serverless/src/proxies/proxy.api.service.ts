@@ -829,11 +829,12 @@ export class ProfileProxyApiService {
 export function isProxyActionActive(action: ApiProfileProxyAction): boolean {
   const now = Time.now();
   return (
-    !action.end_time ||
-    (Time.millis(action.end_time).gte(now) &&
-      (!action.start_time || Time.millis(action.start_time).lte(now)) &&
-      (!action.rejected_at || Time.millis(action.rejected_at).gte(now)) &&
-      (!action.revoked_at || Time.millis(action.revoked_at).gte(now)))
+    !!action.accepted_at &&
+    Time.millis(action.accepted_at).lte(now) &&
+    (!action.start_time || Time.millis(action.start_time).lte(now)) &&
+    (!action.end_time || Time.millis(action.end_time).gte(now)) &&
+    (!action.rejected_at || Time.millis(action.rejected_at).gte(now)) &&
+    (!action.revoked_at || Time.millis(action.revoked_at).gte(now))
   );
 }
 
