@@ -110,6 +110,8 @@ export const DROPS_TABLE = 'drops';
 export const DROPS_PARTS_TABLE = 'drops_parts';
 export const PROFILE_PROXIES_TABLE = 'profile_proxies';
 export const PROFILE_PROXY_ACTIONS_TABLE = 'profile_proxy_actions';
+export const PROFILE_PROXY_RATING_CREDIT_BALANCES_TABLE =
+  'profile_proxy_rating_credit_balances';
 export const WAVES_TABLE = 'waves';
 export const WAVE_OUTCOMES_TABLE = 'wave_outcomes';
 export const WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE =

@@ -79,6 +79,7 @@ export { ProfileGroupChangeEntity } from './IProfileGroupChangeEntity';
 export { ProfileLatestLogEntity } from './IProfileLatestLog';
 export { ProfileProxyEntity } from './IProfileProxy';
 export { ProfileProxyActionEntity } from './IProfileProxyAction';
+export { ProfileProxyRatingCreditBalanceEntity } from './IProfileProxyRatingCreditBalance';
 export { PushNotificationDevice } from './IPushNotification';
 export { PushNotificationSettingsEntity } from './IPushNotificationSettings';
 export { Rating } from './IRating';
