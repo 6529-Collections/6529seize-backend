@@ -1008,7 +1008,7 @@ async function initializeApp() {
   apiRouter.use(`/rep/categories`, repCategorySearchRoutes);
   apiRouter.use(`/tdh`, tdhRoutes);
   apiRouter.use(`/tdh-editions`, tdhEditionsRoutes);
-  apiRouter.use(`/memes_mint_stats`, memesMintStatsRoutes);
+  apiRouter.use(`/memes-mint-stats`, memesMintStatsRoutes);
   apiRouter.use(`/aggregated-activity`, aggregatedActivityRoutes);
   apiRouter.use(`/owners-balances`, ownersBalancesRoutes);
   apiRouter.use(`/ratings`, ratingsRoutes);

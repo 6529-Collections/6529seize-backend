@@ -1875,7 +1875,7 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiIdentitySubscriptionActions"
-  /memes_mint_stats:
+  /memes-mint-stats:
     get:
       tags:
         - Memes Mint Stats
@@ -1915,7 +1915,7 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiMemesMintStatsPage"
-  /memes_mint_stats/total:
+  /memes-mint-stats/total:
     get:
       tags:
         - Memes Mint Stats
@@ -1928,7 +1928,7 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiMemesMintStatsTotals"
-  /memes_mint_stats/yearly:
+  /memes-mint-stats/yearly:
     get:
       tags:
         - Memes Mint Stats
@@ -1943,7 +1943,7 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/ApiMemesMintStatsYearly"
-  /memes_mint_stats/{id}:
+  /memes-mint-stats/{id}:
     get:
       tags:
         - Memes Mint Stats
