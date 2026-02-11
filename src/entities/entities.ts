@@ -89,6 +89,7 @@ export { RoyaltiesUpload } from './IRoyalties';
 export { MemesSeason } from './ISeason';
 export { MetricRollupHourEntity } from './IMetricRollupHour';
 export { MintAnnouncementsDoneMemeToken } from './IMintAnnouncementsDoneMemeToken';
+export { MemesMintStat } from './IMemesMintStat';
 export {
   NFTFinalSubscription,
   NFTFinalSubscriptionUpload,

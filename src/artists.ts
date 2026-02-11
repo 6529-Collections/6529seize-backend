@@ -18,6 +18,8 @@ function splitArtists(artist: string) {
     .join(',')
     .split(' and ')
     .join(',')
+    .split(' & ')
+    .join(',')
     .split(',');
   return a;
 }

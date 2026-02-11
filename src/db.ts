@@ -788,6 +788,17 @@ export async function persistArtists(artists: Artist[]) {
   }
 }
 
+export async function deleteArtistsNotIn(artistNames: string[]) {
+  if (artistNames.length === 0) {
+    return;
+  }
+
+  await sqlExecutor.execute(
+    `DELETE FROM ${ARTISTS_TABLE} WHERE name NOT IN (:artistNames)`,
+    { artistNames }
+  );
+}
+
 export async function persistMemesExtendedData(data: MemesExtendedData[]) {
   await AppDataSource.getRepository(MemesExtendedData).save(data);
 }

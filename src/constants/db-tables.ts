@@ -124,6 +124,7 @@ export const WAVE_READER_METRICS_TABLE = 'wave_reader_metrics';
 export const METRIC_ROLLUP_HOUR_TABLE = 'metric_rollup_hour';
 export const MINT_ANNOUNCEMENTS_DONE_MEME_TOKENS_TABLE =
   'mint_announcements_done_meme_tokens';
+export const MEMES_MINT_STATS_TABLE = 'memes_mint_stats';
 export const DROPS_MENTIONS_TABLE = 'drops_mentions';
 export const DROP_MENTIONED_WAVES_TABLE = 'drop_mentioned_waves';
 export const DROP_REFERENCED_NFTS_TABLE = 'drops_referenced_nfts';
