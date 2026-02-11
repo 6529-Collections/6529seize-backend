@@ -713,7 +713,7 @@ async function populateMintStatsForEligibleNFTs(
     }
 
     const mintDate = new Date(nft.mint_date);
-    if (isNaN(mintDate.getTime())) {
+    if (Number.isNaN(mintDate.getTime())) {
       logger.warn(
         `⚠️ Skipping mint stats for meme #${nft.id}, invalid mint_date ${nft.mint_date}`
       );
@@ -755,14 +755,6 @@ async function populateMintStatsIfMissing(
   statsRepo: Repository<MemesMintStat>,
   txRepo: Repository<Transaction>
 ): Promise<void> {
-  const existing = await statsRepo.findOne({
-    where: { id: tokenId }
-  });
-  if (existing) {
-    logger.info(`ℹ️ Mint stats already exist for meme #${tokenId}, skipping`);
-    return;
-  }
-
   const mintTransactions = await txRepo.find({
     select: ['token_count', 'eth_price_usd'],
     where: {
@@ -791,7 +783,7 @@ async function populateMintStatsIfMissing(
     )
     .select('COALESCE(SUM(rs.count), 0)', 'redeemedCount')
     .addSelect(
-      'COALESCE(SUM(rs.count * :mintPrice * COALESCE(t.eth_price_usd, :fallbackEthUsd)), 0)',
+      'COALESCE(SUM(rs.count * :mintPrice * COALESCE(NULLIF(t.eth_price_usd, 0), :fallbackEthUsd)), 0)',
       'redeemedUsdPrice'
     )
     .where('rs.contract = :contract', { contract: MEMES_CONTRACT })
@@ -808,11 +800,11 @@ async function populateMintStatsIfMissing(
     0
   );
   const mintedUsdPrice = mintTransactions.reduce(
-    (sum, tx) =>
-      sum +
-      Number(tx.token_count ?? 0) *
-        MEMES_MINT_PRICE *
-        Number(tx.eth_price_usd ?? 0),
+    (sum, tx) => {
+      const ethUsdRaw = Number(tx.eth_price_usd ?? 0);
+      const ethUsd = ethUsdRaw > 0 ? ethUsdRaw : fallbackEthUsd;
+      return sum + Number(tx.token_count ?? 0) * MEMES_MINT_PRICE * ethUsd;
+    },
     0
   );
   const redeemedCount = Number(redeemedAgg?.redeemedCount ?? 0);
@@ -823,7 +815,7 @@ async function populateMintStatsIfMissing(
   const artistSplitEth = proceedsEth * ARTIST_SPLIT_RATIO;
   const artistSplitUsd = roundUsd(proceedsUsd * ARTIST_SPLIT_RATIO);
 
-  await statsRepo.save({
+  const payload = {
     id: tokenId,
     mint_date: mintDate,
     mint_count: totalMintCount,
@@ -831,7 +823,22 @@ async function populateMintStatsIfMissing(
     proceeds_usd: proceedsUsd,
     artist_split_eth: artistSplitEth,
     artist_split_usd: artistSplitUsd
-  });
+  };
+
+  const insertResult = await statsRepo
+    .createQueryBuilder()
+    .insert()
+    .into(MemesMintStat)
+    .values(payload)
+    .orIgnore()
+    .execute();
+
+  const wasInserted = Number(insertResult?.raw?.affectedRows ?? 0) > 0;
+  if (!wasInserted) {
+    logger.info(`ℹ️ Mint stats already exist for meme #${tokenId}, skipping`);
+    return;
+  }
+
   logger.info(
     `✅ Mint stats inserted for meme #${tokenId} [mint_count=${totalMintCount}] [proceeds_eth=${proceedsEth}] [proceeds_usd=${proceedsUsd}] [artist_split_eth=${artistSplitEth}] [artist_split_usd=${artistSplitUsd}]`
   );
