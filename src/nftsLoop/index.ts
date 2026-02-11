@@ -1,22 +1,24 @@
-import { doInDbContext } from '../secrets';
+import { doInDbContext } from '@/secrets';
 import {
   LabExtendedData,
   LabNFT,
   MemesExtendedData,
   NFT
-} from '../entities/INFT';
-import { Logger } from '../logging';
-import * as sentryContext from '../sentry.context';
-import { MemesSeason } from '../entities/ISeason';
-import { NFTOwner } from '../entities/INFTOwner';
-import { NFT_MODE, processNFTs } from './nfts';
+} from '@/entities/INFT';
+import { Logger } from '@/logging';
+import * as sentryContext from '@/sentry.context';
+import { MemesSeason } from '@/entities/ISeason';
+import { MemesMintStat } from '@/entities/IMemesMintStat';
+import { NFTOwner } from '@/entities/INFTOwner';
+import { NFT_MODE, processNFTs } from '@/nftsLoop/nfts';
 import {
   findMemeLabExtendedData,
   findMemesExtendedData
-} from './nft_extended_data';
-import { Transaction } from '../entities/ITransaction';
-import { updateDistributionInfoFor } from './nft_distribution';
-import { enums } from '../enums';
+} from '@/nftsLoop/nft_extended_data';
+import { Transaction } from '@/entities/ITransaction';
+import { RedeemedSubscription } from '@/entities/ISubscription';
+import { updateDistributionInfoFor } from '@/nftsLoop/nft_distribution';
+import { enums } from '@/enums';
 
 const logger = Logger.get('NFTS_LOOP');
 
@@ -34,7 +36,9 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
         NFTOwner,
         LabNFT,
         LabExtendedData,
-        Transaction
+        Transaction,
+        MemesMintStat,
+        RedeemedSubscription
       ]
     }
   );

@@ -35,7 +35,7 @@ paths:
             minimum: 1
         - name: sort_direction
           in: query
-          description: Default is ASC
+          description: Default is ASC; applied to id sort
           required: false
           schema:
             type: string
@@ -1875,6 +1875,96 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiIdentitySubscriptionActions"
+  /memes-mint-stats:
+    get:
+      tags:
+        - Memes Mint Stats
+      summary: Get paginated memes mint stats
+      operationId: getMemesMintStats
+      parameters:
+        - name: page_size
+          in: query
+          description: Default is 50
+          required: false
+          schema:
+            type: number
+            format: int64
+            minimum: 1
+            maximum: 100
+        - name: page
+          in: query
+          description: Default is 1
+          required: false
+          schema:
+            type: number
+            format: int64
+            minimum: 1
+        - name: sort_direction
+          in: query
+          description: Default is ASC
+          required: false
+          schema:
+            type: string
+            enum:
+              - ASC
+              - DESC
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiMemesMintStatsPage"
+  /memes-mint-stats/total:
+    get:
+      tags:
+        - Memes Mint Stats
+      summary: Get total memes mint stats
+      operationId: getMemesMintStatsTotal
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiMemesMintStatsTotals"
+  /memes-mint-stats/yearly:
+    get:
+      tags:
+        - Memes Mint Stats
+      summary: Get yearly aggregated memes mint stats
+      operationId: getMemesMintStatsYearly
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ApiMemesMintStatsYearly"
+  /memes-mint-stats/{id}:
+    get:
+      tags:
+        - Memes Mint Stats
+      summary: Get memes mint stats for one meme id
+      operationId: getMemesMintStatsById
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiMemesMintStat"
+        "404":
+          description: Memes mint stats for id not found
   /nft-owners:
     get:
       tags:
@@ -6353,6 +6443,19 @@ components:
         media_url:
           type: string
           example: https://example.com/final/image.png
+    ApiCreateMentionedWave:
+      type: object
+      required:
+        - wave_name_in_content
+        - wave_id
+      properties:
+        wave_name_in_content:
+          type: string
+          minLength: 1
+        wave_id:
+          type: string
+          maxLength: 100
+          minLength: 1
     ApiCreateNewProfileProxy:
       type: object
       required:
@@ -6927,6 +7030,17 @@ components:
           type: boolean
         bookmarked:
           type: boolean
+    ApiDropId:
+      type: object
+      required:
+        - id
+        - serial_no
+      properties:
+        id:
+          type: string
+        serial_no:
+          type: integer
+          format: int64
     ApiDropMedia:
       type: object
       required:
@@ -6955,43 +7069,6 @@ components:
           type: string
           maxLength: 100
           nullable: true
-    ApiDropId:
-      type: object
-      required:
-        - id
-        - serial_no
-      properties:
-        id:
-          type: string
-        serial_no:
-          type: integer
-          format: int64
-    ApiMentionedWave:
-      type: object
-      required:
-        - wave_name_in_content
-        - wave_id
-      properties:
-        wave_name_in_content:
-          type: string
-          minLength: 1
-        wave_id:
-          type: string
-        wave:
-          $ref: "#/components/schemas/ApiWaveMin"
-    ApiCreateMentionedWave:
-      type: object
-      required:
-        - wave_name_in_content
-        - wave_id
-      properties:
-        wave_name_in_content:
-          type: string
-          minLength: 1
-        wave_id:
-          type: string
-          maxLength: 100
-          minLength: 1
     ApiDropMetadata:
       type: object
       required:
@@ -7765,6 +7842,119 @@ components:
         first_unread_drop_serial_no:
           type: integer
           nullable: true
+    ApiMemesMintStat:
+      type: object
+      required:
+        - id
+        - mint_date
+        - mint_count
+        - proceeds_eth
+        - proceeds_usd
+        - artist_split_eth
+        - artist_split_usd
+      properties:
+        id:
+          type: integer
+          format: int64
+        mint_date:
+          type: string
+          format: date-time
+          nullable: true
+        mint_count:
+          type: integer
+          format: int64
+        proceeds_eth:
+          type: number
+          format: double
+        proceeds_usd:
+          type: number
+          format: double
+        artist_split_eth:
+          type: number
+          format: double
+        artist_split_usd:
+          type: number
+          format: double
+    ApiMemesMintStatsPage:
+      type: object
+      required:
+        - data
+      allOf:
+        - $ref: "#/components/schemas/ApiPageWithNextUriBase"
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiMemesMintStat"
+    ApiMemesMintStatsTotals:
+      type: object
+      required:
+        - mint_count
+        - proceeds_eth
+        - proceeds_usd
+        - artist_split_eth
+        - artist_split_usd
+        - artists_count
+      properties:
+        mint_count:
+          type: integer
+          format: int64
+        proceeds_eth:
+          type: number
+          format: double
+        proceeds_usd:
+          type: number
+          format: double
+        artist_split_eth:
+          type: number
+          format: double
+        artist_split_usd:
+          type: number
+          format: double
+        artists_count:
+          type: integer
+          format: int64
+    ApiMemesMintStatsYearly:
+      type: object
+      required:
+        - year
+        - mint_count
+        - proceeds_eth
+        - proceeds_usd
+        - artist_split_eth
+        - artist_split_usd
+      properties:
+        year:
+          type: integer
+          format: int64
+        mint_count:
+          type: integer
+          format: int64
+        proceeds_eth:
+          type: number
+          format: double
+        proceeds_usd:
+          type: number
+          format: double
+        artist_split_eth:
+          type: number
+          format: double
+        artist_split_usd:
+          type: number
+          format: double
+    ApiMentionedWave:
+      type: object
+      required:
+        - wave_name_in_content
+        - wave_id
+      properties:
+        wave_name_in_content:
+          type: string
+          minLength: 1
+        wave_id:
+          type: string
+        wave:
+          $ref: "#/components/schemas/ApiWaveMin"
     ApiMintMetrics:
       type: object
       required:
