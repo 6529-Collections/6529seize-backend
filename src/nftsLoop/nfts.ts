@@ -4,6 +4,7 @@ import {
   MEME_8_EDITION_BURN_ADJUSTMENT,
   MEMELAB_CONTRACT,
   MEMES_CONTRACT,
+  MEMES_MINT_PRICE,
   NFT_HTML_LINK,
   NFT_ORIGINAL_IMAGE_LINK,
   NFT_SCALED1000_IMAGE_LINK,
@@ -14,29 +15,34 @@ import {
 } from '@/constants';
 import { deployerDropper } from '@/deployer-dropper';
 import { env } from '@/env';
-import axios from 'axios';
-import { ethers } from 'ethers';
-import { In, MoreThan } from 'typeorm';
-import { processArtists } from '../artists';
+import { processArtists } from '@/artists';
 import {
+  deleteArtistsNotIn,
   fetchAllArtists,
   fetchMemesWithSeason,
   getDataSource,
   persistArtists
-} from '../db';
-import { LabNFT, NFT, NFTWithExtendedData } from '../entities/INFT';
-import { NFTOwner } from '../entities/INFTOwner';
-import { Transaction } from '../entities/ITransaction';
-import { TokenType } from '../enums';
-import { Logger } from '../logging';
-import { getRpcProvider } from '../rpc-provider';
-import { equalIgnoreCase } from '../strings';
-import { text } from '../text';
-import { Time } from '../time';
+} from '@/db';
+import { MemesMintStat } from '@/entities/IMemesMintStat';
+import { LabNFT, NFT, NFTWithExtendedData } from '@/entities/INFT';
+import { NFTOwner } from '@/entities/INFTOwner';
+import { RedeemedSubscription } from '@/entities/ISubscription';
+import { Transaction } from '@/entities/ITransaction';
+import { TokenType } from '@/enums';
+import { Logger } from '@/logging';
+import { getRpcProvider } from '@/rpc-provider';
+import { equalIgnoreCase } from '@/strings';
+import { text } from '@/text';
+import { Time } from '@/time';
+import axios from 'axios';
+import { ethers } from 'ethers';
+import { In, MoreThan, Not, Repository } from 'typeorm';
 
 const logger = Logger.get('nfts');
 
 const MINT_DATE_GRACE_PERIOD_DAYS = 7;
+const MEMES_MINT_STATS_CLOSE_HOUR = 17;
+const ARTIST_SPLIT_RATIO = 0.5;
 
 export enum NFT_MODE {
   DISCOVER = 'discover',
@@ -184,6 +190,7 @@ async function processNFTsForType(
   } else {
     logger.info(`🔄 Refreshing existing ${EntityClass.name}s`);
     await refreshExistingNFTs(nftMap, provider);
+    await populateMintStatsForEligibleNFTs(nftMap);
   }
 
   logger.info(`🔄 Updating supply for ${EntityClass.name}s`);
@@ -198,10 +205,6 @@ async function processNFTsForType(
   if (toSave.length > 0) {
     await repo.save(toSave);
     logger.info(`✅ Saved ${toSave.length} ${EntityClass.name}s`);
-
-    const artists = await fetchAllArtists();
-    const newArtists = await processArtists(artists, toSave);
-    await persistArtists(newArtists);
 
     if (mode === NFT_MODE.DISCOVER && EntityClass === NFT) {
       try {
@@ -706,6 +709,146 @@ async function updateSupply(
   }
 }
 
+async function populateMintStatsForEligibleNFTs(
+  nftMap: Map<string, { nft: NFT | LabNFT; changed: boolean }>
+) {
+  const statsRepo = getDataSource().getRepository(MemesMintStat);
+  const txRepo = getDataSource().getRepository(Transaction);
+
+  for (const { nft } of Array.from(nftMap.values())) {
+    if (!equalIgnoreCase(nft.contract, MEMES_CONTRACT) || !nft.mint_date) {
+      continue;
+    }
+
+    const mintDate = new Date(nft.mint_date);
+    if (Number.isNaN(mintDate.getTime())) {
+      logger.warn(
+        `⚠️ Skipping mint stats for meme #${nft.id}, invalid mint_date ${nft.mint_date}`
+      );
+      continue;
+    }
+
+    if (!isMintStatsEligible(mintDate)) {
+      continue;
+    }
+
+    logger.info(`🔄 Populating mint stats for meme #${nft.id}`);
+    await populateMintStatsIfMissing(nft.id, mintDate, statsRepo, txRepo);
+  }
+}
+
+function isMintStatsEligible(mintDate: Date): boolean {
+  const mintCloseAt = new Date(
+    Date.UTC(
+      mintDate.getUTCFullYear(),
+      mintDate.getUTCMonth(),
+      mintDate.getUTCDate() + 1,
+      MEMES_MINT_STATS_CLOSE_HOUR,
+      0,
+      0,
+      0
+    )
+  );
+
+  return Time.now().gte(Time.fromDate(mintCloseAt));
+}
+
+function roundUsd(amount: number): number {
+  return Math.round((amount + Number.EPSILON) * 100) / 100;
+}
+
+async function populateMintStatsIfMissing(
+  tokenId: number,
+  mintDate: Date,
+  statsRepo: Repository<MemesMintStat>,
+  txRepo: Repository<Transaction>
+): Promise<void> {
+  const mintTransactions = await txRepo.find({
+    select: ['token_count', 'eth_price_usd'],
+    where: {
+      contract: MEMES_CONTRACT,
+      token_id: tokenId,
+      from_address: In([NULL_ADDRESS, MANIFOLD]),
+      to_address: Not(In([NULL_ADDRESS, MANIFOLD])),
+      value: MoreThan(0)
+    }
+  });
+  const nonZeroEthUsd = mintTransactions
+    .map((tx) => Number(tx.eth_price_usd ?? 0))
+    .filter((v) => v > 0);
+  const fallbackEthUsd =
+    nonZeroEthUsd.length > 0
+      ? nonZeroEthUsd.reduce((sum, v) => sum + v, 0) / nonZeroEthUsd.length
+      : 0;
+
+  const redeemedRepo = getDataSource().getRepository(RedeemedSubscription);
+  const redeemedAgg = await redeemedRepo
+    .createQueryBuilder('rs')
+    .leftJoin(
+      Transaction,
+      't',
+      't.transaction = rs.transaction AND t.contract = rs.contract AND t.token_id = rs.token_id AND LOWER(t.to_address) = LOWER(rs.address)'
+    )
+    .select('COALESCE(SUM(rs.count), 0)', 'redeemedCount')
+    .addSelect(
+      'COALESCE(SUM(rs.count * :mintPrice * COALESCE(NULLIF(t.eth_price_usd, 0), :fallbackEthUsd)), 0)',
+      'redeemedUsdPrice'
+    )
+    .where('rs.contract = :contract', { contract: MEMES_CONTRACT })
+    .andWhere('rs.token_id = :tokenId', { tokenId })
+    .setParameter('mintPrice', MEMES_MINT_PRICE)
+    .setParameter('fallbackEthUsd', fallbackEthUsd)
+    .getRawOne<{
+      redeemedCount: string | number;
+      redeemedUsdPrice: string | number;
+    }>();
+
+  const mintCount = mintTransactions.reduce(
+    (sum, tx) => sum + Number(tx.token_count ?? 0),
+    0
+  );
+  const mintedUsdPrice = mintTransactions.reduce((sum, tx) => {
+    const ethUsdRaw = Number(tx.eth_price_usd ?? 0);
+    const ethUsd = ethUsdRaw > 0 ? ethUsdRaw : fallbackEthUsd;
+    return sum + Number(tx.token_count ?? 0) * MEMES_MINT_PRICE * ethUsd;
+  }, 0);
+  const redeemedCount = Number(redeemedAgg?.redeemedCount ?? 0);
+  const redeemedUsdPrice = Number(redeemedAgg?.redeemedUsdPrice ?? 0);
+  const totalMintCount = mintCount + redeemedCount;
+  const proceedsEth = totalMintCount * MEMES_MINT_PRICE;
+  const proceedsUsd = roundUsd(mintedUsdPrice + redeemedUsdPrice);
+  const artistSplitEth = proceedsEth * ARTIST_SPLIT_RATIO;
+  const artistSplitUsd = roundUsd(proceedsUsd * ARTIST_SPLIT_RATIO);
+
+  const payload = {
+    id: tokenId,
+    mint_date: mintDate,
+    mint_count: totalMintCount,
+    proceeds_eth: proceedsEth,
+    proceeds_usd: proceedsUsd,
+    artist_split_eth: artistSplitEth,
+    artist_split_usd: artistSplitUsd
+  };
+
+  const insertResult = await statsRepo
+    .createQueryBuilder()
+    .insert()
+    .into(MemesMintStat)
+    .values(payload)
+    .orIgnore()
+    .execute();
+
+  const wasInserted = Number(insertResult?.raw?.affectedRows ?? 0) > 0;
+  if (!wasInserted) {
+    logger.info(`ℹ️ Mint stats already exist for meme #${tokenId}, skipping`);
+    return;
+  }
+
+  logger.info(
+    `✅ Mint stats inserted for meme #${tokenId} [mint_count=${totalMintCount}] [proceeds_eth=${proceedsEth}] [proceeds_usd=${proceedsUsd}] [artist_split_eth=${artistSplitEth}] [artist_split_usd=${artistSplitUsd}]`
+  );
+}
+
 const getMintPrice = async (contract: string, tokenId: number) => {
   const repo = getDataSource().getRepository(Transaction);
   const firstMintTransaction = await repo.findOne({
@@ -739,4 +882,34 @@ export async function processNFTs(mode: NFT_MODE) {
   const provider = getRpcProvider();
   await processNFTsForType(NFT, NFT_CONTRACTS, mode, provider, true);
   await processNFTsForType(LabNFT, LABNFT_CONTRACTS, mode, provider, false);
+  if (mode === NFT_MODE.REFRESH) {
+    await syncArtists();
+  }
+}
+
+async function syncArtists() {
+  const artists = await fetchAllArtists();
+  const allMemesAndGradients = await getDataSource()
+    .getRepository(NFT)
+    .find({
+      select: ['id', 'contract', 'artist']
+    });
+  const allMemelab = await getDataSource()
+    .getRepository(LabNFT)
+    .find({
+      select: ['id', 'contract', 'artist']
+    });
+  const allNfts = [...allMemesAndGradients, ...allMemelab];
+
+  logger.info(
+    `🔄 Reconciling artists from ${allNfts.length} NFTs (memes/gradients + memelab)`
+  );
+
+  const reconciledArtists = await processArtists(artists, allNfts);
+  await persistArtists(reconciledArtists);
+  await deleteArtistsNotIn(reconciledArtists.map((a) => a.name));
+
+  logger.info(
+    `✅ Artists reconciliation complete [current=${reconciledArtists.length}]`
+  );
 }

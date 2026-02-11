@@ -104,6 +104,10 @@ export * from '../models/ApiLightDrop';
 export * from '../models/ApiLoginRequest';
 export * from '../models/ApiLoginResponse';
 export * from '../models/ApiMarkDropUnreadResponse';
+export * from '../models/ApiMemesMintStat';
+export * from '../models/ApiMemesMintStatsPage';
+export * from '../models/ApiMemesMintStatsTotals';
+export * from '../models/ApiMemesMintStatsYearly';
 export * from '../models/ApiMentionedWave';
 export * from '../models/ApiMintMetrics';
 export * from '../models/ApiMintMetricsPage';
@@ -373,6 +377,10 @@ import { ApiLightDrop         } from '../models/ApiLightDrop';
 import { ApiLoginRequest } from '../models/ApiLoginRequest';
 import { ApiLoginResponse } from '../models/ApiLoginResponse';
 import { ApiMarkDropUnreadResponse } from '../models/ApiMarkDropUnreadResponse';
+import { ApiMemesMintStat } from '../models/ApiMemesMintStat';
+import { ApiMemesMintStatsPage } from '../models/ApiMemesMintStatsPage';
+import { ApiMemesMintStatsTotals } from '../models/ApiMemesMintStatsTotals';
+import { ApiMemesMintStatsYearly } from '../models/ApiMemesMintStatsYearly';
 import { ApiMentionedWave } from '../models/ApiMentionedWave';
 import { ApiMintMetrics } from '../models/ApiMintMetrics';
 import { ApiMintMetricsPage } from '../models/ApiMintMetricsPage';
@@ -682,6 +690,10 @@ let typeMap: {[index: string]: any} = {
     "ApiLoginRequest": ApiLoginRequest,
     "ApiLoginResponse": ApiLoginResponse,
     "ApiMarkDropUnreadResponse": ApiMarkDropUnreadResponse,
+    "ApiMemesMintStat": ApiMemesMintStat,
+    "ApiMemesMintStatsPage": ApiMemesMintStatsPage,
+    "ApiMemesMintStatsTotals": ApiMemesMintStatsTotals,
+    "ApiMemesMintStatsYearly": ApiMemesMintStatsYearly,
     "ApiMentionedWave": ApiMentionedWave,
     "ApiMintMetrics": ApiMintMetrics,
     "ApiMintMetricsPage": ApiMintMetricsPage,
