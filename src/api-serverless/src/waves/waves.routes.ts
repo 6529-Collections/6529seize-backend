@@ -77,6 +77,7 @@ import {
 } from './wave-decisions-api.service';
 import { waveApiService } from './wave.api.service';
 import { SearchWavesParams } from './waves.api.db';
+import { ApiWaveMetadataType } from '@/api/generated/models/ApiWaveMetadataType';
 
 const router = asyncRouter();
 
@@ -896,7 +897,7 @@ const WaveRequiredMetadataSchema = Joi.object<ApiWaveRequiredMetadata>({
   name: Joi.string().required().max(250).min(1),
   type: Joi.string()
     .required()
-    .valid(...Object.values(ApiWaveParticipationRequirement))
+    .valid(...Object.values(ApiWaveMetadataType))
 });
 
 const WaveParticipationSchema = Joi.object<ApiCreateNewWaveParticipationConfig>(
