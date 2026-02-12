@@ -1,4 +1,4 @@
-import { randomUUID } from 'crypto';
+import { randomUUID } from 'node:crypto';
 import { collections } from '@/collections';
 import { DropType } from '@/entities/IDrop';
 import { ProfileProxyActionType } from '@/entities/IProfileProxyAction';
