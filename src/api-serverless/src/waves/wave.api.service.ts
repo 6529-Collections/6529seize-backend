@@ -78,6 +78,7 @@ import {
   metricsRecorder,
   MetricsRecorder
 } from '../../../metrics/MetricsRecorder';
+import { CurationsDb, curationsDb } from '@/api/curations/curations.db';
 
 export class WaveApiService {
   constructor(
@@ -92,7 +93,8 @@ export class WaveApiService {
     private readonly reactionsService: ReactionsService,
     private readonly userNotifier: UserNotifier,
     private readonly identityFetcher: IdentityFetcher,
-    private readonly metricsRecorder: MetricsRecorder
+    private readonly metricsRecorder: MetricsRecorder,
+    private readonly curationsDb: CurationsDb
   ) {}
 
   public async createWave(
@@ -1251,6 +1253,10 @@ export class WaveApiService {
             waveId,
             ctxWithConnection
           ),
+          this.curationsDb.deleteDropCurationsByWaveId(
+            waveId,
+            ctxWithConnection
+          ),
           this.dropVotingService.deleteVoteByWave(waveId, ctxWithConnection),
           this.reactionsService.deleteReactionsByWave(
             waveId,
@@ -1259,6 +1265,10 @@ export class WaveApiService {
           this.wavesApiDb.deleteDropEntitiesByWaveId(waveId, ctxWithConnection),
           this.wavesApiDb.deleteWaveMetrics(waveId, ctxWithConnection),
           this.wavesApiDb.deleteWave(waveId, ctxWithConnection),
+          this.curationsDb.deleteWaveCurationGroupsByWaveId(
+            waveId,
+            ctxWithConnection
+          ),
           this.wavesApiDb.deleteWaveOutcomes(waveId, ctxWithConnection),
           this.wavesApiDb.deleteWaveOutcomeDistributionItems(
             waveId,
@@ -1581,5 +1591,6 @@ export const waveApiService = new WaveApiService(
   reactionsService,
   userNotifier,
   identityFetcher,
-  metricsRecorder
+  metricsRecorder,
+  curationsDb
 );

@@ -1280,6 +1280,76 @@ paths:
           description: Invalid request
         "404":
           description: Drop not found
+  /drops/{dropId}/curations:
+    get:
+      tags:
+        - Drops
+      summary: Get identities who curated a drop
+      operationId: getDropCurators
+      parameters:
+        - name: dropId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+        - name: page_size
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+            maximum: 2000
+        - name: sort_direction
+          in: query
+          description: Default is DESC
+          required: false
+          schema:
+            $ref: "#/components/schemas/ApiPageSortDirection"
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiProfileMinsPage"
+        "404":
+          description: Drop not found
+    post:
+      tags:
+        - Drops
+      summary: Mark a drop as curated by authenticated user
+      operationId: addDropCuration
+      parameters:
+        - name: dropId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "201":
+          description: successful operation
+    delete:
+      tags:
+        - Drops
+      summary: Remove authenticated user"s curation from a drop
+      operationId: removeDropCuration
+      parameters:
+        - name: dropId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "201":
+          description: successful operation
   /drops/{dropId}/reactions:
     post:
       tags:
@@ -4716,6 +4786,11 @@ paths:
               - CREATED_AT
               - RATING_PREDICTION
               - TREND
+        - name: curated_by_group
+          in: query
+          required: false
+          schema:
+            type: string
       responses:
         "200":
           description: successful operation
@@ -4723,6 +4798,100 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiDropsLeaderboardPage"
+  /waves/{id}/curation-groups:
+    get:
+      tags:
+        - Waves
+      summary: List curation groups configured for wave
+      operationId: listWaveCurationGroups
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ApiWaveCurationGroup"
+    post:
+      tags:
+        - Waves
+      summary: Create curation group for wave
+      operationId: createWaveCurationGroup
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApiWaveCurationGroupRequest"
+      responses:
+        "201":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiWaveCurationGroup"
+  /waves/{id}/curation-groups/{curationGroupId}:
+    post:
+      tags:
+        - Waves
+      summary: Update curation group for wave
+      operationId: updateWaveCurationGroup
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: curationGroupId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApiWaveCurationGroupRequest"
+      responses:
+        "201":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiWaveCurationGroup"
+    delete:
+      tags:
+        - Waves
+      summary: Delete curation group from wave
+      operationId: deleteWaveCurationGroup
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: curationGroupId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: successful operation
   /waves/{id}/logs:
     get:
       tags:
@@ -7013,6 +7182,8 @@ components:
         - reaction
         - boosted
         - bookmarked
+        - curatable
+        - curated
       properties:
         rating:
           type: number
@@ -7029,6 +7200,10 @@ components:
         boosted:
           type: boolean
         bookmarked:
+          type: boolean
+        curatable:
+          type: boolean
+        curated:
           type: boolean
     ApiDropId:
       type: object
@@ -8596,6 +8771,17 @@ components:
             type: string
         is_wave_creator:
           type: boolean
+    ApiProfileMinsPage:
+      type: object
+      required:
+        - data
+      allOf:
+        - $ref: "#/components/schemas/ApiPageBase"
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiProfileMin"
     ApiProfileProxy:
       type: object
       required:
@@ -9432,6 +9618,42 @@ components:
         - REP
         - XTDH
         - TDH_PLUS_XTDH
+    ApiWaveCurationGroup:
+      type: object
+      required:
+        - id
+        - name
+        - wave_id
+        - group_id
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        wave_id:
+          type: string
+        group_id:
+          type: string
+        created_at:
+          type: number
+          format: int64
+        updated_at:
+          type: number
+          format: int64
+    ApiWaveCurationGroupRequest:
+      type: object
+      required:
+        - name
+        - group_id
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 50
+        group_id:
+          type: string
     ApiWaveDecision:
       type: object
       required:

@@ -39,6 +39,10 @@ import {
   dropBookmarksDb,
   DropBookmarksDb
 } from '../api-serverless/src/drops/drop-bookmarks.db';
+import {
+  CurationsDb,
+  curationsDb
+} from '../api-serverless/src/curations/curations.db';
 import { ApiIdentity } from '../api-serverless/src/generated/models/ApiIdentity';
 import { identitySubscriptionsDb } from '../api-serverless/src/identity-subscriptions/identity-subscriptions.db';
 import { identityFetcher } from '../api-serverless/src/identities/identity.fetcher';
@@ -61,7 +65,8 @@ export class ProfilesService {
     private readonly reactionsDb: ReactionsDb,
     private readonly dropVotingDb: DropVotingDb,
     private readonly xTdhRepository: XTdhRepository,
-    private readonly dropBookmarksDb: DropBookmarksDb
+    private readonly dropBookmarksDb: DropBookmarksDb,
+    private readonly curationsDb: CurationsDb
   ) {}
 
   public async getProfileAndConsolidationsByIdentity(
@@ -384,6 +389,7 @@ export class ProfilesService {
         );
         await this.mergeVotingStuff(sourceIdentity, target, connectionHolder);
         await this.mergeBookmarks(sourceIdentity, target, connectionHolder);
+        await this.mergeCurations(sourceIdentity, target, connectionHolder);
         const targetProfile = await this.profilesDb.getProfileById(
           target,
           connectionHolder
@@ -541,6 +547,20 @@ export class ProfilesService {
   ) {
     await this.dropBookmarksDb.mergeOnProfileIdChange(
       { previous_id: sourceIdentity, new_id: target },
+      { connection: connectionHolder }
+    );
+  }
+
+  private async mergeCurations(
+    sourceIdentity: string,
+    target: string,
+    connectionHolder: ConnectionWrapper<any>
+  ) {
+    await this.curationsDb.mergeOnProfileIdChange(
+      {
+        previous_id: sourceIdentity,
+        new_id: target
+      },
       { connection: connectionHolder }
     );
   }
@@ -794,5 +814,6 @@ export const profilesService = new ProfilesService(
   reactionsDb,
   dropVotingDb,
   xTdhRepository,
-  dropBookmarksDb
+  dropBookmarksDb,
+  curationsDb
 );

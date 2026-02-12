@@ -19,6 +19,10 @@ import {
   dropBookmarksDb,
   DropBookmarksDb
 } from '../api-serverless/src/drops/drop-bookmarks.db';
+import {
+  CurationsDb,
+  curationsDb
+} from '../api-serverless/src/curations/curations.db';
 import { userGroupsService } from '../api-serverless/src/community-members/user-groups.service';
 import { WaveEntity } from '../entities/IWave';
 import { DropEntity } from '../entities/IDrop';
@@ -29,7 +33,8 @@ export class DeleteDropUseCase {
     private readonly reactionsService: ReactionsService,
     private readonly dropVotingService: DropVotingService,
     private readonly dropsDb: DropsDb,
-    private readonly dropBookmarksDb: DropBookmarksDb
+    private readonly dropBookmarksDb: DropBookmarksDb,
+    private readonly curationsDb: CurationsDb
   ) {}
 
   public async execute(
@@ -92,6 +97,10 @@ export class DeleteDropUseCase {
           connection
         }),
         this.dropVotingService.deleteVotes(dropId, { timer, connection }),
+        this.curationsDb.deleteDropCurationsByDropId(dropId, {
+          timer,
+          connection
+        }),
         this.dropsDb.deleteDropFeedItems(dropId, { timer, connection }),
         this.dropsDb.deleteDropNotifications(dropId, { timer, connection }),
         this.dropsDb.deleteDropSubscriptions(dropId, { timer, connection }),
@@ -160,5 +169,6 @@ export const deleteDrop = new DeleteDropUseCase(
   reactionsService,
   dropVotingService,
   dropsDb,
-  dropBookmarksDb
+  dropBookmarksDb,
+  curationsDb
 );

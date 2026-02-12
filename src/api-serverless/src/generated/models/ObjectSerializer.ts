@@ -130,6 +130,7 @@ export * from '../models/ApiPageWithNextUriBase';
 export * from '../models/ApiPageWithoutCount';
 export * from '../models/ApiProfileClassification';
 export * from '../models/ApiProfileMin';
+export * from '../models/ApiProfileMinsPage';
 export * from '../models/ApiProfileProxy';
 export * from '../models/ApiProfileProxyAction';
 export * from '../models/ApiProfileProxyActionType';
@@ -171,6 +172,8 @@ export * from '../models/ApiWaveConfig';
 export * from '../models/ApiWaveContributorOverview';
 export * from '../models/ApiWaveCreditScope';
 export * from '../models/ApiWaveCreditType';
+export * from '../models/ApiWaveCurationGroup';
+export * from '../models/ApiWaveCurationGroupRequest';
 export * from '../models/ApiWaveDecision';
 export * from '../models/ApiWaveDecisionAward';
 export * from '../models/ApiWaveDecisionPause';
@@ -386,6 +389,7 @@ import { ApiPageWithNextUriBase } from '../models/ApiPageWithNextUriBase';
 import { ApiPageWithoutCount } from '../models/ApiPageWithoutCount';
 import { ApiProfileClassification } from '../models/ApiProfileClassification';
 import { ApiProfileMin } from '../models/ApiProfileMin';
+import { ApiProfileMinsPage } from '../models/ApiProfileMinsPage';
 import { ApiProfileProxy } from '../models/ApiProfileProxy';
 import { ApiProfileProxyAction             } from '../models/ApiProfileProxyAction';
 import { ApiProfileProxyActionType } from '../models/ApiProfileProxyActionType';
@@ -427,6 +431,8 @@ import { ApiWaveConfig          } from '../models/ApiWaveConfig';
 import { ApiWaveContributorOverview } from '../models/ApiWaveContributorOverview';
 import { ApiWaveCreditScope } from '../models/ApiWaveCreditScope';
 import { ApiWaveCreditType } from '../models/ApiWaveCreditType';
+import { ApiWaveCurationGroup } from '../models/ApiWaveCurationGroup';
+import { ApiWaveCurationGroupRequest } from '../models/ApiWaveCurationGroupRequest';
 import { ApiWaveDecision } from '../models/ApiWaveDecision';
 import { ApiWaveDecisionAward       } from '../models/ApiWaveDecisionAward';
 import { ApiWaveDecisionPause } from '../models/ApiWaveDecisionPause';
@@ -676,6 +682,7 @@ let typeMap: {[index: string]: any} = {
     "ApiPageWithNextUriBase": ApiPageWithNextUriBase,
     "ApiPageWithoutCount": ApiPageWithoutCount,
     "ApiProfileMin": ApiProfileMin,
+    "ApiProfileMinsPage": ApiProfileMinsPage,
     "ApiProfileProxy": ApiProfileProxy,
     "ApiProfileProxyAction": ApiProfileProxyAction,
     "ApiPushNotificationDevice": ApiPushNotificationDevice,
@@ -713,6 +720,8 @@ let typeMap: {[index: string]: any} = {
     "ApiWaveChatConfig": ApiWaveChatConfig,
     "ApiWaveConfig": ApiWaveConfig,
     "ApiWaveContributorOverview": ApiWaveContributorOverview,
+    "ApiWaveCurationGroup": ApiWaveCurationGroup,
+    "ApiWaveCurationGroupRequest": ApiWaveCurationGroupRequest,
     "ApiWaveDecision": ApiWaveDecision,
     "ApiWaveDecisionAward": ApiWaveDecisionAward,
     "ApiWaveDecisionPause": ApiWaveDecisionPause,
