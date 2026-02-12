@@ -44,8 +44,18 @@ import { dropBookmarksApiService } from './drop-bookmarks.api.service';
 import { ApiPageSortDirection } from '../generated/models/ApiPageSortDirection';
 import { DEFAULT_MAX_SIZE, DEFAULT_PAGE_SIZE } from '../page-request';
 import { ApiDropBoostsPage } from '../generated/models/ApiDropBoostsPage';
+import { ApiProfileMinsPage } from '../generated/models/ApiProfileMinsPage';
+import { curationsApiService } from '@/api/curations/curations.api.service';
+import { giveReadReplicaTimeToCatchUp } from '@/api/api-helpers';
 
 const router = asyncRouter();
+
+type GetDropCurationsRequest = {
+  readonly drop_id: string;
+  readonly page_size: number;
+  readonly page: number;
+  readonly sort_direction: ApiPageSortDirection;
+};
 
 router.get(
   '/',
@@ -261,6 +271,77 @@ router.delete(
         authenticationContext
       }
     );
+    res.send({});
+  }
+);
+
+router.post(
+  '/:drop_id/curations',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<{ drop_id: string }, any, any, any, any>,
+    res: Response<ApiResponse<any>>
+  ) => {
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
+    await curationsApiService.addDropCuration(req.params.drop_id, {
+      authenticationContext,
+      timer
+    });
+    await giveReadReplicaTimeToCatchUp();
+    res.send({});
+  }
+);
+
+router.get(
+  '/:drop_id/curations',
+  maybeAuthenticatedUser(),
+  async (
+    req: Request<
+      { drop_id: string },
+      any,
+      any,
+      Omit<GetDropCurationsRequest, 'drop_id'>,
+      any
+    >,
+    res: Response<ApiResponse<ApiProfileMinsPage>>
+  ) => {
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
+    const searchRequest: GetDropCurationsRequest = getValidatedByJoiOrThrow(
+      { drop_id: req.params.drop_id, ...req.query },
+      GetDropCurationsRequestSchema
+    );
+    const result = await curationsApiService.findDropCurators(
+      {
+        dropId: searchRequest.drop_id,
+        page: searchRequest.page,
+        page_size: searchRequest.page_size,
+        sort_direction: searchRequest.sort_direction
+      },
+      {
+        timer,
+        authenticationContext
+      }
+    );
+    res.send(result);
+  }
+);
+
+router.delete(
+  '/:drop_id/curations',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<{ drop_id: string }, any, any, any, any>,
+    res: Response<ApiResponse<any>>
+  ) => {
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
+    await curationsApiService.removeDropCuration(req.params.drop_id, {
+      authenticationContext,
+      timer
+    });
+    await giveReadReplicaTimeToCatchUp();
     res.send({});
   }
 );
@@ -723,6 +804,19 @@ const GetDropBoostsRequestSchema = Joi.object<GetDropsBoostsRequest>({
     .valid(...Object.values(ApiPageSortDirection))
     .default(ApiPageSortDirection.Desc),
   sort: Joi.string().valid('boosted_at').default('boosted_at')
+});
+
+const GetDropCurationsRequestSchema = Joi.object<GetDropCurationsRequest>({
+  drop_id: Joi.string().required(),
+  page_size: Joi.number()
+    .integer()
+    .default(DEFAULT_PAGE_SIZE)
+    .max(DEFAULT_MAX_SIZE)
+    .min(1),
+  page: Joi.number().integer().default(1).min(1),
+  sort_direction: Joi.string()
+    .valid(...Object.values(ApiPageSortDirection))
+    .default(ApiPageSortDirection.Desc)
 });
 
 async function assertDropIsCorrectlySigned(

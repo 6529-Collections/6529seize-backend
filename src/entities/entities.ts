@@ -25,6 +25,7 @@ export {
   DropReferencedNftEntity
 } from './IDrop';
 export { DropBookmarkEntity } from './IDropBookmark';
+export { DropCurationEntity } from './IDropCuration';
 export { DropRankEntity } from './IDropRank';
 export { DropReactionsEntity } from './IDropReactions';
 export { DropRealVoteInTimeEntity } from './IDropRealVoteInTime';
@@ -143,6 +144,7 @@ export { WaveDropperMetricEntity } from './IWaveDropperMetric';
 export { WaveLeaderboardEntryEntity } from './IWaveLeaderboardEntry';
 export { WaveMetricEntity } from './IWaveMetric';
 export { WaveReaderMetricEntity } from './IWaveReaderMetric';
+export { WaveCurationGroupEntity } from './IWaveCurationGroup';
 export { WinnerDropVoterVoteEntity } from './IWinnerDropVoterVote';
 export { WSConnectionEntity } from './IWSConnection';
 export { XTdhGrantEntity } from './IXTdhGrant';

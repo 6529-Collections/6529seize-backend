@@ -64,6 +64,7 @@ import { numbers } from '../../../numbers';
 import { collections } from '../../../collections';
 import { DropReactionsResult, reactionsDb, ReactionsDb } from './reactions.db';
 import { dropBookmarksDb, DropBookmarksDb } from './drop-bookmarks.db';
+import { CurationsDb, curationsDb } from '@/api/curations/curations.db';
 
 export class DropsMappers {
   constructor(
@@ -75,7 +76,8 @@ export class DropsMappers {
     private readonly dropVotingDb: DropVotingDb,
     private readonly dropVotingService: DropVotingService,
     private readonly reactionsDb: ReactionsDb,
-    private readonly dropBookmarksDb: DropBookmarksDb
+    private readonly dropBookmarksDb: DropBookmarksDb,
+    private readonly curationsDb: CurationsDb
   ) {}
 
   public createDropApiToUseCaseModel({
@@ -523,6 +525,70 @@ export class DropsMappers {
       },
       {} as Record<string, ApiWaveMin>
     );
+    const allEntitiesById = allEntities.reduce(
+      (acc, it) => {
+        acc[it.id] = it;
+        return acc;
+      },
+      {} as Record<string, DropEntity>
+    );
+    const allDropIds = Object.keys(allEntitiesById);
+    const allWaveIds = collections.distinct(
+      allEntities.map((entity) => entity.wave_id)
+    );
+    const [waveCurationGroups, curatedDropsByContextProfile] =
+      await Promise.all([
+        this.curationsDb.findWaveCurationGroupsByWaveIds(
+          allWaveIds,
+          ctx.connection
+        ),
+        contextProfileId
+          ? this.curationsDb.findCuratedDropIdsByCurator(
+              {
+                dropIds: allDropIds,
+                curatorId: contextProfileId
+              },
+              ctx.connection
+            )
+          : Promise.resolve(new Set<string>())
+      ]);
+    const curationCommunityGroupIdsByWave = waveCurationGroups.reduce(
+      (acc, curationGroup) => {
+        const groupIds = acc[curationGroup.wave_id] ?? [];
+        groupIds.push(curationGroup.community_group_id);
+        acc[curationGroup.wave_id] = groupIds;
+        return acc;
+      },
+      {} as Record<string, string[]>
+    );
+    const wavesUserCanCurateIn = new Set<string>();
+    if (contextProfileId) {
+      for (const [waveId, groupIds] of Object.entries(
+        curationCommunityGroupIdsByWave
+      )) {
+        if (
+          groupIds.some((groupId) =>
+            groupIdsUserIsEligibleFor.includes(groupId)
+          )
+        ) {
+          wavesUserCanCurateIn.add(waveId);
+        }
+      }
+    }
+    const dropCuratableById = allDropIds.reduce(
+      (acc, dropId) => {
+        acc[dropId] = wavesUserCanCurateIn.has(allEntitiesById[dropId].wave_id);
+        return acc;
+      },
+      {} as Record<string, boolean>
+    );
+    const dropCuratedById = allDropIds.reduce(
+      (acc, dropId) => {
+        acc[dropId] = curatedDropsByContextProfile.has(dropId);
+        return acc;
+      },
+      {} as Record<string, boolean>
+    );
     const voterProfileIds = Object.values(dropsTopVoters)
       .map((it) => it.map((r) => r.voter_id))
       .flat();
@@ -592,13 +658,9 @@ export class DropsMappers {
         winningDropsTopRaters,
         winningDropsRatersCounts,
         winningDropsRatingsByVoter,
-        allEntities: allEntities.reduce(
-          (acc, it) => {
-            acc[it.id] = it;
-            return acc;
-          },
-          {} as Record<string, DropEntity>
-        ),
+        allEntities: allEntitiesById,
+        dropCuratableById,
+        dropCuratedById,
         weightedDropsRanks,
         weightedDropsRates,
         dropsInWavesWhereNegativeVotesAreNotAllowed,
@@ -632,6 +694,8 @@ export class DropsMappers {
     winningDropsRatersCounts,
     winningDropsRatingsByVoter,
     allEntities,
+    dropCuratableById,
+    dropCuratedById,
     weightedDropsRanks,
     weightedDropsRates,
     dropsInWavesWhereNegativeVotesAreNotAllowed,
@@ -667,6 +731,8 @@ export class DropsMappers {
     winningDropsRatersCounts: Record<string, number>;
     winningDropsRatingsByVoter: Record<string, number>;
     allEntities: Record<string, DropEntity>;
+    dropCuratableById: Record<string, boolean>;
+    dropCuratedById: Record<string, boolean>;
     weightedDropsRanks: Record<string, number>;
     weightedDropsRates: Record<string, { current: number; prediction: number }>;
     dropsInWavesWhereNegativeVotesAreNotAllowed: string[];
@@ -714,7 +780,9 @@ export class DropsMappers {
         max_rating: 0,
         reaction: contextProfileReaction,
         boosted: boostsByAuthenticatedUser.has(dropEntity.id),
-        bookmarked: bookmarksByAuthenticatedUser.has(dropEntity.id)
+        bookmarked: bookmarksByAuthenticatedUser.has(dropEntity.id),
+        curatable: dropCuratableById[dropEntity.id] ?? false,
+        curated: dropCuratedById[dropEntity.id] ?? false
       };
     }
     if (dropEntity.drop_type === DropType.WINNER) {
@@ -735,7 +803,9 @@ export class DropsMappers {
           max_rating: winningDropsRatingsByVoter[dropEntity.id] ?? 0,
           reaction: contextProfileReaction,
           boosted: boostsByAuthenticatedUser.has(dropEntity.id),
-          bookmarked: bookmarksByAuthenticatedUser.has(dropEntity.id)
+          bookmarked: bookmarksByAuthenticatedUser.has(dropEntity.id),
+          curatable: dropCuratableById[dropEntity.id] ?? false,
+          curated: dropCuratedById[dropEntity.id] ?? false
         };
       }
     } else if (dropEntity.drop_type === DropType.PARTICIPATORY) {
@@ -765,7 +835,9 @@ export class DropsMappers {
           max_rating: submissionDropsVotingRanges[dropEntity.id]?.max ?? 0,
           reaction: contextProfileReaction,
           boosted: boostsByAuthenticatedUser.has(dropEntity.id),
-          bookmarked: bookmarksByAuthenticatedUser.has(dropEntity.id)
+          bookmarked: bookmarksByAuthenticatedUser.has(dropEntity.id),
+          curatable: dropCuratableById[dropEntity.id] ?? false,
+          curated: dropCuratedById[dropEntity.id] ?? false
         };
       }
     }
@@ -813,6 +885,8 @@ export class DropsMappers {
                   winningDropsTopRaters,
                   winningDropsRatersCounts,
                   winningDropsRatingsByVoter,
+                  dropCuratableById,
+                  dropCuratedById,
                   weightedDropsRanks,
                   weightedDropsRates,
                   dropsInWavesWhereNegativeVotesAreNotAllowed,
@@ -862,6 +936,8 @@ export class DropsMappers {
                           winningDropsRatingsByVoter,
                           weightedDropsRanks,
                           weightedDropsRates,
+                          dropCuratableById,
+                          dropCuratedById,
                           dropsInWavesWhereNegativeVotesAreNotAllowed,
                           dropReactions,
                           boostsCount,
@@ -930,5 +1006,6 @@ export const dropsMappers = new DropsMappers(
   dropVotingDb,
   dropVotingService,
   reactionsDb,
-  dropBookmarksDb
+  dropBookmarksDb,
+  curationsDb
 );

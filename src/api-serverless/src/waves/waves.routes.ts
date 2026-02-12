@@ -78,8 +78,16 @@ import {
 import { waveApiService } from './wave.api.service';
 import { SearchWavesParams } from './waves.api.db';
 import { ApiWaveMetadataType } from '@/api/generated/models/ApiWaveMetadataType';
+import { ApiWaveCurationGroup } from '@/api/generated/models/ApiWaveCurationGroup';
+import { ApiWaveCurationGroupRequest } from '@/api/generated/models/ApiWaveCurationGroupRequest';
+import { curationsApiService } from '@/api/curations/curations.api.service';
 
 const router = asyncRouter();
+
+const WaveCurationGroupSchema = Joi.object<ApiWaveCurationGroupRequest>({
+  name: Joi.string().trim().min(1).max(50).required(),
+  group_id: Joi.string().required()
+});
 
 async function handleSimpleWaveAction(
   req: Request<{ id: string }, any, any, any, any>,
@@ -504,6 +512,7 @@ router.get(
         Joi.object<LeaderboardParams>({
           page_size: Joi.number().integer().min(1).max(100).default(50),
           page: Joi.number().integer().min(1).default(1),
+          curated_by_group: Joi.string().optional().default(null),
           sort_direction: Joi.string()
             .valid(...Object.values(PageSortDirection))
             .default(PageSortDirection.ASC),
@@ -523,6 +532,89 @@ router.get(
       }
     );
     res.send(result);
+  }
+);
+
+router.get(
+  '/:id/curation-groups',
+  maybeAuthenticatedUser(),
+  async (
+    req: Request<{ id: string }, any, any, any, any>,
+    res: Response<ApiResponse<ApiWaveCurationGroup[]>>
+  ) => {
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
+    const groups = await curationsApiService.findWaveCurationGroups(
+      req.params.id,
+      { authenticationContext, timer }
+    );
+    res.send(groups);
+  }
+);
+
+router.post(
+  '/:id/curation-groups',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<{ id: string }, any, ApiWaveCurationGroupRequest, any, any>,
+    res: Response<ApiResponse<ApiWaveCurationGroup>>
+  ) => {
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
+    const request = getValidatedByJoiOrThrow(req.body, WaveCurationGroupSchema);
+    const created = await curationsApiService.createWaveCurationGroup(
+      req.params.id,
+      request,
+      { authenticationContext, timer }
+    );
+    await giveReadReplicaTimeToCatchUp();
+    res.send(created);
+  }
+);
+
+router.post(
+  '/:id/curation-groups/:curationGroupId',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<
+      { id: string; curationGroupId: string },
+      any,
+      ApiWaveCurationGroupRequest,
+      any,
+      any
+    >,
+    res: Response<ApiResponse<ApiWaveCurationGroup>>
+  ) => {
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
+    const request = getValidatedByJoiOrThrow(req.body, WaveCurationGroupSchema);
+    const updated = await curationsApiService.updateWaveCurationGroup(
+      req.params.id,
+      req.params.curationGroupId,
+      request,
+      { authenticationContext, timer }
+    );
+    await giveReadReplicaTimeToCatchUp();
+    res.send(updated);
+  }
+);
+
+router.delete(
+  '/:id/curation-groups/:curationGroupId',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<{ id: string; curationGroupId: string }, any, any, any, any>,
+    res: Response<ApiResponse<any>>
+  ) => {
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
+    await curationsApiService.deleteWaveCurationGroup(
+      req.params.id,
+      req.params.curationGroupId,
+      { authenticationContext, timer }
+    );
+    await giveReadReplicaTimeToCatchUp();
+    res.send({});
   }
 );
 
