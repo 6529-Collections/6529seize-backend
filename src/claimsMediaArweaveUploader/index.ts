@@ -52,8 +52,7 @@ async function processMemeClaimUpload(memeId: number): Promise<void> {
   }
 
   await updateMemeClaim(memeId, {
-    media_uploading: true,
-    arweave_synced_at: null
+    media_uploading: true
   });
 
   logger.info(`Uploading claim media to Arweave for meme_id=${memeId}`);
@@ -66,7 +65,6 @@ async function processMemeClaimUpload(memeId: number): Promise<void> {
         ? arweaveTxIdFromUrl(uploadResult.animationLocationUrl)
         : null,
       metadata_location: arweaveTxIdFromUrl(uploadResult.metadataLocationUrl),
-      arweave_synced_at: Date.now(),
       media_uploading: false
     });
     await invalidateClaimCache(memeId);

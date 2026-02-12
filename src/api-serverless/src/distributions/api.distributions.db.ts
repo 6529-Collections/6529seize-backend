@@ -10,6 +10,7 @@ import { PaginatedResponse } from '../api-constants';
 import { constructFilters, getSearchFilters } from '../api-helpers';
 import { DistributionNormalized } from '../generated/models/DistributionNormalized';
 import { DistributionOverview } from '../generated/models/DistributionOverview';
+import { PhaseAirdrop } from '../generated/models/PhaseAirdrop';
 import { checkIsNormalized } from './api.distributions.service';
 
 export async function fetchDistributionPhases(
@@ -121,6 +122,22 @@ export async function fetchDistributionAirdrops(
 ): Promise<{ wallet: string; count: number }[]> {
   return sqlExecutor.execute<{ wallet: string; count: number }>(
     `SELECT wallet, count FROM ${DISTRIBUTION_TABLE} WHERE contract = :contract AND card_id = :cardId AND phase = 'Airdrop' ORDER BY wallet ASC`,
+    {
+      contract: contract.toLowerCase(),
+      cardId
+    }
+  );
+}
+
+export async function fetchDistributionAutomaticAirdrops(
+  contract: string,
+  cardId: number
+): Promise<PhaseAirdrop[]> {
+  return sqlExecutor.execute<PhaseAirdrop>(
+    `SELECT wallet, count as amount 
+     FROM ${DISTRIBUTION_TABLE}
+     WHERE contract = :contract AND card_id = :cardId AND phase = 'Airdrop'
+     ORDER BY count DESC, wallet ASC`,
     {
       contract: contract.toLowerCase(),
       cardId

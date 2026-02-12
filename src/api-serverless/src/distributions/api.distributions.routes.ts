@@ -15,7 +15,9 @@ import { asyncRouter } from '../async.router';
 import { needsAuthenticatedUser } from '../auth/auth';
 import { cacheRequest } from '../request-cache';
 import { authenticateSubscriptionsAdmin } from '../subscriptions/api.subscriptions.allowlist';
+import { mergeDuplicateWallets } from '@/api/api-wallet-helpers';
 import {
+  fetchDistributionAutomaticAirdrops,
   fetchDistributionOverview,
   fetchDistributionPhases,
   fetchDistributions
@@ -253,6 +255,28 @@ router.post(
       success: true,
       message: 'Successfully uploaded automatic airdrops'
     });
+  }
+);
+
+router.get(
+  `/distributions/:contract/:id/automatic_airdrops`,
+  cacheRequest(),
+  async function (req: Request<any, any, any, any>, res: Response) {
+    const contract = req.params.contract;
+    const cardId = numbers.parseIntOrNull(req.params.id);
+
+    if (cardId === null) {
+      return res.status(400).send({
+        success: false,
+        error: 'Invalid id parameter'
+      });
+    }
+
+    const airdrops = await fetchDistributionAutomaticAirdrops(contract, cardId);
+    const mergedAirdrops = mergeDuplicateWallets(airdrops).sort(
+      (a, b) => b.amount - a.amount || a.wallet.localeCompare(b.wallet)
+    );
+    return res.json(mergedAirdrops);
   }
 );
 

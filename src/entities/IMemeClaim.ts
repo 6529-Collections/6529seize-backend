@@ -61,9 +61,6 @@ export class MemeClaimEntity {
   @Column({ type: 'varchar', length: 1024, nullable: true })
   readonly metadata_location!: string | null;
 
-  @Column({ type: 'bigint', nullable: true })
-  readonly arweave_synced_at!: number | null;
-
   @Column({ type: 'boolean', default: false })
   readonly media_uploading!: boolean;
 

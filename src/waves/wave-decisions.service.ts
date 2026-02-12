@@ -19,14 +19,11 @@ import {
 import { WinnerDropVoterVoteEntity } from '../entities/IWinnerDropVoterVote';
 import { env } from '../env';
 import { deployerDropper, DeployerDropper } from '@/deployer-dropper';
-import {
-  memeClaimsService,
-  MemeClaimsService
-} from '@/meme-claims/meme-claims.service';
 import { Logger } from '../logging';
 import { RequestContext } from '../request.context';
 import { Time, Timer } from '../time';
 import { waveDecisionsDb, WaveDecisionsDb } from './wave-decisions.db';
+import { enqueueClaimBuild as publishClaimBuild } from '@/waves/claims-builder-publisher';
 import {
   waveLeaderboardCalculationService,
   WaveLeaderboardCalculationService
@@ -56,7 +53,6 @@ export class WaveDecisionsService {
     private readonly waveLeaderboardCalculationService: WaveLeaderboardCalculationService,
     private readonly dropVotingDb: DropVotingDb,
     private readonly dropsDb: DropsDb,
-    private readonly memeClaimsService: MemeClaimsService,
     private readonly deployerDropper: DeployerDropper
   ) {}
 
@@ -154,6 +150,7 @@ export class WaveDecisionsService {
     let decisionsExecuted = 0;
     while (decisionTime !== null && decisionTime < currentMillis) {
       if (latestDecisionTime < decisionTime) {
+        let claimBuildDropId: string | null = null;
         await this.waveDecisionsDb.executeNativeQueriesInTransaction(
           async (connection) => {
             this.logger.info(
@@ -164,7 +161,7 @@ export class WaveDecisionsService {
                 Time.millis(decisionTime!).isInInterval(p.start, p.end)
               );
               if (decisionNotOnPause) {
-                await this.createDecision(
+                claimBuildDropId = await this.createDecision(
                   { waveId, decisionTime, outcomes, time_lock_ms },
                   { timer, connection }
                 );
@@ -195,6 +192,9 @@ export class WaveDecisionsService {
             );
           }
         );
+        if (claimBuildDropId) {
+          await this.enqueueClaimBuild(claimBuildDropId, waveId);
+        }
       } else {
         decisionPointer = this.calculateNextDecisionPointer(
           decisionGaps,
@@ -245,7 +245,7 @@ export class WaveDecisionsService {
       time_lock_ms: number | null;
     },
     ctx: RequestContext
-  ) {
+  ): Promise<string | null> {
     ctx?.timer?.start(`${this.constructor.name}->createDecision`);
     await this.waveDecisionsDb.insertDecision(
       {
@@ -327,37 +327,42 @@ export class WaveDecisionsService {
     await this.waveDecisionsDb.insertDecisionWinners(decisionWinners, ctx);
     await this.waveDecisionsDb.updateDropsToWinners(winnerDropIds, ctx);
     const mainStageWaveId = env.getStringOrNull('MAIN_STAGE_WAVE_ID');
-    if (
-      mainStageWaveId &&
-      waveId === mainStageWaveId &&
-      winnerDrops.length > 0
-    ) {
-      const winner = winnerDrops[0];
-      try {
-        await this.memeClaimsService.createClaimForDrop(winner.drop_id, ctx);
-      } catch (err) {
-        const rawMessage = err instanceof Error ? err.message : String(err);
-        const alertError = new Error(
-          `createClaimForDrop failed for drop ${winner.drop_id} in wave ${waveId}: ${rawMessage}`
-        );
-        if (err instanceof Error && err.stack) {
-          alertError.stack = `${alertError.stack}\nCaused by:\n${err.stack}`;
-        }
-        await priorityAlertsContext.sendPriorityAlert(
-          'Wave Decision Loop - Meme Claim Build',
-          alertError
-        );
-        this.logger.warn(
-          'createClaimForDrop failed (decision still committed)',
-          { dropId: winner.drop_id, waveId, err }
-        );
-      }
-    }
+    const claimBuildDropId =
+      mainStageWaveId && waveId === mainStageWaveId && winnerDrops.length > 0
+        ? winnerDrops[0].drop_id
+        : null;
     await this.waveDecisionsDb.deleteDropsRanks(winnerDropIds, ctx);
     await this.dropsDb.resyncParticipatoryDropCountsForWaves([waveId], ctx);
     await this.dropVotingDb.deleteStaleLeaderboardEntries(ctx);
     await this.createAnnouncementDrop(waveId, winnerDropIds, ctx);
     ctx?.timer?.stop(`${this.constructor.name}->createDecision`);
+    return claimBuildDropId;
+  }
+
+  private async enqueueClaimBuild(
+    dropId: string,
+    waveId: string
+  ): Promise<void> {
+    try {
+      await publishClaimBuild(dropId);
+    } catch (err) {
+      const rawMessage = err instanceof Error ? err.message : String(err);
+      const alertError = new Error(
+        `enqueueClaimBuild failed for drop ${dropId} in wave ${waveId}: ${rawMessage}`
+      );
+      if (err instanceof Error && err.stack) {
+        alertError.stack = `${alertError.stack}\nCaused by:\n${err.stack}`;
+      }
+      await priorityAlertsContext.sendPriorityAlert(
+        'Wave Decision Loop - Meme Claim Build Enqueue',
+        alertError
+      );
+      this.logger.warn('enqueueClaimBuild failed (decision still committed)', {
+        dropId,
+        waveId,
+        err
+      });
+    }
   }
 
   private async getWinnerDropIdsOrderByPlaces(
@@ -495,6 +500,5 @@ export const waveDecisionsService = new WaveDecisionsService(
   waveLeaderboardCalculationService,
   dropVotingDb,
   dropsDb,
-  memeClaimsService,
   deployerDropper
 );

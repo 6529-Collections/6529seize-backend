@@ -85,6 +85,21 @@ export class MemeClaimsService {
     private readonly memeClaimsDb: MemeClaimsDb
   ) {}
 
+  async createClaimForDropIfMissing(dropId: string): Promise<void> {
+    await this.memeClaimsDb.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const exists = await this.memeClaimsDb.existsByDropId(
+          dropId,
+          connection
+        );
+        if (exists) {
+          return;
+        }
+        await this.createClaimForDrop(dropId, { connection });
+      }
+    );
+  }
+
   async createClaimForDrop(dropId: string, ctx: RequestContext): Promise<void> {
     const nextMemeId =
       (await getMaxMemeId(false, {

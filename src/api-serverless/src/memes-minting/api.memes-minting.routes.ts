@@ -83,8 +83,6 @@ async function evictMemesMintingClaimCache(memeId: number): Promise<void> {
 }
 
 function rowToMemeClaim(row: MemeClaimRow): MemeClaim {
-  const arweaveSyncedAt =
-    row.arweave_synced_at == null ? undefined : Number(row.arweave_synced_at);
   const editionSize =
     row.edition_size == null ? undefined : Number(row.edition_size);
   return {
@@ -94,7 +92,6 @@ function rowToMemeClaim(row: MemeClaimRow): MemeClaim {
     image_location: row.image_location ?? undefined,
     animation_location: row.animation_location ?? undefined,
     metadata_location: row.metadata_location ?? undefined,
-    arweave_synced_at: arweaveSyncedAt,
     media_uploading: !!row.media_uploading,
     edition_size: editionSize,
     description: row.description,
@@ -323,9 +320,6 @@ const MemeClaimAttributeSchema = Joi.object({
 
 const MemeClaimUpdateRequestSchema = Joi.object({
   season: Joi.number().integer().optional().label('Season'),
-  image_location: Joi.string().allow(null).optional(),
-  animation_location: Joi.string().allow(null).optional(),
-  metadata_location: Joi.string().allow(null).optional(),
   edition_size: Joi.number()
     .integer()
     .min(MIN_EDITION_SIZE)
@@ -340,7 +334,7 @@ const MemeClaimUpdateRequestSchema = Joi.object({
 });
 
 async function assertCanStartArweaveUpload(claim: MemeClaimRow): Promise<void> {
-  if (claim.arweave_synced_at != null) {
+  if (claim.metadata_location != null) {
     throw new CustomApiCompliantException(
       409,
       'Claim already synced to Arweave'
@@ -357,8 +351,7 @@ async function assertCanStartArweaveUpload(claim: MemeClaimRow): Promise<void> {
 
 async function queueArweaveUploadOrRollback(memeId: number): Promise<void> {
   const locked = await updateMemeClaimIfNotUploading(memeId, {
-    media_uploading: true,
-    arweave_synced_at: null
+    media_uploading: true
   });
   if (!locked) {
     throw new CustomApiCompliantException(

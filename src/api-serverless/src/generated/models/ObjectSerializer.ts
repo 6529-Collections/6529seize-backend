@@ -252,6 +252,7 @@ export * from '../models/NFTFinalSubscription';
 export * from '../models/NFTFinalSubscriptionUpload';
 export * from '../models/NFTFinalSubscriptionUploadPage';
 export * from '../models/NFTSubscription';
+export * from '../models/PhaseAirdrop';
 export * from '../models/RedeemedSubscription';
 export * from '../models/RedeemedSubscriptionCounts';
 export * from '../models/RedeemedSubscriptionCountsPage';
@@ -525,6 +526,7 @@ import { NFTFinalSubscription } from '../models/NFTFinalSubscription';
 import { NFTFinalSubscriptionUpload } from '../models/NFTFinalSubscriptionUpload';
 import { NFTFinalSubscriptionUploadPage } from '../models/NFTFinalSubscriptionUploadPage';
 import { NFTSubscription } from '../models/NFTSubscription';
+import { PhaseAirdrop } from '../models/PhaseAirdrop';
 import { RedeemedSubscription } from '../models/RedeemedSubscription';
 import { RedeemedSubscriptionCounts } from '../models/RedeemedSubscriptionCounts';
 import { RedeemedSubscriptionCountsPage } from '../models/RedeemedSubscriptionCountsPage';
@@ -820,6 +822,7 @@ let typeMap: {[index: string]: any} = {
     "NFTFinalSubscriptionUpload": NFTFinalSubscriptionUpload,
     "NFTFinalSubscriptionUploadPage": NFTFinalSubscriptionUploadPage,
     "NFTSubscription": NFTSubscription,
+    "PhaseAirdrop": PhaseAirdrop,
     "RedeemedSubscription": RedeemedSubscription,
     "RedeemedSubscriptionCounts": RedeemedSubscriptionCounts,
     "RedeemedSubscriptionCountsPage": RedeemedSubscriptionCountsPage,

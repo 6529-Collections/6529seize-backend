@@ -749,6 +749,37 @@ paths:
           description: Invalid request
         "403":
           description: Forbidden - not a Subscription Admin
+  /distributions/{contract}/{id}/automatic_airdrops:
+    get:
+      tags:
+        - Distributions
+      summary: Get automatic airdrops for a specific contract and card
+      operationId: getDistributionAutomaticAirdrops
+      parameters:
+        - name: contract
+          in: path
+          description: Contract address
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          description: Card ID
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PhaseAirdrop"
+        "400":
+          description: Invalid request
   /light-drops:
     get:
       tags:
@@ -3613,6 +3644,43 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AirdropAddressResponse"
+  /subscriptions/final/{contract}/{token_id}/phases/{phase_name}:
+    get:
+      tags:
+        - Subscriptions
+      summary: Get final subscription airdrops for a token phase
+      operationId: getFinalSubscriptionsByPhase
+      parameters:
+        - name: contract
+          in: path
+          description: Contract address
+          required: true
+          schema:
+            type: string
+        - name: token_id
+          in: path
+          description: Token ID
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: phase_name
+          in: path
+          description: Phase name (URL encoded)
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PhaseAirdrop"
+        "400":
+          description: Invalid token ID
   /subscriptions/consolidation/final/{consolidation_key}/{contract}/{token_id}:
     get:
       tags:
@@ -10781,10 +10849,6 @@ components:
         metadata_location:
           type: string
           nullable: true
-        arweave_synced_at:
-          type: integer
-          format: int64
-          nullable: true
         media_uploading:
           type: boolean
         edition_size:
@@ -10915,15 +10979,6 @@ components:
           type: integer
           format: int32
           minimum: 1
-        image_location:
-          type: string
-          nullable: true
-        animation_location:
-          type: string
-          nullable: true
-        metadata_location:
-          type: string
-          nullable: true
         edition_size:
           type: integer
           format: int32
@@ -11145,6 +11200,17 @@ components:
         subscribed:
           type: boolean
         subscribed_count:
+          type: integer
+          format: int64
+    PhaseAirdrop:
+      type: object
+      required:
+        - wallet
+        - amount
+      properties:
+        wallet:
+          type: string
+        amount:
           type: integer
           format: int64
     RedeemedSubscription:

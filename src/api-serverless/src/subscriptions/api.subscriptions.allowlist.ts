@@ -15,6 +15,7 @@ import {
 } from '../../../exceptions';
 import { sqlExecutor } from '../../../sql-executor';
 import { equalIgnoreCase } from '../../../strings';
+import { mergeDuplicateWallets } from '@/api/api-wallet-helpers';
 import { getAuthenticatedWalletOrNull } from '../auth/auth';
 import { NFTFinalSubscription } from '../generated/models/NFTFinalSubscription';
 import {
@@ -345,20 +346,6 @@ export async function getPublicSubscriptions(
 
   return { airdrops: mergedAirDrops };
 }
-
-const mergeDuplicateWallets = (
-  results: ResultsResponse[]
-): ResultsResponse[] => {
-  const mergedResults = new Map<string, number>();
-  for (const r of results) {
-    const currentAmount = mergedResults.get(r.wallet) ?? 0;
-    mergedResults.set(r.wallet, currentAmount + r.amount);
-  }
-  return Array.from(mergedResults).map(([wallet, amount]) => ({
-    wallet,
-    amount
-  }));
-};
 
 function filterSubscriptions(
   wallets: string[],

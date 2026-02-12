@@ -23,6 +23,7 @@ import { getWalletOrThrow, needsAuthenticatedUser } from '../auth/auth';
 import { populateDistribution } from '../distributions/api.distributions.service';
 import { NFTFinalSubscription } from '../generated/models/NFTFinalSubscription';
 import { NFTSubscription } from '../generated/models/NFTSubscription';
+import { PhaseAirdrop } from '../generated/models/PhaseAirdrop';
 import { RedeemedSubscription } from '../generated/models/RedeemedSubscription';
 import { RedeemedSubscriptionCounts } from '../generated/models/RedeemedSubscriptionCounts';
 import { SubscriptionCounts } from '../generated/models/SubscriptionCounts';
@@ -43,6 +44,7 @@ import {
   fetchConsolidationAddresses,
   fetchDetailsForConsolidationKey,
   fetchFinalSubscription,
+  fetchFinalSubscriptionsByPhase,
   fetchLogsForConsolidationKey,
   fetchPastMemeSubscriptionCounts,
   fetchRedeemedSubscriptionsForConsolidationKey,
@@ -518,6 +520,37 @@ router.get(
         ens: ensAirdrop[0]?.display ?? ''
       }
     });
+  }
+);
+
+router.get(
+  `/final/:contract/:token_id/phases/:phase_name`,
+  async function (
+    req: Request<
+      {
+        contract: string;
+        token_id: string;
+        phase_name: string;
+      },
+      any,
+      any,
+      any
+    >,
+    res: Response<PhaseAirdrop[] | string>
+  ) {
+    const contract = req.params.contract;
+    const tokenId = numbers.parseIntOrNull(req.params.token_id);
+    if (tokenId === null) {
+      return res.status(400).send('Invalid token ID');
+    }
+
+    const phaseName = req.params.phase_name;
+    const results = await fetchFinalSubscriptionsByPhase(
+      contract,
+      tokenId,
+      phaseName
+    );
+    return res.json(results);
   }
 );
 

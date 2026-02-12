@@ -22,7 +22,6 @@ export class MemeClaim {
     'image_location'?: string | null;
     'animation_location'?: string | null;
     'metadata_location'?: string | null;
-    'arweave_synced_at'?: number | null;
     'media_uploading'?: boolean;
     'edition_size'?: number | null;
     'description': string;
@@ -71,12 +70,6 @@ export class MemeClaim {
             "baseName": "metadata_location",
             "type": "string",
             "format": ""
-        },
-        {
-            "name": "arweave_synced_at",
-            "baseName": "arweave_synced_at",
-            "type": "number",
-            "format": "int64"
         },
         {
             "name": "media_uploading",

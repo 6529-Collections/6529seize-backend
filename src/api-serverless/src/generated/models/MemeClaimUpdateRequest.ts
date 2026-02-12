@@ -15,9 +15,6 @@ import { HttpFile } from '../http/http';
 
 export class MemeClaimUpdateRequest {
     'season'?: number;
-    'image_location'?: string | null;
-    'animation_location'?: string | null;
-    'metadata_location'?: string | null;
     'edition_size'?: number | null;
     'description'?: string;
     'name'?: string;
@@ -33,24 +30,6 @@ export class MemeClaimUpdateRequest {
             "baseName": "season",
             "type": "number",
             "format": "int32"
-        },
-        {
-            "name": "image_location",
-            "baseName": "image_location",
-            "type": "string",
-            "format": ""
-        },
-        {
-            "name": "animation_location",
-            "baseName": "animation_location",
-            "type": "string",
-            "format": ""
-        },
-        {
-            "name": "metadata_location",
-            "baseName": "metadata_location",
-            "type": "string",
-            "format": ""
         },
         {
             "name": "edition_size",

@@ -65,36 +65,28 @@ function applyPrimitiveUpdates(
   body: MemeClaimUpdateRequest,
   updates: MemeClaimUpdates
 ): boolean {
-  let shouldResetArweaveSyncedAt = false;
-  if (body.image_location !== undefined)
-    updates.image_location = body.image_location;
-  if (body.animation_location !== undefined) {
-    updates.animation_location = body.animation_location;
-  }
-  if (body.metadata_location !== undefined) {
-    updates.metadata_location = body.metadata_location;
-  }
+  let shouldResetSyncState = false;
   if (body.description !== undefined) {
     updates.description = body.description;
-    shouldResetArweaveSyncedAt = true;
+    shouldResetSyncState = true;
   }
   if (body.name !== undefined) {
     updates.name = body.name;
-    shouldResetArweaveSyncedAt = true;
+    shouldResetSyncState = true;
   }
   if (body.image_url !== undefined) {
     updates.image_url = body.image_url;
-    shouldResetArweaveSyncedAt = true;
+    shouldResetSyncState = true;
   }
   if (body.attributes !== undefined) {
     updates.attributes = body.attributes;
-    shouldResetArweaveSyncedAt = true;
+    shouldResetSyncState = true;
   }
   if (body.animation_url !== undefined) {
     updates.animation_url = body.animation_url;
-    shouldResetArweaveSyncedAt = true;
+    shouldResetSyncState = true;
   }
-  return shouldResetArweaveSyncedAt;
+  return shouldResetSyncState;
 }
 
 function applyEditionSizeUpdate(
@@ -175,27 +167,27 @@ export async function buildUpdatesForClaimPatch(
   existing: MemeClaimRow
 ): Promise<MemeClaimUpdates> {
   const updates: MemeClaimUpdates = {};
-  let shouldResetArweaveSyncedAt = false;
+  let shouldResetSyncState = false;
   if (body.season !== undefined) {
     updates.season = validateRequestedSeason(
       Number(body.season),
       await fetchMaxSeasonId()
     );
-    shouldResetArweaveSyncedAt = true;
+    shouldResetSyncState = true;
   }
-  shouldResetArweaveSyncedAt =
-    applyPrimitiveUpdates(body, updates) || shouldResetArweaveSyncedAt;
-  shouldResetArweaveSyncedAt =
-    applyEditionSizeUpdate(body, updates) || shouldResetArweaveSyncedAt;
+  shouldResetSyncState =
+    applyPrimitiveUpdates(body, updates) || shouldResetSyncState;
+  shouldResetSyncState =
+    applyEditionSizeUpdate(body, updates) || shouldResetSyncState;
   if (body.image_url !== undefined) {
     await applyImageFromBody(body, existing, updates);
   }
   if (body.animation_url !== undefined) {
     await applyAnimationFromBody(body, existing, updates);
-    shouldResetArweaveSyncedAt = true;
+    shouldResetSyncState = true;
   }
-  if (shouldResetArweaveSyncedAt) {
-    updates.arweave_synced_at = null;
+  if (shouldResetSyncState) {
+    updates.metadata_location = null;
   }
   return updates;
 }
