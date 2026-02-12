@@ -10,6 +10,7 @@ import {
   ACTIVITY_EVENTS_TABLE,
   DELETED_DROPS_TABLE,
   DROP_BOOSTS_TABLE,
+  DROP_CURATIONS_TABLE,
   DROP_MEDIA_TABLE,
   DROP_MENTIONED_WAVES_TABLE,
   DROP_METADATA_TABLE,
@@ -1025,9 +1026,16 @@ export class DropsDb extends LazyDbAccessCompatibleService {
 
   async findWeightedLeaderboardDrops(
     params: LeaderboardParams,
-    ctx: RequestContext
+    ctx: RequestContext,
+    curatorIds: string[] | null = null
   ): Promise<DropEntity[]> {
     ctx.timer?.start(`${this.constructor.name}->findWeightedLeaderboardDrops`);
+    const curationFilter = curatorIds?.length
+      ? `and exists (
+          select 1 from ${DROP_CURATIONS_TABLE} dc
+          where dc.drop_id = d.id and dc.curator_id in (:curator_ids)
+        )`
+      : '';
     const sql = `
         with ddata as (
             select
@@ -1037,6 +1045,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                                                                                          left join ${WAVE_LEADERBOARD_ENTRIES_TABLE} we on d.id = we.drop_id
             where we.wave_id = :wave_id
               and d.drop_type = 'PARTICIPATORY'
+              ${curationFilter}
         ),
              dranks as (
                  select drop_id, rnk, vote from (select drop_id,
@@ -1049,6 +1058,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     `;
     const sqlParams = {
       wave_id: params.wave_id,
+      curator_ids: curatorIds,
       page_size: params.page_size,
       offset: params.page_size * (params.page - 1)
     };
@@ -1061,16 +1071,24 @@ export class DropsDb extends LazyDbAccessCompatibleService {
 
   async findWeightedLeaderboardDropsOrderedByPrediction(
     params: LeaderboardParams,
-    ctx: RequestContext
+    ctx: RequestContext,
+    curatorIds: string[] | null = null
   ): Promise<DropEntity[]> {
     ctx.timer?.start(
       `${this.constructor.name}->findWeightedLeaderboardDropsOrderedByPrediction`
     );
+    const curationFilter = curatorIds?.length
+      ? `and exists (
+          select 1 from ${DROP_CURATIONS_TABLE} dc
+          where dc.drop_id = d.id and dc.curator_id in (:curator_ids)
+        )`
+      : '';
     const sql = `
-        select d.* from ${WAVE_LEADERBOARD_ENTRIES_TABLE} r join ${DROPS_TABLE} d on d.id = r.drop_id where d.wave_id = :wave_id order by r.vote_on_decision_time ${params.sort_direction} limit :page_size offset :offset
+        select d.* from ${WAVE_LEADERBOARD_ENTRIES_TABLE} r join ${DROPS_TABLE} d on d.id = r.drop_id where d.wave_id = :wave_id ${curationFilter} order by r.vote_on_decision_time ${params.sort_direction} limit :page_size offset :offset
     `;
     const sqlParams = {
       wave_id: params.wave_id,
+      curator_ids: curatorIds,
       page_size: params.page_size,
       offset: params.page_size * (params.page - 1)
     };
@@ -1085,16 +1103,24 @@ export class DropsDb extends LazyDbAccessCompatibleService {
 
   async findWeightedLeaderboardDropsOrderedByTrend(
     params: LeaderboardParams,
-    ctx: RequestContext
+    ctx: RequestContext,
+    curatorIds: string[] | null = null
   ): Promise<DropEntity[]> {
     ctx.timer?.start(
       `${this.constructor.name}->findWeightedLeaderboardDropsOrderedByTrend`
     );
+    const curationFilter = curatorIds?.length
+      ? `and exists (
+          select 1 from ${DROP_CURATIONS_TABLE} dc
+          where dc.drop_id = d.id and dc.curator_id in (:curator_ids)
+        )`
+      : '';
     const sql = `
-        select d.* from ${WAVE_LEADERBOARD_ENTRIES_TABLE} r join ${DROPS_TABLE} d on d.id = r.drop_id where d.wave_id = :wave_id order by (r.vote_on_decision_time - r.vote) ${params.sort_direction} limit :page_size offset :offset
+        select d.* from ${WAVE_LEADERBOARD_ENTRIES_TABLE} r join ${DROPS_TABLE} d on d.id = r.drop_id where d.wave_id = :wave_id ${curationFilter} order by (r.vote_on_decision_time - r.vote) ${params.sort_direction} limit :page_size offset :offset
     `;
     const sqlParams = {
       wave_id: params.wave_id,
+      curator_ids: curatorIds,
       page_size: params.page_size,
       offset: params.page_size * (params.page - 1)
     };
@@ -1113,16 +1139,24 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       wave_id: string;
       limit: number;
       sort_order: PageSortDirection;
+      curator_ids?: string[] | null;
     },
     ctx: RequestContext
   ): Promise<DropEntity[]> {
     ctx.timer?.start(
       `${this.constructor.name}->findWaveParticipationDropsOrderedByCreatedAt`
     );
+    const curationFilter = params.curator_ids?.length
+      ? `and exists (
+          select 1 from ${DROP_CURATIONS_TABLE} dc
+          where dc.drop_id = d.id and dc.curator_id in (:curator_ids)
+        )`
+      : '';
     const results = await this.db.execute<DropEntity>(
       `
       select d.* from ${DROPS_TABLE} d 
       where d.wave_id = :wave_id and d.drop_type = '${DropType.PARTICIPATORY}'
+      ${curationFilter}
       order by d.created_at ${params.sort_order} limit :limit offset :offset
       `,
       params,
@@ -1140,10 +1174,17 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       limit: number;
       wave_id: string;
       sort_order: PageSortDirection;
+      curator_ids?: string[] | null;
     },
     ctx: RequestContext
   ): Promise<DropEntity[]> {
     ctx.timer?.start(`${this.constructor.name}->findLeaderboardDrops`);
+    const curationFilter = params.curator_ids?.length
+      ? `and exists (
+          select 1 from ${DROP_CURATIONS_TABLE} dc
+          where dc.drop_id = d.id and dc.curator_id in (:curator_ids)
+        )`
+      : '';
     const sql = `
     with ddata as (select d.id                                    as drop_id,
                       cast(ifnull(r.vote, 0) as signed)         as vote,
@@ -1151,7 +1192,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                from ${DROPS_TABLE} d
                         left join drop_ranks r ON r.drop_id = d.id
                where d.wave_id = :wave_id
-                 and d.drop_type = '${DropType.PARTICIPATORY}'),
+                 and d.drop_type = '${DropType.PARTICIPATORY}'
+                 ${curationFilter}),
       dranks as (
             select drop_id, rnk, vote from (select drop_id,
                                                  vote,
@@ -1163,6 +1205,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     `;
     const sqlParams = {
       wave_id: params.wave_id,
+      curator_ids: params.curator_ids ?? null,
       limit: params.limit,
       offset: params.offset
     };
@@ -1180,12 +1223,19 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       wave_id: string;
       voter_id: string;
       sort_order: PageSortDirection;
+      curator_ids?: string[] | null;
     },
     ctx: RequestContext
   ): Promise<DropEntity[]> {
     ctx.timer?.start(
       `${this.constructor.name}->findRealtimeLeaderboardDropsOrderedByUsersVotes`
     );
+    const curationFilter = params.curator_ids?.length
+      ? `and exists (
+          select 1 from ${DROP_CURATIONS_TABLE} dc
+          where dc.drop_id = d.id and dc.curator_id in (:curator_ids)
+        )`
+      : '';
     const sql = `
     with 
       v_vot_tim as (select drop_id, max(timestamp) as timestamp from ${DROP_REAL_VOTER_VOTE_IN_TIME_TABLE} where wave_id = :wave_id and voter_id = :voter_id group by 1),
@@ -1196,7 +1246,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                from ${DROPS_TABLE} d
                         left join v_vot_as r ON r.drop_id = d.id
                where d.wave_id = :wave_id
-                 and d.drop_type = '${DropType.PARTICIPATORY}'),
+                 and d.drop_type = '${DropType.PARTICIPATORY}'
+                 ${curationFilter}),
       dranks as (
             select drop_id, rnk, vote from (select drop_id,
                                                  vote,
@@ -1209,6 +1260,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     const sqlParams = {
       wave_id: params.wave_id,
       voter_id: params.voter_id,
+      curator_ids: params.curator_ids ?? null,
       limit: params.limit,
       offset: params.offset
     };
@@ -1223,15 +1275,27 @@ export class DropsDb extends LazyDbAccessCompatibleService {
 
   async countParticipatoryDrops(
     params: LeaderboardParams,
-    ctx: RequestContext
+    ctx: RequestContext,
+    curatorIds: string[] | null = null
   ): Promise<number> {
     ctx.timer?.start(`${this.constructor.name}->countLeaderboardDrops`);
+    const curationFilter = curatorIds?.length
+      ? `and exists (
+          select 1 from ${DROP_CURATIONS_TABLE} dc
+          where dc.drop_id = d.id and dc.curator_id in (:curator_ids)
+        )`
+      : '';
     const count = await this.db
       .oneOrNull<{ cnt: number }>(
-        `select count(*) as cnt from ${DROPS_TABLE} where wave_id = :wave_id and drop_type = :drop_type`,
+        `
+        select count(*) as cnt from ${DROPS_TABLE} d
+        where d.wave_id = :wave_id and d.drop_type = :drop_type
+        ${curationFilter}
+        `,
         {
           wave_id: params.wave_id,
-          drop_type: DropType.PARTICIPATORY
+          drop_type: DropType.PARTICIPATORY,
+          curator_ids: curatorIds
         },
         { wrappedConnection: ctx.connection }
       )
@@ -2020,6 +2084,7 @@ export interface LeaderboardParams {
   readonly page: number;
   readonly sort_direction: PageSortDirection;
   readonly sort: LeaderboardSort;
+  readonly curated_by_group: string | null;
 }
 
 export interface DropLogsQueryParams {

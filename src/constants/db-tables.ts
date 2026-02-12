@@ -123,6 +123,7 @@ export const WAVES_DECISION_WINNER_DROPS_TABLE = 'wave_decision_winner_drops';
 export const WAVE_METRICS_TABLE = 'wave_metrics';
 export const WAVE_DROPPER_METRICS_TABLE = 'wave_dropper_metrics';
 export const WAVE_READER_METRICS_TABLE = 'wave_reader_metrics';
+export const WAVE_CURATION_GROUPS_TABLE = 'wave_curation_groups';
 export const METRIC_ROLLUP_HOUR_TABLE = 'metric_rollup_hour';
 export const MINT_ANNOUNCEMENTS_DONE_MEME_TOKENS_TABLE =
   'mint_announcements_done_meme_tokens';
@@ -133,6 +134,7 @@ export const DROP_REFERENCED_NFTS_TABLE = 'drops_referenced_nfts';
 export const DROP_METADATA_TABLE = 'drops_metadatas';
 export const DROP_MEDIA_TABLE = 'drop_medias';
 export const DROP_BOOSTS_TABLE = 'drop_boosts';
+export const DROP_CURATIONS_TABLE = 'drop_curations';
 export const DROP_BOOKMARKS_TABLE = 'drop_bookmarks';
 export const PINNED_WAVES_TABLE = 'pinned_waves';
 export const COOKIES_CONSENT_TABLE = 'cookies_consent';

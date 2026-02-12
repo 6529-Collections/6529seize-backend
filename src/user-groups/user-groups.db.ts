@@ -14,6 +14,7 @@ import {
   PROFILE_GROUPS_TABLE,
   RATINGS_TABLE,
   USER_GROUPS_TABLE,
+  WAVE_CURATION_GROUPS_TABLE,
   XTDH_GRANT_TOKENS_TABLE,
   XTDH_GRANTS_TABLE
 } from '@/constants';
@@ -711,6 +712,8 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
           select w.participation_group_id as id from waves w
           union all
           select w.voting_group_id as id from waves w
+          union all
+          select wcg.community_group_id as id from ${WAVE_CURATION_GROUPS_TABLE} wcg
         ) x where id is not null
         `,
       undefined,

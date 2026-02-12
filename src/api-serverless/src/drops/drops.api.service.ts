@@ -70,11 +70,13 @@ import {
   WsListenersNotifier
 } from '../ws/ws-listeners-notifier';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
+import { CurationsDb, curationsDb } from '@/api/curations/curations.db';
 
 export class DropsApiService {
   constructor(
     private readonly dropsMappers: DropsMappers,
     private readonly dropsDb: DropsDb,
+    private readonly curationsDb: CurationsDb,
     private readonly userGroupsService: UserGroupsService,
     private readonly identitySubscriptionsDb: IdentitySubscriptionsDb,
     private readonly identityFetcher: IdentityFetcher,
@@ -678,11 +680,44 @@ export class DropsApiService {
     };
     const isTimeLockedWave =
       waveEntity.time_lock_ms !== null && waveEntity.time_lock_ms > 0;
-    const count = await this.dropsDb.countParticipatoryDrops(params, ctx);
+    let curatorIdsFilter: string[] | null = null;
+    if (params.curated_by_group) {
+      const curationGroup = await this.curationsDb.findWaveCurationGroupById(
+        {
+          id: params.curated_by_group,
+          wave_id: params.wave_id
+        },
+        ctx.connection
+      );
+      if (!curationGroup) {
+        throw new NotFoundException(
+          `Curation group ${params.curated_by_group} not found`
+        );
+      }
+      curatorIdsFilter = await this.userGroupsService.findIdentitiesInGroups(
+        [curationGroup.community_group_id],
+        ctx
+      );
+    }
+    if (curatorIdsFilter !== null && curatorIdsFilter.length === 0) {
+      return {
+        wave: waveMin,
+        drops: [],
+        count: 0,
+        page: params.page,
+        next: false
+      };
+    }
+    const count = await this.dropsDb.countParticipatoryDrops(
+      params,
+      ctx,
+      curatorIdsFilter
+    );
     const drops = await this.findLeaderboardDrops(
       params,
       isTimeLockedWave,
-      ctx
+      ctx,
+      curatorIdsFilter
     ).then(async (drops) => {
       ctx.timer?.start(`${this.constructor.name}->convertLeaderboardDrops`);
       const results = await this.dropsMappers.convertToDropsWithoutWaves(
@@ -704,7 +739,8 @@ export class DropsApiService {
   private async findLeaderboardDrops(
     params: LeaderboardParams,
     isTimeLockedWave: boolean,
-    ctx: RequestContext
+    ctx: RequestContext,
+    curatorIdsFilter: string[] | null
   ): Promise<DropEntity[]> {
     if (params.sort === LeaderboardSort.CREATED_AT) {
       return this.dropsDb.findWaveParticipationDropsOrderedByCreatedAt(
@@ -712,23 +748,30 @@ export class DropsApiService {
           wave_id: params.wave_id,
           limit: params.page_size,
           offset: (params.page - 1) * params.page_size,
-          sort_order: params.sort_direction
+          sort_order: params.sort_direction,
+          curator_ids: curatorIdsFilter
         },
         ctx
       );
     }
     if (isTimeLockedWave) {
       if (params.sort === LeaderboardSort.RANK) {
-        return this.dropsDb.findWeightedLeaderboardDrops(params, ctx);
+        return this.dropsDb.findWeightedLeaderboardDrops(
+          params,
+          ctx,
+          curatorIdsFilter
+        );
       } else if (params.sort === LeaderboardSort.RATING_PREDICTION) {
         return this.dropsDb.findWeightedLeaderboardDropsOrderedByPrediction(
           params,
-          ctx
+          ctx,
+          curatorIdsFilter
         );
       } else if (params.sort === LeaderboardSort.TREND) {
         return this.dropsDb.findWeightedLeaderboardDropsOrderedByTrend(
           params,
-          ctx
+          ctx,
+          curatorIdsFilter
         );
       }
     }
@@ -745,7 +788,8 @@ export class DropsApiService {
           wave_id: params.wave_id,
           limit: params.page_size,
           offset: (params.page - 1) * params.page_size,
-          sort_order: params.sort_direction
+          sort_order: params.sort_direction,
+          curator_ids: curatorIdsFilter
         },
         ctx
       );
@@ -755,7 +799,8 @@ export class DropsApiService {
         wave_id: params.wave_id,
         limit: params.page_size,
         offset: (params.page - 1) * params.page_size,
-        sort_order: params.sort_direction
+        sort_order: params.sort_direction,
+        curator_ids: curatorIdsFilter
       },
       ctx
     );
@@ -1165,6 +1210,7 @@ export interface FindBoostedDropsRequest {
 export const dropsService = new DropsApiService(
   dropsMappers,
   dropsDb,
+  curationsDb,
   userGroupsService,
   identitySubscriptionsDb,
   identityFetcher,
