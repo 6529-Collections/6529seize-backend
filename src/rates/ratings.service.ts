@@ -1334,32 +1334,35 @@ export class RatingsService {
               `Proxy is not allowed to give REP ratings`
             );
           }
-          const proxyCreditBoundaryDeltas = ratingChanges
-            .flatMap((profileRatingChange) =>
-              profileRatingChange.changes.map((ratingChange) => ({
-                targetProfileId: profileRatingChange.profileId,
-                category: ratingChange.category,
+          if (repAction.credit_amount !== null) {
+            const proxyCreditBoundaryDeltas = ratingChanges
+              .flatMap((profileRatingChange) =>
+                profileRatingChange.changes.map((ratingChange) => ({
+                  targetProfileId: profileRatingChange.profileId,
+                  category: ratingChange.category,
+                  requestedCreditBoundaryDelta:
+                    Math.abs(ratingChange.newRating) -
+                    Math.abs(ratingChange.oldRating)
+                }))
+              )
+              .filter((delta) => delta.requestedCreditBoundaryDelta !== 0)
+              .sort(
+                (a, b) =>
+                  a.targetProfileId.localeCompare(b.targetProfileId) ||
+                  a.category.localeCompare(b.category)
+              );
+            for (const delta of proxyCreditBoundaryDeltas) {
+              await this.applyProxyCreditDeltaStrict({
+                actionId: repAction.id,
+                matter: RateMatter.REP,
+                targetProfileId: delta.targetProfileId,
+                category: delta.category,
                 requestedCreditBoundaryDelta:
-                  Math.abs(ratingChange.newRating) -
-                  Math.abs(ratingChange.oldRating)
-              }))
-            )
-            .filter((delta) => delta.requestedCreditBoundaryDelta !== 0)
-            .sort(
-              (a, b) =>
-                a.targetProfileId.localeCompare(b.targetProfileId) ||
-                a.category.localeCompare(b.category)
-            );
-          for (const delta of proxyCreditBoundaryDeltas) {
-            await this.applyProxyCreditDeltaStrict({
-              actionId: repAction.id,
-              matter: RateMatter.REP,
-              targetProfileId: delta.targetProfileId,
-              category: delta.category,
-              requestedCreditBoundaryDelta: delta.requestedCreditBoundaryDelta,
-              connection,
-              timer: ctx.timer
-            });
+                  delta.requestedCreditBoundaryDelta,
+                connection,
+                timer: ctx.timer
+              });
+            }
           }
         }
         const now = Time.now().toDate();
