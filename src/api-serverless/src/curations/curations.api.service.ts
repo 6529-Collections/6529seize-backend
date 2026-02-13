@@ -41,29 +41,14 @@ export class CurationsApiService {
     waveId: string,
     ctx: RequestContext
   ): Promise<ApiWaveCurationGroup[]> {
-    const authenticationContext = ctx.authenticationContext;
-    let profileId: string | null = null;
-    if (authenticationContext?.isUserFullyAuthenticated()) {
-      if (
-        !authenticationContext.isAuthenticatedAsProxy() ||
-        authenticationContext.hasProxyAction(ProfileProxyActionType.READ_WAVE)
-      ) {
-        profileId = authenticationContext.getActingAsId();
-      }
-    }
     const groupsUserIsEligibleFor =
-      await this.userGroupsService.getGroupsUserIsEligibleFor(
-        profileId,
-        ctx.timer
-      );
+      await this.getGroupsUserIsEligibleForReadContext(ctx);
     const wave = await this.wavesApiDb.findWaveById(waveId, ctx.connection);
-    if (
-      !wave ||
-      (wave.visibility_group_id &&
-        !groupsUserIsEligibleFor.includes(wave.visibility_group_id))
-    ) {
-      throw new NotFoundException(`Wave ${waveId} not found`);
-    }
+    this.assertWaveVisibleOrThrow(
+      wave,
+      groupsUserIsEligibleFor,
+      `Wave ${waveId} not found`
+    );
     return await this.curationsDb
       .findWaveCurationGroupsByWaveId(waveId, ctx.connection)
       .then((entities) =>
@@ -184,34 +169,8 @@ export class CurationsApiService {
   }
 
   public async addDropCuration(dropId: string, ctx: RequestContext) {
-    const profileId = this.getAuthenticatedProfileIdOrThrow(ctx);
-    const drop = await this.dropsDb.findDropById(dropId, ctx.connection);
-    if (!drop) {
-      throw new NotFoundException(`Drop ${dropId} not found`);
-    }
-    if (
-      drop.drop_type !== DropType.PARTICIPATORY &&
-      drop.drop_type !== DropType.WINNER
-    ) {
-      throw new BadRequestException(
-        `Only PARTICIPATORY and WINNER drops can be curated`
-      );
-    }
-    const wave = await this.wavesApiDb.findWaveById(
-      drop.wave_id,
-      ctx.connection
-    );
-    if (!wave) {
-      throw new NotFoundException(`Wave ${drop.wave_id} not found`);
-    }
-    this.assertWaveTypeSupportsCurations(wave.type);
-    await this.assertProfileCanCurateInWave(
-      {
-        profileId,
-        waveId: wave.id
-      },
-      ctx
-    );
+    const { profileId, drop, wave } =
+      await this.getCuratableDropContextForAuthenticatedCurator(dropId, ctx);
     await this.curationsDb.upsertDropCuration(
       {
         drop_id: drop.id,
@@ -223,34 +182,8 @@ export class CurationsApiService {
   }
 
   public async removeDropCuration(dropId: string, ctx: RequestContext) {
-    const profileId = this.getAuthenticatedProfileIdOrThrow(ctx);
-    const drop = await this.dropsDb.findDropById(dropId, ctx.connection);
-    if (!drop) {
-      throw new NotFoundException(`Drop ${dropId} not found`);
-    }
-    if (
-      drop.drop_type !== DropType.PARTICIPATORY &&
-      drop.drop_type !== DropType.WINNER
-    ) {
-      throw new BadRequestException(
-        `Only PARTICIPATORY and WINNER drops can be curated`
-      );
-    }
-    const wave = await this.wavesApiDb.findWaveById(
-      drop.wave_id,
-      ctx.connection
-    );
-    if (!wave) {
-      throw new NotFoundException(`Wave ${drop.wave_id} not found`);
-    }
-    this.assertWaveTypeSupportsCurations(wave.type);
-    await this.assertProfileCanCurateInWave(
-      {
-        profileId,
-        waveId: wave.id
-      },
-      ctx
-    );
+    const { profileId, drop } =
+      await this.getCuratableDropContextForAuthenticatedCurator(dropId, ctx);
     await this.curationsDb.deleteDropCuration(
       {
         drop_id: drop.id,
@@ -290,21 +223,8 @@ export class CurationsApiService {
     },
     ctx: RequestContext
   ): Promise<ApiProfileMinsPage> {
-    const authenticationContext = ctx.authenticationContext;
-    let profileId: string | null = null;
-    if (authenticationContext?.isUserFullyAuthenticated()) {
-      if (
-        !authenticationContext.isAuthenticatedAsProxy() ||
-        authenticationContext.hasProxyAction(ProfileProxyActionType.READ_WAVE)
-      ) {
-        profileId = authenticationContext.getActingAsId();
-      }
-    }
     const groupsUserIsEligibleFor =
-      await this.userGroupsService.getGroupsUserIsEligibleFor(
-        profileId,
-        ctx.timer
-      );
+      await this.getGroupsUserIsEligibleForReadContext(ctx);
     const drop = await this.dropsDb.findDropById(params.dropId, ctx.connection);
     if (!drop) {
       throw new NotFoundException(`Drop ${params.dropId} not found`);
@@ -313,13 +233,11 @@ export class CurationsApiService {
       drop.wave_id,
       ctx.connection
     );
-    if (
-      !wave ||
-      (wave.visibility_group_id &&
-        !groupsUserIsEligibleFor.includes(wave.visibility_group_id))
-    ) {
-      throw new NotFoundException(`Drop ${params.dropId} not found`);
-    }
+    this.assertWaveVisibleOrThrow(
+      wave,
+      groupsUserIsEligibleFor,
+      `Drop ${params.dropId} not found`
+    );
 
     const sort_order: 'ASC' | 'DESC' =
       params.sort_direction === ApiPageSortDirection.Asc ? 'ASC' : 'DESC';
@@ -350,6 +268,87 @@ export class CurationsApiService {
       page: params.page,
       next: count > params.page_size * params.page
     };
+  }
+
+  private async getCuratableDropContextForAuthenticatedCurator(
+    dropId: string,
+    ctx: RequestContext
+  ): Promise<{
+    profileId: string;
+    drop: {
+      id: string;
+      wave_id: string;
+      drop_type: DropType;
+    };
+    wave: {
+      id: string;
+      type: WaveType;
+    };
+  }> {
+    const profileId = this.getAuthenticatedProfileIdOrThrow(ctx);
+    const drop = await this.dropsDb.findDropById(dropId, ctx.connection);
+    if (!drop) {
+      throw new NotFoundException(`Drop ${dropId} not found`);
+    }
+    if (
+      drop.drop_type !== DropType.PARTICIPATORY &&
+      drop.drop_type !== DropType.WINNER
+    ) {
+      throw new BadRequestException(
+        `Only PARTICIPATORY and WINNER drops can be curated`
+      );
+    }
+    const wave = await this.wavesApiDb.findWaveById(
+      drop.wave_id,
+      ctx.connection
+    );
+    if (!wave) {
+      throw new NotFoundException(`Wave ${drop.wave_id} not found`);
+    }
+    this.assertWaveTypeSupportsCurations(wave.type);
+    await this.assertProfileCanCurateInWave(
+      {
+        profileId,
+        waveId: wave.id
+      },
+      ctx
+    );
+    return { profileId, drop, wave };
+  }
+
+  private async getGroupsUserIsEligibleForReadContext(
+    ctx: RequestContext
+  ): Promise<string[]> {
+    const authenticationContext = ctx.authenticationContext;
+    let profileId: string | null = null;
+    if (authenticationContext?.isUserFullyAuthenticated()) {
+      if (
+        !authenticationContext.isAuthenticatedAsProxy() ||
+        authenticationContext.hasProxyAction(ProfileProxyActionType.READ_WAVE)
+      ) {
+        profileId = authenticationContext.getActingAsId();
+      }
+    }
+    return await this.userGroupsService.getGroupsUserIsEligibleFor(
+      profileId,
+      ctx.timer
+    );
+  }
+
+  private assertWaveVisibleOrThrow(
+    wave: {
+      visibility_group_id: string | null;
+    } | null,
+    groupsUserIsEligibleFor: string[],
+    message: string
+  ) {
+    if (
+      !wave ||
+      (wave.visibility_group_id &&
+        !groupsUserIsEligibleFor.includes(wave.visibility_group_id))
+    ) {
+      throw new NotFoundException(message);
+    }
   }
 
   private getAuthenticatedProfileIdOrThrow(ctx: RequestContext): string {
