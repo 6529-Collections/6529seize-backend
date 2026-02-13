@@ -1,3 +1,5 @@
+set @proxy_credit_backfill_started_at = utc_timestamp(3);
+set @proxy_credit_backfill_started_at_ms = cast(unix_timestamp(@proxy_credit_backfill_started_at) * 1000 as unsigned);
 set @proxy_credit_backfill_now_ms = cast(unix_timestamp(utc_timestamp(3)) * 1000 as unsigned);
 
 drop temporary table if exists tmp_proxy_rating_credit_events;
@@ -47,6 +49,7 @@ with raw_logs as (
     and pal.target_id is not null
     and pal.additional_data_1 in ('REP', 'CIC')
     and pal.created_at is not null
+    and pal.created_at <= @proxy_credit_backfill_started_at
     and json_extract(pal.contents, '$.old_rating') is not null
     and json_extract(pal.contents, '$.new_rating') is not null
     and json_unquote(json_extract(pal.contents, '$.old_rating')) regexp '^-?[0-9]+$'
@@ -190,8 +193,16 @@ select
   @proxy_credit_backfill_now_ms
 from tmp_proxy_rating_credit_balances_computed c
 on duplicate key update
-  credit_spent_outstanding = values(credit_spent_outstanding),
-  updated_at = values(updated_at);
+  credit_spent_outstanding = if(
+    updated_at > @proxy_credit_backfill_started_at_ms,
+    credit_spent_outstanding,
+    values(credit_spent_outstanding)
+  ),
+  updated_at = if(
+    updated_at > @proxy_credit_backfill_started_at_ms,
+    updated_at,
+    values(updated_at)
+  );
 
 delete current_balances
 from profile_proxy_rating_credit_balances current_balances
@@ -200,7 +211,8 @@ left join tmp_proxy_rating_credit_balances_computed computed
   and computed.matter = current_balances.matter
   and computed.matter_target_id = current_balances.matter_target_id
   and computed.matter_category = current_balances.matter_category
-where computed.proxy_action_id is null;
+where computed.proxy_action_id is null
+  and current_balances.updated_at <= @proxy_credit_backfill_started_at_ms;
 
 update profile_proxy_actions ppa
 left join (
@@ -211,8 +223,16 @@ left join (
   group by b.proxy_action_id
 ) action_totals
   on action_totals.proxy_action_id = ppa.id
+left join (
+  select distinct
+    b.proxy_action_id
+  from profile_proxy_rating_credit_balances b
+  where b.updated_at > @proxy_credit_backfill_started_at_ms
+) recently_mutated_actions
+  on recently_mutated_actions.proxy_action_id = ppa.id
 set ppa.credit_spent = coalesce(action_totals.total_credit_spent_outstanding, 0)
-where ppa.action_type in ('ALLOCATE_REP', 'ALLOCATE_CIC');
+where ppa.action_type in ('ALLOCATE_REP', 'ALLOCATE_CIC')
+  and recently_mutated_actions.proxy_action_id is null;
 
 drop temporary table if exists tmp_proxy_rating_credit_events;
 drop temporary table if exists tmp_proxy_rating_credit_balances_computed;

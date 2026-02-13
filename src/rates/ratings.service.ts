@@ -1239,10 +1239,10 @@ export class RatingsService {
           }
         );
       const proxyRepLeft =
-        (repAction?.credit_amount ?? 0) -
+        (repAction?.credit_amount ?? Infinity) -
         (repAction ? (outstandingByActionId[repAction.id] ?? 0) : 0);
       const proxyCicLeft =
-        (cicAction?.credit_amount ?? 0) -
+        (cicAction?.credit_amount ?? Infinity) -
         (cicAction ? (outstandingByActionId[cicAction.id] ?? 0) : 0);
       repLeft = Math.min(repLeft, proxyRepLeft);
       cicLeft = Math.min(cicLeft, proxyCicLeft);
@@ -1268,7 +1268,6 @@ export class RatingsService {
     await this.identitiesDb.executeNativeQueriesInTransaction(
       async (connection) => {
         const ctxWithConnection = { ...ctx, connection };
-        ctx.timer?.stop(`${this.constructor.name}->bulkRep->createProfiles`);
         const profileIdsByTargetAddresses =
           await profilesService.makeSureProfilesAreCreatedAndGetProfileIdsByAddresses(
             targetAddresses,
