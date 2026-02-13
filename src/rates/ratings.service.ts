@@ -1,61 +1,64 @@
 import { Request } from 'express';
 import converter from 'json-2-csv';
-import { ApiAvailableRatingCredit } from '@/api/generated/models/ApiAvailableRatingCredit';
-import { ApiBulkRateRequest } from '@/api/generated/models/ApiBulkRateRequest';
-import { ApiBulkRepRequest } from '@/api/generated/models/ApiBulkRepRequest';
-import { ApiRatingWithProfileInfoAndLevel } from '@/api/generated/models/ApiRatingWithProfileInfoAndLevel';
-import { ApiRatingWithProfileInfoAndLevelPage } from '@/api/generated/models/ApiRatingWithProfileInfoAndLevelPage';
-import { identityFetcher } from '@/api/identities/identity.fetcher';
-import { FullPageRequest, Page } from '@/api/page-request';
-import { repService, RepService } from '@/api/profiles/rep.service';
-import { appFeatures } from '@/app-features';
-import { arweaveFileUploader, ArweaveFileUploader } from '@/arweave';
-import { AuthenticationContext } from '@/auth-context';
-import { collections } from '@/collections';
-import { revokeTdhBasedDropWavesOverVotes } from '@/drops/participation-drops-over-vote-revocation';
-import { ProfileClassification } from '@/entities/IProfile';
+import { ApiAvailableRatingCredit } from '../api-serverless/src/generated/models/ApiAvailableRatingCredit';
+import { ApiBulkRateRequest } from '../api-serverless/src/generated/models/ApiBulkRateRequest';
+import { ApiBulkRepRequest } from '../api-serverless/src/generated/models/ApiBulkRepRequest';
+import { ApiRatingWithProfileInfoAndLevel } from '../api-serverless/src/generated/models/ApiRatingWithProfileInfoAndLevel';
+import { ApiRatingWithProfileInfoAndLevelPage } from '../api-serverless/src/generated/models/ApiRatingWithProfileInfoAndLevelPage';
+import { identityFetcher } from '../api-serverless/src/identities/identity.fetcher';
+import { FullPageRequest, Page } from '../api-serverless/src/page-request';
+import {
+  repService,
+  RepService
+} from '../api-serverless/src/profiles/rep.service';
+import { appFeatures } from '../app-features';
+import { arweaveFileUploader, ArweaveFileUploader } from '../arweave';
+import { AuthenticationContext } from '../auth-context';
+import { collections } from '../collections';
+import { revokeTdhBasedDropWavesOverVotes } from '../drops/participation-drops-over-vote-revocation';
+import { ProfileClassification } from '../entities/IProfile';
 import {
   ProfileActivityLog,
   ProfileActivityLogType
-} from '@/entities/IProfileActivityLog';
-import { ProfileProxyActionType } from '@/entities/IProfileProxyAction';
+} from '../entities/IProfileActivityLog';
+import { ProfileProxyActionType } from '../entities/IProfileProxyAction';
 import {
   getMattersWhereTargetIsProfile,
   RateMatter,
   Rating
-} from '@/entities/IRating';
-import { RatingsSnapshot } from '@/entities/IRatingsSnapshots';
-import { enums } from '@/enums';
-import { ProfileRepRatedEventData } from '@/events/datatypes/profile-rep-rated.event-data';
-import { eventScheduler, EventScheduler } from '@/events/event.scheduler';
+} from '../entities/IRating';
+import { RatingsSnapshot } from '../entities/IRatingsSnapshots';
+import { enums } from '../enums';
+import { ProfileRepRatedEventData } from '../events/datatypes/profile-rep-rated.event-data';
+import { eventScheduler, EventScheduler } from '../events/event.scheduler';
 import {
   BadRequestException,
   ForbiddenException,
   NotFoundException
-} from '@/exceptions';
-import { IdentitiesDb, identitiesDb } from '@/identities/identities.db';
-import { ids } from '@/ids';
-import { Logger } from '@/logging';
-import { metricsRecorder, MetricsRecorder } from '@/metrics/MetricsRecorder';
-import { userNotifier } from '@/notifications/user.notifier';
+} from '../exceptions';
+import { IdentitiesDb, identitiesDb } from '../identities/identities.db';
+import { ids } from '../ids';
+import { Logger } from '../logging';
+import { metricsRecorder, MetricsRecorder } from '../metrics/MetricsRecorder';
+import { userNotifier } from '../notifications/user.notifier';
 import {
   profileProxiesDb,
   ProfileProxiesDb
-} from '@/profile-proxies/profile-proxies.db';
+} from '../profile-proxies/profile-proxies.db';
 import {
   profileProxyRatingCreditBalancesDb,
   ProfileProxyRatingCreditBalancesDb
-} from '@/profile-proxies/profile-proxy-rating-credit-balances.db';
-import { profileActivityLogsDb } from '@/profileActivityLogs/profile-activity-logs.db';
+} from '../profile-proxies/profile-proxy-rating-credit-balances.db';
+import { profileActivityLogsDb } from '../profileActivityLogs/profile-activity-logs.db';
 import {
   abusivenessCheckService,
   AbusivenessCheckService
-} from '@/profiles/abusiveness-check.service';
-import { calculateLevel } from '@/profiles/profile-level';
-import { profilesService } from '@/profiles/profiles.service';
-import { RequestContext } from '@/request.context';
-import { ConnectionWrapper } from '@/sql-executor';
-import { Time, Timer } from '@/time';
+} from '../profiles/abusiveness-check.service';
+import { calculateLevel } from '../profiles/profile-level';
+import { profilesService } from '../profiles/profiles.service';
+import { RequestContext } from '../request.context';
+import { ConnectionWrapper } from '../sql-executor';
+import { Time, Timer } from '../time';
 import {
   AggregatedRating,
   AggregatedRatingRequest,
