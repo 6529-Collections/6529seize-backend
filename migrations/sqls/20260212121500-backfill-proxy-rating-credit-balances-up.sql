@@ -194,13 +194,13 @@ select
 from tmp_proxy_rating_credit_balances_computed c
 on duplicate key update
   credit_spent_outstanding = if(
-    updated_at > @proxy_credit_backfill_started_at_ms,
-    credit_spent_outstanding,
+    profile_proxy_rating_credit_balances.updated_at > @proxy_credit_backfill_started_at_ms,
+    profile_proxy_rating_credit_balances.credit_spent_outstanding,
     values(credit_spent_outstanding)
   ),
   updated_at = if(
-    updated_at > @proxy_credit_backfill_started_at_ms,
-    updated_at,
+    profile_proxy_rating_credit_balances.updated_at > @proxy_credit_backfill_started_at_ms,
+    profile_proxy_rating_credit_balances.updated_at,
     values(updated_at)
   );
 
