@@ -19,26 +19,113 @@ export class ProfileProxyRatingCreditBalancesDb extends LazyDbAccessCompatibleSe
   async applyCreditSpentDelta(
     delta: ProxyRatingCreditBalanceDelta,
     connection?: ConnectionWrapper<any>
-  ): Promise<void> {
+  ): Promise<number> {
     if (delta.credit_spent_delta === 0) {
-      return;
+      return 0;
+    }
+    if (!connection) {
+      throw new Error(
+        'Proxy credit balance updates must be executed inside a transaction'
+      );
     }
     const now = Time.currentMillis();
-    await this.db.execute(
-      `insert into ${PROFILE_PROXY_RATING_CREDIT_BALANCES_TABLE}
-      (proxy_action_id, matter, matter_target_id, matter_category, credit_spent_outstanding, created_at, updated_at)
-      values
-      (:proxy_action_id, :matter, :matter_target_id, :matter_category, :initial_credit_spent_outstanding, :now, :now)
-      on duplicate key update
-        credit_spent_outstanding = greatest(0, credit_spent_outstanding + :credit_spent_delta),
-        updated_at = :now`,
+
+    const existing = await this.db.oneOrNull<{
+      id: number;
+      credit_spent_outstanding: number;
+    }>(
+      `select id, credit_spent_outstanding
+      from ${PROFILE_PROXY_RATING_CREDIT_BALANCES_TABLE}
+      where proxy_action_id = :proxy_action_id
+        and matter = :matter
+        and matter_target_id = :matter_target_id
+        and matter_category = :matter_category
+      for update`,
       {
-        ...delta,
-        now,
-        initial_credit_spent_outstanding: Math.max(delta.credit_spent_delta, 0)
+        proxy_action_id: delta.proxy_action_id,
+        matter: delta.matter,
+        matter_target_id: delta.matter_target_id,
+        matter_category: delta.matter_category
       },
-      connection ? { wrappedConnection: connection } : undefined
+      { wrappedConnection: connection }
     );
+
+    if (delta.credit_spent_delta > 0) {
+      if (!existing) {
+        await this.db.execute(
+          `insert into ${PROFILE_PROXY_RATING_CREDIT_BALANCES_TABLE}
+          (
+            proxy_action_id,
+            matter,
+            matter_target_id,
+            matter_category,
+            credit_spent_outstanding,
+            created_at,
+            updated_at
+          )
+          values
+          (
+            :proxy_action_id,
+            :matter,
+            :matter_target_id,
+            :matter_category,
+            :credit_spent_outstanding,
+            :now,
+            :now
+          )
+          on duplicate key update
+            credit_spent_outstanding = credit_spent_outstanding + values(credit_spent_outstanding),
+            updated_at = values(updated_at)`,
+          {
+            proxy_action_id: delta.proxy_action_id,
+            matter: delta.matter,
+            matter_target_id: delta.matter_target_id,
+            matter_category: delta.matter_category,
+            credit_spent_outstanding: delta.credit_spent_delta,
+            now
+          },
+          { wrappedConnection: connection }
+        );
+      } else {
+        await this.db.execute(
+          `update ${PROFILE_PROXY_RATING_CREDIT_BALANCES_TABLE}
+          set credit_spent_outstanding = credit_spent_outstanding + :credit_spent_delta,
+              updated_at = :now
+          where id = :id`,
+          {
+            id: existing.id,
+            credit_spent_delta: delta.credit_spent_delta,
+            now
+          },
+          { wrappedConnection: connection }
+        );
+      }
+      return delta.credit_spent_delta;
+    }
+
+    if (!existing) {
+      return 0;
+    }
+    const refundableAmount = Math.min(
+      Math.abs(delta.credit_spent_delta),
+      existing.credit_spent_outstanding ?? 0
+    );
+    if (refundableAmount <= 0) {
+      return 0;
+    }
+    await this.db.execute(
+      `update ${PROFILE_PROXY_RATING_CREDIT_BALANCES_TABLE}
+      set credit_spent_outstanding = credit_spent_outstanding - :refundable_amount,
+          updated_at = :now
+      where id = :id`,
+      {
+        id: existing.id,
+        refundable_amount: refundableAmount,
+        now
+      },
+      { wrappedConnection: connection }
+    );
+    return -refundableAmount;
   }
 
   async getOutstandingCreditsByActionIds({
