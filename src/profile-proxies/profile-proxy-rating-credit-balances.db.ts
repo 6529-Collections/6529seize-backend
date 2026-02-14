@@ -74,7 +74,7 @@ export class ProfileProxyRatingCreditBalancesDb extends LazyDbAccessCompatibleSe
             :now
           )
           on duplicate key update
-            credit_spent_outstanding = credit_spent_outstanding + values(credit_spent_outstanding),
+            credit_spent_outstanding = ${PROFILE_PROXY_RATING_CREDIT_BALANCES_TABLE}.credit_spent_outstanding + values(credit_spent_outstanding),
             updated_at = values(updated_at)`,
           {
             proxy_action_id: delta.proxy_action_id,
@@ -193,7 +193,7 @@ export class ProfileProxyRatingCreditBalancesDb extends LazyDbAccessCompatibleSe
       from ${PROFILE_PROXY_RATING_CREDIT_BALANCES_TABLE}
       where matter_target_id = :oldTargetId
       on duplicate key update
-        credit_spent_outstanding = credit_spent_outstanding + values(credit_spent_outstanding),
+        credit_spent_outstanding = ${PROFILE_PROXY_RATING_CREDIT_BALANCES_TABLE}.credit_spent_outstanding + values(credit_spent_outstanding),
         updated_at = values(updated_at)`,
       {
         oldTargetId,
