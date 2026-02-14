@@ -183,15 +183,15 @@ export class ProfileProxyRatingCreditBalancesDb extends LazyDbAccessCompatibleSe
         updated_at
       )
       select
-        proxy_action_id,
-        matter,
+        source_balances.proxy_action_id,
+        source_balances.matter,
         :newTargetId,
-        matter_category,
-        credit_spent_outstanding,
-        created_at,
+        source_balances.matter_category,
+        source_balances.credit_spent_outstanding,
+        source_balances.created_at,
         :now
-      from ${PROFILE_PROXY_RATING_CREDIT_BALANCES_TABLE}
-      where matter_target_id = :oldTargetId
+      from ${PROFILE_PROXY_RATING_CREDIT_BALANCES_TABLE} source_balances
+      where source_balances.matter_target_id = :oldTargetId
       on duplicate key update
         credit_spent_outstanding = ${PROFILE_PROXY_RATING_CREDIT_BALANCES_TABLE}.credit_spent_outstanding + values(credit_spent_outstanding),
         updated_at = values(updated_at)`,
