@@ -64,7 +64,9 @@ function defaultIsRetriable(err: any): boolean {
       'ECONNRESET',
       'ECONNREFUSED',
       'EHOSTUNREACH',
-      'EPIPE'
+      'EPIPE',
+      'ENOTFOUND',
+      'EAI_AGAIN'
     ].includes(code)
   ) {
     return true;

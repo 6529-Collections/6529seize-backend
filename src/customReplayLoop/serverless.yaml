@@ -9,7 +9,7 @@ plugins:
 provider:
   name: aws
   runtime: nodejs22.x
-  memorySize: 1024
+  memorySize: 1536
   timeout: 900
   architecture: arm64
   logRetentionInDays: 60
@@ -21,6 +21,10 @@ functions:
     description: ${env:VERSION_DESCRIPTION}
     role: arn:aws:iam::987989283142:role/lambda-vpc-role
     reservedConcurrency: 1
+    maximumRetryAttempts: 0
+    events:
+      - schedule:
+          rate: rate(16 minutes)
     vpc:
       securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
       subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
