@@ -6,6 +6,7 @@ import {
   needsAuthenticatedUser
 } from '@/api/auth/auth';
 import type { MemeClaim } from '@/api/generated/models/MemeClaim';
+import type { ApiMemesMintingAirdropItem } from '@/api/generated/models/ApiMemesMintingAirdropItem';
 import type { MemeClaimUpdateRequest } from '@/api/generated/models/MemeClaimUpdateRequest';
 import type { MemesMintingClaimsPageResponse } from '@/api/generated/models/MemesMintingClaimsPageResponse';
 import type { MemesMintingProofsByAddressResponse } from '@/api/generated/models/MemesMintingProofsByAddressResponse';
@@ -16,6 +17,7 @@ import {
   fetchMemeClaimByMemeId,
   fetchMemeClaimsPage,
   fetchMemeClaimsTotalCount,
+  fetchMintingAirdrops,
   fetchMintingMerkleProofs,
   fetchMintingMerkleRoots,
   type MemeClaimRow,
@@ -155,6 +157,17 @@ const RootsParamsSchema: Joi.ObjectSchema<RootsParams> = Joi.object({
   card_id: Joi.string().trim().required().pattern(/^\d+$/)
 });
 
+const PHASE_AIRDROP_RESPONSE_ORDER: ReadonlyArray<{
+  response_phase: string;
+  db_phase: string;
+}> = [
+  { response_phase: 'Automatic', db_phase: 'Airdrop' },
+  { response_phase: 'Phase 0', db_phase: 'Phase 0' },
+  { response_phase: 'Phase 1', db_phase: 'Phase 1' },
+  { response_phase: 'Phase 2', db_phase: 'Phase 2' },
+  { response_phase: 'Public', db_phase: 'Public' }
+];
+
 router.get(
   '/proofs/:merkle_root',
   maybeAuthenticatedUser(),
@@ -233,6 +246,45 @@ router.get(
       addresses_count: r.addresses_count ?? 0,
       total_spots: r.total_spots ?? 0
     }));
+    return res.json(response);
+  }
+);
+
+router.get(
+  '/airdrops/:contract/:card_id',
+  async function (
+    req: Request<RootsParams, any, any, any, any>,
+    res: Response<ApiResponse<ApiMemesMintingAirdropItem[]>>
+  ) {
+    const params = getValidatedByJoiOrThrow(req.params, RootsParamsSchema);
+    const cardId = numbers.parseIntOrNull(params.card_id);
+    if (cardId === null || cardId < 0) {
+      return res.status(400).json({
+        error: 'card_id must be a non-negative integer'
+      });
+    }
+
+    const rows = await fetchMintingAirdrops(cardId, params.contract);
+    const totalsByDbPhase = new Map(
+      rows.map((row) => [
+        row.phase.toLowerCase(),
+        {
+          addresses_count: row.addresses_count ?? 0,
+          total_airdrops: row.total_airdrops ?? 0
+        }
+      ])
+    );
+
+    const response: ApiMemesMintingAirdropItem[] =
+      PHASE_AIRDROP_RESPONSE_ORDER.map(({ response_phase, db_phase }) => {
+        const totals = totalsByDbPhase.get(db_phase.toLowerCase());
+        return {
+          phase: response_phase,
+          addresses_count: totals?.addresses_count ?? 0,
+          total_airdrops: totals?.total_airdrops ?? 0
+        };
+      });
+
     return res.json(response);
   }
 );

@@ -1,4 +1,5 @@
 import {
+  DISTRIBUTION_TABLE,
   MEMES_CLAIMS_TABLE,
   MEMES_EXTENDED_DATA_TABLE,
   MEMES_SEASONS_TABLE,
@@ -150,6 +151,12 @@ export interface MintingMerkleRootRow {
   total_spots?: number;
 }
 
+export interface MintingAirdropPhaseRow {
+  phase: string;
+  addresses_count?: number;
+  total_airdrops?: number;
+}
+
 export async function fetchMintingMerkleRoots(
   cardId: number,
   contract: string
@@ -206,6 +213,25 @@ export async function fetchMintingMerkleRoots(
       total_spots: counts?.total_spots ?? 0
     };
   });
+}
+
+export async function fetchMintingAirdrops(
+  cardId: number,
+  contract: string
+): Promise<MintingAirdropPhaseRow[]> {
+  return sqlExecutor.execute<MintingAirdropPhaseRow>(
+    `SELECT phase, COUNT(DISTINCT wallet) AS addresses_count, COALESCE(SUM(count_airdrop), 0) AS total_airdrops
+     FROM ${DISTRIBUTION_TABLE}
+     WHERE card_id = :cardId
+       AND contract = :contract
+       AND count_airdrop > 0
+     GROUP BY phase
+     ORDER BY phase ASC`,
+    {
+      cardId,
+      contract: contract.toLowerCase()
+    }
+  );
 }
 
 export interface MemeClaimRow {
