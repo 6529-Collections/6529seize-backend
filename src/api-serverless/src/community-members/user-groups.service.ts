@@ -14,35 +14,32 @@ import {
 import {
   getLevelComponentsBorderByLevel,
   getLevelFromScore
-} from '../../../profiles/profile-level';
+} from '@/profiles/profile-level';
 import {
   GroupTdhInclusionStrategy,
   UserGroupEntity
-} from '../../../entities/IUserGroup';
-import {
-  userGroupsDb,
-  UserGroupsDb
-} from '../../../user-groups/user-groups.db';
+} from '@/entities/IUserGroup';
+import { userGroupsDb, UserGroupsDb } from '@/user-groups/user-groups.db';
 import slugify from 'slugify';
-import { BadRequestException, NotFoundException } from '../../../exceptions';
+import { BadRequestException, NotFoundException } from '@/exceptions';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import {
   abusivenessCheckService,
   AbusivenessCheckService
-} from '../../../profiles/abusiveness-check.service';
-import { RateMatter } from '../../../entities/IRating';
-import { ApiChangeGroupVisibility } from '../generated/models/ApiChangeGroupVisibility';
-import { ApiGroupFull } from '../generated/models/ApiGroupFull';
-import { ApiGroupFilterDirection } from '../generated/models/ApiGroupFilterDirection';
-import { ApiGroupDescription } from '../generated/models/ApiGroupDescription';
+} from '@/profiles/abusiveness-check.service';
+import { RateMatter } from '@/entities/IRating';
+import { ApiChangeGroupVisibility } from '@/api/generated/models/ApiChangeGroupVisibility';
+import { ApiGroupFull } from '@/api/generated/models/ApiGroupFull';
+import { ApiGroupFilterDirection } from '@/api/generated/models/ApiGroupFilterDirection';
+import { ApiGroupDescription } from '@/api/generated/models/ApiGroupDescription';
 import {
   ApiGroupOwnsNft,
   ApiGroupOwnsNftNameEnum
 } from '../generated/models/ApiGroupOwnsNft';
-import { Time, Timer } from '../../../time';
+import { Time, Timer } from '@/time';
 import * as mcache from 'memory-cache';
-import { RequestContext } from '../../../request.context';
-import { NEXTGEN_CORE_CONTRACT } from '../../../nextgen/nextgen_constants';
+import { RequestContext } from '@/request.context';
+import { NEXTGEN_CORE_CONTRACT } from '@/nextgen/nextgen_constants';
 import { Network } from 'alchemy-sdk';
 import {
   hasGroupGotAnyNonIdentityConditions,
@@ -58,27 +55,21 @@ import {
   isProfileViolatingTotalSentCicCriteria,
   isProfileViolatingTotalSentRepCriteria,
   ProfileSimpleMetrics
-} from '../../../groups/user-group-predicates';
+} from '@/groups/user-group-predicates';
 import { identityFetcher } from '../identities/identity.fetcher';
 import { ApiIdentity } from '../generated/models/ApiIdentity';
-import { identitiesDb } from '../../../identities/identities.db';
-import { enums } from '../../../enums';
-import { ids } from '../../../ids';
-import { collections } from '../../../collections';
-import { clearWaveGroupsCache, redisCached } from '../../../redis';
-import { env } from '../../../env';
+import { identitiesDb } from '@/identities/identities.db';
+import { enums } from '@/enums';
+import { ids } from '@/ids';
+import { collections } from '@/collections';
+import { clearWaveGroupsCache, redisCached } from '@/redis';
+import { env } from '@/env';
 import { ApiGroupTdhInclusionStrategy } from '../generated/models/ApiGroupTdhInclusionStrategy';
-import { assertUnreachable } from '../../../assertions';
-import {
-  metricsRecorder,
-  MetricsRecorder
-} from '../../../metrics/MetricsRecorder';
-import { xTdhRepository } from '../../../xtdh/xtdh.repository';
-import {
-  XTdhGrantStatus,
-  XTdhGrantTokenMode
-} from '../../../entities/IXTdhGrant';
-import { xTdhGrantsFinder } from '../../../xtdh/xtdh-grants.finder';
+import { assertUnreachable } from '@/assertions';
+import { metricsRecorder, MetricsRecorder } from '@/metrics/MetricsRecorder';
+import { xTdhRepository } from '@/xtdh/xtdh.repository';
+import { XTdhGrantStatus, XTdhGrantTokenMode } from '@/entities/IXTdhGrant';
+import { xTdhGrantsFinder } from '@/xtdh/xtdh-grants.finder';
 import { xTdhGrantApiConverter } from '../xtdh/grants/xtdh-grant.api-converter';
 
 export type NewUserGroupEntity = Omit<
