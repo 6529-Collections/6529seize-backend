@@ -20,6 +20,9 @@ const ARWEAVE_POINTS_TRAIT_PREFIX = 'Points - ';
 const TYPE_MEME_TRAIT = 'Type - Meme';
 const TYPE_SEASON_TRAIT = 'Type - Season';
 const TYPE_CARD_TRAIT = 'Type - Card';
+const TYPE_TRAIT = 'Type';
+const TYPE_TRAIT_VALUE_CARD = 'Card';
+const ISSUANCE_MONTH_TRAIT = 'Issuance Month';
 const MEME_NAME_TRAIT = 'Meme Name';
 const ARWEAVE_TYPE_NUMBER_TRAITS = new Set([
   TYPE_MEME_TRAIT,
@@ -317,9 +320,15 @@ function attributesWithTypeTraits(
     return (
       tt !== TYPE_MEME_TRAIT &&
       tt !== TYPE_SEASON_TRAIT &&
-      tt !== TYPE_CARD_TRAIT
+      tt !== TYPE_CARD_TRAIT &&
+      tt !== TYPE_TRAIT &&
+      tt !== ISSUANCE_MONTH_TRAIT
     );
   });
+  const now = new Date();
+  const issuanceMonth = `${now.getUTCFullYear()}/${String(
+    now.getUTCMonth() + 1
+  ).padStart(2, '0')}`;
   filtered.push(
     {
       display_type: 'number',
@@ -331,7 +340,9 @@ function attributesWithTypeTraits(
       trait_type: TYPE_SEASON_TRAIT,
       value: seasonValue
     },
-    { display_type: 'number', trait_type: TYPE_CARD_TRAIT, value: memeId }
+    { display_type: 'number', trait_type: TYPE_CARD_TRAIT, value: memeId },
+    { trait_type: TYPE_TRAIT, value: TYPE_TRAIT_VALUE_CARD },
+    { trait_type: ISSUANCE_MONTH_TRAIT, value: issuanceMonth }
   );
   return filtered;
 }

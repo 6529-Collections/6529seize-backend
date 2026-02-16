@@ -157,17 +157,6 @@ const RootsParamsSchema: Joi.ObjectSchema<RootsParams> = Joi.object({
   card_id: Joi.string().trim().required().pattern(/^\d+$/)
 });
 
-const PHASE_AIRDROP_RESPONSE_ORDER: ReadonlyArray<{
-  response_phase: string;
-  db_phase: string;
-}> = [
-  { response_phase: 'Automatic', db_phase: 'Airdrop' },
-  { response_phase: 'Phase 0', db_phase: 'Phase 0' },
-  { response_phase: 'Phase 1', db_phase: 'Phase 1' },
-  { response_phase: 'Phase 2', db_phase: 'Phase 2' },
-  { response_phase: 'Public', db_phase: 'Public' }
-];
-
 router.get(
   '/proofs/:merkle_root',
   maybeAuthenticatedUser(),
@@ -265,25 +254,11 @@ router.get(
     }
 
     const rows = await fetchMintingAirdrops(cardId, params.contract);
-    const totalsByDbPhase = new Map(
-      rows.map((row) => [
-        row.phase.toLowerCase(),
-        {
-          addresses_count: row.addresses_count ?? 0,
-          total_airdrops: row.total_airdrops ?? 0
-        }
-      ])
-    );
-
-    const response: ApiMemesMintingAirdropItem[] =
-      PHASE_AIRDROP_RESPONSE_ORDER.map(({ response_phase, db_phase }) => {
-        const totals = totalsByDbPhase.get(db_phase.toLowerCase());
-        return {
-          phase: response_phase,
-          addresses_count: totals?.addresses_count ?? 0,
-          total_airdrops: totals?.total_airdrops ?? 0
-        };
-      });
+    const response: ApiMemesMintingAirdropItem[] = rows.map((row) => ({
+      phase: row.phase === 'Airdrop' ? 'Automatic' : row.phase,
+      addresses_count: row.addresses_count ?? 0,
+      total_airdrops: row.total_airdrops ?? 0
+    }));
 
     return res.json(response);
   }
