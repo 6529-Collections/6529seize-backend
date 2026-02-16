@@ -169,16 +169,22 @@ function valueToWei(value: unknown): bigint {
         return BigInt(0);
       }
     }
-  }
-  try {
-    const asString = String(value);
-    if (asString === '[object Object]') {
-      return BigInt(0);
+    const maybeToString = Reflect.get(value, 'toString');
+    if (
+      typeof maybeToString === 'function' &&
+      maybeToString !== Object.prototype.toString
+    ) {
+      try {
+        const asString = maybeToString.call(value);
+        if (typeof asString === 'string' && asString.length > 0) {
+          return BigInt(asString);
+        }
+      } catch {
+        return BigInt(0);
+      }
     }
-    return BigInt(asString);
-  } catch {
-    return BigInt(0);
   }
+  return BigInt(0);
 }
 
 function weiToEth(wei: bigint): number {
@@ -304,6 +310,8 @@ async function getInternalTransfersForBlock(
 
   const request = (async () => {
     const blockHex = ethers.toBeHex(blockNumber);
+    // This cache is scoped to one findTransactionValues() invocation, so a
+    // transient trace_block miss here does not persist across future runs.
     try {
       const traces = await provider.send('trace_block', [blockHex]);
       return normalizeTraceInternalTransfers(traces);
@@ -472,6 +480,10 @@ function applyBaseValueFields(
   t.value = weiToEth(prorateWei(transactionValueWei, rowUnits, txUnits));
   t.royalties = 0;
   t.primary_proceeds = 0;
+  t.gas = 0;
+  t.gas_price = 0;
+  t.gas_price_gwei = 0;
+  t.gas_gwei = 0;
 }
 
 function getTransferLogCountForRecipient(
@@ -1355,6 +1367,7 @@ function attributeRowFromSeaportTx(
   let mergedOfferCurrencyTotal: bigint = chosen.offerCurrencyTotal;
   let mergedConsiderationCurrencyTotal: bigint =
     chosen.considerationCurrencyTotal;
+  let matchedGroupDistinctTokenCount = 0;
 
   try {
     // find OrdersMatched logs and parse their orderHashes
@@ -1424,8 +1437,7 @@ function attributeRowFromSeaportTx(
             mergedConsiderationCurrencyTotal += ev.considerationCurrencyTotal;
           }
           // Save group-level counts for fallback decision later
-          (mergedCurrencySplits as any)._matchedGroupDistinctTokenCount =
-            siblingsAllDistinctTokens.size;
+          matchedGroupDistinctTokenCount = siblingsAllDistinctTokens.size;
         }
         break; // only need to process the first match group containing chosen
       }
@@ -1514,8 +1526,6 @@ function attributeRowFromSeaportTx(
         }
       }
       // Only apply buyer-outflow fallback when the matched group effectively involved ONE token total (no sweep/bundle).
-      const matchedGroupDistinctTokenCount: number =
-        (mergedCurrencySplits as any)._matchedGroupDistinctTokenCount ?? 0;
       const safeToOverride =
         matchedGroupDistinctTokenCount === 1 && buyerOut > 0;
       if (safeToOverride && buyerOut > groupTotalCurrency) {
