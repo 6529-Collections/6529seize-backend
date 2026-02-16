@@ -11,19 +11,31 @@ import {
   XTDH_GRANT_TOKENS_TABLE,
   XTDH_GRANTS_TABLE
 } from '@/constants';
-import { getLevelComponentsBorderByLevel, getLevelFromScore } from '@/profiles/profile-level';
-import { GroupTdhInclusionStrategy, UserGroupEntity } from '@/entities/IUserGroup';
+import {
+  getLevelComponentsBorderByLevel,
+  getLevelFromScore
+} from '@/profiles/profile-level';
+import {
+  GroupTdhInclusionStrategy,
+  UserGroupEntity
+} from '@/entities/IUserGroup';
 import { userGroupsDb, UserGroupsDb } from '@/user-groups/user-groups.db';
 import slugify from 'slugify';
 import { BadRequestException, NotFoundException } from '@/exceptions';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
-import { abusivenessCheckService, AbusivenessCheckService } from '@/profiles/abusiveness-check.service';
+import {
+  abusivenessCheckService,
+  AbusivenessCheckService
+} from '@/profiles/abusiveness-check.service';
 import { RateMatter } from '@/entities/IRating';
 import { ApiChangeGroupVisibility } from '@/api/generated/models/ApiChangeGroupVisibility';
 import { ApiGroupFull } from '@/api/generated/models/ApiGroupFull';
 import { ApiGroupFilterDirection } from '@/api/generated/models/ApiGroupFilterDirection';
 import { ApiGroupDescription } from '@/api/generated/models/ApiGroupDescription';
-import { ApiGroupOwnsNft, ApiGroupOwnsNftNameEnum } from '../generated/models/ApiGroupOwnsNft';
+import {
+  ApiGroupOwnsNft,
+  ApiGroupOwnsNftNameEnum
+} from '../generated/models/ApiGroupOwnsNft';
 import { Time, Timer } from '@/time';
 import * as mcache from 'memory-cache';
 import { RequestContext } from '@/request.context';
