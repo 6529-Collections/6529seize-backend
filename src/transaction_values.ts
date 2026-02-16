@@ -310,6 +310,10 @@ async function getInternalTransfersForBlock(
 
   const request = (async () => {
     const blockHex = ethers.toBeHex(blockNumber);
+    const returnEmptyFailure = (): RpcInternalTransfersResponse => {
+      internalTransfersCache.delete(blockNumber);
+      return { transfers: [] };
+    };
     // This cache is scoped to one findTransactionValues() invocation, so a
     // transient trace_block miss here does not persist across future runs.
     try {
@@ -330,14 +334,14 @@ async function getInternalTransfersForBlock(
           logger.error(
             `[INTERNAL_TRANSFERS] [BLOCK=${blockNumber}] [TRACE_BLOCK_FALLBACK_FAILED] [ERROR=${fallbackError.message}]`
           );
-          return { transfers: [] };
+          return returnEmptyFailure();
         }
       }
 
       logger.error(
         `[INTERNAL_TRANSFERS] [BLOCK=${blockNumber}] [TRACE_BLOCK_FAILED] [ERROR=${e.message}]`
       );
-      return { transfers: [] };
+      return returnEmptyFailure();
     }
   })();
 
@@ -740,7 +744,12 @@ async function resolveValue(t: Transaction, context: ResolveValueContext) {
     ? valueToWei(transaction.value)
     : BigInt(0);
 
-  applyBaseValueFields(t, transactionValueWei, groups.rowUnits, groups.txUnits);
+  applyBaseValueFields(
+    t,
+    transactionValueWei,
+    groups.rowUnits,
+    groups.txUnits
+  );
   const royaltiesAddress = getRoyaltiesAddressForTransaction(t);
 
   if (receipt) {
