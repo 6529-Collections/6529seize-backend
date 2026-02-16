@@ -744,12 +744,7 @@ async function resolveValue(t: Transaction, context: ResolveValueContext) {
     ? valueToWei(transaction.value)
     : BigInt(0);
 
-  applyBaseValueFields(
-    t,
-    transactionValueWei,
-    groups.rowUnits,
-    groups.txUnits
-  );
+  applyBaseValueFields(t, transactionValueWei, groups.rowUnits, groups.txUnits);
   const royaltiesAddress = getRoyaltiesAddressForTransaction(t);
 
   if (receipt) {
