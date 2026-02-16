@@ -10,7 +10,6 @@
  * Do not edit the class manually.
  */
 
-import { ApiMemeClaimsSettings } from '../models/ApiMemeClaimsSettings';
 import { HttpFile } from '../http/http';
 
 export class ApiSeizeSettings {
@@ -20,7 +19,6 @@ export class ApiSeizeSettings {
     'curation_wave_id': string | null;
     'distribution_admin_wallets': Array<string>;
     'claims_admin_wallets': Array<string>;
-    'meme_claims': ApiMemeClaimsSettings;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -60,12 +58,6 @@ export class ApiSeizeSettings {
             "baseName": "claims_admin_wallets",
             "type": "Array<string>",
             "format": ""
-        },
-        {
-            "name": "meme_claims",
-            "baseName": "meme_claims",
-            "type": "ApiMemeClaimsSettings",
-            "format": ""
         }    ];
 
     static getAttributeTypeMap() {
@@ -75,3 +67,4 @@ export class ApiSeizeSettings {
     public constructor() {
     }
 }
+

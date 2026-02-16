@@ -25,10 +25,6 @@ export const seizeSettings = (): ApiSeizeSettings => {
   const curation_wave_id = env.getStringOrNull('CURATION_WAVE_ID');
   const distribution_admin_wallets = getDistributionAdminWallets();
   const claims_admin_wallets = getClaimsAdminWallets();
-  const meme_claims = {
-    contract: env.getStringOrNull('MEME_CLAIMS_CONTRACT'),
-    network_id: env.getIntOrNull('MEME_CLAIMS_NETWORK_ID')
-  };
 
   return {
     rememes_submission_tdh_threshold,
@@ -36,7 +32,6 @@ export const seizeSettings = (): ApiSeizeSettings => {
     memes_wave_id,
     curation_wave_id,
     distribution_admin_wallets,
-    claims_admin_wallets,
-    meme_claims
+    claims_admin_wallets
   };
 };

@@ -8337,19 +8337,6 @@ components:
         first_unread_drop_serial_no:
           type: integer
           nullable: true
-    ApiMemeClaimsSettings:
-      type: object
-      required:
-        - contract
-        - network_id
-      properties:
-        contract:
-          type: string
-          nullable: true
-        network_id:
-          type: integer
-          format: int64
-          nullable: true
     ApiMemesMintingAirdropItem:
       type: object
       required:
@@ -9473,7 +9460,6 @@ components:
         - curation_wave_id
         - distribution_admin_wallets
         - claims_admin_wallets
-        - meme_claims
       properties:
         rememes_submission_tdh_threshold:
           type: integer
@@ -9495,8 +9481,6 @@ components:
           type: array
           items:
             type: string
-        meme_claims:
-          $ref: "#/components/schemas/ApiMemeClaimsSettings"
     ApiStartMultipartMediaUploadResponse:
       required:
         - upload_id
