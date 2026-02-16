@@ -1,4 +1,5 @@
 import { MEMES_CLAIMS_TABLE, MEMES_SEASONS_TABLE } from '@/constants';
+import { numbers } from '@/numbers';
 import { RequestContext } from '@/request.context';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
 import type { MemeClaimRowInput } from './meme-claim-from-drop.builder';
@@ -19,12 +20,18 @@ export class MemeClaimsDb extends LazyDbAccessCompatibleService {
   }
 
   async getMaxSeasonId(ctx: RequestContext): Promise<number> {
-    const result = await this.db.execute<{ max_id: number }>(
+    const result = await this.db.execute<{ max_id: unknown }>(
       `SELECT COALESCE(MAX(id), 0) as max_id FROM ${MEMES_SEASONS_TABLE}`,
       undefined,
       ctx?.connection ? { wrappedConnection: ctx.connection } : undefined
     );
-    return result?.[0]?.max_id ?? 0;
+    const maxSeasonId = numbers.parseIntOrNull(result?.[0]?.max_id);
+    if (maxSeasonId === null) {
+      throw new Error(
+        `Invalid max season id type/value from DB: ${result?.[0]?.max_id}`
+      );
+    }
+    return maxSeasonId;
   }
 
   async createMemeClaim(

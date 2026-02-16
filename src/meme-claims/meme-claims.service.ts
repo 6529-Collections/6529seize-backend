@@ -12,10 +12,16 @@ import {
 } from '@/meme-claims/media-inspector';
 import type { MemeClaimAnimationDetails } from '@/entities/IMemeClaim';
 import type { MemeClaimRowInput } from '@/meme-claims/meme-claim-from-drop.builder';
+import { fetchPublicUrlToBuffer } from '@/http/safe-fetch';
+import { Logger } from '@/logging';
 import { getMaxMemeId } from '@/nftsLoop/db.nfts';
+import { numbers } from '@/numbers';
 import { RequestContext } from '@/request.context';
 import { sqlExecutor } from '@/sql-executor';
 import { ethers } from 'ethers';
+
+const MEME_CALENDAR_API_BASE = 'https://6529.io/api/meme-calendar';
+const MEME_CALENDAR_TIMEOUT_MS = 10_000;
 
 async function resolveAnimationDetails(
   animationUrl: string,
@@ -80,6 +86,8 @@ async function fetchTeamWallets(): Promise<string[]> {
 }
 
 export class MemeClaimsService {
+  private readonly logger = Logger.get(this.constructor.name);
+
   constructor(
     private readonly dropsDb: DropsDb,
     private readonly memeClaimsDb: MemeClaimsDb
@@ -93,6 +101,9 @@ export class MemeClaimsService {
           connection
         );
         if (exists) {
+          this.logger.info(
+            `Skipping claim build for drop_id=${dropId} because it already exists`
+          );
           return;
         }
         await this.createClaimForDrop(dropId, { connection });
@@ -110,13 +121,13 @@ export class MemeClaimsService {
       this.dropsDb.findMetadataByDropIds([dropId], ctx.connection)
     ]);
     const medias = mediasByDrop[dropId] ?? [];
-    const maxSeasonId = await this.memeClaimsDb.getMaxSeasonId(ctx);
+    const seasonId = await this.resolveSeasonForClaimBuild(nextMemeId, ctx);
     const row = buildMemeClaimRowFromDrop(
       dropId,
       nextMemeId,
       medias,
       metadatas,
-      maxSeasonId
+      seasonId
     );
     const enriched = await this.enrichRowWithComputedDetails(row);
     await this.memeClaimsDb.createMemeClaim([enriched], ctx);
@@ -143,6 +154,41 @@ export class MemeClaimsService {
         ctx.connection
       );
     }
+  }
+
+  private async resolveSeasonForClaimBuild(
+    memeId: number,
+    ctx: RequestContext
+  ): Promise<number> {
+    const calendarUrl = `${MEME_CALENDAR_API_BASE}/${memeId}`;
+    try {
+      const { buffer } = await fetchPublicUrlToBuffer(calendarUrl, {
+        timeoutMs: MEME_CALENDAR_TIMEOUT_MS,
+        headers: {
+          Accept: 'application/json',
+          'User-Agent': '6529ClaimsBuilder/1.0'
+        }
+      });
+      const parsed = JSON.parse(buffer.toString('utf8')) as {
+        season?: unknown;
+      };
+      const season = numbers.parseIntOrNull(parsed?.season);
+      if (season !== null && season > 0) {
+        this.logger.info(
+          `Using meme-calendar season=${season} for meme_id=${memeId}`
+        );
+        return season;
+      }
+      this.logger.warn(
+        `Invalid season from meme-calendar for meme_id=${memeId}, value=${parsed?.season}; falling back to max season`
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Failed to resolve season from meme-calendar for meme_id=${memeId}; falling back to max season`,
+        { error }
+      );
+    }
+    return await this.memeClaimsDb.getMaxSeasonId(ctx);
   }
 
   private async enrichRowWithComputedDetails(
