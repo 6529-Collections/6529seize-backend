@@ -48,6 +48,7 @@ type RpcTransaction = Awaited<ReturnType<RpcProvider['getTransaction']>>;
 type RpcTransactionReceipt = Awaited<
   ReturnType<RpcProvider['getTransactionReceipt']>
 >;
+type RpcTransactionReceiptLike = NonNullable<RpcTransactionReceipt>;
 type RpcInternalTransfersResponse = {
   transfers: Array<{
     hash: string;
@@ -106,7 +107,7 @@ function resolveLogValue(data: string) {
   if (data === '0x') {
     return 0;
   }
-  return parseFloat(ethers.formatEther(data));
+  return Number.parseFloat(ethers.formatEther(data));
 }
 
 function getHashKey(hash: string): string {
@@ -137,16 +138,58 @@ function prorateWei(
 
 function valueToWei(value: unknown): bigint {
   if (value === null || value === undefined) return BigInt(0);
-  try {
-    return BigInt(value.toString());
-  } catch {
-    return BigInt(0);
+  if (typeof value === 'bigint') return value;
+  if (typeof value === 'string') {
+    try {
+      return BigInt(value);
+    } catch {
+      return BigInt(0);
+    }
   }
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) {
+      return BigInt(0);
+    }
+    return BigInt(Math.trunc(value));
+  }
+  if (typeof value === 'object') {
+    const maybeHex = Reflect.get(value, 'hex');
+    if (typeof maybeHex === 'string') {
+      try {
+        return BigInt(maybeHex);
+      } catch {
+        return BigInt(0);
+      }
+    }
+    const maybeUnderscoreHex = Reflect.get(value, '_hex');
+    if (typeof maybeUnderscoreHex === 'string') {
+      try {
+        return BigInt(maybeUnderscoreHex);
+      } catch {
+        return BigInt(0);
+      }
+    }
+    const maybeToString = Reflect.get(value, 'toString');
+    if (
+      typeof maybeToString === 'function' &&
+      maybeToString !== Object.prototype.toString
+    ) {
+      try {
+        const asString = maybeToString.call(value);
+        if (typeof asString === 'string' && asString.length > 0) {
+          return BigInt(asString);
+        }
+      } catch {
+        return BigInt(0);
+      }
+    }
+  }
+  return BigInt(0);
 }
 
 function weiToEth(wei: bigint): number {
   if (wei <= BigInt(0)) return 0;
-  return parseFloat(ethers.formatEther(wei));
+  return Number.parseFloat(ethers.formatEther(wei));
 }
 
 function isMemelabAckSpecialCase(t: Transaction): boolean {
@@ -195,8 +238,7 @@ function extractErc20Transfers(receipt: ReceiptLike): Erc20Transfer[] {
   const transfers: Erc20Transfer[] = [];
   for (const log of receipt.logs) {
     if (
-      !log.topics ||
-      log.topics.length !== 3 ||
+      log.topics?.length !== 3 ||
       !equalIgnoreCase(log.topics[0], TRANSFER_EVENT)
     ) {
       continue;
@@ -268,6 +310,12 @@ async function getInternalTransfersForBlock(
 
   const request = (async () => {
     const blockHex = ethers.toBeHex(blockNumber);
+    const returnEmptyFailure = (): RpcInternalTransfersResponse => {
+      internalTransfersCache.delete(blockNumber);
+      return { transfers: [] };
+    };
+    // This cache is scoped to one findTransactionValues() invocation, so a
+    // transient trace_block miss here does not persist across future runs.
     try {
       const traces = await provider.send('trace_block', [blockHex]);
       return normalizeTraceInternalTransfers(traces);
@@ -286,14 +334,14 @@ async function getInternalTransfersForBlock(
           logger.error(
             `[INTERNAL_TRANSFERS] [BLOCK=${blockNumber}] [TRACE_BLOCK_FALLBACK_FAILED] [ERROR=${fallbackError.message}]`
           );
-          return { transfers: [] };
+          return returnEmptyFailure();
         }
       }
 
       logger.error(
         `[INTERNAL_TRANSFERS] [BLOCK=${blockNumber}] [TRACE_BLOCK_FAILED] [ERROR=${e.message}]`
       );
-      return { transfers: [] };
+      return returnEmptyFailure();
     }
   })();
 
@@ -400,214 +448,342 @@ export const findTransactionValues = async (
   return transactionsWithValues;
 };
 
-async function resolveValue(t: Transaction, context: ResolveValueContext) {
-  const txRows = context.rowsByHash.get(getHashKey(t.transaction)) ?? [t];
+type TransactionRowGroups = {
+  rowUnits: bigint;
+  txUnits: bigint;
+  pairUnits: bigint;
+  mintUnits: bigint;
+};
+
+type FallbackValueResolution = {
+  value: number;
+  royalties: number;
+};
+
+function buildTransactionRowGroups(
+  t: Transaction,
+  rowsByHash: Map<string, Transaction[]>
+): TransactionRowGroups {
+  const txRows = rowsByHash.get(getHashKey(t.transaction)) ?? [t];
   const pairRows = getRowsForPairInTransaction(txRows, t);
   const mintRows = txRows.filter(isMintLikeTransaction);
-  const rowUnits = getTokenUnits(t);
-  const txUnits = sumTokenUnits(txRows);
-  const pairUnits = sumTokenUnits(pairRows);
-  const mintUnits = sumTokenUnits(mintRows);
+  return {
+    rowUnits: getTokenUnits(t),
+    txUnits: sumTokenUnits(txRows),
+    pairUnits: sumTokenUnits(pairRows),
+    mintUnits: sumTokenUnits(mintRows)
+  };
+}
 
-  const txContext = await getTxRpcContext(
+function applyBaseValueFields(
+  t: Transaction,
+  transactionValueWei: bigint,
+  rowUnits: bigint,
+  txUnits: bigint
+) {
+  t.value = weiToEth(prorateWei(transactionValueWei, rowUnits, txUnits));
+  t.royalties = 0;
+  t.primary_proceeds = 0;
+  t.gas = 0;
+  t.gas_price = 0;
+  t.gas_price_gwei = 0;
+  t.gas_gwei = 0;
+}
+
+function getTransferLogCountForRecipient(
+  receipt: ReceiptLike,
+  recipient: string
+): number {
+  const count = receipt.logs.filter((log) => {
+    const toTopic = log.topics?.[2];
+    return (
+      equalIgnoreCase(log.topics?.[0], TRANSFER_EVENT) &&
+      !!toTopic &&
+      equalIgnoreCase(resolveLogAddress(toTopic), recipient)
+    );
+  }).length;
+  return count || 1;
+}
+
+function getGasPriceWei(
+  receipt: RpcTransactionReceiptLike,
+  transaction: RpcTransaction | null
+): bigint {
+  const candidates = [
+    Reflect.get(receipt, 'effectiveGasPrice'),
+    Reflect.get(receipt, 'gasPrice'),
+    transaction?.gasPrice
+  ];
+  for (const candidate of candidates) {
+    if (candidate !== null && candidate !== undefined) {
+      return valueToWei(candidate);
+    }
+  }
+  return BigInt(0);
+}
+
+function applyGasValues(
+  t: Transaction,
+  receipt: RpcTransactionReceiptLike,
+  transaction: RpcTransaction | null,
+  logCount: number
+) {
+  if (!receipt.gasUsed) {
+    return;
+  }
+  const gasUnits = Number(receipt.gasUsed);
+  const gasPriceWei = getGasPriceWei(receipt, transaction);
+  const gasPrice = Number.parseFloat(ethers.formatEther(gasPriceWei));
+  const gasPriceGwei =
+    Math.round(gasPrice * 1000000000 * 100000000) / 100000000;
+  const gas = Math.round(gasUnits * gasPrice * 100000000) / 100000000;
+
+  t.gas_gwei = gasUnits;
+  t.gas_price = gasPrice;
+  t.gas_price_gwei = gasPriceGwei;
+  t.gas = gas / logCount;
+}
+
+async function resolveFallbackValueAndRoyalties(
+  t: Transaction,
+  receipt: ReceiptLike,
+  royaltiesAddress: string,
+  rowUnits: bigint,
+  pairUnits: bigint,
+  logCount: number
+): Promise<FallbackValueResolution> {
+  let totalValue = 0;
+  let totalRoyalties = 0;
+
+  const erc20Transfers = extractErc20Transfers(receipt);
+  const buyerToSellerWethWei = sumErc20TransfersWei(
+    erc20Transfers,
+    (transfer) =>
+      equalIgnoreCase(transfer.token, WETH_TOKEN_ADDRESS) &&
+      equalIgnoreCase(transfer.from, t.to_address) &&
+      equalIgnoreCase(transfer.to, t.from_address)
+  );
+  if (buyerToSellerWethWei > BigInt(0)) {
+    totalValue = weiToEth(
+      prorateWei(buyerToSellerWethWei, rowUnits, pairUnits)
+    );
+  }
+
+  const buyerToRoyaltiesWethWei = sumErc20TransfersWei(
+    erc20Transfers,
+    (transfer) =>
+      equalIgnoreCase(transfer.token, WETH_TOKEN_ADDRESS) &&
+      equalIgnoreCase(transfer.from, t.to_address) &&
+      equalIgnoreCase(transfer.to, royaltiesAddress)
+  );
+  if (buyerToRoyaltiesWethWei > BigInt(0)) {
+    totalRoyalties = weiToEth(
+      prorateWei(buyerToRoyaltiesWethWei, rowUnits, pairUnits)
+    );
+  }
+
+  for (const log of receipt.logs) {
+    if (isBlurEvent(log) && !totalRoyalties) {
+      const royaltiesResponse = await parseBlurLog(log);
+      if (
+        royaltiesResponse &&
+        equalIgnoreCase(royaltiesResponse.feeRecipient, royaltiesAddress)
+      ) {
+        const parsedRate = Number(royaltiesResponse.feeRate);
+        const parsedRatePercentage = parsedRate / 100;
+        const royaltiesBaseValue = totalValue || t.value;
+        totalRoyalties = royaltiesBaseValue * (parsedRatePercentage / 100);
+      }
+      continue;
+    }
+
+    if (totalValue || !equalIgnoreCase(log.topics?.[0], TRANSFER_EVENT)) {
+      continue;
+    }
+
+    try {
+      if (
+        equalIgnoreCase(log.address, WETH_TOKEN_ADDRESS) &&
+        log.topics?.[1] &&
+        log.topics?.[2]
+      ) {
+        const from = resolveLogAddress(log.topics[1]);
+        const to = resolveLogAddress(log.topics[2]);
+        const value = resolveLogValue(log.data) / logCount;
+        if (
+          equalIgnoreCase(from, t.to_address) &&
+          (equalIgnoreCase(to, t.from_address) ||
+            equalIgnoreCase(to, royaltiesAddress))
+        ) {
+          totalValue += value;
+        }
+      } else if (equalIgnoreCase(log.topics?.[1], MINT_FROM_ADDRESS)) {
+        totalValue = t.value / logCount;
+      }
+    } catch (e) {
+      logger.error(
+        `Error adding royalties for transaction ${t.transaction}`,
+        e
+      );
+    }
+  }
+
+  return {
+    value: totalValue,
+    royalties: totalRoyalties
+  };
+}
+
+async function applyReceiptValueAndRoyalties(
+  t: Transaction,
+  receipt: ReceiptLike,
+  royaltiesAddress: string,
+  rowUnits: bigint,
+  pairUnits: bigint,
+  logCount: number
+) {
+  const attributedRow = attributeRowFromSeaportTx(receipt, t, royaltiesAddress);
+  if (attributedRow) {
+    t.royalties = attributedRow.royalties;
+    t.value = attributedRow.value;
+    return;
+  }
+
+  const resolved = await resolveFallbackValueAndRoyalties(
+    t,
+    receipt,
+    royaltiesAddress,
+    rowUnits,
+    pairUnits,
+    logCount
+  );
+  if (resolved.value) {
+    t.value = resolved.value;
+  }
+  if (resolved.royalties) {
+    t.royalties = resolved.royalties;
+  }
+}
+
+async function applyMintPrimaryProceeds(
+  t: Transaction,
+  context: ResolveValueContext,
+  rowUnits: bigint,
+  mintUnits: bigint
+) {
+  try {
+    const internalTransfers = await getInternalTransfersForBlock(
+      t.block,
+      context.provider,
+      context.fallbackTraceProvider,
+      context.internalTransfersCache
+    );
+    const txInternalTransfers = internalTransfers.transfers.filter((transfer) =>
+      equalIgnoreCase(transfer.hash, t.transaction)
+    );
+
+    const proceedsToMemesDeployer = txInternalTransfers.filter(
+      (transfer) => transfer.to && equalIgnoreCase(transfer.to, MEMES_DEPLOYER)
+    );
+    const primaryTransfers =
+      proceedsToMemesDeployer.length > 0
+        ? proceedsToMemesDeployer
+        : txInternalTransfers.filter(
+            (transfer) =>
+              equalIgnoreCase(transfer.from, t.to_address) ||
+              equalIgnoreCase(transfer.from, MANIFOLD) ||
+              (transfer.to && equalIgnoreCase(transfer.to, MEMES_DEPLOYER))
+          );
+
+    const primaryProceedsTxTotal = primaryTransfers.reduce(
+      (acc, transfer) => acc + (transfer.value ?? 0),
+      0
+    );
+
+    if (primaryProceedsTxTotal > 0) {
+      t.primary_proceeds =
+        (primaryProceedsTxTotal * Number(rowUnits)) / Number(mintUnits);
+    }
+  } catch (e: any) {
+    logger.error(
+      `Error fetching primary proceeds for transaction ${t.transaction}`,
+      e
+    );
+  }
+}
+
+function roundTo8(value: number): number {
+  return Number.parseFloat((value || 0).toFixed(8));
+}
+
+function roundTransactionValues(t: Transaction) {
+  t.value = roundTo8(t.value);
+  t.royalties = roundTo8(t.royalties);
+  t.primary_proceeds = roundTo8(t.primary_proceeds);
+  t.gas = roundTo8(t.gas);
+  t.gas_price = roundTo8(t.gas_price);
+  t.gas_price_gwei = roundTo8(t.gas_price_gwei);
+  t.gas_gwei = roundTo8(t.gas_gwei);
+}
+
+async function applyUsdValues(t: Transaction) {
+  const ethPrice = await getClosestEthUsdPrice(new Date(t.transaction_date));
+  t.eth_price_usd = ethPrice;
+  t.value_usd = t.value * ethPrice;
+  t.gas_usd = t.gas * ethPrice;
+}
+
+async function resolveValue(t: Transaction, context: ResolveValueContext) {
+  const groups = buildTransactionRowGroups(t, context.rowsByHash);
+  const { transaction, receipt } = await getTxRpcContext(
     t.transaction,
     context.provider,
     context.txRpcCache
   );
-  const transaction = txContext.transaction;
-  const receipt = txContext.receipt;
   const transactionValueWei = transaction
     ? valueToWei(transaction.value)
     : BigInt(0);
 
-  t.value = weiToEth(prorateWei(transactionValueWei, rowUnits, txUnits));
-  t.royalties = 0;
-  t.primary_proceeds = 0;
-
+  applyBaseValueFields(t, transactionValueWei, groups.rowUnits, groups.txUnits);
   const royaltiesAddress = getRoyaltiesAddressForTransaction(t);
 
   if (receipt) {
-    const logCount =
-      receipt.logs.filter(
-        (l) =>
-          equalIgnoreCase(l.topics[0], TRANSFER_EVENT) &&
-          equalIgnoreCase(resolveLogAddress(l.topics[2]), t.to_address)
-      ).length || 1;
-
-    if (receipt.gasUsed) {
-      const gasUnits = Number(receipt.gasUsed);
-      const gasPriceWei =
-        (receipt as any).effectiveGasPrice ??
-        (receipt as any).gasPrice ??
-        transaction?.gasPrice ??
-        BigInt(0);
-      const gasPrice = parseFloat(ethers.formatEther(gasPriceWei));
-      const gasPriceGwei =
-        Math.round(gasPrice * 1000000000 * 100000000) / 100000000;
-      const gas = Math.round(gasUnits * gasPrice * 100000000) / 100000000;
-
-      t.gas_gwei = gasUnits;
-      t.gas_price = gasPrice;
-      t.gas_price_gwei = gasPriceGwei;
-      t.gas = gas / logCount;
-    }
-
-    const attributeRow = attributeRowFromSeaportTx(
-      receipt,
+    const logCount = getTransferLogCountForRecipient(receipt, t.to_address);
+    applyGasValues(t, receipt, transaction, logCount);
+    await applyReceiptValueAndRoyalties(
       t,
-      royaltiesAddress
+      receipt,
+      royaltiesAddress,
+      groups.rowUnits,
+      groups.pairUnits,
+      logCount
     );
-
-    if (attributeRow) {
-      t.royalties = attributeRow.royalties;
-      t.value = attributeRow.value;
-    } else {
-      let totalValue = 0;
-      let totalRoyalties = 0;
-
-      const erc20Transfers = extractErc20Transfers(receipt);
-      const buyerToSellerWethWei = sumErc20TransfersWei(
-        erc20Transfers,
-        (transfer) =>
-          equalIgnoreCase(transfer.token, WETH_TOKEN_ADDRESS) &&
-          equalIgnoreCase(transfer.from, t.to_address) &&
-          equalIgnoreCase(transfer.to, t.from_address)
-      );
-      if (buyerToSellerWethWei > BigInt(0)) {
-        totalValue = weiToEth(
-          prorateWei(buyerToSellerWethWei, rowUnits, pairUnits)
-        );
-      }
-
-      const buyerToRoyaltiesWethWei = sumErc20TransfersWei(
-        erc20Transfers,
-        (transfer) =>
-          equalIgnoreCase(transfer.token, WETH_TOKEN_ADDRESS) &&
-          equalIgnoreCase(transfer.from, t.to_address) &&
-          equalIgnoreCase(transfer.to, royaltiesAddress)
-      );
-      if (buyerToRoyaltiesWethWei > BigInt(0)) {
-        totalRoyalties = weiToEth(
-          prorateWei(buyerToRoyaltiesWethWei, rowUnits, pairUnits)
-        );
-      }
-
-      for (const log of receipt.logs) {
-        if (isBlurEvent(log) && !totalRoyalties) {
-          const royaltiesResponse = await parseBlurLog(log);
-          if (
-            royaltiesResponse &&
-            equalIgnoreCase(royaltiesResponse.feeRecipient, royaltiesAddress)
-          ) {
-            const parsedRate = Number(royaltiesResponse.feeRate);
-            const parsedRatePercentage = parsedRate / 100;
-            const royaltiesBaseValue = totalValue || t.value;
-            totalRoyalties = royaltiesBaseValue * (parsedRatePercentage / 100);
-          }
-        } else if (
-          !totalValue &&
-          equalIgnoreCase(log.topics[0], TRANSFER_EVENT)
-        ) {
-          try {
-            const address = log.address;
-            if (equalIgnoreCase(address, WETH_TOKEN_ADDRESS)) {
-              const from = resolveLogAddress(log.topics[1]);
-              const to = resolveLogAddress(log.topics[2]);
-              const value = resolveLogValue(log.data) / logCount;
-              if (
-                equalIgnoreCase(from, t.to_address) &&
-                (equalIgnoreCase(to, t.from_address) ||
-                  equalIgnoreCase(to, royaltiesAddress))
-              ) {
-                totalValue += value;
-              }
-            } else if (equalIgnoreCase(log.topics[1], MINT_FROM_ADDRESS)) {
-              totalValue = t.value / logCount;
-            }
-          } catch (e) {
-            logger.error(
-              `Error adding royalties for transaction ${t.transaction}`,
-              e
-            );
-          }
-        }
-      }
-
-      if (totalValue) {
-        t.value = totalValue;
-      }
-      if (totalRoyalties) {
-        t.royalties = totalRoyalties;
-      }
-    }
   }
 
   if (isMintLikeTransaction(t)) {
     if (transactionValueWei > BigInt(0)) {
-      const grossMintWei = prorateWei(transactionValueWei, rowUnits, mintUnits);
+      const grossMintWei = prorateWei(
+        transactionValueWei,
+        groups.rowUnits,
+        groups.mintUnits
+      );
       t.value = weiToEth(grossMintWei);
     }
 
-    try {
-      const internlTrfs = await getInternalTransfersForBlock(
-        t.block,
-        context.provider,
-        context.fallbackTraceProvider,
-        context.internalTransfersCache
-      );
-      const txInternalTrfs = internlTrfs.transfers.filter((it) =>
-        equalIgnoreCase(it.hash, t.transaction)
-      );
-
-      // Preserve existing mint/special-case semantics, but prefer direct proceeds receiver when present.
-      const proceedsToMemesDeployer = txInternalTrfs.filter(
-        (it) => it.to && equalIgnoreCase(it.to, MEMES_DEPLOYER)
-      );
-      const primaryTransfers =
-        proceedsToMemesDeployer.length > 0
-          ? proceedsToMemesDeployer
-          : txInternalTrfs.filter(
-              (it) =>
-                equalIgnoreCase(it.from, t.to_address) ||
-                equalIgnoreCase(it.from, MANIFOLD) ||
-                (it.to && equalIgnoreCase(it.to, MEMES_DEPLOYER))
-            );
-
-      const primaryProceedsTxTotal = primaryTransfers.reduce(
-        (acc, transfer) => acc + (transfer.value ?? 0),
-        0
-      );
-
-      if (primaryProceedsTxTotal > 0) {
-        const rowPrimaryProceeds =
-          (primaryProceedsTxTotal * Number(rowUnits)) / Number(mintUnits);
-        t.primary_proceeds = rowPrimaryProceeds;
-      }
-    } catch (e: any) {
-      logger.error(
-        `Error fetching primary proceeds for transaction ${t.transaction}`,
-        e
-      );
-    }
+    await applyMintPrimaryProceeds(
+      t,
+      context,
+      groups.rowUnits,
+      groups.mintUnits
+    );
 
     if (!t.primary_proceeds && t.value) {
       t.primary_proceeds = t.value;
     }
   }
 
-  t.value = parseFloat(t.value.toFixed(8));
-  t.royalties = parseFloat(t.royalties.toFixed(8));
-  t.primary_proceeds = parseFloat(t.primary_proceeds.toFixed(8));
-  t.gas = parseFloat(t.gas.toFixed(8));
-  t.gas_price = parseFloat(t.gas_price.toFixed(8));
-  t.gas_price_gwei = parseFloat(t.gas_price_gwei.toFixed(8));
-  t.gas_gwei = parseFloat(t.gas_gwei.toFixed(8));
-
-  const ethPrice = await getClosestEthUsdPrice(new Date(t.transaction_date));
-  t.eth_price_usd = ethPrice;
-  t.value_usd = t.value * ethPrice;
-  t.gas_usd = t.gas * ethPrice;
-
+  roundTransactionValues(t);
+  await applyUsdValues(t);
   return t;
 }
 
@@ -667,7 +843,8 @@ const parseSeaportLog = async (
     }
 
     const totalAmount = seaResult.args.consideration.reduce(
-      (acc: number, c: any) => acc + parseFloat(ethers.formatEther(c.amount)),
+      (acc: number, c: any) =>
+        acc + Number.parseFloat(ethers.formatEther(c.amount)),
       0
     );
 
@@ -680,7 +857,7 @@ const parseSeaportLog = async (
       contract: t.contract,
       tokenId: t.token_id,
       royaltiesAmount: royalties
-        ? parseFloat(ethers.formatEther(royalties.amount))
+        ? Number.parseFloat(ethers.formatEther(royalties.amount))
         : 0,
       totalAmount: totalAmount
     };
@@ -709,14 +886,14 @@ const parseSeaportLog = async (
       equalIgnoreCase(c.recipient, royaltiesAddress)
     );
 
-    const totalAmount = parseFloat(ethers.formatEther(offer.amount));
+    const totalAmount = Number.parseFloat(ethers.formatEther(offer.amount));
 
     return {
       orderHash: seaResult.args.orderHash,
       contract: t.contract,
       tokenId: t.token_id,
       royaltiesAmount: royalties
-        ? parseFloat(ethers.formatEther(royalties.amount))
+        ? Number.parseFloat(ethers.formatEther(royalties.amount))
         : 0,
       totalAmount: totalAmount
     };
@@ -1044,7 +1221,7 @@ function attributeRowFromSeaportTx(
     for (const c of consideration) {
       const it = Number(c.itemType);
       if (!isCurrencyItemType(it)) continue;
-      const amt = BigInt(c.amount.toString());
+      const amt = valueToWei(c.amount);
       currency ??= { itemType: it, token: c.token };
       currencySplits.push({
         itemType: it,
@@ -1194,6 +1371,7 @@ function attributeRowFromSeaportTx(
   let mergedOfferCurrencyTotal: bigint = chosen.offerCurrencyTotal;
   let mergedConsiderationCurrencyTotal: bigint =
     chosen.considerationCurrencyTotal;
+  let matchedGroupDistinctTokenCount = 0;
 
   try {
     // find OrdersMatched logs and parse their orderHashes
@@ -1263,8 +1441,7 @@ function attributeRowFromSeaportTx(
             mergedConsiderationCurrencyTotal += ev.considerationCurrencyTotal;
           }
           // Save group-level counts for fallback decision later
-          (mergedCurrencySplits as any)._matchedGroupDistinctTokenCount =
-            siblingsAllDistinctTokens.size;
+          matchedGroupDistinctTokenCount = siblingsAllDistinctTokens.size;
         }
         break; // only need to process the first match group containing chosen
       }
@@ -1333,8 +1510,7 @@ function attributeRowFromSeaportTx(
       let buyerOut = BigInt(0);
       for (const lg of receipt.logs) {
         if (
-          lg.topics &&
-          lg.topics.length === 3 &&
+          lg.topics?.length === 3 &&
           lg.topics[0] === erc20TransferTopic &&
           equalIgnoreCase(lg.address, mergedCurrency.token)
         ) {
@@ -1354,8 +1530,6 @@ function attributeRowFromSeaportTx(
         }
       }
       // Only apply buyer-outflow fallback when the matched group effectively involved ONE token total (no sweep/bundle).
-      const matchedGroupDistinctTokenCount: number =
-        (mergedCurrencySplits as any)._matchedGroupDistinctTokenCount ?? 0;
       const safeToOverride =
         matchedGroupDistinctTokenCount === 1 && buyerOut > 0;
       if (safeToOverride && buyerOut > groupTotalCurrency) {
@@ -1380,8 +1554,8 @@ function attributeRowFromSeaportTx(
   if (valueWeiPart === BigInt(0) && royaltiesWeiPart === BigInt(0)) return null;
 
   return {
-    value: parseFloat(ethers.formatEther(valueWeiPart)),
-    royalties: parseFloat(ethers.formatEther(royaltiesWeiPart)),
+    value: Number.parseFloat(ethers.formatEther(valueWeiPart)),
+    royalties: Number.parseFloat(ethers.formatEther(royaltiesWeiPart)),
     currency: mergedCurrency,
     orderHash: chosen.orderHash
   };
