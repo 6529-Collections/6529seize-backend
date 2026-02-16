@@ -10,6 +10,7 @@
  * Do not edit the class manually.
  */
 
+import { ApiMemeClaimsSettings } from '../models/ApiMemeClaimsSettings';
 import { HttpFile } from '../http/http';
 
 export class ApiSeizeSettings {
@@ -18,6 +19,7 @@ export class ApiSeizeSettings {
     'memes_wave_id': string | null;
     'distribution_admin_wallets': Array<string>;
     'claims_admin_wallets': Array<string>;
+    'meme_claims': ApiMemeClaimsSettings;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -50,6 +52,12 @@ export class ApiSeizeSettings {
             "name": "claims_admin_wallets",
             "baseName": "claims_admin_wallets",
             "type": "Array<string>",
+            "format": ""
+        },
+        {
+            "name": "meme_claims",
+            "baseName": "meme_claims",
+            "type": "ApiMemeClaimsSettings",
             "format": ""
         }    ];
 
