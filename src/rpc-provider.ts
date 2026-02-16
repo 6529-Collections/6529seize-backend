@@ -1,31 +1,51 @@
 import { JsonRpcProvider } from 'ethers';
 
-const providers = new Map<number, JsonRpcProvider>();
+const ALCHEMY_MAINNET_PATH = 'eth-mainnet';
+const RPC_6529_URL = 'https://rpc1.6529.io';
 
-function getAlchemyPathForNetwork(networkId: number): string {
-  switch (networkId) {
-    case 1:
-      return 'eth-mainnet';
-    case 11155111:
-      return 'eth-sepolia';
-    default:
-      throw new Error(`Unsupported network id: ${networkId}`);
+const providers = new Map<string, JsonRpcProvider>();
+
+function getAlchemyPathForNetwork(networkIdOrName: number | string): string {
+  if (typeof networkIdOrName === 'number') {
+    switch (networkIdOrName) {
+      case 1:
+        return ALCHEMY_MAINNET_PATH;
+      case 11155111:
+        return 'eth-sepolia';
+      default:
+        throw new Error(`Unsupported network id: ${networkIdOrName}`);
+    }
   }
+
+  const networkPath = networkIdOrName.trim();
+  if (!networkPath) {
+    throw new Error('Network name cannot be empty');
+  }
+  return networkPath;
 }
 
-function getAlchemyUrl(networkId: number): string {
+function getAlchemyUrl(networkIdOrName: number | string): string {
   const alchemyApiKey = process.env.ALCHEMY_API_KEY;
   if (!alchemyApiKey) {
     throw new Error('ALCHEMY_API_KEY is not set');
   }
-  const networkPrefix = getAlchemyPathForNetwork(networkId);
-  return `https://${networkPrefix}.g.alchemy.com/v2/${alchemyApiKey}`;
+  const networkPath = getAlchemyPathForNetwork(networkIdOrName);
+  return `https://${networkPath}.g.alchemy.com/v2/${alchemyApiKey}`;
 }
 
-export function getRpcProvider(networkId = 1): JsonRpcProvider {
-  if (!providers.has(networkId)) {
-    const provider = new JsonRpcProvider(getAlchemyUrl(networkId));
-    providers.set(networkId, provider);
+function getOrCreateProvider(url: string): JsonRpcProvider {
+  if (!providers.has(url)) {
+    providers.set(url, new JsonRpcProvider(url));
   }
-  return providers.get(networkId)!;
+  return providers.get(url)!;
+}
+
+export function getRpcProvider(
+  networkIdOrName: number | string = 1
+): JsonRpcProvider {
+  return getOrCreateProvider(getAlchemyUrl(networkIdOrName));
+}
+
+export function get6529RpcProvider(): JsonRpcProvider {
+  return getOrCreateProvider(RPC_6529_URL);
 }

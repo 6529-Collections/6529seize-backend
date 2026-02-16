@@ -340,14 +340,14 @@ export class CurationsDb extends LazyDbAccessCompatibleService {
         insert into ${DROP_CURATIONS_TABLE}
         (drop_id, curator_id, curator_rating, created_at, updated_at, wave_id)
         select
-          drop_id,
+          source_curations.drop_id,
           :new_id as curator_id,
-          curator_rating,
-          created_at,
-          updated_at,
-          wave_id
-        from ${DROP_CURATIONS_TABLE}
-        where curator_id = :previous_id
+          source_curations.curator_rating,
+          source_curations.created_at,
+          source_curations.updated_at,
+          source_curations.wave_id
+        from ${DROP_CURATIONS_TABLE} source_curations
+        where source_curations.curator_id = :previous_id
         on duplicate key update
           curator_rating = greatest(${DROP_CURATIONS_TABLE}.curator_rating, values(curator_rating)),
           created_at = least(${DROP_CURATIONS_TABLE}.created_at, values(created_at)),
