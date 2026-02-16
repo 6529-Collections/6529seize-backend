@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto';
 import {
+  PROFILE_PROXY_RATING_CREDIT_BALANCES_TABLE,
   PROFILE_PROXIES_TABLE,
   PROFILE_PROXY_ACTIONS_TABLE
 } from '@/constants';
@@ -399,6 +400,58 @@ export class ProfileProxiesDb extends LazyDbAccessCompatibleService {
     return this.getAffectedRows(result) === 1;
   }
 
+  async applyCreditSpentDeltaForAction(
+    param: { credit_spent_delta: number; id: string },
+    connection?: ConnectionWrapper<any>
+  ): Promise<boolean> {
+    if (param.credit_spent_delta === 0) {
+      return true;
+    }
+    if (param.credit_spent_delta > 0) {
+      return this.incrementCreditSpentForAction(param, connection);
+    }
+    const requiredRefund = Math.abs(param.credit_spent_delta);
+    const result = await this.db.execute(
+      `update ${PROFILE_PROXY_ACTIONS_TABLE}
+      set credit_spent = IFNULL(credit_spent, 0) + :credit_spent_delta
+      where id = :id
+      and IFNULL(credit_spent, 0) >= :required_refund`,
+      {
+        ...param,
+        required_refund: requiredRefund
+      },
+      connection ? { wrappedConnection: connection } : undefined
+    );
+    return this.getAffectedRows(result) === 1;
+  }
+
+  async getCreditSpentByActionIds({
+    action_ids,
+    connection
+  }: {
+    readonly action_ids: string[];
+    readonly connection?: ConnectionWrapper<any>;
+  }): Promise<Record<string, number>> {
+    if (!action_ids.length) {
+      return {};
+    }
+    const rows = await this.db.execute<{
+      id: string;
+      credit_spent: number | null;
+    }>(
+      `select id, credit_spent from ${PROFILE_PROXY_ACTIONS_TABLE} where id in (:action_ids)`,
+      { action_ids },
+      connection ? { wrappedConnection: connection } : undefined
+    );
+    return rows.reduce(
+      (acc, row) => {
+        acc[row.id] = row.credit_spent ?? 0;
+        return acc;
+      },
+      {} as Record<string, number>
+    );
+  }
+
   private getAffectedRows(result: any): number {
     if (!result) {
       return 0;
@@ -415,6 +468,15 @@ export class ProfileProxiesDb extends LazyDbAccessCompatibleService {
     profileId: string,
     connectionHolder: ConnectionWrapper<any>
   ) {
+    await this.db.execute(
+      `delete balances from ${PROFILE_PROXY_RATING_CREDIT_BALANCES_TABLE} balances
+      join ${PROFILE_PROXY_ACTIONS_TABLE} actions on balances.proxy_action_id = actions.id
+      join ${PROFILE_PROXIES_TABLE} proxies on actions.proxy_id = proxies.id
+      where proxies.target_id = :profileId or proxies.created_by = :profileId`,
+      { profileId },
+      { wrappedConnection: connectionHolder }
+    );
+
     await this.db.execute(
       `delete from ${PROFILE_PROXY_ACTIONS_TABLE} where proxy_id in (select id from ${PROFILE_PROXIES_TABLE} where target_id = :profileId or created_by = :profileId)`,
       { profileId },
