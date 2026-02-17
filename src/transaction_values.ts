@@ -420,9 +420,7 @@ export const findTransactionValues = async (
   use6529Rpc = false
 ) => {
   const provider = getTransactionValuesProvider(network, use6529Rpc);
-  const fallbackTraceProvider = use6529Rpc
-    ? getRpcProvider(network)
-    : null;
+  const fallbackTraceProvider = use6529Rpc ? getRpcProvider(network) : null;
 
   const concurrency = DEFAULT_TRANSACTION_VALUES_CONCURRENCY;
   logger.info(
