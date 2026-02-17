@@ -1,31 +1,51 @@
+import { assertUnreachable } from '@/assertions';
+import { Network } from 'alchemy-sdk';
 import { JsonRpcProvider } from 'ethers';
 
-const providers = new Map<number, JsonRpcProvider>();
+const RPC_6529_URL = 'https://rpc1.6529.io';
 
-function getAlchemyPathForNetwork(networkId: number): string {
-  switch (networkId) {
-    case 1:
+const providers = new Map<string, JsonRpcProvider>();
+
+export type SupportedRpcNetwork =
+  | Network.ETH_MAINNET
+  | Network.ETH_SEPOLIA
+  | Network.ETH_GOERLI;
+
+function getAlchemyPathForNetwork(network: SupportedRpcNetwork): string {
+  switch (network) {
+    case Network.ETH_MAINNET:
       return 'eth-mainnet';
-    case 11155111:
+    case Network.ETH_SEPOLIA:
       return 'eth-sepolia';
+    case Network.ETH_GOERLI:
+      return 'eth-goerli';
     default:
-      throw new Error(`Unsupported network id: ${networkId}`);
+      throw assertUnreachable(network);
   }
 }
 
-function getAlchemyUrl(networkId: number): string {
+function getAlchemyUrl(network: SupportedRpcNetwork): string {
   const alchemyApiKey = process.env.ALCHEMY_API_KEY;
   if (!alchemyApiKey) {
     throw new Error('ALCHEMY_API_KEY is not set');
   }
-  const networkPrefix = getAlchemyPathForNetwork(networkId);
-  return `https://${networkPrefix}.g.alchemy.com/v2/${alchemyApiKey}`;
+  const networkPath = getAlchemyPathForNetwork(network);
+  return `https://${networkPath}.g.alchemy.com/v2/${alchemyApiKey}`;
 }
 
-export function getRpcProvider(networkId = 1): JsonRpcProvider {
-  if (!providers.has(networkId)) {
-    const provider = new JsonRpcProvider(getAlchemyUrl(networkId));
-    providers.set(networkId, provider);
+function getOrCreateProvider(url: string): JsonRpcProvider {
+  if (!providers.has(url)) {
+    providers.set(url, new JsonRpcProvider(url));
   }
-  return providers.get(networkId)!;
+  return providers.get(url)!;
+}
+
+export function getRpcProvider(
+  network: SupportedRpcNetwork = Network.ETH_MAINNET
+): JsonRpcProvider {
+  return getOrCreateProvider(getAlchemyUrl(network));
+}
+
+export function get6529RpcProvider(): JsonRpcProvider {
+  return getOrCreateProvider(RPC_6529_URL);
 }
