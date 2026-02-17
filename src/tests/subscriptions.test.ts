@@ -1,6 +1,7 @@
 import { when } from 'jest-when';
 import { Mock, mock } from 'ts-jest-mocker';
 import { EntityManager, Repository } from 'typeorm';
+import { DISTRIBUTION_AUTOMATIC_AIRDROP_PHASES } from '@/airdrop-phases';
 import {
   DISTRIBUTION_TABLE,
   GRADIENT_CONTRACT,
@@ -697,15 +698,18 @@ describe('SubscriptionTests', () => {
 });
 
 function getDistributionSql(transaction: Transaction) {
+  const phases = DISTRIBUTION_AUTOMATIC_AIRDROP_PHASES.map((phase) =>
+    phase.toLowerCase()
+  );
   return {
-    sql: `SELECT * FROM ${DISTRIBUTION_TABLE} 
+    sql: `SELECT COALESCE(SUM(count), 0) as count FROM ${DISTRIBUTION_TABLE} 
         WHERE LOWER(wallet) = ?
-        AND LOWER(phase) = ?
+        AND LOWER(phase) IN (${DISTRIBUTION_AUTOMATIC_AIRDROP_PHASES.map(() => '?').join(', ')})
         AND LOWER(contract) = ?
         AND card_id = ?;`,
     params: [
       transaction.to_address.toLowerCase(),
-      'airdrop',
+      ...phases,
       transaction.contract.toLowerCase(),
       transaction.token_id
     ]

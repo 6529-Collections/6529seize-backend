@@ -6,6 +6,7 @@ import {
   MINTING_MERKLE_PROOFS_TABLE,
   MINTING_MERKLE_ROOTS_TABLE
 } from '@/constants';
+import { DISTRIBUTION_AUTOMATIC_AIRDROP_PHASES } from '@/airdrop-phases';
 import { sqlExecutor } from '@/sql-executor';
 import type { AllowlistMerkleProofItem } from './allowlist-merkle';
 
@@ -198,7 +199,7 @@ export async function fetchMintingMerkleRoots(
       total_spots: 0
     };
     const parsed = parseStoredMerkleProofs(row.proofs);
-    const rowSpots = parsed.reduce((sum, item) => sum + item.value, 0);
+    const rowSpots = parsed.length;
     countsByRoot.set(root, {
       addresses_count: current.addresses_count + 1,
       total_spots: current.total_spots + rowSpots
@@ -225,11 +226,13 @@ export async function fetchMintingAirdrops(
      WHERE card_id = :cardId
        AND contract = :contract
        AND count_airdrop > 0
+       AND phase IN (:automaticAirdropPhases)
      GROUP BY phase
      ORDER BY phase ASC`,
     {
       cardId,
-      contract: contract.toLowerCase()
+      contract: contract.toLowerCase(),
+      automaticAirdropPhases: [...DISTRIBUTION_AUTOMATIC_AIRDROP_PHASES]
     }
   );
 }

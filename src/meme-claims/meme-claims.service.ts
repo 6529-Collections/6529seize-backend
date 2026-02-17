@@ -1,4 +1,8 @@
-import { insertAutomaticAirdrops } from '@/api/distributions/api.distributions.service';
+import { upsertAutomaticAirdropsForPhase } from '@/api/distributions/api.distributions.service';
+import {
+  DISTRIBUTION_PHASE_AIRDROP_TEAM,
+  DISTRIBUTION_PHASE_AIRDROP_ARTIST
+} from '@/airdrop-phases';
 import { MEMES_CONTRACT, TEAM_TABLE } from '@/constants';
 import { dropsDb, DropsDb } from '@/drops/drops.db';
 import type { DropMetadataEntity } from '@/entities/IDrop';
@@ -76,13 +80,45 @@ function parseAirdropConfigFromMetadatas(
   }
 }
 
-async function fetchTeamWallets(): Promise<string[]> {
-  const rows = await sqlExecutor.execute<{ wallet: string }>(
-    `SELECT wallet FROM ${TEAM_TABLE}`
+type TeamWalletRow = {
+  wallet: string;
+  collection: string;
+};
+
+const TEAM_COLLECTION_MAIN = '6529Team';
+const TEAM_COLLECTION_FUNDS = '6529Funds';
+
+async function fetchTeamWalletRows(): Promise<TeamWalletRow[]> {
+  const rows = await sqlExecutor.execute<TeamWalletRow>(
+    `SELECT wallet, collection FROM ${TEAM_TABLE}`
   );
   return rows
-    .map((r) => r.wallet?.trim())
-    .filter((w) => w && ethers.isAddress(w));
+    .map((r) => ({
+      wallet: r.wallet?.trim() ?? '',
+      collection: r.collection?.trim() ?? ''
+    }))
+    .filter((r) => r.wallet && ethers.isAddress(r.wallet));
+}
+
+function buildTeamAirdrops(rows: TeamWalletRow[]): Array<{
+  address: string;
+  count: number;
+}> {
+  const walletCountMap = new Map<string, number>();
+  for (const row of rows) {
+    if (
+      row.collection !== TEAM_COLLECTION_MAIN &&
+      row.collection !== TEAM_COLLECTION_FUNDS
+    ) {
+      continue;
+    }
+    const key = row.wallet.toLowerCase();
+    walletCountMap.set(key, (walletCountMap.get(key) ?? 0) + 1);
+  }
+  return Array.from(walletCountMap.entries()).map(([address, count]) => ({
+    address,
+    count
+  }));
 }
 
 export class MemeClaimsService {
@@ -132,28 +168,41 @@ export class MemeClaimsService {
     const enriched = await this.enrichRowWithComputedDetails(row);
     await this.memeClaimsDb.createMemeClaim([enriched], ctx);
 
-    const teamWallets = await fetchTeamWallets();
+    const teamWalletRows = await fetchTeamWalletRows();
     const airdropConfigEntries = parseAirdropConfigFromMetadatas(metadatas);
-    const walletCountMap = new Map<string, number>();
-    for (const w of teamWallets) {
-      const key = w.toLowerCase();
-      walletCountMap.set(key, (walletCountMap.get(key) ?? 0) + 1);
-    }
+    const teamAirdrops = buildTeamAirdrops(teamWalletRows);
+
+    const artistWalletCountMap = new Map<string, number>();
     for (const { address, count } of airdropConfigEntries) {
       const key = address.toLowerCase();
-      walletCountMap.set(key, (walletCountMap.get(key) ?? 0) + count);
-    }
-    const airdrops = Array.from(walletCountMap.entries()).map(
-      ([wallet, count]) => ({ address: wallet, count })
-    );
-    if (airdrops.length > 0) {
-      await insertAutomaticAirdrops(
-        MEMES_CONTRACT,
-        nextMemeId,
-        airdrops,
-        ctx.connection
+      artistWalletCountMap.set(
+        key,
+        (artistWalletCountMap.get(key) ?? 0) + count
       );
     }
+    const artistAirdrops = Array.from(artistWalletCountMap.entries()).map(
+      ([address, count]) => ({
+        address,
+        count
+      })
+    );
+
+    await upsertAutomaticAirdropsForPhase(
+      MEMES_CONTRACT,
+      nextMemeId,
+      DISTRIBUTION_PHASE_AIRDROP_ARTIST,
+      artistAirdrops,
+      ctx.connection,
+      true
+    );
+    await upsertAutomaticAirdropsForPhase(
+      MEMES_CONTRACT,
+      nextMemeId,
+      DISTRIBUTION_PHASE_AIRDROP_TEAM,
+      teamAirdrops,
+      ctx.connection,
+      true
+    );
   }
 
   private async resolveSeasonForClaimBuild(

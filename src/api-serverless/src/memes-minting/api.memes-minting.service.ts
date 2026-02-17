@@ -4,6 +4,9 @@ import {
   updateMemeClaim,
   type MemeClaimRow
 } from '@/api/memes-minting/api.memes-minting.db';
+import { upsertAutomaticAirdropsForPhase } from '@/api/distributions/api.distributions.service';
+import { DISTRIBUTION_PHASE_AIRDROP_TEAM } from '@/airdrop-phases';
+import { MEMES_CONTRACT, TEAM_TABLE } from '@/constants';
 import { BadRequestException, CustomApiCompliantException } from '@/exceptions';
 import type { MemeClaimUpdateRequest } from '@/api/generated/models/MemeClaimUpdateRequest';
 import {
@@ -12,10 +15,14 @@ import {
   computeAnimationDetailsGlb,
   animationDetailsHtml
 } from '@/meme-claims/media-inspector';
+import { sqlExecutor } from '@/sql-executor';
+import { ethers } from 'ethers';
 
 const MIN_EDITION_SIZE = 300;
 
 export type MemeClaimUpdates = Parameters<typeof updateMemeClaim>[1];
+
+const TEAM_COLLECTION_RESERVE = 'Reserve';
 
 function parseExistingAnimationFormat(
   animationDetails: string | null
@@ -206,5 +213,47 @@ export async function patchMemeClaim(
   }
   const updates = await buildUpdatesForClaimPatch(body, existing);
   await updateMemeClaim(memeId, updates);
+  const updated = await fetchMemeClaimByMemeId(memeId);
+  if (updated === null) {
+    return null;
+  }
+  if (body.edition_size !== undefined) {
+    await syncReserveTeamAirdrops(memeId, updated.edition_size);
+  }
   return fetchMemeClaimByMemeId(memeId);
+}
+
+async function fetchReserveTeamWallets(): Promise<string[]> {
+  const rows = await sqlExecutor.execute<{ wallet: string }>(
+    `SELECT wallet FROM ${TEAM_TABLE} WHERE collection = :collection`,
+    { collection: TEAM_COLLECTION_RESERVE }
+  );
+  return rows
+    .map((row) => row.wallet?.trim().toLowerCase())
+    .filter((wallet): wallet is string => !!wallet && ethers.isAddress(wallet));
+}
+
+async function syncReserveTeamAirdrops(
+  memeId: number,
+  editionSize: number | null
+): Promise<void> {
+  if (editionSize == null) {
+    return;
+  }
+  const reserveWallets = await fetchReserveTeamWallets();
+  if (reserveWallets.length === 0) {
+    return;
+  }
+  const reserveCount = Math.round(editionSize * 0.1);
+  if (reserveCount <= 0) {
+    return;
+  }
+  await upsertAutomaticAirdropsForPhase(
+    MEMES_CONTRACT,
+    memeId,
+    DISTRIBUTION_PHASE_AIRDROP_TEAM,
+    reserveWallets.map((address) => ({ address, count: reserveCount })),
+    undefined,
+    false
+  );
 }

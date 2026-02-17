@@ -1,9 +1,12 @@
 import { Request } from 'express';
 import fetch from 'node-fetch';
+import { DISTRIBUTION_AUTOMATIC_AIRDROP_PHASES } from '@/airdrop-phases';
 import {
   DISTRIBUTION_NORMALIZED_TABLE,
   DISTRIBUTION_TABLE,
   MEMES_CONTRACT,
+  MINTING_MERKLE_PROOFS_TABLE,
+  MINTING_MERKLE_ROOTS_TABLE,
   SUBSCRIPTIONS_NFTS_FINAL_TABLE,
   USE_CASE_MINTING
 } from '@/constants';
@@ -359,6 +362,7 @@ function filterSubscriptions(
 }
 
 export async function resetAllowlist(contract: string, tokenId: number) {
+  const contractLower = contract.toLowerCase();
   await sqlExecutor.executeNativeQueriesInTransaction(
     async (wrappedConnection) => {
       const updateQuery = `
@@ -379,9 +383,39 @@ export async function resetAllowlist(contract: string, tokenId: number) {
       );
 
       await sqlExecutor.execute(
-        `DELETE FROM ${DISTRIBUTION_TABLE} WHERE contract = :contract AND card_id = :tokenId AND phase != 'Airdrop'`,
+        `DELETE FROM ${DISTRIBUTION_TABLE}
+         WHERE contract = :contract
+           AND card_id = :tokenId
+           AND phase NOT IN (:automaticAirdropPhases)`,
         {
-          contract: contract.toLowerCase(),
+          contract: contractLower,
+          tokenId,
+          automaticAirdropPhases: [...DISTRIBUTION_AUTOMATIC_AIRDROP_PHASES]
+        },
+        { wrappedConnection }
+      );
+
+      await sqlExecutor.execute(
+        `DELETE FROM ${MINTING_MERKLE_PROOFS_TABLE}
+         WHERE merkle_root IN (
+           SELECT merkle_root
+           FROM ${MINTING_MERKLE_ROOTS_TABLE}
+           WHERE contract = :contract
+             AND card_id = :tokenId
+         )`,
+        {
+          contract: contractLower,
+          tokenId
+        },
+        { wrappedConnection }
+      );
+
+      await sqlExecutor.execute(
+        `DELETE FROM ${MINTING_MERKLE_ROOTS_TABLE}
+         WHERE contract = :contract
+           AND card_id = :tokenId`,
+        {
+          contract: contractLower,
           tokenId
         },
         { wrappedConnection }
@@ -390,7 +424,7 @@ export async function resetAllowlist(contract: string, tokenId: number) {
       await sqlExecutor.execute(
         `DELETE FROM ${DISTRIBUTION_NORMALIZED_TABLE} WHERE contract = :contract AND card_id = :tokenId`,
         {
-          contract: contract.toLowerCase(),
+          contract: contractLower,
           tokenId
         },
         { wrappedConnection }

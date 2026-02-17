@@ -70,6 +70,7 @@ async function invalidateMemesMintingPhaseCache(
 ) {
   await evictCacheForPath(`/api/memes-minting/roots/${contract}/${tokenId}`);
   await evictCacheForPath(`/api/memes-minting/proofs/`);
+  await evictCacheForPath(`/api/distributions/${contract}/${tokenId}/overview`);
 }
 
 async function invalidateSubscriptionCache(consolidationKey: string) {
@@ -724,10 +725,6 @@ router.post(
 
     await resetAllowlist(contract, tokenId);
     await invalidateMemesMintingPhaseCache(contract, tokenId);
-
-    await evictCacheForPath(
-      `/api/distributions/${contract}/${tokenId}/overview`
-    );
 
     return res.json({
       success: true,
