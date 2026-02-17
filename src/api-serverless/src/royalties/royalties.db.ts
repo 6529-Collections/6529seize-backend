@@ -149,7 +149,7 @@ export function getRoyaltiesSql(
         SUM(CASE WHEN from_address IN (:null_address, :manifold) ${specialCasePrimary} THEN primary_proceeds ELSE 0 END) AS primary_total_proceeds
       FROM 
         ${TRANSACTIONS_TABLE}
-      WHERE contract=:contract
+      ${filters}
       GROUP BY 
         token_id) AS primaryVolume
       ON ${nftsTable}.id = primaryVolume.token_id`;

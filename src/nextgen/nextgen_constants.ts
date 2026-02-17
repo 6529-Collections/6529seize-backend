@@ -26,7 +26,12 @@ export const NEXTGEN_ROYALTIES_ADDRESS =
 
 export const MINT_TYPE_TRAIT = 'Mint Type';
 
-export function getNextgenNetwork() {
+export type NextgenNetwork =
+  | Network.ETH_MAINNET
+  | Network.ETH_SEPOLIA
+  | Network.ETH_GOERLI;
+
+export function getNextgenNetwork(): NextgenNetwork {
   if (process.env.NEXTGEN_CHAIN_ID) {
     const chainId: number = parseInt(process.env.NEXTGEN_CHAIN_ID);
     if (chainId == sepolia.id) {
