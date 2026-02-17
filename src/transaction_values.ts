@@ -533,17 +533,28 @@ function applyGasValues(
   if (!receipt.gasUsed) {
     return;
   }
-  const gasUnits = Number(receipt.gasUsed);
+  const gasUnitsWei = valueToWei(receipt.gasUsed);
+  if (gasUnitsWei <= BigInt(0)) {
+    return;
+  }
+  const gasUnits = Number(gasUnitsWei);
   const gasPriceWei = getGasPriceWei(receipt, transaction);
   const gasPrice = Number.parseFloat(ethers.formatEther(gasPriceWei));
   const gasPriceGwei =
-    Math.round(gasPrice * 1000000000 * 100000000) / 100000000;
-  const gas = Math.round(gasUnits * gasPrice * 100000000) / 100000000;
+    Math.round(
+      Number.parseFloat(ethers.formatUnits(gasPriceWei, 'gwei')) * 100000000
+    ) / 100000000;
+  const gas =
+    Math.round(
+      Number.parseFloat(ethers.formatEther(gasUnitsWei * gasPriceWei)) *
+        100000000
+    ) / 100000000;
+  const normalizedLogCount = logCount > 0 ? logCount : 1;
 
   t.gas_gwei = gasUnits;
   t.gas_price = gasPrice;
   t.gas_price_gwei = gasPriceGwei;
-  t.gas = gas / logCount;
+  t.gas = gas / normalizedLogCount;
 }
 
 async function resolveFallbackValueAndRoyalties(
