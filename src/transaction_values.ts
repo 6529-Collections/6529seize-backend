@@ -19,8 +19,13 @@ import {
   NEXTGEN_CORE_CONTRACT,
   NEXTGEN_ROYALTIES_ADDRESS
 } from '@/nextgen/nextgen_constants';
-import { get6529RpcProvider, getRpcProvider } from '@/rpc-provider';
+import {
+  get6529RpcProvider,
+  getRpcProvider,
+  SupportedRpcNetwork
+} from '@/rpc-provider';
 import { equalIgnoreCase } from '@/strings';
+import { Network } from 'alchemy-sdk';
 import { ethers } from 'ethers';
 import pLimit from 'p-limit';
 
@@ -400,24 +405,23 @@ function sumErc20TransfersWei(
 }
 
 function getTransactionValuesProvider(
-  network?: string | number,
+  network: SupportedRpcNetwork = Network.ETH_MAINNET,
   use6529Rpc = false
 ): RpcProvider {
   if (use6529Rpc) {
     return get6529RpcProvider();
   }
-  const targetNetwork = network ?? 'eth-mainnet';
-  return getRpcProvider(targetNetwork);
+  return getRpcProvider(network);
 }
 
 export const findTransactionValues = async (
   transactions: Transaction[],
-  network?: string | number,
+  network: SupportedRpcNetwork = Network.ETH_MAINNET,
   use6529Rpc = false
 ) => {
   const provider = getTransactionValuesProvider(network, use6529Rpc);
   const fallbackTraceProvider = use6529Rpc
-    ? getRpcProvider(network ?? 'eth-mainnet')
+    ? getRpcProvider(network)
     : null;
 
   const concurrency = DEFAULT_TRANSACTION_VALUES_CONCURRENCY;
