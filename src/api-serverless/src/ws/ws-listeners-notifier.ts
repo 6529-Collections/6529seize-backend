@@ -4,22 +4,24 @@ import {
   wsConnectionRepository,
   WsConnectionRepository
 } from './ws-connection.repository';
-import { RequestContext } from '../../../request.context';
+import { RequestContext } from '@/request.context';
 import {
   dropDeleteMessage,
   dropRatingUpdateMessage,
   dropReactionUpdateMessage,
   dropUpdateMessage,
+  nftLinkUpdatedMessage,
   userIsTypingMessage
 } from './ws-message';
 import { ApiDropWithoutWave } from '../generated/models/ApiDropWithoutWave';
 import { ApiDropType } from '../generated/models/ApiDropType';
 import { ApiWaveCreditType } from '../generated/models/ApiWaveCreditType';
-import { Logger } from '../../../logging';
-import { Time } from '../../../time';
-import { identitiesDb } from '../../../identities/identities.db';
-import { getLevelFromScore } from '../../../profiles/profile-level';
+import { Logger } from '@/logging';
+import { Time } from '@/time';
+import { identitiesDb } from '@/identities/identities.db';
+import { getLevelFromScore } from '@/profiles/profile-level';
 import { ApiProfileMin } from '../generated/models/ApiProfileMin';
+import { ApiNftLinkData } from '@/api/generated/models/ApiNftLinkData';
 
 export class WsListenersNotifier {
   private readonly logger: Logger = Logger.get(this.constructor.name);
@@ -305,6 +307,35 @@ export class WsListenersNotifier {
       );
     }
     return modifiedDrop;
+  }
+
+  async notifyAboutNftLinkUpdate(
+    nftLinkData: ApiNftLinkData,
+    ctx: RequestContext
+  ) {
+    ctx.timer?.start(`${this.constructor.name}->notifyAboutNftLinkUpdate`);
+    const message = JSON.stringify(nftLinkUpdatedMessage(nftLinkData));
+    try {
+      const connections =
+        await this.wsConnectionRepository.findAllConnectionIds();
+      if (connections.length) {
+        await Promise.all(
+          connections.map((connectionId: string) =>
+            this.appWebSockets.send({
+              connectionId,
+              message
+            })
+          )
+        );
+      }
+    } catch (e) {
+      this.logger.error(
+        `Sending data to websockets failed. Params: ${message}`,
+        e
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->notifyAboutNftLinkUpdate`);
+    }
   }
 }
 

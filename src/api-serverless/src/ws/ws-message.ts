@@ -1,5 +1,6 @@
 import { ApiDrop } from '../generated/models/ApiDrop';
 import { ApiProfileMin } from '../generated/models/ApiProfileMin';
+import { ApiNftLinkData } from '@/api/generated/models/ApiNftLinkData';
 
 export enum WsMessageType {
   DROP_UPDATE = 'DROP_UPDATE',
@@ -7,7 +8,8 @@ export enum WsMessageType {
   DROP_RATING_UPDATE = 'DROP_RATING_UPDATE',
   DROP_REACTION_UPDATE = 'DROP_REACTION_UPDATE',
   USER_IS_TYPING = 'USER_IS_TYPING',
-  SUBSCRIBE_TO_WAVE = 'SUBSCRIBE_TO_WAVE'
+  SUBSCRIBE_TO_WAVE = 'SUBSCRIBE_TO_WAVE',
+  MEDIA_LINK_UPDATED = 'MEDIA_LINK_UPDATED'
 }
 
 export interface WsMessage<MESSAGE_DATA> {
@@ -50,6 +52,15 @@ export function userIsTypingMessage(
 ): WsMessage<UserIsTypingMessageData> {
   return {
     type: WsMessageType.USER_IS_TYPING,
+    data
+  };
+}
+
+export function nftLinkUpdatedMessage(
+  data: ApiNftLinkData
+): WsMessage<ApiNftLinkData> {
+  return {
+    type: WsMessageType.MEDIA_LINK_UPDATED,
     data
   };
 }

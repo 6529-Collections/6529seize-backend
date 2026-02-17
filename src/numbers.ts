@@ -5,11 +5,13 @@ export class Numbers {
 
   public parseIntOrNull(value: any): number | null {
     if (typeof value === 'number') {
-      return Number.isFinite(value) && Number.isInteger(value) ? value : null;
+      return Number.isFinite(value) && Number.isInteger(value)
+        ? Number(value)
+        : null;
     }
 
     if (typeof value === 'bigint') {
-      return Number(value);
+      return Number.isSafeInteger(Number(value)) ? Number(value) : null;
     }
 
     // anything that isn't a string is automatically rejected
