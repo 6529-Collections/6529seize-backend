@@ -16,6 +16,7 @@ export class ApiSeizeSettings {
     'rememes_submission_tdh_threshold': number;
     'all_drops_notifications_subscribers_limit': number;
     'memes_wave_id': string | null;
+    'curation_wave_id': string | null;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -35,6 +36,12 @@ export class ApiSeizeSettings {
         {
             "name": "memes_wave_id",
             "baseName": "memes_wave_id",
+            "type": "string",
+            "format": ""
+        },
+        {
+            "name": "curation_wave_id",
+            "baseName": "curation_wave_id",
             "type": "string",
             "format": ""
         }    ];
