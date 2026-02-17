@@ -9,7 +9,7 @@ plugins:
 provider:
   name: aws
   runtime: nodejs22.x
-  memorySize: 1536
+  memorySize: 5120
   timeout: 900
   architecture: arm64
   logRetentionInDays: 60
@@ -38,21 +38,21 @@ resources:
       Type: AWS::Logs::MetricFilter
       Properties:
         LogGroupName: /aws/lambda/customReplayLoop
-        FilterPattern: "Runtime.OutOfMemory"
+        FilterPattern: 'Runtime.OutOfMemory'
         MetricTransformations:
-          - MetricNamespace: "Lambda/OOM"
-            MetricName: "customReplayLoop_OOMErrorCount"
-            MetricValue: "1"
+          - MetricNamespace: 'Lambda/OOM'
+            MetricName: 'customReplayLoop_OOMErrorCount'
+            MetricValue: '1'
             DefaultValue: 0
 
     CustomReplayLoopOOMAlarm:
       Type: AWS::CloudWatch::Alarm
       DependsOn: CustomReplayLoopOOMFilter
       Properties:
-        AlarmName: !Sub "${AWS::StackName}-customReplayLoop-OOM"
-        AlarmDescription: !Sub "Lambda customReplayLoop OutOfMemory in ${AWS::Region}"
-        Namespace: "Lambda/OOM"
-        MetricName: "customReplayLoop_OOMErrorCount"
+        AlarmName: !Sub '${AWS::StackName}-customReplayLoop-OOM'
+        AlarmDescription: !Sub 'Lambda customReplayLoop OutOfMemory in ${AWS::Region}'
+        Namespace: 'Lambda/OOM'
+        MetricName: 'customReplayLoop_OOMErrorCount'
         Statistic: Sum
         Period: 60
         EvaluationPeriods: 1
