@@ -12,19 +12,19 @@
 
 import { HttpFile } from '../http/http';
 
-export class ApiMemesMintingAirdropItem {
+export class ApiMemesMintingPhaseTotalItem {
     /**
     * Phase name
     */
     'phase': string;
     /**
-    * Number of unique addresses with airdrops in this phase
+    * Number of unique addresses in this phase
     */
-    'addresses_count': number;
+    'addresses': number;
     /**
-    * Sum of airdrops for this phase
+    * Sum of spots for this phase
     */
-    'total_airdrops': number;
+    'total': number;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -36,20 +36,20 @@ export class ApiMemesMintingAirdropItem {
             "format": ""
         },
         {
-            "name": "addresses_count",
-            "baseName": "addresses_count",
+            "name": "addresses",
+            "baseName": "addresses",
             "type": "number",
             "format": "int64"
         },
         {
-            "name": "total_airdrops",
-            "baseName": "total_airdrops",
+            "name": "total",
+            "baseName": "total",
             "type": "number",
             "format": "int64"
         }    ];
 
     static getAttributeTypeMap() {
-        return ApiMemesMintingAirdropItem.attributeTypeMap;
+        return ApiMemesMintingPhaseTotalItem.attributeTypeMap;
     }
 
     public constructor() {

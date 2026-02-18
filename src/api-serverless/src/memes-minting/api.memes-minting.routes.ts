@@ -6,14 +6,15 @@ import {
   needsAuthenticatedUser
 } from '@/api/auth/auth';
 import type { MemeClaim } from '@/api/generated/models/MemeClaim';
-import type { ApiMemesMintingAirdropItem } from '@/api/generated/models/ApiMemesMintingAirdropItem';
 import type { MemeClaimUpdateRequest } from '@/api/generated/models/MemeClaimUpdateRequest';
 import type { MemesMintingClaimsPageResponse } from '@/api/generated/models/MemesMintingClaimsPageResponse';
+import type { ApiMemesMintingPhaseTotalItem } from '@/api/generated/models/ApiMemesMintingPhaseTotalItem';
 import type { MemesMintingProofsByAddressResponse } from '@/api/generated/models/MemesMintingProofsByAddressResponse';
 import type { MemesMintingProofsResponse } from '@/api/generated/models/MemesMintingProofsResponse';
 import type { MemesMintingRootItem } from '@/api/generated/models/MemesMintingRootItem';
 import {
   fetchAllMintingMerkleProofsForRoot,
+  fetchMintingAllowlists,
   fetchMemeClaimByMemeId,
   fetchMemeClaimsPage,
   fetchMemeClaimsTotalCount,
@@ -243,7 +244,7 @@ router.get(
   '/airdrops/:contract/:card_id',
   async function (
     req: Request<RootsParams, any, any, any, any>,
-    res: Response<ApiResponse<ApiMemesMintingAirdropItem[]>>
+    res: Response<ApiResponse<ApiMemesMintingPhaseTotalItem[]>>
   ) {
     const params = getValidatedByJoiOrThrow(req.params, RootsParamsSchema);
     const cardId = numbers.parseIntOrNull(params.card_id);
@@ -254,10 +255,35 @@ router.get(
     }
 
     const rows = await fetchMintingAirdrops(cardId, params.contract);
-    const response: ApiMemesMintingAirdropItem[] = rows.map((row) => ({
-      phase: row.phase === 'Airdrop' ? 'Automatic' : row.phase,
-      addresses_count: row.addresses_count ?? 0,
-      total_airdrops: row.total_airdrops ?? 0
+    const response: ApiMemesMintingPhaseTotalItem[] = rows.map((row) => ({
+      phase: row.phase,
+      addresses: row.addresses ?? 0,
+      total: row.total ?? 0
+    }));
+
+    return res.json(response);
+  }
+);
+
+router.get(
+  '/allowlists/:contract/:card_id',
+  async function (
+    req: Request<RootsParams, any, any, any, any>,
+    res: Response<ApiResponse<ApiMemesMintingPhaseTotalItem[]>>
+  ) {
+    const params = getValidatedByJoiOrThrow(req.params, RootsParamsSchema);
+    const cardId = numbers.parseIntOrNull(params.card_id);
+    if (cardId === null || cardId < 0) {
+      return res.status(400).json({
+        error: 'card_id must be a non-negative integer'
+      });
+    }
+
+    const rows = await fetchMintingAllowlists(cardId, params.contract);
+    const response: ApiMemesMintingPhaseTotalItem[] = rows.map((row) => ({
+      phase: row.phase,
+      addresses: row.addresses ?? 0,
+      total: row.total ?? 0
     }));
 
     return res.json(response);

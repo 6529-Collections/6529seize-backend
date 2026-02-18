@@ -6,7 +6,6 @@ import {
   MINTING_MERKLE_PROOFS_TABLE,
   MINTING_MERKLE_ROOTS_TABLE
 } from '@/constants';
-import { DISTRIBUTION_AUTOMATIC_AIRDROP_PHASES } from '@/airdrop-phases';
 import { sqlExecutor } from '@/sql-executor';
 import type { AllowlistMerkleProofItem } from './allowlist-merkle';
 
@@ -154,8 +153,8 @@ export interface MintingMerkleRootRow {
 
 export interface MintingAirdropPhaseRow {
   phase: string;
-  addresses_count?: number;
-  total_airdrops?: number;
+  addresses?: number;
+  total?: number;
 }
 
 export async function fetchMintingMerkleRoots(
@@ -221,18 +220,35 @@ export async function fetchMintingAirdrops(
   contract: string
 ): Promise<MintingAirdropPhaseRow[]> {
   return sqlExecutor.execute<MintingAirdropPhaseRow>(
-    `SELECT phase, COUNT(DISTINCT wallet) AS addresses_count, COALESCE(SUM(count_airdrop), 0) AS total_airdrops
+    `SELECT phase, COUNT(DISTINCT wallet) AS addresses, COALESCE(SUM(count_airdrop), 0) AS total
      FROM ${DISTRIBUTION_TABLE}
      WHERE card_id = :cardId
        AND contract = :contract
        AND count_airdrop > 0
-       AND phase IN (:automaticAirdropPhases)
      GROUP BY phase
      ORDER BY phase ASC`,
     {
       cardId,
-      contract: contract.toLowerCase(),
-      automaticAirdropPhases: [...DISTRIBUTION_AUTOMATIC_AIRDROP_PHASES]
+      contract: contract.toLowerCase()
+    }
+  );
+}
+
+export async function fetchMintingAllowlists(
+  cardId: number,
+  contract: string
+): Promise<MintingAirdropPhaseRow[]> {
+  return sqlExecutor.execute<MintingAirdropPhaseRow>(
+    `SELECT phase, COUNT(DISTINCT wallet) AS addresses, COALESCE(SUM(count_allowlist), 0) AS total
+     FROM ${DISTRIBUTION_TABLE}
+     WHERE card_id = :cardId
+       AND contract = :contract
+       AND count_allowlist > 0
+     GROUP BY phase
+     ORDER BY phase ASC`,
+    {
+      cardId,
+      contract: contract.toLowerCase()
     }
   );
 }
