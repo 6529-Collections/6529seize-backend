@@ -4,7 +4,8 @@ import {
   MEMES_EXTENDED_DATA_TABLE,
   MEMES_SEASONS_TABLE,
   MINTING_MERKLE_PROOFS_TABLE,
-  MINTING_MERKLE_ROOTS_TABLE
+  MINTING_MERKLE_ROOTS_TABLE,
+  SUBSCRIPTIONS_NFTS_FINAL_TABLE
 } from '@/constants';
 import { sqlExecutor } from '@/sql-executor';
 import type { AllowlistMerkleProofItem } from './allowlist-merkle';
@@ -219,7 +220,9 @@ export async function fetchMintingAirdrops(
   cardId: number,
   contract: string
 ): Promise<MintingAirdropPhaseRow[]> {
-  return sqlExecutor.execute<MintingAirdropPhaseRow>(
+  const contractLower = contract.toLowerCase();
+
+  const phaseRows = await sqlExecutor.execute<MintingAirdropPhaseRow>(
     `SELECT phase, COUNT(DISTINCT wallet) AS addresses, COALESCE(SUM(count_airdrop), 0) AS total
      FROM ${DISTRIBUTION_TABLE}
      WHERE card_id = :cardId
@@ -229,9 +232,30 @@ export async function fetchMintingAirdrops(
      ORDER BY phase ASC`,
     {
       cardId,
-      contract: contract.toLowerCase()
+      contract: contractLower
     }
   );
+
+  const publicRows = await sqlExecutor.execute<MintingAirdropPhaseRow>(
+    `SELECT 'Public Phase' AS phase,
+            COUNT(DISTINCT airdrop_address) AS addresses,
+            COUNT(*) AS total
+     FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}
+     WHERE LOWER(contract) = :contract
+       AND token_id = :cardId
+       AND phase = 'Public'`,
+    {
+      cardId,
+      contract: contractLower
+    }
+  );
+
+  const publicPhase = publicRows[0];
+  if ((publicPhase?.total ?? 0) > 0) {
+    phaseRows.push(publicPhase);
+  }
+
+  return phaseRows.sort((a, b) => a.phase.localeCompare(b.phase));
 }
 
 export async function fetchMintingAllowlists(

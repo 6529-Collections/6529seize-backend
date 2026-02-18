@@ -88,6 +88,25 @@ const router = asyncRouter();
 
 export default router;
 
+function normalizeFinalSubscriptionPhaseName(phaseName: string): string {
+  const trimmedPhaseName = phaseName.trim();
+  const compactPhaseName = trimmedPhaseName.toLowerCase().replace(/\s+/g, '');
+
+  switch (compactPhaseName) {
+    case 'phase0':
+      return 'Phase 0';
+    case 'phase1':
+      return 'Phase 1';
+    case 'phase2':
+      return 'Phase 2';
+    case 'public':
+    case 'publicphase':
+      return 'Public';
+    default:
+      return trimmedPhaseName;
+  }
+}
+
 router.get(
   `/consolidation/details/:consolidation_key`,
   cacheRequest(),
@@ -545,7 +564,9 @@ router.get(
       return res.status(400).send('Invalid token ID');
     }
 
-    const phaseName = req.params.phase_name;
+    const phaseName = normalizeFinalSubscriptionPhaseName(
+      req.params.phase_name
+    );
     const results = await fetchFinalSubscriptionsByPhase(
       contract,
       tokenId,
