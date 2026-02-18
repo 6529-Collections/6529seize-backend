@@ -749,12 +749,43 @@ paths:
           description: Invalid request
         "403":
           description: Forbidden - not a Subscription Admin
-  /distributions/{contract}/{id}/automatic_airdrops:
+  /distributions/{contract}/{id}/airdrops_artist:
     get:
       tags:
         - Distributions
-      summary: Get automatic airdrops for a specific contract and card
-      operationId: getDistributionAutomaticAirdrops
+      summary: Get artist airdrops for a specific contract and card
+      operationId: getDistributionAirdropsArtist
+      parameters:
+        - name: contract
+          in: path
+          description: Contract address
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          description: Card ID
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PhaseAirdrop"
+        "400":
+          description: Invalid request
+  /distributions/{contract}/{id}/airdrops_team:
+    get:
+      tags:
+        - Distributions
+      summary: Get team airdrops for a specific contract and card
+      operationId: getDistributionAirdropsTeam
       parameters:
         - name: contract
           in: path

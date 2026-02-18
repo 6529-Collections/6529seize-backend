@@ -6,7 +6,9 @@ import {
 } from '@/constants';
 import {
   DISTRIBUTION_AUTOMATIC_AIRDROP_PHASES,
-  DISTRIBUTION_PHASE_AIRDROP
+  DISTRIBUTION_PHASE_AIRDROP,
+  DISTRIBUTION_PHASE_AIRDROP_ARTIST,
+  DISTRIBUTION_PHASE_AIRDROP_TEAM
 } from '@/airdrop-phases';
 import { fetchPaginated } from '../../../db-api';
 import { sqlExecutor } from '../../../sql-executor';
@@ -140,21 +142,24 @@ export async function fetchDistributionAirdrops(
   );
 }
 
-export async function fetchDistributionAutomaticAirdrops(
+export async function fetchDistributionPhaseAirdrops(
   contract: string,
-  cardId: number
+  cardId: number,
+  phase:
+    | typeof DISTRIBUTION_PHASE_AIRDROP_ARTIST
+    | typeof DISTRIBUTION_PHASE_AIRDROP_TEAM
 ): Promise<PhaseAirdrop[]> {
   return sqlExecutor.execute<PhaseAirdrop>(
     `SELECT wallet, count as amount 
      FROM ${DISTRIBUTION_TABLE}
      WHERE contract = :contract
        AND card_id = :cardId
-       AND phase IN (:automaticAirdropPhases)
+       AND phase = :phase
      ORDER BY count DESC, wallet ASC`,
     {
       contract: contract.toLowerCase(),
       cardId,
-      automaticAirdropPhases: [...DISTRIBUTION_AUTOMATIC_AIRDROP_PHASES]
+      phase
     }
   );
 }

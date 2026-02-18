@@ -17,7 +17,11 @@ import { cacheRequest } from '../request-cache';
 import { authenticateSubscriptionsAdmin } from '../subscriptions/api.subscriptions.allowlist';
 import { mergeDuplicateWallets } from '@/api/api-wallet-helpers';
 import {
-  fetchDistributionAutomaticAirdrops,
+  DISTRIBUTION_PHASE_AIRDROP_ARTIST,
+  DISTRIBUTION_PHASE_AIRDROP_TEAM
+} from '@/airdrop-phases';
+import {
+  fetchDistributionPhaseAirdrops,
   fetchDistributionOverview,
   fetchDistributionPhases,
   fetchDistributions
@@ -259,7 +263,7 @@ router.post(
 );
 
 router.get(
-  `/distributions/:contract/:id/automatic_airdrops`,
+  `/distributions/:contract/:id/airdrops_artist`,
   cacheRequest(),
   async function (req: Request<any, any, any, any>, res: Response) {
     const contract = req.params.contract;
@@ -272,7 +276,37 @@ router.get(
       });
     }
 
-    const airdrops = await fetchDistributionAutomaticAirdrops(contract, cardId);
+    const airdrops = await fetchDistributionPhaseAirdrops(
+      contract,
+      cardId,
+      DISTRIBUTION_PHASE_AIRDROP_ARTIST
+    );
+    const mergedAirdrops = mergeDuplicateWallets(airdrops).sort(
+      (a, b) => b.amount - a.amount || a.wallet.localeCompare(b.wallet)
+    );
+    return res.json(mergedAirdrops);
+  }
+);
+
+router.get(
+  `/distributions/:contract/:id/airdrops_team`,
+  cacheRequest(),
+  async function (req: Request<any, any, any, any>, res: Response) {
+    const contract = req.params.contract;
+    const cardId = numbers.parseIntOrNull(req.params.id);
+
+    if (cardId === null) {
+      return res.status(400).send({
+        success: false,
+        error: 'Invalid id parameter'
+      });
+    }
+
+    const airdrops = await fetchDistributionPhaseAirdrops(
+      contract,
+      cardId,
+      DISTRIBUTION_PHASE_AIRDROP_TEAM
+    );
     const mergedAirdrops = mergeDuplicateWallets(airdrops).sort(
       (a, b) => b.amount - a.amount || a.wallet.localeCompare(b.wallet)
     );
