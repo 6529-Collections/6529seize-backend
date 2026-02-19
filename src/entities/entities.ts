@@ -92,6 +92,7 @@ export { MemesSeason } from './ISeason';
 export { MetricRollupHourEntity } from './IMetricRollupHour';
 export { MintAnnouncementsDoneMemeToken } from './IMintAnnouncementsDoneMemeToken';
 export { MemesMintStat } from './IMemesMintStat';
+export { NftLinkEntity } from './INftLink';
 export {
   NFTFinalSubscription,
   NFTFinalSubscriptionUpload,
