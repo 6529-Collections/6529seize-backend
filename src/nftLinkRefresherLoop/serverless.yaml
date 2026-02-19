@@ -39,7 +39,7 @@ resources:
       Type: AWS::SQS::Queue
       Properties:
         QueueName: nft-link-refreshes
-        VisibilityTimeout: 60
+        VisibilityTimeout: 1000
         DelaySeconds: 3
         RedrivePolicy:
           deadLetterTargetArn:
