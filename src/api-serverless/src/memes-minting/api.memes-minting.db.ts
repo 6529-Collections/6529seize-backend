@@ -145,6 +145,27 @@ export async function fetchAllMintingMerkleProofsForRoot(
   }));
 }
 
+export async function doesMintingMerkleRootExistForCard(
+  cardId: number,
+  contract: string,
+  merkleRoot: string
+): Promise<boolean> {
+  const rows = await sqlExecutor.execute<{ found: number }>(
+    `SELECT 1 AS found
+     FROM ${MINTING_MERKLE_ROOTS_TABLE}
+     WHERE card_id = :cardId
+       AND contract = :contract
+       AND merkle_root = :merkleRoot
+     LIMIT 1`,
+    {
+      cardId,
+      contract: contract.toLowerCase(),
+      merkleRoot
+    }
+  );
+  return rows.length > 0;
+}
+
 export interface MintingMerkleRootRow {
   phase: string;
   merkle_root: string;

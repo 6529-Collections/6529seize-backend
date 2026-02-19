@@ -68,8 +68,7 @@ async function invalidateMemesMintingPhaseCache(
   contract: string,
   tokenId: number
 ) {
-  await evictCacheForPath(`/api/memes-minting/roots/${contract}/${tokenId}`);
-  await evictCacheForPath(`/api/memes-minting/proofs/`);
+  await evictCacheForPath(`/api/memes-minting/${contract}/${tokenId}/`);
   await evictCacheForPath(`/api/distributions/${contract}/${tokenId}/overview`);
 }
 

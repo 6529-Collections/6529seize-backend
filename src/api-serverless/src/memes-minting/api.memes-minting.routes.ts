@@ -13,6 +13,7 @@ import type { MemesMintingProofsByAddressResponse } from '@/api/generated/models
 import type { MemesMintingProofsResponse } from '@/api/generated/models/MemesMintingProofsResponse';
 import type { MemesMintingRootItem } from '@/api/generated/models/MemesMintingRootItem';
 import {
+  doesMintingMerkleRootExistForCard,
   fetchAllMintingMerkleProofsForRoot,
   fetchMintingAllowlists,
   fetchMemeClaimByMemeId,
@@ -111,11 +112,10 @@ function rowToMemeClaim(row: MemeClaimRow): MemeClaim {
   };
 }
 
-type ProofsParams = {
+type ProofsPathParams = {
+  contract: string;
+  card_id: string;
   merkle_root: string;
-};
-
-type ProofsQuery = {
   address?: string;
 };
 
@@ -124,7 +124,16 @@ type RootsParams = {
   card_id: string;
 };
 
-const ProofsParamsSchema: Joi.ObjectSchema<ProofsParams> = Joi.object({
+const ProofsPathParamsSchema: Joi.ObjectSchema<ProofsPathParams> = Joi.object({
+  contract: Joi.string()
+    .trim()
+    .pattern(/^0x[a-fA-F0-9]{40}$/)
+    .required()
+    .messages({
+      'string.pattern.base':
+        'contract must be a 0x-prefixed 42-character hex string'
+    }),
+  card_id: Joi.string().trim().required().pattern(/^\d+$/),
   merkle_root: Joi.string()
     .trim()
     .pattern(/^0x[a-fA-F0-9]{64}$/)
@@ -132,10 +141,7 @@ const ProofsParamsSchema: Joi.ObjectSchema<ProofsParams> = Joi.object({
     .messages({
       'string.pattern.base':
         'merkle_root must be a 0x-prefixed 66-character hex string'
-    })
-});
-
-const ProofsQuerySchema: Joi.ObjectSchema<ProofsQuery> = Joi.object({
+    }),
   address: Joi.string()
     .trim()
     .pattern(/^0x[a-fA-F0-9]{40}$/)
@@ -159,64 +165,7 @@ const RootsParamsSchema: Joi.ObjectSchema<RootsParams> = Joi.object({
 });
 
 router.get(
-  '/proofs/:merkle_root',
-  maybeAuthenticatedUser(),
-  cacheRequest({ authDependent: true }),
-  async function (
-    req: Request<ProofsParams, any, any, ProofsQuery, any>,
-    res: Response<
-      ApiResponse<
-        MemesMintingProofsResponse | MemesMintingProofsByAddressResponse
-      >
-    >
-  ) {
-    const params = getValidatedByJoiOrThrow(req.params, ProofsParamsSchema);
-    const query = getValidatedByJoiOrThrow(req.query, ProofsQuerySchema);
-    const merkleRoot = params.merkle_root;
-
-    if (!query.address && !isDistributionAdmin(req)) {
-      throw new ForbiddenException(
-        'Only distribution admins can list all proofs for a merkle root'
-      );
-    }
-
-    if (query.address) {
-      const proofs = await fetchMintingMerkleProofs(merkleRoot, query.address);
-      if (proofs === null) {
-        return res.status(404).json({
-          error: 'No proofs found for the given merkle_root and address'
-        });
-      }
-      const response: MemesMintingProofsResponse = {
-        proofs: proofs.map((p) => ({
-          merkle_proof: p.merkleProof,
-          value: p.value
-        }))
-      };
-      return res.json(response);
-    }
-
-    const allRows = await fetchAllMintingMerkleProofsForRoot(merkleRoot);
-    if (allRows.length === 0) {
-      return res.status(404).json({
-        error: 'No proofs found for the given merkle_root'
-      });
-    }
-    const response: MemesMintingProofsByAddressResponse = {
-      proofs_by_address: allRows.map((r) => ({
-        address: r.address,
-        proofs: r.proofs.map((p) => ({
-          merkle_proof: p.merkleProof,
-          value: p.value
-        }))
-      }))
-    };
-    return res.json(response);
-  }
-);
-
-router.get(
-  '/roots/:contract/:card_id',
+  '/:contract/:card_id/roots',
   cacheRequest(),
   async function (
     req: Request<RootsParams, any, any, any, any>,
@@ -241,7 +190,7 @@ router.get(
 );
 
 router.get(
-  '/airdrops/:contract/:card_id',
+  '/:contract/:card_id/airdrops',
   async function (
     req: Request<RootsParams, any, any, any, any>,
     res: Response<ApiResponse<ApiMemesMintingPhaseTotalItem[]>>
@@ -266,7 +215,7 @@ router.get(
 );
 
 router.get(
-  '/allowlists/:contract/:card_id',
+  '/:contract/:card_id/allowlists',
   async function (
     req: Request<RootsParams, any, any, any, any>,
     res: Response<ApiResponse<ApiMemesMintingPhaseTotalItem[]>>
@@ -516,6 +465,84 @@ router.post(
     await evictMemesMintingClaimCache(memeId);
     const updated = await fetchMemeClaimByMemeId(memeId);
     return res.json(rowToMemeClaim(updated ?? claim));
+  }
+);
+
+router.get(
+  '/:contract/:card_id/:merkle_root/proofs/:address?',
+  maybeAuthenticatedUser(),
+  cacheRequest({ authDependent: true }),
+  async function (
+    req: Request<ProofsPathParams, any, any, any, any>,
+    res: Response<
+      ApiResponse<
+        MemesMintingProofsResponse | MemesMintingProofsByAddressResponse
+      >
+    >
+  ) {
+    const params = getValidatedByJoiOrThrow(req.params, ProofsPathParamsSchema);
+    const cardId = numbers.parseIntOrNull(params.card_id);
+    if (cardId === null || cardId < 0) {
+      return res.status(400).json({
+        error: 'card_id must be a non-negative integer'
+      });
+    }
+    const merkleRoot = params.merkle_root;
+    const requestedAddress = params.address;
+    const rootExists = await doesMintingMerkleRootExistForCard(
+      cardId,
+      params.contract,
+      merkleRoot
+    );
+
+    if (!rootExists) {
+      return res.status(404).json({
+        error:
+          'No merkle root found for the given contract, card_id and merkle_root'
+      });
+    }
+
+    if (!requestedAddress && !isDistributionAdmin(req)) {
+      throw new ForbiddenException(
+        'Only distribution admins can list all proofs for a merkle root'
+      );
+    }
+
+    if (requestedAddress) {
+      const proofs = await fetchMintingMerkleProofs(
+        merkleRoot,
+        requestedAddress
+      );
+      if (proofs === null) {
+        return res.status(404).json({
+          error: 'No proofs found for the given merkle_root and address'
+        });
+      }
+      const response: MemesMintingProofsResponse = {
+        proofs: proofs.map((p) => ({
+          merkle_proof: p.merkleProof,
+          value: p.value
+        }))
+      };
+      return res.json(response);
+    }
+
+    const allRows = await fetchAllMintingMerkleProofsForRoot(merkleRoot);
+    if (allRows.length === 0) {
+      return res.status(404).json({
+        error: 'No proofs found for the given merkle_root'
+      });
+    }
+    const response: MemesMintingProofsByAddressResponse = {
+      proofs_by_address: allRows.map((r) => ({
+        address: r.address,
+        proofs: r.proofs.map((p) => ({
+          merkle_proof: p.merkleProof,
+          value: p.value
+        }))
+      }))
+    };
+    return res.json(response);
   }
 );
 

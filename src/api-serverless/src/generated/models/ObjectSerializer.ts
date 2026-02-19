@@ -234,7 +234,6 @@ export * from '../models/DistributionPhotoCompleteRequest';
 export * from '../models/DistributionPhotoCompleteRequestPhoto';
 export * from '../models/DistributionPhotoCompleteResponse';
 export * from '../models/DistributionPhotosPage';
-export * from '../models/GetMemesMintingProofs200Response';
 export * from '../models/GetWaveSubscription200Response';
 export * from '../models/MemeClaim';
 export * from '../models/MemeClaimAnimationDetails';
@@ -512,7 +511,6 @@ import { DistributionPhotoCompleteRequest } from '../models/DistributionPhotoCom
 import { DistributionPhotoCompleteRequestPhoto } from '../models/DistributionPhotoCompleteRequestPhoto';
 import { DistributionPhotoCompleteResponse } from '../models/DistributionPhotoCompleteResponse';
 import { DistributionPhotosPage } from '../models/DistributionPhotosPage';
-import { GetMemesMintingProofs200Response } from '../models/GetMemesMintingProofs200Response';
 import { GetWaveSubscription200Response } from '../models/GetWaveSubscription200Response';
 import { MemeClaim } from '../models/MemeClaim';
 import { MemeClaimAnimationDetails , MemeClaimAnimationDetailsFormatEnum        } from '../models/MemeClaimAnimationDetails';
@@ -812,7 +810,6 @@ let typeMap: {[index: string]: any} = {
     "DistributionPhotoCompleteRequestPhoto": DistributionPhotoCompleteRequestPhoto,
     "DistributionPhotoCompleteResponse": DistributionPhotoCompleteResponse,
     "DistributionPhotosPage": DistributionPhotosPage,
-    "GetMemesMintingProofs200Response": GetMemesMintingProofs200Response,
     "GetWaveSubscription200Response": GetWaveSubscription200Response,
     "MemeClaim": MemeClaim,
     "MemeClaimAnimationDetails": MemeClaimAnimationDetails,
