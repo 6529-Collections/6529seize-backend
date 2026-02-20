@@ -27,15 +27,25 @@ import {
   WsListenersNotifier
 } from '../ws/ws-listeners-notifier';
 import { enums } from '../../../enums';
+import { dropNftLinksDb, DropNftLinksDb } from '@/drops/drop-nft-links.db';
+import {
+  nftLinkResolvingService,
+  NftLinkResolvingService
+} from '@/nft-links/nft-link-resolving.service';
+import { Logger } from '@/logging';
 
 export class DropCreationApiService {
+  private readonly logger = Logger.get(this.constructor.name);
+
   constructor(
     private readonly dropsService: DropsApiService,
     private readonly dropsDb: DropsDb,
     private readonly dropsMappers: DropsMappers,
     private readonly createOrUpdateDrop: CreateOrUpdateDropUseCase,
     private readonly deleteDrop: DeleteDropUseCase,
-    private readonly wsListenersNotifier: WsListenersNotifier
+    private readonly wsListenersNotifier: WsListenersNotifier,
+    private readonly dropNftLinksDb: DropNftLinksDb,
+    private readonly nftLinkResolvingService: NftLinkResolvingService
   ) {}
 
   public async createDrop(
@@ -58,6 +68,7 @@ export class DropCreationApiService {
         );
       }
     );
+    void this.ensureNftLinkTrackingForDrop(drop.id, ctx);
     await this.wsListenersNotifier.notifyAboutDropUpdate(drop, ctx);
     return drop;
   }
@@ -239,8 +250,34 @@ export class DropCreationApiService {
         );
       }
     );
+    void this.ensureNftLinkTrackingForDrop(apiDrop.id, ctx);
     await this.wsListenersNotifier.notifyAboutDropUpdate(apiDrop, ctx);
     return apiDrop;
+  }
+
+  private async ensureNftLinkTrackingForDrop(
+    dropId: string,
+    ctx: RequestContext
+  ) {
+    try {
+      const links = await this.dropNftLinksDb.findByDropId(
+        dropId,
+        ctx.connection,
+        true
+      );
+      if (!links.length) {
+        return;
+      }
+      await this.nftLinkResolvingService.ensureTrackingForUrls(
+        links.map((it) => it.url_in_text),
+        ctx
+      );
+    } catch (e) {
+      this.logger.error(
+        `Failed to initialize NFT link tracking for drop ${dropId}`,
+        e
+      );
+    }
   }
 }
 
@@ -250,5 +287,7 @@ export const dropCreationService = new DropCreationApiService(
   dropsMappers,
   createOrUpdateDrop,
   deleteDrop,
-  wsListenersNotifier
+  wsListenersNotifier,
+  dropNftLinksDb,
+  nftLinkResolvingService
 );

@@ -137,6 +137,7 @@ export const DROP_MEDIA_TABLE = 'drop_medias';
 export const DROP_BOOSTS_TABLE = 'drop_boosts';
 export const DROP_CURATIONS_TABLE = 'drop_curations';
 export const DROP_BOOKMARKS_TABLE = 'drop_bookmarks';
+export const DROP_NFT_LINKS_TABLE = 'drop_nft_links';
 export const PINNED_WAVES_TABLE = 'pinned_waves';
 export const COOKIES_CONSENT_TABLE = 'cookies_consent';
 export const PROFILE_GROUP_CHANGES = 'profile_group_changes';
