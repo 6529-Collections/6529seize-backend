@@ -407,7 +407,7 @@ export async function fetchUpcomingMemeSubscriptionStatusForConsolidationKey(
   return {
     subscribed: true,
     eligibility: subscriptionEligibility,
-    count: mode.subscribe_all_editions ? subscriptionEligibility : 1,
+    count: mode?.subscribe_all_editions ? subscriptionEligibility : 1,
     source: ApiUpcomingMemeSubscriptionStatusSourceEnum.Automatic
   };
 }
