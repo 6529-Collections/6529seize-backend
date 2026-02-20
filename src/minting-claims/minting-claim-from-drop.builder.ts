@@ -1,9 +1,9 @@
 import { DropMediaEntity, DropMetadataEntity } from '@/entities/IDrop';
 import type {
-  MemeClaimAnimationDetails,
-  MemeClaimAttribute,
-  MemeClaimImageDetails
-} from '@/entities/IMemeClaim';
+  MintingClaimAnimationDetails,
+  MintingClaimAttribute,
+  MintingClaimImageDetails
+} from '@/entities/IMintingClaim';
 
 const METADATA_KEYS_SKIP = new Set([
   'title',
@@ -68,6 +68,7 @@ const POINTS_KEYS = new Set([
 ]);
 
 const NUMBER_KEYS = new Set(['typeMeme', 'typeSeason', 'typeCard']);
+const TYPE_SEASON_TRAIT = 'Type - Season';
 
 function mimeToFormat(mime: string): string {
   const normalized = mime.trim().toLowerCase();
@@ -109,8 +110,8 @@ function attrValue(dataKey: string, dataValue: string): string | number {
 
 function buildAttributes(
   metadatas: DropMetadataEntity[]
-): MemeClaimAttribute[] {
-  const attrs: MemeClaimAttribute[] = [];
+): MintingClaimAttribute[] {
+  const attrs: MintingClaimAttribute[] = [];
 
   for (const m of metadatas) {
     if (METADATA_KEYS_SKIP.has(m.data_key)) continue;
@@ -118,7 +119,7 @@ function buildAttributes(
       DATA_KEY_TO_TRAIT_TYPE[m.data_key] ??
       m.data_key.charAt(0).toUpperCase() + m.data_key.slice(1);
     const value = attrValue(m.data_key, m.data_value);
-    const attr: MemeClaimAttribute = { trait_type: traitType, value };
+    const attr: MintingClaimAttribute = { trait_type: traitType, value };
     if (POINTS_KEYS.has(m.data_key)) {
       attr.display_type = 'boost_percentage';
       attr.max_value = 100;
@@ -131,7 +132,22 @@ function buildAttributes(
   return attrs;
 }
 
-function imageDetailsFromMime(mimeType: string): MemeClaimImageDetails {
+function upsertSeasonTrait(
+  attributes: MintingClaimAttribute[],
+  season: number
+): MintingClaimAttribute[] {
+  const withoutSeason = attributes.filter(
+    (attribute) => attribute.trait_type !== TYPE_SEASON_TRAIT
+  );
+  withoutSeason.push({
+    trait_type: TYPE_SEASON_TRAIT,
+    value: season,
+    display_type: 'number'
+  });
+  return withoutSeason;
+}
+
+function imageDetailsFromMime(mimeType: string): MintingClaimImageDetails {
   return {
     format: mimeToFormat(mimeType),
     bytes: 0,
@@ -143,7 +159,7 @@ function imageDetailsFromMime(mimeType: string): MemeClaimImageDetails {
 
 function imageDetailsFromPreviewUrl(
   previewUrl: string
-): MemeClaimImageDetails | null {
+): MintingClaimImageDetails | null {
   let path = '';
   try {
     path = new URL(previewUrl).pathname;
@@ -161,35 +177,36 @@ function imageDetailsFromPreviewUrl(
   return null;
 }
 
-export type MemeClaimRowInput = {
+export type MintingClaimRowInput = {
   drop_id: string;
-  meme_id: number;
-  season: number;
+  contract: string;
+  claim_id: number;
   image_location: string | null;
   animation_location: string | null;
   metadata_location: string | null;
   description: string;
   name: string;
   image_url: string | null;
-  attributes: MemeClaimAttribute[];
-  image_details: MemeClaimImageDetails | null;
+  attributes: MintingClaimAttribute[];
+  image_details: MintingClaimImageDetails | null;
   animation_url: string | null;
-  animation_details: MemeClaimAnimationDetails | null;
+  animation_details: MintingClaimAnimationDetails | null;
 };
 
-export function buildMemeClaimRowFromDrop(
+export function buildMintingClaimRowFromDrop(
   dropId: string,
-  memeId: number,
+  contract: string,
+  claimId: number,
   medias: DropMediaEntity[],
   metadatas: DropMetadataEntity[],
-  maxSeasonId: number
-): MemeClaimRowInput {
-  if (!Number.isInteger(maxSeasonId) || maxSeasonId < 1) {
+  seasonId: number
+): MintingClaimRowInput {
+  if (!Number.isInteger(seasonId) || seasonId < 1) {
     throw new Error(
-      `Invalid maxSeasonId: ${maxSeasonId}. Expected a positive integer`
+      `Invalid seasonId: ${seasonId}. Expected a positive integer`
     );
   }
-  const season = maxSeasonId;
+  const attributes = upsertSeasonTrait(buildAttributes(metadatas), seasonId);
   const title = metadatas.find((m) => m.data_key === 'title')?.data_value ?? '';
   const description =
     metadatas.find((m) => m.data_key === 'description')?.data_value ?? '';
@@ -214,15 +231,15 @@ export function buildMemeClaimRowFromDrop(
   if (!primaryMedia) {
     return {
       drop_id: dropId,
-      meme_id: memeId,
+      contract: contract.toLowerCase(),
+      claim_id: claimId,
       image_location: null,
       animation_location: null,
       metadata_location: null,
       description: description || ' ',
       name: title || ' ',
       image_url: null,
-      season,
-      attributes: buildAttributes(metadatas),
+      attributes,
       image_details: null,
       animation_url: null,
       animation_details: null
@@ -238,9 +255,9 @@ export function buildMemeClaimRowFromDrop(
   const isImage = !isHtml && !isVideo && !isGlb;
 
   let image_url: string | null = null;
-  let image_details: MemeClaimImageDetails | null = null;
+  let image_details: MintingClaimImageDetails | null = null;
   let animation_url: string | null = null;
-  let animation_details: MemeClaimAnimationDetails | null = null;
+  let animation_details: MintingClaimAnimationDetails | null = null;
 
   if (isImage) {
     image_url = primaryMedia.url;
@@ -271,15 +288,15 @@ export function buildMemeClaimRowFromDrop(
 
   return {
     drop_id: dropId,
-    meme_id: memeId,
-    season,
+    contract: contract.toLowerCase(),
+    claim_id: claimId,
     image_location: null,
     animation_location: null,
     metadata_location: null,
     description: description || ' ',
     name: title || ' ',
     image_url,
-    attributes: buildAttributes(metadatas),
+    attributes,
     image_details,
     animation_url,
     animation_details

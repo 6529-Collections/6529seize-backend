@@ -6,16 +6,19 @@ import {
 import { MEMES_CONTRACT, TEAM_TABLE } from '@/constants';
 import { dropsDb, DropsDb } from '@/drops/drops.db';
 import type { DropMetadataEntity } from '@/entities/IDrop';
-import { buildMemeClaimRowFromDrop } from '@/meme-claims/meme-claim-from-drop.builder';
-import { MemeClaimsDb, memeClaimsDb } from '@/meme-claims/meme-claims.db';
+import { buildMintingClaimRowFromDrop } from '@/minting-claims/minting-claim-from-drop.builder';
+import {
+  MintingClaimsDb,
+  mintingClaimsDb
+} from '@/minting-claims/minting-claims.db';
 import {
   computeImageDetails,
   computeAnimationDetailsVideo,
   animationDetailsHtml,
   computeAnimationDetailsGlb
-} from '@/meme-claims/media-inspector';
-import type { MemeClaimAnimationDetails } from '@/entities/IMemeClaim';
-import type { MemeClaimRowInput } from '@/meme-claims/meme-claim-from-drop.builder';
+} from '@/minting-claims/media-inspector';
+import type { MintingClaimAnimationDetails } from '@/entities/IMintingClaim';
+import type { MintingClaimRowInput } from '@/minting-claims/minting-claim-from-drop.builder';
 import { fetchPublicUrlToBuffer } from '@/http/safe-fetch';
 import { Logger } from '@/logging';
 import { getMaxMemeId } from '@/nftsLoop/db.nfts';
@@ -29,8 +32,8 @@ const MEME_CALENDAR_TIMEOUT_MS = 10_000;
 
 async function resolveAnimationDetails(
   animationUrl: string,
-  existing: MemeClaimAnimationDetails | null | undefined
-): Promise<MemeClaimAnimationDetails | null | undefined> {
+  existing: MintingClaimAnimationDetails | null | undefined
+): Promise<MintingClaimAnimationDetails | null | undefined> {
   if (existing && 'format' in existing && existing.format === 'HTML') {
     return animationDetailsHtml();
   }
@@ -121,18 +124,20 @@ function buildTeamAirdrops(rows: TeamWalletRow[]): Array<{
   }));
 }
 
-export class MemeClaimsService {
+export class MintingClaimsService {
   private readonly logger = Logger.get(this.constructor.name);
 
   constructor(
     private readonly dropsDb: DropsDb,
-    private readonly memeClaimsDb: MemeClaimsDb
+    private readonly mintingClaimsDb: MintingClaimsDb
   ) {}
 
   async createClaimForDropIfMissing(dropId: string): Promise<void> {
-    await this.memeClaimsDb.executeNativeQueriesInTransaction(
+    await this.mintingClaimsDb.executeNativeQueriesInTransaction(
       async (connection) => {
-        const exists = await this.memeClaimsDb.existsByDropId(
+        await this.assertDropExistsOrThrow(dropId, connection);
+        const exists = await this.mintingClaimsDb.existsByDropId(
+          MEMES_CONTRACT,
           dropId,
           connection
         );
@@ -147,26 +152,36 @@ export class MemeClaimsService {
     );
   }
 
+  private async assertDropExistsOrThrow(
+    dropId: string,
+    connection: RequestContext['connection']
+  ): Promise<void> {
+    const drop = await this.dropsDb.findDropById(dropId, connection);
+    if (drop == null) {
+      throw new Error(
+        `Cannot build claim: drop not found for drop_id=${dropId}`
+      );
+    }
+  }
+
   async createClaimForDrop(dropId: string, ctx: RequestContext): Promise<void> {
-    const nextMemeId =
-      (await getMaxMemeId(false, {
-        wrappedConnection: ctx.connection
-      })) + 1;
+    const nextClaimId = await this.resolveNextClaimId(ctx);
     const [mediasByDrop, metadatas] = await Promise.all([
       this.dropsDb.getDropMedia([dropId], ctx.connection),
       this.dropsDb.findMetadataByDropIds([dropId], ctx.connection)
     ]);
     const medias = mediasByDrop[dropId] ?? [];
-    const seasonId = await this.resolveSeasonForClaimBuild(nextMemeId, ctx);
-    const row = buildMemeClaimRowFromDrop(
+    const seasonId = await this.resolveSeasonForClaimBuild(nextClaimId, ctx);
+    const row = buildMintingClaimRowFromDrop(
       dropId,
-      nextMemeId,
+      MEMES_CONTRACT,
+      nextClaimId,
       medias,
       metadatas,
       seasonId
     );
     const enriched = await this.enrichRowWithComputedDetails(row);
-    await this.memeClaimsDb.createMemeClaim([enriched], ctx);
+    await this.mintingClaimsDb.createMintingClaim([enriched], ctx);
 
     const teamWalletRows = await fetchTeamWalletRows();
     const airdropConfigEntries = parseAirdropConfigFromMetadatas(metadatas);
@@ -189,7 +204,7 @@ export class MemeClaimsService {
 
     await upsertAutomaticAirdropsForPhase(
       MEMES_CONTRACT,
-      nextMemeId,
+      nextClaimId,
       DISTRIBUTION_PHASE_AIRDROP_ARTIST,
       artistAirdrops,
       ctx.connection,
@@ -197,7 +212,7 @@ export class MemeClaimsService {
     );
     await upsertAutomaticAirdropsForPhase(
       MEMES_CONTRACT,
-      nextMemeId,
+      nextClaimId,
       DISTRIBUTION_PHASE_AIRDROP_TEAM,
       teamAirdrops,
       ctx.connection,
@@ -206,10 +221,10 @@ export class MemeClaimsService {
   }
 
   private async resolveSeasonForClaimBuild(
-    memeId: number,
+    claimId: number,
     ctx: RequestContext
   ): Promise<number> {
-    const calendarUrl = `${MEME_CALENDAR_API_BASE}/${memeId}`;
+    const calendarUrl = `${MEME_CALENDAR_API_BASE}/${claimId}`;
     try {
       const { buffer } = await fetchPublicUrlToBuffer(calendarUrl, {
         timeoutMs: MEME_CALENDAR_TIMEOUT_MS,
@@ -224,25 +239,40 @@ export class MemeClaimsService {
       const season = numbers.parseIntOrNull(parsed?.season);
       if (season !== null && season > 0) {
         this.logger.info(
-          `Using meme-calendar season=${season} for meme_id=${memeId}`
+          `Using meme-calendar season=${season} for claim_id=${claimId}`
         );
         return season;
       }
       this.logger.warn(
-        `Invalid season from meme-calendar for meme_id=${memeId}, value=${parsed?.season}; falling back to max season`
+        `Invalid season from meme-calendar for claim_id=${claimId}, value=${parsed?.season}; falling back to max season`
       );
     } catch (error) {
       this.logger.warn(
-        `Failed to resolve season from meme-calendar for meme_id=${memeId}; falling back to max season`,
+        `Failed to resolve season from meme-calendar for claim_id=${claimId}; falling back to max season`,
         { error }
       );
     }
-    return await this.memeClaimsDb.getMaxSeasonId(ctx);
+    return await this.mintingClaimsDb.getMaxSeasonId(ctx);
+  }
+
+  private async resolveNextClaimId(ctx: RequestContext): Promise<number> {
+    const maxClaimId = await this.mintingClaimsDb.getMaxClaimId(
+      MEMES_CONTRACT,
+      ctx
+    );
+    if (maxClaimId !== null) {
+      return maxClaimId + 1;
+    }
+
+    const maxMemeId = await getMaxMemeId(false, {
+      wrappedConnection: ctx.connection
+    });
+    return maxMemeId + 1;
   }
 
   private async enrichRowWithComputedDetails(
-    row: MemeClaimRowInput
-  ): Promise<MemeClaimRowInput> {
+    row: MintingClaimRowInput
+  ): Promise<MintingClaimRowInput> {
     let image_details = row.image_details;
     if (row.image_url) {
       try {
@@ -267,4 +297,7 @@ export class MemeClaimsService {
   }
 }
 
-export const memeClaimsService = new MemeClaimsService(dropsDb, memeClaimsDb);
+export const mintingClaimsService = new MintingClaimsService(
+  dropsDb,
+  mintingClaimsDb
+);

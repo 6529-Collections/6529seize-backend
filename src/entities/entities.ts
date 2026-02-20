@@ -46,7 +46,7 @@ export { ExternalIndexedTransfersEntity } from './IExternalIndexedTransfer';
 export { IdentityEntity } from './IIdentity';
 export { IdentityNotificationEntity } from './IIdentityNotification';
 export { IdentitySubscriptionEntity } from './IIdentitySubscription';
-export { MemeClaimEntity } from './IMemeClaim';
+export { MintingClaimEntity } from './IMintingClaim';
 export { MetricRollupHourEntity } from './IMetricRollupHour';
 export {
   NextGenAllowlist,

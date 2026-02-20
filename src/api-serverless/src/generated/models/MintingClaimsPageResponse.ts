@@ -10,56 +10,58 @@
  * Do not edit the class manually.
  */
 
+import { MintingClaim } from '../models/MintingClaim';
 import { HttpFile } from '../http/http';
 
-export class MemesMintingRootItem {
+export class MintingClaimsPageResponse {
+    'claims': Array<MintingClaim>;
     /**
-    * Phase name
+    * Total number of claims
     */
-    'phase': string;
+    'count': number;
+    'page': number;
+    'page_size': number;
     /**
-    * 0x-prefixed hex merkle root
+    * True if there is a next page
     */
-    'merkle_root': string;
-    /**
-    * Number of unique addresses in this phase
-    */
-    'addresses_count': number;
-    /**
-    * Sum of mint spots for this phase
-    */
-    'total_spots': number;
+    'next': boolean;
 
     static readonly discriminator: string | undefined = undefined;
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
         {
-            "name": "phase",
-            "baseName": "phase",
-            "type": "string",
+            "name": "claims",
+            "baseName": "claims",
+            "type": "Array<MintingClaim>",
             "format": ""
         },
         {
-            "name": "merkle_root",
-            "baseName": "merkle_root",
-            "type": "string",
-            "format": ""
-        },
-        {
-            "name": "addresses_count",
-            "baseName": "addresses_count",
+            "name": "count",
+            "baseName": "count",
             "type": "number",
             "format": "int64"
         },
         {
-            "name": "total_spots",
-            "baseName": "total_spots",
+            "name": "page",
+            "baseName": "page",
             "type": "number",
             "format": "int64"
+        },
+        {
+            "name": "page_size",
+            "baseName": "page_size",
+            "type": "number",
+            "format": "int64"
+        },
+        {
+            "name": "next",
+            "baseName": "next",
+            "type": "boolean",
+            "format": ""
         }    ];
 
     static getAttributeTypeMap() {
-        return MemesMintingRootItem.attributeTypeMap;
+        return MintingClaimsPageResponse.attributeTypeMap;
     }
 
     public constructor() {

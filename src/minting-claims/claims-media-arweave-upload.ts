@@ -1,9 +1,10 @@
-import type { MemeClaimRow } from '@/api/memes-minting/api.memes-minting.db';
+import type { MintingClaimRow } from '@/api/minting-claims/api.minting-claims.db';
 import {
   fetchMaxSeasonId,
   fetchMemeIdByMemeName
-} from '@/api/memes-minting/api.memes-minting.db';
+} from '@/api/minting-claims/api.minting-claims.db';
 import { arweaveFileUploader } from '@/arweave';
+import { MEMES_CONTRACT } from '@/constants';
 import { BadRequestException } from '@/exceptions';
 import { fetchPublicUrlToBuffer } from '@/http/safe-fetch';
 import { Logger } from '@/logging';
@@ -15,7 +16,7 @@ export const MIN_EDITION_SIZE = 300;
 const FETCH_MEDIA_TIMEOUT_MS = 60_000;
 const MAX_ARWEAVE_UPLOAD_BYTES = 100 * 1024 * 1024;
 const ARWEAVE_METADATA_CREATED_BY = '6529 Collections';
-const ARWEAVE_METADATA_EXTERNAL_URL_BASE = 'https://6529.io/the-memes';
+const ARWEAVE_METADATA_EXTERNAL_URL_BASE = 'https://6529.io/claims';
 const ARWEAVE_POINTS_TRAIT_PREFIX = 'Points - ';
 const TYPE_MEME_TRAIT = 'Type - Meme';
 const TYPE_SEASON_TRAIT = 'Type - Season';
@@ -131,7 +132,7 @@ function computeSha256Hex(buffer: Buffer): string {
 }
 
 async function uploadImageToArweaveOrThrow(
-  claim: MemeClaimRow,
+  claim: MintingClaimRow,
   imageUrl: string
 ): Promise<string> {
   const fetched = await fetchUrlToBuffer(imageUrl);
@@ -152,7 +153,7 @@ async function uploadImageToArweaveOrThrow(
   if (existingSha256 != null && existingSha256 === currentSha256) {
     if (existingArweaveUrl != null) {
       logger.info(
-        `Reusing existing image_location for meme_id=${claim.meme_id} based on matching sha256`
+        `Reusing existing image_location for claim_id=${claim.claim_id} based on matching sha256`
       );
       return existingArweaveUrl;
     }
@@ -165,7 +166,7 @@ async function uploadImageToArweaveOrThrow(
 }
 
 async function uploadAnimationToArweaveIfPresent(
-  claim: MemeClaimRow
+  claim: MintingClaimRow
 ): Promise<string | null> {
   const animationUrl = claim.animation_url?.trim() || null;
   if (animationUrl === null || animationUrl === '') return null;
@@ -201,7 +202,7 @@ async function uploadAnimationToArweaveIfPresent(
   if (existingSha256 != null && existingSha256 === currentSha256) {
     if (existingArweaveUrl != null) {
       logger.info(
-        `Reusing existing animation_location for meme_id=${claim.meme_id} based on matching sha256`
+        `Reusing existing animation_location for claim_id=${claim.claim_id} based on matching sha256`
       );
       return existingArweaveUrl;
     }
@@ -309,11 +310,43 @@ function getMemeNameFromAttributes(attributes: unknown): string {
   return value.trim();
 }
 
+function extractSeasonFromAttributes(attributes: unknown): number | null {
+  if (!Array.isArray(attributes)) {
+    return null;
+  }
+
+  const seasonAttribute = attributes.find(
+    (attribute: any) =>
+      (attribute?.trait_type ?? attribute?.traitType) === TYPE_SEASON_TRAIT
+  ) as { value?: unknown } | undefined;
+
+  if (!seasonAttribute) {
+    return null;
+  }
+
+  const value = seasonAttribute.value;
+  if (typeof value === 'number' && Number.isInteger(value)) {
+    return value;
+  }
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value);
+    if (Number.isInteger(parsed)) {
+      return parsed;
+    }
+  }
+
+  return null;
+}
+
+function isMemesContract(contract: string): boolean {
+  return contract.toLowerCase() === MEMES_CONTRACT.toLowerCase();
+}
+
 function attributesWithTypeTraits(
   rawAttributes: unknown[],
   typeMemeValue: number,
   seasonValue: number,
-  memeId: number
+  claimId: number
 ): unknown[] {
   const filtered = rawAttributes.filter((a: any) => {
     const tt = a.trait_type ?? a.traitType;
@@ -340,7 +373,7 @@ function attributesWithTypeTraits(
       trait_type: TYPE_SEASON_TRAIT,
       value: seasonValue
     },
-    { display_type: 'number', trait_type: TYPE_CARD_TRAIT, value: memeId },
+    { display_type: 'number', trait_type: TYPE_CARD_TRAIT, value: claimId },
     { trait_type: TYPE_TRAIT, value: TYPE_TRAIT_VALUE_CARD },
     { trait_type: ISSUANCE_MONTH_TRAIT, value: issuanceMonth }
   );
@@ -348,20 +381,24 @@ function attributesWithTypeTraits(
 }
 
 async function uploadClaimMetadataToArweave(
-  memeId: number,
-  claim: MemeClaimRow,
+  contract: string,
+  claim: MintingClaimRow,
   imageLocation: string,
   animationLocation: string | null,
-  typeMemeId: number
+  typeMemeId: number | null,
+  seasonValue: number | null
 ): Promise<string> {
   const rawAttributes = safeParseJson(claim.attributes, [], 'attributes');
-  const attributesWithTypes = attributesWithTypeTraits(
-    rawAttributes,
-    typeMemeId,
-    claim.season,
-    memeId
+  const attributes = normalizeAttributesForArweave(
+    isMemesContract(contract)
+      ? attributesWithTypeTraits(
+          rawAttributes,
+          typeMemeId as number,
+          seasonValue as number,
+          claim.claim_id
+        )
+      : rawAttributes
   );
-  const attributes = normalizeAttributesForArweave(attributesWithTypes);
   const imageDetails =
     parseJsonOrNull<Record<string, unknown>>(claim.image_details) ?? null;
   const animationDetails =
@@ -375,9 +412,11 @@ async function uploadClaimMetadataToArweave(
     created_by: ARWEAVE_METADATA_CREATED_BY,
     description: claim.description ?? '',
     name: claim.name,
-    external_url: `${ARWEAVE_METADATA_EXTERNAL_URL_BASE}/${memeId}`,
     attributes
   };
+  if (isMemesContract(contract)) {
+    metadata.external_url = `${ARWEAVE_METADATA_EXTERNAL_URL_BASE}/${claim.claim_id}`;
+  }
   if (imageDetails != null) metadata.image_details = imageDetails;
   metadata.image = imageLocation;
   metadata.image_url = imageLocation;
@@ -398,7 +437,7 @@ async function uploadClaimMetadataToArweave(
   return url;
 }
 
-function validateAttributes(raw: unknown): string[] {
+function validateAttributes(raw: unknown, requireMemeName: boolean): string[] {
   const issues: string[] = [];
   if (raw == null) {
     issues.push('Attributes (invalid JSON)');
@@ -418,33 +457,48 @@ function validateAttributes(raw: unknown): string[] {
     );
   });
   if (hasInvalidItems) issues.push('Attributes (invalid items)');
-  const hasMemeName = raw.some(
-    (a: any) => (a.trait_type ?? a.traitType) === MEME_NAME_TRAIT
-  );
-  if (!hasMemeName) issues.push('Meme Name Attribute');
+  if (requireMemeName) {
+    const hasMemeName = raw.some(
+      (a: any) => (a.trait_type ?? a.traitType) === MEME_NAME_TRAIT
+    );
+    if (!hasMemeName) issues.push('Meme Name Attribute');
+  }
   return issues;
 }
 
-export async function validateMemeClaimReadyForArweaveUpload(
-  claim: MemeClaimRow
-): Promise<{ imageUrl: string; typeMemeId: number }> {
+export async function validateMintingClaimReadyForArweaveUpload(
+  claim: MintingClaimRow,
+  contract: string
+): Promise<{
+  imageUrl: string;
+  typeMemeId: number | null;
+  seasonValue: number | null;
+}> {
+  const memesContract = isMemesContract(contract);
   const missing: string[] = [];
   const invalid: string[] = [];
   const imageUrl = claim.image_url?.trim() || null;
   if (imageUrl === null || imageUrl === '') missing.push('Image URL');
-  appendEditionSizeIssues(claim, missing, invalid);
+  if (memesContract) {
+    appendEditionSizeIssues(claim, missing, invalid);
+  }
 
   const name = claim.name?.trim() ?? '';
   if (name === '') missing.push('Name');
 
   const description = claim.description?.trim();
   if (description == null || description === '') missing.push('Description');
-  await appendSeasonIssues(claim, missing, invalid);
 
   const rawAttributes = parseJsonOrNull<unknown>(claim.attributes);
-  appendAttributeIssues(rawAttributes, missing, invalid);
+  appendAttributeIssues(rawAttributes, missing, invalid, memesContract);
 
-  const typeMemeId = await resolveTypeMemeId(rawAttributes, missing, invalid);
+  let seasonValue: number | null = null;
+  if (memesContract) {
+    seasonValue = await appendSeasonIssues(rawAttributes, missing, invalid);
+  }
+  const typeMemeId = memesContract
+    ? await resolveTypeMemeId(rawAttributes, missing, invalid)
+    : null;
 
   if (missing.length > 0 || invalid.length > 0) {
     const parts: string[] = [];
@@ -458,11 +512,15 @@ export async function validateMemeClaimReadyForArweaveUpload(
     }
     throw new BadRequestException(parts.join(' '));
   }
-  return { imageUrl: imageUrl as string, typeMemeId: typeMemeId as number };
+  return {
+    imageUrl: imageUrl as string,
+    typeMemeId,
+    seasonValue
+  };
 }
 
 function appendEditionSizeIssues(
-  claim: MemeClaimRow,
+  claim: MintingClaimRow,
   missing: string[],
   invalid: string[]
 ) {
@@ -478,34 +536,36 @@ function appendEditionSizeIssues(
 }
 
 async function appendSeasonIssues(
-  claim: MemeClaimRow,
+  rawAttributes: unknown,
   missing: string[],
   invalid: string[]
-) {
-  if (claim.season == null) {
+): Promise<number | null> {
+  const seasonValue = extractSeasonFromAttributes(rawAttributes);
+  if (seasonValue == null) {
     missing.push('Season');
-    return;
+    return null;
   }
-  const season = Number(claim.season);
   const maxSeasonId = await fetchMaxSeasonId();
   const requiredMinSeason = Math.max(1, maxSeasonId);
   if (
-    !Number.isInteger(season) ||
-    season < requiredMinSeason ||
-    season > requiredMinSeason + 1
+    !Number.isInteger(seasonValue) ||
+    seasonValue < requiredMinSeason ||
+    seasonValue > requiredMinSeason + 1
   ) {
     invalid.push(
-      `Season (must be ${requiredMinSeason} or ${requiredMinSeason + 1}; current max season is ${maxSeasonId}, got ${claim.season})`
+      `Season (must be ${requiredMinSeason} or ${requiredMinSeason + 1}; current max season is ${maxSeasonId}, got ${seasonValue})`
     );
   }
+  return seasonValue;
 }
 
 function appendAttributeIssues(
   rawAttributes: unknown,
   missing: string[],
-  invalid: string[]
+  invalid: string[],
+  memesContract: boolean
 ) {
-  const attributeIssues = validateAttributes(rawAttributes);
+  const attributeIssues = validateAttributes(rawAttributes, memesContract);
   for (const issue of attributeIssues) {
     if (issue.startsWith('Attributes (')) {
       invalid.push(issue);
@@ -541,24 +601,25 @@ async function resolveTypeMemeId(
   }
 }
 
-export async function uploadMemeClaimToArweave(
-  memeId: number,
-  claim: MemeClaimRow
+export async function uploadMintingClaimToArweave(
+  contract: string,
+  claim: MintingClaimRow
 ): Promise<{
   imageLocationUrl: string;
   animationLocationUrl: string | null;
   metadataLocationUrl: string;
 }> {
-  const { imageUrl, typeMemeId } =
-    await validateMemeClaimReadyForArweaveUpload(claim);
+  const { imageUrl, typeMemeId, seasonValue } =
+    await validateMintingClaimReadyForArweaveUpload(claim, contract);
   const imageLocationUrl = await uploadImageToArweaveOrThrow(claim, imageUrl);
   const animationLocationUrl = await uploadAnimationToArweaveIfPresent(claim);
   const metadataLocationUrl = await uploadClaimMetadataToArweave(
-    memeId,
+    contract,
     claim,
     imageLocationUrl,
     animationLocationUrl,
-    typeMemeId
+    typeMemeId,
+    seasonValue
   );
   return {
     imageLocationUrl,

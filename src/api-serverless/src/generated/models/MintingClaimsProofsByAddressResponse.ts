@@ -10,17 +10,24 @@
  * Do not edit the class manually.
  */
 
+import { MintingClaimsProofsByAddressEntry } from '../models/MintingClaimsProofsByAddressEntry';
 import { HttpFile } from '../http/http';
 
-export class MemeClaimAttributeValue {
+export class MintingClaimsProofsByAddressResponse {
+    'proofs_by_address': Array<MintingClaimsProofsByAddressEntry>;
 
     static readonly discriminator: string | undefined = undefined;
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
-    ];
+        {
+            "name": "proofs_by_address",
+            "baseName": "proofs_by_address",
+            "type": "Array<MintingClaimsProofsByAddressEntry>",
+            "format": ""
+        }    ];
 
     static getAttributeTypeMap() {
-        return MemeClaimAttributeValue.attributeTypeMap;
+        return MintingClaimsProofsByAddressResponse.attributeTypeMap;
     }
 
     public constructor() {

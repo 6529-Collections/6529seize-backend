@@ -1,13 +1,13 @@
 import { getCacheKeyPatternForPath } from '@/api/api-helpers';
 import {
-  fetchMemeClaimByMemeId,
-  updateMemeClaim
-} from '@/api/memes-minting/api.memes-minting.db';
+  fetchMintingClaimByClaimId,
+  updateMintingClaim
+} from '@/api/minting-claims/api.minting-claims.db';
 import { Logger } from '@/logging';
 import {
   arweaveTxIdFromUrl,
-  uploadMemeClaimToArweave
-} from '@/meme-claims/claims-media-arweave-upload';
+  uploadMintingClaimToArweave
+} from '@/minting-claims/claims-media-arweave-upload';
 import * as priorityAlertsContext from '@/priority-alerts.context';
 import { evictAllKeysMatchingPatternFromRedisCache } from '@/redis';
 import { doInDbContext } from '@/secrets';
@@ -17,49 +17,81 @@ import type { SQSHandler } from 'aws-lambda';
 const logger = Logger.get('CLAIMS_MEDIA_ARWEAVE_UPLOADER');
 const ALERT_TITLE = 'Claims Media Arweave Uploader';
 
-async function invalidateClaimCache(memeId: number): Promise<void> {
-  const pattern = getCacheKeyPatternForPath(
-    `/api/memes-minting/claims/${memeId}*`
-  );
-  try {
-    await evictAllKeysMatchingPatternFromRedisCache(pattern);
-  } catch (error) {
-    logger.warn('Failed to invalidate meme claim cache', { memeId, error });
+async function invalidateClaimCache(
+  contract: string,
+  claimId: number
+): Promise<void> {
+  const patterns = [
+    getCacheKeyPatternForPath(
+      `/api/minting-claims/${contract}/claims/${claimId}*`
+    ),
+    getCacheKeyPatternForPath(`/api/minting-claims/${contract}/claims*`)
+  ];
+
+  for (const pattern of patterns) {
+    try {
+      await evictAllKeysMatchingPatternFromRedisCache(pattern);
+    } catch (error) {
+      logger.warn('Failed to invalidate minting claim cache', {
+        contract,
+        claimId,
+        pattern,
+        error
+      });
+    }
   }
 }
 
-function parseRecordBody(body: string): { meme_id: number } {
-  const parsed = JSON.parse(body) as { meme_id?: unknown };
-  const memeId = Number(parsed.meme_id);
-  if (!Number.isInteger(memeId) || memeId < 1) {
+function parseRecordBody(body: string): { contract: string; claim_id: number } {
+  const parsed = JSON.parse(body) as { contract?: unknown; claim_id?: unknown };
+  const contract =
+    typeof parsed.contract === 'string' ? parsed.contract.trim() : '';
+  const claimId = Number(parsed.claim_id);
+
+  if (!contract || !/^0x[a-fA-F0-9]{40}$/.test(contract)) {
     throw new Error(`Invalid message payload: ${body}`);
   }
-  return { meme_id: memeId };
+
+  if (!Number.isInteger(claimId) || claimId < 1) {
+    throw new Error(`Invalid message payload: ${body}`);
+  }
+
+  return { contract: contract.toLowerCase(), claim_id: claimId };
 }
 
-async function processMemeClaimUpload(memeId: number): Promise<void> {
-  logger.info(`Processing meme claim media upload for meme_id=${memeId}`);
-  const claim = await fetchMemeClaimByMemeId(memeId);
+async function processMintingClaimUpload(
+  contract: string,
+  claimId: number
+): Promise<void> {
+  logger.info(
+    `Processing minting claim media upload for contract=${contract} claim_id=${claimId}`
+  );
+
+  const claim = await fetchMintingClaimByClaimId(contract, claimId);
   if (!claim) {
-    logger.warn(`Skipping upload - claim not found for meme_id=${memeId}`);
-    return;
+    throw new Error(
+      `Claim not found for contract=${contract} claim_id=${claimId}`
+    );
   }
+
   if (!claim.media_uploading) {
     logger.info(
-      `Skipping upload - claim is not uploading for meme_id=${memeId}`
+      `Skipping upload - claim is not uploading for contract=${contract} claim_id=${claimId}`
     );
     return;
   }
 
-  await updateMemeClaim(memeId, {
+  await updateMintingClaim(contract, claimId, {
     media_uploading: true
   });
 
-  logger.info(`Uploading claim media to Arweave for meme_id=${memeId}`);
+  logger.info(
+    `Uploading claim media to Arweave for contract=${contract} claim_id=${claimId}`
+  );
 
   try {
-    const uploadResult = await uploadMemeClaimToArweave(memeId, claim);
-    await updateMemeClaim(memeId, {
+    const uploadResult = await uploadMintingClaimToArweave(contract, claim);
+    await updateMintingClaim(contract, claimId, {
       image_location: arweaveTxIdFromUrl(uploadResult.imageLocationUrl),
       animation_location: uploadResult.animationLocationUrl
         ? arweaveTxIdFromUrl(uploadResult.animationLocationUrl)
@@ -67,17 +99,18 @@ async function processMemeClaimUpload(memeId: number): Promise<void> {
       metadata_location: arweaveTxIdFromUrl(uploadResult.metadataLocationUrl),
       media_uploading: false
     });
-    await invalidateClaimCache(memeId);
+    await invalidateClaimCache(contract, claimId);
   } catch (error) {
     logger.error(
-      `Failed to upload claim media to Arweave for meme_id=${memeId}, error=${error}`
+      `Failed to upload claim media to Arweave for contract=${contract} claim_id=${claimId}, error=${error}`
     );
     try {
-      await updateMemeClaim(memeId, { media_uploading: false });
-      await invalidateClaimCache(memeId);
+      await updateMintingClaim(contract, claimId, { media_uploading: false });
+      await invalidateClaimCache(contract, claimId);
     } catch (rollbackError) {
       logger.error('Failed to reset media_uploading after upload error', {
-        memeId,
+        contract,
+        claimId,
         rollbackError
       });
     }
@@ -91,7 +124,7 @@ const sqsHandler: SQSHandler = async (event) => {
     async () => {
       for (const record of event.Records) {
         const message = parseRecordBody(record.body);
-        await processMemeClaimUpload(message.meme_id);
+        await processMintingClaimUpload(message.contract, message.claim_id);
       }
     },
     { logger }

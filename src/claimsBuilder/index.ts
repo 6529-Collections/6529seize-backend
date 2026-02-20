@@ -1,5 +1,5 @@
 import { Logger } from '@/logging';
-import { memeClaimsService } from '@/meme-claims/meme-claims.service';
+import { mintingClaimsService } from '@/minting-claims/minting-claims.service';
 import * as priorityAlertsContext from '@/priority-alerts.context';
 import { doInDbContext } from '@/secrets';
 import * as sentryContext from '@/sentry.context';
@@ -20,7 +20,7 @@ function parseRecordBody(body: string): { drop_id: string } {
 
 async function processClaimBuild(dropId: string): Promise<void> {
   logger.info(`Processing claim build for drop_id=${dropId}`);
-  await memeClaimsService.createClaimForDropIfMissing(dropId);
+  await mintingClaimsService.createClaimForDropIfMissing(dropId);
 }
 
 const sqsHandler: SQSHandler = async (event) => {

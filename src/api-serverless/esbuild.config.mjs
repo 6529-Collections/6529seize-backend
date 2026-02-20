@@ -14,7 +14,7 @@ await esbuild.build({
   outfile: 'dist/index.js',
   alias: {
     '@/constants': path.join(repoSrc, 'constants'),
-    '@/meme-claims': path.join(repoSrc, 'meme-claims'),
+    '@/minting-claims': path.join(repoSrc, 'minting-claims'),
     '@/entities': path.join(repoSrc, 'entities'),
     '@/numbers': path.join(repoSrc, 'numbers'),
     '@/strings': path.join(repoSrc, 'strings')

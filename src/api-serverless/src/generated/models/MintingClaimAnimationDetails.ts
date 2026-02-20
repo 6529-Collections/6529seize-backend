@@ -10,14 +10,14 @@
  * Do not edit the class manually.
  */
 
-import { MemeClaimAnimationDetailsGlb } from '../models/MemeClaimAnimationDetailsGlb';
-import { MemeClaimAnimationDetailsHtml } from '../models/MemeClaimAnimationDetailsHtml';
-import { MemeClaimAnimationDetailsVideo } from '../models/MemeClaimAnimationDetailsVideo';
+import { MintingClaimAnimationDetailsGlb } from '../models/MintingClaimAnimationDetailsGlb';
+import { MintingClaimAnimationDetailsHtml } from '../models/MintingClaimAnimationDetailsHtml';
+import { MintingClaimAnimationDetailsVideo } from '../models/MintingClaimAnimationDetailsVideo';
 import { HttpFile } from '../http/http';
 
-export class MemeClaimAnimationDetails {
+export class MintingClaimAnimationDetails {
     'bytes': number;
-    'format': MemeClaimAnimationDetailsFormatEnum;
+    'format': MintingClaimAnimationDetailsFormatEnum;
     'duration': number;
     'sha256': string;
     'width': number;
@@ -36,7 +36,7 @@ export class MemeClaimAnimationDetails {
         {
             "name": "format",
             "baseName": "format",
-            "type": "MemeClaimAnimationDetailsFormatEnum",
+            "type": "MintingClaimAnimationDetailsFormatEnum",
             "format": ""
         },
         {
@@ -71,7 +71,7 @@ export class MemeClaimAnimationDetails {
         }    ];
 
     static getAttributeTypeMap() {
-        return MemeClaimAnimationDetails.attributeTypeMap;
+        return MintingClaimAnimationDetails.attributeTypeMap;
     }
 
     public constructor() {
@@ -79,7 +79,7 @@ export class MemeClaimAnimationDetails {
 }
 
 
-export enum MemeClaimAnimationDetailsFormatEnum {
+export enum MintingClaimAnimationDetailsFormatEnum {
     Glb = 'GLB'
 }
 

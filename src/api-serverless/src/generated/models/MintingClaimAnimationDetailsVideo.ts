@@ -12,10 +12,14 @@
 
 import { HttpFile } from '../http/http';
 
-export class MemeClaimAnimationDetailsGlb {
+export class MintingClaimAnimationDetailsVideo {
     'bytes': number;
-    'format': MemeClaimAnimationDetailsGlbFormatEnum;
+    'format': string;
+    'duration': number;
     'sha256': string;
+    'width': number;
+    'height': number;
+    'codecs': Array<string>;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -29,7 +33,13 @@ export class MemeClaimAnimationDetailsGlb {
         {
             "name": "format",
             "baseName": "format",
-            "type": "MemeClaimAnimationDetailsGlbFormatEnum",
+            "type": "string",
+            "format": ""
+        },
+        {
+            "name": "duration",
+            "baseName": "duration",
+            "type": "number",
             "format": ""
         },
         {
@@ -37,18 +47,31 @@ export class MemeClaimAnimationDetailsGlb {
             "baseName": "sha256",
             "type": "string",
             "format": ""
+        },
+        {
+            "name": "width",
+            "baseName": "width",
+            "type": "number",
+            "format": "int32"
+        },
+        {
+            "name": "height",
+            "baseName": "height",
+            "type": "number",
+            "format": "int32"
+        },
+        {
+            "name": "codecs",
+            "baseName": "codecs",
+            "type": "Array<string>",
+            "format": ""
         }    ];
 
     static getAttributeTypeMap() {
-        return MemeClaimAnimationDetailsGlb.attributeTypeMap;
+        return MintingClaimAnimationDetailsVideo.attributeTypeMap;
     }
 
     public constructor() {
     }
-}
-
-
-export enum MemeClaimAnimationDetailsGlbFormatEnum {
-    Glb = 'GLB'
 }
 

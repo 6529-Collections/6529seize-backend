@@ -10,46 +10,24 @@
  * Do not edit the class manually.
  */
 
+import { MintingClaim } from '../models/MintingClaim';
 import { HttpFile } from '../http/http';
 
-export class ApiMemesMintingPhaseTotalItem {
-    /**
-    * Phase name
-    */
-    'phase': string;
-    /**
-    * Number of unique addresses in this phase
-    */
-    'addresses': number;
-    /**
-    * Sum of spots for this phase
-    */
-    'total': number;
+export class MintingClaimsResponse {
+    'claims': Array<MintingClaim>;
 
     static readonly discriminator: string | undefined = undefined;
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
         {
-            "name": "phase",
-            "baseName": "phase",
-            "type": "string",
+            "name": "claims",
+            "baseName": "claims",
+            "type": "Array<MintingClaim>",
             "format": ""
-        },
-        {
-            "name": "addresses",
-            "baseName": "addresses",
-            "type": "number",
-            "format": "int64"
-        },
-        {
-            "name": "total",
-            "baseName": "total",
-            "type": "number",
-            "format": "int64"
         }    ];
 
     static getAttributeTypeMap() {
-        return ApiMemesMintingPhaseTotalItem.attributeTypeMap;
+        return MintingClaimsResponse.attributeTypeMap;
     }
 
     public constructor() {

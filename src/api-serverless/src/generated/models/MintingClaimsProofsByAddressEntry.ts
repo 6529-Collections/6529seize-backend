@@ -10,51 +10,34 @@
  * Do not edit the class manually.
  */
 
+import { MintingClaimsProofItem } from '../models/MintingClaimsProofItem';
 import { HttpFile } from '../http/http';
 
-export class MemeClaimImageDetails {
-    'bytes': number;
-    'format': string;
-    'sha256': string;
-    'width': number;
-    'height': number;
+export class MintingClaimsProofsByAddressEntry {
+    /**
+    * Wallet address
+    */
+    'address': string;
+    'proofs': Array<MintingClaimsProofItem>;
 
     static readonly discriminator: string | undefined = undefined;
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
         {
-            "name": "bytes",
-            "baseName": "bytes",
-            "type": "number",
-            "format": "int64"
-        },
-        {
-            "name": "format",
-            "baseName": "format",
+            "name": "address",
+            "baseName": "address",
             "type": "string",
             "format": ""
         },
         {
-            "name": "sha256",
-            "baseName": "sha256",
-            "type": "string",
+            "name": "proofs",
+            "baseName": "proofs",
+            "type": "Array<MintingClaimsProofItem>",
             "format": ""
-        },
-        {
-            "name": "width",
-            "baseName": "width",
-            "type": "number",
-            "format": "int32"
-        },
-        {
-            "name": "height",
-            "baseName": "height",
-            "type": "number",
-            "format": "int32"
         }    ];
 
     static getAttributeTypeMap() {
-        return MemeClaimImageDetails.attributeTypeMap;
+        return MintingClaimsProofsByAddressEntry.attributeTypeMap;
     }
 
     public constructor() {

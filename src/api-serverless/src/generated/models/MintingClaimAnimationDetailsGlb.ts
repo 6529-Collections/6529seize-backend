@@ -10,48 +10,45 @@
  * Do not edit the class manually.
  */
 
-import { MemeClaimAttributeValue } from '../models/MemeClaimAttributeValue';
 import { HttpFile } from '../http/http';
 
-export class MemeClaimAttribute {
-    'trait_type': string;
-    'value': MemeClaimAttributeValue;
-    'display_type'?: string;
-    'max_value'?: number;
+export class MintingClaimAnimationDetailsGlb {
+    'bytes': number;
+    'format': MintingClaimAnimationDetailsGlbFormatEnum;
+    'sha256': string;
 
     static readonly discriminator: string | undefined = undefined;
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
         {
-            "name": "trait_type",
-            "baseName": "trait_type",
-            "type": "string",
-            "format": ""
-        },
-        {
-            "name": "value",
-            "baseName": "value",
-            "type": "MemeClaimAttributeValue",
-            "format": ""
-        },
-        {
-            "name": "display_type",
-            "baseName": "display_type",
-            "type": "string",
-            "format": ""
-        },
-        {
-            "name": "max_value",
-            "baseName": "max_value",
+            "name": "bytes",
+            "baseName": "bytes",
             "type": "number",
+            "format": "int64"
+        },
+        {
+            "name": "format",
+            "baseName": "format",
+            "type": "MintingClaimAnimationDetailsGlbFormatEnum",
+            "format": ""
+        },
+        {
+            "name": "sha256",
+            "baseName": "sha256",
+            "type": "string",
             "format": ""
         }    ];
 
     static getAttributeTypeMap() {
-        return MemeClaimAttribute.attributeTypeMap;
+        return MintingClaimAnimationDetailsGlb.attributeTypeMap;
     }
 
     public constructor() {
     }
+}
+
+
+export enum MintingClaimAnimationDetailsGlbFormatEnum {
+    Glb = 'GLB'
 }
 

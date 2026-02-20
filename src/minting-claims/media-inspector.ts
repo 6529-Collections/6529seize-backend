@@ -1,10 +1,10 @@
 import { createHash } from 'node:crypto';
 import type {
-  MemeClaimAnimationDetails,
-  MemeClaimAnimationDetailsGlb,
-  MemeClaimAnimationDetailsVideo,
-  MemeClaimImageDetails
-} from '@/entities/IMemeClaim';
+  MintingClaimAnimationDetails,
+  MintingClaimAnimationDetailsGlb,
+  MintingClaimAnimationDetailsVideo,
+  MintingClaimImageDetails
+} from '@/entities/IMintingClaim';
 import { fetchPublicUrlToBuffer } from '@/http/safe-fetch';
 import { imageSize } from 'image-size';
 import * as MP4Box from 'mp4box';
@@ -62,7 +62,7 @@ function asUint8Array(buffer: Buffer): Uint8Array {
 function extractImageDetailsFromBuffer(
   buffer: Buffer,
   format: string
-): MemeClaimImageDetails {
+): MintingClaimImageDetails {
   const bytes = asUint8Array(buffer);
   const size = imageSize(bytes);
   if (!size?.width || !size?.height) {
@@ -83,7 +83,7 @@ const MP4BOX_PARSE_TIMEOUT_MS = 10_000;
 function extractVideoDetailsFromBuffer(
   buffer: Buffer,
   format: string
-): Promise<MemeClaimAnimationDetailsVideo> {
+): Promise<MintingClaimAnimationDetailsVideo> {
   return new Promise((resolve, reject) => {
     let settled = false;
     const mp4boxFile = MP4Box.createFile();
@@ -95,7 +95,7 @@ function extractVideoDetailsFromBuffer(
       reject(new Error('mp4box parse timeout'));
     }, MP4BOX_PARSE_TIMEOUT_MS);
     const finish = (
-      result: MemeClaimAnimationDetailsVideo | null,
+      result: MintingClaimAnimationDetailsVideo | null,
       err: Error | null
     ) => {
       if (settled) return;
@@ -167,7 +167,7 @@ function extractVideoDetailsFromBuffer(
 
 function extractGlbDetailsFromBuffer(
   buffer: Buffer
-): MemeClaimAnimationDetailsGlb {
+): MintingClaimAnimationDetailsGlb {
   const sha256 = createHash('sha256')
     .update(asUint8Array(buffer))
     .digest('hex');
@@ -180,7 +180,7 @@ function extractGlbDetailsFromBuffer(
 
 export async function computeImageDetails(
   imageUrl: string
-): Promise<MemeClaimImageDetails> {
+): Promise<MintingClaimImageDetails> {
   const { buffer, contentType } = await fetchUrlToBuffer(imageUrl);
   const { kind, format } = sniffKindAndFormat(contentType, imageUrl);
   if (kind !== 'image') {
@@ -189,13 +189,13 @@ export async function computeImageDetails(
   return extractImageDetailsFromBuffer(buffer, format);
 }
 
-export function animationDetailsHtml(): MemeClaimAnimationDetails {
+export function animationDetailsHtml(): MintingClaimAnimationDetails {
   return { format: 'HTML' };
 }
 
 export async function computeAnimationDetailsGlb(
   url: string
-): Promise<MemeClaimAnimationDetails> {
+): Promise<MintingClaimAnimationDetails> {
   const { buffer, contentType } = await fetchUrlToBuffer(url);
   const { kind } = sniffKindAndFormat(contentType, url);
   if (kind !== 'glb') {
@@ -206,7 +206,7 @@ export async function computeAnimationDetailsGlb(
 
 export async function computeAnimationDetailsVideo(
   videoUrl: string
-): Promise<MemeClaimAnimationDetails> {
+): Promise<MintingClaimAnimationDetails> {
   const { buffer, contentType } = await fetchUrlToBuffer(videoUrl);
   const { kind, format } = sniffKindAndFormat(contentType, videoUrl);
   if (kind !== 'video') {

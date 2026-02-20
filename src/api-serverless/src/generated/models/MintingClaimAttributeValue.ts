@@ -10,24 +10,17 @@
  * Do not edit the class manually.
  */
 
-import { MemeClaim } from '../models/MemeClaim';
 import { HttpFile } from '../http/http';
 
-export class MemesMintingClaimsResponse {
-    'claims': Array<MemeClaim>;
+export class MintingClaimAttributeValue {
 
     static readonly discriminator: string | undefined = undefined;
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
-        {
-            "name": "claims",
-            "baseName": "claims",
-            "type": "Array<MemeClaim>",
-            "format": ""
-        }    ];
+    ];
 
     static getAttributeTypeMap() {
-        return MemesMintingClaimsResponse.attributeTypeMap;
+        return MintingClaimAttributeValue.attributeTypeMap;
     }
 
     public constructor() {

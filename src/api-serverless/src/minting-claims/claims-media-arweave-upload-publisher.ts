@@ -20,11 +20,12 @@ export function isClaimsMediaArweaveUploadActivated(): boolean {
 }
 
 export async function enqueueClaimMediaArweaveUpload(
-  memeId: number
+  contract: string,
+  claimId: number
 ): Promise<boolean> {
   if (!isClaimsMediaArweaveUploadActivated()) {
     logger.info(
-      `Claims media Arweave upload is not activated, skipping enqueue for meme_id=${memeId}`
+      `Claims media Arweave upload is not activated, skipping enqueue for contract=${contract} claim_id=${claimId}`
     );
     return false;
   }
@@ -32,7 +33,10 @@ export async function enqueueClaimMediaArweaveUpload(
   if (!topicArn) {
     throw new Error('CLAIMS_MEDIA_ARWEAVE_UPLOAD_SNS is not configured');
   }
-  const message = JSON.stringify({ meme_id: memeId });
+  const message = JSON.stringify({
+    contract: contract.toLowerCase(),
+    claim_id: claimId
+  });
   const response = await getSnsClient().send(
     new PublishCommand({
       TopicArn: topicArn,
@@ -40,7 +44,7 @@ export async function enqueueClaimMediaArweaveUpload(
     })
   );
   logger.info(
-    `Queued claim media Arweave upload for meme_id=${memeId}, messageId=${response.MessageId}`
+    `Queued claim media Arweave upload for contract=${contract} claim_id=${claimId}, messageId=${response.MessageId}`
   );
   return true;
 }

@@ -12,8 +12,8 @@
 
 import { HttpFile } from '../http/http';
 
-export class MemeClaimAnimationDetailsHtml {
-    'format': MemeClaimAnimationDetailsHtmlFormatEnum;
+export class MintingClaimAnimationDetailsHtml {
+    'format': MintingClaimAnimationDetailsHtmlFormatEnum;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -21,12 +21,12 @@ export class MemeClaimAnimationDetailsHtml {
         {
             "name": "format",
             "baseName": "format",
-            "type": "MemeClaimAnimationDetailsHtmlFormatEnum",
+            "type": "MintingClaimAnimationDetailsHtmlFormatEnum",
             "format": ""
         }    ];
 
     static getAttributeTypeMap() {
-        return MemeClaimAnimationDetailsHtml.attributeTypeMap;
+        return MintingClaimAnimationDetailsHtml.attributeTypeMap;
     }
 
     public constructor() {
@@ -34,7 +34,7 @@ export class MemeClaimAnimationDetailsHtml {
 }
 
 
-export enum MemeClaimAnimationDetailsHtmlFormatEnum {
+export enum MintingClaimAnimationDetailsHtmlFormatEnum {
     Html = 'HTML'
 }
 

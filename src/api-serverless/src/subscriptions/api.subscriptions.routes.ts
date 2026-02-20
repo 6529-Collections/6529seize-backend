@@ -64,11 +64,11 @@ async function evictCacheForPath(path: string) {
   );
 }
 
-async function invalidateMemesMintingPhaseCache(
+async function invalidateMintingClaimsPhaseCache(
   contract: string,
   tokenId: number
 ) {
-  await evictCacheForPath(`/api/memes-minting/${contract}/${tokenId}/`);
+  await evictCacheForPath(`/api/minting-claims/${contract}/${tokenId}/`);
   await evictCacheForPath(`/api/distributions/${contract}/${tokenId}/overview`);
 }
 
@@ -696,7 +696,7 @@ router.get(
       );
 
       await populateDistribution(contract, tokenId, phaseName, results);
-      await invalidateMemesMintingPhaseCache(contract, tokenId);
+      await invalidateMintingClaimsPhaseCache(contract, tokenId);
       return res.json(results);
     }
   }
@@ -744,7 +744,7 @@ router.post(
     }
 
     await resetAllowlist(contract, tokenId);
-    await invalidateMemesMintingPhaseCache(contract, tokenId);
+    await invalidateMintingClaimsPhaseCache(contract, tokenId);
 
     return res.json({
       success: true,

@@ -1,26 +1,27 @@
 import {
   fetchMaxSeasonId,
-  fetchMemeClaimByMemeId,
-  updateMemeClaim,
-  type MemeClaimRow
-} from '@/api/memes-minting/api.memes-minting.db';
+  fetchMintingClaimByClaimId,
+  updateMintingClaim,
+  type MintingClaimRow
+} from '@/api/minting-claims/api.minting-claims.db';
 import { upsertAutomaticAirdropsForPhase } from '@/api/distributions/api.distributions.service';
 import { DISTRIBUTION_PHASE_AIRDROP_TEAM } from '@/airdrop-phases';
 import { MEMES_CONTRACT, TEAM_TABLE } from '@/constants';
 import { BadRequestException, CustomApiCompliantException } from '@/exceptions';
-import type { MemeClaimUpdateRequest } from '@/api/generated/models/MemeClaimUpdateRequest';
+import type { MintingClaimUpdateRequest } from '@/api/generated/models/MintingClaimUpdateRequest';
 import {
   computeImageDetails,
   computeAnimationDetailsVideo,
   computeAnimationDetailsGlb,
   animationDetailsHtml
-} from '@/meme-claims/media-inspector';
+} from '@/minting-claims/media-inspector';
 import { sqlExecutor } from '@/sql-executor';
 import { ethers } from 'ethers';
 
 const MIN_EDITION_SIZE = 300;
+const TYPE_SEASON_TRAIT = 'Type - Season';
 
-export type MemeClaimUpdates = Parameters<typeof updateMemeClaim>[1];
+export type MintingClaimUpdates = Parameters<typeof updateMintingClaim>[2];
 
 const TEAM_COLLECTION_RESERVE = 'Reserve';
 
@@ -68,43 +69,76 @@ function validateRequestedSeason(
   return requested;
 }
 
-function applyPrimitiveUpdates(
-  body: MemeClaimUpdateRequest,
-  updates: MemeClaimUpdates
-): boolean {
-  let shouldResetSyncState = false;
-  if (body.description !== undefined) {
-    updates.description = body.description;
-    shouldResetSyncState = true;
+function extractSeasonFromAttributes(attributes: unknown): number | null {
+  if (!Array.isArray(attributes)) {
+    return null;
   }
-  if (body.name !== undefined) {
-    updates.name = body.name;
-    shouldResetSyncState = true;
+
+  const seasonAttribute = attributes.find((attribute) => {
+    if (typeof attribute !== 'object' || attribute == null) {
+      return false;
+    }
+    const traitType = (attribute as { trait_type?: unknown }).trait_type;
+    return traitType === TYPE_SEASON_TRAIT;
+  }) as { value?: unknown } | undefined;
+
+  if (!seasonAttribute) {
+    return null;
   }
-  if (body.image_url !== undefined) {
-    updates.image_url = body.image_url;
-    shouldResetSyncState = true;
+
+  const value = seasonAttribute.value;
+  if (typeof value === 'number' && Number.isInteger(value)) {
+    return value;
   }
-  if (body.attributes !== undefined) {
-    updates.attributes = body.attributes;
-    shouldResetSyncState = true;
+
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value);
+    if (Number.isInteger(parsed)) {
+      return parsed;
+    }
   }
-  if (body.animation_url !== undefined) {
-    updates.animation_url = body.animation_url;
-    shouldResetSyncState = true;
+
+  return null;
+}
+
+function normalizeAttributesWithSeason(
+  attributes: unknown,
+  season: number
+): unknown[] {
+  if (!Array.isArray(attributes)) {
+    return [];
   }
-  return shouldResetSyncState;
+
+  const filtered = attributes.filter((attribute) => {
+    if (typeof attribute !== 'object' || attribute == null) {
+      return true;
+    }
+    const traitType = (attribute as { trait_type?: unknown }).trait_type;
+    return traitType !== TYPE_SEASON_TRAIT;
+  });
+
+  filtered.push({
+    trait_type: TYPE_SEASON_TRAIT,
+    value: season,
+    display_type: 'number'
+  });
+
+  return filtered;
 }
 
 function applyEditionSizeUpdate(
-  body: MemeClaimUpdateRequest,
-  updates: MemeClaimUpdates
+  body: MintingClaimUpdateRequest,
+  updates: MintingClaimUpdates,
+  isMemesContract: boolean
 ): boolean {
   if (body.edition_size === undefined) return false;
+  if (body.edition_size !== null && !Number.isInteger(body.edition_size)) {
+    throw new BadRequestException('edition_size must be an integer');
+  }
   if (
+    isMemesContract &&
     body.edition_size !== null &&
-    (!Number.isInteger(body.edition_size) ||
-      body.edition_size < MIN_EDITION_SIZE)
+    body.edition_size < MIN_EDITION_SIZE
   ) {
     throw new BadRequestException(
       `edition_size must be at least ${MIN_EDITION_SIZE}`
@@ -115,9 +149,9 @@ function applyEditionSizeUpdate(
 }
 
 async function applyImageFromBody(
-  body: MemeClaimUpdateRequest,
-  existing: MemeClaimRow,
-  updates: MemeClaimUpdates
+  body: MintingClaimUpdateRequest,
+  existing: MintingClaimRow,
+  updates: MintingClaimUpdates
 ): Promise<void> {
   if (body.image_url === undefined) return;
   if (body.image_url && typeof body.image_url === 'string') {
@@ -135,9 +169,9 @@ async function applyImageFromBody(
 }
 
 async function applyAnimationFromBody(
-  body: MemeClaimUpdateRequest,
-  existing: MemeClaimRow,
-  updates: MemeClaimUpdates
+  body: MintingClaimUpdateRequest,
+  existing: MintingClaimRow,
+  updates: MintingClaimUpdates
 ): Promise<void> {
   if (body.animation_url === undefined) return;
   const hasValidAnimationUrl =
@@ -169,58 +203,125 @@ async function applyAnimationFromBody(
   }
 }
 
-export async function buildUpdatesForClaimPatch(
-  body: MemeClaimUpdateRequest,
-  existing: MemeClaimRow
-): Promise<MemeClaimUpdates> {
-  const updates: MemeClaimUpdates = {};
-  let shouldResetSyncState = false;
-  if (body.season !== undefined) {
-    updates.season = validateRequestedSeason(
-      Number(body.season),
-      await fetchMaxSeasonId()
+async function applyAttributesFromBody(
+  body: MintingClaimUpdateRequest,
+  updates: MintingClaimUpdates,
+  isMemesContract: boolean
+): Promise<boolean> {
+  if (body.attributes === undefined) {
+    return false;
+  }
+
+  if (!isMemesContract) {
+    updates.attributes = body.attributes;
+    return true;
+  }
+
+  const requestedSeason = extractSeasonFromAttributes(body.attributes);
+  if (requestedSeason == null) {
+    throw new BadRequestException(
+      `attributes must include a numeric "${TYPE_SEASON_TRAIT}" trait for MEMES contract`
     );
+  }
+
+  const validatedSeason = validateRequestedSeason(
+    requestedSeason,
+    await fetchMaxSeasonId()
+  );
+
+  updates.attributes = normalizeAttributesWithSeason(
+    body.attributes,
+    validatedSeason
+  );
+
+  return true;
+}
+
+export async function buildUpdatesForClaimPatch(
+  body: MintingClaimUpdateRequest,
+  existing: MintingClaimRow,
+  isMemesContract: boolean
+): Promise<MintingClaimUpdates> {
+  const updates: MintingClaimUpdates = {};
+  let shouldResetSyncState = false;
+
+  if (body.description !== undefined) {
+    updates.description = body.description;
     shouldResetSyncState = true;
   }
+
+  if (body.name !== undefined) {
+    updates.name = body.name;
+    shouldResetSyncState = true;
+  }
+
+  if (body.image_url !== undefined) {
+    updates.image_url = body.image_url;
+    shouldResetSyncState = true;
+  }
+
+  if (await applyAttributesFromBody(body, updates, isMemesContract)) {
+    shouldResetSyncState = true;
+  }
+
+  if (body.animation_url !== undefined) {
+    updates.animation_url = body.animation_url;
+    shouldResetSyncState = true;
+  }
+
   shouldResetSyncState =
-    applyPrimitiveUpdates(body, updates) || shouldResetSyncState;
-  shouldResetSyncState =
-    applyEditionSizeUpdate(body, updates) || shouldResetSyncState;
+    applyEditionSizeUpdate(body, updates, isMemesContract) ||
+    shouldResetSyncState;
+
   if (body.image_url !== undefined) {
     await applyImageFromBody(body, existing, updates);
   }
+
   if (body.animation_url !== undefined) {
     await applyAnimationFromBody(body, existing, updates);
     shouldResetSyncState = true;
   }
+
   if (shouldResetSyncState) {
     updates.metadata_location = null;
   }
+
   return updates;
 }
 
-export async function patchMemeClaim(
-  memeId: number,
-  body: MemeClaimUpdateRequest
-): Promise<MemeClaimRow | null> {
-  const existing = await fetchMemeClaimByMemeId(memeId);
+export async function patchMintingClaim(
+  contract: string,
+  claimId: number,
+  body: MintingClaimUpdateRequest,
+  isMemesContract: boolean
+): Promise<MintingClaimRow | null> {
+  const existing = await fetchMintingClaimByClaimId(contract, claimId);
   if (existing === null) return null;
+
   if (existing.media_uploading) {
     throw new CustomApiCompliantException(
       409,
       'Claim media upload in progress; updates are temporarily blocked'
     );
   }
-  const updates = await buildUpdatesForClaimPatch(body, existing);
-  await updateMemeClaim(memeId, updates);
-  const updated = await fetchMemeClaimByMemeId(memeId);
+
+  const updates = await buildUpdatesForClaimPatch(
+    body,
+    existing,
+    isMemesContract
+  );
+  await updateMintingClaim(contract, claimId, updates);
+
+  const updated = await fetchMintingClaimByClaimId(contract, claimId);
   if (updated === null) {
     return null;
   }
-  if (body.edition_size !== undefined) {
-    await syncReserveTeamAirdrops(memeId, updated.edition_size);
+
+  if (isMemesContract && body.edition_size !== undefined) {
+    await syncReserveTeamAirdrops(claimId, updated.edition_size);
   }
-  return fetchMemeClaimByMemeId(memeId);
+
+  return fetchMintingClaimByClaimId(contract, claimId);
 }
 
 async function fetchReserveTeamWallets(): Promise<string[]> {
@@ -234,7 +335,7 @@ async function fetchReserveTeamWallets(): Promise<string[]> {
 }
 
 async function syncReserveTeamAirdrops(
-  memeId: number,
+  claimId: number,
   editionSize: number | null
 ): Promise<void> {
   if (editionSize == null) {
@@ -250,7 +351,7 @@ async function syncReserveTeamAirdrops(
   }
   await upsertAutomaticAirdropsForPhase(
     MEMES_CONTRACT,
-    memeId,
+    claimId,
     DISTRIBUTION_PHASE_AIRDROP_TEAM,
     reserveWallets.map((address) => ({ address, count: reserveCount })),
     undefined,

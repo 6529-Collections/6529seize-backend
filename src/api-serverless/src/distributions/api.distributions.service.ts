@@ -1,4 +1,4 @@
-import { computeAllowlistMerkle } from '@/api/memes-minting/allowlist-merkle';
+import { computeAllowlistMerkle } from '@/api/minting-claims/allowlist-merkle';
 import {
   DISTRIBUTION_AUTOMATIC_AIRDROP_PHASES,
   DISTRIBUTION_PHASE_AIRDROP
@@ -7,7 +7,7 @@ import {
   deleteMintingMerkleForPhase,
   insertMintingMerkleProofs,
   insertMintingMerkleRoot
-} from '@/api/memes-minting/api.memes-minting.db';
+} from '@/api/minting-claims/api.minting-claims.db';
 import {
   DISTRIBUTION_NORMALIZED_TABLE,
   DISTRIBUTION_TABLE,

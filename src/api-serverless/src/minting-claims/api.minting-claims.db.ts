@@ -1,8 +1,8 @@
 import {
   DISTRIBUTION_TABLE,
-  MEMES_CLAIMS_TABLE,
   MEMES_EXTENDED_DATA_TABLE,
   MEMES_SEASONS_TABLE,
+  MINTING_CLAIMS_TABLE,
   MINTING_MERKLE_PROOFS_TABLE,
   MINTING_MERKLE_ROOTS_TABLE,
   SUBSCRIPTIONS_NFTS_FINAL_TABLE
@@ -298,10 +298,10 @@ export async function fetchMintingAllowlists(
   );
 }
 
-export interface MemeClaimRow {
+export interface MintingClaimRow {
   drop_id: string;
-  meme_id: number;
-  season: number;
+  contract: string;
+  claim_id: number;
   image_location: string | null;
   animation_location: string | null;
   metadata_location: string | null;
@@ -316,42 +316,58 @@ export interface MemeClaimRow {
   animation_details: string | null;
 }
 
-export async function fetchMemeClaimByDropId(
+export async function fetchMintingClaimByDropId(
+  contract: string,
   dropId: string
-): Promise<MemeClaimRow | null> {
-  const rows = await sqlExecutor.execute<MemeClaimRow>(
-    `SELECT drop_id, meme_id, season, image_location, animation_location, metadata_location, media_uploading, edition_size, description, name, image_url, attributes, image_details, animation_url, animation_details FROM ${MEMES_CLAIMS_TABLE} WHERE drop_id = :dropId LIMIT 1`,
-    { dropId }
+): Promise<MintingClaimRow | null> {
+  const rows = await sqlExecutor.execute<MintingClaimRow>(
+    `SELECT drop_id, contract, claim_id, image_location, animation_location, metadata_location, media_uploading, edition_size, description, name, image_url, attributes, image_details, animation_url, animation_details
+     FROM ${MINTING_CLAIMS_TABLE}
+     WHERE contract = :contract
+       AND drop_id = :dropId
+     LIMIT 1`,
+    { contract: contract.toLowerCase(), dropId }
   );
   return rows.length > 0 ? rows[0] : null;
 }
 
-export async function fetchMemeClaimByMemeId(
-  memeId: number
-): Promise<MemeClaimRow | null> {
-  const rows = await sqlExecutor.execute<MemeClaimRow>(
-    `SELECT drop_id, meme_id, season, image_location, animation_location, metadata_location, media_uploading, edition_size, description, name, image_url, attributes, image_details, animation_url, animation_details FROM ${MEMES_CLAIMS_TABLE} WHERE meme_id = :memeId LIMIT 1`,
-    { memeId }
+export async function fetchMintingClaimByClaimId(
+  contract: string,
+  claimId: number
+): Promise<MintingClaimRow | null> {
+  const rows = await sqlExecutor.execute<MintingClaimRow>(
+    `SELECT drop_id, contract, claim_id, image_location, animation_location, metadata_location, media_uploading, edition_size, description, name, image_url, attributes, image_details, animation_url, animation_details
+     FROM ${MINTING_CLAIMS_TABLE}
+     WHERE contract = :contract
+       AND claim_id = :claimId
+     LIMIT 1`,
+    { contract: contract.toLowerCase(), claimId }
   );
   return rows.length > 0 ? rows[0] : null;
 }
 
-const MEMES_CLAIMS_SELECT = `SELECT drop_id, meme_id, season, image_location, animation_location, metadata_location, media_uploading, edition_size, description, name, image_url, attributes, image_details, animation_url, animation_details FROM ${MEMES_CLAIMS_TABLE}`;
+const MINTING_CLAIMS_SELECT = `SELECT drop_id, contract, claim_id, image_location, animation_location, metadata_location, media_uploading, edition_size, description, name, image_url, attributes, image_details, animation_url, animation_details
+FROM ${MINTING_CLAIMS_TABLE}
+WHERE contract = :contract`;
 
-export async function fetchMemeClaimsTotalCount(): Promise<number> {
+export async function fetchMintingClaimsTotalCount(
+  contract: string
+): Promise<number> {
   const rows = await sqlExecutor.execute<{ total: number }>(
-    `SELECT COUNT(*) as total FROM ${MEMES_CLAIMS_TABLE}`
+    `SELECT COUNT(*) as total FROM ${MINTING_CLAIMS_TABLE} WHERE contract = :contract`,
+    { contract: contract.toLowerCase() }
   );
   return rows[0]?.total ?? 0;
 }
 
-export async function fetchMemeClaimsPage(
+export async function fetchMintingClaimsPage(
+  contract: string,
   limit: number,
   offset: number
-): Promise<MemeClaimRow[]> {
-  return sqlExecutor.execute<MemeClaimRow>(
-    `${MEMES_CLAIMS_SELECT} ORDER BY meme_id DESC LIMIT :limit OFFSET :offset`,
-    { limit, offset }
+): Promise<MintingClaimRow[]> {
+  return sqlExecutor.execute<MintingClaimRow>(
+    `${MINTING_CLAIMS_SELECT} ORDER BY claim_id DESC LIMIT :limit OFFSET :offset`,
+    { contract: contract.toLowerCase(), limit, offset }
   );
 }
 
@@ -372,10 +388,10 @@ export async function fetchMemeIdByMemeName(
   return rows.length > 0 ? rows[0].meme : null;
 }
 
-export async function updateMemeClaim(
-  memeId: number,
+export async function updateMintingClaim(
+  contract: string,
+  claimId: number,
   updates: {
-    season?: number;
     image_location?: string | null;
     animation_location?: string | null;
     metadata_location?: string | null;
@@ -390,18 +406,25 @@ export async function updateMemeClaim(
     animation_details?: unknown;
   }
 ): Promise<void> {
-  const { setClauses, params } = buildMemeClaimUpdateStatement(memeId, updates);
+  const { setClauses, params } = buildMintingClaimUpdateStatement(
+    contract,
+    claimId,
+    updates
+  );
   if (setClauses.length === 0) return;
   await sqlExecutor.execute(
-    `UPDATE ${MEMES_CLAIMS_TABLE} SET ${setClauses.join(', ')} WHERE meme_id = :memeId`,
+    `UPDATE ${MINTING_CLAIMS_TABLE}
+     SET ${setClauses.join(', ')}
+     WHERE contract = :contract
+       AND claim_id = :claimId`,
     params
   );
 }
 
-function buildMemeClaimUpdateStatement(
-  memeId: number,
+function buildMintingClaimUpdateStatement(
+  contract: string,
+  claimId: number,
   updates: {
-    season?: number;
     image_location?: string | null;
     animation_location?: string | null;
     metadata_location?: string | null;
@@ -417,9 +440,17 @@ function buildMemeClaimUpdateStatement(
   }
 ): { setClauses: string[]; params: Record<string, unknown> } {
   const keys = Object.keys(updates) as (keyof typeof updates)[];
-  if (keys.length === 0) return { setClauses: [], params: { memeId } };
+  if (keys.length === 0) {
+    return {
+      setClauses: [],
+      params: { contract: contract.toLowerCase(), claimId }
+    };
+  }
   const setClauses: string[] = [];
-  const params: Record<string, unknown> = { memeId };
+  const params: Record<string, unknown> = {
+    contract: contract.toLowerCase(),
+    claimId
+  };
   for (const key of keys) {
     const val = updates[key];
     if (val === undefined) continue;
@@ -459,10 +490,10 @@ function getAffectedRowsFromUpdateResult(result: unknown): number {
   return Number(second ?? 0);
 }
 
-export async function updateMemeClaimIfNotUploading(
-  memeId: number,
+export async function updateMintingClaimIfNotUploading(
+  contract: string,
+  claimId: number,
   updates: {
-    season?: number;
     image_location?: string | null;
     animation_location?: string | null;
     metadata_location?: string | null;
@@ -477,12 +508,17 @@ export async function updateMemeClaimIfNotUploading(
     animation_details?: unknown;
   }
 ): Promise<boolean> {
-  const { setClauses, params } = buildMemeClaimUpdateStatement(memeId, updates);
+  const { setClauses, params } = buildMintingClaimUpdateStatement(
+    contract,
+    claimId,
+    updates
+  );
   if (setClauses.length === 0) return true;
   const result = await sqlExecutor.execute<{ affectedRows: number }>(
-    `UPDATE ${MEMES_CLAIMS_TABLE}
+    `UPDATE ${MINTING_CLAIMS_TABLE}
      SET ${setClauses.join(', ')}
-     WHERE meme_id = :memeId
+     WHERE contract = :contract
+       AND claim_id = :claimId
        AND COALESCE(media_uploading, 0) = 0
        AND metadata_location IS NULL`,
     params

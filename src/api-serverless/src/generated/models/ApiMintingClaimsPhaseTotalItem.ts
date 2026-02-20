@@ -12,34 +12,44 @@
 
 import { HttpFile } from '../http/http';
 
-export class MemesMintingProofItem {
+export class ApiMintingClaimsPhaseTotalItem {
     /**
-    * Hex merkle proof hashes
+    * Phase name
     */
-    'merkle_proof': Array<string>;
+    'phase': string;
     /**
-    * Spot index (value) for this proof
+    * Number of unique addresses in this phase
     */
-    'value': number;
+    'addresses': number;
+    /**
+    * Sum of spots for this phase
+    */
+    'total': number;
 
     static readonly discriminator: string | undefined = undefined;
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
         {
-            "name": "merkle_proof",
-            "baseName": "merkle_proof",
-            "type": "Array<string>",
+            "name": "phase",
+            "baseName": "phase",
+            "type": "string",
             "format": ""
         },
         {
-            "name": "value",
-            "baseName": "value",
+            "name": "addresses",
+            "baseName": "addresses",
+            "type": "number",
+            "format": "int64"
+        },
+        {
+            "name": "total",
+            "baseName": "total",
             "type": "number",
             "format": "int64"
         }    ];
 
     static getAttributeTypeMap() {
-        return MemesMintingProofItem.attributeTypeMap;
+        return ApiMintingClaimsPhaseTotalItem.attributeTypeMap;
     }
 
     public constructor() {

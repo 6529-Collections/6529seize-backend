@@ -10,24 +10,36 @@
  * Do not edit the class manually.
  */
 
-import { MemesMintingProofItem } from '../models/MemesMintingProofItem';
 import { HttpFile } from '../http/http';
 
-export class MemesMintingProofsResponse {
-    'proofs': Array<MemesMintingProofItem>;
+export class MintingClaimsProofItem {
+    /**
+    * Hex merkle proof hashes
+    */
+    'merkle_proof': Array<string>;
+    /**
+    * Spot index (value) for this proof
+    */
+    'value': number;
 
     static readonly discriminator: string | undefined = undefined;
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
         {
-            "name": "proofs",
-            "baseName": "proofs",
-            "type": "Array<MemesMintingProofItem>",
+            "name": "merkle_proof",
+            "baseName": "merkle_proof",
+            "type": "Array<string>",
             "format": ""
+        },
+        {
+            "name": "value",
+            "baseName": "value",
+            "type": "number",
+            "format": "int64"
         }    ];
 
     static getAttributeTypeMap() {
-        return MemesMintingProofsResponse.attributeTypeMap;
+        return MintingClaimsProofItem.attributeTypeMap;
     }
 
     public constructor() {

@@ -10,34 +10,45 @@
  * Do not edit the class manually.
  */
 
-import { MemesMintingProofItem } from '../models/MemesMintingProofItem';
+import { MintingClaimAttributeValue } from '../models/MintingClaimAttributeValue';
 import { HttpFile } from '../http/http';
 
-export class MemesMintingProofsByAddressEntry {
-    /**
-    * Wallet address
-    */
-    'address': string;
-    'proofs': Array<MemesMintingProofItem>;
+export class MintingClaimAttribute {
+    'trait_type': string;
+    'value': MintingClaimAttributeValue;
+    'display_type'?: string;
+    'max_value'?: number;
 
     static readonly discriminator: string | undefined = undefined;
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
         {
-            "name": "address",
-            "baseName": "address",
+            "name": "trait_type",
+            "baseName": "trait_type",
             "type": "string",
             "format": ""
         },
         {
-            "name": "proofs",
-            "baseName": "proofs",
-            "type": "Array<MemesMintingProofItem>",
+            "name": "value",
+            "baseName": "value",
+            "type": "MintingClaimAttributeValue",
+            "format": ""
+        },
+        {
+            "name": "display_type",
+            "baseName": "display_type",
+            "type": "string",
+            "format": ""
+        },
+        {
+            "name": "max_value",
+            "baseName": "max_value",
+            "type": "number",
             "format": ""
         }    ];
 
     static getAttributeTypeMap() {
-        return MemesMintingProofsByAddressEntry.attributeTypeMap;
+        return MintingClaimAttribute.attributeTypeMap;
     }
 
     public constructor() {

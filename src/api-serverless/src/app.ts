@@ -23,7 +23,7 @@ import feedRoutes from './feed/feed.routes';
 import gasRoutes from './gas/gas.routes';
 import identitiesRoutes from './identities/identities.routes';
 import identitySubscriptionsRoutes from './identity-subscriptions/identity-subscriptions.routes';
-import memesMintingRoutes from './memes-minting/api.memes-minting.routes';
+import mintingClaimsRoutes from './minting-claims/api.minting-claims.routes';
 import nextgenRoutes from './nextgen/nextgen.routes';
 import nftOwnersRoutes from './nft-owners/api.nft-owners.routes';
 import notificationsRoutes from './notifications/notifications.routes';
@@ -1026,7 +1026,7 @@ async function initializeApp() {
   apiRouter.use(`/delegations`, delegationsRoutes);
   apiRouter.use(`/distribution_photos`, distributionPhotosRoutes);
   apiRouter.use(``, distributionsRoutes);
-  apiRouter.use(`/memes-minting`, memesMintingRoutes);
+  apiRouter.use(`/minting-claims`, mintingClaimsRoutes);
   apiRouter.use(`/waves`, wavesRoutes);
   apiRouter.use(`/public/waves`, publicWavesRoutes);
   apiRouter.use(`/policies`, policiesRoutes);
