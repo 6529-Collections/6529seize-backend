@@ -25,6 +25,27 @@ export class NftLinksDb extends LazyDbAccessCompatibleService {
     }
   }
 
+  public async findByCanonicalIds(
+    canonicalIds: string[],
+    ctx: RequestContext
+  ): Promise<NftLinkEntity[]> {
+    if (!canonicalIds.length) {
+      return [];
+    }
+    try {
+      ctx.timer?.start(`${this.constructor.name}->findByCanonicalIds`);
+      return this.db
+        .execute<NftLinkEntity>(
+          `select * from ${NFT_LINKS_TABLE} where canonical_id in (:canonicalIds)`,
+          { canonicalIds },
+          { wrappedConnection: ctx.connection, forcePool: DbPoolName.WRITE }
+        )
+        .then((res) => res.map((it) => this.deserializeDullData(it)!));
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->findByCanonicalIds`);
+    }
+  }
+
   private deserializeDullData(res: NftLinkEntity | null) {
     if (res?.full_data) {
       return {

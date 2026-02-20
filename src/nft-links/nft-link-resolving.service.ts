@@ -17,6 +17,7 @@ import { sqs, SQS } from '@/sqs';
 import { NftLinkEntity } from '@/entities/INftLink';
 import { giveReadReplicaTimeToCatchUp } from '@/api/api-helpers';
 import { ApiNftLinkData } from '@/api/generated/models/ApiNftLinkData';
+import { mapNftLinkEntityToApiLink } from '@/nft-links/nft-link-api.mapper';
 
 export class NftLinkResolvingService {
   private readonly logger = Logger.get(this.constructor.name);
@@ -81,6 +82,17 @@ export class NftLinkResolvingService {
       return this.entityToApiLink(entity);
     }
     return null;
+  }
+
+  public async ensureTrackingForUrls(urls: string[], ctx: RequestContext) {
+    await this.trackUrls(urls, ctx, false);
+  }
+
+  public async refreshStaleTrackingForUrls(
+    urls: string[],
+    ctx: RequestContext
+  ) {
+    await this.trackUrls(urls, ctx, true);
   }
 
   public async attemptResolve(url: string, ctx: RequestContext) {
@@ -169,21 +181,97 @@ export class NftLinkResolvingService {
     );
   }
 
+  private async trackUrls(
+    urls: string[],
+    ctx: RequestContext,
+    refreshIfStale: boolean
+  ) {
+    const uniqueCanonicals = urls.reduce((acc, url) => {
+      try {
+        const canonical = validateLinkUrl(url);
+        if (!acc.has(canonical.canonicalId)) {
+          acc.set(canonical.canonicalId, canonical);
+        }
+      } catch (e) {
+        // Best effort by design. Invalid or unsupported URLs are skipped.
+      }
+      return acc;
+    }, new Map<string, CanonicalLink>());
+    if (!uniqueCanonicals.size) {
+      return;
+    }
+
+    const existingLinks = await this.nftLinksDb.findByCanonicalIds(
+      Array.from(uniqueCanonicals.keys()),
+      ctx
+    );
+    const existingByCanonicalId = new Map(
+      existingLinks.map((it) => [it.canonical_id, it] as const)
+    );
+
+    const queueTargets: string[] = [];
+    const missingCanonicals: CanonicalLink[] = [];
+    for (const canonical of Array.from(uniqueCanonicals.values())) {
+      const existing = existingByCanonicalId.get(canonical.canonicalId);
+      if (!existing) {
+        missingCanonicals.push(canonical);
+        queueTargets.push(canonical.originalUrl);
+        continue;
+      }
+      if (
+        refreshIfStale &&
+        Time.millis(existing.last_tried_to_update)
+          .plus(this.getUpdateMinInterval())
+          .isInPast()
+      ) {
+        queueTargets.push(canonical.originalUrl);
+      }
+    }
+    if (missingCanonicals.length) {
+      await Promise.all(
+        missingCanonicals.map((canonical) => {
+          const identifiers = canonical.identifiers as any;
+          return this.nftLinksDb.insertPendingOrDoNothing(
+            {
+              platform: canonical.platform,
+              canonical_id: canonical.canonicalId,
+              contract: identifiers.contract ?? null,
+              chain: identifiers.chain ?? null,
+              token: identifiers.tokenId ?? null,
+              custom_id:
+                identifiers.instanceSlug ??
+                identifiers.instanceId ??
+                identifiers.appId ??
+                null
+            },
+            ctx
+          );
+        })
+      );
+    }
+
+    if (!queueTargets.length) {
+      return;
+    }
+    const queueUrl = env.getStringOrNull(`NFT_LINK_REFRESH_SQS_QUEUE`);
+    if (queueUrl) {
+      await Promise.all(
+        queueTargets.map((rawUrl) =>
+          this.sqs.send({
+            message: { rawUrl },
+            queue: queueUrl
+          })
+        )
+      );
+      return;
+    }
+    await Promise.all(
+      queueTargets.map((rawUrl) => this.attemptResolve(rawUrl, ctx))
+    );
+  }
+
   private entityToApiLink(entity: NftLinkEntity): ApiNftLinkData {
-    return {
-      canonical_id: entity.canonical_id,
-      platform: entity.platform,
-      chain: entity.chain,
-      contract: entity.contract,
-      token: entity.token,
-      name: entity.full_data?.asset?.title ?? null,
-      description: entity.full_data?.asset?.description ?? null,
-      media_uri: entity.media_uri,
-      last_error_message: entity.last_error_message,
-      price: entity.price?.toString() ?? null,
-      last_successfully_updated: entity.last_successfully_updated,
-      failed_since: entity.failed_since
-    };
+    return mapNftLinkEntityToApiLink(entity);
   }
 }
 
