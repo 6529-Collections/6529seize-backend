@@ -13,26 +13,30 @@ import {
   SUBSCRIPTIONS_REDEEMED_TABLE,
   SUBSCRIPTIONS_TOP_UP_TABLE
 } from '@/constants';
-import { fetchNft, fetchPaginated } from '../../../db-api';
+import { fetchNft, fetchPaginated } from '@/db-api';
 import {
   SubscriptionBalance,
   SubscriptionMode
-} from '../../../entities/ISubscription';
-import { BadRequestException } from '../../../exceptions';
-import { getMaxMemeId } from '../../../nftsLoop/db.nfts';
-import { sqlExecutor } from '../../../sql-executor';
-import { equalIgnoreCase } from '../../../strings';
-import { fetchSubscriptionEligibility } from '../../../subscriptionsDaily/db.subscriptions';
-import { Time } from '../../../time';
-import { PaginatedResponse } from '../api-constants';
-import { constructFilters } from '../api-helpers';
-import { NFTFinalSubscription } from '../generated/models/NFTFinalSubscription';
-import { NFTSubscription } from '../generated/models/NFTSubscription';
-import { RedeemedSubscription } from '../generated/models/RedeemedSubscription';
-import { RedeemedSubscriptionCounts } from '../generated/models/RedeemedSubscriptionCounts';
-import { SubscriptionCounts } from '../generated/models/SubscriptionCounts';
-import { SubscriptionDetails } from '../generated/models/SubscriptionDetails';
-import { SubscriptionTopUp } from '../generated/models/SubscriptionTopUp';
+} from '@/entities/ISubscription';
+import { BadRequestException } from '@/exceptions';
+import { getMaxMemeId } from '@/nftsLoop/db.nfts';
+import { sqlExecutor } from '@/sql-executor';
+import { equalIgnoreCase } from '@/strings';
+import { fetchSubscriptionEligibility } from '@/subscriptionsDaily/db.subscriptions';
+import { Time } from '@/time';
+import { PaginatedResponse } from '@/api/api-constants';
+import { constructFilters } from '@/api/api-helpers';
+import {
+  ApiUpcomingMemeSubscriptionStatus,
+  ApiUpcomingMemeSubscriptionStatusSubscriptionSourceEnum
+} from '@/api/generated/models/ApiUpcomingMemeSubscriptionStatus';
+import { NFTFinalSubscription } from '@/api/generated/models/NFTFinalSubscription';
+import { NFTSubscription } from '@/api/generated/models/NFTSubscription';
+import { RedeemedSubscription } from '@/api/generated/models/RedeemedSubscription';
+import { RedeemedSubscriptionCounts } from '@/api/generated/models/RedeemedSubscriptionCounts';
+import { SubscriptionCounts } from '@/api/generated/models/SubscriptionCounts';
+import { SubscriptionDetails } from '@/api/generated/models/SubscriptionDetails';
+import { SubscriptionTopUp } from '@/api/generated/models/SubscriptionTopUp';
 
 const SUBSCRIPTIONS_START_ID = 220;
 
@@ -354,6 +358,55 @@ export async function fetchUpcomingMemeSubscriptions(
     }
   }
   return subscriptions;
+}
+
+export async function fetchUpcomingMemeSubscriptionStatusForConsolidationKey(
+  consolidationKey: string,
+  memeId: number
+): Promise<ApiUpcomingMemeSubscriptionStatus | null> {
+  const maxMemeId = await getMaxMemeId(true);
+  if (memeId <= maxMemeId) {
+    throw new BadRequestException(`Meme #${memeId} already dropped.`);
+  }
+
+  const mode: SubscriptionMode = await getForConsolidationKey(
+    consolidationKey,
+    SUBSCRIPTIONS_MODE_TABLE
+  );
+
+  const subscription = await fetchSubscriptionForConsolidationKey(
+    consolidationKey,
+    MEMES_CONTRACT,
+    memeId
+  );
+  if (subscription && !subscription.subscribed) {
+    return null;
+  }
+
+  if (subscription?.subscribed) {
+    const subscriptionEligibility =
+      await fetchSubscriptionEligibility(consolidationKey);
+    return {
+      subscribed_count: subscription.subscribed_count ?? 1,
+      subscription_eligibility: subscriptionEligibility,
+      subscription_source:
+        ApiUpcomingMemeSubscriptionStatusSubscriptionSourceEnum.Manual
+    };
+  }
+
+  if (!(mode?.automatic ?? false)) {
+    return null;
+  }
+
+  const subscriptionEligibility =
+    await fetchSubscriptionEligibility(consolidationKey);
+
+  return {
+    subscribed_count: mode.subscribe_all_editions ? subscriptionEligibility : 1,
+    subscription_eligibility: subscriptionEligibility,
+    subscription_source:
+      ApiUpcomingMemeSubscriptionStatusSubscriptionSourceEnum.Automatic
+  };
 }
 
 export async function updateSubscription(
@@ -788,7 +841,7 @@ async function fetchSubscriptionForConsolidationKey(
   contract: string,
   tokenId: number
 ): Promise<NFTSubscription | undefined> {
-  const result = await sqlExecutor.execute(
+  const result = await sqlExecutor.execute<NFTSubscription>(
     `SELECT * FROM ${SUBSCRIPTIONS_NFTS_TABLE} WHERE consolidation_key = :consolidationKey AND contract = :contract AND token_id = :tokenId`,
     { consolidationKey, contract, tokenId }
   );
