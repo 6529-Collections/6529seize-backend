@@ -7190,6 +7190,10 @@ components:
           format: int64
         hide_link_preview:
           type: boolean
+        nft_links:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiDropNftLink"
     ApiDropAndDropVote:
       type: object
       required:
@@ -7306,6 +7310,19 @@ components:
         data_value:
           type: string
           maxLength: 5000
+    ApiDropNftLink:
+      type: object
+      required:
+        - url_in_text
+        - data
+      properties:
+        url_in_text:
+          type: string
+          maxLength: 2000
+        data:
+          anyOf:
+            - $ref: "#/components/schemas/ApiNftLinkData"
+            - type: "null"
     ApiDropPart:
       type: object
       required:
@@ -7597,6 +7614,10 @@ components:
           format: int64
         hide_link_preview:
           type: boolean
+        nft_links:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiDropNftLink"
     ApiDropWithoutWavesPageWithoutCount:
       type: object
       required:
