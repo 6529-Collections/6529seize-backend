@@ -1,3 +1,16 @@
+import { PaginatedResponse } from '@/api/api-constants';
+import { constructFilters } from '@/api/api-helpers';
+import {
+  ApiUpcomingMemeSubscriptionStatus,
+  ApiUpcomingMemeSubscriptionStatusSourceEnum
+} from '@/api/generated/models/ApiUpcomingMemeSubscriptionStatus';
+import { NFTFinalSubscription } from '@/api/generated/models/NFTFinalSubscription';
+import { NFTSubscription } from '@/api/generated/models/NFTSubscription';
+import { RedeemedSubscription } from '@/api/generated/models/RedeemedSubscription';
+import { RedeemedSubscriptionCounts } from '@/api/generated/models/RedeemedSubscriptionCounts';
+import { SubscriptionCounts } from '@/api/generated/models/SubscriptionCounts';
+import { SubscriptionDetails } from '@/api/generated/models/SubscriptionDetails';
+import { SubscriptionTopUp } from '@/api/generated/models/SubscriptionTopUp';
 import {
   ADDRESS_CONSOLIDATION_KEY,
   MEMES_CONTRACT,
@@ -24,19 +37,6 @@ import { sqlExecutor } from '@/sql-executor';
 import { equalIgnoreCase } from '@/strings';
 import { fetchSubscriptionEligibility } from '@/subscriptionsDaily/db.subscriptions';
 import { Time } from '@/time';
-import { PaginatedResponse } from '@/api/api-constants';
-import { constructFilters } from '@/api/api-helpers';
-import {
-  ApiUpcomingMemeSubscriptionStatus,
-  ApiUpcomingMemeSubscriptionStatusSourceEnum
-} from '@/api/generated/models/ApiUpcomingMemeSubscriptionStatus';
-import { NFTFinalSubscription } from '@/api/generated/models/NFTFinalSubscription';
-import { NFTSubscription } from '@/api/generated/models/NFTSubscription';
-import { RedeemedSubscription } from '@/api/generated/models/RedeemedSubscription';
-import { RedeemedSubscriptionCounts } from '@/api/generated/models/RedeemedSubscriptionCounts';
-import { SubscriptionCounts } from '@/api/generated/models/SubscriptionCounts';
-import { SubscriptionDetails } from '@/api/generated/models/SubscriptionDetails';
-import { SubscriptionTopUp } from '@/api/generated/models/SubscriptionTopUp';
 
 const SUBSCRIPTIONS_START_ID = 220;
 
@@ -364,7 +364,7 @@ export async function fetchUpcomingMemeSubscriptionStatusForConsolidationKey(
   consolidationKey: string,
   memeId: number
 ): Promise<ApiUpcomingMemeSubscriptionStatus> {
-  const maxMemeId = await getMaxMemeId(true);
+  const maxMemeId = await getMaxMemeId();
   if (memeId <= maxMemeId) {
     throw new BadRequestException(`Meme #${memeId} already dropped.`);
   }
