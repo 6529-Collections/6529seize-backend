@@ -3367,8 +3367,6 @@ paths:
                 $ref: "#/components/schemas/ApiUpcomingMemeSubscriptionStatus"
         "400":
           description: Meme already dropped
-        "404":
-          description: Not subscribed
   /subscriptions/upcoming-memes-counts:
     get:
       tags:
@@ -9451,17 +9449,18 @@ components:
     ApiUpcomingMemeSubscriptionStatus:
       type: object
       required:
-        - subscribed_count
-        - subscription_eligibility
-        - subscription_source
+        - subscribed
+        - eligibility
       properties:
-        subscribed_count:
+        subscribed:
+          type: boolean
+        eligibility:
           type: integer
           format: int64
-        subscription_eligibility:
+        count:
           type: integer
           format: int64
-        subscription_source:
+        source:
           type: string
           enum:
             - automatic

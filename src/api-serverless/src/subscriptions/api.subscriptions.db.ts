@@ -28,7 +28,7 @@ import { PaginatedResponse } from '@/api/api-constants';
 import { constructFilters } from '@/api/api-helpers';
 import {
   ApiUpcomingMemeSubscriptionStatus,
-  ApiUpcomingMemeSubscriptionStatusSubscriptionSourceEnum
+  ApiUpcomingMemeSubscriptionStatusSourceEnum
 } from '@/api/generated/models/ApiUpcomingMemeSubscriptionStatus';
 import { NFTFinalSubscription } from '@/api/generated/models/NFTFinalSubscription';
 import { NFTSubscription } from '@/api/generated/models/NFTSubscription';
@@ -363,11 +363,14 @@ export async function fetchUpcomingMemeSubscriptions(
 export async function fetchUpcomingMemeSubscriptionStatusForConsolidationKey(
   consolidationKey: string,
   memeId: number
-): Promise<ApiUpcomingMemeSubscriptionStatus | null> {
+): Promise<ApiUpcomingMemeSubscriptionStatus> {
   const maxMemeId = await getMaxMemeId(true);
   if (memeId <= maxMemeId) {
     throw new BadRequestException(`Meme #${memeId} already dropped.`);
   }
+
+  const subscriptionEligibility =
+    await fetchSubscriptionEligibility(consolidationKey);
 
   const mode: SubscriptionMode = await getForConsolidationKey(
     consolidationKey,
@@ -380,32 +383,33 @@ export async function fetchUpcomingMemeSubscriptionStatusForConsolidationKey(
     memeId
   );
   if (subscription && !subscription.subscribed) {
-    return null;
+    return {
+      subscribed: false,
+      eligibility: subscriptionEligibility
+    };
   }
 
   if (subscription?.subscribed) {
-    const subscriptionEligibility =
-      await fetchSubscriptionEligibility(consolidationKey);
     return {
-      subscribed_count: subscription.subscribed_count ?? 1,
-      subscription_eligibility: subscriptionEligibility,
-      subscription_source:
-        ApiUpcomingMemeSubscriptionStatusSubscriptionSourceEnum.Manual
+      subscribed: true,
+      eligibility: subscriptionEligibility,
+      count: subscription.subscribed_count ?? 1,
+      source: ApiUpcomingMemeSubscriptionStatusSourceEnum.Manual
     };
   }
 
   if (!(mode?.automatic ?? false)) {
-    return null;
+    return {
+      subscribed: false,
+      eligibility: subscriptionEligibility
+    };
   }
 
-  const subscriptionEligibility =
-    await fetchSubscriptionEligibility(consolidationKey);
-
   return {
-    subscribed_count: mode.subscribe_all_editions ? subscriptionEligibility : 1,
-    subscription_eligibility: subscriptionEligibility,
-    subscription_source:
-      ApiUpcomingMemeSubscriptionStatusSubscriptionSourceEnum.Automatic
+    subscribed: true,
+    eligibility: subscriptionEligibility,
+    count: mode.subscribe_all_editions ? subscriptionEligibility : 1,
+    source: ApiUpcomingMemeSubscriptionStatusSourceEnum.Automatic
   };
 }
 

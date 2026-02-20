@@ -69,9 +69,10 @@ describe('fetchUpcomingMemeSubscriptionStatusForConsolidationKey', () => {
     );
 
     expect(result).toEqual({
-      subscribed_count: 2,
-      subscription_eligibility: 2,
-      subscription_source: 'manual'
+      subscribed: true,
+      eligibility: 2,
+      count: 2,
+      source: 'manual'
     });
   });
 
@@ -95,16 +96,17 @@ describe('fetchUpcomingMemeSubscriptionStatusForConsolidationKey', () => {
     );
 
     expect(result).toEqual({
-      subscribed_count: 3,
-      subscription_eligibility: 3,
-      subscription_source: 'automatic'
+      subscribed: true,
+      eligibility: 3,
+      count: 3,
+      source: 'automatic'
     });
     expect(mockedFetchSubscriptionEligibility).toHaveBeenCalledWith(
       'test-consolidation'
     );
   });
 
-  it('returns null when user explicitly unsubscribed from the meme', async () => {
+  it('returns unsubscribed payload when user explicitly unsubscribed from the meme', async () => {
     mockedExecute
       .mockResolvedValueOnce([]) // mode lookup
       .mockResolvedValueOnce([
@@ -122,10 +124,13 @@ describe('fetchUpcomingMemeSubscriptionStatusForConsolidationKey', () => {
       422
     );
 
-    expect(result).toBeNull();
+    expect(result).toEqual({
+      subscribed: false,
+      eligibility: 1
+    });
   });
 
-  it('returns null when there is no dedicated subscription and automatic mode is disabled', async () => {
+  it('returns unsubscribed payload when there is no dedicated subscription and automatic mode is disabled', async () => {
     mockedExecute
       .mockResolvedValueOnce([]) // mode lookup
       .mockResolvedValueOnce([]); // dedicated subscription lookup
@@ -135,6 +140,9 @@ describe('fetchUpcomingMemeSubscriptionStatusForConsolidationKey', () => {
       423
     );
 
-    expect(result).toBeNull();
+    expect(result).toEqual({
+      subscribed: false,
+      eligibility: 1
+    });
   });
 });

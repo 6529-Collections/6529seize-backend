@@ -289,11 +289,7 @@ router.get(
       consolidationKey,
       memeId
     );
-    if (result) {
-      return res.json(result);
-    } else {
-      return res.status(404).send('Not found');
-    }
+    return res.json(result);
   }
 );
 

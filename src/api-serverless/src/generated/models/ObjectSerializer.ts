@@ -421,7 +421,7 @@ import { ApiTokenTdh } from '../models/ApiTokenTdh';
 import { ApiTokenTdhRank } from '../models/ApiTokenTdhRank';
 import { ApiTransaction } from '../models/ApiTransaction';
 import { ApiTransactionPage } from '../models/ApiTransactionPage';
-import { ApiUpcomingMemeSubscriptionStatus  , ApiUpcomingMemeSubscriptionStatusSubscriptionSourceEnum   } from '../models/ApiUpcomingMemeSubscriptionStatus';
+import { ApiUpcomingMemeSubscriptionStatus   , ApiUpcomingMemeSubscriptionStatusSourceEnum   } from '../models/ApiUpcomingMemeSubscriptionStatus';
 import { ApiUpdateDropRequest } from '../models/ApiUpdateDropRequest';
 import { ApiUpdateProxyActionRequest } from '../models/ApiUpdateProxyActionRequest';
 import { ApiUpdateWaveDecisionPause } from '../models/ApiUpdateWaveDecisionPause';
@@ -552,7 +552,7 @@ let enumsMap: Set<string> = new Set<string>([
     "ApiProfileClassification",
     "ApiProfileProxyActionType",
     "ApiRateMatter",
-    "ApiUpcomingMemeSubscriptionStatusSubscriptionSourceEnum",
+    "ApiUpcomingMemeSubscriptionStatusSourceEnum",
     "ApiWaveCreditScope",
     "ApiWaveCreditType",
     "ApiWaveMetadataType",

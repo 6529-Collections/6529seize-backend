@@ -13,29 +13,36 @@
 import { HttpFile } from '../http/http';
 
 export class ApiUpcomingMemeSubscriptionStatus {
-    'subscribed_count': number;
-    'subscription_eligibility': number;
-    'subscription_source': ApiUpcomingMemeSubscriptionStatusSubscriptionSourceEnum;
+    'subscribed': boolean;
+    'eligibility': number;
+    'count'?: number;
+    'source'?: ApiUpcomingMemeSubscriptionStatusSourceEnum;
 
     static readonly discriminator: string | undefined = undefined;
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
         {
-            "name": "subscribed_count",
-            "baseName": "subscribed_count",
+            "name": "subscribed",
+            "baseName": "subscribed",
+            "type": "boolean",
+            "format": ""
+        },
+        {
+            "name": "eligibility",
+            "baseName": "eligibility",
             "type": "number",
             "format": "int64"
         },
         {
-            "name": "subscription_eligibility",
-            "baseName": "subscription_eligibility",
+            "name": "count",
+            "baseName": "count",
             "type": "number",
             "format": "int64"
         },
         {
-            "name": "subscription_source",
-            "baseName": "subscription_source",
-            "type": "ApiUpcomingMemeSubscriptionStatusSubscriptionSourceEnum",
+            "name": "source",
+            "baseName": "source",
+            "type": "ApiUpcomingMemeSubscriptionStatusSourceEnum",
             "format": ""
         }    ];
 
@@ -48,7 +55,7 @@ export class ApiUpcomingMemeSubscriptionStatus {
 }
 
 
-export enum ApiUpcomingMemeSubscriptionStatusSubscriptionSourceEnum {
+export enum ApiUpcomingMemeSubscriptionStatusSourceEnum {
     Automatic = 'automatic',
     Manual = 'manual'
 }
