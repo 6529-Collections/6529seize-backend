@@ -1,35 +1,36 @@
 import { Request, Response } from 'express';
 import * as Joi from 'joi';
-import { fetchEns } from '../../../db-api';
-import { fetchAirdropAddressForConsolidationKey } from '../../../delegationsLoop/db.delegations';
+import { fetchEns } from '@/db-api';
+import { fetchAirdropAddressForConsolidationKey } from '@/delegationsLoop/db.delegations';
 import {
   BadRequestException,
   ForbiddenException,
   UnauthorisedException
-} from '../../../exceptions';
-import { getNft } from '../../../nftsLoop/db.nfts';
-import { numbers } from '../../../numbers';
-import { evictAllKeysMatchingPatternFromRedisCache } from '../../../redis';
-import { equalIgnoreCase } from '../../../strings';
-import { PaginatedResponse } from '../api-constants';
+} from '@/exceptions';
+import { getNft } from '@/nftsLoop/db.nfts';
+import { numbers } from '@/numbers';
+import { evictAllKeysMatchingPatternFromRedisCache } from '@/redis';
+import { equalIgnoreCase } from '@/strings';
+import { PaginatedResponse } from '@/api/api-constants';
 import {
   getCacheKeyPatternForPath,
   getPage,
   getPageSize,
   giveReadReplicaTimeToCatchUp
-} from '../api-helpers';
-import { asyncRouter } from '../async.router';
-import { getWalletOrThrow, needsAuthenticatedUser } from '../auth/auth';
-import { populateDistribution } from '../distributions/api.distributions.service';
-import { NFTFinalSubscription } from '../generated/models/NFTFinalSubscription';
-import { NFTSubscription } from '../generated/models/NFTSubscription';
-import { RedeemedSubscription } from '../generated/models/RedeemedSubscription';
-import { RedeemedSubscriptionCounts } from '../generated/models/RedeemedSubscriptionCounts';
-import { SubscriptionCounts } from '../generated/models/SubscriptionCounts';
-import { SubscriptionDetails } from '../generated/models/SubscriptionDetails';
-import { SubscriptionTopUp } from '../generated/models/SubscriptionTopUp';
-import { cacheRequest } from '../request-cache';
-import { getValidatedByJoiOrThrow } from '../validation';
+} from '@/api/api-helpers';
+import { asyncRouter } from '@/api/async.router';
+import { getWalletOrThrow, needsAuthenticatedUser } from '@/api/auth/auth';
+import { populateDistribution } from '@/api/distributions/api.distributions.service';
+import { NFTFinalSubscription } from '@/api/generated/models/NFTFinalSubscription';
+import { NFTSubscription } from '@/api/generated/models/NFTSubscription';
+import { ApiUpcomingMemeSubscriptionStatus } from '@/api/generated/models/ApiUpcomingMemeSubscriptionStatus';
+import { RedeemedSubscription } from '@/api/generated/models/RedeemedSubscription';
+import { RedeemedSubscriptionCounts } from '@/api/generated/models/RedeemedSubscriptionCounts';
+import { SubscriptionCounts } from '@/api/generated/models/SubscriptionCounts';
+import { SubscriptionDetails } from '@/api/generated/models/SubscriptionDetails';
+import { SubscriptionTopUp } from '@/api/generated/models/SubscriptionTopUp';
+import { cacheRequest } from '@/api/request-cache';
+import { getValidatedByJoiOrThrow } from '@/api/validation';
 import {
   authenticateSubscriptionsAdmin,
   fetchPhaseName,
@@ -38,7 +39,7 @@ import {
   resetAllowlist,
   splitAllowlistResults,
   validateDistribution
-} from './api.subscriptions.allowlist';
+} from '@/api/subscriptions/api.subscriptions.allowlist';
 import {
   fetchConsolidationAddresses,
   fetchDetailsForConsolidationKey,
@@ -49,12 +50,13 @@ import {
   fetchSubscriptionUploads,
   fetchTopUpsForConsolidationKey,
   fetchUpcomingMemeSubscriptionCounts,
+  fetchUpcomingMemeSubscriptionStatusForConsolidationKey,
   fetchUpcomingMemeSubscriptions,
   updateSubscribeAllEditions,
   updateSubscription,
   updateSubscriptionCount,
   updateSubscriptionMode
-} from './api.subscriptions.db';
+} from '@/api/subscriptions/api.subscriptions.db';
 
 async function evictCacheForPath(path: string) {
   await evictAllKeysMatchingPatternFromRedisCache(
@@ -68,6 +70,9 @@ async function invalidateSubscriptionCache(consolidationKey: string) {
   );
   await evictCacheForPath(
     `/api/subscriptions/consolidation/upcoming-memes/${consolidationKey}`
+  );
+  await evictCacheForPath(
+    `/api/subscriptions/consolidation/upcoming-memes/*/${consolidationKey}`
   );
   await evictCacheForPath(`/api/subscriptions/upcoming-memes-counts`);
   await giveReadReplicaTimeToCatchUp();
@@ -258,6 +263,35 @@ router.get(
     const result = await fetchUpcomingMemeSubscriptions(
       consolidationKey,
       cardCount
+    );
+    return res.json(result);
+  }
+);
+
+router.get(
+  `/consolidation/upcoming-memes/:meme_id/:consolidation_key`,
+  cacheRequest(),
+  async function (
+    req: Request<
+      {
+        meme_id: string;
+        consolidation_key: string;
+      },
+      any,
+      any,
+      any
+    >,
+    res: Response<ApiUpcomingMemeSubscriptionStatus | string>
+  ) {
+    const memeId = numbers.parseIntOrNull(req.params.meme_id);
+    if (memeId === null || memeId < 1) {
+      return res.status(400).send('Invalid meme ID');
+    }
+
+    const consolidationKey = req.params.consolidation_key.toLowerCase();
+    const result = await fetchUpcomingMemeSubscriptionStatusForConsolidationKey(
+      consolidationKey,
+      memeId
     );
     return res.json(result);
   }
