@@ -369,19 +369,18 @@ export async function fetchUpcomingMemeSubscriptionStatusForConsolidationKey(
     throw new BadRequestException(`Meme #${memeId} already dropped.`);
   }
 
-  const subscriptionEligibility =
-    await fetchSubscriptionEligibility(consolidationKey);
-
-  const mode: SubscriptionMode = await getForConsolidationKey(
-    consolidationKey,
-    SUBSCRIPTIONS_MODE_TABLE
-  );
-
-  const subscription = await fetchSubscriptionForConsolidationKey(
-    consolidationKey,
-    MEMES_CONTRACT,
-    memeId
-  );
+  const [subscriptionEligibility, mode, subscription] = await Promise.all([
+    fetchSubscriptionEligibility(consolidationKey),
+    getForConsolidationKey(
+      consolidationKey,
+      SUBSCRIPTIONS_MODE_TABLE
+    ) as Promise<SubscriptionMode | null>,
+    fetchSubscriptionForConsolidationKey(
+      consolidationKey,
+      MEMES_CONTRACT,
+      memeId
+    )
+  ]);
   if (subscription && !subscription.subscribed) {
     return {
       subscribed: false,

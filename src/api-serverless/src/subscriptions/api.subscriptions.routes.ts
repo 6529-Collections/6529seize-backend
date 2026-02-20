@@ -71,6 +71,9 @@ async function invalidateSubscriptionCache(consolidationKey: string) {
   await evictCacheForPath(
     `/api/subscriptions/consolidation/upcoming-memes/${consolidationKey}`
   );
+  await evictCacheForPath(
+    `/api/subscriptions/consolidation/upcoming-memes/*/${consolidationKey}`
+  );
   await evictCacheForPath(`/api/subscriptions/upcoming-memes-counts`);
   await giveReadReplicaTimeToCatchUp();
 }
@@ -267,6 +270,7 @@ router.get(
 
 router.get(
   `/consolidation/upcoming-memes/:meme_id/:consolidation_key`,
+  cacheRequest(),
   async function (
     req: Request<
       {
