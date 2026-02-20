@@ -12,6 +12,7 @@ export const NFT_OWNERS_TABLE = 'nft_owners';
 export const NFT_OWNERS_CONSOLIDATION_TABLE = 'nft_owners_consolidation';
 export const NFT_OWNERS_SYNC_STATE_TABLE = 'nft_owners_sync_state';
 export const MEMES_EXTENDED_DATA_TABLE = 'memes_extended_data';
+export const NFT_LINKS_TABLE = 'nft_links';
 export const LAB_EXTENDED_DATA_TABLE = 'lab_extended_data';
 export const WALLETS_TDH_TABLE = 'tdh';
 export const CONSOLIDATED_WALLETS_TDH_TABLE = 'tdh_consolidation';

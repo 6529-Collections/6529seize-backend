@@ -48,6 +48,7 @@ import wavesOverviewRoutes from './waves/waves-overview.routes';
 import publicWavesRoutes from './waves/waves-public.routes';
 import wavesRoutes from './waves/waves.routes';
 import xtdhRoutes from './xtdh/xtdh.routes';
+import nftLinksRoutes from './nft-links/nft-links.routes';
 
 import * as Sentry from '@sentry/serverless';
 import { NextFunction, Request, Response } from 'express';
@@ -1031,6 +1032,7 @@ async function initializeApp() {
   apiRouter.use(`/policies`, policiesRoutes);
   apiRouter.use(`/push-notifications`, pushNotificationsRoutes);
   apiRouter.use(`/xtdh`, xtdhRoutes);
+  apiRouter.use(`/nft-link`, nftLinksRoutes);
 
   rootRouter.use(BASE_PATH, apiRouter);
   rootRouter.use(`/desktop`, desktopRoutes);

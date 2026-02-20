@@ -1,0 +1,91 @@
+service: nftLinkRefresherLoop
+
+package:
+  artifact: dist/index.zip
+
+plugins:
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs22.x
+  memorySize: 1024
+  timeout: 900
+  architecture: arm64
+  logRetentionInDays: 60
+
+functions:
+  nftLinkRefresherLoop:
+    handler: index.handler
+    name: nftLinkRefresherLoop
+    description: ${env:VERSION_DESCRIPTION}
+    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    reservedConcurrency: 20
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt: [NftLinkRefresherQueue, Arn]
+          batchSize: 1
+    vpc:
+      securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
+      subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
+    environment:
+      SENTRY_DSN: ${env:SENTRY_DSN}
+      SENTRY_ENVIRONMENT: 'nftLinkRefresherLoop_${opt:stage, self:provider.stage}'
+
+resources:
+  Resources:
+    NftLinkRefresherQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: nft-link-refreshes
+        VisibilityTimeout: 1000
+        DelaySeconds: 3
+        RedrivePolicy:
+          deadLetterTargetArn:
+            Fn::GetAtt: [NftLinkRefreshesDLQ, Arn]
+          maxReceiveCount: 10
+
+    NftLinkRefreshesDLQ:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: nft-link-refreshes-dlq
+
+    NftLinkRefresherLoopLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/nftLinkRefresherLoop
+        RetentionInDays: 60
+
+    NftLinkRefresherOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      DependsOn:
+        - NftLinkRefresherLoopLogGroup
+      Properties:
+        LogGroupName:
+          Ref: NftLinkRefresherLoopLogGroup
+        FilterPattern: "Runtime.OutOfMemory"
+        MetricTransformations:
+          - MetricNamespace: "Lambda/OOM"
+            MetricName: "nftLinkRefresherLoop_OOMErrorCount"
+            MetricValue: "1"
+            DefaultValue: 0
+
+    NftLinkRefresherOOMAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: NftLinkRefresherOOMFilter
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-nftLinkRefresherLoop-OOM"
+        AlarmDescription: !Sub "Lambda nftLinkRefresherLoop OutOfMemory in ${AWS::Region}"
+        Namespace: "Lambda/OOM"
+        MetricName: "nftLinkRefresherLoop_OOMErrorCount"
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}

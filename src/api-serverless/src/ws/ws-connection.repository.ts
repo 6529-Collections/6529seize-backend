@@ -225,6 +225,16 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
       { waveId }
     );
   }
+
+  async findAllConnectionIds(): Promise<string[]> {
+    return this.db
+      .execute<{ connection_id: string }>(
+        `
+    select distinct connection_id from ${WS_CONNECTIONS_TABLE}
+    `
+      )
+      .then((res) => res.map((it) => it.connection_id));
+  }
 }
 
 export const wsConnectionRepository = new WsConnectionRepository(

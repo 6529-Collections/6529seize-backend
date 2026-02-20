@@ -40,6 +40,7 @@ on:
           - nextgenMediaUploader
           - nextgenMetadataLoop
           - nftHistoryLoop
+          - nftLinkRefresherLoop
           - nftOwnersLoop
           - nftsLoop
           - overRatesRevocationLoop
