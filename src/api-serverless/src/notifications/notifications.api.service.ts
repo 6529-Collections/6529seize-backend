@@ -15,7 +15,7 @@ import {
 } from '../../../notifications/user-notifications.reader';
 import { RequestContext } from '../../../request.context';
 import { Time } from '../../../time';
-import { seizeSettings } from '../api-constants';
+import { seizeSettings } from '@/api/seize-settings';
 import {
   userGroupsService,
   UserGroupsService

@@ -4,11 +4,6 @@ export * from './db-tables';
 export * from './delegations';
 export * from './media';
 
-export const DISTRIBUTION_ADMIN_WALLETS = [
-  '0x0187C9a182736ba18b44eE8134eE438374cf87DC',
-  '0xFe49A85E98941F1A115aCD4bEB98521023a25802'
-];
-
 export const MEMES_CONTRACT = '0x33FD426905F149f8376e227d0C9D3340AaD17aF1';
 export const GRADIENT_CONTRACT = '0x0c58ef43ff3032005e472cb5709f8908acb00205';
 export const MEMELAB_CONTRACT = '0x4db52a61dc491e15a2f78f5ac001c14ffe3568cb';

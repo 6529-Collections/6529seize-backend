@@ -1,4 +1,5 @@
 import { EntityManager } from 'typeorm';
+import { DISTRIBUTION_AUTOMATIC_AIRDROP_PHASES } from '@/airdrop-phases';
 import {
   DISTRIBUTION_TABLE,
   MEMES_CONTRACT,
@@ -131,21 +132,24 @@ export async function validateNonSubscriptionAirdrop(
 
   const distributionAirdrop = (
     await entityManager.query(
-      `SELECT * FROM ${DISTRIBUTION_TABLE} 
+      `SELECT COALESCE(SUM(count), 0) as count FROM ${DISTRIBUTION_TABLE} 
         WHERE LOWER(wallet) = ?
-        AND LOWER(phase) = ?
+        AND LOWER(phase) IN (${DISTRIBUTION_AUTOMATIC_AIRDROP_PHASES.map(() => '?').join(', ')})
         AND LOWER(contract) = ?
         AND card_id = ?;`,
       [
         transaction.to_address.toLowerCase(),
-        'airdrop',
+        ...DISTRIBUTION_AUTOMATIC_AIRDROP_PHASES.map((phase) =>
+          phase.toLowerCase()
+        ),
         transaction.contract.toLowerCase(),
         transaction.token_id
       ]
     )
   )[0];
 
-  if (distributionAirdrop) {
+  const distributionAirdropCount = Number(distributionAirdrop?.count ?? 0);
+  if (distributionAirdropCount > 0) {
     const previousAirdrops = (
       await entityManager.query(
         `SELECT SUM(token_count) as previous_airdrops FROM ${TRANSACTIONS_TABLE}
@@ -163,7 +167,7 @@ export async function validateNonSubscriptionAirdrop(
       )
     )[0].previous_airdrops;
     if (
-      distributionAirdrop.count >=
+      distributionAirdropCount >=
       previousAirdrops + transaction.token_count
     ) {
       const message = 'Distribution airdrop';

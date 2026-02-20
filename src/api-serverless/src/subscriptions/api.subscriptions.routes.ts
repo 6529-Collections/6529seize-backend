@@ -21,9 +21,10 @@ import {
 import { asyncRouter } from '@/api/async.router';
 import { getWalletOrThrow, needsAuthenticatedUser } from '@/api/auth/auth';
 import { populateDistribution } from '@/api/distributions/api.distributions.service';
+import { ApiUpcomingMemeSubscriptionStatus } from '@/api/generated/models/ApiUpcomingMemeSubscriptionStatus';
 import { NFTFinalSubscription } from '@/api/generated/models/NFTFinalSubscription';
 import { NFTSubscription } from '@/api/generated/models/NFTSubscription';
-import { ApiUpcomingMemeSubscriptionStatus } from '@/api/generated/models/ApiUpcomingMemeSubscriptionStatus';
+import { PhaseAirdrop } from '@/api/generated/models/PhaseAirdrop';
 import { RedeemedSubscription } from '@/api/generated/models/RedeemedSubscription';
 import { RedeemedSubscriptionCounts } from '@/api/generated/models/RedeemedSubscriptionCounts';
 import { SubscriptionCounts } from '@/api/generated/models/SubscriptionCounts';
@@ -44,6 +45,7 @@ import {
   fetchConsolidationAddresses,
   fetchDetailsForConsolidationKey,
   fetchFinalSubscription,
+  fetchFinalSubscriptionsByPhase,
   fetchLogsForConsolidationKey,
   fetchPastMemeSubscriptionCounts,
   fetchRedeemedSubscriptionsForConsolidationKey,
@@ -64,6 +66,14 @@ async function evictCacheForPath(path: string) {
   );
 }
 
+async function invalidateMintingClaimsPhaseCache(
+  contract: string,
+  tokenId: number
+) {
+  await evictCacheForPath(`/api/minting-claims/${contract}/${tokenId}/`);
+  await evictCacheForPath(`/api/distributions/${contract}/${tokenId}/overview`);
+}
+
 async function invalidateSubscriptionCache(consolidationKey: string) {
   await evictCacheForPath(
     `/api/subscriptions/consolidation/details/${consolidationKey}`
@@ -81,6 +91,25 @@ async function invalidateSubscriptionCache(consolidationKey: string) {
 const router = asyncRouter();
 
 export default router;
+
+function normalizeFinalSubscriptionPhaseName(phaseName: string): string {
+  const trimmedPhaseName = phaseName.trim();
+  const compactPhaseName = trimmedPhaseName.toLowerCase().replace(/\s+/g, '');
+
+  switch (compactPhaseName) {
+    case 'phase0':
+      return 'Phase 0';
+    case 'phase1':
+      return 'Phase 1';
+    case 'phase2':
+      return 'Phase 2';
+    case 'public':
+    case 'publicphase':
+      return 'Public';
+    default:
+      return trimmedPhaseName;
+  }
+}
 
 router.get(
   `/consolidation/details/:consolidation_key`,
@@ -548,6 +577,39 @@ router.get(
 );
 
 router.get(
+  `/final/:contract/:token_id/phases/:phase_name`,
+  async function (
+    req: Request<
+      {
+        contract: string;
+        token_id: string;
+        phase_name: string;
+      },
+      any,
+      any,
+      any
+    >,
+    res: Response<PhaseAirdrop[] | string>
+  ) {
+    const contract = req.params.contract;
+    const tokenId = numbers.parseIntOrNull(req.params.token_id);
+    if (tokenId === null) {
+      return res.status(400).send('Invalid token ID');
+    }
+
+    const phaseName = normalizeFinalSubscriptionPhaseName(
+      req.params.phase_name
+    );
+    const results = await fetchFinalSubscriptionsByPhase(
+      contract,
+      tokenId,
+      phaseName
+    );
+    return res.json(results);
+  }
+);
+
+router.get(
   `/consolidation/final/:consolidation_key/:contract/:token_id`,
   async function (
     req: Request<
@@ -668,6 +730,7 @@ router.get(
       );
 
       await populateDistribution(contract, tokenId, phaseName, results);
+      await invalidateMintingClaimsPhaseCache(contract, tokenId);
       return res.json(results);
     }
   }
@@ -715,10 +778,7 @@ router.post(
     }
 
     await resetAllowlist(contract, tokenId);
-
-    await evictCacheForPath(
-      `/api/distributions/${contract}/${tokenId}/overview`
-    );
+    await invalidateMintingClaimsPhaseCache(contract, tokenId);
 
     return res.json({
       success: true,

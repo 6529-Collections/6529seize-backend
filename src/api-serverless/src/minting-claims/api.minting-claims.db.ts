@@ -1,0 +1,528 @@
+import {
+  DISTRIBUTION_TABLE,
+  MEMES_EXTENDED_DATA_TABLE,
+  MEMES_SEASONS_TABLE,
+  MINTING_CLAIMS_TABLE,
+  MINTING_MERKLE_PROOFS_TABLE,
+  MINTING_MERKLE_ROOTS_TABLE,
+  SUBSCRIPTIONS_NFTS_FINAL_TABLE
+} from '@/constants';
+import { sqlExecutor } from '@/sql-executor';
+import type { AllowlistMerkleProofItem } from './allowlist-merkle';
+
+type StoredMerkleProofs = string | AllowlistMerkleProofItem[] | null;
+
+function isAllowlistMerkleProofItem(
+  value: unknown
+): value is AllowlistMerkleProofItem {
+  if (typeof value !== 'object' || value === null) return false;
+  const candidate = value as {
+    merkleProof?: unknown;
+    value?: unknown;
+  };
+  return (
+    Array.isArray(candidate.merkleProof) &&
+    candidate.merkleProof.every((entry) => typeof entry === 'string') &&
+    typeof candidate.value === 'number'
+  );
+}
+
+function parseStoredMerkleProofs(
+  raw: StoredMerkleProofs
+): AllowlistMerkleProofItem[] {
+  if (raw == null) return [];
+  const parsed: unknown = typeof raw === 'string' ? JSON.parse(raw) : raw;
+  if (!Array.isArray(parsed)) return [];
+  return parsed.filter(isAllowlistMerkleProofItem);
+}
+
+export async function deleteMintingMerkleForPhase(
+  contract: string,
+  cardId: number,
+  phase: string,
+  wrappedConnection?: any
+): Promise<void> {
+  const opts = wrappedConnection ? { wrappedConnection } : {};
+  const contractLower = contract.toLowerCase();
+  const roots = await sqlExecutor.execute<{ merkle_root: string }>(
+    `SELECT merkle_root FROM ${MINTING_MERKLE_ROOTS_TABLE} WHERE contract = :contract AND card_id = :cardId AND phase = :phase`,
+    { contract: contractLower, cardId, phase },
+    opts
+  );
+  const merkleRoots = roots.map((r) => r.merkle_root).filter(Boolean);
+  if (merkleRoots.length > 0) {
+    await sqlExecutor.execute(
+      `DELETE FROM ${MINTING_MERKLE_PROOFS_TABLE} WHERE merkle_root IN (:merkleRoots)`,
+      { merkleRoots },
+      opts
+    );
+  }
+  await sqlExecutor.execute(
+    `DELETE FROM ${MINTING_MERKLE_ROOTS_TABLE} WHERE contract = :contract AND card_id = :cardId AND phase = :phase`,
+    { contract: contractLower, cardId, phase },
+    opts
+  );
+}
+
+export async function insertMintingMerkleRoot(
+  contract: string,
+  cardId: number,
+  phase: string,
+  merkleRoot: string,
+  wrappedConnection?: any
+): Promise<void> {
+  await sqlExecutor.execute(
+    `INSERT INTO ${MINTING_MERKLE_ROOTS_TABLE} (card_id, contract, phase, merkle_root) VALUES (:cardId, :contract, :phase, :merkleRoot)`,
+    {
+      cardId,
+      contract: contract.toLowerCase(),
+      phase,
+      merkleRoot
+    },
+    wrappedConnection ? { wrappedConnection } : {}
+  );
+}
+
+export async function insertMintingMerkleProofs(
+  merkleRoot: string,
+  proofsByAddress: Record<string, AllowlistMerkleProofItem[]>,
+  wrappedConnection?: any
+): Promise<void> {
+  const entries = Object.entries(proofsByAddress);
+  if (entries.length === 0) return;
+  const opts = wrappedConnection ? { wrappedConnection } : {};
+  const batchSize = 200;
+  for (let start = 0; start < entries.length; start += batchSize) {
+    const chunk = entries.slice(start, start + batchSize);
+    const params: Record<string, unknown> = { merkleRoot };
+    const placeholders = chunk
+      .map((_, i) => `(:merkleRoot, :address_${i}, :proofs_${i})`)
+      .join(', ');
+    chunk.forEach(([address, proofs], i) => {
+      params[`address_${i}`] = address.toLowerCase();
+      params[`proofs_${i}`] = JSON.stringify(proofs);
+    });
+    await sqlExecutor.execute(
+      `INSERT INTO ${MINTING_MERKLE_PROOFS_TABLE} (merkle_root, address, proofs) VALUES ${placeholders}`,
+      params,
+      opts
+    );
+  }
+}
+
+export interface MintingMerkleProofRow {
+  proofs: StoredMerkleProofs;
+}
+
+export async function fetchMintingMerkleProofs(
+  merkleRoot: string,
+  address: string
+): Promise<AllowlistMerkleProofItem[] | null> {
+  const addressLower = address.toLowerCase();
+  const rows = await sqlExecutor.execute<MintingMerkleProofRow>(
+    `SELECT proofs FROM ${MINTING_MERKLE_PROOFS_TABLE} WHERE merkle_root = :merkleRoot AND address = :address LIMIT 1`,
+    { merkleRoot, address: addressLower }
+  );
+  if (rows.length === 0) return null;
+  return parseStoredMerkleProofs(rows[0].proofs);
+}
+
+export interface MintingMerkleProofByAddressRow {
+  address: string;
+  proofs: StoredMerkleProofs;
+}
+
+export async function fetchAllMintingMerkleProofsForRoot(
+  merkleRoot: string
+): Promise<{ address: string; proofs: AllowlistMerkleProofItem[] }[]> {
+  const rows = await sqlExecutor.execute<MintingMerkleProofByAddressRow>(
+    `SELECT address, proofs FROM ${MINTING_MERKLE_PROOFS_TABLE} WHERE merkle_root = :merkleRoot ORDER BY address ASC`,
+    { merkleRoot }
+  );
+  return rows.map((r) => ({
+    address: r.address,
+    proofs: parseStoredMerkleProofs(r.proofs)
+  }));
+}
+
+export async function doesMintingMerkleRootExistForCard(
+  cardId: number,
+  contract: string,
+  merkleRoot: string
+): Promise<boolean> {
+  const rows = await sqlExecutor.execute<{ found: number }>(
+    `SELECT 1 AS found
+     FROM ${MINTING_MERKLE_ROOTS_TABLE}
+     WHERE card_id = :cardId
+       AND contract = :contract
+       AND merkle_root = :merkleRoot
+     LIMIT 1`,
+    {
+      cardId,
+      contract: contract.toLowerCase(),
+      merkleRoot
+    }
+  );
+  return rows.length > 0;
+}
+
+export interface MintingMerkleRootRow {
+  phase: string;
+  merkle_root: string;
+  addresses_count?: number;
+  total_spots?: number;
+}
+
+export interface MintingAirdropPhaseRow {
+  phase: string;
+  addresses?: number;
+  total?: number;
+}
+
+export async function fetchMintingMerkleRoots(
+  cardId: number,
+  contract: string
+): Promise<MintingMerkleRootRow[]> {
+  const roots = await sqlExecutor.execute<MintingMerkleRootRow>(
+    `SELECT phase, merkle_root FROM ${MINTING_MERKLE_ROOTS_TABLE} WHERE card_id = :cardId AND contract = :contract ORDER BY phase ASC`,
+    { cardId, contract: contract.toLowerCase() }
+  );
+  if (roots.length === 0) {
+    return roots;
+  }
+
+  const merkleRoots = roots.map((r) => r.merkle_root).filter(Boolean);
+  if (merkleRoots.length === 0) {
+    return roots.map((root) => ({
+      ...root,
+      addresses_count: 0,
+      total_spots: 0
+    }));
+  }
+
+  const proofRows = await sqlExecutor.execute<{
+    merkle_root: string;
+    proofs: StoredMerkleProofs;
+  }>(
+    `SELECT merkle_root, proofs FROM ${MINTING_MERKLE_PROOFS_TABLE} WHERE merkle_root IN (:merkleRoots)`,
+    { merkleRoots }
+  );
+
+  const countsByRoot = new Map<
+    string,
+    { addresses_count: number; total_spots: number }
+  >();
+
+  for (const row of proofRows) {
+    const root = row.merkle_root;
+    const current = countsByRoot.get(root) ?? {
+      addresses_count: 0,
+      total_spots: 0
+    };
+    const parsed = parseStoredMerkleProofs(row.proofs);
+    const rowSpots = parsed.length;
+    countsByRoot.set(root, {
+      addresses_count: current.addresses_count + 1,
+      total_spots: current.total_spots + rowSpots
+    });
+  }
+
+  return roots.map((root) => {
+    const counts = countsByRoot.get(root.merkle_root);
+    return {
+      ...root,
+      addresses_count: counts?.addresses_count ?? 0,
+      total_spots: counts?.total_spots ?? 0
+    };
+  });
+}
+
+export async function fetchMintingAirdrops(
+  cardId: number,
+  contract: string
+): Promise<MintingAirdropPhaseRow[]> {
+  const contractLower = contract.toLowerCase();
+
+  const phaseRows = await sqlExecutor.execute<MintingAirdropPhaseRow>(
+    `SELECT phase, COUNT(DISTINCT wallet) AS addresses, COALESCE(SUM(count_airdrop), 0) AS total
+     FROM ${DISTRIBUTION_TABLE}
+     WHERE card_id = :cardId
+       AND contract = :contract
+       AND count_airdrop > 0
+     GROUP BY phase
+     ORDER BY phase ASC`,
+    {
+      cardId,
+      contract: contractLower
+    }
+  );
+
+  const publicRows = await sqlExecutor.execute<MintingAirdropPhaseRow>(
+    `SELECT 'Public Phase' AS phase,
+            COUNT(DISTINCT airdrop_address) AS addresses,
+            COUNT(*) AS total
+     FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}
+     WHERE LOWER(contract) = :contract
+       AND token_id = :cardId
+       AND phase = 'Public'`,
+    {
+      cardId,
+      contract: contractLower
+    }
+  );
+
+  const publicPhase = publicRows[0];
+  if ((publicPhase?.total ?? 0) > 0) {
+    phaseRows.push(publicPhase);
+  }
+
+  return phaseRows.sort((a, b) => a.phase.localeCompare(b.phase));
+}
+
+export async function fetchMintingAllowlists(
+  cardId: number,
+  contract: string
+): Promise<MintingAirdropPhaseRow[]> {
+  return sqlExecutor.execute<MintingAirdropPhaseRow>(
+    `SELECT phase, COUNT(DISTINCT wallet) AS addresses, COALESCE(SUM(count_allowlist), 0) AS total
+     FROM ${DISTRIBUTION_TABLE}
+     WHERE card_id = :cardId
+       AND contract = :contract
+       AND count_allowlist > 0
+     GROUP BY phase
+     ORDER BY phase ASC`,
+    {
+      cardId,
+      contract: contract.toLowerCase()
+    }
+  );
+}
+
+export interface MintingClaimRow {
+  drop_id: string;
+  contract: string;
+  claim_id: number;
+  image_location: string | null;
+  animation_location: string | null;
+  metadata_location: string | null;
+  media_uploading: boolean | number;
+  edition_size: number | null;
+  description: string;
+  name: string;
+  image_url: string | null;
+  attributes: string;
+  image_details: string | null;
+  animation_url: string | null;
+  animation_details: string | null;
+}
+
+export async function fetchMintingClaimByDropId(
+  contract: string,
+  dropId: string
+): Promise<MintingClaimRow | null> {
+  const rows = await sqlExecutor.execute<MintingClaimRow>(
+    `SELECT drop_id, contract, claim_id, image_location, animation_location, metadata_location, media_uploading, edition_size, description, name, image_url, attributes, image_details, animation_url, animation_details
+     FROM ${MINTING_CLAIMS_TABLE}
+     WHERE contract = :contract
+       AND drop_id = :dropId
+     LIMIT 1`,
+    { contract: contract.toLowerCase(), dropId }
+  );
+  return rows.length > 0 ? rows[0] : null;
+}
+
+export async function fetchMintingClaimByClaimId(
+  contract: string,
+  claimId: number
+): Promise<MintingClaimRow | null> {
+  const rows = await sqlExecutor.execute<MintingClaimRow>(
+    `SELECT drop_id, contract, claim_id, image_location, animation_location, metadata_location, media_uploading, edition_size, description, name, image_url, attributes, image_details, animation_url, animation_details
+     FROM ${MINTING_CLAIMS_TABLE}
+     WHERE contract = :contract
+       AND claim_id = :claimId
+     LIMIT 1`,
+    { contract: contract.toLowerCase(), claimId }
+  );
+  return rows.length > 0 ? rows[0] : null;
+}
+
+const MINTING_CLAIMS_SELECT = `SELECT drop_id, contract, claim_id, image_location, animation_location, metadata_location, media_uploading, edition_size, description, name, image_url, attributes, image_details, animation_url, animation_details
+FROM ${MINTING_CLAIMS_TABLE}
+WHERE contract = :contract`;
+
+export async function fetchMintingClaimsTotalCount(
+  contract: string
+): Promise<number> {
+  const rows = await sqlExecutor.execute<{ total: number }>(
+    `SELECT COUNT(*) as total FROM ${MINTING_CLAIMS_TABLE} WHERE contract = :contract`,
+    { contract: contract.toLowerCase() }
+  );
+  return rows[0]?.total ?? 0;
+}
+
+export async function fetchMintingClaimsPage(
+  contract: string,
+  limit: number,
+  offset: number
+): Promise<MintingClaimRow[]> {
+  return sqlExecutor.execute<MintingClaimRow>(
+    `${MINTING_CLAIMS_SELECT} ORDER BY claim_id DESC LIMIT :limit OFFSET :offset`,
+    { contract: contract.toLowerCase(), limit, offset }
+  );
+}
+
+export async function fetchMaxSeasonId(): Promise<number> {
+  const rows = await sqlExecutor.execute<{ max_id: number }>(
+    `SELECT COALESCE(MAX(id), 0) as max_id FROM ${MEMES_SEASONS_TABLE}`
+  );
+  return rows[0]?.max_id ?? 0;
+}
+
+export async function fetchMemeIdByMemeName(
+  memeName: string
+): Promise<number | null> {
+  const rows = await sqlExecutor.execute<{ meme: number }>(
+    `SELECT meme FROM ${MEMES_EXTENDED_DATA_TABLE} WHERE meme_name = :memeName LIMIT 1`,
+    { memeName }
+  );
+  return rows.length > 0 ? rows[0].meme : null;
+}
+
+export async function updateMintingClaim(
+  contract: string,
+  claimId: number,
+  updates: {
+    image_location?: string | null;
+    animation_location?: string | null;
+    metadata_location?: string | null;
+    media_uploading?: boolean;
+    edition_size?: number | null;
+    description?: string;
+    name?: string;
+    image_url?: string | null;
+    attributes?: unknown;
+    image_details?: unknown;
+    animation_url?: string | null;
+    animation_details?: unknown;
+  }
+): Promise<void> {
+  const { setClauses, params } = buildMintingClaimUpdateStatement(
+    contract,
+    claimId,
+    updates
+  );
+  if (setClauses.length === 0) return;
+  await sqlExecutor.execute(
+    `UPDATE ${MINTING_CLAIMS_TABLE}
+     SET ${setClauses.join(', ')}
+     WHERE contract = :contract
+       AND claim_id = :claimId`,
+    params
+  );
+}
+
+function buildMintingClaimUpdateStatement(
+  contract: string,
+  claimId: number,
+  updates: {
+    image_location?: string | null;
+    animation_location?: string | null;
+    metadata_location?: string | null;
+    media_uploading?: boolean;
+    edition_size?: number | null;
+    description?: string;
+    name?: string;
+    image_url?: string | null;
+    attributes?: unknown;
+    image_details?: unknown;
+    animation_url?: string | null;
+    animation_details?: unknown;
+  }
+): { setClauses: string[]; params: Record<string, unknown> } {
+  const keys = Object.keys(updates) as (keyof typeof updates)[];
+  if (keys.length === 0) {
+    return {
+      setClauses: [],
+      params: { contract: contract.toLowerCase(), claimId }
+    };
+  }
+  const setClauses: string[] = [];
+  const params: Record<string, unknown> = {
+    contract: contract.toLowerCase(),
+    claimId
+  };
+  for (const key of keys) {
+    const val = updates[key];
+    if (val === undefined) continue;
+    const col = key;
+    setClauses.push(`${col} = :${col}`);
+    let paramVal: unknown;
+    if (
+      col === 'attributes' ||
+      col === 'image_details' ||
+      col === 'animation_details'
+    ) {
+      paramVal = JSON.stringify(val);
+    } else {
+      paramVal = val;
+    }
+    params[col] = paramVal;
+  }
+  return { setClauses, params };
+}
+
+function getAffectedRowsFromUpdateResult(result: unknown): number {
+  if (
+    result != null &&
+    typeof result === 'object' &&
+    'affectedRows' in result
+  ) {
+    return Number((result as { affectedRows?: unknown }).affectedRows);
+  }
+  if (!Array.isArray(result)) {
+    return 0;
+  }
+  const first = result[0] as unknown;
+  const second = result[1] as unknown;
+  if (first != null && typeof first === 'object' && 'affectedRows' in first) {
+    return Number((first as { affectedRows?: unknown }).affectedRows);
+  }
+  return Number(second ?? 0);
+}
+
+export async function updateMintingClaimIfNotUploading(
+  contract: string,
+  claimId: number,
+  updates: {
+    image_location?: string | null;
+    animation_location?: string | null;
+    metadata_location?: string | null;
+    media_uploading?: boolean;
+    edition_size?: number | null;
+    description?: string;
+    name?: string;
+    image_url?: string | null;
+    attributes?: unknown;
+    image_details?: unknown;
+    animation_url?: string | null;
+    animation_details?: unknown;
+  }
+): Promise<boolean> {
+  const { setClauses, params } = buildMintingClaimUpdateStatement(
+    contract,
+    claimId,
+    updates
+  );
+  if (setClauses.length === 0) return true;
+  const result = await sqlExecutor.execute<{ affectedRows: number }>(
+    `UPDATE ${MINTING_CLAIMS_TABLE}
+     SET ${setClauses.join(', ')}
+     WHERE contract = :contract
+       AND claim_id = :claimId
+       AND COALESCE(media_uploading, 0) = 0
+       AND metadata_location IS NULL`,
+    params
+  );
+  const affectedRows = getAffectedRowsFromUpdateResult(result);
+  return affectedRows > 0;
+}

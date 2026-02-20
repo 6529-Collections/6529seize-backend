@@ -21,36 +21,35 @@ export function wrapAsyncFunction<TResult = any>(
   fn: () => Promise<TResult>
 ): () => Promise<TResult> {
   return async () => {
-    let priorityWaveId = null;
-    if (isConfigured()) {
-      priorityWaveId = process.env.PRIORITY_ALERTS_WAVE!;
-    } else {
-      logger.info(
-        'Priority alerts not configured - PRIORITY_ALERTS_WAVE env var not set - skipping priority alerts'
-      );
-    }
-
     try {
       return await fn();
     } catch (error: any) {
-      if (priorityWaveId) {
-        try {
-          await handlePriorityAlert(priorityWaveId, error, alertTitle);
-          logger.info('Priority alert sent successfully');
-        } catch (alertError: any) {
-          logger.error('Failed to send priority alert', alertError);
-          if (alertError?.stack) {
-            logger.error(
-              'Failed to send priority alert - stack',
-              alertError.stack
-            );
-          }
-        }
-      }
-
+      await sendPriorityAlert(alertTitle, error);
       throw error;
     }
   };
+}
+
+export async function sendPriorityAlert(
+  alertTitle: string,
+  error: unknown
+): Promise<void> {
+  if (!isConfigured()) {
+    logger.info(
+      'Priority alerts not configured - PRIORITY_ALERTS_WAVE env var not set - skipping priority alerts'
+    );
+    return;
+  }
+  const priorityWaveId = process.env.PRIORITY_ALERTS_WAVE!;
+  try {
+    await handlePriorityAlert(priorityWaveId, error, alertTitle);
+    logger.info('Priority alert sent successfully');
+  } catch (alertError: any) {
+    logger.error('Failed to send priority alert', alertError);
+    if (alertError?.stack) {
+      logger.error('Failed to send priority alert - stack', alertError.stack);
+    }
+  }
 }
 
 async function handlePriorityAlert(

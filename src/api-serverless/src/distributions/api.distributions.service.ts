@@ -1,3 +1,13 @@
+import { computeAllowlistMerkle } from '@/api/minting-claims/allowlist-merkle';
+import {
+  DISTRIBUTION_AUTOMATIC_AIRDROP_PHASES,
+  DISTRIBUTION_PHASE_AIRDROP
+} from '@/airdrop-phases';
+import {
+  deleteMintingMerkleForPhase,
+  insertMintingMerkleProofs,
+  insertMintingMerkleRoot
+} from '@/api/minting-claims/api.minting-claims.db';
 import {
   DISTRIBUTION_NORMALIZED_TABLE,
   DISTRIBUTION_TABLE,
@@ -19,6 +29,16 @@ import {
   insertDistributions
 } from './api.distributions.db';
 
+const automaticAirdropPhaseSet = new Set<string>(
+  DISTRIBUTION_AUTOMATIC_AIRDROP_PHASES
+);
+
+function normalizeDistributionPhase(phase: string): string {
+  return automaticAirdropPhaseSet.has(phase)
+    ? DISTRIBUTION_PHASE_AIRDROP
+    : phase;
+}
+
 interface ResultsResponse {
   wallet: string;
   amount: number;
@@ -32,8 +52,15 @@ export function checkIsNormalized(
     return false;
   }
 
-  return Array.from(distributionPhases).every((phase) =>
-    normalizedPhases.has(phase)
+  const canonicalDistributionPhases = new Set(
+    Array.from(distributionPhases).map(normalizeDistributionPhase)
+  );
+  const canonicalNormalizedPhases = new Set(
+    Array.from(normalizedPhases).map(normalizeDistributionPhase)
+  );
+
+  return Array.from(canonicalDistributionPhases).every((phase) =>
+    canonicalNormalizedPhases.has(phase)
   );
 }
 
@@ -48,7 +75,9 @@ function validateNormalization(
   contract: string,
   cardId: number
 ): void {
-  const distributionPhases = new Set(distributions.map((d) => d.phase));
+  const distributionPhases = new Set(
+    distributions.map((d) => normalizeDistributionPhase(d.phase))
+  );
 
   if (distributionPhases.size === 0) {
     throw new BadRequestException(
@@ -135,13 +164,104 @@ export async function populateDistribution(
   }
 
   await insertDistributions(distributionInserts);
+
+  const allowlistEntries = splitResults.allowlists.map((a) => ({
+    address: a.wallet,
+    amount: a.amount
+  }));
+  if (allowlistEntries.length === 0) {
+    await sqlExecutor.executeNativeQueriesInTransaction(
+      async (wrappedConnection) => {
+        await deleteMintingMerkleForPhase(
+          contract,
+          cardId,
+          phase,
+          wrappedConnection
+        );
+      }
+    );
+    return;
+  }
+
+  const { merkleRoot, proofsByAddress } =
+    computeAllowlistMerkle(allowlistEntries);
+  if (!merkleRoot) return;
+
+  await sqlExecutor.executeNativeQueriesInTransaction(
+    async (wrappedConnection) => {
+      await deleteMintingMerkleForPhase(
+        contract,
+        cardId,
+        phase,
+        wrappedConnection
+      );
+      await insertMintingMerkleRoot(
+        contract,
+        cardId,
+        phase,
+        merkleRoot,
+        wrappedConnection
+      );
+      await insertMintingMerkleProofs(
+        merkleRoot,
+        proofsByAddress,
+        wrappedConnection
+      );
+    }
+  );
 }
 
 export async function insertAutomaticAirdrops(
   contract: string,
   cardId: number,
-  airdrops: Array<{ address: string; count: number }>
+  airdrops: Array<{ address: string; count: number }>,
+  wrappedConnection?: any
 ): Promise<void> {
+  await upsertAutomaticAirdropsForPhase(
+    contract,
+    cardId,
+    DISTRIBUTION_PHASE_AIRDROP,
+    airdrops,
+    wrappedConnection,
+    true
+  );
+}
+
+export async function upsertAutomaticAirdropsForPhase(
+  contract: string,
+  cardId: number,
+  phase: string,
+  airdrops: Array<{ address: string; count: number }>,
+  wrappedConnection?: any,
+  replaceExistingPhase = false
+): Promise<void> {
+  if (replaceExistingPhase && wrappedConnection == null) {
+    await sqlExecutor.executeNativeQueriesInTransaction(async (conn) => {
+      await upsertAutomaticAirdropsForPhase(
+        contract,
+        cardId,
+        phase,
+        airdrops,
+        conn,
+        true
+      );
+    });
+    return;
+  }
+
+  if (replaceExistingPhase) {
+    await deleteAirdropDistributions(
+      contract,
+      cardId,
+      wrappedConnection,
+      phase
+    );
+  }
+
+  if (airdrops.length === 0) {
+    return;
+  }
+
   const allWallets = new Set<string>();
   for (const airdrop of airdrops) {
     allWallets.add(airdrop.address.toLowerCase());
@@ -169,7 +289,7 @@ export async function insertAutomaticAirdrops(
     distributionInserts.push({
       card_id: cardId,
       contract: contract.toLowerCase(),
-      phase: 'Airdrop',
+      phase,
       wallet,
       wallet_tdh: tdhData.wallet_tdh,
       wallet_balance: tdhData.wallet_balance,
@@ -180,12 +300,7 @@ export async function insertAutomaticAirdrops(
     });
   }
 
-  await sqlExecutor.executeNativeQueriesInTransaction(
-    async (wrappedConnection) => {
-      await deleteAirdropDistributions(contract, cardId, wrappedConnection);
-      await insertDistributions(distributionInserts, wrappedConnection);
-    }
-  );
+  await insertDistributions(distributionInserts, wrappedConnection);
 }
 
 export async function populateDistributionNormalized(
@@ -292,7 +407,7 @@ export async function populateDistributionNormalized(
       distributionsNormalized.set(wallet, dn);
     }
 
-    if (d.phase === 'Airdrop') {
+    if (automaticAirdropPhaseSet.has(d.phase)) {
       dn.airdrops += d.count;
       dn.total_count += d.count;
     } else {
@@ -306,8 +421,9 @@ export async function populateDistributionNormalized(
       dn.total_spots += d.count;
     }
 
-    if (!dn.phases.includes(d.phase)) {
-      dn.phases.push(d.phase);
+    const normalizedPhase = normalizeDistributionPhase(d.phase);
+    if (!dn.phases.includes(normalizedPhase)) {
+      dn.phases.push(normalizedPhase);
     }
   }
 

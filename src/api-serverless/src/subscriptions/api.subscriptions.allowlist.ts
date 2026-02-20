@@ -1,13 +1,16 @@
 import { Request } from 'express';
 import fetch from 'node-fetch';
+import { DISTRIBUTION_AUTOMATIC_AIRDROP_PHASES } from '@/airdrop-phases';
 import {
   DISTRIBUTION_NORMALIZED_TABLE,
   DISTRIBUTION_TABLE,
   MEMES_CONTRACT,
-  DISTRIBUTION_ADMIN_WALLETS,
+  MINTING_MERKLE_PROOFS_TABLE,
+  MINTING_MERKLE_ROOTS_TABLE,
   SUBSCRIPTIONS_NFTS_FINAL_TABLE,
   USE_CASE_MINTING
 } from '@/constants';
+import { getDistributionAdminWallets } from '@/api/seize-settings';
 import { fetchProcessedDelegations } from '../../../delegationsLoop/db.delegations';
 import {
   BadRequestException,
@@ -15,6 +18,7 @@ import {
 } from '../../../exceptions';
 import { sqlExecutor } from '../../../sql-executor';
 import { equalIgnoreCase } from '../../../strings';
+import { mergeDuplicateWallets } from '@/api/api-wallet-helpers';
 import { getAuthenticatedWalletOrNull } from '../auth/auth';
 import { NFTFinalSubscription } from '../generated/models/NFTFinalSubscription';
 import {
@@ -53,7 +57,7 @@ export function authenticateSubscriptionsAdmin(
   const wallet = getAuthenticatedWalletOrNull(req);
   const isAdmin =
     wallet &&
-    DISTRIBUTION_ADMIN_WALLETS.some((a) => equalIgnoreCase(a, wallet));
+    getDistributionAdminWallets().some((a) => equalIgnoreCase(a, wallet));
   return isAdmin;
 }
 
@@ -346,20 +350,6 @@ export async function getPublicSubscriptions(
   return { airdrops: mergedAirDrops };
 }
 
-const mergeDuplicateWallets = (
-  results: ResultsResponse[]
-): ResultsResponse[] => {
-  const mergedResults = new Map<string, number>();
-  for (const r of results) {
-    const currentAmount = mergedResults.get(r.wallet) ?? 0;
-    mergedResults.set(r.wallet, currentAmount + r.amount);
-  }
-  return Array.from(mergedResults).map(([wallet, amount]) => ({
-    wallet,
-    amount
-  }));
-};
-
 function filterSubscriptions(
   wallets: string[],
   subscriptions: NFTFinalSubscription[]
@@ -372,6 +362,7 @@ function filterSubscriptions(
 }
 
 export async function resetAllowlist(contract: string, tokenId: number) {
+  const contractLower = contract.toLowerCase();
   await sqlExecutor.executeNativeQueriesInTransaction(
     async (wrappedConnection) => {
       const updateQuery = `
@@ -392,9 +383,39 @@ export async function resetAllowlist(contract: string, tokenId: number) {
       );
 
       await sqlExecutor.execute(
-        `DELETE FROM ${DISTRIBUTION_TABLE} WHERE contract = :contract AND card_id = :tokenId AND phase != 'Airdrop'`,
+        `DELETE FROM ${DISTRIBUTION_TABLE}
+         WHERE contract = :contract
+           AND card_id = :tokenId
+           AND phase NOT IN (:automaticAirdropPhases)`,
         {
-          contract: contract.toLowerCase(),
+          contract: contractLower,
+          tokenId,
+          automaticAirdropPhases: [...DISTRIBUTION_AUTOMATIC_AIRDROP_PHASES]
+        },
+        { wrappedConnection }
+      );
+
+      await sqlExecutor.execute(
+        `DELETE FROM ${MINTING_MERKLE_PROOFS_TABLE}
+         WHERE merkle_root IN (
+           SELECT merkle_root
+           FROM ${MINTING_MERKLE_ROOTS_TABLE}
+           WHERE contract = :contract
+             AND card_id = :tokenId
+         )`,
+        {
+          contract: contractLower,
+          tokenId
+        },
+        { wrappedConnection }
+      );
+
+      await sqlExecutor.execute(
+        `DELETE FROM ${MINTING_MERKLE_ROOTS_TABLE}
+         WHERE contract = :contract
+           AND card_id = :tokenId`,
+        {
+          contract: contractLower,
           tokenId
         },
         { wrappedConnection }
@@ -403,7 +424,7 @@ export async function resetAllowlist(contract: string, tokenId: number) {
       await sqlExecutor.execute(
         `DELETE FROM ${DISTRIBUTION_NORMALIZED_TABLE} WHERE contract = :contract AND card_id = :tokenId`,
         {
-          contract: contract.toLowerCase(),
+          contract: contractLower,
           tokenId
         },
         { wrappedConnection }

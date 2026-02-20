@@ -6,6 +6,7 @@ import {
 } from '@/api/generated/models/ApiUpcomingMemeSubscriptionStatus';
 import { NFTFinalSubscription } from '@/api/generated/models/NFTFinalSubscription';
 import { NFTSubscription } from '@/api/generated/models/NFTSubscription';
+import { PhaseAirdrop } from '@/api/generated/models/PhaseAirdrop';
 import { RedeemedSubscription } from '@/api/generated/models/RedeemedSubscription';
 import { RedeemedSubscriptionCounts } from '@/api/generated/models/RedeemedSubscriptionCounts';
 import { SubscriptionCounts } from '@/api/generated/models/SubscriptionCounts';
@@ -643,6 +644,22 @@ export async function fetchFinalSubscription(
     return results[0];
   }
   return null;
+}
+
+export async function fetchFinalSubscriptionsByPhase(
+  contract: string,
+  tokenId: number,
+  phaseName: string
+): Promise<PhaseAirdrop[]> {
+  return sqlExecutor.execute<PhaseAirdrop>(
+    `SELECT airdrop_address as wallet, subscribed_count as amount
+     FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}
+     WHERE contract = :contract
+       AND token_id = :tokenId
+       AND phase = :phaseName
+     ORDER BY phase_position ASC`,
+    { contract, tokenId, phaseName }
+  );
 }
 
 export async function fetchAllNftFinalSubscriptionsForContractAndToken(
