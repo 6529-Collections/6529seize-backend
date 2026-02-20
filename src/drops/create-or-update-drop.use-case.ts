@@ -61,6 +61,14 @@ import {
 } from '@/api/community-members/user-groups.service';
 import { wavesApiDb, WavesApiDb } from '@/api/waves/waves.api.db';
 import { seizeSettings } from '@/api/api-constants';
+import {
+  dropNftLinksDb,
+  DropNftLinkInsertModel,
+  DropNftLinksDb
+} from '@/drops/drop-nft-links.db';
+import { extractUrlCandidatesFromText } from '@/nft-links/nft-link-candidates';
+import { validateLinkUrl } from '@/nft-links/nft-link-resolver.validator';
+import { env } from '@/env';
 
 export class CreateOrUpdateDropUseCase {
   public constructor(
@@ -73,7 +81,8 @@ export class CreateOrUpdateDropUseCase {
     private readonly identitySubscriptionsDb: IdentitySubscriptionsDb,
     private readonly proxyService: ProfileProxyApiService,
     private readonly deleteDropUseCase: DeleteDropUseCase,
-    private readonly metricsRecorder: MetricsRecorder
+    private readonly metricsRecorder: MetricsRecorder,
+    private readonly dropNftLinksDb: DropNftLinksDb
   ) {}
 
   public async execute(
@@ -609,6 +618,7 @@ export class CreateOrUpdateDropUseCase {
     const dropId = model.drop_id!;
     const authorId = model.author_id!;
     const parts = model.parts;
+    const dropNftLinks = this.buildDropNftLinks(model);
     if (model.drop_type === DropType.PARTICIPATORY) {
       if (
         wave &&
@@ -749,6 +759,14 @@ export class CreateOrUpdateDropUseCase {
         connection,
         timer
       ),
+      this.dropNftLinksDb.replaceDropLinks(
+        {
+          dropId,
+          links: dropNftLinks,
+          createdAt: Time.currentMillis()
+        },
+        { connection, timer }
+      ),
       this.dropVotingDb.saveDropRealVoteInTime(
         {
           drop_id: dropId,
@@ -765,6 +783,38 @@ export class CreateOrUpdateDropUseCase {
       )
     ]);
     timer?.stop(`${CreateOrUpdateDropUseCase.name}->insertAllDropComponents`);
+  }
+
+  private buildDropNftLinks(
+    model: CreateOrUpdateDropModel
+  ): DropNftLinkInsertModel[] {
+    const maxCandidates =
+      env.getIntOrNull('MAX_NFT_LINK_CANDIDATES_PER_DROP') ?? 30;
+    const deduplicated = new Map<string, DropNftLinkInsertModel>();
+    let remaining = maxCandidates;
+    for (const part of model.parts) {
+      if (remaining <= 0) {
+        break;
+      }
+      const candidates = extractUrlCandidatesFromText(part.content, remaining);
+      for (const candidate of candidates) {
+        try {
+          const canonical = validateLinkUrl(candidate);
+          const key = `${candidate}|${canonical.canonicalId}`;
+          deduplicated.set(key, {
+            url_in_text: candidate,
+            canonical_id: canonical.canonicalId
+          });
+          if (deduplicated.size >= maxCandidates) {
+            return Array.from(deduplicated.values());
+          }
+        } catch (e) {
+          // Non-blocking by design: unsupported or malformed links are ignored.
+        }
+      }
+      remaining = maxCandidates - deduplicated.size;
+    }
+    return Array.from(deduplicated.values());
   }
 
   private async verifyMentionedWaves(
@@ -978,5 +1028,6 @@ export const createOrUpdateDrop = new CreateOrUpdateDropUseCase(
   identitySubscriptionsDb,
   profileProxyApiService,
   deleteDrop,
-  metricsRecorder
+  metricsRecorder,
+  dropNftLinksDb
 );

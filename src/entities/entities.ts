@@ -24,6 +24,7 @@ export {
   DropBoostEntity,
   DropReferencedNftEntity
 } from './IDrop';
+export { DropNftLinkEntity } from './IDropNftLink';
 export { DropBookmarkEntity } from './IDropBookmark';
 export { DropCurationEntity } from './IDropCuration';
 export { DropRankEntity } from './IDropRank';
