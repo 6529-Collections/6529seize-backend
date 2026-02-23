@@ -131,6 +131,18 @@ export abstract class SqlExecutor {
       ctx?.timer?.stop(timerName);
     }
   }
+
+  public getAffectedRows(result: any): number {
+    if (!result) {
+      return 0;
+    }
+    if (typeof result === 'object' && 'affectedRows' in result) {
+      return result.affectedRows ?? 0;
+    }
+    return Array.isArray(result) && typeof result[1] === 'number'
+      ? (result as any)[1]
+      : 0;
+  }
 }
 
 export let sqlExecutor!: SqlExecutor;

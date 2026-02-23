@@ -1,8 +1,8 @@
 import { randomUUID } from 'crypto';
 import {
-  PROFILE_PROXY_RATING_CREDIT_BALANCES_TABLE,
   PROFILE_PROXIES_TABLE,
-  PROFILE_PROXY_ACTIONS_TABLE
+  PROFILE_PROXY_ACTIONS_TABLE,
+  PROFILE_PROXY_RATING_CREDIT_BALANCES_TABLE
 } from '@/constants';
 import { ProfileProxyEntity } from '../entities/IProfileProxy';
 import {
@@ -397,7 +397,7 @@ export class ProfileProxiesDb extends LazyDbAccessCompatibleService {
       param,
       connection ? { wrappedConnection: connection } : undefined
     );
-    return this.getAffectedRows(result) === 1;
+    return this.db.getAffectedRows(result) === 1;
   }
 
   async applyCreditSpentDeltaForAction(
@@ -422,46 +422,7 @@ export class ProfileProxiesDb extends LazyDbAccessCompatibleService {
       },
       connection ? { wrappedConnection: connection } : undefined
     );
-    return this.getAffectedRows(result) === 1;
-  }
-
-  async getCreditSpentByActionIds({
-    action_ids,
-    connection
-  }: {
-    readonly action_ids: string[];
-    readonly connection?: ConnectionWrapper<any>;
-  }): Promise<Record<string, number>> {
-    if (!action_ids.length) {
-      return {};
-    }
-    const rows = await this.db.execute<{
-      id: string;
-      credit_spent: number | null;
-    }>(
-      `select id, credit_spent from ${PROFILE_PROXY_ACTIONS_TABLE} where id in (:action_ids)`,
-      { action_ids },
-      connection ? { wrappedConnection: connection } : undefined
-    );
-    return rows.reduce(
-      (acc, row) => {
-        acc[row.id] = row.credit_spent ?? 0;
-        return acc;
-      },
-      {} as Record<string, number>
-    );
-  }
-
-  private getAffectedRows(result: any): number {
-    if (!result) {
-      return 0;
-    }
-    if (typeof result === 'object' && 'affectedRows' in result) {
-      return (result as any).affectedRows ?? 0;
-    }
-    return Array.isArray(result) && typeof result[1] === 'number'
-      ? (result as any)[1]
-      : 0;
+    return this.db.getAffectedRows(result) === 1;
   }
 
   async deleteAllProxiesAndActionsForProfile(
