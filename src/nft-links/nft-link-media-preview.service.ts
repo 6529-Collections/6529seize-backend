@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
 import { promises as dns } from 'node:dns';
+import * as http from 'node:http';
+import * as https from 'node:https';
 import { isIP } from 'node:net';
 import fetch, { Response } from 'node-fetch';
 import Sharp from 'sharp';
@@ -37,6 +39,17 @@ interface RenderedPreview {
   readonly small: Buffer;
   readonly width: number | null;
   readonly height: number | null;
+}
+
+interface PinnedDnsResolution {
+  readonly hostname: string;
+  readonly address: string;
+  readonly family: 4 | 6;
+}
+
+interface PathSegmentSanitizerState {
+  sanitized: string;
+  lastWasHyphen: boolean;
 }
 
 const PREVIEW_VARIANTS = Object.freeze([
@@ -371,41 +384,45 @@ export class NftLinkMediaPreviewService {
     if (!trimmed) {
       return 'default';
     }
-    let sanitized = '';
-    let lastWasHyphen = false;
-
-    for (let i = 0; i < trimmed.length; i++) {
-      const codePoint = trimmed.codePointAt(i);
-      if (codePoint === undefined) {
-        continue;
-      }
-      if (codePoint > 0xffff) {
-        i++;
-      }
-
-      if (this.isSafePathSegmentCodePoint(codePoint)) {
-        const ch = String.fromCodePoint(codePoint);
-        if (ch === '-') {
-          if (!sanitized.length || lastWasHyphen) {
-            continue;
-          }
-          lastWasHyphen = true;
-          sanitized += ch;
-          continue;
-        }
-        lastWasHyphen = false;
-        sanitized += ch;
-        continue;
-      }
-
-      if (!sanitized.length || lastWasHyphen) {
-        continue;
-      }
-      lastWasHyphen = true;
-      sanitized += '-';
+    const state: PathSegmentSanitizerState = {
+      sanitized: '',
+      lastWasHyphen: false
+    };
+    for (const ch of trimmed) {
+      this.appendSanitizedPathSegmentChar(ch, state);
     }
 
-    return this.trimTrailingHyphens(sanitized) || 'default';
+    return this.trimTrailingHyphens(state.sanitized) || 'default';
+  }
+
+  private appendSanitizedPathSegmentChar(
+    ch: string,
+    state: PathSegmentSanitizerState
+  ): void {
+    const codePoint = ch.codePointAt(0);
+    if (codePoint === undefined) {
+      return;
+    }
+
+    if (this.isSafePathSegmentCodePoint(codePoint)) {
+      if (ch !== '-') {
+        state.lastWasHyphen = false;
+        state.sanitized += ch;
+        return;
+      }
+      if (!state.sanitized.length || state.lastWasHyphen) {
+        return;
+      }
+      state.lastWasHyphen = true;
+      state.sanitized += '-';
+      return;
+    }
+
+    if (!state.sanitized.length || state.lastWasHyphen) {
+      return;
+    }
+    state.lastWasHyphen = true;
+    state.sanitized += '-';
   }
 
   private isSafePathSegmentCodePoint(codePoint: number): boolean {
@@ -548,8 +565,12 @@ export class NftLinkMediaPreviewService {
 
     let currentUrl = url;
     for (let i = 0; i <= maxRedirects; i++) {
-      await this.assertSafeRemoteUrl(currentUrl);
-      const response = await this.fetchWithTimeout(currentUrl, timeoutMs);
+      const pinnedDns = await this.resolveSafeRemoteUrl(currentUrl);
+      const response = await this.fetchWithTimeout(
+        currentUrl,
+        timeoutMs,
+        pinnedDns
+      );
       if (this.isRedirect(response.status)) {
         const location = response.headers.get('location');
         if (!location) {
@@ -587,7 +608,8 @@ export class NftLinkMediaPreviewService {
 
   private async fetchWithTimeout(
     url: string,
-    timeoutMs: number
+    timeoutMs: number,
+    pinnedDns: PinnedDnsResolution
   ): Promise<Response> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -599,6 +621,7 @@ export class NftLinkMediaPreviewService {
           'user-agent': FETCH_USER_AGENT,
           accept: 'image/*,*/*;q=0.8'
         },
+        agent: this.createPinnedAgent(url, pinnedDns) as any,
         signal: controller.signal as any
       });
     } finally {
@@ -636,7 +659,53 @@ export class NftLinkMediaPreviewService {
     return status >= 300 && status < 400;
   }
 
-  private async assertSafeRemoteUrl(urlString: string): Promise<void> {
+  private createPinnedAgent(
+    urlString: string,
+    pinnedDns: PinnedDnsResolution
+  ): http.Agent | https.Agent {
+    const parsed = new URL(urlString);
+    const lookup = this.createPinnedLookup(pinnedDns);
+    if (parsed.protocol === 'https:') {
+      return new https.Agent({
+        keepAlive: false,
+        lookup,
+        servername: pinnedDns.hostname
+      });
+    }
+    return new http.Agent({
+      keepAlive: false,
+      lookup
+    });
+  }
+
+  private createPinnedLookup(pinnedDns: PinnedDnsResolution) {
+    return (
+      hostname: string,
+      optionsOrCallback: any,
+      maybeCallback?: any
+    ): void => {
+      const callback =
+        typeof optionsOrCallback === 'function'
+          ? optionsOrCallback
+          : maybeCallback;
+      if (typeof callback !== 'function') {
+        throw new Error(`Pinned DNS lookup callback is missing`);
+      }
+      if (hostname !== pinnedDns.hostname) {
+        callback(
+          new Error(
+            `Pinned DNS lookup hostname mismatch: expected ${pinnedDns.hostname}, got ${hostname}`
+          )
+        );
+        return;
+      }
+      callback(null, pinnedDns.address, pinnedDns.family);
+    };
+  }
+
+  private async resolveSafeRemoteUrl(
+    urlString: string
+  ): Promise<PinnedDnsResolution> {
     let parsed: URL;
     try {
       parsed = new URL(urlString);
@@ -666,6 +735,13 @@ export class NftLinkMediaPreviewService {
         );
       }
     }
+
+    const selected = records[0];
+    return {
+      hostname,
+      address: selected.address,
+      family: selected.family === 6 ? 6 : 4
+    };
   }
 
   private isPrivateOrLocalIp(address: string): boolean {
