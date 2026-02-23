@@ -4,7 +4,6 @@ import * as http from 'node:http';
 import * as https from 'node:https';
 import { isIP } from 'node:net';
 import fetch, { Response } from 'node-fetch';
-import Sharp from 'sharp';
 import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { env } from '@/env';
 import { Logger } from '@/logging';
@@ -63,6 +62,7 @@ const FETCH_USER_AGENT = '6529-nft-link-media-preview/0.1';
 export class NftLinkMediaPreviewService {
   private readonly logger = Logger.get(this.constructor.name);
   private s3Client: S3Client | null = null;
+  private sharpModule: (typeof import('sharp')) | null = null;
 
   constructor(
     private readonly nftLinksDb: NftLinksDb,
@@ -462,6 +462,7 @@ export class NftLinkMediaPreviewService {
   private async renderPreviewVariants(
     sourceBytes: Buffer
   ): Promise<RenderedPreview> {
+    const Sharp = this.getSharpModule();
     const limitInputPixels =
       env.getIntOrNull('NFT_LINK_MEDIA_PREVIEW_LIMIT_INPUT_PIXELS') ??
       1_000_000_000;
@@ -514,6 +515,21 @@ export class NftLinkMediaPreviewService {
           ? metadata.height
           : null
     };
+  }
+
+  private getSharpModule(): typeof import('sharp') {
+    if (!this.sharpModule) {
+      try {
+        // Lazy-load sharp so API startup (which imports enqueue-only logic)
+        // does not require sharp/native binaries.
+        this.sharpModule = require('sharp') as typeof import('sharp');
+      } catch (e: any) {
+        throw new Error(
+          `Failed to load sharp in NFT link media preview processor: ${e?.message ?? e}`
+        );
+      }
+    }
+    return this.sharpModule;
   }
 
   private assertResponseLooksImage(downloaded: DownloadedRemoteImage): void {
