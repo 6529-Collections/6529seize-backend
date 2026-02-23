@@ -20,6 +20,7 @@ SERVICES=(
   nextgenMediaUploader
   nextgenMetadataLoop
   nftHistoryLoop
+  nftLinkMediaPreviewLoop
   nftOwnersLoop
   nftsLoop
   overRatesRevocationLoop

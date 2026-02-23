@@ -20,6 +20,36 @@ export class NftLinkEntity {
   readonly full_data!: NormalizedNftCard | null;
   @Column({ type: 'text', nullable: true })
   readonly media_uri!: string | null;
+  @Column({ type: 'varchar', length: 50, nullable: true })
+  readonly media_preview_status!: string | null;
+  @Column({ type: 'varchar', length: 50, nullable: true })
+  readonly media_preview_kind!: string | null;
+  @Column({ type: 'varchar', length: 64, nullable: true })
+  readonly media_preview_source_hash!: string | null;
+  @Column({ type: 'text', nullable: true })
+  readonly media_preview_card_url!: string | null;
+  @Column({ type: 'text', nullable: true })
+  readonly media_preview_thumb_url!: string | null;
+  @Column({ type: 'text', nullable: true })
+  readonly media_preview_small_url!: string | null;
+  @Column({ type: 'int', nullable: true })
+  readonly media_preview_width!: number | null;
+  @Column({ type: 'int', nullable: true })
+  readonly media_preview_height!: number | null;
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  readonly media_preview_mime_type!: string | null;
+  @Column({ type: 'bigint', nullable: true })
+  readonly media_preview_bytes!: number | null;
+  @Column({ type: 'bigint', nullable: true })
+  readonly media_preview_last_tried_at!: number | null;
+  @Column({ type: 'bigint', nullable: true })
+  readonly media_preview_last_success_at!: number | null;
+  @Column({ type: 'bigint', nullable: true })
+  readonly media_preview_failed_since!: number | null;
+  @Column({ type: 'text', nullable: true })
+  readonly media_preview_error_message!: string | null;
+  @Column({ type: 'bigint', nullable: true })
+  readonly media_preview_locked_since!: number | null;
   @Column({ type: 'text', nullable: true })
   readonly last_error_message!: string | null;
   @Column({ type: 'double', nullable: true })
