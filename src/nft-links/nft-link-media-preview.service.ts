@@ -706,6 +706,10 @@ export class NftLinkMediaPreviewService {
       optionsOrCallback: any,
       maybeCallback?: any
     ): void => {
+      const options =
+        typeof optionsOrCallback === 'function'
+          ? {}
+          : (optionsOrCallback ?? {});
       const callback =
         typeof optionsOrCallback === 'function'
           ? optionsOrCallback
@@ -719,6 +723,27 @@ export class NftLinkMediaPreviewService {
             `Pinned DNS lookup hostname mismatch: expected ${pinnedDns.hostname}, got ${hostname}`
           )
         );
+        return;
+      }
+      if (
+        typeof options.family === 'number' &&
+        options.family !== 0 &&
+        options.family !== pinnedDns.family
+      ) {
+        callback(
+          new Error(
+            `Pinned DNS family mismatch for ${hostname}: requested ${options.family}, pinned ${pinnedDns.family}`
+          )
+        );
+        return;
+      }
+      if (options.all) {
+        callback(null, [
+          {
+            address: pinnedDns.address,
+            family: pinnedDns.family
+          }
+        ]);
         return;
       }
       callback(null, pinnedDns.address, pinnedDns.family);
