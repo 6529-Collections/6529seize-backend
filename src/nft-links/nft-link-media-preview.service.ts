@@ -283,7 +283,7 @@ export class NftLinkMediaPreviewService {
   private getS3Client(): S3Client {
     if (!this.s3Client) {
       this.s3Client = new S3Client({
-        region: env.getStringOrThrow('BUCKET_REGION')
+        region: 'eu-west-1'
       });
     }
     return this.s3Client;
