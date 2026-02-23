@@ -11,7 +11,7 @@ provider:
   runtime: nodejs22.x
   memorySize: 2048
   timeout: 120
-  architecture: arm64
+  architecture: x86_64
   logRetentionInDays: 60
 
 functions:
