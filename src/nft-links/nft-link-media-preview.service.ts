@@ -371,10 +371,59 @@ export class NftLinkMediaPreviewService {
     if (!trimmed) {
       return 'default';
     }
-    const sanitized = trimmed
-      .replace(/[^a-z0-9._-]+/g, '-')
-      .replace(/-+/g, '-');
-    return sanitized.replace(/^-+|-+$/g, '') || 'default';
+    let sanitized = '';
+    let lastWasHyphen = false;
+
+    for (let i = 0; i < trimmed.length; i++) {
+      const codePoint = trimmed.codePointAt(i);
+      if (codePoint === undefined) {
+        continue;
+      }
+      if (codePoint > 0xffff) {
+        i++;
+      }
+
+      if (this.isSafePathSegmentCodePoint(codePoint)) {
+        const ch = String.fromCodePoint(codePoint);
+        if (ch === '-') {
+          if (!sanitized.length || lastWasHyphen) {
+            continue;
+          }
+          lastWasHyphen = true;
+          sanitized += ch;
+          continue;
+        }
+        lastWasHyphen = false;
+        sanitized += ch;
+        continue;
+      }
+
+      if (!sanitized.length || lastWasHyphen) {
+        continue;
+      }
+      lastWasHyphen = true;
+      sanitized += '-';
+    }
+
+    return this.trimTrailingHyphens(sanitized) || 'default';
+  }
+
+  private isSafePathSegmentCodePoint(codePoint: number): boolean {
+    return (
+      (codePoint >= 97 && codePoint <= 122) ||
+      (codePoint >= 48 && codePoint <= 57) ||
+      codePoint === 46 ||
+      codePoint === 95 ||
+      codePoint === 45
+    );
+  }
+
+  private trimTrailingHyphens(value: string): string {
+    let end = value.length;
+    while (end > 0 && value.codePointAt(end - 1) === 45) {
+      end--;
+    }
+    return end === value.length ? value : value.slice(0, end);
   }
 
   private trimTrailingSlashes(value: string): string {
