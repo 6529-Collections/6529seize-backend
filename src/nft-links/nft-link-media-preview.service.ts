@@ -62,7 +62,7 @@ const FETCH_USER_AGENT = '6529-nft-link-media-preview/0.1';
 export class NftLinkMediaPreviewService {
   private readonly logger = Logger.get(this.constructor.name);
   private s3Client: S3Client | null = null;
-  private sharpModule: (typeof import('sharp')) | null = null;
+  private sharpModule: typeof import('sharp') | null = null;
 
   constructor(
     private readonly nftLinksDb: NftLinksDb,
