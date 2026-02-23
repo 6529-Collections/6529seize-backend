@@ -302,7 +302,8 @@ export class NftLinkMediaPreviewService {
       .update(prepared.canonicalId)
       .digest('hex')
       .slice(0, 24);
-    const baseKey = `nft-link-previews/${canonicalHash}/${prepared.sourceHash}`;
+    const environmentPrefix = this.getPreviewEnvironmentPrefix();
+    const baseKey = `nft-link-previews/${environmentPrefix}/${canonicalHash}/${prepared.sourceHash}`;
 
     const thumbKey = `${baseKey}/thumb.webp`;
     const smallKey = `${baseKey}/small.webp`;
@@ -355,6 +356,25 @@ export class NftLinkMediaPreviewService {
       smallUrl: `${fileServerUrl}/${smallKey}`,
       cardUrl: `${fileServerUrl}/${cardKey}`
     };
+  }
+
+  private getPreviewEnvironmentPrefix(): string {
+    const raw =
+      env.getStringOrNull('NFT_LINK_MEDIA_PREVIEW_S3_PREFIX') ??
+      env.getStringOrNull('NODE_ENV') ??
+      'default';
+    return this.sanitizePathSegment(raw);
+  }
+
+  private sanitizePathSegment(value: string): string {
+    const trimmed = value.trim().toLowerCase();
+    if (!trimmed) {
+      return 'default';
+    }
+    const sanitized = trimmed
+      .replace(/[^a-z0-9._-]+/g, '-')
+      .replace(/-+/g, '-');
+    return sanitized.replace(/^-+|-+$/g, '') || 'default';
   }
 
   private trimTrailingSlashes(value: string): string {
