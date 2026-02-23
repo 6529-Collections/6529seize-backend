@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto';
 import { promises as dns } from 'node:dns';
+import * as http from 'node:http';
+import * as https from 'node:https';
 import { isIP } from 'node:net';
 import fetch, { Response } from 'node-fetch';
-import Sharp from 'sharp';
 import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { env } from '@/env';
 import { Logger } from '@/logging';
@@ -39,6 +40,17 @@ interface RenderedPreview {
   readonly height: number | null;
 }
 
+interface PinnedDnsResolution {
+  readonly hostname: string;
+  readonly address: string;
+  readonly family: 4 | 6;
+}
+
+interface PathSegmentSanitizerState {
+  sanitized: string;
+  lastWasHyphen: boolean;
+}
+
 const PREVIEW_VARIANTS = Object.freeze([
   { name: 'thumb', width: 120, height: 120 },
   { name: 'small', width: 320, height: null as number | null },
@@ -50,6 +62,7 @@ const FETCH_USER_AGENT = '6529-nft-link-media-preview/0.1';
 export class NftLinkMediaPreviewService {
   private readonly logger = Logger.get(this.constructor.name);
   private s3Client: S3Client | null = null;
+  private sharpModule: (typeof import('sharp')) | null = null;
 
   constructor(
     private readonly nftLinksDb: NftLinksDb,
@@ -371,10 +384,63 @@ export class NftLinkMediaPreviewService {
     if (!trimmed) {
       return 'default';
     }
-    const sanitized = trimmed
-      .replace(/[^a-z0-9._-]+/g, '-')
-      .replace(/-+/g, '-');
-    return sanitized.replace(/^-+|-+$/g, '') || 'default';
+    const state: PathSegmentSanitizerState = {
+      sanitized: '',
+      lastWasHyphen: false
+    };
+    for (const ch of trimmed) {
+      this.appendSanitizedPathSegmentChar(ch, state);
+    }
+
+    return this.trimTrailingHyphens(state.sanitized) || 'default';
+  }
+
+  private appendSanitizedPathSegmentChar(
+    ch: string,
+    state: PathSegmentSanitizerState
+  ): void {
+    const codePoint = ch.codePointAt(0);
+    if (codePoint === undefined) {
+      return;
+    }
+
+    if (this.isSafePathSegmentCodePoint(codePoint)) {
+      if (ch !== '-') {
+        state.lastWasHyphen = false;
+        state.sanitized += ch;
+        return;
+      }
+      if (!state.sanitized.length || state.lastWasHyphen) {
+        return;
+      }
+      state.lastWasHyphen = true;
+      state.sanitized += '-';
+      return;
+    }
+
+    if (!state.sanitized.length || state.lastWasHyphen) {
+      return;
+    }
+    state.lastWasHyphen = true;
+    state.sanitized += '-';
+  }
+
+  private isSafePathSegmentCodePoint(codePoint: number): boolean {
+    return (
+      (codePoint >= 97 && codePoint <= 122) ||
+      (codePoint >= 48 && codePoint <= 57) ||
+      codePoint === 46 ||
+      codePoint === 95 ||
+      codePoint === 45
+    );
+  }
+
+  private trimTrailingHyphens(value: string): string {
+    let end = value.length;
+    while (end > 0 && value.codePointAt(end - 1) === 45) {
+      end--;
+    }
+    return end === value.length ? value : value.slice(0, end);
   }
 
   private trimTrailingSlashes(value: string): string {
@@ -396,6 +462,7 @@ export class NftLinkMediaPreviewService {
   private async renderPreviewVariants(
     sourceBytes: Buffer
   ): Promise<RenderedPreview> {
+    const Sharp = this.getSharpModule();
     const limitInputPixels =
       env.getIntOrNull('NFT_LINK_MEDIA_PREVIEW_LIMIT_INPUT_PIXELS') ??
       1_000_000_000;
@@ -450,6 +517,21 @@ export class NftLinkMediaPreviewService {
     };
   }
 
+  private getSharpModule(): typeof import('sharp') {
+    if (!this.sharpModule) {
+      try {
+        // Lazy-load sharp so API startup (which imports enqueue-only logic)
+        // does not require sharp/native binaries.
+        this.sharpModule = require('sharp') as typeof import('sharp');
+      } catch (e: any) {
+        throw new Error(
+          `Failed to load sharp in NFT link media preview processor: ${e?.message ?? e}`
+        );
+      }
+    }
+    return this.sharpModule;
+  }
+
   private assertResponseLooksImage(downloaded: DownloadedRemoteImage): void {
     const mimeType = this.extractMimeType(downloaded.contentType);
     if (!mimeType) {
@@ -499,8 +581,12 @@ export class NftLinkMediaPreviewService {
 
     let currentUrl = url;
     for (let i = 0; i <= maxRedirects; i++) {
-      await this.assertSafeRemoteUrl(currentUrl);
-      const response = await this.fetchWithTimeout(currentUrl, timeoutMs);
+      const pinnedDns = await this.resolveSafeRemoteUrl(currentUrl);
+      const response = await this.fetchWithTimeout(
+        currentUrl,
+        timeoutMs,
+        pinnedDns
+      );
       if (this.isRedirect(response.status)) {
         const location = response.headers.get('location');
         if (!location) {
@@ -538,7 +624,8 @@ export class NftLinkMediaPreviewService {
 
   private async fetchWithTimeout(
     url: string,
-    timeoutMs: number
+    timeoutMs: number,
+    pinnedDns: PinnedDnsResolution
   ): Promise<Response> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -550,6 +637,7 @@ export class NftLinkMediaPreviewService {
           'user-agent': FETCH_USER_AGENT,
           accept: 'image/*,*/*;q=0.8'
         },
+        agent: this.createPinnedAgent(url, pinnedDns) as any,
         signal: controller.signal as any
       });
     } finally {
@@ -584,10 +672,62 @@ export class NftLinkMediaPreviewService {
   }
 
   private isRedirect(status: number): boolean {
-    return status >= 300 && status < 400;
+    return (
+      status === 301 ||
+      status === 302 ||
+      status === 303 ||
+      status === 307 ||
+      status === 308
+    );
   }
 
-  private async assertSafeRemoteUrl(urlString: string): Promise<void> {
+  private createPinnedAgent(
+    urlString: string,
+    pinnedDns: PinnedDnsResolution
+  ): http.Agent | https.Agent {
+    const parsed = new URL(urlString);
+    const lookup = this.createPinnedLookup(pinnedDns);
+    if (parsed.protocol === 'https:') {
+      return new https.Agent({
+        keepAlive: false,
+        lookup,
+        servername: pinnedDns.hostname
+      });
+    }
+    return new http.Agent({
+      keepAlive: false,
+      lookup
+    });
+  }
+
+  private createPinnedLookup(pinnedDns: PinnedDnsResolution) {
+    return (
+      hostname: string,
+      optionsOrCallback: any,
+      maybeCallback?: any
+    ): void => {
+      const callback =
+        typeof optionsOrCallback === 'function'
+          ? optionsOrCallback
+          : maybeCallback;
+      if (typeof callback !== 'function') {
+        throw new Error(`Pinned DNS lookup callback is missing`);
+      }
+      if (hostname !== pinnedDns.hostname) {
+        callback(
+          new Error(
+            `Pinned DNS lookup hostname mismatch: expected ${pinnedDns.hostname}, got ${hostname}`
+          )
+        );
+        return;
+      }
+      callback(null, pinnedDns.address, pinnedDns.family);
+    };
+  }
+
+  private async resolveSafeRemoteUrl(
+    urlString: string
+  ): Promise<PinnedDnsResolution> {
     let parsed: URL;
     try {
       parsed = new URL(urlString);
@@ -617,6 +757,13 @@ export class NftLinkMediaPreviewService {
         );
       }
     }
+
+    const selected = records[0];
+    return {
+      hostname,
+      address: selected.address,
+      family: selected.family === 6 ? 6 : 4
+    };
   }
 
   private isPrivateOrLocalIp(address: string): boolean {
