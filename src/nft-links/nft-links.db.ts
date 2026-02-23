@@ -5,6 +5,10 @@ import { NFT_LINKS_TABLE } from '@/constants';
 import { Time } from '@/time';
 import type { NormalizedNftCard } from '@/nft-links/types';
 import { DbPoolName } from '@/db-query.options';
+import type {
+  NftLinkMediaPreviewKind,
+  NftLinkMediaPreviewStatus
+} from '@/nft-links/nft-link-media-preview.types';
 
 export class NftLinksDb extends LazyDbAccessCompatibleService {
   public async findByCanonicalId(
@@ -115,6 +119,21 @@ export class NftLinksDb extends LazyDbAccessCompatibleService {
       | 'price'
       | 'full_data'
       | 'media_uri'
+      | 'media_preview_status'
+      | 'media_preview_kind'
+      | 'media_preview_source_hash'
+      | 'media_preview_card_url'
+      | 'media_preview_thumb_url'
+      | 'media_preview_small_url'
+      | 'media_preview_width'
+      | 'media_preview_height'
+      | 'media_preview_mime_type'
+      | 'media_preview_bytes'
+      | 'media_preview_last_tried_at'
+      | 'media_preview_last_success_at'
+      | 'media_preview_failed_since'
+      | 'media_preview_error_message'
+      | 'media_preview_locked_since'
       | 'last_successfully_updated'
       | 'last_tried_to_update'
       | 'failed_since'
@@ -228,6 +247,332 @@ export class NftLinksDb extends LazyDbAccessCompatibleService {
       );
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->updateWithSuccess`);
+    }
+  }
+
+  public async markMediaPreviewPendingIfNeeded(
+    {
+      canonicalId,
+      sourceHash,
+      kind
+    }: {
+      canonicalId: string;
+      sourceHash: string;
+      kind: NftLinkMediaPreviewKind;
+    },
+    ctx: RequestContext
+  ): Promise<boolean> {
+    try {
+      ctx.timer?.start(
+        `${this.constructor.name}->markMediaPreviewPendingIfNeeded`
+      );
+      const affectedRows = await this.db
+        .execute(
+          `
+            update ${NFT_LINKS_TABLE}
+            set
+              media_preview_status = :pendingStatus,
+              media_preview_kind = :kind,
+              media_preview_source_hash = :sourceHash,
+              media_preview_error_message = null,
+              media_preview_failed_since = null,
+              media_preview_locked_since = null,
+              media_preview_last_tried_at = null,
+              media_preview_last_success_at = case
+                when media_preview_source_hash <=> :sourceHash then media_preview_last_success_at
+                else null
+              end,
+              media_preview_card_url = case
+                when media_preview_source_hash <=> :sourceHash then media_preview_card_url
+                else null
+              end,
+              media_preview_thumb_url = case
+                when media_preview_source_hash <=> :sourceHash then media_preview_thumb_url
+                else null
+              end,
+              media_preview_small_url = case
+                when media_preview_source_hash <=> :sourceHash then media_preview_small_url
+                else null
+              end,
+              media_preview_width = case
+                when media_preview_source_hash <=> :sourceHash then media_preview_width
+                else null
+              end,
+              media_preview_height = case
+                when media_preview_source_hash <=> :sourceHash then media_preview_height
+                else null
+              end,
+              media_preview_mime_type = case
+                when media_preview_source_hash <=> :sourceHash then media_preview_mime_type
+                else null
+              end,
+              media_preview_bytes = case
+                when media_preview_source_hash <=> :sourceHash then media_preview_bytes
+                else null
+              end
+            where canonical_id = :canonicalId
+              and (
+                not (media_preview_source_hash <=> :sourceHash)
+                or media_preview_status is null
+                or media_preview_status in ('FAILED', 'SKIPPED')
+              )
+          `,
+          {
+            canonicalId,
+            sourceHash,
+            kind,
+            pendingStatus: 'PENDING'
+          },
+          { wrappedConnection: ctx.connection }
+        )
+        .then((res) => this.db.getAffectedRows(res));
+      return affectedRows > 0;
+    } finally {
+      ctx.timer?.stop(
+        `${this.constructor.name}->markMediaPreviewPendingIfNeeded`
+      );
+    }
+  }
+
+  public async markMediaPreviewSkipped(
+    {
+      canonicalId,
+      kind,
+      message
+    }: {
+      canonicalId: string;
+      kind: NftLinkMediaPreviewKind;
+      message: string;
+    },
+    ctx: RequestContext
+  ): Promise<void> {
+    try {
+      ctx.timer?.start(`${this.constructor.name}->markMediaPreviewSkipped`);
+      const now = Time.currentMillis();
+      await this.db.execute(
+        `
+          update ${NFT_LINKS_TABLE}
+          set
+            media_preview_status = :status,
+            media_preview_kind = :kind,
+            media_preview_error_message = :message,
+            media_preview_failed_since = ifnull(media_preview_failed_since, :now),
+            media_preview_locked_since = null,
+            media_preview_last_tried_at = :now,
+            media_preview_last_success_at = null,
+            media_preview_source_hash = null,
+            media_preview_card_url = null,
+            media_preview_thumb_url = null,
+            media_preview_small_url = null,
+            media_preview_width = null,
+            media_preview_height = null,
+            media_preview_mime_type = null,
+            media_preview_bytes = null
+          where canonical_id = :canonicalId
+        `,
+        {
+          canonicalId,
+          kind,
+          message,
+          now,
+          status: 'SKIPPED'
+        },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->markMediaPreviewSkipped`);
+    }
+  }
+
+  public async lockMediaPreviewForProcessing(
+    {
+      canonicalId,
+      expectedSourceHash,
+      lockTTL
+    }: {
+      canonicalId: string;
+      expectedSourceHash?: string | null;
+      lockTTL: Time;
+    },
+    ctx: RequestContext
+  ): Promise<NftLinkEntity | null> {
+    try {
+      ctx.timer?.start(
+        `${this.constructor.name}->lockMediaPreviewForProcessing`
+      );
+      return await this.db.executeNativeQueriesInTransaction(
+        async (connection) => {
+          const entity = await this.db
+            .oneOrNull<NftLinkEntity>(
+              `
+                select * from ${NFT_LINKS_TABLE}
+                where canonical_id = :canonicalId
+                  and media_preview_status = :pendingStatus
+                  and ifnull(media_preview_locked_since, 0) < :lockedBefore
+                  ${expectedSourceHash ? 'and media_preview_source_hash = :expectedSourceHash' : ''}
+                for update skip locked
+              `,
+              {
+                canonicalId,
+                pendingStatus: 'PENDING',
+                lockedBefore: Time.now().minus(lockTTL).toMillis(),
+                expectedSourceHash: expectedSourceHash ?? null
+              },
+              { wrappedConnection: connection }
+            )
+            .then((res) => this.deserializeDullData(res));
+
+          if (!entity) {
+            return null;
+          }
+
+          const now = Time.currentMillis();
+          await this.db.execute(
+            `
+              update ${NFT_LINKS_TABLE}
+              set
+                media_preview_status = :processingStatus,
+                media_preview_locked_since = :now,
+                media_preview_last_tried_at = :now,
+                media_preview_error_message = null
+              where canonical_id = :canonicalId
+            `,
+            {
+              canonicalId,
+              now,
+              processingStatus: 'PROCESSING'
+            },
+            { wrappedConnection: connection }
+          );
+
+          return {
+            ...entity,
+            media_preview_status: 'PROCESSING'
+          } as NftLinkEntity;
+        }
+      );
+    } finally {
+      ctx.timer?.stop(
+        `${this.constructor.name}->lockMediaPreviewForProcessing`
+      );
+    }
+  }
+
+  public async updateMediaPreviewWithFailure(
+    {
+      canonicalId,
+      message,
+      status
+    }: {
+      canonicalId: string;
+      message: string;
+      status?: Extract<NftLinkMediaPreviewStatus, 'FAILED' | 'SKIPPED'>;
+    },
+    ctx: RequestContext
+  ): Promise<void> {
+    try {
+      ctx.timer?.start(
+        `${this.constructor.name}->updateMediaPreviewWithFailure`
+      );
+      const now = Time.currentMillis();
+      await this.db.execute(
+        `
+          update ${NFT_LINKS_TABLE}
+          set
+            media_preview_status = :status,
+            media_preview_error_message = :message,
+            media_preview_locked_since = null,
+            media_preview_failed_since = ifnull(media_preview_failed_since, :now),
+            media_preview_last_tried_at = :now
+          where canonical_id = :canonicalId
+        `,
+        {
+          canonicalId,
+          message,
+          now,
+          status: status ?? 'FAILED'
+        },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(
+        `${this.constructor.name}->updateMediaPreviewWithFailure`
+      );
+    }
+  }
+
+  public async updateMediaPreviewWithSuccess(
+    {
+      canonicalId,
+      kind,
+      sourceHash,
+      cardUrl,
+      thumbUrl,
+      smallUrl,
+      width,
+      height,
+      mimeType,
+      bytes
+    }: {
+      canonicalId: string;
+      kind: NftLinkMediaPreviewKind;
+      sourceHash: string;
+      cardUrl: string;
+      thumbUrl: string;
+      smallUrl: string;
+      width: number | null;
+      height: number | null;
+      mimeType: string | null;
+      bytes: number | null;
+    },
+    ctx: RequestContext
+  ): Promise<void> {
+    try {
+      ctx.timer?.start(
+        `${this.constructor.name}->updateMediaPreviewWithSuccess`
+      );
+      const now = Time.currentMillis();
+      await this.db.execute(
+        `
+          update ${NFT_LINKS_TABLE}
+          set
+            media_preview_status = :status,
+            media_preview_kind = :kind,
+            media_preview_source_hash = :sourceHash,
+            media_preview_card_url = :cardUrl,
+            media_preview_thumb_url = :thumbUrl,
+            media_preview_small_url = :smallUrl,
+            media_preview_width = :width,
+            media_preview_height = :height,
+            media_preview_mime_type = :mimeType,
+            media_preview_bytes = :bytes,
+            media_preview_last_success_at = :now,
+            media_preview_last_tried_at = :now,
+            media_preview_failed_since = null,
+            media_preview_error_message = null,
+            media_preview_locked_since = null
+          where canonical_id = :canonicalId
+        `,
+        {
+          canonicalId,
+          status: 'READY',
+          kind,
+          sourceHash,
+          cardUrl,
+          thumbUrl,
+          smallUrl,
+          width,
+          height,
+          mimeType,
+          bytes,
+          now
+        },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(
+        `${this.constructor.name}->updateMediaPreviewWithSuccess`
+      );
     }
   }
 }

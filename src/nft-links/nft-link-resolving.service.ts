@@ -18,6 +18,7 @@ import { NftLinkEntity } from '@/entities/INftLink';
 import { giveReadReplicaTimeToCatchUp } from '@/api/api-helpers';
 import { ApiNftLinkData } from '@/api/generated/models/ApiNftLinkData';
 import { mapNftLinkEntityToApiLink } from '@/nft-links/nft-link-api.mapper';
+import { nftLinkMediaPreviewService } from '@/nft-links/nft-link-media-preview.service';
 
 export class NftLinkResolvingService {
   private readonly logger = Logger.get(this.constructor.name);
@@ -127,6 +128,14 @@ export class NftLinkResolvingService {
       try {
         const card = await this.nftLinkResolver.resolve(url, ctx);
         await this.nftLinksDb.updateWithSuccess(card, ctx);
+        try {
+          await nftLinkMediaPreviewService.onResolvedCard(card, ctx);
+        } catch (previewErr) {
+          this.logger.error(
+            `Failed to enqueue/process NFT link media preview for ${url}`,
+            previewErr
+          );
+        }
         didPersistSuccess = true;
         this.logger.info(`Data for ${url} updated`);
         break;

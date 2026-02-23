@@ -114,6 +114,7 @@ export * from '../models/ApiMintMetrics';
 export * from '../models/ApiMintMetricsPage';
 export * from '../models/ApiNft';
 export * from '../models/ApiNftLinkData';
+export * from '../models/ApiNftLinkMediaPreview';
 export * from '../models/ApiNftLinkResponse';
 export * from '../models/ApiNftMedia';
 export * from '../models/ApiNftOwner';
@@ -377,6 +378,7 @@ import { ApiMintMetrics } from '../models/ApiMintMetrics';
 import { ApiMintMetricsPage } from '../models/ApiMintMetricsPage';
 import { ApiNft      , ApiNftTokenTypeEnum                               } from '../models/ApiNft';
 import { ApiNftLinkData } from '../models/ApiNftLinkData';
+import { ApiNftLinkMediaPreview, ApiNftLinkMediaPreviewStatusEnum          } from '../models/ApiNftLinkMediaPreview';
 import { ApiNftLinkResponse } from '../models/ApiNftLinkResponse';
 import { ApiNftMedia } from '../models/ApiNftMedia';
 import { ApiNftOwner } from '../models/ApiNftOwner';
@@ -549,6 +551,7 @@ let enumsMap: Set<string> = new Set<string>([
     "ApiIdentitySubscriptionTargetAction",
     "ApiIdentitySubscriptionTargetType",
     "ApiNftTokenTypeEnum",
+    "ApiNftLinkMediaPreviewStatusEnum",
     "ApiNotificationCause",
     "ApiPageSortDirection",
     "ApiProfileClassification",
@@ -678,6 +681,7 @@ let typeMap: {[index: string]: any} = {
     "ApiMintMetricsPage": ApiMintMetricsPage,
     "ApiNft": ApiNft,
     "ApiNftLinkData": ApiNftLinkData,
+    "ApiNftLinkMediaPreview": ApiNftLinkMediaPreview,
     "ApiNftLinkResponse": ApiNftLinkResponse,
     "ApiNftMedia": ApiNftMedia,
     "ApiNftOwner": ApiNftOwner,

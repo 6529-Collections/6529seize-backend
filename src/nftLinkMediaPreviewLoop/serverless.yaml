@@ -1,0 +1,90 @@
+service: nftLinkMediaPreviewLoop
+
+package:
+  artifact: dist/index.zip
+
+plugins:
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs22.x
+  memorySize: 2048
+  timeout: 120
+  architecture: arm64
+  logRetentionInDays: 60
+
+functions:
+  nftLinkMediaPreviewLoop:
+    handler: index.handler
+    name: nftLinkMediaPreviewLoop
+    description: ${env:VERSION_DESCRIPTION}
+    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    reservedConcurrency: 5
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt: [NftLinkMediaPreviewQueue, Arn]
+          batchSize: 1
+    vpc:
+      securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
+      subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
+    environment:
+      SENTRY_DSN: ${env:SENTRY_DSN}
+      SENTRY_ENVIRONMENT: 'nftLinkMediaPreviewLoop_${opt:stage, self:provider.stage}'
+
+resources:
+  Resources:
+    NftLinkMediaPreviewQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: nft-link-media-previews
+        VisibilityTimeout: 300
+        RedrivePolicy:
+          deadLetterTargetArn:
+            Fn::GetAtt: [NftLinkMediaPreviewDLQ, Arn]
+          maxReceiveCount: 10
+
+    NftLinkMediaPreviewDLQ:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: nft-link-media-previews-dlq
+
+    NftLinkMediaPreviewLoopLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/nftLinkMediaPreviewLoop
+        RetentionInDays: 60
+
+    NftLinkMediaPreviewOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      DependsOn:
+        - NftLinkMediaPreviewLoopLogGroup
+      Properties:
+        LogGroupName:
+          Ref: NftLinkMediaPreviewLoopLogGroup
+        FilterPattern: "Runtime.OutOfMemory"
+        MetricTransformations:
+          - MetricNamespace: "Lambda/OOM"
+            MetricName: "nftLinkMediaPreviewLoop_OOMErrorCount"
+            MetricValue: "1"
+            DefaultValue: 0
+
+    NftLinkMediaPreviewOOMAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: NftLinkMediaPreviewOOMFilter
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-nftLinkMediaPreviewLoop-OOM"
+        AlarmDescription: !Sub "Lambda nftLinkMediaPreviewLoop OutOfMemory in ${AWS::Region}"
+        Namespace: "Lambda/OOM"
+        MetricName: "nftLinkMediaPreviewLoop_OOMErrorCount"
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
