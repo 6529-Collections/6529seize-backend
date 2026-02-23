@@ -32,6 +32,7 @@ functions:
     environment:
       SENTRY_DSN: ${env:SENTRY_DSN}
       SENTRY_ENVIRONMENT: 'nftLinkMediaPreviewLoop_${opt:stage, self:provider.stage}'
+      NFT_LINK_MEDIA_PREVIEW_S3_PREFIX: '${opt:stage, self:provider.stage}'
 
 resources:
   Resources:
