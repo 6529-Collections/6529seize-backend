@@ -94,11 +94,12 @@ export async function processLog(
   const previousOwner = parsedLog.args.previousOwner;
   const newOwner = parsedLog.args.newOwner;
 
-  const previousOwnerEns = await findEnsForAddress(previousOwner);
-  const newOwnerEns = await findEnsForAddress(newOwner);
-
   switch (parsedLog.name) {
-    case 'OwnershipTransferred':
+    case 'OwnershipTransferred': {
+      const previousOwnerEns = previousOwner
+        ? await findEnsForAddress(previousOwner)
+        : null;
+      const newOwnerEns = newOwner ? await findEnsForAddress(newOwner) : null;
       if (equalIgnoreCase(NULL_ADDRESS, parsedLog.args.previousOwner)) {
         return {
           id: 0,
@@ -120,6 +121,7 @@ export async function processLog(
           description: `Ownership Transferred from ${fromDescription} to ${toDescription}`
         };
       }
+    }
     case 'Transfer':
       return await processTransfer(entityManager, log, parsedLog);
   }

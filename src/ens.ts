@@ -18,6 +18,8 @@ import { sqlExecutor } from '@/sql-executor';
 import { Time } from '@/time';
 
 const logger = Logger.get('ENS');
+const ENS_DISCOVERY_MAX_RETRIES = 5;
+const ENS_DISCOVERY_RETRY_BASE_DELAY_MS = 250;
 
 export async function getPrediscoveredEnsNames(
   walletAddresses: string[]
@@ -33,9 +35,12 @@ export async function getPrediscoveredEnsNames(
       )
     }
   );
+  const ensByAddress = new Map(
+    results.map((row) => [row.address.toLowerCase(), row.ens] as const)
+  );
   return walletAddresses.map((walletAddress) => ({
     address: walletAddress,
-    ens: results.find((row) => row.address === walletAddress)?.ens
+    ens: ensByAddress.get(walletAddress.toLowerCase())
   }));
 }
 
@@ -102,18 +107,39 @@ export async function findNewEns(wallets: string[]) {
 }
 
 export async function discoverEns(datetime?: Date) {
-  try {
-    const missingEns = await fetchMissingEns(datetime);
-    if (missingEns.length > 0) {
-      const newEns = await findNewEns(missingEns);
-      if (newEns.length > 0) {
-        await persistENS(newEns);
-        await discoverEns(datetime);
+  let retries = 0;
+
+  while (true) {
+    try {
+      const missingEns = await fetchMissingEns(datetime);
+      if (missingEns.length === 0) {
+        return;
       }
+
+      const newEns = await findNewEns(missingEns);
+      if (newEns.length === 0) {
+        return;
+      }
+
+      await persistENS(newEns);
+      retries = 0;
+    } catch (e: any) {
+      retries += 1;
+      logger.error(e);
+
+      if (retries >= ENS_DISCOVERY_MAX_RETRIES) {
+        logger.error(
+          `[DISCOVER ENS FAILED] [RETRIES ${retries}] [DATETIME ${datetime?.toISOString() ?? 'null'}]`
+        );
+        throw e;
+      }
+
+      const delayMs = ENS_DISCOVERY_RETRY_BASE_DELAY_MS * 2 ** (retries - 1);
+      logger.warn(
+        `[DISCOVER ENS RETRYING] [ATTEMPT ${retries}/${ENS_DISCOVERY_MAX_RETRIES}] [DELAY_MS ${delayMs}]`
+      );
+      await Time.millis(delayMs).sleep();
     }
-  } catch (e: any) {
-    logger.error(e);
-    await discoverEns(datetime);
   }
 }
 
@@ -126,18 +152,39 @@ export async function discoverEnsConsolidations() {
 }
 
 async function discoverEnsNFTDelegation(table: string) {
-  try {
-    const missingEns = await fetchMissingEnsNFTDelegation(table);
-    if (missingEns.length > 0) {
-      const newEns = await findNewEns(missingEns);
-      if (newEns.length > 0) {
-        await persistENS(newEns);
-        await discoverEnsDelegations();
+  let retries = 0;
+
+  while (true) {
+    try {
+      const missingEns = await fetchMissingEnsNFTDelegation(table);
+      if (missingEns.length === 0) {
+        return;
       }
+
+      const newEns = await findNewEns(missingEns);
+      if (newEns.length === 0) {
+        return;
+      }
+
+      await persistENS(newEns);
+      retries = 0;
+    } catch (e: any) {
+      retries += 1;
+      logger.error(e);
+
+      if (retries >= ENS_DISCOVERY_MAX_RETRIES) {
+        logger.error(
+          `[DISCOVER ENS NFT DELEGATION FAILED] [TABLE ${table}] [RETRIES ${retries}]`
+        );
+        throw e;
+      }
+
+      const delayMs = ENS_DISCOVERY_RETRY_BASE_DELAY_MS * 2 ** (retries - 1);
+      logger.warn(
+        `[DISCOVER ENS NFT DELEGATION RETRYING] [TABLE ${table}] [ATTEMPT ${retries}/${ENS_DISCOVERY_MAX_RETRIES}] [DELAY_MS ${delayMs}]`
+      );
+      await Time.millis(delayMs).sleep();
     }
-  } catch (e: any) {
-    logger.error(e);
-    await discoverEnsDelegations();
   }
 }
 

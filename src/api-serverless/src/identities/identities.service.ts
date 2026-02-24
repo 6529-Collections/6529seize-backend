@@ -31,8 +31,6 @@ import {
   getDelegationPrimaryAddressForConsolidation,
   getHighestTdhAddressForConsolidationKey
 } from '@/delegationsLoop/db.delegations';
-import { Alchemy } from 'alchemy-sdk';
-import { getAlchemyInstance } from '@/alchemy';
 import { RequestContext } from '@/request.context';
 import { ApiIdentity } from '@/api/generated/models/ApiIdentity';
 import { ProfileProxyActionType } from '@/entities/IProfileProxyAction';
@@ -55,8 +53,7 @@ export class IdentitiesService {
     private readonly identitiesDb: IdentitiesDb,
     private readonly identitySubscriptionsDb: IdentitySubscriptionsDb,
     private readonly userNotifier: UserNotifier,
-    private readonly identityFetcher: IdentityFetcher,
-    private readonly supplyAlchemy: () => Alchemy
+    private readonly identityFetcher: IdentityFetcher
   ) {}
 
   async addIdentitySubscriptionActions({
@@ -605,6 +602,5 @@ export const identitiesService = new IdentitiesService(
   identitiesDb,
   identitySubscriptionsDb,
   userNotifier,
-  identityFetcher,
-  getAlchemyInstance
+  identityFetcher
 );
