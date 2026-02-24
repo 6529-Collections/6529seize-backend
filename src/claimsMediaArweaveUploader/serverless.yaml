@@ -35,6 +35,12 @@ functions:
 
 resources:
   Resources:
+    ClaimsMediaArweaveUploaderLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/claimsMediaArweaveUploader
+        RetentionInDays: 60
+
     ClaimsMediaArweaveUploadTopic:
       Type: AWS::SNS::Topic
       Properties:
@@ -85,8 +91,11 @@ resources:
 
     ClaimsMediaArweaveUploaderOOMFilter:
       Type: AWS::Logs::MetricFilter
+      DependsOn:
+        - ClaimsMediaArweaveUploaderLogGroup
       Properties:
-        LogGroupName: /aws/lambda/claimsMediaArweaveUploader
+        LogGroupName:
+          Ref: ClaimsMediaArweaveUploaderLogGroup
         FilterPattern: 'Runtime.OutOfMemory'
         MetricTransformations:
           - MetricNamespace: 'Lambda/OOM'
