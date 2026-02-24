@@ -6,25 +6,25 @@ import {
   Network,
   SortingOrder
 } from 'alchemy-sdk';
-import { Logger } from '../logging';
-import { NEXTGEN_CORE_IFACE } from '../abis/nextgen';
-import { NextGenCollection, NextGenLog } from '../entities/INextGen';
+import { NEXTGEN_CORE_IFACE } from '@/abis/nextgen';
+import { CLOUDFRONT_LINK } from '@/constants';
+import { NextGenCollection, NextGenLog } from '@/entities/INextGen';
+import { findEnsForAddress } from '@/ens-lookup';
+import { getSourceCodeForContract } from '@/etherscan';
+import { Logger } from '@/logging';
 import {
   fetchNextGenCollection,
   fetchNextGenCollectionIndex,
   persistNextGenCollection,
   persistNextGenLogs,
   wasTransactionLogProcessed
-} from './nextgen.db';
+} from '@/nextgen/nextgen.db';
 import { EntityManager } from 'typeorm';
 import {
   getNextgenNetwork,
   NEXTGEN_CF_BASE_PATH,
   NEXTGEN_CORE_CONTRACT
-} from './nextgen_constants';
-import { CLOUDFRONT_LINK } from '@/constants';
-import { getEns } from '../alchemy';
-import { getSourceCodeForContract } from '../etherscan';
+} from '@/nextgen/nextgen_constants';
 
 const logger = Logger.get('NEXTGEN_CORE_TRANSACTIONS');
 
@@ -287,7 +287,7 @@ async function artistSignature(
 
   let artistEns;
   try {
-    artistEns = await getEns(artistAddress);
+    artistEns = await findEnsForAddress(artistAddress);
     logger.info(
       `[LOOKUP ARTIST ADDRESS] : [ADDRESS ${artistAddress}] : [ENS ${artistEns}]`
     );
@@ -337,7 +337,7 @@ async function setCollectionData(
   collection.final_supply_after_mint = finalSupplyAfterMint;
   await persistNextGenCollection(entityManager, collection);
 
-  const artistEns = await getEns(artistAddress);
+  const artistEns = await findEnsForAddress(artistAddress);
   const finalSupplyDisplay =
     finalSupplyAfterMint > 0
       ? ` - Final Supply After Mint: ${finalSupplyAfterMint.toLocaleString()}`
