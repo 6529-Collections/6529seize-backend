@@ -109,7 +109,11 @@ export async function lookupPrimaryEnsName(
 ): Promise<string | null> {
   const alchemyProvider = getAlchemyProviderOrNull();
   if (alchemyProvider) {
-    const ens = await lookupAddressWithProvider(alchemyProvider, 'alchemy', address);
+    const ens = await lookupAddressWithProvider(
+      alchemyProvider,
+      'alchemy',
+      address
+    );
     if (ens) {
       return ens;
     }

@@ -80,7 +80,10 @@ export async function findNewEns(wallets: string[]) {
 
   const finalEns: ENS[] = [];
 
-  const concurrency = Math.max(1, Math.min(ENS_LOOKUP_CONCURRENCY, wallets.length));
+  const concurrency = Math.max(
+    1,
+    Math.min(ENS_LOOKUP_CONCURRENCY, wallets.length)
+  );
   let nextIndex = 0;
 
   const workers = Array.from({ length: concurrency }, async () => {
