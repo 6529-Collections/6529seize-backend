@@ -35,6 +35,12 @@ functions:
 
 resources:
   Resources:
+    ClaimsBuilderLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/claimsBuilder
+        RetentionInDays: 60
+
     ClaimsBuilderTopic:
       Type: AWS::SNS::Topic
       Properties:
@@ -85,8 +91,11 @@ resources:
 
     ClaimsBuilderOOMFilter:
       Type: AWS::Logs::MetricFilter
+      DependsOn:
+        - ClaimsBuilderLogGroup
       Properties:
-        LogGroupName: /aws/lambda/claimsBuilder
+        LogGroupName:
+          Ref: ClaimsBuilderLogGroup
         FilterPattern: 'Runtime.OutOfMemory'
         MetricTransformations:
           - MetricNamespace: 'Lambda/OOM'
