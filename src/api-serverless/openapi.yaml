@@ -7654,6 +7654,10 @@ components:
           format: int64
         hide_link_preview:
           type: boolean
+        nft_links:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiDropNftLink"
     ApiDropAndDropVote:
       type: object
       required:
@@ -7770,6 +7774,19 @@ components:
         data_value:
           type: string
           maxLength: 5000
+    ApiDropNftLink:
+      type: object
+      required:
+        - url_in_text
+        - data
+      properties:
+        url_in_text:
+          type: string
+          maxLength: 2000
+        data:
+          anyOf:
+            - $ref: "#/components/schemas/ApiNftLinkData"
+            - type: "null"
     ApiDropPart:
       type: object
       required:
@@ -8061,6 +8078,10 @@ components:
           format: int64
         hide_link_preview:
           type: boolean
+        nft_links:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiDropNftLink"
     ApiDropWithoutWavesPageWithoutCount:
       type: object
       required:
@@ -8854,6 +8875,7 @@ components:
         - price
         - last_successfully_updated
         - failed_since
+        - media_preview
       properties:
         canonical_id:
           type: string
@@ -8890,6 +8912,53 @@ components:
         failed_since:
           type: integer
           format: int64
+          nullable: true
+        media_preview:
+          anyOf:
+            - $ref: "#/components/schemas/ApiNftLinkMediaPreview"
+            - type: "null"
+    ApiNftLinkMediaPreview:
+      type: object
+      required:
+        - status
+        - kind
+        - card_url
+        - thumb_url
+        - small_url
+        - width
+        - height
+        - mime_type
+      properties:
+        status:
+          type: string
+          enum:
+            - PENDING
+            - PROCESSING
+            - READY
+            - FAILED
+            - SKIPPED
+        kind:
+          type: string
+          nullable: true
+        card_url:
+          type: string
+          nullable: true
+        thumb_url:
+          type: string
+          nullable: true
+        small_url:
+          type: string
+          nullable: true
+        width:
+          type: integer
+          format: int64
+          nullable: true
+        height:
+          type: integer
+          format: int64
+          nullable: true
+        mime_type:
+          type: string
           nullable: true
     ApiNftLinkResponse:
       type: object

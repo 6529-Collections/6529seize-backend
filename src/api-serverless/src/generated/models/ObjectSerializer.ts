@@ -65,6 +65,7 @@ export * from '../models/ApiDropId';
 export * from '../models/ApiDropMedia';
 export * from '../models/ApiDropMentionedUser';
 export * from '../models/ApiDropMetadata';
+export * from '../models/ApiDropNftLink';
 export * from '../models/ApiDropPart';
 export * from '../models/ApiDropRater';
 export * from '../models/ApiDropRatingRequest';
@@ -114,6 +115,7 @@ export * from '../models/ApiMintMetricsPage';
 export * from '../models/ApiMintingClaimsPhaseTotalItem';
 export * from '../models/ApiNft';
 export * from '../models/ApiNftLinkData';
+export * from '../models/ApiNftLinkMediaPreview';
 export * from '../models/ApiNftLinkResponse';
 export * from '../models/ApiNftMedia';
 export * from '../models/ApiNftOwner';
@@ -336,7 +338,7 @@ import { ApiCreateWaveConfig        } from '../models/ApiCreateWaveConfig';
 import { ApiCreateWaveDropRequest } from '../models/ApiCreateWaveDropRequest';
 import { ApiCreateWaveOutcome        } from '../models/ApiCreateWaveOutcome';
 import { ApiCreateWaveOutcomeDistributionItem } from '../models/ApiCreateWaveOutcomeDistributionItem';
-import { ApiDrop                             } from '../models/ApiDrop';
+import { ApiDrop                              } from '../models/ApiDrop';
 import { ApiDropAndDropVote } from '../models/ApiDropAndDropVote';
 import { ApiDropBoost } from '../models/ApiDropBoost';
 import { ApiDropBoostsPage } from '../models/ApiDropBoostsPage';
@@ -345,6 +347,7 @@ import { ApiDropId } from '../models/ApiDropId';
 import { ApiDropMedia } from '../models/ApiDropMedia';
 import { ApiDropMentionedUser } from '../models/ApiDropMentionedUser';
 import { ApiDropMetadata } from '../models/ApiDropMetadata';
+import { ApiDropNftLink } from '../models/ApiDropNftLink';
 import { ApiDropPart } from '../models/ApiDropPart';
 import { ApiDropRater } from '../models/ApiDropRater';
 import { ApiDropRatingRequest } from '../models/ApiDropRatingRequest';
@@ -357,7 +360,7 @@ import { ApiDropTraceItem } from '../models/ApiDropTraceItem';
 import { ApiDropType } from '../models/ApiDropType';
 import { ApiDropVote } from '../models/ApiDropVote';
 import { ApiDropWinningContext } from '../models/ApiDropWinningContext';
-import { ApiDropWithoutWave                            } from '../models/ApiDropWithoutWave';
+import { ApiDropWithoutWave                             } from '../models/ApiDropWithoutWave';
 import { ApiDropWithoutWavesPageWithoutCount } from '../models/ApiDropWithoutWavesPageWithoutCount';
 import { ApiDropsLeaderboardPage } from '../models/ApiDropsLeaderboardPage';
 import { ApiDropsPage } from '../models/ApiDropsPage';
@@ -394,6 +397,7 @@ import { ApiMintMetricsPage } from '../models/ApiMintMetricsPage';
 import { ApiMintingClaimsPhaseTotalItem } from '../models/ApiMintingClaimsPhaseTotalItem';
 import { ApiNft      , ApiNftTokenTypeEnum                               } from '../models/ApiNft';
 import { ApiNftLinkData } from '../models/ApiNftLinkData';
+import { ApiNftLinkMediaPreview, ApiNftLinkMediaPreviewStatusEnum          } from '../models/ApiNftLinkMediaPreview';
 import { ApiNftLinkResponse } from '../models/ApiNftLinkResponse';
 import { ApiNftMedia } from '../models/ApiNftMedia';
 import { ApiNftOwner } from '../models/ApiNftOwner';
@@ -583,6 +587,7 @@ let enumsMap: Set<string> = new Set<string>([
     "ApiIdentitySubscriptionTargetAction",
     "ApiIdentitySubscriptionTargetType",
     "ApiNftTokenTypeEnum",
+    "ApiNftLinkMediaPreviewStatusEnum",
     "ApiNotificationCause",
     "ApiPageSortDirection",
     "ApiProfileClassification",
@@ -674,6 +679,7 @@ let typeMap: {[index: string]: any} = {
     "ApiDropMedia": ApiDropMedia,
     "ApiDropMentionedUser": ApiDropMentionedUser,
     "ApiDropMetadata": ApiDropMetadata,
+    "ApiDropNftLink": ApiDropNftLink,
     "ApiDropPart": ApiDropPart,
     "ApiDropRater": ApiDropRater,
     "ApiDropRatingRequest": ApiDropRatingRequest,
@@ -715,6 +721,7 @@ let typeMap: {[index: string]: any} = {
     "ApiMintingClaimsPhaseTotalItem": ApiMintingClaimsPhaseTotalItem,
     "ApiNft": ApiNft,
     "ApiNftLinkData": ApiNftLinkData,
+    "ApiNftLinkMediaPreview": ApiNftLinkMediaPreview,
     "ApiNftLinkResponse": ApiNftLinkResponse,
     "ApiNftMedia": ApiNftMedia,
     "ApiNftOwner": ApiNftOwner,

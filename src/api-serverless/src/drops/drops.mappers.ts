@@ -65,6 +65,15 @@ import { collections } from '../../../collections';
 import { DropReactionsResult, reactionsDb, ReactionsDb } from './reactions.db';
 import { dropBookmarksDb, DropBookmarksDb } from './drop-bookmarks.db';
 import { CurationsDb, curationsDb } from '@/api/curations/curations.db';
+import { ApiDropNftLink } from '@/api/generated/models/ApiDropNftLink';
+import { dropNftLinksDb, DropNftLinksDb } from '@/drops/drop-nft-links.db';
+import { nftLinksDb, NftLinksDb } from '@/nft-links/nft-links.db';
+import { NftLinkEntity } from '@/entities/INftLink';
+import { mapNftLinkEntityToApiLink } from '@/nft-links/nft-link-api.mapper';
+import {
+  nftLinkResolvingService,
+  NftLinkResolvingService
+} from '@/nft-links/nft-link-resolving.service';
 
 export class DropsMappers {
   constructor(
@@ -77,7 +86,10 @@ export class DropsMappers {
     private readonly dropVotingService: DropVotingService,
     private readonly reactionsDb: ReactionsDb,
     private readonly dropBookmarksDb: DropBookmarksDb,
-    private readonly curationsDb: CurationsDb
+    private readonly curationsDb: CurationsDb,
+    private readonly dropNftLinksDb: DropNftLinksDb,
+    private readonly nftLinksDb: NftLinksDb,
+    private readonly nftLinkResolvingService: NftLinkResolvingService
   ) {}
 
   public createDropApiToUseCaseModel({
@@ -307,7 +319,8 @@ export class DropsMappers {
       dropReactions,
       boostsCount,
       boostsByAuthenticatedUser,
-      bookmarksByAuthenticatedUser
+      bookmarksByAuthenticatedUser,
+      rootDropNftLinks
     ] = await Promise.all([
       this.dropVotingDb.getParticipationDropsRealtimeRanks(
         participatoryDropIds,
@@ -388,8 +401,44 @@ export class DropsMappers {
             },
             connection
           )
-        : Promise.resolve(new Set<string>())
+        : Promise.resolve(new Set<string>()),
+      this.dropNftLinksDb.findByDropIds(rootDropIds, connection)
     ]);
+    const canonicalIdsOfRootDropLinks = collections.distinct(
+      rootDropNftLinks.map((it) => it.canonical_id)
+    );
+    const resolvedNftLinksByCanonicalId = (
+      await this.nftLinksDb.findByCanonicalIds(canonicalIdsOfRootDropLinks, {
+        connection
+      })
+    ).reduce(
+      (acc, link) => {
+        acc[link.canonical_id] = link;
+        return acc;
+      },
+      {} as Record<string, NftLinkEntity>
+    );
+    const rootDropNftLinksByDropId = rootDropNftLinks.reduce(
+      (acc, link) => {
+        const data = resolvedNftLinksByCanonicalId[link.canonical_id];
+        const links = acc[link.drop_id] ?? [];
+        links.push({
+          url_in_text: link.url_in_text,
+          data: data ? mapNftLinkEntityToApiLink(data) : null
+        });
+        acc[link.drop_id] = links;
+        return acc;
+      },
+      {} as Record<string, ApiDropNftLink[]>
+    );
+    if (!connection && rootDropNftLinks.length) {
+      void this.nftLinkResolvingService
+        .refreshStaleTrackingForUrls(
+          rootDropNftLinks.map((it) => it.url_in_text),
+          { connection }
+        )
+        .catch(() => undefined);
+    }
     return {
       dropsRanks,
       submissionDropsVotingRanges,
@@ -422,7 +471,8 @@ export class DropsMappers {
       dropReactions,
       boostsCount,
       boostsByAuthenticatedUser,
-      bookmarksByAuthenticatedUser
+      bookmarksByAuthenticatedUser,
+      rootDropNftLinksByDropId
     };
   }
 
@@ -455,7 +505,8 @@ export class DropsMappers {
       dropReactions,
       boostsCount,
       boostsByAuthenticatedUser,
-      bookmarksByAuthenticatedUser
+      bookmarksByAuthenticatedUser,
+      rootDropNftLinksByDropId
     } = await this.getAllDropsRelatedData(
       {
         dropEntities: entities,
@@ -463,6 +514,7 @@ export class DropsMappers {
       },
       ctx.connection
     );
+    const rootDropIds = new Set(entities.map((it) => it.id));
     const mentionedWaveIds = collections.distinct(
       mentionedWaves.map((it) => it.wave_id)
     );
@@ -667,7 +719,9 @@ export class DropsMappers {
         dropReactions,
         boostsCount,
         boostsByAuthenticatedUser,
-        bookmarksByAuthenticatedUser
+        bookmarksByAuthenticatedUser,
+        rootDropNftLinksByDropId,
+        rootDropIds
       });
     });
   }
@@ -702,7 +756,9 @@ export class DropsMappers {
     dropReactions,
     boostsCount,
     boostsByAuthenticatedUser,
-    bookmarksByAuthenticatedUser
+    bookmarksByAuthenticatedUser,
+    rootDropNftLinksByDropId,
+    rootDropIds
   }: {
     dropEntity: DropEntity;
     deletedDrops: Record<string, DeletedDropEntity>;
@@ -740,6 +796,8 @@ export class DropsMappers {
     boostsCount: Record<string, number>;
     boostsByAuthenticatedUser: Set<string>;
     bookmarksByAuthenticatedUser: Set<string>;
+    rootDropNftLinksByDropId: Record<string, ApiDropNftLink[]>;
+    rootDropIds: Set<string>;
   }): ApiDropWithoutWave {
     const replyToDropId = dropEntity.reply_to_drop_id;
     const dropWinDecision = winDecisions[dropEntity.id];
@@ -893,7 +951,9 @@ export class DropsMappers {
                   dropReactions,
                   boostsCount,
                   boostsByAuthenticatedUser,
-                  bookmarksByAuthenticatedUser
+                  bookmarksByAuthenticatedUser,
+                  rootDropNftLinksByDropId,
+                  rootDropIds
                 })
               : undefined
           }
@@ -942,7 +1002,9 @@ export class DropsMappers {
                           dropReactions,
                           boostsCount,
                           boostsByAuthenticatedUser,
-                          bookmarksByAuthenticatedUser
+                          bookmarksByAuthenticatedUser,
+                          rootDropNftLinksByDropId,
+                          rootDropIds
                         })
                       : undefined
                   }
@@ -992,7 +1054,10 @@ export class DropsMappers {
       is_signed: !!dropEntity.signature,
       reactions: dropReactions.get(dropEntity.id)?.reactions ?? [],
       boosts: boostsCount[dropEntity.id] ?? 0,
-      hide_link_preview: !!dropEntity.hide_link_preview
+      hide_link_preview: !!dropEntity.hide_link_preview,
+      nft_links: rootDropIds.has(dropEntity.id)
+        ? (rootDropNftLinksByDropId[dropEntity.id] ?? [])
+        : []
     };
   }
 }
@@ -1007,5 +1072,8 @@ export const dropsMappers = new DropsMappers(
   dropVotingService,
   reactionsDb,
   dropBookmarksDb,
-  curationsDb
+  curationsDb,
+  dropNftLinksDb,
+  nftLinksDb,
+  nftLinkResolvingService
 );

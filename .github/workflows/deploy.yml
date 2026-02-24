@@ -41,6 +41,7 @@ on:
           - nextgenMetadataLoop
           - nftHistoryLoop
           - nftLinkRefresherLoop
+          - nftLinkMediaPreviewLoop
           - nftOwnersLoop
           - nftsLoop
           - overRatesRevocationLoop

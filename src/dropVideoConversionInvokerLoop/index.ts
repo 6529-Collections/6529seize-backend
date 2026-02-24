@@ -32,7 +32,14 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
           Role: roleArn,
           JobTemplate: template,
           Settings: {
-            Inputs: [{ FileInput: fileInput }],
+            Inputs: [
+              {
+                FileInput: fileInput,
+                VideoSelector: {
+                  Rotate: 'AUTO'
+                }
+              }
+            ],
             OutputGroups: [
               {
                 OutputGroupSettings: {
