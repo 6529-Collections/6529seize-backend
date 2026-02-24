@@ -1,8 +1,8 @@
 import { Alchemy, Network } from 'alchemy-sdk';
 import { ALCHEMY_SETTINGS } from '@/constants';
+import { ethTools } from '@/eth-tools';
+import { Time } from '@/time';
 import * as mcache from 'memory-cache';
-import { Time } from './time';
-import { ethTools } from './eth-tools';
 import { goerli, sepolia } from '@wagmi/chains';
 
 let alchemy: Alchemy | null = null;
@@ -18,17 +18,6 @@ export function getAlchemyInstance(
     });
   }
   return alchemy;
-}
-
-export async function getEns(address: string) {
-  let ens: string | null;
-  try {
-    const alchemy = getAlchemyInstance();
-    ens = await alchemy.core.lookupAddress(address);
-  } catch (error) {
-    ens = null;
-  }
-  return ens;
 }
 
 export async function getWalletFromEns(

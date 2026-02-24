@@ -1,62 +1,59 @@
 import {
   identitySubscriptionsDb,
   IdentitySubscriptionsDb
-} from '../identity-subscriptions/identity-subscriptions.db';
+} from '@/api/identity-subscriptions/identity-subscriptions.db';
 import {
   ActivityEventAction,
   ActivityEventTargetType
-} from '../../../entities/IActivityEvent';
-import { identitiesDb, IdentitiesDb } from '../../../identities/identities.db';
-import { ApiIdentitySubscriptionTargetAction } from '../generated/models/ApiIdentitySubscriptionTargetAction';
+} from '@/entities/IActivityEvent';
+import { identitiesDb, IdentitiesDb } from '@/identities/identities.db';
+import { ApiIdentitySubscriptionTargetAction } from '@/api/generated/models/ApiIdentitySubscriptionTargetAction';
 import {
   BadRequestException,
   ForbiddenException,
   NotFoundException
-} from '../../../exceptions';
+} from '@/exceptions';
+import { userNotifier, UserNotifier } from '@/notifications/user.notifier';
 import {
-  userNotifier,
-  UserNotifier
-} from '../../../notifications/user.notifier';
-import { IdentityFetcher, identityFetcher } from './identity.fetcher';
+  IdentityFetcher,
+  identityFetcher
+} from '@/api/identities/identity.fetcher';
 import {
   ProfileActivityLog,
   ProfileActivityLogType
-} from '../../../entities/IProfileActivityLog';
-import { profileActivityLogsDb } from '../../../profileActivityLogs/profile-activity-logs.db';
-import { ConnectionWrapper } from '../../../sql-executor';
+} from '@/entities/IProfileActivityLog';
+import { profileActivityLogsDb } from '@/profileActivityLogs/profile-activity-logs.db';
+import { ConnectionWrapper } from '@/sql-executor';
 import path from 'path';
 import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { randomUUID } from 'crypto';
 import {
   getDelegationPrimaryAddressForConsolidation,
   getHighestTdhAddressForConsolidationKey
-} from '../../../delegationsLoop/db.delegations';
-import { Alchemy } from 'alchemy-sdk';
-import { getAlchemyInstance } from '../../../alchemy';
-import { RequestContext } from '../../../request.context';
-import { ApiIdentity } from '../generated/models/ApiIdentity';
-import { ProfileProxyActionType } from '../../../entities/IProfileProxyAction';
-import { userGroupsService } from '../community-members/user-groups.service';
-import { wavesApiDb } from '../waves/waves.api.db';
-import { ApiProfileClassification } from '../generated/models/ApiProfileClassification';
-import { getLevelFromScore } from '../../../profiles/profile-level';
-import { equalIgnoreCase } from '../../../strings';
-import { enums } from '../../../enums';
-import { text } from '../../../text';
-import { IdentityEntity } from '../../../entities/IIdentity';
-import { Time } from '../../../time';
-import { Profile, ProfileClassification } from '../../../entities/IProfile';
-import { ids } from '../../../ids';
-import { profilesDb } from '../../../profiles/profiles.db';
+} from '@/delegationsLoop/db.delegations';
+import { RequestContext } from '@/request.context';
+import { ApiIdentity } from '@/api/generated/models/ApiIdentity';
+import { ProfileProxyActionType } from '@/entities/IProfileProxyAction';
+import { userGroupsService } from '@/api/community-members/user-groups.service';
+import { wavesApiDb } from '@/api/waves/waves.api.db';
+import { ApiProfileClassification } from '@/api/generated/models/ApiProfileClassification';
+import { getLevelFromScore } from '@/profiles/profile-level';
+import { equalIgnoreCase } from '@/strings';
+import { enums } from '@/enums';
+import { IdentityEntity } from '@/entities/IIdentity';
+import { Time } from '@/time';
+import { Profile, ProfileClassification } from '@/entities/IProfile';
+import { ids } from '@/ids';
+import { profilesDb } from '@/profiles/profiles.db';
 import { NULL_ADDRESS } from '@/constants';
+import { findEnsForAddress } from '@/ens-lookup';
 
 export class IdentitiesService {
   constructor(
     private readonly identitiesDb: IdentitiesDb,
     private readonly identitySubscriptionsDb: IdentitySubscriptionsDb,
     private readonly userNotifier: UserNotifier,
-    private readonly identityFetcher: IdentityFetcher,
-    private readonly supplyAlchemy: () => Alchemy
+    private readonly identityFetcher: IdentityFetcher
   ) {}
 
   async addIdentitySubscriptionActions({
@@ -325,8 +322,7 @@ export class IdentitiesService {
           );
           const oldPrimaryAddress = identity.consolidation_key;
           if (!equalIgnoreCase(newPrimaryAddress, oldPrimaryAddress)) {
-            const ensName =
-              await this.supplyAlchemy().core.lookupAddress(newPrimaryAddress);
+            const ensName = await findEnsForAddress(newPrimaryAddress);
             await this.identitiesDb.executeNativeQueriesInTransaction(
               async (connection) => {
                 await this.identitiesDb.updatePrimaryAddress(
@@ -339,7 +335,7 @@ export class IdentitiesService {
                 await this.identitiesDb.updateWalletsEnsName(
                   {
                     wallet: newPrimaryAddress,
-                    ensName: ensName ? text.replaceEmojisWithHex(ensName) : null
+                    ensName
                   },
                   connection
                 );
@@ -606,6 +602,5 @@ export const identitiesService = new IdentitiesService(
   identitiesDb,
   identitySubscriptionsDb,
   userNotifier,
-  identityFetcher,
-  getAlchemyInstance
+  identityFetcher
 );

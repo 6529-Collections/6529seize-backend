@@ -1,15 +1,20 @@
 import { Alchemy, Log } from 'alchemy-sdk';
+import { NEXTGEN_CORE_IFACE } from '@/abis/nextgen';
 import { NULL_ADDRESS, NULL_ADDRESS_DEAD } from '@/constants';
-import { Logger } from '../logging';
-import { NEXTGEN_CORE_IFACE } from '../abis/nextgen';
+import { getAlchemyInstance } from '@/alchemy';
 import {
   NextGenCollection,
   NextGenLog,
   NextGenToken,
   NextGenTokenTrait
-} from '../entities/INextGen';
+} from '@/entities/INextGen';
+import { Transaction } from '@/entities/ITransaction';
+import { findEnsForAddress } from '@/ens-lookup';
+import { ethTools } from '@/eth-tools';
+import { Logger } from '@/logging';
+import { equalIgnoreCase } from '@/strings';
+import { findTransactionValues } from '@/transaction_values';
 import { LogDescription } from 'ethers';
-import { findTransactionValues } from '../transaction_values';
 import {
   fetchNextGenCollection,
   fetchNextgenToken,
@@ -17,13 +22,12 @@ import {
   persistNextGenToken,
   persistNextGenTraits,
   persistNextgenTransaction
-} from './nextgen.db';
+} from '@/nextgen/nextgen.db';
 import { EntityManager } from 'typeorm';
-import { getNextgenNetwork, NEXTGEN_CORE_CONTRACT } from './nextgen_constants';
-import { Transaction } from '../entities/ITransaction';
-import { getAlchemyInstance, getEns } from '../alchemy';
-import { equalIgnoreCase } from '../strings';
-import { ethTools } from '../eth-tools';
+import {
+  getNextgenNetwork,
+  NEXTGEN_CORE_CONTRACT
+} from '@/nextgen/nextgen_constants';
 
 const logger = Logger.get('NEXTGEN_CORE_EVENTS');
 
@@ -90,12 +94,13 @@ export async function processLog(
   const previousOwner = parsedLog.args.previousOwner;
   const newOwner = parsedLog.args.newOwner;
 
-  const previousOwnerEns = await getEns(previousOwner);
-  const newOwnerEns = await getEns(newOwner);
-
   switch (parsedLog.name) {
-    case 'OwnershipTransferred':
-      if (equalIgnoreCase(NULL_ADDRESS, parsedLog.args.previousOwner)) {
+    case 'OwnershipTransferred': {
+      const previousOwnerEns = previousOwner
+        ? await findEnsForAddress(previousOwner)
+        : null;
+      const newOwnerEns = newOwner ? await findEnsForAddress(newOwner) : null;
+      if (equalIgnoreCase(NULL_ADDRESS, previousOwner)) {
         return {
           id: 0,
           title: 'NextGen Contract Deployed',
@@ -116,6 +121,7 @@ export async function processLog(
           description: `Ownership Transferred from ${fromDescription} to ${toDescription}`
         };
       }
+    }
     case 'Transfer':
       return await processTransfer(entityManager, log, parsedLog);
   }
@@ -135,7 +141,6 @@ async function processTransfer(
 }> {
   const network = getNextgenNetwork();
   if (!alchemy) {
-    const network = getNextgenNetwork();
     alchemy = getAlchemyInstance(network);
   }
 
