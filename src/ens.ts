@@ -20,6 +20,7 @@ import { Time } from '@/time';
 const logger = Logger.get('ENS');
 const ENS_DISCOVERY_MAX_RETRIES = 5;
 const ENS_DISCOVERY_RETRY_BASE_DELAY_MS = 250;
+const ENS_LOOKUP_CONCURRENCY = 10;
 
 export async function getPrediscoveredEnsNames(
   walletAddresses: string[]
@@ -79,8 +80,17 @@ export async function findNewEns(wallets: string[]) {
 
   const finalEns: ENS[] = [];
 
-  await Promise.all(
-    wallets.map(async (w) => {
+  const concurrency = Math.max(1, Math.min(ENS_LOOKUP_CONCURRENCY, wallets.length));
+  let nextIndex = 0;
+
+  const workers = Array.from({ length: concurrency }, async () => {
+    while (true) {
+      const index = nextIndex++;
+      if (index >= wallets.length) {
+        return;
+      }
+
+      const w = wallets[index];
       try {
         const display = await findEnsForAddress(w);
         const newEns: ENS = {
@@ -98,8 +108,10 @@ export async function findNewEns(wallets: string[]) {
         };
         finalEns.push(newEns);
       }
-    })
-  );
+    }
+  });
+
+  await Promise.all(workers);
 
   logger.info(`[FOUND ${finalEns.length} NEW ENS]`);
 

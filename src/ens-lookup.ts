@@ -61,58 +61,61 @@ async function findEnsViaUniversalResolver(
   }
 }
 
+async function lookupAddressWithProvider(
+  provider: JsonRpcProvider,
+  providerName: string,
+  address: string
+): Promise<string | null> {
+  try {
+    const ens = await provider.lookupAddress(address);
+    if (ens) {
+      logger.debug(
+        `[ENS LOOKUP HIT] [PROVIDER ${providerName}] [ADDRESS ${address}] [ENS ${ens}]`
+      );
+    }
+    return ens;
+  } catch (error: any) {
+    logger.debug(
+      `[ENS LOOKUP FAILED] [PROVIDER ${providerName}] [ADDRESS ${address}] [ERROR ${error}]`
+    );
+    return null;
+  }
+}
+
+async function lookupPrimaryEnsNameVia6529(
+  address: string
+): Promise<string | null> {
+  let rpc6529Provider: JsonRpcProvider;
+
+  try {
+    rpc6529Provider = get6529RpcProvider();
+  } catch (error: any) {
+    logger.warn(
+      `[ENS LOOKUP PROVIDER INIT FAILED] [PROVIDER 6529] [ADDRESS ${address}] [ERROR ${error}]`
+    );
+    return null;
+  }
+
+  const ens = await lookupAddressWithProvider(rpc6529Provider, '6529', address);
+  if (ens) {
+    return ens;
+  }
+
+  return await findEnsViaUniversalResolver(rpc6529Provider, address);
+}
+
 export async function lookupPrimaryEnsName(
   address: string
 ): Promise<string | null> {
-  let ens: string | null = null;
-
   const alchemyProvider = getAlchemyProviderOrNull();
   if (alchemyProvider) {
-    try {
-      ens = await alchemyProvider.lookupAddress(address);
-      if (ens) {
-        logger.debug(
-          `[ENS LOOKUP HIT] [PROVIDER alchemy] [ADDRESS ${address}] [ENS ${ens}]`
-        );
-      }
-    } catch (error: any) {
-      logger.debug(
-        `[ENS LOOKUP FAILED] [PROVIDER alchemy] [ADDRESS ${address}] [ERROR ${error}]`
-      );
-      ens = null;
+    const ens = await lookupAddressWithProvider(alchemyProvider, 'alchemy', address);
+    if (ens) {
+      return ens;
     }
   }
 
-  if (!ens) {
-    let rpc6529Provider: JsonRpcProvider | null = null;
-    try {
-      rpc6529Provider = get6529RpcProvider();
-      ens = await rpc6529Provider.lookupAddress(address);
-      if (ens) {
-        logger.debug(
-          `[ENS LOOKUP HIT] [PROVIDER 6529] [ADDRESS ${address}] [ENS ${ens}]`
-        );
-      }
-    } catch (error: any) {
-      logger.debug(
-        `[ENS LOOKUP FAILED] [PROVIDER 6529] [ADDRESS ${address}] [ERROR ${error}]`
-      );
-      ens = null;
-    }
-
-    if (!ens && rpc6529Provider) {
-      try {
-        ens = await findEnsViaUniversalResolver(rpc6529Provider, address);
-      } catch (error: any) {
-        logger.debug(
-          `[ENS LOOKUP FAILED] [PROVIDER universal-resolver] [ADDRESS ${address}] [ERROR ${error}]`
-        );
-        ens = null;
-      }
-    }
-  }
-
-  return ens;
+  return await lookupPrimaryEnsNameVia6529(address);
 }
 
 export async function findEnsForAddress(

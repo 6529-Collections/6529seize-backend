@@ -100,7 +100,7 @@ export async function processLog(
         ? await findEnsForAddress(previousOwner)
         : null;
       const newOwnerEns = newOwner ? await findEnsForAddress(newOwner) : null;
-      if (equalIgnoreCase(NULL_ADDRESS, parsedLog.args.previousOwner)) {
+      if (equalIgnoreCase(NULL_ADDRESS, previousOwner)) {
         return {
           id: 0,
           title: 'NextGen Contract Deployed',
@@ -141,7 +141,6 @@ async function processTransfer(
 }> {
   const network = getNextgenNetwork();
   if (!alchemy) {
-    const network = getNextgenNetwork();
     alchemy = getAlchemyInstance(network);
   }
 
