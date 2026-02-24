@@ -4,12 +4,19 @@ import {
   DISTRIBUTION_PHOTO_TABLE,
   DISTRIBUTION_TABLE
 } from '@/constants';
+import {
+  DISTRIBUTION_AUTOMATIC_AIRDROP_PHASES,
+  DISTRIBUTION_PHASE_AIRDROP,
+  DISTRIBUTION_PHASE_AIRDROP_ARTIST,
+  DISTRIBUTION_PHASE_AIRDROP_TEAM
+} from '@/airdrop-phases';
 import { fetchPaginated } from '../../../db-api';
 import { sqlExecutor } from '../../../sql-executor';
 import { PaginatedResponse } from '../api-constants';
 import { constructFilters, getSearchFilters } from '../api-helpers';
 import { DistributionNormalized } from '../generated/models/DistributionNormalized';
 import { DistributionOverview } from '../generated/models/DistributionOverview';
+import { PhaseAirdrop } from '../generated/models/PhaseAirdrop';
 import { checkIsNormalized } from './api.distributions.service';
 
 export async function fetchDistributionPhases(
@@ -120,10 +127,39 @@ export async function fetchDistributionAirdrops(
   cardId: number
 ): Promise<{ wallet: string; count: number }[]> {
   return sqlExecutor.execute<{ wallet: string; count: number }>(
-    `SELECT wallet, count FROM ${DISTRIBUTION_TABLE} WHERE contract = :contract AND card_id = :cardId AND phase = 'Airdrop' ORDER BY wallet ASC`,
+    `SELECT wallet, COALESCE(SUM(count), 0) AS count
+     FROM ${DISTRIBUTION_TABLE}
+     WHERE contract = :contract
+       AND card_id = :cardId
+       AND phase IN (:automaticAirdropPhases)
+     GROUP BY wallet
+     ORDER BY wallet ASC`,
     {
       contract: contract.toLowerCase(),
-      cardId
+      cardId,
+      automaticAirdropPhases: [...DISTRIBUTION_AUTOMATIC_AIRDROP_PHASES]
+    }
+  );
+}
+
+export async function fetchDistributionPhaseAirdrops(
+  contract: string,
+  cardId: number,
+  phase:
+    | typeof DISTRIBUTION_PHASE_AIRDROP_ARTIST
+    | typeof DISTRIBUTION_PHASE_AIRDROP_TEAM
+): Promise<PhaseAirdrop[]> {
+  return sqlExecutor.execute<PhaseAirdrop>(
+    `SELECT wallet, count as amount 
+     FROM ${DISTRIBUTION_TABLE}
+     WHERE contract = :contract
+       AND card_id = :cardId
+       AND phase = :phase
+     ORDER BY count DESC, wallet ASC`,
+    {
+      contract: contract.toLowerCase(),
+      cardId,
+      phase
     }
   );
 }
@@ -142,11 +178,14 @@ export async function fetchDistributionsByPhase(
   return sqlExecutor.execute<PhaseDistributionData>(
     `SELECT phase, wallet, count_airdrop, count_allowlist 
      FROM ${DISTRIBUTION_TABLE} 
-     WHERE contract = :contract AND card_id = :cardId AND phase != 'Airdrop'
+     WHERE contract = :contract
+       AND card_id = :cardId
+       AND phase NOT IN (:automaticAirdropPhases)
      ORDER BY phase ASC, wallet ASC`,
     {
       contract: contract.toLowerCase(),
-      cardId
+      cardId,
+      automaticAirdropPhases: [...DISTRIBUTION_AUTOMATIC_AIRDROP_PHASES]
     }
   );
 }
@@ -181,10 +220,15 @@ export async function fetchDistributionOverview(
     addresses_count: number;
     total_count: number;
   }>(
-    `SELECT COUNT(DISTINCT wallet) as addresses_count, COALESCE(SUM(count), 0) as total_count FROM ${DISTRIBUTION_TABLE} WHERE contract = :contract AND card_id = :cardId AND phase = 'Airdrop'`,
+    `SELECT COUNT(DISTINCT wallet) as addresses_count, COALESCE(SUM(count), 0) as total_count
+     FROM ${DISTRIBUTION_TABLE}
+     WHERE contract = :contract
+       AND card_id = :cardId
+       AND phase IN (:automaticAirdropPhases)`,
     {
       contract: contractLower,
-      cardId
+      cardId,
+      automaticAirdropPhases: [...DISTRIBUTION_AUTOMATIC_AIRDROP_PHASES]
     }
   );
   const automatic_airdrops_addresses =
@@ -305,13 +349,15 @@ export interface DistributionInsert {
 export async function deleteAirdropDistributions(
   contract: string,
   cardId: number,
-  wrappedConnection?: any
+  wrappedConnection?: any,
+  phase: string = DISTRIBUTION_PHASE_AIRDROP
 ): Promise<void> {
   await sqlExecutor.execute(
-    `DELETE FROM ${DISTRIBUTION_TABLE} WHERE contract = :contract AND card_id = :cardId AND phase = 'Airdrop'`,
+    `DELETE FROM ${DISTRIBUTION_TABLE} WHERE contract = :contract AND card_id = :cardId AND phase = :phase`,
     {
       contract: contract.toLowerCase(),
-      cardId
+      cardId,
+      phase
     },
     wrappedConnection ? { wrappedConnection } : {}
   );

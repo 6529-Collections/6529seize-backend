@@ -1,0 +1,114 @@
+service: claimsBuilder
+
+package:
+  artifact: dist/index.zip
+
+plugins:
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs22.x
+  memorySize: 1024
+  timeout: 900
+  architecture: arm64
+  logRetentionInDays: 60
+
+functions:
+  claimsBuilder:
+    handler: index.handler
+    name: claimsBuilder
+    description: ${env:VERSION_DESCRIPTION}
+    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    reservedConcurrency: 1
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt: [ClaimsBuilderQueue, Arn]
+          batchSize: 1
+    vpc:
+      securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
+      subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
+    environment:
+      SENTRY_DSN: ${env:SENTRY_DSN}
+      SENTRY_ENVIRONMENT: 'claimsBuilder_${opt:stage, self:provider.stage}'
+
+resources:
+  Resources:
+    ClaimsBuilderTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: claims-builder
+
+    ClaimsBuilderQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: claims-builder
+        VisibilityTimeout: 930
+        RedrivePolicy:
+          deadLetterTargetArn:
+            Fn::GetAtt: [ClaimsBuilderDLQ, Arn]
+          maxReceiveCount: 10
+
+    ClaimsBuilderDLQ:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: claims-builder-dlq
+
+    ClaimsBuilderSubscription:
+      Type: AWS::SNS::Subscription
+      Properties:
+        TopicArn: !Ref ClaimsBuilderTopic
+        Protocol: sqs
+        Endpoint: !GetAtt
+          - ClaimsBuilderQueue
+          - Arn
+        RawMessageDelivery: true
+
+    ClaimsBuilderQueuePolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+          - Ref: ClaimsBuilderQueue
+        PolicyDocument:
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: sns.amazonaws.com
+              Action:
+                - sqs:SendMessage
+              Resource:
+                - !GetAtt ClaimsBuilderQueue.Arn
+              Condition:
+                ArnEquals:
+                  aws:SourceArn: !Ref ClaimsBuilderTopic
+
+    ClaimsBuilderOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      Properties:
+        LogGroupName: /aws/lambda/claimsBuilder
+        FilterPattern: 'Runtime.OutOfMemory'
+        MetricTransformations:
+          - MetricNamespace: 'Lambda/OOM'
+            MetricName: 'claimsBuilder_OOMErrorCount'
+            MetricValue: '1'
+            DefaultValue: 0
+
+    ClaimsBuilderOOMAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: ClaimsBuilderOOMFilter
+      Properties:
+        AlarmName: !Sub '${AWS::StackName}-claimsBuilder-OOM'
+        AlarmDescription: !Sub 'Lambda claimsBuilder OutOfMemory in ${AWS::Region}'
+        Namespace: 'Lambda/OOM'
+        MetricName: 'claimsBuilder_OOMErrorCount'
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}

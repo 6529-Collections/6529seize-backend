@@ -75,22 +75,26 @@ function getTokenPath(contract: string, tokenId: number, format: string) {
 function getAnimationPaths(
   contract: string,
   tokenId: number,
+  originalAnimationUrl: string | undefined,
   animationDetails: any
 ) {
   const parsed =
     typeof animationDetails === 'string'
       ? JSON.parse(animationDetails)
       : animationDetails;
-  if (!parsed) return {};
-  const ext = parsed.format;
+  const ext = parsed?.format;
   const base = `${contract}/${tokenId}.${ext}`;
   if (ext === 'HTML') {
     return { animation: `${NFT_HTML_LINK}${base}` };
-  } else if (['MP4', 'MOV'].includes(ext)) {
+  }
+  if (['MP4', 'MOV'].includes(ext)) {
     return {
       animation: `${NFT_VIDEO_LINK}${base}`,
       compressedAnimation: `${NFT_VIDEO_LINK}${contract}/scaledx750/${tokenId}.${ext}`
     };
+  }
+  if (originalAnimationUrl && isValidUrl(originalAnimationUrl)) {
+    return { animation: originalAnimationUrl };
   }
   return {};
 }
@@ -366,6 +370,7 @@ async function buildBaseNft(
   const { animation, compressedAnimation } = getAnimationPaths(
     contract,
     id,
+    metadata.animation ?? metadata.animation_url,
     metadata.animation_details
   );
 
@@ -428,12 +433,14 @@ async function buildBaseNft(
 }
 
 type MediaFormat = 'WEBP' | 'GIF' | 'PNG' | 'JPG';
-type AnimFormat = 'HTML' | 'MP4' | 'MOV';
+type AnimFormat = 'HTML' | 'MP4' | 'MOV' | 'GLB';
 
 type MetaAttr = { trait_type?: string; value?: string | number | boolean };
 type MetaObject = {
   image_details?: { format?: MediaFormat };
   animation_details?: { format?: AnimFormat } | string | null;
+  animation?: string;
+  animation_url?: string;
   attributes?: MetaAttr[];
   name?: string;
   description?: string;
@@ -480,6 +487,7 @@ function rehydrateFromMetadata(entry: { nft: NFT | LabNFT; changed: boolean }) {
   const { animation, compressedAnimation } = getAnimationPaths(
     nft.contract,
     nft.id,
+    metadata.animation ?? metadata.animation_url,
     anim
   );
 

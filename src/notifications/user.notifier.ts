@@ -1,4 +1,4 @@
-import { seizeSettings } from '../api-serverless/src/api-constants';
+import { seizeSettings } from '@/api/seize-settings';
 import { identitySubscriptionsDb } from '../api-serverless/src/identity-subscriptions/identity-subscriptions.db';
 import { IdentityNotificationCause } from '../entities/IIdentityNotification';
 import { RequestContext } from '../request.context';

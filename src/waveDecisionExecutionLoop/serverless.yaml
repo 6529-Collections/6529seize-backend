@@ -34,6 +34,7 @@ functions:
     environment:
       SENTRY_DSN: ${env:SENTRY_DSN}
       SENTRY_ENVIRONMENT: 'waveDecisionExecutionLoop_${opt:stage, self:provider.stage}'
+      CLAIMS_BUILDER_SNS: arn:aws:sns:${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):region}:987989283142:claims-builder
       
 resources:
   Resources:

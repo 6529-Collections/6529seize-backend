@@ -4,7 +4,7 @@ import { invalidateCloudFront } from '../../../cloudfront';
 import { CLOUDFRONT_DISTRIBUTION } from '@/constants';
 import { BadRequestException, ForbiddenException } from '../../../exceptions';
 import { numbers } from '../../../numbers';
-import { evictKeyFromRedisCache } from '../../../redis';
+import { evictAllKeysMatchingPatternFromRedisCache } from '../../../redis';
 import {
   getCacheKeyPatternForPath,
   getPage,
@@ -37,6 +37,12 @@ import {
 } from './api.distribution_photos.db';
 
 const router = asyncRouter();
+
+async function evictCacheForPath(path: string) {
+  await evictAllKeysMatchingPatternFromRedisCache(
+    getCacheKeyPatternForPath(`${path}*`)
+  );
+}
 
 router.get(
   `/:contract/:nft_id`,
@@ -234,10 +240,8 @@ router.post(
     const invalidationPath = `/distribution/${process.env.NODE_ENV}/${contract}/${nftId}/*`;
     await invalidateCloudFront(CLOUDFRONT_DISTRIBUTION, [invalidationPath]);
 
-    const overviewCacheKey = getCacheKeyPatternForPath(
-      `/api/distributions/${contract}/${nftId}/overview`
-    );
-    await evictKeyFromRedisCache(overviewCacheKey);
+    await evictCacheForPath(`/api/distribution_photos/${contract}/${nftId}`);
+    await evictCacheForPath(`/api/distributions/${contract}/${nftId}/overview`);
 
     return res.json({
       success: true,

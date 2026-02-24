@@ -12,3 +12,4 @@ src/*/.serverless
 src/*/.serverless-offline
 *.zip
 *.ignore
+/temp
