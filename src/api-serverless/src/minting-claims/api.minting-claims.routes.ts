@@ -595,14 +595,8 @@ router.get(
         merkleRoot,
         requestedAddress
       );
-      if (proofs === null) {
-        return res.status(404).json({
-          error: 'No proofs found for the given merkle_root and address'
-        });
-      }
-
       const response: MintingClaimsProofsResponse = {
-        proofs: proofs.map((proof) => ({
+        proofs: (proofs ?? []).map((proof) => ({
           merkle_proof: proof.merkleProof,
           value: proof.value
         }))

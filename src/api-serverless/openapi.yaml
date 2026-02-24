@@ -2194,7 +2194,7 @@ paths:
         "400":
           description: Invalid request (missing or invalid parameters)
         "404":
-          description: No proofs found for the given contract/card/merkle_root and address
+          description: No merkle root found for the given contract/card/merkle_root
   /minting-claims/{contract}/{card_id}/roots:
     get:
       tags:
