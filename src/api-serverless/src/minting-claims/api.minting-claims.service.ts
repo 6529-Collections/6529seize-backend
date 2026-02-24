@@ -260,6 +260,11 @@ export async function buildUpdatesForClaimPatch(
     shouldResetSyncState = true;
   }
 
+  if (body.external_url !== undefined) {
+    updates.external_url = body.external_url;
+    shouldResetSyncState = true;
+  }
+
   if (await applyAttributesFromBody(body, updates, isMemesContract)) {
     shouldResetSyncState = true;
   }

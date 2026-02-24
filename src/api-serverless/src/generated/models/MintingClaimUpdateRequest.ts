@@ -18,6 +18,7 @@ export class MintingClaimUpdateRequest {
     'description'?: string;
     'name'?: string;
     'image_url'?: string | null;
+    'external_url'?: string | null;
     'attributes'?: Array<MintingClaimAttribute>;
     'animation_url'?: string | null;
 
@@ -45,6 +46,12 @@ export class MintingClaimUpdateRequest {
         {
             "name": "image_url",
             "baseName": "image_url",
+            "type": "string",
+            "format": ""
+        },
+        {
+            "name": "external_url",
+            "baseName": "external_url",
             "type": "string",
             "format": ""
         },

@@ -78,11 +78,11 @@ export class MintingClaimsDb extends LazyDbAccessCompatibleService {
     ctx?.timer?.start(`${this.constructor.name}->createMintingClaim`);
     try {
       const sql = `
-      INSERT INTO ${MINTING_CLAIMS_TABLE} (drop_id, contract, claim_id, image_location, animation_location, metadata_location, edition_size, description, name, image_url, attributes, image_details, animation_url, animation_details)
+      INSERT INTO ${MINTING_CLAIMS_TABLE} (drop_id, contract, claim_id, image_location, animation_location, metadata_location, edition_size, description, name, image_url, external_url, attributes, image_details, animation_url, animation_details)
       VALUES ${rows
         .map(
           (r) =>
-            `(${mysql.escape(r.drop_id)}, ${mysql.escape(r.contract)}, ${mysql.escape(r.claim_id)}, ${mysql.escape(r.image_location)}, ${mysql.escape(r.animation_location)}, ${mysql.escape(r.metadata_location)}, NULL, ${mysql.escape(r.description)}, ${mysql.escape(r.name)}, ${mysql.escape(r.image_url)}, ${mysql.escape(JSON.stringify(r.attributes))}, ${r.image_details ? mysql.escape(JSON.stringify(r.image_details)) : mysql.escape(null)}, ${mysql.escape(r.animation_url)}, ${r.animation_details ? mysql.escape(JSON.stringify(r.animation_details)) : mysql.escape(null)})`
+            `(${mysql.escape(r.drop_id)}, ${mysql.escape(r.contract)}, ${mysql.escape(r.claim_id)}, ${mysql.escape(r.image_location)}, ${mysql.escape(r.animation_location)}, ${mysql.escape(r.metadata_location)}, NULL, ${mysql.escape(r.description)}, ${mysql.escape(r.name)}, ${mysql.escape(r.image_url)}, ${mysql.escape(r.external_url)}, ${mysql.escape(JSON.stringify(r.attributes))}, ${r.image_details ? mysql.escape(JSON.stringify(r.image_details)) : mysql.escape(null)}, ${mysql.escape(r.animation_url)}, ${r.animation_details ? mysql.escape(JSON.stringify(r.animation_details)) : mysql.escape(null)})`
         )
         .join(', ')}
     `;

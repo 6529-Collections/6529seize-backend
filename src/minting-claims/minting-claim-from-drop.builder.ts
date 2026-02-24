@@ -4,6 +4,7 @@ import type {
   MintingClaimAttribute,
   MintingClaimImageDetails
 } from '@/entities/IMintingClaim';
+import { buildExternalUrl } from '@/minting-claims/external-url';
 
 const METADATA_KEYS_SKIP = new Set([
   'title',
@@ -187,6 +188,7 @@ export type MintingClaimRowInput = {
   description: string;
   name: string;
   image_url: string | null;
+  external_url: string | null;
   attributes: MintingClaimAttribute[];
   image_details: MintingClaimImageDetails | null;
   animation_url: string | null;
@@ -239,6 +241,7 @@ export function buildMintingClaimRowFromDrop(
       description: description || ' ',
       name: title || ' ',
       image_url: null,
+      external_url: buildExternalUrl(contract, claimId),
       attributes,
       image_details: null,
       animation_url: null,
@@ -296,6 +299,7 @@ export function buildMintingClaimRowFromDrop(
     description: description || ' ',
     name: title || ' ',
     image_url,
+    external_url: buildExternalUrl(contract, claimId),
     attributes,
     image_details,
     animation_url,

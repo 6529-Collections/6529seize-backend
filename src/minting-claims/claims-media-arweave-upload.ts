@@ -4,10 +4,10 @@ import {
   fetchMemeIdByMemeName
 } from '@/api/minting-claims/api.minting-claims.db';
 import { arweaveFileUploader } from '@/arweave';
-import { MEMES_CONTRACT } from '@/constants';
 import { BadRequestException } from '@/exceptions';
 import { fetchPublicUrlToBuffer } from '@/http/safe-fetch';
 import { Logger } from '@/logging';
+import { isMemesContract } from '@/minting-claims/external-url';
 import { createHash } from 'node:crypto';
 
 const logger = Logger.get('claims-media-arweave-upload');
@@ -16,7 +16,6 @@ export const MIN_EDITION_SIZE = 300;
 const FETCH_MEDIA_TIMEOUT_MS = 60_000;
 const MAX_ARWEAVE_UPLOAD_BYTES = 100 * 1024 * 1024;
 const ARWEAVE_METADATA_CREATED_BY = '6529 Collections';
-const ARWEAVE_METADATA_EXTERNAL_URL_BASE = 'https://6529.io/the-memes';
 const ARWEAVE_POINTS_TRAIT_PREFIX = 'Points - ';
 const TYPE_MEME_TRAIT = 'Type - Meme';
 const TYPE_SEASON_TRAIT = 'Type - Season';
@@ -338,10 +337,6 @@ function extractSeasonFromAttributes(attributes: unknown): number | null {
   return null;
 }
 
-function isMemesContract(contract: string): boolean {
-  return contract.toLowerCase() === MEMES_CONTRACT.toLowerCase();
-}
-
 function attributesWithTypeTraits(
   rawAttributes: unknown[],
   typeMemeValue: number,
@@ -414,8 +409,9 @@ async function uploadClaimMetadataToArweave(
     name: claim.name,
     attributes
   };
-  if (isMemesContract(contract)) {
-    metadata.external_url = `${ARWEAVE_METADATA_EXTERNAL_URL_BASE}/${claim.claim_id}`;
+  const externalUrl = claim.external_url?.trim();
+  if (externalUrl) {
+    metadata.external_url = externalUrl;
   }
   if (imageDetails != null) metadata.image_details = imageDetails;
   metadata.image = imageLocation;

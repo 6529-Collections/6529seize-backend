@@ -1,3 +1,4 @@
+import { getCacheKeyPatternForPath } from '@/api/api-helpers';
 import { ApiResponse } from '@/api/api-response';
 import { asyncRouter } from '@/api/async.router';
 import {
@@ -15,8 +16,8 @@ import type { MintingClaimsRootItem } from '@/api/generated/models/MintingClaims
 import {
   doesMintingMerkleRootExistForCard,
   fetchAllMintingMerkleProofsForRoot,
-  fetchMintingAllowlists,
   fetchMintingAirdrops,
+  fetchMintingAllowlists,
   fetchMintingClaimByClaimId,
   fetchMintingClaimsPage,
   fetchMintingClaimsTotalCount,
@@ -31,15 +32,14 @@ import { enqueueClaimMediaArweaveUpload } from '@/api/minting-claims/claims-medi
 import { cacheRequest } from '@/api/request-cache';
 import { getDistributionAdminWallets } from '@/api/seize-settings';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
-import { MEMES_CONTRACT } from '@/constants';
 import { CustomApiCompliantException, ForbiddenException } from '@/exceptions';
 import { Logger } from '@/logging';
 import {
   MIN_EDITION_SIZE,
   validateMintingClaimReadyForArweaveUpload
 } from '@/minting-claims/claims-media-arweave-upload';
+import { isMemesContract } from '@/minting-claims/external-url';
 import { numbers } from '@/numbers';
-import { getCacheKeyPatternForPath } from '@/api/api-helpers';
 import { evictAllKeysMatchingPatternFromRedisCache } from '@/redis';
 import { equalIgnoreCase } from '@/strings';
 import { NextFunction, Request, Response } from 'express';
@@ -69,10 +69,6 @@ function safeParseJson<T>(raw: string | null, fallback: T, label: string): T {
     });
     return fallback;
   }
-}
-
-function isMemesContract(contract: string): boolean {
-  return equalIgnoreCase(contract, MEMES_CONTRACT);
 }
 
 async function evictMintingClaimCache(
@@ -116,6 +112,7 @@ function rowToMintingClaim(row: MintingClaimRow): MintingClaim {
     description: row.description,
     name: row.name,
     image_url: row.image_url ?? undefined,
+    external_url: row.external_url ?? undefined,
     attributes: safeParseJson(row.attributes, [], 'attributes'),
     image_details: safeParseJson(row.image_details, undefined, 'image_details'),
     animation_url: row.animation_url ?? undefined,
@@ -321,6 +318,7 @@ const StrictMintingClaimUpdateRequestSchema = Joi.object({
   description: Joi.string().optional(),
   name: Joi.string().optional(),
   image_url: Joi.string().allow(null).optional(),
+  external_url: Joi.string().allow(null).optional(),
   attributes: Joi.array().items(MintingClaimAttributeSchema).optional(),
   animation_url: Joi.string().allow(null).optional()
 });
@@ -330,6 +328,7 @@ const RelaxedMintingClaimUpdateRequestSchema = Joi.object({
   description: Joi.string().allow('').optional(),
   name: Joi.string().allow('').optional(),
   image_url: Joi.string().allow(null, '').optional(),
+  external_url: Joi.string().allow(null, '').optional(),
   attributes: Joi.array().optional(),
   animation_url: Joi.string().allow(null, '').optional()
 }).unknown(true);

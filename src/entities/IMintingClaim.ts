@@ -79,6 +79,9 @@ export class MintingClaimEntity {
   @Column({ type: 'varchar', length: 1024, nullable: true })
   readonly image_url!: string | null;
 
+  @Column({ type: 'varchar', length: 1024, nullable: true })
+  readonly external_url!: string | null;
+
   @Column({ type: 'json' })
   readonly attributes!: MintingClaimAttribute[];
 
