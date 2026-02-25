@@ -432,11 +432,13 @@ export class IdentityFetcher {
       const members = [...membersByHandles, ...profilesByEnsNames]
         .reduce(
           (acc, prof) => {
-            const profDisplay = prof.handle ?? prof.ens ?? prof.primary_address;
+            const profKey =
+              prof.consolidation_key ?? prof.profile_id ?? prof.primary_address;
             if (
               !acc.find((it) => {
-                const itDisplay = it.handle ?? it.ens ?? it.primary_address;
-                return itDisplay === profDisplay;
+                const itKey =
+                  it.consolidation_key ?? it.profile_id ?? it.primary_address;
+                return itKey === profKey;
               })
             ) {
               acc.push(prof);
@@ -480,11 +482,10 @@ export class IdentityFetcher {
     if (leftRank.ensMatch !== rightRank.ensMatch) {
       return rightRank.ensMatch - leftRank.ensMatch;
     }
-    if (leftRank.handleIndex !== rightRank.handleIndex) {
-      return rightRank.handleIndex - leftRank.handleIndex;
-    }
-    if (leftRank.ensIndex !== rightRank.ensIndex) {
-      return rightRank.ensIndex - leftRank.ensIndex;
+    const leftBestIndex = Math.max(leftRank.handleIndex, leftRank.ensIndex);
+    const rightBestIndex = Math.max(rightRank.handleIndex, rightRank.ensIndex);
+    if (leftBestIndex !== rightBestIndex) {
+      return rightBestIndex - leftBestIndex;
     }
     if (leftRank.handleLength !== rightRank.handleLength) {
       return rightRank.handleLength - leftRank.handleLength;
@@ -499,22 +500,23 @@ export class IdentityFetcher {
     member: IdentityEntity & { ens?: string | null },
     param: string
   ) {
+    const paramNorm = param.toLowerCase();
     const normalisedHandle =
       member.normalised_handle ?? member.handle?.toLowerCase() ?? null;
     const normalisedEns = member.ens?.toLowerCase() ?? null;
 
     const handleMatch = this.getSearchFieldMatchStrength(
       normalisedHandle,
-      param
+      paramNorm
     );
-    const ensMatch = this.getSearchFieldMatchStrength(normalisedEns, param);
+    const ensMatch = this.getSearchFieldMatchStrength(normalisedEns, paramNorm);
     const handleIndex =
-      normalisedHandle?.includes(param) === true
-        ? 1000 - normalisedHandle.indexOf(param)
+      normalisedHandle?.includes(paramNorm) === true
+        ? 1000 - normalisedHandle.indexOf(paramNorm)
         : 0;
     const ensIndex =
-      normalisedEns?.includes(param) === true
-        ? 1000 - normalisedEns.indexOf(param)
+      normalisedEns?.includes(paramNorm) === true
+        ? 1000 - normalisedEns.indexOf(paramNorm)
         : 0;
     const handleLength = normalisedHandle ? 1000 - normalisedHandle.length : 0;
     const hasNonAutoHandle =
