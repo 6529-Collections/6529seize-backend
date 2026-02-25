@@ -429,31 +429,29 @@ export class IdentityFetcher {
           onlyProfileOwners,
           limit: limit * 3
         });
-      const members = [...membersByHandles, ...profilesByEnsNames]
-        .reduce(
-          (acc, prof) => {
-            const profDisplay = prof.handle ?? prof.ens ?? prof.primary_address;
-            if (
-              !acc.find((it) => {
-                const itDisplay = it.handle ?? it.ens ?? it.primary_address;
-                return itDisplay === profDisplay;
-              })
-            ) {
-              acc.push(prof);
-            }
-            return acc;
-          },
-          [] as (IdentityEntity & { ens: string })[]
+      const dedupedMembers: (IdentityEntity & { ens?: string | null })[] = [];
+      const seenProfKeys = new Set<string>();
+      for (const prof of [...membersByHandles, ...profilesByEnsNames]) {
+        const profKey = String(
+          prof.consolidation_key ?? prof.profile_id ?? prof.primary_address
+        );
+        if (seenProfKeys.has(profKey)) {
+          continue;
+        }
+        seenProfKeys.add(profKey);
+        dedupedMembers.push(prof);
+      }
+
+      const members = dedupedMembers
+        .map((member) => ({
+          member,
+          rank: this.getCommunityMemberSearchRank(member, param)
+        }))
+        .sort((left, right) =>
+          this.compareCommunityMemberSearchMatches(left, right)
         )
-        .sort((a, d) => {
-          if (a.handle && !d.handle) {
-            return -1;
-          } else if (!a.handle && d.handle) {
-            return 1;
-          }
-          return d.tdh - a.tdh;
-        })
-        .slice(0, limit);
+        .slice(0, limit)
+        .map(({ member }) => member);
       return members.map((member) => {
         return {
           profile_id: member.profile_id,
@@ -469,6 +467,94 @@ export class IdentityFetcher {
         };
       });
     }
+  }
+
+  private compareCommunityMemberSearchMatches(
+    left: {
+      member: IdentityEntity & { ens?: string | null };
+      rank: ReturnType<IdentityFetcher['getCommunityMemberSearchRank']>;
+    },
+    right: {
+      member: IdentityEntity & { ens?: string | null };
+      rank: ReturnType<IdentityFetcher['getCommunityMemberSearchRank']>;
+    }
+  ): number {
+    const leftRank = left.rank;
+    const rightRank = right.rank;
+
+    if (leftRank.handleMatch !== rightRank.handleMatch) {
+      return rightRank.handleMatch - leftRank.handleMatch;
+    }
+    if (leftRank.ensMatch !== rightRank.ensMatch) {
+      return rightRank.ensMatch - leftRank.ensMatch;
+    }
+    const leftBestIndex = Math.max(leftRank.handleIndex, leftRank.ensIndex);
+    const rightBestIndex = Math.max(rightRank.handleIndex, rightRank.ensIndex);
+    if (leftBestIndex !== rightBestIndex) {
+      return rightBestIndex - leftBestIndex;
+    }
+    if (leftRank.handleLength !== rightRank.handleLength) {
+      return rightRank.handleLength - leftRank.handleLength;
+    }
+    if (leftRank.hasNonAutoHandle !== rightRank.hasNonAutoHandle) {
+      return rightRank.hasNonAutoHandle - leftRank.hasNonAutoHandle;
+    }
+    return Number(right.member.tdh) - Number(left.member.tdh);
+  }
+
+  private getCommunityMemberSearchRank(
+    member: IdentityEntity & { ens?: string | null },
+    param: string
+  ) {
+    const paramNorm = param.toLowerCase();
+    const normalisedHandle =
+      member.normalised_handle ?? member.handle?.toLowerCase() ?? null;
+    const normalisedEns = member.ens?.toLowerCase() ?? null;
+
+    const handleMatch = this.getSearchFieldMatchStrength(
+      normalisedHandle,
+      paramNorm
+    );
+    const ensMatch = this.getSearchFieldMatchStrength(normalisedEns, paramNorm);
+    const handleIndex =
+      normalisedHandle?.includes(paramNorm) === true
+        ? 1000 - normalisedHandle.indexOf(paramNorm)
+        : 0;
+    const ensIndex =
+      normalisedEns?.includes(paramNorm) === true
+        ? 1000 - normalisedEns.indexOf(paramNorm)
+        : 0;
+    const handleLength = normalisedHandle ? 1000 - normalisedHandle.length : 0;
+    const hasNonAutoHandle =
+      member.handle && !member.handle.toLowerCase().startsWith('id-0x') ? 1 : 0;
+
+    return {
+      handleMatch,
+      ensMatch,
+      handleIndex,
+      ensIndex,
+      handleLength,
+      hasNonAutoHandle
+    };
+  }
+
+  private getSearchFieldMatchStrength(
+    value: string | null,
+    query: string
+  ): number {
+    if (!value) {
+      return 0;
+    }
+    if (value === query) {
+      return 300;
+    }
+    if (value.startsWith(query)) {
+      return 200;
+    }
+    if (value.includes(query)) {
+      return 100;
+    }
+    return 0;
   }
 
   private async searchCommunityMemberByWallet(
