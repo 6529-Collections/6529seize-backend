@@ -70,6 +70,7 @@ class SuperRareAdapter implements PlatformAdapter {
     let saleAmount: bigint | undefined;
 
     let auctionCreator: string | undefined;
+    let auctionCreatedAt: bigint | undefined;
     let auctionStart: bigint | undefined;
     let auctionLength: bigint | undefined;
     let auctionCurrency: string | undefined;
@@ -98,18 +99,20 @@ class SuperRareAdapter implements PlatformAdapter {
     try {
       const res = await bazaar.getAuctionDetails(contract, BigInt(tokenId));
       const creator = String(res?.[0] ?? res?.creatorAddress ?? '');
+      const creationTime = BigInt(res?.[1] ?? res?.creationTime ?? 0);
       const startingTime = BigInt(res?.[2] ?? res?.startingTime ?? 0);
       const length = BigInt(res?.[3] ?? res?.lengthOfAuction ?? 0);
       const currency = String(res?.[4] ?? res?.currencyAddress ?? ZeroAddress);
       const minBid = BigInt(res?.[5] ?? res?.minimumBid ?? 0);
       if (
-        startingTime > BigInt(0) &&
+        creationTime > BigInt(0) &&
         length > BigInt(0) &&
-        minBid >= BigInt(0)
+        minBid > BigInt(0)
       ) {
         auctionCreator =
           creator && creator !== ZeroAddress ? creator : undefined;
-        auctionStart = startingTime;
+        auctionCreatedAt = creationTime;
+        auctionStart = startingTime > BigInt(0) ? startingTime : undefined;
         auctionLength = length;
         auctionCurrency = currency;
         auctionMinBid = minBid;
@@ -130,6 +133,7 @@ class SuperRareAdapter implements PlatformAdapter {
     // Interpret state
     let saleType: 'FIXED' | 'AUCTION' | 'NOT_FOR_SALE' | 'UNKNOWN';
     let price: { amount: string; currency: string } | undefined;
+    let reservePrice: { amount: string; currency: string } | undefined;
     let endsAt: string | undefined;
 
     if (saleAmount && saleCurrency) {
@@ -144,35 +148,48 @@ class SuperRareAdapter implements PlatformAdapter {
         };
       }
     } else if (
-      auctionStart &&
+      auctionCreatedAt &&
       auctionLength &&
       auctionCurrency &&
       auctionMinBid != null
     ) {
       saleType = 'AUCTION';
-      const effectiveAmount =
-        currentBidAmount && currentBidAmount > BigInt(0)
-          ? currentBidAmount
-          : auctionMinBid;
       if (auctionCurrency === ZeroAddress) {
+        const effectiveAmount =
+          currentBidAmount && currentBidAmount > BigInt(0)
+            ? currentBidAmount
+            : auctionMinBid;
         price = {
           amount: formatTokenAmount(effectiveAmount, 18),
           currency: 'ETH'
         };
+        reservePrice = {
+          amount: formatTokenAmount(auctionMinBid, 18),
+          currency: 'ETH'
+        };
       } else {
         const meta = await getErc20Meta(provider, auctionCurrency);
+        const effectiveAmount =
+          currentBidAmount && currentBidAmount > BigInt(0)
+            ? currentBidAmount
+            : auctionMinBid;
         price = {
           amount: formatTokenAmount(effectiveAmount, meta.decimals),
           currency: meta.symbol
         };
+        reservePrice = {
+          amount: formatTokenAmount(auctionMinBid, meta.decimals),
+          currency: meta.symbol
+        };
       }
-      endsAt = Time.seconds(
-        numbers.parseNumberOrThrow(auctionStart + auctionLength)
-      ).toIsoString();
+      if (auctionStart) {
+        endsAt = Time.seconds(
+          numbers.parseNumberOrThrow(auctionStart + auctionLength)
+        ).toIsoString();
+      }
     } else {
       saleType = 'NOT_FOR_SALE';
     }
-
     // --- Metadata
     const [tokenUri, collectionName] = await Promise.all([
       nft.tokenURI(BigInt(tokenId)),
@@ -220,6 +237,7 @@ class SuperRareAdapter implements PlatformAdapter {
             ? 'LISTED'
             : 'NOT_LISTED',
         price,
+        reservePrice,
         endsAt,
         cta: buildPrimaryAction(
           canonical.platform,
