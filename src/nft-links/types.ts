@@ -88,6 +88,10 @@ export interface NormalizedNftCard {
       amount: string;
       currency: string;
     };
+    reservePrice?: {
+      amount: string;
+      currency: string;
+    };
     endsAt?: string;
     cta?: {
       label: string;
