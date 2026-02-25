@@ -50,14 +50,15 @@ describe('consolidationTools.buildConsolidationKey – performance', () => {
     ).not.toThrow();
   });
 });
-
-/*describe('sd', () => {
+/*
+describe('sd', () => {
   it('daas', async () => {
     const urls = [
       //'https://manifold.xyz/@andrew-hooker/id/4098474224'
       //'https://www.transient.xyz/mint/duetumaeternum'
       //'https://www.transient.xyz/nfts/ethereum/0x5fb8afd38172d6802de095c09714066c97310adf/7' // works
-      'https://www.transient.xyz/mint/paulatim-deinde-subito' // works
+      // 'https://www.transient.xyz/mint/paulatim-deinde-subito' // works
+      'https://superrare.com/artwork/eth/0xb932a70A57673d89f4acfFBE830E8ed7f75Fb9e0/53829'
       //'https://foundation.app/mint/eth/0xda6791077610D97618D2F3fB489bfd3151784aCF/2', // LISTED 0.25 / ETH / works
       //'https://superrare.com/artwork/eth/0x961Af8Be78947928443b14eB86f18cE46E5C6ddC/6' // LISTED / 1.5 / ETH
       //'https://opensea.io/item/ethereum/0xbc4ca0eda7647a8ab7c2061c2e118a18a936f13d/1013', // FIXED / 7750000000000000000 / ETH

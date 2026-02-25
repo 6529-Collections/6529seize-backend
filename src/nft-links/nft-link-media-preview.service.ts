@@ -178,6 +178,29 @@ export class NftLinkMediaPreviewService {
 
     try {
       const downloaded = await this.downloadRemoteImage(prepared.sourceUrl);
+      const downloadedMimeType = this.extractMimeType(downloaded.contentType);
+      if (this.shouldTreatDownloadedMediaAsVideo(downloaded, prepared)) {
+        const uploaded = await this.uploadVideoSource(prepared, downloaded);
+        await this.nftLinksDb.updateMediaPreviewWithSuccess(
+          {
+            canonicalId: prepared.canonicalId,
+            kind: 'video',
+            sourceHash: prepared.sourceHash,
+            cardUrl: uploaded.url,
+            thumbUrl: uploaded.url,
+            smallUrl: uploaded.url,
+            width: null,
+            height: null,
+            mimeType: downloadedMimeType,
+            bytes: downloaded.bytes.length
+          },
+          ctx
+        );
+        this.logger.info(
+          `Stored NFT link video preview source for ${prepared.canonicalId} at ${uploaded.key}`
+        );
+        return;
+      }
       this.assertResponseLooksImage(downloaded);
       const rendered = await this.renderPreviewVariants(downloaded.bytes);
       const uploadedUrls = await this.uploadPreviewVariants(
@@ -300,6 +323,46 @@ export class NftLinkMediaPreviewService {
       });
     }
     return this.s3Client;
+  }
+
+  private async uploadVideoSource(
+    prepared: PreparedPreviewSource,
+    downloaded: DownloadedRemoteImage
+  ): Promise<{ url: string; key: string }> {
+    const bucket = env.getStringOrThrow('S3_BUCKET');
+    const fileServerUrl = this.trimTrailingSlashes(
+      env.getStringOrThrow('FILE_SERVER_URL')
+    );
+    const canonicalHash = createHash('sha256')
+      .update(prepared.canonicalId)
+      .digest('hex')
+      .slice(0, 24);
+    const environmentPrefix = this.getPreviewEnvironmentPrefix();
+    const mimeType = this.extractMimeType(downloaded.contentType);
+    const extension = this.resolveVideoFileExtension(
+      downloaded.finalUrl,
+      mimeType
+    );
+    const key = `drops/nftlinkvideos/${environmentPrefix}/${canonicalHash}/${prepared.sourceHash}.${extension}`;
+
+    await this.getS3Client().send(
+      new PutObjectCommand({
+        Bucket: bucket,
+        Key: key,
+        Body: downloaded.bytes,
+        ContentType: mimeType ?? undefined,
+        CacheControl: 'public, max-age=31536000, immutable',
+        Metadata: {
+          source_url_sha256: prepared.sourceHash,
+          source_host: this.safeHostTag(downloaded.finalUrl)
+        }
+      })
+    );
+
+    return {
+      key,
+      url: `${fileServerUrl}/${key}`
+    };
   }
 
   private async uploadPreviewVariants(
@@ -552,6 +615,97 @@ export class NftLinkMediaPreviewService {
     ) {
       throw new Error(`Remote media is not image-like (${mimeType})`);
     }
+  }
+
+  private shouldTreatDownloadedMediaAsVideo(
+    downloaded: DownloadedRemoteImage,
+    prepared: PreparedPreviewSource
+  ): boolean {
+    const mimeType = this.extractMimeType(downloaded.contentType);
+    if (mimeType?.startsWith('video/')) {
+      return true;
+    }
+    if (mimeType?.startsWith('image/')) {
+      return false;
+    }
+    if (
+      mimeType?.startsWith('text/html') ||
+      mimeType === 'application/json' ||
+      mimeType === 'text/plain'
+    ) {
+      return false;
+    }
+    if (prepared.sourceMediaKind === 'video') {
+      return true;
+    }
+    return this.isKnownVideoExtension(
+      this.extractPathExtension(downloaded.finalUrl)
+    );
+  }
+
+  private resolveVideoFileExtension(
+    urlString: string,
+    mimeType: string | null
+  ): string {
+    const mimeExtension = this.videoExtensionFromMimeType(mimeType);
+    if (mimeExtension) {
+      return mimeExtension;
+    }
+    const pathExtension = this.extractPathExtension(urlString);
+    if (this.isKnownVideoExtension(pathExtension)) {
+      return pathExtension;
+    }
+    return 'mp4';
+  }
+
+  private videoExtensionFromMimeType(mimeType: string | null): string | null {
+    switch (mimeType) {
+      case 'video/mp4':
+        return 'mp4';
+      case 'video/quicktime':
+        return 'mov';
+      case 'video/x-msvideo':
+        return 'avi';
+      case 'video/webm':
+        return 'webm';
+      default:
+        return null;
+    }
+  }
+
+  private extractPathExtension(urlString: string): string | null {
+    try {
+      const pathname = new URL(urlString).pathname ?? '';
+      const lastSegment = pathname.split('/').pop() ?? '';
+      const dotIndex = lastSegment.lastIndexOf('.');
+      if (dotIndex <= 0 || dotIndex === lastSegment.length - 1) {
+        return null;
+      }
+      return lastSegment.slice(dotIndex + 1).toLowerCase();
+    } catch {
+      return null;
+    }
+  }
+
+  private isSafeFileExtension(extension: string | null): extension is string {
+    return !!extension && /^[a-z0-9]{1,12}$/i.test(extension);
+  }
+
+  private isKnownVideoExtension(extension: string | null): extension is string {
+    if (!this.isSafeFileExtension(extension)) {
+      return false;
+    }
+    return [
+      'mp4',
+      'mov',
+      'avi',
+      'webm',
+      'm4v',
+      'mkv',
+      'ogv',
+      'mpeg',
+      'mpg'
+    ].includes(extension.toLowerCase());
   }
 
   private extractMimeType(contentType: string | null): string | null {
