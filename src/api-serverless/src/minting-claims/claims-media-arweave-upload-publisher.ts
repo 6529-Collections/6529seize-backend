@@ -1,16 +1,7 @@
-import { PublishCommand, SNSClient } from '@aws-sdk/client-sns';
 import { Logger } from '@/logging';
+import { sqs } from '@/sqs';
 
 const logger = Logger.get('claims-media-arweave-upload-publisher');
-
-let snsClient: SNSClient | null = null;
-
-function getSnsClient(): SNSClient {
-  if (snsClient === null) {
-    snsClient = new SNSClient({ region: process.env.AWS_REGION });
-  }
-  return snsClient;
-}
 
 export function isClaimsMediaArweaveUploadActivated(): boolean {
   return (
@@ -29,20 +20,17 @@ export async function enqueueClaimMediaArweaveUpload(
     );
     return false;
   }
-  const topicArn = process.env.CLAIMS_MEDIA_ARWEAVE_UPLOAD_SNS;
-  if (!topicArn) {
-    throw new Error('CLAIMS_MEDIA_ARWEAVE_UPLOAD_SNS is not configured');
+  const queueUrl = process.env.CLAIMS_MEDIA_ARWEAVE_UPLOAD_SQS_URL;
+  if (!queueUrl) {
+    throw new Error('CLAIMS_MEDIA_ARWEAVE_UPLOAD_SQS_URL is not configured');
   }
-  const message = JSON.stringify({
-    contract: contract.toLowerCase(),
-    claim_id: claimId
+  const response = await sqs.send({
+    queue: queueUrl,
+    message: {
+      contract: contract.toLowerCase(),
+      claim_id: claimId
+    }
   });
-  const response = await getSnsClient().send(
-    new PublishCommand({
-      TopicArn: topicArn,
-      Message: message
-    })
-  );
   logger.info(
     `Queued claim media Arweave upload for contract=${contract} claim_id=${claimId}, messageId=${response.MessageId}`
   );

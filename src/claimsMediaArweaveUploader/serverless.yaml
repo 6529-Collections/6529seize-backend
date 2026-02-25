@@ -41,11 +41,6 @@ resources:
         LogGroupName: /aws/lambda/claimsMediaArweaveUploader
         RetentionInDays: 60
 
-    ClaimsMediaArweaveUploadTopic:
-      Type: AWS::SNS::Topic
-      Properties:
-        TopicName: claims-media-arweave-upload
-
     ClaimsMediaArweaveUploadQueue:
       Type: AWS::SQS::Queue
       Properties:
@@ -61,16 +56,6 @@ resources:
       Properties:
         QueueName: claims-media-arweave-upload-dlq
 
-    ClaimsMediaArweaveUploadSubscription:
-      Type: AWS::SNS::Subscription
-      Properties:
-        TopicArn: !Ref ClaimsMediaArweaveUploadTopic
-        Protocol: sqs
-        Endpoint: !GetAtt
-          - ClaimsMediaArweaveUploadQueue
-          - Arn
-        RawMessageDelivery: true
-
     ClaimsMediaArweaveUploadQueuePolicy:
       Type: AWS::SQS::QueuePolicy
       Properties:
@@ -80,14 +65,11 @@ resources:
           Statement:
             - Effect: Allow
               Principal:
-                Service: sns.amazonaws.com
+                AWS: arn:aws:iam::987989283142:role/lambda-vpc-role
               Action:
                 - sqs:SendMessage
               Resource:
                 - !GetAtt ClaimsMediaArweaveUploadQueue.Arn
-              Condition:
-                ArnEquals:
-                  aws:SourceArn: !Ref ClaimsMediaArweaveUploadTopic
 
     ClaimsMediaArweaveUploaderOOMFilter:
       Type: AWS::Logs::MetricFilter
