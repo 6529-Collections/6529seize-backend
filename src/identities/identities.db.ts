@@ -846,7 +846,7 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     {
       const sql = `
       select i.*,
-             e.display as display
+             e.display as ens
       from ${IDENTITIES_TABLE} i
                join ${ADDRESS_CONSOLIDATION_KEY} a on i.consolidation_key = a.consolidation_key
                left join ${ENS_TABLE} e on a.address = lower(e.wallet)
