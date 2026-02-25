@@ -697,7 +697,7 @@ export class NftLinkMediaPreviewService {
     return new http.Agent({
       keepAlive: false,
       lookup
-    });
+    } as http.AgentOptions & { lookup: typeof lookup });
   }
 
   private createPinnedLookup(pinnedDns: PinnedDnsResolution) {
