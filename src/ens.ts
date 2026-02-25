@@ -45,12 +45,24 @@ export async function getPrediscoveredEnsNames(
   }));
 }
 
-async function findExistingEns(ens: ENS[]) {
+async function refreshExistingEnsBatch(
+  ens: ENS[],
+  shouldStop: () => boolean
+): Promise<number> {
   logger.info(`[PROCESSING EXISTING ENS FOR ${ens.length} WALLETS]`);
 
-  const deltaEns: ENS[] = [];
+  const persistChunkSize =
+    env.getIntOrNull('REFRESH_ENS_PERSIST_CHUNK_SIZE') ?? 20;
+  let deltaEns: ENS[] = [];
+  let processed = 0;
 
   for (const w of ens) {
+    if (shouldStop()) {
+      logger.info(
+        `[REFRESH ENS STOPPING EARLY] [PROCESSED ${processed}] [TOTAL ${ens.length}]`
+      );
+      break;
+    }
     try {
       const display = await findEnsForAddress(w.wallet);
       const newEns: ENS = {
@@ -68,11 +80,24 @@ async function findExistingEns(ens: ENS[]) {
       };
       deltaEns.push(newEns);
     }
+
+    processed++;
+
+    if (deltaEns.length >= persistChunkSize) {
+      await persistENS(deltaEns);
+      deltaEns = [];
+    }
   }
 
-  logger.info(`[FOUND ${deltaEns.length} DELTA ENS]`);
+  if (deltaEns.length > 0) {
+    await persistENS(deltaEns);
+  }
 
-  return deltaEns;
+  logger.info(
+    `[FOUND ${processed} DELTA ENS] [PERSISTED ${processed}] [TOTAL ${ens.length}]`
+  );
+
+  return processed;
 }
 
 export async function findNewEns(wallets: string[]) {
@@ -203,31 +228,37 @@ async function discoverEnsNFTDelegation(table: string) {
   }
 }
 
-async function refreshEnsLoop() {
+async function refreshEnsLoop(shouldStop: () => boolean) {
+  if (shouldStop()) {
+    return false;
+  }
   const batch = await fetchEnsRefresh();
 
   if (batch.length > 0) {
-    const delta = await findExistingEns(batch);
-    await persistENS(delta);
+    await refreshExistingEnsBatch(batch, shouldStop);
     return true;
   } else {
     return false;
   }
 }
 
-export async function refreshEns() {
+export async function refreshEns(getRemainingTimeInMillis?: () => number) {
   let processing = true;
   const time = Time.now();
-  while (
-    processing &&
-    !time
-      .diffFromNow()
-      .gte(
-        Time.minutes(
-          env.getIntOrNull('REFRESH_ENS_VOLUNTARY_QUIT_MINUTES') ?? 14
-        )
-      )
-  ) {
-    processing = await refreshEnsLoop();
+  const minRemainingMs =
+    env.getIntOrNull('REFRESH_ENS_MIN_REMAINING_MS') ?? 60000;
+  const voluntaryQuitMinutes =
+    env.getIntOrNull('REFRESH_ENS_VOLUNTARY_QUIT_MINUTES') ?? 14;
+  const shouldStop = () => {
+    if (
+      getRemainingTimeInMillis &&
+      getRemainingTimeInMillis() <= minRemainingMs
+    ) {
+      return true;
+    }
+    return time.diffFromNow().gte(Time.minutes(voluntaryQuitMinutes));
+  };
+  while (processing && !shouldStop()) {
+    processing = await refreshEnsLoop(shouldStop);
   }
 }
