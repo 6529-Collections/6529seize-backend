@@ -544,7 +544,7 @@ router.post(
     await evictMintingClaimCache(params.contract, claimId);
 
     const updated = await fetchMintingClaimByClaimId(params.contract, claimId);
-    return res.json(rowToMintingClaim(updated ?? claim));
+    return res.status(202).json(rowToMintingClaim(updated ?? claim));
   }
 );
 
