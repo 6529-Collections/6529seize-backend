@@ -41,11 +41,6 @@ resources:
         LogGroupName: /aws/lambda/claimsBuilder
         RetentionInDays: 60
 
-    ClaimsBuilderTopic:
-      Type: AWS::SNS::Topic
-      Properties:
-        TopicName: claims-builder
-
     ClaimsBuilderQueue:
       Type: AWS::SQS::Queue
       Properties:
@@ -61,16 +56,6 @@ resources:
       Properties:
         QueueName: claims-builder-dlq
 
-    ClaimsBuilderSubscription:
-      Type: AWS::SNS::Subscription
-      Properties:
-        TopicArn: !Ref ClaimsBuilderTopic
-        Protocol: sqs
-        Endpoint: !GetAtt
-          - ClaimsBuilderQueue
-          - Arn
-        RawMessageDelivery: true
-
     ClaimsBuilderQueuePolicy:
       Type: AWS::SQS::QueuePolicy
       Properties:
@@ -80,14 +65,11 @@ resources:
           Statement:
             - Effect: Allow
               Principal:
-                Service: sns.amazonaws.com
+                AWS: arn:aws:iam::987989283142:role/lambda-vpc-role
               Action:
                 - sqs:SendMessage
               Resource:
                 - !GetAtt ClaimsBuilderQueue.Arn
-              Condition:
-                ArnEquals:
-                  aws:SourceArn: !Ref ClaimsBuilderTopic
 
     ClaimsBuilderOOMFilter:
       Type: AWS::Logs::MetricFilter

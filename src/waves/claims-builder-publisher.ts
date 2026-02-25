@@ -1,30 +1,18 @@
-import { PublishCommand, SNSClient } from '@aws-sdk/client-sns';
 import { Logger } from '@/logging';
+import { sqs } from '@/sqs';
 
 const logger = Logger.get('claims-builder-publisher');
 
-let snsClient: SNSClient | null = null;
-
-function getSnsClient(): SNSClient {
-  if (snsClient === null) {
-    snsClient = new SNSClient({ region: process.env.AWS_REGION });
-  }
-  return snsClient;
-}
-
 export async function enqueueClaimBuild(dropId: string): Promise<void> {
-  const topicArn = process.env.CLAIMS_BUILDER_SNS;
-  if (!topicArn) {
-    throw new Error('CLAIMS_BUILDER_SNS is not configured');
+  const queueUrl = process.env.CLAIMS_BUILDER_SQS_URL;
+  if (!queueUrl) {
+    throw new Error('CLAIMS_BUILDER_SQS_URL is not configured');
   }
 
-  const message = JSON.stringify({ drop_id: dropId });
-  const response = await getSnsClient().send(
-    new PublishCommand({
-      TopicArn: topicArn,
-      Message: message
-    })
-  );
+  const response = await sqs.send({
+    queue: queueUrl,
+    message: { drop_id: dropId }
+  });
 
   logger.info(
     `Queued claim build for drop_id=${dropId}, messageId=${response.MessageId}`
