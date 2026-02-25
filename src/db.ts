@@ -686,7 +686,7 @@ export async function fetchWalletTransactions(
 
 export async function fetchEnsRefresh() {
   const batchSize = env.getIntOrNull('ENS_LOOP_MAX_BATCH_SIZE') ?? 100;
-  const sql = `SELECT * FROM ${ENS_TABLE} WHERE created_at < DATE_SUB(NOW(), INTERVAL 6 HOUR) ORDER BY created_at ASC LIMIT :batchSize`;
+  const sql = `SELECT * FROM ${ENS_TABLE} WHERE created_at < DATE_SUB(NOW(), INTERVAL 24 HOUR) ORDER BY created_at ASC LIMIT :batchSize`;
   return sqlExecutor.execute<ENS>(sql, { batchSize });
 }
 
