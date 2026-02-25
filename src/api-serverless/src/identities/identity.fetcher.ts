@@ -429,28 +429,29 @@ export class IdentityFetcher {
           onlyProfileOwners,
           limit: limit * 3
         });
-      const members = [...membersByHandles, ...profilesByEnsNames]
-        .reduce(
-          (acc, prof) => {
-            const profKey =
-              prof.consolidation_key ?? prof.profile_id ?? prof.primary_address;
-            if (
-              !acc.find((it) => {
-                const itKey =
-                  it.consolidation_key ?? it.profile_id ?? it.primary_address;
-                return itKey === profKey;
-              })
-            ) {
-              acc.push(prof);
-            }
-            return acc;
-          },
-          [] as (IdentityEntity & { ens?: string | null })[]
-        )
+      const dedupedMembers: (IdentityEntity & { ens?: string | null })[] = [];
+      const seenProfKeys = new Set<string>();
+      for (const prof of [...membersByHandles, ...profilesByEnsNames]) {
+        const profKey = String(
+          prof.consolidation_key ?? prof.profile_id ?? prof.primary_address
+        );
+        if (seenProfKeys.has(profKey)) {
+          continue;
+        }
+        seenProfKeys.add(profKey);
+        dedupedMembers.push(prof);
+      }
+
+      const members = dedupedMembers
+        .map((member) => ({
+          member,
+          rank: this.getCommunityMemberSearchRank(member, param)
+        }))
         .sort((left, right) =>
-          this.compareCommunityMemberSearchMatches(left, right, param)
+          this.compareCommunityMemberSearchMatches(left, right)
         )
-        .slice(0, limit);
+        .slice(0, limit)
+        .map(({ member }) => member);
       return members.map((member) => {
         return {
           profile_id: member.profile_id,
@@ -469,12 +470,17 @@ export class IdentityFetcher {
   }
 
   private compareCommunityMemberSearchMatches(
-    left: IdentityEntity & { ens?: string | null },
-    right: IdentityEntity & { ens?: string | null },
-    param: string
+    left: {
+      member: IdentityEntity & { ens?: string | null };
+      rank: ReturnType<IdentityFetcher['getCommunityMemberSearchRank']>;
+    },
+    right: {
+      member: IdentityEntity & { ens?: string | null };
+      rank: ReturnType<IdentityFetcher['getCommunityMemberSearchRank']>;
+    }
   ): number {
-    const leftRank = this.getCommunityMemberSearchRank(left, param);
-    const rightRank = this.getCommunityMemberSearchRank(right, param);
+    const leftRank = left.rank;
+    const rightRank = right.rank;
 
     if (leftRank.handleMatch !== rightRank.handleMatch) {
       return rightRank.handleMatch - leftRank.handleMatch;
@@ -493,7 +499,7 @@ export class IdentityFetcher {
     if (leftRank.hasNonAutoHandle !== rightRank.hasNonAutoHandle) {
       return rightRank.hasNonAutoHandle - leftRank.hasNonAutoHandle;
     }
-    return Number(right.tdh) - Number(left.tdh);
+    return Number(right.member.tdh) - Number(left.member.tdh);
   }
 
   private getCommunityMemberSearchRank(
