@@ -503,7 +503,10 @@ export class IdentityFetcher {
       member.normalised_handle ?? member.handle?.toLowerCase() ?? null;
     const normalisedEns = member.ens?.toLowerCase() ?? null;
 
-    const handleMatch = this.getSearchFieldMatchStrength(normalisedHandle, param);
+    const handleMatch = this.getSearchFieldMatchStrength(
+      normalisedHandle,
+      param
+    );
     const ensMatch = this.getSearchFieldMatchStrength(normalisedEns, param);
     const handleIndex =
       normalisedHandle?.includes(param) === true
