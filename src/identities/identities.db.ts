@@ -12,6 +12,7 @@ import {
   ENS_TABLE,
   IDENTITIES_TABLE,
   MEMES_CONTRACT,
+  MEMES_PREVOTE_ARTIST_PROFILES_TABLE,
   NFTS_TABLE,
   PROFILES_ARCHIVE_TABLE,
   PROFILES_TABLE,
@@ -1025,6 +1026,38 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
         return acc;
       },
       {} as Record<string, string[]>
+    );
+  }
+
+  async getArtistOfPrevoteCards(
+    profileIds: string[],
+    ctx: RequestContext
+  ): Promise<Record<string, number[]>> {
+    if (!profileIds.length) {
+      return {};
+    }
+    const results = await this.db.execute<{
+      profile_id: string;
+      card_no: number;
+    }>(
+      `
+      select profile_id, card_no
+      from ${MEMES_PREVOTE_ARTIST_PROFILES_TABLE}
+      where profile_id in (:profileIds)
+      order by card_no asc
+      `,
+      { profileIds },
+      { wrappedConnection: ctx.connection }
+    );
+    return results.reduce(
+      (acc, it) => {
+        if (!acc[it.profile_id]) {
+          acc[it.profile_id] = [];
+        }
+        acc[it.profile_id].push(it.card_no);
+        return acc;
+      },
+      {} as Record<string, number[]>
     );
   }
 
