@@ -5,22 +5,22 @@ import {
   AssetTransfersWithMetadataParams,
   SortingOrder
 } from 'alchemy-sdk';
-import { Logger } from '../logging';
-import { NEXTGEN_MINTER_IFACE } from '../abis/nextgen';
-import { NextGenLog } from '../entities/INextGen';
-import { Time } from '../time';
+import { NEXTGEN_MINTER_IFACE } from '@/abis/nextgen';
+import { NextGenLog } from '@/entities/INextGen';
 import {
   fetchNextGenCollection,
   persistNextGenCollection,
   persistNextGenLogs
-} from './nextgen.db';
+} from '@/nextgen/nextgen.db';
 import { EntityManager } from 'typeorm';
 import {
   getNextgenNetwork,
   NEXTGEN_MINTER_CONTRACT
-} from './nextgen_constants';
-import { getEns } from '../alchemy';
-import { ethTools } from '../eth-tools';
+} from '@/nextgen/nextgen_constants';
+import { findEnsForAddress } from '@/ens-lookup';
+import { ethTools } from '@/eth-tools';
+import { Logger } from '@/logging';
+import { Time } from '@/time';
 
 const logger = Logger.get('NEXTGEN_MINTER');
 
@@ -442,9 +442,9 @@ async function proposeAddressesAndPercentages(
   const add1 = args[1];
   const add2 = args[2];
   const add3 = args[3];
-  const add1Ens = await getEns(add1);
-  const add2Ens = await getEns(add2);
-  const add3Ens = await getEns(add3);
+  const add1Ens = await findEnsForAddress(add1);
+  const add2Ens = await findEnsForAddress(add2);
+  const add3Ens = await findEnsForAddress(add3);
   const _add1Percentage = parseInt(args[4]);
   const _add2Percentage = parseInt(args[5]);
   const _add3Percentage = parseInt(args[6]);
