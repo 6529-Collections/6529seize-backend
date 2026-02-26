@@ -83,6 +83,8 @@ export const CIC_SCORE_AGGREGATIONS_TABLE = 'cic_score_aggregations';
 export const PROFILE_TOTAL_REP_SCORE_AGGREGATIONS_TABLE =
   'profile_total_rep_score_aggregations';
 export const MEMES_SEASONS_TABLE = 'memes_seasons';
+export const MEMES_PREVOTE_ARTIST_PROFILES_TABLE =
+  'memes_prevote_artist_profiles';
 export const AGGREGATED_ACTIVITY_TABLE = 'aggregated_activity';
 export const AGGREGATED_ACTIVITY_MEMES_TABLE = 'aggregated_activity_memes';
 export const CONSOLIDATED_AGGREGATED_ACTIVITY_TABLE =

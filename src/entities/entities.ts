@@ -96,6 +96,7 @@ export { RoyaltiesUpload } from './IRoyalties';
 export { MemesSeason } from './ISeason';
 export { MintAnnouncementsDoneMemeToken } from './IMintAnnouncementsDoneMemeToken';
 export { MemesMintStat } from './IMemesMintStat';
+export { MemesPrevoteArtistProfileEntity } from './IMemesPrevoteArtistProfile';
 export { NftLinkEntity } from './INftLink';
 export {
   NFTFinalSubscription,

@@ -375,6 +375,11 @@ export class ProfilesService {
         await this.mergeGroups(sourceIdentity, target, connectionHolder);
         await this.mergeWaves(sourceIdentity, target, connectionHolder);
         await this.mergeDrops(sourceIdentity, target, connectionHolder);
+        await this.mergeMemesPrevoteArtistProfiles(
+          sourceIdentity,
+          target,
+          connectionHolder
+        );
         await this.mergeNotifications(sourceIdentity, target, connectionHolder);
         await this.mergeXTdhGrants(sourceIdentity, target, connectionHolder);
         await this.mergeIdentitySubscriptions(
@@ -784,6 +789,18 @@ export class ProfilesService {
     connectionHolder: ConnectionWrapper<any>
   ) {
     await this.profilesDb.migrateAuthorIdsInDrops(
+      profileToBeMerged,
+      target,
+      connectionHolder
+    );
+  }
+
+  private async mergeMemesPrevoteArtistProfiles(
+    profileToBeMerged: string,
+    target: string,
+    connectionHolder: ConnectionWrapper<any>
+  ) {
+    await this.profilesDb.migrateProfileIdsInMemesPrevoteArtistProfiles(
       profileToBeMerged,
       target,
       connectionHolder

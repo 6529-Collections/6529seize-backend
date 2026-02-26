@@ -3,7 +3,12 @@ import {
   dbSupplier,
   LazyDbAccessCompatibleService
 } from '../sql-executor';
-import { DROPS_TABLE, PROFILES_TABLE, WAVES_TABLE } from '@/constants';
+import {
+  DROPS_TABLE,
+  MEMES_PREVOTE_ARTIST_PROFILES_TABLE,
+  PROFILES_TABLE,
+  WAVES_TABLE
+} from '@/constants';
 import { Profile } from '../entities/IProfile';
 import { CreateOrUpdateProfileCommand } from './profile.types';
 import { RequestContext } from '../request.context';
@@ -182,6 +187,18 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
   ) {
     await this.db.execute(
       `update ${DROPS_TABLE} set author_id = :target where author_id = :profileToBeMerged`,
+      { profileToBeMerged, target },
+      { wrappedConnection: connectionHolder }
+    );
+  }
+
+  async migrateProfileIdsInMemesPrevoteArtistProfiles(
+    profileToBeMerged: string,
+    target: string,
+    connectionHolder: ConnectionWrapper<any>
+  ) {
+    await this.db.execute(
+      `update ${MEMES_PREVOTE_ARTIST_PROFILES_TABLE} set profile_id = :target where profile_id = :profileToBeMerged`,
       { profileToBeMerged, target },
       { wrappedConnection: connectionHolder }
     );

@@ -82,6 +82,7 @@ export class IdentityFetcher {
       subscribedActions,
       mainStageSubscriptions,
       mainStageWins,
+      artistOfPrevoteCards,
       waveCreatorIds
     ] = await Promise.all([
       this.identitiesDb.getIdentitiesByIds(ids, ctx.connection),
@@ -91,6 +92,7 @@ export class IdentityFetcher {
       }),
       this.identitiesDb.getActiveMainStageDropIds(ids, ctx),
       this.identitiesDb.getMainStageWinnerDropIds(ids, ctx),
+      this.identitiesDb.getArtistOfPrevoteCards(ids, ctx),
       this.identitiesDb.getWaveCreatorProfileIds(ids, ctx.connection)
     ]);
     const notFoundProfileIds = ids.filter(
@@ -117,6 +119,7 @@ export class IdentityFetcher {
       active_main_stage_submission_ids:
         mainStageSubscriptions[p.profile_id!] ?? [],
       winner_main_stage_drop_ids: mainStageWins[p.profile_id!] ?? [],
+      artist_of_prevote_cards: artistOfPrevoteCards[p.profile_id!] ?? [],
       is_wave_creator: waveCreatorIds.has(p.profile_id!)
     }));
     const archivedProfiles = await this.identitiesDb
@@ -146,6 +149,7 @@ export class IdentityFetcher {
           active_main_stage_submission_ids:
             mainStageSubscriptions[p.external_id] ?? [],
           winner_main_stage_drop_ids: mainStageWins[p.external_id] ?? [],
+          artist_of_prevote_cards: artistOfPrevoteCards[p.external_id] ?? [],
           is_wave_creator: waveCreatorIds.has(p.external_id)
         }))
       );
@@ -273,6 +277,7 @@ export class IdentityFetcher {
         consolidation_key: query,
         active_main_stage_submission_ids: [],
         winner_main_stage_drop_ids: [],
+        artist_of_prevote_cards: [],
         is_wave_creator: false
       };
     }
@@ -336,30 +341,43 @@ export class IdentityFetcher {
       },
       ctx
     );
-    const [wallets, mainStageDropIds, mainStageWinnerDrops, waveCreatorIds] =
-      await Promise.all([
-        this.identitiesDb.getPrediscoveredEnsNames(consolidatedWallets, ctx),
-        this.identitiesDb
-          .getActiveMainStageDropIds(
-            identity.profile_id ? [identity.profile_id] : [],
-            ctx
-          )
-          .then((it) =>
-            identity.profile_id ? (it[identity.profile_id] ?? []) : []
-          ),
-        this.identitiesDb
-          .getMainStageWinnerDropIds(
-            identity.profile_id ? [identity.profile_id] : [],
-            ctx
-          )
-          .then((it) =>
-            identity.profile_id ? (it[identity.profile_id] ?? []) : []
-          ),
-        this.identitiesDb.getWaveCreatorProfileIds(
+    const [
+      wallets,
+      mainStageDropIds,
+      mainStageWinnerDrops,
+      artistOfPrevoteCards,
+      waveCreatorIds
+    ] = await Promise.all([
+      this.identitiesDb.getPrediscoveredEnsNames(consolidatedWallets, ctx),
+      this.identitiesDb
+        .getActiveMainStageDropIds(
           identity.profile_id ? [identity.profile_id] : [],
-          ctx.connection
+          ctx
         )
-      ]);
+        .then((it) =>
+          identity.profile_id ? (it[identity.profile_id] ?? []) : []
+        ),
+      this.identitiesDb
+        .getMainStageWinnerDropIds(
+          identity.profile_id ? [identity.profile_id] : [],
+          ctx
+        )
+        .then((it) =>
+          identity.profile_id ? (it[identity.profile_id] ?? []) : []
+        ),
+      this.identitiesDb
+        .getArtistOfPrevoteCards(
+          identity.profile_id ? [identity.profile_id] : [],
+          ctx
+        )
+        .then((it) =>
+          identity.profile_id ? (it[identity.profile_id] ?? []) : []
+        ),
+      this.identitiesDb.getWaveCreatorProfileIds(
+        identity.profile_id ? [identity.profile_id] : [],
+        ctx.connection
+      )
+    ]);
     const classification = identity.classification
       ? (enums.resolve(
           ApiProfileClassification,
@@ -393,6 +411,7 @@ export class IdentityFetcher {
       query: query,
       active_main_stage_submission_ids: mainStageDropIds,
       winner_main_stage_drop_ids: mainStageWinnerDrops,
+      artist_of_prevote_cards: artistOfPrevoteCards,
       is_wave_creator: identity.profile_id
         ? waveCreatorIds.has(identity.profile_id)
         : false

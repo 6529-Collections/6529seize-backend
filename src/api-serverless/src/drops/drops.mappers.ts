@@ -679,6 +679,7 @@ export class DropsMappers {
       primary_address: '',
       active_main_stage_submission_ids: [],
       winner_main_stage_drop_ids: [],
+      artist_of_prevote_cards: [],
       is_wave_creator: false
     };
     const profilesByIds = allProfileIds.reduce(
