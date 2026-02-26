@@ -1,4 +1,4 @@
-import { LabNFT, NFT } from './entities/INFT';
+import { LabNFT, NFT } from '@/entities/INFT';
 import { s3ObjectExists, s3UploadObject } from './helpers/s3_helpers';
 import {
   GRADIENT_CONTRACT,
@@ -244,19 +244,25 @@ function createImageBlobProvider(imageUrl: string) {
       return cachedBlob;
     }
 
-    inFlightPromise ??= fetchUrl(imageUrl)
-      .then((blob) => {
+    inFlightPromise ??= (async () => {
+      try {
+        const blob = await fetchUrl(imageUrl);
         cachedBlob = blob;
         return blob;
-      })
-      .catch((err) => {
+      } catch (err) {
         inFlightPromise = null;
         throw err;
-      });
+      }
+    })();
 
-    const blob = await inFlightPromise;
-    inFlightPromise = null;
-    return blob;
+    const currentPromise = inFlightPromise;
+    try {
+      return await currentPromise;
+    } finally {
+      if (cachedBlob && inFlightPromise === currentPromise) {
+        inFlightPromise = null;
+      }
+    }
   };
 }
 

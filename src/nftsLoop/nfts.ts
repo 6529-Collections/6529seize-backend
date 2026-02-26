@@ -841,7 +841,7 @@ async function updateMintPrice(entry: NftProcessingEntry) {
 }
 
 async function updateMemeReferences(
-  nftMap: Map<string, { nft: any; changed: boolean }>,
+  nftMap: Map<string, NftProcessingEntry>,
   EntityClass: typeof NFT | typeof LabNFT
 ) {
   if (EntityClass !== LabNFT) return;
@@ -864,7 +864,7 @@ async function updateMemeReferences(
 }
 
 async function updateSupply(
-  nftMap: Map<string, { nft: any; changed: boolean }>,
+  nftMap: Map<string, NftProcessingEntry>,
   updateHodlRate: boolean
 ) {
   let maxSupply = 0;
