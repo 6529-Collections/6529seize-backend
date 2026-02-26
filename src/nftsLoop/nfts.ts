@@ -225,7 +225,9 @@ function createNftProcessingMap(
   return nftMap;
 }
 
-function createContractMaxIdMap(existing: Array<NFT | LabNFT>): Map<string, number> {
+function createContractMaxIdMap(
+  existing: Array<NFT | LabNFT>
+): Map<string, number> {
   const contractMap = new Map<string, number>();
   for (const nft of existing) {
     const maxId = contractMap.get(nft.contract) ?? -1;
@@ -257,7 +259,9 @@ async function maybeRunAuditModeAndReturn({
     collectionType,
     reason: 'audit'
   });
-  logger.info(`✅ Enqueued audit S3 jobs for ${nftMap.size} ${EntityClass.name}s`);
+  logger.info(
+    `✅ Enqueued audit S3 jobs for ${nftMap.size} ${EntityClass.name}s`
+  );
   return true;
 }
 
@@ -304,7 +308,7 @@ async function saveAndPostProcessNfts({
   newlyDiscoveredNfts,
   collectionType
 }: {
-  repo: Repository<NFT> | Repository<LabNFT>;
+  repo: Repository<NFT | LabNFT>;
   EntityClass: typeof NFT | typeof LabNFT;
   mode: NFT_MODE;
   nftMap: Map<string, NftProcessingEntry>;

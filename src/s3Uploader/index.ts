@@ -1,8 +1,5 @@
 import { SQSBatchResponse, SQSHandler } from 'aws-lambda';
-import {
-  fetchMemeLabNFTByContractAndId,
-  fetchNFTByContractAndId
-} from '@/db';
+import { fetchMemeLabNFTByContractAndId, fetchNFTByContractAndId } from '@/db';
 import { Logger } from '@/logging';
 import { doInDbContext } from '@/secrets';
 import { processS3UploaderJob } from '@/s3';
@@ -15,7 +12,7 @@ import {
 const logger = Logger.get('S3_UPLOADER');
 
 const sqsHandler: SQSHandler = async (event) => {
-  let batchItemFailures: SQSBatchResponse['batchItemFailures'] = [];
+  const batchItemFailures: SQSBatchResponse['batchItemFailures'] = [];
 
   await doInDbContext(
     async () => {

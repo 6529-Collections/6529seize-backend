@@ -103,7 +103,12 @@ async function uploadMissingRememeAssets(
   await handleImageUpload(keys.originalKey, format, blob);
 
   const scaledToWebp = format.toLowerCase() !== 'gif';
-  const scaledBuffer = await resizeImage(r, scaledToWebp, blobBuffer, SCALED_HEIGHT);
+  const scaledBuffer = await resizeImage(
+    r,
+    scaledToWebp,
+    blobBuffer,
+    SCALED_HEIGHT
+  );
   if (scaledBuffer) {
     await handleImageUpload(keys.scaledKey, format, scaledBuffer);
   }
@@ -118,7 +123,12 @@ async function uploadMissingRememeAssets(
     await handleImageUpload(keys.thumbnailKey, format, thumbnailBuffer);
   }
 
-  const iconBuffer = await resizeImage(r, scaledToWebp, blobBuffer, ICON_HEIGHT);
+  const iconBuffer = await resizeImage(
+    r,
+    scaledToWebp,
+    blobBuffer,
+    ICON_HEIGHT
+  );
   if (iconBuffer) {
     await handleImageUpload(keys.iconKey, format, iconBuffer);
   }
