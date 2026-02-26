@@ -54,6 +54,8 @@ export class NftLinkEntity {
   readonly last_error_message!: string | null;
   @Column({ type: 'double', nullable: true })
   readonly price!: number | null;
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  readonly price_currency!: string | null;
   @Column({ type: 'bigint', nullable: false })
   readonly last_tried_to_update!: number;
   @Column({ type: 'bigint', nullable: true })

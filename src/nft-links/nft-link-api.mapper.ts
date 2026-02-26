@@ -16,6 +16,7 @@ export function mapNftLinkEntityToApiLink(
     media_uri: entity.media_uri,
     last_error_message: entity.last_error_message,
     price: entity.price?.toString() ?? null,
+    price_currency: entity.price_currency,
     last_successfully_updated: entity.last_successfully_updated,
     failed_since: entity.failed_since,
     media_preview: entity.media_preview_status
