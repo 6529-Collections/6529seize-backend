@@ -215,13 +215,13 @@ function createNftProcessingMap(
   existing: Array<NFT | LabNFT>
 ): Map<string, NftProcessingEntry> {
   const nftMap = new Map<string, NftProcessingEntry>();
-  existing.forEach((n) =>
+  existing.forEach((n) => {
     nftMap.set(`${n.contract.toLowerCase()}-${n.id}`, {
       nft: n,
       changed: false,
       mediaChanged: false
-    })
-  );
+    });
+  });
   return nftMap;
 }
 
@@ -230,9 +230,10 @@ function createContractMaxIdMap(
 ): Map<string, number> {
   const contractMap = new Map<string, number>();
   for (const nft of existing) {
-    const maxId = contractMap.get(nft.contract) ?? -1;
+    const contractKey = nft.contract.toLowerCase();
+    const maxId = contractMap.get(contractKey) ?? -1;
     if (nft.id > maxId) {
-      contractMap.set(nft.contract, nft.id);
+      contractMap.set(contractKey, nft.id);
     }
   }
   return contractMap;
@@ -466,7 +467,7 @@ async function discoverForContract(
   const { contract, tokenType } = config;
   const instance = getContractInstance(contract, provider);
   const method = tokenType === TokenType.ERC721 ? 'tokenURI' : 'uri';
-  let nextId = (contractMap.get(contract) ?? -1) + 1;
+  let nextId = (contractMap.get(contract.toLowerCase()) ?? -1) + 1;
   if (tokenType === TokenType.ERC1155 && !nextId) nextId = 1;
 
   while (true) {
@@ -796,7 +797,7 @@ async function updateUri(
   rehydrateFromMetadata(entry);
 }
 
-async function updateMintDate(entry: { nft: NFT | LabNFT; changed: boolean }) {
+async function updateMintDate(entry: NftProcessingEntry) {
   const { nft } = entry;
   if (nft.mint_date) return;
 
@@ -813,7 +814,7 @@ async function updateMintDate(entry: { nft: NFT | LabNFT; changed: boolean }) {
   }
 }
 
-async function updateMintPrice(entry: { nft: NFT | LabNFT; changed: boolean }) {
+async function updateMintPrice(entry: NftProcessingEntry) {
   const { nft } = entry;
   if (nft.mint_price || equalIgnoreCase(nft.contract, GRADIENT_CONTRACT)) {
     return;

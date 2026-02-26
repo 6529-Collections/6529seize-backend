@@ -12,7 +12,7 @@ import axiosRetry from 'axios-retry';
 import pLimit from 'p-limit';
 import { invalidateCloudFront } from './cloudfront';
 import { equalIgnoreCase } from './strings';
-import { Time } from './time';
+import { Time } from '@/time';
 import {
   S3UploaderImageVariant,
   S3UploaderJob,
@@ -238,11 +238,27 @@ function resolveNftImageFormat(n: ProcessableNft): string | null {
 
 function createImageBlobProvider(imageUrl: string) {
   let cachedBlob: Buffer | null = null;
+  let inFlightPromise: Promise<Buffer> | null = null;
   return async () => {
-    if (!cachedBlob) {
-      cachedBlob = await fetchUrl(imageUrl);
+    if (cachedBlob) {
+      return cachedBlob;
     }
-    return cachedBlob;
+
+    if (!inFlightPromise) {
+      inFlightPromise = fetchUrl(imageUrl)
+        .then((blob) => {
+          cachedBlob = blob;
+          return blob;
+        })
+        .catch((err) => {
+          inFlightPromise = null;
+          throw err;
+        });
+    }
+
+    const blob = await inFlightPromise;
+    inFlightPromise = null;
+    return blob;
   };
 }
 
@@ -349,12 +365,11 @@ async function processNftVideos(
 ) {
   const videoUrl = n.metadata?.animation ?? n.metadata?.animation_url;
   const animationDetails = parseAnimationDetails(n.metadata?.animation_details);
+  const rawFormat = animationDetails?.format;
+  const normalizedFormat =
+    typeof rawFormat === 'string' ? rawFormat.trim().toUpperCase() : '';
 
-  if (
-    videoUrl &&
-    (animationDetails?.format?.toUpperCase() == 'MP4' ||
-      animationDetails?.format?.toUpperCase() == 'MOV')
-  ) {
+  if (videoUrl && (normalizedFormat == 'MP4' || normalizedFormat == 'MOV')) {
     const requestedVariants = new Set<S3UploaderVideoVariant>(
       videoVariants ?? [
         S3UploaderVideoVariant.ORIGINAL,
@@ -362,7 +377,7 @@ async function processNftVideos(
       ]
     );
     const videoTxId = getTxId(videoUrl, `${n.contract}-${n.id}`);
-    const videoFormat = animationDetails.format.toUpperCase();
+    const videoFormat = normalizedFormat;
     const videoKey = `videos/${n.contract}/${n.id}.${videoFormat}`;
 
     if (requestedVariants.has(S3UploaderVideoVariant.ORIGINAL)) {
