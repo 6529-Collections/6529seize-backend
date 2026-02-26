@@ -884,14 +884,14 @@ async function updateSupply(
       let supply: number;
 
       if (nft.token_type === TokenType.ERC1155) {
-        supply = await getDataSource()
+        const raw = await getDataSource()
           .getRepository(NFTOwner)
           .createQueryBuilder('owner')
           .select('SUM(owner.balance)', 'sum')
           .where('owner.contract = :contract', { contract: nft.contract })
           .andWhere('owner.token_id = :token_id', { token_id: nft.id })
-          .getRawOne()
-          .then((res) => Number(res?.sum ?? 0));
+          .getRawOne();
+        supply = Number(raw?.sum ?? 0);
 
         if (equalIgnoreCase(nft.contract, MEMES_CONTRACT) && nft.id === 8) {
           supply += MEME_8_EDITION_BURN_ADJUSTMENT;

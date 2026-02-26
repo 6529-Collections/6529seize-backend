@@ -39,7 +39,8 @@ export const persistRememesS3 = async (rememes: Rememe[]) => {
 
 async function processRememeS3(r: Rememe) {
   const image = resolveRememeImageUrl(r);
-  if (!image) {
+  if (!image || !image.length) {
+    logger.warn(`[REMEME IMAGE URL MISSING] [CONTRACT ${r.contract}] [ID ${r.id}]`);
     return;
   }
 
@@ -81,10 +82,15 @@ async function processRememeS3(r: Rememe) {
   await persistRememeS3Links(r, keys);
 }
 
-function resolveRememeImageUrl(r: Rememe): string {
-  return r.media?.gateway
+function resolveRememeImageUrl(r: Rememe): string | undefined {
+  const resolved = r.media?.gateway
     ? r.media.gateway
     : ipfs.ifIpfsThenCloudflareElsePreserveOrEmptyIfUndefined(r.image);
+  if (!resolved) {
+    return undefined;
+  }
+  const trimmed = resolved.trim();
+  return trimmed.length ? trimmed : undefined;
 }
 
 type RememeImageKeys = {
@@ -125,9 +131,7 @@ async function uploadMissingRememeAssets(
 ) {
   logger.info(`[MISSING IMAGE] [CONTRACT ${r.contract}] [ID ${r.id}]`);
 
-  const res = await fetch(
-    ipfs.ifIpfsThenCloudflareElsePreserveOrEmptyIfUndefined(imageUrl)
-  );
+  const res = await fetch(imageUrl);
   if (!res.ok) {
     throw new Error(
       `Failed to fetch rememe image ${imageUrl}: ${res.status} ${res.statusText}`
@@ -253,19 +257,11 @@ async function resizeImage(
   );
 
   try {
-    if (toWEBP) {
-      return await resizeImageBufferToHeight({
-        buffer,
-        height,
-        toWebp: true
-      });
-    } else {
-      return await resizeImageBufferToHeight({
-        buffer,
-        height,
-        toWebp: false
-      });
-    }
+    return await resizeImageBufferToHeight({
+      buffer,
+      height,
+      toWebp: toWEBP
+    });
   } catch (err: any) {
     logger.error(
       `[RESIZING FOR ${rememe.contract} #${rememe.id}] [TO TARGET HEIGHT ${height}] [FAILED!]`,

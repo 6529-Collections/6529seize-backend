@@ -474,9 +474,13 @@ async function handleImage({
   );
 
   const url = nft.metadata?.image ?? nft.metadata?.image_url;
+  const imageUrl = typeof url === 'string' ? url.trim() : '';
+  if (!sourceBlobProvider && !imageUrl) {
+    throw new Error(`Missing image URL for NFT ${nft.contract} #${nft.id}`);
+  }
   const blob = sourceBlobProvider
     ? await sourceBlobProvider()
-    : await fetchUrl(url);
+    : await fetchUrl(imageUrl);
   logger.info(`[DOWNLOADED FOR HEIGHT ${height ?? 'original'}] [KEY ${s3Key}]`);
 
   let buffer: Buffer | undefined;
@@ -518,68 +522,69 @@ async function handleVideoScaling(
   logger.info(`[MISSING SCALED ${videoFormat}] [KEY ${scaledVideoKey}]`);
 
   logger.info(`[SCALING ${scaledVideoKey}]`);
+  let resizedVideoStream: NodeJS.ReadableStream;
+  try {
+    resizedVideoStream = await scaleVideo(videoUrl, videoFormat.toLowerCase());
+  } catch (err) {
+    logger.error(`[scaleVideo FAILED] [${scaledVideoKey}]`, err);
+    throw err instanceof Error ? err : new Error(String(err));
+  }
 
-  await new Promise<void>((resolve, reject) => {
+  logger.info(`[ACQUIRED SCALED STREAM ${scaledVideoKey}]`);
+
+  const ffstream = new Stream.PassThrough();
+  resizedVideoStream.on('error', (err) => {
+    logger.error(`[resizedVideoStream] [SCALING FAILED ${scaledVideoKey}]`, err);
+    ffstream.destroy(err instanceof Error ? err : new Error(String(err)));
+  });
+  resizedVideoStream.pipe(ffstream, { end: true });
+
+  const outputBuffer = await streamToBuffer(ffstream, scaledVideoKey);
+  logger.info(`[S3] [SCALING FINISHED ${scaledVideoKey}]`);
+  if (!outputBuffer.length) return;
+
+  try {
+    const uploadedScaledVideo = await s3UploadObject({
+      bucket: myBucket,
+      key: scaledVideoKey,
+      body: outputBuffer,
+      contentType: `video/${videoFormat.toLowerCase()}`,
+      txId
+    });
+
+    logger.info(
+      `[KEY UPLOADED ${scaledVideoKey}] [ETAG ${uploadedScaledVideo.ETag}]`
+    );
+    cfInvalidationPaths.add(`/${scaledVideoKey}`);
+  } catch (e) {
+    logger.error(`[UPLOAD FAILED ${scaledVideoKey}]`, e);
+    throw e instanceof Error ? e : new Error(String(e));
+  }
+}
+
+async function streamToBuffer(
+  stream: NodeJS.ReadableStream,
+  label: string
+): Promise<Buffer> {
+  return await new Promise<Buffer>((resolve, reject) => {
     const buffers: Buffer[] = [];
 
-    scaleVideo(videoUrl, videoFormat.toLowerCase())
-      .then((resizedVideoStream) => {
-        logger.info(`[ACQUIRED SCALED STREAM ${scaledVideoKey}]`);
+    stream.on('data', (chunk) => {
+      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      logger.info(`[${label}] [ADDING CHUNK LENGTH ${buf.length}]`);
+      if (buf.length > 0) {
+        buffers.push(buf);
+      }
+    });
 
-        resizedVideoStream.on('error', async (err) => {
-          logger.error(
-            `[resizedVideoStream] [SCALING FAILED ${scaledVideoKey}]`,
-            err
-          );
-          reject(err instanceof Error ? err : new Error(String(err)));
-        });
+    stream.on('error', (err) => {
+      logger.error(`[SCALING FAILED ${label}]`, err);
+      reject(err instanceof Error ? err : new Error(String(err)));
+    });
 
-        const ffstream = new Stream.PassThrough();
-        resizedVideoStream.pipe(ffstream, { end: true });
-
-        ffstream.on('data', (buf) => {
-          logger.info(
-            `[${scaledVideoKey}] [ADDING CHUNK LENGTH ${buf.length}]`
-          );
-          if (buf.length > 0) buffers.push(buf);
-        });
-
-        ffstream.on('error', async (err) => {
-          logger.error(`[SCALING FAILED ${scaledVideoKey}]`, err);
-          reject(err instanceof Error ? err : new Error(String(err)));
-        });
-
-        ffstream.on('end', async () => {
-          logger.info(`[S3] [SCALING FINISHED ${scaledVideoKey}]`);
-          try {
-            if (buffers.length > 0) {
-              const outputBuffer = Buffer.concat(buffers);
-              if (!outputBuffer.length) return;
-
-              const uploadedScaledVideo = await s3UploadObject({
-                bucket: myBucket,
-                key: scaledVideoKey,
-                body: outputBuffer,
-                contentType: `video/${videoFormat.toLowerCase()}`,
-                txId
-              });
-
-              logger.info(
-                `[KEY UPLOADED ${scaledVideoKey}] [ETAG ${uploadedScaledVideo.ETag}]`
-              );
-              cfInvalidationPaths.add(`/${scaledVideoKey}`);
-            }
-            resolve();
-          } catch (e) {
-            logger.error(`[UPLOAD FAILED ${scaledVideoKey}]`, e);
-            reject(e instanceof Error ? e : new Error(String(e)));
-          }
-        });
-      })
-      .catch((err) => {
-        logger.error(`[scaleVideo FAILED] [${scaledVideoKey}]`, err);
-        reject(err instanceof Error ? err : new Error(String(err)));
-      });
+    stream.on('end', () => {
+      resolve(Buffer.concat(buffers));
+    });
   });
 }
 
@@ -614,19 +619,11 @@ async function resizeImage(
     `[RESIZING FOR ${nft.contract} #${nft.id} (WEBP: ${toWEBP})] [TO TARGET HEIGHT ${height}]`
   );
   try {
-    if (toWEBP) {
-      return await resizeImageBufferToHeight({
-        buffer,
-        height,
-        toWebp: true
-      });
-    } else {
-      return await resizeImageBufferToHeight({
-        buffer,
-        height,
-        toWebp: false
-      });
-    }
+    return await resizeImageBufferToHeight({
+      buffer,
+      height,
+      toWebp: toWEBP
+    });
   } catch (err: any) {
     logger.error(
       `[RESIZING FOR ${nft.contract} #${nft.id}] [TO TARGET HEIGHT ${height}] [FAILED!]`,
