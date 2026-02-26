@@ -12,6 +12,7 @@ import axiosRetry from 'axios-retry';
 import pLimit from 'p-limit';
 import { invalidateCloudFront } from './cloudfront';
 import { equalIgnoreCase } from './strings';
+import { Time } from './time';
 import {
   S3UploaderImageVariant,
   S3UploaderJob,
@@ -107,11 +108,13 @@ async function withCloudfrontFlush<T>(work: (myBucket: string) => Promise<T>) {
   const myBucket = process.env.AWS_6529_IMAGES_BUCKET_NAME!;
   const myDistribution = process.env.AWS_6529_IMAGES_BUCKET_CF_DISTRIBUTION;
 
-  const flushInterval = setInterval(() => {
-    flushCloudfront(myDistribution).catch((err) =>
-      logger.error('Flush failed', err)
-    );
-  }, 300_000); // 5 minutes
+  const flushInterval = setInterval(async () => {
+    try {
+      await flushCloudfront(myDistribution);
+    } catch (err) {
+      logger.error('Flush failed', err);
+    }
+  }, Time.minutes(5).toMillis());
 
   try {
     return await work(myBucket);
@@ -123,11 +126,19 @@ async function withCloudfrontFlush<T>(work: (myBucket: string) => Promise<T>) {
 
 export const persistS3 = async (nfts: ProcessableNft[]) => {
   logger.info(`[PROCESSING ASSETS FOR ${nfts.length} NFTS]`);
+  let results: PromiseSettledResult<void>[] = [];
   await withCloudfrontFlush(async (myBucket) => {
-    await Promise.all(
+    results = await Promise.allSettled(
       nfts.map((nft) => limit(() => processNft(myBucket, nft)))
     );
   });
+
+  const failed = results.find(
+    (result): result is PromiseRejectedResult => result.status === 'rejected'
+  );
+  if (failed) {
+    throw failed.reason;
+  }
 };
 
 export async function processS3UploaderJob(
@@ -154,85 +165,180 @@ async function processNftImages(
   n: ProcessableNft,
   imageVariants?: S3UploaderImageVariant[]
 ) {
-  let format: any;
-  if (
-    equalIgnoreCase(n.contract, MEMES_CONTRACT) ||
-    equalIgnoreCase(n.contract, MEMELAB_CONTRACT)
-  ) {
-    format = n.metadata?.image_details?.format;
-  }
-  if (equalIgnoreCase(n.contract, GRADIENT_CONTRACT)) {
-    format = n.metadata?.image?.split?.('.').pop();
+  const imageDetails = getProcessableImageDetails(n, imageVariants);
+  if (!imageDetails) {
+    return;
   }
 
+  const { format, imageUrl, requestedVariants } = imageDetails;
+  const imageTxId = getTxId(imageUrl, `${n.contract}-${n.id}`);
+  const imageKey = `images/original/${n.contract}/${n.id}.${format}`;
+  const getImageBlob = createImageBlobProvider(imageUrl);
+
+  await maybeHandleOriginalImage({
+    requestedVariants,
+    nft: n,
+    format,
+    imageKey,
+    imageTxId,
+    myBucket,
+    getImageBlob
+  });
+
+  await processScaledImageVariants({
+    nft: n,
+    format,
+    imageTxId,
+    myBucket,
+    requestedVariants,
+    getImageBlob
+  });
+}
+
+function getProcessableImageDetails(
+  n: ProcessableNft,
+  imageVariants?: S3UploaderImageVariant[]
+): {
+  format: string;
+  imageUrl: string;
+  requestedVariants: Set<S3UploaderImageVariant>;
+} | null {
+  const format = resolveNftImageFormat(n);
   const imageUrl = n.metadata?.image ?? n.metadata?.image_url;
+  if (!format || !imageUrl) {
+    return null;
+  }
 
-  if (format && imageUrl) {
-    const requestedVariants = new Set<S3UploaderImageVariant>(
+  return {
+    format,
+    imageUrl,
+    requestedVariants: new Set<S3UploaderImageVariant>(
       imageVariants ?? [
         S3UploaderImageVariant.ORIGINAL,
         ...(n.scaled ? [S3UploaderImageVariant.SCALED_1000] : []),
         ...(n.thumbnail ? [S3UploaderImageVariant.SCALED_450] : []),
         ...(n.icon ? [S3UploaderImageVariant.SCALED_60] : [])
       ]
-    );
-    let cachedBlob: Buffer | null = null;
-    const getImageBlob = async () => {
-      if (!cachedBlob) {
-        cachedBlob = await fetchUrl(imageUrl);
-      }
-      return cachedBlob;
-    };
+    )
+  };
+}
 
-    const imageTxId = getTxId(imageUrl, `${n.contract}-${n.id}`);
-    const imageKey = `images/original/${n.contract}/${n.id}.${format}`;
-    if (requestedVariants.has(S3UploaderImageVariant.ORIGINAL)) {
-      await handleImage({
-        nft: n,
-        format,
-        s3Key: imageKey,
-        height: null,
-        toWEBP: false,
-        contentType: `image/${format.toLowerCase()}`,
-        imageTxId,
-        myBucket,
-        sourceBlobProvider: getImageBlob
-      });
+function resolveNftImageFormat(n: ProcessableNft): string | null {
+  if (
+    equalIgnoreCase(n.contract, MEMES_CONTRACT) ||
+    equalIgnoreCase(n.contract, MEMELAB_CONTRACT)
+  ) {
+    return n.metadata?.image_details?.format ?? null;
+  }
+  if (equalIgnoreCase(n.contract, GRADIENT_CONTRACT)) {
+    return n.metadata?.image?.split?.('.').pop() ?? null;
+  }
+  return null;
+}
+
+function createImageBlobProvider(imageUrl: string) {
+  let cachedBlob: Buffer | null = null;
+  return async () => {
+    if (!cachedBlob) {
+      cachedBlob = await fetchUrl(imageUrl);
     }
+    return cachedBlob;
+  };
+}
 
-    if (n.scaled && requestedVariants.has(S3UploaderImageVariant.SCALED_1000)) {
-      await handleScaledImage({
-        nft: n,
+async function maybeHandleOriginalImage({
+  requestedVariants,
+  nft,
+  format,
+  imageKey,
+  imageTxId,
+  myBucket,
+  getImageBlob
+}: {
+  requestedVariants: Set<S3UploaderImageVariant>;
+  nft: ProcessableNft;
+  format: string;
+  imageKey: string;
+  imageTxId: string;
+  myBucket: string;
+  getImageBlob: () => Promise<Buffer>;
+}) {
+  if (!requestedVariants.has(S3UploaderImageVariant.ORIGINAL)) {
+    return;
+  }
+
+  await handleImage({
+    nft,
+    format,
+    s3Key: imageKey,
+    height: null,
+    toWEBP: false,
+    contentType: `image/${format.toLowerCase()}`,
+    imageTxId,
+    myBucket,
+    sourceBlobProvider: getImageBlob
+  });
+}
+
+async function processScaledImageVariants({
+  nft,
+  format,
+  imageTxId,
+  myBucket,
+  requestedVariants,
+  getImageBlob
+}: {
+  nft: ProcessableNft;
+  format: string;
+  imageTxId: string;
+  myBucket: string;
+  requestedVariants: Set<S3UploaderImageVariant>;
+  getImageBlob: () => Promise<Buffer>;
+}) {
+  const tasks: Array<Promise<unknown>> = [];
+
+  if (nft.scaled && requestedVariants.has(S3UploaderImageVariant.SCALED_1000)) {
+    tasks.push(
+      handleScaledImage({
+        nft,
         format,
         height: SCALED_HEIGHT,
         imageTxId,
         myBucket,
         sourceBlobProvider: getImageBlob
-      });
-    }
-    if (
-      n.thumbnail &&
-      requestedVariants.has(S3UploaderImageVariant.SCALED_450)
-    ) {
-      await handleScaledImage({
-        nft: n,
+      })
+    );
+  }
+  if (
+    nft.thumbnail &&
+    requestedVariants.has(S3UploaderImageVariant.SCALED_450)
+  ) {
+    tasks.push(
+      handleScaledImage({
+        nft,
         format,
         height: THUMBNAIL_HEIGHT,
         imageTxId,
         myBucket,
         sourceBlobProvider: getImageBlob
-      });
-    }
-    if (n.icon && requestedVariants.has(S3UploaderImageVariant.SCALED_60)) {
-      await handleScaledImage({
-        nft: n,
+      })
+    );
+  }
+  if (nft.icon && requestedVariants.has(S3UploaderImageVariant.SCALED_60)) {
+    tasks.push(
+      handleScaledImage({
+        nft,
         format,
         height: ICON_HEIGHT,
         imageTxId,
         myBucket,
         sourceBlobProvider: getImageBlob
-      });
-    }
+      })
+    );
+  }
+
+  if (tasks.length) {
+    await Promise.all(tasks);
   }
 }
 

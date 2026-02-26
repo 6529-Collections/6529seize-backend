@@ -157,6 +157,8 @@ const LABNFT_CONTRACTS: ContractConfig[] = [
   }
 ];
 
+const S3_ENQUEUE_BATCH_SIZE = 25;
+
 async function processNFTsForType(
   EntityClass: typeof NFT | typeof LabNFT,
   contracts: ContractConfig[],
@@ -166,13 +168,53 @@ async function processNFTsForType(
 ) {
   const repo = getDataSource().getRepository(EntityClass);
   const existing = await repo.find();
-  const nftMap = new Map<string, NftProcessingEntry>();
+  const nftMap = createNftProcessingMap(existing);
   const newlyDiscoveredNfts: Array<NFT | LabNFT> = [];
   const collectionType =
     EntityClass === LabNFT
       ? S3UploaderCollectionType.MEME_LAB
       : S3UploaderCollectionType.NFT;
+  const contractMap = createContractMaxIdMap(existing);
 
+  if (
+    await maybeRunAuditModeAndReturn({
+      mode,
+      EntityClass,
+      nftMap,
+      collectionType
+    })
+  ) {
+    return;
+  }
+
+  await runDiscoverOrRefreshMode({
+    mode,
+    EntityClass,
+    contracts,
+    contractMap,
+    nftMap,
+    provider,
+    newlyDiscoveredNfts
+  });
+
+  logger.info(`🔄 Updating supply for ${EntityClass.name}s`);
+  await updateSupply(nftMap, updateHodlRate);
+
+  await updateMemeReferences(nftMap, EntityClass);
+  await saveAndPostProcessNfts({
+    repo,
+    EntityClass,
+    mode,
+    nftMap,
+    newlyDiscoveredNfts,
+    collectionType
+  });
+}
+
+function createNftProcessingMap(
+  existing: Array<NFT | LabNFT>
+): Map<string, NftProcessingEntry> {
+  const nftMap = new Map<string, NftProcessingEntry>();
   existing.forEach((n) =>
     nftMap.set(`${n.contract.toLowerCase()}-${n.id}`, {
       nft: n,
@@ -180,28 +222,62 @@ async function processNFTsForType(
       mediaChanged: false
     })
   );
+  return nftMap;
+}
 
+function createContractMaxIdMap(existing: Array<NFT | LabNFT>): Map<string, number> {
   const contractMap = new Map<string, number>();
   for (const nft of existing) {
     const maxId = contractMap.get(nft.contract) ?? -1;
-    if (nft.id > maxId) contractMap.set(nft.contract, nft.id);
-  }
-
-  if (mode === NFT_MODE.AUDIT) {
-    logger.info(`🧪 Auditing S3 jobs for all ${EntityClass.name}s`);
-    for (const { nft } of Array.from(nftMap.values())) {
-      await enqueueS3UploaderJobsForNft({
-        nft,
-        collectionType,
-        reason: 'audit'
-      });
+    if (nft.id > maxId) {
+      contractMap.set(nft.contract, nft.id);
     }
-    logger.info(
-      `✅ Enqueued audit S3 jobs for ${nftMap.size} ${EntityClass.name}s`
-    );
-    return;
+  }
+  return contractMap;
+}
+
+async function maybeRunAuditModeAndReturn({
+  mode,
+  EntityClass,
+  nftMap,
+  collectionType
+}: {
+  mode: NFT_MODE;
+  EntityClass: typeof NFT | typeof LabNFT;
+  nftMap: Map<string, NftProcessingEntry>;
+  collectionType: S3UploaderCollectionType;
+}): Promise<boolean> {
+  if (mode !== NFT_MODE.AUDIT) {
+    return false;
   }
 
+  logger.info(`🧪 Auditing S3 jobs for all ${EntityClass.name}s`);
+  await enqueueNftsInBatches({
+    nfts: Array.from(nftMap.values()).map((entry) => entry.nft),
+    collectionType,
+    reason: 'audit'
+  });
+  logger.info(`✅ Enqueued audit S3 jobs for ${nftMap.size} ${EntityClass.name}s`);
+  return true;
+}
+
+async function runDiscoverOrRefreshMode({
+  mode,
+  EntityClass,
+  contracts,
+  contractMap,
+  nftMap,
+  provider,
+  newlyDiscoveredNfts
+}: {
+  mode: NFT_MODE;
+  EntityClass: typeof NFT | typeof LabNFT;
+  contracts: ContractConfig[];
+  contractMap: Map<string, number>;
+  nftMap: Map<string, NftProcessingEntry>;
+  provider: ethers.JsonRpcProvider;
+  newlyDiscoveredNfts: Array<NFT | LabNFT>;
+}) {
   if (mode === NFT_MODE.DISCOVER) {
     logger.info(`🔍 Discovering new ${EntityClass.name}s`);
     await discoverNewNFTs(
@@ -212,59 +288,144 @@ async function processNFTsForType(
       EntityClass,
       newlyDiscoveredNfts
     );
-  } else {
-    logger.info(`🔄 Refreshing existing ${EntityClass.name}s`);
-    await refreshExistingNFTs(nftMap, provider);
-    await populateMintStatsForEligibleNFTs(nftMap);
+    return;
   }
 
-  logger.info(`🔄 Updating supply for ${EntityClass.name}s`);
-  await updateSupply(nftMap, updateHodlRate);
+  logger.info(`🔄 Refreshing existing ${EntityClass.name}s`);
+  await refreshExistingNFTs(nftMap, provider);
+  await populateMintStatsForEligibleNFTs(nftMap);
+}
 
-  await updateMemeReferences(nftMap, EntityClass);
-
+async function saveAndPostProcessNfts({
+  repo,
+  EntityClass,
+  mode,
+  nftMap,
+  newlyDiscoveredNfts,
+  collectionType
+}: {
+  repo: Repository<NFT> | Repository<LabNFT>;
+  EntityClass: typeof NFT | typeof LabNFT;
+  mode: NFT_MODE;
+  nftMap: Map<string, NftProcessingEntry>;
+  newlyDiscoveredNfts: Array<NFT | LabNFT>;
+  collectionType: S3UploaderCollectionType;
+}) {
   const toSave = Array.from(nftMap.values())
     .filter((entry) => entry.changed)
     .map((entry) => entry.nft);
 
-  if (toSave.length > 0) {
-    await repo.save(toSave);
-    logger.info(`✅ Saved ${toSave.length} ${EntityClass.name}s`);
+  if (!toSave.length) {
+    logger.info(`✅ No changes detected for ${EntityClass.name}s`);
+    return;
+  }
 
-    if (mode === NFT_MODE.DISCOVER && newlyDiscoveredNfts.length > 0) {
-      for (const nft of newlyDiscoveredNfts) {
-        await enqueueS3UploaderJobsForNft({
+  await repo.save(toSave as any);
+  logger.info(`✅ Saved ${toSave.length} ${EntityClass.name}s`);
+
+  await enqueueDiscoverJobsIfNeeded({
+    mode,
+    newlyDiscoveredNfts,
+    collectionType
+  });
+  await enqueueRefreshJobsIfNeeded({
+    mode,
+    nftMap,
+    collectionType
+  });
+  await maybeAnnounceNewDiscoveries({
+    mode,
+    EntityClass,
+    newlyDiscoveredNfts
+  });
+}
+
+async function enqueueDiscoverJobsIfNeeded({
+  mode,
+  newlyDiscoveredNfts,
+  collectionType
+}: {
+  mode: NFT_MODE;
+  newlyDiscoveredNfts: Array<NFT | LabNFT>;
+  collectionType: S3UploaderCollectionType;
+}) {
+  if (mode !== NFT_MODE.DISCOVER || !newlyDiscoveredNfts.length) {
+    return;
+  }
+
+  await enqueueNftsInBatches({
+    nfts: newlyDiscoveredNfts,
+    collectionType,
+    reason: 'discover'
+  });
+}
+
+async function enqueueRefreshJobsIfNeeded({
+  mode,
+  nftMap,
+  collectionType
+}: {
+  mode: NFT_MODE;
+  nftMap: Map<string, NftProcessingEntry>;
+  collectionType: S3UploaderCollectionType;
+}) {
+  if (mode !== NFT_MODE.REFRESH) {
+    return;
+  }
+
+  const nftsToEnqueue = Array.from(nftMap.values())
+    .filter((entry) => entry.mediaChanged)
+    .map((entry) => entry.nft);
+
+  await enqueueNftsInBatches({
+    nfts: nftsToEnqueue,
+    collectionType,
+    reason: 'refresh'
+  });
+}
+
+async function maybeAnnounceNewDiscoveries({
+  mode,
+  EntityClass,
+  newlyDiscoveredNfts
+}: {
+  mode: NFT_MODE;
+  EntityClass: typeof NFT | typeof LabNFT;
+  newlyDiscoveredNfts: Array<NFT | LabNFT>;
+}) {
+  if (mode !== NFT_MODE.DISCOVER || EntityClass !== NFT) {
+    return;
+  }
+
+  try {
+    await announceNewMemeDiscoveries(newlyDiscoveredNfts as NFT[]);
+  } catch (error: any) {
+    logger.error(
+      `announceNewMemeDiscoveries failed: ${error?.message ?? String(error)}`
+    );
+  }
+}
+
+async function enqueueNftsInBatches({
+  nfts,
+  collectionType,
+  reason
+}: {
+  nfts: Array<NFT | LabNFT>;
+  collectionType: S3UploaderCollectionType;
+  reason: 'discover' | 'refresh' | 'audit';
+}) {
+  for (let i = 0; i < nfts.length; i += S3_ENQUEUE_BATCH_SIZE) {
+    const batch = nfts.slice(i, i + S3_ENQUEUE_BATCH_SIZE);
+    await Promise.all(
+      batch.map((nft) =>
+        enqueueS3UploaderJobsForNft({
           nft,
           collectionType,
-          reason: 'discover'
-        });
-      }
-    }
-
-    if (mode === NFT_MODE.REFRESH) {
-      for (const entry of Array.from(nftMap.values())) {
-        if (!entry.mediaChanged) {
-          continue;
-        }
-        await enqueueS3UploaderJobsForNft({
-          nft: entry.nft,
-          collectionType,
-          reason: 'refresh'
-        });
-      }
-    }
-
-    if (mode === NFT_MODE.DISCOVER && EntityClass === NFT) {
-      try {
-        await announceNewMemeDiscoveries(newlyDiscoveredNfts as NFT[]);
-      } catch (error: any) {
-        logger.error(
-          `announceNewMemeDiscoveries failed: ${error?.message ?? String(error)}`
-        );
-      }
-    }
-  } else {
-    logger.info(`✅ No changes detected for ${EntityClass.name}s`);
+          reason
+        })
+      )
+    );
   }
 }
 

@@ -12,6 +12,7 @@ export class SQS {
   private readonly logger = Logger.get(this.constructor.name);
   private client: SQSClient;
   private readonly queueUrlCache = new Map<string, string>();
+  private readonly queueUrlInFlight = new Map<string, Promise<string>>();
 
   private getClient() {
     if (!this.client) {
@@ -67,17 +68,31 @@ export class SQS {
       return cached;
     }
 
-    const response = await this.getClient().send(
-      new GetQueueUrlCommand({
-        QueueName: queueName
-      })
-    );
-    if (!response.QueueUrl) {
-      throw new Error(`Queue URL not found for queue ${queueName}`);
+    const inFlight = this.queueUrlInFlight.get(queueName);
+    if (inFlight) {
+      return await inFlight;
     }
 
-    this.queueUrlCache.set(queueName, response.QueueUrl);
-    return response.QueueUrl;
+    const request = (async () => {
+      try {
+        const response = await this.getClient().send(
+          new GetQueueUrlCommand({
+            QueueName: queueName
+          })
+        );
+        if (!response.QueueUrl) {
+          throw new Error(`Queue URL not found for queue ${queueName}`);
+        }
+
+        this.queueUrlCache.set(queueName, response.QueueUrl);
+        return response.QueueUrl;
+      } finally {
+        this.queueUrlInFlight.delete(queueName);
+      }
+    })();
+
+    this.queueUrlInFlight.set(queueName, request);
+    return await request;
   }
 }
 

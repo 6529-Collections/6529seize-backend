@@ -2,6 +2,7 @@ import { Logger } from '@/logging';
 import { sqs } from '@/sqs';
 import {
   buildS3UploaderJobsForNft,
+  QueueableNft,
   S3_UPLOADER_QUEUE_NAME,
   S3UploaderCollectionType
 } from '@/s3Uploader/s3-uploader.jobs';
@@ -17,7 +18,7 @@ export async function enqueueS3UploaderJobsForNft({
   collectionType,
   reason
 }: {
-  nft: any;
+  nft: QueueableNft;
   collectionType: S3UploaderCollectionType;
   reason: 'discover' | 'refresh' | 'audit';
 }) {

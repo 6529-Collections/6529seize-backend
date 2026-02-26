@@ -42,7 +42,20 @@ export type S3UploaderJob =
       variants: S3UploaderVideoVariant[];
     };
 
-type QueueableNft = any;
+export type QueueableNft = {
+  id: number;
+  contract: string;
+  icon?: string | null;
+  thumbnail?: string | null;
+  scaled?: string | null;
+  metadata?: {
+    image?: string;
+    image_url?: string;
+    animation?: string;
+    animation_url?: string;
+    animation_details?: { format?: string } | string | null;
+  } | null;
+};
 
 export function buildS3UploaderJobsForNft({
   nft,
@@ -144,12 +157,28 @@ export function parseS3UploaderJob(messageBody: string): S3UploaderJob | null {
 
   if (
     parsed?.version !== 1 ||
+    typeof parsed.reason !== 'string' ||
+    !parsed.reason ||
     typeof parsed.contract !== 'string' ||
     typeof parsed.tokenId !== 'number' ||
     !Object.values(S3UploaderCollectionType).includes(parsed.collectionType) ||
     !Object.values(S3UploaderJobType).includes(parsed.jobType) ||
     !Array.isArray(parsed.variants)
   ) {
+    return null;
+  }
+
+  const validVariants =
+    parsed.jobType === S3UploaderJobType.IMAGE
+      ? new Set<string>(Object.values(S3UploaderImageVariant))
+      : new Set<string>(Object.values(S3UploaderVideoVariant));
+  const variantsAreValid =
+    parsed.variants.length > 0 &&
+    parsed.variants.every(
+      (variant: unknown) =>
+        typeof variant === 'string' && validVariants.has(variant)
+    );
+  if (!variantsAreValid) {
     return null;
   }
 

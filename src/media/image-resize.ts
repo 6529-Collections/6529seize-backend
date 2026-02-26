@@ -11,6 +11,10 @@ export async function resizeImageBufferToHeight({
   height: number;
   toWebp: boolean;
 }): Promise<Buffer> {
+  if (!Number.isFinite(height) || height <= 0) {
+    throw new Error(`Invalid resize height: ${height}`);
+  }
+
   if (toWebp) {
     return await sharp(buffer).resize({ height }).webp().toBuffer();
   }

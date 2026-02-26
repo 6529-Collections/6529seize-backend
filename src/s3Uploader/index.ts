@@ -1,5 +1,8 @@
-import { SQSHandler } from 'aws-lambda';
-import { fetchMemeLabNFTByContractAndId, fetchNFTByContractAndId } from '@/db';
+import { SQSBatchResponse, SQSHandler } from 'aws-lambda';
+import {
+  fetchMemeLabNFTByContractAndId,
+  fetchNFTByContractAndId
+} from '@/db';
 import { Logger } from '@/logging';
 import { doInDbContext } from '@/secrets';
 import { processS3UploaderJob } from '@/s3';
@@ -12,37 +15,53 @@ import {
 const logger = Logger.get('S3_UPLOADER');
 
 const sqsHandler: SQSHandler = async (event) => {
-  if (process.env.NODE_ENV !== 'production') {
-    logger.info(`[SKIPPING] [CONFIG ${process.env.NODE_ENV}]`);
-    return;
-  }
+  let batchItemFailures: SQSBatchResponse['batchItemFailures'] = [];
 
   await doInDbContext(
     async () => {
+      if (process.env.NODE_ENV !== 'production') {
+        logger.info(`[SKIPPING] [CONFIG ${process.env.NODE_ENV}]`);
+        return;
+      }
+
       for (const record of event.Records) {
-        const job = parseS3UploaderJob(record.body);
-        if (!job) {
-          logger.warn(`Invalid S3 uploader job payload, skipping`);
-          continue;
-        }
+        try {
+          const job = parseS3UploaderJob(record.body);
+          if (!job) {
+            logger.warn(`Invalid S3 uploader job payload, skipping`);
+            continue;
+          }
 
-        const nft =
-          job.collectionType === S3UploaderCollectionType.MEME_LAB
-            ? await fetchMemeLabNFTByContractAndId(job.contract, job.tokenId)
-            : await fetchNFTByContractAndId(job.contract, job.tokenId);
+          const nft =
+            job.collectionType === S3UploaderCollectionType.MEME_LAB
+              ? await fetchMemeLabNFTByContractAndId(job.contract, job.tokenId)
+              : await fetchNFTByContractAndId(job.contract, job.tokenId);
 
-        if (!nft) {
-          logger.warn(
-            `NFT not found for S3 uploader job [${job.collectionType}] ${job.contract}#${job.tokenId}`
+          if (!nft) {
+            logger.warn(
+              `NFT not found for S3 uploader job [${job.collectionType}] ${job.contract}#${job.tokenId}`
+            );
+            continue;
+          }
+
+          await processS3UploaderJob(nft, job);
+        } catch (error: any) {
+          logger.error(
+            `Failed processing S3 uploader record ${record.messageId}`,
+            error
           );
-          continue;
+          if (record.messageId) {
+            batchItemFailures.push({ itemIdentifier: record.messageId });
+          }
         }
-
-        await processS3UploaderJob(nft, job);
       }
     },
     { logger }
   );
+
+  return {
+    batchItemFailures
+  };
 };
 
 export const handler = sentryContext.wrapLambdaHandler(sqsHandler);

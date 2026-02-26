@@ -76,7 +76,7 @@ jobs:
     steps:
       - name: Check production preconditions
         uses: actions/github-script@v3
-        if: (github.event.inputs.service == 'mediaResizerLoop' || github.event.inputs.service == 'nextgenMediaProxyInterceptor' || github.event.inputs.service == 'nextgenMediaUploader' || github.event.inputs.service == 'nextgenMediaImageResolutions' || github.event.inputs.service == 'cloudwatchAlarmsToDiscordLoop') && github.event.inputs.environment != 'prod'
+        if: (github.event.inputs.service == 'mediaResizerLoop' || github.event.inputs.service == 'nextgenMediaProxyInterceptor' || github.event.inputs.service == 'nextgenMediaUploader' || github.event.inputs.service == 'nextgenMediaImageResolutions' || github.event.inputs.service == 'cloudwatchAlarmsToDiscordLoop' || github.event.inputs.service == 's3Uploader') && github.event.inputs.environment != 'prod'
         with:
           script: core.setFailed('Given service can only be deployed to production environment')
       - name: Check staging preconditions
