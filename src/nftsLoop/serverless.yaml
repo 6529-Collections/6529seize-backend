@@ -30,6 +30,11 @@ functions:
           rate: rate(10 minutes)
           input:
             mode: 'refresh'
+      - schedule:
+          # AWS cron uses UTC. Adjust if you want local midnight.
+          rate: cron(0 0 * * ? *)
+          input:
+            mode: 'audit'
 
     vpc:
       securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}

@@ -3,10 +3,10 @@ import {
   PutObjectCommand,
   S3Client
 } from '@aws-sdk/client-s3';
-import sharp from 'sharp';
 import { RequestInfo, RequestInit } from 'node-fetch';
 import { Rememe } from './entities/IRememe';
 import { CLOUDFRONT_LINK } from '@/constants';
+import { resizeImageBufferToHeight } from '@/media/image-resize';
 import { persistRememes } from './db';
 import { Logger } from './logging';
 import { ipfs } from './ipfs';
@@ -16,8 +16,6 @@ const logger = Logger.get('S3_REMEMES');
 
 const fetch = (url: RequestInfo, init?: RequestInit) =>
   import('node-fetch').then(({ default: fetch }) => fetch(url, init));
-
-const imagescript = require('imagescript');
 
 const ICON_HEIGHT = 60;
 const THUMBNAIL_HEIGHT = 450;
@@ -74,6 +72,12 @@ export const persistRememesS3 = async (rememes: Rememe[]) => {
               Buffer.from(blob),
               SCALED_HEIGHT
             );
+            if (!scaledBuffer) {
+              logger.error(
+                `[ERROR ${r.contract} #${r.id}] [FAILED RESIZE scaled ${SCALED_HEIGHT}]`
+              );
+              return;
+            }
 
             await handleImageUpload(scaledKey, format, scaledBuffer);
 
@@ -83,6 +87,12 @@ export const persistRememesS3 = async (rememes: Rememe[]) => {
               Buffer.from(blob),
               THUMBNAIL_HEIGHT
             );
+            if (!thumbnailBuffer) {
+              logger.error(
+                `[ERROR ${r.contract} #${r.id}] [FAILED RESIZE thumbnail ${THUMBNAIL_HEIGHT}]`
+              );
+              return;
+            }
 
             await handleImageUpload(thumbnailKey, format, thumbnailBuffer);
 
@@ -92,6 +102,12 @@ export const persistRememesS3 = async (rememes: Rememe[]) => {
               Buffer.from(blob),
               ICON_HEIGHT
             );
+            if (!iconBuffer) {
+              logger.error(
+                `[ERROR ${r.contract} #${r.id}] [FAILED RESIZE icon ${ICON_HEIGHT}]`
+              );
+              return;
+            }
 
             await handleImageUpload(iconKey, format, iconBuffer);
           } else {
@@ -115,13 +131,14 @@ export const persistRememesS3 = async (rememes: Rememe[]) => {
 async function handleImageUpload(
   key: string,
   format: string,
-  blob: ArrayBuffer
+  blob: ArrayBuffer | Buffer
 ) {
+  const body = Buffer.isBuffer(blob) ? blob : Buffer.from(blob);
   const put = await s3.send(
     new PutObjectCommand({
       Bucket: myBucket,
       Key: key,
-      Body: Buffer.from(blob),
+      Body: body,
       ContentType: `image/${format}`
     })
   );
@@ -150,19 +167,24 @@ async function resizeImage(
   toWEBP: boolean,
   buffer: Buffer,
   height: number
-) {
+): Promise<Buffer | undefined> {
   logger.info(
     `[RESIZING FOR ${rememe.contract} #${rememe.id} (WEBP: ${toWEBP})] [TO TARGET HEIGHT ${height}]`
   );
 
   try {
     if (toWEBP) {
-      return await sharp(buffer).resize({ height: height }).webp().toBuffer();
+      return await resizeImageBufferToHeight({
+        buffer,
+        height,
+        toWebp: true
+      });
     } else {
-      const gif = await imagescript.GIF.decode(buffer);
-      const scaleFactor = gif.height / height;
-      gif.resize(gif.width / scaleFactor, height);
-      return gif.encode();
+      return await resizeImageBufferToHeight({
+        buffer,
+        height,
+        toWebp: false
+      });
     }
   } catch (err: any) {
     logger.error(

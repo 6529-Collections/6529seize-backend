@@ -283,7 +283,7 @@ rates/
 refreshEnsLoop/
 rememesLoop/
 royaltiesLoop/
-s3Loop/
+s3Uploader/
 subscriptionsDaily/
 subscriptionsTopUpLoop/
 tdhConsolidationsLoop/

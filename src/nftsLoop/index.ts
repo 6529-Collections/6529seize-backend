@@ -11,6 +11,7 @@ import { MemesSeason } from '@/entities/ISeason';
 import { MemesMintStat } from '@/entities/IMemesMintStat';
 import { NFTOwner } from '@/entities/INFTOwner';
 import { NFT_MODE, processNFTs } from '@/nftsLoop/nfts';
+import * as priorityAlertsContext from '@/priority-alerts.context';
 import {
   findMemeLabExtendedData,
   findMemesExtendedData
@@ -21,12 +22,13 @@ import { updateDistributionInfoFor } from '@/nftsLoop/nft_distribution';
 import { enums } from '@/enums';
 
 const logger = Logger.get('NFTS_LOOP');
+const ALERT_TITLE = 'NFTs Loop';
 
 export const handler = sentryContext.wrapLambdaHandler(async (event) => {
   await doInDbContext(
-    async () => {
+    priorityAlertsContext.wrapAsyncFunction(ALERT_TITLE, async () => {
       await nftsLoop(event?.mode);
-    },
+    }),
     {
       logger,
       entities: [
@@ -47,6 +49,9 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
 async function nftsLoop(mode?: string) {
   const modeEnum = enums.resolveOrThrow(NFT_MODE, mode);
   await processNFTs(modeEnum);
+  if (modeEnum === NFT_MODE.AUDIT) {
+    return;
+  }
   await findMemesExtendedData();
   await findMemeLabExtendedData();
   await updateDistributionInfoFor(NFT);
