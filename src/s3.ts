@@ -244,17 +244,15 @@ function createImageBlobProvider(imageUrl: string) {
       return cachedBlob;
     }
 
-    if (!inFlightPromise) {
-      inFlightPromise = fetchUrl(imageUrl)
-        .then((blob) => {
-          cachedBlob = blob;
-          return blob;
-        })
-        .catch((err) => {
-          inFlightPromise = null;
-          throw err;
-        });
-    }
+    inFlightPromise ??= fetchUrl(imageUrl)
+      .then((blob) => {
+        cachedBlob = blob;
+        return blob;
+      })
+      .catch((err) => {
+        inFlightPromise = null;
+        throw err;
+      });
 
     const blob = await inFlightPromise;
     inFlightPromise = null;
