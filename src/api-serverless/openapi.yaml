@@ -8881,6 +8881,7 @@ components:
         - media_uri
         - last_error_message
         - price
+        - price_currency
         - last_successfully_updated
         - failed_since
         - media_preview
@@ -8911,6 +8912,9 @@ components:
           type: string
           nullable: true
         price:
+          type: string
+          nullable: true
+        price_currency:
           type: string
           nullable: true
         last_successfully_updated:

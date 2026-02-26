@@ -117,6 +117,7 @@ export class NftLinksDb extends LazyDbAccessCompatibleService {
       NftLinkEntity,
       | 'last_error_message'
       | 'price'
+      | 'price_currency'
       | 'full_data'
       | 'media_uri'
       | 'media_preview_status'
@@ -221,7 +222,8 @@ export class NftLinksDb extends LazyDbAccessCompatibleService {
                 token = :token,
                 custom_id = :custom_id,
                 media_uri = :media_uri,
-                price = :price
+                price = :price,
+                price_currency = :price_currency
             where canonical_id = :canonicalId
         `,
         {
@@ -241,7 +243,8 @@ export class NftLinksDb extends LazyDbAccessCompatibleService {
             null,
           fullData: JSON.stringify(data),
           now: Time.currentMillis(),
-          price: data.market.price?.amount ?? null
+          price: data.market.price?.amount ?? null,
+          price_currency: data.market.price?.currency ?? null
         },
         { wrappedConnection: ctx.connection }
       );
