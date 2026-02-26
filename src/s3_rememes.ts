@@ -60,7 +60,14 @@ async function processRememeS3(r: Rememe) {
     logger.info(
       `[PARTIAL OR MISSING REMEME S3 ASSETS] [CONTRACT ${r.contract}] [ID ${r.id}] [original=${initialPresence.original}] [scaled=${initialPresence.scaled}] [thumbnail=${initialPresence.thumbnail}] [icon=${initialPresence.icon}]`
     );
-    await uploadMissingRememeAssets(r, image, format, derivativeFormat, keys, initialPresence);
+    await uploadMissingRememeAssets(
+      r,
+      image,
+      format,
+      derivativeFormat,
+      keys,
+      initialPresence
+    );
   }
 
   const assetPresence = await getRememeAssetPresence(keys);
@@ -174,7 +181,9 @@ async function uploadMissingRememeAssets(
   }
 }
 
-async function getRememeAssetPresence(keys: RememeImageKeys): Promise<RememeAssetPresence> {
+async function getRememeAssetPresence(
+  keys: RememeImageKeys
+): Promise<RememeAssetPresence> {
   const [original, scaled, thumbnail, icon] = await Promise.all([
     objectExists(myBucket, keys.originalKey),
     objectExists(myBucket, keys.scaledKey),
@@ -191,10 +200,7 @@ async function getRememeAssetPresence(keys: RememeImageKeys): Promise<RememeAsse
   };
 }
 
-async function persistRememeS3Links(
-  r: Rememe,
-  keys: RememeImageKeys
-) {
+async function persistRememeS3Links(r: Rememe, keys: RememeImageKeys) {
   r.s3_image_original = `${CLOUDFRONT_LINK}/${keys.originalKey}`;
   r.s3_image_scaled = `${CLOUDFRONT_LINK}/${keys.scaledKey}`;
   r.s3_image_thumbnail = `${CLOUDFRONT_LINK}/${keys.thumbnailKey}`;

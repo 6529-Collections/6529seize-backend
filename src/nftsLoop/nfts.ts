@@ -58,6 +58,10 @@ type NftProcessingEntry = {
   mediaChanged: boolean;
 };
 
+type NftOnlyProcessingEntry = Omit<NftProcessingEntry, 'nft'> & {
+  nft: NFT;
+};
+
 const URI_ABI = [
   'function tokenURI(uint256 tokenId) public view returns (string)',
   'function uri(uint256 tokenId) public view returns (string)'
@@ -198,7 +202,13 @@ async function processNFTsForType(
   });
 
   logger.info(`🔄 Updating supply for ${EntityClass.name}s`);
-  await updateSupply(nftMap, updateHodlRate);
+  const maxSupply = await updateSupply(nftMap);
+  if (updateHodlRate && EntityClass === NFT) {
+    updateHodlRatesForNfts(
+      nftMap as Map<string, NftOnlyProcessingEntry>,
+      maxSupply
+    );
+  }
 
   await updateMemeReferences(nftMap, EntityClass);
   await saveAndPostProcessNfts({
@@ -864,9 +874,8 @@ async function updateMemeReferences(
 }
 
 async function updateSupply(
-  nftMap: Map<string, NftProcessingEntry>,
-  updateHodlRate: boolean
-) {
+  nftMap: Map<string, NftProcessingEntry>
+): Promise<number> {
   let maxSupply = 0;
 
   await Promise.all(
@@ -905,20 +914,25 @@ async function updateSupply(
     })
   );
 
-  if (updateHodlRate) {
-    nftMap.forEach((entry) => {
-      const nft = entry.nft;
-      let newRate = maxSupply / nft.supply;
-      if (!isFinite(newRate) || newRate < 1) newRate = 1;
-      if (nft.hodl_rate !== newRate) {
-        logger.info(
-          `♻️ ${nft.contract} #${nft.id} updating hodl rate from ${nft.hodl_rate} to ${newRate}`
-        );
-        nft.hodl_rate = newRate;
-        entry.changed = true;
-      }
-    });
-  }
+  return maxSupply;
+}
+
+function updateHodlRatesForNfts(
+  nftMap: Map<string, NftOnlyProcessingEntry>,
+  maxSupply: number
+) {
+  nftMap.forEach((entry) => {
+    const nft = entry.nft;
+    let newRate = maxSupply / nft.supply;
+    if (!isFinite(newRate) || newRate < 1) newRate = 1;
+    if (nft.hodl_rate !== newRate) {
+      logger.info(
+        `♻️ ${nft.contract} #${nft.id} updating hodl rate from ${nft.hodl_rate} to ${newRate}`
+      );
+      nft.hodl_rate = newRate;
+      entry.changed = true;
+    }
+  });
 }
 
 async function populateMintStatsForEligibleNFTs(
