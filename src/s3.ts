@@ -534,7 +534,10 @@ async function handleVideoScaling(
 
   const ffstream = new Stream.PassThrough();
   resizedVideoStream.on('error', (err) => {
-    logger.error(`[resizedVideoStream] [SCALING FAILED ${scaledVideoKey}]`, err);
+    logger.error(
+      `[resizedVideoStream] [SCALING FAILED ${scaledVideoKey}]`,
+      err
+    );
     ffstream.destroy(err instanceof Error ? err : new Error(String(err)));
   });
   resizedVideoStream.pipe(ffstream, { end: true });

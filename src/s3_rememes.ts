@@ -40,7 +40,9 @@ export const persistRememesS3 = async (rememes: Rememe[]) => {
 async function processRememeS3(r: Rememe) {
   const image = resolveRememeImageUrl(r);
   if (!image || !image.length) {
-    logger.warn(`[REMEME IMAGE URL MISSING] [CONTRACT ${r.contract}] [ID ${r.id}]`);
+    logger.warn(
+      `[REMEME IMAGE URL MISSING] [CONTRACT ${r.contract}] [ID ${r.id}]`
+    );
     return;
   }
 
