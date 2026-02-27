@@ -678,13 +678,15 @@ export class NftLinkMediaPreviewService {
       };
     }
 
-    const pathExtension = this.extractPathExtension(downloaded.finalUrl);
-    if (this.isKnownVideoExtension(pathExtension)) {
-      return {
-        kind: 'video',
-        mimeType,
-        detector: 'extension'
-      };
+    if (mimeKind === 'unknown') {
+      const pathExtension = this.extractPathExtension(downloaded.finalUrl);
+      if (this.isKnownVideoExtension(pathExtension)) {
+        return {
+          kind: 'video',
+          mimeType,
+          detector: 'extension'
+        };
+      }
     }
 
     return {
@@ -698,6 +700,9 @@ export class NftLinkMediaPreviewService {
     if (!mimeType) {
       return 'unknown';
     }
+    if (mimeType.startsWith('text/')) {
+      return mimeType === 'text/html' ? 'html' : 'text';
+    }
     if (mimeType.startsWith('image/')) {
       return 'image';
     }
@@ -706,6 +711,12 @@ export class NftLinkMediaPreviewService {
     }
     if (mimeType.startsWith('model/')) {
       return 'model';
+    }
+    if (mimeType.endsWith('+json')) {
+      return 'json';
+    }
+    if (mimeType.endsWith('+xml')) {
+      return 'xml';
     }
     switch (mimeType) {
       case 'text/html':
@@ -851,11 +862,18 @@ export class NftLinkMediaPreviewService {
       return 'html';
     }
 
-    if (lower.startsWith('<?xml') || lower.startsWith('<svg')) {
+    if (
+      lower.startsWith('<svg') ||
+      (lower.startsWith('<?xml') && this.containsSvgTag(lower))
+    ) {
       return 'image';
     }
 
     return null;
+  }
+
+  private containsSvgTag(lowerText: string): boolean {
+    return /<svg(\s|>|:)/.test(lowerText);
   }
 
   private startsWithBytes(buffer: Buffer, bytes: number[]): boolean {
