@@ -5297,8 +5297,15 @@ paths:
               - REALTIME_VOTE
               - MY_REALTIME_VOTE
               - CREATED_AT
+              - PRICE
               - RATING_PREDICTION
               - TREND
+        - name: price_currency
+          in: query
+          description: Optional currency filter used when sorting by PRICE
+          required: false
+          schema:
+            type: string
         - name: curated_by_group
           in: query
           required: false
