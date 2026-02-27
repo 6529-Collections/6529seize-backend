@@ -11,6 +11,7 @@ import {
   DELETED_DROPS_TABLE,
   DROP_BOOSTS_TABLE,
   DROP_CURATIONS_TABLE,
+  DROP_NFT_LINKS_TABLE,
   DROP_MEDIA_TABLE,
   DROP_MENTIONED_WAVES_TABLE,
   DROP_METADATA_TABLE,
@@ -24,6 +25,7 @@ import {
   IDENTITIES_TABLE,
   IDENTITY_NOTIFICATIONS_TABLE,
   IDENTITY_SUBSCRIPTIONS_TABLE,
+  NFT_LINKS_TABLE,
   PROFILES_ACTIVITY_LOGS_TABLE,
   RATINGS_TABLE,
   WAVE_DROPPER_METRICS_TABLE,
@@ -1168,6 +1170,72 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     return results;
   }
 
+  async findWaveParticipationDropsOrderedByNftPrice(
+    params: {
+      offset: number;
+      wave_id: string;
+      limit: number;
+      sort_order: PageSortDirection;
+      curator_ids?: string[] | null;
+      price_currency?: string | null;
+    },
+    ctx: RequestContext
+  ): Promise<DropEntity[]> {
+    ctx.timer?.start(
+      `${this.constructor.name}->findWaveParticipationDropsOrderedByNftPrice`
+    );
+    const curationFilter = params.curator_ids?.length
+      ? `and exists (
+          select 1 from ${DROP_CURATIONS_TABLE} dc
+          where dc.drop_id = d.id and dc.curator_id in (:curator_ids)
+        )`
+      : '';
+    const sql = `
+      with drop_prices as (
+        select
+          d.id as drop_id,
+          max(nl.price) as drop_price
+        from ${DROPS_TABLE} d
+        left join ${DROP_NFT_LINKS_TABLE} dnl on dnl.drop_id = d.id
+        left join ${NFT_LINKS_TABLE} nl
+          on nl.canonical_id = dnl.canonical_id
+          and nl.price is not null
+          and (
+            :price_currency is null
+            or upper(nl.price_currency) = upper(:price_currency)
+          )
+        where d.wave_id = :wave_id
+          and d.drop_type = '${DropType.PARTICIPATORY}'
+          ${curationFilter}
+        group by d.id
+      )
+      select d.*
+      from drop_prices dp
+      join ${DROPS_TABLE} d on d.id = dp.drop_id
+      order by
+        (dp.drop_price is null) asc,
+        dp.drop_price ${params.sort_order},
+        d.created_at desc,
+        d.id desc
+      limit :limit offset :offset
+    `;
+    const results = await this.db.execute<DropEntity>(
+      sql,
+      {
+        wave_id: params.wave_id,
+        curator_ids: params.curator_ids ?? null,
+        price_currency: params.price_currency ?? null,
+        limit: params.limit,
+        offset: params.offset
+      },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop(
+      `${this.constructor.name}->findWaveParticipationDropsOrderedByNftPrice`
+    );
+    return results;
+  }
+
   async findRealtimeLeaderboardDrops(
     params: {
       offset: number;
@@ -2074,6 +2142,7 @@ export enum LeaderboardSort {
   REALTIME_VOTE = 'REALTIME_VOTE',
   MY_REALTIME_VOTE = 'MY_REALTIME_VOTE',
   CREATED_AT = 'CREATED_AT',
+  PRICE = 'PRICE',
   RATING_PREDICTION = 'RATING_PREDICTION',
   TREND = 'TREND'
 }
@@ -2085,6 +2154,7 @@ export interface LeaderboardParams {
   readonly sort_direction: PageSortDirection;
   readonly sort: LeaderboardSort;
   readonly curated_by_group: string | null;
+  readonly price_currency: string | null;
 }
 
 export interface DropLogsQueryParams {
