@@ -80,7 +80,7 @@ export class NftLinkMediaPreviewService {
         {
           canonicalId: card.identifier.canonicalId,
           kind: this.toPreviewKind(sourceMediaKind),
-          message: `No image preview source available (media kind: ${sourceMediaKind})`
+          message: `No preview source available (media kind: ${sourceMediaKind})`
         },
         ctx
       );
@@ -150,7 +150,7 @@ export class NftLinkMediaPreviewService {
         {
           canonicalId: parsed.canonicalId,
           status: 'SKIPPED',
-          message: `No image preview source available in resolved NFT metadata`
+          message: `No preview source available in resolved NFT metadata`
         },
         ctx
       );
@@ -269,33 +269,59 @@ export class NftLinkMediaPreviewService {
   private preparePreviewSourceFromCard(
     card: NormalizedNftCard
   ): PreparedPreviewSource | null {
-    const sourceUrl = card.asset.media?.imageUrl ?? null;
-    if (!sourceUrl) {
+    const selection = this.selectPreviewSource(card.asset.media, null);
+    if (!selection) {
       return null;
     }
     return {
       canonicalId: card.identifier.canonicalId,
-      sourceUrl,
-      sourceHash: this.hashSourceUrl(sourceUrl),
-      previewKind: 'image',
-      sourceMediaKind: card.asset.media?.kind ?? null
+      sourceUrl: selection.sourceUrl,
+      sourceHash: this.hashSourceUrl(selection.sourceUrl),
+      previewKind: selection.previewKind,
+      sourceMediaKind: selection.sourceMediaKind
     };
   }
 
   private preparePreviewSourceFromEntity(
     entity: NftLinkEntity
   ): PreparedPreviewSource | null {
-    const sourceUrl =
-      entity.full_data?.asset?.media?.imageUrl ?? entity.media_uri ?? null;
-    if (!sourceUrl) {
+    const selection = this.selectPreviewSource(
+      entity.full_data?.asset?.media,
+      entity.media_uri
+    );
+    if (!selection) {
       return null;
     }
     return {
       canonicalId: entity.canonical_id,
+      sourceUrl: selection.sourceUrl,
+      sourceHash: this.hashSourceUrl(selection.sourceUrl),
+      previewKind: selection.previewKind,
+      sourceMediaKind: selection.sourceMediaKind
+    };
+  }
+
+  private selectPreviewSource(
+    media: NormalizedNftCard['asset']['media'] | undefined,
+    fallbackUrl: string | null
+  ): {
+    sourceUrl: string;
+    previewKind: NftLinkMediaPreviewKind;
+    sourceMediaKind: string | null;
+  } | null {
+    const sourceMediaKind = media?.kind ?? null;
+    const sourceUrl =
+      sourceMediaKind === 'animation' || sourceMediaKind === 'video'
+        ? (media?.animationUrl ?? media?.imageUrl ?? fallbackUrl ?? null)
+        : (media?.imageUrl ?? media?.animationUrl ?? fallbackUrl ?? null);
+    if (!sourceUrl) {
+      return null;
+    }
+
+    return {
       sourceUrl,
-      sourceHash: this.hashSourceUrl(sourceUrl),
-      previewKind: 'image',
-      sourceMediaKind: entity.full_data?.asset?.media?.kind ?? null
+      previewKind: this.toPreviewKind(sourceMediaKind),
+      sourceMediaKind
     };
   }
 
@@ -635,7 +661,10 @@ export class NftLinkMediaPreviewService {
     ) {
       return false;
     }
-    if (prepared.sourceMediaKind === 'video') {
+    if (
+      prepared.sourceMediaKind === 'video' ||
+      prepared.sourceMediaKind === 'animation'
+    ) {
       return true;
     }
     return this.isKnownVideoExtension(
