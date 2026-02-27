@@ -206,6 +206,10 @@ export class NftLinksDb extends LazyDbAccessCompatibleService {
     try {
       ctx.timer?.start(`${this.constructor.name}->updateWithSuccess`);
       const identifiers = data.identifier.identifiers as any;
+      const price = data.market.price?.amount ?? null;
+      const price_currency =
+        data.market.price?.currency ??
+        (data.market.price?.amount != null ? 'ETH' : null);
       await this.db.execute(
         `
             update ${NFT_LINKS_TABLE} 
@@ -243,8 +247,8 @@ export class NftLinksDb extends LazyDbAccessCompatibleService {
             null,
           fullData: JSON.stringify(data),
           now: Time.currentMillis(),
-          price: data.market.price?.amount ?? null,
-          price_currency: data.market.price?.currency ?? null
+          price,
+          price_currency
         },
         { wrappedConnection: ctx.connection }
       );
