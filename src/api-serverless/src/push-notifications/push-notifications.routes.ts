@@ -47,20 +47,19 @@ router.post(
 
     const { token, device_id, profile_id, platform } = validatedRequest;
     const authenticationContext = await getAuthenticationContext(req);
+    const actingAsProfileId = authenticationContext.getActingAsId();
 
-    if (profile_id) {
-      if (authenticationContext.authenticatedProfileId !== profile_id) {
-        throw new UnauthorisedException(
-          'Profile ID does not match authenticated profile'
-        );
-      }
-    }
-
-    const resolvedProfileId =
-      profile_id ?? authenticationContext.getActingAsId();
-    if (!resolvedProfileId) {
+    if (!actingAsProfileId) {
       throw new ForbiddenException(
         'You need to create a profile to register for push notifications'
+      );
+    }
+
+    const resolvedProfileId = profile_id ?? actingAsProfileId;
+
+    if (resolvedProfileId !== actingAsProfileId) {
+      throw new UnauthorisedException(
+        'Profile ID does not match authenticated acting profile'
       );
     }
 

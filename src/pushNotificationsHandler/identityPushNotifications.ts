@@ -78,7 +78,7 @@ function isNotificationEnabledForDevice(
 }
 
 function getDeviceTokenKey(deviceId: string, token: string): string {
-  return `${deviceId}:${token}`;
+  return JSON.stringify([deviceId, token]);
 }
 
 function buildMultiProfileTitlePrefix(profileHandle: string): string {
@@ -237,7 +237,8 @@ export async function sendIdentityNotification(id: number) {
             logger.warn(`Token not registered: ${device.token}`);
             await getDataSource().getRepository(PushNotificationDevice).delete({
               device_id: device.device_id,
-              profile_id: notification.identity_id
+              profile_id: notification.identity_id,
+              token: device.token
             });
             logger.info(`Deleted token: ${device.token}`);
           } else {
