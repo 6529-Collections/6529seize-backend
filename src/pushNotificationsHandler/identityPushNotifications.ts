@@ -77,6 +77,55 @@ function isNotificationEnabledForDevice(
   return settings[settingKey];
 }
 
+function getDeviceTokenKey(deviceId: string, token: string): string {
+  return `${deviceId}:${token}`;
+}
+
+function buildMultiProfileTitlePrefix(profileHandle: string): string {
+  const normalizedHandle = profileHandle.startsWith('@')
+    ? profileHandle.slice(1)
+    : profileHandle;
+  return `[@${normalizedHandle}]`;
+}
+
+async function getSharedDeviceTokenKeysForOtherProfiles(
+  targetProfileId: string,
+  devices: PushNotificationDevice[]
+): Promise<Set<string>> {
+  if (devices.length === 0) {
+    return new Set();
+  }
+
+  const params: Record<string, string> = {
+    targetProfileId
+  };
+  const deviceAndTokenConditions: string[] = [];
+
+  devices.forEach((device, index) => {
+    const deviceIdParam = `deviceId${index}`;
+    const tokenParam = `token${index}`;
+    params[deviceIdParam] = device.device_id;
+    params[tokenParam] = device.token;
+    deviceAndTokenConditions.push(
+      `(d.device_id = :${deviceIdParam} AND d.token = :${tokenParam})`
+    );
+  });
+
+  const rows = await getDataSource()
+    .getRepository(PushNotificationDevice)
+    .createQueryBuilder('d')
+    .select('d.device_id', 'device_id')
+    .addSelect('d.token', 'token')
+    .where('d.profile_id <> :targetProfileId', params)
+    .andWhere(`(${deviceAndTokenConditions.join(' OR ')})`)
+    .groupBy('d.device_id, d.token')
+    .getRawMany<{ device_id: string; token: string }>();
+
+  return new Set(
+    rows.map((row) => getDeviceTokenKey(row.device_id, row.token))
+  );
+}
+
 export async function sendIdentityNotification(id: number) {
   logger.info(`Sending identity notification: ${id}`);
 
@@ -123,6 +172,20 @@ export async function sendIdentityNotification(id: number) {
     return;
   }
 
+  const sharedDeviceTokenKeys = await getSharedDeviceTokenKeysForOtherProfiles(
+    notification.identity_id,
+    userDevices
+  );
+  let multiProfileTitlePrefix: string | null = null;
+  if (sharedDeviceTokenKeys.size > 0) {
+    const targetProfile = await getIdentityOrThrow(notification.identity_id);
+    const targetProfileHandle =
+      targetProfile.normalised_handle ??
+      targetProfile.handle ??
+      notification.identity_id;
+    multiProfileTitlePrefix = buildMultiProfileTitlePrefix(targetProfileHandle);
+  }
+
   const notificationData = await generateNotificationData(notification);
   if (notificationData) {
     const { title, body, data, imageUrl } = notificationData;
@@ -149,8 +212,17 @@ export async function sendIdentityNotification(id: number) {
           return;
         }
 
+        const shouldPrefixTitle =
+          multiProfileTitlePrefix !== null &&
+          sharedDeviceTokenKeys.has(
+            getDeviceTokenKey(device.device_id, device.token)
+          );
+        const titleForDevice = shouldPrefixTitle
+          ? `${multiProfileTitlePrefix} ${title}`
+          : title;
+
         return sendMessage(
-          title,
+          titleForDevice,
           body,
           device.token,
           notification.id,
@@ -163,9 +235,10 @@ export async function sendIdentityNotification(id: number) {
             error.code === 'messaging/invalid-registration-token'
           ) {
             logger.warn(`Token not registered: ${device.token}`);
-            await getDataSource()
-              .getRepository(PushNotificationDevice)
-              .delete({ device_id: device.device_id });
+            await getDataSource().getRepository(PushNotificationDevice).delete({
+              device_id: device.device_id,
+              profile_id: notification.identity_id
+            });
             logger.info(`Deleted token: ${device.token}`);
           } else {
             logger.error(`Failed to send notification: ${error.message}`, {

@@ -5,11 +5,7 @@ import { PushNotificationSettingsData } from '../../../entities/IPushNotificatio
 import { ForbiddenException, UnauthorisedException } from '../../../exceptions';
 import { ApiResponse } from '../api-response';
 import { asyncRouter } from '../async.router';
-import {
-  getAuthenticationContext,
-  maybeAuthenticatedUser,
-  needsAuthenticatedUser
-} from '../auth/auth';
+import { getAuthenticationContext, needsAuthenticatedUser } from '../auth/auth';
 import { ApiPushNotificationDevice } from '../generated/models/ApiPushNotificationDevice';
 import { ApiRegisterPushNotificationTokenRequest } from '../generated/models/ApiRegisterPushNotificationTokenRequest';
 import { getValidatedByJoiOrThrow } from '../validation';
@@ -35,7 +31,7 @@ const router = asyncRouter();
 
 router.post(
   `/register`,
-  maybeAuthenticatedUser(),
+  needsAuthenticatedUser(),
   async function (
     req: Request<any, any, ApiRegisterPushNotificationTokenRequest, any, any>,
     res: Response<
@@ -50,9 +46,9 @@ router.post(
     );
 
     const { token, device_id, profile_id, platform } = validatedRequest;
+    const authenticationContext = await getAuthenticationContext(req);
 
     if (profile_id) {
-      const authenticationContext = await getAuthenticationContext(req);
       if (authenticationContext.authenticatedProfileId !== profile_id) {
         throw new UnauthorisedException(
           'Profile ID does not match authenticated profile'
@@ -60,11 +56,19 @@ router.post(
       }
     }
 
+    const resolvedProfileId =
+      profile_id ?? authenticationContext.getActingAsId();
+    if (!resolvedProfileId) {
+      throw new ForbiddenException(
+        'You need to create a profile to register for push notifications'
+      );
+    }
+
     const pushNotificationDevice: PushNotificationDevice = {
       device_id,
       token,
       platform,
-      profile_id
+      profile_id: resolvedProfileId
     };
 
     await savePushNotificationDevice(pushNotificationDevice);
