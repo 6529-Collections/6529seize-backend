@@ -750,7 +750,9 @@ export class DropsApiService {
           offset: (params.page - 1) * params.page_size,
           sort_order: params.sort_direction,
           curator_ids: curatorIdsFilter,
-          price_currency: params.price_currency
+          price_currency: params.price_currency,
+          min_price: params.min_price,
+          max_price: params.max_price
         },
         ctx
       );
