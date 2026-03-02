@@ -1178,6 +1178,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       sort_order: PageSortDirection;
       curator_ids?: string[] | null;
       price_currency?: string | null;
+      min_price?: number | null;
+      max_price?: number | null;
     },
     ctx: RequestContext
   ): Promise<DropEntity[]> {
@@ -1212,6 +1214,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       select d.*
       from drop_prices dp
       join ${DROPS_TABLE} d on d.id = dp.drop_id
+      where (:min_price is null or dp.drop_price >= :min_price)
+        and (:max_price is null or dp.drop_price <= :max_price)
       order by
         (dp.drop_price is null) asc,
         dp.drop_price ${params.sort_order},
@@ -1225,6 +1229,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         wave_id: params.wave_id,
         curator_ids: params.curator_ids ?? null,
         price_currency: params.price_currency ?? null,
+        min_price: params.min_price ?? null,
+        max_price: params.max_price ?? null,
         limit: params.limit,
         offset: params.offset
       },
@@ -1353,17 +1359,46 @@ export class DropsDb extends LazyDbAccessCompatibleService {
           where dc.drop_id = d.id and dc.curator_id in (:curator_ids)
         )`
       : '';
-    const count = await this.db
-      .oneOrNull<{ cnt: number }>(
+    const isPriceSort = params.sort === LeaderboardSort.PRICE;
+    const countSql = isPriceSort
+      ? `
+        with drop_prices as (
+          select
+            d.id as drop_id,
+            max(nl.price) as drop_price
+          from ${DROPS_TABLE} d
+          left join ${DROP_NFT_LINKS_TABLE} dnl on dnl.drop_id = d.id
+          left join ${NFT_LINKS_TABLE} nl
+            on nl.canonical_id = dnl.canonical_id
+            and nl.price is not null
+            and (
+              :price_currency is null
+              or upper(nl.price_currency) = upper(:price_currency)
+            )
+          where d.wave_id = :wave_id and d.drop_type = :drop_type
+          ${curationFilter}
+          group by d.id
+        )
+        select count(*) as cnt
+        from drop_prices dp
+        where (:min_price is null or dp.drop_price >= :min_price)
+          and (:max_price is null or dp.drop_price <= :max_price)
         `
+      : `
         select count(*) as cnt from ${DROPS_TABLE} d
         where d.wave_id = :wave_id and d.drop_type = :drop_type
         ${curationFilter}
-        `,
+        `;
+    const count = await this.db
+      .oneOrNull<{ cnt: number }>(
+        countSql,
         {
           wave_id: params.wave_id,
           drop_type: DropType.PARTICIPATORY,
-          curator_ids: curatorIds
+          curator_ids: curatorIds,
+          price_currency: params.price_currency ?? null,
+          min_price: params.min_price ?? null,
+          max_price: params.max_price ?? null
         },
         { wrappedConnection: ctx.connection }
       )
@@ -2155,6 +2190,8 @@ export interface LeaderboardParams {
   readonly sort: LeaderboardSort;
   readonly curated_by_group: string | null;
   readonly price_currency: string | null;
+  readonly min_price: number | null;
+  readonly max_price: number | null;
 }
 
 export interface DropLogsQueryParams {
