@@ -1,5 +1,6 @@
 import { RequestInfo, RequestInit } from 'node-fetch';
 import { Readable } from 'stream';
+import { withArweaveFallback } from '../arweaveGatewayFallback';
 import { consolidationTools } from '../consolidation-tools';
 import {
   HISTORIC_CONSOLIDATED_WALLETS_TDH_TABLE,
@@ -160,8 +161,9 @@ async function fetchConsolidatedTDH(block: number): Promise<ConsolidatedTDH[]> {
       `[BLOCK ${block}] [FOUND ARWEAVE URL] [${uploadEntry.url}] [FETCHING CSV DATA]`
     );
 
-    // Fetch CSV data from arweave URL
-    const csvResponse = await fetch(uploadEntry.url);
+    const csvResponse = await withArweaveFallback(uploadEntry.url, (u) =>
+      fetch(u)
+    );
     if (!csvResponse.ok) {
       throw new Error(
         `Failed to fetch CSV from arweave: ${csvResponse.status} ${csvResponse.statusText}`

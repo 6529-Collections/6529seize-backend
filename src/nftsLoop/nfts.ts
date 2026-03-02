@@ -34,6 +34,7 @@ import { getRpcProvider } from '@/rpc-provider';
 import { equalIgnoreCase } from '@/strings';
 import { text } from '@/text';
 import { Time } from '@/time';
+import { withArweaveFallback } from '@/arweaveGatewayFallback';
 import axios from 'axios';
 import { ethers } from 'ethers';
 import { In, MoreThan, Not, Repository } from 'typeorm';
@@ -104,15 +105,21 @@ function isValidUrl(uri: string): boolean {
   }
 }
 
+const METADATA_FETCH_TIMEOUT_MS = 10000;
+
 async function fetchMetadata(uri: string): Promise<any> {
+  const url = uri.startsWith('ipfs://')
+    ? uri.replace('ipfs://', 'https://ipfs.6529.io/ipfs/')
+    : uri;
   try {
-    const url = uri.startsWith('ipfs://')
-      ? uri.replace('ipfs://', 'https://ipfs.6529.io/ipfs/')
-      : uri;
-    const res = await axios.get(url, { timeout: 10000 });
-    return res.data;
-  } catch (err: any) {
-    logger.warn(`❌ Failed to fetch metadata from ${uri}: ${err.message}`);
+    return await withArweaveFallback(url, (u) =>
+      axios
+        .get(u, { timeout: METADATA_FETCH_TIMEOUT_MS })
+        .then((res) => res.data)
+    );
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.warn(`❌ Failed to fetch metadata from ${uri}: ${msg}`);
     return null;
   }
 }
