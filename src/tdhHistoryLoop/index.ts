@@ -1,6 +1,6 @@
 import { RequestInfo, RequestInit } from 'node-fetch';
 import { Readable } from 'stream';
-import { withArweaveFallback } from '../arweaveGatewayFallback';
+import { withArweaveFallback } from '@/arweaveGatewayFallback';
 import { consolidationTools } from '../consolidation-tools';
 import {
   HISTORIC_CONSOLIDATED_WALLETS_TDH_TABLE,

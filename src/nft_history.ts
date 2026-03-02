@@ -22,7 +22,7 @@ import {
 } from './db';
 import { NFTHistory, NFTHistoryClaim } from './entities/INFTHistory';
 import { NFT_HISTORY_IFACE } from './abis/nft_history';
-import { withArweaveFallback } from './arweaveGatewayFallback';
+import { withArweaveFallback } from '@/arweaveGatewayFallback';
 import { Logger } from './logging';
 import { equalIgnoreCase } from './strings';
 
