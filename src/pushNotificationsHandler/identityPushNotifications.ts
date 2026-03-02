@@ -182,13 +182,14 @@ export async function sendIdentityNotification(id: number) {
       )
       .map(([key]) => key)
   );
+  const targetProfile = await getIdentityOrThrow(notification.identity_id);
+  const targetProfileHandle =
+    targetProfile.normalised_handle ??
+    targetProfile.handle ??
+    notification.identity_id;
+
   let multiProfileTitlePrefix: string | null = null;
   if (sharedDeviceTokenKeys.size > 0) {
-    const targetProfile = await getIdentityOrThrow(notification.identity_id);
-    const targetProfileHandle =
-      targetProfile.normalised_handle ??
-      targetProfile.handle ??
-      notification.identity_id;
     multiProfileTitlePrefix = buildMultiProfileTitlePrefix(targetProfileHandle);
   }
 
@@ -236,6 +237,11 @@ export async function sendIdentityNotification(id: number) {
         const titleForDevice = shouldPrefixTitle
           ? `${multiProfileTitlePrefix} ${title}`
           : title;
+        const dataForDevice = {
+          ...data,
+          target_profile_id: notification.identity_id,
+          target_profile_handle: targetProfileHandle
+        };
         const deviceKey = getDeviceTokenKey(device.device_id, device.token);
         const relevantProfiles =
           profileIdsByDeviceToken.get(deviceKey) ??
@@ -254,7 +260,7 @@ export async function sendIdentityNotification(id: number) {
             body,
             device.token,
             notification.id,
-            data,
+            dataForDevice,
             badge,
             imageUrl ?? undefined
           );
