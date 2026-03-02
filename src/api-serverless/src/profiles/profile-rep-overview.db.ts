@@ -51,6 +51,52 @@ export class ProfileRepOverviewDb extends LazyDbAccessCompatibleService {
     readonly direction: RepDirection;
     readonly authenticatedProfileId: string | null;
   }): Promise<RepOverviewStatsRow> {
+    if (direction === 'outgoing') {
+      const params: Record<string, any> = {
+        contextProfileId,
+        matter: 'REP'
+      };
+      const authenticatedContributionSql = authenticatedProfileId
+        ? `coalesce(sum(case when r.matter_target_id = :authenticatedProfileId then r.rating else 0 end), 0) as authenticated_user_contribution`
+        : `null as authenticated_user_contribution`;
+      if (authenticatedProfileId) {
+        params.authenticatedProfileId = authenticatedProfileId;
+      }
+      const [totalsRow, contributorCountRow] = await Promise.all([
+        this.db.oneOrNull<{
+          total_rep: number;
+          authenticated_user_contribution: number | null;
+        }>(
+          `
+          select
+            coalesce(sum(r.rating), 0) as total_rep,
+            ${authenticatedContributionSql}
+          from ${RATINGS_TABLE} r
+          where r.matter = :matter
+            and r.rater_profile_id = :contextProfileId
+            and r.rating <> 0
+          `,
+          params
+        ),
+        this.db.oneOrNull<{ contributor_count: number }>(
+          `
+          select count(distinct r.matter_target_id) as contributor_count
+          from ${RATINGS_TABLE} r force index (PRIMARY)
+          where r.rater_profile_id = :contextProfileId
+            and r.matter = :matter
+            and r.rating <> 0
+          `,
+          params
+        )
+      ]);
+      return {
+        total_rep: totalsRow?.total_rep ?? 0,
+        contributor_count: contributorCountRow?.contributor_count ?? 0,
+        authenticated_user_contribution:
+          totalsRow?.authenticated_user_contribution ??
+          (authenticatedProfileId ? 0 : null)
+      };
+    }
     const { contextColumn, contributorColumn } =
       this.getDirectionColumns(direction);
     const params: Record<string, any> = {
@@ -108,9 +154,30 @@ export class ProfileRepOverviewDb extends LazyDbAccessCompatibleService {
       offset,
       limitPlusOne
     };
-    const categorySql = category ? `and r.matter_category = :category` : '';
     if (category) {
       params.category = category;
+    }
+    if (category) {
+      const rows = await this.db.execute<RepContributorAggregationRow>(
+        `
+        select
+          r.${contributorColumn} as profile_id,
+          r.rating as contribution
+        from ${RATINGS_TABLE} r
+        where r.matter = :matter
+          and r.${contextColumn} = :contextProfileId
+          and r.rating <> 0
+          and r.matter_category = :category
+        order by contribution desc, profile_id asc
+        limit :limitPlusOne offset :offset
+        `,
+        params
+      );
+      return {
+        page,
+        next: rows.length > page_size,
+        data: rows.slice(0, page_size)
+      };
     }
     const rows = await this.db.execute<RepContributorAggregationRow>(
       `
@@ -122,7 +189,6 @@ export class ProfileRepOverviewDb extends LazyDbAccessCompatibleService {
         where r.matter = :matter
           and r.${contextColumn} = :contextProfileId
           and r.rating <> 0
-          ${categorySql}
         group by 1
       )
       select profile_id, contribution
@@ -170,24 +236,16 @@ export class ProfileRepOverviewDb extends LazyDbAccessCompatibleService {
     }
     const rows = await this.db.execute<RepCategoryAggregationRow>(
       `
-      with grouped_categories as (
-        select
-          r.matter_category as category,
-          sum(r.rating) as total_rep,
-          count(distinct r.${contributorColumn}) as contributor_count,
-          ${authenticatedContributionSql}
-        from ${RATINGS_TABLE} r
-        where r.matter = :matter
-          and r.${contextColumn} = :contextProfileId
-          and r.rating <> 0
-        group by 1
-      )
       select
-        category,
-        total_rep,
-        contributor_count,
-        authenticated_user_contribution
-      from grouped_categories
+        r.matter_category as category,
+        sum(r.rating) as total_rep,
+        count(*) as contributor_count,
+        ${authenticatedContributionSql}
+      from ${RATINGS_TABLE} r
+      where r.matter = :matter
+        and r.${contextColumn} = :contextProfileId
+        and r.rating <> 0
+      group by 1
       order by total_rep desc, category asc
       limit :limitPlusOne offset :offset
       `,
@@ -216,43 +274,32 @@ export class ProfileRepOverviewDb extends LazyDbAccessCompatibleService {
     }
     const { contextColumn, contributorColumn } =
       this.getDirectionColumns(direction);
-    return this.db.execute<RepCategoryTopContributorRow>(
-      `
-      with grouped_contributions as (
-        select
-          r.matter_category as category,
-          r.${contributorColumn} as profile_id,
-          sum(r.rating) as contribution
-        from ${RATINGS_TABLE} r
-        where r.matter = :matter
-          and r.${contextColumn} = :contextProfileId
-          and r.rating <> 0
-          and r.matter_category in (:categories)
-        group by 1, 2
-      ),
-      ranked as (
-        select
-          category,
-          profile_id,
-          contribution,
-          row_number() over (
-            partition by category
-            order by contribution desc, profile_id asc
-          ) as row_no
-        from grouped_contributions
+    const categoryRows = await Promise.all(
+      categories.map((category) =>
+        this.db.execute<RepCategoryTopContributorRow>(
+          `
+          select
+            r.matter_category as category,
+            r.${contributorColumn} as profile_id,
+            r.rating as contribution
+          from ${RATINGS_TABLE} r
+          where r.matter = :matter
+            and r.${contextColumn} = :contextProfileId
+            and r.rating <> 0
+            and r.matter_category = :category
+          order by contribution desc, profile_id asc
+          limit :topContributorsLimit
+          `,
+          {
+            contextProfileId,
+            topContributorsLimit,
+            category,
+            matter: 'REP'
+          }
+        )
       )
-      select category, profile_id, contribution
-      from ranked
-      where row_no <= :topContributorsLimit
-      order by category asc, contribution desc, profile_id asc
-      `,
-      {
-        contextProfileId,
-        topContributorsLimit,
-        categories,
-        matter: 'REP'
-      }
     );
+    return categoryRows.flat();
   }
 }
 
