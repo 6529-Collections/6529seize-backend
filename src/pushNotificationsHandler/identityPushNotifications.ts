@@ -221,33 +221,39 @@ export async function sendIdentityNotification(id: number) {
           ? `${multiProfileTitlePrefix} ${title}`
           : title;
 
-        return sendMessage(
-          titleForDevice,
-          body,
-          device.token,
-          notification.id,
-          data,
-          badge,
-          imageUrl ?? undefined
-        ).catch(async (error: { code?: string; message?: string }) => {
+        try {
+          await sendMessage(
+            titleForDevice,
+            body,
+            device.token,
+            notification.id,
+            data,
+            badge,
+            imageUrl ?? undefined
+          );
+        } catch (error: any) {
           if (
             error.code === 'messaging/registration-token-not-registered' ||
             error.code === 'messaging/invalid-registration-token'
           ) {
-            logger.warn(`Token not registered: ${device.token}`);
+            logger.warn(
+              `[ID ${notification.id}] token-not-registered for profile ${notification.identity_id} device ${device.device_id}`
+            );
             await getDataSource().getRepository(PushNotificationDevice).delete({
               device_id: device.device_id,
               profile_id: notification.identity_id,
               token: device.token
             });
-            logger.info(`Deleted token: ${device.token}`);
+            logger.info(
+              `[ID ${notification.id}] Deleted unregistered token row for profile ${notification.identity_id} device ${device.device_id}`
+            );
           } else {
             logger.error(`Failed to send notification: ${error.message}`, {
               error
             });
             throw error;
           }
-        });
+        }
       })
     );
   } else {
