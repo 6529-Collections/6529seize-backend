@@ -173,47 +173,83 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
       matchColumn: 'profile_id' | 'proxy_id' | 'target_id'
     ) => {
       const p: Record<string, any> = { ...groupPieces.params };
+      const paramPrefix = `b_${matchColumn}`;
 
       // Choose the best available index; prefer the new composite, otherwise fallback
       const idxName =
         indexNameForMatchColumn[matchColumn] ||
         fallbackIndexForMatchColumn[matchColumn];
 
-      // Base WHERE (note: no WHERE 1=1; cleaner strings)
-      let sql = '';
-      if (groupPieces.where) sql += `${groupPieces.where} `;
-
-      sql += `
-      SELECT /*+ INDEX(pa_logs ${idxName}) */
-             pa_logs.id, pa_logs.created_at
-      FROM ${PROFILES_ACTIVITY_LOGS_TABLE} pa_logs
-      ${groupPieces.join}
-      FORCE INDEX (${idxName})
-      WHERE pa_logs.${matchColumn} = :profile_id
-    `;
-      p.profile_id = params.profile_id;
+      const baseConditions: string[] = [];
+      baseConditions.push(
+        `pa_logs.${matchColumn} = :${paramPrefix}_profile_id`
+      );
+      p[`${paramPrefix}_profile_id`] = params.profile_id;
 
       if (params.rating_matter) {
-        sql += ` AND pa_logs.additional_data_1 = :rating_matter`;
-        p.rating_matter = params.rating_matter;
+        baseConditions.push(
+          `pa_logs.additional_data_1 = :${paramPrefix}_rating_matter`
+        );
+        p[`${paramPrefix}_rating_matter`] = params.rating_matter;
       }
       if (params.category) {
-        sql += ` AND pa_logs.additional_data_2 = :rating_category`;
-        p.rating_category = params.category;
+        baseConditions.push(
+          `pa_logs.additional_data_2 = :${paramPrefix}_rating_category`
+        );
+        p[`${paramPrefix}_rating_category`] = params.category;
       }
       if (params.target_id) {
-        sql += ` AND pa_logs.target_id = :target_id`;
-        p.target_id = params.target_id;
-      }
-      if (params.type?.length) {
-        sql += ` AND pa_logs.type IN (:type)`;
-        p.type = params.type;
+        baseConditions.push(`pa_logs.target_id = :${paramPrefix}_target_id`);
+        p[`${paramPrefix}_target_id`] = params.target_id;
       }
 
-      // Optional: bound time if you generally care about recent logs
-      // if (params.since) { sql += ` AND pa_logs.created_at >= :since`; p.since = params.since; }
+      const buildSingleTypeSelect = (typeParamName?: string) => {
+        let typeCondition = '';
+        if (typeParamName) {
+          typeCondition = ` AND pa_logs.type = :${typeParamName}`;
+        }
+        return `
+          SELECT pa_logs.id, pa_logs.created_at
+          FROM ${PROFILES_ACTIVITY_LOGS_TABLE} pa_logs FORCE INDEX (${idxName})
+          ${groupPieces.join}
+          WHERE ${baseConditions.join(' AND ')}${typeCondition}
+          ORDER BY pa_logs.created_at ${orderDir}
+          LIMIT ${perBranchLimit}
+        `;
+      };
 
-      sql += ` ORDER BY pa_logs.created_at ${orderDir} LIMIT ${perBranchLimit}`;
+      // For multi-type filters, fan out by type and limit each type branch first.
+      // This avoids large IN-range scans on hot profiles while preserving exact top-K semantics.
+      if (params.type?.length && params.type.length > 1) {
+        const typeBranches: string[] = [];
+        params.type.forEach((type, idx) => {
+          const typeParamName = `${paramPrefix}_type_${idx}`;
+          p[typeParamName] = type;
+          typeBranches.push(`(${buildSingleTypeSelect(typeParamName)})`);
+        });
+        let sql = '';
+        if (groupPieces.where) sql += `${groupPieces.where} `;
+        sql += `
+          SELECT ids_by_type.id, ids_by_type.created_at
+          FROM (
+            ${typeBranches.join('\nUNION ALL\n')}
+          ) ids_by_type
+          ORDER BY ids_by_type.created_at ${orderDir}
+          LIMIT ${perBranchLimit}
+        `;
+        return { sql, params: p };
+      }
+
+      // Single type (or no type) keeps the simpler path.
+      let sql = '';
+      if (groupPieces.where) sql += `${groupPieces.where} `;
+      if (params.type?.length === 1) {
+        const typeParamName = `${paramPrefix}_type_0`;
+        p[typeParamName] = params.type[0];
+        sql += buildSingleTypeSelect(typeParamName);
+      } else {
+        sql += buildSingleTypeSelect();
+      }
       return { sql, params: p };
     };
 

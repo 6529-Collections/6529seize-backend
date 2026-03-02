@@ -74,7 +74,14 @@ export class ProfileActivityLogsApiService {
       }
     }
 
-    const foundLogs = await this.profileActivityLogsDb.searchLogs(params, ctx);
+    const searchLogsTimerKey = `${this.constructor.name}->searchLogs`;
+    let foundLogs: ProfileActivityLog[];
+    ctx.timer?.start(searchLogsTimerKey);
+    try {
+      foundLogs = await this.profileActivityLogsDb.searchLogs(params, ctx);
+    } finally {
+      ctx.timer?.stop(searchLogsTimerKey);
+    }
     const profileIdsInLogs = foundLogs.reduce((acc, log) => {
       acc.push(log.profile_id);
       if (log.target_id && !isTargetOfTypeDrop(log.type)) {
@@ -90,25 +97,39 @@ export class ProfileActivityLogsApiService {
       }
       return acc;
     }, [] as string[]);
-    const profilesHandlesByIds = await identitiesDb.getProfileHandlesByIds(
-      profileIdsInLogs,
-      ctx
-    );
-    const convertedData = foundLogs.map((log) => {
-      const logContents = JSON.parse(log.contents);
-      return {
-        ...log,
-        contents: logContents,
-        profile_handle: profilesHandlesByIds[log.profile_id],
-        target_profile_handle: !isTargetOfTypeDrop(log.type)
-          ? profilesHandlesByIds[log.target_id!]
-          : null,
-        is_target_of_type_drop: isTargetOfTypeDrop(log.type),
-        proxy_handle: log.proxy_id
-          ? (profilesHandlesByIds[log.proxy_id] ?? null)
-          : null
-      };
-    });
+    const enrichHandlesTimerKey = `${this.constructor.name}->resolveProfileHandles`;
+    let profilesHandlesByIds: Record<string, string>;
+    ctx.timer?.start(enrichHandlesTimerKey);
+    try {
+      profilesHandlesByIds = await identitiesDb.getProfileHandlesByIds(
+        profileIdsInLogs,
+        ctx
+      );
+    } finally {
+      ctx.timer?.stop(enrichHandlesTimerKey);
+    }
+    const convertLogsTimerKey = `${this.constructor.name}->convertLogs`;
+    let convertedData: ApiProfileActivityLog[];
+    ctx.timer?.start(convertLogsTimerKey);
+    try {
+      convertedData = foundLogs.map((log) => {
+        const logContents = JSON.parse(log.contents);
+        return {
+          ...log,
+          contents: logContents,
+          profile_handle: profilesHandlesByIds[log.profile_id],
+          target_profile_handle: !isTargetOfTypeDrop(log.type)
+            ? profilesHandlesByIds[log.target_id!]
+            : null,
+          is_target_of_type_drop: isTargetOfTypeDrop(log.type),
+          proxy_handle: log.proxy_id
+            ? (profilesHandlesByIds[log.proxy_id] ?? null)
+            : null
+        };
+      });
+    } finally {
+      ctx.timer?.stop(convertLogsTimerKey);
+    }
     ctx.timer?.stop(`${this.constructor.name}->getProfileActivityLogsFiltered`);
     return {
       page: pageRequest.page,
