@@ -13,7 +13,7 @@ const ARWEAVE_GATEWAYS: readonly string[] = [
 ] as const;
 
 const ARWEAVE_URL_RE = new RegExp(
-  `^https?:\\/\\/(?:www\\.)?(${ARWEAVE_GATEWAYS.map((g) => g.replace(/\./g, '\\.')).join('|')})\\/([^/?#]+)`
+  String.raw`^https?:\/\/(?:www\.)?(${ARWEAVE_GATEWAYS.map((g) => g.replace(/\./g, '\\.')).join('|')})\/([^/?#]+)`
 );
 
 export function getArweaveFallbackUrls(url: string): string[] {
