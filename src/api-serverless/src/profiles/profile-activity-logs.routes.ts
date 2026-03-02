@@ -10,6 +10,7 @@ import { ProfileActivityLogType } from '../../../entities/IProfileActivityLog';
 import { CountlessPage } from '../page-request';
 import { getAuthenticationContext, maybeAuthenticatedUser } from '../auth/auth';
 import { Timer } from '../../../time';
+import { identitiesDb } from '@/identities/identities.db';
 import { identityFetcher } from '../identities/identity.fetcher';
 
 const router = asyncRouter();
@@ -44,18 +45,47 @@ async function getBaseSearchRequest(
   const ratingMatter = queryParams.rating_matter;
   let profileId = undefined;
   if (profile) {
-    profileId = await identityFetcher
-      .getProfileIdByIdentityKey({ identityKey: profile }, { timer })
-      .then((result) => result ?? '-');
-  }
-  const targetId = queryParams.target
-    ? await identityFetcher
-        .getProfileIdByIdentityKey(
-          { identityKey: queryParams.target },
+    const profileTimer = `${getBaseSearchRequest.name}->resolveProfileId`;
+    timer.start(profileTimer);
+    try {
+      let resolvedProfileId = await identitiesDb.getProfileIdByIdentityKeyFast(
+        { identityKey: profile },
+        { timer }
+      );
+      if (!resolvedProfileId && profile.toLowerCase().endsWith('.eth')) {
+        resolvedProfileId = await identityFetcher.getProfileIdByIdentityKey(
+          { identityKey: profile },
           { timer }
-        )
-        .then((result) => result ?? queryParams.target)
-    : queryParams.target;
+        );
+      }
+      profileId = resolvedProfileId ?? '-';
+    } finally {
+      timer.stop(profileTimer);
+    }
+  }
+  const target = queryParams.target;
+  const targetId = target
+    ? await (async () => {
+        const targetTimer = `${getBaseSearchRequest.name}->resolveTargetId`;
+        timer.start(targetTimer);
+        try {
+          let resolvedTargetId =
+            await identitiesDb.getProfileIdByIdentityKeyFast(
+              { identityKey: target },
+              { timer }
+            );
+          if (!resolvedTargetId && target.toLowerCase().endsWith('.eth')) {
+            resolvedTargetId = await identityFetcher.getProfileIdByIdentityKey(
+              { identityKey: target },
+              { timer }
+            );
+          }
+          return resolvedTargetId ?? target;
+        } finally {
+          timer.stop(targetTimer);
+        }
+      })()
+    : target;
   const logType = queryParams.log_type
     ?.split(',')
     .filter((logType) =>
