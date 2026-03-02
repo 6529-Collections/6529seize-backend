@@ -13,7 +13,7 @@ import axiosRetry from 'axios-retry';
 import pLimit from 'p-limit';
 import { invalidateCloudFront } from './cloudfront';
 import { equalIgnoreCase } from './strings';
-import { withArweaveFallback } from '@/arweaveGatewayFallback';
+import { withArweaveFallback } from '@/arweave-gateway-fallback';
 
 const logger = Logger.get('S3');
 const limit = pLimit(3);
