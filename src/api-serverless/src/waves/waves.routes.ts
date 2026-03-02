@@ -518,6 +518,8 @@ router.get(
             .empty('')
             .optional()
             .default(null),
+          min_price: Joi.number().min(0).optional().default(null),
+          max_price: Joi.number().min(0).optional().default(null),
           sort_direction: Joi.string()
             .valid(...Object.values(PageSortDirection))
             .default(PageSortDirection.ASC),
