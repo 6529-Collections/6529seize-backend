@@ -7,6 +7,7 @@ import sharp from 'sharp';
 import { RequestInfo, RequestInit } from 'node-fetch';
 import { Rememe } from './entities/IRememe';
 import { CLOUDFRONT_LINK } from '@/constants';
+import { withArweaveFallback } from '@/arweaveGatewayFallback';
 import { persistRememes } from './db';
 import { Logger } from './logging';
 import { ipfs } from './ipfs';
@@ -56,9 +57,9 @@ export const persistRememesS3 = async (rememes: Rememe[]) => {
               `[MISSING IMAGE] [CONTRACT ${r.contract}] [ID ${r.id}]`
             );
 
-            const res = await fetch(
-              ipfs.ifIpfsThenCloudflareElsePreserveOrEmptyIfUndefined(image)
-            );
+            const imageUrl =
+              ipfs.ifIpfsThenCloudflareElsePreserveOrEmptyIfUndefined(image);
+            const res = await withArweaveFallback(imageUrl, (u) => fetch(u));
             const blob = await res.arrayBuffer();
 
             await handleImageUpload(originalKey, format, blob);
