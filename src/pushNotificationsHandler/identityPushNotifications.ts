@@ -85,7 +85,7 @@ function buildMultiProfileTitlePrefix(profileHandle: string): string {
   const normalizedHandle = profileHandle.startsWith('@')
     ? profileHandle.slice(1)
     : profileHandle;
-  return `[@${normalizedHandle}]`;
+  return `@${normalizedHandle} •`;
 }
 
 async function getSharedDeviceTokenKeysForOtherProfiles(
