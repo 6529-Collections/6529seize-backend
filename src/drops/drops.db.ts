@@ -1224,7 +1224,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         join ${DROPS_TABLE} d on d.id = r.drop_id
         ${priceSql.joinClause}
         where d.wave_id = :wave_id
-          ${curationFilter}
+         and d.drop_type = '${DropType.PARTICIPATORY}' ${curationFilter}
           ${priceSql.filterClause}
         order by (r.vote_on_decision_time - r.vote) ${params.sort_direction} limit :page_size offset :offset
     `;
