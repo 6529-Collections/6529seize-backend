@@ -12,8 +12,9 @@ const ARWEAVE_GATEWAYS: readonly string[] = [
   'arweave.guide'
 ] as const;
 
+const ARWEAVE_HOSTS_PATTERN = ARWEAVE_GATEWAYS.map((g) => g.replace(/\./g, '\\.')).join('|');
 const ARWEAVE_URL_RE = new RegExp(
-  String.raw`^https?:\/\/(?:www\.)?(${ARWEAVE_GATEWAYS.map((g) => g.replace(/\./g, String.raw`\.`)).join('|')})\/([^/?#]+)`
+  String.raw`^https?:\/\/(?:www\.)?(${ARWEAVE_HOSTS_PATTERN})\/([^/?#]+)`
 );
 
 export function getArweaveFallbackUrls(url: string): string[] {
