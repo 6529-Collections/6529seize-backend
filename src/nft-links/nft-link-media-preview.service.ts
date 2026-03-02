@@ -32,6 +32,15 @@ interface DownloadedRemoteImage {
   readonly contentType: string | null;
 }
 
+type ClassifiedMediaKind = 'image' | 'video' | 'html' | 'model' | 'unknown';
+type MimeMediaKind = ClassifiedMediaKind | 'text' | 'json' | 'xml';
+
+interface ClassifiedDownloadedMedia {
+  readonly kind: ClassifiedMediaKind;
+  readonly mimeType: string | null;
+  readonly detector: 'mime' | 'bytes' | 'extension' | 'unknown';
+}
+
 interface RenderedPreview {
   readonly card: Buffer;
   readonly thumb: Buffer;
@@ -80,7 +89,7 @@ export class NftLinkMediaPreviewService {
         {
           canonicalId: card.identifier.canonicalId,
           kind: this.toPreviewKind(sourceMediaKind),
-          message: `No image preview source available (media kind: ${sourceMediaKind})`
+          message: `No preview source available (media kind: ${sourceMediaKind})`
         },
         ctx
       );
@@ -150,7 +159,7 @@ export class NftLinkMediaPreviewService {
         {
           canonicalId: parsed.canonicalId,
           status: 'SKIPPED',
-          message: `No image preview source available in resolved NFT metadata`
+          message: `No preview source available in resolved NFT metadata`
         },
         ctx
       );
@@ -178,8 +187,8 @@ export class NftLinkMediaPreviewService {
 
     try {
       const downloaded = await this.downloadRemoteImage(prepared.sourceUrl);
-      const downloadedMimeType = this.extractMimeType(downloaded.contentType);
-      if (this.shouldTreatDownloadedMediaAsVideo(downloaded, prepared)) {
+      const classified = this.classifyDownloadedMedia(downloaded);
+      if (classified.kind === 'video') {
         const uploaded = await this.uploadVideoSource(prepared, downloaded);
         await this.nftLinksDb.updateMediaPreviewWithSuccess(
           {
@@ -191,7 +200,7 @@ export class NftLinkMediaPreviewService {
             smallUrl: uploaded.url,
             width: null,
             height: null,
-            mimeType: downloadedMimeType,
+            mimeType: classified.mimeType,
             bytes: downloaded.bytes.length
           },
           ctx
@@ -201,7 +210,20 @@ export class NftLinkMediaPreviewService {
         );
         return;
       }
-      this.assertResponseLooksImage(downloaded);
+      if (classified.kind !== 'image') {
+        await this.nftLinksDb.updateMediaPreviewWithFailure(
+          {
+            canonicalId: prepared.canonicalId,
+            status: 'SKIPPED',
+            message: `Preview skipped for unsupported media (${classified.kind}, detector=${classified.detector}, mime=${classified.mimeType ?? 'unknown'})`
+          },
+          ctx
+        );
+        this.logger.info(
+          `Skipped NFT link preview generation for ${prepared.canonicalId}: unsupported media (${classified.kind}, detector=${classified.detector}, mime=${classified.mimeType ?? 'unknown'})`
+        );
+        return;
+      }
       const rendered = await this.renderPreviewVariants(downloaded.bytes);
       const uploadedUrls = await this.uploadPreviewVariants(
         prepared,
@@ -211,7 +233,7 @@ export class NftLinkMediaPreviewService {
       await this.nftLinksDb.updateMediaPreviewWithSuccess(
         {
           canonicalId: prepared.canonicalId,
-          kind: prepared.previewKind,
+          kind: 'image',
           sourceHash: prepared.sourceHash,
           cardUrl: uploadedUrls.cardUrl,
           thumbUrl: uploadedUrls.thumbUrl,
@@ -269,33 +291,59 @@ export class NftLinkMediaPreviewService {
   private preparePreviewSourceFromCard(
     card: NormalizedNftCard
   ): PreparedPreviewSource | null {
-    const sourceUrl = card.asset.media?.imageUrl ?? null;
-    if (!sourceUrl) {
+    const selection = this.selectPreviewSource(card.asset.media, null);
+    if (!selection) {
       return null;
     }
     return {
       canonicalId: card.identifier.canonicalId,
-      sourceUrl,
-      sourceHash: this.hashSourceUrl(sourceUrl),
-      previewKind: 'image',
-      sourceMediaKind: card.asset.media?.kind ?? null
+      sourceUrl: selection.sourceUrl,
+      sourceHash: this.hashSourceUrl(selection.sourceUrl),
+      previewKind: selection.previewKind,
+      sourceMediaKind: selection.sourceMediaKind
     };
   }
 
   private preparePreviewSourceFromEntity(
     entity: NftLinkEntity
   ): PreparedPreviewSource | null {
-    const sourceUrl =
-      entity.full_data?.asset?.media?.imageUrl ?? entity.media_uri ?? null;
-    if (!sourceUrl) {
+    const selection = this.selectPreviewSource(
+      entity.full_data?.asset?.media,
+      entity.media_uri
+    );
+    if (!selection) {
       return null;
     }
     return {
       canonicalId: entity.canonical_id,
+      sourceUrl: selection.sourceUrl,
+      sourceHash: this.hashSourceUrl(selection.sourceUrl),
+      previewKind: selection.previewKind,
+      sourceMediaKind: selection.sourceMediaKind
+    };
+  }
+
+  private selectPreviewSource(
+    media: NormalizedNftCard['asset']['media'] | undefined,
+    fallbackUrl: string | null
+  ): {
+    sourceUrl: string;
+    previewKind: NftLinkMediaPreviewKind;
+    sourceMediaKind: string | null;
+  } | null {
+    const sourceMediaKind = media?.kind ?? null;
+    const sourceUrl =
+      sourceMediaKind === 'animation' || sourceMediaKind === 'video'
+        ? (media?.animationUrl ?? media?.imageUrl ?? fallbackUrl ?? null)
+        : (media?.imageUrl ?? media?.animationUrl ?? fallbackUrl ?? null);
+    if (!sourceUrl) {
+      return null;
+    }
+
+    return {
       sourceUrl,
-      sourceHash: this.hashSourceUrl(sourceUrl),
-      previewKind: 'image',
-      sourceMediaKind: entity.full_data?.asset?.media?.kind ?? null
+      previewKind: this.toPreviewKind(sourceMediaKind),
+      sourceMediaKind
     };
   }
 
@@ -595,52 +643,273 @@ export class NftLinkMediaPreviewService {
     return this.sharpModule;
   }
 
-  private assertResponseLooksImage(downloaded: DownloadedRemoteImage): void {
+  private classifyDownloadedMedia(
+    downloaded: DownloadedRemoteImage
+  ): ClassifiedDownloadedMedia {
     const mimeType = this.extractMimeType(downloaded.contentType);
+    const mimeKind = this.classifyMimeMediaKind(mimeType);
+    const sniffedKind = this.sniffMediaKindFromBytes(downloaded.bytes);
+
+    if (
+      sniffedKind !== 'unknown' &&
+      (mimeKind === 'unknown' ||
+        mimeKind === 'text' ||
+        mimeKind === 'json' ||
+        mimeKind === 'xml' ||
+        mimeKind !== sniffedKind)
+    ) {
+      return {
+        kind: sniffedKind,
+        mimeType,
+        detector: 'bytes'
+      };
+    }
+
+    if (
+      mimeKind === 'image' ||
+      mimeKind === 'video' ||
+      mimeKind === 'html' ||
+      mimeKind === 'model'
+    ) {
+      return {
+        kind: mimeKind,
+        mimeType,
+        detector: 'mime'
+      };
+    }
+
+    if (mimeKind === 'unknown') {
+      const pathExtension = this.extractPathExtension(downloaded.finalUrl);
+      if (this.isKnownVideoExtension(pathExtension)) {
+        return {
+          kind: 'video',
+          mimeType,
+          detector: 'extension'
+        };
+      }
+    }
+
+    return {
+      kind: 'unknown',
+      mimeType,
+      detector: 'unknown'
+    };
+  }
+
+  private classifyMimeMediaKind(mimeType: string | null): MimeMediaKind {
     if (!mimeType) {
-      return;
+      return 'unknown';
+    }
+    if (mimeType.startsWith('text/')) {
+      return mimeType === 'text/html' ? 'html' : 'text';
     }
     if (mimeType.startsWith('image/')) {
-      return;
+      return 'image';
     }
     if (mimeType.startsWith('video/')) {
-      throw new Error(
-        `Remote media is video (${mimeType}), skipping image preview`
-      );
+      return 'video';
     }
-    if (
-      mimeType.startsWith('text/html') ||
-      mimeType === 'application/json' ||
-      mimeType === 'text/plain'
-    ) {
-      throw new Error(`Remote media is not image-like (${mimeType})`);
+    if (mimeType.startsWith('model/')) {
+      return 'model';
+    }
+    if (mimeType.endsWith('+json')) {
+      return 'json';
+    }
+    if (mimeType.endsWith('+xml')) {
+      return 'xml';
+    }
+    switch (mimeType) {
+      case 'text/html':
+      case 'application/xhtml+xml':
+        return 'html';
+      case 'application/gltf-binary':
+      case 'application/gltf+json':
+        return 'model';
+      case 'application/json':
+        return 'json';
+      case 'text/plain':
+        return 'text';
+      case 'application/xml':
+      case 'text/xml':
+        return 'xml';
+      default:
+        return 'unknown';
     }
   }
 
-  private shouldTreatDownloadedMediaAsVideo(
-    downloaded: DownloadedRemoteImage,
-    prepared: PreparedPreviewSource
-  ): boolean {
-    const mimeType = this.extractMimeType(downloaded.contentType);
-    if (mimeType?.startsWith('video/')) {
-      return true;
+  private sniffMediaKindFromBytes(bytes: Buffer): ClassifiedMediaKind {
+    if (!bytes.length) {
+      return 'unknown';
     }
-    if (mimeType?.startsWith('image/')) {
-      return false;
-    }
+
     if (
-      mimeType?.startsWith('text/html') ||
-      mimeType === 'application/json' ||
-      mimeType === 'text/plain'
+      this.startsWithBytes(bytes, [0x89, 0x50, 0x4e, 0x47]) ||
+      this.startsWithBytes(bytes, [0xff, 0xd8, 0xff]) ||
+      this.hasAsciiAt(bytes, 0, 'GIF87a') ||
+      this.hasAsciiAt(bytes, 0, 'GIF89a') ||
+      (this.hasAsciiAt(bytes, 0, 'RIFF') &&
+        this.hasAsciiAt(bytes, 8, 'WEBP')) ||
+      this.hasAsciiAt(bytes, 0, 'BM')
     ) {
+      return 'image';
+    }
+
+    if (
+      this.hasAsciiAt(bytes, 0, 'RIFF') &&
+      this.hasAsciiAt(bytes, 8, 'AVI ')
+    ) {
+      return 'video';
+    }
+
+    if (
+      this.startsWithBytes(bytes, [0x1a, 0x45, 0xdf, 0xa3]) &&
+      this.bufferContainsAscii(bytes, 'webm')
+    ) {
+      return 'video';
+    }
+
+    if (this.hasAsciiAt(bytes, 0, 'glTF')) {
+      return 'model';
+    }
+
+    const isoKind = this.sniffIsoBaseMediaKind(bytes);
+    if (isoKind) {
+      return isoKind;
+    }
+
+    const markupKind = this.looksLikeMarkupKind(bytes);
+    if (markupKind) {
+      return markupKind;
+    }
+
+    return 'unknown';
+  }
+
+  private sniffIsoBaseMediaKind(bytes: Buffer): 'image' | 'video' | null {
+    if (!this.hasAsciiAt(bytes, 4, 'ftyp')) {
+      return null;
+    }
+
+    const imageBrands = new Set([
+      'avif',
+      'avis',
+      'heic',
+      'heix',
+      'hevc',
+      'hevx',
+      'mif1',
+      'msf1'
+    ]);
+    const videoBrands = new Set([
+      'isom',
+      'iso2',
+      'iso3',
+      'iso4',
+      'iso5',
+      'iso6',
+      'avc1',
+      'hev1',
+      'hvc1',
+      'mp41',
+      'mp42',
+      'm4v ',
+      'dash',
+      'qt  ',
+      '3gp4',
+      '3gp5',
+      '3g2a',
+      '3g2b'
+    ]);
+
+    const brands: string[] = [];
+    const maxOffset = Math.min(bytes.length - 4, 40);
+    for (let offset = 8; offset <= maxOffset; offset += 4) {
+      brands.push(bytes.subarray(offset, offset + 4).toString('ascii'));
+    }
+
+    for (const raw of brands) {
+      const brand = raw.toLowerCase();
+      if (imageBrands.has(brand)) {
+        return 'image';
+      }
+    }
+    for (const raw of brands) {
+      const brand = raw.toLowerCase();
+      if (videoBrands.has(brand) || brand.startsWith('mp4')) {
+        return 'video';
+      }
+    }
+
+    return null;
+  }
+
+  private looksLikeMarkupKind(bytes: Buffer): 'image' | 'html' | null {
+    const head = bytes.subarray(0, Math.min(bytes.length, 4096));
+    const text = head
+      .toString('utf8')
+      .replace(/^\uFEFF/, '')
+      .trimStart();
+    if (!text) {
+      return null;
+    }
+    const lower = text.toLowerCase();
+
+    if (
+      lower.startsWith('<!doctype html') ||
+      lower.startsWith('<html') ||
+      lower.includes('<html')
+    ) {
+      return 'html';
+    }
+
+    if (
+      lower.startsWith('<svg') ||
+      (lower.startsWith('<?xml') && this.containsSvgTag(lower))
+    ) {
+      return 'image';
+    }
+
+    return null;
+  }
+
+  private containsSvgTag(lowerText: string): boolean {
+    return /<svg(\s|>|:)/.test(lowerText);
+  }
+
+  private startsWithBytes(buffer: Buffer, bytes: number[]): boolean {
+    if (buffer.length < bytes.length) {
       return false;
     }
-    if (prepared.sourceMediaKind === 'video') {
-      return true;
+    for (let i = 0; i < bytes.length; i++) {
+      if (buffer[i] !== bytes[i]) {
+        return false;
+      }
     }
-    return this.isKnownVideoExtension(
-      this.extractPathExtension(downloaded.finalUrl)
-    );
+    return true;
+  }
+
+  private hasAsciiAt(
+    buffer: Buffer,
+    offset: number,
+    expected: string
+  ): boolean {
+    const end = offset + expected.length;
+    if (offset < 0 || end > buffer.length) {
+      return false;
+    }
+    return buffer.subarray(offset, end).toString('ascii') === expected;
+  }
+
+  private bufferContainsAscii(
+    buffer: Buffer,
+    expected: string,
+    maxBytes = 4096
+  ): boolean {
+    return buffer
+      .subarray(0, Math.min(buffer.length, maxBytes))
+      .toString('ascii')
+      .toLowerCase()
+      .includes(expected.toLowerCase());
   }
 
   private resolveVideoFileExtension(
