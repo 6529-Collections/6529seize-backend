@@ -89,16 +89,13 @@ function buildMultiProfileTitlePrefix(profileHandle: string): string {
 }
 
 async function getSharedDeviceTokenKeysForOtherProfiles(
-  targetProfileId: string,
   devices: PushNotificationDevice[]
-): Promise<Set<string>> {
+): Promise<Map<string, Set<string>>> {
   if (devices.length === 0) {
-    return new Set();
+    return new Map();
   }
 
-  const params: Record<string, string> = {
-    targetProfileId
-  };
+  const params: Record<string, string> = {};
   const deviceAndTokenConditions: string[] = [];
 
   devices.forEach((device, index) => {
@@ -116,14 +113,18 @@ async function getSharedDeviceTokenKeysForOtherProfiles(
     .createQueryBuilder('d')
     .select('d.device_id', 'device_id')
     .addSelect('d.token', 'token')
-    .where('d.profile_id <> :targetProfileId', params)
-    .andWhere(`(${deviceAndTokenConditions.join(' OR ')})`)
-    .groupBy('d.device_id, d.token')
-    .getRawMany<{ device_id: string; token: string }>();
+    .addSelect('d.profile_id', 'profile_id')
+    .where(`(${deviceAndTokenConditions.join(' OR ')})`, params)
+    .getRawMany<{ device_id: string; token: string; profile_id: string }>();
 
-  return new Set(
-    rows.map((row) => getDeviceTokenKey(row.device_id, row.token))
-  );
+  return rows.reduce((acc, row) => {
+    const key = getDeviceTokenKey(row.device_id, row.token);
+    if (!acc.has(key)) {
+      acc.set(key, new Set());
+    }
+    acc.get(key)!.add(row.profile_id);
+    return acc;
+  }, new Map<string, Set<string>>());
 }
 
 export async function sendIdentityNotification(id: number) {
@@ -172,9 +173,14 @@ export async function sendIdentityNotification(id: number) {
     return;
   }
 
-  const sharedDeviceTokenKeys = await getSharedDeviceTokenKeysForOtherProfiles(
-    notification.identity_id,
-    userDevices
+  const profileIdsByDeviceToken =
+    await getSharedDeviceTokenKeysForOtherProfiles(userDevices);
+  const sharedDeviceTokenKeys = new Set(
+    Array.from(profileIdsByDeviceToken.entries())
+      .filter(([, profileIds]) =>
+        Array.from(profileIds).some((id) => id !== notification.identity_id)
+      )
+      .map(([key]) => key)
   );
   let multiProfileTitlePrefix: string | null = null;
   if (sharedDeviceTokenKeys.size > 0) {
@@ -190,14 +196,24 @@ export async function sendIdentityNotification(id: number) {
   if (notificationData) {
     const { title, body, data, imageUrl } = notificationData;
 
-    const eligibleGroupIds = await userGroupsService.getGroupsUserIsEligibleFor(
-      notification.identity_id
-    );
-    const badge =
-      await identityNotificationsDb.countUnreadNotificationsForIdentity(
-        notification.identity_id,
-        eligibleGroupIds
-      );
+    const unreadCountsByProfile = new Map<string, Promise<number>>();
+    const getUnreadCountForProfile = (profileId: string): Promise<number> => {
+      const existing = unreadCountsByProfile.get(profileId);
+      if (existing) {
+        return existing;
+      }
+
+      const promise = (async () => {
+        const eligibleGroupIds =
+          await userGroupsService.getGroupsUserIsEligibleFor(profileId);
+        return identityNotificationsDb.countUnreadNotificationsForIdentity(
+          profileId,
+          eligibleGroupIds
+        );
+      })();
+      unreadCountsByProfile.set(profileId, promise);
+      return promise;
+    };
 
     await Promise.all(
       userDevices.map(async (device) => {
@@ -220,6 +236,17 @@ export async function sendIdentityNotification(id: number) {
         const titleForDevice = shouldPrefixTitle
           ? `${multiProfileTitlePrefix} ${title}`
           : title;
+        const deviceKey = getDeviceTokenKey(device.device_id, device.token);
+        const relevantProfiles =
+          profileIdsByDeviceToken.get(deviceKey) ??
+          new Set([notification.identity_id]);
+        const badge = (
+          await Promise.all(
+            Array.from(relevantProfiles).map((profileId) =>
+              getUnreadCountForProfile(profileId)
+            )
+          )
+        ).reduce((sum, count) => sum + count, 0);
 
         try {
           await sendMessage(
