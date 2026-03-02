@@ -1,7 +1,7 @@
 const ARWEAVE_URL_RE = /^https?:\/\/(?:www\.)?arweave\.net\/([^/?#]+)/;
 
 export function getArweaveFallbackUrl(url: string): string | null {
-  const match = url.match(ARWEAVE_URL_RE);
+  const match = ARWEAVE_URL_RE.exec(url);
   return match ? `https://ar-io.net/${match[1]}` : null;
 }
 
