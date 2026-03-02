@@ -31,8 +31,9 @@ export function getArweaveFallbackUrl(url: string): string | null {
   if (!match || urls.length < 2) return null;
   const currentHost = match[1];
   const idx = ARWEAVE_GATEWAYS.indexOf(currentHost);
-  const nextIdx = idx < 0 ? 1 : Math.min(idx + 1, urls.length - 1);
-  return urls[nextIdx] ?? null;
+  if (idx < 0) return urls[1] ?? null;
+  if (idx >= urls.length - 1) return null;
+  return urls[idx + 1] ?? null;
 }
 
 function stringifyErr(err: unknown): string {
