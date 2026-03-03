@@ -10,12 +10,10 @@ import type { ApiMintingClaimsPhaseTotalItem } from '@/api/generated/models/ApiM
 import type { MintingClaim } from '@/api/generated/models/MintingClaim';
 import type { MintingClaimUpdateRequest } from '@/api/generated/models/MintingClaimUpdateRequest';
 import type { MintingClaimsPageResponse } from '@/api/generated/models/MintingClaimsPageResponse';
-import type { MintingClaimsProofsByAddressResponse } from '@/api/generated/models/MintingClaimsProofsByAddressResponse';
 import type { MintingClaimsProofsResponse } from '@/api/generated/models/MintingClaimsProofsResponse';
 import type { MintingClaimsRootItem } from '@/api/generated/models/MintingClaimsRootItem';
 import {
   doesMintingMerkleRootExistForCard,
-  fetchAllMintingMerkleProofsForRoot,
   fetchMintingAirdrops,
   fetchMintingAllowlists,
   fetchMintingClaimByClaimId,
@@ -138,7 +136,7 @@ type ProofsPathParams = {
   contract: string;
   card_id: string;
   merkle_root: string;
-  address?: string;
+  address: string;
 };
 
 const ContractAddressSchema = Joi.string()
@@ -181,7 +179,7 @@ const ProofsPathParamsSchema: Joi.ObjectSchema<ProofsPathParams> = Joi.object({
   address: Joi.string()
     .trim()
     .pattern(/^0x[a-fA-F0-9]{40}$/)
-    .optional()
+    .required()
     .messages({
       'string.pattern.base':
         'address must be a 0x-prefixed 42-character hex string'
@@ -549,16 +547,12 @@ router.post(
 );
 
 router.get(
-  '/:contract/:card_id/:merkle_root/proofs/:address?',
+  '/:contract/:card_id/:merkle_root/proofs/:address',
   maybeAuthenticatedUser(),
   cacheRequest({ authDependent: true }),
   async function (
     req: Request<ProofsPathParams, any, any, any, any>,
-    res: Response<
-      ApiResponse<
-        MintingClaimsProofsResponse | MintingClaimsProofsByAddressResponse
-      >
-    >
+    res: Response<ApiResponse<MintingClaimsProofsResponse>>
   ) {
     const params = getValidatedByJoiOrThrow(req.params, ProofsPathParamsSchema);
     const cardId = numbers.parseIntOrNull(params.card_id);
@@ -569,8 +563,6 @@ router.get(
     }
 
     const merkleRoot = params.merkle_root;
-    const requestedAddress = params.address;
-
     const rootExists = await doesMintingMerkleRootExistForCard(
       cardId,
       params.contract,
@@ -584,41 +576,11 @@ router.get(
       });
     }
 
-    if (!requestedAddress && !isDistributionAdmin(req)) {
-      throw new ForbiddenException(
-        'Only distribution admins can list all proofs for a merkle root'
-      );
-    }
-
-    if (requestedAddress) {
-      const proofs = await fetchMintingMerkleProofs(
-        merkleRoot,
-        requestedAddress
-      );
-      const response: MintingClaimsProofsResponse = {
-        proofs: (proofs ?? []).map((proof) => ({
-          merkle_proof: proof.merkleProof,
-          value: proof.value
-        }))
-      };
-
-      return res.json(response);
-    }
-
-    const allRows = await fetchAllMintingMerkleProofsForRoot(merkleRoot);
-    if (allRows.length === 0) {
-      return res.status(404).json({
-        error: 'No proofs found for the given merkle_root'
-      });
-    }
-
-    const response: MintingClaimsProofsByAddressResponse = {
-      proofs_by_address: allRows.map((row) => ({
-        address: row.address,
-        proofs: row.proofs.map((proof) => ({
-          merkle_proof: proof.merkleProof,
-          value: proof.value
-        }))
+    const proofs = await fetchMintingMerkleProofs(merkleRoot, params.address);
+    const response: MintingClaimsProofsResponse = {
+      proofs: (proofs ?? []).map((proof) => ({
+        merkle_proof: proof.merkleProof,
+        value: proof.value
       }))
     };
 

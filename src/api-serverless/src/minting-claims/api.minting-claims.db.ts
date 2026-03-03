@@ -127,24 +127,6 @@ export async function fetchMintingMerkleProofs(
   return parseStoredMerkleProofs(rows[0].proofs);
 }
 
-export interface MintingMerkleProofByAddressRow {
-  address: string;
-  proofs: StoredMerkleProofs;
-}
-
-export async function fetchAllMintingMerkleProofsForRoot(
-  merkleRoot: string
-): Promise<{ address: string; proofs: AllowlistMerkleProofItem[] }[]> {
-  const rows = await sqlExecutor.execute<MintingMerkleProofByAddressRow>(
-    `SELECT address, proofs FROM ${MINTING_MERKLE_PROOFS_TABLE} WHERE merkle_root = :merkleRoot ORDER BY address ASC`,
-    { merkleRoot }
-  );
-  return rows.map((r) => ({
-    address: r.address,
-    proofs: parseStoredMerkleProofs(r.proofs)
-  }));
-}
-
 export async function doesMintingMerkleRootExistForCard(
   cardId: number,
   contract: string,
