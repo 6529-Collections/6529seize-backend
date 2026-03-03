@@ -77,6 +77,18 @@ function isNotificationEnabledForDevice(
   return settings[settingKey];
 }
 
+function getEnabledCauses(
+  settings: PushNotificationSettingsData
+): IdentityNotificationCause[] {
+  return (
+    Object.values(IdentityNotificationCause) as IdentityNotificationCause[]
+  ).filter((cause) => {
+    const key = CAUSE_TO_SETTING_KEY[cause];
+    if (key == null) return true;
+    return settings[key];
+  });
+}
+
 function getDeviceTokenKey(deviceId: string, token: string): string {
   return JSON.stringify([deviceId, token]);
 }
@@ -197,49 +209,59 @@ export async function sendIdentityNotification(id: number) {
   if (notificationData) {
     const { title, body, data, imageUrl } = notificationData;
 
-    const unreadCountsByProfile = new Map<string, Promise<number>>();
-    const getUnreadCountForProfile = (profileId: string): Promise<number> => {
-      const existing = unreadCountsByProfile.get(profileId);
-      if (existing) {
-        return existing;
-      }
-
-      const promise = (async () => {
-        const eligibleGroupIds =
-          await userGroupsService.getGroupsUserIsEligibleFor(profileId);
-        const options =
-          profileId === notification.identity_id
-            ? { includeNotificationId: notification.id }
-            : undefined;
-        return identityNotificationsDb.countUnreadNotificationsForIdentity(
-          profileId,
-          eligibleGroupIds,
-          undefined,
-          options
-        );
-      })();
-      unreadCountsByProfile.set(profileId, promise);
-      return promise;
-    };
-
     await Promise.all(
       userDevices.map(async (device) => {
-        const settings = await getDeviceSettings(
+        const recipientSettings = await getDeviceSettings(
           notification.identity_id,
           device.device_id
         );
-        if (!isNotificationEnabledForDevice(notification.cause, settings)) {
+        if (
+          !isNotificationEnabledForDevice(notification.cause, recipientSettings)
+        ) {
           logger.info(
             `[ID ${notification.id}] Notification type ${notification.cause} disabled for device ${device.device_id}`
           );
           return;
         }
 
+        const deviceKey = getDeviceTokenKey(device.device_id, device.token);
+        const relevantProfiles =
+          profileIdsByDeviceToken.get(deviceKey) ??
+          new Set([notification.identity_id]);
+
+        const contributions = await Promise.allSettled(
+          Array.from(relevantProfiles).map(async (profileId) => {
+            const settings = await getDeviceSettings(
+              profileId,
+              device.device_id
+            );
+            const enabledCauses = getEnabledCauses(settings);
+            if (enabledCauses.length === 0) return 0;
+            const eligibleGroupIds =
+              await userGroupsService.getGroupsUserIsEligibleFor(profileId);
+            const options: {
+              includeNotificationId?: number;
+              enabledCauses?: IdentityNotificationCause[];
+            } = { enabledCauses };
+            if (profileId === notification.identity_id) {
+              options.includeNotificationId = notification.id;
+            }
+            return identityNotificationsDb.countUnreadNotificationsForIdentity(
+              profileId,
+              eligibleGroupIds,
+              undefined,
+              options
+            );
+          })
+        );
+        const badge = contributions.reduce(
+          (sum, r) => sum + (r.status === 'fulfilled' ? r.value : 0),
+          0
+        );
+
         const shouldPrefixTitle =
           multiProfileTitlePrefix !== null &&
-          sharedDeviceTokenKeys.has(
-            getDeviceTokenKey(device.device_id, device.token)
-          );
+          sharedDeviceTokenKeys.has(deviceKey);
         const titleForDevice = shouldPrefixTitle
           ? `${multiProfileTitlePrefix} ${title}`
           : title;
@@ -248,26 +270,6 @@ export async function sendIdentityNotification(id: number) {
           target_profile_id: notification.identity_id,
           target_profile_handle: targetProfileHandle
         };
-        let badge: number;
-        try {
-          const deviceKey = getDeviceTokenKey(device.device_id, device.token);
-          const relevantProfiles =
-            profileIdsByDeviceToken.get(deviceKey) ??
-            new Set([notification.identity_id]);
-          const results = await Promise.allSettled(
-            Array.from(relevantProfiles).map((profileId) =>
-              getUnreadCountForProfile(profileId)
-            )
-          );
-          badge = results.reduce((sum, result) => {
-            if (result.status === 'fulfilled') {
-              return sum + result.value;
-            }
-            return sum;
-          }, 0);
-        } catch {
-          badge = 0;
-        }
 
         try {
           await sendMessage(

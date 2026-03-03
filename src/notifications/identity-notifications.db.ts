@@ -4,7 +4,10 @@ import {
   IDENTITY_NOTIFICATIONS_TABLE,
   WAVE_READER_METRICS_TABLE
 } from '@/constants';
-import { IdentityNotificationEntity } from '../entities/IIdentityNotification';
+import {
+  IdentityNotificationCause,
+  IdentityNotificationEntity
+} from '../entities/IIdentityNotification';
 import { Logger } from '../logging';
 import { numbers } from '../numbers';
 import { RequestContext } from '../request.context';
@@ -204,11 +207,19 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
     identity_id: string,
     eligibleGroupIds: string[],
     connection?: ConnectionWrapper<any>,
-    options?: { includeNotificationId?: number }
+    options?: {
+      includeNotificationId?: number;
+      enabledCauses?: IdentityNotificationCause[];
+    }
   ): Promise<number> {
     const includeId = options?.includeNotificationId;
+    const enabledCauses = options?.enabledCauses;
     const includeClause =
       includeId != null ? ` OR n.id = :includeNotificationId` : '';
+    const causeClause =
+      enabledCauses != null && enabledCauses.length > 0
+        ? ` AND n.cause IN (:enabledCauses)`
+        : '';
     return this.db
       .oneOrNull<{ cnt: number }>(
         `
@@ -226,12 +237,15 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
               : ``
           })
           AND COALESCE(r.muted, FALSE) = FALSE
-        )${includeClause}
+        )${includeClause}${causeClause}
       `,
         {
           identity_id,
           eligibleGroupIds,
-          ...(includeId != null ? { includeNotificationId: includeId } : {})
+          ...(includeId != null ? { includeNotificationId: includeId } : {}),
+          ...(enabledCauses != null && enabledCauses.length > 0
+            ? { enabledCauses }
+            : {})
         },
         connection ? { wrappedConnection: connection } : undefined
       )
