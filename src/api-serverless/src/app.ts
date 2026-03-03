@@ -1,5 +1,5 @@
 import * as db from '../../db-api';
-import { ids } from '../../ids';
+import { ids } from '@/ids';
 
 import * as http from 'node:http';
 import WebSocket, { WebSocketServer } from 'ws';
@@ -58,9 +58,13 @@ import {
   Strategy as JwtStrategy,
   VerifiedCallback
 } from 'passport-jwt';
-import { ApiCompliantException } from '../../exceptions';
+import { ApiCompliantException } from '@/exceptions';
 import * as sentryContext from '../../sentry.context';
-import { Time, Timer } from '../../time';
+import { Time, Timer } from '@/time';
+import { DropType } from '@/entities/IDrop';
+import { dropsDb } from '@/drops/drops.db';
+import { identitiesDb } from '@/identities/identities.db';
+import { dbSupplier } from '@/sql-executor';
 import { asyncRouter } from './async.router';
 import { getJwtSecret } from './auth/auth';
 
@@ -70,15 +74,15 @@ import * as crypto from 'node:crypto';
 import { Strategy as AnonymousStrategy } from 'passport-anonymous';
 import * as process from 'process';
 import * as SwaggerUI from 'swagger-ui-express';
-import { NFT } from '../../entities/INFT';
-import { TDHBlock } from '../../entities/ITDH';
-import { Upload } from '../../entities/IUpload';
-import { env, loadLocalConfig, loadSecrets } from '../../env';
-import { loggerContext } from '../../logger-context';
-import { Logger } from '../../logging';
-import { numbers } from '../../numbers';
-import { getRedisClient, initRedis, redisGet } from '../../redis';
-import { parseTdhResultsFromDB } from '../../sql_helpers';
+import { NFT } from '@/entities/INFT';
+import { TDHBlock } from '@/entities/ITDH';
+import { Upload } from '@/entities/IUpload';
+import { env, loadLocalConfig, loadSecrets } from '@/env';
+import { loggerContext } from '@/logger-context';
+import { Logger } from '@/logging';
+import { numbers } from '@/numbers';
+import { getRedisClient, initRedis, redisGet } from '@/redis';
+import { parseTdhResultsFromDB } from '@/sql_helpers';
 import alchemyProxyRoutes from './alchemy-proxy/alchemy-proxy.routes';
 import {
   corsOptions,
@@ -139,6 +143,406 @@ const requestLogger = Logger.get('API_REQUEST');
 const logger = Logger.get('API');
 
 const API_PORT = 3000;
+const SENTRY_ALLOWED_SKEW_SECONDS = 300;
+const SENTRY_WEBHOOK_DEDUPE_TTL_SECONDS = 86400;
+const GH_WEBHOOK_DEDUPE_TTL_SECONDS = 86400;
+const WEBHOOK_PROCESSING_LOCK_TTL_SECONDS = 300;
+const SENTRY_ALERT_DROP_MAX_CONTENT_LENGTH = 30000;
+const SENTRY_ALERT_DROP_MAX_TITLE_LENGTH = 250;
+
+type SentryWebhookVerificationResult = {
+  ok: boolean;
+  reason?: string;
+  statusCode?: number;
+};
+
+function normalizeHeaderValue(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function timingSafeEqualHex(aHex: string, bHex: string) {
+  try {
+    const a = Buffer.from(aHex, 'hex');
+    const b = Buffer.from(bHex, 'hex');
+    const aView = new Uint8Array(a.buffer, a.byteOffset, a.byteLength);
+    const bView = new Uint8Array(b.buffer, b.byteOffset, b.byteLength);
+    return (
+      aView.length === bView.length && crypto.timingSafeEqual(aView, bView)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function parseSentrySignatureCandidates(signatureHeader: string): string[] {
+  return signatureHeader
+    .split(',')
+    .map((part) => part.trim())
+    .map((part) => part.replace(/^sha256=/i, '').replace(/^v\d+=/i, ''))
+    .map((part) => part.toLowerCase())
+    .filter((part) => /^[0-9a-f]{64}$/.test(part));
+}
+
+function computeSentryWebhookSignature(
+  secret: string,
+  timestamp: string,
+  bodyBytes: Uint8Array
+): string {
+  return crypto
+    .createHmac('sha256', secret)
+    .update(`${timestamp}.`, 'utf8')
+    .update(bodyBytes)
+    .digest('hex');
+}
+
+function verifySentryWebhook(req: any): SentryWebhookVerificationResult {
+  const signatureHeader = normalizeHeaderValue(
+    req.get('sentry-hook-signature')
+  );
+  const timestamp = normalizeHeaderValue(req.get('sentry-hook-timestamp'));
+  const resource = normalizeHeaderValue(req.get('sentry-hook-resource'));
+
+  if (!signatureHeader) {
+    return {
+      ok: false,
+      reason: 'Missing sentry-hook-signature',
+      statusCode: 401
+    };
+  }
+  if (!timestamp) {
+    return {
+      ok: false,
+      reason: 'Missing sentry-hook-timestamp',
+      statusCode: 401
+    };
+  }
+  if (resource && !['event_alert', 'error'].includes(resource)) {
+    return {
+      ok: false,
+      reason: `Unexpected sentry-hook-resource: ${resource}`,
+      statusCode: 400
+    };
+  }
+
+  const rawBody: Buffer | undefined = req.rawBody;
+  if (!rawBody) {
+    return { ok: false, reason: 'Raw body not available', statusCode: 500 };
+  }
+  const rawBodyBytes = new Uint8Array(
+    rawBody.buffer,
+    rawBody.byteOffset,
+    rawBody.byteLength
+  );
+
+  const timestampNumber = Number(timestamp);
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  if (
+    !Number.isFinite(timestampNumber) ||
+    Math.abs(nowSeconds - timestampNumber) > SENTRY_ALLOWED_SKEW_SECONDS
+  ) {
+    return {
+      ok: false,
+      reason: 'Timestamp outside allowed window',
+      statusCode: 401
+    };
+  }
+
+  const rawSecret = env.getStringOrThrow('SENTRY_CLIENT_SECRET');
+  const secret = rawSecret.trim();
+  if (rawSecret !== secret && process.env.SENTRY_WEBHOOK_DEBUG === 'true') {
+    logger.warn(
+      `SENTRY_CLIENT_SECRET has leading/trailing whitespace [raw_len ${rawSecret.length}] [trimmed_len ${secret.length}]`
+    );
+  }
+  const expectedSignature = computeSentryWebhookSignature(
+    secret,
+    timestamp,
+    rawBodyBytes
+  );
+  const expectedWithoutTimestamp = crypto
+    .createHmac('sha256', secret)
+    .update(rawBodyBytes)
+    .digest('hex');
+  const providedCandidates = parseSentrySignatureCandidates(signatureHeader);
+  const matchesWithTimestamp =
+    providedCandidates.length > 0 &&
+    providedCandidates.some((candidate) =>
+      timingSafeEqualHex(expectedSignature, candidate)
+    );
+  const matchesWithoutTimestamp =
+    providedCandidates.length > 0 &&
+    providedCandidates.some((candidate) =>
+      timingSafeEqualHex(expectedWithoutTimestamp, candidate)
+    );
+  const allowBodyOnlyMode =
+    process.env.SENTRY_WEBHOOK_ALLOW_BODY_ONLY !== 'false';
+  const isValidSignature =
+    matchesWithTimestamp || (allowBodyOnlyMode && matchesWithoutTimestamp);
+
+  if (isValidSignature && matchesWithoutTimestamp && !matchesWithTimestamp) {
+    logger.warn(
+      `Sentry webhook validated using body-only signature mode [resource ${
+        resource ?? 'n/a'
+      }] [timestamp ${timestamp}]`
+    );
+  }
+
+  if (!isValidSignature) {
+    if (process.env.SENTRY_WEBHOOK_DEBUG === 'true') {
+      const parsedBodyBuffer = Buffer.from(
+        JSON.stringify(req.body ?? {}),
+        'utf8'
+      );
+      const parsedBodyBytes = new Uint8Array(
+        parsedBodyBuffer.buffer,
+        parsedBodyBuffer.byteOffset,
+        parsedBodyBuffer.byteLength
+      );
+      const expectedFromParsedBody = computeSentryWebhookSignature(
+        secret,
+        timestamp,
+        parsedBodyBytes
+      );
+      const matchesParsedBody = providedCandidates.some((candidate) =>
+        timingSafeEqualHex(expectedFromParsedBody, candidate)
+      );
+      const rawBodySha256 = crypto
+        .createHash('sha256')
+        .update(rawBodyBytes)
+        .digest('hex');
+      logger.warn(
+        `Sentry webhook signature mismatch [resource ${resource ?? 'n/a'}] [timestamp ${timestamp}] [skew_s ${
+          nowSeconds - timestampNumber
+        }] [content_length ${req.get('content-length') ?? 'n/a'}] [raw_body_sha256 ${rawBodySha256}] [provided_candidates ${
+          providedCandidates.length
+        }] [provided_prefix ${
+          providedCandidates[0]?.slice(0, 12) ?? 'n/a'
+        }] [expected_prefix ${expectedSignature.slice(
+          0,
+          12
+        )}] [expected_no_ts_prefix ${expectedWithoutTimestamp.slice(
+          0,
+          12
+        )}] [matches_parsed_body ${
+          matchesParsedBody ? 'yes' : 'no'
+        }] [matches_without_timestamp ${
+          matchesWithoutTimestamp ? 'yes' : 'no'
+        }]`
+      );
+    }
+    return { ok: false, reason: 'Invalid signature', statusCode: 401 };
+  }
+
+  return { ok: true };
+}
+
+function normalizeToString(value: unknown): string | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+  return null;
+}
+
+function truncateString(value: string, maxLength: number): string {
+  if (value.length <= maxLength) {
+    return value;
+  }
+  return `${value.substring(0, maxLength - 3)}...`;
+}
+
+function formatSentryException(event: any): string | null {
+  const entries = Array.isArray(event?.entries) ? event.entries : [];
+  const exceptionEntry = entries.find(
+    (entry: any) => entry?.type === 'exception'
+  );
+  const exception = exceptionEntry?.data?.values?.[0];
+  if (!exception) {
+    return null;
+  }
+
+  const exceptionType = normalizeToString(exception.type);
+  const exceptionValue = normalizeToString(exception.value);
+  const stackFrames = Array.isArray(exception?.stacktrace?.frames)
+    ? exception.stacktrace.frames
+    : [];
+  const latestFrame =
+    stackFrames.length > 0 ? stackFrames[stackFrames.length - 1] : null;
+  const frameFunction = normalizeToString(latestFrame?.function);
+  const frameFile = normalizeToString(latestFrame?.filename);
+  const frameLine = normalizeToString(latestFrame?.lineno);
+  const location = [frameFile, frameLine].filter(Boolean).join(':');
+
+  const lines = [];
+  if (exceptionType || exceptionValue) {
+    lines.push([exceptionType, exceptionValue].filter(Boolean).join(': '));
+  }
+  if (frameFunction && location) {
+    lines.push(`at ${frameFunction} (${location})`);
+  } else if (frameFunction) {
+    lines.push(`at ${frameFunction}`);
+  } else if (location) {
+    lines.push(`at ${location}`);
+  }
+  if (!lines.length) {
+    return null;
+  }
+  return truncateString(lines.join('\n'), 2000);
+}
+
+function formatSentryAlertForDrop(payload: any): {
+  title: string;
+  content: string;
+  eventId: string | null;
+  issueId: string | null;
+  level: string;
+  webUrl: string | null;
+} {
+  const event = payload?.data?.event ?? {};
+  const level = (normalizeToString(event.level) ?? 'error').toUpperCase();
+  const eventTitle =
+    normalizeToString(event.title) ??
+    normalizeToString(event.message) ??
+    'Sentry alert';
+  const issueId = normalizeToString(event.issue_id);
+  const eventId = normalizeToString(event.event_id);
+  const project =
+    normalizeToString(event.project_slug) ??
+    normalizeToString(event.project_name) ??
+    normalizeToString(event.project);
+  const environment = normalizeToString(event.environment);
+  const culprit = normalizeToString(event.culprit);
+  const loggerName = normalizeToString(event.logger);
+  const transaction = normalizeToString(event.transaction);
+  const message = normalizeToString(event.message);
+  const webUrl =
+    normalizeToString(event.web_url) ??
+    normalizeToString(payload?.data?.issue?.url);
+  const exceptionPreview = formatSentryException(event);
+
+  const titlePrefix = project
+    ? `Sentry ${level} | ${project}`
+    : `Sentry ${level}`;
+  const title = truncateString(
+    `${titlePrefix}: ${eventTitle}`,
+    SENTRY_ALERT_DROP_MAX_TITLE_LENGTH
+  );
+
+  const lines = [`**${eventTitle}**`, '', `- Level: ${level}`];
+  if (project) {
+    lines.push(`- Project: ${project}`);
+  }
+  if (environment) {
+    lines.push(`- Environment: ${environment}`);
+  }
+  if (issueId) {
+    lines.push(`- Issue ID: ${issueId}`);
+  }
+  if (eventId) {
+    lines.push(`- Event ID: ${eventId}`);
+  }
+  if (culprit) {
+    lines.push(`- Culprit: ${culprit}`);
+  }
+  if (loggerName) {
+    lines.push(`- Logger: ${loggerName}`);
+  }
+  if (transaction) {
+    lines.push(`- Transaction: ${transaction}`);
+  }
+  if (webUrl) {
+    lines.push(`- URL: ${webUrl}`);
+  }
+  if (message && message !== eventTitle) {
+    lines.push(`- Message: ${message}`);
+  }
+  if (exceptionPreview) {
+    lines.push('', '**Exception**', '```', exceptionPreview, '```');
+  }
+
+  const content = truncateString(
+    lines.join('\n'),
+    SENTRY_ALERT_DROP_MAX_CONTENT_LENGTH
+  );
+
+  return { title, content, eventId, issueId, level, webUrl };
+}
+
+async function postSentryAlertDrop({
+  title,
+  content
+}: {
+  title: string;
+  content: string;
+}) {
+  const waveId = env.getStringOrThrow('ALERTS_WAVE_ID');
+  const senderId = env.getStringOrThrow('ALERTS_BOT_PROFILE_ID');
+  const dropId = randomUUID();
+  const now = Time.currentMillis();
+
+  await dbSupplier().executeNativeQueriesInTransaction(async (connection) => {
+    const [wave, senderIdentity] = await Promise.all([
+      dropsDb.findWaveByIdOrNull(waveId, connection),
+      identitiesDb.getIdentityByProfileId(senderId, connection)
+    ]);
+    if (!wave) {
+      throw new Error(`Configured ALERTS_WAVE_ID ${waveId} not found`);
+    }
+    if (!senderIdentity) {
+      throw new Error(`Configured ALERTS_BOT_PROFILE_ID ${senderId} not found`);
+    }
+
+    await dropsDb.insertDrop(
+      {
+        id: dropId,
+        author_id: senderId,
+        title,
+        parts_count: 1,
+        wave_id: waveId,
+        reply_to_drop_id: null,
+        reply_to_part_id: null,
+        created_at: now,
+        updated_at: null,
+        serial_no: null,
+        drop_type: DropType.CHAT,
+        signature: null
+      },
+      connection
+    );
+
+    await dropsDb.insertDropParts(
+      [
+        {
+          drop_id: dropId,
+          drop_part_id: 1,
+          content,
+          quoted_drop_id: null,
+          quoted_drop_part_id: null,
+          wave_id: waveId
+        }
+      ],
+      connection
+    );
+
+    await dropsDb.updateHideLinkPreview(
+      {
+        drop_id: dropId,
+        hide_link_preview: true
+      },
+      { connection }
+    );
+  });
+}
 
 function requestLogMiddleware() {
   return (request: Request, response: Response, next: NextFunction) => {
@@ -255,7 +659,8 @@ async function initializeApp() {
       limit: '5mb',
       verify: (req: any, _res: any, buf: Buffer) => {
         // Store raw body only for webhook endpoints that need signature verification
-        if (req.url === '/gh-hooks') {
+        const url = (req.url ?? '').split('?')[0];
+        if (url === '/gh-hooks' || url === '/dev-alerts') {
           req.rawBody = buf;
         }
       }
@@ -900,6 +1305,92 @@ async function initializeApp() {
     return res.json(healthData);
   });
 
+  rootRouter.post('/dev-alerts', async (req: any, res: any) => {
+    const verification = verifySentryWebhook(req);
+    if (!verification.ok) {
+      logger.warn(`Rejected Sentry webhook: ${verification.reason}`);
+      return res.status(verification.statusCode).send(verification.reason);
+    }
+
+    const body = req.body;
+    const action = body?.action;
+    if (action !== 'triggered') {
+      return res.send({});
+    }
+
+    const formattedAlert = formatSentryAlertForDrop(body);
+    const redis = getRedisClient();
+    const cacheKey = formattedAlert.eventId
+      ? `sentry-webhook:${formattedAlert.eventId}`
+      : null;
+    const processingKey = cacheKey ? `${cacheKey}:processing` : null;
+    let lockAcquired = false;
+    if (redis && cacheKey && processingKey) {
+      const alreadyProcessed = await redis.get(cacheKey);
+      if (alreadyProcessed) {
+        logger.info(
+          `Duplicate Sentry webhook for event ${formattedAlert.eventId}, skipping`
+        );
+        return res.send({});
+      }
+      const lockWasSet = await redis.set(processingKey, '1', {
+        NX: true,
+        EX: WEBHOOK_PROCESSING_LOCK_TTL_SECONDS
+      });
+      if (!lockWasSet) {
+        logger.info(
+          `Sentry webhook for event ${formattedAlert.eventId} is already being processed, skipping`
+        );
+        return res.send({});
+      }
+      lockAcquired = true;
+    }
+
+    logger.info(
+      `Sentry alert received [level ${formattedAlert.level}] [issue ${
+        formattedAlert.issueId ?? 'unknown'
+      }] [event ${formattedAlert.eventId ?? 'unknown'}] [url ${
+        formattedAlert.webUrl ?? 'n/a'
+      }]`
+    );
+
+    try {
+      await postSentryAlertDrop({
+        title: formattedAlert.title,
+        content: formattedAlert.content
+      });
+      if (redis && cacheKey) {
+        try {
+          await redis.set(cacheKey, '1', {
+            EX: SENTRY_WEBHOOK_DEDUPE_TTL_SECONDS
+          });
+        } catch (err) {
+          logger.warn(
+            `Failed to persist Sentry dedupe key for event ${formattedAlert.eventId}: ${err}`
+          );
+        }
+      }
+      logger.info(
+        `Sentry alert posted to wave ${env.getStringOrThrow('ALERTS_WAVE_ID')}`
+      );
+    } catch (err) {
+      logger.error(`Failed to post Sentry alert drop: ${err}`);
+      return res.status(500).send('Failed to post alert');
+    } finally {
+      if (redis && processingKey && lockAcquired) {
+        try {
+          await redis.del(processingKey);
+        } catch (err) {
+          logger.warn(
+            `Failed to release Sentry processing lock for event ${formattedAlert.eventId}: ${err}`
+          );
+        }
+      }
+    }
+
+    return res.send({});
+  });
+
   rootRouter.post('/gh-hooks', async (req: any, res: any) => {
     function timingSafeEqual(a: string, b: string) {
       const aBuf = Buffer.from(a);
@@ -940,19 +1431,53 @@ async function initializeApp() {
     }
     if (action === 'opened' && html_url) {
       const redis = getRedisClient();
+      const cacheKey = `gh-webhook:${html_url}`;
+      const processingKey = `${cacheKey}:processing`;
+      let lockAcquired = false;
       if (redis) {
-        const cacheKey = `gh-webhook:${html_url}`;
-        const wasSet = await redis.set(cacheKey, '1', { NX: true, EX: 86400 });
-        if (!wasSet) {
+        const alreadyProcessed = await redis.get(cacheKey);
+        if (alreadyProcessed) {
           logger.info(`Duplicate webhook for ${html_url}, skipping`);
           return res.send({});
         }
+        const lockWasSet = await redis.set(processingKey, '1', {
+          NX: true,
+          EX: WEBHOOK_PROCESSING_LOCK_TTL_SECONDS
+        });
+        if (!lockWasSet) {
+          logger.info(
+            `Webhook for ${html_url} is already being processed, skipping`
+          );
+          return res.send({});
+        }
+        lockAcquired = true;
       }
       logger.info(`New issue was opened: ${html_url}`);
       try {
         await githubIssueDropService.postGhIssueDrop(html_url);
+        if (redis) {
+          try {
+            await redis.set(cacheKey, '1', {
+              EX: GH_WEBHOOK_DEDUPE_TTL_SECONDS
+            });
+          } catch (err) {
+            logger.warn(
+              `Failed to persist GitHub webhook dedupe key for ${html_url}: ${err}`
+            );
+          }
+        }
       } catch (err) {
         logger.error(`Failed to post drop for issue ${html_url}: ${err}`);
+      } finally {
+        if (redis && lockAcquired) {
+          try {
+            await redis.del(processingKey);
+          } catch (err) {
+            logger.warn(
+              `Failed to release GitHub webhook processing lock for ${html_url}: ${err}`
+            );
+          }
+        }
       }
     }
     res.send({});
@@ -1043,8 +1568,6 @@ async function initializeApp() {
   app.use(rateLimitingMiddleware());
   app.use(rootRouter);
 
-  app.use(customErrorMiddleware());
-
   const swaggerDocument = YAML.load('openapi.yaml');
   app.use(
     '/docs',
@@ -1064,6 +1587,7 @@ async function initializeApp() {
     app.use(Sentry.Handlers.errorHandler());
     app.use(sentryFlusherMiddleware());
   }
+  app.use(customErrorMiddleware());
 
   if (process.env.NODE_ENV === 'local') {
     const localWebSocketLogger = Logger.get('LocalWebSocket');
