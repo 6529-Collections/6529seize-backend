@@ -40,6 +40,52 @@ export class ProfileCicOverviewDb extends LazyDbAccessCompatibleService {
     readonly direction: CicDirection;
     readonly authenticatedProfileId: string | null;
   }): Promise<CicOverviewStatsRow> {
+    if (direction === 'outgoing') {
+      const params: Record<string, any> = {
+        contextProfileId,
+        matter: 'CIC'
+      };
+      const authenticatedContributionSql = authenticatedProfileId
+        ? `coalesce(sum(case when r.matter_target_id = :authenticatedProfileId then r.rating else 0 end), 0) as authenticated_user_contribution`
+        : `null as authenticated_user_contribution`;
+      if (authenticatedProfileId) {
+        params.authenticatedProfileId = authenticatedProfileId;
+      }
+      const [totalsRow, contributorCountRow] = await Promise.all([
+        this.db.oneOrNull<{
+          total_cic: number;
+          authenticated_user_contribution: number | null;
+        }>(
+          `
+          select
+            coalesce(sum(r.rating), 0) as total_cic,
+            ${authenticatedContributionSql}
+          from ${RATINGS_TABLE} r
+          where r.matter = :matter
+            and r.rater_profile_id = :contextProfileId
+            and r.rating <> 0
+          `,
+          params
+        ),
+        this.db.oneOrNull<{ contributor_count: number }>(
+          `
+          select count(distinct r.matter_target_id) as contributor_count
+          from ${RATINGS_TABLE} r force index (PRIMARY)
+          where r.rater_profile_id = :contextProfileId
+            and r.matter = :matter
+            and r.rating <> 0
+          `,
+          params
+        )
+      ]);
+      return {
+        total_cic: totalsRow?.total_cic ?? 0,
+        contributor_count: contributorCountRow?.contributor_count ?? 0,
+        authenticated_user_contribution:
+          totalsRow?.authenticated_user_contribution ??
+          (authenticatedProfileId ? 0 : null)
+      };
+    }
     const { contextColumn, contributorColumn } =
       this.getDirectionColumns(direction);
     const params: Record<string, any> = {
