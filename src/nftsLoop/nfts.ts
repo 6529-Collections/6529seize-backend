@@ -34,7 +34,7 @@ import { getRpcProvider } from '@/rpc-provider';
 import { equalIgnoreCase } from '@/strings';
 import { text } from '@/text';
 import { Time } from '@/time';
-import { withArweaveFallback } from '@/arweaveGatewayFallback';
+import { withArweaveFallback } from '@/arweave-gateway-fallback';
 import axios from 'axios';
 import { ethers } from 'ethers';
 import { In, MoreThan, Not, Repository } from 'typeorm';

@@ -7,7 +7,7 @@ import sharp from 'sharp';
 import { RequestInfo, RequestInit } from 'node-fetch';
 import { Rememe } from './entities/IRememe';
 import { CLOUDFRONT_LINK } from '@/constants';
-import { withArweaveFallback } from '@/arweaveGatewayFallback';
+import { withArweaveFallback } from '@/arweave-gateway-fallback';
 import { persistRememes } from './db';
 import { Logger } from './logging';
 import { ipfs } from './ipfs';
