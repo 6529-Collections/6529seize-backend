@@ -207,9 +207,15 @@ export async function sendIdentityNotification(id: number) {
       const promise = (async () => {
         const eligibleGroupIds =
           await userGroupsService.getGroupsUserIsEligibleFor(profileId);
+        const options =
+          profileId === notification.identity_id
+            ? { includeNotificationId: notification.id }
+            : undefined;
         return identityNotificationsDb.countUnreadNotificationsForIdentity(
           profileId,
-          eligibleGroupIds
+          eligibleGroupIds,
+          undefined,
+          options
         );
       })();
       unreadCountsByProfile.set(profileId, promise);

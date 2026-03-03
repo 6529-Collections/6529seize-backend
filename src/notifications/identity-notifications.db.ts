@@ -203,8 +203,12 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
   async countUnreadNotificationsForIdentity(
     identity_id: string,
     eligibleGroupIds: string[],
-    connection?: ConnectionWrapper<any>
+    connection?: ConnectionWrapper<any>,
+    options?: { includeNotificationId?: number }
   ): Promise<number> {
+    const includeId = options?.includeNotificationId;
+    const includeClause =
+      includeId != null ? ` OR n.id = :includeNotificationId` : '';
     return this.db
       .oneOrNull<{ cnt: number }>(
         `
@@ -213,7 +217,8 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
         LEFT JOIN ${WAVE_READER_METRICS_TABLE} r
           ON r.wave_id = n.wave_id
           AND r.reader_id = n.identity_id
-        WHERE n.identity_id = :identity_id
+        WHERE (
+          n.identity_id = :identity_id
           AND n.read_at IS NULL
           AND (n.visibility_group_id IS NULL ${
             eligibleGroupIds.length
@@ -221,10 +226,12 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
               : ``
           })
           AND COALESCE(r.muted, FALSE) = FALSE
+        )${includeClause}
       `,
         {
           identity_id,
-          eligibleGroupIds
+          eligibleGroupIds,
+          ...(includeId != null ? { includeNotificationId: includeId } : {})
         },
         connection ? { wrappedConnection: connection } : undefined
       )
