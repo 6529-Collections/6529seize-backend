@@ -13,6 +13,7 @@ import axiosRetry from 'axios-retry';
 import pLimit from 'p-limit';
 import { invalidateCloudFront } from './cloudfront';
 import { equalIgnoreCase } from './strings';
+import { withArweaveFallback } from '@/arweave-gateway-fallback';
 
 const logger = Logger.get('S3');
 const limit = pLimit(3);
@@ -30,11 +31,11 @@ axiosRetry(axios, {
 });
 
 const fetchUrl = async (url: string): Promise<Buffer> => {
-  const response = await axios.get(url, {
-    responseType: 'arraybuffer'
-  });
-
-  return Buffer.from(response.data);
+  const fetchOne = async (u: string) => {
+    const response = await axios.get(u, { responseType: 'arraybuffer' });
+    return Buffer.from(response.data);
+  };
+  return withArweaveFallback(url, fetchOne);
 };
 
 const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
