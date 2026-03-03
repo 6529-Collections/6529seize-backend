@@ -26,7 +26,7 @@ function dedupe(list: readonly string[]): string[] {
 }
 
 function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return s.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
 }
 
 const ARWEAVE_HOSTS_PATTERN = ARWEAVE_GATEWAYS.map(escapeRegex).join('|');
@@ -39,7 +39,7 @@ const ARWEAVE_HOSTS_PATTERN = ARWEAVE_GATEWAYS.map(escapeRegex).join('|');
  * Ignores hash fragment.
  */
 const ARWEAVE_URL_RE = new RegExp(
-  String.raw`^https?:\/\/(?:www\.)?(${ARWEAVE_HOSTS_PATTERN})(\/[^#?]*)?(\?[^#]*)?`,
+  String.raw`^https?:\/\/(?:www\.)?(${ARWEAVE_HOSTS_PATTERN})(?=(?::\d+)?(?:\/|$|\?|#))(\/[^#?]*)?(\?[^#]*)?`,
   'i'
 );
 
