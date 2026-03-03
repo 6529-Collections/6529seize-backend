@@ -85,7 +85,7 @@ function buildMultiProfileTitlePrefix(profileHandle: string): string {
   const normalizedHandle = profileHandle.startsWith('@')
     ? profileHandle.slice(1)
     : profileHandle;
-  return `@${normalizedHandle} •`;
+  return `[${normalizedHandle}]`;
 }
 
 async function getSharedDeviceTokenKeysForOtherProfiles(
@@ -242,17 +242,26 @@ export async function sendIdentityNotification(id: number) {
           target_profile_id: notification.identity_id,
           target_profile_handle: targetProfileHandle
         };
-        const deviceKey = getDeviceTokenKey(device.device_id, device.token);
-        const relevantProfiles =
-          profileIdsByDeviceToken.get(deviceKey) ??
-          new Set([notification.identity_id]);
-        const badge = (
-          await Promise.all(
+        let badge: number;
+        try {
+          const deviceKey = getDeviceTokenKey(device.device_id, device.token);
+          const relevantProfiles =
+            profileIdsByDeviceToken.get(deviceKey) ??
+            new Set([notification.identity_id]);
+          const results = await Promise.allSettled(
             Array.from(relevantProfiles).map((profileId) =>
               getUnreadCountForProfile(profileId)
             )
-          )
-        ).reduce((sum, count) => sum + count, 0);
+          );
+          badge = results.reduce((sum, result) => {
+            if (result.status === 'fulfilled') {
+              return sum + result.value;
+            }
+            return sum;
+          }, 0);
+        } catch {
+          badge = 0;
+        }
 
         try {
           await sendMessage(
