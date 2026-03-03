@@ -213,13 +213,34 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
     }
   ): Promise<number> {
     const includeId = options?.includeNotificationId;
+    const hasIncludeNotificationId =
+      includeId !== undefined && includeId !== null;
     const enabledCauses = options?.enabledCauses;
-    const includeClause =
-      includeId != null ? ` OR n.id = :includeNotificationId` : '';
-    const causeClause =
-      enabledCauses != null && enabledCauses.length > 0
-        ? ` AND n.cause IN (:enabledCauses)`
-        : '';
+    const includeClause = hasIncludeNotificationId
+      ? ` OR (n.id = :includeNotificationId AND n.identity_id = :identity_id)`
+      : '';
+    const hasEnabledCauses =
+      enabledCauses !== undefined && enabledCauses.length > 0;
+    const causeClause = hasEnabledCauses
+      ? ` AND n.cause IN (:enabledCauses)`
+      : '';
+
+    const queryParams: {
+      identity_id: string;
+      eligibleGroupIds: string[];
+      includeNotificationId?: number;
+      enabledCauses?: IdentityNotificationCause[];
+    } = {
+      identity_id,
+      eligibleGroupIds
+    };
+    if (hasIncludeNotificationId) {
+      queryParams.includeNotificationId = includeId;
+    }
+    if (hasEnabledCauses) {
+      queryParams.enabledCauses = enabledCauses;
+    }
+
     return this.db
       .oneOrNull<{ cnt: number }>(
         `
@@ -229,24 +250,19 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
           ON r.wave_id = n.wave_id
           AND r.reader_id = n.identity_id
         WHERE (
-          n.identity_id = :identity_id
-          AND n.read_at IS NULL
-          AND (n.visibility_group_id IS NULL ${
-            eligibleGroupIds.length
-              ? ` OR n.visibility_group_id IN (:eligibleGroupIds) `
-              : ``
-          })
-          AND COALESCE(r.muted, FALSE) = FALSE
-        )${includeClause}${causeClause}
+          (
+            n.identity_id = :identity_id
+            AND n.read_at IS NULL
+            AND (n.visibility_group_id IS NULL ${
+              eligibleGroupIds.length
+                ? ` OR n.visibility_group_id IN (:eligibleGroupIds) `
+                : ``
+            })
+            AND COALESCE(r.muted, FALSE) = FALSE
+          )${includeClause}
+        )${causeClause}
       `,
-        {
-          identity_id,
-          eligibleGroupIds,
-          ...(includeId != null ? { includeNotificationId: includeId } : {}),
-          ...(enabledCauses != null && enabledCauses.length > 0
-            ? { enabledCauses }
-            : {})
-        },
+        queryParams,
         connection ? { wrappedConnection: connection } : undefined
       )
       .then((it) => it?.cnt ?? 0);

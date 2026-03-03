@@ -19,6 +19,7 @@ import { WaveReaderMetricEntity } from '../entities/IWaveReaderMetric';
 import { Logger } from '../logging';
 import { IdentityNotificationsDb } from '../notifications/identity-notifications.db';
 import { dbSupplier } from '../sql-executor';
+import { sumBadgeContributions } from './badge-count';
 import { sendMessage } from './sendPushNotifications';
 
 const CAUSE_TO_SETTING_KEY: Partial<
@@ -254,10 +255,7 @@ export async function sendIdentityNotification(id: number) {
             );
           })
         );
-        const badge = contributions.reduce(
-          (sum, r) => sum + (r.status === 'fulfilled' ? r.value : 0),
-          0
-        );
+        const badge = sumBadgeContributions(contributions);
 
         const shouldPrefixTitle =
           multiProfileTitlePrefix !== null &&
