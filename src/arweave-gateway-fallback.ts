@@ -13,7 +13,9 @@ const ARWEAVE_GATEWAYS: readonly string[] = [
 ] as const;
 
 const REGEX_ESCAPED_DOT = String.raw`\.`;
-const ARWEAVE_HOSTS_PATTERN = ARWEAVE_GATEWAYS.map((g) => g.replace(/\./g, REGEX_ESCAPED_DOT)).join('|');
+const ARWEAVE_HOSTS_PATTERN = ARWEAVE_GATEWAYS.map((g) =>
+  g.replace(/\./g, REGEX_ESCAPED_DOT)
+).join('|');
 const ARWEAVE_URL_RE = new RegExp(
   String.raw`^https?:\/\/(?:www\.)?(${ARWEAVE_HOSTS_PATTERN})\/([^/?#]+)`
 );
