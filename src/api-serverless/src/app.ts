@@ -63,9 +63,12 @@ import { ApiCompliantException } from '@/exceptions';
 import * as sentryContext from '../../sentry.context';
 import { Time, Timer } from '@/time';
 import { DropType } from '@/entities/IDrop';
+import { IdentityNotificationCause } from '@/entities/IIdentityNotification';
 import { dropsDb } from '@/drops/drops.db';
 import { identitiesDb } from '@/identities/identities.db';
+import { identityNotificationsDb } from '@/notifications/identity-notifications.db';
 import { dbSupplier } from '@/sql-executor';
+import { identitySubscriptionsDb } from '@/api/identity-subscriptions/identity-subscriptions.db';
 import { asyncRouter } from './async.router';
 import { getJwtSecret } from './auth/auth';
 
@@ -541,6 +544,32 @@ async function postSentryAlertDrop({
         hide_link_preview: true
       },
       { connection }
+    );
+
+    const followerIds = await identitySubscriptionsDb.findWaveSubscribers(
+      waveId,
+      connection
+    );
+    const followerIdsToNotify = followerIds.filter((id) => id !== senderId);
+
+    await Promise.all(
+      followerIdsToNotify.map((id) =>
+        identityNotificationsDb.insertNotification(
+          {
+            identity_id: id,
+            additional_identity_id: senderId,
+            related_drop_id: dropId,
+            related_drop_part_no: null,
+            related_drop_2_id: null,
+            related_drop_2_part_no: null,
+            wave_id: waveId,
+            cause: IdentityNotificationCause.PRIORITY_ALERT,
+            additional_data: {},
+            visibility_group_id: null
+          },
+          connection
+        )
+      )
     );
   });
 }
