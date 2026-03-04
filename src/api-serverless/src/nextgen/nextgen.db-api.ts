@@ -7,7 +7,6 @@ import {
   TRANSACTIONS_TABLE
 } from '@/constants';
 import { fetchPaginated, resolveEns, returnEmpty } from '../../../db-api';
-import { getProof } from '../../../merkle_proof';
 import {
   MINT_TYPE_TRAIT,
   NEXTGEN_ALLOWLIST_BURN_TABLE,
@@ -29,6 +28,7 @@ import { NextGenCollectionStatus } from '../api-filters';
 import { constructFilters, constructFiltersOR } from '../api-helpers';
 import { PageSortDirection } from '../page-request';
 import { getNextGenChainId, NEXTGEN_CORE } from './abis';
+import { getProof } from './merkle-proof';
 
 export enum TokensSort {
   ID = 'id',

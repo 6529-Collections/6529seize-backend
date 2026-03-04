@@ -4,7 +4,7 @@ import { hashMessage } from '@ethersproject/hash';
 import { ALCHEMY_SETTINGS } from '@/constants';
 import { Alchemy, Nft, NftContract } from 'alchemy-sdk';
 import { getTdhForAddress, rememeExists } from '../../../db-api';
-import { seizeSettings } from '../api-constants';
+import { seizeSettings } from '@/api/seize-settings';
 import { equalIgnoreCase } from '../../../strings';
 
 const rememeSchema = Joi.object({

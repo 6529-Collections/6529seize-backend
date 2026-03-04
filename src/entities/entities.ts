@@ -14,14 +14,16 @@ export { Consolidation, Delegation, NFTDelegationBlock } from './IDelegation';
 export { DeletedDropEntity } from './IDeletedDrop';
 export { Distribution, DistributionNormalized } from './IDistribution';
 export { DistributionPhoto } from './IDistributionPhoto';
+export { MintingMerkleProof } from './IMintingMerkleProof';
+export { MintingMerkleRoot } from './IMintingMerkleRoot';
 export {
+  DropBoostEntity,
   DropEntity,
   DropMediaEntity,
   DropMentionEntity,
   DropMentionedWaveEntity,
   DropMetadataEntity,
   DropPartEntity,
-  DropBoostEntity,
   DropReferencedNftEntity
 } from './IDrop';
 export { DropNftLinkEntity } from './IDropNftLink';
@@ -45,6 +47,8 @@ export { ExternalIndexedTransfersEntity } from './IExternalIndexedTransfer';
 export { IdentityEntity } from './IIdentity';
 export { IdentityNotificationEntity } from './IIdentityNotification';
 export { IdentitySubscriptionEntity } from './IIdentitySubscription';
+export { MintingClaimEntity } from './IMintingClaim';
+export { MetricRollupHourEntity } from './IMetricRollupHour';
 export {
   NextGenAllowlist,
   NextGenAllowlistBurn,
@@ -90,7 +94,6 @@ export { Rememe, RememeUpload } from './IRememe';
 export { ProfileTotalRepScoreAggregation } from './IRepScoreAggregations';
 export { RoyaltiesUpload } from './IRoyalties';
 export { MemesSeason } from './ISeason';
-export { MetricRollupHourEntity } from './IMetricRollupHour';
 export { MintAnnouncementsDoneMemeToken } from './IMintAnnouncementsDoneMemeToken';
 export { MemesMintStat } from './IMemesMintStat';
 export { MemesPrevoteArtistProfileEntity } from './IMemesPrevoteArtistProfile';
