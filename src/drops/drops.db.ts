@@ -11,6 +11,7 @@ import {
   DELETED_DROPS_TABLE,
   DROP_BOOSTS_TABLE,
   DROP_CURATIONS_TABLE,
+  DROP_NFT_LINKS_TABLE,
   DROP_MEDIA_TABLE,
   DROP_MENTIONED_WAVES_TABLE,
   DROP_METADATA_TABLE,
@@ -24,6 +25,7 @@ import {
   IDENTITIES_TABLE,
   IDENTITY_NOTIFICATIONS_TABLE,
   IDENTITY_SUBSCRIPTIONS_TABLE,
+  NFT_LINKS_TABLE,
   PROFILES_ACTIVITY_LOGS_TABLE,
   RATINGS_TABLE,
   WAVE_DROPPER_METRICS_TABLE,
@@ -1024,12 +1026,94 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     return trace;
   }
 
+  private getLeaderboardDropPricesCteSql(): string {
+    return `
+      drop_prices as (
+        select
+          d.id as drop_id,
+          max(nl.price) as drop_price
+        from ${DROPS_TABLE} d
+        left join ${DROP_NFT_LINKS_TABLE} dnl on dnl.drop_id = d.id
+        left join ${NFT_LINKS_TABLE} nl
+          on nl.canonical_id = dnl.canonical_id
+          and nl.price is not null
+          and (
+            :price_currency is null
+            or upper(nl.price_currency) = upper(:price_currency)
+          )
+        where d.wave_id = :wave_id
+          and d.drop_type = '${DropType.PARTICIPATORY}'
+        group by d.id
+      )
+    `;
+  }
+
+  private getLeaderboardPriceFilterSql(dropPriceField: string): string {
+    return `
+      (:min_price is null or ${dropPriceField} >= :min_price)
+      and (:max_price is null or ${dropPriceField} <= :max_price)
+    `;
+  }
+
+  private hasLeaderboardPriceBounds(params: {
+    min_price?: number | null;
+    max_price?: number | null;
+  }): boolean {
+    return params.min_price != null || params.max_price != null;
+  }
+
+  private getLeaderboardPriceSqlParts(hasPriceBounds: boolean): {
+    withClause: string;
+    cteClause: string;
+    joinClause: string;
+    filterClause: string;
+  } {
+    if (!hasPriceBounds) {
+      return {
+        withClause: '',
+        cteClause: '',
+        joinClause: '',
+        filterClause: ''
+      };
+    }
+    return {
+      withClause: `with ${this.getLeaderboardDropPricesCteSql()}`,
+      cteClause: `, ${this.getLeaderboardDropPricesCteSql()}`,
+      joinClause: `left join drop_prices dp on dp.drop_id = d.id`,
+      filterClause: `and ${this.getLeaderboardPriceFilterSql('dp.drop_price')}`
+    };
+  }
+
+  private getLeaderboardPriceSqlParams(
+    params: {
+      price_currency?: string | null;
+      min_price?: number | null;
+      max_price?: number | null;
+    },
+    hasPriceBounds: boolean
+  ): {
+    price_currency?: string | null;
+    min_price?: number | null;
+    max_price?: number | null;
+  } {
+    if (!hasPriceBounds) {
+      return {};
+    }
+    return {
+      price_currency: params.price_currency ?? null,
+      min_price: params.min_price ?? null,
+      max_price: params.max_price ?? null
+    };
+  }
+
   async findWeightedLeaderboardDrops(
     params: LeaderboardParams,
     ctx: RequestContext,
     curatorIds: string[] | null = null
   ): Promise<DropEntity[]> {
     ctx.timer?.start(`${this.constructor.name}->findWeightedLeaderboardDrops`);
+    const hasPriceBounds = this.hasLeaderboardPriceBounds(params);
+    const priceSql = this.getLeaderboardPriceSqlParts(hasPriceBounds);
     const curationFilter = curatorIds?.length
       ? `and exists (
           select 1 from ${DROP_CURATIONS_TABLE} dc
@@ -1053,12 +1137,18 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                                                         timestamp,
                                                         RANK() OVER (ORDER BY vote DESC, timestamp ASC) AS rnk
                                                  from ddata) drop_ranks
-             )
-        select d.* from dranks r join drops d on d.id = r.drop_id order by r.rnk ${params.sort_direction} limit :page_size offset :offset
+             )${priceSql.cteClause}
+        select d.* from dranks r
+        join ${DROPS_TABLE} d on d.id = r.drop_id
+        ${priceSql.joinClause}
+        where 1 = 1
+        ${priceSql.filterClause}
+        order by r.rnk ${params.sort_direction} limit :page_size offset :offset
     `;
     const sqlParams = {
       wave_id: params.wave_id,
       curator_ids: curatorIds,
+      ...this.getLeaderboardPriceSqlParams(params, hasPriceBounds),
       page_size: params.page_size,
       offset: params.page_size * (params.page - 1)
     };
@@ -1083,12 +1173,23 @@ export class DropsDb extends LazyDbAccessCompatibleService {
           where dc.drop_id = d.id and dc.curator_id in (:curator_ids)
         )`
       : '';
+    const hasPriceBounds = this.hasLeaderboardPriceBounds(params);
+    const priceSql = this.getLeaderboardPriceSqlParts(hasPriceBounds);
     const sql = `
-        select d.* from ${WAVE_LEADERBOARD_ENTRIES_TABLE} r join ${DROPS_TABLE} d on d.id = r.drop_id where d.drop_type = '${DropType.PARTICIPATORY}' and d.wave_id = :wave_id ${curationFilter} order by r.vote_on_decision_time ${params.sort_direction} limit :page_size offset :offset
+        ${priceSql.withClause}
+        select d.* from ${WAVE_LEADERBOARD_ENTRIES_TABLE} r
+        join ${DROPS_TABLE} d on d.id = r.drop_id
+        ${priceSql.joinClause}
+        where d.drop_type = '${DropType.PARTICIPATORY}'
+          and d.wave_id = :wave_id
+          ${curationFilter}
+          ${priceSql.filterClause}
+        order by r.vote_on_decision_time ${params.sort_direction} limit :page_size offset :offset
     `;
     const sqlParams = {
       wave_id: params.wave_id,
       curator_ids: curatorIds,
+      ...this.getLeaderboardPriceSqlParams(params, hasPriceBounds),
       page_size: params.page_size,
       offset: params.page_size * (params.page - 1)
     };
@@ -1115,12 +1216,23 @@ export class DropsDb extends LazyDbAccessCompatibleService {
           where dc.drop_id = d.id and dc.curator_id in (:curator_ids)
         )`
       : '';
+    const hasPriceBounds = this.hasLeaderboardPriceBounds(params);
+    const priceSql = this.getLeaderboardPriceSqlParts(hasPriceBounds);
     const sql = `
-        select d.* from ${WAVE_LEADERBOARD_ENTRIES_TABLE} r join ${DROPS_TABLE} d on d.id = r.drop_id where d.wave_id = :wave_id ${curationFilter} order by (r.vote_on_decision_time - r.vote) ${params.sort_direction} limit :page_size offset :offset
+        ${priceSql.withClause}
+        select d.* from ${WAVE_LEADERBOARD_ENTRIES_TABLE} r
+        join ${DROPS_TABLE} d on d.id = r.drop_id
+        ${priceSql.joinClause}
+        where d.wave_id = :wave_id
+          and d.drop_type = '${DropType.PARTICIPATORY}'
+          ${curationFilter}
+          ${priceSql.filterClause}
+        order by (r.vote_on_decision_time - r.vote) ${params.sort_direction} limit :page_size offset :offset
     `;
     const sqlParams = {
       wave_id: params.wave_id,
       curator_ids: curatorIds,
+      ...this.getLeaderboardPriceSqlParams(params, hasPriceBounds),
       page_size: params.page_size,
       offset: params.page_size * (params.page - 1)
     };
@@ -1140,11 +1252,66 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       limit: number;
       sort_order: PageSortDirection;
       curator_ids?: string[] | null;
+      price_currency?: string | null;
+      min_price?: number | null;
+      max_price?: number | null;
     },
     ctx: RequestContext
   ): Promise<DropEntity[]> {
     ctx.timer?.start(
       `${this.constructor.name}->findWaveParticipationDropsOrderedByCreatedAt`
+    );
+    const hasPriceBounds = this.hasLeaderboardPriceBounds(params);
+    const priceSql = this.getLeaderboardPriceSqlParts(hasPriceBounds);
+    const curationFilter = params.curator_ids?.length
+      ? `and exists (
+          select 1 from ${DROP_CURATIONS_TABLE} dc
+          where dc.drop_id = d.id and dc.curator_id in (:curator_ids)
+        )`
+      : '';
+    const sql = `
+      ${priceSql.withClause}
+      select d.*
+      from ${DROPS_TABLE} d
+      ${priceSql.joinClause}
+      where d.wave_id = :wave_id
+        and d.drop_type = '${DropType.PARTICIPATORY}'
+        ${curationFilter}
+        ${priceSql.filterClause}
+      order by d.created_at ${params.sort_order} limit :limit offset :offset
+    `;
+    const results = await this.db.execute<DropEntity>(
+      sql,
+      {
+        wave_id: params.wave_id,
+        curator_ids: params.curator_ids ?? null,
+        ...this.getLeaderboardPriceSqlParams(params, hasPriceBounds),
+        limit: params.limit,
+        offset: params.offset
+      },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop(
+      `${this.constructor.name}->findWaveParticipationDropsOrderedByCreatedAt`
+    );
+    return results;
+  }
+
+  async findWaveParticipationDropsOrderedByNftPrice(
+    params: {
+      offset: number;
+      wave_id: string;
+      limit: number;
+      sort_order: PageSortDirection;
+      curator_ids?: string[] | null;
+      price_currency?: string | null;
+      min_price?: number | null;
+      max_price?: number | null;
+    },
+    ctx: RequestContext
+  ): Promise<DropEntity[]> {
+    ctx.timer?.start(
+      `${this.constructor.name}->findWaveParticipationDropsOrderedByNftPrice`
     );
     const curationFilter = params.curator_ids?.length
       ? `and exists (
@@ -1152,18 +1319,37 @@ export class DropsDb extends LazyDbAccessCompatibleService {
           where dc.drop_id = d.id and dc.curator_id in (:curator_ids)
         )`
       : '';
+    const sql = `
+      with ${this.getLeaderboardDropPricesCteSql()}
+      select d.*
+      from ${DROPS_TABLE} d
+      left join drop_prices dp on d.id = dp.drop_id
+      where d.wave_id = :wave_id
+        and d.drop_type = '${DropType.PARTICIPATORY}'
+        ${curationFilter}
+        and ${this.getLeaderboardPriceFilterSql('dp.drop_price')}
+      order by
+        (dp.drop_price is null) asc,
+        dp.drop_price ${params.sort_order},
+        d.created_at desc,
+        d.id desc
+      limit :limit offset :offset
+    `;
     const results = await this.db.execute<DropEntity>(
-      `
-      select d.* from ${DROPS_TABLE} d 
-      where d.wave_id = :wave_id and d.drop_type = '${DropType.PARTICIPATORY}'
-      ${curationFilter}
-      order by d.created_at ${params.sort_order} limit :limit offset :offset
-      `,
-      params,
+      sql,
+      {
+        wave_id: params.wave_id,
+        curator_ids: params.curator_ids ?? null,
+        price_currency: params.price_currency ?? null,
+        min_price: params.min_price ?? null,
+        max_price: params.max_price ?? null,
+        limit: params.limit,
+        offset: params.offset
+      },
       { wrappedConnection: ctx.connection }
     );
     ctx.timer?.stop(
-      `${this.constructor.name}->findWaveParticipationDropsOrderedByCreatedAt`
+      `${this.constructor.name}->findWaveParticipationDropsOrderedByNftPrice`
     );
     return results;
   }
@@ -1175,10 +1361,15 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       wave_id: string;
       sort_order: PageSortDirection;
       curator_ids?: string[] | null;
+      price_currency?: string | null;
+      min_price?: number | null;
+      max_price?: number | null;
     },
     ctx: RequestContext
   ): Promise<DropEntity[]> {
     ctx.timer?.start(`${this.constructor.name}->findLeaderboardDrops`);
+    const hasPriceBounds = this.hasLeaderboardPriceBounds(params);
+    const priceSql = this.getLeaderboardPriceSqlParts(hasPriceBounds);
     const curationFilter = params.curator_ids?.length
       ? `and exists (
           select 1 from ${DROP_CURATIONS_TABLE} dc
@@ -1200,12 +1391,18 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                                                  timestamp,
                                                  RANK() OVER (ORDER BY vote DESC, timestamp ASC) AS rnk
                                           from ddata) drop_ranks
-          )
-      select d.* from dranks r join drops d on d.id = r.drop_id order by r.rnk ${params.sort_order} limit :limit offset :offset
+          )${priceSql.cteClause}
+      select d.* from dranks r
+      join ${DROPS_TABLE} d on d.id = r.drop_id
+      ${priceSql.joinClause}
+      where 1 = 1
+      ${priceSql.filterClause}
+      order by r.rnk ${params.sort_order} limit :limit offset :offset
     `;
     const sqlParams = {
       wave_id: params.wave_id,
       curator_ids: params.curator_ids ?? null,
+      ...this.getLeaderboardPriceSqlParams(params, hasPriceBounds),
       limit: params.limit,
       offset: params.offset
     };
@@ -1224,12 +1421,17 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       voter_id: string;
       sort_order: PageSortDirection;
       curator_ids?: string[] | null;
+      price_currency?: string | null;
+      min_price?: number | null;
+      max_price?: number | null;
     },
     ctx: RequestContext
   ): Promise<DropEntity[]> {
     ctx.timer?.start(
       `${this.constructor.name}->findRealtimeLeaderboardDropsOrderedByUsersVotes`
     );
+    const hasPriceBounds = this.hasLeaderboardPriceBounds(params);
+    const priceSql = this.getLeaderboardPriceSqlParts(hasPriceBounds);
     const curationFilter = params.curator_ids?.length
       ? `and exists (
           select 1 from ${DROP_CURATIONS_TABLE} dc
@@ -1254,13 +1456,19 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                                                  timestamp,
                                                  RANK() OVER (ORDER BY vote DESC, timestamp ASC) AS rnk
                                           from ddata) drop_ranks
-          )
-      select d.* from dranks r join drops d on d.id = r.drop_id where r.vote <> 0 order by r.rnk ${params.sort_order} limit :limit offset :offset
+          )${priceSql.cteClause}
+      select d.* from dranks r
+      join ${DROPS_TABLE} d on d.id = r.drop_id
+      ${priceSql.joinClause}
+      where r.vote <> 0
+        ${priceSql.filterClause}
+      order by r.rnk ${params.sort_order} limit :limit offset :offset
     `;
     const sqlParams = {
       wave_id: params.wave_id,
       voter_id: params.voter_id,
       curator_ids: params.curator_ids ?? null,
+      ...this.getLeaderboardPriceSqlParams(params, hasPriceBounds),
       limit: params.limit,
       offset: params.offset
     };
@@ -1279,23 +1487,30 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     curatorIds: string[] | null = null
   ): Promise<number> {
     ctx.timer?.start(`${this.constructor.name}->countLeaderboardDrops`);
+    const hasPriceBounds = this.hasLeaderboardPriceBounds(params);
+    const priceSql = this.getLeaderboardPriceSqlParts(hasPriceBounds);
     const curationFilter = curatorIds?.length
       ? `and exists (
           select 1 from ${DROP_CURATIONS_TABLE} dc
           where dc.drop_id = d.id and dc.curator_id in (:curator_ids)
         )`
       : '';
-    const count = await this.db
-      .oneOrNull<{ cnt: number }>(
-        `
+    const countSql = `
+        ${priceSql.withClause}
         select count(*) as cnt from ${DROPS_TABLE} d
+        ${priceSql.joinClause}
         where d.wave_id = :wave_id and d.drop_type = :drop_type
         ${curationFilter}
-        `,
+          ${priceSql.filterClause}
+        `;
+    const count = await this.db
+      .oneOrNull<{ cnt: number }>(
+        countSql,
         {
           wave_id: params.wave_id,
           drop_type: DropType.PARTICIPATORY,
-          curator_ids: curatorIds
+          curator_ids: curatorIds,
+          ...this.getLeaderboardPriceSqlParams(params, hasPriceBounds)
         },
         { wrappedConnection: ctx.connection }
       )
@@ -1452,8 +1667,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     >(
       `
         select v.*, d.author_id as author_id, w.visibility_group_id as visibility_group_id from ${DROP_VOTER_STATE_TABLE} v
-         join drops d on d.id = v.drop_id
-         join waves w on w.id = d.wave_id
+         join ${DROPS_TABLE} d on d.id = v.drop_id
+         join ${WAVES_TABLE} w on w.id = d.wave_id
          where v.wave_id = :wave_id and v.voter_id = :profile_id and votes <> 0 and d.drop_type = '${DropType.PARTICIPATORY}'
       `,
       params,
@@ -1708,8 +1923,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         `
         SELECT
             d.*
-        FROM drops_parts p
-        JOIN drops d on p.drop_id = d.id
+        FROM ${DROPS_PARTS_TABLE} p
+        JOIN ${DROPS_TABLE} d on p.drop_id = d.id
         WHERE d.wave_id = :wave_id AND
               MATCH(p.content) AGAINST (:term IN BOOLEAN MODE) > 0 AND
               LOWER(p.content) LIKE LOWER(CONCAT('%', :likeTerm, '%')) ESCAPE '\\\\'
@@ -2074,6 +2289,7 @@ export enum LeaderboardSort {
   REALTIME_VOTE = 'REALTIME_VOTE',
   MY_REALTIME_VOTE = 'MY_REALTIME_VOTE',
   CREATED_AT = 'CREATED_AT',
+  PRICE = 'PRICE',
   RATING_PREDICTION = 'RATING_PREDICTION',
   TREND = 'TREND'
 }
@@ -2085,6 +2301,9 @@ export interface LeaderboardParams {
   readonly sort_direction: PageSortDirection;
   readonly sort: LeaderboardSort;
   readonly curated_by_group: string | null;
+  readonly price_currency: string | null;
+  readonly min_price: number | null;
+  readonly max_price: number | null;
 }
 
 export interface DropLogsQueryParams {

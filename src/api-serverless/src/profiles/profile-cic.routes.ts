@@ -1,5 +1,10 @@
 import { asyncRouter } from '../async.router';
-import { getWalletOrThrow, needsAuthenticatedUser } from '../auth/auth';
+import {
+  getAuthenticationContext,
+  getWalletOrThrow,
+  maybeAuthenticatedUser,
+  needsAuthenticatedUser
+} from '../auth/auth';
 import { Request, Response } from 'express';
 import { ApiResponse } from '../api-response';
 import { getValidatedByJoiOrThrow } from '../validation';
@@ -22,12 +27,17 @@ import {
 } from './rating.helper';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import { ApiChangeProfileCicRating } from '../generated/models/ApiChangeProfileCicRating';
+import { ApiCicContributorsPage } from '../generated/models/ApiCicContributorsPage';
+import { ApiCicOverview } from '../generated/models/ApiCicOverview';
+import { ApiRepDirection } from '../generated/models/ApiRepDirection';
 import { ApiRatingWithProfileInfoAndLevelPage } from '../generated/models/ApiRatingWithProfileInfoAndLevelPage';
 import { identityFetcher } from '../identities/identity.fetcher';
 import { Timer } from '../../../time';
 import { ApiIdentity } from '../generated/models/ApiIdentity';
 import { ProfileClassification } from '../../../entities/IProfile';
 import { enums } from '../../../enums';
+import { RequestContext } from '@/request.context';
+import { profileCicOverviewApiService } from './profile-cic-overview.api.service';
 
 const router = asyncRouter({ mergeParams: true });
 
@@ -94,6 +104,72 @@ router.get(
       matter: RateMatter.CIC
     });
     res.send(result);
+  }
+);
+
+router.get(
+  `/overview`,
+  maybeAuthenticatedUser(),
+  async function (
+    req: Request<
+      { identity: string },
+      any,
+      any,
+      ApiCicOverviewQueryParams,
+      any
+    >,
+    res: Response<ApiResponse<ApiCicOverview>>
+  ) {
+    const timer = Timer.getFromRequest(req);
+    const query = getValidatedByJoiOrThrow(
+      req.query,
+      ApiCicOverviewQuerySchema
+    );
+    const authenticationContext = await getAuthenticationContext(req, timer);
+    const ctx: RequestContext = { timer, authenticationContext };
+    const response = await profileCicOverviewApiService.getOverview(
+      {
+        identity: req.params.identity.toLowerCase(),
+        direction: query.direction,
+        page: query.page,
+        page_size: query.page_size
+      },
+      ctx
+    );
+    res.send(response);
+  }
+);
+
+router.get(
+  `/contributors`,
+  maybeAuthenticatedUser(),
+  async function (
+    req: Request<
+      { identity: string },
+      any,
+      any,
+      ApiCicContributorsQueryParams,
+      any
+    >,
+    res: Response<ApiResponse<ApiCicContributorsPage>>
+  ) {
+    const timer = Timer.getFromRequest(req);
+    const query = getValidatedByJoiOrThrow(
+      req.query,
+      ApiCicContributorsQuerySchema
+    );
+    const authenticationContext = await getAuthenticationContext(req, timer);
+    const ctx: RequestContext = { timer, authenticationContext };
+    const response = await profileCicOverviewApiService.getContributors(
+      {
+        identity: req.params.identity.toLowerCase(),
+        direction: query.direction,
+        page: query.page,
+        page_size: query.page_size
+      },
+      ctx
+    );
+    res.send(response);
   }
 );
 
@@ -284,6 +360,26 @@ const ChangeProfileCicRatingSchema: Joi.ObjectSchema<ApiChangeProfileCicRating> 
     amount: Joi.number().integer().required()
   });
 
+const ApiCicOverviewQuerySchema: Joi.ObjectSchema<ApiCicOverviewQueryParams> =
+  Joi.object<ApiCicOverviewQueryParams>({
+    direction: Joi.string()
+      .valid(...Object.values(ApiRepDirection))
+      .optional()
+      .default(ApiRepDirection.Incoming),
+    page: Joi.number().integer().min(1).optional().default(1),
+    page_size: Joi.number().integer().min(1).max(200).optional().default(5)
+  });
+
+const ApiCicContributorsQuerySchema: Joi.ObjectSchema<ApiCicContributorsQueryParams> =
+  Joi.object<ApiCicContributorsQueryParams>({
+    direction: Joi.string()
+      .valid(...Object.values(ApiRepDirection))
+      .optional()
+      .default(ApiRepDirection.Incoming),
+    page: Joi.number().integer().min(1).optional().default(1),
+    page_size: Joi.number().integer().min(1).max(200).optional().default(50)
+  });
+
 type ApiCreateOrUpdateProfileCicStatement = Omit<
   CicStatement,
   'id' | 'crated_at' | 'updated_at' | 'profile_id'
@@ -302,6 +398,18 @@ const ApiCreateOrUpdateProfileCicStatementSchema: Joi.ObjectSchema<ApiCreateOrUp
 interface ApiProfileRaterCicState {
   readonly cic_rating_by_rater: number | null;
   readonly cic_ratings_left_to_give_by_rater: number | null;
+}
+
+interface ApiCicOverviewQueryParams {
+  readonly direction: 'incoming' | 'outgoing';
+  readonly page: number;
+  readonly page_size: number;
+}
+
+interface ApiCicContributorsQueryParams {
+  readonly direction: 'incoming' | 'outgoing';
+  readonly page: number;
+  readonly page_size: number;
 }
 
 export default router;

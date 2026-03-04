@@ -13,7 +13,7 @@ export async function savePushNotificationDevice(
     `
       INSERT INTO ${PUSH_NOTIFICATION_DEVICES_TABLE} (device_id, token, profile_id, platform)
       VALUES (:device_id, :token, :profile_id, :platform)
-      ON DUPLICATE KEY UPDATE token = VALUES(token), profile_id = VALUES(profile_id), platform = VALUES(platform)
+      ON DUPLICATE KEY UPDATE token = VALUES(token), platform = VALUES(platform)
     `,
     {
       device_id: device.device_id,

@@ -1,5 +1,9 @@
 import { asyncRouter } from '../async.router';
-import { needsAuthenticatedUser } from '../auth/auth';
+import {
+  getAuthenticationContext,
+  maybeAuthenticatedUser,
+  needsAuthenticatedUser
+} from '../auth/auth';
 import { Request, Response } from 'express';
 import { ApiResponse } from '../api-response';
 import { getValidatedByJoiOrThrow } from '../validation';
@@ -21,6 +25,12 @@ import { ApiRatingWithProfileInfoAndLevel } from '../generated/models/ApiRatingW
 import { ApiRatingWithProfileInfoAndLevelPage } from '../generated/models/ApiRatingWithProfileInfoAndLevelPage';
 import { identityFetcher } from '../identities/identity.fetcher';
 import { Timer } from '../../../time';
+import { RequestContext } from '@/request.context';
+import { ApiRepCategoriesPage } from '@/api/generated/models/ApiRepCategoriesPage';
+import { ApiRepContributorsPage } from '@/api/generated/models/ApiRepContributorsPage';
+import { ApiRepOverview } from '@/api/generated/models/ApiRepOverview';
+import { profileRepOverviewApiService } from '@/api/profiles/profile-rep-overview.api.service';
+import { ApiRepDirection } from '@/api/generated/models/ApiRepDirection';
 
 const router = asyncRouter({ mergeParams: true });
 
@@ -76,6 +86,107 @@ router.get(
       matter: RateMatter.REP
     });
     res.send(result);
+  }
+);
+
+router.get(
+  `/overview`,
+  maybeAuthenticatedUser(),
+  async function (
+    req: Request<
+      { identity: string },
+      any,
+      any,
+      ApiRepOverviewQueryParams,
+      any
+    >,
+    res: Response<ApiResponse<ApiRepOverview>>
+  ) {
+    const timer = Timer.getFromRequest(req);
+    const query = getValidatedByJoiOrThrow(
+      req.query,
+      ApiRepOverviewQuerySchema
+    );
+    const authenticationContext = await getAuthenticationContext(req, timer);
+    const ctx: RequestContext = { timer, authenticationContext };
+    const response = await profileRepOverviewApiService.getOverview(
+      {
+        identity: req.params.identity.toLowerCase(),
+        direction: query.direction,
+        page: query.page,
+        page_size: query.page_size
+      },
+      ctx
+    );
+    res.send(response);
+  }
+);
+
+router.get(
+  `/categories`,
+  maybeAuthenticatedUser(),
+  async function (
+    req: Request<
+      { identity: string },
+      any,
+      any,
+      ApiRepCategoriesQueryParams,
+      any
+    >,
+    res: Response<ApiResponse<ApiRepCategoriesPage>>
+  ) {
+    const timer = Timer.getFromRequest(req);
+    const query = getValidatedByJoiOrThrow(
+      req.query,
+      ApiRepCategoriesQuerySchema
+    );
+    const authenticationContext = await getAuthenticationContext(req, timer);
+    const ctx: RequestContext = { timer, authenticationContext };
+    const response = await profileRepOverviewApiService.getCategories(
+      {
+        identity: req.params.identity.toLowerCase(),
+        direction: query.direction,
+        page: query.page,
+        page_size: query.page_size,
+        top_contributors_limit: query.top_contributors_limit
+      },
+      ctx
+    );
+    res.send(response);
+  }
+);
+
+router.get(
+  `/categories/:category/contributors`,
+  maybeAuthenticatedUser(),
+  async function (
+    req: Request<
+      { identity: string; category: string },
+      any,
+      any,
+      ApiRepContributorsQueryParams,
+      any
+    >,
+    res: Response<ApiResponse<ApiRepContributorsPage>>
+  ) {
+    const timer = Timer.getFromRequest(req);
+    const params = getValidatedByJoiOrThrow(
+      { ...req.query, ...req.params },
+      ApiRepCategoryContributorsQuerySchema
+    );
+    const authenticationContext = await getAuthenticationContext(req, timer);
+    const ctx: RequestContext = { timer, authenticationContext };
+    const response = await profileRepOverviewApiService.getCategoryContributors(
+      {
+        identity: params.identity.toLowerCase(),
+        category: params.category,
+        direction: params.direction,
+        page: params.page,
+        page_size: params.page_size
+      },
+      ctx
+    );
+    res.send(response);
   }
 );
 
@@ -253,12 +364,71 @@ const ChangeProfileRepRatingSchema: Joi.ObjectSchema<ApiChangeProfileRepRating> 
     })
   });
 
+const ApiRepOverviewQuerySchema: Joi.ObjectSchema<ApiRepOverviewQueryParams> =
+  Joi.object<ApiRepOverviewQueryParams>({
+    direction: Joi.string()
+      .valid(...Object.values(ApiRepDirection))
+      .optional()
+      .default(ApiRepDirection.Incoming),
+    page: Joi.number().integer().min(1).optional().default(1),
+    page_size: Joi.number().integer().min(1).max(200).optional().default(5)
+  });
+
+const ApiRepCategoriesQuerySchema: Joi.ObjectSchema<ApiRepCategoriesQueryParams> =
+  Joi.object<ApiRepCategoriesQueryParams>({
+    direction: Joi.string()
+      .valid(...Object.values(ApiRepDirection))
+      .optional()
+      .default(ApiRepDirection.Incoming),
+    page: Joi.number().integer().min(1).optional().default(1),
+    page_size: Joi.number().integer().min(1).max(100).optional().default(10),
+    top_contributors_limit: Joi.number()
+      .integer()
+      .min(1)
+      .max(10)
+      .optional()
+      .default(5)
+  });
+
+const ApiRepCategoryContributorsQuerySchema: Joi.ObjectSchema<ApiRepCategoryContributorsQueryParams> =
+  Joi.object<ApiRepCategoryContributorsQueryParams>({
+    identity: Joi.string().required(),
+    category: Joi.string().max(100).regex(REP_CATEGORY_PATTERN).required(),
+    direction: Joi.string()
+      .valid(...Object.values(ApiRepDirection))
+      .optional()
+      .default(ApiRepDirection.Incoming),
+    page: Joi.number().integer().min(1).optional().default(1),
+    page_size: Joi.number().integer().min(1).max(200).optional().default(50)
+  });
+
 interface ApiProfileReceivedRepRatesState {
   readonly total_rep_rating: number;
   readonly total_rep_rating_by_rater: number | null;
   readonly rep_rates_left_for_rater: number | null;
   readonly number_of_raters: number;
   readonly rating_stats: RatingStats[];
+}
+
+interface ApiRepOverviewQueryParams {
+  readonly direction: 'incoming' | 'outgoing';
+  readonly page: number;
+  readonly page_size: number;
+}
+
+interface ApiRepCategoriesQueryParams extends ApiRepOverviewQueryParams {
+  readonly top_contributors_limit: number;
+}
+
+interface ApiRepContributorsQueryParams {
+  readonly direction: 'incoming' | 'outgoing';
+  readonly page: number;
+  readonly page_size: number;
+}
+
+interface ApiRepCategoryContributorsQueryParams extends ApiRepContributorsQueryParams {
+  readonly identity: string;
+  readonly category: string;
 }
 
 export default router;

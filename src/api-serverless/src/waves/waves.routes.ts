@@ -513,6 +513,13 @@ router.get(
           page_size: Joi.number().integer().min(1).max(100).default(50),
           page: Joi.number().integer().min(1).default(1),
           curated_by_group: Joi.string().optional().default(null),
+          price_currency: Joi.string()
+            .trim()
+            .empty('')
+            .optional()
+            .default(null),
+          min_price: Joi.number().min(0).optional().default(null),
+          max_price: Joi.number().min(0).optional().default(null),
           sort_direction: Joi.string()
             .valid(...Object.values(PageSortDirection))
             .default(PageSortDirection.ASC),

@@ -16,6 +16,8 @@ import {
   NFTS_TABLE,
   PROFILES_ARCHIVE_TABLE,
   PROFILES_TABLE,
+  UUID_REGEX,
+  WALLET_REGEX,
   WALLETS_TDH_TABLE,
   WAVES_TABLE,
   X_TDH_COEFFICIENT
@@ -515,6 +517,71 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
       { wallet },
       { wrappedConnection: connection }
     );
+  }
+
+  async getProfileIdByIdentityKeyFast(
+    {
+      identityKey
+    }: {
+      identityKey: string;
+    },
+    ctx: RequestContext
+  ): Promise<string | null> {
+    const key = identityKey.toLowerCase();
+    const timerKey = `${this.constructor.name}->getProfileIdByIdentityKeyFast`;
+    try {
+      ctx.timer?.start(timerKey);
+      if (UUID_REGEX.exec(key)) {
+        return await this.db
+          .oneOrNull<{
+            profile_id: string;
+          }>(
+            `select profile_id from ${IDENTITIES_TABLE} where profile_id = :profileId`,
+            { profileId: key },
+            { wrappedConnection: ctx.connection }
+          )
+          .then((it) => it?.profile_id ?? null);
+      }
+      if (WALLET_REGEX.exec(key)) {
+        return await this.db
+          .oneOrNull<{ profile_id: string }>(
+            `
+              select i.profile_id as profile_id from ${IDENTITIES_TABLE} i
+              join ${ADDRESS_CONSOLIDATION_KEY} a on a.consolidation_key = i.consolidation_key
+              where a.address = :wallet
+            `,
+            { wallet: key },
+            { wrappedConnection: ctx.connection }
+          )
+          .then((it) => it?.profile_id ?? null);
+      }
+      if (key.endsWith('.eth')) {
+        return await this.db
+          .oneOrNull<{ profile_id: string }>(
+            `
+              select i.profile_id as profile_id
+              from ${ENS_TABLE} e
+              join ${ADDRESS_CONSOLIDATION_KEY} a on lower(e.wallet) = a.address
+              join ${IDENTITIES_TABLE} i on i.consolidation_key = a.consolidation_key
+              where lower(e.display) = :ens
+            `,
+            { ens: key },
+            { wrappedConnection: ctx.connection }
+          )
+          .then((it) => it?.profile_id ?? null);
+      }
+      return await this.db
+        .oneOrNull<{
+          profile_id: string;
+        }>(
+          `select profile_id from ${IDENTITIES_TABLE} where normalised_handle = :handle`,
+          { handle: key },
+          { wrappedConnection: ctx.connection }
+        )
+        .then((it) => it?.profile_id ?? null);
+    } finally {
+      ctx.timer?.stop(timerKey);
+    }
   }
 
   public async getConsolidationInfoForAddress(

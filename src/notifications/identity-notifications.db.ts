@@ -4,7 +4,10 @@ import {
   IDENTITY_NOTIFICATIONS_TABLE,
   WAVE_READER_METRICS_TABLE
 } from '@/constants';
-import { IdentityNotificationEntity } from '../entities/IIdentityNotification';
+import {
+  IdentityNotificationCause,
+  IdentityNotificationEntity
+} from '../entities/IIdentityNotification';
 import { Logger } from '../logging';
 import { numbers } from '../numbers';
 import { RequestContext } from '../request.context';
@@ -203,8 +206,41 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
   async countUnreadNotificationsForIdentity(
     identity_id: string,
     eligibleGroupIds: string[],
-    connection?: ConnectionWrapper<any>
+    connection?: ConnectionWrapper<any>,
+    options?: {
+      includeNotificationId?: number;
+      enabledCauses?: IdentityNotificationCause[];
+    }
   ): Promise<number> {
+    const includeId = options?.includeNotificationId;
+    const hasIncludeNotificationId =
+      includeId !== undefined && includeId !== null;
+    const enabledCauses = options?.enabledCauses;
+    const includeClause = hasIncludeNotificationId
+      ? ` OR (n.id = :includeNotificationId AND n.identity_id = :identity_id)`
+      : '';
+    const hasEnabledCauses =
+      enabledCauses !== undefined && enabledCauses.length > 0;
+    const causeClause = hasEnabledCauses
+      ? ` AND n.cause IN (:enabledCauses)`
+      : '';
+
+    const queryParams: {
+      identity_id: string;
+      eligibleGroupIds: string[];
+      includeNotificationId?: number;
+      enabledCauses?: IdentityNotificationCause[];
+    } = {
+      identity_id,
+      eligibleGroupIds
+    };
+    if (hasIncludeNotificationId) {
+      queryParams.includeNotificationId = includeId;
+    }
+    if (hasEnabledCauses) {
+      queryParams.enabledCauses = enabledCauses;
+    }
+
     return this.db
       .oneOrNull<{ cnt: number }>(
         `
@@ -213,19 +249,20 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
         LEFT JOIN ${WAVE_READER_METRICS_TABLE} r
           ON r.wave_id = n.wave_id
           AND r.reader_id = n.identity_id
-        WHERE n.identity_id = :identity_id
-          AND n.read_at IS NULL
-          AND (n.visibility_group_id IS NULL ${
-            eligibleGroupIds.length
-              ? ` OR n.visibility_group_id IN (:eligibleGroupIds) `
-              : ``
-          })
-          AND COALESCE(r.muted, FALSE) = FALSE
+        WHERE (
+          (
+            n.identity_id = :identity_id
+            AND n.read_at IS NULL
+            AND (n.visibility_group_id IS NULL ${
+              eligibleGroupIds.length
+                ? ` OR n.visibility_group_id IN (:eligibleGroupIds) `
+                : ``
+            })
+            AND COALESCE(r.muted, FALSE) = FALSE
+          )${includeClause}
+        )${causeClause}
       `,
-        {
-          identity_id,
-          eligibleGroupIds
-        },
+        queryParams,
         connection ? { wrappedConnection: connection } : undefined
       )
       .then((it) => it?.cnt ?? 0);

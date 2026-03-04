@@ -7,6 +7,7 @@ import { RequestInfo, RequestInit } from 'node-fetch';
 import { Rememe } from './entities/IRememe';
 import { CLOUDFRONT_LINK } from '@/constants';
 import { resizeImageBufferToHeight } from '@/media/image-resize';
+import { withArweaveFallback } from '@/arweave-gateway-fallback';
 import { persistRememes } from './db';
 import { Logger } from './logging';
 import { ipfs } from './ipfs';
@@ -133,7 +134,7 @@ async function uploadMissingRememeAssets(
 ) {
   logger.info(`[MISSING IMAGE] [CONTRACT ${r.contract}] [ID ${r.id}]`);
 
-  const res = await fetch(imageUrl);
+  const res = await withArweaveFallback(imageUrl, (u) => fetch(u));
   if (!res.ok) {
     throw new Error(
       `Failed to fetch rememe image ${imageUrl}: ${res.status} ${res.statusText}`

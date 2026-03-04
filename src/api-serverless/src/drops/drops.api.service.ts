@@ -742,6 +742,21 @@ export class DropsApiService {
     ctx: RequestContext,
     curatorIdsFilter: string[] | null
   ): Promise<DropEntity[]> {
+    if (params.sort === LeaderboardSort.PRICE) {
+      return this.dropsDb.findWaveParticipationDropsOrderedByNftPrice(
+        {
+          wave_id: params.wave_id,
+          limit: params.page_size,
+          offset: (params.page - 1) * params.page_size,
+          sort_order: params.sort_direction,
+          curator_ids: curatorIdsFilter,
+          price_currency: params.price_currency,
+          min_price: params.min_price,
+          max_price: params.max_price
+        },
+        ctx
+      );
+    }
     if (params.sort === LeaderboardSort.CREATED_AT) {
       return this.dropsDb.findWaveParticipationDropsOrderedByCreatedAt(
         {
@@ -749,7 +764,10 @@ export class DropsApiService {
           limit: params.page_size,
           offset: (params.page - 1) * params.page_size,
           sort_order: params.sort_direction,
-          curator_ids: curatorIdsFilter
+          curator_ids: curatorIdsFilter,
+          price_currency: params.price_currency,
+          min_price: params.min_price,
+          max_price: params.max_price
         },
         ctx
       );
@@ -789,7 +807,10 @@ export class DropsApiService {
           limit: params.page_size,
           offset: (params.page - 1) * params.page_size,
           sort_order: params.sort_direction,
-          curator_ids: curatorIdsFilter
+          curator_ids: curatorIdsFilter,
+          price_currency: params.price_currency,
+          min_price: params.min_price,
+          max_price: params.max_price
         },
         ctx
       );
@@ -800,7 +821,10 @@ export class DropsApiService {
         limit: params.page_size,
         offset: (params.page - 1) * params.page_size,
         sort_order: params.sort_direction,
-        curator_ids: curatorIdsFilter
+        curator_ids: curatorIdsFilter,
+        price_currency: params.price_currency,
+        min_price: params.min_price,
+        max_price: params.max_price
       },
       ctx
     );

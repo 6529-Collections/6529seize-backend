@@ -22,6 +22,7 @@ import {
 } from './db';
 import { NFTHistory, NFTHistoryClaim } from './entities/INFTHistory';
 import { NFT_HISTORY_IFACE } from './abis/nft_history';
+import { withArweaveFallback } from '@/arweave-gateway-fallback';
 import { Logger } from './logging';
 import { equalIgnoreCase } from './strings';
 
@@ -192,8 +193,12 @@ export const getEditDescription = async (
 ) => {
   const previousUri = await fetchLatestNftUri(tokenId, contract, blockNumber);
   if (previousUri && !equalIgnoreCase(previousUri, newUri)) {
-    const previousMeta: any = await (await fetch(previousUri)).json();
-    const newMeta: any = await (await fetch(newUri)).json();
+    const previousMeta: any = await (
+      await withArweaveFallback(previousUri, (u) => fetch(u))
+    ).json();
+    const newMeta: any = await (
+      await withArweaveFallback(newUri, (u) => fetch(u))
+    ).json();
 
     const changes: any[] = [];
     for (const key in previousMeta) {
