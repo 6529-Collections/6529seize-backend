@@ -533,29 +533,38 @@ async function handleVideoScaling(
 
   logger.info(`[ACQUIRED SCALED STREAM ${scaledVideoKey}]`);
 
-  const ffstream = new Stream.PassThrough();
+  let totalChunks = 0;
+  let totalBytes = 0;
+  const countingStream = new Stream.Transform({
+    transform(chunk, _encoding, callback) {
+      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      totalChunks++;
+      totalBytes += buf.length;
+      callback(null, buf);
+    }
+  });
+
   resizedVideoStream.on('error', (err) => {
     logger.error(
       `[resizedVideoStream] [SCALING FAILED ${scaledVideoKey}]`,
       err
     );
-    ffstream.destroy(err instanceof Error ? err : new Error(String(err)));
+    countingStream.destroy(err instanceof Error ? err : new Error(String(err)));
   });
-  resizedVideoStream.pipe(ffstream, { end: true });
-
-  const outputBuffer = await streamToBuffer(ffstream, scaledVideoKey);
-  logger.info(`[S3] [SCALING FINISHED ${scaledVideoKey}]`);
-  if (!outputBuffer.length) return;
+  resizedVideoStream.pipe(countingStream, { end: true });
 
   try {
     const uploadedScaledVideo = await s3UploadObject({
       bucket: myBucket,
       key: scaledVideoKey,
-      body: outputBuffer,
+      body: countingStream,
       contentType: `video/${videoFormat.toLowerCase()}`,
       txId
     });
 
+    logger.info(
+      `[S3] [SCALING STREAM SUMMARY ${scaledVideoKey}] [chunks ${totalChunks}] [bytes ${totalBytes}]`
+    );
     logger.info(
       `[KEY UPLOADED ${scaledVideoKey}] [ETAG ${uploadedScaledVideo.ETag}]`
     );
@@ -564,32 +573,6 @@ async function handleVideoScaling(
     logger.error(`[UPLOAD FAILED ${scaledVideoKey}]`, e);
     throw e instanceof Error ? e : new Error(String(e));
   }
-}
-
-async function streamToBuffer(
-  stream: NodeJS.ReadableStream,
-  label: string
-): Promise<Buffer> {
-  return await new Promise<Buffer>((resolve, reject) => {
-    const buffers: Buffer[] = [];
-
-    stream.on('data', (chunk) => {
-      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-      logger.info(`[${label}] [ADDING CHUNK LENGTH ${buf.length}]`);
-      if (buf.length > 0) {
-        buffers.push(buf);
-      }
-    });
-
-    stream.on('error', (err) => {
-      logger.error(`[SCALING FAILED ${label}]`, err);
-      reject(err instanceof Error ? err : new Error(String(err)));
-    });
-
-    stream.on('end', () => {
-      resolve(Buffer.concat(buffers));
-    });
-  });
 }
 
 async function scaleVideo(

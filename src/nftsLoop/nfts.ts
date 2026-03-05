@@ -26,20 +26,33 @@ import {
 import { MemesMintStat } from '@/entities/IMemesMintStat';
 import { LabNFT, NFT, NFTWithExtendedData } from '@/entities/INFT';
 import { NFTOwner } from '@/entities/INFTOwner';
+import {
+  S3UploaderOutboxEntity,
+  S3UploaderOutboxStatus
+} from '@/entities/IS3UploaderOutbox';
 import { RedeemedSubscription } from '@/entities/ISubscription';
 import { Transaction } from '@/entities/ITransaction';
 import { TokenType } from '@/enums';
 import { Logger } from '@/logging';
 import { getRpcProvider } from '@/rpc-provider';
+import { sqs } from '@/sqs';
 import { equalIgnoreCase } from '@/strings';
 import { text } from '@/text';
 import { Time } from '@/time';
-import { enqueueS3UploaderJobsForNft } from '@/s3Uploader/s3-uploader.queue';
-import { S3UploaderCollectionType } from '@/s3Uploader/s3-uploader.jobs';
+import {
+  enqueueS3UploaderJobsForNft,
+  isS3UploaderEnabledForEnvironment
+} from '@/s3Uploader/s3-uploader.queue';
+import {
+  buildS3UploaderJobsForNft,
+  S3_UPLOADER_QUEUE_NAME,
+  S3UploaderCollectionType,
+  S3UploaderJob
+} from '@/s3Uploader/s3-uploader.jobs';
 import { withArweaveFallback } from '@/arweave-gateway-fallback';
 import axios from 'axios';
 import { ethers } from 'ethers';
-import { In, MoreThan, Not, Repository } from 'typeorm';
+import { EntityManager, In, MoreThan, Not, Repository } from 'typeorm';
 
 const logger = Logger.get('nfts');
 
@@ -169,6 +182,8 @@ const LABNFT_CONTRACTS: ContractConfig[] = [
 ];
 
 const S3_ENQUEUE_BATCH_SIZE = 25;
+const S3_OUTBOX_PUBLISH_BATCH_SIZE = 200;
+const S3_OUTBOX_ERROR_MAX_LENGTH = 2048;
 
 async function processNFTsForType(
   EntityClass: typeof NFT | typeof LabNFT,
@@ -219,7 +234,6 @@ async function processNFTsForType(
 
   await updateMemeReferences(nftMap, EntityClass);
   await saveAndPostProcessNfts({
-    repo,
     EntityClass,
     mode,
     nftMap,
@@ -319,14 +333,12 @@ async function runDiscoverOrRefreshMode({
 }
 
 async function saveAndPostProcessNfts({
-  repo,
   EntityClass,
   mode,
   nftMap,
   newlyDiscoveredNfts,
   collectionType
 }: {
-  repo: Repository<NFT | LabNFT>;
   EntityClass: typeof NFT | typeof LabNFT;
   mode: NFT_MODE;
   nftMap: Map<string, NftProcessingEntry>;
@@ -342,19 +354,22 @@ async function saveAndPostProcessNfts({
     return;
   }
 
-  await repo.save(toSave as any);
-  logger.info(`✅ Saved ${toSave.length} ${EntityClass.name}s`);
-
-  await enqueueDiscoverJobsIfNeeded({
+  const outboxJobs = buildS3UploaderJobsForMode({
     mode,
     newlyDiscoveredNfts,
-    collectionType
-  });
-  await enqueueRefreshJobsIfNeeded({
-    mode,
     nftMap,
     collectionType
   });
+
+  await persistNftUpdatesAndOutboxJobs({
+    EntityClass,
+    nfts: toSave,
+    outboxJobs
+  });
+  logger.info(`✅ Saved ${toSave.length} ${EntityClass.name}s`);
+
+  await publishPendingS3UploaderOutboxJobs();
+
   await maybeAnnounceNewDiscoveries({
     mode,
     EntityClass,
@@ -362,48 +377,148 @@ async function saveAndPostProcessNfts({
   });
 }
 
-async function enqueueDiscoverJobsIfNeeded({
+function buildS3UploaderJobsForMode({
   mode,
   newlyDiscoveredNfts,
-  collectionType
-}: {
-  mode: NFT_MODE;
-  newlyDiscoveredNfts: Array<NFT | LabNFT>;
-  collectionType: S3UploaderCollectionType;
-}) {
-  if (mode !== NFT_MODE.DISCOVER || !newlyDiscoveredNfts.length) {
-    return;
-  }
-
-  await enqueueNftsInBatches({
-    nfts: newlyDiscoveredNfts,
-    collectionType,
-    reason: 'discover'
-  });
-}
-
-async function enqueueRefreshJobsIfNeeded({
-  mode,
   nftMap,
   collectionType
 }: {
   mode: NFT_MODE;
+  newlyDiscoveredNfts: Array<NFT | LabNFT>;
   nftMap: Map<string, NftProcessingEntry>;
   collectionType: S3UploaderCollectionType;
+}): S3UploaderJob[] {
+  if (!isS3UploaderEnabledForEnvironment()) {
+    return [];
+  }
+
+  if (mode === NFT_MODE.DISCOVER) {
+    return newlyDiscoveredNfts.flatMap((nft) =>
+      buildS3UploaderJobsForNft({
+        nft,
+        collectionType,
+        reason: 'discover'
+      })
+    );
+  }
+  if (mode === NFT_MODE.REFRESH) {
+    return Array.from(nftMap.values())
+      .filter((entry) => entry.mediaChanged)
+      .map((entry) => entry.nft)
+      .flatMap((nft) =>
+        buildS3UploaderJobsForNft({
+          nft,
+          collectionType,
+          reason: 'refresh'
+        })
+      );
+  }
+  return [];
+}
+
+async function persistNftUpdatesAndOutboxJobs({
+  EntityClass,
+  nfts,
+  outboxJobs
+}: {
+  EntityClass: typeof NFT | typeof LabNFT;
+  nfts: Array<NFT | LabNFT>;
+  outboxJobs: S3UploaderJob[];
 }) {
-  if (mode !== NFT_MODE.REFRESH) {
+  await getDataSource().transaction(async (manager) => {
+    await manager.getRepository(EntityClass).save(nfts as any);
+    await persistS3UploaderOutboxJobs(manager, outboxJobs);
+  });
+}
+
+async function persistS3UploaderOutboxJobs(
+  manager: EntityManager,
+  jobs: S3UploaderJob[]
+) {
+  if (!jobs.length) {
     return;
   }
 
-  const nftsToEnqueue = Array.from(nftMap.values())
-    .filter((entry) => entry.mediaChanged)
-    .map((entry) => entry.nft);
+  const createdAt = Time.now().toMillis();
+  await manager.getRepository(S3UploaderOutboxEntity).insert(
+    jobs.map((job) => ({
+      job,
+      status: S3UploaderOutboxStatus.PENDING,
+      created_at: createdAt,
+      published_at: null,
+      attempts: 0,
+      last_error: null
+    }))
+  );
+}
 
-  await enqueueNftsInBatches({
-    nfts: nftsToEnqueue,
-    collectionType,
-    reason: 'refresh'
-  });
+async function publishPendingS3UploaderOutboxJobs() {
+  if (!isS3UploaderEnabledForEnvironment()) {
+    return;
+  }
+
+  const repo = getDataSource().getRepository(S3UploaderOutboxEntity);
+
+  while (true) {
+    const pending = await repo.find({
+      where: { status: S3UploaderOutboxStatus.PENDING },
+      order: { id: 'ASC' },
+      take: S3_OUTBOX_PUBLISH_BATCH_SIZE
+    });
+    if (!pending.length) {
+      return;
+    }
+
+    let batchFailures = 0;
+    for (const outbox of pending) {
+      try {
+        await sqs.sendToQueueName({
+          queueName: S3_UPLOADER_QUEUE_NAME,
+          message: outbox.job
+        });
+        await repo.update(
+          { id: outbox.id },
+          {
+            status: S3UploaderOutboxStatus.PUBLISHED,
+            published_at: Time.now().toMillis(),
+            attempts: outbox.attempts + 1,
+            last_error: null
+          }
+        );
+      } catch (error: unknown) {
+        batchFailures++;
+        const message =
+          error instanceof Error ? error.message : String(error ?? '');
+        logger.error(
+          `Failed publishing S3 outbox job ${outbox.id} [attempt ${
+            outbox.attempts + 1
+          }]`,
+          error
+        );
+        await repo.update(
+          { id: outbox.id },
+          {
+            attempts: outbox.attempts + 1,
+            last_error: truncateOutboxError(message)
+          }
+        );
+      }
+    }
+
+    if (
+      batchFailures === pending.length ||
+      pending.length < S3_OUTBOX_PUBLISH_BATCH_SIZE
+    ) {
+      return;
+    }
+  }
+}
+
+function truncateOutboxError(value: string): string {
+  if (value.length <= S3_OUTBOX_ERROR_MAX_LENGTH) {
+    return value;
+  }
+  return value.slice(0, S3_OUTBOX_ERROR_MAX_LENGTH);
 }
 
 async function maybeAnnounceNewDiscoveries({
@@ -1112,9 +1227,11 @@ const getMintDate = async (contract: string, tokenId: number) => {
 };
 
 export async function processNFTs(mode: NFT_MODE) {
+  await publishPendingS3UploaderOutboxJobs();
   const provider = getRpcProvider();
   await processNFTsForType(NFT, NFT_CONTRACTS, mode, provider, true);
   await processNFTsForType(LabNFT, LABNFT_CONTRACTS, mode, provider, false);
+  await publishPendingS3UploaderOutboxJobs();
   if (mode === NFT_MODE.REFRESH) {
     await syncArtists();
   }

@@ -20,6 +20,7 @@ import { Transaction } from '@/entities/ITransaction';
 import { RedeemedSubscription } from '@/entities/ISubscription';
 import { updateDistributionInfoFor } from '@/nftsLoop/nft_distribution';
 import { enums } from '@/enums';
+import { S3UploaderOutboxEntity } from '@/entities/IS3UploaderOutbox';
 
 const logger = Logger.get('NFTS_LOOP');
 const ALERT_TITLE = 'NFTs Loop';
@@ -40,7 +41,8 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
         LabExtendedData,
         Transaction,
         MemesMintStat,
-        RedeemedSubscription
+        RedeemedSubscription,
+        S3UploaderOutboxEntity
       ]
     }
   );

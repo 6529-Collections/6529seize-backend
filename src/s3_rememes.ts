@@ -35,7 +35,23 @@ export const persistRememesS3 = async (rememes: Rememe[]) => {
   myBucket = process.env.AWS_6529_IMAGES_BUCKET_NAME!;
 
   const limit = pLimit(REMEME_CONCURRENCY);
-  await Promise.all(rememes.map((r) => limit(() => processRememeS3(r))));
+  const results = await Promise.allSettled(
+    rememes.map((r) => limit(() => processRememeS3(r)))
+  );
+
+  const failures = results.filter(
+    (result): result is PromiseRejectedResult => result.status === 'rejected'
+  );
+  if (!failures.length) {
+    return;
+  }
+
+  failures.forEach((failure) =>
+    logger.error(`[REMEME PROCESSING FAILED]`, failure.reason)
+  );
+  throw new Error(
+    `Failed processing ${failures.length} of ${rememes.length} rememes`
+  );
 };
 
 async function processRememeS3(r: Rememe) {

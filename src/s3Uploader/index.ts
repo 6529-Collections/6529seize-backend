@@ -4,6 +4,7 @@ import { Logger } from '@/logging';
 import { doInDbContext } from '@/secrets';
 import { processS3UploaderJob } from '@/s3';
 import * as sentryContext from '@/sentry.context';
+import { isS3UploaderEnabledForEnvironment } from '@/s3Uploader/s3-uploader.queue';
 import {
   parseS3UploaderJob,
   S3UploaderCollectionType
@@ -16,7 +17,7 @@ const sqsHandler: SQSHandler = async (event) => {
 
   await doInDbContext(
     async () => {
-      if (process.env.NODE_ENV !== 'production') {
+      if (!isS3UploaderEnabledForEnvironment()) {
         logger.info(`[SKIPPING] [CONFIG ${process.env.NODE_ENV}]`);
         return;
       }

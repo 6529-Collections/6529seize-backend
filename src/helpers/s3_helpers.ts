@@ -1,4 +1,6 @@
 import { HeadObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
+import { Upload } from '@aws-sdk/lib-storage';
+import { Readable } from 'stream';
 import { Logger } from '../logging';
 import { getS3 } from '../s3.client';
 
@@ -42,25 +44,56 @@ export async function s3UploadObject({
   key,
   body,
   contentType,
-  txId
+  txId,
+  contentLength
 }: {
   bucket: string;
   key: string;
-  body: Buffer;
+  body: Buffer | Readable;
   contentType: string;
   txId: string;
+  contentLength?: number;
 }) {
   const s3 = getS3();
-
-  const result = await s3.send(
-    new PutObjectCommand({
+  if (isReadableStream(body)) {
+    const streamParams = {
       Bucket: bucket,
       Key: key,
       Body: body,
       ContentType: contentType,
-      Metadata: { [METADATA_KEY]: txId }
+      Metadata: { [METADATA_KEY]: txId },
+      ...(typeof contentLength === 'number'
+        ? { ContentLength: contentLength }
+        : {})
+    };
+
+    const upload = new Upload({
+      client: s3,
+      params: streamParams
+    });
+    return await upload.done();
+  }
+
+  const bufferParams = {
+    Bucket: bucket,
+    Key: key,
+    Body: body,
+    ContentType: contentType,
+    Metadata: { [METADATA_KEY]: txId },
+    ...(typeof contentLength === 'number'
+      ? { ContentLength: contentLength }
+      : {})
+  };
+
+  const result = await s3.send(
+    new PutObjectCommand({
+      ...bufferParams
     })
   );
 
   return result;
+}
+
+function isReadableStream(body: Buffer | Readable): body is Readable {
+  return !Buffer.isBuffer(body) && body instanceof Readable;
 }
