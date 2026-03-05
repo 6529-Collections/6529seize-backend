@@ -22,9 +22,7 @@ export async function publishPendingS3UploaderOutboxJobs() {
   }
 
   const repo = getDataSource().getRepository(S3UploaderOutboxEntity);
-  const pendingCount = await repo.count({
-    where: { status: S3UploaderOutboxStatus.PENDING }
-  });
+  const pendingCount = await getPendingOutboxCount(repo);
   if (!pendingCount) {
     return;
   }
@@ -33,60 +31,19 @@ export async function publishPendingS3UploaderOutboxJobs() {
   const escalationIds = new Set<number>();
 
   while (true) {
-    const pending = await repo.find({
-      where: { status: S3UploaderOutboxStatus.PENDING },
-      order: { id: 'ASC' },
-      take: S3_OUTBOX_PUBLISH_BATCH_SIZE
-    });
+    const pending = await getPendingOutboxBatch(repo);
     if (!pending.length) {
       break;
     }
 
     let batchFailures = 0;
     for (const outbox of pending) {
-      const attempt = outbox.attempts + 1;
-      logger.info(
-        `📤 Publishing S3 uploader outbox job [id=${outbox.id}] [attempt=${attempt}]`
-      );
-      try {
-        await sqs.sendToQueueName({
-          queueName: S3_UPLOADER_QUEUE_NAME,
-          message: outbox.job
-        });
-        await repo.update(
-          { id: outbox.id },
-          {
-            status: S3UploaderOutboxStatus.PUBLISHED,
-            published_at: Time.now().toMillis(),
-            attempts: attempt,
-            last_error: null
-          }
-        );
-      } catch (error: unknown) {
+      if (await publishOutboxJob(repo, outbox, escalationIds)) {
         batchFailures++;
-        const message = formatOutboxPublishError(error);
-        logger.error(
-          `❌ Failed publishing S3 uploader outbox job [id=${outbox.id}] [attempt=${attempt}] [error=${truncateOutboxError(
-            message
-          )}]`
-        );
-        await repo.update(
-          { id: outbox.id },
-          {
-            attempts: attempt,
-            last_error: truncateOutboxError(message)
-          }
-        );
-        if (attempt === S3_OUTBOX_FAILURE_ESCALATION_ATTEMPTS) {
-          escalationIds.add(outbox.id);
-        }
       }
     }
 
-    if (
-      batchFailures === pending.length ||
-      pending.length < S3_OUTBOX_PUBLISH_BATCH_SIZE
-    ) {
+    if (shouldStopPublishing(batchFailures, pending.length)) {
       break;
     }
   }
@@ -97,6 +54,75 @@ export async function publishPendingS3UploaderOutboxJobs() {
         escalationIds
       ).join(',')}]`
     );
+  }
+}
+
+async function getPendingOutboxCount(repo: ReturnType<typeof getOutboxRepo>) {
+  return repo.count({
+    where: { status: S3UploaderOutboxStatus.PENDING }
+  });
+}
+
+async function getPendingOutboxBatch(repo: ReturnType<typeof getOutboxRepo>) {
+  return repo.find({
+    where: { status: S3UploaderOutboxStatus.PENDING },
+    order: { id: 'ASC' },
+    take: S3_OUTBOX_PUBLISH_BATCH_SIZE
+  });
+}
+
+function getOutboxRepo() {
+  return getDataSource().getRepository(S3UploaderOutboxEntity);
+}
+
+function shouldStopPublishing(batchFailures: number, batchSize: number) {
+  return (
+    batchFailures === batchSize || batchSize < S3_OUTBOX_PUBLISH_BATCH_SIZE
+  );
+}
+
+async function publishOutboxJob(
+  repo: ReturnType<typeof getOutboxRepo>,
+  outbox: S3UploaderOutboxEntity,
+  escalationIds: Set<number>
+) {
+  const attempt = outbox.attempts + 1;
+  logger.info(
+    `📤 Publishing S3 uploader outbox job [id=${outbox.id}] [attempt=${attempt}]`
+  );
+  try {
+    await sqs.sendToQueueName({
+      queueName: S3_UPLOADER_QUEUE_NAME,
+      message: outbox.job
+    });
+    await repo.update(
+      { id: outbox.id },
+      {
+        status: S3UploaderOutboxStatus.PUBLISHED,
+        published_at: Time.now().toMillis(),
+        attempts: attempt,
+        last_error: null
+      }
+    );
+    return false;
+  } catch (error: unknown) {
+    const message = formatOutboxPublishError(error);
+    logger.error(
+      `❌ Failed publishing S3 uploader outbox job [id=${outbox.id}] [attempt=${attempt}] [error=${truncateOutboxError(
+        message
+      )}]`
+    );
+    await repo.update(
+      { id: outbox.id },
+      {
+        attempts: attempt,
+        last_error: truncateOutboxError(message)
+      }
+    );
+    if (attempt === S3_OUTBOX_FAILURE_ESCALATION_ATTEMPTS) {
+      escalationIds.add(outbox.id);
+    }
+    return true;
   }
 }
 

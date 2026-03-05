@@ -10,9 +10,7 @@ import {
 const logger = Logger.get('S3_UPLOADER_QUEUE');
 
 export function isS3UploaderEnabledForEnvironment() {
-  // TODO: revert this
-  return true;
-  // return process.env.NODE_ENV === 'production';
+  return process.env.NODE_ENV === 'production';
 }
 
 export async function enqueueS3UploaderJobsForNft({
