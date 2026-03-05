@@ -1,6 +1,6 @@
 import { HeadObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
-import { Readable } from 'stream';
+import { Readable } from 'node:stream';
 import { Logger } from '../logging';
 import { getS3 } from '../s3.client';
 

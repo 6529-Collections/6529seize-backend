@@ -52,6 +52,7 @@ import {
 import { withArweaveFallback } from '@/arweave-gateway-fallback';
 import axios from 'axios';
 import { ethers } from 'ethers';
+import { inspect } from 'node:util';
 import { EntityManager, In, MoreThan, Not, Repository } from 'typeorm';
 
 const logger = Logger.get('nfts');
@@ -487,8 +488,7 @@ async function publishPendingS3UploaderOutboxJobs() {
         );
       } catch (error: unknown) {
         batchFailures++;
-        const message =
-          error instanceof Error ? error.message : String(error ?? '');
+        const message = formatOutboxPublishError(error);
         logger.error(
           `Failed publishing S3 outbox job ${outbox.id} [attempt ${
             outbox.attempts + 1
@@ -519,6 +519,29 @@ function truncateOutboxError(value: string): string {
     return value;
   }
   return value.slice(0, S3_OUTBOX_ERROR_MAX_LENGTH);
+}
+
+function formatOutboxPublishError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  if (typeof error === 'string') {
+    return error;
+  }
+  if (error == null) {
+    return '';
+  }
+
+  try {
+    const asJson = JSON.stringify(error);
+    if (asJson) {
+      return asJson;
+    }
+  } catch {
+    // fall through to util.inspect
+  }
+
+  return inspect(error, { depth: 3, breakLength: 120 });
 }
 
 async function maybeAnnounceNewDiscoveries({
