@@ -1,6 +1,7 @@
 import { SQSBatchResponse, SQSHandler } from 'aws-lambda';
 import { fetchMemeLabNFTByContractAndId, fetchNFTByContractAndId } from '@/db';
 import { Logger } from '@/logging';
+import * as priorityAlertsContext from '@/priority-alerts.context';
 import { doInDbContext } from '@/secrets';
 import { processS3UploaderJob } from '@/s3';
 import * as sentryContext from '@/sentry.context';
@@ -11,12 +12,15 @@ import {
 } from '@/s3Uploader/s3-uploader.jobs';
 
 const logger = Logger.get('S3_UPLOADER');
+const ALERT_TITLE = 'S3 Uploader';
+const S3_UPLOADER_FAILURE_ALERT_THRESHOLD = 1;
 
 const sqsHandler: SQSHandler = async (event) => {
   const batchItemFailures: SQSBatchResponse['batchItemFailures'] = [];
+  let failedRecords = 0;
 
   await doInDbContext(
-    async () => {
+    priorityAlertsContext.wrapAsyncFunction(ALERT_TITLE, async () => {
       if (!isS3UploaderEnabledForEnvironment()) {
         logger.info(`[SKIPPING] [CONFIG ${process.env.NODE_ENV}]`);
         return;
@@ -48,12 +52,22 @@ const sqsHandler: SQSHandler = async (event) => {
             `Failed processing S3 uploader record ${record.messageId}`,
             error
           );
+          failedRecords++;
           if (record.messageId) {
             batchItemFailures.push({ itemIdentifier: record.messageId });
           }
         }
       }
-    },
+
+      if (failedRecords >= S3_UPLOADER_FAILURE_ALERT_THRESHOLD) {
+        await priorityAlertsContext.sendPriorityAlertIfConfigured(
+          ALERT_TITLE,
+          new Error(
+            `S3 uploader record failures reached threshold [failed=${failedRecords}] [threshold=${S3_UPLOADER_FAILURE_ALERT_THRESHOLD}]`
+          )
+        );
+      }
+    }),
     { logger }
   );
 

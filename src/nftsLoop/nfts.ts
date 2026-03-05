@@ -34,8 +34,8 @@ import { RedeemedSubscription } from '@/entities/ISubscription';
 import { Transaction } from '@/entities/ITransaction';
 import { TokenType } from '@/enums';
 import { Logger } from '@/logging';
+import { publishPendingS3UploaderOutboxJobs } from '@/nftsLoop/s3-uploader-outbox.publisher';
 import { getRpcProvider } from '@/rpc-provider';
-import { sqs } from '@/sqs';
 import { equalIgnoreCase } from '@/strings';
 import { text } from '@/text';
 import { Time } from '@/time';
@@ -45,14 +45,12 @@ import {
 } from '@/s3Uploader/s3-uploader.queue';
 import {
   buildS3UploaderJobsForNft,
-  S3_UPLOADER_QUEUE_NAME,
   S3UploaderCollectionType,
   S3UploaderJob
 } from '@/s3Uploader/s3-uploader.jobs';
 import { withArweaveFallback } from '@/arweave-gateway-fallback';
 import axios from 'axios';
 import { ethers } from 'ethers';
-import { inspect } from 'node:util';
 import { EntityManager, In, MoreThan, Not, Repository } from 'typeorm';
 
 const logger = Logger.get('nfts');
@@ -183,8 +181,6 @@ const LABNFT_CONTRACTS: ContractConfig[] = [
 ];
 
 const S3_ENQUEUE_BATCH_SIZE = 25;
-const S3_OUTBOX_PUBLISH_BATCH_SIZE = 200;
-const S3_OUTBOX_ERROR_MAX_LENGTH = 2048;
 
 async function processNFTsForType(
   EntityClass: typeof NFT | typeof LabNFT,
@@ -361,6 +357,15 @@ async function saveAndPostProcessNfts({
     nftMap,
     collectionType
   });
+  if (outboxJobs.length === 0) {
+    logger.info(
+      `ℹ️ No S3 uploader jobs generated for ${EntityClass.name}s [mode=${mode}]`
+    );
+  } else {
+    logger.info(
+      `📝 Generated ${outboxJobs.length} S3 uploader outbox jobs for ${EntityClass.name}s [mode=${mode}]`
+    );
+  }
 
   await persistNftUpdatesAndOutboxJobs({
     EntityClass,
@@ -368,8 +373,6 @@ async function saveAndPostProcessNfts({
     outboxJobs
   });
   logger.info(`✅ Saved ${toSave.length} ${EntityClass.name}s`);
-
-  await publishPendingS3UploaderOutboxJobs();
 
   await maybeAnnounceNewDiscoveries({
     mode,
@@ -451,97 +454,6 @@ async function persistS3UploaderOutboxJobs(
       last_error: null
     }))
   );
-}
-
-async function publishPendingS3UploaderOutboxJobs() {
-  if (!isS3UploaderEnabledForEnvironment()) {
-    return;
-  }
-
-  const repo = getDataSource().getRepository(S3UploaderOutboxEntity);
-
-  while (true) {
-    const pending = await repo.find({
-      where: { status: S3UploaderOutboxStatus.PENDING },
-      order: { id: 'ASC' },
-      take: S3_OUTBOX_PUBLISH_BATCH_SIZE
-    });
-    if (!pending.length) {
-      return;
-    }
-
-    let batchFailures = 0;
-    for (const outbox of pending) {
-      try {
-        await sqs.sendToQueueName({
-          queueName: S3_UPLOADER_QUEUE_NAME,
-          message: outbox.job
-        });
-        await repo.update(
-          { id: outbox.id },
-          {
-            status: S3UploaderOutboxStatus.PUBLISHED,
-            published_at: Time.now().toMillis(),
-            attempts: outbox.attempts + 1,
-            last_error: null
-          }
-        );
-      } catch (error: unknown) {
-        batchFailures++;
-        const message = formatOutboxPublishError(error);
-        logger.error(
-          `Failed publishing S3 outbox job ${outbox.id} [attempt ${
-            outbox.attempts + 1
-          }]`,
-          error
-        );
-        await repo.update(
-          { id: outbox.id },
-          {
-            attempts: outbox.attempts + 1,
-            last_error: truncateOutboxError(message)
-          }
-        );
-      }
-    }
-
-    if (
-      batchFailures === pending.length ||
-      pending.length < S3_OUTBOX_PUBLISH_BATCH_SIZE
-    ) {
-      return;
-    }
-  }
-}
-
-function truncateOutboxError(value: string): string {
-  if (value.length <= S3_OUTBOX_ERROR_MAX_LENGTH) {
-    return value;
-  }
-  return value.slice(0, S3_OUTBOX_ERROR_MAX_LENGTH);
-}
-
-function formatOutboxPublishError(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-  if (typeof error === 'string') {
-    return error;
-  }
-  if (error == null) {
-    return '';
-  }
-
-  try {
-    const asJson = JSON.stringify(error);
-    if (asJson) {
-      return asJson;
-    }
-  } catch {
-    // fall through to util.inspect
-  }
-
-  return inspect(error, { depth: 3, breakLength: 120 });
 }
 
 async function maybeAnnounceNewDiscoveries({
@@ -1250,7 +1162,6 @@ const getMintDate = async (contract: string, tokenId: number) => {
 };
 
 export async function processNFTs(mode: NFT_MODE) {
-  await publishPendingS3UploaderOutboxJobs();
   const provider = getRpcProvider();
   await processNFTsForType(NFT, NFT_CONTRACTS, mode, provider, true);
   await processNFTsForType(LabNFT, LABNFT_CONTRACTS, mode, provider, false);
