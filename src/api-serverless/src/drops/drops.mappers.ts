@@ -8,6 +8,7 @@ import {
   DropReferencedNftEntity,
   DropType
 } from '../../../entities/IDrop';
+import { WaveEntity } from '../../../entities/IWave';
 import { ConnectionWrapper } from '../../../sql-executor';
 import { ApiDrop } from '../generated/models/ApiDrop';
 import { ApiProfileMin } from '../generated/models/ApiProfileMin';
@@ -202,6 +203,11 @@ export class DropsMappers {
         { connection }
       )
     ]);
+    const waveDisplayByWaveId = await this.resolveWaveDisplayByWaveIdForContext(
+      collections.distinctBy(Object.values(waveOverviews), (it) => it.id),
+      contextProfileId ?? null,
+      connection
+    );
     const group_ids_user_is_eligible_for =
       await this.userGroupsService.getGroupsUserIsEligibleFor(
         contextProfileId ?? null
@@ -211,8 +217,8 @@ export class DropsMappers {
       const waveMin: ApiWaveMin | null = wave
         ? {
             id: wave.id,
-            name: wave.name,
-            picture: wave.picture,
+            name: waveDisplayByWaveId[wave.id]?.name ?? wave.name,
+            picture: waveDisplayByWaveId[wave.id]?.picture ?? wave.picture,
             description_drop_id: wave.description_drop_id,
             authenticated_user_eligible_to_chat:
               wave.chat_enabled &&
@@ -538,12 +544,19 @@ export class DropsMappers {
         { connection: ctx.connection }
       )
     ]);
+    const mentionedWaveDisplayByWaveId =
+      await this.resolveWaveDisplayByWaveIdForContext(
+        mentionedWaveEntities,
+        contextProfileId ?? null,
+        ctx.connection
+      );
     const mentionedWavesById = mentionedWaveEntities.reduce(
       (acc, wave) => {
         acc[wave.id] = {
           id: wave.id,
-          name: wave.name,
-          picture: wave.picture,
+          name: mentionedWaveDisplayByWaveId[wave.id]?.name ?? wave.name,
+          picture:
+            mentionedWaveDisplayByWaveId[wave.id]?.picture ?? wave.picture,
           description_drop_id: wave.description_drop_id,
           authenticated_user_eligible_to_chat:
             wave.chat_enabled &&
@@ -1060,6 +1073,133 @@ export class DropsMappers {
         ? (rootDropNftLinksByDropId[dropEntity.id] ?? [])
         : []
     };
+  }
+
+  public async resolveWaveDisplayByWaveIdForContext(
+    waveEntities: WaveEntity[],
+    contextProfileId: string | null,
+    connection?: ConnectionWrapper<any>
+  ): Promise<Record<string, { name?: string; picture?: string }>> {
+    const directMessageWaves = waveEntities.filter(
+      (waveEntity) => waveEntity.is_direct_message
+    );
+    if (!directMessageWaves.length) {
+      return {};
+    }
+    const waveGroupIds = collections.distinct(
+      directMessageWaves
+        .map(
+          (waveEntity) =>
+            [
+              waveEntity.visibility_group_id,
+              waveEntity.participation_group_id,
+              waveEntity.chat_group_id,
+              waveEntity.admin_group_id,
+              waveEntity.voting_group_id
+            ].filter((groupId) => groupId !== null) as string[]
+        )
+        .flat()
+    );
+    if (!waveGroupIds.length) {
+      return {};
+    }
+    const curationEntities = await this.userGroupsService.getByIds(
+      waveGroupIds,
+      { connection }
+    );
+    const curationEntitiesById = curationEntities.reduce(
+      (acc, curationEntity) => {
+        acc[curationEntity.id] = curationEntity;
+        return acc;
+      },
+      {} as Record<string, (typeof curationEntities)[number]>
+    );
+    const directMessageIdentityGroupIdByWaveId = directMessageWaves.reduce(
+      (acc, waveEntity) => {
+        const directMessageGroup = [
+          waveEntity.visibility_group_id,
+          waveEntity.participation_group_id,
+          waveEntity.chat_group_id,
+          waveEntity.admin_group_id,
+          waveEntity.voting_group_id
+        ]
+          .map((groupId) => (groupId ? curationEntitiesById[groupId] : null))
+          .find((group) => group?.is_direct_message && group.profile_group_id);
+        if (directMessageGroup?.profile_group_id) {
+          acc[waveEntity.id] = directMessageGroup.profile_group_id;
+        }
+        return acc;
+      },
+      {} as Record<string, string>
+    );
+    const directMessageIdentityGroupIds = collections.distinct(
+      Object.values(directMessageIdentityGroupIdByWaveId)
+    );
+    if (!directMessageIdentityGroupIds.length) {
+      return {};
+    }
+    const directMessageParticipantProfileIdsByIdentityGroupId =
+      await this.userGroupsService.findUserGroupsIdentityGroupProfileIds(
+        directMessageIdentityGroupIds
+      );
+    const allDirectMessageParticipantProfileIds = collections.distinct(
+      Object.values(directMessageParticipantProfileIdsByIdentityGroupId).flat()
+    );
+    if (!allDirectMessageParticipantProfileIds.length) {
+      return {};
+    }
+    const profileMins = await this.identityFetcher.getOverviewsByIds(
+      collections.distinct([
+        ...allDirectMessageParticipantProfileIds,
+        ...(contextProfileId ? [contextProfileId] : [])
+      ]),
+      {
+        connection,
+        authenticationContext: contextProfileId
+          ? AuthenticationContext.fromProfileId(contextProfileId)
+          : AuthenticationContext.notAuthenticated()
+      }
+    );
+    return Object.entries(directMessageIdentityGroupIdByWaveId).reduce(
+      (acc, [waveId, identityGroupId]) => {
+        const participantProfileIds =
+          directMessageParticipantProfileIdsByIdentityGroupId[
+            identityGroupId
+          ] ?? [];
+        const participantProfiles = participantProfileIds
+          .map((profileId) => profileMins[profileId])
+          .filter((it): it is ApiProfileMin => !!it);
+        const displayProfiles = contextProfileId
+          ? participantProfiles.filter((it) => it.id !== contextProfileId)
+          : participantProfiles;
+        const effectiveDisplayProfiles = displayProfiles.length
+          ? displayProfiles
+          : participantProfiles;
+        const sortedEffectiveDisplayProfiles = [...effectiveDisplayProfiles]
+          .filter((profile) => !!profile.id)
+          .sort(
+            (a, b) =>
+              (a.handle ?? '').localeCompare(b.handle ?? '') ||
+              a.id.localeCompare(b.id)
+          );
+        const handles = collections.distinct(
+          sortedEffectiveDisplayProfiles
+            .map((profile) => profile.handle?.trim())
+            .filter((handle): handle is string => !!handle)
+        );
+        const picture = sortedEffectiveDisplayProfiles.find(
+          (it) => !!it.pfp
+        )?.pfp;
+        if (handles.length || picture) {
+          acc[waveId] = {
+            ...(handles.length ? { name: handles.join(', ') } : {}),
+            ...(picture ? { picture } : {})
+          };
+        }
+        return acc;
+      },
+      {} as Record<string, { name?: string; picture?: string }>
+    );
   }
 }
 

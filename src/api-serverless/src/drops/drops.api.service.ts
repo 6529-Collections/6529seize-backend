@@ -497,10 +497,16 @@ export class DropsApiService {
     ) {
       throw new NotFoundException(`Wave ${wave_id} not found`);
     }
+    const displayByWaveId =
+      await this.dropsMappers.resolveWaveDisplayByWaveIdForContext(
+        [wave],
+        context_profile_id,
+        ctx.connection
+      );
     const waveMin: ApiWaveMin = {
       id: wave.id,
-      name: wave.name,
-      picture: wave.picture!,
+      name: displayByWaveId[wave.id]?.name ?? wave.name,
+      picture: displayByWaveId[wave.id]?.picture ?? wave.picture,
       description_drop_id: wave.description_drop_id,
       authenticated_user_eligible_to_vote:
         wave.voting_group_id === null ||
@@ -644,11 +650,17 @@ export class DropsApiService {
     if (waveEntity.type === WaveType.CHAT) {
       throw new BadRequestException(`CHAT waves don't have a leaderboard`);
     }
+    const displayByWaveId =
+      await this.dropsMappers.resolveWaveDisplayByWaveIdForContext(
+        [waveEntity],
+        authenticatedProfileId,
+        ctx.connection
+      );
     const votingPeriodEnd = waveEntity.voting_period_end;
     const waveMin: ApiWaveMin = {
       id: waveEntity.id,
-      name: waveEntity.name,
-      picture: waveEntity.picture!,
+      name: displayByWaveId[waveEntity.id]?.name ?? waveEntity.name,
+      picture: displayByWaveId[waveEntity.id]?.picture ?? waveEntity.picture,
       description_drop_id: waveEntity.description_drop_id,
       authenticated_user_eligible_to_vote:
         waveEntity.voting_group_id === null ||

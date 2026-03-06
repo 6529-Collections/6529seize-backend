@@ -186,6 +186,8 @@ export class WavesMappers {
       contributors,
       profiles,
       curations,
+      displayNamesByWaveId,
+      displayPicturesByWaveId,
       creationDrops,
       subscribedActions,
       metrics,
@@ -204,6 +206,8 @@ export class WavesMappers {
         contributors,
         creationDrops,
         curations,
+        displayNamesByWaveId,
+        displayPicturesByWaveId,
         subscribedActions,
         noRightToVote,
         groupIdsUserIsEligibleFor,
@@ -226,6 +230,8 @@ export class WavesMappers {
     contributors,
     creationDrops,
     curations,
+    displayNamesByWaveId,
+    displayPicturesByWaveId,
     subscribedActions,
     noRightToVote,
     groupIdsUserIsEligibleFor,
@@ -250,6 +256,8 @@ export class WavesMappers {
     >;
     creationDrops: Record<string, ApiDrop>;
     curations: Record<string, ApiGroup>;
+    displayNamesByWaveId: Record<string, string>;
+    displayPicturesByWaveId: Record<string, string>;
     subscribedActions: Record<string, ApiWaveSubscriptionTargetAction[]>;
     noRightToVote: boolean;
     groupIdsUserIsEligibleFor: string[];
@@ -387,8 +395,8 @@ export class WavesMappers {
       }));
     return {
       id: waveEntity.id,
-      name: waveEntity.name,
-      picture: waveEntity.picture,
+      name: displayNamesByWaveId[waveEntity.id] ?? waveEntity.name,
+      picture: displayPicturesByWaveId[waveEntity.id] ?? waveEntity.picture,
       serial_no: waveEntity.serial_no,
       author: profiles[waveEntity.created_by],
       contributors_overview: contributorsOverview,
@@ -417,6 +425,8 @@ export class WavesMappers {
     >;
     profiles: Record<string, ApiProfileMin>;
     curations: Record<string, ApiGroup>;
+    displayNamesByWaveId: Record<string, string>;
+    displayPicturesByWaveId: Record<string, string>;
     creationDrops: Record<string, ApiDrop>;
     subscribedActions: Record<string, ApiWaveSubscriptionTargetAction[]>;
     metrics: Record<string, WaveMetricEntity>;
@@ -544,6 +554,46 @@ export class WavesMappers {
         ctx
       )
     ]);
+    const curationEntitiesById = curationEntities.reduce(
+      (acc, curationEntity) => {
+        acc[curationEntity.id] = curationEntity;
+        return acc;
+      },
+      {} as Record<string, (typeof curationEntities)[number]>
+    );
+    const directMessageIdentityGroupIdByWaveId = waveEntities.reduce(
+      (acc, waveEntity) => {
+        if (!waveEntity.is_direct_message) {
+          return acc;
+        }
+        const directMessageGroup = [
+          waveEntity.visibility_group_id,
+          waveEntity.participation_group_id,
+          waveEntity.chat_group_id,
+          waveEntity.admin_group_id,
+          waveEntity.voting_group_id
+        ]
+          .map((groupId) => (groupId ? curationEntitiesById[groupId] : null))
+          .find((group) => group?.is_direct_message && group.profile_group_id);
+        if (directMessageGroup?.profile_group_id) {
+          acc[waveEntity.id] = directMessageGroup.profile_group_id;
+        }
+        return acc;
+      },
+      {} as Record<string, string>
+    );
+    const directMessageIdentityGroupIds = collections.distinct(
+      Object.values(directMessageIdentityGroupIdByWaveId)
+    );
+    const directMessageParticipantProfileIdsByIdentityGroupId =
+      directMessageIdentityGroupIds.length
+        ? await this.userGroupsService.findUserGroupsIdentityGroupProfileIds(
+            directMessageIdentityGroupIds
+          )
+        : {};
+    const allDirectMessageParticipantProfileIds = Object.values(
+      directMessageParticipantProfileIdsByIdentityGroupId
+    ).flat();
     const profileIds = collections.distinct([
       ...waveEntities
         .map(
@@ -553,11 +603,58 @@ export class WavesMappers {
             ) as string[]
         )
         .flat(),
-      ...curationEntities.map((curationEntity) => curationEntity.created_by)
+      ...curationEntities.map((curationEntity) => curationEntity.created_by),
+      ...allDirectMessageParticipantProfileIds,
+      ...(authenticatedUserId ? [authenticatedUserId] : [])
     ]);
     const profileMins = await this.identityFetcher.getOverviewsByIds(
       profileIds,
       ctx
+    );
+    const { displayNamesByWaveId, displayPicturesByWaveId } = Object.entries(
+      directMessageIdentityGroupIdByWaveId
+    ).reduce(
+      (acc, [waveId, identityGroupId]) => {
+        const participantProfileIds =
+          directMessageParticipantProfileIdsByIdentityGroupId[
+            identityGroupId
+          ] ?? [];
+        const participantProfiles = participantProfileIds
+          .map((profileId) => profileMins[profileId])
+          .filter((it): it is ApiProfileMin => !!it);
+        const displayProfiles = authenticatedUserId
+          ? participantProfiles.filter((it) => it.id !== authenticatedUserId)
+          : participantProfiles;
+        const effectiveDisplayProfiles = displayProfiles.length
+          ? displayProfiles
+          : participantProfiles;
+        const sortedEffectiveDisplayProfiles = [...effectiveDisplayProfiles]
+          .filter((profile) => !!profile.id)
+          .sort(
+            (a, b) =>
+              (a.handle ?? '').localeCompare(b.handle ?? '') ||
+              a.id.localeCompare(b.id)
+          );
+        const participantHandles = collections.distinct(
+          sortedEffectiveDisplayProfiles
+            .map((profile) => profile.handle?.trim())
+            .filter((handle): handle is string => !!handle)
+        );
+        if (participantHandles.length) {
+          acc.displayNamesByWaveId[waveId] = participantHandles.join(', ');
+        }
+        const picture = sortedEffectiveDisplayProfiles.find(
+          (it) => !!it.pfp
+        )?.pfp;
+        if (picture) {
+          acc.displayPicturesByWaveId[waveId] = picture;
+        }
+        return acc;
+      },
+      {
+        displayNamesByWaveId: {} as Record<string, string>,
+        displayPicturesByWaveId: {} as Record<string, string>
+      }
     );
     const curations: Record<string, ApiGroup> = curationEntities.reduce(
       (acc, curationEntity) => {
@@ -588,6 +685,8 @@ export class WavesMappers {
       contributors: contributorsOverViews,
       profiles: profileMins,
       curations,
+      displayNamesByWaveId,
+      displayPicturesByWaveId,
       creationDrops: creationDropsByDropId,
       subscribedActions: Object.entries(subscribedActions).reduce(
         (acc, [id, actions]) => {
