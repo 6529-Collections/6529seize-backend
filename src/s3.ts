@@ -1,11 +1,10 @@
-import { NFT } from './entities/INFT';
+import { LabNFT, NFT } from '@/entities/INFT';
 import { s3ObjectExists, s3UploadObject } from './helpers/s3_helpers';
 import {
   GRADIENT_CONTRACT,
   MEMELAB_CONTRACT,
   MEMES_CONTRACT
 } from '@/constants';
-import sharp from 'sharp';
 import { Stream } from 'stream';
 import { Logger } from './logging';
 import axios from 'axios';
@@ -13,6 +12,14 @@ import axiosRetry from 'axios-retry';
 import pLimit from 'p-limit';
 import { invalidateCloudFront } from './cloudfront';
 import { equalIgnoreCase } from './strings';
+import { Time } from '@/time';
+import {
+  S3UploaderImageVariant,
+  S3UploaderJob,
+  S3UploaderJobType,
+  S3UploaderVideoVariant
+} from '@/s3Uploader/s3-uploader.jobs';
+import { resizeImageBufferToHeight } from '@/media/image-resize';
 import { withArweaveFallback } from '@/arweave-gateway-fallback';
 
 const logger = Logger.get('S3');
@@ -42,13 +49,12 @@ const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
 const ffmpeg = require('fluent-ffmpeg');
 ffmpeg.setFfmpegPath(ffmpegPath);
 
-const imagescript = require('imagescript');
-
 const ICON_HEIGHT = 60;
 const THUMBNAIL_HEIGHT = 450;
 const SCALED_HEIGHT = 1000;
 
 const cfInvalidationPaths = new Set<string>();
+type ProcessableNft = NFT | LabNFT;
 
 const flushCloudfront = async (distribution?: string) => {
   if (!distribution) return;
@@ -63,6 +69,18 @@ const flushCloudfront = async (distribution?: string) => {
     await invalidateCloudFront(distribution, paths);
   }
 };
+
+function parseAnimationDetails(value: any): { format?: string } | null {
+  if (!value) return null;
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return null;
+    }
+  }
+  return value;
+}
 
 export const getTxId = (url: string, fallback: string): string => {
   try {
@@ -87,118 +105,311 @@ export const getTxId = (url: string, fallback: string): string => {
   return fallback;
 };
 
-export const persistS3 = async (nfts: NFT[]) => {
-  logger.info(`[PROCESSING ASSETS FOR ${nfts.length} NFTS]`);
+async function withCloudfrontFlush<T>(work: (myBucket: string) => Promise<T>) {
   const myBucket = process.env.AWS_6529_IMAGES_BUCKET_NAME!;
   const myDistribution = process.env.AWS_6529_IMAGES_BUCKET_CF_DISTRIBUTION;
 
-  const flushInterval = setInterval(() => {
-    flushCloudfront(myDistribution).catch((err) =>
-      logger.error('Flush failed', err)
-    );
-  }, 300_000); // 5 minutes
+  const flushInterval = setInterval(async () => {
+    try {
+      await flushCloudfront(myDistribution);
+    } catch (err) {
+      logger.error('Flush failed', err);
+    }
+  }, Time.minutes(5).toMillis());
 
   try {
-    await Promise.all(
-      nfts.map((nft) => limit(() => processNft(myBucket, nft)))
-    );
+    return await work(myBucket);
   } finally {
     clearInterval(flushInterval);
     await flushCloudfront(myDistribution);
   }
+}
+
+export const persistS3 = async (nfts: ProcessableNft[]) => {
+  logger.info(`[PROCESSING ASSETS FOR ${nfts.length} NFTS]`);
+  let results: PromiseSettledResult<void>[] = [];
+  await withCloudfrontFlush(async (myBucket) => {
+    results = await Promise.allSettled(
+      nfts.map((nft) => limit(() => processNft(myBucket, nft)))
+    );
+  });
+
+  const failed = results.find(
+    (result): result is PromiseRejectedResult => result.status === 'rejected'
+  );
+  if (failed) {
+    throw failed.reason;
+  }
 };
 
-async function processNft(myBucket: string, n: NFT) {
-  let format: any;
+export async function processS3UploaderJob(
+  nft: ProcessableNft,
+  job: S3UploaderJob
+) {
+  await withCloudfrontFlush(async (myBucket) => {
+    if (job.jobType === S3UploaderJobType.IMAGE) {
+      await processNftImages(myBucket, nft, job.variants);
+      return;
+    }
+
+    await processNftVideos(myBucket, nft, job.variants);
+  });
+}
+
+async function processNft(myBucket: string, n: ProcessableNft) {
+  await processNftImages(myBucket, n);
+  await processNftVideos(myBucket, n);
+}
+
+async function processNftImages(
+  myBucket: string,
+  n: ProcessableNft,
+  imageVariants?: S3UploaderImageVariant[]
+) {
+  const imageDetails = getProcessableImageDetails(n, imageVariants);
+  if (!imageDetails) {
+    return;
+  }
+
+  const { format, imageUrl, requestedVariants } = imageDetails;
+  const imageTxId = getTxId(imageUrl, `${n.contract}-${n.id}`);
+  const imageKey = `images/original/${n.contract}/${n.id}.${format}`;
+  const getImageBlob = createImageBlobProvider(imageUrl);
+
+  await maybeHandleOriginalImage({
+    requestedVariants,
+    nft: n,
+    format,
+    imageKey,
+    imageTxId,
+    myBucket,
+    getImageBlob
+  });
+
+  await processScaledImageVariants({
+    nft: n,
+    format,
+    imageTxId,
+    myBucket,
+    requestedVariants,
+    getImageBlob
+  });
+}
+
+function getProcessableImageDetails(
+  n: ProcessableNft,
+  imageVariants?: S3UploaderImageVariant[]
+): {
+  format: string;
+  imageUrl: string;
+  requestedVariants: Set<S3UploaderImageVariant>;
+} | null {
+  const format = resolveNftImageFormat(n);
+  const imageUrl = n.metadata?.image ?? n.metadata?.image_url;
+  if (!format || !imageUrl) {
+    return null;
+  }
+
+  return {
+    format,
+    imageUrl,
+    requestedVariants: new Set<S3UploaderImageVariant>(
+      imageVariants ?? [
+        S3UploaderImageVariant.ORIGINAL,
+        ...(n.scaled ? [S3UploaderImageVariant.SCALED_1000] : []),
+        ...(n.thumbnail ? [S3UploaderImageVariant.SCALED_450] : []),
+        ...(n.icon ? [S3UploaderImageVariant.SCALED_60] : [])
+      ]
+    )
+  };
+}
+
+function resolveNftImageFormat(n: ProcessableNft): string | null {
   if (
     equalIgnoreCase(n.contract, MEMES_CONTRACT) ||
     equalIgnoreCase(n.contract, MEMELAB_CONTRACT)
   ) {
-    format = n.metadata.image_details.format;
+    return n.metadata?.image_details?.format ?? null;
   }
   if (equalIgnoreCase(n.contract, GRADIENT_CONTRACT)) {
-    format = n.metadata.image.split('.').pop();
+    return n.metadata?.image?.split?.('.').pop() ?? null;
+  }
+  return null;
+}
+
+function createImageBlobProvider(imageUrl: string) {
+  let cachedBlob: Buffer | null = null;
+  let inFlightPromise: Promise<Buffer> | null = null;
+  return async () => {
+    if (cachedBlob) {
+      return cachedBlob;
+    }
+
+    inFlightPromise ??= (async () => {
+      try {
+        const blob = await fetchUrl(imageUrl);
+        cachedBlob = blob;
+        return blob;
+      } catch (err) {
+        inFlightPromise = null;
+        throw err;
+      }
+    })();
+
+    const currentPromise = inFlightPromise;
+    try {
+      return await currentPromise;
+    } finally {
+      if (cachedBlob && inFlightPromise === currentPromise) {
+        inFlightPromise = null;
+      }
+    }
+  };
+}
+
+async function maybeHandleOriginalImage({
+  requestedVariants,
+  nft,
+  format,
+  imageKey,
+  imageTxId,
+  myBucket,
+  getImageBlob
+}: {
+  requestedVariants: Set<S3UploaderImageVariant>;
+  nft: ProcessableNft;
+  format: string;
+  imageKey: string;
+  imageTxId: string;
+  myBucket: string;
+  getImageBlob: () => Promise<Buffer>;
+}) {
+  if (!requestedVariants.has(S3UploaderImageVariant.ORIGINAL)) {
+    return;
   }
 
-  const imageUrl = n.metadata.image ?? n.metadata.image_url;
+  await handleImage({
+    nft,
+    format,
+    s3Key: imageKey,
+    height: null,
+    toWEBP: false,
+    contentType: `image/${format.toLowerCase()}`,
+    imageTxId,
+    myBucket,
+    sourceBlobProvider: getImageBlob
+  });
+}
 
-  if (format && imageUrl) {
-    const imageTxId = getTxId(imageUrl, `${n.contract}-${n.id}`);
-    const imageKey = `images/original/${n.contract}/${n.id}.${format}`;
+async function processScaledImageVariants({
+  nft,
+  format,
+  imageTxId,
+  myBucket,
+  requestedVariants,
+  getImageBlob
+}: {
+  nft: ProcessableNft;
+  format: string;
+  imageTxId: string;
+  myBucket: string;
+  requestedVariants: Set<S3UploaderImageVariant>;
+  getImageBlob: () => Promise<Buffer>;
+}) {
+  const tasks: Array<Promise<unknown>> = [];
 
-    await handleImage({
-      nft: n,
-      format,
-      s3Key: imageKey,
-      height: null,
-      toWEBP: false,
-      contentType: `image/${format.toLowerCase()}`,
-      imageTxId,
-      myBucket
-    });
-
-    await Promise.all([
-      n.scaled &&
-        handleScaledImage({
-          nft: n,
-          format,
-          height: SCALED_HEIGHT,
-          imageTxId,
-          myBucket
-        }),
-      n.thumbnail &&
-        handleScaledImage({
-          nft: n,
-          format,
-          height: THUMBNAIL_HEIGHT,
-          imageTxId,
-          myBucket
-        }),
-      n.icon &&
-        handleScaledImage({
-          nft: n,
-          format,
-          height: ICON_HEIGHT,
-          imageTxId,
-          myBucket
-        })
-    ]);
+  if (nft.scaled && requestedVariants.has(S3UploaderImageVariant.SCALED_1000)) {
+    tasks.push(
+      handleScaledImage({
+        nft,
+        format,
+        height: SCALED_HEIGHT,
+        imageTxId,
+        myBucket,
+        sourceBlobProvider: getImageBlob
+      })
+    );
   }
-
-  const videoUrl = n.metadata.animation ?? n.metadata.animation_url;
-  const animationDetails = n.metadata.animation_details;
-
   if (
-    videoUrl &&
-    (animationDetails?.format?.toUpperCase() == 'MP4' ||
-      animationDetails?.format?.toUpperCase() == 'MOV')
+    nft.thumbnail &&
+    requestedVariants.has(S3UploaderImageVariant.SCALED_450)
   ) {
+    tasks.push(
+      handleScaledImage({
+        nft,
+        format,
+        height: THUMBNAIL_HEIGHT,
+        imageTxId,
+        myBucket,
+        sourceBlobProvider: getImageBlob
+      })
+    );
+  }
+  if (nft.icon && requestedVariants.has(S3UploaderImageVariant.SCALED_60)) {
+    tasks.push(
+      handleScaledImage({
+        nft,
+        format,
+        height: ICON_HEIGHT,
+        imageTxId,
+        myBucket,
+        sourceBlobProvider: getImageBlob
+      })
+    );
+  }
+
+  if (tasks.length) {
+    await Promise.all(tasks);
+  }
+}
+
+async function processNftVideos(
+  myBucket: string,
+  n: ProcessableNft,
+  videoVariants?: S3UploaderVideoVariant[]
+) {
+  const videoUrl = n.metadata?.animation ?? n.metadata?.animation_url;
+  const animationDetails = parseAnimationDetails(n.metadata?.animation_details);
+  const rawFormat = animationDetails?.format;
+  const normalizedFormat =
+    typeof rawFormat === 'string' ? rawFormat.trim().toUpperCase() : '';
+
+  if (videoUrl && (normalizedFormat == 'MP4' || normalizedFormat == 'MOV')) {
+    const requestedVariants = new Set<S3UploaderVideoVariant>(
+      videoVariants ?? [
+        S3UploaderVideoVariant.ORIGINAL,
+        S3UploaderVideoVariant.SCALED_750
+      ]
+    );
     const videoTxId = getTxId(videoUrl, `${n.contract}-${n.id}`);
-    const videoFormat = animationDetails.format.toUpperCase();
+    const videoFormat = normalizedFormat;
     const videoKey = `videos/${n.contract}/${n.id}.${videoFormat}`;
 
-    const videoExists = await s3ObjectExists(myBucket, videoKey, videoTxId);
-    if (videoExists.exists) return;
+    if (requestedVariants.has(S3UploaderVideoVariant.ORIGINAL)) {
+      const videoExists = await s3ObjectExists(myBucket, videoKey, videoTxId);
+      if (!videoExists.exists) {
+        logger.info(`[MISSING ${videoFormat}] [KEY ${videoKey}]`);
+        logger.info(`[FETCHING ${videoFormat}] [KEY ${videoKey}]`);
 
-    logger.info(`[MISSING ${videoFormat}] [KEY ${videoKey}]`);
+        const buffer = await fetchUrl(videoUrl);
+        logger.info(`[DOWNLOADED ${videoFormat}] [KEY ${videoKey}]`);
 
-    logger.info(`[FETCHING ${videoFormat}] [KEY ${videoKey}]`);
+        const uploadedVideo = await s3UploadObject({
+          bucket: myBucket,
+          key: videoKey,
+          body: buffer,
+          contentType: `video/${videoFormat.toLowerCase()}`,
+          txId: videoTxId
+        });
 
-    const buffer = await fetchUrl(videoUrl);
-    logger.info(`[DOWNLOADED ${videoFormat}] [KEY ${videoKey}]`);
+        logger.info(`[KEY UPLOADED ${videoKey}] [ETAG ${uploadedVideo.ETag}]`);
+        cfInvalidationPaths.add(`/${videoKey}`);
+      }
+    }
 
-    const uploadedVideo = await s3UploadObject({
-      bucket: myBucket,
-      key: videoKey,
-      body: buffer,
-      contentType: `video/${videoFormat.toLowerCase()}`,
-      txId: videoTxId
-    });
-
-    logger.info(`[KEY UPLOADED ${videoKey}] [ETAG ${uploadedVideo.ETag}]`);
-    cfInvalidationPaths.add(`/${videoKey}`);
-
-    await handleVideoScaling(n, videoUrl, videoFormat, myBucket, videoTxId);
+    if (requestedVariants.has(S3UploaderVideoVariant.SCALED_750)) {
+      await handleVideoScaling(n, videoUrl, videoFormat, myBucket, videoTxId);
+    }
   }
 }
 
@@ -207,13 +418,15 @@ async function handleScaledImage({
   format,
   height,
   imageTxId,
-  myBucket
+  myBucket,
+  sourceBlobProvider
 }: {
-  nft: NFT;
+  nft: ProcessableNft;
   format: string;
   height: number;
   imageTxId: string;
   myBucket: string;
+  sourceBlobProvider?: () => Promise<Buffer>;
 }) {
   let scaledFormat = 'WEBP';
   if (format.toUpperCase() == 'GIF') {
@@ -229,7 +442,8 @@ async function handleScaledImage({
     toWEBP: scaledFormat == 'WEBP',
     contentType: `image/${scaledFormat.toLowerCase()}`,
     imageTxId,
-    myBucket
+    myBucket,
+    sourceBlobProvider
   });
 }
 
@@ -240,9 +454,10 @@ async function handleImage({
   toWEBP,
   contentType,
   imageTxId,
-  myBucket
+  myBucket,
+  sourceBlobProvider
 }: {
-  nft: NFT;
+  nft: ProcessableNft;
   format: string;
   s3Key: string;
   height: number | null;
@@ -250,6 +465,7 @@ async function handleImage({
   contentType: string;
   imageTxId: string;
   myBucket: string;
+  sourceBlobProvider?: () => Promise<Buffer>;
 }) {
   const imageExists = await s3ObjectExists(myBucket, s3Key, imageTxId);
   if (imageExists.exists) return;
@@ -258,11 +474,17 @@ async function handleImage({
     `[MISSING IMAGE FOR HEIGHT ${height ?? 'original'}] [KEY ${s3Key}]`
   );
 
-  const url = nft.metadata.image ?? nft.metadata.image_url;
-  const blob = await fetchUrl(url);
+  const url = nft.metadata?.image ?? nft.metadata?.image_url;
+  const imageUrl = typeof url === 'string' ? url.trim() : '';
+  if (!sourceBlobProvider && !imageUrl) {
+    throw new Error(`Missing image URL for NFT ${nft.contract} #${nft.id}`);
+  }
+  const blob = sourceBlobProvider
+    ? await sourceBlobProvider()
+    : await fetchUrl(imageUrl);
   logger.info(`[DOWNLOADED FOR HEIGHT ${height ?? 'original'}] [KEY ${s3Key}]`);
 
-  let buffer: Buffer;
+  let buffer: Buffer | undefined;
   if (!height) {
     buffer = blob;
   } else {
@@ -287,7 +509,7 @@ async function handleImage({
 }
 
 async function handleVideoScaling(
-  n: NFT,
+  n: ProcessableNft,
   videoUrl: string,
   videoFormat: string,
   myBucket: string,
@@ -301,69 +523,56 @@ async function handleVideoScaling(
   logger.info(`[MISSING SCALED ${videoFormat}] [KEY ${scaledVideoKey}]`);
 
   logger.info(`[SCALING ${scaledVideoKey}]`);
+  let resizedVideoStream: NodeJS.ReadableStream;
+  try {
+    resizedVideoStream = await scaleVideo(videoUrl, videoFormat.toLowerCase());
+  } catch (err) {
+    logger.error(`[scaleVideo FAILED] [${scaledVideoKey}]`, err);
+    throw err instanceof Error ? err : new Error(String(err));
+  }
 
-  await new Promise<void>((resolve, reject) => {
-    const buffers: Buffer[] = [];
+  logger.info(`[ACQUIRED SCALED STREAM ${scaledVideoKey}]`);
 
-    scaleVideo(videoUrl, videoFormat.toLowerCase())
-      .then((resizedVideoStream) => {
-        logger.info(`[ACQUIRED SCALED STREAM ${scaledVideoKey}]`);
-
-        resizedVideoStream.on('error', async (err) => {
-          logger.error(
-            `[resizedVideoStream] [SCALING FAILED ${scaledVideoKey}]`,
-            err
-          );
-          reject(err instanceof Error ? err : new Error(String(err)));
-        });
-
-        const ffstream = new Stream.PassThrough();
-        resizedVideoStream.pipe(ffstream, { end: true });
-
-        ffstream.on('data', (buf) => {
-          logger.info(
-            `[${scaledVideoKey}] [ADDING CHUNK LENGTH ${buf.length}]`
-          );
-          if (buf.length > 0) buffers.push(buf);
-        });
-
-        ffstream.on('error', async (err) => {
-          logger.error(`[SCALING FAILED ${scaledVideoKey}]`, err);
-          reject(err instanceof Error ? err : new Error(String(err)));
-        });
-
-        ffstream.on('end', async () => {
-          logger.info(`[S3] [SCALING FINISHED ${scaledVideoKey}]`);
-          try {
-            if (buffers.length > 0) {
-              const outputBuffer = Buffer.concat(buffers);
-              if (!outputBuffer.length) return;
-
-              const uploadedScaledVideo = await s3UploadObject({
-                bucket: myBucket,
-                key: scaledVideoKey,
-                body: outputBuffer,
-                contentType: `video/${videoFormat.toLowerCase()}`,
-                txId
-              });
-
-              logger.info(
-                `[KEY UPLOADED ${scaledVideoKey}] [ETAG ${uploadedScaledVideo.ETag}]`
-              );
-              cfInvalidationPaths.add(`/${scaledVideoKey}`);
-            }
-            resolve();
-          } catch (e) {
-            logger.error(`[UPLOAD FAILED ${scaledVideoKey}]`, e);
-            reject(e instanceof Error ? e : new Error(String(e)));
-          }
-        });
-      })
-      .catch((err) => {
-        logger.error(`[scaleVideo FAILED] [${scaledVideoKey}]`, err);
-        reject(err instanceof Error ? err : new Error(String(err)));
-      });
+  let totalChunks = 0;
+  let totalBytes = 0;
+  const countingStream = new Stream.Transform({
+    transform(chunk, _encoding, callback) {
+      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      totalChunks++;
+      totalBytes += buf.length;
+      callback(null, buf);
+    }
   });
+
+  resizedVideoStream.on('error', (err) => {
+    logger.error(
+      `[resizedVideoStream] [SCALING FAILED ${scaledVideoKey}]`,
+      err
+    );
+    countingStream.destroy(err instanceof Error ? err : new Error(String(err)));
+  });
+  resizedVideoStream.pipe(countingStream, { end: true });
+
+  try {
+    const uploadedScaledVideo = await s3UploadObject({
+      bucket: myBucket,
+      key: scaledVideoKey,
+      body: countingStream,
+      contentType: `video/${videoFormat.toLowerCase()}`,
+      txId
+    });
+
+    logger.info(
+      `[S3] [SCALING STREAM SUMMARY ${scaledVideoKey}] [chunks ${totalChunks}] [bytes ${totalBytes}]`
+    );
+    logger.info(
+      `[KEY UPLOADED ${scaledVideoKey}] [ETAG ${uploadedScaledVideo.ETag}]`
+    );
+    cfInvalidationPaths.add(`/${scaledVideoKey}`);
+  } catch (e) {
+    logger.error(`[UPLOAD FAILED ${scaledVideoKey}]`, e);
+    throw e instanceof Error ? e : new Error(String(e));
+  }
 }
 
 async function scaleVideo(
@@ -388,23 +597,20 @@ async function scaleVideo(
 }
 
 async function resizeImage(
-  nft: NFT,
+  nft: ProcessableNft,
   toWEBP: boolean,
   buffer: Buffer,
   height: number
-) {
+): Promise<Buffer | undefined> {
   logger.info(
     `[RESIZING FOR ${nft.contract} #${nft.id} (WEBP: ${toWEBP})] [TO TARGET HEIGHT ${height}]`
   );
   try {
-    if (toWEBP) {
-      return await sharp(buffer).resize({ height: height }).webp().toBuffer();
-    } else {
-      const gif = await imagescript.GIF.decode(buffer);
-      const scaleFactor = gif.height / height;
-      gif.resize(gif.width / scaleFactor, height);
-      return gif.encode();
-    }
+    return await resizeImageBufferToHeight({
+      buffer,
+      height,
+      toWebp: toWEBP
+    });
   } catch (err: any) {
     logger.error(
       `[RESIZING FOR ${nft.contract} #${nft.id}] [TO TARGET HEIGHT ${height}] [FAILED!]`,

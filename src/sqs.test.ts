@@ -1,4 +1,4 @@
-import { SendMessageCommand } from '@aws-sdk/client-sqs';
+import { GetQueueUrlCommand, SendMessageCommand } from '@aws-sdk/client-sqs';
 import { SQS } from './sqs';
 
 const sendMock = jest.fn();
@@ -7,7 +7,8 @@ jest.mock('@aws-sdk/client-sqs', () => ({
   SQSClient: jest.fn(() => ({
     send: sendMock
   })),
-  SendMessageCommand: jest.fn()
+  SendMessageCommand: jest.fn(),
+  GetQueueUrlCommand: jest.fn()
 }));
 
 describe('SQS', () => {
@@ -63,5 +64,31 @@ describe('SQS', () => {
       MessageGroupId: 'custom-group'
     });
     expect(sendMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('resolves queue url by queue name and caches it', async () => {
+    const sqs = new SQS();
+    sendMock
+      .mockResolvedValueOnce({
+        QueueUrl: 'https://sqs.us-east-1.amazonaws.com/123/s3-uploader-jobs'
+      })
+      .mockResolvedValueOnce({ MessageId: 'mid-123' })
+      .mockResolvedValueOnce({ MessageId: 'mid-456' });
+
+    await sqs.sendToQueueName({
+      message: { hello: 'world' },
+      queueName: 's3-uploader-jobs'
+    });
+    await sqs.sendToQueueName({
+      message: { hello: 'again' },
+      queueName: 's3-uploader-jobs'
+    });
+
+    expect(GetQueueUrlCommand).toHaveBeenCalledTimes(1);
+    expect(GetQueueUrlCommand).toHaveBeenCalledWith({
+      QueueName: 's3-uploader-jobs'
+    });
+    expect(SendMessageCommand).toHaveBeenCalledTimes(2);
+    expect(sendMock).toHaveBeenCalledTimes(3);
   });
 });
