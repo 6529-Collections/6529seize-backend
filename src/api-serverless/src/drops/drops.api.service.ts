@@ -71,7 +71,10 @@ import {
 } from '../ws/ws-listeners-notifier';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import { CurationsDb, curationsDb } from '@/api/curations/curations.db';
-import { directMessageWaveDisplayService } from '@/api/waves/direct-message-wave-display.service';
+import {
+  directMessageWaveDisplayService,
+  resolveWavePictureOverride
+} from '@/api/waves/direct-message-wave-display.service';
 
 export class DropsApiService {
   constructor(
@@ -509,7 +512,10 @@ export class DropsApiService {
     const waveMin: ApiWaveMin = {
       id: wave.id,
       name: displayByWaveId[wave.id]?.name ?? wave.name,
-      picture: displayByWaveId[wave.id]?.picture ?? wave.picture,
+      picture: resolveWavePictureOverride(
+        wave.picture,
+        displayByWaveId[wave.id]
+      ),
       description_drop_id: wave.description_drop_id,
       authenticated_user_eligible_to_vote:
         wave.voting_group_id === null ||
@@ -665,7 +671,10 @@ export class DropsApiService {
     const waveMin: ApiWaveMin = {
       id: waveEntity.id,
       name: displayByWaveId[waveEntity.id]?.name ?? waveEntity.name,
-      picture: displayByWaveId[waveEntity.id]?.picture ?? waveEntity.picture,
+      picture: resolveWavePictureOverride(
+        waveEntity.picture,
+        displayByWaveId[waveEntity.id]
+      ),
       description_drop_id: waveEntity.description_drop_id,
       authenticated_user_eligible_to_vote:
         waveEntity.voting_group_id === null ||

@@ -76,6 +76,7 @@ import {
 } from '@/nft-links/nft-link-resolving.service';
 import {
   directMessageWaveDisplayService,
+  resolveWavePictureOverride,
   WaveDisplayOverride
 } from '@/api/waves/direct-message-wave-display.service';
 
@@ -1060,7 +1061,10 @@ export class DropsMappers {
     return {
       id: waveEntity.id,
       name: displayByWaveId[waveEntity.id]?.name ?? waveEntity.name,
-      picture: displayByWaveId[waveEntity.id]?.picture ?? waveEntity.picture,
+      picture: resolveWavePictureOverride(
+        waveEntity.picture,
+        displayByWaveId[waveEntity.id]
+      ),
       description_drop_id: waveEntity.description_drop_id,
       authenticated_user_eligible_to_chat:
         waveEntity.chat_enabled &&

@@ -15,8 +15,21 @@ import {
 
 export type WaveDisplayOverride = {
   readonly name?: string;
-  readonly picture?: string;
+  readonly picture?: string | null;
 };
+
+export function resolveWavePictureOverride(
+  wavePicture: string | null,
+  waveDisplayOverride?: WaveDisplayOverride
+): string | null {
+  if (
+    waveDisplayOverride &&
+    Object.prototype.hasOwnProperty.call(waveDisplayOverride, 'picture')
+  ) {
+    return waveDisplayOverride.picture ?? null;
+  }
+  return wavePicture;
+}
 
 export class DirectMessageWaveDisplayService {
   constructor(
@@ -154,13 +167,16 @@ export class DirectMessageWaveDisplayService {
             .map((profile) => profile.handle?.trim())
             .filter((handle): handle is string => !!handle)
         );
-        const picture = sortedEffectiveDisplayProfiles.find(
-          (it) => !!it.pfp
-        )?.pfp;
-        if (handles.length || picture) {
+        const hasMoreThanTwoParties = participantProfileIds.length > 2;
+        const picture = hasMoreThanTwoParties
+          ? null
+          : sortedEffectiveDisplayProfiles.find((it) => !!it.pfp)?.pfp;
+        if (handles.length || hasMoreThanTwoParties || picture) {
           acc[waveId] = {
             ...(handles.length ? { name: handles.join(', ') } : {}),
-            ...(picture ? { picture } : {})
+            ...(hasMoreThanTwoParties || picture
+              ? { picture: picture ?? null }
+              : {})
           };
         }
         return acc;

@@ -2,6 +2,10 @@ import { Like } from 'typeorm';
 import { userGroupsService } from '../api-serverless/src/community-members/user-groups.service';
 import { ApiIdentity } from '../api-serverless/src/generated/models/ApiIdentity';
 import { identityFetcher } from '../api-serverless/src/identities/identity.fetcher';
+import {
+  directMessageWaveDisplayService,
+  resolveWavePictureOverride
+} from '../api-serverless/src/waves/direct-message-wave-display.service';
 import { getDataSource } from '../db';
 import { DropEntity, DropPartEntity } from '../entities/IDrop';
 import {
@@ -587,10 +591,11 @@ async function handleWaveCreated(
     notification.id,
     notification.wave_id
   );
+  const waveDisplay = await getWaveDisplayForRecipient(notification, wave);
 
-  const title = `${additionalEntity.handle} invited you to a wave: ${wave.name}`;
+  const title = `${additionalEntity.handle} invited you to a wave: ${waveDisplay.name}`;
   const body = 'View wave';
-  const imageUrl = wave.picture ?? undefined;
+  const imageUrl = waveDisplay.picture ?? undefined;
   const data = {
     redirect: 'waves',
     wave_id: notification.wave_id
@@ -614,6 +619,22 @@ async function getWaveEntityOrThrow(
   return wave;
 }
 
+async function getWaveDisplayForRecipient(
+  notification: IdentityNotificationEntity,
+  wave: WaveEntity
+): Promise<{ name: string; picture: string | null }> {
+  const displayByWaveId =
+    await directMessageWaveDisplayService.resolveWaveDisplayByWaveIdForContext({
+      waveEntities: [wave],
+      contextProfileId: notification.identity_id
+    });
+  const display = displayByWaveId[wave.id];
+  return {
+    name: display?.name ?? wave.name,
+    picture: resolveWavePictureOverride(wave.picture, display)
+  };
+}
+
 async function handleAllDrops(
   notification: IdentityNotificationEntity,
   additionalEntity: ApiIdentity
@@ -622,6 +643,7 @@ async function handleAllDrops(
     notification.id,
     notification.wave_id
   );
+  const waveDisplay = await getWaveDisplayForRecipient(notification, wave);
   const isRating =
     typeof (notification.additional_data as any).vote === 'number';
 
@@ -635,11 +657,11 @@ async function handleAllDrops(
     title = `${additionalEntity.handle}`;
   }
 
-  title += ` in ${wave.name}`;
+  title += ` in ${waveDisplay.name}`;
 
   const dropPart = await getDropPart(notification);
   const dropSerialNo = await getDropSerialNo(notification.related_drop_id);
-  const imageUrl = wave.picture ?? additionalEntity.pfp;
+  const imageUrl = waveDisplay.picture ?? additionalEntity.pfp;
   const body = dropPart?.content ?? 'View drop';
   const data = {
     redirect: 'waves',
@@ -657,11 +679,12 @@ async function handlePriorityAlert(
     notification.id,
     notification.wave_id
   );
+  const waveDisplay = await getWaveDisplayForRecipient(notification, wave);
 
   const drop = await getDrop(notification);
   const dropPart = await getDropPart(notification);
   const dropSerialNo = await getDropSerialNo(notification.related_drop_id);
-  const imageUrl = wave.picture ?? additionalEntity.pfp;
+  const imageUrl = waveDisplay.picture ?? additionalEntity.pfp;
   const title = `🚨 ${drop?.title ?? 'Priority Alert'}`;
   const body = dropPart?.content ?? 'View alert';
   const data = {
