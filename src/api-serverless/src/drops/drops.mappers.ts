@@ -195,9 +195,10 @@ export class DropsMappers {
         ? AuthenticationContext.fromProfileId(contextProfileId)
         : AuthenticationContext.notAuthenticated()
     });
-    const waveIds = dropEntities.map((it) => it.id);
+    const dropIds = dropEntities.map((it) => it.id);
+    const waveIds = collections.distinct(dropEntities.map((it) => it.wave_id));
     const [waveOverviews, pinnedWaveIds] = await Promise.all([
-      this.wavesApiDb.getWavesByDropIds(waveIds, connection),
+      this.wavesApiDb.getWavesByDropIds(dropIds, connection),
       this.wavesApiDb.whichOfWavesArePinnedByGivenProfile(
         {
           waveIds,
