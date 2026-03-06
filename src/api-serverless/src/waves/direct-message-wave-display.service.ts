@@ -39,7 +39,7 @@ export class DirectMessageWaveDisplayService {
     connection?: ConnectionWrapper<any>
   ): Promise<Record<string, WaveDisplayOverride>> {
     const directMessageWaves = waveEntities.filter(
-      (waveEntity) => waveEntity.is_direct_message
+      (waveEntity) => waveEntity.is_direct_message === true
     );
     if (!directMessageWaves.length) {
       return {};
@@ -127,12 +127,18 @@ export class DirectMessageWaveDisplayService {
           directMessageParticipantProfileIdsByIdentityGroupId[
             identityGroupId
           ] ?? [];
+        if (
+          !contextProfileId ||
+          !participantProfileIds.includes(contextProfileId)
+        ) {
+          return acc;
+        }
         const participantProfiles = participantProfileIds
           .map((profileId) => allProfilesById[profileId])
           .filter((it): it is ApiProfileMin => !!it);
-        const displayProfiles = contextProfileId
-          ? participantProfiles.filter((it) => it.id !== contextProfileId)
-          : participantProfiles;
+        const displayProfiles = participantProfiles.filter(
+          (it) => it.id !== contextProfileId
+        );
         const effectiveDisplayProfiles = displayProfiles.length
           ? displayProfiles
           : participantProfiles;
