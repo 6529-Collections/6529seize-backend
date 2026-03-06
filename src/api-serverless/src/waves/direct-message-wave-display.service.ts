@@ -45,18 +45,15 @@ export class DirectMessageWaveDisplayService {
       return {};
     }
     const waveGroupIds = collections.distinct(
-      directMessageWaves
-        .map(
-          (waveEntity) =>
-            [
-              waveEntity.visibility_group_id,
-              waveEntity.participation_group_id,
-              waveEntity.chat_group_id,
-              waveEntity.admin_group_id,
-              waveEntity.voting_group_id
-            ].filter((groupId) => groupId !== null) as string[]
-        )
-        .flat()
+      directMessageWaves.flatMap((waveEntity) =>
+        [
+          waveEntity.visibility_group_id,
+          waveEntity.participation_group_id,
+          waveEntity.chat_group_id,
+          waveEntity.admin_group_id,
+          waveEntity.voting_group_id
+        ].filter((groupId): groupId is string => groupId !== null)
+      )
     );
     if (!waveGroupIds.length) {
       return {};

@@ -421,18 +421,15 @@ export class WavesMappers {
       pinnedWaveIds
     ] = await Promise.all([
       this.userGroupsService.getByIds(
-        waveEntities
-          .map(
-            (waveEntity) =>
-              [
-                waveEntity.visibility_group_id,
-                waveEntity.participation_group_id,
-                waveEntity.voting_group_id,
-                waveEntity.admin_group_id,
-                waveEntity.chat_group_id
-              ].filter((id) => id !== null) as string[]
-          )
-          .flat(),
+        waveEntities.flatMap((waveEntity) =>
+          [
+            waveEntity.visibility_group_id,
+            waveEntity.participation_group_id,
+            waveEntity.voting_group_id,
+            waveEntity.admin_group_id,
+            waveEntity.chat_group_id
+          ].filter((id): id is string => id !== null)
+        ),
         ctx
       ),
       this.wavesApiDb.findWavesMetricsByWaveIds(waveIds, ctx),
@@ -516,14 +513,11 @@ export class WavesMappers {
       )
     ]);
     const profileIds = collections.distinct([
-      ...waveEntities
-        .map(
-          (waveEntity) =>
-            [waveEntity.created_by, waveEntity.voting_credit_creditor].filter(
-              (id) => id !== null
-            ) as string[]
+      ...waveEntities.flatMap((waveEntity) =>
+        [waveEntity.created_by, waveEntity.voting_credit_creditor].filter(
+          (id): id is string => id !== null
         )
-        .flat(),
+      ),
       ...curationEntities.map((curationEntity) => curationEntity.created_by)
     ]);
     const profileMins = await this.identityFetcher.getOverviewsByIds(
