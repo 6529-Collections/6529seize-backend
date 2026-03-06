@@ -48,6 +48,7 @@ import {
 } from '../identity-subscriptions/identity-subscriptions.db';
 import {
   directMessageWaveDisplayService,
+  resolveWavePictureOverride,
   WaveDisplayOverride
 } from '@/api/waves/direct-message-wave-display.service';
 import { InsertWaveEntity, wavesApiDb, WavesApiDb } from './waves.api.db';
@@ -376,7 +377,10 @@ export class WavesMappers {
     return {
       id: waveEntity.id,
       name: displayByWaveId[waveEntity.id]?.name ?? waveEntity.name,
-      picture: displayByWaveId[waveEntity.id]?.picture ?? waveEntity.picture,
+      picture: resolveWavePictureOverride(
+        waveEntity.picture,
+        displayByWaveId[waveEntity.id]
+      ),
       serial_no: waveEntity.serial_no,
       author: profiles[waveEntity.created_by],
       contributors_overview: contributorsOverview,
