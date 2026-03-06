@@ -54,6 +54,26 @@ import { InsertWaveEntity, wavesApiDb, WavesApiDb } from './waves.api.db';
 import { enums } from '../../../enums';
 import { collections } from '../../../collections';
 
+type WaveMappingRelatedData = {
+  contributors: Record<
+    string,
+    { contributor_identity: string; contributor_pfp: string }[]
+  >;
+  profiles: Record<string, ApiProfileMin>;
+  curations: Record<string, ApiGroup>;
+  displayByWaveId: Record<string, WaveDisplayOverride>;
+  creationDrops: Record<string, ApiDrop>;
+  subscribedActions: Record<string, ApiWaveSubscriptionTargetAction[]>;
+  metrics: Record<string, WaveMetricEntity>;
+  authenticatedUserMetrics: Record<string, WaveDropperMetricEntity>;
+  authenticatedUserReaderMetrics: Record<string, WaveReaderMetricEntity>;
+  yourParticipationDropsCountByWaveId: Record<string, number>;
+  yourUnreadDropsCountByWaveId: Record<string, number>;
+  firstUnreadDropSerialNoByWaveId: Record<string, number | null>;
+  wavePauses: Record<string, WaveDecisionPauseEntity[]>;
+  pinnedWaveIds: Set<string>;
+};
+
 export class WavesMappers {
   constructor(
     private readonly identityFetcher: IdentityFetcher,
@@ -186,12 +206,41 @@ export class WavesMappers {
     },
     ctx: RequestContext
   ): Promise<ApiWave[]> {
+    const relatedData = await this.getRelatedData(
+      waveEntities,
+      groupIdsUserIsEligibleFor,
+      ctx
+    );
+    return waveEntities.map<ApiWave>((waveEntity) =>
+      this.mapWaveEntityToApiWave({
+        waveEntity,
+        relatedData,
+        noRightToVote,
+        groupIdsUserIsEligibleFor,
+        noRightToParticipate
+      })
+    );
+  }
+
+  private mapWaveEntityToApiWave({
+    waveEntity,
+    relatedData,
+    noRightToVote,
+    groupIdsUserIsEligibleFor,
+    noRightToParticipate
+  }: {
+    waveEntity: WaveEntity;
+    relatedData: WaveMappingRelatedData;
+    noRightToVote: boolean;
+    groupIdsUserIsEligibleFor: string[];
+    noRightToParticipate: boolean;
+  }): ApiWave {
     const {
       contributors,
       profiles,
+      creationDrops,
       curations,
       displayByWaveId,
-      creationDrops,
       subscribedActions,
       metrics,
       authenticatedUserMetrics,
@@ -201,76 +250,7 @@ export class WavesMappers {
       firstUnreadDropSerialNoByWaveId,
       wavePauses,
       pinnedWaveIds
-    } = await this.getRelatedData(waveEntities, groupIdsUserIsEligibleFor, ctx);
-    return waveEntities.map<ApiWave>((waveEntity) =>
-      this.mapWaveEntityToApiWave({
-        waveEntity,
-        profiles,
-        contributors,
-        creationDrops,
-        curations,
-        displayByWaveId,
-        subscribedActions,
-        noRightToVote,
-        groupIdsUserIsEligibleFor,
-        noRightToParticipate,
-        metrics,
-        authenticatedUserMetrics,
-        authenticatedUserReaderMetrics,
-        yourParticipationDropsCountByWaveId,
-        yourUnreadDropsCountByWaveId,
-        firstUnreadDropSerialNoByWaveId,
-        wavePauses,
-        pinnedWaveIds
-      })
-    );
-  }
-
-  private mapWaveEntityToApiWave({
-    waveEntity,
-    profiles,
-    contributors,
-    creationDrops,
-    curations,
-    displayByWaveId,
-    subscribedActions,
-    noRightToVote,
-    groupIdsUserIsEligibleFor,
-    noRightToParticipate,
-    metrics,
-    authenticatedUserMetrics,
-    authenticatedUserReaderMetrics,
-    yourParticipationDropsCountByWaveId,
-    yourUnreadDropsCountByWaveId,
-    firstUnreadDropSerialNoByWaveId,
-    wavePauses,
-    pinnedWaveIds
-  }: {
-    waveEntity: WaveEntity;
-    profiles: Record<string, ApiProfileMin>;
-    contributors: Record<
-      string,
-      {
-        contributor_identity: string;
-        contributor_pfp: string;
-      }[]
-    >;
-    creationDrops: Record<string, ApiDrop>;
-    curations: Record<string, ApiGroup>;
-    displayByWaveId: Record<string, WaveDisplayOverride>;
-    subscribedActions: Record<string, ApiWaveSubscriptionTargetAction[]>;
-    noRightToVote: boolean;
-    groupIdsUserIsEligibleFor: string[];
-    noRightToParticipate: boolean;
-    metrics: Record<string, WaveMetricEntity>;
-    authenticatedUserMetrics: Record<string, WaveDropperMetricEntity>;
-    authenticatedUserReaderMetrics: Record<string, WaveReaderMetricEntity>;
-    yourParticipationDropsCountByWaveId: Record<string, number>;
-    yourUnreadDropsCountByWaveId: Record<string, number>;
-    firstUnreadDropSerialNoByWaveId: Record<string, number | null>;
-    wavePauses: Record<string, WaveDecisionPauseEntity[]>;
-    pinnedWaveIds: Set<string>;
-  }): ApiWave {
+    } = relatedData;
     const contributorsOverview: ApiWaveContributorOverview[] =
       contributors[waveEntity.id]?.map((it) => ({
         contributor_identity: it.contributor_identity,
@@ -418,25 +398,7 @@ export class WavesMappers {
     waveEntities: WaveEntity[],
     groupIdsUserIsEligibleFor: string[],
     ctx: RequestContext
-  ): Promise<{
-    contributors: Record<
-      string,
-      { contributor_identity: string; contributor_pfp: string }[]
-    >;
-    profiles: Record<string, ApiProfileMin>;
-    curations: Record<string, ApiGroup>;
-    displayByWaveId: Record<string, WaveDisplayOverride>;
-    creationDrops: Record<string, ApiDrop>;
-    subscribedActions: Record<string, ApiWaveSubscriptionTargetAction[]>;
-    metrics: Record<string, WaveMetricEntity>;
-    authenticatedUserMetrics: Record<string, WaveDropperMetricEntity>;
-    authenticatedUserReaderMetrics: Record<string, WaveReaderMetricEntity>;
-    yourParticipationDropsCountByWaveId: Record<string, number>;
-    yourUnreadDropsCountByWaveId: Record<string, number>;
-    firstUnreadDropSerialNoByWaveId: Record<string, number | null>;
-    wavePauses: Record<string, WaveDecisionPauseEntity[]>;
-    pinnedWaveIds: Set<string>;
-  }> {
+  ): Promise<WaveMappingRelatedData> {
     ctx.timer?.start('wavesMappers->getRelatedData');
     const waveIds = waveEntities.map((it) => it.id);
     const authenticatedUserId = ctx.authenticationContext?.getActingAsId();

@@ -71,6 +71,7 @@ import {
 } from '../ws/ws-listeners-notifier';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import { CurationsDb, curationsDb } from '@/api/curations/curations.db';
+import { directMessageWaveDisplayService } from '@/api/waves/direct-message-wave-display.service';
 
 export class DropsApiService {
   constructor(
@@ -498,9 +499,11 @@ export class DropsApiService {
       throw new NotFoundException(`Wave ${wave_id} not found`);
     }
     const displayByWaveId =
-      await this.dropsMappers.resolveWaveDisplayByWaveIdForContext(
-        [wave],
-        context_profile_id,
+      await directMessageWaveDisplayService.resolveWaveDisplayByWaveIdForContext(
+        {
+          waveEntities: [wave],
+          contextProfileId: context_profile_id
+        },
         ctx.connection
       );
     const waveMin: ApiWaveMin = {
@@ -651,9 +654,11 @@ export class DropsApiService {
       throw new BadRequestException(`CHAT waves don't have a leaderboard`);
     }
     const displayByWaveId =
-      await this.dropsMappers.resolveWaveDisplayByWaveIdForContext(
-        [waveEntity],
-        authenticatedProfileId,
+      await directMessageWaveDisplayService.resolveWaveDisplayByWaveIdForContext(
+        {
+          waveEntities: [waveEntity],
+          contextProfileId: authenticatedProfileId
+        },
         ctx.connection
       );
     const votingPeriodEnd = waveEntity.voting_period_end;
