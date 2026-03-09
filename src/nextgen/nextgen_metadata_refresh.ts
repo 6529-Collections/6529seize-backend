@@ -1,7 +1,7 @@
 import { getDataSource } from '../db';
 import { Logger } from '../logging';
 import { fetchAllNftOwners } from '../nftOwnersLoop/db.nft_owners';
-import { randomInt } from 'crypto';
+import { randomInt } from 'node:crypto';
 import {
   fetchNextGenCollections,
   fetchNextGenTokensForCollection
