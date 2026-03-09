@@ -30,6 +30,11 @@ import { RedeemedSubscription } from '@/entities/ISubscription';
 import { Transaction } from '@/entities/ITransaction';
 import { TokenType } from '@/enums';
 import { Logger } from '@/logging';
+import {
+  getPayloadPreview,
+  isPlainObject,
+  normalizeMetadataPayload
+} from '@/metadata-payload';
 import { getRpcProvider } from '@/rpc-provider';
 import { equalIgnoreCase } from '@/strings';
 import { text } from '@/text';
@@ -106,39 +111,6 @@ function isValidUrl(uri: string): boolean {
 }
 
 const METADATA_FETCH_TIMEOUT_MS = 10000;
-
-function isPlainObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v);
-}
-
-function getPayloadPreview(payload: unknown, maxLen = 140): string {
-  if (typeof payload === 'string') {
-    return payload.replace(/\s+/g, ' ').slice(0, maxLen);
-  }
-
-  try {
-    return JSON.stringify(payload).slice(0, maxLen);
-  } catch {
-    return String(payload).slice(0, maxLen);
-  }
-}
-
-function normalizeMetadataPayload(
-  payload: unknown
-): Record<string, unknown> | null {
-  if (isPlainObject(payload)) return payload;
-  if (typeof payload !== 'string') return null;
-
-  const trimmed = payload.trim();
-  if (!trimmed) return null;
-
-  try {
-    const parsed: unknown = JSON.parse(trimmed);
-    return isPlainObject(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
-}
 
 async function fetchMetadata(uri: string): Promise<any> {
   const url = uri.startsWith('ipfs://')

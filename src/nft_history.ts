@@ -24,6 +24,10 @@ import { NFTHistory, NFTHistoryClaim } from './entities/INFTHistory';
 import { NFT_HISTORY_IFACE } from './abis/nft_history';
 import { withArweaveFallback } from '@/arweave-gateway-fallback';
 import { Logger } from './logging';
+import {
+  getPayloadPreview,
+  normalizeMetadataPayload
+} from '@/metadata-payload';
 import { equalIgnoreCase } from './strings';
 
 const logger = Logger.get('NFT_HISTORY');
@@ -191,14 +195,34 @@ export const getEditDescription = async (
   newUri: string,
   blockNumber: number
 ) => {
+  const fetchMetadataForDiff = async (uri: string) => {
+    return await withArweaveFallback(uri, async (u) => {
+      const res = await fetch(u);
+      const body = await res.text();
+
+      if (!res.ok) {
+        throw new Error(
+          `Metadata fetch failed for ${u} with status ${res.status}`
+        );
+      }
+
+      const metadata = normalizeMetadataPayload(body);
+      if (!metadata) {
+        const contentType = res.headers.get('content-type') ?? 'unknown';
+        const preview = getPayloadPreview(body);
+        throw new Error(
+          `Invalid metadata payload for ${u} (content-type: ${contentType}, preview: ${preview})`
+        );
+      }
+
+      return metadata;
+    });
+  };
+
   const previousUri = await fetchLatestNftUri(tokenId, contract, blockNumber);
   if (previousUri && !equalIgnoreCase(previousUri, newUri)) {
-    const previousMeta: any = await (
-      await withArweaveFallback(previousUri, (u) => fetch(u))
-    ).json();
-    const newMeta: any = await (
-      await withArweaveFallback(newUri, (u) => fetch(u))
-    ).json();
+    const previousMeta: any = await fetchMetadataForDiff(previousUri);
+    const newMeta: any = await fetchMetadataForDiff(newUri);
 
     const changes: any[] = [];
     for (const key in previousMeta) {

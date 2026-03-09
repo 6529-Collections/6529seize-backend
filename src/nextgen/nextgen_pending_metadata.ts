@@ -4,10 +4,36 @@ import {
   fetchPendingNextgenTokens
 } from './nextgen.db';
 import { Logger } from '../logging';
+import {
+  getPayloadPreview,
+  normalizeMetadataPayload
+} from '@/metadata-payload';
 import { processTraits } from './nextgen_core_events';
 import { EntityManager } from 'typeorm';
 
 const logger = Logger.get('NEXTGEN_PENDING_METADATA');
+
+async function fetchPendingTokenMetadata(
+  metadataLink: string
+): Promise<Record<string, unknown>> {
+  const res = await fetch(metadataLink);
+  const body = await res.text();
+  if (!res.ok) {
+    throw new Error(
+      `Metadata fetch failed for ${metadataLink} with status ${res.status}`
+    );
+  }
+
+  const metadata = normalizeMetadataPayload(body);
+  if (!metadata) {
+    const contentType = res.headers.get('content-type') ?? 'unknown';
+    const preview = getPayloadPreview(body);
+    throw new Error(
+      `Invalid metadata payload for ${metadataLink} (content-type: ${contentType}, preview: ${preview})`
+    );
+  }
+  return metadata;
+}
 
 export async function processPendingMetadataTokens(
   entityManager: EntityManager
@@ -25,10 +51,16 @@ export async function processPendingMetadataTokens(
     }
     const metadataLink = `${collection.base_uri}${token.id}`;
     try {
-      const metadataResponse: any = await (await fetch(metadataLink)).json();
-      const pending = metadataResponse.name.toLowerCase().startsWith('pending');
+      const metadataResponse: any =
+        await fetchPendingTokenMetadata(metadataLink);
+      const metadataName = metadataResponse.name;
+      if (typeof metadataName !== 'string') {
+        throw new Error(`Invalid metadata.name for ${metadataLink}`);
+      }
 
-      token.name = metadataResponse.name;
+      const pending = metadataName.toLowerCase().startsWith('pending');
+
+      token.name = metadataName;
       token.metadata_url = metadataLink;
       token.image_url = metadataResponse.image;
       token.animation_url = metadataResponse.animation_url;
