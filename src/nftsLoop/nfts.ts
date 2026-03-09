@@ -588,7 +588,6 @@ async function updateUri(
 
   const metadata = await fetchMetadata(uri);
   if (!metadata) return;
-  validateMetadata(metadata);
 
   logger.info(
     `♻️ ${nft.contract} #${nft.id} resetting URI from ${

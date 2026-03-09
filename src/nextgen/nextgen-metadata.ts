@@ -34,7 +34,7 @@ export function getRequiredMetadataName(
 ): string {
   const name = metadata.name;
   if (typeof name !== 'string') {
-    throw new Error(`Invalid metadata.name for ${metadataLink}`);
+    throw new TypeError(`Invalid metadata.name for ${metadataLink}`);
   }
   return name;
 }

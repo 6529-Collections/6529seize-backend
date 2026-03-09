@@ -514,24 +514,30 @@ export const getDeployerTransactions = async (
     } else if (tx?.data.startsWith(SET_TOKEN_URI_METHOD)) {
       const details = await findDetailsFromTransaction(tx);
       if (details) {
-        const editDescription = await getEditDescription(
-          details.tokenId,
-          details.contract,
-          details.tokenUri,
-          tx.blockNumber!
-        );
-        if (editDescription) {
-          const nftEdit: NFTHistory = {
-            created_at: new Date(),
-            nft_id: details.tokenId,
-            contract: details.contract,
-            uri: details.tokenUri,
-            transaction_date: new Date(t.metadata.blockTimestamp),
-            transaction_hash: t.hash,
-            block: parseInt(t.blockNum, 16),
-            description: editDescription
-          };
-          await persistNftHistory([nftEdit]);
+        try {
+          const editDescription = await getEditDescription(
+            details.tokenId,
+            details.contract,
+            details.tokenUri,
+            tx.blockNumber!
+          );
+          if (editDescription) {
+            const nftEdit: NFTHistory = {
+              created_at: new Date(),
+              nft_id: details.tokenId,
+              contract: details.contract,
+              uri: details.tokenUri,
+              transaction_date: new Date(t.metadata.blockTimestamp),
+              transaction_hash: t.hash,
+              block: parseInt(t.blockNum, 16),
+              description: editDescription
+            };
+            await persistNftHistory([nftEdit]);
+          }
+        } catch (e: any) {
+          logger.error(
+            `[ERROR PROCESSING SET_TOKEN_URI TX ${tx.hash}] [CONTRACT ${details.contract}] [TOKEN ID ${details.tokenId}] [URI ${details.tokenUri}] [ERROR ${e?.message ?? String(e)}]`
+          );
         }
       }
     } else if (tx?.data.startsWith(AIRDROP_METHOD)) {
