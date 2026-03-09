@@ -15,10 +15,10 @@ import { HttpFile } from '../http/http';
 
 export class ApiCollectedStats {
     'boost': number;
-    'nextgens_held': number;
-    'gradients_held': number;
-    'total_cards_held': number;
-    'unique_cards_held': number;
+    'nextgen_balance': number;
+    'gradients_balance': number;
+    'memes_balance': number;
+    'unique_memes': number;
     'seasons': Array<ApiCollectedStatsSeason>;
 
     static readonly discriminator: string | undefined = undefined;
@@ -31,26 +31,26 @@ export class ApiCollectedStats {
             "format": "double"
         },
         {
-            "name": "nextgens_held",
-            "baseName": "nextgens_held",
+            "name": "nextgen_balance",
+            "baseName": "nextgen_balance",
             "type": "number",
             "format": "int64"
         },
         {
-            "name": "gradients_held",
-            "baseName": "gradients_held",
+            "name": "gradients_balance",
+            "baseName": "gradients_balance",
             "type": "number",
             "format": "int64"
         },
         {
-            "name": "total_cards_held",
-            "baseName": "total_cards_held",
+            "name": "memes_balance",
+            "baseName": "memes_balance",
             "type": "number",
             "format": "int64"
         },
         {
-            "name": "unique_cards_held",
-            "baseName": "unique_cards_held",
+            "name": "unique_memes",
+            "baseName": "unique_memes",
             "type": "number",
             "format": "int64"
         },

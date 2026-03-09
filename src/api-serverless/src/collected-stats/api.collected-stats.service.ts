@@ -69,13 +69,13 @@ export class CollectedStatsService {
 
     return {
       boost: Number(summary?.boost ?? 1),
-      nextgens_held: Number(summary?.nextgens_held ?? 0),
-      gradients_held: Number(summary?.gradients_held ?? 0),
-      total_cards_held: heldBalances.reduce(
-        (total, row) => total + Number(row.balance),
-        0
+      nextgen_balance: Number(summary?.nextgen_balance ?? 0),
+      gradients_balance: Number(summary?.gradients_balance ?? 0),
+      memes_balance: Number(
+        summary?.memes_balance ??
+          heldBalances.reduce((total, row) => total + Number(row.balance), 0)
       ),
-      unique_cards_held: heldBalances.length,
+      unique_memes: Number(summary?.unique_memes ?? heldBalances.length),
       seasons: seasonDefinitions.map((definition) =>
         this.toApiSeasonStats(
           definition,

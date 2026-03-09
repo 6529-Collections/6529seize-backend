@@ -10020,25 +10020,25 @@ components:
       type: object
       required:
         - boost
-        - nextgens_held
-        - gradients_held
-        - total_cards_held
-        - unique_cards_held
+        - nextgen_balance
+        - gradients_balance
+        - memes_balance
+        - unique_memes
         - seasons
       properties:
         boost:
           type: number
           format: double
-        nextgens_held:
+        nextgen_balance:
           type: integer
           format: int64
-        gradients_held:
+        gradients_balance:
           type: integer
           format: int64
-        total_cards_held:
+        memes_balance:
           type: integer
           format: int64
-        unique_cards_held:
+        unique_memes:
           type: integer
           format: int64
         seasons:
