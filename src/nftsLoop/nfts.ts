@@ -107,15 +107,58 @@ function isValidUrl(uri: string): boolean {
 
 const METADATA_FETCH_TIMEOUT_MS = 10000;
 
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+function getPayloadPreview(payload: unknown, maxLen = 140): string {
+  if (typeof payload === 'string') {
+    return payload.replace(/\s+/g, ' ').slice(0, maxLen);
+  }
+
+  try {
+    return JSON.stringify(payload).slice(0, maxLen);
+  } catch {
+    return String(payload).slice(0, maxLen);
+  }
+}
+
+function normalizeMetadataPayload(
+  payload: unknown
+): Record<string, unknown> | null {
+  if (isPlainObject(payload)) return payload;
+  if (typeof payload !== 'string') return null;
+
+  const trimmed = payload.trim();
+  if (!trimmed) return null;
+
+  try {
+    const parsed: unknown = JSON.parse(trimmed);
+    return isPlainObject(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 async function fetchMetadata(uri: string): Promise<any> {
   const url = uri.startsWith('ipfs://')
     ? uri.replace('ipfs://', 'https://ipfs.6529.io/ipfs/')
     : uri;
   try {
     return await withArweaveFallback(url, (u) =>
-      axios
-        .get(u, { timeout: METADATA_FETCH_TIMEOUT_MS })
-        .then((res) => res.data)
+      axios.get(u, { timeout: METADATA_FETCH_TIMEOUT_MS }).then((res) => {
+        const metadata = normalizeMetadataPayload(res.data);
+        if (!metadata) {
+          const contentType = String(
+            res.headers?.['content-type'] ?? 'unknown'
+          );
+          const preview = getPayloadPreview(res.data);
+          throw new Error(
+            `Invalid metadata payload from ${u} (content-type: ${contentType}, preview: ${preview})`
+          );
+        }
+        return metadata;
+      })
     );
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -345,7 +388,7 @@ function validateUri(uri: string) {
 }
 
 function validateMetadata(metadata: any) {
-  if (!metadata) {
+  if (!isPlainObject(metadata)) {
     throw new Error('Invalid Metadata');
   }
 }
@@ -573,6 +616,7 @@ async function updateUri(
 
   const metadata = await fetchMetadata(uri);
   if (!metadata) return;
+  validateMetadata(metadata);
 
   logger.info(
     `♻️ ${nft.contract} #${nft.id} resetting URI from ${
