@@ -35,14 +35,14 @@ export async function processPendingMetadataTokens(
         metadataLink
       );
 
-      const pending = metadataName.toLowerCase().startsWith('pending');
+      const isPending = metadataName.toLowerCase().startsWith('pending');
 
       token.name = metadataName;
       token.metadata_url = metadataLink;
       token.image_url = metadataResponse.image;
       token.animation_url = metadataResponse.animation_url;
       token.generator = metadataResponse.generator;
-      token.pending = pending;
+      token.pending = isPending;
 
       await persistNextGenToken(entityManager, token);
       if (metadataResponse.attributes) {
@@ -54,7 +54,7 @@ export async function processPendingMetadataTokens(
         );
       }
       logger.info(
-        `[TOKEN ID ${token.id}] : [PENDING ${pending}] : [METADATA LINK ${metadataLink}]`
+        `[TOKEN ID ${token.id}] : [PENDING ${isPending}] : [METADATA LINK ${metadataLink}]`
       );
     } catch (e) {
       logger.info(

@@ -3,15 +3,33 @@ import {
   normalizeMetadataPayload
 } from '@/metadata-payload';
 
+const METADATA_FETCH_TIMEOUT_MS = 10000;
+
 export async function fetchNextGenMetadata(
   metadataLink: string
 ): Promise<Record<string, unknown>> {
-  const res = await fetch(metadataLink);
+  const controller = new AbortController();
+  const timeoutId = setTimeout(
+    () => controller.abort(),
+    METADATA_FETCH_TIMEOUT_MS
+  );
+
+  let res: Response;
+  try {
+    res = await fetch(metadataLink, { signal: controller.signal });
+  } catch (error: unknown) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error(
+        `Metadata fetch timed out for ${metadataLink} after ${METADATA_FETCH_TIMEOUT_MS}ms`
+      );
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
   const body = await res.text();
-  const hasOk = typeof res?.ok === 'boolean';
-  const hasErrorStatus =
-    typeof res?.status === 'number' && Number(res.status) >= 400;
-  if ((hasOk && !res.ok) || hasErrorStatus) {
+  if (res.ok === false || res.status >= 400) {
     throw new Error(
       `Metadata fetch failed for ${metadataLink} with status ${res.status}`
     );
