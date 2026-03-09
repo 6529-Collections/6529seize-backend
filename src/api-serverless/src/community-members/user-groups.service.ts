@@ -1283,6 +1283,14 @@ export class UserGroupsService {
     );
   }
 
+  async findUserGroupsIdentityGroupProfileIds(
+    identityGroupIds: string[]
+  ): Promise<Record<string, string[]>> {
+    return await this.userGroupsDb.findUserGroupsIdentityGroupProfileIds(
+      identityGroupIds
+    );
+  }
+
   private async mapForApi(
     groups: UserGroupEntity[],
     ctx: RequestContext

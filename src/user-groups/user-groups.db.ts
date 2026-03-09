@@ -606,6 +606,32 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
       .then((res) => res.map((it) => it.address));
   }
 
+  async findUserGroupsIdentityGroupProfileIds(
+    identityGroupIds: string[]
+  ): Promise<Record<string, string[]>> {
+    if (!identityGroupIds.length) {
+      return {};
+    }
+    return this.db
+      .execute<{ profile_group_id: string; profile_id: string }>(
+        `select distinct profile_group_id, profile_id
+         from ${PROFILE_GROUPS_TABLE}
+         where profile_group_id in (:identityGroupIds)`,
+        { identityGroupIds: collections.distinct(identityGroupIds) }
+      )
+      .then((res) =>
+        res.reduce(
+          (acc, it) => {
+            const profileIds = acc[it.profile_group_id] ?? [];
+            profileIds.push(it.profile_id);
+            acc[it.profile_group_id] = profileIds;
+            return acc;
+          },
+          {} as Record<string, string[]>
+        )
+      );
+  }
+
   async findProfileGroupsWhereProfileIdIn(
     profileId: string,
     connectionHolder: ConnectionWrapper<any>
