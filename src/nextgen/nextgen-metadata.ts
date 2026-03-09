@@ -3,7 +3,7 @@ import {
   normalizeMetadataPayload
 } from '@/metadata-payload';
 
-const METADATA_FETCH_TIMEOUT_MS = 10000;
+const METADATA_FETCH_TIMEOUT_MS = 30000;
 
 export async function fetchNextGenMetadata(
   metadataLink: string
