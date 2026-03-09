@@ -1,0 +1,202 @@
+import { Logger } from '@/logging';
+
+const logger = Logger.get('S3_UPLOADER_JOBS');
+
+export const S3_UPLOADER_QUEUE_NAME = 's3-uploader-jobs';
+
+export enum S3UploaderCollectionType {
+  NFT = 'nft',
+  MEME_LAB = 'meme_lab'
+}
+
+export enum S3UploaderJobType {
+  IMAGE = 'image',
+  VIDEO = 'video'
+}
+
+export enum S3UploaderImageVariant {
+  ORIGINAL = 'original',
+  SCALED_60 = 'scaled_60',
+  SCALED_450 = 'scaled_450',
+  SCALED_1000 = 'scaled_1000'
+}
+
+export enum S3UploaderVideoVariant {
+  ORIGINAL = 'original',
+  SCALED_750 = 'scaled_750'
+}
+
+export const S3_UPLOADER_JOB_REASONS = [
+  'discover',
+  'refresh',
+  'audit'
+] as const;
+export type S3UploaderJobReason = (typeof S3_UPLOADER_JOB_REASONS)[number];
+
+export type S3UploaderJob =
+  | {
+      version?: 1;
+      reason: S3UploaderJobReason;
+      collectionType: S3UploaderCollectionType;
+      contract: string;
+      tokenId: number;
+      jobType: S3UploaderJobType.IMAGE;
+      variants: S3UploaderImageVariant[];
+    }
+  | {
+      version?: 1;
+      reason: S3UploaderJobReason;
+      collectionType: S3UploaderCollectionType;
+      contract: string;
+      tokenId: number;
+      jobType: S3UploaderJobType.VIDEO;
+      variants: S3UploaderVideoVariant[];
+    };
+
+export type QueueableNft = {
+  id: number;
+  contract: string;
+  icon?: string | null;
+  thumbnail?: string | null;
+  scaled?: string | null;
+  metadata?: {
+    image?: string;
+    image_url?: string;
+    image_details?: { format?: string } | null;
+    animation?: string;
+    animation_url?: string;
+    animation_details?: { format?: string } | string | null;
+  } | null;
+};
+
+export function buildS3UploaderJobsForNft({
+  nft,
+  collectionType,
+  reason
+}: {
+  nft: QueueableNft;
+  collectionType: S3UploaderCollectionType;
+  reason: S3UploaderJobReason;
+}): S3UploaderJob[] {
+  const jobs: S3UploaderJob[] = [];
+
+  const imageVariants = getImageVariants(nft);
+  if (imageVariants.length > 0) {
+    jobs.push({
+      version: 1,
+      reason,
+      collectionType,
+      contract: nft.contract,
+      tokenId: nft.id,
+      jobType: S3UploaderJobType.IMAGE,
+      variants: imageVariants
+    });
+  }
+
+  const videoVariants = getVideoVariants(nft);
+  if (videoVariants.length > 0) {
+    jobs.push({
+      version: 1,
+      reason,
+      collectionType,
+      contract: nft.contract,
+      tokenId: nft.id,
+      jobType: S3UploaderJobType.VIDEO,
+      variants: videoVariants
+    });
+  }
+
+  return jobs;
+}
+
+function getImageVariants(nft: QueueableNft): S3UploaderImageVariant[] {
+  const imageUrl = nft?.metadata?.image ?? nft?.metadata?.image_url;
+  if (!imageUrl) {
+    return [];
+  }
+
+  const variants: S3UploaderImageVariant[] = [S3UploaderImageVariant.ORIGINAL];
+  if (nft.scaled) {
+    variants.push(S3UploaderImageVariant.SCALED_1000);
+  }
+  if (nft.thumbnail) {
+    variants.push(S3UploaderImageVariant.SCALED_450);
+  }
+  if (nft.icon) {
+    variants.push(S3UploaderImageVariant.SCALED_60);
+  }
+  return variants;
+}
+
+function getVideoVariants(nft: QueueableNft): S3UploaderVideoVariant[] {
+  const videoUrl = nft?.metadata?.animation ?? nft?.metadata?.animation_url;
+  const animationDetails = parseAnimationDetails(
+    nft?.metadata?.animation_details
+  );
+  const format = animationDetails?.format?.toUpperCase?.();
+  if (!videoUrl || !['MP4', 'MOV'].includes(format ?? '')) {
+    return [];
+  }
+
+  return [S3UploaderVideoVariant.ORIGINAL, S3UploaderVideoVariant.SCALED_750];
+}
+
+function parseAnimationDetails(value: any): { format?: string } | null {
+  if (!value) {
+    return null;
+  }
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return null;
+    }
+  }
+  return value;
+}
+
+export function parseS3UploaderJob(messageBody: string): S3UploaderJob | null {
+  if (!messageBody) {
+    logger.warn('[PARSE_S3_UPLOADER_JOB] Message body is empty');
+    return null;
+  }
+
+  let parsed: any;
+  try {
+    parsed = JSON.parse(messageBody);
+  } catch {
+    logger.warn('[PARSE_S3_UPLOADER_JOB] Failed to parse message body');
+    return null;
+  }
+
+  if (
+    (parsed.version !== undefined && parsed.version !== 1) ||
+    typeof parsed.reason !== 'string' ||
+    !S3_UPLOADER_JOB_REASONS.includes(parsed.reason) ||
+    typeof parsed.contract !== 'string' ||
+    typeof parsed.tokenId !== 'number' ||
+    !Object.values(S3UploaderCollectionType).includes(parsed.collectionType) ||
+    !Object.values(S3UploaderJobType).includes(parsed.jobType) ||
+    !Array.isArray(parsed.variants)
+  ) {
+    logger.warn('[PARSE_S3_UPLOADER_JOB] Invalid job payload');
+    return null;
+  }
+
+  const validVariants =
+    parsed.jobType === S3UploaderJobType.IMAGE
+      ? new Set<string>(Object.values(S3UploaderImageVariant))
+      : new Set<string>(Object.values(S3UploaderVideoVariant));
+  const variantsAreValid =
+    parsed.variants.length > 0 &&
+    parsed.variants.every(
+      (variant: unknown) =>
+        typeof variant === 'string' && validVariants.has(variant)
+    );
+  if (!variantsAreValid) {
+    logger.warn('[PARSE_S3_UPLOADER_JOB] Invalid variants');
+    return null;
+  }
+
+  return parsed as S3UploaderJob;
+}

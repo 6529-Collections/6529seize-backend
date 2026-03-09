@@ -283,7 +283,7 @@ rates/
 refreshEnsLoop/
 rememesLoop/
 royaltiesLoop/
-s3Loop/
+s3Uploader/
 subscriptionsDaily/
 subscriptionsTopUpLoop/
 tdhConsolidationsLoop/
@@ -373,9 +373,14 @@ export class EthPrice {
 
 ## 4.2 Creating New Background Lambdas
 
-Folders ending with the suffix Loop represent background Lambdas (indexing, normalization, or various recurring tasks). To create a new background Lambda:
+There are 2 common Lambda naming patterns in this repo:
 
-1. Create a new folder under `src/` with a name ending in `Loop`.
+1. **Scheduled/background jobs** (run by a scheduler, e.g. every few minutes or once per day) use the `*Loop` suffix, such as `ethPriceLoop`.
+2. **Trigger-driven handlers** (run by SQS/SNS/S3/API Gateway/etc.) use a descriptive name without the `*Loop` suffix, such as `pushNotificationsHandler` or `s3Uploader`.
+
+To create a new background Lambda:
+
+1. Create a new folder under `src/` using the naming pattern that matches how it is invoked (`*Loop` for scheduled jobs, descriptive name for trigger-driven handlers).
 2. Add a `serverless.yaml` for deployment details.
 3. Register the new folder in `.github/workflows/deploy.yml`.
 4. Create an `index.ts` entry point with the required TypeORM entities (if needed) and logic.

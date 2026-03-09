@@ -117,10 +117,10 @@ async function generateExtendedData<T, M extends ExtendedBase>(
           burnt += tw.balance;
         } else {
           edition_size_not_burnt += tw.balance;
-          if (!equalIgnoreCase(tw.wallet, SIX529_MUSEUM)) {
-            edition_size_cleaned += tw.balance;
-          } else {
+          if (equalIgnoreCase(tw.wallet, SIX529_MUSEUM)) {
             museum_holdings += tw.balance;
+          } else {
+            edition_size_cleaned += tw.balance;
           }
         }
         edition_size += tw.balance;
@@ -218,11 +218,14 @@ export async function findMemesExtendedData() {
     getExtra: (nft) => {
       const attrs = nft.metadata?.attributes ?? [];
       return {
-        season: parseInt(
-          attrs.find((a: any) => a.trait_type === 'Type - Season')?.value ?? '0'
+        season: Number.parseInt(
+          attrs.find((a: any) => a.trait_type === 'Type - Season')?.value ??
+            '0',
+          10
         ),
-        meme: parseInt(
-          attrs.find((a: any) => a.trait_type === 'Type - Meme')?.value ?? '0'
+        meme: Number.parseInt(
+          attrs.find((a: any) => a.trait_type === 'Type - Meme')?.value ?? '0',
+          10
         ),
         meme_name: attrs.find((a: any) => a.trait_type === 'Meme Name')?.value
       };

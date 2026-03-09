@@ -30,6 +30,10 @@ functions:
           rate: rate(10 minutes)
           input:
             mode: 'refresh'
+      - schedule:
+          rate: rate(1 hour)
+          input:
+            mode: 'audit'
 
     vpc:
       securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}

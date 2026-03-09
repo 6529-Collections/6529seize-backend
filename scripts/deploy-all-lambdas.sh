@@ -33,7 +33,7 @@ SERVICES=(
   refreshEnsLoop
   rememesLoop
   royaltiesLoop
-  s3Loop
+  s3Uploader
   subscriptionsDaily
   subscriptionsTopUpLoop
   tdhHistoryLoop

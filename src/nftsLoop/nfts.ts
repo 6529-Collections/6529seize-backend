@@ -26,10 +26,19 @@ import {
 import { MemesMintStat } from '@/entities/IMemesMintStat';
 import { LabNFT, NFT, NFTWithExtendedData } from '@/entities/INFT';
 import { NFTOwner } from '@/entities/INFTOwner';
+import {
+  S3UploaderOutboxEntity,
+  S3UploaderOutboxStatus
+} from '@/entities/IS3UploaderOutbox';
 import { RedeemedSubscription } from '@/entities/ISubscription';
 import { Transaction } from '@/entities/ITransaction';
 import { TokenType } from '@/enums';
 import { Logger } from '@/logging';
+import {
+  publishMissingS3UploaderAuditJobs,
+  resolveAuditS3CheckConcurrency
+} from '@/nftsLoop/s3-uploader-audit';
+import { publishPendingS3UploaderOutboxJobs } from '@/nftsLoop/s3-uploader-outbox.publisher';
 import {
   getPayloadPreview,
   isPlainObject,
@@ -39,10 +48,16 @@ import { getRpcProvider } from '@/rpc-provider';
 import { equalIgnoreCase } from '@/strings';
 import { text } from '@/text';
 import { Time } from '@/time';
+import { isS3UploaderEnabledForEnvironment } from '@/s3Uploader/s3-uploader.queue';
+import {
+  buildS3UploaderJobsForNft,
+  S3UploaderCollectionType,
+  S3UploaderJob
+} from '@/s3Uploader/s3-uploader.jobs';
 import { withArweaveFallback } from '@/arweave-gateway-fallback';
 import axios from 'axios';
 import { ethers } from 'ethers';
-import { In, MoreThan, Not, Repository } from 'typeorm';
+import { EntityManager, In, MoreThan, Not, Repository } from 'typeorm';
 
 const logger = Logger.get('nfts');
 
@@ -52,8 +67,19 @@ const ARTIST_SPLIT_RATIO = 0.5;
 
 export enum NFT_MODE {
   DISCOVER = 'discover',
-  REFRESH = 'refresh'
+  REFRESH = 'refresh',
+  AUDIT = 'audit'
 }
+
+type NftProcessingEntry = {
+  nft: NFT | LabNFT;
+  changed: boolean;
+  mediaChanged: boolean;
+};
+
+type NftOnlyProcessingEntry = Omit<NftProcessingEntry, 'nft'> & {
+  nft: NFT;
+};
 
 const URI_ABI = [
   'function tokenURI(uint256 tokenId) public view returns (string)',
@@ -183,22 +209,143 @@ async function processNFTsForType(
 ) {
   const repo = getDataSource().getRepository(EntityClass);
   const existing = await repo.find();
-  const nftMap = new Map<string, { nft: NFT | LabNFT; changed: boolean }>();
+  const nftMap = createNftProcessingMap(existing);
   const newlyDiscoveredNfts: Array<NFT | LabNFT> = [];
+  const collectionType =
+    EntityClass === LabNFT
+      ? S3UploaderCollectionType.MEME_LAB
+      : S3UploaderCollectionType.NFT;
+  const contractMap = createContractMaxIdMap(existing);
 
-  existing.forEach((n) =>
-    nftMap.set(`${n.contract.toLowerCase()}-${n.id}`, {
-      nft: n,
-      changed: false
+  if (
+    await maybeRunAuditModeAndReturn({
+      mode,
+      EntityClass,
+      nftMap,
+      collectionType
     })
-  );
-
-  const contractMap = new Map<string, number>();
-  for (const nft of existing) {
-    const maxId = contractMap.get(nft.contract) ?? -1;
-    if (nft.id > maxId) contractMap.set(nft.contract, nft.id);
+  ) {
+    return;
   }
 
+  await runDiscoverOrRefreshMode({
+    mode,
+    EntityClass,
+    contracts,
+    contractMap,
+    nftMap,
+    provider,
+    newlyDiscoveredNfts
+  });
+
+  logger.info(`🔄 Updating supply for ${EntityClass.name}s`);
+  const maxSupply = await updateSupply(nftMap);
+  if (updateHodlRate && EntityClass === NFT) {
+    updateHodlRatesForNfts(
+      nftMap as Map<string, NftOnlyProcessingEntry>,
+      maxSupply
+    );
+  }
+
+  await updateMemeReferences(nftMap, EntityClass);
+  await saveAndPostProcessNfts({
+    EntityClass,
+    mode,
+    nftMap,
+    newlyDiscoveredNfts,
+    collectionType
+  });
+}
+
+function createNftProcessingMap(
+  existing: Array<NFT | LabNFT>
+): Map<string, NftProcessingEntry> {
+  const nftMap = new Map<string, NftProcessingEntry>();
+  existing.forEach((n) => {
+    nftMap.set(`${n.contract.toLowerCase()}-${n.id}`, {
+      nft: n,
+      changed: false,
+      mediaChanged: false
+    });
+  });
+  return nftMap;
+}
+
+function createContractMaxIdMap(
+  existing: Array<NFT | LabNFT>
+): Map<string, number> {
+  const contractMap = new Map<string, number>();
+  for (const nft of existing) {
+    const contractKey = nft.contract.toLowerCase();
+    const maxId = contractMap.get(contractKey) ?? -1;
+    if (nft.id > maxId) {
+      contractMap.set(contractKey, nft.id);
+    }
+  }
+  return contractMap;
+}
+
+async function maybeRunAuditModeAndReturn({
+  mode,
+  EntityClass,
+  nftMap,
+  collectionType
+}: {
+  mode: NFT_MODE;
+  EntityClass: typeof NFT | typeof LabNFT;
+  nftMap: Map<string, NftProcessingEntry>;
+  collectionType: S3UploaderCollectionType;
+}): Promise<boolean> {
+  if (mode !== NFT_MODE.AUDIT) {
+    return false;
+  }
+
+  if (!isS3UploaderEnabledForEnvironment()) {
+    logger.info(`🧪 Skipping S3 audit [CONFIG ${process.env.NODE_ENV}]`);
+    return true;
+  }
+
+  const bucket = process.env.AWS_6529_IMAGES_BUCKET_NAME;
+  if (!bucket) {
+    throw new Error(
+      'AWS_6529_IMAGES_BUCKET_NAME is required for S3 uploader audit mode'
+    );
+  }
+
+  const concurrency = resolveAuditS3CheckConcurrency(
+    env.getIntOrNull('S3_AUDIT_CHECK_CONCURRENCY')
+  );
+  const nfts = Array.from(nftMap.values()).map((entry) => entry.nft);
+  logger.info(`🧪 Auditing S3 jobs for all ${EntityClass.name}s`);
+  const summary = await publishMissingS3UploaderAuditJobs({
+    nfts,
+    collectionType,
+    bucket,
+    concurrency
+  });
+  logger.info(
+    `✅ Enqueued audit S3 jobs for ${EntityClass.name}s [nfts=${summary.scannedNfts}] [scannedJobs=${summary.scannedJobs}] [enqueuedJobs=${summary.enqueuedJobs}] [skippedJobs=${summary.skippedJobs}]`
+  );
+  return true;
+}
+
+async function runDiscoverOrRefreshMode({
+  mode,
+  EntityClass,
+  contracts,
+  contractMap,
+  nftMap,
+  provider,
+  newlyDiscoveredNfts
+}: {
+  mode: NFT_MODE;
+  EntityClass: typeof NFT | typeof LabNFT;
+  contracts: ContractConfig[];
+  contractMap: Map<string, number>;
+  nftMap: Map<string, NftProcessingEntry>;
+  provider: ethers.JsonRpcProvider;
+  newlyDiscoveredNfts: Array<NFT | LabNFT>;
+}) {
   if (mode === NFT_MODE.DISCOVER) {
     logger.info(`🔍 Discovering new ${EntityClass.name}s`);
     await discoverNewNFTs(
@@ -209,43 +356,167 @@ async function processNFTsForType(
       EntityClass,
       newlyDiscoveredNfts
     );
-  } else {
-    logger.info(`🔄 Refreshing existing ${EntityClass.name}s`);
-    await refreshExistingNFTs(nftMap, provider);
-    await populateMintStatsForEligibleNFTs(nftMap);
+    return;
   }
 
-  logger.info(`🔄 Updating supply for ${EntityClass.name}s`);
-  await updateSupply(nftMap, updateHodlRate);
+  logger.info(`🔄 Refreshing existing ${EntityClass.name}s`);
+  await refreshExistingNFTs(nftMap, provider);
+  await populateMintStatsForEligibleNFTs(nftMap);
+}
 
-  await updateMemeReferences(nftMap, EntityClass);
-
+async function saveAndPostProcessNfts({
+  EntityClass,
+  mode,
+  nftMap,
+  newlyDiscoveredNfts,
+  collectionType
+}: {
+  EntityClass: typeof NFT | typeof LabNFT;
+  mode: NFT_MODE;
+  nftMap: Map<string, NftProcessingEntry>;
+  newlyDiscoveredNfts: Array<NFT | LabNFT>;
+  collectionType: S3UploaderCollectionType;
+}) {
   const toSave = Array.from(nftMap.values())
     .filter((entry) => entry.changed)
     .map((entry) => entry.nft);
 
-  if (toSave.length > 0) {
-    await repo.save(toSave);
-    logger.info(`✅ Saved ${toSave.length} ${EntityClass.name}s`);
-
-    if (mode === NFT_MODE.DISCOVER && EntityClass === NFT) {
-      try {
-        await announceNewMemeDiscoveries(newlyDiscoveredNfts as NFT[]);
-      } catch (error: any) {
-        logger.error(
-          `announceNewMemeDiscoveries failed: ${error?.message ?? String(error)}`
-        );
-      }
-    }
-  } else {
+  if (!toSave.length) {
     logger.info(`✅ No changes detected for ${EntityClass.name}s`);
+    return;
+  }
+
+  const outboxJobs = buildS3UploaderJobsForMode({
+    mode,
+    newlyDiscoveredNfts,
+    nftMap,
+    collectionType
+  });
+  if (outboxJobs.length === 0) {
+    logger.info(
+      `ℹ️ No S3 uploader jobs generated for ${EntityClass.name}s [mode=${mode}]`
+    );
+  } else {
+    logger.info(
+      `📝 Generated ${outboxJobs.length} S3 uploader outbox jobs for ${EntityClass.name}s [mode=${mode}]`
+    );
+  }
+
+  await persistNftUpdatesAndOutboxJobs({
+    EntityClass,
+    nfts: toSave,
+    outboxJobs
+  });
+  logger.info(`✅ Saved ${toSave.length} ${EntityClass.name}s`);
+
+  await maybeAnnounceNewDiscoveries({
+    mode,
+    EntityClass,
+    newlyDiscoveredNfts
+  });
+}
+
+function buildS3UploaderJobsForMode({
+  mode,
+  newlyDiscoveredNfts,
+  nftMap,
+  collectionType
+}: {
+  mode: NFT_MODE;
+  newlyDiscoveredNfts: Array<NFT | LabNFT>;
+  nftMap: Map<string, NftProcessingEntry>;
+  collectionType: S3UploaderCollectionType;
+}): S3UploaderJob[] {
+  if (!isS3UploaderEnabledForEnvironment()) {
+    return [];
+  }
+
+  if (mode === NFT_MODE.DISCOVER) {
+    return newlyDiscoveredNfts.flatMap((nft) =>
+      buildS3UploaderJobsForNft({
+        nft,
+        collectionType,
+        reason: 'discover'
+      })
+    );
+  }
+  if (mode === NFT_MODE.REFRESH) {
+    return Array.from(nftMap.values())
+      .filter((entry) => entry.mediaChanged)
+      .map((entry) => entry.nft)
+      .flatMap((nft) =>
+        buildS3UploaderJobsForNft({
+          nft,
+          collectionType,
+          reason: 'refresh'
+        })
+      );
+  }
+  return [];
+}
+
+async function persistNftUpdatesAndOutboxJobs({
+  EntityClass,
+  nfts,
+  outboxJobs
+}: {
+  EntityClass: typeof NFT | typeof LabNFT;
+  nfts: Array<NFT | LabNFT>;
+  outboxJobs: S3UploaderJob[];
+}) {
+  await getDataSource().transaction(async (manager) => {
+    await manager.getRepository(EntityClass).save(nfts as any);
+    await persistS3UploaderOutboxJobs(manager, outboxJobs);
+  });
+}
+
+async function persistS3UploaderOutboxJobs(
+  manager: EntityManager,
+  jobs: S3UploaderJob[]
+) {
+  if (!jobs.length) {
+    return;
+  }
+
+  const createdAt = Time.now().toMillis();
+  await manager.getRepository(S3UploaderOutboxEntity).insert(
+    jobs.map((job) => ({
+      job,
+      status: S3UploaderOutboxStatus.PENDING,
+      created_at: createdAt,
+      published_at: null,
+      attempts: 0,
+      last_error: null
+    }))
+  );
+}
+
+async function maybeAnnounceNewDiscoveries({
+  mode,
+  EntityClass,
+  newlyDiscoveredNfts
+}: {
+  mode: NFT_MODE;
+  EntityClass: typeof NFT | typeof LabNFT;
+  newlyDiscoveredNfts: Array<NFT | LabNFT>;
+}) {
+  if (mode !== NFT_MODE.DISCOVER || EntityClass !== NFT) {
+    return;
+  }
+
+  try {
+    await announceNewMemeDiscoveries(newlyDiscoveredNfts as NFT[]);
+  } catch (error: any) {
+    logger.error(
+      `announceNewMemeDiscoveries failed: ${error?.message ?? String(error)}`
+    );
   }
 }
 
 async function discoverNewNFTs(
   contracts: ContractConfig[],
   contractMap: Map<string, number>,
-  nftMap: Map<string, { nft: NFT | LabNFT; changed: boolean }>,
+  nftMap: Map<string, NftProcessingEntry>,
   provider: ethers.JsonRpcProvider,
   EntityClass: typeof NFT | typeof LabNFT,
   newlyDiscoveredNfts: Array<NFT | LabNFT>
@@ -267,7 +538,7 @@ async function discoverNewNFTs(
 async function discoverForContract(
   config: ContractConfig,
   contractMap: Map<string, number>,
-  nftMap: Map<string, { nft: NFT | LabNFT; changed: boolean }>,
+  nftMap: Map<string, NftProcessingEntry>,
   provider: ethers.JsonRpcProvider,
   EntityClass: typeof NFT | typeof LabNFT,
   newlyDiscoveredNfts: Array<NFT | LabNFT>
@@ -275,7 +546,7 @@ async function discoverForContract(
   const { contract, tokenType } = config;
   const instance = getContractInstance(contract, provider);
   const method = tokenType === TokenType.ERC721 ? 'tokenURI' : 'uri';
-  let nextId = (contractMap.get(contract) ?? -1) + 1;
+  let nextId = (contractMap.get(contract.toLowerCase()) ?? -1) + 1;
   if (tokenType === TokenType.ERC1155 && !nextId) nextId = 1;
 
   while (true) {
@@ -298,7 +569,8 @@ async function discoverForContract(
       const discoveredNft = Object.assign(new EntityClass(), baseNft);
       nftMap.set(`${contract.toLowerCase()}-${nextId}`, {
         nft: discoveredNft,
-        changed: true
+        changed: true,
+        mediaChanged: true
       });
       newlyDiscoveredNfts.push(discoveredNft);
 
@@ -495,7 +767,7 @@ function findAttr(md: NonNullable<Meta>, name: string): string | undefined {
   return undefined;
 }
 
-function rehydrateFromMetadata(entry: { nft: NFT | LabNFT; changed: boolean }) {
+function rehydrateFromMetadata(entry: NftProcessingEntry) {
   const { nft } = entry;
   const metadata: Meta = nft.metadata;
   if (!metadata) return;
@@ -531,6 +803,7 @@ function rehydrateFromMetadata(entry: { nft: NFT | LabNFT; changed: boolean }) {
   nft.animation = animation ?? undefined;
 
   entry.changed = true;
+  entry.mediaChanged = true;
 }
 
 function extractMemeRefs(
@@ -559,7 +832,7 @@ function extractMemeRefs(
 }
 
 async function refreshExistingNFTs(
-  nftMap: Map<string, { nft: NFT | LabNFT; changed: boolean }>,
+  nftMap: Map<string, NftProcessingEntry>,
   provider: ethers.JsonRpcProvider
 ) {
   await Promise.all(
@@ -584,7 +857,7 @@ async function refreshExistingNFTs(
 }
 
 async function updateUri(
-  entry: { nft: NFT | LabNFT; changed: boolean },
+  entry: NftProcessingEntry,
   contract: any,
   method: 'tokenURI' | 'uri'
 ) {
@@ -607,7 +880,7 @@ async function updateUri(
   rehydrateFromMetadata(entry);
 }
 
-async function updateMintDate(entry: { nft: NFT | LabNFT; changed: boolean }) {
+async function updateMintDate(entry: NftProcessingEntry) {
   const { nft } = entry;
   if (nft.mint_date) return;
 
@@ -624,7 +897,7 @@ async function updateMintDate(entry: { nft: NFT | LabNFT; changed: boolean }) {
   }
 }
 
-async function updateMintPrice(entry: { nft: NFT | LabNFT; changed: boolean }) {
+async function updateMintPrice(entry: NftProcessingEntry) {
   const { nft } = entry;
   if (nft.mint_price || equalIgnoreCase(nft.contract, GRADIENT_CONTRACT)) {
     return;
@@ -651,7 +924,7 @@ async function updateMintPrice(entry: { nft: NFT | LabNFT; changed: boolean }) {
 }
 
 async function updateMemeReferences(
-  nftMap: Map<string, { nft: any; changed: boolean }>,
+  nftMap: Map<string, NftProcessingEntry>,
   EntityClass: typeof NFT | typeof LabNFT
 ) {
   if (EntityClass !== LabNFT) return;
@@ -674,9 +947,8 @@ async function updateMemeReferences(
 }
 
 async function updateSupply(
-  nftMap: Map<string, { nft: any; changed: boolean }>,
-  updateHodlRate: boolean
-) {
+  nftMap: Map<string, NftProcessingEntry>
+): Promise<number> {
   let maxSupply = 0;
 
   await Promise.all(
@@ -685,14 +957,14 @@ async function updateSupply(
       let supply: number;
 
       if (nft.token_type === TokenType.ERC1155) {
-        supply = await getDataSource()
+        const raw = await getDataSource()
           .getRepository(NFTOwner)
           .createQueryBuilder('owner')
           .select('SUM(owner.balance)', 'sum')
           .where('owner.contract = :contract', { contract: nft.contract })
           .andWhere('owner.token_id = :token_id', { token_id: nft.id })
-          .getRawOne()
-          .then((res) => Number(res?.sum ?? 0));
+          .getRawOne();
+        supply = Number(raw?.sum ?? 0);
 
         if (equalIgnoreCase(nft.contract, MEMES_CONTRACT) && nft.id === 8) {
           supply += MEME_8_EDITION_BURN_ADJUSTMENT;
@@ -715,24 +987,29 @@ async function updateSupply(
     })
   );
 
-  if (updateHodlRate) {
-    nftMap.forEach((entry) => {
-      const nft = entry.nft;
-      let newRate = maxSupply / nft.supply;
-      if (!isFinite(newRate) || newRate < 1) newRate = 1;
-      if (nft.hodl_rate !== newRate) {
-        logger.info(
-          `♻️ ${nft.contract} #${nft.id} updating hodl rate from ${nft.hodl_rate} to ${newRate}`
-        );
-        nft.hodl_rate = newRate;
-        entry.changed = true;
-      }
-    });
-  }
+  return maxSupply;
+}
+
+function updateHodlRatesForNfts(
+  nftMap: Map<string, NftOnlyProcessingEntry>,
+  maxSupply: number
+) {
+  nftMap.forEach((entry) => {
+    const nft = entry.nft;
+    let newRate = maxSupply / nft.supply;
+    if (!isFinite(newRate) || newRate < 1) newRate = 1;
+    if (nft.hodl_rate !== newRate) {
+      logger.info(
+        `♻️ ${nft.contract} #${nft.id} updating hodl rate from ${nft.hodl_rate} to ${newRate}`
+      );
+      nft.hodl_rate = newRate;
+      entry.changed = true;
+    }
+  });
 }
 
 async function populateMintStatsForEligibleNFTs(
-  nftMap: Map<string, { nft: NFT | LabNFT; changed: boolean }>
+  nftMap: Map<string, NftProcessingEntry>
 ) {
   const statsRepo = getDataSource().getRepository(MemesMintStat);
   const txRepo = getDataSource().getRepository(Transaction);
@@ -904,6 +1181,7 @@ export async function processNFTs(mode: NFT_MODE) {
   const provider = getRpcProvider();
   await processNFTsForType(NFT, NFT_CONTRACTS, mode, provider, true);
   await processNFTsForType(LabNFT, LABNFT_CONTRACTS, mode, provider, false);
+  await publishPendingS3UploaderOutboxJobs();
   if (mode === NFT_MODE.REFRESH) {
     await syncArtists();
   }
