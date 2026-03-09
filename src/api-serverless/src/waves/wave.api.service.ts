@@ -1021,10 +1021,19 @@ export class WaveApiService {
     );
   }
 
-  public async getHotWaves(ctx: RequestContext): Promise<ApiWave[]> {
+  public async getHotWaves(
+    params: RankedWavesOverviewParams,
+    ctx: RequestContext
+  ): Promise<ApiWave[]> {
     const authenticationContext = ctx?.authenticationContext;
     const authenticatedProfileId =
       authenticationContext?.getActingAsId() ?? null;
+    const { exclude_followed } = params;
+    if (exclude_followed && !authenticatedProfileId) {
+      throw new BadRequestException(
+        `You can't exclude followed waves unless you're authenticated`
+      );
+    }
     const eligibleGroups =
       !authenticationContext ||
       !authenticatedProfileId ||
@@ -1040,7 +1049,9 @@ export class WaveApiService {
     const cutoffTimestamp = Time.currentMillis() - Time.hours(24).toMillis();
     const waveEntities = await this.wavesApiDb.findHotWaves({
       cutoffTimestamp,
-      limit: 25
+      limit: 25,
+      authenticated_user_id: authenticatedProfileId,
+      exclude_followed
     });
     const noRightToVote =
       !authenticationContext ||
@@ -1598,6 +1609,10 @@ export interface WavesOverviewParams {
   only_waves_followed_by_authenticated_user: boolean;
   direct_message?: boolean;
   pinned: ApiWavesPinFilter | null;
+}
+
+export interface RankedWavesOverviewParams {
+  exclude_followed: boolean;
 }
 
 export const waveApiService = new WaveApiService(
