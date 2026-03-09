@@ -1,6 +1,7 @@
 import { getDataSource } from '../db';
 import { Logger } from '../logging';
 import { fetchAllNftOwners } from '../nftOwnersLoop/db.nft_owners';
+import { randomInt } from 'crypto';
 import {
   fetchNextGenCollections,
   fetchNextGenTokensForCollection
@@ -106,7 +107,7 @@ export async function refreshNextgenMetadata() {
         throw error;
       }
 
-      const jitter = Math.floor(Math.random() * 100);
+      const jitter = randomInt(0, 100);
       const retryInMs =
         DEADLOCK_BASE_RETRY_DELAY_MS * 2 ** (attempt - 1) + jitter;
       logger.warn(
