@@ -10661,14 +10661,8 @@ components:
     ApiWavesOverviewType:
       type: string
       enum:
-        - LATEST
         - MOST_SUBSCRIBED
-        - HIGH_LEVEL_AUTHOR
-        - AUTHOR_YOU_HAVE_REPPED
-        - MOST_DROPPED
-        - MOST_DROPPED_BY_YOU
         - RECENTLY_DROPPED_TO
-        - RECENTLY_DROPPED_TO_BY_YOU
     ApiWavesPinFilter:
       type: string
       enum:
