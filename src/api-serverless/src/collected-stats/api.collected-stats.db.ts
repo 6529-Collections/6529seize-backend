@@ -27,8 +27,10 @@ type CollectedStatsHeldBalanceRow = {
 
 type CollectionSummaryRow = {
   boost: number;
-  nextgens_held: number;
-  gradients_held: number;
+  nextgen_balance: number;
+  gradients_balance: number;
+  memes_balance: number;
+  unique_memes: number;
 };
 
 export class CollectedStatsDb extends LazyDbAccessCompatibleService {
@@ -44,8 +46,10 @@ export class CollectedStatsDb extends LazyDbAccessCompatibleService {
         `
           SELECT
             COALESCE(t.boost, 1) AS boost,
-            COALESCE(o.nextgen_balance, 0) AS nextgens_held,
-            COALESCE(o.gradients_balance, 0) AS gradients_held
+            COALESCE(o.nextgen_balance, 0) AS nextgen_balance,
+            COALESCE(o.gradients_balance, 0) AS gradients_balance,
+            COALESCE(o.memes_balance, 0) AS memes_balance,
+            COALESCE(o.unique_memes, 0) AS unique_memes
           FROM ${CONSOLIDATED_OWNERS_BALANCES_TABLE} o
           LEFT JOIN ${CONSOLIDATED_WALLETS_TDH_TABLE} t
             ON t.consolidation_key = o.consolidation_key
@@ -73,8 +77,10 @@ export class CollectedStatsDb extends LazyDbAccessCompatibleService {
         `
           SELECT
             COALESCE(t.boost, 1) AS boost,
-            COALESCE(o.nextgen_balance, 0) AS nextgens_held,
-            COALESCE(o.gradients_balance, 0) AS gradients_held
+            COALESCE(o.nextgen_balance, 0) AS nextgen_balance,
+            COALESCE(o.gradients_balance, 0) AS gradients_balance,
+            COALESCE(o.memes_balance, 0) AS memes_balance,
+            COALESCE(o.unique_memes, 0) AS unique_memes
           FROM ${OWNERS_BALANCES_TABLE} o
           LEFT JOIN ${WALLETS_TDH_TABLE} t
             ON t.wallet = o.wallet
