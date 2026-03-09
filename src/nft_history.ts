@@ -195,12 +195,25 @@ export const getEditDescription = async (
   newUri: string,
   blockNumber: number
 ) => {
+  const readResponsePayload = async (res: any): Promise<unknown> => {
+    if (typeof res?.text === 'function') {
+      return await res.text();
+    }
+    if (typeof res?.json === 'function') {
+      return await res.json();
+    }
+    throw new Error('Response body reader missing (expected text() or json())');
+  };
+
   const fetchMetadataForDiff = async (uri: string) => {
     return await withArweaveFallback(uri, async (u) => {
       const res = await fetch(u);
-      const body = await res.text();
+      const body = await readResponsePayload(res);
 
-      if (!res.ok) {
+      const hasOk = typeof res?.ok === 'boolean';
+      const hasErrorStatus =
+        typeof res?.status === 'number' && Number(res.status) >= 400;
+      if ((hasOk && !res.ok) || hasErrorStatus) {
         throw new Error(
           `Metadata fetch failed for ${u} with status ${res.status}`
         );

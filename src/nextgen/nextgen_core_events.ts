@@ -13,9 +13,9 @@ import { findEnsForAddress } from '@/ens-lookup';
 import { ethTools } from '@/eth-tools';
 import { Logger } from '@/logging';
 import {
-  getPayloadPreview,
-  normalizeMetadataPayload
-} from '@/metadata-payload';
+  fetchNextGenMetadata,
+  getRequiredMetadataName
+} from '@/nextgen/nextgen-metadata';
 import { equalIgnoreCase } from '@/strings';
 import { findTransactionValues } from '@/transaction_values';
 import { LogDescription } from 'ethers';
@@ -36,36 +36,6 @@ import {
 const logger = Logger.get('NEXTGEN_CORE_EVENTS');
 
 let alchemy: Alchemy;
-
-function getMetadataName(metadata: any, metadataLink: string): string {
-  const name = metadata.name;
-  if (typeof name !== 'string') {
-    throw new Error(`Invalid metadata.name for ${metadataLink}`);
-  }
-  return name;
-}
-
-async function fetchNextGenMetadata(
-  metadataLink: string
-): Promise<Record<string, unknown>> {
-  const res = await fetch(metadataLink);
-  const body = await res.text();
-  if (!res.ok) {
-    throw new Error(
-      `Metadata fetch failed for ${metadataLink} with status ${res.status}`
-    );
-  }
-
-  const metadata = normalizeMetadataPayload(body);
-  if (!metadata) {
-    const contentType = res.headers.get('content-type') ?? 'unknown';
-    const preview = getPayloadPreview(body);
-    throw new Error(
-      `Invalid metadata payload for ${metadataLink} (content-type: ${contentType}, preview: ${preview})`
-    );
-  }
-  return metadata;
-}
 
 export async function findCoreEvents(
   entityManager: EntityManager,
@@ -299,7 +269,7 @@ export async function upsertToken(
   const metadataLink = `${collection.base_uri}${tokenId}`;
 
   const metadataResponse: any = await fetchNextGenMetadata(metadataLink);
-  const name = getMetadataName(metadataResponse, metadataLink);
+  const name = getRequiredMetadataName(metadataResponse, metadataLink);
   const pending = name.toLowerCase().startsWith('pending');
 
   const nextGenToken: NextGenToken = {
