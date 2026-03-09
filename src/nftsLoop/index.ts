@@ -11,22 +11,25 @@ import { MemesSeason } from '@/entities/ISeason';
 import { MemesMintStat } from '@/entities/IMemesMintStat';
 import { NFTOwner } from '@/entities/INFTOwner';
 import { NFT_MODE, processNFTs } from '@/nftsLoop/nfts';
+import * as priorityAlertsContext from '@/priority-alerts.context';
 import {
   findMemeLabExtendedData,
   findMemesExtendedData
-} from '@/nftsLoop/nft_extended_data';
+} from '@/nftsLoop/nft-extended-data';
 import { Transaction } from '@/entities/ITransaction';
 import { RedeemedSubscription } from '@/entities/ISubscription';
-import { updateDistributionInfoFor } from '@/nftsLoop/nft_distribution';
+import { updateDistributionInfoFor } from '@/nftsLoop/nft-distribution';
 import { enums } from '@/enums';
+import { S3UploaderOutboxEntity } from '@/entities/IS3UploaderOutbox';
 
 const logger = Logger.get('NFTS_LOOP');
+const ALERT_TITLE = 'NFTs Loop';
 
 export const handler = sentryContext.wrapLambdaHandler(async (event) => {
   await doInDbContext(
-    async () => {
+    priorityAlertsContext.wrapAsyncFunction(ALERT_TITLE, async () => {
       await nftsLoop(event?.mode);
-    },
+    }),
     {
       logger,
       entities: [
@@ -38,7 +41,8 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
         LabExtendedData,
         Transaction,
         MemesMintStat,
-        RedeemedSubscription
+        RedeemedSubscription,
+        S3UploaderOutboxEntity
       ]
     }
   );
@@ -47,6 +51,9 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
 async function nftsLoop(mode?: string) {
   const modeEnum = enums.resolveOrThrow(NFT_MODE, mode);
   await processNFTs(modeEnum);
+  if (modeEnum === NFT_MODE.AUDIT) {
+    return;
+  }
   await findMemesExtendedData();
   await findMemeLabExtendedData();
   await updateDistributionInfoFor(NFT);

@@ -61,7 +61,7 @@ This repository is configured to be runnable through AWS Lambdas. Each 'loop' fo
 - **CRON:** When starting the service, there are several scheduled cron jobs running at specific intervals which will consume data from the chain, process and save the result to the database.
   e.g. discovering NFTs - there is a scheduled cron job to run every 3 minutes which detects new nfts minted on the chain or any changes to existing nfts.
 
-- **S3 and Video Compression:** [S3Loop](https://github.com/6529-Collections/6529seize-backend/tree/main/src/s3Loop). The s3Loop persists compressed versions of the nft images and videos on AWS S3. This loop is configured to only run in `prod` mode. Video compression requires ffmpeg installed on the running machine.
+- **S3 and Video Compression:** [S3Uploader](https://github.com/6529-Collections/6529seize-backend/tree/main/src/s3Uploader). The s3Uploader persists compressed versions of the nft images and videos on AWS S3. This worker is configured to only run in `prod` mode. Video compression requires ffmpeg installed on the running machine.
   Download instructions at: https://ffmpeg.org/
 
 - Creating new migrations: Run `npm run migrate:new name-of-the-migration`. Three new files are created in `migrations folder`. A javascript file and 2 SQL files. Find the "up" SQL file and write the SQL for new migration there. Then run `npm run migrate:up` to apply the new migration. You can write reverse migration if you wish in the "down" SQL file.

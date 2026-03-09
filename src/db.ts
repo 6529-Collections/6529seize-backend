@@ -478,6 +478,37 @@ export async function fetchAllNFTs() {
   return results;
 }
 
+export async function fetchNFTByContractAndId(
+  contract: string,
+  id: number
+): Promise<NFT | null> {
+  const sql = `SELECT * FROM ${NFTS_TABLE} WHERE contract=:contract AND id=:id LIMIT 1;`;
+  const results = await sqlExecutor.execute(sql, { contract, id });
+  const nft = results[0];
+  if (!nft) {
+    return null;
+  }
+  nft.metadata = nft.metadata ? JSON.parse(nft.metadata) : null;
+  return nft;
+}
+
+export async function fetchMemeLabNFTByContractAndId(
+  contract: string,
+  id: number
+): Promise<LabNFT | null> {
+  const sql = `SELECT * FROM ${NFTS_MEME_LAB_TABLE} WHERE contract=:contract AND id=:id LIMIT 1;`;
+  const results = await sqlExecutor.execute(sql, { contract, id });
+  const nft = results[0];
+  if (!nft) {
+    return null;
+  }
+  nft.metadata = nft.metadata ? JSON.parse(nft.metadata) : null;
+  nft.meme_references = nft.meme_references
+    ? JSON.parse(nft.meme_references)
+    : [];
+  return nft;
+}
+
 export async function fetchAllTDH(block: number, wallets?: string[]) {
   let sql = `SELECT ${ENS_TABLE}.display as ens, ${WALLETS_TDH_TABLE}.* FROM ${WALLETS_TDH_TABLE} LEFT JOIN ${ENS_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${ENS_TABLE}.wallet WHERE block=:block `;
   if (wallets && wallets.length > 0) {

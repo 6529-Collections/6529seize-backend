@@ -24,13 +24,20 @@ export function wrapAsyncFunction<TResult = any>(
     try {
       return await fn();
     } catch (error: any) {
-      await sendPriorityAlert(alertTitle, error);
+      await sendPriorityAlertIfConfigured(alertTitle, error);
       throw error;
     }
   };
 }
 
 export async function sendPriorityAlert(
+  alertTitle: string,
+  error: unknown
+): Promise<void> {
+  await sendPriorityAlertIfConfigured(alertTitle, error);
+}
+
+export async function sendPriorityAlertIfConfigured(
   alertTitle: string,
   error: unknown
 ): Promise<void> {

@@ -1,4 +1,4 @@
-service: s3Loop
+service: s3Uploader
 
 package:
   artifact: dist/index.zip
@@ -14,42 +14,70 @@ provider:
   logRetentionInDays: 60
 
 functions:
-  s3Loop:
+  s3Uploader:
     handler: index.handler
-    name: s3Loop
+    name: s3Uploader
     description: ${env:VERSION_DESCRIPTION}
     role: arn:aws:iam::987989283142:role/lambda-vpc-role
-    reservedConcurrency: 1
+    reservedConcurrency: 2
     events:
-      - schedule: rate(5 minutes)
+      - sqs:
+          arn:
+            Fn::GetAtt: [S3UploaderQueue, Arn]
+          batchSize: 1
+          functionResponseType: ReportBatchItemFailures
     vpc:
       securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
       subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
     environment:
       SENTRY_DSN: ${env:SENTRY_DSN}
-      SENTRY_ENVIRONMENT: 's3Loop_${opt:stage, self:provider.stage}'
+      SENTRY_ENVIRONMENT: 's3Uploader_${opt:stage, self:provider.stage}'
 
 resources:
   Resources:
-    S3LoopOOMFilter:
-      Type: AWS::Logs::MetricFilter
+    S3UploaderQueue:
+      Type: AWS::SQS::Queue
       Properties:
-        LogGroupName: /aws/lambda/s3Loop
+        QueueName: s3-uploader-jobs
+        VisibilityTimeout: 1000
+        RedrivePolicy:
+          deadLetterTargetArn:
+            Fn::GetAtt: [S3UploaderDLQ, Arn]
+          maxReceiveCount: 10
+
+    S3UploaderDLQ:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: s3-uploader-jobs-dlq
+
+    S3UploaderLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/s3Uploader
+        RetentionInDays: 60
+
+    S3UploaderOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      DependsOn:
+        - S3UploaderLogGroup
+      Properties:
+        LogGroupName:
+          Ref: S3UploaderLogGroup
         FilterPattern: "Runtime.OutOfMemory"
         MetricTransformations:
           - MetricNamespace: "Lambda/OOM"
-            MetricName: "s3Loop_OOMErrorCount"
+            MetricName: "s3Uploader_OOMErrorCount"
             MetricValue: "1"
             DefaultValue: 0
 
-    S3LoopOOMAlarm:
+    S3UploaderOOMAlarm:
       Type: AWS::CloudWatch::Alarm
-      DependsOn: S3LoopOOMFilter
+      DependsOn: S3UploaderOOMFilter
       Properties:
-        AlarmName: !Sub "${AWS::StackName}-s3Loop-OOM"
-        AlarmDescription: !Sub "Lambda s3Loop OutOfMemory in ${AWS::Region}"
+        AlarmName: !Sub "${AWS::StackName}-s3Uploader-OOM"
+        AlarmDescription: !Sub "Lambda s3Uploader OutOfMemory in ${AWS::Region}"
         Namespace: "Lambda/OOM"
-        MetricName: "s3Loop_OOMErrorCount"
+        MetricName: "s3Uploader_OOMErrorCount"
         Statistic: Sum
         Period: 60
         EvaluationPeriods: 1
