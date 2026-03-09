@@ -62,6 +62,7 @@ export type QueueableNft = {
   metadata?: {
     image?: string;
     image_url?: string;
+    image_details?: { format?: string } | null;
     animation?: string;
     animation_url?: string;
     animation_details?: { format?: string } | string | null;

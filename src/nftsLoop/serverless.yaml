@@ -31,8 +31,7 @@ functions:
           input:
             mode: 'refresh'
       - schedule:
-          # AWS cron uses UTC. Adjust if you want local midnight.
-          rate: cron(0 0 * * ? *)
+          rate: rate(1 hour)
           input:
             mode: 'audit'
 

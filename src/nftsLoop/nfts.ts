@@ -34,15 +34,16 @@ import { RedeemedSubscription } from '@/entities/ISubscription';
 import { Transaction } from '@/entities/ITransaction';
 import { TokenType } from '@/enums';
 import { Logger } from '@/logging';
+import {
+  publishMissingS3UploaderAuditJobs,
+  resolveAuditS3CheckConcurrency
+} from '@/nftsLoop/s3-uploader-audit';
 import { publishPendingS3UploaderOutboxJobs } from '@/nftsLoop/s3-uploader-outbox.publisher';
 import { getRpcProvider } from '@/rpc-provider';
 import { equalIgnoreCase } from '@/strings';
 import { text } from '@/text';
 import { Time } from '@/time';
-import {
-  enqueueS3UploaderJobsForNft,
-  isS3UploaderEnabledForEnvironment
-} from '@/s3Uploader/s3-uploader.queue';
+import { isS3UploaderEnabledForEnvironment } from '@/s3Uploader/s3-uploader.queue';
 import {
   buildS3UploaderJobsForNft,
   S3UploaderCollectionType,
@@ -180,8 +181,6 @@ const LABNFT_CONTRACTS: ContractConfig[] = [
   }
 ];
 
-const S3_ENQUEUE_BATCH_SIZE = 25;
-
 async function processNFTsForType(
   EntityClass: typeof NFT | typeof LabNFT,
   contracts: ContractConfig[],
@@ -282,14 +281,31 @@ async function maybeRunAuditModeAndReturn({
     return false;
   }
 
+  if (!isS3UploaderEnabledForEnvironment()) {
+    logger.info(`🧪 Skipping S3 audit [CONFIG ${process.env.NODE_ENV}]`);
+    return true;
+  }
+
+  const bucket = process.env.AWS_6529_IMAGES_BUCKET_NAME;
+  if (!bucket) {
+    throw new Error(
+      'AWS_6529_IMAGES_BUCKET_NAME is required for S3 uploader audit mode'
+    );
+  }
+
+  const concurrency = resolveAuditS3CheckConcurrency(
+    env.getIntOrNull('S3_AUDIT_CHECK_CONCURRENCY')
+  );
+  const nfts = Array.from(nftMap.values()).map((entry) => entry.nft);
   logger.info(`🧪 Auditing S3 jobs for all ${EntityClass.name}s`);
-  await enqueueNftsInBatches({
-    nfts: Array.from(nftMap.values()).map((entry) => entry.nft),
+  const summary = await publishMissingS3UploaderAuditJobs({
+    nfts,
     collectionType,
-    reason: 'audit'
+    bucket,
+    concurrency
   });
   logger.info(
-    `✅ Enqueued audit S3 jobs for ${nftMap.size} ${EntityClass.name}s`
+    `✅ Enqueued audit S3 jobs for ${EntityClass.name}s [nfts=${summary.scannedNfts}] [scannedJobs=${summary.scannedJobs}] [enqueuedJobs=${summary.enqueuedJobs}] [skippedJobs=${summary.skippedJobs}]`
   );
   return true;
 }
@@ -474,29 +490,6 @@ async function maybeAnnounceNewDiscoveries({
   } catch (error: any) {
     logger.error(
       `announceNewMemeDiscoveries failed: ${error?.message ?? String(error)}`
-    );
-  }
-}
-
-async function enqueueNftsInBatches({
-  nfts,
-  collectionType,
-  reason
-}: {
-  nfts: Array<NFT | LabNFT>;
-  collectionType: S3UploaderCollectionType;
-  reason: 'discover' | 'refresh' | 'audit';
-}) {
-  for (let i = 0; i < nfts.length; i += S3_ENQUEUE_BATCH_SIZE) {
-    const batch = nfts.slice(i, i + S3_ENQUEUE_BATCH_SIZE);
-    await Promise.all(
-      batch.map((nft) =>
-        enqueueS3UploaderJobsForNft({
-          nft,
-          collectionType,
-          reason
-        })
-      )
     );
   }
 }
