@@ -4,6 +4,11 @@ import { S3UploaderJob } from '@/s3Uploader/s3-uploader.jobs';
 
 @Entity(S3_UPLOADER_OUTBOX_TABLE)
 @Index(`${S3_UPLOADER_OUTBOX_TABLE}_status_id_idx`, ['status', 'id'])
+@Index(`${S3_UPLOADER_OUTBOX_TABLE}_status_published_at_id_idx`, [
+  'status',
+  'published_at',
+  'id'
+])
 export class S3UploaderOutboxEntity {
   @PrimaryGeneratedColumn('increment', { type: 'bigint' })
   readonly id!: number;

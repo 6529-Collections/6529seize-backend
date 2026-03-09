@@ -9,12 +9,14 @@ import { S3_UPLOADER_QUEUE_NAME } from '@/s3Uploader/s3-uploader.jobs';
 import { sqs } from '@/sqs';
 import { Time } from '@/time';
 import { inspect } from 'node:util';
+import { LessThan } from 'typeorm';
 
 const logger = Logger.get('nfts');
 
 const S3_OUTBOX_PUBLISH_BATCH_SIZE = 10;
 const S3_OUTBOX_ERROR_MAX_LENGTH = 2048;
 const S3_OUTBOX_FAILURE_ESCALATION_ATTEMPTS = 3;
+const S3_OUTBOX_PUBLISHED_RETENTION_DAYS = 30;
 
 export async function publishPendingS3UploaderOutboxJobs() {
   if (!isS3UploaderEnabledForEnvironment()) {
@@ -24,29 +26,36 @@ export async function publishPendingS3UploaderOutboxJobs() {
   const repo = getDataSource().getRepository(S3UploaderOutboxEntity);
   const pendingCount = await getPendingOutboxCount(repo);
   if (!pendingCount) {
+    await cleanupPublishedOutboxRows(repo);
     return;
   }
 
   logger.info(`📤 Publishing S3 uploader outbox [pending=${pendingCount}]`);
   const escalationIds = new Set<number>();
+  const maxPendingOutboxId = await getMaxPendingOutboxId(repo);
+  if (!maxPendingOutboxId) {
+    await cleanupPublishedOutboxRows(repo);
+    return;
+  }
+  let lastProcessedId = 0;
 
   while (true) {
-    const pending = await getPendingOutboxBatch(repo);
+    const pending = await getPendingOutboxBatch(
+      repo,
+      lastProcessedId,
+      maxPendingOutboxId
+    );
     if (!pending.length) {
       break;
     }
 
-    let batchFailures = 0;
     for (const outbox of pending) {
-      if (await publishOutboxJob(repo, outbox, escalationIds)) {
-        batchFailures++;
-      }
+      await publishOutboxJob(repo, outbox, escalationIds);
     }
-
-    if (shouldStopPublishing(batchFailures, pending.length)) {
-      break;
-    }
+    lastProcessedId = pending[pending.length - 1].id;
   }
+
+  await cleanupPublishedOutboxRows(repo);
 
   if (escalationIds.size > 0) {
     throw new Error(
@@ -63,22 +72,38 @@ async function getPendingOutboxCount(repo: ReturnType<typeof getOutboxRepo>) {
   });
 }
 
-async function getPendingOutboxBatch(repo: ReturnType<typeof getOutboxRepo>) {
-  return repo.find({
+async function getMaxPendingOutboxId(repo: ReturnType<typeof getOutboxRepo>) {
+  const newestPending = await repo.findOne({
+    select: ['id'],
     where: { status: S3UploaderOutboxStatus.PENDING },
-    order: { id: 'ASC' },
-    take: S3_OUTBOX_PUBLISH_BATCH_SIZE
+    order: { id: 'DESC' }
   });
+  return newestPending?.id ?? null;
+}
+
+async function getPendingOutboxBatch(
+  repo: ReturnType<typeof getOutboxRepo>,
+  lastProcessedId: number,
+  maxPendingOutboxId: number
+) {
+  if (lastProcessedId >= maxPendingOutboxId) {
+    return [];
+  }
+
+  return repo
+    .createQueryBuilder('outbox')
+    .where('outbox.status = :status', {
+      status: S3UploaderOutboxStatus.PENDING
+    })
+    .andWhere('outbox.id > :lastProcessedId', { lastProcessedId })
+    .andWhere('outbox.id <= :maxPendingOutboxId', { maxPendingOutboxId })
+    .orderBy('outbox.id', 'ASC')
+    .take(S3_OUTBOX_PUBLISH_BATCH_SIZE)
+    .getMany();
 }
 
 function getOutboxRepo() {
   return getDataSource().getRepository(S3UploaderOutboxEntity);
-}
-
-function shouldStopPublishing(batchFailures: number, batchSize: number) {
-  return (
-    batchFailures === batchSize || batchSize < S3_OUTBOX_PUBLISH_BATCH_SIZE
-  );
 }
 
 async function publishOutboxJob(
@@ -104,7 +129,6 @@ async function publishOutboxJob(
         last_error: null
       }
     );
-    return false;
   } catch (error: unknown) {
     const message = formatOutboxPublishError(error);
     logger.error(
@@ -122,7 +146,23 @@ async function publishOutboxJob(
     if (attempt === S3_OUTBOX_FAILURE_ESCALATION_ATTEMPTS) {
       escalationIds.add(outbox.id);
     }
-    return true;
+    return;
+  }
+}
+
+async function cleanupPublishedOutboxRows(
+  repo: ReturnType<typeof getOutboxRepo>
+) {
+  const cutoff = Time.daysAgo(S3_OUTBOX_PUBLISHED_RETENTION_DAYS).toMillis();
+  const result = await repo.delete({
+    status: S3UploaderOutboxStatus.PUBLISHED,
+    published_at: LessThan(cutoff)
+  });
+  const deletedRows = result.affected ?? 0;
+  if (deletedRows > 0) {
+    logger.info(
+      `🧹 Cleaned up published S3 uploader outbox rows [deleted=${deletedRows}] [olderThanDays=${S3_OUTBOX_PUBLISHED_RETENTION_DAYS}]`
+    );
   }
 }
 

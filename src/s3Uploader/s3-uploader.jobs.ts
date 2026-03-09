@@ -26,10 +26,17 @@ export enum S3UploaderVideoVariant {
   SCALED_750 = 'scaled_750'
 }
 
+export const S3_UPLOADER_JOB_REASONS = [
+  'discover',
+  'refresh',
+  'audit'
+] as const;
+export type S3UploaderJobReason = (typeof S3_UPLOADER_JOB_REASONS)[number];
+
 export type S3UploaderJob =
   | {
-      version: 1;
-      reason: 'discover' | 'refresh' | 'audit';
+      version?: 1;
+      reason: S3UploaderJobReason;
       collectionType: S3UploaderCollectionType;
       contract: string;
       tokenId: number;
@@ -37,8 +44,8 @@ export type S3UploaderJob =
       variants: S3UploaderImageVariant[];
     }
   | {
-      version: 1;
-      reason: 'discover' | 'refresh' | 'audit';
+      version?: 1;
+      reason: S3UploaderJobReason;
       collectionType: S3UploaderCollectionType;
       contract: string;
       tokenId: number;
@@ -68,7 +75,7 @@ export function buildS3UploaderJobsForNft({
 }: {
   nft: QueueableNft;
   collectionType: S3UploaderCollectionType;
-  reason: 'discover' | 'refresh' | 'audit';
+  reason: S3UploaderJobReason;
 }): S3UploaderJob[] {
   const jobs: S3UploaderJob[] = [];
 
@@ -162,8 +169,9 @@ export function parseS3UploaderJob(messageBody: string): S3UploaderJob | null {
   }
 
   if (
+    (parsed.version !== undefined && parsed.version !== 1) ||
     typeof parsed.reason !== 'string' ||
-    !parsed.reason ||
+    !S3_UPLOADER_JOB_REASONS.includes(parsed.reason) ||
     typeof parsed.contract !== 'string' ||
     typeof parsed.tokenId !== 'number' ||
     !Object.values(S3UploaderCollectionType).includes(parsed.collectionType) ||

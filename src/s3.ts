@@ -422,7 +422,11 @@ async function processNftVideos(
 
   if (requestedVariants.has(S3UploaderVideoVariant.ORIGINAL)) {
     const videoExists = await s3ObjectExists(myBucket, videoKey, videoTxId);
-    if (!videoExists.exists) {
+    if (videoExists.exists) {
+      logger.info(
+        `[SKIP VIDEO ORIGINAL] [KEY ${videoKey}] [reason=already_exists]`
+      );
+    } else {
       logger.info(`[MISSING ${videoFormat}] [KEY ${videoKey}]`);
       logger.info(`[FETCHING ${videoFormat}] [KEY ${videoKey}]`);
 
@@ -439,10 +443,6 @@ async function processNftVideos(
 
       logger.info(`[KEY UPLOADED ${videoKey}] [ETAG ${uploadedVideo.ETag}]`);
       cfInvalidationPaths.add(`/${videoKey}`);
-    } else {
-      logger.info(
-        `[SKIP VIDEO ORIGINAL] [KEY ${videoKey}] [reason=already_exists]`
-      );
     }
   } else {
     logger.info(
