@@ -49,6 +49,7 @@ export class CollectedStatsDb extends LazyDbAccessCompatibleService {
           FROM ${CONSOLIDATED_OWNERS_BALANCES_TABLE} o
           LEFT JOIN ${CONSOLIDATED_WALLETS_TDH_TABLE} t
             ON t.consolidation_key = o.consolidation_key
+           AND t.block = (SELECT MAX(block_number) FROM ${TDH_BLOCKS_TABLE})
           WHERE o.consolidation_key = :consolidationKey
           LIMIT 1
         `,
