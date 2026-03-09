@@ -43,6 +43,7 @@ import { ApiDropsLeaderboardPage } from '../generated/models/ApiDropsLeaderboard
 import { ApiDropType } from '../generated/models/ApiDropType';
 import { ApiDropWithoutWavesPageWithoutCount } from '../generated/models/ApiDropWithoutWavesPageWithoutCount';
 import { ApiIntRange } from '../generated/models/ApiIntRange';
+import { ApiSetPinnedDropRequest } from '../generated/models/ApiSetPinnedDropRequest';
 import { ApiUpdateWaveDecisionPause } from '../generated/models/ApiUpdateWaveDecisionPause';
 import { ApiUpdateWaveRequest } from '../generated/models/ApiUpdateWaveRequest';
 import { ApiWave } from '../generated/models/ApiWave';
@@ -373,6 +374,25 @@ router.post('/:id/pins', needsAuthenticatedUser(), async (req, res) => {
     }
   );
 });
+
+router.post(
+  '/:id/pinned-drop',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<{ id: string }, any, ApiSetPinnedDropRequest, any, any>,
+    res: Response<ApiResponse<ApiWave>>
+  ) => {
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
+    const request = getValidatedByJoiOrThrow(req.body, SetPinnedDropSchema);
+    const wave = await waveApiService.setPinnedDrop(req.params.id, request, {
+      authenticationContext,
+      timer
+    });
+    await giveReadReplicaTimeToCatchUp();
+    res.send(wave);
+  }
+);
 
 router.delete('/:id/pins', needsAuthenticatedUser(), async (req, res) => {
   await handleSimpleWaveAction(
@@ -1135,6 +1155,10 @@ const WaveSchema = Joi.object<ApiCreateNewWave>({
 
 const UpdateWaveSchema = Joi.object<ApiUpdateWaveRequest>({
   ...waveSchemaBaseValidations
+});
+
+const SetPinnedDropSchema = Joi.object<ApiSetPinnedDropRequest>({
+  drop_id: Joi.string().required()
 });
 
 const WaveSubscriptionActionsSchema = Joi.object<ApiWaveSubscriptionActions>({

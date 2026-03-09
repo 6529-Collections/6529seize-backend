@@ -39,6 +39,11 @@ import {
   resolveAuditS3CheckConcurrency
 } from '@/nftsLoop/s3-uploader-audit';
 import { publishPendingS3UploaderOutboxJobs } from '@/nftsLoop/s3-uploader-outbox.publisher';
+import {
+  getPayloadPreview,
+  isPlainObject,
+  normalizeMetadataPayload
+} from '@/metadata-payload';
 import { getRpcProvider } from '@/rpc-provider';
 import { equalIgnoreCase } from '@/strings';
 import { text } from '@/text';
@@ -139,9 +144,19 @@ async function fetchMetadata(uri: string): Promise<any> {
     : uri;
   try {
     return await withArweaveFallback(url, (u) =>
-      axios
-        .get(u, { timeout: METADATA_FETCH_TIMEOUT_MS })
-        .then((res) => res.data)
+      axios.get(u, { timeout: METADATA_FETCH_TIMEOUT_MS }).then((res) => {
+        const metadata = normalizeMetadataPayload(res.data);
+        if (!metadata) {
+          const contentType = String(
+            res.headers?.['content-type'] ?? 'unknown'
+          );
+          const preview = getPayloadPreview(res.data);
+          throw new Error(
+            `Invalid metadata payload from ${u} (content-type: ${contentType}, preview: ${preview})`
+          );
+        }
+        return metadata;
+      })
     );
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -617,7 +632,7 @@ function validateUri(uri: string) {
 }
 
 function validateMetadata(metadata: any) {
-  if (!metadata) {
+  if (!isPlainObject(metadata)) {
     throw new Error('Invalid Metadata');
   }
 }
