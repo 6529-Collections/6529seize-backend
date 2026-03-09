@@ -1,3 +1,7 @@
+import { Logger } from '@/logging';
+
+const logger = Logger.get('S3_UPLOADER_JOBS');
+
 export const S3_UPLOADER_QUEUE_NAME = 's3-uploader-jobs';
 
 export enum S3UploaderCollectionType {
@@ -145,6 +149,7 @@ function parseAnimationDetails(value: any): { format?: string } | null {
 
 export function parseS3UploaderJob(messageBody: string): S3UploaderJob | null {
   if (!messageBody) {
+    logger.warn('[PARSE_S3_UPLOADER_JOB] Message body is empty');
     return null;
   }
 
@@ -152,11 +157,11 @@ export function parseS3UploaderJob(messageBody: string): S3UploaderJob | null {
   try {
     parsed = JSON.parse(messageBody);
   } catch {
+    logger.warn('[PARSE_S3_UPLOADER_JOB] Failed to parse message body');
     return null;
   }
 
   if (
-    parsed?.version !== 1 ||
     typeof parsed.reason !== 'string' ||
     !parsed.reason ||
     typeof parsed.contract !== 'string' ||
@@ -165,6 +170,7 @@ export function parseS3UploaderJob(messageBody: string): S3UploaderJob | null {
     !Object.values(S3UploaderJobType).includes(parsed.jobType) ||
     !Array.isArray(parsed.variants)
   ) {
+    logger.warn('[PARSE_S3_UPLOADER_JOB] Invalid job payload');
     return null;
   }
 
@@ -179,6 +185,7 @@ export function parseS3UploaderJob(messageBody: string): S3UploaderJob | null {
         typeof variant === 'string' && validVariants.has(variant)
     );
   if (!variantsAreValid) {
+    logger.warn('[PARSE_S3_UPLOADER_JOB] Invalid variants');
     return null;
   }
 

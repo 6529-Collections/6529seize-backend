@@ -15,10 +15,10 @@ import * as priorityAlertsContext from '@/priority-alerts.context';
 import {
   findMemeLabExtendedData,
   findMemesExtendedData
-} from '@/nftsLoop/nft_extended_data';
+} from '@/nftsLoop/nft-extended-data';
 import { Transaction } from '@/entities/ITransaction';
 import { RedeemedSubscription } from '@/entities/ISubscription';
-import { updateDistributionInfoFor } from '@/nftsLoop/nft_distribution';
+import { updateDistributionInfoFor } from '@/nftsLoop/nft-distribution';
 import { enums } from '@/enums';
 import { S3UploaderOutboxEntity } from '@/entities/IS3UploaderOutbox';
 

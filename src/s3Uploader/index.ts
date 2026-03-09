@@ -18,6 +18,8 @@ const S3_UPLOADER_FAILURE_ALERT_THRESHOLD = 1;
 const sqsHandler: SQSHandler = async (event) => {
   const batchItemFailures: SQSBatchResponse['batchItemFailures'] = [];
   let failedRecords = 0;
+  let skippedRecords = 0;
+  let processedRecords = 0;
 
   await doInDbContext(
     priorityAlertsContext.wrapAsyncFunction(ALERT_TITLE, async () => {
@@ -27,12 +29,24 @@ const sqsHandler: SQSHandler = async (event) => {
       }
 
       for (const record of event.Records) {
+        const messageId = record.messageId ?? 'unknown';
+        logger.info(
+          `[RECORD START] [messageId=${messageId}] [bodyLength=${record.body?.length ?? 0}]`
+        );
         try {
           const job = parseS3UploaderJob(record.body);
           if (!job) {
-            logger.warn(`Invalid S3 uploader job payload, skipping`);
+            logger.warn(
+              `Invalid S3 uploader job payload, skipping [messageId=${messageId}] [body=${truncateRecordBody(
+                record.body
+              )}]`
+            );
+            skippedRecords++;
             continue;
           }
+          logger.info(
+            `[JOB PARSED] [messageId=${messageId}] [reason=${job.reason}] [collection=${job.collectionType}] [contract=${job.contract}] [tokenId=${job.tokenId}] [jobType=${job.jobType}] [variants=${job.variants.join(',')}]`
+          );
 
           const nft =
             job.collectionType === S3UploaderCollectionType.MEME_LAB
@@ -41,15 +55,23 @@ const sqsHandler: SQSHandler = async (event) => {
 
           if (!nft) {
             logger.warn(
-              `NFT not found for S3 uploader job [${job.collectionType}] ${job.contract}#${job.tokenId}`
+              `NFT not found for S3 uploader job [messageId=${messageId}] [${job.collectionType}] ${job.contract}#${job.tokenId}`
             );
+            skippedRecords++;
             continue;
           }
 
+          logger.info(
+            `[JOB PROCESSING] [messageId=${messageId}] [contract=${job.contract}] [tokenId=${job.tokenId}] [jobType=${job.jobType}]`
+          );
           await processS3UploaderJob(nft, job);
+          processedRecords++;
+          logger.info(
+            `[JOB PROCESSED] [messageId=${messageId}] [contract=${job.contract}] [tokenId=${job.tokenId}] [jobType=${job.jobType}]`
+          );
         } catch (error: any) {
           logger.error(
-            `Failed processing S3 uploader record ${record.messageId}`,
+            `Failed processing S3 uploader record [messageId=${messageId}]`,
             error
           );
           failedRecords++;
@@ -58,6 +80,9 @@ const sqsHandler: SQSHandler = async (event) => {
           }
         }
       }
+      logger.info(
+        `[BATCH SUMMARY] [records=${event.Records.length}] [processed=${processedRecords}] [skipped=${skippedRecords}] [failed=${failedRecords}]`
+      );
 
       if (failedRecords >= S3_UPLOADER_FAILURE_ALERT_THRESHOLD) {
         await priorityAlertsContext.sendPriorityAlertIfConfigured(
@@ -75,5 +100,13 @@ const sqsHandler: SQSHandler = async (event) => {
     batchItemFailures
   };
 };
+
+function truncateRecordBody(body: string | undefined): string {
+  if (!body) {
+    return '';
+  }
+  const maxLength = 300;
+  return body.length <= maxLength ? body : `${body.slice(0, maxLength)}...`;
+}
 
 export const handler = sentryContext.wrapLambdaHandler(sqsHandler);

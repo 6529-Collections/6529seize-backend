@@ -21,6 +21,7 @@ import {
 } from '@/s3Uploader/s3-uploader.jobs';
 import { resizeImageBufferToHeight } from '@/media/image-resize';
 import { withArweaveFallback } from '@/arweave-gateway-fallback';
+import { assertUnreachable } from '@/assertions';
 
 const logger = Logger.get('S3');
 const limit = pLimit(3);
@@ -147,12 +148,18 @@ export async function processS3UploaderJob(
   job: S3UploaderJob
 ) {
   await withCloudfrontFlush(async (myBucket) => {
-    if (job.jobType === S3UploaderJobType.IMAGE) {
-      await processNftImages(myBucket, nft, job.variants);
-      return;
+    const jobType = job.jobType;
+    switch (jobType) {
+      case S3UploaderJobType.IMAGE:
+        await processNftImages(myBucket, nft, job.variants);
+        return;
+      case S3UploaderJobType.VIDEO:
+        await processNftVideos(myBucket, nft, job.variants);
+        return;
+      default:
+        logger.warn(`[UNKNOWN JOB TYPE] [${jobType}]`);
+        throw assertUnreachable(jobType);
     }
-
-    await processNftVideos(myBucket, nft, job.variants);
   });
 }
 
@@ -206,7 +213,16 @@ function getProcessableImageDetails(
 } | null {
   const format = resolveNftImageFormat(n);
   const imageUrl = n.metadata?.image ?? n.metadata?.image_url;
-  if (!format || !imageUrl) {
+  if (!imageUrl) {
+    logger.info(
+      `[SKIP IMAGE] [${n.contract}#${n.id}] [reason=missing_image_url]`
+    );
+    return null;
+  }
+  if (!format) {
+    logger.info(
+      `[SKIP IMAGE] [${n.contract}#${n.id}] [reason=unsupported_or_missing_image_format]`
+    );
     return null;
   }
 
@@ -285,6 +301,9 @@ async function maybeHandleOriginalImage({
   getImageBlob: () => Promise<Buffer>;
 }) {
   if (!requestedVariants.has(S3UploaderImageVariant.ORIGINAL)) {
+    logger.info(
+      `[SKIP IMAGE ORIGINAL] [${nft.contract}#${nft.id}] [reason=variant_not_requested]`
+    );
     return;
   }
 
@@ -360,6 +379,10 @@ async function processScaledImageVariants({
 
   if (tasks.length) {
     await Promise.all(tasks);
+  } else {
+    logger.info(
+      `[SKIP IMAGE SCALES] [${nft.contract}#${nft.id}] [reason=no_requested_or_available_scaled_variants]`
+    );
   }
 }
 
@@ -374,42 +397,65 @@ async function processNftVideos(
   const normalizedFormat =
     typeof rawFormat === 'string' ? rawFormat.trim().toUpperCase() : '';
 
-  if (videoUrl && (normalizedFormat == 'MP4' || normalizedFormat == 'MOV')) {
-    const requestedVariants = new Set<S3UploaderVideoVariant>(
-      videoVariants ?? [
-        S3UploaderVideoVariant.ORIGINAL,
-        S3UploaderVideoVariant.SCALED_750
-      ]
+  if (!videoUrl) {
+    logger.info(
+      `[SKIP VIDEO] [${n.contract}#${n.id}] [reason=missing_video_url]`
     );
-    const videoTxId = getTxId(videoUrl, `${n.contract}-${n.id}`);
-    const videoFormat = normalizedFormat;
-    const videoKey = `videos/${n.contract}/${n.id}.${videoFormat}`;
+    return;
+  }
+  if (normalizedFormat !== 'MP4' && normalizedFormat !== 'MOV') {
+    logger.info(
+      `[SKIP VIDEO] [${n.contract}#${n.id}] [reason=unsupported_or_missing_video_format] [format=${rawFormat ?? ''}]`
+    );
+    return;
+  }
 
-    if (requestedVariants.has(S3UploaderVideoVariant.ORIGINAL)) {
-      const videoExists = await s3ObjectExists(myBucket, videoKey, videoTxId);
-      if (!videoExists.exists) {
-        logger.info(`[MISSING ${videoFormat}] [KEY ${videoKey}]`);
-        logger.info(`[FETCHING ${videoFormat}] [KEY ${videoKey}]`);
+  const requestedVariants = new Set<S3UploaderVideoVariant>(
+    videoVariants ?? [
+      S3UploaderVideoVariant.ORIGINAL,
+      S3UploaderVideoVariant.SCALED_750
+    ]
+  );
+  const videoTxId = getTxId(videoUrl, `${n.contract}-${n.id}`);
+  const videoFormat = normalizedFormat;
+  const videoKey = `videos/${n.contract}/${n.id}.${videoFormat}`;
 
-        const buffer = await fetchUrl(videoUrl);
-        logger.info(`[DOWNLOADED ${videoFormat}] [KEY ${videoKey}]`);
+  if (requestedVariants.has(S3UploaderVideoVariant.ORIGINAL)) {
+    const videoExists = await s3ObjectExists(myBucket, videoKey, videoTxId);
+    if (!videoExists.exists) {
+      logger.info(`[MISSING ${videoFormat}] [KEY ${videoKey}]`);
+      logger.info(`[FETCHING ${videoFormat}] [KEY ${videoKey}]`);
 
-        const uploadedVideo = await s3UploadObject({
-          bucket: myBucket,
-          key: videoKey,
-          body: buffer,
-          contentType: `video/${videoFormat.toLowerCase()}`,
-          txId: videoTxId
-        });
+      const buffer = await fetchUrl(videoUrl);
+      logger.info(`[DOWNLOADED ${videoFormat}] [KEY ${videoKey}]`);
 
-        logger.info(`[KEY UPLOADED ${videoKey}] [ETAG ${uploadedVideo.ETag}]`);
-        cfInvalidationPaths.add(`/${videoKey}`);
-      }
+      const uploadedVideo = await s3UploadObject({
+        bucket: myBucket,
+        key: videoKey,
+        body: buffer,
+        contentType: `video/${videoFormat.toLowerCase()}`,
+        txId: videoTxId
+      });
+
+      logger.info(`[KEY UPLOADED ${videoKey}] [ETAG ${uploadedVideo.ETag}]`);
+      cfInvalidationPaths.add(`/${videoKey}`);
+    } else {
+      logger.info(
+        `[SKIP VIDEO ORIGINAL] [KEY ${videoKey}] [reason=already_exists]`
+      );
     }
+  } else {
+    logger.info(
+      `[SKIP VIDEO ORIGINAL] [${n.contract}#${n.id}] [reason=variant_not_requested]`
+    );
+  }
 
-    if (requestedVariants.has(S3UploaderVideoVariant.SCALED_750)) {
-      await handleVideoScaling(n, videoUrl, videoFormat, myBucket, videoTxId);
-    }
+  if (requestedVariants.has(S3UploaderVideoVariant.SCALED_750)) {
+    await handleVideoScaling(n, videoUrl, videoFormat, myBucket, videoTxId);
+  } else {
+    logger.info(
+      `[SKIP VIDEO SCALED_750] [${n.contract}#${n.id}] [reason=variant_not_requested]`
+    );
   }
 }
 
@@ -468,7 +514,10 @@ async function handleImage({
   sourceBlobProvider?: () => Promise<Buffer>;
 }) {
   const imageExists = await s3ObjectExists(myBucket, s3Key, imageTxId);
-  if (imageExists.exists) return;
+  if (imageExists.exists) {
+    logger.info(`[SKIP IMAGE] [KEY ${s3Key}] [reason=already_exists]`);
+    return;
+  }
 
   logger.info(
     `[MISSING IMAGE FOR HEIGHT ${height ?? 'original'}] [KEY ${s3Key}]`
@@ -518,7 +567,12 @@ async function handleVideoScaling(
   const scaledVideoKey = `videos/${n.contract}/scaledx750/${n.id}.${videoFormat}`;
 
   const videoExists = await s3ObjectExists(myBucket, scaledVideoKey, txId);
-  if (videoExists.exists) return;
+  if (videoExists.exists) {
+    logger.info(
+      `[SKIP VIDEO SCALED] [KEY ${scaledVideoKey}] [reason=already_exists]`
+    );
+    return;
+  }
 
   logger.info(`[MISSING SCALED ${videoFormat}] [KEY ${scaledVideoKey}]`);
 
