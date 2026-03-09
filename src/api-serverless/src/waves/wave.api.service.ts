@@ -965,14 +965,7 @@ export class WaveApiService {
     const authenticatedProfileId =
       authenticationContext?.getActingAsId() ?? null;
     if (!authenticatedProfileId) {
-      if (
-        only_waves_followed_by_authenticated_user ||
-        [
-          ApiWavesOverviewType.AuthorYouHaveRepped,
-          ApiWavesOverviewType.MostDroppedByYou,
-          ApiWavesOverviewType.RecentlyDroppedToByYou
-        ].includes(type)
-      ) {
+      if (only_waves_followed_by_authenticated_user) {
         throw new BadRequestException(
           `You can't see waves organised by your behaviour unless you're authenticated`
         );
@@ -1091,16 +1084,6 @@ export class WaveApiService {
     pinned: ApiWavesPinFilter | null;
   }): Promise<WaveEntity[]> {
     switch (type) {
-      case ApiWavesOverviewType.Latest:
-        return await this.wavesApiDb.findLatestWaves({
-          only_waves_followed_by_authenticated_user,
-          authenticated_user_id: authenticatedUserId,
-          eligibleGroups,
-          limit,
-          offset,
-          direct_message,
-          pinned
-        });
       case ApiWavesOverviewType.MostSubscribed:
         return await this.wavesApiDb.findMostSubscribedWaves({
           only_waves_followed_by_authenticated_user,
@@ -1111,63 +1094,11 @@ export class WaveApiService {
           direct_message,
           pinned
         });
-      case ApiWavesOverviewType.HighLevelAuthor:
-        return await this.wavesApiDb.findHighLevelAuthorWaves({
-          only_waves_followed_by_authenticated_user,
-          authenticated_user_id: authenticatedUserId,
-          eligibleGroups,
-          limit,
-          offset,
-          direct_message,
-          pinned
-        });
-      case ApiWavesOverviewType.AuthorYouHaveRepped:
-        return await this.wavesApiDb.findWavesByAuthorsYouHaveRepped({
-          eligibleGroups,
-          authenticatedUserId: authenticatedUserId!,
-          only_waves_followed_by_authenticated_user,
-          limit,
-          offset,
-          direct_message,
-          pinned
-        });
-      case ApiWavesOverviewType.MostDropped:
-        return await this.wavesApiDb.findMostDroppedWaves({
-          eligibleGroups,
-          authenticated_user_id: authenticatedUserId,
-          only_waves_followed_by_authenticated_user,
-          limit,
-          offset,
-          direct_message,
-          pinned
-        });
-      case ApiWavesOverviewType.MostDroppedByYou:
-        return await this.wavesApiDb.findMostDroppedWavesByYou({
-          eligibleGroups,
-          only_waves_followed_by_authenticated_user,
-          dropperId: authenticatedUserId!,
-          authenticated_user_id: authenticatedUserId,
-          limit,
-          offset,
-          direct_message,
-          pinned
-        });
       case ApiWavesOverviewType.RecentlyDroppedTo:
         return await this.wavesApiDb.findRecentlyDroppedToWaves({
           eligibleGroups,
           only_waves_followed_by_authenticated_user,
           authenticated_user_id: authenticatedUserId,
-          limit,
-          offset,
-          direct_message,
-          pinned
-        });
-      case ApiWavesOverviewType.RecentlyDroppedToByYou:
-        return await this.wavesApiDb.findRecentlyDroppedToWavesByYou({
-          only_waves_followed_by_authenticated_user,
-          authenticated_user_id: authenticatedUserId,
-          eligibleGroups,
-          dropperId: authenticatedUserId!,
           limit,
           offset,
           direct_message,
