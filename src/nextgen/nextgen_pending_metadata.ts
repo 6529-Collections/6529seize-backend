@@ -4,6 +4,10 @@ import {
   fetchPendingNextgenTokens
 } from './nextgen.db';
 import { Logger } from '../logging';
+import {
+  fetchNextGenMetadata,
+  getRequiredMetadataName
+} from '@/nextgen/nextgen-metadata';
 import { processTraits } from './nextgen_core_events';
 import { EntityManager } from 'typeorm';
 
@@ -25,15 +29,20 @@ export async function processPendingMetadataTokens(
     }
     const metadataLink = `${collection.base_uri}${token.id}`;
     try {
-      const metadataResponse: any = await (await fetch(metadataLink)).json();
-      const pending = metadataResponse.name.toLowerCase().startsWith('pending');
+      const metadataResponse: any = await fetchNextGenMetadata(metadataLink);
+      const metadataName = getRequiredMetadataName(
+        metadataResponse,
+        metadataLink
+      );
 
-      token.name = metadataResponse.name;
+      const isPending = metadataName.toLowerCase().startsWith('pending');
+
+      token.name = metadataName;
       token.metadata_url = metadataLink;
       token.image_url = metadataResponse.image;
       token.animation_url = metadataResponse.animation_url;
       token.generator = metadataResponse.generator;
-      token.pending = pending;
+      token.pending = isPending;
 
       await persistNextGenToken(entityManager, token);
       if (metadataResponse.attributes) {
@@ -45,7 +54,7 @@ export async function processPendingMetadataTokens(
         );
       }
       logger.info(
-        `[TOKEN ID ${token.id}] : [PENDING ${pending}] : [METADATA LINK ${metadataLink}]`
+        `[TOKEN ID ${token.id}] : [PENDING ${isPending}] : [METADATA LINK ${metadataLink}]`
       );
     } catch (e) {
       logger.info(
