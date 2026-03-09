@@ -1368,19 +1368,20 @@ export class WaveApiService {
         if (!wave) {
           throw new NotFoundException(`Wave ${waveId} not found`);
         }
-        if (
-          wave.admin_group_id === null ||
-          !groupsUserIsEligibleFor.includes(wave.admin_group_id)
-        ) {
+        const isCreator = wave.created_by === authenticatedProfileId;
+        const isAdmin =
+          wave.admin_group_id !== null &&
+          groupsUserIsEligibleFor.includes(wave.admin_group_id);
+        if (!isCreator && !isAdmin) {
           throw new ForbiddenException(
-            `Only wave admins can change pinned drop`
+            `Only wave creators or admins can change pinned drop`
           );
         }
         const drop = await this.dropsDb.findDropById(
           request.drop_id,
           connection
         );
-        if (!drop || drop.wave_id !== waveId) {
+        if (drop?.wave_id !== waveId) {
           throw new NotFoundException(
             `Drop ${request.drop_id} not found in wave ${waveId}`
           );

@@ -4964,6 +4964,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiWave"
+        "403":
+          description: Only wave creators or admins can change pinned drop
         "400":
           description: Invalid request
         "404":
