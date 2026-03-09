@@ -11,10 +11,7 @@ import {
   WALLETS_TDH_TABLE
 } from '@/constants';
 import { RequestContext } from '@/request.context';
-import {
-  dbSupplier,
-  LazyDbAccessCompatibleService
-} from '@/sql-executor';
+import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
 
 type CollectedStatsSeasonDefinitionRow = {
   season_id: number;

@@ -35,12 +35,18 @@ describe('CollectedStatsService', () => {
   });
 
   it('aggregates total, full set, partial set, and empty season stats', async () => {
-    identityFetcher.getIdentityAndConsolidationsByIdentityKey.mockResolvedValue({
-      wallets: [{ wallet: '0xABC' }, { wallet: '0xdef' }, { wallet: '0xabc' }],
-      primary_wallet: '0xABC',
-      consolidation_key: '0xabc-0xdef',
-      id: 'profile-1'
-    } as any);
+    identityFetcher.getIdentityAndConsolidationsByIdentityKey.mockResolvedValue(
+      {
+        wallets: [
+          { wallet: '0xABC' },
+          { wallet: '0xdef' },
+          { wallet: '0xabc' }
+        ],
+        primary_wallet: '0xABC',
+        consolidation_key: '0xabc-0xdef',
+        id: 'profile-1'
+      } as any
+    );
     collectedStatsDb.getSeasonDefinitions.mockResolvedValue([
       {
         season_id: 1,
@@ -103,10 +109,7 @@ describe('CollectedStatsService', () => {
 
     expect(
       collectedStatsDb.getHeldBalancesBySeasonAndToken
-    ).toHaveBeenCalledWith(
-      ['0xabc', '0xdef'],
-      {}
-    );
+    ).toHaveBeenCalledWith(['0xabc', '0xdef'], {});
     expect(
       collectedStatsDb.getConsolidatedCollectionSummary
     ).toHaveBeenCalledWith('0xabc-0xdef', {});
