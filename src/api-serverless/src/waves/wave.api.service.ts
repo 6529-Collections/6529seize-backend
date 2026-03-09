@@ -51,6 +51,7 @@ import { reactionsService, ReactionsService } from '../drops/reactions.service';
 import { ApiCreateNewWave } from '../generated/models/ApiCreateNewWave';
 import { ApiDropType } from '../generated/models/ApiDropType';
 import { ApiGroupFull } from '../generated/models/ApiGroupFull';
+import { ApiSetPinnedDropRequest } from '../generated/models/ApiSetPinnedDropRequest';
 import { ApiUpdateWaveDecisionPause } from '../generated/models/ApiUpdateWaveDecisionPause';
 import { ApiUpdateWaveRequest } from '../generated/models/ApiUpdateWaveRequest';
 import { ApiWave } from '../generated/models/ApiWave';
@@ -79,6 +80,7 @@ import {
   MetricsRecorder
 } from '../../../metrics/MetricsRecorder';
 import { CurationsDb, curationsDb } from '@/api/curations/curations.db';
+import { DropsDb, dropsDb } from '@/drops/drops.db';
 
 export class WaveApiService {
   constructor(
@@ -94,7 +96,8 @@ export class WaveApiService {
     private readonly userNotifier: UserNotifier,
     private readonly identityFetcher: IdentityFetcher,
     private readonly metricsRecorder: MetricsRecorder,
-    private readonly curationsDb: CurationsDb
+    private readonly curationsDb: CurationsDb,
+    private readonly dropsDb: DropsDb
   ) {}
 
   public async createWave(
@@ -1327,6 +1330,93 @@ export class WaveApiService {
     );
   }
 
+  async setPinnedDrop(
+    waveId: string,
+    request: ApiSetPinnedDropRequest,
+    ctx: RequestContext
+  ): Promise<ApiWave> {
+    const authenticationContext = ctx.authenticationContext;
+    if (!authenticationContext?.isUserFullyAuthenticated()) {
+      throw new ForbiddenException(`Please create a profile first`);
+    }
+    if (authenticationContext.isAuthenticatedAsProxy()) {
+      throw new ForbiddenException(`Proxies can't change pinned drops`);
+    }
+    const authenticatedProfileId = authenticationContext.getActingAsId();
+    if (!authenticatedProfileId) {
+      throw new ForbiddenException(`Please create a profile first`);
+    }
+    const groupsUserIsEligibleFor =
+      await this.userGroupsService.getGroupsUserIsEligibleFor(
+        authenticatedProfileId,
+        ctx.timer
+      );
+    const noRightToVote =
+      authenticationContext.isAuthenticatedAsProxy() &&
+      !authenticationContext.activeProxyActions[
+        ProfileProxyActionType.RATE_WAVE_DROP
+      ];
+    const noRightToParticipate =
+      authenticationContext.isAuthenticatedAsProxy() &&
+      !authenticationContext.activeProxyActions[
+        ProfileProxyActionType.CREATE_DROP_TO_WAVE
+      ];
+    return await this.wavesApiDb.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const ctxWithConnection = { ...ctx, connection };
+        const wave = await this.wavesApiDb.findWaveById(waveId, connection);
+        if (!wave) {
+          throw new NotFoundException(`Wave ${waveId} not found`);
+        }
+        const isCreator = wave.created_by === authenticatedProfileId;
+        const isAdmin =
+          wave.admin_group_id !== null &&
+          groupsUserIsEligibleFor.includes(wave.admin_group_id);
+        if (!isCreator && !isAdmin) {
+          throw new ForbiddenException(
+            `Only wave creators or admins can change pinned drop`
+          );
+        }
+        const drop = await this.dropsDb.findDropById(
+          request.drop_id,
+          connection
+        );
+        if (drop?.wave_id !== waveId) {
+          throw new NotFoundException(
+            `Drop ${request.drop_id} not found in wave ${waveId}`
+          );
+        }
+        await this.wavesApiDb.updateDescriptionDropId(
+          {
+            waveId,
+            newDescriptionDropId: request.drop_id
+          },
+          connection
+        );
+        await this.metricsRecorder.recordActiveIdentity(
+          { identityId: authenticatedProfileId },
+          ctxWithConnection
+        );
+        const updatedWave = await this.wavesApiDb.findWaveById(
+          waveId,
+          connection
+        );
+        if (!updatedWave) {
+          throw new NotFoundException(`Wave ${waveId} not found`);
+        }
+        return await this.waveMappers.waveEntityToApiWave(
+          {
+            waveEntity: updatedWave,
+            groupIdsUserIsEligibleFor: groupsUserIsEligibleFor,
+            noRightToVote,
+            noRightToParticipate
+          },
+          ctxWithConnection
+        );
+      }
+    );
+  }
+
   private calculateNextDecisionTimeRelativeToNow(
     currentMillis: number,
     decisionStrategy: ApiWaveDecisionsStrategy | null
@@ -1523,5 +1613,6 @@ export const waveApiService = new WaveApiService(
   userNotifier,
   identityFetcher,
   metricsRecorder,
-  curationsDb
+  curationsDb,
+  dropsDb
 );
