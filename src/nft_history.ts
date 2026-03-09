@@ -24,6 +24,10 @@ import { NFTHistory, NFTHistoryClaim } from './entities/INFTHistory';
 import { NFT_HISTORY_IFACE } from './abis/nft_history';
 import { withArweaveFallback } from '@/arweave-gateway-fallback';
 import { Logger } from './logging';
+import {
+  getPayloadPreview,
+  normalizeMetadataPayload
+} from '@/metadata-payload';
 import { equalIgnoreCase } from './strings';
 
 const logger = Logger.get('NFT_HISTORY');
@@ -191,14 +195,47 @@ export const getEditDescription = async (
   newUri: string,
   blockNumber: number
 ) => {
+  const readResponsePayload = async (res: any): Promise<unknown> => {
+    if (typeof res?.text === 'function') {
+      return await res.text();
+    }
+    if (typeof res?.json === 'function') {
+      return await res.json();
+    }
+    throw new Error('Response body reader missing (expected text() or json())');
+  };
+
+  const fetchMetadataForDiff = async (uri: string) => {
+    return await withArweaveFallback(uri, async (u) => {
+      const res = await fetch(u);
+      const body = await readResponsePayload(res);
+
+      const hasOk = typeof res?.ok === 'boolean';
+      const hasErrorStatus =
+        typeof res?.status === 'number' && Number(res.status) >= 400;
+      if ((hasOk && !res.ok) || hasErrorStatus) {
+        throw new Error(
+          `Metadata fetch failed for ${u} with status ${res.status}`
+        );
+      }
+
+      const metadata = normalizeMetadataPayload(body);
+      if (!metadata) {
+        const contentType = res.headers.get('content-type') ?? 'unknown';
+        const preview = getPayloadPreview(body);
+        throw new Error(
+          `Invalid metadata payload for ${u} (content-type: ${contentType}, preview: ${preview})`
+        );
+      }
+
+      return metadata;
+    });
+  };
+
   const previousUri = await fetchLatestNftUri(tokenId, contract, blockNumber);
   if (previousUri && !equalIgnoreCase(previousUri, newUri)) {
-    const previousMeta: any = await (
-      await withArweaveFallback(previousUri, (u) => fetch(u))
-    ).json();
-    const newMeta: any = await (
-      await withArweaveFallback(newUri, (u) => fetch(u))
-    ).json();
+    const previousMeta: any = await fetchMetadataForDiff(previousUri);
+    const newMeta: any = await fetchMetadataForDiff(newUri);
 
     const changes: any[] = [];
     for (const key in previousMeta) {
@@ -477,24 +514,30 @@ export const getDeployerTransactions = async (
     } else if (tx?.data.startsWith(SET_TOKEN_URI_METHOD)) {
       const details = await findDetailsFromTransaction(tx);
       if (details) {
-        const editDescription = await getEditDescription(
-          details.tokenId,
-          details.contract,
-          details.tokenUri,
-          tx.blockNumber!
-        );
-        if (editDescription) {
-          const nftEdit: NFTHistory = {
-            created_at: new Date(),
-            nft_id: details.tokenId,
-            contract: details.contract,
-            uri: details.tokenUri,
-            transaction_date: new Date(t.metadata.blockTimestamp),
-            transaction_hash: t.hash,
-            block: parseInt(t.blockNum, 16),
-            description: editDescription
-          };
-          await persistNftHistory([nftEdit]);
+        try {
+          const editDescription = await getEditDescription(
+            details.tokenId,
+            details.contract,
+            details.tokenUri,
+            tx.blockNumber!
+          );
+          if (editDescription) {
+            const nftEdit: NFTHistory = {
+              created_at: new Date(),
+              nft_id: details.tokenId,
+              contract: details.contract,
+              uri: details.tokenUri,
+              transaction_date: new Date(t.metadata.blockTimestamp),
+              transaction_hash: t.hash,
+              block: parseInt(t.blockNum, 16),
+              description: editDescription
+            };
+            await persistNftHistory([nftEdit]);
+          }
+        } catch (e: any) {
+          logger.error(
+            `[ERROR PROCESSING SET_TOKEN_URI TX ${tx.hash}] [CONTRACT ${details.contract}] [TOKEN ID ${details.tokenId}] [URI ${details.tokenUri}] [ERROR ${e?.message ?? String(e)}]`
+          );
         }
       }
     } else if (tx?.data.startsWith(AIRDROP_METHOD)) {

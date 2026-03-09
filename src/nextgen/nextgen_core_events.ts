@@ -12,6 +12,10 @@ import { Transaction } from '@/entities/ITransaction';
 import { findEnsForAddress } from '@/ens-lookup';
 import { ethTools } from '@/eth-tools';
 import { Logger } from '@/logging';
+import {
+  fetchNextGenMetadata,
+  getRequiredMetadataName
+} from '@/nextgen/nextgen-metadata';
 import { equalIgnoreCase } from '@/strings';
 import { findTransactionValues } from '@/transaction_values';
 import { LogDescription } from 'ethers';
@@ -264,13 +268,14 @@ export async function upsertToken(
 ) {
   const metadataLink = `${collection.base_uri}${tokenId}`;
 
-  const metadataResponse: any = await (await fetch(metadataLink)).json();
-  const pending = metadataResponse.name.toLowerCase().startsWith('pending');
+  const metadataResponse: any = await fetchNextGenMetadata(metadataLink);
+  const name = getRequiredMetadataName(metadataResponse, metadataLink);
+  const pending = name.toLowerCase().startsWith('pending');
 
   const nextGenToken: NextGenToken = {
     id: tokenId,
     normalised_id: normalisedTokenId,
-    name: metadataResponse.name,
+    name,
     collection_id: collection.id,
     collection_name: collection.name,
     mint_date: mintDate,
