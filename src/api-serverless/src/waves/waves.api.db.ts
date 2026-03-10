@@ -21,7 +21,10 @@ import {
   WAVES_DECISION_PAUSES_TABLE,
   WAVES_TABLE
 } from '@/constants';
-import { ActivityEventTargetType } from '../../../entities/IActivityEvent';
+import {
+  ActivityEventAction,
+  ActivityEventTargetType
+} from '../../../entities/IActivityEvent';
 import { DropType } from '../../../entities/IDrop';
 import {
   WaveDecisionPauseEntity,
@@ -997,31 +1000,34 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
 
   async findHotWaves({
     cutoffTimestamp,
-    limit
+    limit,
+    authenticated_user_id,
+    exclude_followed
   }: {
     cutoffTimestamp: number;
     limit: number;
+    authenticated_user_id: string | null;
+    exclude_followed: boolean;
   }): Promise<WaveEntity[]> {
     return this.db
-      .execute<
-        Omit<
-          WaveEntity,
-          | 'participation_required_media'
-          | 'participation_required_metadata'
-          | 'decisions_strategy'
-        > & {
-          participation_required_media: string;
-          participation_required_metadata: string;
-          decisions_strategy: string;
-        }
-      >(
+      .execute<RawWaveEntity>(
         `with hot_waves as (
           select w.id, count(*) as drop_count
           from ${WAVES_TABLE} w
           join ${DROPS_TABLE} d on d.wave_id = w.id
+          ${
+            exclude_followed
+              ? `left join ${IDENTITY_SUBSCRIPTIONS_TABLE} f
+                  on f.subscriber_id = :authenticated_user_id
+                 and f.target_id = w.id
+                 and f.target_type = :wave_target_type
+                 and f.target_action = :drop_created_action`
+              : ``
+          }
           where d.created_at >= :cutoffTimestamp
             and w.visibility_group_id is null
             and w.chat_group_id is null
+            ${exclude_followed ? `and f.id is null` : ``}
           group by w.id
           having count(distinct d.author_id) >= 3
           order by drop_count desc
@@ -1030,22 +1036,15 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         select w.* from ${WAVES_TABLE} w
         join hot_waves hw on hw.id = w.id
         order by hw.drop_count desc, w.id`,
-        { cutoffTimestamp, limit }
+        {
+          cutoffTimestamp,
+          limit,
+          authenticated_user_id,
+          wave_target_type: ActivityEventTargetType.WAVE,
+          drop_created_action: ActivityEventAction.DROP_CREATED
+        }
       )
-      .then((res) =>
-        res.map((it) => ({
-          ...it,
-          participation_required_media: JSON.parse(
-            it.participation_required_media
-          ),
-          participation_required_metadata: JSON.parse(
-            it.participation_required_metadata
-          ),
-          decisions_strategy: it.decisions_strategy
-            ? JSON.parse(it.decisions_strategy)
-            : null
-        }))
-      );
+      .then((res) => res.map((it) => this.parseWaveEntity(it)));
   }
 
   async findRecentlyDroppedToWaves(param: {

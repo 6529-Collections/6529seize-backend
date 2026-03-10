@@ -5,7 +5,11 @@ import { ApiResponse } from '../api-response';
 import { ApiWave } from '../generated/models/ApiWave';
 import * as Joi from 'joi';
 import { getValidatedByJoiOrThrow } from '../validation';
-import { waveApiService, WavesOverviewParams } from './wave.api.service';
+import {
+  RankedWavesOverviewParams,
+  waveApiService,
+  WavesOverviewParams
+} from './wave.api.service';
 import { ApiWavesOverviewType } from '../generated/models/ApiWavesOverviewType';
 import { Timer } from '../../../time';
 import { ApiWavesPinFilter } from '../generated/models/ApiWavesPinFilter';
@@ -18,12 +22,16 @@ router.get(
   maybeAuthenticatedUser(),
   cacheRequest({ authDependent: true }),
   async (
-    req: Request<any, any, any, any, any>,
+    req: Request<any, any, any, RankedWavesOverviewParams, any>,
     res: Response<ApiResponse<ApiWave[]>>
   ) => {
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
-    const waves = await waveApiService.getHotWaves({
+    const params = getValidatedByJoiOrThrow(
+      req.query,
+      RankedWavesOverviewParamsSchema
+    );
+    const waves = await waveApiService.getHotWaves(params, {
       timer,
       authenticationContext
     });
@@ -66,6 +74,14 @@ const WavesOverviewParamsSchema = Joi.object<WavesOverviewParams>({
     .optional()
     .allow(null, ...Object.values(ApiWavesPinFilter))
     .default(null)
+});
+
+const RankedWavesOverviewParamsSchema = Joi.object<RankedWavesOverviewParams>({
+  exclude_followed: Joi.boolean()
+    .truthy('true')
+    .falsy('false')
+    .optional()
+    .default(false)
 });
 
 export default router;
