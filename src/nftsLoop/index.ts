@@ -26,32 +26,36 @@ const logger = Logger.get('NFTS_LOOP');
 const ALERT_TITLE = 'NFTs Loop';
 
 export const handler = sentryContext.wrapLambdaHandler(async (event) => {
-  await doInDbContext(
-    priorityAlertsContext.wrapAsyncFunction(ALERT_TITLE, async () => {
-      await nftsLoop(event?.mode);
-    }),
-    {
-      logger,
-      entities: [
-        NFT,
-        MemesExtendedData,
-        MemesSeason,
-        NFTOwner,
-        LabNFT,
-        LabExtendedData,
-        Transaction,
-        MemesMintStat,
-        RedeemedSubscription,
-        S3UploaderOutboxEntity
-      ]
-    }
-  );
+  const modeEnum = enums.resolveOrThrow(NFT_MODE, event?.mode);
+  logger.info(`[${modeEnum.toUpperCase()}] [RUNNING]`);
+  try {
+    await doInDbContext(
+      priorityAlertsContext.wrapAsyncFunction(ALERT_TITLE, async () => {
+        await nftsLoop(modeEnum);
+      }),
+      {
+        entities: [
+          NFT,
+          MemesExtendedData,
+          MemesSeason,
+          NFTOwner,
+          LabNFT,
+          LabExtendedData,
+          Transaction,
+          MemesMintStat,
+          RedeemedSubscription,
+          S3UploaderOutboxEntity
+        ]
+      }
+    );
+  } finally {
+    logger.info(`[${modeEnum.toUpperCase()}] [FINISHED]`);
+  }
 });
 
-async function nftsLoop(mode?: string) {
-  const modeEnum = enums.resolveOrThrow(NFT_MODE, mode);
-  await processNFTs(modeEnum);
-  if (modeEnum === NFT_MODE.AUDIT) {
+async function nftsLoop(mode: NFT_MODE) {
+  await processNFTs(mode);
+  if (mode === NFT_MODE.AUDIT) {
     return;
   }
   await findMemesExtendedData();
