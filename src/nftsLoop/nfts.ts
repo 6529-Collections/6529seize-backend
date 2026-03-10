@@ -59,7 +59,36 @@ import axios from 'axios';
 import { ethers } from 'ethers';
 import { EntityManager, In, MoreThan, Not, Repository } from 'typeorm';
 
-const logger = Logger.get('nfts');
+const logger = Logger.get('NFTS');
+let activeMode: NFT_MODE | undefined;
+
+function modePrefix() {
+  return activeMode ? `[${activeMode.toUpperCase()}] ` : '';
+}
+
+function logInfo(arg1: any, ...rest: any[]) {
+  if (typeof arg1 === 'string') {
+    logger.info(`${modePrefix()}${arg1}`, ...rest);
+    return;
+  }
+  logger.info(arg1, ...rest);
+}
+
+function logWarn(arg1: any, ...rest: any[]) {
+  if (typeof arg1 === 'string') {
+    logger.warn(`${modePrefix()}${arg1}`, ...rest);
+    return;
+  }
+  logger.warn(arg1, ...rest);
+}
+
+function logError(arg1: any, ...rest: any[]) {
+  if (typeof arg1 === 'string') {
+    logger.error(`${modePrefix()}${arg1}`, ...rest);
+    return;
+  }
+  logger.error(arg1, ...rest);
+}
 
 const MINT_DATE_GRACE_PERIOD_DAYS = 7;
 const MEMES_MINT_STATS_CLOSE_HOUR = 17;
@@ -160,7 +189,7 @@ async function fetchMetadata(uri: string): Promise<any> {
     );
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    logger.warn(`❌ Failed to fetch metadata from ${uri}: ${msg}`);
+    logWarn(`❌ Failed to fetch metadata from ${uri}: ${msg}`);
     return null;
   }
 }
@@ -234,7 +263,7 @@ async function processNFTsForType(
     newlyDiscoveredNfts
   });
 
-  logger.info(`🔄 Updating supply for ${EntityClass.name}s`);
+  logInfo(`🔄 Updating supply for ${EntityClass.name}s`);
   const maxSupply = await updateSupply(nftMap);
   if (updateHodlRate && EntityClass === NFT) {
     updateHodlRatesForNfts(
@@ -297,7 +326,7 @@ async function maybeRunAuditModeAndReturn({
   }
 
   if (!isS3UploaderEnabledForEnvironment()) {
-    logger.info(`🧪 Skipping S3 audit [CONFIG ${process.env.NODE_ENV}]`);
+    logInfo(`🧪 Skipping S3 audit [CONFIG ${process.env.NODE_ENV}]`);
     return true;
   }
 
@@ -312,14 +341,14 @@ async function maybeRunAuditModeAndReturn({
     env.getIntOrNull('S3_AUDIT_CHECK_CONCURRENCY')
   );
   const nfts = Array.from(nftMap.values()).map((entry) => entry.nft);
-  logger.info(`🧪 Auditing S3 jobs for all ${EntityClass.name}s`);
+  logInfo(`🧪 Auditing S3 jobs for all ${EntityClass.name}s`);
   const summary = await publishMissingS3UploaderAuditJobs({
     nfts,
     collectionType,
     bucket,
     concurrency
   });
-  logger.info(
+  logInfo(
     `✅ Enqueued audit S3 jobs for ${EntityClass.name}s [nfts=${summary.scannedNfts}] [scannedJobs=${summary.scannedJobs}] [enqueuedJobs=${summary.enqueuedJobs}] [skippedJobs=${summary.skippedJobs}]`
   );
   return true;
@@ -343,7 +372,7 @@ async function runDiscoverOrRefreshMode({
   newlyDiscoveredNfts: Array<NFT | LabNFT>;
 }) {
   if (mode === NFT_MODE.DISCOVER) {
-    logger.info(`🔍 Discovering new ${EntityClass.name}s`);
+    logInfo(`🔍 Discovering new ${EntityClass.name}s`);
     await discoverNewNFTs(
       contracts,
       contractMap,
@@ -355,7 +384,7 @@ async function runDiscoverOrRefreshMode({
     return;
   }
 
-  logger.info(`🔄 Refreshing existing ${EntityClass.name}s`);
+  logInfo(`🔄 Refreshing existing ${EntityClass.name}s`);
   await refreshExistingNFTs(nftMap, provider);
   await populateMintStatsForEligibleNFTs(nftMap);
 }
@@ -378,7 +407,7 @@ async function saveAndPostProcessNfts({
     .map((entry) => entry.nft);
 
   if (!toSave.length) {
-    logger.info(`✅ No changes detected for ${EntityClass.name}s`);
+    logInfo(`✅ No changes detected for ${EntityClass.name}s`);
     return;
   }
 
@@ -389,11 +418,11 @@ async function saveAndPostProcessNfts({
     collectionType
   });
   if (outboxJobs.length === 0) {
-    logger.info(
+    logInfo(
       `ℹ️ No S3 uploader jobs generated for ${EntityClass.name}s [mode=${mode}]`
     );
   } else {
-    logger.info(
+    logInfo(
       `📝 Generated ${outboxJobs.length} S3 uploader outbox jobs for ${EntityClass.name}s [mode=${mode}]`
     );
   }
@@ -403,7 +432,7 @@ async function saveAndPostProcessNfts({
     nfts: toSave,
     outboxJobs
   });
-  logger.info(`✅ Saved ${toSave.length} ${EntityClass.name}s`);
+  logInfo(`✅ Saved ${toSave.length} ${EntityClass.name}s`);
 
   await maybeAnnounceNewDiscoveries({
     mode,
@@ -503,7 +532,7 @@ async function maybeAnnounceNewDiscoveries({
   try {
     await announceNewMemeDiscoveries(newlyDiscoveredNfts as NFT[]);
   } catch (error: any) {
-    logger.error(
+    logError(
       `announceNewMemeDiscoveries failed: ${error?.message ?? String(error)}`
     );
   }
@@ -570,11 +599,11 @@ async function discoverForContract(
       });
       newlyDiscoveredNfts.push(discoveredNft);
 
-      logger.info(`🆕 Discovered token for ${contract} #${nextId}: ${uri}`);
+      logInfo(`🆕 Discovered token for ${contract} #${nextId}: ${uri}`);
       nextId++;
     } catch (err: any) {
       if (shouldStopDiscovery(err.message)) {
-        logger.info(`🔚 Stopping Discovery for ${contract} at #${nextId}`);
+        logInfo(`🔚 Stopping Discovery for ${contract} at #${nextId}`);
         if (tokenType === TokenType.ERC1155 && !nextId) {
           nextId = 1;
           continue;
@@ -589,7 +618,7 @@ async function discoverForContract(
 async function announceNewMemeDiscoveries(newlyDiscoveredNfts: NFT[]) {
   const waves = env.getStringArray('DEPLOYER_ANNOUNCEMENTS_WAVE_IDS');
   if (!waves.length) {
-    logger.info(
+    logInfo(
       'No DEPLOYER_ANNOUNCEMENTS_WAVE_IDS waves found, skipping announcement'
     );
     return;
@@ -614,9 +643,9 @@ async function announceNewMemeDiscoveries(newlyDiscoveredNfts: NFT[]) {
     const message = `🚀 ${memeDescriptor} is Live!\n${memeLink}`;
     try {
       await deployerDropper.drop({ message, waves }, {});
-      logger.info(`📣 Posted discovery announcement for meme #${meme.id}`);
+      logInfo(`📣 Posted discovery announcement for meme #${meme.id}`);
     } catch (error: any) {
-      logger.error(
+      logError(
         `Failed to post discovery announcement for meme #${meme.id}: ${
           error?.message ?? String(error)
         }`
@@ -840,9 +869,7 @@ async function refreshExistingNFTs(
           updateMintPrice(entry)
         ]);
       } catch (err: any) {
-        logger.warn(
-          `⚠️ ${nft.contract} #${nft.id} refresh failed: ${err.message}`
-        );
+        logWarn(`⚠️ ${nft.contract} #${nft.id} refresh failed: ${err.message}`);
       }
     })
   );
@@ -862,7 +889,7 @@ async function updateUri(
   const metadata = await fetchMetadata(uri);
   if (!metadata) return;
 
-  logger.info(
+  logInfo(
     `♻️ ${nft.contract} #${nft.id} resetting URI from ${
       nft.uri ?? 'undefined'
     } to ${uri}`
@@ -876,16 +903,16 @@ async function updateMintDate(entry: NftProcessingEntry) {
   const { nft } = entry;
   if (nft.mint_date) return;
 
-  logger.info(`🔄 ${nft.contract} #${nft.id} missing mint date, fetching...`);
+  logInfo(`🔄 ${nft.contract} #${nft.id} missing mint date, fetching...`);
   const mintDate = await getMintDate(nft.contract, nft.id);
   if (mintDate) {
-    logger.info(
+    logInfo(
       `♻️ ${nft.contract} #${nft.id} updating mint date from ${nft.mint_date} to ${mintDate}`
     );
     nft.mint_date = mintDate;
     entry.changed = true;
   } else {
-    logger.warn(`⚠️ ${nft.contract} #${nft.id} mint date not found`);
+    logWarn(`⚠️ ${nft.contract} #${nft.id} mint date not found`);
   }
 }
 
@@ -902,16 +929,16 @@ async function updateMintPrice(entry: NftProcessingEntry) {
     mintDate && Time.daysAgo(MINT_DATE_GRACE_PERIOD_DAYS) > mintDate;
   if (tooOld) return; // skip old NFTs
 
-  logger.info(`🔄 ${nft.contract} #${nft.id} missing mint price, fetching...`);
+  logInfo(`🔄 ${nft.contract} #${nft.id} missing mint price, fetching...`);
   const mintPrice = await getMintPrice(nft.contract, nft.id);
   if (mintPrice) {
-    logger.info(
+    logInfo(
       `♻️ ${nft.contract} #${nft.id} updating mint price from ${nft.mint_price} to ${mintPrice}`
     );
     nft.mint_price = mintPrice;
     entry.changed = true;
   } else {
-    logger.warn(`⚠️ ${nft.contract} #${nft.id} mint price still missing`);
+    logWarn(`⚠️ ${nft.contract} #${nft.id} mint price still missing`);
   }
 }
 
@@ -921,7 +948,7 @@ async function updateMemeReferences(
 ) {
   if (EntityClass !== LabNFT) return;
 
-  logger.info(`🔄 Updating meme references for ${EntityClass.name}s`);
+  logInfo(`🔄 Updating meme references for ${EntityClass.name}s`);
 
   const memeNFTs: NFTWithExtendedData[] = await fetchMemesWithSeason();
 
@@ -929,7 +956,7 @@ async function updateMemeReferences(
     const nft = entry.nft as LabNFT;
     const memeRefs = extractMemeRefs(nft.metadata, memeNFTs);
     if (JSON.stringify(memeRefs) !== JSON.stringify(nft.meme_references)) {
-      logger.info(
+      logInfo(
         `♻️ ${nft.contract} #${nft.id} updating meme references from ${nft.meme_references} to ${memeRefs}`
       );
       nft.meme_references = memeRefs;
@@ -968,7 +995,7 @@ async function updateSupply(
       }
 
       if (supply !== nft.supply) {
-        logger.info(
+        logInfo(
           `♻️ ${nft.contract} #${nft.id} updating supply from ${nft.supply} to ${supply}`
         );
         nft.supply = supply;
@@ -991,7 +1018,7 @@ function updateHodlRatesForNfts(
     let newRate = maxSupply / nft.supply;
     if (!isFinite(newRate) || newRate < 1) newRate = 1;
     if (nft.hodl_rate !== newRate) {
-      logger.info(
+      logInfo(
         `♻️ ${nft.contract} #${nft.id} updating hodl rate from ${nft.hodl_rate} to ${newRate}`
       );
       nft.hodl_rate = newRate;
@@ -1013,7 +1040,7 @@ async function populateMintStatsForEligibleNFTs(
 
     const mintDate = new Date(nft.mint_date);
     if (Number.isNaN(mintDate.getTime())) {
-      logger.warn(
+      logWarn(
         `⚠️ Skipping mint stats for meme #${nft.id}, invalid mint_date ${nft.mint_date}`
       );
       continue;
@@ -1023,7 +1050,7 @@ async function populateMintStatsForEligibleNFTs(
       continue;
     }
 
-    logger.info(`🔄 Populating mint stats for meme #${nft.id}`);
+    logInfo(`🔄 Populating mint stats for meme #${nft.id}`);
     await populateMintStatsIfMissing(nft.id, mintDate, statsRepo, txRepo);
   }
 }
@@ -1131,11 +1158,11 @@ async function populateMintStatsIfMissing(
 
   const wasInserted = Number(insertResult?.raw?.affectedRows ?? 0) > 0;
   if (!wasInserted) {
-    logger.info(`ℹ️ Mint stats already exist for meme #${tokenId}, skipping`);
+    logInfo(`ℹ️ Mint stats already exist for meme #${tokenId}, skipping`);
     return;
   }
 
-  logger.info(
+  logInfo(
     `✅ Mint stats inserted for meme #${tokenId} [mint_count=${totalMintCount}] [proceeds_eth=${proceedsEth}] [proceeds_usd=${proceedsUsd}] [artist_split_eth=${artistSplitEth}] [artist_split_usd=${artistSplitUsd}]`
   );
 }
@@ -1170,12 +1197,18 @@ const getMintDate = async (contract: string, tokenId: number) => {
 };
 
 export async function processNFTs(mode: NFT_MODE) {
-  const provider = getRpcProvider();
-  await processNFTsForType(NFT, NFT_CONTRACTS, mode, provider, true);
-  await processNFTsForType(LabNFT, LABNFT_CONTRACTS, mode, provider, false);
-  await publishPendingS3UploaderOutboxJobs();
-  if (mode === NFT_MODE.REFRESH) {
-    await syncArtists();
+  const previousMode = activeMode;
+  activeMode = mode;
+  try {
+    const provider = getRpcProvider();
+    await processNFTsForType(NFT, NFT_CONTRACTS, mode, provider, true);
+    await processNFTsForType(LabNFT, LABNFT_CONTRACTS, mode, provider, false);
+    await publishPendingS3UploaderOutboxJobs(mode);
+    if (mode === NFT_MODE.REFRESH) {
+      await syncArtists();
+    }
+  } finally {
+    activeMode = previousMode;
   }
 }
 
@@ -1193,7 +1226,7 @@ async function syncArtists() {
     });
   const allNfts = [...allMemesAndGradients, ...allMemelab];
 
-  logger.info(
+  logInfo(
     `🔄 Reconciling artists from ${allNfts.length} NFTs (memes/gradients + memelab)`
   );
 
@@ -1201,7 +1234,7 @@ async function syncArtists() {
   await persistArtists(reconciledArtists);
   await deleteArtistsNotIn(reconciledArtists.map((a) => a.name));
 
-  logger.info(
+  logInfo(
     `✅ Artists reconciliation complete [current=${reconciledArtists.length}]`
   );
 }

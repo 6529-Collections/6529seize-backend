@@ -11,14 +11,14 @@ import { Time } from '@/time';
 import { inspect } from 'node:util';
 import { LessThan } from 'typeorm';
 
-const logger = Logger.get('nfts');
+const logger = Logger.get('NFTS');
 
 const S3_OUTBOX_PUBLISH_BATCH_SIZE = 10;
 const S3_OUTBOX_ERROR_MAX_LENGTH = 2048;
 const S3_OUTBOX_FAILURE_ESCALATION_ATTEMPTS = 3;
 const S3_OUTBOX_PUBLISHED_RETENTION_DAYS = 30;
 
-export async function publishPendingS3UploaderOutboxJobs() {
+export async function publishPendingS3UploaderOutboxJobs(mode?: string) {
   if (!isS3UploaderEnabledForEnvironment()) {
     return;
   }
@@ -26,15 +26,15 @@ export async function publishPendingS3UploaderOutboxJobs() {
   const repo = getDataSource().getRepository(S3UploaderOutboxEntity);
   const pendingCount = await getPendingOutboxCount(repo);
   if (!pendingCount) {
-    await cleanupPublishedOutboxRows(repo);
+    await cleanupPublishedOutboxRows(repo, mode);
     return;
   }
 
-  logger.info(`📤 Publishing S3 uploader outbox [pending=${pendingCount}]`);
+  logInfo(mode, `📤 Publishing S3 uploader outbox [pending=${pendingCount}]`);
   const escalationIds = new Set<number>();
   const maxPendingOutboxId = await getMaxPendingOutboxId(repo);
   if (!maxPendingOutboxId) {
-    await cleanupPublishedOutboxRows(repo);
+    await cleanupPublishedOutboxRows(repo, mode);
     return;
   }
   let lastProcessedId = 0;
@@ -50,12 +50,12 @@ export async function publishPendingS3UploaderOutboxJobs() {
     }
 
     for (const outbox of pending) {
-      await publishOutboxJob(repo, outbox, escalationIds);
+      await publishOutboxJob(repo, outbox, escalationIds, mode);
     }
     lastProcessedId = pending[pending.length - 1].id;
   }
 
-  await cleanupPublishedOutboxRows(repo);
+  await cleanupPublishedOutboxRows(repo, mode);
 
   if (escalationIds.size > 0) {
     throw new Error(
@@ -109,10 +109,12 @@ function getOutboxRepo() {
 async function publishOutboxJob(
   repo: ReturnType<typeof getOutboxRepo>,
   outbox: S3UploaderOutboxEntity,
-  escalationIds: Set<number>
+  escalationIds: Set<number>,
+  mode?: string
 ) {
   const attempt = outbox.attempts + 1;
-  logger.info(
+  logInfo(
+    mode,
     `📤 Publishing S3 uploader outbox job [id=${outbox.id}] [attempt=${attempt}]`
   );
   try {
@@ -131,7 +133,8 @@ async function publishOutboxJob(
     );
   } catch (error: unknown) {
     const message = formatOutboxPublishError(error);
-    logger.error(
+    logError(
+      mode,
       `❌ Failed publishing S3 uploader outbox job [id=${outbox.id}] [attempt=${attempt}] [error=${truncateOutboxError(
         message
       )}]`
@@ -151,7 +154,8 @@ async function publishOutboxJob(
 }
 
 async function cleanupPublishedOutboxRows(
-  repo: ReturnType<typeof getOutboxRepo>
+  repo: ReturnType<typeof getOutboxRepo>,
+  mode?: string
 ) {
   const cutoff = Time.daysAgo(S3_OUTBOX_PUBLISHED_RETENTION_DAYS).toMillis();
   const result = await repo.delete({
@@ -160,10 +164,23 @@ async function cleanupPublishedOutboxRows(
   });
   const deletedRows = result.affected ?? 0;
   if (deletedRows > 0) {
-    logger.info(
+    logInfo(
+      mode,
       `🧹 Cleaned up published S3 uploader outbox rows [deleted=${deletedRows}] [olderThanDays=${S3_OUTBOX_PUBLISHED_RETENTION_DAYS}]`
     );
   }
+}
+
+function modePrefix(mode?: string) {
+  return mode ? `[${mode.toUpperCase()}] ` : '';
+}
+
+function logInfo(mode: string | undefined, message: string) {
+  logger.info(`${modePrefix(mode)}${message}`);
+}
+
+function logError(mode: string | undefined, message: string) {
+  logger.error(`${modePrefix(mode)}${message}`);
 }
 
 function truncateOutboxError(value: string): string {

@@ -25,6 +25,20 @@ const DEFAULT_AUDIT_S3_CHECK_CONCURRENCY = 25;
 const MAX_AUDIT_S3_CHECK_CONCURRENCY = 50;
 
 type S3ObjectExistsFn = typeof s3ObjectExists;
+type AuditNftResult = {
+  collection: string;
+  tokenId: number;
+  totalJobs: number;
+  enqueuedJobs: number;
+  skippedJobs: number;
+};
+type AuditContractSummary = {
+  collection: string;
+  scannedNfts: number;
+  scannedJobs: number;
+  enqueuedJobs: number;
+  skippedJobs: number;
+};
 
 export function resolveAuditS3CheckConcurrency(
   configured: number | null
@@ -40,23 +54,20 @@ export async function publishMissingS3UploaderAuditJobs({
   collectionType,
   bucket,
   concurrency,
-  s3ObjectExistsFn = s3ObjectExists
+  s3ObjectExistsFn = s3ObjectExists,
+  modeLabel = 'AUDIT'
 }: {
   nfts: QueueableNft[];
   collectionType: S3UploaderCollectionType;
   bucket: string;
   concurrency: number;
   s3ObjectExistsFn?: S3ObjectExistsFn;
+  modeLabel?: string;
 }) {
   const limit = pLimit(concurrency);
-  let scannedNfts = 0;
-  let scannedJobs = 0;
-  let enqueuedJobs = 0;
-
-  await Promise.all(
+  const nftResults = await Promise.all(
     nfts.map((nft) =>
       limit(async () => {
-        scannedNfts++;
         const { jobsToEnqueue, totalJobs } =
           await selectAuditJobsToEnqueueForNft({
             nft,
@@ -64,30 +75,116 @@ export async function publishMissingS3UploaderAuditJobs({
             bucket,
             s3ObjectExistsFn
           });
-        scannedJobs += totalJobs;
 
         for (const job of jobsToEnqueue) {
           await sqs.sendToQueueName({
             queueName: S3_UPLOADER_QUEUE_NAME,
             message: job
           });
-          enqueuedJobs++;
         }
+
+        const enqueuedJobs = jobsToEnqueue.length;
+        const skippedJobs = totalJobs - enqueuedJobs;
+        const collection = resolveCollectionLabel(nft);
+
+        return {
+          collection,
+          tokenId: nft.id,
+          totalJobs,
+          enqueuedJobs,
+          skippedJobs
+        } satisfies AuditNftResult;
       })
     )
   );
 
-  const skippedJobs = scannedJobs - enqueuedJobs;
-  logger.info(
-    `🧪 Audit S3 precheck complete [nfts=${scannedNfts}] [scannedJobs=${scannedJobs}] [enqueuedJobs=${enqueuedJobs}] [skippedJobs=${skippedJobs}] [concurrency=${concurrency}]`
+  const scannedNfts = nftResults.length;
+  const scannedJobs = nftResults.reduce(
+    (sum, result) => sum + result.totalJobs,
+    0
+  );
+  const enqueuedJobs = nftResults.reduce(
+    (sum, result) => sum + result.enqueuedJobs,
+    0
+  );
+  const skippedJobs = nftResults.reduce(
+    (sum, result) => sum + result.skippedJobs,
+    0
+  );
+
+  const orderedNftResults = [...nftResults].sort((a, b) => {
+    const collectionCmp = a.collection.localeCompare(b.collection);
+    if (collectionCmp !== 0) {
+      return collectionCmp;
+    }
+    return a.tokenId - b.tokenId;
+  });
+  for (const result of orderedNftResults) {
+    logInfo(
+      modeLabel,
+      `🧪 Audit NFT ${result.collection} #${result.tokenId} [SCANNED JOBS ${result.totalJobs}] [ENQUEUED ${result.enqueuedJobs}] [NO ACTION ${result.skippedJobs}]`
+    );
+  }
+
+  const contractSummaries = summarizeAuditByContract(nftResults);
+  for (const summary of contractSummaries) {
+    logInfo(
+      modeLabel,
+      `🧪 Audit collection ${summary.collection} [NFTS ${summary.scannedNfts}] [SCANNED JOBS ${summary.scannedJobs}] [ENQUEUED ${summary.enqueuedJobs}] [NO ACTION ${summary.skippedJobs}]`
+    );
+  }
+
+  logInfo(
+    modeLabel,
+    `🧪 Audit S3 precheck complete [NFTS ${scannedNfts}] [SCANNED JOBS ${scannedJobs}] [ENQUEUED ${enqueuedJobs}] [NO ACTION ${skippedJobs}] [CONCURRENCY ${concurrency}]`
   );
 
   return {
     scannedNfts,
     scannedJobs,
     enqueuedJobs,
-    skippedJobs
+    skippedJobs,
+    contractSummaries
   };
+}
+
+function logInfo(modeLabel: string, message: string) {
+  logger.info(`[${modeLabel.toUpperCase()}] ${message}`);
+}
+
+function summarizeAuditByContract(
+  results: AuditNftResult[]
+): AuditContractSummary[] {
+  const summaryByContract = new Map<string, AuditContractSummary>();
+  for (const result of results) {
+    const key = result.collection.toLowerCase();
+    const current = summaryByContract.get(key);
+    if (!current) {
+      summaryByContract.set(key, {
+        collection: result.collection,
+        scannedNfts: 1,
+        scannedJobs: result.totalJobs,
+        enqueuedJobs: result.enqueuedJobs,
+        skippedJobs: result.skippedJobs
+      });
+      continue;
+    }
+    current.scannedNfts += 1;
+    current.scannedJobs += result.totalJobs;
+    current.enqueuedJobs += result.enqueuedJobs;
+    current.skippedJobs += result.skippedJobs;
+  }
+  return Array.from(summaryByContract.values()).sort((a, b) =>
+    a.collection.localeCompare(b.collection)
+  );
+}
+
+function resolveCollectionLabel(nft: QueueableNft): string {
+  const collection = nft.collection?.trim();
+  if (collection) {
+    return collection;
+  }
+  return nft.contract;
 }
 
 export async function selectAuditJobsToEnqueueForNft({
