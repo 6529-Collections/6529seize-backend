@@ -26,10 +26,41 @@ export class Ipfs {
   }
 
   private extractIpfsCidFromUrlOrEmpty(url: string | undefined) {
-    if (url?.startsWith('ipfs')) {
-      return url.split('://')[1] ?? '';
+    if (!url) {
+      return '';
     }
-    return url ?? '';
+
+    const trimmed = url.trim();
+    if (!trimmed) {
+      return '';
+    }
+
+    const ipfsProtocolMatch = trimmed.match(/^ipfs:\/\/(.+)$/i);
+    if (ipfsProtocolMatch) {
+      return this.normalizeIpfsPathToCid(ipfsProtocolMatch[1]);
+    }
+
+    const ipfsPathMatch = trimmed.match(/\/ipfs\/([^/?#]+)/i);
+    if (ipfsPathMatch) {
+      return ipfsPathMatch[1];
+    }
+
+    if (this.looksLikeIpfsCid(trimmed)) {
+      return trimmed;
+    }
+
+    return '';
+  }
+
+  private normalizeIpfsPathToCid(path: string): string {
+    const withoutLeadingIpfsSegment = path
+      .replace(/^\/+/, '')
+      .replace(/^ipfs\//i, '');
+    return withoutLeadingIpfsSegment.split(/[/?#]/)[0] ?? '';
+  }
+
+  private looksLikeIpfsCid(value: string): boolean {
+    return /^(Qm[1-9A-HJ-NP-Za-km-z]{44}|baf[a-z2-7]{20,})$/i.test(value);
   }
 }
 
