@@ -1050,7 +1050,6 @@ async function populateMintStatsForEligibleNFTs(
       continue;
     }
 
-    logInfo(`🔄 Populating mint stats for meme #${nft.id}`);
     await populateMintStatsIfMissing(nft.id, mintDate, statsRepo, txRepo);
   }
 }
@@ -1081,6 +1080,13 @@ async function populateMintStatsIfMissing(
   statsRepo: Repository<MemesMintStat>,
   txRepo: Repository<Transaction>
 ): Promise<void> {
+  const mintStatsExist = await statsRepo.exist({ where: { id: tokenId } });
+  if (mintStatsExist) {
+    return;
+  }
+
+  logger.info(`🔄 Populating mint stats for meme #${tokenId}`);
+
   const mintTransactions = await txRepo.find({
     select: ['token_count', 'eth_price_usd'],
     where: {
@@ -1158,7 +1164,9 @@ async function populateMintStatsIfMissing(
 
   const wasInserted = Number(insertResult?.raw?.affectedRows ?? 0) > 0;
   if (!wasInserted) {
-    logInfo(`ℹ️ Mint stats already exist for meme #${tokenId}, skipping`);
+    logger.info(
+      `ℹ️ Mint stats already exist for meme #${tokenId}, skipping (likely concurrent insert)`
+    );
     return;
   }
 
