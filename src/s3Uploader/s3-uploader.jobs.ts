@@ -56,6 +56,7 @@ export type S3UploaderJob =
 export type QueueableNft = {
   id: number;
   contract: string;
+  collection?: string | null;
   icon?: string | null;
   thumbnail?: string | null;
   scaled?: string | null;

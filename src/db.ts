@@ -1583,7 +1583,22 @@ export async function persistGlobalTDHHistory(globalHistory: GlobalTDHHistory) {
   );
 }
 export async function persistMemesSeasons(seasons: MemesSeason[]) {
-  await AppDataSource.getRepository(MemesSeason).save(seasons);
+  if (seasons.length === 0) {
+    throw new Error('Cannot persist memes seasons: received empty seasons set');
+  }
+
+  await AppDataSource.transaction(async (transactionalEntityManager) => {
+    const repository = transactionalEntityManager.getRepository(MemesSeason);
+    const seasonIds = Array.from(new Set(seasons.map((s) => s.id)));
+
+    await repository
+      .createQueryBuilder()
+      .delete()
+      .where('id NOT IN (:...seasonIds)', { seasonIds })
+      .execute();
+
+    await repository.save(seasons);
+  });
 }
 
 export async function fetchAllSeasons() {
