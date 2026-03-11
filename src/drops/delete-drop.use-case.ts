@@ -27,6 +27,10 @@ import { userGroupsService } from '../api-serverless/src/community-members/user-
 import { WaveEntity } from '../entities/IWave';
 import { DropEntity } from '../entities/IDrop';
 import { identityFetcher } from '../api-serverless/src/identities/identity.fetcher';
+import {
+  artCurationTokenWatchService,
+  ArtCurationTokenWatchService
+} from '@/art-curation/art-curation-token-watch.service';
 
 export class DeleteDropUseCase {
   public constructor(
@@ -34,7 +38,8 @@ export class DeleteDropUseCase {
     private readonly dropVotingService: DropVotingService,
     private readonly dropsDb: DropsDb,
     private readonly dropBookmarksDb: DropBookmarksDb,
-    private readonly curationsDb: CurationsDb
+    private readonly curationsDb: CurationsDb,
+    private readonly artCurationTokenWatchService: ArtCurationTokenWatchService
   ) {}
 
   public async execute(
@@ -101,6 +106,14 @@ export class DeleteDropUseCase {
           timer,
           connection
         }),
+        ...(model.deletion_purpose === 'DELETE'
+          ? [
+              this.artCurationTokenWatchService.unregisterDrop(dropId, {
+                timer,
+                connection
+              })
+            ]
+          : []),
         this.dropsDb.deleteDropFeedItems(dropId, { timer, connection }),
         this.dropsDb.deleteDropNotifications(dropId, { timer, connection }),
         this.dropsDb.deleteDropSubscriptions(dropId, { timer, connection }),
@@ -170,5 +183,6 @@ export const deleteDrop = new DeleteDropUseCase(
   dropVotingService,
   dropsDb,
   dropBookmarksDb,
-  curationsDb
+  curationsDb,
+  artCurationTokenWatchService
 );

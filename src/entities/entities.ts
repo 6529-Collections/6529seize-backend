@@ -1,4 +1,9 @@
 export { AbusivenessDetectionResult } from './IAbusivenessDetectionResult';
+export {
+  ArtCurationTokenWatchEntity,
+  ArtCurationTokenWatchStatus
+} from './IArtCurationTokenWatch';
+export { ArtCurationTokenWatchDropEntity } from './IArtCurationTokenWatchDrop';
 export { ActivityEventEntity } from './IActivityEvent';
 export { AddressConsolidationKey } from './IAddressConsolidationKey';
 export {

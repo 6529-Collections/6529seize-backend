@@ -66,6 +66,10 @@ import {
   DropNftLinkInsertModel,
   DropNftLinksDb
 } from '@/drops/drop-nft-links.db';
+import {
+  artCurationTokenWatchService,
+  ArtCurationTokenWatchService
+} from '@/art-curation/art-curation-token-watch.service';
 import { extractUrlCandidatesFromText } from '@/nft-links/nft-link-candidates';
 import { validateLinkUrl } from '@/nft-links/nft-link-resolver.validator';
 import { env } from '@/env';
@@ -82,7 +86,8 @@ export class CreateOrUpdateDropUseCase {
     private readonly proxyService: ProfileProxyApiService,
     private readonly deleteDropUseCase: DeleteDropUseCase,
     private readonly metricsRecorder: MetricsRecorder,
-    private readonly dropNftLinksDb: DropNftLinksDb
+    private readonly dropNftLinksDb: DropNftLinksDb,
+    private readonly artCurationTokenWatchService: ArtCurationTokenWatchService
   ) {}
 
   public async execute(
@@ -234,6 +239,15 @@ export class CreateOrUpdateDropUseCase {
         )
       ]);
     }
+    await this.artCurationTokenWatchService.registerDrop(
+      {
+        dropId,
+        waveId: model.wave_id,
+        dropType: model.drop_type,
+        links: this.buildDropNftLinks(model)
+      },
+      { timer, connection }
+    );
     timer?.stop(`${CreateOrUpdateDropUseCase.name}->execute`);
     return { drop_id: dropId };
   }
@@ -1029,5 +1043,6 @@ export const createOrUpdateDrop = new CreateOrUpdateDropUseCase(
   profileProxyApiService,
   deleteDrop,
   metricsRecorder,
-  dropNftLinksDb
+  dropNftLinksDb,
+  artCurationTokenWatchService
 );

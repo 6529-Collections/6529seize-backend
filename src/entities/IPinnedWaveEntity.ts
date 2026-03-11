@@ -4,8 +4,8 @@ import { PINNED_WAVES_TABLE } from '@/constants';
 @Entity(PINNED_WAVES_TABLE)
 export class PinnedWaveEntity {
   @PrimaryColumn({ type: 'varchar', length: 100, nullable: false })
-  profile_id!: number;
+  profile_id!: string;
 
   @PrimaryColumn({ type: 'varchar', length: 100, nullable: false })
-  wave_id!: number;
+  wave_id!: string;
 }
