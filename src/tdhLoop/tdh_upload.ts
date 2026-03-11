@@ -1,4 +1,6 @@
 import converter from 'json-2-csv';
+import { CLOUDFRONT_LINK } from '@/constants';
+import { s3ObjectExists, s3UploadObject } from '@/helpers/s3_helpers';
 import { persistConsolidatedTdhUpload, persistTdhUpload } from '../db';
 import {
   ConsolidatedOwnerBalances,
@@ -190,21 +192,57 @@ async function persistUpload(
   }
 
   const url = `https://arweave.net/${transaction.id}`;
+  const cloudfrontUrl = `${CLOUDFRONT_LINK}/arweave/${transaction.id}`;
 
   if (isConsolidation) {
-    await persistConsolidatedTdhUpload(
-      block,
-      dateString,
-      `https://arweave.net/${transaction.id}`
-    );
+    await persistConsolidatedTdhUpload(block, dateString, url);
   } else {
-    await persistTdhUpload(
-      block,
-      dateString,
-      `https://arweave.net/${transaction.id}`
-    );
+    await persistTdhUpload(block, dateString, url);
   }
 
+  await persistCsvToS3(csv, transaction.id);
+
   logger.info(`[ARWEAVE LINK ${url}]`);
+  logger.info(`[ARWEAVE S3 MIRROR ${cloudfrontUrl}]`);
   return url;
+}
+
+async function persistCsvToS3(csv: string, txId: string): Promise<void> {
+  const myBucket = process.env.AWS_6529_IMAGES_BUCKET_NAME;
+  if (!myBucket) {
+    logger.warn(
+      `[ARWEAVE S3 MIRROR SKIPPED] Missing AWS_6529_IMAGES_BUCKET_NAME env var`
+    );
+    return;
+  }
+
+  const key = `arweave/${txId}`;
+  const csvBuffer = Buffer.from(csv);
+
+  try {
+    const existing = await s3ObjectExists(myBucket, key, txId);
+    if (existing.exists) {
+      logger.info(`[ARWEAVE S3 MIRROR EXISTS] [KEY ${key}]`);
+      return;
+    }
+
+    const uploaded = await s3UploadObject({
+      bucket: myBucket,
+      key,
+      body: csvBuffer,
+      contentType: 'text/csv',
+      txId
+    });
+
+    logger.info(
+      `[ARWEAVE S3 MIRROR STORED] [KEY ${key}] [ETAG ${uploaded.ETag}]`
+    );
+  } catch (error) {
+    const errorDetails =
+      error instanceof Error ? `${error.name}: ${error.message}` : `${error}`;
+    logger.error(
+      `[ARWEAVE S3 MIRROR FAILED] [TX ${txId}] [ERROR ${errorDetails}]`,
+      error
+    );
+  }
 }
