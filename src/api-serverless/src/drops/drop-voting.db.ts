@@ -664,6 +664,36 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  async getCurrentVoterStatesForDrops(
+    dropIds: string[],
+    ctx: RequestContext
+  ): Promise<WinnerDropVoterVoteEntity[]> {
+    if (!dropIds.length) {
+      return [];
+    }
+    ctx.timer?.start(`${this.constructor.name}->getCurrentVoterStatesForDrops`);
+    try {
+      return await this.db.execute<WinnerDropVoterVoteEntity>(
+        `
+        select
+          voter_id,
+          drop_id,
+          votes,
+          wave_id
+        from ${DROP_VOTER_STATE_TABLE}
+        where drop_id in (:dropIds)
+          and votes <> 0
+      `,
+        { dropIds },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(
+        `${this.constructor.name}->getCurrentVoterStatesForDrops`
+      );
+    }
+  }
+
   async saveDropRealVoteInTime(
     entity: DropRealVoteInTimeWithoutId,
     ctx: RequestContext
