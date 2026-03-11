@@ -1,0 +1,74 @@
+service: artCurationNftWatchLoop
+
+package:
+  artifact: dist/index.zip
+
+plugins:
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs22.x
+  memorySize: 1024
+  timeout: 900
+  architecture: arm64
+  logRetentionInDays: 60
+
+functions:
+  artCurationNftWatchLoop:
+    handler: index.handler
+    name: artCurationNftWatchLoop
+    description: ${env:VERSION_DESCRIPTION}
+    events:
+      - schedule: rate(1 minute)
+    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    reservedConcurrency: 1
+    vpc:
+      securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
+      subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
+    environment:
+      SENTRY_DSN: ${env:SENTRY_DSN}
+      SENTRY_ENVIRONMENT: "artCurationNftWatchLoop_${opt:stage, self:provider.stage}"
+      NFT_INDEXER_REORG_DEPTH_BLOCKS: 20
+      ART_CURATIONS_WATCH_BLOCK_RANGE: 2000
+
+resources:
+  Resources:
+    ArtCurationNftWatchLoopLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/artCurationNftWatchLoop
+        RetentionInDays: 60
+
+    ArtCurationNftWatchLoopOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      DependsOn:
+        - ArtCurationNftWatchLoopLogGroup
+      Properties:
+        LogGroupName:
+          Ref: ArtCurationNftWatchLoopLogGroup
+        FilterPattern: "Runtime.OutOfMemory"
+        MetricTransformations:
+          - MetricNamespace: "Lambda/OOM"
+            MetricName: "artCurationNftWatchLoop_OOMErrorCount"
+            MetricValue: "1"
+            DefaultValue: 0
+
+    ArtCurationNftWatchLoopOOMAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: ArtCurationNftWatchLoopOOMFilter
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-artCurationNftWatchLoop-OOM"
+        AlarmDescription: !Sub "Lambda artCurationNftWatchLoop OutOfMemory in ${AWS::Region}"
+        Namespace: "Lambda/OOM"
+        MetricName: "artCurationNftWatchLoop_OOMErrorCount"
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
