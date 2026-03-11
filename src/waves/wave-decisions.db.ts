@@ -45,6 +45,26 @@ export class WaveDecisionsDb extends LazyDbAccessCompatibleService {
     ctx?.timer?.stop(`${this.constructor.name}->insertDecision`);
   }
 
+  public async insertDecisionIfMissing(
+    decision: WaveDecisionEntity,
+    ctx: RequestContext
+  ) {
+    ctx?.timer?.start(`${this.constructor.name}->insertDecisionIfMissing`);
+    const connection = ctx.connection;
+    if (!connection) {
+      throw new Error(`Wave decisions can only be saved in a transaction`);
+    }
+    await this.db.execute(
+      `
+      insert ignore into ${WAVES_DECISIONS_TABLE} (decision_time, wave_id)
+      values (:decision_time, :wave_id)
+    `,
+      decision,
+      { wrappedConnection: ctx.connection }
+    );
+    ctx?.timer?.stop(`${this.constructor.name}->insertDecisionIfMissing`);
+  }
+
   public async insertDecisionWinners(
     decisionWinners: WaveDecisionWinnerDropEntity[],
     ctx: RequestContext
