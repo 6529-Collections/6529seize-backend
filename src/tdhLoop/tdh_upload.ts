@@ -219,21 +219,30 @@ async function persistCsvToS3(csv: string, txId: string): Promise<void> {
   const key = `arweave/${txId}`;
   const csvBuffer = Buffer.from(csv);
 
-  const existing = await s3ObjectExists(myBucket, key, txId);
-  if (existing.exists) {
-    logger.info(`[ARWEAVE S3 MIRROR EXISTS] [KEY ${key}]`);
-    return;
+  try {
+    const existing = await s3ObjectExists(myBucket, key, txId);
+    if (existing.exists) {
+      logger.info(`[ARWEAVE S3 MIRROR EXISTS] [KEY ${key}]`);
+      return;
+    }
+
+    const uploaded = await s3UploadObject({
+      bucket: myBucket,
+      key,
+      body: csvBuffer,
+      contentType: 'text/csv',
+      txId
+    });
+
+    logger.info(
+      `[ARWEAVE S3 MIRROR STORED] [KEY ${key}] [ETAG ${uploaded.ETag}]`
+    );
+  } catch (error) {
+    const errorDetails =
+      error instanceof Error ? `${error.name}: ${error.message}` : `${error}`;
+    logger.error(
+      `[ARWEAVE S3 MIRROR FAILED] [TX ${txId}] [ERROR ${errorDetails}]`,
+      error
+    );
   }
-
-  const uploaded = await s3UploadObject({
-    bucket: myBucket,
-    key,
-    body: csvBuffer,
-    contentType: 'text/csv',
-    txId
-  });
-
-  logger.info(
-    `[ARWEAVE S3 MIRROR STORED] [KEY ${key}] [ETAG ${uploaded.ETag}]`
-  );
 }
