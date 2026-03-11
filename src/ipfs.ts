@@ -35,12 +35,12 @@ export class Ipfs {
       return '';
     }
 
-    const ipfsProtocolMatch = trimmed.match(/^ipfs:\/\/(.+)$/i);
+    const ipfsProtocolMatch = /^ipfs:\/\/(.+)$/i.exec(trimmed);
     if (ipfsProtocolMatch) {
       return this.normalizeIpfsPathToCid(ipfsProtocolMatch[1]);
     }
 
-    const ipfsPathMatch = trimmed.match(/\/ipfs\/([^/?#]+)/i);
+    const ipfsPathMatch = /\/ipfs\/([^/?#]+)/i.exec(trimmed);
     if (ipfsPathMatch) {
       return ipfsPathMatch[1];
     }
@@ -60,7 +60,9 @@ export class Ipfs {
   }
 
   private looksLikeIpfsCid(value: string): boolean {
-    return /^(Qm[1-9A-HJ-NP-Za-km-z]{44}|baf[a-z2-7]{20,})$/i.test(value);
+    return /^(Qm[1-9A-HJ-NP-Za-km-z]{44}|[bB][aA][fF][a-zA-Z2-7]{20,})$/.test(
+      value
+    );
   }
 }
 
