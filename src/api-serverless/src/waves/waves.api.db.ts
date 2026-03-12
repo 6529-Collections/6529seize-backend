@@ -649,6 +649,62 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       );
   }
 
+  async findFavouriteWavesOfIdentity(
+    {
+      identityId,
+      eligibleGroups,
+      limit,
+      offset
+    }: {
+      identityId: string;
+      eligibleGroups: string[];
+      limit: number;
+      offset: number;
+    },
+    ctx: RequestContext
+  ): Promise<WaveEntity[]> {
+    try {
+      ctx.timer?.start(
+        `${this.constructor.name}->findFavouriteWavesOfIdentity`
+      );
+      return await this.db
+        .execute<RawWaveEntity>(
+          `
+            select w.*
+            from ${WAVE_DROPPER_METRICS_TABLE} wdm
+              join ${WAVES_TABLE} w on w.id = wdm.wave_id
+            where wdm.dropper_id = :identityId
+              and wdm.drops_count > 0
+              and w.is_direct_message = false
+              and (
+                w.visibility_group_id is null
+                ${
+                  eligibleGroups.length
+                    ? `or w.visibility_group_id in (:eligibleGroups)
+                       or w.admin_group_id in (:eligibleGroups)`
+                    : ``
+                }
+              )
+            order by
+              wdm.drops_count desc,
+              wdm.latest_drop_timestamp desc,
+              w.id desc
+            limit :limit offset :offset
+          `,
+          {
+            identityId,
+            eligibleGroups,
+            limit,
+            offset
+          },
+          ctx.connection ? { wrappedConnection: ctx.connection } : undefined
+        )
+        .then((result) => result.map((it) => this.parseWaveEntity(it)));
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->findFavouriteWavesOfIdentity`);
+    }
+  }
+
   async findWavesMetricsByWaveIds(
     waveIds: string[],
     { connection, timer }: RequestContext
