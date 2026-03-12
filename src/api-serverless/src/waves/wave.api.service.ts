@@ -1078,6 +1078,64 @@ export class WaveApiService {
     );
   }
 
+  public async getFavouriteWavesOfIdentity(
+    { identityKey, limit, offset }: FavouriteWavesOfIdentityParams,
+    ctx: RequestContext
+  ): Promise<ApiWave[]> {
+    const authenticationContext = ctx?.authenticationContext;
+    const authenticatedProfileId =
+      authenticationContext?.getActingAsId() ?? null;
+    const eligibleGroups =
+      !authenticationContext ||
+      !authenticatedProfileId ||
+      (authenticationContext.isAuthenticatedAsProxy() &&
+        !authenticationContext.activeProxyActions[
+          ProfileProxyActionType.READ_WAVE
+        ])
+        ? []
+        : await this.userGroupsService.getGroupsUserIsEligibleFor(
+            authenticatedProfileId,
+            ctx.timer
+          );
+    const targetProfileId =
+      await this.identityFetcher.getProfileIdByIdentityKeyOrThrow(
+        { identityKey },
+        ctx
+      );
+    const waveEntities = await this.wavesApiDb.findFavouriteWavesOfIdentity(
+      {
+        identityId: targetProfileId,
+        eligibleGroups,
+        limit,
+        offset
+      },
+      ctx
+    );
+    const noRightToVote =
+      !authenticationContext ||
+      !authenticatedProfileId ||
+      (authenticationContext.isAuthenticatedAsProxy() &&
+        !authenticationContext.activeProxyActions[
+          ProfileProxyActionType.RATE_WAVE_DROP
+        ]);
+    const noRightToParticipate =
+      !authenticationContext ||
+      !authenticatedProfileId ||
+      (authenticationContext.isAuthenticatedAsProxy() &&
+        !authenticationContext.activeProxyActions[
+          ProfileProxyActionType.CREATE_DROP_TO_WAVE
+        ]);
+    return this.waveMappers.waveEntitiesToApiWaves(
+      {
+        waveEntities,
+        groupIdsUserIsEligibleFor: eligibleGroups,
+        noRightToVote,
+        noRightToParticipate
+      },
+      ctx
+    );
+  }
+
   private async findWaveEntitiesByType({
     eligibleGroups,
     type,
@@ -1613,6 +1671,12 @@ export interface WavesOverviewParams {
 
 export interface RankedWavesOverviewParams {
   exclude_followed: boolean;
+}
+
+export interface FavouriteWavesOfIdentityParams {
+  identityKey: string;
+  limit: number;
+  offset: number;
 }
 
 export const waveApiService = new WaveApiService(
