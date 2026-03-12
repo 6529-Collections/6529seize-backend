@@ -15,7 +15,7 @@ export class ManifoldClaimService {
   async getMintStatsFromMemeClaim(
     tokenId: number,
     ctx: RequestContext
-  ): Promise<{ total: number; remaining: number }> {
+  ): Promise<{ minted: number; total: number; remaining: number }> {
     try {
       ctx.timer?.start(
         `${this.constructor.name}->getRemainingEditionsForLatestMeme`
@@ -36,7 +36,7 @@ export class ManifoldClaimService {
       const total = numbers.parseIntOrThrow(claim.totalMax);
       const remaining = total - minted;
 
-      return { total, remaining };
+      return { minted, total, remaining };
     } finally {
       ctx.timer?.stop(
         `${this.constructor.name}->getRemainingEditionsForLatestMeme`
