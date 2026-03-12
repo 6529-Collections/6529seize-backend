@@ -59,6 +59,14 @@ type RawWaveEntity = Omit<
   decisions_strategy: string;
 };
 
+type RawWaveEntityWithLastDropTime = RawWaveEntity & {
+  last_drop_time: number;
+};
+
+type WaveEntityWithLastDropTime = WaveEntity & {
+  last_drop_time: number;
+};
+
 export class WavesApiDb extends LazyDbAccessCompatibleService {
   private parseWaveEntity(entity: RawWaveEntity): WaveEntity {
     return {
@@ -75,17 +83,29 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     };
   }
 
+  private parseWaveEntityWithLastDropTime(
+    entity: RawWaveEntityWithLastDropTime
+  ): WaveEntityWithLastDropTime {
+    return {
+      ...this.parseWaveEntity(entity),
+      last_drop_time: entity.last_drop_time
+    };
+  }
+
   public async findWaveById(
     id: string,
     connection?: ConnectionWrapper<any>
-  ): Promise<WaveEntity | null> {
+  ): Promise<WaveEntityWithLastDropTime | null> {
     return this.db
-      .oneOrNull<RawWaveEntity>(
-        `SELECT * FROM ${WAVES_TABLE} WHERE id = :id`,
+      .oneOrNull<RawWaveEntityWithLastDropTime>(
+        `SELECT w.*, COALESCE(wm.latest_drop_timestamp, 0) as last_drop_time
+         FROM ${WAVES_TABLE} w
+         LEFT JOIN ${WAVE_METRICS_TABLE} wm ON wm.wave_id = w.id
+         WHERE w.id = :id`,
         { id },
         connection ? { wrappedConnection: connection } : undefined
       )
-      .then((it) => (it ? this.parseWaveEntity(it) : null));
+      .then((it) => (it ? this.parseWaveEntityWithLastDropTime(it) : null));
   }
 
   public async findWavesByIds(
@@ -113,21 +133,24 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     ids: string[],
     groupIdsUserIsEligibleFor: string[],
     connection?: ConnectionWrapper<any>
-  ): Promise<WaveEntity[]> {
+  ): Promise<WaveEntityWithLastDropTime[]> {
     if (!ids.length) {
       return [];
     }
     return this.db
-      .execute<RawWaveEntity>(
-        `SELECT * FROM ${WAVES_TABLE} WHERE id in (:ids) and (visibility_group_id is null ${
-          groupIdsUserIsEligibleFor.length
-            ? `or visibility_group_id in (:groupIdsUserIsEligibleFor) or admin_group_id in (:groupIdsUserIsEligibleFor)`
-            : ``
-        })`,
+      .execute<RawWaveEntityWithLastDropTime>(
+        `SELECT w.*, COALESCE(wm.latest_drop_timestamp, 0) as last_drop_time
+         FROM ${WAVES_TABLE} w
+         LEFT JOIN ${WAVE_METRICS_TABLE} wm ON wm.wave_id = w.id
+         WHERE w.id in (:ids) and (w.visibility_group_id is null ${
+           groupIdsUserIsEligibleFor.length
+             ? `or w.visibility_group_id in (:groupIdsUserIsEligibleFor) or w.admin_group_id in (:groupIdsUserIsEligibleFor)`
+             : ``
+         })`,
         { ids, groupIdsUserIsEligibleFor },
         connection ? { wrappedConnection: connection } : undefined
       )
-      .then((res) => res.map((it) => this.parseWaveEntity(it)));
+      .then((res) => res.map((it) => this.parseWaveEntityWithLastDropTime(it)));
   }
 
   public async insertWave(wave: InsertWaveEntity, ctx: RequestContext) {
@@ -391,29 +414,25 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
   async getWavesByDropIds(
     dropIds: string[],
     connection?: ConnectionWrapper<any>
-  ): Promise<Record<string, WaveEntity>> {
+  ): Promise<Record<string, WaveEntityWithLastDropTime>> {
     if (dropIds.length === 0) {
       return {};
     }
     return this.db
       .execute<
-        Omit<
-          WaveEntity,
-          | 'participation_required_media'
-          | 'participation_required_metadata'
-          | 'decisions_strategy'
-        > & {
-          participation_required_media: string;
-          participation_required_metadata: string;
-          decisions_strategy: string;
+        RawWaveEntityWithLastDropTime & {
           drop_id: string;
         }
       >(
         `
         select 
           d.id as drop_id, 
-          w.*
-        from ${DROPS_TABLE} d join ${WAVES_TABLE} w on w.id = d.wave_id where d.id in (:dropIds)
+          w.*,
+          COALESCE(wm.latest_drop_timestamp, 0) as last_drop_time
+        from ${DROPS_TABLE} d
+        join ${WAVES_TABLE} w on w.id = d.wave_id
+        left join ${WAVE_METRICS_TABLE} wm on wm.wave_id = w.id
+        where d.id in (:dropIds)
         `,
         {
           dropIds
@@ -421,24 +440,13 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         connection ? { wrappedConnection: connection } : undefined
       )
       .then((it) =>
-        it.reduce<Record<string, WaveEntity>>(
+        it.reduce<Record<string, WaveEntityWithLastDropTime>>(
           (acc, wave) => {
-            acc[wave.drop_id] = {
-              ...wave,
-              participation_required_media: JSON.parse(
-                wave.participation_required_media
-              ),
-              participation_required_metadata: JSON.parse(
-                wave.participation_required_metadata
-              ),
-              decisions_strategy: wave.decisions_strategy
-                ? JSON.parse(wave.decisions_strategy)
-                : null
-            };
+            acc[wave.drop_id] = this.parseWaveEntityWithLastDropTime(wave);
             delete (acc[wave.drop_id] as any).drop_id;
             return acc;
           },
-          {} as Record<string, WaveEntity>
+          {} as Record<string, WaveEntityWithLastDropTime>
         )
       );
   }
@@ -647,6 +655,62 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
             : null
         }))
       );
+  }
+
+  async findFavouriteWavesOfIdentity(
+    {
+      identityId,
+      eligibleGroups,
+      limit,
+      offset
+    }: {
+      identityId: string;
+      eligibleGroups: string[];
+      limit: number;
+      offset: number;
+    },
+    ctx: RequestContext
+  ): Promise<WaveEntity[]> {
+    try {
+      ctx.timer?.start(
+        `${this.constructor.name}->findFavouriteWavesOfIdentity`
+      );
+      return await this.db
+        .execute<RawWaveEntity>(
+          `
+            select w.*
+            from ${WAVE_DROPPER_METRICS_TABLE} wdm
+              join ${WAVES_TABLE} w on w.id = wdm.wave_id
+            where wdm.dropper_id = :identityId
+              and wdm.drops_count > 0
+              and w.is_direct_message = false
+              and (
+                w.visibility_group_id is null
+                ${
+                  eligibleGroups.length
+                    ? `or w.visibility_group_id in (:eligibleGroups)
+                       or w.admin_group_id in (:eligibleGroups)`
+                    : ``
+                }
+              )
+            order by
+              wdm.drops_count desc,
+              wdm.latest_drop_timestamp desc,
+              w.id desc
+            limit :limit offset :offset
+          `,
+          {
+            identityId,
+            eligibleGroups,
+            limit,
+            offset
+          },
+          ctx.connection ? { wrappedConnection: ctx.connection } : undefined
+        )
+        .then((result) => result.map((it) => this.parseWaveEntity(it)));
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->findFavouriteWavesOfIdentity`);
+    }
   }
 
   async findWavesMetricsByWaveIds(

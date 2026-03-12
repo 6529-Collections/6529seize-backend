@@ -1042,6 +1042,7 @@ export class DropsMappers {
       name: string;
       picture: string | null;
       description_drop_id: string;
+      last_drop_time: number;
       chat_enabled: boolean;
       chat_group_id: string | null;
       voting_group_id: string | null;
@@ -1066,6 +1067,7 @@ export class DropsMappers {
         displayByWaveId[waveEntity.id]
       ),
       description_drop_id: waveEntity.description_drop_id,
+      last_drop_time: waveEntity.last_drop_time,
       authenticated_user_eligible_to_chat:
         waveEntity.chat_enabled &&
         (waveEntity.chat_group_id === null ||

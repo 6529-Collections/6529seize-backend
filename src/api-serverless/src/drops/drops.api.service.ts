@@ -517,6 +517,7 @@ export class DropsApiService {
         displayByWaveId[wave.id]
       ),
       description_drop_id: wave.description_drop_id,
+      last_drop_time: wave.last_drop_time,
       authenticated_user_eligible_to_vote:
         wave.voting_group_id === null ||
         group_ids_user_is_eligible_for.includes(wave.voting_group_id),
@@ -676,6 +677,7 @@ export class DropsApiService {
         displayByWaveId[waveEntity.id]
       ),
       description_drop_id: waveEntity.description_drop_id,
+      last_drop_time: waveEntity.last_drop_time,
       authenticated_user_eligible_to_vote:
         waveEntity.voting_group_id === null ||
         groupIdsUserIsEligibleFor.includes(waveEntity.voting_group_id),
