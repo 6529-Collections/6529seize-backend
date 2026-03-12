@@ -6,6 +6,7 @@ import { ApiWave } from '../generated/models/ApiWave';
 import * as Joi from 'joi';
 import { getValidatedByJoiOrThrow } from '../validation';
 import {
+  FavouriteWavesOfIdentityParams,
   RankedWavesOverviewParams,
   waveApiService,
   WavesOverviewParams
@@ -16,6 +17,33 @@ import { ApiWavesPinFilter } from '../generated/models/ApiWavesPinFilter';
 import { cacheRequest } from '../request-cache';
 
 const router = asyncRouter();
+
+router.get(
+  '/favourites-of-identity/:identityKey',
+  maybeAuthenticatedUser(),
+  async (
+    req: Request<
+      { identityKey: string },
+      any,
+      any,
+      { limit: number; offset: number },
+      any
+    >,
+    res: Response<ApiResponse<ApiWave[]>>
+  ) => {
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
+    const params = getValidatedByJoiOrThrow(
+      { ...req.params, ...req.query },
+      FavouriteWavesOfIdentityParamsSchema
+    );
+    const waves = await waveApiService.getFavouriteWavesOfIdentity(params, {
+      timer,
+      authenticationContext
+    });
+    res.send(waves);
+  }
+);
 
 router.get(
   '/hot',
@@ -83,5 +111,12 @@ const RankedWavesOverviewParamsSchema = Joi.object<RankedWavesOverviewParams>({
     .optional()
     .default(false)
 });
+
+const FavouriteWavesOfIdentityParamsSchema =
+  Joi.object<FavouriteWavesOfIdentityParams>({
+    identityKey: Joi.string().trim().required().min(1).max(200),
+    limit: Joi.number().integer().optional().min(1).max(100).default(50),
+    offset: Joi.number().integer().optional().min(0).default(0)
+  });
 
 export default router;
