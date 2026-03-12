@@ -1,0 +1,73 @@
+service: artCurationHistoricalBackfillLoop
+
+package:
+  artifact: dist/index.zip
+
+plugins:
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs22.x
+  memorySize: 1024
+  timeout: 900
+  architecture: arm64
+  logRetentionInDays: 60
+
+functions:
+  artCurationHistoricalBackfillLoop:
+    handler: index.handler
+    name: artCurationHistoricalBackfillLoop
+    description: ${env:VERSION_DESCRIPTION}
+    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    reservedConcurrency: 1
+    vpc:
+      securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
+      subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
+    environment:
+      SENTRY_DSN: ${env:SENTRY_DSN}
+      SENTRY_ENVIRONMENT: 'artCurationHistoricalBackfillLoop_${opt:stage, self:provider.stage}'
+      ART_CURATIONS_BACKFILL_DRY_RUN: ${env:ART_CURATIONS_BACKFILL_DRY_RUN, 'false'}
+      NFT_INDEXER_REORG_DEPTH_BLOCKS: 20
+      ART_CURATIONS_WATCH_BLOCK_RANGE: 2000
+
+resources:
+  Resources:
+    ArtCurationHistoricalBackfillLoopLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/artCurationHistoricalBackfillLoop
+        RetentionInDays: 60
+
+    ArtCurationHistoricalBackfillLoopOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      DependsOn:
+        - ArtCurationHistoricalBackfillLoopLogGroup
+      Properties:
+        LogGroupName:
+          Ref: ArtCurationHistoricalBackfillLoopLogGroup
+        FilterPattern: 'Runtime.OutOfMemory'
+        MetricTransformations:
+          - MetricNamespace: 'Lambda/OOM'
+            MetricName: 'artCurationHistoricalBackfillLoop_OOMErrorCount'
+            MetricValue: '1'
+            DefaultValue: 0
+
+    ArtCurationHistoricalBackfillLoopOOMAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: ArtCurationHistoricalBackfillLoopOOMFilter
+      Properties:
+        AlarmName: !Sub '${AWS::StackName}-artCurationHistoricalBackfillLoop-OOM'
+        AlarmDescription: !Sub 'Lambda artCurationHistoricalBackfillLoop OutOfMemory in ${AWS::Region}'
+        Namespace: 'Lambda/OOM'
+        MetricName: 'artCurationHistoricalBackfillLoop_OOMErrorCount'
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}

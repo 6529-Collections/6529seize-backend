@@ -25,6 +25,8 @@ export interface ArtCurationTokenTransferEvent {
 }
 
 export class ArtCurationTokenWatchOnchainService {
+  private static readonly APPROX_BLOCK_TIME_SECONDS = 12;
+
   private providerInstance: ReturnType<typeof getRpcProvider> | null = null;
 
   private get provider() {
@@ -42,7 +44,25 @@ export class ArtCurationTokenWatchOnchainService {
     tokenId: string;
   }): Promise<ArtCurationTokenSubmissionSnapshot> {
     const blockNumber = await this.provider.getBlockNumber();
-    const observedAt = Date.now();
+    return this.snapshotSubmissionStateAtBlock({
+      contract,
+      tokenId,
+      blockNumber,
+      observedAt: Date.now()
+    });
+  }
+
+  public async snapshotSubmissionStateAtBlock({
+    contract,
+    tokenId,
+    blockNumber,
+    observedAt
+  }: {
+    contract: string;
+    tokenId: string;
+    blockNumber: number;
+    observedAt: number;
+  }): Promise<ArtCurationTokenSubmissionSnapshot> {
     const nft = new Contract(contract, ERC721_ABI, this.provider);
     let supportsErc721;
     try {
@@ -78,6 +98,54 @@ export class ArtCurationTokenWatchOnchainService {
         isTrackable: false
       };
     }
+  }
+
+  public async findLatestBlockBeforeTimestamp(
+    targetTimestampMs: number
+  ): Promise<{ number: number; timestampMs: number }> {
+    const targetTimestampSeconds = Math.floor(targetTimestampMs / 1000);
+    const latestBlock = await this.provider.getBlock('latest');
+    if (!latestBlock) {
+      throw new Error('Latest block not found');
+    }
+
+    let startBlock = Math.max(
+      0,
+      latestBlock.number -
+        Math.floor(
+          (latestBlock.timestamp - targetTimestampSeconds) /
+            ArtCurationTokenWatchOnchainService.APPROX_BLOCK_TIME_SECONDS
+        )
+    );
+    let endBlock = latestBlock.number;
+
+    while (startBlock <= endBlock) {
+      const midBlockNumber = Math.floor((startBlock + endBlock) / 2);
+      const midBlock = await this.provider.getBlock(midBlockNumber);
+      if (!midBlock) {
+        throw new Error(`Block ${midBlockNumber} not found`);
+      }
+      if (midBlock.timestamp === targetTimestampSeconds) {
+        return {
+          number: midBlock.number,
+          timestampMs: midBlock.timestamp * 1000
+        };
+      }
+      if (midBlock.timestamp < targetTimestampSeconds) {
+        startBlock = midBlockNumber + 1;
+      } else {
+        endBlock = midBlockNumber - 1;
+      }
+    }
+
+    const blockBefore = await this.provider.getBlock(Math.max(endBlock, 0));
+    if (!blockBefore) {
+      throw new Error('Block before not found');
+    }
+    return {
+      number: blockBefore.number,
+      timestampMs: blockBefore.timestamp * 1000
+    };
   }
 
   public async findFirstTransfer({
@@ -137,6 +205,80 @@ export class ArtCurationTokenWatchOnchainService {
         logIndex: firstLog.index,
         timestampMs: block.timestamp * 1000
       }
+    };
+  }
+
+  public async findTransfersThroughSafeHead({
+    contract,
+    tokenId,
+    fromBlock,
+    reorgDepth,
+    maxRange
+  }: {
+    contract: string;
+    tokenId: string;
+    fromBlock: number;
+    reorgDepth: number;
+    maxRange: number;
+  }): Promise<{
+    safeHead: number;
+    events: ArtCurationTokenTransferEvent[];
+  }> {
+    const bestBlock = await this.provider.getBlockNumber();
+    const safeHead = Math.max(0, bestBlock - reorgDepth);
+    if (fromBlock > safeHead) {
+      return {
+        safeHead,
+        events: []
+      };
+    }
+
+    const events: ArtCurationTokenTransferEvent[] = [];
+    const timestampByBlock = new Map<number, number>();
+    let currentFromBlock = fromBlock;
+
+    while (currentFromBlock <= safeHead) {
+      const toBlock = Math.min(safeHead, currentFromBlock + maxRange - 1);
+      const logs = await this.provider.getLogs({
+        address: contract,
+        topics: [
+          ERC721_TRANSFER_TOPIC,
+          null,
+          null,
+          ethers.toBeHex(BigInt(tokenId), 32)
+        ],
+        fromBlock: currentFromBlock,
+        toBlock
+      });
+
+      const orderedLogs = logs.sort(
+        (a, b) => a.blockNumber - b.blockNumber || a.index - b.index
+      );
+
+      for (const log of orderedLogs) {
+        let timestampMs = timestampByBlock.get(log.blockNumber);
+        if (timestampMs == null) {
+          const block = await this.provider.getBlock(log.blockNumber);
+          if (!block) {
+            throw new Error(`Block ${log.blockNumber} not found`);
+          }
+          timestampMs = block.timestamp * 1000;
+          timestampByBlock.set(log.blockNumber, timestampMs);
+        }
+        events.push({
+          txHash: log.transactionHash,
+          blockNumber: log.blockNumber,
+          logIndex: log.index,
+          timestampMs
+        });
+      }
+
+      currentFromBlock = toBlock + 1;
+    }
+
+    return {
+      safeHead,
+      events
     };
   }
 

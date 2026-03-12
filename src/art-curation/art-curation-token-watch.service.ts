@@ -1,4 +1,5 @@
 import {
+  ArtCurationHistoricalBackfillCandidateDrop,
   artCurationTokenWatchDb,
   ArtCurationTokenWatchDb,
   buildArtCurationActiveDedupeKey
@@ -33,6 +34,17 @@ import { WinnerDropVoterVoteEntity } from '@/entities/IWinnerDropVoterVote';
 import { dropVotingDb, DropVotingDb } from '@/api/drops/drop-voting.db';
 
 const EMPTY_PRIZES: WaveDecisionWinnerPrize[] = [];
+
+interface HistoricalBackfillTokenIdentifiers {
+  readonly canonicalId: string;
+  readonly chain: string;
+  readonly contract: string;
+  readonly tokenId: string;
+}
+
+interface HistoricalBackfillExecutionOptions {
+  readonly dryRun?: boolean;
+}
 
 export class ArtCurationTokenWatchService {
   private readonly logger = Logger.get(this.constructor.name);
@@ -169,6 +181,71 @@ export class ArtCurationTokenWatchService {
     await this.artCurationTokenWatchDb.detachDropFromWatch(dropId, ctx);
   }
 
+  public async processHistoricalBackfillCycle(
+    timer: Timer,
+    options?: HistoricalBackfillExecutionOptions
+  ): Promise<number> {
+    const waveId = env.getStringOrNull('ART_CURATIONS_WAVE_ID');
+    if (!waveId) {
+      return 0;
+    }
+    const dryRun = options?.dryRun ?? false;
+    const ctx: RequestContext = { timer };
+    const maxTokens =
+      env.getIntOrNull('ART_CURATIONS_BACKFILL_MAX_TOKENS_PER_RUN') ?? 100;
+    const canonicalIds =
+      await this.artCurationTokenWatchDb.findHistoricalBackfillCandidateCanonicalIds(
+        {
+          waveId,
+          limit: maxTokens
+        },
+        ctx
+      );
+    console.log(canonicalIds.length);
+    if (!canonicalIds.length) {
+      return 0;
+    }
+    const candidates =
+      await this.artCurationTokenWatchDb.findHistoricalBackfillCandidateDrops(
+        {
+          waveId,
+          canonicalIds
+        },
+        ctx
+      );
+    const candidatesByCanonicalId = new Map<
+      string,
+      ArtCurationHistoricalBackfillCandidateDrop[]
+    >();
+    for (const candidate of candidates) {
+      const group = candidatesByCanonicalId.get(candidate.canonical_id) ?? [];
+      group.push(candidate);
+      candidatesByCanonicalId.set(candidate.canonical_id, group);
+    }
+    let processed = 0;
+    for (const canonicalId of canonicalIds) {
+      const group = candidatesByCanonicalId.get(canonicalId) ?? [];
+      if (!group.length) {
+        continue;
+      }
+      try {
+        await this.processHistoricalBackfillCanonicalGroup(
+          waveId,
+          group,
+          ctx,
+          dryRun
+        );
+        processed++;
+      } catch (error) {
+        this.logger.error(
+          `Failed historical Art Curation backfill for ${canonicalId}${dryRun ? ' [DRY_RUN]' : ''}`,
+          error
+        );
+      }
+    }
+    return processed;
+  }
+
   public async processCycle(timer: Timer): Promise<number> {
     const ctx: RequestContext = { timer };
     const lockTtlMs =
@@ -272,6 +349,552 @@ export class ArtCurationTokenWatchService {
         txCtx
       );
     });
+  }
+
+  private async processHistoricalBackfillCanonicalGroup(
+    waveId: string,
+    candidates: ArtCurationHistoricalBackfillCandidateDrop[],
+    ctx: RequestContext,
+    dryRun: boolean
+  ): Promise<void> {
+    const sortedCandidates = [...candidates].sort(
+      (left, right) =>
+        left.created_at - right.created_at ||
+        left.drop_id.localeCompare(right.drop_id)
+    );
+    const token = this.parseTokenCanonicalId(sortedCandidates[0].canonical_id);
+    if (!token) {
+      this.logger.warn(
+        `Skipping historical Art Curation backfill for ${sortedCandidates[0].canonical_id}. Canonical id is not a token${dryRun ? ' [DRY_RUN]' : ''}`
+      );
+      return;
+    }
+    this.logHistoricalBackfillGroupStart(token, sortedCandidates, dryRun);
+
+    const firstSubmissionBlock =
+      await this.onchainService.findLatestBlockBeforeTimestamp(
+        sortedCandidates[0].created_at
+      );
+    const reorgDepth = env.getIntOrNull('NFT_INDEXER_REORG_DEPTH_BLOCKS') ?? 12;
+    const maxRange =
+      env.getIntOrNull('ART_CURATIONS_WATCH_BLOCK_RANGE') ?? 2000;
+    const { safeHead, events } =
+      await this.onchainService.findTransfersThroughSafeHead({
+        contract: token.contract,
+        tokenId: token.tokenId,
+        fromBlock: firstSubmissionBlock.number + 1,
+        reorgDepth,
+        maxRange
+      });
+
+    let dropIndex = 0;
+    let eventIndex = 0;
+
+    while (dropIndex < sortedCandidates.length) {
+      const sessionStartDrop = sortedCandidates[dropIndex];
+      const sessionStartBlock =
+        await this.onchainService.findLatestBlockBeforeTimestamp(
+          sessionStartDrop.created_at
+        );
+      const submissionSnapshot =
+        await this.onchainService.snapshotSubmissionStateAtBlock({
+          contract: token.contract,
+          tokenId: token.tokenId,
+          blockNumber: sessionStartBlock.number,
+          observedAt: sessionStartDrop.created_at
+        });
+
+      const remainingDrops = sortedCandidates.slice(dropIndex);
+      if (!submissionSnapshot.isTrackable) {
+        let watchId: string | null = null;
+        if (!dryRun) {
+          watchId = await this.cancelHistoricalBackfillDrops(
+            {
+              waveId,
+              token,
+              sessionStartBlock: sessionStartBlock.number,
+              sessionStartTime: sessionStartDrop.created_at,
+              ownerAtSubmission: submissionSnapshot.owner,
+              drops: remainingDrops
+            },
+            ctx
+          );
+        }
+        this.logHistoricalBackfillOutcome(
+          'cancelled_untrackable',
+          token,
+          remainingDrops,
+          {
+            watchId,
+            dryRun,
+            sessionStartBlock: sessionStartBlock.number,
+            sessionStartTime: sessionStartDrop.created_at
+          }
+        );
+        return;
+      }
+
+      while (
+        eventIndex < events.length &&
+        events[eventIndex].timestampMs < sessionStartDrop.created_at
+      ) {
+        eventIndex++;
+      }
+
+      const event = events[eventIndex] ?? null;
+      const sessionDrops: ArtCurationHistoricalBackfillCandidateDrop[] = [];
+      while (dropIndex < sortedCandidates.length) {
+        const candidate = sortedCandidates[dropIndex];
+        if (event && candidate.created_at > event.timestampMs) {
+          break;
+        }
+        sessionDrops.push(candidate);
+        dropIndex++;
+      }
+
+      if (!sessionDrops.length) {
+        break;
+      }
+
+      if (event) {
+        let watchId: string | null = null;
+        if (!dryRun) {
+          watchId = await this.resolveHistoricalBackfillSession(
+            {
+              waveId,
+              token,
+              sessionStartBlock: sessionStartBlock.number,
+              sessionStartTime: sessionStartDrop.created_at,
+              ownerAtSubmission: submissionSnapshot.owner,
+              drops: sessionDrops,
+              event
+            },
+            ctx
+          );
+        }
+        this.logHistoricalBackfillOutcome(
+          'resolved_to_winner',
+          token,
+          sessionDrops,
+          {
+            watchId,
+            dryRun,
+            sessionStartBlock: sessionStartBlock.number,
+            sessionStartTime: sessionStartDrop.created_at,
+            triggerTime: event.timestampMs,
+            triggerTxHash: event.txHash
+          }
+        );
+        eventIndex++;
+        continue;
+      }
+
+      const seededWatch = await this.seedHistoricalBackfillSession(
+        {
+          waveId,
+          token,
+          sessionStartBlock: sessionStartBlock.number,
+          sessionStartTime: sessionStartDrop.created_at,
+          ownerAtSubmission: submissionSnapshot.owner,
+          lastCheckedBlock: Math.max(sessionStartBlock.number, safeHead),
+          drops: sessionDrops,
+          dryRun
+        },
+        ctx
+      );
+      this.logHistoricalBackfillOutcome(
+        seededWatch.wasMergedIntoExistingWatch
+          ? 'merged_into_active_watch'
+          : 'seeded_active_watch',
+        token,
+        sessionDrops,
+        {
+          watchId: seededWatch.watchId,
+          dryRun,
+          sessionStartBlock: sessionStartBlock.number,
+          sessionStartTime: sessionStartDrop.created_at,
+          checkedThroughBlock: Math.max(sessionStartBlock.number, safeHead)
+        }
+      );
+      return;
+    }
+  }
+
+  private async resolveHistoricalBackfillSession(
+    {
+      waveId,
+      token,
+      sessionStartBlock,
+      sessionStartTime,
+      ownerAtSubmission,
+      drops,
+      event
+    }: {
+      waveId: string;
+      token: HistoricalBackfillTokenIdentifiers;
+      sessionStartBlock: number;
+      sessionStartTime: number;
+      ownerAtSubmission: string;
+      drops: ArtCurationHistoricalBackfillCandidateDrop[];
+      event: ArtCurationTokenTransferEvent;
+    },
+    ctx: RequestContext
+  ): Promise<string> {
+    return await this.dropsDb.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const txCtx: RequestContext = {
+          timer: ctx.timer,
+          connection
+        };
+        const wave = await this.dropsDb.findWaveByIdOrNull(waveId, connection);
+        if (!wave) {
+          throw new Error(`Wave ${waveId} not found`);
+        }
+        const now = Time.currentMillis();
+        const watch = this.buildHistoricalWatch({
+          id: randomUUID(),
+          waveId,
+          token,
+          ownerAtSubmission,
+          startBlock: sessionStartBlock,
+          startTime: sessionStartTime,
+          lastCheckedBlock: event.blockNumber,
+          status: ArtCurationTokenWatchStatus.ACTIVE,
+          activeDedupeKey: null,
+          createdAt: now,
+          updatedAt: now
+        });
+
+        await this.artCurationTokenWatchDb.insertWatch(watch, txCtx);
+        await this.attachHistoricalDropsToWatch(
+          watch.id,
+          ownerAtSubmission,
+          drops,
+          now,
+          txCtx
+        );
+        await this.convertDropsToWinnersForTrigger(
+          {
+            watch,
+            wave,
+            dropIds: drops.map((drop) => drop.drop_id),
+            event
+          },
+          txCtx
+        );
+        return watch.id;
+      }
+    );
+  }
+
+  private async seedHistoricalBackfillSession(
+    {
+      waveId,
+      token,
+      sessionStartBlock,
+      sessionStartTime,
+      ownerAtSubmission,
+      lastCheckedBlock,
+      drops,
+      dryRun
+    }: {
+      waveId: string;
+      token: HistoricalBackfillTokenIdentifiers;
+      sessionStartBlock: number;
+      sessionStartTime: number;
+      ownerAtSubmission: string;
+      lastCheckedBlock: number;
+      drops: ArtCurationHistoricalBackfillCandidateDrop[];
+      dryRun: boolean;
+    },
+    ctx: RequestContext
+  ): Promise<{
+    watchId: string | null;
+    wasMergedIntoExistingWatch: boolean;
+  }> {
+    if (dryRun) {
+      const activeDedupeKey = buildArtCurationActiveDedupeKey({
+        waveId,
+        chain: token.chain,
+        contract: token.contract,
+        tokenId: token.tokenId
+      });
+      const existingActive =
+        await this.artCurationTokenWatchDb.findActiveByDedupeKey(
+          activeDedupeKey,
+          ctx
+        );
+      return {
+        watchId: existingActive?.id ?? null,
+        wasMergedIntoExistingWatch: !!existingActive
+      };
+    }
+    return await this.dropsDb.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const txCtx: RequestContext = {
+          timer: ctx.timer,
+          connection
+        };
+        const activeDedupeKey = buildArtCurationActiveDedupeKey({
+          waveId,
+          chain: token.chain,
+          contract: token.contract,
+          tokenId: token.tokenId
+        });
+        const existingActive =
+          await this.artCurationTokenWatchDb.findActiveByDedupeKey(
+            activeDedupeKey,
+            txCtx
+          );
+        const now = Time.currentMillis();
+
+        let watchId: string;
+        let wasMergedIntoExistingWatch = false;
+        if (existingActive) {
+          const shouldUseHistoricalBaseline =
+            sessionStartTime < existingActive.start_time;
+          await this.artCurationTokenWatchDb.updateHistoricalBaseline(
+            {
+              watchId: existingActive.id,
+              startBlock: shouldUseHistoricalBaseline
+                ? sessionStartBlock
+                : existingActive.start_block,
+              startTime: shouldUseHistoricalBaseline
+                ? sessionStartTime
+                : existingActive.start_time,
+              ownerAtSubmission: shouldUseHistoricalBaseline
+                ? ownerAtSubmission
+                : existingActive.owner_at_submission,
+              lastCheckedBlock: Math.max(
+                existingActive.last_checked_block,
+                lastCheckedBlock
+              )
+            },
+            txCtx
+          );
+          watchId = existingActive.id;
+          wasMergedIntoExistingWatch = true;
+        } else {
+          const watch = this.buildHistoricalWatch({
+            id: randomUUID(),
+            waveId,
+            token,
+            ownerAtSubmission,
+            startBlock: sessionStartBlock,
+            startTime: sessionStartTime,
+            lastCheckedBlock,
+            status: ArtCurationTokenWatchStatus.ACTIVE,
+            activeDedupeKey,
+            createdAt: now,
+            updatedAt: now
+          });
+          await this.artCurationTokenWatchDb.insertWatch(watch, txCtx);
+          watchId = watch.id;
+        }
+
+        await this.attachHistoricalDropsToWatch(
+          watchId,
+          ownerAtSubmission,
+          drops,
+          now,
+          txCtx
+        );
+        return {
+          watchId,
+          wasMergedIntoExistingWatch
+        };
+      }
+    );
+  }
+
+  private async cancelHistoricalBackfillDrops(
+    {
+      waveId,
+      token,
+      sessionStartBlock,
+      sessionStartTime,
+      ownerAtSubmission,
+      drops
+    }: {
+      waveId: string;
+      token: HistoricalBackfillTokenIdentifiers;
+      sessionStartBlock: number;
+      sessionStartTime: number;
+      ownerAtSubmission: string;
+      drops: ArtCurationHistoricalBackfillCandidateDrop[];
+    },
+    ctx: RequestContext
+  ): Promise<string> {
+    return await this.dropsDb.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const txCtx: RequestContext = {
+          timer: ctx.timer,
+          connection
+        };
+        const now = Time.currentMillis();
+        const watch = this.buildHistoricalWatch({
+          id: randomUUID(),
+          waveId,
+          token,
+          ownerAtSubmission,
+          startBlock: sessionStartBlock,
+          startTime: sessionStartTime,
+          lastCheckedBlock: sessionStartBlock,
+          status: ArtCurationTokenWatchStatus.CANCELLED,
+          activeDedupeKey: null,
+          createdAt: now,
+          updatedAt: now
+        });
+        await this.artCurationTokenWatchDb.insertWatch(watch, txCtx);
+        await this.attachHistoricalDropsToWatch(
+          watch.id,
+          ownerAtSubmission,
+          drops,
+          now,
+          txCtx
+        );
+        return watch.id;
+      }
+    );
+  }
+
+  private async attachHistoricalDropsToWatch(
+    watchId: string,
+    ownerAtSubmission: string,
+    drops: ArtCurationHistoricalBackfillCandidateDrop[],
+    now: number,
+    ctx: RequestContext
+  ): Promise<void> {
+    for (const drop of drops) {
+      await this.artCurationTokenWatchDb.upsertDropWatch(
+        {
+          watch_id: watchId,
+          drop_id: drop.drop_id,
+          canonical_id: drop.canonical_id,
+          url_in_text: drop.url_in_text,
+          owner_at_submission: ownerAtSubmission,
+          created_at: now,
+          updated_at: now
+        },
+        ctx
+      );
+    }
+  }
+
+  private buildHistoricalWatch({
+    id,
+    waveId,
+    token,
+    ownerAtSubmission,
+    startBlock,
+    startTime,
+    lastCheckedBlock,
+    status,
+    activeDedupeKey,
+    createdAt,
+    updatedAt
+  }: {
+    id: string;
+    waveId: string;
+    token: HistoricalBackfillTokenIdentifiers;
+    ownerAtSubmission: string;
+    startBlock: number;
+    startTime: number;
+    lastCheckedBlock: number;
+    status: ArtCurationTokenWatchStatus;
+    activeDedupeKey: string | null;
+    createdAt: number;
+    updatedAt: number;
+  }): ArtCurationTokenWatchEntity {
+    return {
+      id,
+      wave_id: waveId,
+      canonical_id: token.canonicalId,
+      chain: token.chain,
+      contract: token.contract,
+      token_id: token.tokenId,
+      active_dedupe_key: activeDedupeKey,
+      owner_at_submission: ownerAtSubmission,
+      status,
+      start_block: startBlock,
+      start_time: startTime,
+      last_checked_block: lastCheckedBlock,
+      locked_at: null,
+      resolved_at: null,
+      trigger_tx_hash: null,
+      trigger_block_number: null,
+      trigger_log_index: null,
+      trigger_time: null,
+      created_at: createdAt,
+      updated_at: updatedAt
+    };
+  }
+
+  private parseTokenCanonicalId(
+    canonicalId: string
+  ): HistoricalBackfillTokenIdentifiers | null {
+    const [platform, chain, contract, tokenId, ...rest] =
+      canonicalId.split(':');
+    if (!platform || !chain || !contract || !tokenId || rest.length) {
+      return null;
+    }
+    if (!contract.startsWith('0x')) {
+      return null;
+    }
+    return {
+      canonicalId,
+      chain,
+      contract: contract.toLowerCase(),
+      tokenId
+    };
+  }
+
+  private logHistoricalBackfillGroupStart(
+    token: HistoricalBackfillTokenIdentifiers,
+    drops: ArtCurationHistoricalBackfillCandidateDrop[],
+    dryRun: boolean
+  ): void {
+    const dropIds = drops.map((drop) => drop.drop_id).join(',');
+    this.logger.info(
+      `Historical Art Curation${dryRun ? ' DRY_RUN' : ''} backfill start canonical=${token.canonicalId} drops=${dropIds} action=scan_post_submission_transfers`
+    );
+  }
+
+  private logHistoricalBackfillOutcome(
+    outcome:
+      | 'resolved_to_winner'
+      | 'seeded_active_watch'
+      | 'merged_into_active_watch'
+      | 'cancelled_untrackable',
+    token: HistoricalBackfillTokenIdentifiers,
+    drops: ArtCurationHistoricalBackfillCandidateDrop[],
+    {
+      watchId,
+      dryRun,
+      sessionStartBlock,
+      sessionStartTime,
+      checkedThroughBlock,
+      triggerTime,
+      triggerTxHash
+    }: {
+      watchId?: string | null;
+      dryRun: boolean;
+      sessionStartBlock: number;
+      sessionStartTime: number;
+      checkedThroughBlock?: number;
+      triggerTime?: number;
+      triggerTxHash?: string;
+    }
+  ): void {
+    const dropIds = drops.map((drop) => drop.drop_id);
+    this.logger.info(
+      `Historical Art Curation${dryRun ? ' DRY_RUN' : ''} session outcome=${outcome} canonical=${token.canonicalId} drops=${dropIds.join(',')} session_start_block=${sessionStartBlock} session_start_time=${sessionStartTime}${watchId ? ` watch_id=${watchId}` : ''}${checkedThroughBlock != null ? ` checked_through_block=${checkedThroughBlock}` : ''}${triggerTime != null ? ` trigger_time=${triggerTime}` : ''}${triggerTxHash ? ` trigger_tx=${triggerTxHash}` : ''}`
+    );
+    for (const dropId of dropIds) {
+      this.logger.info(
+        `Historical Art Curation${dryRun ? ' DRY_RUN' : ''} drop=${dropId} canonical=${token.canonicalId} outcome=${outcome}${watchId ? ` watch_id=${watchId}` : ''}${triggerTime != null ? ` trigger_time=${triggerTime}` : ''}${triggerTxHash ? ` trigger_tx=${triggerTxHash}` : ''}`
+      );
+    }
   }
 
   private async convertDropsToWinnersForTrigger(

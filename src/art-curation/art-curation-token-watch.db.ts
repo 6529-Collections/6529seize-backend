@@ -1,6 +1,7 @@
 import {
   ART_CURATION_TOKEN_WATCH_DROPS_TABLE,
   ART_CURATION_TOKEN_WATCHES_TABLE,
+  DROP_NFT_LINKS_TABLE,
   DROPS_TABLE
 } from '@/constants';
 import {
@@ -27,7 +28,75 @@ export function buildArtCurationActiveDedupeKey({
   return `${waveId}:${chain}:${contract.toLowerCase()}:${tokenId}`;
 }
 
+export interface ArtCurationHistoricalBackfillCandidateDrop {
+  readonly drop_id: string;
+  readonly created_at: number;
+  readonly canonical_id: string;
+  readonly url_in_text: string;
+}
+
 export class ArtCurationTokenWatchDb extends LazyDbAccessCompatibleService {
+  public async insertWatch(
+    watch: ArtCurationTokenWatchEntity,
+    ctx: RequestContext
+  ): Promise<void> {
+    const timerName = `${this.constructor.name}->insertWatch`;
+    ctx.timer?.start(timerName);
+    try {
+      await this.db.execute(
+        `
+        insert into ${ART_CURATION_TOKEN_WATCHES_TABLE} (
+          id,
+          wave_id,
+          canonical_id,
+          chain,
+          contract,
+          token_id,
+          active_dedupe_key,
+          owner_at_submission,
+          status,
+          start_block,
+          start_time,
+          last_checked_block,
+          locked_at,
+          resolved_at,
+          trigger_tx_hash,
+          trigger_block_number,
+          trigger_log_index,
+          trigger_time,
+          created_at,
+          updated_at
+        ) values (
+          :id,
+          :wave_id,
+          :canonical_id,
+          :chain,
+          :contract,
+          :token_id,
+          :active_dedupe_key,
+          :owner_at_submission,
+          :status,
+          :start_block,
+          :start_time,
+          :last_checked_block,
+          :locked_at,
+          :resolved_at,
+          :trigger_tx_hash,
+          :trigger_block_number,
+          :trigger_log_index,
+          :trigger_time,
+          :created_at,
+          :updated_at
+        )
+      `,
+        watch,
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
+  }
+
   public async upsertActiveWatchAndGet(
     watch: Omit<ArtCurationTokenWatchEntity, 'status' | 'resolved_at'> & {
       status?: ArtCurationTokenWatchStatus;
@@ -101,6 +170,107 @@ export class ArtCurationTokenWatchDb extends LazyDbAccessCompatibleService {
         { active_dedupe_key: watch.active_dedupe_key },
         { wrappedConnection: ctx.connection }
       ))!;
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
+  }
+
+  public async findHistoricalBackfillCandidateCanonicalIds(
+    {
+      waveId,
+      limit
+    }: {
+      waveId: string;
+      limit: number;
+    },
+    ctx: RequestContext
+  ): Promise<string[]> {
+    const timerName = `${this.constructor.name}->findHistoricalBackfillCandidateCanonicalIds`;
+    ctx.timer?.start(timerName);
+    try {
+      return await this.db
+        .execute<{ canonical_id: string }>(
+          `
+          select candidate.canonical_id
+          from (
+            select d.id, d.created_at, l.canonical_id
+            from ${DROPS_TABLE} d
+            join (
+              select min(id) as link_id, drop_id
+              from ${DROP_NFT_LINKS_TABLE}
+              group by drop_id
+              having count(*) = 1
+            ) single_link on single_link.drop_id = d.id
+            join ${DROP_NFT_LINKS_TABLE} l on l.id = single_link.link_id
+            left join ${ART_CURATION_TOKEN_WATCH_DROPS_TABLE} wd on wd.drop_id = d.id
+            where d.wave_id = :waveId
+              and d.drop_type = :dropType
+              and wd.drop_id is null
+              and l.canonical_id like :tokenPattern
+          ) candidate
+          group by candidate.canonical_id
+          order by min(candidate.created_at) asc
+          limit :limit
+        `,
+          {
+            waveId,
+            dropType: DropType.PARTICIPATORY,
+            tokenPattern: '%:eth:0x%:%',
+            limit
+          },
+          { wrappedConnection: ctx.connection }
+        )
+        .then((rows) => rows.map((row) => row.canonical_id));
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
+  }
+
+  public async findHistoricalBackfillCandidateDrops(
+    {
+      waveId,
+      canonicalIds
+    }: {
+      waveId: string;
+      canonicalIds: string[];
+    },
+    ctx: RequestContext
+  ): Promise<ArtCurationHistoricalBackfillCandidateDrop[]> {
+    const timerName = `${this.constructor.name}->findHistoricalBackfillCandidateDrops`;
+    ctx.timer?.start(timerName);
+    try {
+      if (!canonicalIds.length) {
+        return [];
+      }
+      return await this.db.execute<ArtCurationHistoricalBackfillCandidateDrop>(
+        `
+        select
+          d.id as drop_id,
+          d.created_at,
+          l.canonical_id,
+          l.url_in_text
+        from ${DROPS_TABLE} d
+        join (
+          select min(id) as link_id, drop_id
+          from ${DROP_NFT_LINKS_TABLE}
+          group by drop_id
+          having count(*) = 1
+        ) single_link on single_link.drop_id = d.id
+        join ${DROP_NFT_LINKS_TABLE} l on l.id = single_link.link_id
+        left join ${ART_CURATION_TOKEN_WATCH_DROPS_TABLE} wd on wd.drop_id = d.id
+        where d.wave_id = :waveId
+          and d.drop_type = :dropType
+          and wd.drop_id is null
+          and l.canonical_id in (:canonicalIds)
+        order by l.canonical_id asc, d.created_at asc, d.id asc
+      `,
+        {
+          waveId,
+          dropType: DropType.PARTICIPATORY,
+          canonicalIds
+        },
+        { wrappedConnection: ctx.connection }
+      );
     } finally {
       ctx.timer?.stop(timerName);
     }
@@ -290,6 +460,33 @@ export class ArtCurationTokenWatchDb extends LazyDbAccessCompatibleService {
     }
   }
 
+  public async findActiveByDedupeKey(
+    activeDedupeKey: string,
+    ctx: RequestContext
+  ): Promise<ArtCurationTokenWatchEntity | null> {
+    const timerName = `${this.constructor.name}->findActiveByDedupeKey`;
+    ctx.timer?.start(timerName);
+    try {
+      return await this.db.oneOrNull<ArtCurationTokenWatchEntity>(
+        `
+        select *
+        from ${ART_CURATION_TOKEN_WATCHES_TABLE}
+        where active_dedupe_key = :activeDedupeKey
+          and status = :status
+        limit 1
+        for update
+      `,
+        {
+          activeDedupeKey,
+          status: ArtCurationTokenWatchStatus.ACTIVE
+        },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
+  }
+
   public async unlock(watchId: string, ctx: RequestContext): Promise<void> {
     const timerName = `${this.constructor.name}->unlock`;
     ctx.timer?.start(timerName);
@@ -332,6 +529,53 @@ export class ArtCurationTokenWatchDb extends LazyDbAccessCompatibleService {
       `,
         {
           watchId,
+          lastCheckedBlock,
+          status: ArtCurationTokenWatchStatus.ACTIVE,
+          now: Time.currentMillis()
+        },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
+  }
+
+  public async updateHistoricalBaseline(
+    {
+      watchId,
+      startBlock,
+      startTime,
+      ownerAtSubmission,
+      lastCheckedBlock
+    }: {
+      watchId: string;
+      startBlock: number;
+      startTime: number;
+      ownerAtSubmission: string;
+      lastCheckedBlock: number;
+    },
+    ctx: RequestContext
+  ): Promise<void> {
+    const timerName = `${this.constructor.name}->updateHistoricalBaseline`;
+    ctx.timer?.start(timerName);
+    try {
+      await this.db.execute(
+        `
+        update ${ART_CURATION_TOKEN_WATCHES_TABLE}
+        set
+          start_block = :startBlock,
+          start_time = :startTime,
+          owner_at_submission = :ownerAtSubmission,
+          last_checked_block = :lastCheckedBlock,
+          updated_at = :now
+        where id = :watchId
+          and status = :status
+      `,
+        {
+          watchId,
+          startBlock,
+          startTime,
+          ownerAtSubmission,
           lastCheckedBlock,
           status: ArtCurationTokenWatchStatus.ACTIVE,
           now: Time.currentMillis()
