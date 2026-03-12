@@ -1,6 +1,7 @@
 import {
   GetQueueUrlCommand,
   SendMessageCommand,
+  type SendMessageCommandOutput,
   SQSClient
 } from '@aws-sdk/client-sqs';
 import { env } from './env';
@@ -31,7 +32,7 @@ export class SQS {
     message: any;
     queue: string;
     messageGroupId?: string;
-  }) {
+  }): Promise<SendMessageCommandOutput> {
     const needsMessageGroupId = queue.endsWith('.fifo');
     const resolvedMessageGroupId =
       messageGroupId ?? (needsMessageGroupId ? DEFAULT_MESSAGE_GROUP_ID : null);
@@ -47,6 +48,7 @@ export class SQS {
     this.logger.info(
       `Sent SQS message ${response.MessageId} to queue ${queue}  Message sent: ${response.MessageId}`
     );
+    return response;
   }
 
   async sendToQueueName({

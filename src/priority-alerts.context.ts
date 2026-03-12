@@ -25,29 +25,29 @@ export function wrapAsyncFunction<TResult = any>(
       return await fn();
     } catch (error: any) {
       await sendPriorityAlertIfConfigured(alertTitle, error);
-
       throw error;
     }
   };
+}
+
+export async function sendPriorityAlert(
+  alertTitle: string,
+  error: unknown
+): Promise<void> {
+  await sendPriorityAlertIfConfigured(alertTitle, error);
 }
 
 export async function sendPriorityAlertIfConfigured(
   alertTitle: string,
   error: unknown
 ): Promise<void> {
-  let priorityWaveId = null;
-  if (isConfigured()) {
-    priorityWaveId = process.env.PRIORITY_ALERTS_WAVE!;
-  } else {
+  if (!isConfigured()) {
     logger.info(
       'Priority alerts not configured - PRIORITY_ALERTS_WAVE env var not set - skipping priority alerts'
     );
-  }
-
-  if (!priorityWaveId) {
     return;
   }
-
+  const priorityWaveId = process.env.PRIORITY_ALERTS_WAVE!;
   try {
     await handlePriorityAlert(priorityWaveId, error, alertTitle);
     logger.info('Priority alert sent successfully');
