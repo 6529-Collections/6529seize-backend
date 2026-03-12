@@ -50,6 +50,12 @@ function inferAnimationKind(
   return 'VIDEO';
 }
 
+function normalizeOptionalUrl(value: string | null | undefined): string | null {
+  if (value == null) return null;
+  const trimmed = value.trim();
+  return trimmed === '' ? null : trimmed;
+}
+
 function validateRequestedSeason(
   requestedSeason: number,
   maxSeason: number
@@ -149,15 +155,14 @@ function applyEditionSizeUpdate(
 }
 
 async function applyImageFromBody(
-  body: MintingClaimUpdateRequest,
+  imageUrl: string | null,
   existing: MintingClaimRow,
   updates: MintingClaimUpdates
 ): Promise<void> {
-  if (body.image_url === undefined) return;
-  if (body.image_url && typeof body.image_url === 'string') {
-    const urlChanged = (existing.image_url ?? '').trim() !== body.image_url;
+  if (typeof imageUrl === 'string' && imageUrl.length > 0) {
+    const urlChanged = normalizeOptionalUrl(existing.image_url) !== imageUrl;
     try {
-      updates.image_details = await computeImageDetails(body.image_url);
+      updates.image_details = await computeImageDetails(imageUrl);
     } catch {
       if (urlChanged) {
         updates.image_details = null;
@@ -169,22 +174,21 @@ async function applyImageFromBody(
 }
 
 async function applyAnimationFromBody(
-  body: MintingClaimUpdateRequest,
+  animationUrl: string | null,
   existing: MintingClaimRow,
   updates: MintingClaimUpdates
 ): Promise<void> {
-  if (body.animation_url === undefined) return;
   const hasValidAnimationUrl =
-    typeof body.animation_url === 'string' && body.animation_url.length > 0;
+    typeof animationUrl === 'string' && animationUrl.length > 0;
   if (!hasValidAnimationUrl) {
     updates.animation_details = null;
     return;
   }
-  const animationUrl = body.animation_url as string;
   const existingDetails = parseExistingAnimationFormat(
     existing.animation_details
   );
-  const urlChanged = (existing.animation_url ?? '').trim() !== animationUrl;
+  const urlChanged =
+    normalizeOptionalUrl(existing.animation_url) !== animationUrl;
   try {
     const kind = inferAnimationKind(animationUrl, existingDetails);
     if (kind === 'HTML') {
@@ -244,6 +248,12 @@ export async function buildUpdatesForClaimPatch(
 ): Promise<MintingClaimUpdates> {
   const updates: MintingClaimUpdates = {};
   let shouldResetSyncState = false;
+  let nextImageUrl: string | null = normalizeOptionalUrl(existing.image_url);
+  let imageUrlChanged = false;
+  let nextAnimationUrl: string | null = normalizeOptionalUrl(
+    existing.animation_url
+  );
+  let animationUrlChanged = false;
 
   if (body.description !== undefined) {
     updates.description = body.description;
@@ -256,8 +266,13 @@ export async function buildUpdatesForClaimPatch(
   }
 
   if (body.image_url !== undefined) {
-    updates.image_url = body.image_url;
-    shouldResetSyncState = true;
+    nextImageUrl = normalizeOptionalUrl(body.image_url);
+    imageUrlChanged = nextImageUrl !== normalizeOptionalUrl(existing.image_url);
+    if (imageUrlChanged) {
+      updates.image_url = nextImageUrl;
+      updates.image_location = null;
+      shouldResetSyncState = true;
+    }
   }
 
   if (body.external_url !== undefined) {
@@ -270,21 +285,26 @@ export async function buildUpdatesForClaimPatch(
   }
 
   if (body.animation_url !== undefined) {
-    updates.animation_url = body.animation_url;
-    shouldResetSyncState = true;
+    nextAnimationUrl = normalizeOptionalUrl(body.animation_url);
+    animationUrlChanged =
+      nextAnimationUrl !== normalizeOptionalUrl(existing.animation_url);
+    if (animationUrlChanged) {
+      updates.animation_url = nextAnimationUrl;
+      updates.animation_location = null;
+      shouldResetSyncState = true;
+    }
   }
 
   shouldResetSyncState =
     applyEditionSizeUpdate(body, updates, isMemesContract) ||
     shouldResetSyncState;
 
-  if (body.image_url !== undefined) {
-    await applyImageFromBody(body, existing, updates);
+  if (imageUrlChanged) {
+    await applyImageFromBody(nextImageUrl, existing, updates);
   }
 
-  if (body.animation_url !== undefined) {
-    await applyAnimationFromBody(body, existing, updates);
-    shouldResetSyncState = true;
+  if (animationUrlChanged) {
+    await applyAnimationFromBody(nextAnimationUrl, existing, updates);
   }
 
   if (shouldResetSyncState) {
