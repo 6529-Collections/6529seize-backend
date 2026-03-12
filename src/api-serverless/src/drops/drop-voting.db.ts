@@ -607,7 +607,21 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
       return {};
     }
     ctx.timer?.start(`${this.constructor.name}->getWinningDropsTopRaters`);
-    const sql = `select * from ${WINNER_DROP_VOTER_VOTES_TABLE} where drop_id in (:dropIds) and votes <> 0 order by votes desc limit 5`;
+    const sql = `
+      with ranked_voters as (
+        select
+          voter_id,
+          drop_id,
+          votes,
+          wave_id,
+          row_number() over (partition by drop_id order by votes desc) as rn
+        from ${WINNER_DROP_VOTER_VOTES_TABLE}
+        where drop_id in (:dropIds) and votes <> 0
+      )
+      select voter_id, drop_id, votes, wave_id
+      from ranked_voters
+      where rn <= 5
+    `;
     const results = await this.db.execute<WinnerDropVoterVoteEntity>(
       sql,
       { dropIds },
