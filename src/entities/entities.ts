@@ -97,6 +97,7 @@ export { RoyaltiesUpload } from './IRoyalties';
 export { MemesSeason } from './ISeason';
 export { MetricRollupHourEntity } from './IMetricRollupHour';
 export { MintAnnouncementsDoneMemeToken } from './IMintAnnouncementsDoneMemeToken';
+export { MintEndAnnouncementsDoneMemeToken } from './IMintEndAnnouncementsDoneMemeToken';
 export { MemesMintStat } from './IMemesMintStat';
 export { S3UploaderOutboxEntity } from './IS3UploaderOutbox';
 export { MemesPrevoteArtistProfileEntity } from './IMemesPrevoteArtistProfile';

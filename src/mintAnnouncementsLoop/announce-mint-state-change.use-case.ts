@@ -9,8 +9,10 @@ import {
 } from './manifold-claim.service';
 import { getNewestMeme } from '@/nftsLoop/db.nfts';
 import { sqlExecutor } from '@/sql-executor';
-import { MINT_ANNOUNCEMENTS_DONE_MEME_TOKENS_TABLE } from '@/constants';
-import moment = require('moment-timezone');
+import {
+  MINT_ANNOUNCEMENTS_DONE_MEME_TOKENS_TABLE,
+  MINT_END_ANNOUNCEMENTS_DONE_MEME_TOKENS_TABLE
+} from '@/constants';
 
 interface PhaseConfig {
   readonly name: string;
@@ -101,21 +103,31 @@ export class AnnounceMintStateChangeUseCase {
       if (!mintingMeme?.id) {
         throw new Error('No meme tokens found');
       }
-      const mintAnnouncementsDoneForThisToken =
-        (await sqlExecutor.oneOrNull<{ id: number }>(
-          `select id from ${MINT_ANNOUNCEMENTS_DONE_MEME_TOKENS_TABLE} where id = :id`,
-          { id: mintingMeme.id }
-        )) != null;
-      if (mintAnnouncementsDoneForThisToken) {
-        if (announcementWindow.type === 'PHASE') {
-          this.logger.info(
-            `All mint announcements are already done for token #${mintingMeme.id}`
-          );
-          return;
-        }
+      const phaseAnnouncementsDoneForThisToken = await this.isAnnouncementDone(
+        MINT_ANNOUNCEMENTS_DONE_MEME_TOKENS_TABLE,
+        mintingMeme.id
+      );
+      const mintEndAnnouncementDoneForThisToken = await this.isAnnouncementDone(
+        MINT_END_ANNOUNCEMENTS_DONE_MEME_TOKENS_TABLE,
+        mintingMeme.id
+      );
+      if (
+        announcementWindow.type === 'PHASE' &&
+        phaseAnnouncementsDoneForThisToken
+      ) {
         this.logger.info(
-          `Mint phase announcements are done for token #${mintingMeme.id}, continuing with end-of-mint announcement`
+          `All phase mint announcements are already done for token #${mintingMeme.id}`
         );
+        return;
+      }
+      if (
+        announcementWindow.type === 'MINT_END' &&
+        mintEndAnnouncementDoneForThisToken
+      ) {
+        this.logger.info(
+          `End-of-mint announcement is already done for token #${mintingMeme.id}`
+        );
+        return;
       }
       const { minted, total, remaining } =
         await this.manifoldClaimService.getMintStatsFromMemeClaim(
@@ -168,11 +180,30 @@ export class AnnounceMintStateChangeUseCase {
               { wrappedConnection: connection }
             );
           }
+          if (announcementWindow.type === 'MINT_END') {
+            await sqlExecutor.execute(
+              `insert into ${MINT_END_ANNOUNCEMENTS_DONE_MEME_TOKENS_TABLE} (id) values (:id)`,
+              { id: mintingMeme.id },
+              { wrappedConnection: connection }
+            );
+          }
         }
       );
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->handle`);
     }
+  }
+
+  private async isAnnouncementDone(
+    table: string,
+    memeTokenId: number
+  ): Promise<boolean> {
+    return (
+      (await sqlExecutor.oneOrNull<{ id: number }>(
+        `select id from ${table} where id = :id`,
+        { id: memeTokenId }
+      )) != null
+    );
   }
 
   private findAnnouncementWindow(): AnnouncementWindow | null {
@@ -187,8 +218,8 @@ export class AnnounceMintStateChangeUseCase {
   }
 
   private findCurrentPhase(): PhaseConfig | null {
-    const now = moment.tz(EUROPE_TZ);
-    const todayMidnightTz = now.clone().startOf('day');
+    const now = Time.nowInTimezone(EUROPE_TZ);
+    const todayMidnightTz = Time.todayMidnightInTimezone(EUROPE_TZ);
     let matchedPhase: PhaseConfig | null = null;
     let smallestDiffMs: number | null = null;
     const maxMinutesAfterPhaseStartMs =
@@ -217,7 +248,7 @@ export class AnnounceMintStateChangeUseCase {
   }
 
   private isMintEndWindow(): boolean {
-    const now = moment.tz(EUROPE_TZ);
+    const now = Time.nowInTimezone(EUROPE_TZ);
     if (!MINT_END_SCHEDULE.daysOfWeek.includes(now.day())) {
       return false;
     }
@@ -236,9 +267,7 @@ export class AnnounceMintStateChangeUseCase {
   }
 
   private getPhaseCloseAtUtcString(phase: PhaseConfig): string {
-    const closeLocal = moment
-      .tz(EUROPE_TZ)
-      .startOf('day')
+    const closeLocal = Time.todayMidnightInTimezone(EUROPE_TZ)
       .add(phase.closeDayOffset, 'day')
       .hour(phase.closeHour)
       .minute(phase.closeMinute)

@@ -133,6 +133,8 @@ export const WAVE_CURATION_GROUPS_TABLE = 'wave_curation_groups';
 export const METRIC_ROLLUP_HOUR_TABLE = 'metric_rollup_hour';
 export const MINT_ANNOUNCEMENTS_DONE_MEME_TOKENS_TABLE =
   'mint_announcements_done_meme_tokens';
+export const MINT_END_ANNOUNCEMENTS_DONE_MEME_TOKENS_TABLE =
+  'mint_end_announcements_done_meme_tokens';
 export const MEMES_MINT_STATS_TABLE = 'memes_mint_stats';
 export const S3_UPLOADER_OUTBOX_TABLE = 's3_uploader_outbox';
 export const DROPS_MENTIONS_TABLE = 'drops_mentions';

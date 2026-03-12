@@ -66,6 +66,14 @@ export class Time {
     return Time.millis(nowUtc.getTime());
   }
 
+  static nowInTimezone(timezone: string): moment.Moment {
+    return moment.tz(timezone);
+  }
+
+  static todayMidnightInTimezone(timezone: string): moment.Moment {
+    return this.nowInTimezone(timezone).startOf('day');
+  }
+
   static millisOrNull(inp: number | undefined | null): Time | undefined {
     if (inp !== undefined && inp !== null) {
       return Time.millis(inp);
