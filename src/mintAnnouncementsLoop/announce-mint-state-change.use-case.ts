@@ -70,7 +70,7 @@ const PHASES: readonly PhaseConfig[] = [
   }
 ];
 
-const MAX_MINUTES_AFTER_PHASE_START = Time.minutes(5);
+const ANNOUNCEMENT_WINDOW_DURATION_MINUTES = Time.minutes(5);
 const MINT_END_SCHEDULE: MintEndSchedule = {
   // Tue/Thu/Sat in moment day() numbering (0=Sun)
   daysOfWeek: [2, 4, 6],
@@ -223,7 +223,7 @@ export class AnnounceMintStateChangeUseCase {
     let matchedPhase: PhaseConfig | null = null;
     let smallestDiffMs: number | null = null;
     const maxMinutesAfterPhaseStartMs =
-      MAX_MINUTES_AFTER_PHASE_START.toMillis();
+      ANNOUNCEMENT_WINDOW_DURATION_MINUTES.toMillis();
     for (const phase of PHASES) {
       const phaseStart = todayMidnightTz
         .clone()
@@ -262,7 +262,7 @@ export class AnnounceMintStateChangeUseCase {
     const msSinceMintEndStart = now.valueOf() - mintEndStart.valueOf();
     return (
       msSinceMintEndStart >= 0 &&
-      msSinceMintEndStart < MAX_MINUTES_AFTER_PHASE_START.toMillis()
+      msSinceMintEndStart < ANNOUNCEMENT_WINDOW_DURATION_MINUTES.toMillis()
     );
   }
 
