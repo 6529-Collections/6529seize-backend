@@ -42,6 +42,10 @@ export class ApiWave {
     */
     'picture': string | null;
     'created_at': number;
+    /**
+    * Unix timestamp in milliseconds of the most recent drop in this wave
+    */
+    'last_drop_time': number;
     'description_drop': ApiDrop;
     'voting': ApiWaveVotingConfig;
     'visibility': ApiWaveVisibilityConfig;
@@ -90,6 +94,12 @@ export class ApiWave {
         {
             "name": "created_at",
             "baseName": "created_at",
+            "type": "number",
+            "format": "int64"
+        },
+        {
+            "name": "last_drop_time",
+            "baseName": "last_drop_time",
             "type": "number",
             "format": "int64"
         },

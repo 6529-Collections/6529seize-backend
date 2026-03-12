@@ -386,6 +386,7 @@ export class WavesMappers {
       contributors_overview: contributorsOverview,
       description_drop: creationDrop,
       created_at: waveEntity.created_at,
+      last_drop_time: waveMetrics.latest_drop_timestamp,
       voting: voting,
       visibility: visibility,
       participation: participation,
