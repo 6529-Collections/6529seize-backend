@@ -13,6 +13,9 @@ export const NFT_OWNERS_CONSOLIDATION_TABLE = 'nft_owners_consolidation';
 export const NFT_OWNERS_SYNC_STATE_TABLE = 'nft_owners_sync_state';
 export const MEMES_EXTENDED_DATA_TABLE = 'memes_extended_data';
 export const NFT_LINKS_TABLE = 'nft_links';
+export const ART_CURATION_TOKEN_WATCHES_TABLE = 'art_curation_token_watches';
+export const ART_CURATION_TOKEN_WATCH_DROPS_TABLE =
+  'art_curation_token_watch_drops';
 export const LAB_EXTENDED_DATA_TABLE = 'lab_extended_data';
 export const WALLETS_TDH_TABLE = 'tdh';
 export const CONSOLIDATED_WALLETS_TDH_TABLE = 'tdh_consolidation';
