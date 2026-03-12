@@ -11,7 +11,8 @@ import { getNewestMeme } from '@/nftsLoop/db.nfts';
 import { sqlExecutor } from '@/sql-executor';
 import {
   MINT_ANNOUNCEMENTS_DONE_MEME_TOKENS_TABLE,
-  MINT_END_ANNOUNCEMENTS_DONE_MEME_TOKENS_TABLE
+  MINT_END_ANNOUNCEMENTS_DONE_MEME_TOKENS_TABLE,
+  PUBLIC_PHASE_ENDING_SOON_ANNOUNCEMENTS_DONE_MEME_TOKENS_TABLE
 } from '@/constants';
 
 interface PhaseConfig {
@@ -23,7 +24,7 @@ interface PhaseConfig {
   readonly closeMinute: number;
 }
 
-interface MintEndSchedule {
+interface AnnouncementSchedule {
   readonly daysOfWeek: readonly number[];
   readonly hour: number;
   readonly minute: number;
@@ -31,6 +32,7 @@ interface MintEndSchedule {
 
 type AnnouncementWindow =
   | { readonly type: 'PHASE'; readonly phase: PhaseConfig }
+  | { readonly type: 'PUBLIC_PHASE_ENDING_SOON' }
   | { readonly type: 'MINT_END' };
 
 const EUROPE_TZ = 'Europe/Athens'; // EET/EEST
@@ -71,7 +73,13 @@ const PHASES: readonly PhaseConfig[] = [
 ];
 
 const ANNOUNCEMENT_WINDOW_DURATION_MINUTES = Time.minutes(5);
-const MINT_END_SCHEDULE: MintEndSchedule = {
+const PUBLIC_PHASE_ENDING_SOON_SCHEDULE: AnnouncementSchedule = {
+  // Tue/Thu/Sat in moment day() numbering (0=Sun)
+  daysOfWeek: [2, 4, 6],
+  hour: 16,
+  minute: 0
+};
+const MINT_END_SCHEDULE: AnnouncementSchedule = {
   // Tue/Thu/Sat in moment day() numbering (0=Sun)
   daysOfWeek: [2, 4, 6],
   hour: 17,
@@ -111,6 +119,11 @@ export class AnnounceMintStateChangeUseCase {
         MINT_END_ANNOUNCEMENTS_DONE_MEME_TOKENS_TABLE,
         mintingMeme.id
       );
+      const publicPhaseEndingSoonAnnouncementDoneForThisToken =
+        await this.isAnnouncementDone(
+          PUBLIC_PHASE_ENDING_SOON_ANNOUNCEMENTS_DONE_MEME_TOKENS_TABLE,
+          mintingMeme.id
+        );
       if (
         announcementWindow.type === 'PHASE' &&
         phaseAnnouncementsDoneForThisToken
@@ -126,6 +139,15 @@ export class AnnounceMintStateChangeUseCase {
       ) {
         this.logger.info(
           `End-of-mint announcement is already done for token #${mintingMeme.id}`
+        );
+        return;
+      }
+      if (
+        announcementWindow.type === 'PUBLIC_PHASE_ENDING_SOON' &&
+        publicPhaseEndingSoonAnnouncementDoneForThisToken
+      ) {
+        this.logger.info(
+          `Public phase ending soon announcement is already done for token #${mintingMeme.id}`
         );
         return;
       }
@@ -146,7 +168,18 @@ export class AnnounceMintStateChangeUseCase {
       ).replace('{cardNo}', mintingMeme.id.toString());
       message += `\n\n${cardPage}`;
       const cardSoldOut = remaining <= 0;
-      if (announcementWindow.type === 'MINT_END') {
+      if (announcementWindow.type === 'PUBLIC_PHASE_ENDING_SOON') {
+        if (cardSoldOut) {
+          this.logger.info(
+            `Skipping public phase ending soon announcement for token #${mintingMeme.id} because mint is already complete`
+          );
+          return;
+        }
+        message += `\n\nPublic Phase ends in 1 hour!`;
+        message += `\nEdition Size: ${total}`;
+        message += `\nRemaining: ${remaining}`;
+        message += `\n\nMinting closes ${this.getPublicPhaseCloseAtUtcString()}`;
+      } else if (announcementWindow.type === 'MINT_END') {
         message += `\n\nMinting Completed`;
         message += `\nClosing Edition Size: ${minted}`;
       } else if (cardSoldOut) {
@@ -187,6 +220,13 @@ export class AnnounceMintStateChangeUseCase {
               { wrappedConnection: connection }
             );
           }
+          if (announcementWindow.type === 'PUBLIC_PHASE_ENDING_SOON') {
+            await sqlExecutor.execute(
+              `insert into ${PUBLIC_PHASE_ENDING_SOON_ANNOUNCEMENTS_DONE_MEME_TOKENS_TABLE} (id) values (:id)`,
+              { id: mintingMeme.id },
+              { wrappedConnection: connection }
+            );
+          }
         }
       );
     } finally {
@@ -210,6 +250,9 @@ export class AnnounceMintStateChangeUseCase {
     const phase = this.findCurrentPhase();
     if (phase) {
       return { type: 'PHASE', phase };
+    }
+    if (this.isPublicPhaseEndingSoonWindow()) {
+      return { type: 'PUBLIC_PHASE_ENDING_SOON' };
     }
     if (this.isMintEndWindow()) {
       return { type: 'MINT_END' };
@@ -247,23 +290,41 @@ export class AnnounceMintStateChangeUseCase {
     return matchedPhase;
   }
 
+  private isPublicPhaseEndingSoonWindow(): boolean {
+    return this.isScheduledWindow(PUBLIC_PHASE_ENDING_SOON_SCHEDULE);
+  }
+
   private isMintEndWindow(): boolean {
+    return this.isScheduledWindow(MINT_END_SCHEDULE);
+  }
+
+  private isScheduledWindow(schedule: AnnouncementSchedule): boolean {
     const now = Time.nowInTimezone(EUROPE_TZ);
-    if (!MINT_END_SCHEDULE.daysOfWeek.includes(now.day())) {
+    if (!schedule.daysOfWeek.includes(now.day())) {
       return false;
     }
-    const mintEndStart = now
+    const start = now
       .clone()
       .startOf('day')
+      .hour(schedule.hour)
+      .minute(schedule.minute)
+      .second(0)
+      .millisecond(0);
+    const msSinceStart = now.valueOf() - start.valueOf();
+    return (
+      msSinceStart >= 0 &&
+      msSinceStart < ANNOUNCEMENT_WINDOW_DURATION_MINUTES.toMillis()
+    );
+  }
+
+  private getPublicPhaseCloseAtUtcString(): string {
+    const closeLocal = Time.todayMidnightInTimezone(EUROPE_TZ)
       .hour(MINT_END_SCHEDULE.hour)
       .minute(MINT_END_SCHEDULE.minute)
       .second(0)
       .millisecond(0);
-    const msSinceMintEndStart = now.valueOf() - mintEndStart.valueOf();
-    return (
-      msSinceMintEndStart >= 0 &&
-      msSinceMintEndStart < ANNOUNCEMENT_WINDOW_DURATION_MINUTES.toMillis()
-    );
+    const closeUtc = closeLocal.clone().utc();
+    return `at ${closeUtc.format('HH:mm')} UTC`;
   }
 
   private getPhaseCloseAtUtcString(phase: PhaseConfig): string {

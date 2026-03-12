@@ -26,10 +26,17 @@ functions:
           method: scheduler
           timezone: Europe/Athens
           rate:
+            # Phase 0 start announcement (Mon/Wed/Fri)
             - cron(40 17 ? * MON,WED,FRI *)
+            # Phase 1 start announcement (Mon/Wed/Fri)
             - cron(30 18 ? * MON,WED,FRI *)
+            # Phase 2 start announcement (Mon/Wed/Fri)
             - cron(0 19 ? * MON,WED,FRI *)
+            # Public phase start announcement (Mon/Wed/Fri)
             - cron(20 19 ? * MON,WED,FRI *)
+            # Public phase ending in 1 hour reminder (Tue/Thu/Sat)
+            - cron(0 16 ? * TUE,THU,SAT *)
+            # Mint end announcement (Tue/Thu/Sat)
             - cron(0 17 ? * TUE,THU,SAT *)
     vpc:
       securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
