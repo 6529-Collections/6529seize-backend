@@ -2029,6 +2029,27 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiIdentitySubscriptionActions"
+  /identities/{id}/activity:
+    get:
+      tags:
+        - Identities
+      summary: Get daily public-wave drop activity for an identity.
+      operationId: getIdentityActivity
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiIdentityActivity"
+        "404":
+          description: Identity not found
   /memes-mint-stats:
     get:
       tags:
@@ -8845,6 +8866,23 @@ components:
         - PROFILE
         - WAVE
         - DROP
+    ApiIdentityActivity:
+      type: object
+      required:
+        - last_date
+        - date_samples
+      properties:
+        last_date:
+          type: string
+          example: "12.03.2026"
+        date_samples:
+          type: array
+          minItems: 365
+          maxItems: 365
+          items:
+            type: integer
+            format: int64
+            minimum: 0
     ApiIncomingIdentitySubscriptionsPage:
       type: object
       required:
