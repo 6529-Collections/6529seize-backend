@@ -1,4 +1,5 @@
 import { getRpcProvider } from '@/rpc-provider';
+import { getBestEffortArtCurationTransferPrice } from '@/art-curation/art-curation-token-watch-price';
 import { Network } from 'alchemy-sdk';
 import { Contract, ethers } from 'ethers';
 
@@ -6,6 +7,7 @@ const ERC721_ABI = [
   'function ownerOf(uint256) view returns (address)',
   'function supportsInterface(bytes4) view returns (bool)'
 ] as const;
+const ERC20_ABI = ['function decimals() view returns (uint8)'] as const;
 
 const ERC721_TRANSFER_TOPIC = ethers.id('Transfer(address,address,uint256)');
 const ERC721_INTERFACE_ID = '0x80ac58cd';
@@ -18,14 +20,23 @@ export interface ArtCurationTokenSubmissionSnapshot {
 }
 
 export interface ArtCurationTokenTransferEvent {
+  readonly from: string;
+  readonly to: string;
   readonly txHash: string;
   readonly blockNumber: number;
   readonly logIndex: number;
   readonly timestampMs: number;
 }
 
+export interface ArtCurationTokenTransferPrice {
+  readonly amountRaw: string | null;
+  readonly amount: number | null;
+  readonly currency: string | null;
+}
+
 export class ArtCurationTokenWatchOnchainService {
   private providerInstance: ReturnType<typeof getRpcProvider> | null = null;
+  private readonly erc20DecimalsCache = new Map<string, Promise<number>>();
 
   private get provider() {
     if (!this.providerInstance) {
@@ -132,11 +143,58 @@ export class ArtCurationTokenWatchOnchainService {
     return {
       checkedThroughBlock: toBlock,
       event: {
+        from: ethers
+          .getAddress(`0x${firstLog.topics[1].slice(-40)}`)
+          .toLowerCase(),
+        to: ethers
+          .getAddress(`0x${firstLog.topics[2].slice(-40)}`)
+          .toLowerCase(),
         txHash: firstLog.transactionHash,
         blockNumber: firstLog.blockNumber,
         logIndex: firstLog.index,
         timestampMs: block.timestamp * 1000
       }
+    };
+  }
+
+  public async findTransferPrice({
+    txHash,
+    contract,
+    tokenId
+  }: {
+    txHash: string;
+    contract: string;
+    tokenId: string;
+  }): Promise<ArtCurationTokenTransferPrice> {
+    const [transaction, receipt] = await Promise.all([
+      this.provider.getTransaction(txHash),
+      this.provider.getTransactionReceipt(txHash)
+    ]);
+    const attribution = getBestEffortArtCurationTransferPrice({
+      transaction: transaction
+        ? {
+            from: transaction.from ?? null,
+            value: transaction.value
+          }
+        : null,
+      receipt,
+      contract,
+      tokenId
+    });
+    if (!attribution.amountRaw || !attribution.currency) {
+      return {
+        amountRaw: null,
+        amount: null,
+        currency: null
+      };
+    }
+    const decimals = await this.getCurrencyDecimals(attribution.currency);
+    return {
+      amountRaw: attribution.amountRaw,
+      amount: Number.parseFloat(
+        ethers.formatUnits(BigInt(attribution.amountRaw), decimals)
+      ),
+      currency: attribution.currency
     };
   }
 
@@ -158,6 +216,26 @@ export class ArtCurationTokenWatchOnchainService {
       lowered.includes('token does not exist') ||
       lowered.includes('not minted')
     );
+  }
+
+  private async getCurrencyDecimals(currency: string): Promise<number> {
+    if (currency === ethers.ZeroAddress.toLowerCase()) {
+      return 18;
+    }
+    const key = currency.toLowerCase();
+    if (!this.erc20DecimalsCache.has(key)) {
+      this.erc20DecimalsCache.set(key, this.fetchCurrencyDecimals(currency));
+    }
+    return await this.erc20DecimalsCache.get(key)!;
+  }
+
+  private async fetchCurrencyDecimals(currency: string): Promise<number> {
+    try {
+      const erc20 = new Contract(currency, ERC20_ABI, this.provider);
+      return Number(await erc20.decimals());
+    } catch {
+      return 18;
+    }
   }
 }
 
