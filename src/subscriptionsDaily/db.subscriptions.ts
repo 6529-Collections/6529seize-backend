@@ -1,6 +1,9 @@
 import {
   CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE,
-  MEMES_SEASONS_TABLE
+  MEMES_CONTRACT,
+  MEMES_EXTENDED_DATA_TABLE,
+  MEMES_SEASONS_TABLE,
+  NFT_OWNERS_CONSOLIDATION_TABLE
 } from '@/constants';
 import { getDataSource } from '../db';
 import {
@@ -13,6 +16,9 @@ import {
 } from '../entities/ISubscription';
 import { insertWithoutUpdate } from '../orm_helpers';
 import { sqlExecutor } from '../sql-executor';
+
+const SUBSCRIPTION_ELIGIBILITY_EXCLUDED_CARD_SEASON = 14;
+const SUBSCRIPTION_ELIGIBILITY_EXCLUDED_CARD_TOKEN_ID = 469;
 
 export async function fetchAllAutoSubscriptions() {
   return await getDataSource()
@@ -108,13 +114,50 @@ export async function fetchSubscriptionEligibility(
 
   const seasonId = maxSeasonId[0].max_id;
 
-  const cardSetsResult = await sqlExecutor.execute<{
-    sets: number;
-  }>(
-    `SELECT sets FROM ${CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE} 
-     WHERE consolidation_key = :consolidationKey AND season = :seasonId`,
-    { consolidationKey, seasonId }
-  );
+  const cardSetsResult =
+    seasonId === SUBSCRIPTION_ELIGIBILITY_EXCLUDED_CARD_SEASON
+      ? await sqlExecutor.execute<{
+          sets: number;
+        }>(
+          `
+            WITH season_cards AS (
+              SELECT med.id
+              FROM ${MEMES_EXTENDED_DATA_TABLE} med
+              WHERE med.season = :seasonId
+                AND med.id <> :excludedTokenId
+            ),
+            season_card_count AS (
+              SELECT COUNT(*) AS required_cards
+              FROM season_cards
+            )
+            SELECT
+              CASE
+                WHEN COUNT(DISTINCT noc.token_id) = scc.required_cards
+                  THEN MIN(noc.balance)
+                ELSE 0
+              END AS sets
+            FROM ${NFT_OWNERS_CONSOLIDATION_TABLE} noc
+            JOIN season_cards sc
+              ON sc.id = noc.token_id
+            CROSS JOIN season_card_count scc
+            WHERE LOWER(noc.contract) = LOWER(:memesContract)
+              AND noc.balance > 0
+              AND noc.consolidation_key = :consolidationKey
+          `,
+          {
+            consolidationKey,
+            excludedTokenId: SUBSCRIPTION_ELIGIBILITY_EXCLUDED_CARD_TOKEN_ID,
+            memesContract: MEMES_CONTRACT,
+            seasonId
+          }
+        )
+      : await sqlExecutor.execute<{
+          sets: number;
+        }>(
+          `SELECT sets FROM ${CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE} 
+           WHERE consolidation_key = :consolidationKey AND season = :seasonId`,
+          { consolidationKey, seasonId }
+        );
 
   if (
     !cardSetsResult ||
