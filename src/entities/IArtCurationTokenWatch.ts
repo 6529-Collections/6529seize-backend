@@ -86,6 +86,15 @@ export class ArtCurationTokenWatchEntity {
   @Column({ type: 'bigint', nullable: true })
   readonly trigger_time!: number | null;
 
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  readonly trigger_price_raw!: string | null;
+
+  @Column({ type: 'double', nullable: true })
+  readonly trigger_price!: number | null;
+
+  @Column({ type: 'varchar', length: 42, nullable: true })
+  readonly trigger_price_currency!: string | null;
+
   @Column({
     type: 'bigint',
     nullable: false

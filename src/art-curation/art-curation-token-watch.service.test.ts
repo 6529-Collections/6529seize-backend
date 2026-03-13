@@ -23,8 +23,28 @@ describe('ArtCurationTokenWatchService', () => {
     lockNextActiveWatch = jest.fn(),
     unlock = jest.fn().mockResolvedValue(undefined),
     markChecked = jest.fn().mockResolvedValue(undefined),
+    markResolved = jest.fn().mockResolvedValue(undefined),
     snapshotSubmissionState = jest.fn(),
-    findFirstTransfer = jest.fn()
+    findFirstTransfer = jest.fn(),
+    findTransferPrice = jest.fn().mockResolvedValue({
+      amountRaw: null,
+      amount: null,
+      currency: null
+    }),
+    getCurrentVoterStatesForDrops = jest.fn().mockResolvedValue([]),
+    insertWinnerDropsVoterVotes = jest.fn().mockResolvedValue(undefined),
+    deleteStaleLeaderboardEntries = jest.fn().mockResolvedValue(undefined),
+    executeNativeQueriesInTransaction = jest
+      .fn()
+      .mockImplementation(async (callback) => await callback({})),
+    resyncParticipatoryDropCountsForWaves = jest
+      .fn()
+      .mockResolvedValue(undefined),
+    insertDecisionIfMissing = jest.fn().mockResolvedValue(undefined),
+    insertDecisionWinners = jest.fn().mockResolvedValue(undefined),
+    updateDropsToWinners = jest.fn().mockResolvedValue(undefined),
+    deleteDropsRanks = jest.fn().mockResolvedValue(undefined),
+    calculateFinalVoteForDrop = jest.fn().mockReturnValue(0)
   } = {}) {
     return {
       service: new ArtCurationTokenWatchService(
@@ -36,16 +56,32 @@ describe('ArtCurationTokenWatchService', () => {
           cancelIfEmpty,
           lockNextActiveWatch,
           unlock,
-          markChecked
+          markChecked,
+          markResolved
         } as any,
         {
           snapshotSubmissionState,
-          findFirstTransfer
+          findFirstTransfer,
+          findTransferPrice
         } as any,
-        {} as any,
-        {} as any,
-        {} as any,
-        {} as any
+        {
+          getCurrentVoterStatesForDrops,
+          insertWinnerDropsVoterVotes,
+          deleteStaleLeaderboardEntries
+        } as any,
+        {
+          executeNativeQueriesInTransaction,
+          resyncParticipatoryDropCountsForWaves
+        } as any,
+        {
+          insertDecisionIfMissing,
+          insertDecisionWinners,
+          updateDropsToWinners,
+          deleteDropsRanks
+        } as any,
+        {
+          calculateFinalVoteForDrop
+        } as any
       ),
       mocks: {
         findByDropId,
@@ -56,8 +92,20 @@ describe('ArtCurationTokenWatchService', () => {
         lockNextActiveWatch,
         unlock,
         markChecked,
+        markResolved,
         snapshotSubmissionState,
-        findFirstTransfer
+        findFirstTransfer,
+        findTransferPrice,
+        getCurrentVoterStatesForDrops,
+        insertWinnerDropsVoterVotes,
+        deleteStaleLeaderboardEntries,
+        executeNativeQueriesInTransaction,
+        resyncParticipatoryDropCountsForWaves,
+        insertDecisionIfMissing,
+        insertDecisionWinners,
+        updateDropsToWinners,
+        deleteDropsRanks,
+        calculateFinalVoteForDrop
       }
     };
   }
@@ -166,5 +214,104 @@ describe('ArtCurationTokenWatchService', () => {
     expect(mocks.lockNextActiveWatch.mock.calls[1][0]).toMatchObject({
       excludedWatchIds: ['watch-1']
     });
+  });
+
+  it('persists the best-effort transfer price when resolving a watch', async () => {
+    const { service, mocks } = createService();
+
+    await (service as any).convertDropsToWinnersForTrigger(
+      {
+        watch: {
+          id: 'watch-1'
+        },
+        wave: {
+          id: 'wave-1',
+          time_lock_ms: null
+        },
+        dropIds: ['drop-1'],
+        event: {
+          from: '0x0000000000000000000000000000000000000001',
+          to: '0x0000000000000000000000000000000000000002',
+          txHash: '0xtx',
+          blockNumber: 123,
+          logIndex: 4,
+          timestampMs: 999
+        },
+        transferPrice: {
+          amountRaw: '2000000000000000000',
+          amount: 2,
+          currency: '0x0000000000000000000000000000000000000000'
+        }
+      },
+      baseCtx as any
+    );
+
+    expect(mocks.insertDecisionIfMissing).toHaveBeenCalledWith(
+      {
+        decision_time: 999,
+        wave_id: 'wave-1'
+      },
+      baseCtx
+    );
+    expect(mocks.markResolved).toHaveBeenCalledWith(
+      {
+        watchId: 'watch-1',
+        resolvedAt: expect.any(Number),
+        triggerTxHash: '0xtx',
+        triggerBlockNumber: 123,
+        triggerLogIndex: 4,
+        triggerTime: 999,
+        triggerPriceRaw: '2000000000000000000',
+        triggerPrice: 2,
+        triggerPriceCurrency: '0x0000000000000000000000000000000000000000'
+      },
+      baseCtx
+    );
+  });
+
+  it('persists a null transfer price when price attribution is unavailable', async () => {
+    const { service, mocks } = createService();
+
+    await (service as any).convertDropsToWinnersForTrigger(
+      {
+        watch: {
+          id: 'watch-1'
+        },
+        wave: {
+          id: 'wave-1',
+          time_lock_ms: null
+        },
+        dropIds: ['drop-1'],
+        event: {
+          from: '0x0000000000000000000000000000000000000001',
+          to: '0x0000000000000000000000000000000000000002',
+          txHash: '0xtx',
+          blockNumber: 123,
+          logIndex: 4,
+          timestampMs: 999
+        },
+        transferPrice: {
+          amountRaw: null,
+          amount: null,
+          currency: null
+        }
+      },
+      baseCtx as any
+    );
+
+    expect(mocks.markResolved).toHaveBeenCalledWith(
+      {
+        watchId: 'watch-1',
+        resolvedAt: expect.any(Number),
+        triggerTxHash: '0xtx',
+        triggerBlockNumber: 123,
+        triggerLogIndex: 4,
+        triggerTime: 999,
+        triggerPriceRaw: null,
+        triggerPrice: null,
+        triggerPriceCurrency: null
+      },
+      baseCtx
+    );
   });
 });

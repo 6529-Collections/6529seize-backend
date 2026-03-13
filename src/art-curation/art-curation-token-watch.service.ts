@@ -5,6 +5,7 @@ import {
 } from '@/art-curation/art-curation-token-watch.db';
 import {
   ArtCurationTokenTransferEvent,
+  ArtCurationTokenTransferPrice,
   artCurationTokenWatchOnchainService,
   ArtCurationTokenWatchOnchainService
 } from '@/art-curation/art-curation-token-watch.onchain';
@@ -137,6 +138,9 @@ export class ArtCurationTokenWatchService {
         trigger_block_number: null,
         trigger_log_index: null,
         trigger_time: null,
+        trigger_price_raw: null,
+        trigger_price: null,
+        trigger_price_currency: null,
         created_at: now,
         updated_at: now
       },
@@ -233,6 +237,23 @@ export class ArtCurationTokenWatchService {
       }
       return;
     }
+    let transferPrice: ArtCurationTokenTransferPrice = {
+      amountRaw: null,
+      amount: null,
+      currency: null
+    };
+    try {
+      transferPrice = await this.onchainService.findTransferPrice({
+        txHash: event.txHash,
+        contract: watch.contract,
+        tokenId: watch.token_id
+      });
+    } catch (error) {
+      this.logger.warn(
+        `Failed determining Art Curation transfer price for watch ${watch.id}`,
+        error
+      );
+    }
     await this.dropsDb.executeNativeQueriesInTransaction(async (connection) => {
       const txCtx: RequestContext = {
         timer: ctx.timer,
@@ -267,7 +288,8 @@ export class ArtCurationTokenWatchService {
           watch: lockedWatch,
           wave,
           dropIds,
-          event
+          event,
+          transferPrice
         },
         txCtx
       );
@@ -279,12 +301,14 @@ export class ArtCurationTokenWatchService {
       watch,
       wave,
       dropIds,
-      event
+      event,
+      transferPrice
     }: {
       watch: ArtCurationTokenWatchEntity;
       wave: WaveEntity;
       dropIds: string[];
       event: ArtCurationTokenTransferEvent;
+      transferPrice: ArtCurationTokenTransferPrice;
     },
     ctx: RequestContext
   ): Promise<void> {
@@ -330,7 +354,10 @@ export class ArtCurationTokenWatchService {
         triggerTxHash: event.txHash,
         triggerBlockNumber: event.blockNumber,
         triggerLogIndex: event.logIndex,
-        triggerTime: event.timestampMs
+        triggerTime: event.timestampMs,
+        triggerPriceRaw: transferPrice.amountRaw,
+        triggerPrice: transferPrice.amount,
+        triggerPriceCurrency: transferPrice.currency
       },
       ctx
     );
