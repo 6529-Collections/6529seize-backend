@@ -118,6 +118,10 @@ export * from '../models/ApiMemesMintStatsYearly';
 export * from '../models/ApiMentionedWave';
 export * from '../models/ApiMintMetrics';
 export * from '../models/ApiMintMetricsPage';
+export * from '../models/ApiMintingClaimAction';
+export * from '../models/ApiMintingClaimActionTypesResponse';
+export * from '../models/ApiMintingClaimActionUpdateRequest';
+export * from '../models/ApiMintingClaimActionsResponse';
 export * from '../models/ApiMintingClaimsPhaseTotalItem';
 export * from '../models/ApiNft';
 export * from '../models/ApiNftLinkData';
@@ -411,6 +415,10 @@ import { ApiMemesMintStatsYearly } from '../models/ApiMemesMintStatsYearly';
 import { ApiMentionedWave } from '../models/ApiMentionedWave';
 import { ApiMintMetrics } from '../models/ApiMintMetrics';
 import { ApiMintMetricsPage } from '../models/ApiMintMetricsPage';
+import { ApiMintingClaimAction } from '../models/ApiMintingClaimAction';
+import { ApiMintingClaimActionTypesResponse } from '../models/ApiMintingClaimActionTypesResponse';
+import { ApiMintingClaimActionUpdateRequest } from '../models/ApiMintingClaimActionUpdateRequest';
+import { ApiMintingClaimActionsResponse } from '../models/ApiMintingClaimActionsResponse';
 import { ApiMintingClaimsPhaseTotalItem } from '../models/ApiMintingClaimsPhaseTotalItem';
 import { ApiNft      , ApiNftTokenTypeEnum                               } from '../models/ApiNft';
 import { ApiNftLinkData } from '../models/ApiNftLinkData';
@@ -747,6 +755,10 @@ let typeMap: {[index: string]: any} = {
     "ApiMentionedWave": ApiMentionedWave,
     "ApiMintMetrics": ApiMintMetrics,
     "ApiMintMetricsPage": ApiMintMetricsPage,
+    "ApiMintingClaimAction": ApiMintingClaimAction,
+    "ApiMintingClaimActionTypesResponse": ApiMintingClaimActionTypesResponse,
+    "ApiMintingClaimActionUpdateRequest": ApiMintingClaimActionUpdateRequest,
+    "ApiMintingClaimActionsResponse": ApiMintingClaimActionsResponse,
     "ApiMintingClaimsPhaseTotalItem": ApiMintingClaimsPhaseTotalItem,
     "ApiNft": ApiNft,
     "ApiNftLinkData": ApiNftLinkData,
