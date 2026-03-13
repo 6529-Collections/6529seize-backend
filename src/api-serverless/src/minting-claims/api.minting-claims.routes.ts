@@ -25,12 +25,17 @@ import {
   updateMintingClaim,
   updateMintingClaimIfNotUploading
 } from '@/api/minting-claims/api.minting-claims.db';
+import mintingClaimActionsRoutes from '@/api/minting-claims/api.minting-claims.actions.routes';
 import { patchMintingClaim } from '@/api/minting-claims/api.minting-claims.service';
 import { enqueueClaimMediaArweaveUpload } from '@/api/minting-claims/claims-media-arweave-upload-publisher';
 import { cacheRequest } from '@/api/request-cache';
 import { getDistributionAdminWallets } from '@/api/seize-settings';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
-import { CustomApiCompliantException, ForbiddenException } from '@/exceptions';
+import {
+  BadRequestException,
+  CustomApiCompliantException,
+  ForbiddenException
+} from '@/exceptions';
 import { Logger } from '@/logging';
 import {
   MIN_EDITION_SIZE,
@@ -513,6 +518,8 @@ async function queueArweaveUploadOrRollback(
     throw enqueueError;
   }
 }
+
+router.use('/actions', mintingClaimActionsRoutes);
 
 router.post(
   '/:contract/claims/:claim_id/arweave-upload',
