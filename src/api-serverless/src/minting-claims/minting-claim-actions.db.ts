@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
 import { MINTING_CLAIM_ACTIONS_TABLE } from '@/constants';
-import type { MintingClaimActionType } from '@/minting-claims/minting-claim-actions';
 import { RequestContext } from '@/request.context';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
 import { Time } from '@/time';
@@ -9,7 +8,7 @@ export interface MintingClaimActionRow {
   id: string;
   contract: string;
   token_id: number;
-  action: MintingClaimActionType;
+  action: string;
   completed: boolean | number;
   created_by_wallet: string;
   updated_by_wallet: string;
@@ -57,7 +56,7 @@ export class MintingClaimActionsDb extends LazyDbAccessCompatibleService {
     param: {
       contract: string;
       token_id: number;
-      action: MintingClaimActionType;
+      action: string;
       completed: boolean;
       wallet: string;
     },

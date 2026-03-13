@@ -16,6 +16,12 @@ import {
   upsertMintingClaimActionAndGetResponse
 } from '@/api/minting-claims/minting-claim-actions.api.service';
 import { fetchMintingClaimByClaimId } from '@/api/minting-claims/api.minting-claims.db';
+import {
+  ContractTokenParamsSchema,
+  ContractOnlyParamsSchema,
+  type ContractOnlyParams,
+  type ContractTokenParams
+} from '@/api/minting-claims/minting-claims.validation';
 import { getClaimsAdminWallets } from '@/api/seize-settings';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
 import {
@@ -30,31 +36,6 @@ import { Request, Response } from 'express';
 import * as Joi from 'joi';
 
 const router = asyncRouter();
-
-type ContractTokenParams = {
-  contract: string;
-  token_id: string;
-};
-
-const ContractAddressSchema = Joi.string()
-  .trim()
-  .pattern(/^0x[a-fA-F0-9]{40}$/)
-  .required()
-  .messages({
-    'string.pattern.base':
-      'contract must be a 0x-prefixed 42-character hex string'
-  });
-
-const ContractOnlyParamsSchema: Joi.ObjectSchema<{ contract: string }> =
-  Joi.object({
-    contract: ContractAddressSchema
-  });
-
-const ContractTokenParamsSchema: Joi.ObjectSchema<ContractTokenParams> =
-  Joi.object({
-    contract: ContractAddressSchema,
-    token_id: Joi.string().trim().required().pattern(/^\d+$/)
-  });
 
 const MintingClaimActionUpdateRequestSchema: Joi.ObjectSchema<ApiMintingClaimActionUpdateRequest> =
   Joi.object({
@@ -94,7 +75,7 @@ router.get(
   '/:contract/types',
   needsAuthenticatedUser(),
   async function (
-    req: Request<{ contract: string }, any, any, any, any>,
+    req: Request<ContractOnlyParams, any, any, any, any>,
     res: Response<ApiResponse<ApiMintingClaimActionTypesResponse>>
   ) {
     if (!isClaimsAdmin(req)) {

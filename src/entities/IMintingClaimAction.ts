@@ -1,5 +1,4 @@
 import { MINTING_CLAIM_ACTIONS_TABLE } from '@/constants';
-import { MintingClaimActionType } from '@/minting-claims/minting-claim-actions';
 import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
 
 @Entity(MINTING_CLAIM_ACTIONS_TABLE)
@@ -20,7 +19,7 @@ export class MintingClaimActionEntity {
   readonly token_id!: number;
 
   @Column({ type: 'varchar', length: 32 })
-  readonly action!: MintingClaimActionType;
+  readonly action!: string;
 
   @Column({ type: 'boolean', default: false })
   readonly completed!: boolean;

@@ -32,7 +32,7 @@ describe('buildMintingClaimActionsResponse', () => {
         actionRow(MEMES_MINTING_CLAIM_ACTION_TYPES[1], {
           completed: 1
         }),
-        actionRow(MEMES_MINTING_CLAIM_ACTION_TYPES[5], {
+        actionRow(MEMES_MINTING_CLAIM_ACTION_TYPES[6], {
           completed: 0,
           updated_at: 3000
         })
@@ -65,8 +65,8 @@ describe('buildMintingClaimActionsResponse', () => {
       updated_by_wallet: '0x2222222222222222222222222222222222222222'
     });
 
-    expect(response.actions[5]?.completed).toBe(false);
-    expect(response.actions[5]?.updated_at).toBe(3000);
+    expect(response.actions[6]?.completed).toBe(false);
+    expect(response.actions[6]?.updated_at).toBe(3000);
   });
 });
 

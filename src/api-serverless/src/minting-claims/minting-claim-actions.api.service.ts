@@ -9,14 +9,13 @@ import {
 import {
   getMintingClaimActionsContractLabel,
   getSupportedMintingClaimActionTypes,
-  isSupportedMintingClaimActionType,
-  type MintingClaimActionType
+  isSupportedMintingClaimActionType
 } from '@/minting-claims/minting-claim-actions';
 import type { RequestContext } from '@/request.context';
 import { BadRequestException } from '@/exceptions';
 
 function toApiMintingClaimAction(
-  action: MintingClaimActionType,
+  action: string,
   row?: MintingClaimActionRow
 ): ApiMintingClaimAction {
   return {
@@ -100,11 +99,13 @@ export async function upsertMintingClaimActionAndGetResponse(
   wallet: string,
   ctx: RequestContext
 ): Promise<ApiMintingClaimActionsResponse> {
+  assertSupportedMintingClaimAction(contract, body.action);
+
   await mintingClaimActionsDb.upsertAction(
     {
       contract,
       token_id: tokenId,
-      action: body.action as MintingClaimActionType,
+      action: body.action,
       completed: body.completed,
       wallet
     },

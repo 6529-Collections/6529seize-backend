@@ -1,13 +1,12 @@
 import { MEMES_CONTRACT } from '@/constants';
 import { isMemesContract } from '@/minting-claims/external-url';
 
-export type MintingClaimActionType = string;
-
 export const MEMES_MINTING_CLAIM_ACTION_TYPES = [
   'ARTIST_AIRDROP',
   'TEAM_AIRDROP',
   'PHASE0_AIRDROP',
   'PHASE1_AIRDROP',
+  'PHASE2_AIRDROP',
   'PUBLIC_PHASE_AIRDROP',
   'RESEARCH_AIRDROP'
 ] as const;

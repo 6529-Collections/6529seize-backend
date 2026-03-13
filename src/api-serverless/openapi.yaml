@@ -9183,6 +9183,7 @@ components:
       properties:
         action:
           type: string
+          minLength: 1
           description: Contract-specific minting claim action name
         completed:
           type: boolean
@@ -9196,9 +9197,11 @@ components:
           description: Unix epoch milliseconds when this action record was last updated
         created_by_wallet:
           type: string
+          minLength: 1
           description: Wallet that first created this action record
         updated_by_wallet:
           type: string
+          minLength: 1
           description: Wallet that last updated this action record
     ApiMintingClaimActionsResponse:
       type: object
@@ -9228,6 +9231,7 @@ components:
           type: array
           items:
             type: string
+            minLength: 1
             description: Contract-specific minting claim action name
     ApiMintingClaimActionUpdateRequest:
       type: object
@@ -9237,6 +9241,7 @@ components:
       properties:
         action:
           type: string
+          minLength: 1
           description: Contract-specific minting claim action name
         completed:
           type: boolean
