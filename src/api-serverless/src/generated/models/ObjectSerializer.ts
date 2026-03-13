@@ -100,6 +100,7 @@ export * from '../models/ApiGroupRepFilter';
 export * from '../models/ApiGroupTdhFilter';
 export * from '../models/ApiGroupTdhInclusionStrategy';
 export * from '../models/ApiIdentity';
+export * from '../models/ApiIdentityActivity';
 export * from '../models/ApiIdentityAndSubscriptionActions';
 export * from '../models/ApiIdentitySubscriptionActions';
 export * from '../models/ApiIdentitySubscriptionTargetAction';
@@ -396,6 +397,7 @@ import { ApiGroupRepFilter      } from '../models/ApiGroupRepFilter';
 import { ApiGroupTdhFilter    } from '../models/ApiGroupTdhFilter';
 import { ApiGroupTdhInclusionStrategy } from '../models/ApiGroupTdhInclusionStrategy';
 import { ApiIdentity                         } from '../models/ApiIdentity';
+import { ApiIdentityActivity } from '../models/ApiIdentityActivity';
 import { ApiIdentityAndSubscriptionActions } from '../models/ApiIdentityAndSubscriptionActions';
 import { ApiIdentitySubscriptionActions } from '../models/ApiIdentitySubscriptionActions';
 import { ApiIdentitySubscriptionTargetAction } from '../models/ApiIdentitySubscriptionTargetAction';
@@ -737,6 +739,7 @@ let typeMap: {[index: string]: any} = {
     "ApiGroupRepFilter": ApiGroupRepFilter,
     "ApiGroupTdhFilter": ApiGroupTdhFilter,
     "ApiIdentity": ApiIdentity,
+    "ApiIdentityActivity": ApiIdentityActivity,
     "ApiIdentityAndSubscriptionActions": ApiIdentityAndSubscriptionActions,
     "ApiIdentitySubscriptionActions": ApiIdentitySubscriptionActions,
     "ApiIncomingIdentitySubscriptionsPage": ApiIncomingIdentitySubscriptionsPage,

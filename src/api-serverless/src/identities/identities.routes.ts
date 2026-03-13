@@ -10,17 +10,20 @@ import {
   BadRequestException,
   ForbiddenException,
   NotFoundException
-} from '../../../exceptions';
+} from '@/exceptions';
 import { getValidatedByJoiOrThrow } from '../validation';
-import { ApiIdentitySubscriptionActions } from '../generated/models/ApiIdentitySubscriptionActions';
+import { ApiIdentitySubscriptionActions } from '@/api/generated/models/ApiIdentitySubscriptionActions';
 import * as Joi from 'joi';
-import { ApiIdentitySubscriptionTargetAction } from '../generated/models/ApiIdentitySubscriptionTargetAction';
+import { ApiIdentitySubscriptionTargetAction } from '@/api/generated/models/ApiIdentitySubscriptionTargetAction';
 import { identitiesService } from './identities.service';
 import { ApiIdentity } from '../generated/models/ApiIdentity';
-import { Timer } from '../../../time';
+import { ApiIdentityActivity } from '@/api/generated/models/ApiIdentityActivity';
+import { Time, Timer } from '@/time';
 import { WALLET_REGEX } from '@/constants';
 import { identityFetcher } from './identity.fetcher';
-import { numbers } from '../../../numbers';
+import { numbers } from '@/numbers';
+import { identitiesActivityApiService } from './identities.activity.api.service';
+import { cacheRequest } from '@/api/request-cache';
 
 const router = asyncRouter();
 
@@ -93,6 +96,22 @@ router.get(
       throw new NotFoundException(`Identity ${wallet} not found`);
     }
     res.send(identity);
+  }
+);
+
+router.get(
+  '/:id/activity',
+  cacheRequest({ ttl: Time.minutes(15) }),
+  async function (
+    req: Request<{ id: string }, any, any, any, any>,
+    res: Response<ApiResponse<ApiIdentityActivity>>
+  ) {
+    const timer = Timer.getFromRequest(req);
+    const activity = await identitiesActivityApiService.getIdentityActivity(
+      { identity: req.params.id },
+      { timer }
+    );
+    res.send(activity);
   }
 );
 
