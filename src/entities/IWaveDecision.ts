@@ -39,6 +39,12 @@ export class WaveDecisionWinnerDropEntity {
   readonly wave_id!: string;
 }
 
+export interface WaveDecisionWinnerDropWithSaleEntity extends WaveDecisionWinnerDropEntity {
+  readonly sale_time: number | null;
+  readonly sale_price: number | null;
+  readonly sale_price_currency: string | null;
+}
+
 export interface WaveDecisionWinnerPrize {
   type: WaveOutcomeType;
   subtype: WaveOutcomeSubType | null;

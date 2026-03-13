@@ -59,6 +59,9 @@ export class ArtCurationTokenWatchDb extends LazyDbAccessCompatibleService {
           trigger_block_number,
           trigger_log_index,
           trigger_time,
+          trigger_price_raw,
+          trigger_price,
+          trigger_price_currency,
           created_at,
           updated_at
         ) values (
@@ -80,6 +83,9 @@ export class ArtCurationTokenWatchDb extends LazyDbAccessCompatibleService {
           :trigger_block_number,
           :trigger_log_index,
           :trigger_time,
+          :trigger_price_raw,
+          :trigger_price,
+          :trigger_price_currency,
           :created_at,
           :updated_at
         )
@@ -350,7 +356,10 @@ export class ArtCurationTokenWatchDb extends LazyDbAccessCompatibleService {
       triggerTxHash,
       triggerBlockNumber,
       triggerLogIndex,
-      triggerTime
+      triggerTime,
+      triggerPriceRaw,
+      triggerPrice,
+      triggerPriceCurrency
     }: {
       watchId: string;
       resolvedAt: number;
@@ -358,6 +367,9 @@ export class ArtCurationTokenWatchDb extends LazyDbAccessCompatibleService {
       triggerBlockNumber: number;
       triggerLogIndex: number;
       triggerTime: number;
+      triggerPriceRaw: string | null;
+      triggerPrice: number | null;
+      triggerPriceCurrency: string | null;
     },
     ctx: RequestContext
   ): Promise<void> {
@@ -376,6 +388,9 @@ export class ArtCurationTokenWatchDb extends LazyDbAccessCompatibleService {
           trigger_block_number = :triggerBlockNumber,
           trigger_log_index = :triggerLogIndex,
           trigger_time = :triggerTime,
+          trigger_price_raw = :triggerPriceRaw,
+          trigger_price = :triggerPrice,
+          trigger_price_currency = :triggerPriceCurrency,
           updated_at = :resolvedAt
         where id = :watchId and status = :activeStatus
       `,
@@ -386,6 +401,9 @@ export class ArtCurationTokenWatchDb extends LazyDbAccessCompatibleService {
           triggerBlockNumber,
           triggerLogIndex,
           triggerTime,
+          triggerPriceRaw,
+          triggerPrice,
+          triggerPriceCurrency,
           status: ArtCurationTokenWatchStatus.RESOLVED,
           activeStatus: ArtCurationTokenWatchStatus.ACTIVE
         },

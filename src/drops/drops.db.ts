@@ -7,6 +7,8 @@ import { PageSortDirection } from '../api-serverless/src/page-request';
 import { assertUnreachable } from '../assertions';
 import { collections } from '../collections';
 import {
+  ART_CURATION_TOKEN_WATCH_DROPS_TABLE,
+  ART_CURATION_TOKEN_WATCHES_TABLE,
   ACTIVITY_EVENTS_TABLE,
   DELETED_DROPS_TABLE,
   DROP_BOOSTS_TABLE,
@@ -52,7 +54,7 @@ import { DropRelationEntity } from '../entities/IDropRelation';
 import { DropVoterStateEntity } from '../entities/IDropVoterState';
 import { ProfileActivityLog } from '../entities/IProfileActivityLog';
 import { WaveCreditType, WaveEntity } from '../entities/IWave';
-import { WaveDecisionWinnerDropEntity } from '../entities/IWaveDecision';
+import { WaveDecisionWinnerDropWithSaleEntity } from '@/entities/IWaveDecision';
 import { WinnerDropVoterVoteEntity } from '../entities/IWinnerDropVoterVote';
 import { RequestContext } from '../request.context';
 import {
@@ -1804,15 +1806,31 @@ export class DropsDb extends LazyDbAccessCompatibleService {
   async getWinDecisionsForDrops(
     dropIds: string[],
     ctx: RequestContext
-  ): Promise<Record<string, WaveDecisionWinnerDropEntity>> {
+  ): Promise<Record<string, WaveDecisionWinnerDropWithSaleEntity>> {
     if (!dropIds.length) {
       return {};
     }
     ctx.timer?.start(`${this.constructor.name}->getWinDecisionsForDrops`);
     const entities = await this.db.execute<
-      Omit<WaveDecisionWinnerDropEntity, 'prizes'> & { prizes: string }
+      Omit<WaveDecisionWinnerDropWithSaleEntity, 'prizes'> & { prizes: string }
     >(
-      `select * from ${WAVES_DECISION_WINNER_DROPS_TABLE} where drop_id in (:dropIds)`,
+      `select
+          wd.*,
+          acw.trigger_time as sale_time,
+          case
+            when acw.trigger_time is null then null
+            else acw.trigger_price
+          end as sale_price,
+          case
+            when acw.trigger_time is null then null
+            else acw.trigger_price_currency
+          end as sale_price_currency
+        from ${WAVES_DECISION_WINNER_DROPS_TABLE} wd
+        left join ${ART_CURATION_TOKEN_WATCH_DROPS_TABLE} acwd
+          on acwd.drop_id = wd.drop_id
+        left join ${ART_CURATION_TOKEN_WATCHES_TABLE} acw
+          on acw.id = acwd.watch_id
+        where wd.drop_id in (:dropIds)`,
       { dropIds },
       { wrappedConnection: ctx.connection }
     );
@@ -1822,7 +1840,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         acc[it.drop_id] = { ...it, prizes: JSON.parse(it.prizes) };
         return acc;
       },
-      {} as Record<string, WaveDecisionWinnerDropEntity>
+      {} as Record<string, WaveDecisionWinnerDropWithSaleEntity>
     );
   }
 
