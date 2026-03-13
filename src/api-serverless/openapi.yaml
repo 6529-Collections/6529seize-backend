@@ -2465,16 +2465,16 @@ paths:
           description: Unauthorized - authentication required
         "403":
           description: Forbidden - only claims admins can access
-  /minting-claims/actions/{contract}/{token_id}:
+  /minting-claims/actions/{contract}/{claim_id}:
     get:
       tags:
         - Minting Claims
       summary: Get minting claim actions (claims admin only)
       description: >
-        Returns the current action state for a minting claim token. All
-        supported actions for the contract are always returned; missing records
-        are represented as completed=false. Only CLAIMS_ADMIN_WALLETS can call
-        this. Unsupported contracts return 400.
+        Returns the current action state for a minting claim. All supported
+        actions for the contract are always returned; missing records are
+        represented as completed=false. Only CLAIMS_ADMIN_WALLETS can call this.
+        Unsupported contracts return 400.
       operationId: getMintingClaimActions
       parameters:
         - name: contract
@@ -2483,7 +2483,7 @@ paths:
           schema:
             type: string
             pattern: ^0x[a-fA-F0-9]{40}$
-        - name: token_id
+        - name: claim_id
           in: path
           required: true
           schema:
@@ -2511,7 +2511,7 @@ paths:
       summary: Upsert minting claim action state (claims admin only)
       description: >
         Creates or updates the current state of a minting claim action for the
-        given token. The caller wallet is recorded as the actor. Only
+        given claim. The caller wallet is recorded as the actor. Only
         CLAIMS_ADMIN_WALLETS can call this. Unsupported contracts or unsupported
         action names for the given contract return 400.
       operationId: postMintingClaimAction
@@ -2522,7 +2522,7 @@ paths:
           schema:
             type: string
             pattern: ^0x[a-fA-F0-9]{40}$
-        - name: token_id
+        - name: claim_id
           in: path
           required: true
           schema:
@@ -9196,23 +9196,21 @@ components:
           format: int64
           description: Unix epoch milliseconds when this action record was last updated
         created_by_wallet:
-          type: string
-          minLength: 1
+          $ref: "#/components/schemas/ApiEthereumAddress"
           description: Wallet that first created this action record
         updated_by_wallet:
-          type: string
-          minLength: 1
+          $ref: "#/components/schemas/ApiEthereumAddress"
           description: Wallet that last updated this action record
     ApiMintingClaimActionsResponse:
       type: object
       required:
         - contract
-        - token_id
+        - claim_id
         - actions
       properties:
         contract:
           type: string
-        token_id:
+        claim_id:
           type: integer
           format: int64
         actions:

@@ -14,11 +14,6 @@ export type ContractClaimParams = {
   claim_id: string;
 };
 
-export type ContractTokenParams = {
-  contract: string;
-  token_id: string;
-};
-
 export type ProofsPathParams = {
   contract: string;
   card_id: string;
@@ -50,12 +45,6 @@ export const ContractClaimParamsSchema: Joi.ObjectSchema<ContractClaimParams> =
   Joi.object({
     contract: ContractAddressSchema,
     claim_id: Joi.string().trim().required().pattern(/^\d+$/)
-  });
-
-export const ContractTokenParamsSchema: Joi.ObjectSchema<ContractTokenParams> =
-  Joi.object({
-    contract: ContractAddressSchema,
-    token_id: Joi.string().trim().required().pattern(/^\d+$/)
   });
 
 export const ProofsPathParamsSchema: Joi.ObjectSchema<ProofsPathParams> =

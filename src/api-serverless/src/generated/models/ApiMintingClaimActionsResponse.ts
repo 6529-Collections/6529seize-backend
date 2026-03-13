@@ -15,7 +15,7 @@ import { HttpFile } from '../http/http';
 
 export class ApiMintingClaimActionsResponse {
     'contract': string;
-    'token_id': number;
+    'claim_id': number;
     'actions': Array<ApiMintingClaimAction>;
 
     static readonly discriminator: string | undefined = undefined;
@@ -28,8 +28,8 @@ export class ApiMintingClaimActionsResponse {
             "format": ""
         },
         {
-            "name": "token_id",
-            "baseName": "token_id",
+            "name": "claim_id",
+            "baseName": "claim_id",
             "type": "number",
             "format": "int64"
         },

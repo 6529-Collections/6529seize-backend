@@ -12,7 +12,7 @@ function actionRow(
   return {
     id: 'row-1',
     contract: '0x33fd426905f149f8376e227d0c9d3340aad17af1',
-    token_id: 123,
+    claim_id: 123,
     action,
     completed: true,
     created_by_wallet: '0x1111111111111111111111111111111111111111',
@@ -42,7 +42,7 @@ describe('buildMintingClaimActionsResponse', () => {
     expect(response.contract).toBe(
       '0x33fd426905f149f8376e227d0c9d3340aad17af1'
     );
-    expect(response.token_id).toBe(123);
+    expect(response.claim_id).toBe(123);
     expect(response.actions.map((action) => action.action)).toEqual(
       MEMES_MINTING_CLAIM_ACTION_TYPES
     );

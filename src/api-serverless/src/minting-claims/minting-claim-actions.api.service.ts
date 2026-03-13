@@ -14,6 +14,10 @@ import {
 import type { RequestContext } from '@/request.context';
 import { BadRequestException } from '@/exceptions';
 
+function canonicalizeMintingClaimActionsContract(contract: string): string {
+  return contract.toLowerCase();
+}
+
 function toApiMintingClaimAction(
   action: string,
   row?: MintingClaimActionRow
@@ -30,15 +34,17 @@ function toApiMintingClaimAction(
 
 export function buildMintingClaimActionsResponse(
   contract: string,
-  tokenId: number,
+  claimId: number,
   rows: MintingClaimActionRow[]
 ): ApiMintingClaimActionsResponse {
-  const supportedActions = getSupportedMintingClaimActionTypes(contract);
+  const normalizedContract = canonicalizeMintingClaimActionsContract(contract);
+  const supportedActions =
+    getSupportedMintingClaimActionTypes(normalizedContract);
   const rowsByAction = new Map(rows.map((row) => [row.action, row]));
 
   return {
-    contract: contract.toLowerCase(),
-    token_id: tokenId,
+    contract: normalizedContract,
+    claim_id: claimId,
     actions: supportedActions.map((action) =>
       toApiMintingClaimAction(action, rowsByAction.get(action))
     )
@@ -48,7 +54,9 @@ export function buildMintingClaimActionsResponse(
 export function getSupportedMintingClaimActionTypesOrThrow(
   contract: string
 ): readonly string[] {
-  const supportedActions = getSupportedMintingClaimActionTypes(contract);
+  const normalizedContract = canonicalizeMintingClaimActionsContract(contract);
+  const supportedActions =
+    getSupportedMintingClaimActionTypes(normalizedContract);
   if (supportedActions.length === 0) {
     throw new BadRequestException(
       'Minting claim actions are not supported for this contract'
@@ -61,10 +69,12 @@ export function assertSupportedMintingClaimAction(
   contract: string,
   action: string
 ): void {
-  const supportedActions = getSupportedMintingClaimActionTypesOrThrow(contract);
-  if (!isSupportedMintingClaimActionType(contract, action)) {
+  const normalizedContract = canonicalizeMintingClaimActionsContract(contract);
+  const supportedActions =
+    getSupportedMintingClaimActionTypesOrThrow(normalizedContract);
+  if (!isSupportedMintingClaimActionType(normalizedContract, action)) {
     throw new BadRequestException(
-      `Unsupported action "${action}" for ${getMintingClaimActionsContractLabel(contract)}. Supported actions: ${supportedActions.join(', ')}`
+      `Unsupported action "${action}" for ${getMintingClaimActionsContractLabel(normalizedContract)}. Supported actions: ${supportedActions.join(', ')}`
     );
   }
 }
@@ -72,39 +82,44 @@ export function assertSupportedMintingClaimAction(
 export function getMintingClaimActionTypesResponse(
   contract: string
 ): ApiMintingClaimActionTypesResponse {
+  const normalizedContract = canonicalizeMintingClaimActionsContract(contract);
   return {
-    contract: contract.toLowerCase(),
-    action_types: [...getSupportedMintingClaimActionTypesOrThrow(contract)]
+    contract: normalizedContract,
+    action_types: [
+      ...getSupportedMintingClaimActionTypesOrThrow(normalizedContract)
+    ]
   };
 }
 
 export async function getMintingClaimActionsResponse(
   contract: string,
-  tokenId: number,
+  claimId: number,
   ctx: RequestContext
 ): Promise<ApiMintingClaimActionsResponse> {
-  getSupportedMintingClaimActionTypesOrThrow(contract);
-  const rows = await mintingClaimActionsDb.findByContractAndTokenId(
-    contract,
-    tokenId,
+  const normalizedContract = canonicalizeMintingClaimActionsContract(contract);
+  getSupportedMintingClaimActionTypesOrThrow(normalizedContract);
+  const rows = await mintingClaimActionsDb.findByContractAndClaimId(
+    normalizedContract,
+    claimId,
     ctx
   );
-  return buildMintingClaimActionsResponse(contract, tokenId, rows);
+  return buildMintingClaimActionsResponse(normalizedContract, claimId, rows);
 }
 
 export async function upsertMintingClaimActionAndGetResponse(
   contract: string,
-  tokenId: number,
+  claimId: number,
   body: ApiMintingClaimActionUpdateRequest,
   wallet: string,
   ctx: RequestContext
 ): Promise<ApiMintingClaimActionsResponse> {
-  assertSupportedMintingClaimAction(contract, body.action);
+  const normalizedContract = canonicalizeMintingClaimActionsContract(contract);
+  assertSupportedMintingClaimAction(normalizedContract, body.action);
 
   await mintingClaimActionsDb.upsertAction(
     {
-      contract,
-      token_id: tokenId,
+      contract: normalizedContract,
+      claim_id: claimId,
       action: body.action,
       completed: body.completed,
       wallet
@@ -112,5 +127,5 @@ export async function upsertMintingClaimActionAndGetResponse(
     ctx
   );
 
-  return getMintingClaimActionsResponse(contract, tokenId, ctx);
+  return getMintingClaimActionsResponse(normalizedContract, claimId, ctx);
 }

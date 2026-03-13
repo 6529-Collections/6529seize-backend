@@ -26,13 +26,7 @@ export class ApiMintingClaimAction {
     * Unix epoch milliseconds when this action record was last updated
     */
     'updated_at'?: number;
-    /**
-    * Wallet that first created this action record
-    */
     'created_by_wallet'?: string;
-    /**
-    * Wallet that last updated this action record
-    */
     'updated_by_wallet'?: string;
 
     static readonly discriminator: string | undefined = undefined;

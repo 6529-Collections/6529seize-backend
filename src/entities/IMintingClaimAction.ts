@@ -2,10 +2,10 @@ import { MINTING_CLAIM_ACTIONS_TABLE } from '@/constants';
 import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
 
 @Entity(MINTING_CLAIM_ACTIONS_TABLE)
-@Index('minting_claim_actions_contract_token_id_idx', ['contract', 'token_id'])
+@Index('minting_claim_actions_contract_claim_id_idx', ['contract', 'claim_id'])
 @Index(
-  'minting_claim_actions_contract_token_id_action_uq',
-  ['contract', 'token_id', 'action'],
+  'minting_claim_actions_contract_claim_id_action_uq',
+  ['contract', 'claim_id', 'action'],
   { unique: true }
 )
 export class MintingClaimActionEntity {
@@ -16,7 +16,7 @@ export class MintingClaimActionEntity {
   readonly contract!: string;
 
   @Column({ type: 'int' })
-  readonly token_id!: number;
+  readonly claim_id!: number;
 
   @Column({ type: 'varchar', length: 32 })
   readonly action!: string;

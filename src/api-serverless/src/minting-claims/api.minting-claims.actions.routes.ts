@@ -17,10 +17,10 @@ import {
 } from '@/api/minting-claims/minting-claim-actions.api.service';
 import { fetchMintingClaimByClaimId } from '@/api/minting-claims/api.minting-claims.db';
 import {
-  ContractTokenParamsSchema,
+  ContractClaimParamsSchema,
   ContractOnlyParamsSchema,
-  type ContractOnlyParams,
-  type ContractTokenParams
+  type ContractClaimParams,
+  type ContractOnlyParams
 } from '@/api/minting-claims/minting-claims.validation';
 import { getClaimsAdminWallets } from '@/api/seize-settings';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
@@ -53,19 +53,19 @@ function isClaimsAdmin(req: Request): boolean {
   );
 }
 
-function parseTokenIdOrThrow(tokenIdRaw: string): number {
-  const tokenId = numbers.parseIntOrNull(tokenIdRaw);
-  if (tokenId === null || tokenId < 0) {
-    throw new BadRequestException('token_id must be a non-negative integer');
+function parseClaimIdOrThrow(claimIdRaw: string): number {
+  const claimId = numbers.parseIntOrNull(claimIdRaw);
+  if (claimId === null || claimId < 0) {
+    throw new BadRequestException('claim_id must be a non-negative integer');
   }
-  return tokenId;
+  return claimId;
 }
 
 async function assertMintingClaimExists(
   contract: string,
-  tokenId: number
+  claimId: number
 ): Promise<void> {
-  const claim = await fetchMintingClaimByClaimId(contract, tokenId);
+  const claim = await fetchMintingClaimByClaimId(contract, claimId);
   if (!claim) {
     throw new CustomApiCompliantException(404, 'Claim not found');
   }
@@ -94,11 +94,11 @@ router.get(
 );
 
 router.post(
-  '/:contract/:token_id',
+  '/:contract/:claim_id',
   needsAuthenticatedUser(),
   async function (
     req: Request<
-      ContractTokenParams,
+      ContractClaimParams,
       any,
       ApiMintingClaimActionUpdateRequest,
       any,
@@ -114,12 +114,12 @@ router.post(
 
     const params = getValidatedByJoiOrThrow(
       req.params,
-      ContractTokenParamsSchema
+      ContractClaimParamsSchema
     );
     getSupportedMintingClaimActionTypesOrThrow(params.contract);
 
-    const tokenId = parseTokenIdOrThrow(params.token_id);
-    await assertMintingClaimExists(params.contract, tokenId);
+    const claimId = parseClaimIdOrThrow(params.claim_id);
+    await assertMintingClaimExists(params.contract, claimId);
 
     const body: ApiMintingClaimActionUpdateRequest = getValidatedByJoiOrThrow(
       req.body,
@@ -129,7 +129,7 @@ router.post(
 
     const response = await upsertMintingClaimActionAndGetResponse(
       params.contract,
-      tokenId,
+      claimId,
       body,
       getWalletOrThrow(req),
       { timer: Timer.getFromRequest(req) }
@@ -140,10 +140,10 @@ router.post(
 );
 
 router.get(
-  '/:contract/:token_id',
+  '/:contract/:claim_id',
   needsAuthenticatedUser(),
   async function (
-    req: Request<ContractTokenParams, any, any, any, any>,
+    req: Request<ContractClaimParams, any, any, any, any>,
     res: Response<ApiResponse<ApiMintingClaimActionsResponse>>
   ) {
     if (!isClaimsAdmin(req)) {
@@ -154,16 +154,16 @@ router.get(
 
     const params = getValidatedByJoiOrThrow(
       req.params,
-      ContractTokenParamsSchema
+      ContractClaimParamsSchema
     );
     getSupportedMintingClaimActionTypesOrThrow(params.contract);
 
-    const tokenId = parseTokenIdOrThrow(params.token_id);
-    await assertMintingClaimExists(params.contract, tokenId);
+    const claimId = parseClaimIdOrThrow(params.claim_id);
+    await assertMintingClaimExists(params.contract, claimId);
 
     const response = await getMintingClaimActionsResponse(
       params.contract,
-      tokenId,
+      claimId,
       { timer: Timer.getFromRequest(req) }
     );
 
