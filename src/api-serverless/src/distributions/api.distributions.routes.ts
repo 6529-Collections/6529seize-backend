@@ -9,6 +9,7 @@ import {
   getPage,
   getPageSize,
   giveReadReplicaTimeToCatchUp,
+  returnCSVResult,
   returnPaginatedResult
 } from '../api-helpers';
 import { asyncRouter } from '../async.router';
@@ -21,6 +22,7 @@ import {
   DISTRIBUTION_PHASE_AIRDROP_TEAM
 } from '@/airdrop-phases';
 import {
+  fetchDistributionAirdrops,
   fetchDistributionPhaseAirdrops,
   fetchDistributionOverview,
   fetchDistributionPhases,
@@ -259,6 +261,32 @@ router.post(
       success: true,
       message: 'Successfully uploaded automatic airdrops'
     });
+  }
+);
+
+router.get(
+  `/distributions/:contract/:id/automatic_airdrops`,
+  needsAuthenticatedUser(),
+  async function (req: Request<any, any, any, any>, res: Response) {
+    const params = validateSubscriptionAdminAndParams(req, res);
+    if (!params) {
+      return;
+    }
+    const { contract, cardId } = params;
+
+    const airdrops = await fetchDistributionAirdrops(contract, cardId);
+    const sortedAirdrops = [...airdrops].sort(
+      (a, b) => b.count - a.count || a.wallet.localeCompare(b.wallet)
+    );
+
+    return returnCSVResult(
+      `automatic_airdrops_${cardId}`,
+      sortedAirdrops.map((airdrop) => ({
+        address: airdrop.wallet,
+        count: airdrop.count
+      })),
+      res
+    );
   }
 );
 

@@ -25,6 +25,16 @@ import {
   updateMintingClaim,
   updateMintingClaimIfNotUploading
 } from '@/api/minting-claims/api.minting-claims.db';
+import mintingClaimActionsRoutes from '@/api/minting-claims/api.minting-claims.actions.routes';
+import {
+  ContractCardParamsSchema,
+  ContractClaimParamsSchema,
+  ContractOnlyParamsSchema,
+  ProofsPathParamsSchema,
+  type ContractCardParams,
+  type ContractClaimParams,
+  type ProofsPathParams
+} from '@/api/minting-claims/minting-claims.validation';
 import { patchMintingClaim } from '@/api/minting-claims/api.minting-claims.service';
 import { enqueueClaimMediaArweaveUpload } from '@/api/minting-claims/claims-media-arweave-upload-publisher';
 import { cacheRequest } from '@/api/request-cache';
@@ -121,70 +131,6 @@ function rowToMintingClaim(row: MintingClaimRow): MintingClaim {
     )
   };
 }
-
-type ContractCardParams = {
-  contract: string;
-  card_id: string;
-};
-
-type ContractClaimParams = {
-  contract: string;
-  claim_id: string;
-};
-
-type ProofsPathParams = {
-  contract: string;
-  card_id: string;
-  merkle_root: string;
-  address: string;
-};
-
-const ContractAddressSchema = Joi.string()
-  .trim()
-  .pattern(/^0x[a-fA-F0-9]{40}$/)
-  .required()
-  .messages({
-    'string.pattern.base':
-      'contract must be a 0x-prefixed 42-character hex string'
-  });
-
-const ContractCardParamsSchema: Joi.ObjectSchema<ContractCardParams> =
-  Joi.object({
-    contract: ContractAddressSchema,
-    card_id: Joi.string().trim().required().pattern(/^\d+$/)
-  });
-
-const ContractClaimParamsSchema: Joi.ObjectSchema<ContractClaimParams> =
-  Joi.object({
-    contract: ContractAddressSchema,
-    claim_id: Joi.string().trim().required().pattern(/^\d+$/)
-  });
-
-const ContractOnlyParamsSchema: Joi.ObjectSchema<{ contract: string }> =
-  Joi.object({
-    contract: ContractAddressSchema
-  });
-
-const ProofsPathParamsSchema: Joi.ObjectSchema<ProofsPathParams> = Joi.object({
-  contract: ContractAddressSchema,
-  card_id: Joi.string().trim().required().pattern(/^\d+$/),
-  merkle_root: Joi.string()
-    .trim()
-    .pattern(/^0x[a-fA-F0-9]{64}$/)
-    .required()
-    .messages({
-      'string.pattern.base':
-        'merkle_root must be a 0x-prefixed 66-character hex string'
-    }),
-  address: Joi.string()
-    .trim()
-    .pattern(/^0x[a-fA-F0-9]{40}$/)
-    .required()
-    .messages({
-      'string.pattern.base':
-        'address must be a 0x-prefixed 42-character hex string'
-    })
-});
 
 router.get(
   '/:contract/:card_id/roots',
@@ -513,6 +459,8 @@ async function queueArweaveUploadOrRollback(
     throw enqueueError;
   }
 }
+
+router.use('/actions', mintingClaimActionsRoutes);
 
 router.post(
   '/:contract/claims/:claim_id/arweave-upload',
