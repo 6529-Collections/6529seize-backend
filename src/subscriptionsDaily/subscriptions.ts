@@ -48,10 +48,12 @@ export async function updateSubscriptions() {
   const autoSubscriptions = await fetchAllAutoSubscriptions();
   logger.info(`[FOUND ${autoSubscriptions.length} AUTO SUBSCRIPTIONS]`);
 
-  const maxMemeId = await getMaxMemeId();
-  const nextMemeId = maxMemeId + 1;
+  // const maxMemeId = await getMaxMemeId();
+  // const nextMemeId = maxMemeId + 1;
 
-  logger.info(`[MAX CURRENT MEME ${maxMemeId}]`);
+  // logger.info(`[MAX CURRENT MEME ${maxMemeId}]`);
+  const nextMemeId = 469;
+  logger.info(`[NEXT MEME ID ${nextMemeId}]`);
 
   await populateAutoSubscriptionsForMemeId(nextMemeId, autoSubscriptions);
 
