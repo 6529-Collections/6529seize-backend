@@ -275,14 +275,16 @@ router.get(
     const { contract, cardId } = params;
 
     const airdrops = await fetchDistributionAirdrops(contract, cardId);
+    const sortedAirdrops = [...airdrops].sort(
+      (a, b) => b.count - a.count || a.wallet.localeCompare(b.wallet)
+    );
+
     return returnCSVResult(
       `automatic_airdrops_${cardId}`,
-      airdrops
-        .sort((a, b) => b.count - a.count || a.wallet.localeCompare(b.wallet))
-        .map((airdrop) => ({
-          address: airdrop.wallet,
-          count: airdrop.count
-        })),
+      sortedAirdrops.map((airdrop) => ({
+        address: airdrop.wallet,
+        count: airdrop.count
+      })),
       res
     );
   }
