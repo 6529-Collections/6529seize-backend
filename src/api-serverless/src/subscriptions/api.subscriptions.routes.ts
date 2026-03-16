@@ -73,10 +73,30 @@ async function invalidateMintingClaimsPhaseCache(
   contract: string,
   tokenId: number
 ) {
-  await Promise.all([
-    evictCacheForPath(`/api/minting-claims/${contract}/${tokenId}/`),
-    evictCacheForPath(`/api/distributions/${contract}/${tokenId}/overview`)
-  ]);
+  const cacheEvictions = [
+    {
+      label: 'minting-claims',
+      path: `/api/minting-claims/${contract}/${tokenId}/`
+    },
+    {
+      label: 'distribution-overview',
+      path: `/api/distributions/${contract}/${tokenId}/overview`
+    }
+  ];
+
+  const results = await Promise.allSettled(
+    cacheEvictions.map(({ path }) => evictCacheForPath(path))
+  );
+
+  results.forEach((result, index) => {
+    if (result.status === 'rejected') {
+      const cacheEviction = cacheEvictions[index];
+      allowlistLogger.error(
+        `Failed to evict ${cacheEviction.label} cache for ${contract}#${tokenId} (${cacheEviction.path})`,
+        result.reason
+      );
+    }
+  });
 }
 
 async function invalidateSubscriptionCache(consolidationKey: string) {
