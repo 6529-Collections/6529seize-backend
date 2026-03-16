@@ -1,16 +1,44 @@
 import type { MintingClaimUpdateRequest } from '@/api/generated/models/MintingClaimUpdateRequest';
+import { DbPoolName } from '@/db-query.options';
 import type { MintingClaimRow } from '@/api/minting-claims/api.minting-claims.db';
-import { buildUpdatesForClaimPatch } from '@/api/minting-claims/api.minting-claims.service';
+import { DISTRIBUTION_PHASE_AIRDROP_TEAM } from '@/airdrop-phases';
+import {
+  buildUpdatesForClaimPatch,
+  patchMintingClaim
+} from '@/api/minting-claims/api.minting-claims.service';
 import {
   computeAnimationDetailsVideo,
   computeImageDetails
 } from '@/minting-claims/media-inspector';
+import {
+  fetchMintingClaimByClaimId,
+  updateMintingClaim
+} from '@/api/minting-claims/api.minting-claims.db';
+import { upsertAutomaticAirdropsForPhase } from '@/api/distributions/api.distributions.service';
+import { MEMES_CONTRACT } from '@/constants';
+import { sqlExecutor } from '@/sql-executor';
 
 jest.mock('@/minting-claims/media-inspector', () => ({
   computeImageDetails: jest.fn(),
   computeAnimationDetailsVideo: jest.fn(),
   computeAnimationDetailsGlb: jest.fn(),
   animationDetailsHtml: jest.fn(() => ({ format: 'HTML' }))
+}));
+
+jest.mock('@/api/minting-claims/api.minting-claims.db', () => ({
+  fetchMaxSeasonId: jest.fn(),
+  fetchMintingClaimByClaimId: jest.fn(),
+  updateMintingClaim: jest.fn()
+}));
+
+jest.mock('@/api/distributions/api.distributions.service', () => ({
+  upsertAutomaticAirdropsForPhase: jest.fn()
+}));
+
+jest.mock('@/sql-executor', () => ({
+  sqlExecutor: {
+    execute: jest.fn()
+  }
 }));
 
 function baseClaim(overrides: Partial<MintingClaimRow> = {}): MintingClaimRow {
@@ -145,5 +173,90 @@ describe('buildUpdatesForClaimPatch', () => {
     expect(updates.image_url).toBeUndefined();
     expect(updates.image_location).toBeUndefined();
     expect(updates.metadata_location).toBeUndefined();
+  });
+});
+
+describe('patchMintingClaim', () => {
+  const fetchMintingClaimByClaimIdMock =
+    fetchMintingClaimByClaimId as jest.MockedFunction<
+      typeof fetchMintingClaimByClaimId
+    >;
+  const updateMintingClaimMock = updateMintingClaim as jest.MockedFunction<
+    typeof updateMintingClaim
+  >;
+  const upsertAutomaticAirdropsForPhaseMock =
+    upsertAutomaticAirdropsForPhase as jest.MockedFunction<
+      typeof upsertAutomaticAirdropsForPhase
+    >;
+  const sqlExecutorExecuteMock = sqlExecutor.execute as jest.MockedFunction<
+    typeof sqlExecutor.execute
+  >;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('uses the write pool when patching edition_size so reserve sync sees the latest claim row', async () => {
+    const existing = baseClaim({ edition_size: null });
+    const updated = baseClaim({ edition_size: 500 });
+
+    fetchMintingClaimByClaimIdMock.mockImplementation(
+      async (_contract, _claimId, options) => {
+        if (options?.forcePool !== DbPoolName.WRITE) {
+          return baseClaim({ edition_size: null });
+        }
+
+        if (fetchMintingClaimByClaimIdMock.mock.calls.length <= 1) {
+          return existing;
+        }
+
+        return updated;
+      }
+    );
+    updateMintingClaimMock.mockResolvedValue(undefined);
+    upsertAutomaticAirdropsForPhaseMock.mockResolvedValue(undefined);
+    sqlExecutorExecuteMock.mockResolvedValue([
+      { wallet: '0xc6400A5584db71e41B0E5dFbdC769b54B91256CD' }
+    ]);
+
+    const result = await patchMintingClaim(
+      existing.contract,
+      existing.claim_id,
+      { edition_size: 500 },
+      true
+    );
+
+    expect(fetchMintingClaimByClaimIdMock).toHaveBeenNthCalledWith(
+      1,
+      existing.contract,
+      existing.claim_id,
+      { forcePool: DbPoolName.WRITE }
+    );
+    expect(fetchMintingClaimByClaimIdMock).toHaveBeenNthCalledWith(
+      2,
+      existing.contract,
+      existing.claim_id,
+      { forcePool: DbPoolName.WRITE }
+    );
+    expect(fetchMintingClaimByClaimIdMock).toHaveBeenNthCalledWith(
+      3,
+      existing.contract,
+      existing.claim_id,
+      { forcePool: DbPoolName.WRITE }
+    );
+    expect(upsertAutomaticAirdropsForPhaseMock).toHaveBeenCalledWith(
+      MEMES_CONTRACT,
+      existing.claim_id,
+      DISTRIBUTION_PHASE_AIRDROP_TEAM,
+      [
+        {
+          address: '0xc6400a5584db71e41b0e5dfbdc769b54b91256cd',
+          count: 50
+        }
+      ],
+      undefined,
+      false
+    );
+    expect(result).toEqual(updated);
   });
 });

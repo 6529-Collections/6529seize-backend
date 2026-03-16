@@ -7,6 +7,7 @@ import {
   MINTING_MERKLE_ROOTS_TABLE,
   SUBSCRIPTIONS_NFTS_FINAL_TABLE
 } from '@/constants';
+import type { DbQueryOptions } from '@/db-query.options';
 import { sqlExecutor } from '@/sql-executor';
 import type { AllowlistMerkleProofItem } from './allowlist-merkle';
 
@@ -301,7 +302,8 @@ export interface MintingClaimRow {
 
 export async function fetchMintingClaimByDropId(
   contract: string,
-  dropId: string
+  dropId: string,
+  options?: DbQueryOptions
 ): Promise<MintingClaimRow | null> {
   const rows = await sqlExecutor.execute<MintingClaimRow>(
     `SELECT drop_id, contract, claim_id, image_location, animation_location, metadata_location, media_uploading, edition_size, description, name, image_url, external_url, attributes, image_details, animation_url, animation_details
@@ -309,14 +311,16 @@ export async function fetchMintingClaimByDropId(
      WHERE contract = :contract
        AND drop_id = :dropId
      LIMIT 1`,
-    { contract: contract.toLowerCase(), dropId }
+    { contract: contract.toLowerCase(), dropId },
+    options
   );
   return rows.length > 0 ? rows[0] : null;
 }
 
 export async function fetchMintingClaimByClaimId(
   contract: string,
-  claimId: number
+  claimId: number,
+  options?: DbQueryOptions
 ): Promise<MintingClaimRow | null> {
   const rows = await sqlExecutor.execute<MintingClaimRow>(
     `SELECT drop_id, contract, claim_id, image_location, animation_location, metadata_location, media_uploading, edition_size, description, name, image_url, external_url, attributes, image_details, animation_url, animation_details
@@ -324,7 +328,8 @@ export async function fetchMintingClaimByClaimId(
      WHERE contract = :contract
        AND claim_id = :claimId
      LIMIT 1`,
-    { contract: contract.toLowerCase(), claimId }
+    { contract: contract.toLowerCase(), claimId },
+    options
   );
   return rows.length > 0 ? rows[0] : null;
 }

@@ -7,6 +7,7 @@ import {
 import { upsertAutomaticAirdropsForPhase } from '@/api/distributions/api.distributions.service';
 import { DISTRIBUTION_PHASE_AIRDROP_TEAM } from '@/airdrop-phases';
 import { MEMES_CONTRACT, TEAM_TABLE } from '@/constants';
+import { DbPoolName } from '@/db-query.options';
 import { BadRequestException, CustomApiCompliantException } from '@/exceptions';
 import type { MintingClaimUpdateRequest } from '@/api/generated/models/MintingClaimUpdateRequest';
 import {
@@ -20,6 +21,7 @@ import { ethers } from 'ethers';
 
 const MIN_EDITION_SIZE = 300;
 const TYPE_SEASON_TRAIT = 'Type - Season';
+const CLAIM_PATCH_READ_OPTIONS = { forcePool: DbPoolName.WRITE } as const;
 
 export type MintingClaimUpdates = Parameters<typeof updateMintingClaim>[2];
 
@@ -320,7 +322,11 @@ export async function patchMintingClaim(
   body: MintingClaimUpdateRequest,
   isMemesContract: boolean
 ): Promise<MintingClaimRow | null> {
-  const existing = await fetchMintingClaimByClaimId(contract, claimId);
+  const existing = await fetchMintingClaimByClaimId(
+    contract,
+    claimId,
+    CLAIM_PATCH_READ_OPTIONS
+  );
   if (existing === null) return null;
 
   if (existing.media_uploading) {
@@ -337,7 +343,11 @@ export async function patchMintingClaim(
   );
   await updateMintingClaim(contract, claimId, updates);
 
-  const updated = await fetchMintingClaimByClaimId(contract, claimId);
+  const updated = await fetchMintingClaimByClaimId(
+    contract,
+    claimId,
+    CLAIM_PATCH_READ_OPTIONS
+  );
   if (updated === null) {
     return null;
   }
@@ -346,7 +356,11 @@ export async function patchMintingClaim(
     await syncReserveTeamAirdrops(claimId, updated.edition_size);
   }
 
-  return fetchMintingClaimByClaimId(contract, claimId);
+  return fetchMintingClaimByClaimId(
+    contract,
+    claimId,
+    CLAIM_PATCH_READ_OPTIONS
+  );
 }
 
 async function fetchReserveTeamWallets(): Promise<string[]> {
