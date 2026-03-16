@@ -22,11 +22,11 @@ export class DistributionOverview {
     */
     'is_normalized': boolean;
     /**
-    * Count of unique addresses with automatic airdrops
+    * Count of unique addresses across automatic airdrop phases
     */
     'automatic_airdrops_addresses': number;
     /**
-    * Total count of automatic airdrops
+    * Total count across automatic airdrop phases
     */
     'automatic_airdrops_count': number;
 

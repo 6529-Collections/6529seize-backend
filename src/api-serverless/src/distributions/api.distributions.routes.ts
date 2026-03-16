@@ -16,20 +16,18 @@ import { asyncRouter } from '../async.router';
 import { needsAuthenticatedUser } from '../auth/auth';
 import { cacheRequest } from '../request-cache';
 import { authenticateSubscriptionsAdmin } from '../subscriptions/api.subscriptions.allowlist';
-import { mergeDuplicateWallets } from '@/api/api-wallet-helpers';
 import {
   DISTRIBUTION_PHASE_AIRDROP_ARTIST,
   DISTRIBUTION_PHASE_AIRDROP_TEAM
 } from '@/airdrop-phases';
 import {
-  fetchDistributionAirdrops,
   fetchDistributionPhaseAirdrops,
   fetchDistributionOverview,
   fetchDistributionPhases,
   fetchDistributions
 } from './api.distributions.db';
 import {
-  insertAutomaticAirdrops,
+  insertAutomaticAirdropsForPhase,
   populateDistributionNormalized
 } from './api.distributions.service';
 import { githubDistributionService } from './github-distribution.service';
@@ -126,6 +124,91 @@ function validateSubscriptionAdminAndParams(
   return { contract, cardId };
 }
 
+async function uploadAutomaticAirdropsForPhase(
+  req: Request<any, any, any, any>,
+  res: Response,
+  phase:
+    | typeof DISTRIBUTION_PHASE_AIRDROP_ARTIST
+    | typeof DISTRIBUTION_PHASE_AIRDROP_TEAM,
+  uploadLabel: string
+): Promise<void> {
+  const params = validateSubscriptionAdminAndParams(req, res);
+  if (!params) {
+    return;
+  }
+  const { contract, cardId } = params;
+
+  const { csv: csvData } = req.body;
+  if (!csvData || typeof csvData !== 'string') {
+    res.status(400).send({
+      success: false,
+      error: 'CSV data is required in request body'
+    });
+    return;
+  }
+
+  let airdrops: AirdropEntry[];
+  try {
+    airdrops = parseAirdropCsv(csvData);
+  } catch (e) {
+    if (e instanceof CsvParseError) {
+      res.status(400).send({
+        success: false,
+        error: e.message
+      });
+      return;
+    }
+    throw e;
+  }
+
+  await insertAutomaticAirdropsForPhase(contract, cardId, phase, airdrops);
+
+  await giveReadReplicaTimeToCatchUp();
+
+  const baseCacheKey = getCacheKeyPatternForPath(
+    `/api/distributions/${contract}/${cardId}/overview`
+  );
+  await evictKeyFromRedisCache(baseCacheKey);
+
+  res.json({
+    success: true,
+    message: `Successfully uploaded ${uploadLabel}`
+  });
+}
+
+async function downloadAutomaticAirdropsForPhase(
+  req: Request<any, any, any, any>,
+  res: Response,
+  phase:
+    | typeof DISTRIBUTION_PHASE_AIRDROP_ARTIST
+    | typeof DISTRIBUTION_PHASE_AIRDROP_TEAM,
+  filenamePrefix: string
+): Promise<void> {
+  const params = validateSubscriptionAdminAndParams(req, res);
+  if (!params) {
+    return;
+  }
+  const { contract, cardId } = params;
+
+  const airdrops = await fetchDistributionPhaseAirdrops(
+    contract,
+    cardId,
+    phase
+  );
+  const sortedAirdrops = [...airdrops].sort(
+    (a, b) => b.amount - a.amount || a.wallet.localeCompare(b.wallet)
+  );
+
+  returnCSVResult(
+    `${filenamePrefix}_${cardId}`,
+    sortedAirdrops.map((airdrop) => ({
+      address: airdrop.wallet,
+      count: airdrop.amount
+    })),
+    res
+  );
+}
+
 router.get(
   `/distribution_phases/:contract/:nft_id`,
   cacheRequest(),
@@ -218,127 +301,54 @@ router.post(
 );
 
 router.post(
-  `/distributions/:contract/:id/automatic_airdrops`,
+  `/distributions/:contract/:id/artist-airdrops`,
   needsAuthenticatedUser(),
   async function (req: Request<any, any, any, any>, res: Response) {
-    const params = validateSubscriptionAdminAndParams(req, res);
-    if (!params) {
-      return;
-    }
-    const { contract, cardId } = params;
-
-    const { csv: csvData } = req.body;
-    if (!csvData || typeof csvData !== 'string') {
-      return res.status(400).send({
-        success: false,
-        error: 'CSV data is required in request body'
-      });
-    }
-
-    let airdrops: AirdropEntry[];
-    try {
-      airdrops = parseAirdropCsv(csvData);
-    } catch (e) {
-      if (e instanceof CsvParseError) {
-        return res.status(400).send({
-          success: false,
-          error: e.message
-        });
-      }
-      throw e;
-    }
-
-    await insertAutomaticAirdrops(contract, cardId, airdrops);
-
-    await giveReadReplicaTimeToCatchUp();
-
-    const baseCacheKey = getCacheKeyPatternForPath(
-      `/api/distributions/${contract}/${cardId}/overview`
+    await uploadAutomaticAirdropsForPhase(
+      req,
+      res,
+      DISTRIBUTION_PHASE_AIRDROP_ARTIST,
+      'artist airdrops'
     );
-    await evictKeyFromRedisCache(baseCacheKey);
-
-    return res.json({
-      success: true,
-      message: 'Successfully uploaded automatic airdrops'
-    });
   }
 );
 
 router.get(
-  `/distributions/:contract/:id/automatic_airdrops`,
+  `/distributions/:contract/:id/artist-airdrops`,
   needsAuthenticatedUser(),
   async function (req: Request<any, any, any, any>, res: Response) {
-    const params = validateSubscriptionAdminAndParams(req, res);
-    if (!params) {
-      return;
-    }
-    const { contract, cardId } = params;
-
-    const airdrops = await fetchDistributionAirdrops(contract, cardId);
-    const sortedAirdrops = [...airdrops].sort(
-      (a, b) => b.count - a.count || a.wallet.localeCompare(b.wallet)
+    await downloadAutomaticAirdropsForPhase(
+      req,
+      res,
+      DISTRIBUTION_PHASE_AIRDROP_ARTIST,
+      'artist_airdrops'
     );
+  }
+);
 
-    return returnCSVResult(
-      `automatic_airdrops_${cardId}`,
-      sortedAirdrops.map((airdrop) => ({
-        address: airdrop.wallet,
-        count: airdrop.count
-      })),
-      res
+router.post(
+  `/distributions/:contract/:id/team-airdrops`,
+  needsAuthenticatedUser(),
+  async function (req: Request<any, any, any, any>, res: Response) {
+    await uploadAutomaticAirdropsForPhase(
+      req,
+      res,
+      DISTRIBUTION_PHASE_AIRDROP_TEAM,
+      'team airdrops'
     );
   }
 );
 
 router.get(
-  `/distributions/:contract/:id/airdrops_artist`,
-  cacheRequest(),
+  `/distributions/:contract/:id/team-airdrops`,
+  needsAuthenticatedUser(),
   async function (req: Request<any, any, any, any>, res: Response) {
-    const contract = req.params.contract;
-    const cardId = numbers.parseIntOrNull(req.params.id);
-
-    if (cardId === null) {
-      return res.status(400).send({
-        success: false,
-        error: 'Invalid id parameter'
-      });
-    }
-
-    const airdrops = await fetchDistributionPhaseAirdrops(
-      contract,
-      cardId,
-      DISTRIBUTION_PHASE_AIRDROP_ARTIST
+    await downloadAutomaticAirdropsForPhase(
+      req,
+      res,
+      DISTRIBUTION_PHASE_AIRDROP_TEAM,
+      'team_airdrops'
     );
-    const mergedAirdrops = mergeDuplicateWallets(airdrops).sort(
-      (a, b) => b.amount - a.amount || a.wallet.localeCompare(b.wallet)
-    );
-    return res.json(mergedAirdrops);
-  }
-);
-
-router.get(
-  `/distributions/:contract/:id/airdrops_team`,
-  cacheRequest(),
-  async function (req: Request<any, any, any, any>, res: Response) {
-    const contract = req.params.contract;
-    const cardId = numbers.parseIntOrNull(req.params.id);
-
-    if (cardId === null) {
-      return res.status(400).send({
-        success: false,
-        error: 'Invalid id parameter'
-      });
-    }
-
-    const airdrops = await fetchDistributionPhaseAirdrops(
-      contract,
-      cardId,
-      DISTRIBUTION_PHASE_AIRDROP_TEAM
-    );
-    const mergedAirdrops = mergeDuplicateWallets(airdrops).sort(
-      (a, b) => b.amount - a.amount || a.wallet.localeCompare(b.wallet)
-    );
-    return res.json(mergedAirdrops);
   }
 );
 

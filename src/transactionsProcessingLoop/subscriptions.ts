@@ -156,12 +156,14 @@ export async function validateNonSubscriptionAirdrop(
         WHERE contract = ?
         AND token_id = ?
         AND from_address = ?
+        AND LOWER(to_address) = LOWER(?)
         AND block < ?
         AND value = 0;`,
         [
           transaction.contract,
           transaction.token_id,
           NULL_ADDRESS,
+          transaction.to_address,
           transaction.block
         ]
       )

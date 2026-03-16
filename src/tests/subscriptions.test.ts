@@ -147,6 +147,26 @@ describe('SubscriptionTests', () => {
       expect(entityManager.query).toHaveBeenCalledTimes(2);
     });
 
+    it('in initial airdrop after prior airdrops to other wallets', async () => {
+      const transaction = buildTransaction(
+        NULL_ADDRESS,
+        '0x123',
+        MEMES_CONTRACT,
+        generateRandomTokenId()
+      );
+      whenRequestDistribution(entityManager, transaction, { count: 1 });
+      whenRequestAirdrops(entityManager, transaction, 0);
+      const response = await validateNonSubscriptionAirdrop(
+        transaction,
+        entityManager
+      );
+      expect(response).toEqual({
+        valid: true,
+        message: 'Distribution airdrop'
+      });
+      expect(entityManager.query).toHaveBeenCalledTimes(2);
+    });
+
     it('not in initial airdrop', async () => {
       const transaction = buildTransaction(
         NULL_ADDRESS,
@@ -733,12 +753,14 @@ function getAirdropSql(transaction: Transaction) {
         WHERE contract = ?
         AND token_id = ?
         AND from_address = ?
+        AND LOWER(to_address) = LOWER(?)
         AND block < ?
         AND value = 0;`,
     params: [
       transaction.contract,
       transaction.token_id,
       NULL_ADDRESS,
+      transaction.to_address,
       transaction.block
     ]
   };

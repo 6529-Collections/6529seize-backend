@@ -771,12 +771,15 @@ paths:
           description: Invalid request
         "403":
           description: Forbidden - not a Subscription Admin
-  /distributions/{contract}/{id}/airdrops_artist:
+  /distributions/{contract}/{id}/artist-airdrops:
     get:
       tags:
         - Distributions
-      summary: Get artist airdrops for a specific contract and card
-      operationId: getDistributionAirdropsArtist
+      summary: Download artist airdrops CSV for a specific contract and card
+      description: >-
+        Requires the user to be authenticated as a Subscription Admin. Returns a
+        CSV export for the Airdrop - Artist phase in `address,count` format.
+      operationId: downloadDistributionArtistAirdrops
       parameters:
         - name: contract
           in: path
@@ -795,19 +798,64 @@ paths:
         "200":
           description: successful operation
           content:
-            application/json:
+            text/csv:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/PhaseAirdrop"
+                type: string
+                format: binary
         "400":
           description: Invalid request
-  /distributions/{contract}/{id}/airdrops_team:
+        "403":
+          description: Forbidden - not a Subscription Admin
+    post:
+      tags:
+        - Distributions
+      summary: Upload artist airdrops for a specific contract and card
+      description: >-
+        Requires the user to be authenticated as a Subscription Admin. Replaces
+        any existing distribution rows for the Airdrop - Artist phase on the
+        given token. The request body must contain CSV text in `address,count`
+        format.
+      operationId: uploadDistributionArtistAirdrops
+      parameters:
+        - name: contract
+          in: path
+          description: Contract address
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          description: Card ID
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApiDistributionAirdropsCsvUploadRequest"
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiDistributionAirdropsUploadResponse"
+        "400":
+          description: Invalid request
+        "403":
+          description: Forbidden - not a Subscription Admin
+  /distributions/{contract}/{id}/team-airdrops:
     get:
       tags:
         - Distributions
-      summary: Get team airdrops for a specific contract and card
-      operationId: getDistributionAirdropsTeam
+      summary: Download team airdrops CSV for a specific contract and card
+      description: >-
+        Requires the user to be authenticated as a Subscription Admin. Returns a
+        CSV export for the Airdrop - Team phase in `address,count` format.
+      operationId: downloadDistributionTeamAirdrops
       parameters:
         - name: contract
           in: path
@@ -826,13 +874,54 @@ paths:
         "200":
           description: successful operation
           content:
-            application/json:
+            text/csv:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/PhaseAirdrop"
+                type: string
+                format: binary
         "400":
           description: Invalid request
+        "403":
+          description: Forbidden - not a Subscription Admin
+    post:
+      tags:
+        - Distributions
+      summary: Upload team airdrops for a specific contract and card
+      description: >-
+        Requires the user to be authenticated as a Subscription Admin. Replaces
+        any existing distribution rows for the Airdrop - Team phase on the given
+        token. The request body must contain CSV text in `address,count` format.
+      operationId: uploadDistributionTeamAirdrops
+      parameters:
+        - name: contract
+          in: path
+          description: Contract address
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          description: Card ID
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApiDistributionAirdropsCsvUploadRequest"
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiDistributionAirdropsUploadResponse"
+        "400":
+          description: Invalid request
+        "403":
+          description: Forbidden - not a Subscription Admin
   /light-drops:
     get:
       tags:
@@ -8053,6 +8142,27 @@ components:
         description:
           type: string
           nullable: true
+    ApiDistributionAirdropsCsvUploadRequest:
+      type: object
+      required:
+        - csv
+      properties:
+        csv:
+          type: string
+          description: CSV text with one `address,count` entry per line
+          example: |-
+            0x0000000000000000000000000000000000000001,2
+            0x0000000000000000000000000000000000000002,1
+    ApiDistributionAirdropsUploadResponse:
+      type: object
+      required:
+        - success
+        - message
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
     ApiDrop:
       type: object
       required:
@@ -12106,11 +12216,11 @@ components:
         automatic_airdrops_addresses:
           type: integer
           format: int64
-          description: Count of unique addresses with automatic airdrops
+          description: Count of unique addresses across automatic airdrop phases
         automatic_airdrops_count:
           type: integer
           format: int64
-          description: Total count of automatic airdrops
+          description: Total count across automatic airdrop phases
     DistributionPhasesPage:
       type: object
       required:
