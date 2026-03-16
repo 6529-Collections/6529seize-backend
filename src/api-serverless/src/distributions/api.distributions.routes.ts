@@ -199,14 +199,22 @@ async function downloadAutomaticAirdropsForPhase(
     (a, b) => b.amount - a.amount || a.wallet.localeCompare(b.wallet)
   );
 
-  returnCSVResult(
-    `${filenamePrefix}_${cardId}`,
-    sortedAirdrops.map((airdrop) => ({
-      address: airdrop.wallet,
-      count: airdrop.amount
-    })),
-    res
-  );
+  res.vary('Accept');
+
+  const acceptHeader = req.get('accept')?.toLowerCase() ?? '';
+  if (acceptHeader.includes('text/csv')) {
+    returnCSVResult(
+      `${filenamePrefix}_${cardId}`,
+      sortedAirdrops.map((airdrop) => ({
+        address: airdrop.wallet,
+        count: airdrop.amount
+      })),
+      res
+    );
+    return;
+  }
+
+  res.json(sortedAirdrops);
 }
 
 router.get(

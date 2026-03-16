@@ -775,11 +775,12 @@ paths:
     get:
       tags:
         - Distributions
-      summary: Download artist airdrops CSV for a specific contract and card
+      summary: Get artist airdrops for a specific contract and card
       description: >-
-        Requires the user to be authenticated as a Subscription Admin. Returns a
-        CSV export for the Airdrop - Artist phase in `address,count` format.
-      operationId: downloadDistributionArtistAirdrops
+        Requires the user to be authenticated as a Subscription Admin. Returns
+        JSON by default, or CSV in `address,count` format when the client sends
+        `Accept: text/csv`.
+      operationId: getDistributionArtistAirdrops
       parameters:
         - name: contract
           in: path
@@ -798,6 +799,11 @@ paths:
         "200":
           description: successful operation
           content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PhaseAirdrop"
             text/csv:
               schema:
                 type: string
@@ -851,11 +857,12 @@ paths:
     get:
       tags:
         - Distributions
-      summary: Download team airdrops CSV for a specific contract and card
+      summary: Get team airdrops for a specific contract and card
       description: >-
-        Requires the user to be authenticated as a Subscription Admin. Returns a
-        CSV export for the Airdrop - Team phase in `address,count` format.
-      operationId: downloadDistributionTeamAirdrops
+        Requires the user to be authenticated as a Subscription Admin. Returns
+        JSON by default, or CSV in `address,count` format when the client sends
+        `Accept: text/csv`.
+      operationId: getDistributionTeamAirdrops
       parameters:
         - name: contract
           in: path
@@ -874,6 +881,11 @@ paths:
         "200":
           description: successful operation
           content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PhaseAirdrop"
             text/csv:
               schema:
                 type: string
