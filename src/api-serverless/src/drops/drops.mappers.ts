@@ -48,7 +48,7 @@ import { ApiDropType } from '../generated/models/ApiDropType';
 import { dropVotingService, DropVotingService } from './drop-voting.service';
 import { dropVotingDb, DropVotingDb } from './drop-voting.db';
 import { ApiWaveCreditType as WaveCreditTypeApi } from '../generated/models/ApiWaveCreditType';
-import { WaveDecisionWinnerDropEntity } from '../../../entities/IWaveDecision';
+import { WaveDecisionWinnerDropWithSaleEntity } from '@/entities/IWaveDecision';
 import { ApiDropWinningContext } from '../generated/models/ApiDropWinningContext';
 import { ApiWaveOutcomeType } from '../generated/models/ApiWaveOutcomeType';
 import { ApiWaveOutcomeSubType } from '../generated/models/ApiWaveOutcomeSubType';
@@ -752,7 +752,7 @@ export class DropsMappers {
       { min: number; max: number; current: number }
     >;
     dropsRanks: Record<string, number>;
-    winDecisions: Record<string, WaveDecisionWinnerDropEntity>;
+    winDecisions: Record<string, WaveDecisionWinnerDropWithSaleEntity>;
     winningDropsTopRaters: Record<string, WinnerDropVoterVoteEntity[]>;
     winningDropsRatersCounts: Record<string, number>;
     winningDropsRatingsByVoter: Record<string, number>;
@@ -775,6 +775,9 @@ export class DropsMappers {
       ? {
           place: dropWinDecision.ranking,
           decision_time: dropWinDecision.decision_time,
+          sale_time: dropWinDecision.sale_time,
+          sale_price: dropWinDecision.sale_price,
+          sale_price_currency: dropWinDecision.sale_price_currency,
           awards: dropWinDecision.prizes.map((prize) => ({
             type: enums.resolveOrThrow(ApiWaveOutcomeType, prize.type),
             subtype:

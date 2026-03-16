@@ -8360,6 +8360,16 @@ components:
         decision_time:
           type: integer
           format: int64
+        sale_time:
+          type: integer
+          format: int64
+          nullable: true
+        sale_price:
+          type: number
+          nullable: true
+        sale_price_currency:
+          type: string
+          nullable: true
     ApiDropWithoutWave:
       type: object
       required:
@@ -8832,6 +8842,23 @@ components:
             format: int64
         is_wave_creator:
           type: boolean
+    ApiIdentityActivity:
+      type: object
+      required:
+        - last_date
+        - date_samples
+      properties:
+        last_date:
+          type: string
+          example: 12.03.2026
+        date_samples:
+          type: array
+          minItems: 365
+          maxItems: 365
+          items:
+            type: integer
+            format: int64
+            minimum: 0
     ApiIdentityAndSubscriptionActions:
       type: object
       required:
@@ -8866,23 +8893,6 @@ components:
         - PROFILE
         - WAVE
         - DROP
-    ApiIdentityActivity:
-      type: object
-      required:
-        - last_date
-        - date_samples
-      properties:
-        last_date:
-          type: string
-          example: "12.03.2026"
-        date_samples:
-          type: array
-          minItems: 365
-          maxItems: 365
-          items:
-            type: integer
-            format: int64
-            minimum: 0
     ApiIncomingIdentitySubscriptionsPage:
       type: object
       required:

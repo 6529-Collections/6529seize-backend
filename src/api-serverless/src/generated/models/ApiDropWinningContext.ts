@@ -17,6 +17,9 @@ export class ApiDropWinningContext {
     'place': number;
     'awards': Array<ApiWaveDecisionAward>;
     'decision_time': number;
+    'sale_time'?: number | null;
+    'sale_price'?: number | null;
+    'sale_price_currency'?: string | null;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -38,6 +41,24 @@ export class ApiDropWinningContext {
             "baseName": "decision_time",
             "type": "number",
             "format": "int64"
+        },
+        {
+            "name": "sale_time",
+            "baseName": "sale_time",
+            "type": "number",
+            "format": "int64"
+        },
+        {
+            "name": "sale_price",
+            "baseName": "sale_price",
+            "type": "number",
+            "format": ""
+        },
+        {
+            "name": "sale_price_currency",
+            "baseName": "sale_price_currency",
+            "type": "string",
+            "format": ""
         }    ];
 
     static getAttributeTypeMap() {
