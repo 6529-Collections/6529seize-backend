@@ -15,6 +15,7 @@ import { ids } from '../../ids';
 import { wsListenersNotifier } from './ws/ws-listeners-notifier';
 
 const serverlessHttp = require('serverless-http');
+const logger = Logger.get('API_HANDLER');
 
 const httpHandler = serverlessHttp(app);
 export const handler = sentryContext.wrapLambdaHandler(
@@ -22,7 +23,22 @@ export const handler = sentryContext.wrapLambdaHandler(
     event: APIGatewayEvent,
     context: Context
   ): Promise<APIGatewayProxyResult> => {
+    const path = (event as any).rawPath ?? event.path ?? 'n/a';
+    const method = event.httpMethod ?? 'n/a';
+    logger.info(
+      `[HTTP_ENTRY] [METHOD ${method}] [PATH ${path}] [REQUEST_ID ${
+        event.requestContext?.requestId ?? context.awsRequestId
+      }]`
+    );
+
     await ensureInitialized();
+
+    logger.info(
+      `[HTTP_READY] [METHOD ${method}] [PATH ${path}] [REQUEST_ID ${
+        event.requestContext?.requestId ?? context.awsRequestId
+      }]`
+    );
+
     if (event.requestContext && event.requestContext.routeKey) {
       return wsHandler(event);
     } else {
