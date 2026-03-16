@@ -12,6 +12,7 @@ import { numbers } from '@/numbers';
 import { evictAllKeysMatchingPatternFromRedisCache } from '@/redis';
 import { equalIgnoreCase } from '@/strings';
 import { PaginatedResponse } from '@/api/api-constants';
+import { Logger } from '@/logging';
 import {
   getCacheKeyPatternForPath,
   getPage,
@@ -60,6 +61,8 @@ import {
   updateSubscriptionMode
 } from '@/api/subscriptions/api.subscriptions.db';
 
+const allowlistLogger = Logger.get('SUBSCRIPTIONS_ALLOWLIST');
+
 async function evictCacheForPath(path: string) {
   await evictAllKeysMatchingPatternFromRedisCache(
     getCacheKeyPatternForPath(`${path}*`)
@@ -70,8 +73,10 @@ async function invalidateMintingClaimsPhaseCache(
   contract: string,
   tokenId: number
 ) {
-  await evictCacheForPath(`/api/minting-claims/${contract}/${tokenId}/`);
-  await evictCacheForPath(`/api/distributions/${contract}/${tokenId}/overview`);
+  await Promise.all([
+    evictCacheForPath(`/api/minting-claims/${contract}/${tokenId}/`),
+    evictCacheForPath(`/api/distributions/${contract}/${tokenId}/overview`)
+  ]);
 }
 
 async function invalidateSubscriptionCache(consolidationKey: string) {
@@ -694,6 +699,11 @@ router.get(
     const tokenIdStr = req.params.token_id;
     const allowlistId = req.params.allowlist_id;
     const phaseId = req.params.phase_id;
+    const requestStartedAt = Date.now();
+
+    allowlistLogger.info(
+      `[GET_START] [contract ${contract}] [token_id ${tokenIdStr}] [allowlist_id ${allowlistId}] [phase_id ${phaseId}]`
+    );
 
     const tokenId = numbers.parseIntOrNull(tokenIdStr);
     if (tokenId === null) {
@@ -710,27 +720,68 @@ router.get(
       );
     }
 
+    const validateStartedAt = Date.now();
     const validate = await validateDistribution(auth, allowlistId, phaseId);
+    allowlistLogger.info(
+      `[GET_VALIDATE_DONE] [contract ${contract}] [token_id ${tokenId}] [allowlist_id ${allowlistId}] [phase_id ${phaseId}] [TOOK_MS ${
+        Date.now() - validateStartedAt
+      }]`
+    );
     if (!validate.valid) {
       return res.status(400).send(validate);
     }
 
     if (phaseId === 'public') {
+      const publicStartedAt = Date.now();
       const results = await getPublicSubscriptions(contract, tokenId);
+      allowlistLogger.info(
+        `[GET_PUBLIC_DONE] [contract ${contract}] [token_id ${tokenId}] [allowlist_id ${allowlistId}] [phase_id ${phaseId}] [TOOK_MS ${
+          Date.now() - publicStartedAt
+        }] [TOTAL_TOOK_MS ${Date.now() - requestStartedAt}]`
+      );
       return res.json(results);
     } else {
-      const phaseResults = await fetchPhaseResults(auth, allowlistId, phaseId);
-      const phaseName = await fetchPhaseName(auth, allowlistId, phaseId);
+      const phaseFetchStartedAt = Date.now();
+      const [phaseResults, phaseName] = await Promise.all([
+        fetchPhaseResults(auth, allowlistId, phaseId),
+        fetchPhaseName(auth, allowlistId, phaseId)
+      ]);
+      allowlistLogger.info(
+        `[GET_PHASE_FETCH_DONE] [contract ${contract}] [token_id ${tokenId}] [allowlist_id ${allowlistId}] [phase_id ${phaseId}] [phase_name ${phaseName}] [results_count ${
+          phaseResults.length
+        }] [TOOK_MS ${Date.now() - phaseFetchStartedAt}]`
+      );
 
+      const splitStartedAt = Date.now();
       const results = await splitAllowlistResults(
         contract,
         tokenId,
         phaseName,
         phaseResults
       );
+      allowlistLogger.info(
+        `[GET_SPLIT_DONE] [contract ${contract}] [token_id ${tokenId}] [allowlist_id ${allowlistId}] [phase_id ${phaseId}] [phase_name ${phaseName}] [airdrops ${
+          results.airdrops.length
+        }] [allowlists ${results.allowlists.length}] [TOOK_MS ${
+          Date.now() - splitStartedAt
+        }]`
+      );
 
+      const populateStartedAt = Date.now();
       await populateDistribution(contract, tokenId, phaseName, results);
+      allowlistLogger.info(
+        `[GET_POPULATE_DONE] [contract ${contract}] [token_id ${tokenId}] [allowlist_id ${allowlistId}] [phase_id ${phaseId}] [phase_name ${phaseName}] [TOOK_MS ${
+          Date.now() - populateStartedAt
+        }]`
+      );
+
+      const invalidateStartedAt = Date.now();
       await invalidateMintingClaimsPhaseCache(contract, tokenId);
+      allowlistLogger.info(
+        `[GET_DONE] [contract ${contract}] [token_id ${tokenId}] [allowlist_id ${allowlistId}] [phase_id ${phaseId}] [phase_name ${phaseName}] [TOOK_MS ${
+          Date.now() - invalidateStartedAt
+        }] [TOTAL_TOOK_MS ${Date.now() - requestStartedAt}]`
+      );
       return res.json(results);
     }
   }
