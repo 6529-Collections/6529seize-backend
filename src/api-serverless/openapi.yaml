@@ -2360,6 +2360,7 @@ paths:
           schema:
             type: integer
             format: int64
+            minimum: 1
       responses:
         "200":
           description: successful operation
@@ -2395,6 +2396,7 @@ paths:
           schema:
             type: integer
             format: int64
+            minimum: 1
       requestBody:
         content:
           application/json:
@@ -2437,6 +2439,7 @@ paths:
           schema:
             type: integer
             format: int64
+            minimum: 1
       responses:
         "202":
           description: Accepted; work queued
@@ -2510,7 +2513,7 @@ paths:
           schema:
             type: integer
             format: int64
-            minimum: 0
+            minimum: 1
       responses:
         "200":
           description: successful operation
@@ -2549,7 +2552,7 @@ paths:
           schema:
             type: integer
             format: int64
-            minimum: 0
+            minimum: 1
       requestBody:
         required: true
         content:
