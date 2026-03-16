@@ -11,6 +11,7 @@ import { getNft } from '@/nftsLoop/db.nfts';
 import { numbers } from '@/numbers';
 import { evictAllKeysMatchingPatternFromRedisCache } from '@/redis';
 import { equalIgnoreCase } from '@/strings';
+import { Timer } from '@/time';
 import { PaginatedResponse } from '@/api/api-constants';
 import { Logger } from '@/logging';
 import {
@@ -719,7 +720,9 @@ router.get(
     const tokenIdStr = req.params.token_id;
     const allowlistId = req.params.allowlist_id;
     const phaseId = req.params.phase_id;
-    const requestStartedAt = Date.now();
+    const allowlistTimer = new Timer(
+      `subscriptions-allowlist:${contract}:${tokenIdStr}:${allowlistId}:${phaseId}`
+    );
 
     allowlistLogger.info(
       `[GET_START] [contract ${contract}] [token_id ${tokenIdStr}] [allowlist_id ${allowlistId}] [phase_id ${phaseId}]`
@@ -740,67 +743,63 @@ router.get(
       );
     }
 
-    const validateStartedAt = Date.now();
+    allowlistTimer.start('validateDistribution');
     const validate = await validateDistribution(auth, allowlistId, phaseId);
+    allowlistTimer.stop('validateDistribution');
     allowlistLogger.info(
-      `[GET_VALIDATE_DONE] [contract ${contract}] [token_id ${tokenId}] [allowlist_id ${allowlistId}] [phase_id ${phaseId}] [TOOK_MS ${
-        Date.now() - validateStartedAt
-      }]`
+      `[GET_VALIDATE_DONE] [contract ${contract}] [token_id ${tokenId}] [allowlist_id ${allowlistId}] [phase_id ${phaseId}] [${allowlistTimer.getReport()}]`
     );
     if (!validate.valid) {
       return res.status(400).send(validate);
     }
 
     if (phaseId === 'public') {
-      const publicStartedAt = Date.now();
+      allowlistTimer.start('getPublicSubscriptions');
       const results = await getPublicSubscriptions(contract, tokenId);
+      allowlistTimer.stop('getPublicSubscriptions');
       allowlistLogger.info(
-        `[GET_PUBLIC_DONE] [contract ${contract}] [token_id ${tokenId}] [allowlist_id ${allowlistId}] [phase_id ${phaseId}] [TOOK_MS ${
-          Date.now() - publicStartedAt
-        }] [TOTAL_TOOK_MS ${Date.now() - requestStartedAt}]`
+        `[GET_PUBLIC_DONE] [contract ${contract}] [token_id ${tokenId}] [allowlist_id ${allowlistId}] [phase_id ${phaseId}] [${allowlistTimer.getReport()}]`
       );
       return res.json(results);
     } else {
-      const phaseFetchStartedAt = Date.now();
+      allowlistTimer.start('fetchPhaseResultsAndName');
       const [phaseResults, phaseName] = await Promise.all([
         fetchPhaseResults(auth, allowlistId, phaseId),
         fetchPhaseName(auth, allowlistId, phaseId)
       ]);
+      allowlistTimer.stop('fetchPhaseResultsAndName');
       allowlistLogger.info(
         `[GET_PHASE_FETCH_DONE] [contract ${contract}] [token_id ${tokenId}] [allowlist_id ${allowlistId}] [phase_id ${phaseId}] [phase_name ${phaseName}] [results_count ${
           phaseResults.length
-        }] [TOOK_MS ${Date.now() - phaseFetchStartedAt}]`
+        }] [${allowlistTimer.getReport()}]`
       );
 
-      const splitStartedAt = Date.now();
+      allowlistTimer.start('splitAllowlistResults');
       const results = await splitAllowlistResults(
         contract,
         tokenId,
         phaseName,
         phaseResults
       );
+      allowlistTimer.stop('splitAllowlistResults');
       allowlistLogger.info(
         `[GET_SPLIT_DONE] [contract ${contract}] [token_id ${tokenId}] [allowlist_id ${allowlistId}] [phase_id ${phaseId}] [phase_name ${phaseName}] [airdrops ${
           results.airdrops.length
-        }] [allowlists ${results.allowlists.length}] [TOOK_MS ${
-          Date.now() - splitStartedAt
-        }]`
+        }] [allowlists ${results.allowlists.length}] [${allowlistTimer.getReport()}]`
       );
 
-      const populateStartedAt = Date.now();
+      allowlistTimer.start('populateDistribution');
       await populateDistribution(contract, tokenId, phaseName, results);
+      allowlistTimer.stop('populateDistribution');
       allowlistLogger.info(
-        `[GET_POPULATE_DONE] [contract ${contract}] [token_id ${tokenId}] [allowlist_id ${allowlistId}] [phase_id ${phaseId}] [phase_name ${phaseName}] [TOOK_MS ${
-          Date.now() - populateStartedAt
-        }]`
+        `[GET_POPULATE_DONE] [contract ${contract}] [token_id ${tokenId}] [allowlist_id ${allowlistId}] [phase_id ${phaseId}] [phase_name ${phaseName}] [${allowlistTimer.getReport()}]`
       );
 
-      const invalidateStartedAt = Date.now();
+      allowlistTimer.start('invalidateMintingClaimsPhaseCache');
       await invalidateMintingClaimsPhaseCache(contract, tokenId);
+      allowlistTimer.stop('invalidateMintingClaimsPhaseCache');
       allowlistLogger.info(
-        `[GET_DONE] [contract ${contract}] [token_id ${tokenId}] [allowlist_id ${allowlistId}] [phase_id ${phaseId}] [phase_name ${phaseName}] [TOOK_MS ${
-          Date.now() - invalidateStartedAt
-        }] [TOTAL_TOOK_MS ${Date.now() - requestStartedAt}]`
+        `[GET_DONE] [contract ${contract}] [token_id ${tokenId}] [allowlist_id ${allowlistId}] [phase_id ${phaseId}] [phase_name ${phaseName}] [${allowlistTimer.getReport()}]`
       );
       return res.json(results);
     }
