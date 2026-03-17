@@ -132,6 +132,7 @@ router.post(
 
 const MediaPrepRequestSchema = createMediaPrepRequestSchema({
   allowedMimeTypes: [
+    'text/csv',
     'image/png',
     'image/jpeg',
     'image/gif',
