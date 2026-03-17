@@ -356,11 +356,7 @@ export async function patchMintingClaim(
     await syncReserveTeamAirdrops(claimId, updated.edition_size);
   }
 
-  return fetchMintingClaimByClaimId(
-    contract,
-    claimId,
-    CLAIM_PATCH_READ_OPTIONS
-  );
+  return updated;
 }
 
 async function fetchReserveTeamWallets(): Promise<string[]> {

@@ -156,14 +156,22 @@ describe('SubscriptionTests', () => {
       );
       whenRequestDistribution(entityManager, transaction, { count: 1 });
       whenRequestAirdrops(entityManager, transaction, 0);
+      whenRequestAirdrops(
+        entityManager,
+        transaction,
+        3,
+        '0x0000000000000000000000000000000000000456'
+      );
       const response = await validateNonSubscriptionAirdrop(
         transaction,
         entityManager
       );
+      const { sql: adSql, params: adParams } = getAirdropSql(transaction);
       expect(response).toEqual({
         valid: true,
         message: 'Distribution airdrop'
       });
+      expect(entityManager.query).toHaveBeenCalledWith(adSql, adParams);
       expect(entityManager.query).toHaveBeenCalledTimes(2);
     });
 
@@ -747,7 +755,10 @@ function whenRequestDistribution(
     .mockResolvedValue([response]);
 }
 
-function getAirdropSql(transaction: Transaction) {
+function getAirdropSql(
+  transaction: Transaction,
+  wallet = transaction.to_address
+) {
   return {
     sql: `SELECT SUM(token_count) as previous_airdrops FROM ${TRANSACTIONS_TABLE}
         WHERE contract = ?
@@ -760,7 +771,7 @@ function getAirdropSql(transaction: Transaction) {
       transaction.contract,
       transaction.token_id,
       NULL_ADDRESS,
-      transaction.to_address,
+      wallet,
       transaction.block
     ]
   };
@@ -769,9 +780,10 @@ function getAirdropSql(transaction: Transaction) {
 function whenRequestAirdrops(
   entityManager: Mock<EntityManager>,
   transaction: Transaction,
-  response: number
+  response: number,
+  wallet?: string
 ) {
-  const { sql, params } = getAirdropSql(transaction);
+  const { sql, params } = getAirdropSql(transaction, wallet);
   when(entityManager.query)
     .calledWith(sql, params)
     .mockResolvedValue([

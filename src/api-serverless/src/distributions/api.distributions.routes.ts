@@ -203,7 +203,7 @@ async function downloadAutomaticAirdropsForPhase(
 
   const acceptHeader = req.get('accept')?.toLowerCase() ?? '';
   if (acceptHeader.includes('text/csv')) {
-    returnCSVResult(
+    await returnCSVResult(
       `${filenamePrefix}_${cardId}`,
       sortedAirdrops.map((airdrop) => ({
         address: airdrop.wallet,
