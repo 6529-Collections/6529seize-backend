@@ -76,6 +76,15 @@ import { env } from '@/env';
 
 export const DROP_MEDIA_CLOUDFRONT_ORIGIN =
   'https://d3lqz0a4bldqgf.cloudfront.net';
+const ARWEAVE_ORIGIN = 'https://arweave.net';
+
+function parseDropMediaUrl(url: string): URL {
+  try {
+    return new URL(url);
+  } catch {
+    throw new BadRequestException(`Invalid media url ${url}`);
+  }
+}
 
 export function validateDropMediaAttachment({
   mimeType,
@@ -86,12 +95,14 @@ export function validateDropMediaAttachment({
   url: string;
   dropType: DropType;
 }): void {
+  const parsedUrl = parseDropMediaUrl(url);
+
   if (
     mimeType.startsWith('image/') ||
     mimeType.startsWith('video/') ||
     mimeType.startsWith('audio/')
   ) {
-    if (!url.startsWith(DROP_MEDIA_CLOUDFRONT_ORIGIN)) {
+    if (parsedUrl.origin !== DROP_MEDIA_CLOUDFRONT_ORIGIN) {
       throw new BadRequestException(
         `Media needs to come from ${DROP_MEDIA_CLOUDFRONT_ORIGIN}`
       );
@@ -103,7 +114,7 @@ export function validateDropMediaAttachment({
     if (dropType !== DropType.CHAT) {
       throw new BadRequestException(`text/csv is only supported on chat drops`);
     }
-    if (!url.startsWith(DROP_MEDIA_CLOUDFRONT_ORIGIN)) {
+    if (parsedUrl.origin !== DROP_MEDIA_CLOUDFRONT_ORIGIN) {
       throw new BadRequestException(
         `text/csv needs to come from ${DROP_MEDIA_CLOUDFRONT_ORIGIN}`
       );
@@ -112,7 +123,7 @@ export function validateDropMediaAttachment({
   }
 
   if (mimeType === 'text/html') {
-    if (!url.startsWith('https://arweave.net/') && !url.startsWith('ipfs://')) {
+    if (parsedUrl.origin !== ARWEAVE_ORIGIN && parsedUrl.protocol !== 'ipfs:') {
       throw new BadRequestException(
         `text/html needs to be served from IPFS or Arweave`
       );

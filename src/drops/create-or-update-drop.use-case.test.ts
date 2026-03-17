@@ -35,11 +35,41 @@ describe('validateDropMediaAttachment', () => {
     ).toThrow(`text/csv needs to come from ${DROP_MEDIA_CLOUDFRONT_ORIGIN}`);
   });
 
+  it('rejects csv uploads from spoofed CloudFront-like hosts', () => {
+    expect(() =>
+      validateDropMediaAttachment({
+        mimeType: 'text/csv',
+        url: 'https://d3lqz0a4bldqgf.cloudfront.net.evil.com/file.csv',
+        dropType: DropType.CHAT
+      })
+    ).toThrow(`text/csv needs to come from ${DROP_MEDIA_CLOUDFRONT_ORIGIN}`);
+  });
+
   it('preserves html handling', () => {
     expect(() =>
       validateDropMediaAttachment({
         mimeType: 'text/html',
         url: 'https://arweave.net/some-html',
+        dropType: DropType.CHAT
+      })
+    ).not.toThrow();
+  });
+
+  it('rejects html uploads from spoofed Arweave-like hosts', () => {
+    expect(() =>
+      validateDropMediaAttachment({
+        mimeType: 'text/html',
+        url: 'https://arweave.net.evil.com/file.html',
+        dropType: DropType.CHAT
+      })
+    ).toThrow('text/html needs to be served from IPFS or Arweave');
+  });
+
+  it('preserves ipfs html handling', () => {
+    expect(() =>
+      validateDropMediaAttachment({
+        mimeType: 'text/html',
+        url: 'ipfs://bafybeigdyrzt/file.html',
         dropType: DropType.CHAT
       })
     ).not.toThrow();
