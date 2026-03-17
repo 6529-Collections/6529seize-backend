@@ -238,12 +238,7 @@ describe('patchMintingClaim', () => {
       existing.claim_id,
       { forcePool: DbPoolName.WRITE }
     );
-    expect(fetchMintingClaimByClaimIdMock).toHaveBeenNthCalledWith(
-      3,
-      existing.contract,
-      existing.claim_id,
-      { forcePool: DbPoolName.WRITE }
-    );
+    expect(fetchMintingClaimByClaimIdMock).toHaveBeenCalledTimes(2);
     expect(upsertAutomaticAirdropsForPhaseMock).toHaveBeenCalledWith(
       MEMES_CONTRACT,
       existing.claim_id,
