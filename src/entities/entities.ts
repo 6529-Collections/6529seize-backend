@@ -21,6 +21,7 @@ export { Distribution, DistributionNormalized } from './IDistribution';
 export { DistributionPhoto } from './IDistributionPhoto';
 export { MintingMerkleProof } from './IMintingMerkleProof';
 export { MintingMerkleRoot } from './IMintingMerkleRoot';
+export { MintingClaimActionEntity } from './IMintingClaimAction';
 export {
   DropBoostEntity,
   DropEntity,

@@ -217,30 +217,42 @@ export async function fetchDistributionOverview(
   );
 
   const automaticAirdropsResult = await sqlExecutor.execute<{
-    addresses_count: number;
-    total_count: number;
+    artist_addresses_count: number;
+    artist_total_count: number;
+    team_addresses_count: number;
+    team_total_count: number;
   }>(
-    `SELECT COUNT(DISTINCT wallet) as addresses_count, COALESCE(SUM(count), 0) as total_count
+    `SELECT
+       COUNT(DISTINCT CASE WHEN phase = :artistPhase THEN wallet END) as artist_addresses_count,
+       COALESCE(SUM(CASE WHEN phase = :artistPhase THEN count ELSE 0 END), 0) as artist_total_count,
+       COUNT(DISTINCT CASE WHEN phase = :teamPhase THEN wallet END) as team_addresses_count,
+       COALESCE(SUM(CASE WHEN phase = :teamPhase THEN count ELSE 0 END), 0) as team_total_count
      FROM ${DISTRIBUTION_TABLE}
      WHERE contract = :contract
-       AND card_id = :cardId
-       AND phase IN (:automaticAirdropPhases)`,
+       AND card_id = :cardId`,
     {
       contract: contractLower,
       cardId,
-      automaticAirdropPhases: [...DISTRIBUTION_AUTOMATIC_AIRDROP_PHASES]
+      artistPhase: DISTRIBUTION_PHASE_AIRDROP_ARTIST,
+      teamPhase: DISTRIBUTION_PHASE_AIRDROP_TEAM
     }
   );
-  const automatic_airdrops_addresses =
-    automaticAirdropsResult[0]?.addresses_count || 0;
-  const automatic_airdrops_count = automaticAirdropsResult[0]?.total_count || 0;
+  const artist_airdrops_addresses =
+    automaticAirdropsResult[0]?.artist_addresses_count || 0;
+  const artist_airdrops_count =
+    automaticAirdropsResult[0]?.artist_total_count || 0;
+  const team_airdrops_addresses =
+    automaticAirdropsResult[0]?.team_addresses_count || 0;
+  const team_airdrops_count = automaticAirdropsResult[0]?.team_total_count || 0;
 
   if (distributionPhases.size === 0) {
     return {
       photos_count,
       is_normalized: false,
-      automatic_airdrops_addresses,
-      automatic_airdrops_count
+      artist_airdrops_addresses,
+      artist_airdrops_count,
+      team_airdrops_addresses,
+      team_airdrops_count
     };
   }
 
@@ -256,8 +268,10 @@ export async function fetchDistributionOverview(
     return {
       photos_count,
       is_normalized: false,
-      automatic_airdrops_addresses,
-      automatic_airdrops_count
+      artist_airdrops_addresses,
+      artist_airdrops_count,
+      team_airdrops_addresses,
+      team_airdrops_count
     };
   }
 
@@ -277,8 +291,10 @@ export async function fetchDistributionOverview(
   return {
     photos_count,
     is_normalized,
-    automatic_airdrops_addresses,
-    automatic_airdrops_count
+    artist_airdrops_addresses,
+    artist_airdrops_count,
+    team_airdrops_addresses,
+    team_airdrops_count
   };
 }
 

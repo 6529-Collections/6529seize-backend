@@ -1,7 +1,9 @@
 import { computeAllowlistMerkle } from '@/api/minting-claims/allowlist-merkle';
 import {
   DISTRIBUTION_AUTOMATIC_AIRDROP_PHASES,
-  DISTRIBUTION_PHASE_AIRDROP
+  DISTRIBUTION_PHASE_AIRDROP,
+  DISTRIBUTION_PHASE_AIRDROP_ARTIST,
+  DISTRIBUTION_PHASE_AIRDROP_TEAM
 } from '@/airdrop-phases';
 import {
   deleteMintingMerkleForPhase,
@@ -221,6 +223,26 @@ export async function insertAutomaticAirdrops(
     contract,
     cardId,
     DISTRIBUTION_PHASE_AIRDROP,
+    airdrops,
+    wrappedConnection,
+    true
+  );
+}
+
+export async function insertAutomaticAirdropsForPhase(
+  contract: string,
+  cardId: number,
+  phase:
+    | typeof DISTRIBUTION_PHASE_AIRDROP
+    | typeof DISTRIBUTION_PHASE_AIRDROP_ARTIST
+    | typeof DISTRIBUTION_PHASE_AIRDROP_TEAM,
+  airdrops: Array<{ address: string; count: number }>,
+  wrappedConnection?: any
+): Promise<void> {
+  await upsertAutomaticAirdropsForPhase(
+    contract,
+    cardId,
+    phase,
     airdrops,
     wrappedConnection,
     true
