@@ -1,7 +1,3 @@
-UPDATE subscriptions_nfts
-SET automatic_subscription = FALSE
-WHERE automatic_subscription = TRUE;
-
 UPDATE subscriptions_nfts subscriptions
 INNER JOIN (
   SELECT latest_subscription_actions.consolidation_key, latest_subscription_actions.token_id
