@@ -1,5 +1,6 @@
 UPDATE subscriptions_nfts
-SET automatic_subscription = FALSE;
+SET automatic_subscription = FALSE
+WHERE automatic_subscription = TRUE;
 
 UPDATE subscriptions_nfts subscriptions
 INNER JOIN (
