@@ -101,6 +101,9 @@ class NFTSubscriptionFields {
 export class NFTSubscription extends NFTSubscriptionFields {
   @Column({ type: 'boolean', default: true })
   subscribed!: boolean;
+
+  @Column({ type: 'boolean', default: false })
+  automatic_subscription!: boolean;
 }
 
 @Entity(SUBSCRIPTIONS_NFTS_FINAL_TABLE)
