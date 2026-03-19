@@ -60,5 +60,25 @@ describe('subscriptionsDaily', () => {
 
       expect(result).toBe(2);
     });
+
+    it('defaults to the stored count when mode is undefined', () => {
+      const result = resolveRequestedSubscriptionCount(
+        buildSubscription(2, true),
+        undefined,
+        3
+      );
+
+      expect(result).toBe(2);
+    });
+
+    it('returns zero when auto all-editions eligibility is zero', () => {
+      const result = resolveRequestedSubscriptionCount(
+        buildSubscription(2, true),
+        buildMode(true),
+        0
+      );
+
+      expect(result).toBe(0);
+    });
   });
 });
