@@ -116,7 +116,8 @@ async function populateAutoSubscriptionsForMemeId(
           contract: MEMES_CONTRACT,
           token_id: newMeme,
           subscribed: true,
-          subscribed_count: subscribedCount
+          subscribed_count: subscribedCount,
+          automatic_subscription: true
         };
         newSubscriptions.push(sub);
         const logText = `Auto-Subscribed to Meme #${newMeme}`;
@@ -210,14 +211,19 @@ async function createFinalSubscriptions(
           sub.consolidation_key
         );
         const affordableCount = Math.floor(balance.balance / MEMES_MINT_PRICE);
+        const requestedCount = resolveRequestedSubscriptionCount(
+          sub,
+          autoSub,
+          eligibilityCount
+        );
         const subscribedCount = Math.min(
           eligibilityCount,
-          sub.subscribed_count,
+          requestedCount,
           affordableCount
         );
-        if (affordableCount < sub.subscribed_count) {
+        if (affordableCount < requestedCount) {
           logger.info(
-            `[CAPPED BY BALANCE] ${sub.consolidation_key} requested x${sub.subscribed_count}, affordable x${affordableCount}, final x${subscribedCount}`
+            `[CAPPED BY BALANCE] ${sub.consolidation_key} requested x${requestedCount}, affordable x${affordableCount}, final x${subscribedCount}`
           );
         }
         const finalSub: NFTFinalSubscription = {
@@ -276,6 +282,26 @@ async function createFinalSubscriptions(
   });
 
   return { finalSubscriptions, newSubscriptionLogs };
+}
+
+export function resolveRequestedSubscriptionCount(
+  subscription: Pick<
+    NFTSubscription,
+    'subscribed_count' | 'automatic_subscription'
+  >,
+  autoSubscription:
+    | Pick<SubscriptionMode, 'subscribe_all_editions'>
+    | undefined,
+  eligibilityCount: number
+): number {
+  if (
+    autoSubscription?.subscribe_all_editions &&
+    subscription.automatic_subscription
+  ) {
+    return eligibilityCount;
+  }
+
+  return subscription.subscribed_count;
 }
 
 async function uploadFinalSubscriptions(

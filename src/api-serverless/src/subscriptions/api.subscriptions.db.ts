@@ -226,9 +226,11 @@ async function updateSubscriptionsAfterModeChange(
     promises.push(
       sqlExecutor.execute(
         `
-        INSERT INTO ${SUBSCRIPTIONS_NFTS_TABLE} (consolidation_key, contract, token_id, subscribed)
-        VALUES (:consolidationKey, :contract, :tokenId, :subscribed)
-        ON DUPLICATE KEY UPDATE subscribed = VALUES(subscribed)
+        UPDATE ${SUBSCRIPTIONS_NFTS_TABLE}
+        SET subscribed = :subscribed
+        WHERE consolidation_key = :consolidationKey
+          AND contract = :contract
+          AND token_id = :tokenId
         `,
         {
           consolidationKey,
@@ -456,9 +458,9 @@ export async function updateSubscription(
 
       await sqlExecutor.execute(
         `
-        INSERT INTO ${SUBSCRIPTIONS_NFTS_TABLE} (consolidation_key, contract, token_id, subscribed, subscribed_count)
-        VALUES (:consolidation_key, :contract, :token_id, :subscribed, :subscribed_count)
-        ON DUPLICATE KEY UPDATE subscribed = VALUES(subscribed), subscribed_count = VALUES(subscribed_count)
+        INSERT INTO ${SUBSCRIPTIONS_NFTS_TABLE} (consolidation_key, contract, token_id, subscribed, subscribed_count, automatic_subscription)
+        VALUES (:consolidation_key, :contract, :token_id, :subscribed, :subscribed_count, false)
+        ON DUPLICATE KEY UPDATE subscribed = VALUES(subscribed), subscribed_count = VALUES(subscribed_count), automatic_subscription = false
         `,
         {
           consolidation_key: consolidationKey,
@@ -533,9 +535,9 @@ export async function updateSubscriptionCount(
 
       await sqlExecutor.execute(
         `
-          INSERT INTO ${SUBSCRIPTIONS_NFTS_TABLE} (consolidation_key, contract, token_id, subscribed_count)
-          VALUES (:consolidation_key, :contract, :token_id, :subscribed_count)
-          ON DUPLICATE KEY UPDATE subscribed_count = VALUES(subscribed_count)
+          INSERT INTO ${SUBSCRIPTIONS_NFTS_TABLE} (consolidation_key, contract, token_id, subscribed_count, automatic_subscription)
+          VALUES (:consolidation_key, :contract, :token_id, :subscribed_count, false)
+          ON DUPLICATE KEY UPDATE subscribed_count = VALUES(subscribed_count), automatic_subscription = false
         `,
         {
           consolidation_key: consolidationKey,
