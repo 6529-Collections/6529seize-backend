@@ -115,17 +115,31 @@ export async function upsertMintingClaimActionAndGetResponse(
 ): Promise<ApiMintingClaimActionsResponse> {
   const normalizedContract = canonicalizeMintingClaimActionsContract(contract);
   assertSupportedMintingClaimAction(normalizedContract, body.action);
+  const performUpsertAndReadback = async (
+    txCtx: RequestContext
+  ): Promise<ApiMintingClaimActionsResponse> => {
+    await mintingClaimActionsDb.upsertAction(
+      {
+        contract: normalizedContract,
+        claim_id: claimId,
+        action: body.action,
+        completed: body.completed,
+        wallet
+      },
+      txCtx
+    );
 
-  await mintingClaimActionsDb.upsertAction(
-    {
-      contract: normalizedContract,
-      claim_id: claimId,
-      action: body.action,
-      completed: body.completed,
-      wallet
-    },
-    ctx
+    return getMintingClaimActionsResponse(normalizedContract, claimId, txCtx);
+  };
+
+  if (ctx.connection) {
+    return performUpsertAndReadback(ctx);
+  }
+
+  return mintingClaimActionsDb.executeNativeQueriesInTransaction(
+    async (connection) => {
+      const txCtx: RequestContext = { ...ctx, connection };
+      return performUpsertAndReadback(txCtx);
+    }
   );
-
-  return getMintingClaimActionsResponse(normalizedContract, claimId, ctx);
 }
