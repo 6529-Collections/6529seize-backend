@@ -136,6 +136,9 @@ export async function insertMemesMintStatsIfMissing(
     .orIgnore()
     .execute();
 
-  const wasInserted = Number(insertResult?.raw?.affectedRows ?? 0) > 0;
+  const wasInserted =
+    insertResult?.raw !== undefined &&
+    'affectedRows' in insertResult.raw &&
+    Number(insertResult.raw.affectedRows) > 0;
   return wasInserted ? payload : null;
 }
