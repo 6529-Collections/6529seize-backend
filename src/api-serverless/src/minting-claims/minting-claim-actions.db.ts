@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
 import { MINTING_CLAIM_ACTIONS_TABLE } from '@/constants';
-import { type DbQueryOptions } from '@/db-query.options';
 import { RequestContext } from '@/request.context';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
 import { Time } from '@/time';
@@ -21,8 +20,7 @@ export class MintingClaimActionsDb extends LazyDbAccessCompatibleService {
   public async findByContractAndClaimId(
     contract: string,
     claimId: number,
-    ctx: RequestContext,
-    options?: DbQueryOptions
+    ctx: RequestContext
   ): Promise<MintingClaimActionRow[]> {
     try {
       ctx.timer?.start(`${this.constructor.name}->findByContractAndClaimId`);
@@ -47,10 +45,7 @@ export class MintingClaimActionsDb extends LazyDbAccessCompatibleService {
           contract: contract.toLowerCase(),
           claimId
         },
-        {
-          wrappedConnection: ctx.connection,
-          forcePool: options?.forcePool
-        }
+        { wrappedConnection: ctx.connection }
       );
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->findByContractAndClaimId`);

@@ -6,7 +6,6 @@ import {
   mintingClaimActionsDb,
   type MintingClaimActionRow
 } from '@/api/minting-claims/minting-claim-actions.db';
-import { DbPoolName, type DbQueryOptions } from '@/db-query.options';
 import {
   getMintingClaimActionsContractLabel,
   getSupportedMintingClaimActionTypes,
@@ -95,16 +94,14 @@ export function getMintingClaimActionTypesResponse(
 export async function getMintingClaimActionsResponse(
   contract: string,
   claimId: number,
-  ctx: RequestContext,
-  options?: DbQueryOptions
+  ctx: RequestContext
 ): Promise<ApiMintingClaimActionsResponse> {
   const normalizedContract = canonicalizeMintingClaimActionsContract(contract);
   getSupportedMintingClaimActionTypesOrThrow(normalizedContract);
   const rows = await mintingClaimActionsDb.findByContractAndClaimId(
     normalizedContract,
     claimId,
-    ctx,
-    options
+    ctx
   );
   return buildMintingClaimActionsResponse(normalizedContract, claimId, rows);
 }
@@ -118,19 +115,31 @@ export async function upsertMintingClaimActionAndGetResponse(
 ): Promise<ApiMintingClaimActionsResponse> {
   const normalizedContract = canonicalizeMintingClaimActionsContract(contract);
   assertSupportedMintingClaimAction(normalizedContract, body.action);
+  const performUpsertAndReadback = async (
+    txCtx: RequestContext
+  ): Promise<ApiMintingClaimActionsResponse> => {
+    await mintingClaimActionsDb.upsertAction(
+      {
+        contract: normalizedContract,
+        claim_id: claimId,
+        action: body.action,
+        completed: body.completed,
+        wallet
+      },
+      txCtx
+    );
 
-  await mintingClaimActionsDb.upsertAction(
-    {
-      contract: normalizedContract,
-      claim_id: claimId,
-      action: body.action,
-      completed: body.completed,
-      wallet
-    },
-    ctx
+    return getMintingClaimActionsResponse(normalizedContract, claimId, txCtx);
+  };
+
+  if (ctx.connection) {
+    return performUpsertAndReadback(ctx);
+  }
+
+  return mintingClaimActionsDb.executeNativeQueriesInTransaction(
+    async (connection) => {
+      const txCtx: RequestContext = { ...ctx, connection };
+      return performUpsertAndReadback(txCtx);
+    }
   );
-
-  return getMintingClaimActionsResponse(normalizedContract, claimId, ctx, {
-    forcePool: DbPoolName.WRITE
-  });
 }
