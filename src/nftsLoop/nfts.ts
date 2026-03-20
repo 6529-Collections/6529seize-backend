@@ -55,7 +55,7 @@ import {
 import { withArweaveFallback } from '@/arweave-gateway-fallback';
 import axios from 'axios';
 import { ethers } from 'ethers';
-import { EntityManager, In, MoreThan, Not } from 'typeorm';
+import { EntityManager, In, MoreThan } from 'typeorm';
 
 const logger = Logger.get('NFTS');
 let activeMode: NFT_MODE | undefined;
