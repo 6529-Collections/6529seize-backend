@@ -1108,14 +1108,51 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     };
   }
 
+  private getLeaderboardUnvotedByMeSqlParts(
+    params: Pick<LeaderboardParams, 'unvoted_by_me'>,
+    voterId: string | null
+  ): {
+    joinClause: string;
+    filterClause: string;
+    sqlParams: { voter_id?: string };
+  } {
+    if (!params.unvoted_by_me) {
+      return {
+        joinClause: '',
+        filterClause: '',
+        sqlParams: {}
+      };
+    }
+    if (!voterId) {
+      throw new Error(
+        'voter_id must be provided when unvoted_by_me is enabled'
+      );
+    }
+    return {
+      joinClause: `left join ${DROP_VOTER_STATE_TABLE} dvs
+        on dvs.drop_id = d.id
+       and dvs.wave_id = :wave_id
+       and dvs.voter_id = :voter_id`,
+      filterClause: `and ifnull(dvs.votes, 0) = 0`,
+      sqlParams: {
+        voter_id: voterId
+      }
+    };
+  }
+
   async findWeightedLeaderboardDrops(
     params: LeaderboardParams,
     ctx: RequestContext,
-    curatorIds: string[] | null = null
+    curatorIds: string[] | null = null,
+    voterId: string | null = null
   ): Promise<DropEntity[]> {
     ctx.timer?.start(`${this.constructor.name}->findWeightedLeaderboardDrops`);
     const hasPriceBounds = this.hasLeaderboardPriceBounds(params);
     const priceSql = this.getLeaderboardPriceSqlParts(hasPriceBounds);
+    const unvotedByMeSql = this.getLeaderboardUnvotedByMeSqlParts(
+      params,
+      voterId
+    );
     const curationFilter = curatorIds?.length
       ? `and exists (
           select 1 from ${DROP_CURATIONS_TABLE} dc
@@ -1142,14 +1179,17 @@ export class DropsDb extends LazyDbAccessCompatibleService {
              )${priceSql.cteClause}
         select d.* from dranks r
         join ${DROPS_TABLE} d on d.id = r.drop_id
+        ${unvotedByMeSql.joinClause}
         ${priceSql.joinClause}
         where 1 = 1
+        ${unvotedByMeSql.filterClause}
         ${priceSql.filterClause}
         order by r.rnk ${params.sort_direction} limit :page_size offset :offset
     `;
     const sqlParams = {
       wave_id: params.wave_id,
       curator_ids: curatorIds,
+      ...unvotedByMeSql.sqlParams,
       ...this.getLeaderboardPriceSqlParams(params, hasPriceBounds),
       page_size: params.page_size,
       offset: params.page_size * (params.page - 1)
@@ -1164,10 +1204,15 @@ export class DropsDb extends LazyDbAccessCompatibleService {
   async findWeightedLeaderboardDropsOrderedByPrediction(
     params: LeaderboardParams,
     ctx: RequestContext,
-    curatorIds: string[] | null = null
+    curatorIds: string[] | null = null,
+    voterId: string | null = null
   ): Promise<DropEntity[]> {
     ctx.timer?.start(
       `${this.constructor.name}->findWeightedLeaderboardDropsOrderedByPrediction`
+    );
+    const unvotedByMeSql = this.getLeaderboardUnvotedByMeSqlParts(
+      params,
+      voterId
     );
     const curationFilter = curatorIds?.length
       ? `and exists (
@@ -1181,16 +1226,19 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         ${priceSql.withClause}
         select d.* from ${WAVE_LEADERBOARD_ENTRIES_TABLE} r
         join ${DROPS_TABLE} d on d.id = r.drop_id
+        ${unvotedByMeSql.joinClause}
         ${priceSql.joinClause}
         where d.drop_type = '${DropType.PARTICIPATORY}'
           and d.wave_id = :wave_id
           ${curationFilter}
+          ${unvotedByMeSql.filterClause}
           ${priceSql.filterClause}
         order by r.vote_on_decision_time ${params.sort_direction} limit :page_size offset :offset
     `;
     const sqlParams = {
       wave_id: params.wave_id,
       curator_ids: curatorIds,
+      ...unvotedByMeSql.sqlParams,
       ...this.getLeaderboardPriceSqlParams(params, hasPriceBounds),
       page_size: params.page_size,
       offset: params.page_size * (params.page - 1)
@@ -1207,10 +1255,15 @@ export class DropsDb extends LazyDbAccessCompatibleService {
   async findWeightedLeaderboardDropsOrderedByTrend(
     params: LeaderboardParams,
     ctx: RequestContext,
-    curatorIds: string[] | null = null
+    curatorIds: string[] | null = null,
+    voterId: string | null = null
   ): Promise<DropEntity[]> {
     ctx.timer?.start(
       `${this.constructor.name}->findWeightedLeaderboardDropsOrderedByTrend`
+    );
+    const unvotedByMeSql = this.getLeaderboardUnvotedByMeSqlParts(
+      params,
+      voterId
     );
     const curationFilter = curatorIds?.length
       ? `and exists (
@@ -1224,16 +1277,19 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         ${priceSql.withClause}
         select d.* from ${WAVE_LEADERBOARD_ENTRIES_TABLE} r
         join ${DROPS_TABLE} d on d.id = r.drop_id
+        ${unvotedByMeSql.joinClause}
         ${priceSql.joinClause}
         where d.wave_id = :wave_id
           and d.drop_type = '${DropType.PARTICIPATORY}'
           ${curationFilter}
+          ${unvotedByMeSql.filterClause}
           ${priceSql.filterClause}
         order by (r.vote_on_decision_time - r.vote) ${params.sort_direction} limit :page_size offset :offset
     `;
     const sqlParams = {
       wave_id: params.wave_id,
       curator_ids: curatorIds,
+      ...unvotedByMeSql.sqlParams,
       ...this.getLeaderboardPriceSqlParams(params, hasPriceBounds),
       page_size: params.page_size,
       offset: params.page_size * (params.page - 1)
@@ -1253,6 +1309,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       wave_id: string;
       limit: number;
       sort_order: PageSortDirection;
+      unvoted_by_me: boolean;
+      voter_id?: string | null;
       curator_ids?: string[] | null;
       price_currency?: string | null;
       min_price?: number | null;
@@ -1265,6 +1323,10 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     );
     const hasPriceBounds = this.hasLeaderboardPriceBounds(params);
     const priceSql = this.getLeaderboardPriceSqlParts(hasPriceBounds);
+    const unvotedByMeSql = this.getLeaderboardUnvotedByMeSqlParts(
+      params,
+      params.voter_id ?? null
+    );
     const curationFilter = params.curator_ids?.length
       ? `and exists (
           select 1 from ${DROP_CURATIONS_TABLE} dc
@@ -1275,10 +1337,12 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       ${priceSql.withClause}
       select d.*
       from ${DROPS_TABLE} d
+      ${unvotedByMeSql.joinClause}
       ${priceSql.joinClause}
       where d.wave_id = :wave_id
         and d.drop_type = '${DropType.PARTICIPATORY}'
         ${curationFilter}
+        ${unvotedByMeSql.filterClause}
         ${priceSql.filterClause}
       order by d.created_at ${params.sort_order} limit :limit offset :offset
     `;
@@ -1286,6 +1350,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       sql,
       {
         wave_id: params.wave_id,
+        ...unvotedByMeSql.sqlParams,
         curator_ids: params.curator_ids ?? null,
         ...this.getLeaderboardPriceSqlParams(params, hasPriceBounds),
         limit: params.limit,
@@ -1305,6 +1370,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       wave_id: string;
       limit: number;
       sort_order: PageSortDirection;
+      unvoted_by_me: boolean;
+      voter_id?: string | null;
       curator_ids?: string[] | null;
       price_currency?: string | null;
       min_price?: number | null;
@@ -1314,6 +1381,10 @@ export class DropsDb extends LazyDbAccessCompatibleService {
   ): Promise<DropEntity[]> {
     ctx.timer?.start(
       `${this.constructor.name}->findWaveParticipationDropsOrderedByNftPrice`
+    );
+    const unvotedByMeSql = this.getLeaderboardUnvotedByMeSqlParts(
+      params,
+      params.voter_id ?? null
     );
     const curationFilter = params.curator_ids?.length
       ? `and exists (
@@ -1325,10 +1396,12 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       with ${this.getLeaderboardDropPricesCteSql()}
       select d.*
       from ${DROPS_TABLE} d
+      ${unvotedByMeSql.joinClause}
       left join drop_prices dp on d.id = dp.drop_id
       where d.wave_id = :wave_id
         and d.drop_type = '${DropType.PARTICIPATORY}'
         ${curationFilter}
+        ${unvotedByMeSql.filterClause}
         and ${this.getLeaderboardPriceFilterSql('dp.drop_price')}
       order by
         (dp.drop_price is null) asc,
@@ -1341,6 +1414,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       sql,
       {
         wave_id: params.wave_id,
+        ...unvotedByMeSql.sqlParams,
         curator_ids: params.curator_ids ?? null,
         price_currency: params.price_currency ?? null,
         min_price: params.min_price ?? null,
@@ -1362,6 +1436,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       limit: number;
       wave_id: string;
       sort_order: PageSortDirection;
+      unvoted_by_me: boolean;
+      voter_id?: string | null;
       curator_ids?: string[] | null;
       price_currency?: string | null;
       min_price?: number | null;
@@ -1372,6 +1448,10 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     ctx.timer?.start(`${this.constructor.name}->findLeaderboardDrops`);
     const hasPriceBounds = this.hasLeaderboardPriceBounds(params);
     const priceSql = this.getLeaderboardPriceSqlParts(hasPriceBounds);
+    const unvotedByMeSql = this.getLeaderboardUnvotedByMeSqlParts(
+      params,
+      params.voter_id ?? null
+    );
     const curationFilter = params.curator_ids?.length
       ? `and exists (
           select 1 from ${DROP_CURATIONS_TABLE} dc
@@ -1396,13 +1476,16 @@ export class DropsDb extends LazyDbAccessCompatibleService {
           )${priceSql.cteClause}
       select d.* from dranks r
       join ${DROPS_TABLE} d on d.id = r.drop_id
+      ${unvotedByMeSql.joinClause}
       ${priceSql.joinClause}
       where 1 = 1
+      ${unvotedByMeSql.filterClause}
       ${priceSql.filterClause}
       order by r.rnk ${params.sort_order} limit :limit offset :offset
     `;
     const sqlParams = {
       wave_id: params.wave_id,
+      ...unvotedByMeSql.sqlParams,
       curator_ids: params.curator_ids ?? null,
       ...this.getLeaderboardPriceSqlParams(params, hasPriceBounds),
       limit: params.limit,
@@ -1422,6 +1505,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       wave_id: string;
       voter_id: string;
       sort_order: PageSortDirection;
+      unvoted_by_me: boolean;
       curator_ids?: string[] | null;
       price_currency?: string | null;
       min_price?: number | null;
@@ -1434,6 +1518,10 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     );
     const hasPriceBounds = this.hasLeaderboardPriceBounds(params);
     const priceSql = this.getLeaderboardPriceSqlParts(hasPriceBounds);
+    const unvotedByMeSql = this.getLeaderboardUnvotedByMeSqlParts(
+      params,
+      params.voter_id
+    );
     const curationFilter = params.curator_ids?.length
       ? `and exists (
           select 1 from ${DROP_CURATIONS_TABLE} dc
@@ -1461,8 +1549,12 @@ export class DropsDb extends LazyDbAccessCompatibleService {
           )${priceSql.cteClause}
       select d.* from dranks r
       join ${DROPS_TABLE} d on d.id = r.drop_id
+      ${unvotedByMeSql.joinClause}
       ${priceSql.joinClause}
-      where r.vote <> 0
+      where 1 = 1
+        ${
+          params.unvoted_by_me ? unvotedByMeSql.filterClause : 'and r.vote <> 0'
+        }
         ${priceSql.filterClause}
       order by r.rnk ${params.sort_order} limit :limit offset :offset
     `;
@@ -1486,11 +1578,16 @@ export class DropsDb extends LazyDbAccessCompatibleService {
   async countParticipatoryDrops(
     params: LeaderboardParams,
     ctx: RequestContext,
-    curatorIds: string[] | null = null
+    curatorIds: string[] | null = null,
+    voterId: string | null = null
   ): Promise<number> {
     ctx.timer?.start(`${this.constructor.name}->countLeaderboardDrops`);
     const hasPriceBounds = this.hasLeaderboardPriceBounds(params);
     const priceSql = this.getLeaderboardPriceSqlParts(hasPriceBounds);
+    const unvotedByMeSql = this.getLeaderboardUnvotedByMeSqlParts(
+      params,
+      voterId
+    );
     const curationFilter = curatorIds?.length
       ? `and exists (
           select 1 from ${DROP_CURATIONS_TABLE} dc
@@ -1500,9 +1597,11 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     const countSql = `
         ${priceSql.withClause}
         select count(*) as cnt from ${DROPS_TABLE} d
+        ${unvotedByMeSql.joinClause}
         ${priceSql.joinClause}
         where d.wave_id = :wave_id and d.drop_type = :drop_type
         ${curationFilter}
+          ${unvotedByMeSql.filterClause}
           ${priceSql.filterClause}
         `;
     const count = await this.db
@@ -1511,6 +1610,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         {
           wave_id: params.wave_id,
           drop_type: DropType.PARTICIPATORY,
+          ...unvotedByMeSql.sqlParams,
           curator_ids: curatorIds,
           ...this.getLeaderboardPriceSqlParams(params, hasPriceBounds)
         },
@@ -2319,6 +2419,7 @@ export interface LeaderboardParams {
   readonly sort_direction: PageSortDirection;
   readonly sort: LeaderboardSort;
   readonly curated_by_group: string | null;
+  readonly unvoted_by_me: boolean;
   readonly price_currency: string | null;
   readonly min_price: number | null;
   readonly max_price: number | null;

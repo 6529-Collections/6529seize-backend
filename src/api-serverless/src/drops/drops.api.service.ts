@@ -636,6 +636,11 @@ export class DropsApiService {
         `User is authenticated as proxy but doesn't have persmission to read waves`
       );
     }
+    if (params.unvoted_by_me && authenticatedProfileId === null) {
+      throw new BadRequestException(
+        `User must be authenticated to use unvoted_by_me`
+      );
+    }
     const groupIdsUserIsEligibleFor =
       await this.userGroupsService.getGroupsUserIsEligibleFor(
         authenticatedProfileId
@@ -739,13 +744,15 @@ export class DropsApiService {
     const count = await this.dropsDb.countParticipatoryDrops(
       params,
       ctx,
-      curatorIdsFilter
+      curatorIdsFilter,
+      authenticatedProfileId
     );
     const drops = await this.findLeaderboardDrops(
       params,
       isTimeLockedWave,
       ctx,
-      curatorIdsFilter
+      curatorIdsFilter,
+      authenticatedProfileId
     ).then(async (drops) => {
       ctx.timer?.start(`${this.constructor.name}->convertLeaderboardDrops`);
       const results = await this.dropsMappers.convertToDropsWithoutWaves(
@@ -768,7 +775,8 @@ export class DropsApiService {
     params: LeaderboardParams,
     isTimeLockedWave: boolean,
     ctx: RequestContext,
-    curatorIdsFilter: string[] | null
+    curatorIdsFilter: string[] | null,
+    authenticatedProfileId: string | null
   ): Promise<DropEntity[]> {
     if (params.sort === LeaderboardSort.PRICE) {
       return this.dropsDb.findWaveParticipationDropsOrderedByNftPrice(
@@ -778,6 +786,8 @@ export class DropsApiService {
           offset: (params.page - 1) * params.page_size,
           sort_order: params.sort_direction,
           curator_ids: curatorIdsFilter,
+          unvoted_by_me: params.unvoted_by_me,
+          voter_id: authenticatedProfileId,
           price_currency: params.price_currency,
           min_price: params.min_price,
           max_price: params.max_price
@@ -793,6 +803,8 @@ export class DropsApiService {
           offset: (params.page - 1) * params.page_size,
           sort_order: params.sort_direction,
           curator_ids: curatorIdsFilter,
+          unvoted_by_me: params.unvoted_by_me,
+          voter_id: authenticatedProfileId,
           price_currency: params.price_currency,
           min_price: params.min_price,
           max_price: params.max_price
@@ -805,24 +817,27 @@ export class DropsApiService {
         return this.dropsDb.findWeightedLeaderboardDrops(
           params,
           ctx,
-          curatorIdsFilter
+          curatorIdsFilter,
+          authenticatedProfileId
         );
       } else if (params.sort === LeaderboardSort.RATING_PREDICTION) {
         return this.dropsDb.findWeightedLeaderboardDropsOrderedByPrediction(
           params,
           ctx,
-          curatorIdsFilter
+          curatorIdsFilter,
+          authenticatedProfileId
         );
       } else if (params.sort === LeaderboardSort.TREND) {
         return this.dropsDb.findWeightedLeaderboardDropsOrderedByTrend(
           params,
           ctx,
-          curatorIdsFilter
+          curatorIdsFilter,
+          authenticatedProfileId
         );
       }
     }
     if (params.sort === LeaderboardSort.MY_REALTIME_VOTE) {
-      const voterId = ctx.authenticationContext?.getActingAsId();
+      const voterId = authenticatedProfileId;
       if (!voterId) {
         throw new BadRequestException(
           `Can't sort by voter votes as the user is not authenticated`
@@ -836,6 +851,7 @@ export class DropsApiService {
           offset: (params.page - 1) * params.page_size,
           sort_order: params.sort_direction,
           curator_ids: curatorIdsFilter,
+          unvoted_by_me: params.unvoted_by_me,
           price_currency: params.price_currency,
           min_price: params.min_price,
           max_price: params.max_price
@@ -850,6 +866,8 @@ export class DropsApiService {
         offset: (params.page - 1) * params.page_size,
         sort_order: params.sort_direction,
         curator_ids: curatorIdsFilter,
+        unvoted_by_me: params.unvoted_by_me,
+        voter_id: authenticatedProfileId,
         price_currency: params.price_currency,
         min_price: params.min_price,
         max_price: params.max_price
