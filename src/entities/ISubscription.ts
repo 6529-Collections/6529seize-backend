@@ -2,6 +2,7 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  Index,
   PrimaryColumn,
   PrimaryGeneratedColumn,
   Unique,
@@ -107,6 +108,7 @@ export class NFTSubscription extends NFTSubscriptionFields {
 }
 
 @Entity(SUBSCRIPTIONS_NFTS_FINAL_TABLE)
+@Index('idx_subscriptions_final_contract_token', ['contract', 'token_id'])
 @Unique(['consolidation_key', 'contract', 'token_id'])
 export class NFTFinalSubscription extends NFTSubscriptionFields {
   @Column({ type: 'text' })
