@@ -6,6 +6,7 @@ import {
   mintingClaimActionsDb,
   type MintingClaimActionRow
 } from '@/api/minting-claims/minting-claim-actions.db';
+import { DbPoolName, type DbQueryOptions } from '@/db-query.options';
 import {
   getMintingClaimActionsContractLabel,
   getSupportedMintingClaimActionTypes,
@@ -94,14 +95,16 @@ export function getMintingClaimActionTypesResponse(
 export async function getMintingClaimActionsResponse(
   contract: string,
   claimId: number,
-  ctx: RequestContext
+  ctx: RequestContext,
+  options?: DbQueryOptions
 ): Promise<ApiMintingClaimActionsResponse> {
   const normalizedContract = canonicalizeMintingClaimActionsContract(contract);
   getSupportedMintingClaimActionTypesOrThrow(normalizedContract);
   const rows = await mintingClaimActionsDb.findByContractAndClaimId(
     normalizedContract,
     claimId,
-    ctx
+    ctx,
+    options
   );
   return buildMintingClaimActionsResponse(normalizedContract, claimId, rows);
 }
@@ -127,5 +130,7 @@ export async function upsertMintingClaimActionAndGetResponse(
     ctx
   );
 
-  return getMintingClaimActionsResponse(normalizedContract, claimId, ctx);
+  return getMintingClaimActionsResponse(normalizedContract, claimId, ctx, {
+    forcePool: DbPoolName.WRITE
+  });
 }
