@@ -103,7 +103,7 @@ export async function evictAllKeysMatchingPatternFromRedisCache(
   }
   let cursor = 0;
   do {
-    const result = await redis.scan(cursor, { MATCH: pattern, COUNT: 100 });
+    const result = await redis.scan(cursor, { MATCH: pattern, COUNT: 1000 });
     cursor = result.cursor;
     if (result.keys.length > 0) {
       await redis.del(result.keys);

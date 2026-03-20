@@ -17,6 +17,12 @@ export interface AllowlistNormalizedEntry {
 }
 
 @Entity({ name: DISTRIBUTION_TABLE })
+@Index('idx_distribution_contract_card_phase_wallet', [
+  'contract',
+  'card_id',
+  'phase',
+  'wallet'
+])
 @Index(['wallet', 'phase', 'card_id', 'contract'], { unique: true })
 export class Distribution {
   @CreateDateColumn({ type: 'datetime' })
