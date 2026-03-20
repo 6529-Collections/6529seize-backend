@@ -1081,7 +1081,7 @@ async function populateMintStats(
   const payload = await upsertMemesMintStats(tokenId, mintDate);
 
   logInfo(
-    `✅ Mint stats upserted for meme #${tokenId} [mint_count=${payload.total_count}] [proceeds_eth=${payload.proceeds_eth}] [proceeds_usd=${payload.proceeds_usd}] [artist_split_eth=${payload.artist_split_eth}] [artist_split_usd=${payload.artist_split_usd}]`
+    `✅ Mint stats upserted for meme #${tokenId} [total_count=${payload.total_count}] [mint_count=${payload.mint_count}] [subscriptions_count=${payload.subscriptions_count}] [proceeds_eth=${payload.proceeds_eth}] [proceeds_usd=${payload.proceeds_usd}] [artist_split_eth=${payload.artist_split_eth}] [artist_split_usd=${payload.artist_split_usd}]`
   );
 }
 
