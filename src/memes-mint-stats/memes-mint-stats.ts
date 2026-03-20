@@ -139,3 +139,30 @@ export async function insertMemesMintStatsIfMissing(
   const wasInserted = Number(insertResult?.raw?.affectedRows ?? 0) > 0;
   return wasInserted ? payload : null;
 }
+
+export async function upsertMemesMintStats(
+  tokenId: number,
+  mintDate: Date
+): Promise<MemesMintStatsPayload> {
+  const payload = await calculateMemesMintStatsPayload(tokenId, mintDate);
+
+  await getDataSource()
+    .getRepository(MemesMintStat)
+    .createQueryBuilder()
+    .insert()
+    .into(MemesMintStat)
+    .values(payload)
+    .orUpdate([
+      'mint_date',
+      'mint_count',
+      'direct_mint_count',
+      'subscriptions_count',
+      'proceeds_eth',
+      'proceeds_usd',
+      'artist_split_eth',
+      'artist_split_usd'
+    ])
+    .execute();
+
+  return payload;
+}
