@@ -63,11 +63,59 @@ import {
 } from '@/api/subscriptions/api.subscriptions.db';
 
 const allowlistLogger = Logger.get('SUBSCRIPTIONS_ALLOWLIST');
+const CACHE_EVICTION_TIMEOUT_MS = 1_500;
 
 async function evictCacheForPath(path: string) {
   await evictAllKeysMatchingPatternFromRedisCache(
     getCacheKeyPatternForPath(`${path}*`)
   );
+}
+
+async function evictCacheForPathWithTimeout(
+  contract: string,
+  tokenId: number,
+  cacheEviction: {
+    label: string;
+    path: string;
+  }
+) {
+  const startedAt = Date.now();
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const evictionPromise = evictCacheForPath(cacheEviction.path).finally(
+      () => {
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+        }
+      }
+    );
+
+    await Promise.race([
+      evictionPromise,
+      new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => {
+          reject(
+            new Error(
+              `Timed out after ${CACHE_EVICTION_TIMEOUT_MS}ms while evicting ${cacheEviction.label} cache`
+            )
+          );
+        }, CACHE_EVICTION_TIMEOUT_MS);
+      })
+    ]);
+
+    allowlistLogger.info(
+      `[CACHE_EVICT_DONE] [contract ${contract}] [token_id ${tokenId}] [cache ${cacheEviction.label}] [elapsed_ms ${
+        Date.now() - startedAt
+      }]`
+    );
+  } catch (error) {
+    allowlistLogger.warn(
+      `[CACHE_EVICT_FAILED] [contract ${contract}] [token_id ${tokenId}] [cache ${cacheEviction.label}] [elapsed_ms ${
+        Date.now() - startedAt
+      }]`,
+      error
+    );
+  }
 }
 
 async function invalidateMintingClaimsPhaseCache(
@@ -85,19 +133,11 @@ async function invalidateMintingClaimsPhaseCache(
     }
   ];
 
-  const results = await Promise.allSettled(
-    cacheEvictions.map(({ path }) => evictCacheForPath(path))
+  await Promise.allSettled(
+    cacheEvictions.map((cacheEviction) =>
+      evictCacheForPathWithTimeout(contract, tokenId, cacheEviction)
+    )
   );
-
-  results.forEach((result, index) => {
-    if (result.status === 'rejected') {
-      const cacheEviction = cacheEvictions[index];
-      allowlistLogger.error(
-        `Failed to evict ${cacheEviction.label} cache for ${contract}#${tokenId} (${cacheEviction.path})`,
-        result.reason
-      );
-    }
-  });
 }
 
 async function invalidateSubscriptionCache(consolidationKey: string) {
@@ -826,6 +866,13 @@ router.post(
     const contract = req.params.contract;
     const tokenIdStr = req.params.token_id;
     const allowlistId = req.params.allowlist_id;
+    const resetTimer = new Timer(
+      `subscriptions-allowlist-reset:${contract}:${tokenIdStr}:${allowlistId}`
+    );
+
+    allowlistLogger.info(
+      `[RESET_START] [contract ${contract}] [token_id ${tokenIdStr}] [allowlist_id ${allowlistId}]`
+    );
 
     const tokenId = numbers.parseIntOrNull(tokenIdStr);
     if (tokenId === null) {
@@ -842,13 +889,29 @@ router.post(
       );
     }
 
+    resetTimer.start('validateDistribution');
     const validate = await validateDistribution(auth, allowlistId);
+    resetTimer.stop('validateDistribution');
+    allowlistLogger.info(
+      `[RESET_VALIDATE_DONE] [contract ${contract}] [token_id ${tokenId}] [allowlist_id ${allowlistId}] [${resetTimer.getReport()}]`
+    );
     if (!validate.valid) {
       return res.status(400).send(validate);
     }
 
+    resetTimer.start('resetAllowlist');
     await resetAllowlist(contract, tokenId);
+    resetTimer.stop('resetAllowlist');
+    allowlistLogger.info(
+      `[RESET_ALLOWLIST_DONE] [contract ${contract}] [token_id ${tokenId}] [allowlist_id ${allowlistId}] [${resetTimer.getReport()}]`
+    );
+
+    resetTimer.start('invalidateMintingClaimsPhaseCache');
     await invalidateMintingClaimsPhaseCache(contract, tokenId);
+    resetTimer.stop('invalidateMintingClaimsPhaseCache');
+    allowlistLogger.info(
+      `[RESET_DONE] [contract ${contract}] [token_id ${tokenId}] [allowlist_id ${allowlistId}] [${resetTimer.getReport()}]`
+    );
 
     return res.json({
       success: true,
