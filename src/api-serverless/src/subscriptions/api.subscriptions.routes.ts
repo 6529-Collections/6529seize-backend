@@ -80,11 +80,20 @@ async function evictCacheForPathWithTimeout(
   }
 ) {
   const startedAt = Date.now();
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
   try {
+    const evictionPromise = evictCacheForPath(cacheEviction.path).finally(
+      () => {
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+        }
+      }
+    );
+
     await Promise.race([
-      evictCacheForPath(cacheEviction.path),
+      evictionPromise,
       new Promise<never>((_, reject) => {
-        setTimeout(() => {
+        timeoutId = setTimeout(() => {
           reject(
             new Error(
               `Timed out after ${CACHE_EVICTION_TIMEOUT_MS}ms while evicting ${cacheEviction.label} cache`
