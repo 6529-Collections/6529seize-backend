@@ -22,26 +22,14 @@ type RedeemedAggregateRow = {
   redeemedUsdPrice: number | string | null;
 };
 
-export type MemesMintStatsPayload = {
-  id: number;
-  mint_date: Date;
-  total_count: number;
-  mint_count: number;
-  subscriptions_count: number;
-  proceeds_eth: number;
-  proceeds_usd: number;
-  artist_split_eth: number;
-  artist_split_usd: number;
-};
-
 function roundUsd(amount: number): number {
   return Math.round((amount + Number.EPSILON) * 100) / 100;
 }
 
-export async function calculateMemesMintStatsPayload(
+export async function calculateMemesMintStats(
   tokenId: number,
   mintDate: Date
-): Promise<MemesMintStatsPayload> {
+): Promise<MemesMintStat> {
   const mintTransactions = await sqlExecutor.execute<MintTransactionRow>(
     `SELECT token_count, eth_price_usd
     FROM ${TRANSACTIONS_TABLE}
@@ -120,14 +108,14 @@ export async function calculateMemesMintStatsPayload(
 export async function insertMemesMintStatsIfMissing(
   tokenId: number,
   mintDate: Date
-): Promise<MemesMintStatsPayload | null> {
+): Promise<MemesMintStat | null> {
   const repo = getDataSource().getRepository(MemesMintStat);
-  const exists = await repo.exist({ where: { id: tokenId } });
+  const exists = await repo.existsBy({ id: tokenId });
   if (exists) {
     return null;
   }
 
-  const payload = await calculateMemesMintStatsPayload(tokenId, mintDate);
+  const payload = await calculateMemesMintStats(tokenId, mintDate);
   const insertResult = await repo
     .createQueryBuilder()
     .insert()
@@ -136,7 +124,10 @@ export async function insertMemesMintStatsIfMissing(
     .orIgnore()
     .execute();
 
-  const wasInserted = Number(insertResult?.raw?.affectedRows ?? 0) > 0;
+  const wasInserted =
+    insertResult?.raw !== undefined &&
+    'affectedRows' in insertResult.raw &&
+    Number(insertResult.raw.affectedRows) > 0;
   return wasInserted ? payload : null;
 }
 
