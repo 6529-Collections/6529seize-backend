@@ -6,6 +6,7 @@ import {
   SUBSCRIPTIONS_REDEEMED_TABLE,
   TRANSACTIONS_TABLE
 } from '@/constants';
+import { getDataSource } from '@/db';
 import { MemesMintStat } from '@/entities/IMemesMintStat';
 import { sqlExecutor } from '@/sql-executor';
 
