@@ -36,7 +36,7 @@ import {
   resolveAuditS3CheckConcurrency
 } from '@/nftsLoop/s3-uploader-audit';
 import { publishPendingS3UploaderOutboxJobs } from '@/nftsLoop/s3-uploader-outbox.publisher';
-import { upsertMemesMintStats } from '@/memes-mint-stats/memes-mint-stats';
+import { insertMemesMintStatsIfMissing } from '@/memes-mint-stats/memes-mint-stats';
 import {
   getPayloadPreview,
   isPlainObject,
@@ -1078,10 +1078,14 @@ async function populateMintStats(
 ): Promise<void> {
   logger.info(`🔄 Populating mint stats for meme #${tokenId}`);
 
-  const payload = await upsertMemesMintStats(tokenId, mintDate);
+  const payload = await insertMemesMintStatsIfMissing(tokenId, mintDate);
+  if (!payload) {
+    logger.info(`ℹ️ Mint stats already exist for meme #${tokenId}, skipping`);
+    return;
+  }
 
   logInfo(
-    `✅ Mint stats upserted for meme #${tokenId} [total_count=${payload.total_count}] [mint_count=${payload.mint_count}] [subscriptions_count=${payload.subscriptions_count}] [proceeds_eth=${payload.proceeds_eth}] [proceeds_usd=${payload.proceeds_usd}] [artist_split_eth=${payload.artist_split_eth}] [artist_split_usd=${payload.artist_split_usd}]`
+    `✅ Mint stats inserted for meme #${tokenId} [total_count=${payload.total_count}] [mint_count=${payload.mint_count}] [subscriptions_count=${payload.subscriptions_count}] [proceeds_eth=${payload.proceeds_eth}] [proceeds_usd=${payload.proceeds_usd}] [artist_split_eth=${payload.artist_split_eth}] [artist_split_usd=${payload.artist_split_usd}]`
   );
 }
 
