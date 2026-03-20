@@ -134,8 +134,8 @@ export async function insertMemesMintStatsIfMissing(
 export async function upsertMemesMintStats(
   tokenId: number,
   mintDate: Date
-): Promise<MemesMintStatsPayload> {
-  const payload = await calculateMemesMintStatsPayload(tokenId, mintDate);
+): Promise<MemesMintStat> {
+  const payload = await calculateMemesMintStats(tokenId, mintDate);
 
   await getDataSource()
     .getRepository(MemesMintStat)
