@@ -1155,7 +1155,9 @@ async function populateMintStatsIfMissing(
   const payload = {
     id: tokenId,
     mint_date: mintDate,
-    mint_count: totalMintCount,
+    total_count: totalMintCount,
+    mint_count: mintCount,
+    subscriptions_count: redeemedCount,
     proceeds_eth: proceedsEth,
     proceeds_usd: proceedsUsd,
     artist_split_eth: artistSplitEth,

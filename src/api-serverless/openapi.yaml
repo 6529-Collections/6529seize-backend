@@ -9243,7 +9243,9 @@ components:
       required:
         - id
         - mint_date
+        - total_count
         - mint_count
+        - subscriptions_count
         - proceeds_eth
         - proceeds_usd
         - artist_split_eth
@@ -9256,7 +9258,13 @@ components:
           type: string
           format: date-time
           nullable: true
+        total_count:
+          type: integer
+          format: int64
         mint_count:
+          type: integer
+          format: int64
+        subscriptions_count:
           type: integer
           format: int64
         proceeds_eth:
@@ -9285,14 +9293,22 @@ components:
     ApiMemesMintStatsTotals:
       type: object
       required:
+        - total_count
         - mint_count
+        - subscriptions_count
         - proceeds_eth
         - proceeds_usd
         - artist_split_eth
         - artist_split_usd
         - artists_count
       properties:
+        total_count:
+          type: integer
+          format: int64
         mint_count:
+          type: integer
+          format: int64
+        subscriptions_count:
           type: integer
           format: int64
         proceeds_eth:
@@ -9314,7 +9330,9 @@ components:
       type: object
       required:
         - year
+        - total_count
         - mint_count
+        - subscriptions_count
         - proceeds_eth
         - proceeds_usd
         - artist_split_eth
@@ -9323,7 +9341,13 @@ components:
         year:
           type: integer
           format: int64
+        total_count:
+          type: integer
+          format: int64
         mint_count:
+          type: integer
+          format: int64
+        subscriptions_count:
           type: integer
           format: int64
         proceeds_eth:
