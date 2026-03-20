@@ -4,7 +4,6 @@ import {
   MEME_8_EDITION_BURN_ADJUSTMENT,
   MEMELAB_CONTRACT,
   MEMES_CONTRACT,
-  MEMES_MINT_PRICE,
   NFT_HTML_LINK,
   NFT_ORIGINAL_IMAGE_LINK,
   NFT_SCALED1000_IMAGE_LINK,
@@ -23,14 +22,12 @@ import {
   getDataSource,
   persistArtists
 } from '@/db';
-import { MemesMintStat } from '@/entities/IMemesMintStat';
 import { LabNFT, NFT, NFTWithExtendedData } from '@/entities/INFT';
 import { NFTOwner } from '@/entities/INFTOwner';
 import {
   S3UploaderOutboxEntity,
   S3UploaderOutboxStatus
 } from '@/entities/IS3UploaderOutbox';
-import { RedeemedSubscription } from '@/entities/ISubscription';
 import { Transaction } from '@/entities/ITransaction';
 import { TokenType } from '@/enums';
 import { Logger } from '@/logging';
@@ -39,6 +36,7 @@ import {
   resolveAuditS3CheckConcurrency
 } from '@/nftsLoop/s3-uploader-audit';
 import { publishPendingS3UploaderOutboxJobs } from '@/nftsLoop/s3-uploader-outbox.publisher';
+import { upsertMemesMintStats } from '@/memes-mint-stats/memes-mint-stats';
 import {
   getPayloadPreview,
   isPlainObject,
@@ -57,7 +55,7 @@ import {
 import { withArweaveFallback } from '@/arweave-gateway-fallback';
 import axios from 'axios';
 import { ethers } from 'ethers';
-import { EntityManager, In, MoreThan, Not, Repository } from 'typeorm';
+import { EntityManager, In, MoreThan, Not } from 'typeorm';
 
 const logger = Logger.get('NFTS');
 let activeMode: NFT_MODE | undefined;
@@ -92,7 +90,6 @@ function logError(arg1: any, ...rest: any[]) {
 
 const MINT_DATE_GRACE_PERIOD_DAYS = 7;
 const MEMES_MINT_STATS_CLOSE_HOUR = 17;
-const ARTIST_SPLIT_RATIO = 0.5;
 
 export enum NFT_MODE {
   DISCOVER = 'discover',
@@ -1038,9 +1035,6 @@ function updateHodlRatesForNfts(
 async function populateMintStatsForEligibleNFTs(
   nftMap: Map<string, NftProcessingEntry>
 ) {
-  const statsRepo = getDataSource().getRepository(MemesMintStat);
-  const txRepo = getDataSource().getRepository(Transaction);
-
   for (const { nft } of Array.from(nftMap.values())) {
     if (!equalIgnoreCase(nft.contract, MEMES_CONTRACT) || !nft.mint_date) {
       continue;
@@ -1058,7 +1052,7 @@ async function populateMintStatsForEligibleNFTs(
       continue;
     }
 
-    await populateMintStatsIfMissing(nft.id, mintDate, statsRepo, txRepo);
+    await populateMintStats(nft.id, mintDate);
   }
 }
 
@@ -1078,110 +1072,16 @@ function isMintStatsEligible(mintDate: Date): boolean {
   return Time.now().gte(Time.fromDate(mintCloseAt));
 }
 
-function roundUsd(amount: number): number {
-  return Math.round((amount + Number.EPSILON) * 100) / 100;
-}
-
-async function populateMintStatsIfMissing(
+async function populateMintStats(
   tokenId: number,
-  mintDate: Date,
-  statsRepo: Repository<MemesMintStat>,
-  txRepo: Repository<Transaction>
+  mintDate: Date
 ): Promise<void> {
-  const mintStatsExist = await statsRepo.exist({ where: { id: tokenId } });
-  if (mintStatsExist) {
-    return;
-  }
-
   logger.info(`🔄 Populating mint stats for meme #${tokenId}`);
 
-  const mintTransactions = await txRepo.find({
-    select: ['token_count', 'eth_price_usd'],
-    where: {
-      contract: MEMES_CONTRACT,
-      token_id: tokenId,
-      from_address: In([NULL_ADDRESS, MANIFOLD]),
-      to_address: Not(In([NULL_ADDRESS, MANIFOLD])),
-      value: MoreThan(0)
-    }
-  });
-  const nonZeroEthUsd = mintTransactions
-    .map((tx) => Number(tx.eth_price_usd ?? 0))
-    .filter((v) => v > 0);
-  const fallbackEthUsd =
-    nonZeroEthUsd.length > 0
-      ? nonZeroEthUsd.reduce((sum, v) => sum + v, 0) / nonZeroEthUsd.length
-      : 0;
-
-  const redeemedRepo = getDataSource().getRepository(RedeemedSubscription);
-  const redeemedAgg = await redeemedRepo
-    .createQueryBuilder('rs')
-    .leftJoin(
-      Transaction,
-      't',
-      't.transaction = rs.transaction AND t.contract = rs.contract AND t.token_id = rs.token_id AND LOWER(t.to_address) = LOWER(rs.address)'
-    )
-    .select('COALESCE(SUM(rs.count), 0)', 'redeemedCount')
-    .addSelect(
-      'COALESCE(SUM(rs.count * :mintPrice * COALESCE(NULLIF(t.eth_price_usd, 0), :fallbackEthUsd)), 0)',
-      'redeemedUsdPrice'
-    )
-    .where('rs.contract = :contract', { contract: MEMES_CONTRACT })
-    .andWhere('rs.token_id = :tokenId', { tokenId })
-    .setParameter('mintPrice', MEMES_MINT_PRICE)
-    .setParameter('fallbackEthUsd', fallbackEthUsd)
-    .getRawOne<{
-      redeemedCount: string | number;
-      redeemedUsdPrice: string | number;
-    }>();
-
-  const mintCount = mintTransactions.reduce(
-    (sum, tx) => sum + Number(tx.token_count ?? 0),
-    0
-  );
-  const mintedUsdPrice = mintTransactions.reduce((sum, tx) => {
-    const ethUsdRaw = Number(tx.eth_price_usd ?? 0);
-    const ethUsd = ethUsdRaw > 0 ? ethUsdRaw : fallbackEthUsd;
-    return sum + Number(tx.token_count ?? 0) * MEMES_MINT_PRICE * ethUsd;
-  }, 0);
-  const redeemedCount = Number(redeemedAgg?.redeemedCount ?? 0);
-  const redeemedUsdPrice = Number(redeemedAgg?.redeemedUsdPrice ?? 0);
-  const totalMintCount = mintCount + redeemedCount;
-  const proceedsEth = totalMintCount * MEMES_MINT_PRICE;
-  const proceedsUsd = roundUsd(mintedUsdPrice + redeemedUsdPrice);
-  const artistSplitEth = proceedsEth * ARTIST_SPLIT_RATIO;
-  const artistSplitUsd = roundUsd(proceedsUsd * ARTIST_SPLIT_RATIO);
-
-  const payload = {
-    id: tokenId,
-    mint_date: mintDate,
-    total_count: totalMintCount,
-    mint_count: mintCount,
-    subscriptions_count: redeemedCount,
-    proceeds_eth: proceedsEth,
-    proceeds_usd: proceedsUsd,
-    artist_split_eth: artistSplitEth,
-    artist_split_usd: artistSplitUsd
-  };
-
-  const insertResult = await statsRepo
-    .createQueryBuilder()
-    .insert()
-    .into(MemesMintStat)
-    .values(payload)
-    .orIgnore()
-    .execute();
-
-  const wasInserted = Number(insertResult?.raw?.affectedRows ?? 0) > 0;
-  if (!wasInserted) {
-    logger.info(
-      `ℹ️ Mint stats already exist for meme #${tokenId}, skipping (likely concurrent insert)`
-    );
-    return;
-  }
+  const payload = await upsertMemesMintStats(tokenId, mintDate);
 
   logInfo(
-    `✅ Mint stats inserted for meme #${tokenId} [mint_count=${totalMintCount}] [proceeds_eth=${proceedsEth}] [proceeds_usd=${proceedsUsd}] [artist_split_eth=${artistSplitEth}] [artist_split_usd=${artistSplitUsd}]`
+    `✅ Mint stats upserted for meme #${tokenId} [mint_count=${payload.total_count}] [proceeds_eth=${payload.proceeds_eth}] [proceeds_usd=${payload.proceeds_usd}] [artist_split_eth=${payload.artist_split_eth}] [artist_split_usd=${payload.artist_split_usd}]`
   );
 }
 
