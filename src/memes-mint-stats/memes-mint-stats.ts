@@ -6,7 +6,6 @@ import {
   SUBSCRIPTIONS_REDEEMED_TABLE,
   TRANSACTIONS_TABLE
 } from '@/constants';
-import { getDataSource } from '@/db';
 import { MemesMintStat } from '@/entities/IMemesMintStat';
 import { sqlExecutor } from '@/sql-executor';
 
@@ -117,29 +116,25 @@ export async function calculateMemesMintStatsPayload(
   };
 }
 
-export async function upsertMemesMintStats(
+export async function insertMemesMintStatsIfMissing(
   tokenId: number,
   mintDate: Date
-): Promise<MemesMintStatsPayload> {
-  const payload = await calculateMemesMintStatsPayload(tokenId, mintDate);
+): Promise<MemesMintStatsPayload | null> {
+  const repo = getDataSource().getRepository(MemesMintStat);
+  const exists = await repo.exist({ where: { id: tokenId } });
+  if (exists) {
+    return null;
+  }
 
-  await getDataSource()
-    .getRepository(MemesMintStat)
+  const payload = await calculateMemesMintStatsPayload(tokenId, mintDate);
+  const insertResult = await repo
     .createQueryBuilder()
     .insert()
     .into(MemesMintStat)
     .values(payload)
-    .orUpdate([
-      'mint_date',
-      'mint_count',
-      'direct_mint_count',
-      'subscriptions_count',
-      'proceeds_eth',
-      'proceeds_usd',
-      'artist_split_eth',
-      'artist_split_usd'
-    ])
+    .orIgnore()
     .execute();
 
-  return payload;
+  const wasInserted = Number(insertResult?.raw?.affectedRows ?? 0) > 0;
+  return wasInserted ? payload : null;
 }
