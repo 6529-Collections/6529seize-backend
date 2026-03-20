@@ -1,63 +1,55 @@
-import {
-  MANIFOLD,
-  MEMES_CONTRACT,
-  MEMES_MINT_STATS_TABLE,
-  NULL_ADDRESS,
-  SUBSCRIPTIONS_REDEEMED_TABLE,
-  TRANSACTIONS_TABLE
-} from '@/constants';
+import { MEMES_CONTRACT, NFTS_TABLE } from '@/constants';
+import { MemesMintStat } from '@/entities/IMemesMintStat';
+import { upsertMemesMintStats } from '@/memes-mint-stats/memes-mint-stats';
+import { Logger } from '@/logging';
+import * as sentryContext from '@/sentry.context';
+import { doInDbContext } from '@/secrets';
 import { sqlExecutor } from '@/sql-executor';
-import { doInDbContext } from '../secrets';
-import { Logger } from '../logging';
-import * as sentryContext from '../sentry.context';
 
 const logger = Logger.get('CUSTOM_REPLAY_LOOP');
+
+type ReplayMemeRow = {
+  id: number;
+  mint_date: Date | string;
+};
 
 export const handler = sentryContext.wrapLambdaHandler(async () => {
   await doInDbContext(
     async () => {
       await replay();
     },
-    { logger }
+    {
+      entities: [MemesMintStat],
+      logger
+    }
   );
 });
 
 async function replay() {
-  await backfillMemesMintStatsCounts();
-}
+  logger.info(`[MEMES MINT STATS REPLAY START]`);
 
-async function backfillMemesMintStatsCounts() {
-  logger.info(`[MEMES MINT STATS BACKFILL START]`);
-
-  const result = await sqlExecutor.execute<any>(
-    `UPDATE ${MEMES_MINT_STATS_TABLE} mms
-    LEFT JOIN (
-      SELECT
-        token_id,
-        COALESCE(SUM(token_count), 0) AS direct_mint_count
-      FROM ${TRANSACTIONS_TABLE}
-      WHERE contract = '${MEMES_CONTRACT}'
-        AND from_address IN ('${NULL_ADDRESS}', '${MANIFOLD}')
-        AND to_address NOT IN ('${NULL_ADDRESS}', '${MANIFOLD}')
-        AND value > 0
-      GROUP BY token_id
-    ) direct_mints ON direct_mints.token_id = mms.id
-    LEFT JOIN (
-      SELECT
-        token_id,
-        COALESCE(SUM(count), 0) AS subscriptions_count
-      FROM ${SUBSCRIPTIONS_REDEEMED_TABLE}
-      WHERE contract = '${MEMES_CONTRACT}'
-      GROUP BY token_id
-    ) subscription_mints ON subscription_mints.token_id = mms.id
-    SET
-      mms.direct_mint_count = COALESCE(direct_mints.direct_mint_count, 0),
-      mms.subscriptions_count = COALESCE(subscription_mints.subscriptions_count, 0)`
+  const memes = await sqlExecutor.execute<ReplayMemeRow>(
+    `SELECT id, mint_date
+    FROM ${NFTS_TABLE}
+    WHERE contract = '${MEMES_CONTRACT}'
+      AND mint_date IS NOT NULL
+    ORDER BY id ASC`
   );
 
-  logger.info(
-    `[MEMES MINT STATS BACKFILL DONE] [affectedRows=${sqlExecutor.getAffectedRows(
-      result
-    )}]`
-  );
+  for (const meme of memes) {
+    const mintDate = new Date(meme.mint_date);
+    if (Number.isNaN(mintDate.getTime())) {
+      logger.warn(
+        `[MEMES MINT STATS REPLAY SKIP] [id=${meme.id}] [invalid_mint_date=${meme.mint_date}]`
+      );
+      continue;
+    }
+
+    const payload = await upsertMemesMintStats(meme.id, mintDate);
+    logger.info(
+      `[MEMES MINT STATS REPLAY UPSERT] [id=${meme.id}] [total_count=${payload.total_count}] [mint_count=${payload.mint_count}] [subscriptions_count=${payload.subscriptions_count}]`
+    );
+  }
+
+  logger.info(`[MEMES MINT STATS REPLAY DONE] [count=${memes.length}]`);
 }
