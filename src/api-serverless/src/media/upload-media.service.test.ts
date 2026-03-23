@@ -37,10 +37,10 @@ describe('UploadMediaService', () => {
     });
 
     expect(first.media_url).toMatch(
-      /^https:\/\/d3lqz0a4bldqgf\.cloudfront\.net\/distribution\/test\/0xabcd\/42\/.+\.JPG$/
+      /^https:\/\/d3lqz0a4bldqgf\.cloudfront\.net\/distribution\/test\/0xabcd\/42-.+\.JPG$/
     );
     expect(second.media_url).toMatch(
-      /^https:\/\/d3lqz0a4bldqgf\.cloudfront\.net\/distribution\/test\/0xabcd\/42\/.+\.JPG$/
+      /^https:\/\/d3lqz0a4bldqgf\.cloudfront\.net\/distribution\/test\/0xabcd\/42-.+\.JPG$/
     );
     expect(first.media_url).not.toBe(second.media_url);
     expect(first.upload_url).toBe('https://signed-upload-url.example');

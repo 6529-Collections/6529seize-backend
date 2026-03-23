@@ -1,38 +1,35 @@
 import { ethers } from 'ethers';
 import { Request, Response } from 'express';
-import { ForbiddenException } from '../../../exceptions';
-import { numbers } from '../../../numbers';
-import {
-  evictKeyFromRedisCache,
-  getRedisCacheKeyForPath
-} from '../../../redis';
-import { DISTRIBUTION_PAGE_SIZE } from '../api-constants';
+import { DISTRIBUTION_PHASE_AIRDROP_ARTIST, DISTRIBUTION_PHASE_AIRDROP_TEAM } from '@/airdrop-phases';
+import { DISTRIBUTION_PAGE_SIZE } from '@/api/api-constants';
 import {
   getPage,
   getPageSize,
   giveReadReplicaTimeToCatchUp,
   returnCSVResult,
   returnPaginatedResult
-} from '../api-helpers';
-import { asyncRouter } from '../async.router';
-import { needsAuthenticatedUser } from '../auth/auth';
-import { cacheRequest } from '../request-cache';
-import { authenticateSubscriptionsAdmin } from '../subscriptions/api.subscriptions.allowlist';
+} from '@/api/api-helpers';
+import { asyncRouter } from '@/api/async.router';
+import { needsAuthenticatedUser } from '@/api/auth/auth';
+import { cacheRequest } from '@/api/request-cache';
+import { authenticateSubscriptionsAdmin } from '@/api/subscriptions/api.subscriptions.allowlist';
+import { ForbiddenException } from '@/exceptions';
+import { numbers } from '@/numbers';
 import {
-  DISTRIBUTION_PHASE_AIRDROP_ARTIST,
-  DISTRIBUTION_PHASE_AIRDROP_TEAM
-} from '@/airdrop-phases';
+  evictKeyFromRedisCache,
+  getRedisCacheKeyForPath
+} from '@/redis';
 import {
   fetchDistributionPhaseAirdrops,
   fetchDistributionOverview,
   fetchDistributionPhases,
   fetchDistributions
-} from './api.distributions.db';
+} from '@/api/distributions/api.distributions.db';
 import {
   insertAutomaticAirdropsForPhase,
   populateDistributionNormalized
-} from './api.distributions.service';
-import { githubDistributionService } from './github-distribution.service';
+} from '@/api/distributions/api.distributions.service';
+import { githubDistributionService } from '@/api/distributions/github-distribution.service';
 
 interface AirdropEntry {
   address: string;
