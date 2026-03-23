@@ -371,6 +371,10 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value != null && typeof value === 'object' && !Array.isArray(value);
 }
 
+function hasOwn(value: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
 function pickKnownKeys(
   value: unknown,
   keys: readonly string[]
@@ -378,7 +382,7 @@ function pickKnownKeys(
   if (!isPlainObject(value)) return null;
   const picked: Record<string, unknown> = {};
   for (const key of keys) {
-    if (Object.hasOwn(value, key)) {
+    if (hasOwn(value, key)) {
       picked[key] = value[key];
     }
   }
@@ -674,18 +678,16 @@ function appendMissingDetailKeysIssue(
   if (details == null) {
     return;
   }
-  const missingKeys = requiredKeys.filter(
-    (key) => !Object.hasOwn(details, key)
-  );
+  const missingKeys = requiredKeys.filter((key) => !hasOwn(details, key));
   if (missingKeys.length > 0) {
     invalid.push(`${label} (missing keys: ${missingKeys.join(', ')})`);
   }
 }
 
 function getMemesAnimationMetadataState(metadata: Record<string, unknown>) {
-  const hasAnimation = Object.hasOwn(metadata, 'animation');
-  const hasAnimationUrl = Object.hasOwn(metadata, 'animation_url');
-  const hasAnimationDetails = Object.hasOwn(metadata, 'animation_details');
+  const hasAnimation = hasOwn(metadata, 'animation');
+  const hasAnimationUrl = hasOwn(metadata, 'animation_url');
+  const hasAnimationDetails = hasOwn(metadata, 'animation_details');
   const animationDetails = metadata.animation_details;
   const hasAnyAnimationFields =
     hasAnimation || hasAnimationUrl || hasAnimationDetails;
@@ -708,7 +710,7 @@ function appendMissingMemesMetadataKeys(
   issues: string[]
 ) {
   const missingKeys = Array.from(MEMES_REQUIRED_METADATA_KEYS).filter(
-    (key) => !Object.hasOwn(metadata, key)
+    (key) => !hasOwn(metadata, key)
   );
   if (missingKeys.length > 0) {
     issues.push(`missing keys: ${missingKeys.join(', ')}`);
@@ -724,7 +726,7 @@ function appendMissingMemesAnimationKeys(
     const missingHtmlAnimationKeys = [
       'animation_details',
       'animation_url'
-    ].filter((key) => !Object.hasOwn(metadata, key));
+    ].filter((key) => !hasOwn(metadata, key));
     if (missingHtmlAnimationKeys.length > 0) {
       issues.push(
         `incomplete html animation keys: ${missingHtmlAnimationKeys.join(', ')}`
@@ -738,7 +740,7 @@ function appendMissingMemesAnimationKeys(
       'animation',
       'animation_url',
       'animation_details'
-    ].filter((key) => !Object.hasOwn(metadata, key));
+    ].filter((key) => !hasOwn(metadata, key));
     if (missingAnimationKeys.length > 0) {
       issues.push(
         `incomplete animation keys: ${missingAnimationKeys.join(', ')}`
@@ -858,15 +860,15 @@ export async function validateMintingClaimReadyForArweaveUpload(
     missing.length === 0 &&
     invalid.length === 0
   ) {
-    appendMemesFinalAttributeSchemaIssues(
+    const finalMemesAttributes = filterMemesAttributesToKnownTraits(
       attributesWithTypeTraits(
         rawAttributes,
         typeMemeId,
         seasonValue,
         claim.claim_id
-      ),
-      invalid
+      )
     );
+    appendMemesFinalAttributeSchemaIssues(finalMemesAttributes, invalid);
     appendMemesMetadataSkeletonIssues(
       buildArweaveMetadataPayload(
         contract,
