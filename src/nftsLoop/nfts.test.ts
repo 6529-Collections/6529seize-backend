@@ -16,4 +16,38 @@ describe('getAnimationPaths', () => {
       getAnimationPaths('0xabc', 1, 'not-a-url', { format: 'HTML' })
     ).toEqual({});
   });
+
+  it('returns original and compressed video paths for mp4 animations', () => {
+    expect(
+      getAnimationPaths('0xabc', 1, 'https://example.com/animation.mp4', {
+        format: 'MP4'
+      })
+    ).toEqual({
+      animation: 'https://d3lqz0a4bldqgf.cloudfront.net/videos/0xabc/1.MP4',
+      compressedAnimation:
+        'https://d3lqz0a4bldqgf.cloudfront.net/videos/0xabc/scaledx750/1.MP4'
+    });
+  });
+
+  it('does not throw on malformed animation_details json', () => {
+    expect(() =>
+      getAnimationPaths(
+        '0xabc',
+        1,
+        'https://example.com/interactive/index.html',
+        '{not-json'
+      )
+    ).not.toThrow();
+
+    expect(
+      getAnimationPaths(
+        '0xabc',
+        1,
+        'https://example.com/interactive/index.html',
+        '{not-json'
+      )
+    ).toEqual({
+      animation: 'https://example.com/interactive/index.html'
+    });
+  });
 });

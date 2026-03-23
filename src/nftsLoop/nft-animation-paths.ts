@@ -1,4 +1,7 @@
+import { Logger } from '@/logging';
 import { NFT_VIDEO_LINK } from '@/constants';
+
+const logger = Logger.get('NFT_ANIMATION_PATHS');
 
 function isValidAnimationUrl(uri: string): boolean {
   try {
@@ -15,10 +18,7 @@ export function getAnimationPaths(
   originalAnimationUrl: string | undefined,
   animationDetails: any
 ) {
-  const parsed =
-    typeof animationDetails === 'string'
-      ? JSON.parse(animationDetails)
-      : animationDetails;
+  const parsed = parseAnimationDetails(animationDetails, contract, tokenId);
   const ext = parsed?.format;
   const base = `${contract}/${tokenId}.${ext}`;
   if (ext === 'HTML') {
@@ -26,7 +26,7 @@ export function getAnimationPaths(
       ? { animation: originalAnimationUrl }
       : {};
   }
-  if (['MP4', 'MOV'].includes(ext)) {
+  if (ext === 'MP4' || ext === 'MOV') {
     return {
       animation: `${NFT_VIDEO_LINK}${base}`,
       compressedAnimation: `${NFT_VIDEO_LINK}${contract}/scaledx750/${tokenId}.${ext}`
@@ -36,4 +36,26 @@ export function getAnimationPaths(
     return { animation: originalAnimationUrl };
   }
   return {};
+}
+
+function parseAnimationDetails(
+  animationDetails: unknown,
+  contract: string,
+  tokenId: number
+): { format?: string } | null {
+  if (!animationDetails) {
+    return null;
+  }
+  if (typeof animationDetails !== 'string') {
+    return animationDetails as { format?: string };
+  }
+  try {
+    return JSON.parse(animationDetails) as { format?: string };
+  } catch (error) {
+    logger.warn(
+      `[ANIMATION_DETAILS_PARSE_FAILED] [contract ${contract}] [token_id ${tokenId}]`,
+      error
+    );
+    return null;
+  }
 }

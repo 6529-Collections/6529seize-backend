@@ -408,7 +408,7 @@ function sanitizeAnimationDetails(
 
 function serializeAnimationDetailsForArweave(
   animationDetails: Record<string, unknown> | null
-) : Record<string, unknown> | null {
+): Record<string, unknown> | null {
   if (animationDetails == null) return null;
   return animationDetails;
 }

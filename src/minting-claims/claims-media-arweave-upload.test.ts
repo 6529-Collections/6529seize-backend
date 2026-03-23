@@ -414,6 +414,13 @@ describe('uploadMintingClaimToArweave', () => {
     expect(result.animationLocationUrl).toBe(
       'https://cdn.example.com/interactive.html'
     );
+    expect(uploadFileMock).toHaveBeenCalledTimes(2);
+    expect(fetchPublicUrlToBufferMock).toHaveBeenCalledTimes(1);
+    expect(
+      fetchPublicUrlToBufferMock.mock.calls.some(
+        ([url]) => url === 'https://cdn.example.com/interactive.html'
+      )
+    ).toBe(false);
     const metadataUploadBuffer = uploadFileMock.mock.calls[1]?.[0] as Buffer;
     const uploadedMetadata = JSON.parse(metadataUploadBuffer.toString('utf8'));
 

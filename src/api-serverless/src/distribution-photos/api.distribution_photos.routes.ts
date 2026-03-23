@@ -1,9 +1,9 @@
 import { Request, Response } from 'express';
 import * as Joi from 'joi';
+import { getPage, getPageSize, returnPaginatedResult } from '@/api/api-helpers';
 import { Logger } from '@/logging';
 import { BadRequestException, ForbiddenException } from '../../../exceptions';
 import { numbers } from '../../../numbers';
-import { getPage, getPageSize, returnPaginatedResult } from '../api-helpers';
 import { ApiResponse } from '../api-response';
 import { asyncRouter } from '../async.router';
 import { needsAuthenticatedUser } from '../auth/auth';

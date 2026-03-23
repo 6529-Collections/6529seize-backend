@@ -18,7 +18,7 @@ import { cacheRequest } from '@/api/request-cache';
 import { authenticateSubscriptionsAdmin } from '@/api/subscriptions/api.subscriptions.allowlist';
 import { ForbiddenException } from '@/exceptions';
 import { numbers } from '@/numbers';
-import { evictKeyFromRedisCache, getRedisCacheKeyForPath } from '@/redis';
+import { evictRedisCacheForPath } from '@/redis';
 import {
   fetchDistributionPhaseAirdrops,
   fetchDistributionOverview,
@@ -164,10 +164,9 @@ async function uploadAutomaticAirdropsForPhase(
 
   await giveReadReplicaTimeToCatchUp();
 
-  const baseCacheKey = getRedisCacheKeyForPath(
+  await evictRedisCacheForPath(
     `/api/distributions/${contract}/${cardId}/overview`
   );
-  await evictKeyFromRedisCache(baseCacheKey);
 
   res.json({
     success: true,
@@ -295,10 +294,9 @@ router.post(
 
     await giveReadReplicaTimeToCatchUp();
 
-    const overviewCacheKey = getRedisCacheKeyForPath(
+    await evictRedisCacheForPath(
       `/api/distributions/${contract}/${cardId}/overview`
     );
-    await evictKeyFromRedisCache(overviewCacheKey);
 
     return res.json({
       success: true,

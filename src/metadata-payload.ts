@@ -37,9 +37,11 @@ function normalizeNestedMetadataFields(
   payload: MetadataPayload
 ): MetadataPayload {
   const normalized = { ...payload };
-  normalized.animation_details = normalizePossiblyStringifiedObject(
-    normalized.animation_details
-  );
+  if ('animation_details' in normalized) {
+    normalized.animation_details = normalizePossiblyStringifiedObject(
+      normalized.animation_details
+    );
+  }
   return normalized;
 }
 
