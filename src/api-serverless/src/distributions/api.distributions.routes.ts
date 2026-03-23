@@ -1,6 +1,9 @@
 import { ethers } from 'ethers';
 import { Request, Response } from 'express';
-import { DISTRIBUTION_PHASE_AIRDROP_ARTIST, DISTRIBUTION_PHASE_AIRDROP_TEAM } from '@/airdrop-phases';
+import {
+  DISTRIBUTION_PHASE_AIRDROP_ARTIST,
+  DISTRIBUTION_PHASE_AIRDROP_TEAM
+} from '@/airdrop-phases';
 import { DISTRIBUTION_PAGE_SIZE } from '@/api/api-constants';
 import {
   getPage,
@@ -15,10 +18,7 @@ import { cacheRequest } from '@/api/request-cache';
 import { authenticateSubscriptionsAdmin } from '@/api/subscriptions/api.subscriptions.allowlist';
 import { ForbiddenException } from '@/exceptions';
 import { numbers } from '@/numbers';
-import {
-  evictKeyFromRedisCache,
-  getRedisCacheKeyForPath
-} from '@/redis';
+import { evictKeyFromRedisCache, getRedisCacheKeyForPath } from '@/redis';
 import {
   fetchDistributionPhaseAirdrops,
   fetchDistributionOverview,
