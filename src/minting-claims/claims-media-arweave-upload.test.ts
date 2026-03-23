@@ -507,18 +507,12 @@ describe('uploadMintingClaimToArweave', () => {
       format: 'PNG',
       sha256: 'a'.repeat(64),
       width: 800,
-      height: 800,
-      ignored: 'keep-me'
+      height: 800
     });
-    expect(uploadedMetadata.animation).toBe(
-      'https://cdn.example.com/interactive.html'
-    );
+    expect(uploadedMetadata.animation).toBeUndefined();
     expect(uploadedMetadata.animation_url).toBe(
       'https://cdn.example.com/interactive.html'
     );
-    expect(uploadedMetadata.animation_details).toEqual({
-      format: 'HTML',
-      ignored: 'keep-me'
-    });
+    expect(uploadedMetadata.animation_details).toBe('{ "format": "HTML" }');
   });
 });
