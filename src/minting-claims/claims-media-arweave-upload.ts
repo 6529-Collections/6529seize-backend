@@ -378,7 +378,7 @@ function pickKnownKeys(
   if (!isPlainObject(value)) return null;
   const picked: Record<string, unknown> = {};
   for (const key of keys) {
-    if (Object.prototype.hasOwnProperty.call(value, key)) {
+    if (Object.hasOwn(value, key)) {
       picked[key] = value[key];
     }
   }
@@ -675,78 +675,133 @@ function appendMissingDetailKeysIssue(
     return;
   }
   const missingKeys = requiredKeys.filter(
-    (key) => !Object.prototype.hasOwnProperty.call(details, key)
+    (key) => !Object.hasOwn(details, key)
   );
   if (missingKeys.length > 0) {
     invalid.push(`${label} (missing keys: ${missingKeys.join(', ')})`);
   }
 }
 
-function appendMemesMetadataSkeletonIssues(
-  metadata: Record<string, unknown>,
-  invalid: string[]
-) {
-  const keys = Object.keys(metadata);
-  const hasAnimation = Object.prototype.hasOwnProperty.call(
-    metadata,
-    'animation'
-  );
-  const hasAnimationUrl = Object.prototype.hasOwnProperty.call(
-    metadata,
-    'animation_url'
-  );
-  const hasAnimationDetails = Object.prototype.hasOwnProperty.call(
-    metadata,
-    'animation_details'
-  );
+function getMemesAnimationMetadataState(metadata: Record<string, unknown>) {
+  const hasAnimation = Object.hasOwn(metadata, 'animation');
+  const hasAnimationUrl = Object.hasOwn(metadata, 'animation_url');
+  const hasAnimationDetails = Object.hasOwn(metadata, 'animation_details');
   const animationDetails = metadata.animation_details;
-
-  const allowedKeys = new Set(MEMES_REQUIRED_METADATA_KEYS);
-  if (
+  const hasAnyAnimationFields =
+    hasAnimation || hasAnimationUrl || hasAnimationDetails;
+  const hasHtmlAnimationDetails =
     typeof animationDetails === 'string' &&
-    (hasAnimation || hasAnimationUrl || hasAnimationDetails)
-  ) {
-    allowedKeys.add('animation_details');
-    allowedKeys.add('animation_url');
-  } else if (hasAnimation || hasAnimationUrl || hasAnimationDetails) {
-    allowedKeys.add('animation_details');
-    allowedKeys.add('animation');
-    allowedKeys.add('animation_url');
-  }
+    animationDetails === HTML_ANIMATION_DETAILS_SERIALIZED;
 
+  return {
+    hasAnimation,
+    hasAnimationUrl,
+    hasAnimationDetails,
+    animationDetails,
+    hasAnyAnimationFields,
+    hasHtmlAnimationDetails
+  };
+}
+
+function appendMissingMemesMetadataKeys(
+  metadata: Record<string, unknown>,
+  issues: string[]
+) {
   const missingKeys = Array.from(MEMES_REQUIRED_METADATA_KEYS).filter(
-    (key) => !Object.prototype.hasOwnProperty.call(metadata, key)
+    (key) => !Object.hasOwn(metadata, key)
   );
-  const issues: string[] = [];
   if (missingKeys.length > 0) {
     issues.push(`missing keys: ${missingKeys.join(', ')}`);
   }
+}
 
-  if (
-    typeof animationDetails === 'string' &&
-    (hasAnimation || hasAnimationUrl || hasAnimationDetails)
-  ) {
+function appendMissingMemesAnimationKeys(
+  metadata: Record<string, unknown>,
+  state: ReturnType<typeof getMemesAnimationMetadataState>,
+  issues: string[]
+) {
+  if (state.hasHtmlAnimationDetails && state.hasAnyAnimationFields) {
     const missingHtmlAnimationKeys = [
       'animation_details',
       'animation_url'
-    ].filter((key) => !Object.prototype.hasOwnProperty.call(metadata, key));
+    ].filter((key) => !Object.hasOwn(metadata, key));
     if (missingHtmlAnimationKeys.length > 0) {
       issues.push(
         `incomplete html animation keys: ${missingHtmlAnimationKeys.join(', ')}`
       );
     }
-  } else if (hasAnimation || hasAnimationUrl || hasAnimationDetails) {
+    return;
+  }
+
+  if (state.hasAnyAnimationFields) {
     const missingAnimationKeys = [
       'animation',
       'animation_url',
       'animation_details'
-    ].filter((key) => !Object.prototype.hasOwnProperty.call(metadata, key));
+    ].filter((key) => !Object.hasOwn(metadata, key));
     if (missingAnimationKeys.length > 0) {
       issues.push(
         `incomplete animation keys: ${missingAnimationKeys.join(', ')}`
       );
     }
   }
+}
+
+function getRequiredAnimationDetailKeys(
+  format: string | null
+): readonly string[] {
+  if (format === 'HTML') {
+    return HTML_ANIMATION_DETAILS_KEYS;
+  }
+  if (format === 'GLB') {
+    return GLB_ANIMATION_DETAILS_KEYS;
+  }
+  return VIDEO_ANIMATION_DETAILS_KEYS;
+}
+
+function appendMemesAnimationDetailsIssues(
+  state: ReturnType<typeof getMemesAnimationMetadataState>,
+  invalid: string[]
+) {
+  if (typeof state.animationDetails === 'string') {
+    if (!state.hasHtmlAnimationDetails) {
+      invalid.push(
+        `MEMES animation_details (must equal ${HTML_ANIMATION_DETAILS_SERIALIZED})`
+      );
+    }
+    return;
+  }
+
+  if (!state.hasAnimationDetails) {
+    return;
+  }
+
+  const objectAnimationDetails = state.animationDetails as Record<
+    string,
+    unknown
+  > | null;
+  const format =
+    objectAnimationDetails != null &&
+    typeof objectAnimationDetails.format === 'string'
+      ? objectAnimationDetails.format
+      : null;
+  appendMissingDetailKeysIssue(
+    'MEMES animation_details',
+    objectAnimationDetails,
+    getRequiredAnimationDetailKeys(format),
+    invalid
+  );
+}
+
+function appendMemesMetadataSkeletonIssues(
+  metadata: Record<string, unknown>,
+  invalid: string[]
+) {
+  const issues: string[] = [];
+  const animationState = getMemesAnimationMetadataState(metadata);
+
+  appendMissingMemesMetadataKeys(metadata, issues);
+  appendMissingMemesAnimationKeys(metadata, animationState, issues);
 
   if (issues.length > 0) {
     invalid.push(`MEMES Metadata (${issues.join('; ')})`);
@@ -758,39 +813,7 @@ function appendMemesMetadataSkeletonIssues(
     IMAGE_DETAILS_KEYS,
     invalid
   );
-
-  if (typeof animationDetails === 'string') {
-    if (animationDetails !== HTML_ANIMATION_DETAILS_SERIALIZED) {
-      invalid.push(
-        `MEMES animation_details (must equal ${HTML_ANIMATION_DETAILS_SERIALIZED})`
-      );
-    }
-    return;
-  }
-
-  if (hasAnimationDetails) {
-    const objectAnimationDetails = animationDetails as Record<
-      string,
-      unknown
-    > | null;
-    const format =
-      objectAnimationDetails != null &&
-      typeof objectAnimationDetails.format === 'string'
-        ? objectAnimationDetails.format
-        : null;
-    const requiredAnimationKeys =
-      format === 'HTML'
-        ? HTML_ANIMATION_DETAILS_KEYS
-        : format === 'GLB'
-          ? GLB_ANIMATION_DETAILS_KEYS
-          : VIDEO_ANIMATION_DETAILS_KEYS;
-    appendMissingDetailKeysIssue(
-      'MEMES animation_details',
-      objectAnimationDetails,
-      requiredAnimationKeys,
-      invalid
-    );
-  }
+  appendMemesAnimationDetailsIssues(animationState, invalid);
 }
 
 export async function validateMintingClaimReadyForArweaveUpload(
@@ -804,8 +827,8 @@ export async function validateMintingClaimReadyForArweaveUpload(
   const memesContract = isMemesContract(contract);
   const missing: string[] = [];
   const invalid: string[] = [];
-  const imageUrl = claim.image_url?.trim() || null;
-  if (imageUrl === null || imageUrl === '') missing.push('Image URL');
+  const imageUrl = claim.image_url?.trim() ?? '';
+  if (imageUrl === '') missing.push('Image URL');
   if (memesContract) {
     appendEditionSizeIssues(claim, missing, invalid);
   }
@@ -848,7 +871,7 @@ export async function validateMintingClaimReadyForArweaveUpload(
       buildArweaveMetadataPayload(
         contract,
         claim,
-        imageUrl as string,
+        imageUrl,
         claim.animation_url?.trim() || null,
         typeMemeId,
         seasonValue
@@ -870,7 +893,7 @@ export async function validateMintingClaimReadyForArweaveUpload(
     throw new BadRequestException(parts.join(' '));
   }
   return {
-    imageUrl: imageUrl as string,
+    imageUrl,
     typeMemeId,
     seasonValue
   };
