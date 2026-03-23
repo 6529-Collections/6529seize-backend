@@ -13,6 +13,7 @@ const METADATA_KEYS_SKIP = new Set([
   'commentary',
   'about_artist',
   'airdrop_config',
+  'allowlist_batches',
   'additional_media'
 ]);
 
