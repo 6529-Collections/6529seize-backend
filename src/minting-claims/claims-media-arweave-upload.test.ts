@@ -411,9 +411,7 @@ describe('uploadMintingClaimToArweave', () => {
       })
     );
 
-    expect(result.animationLocationUrl).toBe(
-      'https://cdn.example.com/interactive.html'
-    );
+    expect(result.animationLocationUrl).toBeNull();
     expect(uploadFileMock).toHaveBeenCalledTimes(2);
     expect(fetchPublicUrlToBufferMock).toHaveBeenCalledTimes(1);
     expect(

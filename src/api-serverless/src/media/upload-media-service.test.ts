@@ -26,7 +26,6 @@ describe('UploadMediaService', () => {
   });
 
   afterEach(() => {
-    jest.clearAllMocks();
     process.env = { ...ORIGINAL_ENV };
   });
 

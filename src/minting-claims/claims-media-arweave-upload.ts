@@ -244,7 +244,7 @@ async function uploadAnimationToArweaveIfPresent(
 
   const details =
     parseJsonOrNull<{ format?: string }>(claim.animation_details) ?? null;
-  if (details?.format === 'HTML') return animationUrl;
+  if (details?.format === 'HTML') return null;
 
   const lowerPath = (() => {
     try {
@@ -406,13 +406,6 @@ function sanitizeAnimationDetails(
   return pickKnownKeys(value, VIDEO_ANIMATION_DETAILS_KEYS);
 }
 
-function serializeAnimationDetailsForArweave(
-  animationDetails: Record<string, unknown> | null
-): Record<string, unknown> | null {
-  if (animationDetails == null) return null;
-  return animationDetails;
-}
-
 function getMemeNameFromAttributes(attributes: unknown): string {
   if (!Array.isArray(attributes))
     throw new BadRequestException('Claim has no attributes');
@@ -558,9 +551,6 @@ function buildArweaveMetadataPayload(
       ? claim.animation_url?.trim() || null
       : null;
   const resolvedAnimationUrl = animationLocation ?? htmlAnimationUrl;
-  const animationDetails = serializeAnimationDetailsForArweave(
-    sanitizedAnimationDetails
-  );
 
   const metadata: Record<string, unknown> = {
     created_by: ARWEAVE_METADATA_CREATED_BY,
@@ -577,14 +567,16 @@ function buildArweaveMetadataPayload(
   metadata.image_url = imageLocation;
   if (
     resolvedAnimationUrl != null &&
-    (animationDetails as { format?: string } | null)?.format === 'HTML'
+    (sanitizedAnimationDetails as { format?: string } | null)?.format === 'HTML'
   ) {
     metadata.animation_url = resolvedAnimationUrl;
   } else if (resolvedAnimationUrl != null) {
     metadata.animation = resolvedAnimationUrl;
     metadata.animation_url = resolvedAnimationUrl;
   }
-  if (animationDetails != null) metadata.animation_details = animationDetails;
+  if (sanitizedAnimationDetails != null) {
+    metadata.animation_details = sanitizedAnimationDetails;
+  }
   return metadata;
 }
 
