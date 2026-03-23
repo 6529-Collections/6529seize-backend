@@ -1,7 +1,7 @@
 import { describe, expect, it, beforeEach, jest } from '@jest/globals';
 import type { MintingClaimRow } from '@/api/minting-claims/api.minting-claims.db';
 import { arweaveFileUploader } from '@/arweave';
-import { MEMES_CONTRACT } from '@/constants';
+import { GRADIENT_CONTRACT, MEMES_CONTRACT } from '@/constants';
 import { fetchPublicUrlToBuffer } from '@/http/safe-fetch';
 import {
   uploadMintingClaimToArweave,
@@ -455,6 +455,70 @@ describe('uploadMintingClaimToArweave', () => {
       bytes: 8133420,
       format: 'GLB',
       sha256: 'b'.repeat(64)
+    });
+  });
+
+  it('preserves non-MEMES metadata shape', async () => {
+    uploadFileMock.mockReset();
+    uploadFileMock
+      .mockResolvedValueOnce({ url: 'https://arweave.net/image-tx' })
+      .mockResolvedValueOnce({ url: 'https://arweave.net/metadata-tx' });
+
+    await uploadMintingClaimToArweave(
+      GRADIENT_CONTRACT,
+      baseClaim({
+        contract: GRADIENT_CONTRACT,
+        attributes: JSON.stringify([
+          ...buildMemesRawAttributes(),
+          {
+            trait_type: 'Allowlist_batches',
+            value: 'keep-me'
+          }
+        ]),
+        image_details: JSON.stringify({
+          bytes: 123,
+          format: 'PNG',
+          sha256: 'a'.repeat(64),
+          width: 800,
+          height: 800,
+          ignored: 'keep-me'
+        }),
+        animation_url: 'https://cdn.example.com/interactive.html',
+        animation_details: JSON.stringify({
+          format: 'HTML',
+          ignored: 'keep-me'
+        })
+      })
+    );
+
+    const metadataUploadBuffer = uploadFileMock.mock.calls[1]?.[0] as Buffer;
+    const uploadedMetadata = JSON.parse(metadataUploadBuffer.toString('utf8'));
+
+    expect(uploadedMetadata.attributes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          trait_type: 'Allowlist_batches',
+          value: 'keep-me'
+        })
+      ])
+    );
+    expect(uploadedMetadata.image_details).toEqual({
+      bytes: 123,
+      format: 'PNG',
+      sha256: 'a'.repeat(64),
+      width: 800,
+      height: 800,
+      ignored: 'keep-me'
+    });
+    expect(uploadedMetadata.animation).toBe(
+      'https://cdn.example.com/interactive.html'
+    );
+    expect(uploadedMetadata.animation_url).toBe(
+      'https://cdn.example.com/interactive.html'
+    );
+    expect(uploadedMetadata.animation_details).toEqual({
+      format: 'HTML',
+      ignored: 'keep-me'
     });
   });
 });
