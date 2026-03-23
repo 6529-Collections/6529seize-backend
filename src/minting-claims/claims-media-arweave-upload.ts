@@ -245,7 +245,7 @@ async function uploadAnimationToArweaveIfPresent(
 
   const details =
     parseJsonOrNull<{ format?: string }>(claim.animation_details) ?? null;
-  if (details?.format === 'HTML') return null;
+  if (details?.format === 'HTML') return animationUrl;
 
   const lowerPath = (() => {
     try {

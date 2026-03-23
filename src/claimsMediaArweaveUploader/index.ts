@@ -1,4 +1,3 @@
-import { getCacheKeyPatternForPath } from '@/api/api-helpers';
 import {
   fetchMintingClaimByClaimId,
   updateMintingClaim
@@ -9,38 +8,12 @@ import {
   uploadMintingClaimToArweave
 } from '@/minting-claims/claims-media-arweave-upload';
 import * as priorityAlertsContext from '@/priority-alerts.context';
-import { evictAllKeysMatchingPatternFromRedisCache } from '@/redis';
 import { doInDbContext } from '@/secrets';
 import * as sentryContext from '@/sentry.context';
 import type { SQSHandler } from 'aws-lambda';
 
 const logger = Logger.get('CLAIMS_MEDIA_ARWEAVE_UPLOADER');
 const ALERT_TITLE = 'Claims Media Arweave Uploader';
-
-async function invalidateClaimCache(
-  contract: string,
-  claimId: number
-): Promise<void> {
-  const patterns = [
-    getCacheKeyPatternForPath(
-      `/api/minting-claims/${contract}/claims/${claimId}*`
-    ),
-    getCacheKeyPatternForPath(`/api/minting-claims/${contract}/claims*`)
-  ];
-
-  for (const pattern of patterns) {
-    try {
-      await evictAllKeysMatchingPatternFromRedisCache(pattern);
-    } catch (error) {
-      logger.warn('Failed to invalidate minting claim cache', {
-        contract,
-        claimId,
-        pattern,
-        error
-      });
-    }
-  }
-}
 
 function parseRecordBody(body: string): { contract: string; claim_id: number } {
   const parsed = JSON.parse(body) as { contract?: unknown; claim_id?: unknown };
@@ -99,14 +72,12 @@ async function processMintingClaimUpload(
       metadata_location: arweaveTxIdFromUrl(uploadResult.metadataLocationUrl),
       media_uploading: false
     });
-    await invalidateClaimCache(contract, claimId);
   } catch (error) {
     logger.error(
       `Failed to upload claim media to Arweave for contract=${contract} claim_id=${claimId}, error=${error}`
     );
     try {
       await updateMintingClaim(contract, claimId, { media_uploading: false });
-      await invalidateClaimCache(contract, claimId);
     } catch (rollbackError) {
       logger.error('Failed to reset media_uploading after upload error', {
         contract,

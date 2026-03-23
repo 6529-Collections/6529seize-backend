@@ -400,7 +400,7 @@ describe('uploadMintingClaimToArweave', () => {
       .mockResolvedValueOnce({ url: 'https://arweave.net/image-tx' })
       .mockResolvedValueOnce({ url: 'https://arweave.net/metadata-tx' });
 
-    await uploadMintingClaimToArweave(
+    const result = await uploadMintingClaimToArweave(
       MEMES_CONTRACT,
       baseClaim({
         animation_url: 'https://cdn.example.com/interactive.html',
@@ -411,6 +411,9 @@ describe('uploadMintingClaimToArweave', () => {
       })
     );
 
+    expect(result.animationLocationUrl).toBe(
+      'https://cdn.example.com/interactive.html'
+    );
     const metadataUploadBuffer = uploadFileMock.mock.calls[1]?.[0] as Buffer;
     const uploadedMetadata = JSON.parse(metadataUploadBuffer.toString('utf8'));
 

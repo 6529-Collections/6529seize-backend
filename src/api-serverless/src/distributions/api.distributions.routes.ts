@@ -2,10 +2,12 @@ import { ethers } from 'ethers';
 import { Request, Response } from 'express';
 import { ForbiddenException } from '../../../exceptions';
 import { numbers } from '../../../numbers';
-import { evictKeyFromRedisCache } from '../../../redis';
+import {
+  evictKeyFromRedisCache,
+  getRedisCacheKeyForPath
+} from '../../../redis';
 import { DISTRIBUTION_PAGE_SIZE } from '../api-constants';
 import {
-  getCacheKeyPatternForPath,
   getPage,
   getPageSize,
   giveReadReplicaTimeToCatchUp,
@@ -165,7 +167,7 @@ async function uploadAutomaticAirdropsForPhase(
 
   await giveReadReplicaTimeToCatchUp();
 
-  const baseCacheKey = getCacheKeyPatternForPath(
+  const baseCacheKey = getRedisCacheKeyForPath(
     `/api/distributions/${contract}/${cardId}/overview`
   );
   await evictKeyFromRedisCache(baseCacheKey);
@@ -296,7 +298,7 @@ router.post(
 
     await giveReadReplicaTimeToCatchUp();
 
-    const overviewCacheKey = getCacheKeyPatternForPath(
+    const overviewCacheKey = getRedisCacheKeyForPath(
       `/api/distributions/${contract}/${cardId}/overview`
     );
     await evictKeyFromRedisCache(overviewCacheKey);
