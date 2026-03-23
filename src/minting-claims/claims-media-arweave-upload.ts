@@ -42,7 +42,6 @@ const VIDEO_ANIMATION_DETAILS_KEYS = [
 ] as const;
 const HTML_ANIMATION_DETAILS_KEYS = ['format'] as const;
 const GLB_ANIMATION_DETAILS_KEYS = ['bytes', 'format', 'sha256'] as const;
-const HTML_ANIMATION_DETAILS_SERIALIZED = '{ "format": "HTML" }';
 const MEMES_REQUIRED_METADATA_KEYS = new Set([
   'created_by',
   'description',
@@ -409,11 +408,8 @@ function sanitizeAnimationDetails(
 
 function serializeAnimationDetailsForArweave(
   animationDetails: Record<string, unknown> | null
-): Record<string, unknown> | string | null {
+) : Record<string, unknown> | null {
   if (animationDetails == null) return null;
-  if (animationDetails.format === 'HTML') {
-    return HTML_ANIMATION_DETAILS_SERIALIZED;
-  }
   return animationDetails;
 }
 
@@ -581,8 +577,7 @@ function buildArweaveMetadataPayload(
   metadata.image_url = imageLocation;
   if (
     resolvedAnimationUrl != null &&
-    typeof animationDetails === 'string' &&
-    animationDetails === HTML_ANIMATION_DETAILS_SERIALIZED
+    (animationDetails as { format?: string } | null)?.format === 'HTML'
   ) {
     metadata.animation_url = resolvedAnimationUrl;
   } else if (resolvedAnimationUrl != null) {
@@ -692,8 +687,9 @@ function getMemesAnimationMetadataState(metadata: Record<string, unknown>) {
   const hasAnyAnimationFields =
     hasAnimation || hasAnimationUrl || hasAnimationDetails;
   const hasHtmlAnimationDetails =
-    typeof animationDetails === 'string' &&
-    animationDetails === HTML_ANIMATION_DETAILS_SERIALIZED;
+    (typeof animationDetails === 'string' &&
+      animationDetails === '{ "format": "HTML" }') ||
+    (isPlainObject(animationDetails) && animationDetails.format === 'HTML');
 
   return {
     hasAnimation,
@@ -767,9 +763,7 @@ function appendMemesAnimationDetailsIssues(
 ) {
   if (typeof state.animationDetails === 'string') {
     if (!state.hasHtmlAnimationDetails) {
-      invalid.push(
-        `MEMES animation_details (must equal ${HTML_ANIMATION_DETAILS_SERIALIZED})`
-      );
+      invalid.push('MEMES animation_details (invalid legacy string value)');
     }
     return;
   }

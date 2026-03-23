@@ -394,7 +394,7 @@ describe('uploadMintingClaimToArweave', () => {
     );
   });
 
-  it('uploads HTML MEMES metadata in the expected legacy shape', async () => {
+  it('uploads HTML MEMES metadata in object shape', async () => {
     uploadFileMock.mockReset();
     uploadFileMock
       .mockResolvedValueOnce({ url: 'https://arweave.net/image-tx' })
@@ -421,7 +421,7 @@ describe('uploadMintingClaimToArweave', () => {
     expect(uploadedMetadata.animation_url).toBe(
       'https://cdn.example.com/interactive.html'
     );
-    expect(uploadedMetadata.animation_details).toBe('{ "format": "HTML" }');
+    expect(uploadedMetadata.animation_details).toEqual({ format: 'HTML' });
   });
 
   it('uploads GLB MEMES metadata in the expected object shape', async () => {
@@ -516,6 +516,6 @@ describe('uploadMintingClaimToArweave', () => {
     expect(uploadedMetadata.animation_url).toBe(
       'https://cdn.example.com/interactive.html'
     );
-    expect(uploadedMetadata.animation_details).toBe('{ "format": "HTML" }');
+    expect(uploadedMetadata.animation_details).toEqual({ format: 'HTML' });
   });
 });
