@@ -266,22 +266,28 @@ export async function syncIdentityMetadataFromMergedProfiles(
   const mergeTargetsWithProfiles = collections
     .distinct(
       identitiesToMerge
-        .filter(
-          (mergeTarget) =>
-            mergeTarget.sourceIdentities.length > 0 &&
-            !!mergeTarget.targetIdentity.profile_id
-        )
-        .map((mergeTarget) => mergeTarget.targetIdentity.profile_id!)
+        .filter((mergeTarget) => mergeTarget.sourceIdentities.length > 0)
+        .map((mergeTarget) => mergeTarget.targetIdentity.profile_id)
+        .filter((profileId): profileId is string => !!profileId)
     )
-    .map((profileId) => {
-      const mergeTarget = identitiesToMerge.find(
-        (it) => it.targetIdentity.profile_id === profileId
-      )!;
-      return {
-        consolidationKey: mergeTarget.targetIdentity.consolidation_key,
-        profileId
-      };
-    });
+    .reduce(
+      (acc, profileId) => {
+        const mergeTarget = identitiesToMerge.find(
+          (it) => it.targetIdentity.profile_id === profileId
+        );
+        if (mergeTarget) {
+          acc.push({
+            consolidationKey: mergeTarget.targetIdentity.consolidation_key,
+            profileId
+          });
+        }
+        return acc;
+      },
+      [] as {
+        consolidationKey: string;
+        profileId: string;
+      }[]
+    );
 
   for (const mergeTarget of mergeTargetsWithProfiles) {
     const profile = await profilesDb.getProfileById(
@@ -394,28 +400,27 @@ export async function syncIdentitiesWithTdhConsolidations(
           .map((wallet) => oldDataByWallets[wallet]?.identity ?? null)
           .find((identity) => !!identity) ??
         null;
-      let targetIdentity = originalIdentity ??
-        oldDataByWallets[0]?.identity ?? {
-          consolidation_key: consolidationsThatNeedWork,
-          primary_address: newPrimaryAddress,
-          profile_id: randomUUID(),
-          handle: null,
-          normalised_handle: null,
-          tdh: consolidationThatNeedsWork.tdh,
-          produced_xtdh: 0,
-          granted_xtdh: 0,
-          xtdh: 0,
-          xtdh_rate: 0,
-          basetdh_rate: 0,
-          rep: 0,
-          cic: 0,
-          level_raw: consolidationThatNeedsWork.tdh,
-          pfp: null,
-          banner1: null,
-          banner2: null,
-          classification: null,
-          sub_classification: null
-        };
+      let targetIdentity = originalIdentity ?? {
+        consolidation_key: consolidationThatNeedsWork.consolidation_key,
+        primary_address: newPrimaryAddress,
+        profile_id: randomUUID(),
+        handle: null,
+        normalised_handle: null,
+        tdh: consolidationThatNeedsWork.tdh,
+        produced_xtdh: 0,
+        granted_xtdh: 0,
+        xtdh: 0,
+        xtdh_rate: 0,
+        basetdh_rate: 0,
+        rep: 0,
+        cic: 0,
+        level_raw: consolidationThatNeedsWork.tdh,
+        pfp: null,
+        banner1: null,
+        banner2: null,
+        classification: null,
+        sub_classification: null
+      };
       const mainProfileForNewConsolidation =
         walletsForConsolidationThatNeedsWork
           .map((it) => oldDataByWallets[it])
