@@ -60,10 +60,21 @@ export class DropCreationApiService {
     },
     ctx: RequestContext
   ): Promise<ApiDrop> {
+    const proxyId =
+      authorId === representativeId ? undefined : representativeId;
+    const model = this.dropsMappers.createDropApiToUseCaseModel({
+      request: createDropRequest,
+      authorId,
+      proxyId
+    });
+    const preResolvedIdentityNomination =
+      await this.createOrUpdateDrop.preResolveIdentityNomination(model, {
+        timer: ctx.timer
+      });
     const drop = await this.dropsDb.executeNativeQueriesInTransaction(
       async (connection) => {
         return await this.createDropWithGivenConnection(
-          { createDropRequest, authorId, representativeId },
+          { model, authorId, preResolvedIdentityNomination },
           { timer: ctx.timer!, connection }
         );
       }
@@ -75,26 +86,22 @@ export class DropCreationApiService {
 
   private async createDropWithGivenConnection(
     {
-      createDropRequest,
+      model,
       authorId,
-      representativeId
+      preResolvedIdentityNomination
     }: {
-      createDropRequest: ApiCreateDropRequest;
+      model: CreateOrUpdateDropModel;
       authorId: string;
-      representativeId: string;
+      preResolvedIdentityNomination: Awaited<
+        ReturnType<CreateOrUpdateDropUseCase['preResolveIdentityNomination']>
+      > | null;
     },
     { timer, connection }: { timer: Timer; connection: ConnectionWrapper<any> }
   ): Promise<ApiDrop> {
-    const proxyId =
-      authorId === representativeId ? undefined : representativeId;
-    const model = this.dropsMappers.createDropApiToUseCaseModel({
-      request: createDropRequest,
-      authorId,
-      proxyId
-    });
     const { drop_id } = await this.createOrUpdateDrop.execute(model, false, {
       timer,
-      connection
+      connection,
+      preResolvedIdentityNomination
     });
     return this.dropsService.findDropByIdOrThrow(
       {
@@ -204,38 +211,43 @@ export class DropCreationApiService {
       throw new NotFoundException(`Drop ${dropId} not found`);
     }
     const waveId = drop.wave_id;
+    const replyTo: DropPartIdentifierModel | null =
+      drop.reply_to_drop_id !== null
+        ? {
+            drop_id: drop.reply_to_drop_id,
+            drop_part_id: drop.reply_to_part_id!
+          }
+        : null;
+    const proxyId =
+      authorId === representativeId ? undefined : representativeId;
+    const dropType = drop.drop_type
+      ? enums.resolveOrThrow(ApiDropType, drop.drop_type)
+      : ApiDropType.Chat;
+    const model: CreateOrUpdateDropModel =
+      this.dropsMappers.updateDropApiToUseCaseModel({
+        request: {
+          ...request,
+          drop_type: dropType
+        },
+        authorId,
+        proxyId,
+        replyTo,
+        waveId,
+        dropId
+      });
+    const preResolvedIdentityNomination =
+      await this.createOrUpdateDrop.preResolveIdentityNomination(model, {
+        timer: ctx.timer
+      });
     const apiDrop = await this.dropsDb.executeNativeQueriesInTransaction(
       async (connection) => {
-        const replyTo: DropPartIdentifierModel | null =
-          drop.reply_to_drop_id !== null
-            ? {
-                drop_id: drop.reply_to_drop_id,
-                drop_part_id: drop.reply_to_part_id!
-              }
-            : null;
-        const proxyId =
-          authorId === representativeId ? undefined : representativeId;
-        const dropType = drop.drop_type
-          ? enums.resolveOrThrow(ApiDropType, drop.drop_type)
-          : ApiDropType.Chat;
-        const model: CreateOrUpdateDropModel =
-          this.dropsMappers.updateDropApiToUseCaseModel({
-            request: {
-              ...request,
-              drop_type: dropType
-            },
-            authorId,
-            proxyId,
-            replyTo,
-            waveId,
-            dropId
-          });
         const { drop_id } = await this.createOrUpdateDrop.execute(
           model,
           false,
           {
             timer: ctx.timer!,
-            connection
+            connection,
+            preResolvedIdentityNomination
           }
         );
         return await this.dropsService.findDropByIdOrThrow(

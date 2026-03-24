@@ -14,7 +14,10 @@ import {
 import {
   ParticipationRequiredMedia,
   WaveEntity,
+  WaveIdentitySubmissionDuplicates,
+  WaveIdentitySubmissionStrategy,
   WaveRequiredMetadataItemType,
+  WaveSubmissionType,
   WaveType
 } from '@/entities/IWave';
 import { assertUnreachable } from '@/assertions';
@@ -73,6 +76,18 @@ import {
 import { extractUrlCandidatesFromText } from '@/nft-links/nft-link-candidates';
 import { validateLinkUrl } from '@/nft-links/nft-link-resolver.validator';
 import { env } from '@/env';
+import { UUID_REGEX, WALLET_REGEX } from '@/constants';
+import { getAlchemyInstance } from '@/alchemy';
+import { profilesService } from '@/profiles/profiles.service';
+
+function isActiveIdentityNomination(nomination: { has_won: boolean }): boolean {
+  return !nomination.has_won;
+}
+
+type PreResolvedEnsIdentityNomination = Readonly<{
+  normalizedEnsName: string;
+  normalizedWallet: string;
+}>;
 
 export class CreateOrUpdateDropUseCase {
   public constructor(
@@ -90,10 +105,34 @@ export class CreateOrUpdateDropUseCase {
     private readonly artCurationTokenWatchService: ArtCurationTokenWatchService
   ) {}
 
+  private getRequiredAuthorId(model: CreateOrUpdateDropModel): string {
+    const authorId = model.author_id;
+    if (!authorId) {
+      throw new BadRequestException(`author_id is required`);
+    }
+    return authorId;
+  }
+
+  private getRequiredDropId(model: CreateOrUpdateDropModel): string {
+    const dropId = model.drop_id;
+    if (!dropId) {
+      throw new BadRequestException(`drop_id is required`);
+    }
+    return dropId;
+  }
+
   public async execute(
     model: CreateOrUpdateDropModel,
     isDescriptionDrop: boolean,
-    { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
+    {
+      timer,
+      connection,
+      preResolvedIdentityNomination
+    }: {
+      timer?: Timer;
+      connection: ConnectionWrapper<any>;
+      preResolvedIdentityNomination?: PreResolvedEnsIdentityNomination | null;
+    }
   ): Promise<{ drop_id: string }> {
     timer?.start(`${CreateOrUpdateDropUseCase.name}->execute`);
     const authorId = model.author_id;
@@ -110,7 +149,7 @@ export class CreateOrUpdateDropUseCase {
       return this.execute(
         { ...model, author_id: resolvedAuthorId },
         isDescriptionDrop,
-        { timer, connection }
+        { timer, connection, preResolvedIdentityNomination }
       );
     } else if (proxyIdNecessary) {
       const proxyIdentity = model.proxy_identity;
@@ -135,30 +174,109 @@ export class CreateOrUpdateDropUseCase {
       return this.execute(
         { ...model, proxy_id: resolvedProxyId },
         isDescriptionDrop,
-        { timer, connection }
+        { timer, connection, preResolvedIdentityNomination }
       );
     }
     return await this.createOrUpdateDrop(model, isDescriptionDrop, {
       timer,
-      connection
+      connection,
+      preResolvedIdentityNomination
     });
+  }
+
+  public async preResolveIdentityNomination(
+    model: CreateOrUpdateDropModel,
+    { timer }: { timer?: Timer }
+  ): Promise<PreResolvedEnsIdentityNomination | null> {
+    timer?.start(
+      `${CreateOrUpdateDropUseCase.name}->preResolveIdentityNomination`
+    );
+    try {
+      if (model.drop_type !== DropType.PARTICIPATORY) {
+        return null;
+      }
+
+      const identityMetadatas = model.metadata.filter(
+        (it) => it.data_key === 'identity'
+      );
+      if (identityMetadatas.length !== 1) {
+        return null;
+      }
+
+      const nominationInput = identityMetadatas[0]!.data_value.trim();
+      if (!nominationInput.length) {
+        return null;
+      }
+
+      const normalizedInput = nominationInput.toLowerCase();
+      if (!normalizedInput.endsWith('.eth')) {
+        return null;
+      }
+
+      const resolvedWallet =
+        await getAlchemyInstance().core.resolveName(normalizedInput);
+      if (!resolvedWallet) {
+        throw new BadRequestException(
+          `ENS name ${nominationInput} could not be resolved`
+        );
+      }
+
+      const normalizedWallet = resolvedWallet.toLowerCase();
+      if (!WALLET_REGEX.exec(normalizedWallet)) {
+        throw new BadRequestException(
+          `ENS name ${nominationInput} resolved to invalid wallet ${resolvedWallet}`
+        );
+      }
+
+      return {
+        normalizedEnsName: normalizedInput,
+        normalizedWallet
+      };
+    } finally {
+      timer?.stop(
+        `${CreateOrUpdateDropUseCase.name}->preResolveIdentityNomination`
+      );
+    }
   }
 
   private async createOrUpdateDrop(
     model: CreateOrUpdateDropModel,
     isDescriptionDrop: boolean,
-    { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
+    {
+      timer,
+      connection,
+      preResolvedIdentityNomination
+    }: {
+      timer?: Timer;
+      connection: ConnectionWrapper<any>;
+      preResolvedIdentityNomination?: PreResolvedEnsIdentityNomination | null;
+    }
   ): Promise<{ drop_id: string }> {
     if (model.drop_type === DropType.WINNER) {
       throw new BadRequestException(`Can't modify a winner drop`);
     }
-    await this.validateReferences(model, isDescriptionDrop, {
-      timer,
+    const validatedModel = await this.validateReferences(
+      model,
+      isDescriptionDrop,
+      {
+        timer,
+        connection,
+        preResolvedIdentityNomination
+      }
+    );
+    const authorId = this.getRequiredAuthorId(validatedModel);
+    const preExistingDropId = validatedModel.drop_id;
+    const wave = await this.wavesApiDb.findById(
+      validatedModel.wave_id,
       connection
-    });
-    const preExistingDropId = model.drop_id;
-    const wave = (await this.wavesApiDb.findById(model.wave_id, connection))!;
-    if (wave.type === WaveType.CHAT && model.drop_type !== DropType.CHAT) {
+    );
+    if (!wave) {
+      throw new BadRequestException(`Wave ${validatedModel.wave_id} not found`);
+    }
+    if (
+      wave.type === WaveType.CHAT &&
+      validatedModel.drop_type !== DropType.CHAT
+    ) {
       throw new BadRequestException('Chat waves only allow chat drops');
     }
     let dropId: string;
@@ -171,13 +289,13 @@ export class CreateOrUpdateDropUseCase {
       if (dropBeforeUpdate === null) {
         throw new NotFoundException(`Drop ${dropId} not found`);
       }
-      if (dropBeforeUpdate.wave_id !== model.wave_id) {
+      if (dropBeforeUpdate.wave_id !== validatedModel.wave_id) {
         throw new BadRequestException("Can't change wave of a drop");
       }
-      if (dropBeforeUpdate.drop_type !== model.drop_type) {
+      if (dropBeforeUpdate.drop_type !== validatedModel.drop_type) {
         throw new BadRequestException("Can't change type of a drop");
       }
-      if (dropBeforeUpdate.author_id !== model.author_id) {
+      if (dropBeforeUpdate.author_id !== authorId) {
         throw new ForbiddenException(
           "Only author can change it's drop. You are not the author of this drop"
         );
@@ -196,15 +314,15 @@ export class CreateOrUpdateDropUseCase {
       await this.deleteDropUseCase.execute(
         {
           drop_id: dropId,
-          deleter_identity: model.author_identity,
-          deleter_id: model.author_id,
+          deleter_identity: validatedModel.author_identity,
+          deleter_id: authorId,
           deletion_purpose: 'UPDATE'
         },
         { timer, connection }
       );
       await this.insertAllDropComponents(
         {
-          model: { ...model, drop_id: dropId },
+          model: { ...validatedModel, drop_id: dropId },
           createdAt: dropBeforeUpdate.created_at,
           serialNo: dropBeforeUpdate.serial_no,
           updatedAt: Time.currentMillis(),
@@ -216,7 +334,7 @@ export class CreateOrUpdateDropUseCase {
       dropId = randomUUID();
       await this.insertAllDropComponents(
         {
-          model: { ...model, drop_id: dropId },
+          model: { ...validatedModel, drop_id: dropId },
           createdAt: Time.currentMillis(),
           serialNo: null,
           updatedAt: null,
@@ -227,14 +345,14 @@ export class CreateOrUpdateDropUseCase {
       await Promise.all([
         this.metricsRecorder.recordDrop(
           {
-            identityId: model.author_id!,
-            waveId: model.wave_id,
-            dropType: model.drop_type
+            identityId: authorId,
+            waveId: validatedModel.wave_id,
+            dropType: validatedModel.drop_type
           },
           { timer, connection }
         ),
         this.metricsRecorder.recordActiveIdentity(
-          { identityId: model.author_id! },
+          { identityId: authorId },
           { timer, connection }
         )
       ]);
@@ -242,9 +360,9 @@ export class CreateOrUpdateDropUseCase {
     await this.artCurationTokenWatchService.registerDrop(
       {
         dropId,
-        waveId: model.wave_id,
-        dropType: model.drop_type,
-        links: this.buildDropNftLinks(model)
+        waveId: validatedModel.wave_id,
+        dropType: validatedModel.drop_type,
+        links: this.buildDropNftLinks(validatedModel)
       },
       { timer, connection }
     );
@@ -255,16 +373,29 @@ export class CreateOrUpdateDropUseCase {
   private async validateReferences(
     model: CreateOrUpdateDropModel,
     isDescriptionDrop: boolean,
-    { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
-  ) {
+    {
+      timer,
+      connection,
+      preResolvedIdentityNomination
+    }: {
+      timer?: Timer;
+      connection: ConnectionWrapper<any>;
+      preResolvedIdentityNomination?: PreResolvedEnsIdentityNomination | null;
+    }
+  ): Promise<CreateOrUpdateDropModel> {
     timer?.start(`${CreateOrUpdateDropUseCase.name}->validateReferences`);
-    const authorId = model.author_id!;
+    const authorId = this.getRequiredAuthorId(model);
     const groupIdsUserIsEligibleFor =
       await this.userGroupsService.getGroupsUserIsEligibleFor(authorId, timer);
 
-    await Promise.all([
+    const [validatedModel] = await Promise.all([
       this.verifyWaveLimitations(
-        { model, groupIdsUserIsEligibleFor, isDescriptionDrop },
+        {
+          model,
+          groupIdsUserIsEligibleFor,
+          isDescriptionDrop,
+          preResolvedIdentityNomination
+        },
         { timer, connection }
       ),
       this.verifyMentionedWaves(
@@ -275,20 +406,23 @@ export class CreateOrUpdateDropUseCase {
       this.verifyReplyDrop(model, { timer, connection })
     ]);
     timer?.stop(`${CreateOrUpdateDropUseCase.name}->validateReferences`);
+    return validatedModel;
   }
 
   private async verifyWaveLimitations(
     {
       isDescriptionDrop,
       model,
-      groupIdsUserIsEligibleFor
+      groupIdsUserIsEligibleFor,
+      preResolvedIdentityNomination
     }: {
       isDescriptionDrop: boolean;
       model: CreateOrUpdateDropModel;
       groupIdsUserIsEligibleFor: string[];
+      preResolvedIdentityNomination?: PreResolvedEnsIdentityNomination | null;
     },
     { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
-  ) {
+  ): Promise<CreateOrUpdateDropModel> {
     timer?.start(`${CreateOrUpdateDropUseCase.name}->verifyWaveLimitations`);
     const waveId = model.wave_id;
     const wave = await this.wavesApiDb.findById(waveId, connection);
@@ -321,16 +455,65 @@ export class CreateOrUpdateDropUseCase {
           model
         },
         { timer, connection }
-      ),
-      this.verifyMetadata(
-        {
-          wave,
-          model
-        },
-        { timer, connection }
       )
     ]);
+    const validatedModel = await this.verifyMetadata(
+      {
+        wave,
+        model,
+        preResolvedIdentityNomination
+      },
+      { timer, connection }
+    );
     timer?.stop(`${CreateOrUpdateDropUseCase.name}->verifyWaveLimitations`);
+    return validatedModel;
+  }
+
+  private async verifyMetadata(
+    {
+      wave,
+      model,
+      preResolvedIdentityNomination
+    }: {
+      wave: WaveEntity;
+      model: CreateOrUpdateDropModel;
+      preResolvedIdentityNomination?: PreResolvedEnsIdentityNomination | null;
+    },
+    { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
+  ): Promise<CreateOrUpdateDropModel> {
+    timer?.start(`${CreateOrUpdateDropUseCase.name}->verifyMetadata`);
+    if (model.drop_type === DropType.PARTICIPATORY) {
+      const requiredMetadatas = wave.participation_required_metadata;
+      for (const requiredMetadata of requiredMetadatas) {
+        const metadata = model.metadata.filter(
+          (it) => it.data_key === requiredMetadata.name
+        );
+        if (!metadata.length) {
+          throw new BadRequestException(
+            `Wave requires metadata ${requiredMetadata.name}`
+          );
+        }
+        if (requiredMetadata.type === WaveRequiredMetadataItemType.NUMBER) {
+          if (
+            !metadata.some(
+              (it) => numbers.parseIntOrNull(it.data_value) !== null
+            )
+          ) {
+            throw new BadRequestException(
+              `Wave requires metadata ${requiredMetadata.name} to be a number`
+            );
+          }
+        }
+      }
+      if (wave.submission_type === WaveSubmissionType.IDENTITY) {
+        await this.verifyIdentitySubmissionMetadata(
+          { wave, model, preResolvedIdentityNomination },
+          { timer, connection }
+        );
+      }
+    }
+    timer?.stop(`${CreateOrUpdateDropUseCase.name}->verifyMetadata`);
+    return model;
   }
 
   private async verifyParticipatoryLimitations(
@@ -488,42 +671,236 @@ export class CreateOrUpdateDropUseCase {
     timer?.stop(`${CreateOrUpdateDropUseCase.name}->verifyMedia`);
   }
 
-  private async verifyMetadata(
+  private async verifyIdentitySubmissionMetadata(
     {
       wave,
-      model
+      model,
+      preResolvedIdentityNomination
     }: {
       wave: WaveEntity;
       model: CreateOrUpdateDropModel;
+      preResolvedIdentityNomination?: PreResolvedEnsIdentityNomination | null;
     },
-    { timer }: { timer?: Timer; connection: ConnectionWrapper<any> }
-  ) {
-    timer?.start(`${CreateOrUpdateDropUseCase.name}->verifyMetadata`);
-    if (model.drop_type === DropType.PARTICIPATORY) {
-      const requiredMetadatas = wave.participation_required_metadata;
-      for (const requiredMetadata of requiredMetadatas) {
-        const metadata = model.metadata.filter(
-          (it) => it.data_key === requiredMetadata.name
+    { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
+  ): Promise<void> {
+    timer?.start(
+      `${CreateOrUpdateDropUseCase.name}->verifyIdentitySubmissionMetadata`
+    );
+    const identityMetadatas = model.metadata.filter(
+      (it) => it.data_key === 'identity'
+    );
+    if (identityMetadatas.length !== 1) {
+      throw new BadRequestException(
+        `Identity submission waves require exactly one identity metadata entry`
+      );
+    }
+
+    const identityMetadata = identityMetadatas[0];
+    const nominationInput = identityMetadata.data_value.trim();
+    if (!nominationInput.length) {
+      throw new BadRequestException(
+        `Identity submission waves require a non-empty identity nomination`
+      );
+    }
+
+    if (
+      wave.identity_submission_strategy === null ||
+      wave.identity_submission_duplicates === null
+    ) {
+      throw new BadRequestException(
+        `Wave identity submission strategy is misconfigured`
+      );
+    }
+
+    const nominatedProfileId = await this.resolveIdentityNominationProfileId(
+      nominationInput,
+      {
+        timer,
+        connection,
+        preResolvedIdentityNomination
+      }
+    );
+    this.verifyIdentitySubmissionWhoCanBeSubmitted({
+      submittingProfileId: this.getRequiredAuthorId(model),
+      nominatedProfileId,
+      strategy: wave.identity_submission_strategy
+    });
+    await this.verifyIdentitySubmissionDuplicates(
+      {
+        nominatedProfileId,
+        waveId: wave.id,
+        duplicatesPolicy: wave.identity_submission_duplicates,
+        currentDropId: model.drop_id
+      },
+      { timer, connection }
+    );
+
+    const identityMetadataIndex = model.metadata.findIndex(
+      (it) => it.data_key === 'identity'
+    );
+    model.metadata[identityMetadataIndex] = {
+      data_key: 'identity',
+      data_value: nominatedProfileId
+    };
+    timer?.stop(
+      `${CreateOrUpdateDropUseCase.name}->verifyIdentitySubmissionMetadata`
+    );
+  }
+
+  private async resolveIdentityNominationProfileId(
+    identityInput: string,
+    {
+      timer,
+      connection,
+      preResolvedIdentityNomination
+    }: {
+      timer?: Timer;
+      connection: ConnectionWrapper<any>;
+      preResolvedIdentityNomination?: PreResolvedEnsIdentityNomination | null;
+    }
+  ): Promise<string> {
+    timer?.start(
+      `${CreateOrUpdateDropUseCase.name}->resolveIdentityNominationProfileId`
+    );
+    const normalizedInput = identityInput.trim();
+    const lowercasedInput = normalizedInput.toLowerCase();
+
+    if (WALLET_REGEX.exec(lowercasedInput)) {
+      const createdProfiles =
+        await profilesService.makeSureProfilesAreCreatedAndGetProfileIdsByAddresses(
+          [lowercasedInput],
+          { timer, connection }
         );
-        if (!metadata.length) {
-          throw new BadRequestException(
-            `Wave requires metadata ${requiredMetadata.name}`
+      timer?.stop(
+        `${CreateOrUpdateDropUseCase.name}->resolveIdentityNominationProfileId`
+      );
+      return createdProfiles[lowercasedInput];
+    }
+
+    if (lowercasedInput.endsWith('.eth')) {
+      if (
+        !preResolvedIdentityNomination ||
+        preResolvedIdentityNomination.normalizedEnsName !== lowercasedInput
+      ) {
+        throw new BadRequestException(
+          `ENS nomination ${normalizedInput} must be pre-resolved before transactional execution`
+        );
+      }
+      const normalizedWallet = preResolvedIdentityNomination.normalizedWallet;
+      await identitiesDb.updateWalletsEnsName(
+        {
+          wallet: normalizedWallet,
+          ensName: preResolvedIdentityNomination.normalizedEnsName
+        },
+        connection
+      );
+      const createdProfiles =
+        await profilesService.makeSureProfilesAreCreatedAndGetProfileIdsByAddresses(
+          [normalizedWallet],
+          { timer, connection }
+        );
+      timer?.stop(
+        `${CreateOrUpdateDropUseCase.name}->resolveIdentityNominationProfileId`
+      );
+      return createdProfiles[normalizedWallet];
+    }
+
+    const resolvedProfileId = await identityFetcher.getProfileIdByIdentityKey(
+      {
+        identityKey: UUID_REGEX.exec(normalizedInput)
+          ? normalizedInput
+          : lowercasedInput
+      },
+      { timer, connection }
+    );
+    timer?.stop(
+      `${CreateOrUpdateDropUseCase.name}->resolveIdentityNominationProfileId`
+    );
+    if (!resolvedProfileId) {
+      throw new BadRequestException(
+        `Identity nomination ${normalizedInput} could not be resolved to a profile`
+      );
+    }
+    return resolvedProfileId;
+  }
+
+  private verifyIdentitySubmissionWhoCanBeSubmitted({
+    submittingProfileId,
+    nominatedProfileId,
+    strategy
+  }: {
+    submittingProfileId: string;
+    nominatedProfileId: string;
+    strategy: WaveIdentitySubmissionStrategy;
+  }): void {
+    switch (strategy) {
+      case WaveIdentitySubmissionStrategy.ONLY_MYSELF:
+        if (submittingProfileId !== nominatedProfileId) {
+          throw new ForbiddenException(
+            `This wave only allows nominating yourself`
           );
         }
-        if (requiredMetadata.type === WaveRequiredMetadataItemType.NUMBER) {
-          if (
-            !metadata.some(
-              (it) => numbers.parseIntOrNull(it.data_value) !== null
-            )
-          ) {
-            throw new BadRequestException(
-              `Wave requires metadata ${requiredMetadata.name} to be a number`
-            );
-          }
+        return;
+      case WaveIdentitySubmissionStrategy.ONLY_OTHERS:
+        if (submittingProfileId === nominatedProfileId) {
+          throw new ForbiddenException(
+            `This wave does not allow nominating yourself`
+          );
         }
-      }
+        return;
+      case WaveIdentitySubmissionStrategy.EVERYONE:
+        return;
+      default:
+        assertUnreachable(strategy);
     }
-    timer?.stop(`${CreateOrUpdateDropUseCase.name}->verifyMetadata`);
+  }
+
+  private async verifyIdentitySubmissionDuplicates(
+    {
+      nominatedProfileId,
+      waveId,
+      duplicatesPolicy,
+      currentDropId
+    }: {
+      nominatedProfileId: string;
+      waveId: string;
+      duplicatesPolicy: WaveIdentitySubmissionDuplicates;
+      currentDropId: string | null;
+    },
+    { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
+  ): Promise<void> {
+    if (duplicatesPolicy === WaveIdentitySubmissionDuplicates.ALWAYS_ALLOW) {
+      return;
+    }
+
+    const existingNominations =
+      await this.dropsDb.findIdentityNominationDropsForWave(
+        {
+          waveId,
+          profileId: nominatedProfileId,
+          excludeDropId: currentDropId
+        },
+        { timer, connection }
+      );
+    if (!existingNominations.length) {
+      return;
+    }
+
+    switch (duplicatesPolicy) {
+      case WaveIdentitySubmissionDuplicates.ALLOW_AFTER_WIN:
+        if (existingNominations.some(isActiveIdentityNomination)) {
+          throw new BadRequestException(
+            `This identity already has an active nomination in the wave`
+          );
+        }
+        return;
+      case WaveIdentitySubmissionDuplicates.NEVER_ALLOW:
+        throw new BadRequestException(
+          `This identity has already been nominated in the wave`
+        );
+      default:
+        assertUnreachable(duplicatesPolicy);
+    }
   }
 
   private async verifyQuotedDrops(
@@ -629,8 +1006,8 @@ export class CreateOrUpdateDropUseCase {
     { connection, timer }: { connection: ConnectionWrapper<any>; timer?: Timer }
   ) {
     timer?.start(`${CreateOrUpdateDropUseCase.name}->insertAllDropComponents`);
-    const dropId = model.drop_id!;
-    const authorId = model.author_id!;
+    const dropId = this.getRequiredDropId(model);
+    const authorId = this.getRequiredAuthorId(model);
     const parts = model.parts;
     const dropNftLinks = this.buildDropNftLinks(model);
     if (model.drop_type === DropType.PARTICIPATORY) {
@@ -866,6 +1243,8 @@ export class CreateOrUpdateDropUseCase {
     { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
   ) {
     timer?.start(`${CreateOrUpdateDropUseCase.name}->recordQuoteNotifications`);
+    const dropId = this.getRequiredDropId(model);
+    const authorId = this.getRequiredAuthorId(model);
     let idx = 1;
     const quoteNotificationDatas: DropQuoteNotificationData[] = [];
     for (const createDropPart of model.parts) {
@@ -875,9 +1254,9 @@ export class CreateOrUpdateDropUseCase {
           .getDropsByIds([quotedDrop.drop_id], connection)
           .then((it) => it[0]);
         quoteNotificationDatas.push({
-          quote_drop_id: model.drop_id!,
+          quote_drop_id: dropId,
           quote_drop_part: idx,
-          quote_drop_author_id: model.author_id!,
+          quote_drop_author_id: authorId,
           quoted_drop_id: quotedDrop.drop_id,
           quoted_drop_part: quotedDrop.drop_part_id,
           quoted_drop_author_id: quotedEntity.author_id,
@@ -905,6 +1284,8 @@ export class CreateOrUpdateDropUseCase {
   ) {
     const replyTo = model.reply_to;
     if (replyTo) {
+      const dropId = this.getRequiredDropId(model);
+      const authorId = this.getRequiredAuthorId(model);
       timer?.start(`${CreateOrUpdateDropUseCase.name}->getReplyDropEntity`);
       const replyToEntity = await this.dropsDb
         .getDropsByIds([replyTo.drop_id], connection)
@@ -913,8 +1294,8 @@ export class CreateOrUpdateDropUseCase {
       timer?.start(`${CreateOrUpdateDropUseCase.name}->notifyOfDropReply`);
       await this.userNotifier.notifyOfDropReply(
         {
-          reply_drop_id: model.drop_id!,
-          reply_drop_author_id: model.author_id!,
+          reply_drop_id: dropId,
+          reply_drop_author_id: authorId,
           replied_drop_id: replyTo.drop_id,
           replied_drop_part: replyTo.drop_part_id,
           replied_drop_author_id: replyToEntity.author_id,
@@ -938,7 +1319,7 @@ export class CreateOrUpdateDropUseCase {
     const mentionedHandlesWithIds = Object.entries(
       await identitiesDb.getIdsByHandles(mentionedHandles, connection)
     );
-    const dropId = model.drop_id!;
+    const dropId = this.getRequiredDropId(model);
     const waveId = model.wave_id;
     const mentionEntities = mentionedHandlesWithIds.map<
       Omit<DropMentionEntity, 'id'>
@@ -987,10 +1368,12 @@ export class CreateOrUpdateDropUseCase {
     { timer, connection }: { connection: ConnectionWrapper<any>; timer?: Timer }
   ) {
     const replyTo = model.reply_to;
+    const dropId = this.getRequiredDropId(model);
+    const authorId = this.getRequiredAuthorId(model);
     await this.activityRecorder.recordDropCreated(
       {
-        drop_id: model.drop_id!,
-        creator_id: model.author_id!,
+        drop_id: dropId,
+        creator_id: authorId,
         wave_id: model.wave_id,
         visibility_group_id: wave.visibility_group_id,
         reply_to: replyTo
@@ -1020,11 +1403,13 @@ export class CreateOrUpdateDropUseCase {
     ) {
       return;
     }
+    const dropId = this.getRequiredDropId(model);
+    const authorId = this.getRequiredAuthorId(model);
     await this.userNotifier.notifyAllNotificationsSubscribers(
       {
         waveId: wave.id,
-        dropId: model.drop_id!,
-        relatedIdentityId: model.author_id!,
+        dropId,
+        relatedIdentityId: authorId,
         subscriberIds
       },
       { timer, connection }

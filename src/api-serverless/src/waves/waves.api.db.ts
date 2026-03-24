@@ -154,8 +154,11 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
   }
 
   public async insertWave(wave: InsertWaveEntity, ctx: RequestContext) {
-    const timer = ctx.timer!;
-    timer.start('waveApiDb->insertWave');
+    const connection = ctx.connection;
+    if (!connection) {
+      throw new Error('insertWave requires a connection');
+    }
+    ctx.timer?.start('waveApiDb->insertWave');
     const params = {
       ...wave,
       participation_required_media: JSON.stringify(
@@ -194,6 +197,9 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
            participation_max_applications_per_participant,
            participation_required_metadata,
            participation_required_media,
+           submission_type,
+           identity_submission_strategy,
+           identity_submission_duplicates,
            participation_period_start,
            participation_period_end,
            participation_signature_required,
@@ -230,6 +236,9 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                   :participation_max_applications_per_participant,
                   :participation_required_metadata,
                   :participation_required_media,
+                  :submission_type,
+                  :identity_submission_strategy,
+                  :identity_submission_duplicates,
                   :participation_period_start,
                   :participation_period_end,
                   :participation_signature_required,
@@ -245,11 +254,10 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                   :forbid_negative_votes,
                   :is_direct_message${wave.serial_no !== null ? ', :serial_no' : ''})`,
         params,
-        { wrappedConnection: ctx.connection }
+        { wrappedConnection: connection }
       )
       .then(
-        async () =>
-          wave.serial_no ?? (await this.getLastInsertId(ctx.connection!))
+        async () => wave.serial_no ?? (await this.getLastInsertId(connection))
       );
     await this.db.execute(
       `insert into ${WAVES_ARCHIVE_TABLE}
@@ -277,6 +285,9 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                             participation_max_applications_per_participant,
                             participation_required_metadata,
                             participation_required_media,
+                            submission_type,
+                            identity_submission_strategy,
+                            identity_submission_duplicates,
                             participation_period_start,
                             participation_period_end,
                             participation_terms,
@@ -316,6 +327,9 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                                    :participation_max_applications_per_participant,
                                    :participation_required_metadata,
                                    :participation_required_media,
+                                   :submission_type,
+                                   :identity_submission_strategy,
+                                   :identity_submission_duplicates,
                                    :participation_period_start,
                                    :participation_period_end,
                                    :participation_terms,
@@ -332,9 +346,9 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                                    :is_direct_message
                            )`,
       { ...params, serial_no: serial, now: Time.currentMillis() },
-      { wrappedConnection: ctx.connection }
+      { wrappedConnection: connection }
     );
-    timer.stop('waveApiDb->insertWave');
+    ctx.timer?.stop('waveApiDb->insertWave');
   }
 
   async searchWaves(

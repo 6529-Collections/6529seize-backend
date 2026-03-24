@@ -181,7 +181,12 @@ export class DropsDb extends LazyDbAccessCompatibleService {
           { id: dropId, wave_id: waveId },
           { wrappedConnection: connection }
         )
-        .then((it) => it!.serial_no);
+        .then((it) => {
+          if (!it) {
+            throw new Error(`Drop ${dropId} serial number was not found`);
+          }
+          return it.serial_no;
+        });
       const existingDropRelations = await this.db.execute<DropRelationEntity>(
         `select * from ${DROP_RELATIONS_TABLE} where child_id = :child_id and wave_id = :wave_id`,
         {
@@ -699,6 +704,208 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       { dropIds },
       connection ? { wrappedConnection: connection } : undefined
     );
+  }
+
+  async findIdentityNominationWaveIdsByProfileIds(
+    profileIds: string[],
+    ctx: RequestContext
+  ): Promise<string[]> {
+    if (!profileIds.length) {
+      return [];
+    }
+    ctx.timer?.start(
+      `${this.constructor.name}->findIdentityNominationWaveIdsByProfileIds`
+    );
+    try {
+      const result = await this.db.execute<{ wave_id: string }>(
+        `
+          select distinct d.wave_id as wave_id
+          from ${DROPS_TABLE} d
+          join ${DROP_METADATA_TABLE} dm on dm.drop_id = d.id
+          where dm.data_key = 'identity'
+            and dm.data_value in (:profileIds)
+            and d.drop_type = '${DropType.PARTICIPATORY}'
+            and not exists(
+              select 1
+              from ${WAVES_DECISION_WINNER_DROPS_TABLE} wd
+              where wd.drop_id = d.id
+                and wd.wave_id = d.wave_id
+            )
+        `,
+        { profileIds },
+        { wrappedConnection: ctx.connection }
+      );
+      return result.map((it) => it.wave_id);
+    } finally {
+      ctx.timer?.stop(
+        `${this.constructor.name}->findIdentityNominationWaveIdsByProfileIds`
+      );
+    }
+  }
+
+  async findIdentityNominationDropsForWave(
+    {
+      waveId,
+      profileId,
+      excludeDropId
+    }: {
+      waveId: string;
+      profileId: string;
+      excludeDropId?: string | null;
+    },
+    ctx: RequestContext
+  ): Promise<IdentityNominationDrop[]> {
+    ctx.timer?.start(
+      `${this.constructor.name}->findIdentityNominationDropsForWave`
+    );
+    try {
+      const result = await this.db.execute<
+        Omit<IdentityNominationDrop, 'has_won'> & { has_won: number }
+      >(
+        `
+          select d.id as drop_id,
+                 d.author_id as author_id,
+                 d.wave_id as wave_id,
+                 dm.data_value as nominated_profile_id,
+                 d.created_at as created_at,
+                 d.serial_no as serial_no,
+                 case
+                     when exists(
+                       select 1
+                       from ${WAVES_DECISION_WINNER_DROPS_TABLE} wd
+                       where wd.drop_id = d.id and wd.wave_id = d.wave_id
+                     ) then 1
+                     else 0
+                 end as has_won
+          from ${DROPS_TABLE} d
+          join ${DROP_METADATA_TABLE} dm
+            on dm.drop_id = d.id
+           and dm.data_key = 'identity'
+          where d.wave_id = :waveId
+            and dm.data_value = :profileId
+            and d.drop_type in ('${DropType.PARTICIPATORY}', '${DropType.WINNER}')
+            ${excludeDropId ? `and d.id <> :excludeDropId` : ``}
+          order by d.created_at asc, d.serial_no asc, d.id asc
+        `,
+        { waveId, profileId, excludeDropId },
+        { wrappedConnection: ctx.connection }
+      );
+      return result.map((it) => ({
+        ...it,
+        has_won: !!it.has_won
+      }));
+    } finally {
+      ctx.timer?.stop(
+        `${this.constructor.name}->findIdentityNominationDropsForWave`
+      );
+    }
+  }
+
+  async updateIdentityNominationProfileId(
+    {
+      waveId,
+      sourceProfileId,
+      targetProfileId
+    }: {
+      waveId: string;
+      sourceProfileId: string;
+      targetProfileId: string;
+    },
+    ctx: RequestContext
+  ): Promise<void> {
+    ctx.timer?.start(
+      `${this.constructor.name}->updateIdentityNominationProfileId`
+    );
+    try {
+      await this.db.execute(
+        `
+          update ${DROP_METADATA_TABLE} dm
+          join ${DROPS_TABLE} d on d.id = dm.drop_id
+          set data_value = :targetProfileId
+          where dm.data_key = 'identity'
+            and d.wave_id = :waveId
+            and dm.data_value = :sourceProfileId
+            and d.drop_type = '${DropType.PARTICIPATORY}'
+            and not exists(
+              select 1
+              from ${WAVES_DECISION_WINNER_DROPS_TABLE} wd
+              where wd.drop_id = d.id
+                and wd.wave_id = d.wave_id
+            )
+        `,
+        { waveId, sourceProfileId, targetProfileId },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(
+        `${this.constructor.name}->updateIdentityNominationProfileId`
+      );
+    }
+  }
+
+  async moveWaveDecisionWinnerDropsToOlderDrop(
+    {
+      sourceDropId,
+      targetDropId
+    }: {
+      sourceDropId: string;
+      targetDropId: string;
+    },
+    ctx: RequestContext
+  ): Promise<void> {
+    if (sourceDropId === targetDropId) {
+      return;
+    }
+    ctx.timer?.start(
+      `${this.constructor.name}->moveWaveDecisionWinnerDropsToOlderDrop`
+    );
+    try {
+      await this.db.execute(
+        `
+          insert into ${WAVES_DECISION_WINNER_DROPS_TABLE}
+            (decision_time, drop_id, ranking, final_vote, prizes, wave_id)
+          select decision_time,
+                 :targetDropId as drop_id,
+                 ranking,
+                 final_vote,
+                 prizes,
+                 wave_id
+          from ${WAVES_DECISION_WINNER_DROPS_TABLE}
+          where drop_id = :sourceDropId
+          on duplicate key update
+            ranking = least(${WAVES_DECISION_WINNER_DROPS_TABLE}.ranking, values(ranking)),
+            final_vote = greatest(${WAVES_DECISION_WINNER_DROPS_TABLE}.final_vote, values(final_vote)),
+            prizes = json_merge_preserve(${WAVES_DECISION_WINNER_DROPS_TABLE}.prizes, values(prizes))
+        `,
+        { sourceDropId, targetDropId },
+        { wrappedConnection: ctx.connection }
+      );
+      await this.db.execute(
+        `delete from ${WAVES_DECISION_WINNER_DROPS_TABLE} where drop_id = :sourceDropId`,
+        { sourceDropId },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(
+        `${this.constructor.name}->moveWaveDecisionWinnerDropsToOlderDrop`
+      );
+    }
+  }
+
+  async promoteDropToWinner(
+    dropId: string,
+    ctx: RequestContext
+  ): Promise<void> {
+    ctx.timer?.start(`${this.constructor.name}->promoteDropToWinner`);
+    try {
+      await this.db.execute(
+        `update ${DROPS_TABLE} set drop_type = '${DropType.WINNER}' where id = :dropId`,
+        { dropId },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->promoteDropToWinner`);
+    }
   }
 
   async insertDropMedia(
@@ -1699,7 +1906,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         { profileId, now },
         { wrappedConnection: ctx.connection }
       )
-      .then((it) => it!.cnt > 0);
+      .then((it) => (it?.cnt ?? 0) > 0);
     ctx.timer?.stop(
       `${this.constructor.name}->hasProfileVotedInAnyOpenRepBasedWave`
     );
@@ -2455,5 +2662,15 @@ export type DropWithMediaAndPart = DropEntity & {
   part_quoted_drop_id: string | null;
   medias_json: string | null;
 };
+
+export interface IdentityNominationDrop {
+  readonly drop_id: string;
+  readonly author_id: string;
+  readonly wave_id: string;
+  readonly nominated_profile_id: string;
+  readonly created_at: number;
+  readonly serial_no: number;
+  readonly has_won: boolean;
+}
 
 export const dropsDb = new DropsDb(dbSupplier);

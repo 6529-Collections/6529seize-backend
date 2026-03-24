@@ -48,6 +48,7 @@ import { ApiProfileMin } from '../generated/models/ApiProfileMin';
 import { ApiWaveVotersPage } from '../generated/models/ApiWaveVotersPage';
 import { ApiWaveVoter } from '../generated/models/ApiWaveVoter';
 import { ApiWaveCreditType as WaveCreditTypeApi } from '../generated/models/ApiWaveCreditType';
+import { ApiWaveParticipationSubmissionStrategyType } from '../generated/models/ApiWaveParticipationSubmissionStrategyType';
 import {
   identityFetcher,
   IdentityFetcher
@@ -75,6 +76,16 @@ import {
   directMessageWaveDisplayService,
   resolveWavePictureOverride
 } from '@/api/waves/direct-message-wave-display.service';
+
+const resolveWaveSubmissionType = (
+  submissionType?: string | null
+): ApiWaveParticipationSubmissionStrategyType | null =>
+  submissionType
+    ? (enums.resolve(
+        ApiWaveParticipationSubmissionStrategyType,
+        submissionType
+      ) ?? null)
+    : null;
 
 export class DropsApiService {
   constructor(
@@ -518,6 +529,7 @@ export class DropsApiService {
       ),
       description_drop_id: wave.description_drop_id,
       last_drop_time: wave.last_drop_time,
+      submission_type: resolveWaveSubmissionType(wave.submission_type),
       authenticated_user_eligible_to_vote:
         wave.voting_group_id === null ||
         group_ids_user_is_eligible_for.includes(wave.voting_group_id),
@@ -683,6 +695,7 @@ export class DropsApiService {
       ),
       description_drop_id: waveEntity.description_drop_id,
       last_drop_time: waveEntity.last_drop_time,
+      submission_type: resolveWaveSubmissionType(waveEntity.submission_type),
       authenticated_user_eligible_to_vote:
         waveEntity.voting_group_id === null ||
         groupIdsUserIsEligibleFor.includes(waveEntity.voting_group_id),

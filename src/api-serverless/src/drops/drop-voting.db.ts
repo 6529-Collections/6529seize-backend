@@ -24,6 +24,50 @@ import { DbPoolName } from '../../../db-query.options';
 import { WinnerDropVoterVoteEntity } from '../../../entities/IWinnerDropVoterVote';
 import mysql from 'mysql';
 
+type MergedDropRealVoterVoteChange = {
+  id: number;
+  original_drop_id: string;
+  voter_id: string;
+  vote: number;
+  timestamp: number;
+};
+
+export function buildMergedDropRealVoteHistoryStates({
+  voteChanges,
+  targetDropId,
+  waveId
+}: {
+  voteChanges: readonly MergedDropRealVoterVoteChange[];
+  targetDropId: string;
+  waveId: string;
+}): DropRealVoteInTimeWithoutId[] {
+  const currentVotesByNominationAndVoter: Record<string, number> = {};
+  let currentTotal = 0;
+  const rebuiltStates: DropRealVoteInTimeWithoutId[] = [];
+  for (const voteChange of voteChanges) {
+    const voterStateKey = `${voteChange.original_drop_id}:${voteChange.voter_id}`;
+    const previousVote = currentVotesByNominationAndVoter[voterStateKey] ?? 0;
+    currentVotesByNominationAndVoter[voterStateKey] = voteChange.vote;
+    currentTotal += voteChange.vote - previousVote;
+
+    const previousState = rebuiltStates.at(-1);
+    if (previousState?.timestamp === voteChange.timestamp) {
+      rebuiltStates.splice(-1, 1, {
+        ...previousState,
+        vote: currentTotal
+      });
+      continue;
+    }
+    rebuiltStates.push({
+      drop_id: targetDropId,
+      wave_id: waveId,
+      timestamp: voteChange.timestamp,
+      vote: currentTotal
+    });
+  }
+  return rebuiltStates;
+}
+
 export class DropVotingDb extends LazyDbAccessCompatibleService {
   public async upsertState(state: NewDropVoterState, ctx: RequestContext) {
     ctx.timer?.start(`${this.constructor.name}->upsertState`);
@@ -220,6 +264,226 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
       queryOptions
     );
     ctx.timer?.stop(`${this.constructor.name}->mergeOnProfileIdChange`);
+  }
+
+  public async mergeDropVoteState(
+    {
+      sourceDropId,
+      targetDropId,
+      waveId
+    }: {
+      sourceDropId: string;
+      targetDropId: string;
+      waveId: string;
+    },
+    ctx: RequestContext
+  ) {
+    if (sourceDropId === targetDropId) {
+      return;
+    }
+    ctx.timer?.start(`${this.constructor.name}->mergeDropVoteState`);
+    try {
+      if (ctx.connection) {
+        await this.mergeDropVoteStateWithConnection(
+          {
+            sourceDropId,
+            targetDropId,
+            waveId
+          },
+          ctx
+        );
+      } else {
+        await this.executeNativeQueriesInTransaction(async (connection) => {
+          await this.mergeDropVoteStateWithConnection(
+            {
+              sourceDropId,
+              targetDropId,
+              waveId
+            },
+            { ...ctx, connection }
+          );
+        });
+      }
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->mergeDropVoteState`);
+    }
+  }
+
+  private async mergeDropVoteStateWithConnection(
+    {
+      sourceDropId,
+      targetDropId,
+      waveId
+    }: {
+      sourceDropId: string;
+      targetDropId: string;
+      waveId: string;
+    },
+    ctx: RequestContext
+  ) {
+    const queryOptions = { wrappedConnection: ctx.connection };
+    const params = { sourceDropId, targetDropId, waveId };
+    const voteChanges = await this.db.execute<MergedDropRealVoterVoteChange>(
+      `
+          select id,
+                 drop_id as original_drop_id,
+                 voter_id,
+                 vote,
+                 timestamp
+          from ${DROP_REAL_VOTER_VOTE_IN_TIME_TABLE}
+          where drop_id in (:dropIds)
+          order by timestamp asc, id asc
+        `,
+      { dropIds: [sourceDropId, targetDropId] },
+      queryOptions
+    );
+    await Promise.all([
+      this.db.execute(
+        `
+            update ${DROPS_VOTES_CREDIT_SPENDINGS_TABLE}
+            set drop_id = :targetDropId
+            where drop_id = :sourceDropId
+          `,
+        params,
+        queryOptions
+      ),
+      this.db.execute(
+        `
+            update ${DROP_REAL_VOTER_VOTE_IN_TIME_TABLE}
+            set drop_id = :targetDropId
+            where drop_id = :sourceDropId
+          `,
+        params,
+        queryOptions
+      )
+    ]);
+
+    await this.db.execute(
+      `
+          insert into ${DROP_VOTER_STATE_TABLE} (voter_id, drop_id, votes, wave_id)
+          select voter_id, :targetDropId as drop_id, votes, wave_id
+          from ${DROP_VOTER_STATE_TABLE}
+          where drop_id = :sourceDropId
+          on duplicate key update ${DROP_VOTER_STATE_TABLE}.votes = ${DROP_VOTER_STATE_TABLE}.votes + values(votes)
+        `,
+      params,
+      queryOptions
+    );
+    await this.db.execute(
+      `delete from ${DROP_VOTER_STATE_TABLE} where drop_id = :sourceDropId`,
+      params,
+      queryOptions
+    );
+
+    await this.db.execute(
+      `
+          insert into ${WINNER_DROP_VOTER_VOTES_TABLE} (voter_id, drop_id, votes, wave_id)
+          select voter_id, :targetDropId as drop_id, votes, wave_id
+          from ${WINNER_DROP_VOTER_VOTES_TABLE}
+          where drop_id = :sourceDropId
+          on duplicate key update ${WINNER_DROP_VOTER_VOTES_TABLE}.votes = ${WINNER_DROP_VOTER_VOTES_TABLE}.votes + values(votes)
+        `,
+      params,
+      queryOptions
+    );
+    await this.db.execute(
+      `delete from ${WINNER_DROP_VOTER_VOTES_TABLE} where drop_id = :sourceDropId`,
+      params,
+      queryOptions
+    );
+
+    const [sourceRank, targetRank] = await Promise.all([
+      this.db.oneOrNull<{ vote: number; last_increased: number }>(
+        `select vote, last_increased from ${DROP_RANK_TABLE} where drop_id = :sourceDropId`,
+        params,
+        queryOptions
+      ),
+      this.db.oneOrNull<{ vote: number; last_increased: number }>(
+        `select vote, last_increased from ${DROP_RANK_TABLE} where drop_id = :targetDropId`,
+        params,
+        queryOptions
+      )
+    ]);
+
+    if (sourceRank || targetRank) {
+      await this.db.execute(
+        `
+            insert into ${DROP_RANK_TABLE} (drop_id, last_increased, vote, wave_id)
+            values (:targetDropId, :lastIncreased, :vote, :waveId)
+            on duplicate key update last_increased = :lastIncreased, vote = :vote, wave_id = :waveId
+          `,
+        {
+          targetDropId,
+          waveId,
+          vote: (sourceRank?.vote ?? 0) + (targetRank?.vote ?? 0),
+          lastIncreased: Math.max(
+            sourceRank?.last_increased ?? 0,
+            targetRank?.last_increased ?? 0
+          )
+        },
+        queryOptions
+      );
+    }
+    await this.db.execute(
+      `delete from ${DROP_RANK_TABLE} where drop_id = :sourceDropId`,
+      params,
+      queryOptions
+    );
+    await this.rebuildRealVoteHistoryForMergedDrop(
+      {
+        sourceDropId,
+        targetDropId,
+        waveId,
+        voteChanges
+      },
+      ctx
+    );
+    await this.deleteDropsLeaderboardEntry(targetDropId, ctx);
+    await this.deleteDropsLeaderboardEntry(sourceDropId, ctx);
+  }
+
+  private async rebuildRealVoteHistoryForMergedDrop(
+    {
+      sourceDropId,
+      targetDropId,
+      waveId,
+      voteChanges
+    }: {
+      sourceDropId: string;
+      targetDropId: string;
+      waveId: string;
+      voteChanges: readonly MergedDropRealVoterVoteChange[];
+    },
+    ctx: RequestContext
+  ): Promise<void> {
+    const queryOptions = { wrappedConnection: ctx.connection };
+    await this.db.execute(
+      `delete from ${DROP_REAL_VOTE_IN_TIME_TABLE} where drop_id in (:dropIds)`,
+      { dropIds: [sourceDropId, targetDropId] },
+      queryOptions
+    );
+    if (!voteChanges.length) {
+      return;
+    }
+
+    const rebuiltStates = buildMergedDropRealVoteHistoryStates({
+      voteChanges,
+      targetDropId,
+      waveId
+    });
+
+    const sql = `
+      insert into ${DROP_REAL_VOTE_IN_TIME_TABLE} (drop_id, wave_id, timestamp, vote)
+      values ${rebuiltStates
+        .map(
+          (state) =>
+            `(${mysql.escape(state.drop_id)}, ${mysql.escape(
+              state.wave_id
+            )}, ${mysql.escape(state.timestamp)}, ${mysql.escape(state.vote)})`
+        )
+        .join(', ')}
+    `;
+    await this.db.execute(sql, undefined, queryOptions);
   }
 
   public async getTallyForDrops(

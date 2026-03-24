@@ -186,6 +186,10 @@ export class Time {
     return Time.fromUtcDateString(tdhStr);
   }
 
+  static epoch(): Time {
+    return Time.millis(0);
+  }
+
   public toPaddedDateString(): string {
     const date = this.toDate();
     return [
