@@ -1048,11 +1048,11 @@ async function populateMintStats(
   tokenId: number,
   mintDate: Date
 ): Promise<void> {
-  logger.info(`🔄 Populating mint stats for meme #${tokenId}`);
+  logInfo(`🔄 Populating mint stats for meme #${tokenId}`);
 
   const payload = await insertMemesMintStatsIfMissing(tokenId, mintDate);
   if (!payload) {
-    logger.info(`ℹ️ Mint stats already exist for meme #${tokenId}, skipping`);
+    logInfo(`ℹ️ Mint stats already exist for meme #${tokenId}, skipping`);
     return;
   }
 
