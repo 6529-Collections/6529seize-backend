@@ -46,6 +46,12 @@ async function replay() {
     }
 
     const payload = await upsertMemesMintStats(meme.id, mintDate);
+    if (!payload) {
+      logger.info(
+        `[MEMES MINT STATS REPLAY SKIP] [id=${meme.id}] [reason=stats_row_missing]`
+      );
+      continue;
+    }
     logger.info(
       `[MEMES MINT STATS REPLAY UPSERT] [id=${meme.id}] [total_count=${payload.total_count}] [mint_count=${payload.mint_count}] [subscriptions_count=${payload.subscriptions_count}]`
     );

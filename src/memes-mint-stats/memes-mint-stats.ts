@@ -134,11 +134,16 @@ export async function insertMemesMintStatsIfMissing(
 export async function upsertMemesMintStats(
   tokenId: number,
   mintDate: Date
-): Promise<MemesMintStat> {
+): Promise<MemesMintStat | null> {
+  const repo = getDataSource().getRepository(MemesMintStat);
+  const exists = await repo.existsBy({ id: tokenId });
+  if (!exists) {
+    return null;
+  }
+
   const payload = await calculateMemesMintStats(tokenId, mintDate);
 
-  await getDataSource()
-    .getRepository(MemesMintStat)
+  await repo
     .createQueryBuilder()
     .insert()
     .into(MemesMintStat)
