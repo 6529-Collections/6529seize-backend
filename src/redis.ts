@@ -104,11 +104,76 @@ export async function evictAllKeysMatchingPatternFromRedisCache(
   let cursor = 0;
   do {
     const result = await redis.scan(cursor, { MATCH: pattern, COUNT: 1000 });
-    cursor = result.cursor;
+    cursor = Number(result.cursor);
     if (result.keys.length > 0) {
       await redis.del(result.keys);
     }
   } while (cursor !== 0);
+}
+
+export function getRedisCacheKeyForPath(path: string): string {
+  return `__SEIZE_CACHE_${process.env.NODE_ENV}__${path}`;
+}
+
+export function getRedisCacheKeyPatternForPath(path: string): string {
+  return getRedisCacheKeyForPath(path);
+}
+
+export async function evictRedisCacheForPath(path: string): Promise<void> {
+  await evictAllKeysMatchingPatternFromRedisCache(
+    getRedisCacheKeyPatternForPath(`${path}*`)
+  );
+}
+
+export async function evictRedisCacheForPathWithTimeout({
+  path,
+  timeoutMs = 1_500
+}: {
+  path: string;
+  timeoutMs?: number;
+}): Promise<
+  | {
+      success: true;
+      elapsed_ms: number;
+    }
+  | {
+      success: false;
+      elapsed_ms: number;
+      error: unknown;
+    }
+> {
+  const startedAt = Date.now();
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+  try {
+    const evictionPromise = evictRedisCacheForPath(path).finally(() => {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+    });
+
+    await Promise.race([
+      evictionPromise,
+      new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => {
+          reject(
+            new Error(`Timed out after ${timeoutMs}ms while evicting ${path}`)
+          );
+        }, timeoutMs);
+      })
+    ]);
+
+    return {
+      success: true,
+      elapsed_ms: Date.now() - startedAt
+    };
+  } catch (error) {
+    return {
+      success: false,
+      elapsed_ms: Date.now() - startedAt,
+      error
+    };
+  }
 }
 
 const logger = Logger.get('REDIS_CLIENT');

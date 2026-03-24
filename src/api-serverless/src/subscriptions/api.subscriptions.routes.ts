@@ -9,13 +9,15 @@ import {
 } from '@/exceptions';
 import { getNft } from '@/nftsLoop/db.nfts';
 import { numbers } from '@/numbers';
-import { evictAllKeysMatchingPatternFromRedisCache } from '@/redis';
+import {
+  evictRedisCacheForPath,
+  evictRedisCacheForPathWithTimeout
+} from '@/redis';
 import { equalIgnoreCase } from '@/strings';
 import { Timer } from '@/time';
 import { PaginatedResponse } from '@/api/api-constants';
 import { Logger } from '@/logging';
 import {
-  getCacheKeyPatternForPath,
   getPage,
   getPageSize,
   giveReadReplicaTimeToCatchUp
@@ -65,12 +67,6 @@ import {
 const allowlistLogger = Logger.get('SUBSCRIPTIONS_ALLOWLIST');
 const CACHE_EVICTION_TIMEOUT_MS = 1_500;
 
-async function evictCacheForPath(path: string) {
-  await evictAllKeysMatchingPatternFromRedisCache(
-    getCacheKeyPatternForPath(`${path}*`)
-  );
-}
-
 async function evictCacheForPathWithTimeout(
   contract: string,
   tokenId: number,
@@ -79,41 +75,23 @@ async function evictCacheForPathWithTimeout(
     path: string;
   }
 ) {
-  const startedAt = Date.now();
-  let timeoutId: ReturnType<typeof setTimeout> | undefined;
-  try {
-    const evictionPromise = evictCacheForPath(cacheEviction.path).finally(
-      () => {
-        if (timeoutId) {
-          clearTimeout(timeoutId);
-        }
-      }
-    );
+  const evictionResult = await evictRedisCacheForPathWithTimeout({
+    path: cacheEviction.path,
+    timeoutMs: CACHE_EVICTION_TIMEOUT_MS
+  });
 
-    await Promise.race([
-      evictionPromise,
-      new Promise<never>((_, reject) => {
-        timeoutId = setTimeout(() => {
-          reject(
-            new Error(
-              `Timed out after ${CACHE_EVICTION_TIMEOUT_MS}ms while evicting ${cacheEviction.label} cache`
-            )
-          );
-        }, CACHE_EVICTION_TIMEOUT_MS);
-      })
-    ]);
-
+  if (evictionResult.success) {
     allowlistLogger.info(
       `[CACHE_EVICT_DONE] [contract ${contract}] [token_id ${tokenId}] [cache ${cacheEviction.label}] [elapsed_ms ${
-        Date.now() - startedAt
+        evictionResult.elapsed_ms
       }]`
     );
-  } catch (error) {
+  } else {
     allowlistLogger.warn(
       `[CACHE_EVICT_FAILED] [contract ${contract}] [token_id ${tokenId}] [cache ${cacheEviction.label}] [elapsed_ms ${
-        Date.now() - startedAt
+        evictionResult.elapsed_ms
       }]`,
-      error
+      evictionResult.error
     );
   }
 }
@@ -141,16 +119,16 @@ async function invalidateMintingClaimsPhaseCache(
 }
 
 async function invalidateSubscriptionCache(consolidationKey: string) {
-  await evictCacheForPath(
+  await evictRedisCacheForPath(
     `/api/subscriptions/consolidation/details/${consolidationKey}`
   );
-  await evictCacheForPath(
+  await evictRedisCacheForPath(
     `/api/subscriptions/consolidation/upcoming-memes/${consolidationKey}`
   );
-  await evictCacheForPath(
+  await evictRedisCacheForPath(
     `/api/subscriptions/consolidation/upcoming-memes/*/${consolidationKey}`
   );
-  await evictCacheForPath(`/api/subscriptions/upcoming-memes-counts`);
+  await evictRedisCacheForPath(`/api/subscriptions/upcoming-memes-counts`);
   await giveReadReplicaTimeToCatchUp();
 }
 

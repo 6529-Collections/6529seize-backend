@@ -533,6 +533,7 @@ router.get(
           page_size: Joi.number().integer().min(1).max(100).default(50),
           page: Joi.number().integer().min(1).default(1),
           curated_by_group: Joi.string().optional().default(null),
+          unvoted_by_me: Joi.boolean().optional().default(false),
           price_currency: Joi.string()
             .trim()
             .empty('')

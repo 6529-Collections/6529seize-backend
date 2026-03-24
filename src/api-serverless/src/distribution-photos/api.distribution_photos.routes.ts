@@ -1,16 +1,9 @@
 import { Request, Response } from 'express';
 import * as Joi from 'joi';
-import { invalidateCloudFront } from '../../../cloudfront';
-import { CLOUDFRONT_DISTRIBUTION } from '@/constants';
+import { getPage, getPageSize, returnPaginatedResult } from '@/api/api-helpers';
+import { Logger } from '@/logging';
 import { BadRequestException, ForbiddenException } from '../../../exceptions';
 import { numbers } from '../../../numbers';
-import { evictAllKeysMatchingPatternFromRedisCache } from '../../../redis';
-import {
-  getCacheKeyPatternForPath,
-  getPage,
-  getPageSize,
-  returnPaginatedResult
-} from '../api-helpers';
 import { ApiResponse } from '../api-response';
 import { asyncRouter } from '../async.router';
 import { needsAuthenticatedUser } from '../auth/auth';
@@ -31,17 +24,59 @@ import { uploadMediaService } from '../media/upload-media.service';
 import { cacheRequest } from '../request-cache';
 import { authenticateSubscriptionsAdmin } from '../subscriptions/api.subscriptions.allowlist';
 import { getValidatedByJoiOrThrow } from '../validation';
+import { evictRedisCacheForPathWithTimeout } from '@/redis';
 import {
   fetchDistributionPhotos,
   saveDistributionPhotos
 } from './api.distribution_photos.db';
 
 const router = asyncRouter();
+const logger = Logger.get('DISTRIBUTION_PHOTOS');
+const CACHE_EVICTION_TIMEOUT_MS = 1_500;
 
-async function evictCacheForPath(path: string) {
-  await evictAllKeysMatchingPatternFromRedisCache(
-    getCacheKeyPatternForPath(`${path}*`)
-  );
+async function evictCacheForPathWithTimeout(
+  contract: string,
+  nftId: number,
+  cacheEviction: {
+    label: string;
+    path: string;
+  }
+) {
+  const evictionResult = await evictRedisCacheForPathWithTimeout({
+    path: cacheEviction.path,
+    timeoutMs: CACHE_EVICTION_TIMEOUT_MS
+  });
+
+  if (evictionResult.success) {
+    logger.info(
+      `[CACHE_EVICT_DONE] [contract ${contract}] [nft_id ${nftId}] [cache ${cacheEviction.label}] [elapsed_ms ${
+        evictionResult.elapsed_ms
+      }]`
+    );
+  } else {
+    logger.warn(
+      `[CACHE_EVICT_FAILED] [contract ${contract}] [nft_id ${nftId}] [cache ${cacheEviction.label}] [elapsed_ms ${
+        evictionResult.elapsed_ms
+      }]`,
+      evictionResult.error
+    );
+  }
+}
+
+async function invalidateDistributionPhotoCaches(
+  contract: string,
+  nftId: number
+) {
+  await Promise.allSettled([
+    evictCacheForPathWithTimeout(contract, nftId, {
+      label: 'distribution-photos',
+      path: `/api/distribution_photos/${contract}/${nftId}`
+    }),
+    evictCacheForPathWithTimeout(contract, nftId, {
+      label: 'distribution-overview',
+      path: `/api/distributions/${contract}/${nftId}/overview`
+    })
+  ]);
 }
 
 router.get(
@@ -236,12 +271,7 @@ router.post(
     const photoUrls = validatedRequest.photos.map((p) => p.media_url);
 
     await saveDistributionPhotos(contract, nftId, photoUrls);
-
-    const invalidationPath = `/distribution/${process.env.NODE_ENV}/${contract}/${nftId}/*`;
-    await invalidateCloudFront(CLOUDFRONT_DISTRIBUTION, [invalidationPath]);
-
-    await evictCacheForPath(`/api/distribution_photos/${contract}/${nftId}`);
-    await evictCacheForPath(`/api/distributions/${contract}/${nftId}/overview`);
+    await invalidateDistributionPhotoCaches(contract, nftId);
 
     return res.json({
       success: true,
