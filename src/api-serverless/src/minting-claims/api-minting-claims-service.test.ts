@@ -174,6 +174,32 @@ describe('buildUpdatesForClaimPatch', () => {
     expect(updates.image_location).toBeUndefined();
     expect(updates.metadata_location).toBeUndefined();
   });
+
+  it('keeps metadata_location when only edition_size changes', async () => {
+    const existing = baseClaim();
+    const body: MintingClaimUpdateRequest = {
+      edition_size: 500
+    };
+
+    const updates = await buildUpdatesForClaimPatch(body, existing, true);
+
+    expect(updates.edition_size).toBe(500);
+    expect(updates.metadata_location).toBeUndefined();
+  });
+
+  it('clears metadata_location when edition_size and metadata fields change together', async () => {
+    const existing = baseClaim();
+    const body: MintingClaimUpdateRequest = {
+      edition_size: 500,
+      name: 'updated-name'
+    };
+
+    const updates = await buildUpdatesForClaimPatch(body, existing, true);
+
+    expect(updates.edition_size).toBe(500);
+    expect(updates.name).toBe('updated-name');
+    expect(updates.metadata_location).toBeNull();
+  });
 });
 
 describe('patchMintingClaim', () => {

@@ -140,8 +140,8 @@ function applyEditionSizeUpdate(
   body: MintingClaimUpdateRequest,
   updates: MintingClaimUpdates,
   isMemesContract: boolean
-): boolean {
-  if (body.edition_size === undefined) return false;
+): void {
+  if (body.edition_size === undefined) return;
   if (body.edition_size !== null && !Number.isInteger(body.edition_size)) {
     throw new BadRequestException('edition_size must be an integer');
   }
@@ -155,7 +155,6 @@ function applyEditionSizeUpdate(
     );
   }
   updates.edition_size = body.edition_size;
-  return true;
 }
 
 async function applyImageFromBody(
@@ -251,7 +250,7 @@ export async function buildUpdatesForClaimPatch(
   isMemesContract: boolean
 ): Promise<MintingClaimUpdates> {
   const updates: MintingClaimUpdates = {};
-  let shouldResetSyncState = false;
+  let shouldResetMetadataLocation = false;
   let nextImageUrl: string | null = normalizeOptionalUrl(existing.image_url);
   let imageUrlChanged = false;
   let nextAnimationUrl: string | null = normalizeOptionalUrl(
@@ -261,12 +260,12 @@ export async function buildUpdatesForClaimPatch(
 
   if (body.description !== undefined) {
     updates.description = body.description;
-    shouldResetSyncState = true;
+    shouldResetMetadataLocation = true;
   }
 
   if (body.name !== undefined) {
     updates.name = body.name;
-    shouldResetSyncState = true;
+    shouldResetMetadataLocation = true;
   }
 
   if (body.image_url !== undefined) {
@@ -275,17 +274,17 @@ export async function buildUpdatesForClaimPatch(
     if (imageUrlChanged) {
       updates.image_url = nextImageUrl;
       updates.image_location = null;
-      shouldResetSyncState = true;
+      shouldResetMetadataLocation = true;
     }
   }
 
   if (body.external_url !== undefined) {
     updates.external_url = body.external_url;
-    shouldResetSyncState = true;
+    shouldResetMetadataLocation = true;
   }
 
   if (await applyAttributesFromBody(body, updates, isMemesContract)) {
-    shouldResetSyncState = true;
+    shouldResetMetadataLocation = true;
   }
 
   if (body.animation_url !== undefined) {
@@ -295,13 +294,11 @@ export async function buildUpdatesForClaimPatch(
     if (animationUrlChanged) {
       updates.animation_url = nextAnimationUrl;
       updates.animation_location = null;
-      shouldResetSyncState = true;
+      shouldResetMetadataLocation = true;
     }
   }
 
-  shouldResetSyncState =
-    applyEditionSizeUpdate(body, updates, isMemesContract) ||
-    shouldResetSyncState;
+  applyEditionSizeUpdate(body, updates, isMemesContract);
 
   if (imageUrlChanged) {
     await applyImageFromBody(nextImageUrl, existing, updates);
@@ -311,7 +308,7 @@ export async function buildUpdatesForClaimPatch(
     await applyAnimationFromBody(nextAnimationUrl, existing, updates);
   }
 
-  if (shouldResetSyncState) {
+  if (shouldResetMetadataLocation) {
     updates.metadata_location = null;
   }
 
