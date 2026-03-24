@@ -18,10 +18,6 @@ export function cacheKey(req: Request) {
   return getCacheKeyPrefix() + (req.originalUrl || req.url);
 }
 
-export function getCacheKeyPatternForPath(path: string): string {
-  return `${getCacheKeyPrefix()}${path}`;
-}
-
 function fullUrl(req: Request, next: string | null) {
   let url = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
 

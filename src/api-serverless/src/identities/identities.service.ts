@@ -320,7 +320,7 @@ export class IdentitiesService {
             wallets,
             consolidationKey
           );
-          const oldPrimaryAddress = identity.consolidation_key;
+          const oldPrimaryAddress = identity.primary_wallet;
           if (!equalIgnoreCase(newPrimaryAddress, oldPrimaryAddress)) {
             const ensName = await findEnsForAddress(newPrimaryAddress);
             await this.identitiesDb.executeNativeQueriesInTransaction(

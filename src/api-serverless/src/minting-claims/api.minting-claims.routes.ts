@@ -1,4 +1,3 @@
-import { getCacheKeyPatternForPath } from '@/api/api-helpers';
 import { ApiResponse } from '@/api/api-response';
 import { asyncRouter } from '@/api/async.router';
 import {
@@ -48,7 +47,6 @@ import {
 } from '@/minting-claims/claims-media-arweave-upload';
 import { isMemesContract } from '@/minting-claims/external-url';
 import { numbers } from '@/numbers';
-import { evictAllKeysMatchingPatternFromRedisCache } from '@/redis';
 import { equalIgnoreCase } from '@/strings';
 import { NextFunction, Request, Response } from 'express';
 import * as Joi from 'joi';
@@ -76,31 +74,6 @@ function safeParseJson<T>(raw: string | null, fallback: T, label: string): T {
       err
     });
     return fallback;
-  }
-}
-
-async function evictMintingClaimCache(
-  contract: string,
-  claimId: number
-): Promise<void> {
-  const patterns = [
-    getCacheKeyPatternForPath(
-      `/api/minting-claims/${contract}/claims/${claimId}*`
-    ),
-    getCacheKeyPatternForPath(`/api/minting-claims/${contract}/claims*`)
-  ];
-
-  for (const pattern of patterns) {
-    try {
-      await evictAllKeysMatchingPatternFromRedisCache(pattern);
-    } catch (error) {
-      logger.warn('Failed to evict minting-claims cache pattern', {
-        pattern,
-        contract,
-        claimId,
-        error
-      });
-    }
   }
 }
 
@@ -280,7 +253,6 @@ const RelaxedMintingClaimUpdateRequestSchema = Joi.object({
 router.get(
   '/:contract/claims',
   needsAuthenticatedUser(),
-  cacheRequest({ authDependent: true }),
   async function (
     req: Request<
       { contract: string },
@@ -336,7 +308,6 @@ router.get(
 router.get(
   '/:contract/claims/:claim_id',
   needsAuthenticatedUser(),
-  cacheRequest({ authDependent: true }),
   async function (
     req: Request<ContractClaimParams, any, any, any, any>,
     res: Response<ApiResponse<MintingClaim>>
@@ -399,7 +370,6 @@ router.patch(
         return res.status(404).json({ error: 'Claim not found' });
       }
 
-      await evictMintingClaimCache(params.contract, claimId);
       return res.json(rowToMintingClaim(updated));
     } catch (error) {
       return next(error);
@@ -487,10 +457,13 @@ router.post(
 
     await assertCanStartArweaveUpload(claim, params.contract);
     await queueArweaveUploadOrRollback(params.contract, claimId);
-    await evictMintingClaimCache(params.contract, claimId);
 
-    const updated = await fetchMintingClaimByClaimId(params.contract, claimId);
-    return res.status(202).json(rowToMintingClaim(updated ?? claim));
+    return res.status(202).json(
+      rowToMintingClaim({
+        ...claim,
+        media_uploading: true
+      })
+    );
   }
 );
 

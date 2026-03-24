@@ -15,8 +15,20 @@ import { identitySubscriptionsDb } from './api-serverless/src/identity-subscript
 import { identitiesService } from './api-serverless/src/identities/identities.service';
 import { numbers } from './numbers';
 import { collections } from './collections';
+import { profilesDb } from './profiles/profiles.db';
 
 const logger = Logger.get('IDENTITIES');
+
+type IdentityMergeTarget = {
+  sourceIdentities: IdentityEntity[];
+  targetIdentity: IdentityEntity;
+  originalIdentity: IdentityEntity | null;
+};
+
+export type ProfileRetentionCandidate = {
+  consolidationKey: string;
+  tdh: number;
+};
 
 async function getUnsynchronisedConsolidationKeysWithTdhs(
   connection: ConnectionWrapper<any>
@@ -106,6 +118,201 @@ function mergeDuplicates(identitiesToSave: IdentityEntity[]) {
   );
 }
 
+function consolidationContainsWallet(
+  consolidationKey: string,
+  wallet: string | null | undefined
+) {
+  if (!wallet) {
+    return false;
+  }
+  return consolidationKey
+    .split('-')
+    .some((it) => it.toLowerCase() === wallet.toLowerCase());
+}
+
+function detachIdentityFromProfile(identity: IdentityEntity): IdentityEntity {
+  const newProfileId = randomUUID();
+  return {
+    ...identity,
+    profile_id: newProfileId,
+    handle: null,
+    normalised_handle: null,
+    rep: 0,
+    cic: 0,
+    level_raw: identity.level_raw - identity.rep,
+    classification: null,
+    sub_classification: null,
+    banner1: null,
+    banner2: null,
+    pfp: null
+  };
+}
+
+export function selectProfileRetentionConsolidation({
+  candidates,
+  delegatedPrimaryAddress,
+  previousPrimaryAddress
+}: {
+  candidates: ProfileRetentionCandidate[];
+  delegatedPrimaryAddress: string | null;
+  previousPrimaryAddress: string | null;
+}) {
+  if (candidates.length === 0) {
+    throw new Error('Expected at least one profile retention candidate');
+  }
+
+  const delegatedPrimaryCandidate = delegatedPrimaryAddress
+    ? candidates.find((candidate) =>
+        consolidationContainsWallet(
+          candidate.consolidationKey,
+          delegatedPrimaryAddress
+        )
+      )
+    : null;
+  if (delegatedPrimaryCandidate) {
+    return delegatedPrimaryCandidate.consolidationKey;
+  }
+
+  const highestTdh = Math.max(...candidates.map((candidate) => candidate.tdh));
+  const highestTdhCandidates = candidates.filter(
+    (candidate) => candidate.tdh === highestTdh
+  );
+
+  if (highestTdhCandidates.length === 1) {
+    return highestTdhCandidates[0].consolidationKey;
+  }
+
+  const previousPrimaryCandidate = previousPrimaryAddress
+    ? highestTdhCandidates.find((candidate) =>
+        consolidationContainsWallet(
+          candidate.consolidationKey,
+          previousPrimaryAddress
+        )
+      )
+    : null;
+  if (previousPrimaryCandidate) {
+    return previousPrimaryCandidate.consolidationKey;
+  }
+
+  return highestTdhCandidates
+    .map((candidate) => candidate.consolidationKey)
+    .sort((a, b) => a.localeCompare(b))[0];
+}
+
+async function getActiveDelegatedPrimaryAddress(
+  consolidationKey: string
+): Promise<string | null> {
+  const { getDelegationPrimaryAddressForConsolidation } =
+    await import('./delegationsLoop/db.delegations');
+  return await getDelegationPrimaryAddressForConsolidation(consolidationKey);
+}
+
+async function applyExplicitProfileRetention(
+  identitiesToMerge: IdentityMergeTarget[]
+) {
+  const mergeGroups = Object.values(
+    identitiesToMerge.reduce(
+      (acc, mergeTarget) => {
+        const profileId = mergeTarget.targetIdentity.profile_id;
+        if (profileId) {
+          acc[profileId] = acc[profileId] ?? [];
+          acc[profileId].push(mergeTarget);
+        }
+        return acc;
+      },
+      {} as Record<string, IdentityMergeTarget[]>
+    )
+  );
+
+  for (const mergeGroup of mergeGroups) {
+    if (mergeGroup.length < 2) {
+      continue;
+    }
+
+    const originalIdentity = mergeGroup[0].originalIdentity;
+    if (!originalIdentity) {
+      continue;
+    }
+
+    const delegatedPrimaryAddress = await getActiveDelegatedPrimaryAddress(
+      originalIdentity.consolidation_key
+    );
+    const retainedConsolidationKey = selectProfileRetentionConsolidation({
+      candidates: mergeGroup.map((candidate) => ({
+        consolidationKey: candidate.targetIdentity.consolidation_key,
+        tdh: candidate.targetIdentity.tdh
+      })),
+      delegatedPrimaryAddress,
+      previousPrimaryAddress: originalIdentity.primary_address
+    });
+
+    for (const mergeTarget of mergeGroup) {
+      if (
+        mergeTarget.targetIdentity.consolidation_key.toLowerCase() !==
+        retainedConsolidationKey.toLowerCase()
+      ) {
+        mergeTarget.targetIdentity = detachIdentityFromProfile(
+          mergeTarget.targetIdentity
+        );
+      }
+    }
+  }
+}
+
+export async function syncIdentityMetadataFromMergedProfiles(
+  identitiesToMerge: IdentityMergeTarget[],
+  connection: ConnectionWrapper<any>
+) {
+  const mergeTargetsWithProfiles = collections
+    .distinct(
+      identitiesToMerge
+        .filter((mergeTarget) => mergeTarget.sourceIdentities.length > 0)
+        .map((mergeTarget) => mergeTarget.targetIdentity.profile_id)
+        .filter((profileId): profileId is string => !!profileId)
+    )
+    .reduce(
+      (acc, profileId) => {
+        const mergeTarget = identitiesToMerge.find(
+          (it) => it.targetIdentity.profile_id === profileId
+        );
+        if (mergeTarget) {
+          acc.push({
+            consolidationKey: mergeTarget.targetIdentity.consolidation_key,
+            profileId
+          });
+        }
+        return acc;
+      },
+      [] as {
+        consolidationKey: string;
+        profileId: string;
+      }[]
+    );
+
+  for (const mergeTarget of mergeTargetsWithProfiles) {
+    const profile = await profilesDb.getProfileById(
+      mergeTarget.profileId,
+      connection
+    );
+    if (profile) {
+      await identitiesDb.updateIdentityProfile(
+        mergeTarget.consolidationKey,
+        {
+          profile_id: profile.external_id,
+          handle: profile.handle,
+          classification: profile.classification ?? null,
+          normalised_handle: profile.normalised_handle,
+          sub_classification: profile.sub_classification ?? null,
+          banner1: profile.banner_1 ?? null,
+          banner2: profile.banner_2 ?? null,
+          pfp: profile.pfp_url ?? null
+        },
+        connection
+      );
+    }
+  }
+}
+
 export async function syncIdentitiesWithTdhConsolidations(
   connection: ConnectionWrapper<any>
 ) {
@@ -179,10 +386,7 @@ export async function syncIdentitiesWithTdhConsolidations(
           })
       )
     );
-    const identitiesToMerge: {
-      sourceIdentities: IdentityEntity[];
-      targetIdentity: IdentityEntity;
-    }[] = [];
+    const identitiesToMerge: IdentityMergeTarget[] = [];
     for (const consolidationThatNeedsWork of consolidationsThatNeedWork) {
       const walletsForConsolidationThatNeedsWork =
         consolidationThatNeedsWork.consolidation_key.split('-');
@@ -190,28 +394,33 @@ export async function syncIdentitiesWithTdhConsolidations(
         walletsForConsolidationThatNeedsWork,
         consolidationThatNeedsWork.consolidation_key
       );
-      let targetIdentity = oldDataByWallets[newPrimaryAddress]?.identity ??
-        oldDataByWallets[0]?.identity ?? {
-          consolidation_key: consolidationsThatNeedWork,
-          primary_address: newPrimaryAddress,
-          profile_id: randomUUID(),
-          handle: null,
-          normalised_handle: null,
-          tdh: consolidationThatNeedsWork.tdh,
-          produced_xtdh: 0,
-          granted_xtdh: 0,
-          xtdh: 0,
-          xtdh_rate: 0,
-          basetdh_rate: 0,
-          rep: 0,
-          cic: 0,
-          level_raw: consolidationThatNeedsWork.tdh,
-          pfp: null,
-          banner1: null,
-          banner2: null,
-          classification: null,
-          sub_classification: null
-        };
+      const originalIdentity =
+        oldDataByWallets[newPrimaryAddress]?.identity ??
+        walletsForConsolidationThatNeedsWork
+          .map((wallet) => oldDataByWallets[wallet]?.identity ?? null)
+          .find((identity) => !!identity) ??
+        null;
+      let targetIdentity = originalIdentity ?? {
+        consolidation_key: consolidationThatNeedsWork.consolidation_key,
+        primary_address: newPrimaryAddress,
+        profile_id: randomUUID(),
+        handle: null,
+        normalised_handle: null,
+        tdh: consolidationThatNeedsWork.tdh,
+        produced_xtdh: 0,
+        granted_xtdh: 0,
+        xtdh: 0,
+        xtdh_rate: 0,
+        basetdh_rate: 0,
+        rep: 0,
+        cic: 0,
+        level_raw: consolidationThatNeedsWork.tdh,
+        pfp: null,
+        banner1: null,
+        banner2: null,
+        classification: null,
+        sub_classification: null
+      };
       const mainProfileForNewConsolidation =
         walletsForConsolidationThatNeedsWork
           .map((it) => oldDataByWallets[it])
@@ -253,8 +462,13 @@ export async function syncIdentitiesWithTdhConsolidations(
         .filter((it) => !!it)
         .filter((it) => it.identity.profile_id !== targetIdentity.profile_id)
         .map((it) => it.identity);
-      identitiesToMerge.push({ sourceIdentities, targetIdentity });
+      identitiesToMerge.push({
+        sourceIdentities,
+        targetIdentity,
+        originalIdentity
+      });
     }
+    await applyExplicitProfileRetention(identitiesToMerge);
     const allOldWallets = collections.distinct(
       Object.values(oldDataByWallets)
         .map((it) => it.identity.consolidation_key.split('-'))
@@ -332,6 +546,7 @@ export async function syncIdentitiesWithTdhConsolidations(
         connection
       );
     }
+    await syncIdentityMetadataFromMergedProfiles(identitiesToMerge, connection);
     if (identitiesToMerge.length > 0) {
       await identitySubscriptionsDb.resyncWaveSubscriptionsMetrics(connection);
     }

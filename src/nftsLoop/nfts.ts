@@ -4,14 +4,13 @@ import {
   MEME_8_EDITION_BURN_ADJUSTMENT,
   MEMELAB_CONTRACT,
   MEMES_CONTRACT,
-  NFT_HTML_LINK,
   NFT_ORIGINAL_IMAGE_LINK,
   NFT_SCALED1000_IMAGE_LINK,
   NFT_SCALED450_IMAGE_LINK,
   NFT_SCALED60_IMAGE_LINK,
-  NFT_VIDEO_LINK,
   NULL_ADDRESS
 } from '@/constants';
+import { getAnimationPaths } from '@/nftsLoop/nft-animation-paths';
 import { deployerDropper } from '@/deployer-dropper';
 import { env } from '@/env';
 import { processArtists } from '@/artists';
@@ -128,33 +127,6 @@ function getTokenPath(contract: string, tokenId: number, format: string) {
   return format.toUpperCase() === 'GIF'
     ? `${contract}/${tokenId}.${format}`
     : `${contract}/${tokenId}.WEBP`;
-}
-
-function getAnimationPaths(
-  contract: string,
-  tokenId: number,
-  originalAnimationUrl: string | undefined,
-  animationDetails: any
-) {
-  const parsed =
-    typeof animationDetails === 'string'
-      ? JSON.parse(animationDetails)
-      : animationDetails;
-  const ext = parsed?.format;
-  const base = `${contract}/${tokenId}.${ext}`;
-  if (ext === 'HTML') {
-    return { animation: `${NFT_HTML_LINK}${base}` };
-  }
-  if (['MP4', 'MOV'].includes(ext)) {
-    return {
-      animation: `${NFT_VIDEO_LINK}${base}`,
-      compressedAnimation: `${NFT_VIDEO_LINK}${contract}/scaledx750/${tokenId}.${ext}`
-    };
-  }
-  if (originalAnimationUrl && isValidUrl(originalAnimationUrl)) {
-    return { animation: originalAnimationUrl };
-  }
-  return {};
 }
 
 function isValidUrl(uri: string): boolean {

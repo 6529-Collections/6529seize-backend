@@ -207,7 +207,7 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     profile: {
       profile_id: string;
       handle: string;
-      classification: ProfileClassification;
+      classification: ProfileClassification | null;
       normalised_handle: string;
       sub_classification: string | null;
       banner1: string | null;
