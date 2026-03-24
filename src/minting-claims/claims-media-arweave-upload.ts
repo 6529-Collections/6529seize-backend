@@ -42,7 +42,6 @@ const VIDEO_ANIMATION_DETAILS_KEYS = [
 ] as const;
 const HTML_ANIMATION_DETAILS_KEYS = ['format'] as const;
 const GLB_ANIMATION_DETAILS_KEYS = ['bytes', 'format', 'sha256'] as const;
-const HTML_ANIMATION_DETAILS_SERIALIZED = '{ "format": "HTML" }';
 const MEMES_REQUIRED_METADATA_KEYS = new Set([
   'created_by',
   'description',
@@ -407,16 +406,6 @@ function sanitizeAnimationDetails(
   return pickKnownKeys(value, VIDEO_ANIMATION_DETAILS_KEYS);
 }
 
-function serializeAnimationDetailsForArweave(
-  animationDetails: Record<string, unknown> | null
-): Record<string, unknown> | string | null {
-  if (animationDetails == null) return null;
-  if (animationDetails.format === 'HTML') {
-    return HTML_ANIMATION_DETAILS_SERIALIZED;
-  }
-  return animationDetails;
-}
-
 function getMemeNameFromAttributes(attributes: unknown): string {
   if (!Array.isArray(attributes))
     throw new BadRequestException('Claim has no attributes');
@@ -562,9 +551,6 @@ function buildArweaveMetadataPayload(
       ? claim.animation_url?.trim() || null
       : null;
   const resolvedAnimationUrl = animationLocation ?? htmlAnimationUrl;
-  const animationDetails = serializeAnimationDetailsForArweave(
-    sanitizedAnimationDetails
-  );
 
   const metadata: Record<string, unknown> = {
     created_by: ARWEAVE_METADATA_CREATED_BY,
@@ -581,15 +567,16 @@ function buildArweaveMetadataPayload(
   metadata.image_url = imageLocation;
   if (
     resolvedAnimationUrl != null &&
-    typeof animationDetails === 'string' &&
-    animationDetails === HTML_ANIMATION_DETAILS_SERIALIZED
+    (sanitizedAnimationDetails as { format?: string } | null)?.format === 'HTML'
   ) {
     metadata.animation_url = resolvedAnimationUrl;
   } else if (resolvedAnimationUrl != null) {
     metadata.animation = resolvedAnimationUrl;
     metadata.animation_url = resolvedAnimationUrl;
   }
-  if (animationDetails != null) metadata.animation_details = animationDetails;
+  if (sanitizedAnimationDetails != null) {
+    metadata.animation_details = sanitizedAnimationDetails;
+  }
   return metadata;
 }
 
@@ -692,8 +679,9 @@ function getMemesAnimationMetadataState(metadata: Record<string, unknown>) {
   const hasAnyAnimationFields =
     hasAnimation || hasAnimationUrl || hasAnimationDetails;
   const hasHtmlAnimationDetails =
-    typeof animationDetails === 'string' &&
-    animationDetails === HTML_ANIMATION_DETAILS_SERIALIZED;
+    (typeof animationDetails === 'string' &&
+      animationDetails === '{ "format": "HTML" }') ||
+    (isPlainObject(animationDetails) && animationDetails.format === 'HTML');
 
   return {
     hasAnimation,
@@ -767,9 +755,7 @@ function appendMemesAnimationDetailsIssues(
 ) {
   if (typeof state.animationDetails === 'string') {
     if (!state.hasHtmlAnimationDetails) {
-      invalid.push(
-        `MEMES animation_details (must equal ${HTML_ANIMATION_DETAILS_SERIALIZED})`
-      );
+      invalid.push('MEMES animation_details (invalid legacy string value)');
     }
     return;
   }

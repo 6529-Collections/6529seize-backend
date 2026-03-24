@@ -394,13 +394,13 @@ describe('uploadMintingClaimToArweave', () => {
     );
   });
 
-  it('uploads HTML MEMES metadata in the expected legacy shape', async () => {
+  it('uploads HTML MEMES metadata in object shape', async () => {
     uploadFileMock.mockReset();
     uploadFileMock
       .mockResolvedValueOnce({ url: 'https://arweave.net/image-tx' })
       .mockResolvedValueOnce({ url: 'https://arweave.net/metadata-tx' });
 
-    await uploadMintingClaimToArweave(
+    const result = await uploadMintingClaimToArweave(
       MEMES_CONTRACT,
       baseClaim({
         animation_url: 'https://cdn.example.com/interactive.html',
@@ -411,6 +411,14 @@ describe('uploadMintingClaimToArweave', () => {
       })
     );
 
+    expect(result.animationLocationUrl).toBeNull();
+    expect(uploadFileMock).toHaveBeenCalledTimes(2);
+    expect(fetchPublicUrlToBufferMock).toHaveBeenCalledTimes(1);
+    expect(
+      fetchPublicUrlToBufferMock.mock.calls.some(
+        ([url]) => url === 'https://cdn.example.com/interactive.html'
+      )
+    ).toBe(false);
     const metadataUploadBuffer = uploadFileMock.mock.calls[1]?.[0] as Buffer;
     const uploadedMetadata = JSON.parse(metadataUploadBuffer.toString('utf8'));
 
@@ -418,7 +426,7 @@ describe('uploadMintingClaimToArweave', () => {
     expect(uploadedMetadata.animation_url).toBe(
       'https://cdn.example.com/interactive.html'
     );
-    expect(uploadedMetadata.animation_details).toBe('{ "format": "HTML" }');
+    expect(uploadedMetadata.animation_details).toEqual({ format: 'HTML' });
   });
 
   it('uploads GLB MEMES metadata in the expected object shape', async () => {
@@ -513,6 +521,6 @@ describe('uploadMintingClaimToArweave', () => {
     expect(uploadedMetadata.animation_url).toBe(
       'https://cdn.example.com/interactive.html'
     );
-    expect(uploadedMetadata.animation_details).toBe('{ "format": "HTML" }');
+    expect(uploadedMetadata.animation_details).toEqual({ format: 'HTML' });
   });
 });
