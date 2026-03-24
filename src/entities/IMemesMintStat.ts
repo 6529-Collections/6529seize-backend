@@ -9,8 +9,14 @@ export class MemesMintStat {
   @Column({ type: 'datetime', nullable: true })
   mint_date!: Date | null;
 
-  @Column({ type: 'int' })
+  @Column({ type: 'int', name: 'mint_count' })
+  total_count!: number;
+
+  @Column({ type: 'int', name: 'direct_mint_count', default: 0 })
   mint_count!: number;
+
+  @Column({ type: 'int', default: 0 })
+  subscriptions_count!: number;
 
   @Column({ type: 'double' })
   proceeds_eth!: number;
