@@ -1073,7 +1073,9 @@ const getMintPrice = async (contract: string, tokenId: number) => {
     },
     order: { transaction_date: 'ASC' }
   });
-  return firstMintTransaction?.value ?? 0;
+  return (
+    firstMintTransaction?.primary_proceeds ?? firstMintTransaction?.value ?? 0
+  );
 };
 
 const getMintDate = async (contract: string, tokenId: number) => {
