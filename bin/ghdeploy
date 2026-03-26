@@ -1,0 +1,459 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+readonly WORKFLOW_FILE=".github/workflows/deploy.yml"
+readonly WORKFLOW_NAME="Deploy a service"
+readonly WORKFLOW_REPO="6529-Collections/6529seize-backend"
+readonly DEFAULT_ENVIRONMENT="staging"
+readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly PICKER_SCRIPT="$SCRIPT_DIR/ghdeploy-picker.mjs"
+
+BATCH_SERVICES=()
+BATCH_SUCCEEDED=()
+BATCH_FAILED=()
+BATCH_SKIPPED=()
+
+cleanup_ui() {
+  return 0
+}
+
+close_tty() {
+  return 0
+}
+
+die() {
+  cleanup_ui
+  printf 'ghdeploy: %s\n' "$*" >&2
+  exit 1
+}
+
+handle_interrupt() {
+  cleanup_ui
+  exit 130
+}
+
+cleanup_on_exit() {
+  cleanup_ui
+}
+
+ensure_command() {
+  command -v "$1" >/dev/null 2>&1 || die "Required command not found: $1"
+}
+
+open_tty() {
+  return 0
+}
+
+tty_printf() {
+  printf "$@" >&2
+}
+
+read_line_from_tty() {
+  local __target="$1"
+  local value
+
+  IFS= read -r value || return 1
+  printf -v "$__target" '%s' "$value"
+}
+
+resolve_repo_root() {
+  git rev-parse --show-toplevel 2>/dev/null ||
+    die 'Run this command from inside the repository'
+}
+
+list_allowed_services() {
+  local workflow_path="$1"
+
+  awk '
+    function indent_of(line) {
+      match(line, /^[ ]*/)
+      return RLENGTH
+    }
+
+    {
+      raw = $0
+      trimmed = raw
+      sub(/^[ ]+/, "", trimmed)
+
+      if (!found_service && trimmed == "service:") {
+        found_service = 1
+        service_indent = indent_of(raw)
+        next
+      }
+
+      if (found_service && !in_options) {
+        current_indent = indent_of(raw)
+
+        if (trimmed == "" || substr(trimmed, 1, 1) == "#") {
+          next
+        }
+
+        if (current_indent <= service_indent) {
+          exit
+        }
+
+        if (trimmed == "options:") {
+          in_options = 1
+          options_indent = current_indent
+        }
+
+        next
+      }
+
+      if (in_options) {
+        current_indent = indent_of(raw)
+
+        if (trimmed == "" || substr(trimmed, 1, 1) == "#") {
+          next
+        }
+
+        if (current_indent <= options_indent) {
+          exit
+        }
+
+        if (substr(trimmed, 1, 2) == "- ") {
+          print substr(trimmed, 3)
+          next
+        }
+
+        exit
+      }
+    }
+  ' "$workflow_path"
+}
+
+service_is_allowed() {
+  local target="$1"
+  shift
+  local service
+
+  for service in "$@"; do
+    if [[ "$service" == "$target" ]]; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+resolve_service_from_path() {
+  local repo_root="$1"
+  local current_dir="$2"
+  local relative_path
+  local candidate
+
+  if [[ "$current_dir" == "$repo_root" ]]; then
+    printf '__ROOT__\n'
+    return 0
+  fi
+
+  relative_path="${current_dir#"$repo_root"/}"
+
+  case "$relative_path" in
+    src/api-serverless)
+      printf 'api\n'
+      ;;
+    src/*)
+      if [[ "$relative_path" == src/*/* ]]; then
+        die 'Run ghdeploy from the repo root, src/<service>, or src/api-serverless'
+      fi
+
+      candidate="${relative_path#src/}"
+      printf '%s\n' "$candidate"
+      ;;
+    *)
+      die 'Run ghdeploy from the repo root, src/<service>, or src/api-serverless'
+      ;;
+  esac
+}
+
+ensure_clean_worktree() {
+  local repo_root="$1"
+  local dirty_status
+
+  dirty_status="$(git -C "$repo_root" status --porcelain --untracked-files=normal)"
+
+  if [[ -n "$dirty_status" ]]; then
+    printf 'ghdeploy: Refusing to deploy because the working tree is not clean:\n%s\n' \
+      "$dirty_status" >&2
+    exit 1
+  fi
+}
+
+resolve_branch() {
+  local repo_root="$1"
+  local branch
+
+  branch="$(git -C "$repo_root" rev-parse --abbrev-ref HEAD 2>/dev/null)" ||
+    die 'Unable to determine the current branch'
+
+  [[ "$branch" != 'HEAD' ]] || die 'Detached HEAD is not supported'
+
+  printf '%s\n' "$branch"
+}
+
+ensure_branch_in_sync() {
+  local repo_root="$1"
+  local branch="$2"
+  local upstream_ref
+  local upstream_remote
+  local upstream_merge
+  local upstream_branch
+  local local_sha
+  local upstream_sha
+  local merge_base
+
+  upstream_ref="$(git -C "$repo_root" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null)" ||
+    die "Branch '$branch' has no upstream branch"
+
+  upstream_remote="$(git -C "$repo_root" config --get "branch.$branch.remote")" ||
+    die "Could not determine the remote for branch '$branch'"
+
+  upstream_merge="$(git -C "$repo_root" config --get "branch.$branch.merge")" ||
+    die "Could not determine the upstream ref for branch '$branch'"
+
+  upstream_branch="${upstream_merge#refs/heads/}"
+
+  printf 'Checking upstream sync with %s...\n' "$upstream_ref" >&2
+
+  git -C "$repo_root" fetch --quiet "$upstream_remote" "$upstream_branch" ||
+    die "Failed to fetch '$upstream_ref'"
+
+  local_sha="$(git -C "$repo_root" rev-parse HEAD)"
+  upstream_sha="$(git -C "$repo_root" rev-parse '@{upstream}')"
+  merge_base="$(git -C "$repo_root" merge-base HEAD '@{upstream}')"
+
+  if [[ "$local_sha" == "$upstream_sha" ]]; then
+    printf '%s\n' "$upstream_ref"
+    return 0
+  fi
+
+  if [[ "$local_sha" == "$merge_base" ]]; then
+    die "Branch '$branch' is behind '$upstream_ref'"
+  fi
+
+  if [[ "$upstream_sha" == "$merge_base" ]]; then
+    die "Branch '$branch' is ahead of '$upstream_ref'"
+  fi
+
+  die "Branch '$branch' has diverged from '$upstream_ref'"
+}
+
+choose_environment() {
+  local target="$1"
+  local branch="$2"
+  local choice
+  local title
+
+  ensure_command node
+  [[ -f "$PICKER_SCRIPT" ]] || die "Picker script not found: $PICKER_SCRIPT"
+
+  title="Select deployment environment for $target from branch $branch"
+  choice="$(node "$PICKER_SCRIPT" single "$title" "$DEFAULT_ENVIRONMENT" staging prod)" ||
+    die 'Cancelled'
+
+  case "$choice" in
+    staging|prod)
+      printf '%s\n' "$choice"
+      ;;
+    *)
+      die "Invalid environment '$choice'. Expected staging or prod"
+      ;;
+  esac
+}
+
+choose_services_for_batch() {
+  local branch="$1"
+  local environment="$2"
+  shift 2
+
+  ensure_command node
+  [[ -f "$PICKER_SCRIPT" ]] || die "Picker script not found: $PICKER_SCRIPT"
+
+  node "$PICKER_SCRIPT" multi \
+    "Select services to deploy from branch $branch to $environment" \
+    "$@"
+}
+
+confirm_continue_after_failure() {
+  local service="$1"
+  local answer
+
+  while true; do
+    tty_printf 'Failed to trigger deploy for %s. Continue with the remaining services? [y/N]: ' "$service"
+    read_line_from_tty answer || die 'Failed to read failure confirmation'
+
+    case "${answer:-n}" in
+      y|Y|yes|YES)
+        printf 'yes\n'
+        return 0
+        ;;
+      n|N|no|NO)
+        printf 'no\n'
+        return 0
+        ;;
+      *)
+        tty_printf 'Please answer y or n.\n'
+        ;;
+    esac
+  done
+}
+
+dispatch_deploy() {
+  local service="$1"
+  local environment="$2"
+  local branch="$3"
+  local upstream_ref="$4"
+
+  printf 'Triggering deploy for service=%s environment=%s branch=%s upstream=%s\n' \
+    "$service" "$environment" "$branch" "$upstream_ref"
+
+  gh workflow run "$WORKFLOW_NAME" \
+    --ref "$branch" \
+    -f "environment=$environment" \
+    -f "service=$service" \
+    -R "$WORKFLOW_REPO"
+}
+
+print_batch_summary() {
+  local service
+
+  printf '\nBatch deploy summary:\n'
+
+  printf 'Succeeded (%s):\n' "${#BATCH_SUCCEEDED[@]}"
+  if (( ${#BATCH_SUCCEEDED[@]} == 0 )); then
+    printf '  - none\n'
+  else
+    for service in "${BATCH_SUCCEEDED[@]}"; do
+      printf '  - %s\n' "$service"
+    done
+  fi
+
+  printf 'Failed (%s):\n' "${#BATCH_FAILED[@]}"
+  if (( ${#BATCH_FAILED[@]} == 0 )); then
+    printf '  - none\n'
+  else
+    for service in "${BATCH_FAILED[@]}"; do
+      printf '  - %s\n' "$service"
+    done
+  fi
+
+  printf 'Skipped (%s):\n' "${#BATCH_SKIPPED[@]}"
+  if (( ${#BATCH_SKIPPED[@]} == 0 )); then
+    printf '  - none\n'
+  else
+    for service in "${BATCH_SKIPPED[@]}"; do
+      printf '  - %s\n' "$service"
+    done
+  fi
+}
+
+run_batch_mode() {
+  local repo_root="$1"
+  local branch="$2"
+  local upstream_ref="$3"
+  local allowed_service
+  local environment
+  local continue_choice
+  local idx
+  local selected_output
+  local -a selected_services=()
+
+  environment="$(choose_environment 'selected services' "$branch")"
+
+  selected_output="$(choose_services_for_batch "$branch" "$environment" "${BATCH_SERVICES[@]}")" ||
+    die 'Cancelled'
+
+  while IFS= read -r allowed_service; do
+    [[ -n "$allowed_service" ]] || continue
+    selected_services+=("$allowed_service")
+  done <<< "$selected_output"
+
+  (( ${#selected_services[@]} > 0 )) || die 'No services were selected'
+
+  BATCH_SUCCEEDED=()
+  BATCH_FAILED=()
+  BATCH_SKIPPED=()
+
+  for ((idx = 0; idx < ${#selected_services[@]}; idx += 1)); do
+    if dispatch_deploy "${selected_services[$idx]}" "$environment" "$branch" "$upstream_ref"; then
+      BATCH_SUCCEEDED+=("${selected_services[$idx]}")
+      continue
+    fi
+
+    BATCH_FAILED+=("${selected_services[$idx]}")
+    continue_choice="$(confirm_continue_after_failure "${selected_services[$idx]}")"
+
+    if [[ "$continue_choice" == 'yes' ]]; then
+      continue
+    fi
+
+    for ((idx += 1; idx < ${#selected_services[@]}; idx += 1)); do
+      BATCH_SKIPPED+=("${selected_services[$idx]}")
+    done
+    break
+  done
+
+  print_batch_summary
+
+  if (( ${#BATCH_FAILED[@]} > 0 || ${#BATCH_SKIPPED[@]} > 0 )); then
+    return 1
+  fi
+
+  return 0
+}
+
+main() {
+  local repo_root
+  local current_dir
+  local workflow_path
+  local mode_or_service
+  local branch
+  local upstream_ref
+  local environment
+  local service
+  local allowed_service
+
+  [[ $# -eq 0 ]] || die 'This command does not take arguments'
+
+  ensure_command git
+  ensure_command gh
+  open_tty
+  trap cleanup_on_exit EXIT
+  trap handle_interrupt INT TERM
+
+  repo_root="$(resolve_repo_root)"
+  current_dir="$(pwd -P)"
+  workflow_path="$repo_root/$WORKFLOW_FILE"
+
+  [[ -f "$workflow_path" ]] || die "Workflow file not found: $WORKFLOW_FILE"
+
+  BATCH_SERVICES=()
+  while IFS= read -r allowed_service; do
+    BATCH_SERVICES+=("$allowed_service")
+  done < <(list_allowed_services "$workflow_path")
+
+  [[ ${#BATCH_SERVICES[@]} -gt 0 ]] ||
+    die "Could not parse deployable services from $WORKFLOW_FILE"
+
+  mode_or_service="$(resolve_service_from_path "$repo_root" "$current_dir")"
+  branch="$(resolve_branch "$repo_root")"
+  ensure_clean_worktree "$repo_root"
+  upstream_ref="$(ensure_branch_in_sync "$repo_root" "$branch")"
+
+  if [[ "$mode_or_service" == '__ROOT__' ]]; then
+    run_batch_mode "$repo_root" "$branch" "$upstream_ref"
+    return
+  fi
+
+  service="$mode_or_service"
+
+  service_is_allowed "$service" "${BATCH_SERVICES[@]}" ||
+    die "Directory '$current_dir' does not map to a deployable service in $WORKFLOW_FILE"
+
+  environment="$(choose_environment "$service" "$branch")"
+  dispatch_deploy "$service" "$environment" "$branch" "$upstream_ref"
+}
+
+main "$@"

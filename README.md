@@ -6,6 +6,151 @@ This is a 2-part repository for
 
 2. [6529 API](#user-content-2-api)
 
+## 0. Repo Helpers
+
+This repo includes a `.envrc` for `direnv`.
+
+It is only used for repo-local shell helpers. Right now it adds the repo `bin/` directory to your `PATH`, which makes commands like `ghruns` and `ghdeploy` available anywhere inside this repository.
+
+It does not load `.env.local` and it does not set `NODE_ENV`.
+
+### 0.1 Setup direnv
+
+1. Install `direnv` on your machine.
+2. Enable the `direnv` shell hook.
+
+For `zsh`, add this to `~/.zshrc`:
+
+```bash
+eval "$(direnv hook zsh)"
+```
+
+For `bash`, add this to `~/.bashrc`:
+
+```bash
+eval "$(direnv hook bash)"
+```
+
+Then reload your shell config, for example:
+
+```bash
+source ~/.zshrc
+```
+
+### 0.2 Allow this repo
+
+From the repo root, run:
+
+```bash
+direnv allow
+```
+
+If `.envrc` changes later, run:
+
+```bash
+direnv allow
+```
+
+again to approve the updated file.
+
+### 0.3 Verify
+
+From the repo root, you should be able to run:
+
+```bash
+which ghruns
+ghruns
+```
+
+`ghruns` is a shortcut for:
+
+```bash
+gh run list -R "6529-Collections/6529seize-backend"
+```
+
+In an interactive terminal, `ghruns` opens a live dashboard instead of printing a one-time snapshot. It refreshes automatically every 5 seconds, keeps the same repo scope, and still accepts the usual `gh run list` filters like `--branch`, `--workflow`, `--status`, and `-L`.
+
+`ghruns` controls:
+
+- `Up` / `Down` moves through the recent runs
+
+The dashboard falls back to plain `gh run list` output in non-interactive shells and when you use output-formatting flags like `--json`, `--jq`, or `--template`.
+
+### 0.4 Deploy Helper
+
+`ghdeploy` triggers the GitHub Actions deploy workflow for this repo.
+
+You can run it from anywhere inside this repository, but it only works in these locations:
+
+- In the repo root, it opens an interactive multi-select list of all deployable workflow services, including `api`.
+- In `src/<service>`, it uses the folder name as the deploy service.
+- In `src/api-serverless`, it maps to service `api`.
+
+The allowed services are read from `.github/workflows/deploy.yml`, so there is no second list to maintain.
+
+Before it triggers the GitHub workflow, it checks that:
+
+- the current branch is not detached
+- the working tree is fully clean, including no untracked files
+- the current branch has an upstream
+- the current branch is exactly in sync with its upstream after a fetch
+
+### 0.4.1 Use `ghdeploy` from repo root
+
+From the repo root, run:
+
+```bash
+ghdeploy
+```
+
+This opens:
+
+- a single-select environment picker for `staging` or `prod`
+- then a multi-select service picker with all deployable services
+
+Environment picker controls:
+
+- `Up` / `Down` moves between `staging` and `prod`
+- `Enter` confirms the highlighted environment
+- `q` cancels
+
+Service picker controls:
+
+- `Up` / `Down` moves through the service list
+- `Space` toggles the current service
+- `Enter` confirms the selected services
+- `q` cancels
+
+The list scrolls automatically as you move beyond the visible items. `j` / `k` and `x` also work as fallback keys if your terminal handles arrows or space oddly.
+
+Root mode prompts once for `staging` or `prod`, uses that environment for the whole batch, then dispatches one GitHub workflow run per selected service. If one dispatch fails, it asks whether to continue with the remaining services and prints a success/failure/skipped summary at the end.
+
+### 0.4.2 Use `ghdeploy` from a service folder
+
+If you only want to deploy one service, `cd` into that service folder and run:
+
+```bash
+cd src/tdhLoop
+ghdeploy
+```
+
+Single-service mode opens the same environment picker, resolves the service from the current folder, and then triggers:
+
+```bash
+gh workflow run "Deploy a service" \
+  --ref <current-branch> \
+  -f environment=<selected-environment> \
+  -f service=<resolved-service> \
+  -R 6529-Collections/6529seize-backend
+```
+
+Examples:
+
+- `src/tdhLoop` deploys service `tdhLoop`
+- `src/api-serverless` deploys service `api`
+
+If you run `ghdeploy` from an unsupported folder, it fails with a clear error instead of guessing.
+
 ## 1. Backend
 
 ### 1.1 Install
