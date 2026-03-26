@@ -429,6 +429,131 @@ describe('uploadMintingClaimToArweave', () => {
     expect(uploadedMetadata.animation_details).toEqual({ format: 'HTML' });
   });
 
+  it('copies html ipfs animation_url to animation_location as is', async () => {
+    uploadFileMock.mockReset();
+    uploadFileMock
+      .mockResolvedValueOnce({ url: 'https://arweave.net/image-tx' })
+      .mockResolvedValueOnce({ url: 'https://arweave.net/metadata-tx' });
+
+    const result = await uploadMintingClaimToArweave(
+      MEMES_CONTRACT,
+      baseClaim({
+        animation_url: 'ipfs://bafybeigdyrzt5-example-animation',
+        animation_details: JSON.stringify({
+          format: 'HTML'
+        })
+      })
+    );
+
+    expect(result.animationLocationUrl).toBe(
+      'ipfs://bafybeigdyrzt5-example-animation'
+    );
+    expect(uploadFileMock).toHaveBeenCalledTimes(2);
+    expect(fetchPublicUrlToBufferMock).toHaveBeenCalledTimes(1);
+    expect(
+      fetchPublicUrlToBufferMock.mock.calls.some(
+        ([url]) => url === 'ipfs://bafybeigdyrzt5-example-animation'
+      )
+    ).toBe(false);
+
+    const metadataUploadBuffer = uploadFileMock.mock.calls[1]?.[0] as Buffer;
+    const uploadedMetadata = JSON.parse(metadataUploadBuffer.toString('utf8'));
+
+    expect(uploadedMetadata.animation).toBeUndefined();
+    expect(uploadedMetadata.animation_url).toBe(
+      'ipfs://bafybeigdyrzt5-example-animation'
+    );
+    expect(uploadedMetadata.animation_details).toEqual({ format: 'HTML' });
+  });
+
+  it('copies html arweave animation_url to animation_location as is', async () => {
+    uploadFileMock.mockReset();
+    uploadFileMock
+      .mockResolvedValueOnce({ url: 'https://arweave.net/image-tx' })
+      .mockResolvedValueOnce({ url: 'https://arweave.net/metadata-tx' });
+
+    const result = await uploadMintingClaimToArweave(
+      MEMES_CONTRACT,
+      baseClaim({
+        animation_url: 'https://arweave.net/existing-html-animation-tx',
+        animation_details: JSON.stringify({
+          format: 'HTML'
+        })
+      })
+    );
+
+    expect(result.animationLocationUrl).toBe(
+      'https://arweave.net/existing-html-animation-tx'
+    );
+    expect(uploadFileMock).toHaveBeenCalledTimes(2);
+    expect(fetchPublicUrlToBufferMock).toHaveBeenCalledTimes(1);
+    expect(
+      fetchPublicUrlToBufferMock.mock.calls.some(
+        ([url]) => url === 'https://arweave.net/existing-html-animation-tx'
+      )
+    ).toBe(false);
+
+    const metadataUploadBuffer = uploadFileMock.mock.calls[1]?.[0] as Buffer;
+    const uploadedMetadata = JSON.parse(metadataUploadBuffer.toString('utf8'));
+
+    expect(uploadedMetadata.animation).toBeUndefined();
+    expect(uploadedMetadata.animation_url).toBe(
+      'https://arweave.net/existing-html-animation-tx'
+    );
+    expect(uploadedMetadata.animation_details).toEqual({ format: 'HTML' });
+  });
+
+  it('uploads non-html ipfs animation_url via gateway fetch', async () => {
+    uploadFileMock.mockReset();
+    fetchPublicUrlToBufferMock
+      .mockResolvedValueOnce({
+        buffer: Buffer.from('image-bytes'),
+        contentType: 'image/png',
+        finalUrl: 'https://cdn.example.com/image.png'
+      })
+      .mockResolvedValueOnce({
+        buffer: Buffer.from('video-bytes'),
+        contentType: 'application/octet-stream',
+        finalUrl: 'https://ipfs.6529.io/ipfs/bafybeigdyrzt5-example-animation'
+      });
+    uploadFileMock
+      .mockResolvedValueOnce({ url: 'https://arweave.net/image-tx' })
+      .mockResolvedValueOnce({ url: 'https://arweave.net/video-tx' })
+      .mockResolvedValueOnce({ url: 'https://arweave.net/metadata-tx' });
+
+    const result = await uploadMintingClaimToArweave(
+      MEMES_CONTRACT,
+      baseClaim({
+        animation_url: 'ipfs://bafybeigdyrzt5-example-animation',
+        animation_details: JSON.stringify({
+          bytes: 456,
+          format: 'MP4',
+          duration: 4,
+          sha256: 'b'.repeat(64),
+          width: 1000,
+          height: 1000,
+          codecs: ['avc1']
+        })
+      })
+    );
+
+    expect(result.animationLocationUrl).toBe('https://arweave.net/video-tx');
+    expect(fetchPublicUrlToBufferMock.mock.calls[1]?.[0]).toBe(
+      'https://ipfs.6529.io/ipfs/bafybeigdyrzt5-example-animation'
+    );
+    expect(uploadFileMock).toHaveBeenNthCalledWith(
+      2,
+      Buffer.from('video-bytes'),
+      'video/mp4'
+    );
+
+    const metadataUploadBuffer = uploadFileMock.mock.calls[2]?.[0] as Buffer;
+    const uploadedMetadata = JSON.parse(metadataUploadBuffer.toString('utf8'));
+
+    expect(uploadedMetadata.animation).toBe('https://arweave.net/video-tx');
+    expect(uploadedMetadata.animation_url).toBe('https://arweave.net/video-tx');
+  });
+
   it('uploads GLB MEMES metadata in the expected object shape', async () => {
     uploadFileMock.mockReset();
     fetchPublicUrlToBufferMock.mockResolvedValue({
