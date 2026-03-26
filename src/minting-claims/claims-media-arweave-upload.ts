@@ -8,6 +8,7 @@ import { BadRequestException } from '@/exceptions';
 import { fetchPublicUrlToBuffer } from '@/http/safe-fetch';
 import { Logger } from '@/logging';
 import { isMemesContract } from '@/minting-claims/external-url';
+import { normalizeIpfsUri } from '@/nft-links/lib/uri';
 import { createHash } from 'node:crypto';
 
 const logger = Logger.get('claims-media-arweave-upload');
@@ -183,14 +184,53 @@ function normalizeSha256(value: unknown): string | null {
   return normalized;
 }
 
-function buildArweaveUrl(location: string | null | undefined): string | null {
+function isProtocolUrl(value: string): boolean {
+  return /^[a-z][a-z0-9+.-]*:\/\//i.test(value);
+}
+
+function isIpfsUrl(value: string): boolean {
+  return value.trim().toLowerCase().startsWith('ipfs://');
+}
+
+function isArweaveUrl(value: string): boolean {
+  try {
+    return new URL(value).hostname.toLowerCase() === 'arweave.net';
+  } catch {
+    return false;
+  }
+}
+
+function buildStoredLocationUrl(
+  location: string | null | undefined,
+  allowProtocolPassthrough = false
+): string | null {
   if (location == null) return null;
   const trimmed = location.trim();
   if (trimmed === '') return null;
-  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
-    return trimmed;
+  if (isProtocolUrl(trimmed)) {
+    if (allowProtocolPassthrough || isArweaveUrl(trimmed)) {
+      return trimmed;
+    }
+    return `https://arweave.net/${trimmed}`;
   }
   return `https://arweave.net/${trimmed}`;
+}
+
+function resolveAnimationFetchUrl(url: string): string {
+  const trimmed = url.trim();
+  if (!isIpfsUrl(trimmed)) {
+    return normalizeIpfsUri(trimmed) ?? trimmed;
+  }
+  const ipfsPath = trimmed.replace(/^ipfs:\/\//i, '').replace(/^ipfs\//i, '');
+  return normalizeIpfsUri(`ipfs://${ipfsPath}`) ?? trimmed;
+}
+
+function contentTypeFromAnimationFormat(format: string | null | undefined) {
+  const normalized = typeof format === 'string' ? format.toUpperCase() : null;
+  if (normalized === 'GLB') return 'model/gltf-binary';
+  if (normalized === 'MP4') return 'video/mp4';
+  if (normalized === 'MOV') return 'video/quicktime';
+  return null;
 }
 
 function computeSha256Hex(buffer: Buffer): string {
@@ -220,7 +260,10 @@ async function uploadImageToArweaveOrThrow(
   const existingDetails =
     parseJsonOrNull<{ sha256?: unknown }>(claim.image_details) ?? null;
   const existingSha256 = normalizeSha256(existingDetails?.sha256);
-  const existingArweaveUrl = buildArweaveUrl(claim.image_location);
+  const existingArweaveUrl = buildStoredLocationUrl(
+    claim.image_location,
+    false
+  );
   if (existingSha256 != null && existingSha256 === currentSha256) {
     if (existingArweaveUrl != null) {
       logger.info(
@@ -244,17 +287,23 @@ async function uploadAnimationToArweaveIfPresent(
 
   const details =
     parseJsonOrNull<{ format?: string }>(claim.animation_details) ?? null;
-  if (details?.format === 'HTML') return null;
+  if (details?.format === 'HTML') {
+    if (isIpfsUrl(animationUrl) || isArweaveUrl(animationUrl)) {
+      return buildStoredLocationUrl(animationUrl, true);
+    }
+    return null;
+  }
 
+  const fetchUrl = resolveAnimationFetchUrl(animationUrl);
   const lowerPath = (() => {
     try {
-      return new URL(animationUrl).pathname.toLowerCase();
+      return new URL(fetchUrl).pathname.toLowerCase();
     } catch {
       return '';
     }
   })();
   const expectsGlb = details?.format === 'GLB' || lowerPath.endsWith('.glb');
-  const { buffer, contentType } = await fetchUrlToBuffer(animationUrl);
+  const { buffer, contentType } = await fetchUrlToBuffer(fetchUrl);
   const hasGenericContentType =
     contentType === '' ||
     contentType === 'application/octet-stream' ||
@@ -263,13 +312,17 @@ async function uploadAnimationToArweaveIfPresent(
     contentType,
     hasGenericContentType,
     lowerPath,
-    expectsGlb
+    expectsGlb,
+    detailsFormat: details?.format ?? null
   });
   const currentSha256 = computeSha256Hex(buffer);
   const existingSha256 = normalizeSha256(
     (details as { sha256?: unknown }).sha256
   );
-  const existingArweaveUrl = buildArweaveUrl(claim.animation_location);
+  const existingArweaveUrl = buildStoredLocationUrl(
+    claim.animation_location,
+    false
+  );
   if (existingSha256 != null && existingSha256 === currentSha256) {
     if (existingArweaveUrl != null) {
       logger.info(
@@ -289,17 +342,22 @@ function resolveAnimationContentTypeForUpload({
   contentType,
   hasGenericContentType,
   lowerPath,
-  expectsGlb
+  expectsGlb,
+  detailsFormat
 }: {
   contentType: string;
   hasGenericContentType: boolean;
   lowerPath: string;
   expectsGlb: boolean;
+  detailsFormat: string | null;
 }): string {
   if (expectsGlb) {
     const isValidGlb =
       contentType === 'model/gltf-binary' ||
-      (hasGenericContentType && lowerPath.endsWith('.glb'));
+      (hasGenericContentType &&
+        (lowerPath.endsWith('.glb') ||
+          contentTypeFromAnimationFormat(detailsFormat) ===
+            'model/gltf-binary'));
     if (!isValidGlb) {
       throw new BadRequestException(
         `animation_url did not resolve to a GLB (content-type: ${contentType})`
@@ -307,16 +365,26 @@ function resolveAnimationContentTypeForUpload({
     }
     return 'model/gltf-binary';
   }
+  const contentTypeFromFormat = contentTypeFromAnimationFormat(detailsFormat);
   const isValidVideo =
     contentType.startsWith('video/') ||
     (hasGenericContentType &&
-      (lowerPath.endsWith('.mp4') || lowerPath.endsWith('.mov')));
+      (lowerPath.endsWith('.mp4') ||
+        lowerPath.endsWith('.mov') ||
+        contentTypeFromFormat === 'video/mp4' ||
+        contentTypeFromFormat === 'video/quicktime'));
   if (!isValidVideo) {
     throw new BadRequestException(
       `animation_url did not resolve to a video (content-type: ${contentType})`
     );
   }
   if (!hasGenericContentType) return contentType;
+  if (
+    contentTypeFromFormat === 'video/mp4' ||
+    contentTypeFromFormat === 'video/quicktime'
+  ) {
+    return contentTypeFromFormat;
+  }
   if (lowerPath.endsWith('.mp4')) return 'video/mp4';
   if (lowerPath.endsWith('.mov')) return 'video/quicktime';
   return contentType;
