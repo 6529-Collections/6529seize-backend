@@ -201,19 +201,28 @@ function isArweaveUrl(value: string): boolean {
 }
 
 function buildStoredLocationUrl(
-  location: string | null | undefined
+  location: string | null | undefined,
+  allowProtocolPassthrough = false
 ): string | null {
   if (location == null) return null;
   const trimmed = location.trim();
   if (trimmed === '') return null;
   if (isProtocolUrl(trimmed)) {
-    return trimmed;
+    if (allowProtocolPassthrough || isArweaveUrl(trimmed)) {
+      return trimmed;
+    }
+    return `https://arweave.net/${trimmed}`;
   }
   return `https://arweave.net/${trimmed}`;
 }
 
 function resolveAnimationFetchUrl(url: string): string {
-  return normalizeIpfsUri(url) ?? url;
+  const trimmed = url.trim();
+  if (!isIpfsUrl(trimmed)) {
+    return normalizeIpfsUri(trimmed) ?? trimmed;
+  }
+  const ipfsPath = trimmed.replace(/^ipfs:\/\//i, '').replace(/^ipfs\//i, '');
+  return normalizeIpfsUri(`ipfs://${ipfsPath}`) ?? trimmed;
 }
 
 function contentTypeFromAnimationFormat(format: string | null | undefined) {
@@ -251,7 +260,10 @@ async function uploadImageToArweaveOrThrow(
   const existingDetails =
     parseJsonOrNull<{ sha256?: unknown }>(claim.image_details) ?? null;
   const existingSha256 = normalizeSha256(existingDetails?.sha256);
-  const existingArweaveUrl = buildStoredLocationUrl(claim.image_location);
+  const existingArweaveUrl = buildStoredLocationUrl(
+    claim.image_location,
+    false
+  );
   if (existingSha256 != null && existingSha256 === currentSha256) {
     if (existingArweaveUrl != null) {
       logger.info(
@@ -277,7 +289,7 @@ async function uploadAnimationToArweaveIfPresent(
     parseJsonOrNull<{ format?: string }>(claim.animation_details) ?? null;
   if (details?.format === 'HTML') {
     if (isIpfsUrl(animationUrl) || isArweaveUrl(animationUrl)) {
-      return animationUrl;
+      return buildStoredLocationUrl(animationUrl, true);
     }
     return null;
   }
@@ -307,7 +319,10 @@ async function uploadAnimationToArweaveIfPresent(
   const existingSha256 = normalizeSha256(
     (details as { sha256?: unknown }).sha256
   );
-  const existingArweaveUrl = buildStoredLocationUrl(claim.animation_location);
+  const existingArweaveUrl = buildStoredLocationUrl(
+    claim.animation_location,
+    false
+  );
   if (existingSha256 != null && existingSha256 === currentSha256) {
     if (existingArweaveUrl != null) {
       logger.info(
