@@ -1063,14 +1063,18 @@ async function populateMintStats(
 
 const getMintPrice = async (contract: string, tokenId: number) => {
   const repo = getDataSource().getRepository(Transaction);
+  const baseWhere = {
+    contract,
+    token_id: tokenId,
+    from_address: In([NULL_ADDRESS, MANIFOLD]),
+    token_count: MoreThan(0)
+  };
   const firstMintTransaction = await repo.findOne({
     select: ['value', 'primary_proceeds', 'token_count'],
-    where: {
-      contract,
-      token_id: tokenId,
-      from_address: In([NULL_ADDRESS, MANIFOLD]),
-      value: MoreThan(0)
-    },
+    where: [
+      { ...baseWhere, value: MoreThan(0) },
+      { ...baseWhere, primary_proceeds: MoreThan(0) }
+    ],
     order: { transaction_date: 'ASC' }
   });
   const trxPrice =
