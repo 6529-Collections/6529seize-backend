@@ -91,7 +91,7 @@ async function evictCacheForPathWithTimeout(
       `[CACHE_EVICT_FAILED] [contract ${contract}] [token_id ${tokenId}] [cache ${cacheEviction.label}] [elapsed_ms ${
         evictionResult.elapsed_ms
       }]`,
-      evictionResult.error
+      'error' in evictionResult ? evictionResult.error : undefined
     );
   }
 }

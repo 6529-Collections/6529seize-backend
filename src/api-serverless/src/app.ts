@@ -10,6 +10,7 @@ import userGroupsImEligibleForRoutes from './community-members/user-groups-im-el
 import userGroupsRoutes from './community-members/user-groups.routes';
 import communityMetricsRoutes from './community-metrics/community-metrics.routes';
 import delegationsRoutes from './delegations/delegations.routes';
+import deployRoutes from './deploy/deploy.routes';
 import desktopRoutes from './desktop/routes.desktop';
 import distributionPhotosRoutes from './distribution-photos/api.distribution_photos.routes';
 import distributionsRoutes from './distributions/api.distributions.routes';
@@ -124,6 +125,7 @@ import {
   initRateLimiting,
   rateLimitingMiddleware
 } from './rate-limiting/rate-limiting.middleware';
+import { setNoStoreHeaders } from './response-headers';
 import { cacheRequest, isRequestCacheEntry } from './request-cache';
 import rpcRoutes from './rpc/rpc.routes';
 import sitemapRoutes from './sitemap/sitemap.routes';
@@ -1514,14 +1516,14 @@ async function initializeApp() {
     res.send({});
   });
 
+  rootRouter.use('/deploy', deployRoutes);
+
   rootRouter.get('/health/ui', async (req, res) => {
     const healthData = await getHealthData();
     const baseUrl = `${req.protocol}://${req.get('host')}`;
     const html = renderHealthUI(healthData, baseUrl);
 
-    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-    res.setHeader('Pragma', 'no-cache');
-    res.setHeader('Expires', '0');
+    setNoStoreHeaders(res);
     res.setHeader('Content-Type', 'text/html');
 
     return res.send(html);
