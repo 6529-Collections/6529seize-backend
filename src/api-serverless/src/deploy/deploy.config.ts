@@ -1,12 +1,7 @@
-import {
-  GENERATED_DEPLOY_DEFAULT_ENVIRONMENT,
-  GENERATED_DEPLOY_SERVICE_CONFIGS
-} from '@/api/deploy/deploy.generated';
+import deployConfigJson from '../../../../config/deploy-services.json';
 
 export type DeployEnvironment = 'staging' | 'prod';
-
-export type DeployService =
-  (typeof GENERATED_DEPLOY_SERVICE_CONFIGS)[number]['name'];
+export type DeployService = string;
 
 export type DeployServiceConfig = {
   name: DeployService;
@@ -17,17 +12,24 @@ export const DEPLOY_REPO_OWNER = '6529-Collections';
 export const DEPLOY_REPO_NAME = '6529seize-backend';
 export const DEPLOY_WORKFLOW_FILE = 'deploy.yml';
 export const DEPLOY_WORKFLOW_NAME = 'Deploy a service';
+
+const DEPLOY_CONFIG = deployConfigJson as {
+  default_environment: DeployEnvironment;
+  default_service: DeployService;
+  services: DeployServiceConfig[];
+};
+
 export const DEFAULT_DEPLOY_ENVIRONMENT: DeployEnvironment =
-  GENERATED_DEPLOY_DEFAULT_ENVIRONMENT;
+  DEPLOY_CONFIG.default_environment;
 export const DEFAULT_DEPLOY_REF = 'main';
 
-export const DEPLOY_SERVICES = GENERATED_DEPLOY_SERVICE_CONFIGS.map(
+export const DEPLOY_SERVICES = DEPLOY_CONFIG.services.map(
   (service) => service.name
 ) as DeployService[];
 
 const DEPLOY_SERVICE_SET = new Set<string>(DEPLOY_SERVICES);
 const DEPLOY_SERVICE_ENVIRONMENTS = new Map(
-  GENERATED_DEPLOY_SERVICE_CONFIGS.map((service) => [
+  DEPLOY_CONFIG.services.map((service) => [
     service.name,
     [...service.allowed_environments]
   ])
@@ -60,8 +62,8 @@ export function canDeployServiceToEnvironment(
 }
 
 export function getDeployServiceConfigs(): DeployServiceConfig[] {
-  return GENERATED_DEPLOY_SERVICE_CONFIGS.map((service) => ({
-    name: service.name,
-    allowed_environments: [...service.allowed_environments]
+  return DEPLOY_SERVICES.map((service) => ({
+    name: service,
+    allowed_environments: [...getAllowedEnvironmentsForService(service)]
   }));
 }
