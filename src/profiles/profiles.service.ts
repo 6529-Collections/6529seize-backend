@@ -43,6 +43,10 @@ import {
   CurationsDb,
   curationsDb
 } from '../api-serverless/src/curations/curations.db';
+import {
+  WaveQuickVoteDb,
+  waveQuickVoteDb
+} from '../api-serverless/src/waves/wave-quick-vote.db';
 import { ApiIdentity } from '../api-serverless/src/generated/models/ApiIdentity';
 import { identitySubscriptionsDb } from '../api-serverless/src/identity-subscriptions/identity-subscriptions.db';
 import { identityFetcher } from '../api-serverless/src/identities/identity.fetcher';
@@ -66,7 +70,8 @@ export class ProfilesService {
     private readonly dropVotingDb: DropVotingDb,
     private readonly xTdhRepository: XTdhRepository,
     private readonly dropBookmarksDb: DropBookmarksDb,
-    private readonly curationsDb: CurationsDb
+    private readonly curationsDb: CurationsDb,
+    private readonly waveQuickVoteDb: WaveQuickVoteDb
   ) {}
 
   public async getProfileAndConsolidationsByIdentity(
@@ -395,6 +400,11 @@ export class ProfilesService {
         await this.mergeVotingStuff(sourceIdentity, target, connectionHolder);
         await this.mergeBookmarks(sourceIdentity, target, connectionHolder);
         await this.mergeCurations(sourceIdentity, target, connectionHolder);
+        await this.mergeQuickVoteSkips(
+          sourceIdentity,
+          target,
+          connectionHolder
+        );
         const targetProfile = await this.profilesDb.getProfileById(
           target,
           connectionHolder
@@ -562,6 +572,20 @@ export class ProfilesService {
     connectionHolder: ConnectionWrapper<any>
   ) {
     await this.curationsDb.mergeOnProfileIdChange(
+      {
+        previous_id: sourceIdentity,
+        new_id: target
+      },
+      { connection: connectionHolder }
+    );
+  }
+
+  private async mergeQuickVoteSkips(
+    sourceIdentity: string,
+    target: string,
+    connectionHolder: ConnectionWrapper<any>
+  ) {
+    await this.waveQuickVoteDb.mergeOnProfileIdChange(
       {
         previous_id: sourceIdentity,
         new_id: target
@@ -832,5 +856,6 @@ export const profilesService = new ProfilesService(
   dropVotingDb,
   xTdhRepository,
   dropBookmarksDb,
-  curationsDb
+  curationsDb,
+  waveQuickVoteDb
 );

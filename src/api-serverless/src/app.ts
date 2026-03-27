@@ -46,6 +46,7 @@ import memesMintStatsRoutes from './memes-mint-stats/api.memes-mint-stats.routes
 import collectedStatsRoutes from './collected-stats/api.collected-stats.routes';
 import waveMediaRoutes from './waves/wave-media.routes';
 import wavesOverviewRoutes from './waves/waves-overview.routes';
+import waveQuickVoteRoutes from './waves/wave-quick-vote.routes';
 import publicWavesRoutes from './waves/waves-public.routes';
 import wavesRoutes from './waves/waves.routes';
 import xtdhRoutes from './xtdh/xtdh.routes';
@@ -1583,6 +1584,8 @@ async function initializeApp() {
   apiRouter.use(`/distribution_photos`, distributionPhotosRoutes);
   apiRouter.use(``, distributionsRoutes);
   apiRouter.use(`/minting-claims`, mintingClaimsRoutes);
+  apiRouter.use(`/wave`, waveQuickVoteRoutes);
+  apiRouter.use(`/waves`, waveQuickVoteRoutes);
   apiRouter.use(`/waves`, wavesRoutes);
   apiRouter.use(`/public/waves`, publicWavesRoutes);
   apiRouter.use(`/policies`, policiesRoutes);

@@ -7,6 +7,10 @@ import {
   voteForDropUseCase,
   VoteForDropUseCase
 } from '../../../drops/vote-for-drop.use-case';
+import {
+  waveQuickVoteDb,
+  WaveQuickVoteDb
+} from '@/api/waves/wave-quick-vote.db';
 import { assertUnreachable } from '../../../assertions';
 import {
   wsListenersNotifier,
@@ -20,6 +24,7 @@ export class DropCheeringService {
     private readonly dropsDb: DropsDb,
     private readonly reactionsService: ReactionsService,
     private readonly voteForDrop: VoteForDropUseCase,
+    private readonly waveQuickVoteDb: WaveQuickVoteDb,
     private readonly wsListenersNotifier: WsListenersNotifier,
     private readonly dropsService: DropsApiService
   ) {}
@@ -68,6 +73,33 @@ export class DropCheeringService {
               },
               ctxWithConnection
             );
+            if (param.cheersChange === 0) {
+              await this.waveQuickVoteDb.insertSkip(
+                {
+                  identity_id: param.rater_profile_id,
+                  wave_id: dropEntity.wave_id,
+                  drop_id: dropId
+                },
+                ctxWithConnection
+              );
+            }
+            const nextUndiscoveredDrop =
+              await this.waveQuickVoteDb.findNextUndiscoveredDrop(
+                {
+                  identity_id: param.rater_profile_id,
+                  wave_id: dropEntity.wave_id
+                },
+                ctxWithConnection
+              );
+            if (!nextUndiscoveredDrop) {
+              await this.waveQuickVoteDb.clearSkips(
+                {
+                  identity_id: param.rater_profile_id,
+                  wave_id: dropEntity.wave_id
+                },
+                ctxWithConnection
+              );
+            }
             break;
           }
           case DropType.WINNER: {
@@ -96,6 +128,7 @@ export const dropCheeringService = new DropCheeringService(
   dropsDb,
   reactionsService,
   voteForDropUseCase,
+  waveQuickVoteDb,
   wsListenersNotifier,
   dropsService
 );

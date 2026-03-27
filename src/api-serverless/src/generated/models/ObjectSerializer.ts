@@ -181,6 +181,7 @@ export * from '../models/ApiTokenTdh';
 export * from '../models/ApiTokenTdhRank';
 export * from '../models/ApiTransaction';
 export * from '../models/ApiTransactionPage';
+export * from '../models/ApiUndiscoveredDrop';
 export * from '../models/ApiUpcomingMemeSubscriptionStatus';
 export * from '../models/ApiUpdateDropRequest';
 export * from '../models/ApiUpdateProxyActionRequest';
@@ -480,6 +481,7 @@ import { ApiTokenTdh } from '../models/ApiTokenTdh';
 import { ApiTokenTdhRank } from '../models/ApiTokenTdhRank';
 import { ApiTransaction } from '../models/ApiTransaction';
 import { ApiTransactionPage } from '../models/ApiTransactionPage';
+import { ApiUndiscoveredDrop } from '../models/ApiUndiscoveredDrop';
 import { ApiUpcomingMemeSubscriptionStatus   , ApiUpcomingMemeSubscriptionStatusSourceEnum   } from '../models/ApiUpcomingMemeSubscriptionStatus';
 import { ApiUpdateDropRequest } from '../models/ApiUpdateDropRequest';
 import { ApiUpdateProxyActionRequest } from '../models/ApiUpdateProxyActionRequest';
@@ -816,6 +818,7 @@ let typeMap: {[index: string]: any} = {
     "ApiTokenTdhRank": ApiTokenTdhRank,
     "ApiTransaction": ApiTransaction,
     "ApiTransactionPage": ApiTransactionPage,
+    "ApiUndiscoveredDrop": ApiUndiscoveredDrop,
     "ApiUpcomingMemeSubscriptionStatus": ApiUpcomingMemeSubscriptionStatus,
     "ApiUpdateDropRequest": ApiUpdateDropRequest,
     "ApiUpdateProxyActionRequest": ApiUpdateProxyActionRequest,

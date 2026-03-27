@@ -5650,6 +5650,40 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiWaveDropsFeed"
+  /waves/{id}/undiscovered-drop:
+    get:
+      tags:
+        - Waves
+      summary: Get the next undiscovered participatory drop for quick vote
+      operationId: getWaveUndiscoveredDrop
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: skip
+          in: query
+          required: false
+          description: >-
+            Zero-based offset into the newest unvoted and unskipped drops for
+            this wave. If no unskipped drops remain, the offset applies to the
+            earliest skipped unvoted drops instead.
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiUndiscoveredDrop"
+        "403":
+          description: User is not eligible to quick vote in this wave
+        "404":
+          description: Wave not found
   /waves/{id}/pinned-drop:
     post:
       tags:
@@ -8485,7 +8519,6 @@ components:
       type: object
       required:
         - rating
-        - category
       properties:
         rating:
           type: number
@@ -8493,6 +8526,7 @@ components:
         category:
           type: string
           maxLength: 100
+          nullable: true
     ApiDropReaction:
       type: object
       required:
@@ -10898,6 +10932,19 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ApiTransaction"
+    ApiUndiscoveredDrop:
+      type: object
+      required:
+        - drop
+        - total_count
+      properties:
+        drop:
+          anyOf:
+            - type: "null"
+            - $ref: "#/components/schemas/ApiDrop"
+        total_count:
+          type: integer
+          format: int64
     ApiUpcomingMemeSubscriptionStatus:
       type: object
       required:
