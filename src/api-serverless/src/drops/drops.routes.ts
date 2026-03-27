@@ -21,6 +21,7 @@ import { userGroupsService } from '../community-members/user-groups.service';
 import { ApiAddReactionToDropRequest } from '../generated/models/ApiAddReactionToDropRequest';
 import { ApiCreateDropRequest } from '../generated/models/ApiCreateDropRequest';
 import { ApiDrop } from '../generated/models/ApiDrop';
+import { ApiDropRatingRequest } from '../generated/models/ApiDropRatingRequest';
 import { ApiDropSubscriptionActions } from '../generated/models/ApiDropSubscriptionActions';
 import { ApiDropSubscriptionTargetAction } from '../generated/models/ApiDropSubscriptionTargetAction';
 import { ApiDropType } from '../generated/models/ApiDropType';
@@ -32,9 +33,8 @@ import { dropCheeringService } from './drop-cheering.service';
 import { dropCreationService } from './drop-creation.api.service';
 import { dropSignatureVerifier } from './drop-signature-verifier';
 import {
-  ApiAddRatingToDropRequest,
-  ApiAddRatingToDropRequestSchema,
   ApiAddReactionToDropRequestSchema,
+  ApiDropRatingRequestSchema,
   NewDropSchema,
   UpdateDropSchema
 } from './drop.validator';
@@ -367,12 +367,12 @@ router.post(
   `/:drop_id/ratings`,
   needsAuthenticatedUser(),
   async (
-    req: Request<{ drop_id: string }, any, ApiAddRatingToDropRequest, any, any>,
+    req: Request<{ drop_id: string }, any, ApiDropRatingRequest, any, any>,
     res: Response<ApiResponse<ApiDrop>>
   ) => {
     const { rating } = getValidatedByJoiOrThrow(
       req.body,
-      ApiAddRatingToDropRequestSchema
+      ApiDropRatingRequestSchema
     );
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);

@@ -34,6 +34,7 @@ export {
 } from './IDrop';
 export { DropNftLinkEntity } from './IDropNftLink';
 export { DropBookmarkEntity } from './IDropBookmark';
+export { DropQuickVoteSkipEntity } from './IDropQuickVoteSkip';
 export { DropCurationEntity } from './IDropCuration';
 export { DropRankEntity } from './IDropRank';
 export { DropReactionsEntity } from './IDropReactions';

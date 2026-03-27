@@ -9,13 +9,10 @@ import { ApiCreateWaveDropRequest } from '../generated/models/ApiCreateWaveDropR
 import { ApiReplyToDrop } from '../generated/models/ApiReplyToDrop';
 import { ApiUpdateDropRequest } from '../generated/models/ApiUpdateDropRequest';
 import { ApiDropType } from '../generated/models/ApiDropType';
+import { ApiDropRatingRequest } from '../generated/models/ApiDropRatingRequest';
 import { ApiAddReactionToDropRequest } from '../generated/models/ApiAddReactionToDropRequest';
 
-export interface ApiAddRatingToDropRequest {
-  readonly rating: number;
-}
-
-export const ApiAddRatingToDropRequestSchema: Joi.ObjectSchema<ApiAddRatingToDropRequest> =
+export const ApiDropRatingRequestSchema: Joi.ObjectSchema<ApiDropRatingRequest> =
   Joi.object({
     rating: Joi.number().integer().required(),
     category: Joi.string().optional().allow(null) // for legacy reasons
