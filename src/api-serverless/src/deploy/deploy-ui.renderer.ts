@@ -1673,6 +1673,10 @@ export function renderDeployUiApp(): string {
 
     state.token = token;
     state.isCheckingSession = false;
+    // This token is intentionally persisted in localStorage and sent via Authorization,
+    // so XSS protections are critical even though CSRF exposure is reduced.
+    // Any DOM injection point, third-party script, and CSP change must be treated
+    // as security-sensitive because localStorage token access would leak GitHub auth.
     localStorage.setItem(TOKEN_STORAGE_KEY, token);
     syncAuthControls();
     tokenInput.value = '';

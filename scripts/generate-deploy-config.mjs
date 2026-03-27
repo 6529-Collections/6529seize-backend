@@ -1,11 +1,14 @@
 import fs from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const require = createRequire(import.meta.url);
 const repoRoot = path.resolve(__dirname, '..');
 const sourcePath = path.join(repoRoot, 'src', 'config', 'deploy-services.json');
 const workflowPath = path.join(repoRoot, '.github', 'workflows', 'deploy.yml');
+const { validateDeployConfig } = require('../src/config/deploy-config.validation.js');
 
 function indent(lines, prefix = '          ') {
   return lines.map((line) => `${prefix}${line}`).join('\n');
@@ -13,69 +16,6 @@ function indent(lines, prefix = '          ') {
 
 function yamlList(values) {
   return values.map((value) => `- ${value}`);
-}
-
-function isDeployEnvironment(value) {
-  return value === 'staging' || value === 'prod';
-}
-
-function validateServiceConfig(service, seenNames) {
-  if (!service || typeof service !== 'object') {
-    throw new Error('each service must be an object');
-  }
-
-  if (typeof service.name !== 'string' || service.name.trim() === '') {
-    throw new Error('each service must have a non-empty name');
-  }
-
-  if (seenNames.has(service.name)) {
-    throw new Error(`duplicate deploy service: ${service.name}`);
-  }
-  seenNames.add(service.name);
-
-  if (
-    !Array.isArray(service.allowed_environments) ||
-    service.allowed_environments.length === 0
-  ) {
-    throw new Error(`service ${service.name} must have allowed_environments`);
-  }
-
-  for (const environment of service.allowed_environments) {
-    if (!isDeployEnvironment(environment)) {
-      throw new Error(
-        `service ${service.name} has invalid environment ${environment}`
-      );
-    }
-  }
-}
-
-function validateConfig(config) {
-  if (!config || typeof config !== 'object') {
-    throw new Error('deploy-services.json must contain an object');
-  }
-
-  const {
-    default_environment: defaultEnvironment,
-    default_service: defaultService,
-    services
-  } = config;
-
-  if (!isDeployEnvironment(defaultEnvironment)) {
-    throw new Error('default_environment must be staging or prod');
-  }
-
-  if (!Array.isArray(services) || services.length === 0) {
-    throw new Error('services must be a non-empty array');
-  }
-
-  const seenNames = new Set();
-  for (const service of services) {
-    validateServiceConfig(service, seenNames);
-  }
-
-  if (!seenNames.has(defaultService)) {
-    throw new Error(`default_service ${defaultService} is not in services`);
-  }
 }
 
 function buildWorkflowYaml(config) {
@@ -253,7 +193,7 @@ jobs:
 
 async function main() {
   const config = JSON.parse(await fs.readFile(sourcePath, 'utf8'));
-  validateConfig(config);
+  validateDeployConfig(config);
 
   await fs.writeFile(workflowPath, buildWorkflowYaml(config));
 }
