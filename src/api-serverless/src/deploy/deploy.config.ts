@@ -1,10 +1,14 @@
 import * as deployConfigJson from '@/config/deploy-services.json';
-import {
-  DEPLOY_ENVIRONMENTS,
-  isDeployEnvironment,
-  validateDeployConfig
-} from '@/config/deploy-config.validation';
+import { validateDeployConfig } from '@/config/deploy-config.validation';
 import type {
+  DeployEnvironment,
+  DeployServiceConfig
+} from '@/config/deploy-config.validation';
+export {
+  DEPLOY_ENVIRONMENTS,
+  isDeployEnvironment
+} from '@/config/deploy-config.validation';
+export type {
   DeployConfig,
   DeployEnvironment,
   DeployServiceConfig
@@ -16,10 +20,7 @@ export const DEPLOY_WORKFLOW_FILE = 'deploy.yml';
 export const DEPLOY_WORKFLOW_NAME = 'Deploy a service';
 
 validateDeployConfig(deployConfigJson);
-const DEPLOY_CONFIG = deployConfigJson as DeployConfig;
-
-export type { DeployConfig, DeployEnvironment, DeployServiceConfig };
-export { DEPLOY_ENVIRONMENTS, isDeployEnvironment };
+const DEPLOY_CONFIG = deployConfigJson;
 
 export const DEFAULT_DEPLOY_ENVIRONMENT: DeployEnvironment =
   DEPLOY_CONFIG.default_environment;
