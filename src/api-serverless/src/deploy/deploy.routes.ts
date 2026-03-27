@@ -16,10 +16,7 @@ import { getValidatedByJoiOrThrow } from '@/api/validation';
 
 function getGitHubTokenOrThrow(req: Request): string {
   const authorizationHeader = req.get('authorization');
-  if (
-    authorizationHeader &&
-    authorizationHeader.toLowerCase().startsWith('bearer ')
-  ) {
+  if (authorizationHeader?.toLowerCase().startsWith('bearer ')) {
     const token = authorizationHeader.slice('bearer '.length).trim();
     if (token) {
       return token;

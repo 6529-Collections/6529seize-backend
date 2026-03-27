@@ -102,7 +102,7 @@ export class GitHubDeployService {
         'Content-Type': 'application/json',
         'User-Agent': '6529-seize-deploy-ui',
         'X-GitHub-Api-Version': '2022-11-28',
-        ...(options.headers ?? {})
+        ...(options.headers ?? undefined)
       }
     });
 

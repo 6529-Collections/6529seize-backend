@@ -15,16 +15,52 @@ function yamlList(values) {
   return values.map((value) => `- ${value}`);
 }
 
+function isDeployEnvironment(value) {
+  return value === 'staging' || value === 'prod';
+}
+
+function validateServiceConfig(service, seenNames) {
+  if (!service || typeof service !== 'object') {
+    throw new Error('each service must be an object');
+  }
+
+  if (typeof service.name !== 'string' || service.name.trim() === '') {
+    throw new Error('each service must have a non-empty name');
+  }
+
+  if (seenNames.has(service.name)) {
+    throw new Error(`duplicate deploy service: ${service.name}`);
+  }
+  seenNames.add(service.name);
+
+  if (
+    !Array.isArray(service.allowed_environments) ||
+    service.allowed_environments.length === 0
+  ) {
+    throw new Error(`service ${service.name} must have allowed_environments`);
+  }
+
+  for (const environment of service.allowed_environments) {
+    if (!isDeployEnvironment(environment)) {
+      throw new Error(
+        `service ${service.name} has invalid environment ${environment}`
+      );
+    }
+  }
+}
+
 function validateConfig(config) {
   if (!config || typeof config !== 'object') {
     throw new Error('deploy-services.json must contain an object');
   }
 
-  const { default_environment: defaultEnvironment, default_service: defaultService, services } = config;
-  if (
-    defaultEnvironment !== 'staging' &&
-    defaultEnvironment !== 'prod'
-  ) {
+  const {
+    default_environment: defaultEnvironment,
+    default_service: defaultService,
+    services
+  } = config;
+
+  if (!isDeployEnvironment(defaultEnvironment)) {
     throw new Error('default_environment must be staging or prod');
   }
 
@@ -34,31 +70,7 @@ function validateConfig(config) {
 
   const seenNames = new Set();
   for (const service of services) {
-    if (!service || typeof service !== 'object') {
-      throw new Error('each service must be an object');
-    }
-    if (typeof service.name !== 'string' || service.name.trim() === '') {
-      throw new Error('each service must have a non-empty name');
-    }
-    if (seenNames.has(service.name)) {
-      throw new Error(`duplicate deploy service: ${service.name}`);
-    }
-    seenNames.add(service.name);
-    if (
-      !Array.isArray(service.allowed_environments) ||
-      service.allowed_environments.length === 0
-    ) {
-      throw new Error(
-        `service ${service.name} must have allowed_environments`
-      );
-    }
-    for (const environment of service.allowed_environments) {
-      if (environment !== 'staging' && environment !== 'prod') {
-        throw new Error(
-          `service ${service.name} has invalid environment ${environment}`
-        );
-      }
-    }
+    validateServiceConfig(service, seenNames);
   }
 
   if (!seenNames.has(defaultService)) {

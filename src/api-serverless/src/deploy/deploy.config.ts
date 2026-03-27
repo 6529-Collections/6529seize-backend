@@ -1,10 +1,9 @@
 import deployConfigJson from '../../../../config/deploy-services.json';
 
 export type DeployEnvironment = 'staging' | 'prod';
-export type DeployService = string;
 
 export type DeployServiceConfig = {
-  name: DeployService;
+  name: string;
   allowed_environments: DeployEnvironment[];
 };
 
@@ -15,7 +14,7 @@ export const DEPLOY_WORKFLOW_NAME = 'Deploy a service';
 
 const DEPLOY_CONFIG = deployConfigJson as {
   default_environment: DeployEnvironment;
-  default_service: DeployService;
+  default_service: string;
   services: DeployServiceConfig[];
 };
 
@@ -25,7 +24,7 @@ export const DEFAULT_DEPLOY_REF = 'main';
 
 export const DEPLOY_SERVICES = DEPLOY_CONFIG.services.map(
   (service) => service.name
-) as DeployService[];
+) as string[];
 
 const DEPLOY_SERVICE_SET = new Set<string>(DEPLOY_SERVICES);
 const DEPLOY_SERVICE_ENVIRONMENTS = new Map(
@@ -39,19 +38,14 @@ export function isDeployEnvironment(value: string): value is DeployEnvironment {
   return value === 'staging' || value === 'prod';
 }
 
-export function isDeployService(value: string): value is DeployService {
+export function isDeployService(value: string): boolean {
   return DEPLOY_SERVICE_SET.has(value);
 }
 
 export function getAllowedEnvironmentsForService(
   service: string
 ): DeployEnvironment[] {
-  return (
-    DEPLOY_SERVICE_ENVIRONMENTS.get(service as DeployService) ?? [
-      'staging',
-      'prod'
-    ]
-  );
+  return DEPLOY_SERVICE_ENVIRONMENTS.get(service) ?? ['staging', 'prod'];
 }
 
 export function canDeployServiceToEnvironment(
