@@ -7,6 +7,15 @@ import {
 
 const GIT_REF_PATTERN = /^[A-Za-z0-9._/-]+$/;
 
+export type DeployRunsQuery = {
+  page: number;
+  page_size: number;
+};
+
+export type DeployRefsQuery = {
+  q: string;
+};
+
 export const DeployDispatchBodySchema = Joi.object({
   ref: Joi.string()
     .trim()
@@ -30,3 +39,12 @@ export const DeployDispatchBodySchema = Joi.object({
     .unique()
     .required()
 });
+
+export const DeployRunsQuerySchema = Joi.object<DeployRunsQuery>({
+  page: Joi.number().integer().min(1).max(1000).default(1),
+  page_size: Joi.number().integer().min(1).max(20).default(8)
+}).unknown(true);
+
+export const DeployRefsQuerySchema = Joi.object<DeployRefsQuery>({
+  q: Joi.string().allow('').max(200).default('')
+}).unknown(true);

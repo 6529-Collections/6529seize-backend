@@ -43,4 +43,16 @@ describe('deploy.config', () => {
     expect(canDeployServiceToEnvironment('api', 'staging')).toBe(true);
     expect(canDeployServiceToEnvironment('api', 'prod')).toBe(true);
   });
+
+  it('does not allow unknown services to deploy anywhere', () => {
+    expect(
+      getAllowedEnvironmentsForService('definitely-not-a-service')
+    ).toEqual([]);
+    expect(
+      canDeployServiceToEnvironment('definitely-not-a-service', 'staging')
+    ).toBe(false);
+    expect(
+      canDeployServiceToEnvironment('definitely-not-a-service', 'prod')
+    ).toBe(false);
+  });
 });

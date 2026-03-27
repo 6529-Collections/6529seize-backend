@@ -10,7 +10,6 @@ import userGroupsImEligibleForRoutes from './community-members/user-groups-im-el
 import userGroupsRoutes from './community-members/user-groups.routes';
 import communityMetricsRoutes from './community-metrics/community-metrics.routes';
 import delegationsRoutes from './delegations/delegations.routes';
-import deployRoutes from './deploy/deploy.routes';
 import desktopRoutes from './desktop/routes.desktop';
 import distributionPhotosRoutes from './distribution-photos/api.distribution_photos.routes';
 import distributionsRoutes from './distributions/api.distributions.routes';
@@ -89,6 +88,7 @@ import { Logger } from '@/logging';
 import { numbers } from '@/numbers';
 import { getRedisClient, initRedis, redisGet } from '@/redis';
 import { parseTdhResultsFromDB } from '@/sql_helpers';
+import deployRoutes from '@/api/deploy/deploy.routes';
 import alchemyProxyRoutes from './alchemy-proxy/alchemy-proxy.routes';
 import {
   corsOptions,
@@ -125,7 +125,7 @@ import {
   initRateLimiting,
   rateLimitingMiddleware
 } from './rate-limiting/rate-limiting.middleware';
-import { setNoStoreHeaders } from './response-headers';
+import { setNoStoreHeaders } from '@/api/response-headers';
 import { cacheRequest, isRequestCacheEntry } from './request-cache';
 import rpcRoutes from './rpc/rpc.routes';
 import sitemapRoutes from './sitemap/sitemap.routes';

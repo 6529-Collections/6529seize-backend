@@ -79,6 +79,7 @@ export type DeployRefOption = {
 export class GitHubDeployService {
   private readonly logger = Logger.get(this.constructor.name);
   private readonly apiBase = `https://api.github.com/repos/${DEPLOY_REPO_OWNER}/${DEPLOY_REPO_NAME}`;
+  private readonly requestTimeoutMs = 15000;
 
   private async getErrorMessage(response: Response): Promise<string> {
     try {
@@ -94,7 +95,7 @@ export class GitHubDeployService {
     path: string,
     options: NodeFetchRequestInit = {}
   ) {
-    const response = await fetch(`${this.apiBase}${path}`, {
+    const response = await this.fetchWithTimeout(`${this.apiBase}${path}`, {
       ...options,
       headers: {
         Authorization: `Bearer ${token}`,
@@ -107,6 +108,66 @@ export class GitHubDeployService {
     });
 
     return response;
+  }
+
+  private async fetchWithTimeout(
+    url: string,
+    options: NodeFetchRequestInit = {}
+  ): Promise<Response> {
+    const controller = new AbortController();
+    const outerSignal = options.signal;
+    let timedOut = false;
+    const timeoutId = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, this.requestTimeoutMs);
+
+    const onOuterAbort = () => controller.abort();
+    if (outerSignal) {
+      if (outerSignal.aborted) {
+        clearTimeout(timeoutId);
+        controller.abort();
+      } else {
+        outerSignal.addEventListener('abort', onOuterAbort, {
+          once: true
+        });
+      }
+    }
+
+    try {
+      return await fetch(url, {
+        ...options,
+        signal: controller.signal
+      });
+    } catch (error) {
+      if (error instanceof CustomApiCompliantException) {
+        throw error;
+      }
+
+      if (error instanceof Error && error.name === 'AbortError') {
+        if (timedOut) {
+          throw new CustomApiCompliantException(
+            504,
+            `GitHub request timed out after ${this.requestTimeoutMs}ms`
+          );
+        }
+
+        throw new CustomApiCompliantException(
+          502,
+          'GitHub request was aborted'
+        );
+      }
+
+      throw new CustomApiCompliantException(
+        502,
+        `GitHub request failed: ${
+          error instanceof Error ? error.message : 'Unknown fetch error'
+        }`
+      );
+    } finally {
+      clearTimeout(timeoutId);
+      outerSignal?.removeEventListener('abort', onOuterAbort);
+    }
   }
 
   private parseDeployTitle(title: string): {
@@ -318,15 +379,18 @@ export class GitHubDeployService {
   }
 
   public async getViewer(token: string): Promise<GitHubViewer> {
-    const response = await fetch('https://api.github.com/user', {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: 'application/vnd.github+json',
-        'User-Agent': '6529-seize-deploy-ui',
-        'X-GitHub-Api-Version': '2022-11-28'
+    const response = await this.fetchWithTimeout(
+      'https://api.github.com/user',
+      {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/vnd.github+json',
+          'User-Agent': '6529-seize-deploy-ui',
+          'X-GitHub-Api-Version': '2022-11-28'
+        }
       }
-    });
+    );
 
     if (!response.ok) {
       const message = await this.getErrorMessage(response);

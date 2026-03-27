@@ -1015,7 +1015,7 @@ export function renderDeployUiApp(): string {
 
   function getAuthHeaders() {
     return {
-      'X-GitHub-Token': state.token
+      Authorization: 'Bearer ' + state.token
     };
   }
 
@@ -1067,6 +1067,17 @@ export function renderDeployUiApp(): string {
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#39;');
+  }
+
+  function sanitizeHttpUrl(value) {
+    try {
+      var parsed = new URL(String(value), window.location.origin);
+      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+        return parsed.toString();
+      }
+    } catch (error) {}
+
+    return '#';
   }
 
   async function fetchJson(url, options) {
@@ -1233,50 +1244,112 @@ export function renderDeployUiApp(): string {
   }
 
   function renderRuns(runs) {
+    runsPanel.innerHTML = '';
+
     if (!runs || runs.length === 0) {
-      runsPanel.innerHTML = '<div class="run-item">No recent deploy runs found.</div>';
+      var emptyRun = document.createElement('div');
+      emptyRun.className = 'run-item';
+      emptyRun.textContent = 'No recent deploy runs found.';
+      runsPanel.appendChild(emptyRun);
       return;
     }
 
-    runsPanel.innerHTML = runs
-      .map(function (run) {
-        var outcome = run.conclusion || run.status || 'unknown';
-        var outcomeClass = 'is-progress';
-        if (outcome === 'success' || outcome === 'completed') {
-          outcomeClass = 'is-completed';
-        } else if (outcome === 'failure' || outcome === 'cancelled' || outcome === 'timed_out' || outcome === 'action_required') {
-          outcomeClass = 'is-failed';
-        }
+    runs.forEach(function (run) {
+      var outcome = run.conclusion || run.status || 'unknown';
+      var outcomeClass = 'is-progress';
+      if (outcome === 'success' || outcome === 'completed') {
+        outcomeClass = 'is-completed';
+      } else if (outcome === 'failure' || outcome === 'cancelled' || outcome === 'timed_out' || outcome === 'action_required') {
+        outcomeClass = 'is-failed';
+      }
 
-        var parts = [];
-        if (run.ref) {
-          parts.push('ref ' + run.ref);
-        }
-        if (run.actor) {
-          parts.push('by ' + run.actor);
-        }
-        if (run.updated_at) {
-          parts.push('updated ' + new Date(run.updated_at).toLocaleString());
-        }
+      var safeUrl = sanitizeHttpUrl(run.url);
+      var item = document.createElement('div');
+      item.className = 'run-item';
 
-        return '<div class="run-item">' +
-          '<div class="run-line">' +
-            '<a class="run-title" target="_blank" rel="noreferrer" href="' + run.url + '">' + run.title + '</a>' +
-            '<span class="run-actions">' +
-              '<span class="run-status ' + outcomeClass + '">' + outcome + '</span>' +
-              '<a class="run-link" target="_blank" rel="noreferrer" href="' + run.url + '" aria-label="Open run on GitHub" title="Open run on GitHub">' +
-                '<svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">' +
-                  '<path d="M6 4H4.5C4.10218 4 3.72064 4.15804 3.43934 4.43934C3.15804 4.72064 3 5.10218 3 5.5V11.5C3 11.8978 3.15804 12.2794 3.43934 12.5607C3.72064 12.842 4.10218 13 4.5 13H10.5C10.8978 13 11.2794 12.842 11.5607 12.5607C11.842 12.2794 12 11.8978 12 11.5V10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>' +
-                  '<path d="M8.5 3H13V7.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>' +
-                  '<path d="M13 3L7 9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>' +
-                '</svg>' +
-              '</a>' +
-            '</span>' +
-          '</div>' +
-          '<div class="run-meta">' + parts.map(function (part) { return '<span>' + part + '</span>'; }).join('') + '</div>' +
-        '</div>';
-      })
-      .join('');
+      var runLine = document.createElement('div');
+      runLine.className = 'run-line';
+
+      var titleLink = document.createElement('a');
+      titleLink.className = 'run-title';
+      titleLink.target = '_blank';
+      titleLink.rel = 'noreferrer';
+      titleLink.href = safeUrl;
+      titleLink.textContent = run.title || 'Unnamed deploy run';
+      runLine.appendChild(titleLink);
+
+      var runActions = document.createElement('span');
+      runActions.className = 'run-actions';
+
+      var statusNode = document.createElement('span');
+      statusNode.className = 'run-status ' + outcomeClass;
+      statusNode.textContent = outcome;
+      runActions.appendChild(statusNode);
+
+      var linkNode = document.createElement('a');
+      linkNode.className = 'run-link';
+      linkNode.target = '_blank';
+      linkNode.rel = 'noreferrer';
+      linkNode.href = safeUrl;
+      linkNode.setAttribute('aria-label', 'Open run on GitHub');
+      linkNode.title = 'Open run on GitHub';
+
+      var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('viewBox', '0 0 16 16');
+      svg.setAttribute('fill', 'none');
+
+      var pathOne = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      pathOne.setAttribute('d', 'M6 4H4.5C4.10218 4 3.72064 4.15804 3.43934 4.43934C3.15804 4.72064 3 5.10218 3 5.5V11.5C3 11.8978 3.15804 12.2794 3.43934 12.5607C3.72064 12.842 4.10218 13 4.5 13H10.5C10.8978 13 11.2794 12.842 11.5607 12.5607C11.842 12.2794 12 11.8978 12 11.5V10');
+      pathOne.setAttribute('stroke', 'currentColor');
+      pathOne.setAttribute('stroke-width', '1.5');
+      pathOne.setAttribute('stroke-linecap', 'round');
+      pathOne.setAttribute('stroke-linejoin', 'round');
+      svg.appendChild(pathOne);
+
+      var pathTwo = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      pathTwo.setAttribute('d', 'M8.5 3H13V7.5');
+      pathTwo.setAttribute('stroke', 'currentColor');
+      pathTwo.setAttribute('stroke-width', '1.5');
+      pathTwo.setAttribute('stroke-linecap', 'round');
+      pathTwo.setAttribute('stroke-linejoin', 'round');
+      svg.appendChild(pathTwo);
+
+      var pathThree = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      pathThree.setAttribute('d', 'M13 3L7 9');
+      pathThree.setAttribute('stroke', 'currentColor');
+      pathThree.setAttribute('stroke-width', '1.5');
+      pathThree.setAttribute('stroke-linecap', 'round');
+      pathThree.setAttribute('stroke-linejoin', 'round');
+      svg.appendChild(pathThree);
+
+      linkNode.appendChild(svg);
+      runActions.appendChild(linkNode);
+      runLine.appendChild(runActions);
+      item.appendChild(runLine);
+
+      var meta = document.createElement('div');
+      meta.className = 'run-meta';
+
+      if (run.ref) {
+        var refPart = document.createElement('span');
+        refPart.textContent = 'ref ' + run.ref;
+        meta.appendChild(refPart);
+      }
+      if (run.actor) {
+        var actorPart = document.createElement('span');
+        actorPart.textContent = 'by ' + run.actor;
+        meta.appendChild(actorPart);
+      }
+      if (run.updated_at) {
+        var updatedPart = document.createElement('span');
+        updatedPart.textContent =
+          'updated ' + new Date(run.updated_at).toLocaleString();
+        meta.appendChild(updatedPart);
+      }
+
+      item.appendChild(meta);
+      runsPanel.appendChild(item);
+    });
   }
 
   function applyRunsPage(runsPage) {
@@ -1296,19 +1369,25 @@ export function renderDeployUiApp(): string {
   }
 
   function renderResults(items) {
+    resultsPanel.innerHTML = '';
+
     if (!items || items.length === 0) {
       resultsPanel.classList.add('hidden');
-      resultsPanel.innerHTML = '';
       return;
     }
 
     resultsPanel.classList.remove('hidden');
-    resultsPanel.innerHTML = items.map(function (item) {
-      var className = item.ok ? 'is-success' : 'is-error';
-      return '<div class="result-item ' + className + '">' +
-        '<strong>' + item.service + '</strong>: ' + item.message +
-      '</div>';
-    }).join('');
+    items.forEach(function (item) {
+      var resultNode = document.createElement('div');
+      resultNode.className = 'result-item ' + (item.ok ? 'is-success' : 'is-error');
+
+      var serviceNode = document.createElement('strong');
+      serviceNode.textContent = item.service;
+      resultNode.appendChild(serviceNode);
+      resultNode.appendChild(document.createTextNode(': ' + item.message));
+
+      resultsPanel.appendChild(resultNode);
+    });
   }
 
   async function loadRuns(page) {
@@ -1351,7 +1430,7 @@ export function renderDeployUiApp(): string {
     setStatus(authStatus, 'Checking deploy permissions...', null);
     var payload = await fetchJson('/deploy/ui/session', {
       headers: {
-        'X-GitHub-Token': token
+        Authorization: 'Bearer ' + token
       }
     });
 
@@ -1465,17 +1544,33 @@ export function renderDeployUiApp(): string {
         })
       });
       renderResults(payload.results || []);
-      setStatus(
-        deployStatus,
-        'Dispatch complete. GitHub may take a few seconds to surface the new runs.',
-        'success'
-      );
-      window.setTimeout(function () {
-        loadRuns(1);
-      }, 2500);
-      window.setTimeout(function () {
-        loadRuns(1);
-      }, 7000);
+      if ((payload.summary && payload.summary.failed) === 0) {
+        setStatus(
+          deployStatus,
+          'Dispatch complete. GitHub may take a few seconds to surface the new runs.',
+          'success'
+        );
+        window.setTimeout(function () {
+          loadRuns(1);
+        }, 2500);
+        window.setTimeout(function () {
+          loadRuns(1);
+        }, 7000);
+      } else {
+        var failedDispatches =
+          payload.summary && typeof payload.summary.failed === 'number'
+            ? payload.summary.failed
+            : 0;
+        setStatus(
+          deployStatus,
+          'Dispatch completed with ' +
+            failedDispatches +
+            ' failed dispatch' +
+            (failedDispatches === 1 ? '' : 'es') +
+            '.',
+          'error'
+        );
+      }
     } catch (error) {
       setStatus(deployStatus, error.message, 'error');
     } finally {

@@ -10,7 +10,13 @@ import {
   renderDeployUI,
   renderDeployUiApp
 } from '@/api/deploy/deploy-ui.renderer';
-import { DeployDispatchBodySchema } from '@/api/deploy/deploy.validation';
+import {
+  DeployDispatchBodySchema,
+  DeployRefsQuery,
+  DeployRefsQuerySchema,
+  DeployRunsQuery,
+  DeployRunsQuerySchema
+} from '@/api/deploy/deploy.validation';
 import { setNoStoreHeaders } from '@/api/response-headers';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
 
@@ -21,11 +27,6 @@ function getGitHubTokenOrThrow(req: Request): string {
     if (token) {
       return token;
     }
-  }
-
-  const token = req.get('x-github-token')?.trim();
-  if (token) {
-    return token;
   }
 
   throw new CustomApiCompliantException(
@@ -70,33 +71,31 @@ deployRoutes.get('/ui/session', async (req, res) => {
 
 deployRoutes.get('/ui/runs', async (req, res) => {
   const token = getGitHubTokenOrThrow(req);
-  const page =
-    typeof req.query.page === 'string'
-      ? Math.max(1, Math.min(Number.parseInt(req.query.page, 10) || 1, 1000))
-      : 1;
-  const pageSize =
-    typeof req.query.page_size === 'string'
-      ? Math.max(1, Math.min(Number.parseInt(req.query.page_size, 10) || 8, 20))
-      : 8;
+  const query = getValidatedByJoiOrThrow<DeployRunsQuery>(
+    req.query as unknown as DeployRunsQuery,
+    DeployRunsQuerySchema
+  );
 
   setNoStoreHeaders(res);
   return res.json({
     runs_page: await gitHubDeployService.listRecentRuns({
       token,
-      page,
-      pageSize
+      page: query.page,
+      pageSize: query.page_size
     })
   });
 });
 
 deployRoutes.get('/ui/refs', async (req, res) => {
   const token = getGitHubTokenOrThrow(req);
-  const query =
-    typeof req.query.q === 'string' ? req.query.q.slice(0, 200) : '';
+  const query = getValidatedByJoiOrThrow<DeployRefsQuery>(
+    req.query as unknown as DeployRefsQuery,
+    DeployRefsQuerySchema
+  );
 
   setNoStoreHeaders(res);
   return res.json({
-    refs: await gitHubDeployService.listRefs(token, query, 20)
+    refs: await gitHubDeployService.listRefs(token, query.q, 20)
   });
 });
 

@@ -23,7 +23,7 @@ jobs:
       - name: Verify generated files are committed
         run: |
           npm run generate:deploy-config
-          if ! git diff --exit-code -- .github/workflows/deploy.yml; then
+          if [[ -n "$(git status --porcelain -- .github/workflows/deploy.yml)" ]]; then
             echo "::error::.github/workflows/deploy.yml is generated. Edit config/deploy-services.json, rerun npm run generate:deploy-config, and commit the result."
             git diff --stat -- .github/workflows/deploy.yml
             exit 1
@@ -33,7 +33,7 @@ jobs:
           npm run generate
           popd
 
-          if ! git diff --exit-code -- src/api-serverless/src/generated; then
+          if [[ -n "$(git status --porcelain -- src/api-serverless/src/generated)" ]]; then
             echo "::error::src/api-serverless/src/generated is generated from openapi.yaml. Rerun src/api-serverless generation and commit the result."
             git diff --stat -- src/api-serverless/src/generated
             exit 1

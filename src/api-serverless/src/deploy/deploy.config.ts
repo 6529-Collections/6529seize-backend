@@ -45,7 +45,7 @@ export function isDeployService(value: string): boolean {
 export function getAllowedEnvironmentsForService(
   service: string
 ): DeployEnvironment[] {
-  return DEPLOY_SERVICE_ENVIRONMENTS.get(service) ?? ['staging', 'prod'];
+  return DEPLOY_SERVICE_ENVIRONMENTS.get(service) ?? [];
 }
 
 export function canDeployServiceToEnvironment(
