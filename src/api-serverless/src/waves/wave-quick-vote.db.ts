@@ -233,6 +233,9 @@ export class WaveQuickVoteDb extends LazyDbAccessCompatibleService {
     param: { previous_id: string; new_id: string },
     ctx: { connection: ConnectionWrapper<any> }
   ): Promise<void> {
+    if (param.previous_id === param.new_id) {
+      return;
+    }
     await this.db.execute(
       `
         UPDATE ${DROP_QUICKVOTE_SKIPS_TABLE} s1

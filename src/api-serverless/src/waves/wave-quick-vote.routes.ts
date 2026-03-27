@@ -42,7 +42,10 @@ router.get(
     }
     if (
       authenticationContext.isAuthenticatedAsProxy() &&
-      !authenticationContext.hasProxyAction(ProfileProxyActionType.READ_WAVE)
+      !authenticationContext.hasProxyAction(ProfileProxyActionType.READ_WAVE) &&
+      !authenticationContext.hasProxyAction(
+        ProfileProxyActionType.RATE_WAVE_DROP
+      )
     ) {
       throw new ForbiddenException(
         `Proxy doesn't have permission to use quick vote`
