@@ -239,6 +239,12 @@ export class GitHubDeployService {
 
     if (!response.ok) {
       const message = await this.getErrorMessage(response);
+      if (response.status === 401 || response.status === 403) {
+        throw new CustomApiCompliantException(
+          response.status,
+          `Failed to load branches from GitHub: ${message}`
+        );
+      }
       throw new CustomApiCompliantException(
         502,
         `Failed to load branches from GitHub: ${message}`
@@ -260,6 +266,12 @@ export class GitHubDeployService {
 
     if (!response.ok) {
       const message = await this.getErrorMessage(response);
+      if (response.status === 401 || response.status === 403) {
+        throw new CustomApiCompliantException(
+          response.status,
+          `Failed to load tags from GitHub: ${message}`
+        );
+      }
       throw new CustomApiCompliantException(
         502,
         `Failed to load tags from GitHub: ${message}`
@@ -313,7 +325,7 @@ export class GitHubDeployService {
       }
     );
 
-    if (response.status === 204) {
+    if (response.ok) {
       this.logger.info(
         `GitHub deploy dispatch accepted [service ${params.service}] [environment ${params.environment}] [ref ${params.ref}]`
       );
@@ -323,7 +335,7 @@ export class GitHubDeployService {
     const message = await this.getErrorMessage(response);
     if (response.status === 401 || response.status === 403) {
       throw new CustomApiCompliantException(
-        503,
+        response.status,
         `GitHub token cannot dispatch workflows: ${message}`
       );
     }
@@ -364,7 +376,7 @@ export class GitHubDeployService {
       const message = await this.getErrorMessage(response);
       if (response.status === 401 || response.status === 403) {
         throw new CustomApiCompliantException(
-          503,
+          response.status,
           `GitHub token cannot list workflow runs: ${message}`
         );
       }
