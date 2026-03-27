@@ -1284,8 +1284,9 @@ export function renderDeployUiApp(): string {
 
   function updateSelectedSummary() {
     var selected = selectedServices();
+    var hasRef = !!(refInput.value || '').trim();
     selectedSummary.textContent = selected.length + ' service' + (selected.length === 1 ? '' : 's') + ' selected.';
-    deployButton.disabled = !state.token || selected.length === 0;
+    deployButton.disabled = !state.token || selected.length === 0 || !hasRef;
     clearSelectionButton.disabled = selected.length === 0;
     updateDeployOverview();
   }
@@ -1676,7 +1677,8 @@ export function renderDeployUiApp(): string {
     syncAuthControls();
     tokenInput.value = '';
     renderSessionSummary(payload.login);
-    deployButton.disabled = selectedServices().length === 0;
+    deployButton.disabled =
+      selectedServices().length === 0 || !(refInput.value || '').trim();
     setStatus(authStatus, '', null);
     applyRunsPage(payload.runs_page || {});
 
@@ -1810,7 +1812,10 @@ export function renderDeployUiApp(): string {
     } catch (error) {
       setStatus(deployStatus, error.message, 'error');
     } finally {
-      deployButton.disabled = selectedServices().length === 0 || !state.token;
+      deployButton.disabled =
+        selectedServices().length === 0 ||
+        !state.token ||
+        !(refInput.value || '').trim();
     }
   }
 
