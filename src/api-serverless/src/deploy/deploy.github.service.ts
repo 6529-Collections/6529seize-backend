@@ -85,14 +85,22 @@ export class GitHubDeployService {
 
   private buildGitHubHeaders(
     token: string,
-    extraHeaders: NodeFetchRequestInit['headers'] = {}
+    extraHeaders?: NodeFetchRequestInit['headers']
   ) {
-    return {
+    const baseHeaders = {
       Authorization: `Bearer ${token}`,
       Accept: 'application/vnd.github+json',
       'User-Agent': '6529-seize-deploy-ui',
-      'X-GitHub-Api-Version': '2022-11-28',
-      ...(extraHeaders ?? {})
+      'X-GitHub-Api-Version': '2022-11-28'
+    };
+
+    if (!extraHeaders) {
+      return baseHeaders;
+    }
+
+    return {
+      ...baseHeaders,
+      ...extraHeaders
     };
   }
 
