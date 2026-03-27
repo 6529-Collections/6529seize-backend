@@ -144,12 +144,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check production preconditions
-        uses: actions/github-script@ffc2c79a5b2490bd33e0a41c1de74b877714d736
+        uses: actions/github-script@v3
         if: ${prodCondition}
         with:
           script: core.setFailed('Given service can only be deployed to production environment')
       - name: Check staging preconditions
-        uses: actions/github-script@ffc2c79a5b2490bd33e0a41c1de74b877714d736
+        uses: actions/github-script@v3
         if: ${stagingCondition}
         with:
           script: core.setFailed('Given service can only be deployed to staging environment')
@@ -158,7 +158,7 @@ jobs:
         run: echo "branch=\${GITHUB_HEAD_REF:-\${GITHUB_REF#refs/heads/}}" >> $GITHUB_OUTPUT
         id: extract_branch
       - name: Checkout
-        uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744
+        uses: actions/checkout@v3
         with:
           ref: \${{ steps.extract_branch.outputs.branch }}
       - name: Install root dependencies
@@ -231,7 +231,7 @@ jobs:
             exit 1
           fi
       - name: Notify about failure
-        uses: sarisia/actions-status-discord@4f4322cb1878ec4400fcf6a10315d2169a90877d
+        uses: sarisia/actions-status-discord@v1
         if: failure()
         env:
           DISCORD_WEBHOOK: \${{ secrets.DISCORD_WEBHOOK }}
@@ -241,7 +241,7 @@ jobs:
           color: 0xff0000
 
       - name: Notify about success
-        uses: sarisia/actions-status-discord@4f4322cb1878ec4400fcf6a10315d2169a90877d
+        uses: sarisia/actions-status-discord@v1
         if: success()
         env:
           DISCORD_WEBHOOK: \${{ secrets.DISCORD_WEBHOOK }}
