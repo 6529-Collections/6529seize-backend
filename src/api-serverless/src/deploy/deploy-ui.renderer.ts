@@ -964,6 +964,16 @@ export function renderDeployUI(services: DeployServiceConfig[]): string {
         <div class="hero-actions">
           <a
             class="hero-link"
+            href="/health/ui"
+            target="_blank"
+            rel="noreferrer">
+            <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+              <path d="M8 14.2L6.84 13.15C3.12 9.78 0.67 7.56 0.67 4.83C0.67 2.61 2.4 0.87 4.62 0.87C5.88 0.87 7.09 1.45 8 2.38C8.91 1.45 10.12 0.87 11.38 0.87C13.6 0.87 15.33 2.61 15.33 4.83C15.33 7.56 12.88 9.78 9.16 13.16L8 14.2Z"/>
+            </svg>
+            <span>Health</span>
+          </a>
+          <a
+            class="hero-link"
             href="https://github.com/${encodeURIComponent(DEPLOY_REPO_OWNER)}/${encodeURIComponent(DEPLOY_REPO_NAME)}"
             target="_blank"
             rel="noreferrer">
@@ -1662,7 +1672,7 @@ export function renderDeployUiApp(): string {
 
     state.token = token;
     state.isCheckingSession = false;
-    sessionStorage.setItem(TOKEN_STORAGE_KEY, token);
+    localStorage.setItem(TOKEN_STORAGE_KEY, token);
     syncAuthControls();
     tokenInput.value = '';
     renderSessionSummary(payload.login);
@@ -1688,7 +1698,7 @@ export function renderDeployUiApp(): string {
     } catch (error) {
       state.token = null;
       state.isCheckingSession = false;
-      sessionStorage.removeItem(TOKEN_STORAGE_KEY);
+      localStorage.removeItem(TOKEN_STORAGE_KEY);
       syncAuthControls();
       sessionSummary.textContent = 'No active session.';
       tokenInput.value = token;
@@ -1707,7 +1717,7 @@ export function renderDeployUiApp(): string {
   function onForget() {
     state.token = null;
     state.isCheckingSession = false;
-    sessionStorage.removeItem(TOKEN_STORAGE_KEY);
+    localStorage.removeItem(TOKEN_STORAGE_KEY);
     tokenInput.value = '';
     syncAuthControls();
     renderSessionSummary(null);
@@ -1960,7 +1970,7 @@ export function renderDeployUiApp(): string {
 
   serviceSearch.addEventListener('input', applyEnvironmentFilter);
 
-  var storedToken = sessionStorage.getItem(TOKEN_STORAGE_KEY) || '';
+  var storedToken = localStorage.getItem(TOKEN_STORAGE_KEY) || '';
   tokenInput.value = '';
   syncAuthControls();
   applyEnvironmentFilter();
@@ -1978,7 +1988,7 @@ export function renderDeployUiApp(): string {
     authenticate(storedToken.trim()).catch(function () {
       state.token = null;
       state.isCheckingSession = false;
-      sessionStorage.removeItem(TOKEN_STORAGE_KEY);
+      localStorage.removeItem(TOKEN_STORAGE_KEY);
       state.runsPage = 1;
       state.runsCurrentCount = 0;
       state.runsTotalCount = null;

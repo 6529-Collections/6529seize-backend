@@ -461,6 +461,8 @@ export function renderHealthUI(data: HealthData, baseUrl?: string): string {
             <td class="value-cell">
               <div class="nested-object">
                 <div class="nested-key"><a href="${data.links.api_documentation}" target="_blank" rel="noopener noreferrer">🔗 API Documentation</a></div>
+                <div class="nested-key"><a href="/health" target="_blank" rel="noopener noreferrer">🔗 Health JSON</a></div>
+                <div class="nested-key"><a href="${data.links.deploy_ui}" target="_blank" rel="noopener noreferrer">🔗 Deploy UI</a></div>
               </div>
             </td>
           </tr>
