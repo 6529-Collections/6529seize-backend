@@ -86,7 +86,7 @@ You can run it from anywhere inside this repository, but it only works in these 
 - In `src/<service>`, it uses the folder name as the deploy service.
 - In `src/api-serverless`, it maps to service `api`.
 
-The single source of truth for deployable services is `config/deploy-services.json`.
+The single source of truth for deployable services is `src/config/deploy-services.json`.
 `.github/workflows/deploy.yml` is generated from it, and the API deploy UI reads the same JSON directly.
 
 Before it triggers the GitHub workflow, it checks that:

@@ -1,4 +1,4 @@
-import deployConfigJson from '../../../../config/deploy-services.json';
+import * as deployConfigJson from '@/config/deploy-services.json';
 
 export type DeployEnvironment = 'staging' | 'prod';
 
@@ -7,16 +7,19 @@ export type DeployServiceConfig = {
   allowed_environments: DeployEnvironment[];
 };
 
+export const DEPLOY_ENVIRONMENTS: DeployEnvironment[] = ['staging', 'prod'];
 export const DEPLOY_REPO_OWNER = '6529-Collections';
 export const DEPLOY_REPO_NAME = '6529seize-backend';
 export const DEPLOY_WORKFLOW_FILE = 'deploy.yml';
 export const DEPLOY_WORKFLOW_NAME = 'Deploy a service';
 
-const DEPLOY_CONFIG = deployConfigJson as {
+type DeployConfig = {
   default_environment: DeployEnvironment;
   default_service: string;
   services: DeployServiceConfig[];
 };
+
+const DEPLOY_CONFIG = deployConfigJson as DeployConfig;
 
 export const DEFAULT_DEPLOY_ENVIRONMENT: DeployEnvironment =
   DEPLOY_CONFIG.default_environment;
@@ -35,7 +38,7 @@ const DEPLOY_SERVICE_ENVIRONMENTS = new Map(
 );
 
 export function isDeployEnvironment(value: string): value is DeployEnvironment {
-  return value === 'staging' || value === 'prod';
+  return DEPLOY_ENVIRONMENTS.includes(value as DeployEnvironment);
 }
 
 export function isDeployService(value: string): boolean {
@@ -59,5 +62,5 @@ export function getDeployServiceConfigs(): DeployServiceConfig[] {
   return DEPLOY_SERVICES.map((service) => ({
     name: service,
     allowed_environments: [...getAllowedEnvironmentsForService(service)]
-  }));
+  })).sort((a, b) => a.name.localeCompare(b.name));
 }

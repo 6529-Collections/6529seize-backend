@@ -5,10 +5,12 @@ import fetch, {
 import { BadRequestException, CustomApiCompliantException } from '@/exceptions';
 import { Logger } from '@/logging';
 import {
+  DEPLOY_ENVIRONMENTS,
   DEPLOY_REPO_NAME,
   DEPLOY_REPO_OWNER,
   DEPLOY_WORKFLOW_FILE,
-  DeployEnvironment
+  DeployEnvironment,
+  isDeployEnvironment
 } from '@/api/deploy/deploy.config';
 
 type GitHubApiError = {
@@ -81,6 +83,19 @@ export class GitHubDeployService {
   private readonly apiBase = `https://api.github.com/repos/${DEPLOY_REPO_OWNER}/${DEPLOY_REPO_NAME}`;
   private readonly requestTimeoutMs = 15000;
 
+  private buildGitHubHeaders(
+    token: string,
+    extraHeaders: NodeFetchRequestInit['headers'] = {}
+  ) {
+    return {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/vnd.github+json',
+      'User-Agent': '6529-seize-deploy-ui',
+      'X-GitHub-Api-Version': '2022-11-28',
+      ...(extraHeaders ?? {})
+    };
+  }
+
   private async getErrorMessage(response: Response): Promise<string> {
     try {
       const payload = (await response.json()) as GitHubApiError;
@@ -97,14 +112,10 @@ export class GitHubDeployService {
   ) {
     const response = await this.fetchWithTimeout(`${this.apiBase}${path}`, {
       ...options,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: 'application/vnd.github+json',
+      headers: this.buildGitHubHeaders(token, {
         'Content-Type': 'application/json',
-        'User-Agent': '6529-seize-deploy-ui',
-        'X-GitHub-Api-Version': '2022-11-28',
         ...(options.headers ?? undefined)
-      }
+      })
     });
 
     return response;
@@ -135,9 +146,11 @@ export class GitHubDeployService {
     }
 
     try {
+      const signal = controller.signal as NodeFetchRequestInit['signal'];
+
       return await fetch(url, {
         ...options,
-        signal: controller.signal
+        signal
       });
     } catch (error) {
       if (error instanceof CustomApiCompliantException) {
@@ -174,8 +187,18 @@ export class GitHubDeployService {
     service: string | null;
     environment: DeployEnvironment | null;
   } {
-    const match = /^Deploy (.+) to (staging|prod)$/.exec(title);
+    const match = new RegExp(
+      `^Deploy (.+) to (${DEPLOY_ENVIRONMENTS.join('|')})$`
+    ).exec(title);
     if (!match) {
+      return {
+        service: null,
+        environment: null
+      };
+    }
+
+    const environment = match[2];
+    if (!isDeployEnvironment(environment)) {
       return {
         service: null,
         environment: null
@@ -184,7 +207,7 @@ export class GitHubDeployService {
 
     return {
       service: match[1],
-      environment: match[2] as DeployEnvironment
+      environment
     };
   }
 
@@ -383,12 +406,7 @@ export class GitHubDeployService {
       'https://api.github.com/user',
       {
         method: 'GET',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: 'application/vnd.github+json',
-          'User-Agent': '6529-seize-deploy-ui',
-          'X-GitHub-Api-Version': '2022-11-28'
-        }
+        headers: this.buildGitHubHeaders(token)
       }
     );
 
@@ -415,10 +433,39 @@ export class GitHubDeployService {
     limit = 20
   ): Promise<DeployRefOption[]> {
     const trimmedQuery = query.trim().toLowerCase();
-    const [branches, tags] = await Promise.all([
+    const [branchesResult, tagsResult] = await Promise.allSettled([
       this.listBranches(token, 100),
       this.listTags(token, 100)
     ]);
+
+    const branches =
+      branchesResult.status === 'fulfilled' ? branchesResult.value : [];
+    const tags = tagsResult.status === 'fulfilled' ? tagsResult.value : [];
+
+    if (branchesResult.status === 'rejected') {
+      this.logger.warn(
+        `Failed to load deploy branches from GitHub: ${branchesResult.reason}`
+      );
+    }
+
+    if (tagsResult.status === 'rejected') {
+      this.logger.warn(
+        `Failed to load deploy tags from GitHub: ${tagsResult.reason}`
+      );
+    }
+
+    if (
+      branchesResult.status === 'rejected' &&
+      tagsResult.status === 'rejected'
+    ) {
+      const firstError = branchesResult.reason ?? tagsResult.reason;
+      throw firstError instanceof Error
+        ? firstError
+        : new CustomApiCompliantException(
+            502,
+            'Failed to load refs from GitHub'
+          );
+    }
 
     const refs = [
       ...branches.map<DeployRefOption>((name) => ({

@@ -1,6 +1,5 @@
 import {
   DEFAULT_DEPLOY_ENVIRONMENT,
-  DEFAULT_DEPLOY_REF,
   DEPLOY_REPO_NAME,
   DEPLOY_REPO_OWNER,
   DEPLOY_WORKFLOW_NAME,
@@ -9,9 +8,10 @@ import {
 } from '@/api/deploy/deploy.config';
 import { LOGO_SVG } from '@/api/health/health-ui.renderer';
 
+const COMMON_DEPLOY_REFS = ['main', '1a-staging'];
+
 type DeployUiBootstrap = {
   default_environment: DeployEnvironment;
-  default_ref: string;
   recent_runs_page_size: number;
   repo_owner: string;
   repo_name: string;
@@ -60,7 +60,6 @@ function renderBootstrap(bootstrap: DeployUiBootstrap): string {
 export function renderDeployUI(services: DeployServiceConfig[]): string {
   const bootstrap: DeployUiBootstrap = {
     default_environment: DEFAULT_DEPLOY_ENVIRONMENT,
-    default_ref: DEFAULT_DEPLOY_REF,
     recent_runs_page_size: 8,
     repo_owner: DEPLOY_REPO_OWNER,
     repo_name: DEPLOY_REPO_NAME,
@@ -69,6 +68,10 @@ export function renderDeployUI(services: DeployServiceConfig[]): string {
   };
 
   const serviceCards = services.map(renderServiceCard).join('');
+  const commonRefChips = COMMON_DEPLOY_REFS.map(
+    (ref) =>
+      `<button type="button" class="button-secondary quick-ref-button" data-quick-ref="${escapeHtml(ref)}">${escapeHtml(ref)}</button>`
+  ).join('');
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -122,6 +125,13 @@ export function renderDeployUI(services: DeployServiceConfig[]): string {
       padding: 0 4px;
     }
 
+    .hero-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
     .brand {
       display: flex;
       align-items: center;
@@ -151,6 +161,42 @@ export function renderDeployUI(services: DeployServiceConfig[]): string {
       color: #d8d8d8;
     }
 
+    .hero-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex: 0 0 auto;
+    }
+
+    .hero-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 14px;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      background: rgba(255, 255, 255, 0.04);
+      color: #f3f3f3;
+      text-decoration: none;
+      font-size: 14px;
+      font-weight: 600;
+      line-height: 1;
+      transition: transform 120ms ease, background 120ms ease, border-color 120ms ease;
+    }
+
+    .hero-link:hover {
+      transform: translateY(-1px);
+      background: rgba(255, 255, 255, 0.08);
+      border-color: rgba(255, 255, 255, 0.18);
+    }
+
+    .hero-link svg {
+      width: 16px;
+      height: 16px;
+      display: block;
+      flex: 0 0 auto;
+    }
+
     .panel {
       border-radius: 20px;
       padding: 18px;
@@ -173,12 +219,16 @@ export function renderDeployUI(services: DeployServiceConfig[]): string {
       gap: 16px;
       width: 100%;
       padding: 0;
-      margin-bottom: 14px;
+      margin-bottom: 0;
       border: 0;
       background: transparent;
       text-align: left;
       color: inherit;
       transform: none;
+    }
+
+    .panel-heading[aria-expanded='true'] {
+      margin-bottom: 14px;
     }
 
     .panel-heading:hover {
@@ -200,7 +250,7 @@ export function renderDeployUI(services: DeployServiceConfig[]): string {
     }
 
     .panel-heading[aria-expanded='true'] .panel-heading-indicator {
-      transform: rotate(-90deg);
+      transform: rotate(90deg);
     }
 
     .panel-heading-indicator svg {
@@ -249,7 +299,6 @@ export function renderDeployUI(services: DeployServiceConfig[]): string {
     }
 
     .token-input {
-      min-height: 120px;
       resize: vertical;
     }
 
@@ -317,6 +366,25 @@ export function renderDeployUI(services: DeployServiceConfig[]): string {
       padding: 12px 14px;
       color: #989898;
       font-size: 13px;
+    }
+
+    .quick-ref-list {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .quick-ref-label {
+      color: #8f8f8f;
+      font-size: 16px;
+    }
+
+    .quick-ref-actions {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 10px;
     }
 
     .input:focus,
@@ -393,7 +461,17 @@ export function renderDeployUI(services: DeployServiceConfig[]): string {
       border: 1px solid rgba(255, 255, 255, 0.1);
     }
 
+    .env-actions {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      width: 100%;
+    }
+
     .env-button {
+      width: 100%;
+      min-width: 0;
+      padding: 10px 14px;
       background: rgba(255, 255, 255, 0.06);
       color: #d1d1d1;
       border: 1px solid rgba(255, 255, 255, 0.12);
@@ -406,9 +484,13 @@ export function renderDeployUI(services: DeployServiceConfig[]): string {
     }
 
     .status-line {
-      min-height: 20px;
+      display: block;
       font-size: 13px;
       color: #b4b4b4;
+    }
+
+    .status-line:empty {
+      display: none;
     }
 
     .status-line.is-error {
@@ -423,6 +505,12 @@ export function renderDeployUI(services: DeployServiceConfig[]): string {
       color: #d6d6d6;
       font-size: 16px;
       line-height: 1.5;
+    }
+
+    .summary-line a {
+      color: inherit;
+      text-decoration: underline;
+      text-underline-offset: 0.14em;
     }
 
     .deploy-overview {
@@ -443,14 +531,57 @@ export function renderDeployUI(services: DeployServiceConfig[]): string {
 
     .deploy-overview-grid {
       display: grid;
-      gap: 8px;
+      gap: 15px;
     }
 
     .deploy-overview-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
       color: #dfdfdf;
       font-size: 16px;
       line-height: 1.45;
       word-break: break-word;
+    }
+
+    .deploy-overview-key {
+      color: #b0b0b0;
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      line-height: 1.2;
+      flex: 0 0 auto;
+    }
+
+    .deploy-overview-values {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      min-width: 0;
+      flex: 1 1 auto;
+    }
+
+    .overview-pill {
+      display: inline-flex;
+      align-items: center;
+      padding: 6px 12px;
+      border-radius: 999px;
+      border: 1px solid #ffffff;
+      background: #ffffff;
+      color: #070707;
+      font-size: 14px;
+      font-weight: 600;
+      line-height: 1.2;
+      max-width: 100%;
+      word-break: break-word;
+    }
+
+    .overview-pill.is-muted {
+      color: #8d8d8d;
+      background: rgba(255, 255, 255, 0.06);
+      border-color: rgba(255, 255, 255, 0.1);
     }
 
     .auth-title {
@@ -459,7 +590,7 @@ export function renderDeployUI(services: DeployServiceConfig[]): string {
 
     .auth-session {
       display: grid;
-      gap: 10px;
+      gap: 8px;
     }
 
     .auth-session-head {
@@ -760,6 +891,20 @@ export function renderDeployUI(services: DeployServiceConfig[]): string {
     }
 
     @media (max-width: 699px) {
+      .hero-row {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .hero-actions {
+        width: 100%;
+      }
+
+      .hero-link {
+        width: 100%;
+        justify-content: center;
+      }
+
       .brand-title {
         font-size: 18px;
         letter-spacing: 0.14em;
@@ -767,10 +912,6 @@ export function renderDeployUI(services: DeployServiceConfig[]): string {
 
       .panel-title {
         font-size: 17px;
-      }
-
-      .panel-heading {
-        margin-bottom: 10px;
       }
 
       .auth-session-head {
@@ -808,15 +949,30 @@ export function renderDeployUI(services: DeployServiceConfig[]): string {
         width: 100%;
         justify-content: center;
       }
+
     }
   </style>
 </head>
 <body>
   <main class="shell">
     <section class="hero">
-      <div class="brand">
-        <div class="logo">${LOGO_SVG}</div>
-        <h1 class="brand-title">6529 Deploy Console</h1>
+      <div class="hero-row">
+        <div class="brand">
+          <div class="logo">${LOGO_SVG}</div>
+          <h1 class="brand-title">6529 Deploy Console</h1>
+        </div>
+        <div class="hero-actions">
+          <a
+            class="hero-link"
+            href="https://github.com/${encodeURIComponent(DEPLOY_REPO_OWNER)}/${encodeURIComponent(DEPLOY_REPO_NAME)}"
+            target="_blank"
+            rel="noreferrer">
+            <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+              <path d="M8 0.2C3.58 0.2 0 3.83 0 8.31C0 11.89 2.29 14.92 5.47 16C5.87 16.08 6.02 15.82 6.02 15.59C6.02 15.38 6.01 14.68 6.01 13.93C4 14.38 3.48 13.08 3.32 12.59C3.23 12.34 2.84 11.54 2.5 11.35C2.22 11.2 1.82 10.82 2.49 10.81C3.12 10.8 3.57 11.4 3.72 11.65C4.44 12.88 5.59 12.53 6.07 12.31C6.14 11.78 6.35 11.42 6.58 11.22C4.8 11.01 2.94 10.31 2.94 7.2C2.94 6.31 3.25 5.58 3.77 5.01C3.69 4.81 3.41 3.98 3.85 2.86C3.85 2.86 4.52 2.64 6.01 3.66C6.65 3.48 7.33 3.39 8 3.39C8.67 3.39 9.35 3.48 9.99 3.66C11.48 2.63 12.15 2.86 12.15 2.86C12.59 3.98 12.31 4.81 12.23 5.01C12.75 5.58 13.06 6.3 13.06 7.2C13.06 10.32 11.19 11.01 9.41 11.22C9.7 11.47 9.95 11.95 9.95 12.7C9.95 13.77 9.94 15.28 9.94 15.59C9.94 15.82 10.09 16.09 10.49 16C13.65 14.91 15.94 11.89 15.94 8.31C15.95 3.83 12.37 0.2 8 0.2Z"/>
+            </svg>
+            <span>Go to Repo</span>
+          </a>
+        </div>
       </div>
     </section>
 
@@ -825,9 +981,9 @@ export function renderDeployUI(services: DeployServiceConfig[]): string {
       <div class="auth-shell">
         <div id="auth-entry" class="field hidden">
           <label class="field-label" for="token-input">GitHub token</label>
-          <textarea id="token-input" class="token-input" spellcheck="false" placeholder="Paste a GitHub PAT with repo/workflow access here"></textarea>
+          <textarea id="token-input" class="token-input" rows="3" spellcheck="false" placeholder="Paste GitHub token"></textarea>
           <div class="auth-actions">
-            <button id="connect-button" type="button" class="button-primary">Unlock deploy UI</button>
+            <button id="connect-button" type="button" class="button-primary">Authorize</button>
           </div>
         </div>
         <div class="auth-session">
@@ -860,7 +1016,7 @@ export function renderDeployUI(services: DeployServiceConfig[]): string {
       </button>
       <div id="recent-runs-content" class="accordion-content">
         <div class="section-actions runs-actions">
-          <button id="refresh-runs-button" type="button" class="button-secondary" disabled>Refresh runs</button>
+          <button id="refresh-runs-button" type="button" class="button-secondary" disabled>Refresh Runs</button>
           <div class="runs-pagination">
             <button id="runs-prev-button" type="button" class="button-secondary" disabled>Previous</button>
             <div id="runs-page-label" class="runs-page-label">Page 1</div>
@@ -890,16 +1046,19 @@ export function renderDeployUI(services: DeployServiceConfig[]): string {
       <div id="deploy-batch-content" class="accordion-content">
         <div class="control-grid">
           <div class="field">
-            <label class="field-label" for="ref-input">Git ref</label>
+            <label class="field-label" for="ref-input">Git Ref</label>
             <div class="ref-picker">
-              <input id="ref-input" class="input" type="text" spellcheck="false" autocomplete="off" value="${escapeHtml(DEFAULT_DEPLOY_REF)}" />
+              <input id="ref-input" class="input" type="text" spellcheck="false" autocomplete="off" value="" placeholder="Search branches or enter ref" />
               <div id="ref-menu" class="ref-menu hidden"></div>
             </div>
-            <div class="field-help">Branch or tag to hand to the workflow dispatch API.</div>
+            <div class="quick-ref-list">
+              <span class="quick-ref-label">Quick Access</span>
+              <div class="quick-ref-actions">${commonRefChips}</div>
+            </div>
           </div>
           <div class="field">
             <div class="field-label">Environment</div>
-            <div class="control-actions">
+            <div class="env-actions">
               <button type="button" class="env-button is-active" data-env-button data-environment="staging">STAGING</button>
               <button type="button" class="env-button" data-env-button data-environment="prod">PRODUCTION</button>
             </div>
@@ -908,8 +1067,8 @@ export function renderDeployUI(services: DeployServiceConfig[]): string {
 
         <div class="toolbar">
           <input id="service-search" class="input" type="search" placeholder="Filter services" />
-          <button id="select-visible-button" type="button" class="button-secondary">Select visible</button>
-          <button id="clear-selection-button" type="button" class="button-secondary">Clear selected</button>
+          <button id="select-visible-button" type="button" class="button-secondary">Select Visible</button>
+          <button id="clear-selection-button" type="button" class="button-secondary">Clear Selected</button>
         </div>
 
         <div id="selected-summary" class="summary-line">0 services selected.</div>
@@ -918,14 +1077,14 @@ export function renderDeployUI(services: DeployServiceConfig[]): string {
         <div id="deploy-overview" class="deploy-overview">
           <div class="deploy-overview-label">Deploy Overview</div>
           <div class="deploy-overview-grid">
-            <div id="deploy-overview-ref" class="deploy-overview-item">Ref: ${escapeHtml(DEFAULT_DEPLOY_REF)}</div>
-            <div id="deploy-overview-environment" class="deploy-overview-item">Environment: ${escapeHtml(DEFAULT_DEPLOY_ENVIRONMENT)}</div>
-            <div id="deploy-overview-services" class="deploy-overview-item">Services: none selected</div>
+            <div id="deploy-overview-ref" class="deploy-overview-item"></div>
+            <div id="deploy-overview-environment" class="deploy-overview-item"></div>
+            <div id="deploy-overview-services" class="deploy-overview-item"></div>
           </div>
         </div>
 
         <div class="control-actions">
-          <button id="deploy-button" type="button" class="button-primary" disabled>Dispatch deploy batch</button>
+          <button id="deploy-button" type="button" class="button-primary" disabled>Deploy Batch</button>
         </div>
         <div id="deploy-status" class="status-line"></div>
         <div id="results-panel" class="results-list hidden"></div>
@@ -957,6 +1116,9 @@ export function renderDeployUiApp(): string {
   var protectedSections = document.getElementById('protected-sections');
   var refInput = document.getElementById('ref-input');
   var refMenu = document.getElementById('ref-menu');
+  var quickRefButtons = Array.prototype.slice.call(
+    document.querySelectorAll('[data-quick-ref]')
+  );
   var deployButton = document.getElementById('deploy-button');
   var refreshRunsButton = document.getElementById('refresh-runs-button');
   var runsPrevButton = document.getElementById('runs-prev-button');
@@ -1050,7 +1212,12 @@ export function renderDeployUiApp(): string {
     } else if (state.runsCurrentCount > 0 && state.runsTotalCount !== null) {
       var start = (state.runsPage - 1) * state.runsPageSize + 1;
       var end = start + state.runsCurrentCount - 1;
-      runsPageLabel.textContent = start + '-' + end + ' of ' + state.runsTotalCount;
+      runsPageLabel.textContent =
+        start.toLocaleString() +
+        '-' +
+        end.toLocaleString() +
+        ' of ' +
+        state.runsTotalCount.toLocaleString();
     } else {
       runsPageLabel.textContent = 'Page ' + state.runsPage;
     }
@@ -1109,20 +1276,78 @@ export function renderDeployUiApp(): string {
     var selected = selectedServices();
     selectedSummary.textContent = selected.length + ' service' + (selected.length === 1 ? '' : 's') + ' selected.';
     deployButton.disabled = !state.token || selected.length === 0;
+    clearSelectionButton.disabled = selected.length === 0;
     updateDeployOverview();
   }
 
-  function updateDeployOverview() {
-    var selected = selectedServices();
-    var servicesText = 'none selected';
-    if (selected.length > 0) {
-      servicesText = selected.join(', ');
+  function renderOverviewItem(node, label, values, muted) {
+    node.innerHTML = '';
+
+    var keyNode = document.createElement('div');
+    keyNode.className = 'deploy-overview-key';
+    keyNode.textContent = label;
+    node.appendChild(keyNode);
+
+    var valuesNode = document.createElement('div');
+    valuesNode.className = 'deploy-overview-values';
+
+    values.forEach(function (value) {
+      var pillNode = document.createElement('span');
+      pillNode.className = 'overview-pill' + (muted ? ' is-muted' : '');
+      pillNode.textContent = value;
+      valuesNode.appendChild(pillNode);
+    });
+
+    node.appendChild(valuesNode);
+  }
+
+  function renderSessionSummary(login) {
+    sessionSummary.innerHTML = '';
+
+    if (!login) {
+      sessionSummary.textContent = 'No active session.';
+      return;
     }
 
-    deployOverviewRef.textContent = 'Ref: ' + ((refInput.value || '').trim() || 'none');
-    deployOverviewEnvironment.textContent =
-      'Environment: ' + state.environment;
-    deployOverviewServices.textContent = 'Services: ' + servicesText;
+    sessionSummary.appendChild(
+      document.createTextNode('Authenticated as GitHub user ')
+    );
+
+    var profileLink = document.createElement('a');
+    profileLink.target = '_blank';
+    profileLink.rel = 'noreferrer';
+    profileLink.href = sanitizeHttpUrl(
+      'https://github.com/' + encodeURIComponent(login)
+    );
+    profileLink.textContent = login;
+    sessionSummary.appendChild(profileLink);
+    sessionSummary.appendChild(document.createTextNode('.'));
+  }
+
+  function updateDeployOverview() {
+    var selected = selectedServices().slice().sort(function (a, b) {
+      return String(a).localeCompare(String(b));
+    });
+    var refValue = (refInput.value || '').trim() || 'none';
+
+    renderOverviewItem(deployOverviewRef, 'Ref', [refValue], refValue === 'none');
+    renderOverviewItem(deployOverviewEnvironment, 'Environment', [state.environment], false);
+    renderOverviewItem(
+      deployOverviewServices,
+      'Services',
+      selected.length ? selected : ['none selected'],
+      selected.length === 0
+    );
+    syncQuickRefButtons();
+  }
+
+  function syncQuickRefButtons() {
+    var currentRef = (refInput.value || '').trim();
+    quickRefButtons.forEach(function (button) {
+      var isActive = button.getAttribute('data-quick-ref') === currentRef;
+      button.classList.toggle('button-primary', isActive);
+      button.classList.toggle('button-secondary', !isActive);
+    });
   }
 
   function setRefMenuOpen(isOpen) {
@@ -1426,6 +1651,7 @@ export function renderDeployUiApp(): string {
 
   async function authenticate(token) {
     state.isCheckingSession = true;
+    sessionSummary.textContent = 'Checking session...';
     syncAuthControls();
     setStatus(authStatus, 'Checking deploy permissions...', null);
     var payload = await fetchJson('/deploy/ui/session', {
@@ -1439,8 +1665,7 @@ export function renderDeployUiApp(): string {
     sessionStorage.setItem(TOKEN_STORAGE_KEY, token);
     syncAuthControls();
     tokenInput.value = '';
-    sessionSummary.textContent =
-      'Authenticated as GitHub user ' + payload.login + '.';
+    renderSessionSummary(payload.login);
     deployButton.disabled = selectedServices().length === 0;
     setStatus(authStatus, '', null);
     applyRunsPage(payload.runs_page || {});
@@ -1475,6 +1700,7 @@ export function renderDeployUiApp(): string {
       state.runsHasNextPage = false;
       updateRunsPagination();
       setStatus(authStatus, error.message, 'error');
+      renderSessionSummary(null);
     }
   }
 
@@ -1484,7 +1710,7 @@ export function renderDeployUiApp(): string {
     sessionStorage.removeItem(TOKEN_STORAGE_KEY);
     tokenInput.value = '';
     syncAuthControls();
-    sessionSummary.textContent = 'No active session.';
+    renderSessionSummary(null);
     deployButton.disabled = true;
     state.runsPage = 1;
     state.runsCurrentCount = 0;
@@ -1695,6 +1921,14 @@ export function renderDeployUiApp(): string {
     }
   });
 
+  quickRefButtons.forEach(function (button) {
+    button.addEventListener('click', function () {
+      refInput.value = button.getAttribute('data-quick-ref') || '';
+      setRefMenuOpen(false);
+      updateDeployOverview();
+    });
+  });
+
   document.addEventListener('mousedown', function (event) {
     var target = event.target;
     if (
@@ -1730,6 +1964,7 @@ export function renderDeployUiApp(): string {
   tokenInput.value = '';
   syncAuthControls();
   applyEnvironmentFilter();
+  refInput.value = '';
   updateDeployOverview();
   updateRunsPagination();
   setAccordionExpanded(document.getElementById('recent-runs-toggle'), false);
@@ -1738,6 +1973,7 @@ export function renderDeployUiApp(): string {
   if (storedToken.trim()) {
     state.token = storedToken.trim();
     state.isCheckingSession = true;
+    sessionSummary.textContent = 'Checking session...';
     syncAuthControls();
     authenticate(storedToken.trim()).catch(function () {
       state.token = null;
@@ -1749,12 +1985,12 @@ export function renderDeployUiApp(): string {
       state.runsHasPreviousPage = false;
       state.runsHasNextPage = false;
       syncAuthControls();
-      sessionSummary.textContent = 'No active session.';
+      renderSessionSummary(null);
       updateRunsPagination();
     });
   } else {
     state.isCheckingSession = false;
-    sessionSummary.textContent = 'No active session.';
+    renderSessionSummary(null);
     syncAuthControls();
     updateRunsPagination();
   }

@@ -114,30 +114,36 @@ deployRoutes.post('/ui/dispatch', async (req, res) => {
     );
   }
 
-  const results: Array<{ service: string; ok: boolean; message: string }> = [];
-
-  for (const service of body.services) {
-    try {
-      await gitHubDeployService.dispatchDeploy({
+  const settledResults = await Promise.allSettled(
+    body.services.map((service: string) =>
+      gitHubDeployService.dispatchDeploy({
         token,
         ref: body.ref,
         service,
         environment: body.environment
-      });
-      results.push({
+      })
+    )
+  );
+
+  const results = settledResults.map((result, index) => {
+    const service = body.services[index];
+
+    if (result.status === 'fulfilled') {
+      return {
         service,
         ok: true,
         message: `Dispatched ${service} to ${body.environment} from ${body.ref}`
-      });
-    } catch (err) {
-      results.push({
-        service,
-        ok: false,
-        message:
-          err instanceof Error ? err.message : 'Unknown GitHub deploy error'
-      });
+      };
     }
-  }
+
+    const err = result.reason;
+    return {
+      service,
+      ok: false,
+      message:
+        err instanceof Error ? err.message : 'Unknown GitHub deploy error'
+    };
+  });
 
   setNoStoreHeaders(res);
   return res.json({
