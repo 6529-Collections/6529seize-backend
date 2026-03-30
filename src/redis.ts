@@ -131,17 +131,11 @@ export async function evictRedisCacheForPathWithTimeout({
 }: {
   path: string;
   timeoutMs?: number;
-}): Promise<
-  | {
-      success: true;
-      elapsed_ms: number;
-    }
-  | {
-      success: false;
-      elapsed_ms: number;
-      error: unknown;
-    }
-> {
+}): Promise<{
+  success: boolean;
+  elapsed_ms: number;
+  error?: unknown;
+}> {
   const startedAt = Date.now();
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
 

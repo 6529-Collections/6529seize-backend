@@ -10,30 +10,31 @@
  * Do not edit the class manually.
  */
 
+import { ApiDrop } from '../models/ApiDrop';
 import { HttpFile } from '../http/http';
 
-export class ApiDropRatingRequest {
-    'rating': number;
-    'category'?: string | null;
+export class ApiUndiscoveredDrop {
+    'drop': ApiDrop | null;
+    'total_count': number;
 
     static readonly discriminator: string | undefined = undefined;
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
         {
-            "name": "rating",
-            "baseName": "rating",
-            "type": "number",
-            "format": "int64"
+            "name": "drop",
+            "baseName": "drop",
+            "type": "ApiDrop",
+            "format": ""
         },
         {
-            "name": "category",
-            "baseName": "category",
-            "type": "string",
-            "format": ""
+            "name": "total_count",
+            "baseName": "total_count",
+            "type": "number",
+            "format": "int64"
         }    ];
 
     static getAttributeTypeMap() {
-        return ApiDropRatingRequest.attributeTypeMap;
+        return ApiUndiscoveredDrop.attributeTypeMap;
     }
 
     public constructor() {
