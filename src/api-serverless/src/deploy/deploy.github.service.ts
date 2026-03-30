@@ -9,9 +9,13 @@ import {
   DEPLOY_REPO_NAME,
   DEPLOY_REPO_OWNER,
   DEPLOY_WORKFLOW_FILE,
+  FRONTEND_DEPLOY_REPO_NAME,
+  FRONTEND_DEPLOY_REPO_OWNER,
+  FRONTEND_DEPLOY_WORKFLOW_FILE,
   DeployEnvironment,
   isDeployEnvironment
 } from '@/api/deploy/deploy.config';
+import type { DeployTarget } from '@/api/deploy/deploy.validation';
 
 type GitHubApiError = {
   message?: string;
@@ -80,8 +84,25 @@ export type DeployRefOption = {
 
 export class GitHubDeployService {
   private readonly logger = Logger.get(this.constructor.name);
-  private readonly apiBase = `https://api.github.com/repos/${DEPLOY_REPO_OWNER}/${DEPLOY_REPO_NAME}`;
   private readonly requestTimeoutMs = 15000;
+
+  private getApiBase(target: DeployTarget): string {
+    const repoOwner =
+      target === 'frontend' ? FRONTEND_DEPLOY_REPO_OWNER : DEPLOY_REPO_OWNER;
+    const repoName =
+      target === 'frontend' ? FRONTEND_DEPLOY_REPO_NAME : DEPLOY_REPO_NAME;
+    return `https://api.github.com/repos/${repoOwner}/${repoName}`;
+  }
+
+  private getWorkflowFile(target: DeployTarget): string {
+    return target === 'frontend'
+      ? FRONTEND_DEPLOY_WORKFLOW_FILE
+      : DEPLOY_WORKFLOW_FILE;
+  }
+
+  private getRepoName(target: DeployTarget): string {
+    return target === 'frontend' ? FRONTEND_DEPLOY_REPO_NAME : DEPLOY_REPO_NAME;
+  }
 
   private buildGitHubHeaders(
     token: string,
@@ -115,16 +136,20 @@ export class GitHubDeployService {
 
   private async api(
     token: string,
+    target: DeployTarget,
     path: string,
     options: NodeFetchRequestInit = {}
   ) {
-    const response = await this.fetchWithTimeout(`${this.apiBase}${path}`, {
-      ...options,
-      headers: this.buildGitHubHeaders(token, {
-        'Content-Type': 'application/json',
-        ...(options.headers ?? undefined)
-      })
-    });
+    const response = await this.fetchWithTimeout(
+      `${this.getApiBase(target)}${path}`,
+      {
+        ...options,
+        headers: this.buildGitHubHeaders(token, {
+          'Content-Type': 'application/json',
+          ...(options.headers ?? undefined)
+        })
+      }
+    );
 
     return response;
   }
@@ -228,9 +253,14 @@ export class GitHubDeployService {
     return linkHeader.includes(`rel="${relation}"`);
   }
 
-  private async listBranches(token: string, limit: number): Promise<string[]> {
+  private async listBranches(
+    token: string,
+    target: DeployTarget,
+    limit: number
+  ): Promise<string[]> {
     const response = await this.api(
       token,
+      target,
       `/branches?per_page=${Math.max(1, Math.min(limit, 100))}`,
       {
         method: 'GET'
@@ -255,9 +285,14 @@ export class GitHubDeployService {
     return payload.map((branch) => branch.name);
   }
 
-  private async listTags(token: string, limit: number): Promise<string[]> {
+  private async listTags(
+    token: string,
+    target: DeployTarget,
+    limit: number
+  ): Promise<string[]> {
     const response = await this.api(
       token,
+      target,
       `/tags?per_page=${Math.max(1, Math.min(limit, 100))}`,
       {
         method: 'GET'
@@ -306,28 +341,39 @@ export class GitHubDeployService {
 
   public async dispatchDeploy(params: {
     token: string;
+    target?: DeployTarget;
     ref: string;
-    service: string;
+    service?: string;
     environment: DeployEnvironment;
   }): Promise<void> {
+    const target = params.target ?? 'backend';
+    const body =
+      target === 'frontend'
+        ? {
+            ref: params.ref
+          }
+        : {
+            ref: params.ref,
+            inputs: {
+              environment: params.environment,
+              service: params.service
+            }
+          };
     const response = await this.api(
       params.token,
-      `/actions/workflows/${DEPLOY_WORKFLOW_FILE}/dispatches`,
+      target,
+      `/actions/workflows/${this.getWorkflowFile(target)}/dispatches`,
       {
         method: 'POST',
-        body: JSON.stringify({
-          ref: params.ref,
-          inputs: {
-            environment: params.environment,
-            service: params.service
-          }
-        })
+        body: JSON.stringify(body)
       }
     );
 
     if (response.ok) {
       this.logger.info(
-        `GitHub deploy dispatch accepted [service ${params.service}] [environment ${params.environment}] [ref ${params.ref}]`
+        `GitHub deploy dispatch accepted [target ${target}] [service ${
+          params.service ?? 'frontend'
+        }] [environment ${params.environment}] [ref ${params.ref}]`
       );
       return;
     }
@@ -342,12 +388,14 @@ export class GitHubDeployService {
     if (response.status === 404) {
       throw new CustomApiCompliantException(
         503,
-        `Deploy workflow ${DEPLOY_WORKFLOW_FILE} is not reachable: ${message}`
+        `Deploy workflow ${this.getWorkflowFile(target)} is not reachable: ${message}`
       );
     }
     if (response.status === 422) {
       throw new BadRequestException(
-        `GitHub rejected deploy request for ${params.service} on ref ${params.ref}: ${message}`
+        `GitHub rejected deploy request for ${
+          params.service ?? this.getRepoName(target)
+        } on ref ${params.ref}: ${message}`
       );
     }
 
@@ -359,14 +407,17 @@ export class GitHubDeployService {
 
   public async listRecentRuns(params: {
     token: string;
+    target?: DeployTarget;
     page?: number;
     pageSize?: number;
   }): Promise<DeployWorkflowRunsPage> {
     const page = Math.max(1, Math.floor(params.page ?? 1));
     const perPage = Math.max(1, Math.min(Math.floor(params.pageSize ?? 8), 50));
+    const target = params.target ?? 'backend';
     const response = await this.api(
       params.token,
-      `/actions/workflows/${DEPLOY_WORKFLOW_FILE}/runs?event=workflow_dispatch&per_page=${perPage}&page=${page}`,
+      target,
+      `/actions/workflows/${this.getWorkflowFile(target)}/runs?event=workflow_dispatch&per_page=${perPage}&page=${page}`,
       {
         method: 'GET'
       }
@@ -388,7 +439,16 @@ export class GitHubDeployService {
 
     const payload = (await response.json()) as GitHubWorkflowRunsResponse;
     const runs = payload.workflow_runs.map((run) => {
-      const parsedTitle = this.parseDeployTitle(run.display_title);
+      const parsedTitle: {
+        service: string | null;
+        environment: DeployEnvironment | null;
+      } =
+        target === 'backend'
+          ? this.parseDeployTitle(run.display_title)
+          : {
+              service: null,
+              environment: 'prod'
+            };
       return {
         id: run.id,
         url: run.html_url,
@@ -449,13 +509,14 @@ export class GitHubDeployService {
 
   public async listRefs(
     token: string,
+    target: DeployTarget,
     query: string,
     limit = 20
   ): Promise<DeployRefOption[]> {
     const trimmedQuery = query.trim().toLowerCase();
     const [branchesResult, tagsResult] = await Promise.allSettled([
-      this.listBranches(token, 100),
-      this.listTags(token, 100)
+      this.listBranches(token, target, 100),
+      this.listTags(token, target, 100)
     ]);
 
     const branches =

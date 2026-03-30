@@ -270,6 +270,30 @@ export function renderDeployUI(services: DeployServiceConfig[]): string {
       gap: 16px;
     }
 
+    .target-tabs {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .target-tab {
+      width: 100%;
+      min-width: 0;
+      padding: 10px 14px;
+      background: rgba(255, 255, 255, 0.06);
+      color: #d1d1d1;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .target-tab.is-active {
+      background: #ffffff;
+      color: #050505;
+      border-color: #ffffff;
+    }
+
     .field {
       display: grid;
       gap: 8px;
@@ -611,6 +635,14 @@ export function renderDeployUI(services: DeployServiceConfig[]): string {
     .services-panel {
       display: grid;
       gap: 18px;
+    }
+
+    .services-panel.is-frontend .quick-ref-list,
+    .services-panel.is-frontend .toolbar,
+    .services-panel.is-frontend #selected-summary,
+    .services-panel.is-frontend #service-grid,
+    .services-panel.is-frontend #deploy-overview-services {
+      display: none !important;
     }
 
     .service-grid {
@@ -997,14 +1029,29 @@ export function renderDeployUI(services: DeployServiceConfig[]): string {
           </div>
         </div>
         <div class="auth-session">
-          <div class="auth-session-head">
-            <div class="field-label">Session</div>
-          </div>
           <div class="auth-session-row">
             <div id="session-summary" class="summary-line">Checking session...</div>
             <button id="forget-button" type="button" class="button-secondary">Forget</button>
           </div>
           <div id="auth-status" class="status-line"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="deploy-target-panel" class="panel hidden">
+      <div class="field">
+        <div class="field-label">Deploy Target</div>
+        <div class="target-tabs">
+          <button
+            id="target-backend-button"
+            type="button"
+            class="target-tab is-active"
+            data-deploy-target="backend">Backend</button>
+          <button
+            id="target-frontend-button"
+            type="button"
+            class="target-tab"
+            data-deploy-target="frontend">Frontend</button>
         </div>
       </div>
     </section>
@@ -1046,7 +1093,7 @@ export function renderDeployUI(services: DeployServiceConfig[]): string {
         type="button"
         aria-expanded="true"
         aria-controls="deploy-batch-content">
-        <h2 class="panel-title">Deploy Batch</h2>
+        <h2 id="deploy-panel-title" class="panel-title">Deploy Batch</h2>
         <span class="panel-heading-indicator" aria-hidden="true">
           <svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
             <path d="M6 3L11 8L6 13" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
@@ -1123,7 +1170,13 @@ export function renderDeployUiApp(): string {
   var forgetButton = document.getElementById('forget-button');
   var authStatus = document.getElementById('auth-status');
   var sessionSummary = document.getElementById('session-summary');
+  var deployTargetPanel = document.getElementById('deploy-target-panel');
   var protectedSections = document.getElementById('protected-sections');
+  var deployBatchPanel = document.querySelector('.services-panel');
+  var deployPanelTitle = document.getElementById('deploy-panel-title');
+  var targetButtons = Array.prototype.slice.call(
+    document.querySelectorAll('[data-deploy-target]')
+  );
   var refInput = document.getElementById('ref-input');
   var refMenu = document.getElementById('ref-menu');
   var quickRefButtons = Array.prototype.slice.call(
@@ -1150,6 +1203,11 @@ export function renderDeployUiApp(): string {
   var state = {
     token: null,
     isCheckingSession: true,
+    deployTarget: 'backend',
+    backendEnvironment: bootstrap.default_environment || 'staging',
+    frontendEnvironment: 'prod',
+    backendRef: '',
+    frontendRef: 'main',
     environment: bootstrap.default_environment || 'staging',
     runsTimer: null,
     runsPage: 1,
@@ -1164,6 +1222,54 @@ export function renderDeployUiApp(): string {
     refRequestId: 0,
     refSearchTimer: null
   };
+
+  var TARGET_UI_CONFIGS = {
+    backend: {
+      panelTitle: 'Deploy Batch',
+      buttonLabel: 'Deploy Batch',
+      statusLabel: 'backend',
+      showServices: true,
+      visibleEnvironments: ['staging', 'prod']
+    },
+    frontend: {
+      panelTitle: 'Deploy',
+      buttonLabel: 'Deploy',
+      statusLabel: 'frontend',
+      showServices: false,
+      visibleEnvironments: ['prod']
+    }
+  };
+
+  function getCurrentTargetConfig() {
+    return TARGET_UI_CONFIGS[state.deployTarget] || TARGET_UI_CONFIGS.backend;
+  }
+
+  function getCurrentRef() {
+    return state.deployTarget === 'frontend' ? state.frontendRef : state.backendRef;
+  }
+
+  function setCurrentRef(value) {
+    if (state.deployTarget === 'frontend') {
+      state.frontendRef = value;
+    } else {
+      state.backendRef = value;
+    }
+  }
+
+  function getCurrentEnvironment() {
+    return state.deployTarget === 'frontend'
+      ? state.frontendEnvironment
+      : state.backendEnvironment;
+  }
+
+  function setCurrentEnvironment(value) {
+    if (state.deployTarget === 'frontend') {
+      state.frontendEnvironment = value;
+    } else {
+      state.backendEnvironment = value;
+    }
+    state.environment = value;
+  }
 
   function setStatus(node, message, kind) {
     node.textContent = message || '';
@@ -1193,7 +1299,44 @@ export function renderDeployUiApp(): string {
 
   function syncProtectedSections() {
     var showProtectedSections = !!state.token && !state.isCheckingSession;
+    var showDeployTargetPanel = !!state.token && !state.isCheckingSession;
+    deployTargetPanel.classList.toggle('hidden', !showDeployTargetPanel);
     protectedSections.classList.toggle('hidden', !showProtectedSections);
+    if (deployBatchPanel) {
+      deployBatchPanel.classList.toggle('hidden', !showProtectedSections);
+    }
+  }
+
+  function syncTargetButtons() {
+    targetButtons.forEach(function (button) {
+      var isActive =
+        button.getAttribute('data-deploy-target') === state.deployTarget;
+      button.classList.toggle('is-active', isActive);
+    });
+    deployBatchPanel.classList.toggle(
+      'is-frontend',
+      state.deployTarget === 'frontend'
+    );
+    syncProtectedSections();
+  }
+
+  function syncTargetSpecificControls() {
+    var targetConfig = getCurrentTargetConfig();
+    state.environment = getCurrentEnvironment();
+    refInput.value = getCurrentRef();
+
+    if (deployPanelTitle) {
+      deployPanelTitle.textContent = targetConfig.panelTitle;
+    }
+    deployButton.textContent = targetConfig.buttonLabel;
+
+    envButtons.forEach(function (button) {
+      var environment = button.getAttribute('data-environment');
+      var isVisible =
+        targetConfig.visibleEnvironments.indexOf(environment) >= 0;
+      button.classList.toggle('hidden', !isVisible);
+      button.classList.toggle('is-active', environment === state.environment);
+    });
   }
 
   function syncAuthControls() {
@@ -1223,11 +1366,15 @@ export function renderDeployUiApp(): string {
       var start = (state.runsPage - 1) * state.runsPageSize + 1;
       var end = start + state.runsCurrentCount - 1;
       runsPageLabel.textContent =
+        'Page ' +
+        state.runsPage.toLocaleString() +
+        ' (' +
         start.toLocaleString() +
         '-' +
         end.toLocaleString() +
         ' of ' +
-        state.runsTotalCount.toLocaleString();
+        state.runsTotalCount.toLocaleString() +
+        ')';
     } else {
       runsPageLabel.textContent = 'Page ' + state.runsPage;
     }
@@ -1283,11 +1430,18 @@ export function renderDeployUiApp(): string {
   }
 
   function updateSelectedSummary() {
+    var targetConfig = getCurrentTargetConfig();
     var selected = selectedServices();
-    var hasRef = !!(refInput.value || '').trim();
-    selectedSummary.textContent = selected.length + ' service' + (selected.length === 1 ? '' : 's') + ' selected.';
-    deployButton.disabled = !state.token || selected.length === 0 || !hasRef;
-    clearSelectionButton.disabled = selected.length === 0;
+    var hasRef = !!getCurrentRef().trim();
+    if (!targetConfig.showServices) {
+      selectedSummary.textContent = '';
+      deployButton.disabled = !state.token || !hasRef;
+      clearSelectionButton.disabled = true;
+    } else {
+      selectedSummary.textContent = selected.length + ' service' + (selected.length === 1 ? '' : 's') + ' selected.';
+      deployButton.disabled = !state.token || selected.length === 0 || !hasRef;
+      clearSelectionButton.disabled = selected.length === 0;
+    }
     updateDeployOverview();
   }
 
@@ -1316,7 +1470,6 @@ export function renderDeployUiApp(): string {
     sessionSummary.innerHTML = '';
 
     if (!login) {
-      sessionSummary.textContent = 'No active session.';
       return;
     }
 
@@ -1336,24 +1489,36 @@ export function renderDeployUiApp(): string {
   }
 
   function updateDeployOverview() {
+    var targetConfig = getCurrentTargetConfig();
     var selected = selectedServices().slice().sort(function (a, b) {
       return String(a).localeCompare(String(b));
     });
-    var refValue = (refInput.value || '').trim() || 'none';
+    var refValue = getCurrentRef().trim() || 'none';
+    var environmentLabel =
+      state.environment === 'prod' ? 'PRODUCTION' : 'STAGING';
 
     renderOverviewItem(deployOverviewRef, 'Ref', [refValue], refValue === 'none');
-    renderOverviewItem(deployOverviewEnvironment, 'Environment', [state.environment], false);
     renderOverviewItem(
-      deployOverviewServices,
-      'Services',
-      selected.length ? selected : ['none selected'],
-      selected.length === 0
+      deployOverviewEnvironment,
+      'Environment',
+      [environmentLabel],
+      false
     );
+    if (!targetConfig.showServices) {
+      deployOverviewServices.innerHTML = '';
+    } else {
+      renderOverviewItem(
+        deployOverviewServices,
+        'Services',
+        selected.length ? selected : ['none selected'],
+        selected.length === 0
+      );
+    }
     syncQuickRefButtons();
   }
 
   function syncQuickRefButtons() {
-    var currentRef = (refInput.value || '').trim();
+    var currentRef = getCurrentRef().trim();
     quickRefButtons.forEach(function (button) {
       var isActive = button.getAttribute('data-quick-ref') === currentRef;
       button.classList.toggle('button-primary', isActive);
@@ -1400,6 +1565,7 @@ export function renderDeployUiApp(): string {
 
   function applyRefSelection(option) {
     refInput.value = option.name;
+    setCurrentRef(option.name);
     state.refActiveIndex = -1;
     setRefMenuOpen(false);
     updateDeployOverview();
@@ -1413,7 +1579,10 @@ export function renderDeployUiApp(): string {
     var requestId = ++state.refRequestId;
     try {
       var payload = await fetchJson(
-        '/deploy/ui/refs?q=' + encodeURIComponent(query || ''),
+        '/deploy/ui/refs?target=' +
+          encodeURIComponent(state.deployTarget) +
+          '&q=' +
+          encodeURIComponent(query || ''),
         {
           headers: getAuthHeaders()
         }
@@ -1454,12 +1623,18 @@ export function renderDeployUiApp(): string {
   }
 
   function applyEnvironmentFilter() {
+    var targetConfig = getCurrentTargetConfig();
     envButtons.forEach(function (button) {
       button.classList.toggle(
         'is-active',
         button.getAttribute('data-environment') === state.environment
       );
     });
+
+    if (!targetConfig.showServices) {
+      updateSelectedSummary();
+      return;
+    }
 
     serviceCards.forEach(function (card) {
       var allowedEnvironments = (card.getAttribute('data-environments') || '').split(',');
@@ -1637,7 +1812,9 @@ export function renderDeployUiApp(): string {
     runsNextButton.disabled = true;
     try {
       var payload = await fetchJson(
-        '/deploy/ui/runs?page=' +
+        '/deploy/ui/runs?target=' +
+          encodeURIComponent(state.deployTarget) +
+          '&page=' +
           encodeURIComponent(String(targetPage)) +
           '&page_size=' +
           encodeURIComponent(String(state.runsPageSize)),
@@ -1664,7 +1841,6 @@ export function renderDeployUiApp(): string {
     state.isCheckingSession = true;
     sessionSummary.textContent = 'Checking session...';
     syncAuthControls();
-    setStatus(authStatus, 'Checking deploy permissions...', null);
     var payload = await fetchJson('/deploy/ui/session', {
       headers: {
         Authorization: 'Bearer ' + token
@@ -1681,10 +1857,9 @@ export function renderDeployUiApp(): string {
     syncAuthControls();
     tokenInput.value = '';
     renderSessionSummary(payload.login);
-    deployButton.disabled =
-      selectedServices().length === 0 || !(refInput.value || '').trim();
     setStatus(authStatus, '', null);
     applyRunsPage(payload.runs_page || {});
+    updateSelectedSummary();
 
     if (state.runsTimer) {
       clearInterval(state.runsTimer);
@@ -1706,7 +1881,7 @@ export function renderDeployUiApp(): string {
       state.isCheckingSession = false;
       localStorage.removeItem(TOKEN_STORAGE_KEY);
       syncAuthControls();
-      sessionSummary.textContent = 'No active session.';
+      sessionSummary.textContent = '';
       tokenInput.value = token;
       deployButton.disabled = true;
       state.runsPage = 1;
@@ -1736,7 +1911,7 @@ export function renderDeployUiApp(): string {
     renderResults([]);
     renderRuns([]);
     updateRunsPagination();
-    setStatus(authStatus, 'Stored token cleared.', 'success');
+    setStatus(authStatus, '', null);
     setStatus(deployStatus, '', null);
     state.refOptions = [];
     state.refActiveIndex = -1;
@@ -1748,8 +1923,9 @@ export function renderDeployUiApp(): string {
   }
 
   async function onDeploy() {
+    var targetConfig = getCurrentTargetConfig();
     var services = selectedServices();
-    var ref = (refInput.value || '').trim();
+    var ref = getCurrentRef().trim();
     if (!state.token) {
       setStatus(deployStatus, 'Authenticate first.', 'error');
       return;
@@ -1758,7 +1934,7 @@ export function renderDeployUiApp(): string {
       setStatus(deployStatus, 'Ref is required.', 'error');
       return;
     }
-    if (services.length === 0) {
+    if (targetConfig.showServices && services.length === 0) {
       setStatus(deployStatus, 'Select at least one service.', 'error');
       return;
     }
@@ -1766,7 +1942,9 @@ export function renderDeployUiApp(): string {
     deployButton.disabled = true;
     setStatus(
       deployStatus,
-      'Dispatching ' + services.length + ' service' + (services.length === 1 ? '' : 's') + ' to ' + state.environment + '...',
+      !targetConfig.showServices
+        ? 'Dispatching ' + targetConfig.statusLabel + ' to production...'
+        : 'Dispatching ' + services.length + ' service' + (services.length === 1 ? '' : 's') + ' to ' + state.environment + '...',
       null
     );
 
@@ -1779,11 +1957,20 @@ export function renderDeployUiApp(): string {
           },
           getAuthHeaders()
         ),
-        body: JSON.stringify({
-          ref: ref,
-          environment: state.environment,
-          services: services
-        })
+        body: JSON.stringify(
+          !targetConfig.showServices
+            ? {
+                target: state.deployTarget,
+                ref: ref,
+                environment: state.environment
+              }
+            : {
+                target: state.deployTarget,
+                ref: ref,
+                environment: state.environment,
+                services: services
+              }
+        )
       });
       renderResults(payload.results || []);
       if ((payload.summary && payload.summary.failed) === 0) {
@@ -1816,10 +2003,7 @@ export function renderDeployUiApp(): string {
     } catch (error) {
       setStatus(deployStatus, error.message, 'error');
     } finally {
-      deployButton.disabled =
-        selectedServices().length === 0 ||
-        !state.token ||
-        !(refInput.value || '').trim();
+      updateSelectedSummary();
     }
   }
 
@@ -1870,10 +2054,22 @@ export function renderDeployUiApp(): string {
     });
     updateSelectedSummary();
   });
+  targetButtons.forEach(function (button) {
+    button.addEventListener('click', function () {
+      state.deployTarget =
+        button.getAttribute('data-deploy-target') || 'backend';
+      syncTargetButtons();
+      syncTargetSpecificControls();
+      updateDeployOverview();
+      if (state.token && !state.isCheckingSession) {
+        loadRuns(1);
+      }
+    });
+  });
 
   envButtons.forEach(function (button) {
     button.addEventListener('click', function () {
-      state.environment = button.getAttribute('data-environment');
+      setCurrentEnvironment(button.getAttribute('data-environment'));
       applyEnvironmentFilter();
       updateDeployOverview();
     });
@@ -1887,6 +2083,7 @@ export function renderDeployUiApp(): string {
   });
 
   refInput.addEventListener('input', function () {
+    setCurrentRef((refInput.value || '').trim());
     queueRefSearch();
     updateDeployOverview();
   });
@@ -1943,6 +2140,7 @@ export function renderDeployUiApp(): string {
   quickRefButtons.forEach(function (button) {
     button.addEventListener('click', function () {
       refInput.value = button.getAttribute('data-quick-ref') || '';
+      setCurrentRef(refInput.value);
       setRefMenuOpen(false);
       updateDeployOverview();
     });
@@ -1981,9 +2179,10 @@ export function renderDeployUiApp(): string {
 
   var storedToken = localStorage.getItem(TOKEN_STORAGE_KEY) || '';
   tokenInput.value = '';
+  syncTargetButtons();
   syncAuthControls();
+  syncTargetSpecificControls();
   applyEnvironmentFilter();
-  refInput.value = '';
   updateDeployOverview();
   updateRunsPagination();
   setAccordionExpanded(document.getElementById('recent-runs-toggle'), false);

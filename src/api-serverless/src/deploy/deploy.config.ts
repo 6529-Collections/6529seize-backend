@@ -18,6 +18,10 @@ export const DEPLOY_REPO_OWNER = '6529-Collections';
 export const DEPLOY_REPO_NAME = '6529seize-backend';
 export const DEPLOY_WORKFLOW_FILE = 'deploy.yml';
 export const DEPLOY_WORKFLOW_NAME = 'Deploy a service';
+export const FRONTEND_DEPLOY_REPO_OWNER = '6529-Collections';
+export const FRONTEND_DEPLOY_REPO_NAME = '6529seize-frontend';
+export const FRONTEND_DEPLOY_WORKFLOW_FILE = 'build-upload-deploy-prod.yml';
+export const FRONTEND_DEPLOY_WORKFLOW_NAME = 'Web Deploy - PROD';
 
 validateDeployConfig(deployConfigJson);
 const DEPLOY_CONFIG = deployConfigJson;

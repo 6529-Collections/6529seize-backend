@@ -80,6 +80,7 @@ deployRoutes.get('/ui/runs', async (req, res) => {
   return res.json({
     runs_page: await gitHubDeployService.listRecentRuns({
       token,
+      target: query.target,
       page: query.page,
       pageSize: query.page_size
     })
@@ -95,14 +96,15 @@ deployRoutes.get('/ui/refs', async (req, res) => {
 
   setNoStoreHeaders(res);
   return res.json({
-    refs: await gitHubDeployService.listRefs(token, query.q, 20)
+    refs: await gitHubDeployService.listRefs(token, query.target, query.q, 20)
   });
 });
 
 deployRoutes.post('/ui/dispatch', async (req, res) => {
   const token = getGitHubTokenOrThrow(req);
   const body = getValidatedByJoiOrThrow(req.body, DeployDispatchBodySchema);
-  const invalidService = body.services.find(
+  const services = body.target === 'backend' ? (body.services as string[]) : [];
+  const invalidService = services.find(
     (service: string) =>
       !canDeployServiceToEnvironment(service, body.environment)
   );
@@ -115,18 +117,28 @@ deployRoutes.post('/ui/dispatch', async (req, res) => {
   }
 
   const settledResults = await Promise.allSettled(
-    body.services.map((service: string) =>
-      gitHubDeployService.dispatchDeploy({
-        token,
-        ref: body.ref,
-        service,
-        environment: body.environment
-      })
-    )
+    body.target === 'frontend'
+      ? [
+          gitHubDeployService.dispatchDeploy({
+            token,
+            target: 'frontend',
+            ref: body.ref,
+            environment: body.environment
+          })
+        ]
+      : services.map((service: string) =>
+          gitHubDeployService.dispatchDeploy({
+            token,
+            target: 'backend',
+            ref: body.ref,
+            service,
+            environment: body.environment
+          })
+        )
   );
 
   const results = settledResults.map((result, index) => {
-    const service = body.services[index];
+    const service = body.target === 'frontend' ? 'frontend' : services[index];
 
     if (result.status === 'fulfilled') {
       return {
@@ -147,6 +159,7 @@ deployRoutes.post('/ui/dispatch', async (req, res) => {
 
   setNoStoreHeaders(res);
   return res.json({
+    target: body.target,
     environment: body.environment,
     ref: body.ref,
     results,
