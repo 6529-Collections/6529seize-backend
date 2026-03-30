@@ -89,6 +89,7 @@ import { Logger } from '@/logging';
 import { numbers } from '@/numbers';
 import { getRedisClient, initRedis, redisGet } from '@/redis';
 import { parseTdhResultsFromDB } from '@/sql_helpers';
+import deployRoutes from '@/api/deploy/deploy.routes';
 import alchemyProxyRoutes from './alchemy-proxy/alchemy-proxy.routes';
 import {
   corsOptions,
@@ -125,6 +126,7 @@ import {
   initRateLimiting,
   rateLimitingMiddleware
 } from './rate-limiting/rate-limiting.middleware';
+import { setNoStoreHeaders } from '@/api/response-headers';
 import { cacheRequest, isRequestCacheEntry } from './request-cache';
 import rpcRoutes from './rpc/rpc.routes';
 import sitemapRoutes from './sitemap/sitemap.routes';
@@ -1515,14 +1517,14 @@ async function initializeApp() {
     res.send({});
   });
 
+  rootRouter.use('/deploy', deployRoutes);
+
   rootRouter.get('/health/ui', async (req, res) => {
     const healthData = await getHealthData();
     const baseUrl = `${req.protocol}://${req.get('host')}`;
     const html = renderHealthUI(healthData, baseUrl);
 
-    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-    res.setHeader('Pragma', 'no-cache');
-    res.setHeader('Expires', '0');
+    setNoStoreHeaders(res);
     res.setHeader('Content-Type', 'text/html');
 
     return res.send(html);

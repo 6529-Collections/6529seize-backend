@@ -1,0 +1,174 @@
+import { Request } from 'express';
+import { CustomApiCompliantException } from '@/exceptions';
+import { asyncRouter } from '@/api/async.router';
+import {
+  canDeployServiceToEnvironment,
+  getDeployServiceConfigs
+} from '@/api/deploy/deploy.config';
+import { gitHubDeployService } from '@/api/deploy/deploy.github.service';
+import {
+  renderDeployUI,
+  renderDeployUiApp
+} from '@/api/deploy/deploy-ui.renderer';
+import {
+  DeployDispatchBodySchema,
+  DeployRefsQuery,
+  DeployRefsQuerySchema,
+  DeployRunsQuery,
+  DeployRunsQuerySchema
+} from '@/api/deploy/deploy.validation';
+import { setNoStoreHeaders } from '@/api/response-headers';
+import { getValidatedByJoiOrThrow } from '@/api/validation';
+
+function getGitHubTokenOrThrow(req: Request): string {
+  const authorizationHeader = req.get('authorization');
+  if (authorizationHeader?.toLowerCase().startsWith('bearer ')) {
+    const token = authorizationHeader.slice('bearer '.length).trim();
+    if (token) {
+      return token;
+    }
+  }
+
+  throw new CustomApiCompliantException(
+    401,
+    'GitHub token is required for this route'
+  );
+}
+
+const deployRoutes = asyncRouter();
+
+deployRoutes.get('/ui', async (req, res) => {
+  const html = renderDeployUI(getDeployServiceConfigs());
+
+  setNoStoreHeaders(res);
+  res.setHeader('Content-Type', 'text/html');
+
+  return res.send(html);
+});
+
+deployRoutes.get('/ui/app.js', async (req, res) => {
+  setNoStoreHeaders(res);
+  res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+
+  return res.send(renderDeployUiApp());
+});
+
+deployRoutes.get('/ui/session', async (req, res) => {
+  const token = getGitHubTokenOrThrow(req);
+  const viewer = await gitHubDeployService.getViewer(token);
+  const runsPage = await gitHubDeployService.listRecentRuns({
+    token,
+    page: 1,
+    pageSize: 8
+  });
+
+  setNoStoreHeaders(res);
+  return res.json({
+    login: viewer.login,
+    runs_page: runsPage
+  });
+});
+
+deployRoutes.get('/ui/runs', async (req, res) => {
+  const token = getGitHubTokenOrThrow(req);
+  const query = getValidatedByJoiOrThrow<DeployRunsQuery>(
+    req.query as unknown as DeployRunsQuery,
+    DeployRunsQuerySchema
+  );
+
+  setNoStoreHeaders(res);
+  return res.json({
+    runs_page: await gitHubDeployService.listRecentRuns({
+      token,
+      target: query.target,
+      page: query.page,
+      pageSize: query.page_size
+    })
+  });
+});
+
+deployRoutes.get('/ui/refs', async (req, res) => {
+  const token = getGitHubTokenOrThrow(req);
+  const query = getValidatedByJoiOrThrow<DeployRefsQuery>(
+    req.query as unknown as DeployRefsQuery,
+    DeployRefsQuerySchema
+  );
+
+  setNoStoreHeaders(res);
+  return res.json({
+    refs: await gitHubDeployService.listRefs(token, query.target, query.q, 20)
+  });
+});
+
+deployRoutes.post('/ui/dispatch', async (req, res) => {
+  const token = getGitHubTokenOrThrow(req);
+  const body = getValidatedByJoiOrThrow(req.body, DeployDispatchBodySchema);
+  const services = body.target === 'backend' ? (body.services as string[]) : [];
+  const invalidService = services.find(
+    (service: string) =>
+      !canDeployServiceToEnvironment(service, body.environment)
+  );
+
+  if (invalidService) {
+    throw new CustomApiCompliantException(
+      400,
+      `${invalidService} cannot be deployed to ${body.environment}`
+    );
+  }
+
+  const settledResults = await Promise.allSettled(
+    body.target === 'frontend'
+      ? [
+          gitHubDeployService.dispatchDeploy({
+            token,
+            target: 'frontend',
+            ref: body.ref,
+            environment: body.environment
+          })
+        ]
+      : services.map((service: string) =>
+          gitHubDeployService.dispatchDeploy({
+            token,
+            target: 'backend',
+            ref: body.ref,
+            service,
+            environment: body.environment
+          })
+        )
+  );
+
+  const results = settledResults.map((result, index) => {
+    const service = body.target === 'frontend' ? 'frontend' : services[index];
+
+    if (result.status === 'fulfilled') {
+      return {
+        service,
+        ok: true,
+        message: `Dispatched ${service} to ${body.environment} from ${body.ref}`
+      };
+    }
+
+    const err = result.reason;
+    return {
+      service,
+      ok: false,
+      message:
+        err instanceof Error ? err.message : 'Unknown GitHub deploy error'
+    };
+  });
+
+  setNoStoreHeaders(res);
+  return res.json({
+    target: body.target,
+    environment: body.environment,
+    ref: body.ref,
+    results,
+    summary: {
+      requested: results.length,
+      succeeded: results.filter((result) => result.ok).length,
+      failed: results.filter((result) => !result.ok).length
+    }
+  });
+});
+
+export default deployRoutes;
