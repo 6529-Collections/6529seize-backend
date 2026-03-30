@@ -4,7 +4,9 @@ import {
   DEPLOY_REPO_OWNER,
   DEPLOY_WORKFLOW_NAME,
   DeployEnvironment,
-  DeployServiceConfig
+  DeployServiceConfig,
+  FRONTEND_DEPLOY_REPO_NAME,
+  FRONTEND_DEPLOY_REPO_OWNER
 } from '@/api/deploy/deploy.config';
 import { LOGO_SVG } from '@/api/health/health-ui.renderer';
 
@@ -1005,6 +1007,7 @@ export function renderDeployUI(services: DeployServiceConfig[]): string {
             <span>Health</span>
           </a>
           <a
+            id="repo-link"
             class="hero-link"
             href="https://github.com/${encodeURIComponent(DEPLOY_REPO_OWNER)}/${encodeURIComponent(DEPLOY_REPO_NAME)}"
             target="_blank"
@@ -1168,6 +1171,7 @@ export function renderDeployUiApp(): string {
   var tokenInput = document.getElementById('token-input');
   var connectButton = document.getElementById('connect-button');
   var forgetButton = document.getElementById('forget-button');
+  var repoLink = document.getElementById('repo-link');
   var authStatus = document.getElementById('auth-status');
   var sessionSummary = document.getElementById('session-summary');
   var deployTargetPanel = document.getElementById('deploy-target-panel');
@@ -1242,6 +1246,14 @@ export function renderDeployUiApp(): string {
 
   function getCurrentTargetConfig() {
     return TARGET_UI_CONFIGS[state.deployTarget] || TARGET_UI_CONFIGS.backend;
+  }
+
+  function getCurrentRepoUrl() {
+    if (state.deployTarget === 'frontend') {
+      return 'https://github.com/${encodeURIComponent(FRONTEND_DEPLOY_REPO_OWNER)}/${encodeURIComponent(FRONTEND_DEPLOY_REPO_NAME)}';
+    }
+
+    return 'https://github.com/${encodeURIComponent(DEPLOY_REPO_OWNER)}/${encodeURIComponent(DEPLOY_REPO_NAME)}';
   }
 
   function getCurrentRef() {
@@ -1324,6 +1336,10 @@ export function renderDeployUiApp(): string {
     var targetConfig = getCurrentTargetConfig();
     state.environment = getCurrentEnvironment();
     refInput.value = getCurrentRef();
+
+    if (repoLink) {
+      repoLink.setAttribute('href', getCurrentRepoUrl());
+    }
 
     if (deployPanelTitle) {
       deployPanelTitle.textContent = targetConfig.panelTitle;
