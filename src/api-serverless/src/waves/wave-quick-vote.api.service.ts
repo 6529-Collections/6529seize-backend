@@ -43,6 +43,7 @@ export class WaveQuickVoteApiService {
         this.waveQuickVoteDb.countUnvotedDrops(quickVoteParams, ctx),
         this.waveQuickVoteDb.countUndiscoveredDrops(quickVoteParams, ctx)
       ]);
+      const leftToVoteInCurrentRound = undiscoveredCount;
       let drop: DropEntity | null;
       if (undiscoveredCount > 0) {
         drop =
@@ -62,10 +63,18 @@ export class WaveQuickVoteApiService {
         );
       }
       if (!drop) {
-        return { drop: null, total_count: totalCount };
+        return {
+          drop: null,
+          total_count: totalCount,
+          left_to_vote_in_current_round: leftToVoteInCurrentRound
+        };
       }
       const apiDrop = await this.toApiDrop(drop, param.identityId, ctx);
-      return { drop: apiDrop, total_count: totalCount };
+      return {
+        drop: apiDrop,
+        total_count: totalCount,
+        left_to_vote_in_current_round: leftToVoteInCurrentRound
+      };
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->findUndiscoveredDrop`);
     }

@@ -140,6 +140,7 @@ describe('WaveQuickVoteApiService', () => {
 
     expect(result).toEqual({
       drop: { id: 'drop-1' },
+      left_to_vote_in_current_round: 2,
       total_count: 2
     });
   });
@@ -208,6 +209,7 @@ describe('WaveQuickVoteApiService', () => {
 
     expect(result).toEqual({
       drop: { id: 'drop-1' },
+      left_to_vote_in_current_round: 0,
       total_count: 2
     });
   });
@@ -268,6 +270,7 @@ describe('WaveQuickVoteApiService', () => {
 
     expect(result).toEqual({
       drop: { id: 'drop-1' },
+      left_to_vote_in_current_round: 2,
       total_count: 2
     });
   });
@@ -328,6 +331,7 @@ describe('WaveQuickVoteApiService', () => {
 
     expect(result).toEqual({
       drop: { id: 'drop-1' },
+      left_to_vote_in_current_round: 0,
       total_count: 2
     });
   });
