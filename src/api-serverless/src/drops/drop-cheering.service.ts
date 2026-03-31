@@ -63,7 +63,7 @@ export class DropCheeringService {
             break;
           }
           case DropType.PARTICIPATORY: {
-            await this.voteForDrop.execute(
+            const voteChanged = await this.voteForDrop.execute(
               {
                 drop_id: dropId,
                 voter_id: param.rater_profile_id,
@@ -82,6 +82,9 @@ export class DropCheeringService {
                 },
                 ctxWithConnection
               );
+            }
+            if (!voteChanged) {
+              return null;
             }
             const nextUndiscoveredDrop =
               await this.waveQuickVoteDb.findNextUndiscoveredDrop(
@@ -119,6 +122,9 @@ export class DropCheeringService {
         );
       }
     );
+    if (!drop) {
+      return;
+    }
     await giveReadReplicaTimeToCatchUp();
     await this.wsListenersNotifier.notifyAboutDropRatingUpdate(drop, ctx);
   }
