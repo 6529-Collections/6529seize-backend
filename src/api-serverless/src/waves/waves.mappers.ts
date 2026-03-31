@@ -51,6 +51,10 @@ import {
   resolveWavePictureOverride,
   WaveDisplayOverride
 } from '@/api/waves/direct-message-wave-display.service';
+import {
+  mapWaveFieldsToApiSubmissionStrategy,
+  resolveWaveSubmissionStrategyFieldsForWrite
+} from '@/api/waves/wave-submission-strategy';
 import { InsertWaveEntity, wavesApiDb, WavesApiDb } from './waves.api.db';
 import { enums } from '../../../enums';
 import { collections } from '../../../collections';
@@ -92,7 +96,8 @@ export class WavesMappers {
     created_by,
     descriptionDropId,
     nextDecisionTime,
-    isDirectMessage
+    isDirectMessage,
+    existingSubmissionStrategy
   }: {
     id: string;
     serial_no: number | null;
@@ -103,6 +108,12 @@ export class WavesMappers {
     descriptionDropId: string;
     nextDecisionTime: number | null;
     isDirectMessage: boolean;
+    existingSubmissionStrategy?: Pick<
+      WaveEntity,
+      | 'submission_type'
+      | 'identity_submission_strategy'
+      | 'identity_submission_duplicates'
+    > | null;
   }): Promise<InsertWaveEntity> {
     let creditorId = request.voting.creditor_id;
     if (creditorId) {
@@ -113,6 +124,11 @@ export class WavesMappers {
         {}
       );
     }
+    const submissionStrategyFields =
+      resolveWaveSubmissionStrategyFieldsForWrite({
+        strategy: request.participation.submission_strategy,
+        existingStrategy: existingSubmissionStrategy
+      });
     return {
       id,
       serial_no,
@@ -150,6 +166,7 @@ export class WavesMappers {
       participation_required_media: request.participation.required_media.map(
         (it) => enums.resolveOrThrow(ParticipationRequiredMedia, it)
       ),
+      ...submissionStrategyFields,
       participation_period_start: request.participation.period?.min ?? null,
       participation_period_end: request.participation.period?.max ?? null,
       type: enums.resolveOrThrow(WaveType, request.wave.type),
@@ -258,11 +275,16 @@ export class WavesMappers {
         contributor_pfp: it.contributor_pfp
       })) ?? [];
     const creationDrop: ApiDrop = creationDrops[waveEntity.description_drop_id];
+    const resolveGroup = (groupId: string | null) =>
+      groupId ? (curations[groupId] ?? null) : null;
+    const resolveProfile = (profileId: string | null) =>
+      profileId ? (profiles[profileId] ?? null) : null;
     const votingScope: ApiWaveScope = {
-      group: curations[waveEntity.voting_group_id!] ?? null
+      group: resolveGroup(waveEntity.voting_group_id)
     };
-    const voteCreditor: ApiProfileMin | null =
-      profiles[waveEntity.voting_credit_creditor!] ?? null;
+    const voteCreditor: ApiProfileMin | null = resolveProfile(
+      waveEntity.voting_credit_creditor
+    );
     const authenticatedUserEligibleToVote =
       !noRightToVote &&
       (!waveEntity.voting_group_id ||
@@ -285,7 +307,7 @@ export class WavesMappers {
     };
     const visibility: ApiWaveVisibilityConfig = {
       scope: {
-        group: curations[waveEntity.visibility_group_id!] ?? null
+        group: resolveGroup(waveEntity.visibility_group_id)
       }
     };
     const authenticatedUserEligibleToParticipate =
@@ -294,7 +316,7 @@ export class WavesMappers {
         groupIdsUserIsEligibleFor.includes(waveEntity.participation_group_id));
     const participation: ApiWaveParticipationConfig = {
       scope: {
-        group: curations[waveEntity.participation_group_id!] ?? null
+        group: resolveGroup(waveEntity.participation_group_id)
       },
       no_of_applications_allowed_per_participant:
         waveEntity.participation_max_applications_per_participant,
@@ -313,11 +335,12 @@ export class WavesMappers {
         max: waveEntity.participation_period_end
       },
       authenticated_user_eligible: authenticatedUserEligibleToParticipate,
-      terms: waveEntity.participation_terms
+      terms: waveEntity.participation_terms,
+      submission_strategy: mapWaveFieldsToApiSubmissionStrategy(waveEntity)
     };
     const chat: ApiWaveChatConfig = {
       scope: {
-        group: curations[waveEntity.chat_group_id!] ?? null
+        group: resolveGroup(waveEntity.chat_group_id)
       },
       enabled: waveEntity.chat_enabled,
       authenticated_user_eligible:
@@ -338,7 +361,7 @@ export class WavesMappers {
       max_winners: waveEntity.max_winners,
       time_lock_ms: waveEntity.time_lock_ms,
       admin_group: {
-        group: curations[waveEntity.admin_group_id!] ?? null
+        group: resolveGroup(waveEntity.admin_group_id)
       },
       authenticated_user_eligible_for_admin: authenticatedUserEligibleForAdmin,
       decisions_strategy: waveEntity.decisions_strategy,

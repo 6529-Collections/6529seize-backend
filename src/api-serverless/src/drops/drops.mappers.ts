@@ -16,7 +16,7 @@ import { ApiDropMedia } from '../generated/models/ApiDropMedia';
 import { ApiDropReferencedNFT } from '../generated/models/ApiDropReferencedNFT';
 import { ApiDropMentionedUser } from '../generated/models/ApiDropMentionedUser';
 import { ApiMentionedWave } from '../generated/models/ApiMentionedWave';
-import { ApiDropMetadata } from '../generated/models/ApiDropMetadata';
+import { ApiDropMetadataResponse } from '../generated/models/ApiDropMetadataResponse';
 import { ApiDropRater } from '../generated/models/ApiDropRater';
 import {
   ActivityEventAction,
@@ -48,6 +48,7 @@ import { ApiDropType } from '../generated/models/ApiDropType';
 import { dropVotingService, DropVotingService } from './drop-voting.service';
 import { dropVotingDb, DropVotingDb } from './drop-voting.db';
 import { ApiWaveCreditType as WaveCreditTypeApi } from '../generated/models/ApiWaveCreditType';
+import { ApiWaveParticipationSubmissionStrategyType } from '../generated/models/ApiWaveParticipationSubmissionStrategyType';
 import { WaveDecisionWinnerDropWithSaleEntity } from '@/entities/IWaveDecision';
 import { ApiDropWinningContext } from '../generated/models/ApiDropWinningContext';
 import { ApiWaveOutcomeType } from '../generated/models/ApiWaveOutcomeType';
@@ -618,6 +619,9 @@ export class DropsMappers {
       ...mentions.map((it) => it.mentioned_profile_id),
       ...voterProfileIds,
       ...Object.values(deletedDrops).map((it) => it.author_id),
+      ...metadata
+        .filter((it) => it.data_key === 'identity')
+        .map((it) => it.data_value),
       ...Object.values(winningDropsTopRaters)
         .flat()
         .map((it) => it.voter_id)
@@ -625,6 +629,7 @@ export class DropsMappers {
     const profileMins = await this.identityFetcher.getOverviewsByIds(
       allProfileIds,
       {
+        connection: ctx.connection,
         authenticationContext: contextProfileId
           ? AuthenticationContext.fromProfileId(contextProfileId)
           : AuthenticationContext.notAuthenticated()
@@ -663,6 +668,7 @@ export class DropsMappers {
         dropEntity,
         deletedDrops,
         profilesByIds,
+        resolvedProfilesByIds: profileMins,
         dropsParts,
         dropMedia,
         contextProfileId,
@@ -700,6 +706,7 @@ export class DropsMappers {
     dropEntity,
     deletedDrops,
     profilesByIds,
+    resolvedProfilesByIds,
     dropsParts,
     dropMedia,
     contextProfileId,
@@ -733,6 +740,7 @@ export class DropsMappers {
     dropEntity: DropEntity;
     deletedDrops: Record<string, DeletedDropEntity>;
     profilesByIds: Record<string, ApiProfileMin>;
+    resolvedProfilesByIds: Record<string, ApiProfileMin>;
     dropsParts: Record<string, DropPartEntity[]>;
     dropMedia: Record<string, DropMediaEntity[]>;
     contextProfileId: string | undefined | null;
@@ -898,6 +906,7 @@ export class DropsMappers {
                   dropEntity: allEntities[replyToDropId],
                   deletedDrops,
                   profilesByIds,
+                  resolvedProfilesByIds,
                   dropsParts,
                   dropMedia,
                   contextProfileId,
@@ -949,6 +958,7 @@ export class DropsMappers {
                           dropEntity: allEntities[quotedDropId],
                           deletedDrops,
                           profilesByIds,
+                          resolvedProfilesByIds,
                           dropsParts,
                           dropMedia,
                           contextProfileId,
@@ -1012,9 +1022,13 @@ export class DropsMappers {
         })),
       metadata: metadata
         .filter((it) => it.drop_id === dropEntity.id)
-        .map<ApiDropMetadata>((it) => ({
+        .map<ApiDropMetadataResponse>((it) => ({
           data_key: it.data_key,
-          data_value: it.data_value
+          data_value: it.data_value,
+          resolved_profile:
+            it.data_key === 'identity'
+              ? (resolvedProfilesByIds[it.data_value] ?? null)
+              : null
         })),
       rating,
       realtime_rating,
@@ -1046,6 +1060,7 @@ export class DropsMappers {
       picture: string | null;
       description_drop_id: string;
       last_drop_time: number;
+      submission_type: string | null;
       chat_enabled: boolean;
       chat_group_id: string | null;
       voting_group_id: string | null;
@@ -1071,6 +1086,12 @@ export class DropsMappers {
       ),
       description_drop_id: waveEntity.description_drop_id,
       last_drop_time: waveEntity.last_drop_time,
+      submission_type: waveEntity.submission_type
+        ? enums.resolveOrThrow(
+            ApiWaveParticipationSubmissionStrategyType,
+            waveEntity.submission_type
+          )
+        : null,
       authenticated_user_eligible_to_chat:
         waveEntity.chat_enabled &&
         (waveEntity.chat_group_id === null ||

@@ -79,10 +79,7 @@ import { Team } from './entities/ITeam';
 import { BaseTransaction, Transaction } from './entities/ITransaction';
 import { env } from './env';
 import { ethTools } from './eth-tools';
-import {
-  syncIdentitiesMetrics,
-  syncIdentitiesWithTdhConsolidations
-} from './identity';
+import { identityConsolidationEffects } from './identity';
 import { Logger } from './logging';
 import { metricsRecorder } from './metrics/MetricsRecorder';
 import { deleteAll, insertWithoutUpdate, resetRepository } from './orm_helpers';
@@ -1047,8 +1044,10 @@ export async function persistConsolidatedTDH(
     }
 
     await updateBoostedTdhRates(qrHolder);
-    await syncIdentitiesWithTdhConsolidations(qrHolder);
-    await syncIdentitiesMetrics(qrHolder);
+    await identityConsolidationEffects.syncIdentitiesWithTdhConsolidations(
+      qrHolder
+    );
+    await identityConsolidationEffects.syncIdentitiesMetrics(qrHolder);
     await revokeTdhBasedDropWavesOverVotes(qrHolder);
 
     await persistHistoricConsolidatedTDH(manager, block, tdh, wallets);

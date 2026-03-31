@@ -81,6 +81,11 @@ import {
 } from '../../../metrics/MetricsRecorder';
 import { CurationsDb, curationsDb } from '@/api/curations/curations.db';
 import { DropsDb, dropsDb } from '@/drops/drops.db';
+import {
+  resolveWaveSubmissionStrategyFieldsForWrite,
+  validateWaveSubmissionStrategy
+} from '@/api/waves/wave-submission-strategy';
+import { WaveType } from '@/entities/IWave';
 
 export class WaveApiService {
   constructor(
@@ -100,13 +105,83 @@ export class WaveApiService {
     private readonly dropsDb: DropsDb
   ) {}
 
+  private getRequiredTimer(
+    ctx: RequestContext
+  ): NonNullable<RequestContext['timer']> {
+    const timer = ctx.timer;
+    if (!timer) {
+      throw new Error('Timer is required');
+    }
+    return timer;
+  }
+
+  private getRequiredAuthenticationContext(
+    ctx: RequestContext
+  ): AuthenticationContext {
+    const authenticationContext = ctx.authenticationContext;
+    if (!authenticationContext) {
+      throw new ForbiddenException(`User must be authenticated`);
+    }
+    return authenticationContext;
+  }
+
+  private getRequiredActingAsId(
+    authenticationContext: AuthenticationContext
+  ): string {
+    const actingAsId = authenticationContext.getActingAsId();
+    if (!actingAsId) {
+      throw new ForbiddenException(`Please create a profile first`);
+    }
+    return actingAsId;
+  }
+
+  private assertImmutableWaveUpdateFieldsUnchanged({
+    request,
+    waveBeforeUpdate
+  }: {
+    request: ApiUpdateWaveRequest;
+    waveBeforeUpdate: Pick<
+      WaveEntity,
+      | 'type'
+      | 'submission_type'
+      | 'identity_submission_strategy'
+      | 'identity_submission_duplicates'
+    >;
+  }) {
+    const requestedWaveType = enums.resolveOrThrow(WaveType, request.wave.type);
+    if (waveBeforeUpdate.type !== requestedWaveType) {
+      throw new BadRequestException(
+        `Wave type cannot be changed after creation`
+      );
+    }
+
+    const resolvedSubmissionStrategy =
+      resolveWaveSubmissionStrategyFieldsForWrite({
+        strategy: request.participation.submission_strategy,
+        existingStrategy: waveBeforeUpdate
+      });
+    if (
+      resolvedSubmissionStrategy.submission_type !==
+        waveBeforeUpdate.submission_type ||
+      resolvedSubmissionStrategy.identity_submission_strategy !==
+        waveBeforeUpdate.identity_submission_strategy ||
+      resolvedSubmissionStrategy.identity_submission_duplicates !==
+        waveBeforeUpdate.identity_submission_duplicates
+    ) {
+      throw new BadRequestException(
+        `Wave identity submission strategy cannot be changed after creation`
+      );
+    }
+  }
+
   public async createWave(
     createWaveRequest: ApiCreateNewWave,
     isDirectMessage: boolean,
     ctx: RequestContext
   ): Promise<ApiWave> {
-    const timer = ctx.timer!;
-    const authenticationContext = ctx.authenticationContext!;
+    const timer = this.getRequiredTimer(ctx);
+    const authenticationContext = this.getRequiredAuthenticationContext(ctx);
+    const actingAsId = this.getRequiredActingAsId(authenticationContext);
     timer.start(`${this.constructor.name}->createWave`);
     await this.validateWaveRelations(createWaveRequest, ctx);
     this.validateOutcomes(createWaveRequest);
@@ -121,7 +196,7 @@ export class WaveApiService {
           created_at: waveCreationTime,
           updated_at: null,
           request: createWaveRequest,
-          created_by: authenticationContext.getActingAsId()!,
+          created_by: actingAsId,
           descriptionDropId: randomUUID(),
           nextDecisionTime: this.calculateNextDecisionTimeRelativeToNow(
             waveCreationTime,
@@ -135,11 +210,15 @@ export class WaveApiService {
         const distiributionItemEntities: WaveOutcomeDistributionItemEntity[] =
           [];
         for (
-          let outcomeIndex = 1;
-          outcomeIndex <= apiOutcomes.length;
+          let outcomeIndex = 0;
+          outcomeIndex < apiOutcomes.length;
           outcomeIndex++
         ) {
-          const apiOutcome = apiOutcomes[outcomeIndex - 1]!;
+          const apiOutcome = apiOutcomes[outcomeIndex];
+          if (!apiOutcome) {
+            continue;
+          }
+          const waveOutcomePosition = outcomeIndex + 1;
           outcomeEntities.push({
             wave_id: id,
             type: enums.resolveOrThrow(WaveOutcomeType, apiOutcome.type),
@@ -152,21 +231,23 @@ export class WaveApiService {
               : null,
             rep_category: apiOutcome.rep_category ?? null,
             amount: apiOutcome.amount ?? null,
-            wave_outcome_position: outcomeIndex
+            wave_outcome_position: waveOutcomePosition
           });
           const apiDistributionItems = apiOutcome.distribution ?? [];
           for (
-            let distributionItemIndex = 1;
-            distributionItemIndex <= apiDistributionItems.length;
-            distributionItemIndex++
+            let distributionIndex = 0;
+            distributionIndex < apiDistributionItems.length;
+            distributionIndex++
           ) {
-            const apiDistributionItem =
-              apiDistributionItems[distributionItemIndex - 1]!;
+            const apiDistributionItem = apiDistributionItems[distributionIndex];
+            if (!apiDistributionItem) {
+              continue;
+            }
             distiributionItemEntities.push({
               amount: numbers.parseIntOrNull(apiDistributionItem.amount),
               description: apiDistributionItem.description ?? null,
-              wave_outcome_position: outcomeIndex,
-              wave_outcome_distribution_item_position: distributionItemIndex,
+              wave_outcome_position: waveOutcomePosition,
+              wave_outcome_distribution_item_position: distributionIndex + 1,
               wave_id: id
             });
           }
@@ -179,7 +260,6 @@ export class WaveApiService {
           distiributionItemEntities,
           ctxWithConnection
         );
-        const authorId = authenticationContext.getActingAsId()!;
         const descriptionDropModel =
           this.dropsMappers.createDropApiToUseCaseModel({
             request: {
@@ -187,11 +267,11 @@ export class WaveApiService {
               wave_id: id,
               drop_type: ApiDropType.Chat
             },
-            authorId
+            authorId: actingAsId
           });
         const descriptionDropId = await this.createOrUpdateDrop
           .execute(descriptionDropModel, true, {
-            timer: ctxWithConnection.timer!,
+            timer: ctxWithConnection.timer,
             connection: ctxWithConnection.connection
           })
           .then((resp) => resp.drop_id);
@@ -268,7 +348,7 @@ export class WaveApiService {
 
         const groupIdsUserIsEligibleFor =
           await this.userGroupsService.getGroupsUserIsEligibleFor(
-            authenticationContext.getActingAsId(),
+            actingAsId,
             timer
           );
         const noRightToVote =
@@ -317,10 +397,12 @@ export class WaveApiService {
       }
     );
     await giveReadReplicaTimeToCatchUp();
+    const actingAsId = ctx.authenticationContext?.getActingAsId();
+    if (!actingAsId) {
+      throw new ForbiddenException(`User must be authenticated`);
+    }
     const groupsUserIsEligibleFor =
-      await this.userGroupsService.getGroupsUserIsEligibleFor(
-        ctx.authenticationContext!.getActingAsId()
-      );
+      await this.userGroupsService.getGroupsUserIsEligibleFor(actingAsId);
     return this.findWaveByIdOrThrow(waveId, groupsUserIsEligibleFor, ctx);
   }
 
@@ -337,10 +419,12 @@ export class WaveApiService {
       }
     );
     await giveReadReplicaTimeToCatchUp();
+    const actingAsId = ctx.authenticationContext?.getActingAsId();
+    if (!actingAsId) {
+      throw new ForbiddenException(`User must be authenticated`);
+    }
     const groupsUserIsEligibleFor =
-      await this.userGroupsService.getGroupsUserIsEligibleFor(
-        ctx.authenticationContext!.getActingAsId()
-      );
+      await this.userGroupsService.getGroupsUserIsEligibleFor(actingAsId);
     return this.findWaveByIdOrThrow(waveId, groupsUserIsEligibleFor, ctx);
   }
 
@@ -451,7 +535,7 @@ export class WaveApiService {
     if (!authenticatedUserId) {
       throw new ForbiddenException(`User must be authenticated`);
     }
-    if (authContext!.isAuthenticatedAsProxy()) {
+    if (authContext?.isAuthenticatedAsProxy()) {
       throw new ForbiddenException(`This action can not be done as proxy`);
     }
     const wave = await this.wavesApiDb.findById(waveId);
@@ -537,7 +621,8 @@ export class WaveApiService {
           min: null,
           max: null
         },
-        terms: null
+        terms: null,
+        submission_strategy: null
       },
       chat: {
         scope: {
@@ -576,6 +661,10 @@ export class WaveApiService {
         `Creating a wave with signed votes requirement is not yet supported`
       );
     }
+    validateWaveSubmissionStrategy(
+      request.participation.submission_strategy,
+      request.wave.type
+    );
     if (request.wave.decisions_strategy !== null) {
       if (request.wave.type !== ApiWaveType.Rank) {
         throw new BadRequestException(
@@ -1183,7 +1272,7 @@ export class WaveApiService {
   }
 
   async deleteWave(waveId: string, ctx: RequestContext) {
-    const authenticationContext = ctx.authenticationContext!;
+    const authenticationContext = this.getRequiredAuthenticationContext(ctx);
     const authenticatedUserId = authenticationContext.getActingAsId();
     if (!authenticatedUserId) {
       throw new ForbiddenException(
@@ -1293,7 +1382,7 @@ export class WaveApiService {
     request: ApiUpdateWaveRequest,
     ctx: RequestContext
   ): Promise<ApiWave> {
-    const authenticationContext = ctx.authenticationContext!;
+    const authenticationContext = this.getRequiredAuthenticationContext(ctx);
     const authenticatedProfileId = authenticationContext.authenticatedProfileId;
     if (!authenticatedProfileId) {
       throw new ForbiddenException(
@@ -1310,7 +1399,6 @@ export class WaveApiService {
     return await this.wavesApiDb.executeNativeQueriesInTransaction(
       async (connection) => {
         const ctxWithConnection = { ...ctx, connection };
-        await this.validateWaveRelations(request, ctxWithConnection);
         const waveBeforeUpdate = await this.wavesApiDb.findWaveById(
           waveId,
           connection
@@ -1336,6 +1424,11 @@ export class WaveApiService {
             );
           }
         }
+        this.assertImmutableWaveUpdateFieldsUnchanged({
+          request,
+          waveBeforeUpdate
+        });
+        await this.validateWaveRelations(request, ctxWithConnection);
         await this.wavesApiDb.deleteWave(waveId, ctxWithConnection);
         const waveUpdateTime = Time.currentMillis();
         const updatedEntity = await this.waveMappers.createWaveToNewWaveEntity({
@@ -1350,7 +1443,8 @@ export class WaveApiService {
             waveUpdateTime,
             request.wave.decisions_strategy
           ),
-          isDirectMessage: waveBeforeUpdate.is_direct_message ?? false
+          isDirectMessage: waveBeforeUpdate.is_direct_message ?? false,
+          existingSubmissionStrategy: waveBeforeUpdate
         });
 
         await this.wavesApiDb.insertWave(updatedEntity, ctxWithConnection);
@@ -1386,9 +1480,12 @@ export class WaveApiService {
           waveId,
           connection
         );
+        if (!waveEntity) {
+          throw new NotFoundException(`Wave ${waveId} not found`);
+        }
         return await this.waveMappers.waveEntityToApiWave(
           {
-            waveEntity: waveEntity!,
+            waveEntity,
             groupIdsUserIsEligibleFor: groupsUserIsEligibleFor,
             noRightToVote,
             noRightToParticipate
@@ -1590,10 +1687,13 @@ export class WaveApiService {
           ctxWithConnection
         );
         const actingAsId = ctx.authenticationContext?.getActingAsId();
+        if (!actingAsId) {
+          throw new ForbiddenException(`Please create a profile first`);
+        }
         await this.wavesApiDb.setWaveMuted(
           {
             waveId,
-            readerId: actingAsId!,
+            readerId: actingAsId,
             muted: true
           },
           ctxWithConnection
@@ -1617,10 +1717,13 @@ export class WaveApiService {
           ctxWithConnection
         );
         const actingAsId = ctx.authenticationContext?.getActingAsId();
+        if (!actingAsId) {
+          throw new ForbiddenException(`Please create a profile first`);
+        }
         await this.wavesApiDb.setWaveMuted(
           {
             waveId,
-            readerId: actingAsId!,
+            readerId: actingAsId,
             muted: false
           },
           ctxWithConnection
@@ -1646,11 +1749,12 @@ export class WaveApiService {
     if (!waveEntity) {
       throw new NotFoundException(`Wave ${waveId} not found.`);
     }
+    const actingAsId = ctx.authenticationContext?.getActingAsId();
+    if (!actingAsId) {
+      throw new ForbiddenException(`User must be authenticated`);
+    }
     const groupsUserIsEligibleFor =
-      await userGroupsService.getGroupsUserIsEligibleFor(
-        ctx.authenticationContext!.getActingAsId(),
-        ctx.timer
-      );
+      await userGroupsService.getGroupsUserIsEligibleFor(actingAsId, ctx.timer);
     if (
       waveEntity.visibility_group_id &&
       !groupsUserIsEligibleFor.includes(waveEntity.visibility_group_id)

@@ -13,6 +13,7 @@
 import { ApiCreateNewWaveScope } from '../models/ApiCreateNewWaveScope';
 import { ApiIntRange } from '../models/ApiIntRange';
 import { ApiWaveParticipationRequirement } from '../models/ApiWaveParticipationRequirement';
+import { ApiWaveParticipationSubmissionStrategy } from '../models/ApiWaveParticipationSubmissionStrategy';
 import { ApiWaveRequiredMetadata } from '../models/ApiWaveRequiredMetadata';
 import { HttpFile } from '../http/http';
 
@@ -36,6 +37,7 @@ export class ApiCreateNewWaveParticipationConfig {
     */
     'terms': string | null;
     'period'?: ApiIntRange;
+    'submission_strategy'?: ApiWaveParticipationSubmissionStrategy | null;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -80,6 +82,12 @@ export class ApiCreateNewWaveParticipationConfig {
             "name": "period",
             "baseName": "period",
             "type": "ApiIntRange",
+            "format": ""
+        },
+        {
+            "name": "submission_strategy",
+            "baseName": "submission_strategy",
+            "type": "ApiWaveParticipationSubmissionStrategy",
             "format": ""
         }    ];
 

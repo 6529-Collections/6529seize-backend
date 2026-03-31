@@ -10,31 +10,33 @@
  * Do not edit the class manually.
  */
 
+import { ApiCreateNewWaveScope } from '../models/ApiCreateNewWaveScope';
 import { ApiIntRange } from '../models/ApiIntRange';
 import { ApiWaveParticipationRequirement } from '../models/ApiWaveParticipationRequirement';
 import { ApiWaveParticipationSubmissionStrategy } from '../models/ApiWaveParticipationSubmissionStrategy';
 import { ApiWaveRequiredMetadata } from '../models/ApiWaveRequiredMetadata';
-import { ApiWaveScope } from '../models/ApiWaveScope';
 import { HttpFile } from '../http/http';
 
-export class ApiWaveParticipationConfig {
-    'scope': ApiWaveScope;
+export class ApiUpdateWaveParticipationConfig {
+    'scope': ApiCreateNewWaveScope;
     /**
     * The number of applications allowed per participant. Infinite if omitted.
     */
     'no_of_applications_allowed_per_participant': number | null;
+    'required_media': Array<ApiWaveParticipationRequirement>;
     /**
     * The metadata that must be provided by the participant.  Empty array if nothing is required. 
     */
     'required_metadata': Array<ApiWaveRequiredMetadata>;
-    'required_media': Array<ApiWaveParticipationRequirement>;
     /**
     * If true then the votes must be signed by voters.
     */
     'signature_required': boolean;
-    'period'?: ApiIntRange;
-    'authenticated_user_eligible': boolean;
+    /**
+    * If this is and the \"signature_required\" is set then this will be embedded as a signature input data component for each drop.
+    */
     'terms': string | null;
+    'period'?: ApiIntRange;
     'submission_strategy'?: ApiWaveParticipationSubmissionStrategy | null;
 
     static readonly discriminator: string | undefined = undefined;
@@ -43,7 +45,7 @@ export class ApiWaveParticipationConfig {
         {
             "name": "scope",
             "baseName": "scope",
-            "type": "ApiWaveScope",
+            "type": "ApiCreateNewWaveScope",
             "format": ""
         },
         {
@@ -53,32 +55,20 @@ export class ApiWaveParticipationConfig {
             "format": "int64"
         },
         {
-            "name": "required_metadata",
-            "baseName": "required_metadata",
-            "type": "Array<ApiWaveRequiredMetadata>",
-            "format": ""
-        },
-        {
             "name": "required_media",
             "baseName": "required_media",
             "type": "Array<ApiWaveParticipationRequirement>",
             "format": ""
         },
         {
+            "name": "required_metadata",
+            "baseName": "required_metadata",
+            "type": "Array<ApiWaveRequiredMetadata>",
+            "format": ""
+        },
+        {
             "name": "signature_required",
             "baseName": "signature_required",
-            "type": "boolean",
-            "format": ""
-        },
-        {
-            "name": "period",
-            "baseName": "period",
-            "type": "ApiIntRange",
-            "format": ""
-        },
-        {
-            "name": "authenticated_user_eligible",
-            "baseName": "authenticated_user_eligible",
             "type": "boolean",
             "format": ""
         },
@@ -89,6 +79,12 @@ export class ApiWaveParticipationConfig {
             "format": ""
         },
         {
+            "name": "period",
+            "baseName": "period",
+            "type": "ApiIntRange",
+            "format": ""
+        },
+        {
             "name": "submission_strategy",
             "baseName": "submission_strategy",
             "type": "ApiWaveParticipationSubmissionStrategy",
@@ -96,7 +92,7 @@ export class ApiWaveParticipationConfig {
         }    ];
 
     static getAttributeTypeMap() {
-        return ApiWaveParticipationConfig.attributeTypeMap;
+        return ApiUpdateWaveParticipationConfig.attributeTypeMap;
     }
 
     public constructor() {

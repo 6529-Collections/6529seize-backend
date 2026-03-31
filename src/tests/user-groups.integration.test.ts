@@ -1,19 +1,19 @@
 import 'reflect-metadata';
-import { sqlExecutor } from '../sql-executor';
-import { describeWithSeed } from '../tests/_setup/seed';
-import { UserGroupsService } from '../api-serverless/src/community-members/user-groups.service';
-import { UserGroupsDb } from '../user-groups/user-groups.db';
-import { mock } from 'ts-jest-mocker';
 import { anIdentity, withIdentities } from './fixtures/identity.fixture';
 import { aUserGroup, withUserGroups } from './fixtures/user-group.fixture';
-import { aWave, withWaves } from './fixtures/wave.fixture';
-import { IdentityEntity } from '../entities/IIdentity';
-import { UserGroupEntity } from '../entities/IUserGroup';
 import { randomUUID } from 'node:crypto';
 import {
   aProfileGroup,
   withProfileGroups
 } from './fixtures/profile-group.fixture';
+import { describeWithSeed } from '@/tests/_setup/seed';
+import { aWave, withWaves } from './fixtures/wave.fixture';
+import { UserGroupsService } from '@/api/community-members/user-groups.service';
+import { sqlExecutor } from '@/sql-executor';
+import { UserGroupsDb } from '@/user-groups/user-groups.db';
+import { mock } from 'ts-jest-mocker';
+import { IdentityEntity } from '@/entities/IIdentity';
+import { UserGroupEntity } from '@/entities/IUserGroup';
 
 const tdh10Identity = anIdentity({ tdh: 10 });
 const tdh20Identity = anIdentity({ tdh: 20 });
@@ -54,6 +54,10 @@ const minTdh10GroupWhereTdh11Identity1IsIncludedAndExcluded = aUserGroup({
   tdh_min: 10
 });
 
+describe('smth', () => {
+  it('s', () => {});
+});
+
 describeWithSeed(
   'UserGroupsIntegrationTests',
   [
@@ -81,7 +85,9 @@ describeWithSeed(
         minTdh10AndTdh11Identity1ExcludedGroup,
         onlyInclusionAndExclusionGroupWhereSameIdentityIsIncludedAndExcluded,
         minTdh10GroupWhereTdh11Identity1IsIncludedAndExcluded
-      ].map((it) => aWave({ visibility_group_id: it.id }))
+      ].map((it) => {
+        return aWave({ visibility_group_id: it.id });
+      })
     ),
     withProfileGroups([
       profileGroupWithTdh11Identity1,

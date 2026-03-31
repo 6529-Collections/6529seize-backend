@@ -45,6 +45,7 @@ import { ApiDropWithoutWavesPageWithoutCount } from '../generated/models/ApiDrop
 import { ApiIntRange } from '../generated/models/ApiIntRange';
 import { ApiSetPinnedDropRequest } from '../generated/models/ApiSetPinnedDropRequest';
 import { ApiUpdateWaveDecisionPause } from '../generated/models/ApiUpdateWaveDecisionPause';
+import { ApiUpdateWaveParticipationConfig } from '../generated/models/ApiUpdateWaveParticipationConfig';
 import { ApiUpdateWaveRequest } from '../generated/models/ApiUpdateWaveRequest';
 import { ApiWave } from '../generated/models/ApiWave';
 import { ApiWaveConfig } from '../generated/models/ApiWaveConfig';
@@ -81,6 +82,11 @@ import { SearchWavesParams } from './waves.api.db';
 import { ApiWaveMetadataType } from '@/api/generated/models/ApiWaveMetadataType';
 import { ApiWaveCurationGroup } from '@/api/generated/models/ApiWaveCurationGroup';
 import { ApiWaveCurationGroupRequest } from '@/api/generated/models/ApiWaveCurationGroupRequest';
+import { ApiWaveParticipationIdentitySubmissionAllowDuplicates } from '@/api/generated/models/ApiWaveParticipationIdentitySubmissionAllowDuplicates';
+import { ApiWaveParticipationIdentitySubmissionWhoCanBeSubmitted } from '@/api/generated/models/ApiWaveParticipationIdentitySubmissionWhoCanBeSubmitted';
+import { ApiWaveParticipationSubmissionStrategy } from '@/api/generated/models/ApiWaveParticipationSubmissionStrategy';
+import { ApiWaveParticipationSubmissionStrategyIdentityConf } from '@/api/generated/models/ApiWaveParticipationSubmissionStrategyIdentityConf';
+import { ApiWaveParticipationSubmissionStrategyType } from '@/api/generated/models/ApiWaveParticipationSubmissionStrategyType';
 import { curationsApiService } from '@/api/curations/curations.api.service';
 
 const router = asyncRouter();
@@ -1020,6 +1026,48 @@ const WaveRequiredMetadataSchema = Joi.object<ApiWaveRequiredMetadata>({
     .valid(...Object.values(ApiWaveMetadataType))
 });
 
+const WaveParticipationSubmissionStrategyIdentityConfSchema =
+  Joi.object<ApiWaveParticipationSubmissionStrategyIdentityConf>({
+    duplicates: Joi.string()
+      .required()
+      .valid(
+        ...Object.values(ApiWaveParticipationIdentitySubmissionAllowDuplicates)
+      ),
+    who_can_be_submitted: Joi.string()
+      .required()
+      .valid(
+        ...Object.values(
+          ApiWaveParticipationIdentitySubmissionWhoCanBeSubmitted
+        )
+      )
+  });
+
+const WaveParticipationSubmissionStrategySchema =
+  Joi.alternatives<ApiWaveParticipationSubmissionStrategy | null>()
+    .try(
+      Joi.valid(null),
+      Joi.object<ApiWaveParticipationSubmissionStrategy>({
+        type: Joi.string()
+          .required()
+          .valid(...Object.values(ApiWaveParticipationSubmissionStrategyType)),
+        config: WaveParticipationSubmissionStrategyIdentityConfSchema.required()
+      })
+    )
+    .default(null);
+
+const WaveUpdateParticipationSubmissionStrategySchema =
+  Joi.alternatives<ApiWaveParticipationSubmissionStrategy | null>()
+    .try(
+      Joi.valid(null),
+      Joi.object<ApiWaveParticipationSubmissionStrategy>({
+        type: Joi.string()
+          .required()
+          .valid(...Object.values(ApiWaveParticipationSubmissionStrategyType)),
+        config: WaveParticipationSubmissionStrategyIdentityConfSchema.required()
+      })
+    )
+    .optional();
+
 const WaveParticipationSchema = Joi.object<ApiCreateNewWaveParticipationConfig>(
   {
     scope: WaveScopeSchema.required(),
@@ -1039,9 +1087,33 @@ const WaveParticipationSchema = Joi.object<ApiCreateNewWaveParticipationConfig>(
       .default([]),
     signature_required: Joi.boolean().optional().default(false),
     period: IntRangeSchema.required().allow(null),
-    terms: Joi.string().optional().allow(null).default(null)
+    terms: Joi.string().optional().allow(null).default(null),
+    submission_strategy: WaveParticipationSubmissionStrategySchema
   }
 );
+
+const UpdateWaveParticipationSchema =
+  Joi.object<ApiUpdateWaveParticipationConfig>({
+    scope: WaveScopeSchema.required(),
+    no_of_applications_allowed_per_participant: Joi.number()
+      .integer()
+      .required()
+      .allow(null),
+    required_metadata: Joi.array()
+      .required()
+      .min(0)
+      .items(WaveRequiredMetadataSchema),
+    required_media: Joi.array()
+      .items(
+        Joi.string().valid(...Object.values(ApiWaveParticipationRequirement))
+      )
+      .optional()
+      .default([]),
+    signature_required: Joi.boolean().optional().default(false),
+    period: IntRangeSchema.required().allow(null),
+    terms: Joi.string().optional().allow(null).default(null),
+    submission_strategy: WaveUpdateParticipationSubmissionStrategySchema
+  });
 
 const WaveChatSchema = Joi.object<ApiCreateNewWaveChatConfig>({
   scope: WaveScopeSchema.required(),
@@ -1155,7 +1227,8 @@ const WaveSchema = Joi.object<ApiCreateNewWave>({
 });
 
 const UpdateWaveSchema = Joi.object<ApiUpdateWaveRequest>({
-  ...waveSchemaBaseValidations
+  ...waveSchemaBaseValidations,
+  participation: UpdateWaveParticipationSchema.required()
 });
 
 const SetPinnedDropSchema = Joi.object<ApiSetPinnedDropRequest>({

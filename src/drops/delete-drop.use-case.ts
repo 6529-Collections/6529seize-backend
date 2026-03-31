@@ -42,6 +42,32 @@ export class DeleteDropUseCase {
     private readonly artCurationTokenWatchService: ArtCurationTokenWatchService
   ) {}
 
+  private async resolveDeleterId(
+    model: DeleteDropModel,
+    { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
+  ): Promise<string | undefined> {
+    const deleterId = model.deleter_id;
+    if (model.deletion_purpose === 'SYSTEM_DELETE' || deleterId) {
+      return deleterId;
+    }
+
+    const deleterIdentity = model.deleter_identity;
+    if (!deleterIdentity) {
+      throw new BadRequestException(`deleter_identity is required`);
+    }
+    const resolvedDeleterIdentity =
+      await identityFetcher.getProfileIdByIdentityKey(
+        {
+          identityKey: deleterIdentity
+        },
+        { timer, connection }
+      );
+    if (!resolvedDeleterIdentity) {
+      throw new NotFoundException(`${deleterIdentity} doesn't have a profile`);
+    }
+    return resolvedDeleterIdentity;
+  }
+
   public async execute(
     model: DeleteDropModel,
     { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
@@ -51,42 +77,40 @@ export class DeleteDropUseCase {
     serial_no: number;
     wave_id: string;
   } | null> {
-    const deleterId = model.deleter_id;
-    if (!deleterId) {
-      const deleterIdentity = model.deleter_identity;
-      const resolvedDeleterIdentity =
-        await identityFetcher.getProfileIdByIdentityKey(
-          {
-            identityKey: deleterIdentity
-          },
-          {}
-        );
-      if (!resolvedDeleterIdentity) {
-        throw new NotFoundException(
-          `${deleterIdentity} doesn't have a profile`
-        );
-      }
+    const isBackendDelete = model.deletion_purpose === 'SYSTEM_DELETE';
+    const isPermanentDelete = model.deletion_purpose !== 'UPDATE';
+    const deleterId = await this.resolveDeleterId(model, {
+      timer,
+      connection
+    });
+    if (!isBackendDelete && !model.deleter_id) {
       return await this.execute(
-        { ...model, deleter_id: resolvedDeleterIdentity },
+        { ...model, deleter_id: deleterId },
         { timer, connection }
       );
     }
+    if (!isBackendDelete && !deleterId) {
+      throw new Error('Expected deleter_id to be resolved');
+    }
+    const resolvedDeleterId = deleterId ?? null;
     const dropId = model.drop_id;
     const drop = await this.dropsDb.findDropById(dropId, connection);
     if (drop !== null) {
       const waveId = drop.wave_id;
       const wave = await this.dropsDb.findWaveByIdOrNull(waveId, connection);
-      await this.assertDeleterIsAllowedToDeleteDrop({
-        drop,
-        deleterId,
-        wave,
-        model,
-        timer
-      });
-      if (
-        wave?.description_drop_id === dropId &&
-        model.deletion_purpose === 'DELETE'
-      ) {
+      if (!isBackendDelete) {
+        if (!resolvedDeleterId) {
+          throw new Error('Expected deleter_id to be resolved');
+        }
+        await this.assertDeleterIsAllowedToDeleteDrop({
+          drop,
+          deleterId: resolvedDeleterId,
+          wave,
+          model,
+          timer
+        });
+      }
+      if (wave?.description_drop_id === dropId && isPermanentDelete) {
         throw new BadRequestException('Cannot delete the description drop');
       }
       await Promise.all([
@@ -106,7 +130,7 @@ export class DeleteDropUseCase {
           timer,
           connection
         }),
-        ...(model.deletion_purpose === 'DELETE'
+        ...(isPermanentDelete
           ? [
               this.artCurationTokenWatchService.unregisterDrop(dropId, {
                 timer,
@@ -119,7 +143,7 @@ export class DeleteDropUseCase {
         this.dropsDb.deleteDropSubscriptions(dropId, { timer, connection }),
         this.dropBookmarksDb.deleteBookmarksByDropId(dropId, connection)
       ]);
-      if (model.deletion_purpose === 'DELETE') {
+      if (isPermanentDelete) {
         await this.dropsDb.resyncParticipatoryDropCountsForWaves(
           [drop.wave_id],
           {
@@ -131,7 +155,7 @@ export class DeleteDropUseCase {
           {
             id: dropId,
             wave_id: waveId,
-            author_id: deleterId,
+            author_id: drop.author_id,
             created_at: drop.created_at,
             deleted_at: Time.currentMillis()
           },

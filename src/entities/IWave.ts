@@ -36,6 +36,9 @@ export interface WaveBaseType {
   readonly participation_max_applications_per_participant: number | null;
   readonly participation_required_metadata: WaveRequiredMetadataItem[];
   readonly participation_required_media: ParticipationRequiredMedia[];
+  readonly submission_type: WaveSubmissionType | null;
+  readonly identity_submission_strategy: WaveIdentitySubmissionStrategy | null;
+  readonly identity_submission_duplicates: WaveIdentitySubmissionDuplicates | null;
   readonly participation_period_start: number | null;
   readonly participation_period_end: number | null;
   readonly type: WaveType;
@@ -112,6 +115,15 @@ export class WaveBase implements WaveBaseType {
 
   @Column({ type: 'json', nullable: false })
   readonly participation_required_media!: ParticipationRequiredMedia[];
+
+  @Column({ type: 'varchar', length: 50, nullable: true, default: null })
+  readonly submission_type!: WaveSubmissionType | null;
+
+  @Column({ type: 'varchar', length: 50, nullable: true, default: null })
+  readonly identity_submission_strategy!: WaveIdentitySubmissionStrategy | null;
+
+  @Column({ type: 'varchar', length: 50, nullable: true, default: null })
+  readonly identity_submission_duplicates!: WaveIdentitySubmissionDuplicates | null;
 
   @Column({ type: 'bigint', nullable: true })
   readonly participation_period_start!: number | null;
@@ -221,6 +233,22 @@ export enum ParticipationRequiredMedia {
   IMAGE = 'IMAGE',
   VIDEO = 'VIDEO',
   AUDIO = 'AUDIO'
+}
+
+export enum WaveSubmissionType {
+  IDENTITY = 'IDENTITY'
+}
+
+export enum WaveIdentitySubmissionStrategy {
+  ONLY_MYSELF = 'ONLY_MYSELF',
+  ONLY_OTHERS = 'ONLY_OTHERS',
+  EVERYONE = 'EVERYONE'
+}
+
+export enum WaveIdentitySubmissionDuplicates {
+  ALWAYS_ALLOW = 'ALWAYS_ALLOW',
+  ALLOW_AFTER_WIN = 'ALLOW_AFTER_WIN',
+  NEVER_ALLOW = 'NEVER_ALLOW'
 }
 
 export interface WaveRequiredMetadataItem {
