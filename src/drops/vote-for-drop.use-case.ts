@@ -42,17 +42,16 @@ export class VoteForDropUseCase {
       timer?: Timer;
       connection: ConnectionWrapper<any>;
     }
-  ) {
+  ): Promise<boolean> {
     if (!ctx.connection) {
-      await this.votingDb.executeNativeQueriesInTransaction(
+      return await this.votingDb.executeNativeQueriesInTransaction(
         async (connection) => {
-          await this.execute(
+          return await this.execute(
             { voter_id, drop_id, wave_id, votes, proxy_id },
             { ...ctx, connection }
           );
         }
       );
-      return;
     }
     await this.votingDb.lockDropsCurrentRealVote(drop_id, ctx);
     const now = Time.now();
@@ -156,6 +155,9 @@ export class VoteForDropUseCase {
         `Negative votes are not allowed in this wave`
       );
     }
+    if (change === 0) {
+      return false;
+    }
     await Promise.all([
       this.votingDb.upsertState(
         {
@@ -237,6 +239,7 @@ export class VoteForDropUseCase {
         ctx.connection
       );
     }
+    return true;
   }
 }
 
