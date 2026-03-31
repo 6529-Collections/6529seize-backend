@@ -9,15 +9,15 @@ import {
   DISTRIBUTION_PHASE_AIRDROP_ARTIST,
   DISTRIBUTION_PHASE_AIRDROP_TEAM
 } from '@/airdrop-phases';
-import { fetchPaginated } from '../../../db-api';
-import { sqlExecutor } from '../../../sql-executor';
-import { PaginatedResponse } from '../api-constants';
-import { constructFilters, getSearchFilters } from '../api-helpers';
-import { fetchDistributionPhotosCount } from '../distribution-photos/api.distribution_photos.db';
-import { DistributionNormalized } from '../generated/models/DistributionNormalized';
-import { DistributionOverview } from '../generated/models/DistributionOverview';
-import { PhaseAirdrop } from '../generated/models/PhaseAirdrop';
-import { checkIsNormalized } from './api.distributions.service';
+import { fetchDistributionPhotosCount } from '@/api/distribution-photos/api.distribution_photos.db';
+import { PaginatedResponse } from '@/api/api-constants';
+import { constructFilters, getSearchFilters } from '@/api/api-helpers';
+import { DistributionNormalized } from '@/api/generated/models/DistributionNormalized';
+import { DistributionOverview } from '@/api/generated/models/DistributionOverview';
+import { PhaseAirdrop } from '@/api/generated/models/PhaseAirdrop';
+import { checkIsNormalized } from '@/api/distributions/api.distributions.service';
+import { fetchPaginated } from '@/db-api';
+import { sqlExecutor } from '@/sql-executor';
 
 export async function fetchDistributionPhases(
   contract: string,

@@ -1,9 +1,9 @@
 import { DISTRIBUTION_PHOTO_TABLE } from '@/constants';
-import { fetchPaginated } from '../../../db-api';
-import { sqlExecutor } from '../../../sql-executor';
-import { PaginatedResponse } from '../api-constants';
-import { constructFilters } from '../api-helpers';
-import { DistributionPhoto } from '../generated/models/DistributionPhoto';
+import { fetchPaginated } from '@/db-api';
+import { sqlExecutor } from '@/sql-executor';
+import { PaginatedResponse } from '@/api/api-constants';
+import { constructFilters } from '@/api/api-helpers';
+import { DistributionPhoto } from '@/api/generated/models/DistributionPhoto';
 
 const DISTRIBUTION_PHOTOS_ORDER_BY = `id asc`;
 
