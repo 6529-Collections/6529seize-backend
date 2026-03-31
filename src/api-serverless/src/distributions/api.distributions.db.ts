@@ -1,7 +1,6 @@
 import {
   CONSOLIDATED_WALLETS_TDH_TABLE,
   DISTRIBUTION_NORMALIZED_TABLE,
-  DISTRIBUTION_PHOTO_TABLE,
   DISTRIBUTION_TABLE
 } from '@/constants';
 import {
@@ -107,19 +106,6 @@ export async function fetchDistributions(
     d.allowlist = JSON.parse(d.allowlist);
   });
   return results;
-}
-
-export async function fetchDistributionPhotos(
-  contract: string,
-  cardId: number
-): Promise<{ link: string }[]> {
-  return sqlExecutor.execute<{ link: string }>(
-    `SELECT link FROM ${DISTRIBUTION_PHOTO_TABLE} WHERE contract = :contract AND card_id = :cardId ORDER BY link ASC`,
-    {
-      contract: contract.toLowerCase(),
-      cardId
-    }
-  );
 }
 
 export async function fetchDistributionAirdrops(
