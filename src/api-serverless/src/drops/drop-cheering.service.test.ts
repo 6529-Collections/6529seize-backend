@@ -61,7 +61,7 @@ describe('DropCheeringService', () => {
     (dropsDb.findDropByIdWithEligibilityCheck as jest.Mock).mockResolvedValue(
       dropEntity
     );
-    (voteForDrop.execute as jest.Mock).mockResolvedValue(undefined);
+    (voteForDrop.execute as jest.Mock).mockResolvedValue(true);
     (waveQuickVoteDb.insertSkip as jest.Mock).mockResolvedValue(undefined);
     (waveQuickVoteDb.findNextUndiscoveredDrop as jest.Mock).mockResolvedValue({
       id: 'another-drop'
@@ -104,6 +104,57 @@ describe('DropCheeringService', () => {
       },
       { connection }
     );
+  });
+
+  it('only registers a skip when a 0 rating is a no-op', async () => {
+    (voteForDrop.execute as jest.Mock).mockResolvedValue(false);
+
+    await service.updateCheers(
+      {
+        drop_id: dropEntity.id,
+        rater_profile_id: 'identity-1',
+        groupIdsUserIsEligibleFor: [],
+        cheersChange: 0
+      },
+      {}
+    );
+
+    expect(waveQuickVoteDb.insertSkip).toHaveBeenCalledWith(
+      {
+        identity_id: 'identity-1',
+        wave_id: dropEntity.wave_id,
+        drop_id: dropEntity.id
+      },
+      { connection }
+    );
+    expect(waveQuickVoteDb.findNextUndiscoveredDrop).not.toHaveBeenCalled();
+    expect(waveQuickVoteDb.clearSkips).not.toHaveBeenCalled();
+    expect(dropsService.findDropByIdOrThrow).not.toHaveBeenCalled();
+    expect(
+      wsListenersNotifier.notifyAboutDropRatingUpdate
+    ).not.toHaveBeenCalled();
+  });
+
+  it('does nothing extra when a non-zero rating is a no-op', async () => {
+    (voteForDrop.execute as jest.Mock).mockResolvedValue(false);
+
+    await service.updateCheers(
+      {
+        drop_id: dropEntity.id,
+        rater_profile_id: 'identity-1',
+        groupIdsUserIsEligibleFor: [],
+        cheersChange: 1
+      },
+      {}
+    );
+
+    expect(waveQuickVoteDb.insertSkip).not.toHaveBeenCalled();
+    expect(waveQuickVoteDb.findNextUndiscoveredDrop).not.toHaveBeenCalled();
+    expect(waveQuickVoteDb.clearSkips).not.toHaveBeenCalled();
+    expect(dropsService.findDropByIdOrThrow).not.toHaveBeenCalled();
+    expect(
+      wsListenersNotifier.notifyAboutDropRatingUpdate
+    ).not.toHaveBeenCalled();
   });
 
   it('clears quick-vote skips when the action completes the last undiscovered drop', async () => {
