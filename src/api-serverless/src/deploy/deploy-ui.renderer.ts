@@ -4,7 +4,9 @@ import {
   DEPLOY_REPO_OWNER,
   DEPLOY_WORKFLOW_NAME,
   DeployEnvironment,
-  DeployServiceConfig
+  DeployServiceConfig,
+  FRONTEND_DEPLOY_REPO_NAME,
+  FRONTEND_DEPLOY_REPO_OWNER
 } from '@/api/deploy/deploy.config';
 import { LOGO_SVG } from '@/api/health/health-ui.renderer';
 
@@ -1002,9 +1004,10 @@ export function renderDeployUI(services: DeployServiceConfig[]): string {
             <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
               <path d="M8 14.2L6.84 13.15C3.12 9.78 0.67 7.56 0.67 4.83C0.67 2.61 2.4 0.87 4.62 0.87C5.88 0.87 7.09 1.45 8 2.38C8.91 1.45 10.12 0.87 11.38 0.87C13.6 0.87 15.33 2.61 15.33 4.83C15.33 7.56 12.88 9.78 9.16 13.16L8 14.2Z"/>
             </svg>
-            <span>Health</span>
+            <span>API Health</span>
           </a>
           <a
+            id="repo-link"
             class="hero-link"
             href="https://github.com/${encodeURIComponent(DEPLOY_REPO_OWNER)}/${encodeURIComponent(DEPLOY_REPO_NAME)}"
             target="_blank"
@@ -1168,6 +1171,7 @@ export function renderDeployUiApp(): string {
   var tokenInput = document.getElementById('token-input');
   var connectButton = document.getElementById('connect-button');
   var forgetButton = document.getElementById('forget-button');
+  var repoLink = document.getElementById('repo-link');
   var authStatus = document.getElementById('auth-status');
   var sessionSummary = document.getElementById('session-summary');
   var deployTargetPanel = document.getElementById('deploy-target-panel');
@@ -1242,6 +1246,14 @@ export function renderDeployUiApp(): string {
 
   function getCurrentTargetConfig() {
     return TARGET_UI_CONFIGS[state.deployTarget] || TARGET_UI_CONFIGS.backend;
+  }
+
+  function getCurrentRepoUrl() {
+    if (state.deployTarget === 'frontend') {
+      return 'https://github.com/${encodeURIComponent(FRONTEND_DEPLOY_REPO_OWNER)}/${encodeURIComponent(FRONTEND_DEPLOY_REPO_NAME)}';
+    }
+
+    return 'https://github.com/${encodeURIComponent(DEPLOY_REPO_OWNER)}/${encodeURIComponent(DEPLOY_REPO_NAME)}';
   }
 
   function getCurrentRef() {
@@ -1324,6 +1336,10 @@ export function renderDeployUiApp(): string {
     var targetConfig = getCurrentTargetConfig();
     state.environment = getCurrentEnvironment();
     refInput.value = getCurrentRef();
+
+    if (repoLink) {
+      repoLink.setAttribute('href', getCurrentRepoUrl());
+    }
 
     if (deployPanelTitle) {
       deployPanelTitle.textContent = targetConfig.panelTitle;
