@@ -1,34 +1,34 @@
 import { Request, Response } from 'express';
 import * as Joi from 'joi';
 import { getPage, getPageSize, returnPaginatedResult } from '@/api/api-helpers';
+import { ApiResponse } from '@/api/api-response';
+import { asyncRouter } from '@/api/async.router';
+import { needsAuthenticatedUser } from '@/api/auth/auth';
+import {
+  fetchDistributionPhotos,
+  saveDistributionPhotos
+} from '@/api/distribution-photos/api.distribution_photos.db';
+import { ApiCompleteMultipartUploadRequest } from '@/api/generated/models/ApiCompleteMultipartUploadRequest';
+import { ApiCompleteMultipartUploadResponse } from '@/api/generated/models/ApiCompleteMultipartUploadResponse';
+import { ApiCreateMediaUploadUrlRequest } from '@/api/generated/models/ApiCreateMediaUploadUrlRequest';
+import { ApiCreateMediaUrlResponse } from '@/api/generated/models/ApiCreateMediaUrlResponse';
+import { ApiStartMultipartMediaUploadResponse } from '@/api/generated/models/ApiStartMultipartMediaUploadResponse';
+import { ApiUploadPartOfMultipartUploadRequest } from '@/api/generated/models/ApiUploadPartOfMultipartUploadRequest';
+import { ApiUploadPartOfMultipartUploadResponse } from '@/api/generated/models/ApiUploadPartOfMultipartUploadResponse';
+import { DistributionPhotoCompleteRequest } from '@/api/generated/models/DistributionPhotoCompleteRequest';
 import { Logger } from '@/logging';
-import { BadRequestException, ForbiddenException } from '../../../exceptions';
-import { numbers } from '../../../numbers';
-import { ApiResponse } from '../api-response';
-import { asyncRouter } from '../async.router';
-import { needsAuthenticatedUser } from '../auth/auth';
-import { ApiCompleteMultipartUploadRequest } from '../generated/models/ApiCompleteMultipartUploadRequest';
-import { ApiCompleteMultipartUploadResponse } from '../generated/models/ApiCompleteMultipartUploadResponse';
-import { ApiCreateMediaUploadUrlRequest } from '../generated/models/ApiCreateMediaUploadUrlRequest';
-import { ApiCreateMediaUrlResponse } from '../generated/models/ApiCreateMediaUrlResponse';
-import { ApiStartMultipartMediaUploadResponse } from '../generated/models/ApiStartMultipartMediaUploadResponse';
-import { ApiUploadPartOfMultipartUploadRequest } from '../generated/models/ApiUploadPartOfMultipartUploadRequest';
-import { ApiUploadPartOfMultipartUploadResponse } from '../generated/models/ApiUploadPartOfMultipartUploadResponse';
-import { DistributionPhotoCompleteRequest } from '../generated/models/DistributionPhotoCompleteRequest';
 import {
   ApiCompleteMultipartUploadRequestSchema,
   ApiUploadPartOfMultipartUploadRequestSchema,
   createDistributionPhotoMediaPrepRequestSchema
-} from '../media/media-uplodad.validators';
-import { uploadMediaService } from '../media/upload-media.service';
-import { cacheRequest } from '../request-cache';
-import { authenticateSubscriptionsAdmin } from '../subscriptions/api.subscriptions.allowlist';
-import { getValidatedByJoiOrThrow } from '../validation';
+} from '@/api/media/media-uplodad.validators';
+import { uploadMediaService } from '@/api/media/upload-media.service';
+import { cacheRequest } from '@/api/request-cache';
+import { authenticateSubscriptionsAdmin } from '@/api/subscriptions/api.subscriptions.allowlist';
+import { getValidatedByJoiOrThrow } from '@/api/validation';
+import { BadRequestException, ForbiddenException } from '@/exceptions';
+import { numbers } from '@/numbers';
 import { evictRedisCacheForPathWithTimeout } from '@/redis';
-import {
-  fetchDistributionPhotos,
-  saveDistributionPhotos
-} from './api.distribution_photos.db';
 
 const router = asyncRouter();
 const logger = Logger.get('DISTRIBUTION_PHOTOS');

@@ -1,15 +1,15 @@
 import fetch, { RequestInit as NodeFetchRequestInit } from 'node-fetch';
 import { PDFDocument } from 'pdf-lib';
-import { env } from '../../../env';
-import { BadRequestException } from '../../../exceptions';
-import { Logger } from '../../../logging';
+import { fetchDistributionPhotoLinks } from '@/api/distribution-photos/api.distribution_photos.db';
 import {
   fetchDistributionAirdrops,
   fetchDistributionOverview,
-  fetchDistributionPhotos,
   fetchDistributionsByPhase,
   PhaseDistributionData
-} from './api.distributions.db';
+} from '@/api/distributions/api.distributions.db';
+import { env } from '@/env';
+import { BadRequestException } from '@/exceptions';
+import { Logger } from '@/logging';
 
 interface PhotoUpload {
   fileName: string;
@@ -149,7 +149,7 @@ export class GitHubDistributionService {
       );
     }
 
-    const photos = await fetchDistributionPhotos(contract, cardId);
+    const photos = await fetchDistributionPhotoLinks(contract, cardId);
     if (photos.length === 0) {
       throw new BadRequestException(
         `Cannot upload to GitHub: No photos found for ${contract}#${cardId}. Please upload photos first.`

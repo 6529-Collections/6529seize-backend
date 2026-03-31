@@ -1,7 +1,6 @@
 import {
   CONSOLIDATED_WALLETS_TDH_TABLE,
   DISTRIBUTION_NORMALIZED_TABLE,
-  DISTRIBUTION_PHOTO_TABLE,
   DISTRIBUTION_TABLE
 } from '@/constants';
 import {
@@ -10,14 +9,15 @@ import {
   DISTRIBUTION_PHASE_AIRDROP_ARTIST,
   DISTRIBUTION_PHASE_AIRDROP_TEAM
 } from '@/airdrop-phases';
-import { fetchPaginated } from '../../../db-api';
-import { sqlExecutor } from '../../../sql-executor';
-import { PaginatedResponse } from '../api-constants';
-import { constructFilters, getSearchFilters } from '../api-helpers';
-import { DistributionNormalized } from '../generated/models/DistributionNormalized';
-import { DistributionOverview } from '../generated/models/DistributionOverview';
-import { PhaseAirdrop } from '../generated/models/PhaseAirdrop';
-import { checkIsNormalized } from './api.distributions.service';
+import { fetchDistributionPhotosCount } from '@/api/distribution-photos/api.distribution_photos.db';
+import { PaginatedResponse } from '@/api/api-constants';
+import { constructFilters, getSearchFilters } from '@/api/api-helpers';
+import { DistributionNormalized } from '@/api/generated/models/DistributionNormalized';
+import { DistributionOverview } from '@/api/generated/models/DistributionOverview';
+import { PhaseAirdrop } from '@/api/generated/models/PhaseAirdrop';
+import { checkIsNormalized } from '@/api/distributions/api.distributions.service';
+import { fetchPaginated } from '@/db-api';
+import { sqlExecutor } from '@/sql-executor';
 
 export async function fetchDistributionPhases(
   contract: string,
@@ -109,19 +109,6 @@ export async function fetchDistributions(
   return results;
 }
 
-export async function fetchDistributionPhotos(
-  contract: string,
-  cardId: number
-): Promise<{ link: string }[]> {
-  return sqlExecutor.execute<{ link: string }>(
-    `SELECT link FROM ${DISTRIBUTION_PHOTO_TABLE} WHERE contract = :contract AND card_id = :cardId ORDER BY link ASC`,
-    {
-      contract: contract.toLowerCase(),
-      cardId
-    }
-  );
-}
-
 export async function fetchDistributionAirdrops(
   contract: string,
   cardId: number
@@ -196,14 +183,10 @@ export async function fetchDistributionOverview(
 ): Promise<DistributionOverview> {
   const contractLower = contract.toLowerCase();
 
-  const photoCountResult = await sqlExecutor.execute<{ count: number }>(
-    `SELECT COUNT(*) as count FROM ${DISTRIBUTION_PHOTO_TABLE} WHERE contract = :contract AND card_id = :cardId`,
-    {
-      contract: contractLower,
-      cardId
-    }
+  const photos_count = await fetchDistributionPhotosCount(
+    contractLower,
+    cardId
   );
-  const photos_count = photoCountResult[0]?.count || 0;
 
   const distributionPhasesResult = await sqlExecutor.execute<{ phase: string }>(
     `SELECT DISTINCT phase FROM ${DISTRIBUTION_TABLE} WHERE contract = :contract AND card_id = :cardId`,

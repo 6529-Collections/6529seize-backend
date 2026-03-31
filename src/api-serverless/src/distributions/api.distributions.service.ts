@@ -19,17 +19,17 @@ import {
   NFTS_TABLE
 } from '@/constants';
 import {
-  AllowlistNormalizedEntry,
-  Distribution
-} from '../../../entities/IDistribution';
-import { BadRequestException } from '../../../exceptions';
-import { sqlExecutor } from '../../../sql-executor';
-import {
   deleteAirdropDistributions,
   DistributionInsert,
   fetchWalletTdhData,
   insertDistributions
-} from './api.distributions.db';
+} from '@/api/distributions/api.distributions.db';
+import { BadRequestException } from '@/exceptions';
+import {
+  AllowlistNormalizedEntry,
+  Distribution
+} from '@/entities/IDistribution';
+import { sqlExecutor } from '@/sql-executor';
 
 const automaticAirdropPhaseSet = new Set<string>(
   DISTRIBUTION_AUTOMATIC_AIRDROP_PHASES
