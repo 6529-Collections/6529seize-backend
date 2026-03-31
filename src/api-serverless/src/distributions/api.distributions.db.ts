@@ -1,7 +1,6 @@
 import {
   CONSOLIDATED_WALLETS_TDH_TABLE,
   DISTRIBUTION_NORMALIZED_TABLE,
-  DISTRIBUTION_PHOTO_TABLE,
   DISTRIBUTION_TABLE
 } from '@/constants';
 import {
@@ -14,6 +13,7 @@ import { fetchPaginated } from '../../../db-api';
 import { sqlExecutor } from '../../../sql-executor';
 import { PaginatedResponse } from '../api-constants';
 import { constructFilters, getSearchFilters } from '../api-helpers';
+import { fetchDistributionPhotosCount } from '../distribution-photos/api.distribution_photos.db';
 import { DistributionNormalized } from '../generated/models/DistributionNormalized';
 import { DistributionOverview } from '../generated/models/DistributionOverview';
 import { PhaseAirdrop } from '../generated/models/PhaseAirdrop';
@@ -183,14 +183,10 @@ export async function fetchDistributionOverview(
 ): Promise<DistributionOverview> {
   const contractLower = contract.toLowerCase();
 
-  const photoCountResult = await sqlExecutor.execute<{ count: number }>(
-    `SELECT COUNT(*) as count FROM ${DISTRIBUTION_PHOTO_TABLE} WHERE contract = :contract AND card_id = :cardId`,
-    {
-      contract: contractLower,
-      cardId
-    }
+  const photos_count = await fetchDistributionPhotosCount(
+    contractLower,
+    cardId
   );
-  const photos_count = photoCountResult[0]?.count || 0;
 
   const distributionPhasesResult = await sqlExecutor.execute<{ phase: string }>(
     `SELECT DISTINCT phase FROM ${DISTRIBUTION_TABLE} WHERE contract = :contract AND card_id = :cardId`,

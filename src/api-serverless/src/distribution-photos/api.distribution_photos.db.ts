@@ -51,6 +51,17 @@ export async function fetchDistributionPhotoLinks(
   );
 }
 
+export async function fetchDistributionPhotosCount(
+  contract: string,
+  cardId: number
+): Promise<number> {
+  const result = await sqlExecutor.execute<{ count: number }>(
+    `SELECT COUNT(*) as count FROM ${DISTRIBUTION_PHOTO_TABLE} WHERE contract = :contract AND card_id = :card_id`,
+    buildDistributionPhotoParams(contract, cardId)
+  );
+  return result[0]?.count || 0;
+}
+
 export async function saveDistributionPhotos(
   contract: string,
   cardId: number,
