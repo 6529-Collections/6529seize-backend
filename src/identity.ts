@@ -1148,10 +1148,29 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
       `
     with cs as (
         select matter_target_id as profile_id, sum(rating) as rating from ${RATINGS_TABLE} where matter = 'REP' group by 1
-    ), out_of_sync_reps as (select i.profile_id, i.rep, ifnull(c.rating, 0) as rating from ${IDENTITIES_TABLE} i left join cs c on c.profile_id = i.profile_id where ifnull(c.rating, 0) <> i.rep)
+    )
     update ${IDENTITIES_TABLE} i
-        inner join out_of_sync_reps on i.profile_id = out_of_sync_reps.profile_id
-    set i.rep = out_of_sync_reps.rating where true
+        inner join cs on cs.profile_id = i.profile_id
+    set i.rep = cs.rating
+    where cs.rating <> i.rep
+  `,
+      undefined,
+      { wrappedConnection: connection }
+    );
+    await db.execute(
+      `
+    update ${IDENTITIES_TABLE} i
+    set i.rep = 0
+    where i.rep <> 0
+      and (
+        i.profile_id is null
+        or not exists (
+          select 1
+          from ${RATINGS_TABLE} r
+          where r.matter = 'REP'
+            and r.matter_target_id = i.profile_id
+        )
+      )
   `,
       undefined,
       { wrappedConnection: connection }
@@ -1160,10 +1179,29 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
       `
         with cs as (
             select matter_target_id as profile_id, sum(rating) as rating from ${RATINGS_TABLE} where matter = 'CIC' group by 1
-        ), out_of_sync_cics as (select i.profile_id, i.rep, ifnull(c.rating, 0) as rating from ${IDENTITIES_TABLE} i left join cs c on c.profile_id = i.profile_id where ifnull(c.rating, 0) <> i.cic)
+        )
         update ${IDENTITIES_TABLE} i
-            inner join out_of_sync_cics on i.profile_id = out_of_sync_cics.profile_id
-        set i.cic = out_of_sync_cics.rating where true
+            inner join cs on cs.profile_id = i.profile_id
+        set i.cic = cs.rating
+        where cs.rating <> i.cic
+  `,
+      undefined,
+      { wrappedConnection: connection }
+    );
+    await db.execute(
+      `
+        update ${IDENTITIES_TABLE} i
+        set i.cic = 0
+        where i.cic <> 0
+          and (
+            i.profile_id is null
+            or not exists (
+              select 1
+              from ${RATINGS_TABLE} r
+              where r.matter = 'CIC'
+                and r.matter_target_id = i.profile_id
+            )
+          )
   `,
       undefined,
       { wrappedConnection: connection }
