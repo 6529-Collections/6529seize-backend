@@ -131,6 +131,15 @@ describeWithSeed(
           primary_address: '0x3',
           handle: '0x3'
         }
+      ),
+      anIdentity(
+        { rep: 0, tdh: 0, basetdh_rate: 0, cic: 0 },
+        {
+          consolidation_key: '0x4',
+          profile_id: '0x4',
+          primary_address: '0x4',
+          handle: '0x4'
+        }
       )
     ]),
     withRatings([
@@ -218,7 +227,7 @@ describeWithSeed(
           { rep: number; cic: number; tdh: number; tdh_rate: number }
         >
       );
-      expect(identities.length).toBe(3);
+      expect(identities.length).toBe(4);
 
       expect(grouped['0x1'].tdh).toBe(0);
       expect(grouped['0x1'].tdh_rate).toBe(0);
@@ -234,6 +243,11 @@ describeWithSeed(
       expect(grouped['0x3'].tdh_rate).toBe(3);
       expect(grouped['0x3'].cic).toBe(3);
       expect(grouped['0x3'].rep).toBe(3);
+
+      expect(grouped['0x4'].tdh).toBe(0);
+      expect(grouped['0x4'].tdh_rate).toBe(0);
+      expect(grouped['0x4'].cic).toBe(0);
+      expect(grouped['0x4'].rep).toBe(0);
     });
   }
 );
