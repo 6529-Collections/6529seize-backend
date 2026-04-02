@@ -63,6 +63,24 @@ export class DropCheeringService {
             break;
           }
           case DropType.PARTICIPATORY: {
+            if (param.cheersChange === 0) {
+              await this.waveQuickVoteDb.insertSkip(
+                {
+                  identity_id: param.rater_profile_id,
+                  wave_id: dropEntity.wave_id,
+                  drop_id: dropId
+                },
+                ctxWithConnection
+              );
+              await this.clearSkipsIfRoundCompleted(
+                {
+                  identity_id: param.rater_profile_id,
+                  wave_id: dropEntity.wave_id
+                },
+                ctxWithConnection
+              );
+              return null;
+            }
             const voteChanged = await this.voteForDrop.execute(
               {
                 drop_id: dropId,
@@ -73,36 +91,16 @@ export class DropCheeringService {
               },
               ctxWithConnection
             );
-            if (param.cheersChange === 0) {
-              await this.waveQuickVoteDb.insertSkip(
-                {
-                  identity_id: param.rater_profile_id,
-                  wave_id: dropEntity.wave_id,
-                  drop_id: dropId
-                },
-                ctxWithConnection
-              );
-            }
             if (!voteChanged) {
               return null;
             }
-            const nextUndiscoveredDrop =
-              await this.waveQuickVoteDb.findNextUndiscoveredDrop(
-                {
-                  identity_id: param.rater_profile_id,
-                  wave_id: dropEntity.wave_id
-                },
-                ctxWithConnection
-              );
-            if (!nextUndiscoveredDrop) {
-              await this.waveQuickVoteDb.clearSkips(
-                {
-                  identity_id: param.rater_profile_id,
-                  wave_id: dropEntity.wave_id
-                },
-                ctxWithConnection
-              );
-            }
+            await this.clearSkipsIfRoundCompleted(
+              {
+                identity_id: param.rater_profile_id,
+                wave_id: dropEntity.wave_id
+              },
+              ctxWithConnection
+            );
             break;
           }
           case DropType.WINNER: {
@@ -127,6 +125,17 @@ export class DropCheeringService {
     }
     await giveReadReplicaTimeToCatchUp();
     await this.wsListenersNotifier.notifyAboutDropRatingUpdate(drop, ctx);
+  }
+
+  private async clearSkipsIfRoundCompleted(
+    param: { identity_id: string; wave_id: string },
+    ctx: RequestContext
+  ): Promise<void> {
+    const nextUndiscoveredDrop =
+      await this.waveQuickVoteDb.findNextUndiscoveredDrop(param, ctx);
+    if (!nextUndiscoveredDrop) {
+      await this.waveQuickVoteDb.clearSkips(param, ctx);
+    }
   }
 }
 
