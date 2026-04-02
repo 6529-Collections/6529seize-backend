@@ -1,13 +1,18 @@
 import { identitiesDb, IdentitiesDb } from '../../../identities/identities.db';
 import { UUID_REGEX, WALLET_REGEX } from '@/constants';
+import { cicDb, CicDb } from '@/cic/cic.db';
+import { collections } from '@/collections';
+import { ratingsDb, RatingsDb } from '@/rates/ratings.db';
 import { Alchemy } from 'alchemy-sdk';
 import { getAlchemyInstance } from '../../../alchemy';
 import { IdentityEntity } from '../../../entities/IIdentity';
 import { RequestContext } from '../../../request.context';
+import { ApiDropResolvedIdentityProfile } from '../generated/models/ApiDropResolvedIdentityProfile';
 import { ApiIdentity } from '../generated/models/ApiIdentity';
 import { getLevelFromScore } from '../../../profiles/profile-level';
 import { ConnectionWrapper } from '../../../sql-executor';
 import { ApiProfileMin } from '../generated/models/ApiProfileMin';
+import { ApiProfileRepCategorySummary } from '../generated/models/ApiProfileRepCategorySummary';
 import { ActivityEventTargetType } from '../../../entities/IActivityEvent';
 import { ApiIdentitySubscriptionTargetAction } from '../generated/models/ApiIdentitySubscriptionTargetAction';
 import {
@@ -23,6 +28,8 @@ export class IdentityFetcher {
   constructor(
     private readonly identitiesDb: IdentitiesDb,
     private readonly identitySubscriptionsDb: IdentitySubscriptionsDb,
+    private readonly cicDb: CicDb,
+    private readonly ratingsDb: RatingsDb,
     private readonly supplyAlchemy: () => Alchemy
   ) {}
 
@@ -160,6 +167,93 @@ export class IdentityFetcher {
       },
       {} as Record<string, ApiProfileMin>
     );
+  }
+
+  public async getDropResolvedIdentitiesByIds(
+    {
+      ids,
+      baseProfilesById
+    }: {
+      ids: string[];
+      baseProfilesById?: Record<string, ApiProfileMin>;
+    },
+    ctx: RequestContext
+  ): Promise<Record<string, ApiDropResolvedIdentityProfile>> {
+    const distinctIds = collections.distinct(ids);
+    if (!distinctIds.length) {
+      return {};
+    }
+    ctx.timer?.start(
+      `${this.constructor.name}->getDropResolvedIdentitiesByIds`
+    );
+    try {
+      const providedProfiles = distinctIds.reduce(
+        (acc, id) => {
+          const profile = baseProfilesById?.[id];
+          if (profile) {
+            acc[id] = profile;
+          }
+          return acc;
+        },
+        {} as Record<string, ApiProfileMin>
+      );
+      const missingIds = distinctIds.filter((id) => !providedProfiles[id]);
+      const [fetchedProfiles, bios, topRepCategoriesRows] = await Promise.all([
+        missingIds.length
+          ? this.getOverviewsByIds(missingIds, ctx)
+          : Promise.resolve({} as Record<string, ApiProfileMin>),
+        this.cicDb.getLatestBiosByProfileIds(distinctIds, ctx),
+        this.ratingsDb.getTopAbsoluteRepCategoriesByTargetIds(
+          {
+            targetIds: distinctIds,
+            limitPerTarget: 2
+          },
+          ctx
+        )
+      ]);
+      const profilesById = {
+        ...providedProfiles,
+        ...fetchedProfiles
+      };
+      const biosByProfileId = bios.reduce(
+        (acc, row) => {
+          acc[row.profile_id] = row.bio;
+          return acc;
+        },
+        {} as Record<string, string>
+      );
+      const topRepCategoriesByProfileId = topRepCategoriesRows.reduce(
+        (acc, row) => {
+          const categories = acc[row.profile_id] ?? [];
+          categories.push({
+            category: row.category,
+            rep: row.rep
+          });
+          acc[row.profile_id] = categories;
+          return acc;
+        },
+        {} as Record<string, ApiProfileRepCategorySummary[]>
+      );
+      return distinctIds.reduce(
+        (acc, id) => {
+          const profile = profilesById[id];
+          if (!profile) {
+            return acc;
+          }
+          acc[id] = {
+            ...profile,
+            bio: biosByProfileId[id] ?? null,
+            top_rep_categories: topRepCategoriesByProfileId[id] ?? []
+          };
+          return acc;
+        },
+        {} as Record<string, ApiDropResolvedIdentityProfile>
+      );
+    } finally {
+      ctx.timer?.stop(
+        `${this.constructor.name}->getDropResolvedIdentitiesByIds`
+      );
+    }
   }
 
   private async getSubscribedActions(
@@ -618,5 +712,7 @@ export class IdentityFetcher {
 export const identityFetcher = new IdentityFetcher(
   identitiesDb,
   identitySubscriptionsDb,
+  cicDb,
+  ratingsDb,
   getAlchemyInstance
 );

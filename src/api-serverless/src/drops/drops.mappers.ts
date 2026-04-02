@@ -56,6 +56,7 @@ import { ApiWaveOutcomeSubType } from '../generated/models/ApiWaveOutcomeSubType
 import { ApiWaveOutcomeCredit } from '../generated/models/ApiWaveOutcomeCredit';
 import { WinnerDropVoterVoteEntity } from '../../../entities/IWinnerDropVoterVote';
 import { ApiDropContextProfileContext } from '../generated/models/ApiDropContextProfileContext';
+import { ApiDropResolvedIdentityProfile } from '../generated/models/ApiDropResolvedIdentityProfile';
 import {
   identityFetcher,
   IdentityFetcher
@@ -614,27 +615,39 @@ export class DropsMappers {
     const voterProfileIds = Object.values(dropsTopVoters)
       .map((it) => it.map((r) => r.voter_id))
       .flat();
+    const identityMetadataProfileIds = collections.distinct(
+      metadata
+        .filter((it) => it.data_key === 'identity')
+        .map((it) => it.data_value)
+    );
     const allProfileIds = collections.distinct([
       ...allEntities.map((it) => it.author_id),
       ...mentions.map((it) => it.mentioned_profile_id),
       ...voterProfileIds,
       ...Object.values(deletedDrops).map((it) => it.author_id),
-      ...metadata
-        .filter((it) => it.data_key === 'identity')
-        .map((it) => it.data_value),
+      ...identityMetadataProfileIds,
       ...Object.values(winningDropsTopRaters)
         .flat()
         .map((it) => it.voter_id)
     ]);
+    const identityContext = {
+      connection: ctx.connection,
+      authenticationContext: contextProfileId
+        ? AuthenticationContext.fromProfileId(contextProfileId)
+        : AuthenticationContext.notAuthenticated()
+    };
     const profileMins = await this.identityFetcher.getOverviewsByIds(
       allProfileIds,
-      {
-        connection: ctx.connection,
-        authenticationContext: contextProfileId
-          ? AuthenticationContext.fromProfileId(contextProfileId)
-          : AuthenticationContext.notAuthenticated()
-      }
+      identityContext
     );
+    const resolvedIdentityProfilesByIds =
+      await this.identityFetcher.getDropResolvedIdentitiesByIds(
+        {
+          ids: identityMetadataProfileIds,
+          baseProfilesById: profileMins
+        },
+        identityContext
+      );
     const UNKNOWN_PROFILE: ApiProfileMin = {
       id: 'an-unknown-profile',
       handle: 'An unknown profile',
@@ -668,7 +681,7 @@ export class DropsMappers {
         dropEntity,
         deletedDrops,
         profilesByIds,
-        resolvedProfilesByIds: profileMins,
+        resolvedProfilesByIds: resolvedIdentityProfilesByIds,
         dropsParts,
         dropMedia,
         contextProfileId,
@@ -740,7 +753,7 @@ export class DropsMappers {
     dropEntity: DropEntity;
     deletedDrops: Record<string, DeletedDropEntity>;
     profilesByIds: Record<string, ApiProfileMin>;
-    resolvedProfilesByIds: Record<string, ApiProfileMin>;
+    resolvedProfilesByIds: Record<string, ApiDropResolvedIdentityProfile>;
     dropsParts: Record<string, DropPartEntity[]>;
     dropMedia: Record<string, DropMediaEntity[]>;
     contextProfileId: string | undefined | null;
