@@ -27,8 +27,25 @@ function aProfileMin(id: string): ApiProfileMin {
   };
 }
 
+function aResolvedIdentityProfile(id: string) {
+  return {
+    ...aProfileMin(id),
+    bio: `bio-${id}`,
+    top_rep_categories: [
+      {
+        category: 'LEADERSHIP',
+        rep: -12
+      },
+      {
+        category: 'STRATEGY',
+        rep: 8
+      }
+    ]
+  };
+}
+
 describe('DropsMappers', () => {
-  it('uses the transactional connection when resolving metadata profiles', async () => {
+  it('uses the transactional connection when resolving identity metadata profiles', async () => {
     const userGroupsService = {
       getGroupsUserIsEligibleFor: jest.fn().mockResolvedValue([])
     };
@@ -36,6 +53,9 @@ describe('DropsMappers', () => {
       getOverviewsByIds: jest.fn().mockResolvedValue({
         'author-profile': aProfileMin('author-profile'),
         'nominated-profile': aProfileMin('nominated-profile')
+      }),
+      getDropResolvedIdentitiesByIds: jest.fn().mockResolvedValue({
+        'nominated-profile': aResolvedIdentityProfile('nominated-profile')
       })
     };
     const dropsDb = {
@@ -134,7 +154,7 @@ describe('DropsMappers', () => {
     dropsDb.getDropsByIds.mockResolvedValue([dropEntity]);
     const connection = { connection: { id: 'tx' } } as any;
 
-    await mapper.convertToDropsWithoutWaves([dropEntity], {
+    const [mappedDrop] = await mapper.convertToDropsWithoutWaves([dropEntity], {
       connection,
       authenticationContext: AuthenticationContext.notAuthenticated()
     });
@@ -143,5 +163,24 @@ describe('DropsMappers', () => {
     expect(identityFetcher.getOverviewsByIds.mock.calls[0][1]).toMatchObject({
       connection
     });
+    expect(
+      identityFetcher.getDropResolvedIdentitiesByIds
+    ).toHaveBeenCalledTimes(1);
+    expect(
+      identityFetcher.getDropResolvedIdentitiesByIds.mock.calls[0][0]
+    ).toMatchObject({
+      ids: ['nominated-profile'],
+      baseProfilesById: {
+        'nominated-profile': aProfileMin('nominated-profile')
+      }
+    });
+    expect(
+      identityFetcher.getDropResolvedIdentitiesByIds.mock.calls[0][1]
+    ).toMatchObject({
+      connection
+    });
+    expect(mappedDrop.metadata[0].resolved_profile).toEqual(
+      aResolvedIdentityProfile('nominated-profile')
+    );
   });
 });

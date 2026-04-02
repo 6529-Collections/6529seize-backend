@@ -4,9 +4,15 @@ import {
   LazyDbAccessCompatibleService
 } from '../sql-executor';
 import { CIC_STATEMENTS_TABLE } from '@/constants';
-import { CicStatement } from '../entities/ICICStatement';
+import { CicStatement, CicStatementGroup } from '../entities/ICICStatement';
 import { DbPoolName } from '../db-query.options';
 import { ids } from '../ids';
+import { RequestContext } from '../request.context';
+
+export interface ProfileBioRow {
+  readonly profile_id: string;
+  readonly bio: string;
+}
 
 export class CicDb extends LazyDbAccessCompatibleService {
   async insertCicStatement(
@@ -75,6 +81,49 @@ export class CicDb extends LazyDbAccessCompatibleService {
       { profile_id: profile_id },
       opts
     );
+  }
+
+  async getLatestBiosByProfileIds(
+    profileIds: string[],
+    ctx: RequestContext
+  ): Promise<ProfileBioRow[]> {
+    if (!profileIds.length) {
+      return [];
+    }
+    ctx.timer?.start(`${this.constructor.name}->getLatestBiosByProfileIds`);
+    try {
+      return await this.db.execute<ProfileBioRow>(
+        `
+          with ranked_bios as (
+            select
+              profile_id,
+              statement_value as bio,
+              row_number() over (
+                partition by profile_id
+                order by crated_at desc, id desc
+              ) as ranking
+            from ${CIC_STATEMENTS_TABLE}
+            where profile_id in (:profileIds)
+              and statement_group = :statementGroup
+              and statement_type = :statementType
+          )
+          select profile_id, bio
+          from ranked_bios
+          where ranking = 1
+        `,
+        {
+          profileIds,
+          statementGroup: CicStatementGroup.GENERAL,
+          statementType: 'BIO'
+        },
+        {
+          wrappedConnection: ctx.connection,
+          forcePool: DbPoolName.WRITE
+        }
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->getLatestBiosByProfileIds`);
+    }
   }
 }
 

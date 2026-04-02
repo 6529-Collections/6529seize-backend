@@ -23,6 +23,12 @@ export interface IdentityUpdate {
   cicChange?: number;
 }
 
+export interface TopAbsoluteRepCategoryRow {
+  readonly profile_id: string;
+  readonly category: string;
+  readonly rep: number;
+}
+
 export class RatingsDb extends LazyDbAccessCompatibleService {
   async getAggregatedRatingOnMatter(
     {
@@ -780,6 +786,67 @@ from grouped_rates r
       `${this.constructor.name}->getAllRepRatingsForTargetsAndCategories`
     );
     return results;
+  }
+
+  async getTopAbsoluteRepCategoriesByTargetIds(
+    {
+      targetIds,
+      limitPerTarget
+    }: {
+      targetIds: string[];
+      limitPerTarget: number;
+    },
+    ctx: RequestContext
+  ): Promise<TopAbsoluteRepCategoryRow[]> {
+    if (!targetIds.length || limitPerTarget <= 0) {
+      return [];
+    }
+    ctx.timer?.start(
+      `${this.constructor.name}->getTopAbsoluteRepCategoriesByTargetIds`
+    );
+    try {
+      return this.db.execute<TopAbsoluteRepCategoryRow>(
+        `
+          with rep_category_totals as (
+            select
+              matter_target_id as profile_id,
+              matter_category as category,
+              sum(rating) as rep
+            from ${RATINGS_TABLE}
+            where matter = :matter
+              and matter_target_id in (:targetIds)
+              and rating <> 0
+            group by 1, 2
+          ),
+          ranked_categories as (
+            select
+              profile_id,
+              category,
+              rep,
+              row_number() over (
+                partition by profile_id
+                order by abs(rep) desc, rep desc, category asc
+              ) as ranking
+            from rep_category_totals
+            where rep <> 0
+          )
+          select profile_id, category, rep
+          from ranked_categories
+          where ranking <= :limitPerTarget
+          order by profile_id asc, ranking asc
+        `,
+        {
+          targetIds,
+          limitPerTarget,
+          matter: RateMatter.REP
+        },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(
+        `${this.constructor.name}->getTopAbsoluteRepCategoriesByTargetIds`
+      );
+    }
   }
 
   async bulkUpsertRatings(ratings: Rating[], ctx: RequestContext) {
