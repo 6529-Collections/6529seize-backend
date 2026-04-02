@@ -1162,19 +1162,14 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
     );
     await db.execute(
       `
-    update ${IDENTITIES_TABLE} i
-    set i.rep = 0
-    where i.rep <> 0
-      and (
-        i.profile_id is null
-        or not exists (
-          select 1
-          from ${RATINGS_TABLE} r
-          where r.matter = 'REP'
-            and r.matter_target_id = i.profile_id
+        with cs as (
+          select matter_target_id as profile_id, sum(rating) as rating from ${RATINGS_TABLE} where matter = 'CIC' group by 1
         )
-      )
-  `,
+        update ${IDENTITIES_TABLE} i
+          inner join cs on cs.profile_id = i.profile_id
+        set i.cic = cs.rating
+        where cs.rating <> i.cic
+      `,
       undefined,
       { wrappedConnection: connection }
     );
