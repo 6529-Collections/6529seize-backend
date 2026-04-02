@@ -1145,7 +1145,9 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
     logger.info(`Syncing identities metrics`);
     const db = dbSupplier();
     await db.execute(
-      `update ${IDENTITIES_TABLE} set rep = 0, cic = 0, tdh = 0, basetdh_rate = 0`
+      `update ${IDENTITIES_TABLE} set rep = 0, cic = 0, tdh = 0, basetdh_rate = 0`,
+      undefined,
+      { wrappedConnection: connection }
     );
     await db.execute(
       `
