@@ -44,6 +44,9 @@ describe('DeleteDropUseCase', () => {
     const curationsDb = {
       deleteDropCurationsByDropId: jest.fn().mockResolvedValue(undefined)
     };
+    const waveSelectionsDb = {
+      deleteWaveSelectionDropsByDropId: jest.fn().mockResolvedValue(undefined)
+    };
     const artCurationTokenWatchService = {
       unregisterDrop: jest.fn().mockResolvedValue(undefined)
     };
@@ -55,9 +58,11 @@ describe('DeleteDropUseCase', () => {
         dropsDb as any,
         dropBookmarksDb as any,
         curationsDb as any,
+        waveSelectionsDb as any,
         artCurationTokenWatchService as any
       ),
       dropsDb,
+      waveSelectionsDb,
       artCurationTokenWatchService
     };
   }
@@ -76,10 +81,11 @@ describe('DeleteDropUseCase', () => {
       description_drop_id: 'description-drop',
       visibility_group_id: 'group-1'
     };
-    const { useCase, dropsDb, artCurationTokenWatchService } = createUseCase({
-      drop,
-      wave
-    });
+    const { useCase, dropsDb, waveSelectionsDb, artCurationTokenWatchService } =
+      createUseCase({
+        drop,
+        wave
+      });
     const getProfileIdByIdentityKeySpy = jest.spyOn(
       identityFetcher,
       'getProfileIdByIdentityKey'
@@ -105,6 +111,9 @@ describe('DeleteDropUseCase', () => {
       'drop-1',
       { timer: undefined, connection }
     );
+    expect(
+      waveSelectionsDb.deleteWaveSelectionDropsByDropId
+    ).toHaveBeenCalledWith('drop-1', { timer: undefined, connection });
     expect(dropsDb.insertDeletedDrop).toHaveBeenCalledWith(
       expect.objectContaining({
         id: 'drop-1',

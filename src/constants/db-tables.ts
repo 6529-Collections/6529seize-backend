@@ -134,6 +134,8 @@ export const WAVE_METRICS_TABLE = 'wave_metrics';
 export const WAVE_DROPPER_METRICS_TABLE = 'wave_dropper_metrics';
 export const WAVE_READER_METRICS_TABLE = 'wave_reader_metrics';
 export const WAVE_CURATION_GROUPS_TABLE = 'wave_curation_groups';
+export const WAVE_SELECTIONS_TABLE = 'wave_selections';
+export const WAVE_SELECTION_DROPS_TABLE = 'wave_selection_drops';
 export const METRIC_ROLLUP_HOUR_TABLE = 'metric_rollup_hour';
 export const MINT_ANNOUNCEMENTS_DONE_MEME_TOKENS_TABLE =
   'mint_announcements_done_meme_tokens';

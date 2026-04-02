@@ -23,6 +23,7 @@ import {
   ActivityEventTargetType
 } from '../../../entities/IActivityEvent';
 import { ApiDropSubscriptionTargetAction } from '../generated/models/ApiDropSubscriptionTargetAction';
+import { ApiWaveSelection } from '../generated/models/ApiWaveSelection';
 import {
   userGroupsService,
   UserGroupsService
@@ -47,8 +48,6 @@ import {
 import { ApiDropType } from '../generated/models/ApiDropType';
 import { dropVotingService, DropVotingService } from './drop-voting.service';
 import { dropVotingDb, DropVotingDb } from './drop-voting.db';
-import { ApiWaveCreditType as WaveCreditTypeApi } from '../generated/models/ApiWaveCreditType';
-import { ApiWaveParticipationSubmissionStrategyType } from '../generated/models/ApiWaveParticipationSubmissionStrategyType';
 import { WaveDecisionWinnerDropWithSaleEntity } from '@/entities/IWaveDecision';
 import { ApiDropWinningContext } from '../generated/models/ApiDropWinningContext';
 import { ApiWaveOutcomeType } from '../generated/models/ApiWaveOutcomeType';
@@ -76,11 +75,20 @@ import {
   nftLinkResolvingService,
   NftLinkResolvingService
 } from '@/nft-links/nft-link-resolving.service';
+import { directMessageWaveDisplayService } from '@/api/waves/direct-message-wave-display.service';
+import { getWaveReadContextProfileId } from '@/api/waves/wave-access.helpers';
 import {
-  directMessageWaveDisplayService,
-  resolveWavePictureOverride,
-  WaveDisplayOverride
-} from '@/api/waves/direct-message-wave-display.service';
+  groupWaveSelectionsByDropId,
+  groupWaveSelectionsByWaveId
+} from '@/api/waves/wave-selections.helpers';
+import {
+  getWaveMinPermissionMask,
+  mapWaveToApiWaveMin
+} from '@/api/waves/wave-min.helpers';
+import {
+  WaveSelectionsDb,
+  waveSelectionsDb
+} from '@/api/waves/wave-selections.db';
 
 export class DropsMappers {
   constructor(
@@ -94,6 +102,7 @@ export class DropsMappers {
     private readonly reactionsDb: ReactionsDb,
     private readonly dropBookmarksDb: DropBookmarksDb,
     private readonly curationsDb: CurationsDb,
+    private readonly waveSelectionsDb: WaveSelectionsDb,
     private readonly dropNftLinksDb: DropNftLinksDb,
     private readonly nftLinksDb: NftLinksDb,
     private readonly nftLinkResolvingService: NftLinkResolvingService
@@ -185,31 +194,42 @@ export class DropsMappers {
   public async convertToDropFulls(
     {
       dropEntities,
-      contextProfileId
+      contextProfileId,
+      authenticationContext
     }: {
       dropEntities: DropEntity[];
       contextProfileId?: string | null;
+      authenticationContext?: AuthenticationContext;
     },
     connection?: ConnectionWrapper<any>
   ): Promise<ApiDrop[]> {
+    const effectiveAuthenticationContext =
+      authenticationContext ??
+      (contextProfileId
+        ? AuthenticationContext.fromProfileId(contextProfileId)
+        : AuthenticationContext.notAuthenticated());
+    const readContextProfileId = getWaveReadContextProfileId(
+      effectiveAuthenticationContext
+    );
     const dWoW = await this.convertToDropsWithoutWaves(dropEntities, {
       connection,
-      authenticationContext: contextProfileId
-        ? AuthenticationContext.fromProfileId(contextProfileId)
-        : AuthenticationContext.notAuthenticated()
+      authenticationContext: effectiveAuthenticationContext
     });
     const dropIds = dropEntities.map((it) => it.id);
     const waveIds = collections.distinct(dropEntities.map((it) => it.wave_id));
-    const [waveOverviews, pinnedWaveIds] = await Promise.all([
-      this.wavesApiDb.getWavesByDropIds(dropIds, connection),
-      this.wavesApiDb.whichOfWavesArePinnedByGivenProfile(
-        {
-          waveIds,
-          profileId: contextProfileId
-        },
-        { connection }
-      )
-    ]);
+    const [waveOverviews, pinnedWaveIds, selectionEntities] = await Promise.all(
+      [
+        this.wavesApiDb.getWavesByDropIds(dropIds, connection),
+        this.wavesApiDb.whichOfWavesArePinnedByGivenProfile(
+          {
+            waveIds,
+            profileId: readContextProfileId
+          },
+          { connection }
+        ),
+        this.waveSelectionsDb.findWaveSelectionsByWaveIds(waveIds, connection)
+      ]
+    );
     const waveDisplayByWaveId =
       await directMessageWaveDisplayService.resolveWaveDisplayByWaveIdForContext(
         {
@@ -217,21 +237,28 @@ export class DropsMappers {
             Object.values(waveOverviews),
             (it) => it.id
           ),
-          contextProfileId: contextProfileId ?? null
+          contextProfileId: readContextProfileId ?? null
         },
         connection
       );
     const group_ids_user_is_eligible_for =
       await this.userGroupsService.getGroupsUserIsEligibleFor(
-        contextProfileId ?? null
+        readContextProfileId ?? null
       );
+    const { noRightToVote, noRightToParticipate } = getWaveMinPermissionMask(
+      effectiveAuthenticationContext
+    );
+    const selectionsByWaveId = groupWaveSelectionsByWaveId(selectionEntities);
     return dWoW.map<ApiDrop>((d) => {
       const wave = waveOverviews[d.id];
       const waveMin: ApiWaveMin | null = wave
-        ? this.mapWaveEntityToApiWaveMin({
-            waveEntity: wave,
+        ? mapWaveToApiWaveMin({
+            wave,
             displayByWaveId: waveDisplayByWaveId,
             groupIdsUserIsEligibleFor: group_ids_user_is_eligible_for,
+            noRightToVote,
+            noRightToParticipate,
+            selections: selectionsByWaveId[wave.id] ?? [],
             pinned: pinnedWaveIds.has(wave.id)
           })
         : null;
@@ -470,7 +497,12 @@ export class DropsMappers {
     entities: DropEntity[],
     ctx: RequestContext
   ): Promise<ApiDropWithoutWave[]> {
-    const contextProfileId = ctx.authenticationContext?.getActingAsId() ?? null;
+    const contextProfileId = getWaveReadContextProfileId(
+      ctx.authenticationContext
+    );
+    const { noRightToVote, noRightToParticipate } = getWaveMinPermissionMask(
+      ctx.authenticationContext
+    );
     const {
       submissionDropsVotingRanges,
       mentions,
@@ -536,12 +568,21 @@ export class DropsMappers {
         },
         ctx.connection
       );
+    const mentionedWaveSelectionsByWaveId = groupWaveSelectionsByWaveId(
+      await this.waveSelectionsDb.findWaveSelectionsByWaveIds(
+        mentionedWaveIds,
+        ctx.connection
+      )
+    );
     const mentionedWavesById = mentionedWaveEntities.reduce(
       (acc, wave) => {
-        acc[wave.id] = this.mapWaveEntityToApiWaveMin({
-          waveEntity: wave,
+        acc[wave.id] = mapWaveToApiWaveMin({
+          wave,
           displayByWaveId: mentionedWaveDisplayByWaveId,
           groupIdsUserIsEligibleFor,
+          noRightToVote,
+          noRightToParticipate,
+          selections: mentionedWaveSelectionsByWaveId[wave.id] ?? [],
           pinned: pinnedMentionedWaveIds.has(wave.id)
         });
         return acc;
@@ -559,22 +600,32 @@ export class DropsMappers {
     const allWaveIds = collections.distinct(
       allEntities.map((entity) => entity.wave_id)
     );
-    const [waveCurationGroups, curatedDropsByContextProfile] =
-      await Promise.all([
-        this.curationsDb.findWaveCurationGroupsByWaveIds(
-          allWaveIds,
-          ctx.connection
-        ),
-        contextProfileId
-          ? this.curationsDb.findCuratedDropIdsByCurator(
-              {
-                dropIds: allDropIds,
-                curatorId: contextProfileId
-              },
-              ctx.connection
-            )
-          : Promise.resolve(new Set<string>())
-      ]);
+    const [
+      waveCurationGroups,
+      curatedDropsByContextProfile,
+      selectionMembershipEntities
+    ] = await Promise.all([
+      this.curationsDb.findWaveCurationGroupsByWaveIds(
+        allWaveIds,
+        ctx.connection
+      ),
+      contextProfileId
+        ? this.curationsDb.findCuratedDropIdsByCurator(
+            {
+              dropIds: allDropIds,
+              curatorId: contextProfileId
+            },
+            ctx.connection
+          )
+        : Promise.resolve(new Set<string>()),
+      this.waveSelectionsDb.findWaveSelectionsByDropIds(
+        allDropIds,
+        ctx.connection
+      )
+    ]);
+    const selectionsByDropId = groupWaveSelectionsByDropId(
+      selectionMembershipEntities
+    );
     const curationCommunityGroupIdsByWave = waveCurationGroups.reduce(
       (acc, curationGroup) => {
         const groupIds = acc[curationGroup.wave_id] ?? [];
@@ -709,6 +760,7 @@ export class DropsMappers {
         boostsCount,
         boostsByAuthenticatedUser,
         bookmarksByAuthenticatedUser,
+        selectionsByDropId,
         rootDropNftLinksByDropId,
         rootDropIds
       });
@@ -747,6 +799,7 @@ export class DropsMappers {
     boostsCount,
     boostsByAuthenticatedUser,
     bookmarksByAuthenticatedUser,
+    selectionsByDropId,
     rootDropNftLinksByDropId,
     rootDropIds
   }: {
@@ -787,6 +840,7 @@ export class DropsMappers {
     boostsCount: Record<string, number>;
     boostsByAuthenticatedUser: Set<string>;
     bookmarksByAuthenticatedUser: Set<string>;
+    selectionsByDropId: Record<string, ApiWaveSelection[]>;
     rootDropNftLinksByDropId: Record<string, ApiDropNftLink[]>;
     rootDropIds: Set<string>;
   }): ApiDropWithoutWave {
@@ -947,6 +1001,7 @@ export class DropsMappers {
                   boostsCount,
                   boostsByAuthenticatedUser,
                   bookmarksByAuthenticatedUser,
+                  selectionsByDropId,
                   rootDropNftLinksByDropId,
                   rootDropIds
                 })
@@ -999,6 +1054,7 @@ export class DropsMappers {
                           boostsCount,
                           boostsByAuthenticatedUser,
                           bookmarksByAuthenticatedUser,
+                          selectionsByDropId,
                           rootDropNftLinksByDropId,
                           rootDropIds
                         })
@@ -1043,6 +1099,7 @@ export class DropsMappers {
               ? (resolvedProfilesByIds[it.data_value] ?? null)
               : null
         })),
+      selections: selectionsByDropId[dropEntity.id] ?? [],
       rating,
       realtime_rating,
       rating_prediction,
@@ -1060,80 +1117,6 @@ export class DropsMappers {
         : []
     };
   }
-
-  private mapWaveEntityToApiWaveMin({
-    waveEntity,
-    displayByWaveId,
-    groupIdsUserIsEligibleFor,
-    pinned
-  }: {
-    waveEntity: {
-      id: string;
-      name: string;
-      picture: string | null;
-      description_drop_id: string;
-      last_drop_time: number;
-      submission_type: string | null;
-      chat_enabled: boolean;
-      chat_group_id: string | null;
-      voting_group_id: string | null;
-      participation_group_id: string | null;
-      admin_group_id: string | null;
-      voting_credit_type: string;
-      voting_period_start: number | null;
-      voting_period_end: number | null;
-      visibility_group_id: string | null;
-      admin_drop_deletion_enabled: boolean;
-      forbid_negative_votes: boolean;
-    };
-    displayByWaveId: Record<string, WaveDisplayOverride>;
-    groupIdsUserIsEligibleFor: string[];
-    pinned: boolean;
-  }): ApiWaveMin {
-    return {
-      id: waveEntity.id,
-      name: displayByWaveId[waveEntity.id]?.name ?? waveEntity.name,
-      picture: resolveWavePictureOverride(
-        waveEntity.picture,
-        displayByWaveId[waveEntity.id]
-      ),
-      description_drop_id: waveEntity.description_drop_id,
-      last_drop_time: waveEntity.last_drop_time,
-      submission_type: waveEntity.submission_type
-        ? enums.resolveOrThrow(
-            ApiWaveParticipationSubmissionStrategyType,
-            waveEntity.submission_type
-          )
-        : null,
-      authenticated_user_eligible_to_chat:
-        waveEntity.chat_enabled &&
-        (waveEntity.chat_group_id === null ||
-          groupIdsUserIsEligibleFor.includes(waveEntity.chat_group_id)),
-      authenticated_user_eligible_to_vote:
-        waveEntity.voting_group_id === null ||
-        groupIdsUserIsEligibleFor.includes(waveEntity.voting_group_id),
-      authenticated_user_eligible_to_participate:
-        waveEntity.participation_group_id === null ||
-        groupIdsUserIsEligibleFor.includes(waveEntity.participation_group_id),
-      authenticated_user_admin:
-        waveEntity.admin_group_id !== null &&
-        groupIdsUserIsEligibleFor.includes(waveEntity.admin_group_id),
-      voting_credit_type: enums.resolveOrThrow(
-        WaveCreditTypeApi,
-        waveEntity.voting_credit_type
-      ),
-      voting_period_start: waveEntity.voting_period_start,
-      voting_period_end: waveEntity.voting_period_end,
-      visibility_group_id: waveEntity.visibility_group_id,
-      chat_group_id: waveEntity.chat_group_id,
-      admin_group_id: waveEntity.admin_group_id,
-      participation_group_id: waveEntity.participation_group_id,
-      voting_group_id: waveEntity.voting_group_id,
-      admin_drop_deletion_enabled: waveEntity.admin_drop_deletion_enabled,
-      forbid_negative_votes: waveEntity.forbid_negative_votes,
-      pinned
-    };
-  }
 }
 
 export const dropsMappers = new DropsMappers(
@@ -1147,6 +1130,7 @@ export const dropsMappers = new DropsMappers(
   reactionsDb,
   dropBookmarksDb,
   curationsDb,
+  waveSelectionsDb,
   dropNftLinksDb,
   nftLinksDb,
   nftLinkResolvingService

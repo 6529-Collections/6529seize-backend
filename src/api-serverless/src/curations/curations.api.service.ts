@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { collections } from '@/collections';
 import { DropType } from '@/entities/IDrop';
-import { ProfileProxyActionType } from '@/entities/IProfileProxyAction';
 import { WaveType } from '@/entities/IWave';
 import {
   BadRequestException,
@@ -24,6 +23,12 @@ import {
   identityFetcher,
   IdentityFetcher
 } from '@/api/identities/identity.fetcher';
+import {
+  assertWaveVisibleOrThrow,
+  getAuthenticatedNonProxyProfileIdOrThrow,
+  getGroupsUserIsEligibleForReadContext,
+  getWaveManagementContextOrThrow
+} from '@/api/waves/wave-access.helpers';
 import { wavesApiDb, WavesApiDb } from '@/api/waves/waves.api.db';
 import { CurationsDb, curationsDb } from '@/api/curations/curations.db';
 import { WaveCurationGroupEntity } from '@/entities/IWaveCurationGroup';
@@ -41,10 +46,12 @@ export class CurationsApiService {
     waveId: string,
     ctx: RequestContext
   ): Promise<ApiWaveCurationGroup[]> {
-    const groupsUserIsEligibleFor =
-      await this.getGroupsUserIsEligibleForReadContext(ctx);
+    const groupsUserIsEligibleFor = await getGroupsUserIsEligibleForReadContext(
+      this.userGroupsService,
+      ctx
+    );
     const wave = await this.wavesApiDb.findWaveById(waveId, ctx.connection);
-    this.assertWaveVisibleOrThrow(
+    assertWaveVisibleOrThrow(
       wave,
       groupsUserIsEligibleFor,
       `Wave ${waveId} not found`
@@ -223,8 +230,10 @@ export class CurationsApiService {
     },
     ctx: RequestContext
   ): Promise<ApiProfileMinsPage> {
-    const groupsUserIsEligibleFor =
-      await this.getGroupsUserIsEligibleForReadContext(ctx);
+    const groupsUserIsEligibleFor = await getGroupsUserIsEligibleForReadContext(
+      this.userGroupsService,
+      ctx
+    );
     const drop = await this.dropsDb.findDropById(params.dropId, ctx.connection);
     if (!drop) {
       throw new NotFoundException(`Drop ${params.dropId} not found`);
@@ -233,7 +242,7 @@ export class CurationsApiService {
       drop.wave_id,
       ctx.connection
     );
-    this.assertWaveVisibleOrThrow(
+    assertWaveVisibleOrThrow(
       wave,
       groupsUserIsEligibleFor,
       `Drop ${params.dropId} not found`
@@ -285,7 +294,10 @@ export class CurationsApiService {
       type: WaveType;
     };
   }> {
-    const profileId = this.getAuthenticatedProfileIdOrThrow(ctx);
+    const profileId = getAuthenticatedNonProxyProfileIdOrThrow(
+      ctx,
+      `Proxies can't curate drops`
+    );
     const drop = await this.dropsDb.findDropById(dropId, ctx.connection);
     if (!drop) {
       throw new NotFoundException(`Drop ${dropId} not found`);
@@ -316,52 +328,6 @@ export class CurationsApiService {
     return { profileId, drop, wave };
   }
 
-  private async getGroupsUserIsEligibleForReadContext(
-    ctx: RequestContext
-  ): Promise<string[]> {
-    const authenticationContext = ctx.authenticationContext;
-    let profileId: string | null = null;
-    if (authenticationContext?.isUserFullyAuthenticated()) {
-      if (
-        !authenticationContext.isAuthenticatedAsProxy() ||
-        authenticationContext.hasProxyAction(ProfileProxyActionType.READ_WAVE)
-      ) {
-        profileId = authenticationContext.getActingAsId();
-      }
-    }
-    return await this.userGroupsService.getGroupsUserIsEligibleFor(
-      profileId,
-      ctx.timer
-    );
-  }
-
-  private assertWaveVisibleOrThrow(
-    wave: {
-      visibility_group_id: string | null;
-    } | null,
-    groupsUserIsEligibleFor: string[],
-    message: string
-  ) {
-    if (
-      !wave ||
-      (wave.visibility_group_id &&
-        !groupsUserIsEligibleFor.includes(wave.visibility_group_id))
-    ) {
-      throw new NotFoundException(message);
-    }
-  }
-
-  private getAuthenticatedProfileIdOrThrow(ctx: RequestContext): string {
-    const authenticationContext = ctx.authenticationContext;
-    if (!authenticationContext?.isUserFullyAuthenticated()) {
-      throw new ForbiddenException(`Please create a profile first`);
-    }
-    if (authenticationContext.isAuthenticatedAsProxy()) {
-      throw new ForbiddenException(`Proxies can't curate drops`);
-    }
-    return authenticationContext.getActingAsId()!;
-  }
-
   private async assertCanManageWaveCurations(
     waveId: string,
     ctx: RequestContext
@@ -374,34 +340,17 @@ export class CurationsApiService {
     };
     profileId: string;
   }> {
-    const authenticationContext = ctx.authenticationContext;
-    if (!authenticationContext?.isUserFullyAuthenticated()) {
-      throw new ForbiddenException(`Please create a profile first`);
-    }
-    if (authenticationContext.isAuthenticatedAsProxy()) {
-      throw new ForbiddenException(`Proxies can't manage curation groups`);
-    }
-    const profileId = authenticationContext.getActingAsId()!;
-    const wave = await this.wavesApiDb.findWaveById(waveId, ctx.connection);
-    if (!wave) {
-      throw new NotFoundException(`Wave ${waveId} not found`);
-    }
-    this.assertWaveTypeSupportsCurations(wave.type);
-    const groupsUserIsEligibleFor =
-      await this.userGroupsService.getGroupsUserIsEligibleFor(
-        profileId,
-        ctx.timer
-      );
-    const isAdmin =
-      wave.created_by === profileId ||
-      (wave.admin_group_id !== null &&
-        groupsUserIsEligibleFor.includes(wave.admin_group_id));
-    if (!isAdmin) {
-      throw new ForbiddenException(
-        `You can't manage curation groups in wave ${waveId}`
-      );
-    }
-    return { wave, profileId };
+    return await getWaveManagementContextOrThrow({
+      waveId,
+      ctx,
+      wavesApiDb: this.wavesApiDb,
+      userGroupsService: this.userGroupsService,
+      proxyErrorMessage: `Proxies can't manage curation groups`,
+      forbiddenMessage: `You can't manage curation groups in wave ${waveId}`,
+      allowCreator: true,
+      requireAdminGroup: false,
+      validateWave: (wave) => this.assertWaveTypeSupportsCurations(wave.type)
+    });
   }
 
   private async assertProfileCanCurateInWave(
