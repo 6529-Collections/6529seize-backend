@@ -1159,18 +1159,16 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
     );
     await db.execute(
       `
+    with profiles_with_rep as (
+        select distinct matter_target_id as profile_id
+        from ${RATINGS_TABLE}
+        where matter = 'REP'
+    )
     update ${IDENTITIES_TABLE} i
+        left join profiles_with_rep on profiles_with_rep.profile_id = i.profile_id
     set i.rep = 0
     where i.rep <> 0
-      and (
-        i.profile_id is null
-        or not exists (
-          select 1
-          from ${RATINGS_TABLE} r
-          where r.matter = 'REP'
-            and r.matter_target_id = i.profile_id
-        )
-      )
+      and profiles_with_rep.profile_id is null
   `,
       undefined,
       { wrappedConnection: connection }
@@ -1190,18 +1188,16 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
     );
     await db.execute(
       `
+        with profiles_with_cic as (
+            select distinct matter_target_id as profile_id
+            from ${RATINGS_TABLE}
+            where matter = 'CIC'
+        )
         update ${IDENTITIES_TABLE} i
+            left join profiles_with_cic on profiles_with_cic.profile_id = i.profile_id
         set i.cic = 0
         where i.cic <> 0
-          and (
-            i.profile_id is null
-            or not exists (
-              select 1
-              from ${RATINGS_TABLE} r
-              where r.matter = 'CIC'
-                and r.matter_target_id = i.profile_id
-            )
-          )
+          and profiles_with_cic.profile_id is null
   `,
       undefined,
       { wrappedConnection: connection }

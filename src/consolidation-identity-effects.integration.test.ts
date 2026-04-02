@@ -140,7 +140,19 @@ describeWithSeed(
           primary_address: '0x4',
           handle: '0x4'
         }
-      )
+      ),
+      {
+        ...anIdentity(
+          { rep: 9, tdh: 9, basetdh_rate: 9, cic: 9 },
+          {
+            consolidation_key: '0x5',
+            profile_id: '0x5-profile',
+            primary_address: '0x5',
+            handle: '0x5'
+          }
+        ),
+        profile_id: null
+      }
     ]),
     withRatings([
       aCicRating({
@@ -214,6 +226,9 @@ describeWithSeed(
       );
       const grouped = identities.reduce(
         (acc, it) => {
+          if (!it.profile_id) {
+            return acc;
+          }
           acc[it.profile_id!] = {
             rep: it.rep,
             tdh: it.tdh,
@@ -227,7 +242,7 @@ describeWithSeed(
           { rep: number; cic: number; tdh: number; tdh_rate: number }
         >
       );
-      expect(identities.length).toBe(4);
+      expect(identities.length).toBe(5);
 
       expect(grouped['0x1'].tdh).toBe(0);
       expect(grouped['0x1'].tdh_rate).toBe(0);
@@ -248,6 +263,15 @@ describeWithSeed(
       expect(grouped['0x4'].tdh_rate).toBe(0);
       expect(grouped['0x4'].cic).toBe(0);
       expect(grouped['0x4'].rep).toBe(0);
+
+      const identityWithoutProfile = identities.find(
+        (it) => it.consolidation_key === '0x5'
+      );
+      expect(identityWithoutProfile).toBeDefined();
+      expect(identityWithoutProfile?.tdh).toBe(0);
+      expect(identityWithoutProfile?.basetdh_rate).toBe(0);
+      expect(identityWithoutProfile?.cic).toBe(0);
+      expect(identityWithoutProfile?.rep).toBe(0);
     });
   }
 );
