@@ -1145,6 +1145,9 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
     logger.info(`Syncing identities metrics`);
     const db = dbSupplier();
     await db.execute(
+      `update ${IDENTITIES_TABLE} set rep = 0, cic = 0, tdh = 0, basetdh_rate = 0`
+    );
+    await db.execute(
       `
     with cs as (
         select matter_target_id as profile_id, sum(rating) as rating from ${RATINGS_TABLE} where matter = 'REP' group by 1
@@ -1172,42 +1175,6 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
         )
       )
   `,
-      undefined,
-      { wrappedConnection: connection }
-    );
-    await db.execute(
-      `
-        with cs as (
-            select matter_target_id as profile_id, sum(rating) as rating from ${RATINGS_TABLE} where matter = 'CIC' group by 1
-        )
-        update ${IDENTITIES_TABLE} i
-            inner join cs on cs.profile_id = i.profile_id
-        set i.cic = cs.rating
-        where cs.rating <> i.cic
-  `,
-      undefined,
-      { wrappedConnection: connection }
-    );
-    await db.execute(
-      `
-        update ${IDENTITIES_TABLE} i
-        set i.cic = 0
-        where i.cic <> 0
-          and (
-            i.profile_id is null
-            or not exists (
-              select 1
-              from ${RATINGS_TABLE} r
-              where r.matter = 'CIC'
-                and r.matter_target_id = i.profile_id
-            )
-          )
-  `,
-      undefined,
-      { wrappedConnection: connection }
-    );
-    await db.execute(
-      `update ${IDENTITIES_TABLE} set tdh = 0, basetdh_rate = 0`,
       undefined,
       { wrappedConnection: connection }
     );
