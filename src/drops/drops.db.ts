@@ -33,6 +33,7 @@ import {
   WAVE_DROPPER_METRICS_TABLE,
   WAVE_LEADERBOARD_ENTRIES_TABLE,
   WAVE_METRICS_TABLE,
+  WAVE_SELECTION_DROPS_TABLE,
   WAVES_DECISION_WINNER_DROPS_TABLE,
   WAVES_TABLE,
   WINNER_DROP_VOTER_VOTES_TABLE
@@ -397,6 +398,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       group_ids_user_is_eligible_for,
       group_id,
       wave_id,
+      selection_id,
       author_id,
       include_replies,
       drop_type,
@@ -408,6 +410,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       serial_no_less_than: number | null;
       amount: number;
       wave_id: string | null;
+      selection_id: string | null;
       author_id: string | null;
       include_replies: boolean;
       drop_type: DropType | null;
@@ -428,6 +431,11 @@ export class DropsDb extends LazyDbAccessCompatibleService {
          join ${
            UserGroupsService.GENERATED_VIEW
          } cm on cm.profile_id = d.author_id
+         ${
+           selection_id
+             ? `join ${WAVE_SELECTION_DROPS_TABLE} wsd on wsd.drop_id = d.id and wsd.wave_id = d.wave_id and wsd.selection_id = :selection_id`
+             : ``
+         }
          join ${WAVES_TABLE} w on d.wave_id = w.id and (${
            group_ids_user_is_eligible_for.length
              ? `w.visibility_group_id in (:groupsUserIsEligibleFor) or w.admin_group_id in (:groupsUserIsEligibleFor) or`
@@ -450,6 +458,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       groupsUserIsEligibleFor: group_ids_user_is_eligible_for,
       author_id,
       wave_id,
+      selection_id,
       drop_type,
       ids
     };
@@ -514,24 +523,29 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       serial_no_limit,
       search_strategy,
       wave_id,
+      selection_id,
       drop_type
     }: {
       serial_no_limit: number | null;
       search_strategy: string;
       amount: number;
       wave_id: string;
+      selection_id: string | null;
       drop_type: DropType | null;
     },
     ctx: RequestContext
   ): Promise<DropEntity[]> {
     ctx.timer?.start('dropsDb->findLatestDropsSimple');
-    const sqlForOlder = `(select d.* from ${DROPS_TABLE} d where ${
+    const selectionJoin = selection_id
+      ? `join ${WAVE_SELECTION_DROPS_TABLE} wsd on wsd.drop_id = d.id and wsd.wave_id = d.wave_id and wsd.selection_id = :selection_id`
+      : '';
+    const sqlForOlder = `(select d.* from ${DROPS_TABLE} d ${selectionJoin} where ${
       drop_type ? ` drop_type = :drop_type and ` : ``
     } d.wave_id = :wave_id and d.serial_no < :serial_no_limit order by d.serial_no desc limit ${amount})`;
-    const sqlForNewer = `(select d.* from ${DROPS_TABLE} d where ${
+    const sqlForNewer = `(select d.* from ${DROPS_TABLE} d ${selectionJoin} where ${
       drop_type ? ` drop_type = :drop_type and ` : ``
     } d.wave_id = :wave_id and d.serial_no > :serial_no_limit order by d.serial_no asc limit ${amount})`;
-    const sqlForThis = `(select d.* from ${DROPS_TABLE} d where ${
+    const sqlForThis = `(select d.* from ${DROPS_TABLE} d ${selectionJoin} where ${
       drop_type ? ` drop_type = :drop_type and ` : ``
     } d.wave_id = :wave_id and d.serial_no = :serial_no_limit)`;
     const sql = `with dr_results as (${[
@@ -549,6 +563,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       .join(' union all ')}) select * from dr_results order by serial_no desc`;
     const params = {
       wave_id,
+      selection_id,
       drop_type,
       serial_no_limit: serial_no_limit ?? Number.MAX_SAFE_INTEGER
     };
@@ -606,24 +621,29 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       drop_id,
       serial_no_limit,
       search_strategy,
+      selection_id,
       drop_type
     }: {
       amount: number;
       drop_id: string;
       serial_no_limit: number | null;
       search_strategy: string;
+      selection_id: string | null;
       drop_type: DropType | null;
     },
     ctx: RequestContext
   ): Promise<DropEntity[]> {
     ctx.timer?.start('dropsDb->findLatestDropRepliesSimple');
-    const sqlForOlder = `(select d.* from ${DROPS_TABLE} d join ${DROP_RELATIONS_TABLE} r on d.id = r.child_id where ${
+    const selectionJoin = selection_id
+      ? `join ${WAVE_SELECTION_DROPS_TABLE} wsd on wsd.drop_id = d.id and wsd.wave_id = d.wave_id and wsd.selection_id = :selection_id`
+      : '';
+    const sqlForOlder = `(select d.* from ${DROPS_TABLE} d join ${DROP_RELATIONS_TABLE} r on d.id = r.child_id ${selectionJoin} where ${
       drop_type ? ` drop_type = :drop_type and ` : ``
     } r.parent_id = :drop_id and serial_no < :serial_no_limit order by d.serial_no desc limit ${amount})`;
-    const sqlForNewer = `(select d.* from ${DROPS_TABLE} d join ${DROP_RELATIONS_TABLE} r on d.id = r.child_id where ${
+    const sqlForNewer = `(select d.* from ${DROPS_TABLE} d join ${DROP_RELATIONS_TABLE} r on d.id = r.child_id ${selectionJoin} where ${
       drop_type ? ` drop_type = :drop_type and ` : ``
     } r.parent_id = :drop_id and serial_no > :serial_no_limit order by d.serial_no asc limit ${amount})`;
-    const sqlForThis = `select d.* from ${DROPS_TABLE} d join ${DROP_RELATIONS_TABLE} r on d.id = r.child_id where ${
+    const sqlForThis = `select d.* from ${DROPS_TABLE} d join ${DROP_RELATIONS_TABLE} r on d.id = r.child_id ${selectionJoin} where ${
       drop_type ? ` drop_type = :drop_type and ` : ``
     } r.parent_id = :drop_id and serial_no = :serial_no_limit`;
     const sql = `with dr_results as (${[
@@ -641,6 +661,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       .join(' union all ')}) select * from dr_results order by serial_no desc`;
     const params = {
       drop_id,
+      selection_id,
       serial_no_limit: serial_no_limit ?? Number.MAX_SAFE_INTEGER
     };
     const results = await this.db.execute<DropEntity>(sql, params, {

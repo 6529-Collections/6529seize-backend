@@ -63,6 +63,7 @@ import { ApiWaveOutcomeSubType } from '../generated/models/ApiWaveOutcomeSubType
 import { ApiWaveOutcomeType } from '../generated/models/ApiWaveOutcomeType';
 import { ApiWaveParticipationRequirement } from '../generated/models/ApiWaveParticipationRequirement';
 import { ApiWaveRequiredMetadata } from '../generated/models/ApiWaveRequiredMetadata';
+import { ApiWaveSelection } from '../generated/models/ApiWaveSelection';
 import { ApiWaveSubscriptionActions } from '../generated/models/ApiWaveSubscriptionActions';
 import { ApiWaveSubscriptionTargetAction } from '../generated/models/ApiWaveSubscriptionTargetAction';
 import { ApiWaveType } from '../generated/models/ApiWaveType';
@@ -87,13 +88,24 @@ import { ApiWaveParticipationIdentitySubmissionWhoCanBeSubmitted } from '@/api/g
 import { ApiWaveParticipationSubmissionStrategy } from '@/api/generated/models/ApiWaveParticipationSubmissionStrategy';
 import { ApiWaveParticipationSubmissionStrategyIdentityConf } from '@/api/generated/models/ApiWaveParticipationSubmissionStrategyIdentityConf';
 import { ApiWaveParticipationSubmissionStrategyType } from '@/api/generated/models/ApiWaveParticipationSubmissionStrategyType';
+import { ApiWaveSelectionDropRequest } from '@/api/generated/models/ApiWaveSelectionDropRequest';
+import { ApiWaveSelectionRequest } from '@/api/generated/models/ApiWaveSelectionRequest';
 import { curationsApiService } from '@/api/curations/curations.api.service';
+import { waveSelectionsApiService } from '@/api/waves/wave-selections.api.service';
 
 const router = asyncRouter();
 
 const WaveCurationGroupSchema = Joi.object<ApiWaveCurationGroupRequest>({
   name: Joi.string().trim().min(1).max(50).required(),
   group_id: Joi.string().required()
+});
+
+const WaveSelectionSchema = Joi.object<ApiWaveSelectionRequest>({
+  title: Joi.string().trim().min(1).max(250).required()
+});
+
+const WaveSelectionDropSchema = Joi.object<ApiWaveSelectionDropRequest>({
+  drop_id: Joi.string().required()
 });
 
 async function handleSimpleWaveAction(
@@ -476,6 +488,7 @@ router.get(
         serial_no_limit?: string;
         search_strategy?: string;
         drop_type?: ApiDropType;
+        selection_id?: string;
       },
       any
     >,
@@ -500,6 +513,7 @@ router.get(
     const drop_type = drop_type_str
       ? (enums.resolve(ApiDropType, drop_type_str) ?? null)
       : null;
+    const selection_id = req.query.selection_id ?? null;
     const result = await dropsService.findWaveDropsFeed(
       {
         wave_id: id,
@@ -507,7 +521,8 @@ router.get(
         amount: amount >= 200 || amount < 1 ? 50 : amount,
         serial_no_limit: serialNoLimit,
         search_strategy: searchStrategy,
-        drop_type
+        drop_type,
+        selection_id
       },
       { authenticationContext, timer }
     );
@@ -566,6 +581,115 @@ router.get(
       }
     );
     res.send(result);
+  }
+);
+
+router.get(
+  '/:id/selections',
+  maybeAuthenticatedUser(),
+  async (
+    req: Request<{ id: string }, any, any, any, any>,
+    res: Response<ApiResponse<ApiWaveSelection[]>>
+  ) => {
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
+    const selections = await waveSelectionsApiService.findWaveSelections(
+      req.params.id,
+      { authenticationContext, timer }
+    );
+    res.send(selections);
+  }
+);
+
+router.post(
+  '/:id/selections',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<{ id: string }, any, ApiWaveSelectionRequest, any, any>,
+    res: Response<ApiResponse<ApiWaveSelection>>
+  ) => {
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
+    const request = getValidatedByJoiOrThrow(req.body, WaveSelectionSchema);
+    const created = await waveSelectionsApiService.createWaveSelection(
+      req.params.id,
+      request,
+      { authenticationContext, timer }
+    );
+    await giveReadReplicaTimeToCatchUp();
+    res.send(created);
+  }
+);
+
+router.post(
+  '/:id/selections/:selectionId/drops',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<
+      { id: string; selectionId: string },
+      any,
+      ApiWaveSelectionDropRequest,
+      any,
+      any
+    >,
+    res: Response<ApiResponse<any>>
+  ) => {
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
+    const request = getValidatedByJoiOrThrow(req.body, WaveSelectionDropSchema);
+    await waveSelectionsApiService.addDropToWaveSelection(
+      req.params.id,
+      req.params.selectionId,
+      request,
+      { authenticationContext, timer }
+    );
+    await giveReadReplicaTimeToCatchUp();
+    res.send({});
+  }
+);
+
+router.delete(
+  '/:id/selections/:selectionId/drops/:dropId',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<
+      { id: string; selectionId: string; dropId: string },
+      any,
+      any,
+      any,
+      any
+    >,
+    res: Response<ApiResponse<any>>
+  ) => {
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
+    await waveSelectionsApiService.removeDropFromWaveSelection(
+      req.params.id,
+      req.params.selectionId,
+      req.params.dropId,
+      { authenticationContext, timer }
+    );
+    await giveReadReplicaTimeToCatchUp();
+    res.send({});
+  }
+);
+
+router.delete(
+  '/:id/selections/:selectionId',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<{ id: string; selectionId: string }, any, any, any, any>,
+    res: Response<ApiResponse<any>>
+  ) => {
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
+    await waveSelectionsApiService.deleteWaveSelection(
+      req.params.id,
+      req.params.selectionId,
+      { authenticationContext, timer }
+    );
+    await giveReadReplicaTimeToCatchUp();
+    res.send({});
   }
 );
 

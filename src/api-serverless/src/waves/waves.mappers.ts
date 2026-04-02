@@ -34,6 +34,7 @@ import { ApiWaveMetrics } from '../generated/models/ApiWaveMetrics';
 import { ApiWaveParticipationConfig } from '../generated/models/ApiWaveParticipationConfig';
 import { ApiWaveParticipationRequirement } from '../generated/models/ApiWaveParticipationRequirement';
 import { ApiWaveScope } from '../generated/models/ApiWaveScope';
+import { ApiWaveSelection } from '../generated/models/ApiWaveSelection';
 import { ApiWaveSubscriptionTargetAction } from '../generated/models/ApiWaveSubscriptionTargetAction';
 import { ApiWaveType as WaveTypeApi } from '../generated/models/ApiWaveType';
 import { ApiWaveVisibilityConfig } from '../generated/models/ApiWaveVisibilityConfig';
@@ -55,6 +56,11 @@ import {
   mapWaveFieldsToApiSubmissionStrategy,
   resolveWaveSubmissionStrategyFieldsForWrite
 } from '@/api/waves/wave-submission-strategy';
+import { groupWaveSelectionsByWaveId } from '@/api/waves/wave-selections.helpers';
+import {
+  WaveSelectionsDb,
+  waveSelectionsDb
+} from '@/api/waves/wave-selections.db';
 import { InsertWaveEntity, wavesApiDb, WavesApiDb } from './waves.api.db';
 import { enums } from '../../../enums';
 import { collections } from '../../../collections';
@@ -66,6 +72,7 @@ type WaveMappingRelatedData = {
   >;
   profiles: Record<string, ApiProfileMin>;
   curations: Record<string, ApiGroup>;
+  selections: Record<string, ApiWaveSelection[]>;
   displayByWaveId: Record<string, WaveDisplayOverride>;
   creationDrops: Record<string, ApiDrop>;
   subscribedActions: Record<string, ApiWaveSubscriptionTargetAction[]>;
@@ -84,7 +91,8 @@ export class WavesMappers {
     private readonly identityFetcher: IdentityFetcher,
     private readonly userGroupsService: UserGroupsService,
     private readonly wavesApiDb: WavesApiDb,
-    private readonly identitySubscriptionsDb: IdentitySubscriptionsDb
+    private readonly identitySubscriptionsDb: IdentitySubscriptionsDb,
+    private readonly waveSelectionsDb: WaveSelectionsDb
   ) {}
 
   public async createWaveToNewWaveEntity({
@@ -258,6 +266,7 @@ export class WavesMappers {
       profiles,
       creationDrops,
       curations,
+      selections,
       displayByWaveId,
       subscribedActions,
       metrics,
@@ -415,6 +424,7 @@ export class WavesMappers {
       participation: participation,
       chat: chat,
       wave: waveConf,
+      selections: selections[waveEntity.id] ?? [],
       subscribed_actions: subscribedActions[waveEntity.id] ?? [],
       metrics: apiWaveMetrics,
       pauses,
@@ -436,6 +446,7 @@ export class WavesMappers {
     );
     const [
       curationEntities,
+      selectionEntities,
       metrics,
       authenticatedUserMetrics,
       authenticatedUserReaderMetrics,
@@ -459,6 +470,10 @@ export class WavesMappers {
           ].filter((id): id is string => id !== null)
         ),
         ctx
+      ),
+      this.waveSelectionsDb.findWaveSelectionsByWaveIds(
+        waveIds,
+        ctx.connection
       ),
       this.wavesApiDb.findWavesMetricsByWaveIds(waveIds, ctx),
       authenticatedUserId
@@ -591,6 +606,7 @@ export class WavesMappers {
       contributors: contributorsOverViews,
       profiles: profileMins,
       curations,
+      selections: groupWaveSelectionsByWaveId(selectionEntities),
       displayByWaveId,
       creationDrops: creationDropsByDropId,
       subscribedActions: Object.entries(subscribedActions).reduce(
@@ -618,5 +634,6 @@ export const wavesMappers = new WavesMappers(
   identityFetcher,
   userGroupsService,
   wavesApiDb,
-  identitySubscriptionsDb
+  identitySubscriptionsDb,
+  waveSelectionsDb
 );

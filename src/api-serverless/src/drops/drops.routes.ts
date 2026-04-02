@@ -71,6 +71,7 @@ router.get(
         serial_no_less_than?: number;
         author?: string;
         wave_id?: string;
+        selection_id?: string;
         include_replies?: string;
         drop_type?: ApiDropType;
         ids?: string;
@@ -86,6 +87,7 @@ router.get(
       limit,
       wave_id,
       group_id,
+      selection_id,
       author_id,
       include_replies,
       drop_type,
@@ -100,6 +102,7 @@ router.get(
           req.query.serial_no_less_than
         ),
         wave_id,
+        selection_id,
         author_id,
         include_replies,
         drop_type,
@@ -745,6 +748,7 @@ export async function prepLatestDropsSearchQuery(
       serial_no_less_than?: number;
       author?: string;
       wave_id?: string;
+      selection_id?: string;
       include_replies?: string;
       drop_type?: ApiDropType;
       ids?: string;
@@ -755,6 +759,7 @@ export async function prepLatestDropsSearchQuery(
 ) {
   const limit = numbers.parseIntOrNull(req.query.limit) ?? 10;
   const wave_id = req.query.wave_id ?? null;
+  const selection_id = req.query.selection_id ?? null;
   const group_id = req.query.group_id ?? null;
   const include_replies = req.query.include_replies === 'true';
   const drop_type_str = (req.query.drop_type as string) ?? null;
@@ -775,6 +780,7 @@ export async function prepLatestDropsSearchQuery(
   return {
     limit,
     wave_id,
+    selection_id,
     group_id,
     author_id,
     include_replies,
