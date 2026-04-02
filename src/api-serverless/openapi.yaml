@@ -5754,6 +5754,32 @@ paths:
               schema:
                 type: object
                 additionalProperties: false
+  /waves/{id}/identity-wave:
+    post:
+      tags:
+        - Waves
+      summary: Set identity wave
+      operationId: setIdentityWave
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+        "400":
+          description: Invalid identity wave
+        "403":
+          description: Forbidden
+        "404":
+          description: Wave not found
   /waves/{id}/mute:
     post:
       tags:
@@ -9092,6 +9118,7 @@ components:
         - winner_main_stage_drop_ids
         - artist_of_prevote_cards
         - is_wave_creator
+        - identity_wave
       properties:
         id:
           type: string
@@ -9165,6 +9192,10 @@ components:
             format: int64
         is_wave_creator:
           type: boolean
+        identity_wave:
+          anyOf:
+            - $ref: "#/components/schemas/ApiWaveMin"
+            - type: "null"
     ApiIdentityActivity:
       type: object
       required:
@@ -10250,6 +10281,7 @@ components:
         - winner_main_stage_drop_ids
         - artist_of_prevote_cards
         - is_wave_creator
+        - identity_wave
       properties:
         id:
           type: string
@@ -10310,6 +10342,10 @@ components:
             format: int64
         is_wave_creator:
           type: boolean
+        identity_wave:
+          anyOf:
+            - $ref: "#/components/schemas/ApiWaveMin"
+            - type: "null"
     ApiProfileMinsPage:
       type: object
       required:

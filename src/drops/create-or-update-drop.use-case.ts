@@ -73,6 +73,10 @@ import {
   artCurationTokenWatchService,
   ArtCurationTokenWatchService
 } from '@/art-curation/art-curation-token-watch.service';
+import {
+  identityWavesService,
+  IdentityWavesService
+} from '@/identities/identity-waves.service';
 import { extractUrlCandidatesFromText } from '@/nft-links/nft-link-candidates';
 import { validateLinkUrl } from '@/nft-links/nft-link-resolver.validator';
 import { env } from '@/env';
@@ -102,7 +106,8 @@ export class CreateOrUpdateDropUseCase {
     private readonly deleteDropUseCase: DeleteDropUseCase,
     private readonly metricsRecorder: MetricsRecorder,
     private readonly dropNftLinksDb: DropNftLinksDb,
-    private readonly artCurationTokenWatchService: ArtCurationTokenWatchService
+    private readonly artCurationTokenWatchService: ArtCurationTokenWatchService,
+    private readonly identityWavesService: IdentityWavesService
   ) {}
 
   private getRequiredAuthorId(model: CreateOrUpdateDropModel): string {
@@ -343,6 +348,13 @@ export class CreateOrUpdateDropUseCase {
         { connection, timer }
       );
       await Promise.all([
+        this.identityWavesService.setIdentityWaveIfEligible(
+          {
+            profileId: authorId,
+            waveId: validatedModel.wave_id
+          },
+          { timer, connection }
+        ),
         this.metricsRecorder.recordDrop(
           {
             identityId: authorId,
@@ -1429,5 +1441,6 @@ export const createOrUpdateDrop = new CreateOrUpdateDropUseCase(
   deleteDrop,
   metricsRecorder,
   dropNftLinksDb,
-  artCurationTokenWatchService
+  artCurationTokenWatchService,
+  identityWavesService
 );

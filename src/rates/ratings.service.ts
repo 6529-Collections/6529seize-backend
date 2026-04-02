@@ -1041,6 +1041,7 @@ export class RatingsService {
                   pfp: null,
                   classification: null,
                   sub_classification: null,
+                  wave_id: null,
                   cic: 0,
                   rep: 0,
                   tdh: 0,

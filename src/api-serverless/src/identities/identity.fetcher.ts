@@ -23,6 +23,11 @@ import { ApiProfileClassification } from '../generated/models/ApiProfileClassifi
 import { NotFoundException } from '../../../exceptions';
 import { ApiCommunityMemberMinimal } from '../generated/models/ApiCommunityMemberMinimal';
 import { enums } from '../../../enums';
+import { ApiWaveMin } from '@/api/generated/models/ApiWaveMin';
+import { ProfileProxyActionType } from '@/entities/IProfileProxyAction';
+import { userGroupsService } from '@/api/community-members/user-groups.service';
+import { wavesApiDb } from '@/api/waves/waves.api.db';
+import { mapWaveEntityToApiWaveMin } from '@/api/waves/wave-min.mapper';
 
 export class IdentityFetcher {
   constructor(
@@ -102,63 +107,77 @@ export class IdentityFetcher {
       this.identitiesDb.getArtistOfPrevoteCards(ids, ctx),
       this.identitiesDb.getWaveCreatorProfileIds(ids, ctx.connection)
     ]);
+    const identityWaves = await this.getIdentityWavesByIdentities(
+      identities,
+      ctx
+    );
     const notFoundProfileIds = ids.filter(
       (id) => !identities.find((p) => p.profile_id === id)
     );
-    const notArchivedProfiles = identities.map<ApiProfileMin>((p) => ({
-      id: p.profile_id!,
-      handle: p.handle,
-      banner1_color: p.banner1,
-      banner2_color: p.banner2,
-      cic: p.cic,
-      rep: p.rep,
-      tdh: p.tdh,
-      xtdh: p.xtdh,
-      xtdh_rate: p.xtdh_rate,
-      produced_xtdh: p.produced_xtdh,
-      granted_xtdh: p.granted_xtdh,
-      tdh_rate: p.basetdh_rate,
-      level: getLevelFromScore(p.level_raw),
-      pfp: p.pfp,
-      archived: false,
-      subscribed_actions: subscribedActions[p.profile_id!] ?? [],
-      primary_address: p.primary_address,
-      active_main_stage_submission_ids:
-        mainStageSubscriptions[p.profile_id!] ?? [],
-      winner_main_stage_drop_ids: mainStageWins[p.profile_id!] ?? [],
-      artist_of_prevote_cards: artistOfPrevoteCards[p.profile_id!] ?? [],
-      is_wave_creator: waveCreatorIds.has(p.profile_id!)
-    }));
+    const notArchivedProfiles = identities.reduce<ApiProfileMin[]>((acc, p) => {
+      const profileId = p.profile_id;
+      if (profileId === null) {
+        return acc;
+      }
+      const profile = {
+        id: profileId,
+        handle: p.handle,
+        banner1_color: p.banner1,
+        banner2_color: p.banner2,
+        cic: p.cic,
+        rep: p.rep,
+        tdh: p.tdh,
+        xtdh: p.xtdh,
+        xtdh_rate: p.xtdh_rate,
+        tdh_rate: p.basetdh_rate,
+        level: getLevelFromScore(p.level_raw),
+        pfp: p.pfp,
+        archived: false,
+        subscribed_actions: subscribedActions[profileId] ?? [],
+        primary_address: p.primary_address,
+        active_main_stage_submission_ids:
+          mainStageSubscriptions[profileId] ?? [],
+        winner_main_stage_drop_ids: mainStageWins[profileId] ?? [],
+        artist_of_prevote_cards: artistOfPrevoteCards[profileId] ?? [],
+        is_wave_creator: waveCreatorIds.has(profileId),
+        identity_wave: identityWaves[profileId] ?? null
+      };
+      acc.push(profile);
+      return acc;
+    }, []);
     const archivedProfiles = await this.identitiesDb
       .getNewestVersionHandlesOfArchivedProfiles(
         notFoundProfileIds,
         ctx.connection
       )
       .then((it) =>
-        it.map<ApiProfileMin>((p) => ({
-          id: p.external_id,
-          handle: p.handle,
-          banner1_color: p.banner1,
-          banner2_color: p.banner2,
-          cic: 0,
-          rep: 0,
-          tdh: 0,
-          xtdh: 0,
-          xtdh_rate: 0,
-          granted_xtdh: 0,
-          produced_xtdh: 0,
-          tdh_rate: 0,
-          level: 0,
-          primary_address: p.primary_address,
-          pfp: null,
-          archived: true,
-          subscribed_actions: subscribedActions[p.external_id] ?? [],
-          active_main_stage_submission_ids:
-            mainStageSubscriptions[p.external_id] ?? [],
-          winner_main_stage_drop_ids: mainStageWins[p.external_id] ?? [],
-          artist_of_prevote_cards: artistOfPrevoteCards[p.external_id] ?? [],
-          is_wave_creator: waveCreatorIds.has(p.external_id)
-        }))
+        it.reduce<ApiProfileMin[]>((acc, p) => {
+          const profile = {
+            id: p.external_id,
+            handle: p.handle,
+            banner1_color: p.banner1,
+            banner2_color: p.banner2,
+            cic: 0,
+            rep: 0,
+            tdh: 0,
+            xtdh: 0,
+            xtdh_rate: 0,
+            tdh_rate: 0,
+            level: 0,
+            primary_address: p.primary_address,
+            pfp: null,
+            archived: true,
+            subscribed_actions: subscribedActions[p.external_id] ?? [],
+            active_main_stage_submission_ids:
+              mainStageSubscriptions[p.external_id] ?? [],
+            winner_main_stage_drop_ids: mainStageWins[p.external_id] ?? [],
+            artist_of_prevote_cards: artistOfPrevoteCards[p.external_id] ?? [],
+            is_wave_creator: waveCreatorIds.has(p.external_id),
+            identity_wave: null
+          };
+          acc.push(profile);
+          return acc;
+        }, [])
       );
     return [...notArchivedProfiles, ...archivedProfiles].reduce(
       (acc, it) => {
@@ -256,6 +275,65 @@ export class IdentityFetcher {
     }
   }
 
+  public async getIdentityWavesByIdentities(
+    identities: Array<Pick<IdentityEntity, 'profile_id' | 'wave_id'>>,
+    ctx: RequestContext
+  ): Promise<Record<string, ApiWaveMin | null>> {
+    const profileIdsByWaveId = identities.reduce(
+      (acc, identity) => {
+        if (identity.profile_id && identity.wave_id) {
+          acc[identity.profile_id] = identity.wave_id;
+        }
+        return acc;
+      },
+      {} as Record<string, string>
+    );
+    const waveIds = Array.from(new Set(Object.values(profileIdsByWaveId)));
+    if (waveIds.length === 0) {
+      return {};
+    }
+    const readableWaveProfileId = this.getReadableWaveProfileId(ctx);
+    const [groupIdsUserIsEligibleFor, pinnedWaveIds] = await Promise.all([
+      this.getReadableWaveGroupIds(ctx),
+      wavesApiDb.whichOfWavesArePinnedByGivenProfile(
+        {
+          waveIds,
+          profileId: readableWaveProfileId
+        },
+        ctx
+      )
+    ]);
+    const noRightToVote = this.hasNoRightToVote(ctx);
+    const noRightToParticipate = this.hasNoRightToParticipate(ctx);
+    const waveEntities = await wavesApiDb.findWavesByIdsEligibleForRead(
+      waveIds,
+      groupIdsUserIsEligibleFor,
+      ctx.connection
+    );
+    const publicWavesById = waveEntities
+      .filter((waveEntity) => waveEntity.visibility_group_id === null)
+      .reduce(
+        (acc, waveEntity) => {
+          acc[waveEntity.id] = mapWaveEntityToApiWaveMin({
+            waveEntity,
+            groupIdsUserIsEligibleFor,
+            pinned: pinnedWaveIds.has(waveEntity.id),
+            noRightToVote,
+            noRightToParticipate
+          });
+          return acc;
+        },
+        {} as Record<string, ApiWaveMin>
+      );
+    return Object.entries(profileIdsByWaveId).reduce(
+      (acc, [profileId, waveId]) => {
+        acc[profileId] = publicWavesById[waveId] ?? null;
+        return acc;
+      },
+      {} as Record<string, ApiWaveMin | null>
+    );
+  }
+
   private async getSubscribedActions(
     {
       authenticatedProfileId,
@@ -285,6 +363,47 @@ export class IdentityFetcher {
             )
           )
       : {};
+  }
+
+  private async getReadableWaveGroupIds(
+    ctx: RequestContext
+  ): Promise<string[]> {
+    const readableWaveProfileId = this.getReadableWaveProfileId(ctx);
+    if (!readableWaveProfileId) {
+      return [];
+    }
+    return userGroupsService.getGroupsUserIsEligibleFor(
+      readableWaveProfileId,
+      ctx.timer
+    );
+  }
+
+  private getReadableWaveProfileId(ctx: RequestContext): string | null {
+    const authenticationContext = ctx.authenticationContext;
+    if (!authenticationContext?.hasRightsTo(ProfileProxyActionType.READ_WAVE)) {
+      return null;
+    }
+    return authenticationContext.getActingAsId();
+  }
+
+  private hasNoRightToVote(ctx: RequestContext): boolean {
+    const authenticationContext = ctx.authenticationContext;
+    return !!(
+      authenticationContext?.isAuthenticatedAsProxy() &&
+      !authenticationContext.activeProxyActions[
+        ProfileProxyActionType.RATE_WAVE_DROP
+      ]
+    );
+  }
+
+  private hasNoRightToParticipate(ctx: RequestContext): boolean {
+    const authenticationContext = ctx.authenticationContext;
+    return !!(
+      authenticationContext?.isAuthenticatedAsProxy() &&
+      !authenticationContext.activeProxyActions[
+        ProfileProxyActionType.CREATE_DROP_TO_WAVE
+      ]
+    );
   }
 
   private async getIdentityAndConsolidationsByHandle(
@@ -372,7 +491,8 @@ export class IdentityFetcher {
         active_main_stage_submission_ids: [],
         winner_main_stage_drop_ids: [],
         artist_of_prevote_cards: [],
-        is_wave_creator: false
+        is_wave_creator: false,
+        identity_wave: null
       };
     }
     return await this.mapToApiIdentity(identity, query, ctx);
@@ -478,6 +598,19 @@ export class IdentityFetcher {
           identity.classification as string
         ) ?? ApiProfileClassification.Pseudonym)
       : ApiProfileClassification.Pseudonym;
+    const identityWave = identity.profile_id
+      ? ((
+          await this.getIdentityWavesByIdentities(
+            [
+              {
+                profile_id: identity.profile_id,
+                wave_id: identity.wave_id
+              }
+            ],
+            ctx
+          )
+        )[identity.profile_id] ?? null)
+      : null;
     return {
       id: identity.profile_id,
       handle: identity.handle,
@@ -508,7 +641,8 @@ export class IdentityFetcher {
       artist_of_prevote_cards: artistOfPrevoteCards,
       is_wave_creator: identity.profile_id
         ? waveCreatorIds.has(identity.profile_id)
-        : false
+        : false,
+      identity_wave: identityWave
     };
   }
 

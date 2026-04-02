@@ -47,8 +47,6 @@ import {
 import { ApiProfileMin } from '../generated/models/ApiProfileMin';
 import { ApiWaveVotersPage } from '../generated/models/ApiWaveVotersPage';
 import { ApiWaveVoter } from '../generated/models/ApiWaveVoter';
-import { ApiWaveCreditType as WaveCreditTypeApi } from '../generated/models/ApiWaveCreditType';
-import { ApiWaveParticipationSubmissionStrategyType } from '../generated/models/ApiWaveParticipationSubmissionStrategyType';
 import {
   identityFetcher,
   IdentityFetcher
@@ -72,20 +70,8 @@ import {
 } from '../ws/ws-listeners-notifier';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import { CurationsDb, curationsDb } from '@/api/curations/curations.db';
-import {
-  directMessageWaveDisplayService,
-  resolveWavePictureOverride
-} from '@/api/waves/direct-message-wave-display.service';
-
-const resolveWaveSubmissionType = (
-  submissionType?: string | null
-): ApiWaveParticipationSubmissionStrategyType | null =>
-  submissionType
-    ? (enums.resolve(
-        ApiWaveParticipationSubmissionStrategyType,
-        submissionType
-      ) ?? null)
-    : null;
+import { directMessageWaveDisplayService } from '@/api/waves/direct-message-wave-display.service';
+import { mapWaveEntityToApiWaveMin } from '@/api/waves/wave-min.mapper';
 
 export class DropsApiService {
   constructor(
@@ -136,7 +122,8 @@ export class DropsApiService {
       .convertToDropFulls(
         {
           dropEntities: [dropEntity],
-          contextProfileId: contextProfileId
+          contextProfileId: contextProfileId,
+          authenticationContext: ctx.authenticationContext
         },
         ctx.connection
       )
@@ -244,7 +231,8 @@ export class DropsApiService {
     );
     return await this.dropsMappers.convertToDropFulls({
       dropEntities: dropEntities,
-      contextProfileId: context_profile_id
+      contextProfileId: context_profile_id,
+      authenticationContext: ctx.authenticationContext
     });
   }
 
@@ -299,6 +287,28 @@ export class DropsApiService {
     return context_profile_id;
   }
 
+  private hasNoRightToVote(
+    authenticationContext?: AuthenticationContext
+  ): boolean {
+    return !!(
+      authenticationContext?.isAuthenticatedAsProxy() &&
+      !authenticationContext.activeProxyActions[
+        ProfileProxyActionType.RATE_WAVE_DROP
+      ]
+    );
+  }
+
+  private hasNoRightToParticipate(
+    authenticationContext?: AuthenticationContext
+  ): boolean {
+    return !!(
+      authenticationContext?.isAuthenticatedAsProxy() &&
+      !authenticationContext.activeProxyActions[
+        ProfileProxyActionType.CREATE_DROP_TO_WAVE
+      ]
+    );
+  }
+
   async findDropsByIdsOrThrow(
     dropIds: string[],
     authenticationContext: AuthenticationContext | undefined,
@@ -330,7 +340,8 @@ export class DropsApiService {
     return await this.dropsMappers
       .convertToDropFulls({
         dropEntities,
-        contextProfileId: authenticationContext?.getActingAsId()
+        contextProfileId: authenticationContext?.getActingAsId(),
+        authenticationContext
       })
       .then((drops) =>
         drops.reduce(
@@ -487,6 +498,10 @@ export class DropsApiService {
     const context_profile_id = this.getDropsReadContextProfileId(
       authenticationContext
     );
+    const noRightToVote = this.hasNoRightToVote(authenticationContext);
+    const noRightToParticipate = this.hasNoRightToParticipate(
+      authenticationContext
+    );
     const group_ids_user_is_eligible_for =
       !authenticationContext.isUserFullyAuthenticated() ||
       (authenticationContext.isAuthenticatedAsProxy() &&
@@ -520,44 +535,14 @@ export class DropsApiService {
         },
         ctx.connection
       );
-    const waveMin: ApiWaveMin = {
-      id: wave.id,
-      name: displayByWaveId[wave.id]?.name ?? wave.name,
-      picture: resolveWavePictureOverride(
-        wave.picture,
-        displayByWaveId[wave.id]
-      ),
-      description_drop_id: wave.description_drop_id,
-      last_drop_time: wave.last_drop_time,
-      submission_type: resolveWaveSubmissionType(wave.submission_type),
-      authenticated_user_eligible_to_vote:
-        wave.voting_group_id === null ||
-        group_ids_user_is_eligible_for.includes(wave.voting_group_id),
-      authenticated_user_eligible_to_participate:
-        wave.participation_group_id === null ||
-        group_ids_user_is_eligible_for.includes(wave.participation_group_id),
-      authenticated_user_eligible_to_chat:
-        wave.chat_enabled &&
-        (wave.chat_group_id === null ||
-          group_ids_user_is_eligible_for.includes(wave.chat_group_id)),
-      authenticated_user_admin:
-        wave.admin_group_id !== null &&
-        group_ids_user_is_eligible_for.includes(wave.admin_group_id),
-      voting_period_start: wave.voting_period_start,
-      voting_period_end: wave.voting_period_end,
-      voting_credit_type: enums.resolveOrThrow(
-        WaveCreditTypeApi,
-        wave.voting_credit_type
-      ),
-      visibility_group_id: wave.visibility_group_id,
-      participation_group_id: wave.participation_group_id,
-      admin_group_id: wave.admin_group_id,
-      chat_group_id: wave.chat_group_id,
-      voting_group_id: wave.voting_group_id,
-      admin_drop_deletion_enabled: wave.admin_drop_deletion_enabled,
-      forbid_negative_votes: wave.forbid_negative_votes,
-      pinned: pinnedWaveIds.has(wave_id)
-    };
+    const waveMin: ApiWaveMin = mapWaveEntityToApiWaveMin({
+      waveEntity: wave,
+      groupIdsUserIsEligibleFor: group_ids_user_is_eligible_for,
+      pinned: pinnedWaveIds.has(wave_id),
+      displayOverride: displayByWaveId[wave.id],
+      noRightToVote,
+      noRightToParticipate
+    });
     if (drop_id) {
       const dropEntity = await this.dropsDb.findDropByIdWithEligibilityCheck(
         drop_id,
@@ -657,6 +642,8 @@ export class DropsApiService {
       await this.userGroupsService.getGroupsUserIsEligibleFor(
         authenticatedProfileId
       );
+    const noRightToVote = this.hasNoRightToVote(authContext);
+    const noRightToParticipate = this.hasNoRightToParticipate(authContext);
     const [waveEntity, pinnedWaveIds] = await Promise.all([
       wavesApiDb.findWaveById(params.wave_id),
       wavesApiDb.whichOfWavesArePinnedByGivenProfile(
@@ -686,44 +673,17 @@ export class DropsApiService {
         ctx.connection
       );
     const votingPeriodEnd = waveEntity.voting_period_end;
-    const waveMin: ApiWaveMin = {
-      id: waveEntity.id,
-      name: displayByWaveId[waveEntity.id]?.name ?? waveEntity.name,
-      picture: resolveWavePictureOverride(
-        waveEntity.picture,
-        displayByWaveId[waveEntity.id]
-      ),
-      description_drop_id: waveEntity.description_drop_id,
-      last_drop_time: waveEntity.last_drop_time,
-      submission_type: resolveWaveSubmissionType(waveEntity.submission_type),
-      authenticated_user_eligible_to_vote:
-        waveEntity.voting_group_id === null ||
-        groupIdsUserIsEligibleFor.includes(waveEntity.voting_group_id),
-      authenticated_user_eligible_to_participate:
-        waveEntity.participation_group_id === null ||
-        groupIdsUserIsEligibleFor.includes(waveEntity.participation_group_id),
-      authenticated_user_eligible_to_chat:
-        waveEntity.chat_enabled &&
-        (waveEntity.chat_group_id === null ||
-          groupIdsUserIsEligibleFor.includes(waveEntity.chat_group_id)),
-      authenticated_user_admin:
-        waveEntity.admin_group_id !== null &&
-        groupIdsUserIsEligibleFor.includes(waveEntity.admin_group_id),
-      voting_period_start: waveEntity.voting_period_start,
-      voting_period_end: votingPeriodEnd,
-      voting_credit_type: enums.resolveOrThrow(
-        WaveCreditTypeApi,
-        waveEntity.voting_credit_type
-      ),
-      visibility_group_id: waveEntity.visibility_group_id,
-      participation_group_id: waveEntity.participation_group_id,
-      admin_group_id: waveEntity.admin_group_id,
-      chat_group_id: waveEntity.chat_group_id,
-      voting_group_id: waveEntity.voting_group_id,
-      admin_drop_deletion_enabled: waveEntity.admin_drop_deletion_enabled,
-      forbid_negative_votes: waveEntity.forbid_negative_votes,
-      pinned: pinnedWaveIds.has(params.wave_id)
-    };
+    const waveMin: ApiWaveMin = mapWaveEntityToApiWaveMin({
+      waveEntity: {
+        ...waveEntity,
+        voting_period_end: votingPeriodEnd
+      },
+      groupIdsUserIsEligibleFor,
+      pinned: pinnedWaveIds.has(params.wave_id),
+      displayOverride: displayByWaveId[waveEntity.id],
+      noRightToVote,
+      noRightToParticipate
+    });
     const isTimeLockedWave =
       waveEntity.time_lock_ms !== null && waveEntity.time_lock_ms > 0;
     let curatorIdsFilter: string[] | null = null;
@@ -1255,7 +1215,11 @@ export class DropsApiService {
         )
       ]);
       const apiDrops = await this.dropsMappers.convertToDropFulls(
-        { dropEntities: data, contextProfileId },
+        {
+          dropEntities: data,
+          contextProfileId,
+          authenticationContext: ctx.authenticationContext
+        },
         ctx.connection
       );
       return {

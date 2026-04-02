@@ -54,7 +54,8 @@ export class DropBookmarksApiService {
         const drops = await this.dropsMappers.convertToDropFulls(
           {
             dropEntities: [dropEntity],
-            contextProfileId: identityId
+            contextProfileId: identityId,
+            authenticationContext: ctx.authenticationContext
           },
           connection
         );
@@ -97,7 +98,8 @@ export class DropBookmarksApiService {
         const drops = await this.dropsMappers.convertToDropFulls(
           {
             dropEntities: [dropEntity],
-            contextProfileId: identityId
+            contextProfileId: identityId,
+            authenticationContext: ctx.authenticationContext
           },
           connection
         );
@@ -163,7 +165,8 @@ export class DropBookmarksApiService {
     const drops = await this.dropsMappers.convertToDropFulls(
       {
         dropEntities: orderedDropEntities,
-        contextProfileId: identityId
+        contextProfileId: identityId,
+        authenticationContext: ctx.authenticationContext
       },
       ctx.connection
     );

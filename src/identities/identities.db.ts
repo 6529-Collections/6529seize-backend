@@ -118,6 +118,7 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
                                          primary_address,
                                          handle,
                                          normalised_handle,
+                                         wave_id,
                                          tdh,
                                          rep,
                                          cic,
@@ -135,6 +136,7 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
                 :primary_address,
                 :handle,
                 :normalised_handle,
+                :wave_id,
                 :tdh,
                 :rep,
                 :cic,
@@ -276,6 +278,7 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
       primary_address: identity.primary_address,
       handle: identity.handle ?? null,
       normalised_handle: identity.normalised_handle ?? null,
+      wave_id: identity.wave_id ?? null,
       tdh: identity.tdh ?? 0,
       rep: identity.rep ?? 0,
       cic: identity.cic ?? 0,
@@ -296,6 +299,7 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
         'primary_address',
         'handle',
         'normalised_handle',
+        'wave_id',
         'tdh',
         'rep',
         'cic',
@@ -311,6 +315,7 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
         'primary_address',
         'handle',
         'normalised_handle',
+        'wave_id',
         'tdh',
         'rep',
         'cic',
@@ -351,6 +356,58 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
       { id },
       { wrappedConnection: connectionHolder }
     );
+  }
+
+  async updateIdentityWave(
+    {
+      profileId,
+      waveId
+    }: {
+      profileId: string;
+      waveId: string | null;
+    },
+    ctx: RequestContext
+  ) {
+    try {
+      ctx.timer?.start(`${this.constructor.name}->updateIdentityWave`);
+      await this.db.execute(
+        `update ${IDENTITIES_TABLE} set wave_id = :waveId where profile_id = :profileId`,
+        { profileId, waveId },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->updateIdentityWave`);
+    }
+  }
+
+  async clearIdentityWaveByWaveId(waveId: string, ctx: RequestContext) {
+    try {
+      ctx.timer?.start(`${this.constructor.name}->clearIdentityWaveByWaveId`);
+      await this.db.execute(
+        `update ${IDENTITIES_TABLE} set wave_id = null where wave_id = :waveId`,
+        { waveId },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->clearIdentityWaveByWaveId`);
+    }
+  }
+
+  async existsIdentityWithWaveId(
+    { waveId }: { waveId: string },
+    ctx: RequestContext
+  ): Promise<boolean> {
+    try {
+      ctx.timer?.start(`${this.constructor.name}->existsIdentityWithWaveId`);
+      const result = await this.db.oneOrNull<{ exists_count: number }>(
+        `select count(*) as exists_count from ${IDENTITIES_TABLE} where wave_id = :waveId`,
+        { waveId },
+        { wrappedConnection: ctx.connection }
+      );
+      return (result?.exists_count ?? 0) > 0;
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->existsIdentityWithWaveId`);
+    }
   }
 
   async getIdentityByHandle(
@@ -785,6 +842,7 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
       | 'granted_xtdh'
       | 'xtdh_rate'
       | 'basetdh_rate'
+      | 'wave_id'
     >,
     connection: ConnectionWrapper<any>
   ) {

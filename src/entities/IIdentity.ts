@@ -53,6 +53,9 @@ export class IdentityEntity {
   @Column({ type: 'varchar', length: 255, nullable: true, default: null })
   public readonly sub_classification!: string | null;
 
+  @Column({ type: 'varchar', length: 100, nullable: true, default: null })
+  public readonly wave_id!: string | null;
+
   @Column({ type: 'double', nullable: false, default: 0 })
   readonly xtdh!: number;
 

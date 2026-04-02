@@ -798,28 +798,35 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     connection?: ConnectionWrapper<any>
   ): Promise<WaveEntity | null> {
     return this.db
-      .oneOrNull<WaveEntity>(
+      .oneOrNull<RawWaveEntity>(
         `
         select * from ${WAVES_TABLE} where id = :wave_id`,
         { wave_id },
         { wrappedConnection: connection }
       )
-      .then((it) =>
-        it
-          ? {
-              ...it,
-              participation_required_media: JSON.parse(
-                it.participation_required_media as any
-              ),
-              participation_required_metadata: JSON.parse(
-                it.participation_required_metadata as any
-              ),
-              decisions_strategy: it.decisions_strategy
-                ? JSON.parse(it.decisions_strategy as any)
-                : null
-            }
-          : null
+      .then((it) => (it ? this.parseWaveEntity(it) : null));
+  }
+
+  async lockById(
+    waveId: string,
+    ctx: RequestContext
+  ): Promise<WaveEntity | null> {
+    try {
+      ctx.timer?.start(`${this.constructor.name}->lockById`);
+      if (!ctx.connection) {
+        throw new Error(`Wave locking requires a transaction`);
+      }
+      const wave = await this.db.oneOrNull<RawWaveEntity>(
+        `
+          select * from ${WAVES_TABLE} where id = :waveId for update
+        `,
+        { waveId },
+        { wrappedConnection: ctx.connection }
       );
+      return wave ? this.parseWaveEntity(wave) : null;
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->lockById`);
+    }
   }
 
   async deleteWave(waveId: string, ctx: RequestContext) {

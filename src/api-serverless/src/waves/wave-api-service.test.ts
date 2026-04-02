@@ -45,6 +45,12 @@ describe('WaveApiService updateWave immutability', () => {
         .fn()
         .mockResolvedValue({ id: waveBeforeUpdate.id })
     };
+    const identityWavesService = {
+      assertWaveCanBeMadePrivate: jest.fn().mockResolvedValue(undefined),
+      clearIdentityWaveByWaveId: jest.fn().mockResolvedValue(undefined),
+      assertWaveCanBeIdentityWave: jest.fn().mockResolvedValue(undefined),
+      setIdentityWave: jest.fn().mockResolvedValue(undefined)
+    };
     const metricsRecorder = {
       recordActiveIdentity: jest.fn().mockResolvedValue(undefined)
     };
@@ -60,6 +66,7 @@ describe('WaveApiService updateWave immutability', () => {
       {} as any,
       {} as any,
       {} as any,
+      identityWavesService as any,
       metricsRecorder as any,
       {} as any,
       {} as any
@@ -71,6 +78,7 @@ describe('WaveApiService updateWave immutability', () => {
       service,
       wavesApiDb,
       waveMappers,
+      identityWavesService,
       metricsRecorder,
       ctx: {
         authenticationContext: AuthenticationContext.fromProfileId(
@@ -273,5 +281,111 @@ describe('WaveApiService updateWave immutability', () => {
 
     expect(wavesApiDb.deleteWave).toHaveBeenCalled();
     expect(waveMappers.createWaveToNewWaveEntity).toHaveBeenCalled();
+  });
+
+  it('rejects making an assigned identity wave private', async () => {
+    const waveBeforeUpdate = aWave(
+      {
+        type: WaveType.CHAT,
+        created_by: 'profile-1'
+      },
+      {
+        id: 'wave-1',
+        name: 'wave-1',
+        serial_no: 1
+      }
+    );
+    const { service, identityWavesService, wavesApiDb, ctx } = createService({
+      waveBeforeUpdate
+    });
+    identityWavesService.assertWaveCanBeMadePrivate.mockRejectedValue(
+      new Error(`A wave used as an identity wave cannot be made private`)
+    );
+
+    await expect(
+      service.updateWave(
+        'wave-1',
+        {
+          ...updateRequest({ type: ApiWaveType.Chat }),
+          visibility: {
+            scope: { group_id: 'group-1' }
+          }
+        },
+        ctx
+      )
+    ).rejects.toThrow(`A wave used as an identity wave cannot be made private`);
+
+    expect(wavesApiDb.deleteWave).not.toHaveBeenCalled();
+  });
+
+  it('sets identity wave for the authenticated profile', async () => {
+    const waveBeforeUpdate = aWave(
+      {
+        type: WaveType.CHAT,
+        created_by: 'profile-1'
+      },
+      {
+        id: 'wave-1',
+        name: 'wave-1',
+        serial_no: 1
+      }
+    );
+    const { service, identityWavesService, metricsRecorder, ctx } =
+      createService({
+        waveBeforeUpdate
+      });
+
+    await expect(
+      service.setIdentityWave({ waveId: 'wave-1' }, ctx)
+    ).resolves.toBeUndefined();
+
+    expect(
+      identityWavesService.assertWaveCanBeIdentityWave
+    ).toHaveBeenCalledWith(
+      {
+        waveId: 'wave-1',
+        profileId: 'profile-1'
+      },
+      expect.objectContaining({ connection: expect.anything() })
+    );
+    expect(identityWavesService.setIdentityWave).toHaveBeenCalledWith(
+      {
+        profileId: 'profile-1',
+        waveId: 'wave-1'
+      },
+      expect.objectContaining({ connection: expect.anything() })
+    );
+    expect(metricsRecorder.recordActiveIdentity).toHaveBeenCalledWith(
+      { identityId: 'profile-1' },
+      expect.objectContaining({ connection: expect.anything() })
+    );
+  });
+
+  it('rejects setting identity wave through a proxy', async () => {
+    const waveBeforeUpdate = aWave(
+      {
+        type: WaveType.CHAT,
+        created_by: 'profile-1'
+      },
+      {
+        id: 'wave-1',
+        name: 'wave-1',
+        serial_no: 1
+      }
+    );
+    const { service } = createService({ waveBeforeUpdate });
+    const ctx = {
+      authenticationContext: new AuthenticationContext({
+        authenticatedWallet: null,
+        authenticatedProfileId: 'proxy-1',
+        roleProfileId: 'profile-1',
+        activeProxyActions: []
+      }),
+      timer: undefined
+    } as any;
+
+    await expect(
+      service.setIdentityWave({ waveId: 'wave-1' }, ctx)
+    ).rejects.toThrow(`Proxies can't set identity waves`);
   });
 });

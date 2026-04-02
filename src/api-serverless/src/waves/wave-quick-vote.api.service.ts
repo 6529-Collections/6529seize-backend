@@ -123,7 +123,8 @@ export class WaveQuickVoteApiService {
       .convertToDropFulls(
         {
           dropEntities: [drop],
-          contextProfileId: identityId
+          contextProfileId: identityId,
+          authenticationContext: ctx.authenticationContext
         },
         ctx.connection
       )

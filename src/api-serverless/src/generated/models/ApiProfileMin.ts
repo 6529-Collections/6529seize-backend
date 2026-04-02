@@ -11,6 +11,7 @@
  */
 
 import { ApiIdentitySubscriptionTargetAction } from '../models/ApiIdentitySubscriptionTargetAction';
+import { ApiWaveMin } from '../models/ApiWaveMin';
 import { HttpFile } from '../http/http';
 
 export class ApiProfileMin {
@@ -33,6 +34,7 @@ export class ApiProfileMin {
     'winner_main_stage_drop_ids': Array<string>;
     'artist_of_prevote_cards': Array<number>;
     'is_wave_creator': boolean;
+    'identity_wave': ApiWaveMin | null;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -149,6 +151,12 @@ export class ApiProfileMin {
             "name": "is_wave_creator",
             "baseName": "is_wave_creator",
             "type": "boolean",
+            "format": ""
+        },
+        {
+            "name": "identity_wave",
+            "baseName": "identity_wave",
+            "type": "ApiWaveMin",
             "format": ""
         }    ];
 

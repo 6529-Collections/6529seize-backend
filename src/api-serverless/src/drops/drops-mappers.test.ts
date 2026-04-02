@@ -1,5 +1,7 @@
 import { AuthenticationContext } from '@/auth-context';
+import { directMessageWaveDisplayService } from '@/api/waves/direct-message-wave-display.service';
 import { DropType, DropEntity } from '@/entities/IDrop';
+import { ProfileProxyActionType } from '@/entities/IProfileProxyAction';
 import { ApiProfileMin } from '../generated/models/ApiProfileMin';
 import { DropsMappers } from './drops.mappers';
 
@@ -23,7 +25,8 @@ function aProfileMin(id: string): ApiProfileMin {
     active_main_stage_submission_ids: [],
     winner_main_stage_drop_ids: [],
     artist_of_prevote_cards: [],
-    is_wave_creator: false
+    is_wave_creator: false,
+    identity_wave: null
   };
 }
 
@@ -45,6 +48,26 @@ function aResolvedIdentityProfile(id: string) {
 }
 
 describe('DropsMappers', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  function createReadOnlyProxyContext(roleProfileId: string) {
+    return new AuthenticationContext({
+      authenticatedWallet: null,
+      authenticatedProfileId: 'proxy-profile',
+      roleProfileId,
+      activeProxyActions: [
+        {
+          id: 'read-wave-action',
+          type: ProfileProxyActionType.READ_WAVE,
+          credit_amount: null,
+          credit_spent: null
+        }
+      ]
+    });
+  }
+
   it('uses the transactional connection when resolving identity metadata profiles', async () => {
     const userGroupsService = {
       getGroupsUserIsEligibleFor: jest.fn().mockResolvedValue([])
@@ -86,7 +109,7 @@ describe('DropsMappers', () => {
         .mockResolvedValue(new Set<string>())
     };
     const identitySubscriptionsDb = {
-      findIdentitySubscriptionActionsOfTargets: jest.fn()
+      findIdentitySubscriptionActionsOfTargets: jest.fn().mockResolvedValue({})
     };
     const dropVotingDb = {
       getParticipationDropsRealtimeRanks: jest.fn().mockResolvedValue({}),
@@ -94,6 +117,7 @@ describe('DropsMappers', () => {
       getTallyForDrops: jest.fn().mockResolvedValue({}),
       getWinningDropsTopRaters: jest.fn().mockResolvedValue({}),
       getWinningDropsRatersCount: jest.fn().mockResolvedValue({}),
+      getWinningDropsRatingsByVoter: jest.fn().mockResolvedValue({}),
       getTimeLockedDropsWeightedVotes: jest.fn().mockResolvedValue({}),
       getWeightedDropRates: jest.fn().mockResolvedValue({})
     };
@@ -104,7 +128,7 @@ describe('DropsMappers', () => {
       getByDropIds: jest.fn().mockResolvedValue(new Map())
     };
     const dropBookmarksDb = {
-      findBookmarkedDropIds: jest.fn()
+      findBookmarkedDropIds: jest.fn().mockResolvedValue(new Set())
     };
     const curationsDb = {
       findWaveCurationGroupsByWaveIds: jest.fn().mockResolvedValue([]),
@@ -181,6 +205,231 @@ describe('DropsMappers', () => {
     });
     expect(mappedDrop.metadata[0].resolved_profile).toEqual(
       aResolvedIdentityProfile('nominated-profile')
+    );
+  });
+
+  it('does not overstate top-level wave eligibility for read-only proxies', async () => {
+    const userGroupsService = {
+      getGroupsUserIsEligibleFor: jest.fn().mockResolvedValue([])
+    };
+    const wavesApiDb = {
+      getWavesByDropIds: jest.fn().mockResolvedValue({
+        'drop-1': {
+          id: 'wave-1',
+          name: 'wave-1',
+          picture: null,
+          description_drop_id: 'description-drop-1',
+          last_drop_time: 42,
+          submission_type: null,
+          chat_enabled: true,
+          chat_group_id: null,
+          voting_group_id: null,
+          participation_group_id: null,
+          admin_group_id: null,
+          voting_credit_type: 'TDH',
+          voting_period_start: null,
+          voting_period_end: null,
+          visibility_group_id: null,
+          admin_drop_deletion_enabled: false,
+          forbid_negative_votes: false
+        }
+      }),
+      whichOfWavesArePinnedByGivenProfile: jest
+        .fn()
+        .mockResolvedValue(new Set<string>())
+    };
+    const mapper = new DropsMappers(
+      userGroupsService as any,
+      {} as any,
+      {} as any,
+      wavesApiDb as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any
+    );
+    const dropEntity = {
+      id: 'drop-1',
+      wave_id: 'wave-1'
+    } as DropEntity;
+    jest
+      .spyOn(mapper, 'convertToDropsWithoutWaves')
+      .mockResolvedValue([{ id: 'drop-1' } as any]);
+    jest
+      .spyOn(
+        directMessageWaveDisplayService,
+        'resolveWaveDisplayByWaveIdForContext'
+      )
+      .mockResolvedValue({});
+
+    const drops = await mapper.convertToDropFulls(
+      {
+        dropEntities: [dropEntity],
+        contextProfileId: 'author-profile',
+        authenticationContext: createReadOnlyProxyContext('author-profile')
+      },
+      { connection: { id: 'tx' } } as any
+    );
+
+    expect(drops[0]?.wave).toEqual(
+      expect.objectContaining({
+        authenticated_user_eligible_to_vote: false,
+        authenticated_user_eligible_to_participate: false
+      })
+    );
+  });
+
+  it('does not overstate mentioned wave eligibility for read-only proxies', async () => {
+    const userGroupsService = {
+      getGroupsUserIsEligibleFor: jest.fn().mockResolvedValue([])
+    };
+    const identityFetcher = {
+      getOverviewsByIds: jest.fn().mockResolvedValue({
+        'author-profile': aProfileMin('author-profile')
+      })
+    };
+    const dropsDb = {
+      getQuoteIds: jest.fn().mockResolvedValue([]),
+      getDropsByIds: jest.fn().mockResolvedValue([]),
+      getDropsParts: jest.fn().mockResolvedValue({ 'drop-1': [] }),
+      findMentionsByDropIds: jest.fn().mockResolvedValue([]),
+      findMentionedWavesByDropIds: jest.fn().mockResolvedValue([
+        {
+          drop_id: 'drop-1',
+          wave_id: 'wave-2',
+          wave_name_in_content: 'wave-2'
+        }
+      ]),
+      findReferencedNftsByDropIds: jest.fn().mockResolvedValue([]),
+      findMetadataByDropIds: jest.fn().mockResolvedValue([]),
+      getDropMedia: jest.fn().mockResolvedValue([]),
+      getWinDecisionsForDrops: jest.fn().mockResolvedValue({}),
+      findDeletedDrops: jest.fn().mockResolvedValue({}),
+      findDropIdsOfWavesWhereNegativeVotesAreNotAllowed: jest
+        .fn()
+        .mockResolvedValue([]),
+      countBoostsOfGivenDrops: jest.fn().mockResolvedValue({})
+    };
+    const wavesApiDb = {
+      findWavesByIdsEligibleForRead: jest.fn().mockResolvedValue([
+        {
+          id: 'wave-2',
+          name: 'wave-2',
+          picture: null,
+          description_drop_id: 'description-drop-2',
+          last_drop_time: 42,
+          submission_type: null,
+          chat_enabled: true,
+          chat_group_id: null,
+          voting_group_id: null,
+          participation_group_id: null,
+          admin_group_id: null,
+          voting_credit_type: 'TDH',
+          voting_period_start: null,
+          voting_period_end: null,
+          visibility_group_id: null,
+          admin_drop_deletion_enabled: false,
+          forbid_negative_votes: false
+        }
+      ]),
+      whichOfWavesArePinnedByGivenProfile: jest
+        .fn()
+        .mockResolvedValue(new Set<string>())
+    };
+    const identitySubscriptionsDb = {
+      findIdentitySubscriptionActionsOfTargets: jest.fn().mockResolvedValue({})
+    };
+    const dropVotingDb = {
+      getParticipationDropsRealtimeRanks: jest.fn().mockResolvedValue({}),
+      findDropsTopContributors: jest.fn().mockResolvedValue({}),
+      getTallyForDrops: jest.fn().mockResolvedValue({}),
+      getWinningDropsTopRaters: jest.fn().mockResolvedValue({}),
+      getWinningDropsRatersCount: jest.fn().mockResolvedValue({}),
+      getWinningDropsRatingsByVoter: jest.fn().mockResolvedValue({}),
+      getTimeLockedDropsWeightedVotes: jest.fn().mockResolvedValue({}),
+      getWeightedDropRates: jest.fn().mockResolvedValue({})
+    };
+    const dropVotingService = {
+      findCreditLeftForVotingForDrops: jest.fn().mockResolvedValue({})
+    };
+    const reactionsDb = {
+      getByDropIds: jest.fn().mockResolvedValue(new Map())
+    };
+    const dropBookmarksDb = {
+      findBookmarkedDropIds: jest.fn().mockResolvedValue(new Set())
+    };
+    const curationsDb = {
+      findWaveCurationGroupsByWaveIds: jest.fn().mockResolvedValue([]),
+      findCuratedDropIdsByCurator: jest.fn().mockResolvedValue(new Set())
+    };
+    const dropNftLinksDb = {
+      findByDropIds: jest.fn().mockResolvedValue([])
+    };
+    const nftLinksDb = {
+      findByCanonicalIds: jest.fn().mockResolvedValue([])
+    };
+    const nftLinkResolvingService = {
+      refreshStaleTrackingForUrls: jest.fn()
+    };
+
+    const mapper = new DropsMappers(
+      userGroupsService as any,
+      identityFetcher as any,
+      dropsDb as any,
+      wavesApiDb as any,
+      identitySubscriptionsDb as any,
+      dropVotingDb as any,
+      dropVotingService as any,
+      reactionsDb as any,
+      dropBookmarksDb as any,
+      curationsDb as any,
+      dropNftLinksDb as any,
+      nftLinksDb as any,
+      nftLinkResolvingService as any
+    );
+
+    const dropEntity: DropEntity = {
+      id: 'drop-1',
+      serial_no: 1,
+      drop_type: DropType.CHAT,
+      wave_id: 'wave-1',
+      author_id: 'author-profile',
+      title: null,
+      reply_to_drop_id: null,
+      reply_to_part_id: null,
+      parts_count: 0,
+      created_at: 1,
+      updated_at: null,
+      signature: null,
+      hide_link_preview: false
+    } as DropEntity;
+    jest
+      .spyOn(
+        directMessageWaveDisplayService,
+        'resolveWaveDisplayByWaveIdForContext'
+      )
+      .mockResolvedValue({});
+
+    const drops = await mapper.convertToDropsWithoutWaves([dropEntity], {
+      connection: { connection: { id: 'tx' } } as any,
+      authenticationContext: new AuthenticationContext({
+        authenticatedWallet: null,
+        authenticatedProfileId: 'proxy-profile',
+        roleProfileId: 'author-profile',
+        activeProxyActions: []
+      })
+    });
+
+    expect(drops[0]?.mentioned_waves[0]?.wave).toEqual(
+      expect.objectContaining({
+        authenticated_user_eligible_to_vote: false,
+        authenticated_user_eligible_to_participate: false
+      })
     );
   });
 });

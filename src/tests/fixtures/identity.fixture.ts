@@ -24,6 +24,7 @@ const defaultBaseIdentity: BaseIdentity = {
   banner2: null,
   classification: ProfileClassification.PSEUDONYM,
   sub_classification: randomUUID(),
+  wave_id: null,
   xtdh: 0,
   produced_xtdh: 0,
   granted_xtdh: 0,

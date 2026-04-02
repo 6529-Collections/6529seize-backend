@@ -421,11 +421,13 @@ export class IdentitiesService {
       .map((it) => it.profile_id)
       .filter((it) => !!it) as string[];
     const [
+      identityWaves,
       mainStageSubmissions,
       mainStageWins,
       artistOfPrevoteCards,
       waveCreatorIds
     ] = await Promise.all([
+      this.identityFetcher.getIdentityWavesByIdentities(identityEntities, ctx),
       this.identitiesDb.getActiveMainStageDropIds(identityIds, ctx),
       this.identitiesDb.getMainStageWinnerDropIds(identityIds, ctx),
       this.identitiesDb.getArtistOfPrevoteCards(identityIds, ctx),
@@ -470,7 +472,10 @@ export class IdentitiesService {
           : [],
         is_wave_creator: it.profile_id
           ? waveCreatorIds.has(it.profile_id)
-          : false
+          : false,
+        identity_wave: it.profile_id
+          ? (identityWaves[it.profile_id] ?? null)
+          : null
       };
     });
   }
@@ -509,7 +514,8 @@ export class IdentitiesService {
           banner1: null,
           banner2: null,
           classification: null,
-          sub_classification: null
+          sub_classification: null,
+          wave_id: null
         })
       );
       if (newIdentities.length) {

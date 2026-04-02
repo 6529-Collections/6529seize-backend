@@ -210,7 +210,8 @@ export class WsListenersNotifier {
         mainStageSubscriptions[identityId] ?? [],
       winner_main_stage_drop_ids: mainStageWins[identityId] ?? [],
       artist_of_prevote_cards: artistOfPrevoteCards[identityId] ?? [],
-      is_wave_creator: waveCreatorIds.has(identityId)
+      is_wave_creator: waveCreatorIds.has(identityId),
+      identity_wave: null
     };
     const now = Time.currentMillis();
     await Promise.all(

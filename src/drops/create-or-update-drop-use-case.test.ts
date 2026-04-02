@@ -25,6 +25,9 @@ describe('CreateOrUpdateDropUseCase', () => {
   }: {
     existingNominations: Array<{ has_won: boolean }>;
   }) {
+    const identityWavesService = {
+      setIdentityWaveIfEligible: jest.fn().mockResolvedValue(false)
+    };
     return new CreateOrUpdateDropUseCase(
       {
         findIdentityNominationDropsForWave: jest
@@ -41,7 +44,8 @@ describe('CreateOrUpdateDropUseCase', () => {
       {} as any,
       {} as any,
       {} as any,
-      {} as any
+      {} as any,
+      identityWavesService as any
     );
   }
 
@@ -181,5 +185,126 @@ describe('CreateOrUpdateDropUseCase', () => {
       connection: {}
     });
     expect(mockResolveName).not.toHaveBeenCalled();
+  });
+
+  it('marks a newly created qualifying wave as the author identity wave', async () => {
+    const identityWavesService = {
+      setIdentityWaveIfEligible: jest.fn().mockResolvedValue(true)
+    };
+    const metricsRecorder = {
+      recordDrop: jest.fn().mockResolvedValue(undefined),
+      recordActiveIdentity: jest.fn().mockResolvedValue(undefined)
+    };
+    const useCase = new CreateOrUpdateDropUseCase(
+      {
+        findIdentityNominationDropsForWave: jest.fn(),
+        findDropById: jest.fn(),
+        executeNativeQueriesInTransaction: jest.fn(),
+        insertDrop: jest.fn(),
+        insertDropParts: jest.fn(),
+        insertDropMentions: jest.fn(),
+        insertDropMentionedWaves: jest.fn(),
+        insertDropReferencedNfts: jest.fn(),
+        insertDropMedia: jest.fn(),
+        insertDropMetadata: jest.fn(),
+        findNftDetailsByReferencedNfts: jest.fn().mockResolvedValue({})
+      } as any,
+      {} as any,
+      {
+        getGroupsUserIsEligibleFor: jest.fn().mockResolvedValue([])
+      } as any,
+      {
+        findById: jest.fn().mockResolvedValue({
+          id: 'wave-1',
+          type: 'CHAT',
+          chat_group_id: null,
+          chat_enabled: true,
+          participation_group_id: null,
+          participation_required_media: [],
+          participation_required_metadata: [],
+          submission_type: null,
+          participation_signature_required: false,
+          participation_period_start: null,
+          participation_period_end: null,
+          participation_max_applications_per_participant: null,
+          visibility_group_id: null
+        })
+      } as any,
+      {
+        notifyAllNotificationsSubscribers: jest
+          .fn()
+          .mockResolvedValue(undefined)
+      } as any,
+      {
+        recordDropCreated: jest.fn().mockResolvedValue(undefined)
+      } as any,
+      {
+        findWaveSubscribedAllSubscribers: jest.fn().mockResolvedValue([])
+      } as any,
+      {} as any,
+      {
+        execute: jest.fn().mockResolvedValue(undefined)
+      } as any,
+      metricsRecorder as any,
+      {
+        bulkDeleteForDrop: jest.fn().mockResolvedValue(undefined),
+        bulkInsert: jest.fn().mockResolvedValue(undefined)
+      } as any,
+      {
+        registerDrop: jest.fn().mockResolvedValue(undefined)
+      } as any,
+      identityWavesService as any
+    );
+
+    jest
+      .spyOn(useCase as any, 'validateReferences')
+      .mockImplementation(async (model) => model);
+    jest
+      .spyOn(useCase as any, 'insertAllDropComponents')
+      .mockResolvedValue(undefined);
+    jest.spyOn(useCase as any, 'buildDropNftLinks').mockReturnValue([]);
+
+    await expect(
+      (useCase as any).createOrUpdateDrop(
+        {
+          drop_id: null,
+          wave_id: 'wave-1',
+          reply_to: null,
+          title: null,
+          parts: [
+            {
+              content: 'hello',
+              quoted_drop: null,
+              media: []
+            }
+          ],
+          referenced_nfts: [],
+          mentioned_users: [],
+          mentioned_waves: [],
+          metadata: [],
+          author_identity: 'author-profile',
+          author_id: 'author-profile',
+          drop_type: DropType.CHAT,
+          mentions_all: false,
+          signature: null
+        },
+        false,
+        {
+          connection: {},
+          timer: undefined
+        }
+      )
+    ).resolves.toEqual({ drop_id: expect.any(String) });
+
+    expect(identityWavesService.setIdentityWaveIfEligible).toHaveBeenCalledWith(
+      {
+        profileId: 'author-profile',
+        waveId: 'wave-1'
+      },
+      {
+        timer: undefined,
+        connection: {}
+      }
+    );
   });
 });

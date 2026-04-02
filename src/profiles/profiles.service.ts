@@ -226,6 +226,7 @@ export class ProfilesService {
           banner2: null,
           classification: null,
           sub_classification: null,
+          wave_id: null,
           xtdh: 0,
           produced_xtdh: 0,
           granted_xtdh: 0,

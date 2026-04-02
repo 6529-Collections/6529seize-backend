@@ -69,6 +69,10 @@ import {
   identityFetcher
 } from '../identities/identity.fetcher';
 import {
+  IdentityWavesService,
+  identityWavesService
+} from '@/identities/identity-waves.service';
+import {
   identitySubscriptionsDb,
   IdentitySubscriptionsDb
 } from '../identity-subscriptions/identity-subscriptions.db';
@@ -100,6 +104,7 @@ export class WaveApiService {
     private readonly reactionsService: ReactionsService,
     private readonly userNotifier: UserNotifier,
     private readonly identityFetcher: IdentityFetcher,
+    private readonly identityWavesService: IdentityWavesService,
     private readonly metricsRecorder: MetricsRecorder,
     private readonly curationsDb: CurationsDb,
     private readonly dropsDb: DropsDb
@@ -1317,6 +1322,10 @@ export class WaveApiService {
         }
 
         await Promise.all([
+          this.identityWavesService.clearIdentityWaveByWaveId(
+            { waveId },
+            ctxWithConnection
+          ),
           this.wavesApiDb.deleteDropPartsByWaveId(waveId, ctxWithConnection),
           this.wavesApiDb.deleteDropMentionsByWaveId(waveId, ctxWithConnection),
           this.wavesApiDb.deleteDropMentionedWavesByWaveId(
@@ -1428,6 +1437,13 @@ export class WaveApiService {
           request,
           waveBeforeUpdate
         });
+        await this.identityWavesService.assertWaveCanBeMadePrivate(
+          {
+            waveId,
+            visibilityGroupId: request.visibility.scope.group_id
+          },
+          ctxWithConnection
+        );
         await this.validateWaveRelations(request, ctxWithConnection);
         await this.wavesApiDb.deleteWave(waveId, ctxWithConnection);
         const waveUpdateTime = Time.currentMillis();
@@ -1629,6 +1645,39 @@ export class WaveApiService {
     return subsequentDecisionPointer + 1;
   }
 
+  async setIdentityWave({ waveId }: { waveId: string }, ctx: RequestContext) {
+    const authenticationContext = this.getRequiredAuthenticationContext(ctx);
+    const actingAsId = this.getRequiredActingAsId(authenticationContext);
+    if (authenticationContext.isAuthenticatedAsProxy()) {
+      throw new ForbiddenException(`Proxies can't set identity waves`);
+    }
+    await this.wavesApiDb.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const ctxWithConnection = { ...ctx, connection };
+        await this.identityWavesService.assertWaveCanBeIdentityWave(
+          {
+            waveId,
+            profileId: actingAsId
+          },
+          ctxWithConnection
+        );
+        await Promise.all([
+          this.identityWavesService.setIdentityWave(
+            {
+              profileId: actingAsId,
+              waveId
+            },
+            ctxWithConnection
+          ),
+          this.metricsRecorder.recordActiveIdentity(
+            { identityId: actingAsId },
+            ctxWithConnection
+          )
+        ]);
+      }
+    );
+  }
+
   async pinWave({ waveId }: { waveId: string }, ctx: RequestContext) {
     await this.wavesApiDb.executeNativeQueriesInTransaction(
       async (connection) => {
@@ -1795,6 +1844,7 @@ export const waveApiService = new WaveApiService(
   reactionsService,
   userNotifier,
   identityFetcher,
+  identityWavesService,
   metricsRecorder,
   curationsDb,
   dropsDb

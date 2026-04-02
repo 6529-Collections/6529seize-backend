@@ -412,7 +412,7 @@ import { ApiGroupOwnsNft, ApiGroupOwnsNftNameEnum    } from '../models/ApiGroupO
 import { ApiGroupRepFilter      } from '../models/ApiGroupRepFilter';
 import { ApiGroupTdhFilter    } from '../models/ApiGroupTdhFilter';
 import { ApiGroupTdhInclusionStrategy } from '../models/ApiGroupTdhInclusionStrategy';
-import { ApiIdentity                         } from '../models/ApiIdentity';
+import { ApiIdentity                          } from '../models/ApiIdentity';
 import { ApiIdentityActivity } from '../models/ApiIdentityActivity';
 import { ApiIdentityAndSubscriptionActions } from '../models/ApiIdentityAndSubscriptionActions';
 import { ApiIdentitySubscriptionActions } from '../models/ApiIdentitySubscriptionActions';

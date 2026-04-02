@@ -382,6 +382,22 @@ router.post('/:id/pins', needsAuthenticatedUser(), async (req, res) => {
 });
 
 router.post(
+  '/:id/identity-wave',
+  needsAuthenticatedUser(),
+  async (req, res) => {
+    await handleSimpleWaveAction(
+      req,
+      res,
+      (waveId, ctx) => waveApiService.setIdentityWave({ waveId }, ctx),
+      {
+        disallowProxy: true,
+        proxyErrorMessage: `Proxy is not allowed to set identity waves`
+      }
+    );
+  }
+);
+
+router.post(
   '/:id/pinned-drop',
   needsAuthenticatedUser(),
   async (

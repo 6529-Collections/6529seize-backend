@@ -134,7 +134,8 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
                 sub_classification: null,
                 banner1: null,
                 banner2: null,
-                pfp: null
+                pfp: null,
+                wave_id: null
               };
               acc[profileId] = it;
               acc[newProfileId] = oldIdentitiesNewVersion;
@@ -189,7 +190,8 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
       sub_classification: null,
       banner1: null,
       banner2: null,
-      pfp: null
+      pfp: null,
+      wave_id: null
     };
   }
 
@@ -934,6 +936,7 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
                 profile_id: this.profileIdGenerator.generate(),
                 handle: null,
                 normalised_handle: null,
+                wave_id: null,
                 tdh: consolidation.tdh,
                 rep: 0,
                 cic: 0,
@@ -1060,6 +1063,7 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
             profile_id: this.profileIdGenerator.generate(),
             handle: null,
             normalised_handle: null,
+            wave_id: null,
             tdh: 0,
             rep: 0,
             cic: 0,
