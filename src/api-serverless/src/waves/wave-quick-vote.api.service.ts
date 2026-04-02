@@ -45,7 +45,7 @@ export class WaveQuickVoteApiService {
       ]);
       const leftToVoteInCurrentRound = undiscoveredCount;
       let drop: DropEntity | null;
-      if (undiscoveredCount > 0) {
+      if (offset < undiscoveredCount) {
         drop =
           offset === 0
             ? await this.waveQuickVoteDb.findNextUndiscoveredDrop(
@@ -57,8 +57,9 @@ export class WaveQuickVoteApiService {
                 ctx
               );
       } else {
+        const skippedOffset = Math.max(offset - undiscoveredCount, 0);
         drop = await this.waveQuickVoteDb.findSkippedUnvotedDropBySkip(
-          { ...quickVoteParams, skip: offset },
+          { ...quickVoteParams, skip: skippedOffset },
           ctx
         );
       }

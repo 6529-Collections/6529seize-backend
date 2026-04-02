@@ -275,6 +275,67 @@ describe('WaveQuickVoteApiService', () => {
     });
   });
 
+  it('continues into skipped drops when the offset goes past the remaining undiscovered drops', async () => {
+    when(wavesApiDb.findWaveById)
+      .calledWith('wave-1', undefined)
+      .mockResolvedValue(wave as any);
+    when(userGroupsService.getGroupsUserIsEligibleFor)
+      .calledWith('identity-1', undefined)
+      .mockResolvedValue([]);
+    when(waveQuickVoteDb.countUnvotedDrops)
+      .calledWith(
+        {
+          identity_id: 'identity-1',
+          wave_id: 'wave-1'
+        },
+        {}
+      )
+      .mockResolvedValue(4);
+    when(waveQuickVoteDb.countUndiscoveredDrops)
+      .calledWith(
+        {
+          identity_id: 'identity-1',
+          wave_id: 'wave-1'
+        },
+        {}
+      )
+      .mockResolvedValue(1);
+    when(waveQuickVoteDb.findSkippedUnvotedDropBySkip)
+      .calledWith(
+        {
+          identity_id: 'identity-1',
+          wave_id: 'wave-1',
+          skip: 1
+        },
+        {}
+      )
+      .mockResolvedValue(drop);
+    when(dropsMappers.convertToDropFulls)
+      .calledWith(
+        {
+          dropEntities: [drop],
+          contextProfileId: 'identity-1'
+        },
+        undefined
+      )
+      .mockResolvedValue([{ id: drop.id } as any]);
+
+    const result = await service.findUndiscoveredDrop(
+      {
+        waveId: 'wave-1',
+        identityId: 'identity-1',
+        skip: 2
+      },
+      {}
+    );
+
+    expect(result).toEqual({
+      drop: { id: 'drop-1' },
+      left_to_vote_in_current_round: 1,
+      total_count: 4
+    });
+  });
+
   it('falls back to skipped drops when everything is already skipped', async () => {
     when(wavesApiDb.findWaveById)
       .calledWith('wave-1', undefined)

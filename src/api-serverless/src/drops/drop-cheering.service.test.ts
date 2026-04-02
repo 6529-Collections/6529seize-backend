@@ -75,7 +75,7 @@ describe('DropCheeringService', () => {
     ).mockResolvedValue(undefined);
   });
 
-  it('registers a skip when a quick vote submits a 0 rating', async () => {
+  it('registers a skip without recording a vote when a quick vote submits a 0 rating', async () => {
     await service.updateCheers(
       {
         drop_id: dropEntity.id,
@@ -86,28 +86,33 @@ describe('DropCheeringService', () => {
       {}
     );
 
-    expect(voteForDrop.execute).toHaveBeenCalledWith(
-      {
-        drop_id: dropEntity.id,
-        voter_id: 'identity-1',
-        votes: 0,
-        wave_id: dropEntity.wave_id,
-        proxy_id: null
-      },
-      { connection }
-    );
+    expect(voteForDrop.execute).not.toHaveBeenCalled();
     expect(waveQuickVoteDb.insertSkip).toHaveBeenCalledWith(
       {
+        drop_id: dropEntity.id,
         identity_id: 'identity-1',
-        wave_id: dropEntity.wave_id,
-        drop_id: dropEntity.id
+        wave_id: dropEntity.wave_id
       },
       { connection }
     );
+    expect(waveQuickVoteDb.findNextUndiscoveredDrop).toHaveBeenCalledWith(
+      {
+        identity_id: 'identity-1',
+        wave_id: dropEntity.wave_id
+      },
+      { connection }
+    );
+    expect(waveQuickVoteDb.clearSkips).not.toHaveBeenCalled();
+    expect(dropsService.findDropByIdOrThrow).not.toHaveBeenCalled();
+    expect(
+      wsListenersNotifier.notifyAboutDropRatingUpdate
+    ).not.toHaveBeenCalled();
   });
 
-  it('only registers a skip when a 0 rating is a no-op', async () => {
-    (voteForDrop.execute as jest.Mock).mockResolvedValue(false);
+  it('clears quick-vote skips when skipping the last undiscovered drop', async () => {
+    (waveQuickVoteDb.findNextUndiscoveredDrop as jest.Mock).mockResolvedValue(
+      null
+    );
 
     await service.updateCheers(
       {
@@ -119,16 +124,29 @@ describe('DropCheeringService', () => {
       {}
     );
 
+    expect(voteForDrop.execute).not.toHaveBeenCalled();
     expect(waveQuickVoteDb.insertSkip).toHaveBeenCalledWith(
       {
+        drop_id: dropEntity.id,
         identity_id: 'identity-1',
-        wave_id: dropEntity.wave_id,
-        drop_id: dropEntity.id
+        wave_id: dropEntity.wave_id
       },
       { connection }
     );
-    expect(waveQuickVoteDb.findNextUndiscoveredDrop).not.toHaveBeenCalled();
-    expect(waveQuickVoteDb.clearSkips).not.toHaveBeenCalled();
+    expect(waveQuickVoteDb.findNextUndiscoveredDrop).toHaveBeenCalledWith(
+      {
+        identity_id: 'identity-1',
+        wave_id: dropEntity.wave_id
+      },
+      { connection }
+    );
+    expect(waveQuickVoteDb.clearSkips).toHaveBeenCalledWith(
+      {
+        identity_id: 'identity-1',
+        wave_id: dropEntity.wave_id
+      },
+      { connection }
+    );
     expect(dropsService.findDropByIdOrThrow).not.toHaveBeenCalled();
     expect(
       wsListenersNotifier.notifyAboutDropRatingUpdate
