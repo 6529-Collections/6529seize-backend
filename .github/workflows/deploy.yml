@@ -120,13 +120,14 @@ jobs:
       - name: Deploy service
         if: github.event.inputs.service != 'api' && github.event.inputs.service != 'nextgenMediaProxyInterceptor' && github.event.inputs.service != 'mediaResizerLoop'
         run: |
-          export VERSION_DESCRIPTION="$(date) - $(git rev-parse --abbrev-ref HEAD) - $(git show -s --format=%s)"
+          export VERSION_DESCRIPTION="$(git rev-parse --short HEAD) - $(date) - $(git rev-parse --abbrev-ref HEAD) - $(git show -s --format=%s)"
           pushd src/${{ github.event.inputs.service }} && npm run sls-deploy:${{ github.event.inputs.environment }} && popd
       - name: Deploy API
         if: github.event.inputs.service == 'api'
         run: |
           set +x
           GIT_COMMIT=$(git rev-parse HEAD)
+          VERSION_DESCRIPTION="$(git rev-parse --short HEAD) - $(date) - $(git rev-parse --abbrev-ref HEAD) - $(git show -s --format=%s)"
           DEPLOY_REGION="${{ github.event.inputs.environment == 'prod' && 'us-east-1' || 'eu-west-1' }}"
           API_MEMORY_SIZE=2048
           API_TIMEOUT=30
@@ -135,14 +136,15 @@ jobs:
           sleep 10
           aws lambda get-function-configuration --function-name seizeAPI --query 'Environment.Variables' --output json --no-cli-pager > /tmp/current_env.json 2>/dev/null || echo '{}' > /tmp/current_env.json
           jq --arg commit "$GIT_COMMIT" --arg claimsMediaArweaveUploadSqsUrl "$CLAIMS_MEDIA_ARWEAVE_UPLOAD_SQS_URL" '. + {GIT_COMMIT: $commit, CLAIMS_MEDIA_ARWEAVE_UPLOAD_SQS_URL: $claimsMediaArweaveUploadSqsUrl} | {Variables: .}' /tmp/current_env.json > /tmp/env_config.json
-          aws lambda update-function-configuration --function-name seizeAPI --description "$(date) - $(git rev-parse --abbrev-ref HEAD) - $(git show -s --format=%s)" --environment file:///tmp/env_config.json --memory-size "$API_MEMORY_SIZE" --timeout "$API_TIMEOUT" --no-cli-pager > /dev/null 2>&1
+          aws lambda update-function-configuration --function-name seizeAPI --description "$VERSION_DESCRIPTION" --environment file:///tmp/env_config.json --memory-size "$API_MEMORY_SIZE" --timeout "$API_TIMEOUT" --no-cli-pager > /dev/null 2>&1
           rm -f /tmp/current_env.json /tmp/env_config.json
       - name: Deploy mediaResizerLoop
         if: github.event.inputs.service == 'mediaResizerLoop'
         run: |
+          VERSION_DESCRIPTION="$(git rev-parse --short HEAD) - $(date) - $(git rev-parse --abbrev-ref HEAD) - $(git show -s --format=%s)"
           aws lambda update-function-code --function-name  mediaResizerLoop --zip-file fileb://src/mediaResizerLoop/dist/index.zip
           sleep 10
-          aws lambda update-function-configuration --function-name mediaResizerLoop --description "$(date) - $(git rev-parse --abbrev-ref HEAD) - $(git show -s --format=%s)"
+          aws lambda update-function-configuration --function-name mediaResizerLoop --description "$VERSION_DESCRIPTION"
       - name: Deploy nextgenMediaProxyInterceptor
         if: github.event.inputs.service == 'nextgenMediaProxyInterceptor'
         run: |
