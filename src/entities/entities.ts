@@ -163,6 +163,7 @@ export { WaveLeaderboardEntryEntity } from './IWaveLeaderboardEntry';
 export { WaveMetricEntity } from './IWaveMetric';
 export { WaveReaderMetricEntity } from './IWaveReaderMetric';
 export { WaveCurationGroupEntity } from './IWaveCurationGroup';
+export { WaveSelectionDropEntity, WaveSelectionEntity } from './IWaveSelection';
 export { WinnerDropVoterVoteEntity } from './IWinnerDropVoterVote';
 export { WSConnectionEntity } from './IWSConnection';
 export { XTdhGrantEntity } from './IXTdhGrant';
