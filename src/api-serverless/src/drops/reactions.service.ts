@@ -192,14 +192,18 @@ export class ReactionsService {
           ...ctx,
           connection
         });
-        const reactionPromise = this.reactionsDb.removeReaction(
+        const reactionChanged = await this.reactionsDb.removeReaction(
           profileId,
           dropId,
           dropEntity.wave_id,
           { ...ctx, connection }
         );
+
+        if (!reactionChanged) {
+          return false;
+        }
+
         await Promise.all([
-          reactionPromise,
           profileActivityLogsDb.insert(
             {
               profile_id: profileId,

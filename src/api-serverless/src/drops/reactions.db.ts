@@ -28,15 +28,15 @@ export class ReactionsDb extends LazyDbAccessCompatibleService {
           VALUES
             (:profileId, :dropId, :waveId, :reaction)
           ON DUPLICATE KEY UPDATE
-            reaction = IF(
-              reaction <> VALUES(reaction),
-              VALUES(reaction),
-              reaction
-            ),
             created_at = IF(
               reaction <> VALUES(reaction),
               NOW(),
               created_at
+            ),
+            reaction = IF(
+              reaction <> VALUES(reaction),
+              VALUES(reaction),
+              reaction
             )
         `,
       {
@@ -56,9 +56,9 @@ export class ReactionsDb extends LazyDbAccessCompatibleService {
     dropId: string,
     waveId: string,
     ctx: RequestContext
-  ) {
+  ): Promise<boolean> {
     ctx.timer?.start(`${this.constructor.name}->removeReaction`);
-    await this.db.execute(
+    const result = await this.db.execute(
       `DELETE FROM ${DROP_REACTIONS_TABLE} 
       WHERE profile_id = :profileId 
         AND drop_id = :dropId 
@@ -68,6 +68,7 @@ export class ReactionsDb extends LazyDbAccessCompatibleService {
       { wrappedConnection: ctx.connection }
     );
     ctx.timer?.stop(`${this.constructor.name}->removeReaction`);
+    return this.db.getAffectedRows(result) > 0;
   }
 
   public async getByDropIds(

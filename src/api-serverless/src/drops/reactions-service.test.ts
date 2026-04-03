@@ -1,20 +1,20 @@
-jest.mock('../api-helpers', () => ({
+jest.mock('@/api/api-helpers', () => ({
   giveReadReplicaTimeToCatchUp: jest.fn().mockResolvedValue(undefined)
 }));
 
 import { mock } from 'ts-jest-mocker';
-import { ReactionsDb } from './reactions.db';
-import { WavesApiDb } from '../waves/waves.api.db';
+import { ReactionsDb } from '@/api/drops/reactions.db';
+import { WavesApiDb } from '@/api/waves/waves.api.db';
 import { DropsDb } from '@/drops/drops.db';
-import { UserGroupsService } from '../community-members/user-groups.service';
+import { UserGroupsService } from '@/api/community-members/user-groups.service';
 import { UserNotifier } from '@/notifications/user.notifier';
-import { WsListenersNotifier } from '../ws/ws-listeners-notifier';
-import { DropsApiService } from './drops.api.service';
+import { WsListenersNotifier } from '@/api/ws/ws-listeners-notifier';
+import { DropsApiService } from '@/api/drops/drops.api.service';
 import { MetricsRecorder } from '@/metrics/MetricsRecorder';
-import { ReactionsService } from './reactions.service';
+import { ReactionsService } from '@/api/drops/reactions.service';
 import { DropEntity, DropType } from '@/entities/IDrop';
 import { profileActivityLogsDb } from '@/profileActivityLogs/profile-activity-logs.db';
-import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
+import { giveReadReplicaTimeToCatchUp } from '@/api/api-helpers';
 
 describe('ReactionsService', () => {
   let reactionsDb: ReactionsDb;
@@ -47,6 +47,8 @@ describe('ReactionsService', () => {
   const drop = { id: dropEntity.id } as any;
 
   beforeEach(() => {
+    jest.clearAllMocks();
+
     reactionsDb = mock();
     wavesDb = mock();
     dropsDb = mock();
@@ -141,6 +143,47 @@ describe('ReactionsService', () => {
     );
     expect(profileActivityLogsDb.insert).toHaveBeenCalled();
     expect(userNotifier.notifyOfDropReaction).toHaveBeenCalled();
+    expect(giveReadReplicaTimeToCatchUp).toHaveBeenCalled();
+    expect(
+      wsListenersNotifier.notifyAboutDropReactionUpdate
+    ).toHaveBeenCalledWith(drop, ctx);
+  });
+
+  it('treats a duplicate remove request as a no-op', async () => {
+    (reactionsDb.removeReaction as jest.Mock).mockResolvedValue(false);
+
+    const result = await service.removeReaction(
+      dropEntity.id,
+      'profile-1',
+      ctx as any
+    );
+
+    expect(result).toBe(drop);
+    expect(reactionsDb.removeReaction).toHaveBeenCalledWith(
+      'profile-1',
+      dropEntity.id,
+      dropEntity.wave_id,
+      ctx
+    );
+    expect(profileActivityLogsDb.insert).not.toHaveBeenCalled();
+    expect(giveReadReplicaTimeToCatchUp).not.toHaveBeenCalled();
+    expect(
+      wsListenersNotifier.notifyAboutDropReactionUpdate
+    ).not.toHaveBeenCalled();
+  });
+
+  it('records side effects when a reaction is removed', async () => {
+    (reactionsDb.removeReaction as jest.Mock).mockResolvedValue(true);
+
+    await service.removeReaction(dropEntity.id, 'profile-1', ctx as any);
+
+    expect(reactionsDb.removeReaction).toHaveBeenCalledWith(
+      'profile-1',
+      dropEntity.id,
+      dropEntity.wave_id,
+      ctx
+    );
+    expect(profileActivityLogsDb.insert).toHaveBeenCalled();
     expect(giveReadReplicaTimeToCatchUp).toHaveBeenCalled();
     expect(
       wsListenersNotifier.notifyAboutDropReactionUpdate
