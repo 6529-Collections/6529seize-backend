@@ -2,6 +2,7 @@ import { AuthenticationContext } from '@/auth-context';
 import { ApiDropSearchStrategy } from '../generated/models/ApiDropSearchStrategy';
 import { directMessageWaveDisplayService } from '@/api/waves/direct-message-wave-display.service';
 import { wavesApiDb } from '@/api/waves/waves.api.db';
+import { WaveCreditType } from '@/entities/IWave';
 import { DropsApiService } from './drops.api.service';
 
 describe('DropsApiService', () => {
@@ -60,7 +61,7 @@ describe('DropsApiService', () => {
       voting_group_id: null,
       participation_group_id: null,
       admin_group_id: null,
-      voting_credit_type: 'CIC',
+      voting_credit_type: WaveCreditType.TDH,
       voting_period_start: null,
       voting_period_end: null,
       visibility_group_id: null,
