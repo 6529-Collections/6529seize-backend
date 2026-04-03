@@ -49,11 +49,14 @@ export class ReactionsService {
     callback: (
       dropEntity: DropEntity,
       groupIdsUserIsEligibleFor: string[]
-    ) => Promise<void>,
+    ) => Promise<boolean>,
     ctx: RequestContext
   ) {
     const groupIdsUserIsEligibleFor =
-      await userGroupsService.getGroupsUserIsEligibleFor(profileId, ctx.timer);
+      await this.userGroupsService.getGroupsUserIsEligibleFor(
+        profileId,
+        ctx.timer
+      );
     const dropEntity = await this.dropsDb.findDropByIdWithEligibilityCheck(
       dropId,
       groupIdsUserIsEligibleFor,
@@ -62,8 +65,14 @@ export class ReactionsService {
     if (!dropEntity) {
       throw new NotFoundException(`Drop ${dropId} not found`);
     }
-    await callback(dropEntity, groupIdsUserIsEligibleFor);
-    await giveReadReplicaTimeToCatchUp();
+    const reactionChanged = await callback(
+      dropEntity,
+      groupIdsUserIsEligibleFor
+    );
+
+    if (reactionChanged) {
+      await giveReadReplicaTimeToCatchUp();
+    }
 
     const drop = await this.dropsService.findDropByIdOrThrow(
       {
@@ -73,7 +82,9 @@ export class ReactionsService {
       ctx
     );
 
-    await this.wsListenersNotifier.notifyAboutDropReactionUpdate(drop, ctx);
+    if (reactionChanged) {
+      await this.wsListenersNotifier.notifyAboutDropReactionUpdate(drop, ctx);
+    }
     return drop;
   }
 
@@ -103,15 +114,19 @@ export class ReactionsService {
           ...ctx,
           connection
         });
-        const reactionPromise = this.reactionsDb.addReaction(
+        const reactionChanged = await this.reactionsDb.addReaction(
           profileId,
           dropId,
           dropEntity.wave_id,
           reaction,
           { ...ctx, connection }
         );
+
+        if (!reactionChanged) {
+          return false;
+        }
+
         await Promise.all([
-          reactionPromise,
           this.metricsRecorder.recordActiveIdentity(
             { identityId: profileId },
             ctx
@@ -146,6 +161,7 @@ export class ReactionsService {
                   connection
                 ))()
         ]);
+        return true;
       },
       ctx
     );
@@ -200,6 +216,7 @@ export class ReactionsService {
             ctx.timer
           )
         ]);
+        return true;
       },
       ctx
     );

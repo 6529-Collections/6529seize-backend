@@ -19,17 +19,25 @@ export class ReactionsDb extends LazyDbAccessCompatibleService {
     waveId: string,
     reaction: string,
     ctx: RequestContext
-  ) {
+  ): Promise<boolean> {
     ctx.timer?.start(`${this.constructor.name}->addReaction`);
-    await this.db.execute(
+    const result = await this.db.execute(
       `
           INSERT INTO ${DROP_REACTIONS_TABLE}
             (profile_id, drop_id, wave_id, reaction)
           VALUES
             (:profileId, :dropId, :waveId, :reaction)
           ON DUPLICATE KEY UPDATE
-            reaction = VALUES(reaction),
-            created_at = NOW()
+            reaction = IF(
+              reaction <> VALUES(reaction),
+              VALUES(reaction),
+              reaction
+            ),
+            created_at = IF(
+              reaction <> VALUES(reaction),
+              NOW(),
+              created_at
+            )
         `,
       {
         profileId,
@@ -40,6 +48,7 @@ export class ReactionsDb extends LazyDbAccessCompatibleService {
       { wrappedConnection: ctx.connection }
     );
     ctx.timer?.stop(`${this.constructor.name}->addReaction`);
+    return this.db.getAffectedRows(result) > 0;
   }
 
   public async removeReaction(
