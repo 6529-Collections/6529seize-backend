@@ -23,6 +23,7 @@ export const seizeSettings = (): ApiSeizeSettings => {
 
   const memes_wave_id = env.getStringOrNull('MAIN_STAGE_WAVE_ID');
   const curation_wave_id = env.getStringOrNull('CURATION_WAVE_ID');
+  const announcements_wave_id = env.getStringOrNull('ANNOUNCEMENTS_WAVE_ID');
   const distribution_admin_wallets = getDistributionAdminWallets();
   const claims_admin_wallets = getClaimsAdminWallets();
 
@@ -32,6 +33,7 @@ export const seizeSettings = (): ApiSeizeSettings => {
     memes_wave_id,
     curation_wave_id,
     distribution_admin_wallets,
-    claims_admin_wallets
+    claims_admin_wallets,
+    announcements_wave_id
   };
 };
