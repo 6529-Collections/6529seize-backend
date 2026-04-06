@@ -32,8 +32,8 @@ const config: Config = {
       displayName: 'unit',
       testPathIgnorePatterns: [
         '<rootDir>/build/',
-        '<rootDir>/src/.*\\.db\\.test\\.ts$',
-        '<rootDir>/src/.*\\.integration\\.test\\.ts$'
+        String.raw`<rootDir>/src/.*\.db\.test\.ts$`,
+        String.raw`<rootDir>/src/.*\.integration\.test\.ts$`
       ],
       maxWorkers: '50%'
     },

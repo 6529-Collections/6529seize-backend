@@ -203,23 +203,21 @@ export class ReactionsService {
           return false;
         }
 
-        await Promise.all([
-          profileActivityLogsDb.insert(
-            {
-              profile_id: profileId,
-              type: ProfileActivityLogType.DROP_REACTED,
-              target_id: dropId,
-              contents: JSON.stringify({
-                reaction: null
-              }),
-              additional_data_1: dropEntity.author_id,
-              additional_data_2: dropEntity.wave_id,
-              proxy_id: null
-            },
-            connection,
-            ctx.timer
-          )
-        ]);
+        await profileActivityLogsDb.insert(
+          {
+            profile_id: profileId,
+            type: ProfileActivityLogType.DROP_REACTED,
+            target_id: dropId,
+            contents: JSON.stringify({
+              reaction: null
+            }),
+            additional_data_1: dropEntity.author_id,
+            additional_data_2: dropEntity.wave_id,
+            proxy_id: null
+          },
+          connection,
+          ctx.timer
+        );
         return true;
       },
       ctx

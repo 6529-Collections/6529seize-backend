@@ -23,7 +23,7 @@ function getChangedRowsFromWriteResult(result: unknown): number {
   if (first != null && typeof first === 'object' && 'changedRows' in first) {
     return Number((first as { changedRows?: unknown }).changedRows ?? 0);
   }
-  const last = result[result.length - 1] as unknown;
+  const last = result.at(-1) as unknown;
   return typeof last === 'number' ? last : 0;
 }
 

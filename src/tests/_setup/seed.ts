@@ -54,10 +54,20 @@ export function describeWithSeed(
 
   describe(title, () => {
     beforeEach(async () => {
+      const tables = collections.distinct(seedArr.map(({ table }) => table));
+
       await sqlExecutor.executeNativeQueriesInTransaction(async (tx) => {
+        for (const table of tables) {
+          await sqlExecutor.execute(`DELETE FROM ${table}`, undefined, {
+            wrappedConnection: tx
+          });
+        }
+
         for (const { table, rows } of seedArr) {
           for (const row of rows) {
-            await tx.connection.query(buildInsertSql(table, row));
+            await sqlExecutor.execute(buildInsertSql(table, row), undefined, {
+              wrappedConnection: tx
+            });
           }
         }
       });
