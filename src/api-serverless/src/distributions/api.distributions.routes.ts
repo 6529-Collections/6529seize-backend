@@ -134,8 +134,8 @@ async function invalidateDistributionOverviewCache(
   contract: string,
   cardId: number
 ) {
+  await giveReadReplicaTimeToCatchUp();
   await Promise.allSettled([
-    giveReadReplicaTimeToCatchUp(),
     evictDistributionCacheForPathWithTimeout(contract, cardId, {
       label: 'distribution-overview',
       path: `/api/distributions/${contract}/${cardId}/overview`
