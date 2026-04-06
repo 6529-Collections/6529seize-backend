@@ -1,7 +1,6 @@
 import { AuthenticationContext } from '@/auth-context';
 import { directMessageWaveDisplayService } from '@/api/waves/direct-message-wave-display.service';
 import { DropType } from '@/entities/IDrop';
-import { WaveCreditType } from '@/entities/IWave';
 import { DropsMappers } from './drops.mappers';
 
 describe('DropsMappers', () => {
@@ -270,7 +269,7 @@ describe('DropsMappers', () => {
         voting_group_id: null,
         participation_group_id: null,
         admin_group_id: null,
-        voting_credit_type: WaveCreditType.TDH,
+        voting_credit_type: 'CIC',
         voting_period_start: null,
         voting_period_end: null,
         visibility_group_id: null,
