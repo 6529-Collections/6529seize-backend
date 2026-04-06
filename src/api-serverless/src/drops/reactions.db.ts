@@ -12,6 +12,32 @@ export interface DropReactionsResult {
   context_profile_reaction: string | null;
 }
 
+function getChangedRowsFromWriteResult(result: unknown): number {
+  if (result != null && typeof result === 'object' && 'changedRows' in result) {
+    return Number((result as { changedRows?: unknown }).changedRows ?? 0);
+  }
+  if (!Array.isArray(result)) {
+    return 0;
+  }
+  const first = result[0] as unknown;
+  if (first != null && typeof first === 'object' && 'changedRows' in first) {
+    return Number((first as { changedRows?: unknown }).changedRows ?? 0);
+  }
+  const last = result[result.length - 1] as unknown;
+  return typeof last === 'number' ? last : 0;
+}
+
+function getInsertIdFromWriteResult(result: unknown): number {
+  if (result != null && typeof result === 'object' && 'insertId' in result) {
+    return Number((result as { insertId?: unknown }).insertId ?? 0);
+  }
+  if (!Array.isArray(result)) {
+    return 0;
+  }
+  const third = result[2] as unknown;
+  return typeof third === 'number' ? third : 0;
+}
+
 export class ReactionsDb extends LazyDbAccessCompatibleService {
   public async addReaction(
     profileId: string,
@@ -48,7 +74,10 @@ export class ReactionsDb extends LazyDbAccessCompatibleService {
       { wrappedConnection: ctx.connection }
     );
     ctx.timer?.stop(`${this.constructor.name}->addReaction`);
-    return this.db.getAffectedRows(result) > 0;
+    const affectedRows = this.db.getAffectedRows(result);
+    const changedRows = getChangedRowsFromWriteResult(result);
+    const insertId = getInsertIdFromWriteResult(result);
+    return insertId > 0 || affectedRows > 1 || changedRows > 0;
   }
 
   public async removeReaction(
