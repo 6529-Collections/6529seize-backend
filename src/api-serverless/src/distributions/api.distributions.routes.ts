@@ -18,7 +18,8 @@ import { cacheRequest } from '@/api/request-cache';
 import { authenticateSubscriptionsAdmin } from '@/api/subscriptions/api.subscriptions.allowlist';
 import { ForbiddenException } from '@/exceptions';
 import { numbers } from '@/numbers';
-import { evictRedisCacheForPath } from '@/redis';
+import { evictRedisCacheForPathWithTimeout } from '@/redis';
+import { Logger } from '@/logging';
 import {
   fetchDistributionPhaseAirdrops,
   fetchDistributionOverview,
@@ -97,6 +98,50 @@ function parseAirdropCsv(csvData: string): AirdropEntry[] {
 }
 
 const router = asyncRouter();
+const logger = Logger.get('DISTRIBUTIONS');
+const CACHE_EVICTION_TIMEOUT_MS = 1_500;
+
+async function evictDistributionCacheForPathWithTimeout(
+  contract: string,
+  cardId: number,
+  cacheEviction: {
+    label: string;
+    path: string;
+  }
+) {
+  const evictionResult = await evictRedisCacheForPathWithTimeout({
+    path: cacheEviction.path,
+    timeoutMs: CACHE_EVICTION_TIMEOUT_MS
+  });
+
+  if (evictionResult.success) {
+    logger.info(
+      `[CACHE_EVICT_DONE] [contract ${contract}] [card_id ${cardId}] [cache ${cacheEviction.label}] [elapsed_ms ${
+        evictionResult.elapsed_ms
+      }]`
+    );
+  } else {
+    logger.warn(
+      `[CACHE_EVICT_FAILED] [contract ${contract}] [card_id ${cardId}] [cache ${cacheEviction.label}] [elapsed_ms ${
+        evictionResult.elapsed_ms
+      }]`,
+      'error' in evictionResult ? evictionResult.error : undefined
+    );
+  }
+}
+
+async function invalidateDistributionOverviewCache(
+  contract: string,
+  cardId: number
+) {
+  await giveReadReplicaTimeToCatchUp();
+  await Promise.allSettled([
+    evictDistributionCacheForPathWithTimeout(contract, cardId, {
+      label: 'distribution-overview',
+      path: `/api/distributions/${contract}/${cardId}/overview`
+    })
+  ]);
+}
 
 function validateSubscriptionAdminAndParams(
   req: Request<any, any, any, any>,
@@ -162,11 +207,7 @@ async function uploadAutomaticAirdropsForPhase(
 
   await insertAutomaticAirdropsForPhase(contract, cardId, phase, airdrops);
 
-  await giveReadReplicaTimeToCatchUp();
-
-  await evictRedisCacheForPath(
-    `/api/distributions/${contract}/${cardId}/overview`
-  );
+  await invalidateDistributionOverviewCache(contract, cardId);
 
   res.json({
     success: true,
@@ -292,11 +333,7 @@ router.post(
 
     await populateDistributionNormalized(contract, cardId);
 
-    await giveReadReplicaTimeToCatchUp();
-
-    await evictRedisCacheForPath(
-      `/api/distributions/${contract}/${cardId}/overview`
-    );
+    await invalidateDistributionOverviewCache(contract, cardId);
 
     return res.json({
       success: true,

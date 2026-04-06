@@ -9,10 +9,7 @@ import {
 } from '@/exceptions';
 import { getNft } from '@/nftsLoop/db.nfts';
 import { numbers } from '@/numbers';
-import {
-  evictRedisCacheForPath,
-  evictRedisCacheForPathWithTimeout
-} from '@/redis';
+import { evictRedisCacheForPathWithTimeout } from '@/redis';
 import { equalIgnoreCase } from '@/strings';
 import { Timer } from '@/time';
 import { PaginatedResponse } from '@/api/api-constants';
@@ -67,9 +64,8 @@ import {
 const allowlistLogger = Logger.get('SUBSCRIPTIONS_ALLOWLIST');
 const CACHE_EVICTION_TIMEOUT_MS = 1_500;
 
-async function evictCacheForPathWithTimeout(
-  contract: string,
-  tokenId: number,
+async function evictCacheWithContextLogging(
+  context: string,
   cacheEviction: {
     label: string;
     path: string;
@@ -82,13 +78,13 @@ async function evictCacheForPathWithTimeout(
 
   if (evictionResult.success) {
     allowlistLogger.info(
-      `[CACHE_EVICT_DONE] [contract ${contract}] [token_id ${tokenId}] [cache ${cacheEviction.label}] [elapsed_ms ${
+      `[CACHE_EVICT_DONE] ${context} [cache ${cacheEviction.label}] [elapsed_ms ${
         evictionResult.elapsed_ms
       }]`
     );
   } else {
     allowlistLogger.warn(
-      `[CACHE_EVICT_FAILED] [contract ${contract}] [token_id ${tokenId}] [cache ${cacheEviction.label}] [elapsed_ms ${
+      `[CACHE_EVICT_FAILED] ${context} [cache ${cacheEviction.label}] [elapsed_ms ${
         evictionResult.elapsed_ms
       }]`,
       'error' in evictionResult ? evictionResult.error : undefined
@@ -113,23 +109,43 @@ async function invalidateMintingClaimsPhaseCache(
 
   await Promise.allSettled(
     cacheEvictions.map((cacheEviction) =>
-      evictCacheForPathWithTimeout(contract, tokenId, cacheEviction)
+      evictCacheWithContextLogging(
+        `[contract ${contract}] [token_id ${tokenId}]`,
+        cacheEviction
+      )
     )
   );
 }
 
 async function invalidateSubscriptionCache(consolidationKey: string) {
-  await evictRedisCacheForPath(
-    `/api/subscriptions/consolidation/details/${consolidationKey}`
-  );
-  await evictRedisCacheForPath(
-    `/api/subscriptions/consolidation/upcoming-memes/${consolidationKey}`
-  );
-  await evictRedisCacheForPath(
-    `/api/subscriptions/consolidation/upcoming-memes/*/${consolidationKey}`
-  );
-  await evictRedisCacheForPath(`/api/subscriptions/upcoming-memes-counts`);
-  await giveReadReplicaTimeToCatchUp();
+  const cacheEvictions = [
+    {
+      label: 'subscription-details',
+      path: `/api/subscriptions/consolidation/details/${consolidationKey}`
+    },
+    {
+      label: 'subscription-upcoming-memes',
+      path: `/api/subscriptions/consolidation/upcoming-memes/${consolidationKey}`
+    },
+    {
+      label: 'subscription-upcoming-meme-status',
+      path: `/api/subscriptions/consolidation/upcoming-memes/*/${consolidationKey}`
+    },
+    {
+      label: 'subscription-upcoming-memes-counts',
+      path: `/api/subscriptions/upcoming-memes-counts`
+    }
+  ];
+
+  await Promise.allSettled([
+    giveReadReplicaTimeToCatchUp(),
+    ...cacheEvictions.map((cacheEviction) =>
+      evictCacheWithContextLogging(
+        `[consolidation_key ${consolidationKey}]`,
+        cacheEviction
+      )
+    )
+  ]);
 }
 
 const router = asyncRouter();

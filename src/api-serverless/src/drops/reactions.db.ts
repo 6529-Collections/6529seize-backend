@@ -12,6 +12,32 @@ export interface DropReactionsResult {
   context_profile_reaction: string | null;
 }
 
+function getChangedRowsFromWriteResult(result: unknown): number {
+  if (result != null && typeof result === 'object' && 'changedRows' in result) {
+    return Number((result as { changedRows?: unknown }).changedRows ?? 0);
+  }
+  if (!Array.isArray(result)) {
+    return 0;
+  }
+  const first = result[0] as unknown;
+  if (first != null && typeof first === 'object' && 'changedRows' in first) {
+    return Number((first as { changedRows?: unknown }).changedRows ?? 0);
+  }
+  const last = result.at(-1) as unknown;
+  return typeof last === 'number' ? last : 0;
+}
+
+function getInsertIdFromWriteResult(result: unknown): number {
+  if (result != null && typeof result === 'object' && 'insertId' in result) {
+    return Number((result as { insertId?: unknown }).insertId ?? 0);
+  }
+  if (!Array.isArray(result)) {
+    return 0;
+  }
+  const third = result[2] as unknown;
+  return typeof third === 'number' ? third : 0;
+}
+
 export class ReactionsDb extends LazyDbAccessCompatibleService {
   public async addReaction(
     profileId: string,
@@ -19,17 +45,25 @@ export class ReactionsDb extends LazyDbAccessCompatibleService {
     waveId: string,
     reaction: string,
     ctx: RequestContext
-  ) {
+  ): Promise<boolean> {
     ctx.timer?.start(`${this.constructor.name}->addReaction`);
-    await this.db.execute(
+    const result = await this.db.execute(
       `
           INSERT INTO ${DROP_REACTIONS_TABLE}
             (profile_id, drop_id, wave_id, reaction)
           VALUES
             (:profileId, :dropId, :waveId, :reaction)
           ON DUPLICATE KEY UPDATE
-            reaction = VALUES(reaction),
-            created_at = NOW()
+            created_at = IF(
+              reaction <> VALUES(reaction),
+              NOW(),
+              created_at
+            ),
+            reaction = IF(
+              reaction <> VALUES(reaction),
+              VALUES(reaction),
+              reaction
+            )
         `,
       {
         profileId,
@@ -40,6 +74,10 @@ export class ReactionsDb extends LazyDbAccessCompatibleService {
       { wrappedConnection: ctx.connection }
     );
     ctx.timer?.stop(`${this.constructor.name}->addReaction`);
+    const affectedRows = this.db.getAffectedRows(result);
+    const changedRows = getChangedRowsFromWriteResult(result);
+    const insertId = getInsertIdFromWriteResult(result);
+    return insertId > 0 || affectedRows > 1 || changedRows > 0;
   }
 
   public async removeReaction(
@@ -47,9 +85,9 @@ export class ReactionsDb extends LazyDbAccessCompatibleService {
     dropId: string,
     waveId: string,
     ctx: RequestContext
-  ) {
+  ): Promise<boolean> {
     ctx.timer?.start(`${this.constructor.name}->removeReaction`);
-    await this.db.execute(
+    const result = await this.db.execute(
       `DELETE FROM ${DROP_REACTIONS_TABLE} 
       WHERE profile_id = :profileId 
         AND drop_id = :dropId 
@@ -59,6 +97,7 @@ export class ReactionsDb extends LazyDbAccessCompatibleService {
       { wrappedConnection: ctx.connection }
     );
     ctx.timer?.stop(`${this.constructor.name}->removeReaction`);
+    return this.db.getAffectedRows(result) > 0;
   }
 
   public async getByDropIds(
