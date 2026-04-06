@@ -9,10 +9,7 @@ import {
 } from '@/exceptions';
 import { getNft } from '@/nftsLoop/db.nfts';
 import { numbers } from '@/numbers';
-import {
-  evictRedisCacheForPath,
-  evictRedisCacheForPathWithTimeout
-} from '@/redis';
+import { evictRedisCacheForPathWithTimeout } from '@/redis';
 import { equalIgnoreCase } from '@/strings';
 import { Timer } from '@/time';
 import { PaginatedResponse } from '@/api/api-constants';
@@ -96,6 +93,34 @@ async function evictCacheForPathWithTimeout(
   }
 }
 
+async function evictSubscriptionCacheForPathWithTimeout(
+  consolidationKey: string,
+  cacheEviction: {
+    label: string;
+    path: string;
+  }
+) {
+  const evictionResult = await evictRedisCacheForPathWithTimeout({
+    path: cacheEviction.path,
+    timeoutMs: CACHE_EVICTION_TIMEOUT_MS
+  });
+
+  if (evictionResult.success) {
+    allowlistLogger.info(
+      `[CACHE_EVICT_DONE] [consolidation_key ${consolidationKey}] [cache ${cacheEviction.label}] [elapsed_ms ${
+        evictionResult.elapsed_ms
+      }]`
+    );
+  } else {
+    allowlistLogger.warn(
+      `[CACHE_EVICT_FAILED] [consolidation_key ${consolidationKey}] [cache ${cacheEviction.label}] [elapsed_ms ${
+        evictionResult.elapsed_ms
+      }]`,
+      'error' in evictionResult ? evictionResult.error : undefined
+    );
+  }
+}
+
 async function invalidateMintingClaimsPhaseCache(
   contract: string,
   tokenId: number
@@ -119,17 +144,31 @@ async function invalidateMintingClaimsPhaseCache(
 }
 
 async function invalidateSubscriptionCache(consolidationKey: string) {
-  await evictRedisCacheForPath(
-    `/api/subscriptions/consolidation/details/${consolidationKey}`
-  );
-  await evictRedisCacheForPath(
-    `/api/subscriptions/consolidation/upcoming-memes/${consolidationKey}`
-  );
-  await evictRedisCacheForPath(
-    `/api/subscriptions/consolidation/upcoming-memes/*/${consolidationKey}`
-  );
-  await evictRedisCacheForPath(`/api/subscriptions/upcoming-memes-counts`);
-  await giveReadReplicaTimeToCatchUp();
+  const cacheEvictions = [
+    {
+      label: 'subscription-details',
+      path: `/api/subscriptions/consolidation/details/${consolidationKey}`
+    },
+    {
+      label: 'subscription-upcoming-memes',
+      path: `/api/subscriptions/consolidation/upcoming-memes/${consolidationKey}`
+    },
+    {
+      label: 'subscription-upcoming-meme-status',
+      path: `/api/subscriptions/consolidation/upcoming-memes/*/${consolidationKey}`
+    },
+    {
+      label: 'subscription-upcoming-memes-counts',
+      path: `/api/subscriptions/upcoming-memes-counts`
+    }
+  ];
+
+  await Promise.allSettled([
+    giveReadReplicaTimeToCatchUp(),
+    ...cacheEvictions.map((cacheEviction) =>
+      evictSubscriptionCacheForPathWithTimeout(consolidationKey, cacheEviction)
+    )
+  ]);
 }
 
 const router = asyncRouter();

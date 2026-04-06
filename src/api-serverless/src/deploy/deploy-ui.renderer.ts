@@ -1584,7 +1584,7 @@ export function renderDeployUiApp(): string {
     setCurrentRef(option.name);
     state.refActiveIndex = -1;
     setRefMenuOpen(false);
-    updateDeployOverview();
+    updateSelectedSummary();
   }
 
   async function loadRefOptions(query) {
@@ -2076,7 +2076,7 @@ export function renderDeployUiApp(): string {
         button.getAttribute('data-deploy-target') || 'backend';
       syncTargetButtons();
       syncTargetSpecificControls();
-      updateDeployOverview();
+      applyEnvironmentFilter();
       if (state.token && !state.isCheckingSession) {
         loadRuns(1);
       }
@@ -2101,7 +2101,7 @@ export function renderDeployUiApp(): string {
   refInput.addEventListener('input', function () {
     setCurrentRef((refInput.value || '').trim());
     queueRefSearch();
-    updateDeployOverview();
+    updateSelectedSummary();
   });
 
   refInput.addEventListener('keydown', function (event) {
@@ -2158,7 +2158,7 @@ export function renderDeployUiApp(): string {
       refInput.value = button.getAttribute('data-quick-ref') || '';
       setCurrentRef(refInput.value);
       setRefMenuOpen(false);
-      updateDeployOverview();
+      updateSelectedSummary();
     });
   });
 

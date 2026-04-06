@@ -33,6 +33,10 @@ type GitHubTag = {
   name: string;
 };
 
+type GitHubMatchingRef = {
+  ref: string;
+};
+
 type GitHubWorkflowRun = {
   id: number;
   html_url: string;
@@ -317,6 +321,44 @@ export class GitHubDeployService {
     return payload.map((tag) => tag.name);
   }
 
+  private async listMatchingRefs(
+    token: string,
+    target: DeployTarget,
+    type: 'heads' | 'tags',
+    query: string
+  ): Promise<string[]> {
+    const response = await this.api(
+      token,
+      target,
+      `/git/matching-refs/${type}/${encodeURIComponent(query)}`,
+      {
+        method: 'GET'
+      }
+    );
+
+    if (!response.ok) {
+      const message = await this.getErrorMessage(response);
+      if (response.status === 401 || response.status === 403) {
+        throw new CustomApiCompliantException(
+          response.status,
+          `Failed to load ${type === 'heads' ? 'branches' : 'tags'} from GitHub: ${message}`
+        );
+      }
+      throw new CustomApiCompliantException(
+        502,
+        `Failed to load ${type === 'heads' ? 'branches' : 'tags'} from GitHub: ${message}`
+      );
+    }
+
+    const refPrefix = type === 'heads' ? 'refs/heads/' : 'refs/tags/';
+    const payload = (await response.json()) as GitHubMatchingRef[];
+
+    return payload
+      .map((ref) => ref.ref)
+      .filter((ref): ref is string => ref.startsWith(refPrefix))
+      .map((ref) => ref.slice(refPrefix.length));
+  }
+
   private scoreRefMatch(name: string, query: string): number {
     if (!query) {
       return 0;
@@ -513,11 +555,18 @@ export class GitHubDeployService {
     query: string,
     limit = 20
   ): Promise<DeployRefOption[]> {
-    const trimmedQuery = query.trim().toLowerCase();
-    const [branchesResult, tagsResult] = await Promise.allSettled([
-      this.listBranches(token, target, 100),
-      this.listTags(token, target, 100)
-    ]);
+    const trimmedQuery = query.trim();
+    const [branchesResult, tagsResult] = await Promise.allSettled(
+      trimmedQuery
+        ? [
+            this.listMatchingRefs(token, target, 'heads', trimmedQuery),
+            this.listMatchingRefs(token, target, 'tags', trimmedQuery)
+          ]
+        : [
+            this.listBranches(token, target, 100),
+            this.listTags(token, target, 100)
+          ]
+    );
 
     const branches =
       branchesResult.status === 'fulfilled' ? branchesResult.value : [];
@@ -557,9 +606,7 @@ export class GitHubDeployService {
         name,
         type: 'tag'
       }))
-    ].filter((ref) =>
-      trimmedQuery ? ref.name.toLowerCase().includes(trimmedQuery) : true
-    );
+    ];
 
     refs.sort((a, b) => {
       const scoreDifference =

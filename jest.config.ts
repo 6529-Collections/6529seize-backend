@@ -1,6 +1,6 @@
 import type { Config } from 'jest';
 
-const config: Config = {
+const commonProjectConfig: Config = {
   preset: 'ts-jest',
   testEnvironment: 'node',
   moduleNameMapper: {
@@ -17,14 +17,36 @@ const config: Config = {
   setupFilesAfterEnv: ['./src/tests/_setup/perTestHooks.ts'],
   // Increase timeout for graceful shutdown of database connections and containers
   testTimeout: 30000,
-  // Force exit after tests to prevent hanging on open handles
-  // This is safe because globalTeardown handles cleanup
-  forceExit: true,
-  // Reduce workers to minimize connection pool issues
-  maxWorkers: '50%',
   // Suppress worker exit warnings (known issue with testcontainers)
   // Resources are properly cleaned up in globalTeardown
   detectOpenHandles: false
+};
+
+const config: Config = {
+  // Force exit after tests to prevent hanging on open handles.
+  // This is safe because globalTeardown handles cleanup.
+  forceExit: true,
+  projects: [
+    {
+      ...commonProjectConfig,
+      displayName: 'unit',
+      testPathIgnorePatterns: [
+        '<rootDir>/build/',
+        '<rootDir>/src/.*\\.db\\.test\\.ts$',
+        '<rootDir>/src/.*\\.integration\\.test\\.ts$'
+      ],
+      maxWorkers: '50%'
+    },
+    {
+      ...commonProjectConfig,
+      displayName: 'db',
+      testMatch: [
+        '<rootDir>/src/**/*.db.test.ts',
+        '<rootDir>/src/**/*.integration.test.ts'
+      ],
+      maxWorkers: 1
+    }
+  ]
 };
 
 export default config;
