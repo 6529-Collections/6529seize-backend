@@ -23,10 +23,6 @@ import {
   CurationsDb,
   curationsDb
 } from '../api-serverless/src/curations/curations.db';
-import {
-  WaveSelectionsDb,
-  waveSelectionsDb
-} from '../api-serverless/src/waves/wave-selections.db';
 import { userGroupsService } from '../api-serverless/src/community-members/user-groups.service';
 import { WaveEntity } from '../entities/IWave';
 import { DropEntity } from '../entities/IDrop';
@@ -43,7 +39,6 @@ export class DeleteDropUseCase {
     private readonly dropsDb: DropsDb,
     private readonly dropBookmarksDb: DropBookmarksDb,
     private readonly curationsDb: CurationsDb,
-    private readonly waveSelectionsDb: WaveSelectionsDb,
     private readonly artCurationTokenWatchService: ArtCurationTokenWatchService
   ) {}
 
@@ -135,10 +130,6 @@ export class DeleteDropUseCase {
           timer,
           connection
         }),
-        this.waveSelectionsDb.deleteWaveSelectionDropsByDropId(dropId, {
-          timer,
-          connection
-        }),
         ...(isPermanentDelete
           ? [
               this.artCurationTokenWatchService.unregisterDrop(dropId, {
@@ -217,6 +208,5 @@ export const deleteDrop = new DeleteDropUseCase(
   dropsDb,
   dropBookmarksDb,
   curationsDb,
-  waveSelectionsDb,
   artCurationTokenWatchService
 );

@@ -1,6 +1,5 @@
 import { AuthenticationContext } from '@/auth-context';
 import { ApiWaveMin } from '@/api/generated/models/ApiWaveMin';
-import { ApiWaveSelection } from '@/api/generated/models/ApiWaveSelection';
 import { ApiWaveCreditType as WaveCreditTypeApi } from '@/api/generated/models/ApiWaveCreditType';
 import { ApiWaveParticipationSubmissionStrategyType } from '@/api/generated/models/ApiWaveParticipationSubmissionStrategyType';
 import { ProfileProxyActionType } from '@/entities/IProfileProxyAction';
@@ -63,7 +62,6 @@ export function mapWaveToApiWaveMin({
   groupIdsUserIsEligibleFor,
   noRightToVote,
   noRightToParticipate,
-  selections,
   pinned
 }: {
   wave: WaveMinSource;
@@ -71,7 +69,6 @@ export function mapWaveToApiWaveMin({
   groupIdsUserIsEligibleFor: string[];
   noRightToVote: boolean;
   noRightToParticipate: boolean;
-  selections: ApiWaveSelection[];
   pinned: boolean;
 }): ApiWaveMin {
   return {
@@ -109,7 +106,6 @@ export function mapWaveToApiWaveMin({
     voting_group_id: wave.voting_group_id,
     admin_drop_deletion_enabled: wave.admin_drop_deletion_enabled,
     forbid_negative_votes: wave.forbid_negative_votes,
-    selections,
     pinned
   };
 }

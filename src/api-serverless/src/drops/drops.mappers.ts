@@ -23,7 +23,6 @@ import {
   ActivityEventTargetType
 } from '../../../entities/IActivityEvent';
 import { ApiDropSubscriptionTargetAction } from '../generated/models/ApiDropSubscriptionTargetAction';
-import { ApiWaveSelection } from '../generated/models/ApiWaveSelection';
 import {
   userGroupsService,
   UserGroupsService
@@ -78,17 +77,9 @@ import {
 import { directMessageWaveDisplayService } from '@/api/waves/direct-message-wave-display.service';
 import { getWaveReadContextProfileId } from '@/api/waves/wave-access.helpers';
 import {
-  groupWaveSelectionsByDropId,
-  groupWaveSelectionsByWaveId
-} from '@/api/waves/wave-selections.helpers';
-import {
   getWaveMinPermissionMask,
   mapWaveToApiWaveMin
 } from '@/api/waves/wave-min.helpers';
-import {
-  WaveSelectionsDb,
-  waveSelectionsDb
-} from '@/api/waves/wave-selections.db';
 
 export class DropsMappers {
   constructor(
@@ -102,7 +93,6 @@ export class DropsMappers {
     private readonly reactionsDb: ReactionsDb,
     private readonly dropBookmarksDb: DropBookmarksDb,
     private readonly curationsDb: CurationsDb,
-    private readonly waveSelectionsDb: WaveSelectionsDb,
     private readonly dropNftLinksDb: DropNftLinksDb,
     private readonly nftLinksDb: NftLinksDb,
     private readonly nftLinkResolvingService: NftLinkResolvingService
@@ -217,19 +207,16 @@ export class DropsMappers {
     });
     const dropIds = dropEntities.map((it) => it.id);
     const waveIds = collections.distinct(dropEntities.map((it) => it.wave_id));
-    const [waveOverviews, pinnedWaveIds, selectionEntities] = await Promise.all(
-      [
-        this.wavesApiDb.getWavesByDropIds(dropIds, connection),
-        this.wavesApiDb.whichOfWavesArePinnedByGivenProfile(
-          {
-            waveIds,
-            profileId: readContextProfileId
-          },
-          { connection }
-        ),
-        this.waveSelectionsDb.findWaveSelectionsByWaveIds(waveIds, connection)
-      ]
-    );
+    const [waveOverviews, pinnedWaveIds] = await Promise.all([
+      this.wavesApiDb.getWavesByDropIds(dropIds, connection),
+      this.wavesApiDb.whichOfWavesArePinnedByGivenProfile(
+        {
+          waveIds,
+          profileId: readContextProfileId
+        },
+        { connection }
+      )
+    ]);
     const waveDisplayByWaveId =
       await directMessageWaveDisplayService.resolveWaveDisplayByWaveIdForContext(
         {
@@ -248,7 +235,6 @@ export class DropsMappers {
     const { noRightToVote, noRightToParticipate } = getWaveMinPermissionMask(
       effectiveAuthenticationContext
     );
-    const selectionsByWaveId = groupWaveSelectionsByWaveId(selectionEntities);
     return dWoW.map<ApiDrop>((d) => {
       const wave = waveOverviews[d.id];
       const waveMin: ApiWaveMin | null = wave
@@ -258,7 +244,6 @@ export class DropsMappers {
             groupIdsUserIsEligibleFor: group_ids_user_is_eligible_for,
             noRightToVote,
             noRightToParticipate,
-            selections: selectionsByWaveId[wave.id] ?? [],
             pinned: pinnedWaveIds.has(wave.id)
           })
         : null;
@@ -568,12 +553,6 @@ export class DropsMappers {
         },
         ctx.connection
       );
-    const mentionedWaveSelectionsByWaveId = groupWaveSelectionsByWaveId(
-      await this.waveSelectionsDb.findWaveSelectionsByWaveIds(
-        mentionedWaveIds,
-        ctx.connection
-      )
-    );
     const mentionedWavesById = mentionedWaveEntities.reduce(
       (acc, wave) => {
         acc[wave.id] = mapWaveToApiWaveMin({
@@ -582,7 +561,6 @@ export class DropsMappers {
           groupIdsUserIsEligibleFor,
           noRightToVote,
           noRightToParticipate,
-          selections: mentionedWaveSelectionsByWaveId[wave.id] ?? [],
           pinned: pinnedMentionedWaveIds.has(wave.id)
         });
         return acc;
@@ -600,37 +578,16 @@ export class DropsMappers {
     const allWaveIds = collections.distinct(
       allEntities.map((entity) => entity.wave_id)
     );
-    const [
-      waveCurationGroups,
-      curatedDropsByContextProfile,
-      selectionMembershipEntities
-    ] = await Promise.all([
-      this.curationsDb.findWaveCurationGroupsByWaveIds(
-        allWaveIds,
-        ctx.connection
-      ),
-      contextProfileId
-        ? this.curationsDb.findCuratedDropIdsByCurator(
-            {
-              dropIds: allDropIds,
-              curatorId: contextProfileId
-            },
-            ctx.connection
-          )
-        : Promise.resolve(new Set<string>()),
-      this.waveSelectionsDb.findWaveSelectionsByDropIds(
-        allDropIds,
-        ctx.connection
-      )
-    ]);
-    const selectionsByDropId = groupWaveSelectionsByDropId(
-      selectionMembershipEntities
-    );
-    const curationCommunityGroupIdsByWave = waveCurationGroups.reduce(
-      (acc, curationGroup) => {
-        const groupIds = acc[curationGroup.wave_id] ?? [];
-        groupIds.push(curationGroup.community_group_id);
-        acc[curationGroup.wave_id] = groupIds;
+    const [waveCurations, curatedDropsByManageableCurations] =
+      await Promise.all([
+        this.curationsDb.findWaveCurationsByWaveIds(allWaveIds, ctx.connection),
+        Promise.resolve(new Set<string>())
+      ]);
+    const curationAccessGroupIdsByWave = waveCurations.reduce(
+      (acc, curation) => {
+        const groupIds = acc[curation.wave_id] ?? [];
+        groupIds.push(curation.community_group_id);
+        acc[curation.wave_id] = groupIds;
         return acc;
       },
       {} as Record<string, string[]>
@@ -638,7 +595,7 @@ export class DropsMappers {
     const wavesUserCanCurateIn = new Set<string>();
     if (contextProfileId) {
       for (const [waveId, groupIds] of Object.entries(
-        curationCommunityGroupIdsByWave
+        curationAccessGroupIdsByWave
       )) {
         if (
           groupIds.some((groupId) =>
@@ -649,6 +606,21 @@ export class DropsMappers {
         }
       }
     }
+    const manageableCurationIds = waveCurations
+      .filter((curation) =>
+        groupIdsUserIsEligibleFor.includes(curation.community_group_id)
+      )
+      .map((curation) => curation.id);
+    const curatedDropIdsManageableByUser =
+      manageableCurationIds.length && allDropIds.length
+        ? await this.curationsDb.findCuratedDropIdsByCurations(
+            {
+              dropIds: allDropIds,
+              curationIds: manageableCurationIds
+            },
+            ctx.connection
+          )
+        : curatedDropsByManageableCurations;
     const dropCuratableById = allDropIds.reduce(
       (acc, dropId) => {
         acc[dropId] = wavesUserCanCurateIn.has(allEntitiesById[dropId].wave_id);
@@ -658,7 +630,7 @@ export class DropsMappers {
     );
     const dropCuratedById = allDropIds.reduce(
       (acc, dropId) => {
-        acc[dropId] = curatedDropsByContextProfile.has(dropId);
+        acc[dropId] = curatedDropIdsManageableByUser.has(dropId);
         return acc;
       },
       {} as Record<string, boolean>
@@ -760,7 +732,6 @@ export class DropsMappers {
         boostsCount,
         boostsByAuthenticatedUser,
         bookmarksByAuthenticatedUser,
-        selectionsByDropId,
         rootDropNftLinksByDropId,
         rootDropIds
       });
@@ -799,7 +770,6 @@ export class DropsMappers {
     boostsCount,
     boostsByAuthenticatedUser,
     bookmarksByAuthenticatedUser,
-    selectionsByDropId,
     rootDropNftLinksByDropId,
     rootDropIds
   }: {
@@ -840,7 +810,6 @@ export class DropsMappers {
     boostsCount: Record<string, number>;
     boostsByAuthenticatedUser: Set<string>;
     bookmarksByAuthenticatedUser: Set<string>;
-    selectionsByDropId: Record<string, ApiWaveSelection[]>;
     rootDropNftLinksByDropId: Record<string, ApiDropNftLink[]>;
     rootDropIds: Set<string>;
   }): ApiDropWithoutWave {
@@ -1001,7 +970,6 @@ export class DropsMappers {
                   boostsCount,
                   boostsByAuthenticatedUser,
                   bookmarksByAuthenticatedUser,
-                  selectionsByDropId,
                   rootDropNftLinksByDropId,
                   rootDropIds
                 })
@@ -1054,7 +1022,6 @@ export class DropsMappers {
                           boostsCount,
                           boostsByAuthenticatedUser,
                           bookmarksByAuthenticatedUser,
-                          selectionsByDropId,
                           rootDropNftLinksByDropId,
                           rootDropIds
                         })
@@ -1099,7 +1066,6 @@ export class DropsMappers {
               ? (resolvedProfilesByIds[it.data_value] ?? null)
               : null
         })),
-      selections: selectionsByDropId[dropEntity.id] ?? [],
       rating,
       realtime_rating,
       rating_prediction,
@@ -1130,7 +1096,6 @@ export const dropsMappers = new DropsMappers(
   reactionsDb,
   dropBookmarksDb,
   curationsDb,
-  waveSelectionsDb,
   dropNftLinksDb,
   nftLinksDb,
   nftLinkResolvingService

@@ -85,10 +85,6 @@ import {
   resolveWaveSubmissionStrategyFieldsForWrite,
   validateWaveSubmissionStrategy
 } from '@/api/waves/wave-submission-strategy';
-import {
-  WaveSelectionsDb,
-  waveSelectionsDb
-} from '@/api/waves/wave-selections.db';
 import { WaveType } from '@/entities/IWave';
 
 export class WaveApiService {
@@ -106,8 +102,7 @@ export class WaveApiService {
     private readonly identityFetcher: IdentityFetcher,
     private readonly metricsRecorder: MetricsRecorder,
     private readonly curationsDb: CurationsDb,
-    private readonly dropsDb: DropsDb,
-    private readonly waveSelectionsDb: WaveSelectionsDb
+    private readonly dropsDb: DropsDb
   ) {}
 
   private getRequiredTimer(
@@ -1354,10 +1349,6 @@ export class WaveApiService {
             waveId,
             ctxWithConnection
           ),
-          this.waveSelectionsDb.deleteWaveSelectionDropsByWaveId(
-            waveId,
-            ctxWithConnection
-          ),
           this.dropVotingService.deleteVoteByWave(waveId, ctxWithConnection),
           this.reactionsService.deleteReactionsByWave(
             waveId,
@@ -1366,11 +1357,7 @@ export class WaveApiService {
           this.wavesApiDb.deleteDropEntitiesByWaveId(waveId, ctxWithConnection),
           this.wavesApiDb.deleteWaveMetrics(waveId, ctxWithConnection),
           this.wavesApiDb.deleteWave(waveId, ctxWithConnection),
-          this.curationsDb.deleteWaveCurationGroupsByWaveId(
-            waveId,
-            ctxWithConnection
-          ),
-          this.waveSelectionsDb.deleteWaveSelectionsByWaveId(
+          this.curationsDb.deleteWaveCurationsByWaveId(
             waveId,
             ctxWithConnection
           ),
@@ -1810,6 +1797,5 @@ export const waveApiService = new WaveApiService(
   identityFetcher,
   metricsRecorder,
   curationsDb,
-  dropsDb,
-  waveSelectionsDb
+  dropsDb
 );

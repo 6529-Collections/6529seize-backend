@@ -3,17 +3,15 @@ import { DROP_CURATIONS_TABLE } from '@/constants';
 
 @Entity(DROP_CURATIONS_TABLE)
 @Index('idx_drop_curations_wave_drop', ['wave_id', 'drop_id'])
-@Index('idx_drop_curations_wave_curator', ['wave_id', 'curator_id'])
-@Index('idx_drop_curations_curator', ['curator_id'])
+@Index('idx_drop_curations_wave_curation', ['wave_id', 'curation_id'])
+@Index('idx_drop_curations_curation', ['curation_id'])
+@Index('idx_drop_curations_curated_by', ['curated_by'])
 export class DropCurationEntity {
   @PrimaryColumn({ type: 'varchar', length: 100, nullable: false })
   readonly drop_id!: string;
 
   @PrimaryColumn({ type: 'varchar', length: 100, nullable: false })
-  readonly curator_id!: string;
-
-  @Column({ type: 'bigint', nullable: false, default: 1 })
-  readonly curator_rating!: number;
+  readonly curation_id!: string;
 
   @Column({ type: 'bigint', nullable: false })
   readonly created_at!: number;
@@ -23,4 +21,7 @@ export class DropCurationEntity {
 
   @Column({ type: 'varchar', length: 100, nullable: false })
   readonly wave_id!: string;
+
+  @Column({ type: 'varchar', length: 100, nullable: false })
+  readonly curated_by!: string;
 }
