@@ -141,6 +141,51 @@ describe('DropsApiService', () => {
     expect(dropsDb.findLatestDrops).not.toHaveBeenCalled();
   });
 
+  it('rejects latest drop filtering when the curation wave is not readable', async () => {
+    const { service, dropsDb, ctx } = createService({
+      wave: {
+        id: 'wave-1',
+        name: 'Private Wave',
+        picture: null,
+        description_drop_id: 'description-drop-1',
+        last_drop_time: 1,
+        submission_type: null,
+        chat_enabled: false,
+        chat_group_id: null,
+        voting_group_id: null,
+        participation_group_id: null,
+        admin_group_id: null,
+        voting_credit_type: 'TDH',
+        voting_period_start: null,
+        voting_period_end: null,
+        visibility_group_id: 'private-group',
+        admin_drop_deletion_enabled: false,
+        forbid_negative_votes: false,
+        time_lock_ms: null
+      }
+    });
+
+    await expect(
+      service.findLatestDrops(
+        {
+          amount: 10,
+          group_id: null,
+          serial_no_less_than: null,
+          wave_id: null,
+          curation_id: 'curation-1',
+          author_id: null,
+          include_replies: false,
+          drop_type: null,
+          ids: null,
+          contains_media: false
+        },
+        ctx
+      )
+    ).rejects.toThrow(`Curation curation-1 not found`);
+
+    expect(dropsDb.findLatestDrops).not.toHaveBeenCalled();
+  });
+
   it('passes curation filters into wave drop feeds', async () => {
     const { service, dropsDb, ctx } = createService();
 

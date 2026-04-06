@@ -70,7 +70,11 @@ import {
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import { CurationsDb, curationsDb } from '@/api/curations/curations.db';
 import { directMessageWaveDisplayService } from '@/api/waves/direct-message-wave-display.service';
-import { getWaveReadContextProfileId } from '@/api/waves/wave-access.helpers';
+import {
+  assertWaveVisibleOrThrow,
+  getGroupsUserIsEligibleForReadContext,
+  getWaveReadContextProfileId
+} from '@/api/waves/wave-access.helpers';
 import {
   getWaveMinPermissionMask,
   mapWaveToApiWaveMin
@@ -623,9 +627,20 @@ export class DropsApiService {
     if (!curation || (waveId && curation.wave_id !== waveId)) {
       throw new NotFoundException(`Curation ${curationId} not found`);
     }
+    const groupsUserIsEligibleFor = await getGroupsUserIsEligibleForReadContext(
+      this.userGroupsService,
+      ctx
+    );
+    const resolvedWaveId = waveId ?? curation.wave_id;
+    const wave = await wavesApiDb.findWaveById(resolvedWaveId, ctx.connection);
+    assertWaveVisibleOrThrow(
+      wave,
+      groupsUserIsEligibleFor,
+      `Curation ${curationId} not found`
+    );
     return {
       curationFilter: curation.id,
-      resolvedWaveId: waveId ?? curation.wave_id
+      resolvedWaveId
     };
   }
 
