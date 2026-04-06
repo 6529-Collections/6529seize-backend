@@ -411,7 +411,10 @@ export class WaveDecisionsService {
     ctx: RequestContext
   ) {
     const endTime = decision_time;
-    const allFinalVoterVotesByDrops: WinnerDropVoterVoteEntity[] = [];
+    const allFinalVoterVotesByDrops: WinnerDropVoterVoteEntity[] =
+      time_lock_ms !== null && time_lock_ms > 0
+        ? []
+        : await this.dropVotingDb.getCurrentVoterStatesForDrops(dropIds, ctx);
     if (time_lock_ms !== null && time_lock_ms > 0) {
       const startTime = endTime.minusMillis(time_lock_ms);
       const votesByDropsAndVoters =
