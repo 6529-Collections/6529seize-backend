@@ -71,22 +71,16 @@ import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import { CurationsDb, curationsDb } from '@/api/curations/curations.db';
 import { directMessageWaveDisplayService } from '@/api/waves/direct-message-wave-display.service';
 import { getWaveReadContextProfileId } from '@/api/waves/wave-access.helpers';
-import { groupWaveSelectionsByWaveId } from '@/api/waves/wave-selections.helpers';
 import {
   getWaveMinPermissionMask,
   mapWaveToApiWaveMin
 } from '@/api/waves/wave-min.helpers';
-import {
-  WaveSelectionsDb,
-  waveSelectionsDb
-} from '@/api/waves/wave-selections.db';
 
 export class DropsApiService {
   constructor(
     private readonly dropsMappers: DropsMappers,
     private readonly dropsDb: DropsDb,
     private readonly curationsDb: CurationsDb,
-    private readonly waveSelectionsDb: WaveSelectionsDb,
     private readonly userGroupsService: UserGroupsService,
     private readonly identitySubscriptionsDb: IdentitySubscriptionsDb,
     private readonly identityFetcher: IdentityFetcher,
@@ -192,7 +186,7 @@ export class DropsApiService {
       amount,
       group_id,
       wave_id,
-      selection_id,
+      curation_id,
       serial_no_less_than,
       author_id,
       include_replies,
@@ -203,7 +197,7 @@ export class DropsApiService {
       group_id: string | null;
       serial_no_less_than: number | null;
       wave_id: string | null;
-      selection_id: string | null;
+      curation_id: string | null;
       amount: number;
       author_id: string | null;
       include_replies: boolean;
@@ -224,14 +218,21 @@ export class DropsApiService {
     if (group_id && !group_ids_user_is_eligible_for.includes(group_id)) {
       return [];
     }
+    const { curationFilter, resolvedWaveId } = await this.resolveCurationFilter(
+      {
+        curationId: curation_id,
+        waveId: wave_id
+      },
+      ctx
+    );
     const dropEntities = await this.dropsDb.findLatestDrops(
       {
         amount,
         serial_no_less_than,
         group_id,
         group_ids_user_is_eligible_for,
-        wave_id,
-        selection_id,
+        wave_id: resolvedWaveId,
+        curation_id: curationFilter,
         author_id,
         include_replies,
         drop_type: drop_type ? enums.resolveOrThrow(DropType, drop_type) : null,
@@ -460,7 +461,7 @@ export class DropsApiService {
       amount,
       search_strategy,
       drop_type,
-      selection_id
+      curation_id
     }: {
       drop_id: string | null;
       serial_no_limit: number | null;
@@ -468,7 +469,7 @@ export class DropsApiService {
       amount: number;
       search_strategy: ApiDropSearchStrategy;
       drop_type: ApiDropType | null;
-      selection_id: string | null;
+      curation_id: string | null;
     },
     ctx: RequestContext
   ): Promise<ApiWaveDropsFeed> {
@@ -488,7 +489,14 @@ export class DropsApiService {
         : await this.userGroupsService.getGroupsUserIsEligibleFor(
             context_profile_id
           );
-    const [wave, pinnedWaveIds, selectionEntities] = await Promise.all([
+    const { curationFilter } = await this.resolveCurationFilter(
+      {
+        curationId: curation_id,
+        waveId: wave_id
+      },
+      ctx
+    );
+    const [wave, pinnedWaveIds] = await Promise.all([
       wavesApiDb.findWaveById(wave_id),
       wavesApiDb.whichOfWavesArePinnedByGivenProfile(
         {
@@ -496,10 +504,6 @@ export class DropsApiService {
           profileId: context_profile_id
         },
         ctx
-      ),
-      this.waveSelectionsDb.findWaveSelectionsByWaveIds(
-        [wave_id],
-        ctx.connection
       )
     ]);
     if (
@@ -517,15 +521,12 @@ export class DropsApiService {
         },
         ctx.connection
       );
-    const waveSelectionsByWaveId =
-      groupWaveSelectionsByWaveId(selectionEntities);
     const waveMin = mapWaveToApiWaveMin({
       wave,
       displayByWaveId,
       groupIdsUserIsEligibleFor: group_ids_user_is_eligible_for,
       noRightToVote,
       noRightToParticipate,
-      selections: waveSelectionsByWaveId[wave.id] ?? [],
       pinned: pinnedWaveIds.has(wave_id)
     });
     if (drop_id) {
@@ -544,7 +545,7 @@ export class DropsApiService {
           amount,
           serial_no_limit,
           search_strategy,
-          selection_id,
+          curation_id: curationFilter,
           drop_type: drop_type
             ? enums.resolveOrThrow(DropType, drop_type)
             : null
@@ -576,7 +577,7 @@ export class DropsApiService {
           amount,
           serial_no_limit,
           search_strategy,
-          selection_id,
+          curation_id: curationFilter,
           drop_type: drop_type
             ? enums.resolveOrThrow(DropType, drop_type)
             : null
@@ -594,6 +595,38 @@ export class DropsApiService {
       ctx.timer?.stop('dropsApiService->findWaveDropsFeed');
       return resp;
     }
+  }
+
+  private async resolveCurationFilter(
+    {
+      curationId,
+      waveId
+    }: {
+      curationId: string | null;
+      waveId?: string | null;
+    },
+    ctx: RequestContext
+  ): Promise<{
+    curationFilter: string | null;
+    resolvedWaveId: string | null;
+  }> {
+    if (!curationId) {
+      return {
+        curationFilter: null,
+        resolvedWaveId: waveId ?? null
+      };
+    }
+    const curation = await this.curationsDb.findWaveCurationById(
+      { id: curationId },
+      ctx.connection
+    );
+    if (!curation || (waveId && curation.wave_id !== waveId)) {
+      throw new NotFoundException(`Curation ${curationId} not found`);
+    }
+    return {
+      curationFilter: curation.id,
+      resolvedWaveId: waveId ?? curation.wave_id
+    };
   }
 
   async findLeaderboard(
@@ -631,7 +664,14 @@ export class DropsApiService {
       await this.userGroupsService.getGroupsUserIsEligibleFor(
         authenticatedProfileId
       );
-    const [waveEntity, pinnedWaveIds, selectionEntities] = await Promise.all([
+    const { curationFilter } = await this.resolveCurationFilter(
+      {
+        curationId: params.curation_id,
+        waveId: params.wave_id
+      },
+      ctx
+    );
+    const [waveEntity, pinnedWaveIds] = await Promise.all([
       wavesApiDb.findWaveById(params.wave_id),
       wavesApiDb.whichOfWavesArePinnedByGivenProfile(
         {
@@ -639,10 +679,6 @@ export class DropsApiService {
           profileId: authenticatedProfileId
         },
         ctx
-      ),
-      this.waveSelectionsDb.findWaveSelectionsByWaveIds(
-        [params.wave_id],
-        ctx.connection
       )
     ]);
     if (
@@ -664,8 +700,6 @@ export class DropsApiService {
         ctx.connection
       );
     const votingPeriodEnd = waveEntity.voting_period_end;
-    const waveSelectionsByWaveId =
-      groupWaveSelectionsByWaveId(selectionEntities);
     const waveMin = mapWaveToApiWaveMin({
       wave: {
         ...waveEntity,
@@ -675,50 +709,23 @@ export class DropsApiService {
       groupIdsUserIsEligibleFor,
       noRightToVote,
       noRightToParticipate,
-      selections: waveSelectionsByWaveId[waveEntity.id] ?? [],
       pinned: pinnedWaveIds.has(params.wave_id)
     });
     const isTimeLockedWave =
       waveEntity.time_lock_ms !== null && waveEntity.time_lock_ms > 0;
-    let curatorIdsFilter: string[] | null = null;
-    if (params.curated_by_group) {
-      const curationGroup = await this.curationsDb.findWaveCurationGroupById(
-        {
-          id: params.curated_by_group,
-          wave_id: params.wave_id
-        },
-        ctx.connection
-      );
-      if (!curationGroup) {
-        throw new NotFoundException(
-          `Curation group ${params.curated_by_group} not found`
-        );
-      }
-      curatorIdsFilter = await this.userGroupsService.findIdentitiesInGroups(
-        [curationGroup.community_group_id],
-        ctx
-      );
-    }
-    if (curatorIdsFilter !== null && curatorIdsFilter.length === 0) {
-      return {
-        wave: waveMin,
-        drops: [],
-        count: 0,
-        page: params.page,
-        next: false
-      };
-    }
+    const resolvedParams: LeaderboardParams = {
+      ...params,
+      curation_id: curationFilter
+    };
     const count = await this.dropsDb.countParticipatoryDrops(
-      params,
+      resolvedParams,
       ctx,
-      curatorIdsFilter,
       authenticatedProfileId
     );
     const drops = await this.findLeaderboardDrops(
-      params,
+      resolvedParams,
       isTimeLockedWave,
       ctx,
-      curatorIdsFilter,
       authenticatedProfileId
     ).then(async (drops) => {
       ctx.timer?.start(`${this.constructor.name}->convertLeaderboardDrops`);
@@ -742,7 +749,6 @@ export class DropsApiService {
     params: LeaderboardParams,
     isTimeLockedWave: boolean,
     ctx: RequestContext,
-    curatorIdsFilter: string[] | null,
     authenticatedProfileId: string | null
   ): Promise<DropEntity[]> {
     if (params.sort === LeaderboardSort.PRICE) {
@@ -752,7 +758,7 @@ export class DropsApiService {
           limit: params.page_size,
           offset: (params.page - 1) * params.page_size,
           sort_order: params.sort_direction,
-          curator_ids: curatorIdsFilter,
+          curation_id: params.curation_id,
           unvoted_by_me: params.unvoted_by_me,
           voter_id: authenticatedProfileId,
           price_currency: params.price_currency,
@@ -769,7 +775,7 @@ export class DropsApiService {
           limit: params.page_size,
           offset: (params.page - 1) * params.page_size,
           sort_order: params.sort_direction,
-          curator_ids: curatorIdsFilter,
+          curation_id: params.curation_id,
           unvoted_by_me: params.unvoted_by_me,
           voter_id: authenticatedProfileId,
           price_currency: params.price_currency,
@@ -784,21 +790,18 @@ export class DropsApiService {
         return this.dropsDb.findWeightedLeaderboardDrops(
           params,
           ctx,
-          curatorIdsFilter,
           authenticatedProfileId
         );
       } else if (params.sort === LeaderboardSort.RATING_PREDICTION) {
         return this.dropsDb.findWeightedLeaderboardDropsOrderedByPrediction(
           params,
           ctx,
-          curatorIdsFilter,
           authenticatedProfileId
         );
       } else if (params.sort === LeaderboardSort.TREND) {
         return this.dropsDb.findWeightedLeaderboardDropsOrderedByTrend(
           params,
           ctx,
-          curatorIdsFilter,
           authenticatedProfileId
         );
       }
@@ -817,7 +820,7 @@ export class DropsApiService {
           limit: params.page_size,
           offset: (params.page - 1) * params.page_size,
           sort_order: params.sort_direction,
-          curator_ids: curatorIdsFilter,
+          curation_id: params.curation_id,
           unvoted_by_me: params.unvoted_by_me,
           price_currency: params.price_currency,
           min_price: params.min_price,
@@ -832,7 +835,7 @@ export class DropsApiService {
         limit: params.page_size,
         offset: (params.page - 1) * params.page_size,
         sort_order: params.sort_direction,
-        curator_ids: curatorIdsFilter,
+        curation_id: params.curation_id,
         unvoted_by_me: params.unvoted_by_me,
         voter_id: authenticatedProfileId,
         price_currency: params.price_currency,
@@ -1251,7 +1254,6 @@ export const dropsService = new DropsApiService(
   dropsMappers,
   dropsDb,
   curationsDb,
-  waveSelectionsDb,
   userGroupsService,
   identitySubscriptionsDb,
   identityFetcher,

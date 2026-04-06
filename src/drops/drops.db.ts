@@ -33,7 +33,6 @@ import {
   WAVE_DROPPER_METRICS_TABLE,
   WAVE_LEADERBOARD_ENTRIES_TABLE,
   WAVE_METRICS_TABLE,
-  WAVE_SELECTION_DROPS_TABLE,
   WAVES_DECISION_WINNER_DROPS_TABLE,
   WAVES_TABLE,
   WINNER_DROP_VOTER_VOTES_TABLE
@@ -398,7 +397,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       group_ids_user_is_eligible_for,
       group_id,
       wave_id,
-      selection_id,
+      curation_id,
       author_id,
       include_replies,
       drop_type,
@@ -410,7 +409,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       serial_no_less_than: number | null;
       amount: number;
       wave_id: string | null;
-      selection_id: string | null;
+      curation_id?: string | null;
       author_id: string | null;
       include_replies: boolean;
       drop_type: DropType | null;
@@ -426,16 +425,17 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     if (!sqlAndParams) {
       return [];
     }
+    const curationFilter = curation_id
+      ? `and exists (
+          select 1 from ${DROP_CURATIONS_TABLE} dc
+          where dc.drop_id = d.id and dc.curation_id = :curation_id
+        )`
+      : '';
     const serialNoLessThan = serial_no_less_than ?? Number.MAX_SAFE_INTEGER;
     const sql = `${sqlAndParams.sql} select d.* from ${DROPS_TABLE} d
          join ${
            UserGroupsService.GENERATED_VIEW
          } cm on cm.profile_id = d.author_id
-         ${
-           selection_id
-             ? `join ${WAVE_SELECTION_DROPS_TABLE} wsd on wsd.drop_id = d.id and wsd.wave_id = d.wave_id and wsd.selection_id = :selection_id`
-             : ``
-         }
          join ${WAVES_TABLE} w on d.wave_id = w.id and (${
            group_ids_user_is_eligible_for.length
              ? `w.visibility_group_id in (:groupsUserIsEligibleFor) or w.admin_group_id in (:groupsUserIsEligibleFor) or`
@@ -451,14 +451,14 @@ export class DropsDb extends LazyDbAccessCompatibleService {
            contains_media
              ? ` and exists (select 1 from ${DROP_MEDIA_TABLE} dm where dm.drop_id = d.id) `
              : ``
-         } order by d.serial_no desc limit ${amount}`;
+         } ${curationFilter} order by d.serial_no desc limit ${amount}`;
     const params: Record<string, any> = {
       ...sqlAndParams.params,
       serialNoLessThan,
       groupsUserIsEligibleFor: group_ids_user_is_eligible_for,
       author_id,
       wave_id,
-      selection_id,
+      curation_id: curation_id ?? null,
       drop_type,
       ids
     };
@@ -523,31 +523,34 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       serial_no_limit,
       search_strategy,
       wave_id,
-      selection_id,
+      curation_id,
       drop_type
     }: {
       serial_no_limit: number | null;
       search_strategy: string;
       amount: number;
       wave_id: string;
-      selection_id: string | null;
+      curation_id?: string | null;
       drop_type: DropType | null;
     },
     ctx: RequestContext
   ): Promise<DropEntity[]> {
     ctx.timer?.start('dropsDb->findLatestDropsSimple');
-    const selectionJoin = selection_id
-      ? `join ${WAVE_SELECTION_DROPS_TABLE} wsd on wsd.drop_id = d.id and wsd.wave_id = d.wave_id and wsd.selection_id = :selection_id`
+    const curationFilter = curation_id
+      ? `and exists (
+          select 1 from ${DROP_CURATIONS_TABLE} dc
+          where dc.drop_id = d.id and dc.curation_id = :curation_id
+        )`
       : '';
-    const sqlForOlder = `(select d.* from ${DROPS_TABLE} d ${selectionJoin} where ${
+    const sqlForOlder = `(select d.* from ${DROPS_TABLE} d where ${
       drop_type ? ` drop_type = :drop_type and ` : ``
-    } d.wave_id = :wave_id and d.serial_no < :serial_no_limit order by d.serial_no desc limit ${amount})`;
-    const sqlForNewer = `(select d.* from ${DROPS_TABLE} d ${selectionJoin} where ${
+    } d.wave_id = :wave_id and d.serial_no < :serial_no_limit ${curationFilter} order by d.serial_no desc limit ${amount})`;
+    const sqlForNewer = `(select d.* from ${DROPS_TABLE} d where ${
       drop_type ? ` drop_type = :drop_type and ` : ``
-    } d.wave_id = :wave_id and d.serial_no > :serial_no_limit order by d.serial_no asc limit ${amount})`;
-    const sqlForThis = `(select d.* from ${DROPS_TABLE} d ${selectionJoin} where ${
+    } d.wave_id = :wave_id and d.serial_no > :serial_no_limit ${curationFilter} order by d.serial_no asc limit ${amount})`;
+    const sqlForThis = `(select d.* from ${DROPS_TABLE} d where ${
       drop_type ? ` drop_type = :drop_type and ` : ``
-    } d.wave_id = :wave_id and d.serial_no = :serial_no_limit)`;
+    } d.wave_id = :wave_id and d.serial_no = :serial_no_limit ${curationFilter})`;
     const sql = `with dr_results as (${[
       search_strategy === ApiDropSearchStrategy.Newer ||
       search_strategy === ApiDropSearchStrategy.Both
@@ -563,7 +566,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       .join(' union all ')}) select * from dr_results order by serial_no desc`;
     const params = {
       wave_id,
-      selection_id,
+      curation_id: curation_id ?? null,
       drop_type,
       serial_no_limit: serial_no_limit ?? Number.MAX_SAFE_INTEGER
     };
@@ -621,31 +624,34 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       drop_id,
       serial_no_limit,
       search_strategy,
-      selection_id,
+      curation_id,
       drop_type
     }: {
       amount: number;
       drop_id: string;
       serial_no_limit: number | null;
       search_strategy: string;
-      selection_id: string | null;
+      curation_id?: string | null;
       drop_type: DropType | null;
     },
     ctx: RequestContext
   ): Promise<DropEntity[]> {
     ctx.timer?.start('dropsDb->findLatestDropRepliesSimple');
-    const selectionJoin = selection_id
-      ? `join ${WAVE_SELECTION_DROPS_TABLE} wsd on wsd.drop_id = d.id and wsd.wave_id = d.wave_id and wsd.selection_id = :selection_id`
+    const curationFilter = curation_id
+      ? `and exists (
+          select 1 from ${DROP_CURATIONS_TABLE} dc
+          where dc.drop_id = d.id and dc.curation_id = :curation_id
+        )`
       : '';
-    const sqlForOlder = `(select d.* from ${DROPS_TABLE} d join ${DROP_RELATIONS_TABLE} r on d.id = r.child_id ${selectionJoin} where ${
+    const sqlForOlder = `(select d.* from ${DROPS_TABLE} d join ${DROP_RELATIONS_TABLE} r on d.id = r.child_id where ${
       drop_type ? ` drop_type = :drop_type and ` : ``
-    } r.parent_id = :drop_id and serial_no < :serial_no_limit order by d.serial_no desc limit ${amount})`;
-    const sqlForNewer = `(select d.* from ${DROPS_TABLE} d join ${DROP_RELATIONS_TABLE} r on d.id = r.child_id ${selectionJoin} where ${
+    } r.parent_id = :drop_id and serial_no < :serial_no_limit ${curationFilter} order by d.serial_no desc limit ${amount})`;
+    const sqlForNewer = `(select d.* from ${DROPS_TABLE} d join ${DROP_RELATIONS_TABLE} r on d.id = r.child_id where ${
       drop_type ? ` drop_type = :drop_type and ` : ``
-    } r.parent_id = :drop_id and serial_no > :serial_no_limit order by d.serial_no asc limit ${amount})`;
-    const sqlForThis = `select d.* from ${DROPS_TABLE} d join ${DROP_RELATIONS_TABLE} r on d.id = r.child_id ${selectionJoin} where ${
+    } r.parent_id = :drop_id and serial_no > :serial_no_limit ${curationFilter} order by d.serial_no asc limit ${amount})`;
+    const sqlForThis = `select d.* from ${DROPS_TABLE} d join ${DROP_RELATIONS_TABLE} r on d.id = r.child_id where ${
       drop_type ? ` drop_type = :drop_type and ` : ``
-    } r.parent_id = :drop_id and serial_no = :serial_no_limit`;
+    } r.parent_id = :drop_id and serial_no = :serial_no_limit ${curationFilter}`;
     const sql = `with dr_results as (${[
       search_strategy === ApiDropSearchStrategy.Newer ||
       search_strategy === ApiDropSearchStrategy.Both
@@ -661,7 +667,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       .join(' union all ')}) select * from dr_results order by serial_no desc`;
     const params = {
       drop_id,
-      selection_id,
+      curation_id: curation_id ?? null,
+      drop_type,
       serial_no_limit: serial_no_limit ?? Number.MAX_SAFE_INTEGER
     };
     const results = await this.db.execute<DropEntity>(sql, params, {
@@ -1371,7 +1378,6 @@ export class DropsDb extends LazyDbAccessCompatibleService {
   async findWeightedLeaderboardDrops(
     params: LeaderboardParams,
     ctx: RequestContext,
-    curatorIds: string[] | null = null,
     voterId: string | null = null
   ): Promise<DropEntity[]> {
     ctx.timer?.start(`${this.constructor.name}->findWeightedLeaderboardDrops`);
@@ -1381,10 +1387,10 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       params,
       voterId
     );
-    const curationFilter = curatorIds?.length
+    const curationFilter = params.curation_id
       ? `and exists (
           select 1 from ${DROP_CURATIONS_TABLE} dc
-          where dc.drop_id = d.id and dc.curator_id in (:curator_ids)
+          where dc.drop_id = d.id and dc.curation_id = :curation_id
         )`
       : '';
     const sql = `
@@ -1416,7 +1422,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     `;
     const sqlParams = {
       wave_id: params.wave_id,
-      curator_ids: curatorIds,
+      curation_id: params.curation_id,
       ...unvotedByMeSql.sqlParams,
       ...this.getLeaderboardPriceSqlParams(params, hasPriceBounds),
       page_size: params.page_size,
@@ -1432,7 +1438,6 @@ export class DropsDb extends LazyDbAccessCompatibleService {
   async findWeightedLeaderboardDropsOrderedByPrediction(
     params: LeaderboardParams,
     ctx: RequestContext,
-    curatorIds: string[] | null = null,
     voterId: string | null = null
   ): Promise<DropEntity[]> {
     ctx.timer?.start(
@@ -1442,10 +1447,10 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       params,
       voterId
     );
-    const curationFilter = curatorIds?.length
+    const curationFilter = params.curation_id
       ? `and exists (
           select 1 from ${DROP_CURATIONS_TABLE} dc
-          where dc.drop_id = d.id and dc.curator_id in (:curator_ids)
+          where dc.drop_id = d.id and dc.curation_id = :curation_id
         )`
       : '';
     const hasPriceBounds = this.hasLeaderboardPriceBounds(params);
@@ -1465,7 +1470,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     `;
     const sqlParams = {
       wave_id: params.wave_id,
-      curator_ids: curatorIds,
+      curation_id: params.curation_id,
       ...unvotedByMeSql.sqlParams,
       ...this.getLeaderboardPriceSqlParams(params, hasPriceBounds),
       page_size: params.page_size,
@@ -1483,7 +1488,6 @@ export class DropsDb extends LazyDbAccessCompatibleService {
   async findWeightedLeaderboardDropsOrderedByTrend(
     params: LeaderboardParams,
     ctx: RequestContext,
-    curatorIds: string[] | null = null,
     voterId: string | null = null
   ): Promise<DropEntity[]> {
     ctx.timer?.start(
@@ -1493,10 +1497,10 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       params,
       voterId
     );
-    const curationFilter = curatorIds?.length
+    const curationFilter = params.curation_id
       ? `and exists (
           select 1 from ${DROP_CURATIONS_TABLE} dc
-          where dc.drop_id = d.id and dc.curator_id in (:curator_ids)
+          where dc.drop_id = d.id and dc.curation_id = :curation_id
         )`
       : '';
     const hasPriceBounds = this.hasLeaderboardPriceBounds(params);
@@ -1516,7 +1520,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     `;
     const sqlParams = {
       wave_id: params.wave_id,
-      curator_ids: curatorIds,
+      curation_id: params.curation_id,
       ...unvotedByMeSql.sqlParams,
       ...this.getLeaderboardPriceSqlParams(params, hasPriceBounds),
       page_size: params.page_size,
@@ -1539,7 +1543,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       sort_order: PageSortDirection;
       unvoted_by_me: boolean;
       voter_id?: string | null;
-      curator_ids?: string[] | null;
+      curation_id?: string | null;
       price_currency?: string | null;
       min_price?: number | null;
       max_price?: number | null;
@@ -1555,10 +1559,10 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       params,
       params.voter_id ?? null
     );
-    const curationFilter = params.curator_ids?.length
+    const curationFilter = params.curation_id
       ? `and exists (
           select 1 from ${DROP_CURATIONS_TABLE} dc
-          where dc.drop_id = d.id and dc.curator_id in (:curator_ids)
+          where dc.drop_id = d.id and dc.curation_id = :curation_id
         )`
       : '';
     const sql = `
@@ -1579,7 +1583,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       {
         wave_id: params.wave_id,
         ...unvotedByMeSql.sqlParams,
-        curator_ids: params.curator_ids ?? null,
+        curation_id: params.curation_id ?? null,
         ...this.getLeaderboardPriceSqlParams(params, hasPriceBounds),
         limit: params.limit,
         offset: params.offset
@@ -1600,7 +1604,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       sort_order: PageSortDirection;
       unvoted_by_me: boolean;
       voter_id?: string | null;
-      curator_ids?: string[] | null;
+      curation_id?: string | null;
       price_currency?: string | null;
       min_price?: number | null;
       max_price?: number | null;
@@ -1614,10 +1618,10 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       params,
       params.voter_id ?? null
     );
-    const curationFilter = params.curator_ids?.length
+    const curationFilter = params.curation_id
       ? `and exists (
           select 1 from ${DROP_CURATIONS_TABLE} dc
-          where dc.drop_id = d.id and dc.curator_id in (:curator_ids)
+          where dc.drop_id = d.id and dc.curation_id = :curation_id
         )`
       : '';
     const sql = `
@@ -1643,7 +1647,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       {
         wave_id: params.wave_id,
         ...unvotedByMeSql.sqlParams,
-        curator_ids: params.curator_ids ?? null,
+        curation_id: params.curation_id ?? null,
         price_currency: params.price_currency ?? null,
         min_price: params.min_price ?? null,
         max_price: params.max_price ?? null,
@@ -1666,7 +1670,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       sort_order: PageSortDirection;
       unvoted_by_me: boolean;
       voter_id?: string | null;
-      curator_ids?: string[] | null;
+      curation_id?: string | null;
       price_currency?: string | null;
       min_price?: number | null;
       max_price?: number | null;
@@ -1680,10 +1684,10 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       params,
       params.voter_id ?? null
     );
-    const curationFilter = params.curator_ids?.length
+    const curationFilter = params.curation_id
       ? `and exists (
           select 1 from ${DROP_CURATIONS_TABLE} dc
-          where dc.drop_id = d.id and dc.curator_id in (:curator_ids)
+          where dc.drop_id = d.id and dc.curation_id = :curation_id
         )`
       : '';
     const sql = `
@@ -1714,7 +1718,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     const sqlParams = {
       wave_id: params.wave_id,
       ...unvotedByMeSql.sqlParams,
-      curator_ids: params.curator_ids ?? null,
+      curation_id: params.curation_id ?? null,
       ...this.getLeaderboardPriceSqlParams(params, hasPriceBounds),
       limit: params.limit,
       offset: params.offset
@@ -1734,7 +1738,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       voter_id: string;
       sort_order: PageSortDirection;
       unvoted_by_me: boolean;
-      curator_ids?: string[] | null;
+      curation_id?: string | null;
       price_currency?: string | null;
       min_price?: number | null;
       max_price?: number | null;
@@ -1750,10 +1754,10 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       params,
       params.voter_id
     );
-    const curationFilter = params.curator_ids?.length
+    const curationFilter = params.curation_id
       ? `and exists (
           select 1 from ${DROP_CURATIONS_TABLE} dc
-          where dc.drop_id = d.id and dc.curator_id in (:curator_ids)
+          where dc.drop_id = d.id and dc.curation_id = :curation_id
         )`
       : '';
     const sql = `
@@ -1789,7 +1793,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     const sqlParams = {
       wave_id: params.wave_id,
       voter_id: params.voter_id,
-      curator_ids: params.curator_ids ?? null,
+      curation_id: params.curation_id ?? null,
       ...this.getLeaderboardPriceSqlParams(params, hasPriceBounds),
       limit: params.limit,
       offset: params.offset
@@ -1806,7 +1810,6 @@ export class DropsDb extends LazyDbAccessCompatibleService {
   async countParticipatoryDrops(
     params: LeaderboardParams,
     ctx: RequestContext,
-    curatorIds: string[] | null = null,
     voterId: string | null = null
   ): Promise<number> {
     ctx.timer?.start(`${this.constructor.name}->countLeaderboardDrops`);
@@ -1816,10 +1819,10 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       params,
       voterId
     );
-    const curationFilter = curatorIds?.length
+    const curationFilter = params.curation_id
       ? `and exists (
           select 1 from ${DROP_CURATIONS_TABLE} dc
-          where dc.drop_id = d.id and dc.curator_id in (:curator_ids)
+          where dc.drop_id = d.id and dc.curation_id = :curation_id
         )`
       : '';
     const countSql = `
@@ -1839,7 +1842,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
           wave_id: params.wave_id,
           drop_type: DropType.PARTICIPATORY,
           ...unvotedByMeSql.sqlParams,
-          curator_ids: curatorIds,
+          curation_id: params.curation_id,
           ...this.getLeaderboardPriceSqlParams(params, hasPriceBounds)
         },
         { wrappedConnection: ctx.connection }
@@ -2646,7 +2649,7 @@ export interface LeaderboardParams {
   readonly page: number;
   readonly sort_direction: PageSortDirection;
   readonly sort: LeaderboardSort;
-  readonly curated_by_group: string | null;
+  readonly curation_id: string | null;
   readonly unvoted_by_me: boolean;
   readonly price_currency: string | null;
   readonly min_price: number | null;

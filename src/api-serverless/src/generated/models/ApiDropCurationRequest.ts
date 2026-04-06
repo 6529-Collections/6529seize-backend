@@ -12,28 +12,21 @@
 
 import { HttpFile } from '../http/http';
 
-export class ApiWaveCurationGroupRequest {
-    'name': string;
-    'group_id': string;
+export class ApiDropCurationRequest {
+    'curation_id': string;
 
     static readonly discriminator: string | undefined = undefined;
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
         {
-            "name": "name",
-            "baseName": "name",
-            "type": "string",
-            "format": ""
-        },
-        {
-            "name": "group_id",
-            "baseName": "group_id",
+            "name": "curation_id",
+            "baseName": "curation_id",
             "type": "string",
             "format": ""
         }    ];
 
     static getAttributeTypeMap() {
-        return ApiWaveCurationGroupRequest.attributeTypeMap;
+        return ApiDropCurationRequest.attributeTypeMap;
     }
 
     public constructor() {

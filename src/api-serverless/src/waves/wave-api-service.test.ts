@@ -62,7 +62,6 @@ describe('WaveApiService updateWave immutability', () => {
       {} as any,
       metricsRecorder as any,
       {} as any,
-      {} as any,
       {} as any
     );
     jest

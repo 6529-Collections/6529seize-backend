@@ -44,18 +44,12 @@ import { dropBookmarksApiService } from './drop-bookmarks.api.service';
 import { ApiPageSortDirection } from '../generated/models/ApiPageSortDirection';
 import { DEFAULT_MAX_SIZE, DEFAULT_PAGE_SIZE } from '../page-request';
 import { ApiDropBoostsPage } from '../generated/models/ApiDropBoostsPage';
-import { ApiProfileMinsPage } from '../generated/models/ApiProfileMinsPage';
 import { curationsApiService } from '@/api/curations/curations.api.service';
 import { giveReadReplicaTimeToCatchUp } from '@/api/api-helpers';
+import { ApiDropCurationRequest } from '@/api/generated/models/ApiDropCurationRequest';
+import { ApiWaveCuration } from '@/api/generated/models/ApiWaveCuration';
 
 const router = asyncRouter();
-
-type GetDropCurationsRequest = {
-  readonly drop_id: string;
-  readonly page_size: number;
-  readonly page: number;
-  readonly sort_direction: ApiPageSortDirection;
-};
 
 router.get(
   '/',
@@ -71,7 +65,7 @@ router.get(
         serial_no_less_than?: number;
         author?: string;
         wave_id?: string;
-        selection_id?: string;
+        curation_id?: string;
         include_replies?: string;
         drop_type?: ApiDropType;
         ids?: string;
@@ -87,7 +81,7 @@ router.get(
       limit,
       wave_id,
       group_id,
-      selection_id,
+      curation_id,
       author_id,
       include_replies,
       drop_type,
@@ -102,7 +96,7 @@ router.get(
           req.query.serial_no_less_than
         ),
         wave_id,
-        selection_id,
+        curation_id,
         author_id,
         include_replies,
         drop_type,
@@ -282,12 +276,16 @@ router.post(
   '/:drop_id/curations',
   needsAuthenticatedUser(),
   async (
-    req: Request<{ drop_id: string }, any, any, any, any>,
+    req: Request<{ drop_id: string }, any, ApiDropCurationRequest, any, any>,
     res: Response<ApiResponse<any>>
   ) => {
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
-    await curationsApiService.addDropCuration(req.params.drop_id, {
+    const request = getValidatedByJoiOrThrow(
+      req.body,
+      DropCurationRequestSchema
+    );
+    await curationsApiService.addDropCuration(req.params.drop_id, request, {
       authenticationContext,
       timer
     });
@@ -300,28 +298,13 @@ router.get(
   '/:drop_id/curations',
   maybeAuthenticatedUser(),
   async (
-    req: Request<
-      { drop_id: string },
-      any,
-      any,
-      Omit<GetDropCurationsRequest, 'drop_id'>,
-      any
-    >,
-    res: Response<ApiResponse<ApiProfileMinsPage>>
+    req: Request<{ drop_id: string }, any, any, any, any>,
+    res: Response<ApiResponse<ApiWaveCuration[]>>
   ) => {
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
-    const searchRequest: GetDropCurationsRequest = getValidatedByJoiOrThrow(
-      { drop_id: req.params.drop_id, ...req.query },
-      GetDropCurationsRequestSchema
-    );
-    const result = await curationsApiService.findDropCurators(
-      {
-        dropId: searchRequest.drop_id,
-        page: searchRequest.page,
-        page_size: searchRequest.page_size,
-        sort_direction: searchRequest.sort_direction
-      },
+    const result = await curationsApiService.findDropCurations(
+      req.params.drop_id,
       {
         timer,
         authenticationContext
@@ -335,12 +318,16 @@ router.delete(
   '/:drop_id/curations',
   needsAuthenticatedUser(),
   async (
-    req: Request<{ drop_id: string }, any, any, any, any>,
+    req: Request<{ drop_id: string }, any, ApiDropCurationRequest, any, any>,
     res: Response<ApiResponse<any>>
   ) => {
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
-    await curationsApiService.removeDropCuration(req.params.drop_id, {
+    const request = getValidatedByJoiOrThrow(
+      req.body,
+      DropCurationRequestSchema
+    );
+    await curationsApiService.removeDropCuration(req.params.drop_id, request, {
       authenticationContext,
       timer
     });
@@ -748,7 +735,7 @@ export async function prepLatestDropsSearchQuery(
       serial_no_less_than?: number;
       author?: string;
       wave_id?: string;
-      selection_id?: string;
+      curation_id?: string;
       include_replies?: string;
       drop_type?: ApiDropType;
       ids?: string;
@@ -759,7 +746,7 @@ export async function prepLatestDropsSearchQuery(
 ) {
   const limit = numbers.parseIntOrNull(req.query.limit) ?? 10;
   const wave_id = req.query.wave_id ?? null;
-  const selection_id = req.query.selection_id ?? null;
+  const curation_id = req.query.curation_id ?? null;
   const group_id = req.query.group_id ?? null;
   const include_replies = req.query.include_replies === 'true';
   const drop_type_str = (req.query.drop_type as string) ?? null;
@@ -780,7 +767,7 @@ export async function prepLatestDropsSearchQuery(
   return {
     limit,
     wave_id,
-    selection_id,
+    curation_id,
     group_id,
     author_id,
     include_replies,
@@ -812,17 +799,8 @@ const GetDropBoostsRequestSchema = Joi.object<GetDropsBoostsRequest>({
   sort: Joi.string().valid('boosted_at').default('boosted_at')
 });
 
-const GetDropCurationsRequestSchema = Joi.object<GetDropCurationsRequest>({
-  drop_id: Joi.string().required(),
-  page_size: Joi.number()
-    .integer()
-    .default(DEFAULT_PAGE_SIZE)
-    .max(DEFAULT_MAX_SIZE)
-    .min(1),
-  page: Joi.number().integer().default(1).min(1),
-  sort_direction: Joi.string()
-    .valid(...Object.values(ApiPageSortDirection))
-    .default(ApiPageSortDirection.Desc)
+const DropCurationRequestSchema = Joi.object<ApiDropCurationRequest>({
+  curation_id: Joi.string().required()
 });
 
 async function assertDropIsCorrectlySigned(

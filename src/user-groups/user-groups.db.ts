@@ -14,7 +14,8 @@ import {
   PROFILE_GROUPS_TABLE,
   RATINGS_TABLE,
   USER_GROUPS_TABLE,
-  WAVE_CURATION_GROUPS_TABLE,
+  WAVE_CURATIONS_TABLE,
+  WAVES_TABLE,
   XTDH_GRANT_TOKENS_TABLE,
   XTDH_GRANTS_TABLE
 } from '@/constants';
@@ -729,17 +730,17 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
     }>(
       `
         select distinct id from (
-          select w.visibility_group_id as id from waves w
+          select w.visibility_group_id as id from ${WAVES_TABLE} w
           union all
-          select w.admin_group_id as id from waves w
+          select w.admin_group_id as id from ${WAVES_TABLE} w
           union all
-          select w.chat_group_id as id from waves w
+          select w.chat_group_id as id from ${WAVES_TABLE} w
           union all
-          select w.participation_group_id as id from waves w
+          select w.participation_group_id as id from ${WAVES_TABLE} w
           union all
-          select w.voting_group_id as id from waves w
+          select w.voting_group_id as id from ${WAVES_TABLE} w
           union all
-          select wcg.community_group_id as id from ${WAVE_CURATION_GROUPS_TABLE} wcg
+          select wcg.community_group_id as id from ${WAVE_CURATIONS_TABLE} wcg
         ) x where id is not null
         `,
       undefined,

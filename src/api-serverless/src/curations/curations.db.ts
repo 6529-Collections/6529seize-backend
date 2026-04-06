@@ -6,35 +6,35 @@ import {
 import {
   DROP_CURATIONS_TABLE,
   USER_GROUPS_TABLE,
-  WAVE_CURATION_GROUPS_TABLE
+  WAVE_CURATIONS_TABLE
 } from '@/constants';
 import { DropCurationEntity } from '@/entities/IDropCuration';
-import { WaveCurationGroupEntity } from '@/entities/IWaveCurationGroup';
+import { WaveCurationEntity } from '@/entities/IWaveCuration';
 import { RequestContext } from '@/request.context';
 import { Time } from '@/time';
 
 export class CurationsDb extends LazyDbAccessCompatibleService {
-  public async findWaveCurationGroupById(
-    param: { id: string; wave_id: string },
+  public async findWaveCurationById(
+    param: { id: string; wave_id?: string },
     connection?: ConnectionWrapper<any>
-  ): Promise<WaveCurationGroupEntity | null> {
-    return await this.db.oneOrNull<WaveCurationGroupEntity>(
+  ): Promise<WaveCurationEntity | null> {
+    return await this.db.oneOrNull<WaveCurationEntity>(
       `
-      select * from ${WAVE_CURATION_GROUPS_TABLE}
-      where id = :id and wave_id = :wave_id
+      select * from ${WAVE_CURATIONS_TABLE}
+      where id = :id ${param.wave_id ? 'and wave_id = :wave_id' : ''}
       `,
       param,
       connection ? { wrappedConnection: connection } : undefined
     );
   }
 
-  public async findWaveCurationGroupsByWaveId(
+  public async findWaveCurationsByWaveId(
     waveId: string,
     connection?: ConnectionWrapper<any>
-  ): Promise<WaveCurationGroupEntity[]> {
-    return await this.db.execute<WaveCurationGroupEntity>(
+  ): Promise<WaveCurationEntity[]> {
+    return await this.db.execute<WaveCurationEntity>(
       `
-      select * from ${WAVE_CURATION_GROUPS_TABLE}
+      select * from ${WAVE_CURATIONS_TABLE}
       where wave_id = :waveId
       order by created_at asc
       `,
@@ -43,16 +43,16 @@ export class CurationsDb extends LazyDbAccessCompatibleService {
     );
   }
 
-  public async findWaveCurationGroupsByWaveIds(
+  public async findWaveCurationsByWaveIds(
     waveIds: string[],
     connection?: ConnectionWrapper<any>
-  ): Promise<WaveCurationGroupEntity[]> {
+  ): Promise<WaveCurationEntity[]> {
     if (!waveIds.length) {
       return [];
     }
-    return await this.db.execute<WaveCurationGroupEntity>(
+    return await this.db.execute<WaveCurationEntity>(
       `
-      select * from ${WAVE_CURATION_GROUPS_TABLE}
+      select * from ${WAVE_CURATIONS_TABLE}
       where wave_id in (:waveIds)
       `,
       { waveIds },
@@ -60,13 +60,13 @@ export class CurationsDb extends LazyDbAccessCompatibleService {
     );
   }
 
-  public async findWaveCurationGroupByName(
+  public async findWaveCurationByName(
     param: { wave_id: string; name: string },
     connection?: ConnectionWrapper<any>
-  ): Promise<WaveCurationGroupEntity | null> {
-    return await this.db.oneOrNull<WaveCurationGroupEntity>(
+  ): Promise<WaveCurationEntity | null> {
+    return await this.db.oneOrNull<WaveCurationEntity>(
       `
-      select * from ${WAVE_CURATION_GROUPS_TABLE}
+      select * from ${WAVE_CURATIONS_TABLE}
       where wave_id = :wave_id and name = :name
       `,
       param,
@@ -74,15 +74,15 @@ export class CurationsDb extends LazyDbAccessCompatibleService {
     );
   }
 
-  public async insertWaveCurationGroup(
-    entity: WaveCurationGroupEntity,
+  public async insertWaveCuration(
+    entity: WaveCurationEntity,
     ctx: RequestContext
   ): Promise<void> {
     try {
-      ctx.timer?.start(`${this.constructor.name}->insertWaveCurationGroup`);
+      ctx.timer?.start(`${this.constructor.name}->insertWaveCuration`);
       await this.db.execute(
         `
-        insert into ${WAVE_CURATION_GROUPS_TABLE}
+        insert into ${WAVE_CURATIONS_TABLE}
         (id, name, wave_id, community_group_id, created_at, updated_at)
         values
         (:id, :name, :wave_id, :community_group_id, :created_at, :updated_at)
@@ -91,11 +91,11 @@ export class CurationsDb extends LazyDbAccessCompatibleService {
         { wrappedConnection: ctx.connection }
       );
     } finally {
-      ctx.timer?.stop(`${this.constructor.name}->insertWaveCurationGroup`);
+      ctx.timer?.stop(`${this.constructor.name}->insertWaveCuration`);
     }
   }
 
-  public async updateWaveCurationGroup(
+  public async updateWaveCuration(
     param: {
       id: string;
       wave_id: string;
@@ -106,10 +106,10 @@ export class CurationsDb extends LazyDbAccessCompatibleService {
     ctx: RequestContext
   ): Promise<void> {
     try {
-      ctx.timer?.start(`${this.constructor.name}->updateWaveCurationGroup`);
+      ctx.timer?.start(`${this.constructor.name}->updateWaveCuration`);
       await this.db.execute(
         `
-        update ${WAVE_CURATION_GROUPS_TABLE}
+        update ${WAVE_CURATIONS_TABLE}
         set name = :name, community_group_id = :community_group_id, updated_at = :updated_at
         where id = :id and wave_id = :wave_id
       `,
@@ -117,26 +117,26 @@ export class CurationsDb extends LazyDbAccessCompatibleService {
         { wrappedConnection: ctx.connection }
       );
     } finally {
-      ctx.timer?.stop(`${this.constructor.name}->updateWaveCurationGroup`);
+      ctx.timer?.stop(`${this.constructor.name}->updateWaveCuration`);
     }
   }
 
-  public async deleteWaveCurationGroup(
+  public async deleteWaveCuration(
     param: { id: string; wave_id: string },
     ctx: RequestContext
   ): Promise<void> {
     try {
-      ctx.timer?.start(`${this.constructor.name}->deleteWaveCurationGroup`);
+      ctx.timer?.start(`${this.constructor.name}->deleteWaveCuration`);
       await this.db.execute(
         `
-        delete from ${WAVE_CURATION_GROUPS_TABLE}
+        delete from ${WAVE_CURATIONS_TABLE}
         where id = :id and wave_id = :wave_id
       `,
         param,
         { wrappedConnection: ctx.connection }
       );
     } finally {
-      ctx.timer?.stop(`${this.constructor.name}->deleteWaveCurationGroup`);
+      ctx.timer?.stop(`${this.constructor.name}->deleteWaveCuration`);
     }
   }
 
@@ -155,7 +155,12 @@ export class CurationsDb extends LazyDbAccessCompatibleService {
   }
 
   public async upsertDropCuration(
-    param: { drop_id: string; curator_id: string; wave_id: string },
+    param: {
+      drop_id: string;
+      curation_id: string;
+      curated_by: string;
+      wave_id: string;
+    },
     ctx: RequestContext
   ): Promise<void> {
     try {
@@ -164,10 +169,12 @@ export class CurationsDb extends LazyDbAccessCompatibleService {
       await this.db.execute(
         `
         insert into ${DROP_CURATIONS_TABLE}
-        (drop_id, curator_id, curator_rating, created_at, updated_at, wave_id)
+        (drop_id, curation_id, curated_by, created_at, updated_at, wave_id)
         values
-        (:drop_id, :curator_id, 1, :created_at, :updated_at, :wave_id)
-        on duplicate key update drop_id = values(drop_id)
+        (:drop_id, :curation_id, :curated_by, :created_at, :updated_at, :wave_id)
+        on duplicate key update
+          curated_by = values(curated_by),
+          updated_at = values(updated_at)
       `,
         {
           ...param,
@@ -182,7 +189,7 @@ export class CurationsDb extends LazyDbAccessCompatibleService {
   }
 
   public async deleteDropCuration(
-    param: { drop_id: string; curator_id: string },
+    param: { drop_id: string; curation_id: string },
     ctx: RequestContext
   ): Promise<void> {
     try {
@@ -190,7 +197,7 @@ export class CurationsDb extends LazyDbAccessCompatibleService {
       await this.db.execute(
         `
         delete from ${DROP_CURATIONS_TABLE}
-        where drop_id = :drop_id and curator_id = :curator_id
+        where drop_id = :drop_id and curation_id = :curation_id
       `,
         param,
         { wrappedConnection: ctx.connection }
@@ -200,17 +207,17 @@ export class CurationsDb extends LazyDbAccessCompatibleService {
     }
   }
 
-  public async findCuratedDropIdsByCurator(
-    param: { dropIds: string[]; curatorId: string },
+  public async findCuratedDropIdsByCurations(
+    param: { dropIds: string[]; curationIds: string[] },
     connection?: ConnectionWrapper<any>
   ): Promise<Set<string>> {
-    if (!param.dropIds.length) {
+    if (!param.dropIds.length || !param.curationIds.length) {
       return new Set<string>();
     }
     const rows = await this.db.execute<{ drop_id: string }>(
       `
-      select drop_id from ${DROP_CURATIONS_TABLE}
-      where drop_id in (:dropIds) and curator_id = :curatorId
+      select distinct drop_id from ${DROP_CURATIONS_TABLE}
+      where drop_id in (:dropIds) and curation_id in (:curationIds)
       `,
       param,
       connection ? { wrappedConnection: connection } : undefined
@@ -218,54 +225,21 @@ export class CurationsDb extends LazyDbAccessCompatibleService {
     return new Set(rows.map((it) => it.drop_id));
   }
 
-  public async findCuratorIdsByDropId(
-    param: {
-      drop_id: string;
-      limit: number;
-      offset: number;
-      sort_order: 'ASC' | 'DESC';
-    },
-    ctx: RequestContext
-  ): Promise<string[]> {
-    try {
-      ctx.timer?.start(`${this.constructor.name}->findCuratorIdsByDropId`);
-      const rows = await this.db.execute<{ curator_id: string }>(
-        `
-        select curator_id
-        from ${DROP_CURATIONS_TABLE}
-        where drop_id = :drop_id
-        order by created_at ${param.sort_order}, curator_id asc
-        limit :limit
-        offset :offset
-      `,
-        param,
-        { wrappedConnection: ctx.connection }
-      );
-      return rows.map((it) => it.curator_id);
-    } finally {
-      ctx.timer?.stop(`${this.constructor.name}->findCuratorIdsByDropId`);
-    }
-  }
-
-  public async countCurationsByDropId(
+  public async findWaveCurationsForDropId(
     dropId: string,
-    ctx: RequestContext
-  ): Promise<number> {
-    try {
-      ctx.timer?.start(`${this.constructor.name}->countCurationsByDropId`);
-      const rows = await this.db.execute<{ count: number }>(
-        `
-        select count(*) as count
-        from ${DROP_CURATIONS_TABLE}
-        where drop_id = :dropId
+    connection?: ConnectionWrapper<any>
+  ): Promise<WaveCurationEntity[]> {
+    return await this.db.execute<WaveCurationEntity>(
+      `
+      select wcg.*
+      from ${WAVE_CURATIONS_TABLE} wcg
+      join ${DROP_CURATIONS_TABLE} dc on dc.curation_id = wcg.id
+      where dc.drop_id = :dropId
+      order by wcg.created_at asc, wcg.id asc
       `,
-        { dropId },
-        { wrappedConnection: ctx.connection }
-      );
-      return rows[0]?.count ?? 0;
-    } finally {
-      ctx.timer?.stop(`${this.constructor.name}->countCurationsByDropId`);
-    }
+      { dropId },
+      connection ? { wrappedConnection: connection } : undefined
+    );
   }
 
   public async deleteDropCurationsByWaveId(
@@ -287,25 +261,44 @@ export class CurationsDb extends LazyDbAccessCompatibleService {
     }
   }
 
-  public async deleteWaveCurationGroupsByWaveId(
+  public async deleteWaveCurationsByWaveId(
     waveId: string,
     ctx: RequestContext
   ): Promise<void> {
     try {
-      ctx.timer?.start(
-        `${this.constructor.name}->deleteWaveCurationGroupsByWaveId`
-      );
+      ctx.timer?.start(`${this.constructor.name}->deleteWaveCurationsByWaveId`);
       await this.db.execute(
         `
-        delete from ${WAVE_CURATION_GROUPS_TABLE}
+        delete from ${WAVE_CURATIONS_TABLE}
         where wave_id = :waveId
       `,
         { waveId },
         { wrappedConnection: ctx.connection }
       );
     } finally {
+      ctx.timer?.stop(`${this.constructor.name}->deleteWaveCurationsByWaveId`);
+    }
+  }
+
+  public async deleteDropCurationsByCurationId(
+    curationId: string,
+    ctx: RequestContext
+  ): Promise<void> {
+    try {
+      ctx.timer?.start(
+        `${this.constructor.name}->deleteDropCurationsByCurationId`
+      );
+      await this.db.execute(
+        `
+        delete from ${DROP_CURATIONS_TABLE}
+        where curation_id = :curationId
+      `,
+        { curationId },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
       ctx.timer?.stop(
-        `${this.constructor.name}->deleteWaveCurationGroupsByWaveId`
+        `${this.constructor.name}->deleteDropCurationsByCurationId`
       );
     }
   }
@@ -337,31 +330,11 @@ export class CurationsDb extends LazyDbAccessCompatibleService {
       ctx.timer?.start(`${this.constructor.name}->mergeOnProfileIdChange`);
       await this.db.execute(
         `
-        insert into ${DROP_CURATIONS_TABLE}
-        (drop_id, curator_id, curator_rating, created_at, updated_at, wave_id)
-        select
-          source_curations.drop_id,
-          :new_id as curator_id,
-          source_curations.curator_rating,
-          source_curations.created_at,
-          source_curations.updated_at,
-          source_curations.wave_id
-        from ${DROP_CURATIONS_TABLE} source_curations
-        where source_curations.curator_id = :previous_id
-        on duplicate key update
-          curator_rating = greatest(${DROP_CURATIONS_TABLE}.curator_rating, values(curator_rating)),
-          created_at = least(${DROP_CURATIONS_TABLE}.created_at, values(created_at)),
-          updated_at = greatest(${DROP_CURATIONS_TABLE}.updated_at, values(updated_at))
+        update ${DROP_CURATIONS_TABLE}
+        set curated_by = :new_id
+        where curated_by = :previous_id
       `,
         param,
-        { wrappedConnection: ctx.connection }
-      );
-      await this.db.execute(
-        `
-        delete from ${DROP_CURATIONS_TABLE}
-        where curator_id = :previous_id
-      `,
-        { previous_id: param.previous_id },
         { wrappedConnection: ctx.connection }
       );
     } finally {
