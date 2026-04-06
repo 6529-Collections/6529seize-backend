@@ -30,6 +30,9 @@ const config: Config = {
     {
       ...commonProjectConfig,
       displayName: 'unit',
+      globalSetup: undefined,
+      globalTeardown: undefined,
+      setupFilesAfterEnv: undefined,
       testPathIgnorePatterns: [
         '<rootDir>/build/',
         String.raw`<rootDir>/src/.*\.db\.test\.ts$`,

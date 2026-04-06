@@ -64,9 +64,8 @@ import {
 const allowlistLogger = Logger.get('SUBSCRIPTIONS_ALLOWLIST');
 const CACHE_EVICTION_TIMEOUT_MS = 1_500;
 
-async function evictCacheForPathWithTimeout(
-  contract: string,
-  tokenId: number,
+async function evictCacheWithContextLogging(
+  context: string,
   cacheEviction: {
     label: string;
     path: string;
@@ -79,41 +78,13 @@ async function evictCacheForPathWithTimeout(
 
   if (evictionResult.success) {
     allowlistLogger.info(
-      `[CACHE_EVICT_DONE] [contract ${contract}] [token_id ${tokenId}] [cache ${cacheEviction.label}] [elapsed_ms ${
+      `[CACHE_EVICT_DONE] ${context} [cache ${cacheEviction.label}] [elapsed_ms ${
         evictionResult.elapsed_ms
       }]`
     );
   } else {
     allowlistLogger.warn(
-      `[CACHE_EVICT_FAILED] [contract ${contract}] [token_id ${tokenId}] [cache ${cacheEviction.label}] [elapsed_ms ${
-        evictionResult.elapsed_ms
-      }]`,
-      'error' in evictionResult ? evictionResult.error : undefined
-    );
-  }
-}
-
-async function evictSubscriptionCacheForPathWithTimeout(
-  consolidationKey: string,
-  cacheEviction: {
-    label: string;
-    path: string;
-  }
-) {
-  const evictionResult = await evictRedisCacheForPathWithTimeout({
-    path: cacheEviction.path,
-    timeoutMs: CACHE_EVICTION_TIMEOUT_MS
-  });
-
-  if (evictionResult.success) {
-    allowlistLogger.info(
-      `[CACHE_EVICT_DONE] [consolidation_key ${consolidationKey}] [cache ${cacheEviction.label}] [elapsed_ms ${
-        evictionResult.elapsed_ms
-      }]`
-    );
-  } else {
-    allowlistLogger.warn(
-      `[CACHE_EVICT_FAILED] [consolidation_key ${consolidationKey}] [cache ${cacheEviction.label}] [elapsed_ms ${
+      `[CACHE_EVICT_FAILED] ${context} [cache ${cacheEviction.label}] [elapsed_ms ${
         evictionResult.elapsed_ms
       }]`,
       'error' in evictionResult ? evictionResult.error : undefined
@@ -138,7 +109,10 @@ async function invalidateMintingClaimsPhaseCache(
 
   await Promise.allSettled(
     cacheEvictions.map((cacheEviction) =>
-      evictCacheForPathWithTimeout(contract, tokenId, cacheEviction)
+      evictCacheWithContextLogging(
+        `[contract ${contract}] [token_id ${tokenId}]`,
+        cacheEviction
+      )
     )
   );
 }
@@ -166,7 +140,10 @@ async function invalidateSubscriptionCache(consolidationKey: string) {
   await Promise.allSettled([
     giveReadReplicaTimeToCatchUp(),
     ...cacheEvictions.map((cacheEviction) =>
-      evictSubscriptionCacheForPathWithTimeout(consolidationKey, cacheEviction)
+      evictCacheWithContextLogging(
+        `[consolidation_key ${consolidationKey}]`,
+        cacheEviction
+      )
     )
   ]);
 }
