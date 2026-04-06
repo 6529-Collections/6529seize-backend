@@ -1,7 +1,7 @@
 import 'reflect-metadata';
 import { sqlExecutor } from '../../sql-executor';
-import { collections } from '../../collections';
 import * as mysql from 'mysql';
+import { resetTestDatabase } from '@/tests/_setup/testDatabase';
 
 export interface Seed {
   table: string;
@@ -45,6 +45,23 @@ function buildInsertSql(table: string, row: Record<string, any>): string {
   return `INSERT INTO ${mysql.escapeId(table)} (${escapedColumns}) VALUES (${escapedValues})`;
 }
 
+async function executeNativeQuery(
+  connection: {
+    query: (sql: string, callback: (error?: unknown) => void) => void;
+  },
+  sql: string
+): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    connection.query(sql, (error?: unknown) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
 export function describeWithSeed(
   title: string,
   seeds: Seed | Seed[],
@@ -54,10 +71,11 @@ export function describeWithSeed(
 
   describe(title, () => {
     beforeEach(async () => {
+      await resetTestDatabase();
       await sqlExecutor.executeNativeQueriesInTransaction(async (tx) => {
         for (const { table, rows } of seedArr) {
           for (const row of rows) {
-            await tx.connection.query(buildInsertSql(table, row));
+            await executeNativeQuery(tx.connection, buildInsertSql(table, row));
           }
         }
       });
@@ -66,10 +84,7 @@ export function describeWithSeed(
     body();
 
     afterEach(async () => {
-      const tables = collections.distinct(seedArr.map(({ table }) => table));
-      for (const table of tables) {
-        await sqlExecutor.execute(`DELETE FROM ${table}`);
-      }
+      await resetTestDatabase();
     });
   });
 }

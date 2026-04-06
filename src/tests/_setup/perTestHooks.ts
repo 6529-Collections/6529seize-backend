@@ -13,10 +13,13 @@ import {
   SqlExecutor
 } from '../../sql-executor';
 import { Time } from '../../time';
+import { selectWorkerDatabaseFromEnv } from '@/tests/_setup/testDatabase';
 
 const logger = Logger.get('TEST');
 
 let pool: mysql.Pool;
+
+selectWorkerDatabaseFromEnv();
 
 function getConnectionsFromPool(): Promise<mysql.PoolConnection> {
   return new Promise((resolve, reject) => {
