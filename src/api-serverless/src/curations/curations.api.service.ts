@@ -11,6 +11,7 @@ import {
   userGroupsService,
   UserGroupsService
 } from '@/api/community-members/user-groups.service';
+import { ApiDropCuration } from '@/api/generated/models/ApiDropCuration';
 import { ApiDropCurationRequest } from '@/api/generated/models/ApiDropCurationRequest';
 import { ApiWaveCuration } from '@/api/generated/models/ApiWaveCuration';
 import { ApiWaveCurationRequest } from '@/api/generated/models/ApiWaveCurationRequest';
@@ -208,7 +209,7 @@ export class CurationsApiService {
   public async findDropCurations(
     dropId: string,
     ctx: RequestContext
-  ): Promise<ApiWaveCuration[]> {
+  ): Promise<ApiDropCuration[]> {
     const groupsUserIsEligibleFor = await getGroupsUserIsEligibleForReadContext(
       this.userGroupsService,
       ctx
@@ -226,11 +227,20 @@ export class CurationsApiService {
       groupsUserIsEligibleFor,
       `Drop ${dropId} not found`
     );
-    return await this.curationsDb
-      .findWaveCurationsForDropId(dropId, ctx.connection)
-      .then((entities) =>
-        entities.map((entity) => this.waveCurationToApi(entity))
-      );
+    const [waveCurations, dropCurationIds, curatorEligibleGroupIds] =
+      await Promise.all([
+        this.curationsDb.findWaveCurationsByWaveId(wave.id, ctx.connection),
+        this.curationsDb.findCurationIdsForDropId(drop.id, ctx.connection),
+        this.getEligibleGroupIdsForAuthenticatedCurator(ctx)
+      ]);
+    return waveCurations.map((entity) =>
+      this.dropCurationToApi(entity, {
+        dropIncluded: dropCurationIds.has(entity.id),
+        authenticatedUserCanCurate: curatorEligibleGroupIds.includes(
+          entity.community_group_id
+        )
+      })
+    );
   }
 
   private async getCurationContextForAuthenticatedCurator(
@@ -322,6 +332,26 @@ export class CurationsApiService {
     }
   }
 
+  private async getEligibleGroupIdsForAuthenticatedCurator(
+    ctx: RequestContext
+  ): Promise<string[]> {
+    const authenticationContext = ctx.authenticationContext;
+    if (
+      !authenticationContext?.isUserFullyAuthenticated() ||
+      authenticationContext.isAuthenticatedAsProxy()
+    ) {
+      return [];
+    }
+    const profileId = authenticationContext.getActingAsId();
+    if (!profileId) {
+      return [];
+    }
+    return await this.userGroupsService.getGroupsUserIsEligibleFor(
+      profileId,
+      ctx.timer
+    );
+  }
+
   private async assertCommunityGroupCanBeUsed(
     groupId: string,
     ctx: RequestContext
@@ -372,6 +402,20 @@ export class CurationsApiService {
       group_id: entity.community_group_id,
       created_at: entity.created_at,
       updated_at: entity.updated_at
+    };
+  }
+
+  private dropCurationToApi(
+    entity: WaveCurationEntity,
+    param: {
+      dropIncluded: boolean;
+      authenticatedUserCanCurate: boolean;
+    }
+  ): ApiDropCuration {
+    return {
+      ...this.waveCurationToApi(entity),
+      drop_included: param.dropIncluded,
+      authenticated_user_can_curate: param.authenticatedUserCanCurate
     };
   }
 }
