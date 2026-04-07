@@ -154,6 +154,7 @@ export const DROP_BOOKMARKS_TABLE = 'drop_bookmarks';
 export const DROP_QUICKVOTE_SKIPS_TABLE = 'drop_quickvote_skips';
 export const DROP_NFT_LINKS_TABLE = 'drop_nft_links';
 export const PINNED_WAVES_TABLE = 'pinned_waves';
+export const PROFILE_WAVES_TABLE = 'profile_waves';
 export const COOKIES_CONSENT_TABLE = 'cookies_consent';
 export const PROFILE_GROUP_CHANGES = 'profile_group_changes';
 export const EULA_CONSENT_TABLE = 'eula_consent';

@@ -3696,6 +3696,59 @@ paths:
                 $ref: "#/components/schemas/ApiIdentity"
         "400":
           description: Invalid request
+  /profiles/{identity}/wave:
+    post:
+      tags:
+        - Profiles
+      summary: Set explicit profile wave
+      operationId: setProfileWave
+      parameters:
+        - name: identity
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApiSetProfileWaveRequest"
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiIdentity"
+        "400":
+          description: Invalid request
+        "403":
+          description: Forbidden
+        "404":
+          description: Profile or wave not found
+    delete:
+      tags:
+        - Profiles
+      summary: Clear explicit profile wave
+      operationId: clearProfileWave
+      parameters:
+        - name: identity
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiIdentity"
+        "403":
+          description: Forbidden
+        "404":
+          description: Profile not found
   /profiles/{identity}/proxies:
     get:
       tags:
@@ -9113,6 +9166,7 @@ components:
         - active_main_stage_submission_ids
         - winner_main_stage_drop_ids
         - artist_of_prevote_cards
+        - profile_wave_id
         - is_wave_creator
       properties:
         id:
@@ -9185,6 +9239,9 @@ components:
           items:
             type: integer
             format: int64
+        profile_wave_id:
+          type: string
+          nullable: true
         is_wave_creator:
           type: boolean
     ApiIdentityActivity:
@@ -10271,6 +10328,7 @@ components:
         - active_main_stage_submission_ids
         - winner_main_stage_drop_ids
         - artist_of_prevote_cards
+        - profile_wave_id
         - is_wave_creator
       properties:
         id:
@@ -10330,6 +10388,9 @@ components:
           items:
             type: integer
             format: int64
+        profile_wave_id:
+          type: string
+          nullable: true
         is_wave_creator:
           type: boolean
     ApiProfileMinsPage:
@@ -10809,6 +10870,15 @@ components:
       properties:
         drop_id:
           type: string
+    ApiSetProfileWaveRequest:
+      type: object
+      required:
+        - wave_id
+      properties:
+        wave_id:
+          type: string
+          minLength: 1
+          maxLength: 100
     ApiStartMultipartMediaUploadResponse:
       required:
         - upload_id
@@ -11248,6 +11318,7 @@ components:
         - metrics
         - pauses
         - pinned
+        - identity_wave
       properties:
         id:
           description: The ID of the wave
@@ -11300,6 +11371,8 @@ components:
           items:
             $ref: "#/components/schemas/ApiWaveDecisionPause"
         pinned:
+          type: boolean
+        identity_wave:
           type: boolean
     ApiWaveChatConfig:
       type: object
@@ -11654,6 +11727,7 @@ components:
         - admin_drop_deletion_enabled
         - forbid_negative_votes
         - pinned
+        - identity_wave
       properties:
         id:
           type: string
@@ -11710,6 +11784,8 @@ components:
         forbid_negative_votes:
           type: boolean
         pinned:
+          type: boolean
+        identity_wave:
           type: boolean
     ApiWaveOutcome:
       type: object

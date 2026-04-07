@@ -177,6 +177,7 @@ export * from '../models/ApiReplyToDrop';
 export * from '../models/ApiReplyToDropResponse';
 export * from '../models/ApiSeizeSettings';
 export * from '../models/ApiSetPinnedDropRequest';
+export * from '../models/ApiSetProfileWaveRequest';
 export * from '../models/ApiStartMultipartMediaUploadResponse';
 export * from '../models/ApiTargetAndSubscriptionActions';
 export * from '../models/ApiTdhEdition';
@@ -414,7 +415,7 @@ import { ApiGroupOwnsNft, ApiGroupOwnsNftNameEnum    } from '../models/ApiGroupO
 import { ApiGroupRepFilter      } from '../models/ApiGroupRepFilter';
 import { ApiGroupTdhFilter    } from '../models/ApiGroupTdhFilter';
 import { ApiGroupTdhInclusionStrategy } from '../models/ApiGroupTdhInclusionStrategy';
-import { ApiIdentity                         } from '../models/ApiIdentity';
+import { ApiIdentity                          } from '../models/ApiIdentity';
 import { ApiIdentityActivity } from '../models/ApiIdentityActivity';
 import { ApiIdentityAndSubscriptionActions } from '../models/ApiIdentityAndSubscriptionActions';
 import { ApiIdentitySubscriptionActions } from '../models/ApiIdentitySubscriptionActions';
@@ -487,6 +488,7 @@ import { ApiReplyToDrop } from '../models/ApiReplyToDrop';
 import { ApiReplyToDropResponse } from '../models/ApiReplyToDropResponse';
 import { ApiSeizeSettings } from '../models/ApiSeizeSettings';
 import { ApiSetPinnedDropRequest } from '../models/ApiSetPinnedDropRequest';
+import { ApiSetProfileWaveRequest } from '../models/ApiSetProfileWaveRequest';
 import { ApiStartMultipartMediaUploadResponse } from '../models/ApiStartMultipartMediaUploadResponse';
 import { ApiTargetAndSubscriptionActions } from '../models/ApiTargetAndSubscriptionActions';
 import { ApiTdhEdition } from '../models/ApiTdhEdition';
@@ -525,7 +527,7 @@ import { ApiWaveDropsFeed } from '../models/ApiWaveDropsFeed';
 import { ApiWaveLog } from '../models/ApiWaveLog';
 import { ApiWaveMetadataType } from '../models/ApiWaveMetadataType';
 import { ApiWaveMetrics } from '../models/ApiWaveMetrics';
-import { ApiWaveMin                      } from '../models/ApiWaveMin';
+import { ApiWaveMin                       } from '../models/ApiWaveMin';
 import { ApiWaveOutcome        } from '../models/ApiWaveOutcome';
 import { ApiWaveOutcomeCredit } from '../models/ApiWaveOutcomeCredit';
 import { ApiWaveOutcomeDistributionItem } from '../models/ApiWaveOutcomeDistributionItem';
@@ -837,6 +839,7 @@ let typeMap: {[index: string]: any} = {
     "ApiReplyToDropResponse": ApiReplyToDropResponse,
     "ApiSeizeSettings": ApiSeizeSettings,
     "ApiSetPinnedDropRequest": ApiSetPinnedDropRequest,
+    "ApiSetProfileWaveRequest": ApiSetProfileWaveRequest,
     "ApiStartMultipartMediaUploadResponse": ApiStartMultipartMediaUploadResponse,
     "ApiTargetAndSubscriptionActions": ApiTargetAndSubscriptionActions,
     "ApiTdhEdition": ApiTdhEdition,

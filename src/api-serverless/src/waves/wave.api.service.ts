@@ -86,6 +86,7 @@ import {
   validateWaveSubmissionStrategy
 } from '@/api/waves/wave-submission-strategy';
 import { WaveType } from '@/entities/IWave';
+import { profileWavesDb } from '@/profiles/profile-waves.db';
 
 export class WaveApiService {
   constructor(
@@ -1345,6 +1346,7 @@ export class WaveApiService {
             waveId,
             ctxWithConnection
           ),
+          profileWavesDb.deleteByWaveId(waveId, ctxWithConnection),
           this.curationsDb.deleteDropCurationsByWaveId(
             waveId,
             ctxWithConnection
@@ -1423,6 +1425,15 @@ export class WaveApiService {
               `You can't update a wave you didn't create and are not an admin of`
             );
           }
+        }
+        const isSelectedProfileWave = await profileWavesDb
+          .findSelectedWaveIdsByWaveIds([waveId], ctxWithConnection)
+          .then((waveIds) => waveIds.has(waveId));
+        if (
+          isSelectedProfileWave &&
+          request.visibility.scope.group_id !== null
+        ) {
+          throw new BadRequestException(`Profile waves must remain public`);
         }
         this.assertImmutableWaveUpdateFieldsUnchanged({
           request,

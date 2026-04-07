@@ -23,6 +23,7 @@ import { ApiProfileClassification } from '../generated/models/ApiProfileClassifi
 import { NotFoundException } from '../../../exceptions';
 import { ApiCommunityMemberMinimal } from '../generated/models/ApiCommunityMemberMinimal';
 import { enums } from '../../../enums';
+import { profileWavesDb } from '@/profiles/profile-waves.db';
 
 export class IdentityFetcher {
   constructor(
@@ -90,7 +91,8 @@ export class IdentityFetcher {
       mainStageSubscriptions,
       mainStageWins,
       artistOfPrevoteCards,
-      waveCreatorIds
+      waveCreatorIds,
+      profileWaveIds
     ] = await Promise.all([
       this.identitiesDb.getIdentitiesByIds(ids, ctx.connection),
       this.getSubscribedActions({
@@ -100,7 +102,8 @@ export class IdentityFetcher {
       this.identitiesDb.getActiveMainStageDropIds(ids, ctx),
       this.identitiesDb.getMainStageWinnerDropIds(ids, ctx),
       this.identitiesDb.getArtistOfPrevoteCards(ids, ctx),
-      this.identitiesDb.getWaveCreatorProfileIds(ids, ctx.connection)
+      this.identitiesDb.getWaveCreatorProfileIds(ids, ctx.connection),
+      profileWavesDb.findProfileWaveIdsByProfileIds(ids, ctx)
     ]);
     const notFoundProfileIds = ids.filter(
       (id) => !identities.find((p) => p.profile_id === id)
@@ -121,6 +124,7 @@ export class IdentityFetcher {
       level: getLevelFromScore(p.level_raw),
       pfp: p.pfp,
       archived: false,
+      profile_wave_id: profileWaveIds[p.profile_id!] ?? null,
       subscribed_actions: subscribedActions[p.profile_id!] ?? [],
       primary_address: p.primary_address,
       active_main_stage_submission_ids:
@@ -152,6 +156,7 @@ export class IdentityFetcher {
           primary_address: p.primary_address,
           pfp: null,
           archived: true,
+          profile_wave_id: profileWaveIds[p.external_id] ?? null,
           subscribed_actions: subscribedActions[p.external_id] ?? [],
           active_main_stage_submission_ids:
             mainStageSubscriptions[p.external_id] ?? [],
@@ -372,6 +377,7 @@ export class IdentityFetcher {
         active_main_stage_submission_ids: [],
         winner_main_stage_drop_ids: [],
         artist_of_prevote_cards: [],
+        profile_wave_id: null,
         is_wave_creator: false
       };
     }
@@ -440,7 +446,8 @@ export class IdentityFetcher {
       mainStageDropIds,
       mainStageWinnerDrops,
       artistOfPrevoteCards,
-      waveCreatorIds
+      waveCreatorIds,
+      profileWaveIds
     ] = await Promise.all([
       this.identitiesDb.getPrediscoveredEnsNames(consolidatedWallets, ctx),
       this.identitiesDb
@@ -470,6 +477,10 @@ export class IdentityFetcher {
       this.identitiesDb.getWaveCreatorProfileIds(
         identity.profile_id ? [identity.profile_id] : [],
         ctx.connection
+      ),
+      profileWavesDb.findProfileWaveIdsByProfileIds(
+        identity.profile_id ? [identity.profile_id] : [],
+        ctx
       )
     ]);
     const classification = identity.classification
@@ -506,6 +517,9 @@ export class IdentityFetcher {
       active_main_stage_submission_ids: mainStageDropIds,
       winner_main_stage_drop_ids: mainStageWinnerDrops,
       artist_of_prevote_cards: artistOfPrevoteCards,
+      profile_wave_id: identity.profile_id
+        ? (profileWaveIds[identity.profile_id] ?? null)
+        : null,
       is_wave_creator: identity.profile_id
         ? waveCreatorIds.has(identity.profile_id)
         : false

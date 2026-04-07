@@ -39,6 +39,7 @@ export class ApiWaveMin {
     'admin_drop_deletion_enabled': boolean;
     'forbid_negative_votes': boolean;
     'pinned': boolean;
+    'identity_wave': boolean;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -166,6 +167,12 @@ export class ApiWaveMin {
         {
             "name": "pinned",
             "baseName": "pinned",
+            "type": "boolean",
+            "format": ""
+        },
+        {
+            "name": "identity_wave",
+            "baseName": "identity_wave",
             "type": "boolean",
             "format": ""
         }    ];

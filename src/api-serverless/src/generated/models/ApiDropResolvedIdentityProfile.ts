@@ -33,6 +33,7 @@ export class ApiDropResolvedIdentityProfile {
     'active_main_stage_submission_ids': Array<string>;
     'winner_main_stage_drop_ids': Array<string>;
     'artist_of_prevote_cards': Array<number>;
+    'profile_wave_id': string | null;
     'is_wave_creator': boolean;
     'bio': string | null;
     'top_rep_categories': Array<ApiProfileRepCategorySummary>;
@@ -147,6 +148,12 @@ export class ApiDropResolvedIdentityProfile {
             "baseName": "artist_of_prevote_cards",
             "type": "Array<number>",
             "format": "int64"
+        },
+        {
+            "name": "profile_wave_id",
+            "baseName": "profile_wave_id",
+            "type": "string",
+            "format": ""
         },
         {
             "name": "is_wave_creator",
