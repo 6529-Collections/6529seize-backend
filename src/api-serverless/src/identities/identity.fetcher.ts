@@ -105,34 +105,39 @@ export class IdentityFetcher {
       this.identitiesDb.getWaveCreatorProfileIds(ids, ctx.connection),
       profileWavesDb.findProfileWaveIdsByProfileIds(ids, ctx)
     ]);
-    const notFoundProfileIds = ids.filter(
-      (id) => !identities.find((p) => p.profile_id === id)
+    const identitiesWithProfileId = identities.filter(
+      (p): p is IdentityEntity & { profile_id: string } => p.profile_id !== null
     );
-    const notArchivedProfiles = identities.map<ApiProfileMin>((p) => ({
-      id: p.profile_id!,
-      handle: p.handle,
-      banner1_color: p.banner1,
-      banner2_color: p.banner2,
-      cic: p.cic,
-      rep: p.rep,
-      tdh: p.tdh,
-      xtdh: p.xtdh,
-      xtdh_rate: p.xtdh_rate,
-      produced_xtdh: p.produced_xtdh,
-      granted_xtdh: p.granted_xtdh,
-      tdh_rate: p.basetdh_rate,
-      level: getLevelFromScore(p.level_raw),
-      pfp: p.pfp,
-      archived: false,
-      profile_wave_id: profileWaveIds[p.profile_id!] ?? null,
-      subscribed_actions: subscribedActions[p.profile_id!] ?? [],
-      primary_address: p.primary_address,
-      active_main_stage_submission_ids:
-        mainStageSubscriptions[p.profile_id!] ?? [],
-      winner_main_stage_drop_ids: mainStageWins[p.profile_id!] ?? [],
-      artist_of_prevote_cards: artistOfPrevoteCards[p.profile_id!] ?? [],
-      is_wave_creator: waveCreatorIds.has(p.profile_id!)
-    }));
+    const notFoundProfileIds = ids.filter(
+      (id) => !identitiesWithProfileId.find((p) => p.profile_id === id)
+    );
+    const notArchivedProfiles = identitiesWithProfileId.map<ApiProfileMin>(
+      (p) => ({
+        id: p.profile_id,
+        handle: p.handle,
+        banner1_color: p.banner1,
+        banner2_color: p.banner2,
+        cic: p.cic,
+        rep: p.rep,
+        tdh: p.tdh,
+        xtdh: p.xtdh,
+        xtdh_rate: p.xtdh_rate,
+        produced_xtdh: p.produced_xtdh,
+        granted_xtdh: p.granted_xtdh,
+        tdh_rate: p.basetdh_rate,
+        level: getLevelFromScore(p.level_raw),
+        pfp: p.pfp,
+        archived: false,
+        profile_wave_id: profileWaveIds[p.profile_id] ?? null,
+        subscribed_actions: subscribedActions[p.profile_id] ?? [],
+        primary_address: p.primary_address,
+        active_main_stage_submission_ids:
+          mainStageSubscriptions[p.profile_id] ?? [],
+        winner_main_stage_drop_ids: mainStageWins[p.profile_id] ?? [],
+        artist_of_prevote_cards: artistOfPrevoteCards[p.profile_id] ?? [],
+        is_wave_creator: waveCreatorIds.has(p.profile_id)
+      })
+    );
     const archivedProfiles = await this.identitiesDb
       .getNewestVersionHandlesOfArchivedProfiles(
         notFoundProfileIds,

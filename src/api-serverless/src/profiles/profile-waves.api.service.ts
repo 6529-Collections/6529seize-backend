@@ -43,7 +43,7 @@ export class ProfileWavesApiService {
           },
           txCtx
         );
-        return await this.getIdentityOrThrow(profileId, txCtx);
+        return await this.getIdentityOrThrow(identityKey, txCtx);
       }
     );
   }
@@ -60,7 +60,7 @@ export class ProfileWavesApiService {
           txCtx
         );
         await profileWavesDb.deleteByProfileId(profileId, txCtx);
-        return await this.getIdentityOrThrow(profileId, txCtx);
+        return await this.getIdentityOrThrow(identityKey, txCtx);
       }
     );
   }

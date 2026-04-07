@@ -28,12 +28,12 @@ describe('ProfileWavesApiService', () => {
     const setSpy = jest
       .spyOn(profileWavesDb, 'setProfileWave')
       .mockResolvedValue(undefined);
-    jest
+    const getIdentitySpy = jest
       .spyOn(identityFetcher, 'getIdentityAndConsolidationsByIdentityKey')
       .mockResolvedValue({ id: 'profile-1', profile_wave_id: 'wave-1' } as any);
 
     await expect(
-      service.setProfileWave('profile-1', { wave_id: 'wave-1' } as any, {
+      service.setProfileWave('alice', { wave_id: 'wave-1' } as any, {
         authenticationContext: AuthenticationContext.fromProfileId('profile-1'),
         timer: undefined
       })
@@ -46,6 +46,10 @@ describe('ProfileWavesApiService', () => {
 
     expect(setSpy).toHaveBeenCalledWith(
       { profileId: 'profile-1', waveId: 'wave-1' },
+      expect.objectContaining({ connection })
+    );
+    expect(getIdentitySpy).toHaveBeenCalledWith(
+      { identityKey: 'alice' },
       expect.objectContaining({ connection })
     );
   });
@@ -85,5 +89,42 @@ describe('ProfileWavesApiService', () => {
         timer: undefined
       })
     ).rejects.toThrow(`Profile wave must be public`);
+  });
+
+  it('clears a profile wave and reads identity back using the original identity key', async () => {
+    const connection = { id: 'tx' } as any;
+    jest
+      .spyOn(profileWavesDb, 'executeNativeQueriesInTransaction')
+      .mockImplementation(async (fn: any) => await fn(connection));
+    jest
+      .spyOn(identityFetcher, 'getProfileIdByIdentityKeyOrThrow')
+      .mockResolvedValue('profile-1');
+    const deleteSpy = jest
+      .spyOn(profileWavesDb, 'deleteByProfileId')
+      .mockResolvedValue(undefined);
+    const getIdentitySpy = jest
+      .spyOn(identityFetcher, 'getIdentityAndConsolidationsByIdentityKey')
+      .mockResolvedValue({ id: 'profile-1', profile_wave_id: null } as any);
+
+    await expect(
+      service.clearProfileWave('alice', {
+        authenticationContext: AuthenticationContext.fromProfileId('profile-1'),
+        timer: undefined
+      })
+    ).resolves.toEqual(
+      expect.objectContaining({
+        id: 'profile-1',
+        profile_wave_id: null
+      })
+    );
+
+    expect(deleteSpy).toHaveBeenCalledWith(
+      'profile-1',
+      expect.objectContaining({ connection })
+    );
+    expect(getIdentitySpy).toHaveBeenCalledWith(
+      { identityKey: 'alice' },
+      expect.objectContaining({ connection })
+    );
   });
 });
