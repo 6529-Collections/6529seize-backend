@@ -1,7 +1,11 @@
 import { MemesSeason } from '../entities/ISeason';
 import { TokenTDH } from '../entities/ITDH';
 
-import { calculateBoost } from '../tdhLoop/tdh';
+import {
+  ADDITIONAL_CARD_SET_BOOST,
+  ADDITIONAL_CARD_SET_RATIO,
+  calculateBoost
+} from '../tdhLoop/tdh';
 
 const seasonData = [
   { start_index: 1, end_index: 47, count: 47 },
@@ -34,7 +38,7 @@ function getFullCollectionSetBoost() {
   const maxSeasonId = Math.max(...seasons.map((s) => s.id));
   return roundToSixDecimals(
     seasons
-      .filter((season) => season.id < maxSeasonId)
+      .filter((season) => season.id < maxSeasonId && season.boost > 0)
       .reduce((sum, season) => sum + season.boost, 0)
   );
 }
@@ -44,7 +48,11 @@ function getAdditionalCardSetsBoost(additionalCardSets: number) {
     return 0;
   }
 
-  return (0.05 * (1 - Math.pow(0.6529, additionalCardSets))) / (1 - 0.6529);
+  return roundToSixDecimals(
+    (ADDITIONAL_CARD_SET_BOOST *
+      (1 - Math.pow(ADDITIONAL_CARD_SET_RATIO, additionalCardSets))) /
+      (1 - ADDITIONAL_CARD_SET_RATIO)
+  );
 }
 
 function getSeasonSet(id: number): TokenTDH[] {

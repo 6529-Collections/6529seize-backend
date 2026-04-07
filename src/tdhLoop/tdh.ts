@@ -41,8 +41,8 @@ const logger = Logger.get('TDH');
 
 let alchemy: Alchemy;
 
-const ADDITIONAL_CARD_SET_BOOST = 0.05;
-const ADDITIONAL_CARD_SET_RATIO = 0.6529;
+export const ADDITIONAL_CARD_SET_BOOST = 0.05;
+export const ADDITIONAL_CARD_SET_RATIO = 0.6529;
 
 function roundBoostValue(value: number): number {
   return Math.round(value * 1e6) / 1e6;
@@ -65,15 +65,17 @@ function getAdditionalCardSetsBoost(additionalCardSets: number): number {
     return 0;
   }
 
-  return (
+  return roundBoostValue(
     (ADDITIONAL_CARD_SET_BOOST *
       (1 - Math.pow(ADDITIONAL_CARD_SET_RATIO, additionalCardSets))) /
-    (1 - ADDITIONAL_CARD_SET_RATIO)
+      (1 - ADDITIONAL_CARD_SET_RATIO)
   );
 }
 
 function getAdditionalCardSetsBoostLimit(): number {
-  return ADDITIONAL_CARD_SET_BOOST / (1 - ADDITIONAL_CARD_SET_RATIO);
+  return roundBoostValue(
+    ADDITIONAL_CARD_SET_BOOST / (1 - ADDITIONAL_CARD_SET_RATIO)
+  );
 }
 
 export function getDefaultBoost(seasons: MemesSeason[] = []): DefaultBoost {
@@ -548,7 +550,11 @@ function calculateMemesBoostsCardSets(
   let cardSetBreakdown = getFullCollectionSetBoost(seasons);
 
   const additionalCardSets = Math.max(0, cardSets - 1);
-  cardSetBreakdown += getAdditionalCardSetsBoost(additionalCardSets);
+  const additionalIncrement = getAdditionalCardSetsBoost(additionalCardSets);
+  const roundedAdditionalIncrement = roundBoostValue(additionalIncrement);
+  cardSetBreakdown = roundBoostValue(
+    cardSetBreakdown + roundedAdditionalIncrement
+  );
 
   boost += cardSetBreakdown;
   breakdown.memes_card_sets.acquired = cardSetBreakdown;
@@ -559,8 +565,7 @@ function calculateMemesBoostsCardSets(
   if (additionalCardSets === 1) {
     acquiredInfo.push(`${ADDITIONAL_CARD_SET_BOOST} for 1 additional set`);
   } else if (additionalCardSets > 1) {
-    const increment = getAdditionalCardSetsBoost(additionalCardSets);
-    const incStr = roundBoostValue(increment).toString();
+    const incStr = roundedAdditionalIncrement.toString();
     acquiredInfo.push(
       `${incStr} total for ${additionalCardSets} additional sets (${ADDITIONAL_CARD_SET_BOOST} * (1 - ${ADDITIONAL_CARD_SET_RATIO}^${additionalCardSets}) / (1 - ${ADDITIONAL_CARD_SET_RATIO}))`
     );
