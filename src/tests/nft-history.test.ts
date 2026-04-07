@@ -45,9 +45,7 @@ describe('nft_history helpers', () => {
     /* ─── stub fetch returning old & new metadata ─── */
     type FakeResponse = { json: () => Promise<any> };
 
-    const fetchMock = jest.fn() as jest.MockedFunction<
-      () => Promise<FakeResponse>
-    >;
+    const fetchMock = jest.fn<() => Promise<FakeResponse>>();
 
     const oldMeta = {
       name: 'Old',

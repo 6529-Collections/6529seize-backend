@@ -66,8 +66,9 @@ docker-compose.yml
 ffmpeg-installer.js
 jest.config.js
 nodemon.json
-package-lock.json
 package.json
+pnpm-lock.yaml
+pnpm-workspace.yaml
 settings.json
 tsconfig.json
 ```
@@ -153,41 +154,33 @@ jobs:
         id: extract_branch
 
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           ref: ${{ steps.extract_branch.outputs.branch }}
 
-      - name: Install root dependencies
-        run: npm i
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
 
-      - name: Install lambda dependencies
-        if: github.event.inputs.service != 'api'
-        run: |
-          npm i
-          pushd src/${{ github.event.inputs.service }}
-          npm i
-          popd
+      - name: Setup Corepack pnpm
+        run: bash scripts/setup-corepack-pnpm.sh
 
-      - name: Install API dependencies
-        if: github.event.inputs.service == 'api'
-        run: |
-          pushd src/api-serverless
-          npm i
-          popd
+      - name: Install Socket Firewall
+        run: npm install --global sfw
+
+      - name: Install dependencies
+        run: ./bin/6529 install:frozen
 
       - name: Build service
         if: github.event.inputs.service != 'api'
-        run: |
-          pushd src/${{ github.event.inputs.service }}
-          npm run build
-          popd
+        run: ./bin/6529 run build:service -- ${{ github.event.inputs.service }}
 
       - name: Build API
         if: github.event.inputs.service == 'api'
-        run: |
-          pushd src/api-serverless
-          npm run build
-          popd
+        run: ./bin/6529 run build:api
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@13d241b293754004c80624b5567555c4a39ffbe3
@@ -200,9 +193,7 @@ jobs:
         if: github.event.inputs.service != 'api'
         run: |
           export VERSION_DESCRIPTION="$(date) - $(git rev-parse --abbrev-ref HEAD) - $(git show -s --format=%s)"
-          pushd src/${{ github.event.inputs.service }}
-          npm run sls-deploy:${{ github.event.inputs.environment }}
-          popd
+          ./bin/6529 run deploy:service -- ${{ github.event.inputs.service }} ${{ github.event.inputs.environment }}
 
       - name: Deploy API
         if: github.event.inputs.service == 'api'

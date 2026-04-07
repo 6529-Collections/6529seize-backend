@@ -154,16 +154,35 @@ If you run `ghdeploy` from an unsupported folder, it fails with a clear error in
 
 ## 1. Backend
 
+### 1.0 Package Management
+
+Use the repo-local `6529` wrapper for all supported repo commands.
+
+Fresh setup:
+
+```bash
+./bin/6529 bootstrap
+```
+
+Manual setup:
+
+```bash
+corepack enable pnpm
+corepack prepare pnpm@10.33.0 --activate
+npm install --global sfw
+./bin/6529 install
+```
+
 ### 1.1 Install
 
 ```
-npm i
+./bin/6529 install
 ```
 
 ### 1.2 Build
 
 ```
-npm run build
+./bin/6529 run build
 ```
 
 ### 1.3 Environment
@@ -176,21 +195,21 @@ The name of your .env file must include the environment you want to run like `.e
 
 ### 1.4 Run
 
-Before running anything, either manually run `npm run migrate:up` or make sure `dbMigrationsLoop` is run.
+Before running anything, either manually run `./bin/6529 run migrate:up` or make sure `dbMigrationsLoop` is run.
 
-#### 1.4.1 using npm
+#### 1.4.1 using 6529
 
 ```
-npm run backend:env
+./bin/6529 run backend:local
 ```
 
 #### 1.4.2 using PM2
 
 ```
-pm2 start npm --name=6529backend -- run backend:env
+pm2 start ./bin/6529 --name=6529backend -- backend:local
 ```
 
-\* Note: env can be one of: `local` / `dev` / `prod`
+\* Note: backend commands are available as `backend:local` / `backend:dev` / `backend:prod`
 
 #### 1.4.3 using AWS Lambda
 
@@ -202,7 +221,7 @@ This repository is configured to be runnable through AWS Lambdas. Each 'loop' fo
 
 - **Running database for development:** You can use docker and docker-compose for this. Run `docker-compose up -d` in project root and configure your `.env` exactly as DB part in `.env.sample`.
 
-- **Database and ORM:** Backend service is using [TYPEORM](https://www.npmjs.com/package/typeorm). When starting a service, if the database is successful then the ORM will take care of synchronising the schema for the database and creating the necessary tables. \* Note: You will need to create the database and user and provide them in the .env file. Only thing TypeORM doesn't take care of, are views. Those are created with migrations. So you should either run `npm run migrate:up` or make sure `dbMigrationsLoop` is run to be sure that all migrations are applied.
+- **Database and ORM:** Backend service is using [TYPEORM](https://www.npmjs.com/package/typeorm). When starting a service, if the database is successful then the ORM will take care of synchronising the schema for the database and creating the necessary tables. \* Note: You will need to create the database and user and provide them in the .env file. Only thing TypeORM doesn't take care of, are views. Those are created with migrations. So you should either run `./bin/6529 run migrate:up` or make sure `dbMigrationsLoop` is run to be sure that all migrations are applied.
 
 - **CRON:** When starting the service, there are several scheduled cron jobs running at specific intervals which will consume data from the chain, process and save the result to the database.
   e.g. discovering NFTs - there is a scheduled cron job to run every 3 minutes which detects new nfts minted on the chain or any changes to existing nfts.
@@ -210,7 +229,7 @@ This repository is configured to be runnable through AWS Lambdas. Each 'loop' fo
 - **S3 and Video Compression:** [S3Uploader](https://github.com/6529-Collections/6529seize-backend/tree/main/src/s3Uploader). The s3Uploader persists compressed versions of the nft images and videos on AWS S3. This worker is configured to only run in `prod` mode. Video compression requires ffmpeg installed on the running machine.
   Download instructions at: https://ffmpeg.org/
 
-- Creating new migrations: Run `npm run migrate:new name-of-the-migration`. Three new files are created in `migrations folder`. A javascript file and 2 SQL files. Find the "up" SQL file and write the SQL for new migration there. Then run `npm run migrate:up` to apply the new migration. You can write reverse migration if you wish in the "down" SQL file.
+- Creating new migrations: Run `./bin/6529 run migrate:new -- name-of-the-migration`. Three new files are created in `migrations folder`. A javascript file and 2 SQL files. Find the "up" SQL file and write the SQL for new migration there. Then run `./bin/6529 run migrate:up` to apply the new migration. You can write reverse migration if you wish in the "down" SQL file.
 
 ## 2. API
 
@@ -221,15 +240,13 @@ PATH: [src/api-serverless](https://github.com/6529-Collections/6529seize-backend
 ### 2.1 Install
 
 ```
-cd src/api-serverless
-npm i
+./bin/6529 install
 ```
 
 ### 2.2 Build
 
 ```
-cd src/api-serverless
-npm run build
+./bin/6529 run build:api
 ```
 
 ### 2.3 Environment
@@ -245,18 +262,18 @@ The name of your .env file must include the environment you want to run like `.e
 In project root directory:
 
 ```
-npm run api:env
+./bin/6529 run api:local
 ```
 
-\* Note: env can be one of: local / dev / prod
+\* Note: API commands are available as `api:local` / `api:dev`
 
 ### 2.5 RUN USING PM2
 
 ```
-pm2 start npm --name=6529api -- run api:env
+pm2 start ./bin/6529 --name=6529api -- api:local
 ```
 
-\* Note: env can be one of: `local` / `dev` / `prod`
+\* Note: API commands are available as `api:local` / `api:dev`
 
 ### 2.6 RUN USING AWS Lambda
 

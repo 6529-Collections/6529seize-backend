@@ -27,4 +27,14 @@ describe('deploy-ui.renderer', () => {
     );
     expect(app).toContain('setCurrentRef(refInput.value);');
   });
+
+  it('treats startup failure runs as failed status badges', () => {
+    const app = renderDeployUiApp();
+
+    expect(app).toContain('var outcomeKey = String(outcome).toLowerCase();');
+    expect(app).toContain("outcomeKey === 'startup_failure'");
+    expect(app).toContain(
+      "statusNode.className = 'run-status ' + outcomeClass;"
+    );
+  });
 });
