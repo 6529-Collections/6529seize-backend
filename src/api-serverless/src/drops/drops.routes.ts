@@ -46,8 +46,8 @@ import { DEFAULT_MAX_SIZE, DEFAULT_PAGE_SIZE } from '../page-request';
 import { ApiDropBoostsPage } from '../generated/models/ApiDropBoostsPage';
 import { curationsApiService } from '@/api/curations/curations.api.service';
 import { giveReadReplicaTimeToCatchUp } from '@/api/api-helpers';
+import { ApiDropCuration } from '@/api/generated/models/ApiDropCuration';
 import { ApiDropCurationRequest } from '@/api/generated/models/ApiDropCurationRequest';
-import { ApiWaveCuration } from '@/api/generated/models/ApiWaveCuration';
 
 const router = asyncRouter();
 
@@ -299,7 +299,7 @@ router.get(
   maybeAuthenticatedUser(),
   async (
     req: Request<{ drop_id: string }, any, any, any, any>,
-    res: Response<ApiResponse<ApiWaveCuration[]>>
+    res: Response<ApiResponse<ApiDropCuration[]>>
   ) => {
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
