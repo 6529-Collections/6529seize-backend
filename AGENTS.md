@@ -343,3 +343,7 @@ Do **not** create new migrations for table creation or schema changes unless the
 
 - **New tables**: Add TypeORM entities and export them in `src/entities/entities.ts`. The dbMigrations loop runs with `sync=true`, which creates and updates tables from entities. Do not add migration files for new tables.
 - **Schema changes**: Prefer updating the entity definition; sync will apply changes. Only add or edit migrations when the user explicitly requests a migration (e.g. for a one-off data migration or a view).
+
+# Deployment plan
+
+Any time you finish a development, list all the lambdas that need to be redeployed and their deployment order.

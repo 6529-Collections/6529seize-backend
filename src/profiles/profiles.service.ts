@@ -1,7 +1,8 @@
 import { profilesDb, ProfilesDb } from './profiles.db';
 import {
   CreateOrUpdateProfileCommand,
-  ProfileAndConsolidations
+  ProfileAndConsolidations,
+  ProfileWithWave
 } from './profile.types';
 import { Profile, ProfileClassification } from '../entities/IProfile';
 import { BadRequestException } from '../exceptions';
@@ -54,6 +55,7 @@ import { enums } from '../enums';
 import { collections } from '../collections';
 import { identitiesService } from '../api-serverless/src/identities/identities.service';
 import { xTdhRepository, XTdhRepository } from '../xtdh/xtdh.repository';
+import { profileWavesDb, ProfileWavesDb } from '@/profiles/profile-waves.db';
 
 export class ProfilesService {
   private readonly logger = Logger.get('PROFILES_SERVICE');
@@ -71,7 +73,8 @@ export class ProfilesService {
     private readonly xTdhRepository: XTdhRepository,
     private readonly dropBookmarksDb: DropBookmarksDb,
     private readonly curationsDb: CurationsDb,
-    private readonly waveQuickVoteDb: WaveQuickVoteDb
+    private readonly waveQuickVoteDb: WaveQuickVoteDb,
+    private readonly profileWavesDb: ProfileWavesDb
   ) {}
 
   public async getProfileAndConsolidationsByIdentity(
@@ -86,7 +89,7 @@ export class ProfilesService {
     if (!apiIdentity) {
       return null;
     }
-    let profile: Profile | null = null;
+    let profile: ProfileWithWave | null = null;
     if (apiIdentity.id) {
       profile = {
         external_id: apiIdentity.id,
@@ -99,6 +102,7 @@ export class ProfilesService {
         pfp_url: apiIdentity.pfp ?? undefined,
         banner_1: apiIdentity.banner1 ?? undefined,
         banner_2: apiIdentity.banner2 ?? undefined,
+        profile_wave_id: apiIdentity.profile_wave_id ?? null,
         classification: apiIdentity.classification
           ? (enums.resolve(
               ProfileClassification,
@@ -404,6 +408,13 @@ export class ProfilesService {
           sourceIdentity,
           target,
           connectionHolder
+        );
+        await this.profileWavesDb.mergeOnProfileIdChange(
+          {
+            previous_id: sourceIdentity,
+            new_id: target
+          },
+          { connection: connectionHolder }
         );
         const targetProfile = await this.profilesDb.getProfileById(
           target,
@@ -857,5 +868,6 @@ export const profilesService = new ProfilesService(
   xTdhRepository,
   dropBookmarksDb,
   curationsDb,
-  waveQuickVoteDb
+  waveQuickVoteDb,
+  profileWavesDb
 );

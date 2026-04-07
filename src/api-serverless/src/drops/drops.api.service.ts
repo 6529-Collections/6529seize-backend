@@ -79,6 +79,7 @@ import {
   getWaveMinPermissionMask,
   mapWaveToApiWaveMin
 } from '@/api/waves/wave-min.helpers';
+import { profileWavesDb } from '@/profiles/profile-waves.db';
 
 export class DropsApiService {
   constructor(
@@ -500,7 +501,7 @@ export class DropsApiService {
       },
       ctx
     );
-    const [wave, pinnedWaveIds] = await Promise.all([
+    const [wave, pinnedWaveIds, identityWaveIds] = await Promise.all([
       wavesApiDb.findWaveById(wave_id),
       wavesApiDb.whichOfWavesArePinnedByGivenProfile(
         {
@@ -508,7 +509,8 @@ export class DropsApiService {
           profileId: context_profile_id
         },
         ctx
-      )
+      ),
+      profileWavesDb.findSelectedWaveIdsByWaveIds([wave_id], ctx)
     ]);
     if (
       !wave ||
@@ -531,7 +533,8 @@ export class DropsApiService {
       groupIdsUserIsEligibleFor: group_ids_user_is_eligible_for,
       noRightToVote,
       noRightToParticipate,
-      pinned: pinnedWaveIds.has(wave_id)
+      pinned: pinnedWaveIds.has(wave_id),
+      identityWave: identityWaveIds.has(wave_id)
     });
     if (drop_id) {
       const dropEntity = await this.dropsDb.findDropByIdWithEligibilityCheck(
@@ -686,7 +689,7 @@ export class DropsApiService {
       },
       ctx
     );
-    const [waveEntity, pinnedWaveIds] = await Promise.all([
+    const [waveEntity, pinnedWaveIds, identityWaveIds] = await Promise.all([
       wavesApiDb.findWaveById(params.wave_id),
       wavesApiDb.whichOfWavesArePinnedByGivenProfile(
         {
@@ -694,7 +697,8 @@ export class DropsApiService {
           profileId: authenticatedProfileId
         },
         ctx
-      )
+      ),
+      profileWavesDb.findSelectedWaveIdsByWaveIds([params.wave_id], ctx)
     ]);
     if (
       !waveEntity ||
@@ -724,7 +728,8 @@ export class DropsApiService {
       groupIdsUserIsEligibleFor,
       noRightToVote,
       noRightToParticipate,
-      pinned: pinnedWaveIds.has(params.wave_id)
+      pinned: pinnedWaveIds.has(params.wave_id),
+      identityWave: identityWaveIds.has(params.wave_id)
     });
     const isTimeLockedWave =
       waveEntity.time_lock_ms !== null && waveEntity.time_lock_ms > 0;

@@ -21,6 +21,7 @@ import { Time } from '@/time';
 import { identitiesDb } from '@/identities/identities.db';
 import { getLevelFromScore } from '@/profiles/profile-level';
 import { ApiProfileMin } from '../generated/models/ApiProfileMin';
+import { profileWavesDb } from '@/profiles/profile-waves.db';
 import { ApiNftLinkData } from '@/api/generated/models/ApiNftLinkData';
 
 export class WsListenersNotifier {
@@ -184,12 +185,14 @@ export class WsListenersNotifier {
       mainStageSubscriptions,
       mainStageWins,
       artistOfPrevoteCards,
-      waveCreatorIds
+      waveCreatorIds,
+      profileWaveIds
     ] = await Promise.all([
       identitiesDb.getActiveMainStageDropIds([identityId], {}),
       identitiesDb.getMainStageWinnerDropIds([identityId], {}),
       identitiesDb.getArtistOfPrevoteCards([identityId], {}),
-      identitiesDb.getWaveCreatorProfileIds([identityId])
+      identitiesDb.getWaveCreatorProfileIds([identityId]),
+      profileWavesDb.findProfileWaveIdsByProfileIds([identityId], {})
     ]);
     const profile: Omit<ApiProfileMin, 'subscribed_actions'> = {
       id: identityId,
@@ -206,6 +209,7 @@ export class WsListenersNotifier {
       level: getLevelFromScore(identityEntity.level_raw),
       archived: false,
       primary_address: identityEntity.primary_address,
+      profile_wave_id: profileWaveIds[identityId] ?? null,
       active_main_stage_submission_ids:
         mainStageSubscriptions[identityId] ?? [],
       winner_main_stage_drop_ids: mainStageWins[identityId] ?? [],

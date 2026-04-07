@@ -87,6 +87,7 @@ export { PinnedWaveEntity } from './IPinnedWaveEntity';
 export { Prenode } from './IPrenode';
 export { Profile, ProfileArchived } from './IProfile';
 export { ProfileActivityLog } from './IProfileActivityLog';
+export { ProfileWaveEntity } from './IProfileWave';
 export { ProfileGroupEntity } from './IProfileGroup';
 export { ProfileGroupChangeEntity } from './IProfileGroupChangeEntity';
 export { ProfileLatestLogEntity } from './IProfileLatestLog';
