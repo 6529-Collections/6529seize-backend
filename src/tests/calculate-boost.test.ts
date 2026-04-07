@@ -26,6 +26,27 @@ const seasons: MemesSeason[] = seasonData.map((data, index) => ({
   boost: 0.05
 }));
 
+const roundToTwoDecimals = (value: number) => Math.round(value * 100) / 100;
+
+const roundToSixDecimals = (value: number) => Math.round(value * 1e6) / 1e6;
+
+function getFullCollectionSetBoost() {
+  const maxSeasonId = Math.max(...seasons.map((s) => s.id));
+  return roundToSixDecimals(
+    seasons
+      .filter((season) => season.id < maxSeasonId)
+      .reduce((sum, season) => sum + season.boost, 0)
+  );
+}
+
+function getAdditionalCardSetsBoost(additionalCardSets: number) {
+  if (additionalCardSets <= 0) {
+    return 0;
+  }
+
+  return (0.05 * (1 - Math.pow(0.6529, additionalCardSets))) / (1 - 0.6529);
+}
+
 function getSeasonSet(id: number): TokenTDH[] {
   const season = seasons.find((s) => s.id === id);
   if (!season) return [];
@@ -188,17 +209,21 @@ describe('calculateBoost', () => {
 
   describe('multiple complete sets', () => {
     const cardSetCases = [
-      { sets: 1, expected: 1.6 },
-      { sets: 2, expected: 1.65 },
-      { sets: 3, expected: 1.68 },
-      { sets: 4, expected: 1.7 },
-      { sets: 5, expected: 1.72 },
-      { sets: 10, expected: 1.74 }
+      { sets: 1 },
+      { sets: 2 },
+      { sets: 3 },
+      { sets: 4 },
+      { sets: 5 },
+      { sets: 10 }
     ];
 
     test.each(cardSetCases)(
-      '$sets set(s) on S3 = $expected',
-      ({ sets, expected }) => {
+      '$sets set(s) on S3 uses prior seasons boost',
+      ({ sets }) => {
+        const expected = roundToTwoDecimals(
+          1 + getFullCollectionSetBoost() + getAdditionalCardSetsBoost(sets - 1)
+        );
+
         const result = calculateBoost(
           seasons,
           sets,
@@ -214,13 +239,11 @@ describe('calculateBoost', () => {
       {
         sets: 1,
         gradients: 4,
-        expected: 1.68,
         desc: '1 set + 4 gradients on S3'
       },
       {
         sets: 3,
         gradients: 3,
-        expected: 1.74,
         desc: '3 sets + 3 gradients on S3'
       },
       {
@@ -228,14 +251,20 @@ describe('calculateBoost', () => {
         gradients: 3,
         genesis: 1,
         nakamoto: 1,
-        expected: 1.74,
         desc: '3 sets + genesis + nakamoto + 3 gradients on S3'
       }
     ];
 
     test.each(combinedCases)(
-      '$desc = $expected',
-      ({ sets, gradients, genesis = 1, nakamoto = 0, expected }) => {
+      '$desc applies full-set boost dynamically',
+      ({ sets, gradients, genesis = 1, nakamoto = 0 }) => {
+        const expected = roundToTwoDecimals(
+          1 +
+            getFullCollectionSetBoost() +
+            getAdditionalCardSetsBoost(sets - 1) +
+            Math.min(gradients * 0.02, 0.1)
+        );
+
         const result = calculateBoost(
           seasons,
           sets,
@@ -246,6 +275,23 @@ describe('calculateBoost', () => {
         expect(result.total).toBe(expected);
       }
     );
+
+    it('reports the full-set boost responsively in the breakdown', () => {
+      const result = calculateBoost(
+        seasons,
+        1,
+        { genesis: 0, nakamoto: 0 },
+        getSeasonSet(3),
+        []
+      );
+
+      expect(result.breakdown.memes_card_sets.available_info[0]).toBe(
+        `${getFullCollectionSetBoost()} for Full Collection Set`
+      );
+      expect(result.breakdown.memes_card_sets.acquired_info[0]).toBe(
+        `${getFullCollectionSetBoost()} for Full Collection Set`
+      );
+    });
   });
 
   describe('multiple season sets', () => {
