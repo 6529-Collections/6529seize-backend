@@ -229,7 +229,7 @@ export class CurationsApiService {
     );
     const [waveCurations, dropCurationIds, curatorEligibleGroupIds] =
       await Promise.all([
-        this.curationsDb.findWaveCurationsByWaveId(wave.id, ctx.connection),
+        this.curationsDb.findWaveCurationsByWaveId(wave!.id, ctx.connection),
         this.curationsDb.findCurationIdsForDropId(drop.id, ctx.connection),
         this.getEligibleGroupIdsForAuthenticatedCurator(ctx)
       ]);
