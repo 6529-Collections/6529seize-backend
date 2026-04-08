@@ -547,25 +547,22 @@ function calculateMemesBoostsCardSets(
   let boost = 1;
   const breakdown = getDefaultBoost(seasons);
 
-  let cardSetBreakdown = getFullCollectionSetBoost(seasons);
+  const fullSetBoost = getFullCollectionSetBoost(seasons);
 
   const additionalCardSets = Math.max(0, cardSets - 1);
   const additionalIncrement = getAdditionalCardSetsBoost(additionalCardSets);
-  const roundedAdditionalIncrement = roundBoostValue(additionalIncrement);
-  cardSetBreakdown = roundBoostValue(
-    cardSetBreakdown + roundedAdditionalIncrement
+  const roundedCombinedBoost = roundBoostValue(
+    fullSetBoost + additionalIncrement
   );
 
-  boost += cardSetBreakdown;
-  breakdown.memes_card_sets.acquired = cardSetBreakdown;
+  boost += roundedCombinedBoost;
+  breakdown.memes_card_sets.acquired = roundedCombinedBoost;
 
-  const acquiredInfo: string[] = [
-    `${getFullCollectionSetBoost(seasons)} for Full Collection Set`
-  ];
+  const acquiredInfo: string[] = [`${fullSetBoost} for Full Collection Set`];
   if (additionalCardSets === 1) {
     acquiredInfo.push(`${ADDITIONAL_CARD_SET_BOOST} for 1 additional set`);
   } else if (additionalCardSets > 1) {
-    const incStr = roundedAdditionalIncrement.toString();
+    const incStr = additionalIncrement.toString();
     acquiredInfo.push(
       `${incStr} total for ${additionalCardSets} additional sets (${ADDITIONAL_CARD_SET_BOOST} * (1 - ${ADDITIONAL_CARD_SET_RATIO}^${additionalCardSets}) / (1 - ${ADDITIONAL_CARD_SET_RATIO}))`
     );
