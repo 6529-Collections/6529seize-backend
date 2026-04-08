@@ -225,6 +225,22 @@ export class CurationsDb extends LazyDbAccessCompatibleService {
     return new Set(rows.map((it) => it.drop_id));
   }
 
+  public async findCurationIdsForDropId(
+    dropId: string,
+    connection?: ConnectionWrapper<any>
+  ): Promise<Set<string>> {
+    const rows = await this.db.execute<{ curation_id: string }>(
+      `
+      select distinct curation_id
+      from ${DROP_CURATIONS_TABLE}
+      where drop_id = :dropId
+      `,
+      { dropId },
+      connection ? { wrappedConnection: connection } : undefined
+    );
+    return new Set(rows.map((it) => it.curation_id));
+  }
+
   public async findWaveCurationsForDropId(
     dropId: string,
     connection?: ConnectionWrapper<any>

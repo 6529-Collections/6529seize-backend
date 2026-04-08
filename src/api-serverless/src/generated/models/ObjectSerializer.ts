@@ -68,6 +68,7 @@ export * from '../models/ApiDropAndDropVote';
 export * from '../models/ApiDropBoost';
 export * from '../models/ApiDropBoostsPage';
 export * from '../models/ApiDropContextProfileContext';
+export * from '../models/ApiDropCuration';
 export * from '../models/ApiDropCurationRequest';
 export * from '../models/ApiDropId';
 export * from '../models/ApiDropMedia';
@@ -379,6 +380,7 @@ import { ApiDropAndDropVote } from '../models/ApiDropAndDropVote';
 import { ApiDropBoost } from '../models/ApiDropBoost';
 import { ApiDropBoostsPage } from '../models/ApiDropBoostsPage';
 import { ApiDropContextProfileContext } from '../models/ApiDropContextProfileContext';
+import { ApiDropCuration } from '../models/ApiDropCuration';
 import { ApiDropCurationRequest } from '../models/ApiDropCurationRequest';
 import { ApiDropId } from '../models/ApiDropId';
 import { ApiDropMedia } from '../models/ApiDropMedia';
@@ -744,6 +746,7 @@ let typeMap: {[index: string]: any} = {
     "ApiDropBoost": ApiDropBoost,
     "ApiDropBoostsPage": ApiDropBoostsPage,
     "ApiDropContextProfileContext": ApiDropContextProfileContext,
+    "ApiDropCuration": ApiDropCuration,
     "ApiDropCurationRequest": ApiDropCurationRequest,
     "ApiDropId": ApiDropId,
     "ApiDropMedia": ApiDropMedia,
