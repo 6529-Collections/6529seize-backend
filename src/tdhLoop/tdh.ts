@@ -30,6 +30,7 @@ import {
   getNextgenNetwork,
   NEXTGEN_CORE_CONTRACT
 } from '../nextgen/nextgen_constants';
+import { numbers } from '@/numbers';
 import { ConnectionWrapper, sqlExecutor } from '../sql-executor';
 import { equalIgnoreCase } from '../strings';
 import { Time } from '../time';
@@ -45,7 +46,7 @@ export const ADDITIONAL_CARD_SET_BOOST = 0.05;
 export const ADDITIONAL_CARD_SET_RATIO = 0.6529;
 
 function roundBoostValue(value: number): number {
-  return Math.round(value * 1e6) / 1e6;
+  return numbers.roundDecimals(value, 6);
 }
 
 function getBoostableSeasons(seasons: MemesSeason[]): MemesSeason[] {

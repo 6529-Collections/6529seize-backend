@@ -1,6 +1,7 @@
 import { MemesSeason } from '../entities/ISeason';
 import { TokenTDH } from '../entities/ITDH';
 
+import { numbers } from '@/numbers';
 import {
   ADDITIONAL_CARD_SET_BOOST,
   ADDITIONAL_CARD_SET_RATIO,
@@ -30,9 +31,9 @@ const seasons: MemesSeason[] = seasonData.map((data, index) => ({
   boost: 0.05
 }));
 
-const roundToTwoDecimals = (value: number) => Math.round(value * 100) / 100;
+const roundToTwoDecimals = (value: number) => numbers.roundDecimals(value, 2);
 
-const roundToSixDecimals = (value: number) => Math.round(value * 1e6) / 1e6;
+const roundToSixDecimals = (value: number) => numbers.roundDecimals(value, 6);
 
 function getFullCollectionSetBoost() {
   const maxSeasonId = Math.max(...seasons.map((s) => s.id));
