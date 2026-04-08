@@ -11,6 +11,7 @@ import { ApiUpdateDropRequest } from '../generated/models/ApiUpdateDropRequest';
 import { ApiDropType } from '../generated/models/ApiDropType';
 import { ApiDropRatingRequest } from '../generated/models/ApiDropRatingRequest';
 import { ApiAddReactionToDropRequest } from '../generated/models/ApiAddReactionToDropRequest';
+import { ApiDropGroupMention } from '../generated/models/ApiDropGroupMention';
 
 export const ApiDropRatingRequestSchema: Joi.ObjectSchema<ApiDropRatingRequest> =
   Joi.object({
@@ -81,7 +82,6 @@ const baseDropFieldsValidators = {
     .items(MentionedWaveSchema)
     .default([]),
   metadata: Joi.array().optional().items(MetadataSchema).default([]),
-  mentions_all: Joi.boolean().optional(),
   signature: Joi.string().optional().allow(null).default(null),
   is_safe_signature: Joi.boolean().optional(),
   signer_address: Joi.string().optional()
@@ -90,6 +90,10 @@ const baseDropFieldsValidators = {
 export const NewDropSchema: Joi.ObjectSchema<ApiCreateDropRequest> = Joi.object(
   {
     ...baseDropFieldsValidators,
+    mentioned_groups: Joi.array()
+      .optional()
+      .items(Joi.string().valid(...Object.values(ApiDropGroupMention)))
+      .default([]),
     reply_to: Joi.object<ApiReplyToDrop>({
       drop_id: Joi.string().required(),
       drop_part_id: Joi.number().integer().min(0)

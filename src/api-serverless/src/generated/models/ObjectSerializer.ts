@@ -70,6 +70,7 @@ export * from '../models/ApiDropBoostsPage';
 export * from '../models/ApiDropContextProfileContext';
 export * from '../models/ApiDropCuration';
 export * from '../models/ApiDropCurationRequest';
+export * from '../models/ApiDropGroupMention';
 export * from '../models/ApiDropId';
 export * from '../models/ApiDropMedia';
 export * from '../models/ApiDropMentionedUser';
@@ -192,6 +193,7 @@ export * from '../models/ApiUpcomingMemeSubscriptionStatus';
 export * from '../models/ApiUpdateDropRequest';
 export * from '../models/ApiUpdateProxyActionRequest';
 export * from '../models/ApiUpdateWaveDecisionPause';
+export * from '../models/ApiUpdateWaveNotificationPreferencesRequest';
 export * from '../models/ApiUpdateWaveParticipationConfig';
 export * from '../models/ApiUpdateWaveRequest';
 export * from '../models/ApiUploadItem';
@@ -218,6 +220,7 @@ export * from '../models/ApiWaveLog';
 export * from '../models/ApiWaveMetadataType';
 export * from '../models/ApiWaveMetrics';
 export * from '../models/ApiWaveMin';
+export * from '../models/ApiWaveNotificationPreferences';
 export * from '../models/ApiWaveOutcome';
 export * from '../models/ApiWaveOutcomeCredit';
 export * from '../models/ApiWaveOutcomeDistributionItem';
@@ -271,7 +274,6 @@ export * from '../models/DistributionPhotoCompleteRequest';
 export * from '../models/DistributionPhotoCompleteRequestPhoto';
 export * from '../models/DistributionPhotoCompleteResponse';
 export * from '../models/DistributionPhotosPage';
-export * from '../models/GetWaveSubscription200Response';
 export * from '../models/MintingClaim';
 export * from '../models/MintingClaimAnimationDetails';
 export * from '../models/MintingClaimAnimationDetailsGlb';
@@ -375,13 +377,14 @@ import { ApiCreateWaveOutcome        } from '../models/ApiCreateWaveOutcome';
 import { ApiCreateWaveOutcomeDistributionItem } from '../models/ApiCreateWaveOutcomeDistributionItem';
 import { ApiDistributionAirdropsCsvUploadRequest } from '../models/ApiDistributionAirdropsCsvUploadRequest';
 import { ApiDistributionAirdropsUploadResponse } from '../models/ApiDistributionAirdropsUploadResponse';
-import { ApiDrop                              } from '../models/ApiDrop';
+import { ApiDrop                               } from '../models/ApiDrop';
 import { ApiDropAndDropVote } from '../models/ApiDropAndDropVote';
 import { ApiDropBoost } from '../models/ApiDropBoost';
 import { ApiDropBoostsPage } from '../models/ApiDropBoostsPage';
 import { ApiDropContextProfileContext } from '../models/ApiDropContextProfileContext';
 import { ApiDropCuration } from '../models/ApiDropCuration';
 import { ApiDropCurationRequest } from '../models/ApiDropCurationRequest';
+import { ApiDropGroupMention } from '../models/ApiDropGroupMention';
 import { ApiDropId } from '../models/ApiDropId';
 import { ApiDropMedia } from '../models/ApiDropMedia';
 import { ApiDropMentionedUser } from '../models/ApiDropMentionedUser';
@@ -401,7 +404,7 @@ import { ApiDropTraceItem } from '../models/ApiDropTraceItem';
 import { ApiDropType } from '../models/ApiDropType';
 import { ApiDropVote } from '../models/ApiDropVote';
 import { ApiDropWinningContext } from '../models/ApiDropWinningContext';
-import { ApiDropWithoutWave                             } from '../models/ApiDropWithoutWave';
+import { ApiDropWithoutWave                              } from '../models/ApiDropWithoutWave';
 import { ApiDropWithoutWavesPageWithoutCount } from '../models/ApiDropWithoutWavesPageWithoutCount';
 import { ApiDropsLeaderboardPage } from '../models/ApiDropsLeaderboardPage';
 import { ApiDropsPage } from '../models/ApiDropsPage';
@@ -504,6 +507,7 @@ import { ApiUpcomingMemeSubscriptionStatus   , ApiUpcomingMemeSubscriptionStatus
 import { ApiUpdateDropRequest } from '../models/ApiUpdateDropRequest';
 import { ApiUpdateProxyActionRequest } from '../models/ApiUpdateProxyActionRequest';
 import { ApiUpdateWaveDecisionPause } from '../models/ApiUpdateWaveDecisionPause';
+import { ApiUpdateWaveNotificationPreferencesRequest } from '../models/ApiUpdateWaveNotificationPreferencesRequest';
 import { ApiUpdateWaveParticipationConfig } from '../models/ApiUpdateWaveParticipationConfig';
 import { ApiUpdateWaveRequest } from '../models/ApiUpdateWaveRequest';
 import { ApiUploadItem } from '../models/ApiUploadItem';
@@ -530,6 +534,7 @@ import { ApiWaveLog } from '../models/ApiWaveLog';
 import { ApiWaveMetadataType } from '../models/ApiWaveMetadataType';
 import { ApiWaveMetrics } from '../models/ApiWaveMetrics';
 import { ApiWaveMin                       } from '../models/ApiWaveMin';
+import { ApiWaveNotificationPreferences } from '../models/ApiWaveNotificationPreferences';
 import { ApiWaveOutcome        } from '../models/ApiWaveOutcome';
 import { ApiWaveOutcomeCredit } from '../models/ApiWaveOutcomeCredit';
 import { ApiWaveOutcomeDistributionItem } from '../models/ApiWaveOutcomeDistributionItem';
@@ -583,7 +588,6 @@ import { DistributionPhotoCompleteRequest } from '../models/DistributionPhotoCom
 import { DistributionPhotoCompleteRequestPhoto } from '../models/DistributionPhotoCompleteRequestPhoto';
 import { DistributionPhotoCompleteResponse } from '../models/DistributionPhotoCompleteResponse';
 import { DistributionPhotosPage } from '../models/DistributionPhotosPage';
-import { GetWaveSubscription200Response } from '../models/GetWaveSubscription200Response';
 import { MintingClaim } from '../models/MintingClaim';
 import { MintingClaimAnimationDetails , MintingClaimAnimationDetailsFormatEnum        } from '../models/MintingClaimAnimationDetails';
 import { MintingClaimAnimationDetailsGlb , MintingClaimAnimationDetailsGlbFormatEnum    } from '../models/MintingClaimAnimationDetailsGlb';
@@ -637,6 +641,7 @@ let primitives = [
 let enumsMap: Set<string> = new Set<string>([
     "AcceptActionRequestActionEnum",
     "ApiCommunityMembersSortOption",
+    "ApiDropGroupMention",
     "ApiDropSearchStrategy",
     "ApiDropSubscriptionTargetAction",
     "ApiDropType",
@@ -856,6 +861,7 @@ let typeMap: {[index: string]: any} = {
     "ApiUpdateDropRequest": ApiUpdateDropRequest,
     "ApiUpdateProxyActionRequest": ApiUpdateProxyActionRequest,
     "ApiUpdateWaveDecisionPause": ApiUpdateWaveDecisionPause,
+    "ApiUpdateWaveNotificationPreferencesRequest": ApiUpdateWaveNotificationPreferencesRequest,
     "ApiUpdateWaveParticipationConfig": ApiUpdateWaveParticipationConfig,
     "ApiUpdateWaveRequest": ApiUpdateWaveRequest,
     "ApiUploadItem": ApiUploadItem,
@@ -879,6 +885,7 @@ let typeMap: {[index: string]: any} = {
     "ApiWaveLog": ApiWaveLog,
     "ApiWaveMetrics": ApiWaveMetrics,
     "ApiWaveMin": ApiWaveMin,
+    "ApiWaveNotificationPreferences": ApiWaveNotificationPreferences,
     "ApiWaveOutcome": ApiWaveOutcome,
     "ApiWaveOutcomeDistributionItem": ApiWaveOutcomeDistributionItem,
     "ApiWaveOutcomeDistributionItemsPage": ApiWaveOutcomeDistributionItemsPage,
@@ -919,7 +926,6 @@ let typeMap: {[index: string]: any} = {
     "DistributionPhotoCompleteRequestPhoto": DistributionPhotoCompleteRequestPhoto,
     "DistributionPhotoCompleteResponse": DistributionPhotoCompleteResponse,
     "DistributionPhotosPage": DistributionPhotosPage,
-    "GetWaveSubscription200Response": GetWaveSubscription200Response,
     "MintingClaim": MintingClaim,
     "MintingClaimAnimationDetails": MintingClaimAnimationDetails,
     "MintingClaimAnimationDetailsGlb": MintingClaimAnimationDetailsGlb,

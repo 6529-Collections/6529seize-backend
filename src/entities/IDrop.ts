@@ -7,6 +7,7 @@ import {
 } from 'typeorm';
 import {
   DROP_BOOSTS_TABLE,
+  DROP_MENTIONED_GROUPS_TABLE,
   DROP_MEDIA_TABLE,
   DROP_MENTIONED_WAVES_TABLE,
   DROP_METADATA_TABLE,
@@ -15,6 +16,7 @@ import {
   DROPS_PARTS_TABLE,
   DROPS_TABLE
 } from '@/constants';
+import { DropGroupMention } from '@/entities/IWaveGroupNotificationSubscription';
 
 export enum DropType {
   CHAT = 'CHAT',
@@ -111,6 +113,16 @@ export class DropMentionedWaveEntity {
   @Column({ type: 'varchar', length: 100 })
   @Index()
   readonly wave_id!: string;
+}
+
+@Entity(DROP_MENTIONED_GROUPS_TABLE)
+export class DropGroupMentionEntity {
+  @PrimaryColumn({ type: 'varchar', length: 100 })
+  @Index()
+  readonly drop_id!: string;
+
+  @PrimaryColumn({ type: 'varchar', length: 50 })
+  readonly mentioned_group!: DropGroupMention;
 }
 
 @Entity(DROP_REFERENCED_NFTS_TABLE)

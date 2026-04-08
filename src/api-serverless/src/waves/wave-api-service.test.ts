@@ -1,10 +1,15 @@
 import { AuthenticationContext } from '@/auth-context';
+import {
+  ActivityEventAction,
+  ActivityEventTargetType
+} from '@/entities/IActivityEvent';
 import { aWave } from '@/tests/fixtures/wave.fixture';
 import { ApiUpdateWaveRequest } from '../generated/models/ApiUpdateWaveRequest';
 import { ApiWaveCreditType } from '../generated/models/ApiWaveCreditType';
 import { ApiWaveParticipationIdentitySubmissionAllowDuplicates } from '../generated/models/ApiWaveParticipationIdentitySubmissionAllowDuplicates';
 import { ApiWaveParticipationIdentitySubmissionWhoCanBeSubmitted } from '../generated/models/ApiWaveParticipationIdentitySubmissionWhoCanBeSubmitted';
 import { ApiWaveParticipationSubmissionStrategyType } from '../generated/models/ApiWaveParticipationSubmissionStrategyType';
+import { ApiWaveSubscriptionTargetAction } from '../generated/models/ApiWaveSubscriptionTargetAction';
 import { ApiWaveType } from '../generated/models/ApiWaveType';
 import { WaveApiService } from './wave.api.service';
 import { mapWaveFieldsToApiSubmissionStrategy } from './wave-submission-strategy';
@@ -61,6 +66,7 @@ describe('WaveApiService updateWave immutability', () => {
       {} as any,
       {} as any,
       metricsRecorder as any,
+      {} as any,
       {} as any,
       {} as any
     );
@@ -273,5 +279,155 @@ describe('WaveApiService updateWave immutability', () => {
 
     expect(wavesApiDb.deleteWave).toHaveBeenCalled();
     expect(waveMappers.createWaveToNewWaveEntity).toHaveBeenCalled();
+  });
+});
+
+describe('WaveApiService wave subscription group defaults', () => {
+  function createService({
+    existingActions = [],
+    returnedActions = [ActivityEventAction.DROP_CREATED]
+  }: {
+    existingActions?: ActivityEventAction[];
+    returnedActions?: ActivityEventAction[];
+  }) {
+    const connection = {} as any;
+    const identitySubscriptionsDb = {
+      executeNativeQueriesInTransaction: jest.fn(async (fn) => fn(connection)),
+      findIdentitySubscriptionActionsOfTarget: jest
+        .fn()
+        .mockResolvedValueOnce(existingActions)
+        .mockResolvedValue(returnedActions),
+      addIdentitySubscription: jest.fn().mockResolvedValue(undefined),
+      deleteIdentitySubscription: jest.fn().mockResolvedValue(undefined)
+    };
+    const waveGroupNotificationSubscriptionsDb = {
+      addDefaultGroupsForWaveSubscription: jest
+        .fn()
+        .mockResolvedValue(undefined),
+      deleteForWave: jest.fn().mockResolvedValue(undefined)
+    };
+    const service = new WaveApiService(
+      {} as any,
+      {
+        getGroupsUserIsEligibleFor: jest.fn().mockResolvedValue([])
+      } as any,
+      {} as any,
+      {} as any,
+      identitySubscriptionsDb as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {
+        recordActiveIdentity: jest.fn().mockResolvedValue(undefined)
+      } as any,
+      {} as any,
+      {} as any,
+      waveGroupNotificationSubscriptionsDb as any
+    );
+    jest
+      .spyOn(service as any, 'findWaveByIdOrThrow')
+      .mockResolvedValue({ id: 'wave-1' });
+
+    return {
+      service,
+      connection,
+      identitySubscriptionsDb,
+      waveGroupNotificationSubscriptionsDb
+    };
+  }
+
+  it('adds default group subscriptions when a user follows a wave', async () => {
+    const {
+      service,
+      connection,
+      identitySubscriptionsDb,
+      waveGroupNotificationSubscriptionsDb
+    } = createService({
+      existingActions: [],
+      returnedActions: [ActivityEventAction.DROP_CREATED]
+    });
+
+    await service.addWaveSubscriptionActions({
+      subscriber: 'profile-1',
+      waveId: 'wave-1',
+      actions: [ApiWaveSubscriptionTargetAction.DropCreated]
+    });
+
+    expect(
+      identitySubscriptionsDb.addIdentitySubscription
+    ).toHaveBeenCalledWith(
+      {
+        subscriber_id: 'profile-1',
+        target_id: 'wave-1',
+        target_type: ActivityEventTargetType.WAVE,
+        target_action: ActivityEventAction.DROP_CREATED,
+        wave_id: 'wave-1',
+        subscribed_to_all_drops: false
+      },
+      connection
+    );
+    expect(
+      waveGroupNotificationSubscriptionsDb.addDefaultGroupsForWaveSubscription
+    ).toHaveBeenCalledWith('profile-1', 'wave-1', connection);
+  });
+
+  it('does not re-add default group subscriptions when follow action already exists', async () => {
+    const {
+      service,
+      identitySubscriptionsDb,
+      waveGroupNotificationSubscriptionsDb
+    } = createService({
+      existingActions: [ActivityEventAction.DROP_CREATED],
+      returnedActions: [ActivityEventAction.DROP_CREATED]
+    });
+
+    await service.addWaveSubscriptionActions({
+      subscriber: 'profile-1',
+      waveId: 'wave-1',
+      actions: [ApiWaveSubscriptionTargetAction.DropCreated]
+    });
+
+    expect(
+      identitySubscriptionsDb.addIdentitySubscription
+    ).not.toHaveBeenCalled();
+    expect(
+      waveGroupNotificationSubscriptionsDb.addDefaultGroupsForWaveSubscription
+    ).not.toHaveBeenCalled();
+  });
+
+  it('removes group subscriptions when a user unfollows a wave', async () => {
+    const {
+      service,
+      connection,
+      identitySubscriptionsDb,
+      waveGroupNotificationSubscriptionsDb
+    } = createService({
+      existingActions: [],
+      returnedActions: []
+    });
+
+    await service.removeWaveSubscriptionActions({
+      subscriber: 'profile-1',
+      waveId: 'wave-1',
+      actions: [ApiWaveSubscriptionTargetAction.DropCreated]
+    });
+
+    expect(
+      identitySubscriptionsDb.deleteIdentitySubscription
+    ).toHaveBeenCalledWith(
+      {
+        subscriber_id: 'profile-1',
+        target_id: 'wave-1',
+        target_type: ActivityEventTargetType.WAVE,
+        target_action: ActivityEventAction.DROP_CREATED
+      },
+      connection
+    );
+    expect(
+      waveGroupNotificationSubscriptionsDb.deleteForWave
+    ).toHaveBeenCalledWith('profile-1', 'wave-1', connection);
   });
 });

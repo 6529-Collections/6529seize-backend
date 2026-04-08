@@ -22,10 +22,13 @@ import {
 } from '../community-members/user-groups.service';
 import { DropsApiService, dropsService } from '../drops/drops.api.service';
 import { ApiDrop } from '../generated/models/ApiDrop';
+import { ApiDropGroupMention } from '../generated/models/ApiDropGroupMention';
 import { ApiNotification } from '../generated/models/ApiNotification';
 import { ApiNotificationCause } from '../generated/models/ApiNotificationCause';
 import { ApiNotificationsResponse } from '../generated/models/ApiNotificationsResponse';
 import { ApiProfileMin } from '../generated/models/ApiProfileMin';
+import { ApiUpdateWaveNotificationPreferencesRequest } from '../generated/models/ApiUpdateWaveNotificationPreferencesRequest';
+import { ApiWaveNotificationPreferences } from '../generated/models/ApiWaveNotificationPreferences';
 import {
   identityFetcher,
   IdentityFetcher
@@ -35,6 +38,11 @@ import {
   IdentitySubscriptionsDb
 } from '../identity-subscriptions/identity-subscriptions.db';
 import { wavesApiDb, WavesApiDb } from '../waves/waves.api.db';
+import { DropGroupMention } from '@/entities/IWaveGroupNotificationSubscription';
+import {
+  waveGroupNotificationSubscriptionsDb,
+  WaveGroupNotificationSubscriptionsDb
+} from '@/notifications/wave-group-notification-subscriptions.db';
 
 export class NotificationsApiService {
   constructor(
@@ -44,7 +52,8 @@ export class NotificationsApiService {
     private readonly dropsService: DropsApiService,
     private readonly identityNotificationsDb: IdentityNotificationsDb,
     private readonly identitySubscriptionsDb: IdentitySubscriptionsDb,
-    private readonly wavesApiDb: WavesApiDb
+    private readonly wavesApiDb: WavesApiDb,
+    private readonly waveGroupNotificationSubscriptionsDb: WaveGroupNotificationSubscriptionsDb = waveGroupNotificationSubscriptionsDb
   ) {}
 
   public async markNotificationAsRead(param: {
@@ -416,33 +425,139 @@ export class NotificationsApiService {
     }
   }
 
-  public async countWaveSubscribers(waveId: string) {
-    return this.identitySubscriptionsDb.countWaveSubscribers(waveId);
+  public async getWaveSubscription(
+    identityId: string,
+    waveId: string
+  ): Promise<ApiWaveNotificationPreferences> {
+    const [subscriptionState, enabledGroups] = await Promise.all([
+      this.identitySubscriptionsDb.getWaveSubscriptionState(identityId, waveId),
+      this.waveGroupNotificationSubscriptionsDb.getEnabledGroups(
+        identityId,
+        waveId
+      )
+    ]);
+    return {
+      subscribed: subscriptionState.subscribed_to_all_drops,
+      enabled_group_notifications: enabledGroups.map((group) =>
+        enums.resolveOrThrow(ApiDropGroupMention, group)
+      )
+    };
   }
 
-  public async getWaveSubscription(identityId: string, waveId: string) {
-    return this.identitySubscriptionsDb.getWaveSubscription(identityId, waveId);
-  }
+  public async updateWaveSubscription(
+    identityId: string,
+    waveId: string,
+    request: ApiUpdateWaveNotificationPreferencesRequest
+  ): Promise<ApiWaveNotificationPreferences> {
+    const normalizedRequest =
+      request.subscribed === undefined &&
+      request.enabled_group_notifications === undefined
+        ? { ...request, subscribed: true }
+        : request;
+    const mentionedGroups = (
+      normalizedRequest.enabled_group_notifications ?? []
+    ).map((group) => enums.resolveOrThrow(DropGroupMention, group));
 
-  public async subscribeToAllWaveDrops(identityId: string, waveId: string) {
-    const waveMembersCount =
-      await notificationsApiService.countWaveSubscribers(waveId);
+    return this.identitySubscriptionsDb.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const [subscriptionState, existingEnabledGroups] = await Promise.all([
+          this.identitySubscriptionsDb.getWaveSubscriptionState(
+            identityId,
+            waveId,
+            connection
+          ),
+          this.waveGroupNotificationSubscriptionsDb.getEnabledGroups(
+            identityId,
+            waveId,
+            connection
+          )
+        ]);
 
-    const subscribersLimit =
-      seizeSettings().all_drops_notifications_subscribers_limit;
-    if (waveMembersCount >= subscribersLimit) {
-      throw new BadRequestException(
-        `Wave has too many subscribers (${waveMembersCount}). Max is ${subscribersLimit}.`
-      );
-    }
-    await this.identitySubscriptionsDb.subscribeToAllDrops(identityId, waveId);
-  }
+        if (
+          normalizedRequest.subscribed === true &&
+          subscriptionState.is_following &&
+          !subscriptionState.subscribed_to_all_drops
+        ) {
+          const waveMembersCount =
+            await this.identitySubscriptionsDb.countWaveSubscribersForUpdate(
+              waveId,
+              connection
+            );
+          const subscribersLimit =
+            seizeSettings().all_drops_notifications_subscribers_limit;
+          if (waveMembersCount >= subscribersLimit) {
+            throw new BadRequestException(
+              `Wave has too many subscribers (${waveMembersCount}). Max is ${subscribersLimit}.`
+            );
+          }
+          await this.identitySubscriptionsDb.subscribeToAllDrops(
+            identityId,
+            waveId,
+            connection
+          );
+        }
 
-  public async unsubscribeFromAllWaveDrops(identityId: string, waveId: string) {
-    await this.identitySubscriptionsDb.unsubscribeFromAllDrops(
-      identityId,
-      waveId
+        if (normalizedRequest.subscribed === false) {
+          await this.identitySubscriptionsDb.unsubscribeFromAllDrops(
+            identityId,
+            waveId,
+            connection
+          );
+          await this.waveGroupNotificationSubscriptionsDb.deleteForWave(
+            identityId,
+            waveId,
+            connection
+          );
+          return {
+            subscribed: false,
+            enabled_group_notifications: []
+          };
+        }
+
+        if (
+          normalizedRequest.enabled_group_notifications !== undefined &&
+          subscriptionState.is_following
+        ) {
+          await this.waveGroupNotificationSubscriptionsDb.replaceEnabledGroups(
+            {
+              identityId,
+              waveId,
+              mentionedGroups
+            },
+            connection
+          );
+        }
+
+        const nextSubscribed =
+          normalizedRequest.subscribed === true
+            ? subscriptionState.is_following
+              ? true
+              : subscriptionState.subscribed_to_all_drops
+            : normalizedRequest.subscribed === false
+              ? false
+              : subscriptionState.subscribed_to_all_drops;
+
+        return {
+          subscribed: nextSubscribed,
+          enabled_group_notifications:
+            (normalizedRequest.enabled_group_notifications !== undefined &&
+            subscriptionState.is_following
+              ? mentionedGroups
+              : existingEnabledGroups
+            ).map((group) => enums.resolveOrThrow(ApiDropGroupMention, group))
+        };
+      }
     );
+  }
+
+  public async clearWaveSubscription(
+    identityId: string,
+    waveId: string
+  ): Promise<ApiWaveNotificationPreferences> {
+    return this.updateWaveSubscription(identityId, waveId, {
+      subscribed: false,
+      enabled_group_notifications: []
+    });
   }
 }
 
@@ -453,5 +568,6 @@ export const notificationsApiService = new NotificationsApiService(
   dropsService,
   identityNotificationsDb,
   identitySubscriptionsDb,
-  wavesApiDb
+  wavesApiDb,
+  waveGroupNotificationSubscriptionsDb
 );

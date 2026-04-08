@@ -2,7 +2,10 @@ import { asyncRouter } from '../async.router';
 import { Request, Response } from 'express';
 import { getAuthenticationContext, needsAuthenticatedUser } from '../auth/auth';
 import { ApiResponse } from '../api-response';
+import { ApiDropGroupMention } from '../generated/models/ApiDropGroupMention';
 import { ApiNotificationsResponse } from '../generated/models/ApiNotificationsResponse';
+import { ApiUpdateWaveNotificationPreferencesRequest } from '../generated/models/ApiUpdateWaveNotificationPreferencesRequest';
+import { ApiWaveNotificationPreferences } from '../generated/models/ApiWaveNotificationPreferences';
 import { BadRequestException, ForbiddenException } from '../../../exceptions';
 import { getValidatedByJoiOrThrow } from '../validation';
 import * as Joi from 'joi';
@@ -13,6 +16,14 @@ import { Timer } from '../../../time';
 import { numbers } from '../../../numbers';
 
 const router = asyncRouter();
+
+const WaveNotificationPreferencesSchema =
+  Joi.object<ApiUpdateWaveNotificationPreferencesRequest>({
+    subscribed: Joi.boolean().optional(),
+    enabled_group_notifications: Joi.array()
+      .items(Joi.string().valid(...Object.values(ApiDropGroupMention)))
+      .optional()
+  });
 
 const causesValidator = (value: unknown, helpers: Joi.CustomHelpers) => {
   if (typeof value !== 'string') return null;
@@ -207,7 +218,7 @@ router.get(
   needsAuthenticatedUser(),
   async (
     req: Request<{ wave_id: string }, any, any, any, any>,
-    res: Response<ApiResponse<{ subscribed: boolean }>>
+    res: Response<ApiResponse<ApiWaveNotificationPreferences>>
   ) => {
     const authenticationContext = await getAuthenticationContext(req);
     if (!authenticationContext.getActingAsId()) {
@@ -223,9 +234,7 @@ router.get(
       authenticationContext.getActingAsId()!,
       waveId
     );
-    res.send({
-      subscribed: waveSubscription
-    });
+    res.send(waveSubscription);
   }
 );
 
@@ -233,8 +242,14 @@ router.post(
   '/wave-subscription/:wave_id',
   needsAuthenticatedUser(),
   async (
-    req: Request<{ wave_id: string }, any, any, any, any>,
-    res: Response<ApiResponse<{ subscribed: boolean }>>
+    req: Request<
+      { wave_id: string },
+      any,
+      ApiUpdateWaveNotificationPreferencesRequest,
+      any,
+      any
+    >,
+    res: Response<ApiResponse<ApiWaveNotificationPreferences>>
   ) => {
     const authenticationContext = await getAuthenticationContext(req);
     if (!authenticationContext.getActingAsId()) {
@@ -246,14 +261,17 @@ router.post(
     if (!waveId) {
       throw new BadRequestException(`Wave ID is required`);
     }
-    await notificationsApiService.subscribeToAllWaveDrops(
+    const request = getValidatedByJoiOrThrow(
+      req.body ?? {},
+      WaveNotificationPreferencesSchema
+    );
+    const response = await notificationsApiService.updateWaveSubscription(
       authenticationContext.getActingAsId()!,
-      waveId
+      waveId,
+      request
     );
     await giveReadReplicaTimeToCatchUp();
-    res.send({
-      subscribed: true
-    });
+    res.send(response);
   }
 );
 
@@ -262,7 +280,7 @@ router.delete(
   needsAuthenticatedUser(),
   async (
     req: Request<{ wave_id: string }, any, any, any, any>,
-    res: Response<ApiResponse<{ subscribed: boolean }>>
+    res: Response<ApiResponse<ApiWaveNotificationPreferences>>
   ) => {
     const authenticationContext = await getAuthenticationContext(req);
     if (!authenticationContext.getActingAsId()) {
@@ -274,14 +292,12 @@ router.delete(
     if (!waveId) {
       throw new BadRequestException(`Wave ID is required`);
     }
-    await notificationsApiService.unsubscribeFromAllWaveDrops(
+    const response = await notificationsApiService.clearWaveSubscription(
       authenticationContext.getActingAsId()!,
       waveId
     );
     await giveReadReplicaTimeToCatchUp();
-    res.send({
-      subscribed: false
-    });
+    res.send(response);
   }
 );
 

@@ -2993,10 +2993,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  subscribed:
-                    type: boolean
+                $ref: "#/components/schemas/ApiWaveNotificationPreferences"
     post:
       tags:
         - Notifications
@@ -3008,16 +3005,19 @@ paths:
           required: true
           schema:
             type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApiUpdateWaveNotificationPreferencesRequest"
       responses:
         "200":
           description: successful operation
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  subscribed:
-                    type: boolean
+                $ref: "#/components/schemas/ApiWaveNotificationPreferences"
     delete:
       tags:
         - Notifications
@@ -3035,10 +3035,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  subscribed:
-                    type: boolean
+                $ref: "#/components/schemas/ApiWaveNotificationPreferences"
   /blocks:
     get:
       tags:
@@ -7783,8 +7780,10 @@ components:
           $ref: "#/components/schemas/ApiReplyToDrop"
         drop_type:
           $ref: "#/components/schemas/ApiDropType"
-        mentions_all:
-          type: boolean
+        mentioned_groups:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiDropGroupMention"
     ApiCreateGroup:
       type: object
       required:
@@ -8305,6 +8304,7 @@ components:
         - updated_at
         - referenced_nfts
         - mentioned_users
+        - mentioned_groups
         - mentioned_waves
         - metadata
         - parts
@@ -8376,6 +8376,10 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ApiDropMentionedUser"
+        mentioned_groups:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiDropGroupMention"
         mentioned_waves:
           type: array
           items:
@@ -8507,6 +8511,10 @@ components:
       properties:
         curation_id:
           type: string
+    ApiDropGroupMention:
+      type: string
+      enum:
+        - ALL
     ApiDropId:
       type: object
       required:
@@ -8791,6 +8799,7 @@ components:
         - updated_at
         - referenced_nfts
         - mentioned_users
+        - mentioned_groups
         - mentioned_waves
         - metadata
         - parts
@@ -8860,6 +8869,10 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ApiDropMentionedUser"
+        mentioned_groups:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiDropGroupMention"
         mentioned_waves:
           type: array
           items:
@@ -11126,9 +11139,6 @@ components:
       type: object
       allOf:
         - $ref: "#/components/schemas/ApiCreateWaveDropRequest"
-      properties:
-        mentions_all:
-          type: boolean
     ApiUpdateProxyActionRequest:
       type: object
       properties:
@@ -11168,6 +11178,15 @@ components:
             Decisions before this time will not be made. Should not overlap with
             other pauses. Needs to be after start_time, after now and after
             wave.next_decision_time
+    ApiUpdateWaveNotificationPreferencesRequest:
+      type: object
+      properties:
+        subscribed:
+          type: boolean
+        enabled_group_notifications:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiDropGroupMention"
     ApiUpdateWaveParticipationConfig:
       type: object
       required:
@@ -11799,6 +11818,18 @@ components:
           type: boolean
         identity_wave:
           type: boolean
+    ApiWaveNotificationPreferences:
+      type: object
+      required:
+        - subscribed
+        - enabled_group_notifications
+      properties:
+        subscribed:
+          type: boolean
+        enabled_group_notifications:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiDropGroupMention"
     ApiWaveOutcome:
       type: object
       required:

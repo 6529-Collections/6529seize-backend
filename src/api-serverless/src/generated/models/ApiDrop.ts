@@ -11,6 +11,7 @@
  */
 
 import { ApiDropContextProfileContext } from '../models/ApiDropContextProfileContext';
+import { ApiDropGroupMention } from '../models/ApiDropGroupMention';
 import { ApiDropMentionedUser } from '../models/ApiDropMentionedUser';
 import { ApiDropMetadataResponse } from '../models/ApiDropMetadataResponse';
 import { ApiDropNftLink } from '../models/ApiDropNftLink';
@@ -55,6 +56,7 @@ export class ApiDrop {
     'parts_count': number;
     'referenced_nfts': Array<ApiDropReferencedNFT>;
     'mentioned_users': Array<ApiDropMentionedUser>;
+    'mentioned_groups': Array<ApiDropGroupMention>;
     'mentioned_waves': Array<ApiMentionedWave>;
     'metadata': Array<ApiDropMetadataResponse>;
     'rating': number;
@@ -161,6 +163,12 @@ export class ApiDrop {
             "name": "mentioned_users",
             "baseName": "mentioned_users",
             "type": "Array<ApiDropMentionedUser>",
+            "format": ""
+        },
+        {
+            "name": "mentioned_groups",
+            "baseName": "mentioned_groups",
+            "type": "Array<ApiDropGroupMention>",
             "format": ""
         },
         {

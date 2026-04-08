@@ -10,6 +10,7 @@ jest.mock('@/alchemy', () => ({
 
 import { identitiesDb } from '@/identities/identities.db';
 import { DropType } from '@/entities/IDrop';
+import { DropGroupMention } from '@/entities/IWaveGroupNotificationSubscription';
 import { WaveIdentitySubmissionDuplicates } from '@/entities/IWave';
 import { profilesService } from '@/profiles/profiles.service';
 import { CreateOrUpdateDropUseCase } from './create-or-update-drop.use-case';
@@ -45,6 +46,30 @@ describe('CreateOrUpdateDropUseCase', () => {
     );
   }
 
+  function createUseCaseWithMocks(
+    overrides: {
+      dropsDb?: any;
+      wavesApiDb?: any;
+      deleteDropUseCase?: any;
+      artCurationTokenWatchService?: any;
+    } = {}
+  ) {
+    return new CreateOrUpdateDropUseCase(
+      overrides.dropsDb ?? ({} as any),
+      {} as any,
+      {} as any,
+      overrides.wavesApiDb ?? ({} as any),
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      overrides.deleteDropUseCase ?? ({} as any),
+      {} as any,
+      {} as any,
+      overrides.artCurationTokenWatchService ?? ({} as any)
+    );
+  }
+
   function createIdentitySubmissionModel(identity: string) {
     return {
       drop_id: null,
@@ -70,8 +95,15 @@ describe('CreateOrUpdateDropUseCase', () => {
       author_identity: 'author-profile',
       author_id: 'author-profile',
       drop_type: DropType.PARTICIPATORY,
-      mentions_all: false,
+      mentioned_groups: [],
       signature: null
+    };
+  }
+
+  function createGroupMentionModel() {
+    return {
+      ...createIdentitySubmissionModel('alice.eth'),
+      mentioned_groups: [DropGroupMention.ALL]
     };
   }
 
@@ -181,5 +213,76 @@ describe('CreateOrUpdateDropUseCase', () => {
       connection: {}
     });
     expect(mockResolveName).not.toHaveBeenCalled();
+  });
+
+  it('allows wave creators to use group mentions', () => {
+    const useCase = createUseCase({
+      existingNominations: []
+    });
+
+    expect(() =>
+      (useCase as any).verifyGroupMentions({
+        model: createGroupMentionModel(),
+        wave: {
+          created_by: 'author-profile',
+          admin_group_id: 'admins'
+        },
+        groupIdsUserIsEligibleFor: []
+      })
+    ).not.toThrow();
+  });
+
+  it('allows wave admins to use group mentions', () => {
+    const useCase = createUseCase({
+      existingNominations: []
+    });
+
+    expect(() =>
+      (useCase as any).verifyGroupMentions({
+        model: createGroupMentionModel(),
+        wave: {
+          created_by: 'another-profile',
+          admin_group_id: 'admins'
+        },
+        groupIdsUserIsEligibleFor: ['admins']
+      })
+    ).not.toThrow();
+  });
+
+  it('rejects group mentions from non-admins', () => {
+    const useCase = createUseCase({
+      existingNominations: []
+    });
+
+    expect(() =>
+      (useCase as any).verifyGroupMentions({
+        model: createGroupMentionModel(),
+        wave: {
+          created_by: 'another-profile',
+          admin_group_id: 'admins'
+        },
+        groupIdsUserIsEligibleFor: ['members']
+      })
+    ).toThrow(`Only wave creators or admins can mention groups`);
+  });
+
+  it('rejects group mentions on drop updates', () => {
+    const useCase = createUseCase({
+      existingNominations: []
+    });
+
+    expect(() =>
+      (useCase as any).verifyGroupMentions({
+        model: {
+          ...createGroupMentionModel(),
+          drop_id: 'drop-1'
+        },
+        wave: {
+          created_by: 'author-profile',
+          admin_group_id: 'admins'
+        },
+        groupIdsUserIsEligibleFor: ['admins']
+      })
+    ).toThrow(`Group mentions can only be used when creating a drop`);
   });
 });

@@ -29,6 +29,7 @@ import {
   WaveLeaderboardCalculationService
 } from './wave-leaderboard-calculation.service';
 import * as priorityAlertsContext from '../priority-alerts.context';
+import { sendIdentityPushNotifications } from '@/api/push-notifications/push-notifications.service';
 
 interface WaveOutcome {
   type: WaveOutcomeType;
@@ -151,6 +152,7 @@ export class WaveDecisionsService {
     while (decisionTime !== null && decisionTime < currentMillis) {
       if (latestDecisionTime < decisionTime) {
         let claimBuildDropId: string | null = null;
+        let pendingPushNotificationIds: number[] = [];
         await this.waveDecisionsDb.executeNativeQueriesInTransaction(
           async (connection) => {
             this.logger.info(
@@ -161,10 +163,13 @@ export class WaveDecisionsService {
                 Time.millis(decisionTime!).isInInterval(p.start, p.end)
               );
               if (decisionNotOnPause) {
-                claimBuildDropId = await this.createDecision(
+                const decisionResult = await this.createDecision(
                   { waveId, decisionTime, outcomes, time_lock_ms },
                   { timer, connection }
                 );
+                claimBuildDropId = decisionResult.claimBuildDropId;
+                pendingPushNotificationIds =
+                  decisionResult.pendingPushNotificationIds;
                 decisionsExecuted++;
               } else {
                 this.logger.info(
@@ -194,6 +199,14 @@ export class WaveDecisionsService {
         );
         if (claimBuildDropId) {
           await this.enqueueClaimBuild(claimBuildDropId, waveId);
+        }
+        try {
+          await sendIdentityPushNotifications(pendingPushNotificationIds);
+        } catch (error) {
+          this.logger.error(
+            `Failed to send push notifications for wave decision ${waveId} with pending ids ${pendingPushNotificationIds.join(',')}`,
+            error
+          );
         }
       } else {
         decisionPointer = this.calculateNextDecisionPointer(
@@ -245,7 +258,10 @@ export class WaveDecisionsService {
       time_lock_ms: number | null;
     },
     ctx: RequestContext
-  ): Promise<string | null> {
+  ): Promise<{
+    claimBuildDropId: string | null;
+    pendingPushNotificationIds: number[];
+  }> {
     ctx?.timer?.start(`${this.constructor.name}->createDecision`);
     await this.waveDecisionsDb.insertDecision(
       {
@@ -334,9 +350,13 @@ export class WaveDecisionsService {
     await this.waveDecisionsDb.deleteDropsRanks(winnerDropIds, ctx);
     await this.dropsDb.resyncParticipatoryDropCountsForWaves([waveId], ctx);
     await this.dropVotingDb.deleteStaleLeaderboardEntries(ctx);
-    await this.createAnnouncementDrop(waveId, winnerDropIds, ctx);
+    const pendingPushNotificationIds = await this.createAnnouncementDrop(
+      waveId,
+      winnerDropIds,
+      ctx
+    );
     ctx?.timer?.stop(`${this.constructor.name}->createDecision`);
-    return claimBuildDropId;
+    return { claimBuildDropId, pendingPushNotificationIds };
   }
 
   private async enqueueClaimBuild(
@@ -467,11 +487,12 @@ export class WaveDecisionsService {
     waveId: string,
     winnerDropIds: string[],
     ctx: RequestContext
-  ) {
+  ): Promise<number[]> {
     const mainStageWaveId = env.getStringOrNull('MAIN_STAGE_WAVE_ID');
     const wavesToDropWinnerAnnouncementsTo = env.getStringArray(
       'DEPLOYER_ANNOUNCEMENTS_WAVE_IDS'
     );
+    const pendingPushNotificationIds: number[] = [];
     if (wavesToDropWinnerAnnouncementsTo.length && waveId === mainStageWaveId) {
       for (const dropId of winnerDropIds) {
         const winnerHandle = await this.dropsDb.getDropAuthorHandle(
@@ -485,7 +506,7 @@ export class WaveDecisionsService {
           .replace('{waveId}', mainStageWaveId)
           .replace('{dropId}', dropId);
         const message = `🏆 New Main Stage Winner!\n${dropUrl}${winnerHandle ? `\nGG @[${winnerHandle}] :sgt_pinched_fingers:` : ``}`;
-        await this.deployerDropper.drop(
+        const newIds = await this.deployerDropper.drop(
           {
             message,
             waves: wavesToDropWinnerAnnouncementsTo,
@@ -493,8 +514,12 @@ export class WaveDecisionsService {
           },
           ctx
         );
+        for (const id of newIds) {
+          pendingPushNotificationIds.push(id);
+        }
       }
     }
+    return pendingPushNotificationIds;
   }
 }
 

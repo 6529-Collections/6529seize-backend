@@ -7,6 +7,7 @@ import { sqlExecutor } from '@/sql-executor';
 import { CreateOrUpdateDropModel } from '@/drops/create-or-update-drop.model';
 import { MEMES_DEPLOYER } from '@/constants';
 import { DropType } from '@/entities/IDrop';
+import { sendIdentityPushNotifications } from '@/api/push-notifications/push-notifications.service';
 
 export class DeployerDropper {
   constructor(private readonly createDrop: CreateOrUpdateDropUseCase) {}
@@ -18,15 +19,18 @@ export class DeployerDropper {
       waves: string[];
     },
     ctx: RequestContext
-  ) {
+  ): Promise<number[]> {
     if (!ctx.connection) {
-      await sqlExecutor.executeNativeQueriesInTransaction(
-        async (connection) => {
-          await this._drop(params, { ...ctx, connection });
-        }
-      );
+      const pendingPushNotificationIds =
+        await sqlExecutor.executeNativeQueriesInTransaction(
+          async (connection) => {
+            return await this._drop(params, { ...ctx, connection });
+          }
+        );
+      await sendIdentityPushNotifications(pendingPushNotificationIds);
+      return pendingPushNotificationIds;
     } else {
-      await this._drop(params, ctx);
+      return this._drop(params, ctx);
     }
   }
 
@@ -41,38 +45,44 @@ export class DeployerDropper {
       waves: string[];
     },
     ctx: RequestContext
-  ) {
+  ): Promise<number[]> {
     ctx.timer?.start(`${this.constructor.name}->drop`);
-    await Promise.all(
-      waves.map((waveId: string) => {
-        const model: CreateOrUpdateDropModel = {
-          drop_id: null,
-          wave_id: waveId,
-          reply_to: null,
-          title: null,
-          parts: [
-            {
-              content: message,
-              quoted_drop: null,
-              media: []
-            }
-          ],
-          referenced_nfts: [],
-          mentioned_users: mentionedUsers?.map((handle) => ({ handle })) ?? [],
-          mentioned_waves: [],
-          metadata: [],
-          author_identity: MEMES_DEPLOYER,
-          drop_type: DropType.CHAT,
-          mentions_all: false,
-          signature: null
-        };
-        return this.createDrop.execute(model, false, {
-          timer: ctx.timer,
-          connection: ctx.connection!
-        });
-      })
-    );
+    const pendingPushNotificationIds = (
+      await Promise.all(
+        waves.map(async (waveId: string) => {
+          const model: CreateOrUpdateDropModel = {
+            drop_id: null,
+            wave_id: waveId,
+            reply_to: null,
+            title: null,
+            parts: [
+              {
+                content: message,
+                quoted_drop: null,
+                media: []
+              }
+            ],
+            referenced_nfts: [],
+            mentioned_users:
+              mentionedUsers?.map((handle) => ({ handle })) ?? [],
+            mentioned_waves: [],
+            metadata: [],
+            author_identity: MEMES_DEPLOYER,
+            drop_type: DropType.CHAT,
+            mentioned_groups: [],
+            signature: null
+          };
+          const { pending_push_notification_ids } =
+            await this.createDrop.execute(model, false, {
+              timer: ctx.timer,
+              connection: ctx.connection!
+            });
+          return pending_push_notification_ids;
+        })
+      )
+    ).flat();
     ctx.timer?.stop(`${this.constructor.name}->drop`);
+    return pendingPushNotificationIds;
   }
 }
 

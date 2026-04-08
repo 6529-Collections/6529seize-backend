@@ -13,6 +13,7 @@ import {
   DELETED_DROPS_TABLE,
   DROP_BOOSTS_TABLE,
   DROP_CURATIONS_TABLE,
+  DROP_MENTIONED_GROUPS_TABLE,
   DROP_NFT_LINKS_TABLE,
   DROP_MEDIA_TABLE,
   DROP_MENTIONED_WAVES_TABLE,
@@ -42,6 +43,7 @@ import { DeletedDropEntity } from '../entities/IDeletedDrop';
 import {
   DropBoostEntity,
   DropEntity,
+  DropGroupMentionEntity,
   DropMediaEntity,
   DropMentionedWaveEntity,
   DropMentionEntity,
@@ -56,6 +58,7 @@ import { ProfileActivityLog } from '../entities/IProfileActivityLog';
 import { WaveCreditType, WaveEntity } from '../entities/IWave';
 import { WaveDecisionWinnerDropWithSaleEntity } from '@/entities/IWaveDecision';
 import { WinnerDropVoterVoteEntity } from '../entities/IWinnerDropVoterVote';
+import { DropGroupMention } from '@/entities/IWaveGroupNotificationSubscription';
 import { RequestContext } from '../request.context';
 import {
   ConnectionWrapper,
@@ -276,6 +279,30 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       );
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->insertMentionedWaves`);
+    }
+  }
+
+  async insertDropGroupMentions(
+    mentions: DropGroupMentionEntity[],
+    ctx: RequestContext
+  ) {
+    const distinctEntities = collections.distinctBy(
+      mentions,
+      (mention) => `${mention.drop_id}-${mention.mentioned_group}`
+    );
+    if (!distinctEntities.length) {
+      return;
+    }
+    ctx.timer?.start(`${this.constructor.name}->insertDropGroupMentions`);
+    try {
+      await this.db.bulkInsert(
+        DROP_MENTIONED_GROUPS_TABLE,
+        distinctEntities,
+        ['drop_id', 'mentioned_group'],
+        ctx
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->insertDropGroupMentions`);
     }
   }
 
@@ -706,6 +733,29 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  async findDropGroupMentionsByDropIds(
+    dropIds: string[],
+    connection?: ConnectionWrapper<any>
+  ): Promise<DropGroupMentionEntity[]> {
+    if (dropIds.length === 0) {
+      return [];
+    }
+    return this.db.execute(
+      `select * from ${DROP_MENTIONED_GROUPS_TABLE} where drop_id in (:dropIds)`,
+      { dropIds },
+      connection ? { wrappedConnection: connection } : undefined
+    );
+  }
+
+  async getDropGroupMentions(
+    dropId: string,
+    connection?: ConnectionWrapper<any>
+  ): Promise<DropGroupMention[]> {
+    return this.findDropGroupMentionsByDropIds([dropId], connection).then(
+      (rows) => rows.map((row) => row.mentioned_group)
+    );
+  }
+
   async findReferencedNftsByDropIds(
     dropIds: string[],
     connection?: ConnectionWrapper<any>
@@ -1079,6 +1129,32 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       { wrappedConnection: ctx.connection }
     );
     ctx.timer?.stop('dropsDb->deleteDropMentionedWaves');
+  }
+
+  public async deleteDropGroupMentions(dropId: string, ctx: RequestContext) {
+    ctx.timer?.start('dropsDb->deleteDropGroupMentions');
+    await this.db.execute(
+      `delete from ${DROP_MENTIONED_GROUPS_TABLE} where drop_id = :dropId`,
+      { dropId },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop('dropsDb->deleteDropGroupMentions');
+  }
+
+  public async deleteDropGroupMentionsByWaveId(
+    waveId: string,
+    ctx: RequestContext
+  ) {
+    ctx.timer?.start('dropsDb->deleteDropGroupMentionsByWaveId');
+    await this.db.execute(
+      `delete from ${DROP_MENTIONED_GROUPS_TABLE}
+       where drop_id in (
+         select id from ${DROPS_TABLE} where wave_id = :waveId
+       )`,
+      { waveId },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop('dropsDb->deleteDropGroupMentionsByWaveId');
   }
 
   public async deleteDropMedia(dropId: string, ctx: RequestContext) {
