@@ -35,6 +35,11 @@ export class Numbers {
     return ns.reduce((sum, n) => sum + n, 0);
   }
 
+  public roundDecimals(original: number, decimals: number): number {
+    const exp = Math.pow(10, decimals);
+    return Math.round(original * exp) / exp;
+  }
+
   public parseIntOrThrow(value: any): number {
     const result = this.parseIntOrNull(value);
     if (result === null) {
