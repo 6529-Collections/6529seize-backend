@@ -7,7 +7,6 @@ import { sqlExecutor } from '@/sql-executor';
 import { CreateOrUpdateDropModel } from '@/drops/create-or-update-drop.model';
 import { MEMES_DEPLOYER } from '@/constants';
 import { DropType } from '@/entities/IDrop';
-import { sendIdentityPushNotifications } from '@/api/push-notifications/push-notifications.service';
 
 export class DeployerDropper {
   constructor(private readonly createDrop: CreateOrUpdateDropUseCase) {}
@@ -27,7 +26,7 @@ export class DeployerDropper {
             return await this._drop(params, { ...ctx, connection });
           }
         );
-      await sendIdentityPushNotifications(pendingPushNotificationIds);
+      // await sendIdentityPushNotifications(pendingPushNotificationIds);
       return pendingPushNotificationIds;
     } else {
       return this._drop(params, ctx);
