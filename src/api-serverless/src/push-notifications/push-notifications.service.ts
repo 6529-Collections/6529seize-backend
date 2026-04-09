@@ -1,9 +1,10 @@
 import {
-  SQSClient,
   SendMessageBatchCommand,
-  SendMessageBatchCommandInput
+  SendMessageBatchCommandInput,
+  SQSClient
 } from '@aws-sdk/client-sqs';
 import { Logger } from '../../../logging';
+import { collections } from '@/collections';
 
 const logger = Logger.get('PUSH_NOTIFICATIONS');
 const region = process.env.AWS_REGION;
@@ -23,7 +24,7 @@ export const sendIdentityPushNotifications = async (ids: number[]) => {
     logger.info('Push notifications are not activated');
     return;
   }
-  const uniqueIds = Array.from(new Set(ids));
+  const uniqueIds = collections.distinct(ids);
   if (!uniqueIds.length) {
     return;
   }
