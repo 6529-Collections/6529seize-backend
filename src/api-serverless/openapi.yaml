@@ -963,7 +963,7 @@ paths:
         - name: wave_id
           in: query
           description: Drops in wave with given ID
-          required: true
+          required: false
           schema:
             type: string
       responses:
@@ -9338,6 +9338,10 @@ components:
       type: object
       required:
         - id
+        - wave_id
+        - wave_name
+        - author
+        - created_at
         - serial_no
         - drop_type
         - part_1_text
@@ -9348,6 +9352,15 @@ components:
       properties:
         id:
           type: string
+        wave_id:
+          type: string
+        wave_name:
+          type: string
+        author:
+          type: string
+        created_at:
+          type: number
+          format: int64
         serial_no:
           description: Sequence number of the drop in Seize
           type: number

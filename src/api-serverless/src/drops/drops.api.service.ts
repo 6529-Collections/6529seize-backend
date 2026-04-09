@@ -142,7 +142,7 @@ export class DropsApiService {
       waveId,
       limit,
       max_serial_no
-    }: { waveId: string; limit: number; max_serial_no: number | null },
+    }: { waveId: string | null; limit: number; max_serial_no: number | null },
     ctx: RequestContext
   ): Promise<ApiLightDrop[]> {
     const authenticationContext = ctx.authenticationContext;
@@ -153,13 +153,26 @@ export class DropsApiService {
       await this.userGroupsService.getGroupsUserIsEligibleFor(
         context_profile_id
       );
-    const entities = await this.dropsDb.findLatestDropsWithPartsAndMedia(
-      {
-        limit,
-        max_serial_no,
-        group_ids_user_is_eligible_for,
-        wave_id: waveId
-      },
+    const lightDropIds = waveId
+      ? await this.dropsDb.findLatestLightDropIdsByWave(
+          {
+            limit,
+            max_serial_no,
+            group_ids_user_is_eligible_for,
+            wave_id: waveId
+          },
+          ctx
+        )
+      : await this.dropsDb.findLatestVisibleLightDropIds(
+          {
+            limit,
+            max_serial_no,
+            group_ids_user_is_eligible_for
+          },
+          ctx
+        );
+    const entities = await this.dropsDb.findLightDropsByIds(
+      lightDropIds.map((it) => it.id),
       ctx
     );
     const apiLightDrops = Object.values(
@@ -167,6 +180,10 @@ export class DropsApiService {
         (acc, it) => {
           acc[it.id] = {
             id: it.id,
+            wave_id: it.wave_id,
+            wave_name: it.wave_name,
+            author: it.author,
+            created_at: it.created_at,
             serial_no: it.serial_no,
             drop_type: enums.resolveOrThrow(
               ApiDropType,
