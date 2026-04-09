@@ -24,6 +24,7 @@ export enum DropType {
 
 @Entity(DROPS_TABLE)
 @Index('idx_drop_wave_author', ['wave_id', 'author_id'])
+@Index('idx_drop_wave_serial_no', ['wave_id', 'serial_no'])
 @Index('idx_drop_wave_type_author', ['wave_id', 'drop_type', 'author_id'])
 @Index('idx_drop_wave_created_at', ['wave_id', 'created_at'])
 export class DropEntity {
@@ -150,6 +151,7 @@ export class DropMetadataEntity {
 }
 
 @Entity(DROP_MEDIA_TABLE)
+@Index('idx_drop_media_drop_part', ['drop_id', 'drop_part_id'])
 export class DropMediaEntity {
   @PrimaryGeneratedColumn('increment', { type: 'bigint' })
   readonly id!: string;
