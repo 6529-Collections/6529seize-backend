@@ -18,7 +18,7 @@ router.get(
       any,
       any,
       any,
-      { wave_id: string; limit: number; max_serial_no: number | null },
+      { wave_id?: string; limit: number; max_serial_no: number | null },
       any
     >,
     res: Response<ApiResponse<ApiLightDrop[]>>
@@ -26,9 +26,6 @@ router.get(
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
     const { wave_id, limit, max_serial_no } = req.query;
-    if (!wave_id) {
-      throw new BadRequestException('wave_id must be provided');
-    }
     if (!limit) {
       throw new BadRequestException('limit must be provided');
     }
@@ -39,7 +36,7 @@ router.get(
     const maxSerialNo = numbers.parseIntOrNull(max_serial_no);
     const latestDrops = await dropsService.findLatestLightDrops(
       {
-        waveId: wave_id,
+        waveId: wave_id ?? null,
         limit: parsedLimit,
         max_serial_no: maxSerialNo
       },

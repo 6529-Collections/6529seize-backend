@@ -7,9 +7,9 @@ import { PageSortDirection } from '../api-serverless/src/page-request';
 import { assertUnreachable } from '../assertions';
 import { collections } from '../collections';
 import {
+  ACTIVITY_EVENTS_TABLE,
   ART_CURATION_TOKEN_WATCH_DROPS_TABLE,
   ART_CURATION_TOKEN_WATCHES_TABLE,
-  ACTIVITY_EVENTS_TABLE,
   DELETED_DROPS_TABLE,
   DROP_BOOSTS_TABLE,
   DROP_CURATIONS_TABLE,
@@ -84,6 +84,20 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       },
       connection ? { wrappedConnection: connection } : undefined
     );
+  }
+
+  private getVisibleWaveFilterSql(groupIdsUserIsEligibleFor: string[]): string {
+    return [
+      'w.visibility_group_id is null',
+      groupIdsUserIsEligibleFor.length
+        ? `w.visibility_group_id in (:groupsUserIsEligibleFor)`
+        : null,
+      groupIdsUserIsEligibleFor.length
+        ? `w.admin_group_id in (:groupsUserIsEligibleFor)`
+        : null
+    ]
+      .filter((it): it is string => !!it)
+      .join(' or ');
   }
 
   async insertDrop(
@@ -492,7 +506,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     return this.db.execute<DropEntity>(sql, params);
   }
 
-  async findLatestDropsWithPartsAndMedia(
+  async findLatestLightDropIdsByWave(
     {
       limit,
       max_serial_no,
@@ -502,16 +516,105 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       limit: number;
       max_serial_no: number | null;
       group_ids_user_is_eligible_for: string[];
-      wave_id: string | null;
+      wave_id: string;
     },
     ctx: RequestContext
-  ): Promise<DropWithMediaAndPart[]> {
+  ): Promise<LightDropIdRow[]> {
+    const timerLabel = `${this.constructor.name}->findLatestLightDropIdsByWave`;
+    ctx.timer?.start(timerLabel);
     const maxSerialNo = max_serial_no ?? Number.MAX_SAFE_INTEGER;
-    const sql = `select d.*, 
+    const visibleWaveFilter = this.getVisibleWaveFilterSql(
+      group_ids_user_is_eligible_for
+    );
+    try {
+      return await this.db.execute<LightDropIdRow>(
+        `select d.id, d.serial_no
+         from ${DROPS_TABLE} d FORCE INDEX (idx_drop_wave_serial_no)
+         where d.wave_id = :wave_id
+           and d.serial_no <= :maxSerialNo
+           and exists (
+             select 1
+             from ${WAVES_TABLE} w
+             where w.id = :wave_id
+               and (${visibleWaveFilter})
+           )
+         order by d.serial_no desc
+         limit :limit`,
+        {
+          limit,
+          maxSerialNo,
+          groupsUserIsEligibleFor: group_ids_user_is_eligible_for,
+          wave_id
+        },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(timerLabel);
+    }
+  }
+
+  async findLatestVisibleLightDropIds(
+    {
+      limit,
+      max_serial_no,
+      group_ids_user_is_eligible_for
+    }: {
+      limit: number;
+      max_serial_no: number | null;
+      group_ids_user_is_eligible_for: string[];
+    },
+    ctx: RequestContext
+  ): Promise<LightDropIdRow[]> {
+    const timerLabel = `${this.constructor.name}->findLatestVisibleLightDropIds`;
+    ctx.timer?.start(timerLabel);
+    const maxSerialNo = max_serial_no ?? Number.MAX_SAFE_INTEGER;
+    const visibleWaveFilter = this.getVisibleWaveFilterSql(
+      group_ids_user_is_eligible_for
+    );
+    try {
+      return await this.db.execute<LightDropIdRow>(
+        `select d.id, d.serial_no
+         from ${DROPS_TABLE} d FORCE INDEX (PRIMARY)
+         where d.serial_no <= :maxSerialNo
+           and exists (
+             select 1
+             from ${WAVES_TABLE} w
+             where w.id = d.wave_id
+               and (${visibleWaveFilter})
+           )
+         order by d.serial_no desc
+         limit :limit`,
+        {
+          limit,
+          maxSerialNo,
+          groupsUserIsEligibleFor: group_ids_user_is_eligible_for
+        },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(timerLabel);
+    }
+  }
+
+  async findLightDropsByIds(
+    dropIds: string[],
+    ctx: RequestContext
+  ): Promise<DropWithMediaAndPart[]> {
+    if (!dropIds.length) {
+      return [];
+    }
+
+    const timerLabel = `${this.constructor.name}->findLightDropsByIds`;
+    ctx.timer?.start(timerLabel);
+    try {
+      return await this.db.execute<DropWithMediaAndPart>(
+        `select d.*, 
     dp.drop_part_id as part_drop_part_id,
     dp.content as part_content,
     dp.quoted_drop_id as part_quoted_drop_id,
-    dm.medias_json as medias_json
+    dm.medias_json as medias_json,
+    w.name as wave_name,
+    COALESCE(i.handle, '') as author
     from ${DROPS_TABLE} d
          left join ${DROPS_PARTS_TABLE} dp on dp.drop_id = d.id and dp.drop_part_id = 1
          LEFT JOIN (
@@ -524,24 +627,19 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                     ) AS medias_json
             FROM    ${DROP_MEDIA_TABLE}
             WHERE   drop_part_id = 1
+              and drop_id in (:dropIds)
             GROUP BY drop_id
         ) dm ON dm.drop_id = d.id
-         join ${WAVES_TABLE} w on d.wave_id = w.id and (${
-           group_ids_user_is_eligible_for.length
-             ? `w.visibility_group_id in (:groupsUserIsEligibleFor) or w.admin_group_id in (:groupsUserIsEligibleFor) or`
-             : ``
-         } w.visibility_group_id is null) ${wave_id ? `and w.id = :wave_id` : ``}
-         where d.serial_no <= :maxSerialNo 
-          order by d.serial_no desc limit :limit`;
-    const params: Record<string, any> = {
-      limit,
-      maxSerialNo: maxSerialNo,
-      groupsUserIsEligibleFor: group_ids_user_is_eligible_for,
-      wave_id
-    };
-    return await this.db.execute<DropWithMediaAndPart>(sql, params, {
-      wrappedConnection: ctx.connection
-    });
+         join ${WAVES_TABLE} w on d.wave_id = w.id
+         join ${IDENTITIES_TABLE} i on i.profile_id = d.author_id
+         where d.id in (:dropIds)
+         order by d.serial_no desc`,
+        { dropIds },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(timerLabel);
+    }
   }
 
   async findLatestDropsSimple(
@@ -2756,11 +2854,18 @@ export interface DropVotersStatsParams {
   readonly sort: DropVotersStatsSort;
 }
 
+export interface LightDropIdRow {
+  readonly id: string;
+  readonly serial_no: number;
+}
+
 export type DropWithMediaAndPart = DropEntity & {
   part_drop_part_id: number | null;
   part_content: string | null;
   part_quoted_drop_id: string | null;
   medias_json: string | null;
+  wave_name: string;
+  author: string;
 };
 
 export interface IdentityNominationDrop {
