@@ -45,6 +45,7 @@ import {
   DropPartIdentifierModel
 } from '../../../drops/create-or-update-drop.model';
 import { ApiDropType } from '../generated/models/ApiDropType';
+import { ApiDropGroupMention } from '../generated/models/ApiDropGroupMention';
 import { dropVotingService, DropVotingService } from './drop-voting.service';
 import { dropVotingDb, DropVotingDb } from './drop-voting.db';
 import { WaveDecisionWinnerDropWithSaleEntity } from '@/entities/IWaveDecision';
@@ -81,6 +82,7 @@ import {
   mapWaveToApiWaveMin
 } from '@/api/waves/wave-min.helpers';
 import { profileWavesDb } from '@/profiles/profile-waves.db';
+import { DropGroupMention } from '@/entities/IWaveGroupNotificationSubscription';
 
 export class DropsMappers {
   constructor(
@@ -131,7 +133,10 @@ export class DropsMappers {
     waveId,
     dropId
   }: {
-    request: ApiUpdateDropRequest & { drop_type: ApiDropType };
+    request: ApiUpdateDropRequest & {
+      drop_type: ApiDropType;
+      mentioned_groups?: ApiDropGroupMention[];
+    };
     waveId: string;
     replyTo: DropPartIdentifierModel | null;
     authorId: string;
@@ -177,7 +182,10 @@ export class DropsMappers {
         data_key: it.data_key,
         data_value: it.data_value
       })),
-      mentions_all: request.mentions_all ?? false,
+      mentioned_groups: (request.mentioned_groups ?? []).map(
+        (group: ApiDropGroupMention) =>
+          enums.resolveOrThrow(DropGroupMention, group)
+      ),
       signature: request.signature
     };
   }
@@ -306,6 +314,7 @@ export class DropsMappers {
       dropsRanks,
       submissionDropsVotingRanges,
       mentions,
+      mentionedGroups,
       mentionedWaves,
       referencedNfts,
       metadata,
@@ -339,6 +348,7 @@ export class DropsMappers {
         connection
       ),
       this.dropsDb.findMentionsByDropIds(allDropIds, connection),
+      this.dropsDb.findDropGroupMentionsByDropIds(allDropIds, connection),
       this.dropsDb.findMentionedWavesByDropIds(allDropIds, connection),
       this.dropsDb.findReferencedNftsByDropIds(allDropIds, connection),
       this.dropsDb.findMetadataByDropIds(allDropIds, connection),
@@ -448,6 +458,7 @@ export class DropsMappers {
       dropsRanks,
       submissionDropsVotingRanges,
       mentions,
+      mentionedGroups,
       mentionedWaves,
       referencedNfts,
       metadata,
@@ -494,6 +505,7 @@ export class DropsMappers {
     const {
       submissionDropsVotingRanges,
       mentions,
+      mentionedGroups,
       mentionedWaves,
       referencedNfts,
       metadata,
@@ -527,6 +539,17 @@ export class DropsMappers {
     const rootDropIds = new Set(entities.map((it) => it.id));
     const mentionedWaveIds = collections.distinct(
       mentionedWaves.map((it) => it.wave_id)
+    );
+    const mentionedGroupsByDropId = mentionedGroups.reduce(
+      (acc, mention) => {
+        const groups = acc[mention.drop_id] ?? [];
+        groups.push(
+          enums.resolveOrThrow(ApiDropGroupMention, mention.mentioned_group)
+        );
+        acc[mention.drop_id] = groups;
+        return acc;
+      },
+      {} as Record<string, ApiDropGroupMention[]>
     );
     const groupIdsUserIsEligibleFor =
       await this.userGroupsService.getGroupsUserIsEligibleFor(
@@ -717,6 +740,7 @@ export class DropsMappers {
         contextProfileId,
         referencedNfts,
         mentions,
+        mentionedGroupsByDropId,
         mentionedWaves,
         mentionedWavesById,
         metadata,
@@ -755,6 +779,7 @@ export class DropsMappers {
     contextProfileId,
     referencedNfts,
     mentions,
+    mentionedGroupsByDropId,
     mentionedWaves,
     mentionedWavesById,
     metadata,
@@ -789,6 +814,7 @@ export class DropsMappers {
     contextProfileId: string | undefined | null;
     referencedNfts: DropReferencedNftEntity[];
     mentions: DropMentionEntity[];
+    mentionedGroupsByDropId: Record<string, ApiDropGroupMention[]>;
     mentionedWaves: DropMentionedWaveEntity[];
     mentionedWavesById: Record<string, ApiWaveMin>;
     metadata: DropMetadataEntity[];
@@ -955,6 +981,7 @@ export class DropsMappers {
                   contextProfileId,
                   referencedNfts,
                   mentions,
+                  mentionedGroupsByDropId,
                   mentionedWaves,
                   mentionedWavesById,
                   metadata,
@@ -1007,6 +1034,7 @@ export class DropsMappers {
                           contextProfileId,
                           referencedNfts,
                           mentions,
+                          mentionedGroupsByDropId,
                           mentionedWaves,
                           mentionedWavesById,
                           metadata,
@@ -1063,6 +1091,7 @@ export class DropsMappers {
           handle_in_content: it.handle_in_content,
           current_handle: profilesByIds[it.mentioned_profile_id]?.handle ?? null
         })),
+      mentioned_groups: mentionedGroupsByDropId[dropEntity.id] ?? [],
       metadata: metadata
         .filter((it) => it.drop_id === dropEntity.id)
         .map<ApiDropMetadataResponse>((it) => ({

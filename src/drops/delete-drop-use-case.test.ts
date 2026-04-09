@@ -20,6 +20,7 @@ describe('DeleteDropUseCase', () => {
       deleteDropParts: jest.fn().mockResolvedValue(undefined),
       deleteDropMentions: jest.fn().mockResolvedValue(undefined),
       deleteDropMentionedWaves: jest.fn().mockResolvedValue(undefined),
+      deleteDropGroupMentions: jest.fn().mockResolvedValue(undefined),
       deleteDropMedia: jest.fn().mockResolvedValue(undefined),
       deleteDropReferencedNfts: jest.fn().mockResolvedValue(undefined),
       deleteDropMetadata: jest.fn().mockResolvedValue(undefined),

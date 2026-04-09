@@ -185,12 +185,12 @@ router.post(
       parts: newDrop.parts,
       referenced_nfts: newDrop.referenced_nfts,
       mentioned_users: newDrop.mentioned_users,
+      mentioned_groups: newDrop.mentioned_groups,
       mentioned_waves: newDrop.mentioned_waves,
       metadata: newDrop.metadata,
       wave_id: newDrop.wave_id,
       reply_to: newDrop.reply_to,
       drop_type: newDrop.drop_type,
-      mentions_all: newDrop.mentions_all,
       signature: newDrop.signature
     };
     const createdDrop = await dropCreationService.createDrop(

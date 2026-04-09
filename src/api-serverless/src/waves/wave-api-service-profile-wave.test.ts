@@ -87,6 +87,7 @@ describe('WaveApiService profile wave safeguards', () => {
       {} as any,
       {} as any,
       {} as any,
+      {} as any,
       {} as any
     );
     jest
@@ -103,6 +104,12 @@ describe('WaveApiService profile wave safeguards', () => {
 
   it('clears profile wave selection when deleting a wave', async () => {
     const connection = {} as any;
+    const dropsDb = {
+      deleteDropGroupMentionsByWaveId: jest.fn().mockResolvedValue(undefined)
+    };
+    const waveGroupNotificationSubscriptionsDb = {
+      deleteByWaveId: jest.fn().mockResolvedValue(undefined)
+    };
     const wavesApiDb = {
       executeNativeQueriesInTransaction: jest.fn(
         async (fn) => await fn(connection)
@@ -158,7 +165,8 @@ describe('WaveApiService profile wave safeguards', () => {
         deleteDropCurationsByWaveId: jest.fn().mockResolvedValue(undefined),
         deleteWaveCurationsByWaveId: jest.fn().mockResolvedValue(undefined)
       } as any,
-      {} as any
+      dropsDb as any,
+      waveGroupNotificationSubscriptionsDb as any
     );
 
     await expect(
@@ -172,5 +180,12 @@ describe('WaveApiService profile wave safeguards', () => {
       'wave-1',
       expect.objectContaining({ connection })
     );
+    expect(dropsDb.deleteDropGroupMentionsByWaveId).toHaveBeenCalledWith(
+      'wave-1',
+      expect.objectContaining({ connection })
+    );
+    expect(
+      waveGroupNotificationSubscriptionsDb.deleteByWaveId
+    ).toHaveBeenCalledWith('wave-1', connection);
   });
 });

@@ -1,4 +1,5 @@
 export const RESERVED_HANDLES = [
+  'all',
   'admin',
   'administrator',
   'nft',

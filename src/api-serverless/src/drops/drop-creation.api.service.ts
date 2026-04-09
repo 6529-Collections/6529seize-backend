@@ -33,6 +33,7 @@ import {
   NftLinkResolvingService
 } from '@/nft-links/nft-link-resolving.service';
 import { Logger } from '@/logging';
+import { sendIdentityPushNotifications } from '@/api/push-notifications/push-notifications.service';
 
 export class DropCreationApiService {
   private readonly logger = Logger.get(this.constructor.name);
@@ -71,14 +72,19 @@ export class DropCreationApiService {
       await this.createOrUpdateDrop.preResolveIdentityNomination(model, {
         timer: ctx.timer
       });
-    const drop = await this.dropsDb.executeNativeQueriesInTransaction(
-      async (connection) => {
-        return await this.createDropWithGivenConnection(
-          { model, authorId, preResolvedIdentityNomination },
-          { timer: ctx.timer!, connection }
-        );
-      }
-    );
+    const { drop, pendingPushNotificationIds } =
+      await this.dropsDb.executeNativeQueriesInTransaction(
+        async (connection) => {
+          return await this.createDropWithGivenConnection(
+            { model, authorId, preResolvedIdentityNomination },
+            { timer: ctx.timer!, connection }
+          );
+        }
+      );
+    void this.sendPendingPushNotifications({
+      dropId: drop.id,
+      pendingPushNotificationIds
+    });
     void this.ensureNftLinkTrackingForDrop(drop.id, ctx);
     await this.wsListenersNotifier.notifyAboutDropUpdate(drop, ctx);
     return drop;
@@ -97,13 +103,14 @@ export class DropCreationApiService {
       > | null;
     },
     { timer, connection }: { timer: Timer; connection: ConnectionWrapper<any> }
-  ): Promise<ApiDrop> {
-    const { drop_id } = await this.createOrUpdateDrop.execute(model, false, {
-      timer,
-      connection,
-      preResolvedIdentityNomination
-    });
-    return this.dropsService.findDropByIdOrThrow(
+  ): Promise<{ drop: ApiDrop; pendingPushNotificationIds: number[] }> {
+    const { drop_id, pending_push_notification_ids } =
+      await this.createOrUpdateDrop.execute(model, false, {
+        timer,
+        connection,
+        preResolvedIdentityNomination
+      });
+    const drop = await this.dropsService.findDropByIdOrThrow(
       {
         dropId: drop_id,
         skipEligibilityCheck: true
@@ -114,6 +121,10 @@ export class DropCreationApiService {
         timer
       }
     );
+    return {
+      drop,
+      pendingPushNotificationIds: pending_push_notification_ids
+    };
   }
 
   public async deleteDropById(
@@ -239,32 +250,55 @@ export class DropCreationApiService {
       await this.createOrUpdateDrop.preResolveIdentityNomination(model, {
         timer: ctx.timer
       });
-    const apiDrop = await this.dropsDb.executeNativeQueriesInTransaction(
-      async (connection) => {
-        const { drop_id } = await this.createOrUpdateDrop.execute(
-          model,
-          false,
-          {
-            timer: ctx.timer!,
-            connection,
-            preResolvedIdentityNomination
-          }
-        );
-        return await this.dropsService.findDropByIdOrThrow(
-          {
-            dropId: drop_id,
-            skipEligibilityCheck: true
-          },
-          {
-            ...ctx,
-            connection
-          }
-        );
-      }
-    );
+    const { apiDrop, pendingPushNotificationIds } =
+      await this.dropsDb.executeNativeQueriesInTransaction(
+        async (connection) => {
+          const { drop_id, pending_push_notification_ids } =
+            await this.createOrUpdateDrop.execute(model, false, {
+              timer: ctx.timer!,
+              connection,
+              preResolvedIdentityNomination
+            });
+          const apiDrop = await this.dropsService.findDropByIdOrThrow(
+            {
+              dropId: drop_id,
+              skipEligibilityCheck: true
+            },
+            {
+              ...ctx,
+              connection
+            }
+          );
+          return {
+            apiDrop,
+            pendingPushNotificationIds: pending_push_notification_ids
+          };
+        }
+      );
+    void this.sendPendingPushNotifications({
+      dropId: apiDrop.id,
+      pendingPushNotificationIds
+    });
     void this.ensureNftLinkTrackingForDrop(apiDrop.id, ctx);
     await this.wsListenersNotifier.notifyAboutDropUpdate(apiDrop, ctx);
     return apiDrop;
+  }
+
+  private async sendPendingPushNotifications({
+    dropId,
+    pendingPushNotificationIds
+  }: {
+    dropId: string;
+    pendingPushNotificationIds: number[];
+  }) {
+    try {
+      await sendIdentityPushNotifications(pendingPushNotificationIds);
+    } catch (error) {
+      this.logger.error(
+        `Failed to send push notifications for drop ${dropId} with pending ids ${pendingPushNotificationIds.join(',')}`,
+        error
+      );
+    }
   }
 
   private async ensureNftLinkTrackingForDrop(

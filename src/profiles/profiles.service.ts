@@ -56,6 +56,7 @@ import { collections } from '../collections';
 import { identitiesService } from '../api-serverless/src/identities/identities.service';
 import { xTdhRepository, XTdhRepository } from '../xtdh/xtdh.repository';
 import { profileWavesDb, ProfileWavesDb } from '@/profiles/profile-waves.db';
+import { waveGroupNotificationSubscriptionsDb } from '@/notifications/wave-group-notification-subscriptions.db';
 
 export class ProfilesService {
   private readonly logger = Logger.get('PROFILES_SERVICE');
@@ -527,6 +528,11 @@ export class ProfilesService {
     connectionHolder: ConnectionWrapper<any>
   ) {
     await identitySubscriptionsDb.updateIdentityIdsInSubscriptions(
+      sourceIdentity,
+      target,
+      connectionHolder
+    );
+    await waveGroupNotificationSubscriptionsDb.updateIdentityIdsInWaveGroupNotificationSubscriptions(
       sourceIdentity,
       target,
       connectionHolder

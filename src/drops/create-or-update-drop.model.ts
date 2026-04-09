@@ -1,4 +1,5 @@
 import { DropType } from '../entities/IDrop';
+import { DropGroupMention } from '../entities/IWaveGroupNotificationSubscription';
 
 export interface CreateOrUpdateDropModel {
   readonly drop_id: string | null;
@@ -15,7 +16,7 @@ export interface CreateOrUpdateDropModel {
   readonly proxy_identity?: string;
   readonly proxy_id?: string;
   readonly drop_type: DropType;
-  readonly mentions_all: boolean;
+  readonly mentioned_groups: DropGroupMention[];
   readonly signature: string | null;
 }
 
