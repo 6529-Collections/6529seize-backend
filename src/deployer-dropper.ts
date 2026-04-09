@@ -47,7 +47,7 @@ export class DeployerDropper {
     ctx: RequestContext
   ): Promise<number[]> {
     ctx.timer?.start(`${this.constructor.name}->drop`);
-    const pendingPushNotificationIds = (
+    (
       await Promise.all(
         waves.map(async (waveId: string) => {
           const model: CreateOrUpdateDropModel = {
@@ -82,7 +82,7 @@ export class DeployerDropper {
       )
     ).flat();
     ctx.timer?.stop(`${this.constructor.name}->drop`);
-    return pendingPushNotificationIds;
+    return [];
   }
 }
 
