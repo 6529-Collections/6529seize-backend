@@ -24,6 +24,20 @@ import {
 } from './identity-subscriptions.routes';
 import { Timer } from '../../../time';
 
+function coerceDbBoolean(value: boolean | number | string | null): boolean {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  if (typeof value === 'number') {
+    return value !== 0;
+  }
+  if (typeof value === 'string') {
+    const normalizedValue = value.trim().toLowerCase();
+    return normalizedValue === '1' || normalizedValue === 'true';
+  }
+  return false;
+}
+
 export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
   async addIdentitySubscription(
     identitySubscription: Omit<IdentitySubscriptionEntity, 'id'>,
@@ -398,12 +412,13 @@ export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
     }[]
   > {
     const hasMentionedGroups = mentionedGroups.length > 0;
-    return this.db.execute<{
-      identity_id: string;
-      subscribed_to_all_drops: boolean;
-      has_group_mention: boolean;
-    }>(
-      `
+    return this.db
+      .execute<{
+        identity_id: string;
+        subscribed_to_all_drops: boolean | number | string | null;
+        has_group_mention: boolean | number | string | null;
+      }>(
+        `
       select
         s.subscriber_id as identity_id,
         s.subscribed_to_all_drops as subscribed_to_all_drops,
@@ -428,15 +443,22 @@ export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
         and coalesce(r.muted, false) = false
       group by s.subscriber_id, s.subscribed_to_all_drops
       `,
-      {
-        waveId,
-        authorId,
-        mentionedGroups,
-        targetType: ActivityEventTargetType.WAVE,
-        targetAction: ActivityEventAction.DROP_CREATED
-      },
-      { wrappedConnection: connection }
-    );
+        {
+          waveId,
+          authorId,
+          mentionedGroups,
+          targetType: ActivityEventTargetType.WAVE,
+          targetAction: ActivityEventAction.DROP_CREATED
+        },
+        { wrappedConnection: connection }
+      )
+      .then((rows) =>
+        rows.map((row) => ({
+          identity_id: row.identity_id,
+          subscribed_to_all_drops: coerceDbBoolean(row.subscribed_to_all_drops),
+          has_group_mention: coerceDbBoolean(row.has_group_mention)
+        }))
+      );
   }
 
   async findMutedWaveReaders(
@@ -555,7 +577,7 @@ export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
   ): Promise<{ is_following: boolean; subscribed_to_all_drops: boolean }> {
     return this.db
       .oneOrNull<{
-        subscribed_to_all_drops: boolean;
+        subscribed_to_all_drops: boolean | number | string | null;
       }>(
         `select subscribed_to_all_drops
          from ${IDENTITY_SUBSCRIPTIONS_TABLE}
@@ -573,7 +595,9 @@ export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
       )
       .then((it) => ({
         is_following: it !== null,
-        subscribed_to_all_drops: it?.subscribed_to_all_drops ?? false
+        subscribed_to_all_drops: coerceDbBoolean(
+          it?.subscribed_to_all_drops ?? false
+        )
       }));
   }
 
