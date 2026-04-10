@@ -34,7 +34,7 @@ export class DropCheeringService {
       drop_id: string;
       rater_profile_id: string;
       groupIdsUserIsEligibleFor: string[];
-      cheersChange: number;
+      newCheers: number;
     },
     ctx: RequestContext
   ) {
@@ -53,7 +53,7 @@ export class DropCheeringService {
         const dropType = dropEntity.drop_type;
         switch (dropType) {
           case DropType.CHAT: {
-            const reaction = param.cheersChange > 0 ? ':+1:' : ':-1:';
+            const reaction = param.newCheers > 0 ? ':+1:' : ':-1:';
             await this.reactionsService.addReaction(
               dropId,
               param.rater_profile_id,
@@ -63,7 +63,7 @@ export class DropCheeringService {
             break;
           }
           case DropType.PARTICIPATORY: {
-            if (param.cheersChange === 0) {
+            if (param.newCheers === 0) {
               await this.waveQuickVoteDb.insertSkip(
                 {
                   identity_id: param.rater_profile_id,
@@ -79,13 +79,12 @@ export class DropCheeringService {
                 },
                 ctxWithConnection
               );
-              return null;
             }
             const voteChanged = await this.voteForDrop.execute(
               {
                 drop_id: dropId,
                 voter_id: param.rater_profile_id,
-                votes: param.cheersChange,
+                votes: param.newCheers,
                 wave_id: dropEntity.wave_id,
                 proxy_id: null
               },
