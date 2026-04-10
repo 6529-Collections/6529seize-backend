@@ -72,9 +72,12 @@ export function aUserGroup(
 export function withUserGroups(entities: UserGroupEntity[]): Seed {
   return {
     table: USER_GROUPS_TABLE,
-    rows: entities.map(({ is_pure_profile_group, ...entity }) => {
-      void is_pure_profile_group;
-      return entity as PersistedUserGroup;
+    rows: entities.map((entity) => {
+      const persistedEntity = {
+        ...entity
+      } as PersistedUserGroup & { is_pure_profile_group?: boolean };
+      delete persistedEntity.is_pure_profile_group;
+      return persistedEntity;
     })
   };
 }

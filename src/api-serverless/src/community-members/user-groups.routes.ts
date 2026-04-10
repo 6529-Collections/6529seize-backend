@@ -37,7 +37,7 @@ import { ApiGroupTdhInclusionStrategy } from '../generated/models/ApiGroupTdhInc
 
 const router = asyncRouter();
 
-interface SearchUserGroupsQuery {
+export interface SearchUserGroupsQuery {
   group_name: string | null;
   author_identity: string | null;
   created_at_less_than: number | null;
@@ -308,12 +308,25 @@ const NullableStringSchema: Joi.StringSchema = Joi.string()
   .allow(null)
   .default(null);
 
-const SearchUserGroupsQuerySchema: Joi.ObjectSchema<SearchUserGroupsQuery> =
+const SearchNullableStringSchema: Joi.StringSchema = Joi.string()
+  .empty('')
+  .optional()
+  .allow(null)
+  .default(null);
+
+const SearchNullableIntegerSchema: Joi.NumberSchema = Joi.number()
+  .integer()
+  .empty('')
+  .optional()
+  .allow(null)
+  .default(null);
+
+export const SearchUserGroupsQuerySchema: Joi.ObjectSchema<SearchUserGroupsQuery> =
   Joi.object<SearchUserGroupsQuery>({
-    group_name: NullableStringSchema,
-    author_identity: NullableStringSchema,
-    created_at_less_than: NullableIntegerSchema,
-    include_profile_groups: Joi.boolean().optional().default(false)
+    group_name: SearchNullableStringSchema,
+    author_identity: SearchNullableStringSchema,
+    created_at_less_than: SearchNullableIntegerSchema,
+    include_profile_groups: Joi.boolean().empty('').optional().default(false)
   });
 
 const GroupTdhFilterSchema: Joi.ObjectSchema<ApiGroupTdhFilter> =
