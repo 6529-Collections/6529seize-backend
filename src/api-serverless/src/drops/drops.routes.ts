@@ -391,7 +391,7 @@ router.post(
         rater_profile_id: raterProfileId,
         groupIdsUserIsEligibleFor: group_ids_user_is_eligible_for,
         drop_id: dropId,
-        cheersChange: rating
+        newCheers: rating
       },
       ctx
     );
