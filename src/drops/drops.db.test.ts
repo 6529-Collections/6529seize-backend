@@ -1,5 +1,11 @@
 import 'reflect-metadata';
-import { DROP_MEDIA_TABLE, DROPS_PARTS_TABLE, DROPS_TABLE } from '@/constants';
+import {
+  DROP_CURATIONS_TABLE,
+  DROP_MEDIA_TABLE,
+  DROPS_PARTS_TABLE,
+  DROPS_TABLE,
+  WAVE_CURATIONS_TABLE
+} from '@/constants';
 import { DropType } from '@/entities/IDrop';
 import { RequestContext } from '@/request.context';
 import { sqlExecutor } from '@/sql-executor';
@@ -201,6 +207,80 @@ describeWithSeed(
       ]
     },
     {
+      table: WAVE_CURATIONS_TABLE,
+      rows: [
+        {
+          id: 'curation-public-a-art',
+          name: 'Art',
+          wave_id: publicWaveA.id,
+          community_group_id: 'group-public',
+          created_at: 2001,
+          updated_at: 2001
+        },
+        {
+          id: 'curation-public-b-art',
+          name: 'Art',
+          wave_id: publicWaveB.id,
+          community_group_id: 'group-public',
+          created_at: 2002,
+          updated_at: 2002
+        },
+        {
+          id: 'curation-private-art',
+          name: 'Art',
+          wave_id: privateWave.id,
+          community_group_id: 'group-public',
+          created_at: 2003,
+          updated_at: 2003
+        },
+        {
+          id: 'curation-public-a-other',
+          name: 'Other',
+          wave_id: publicWaveA.id,
+          community_group_id: 'group-public',
+          created_at: 2004,
+          updated_at: 2004
+        }
+      ]
+    },
+    {
+      table: DROP_CURATIONS_TABLE,
+      rows: [
+        {
+          drop_id: 'drop-public-a-old',
+          curation_id: 'curation-public-a-art',
+          created_at: 3001,
+          updated_at: 3001,
+          wave_id: publicWaveA.id,
+          curated_by: authorAlice.profile_id!
+        },
+        {
+          drop_id: 'drop-public-b',
+          curation_id: 'curation-public-b-art',
+          created_at: 3002,
+          updated_at: 3002,
+          wave_id: publicWaveB.id,
+          curated_by: authorBob.profile_id!
+        },
+        {
+          drop_id: 'drop-private',
+          curation_id: 'curation-private-art',
+          created_at: 3003,
+          updated_at: 3003,
+          wave_id: privateWave.id,
+          curated_by: authorCarol.profile_id!
+        },
+        {
+          drop_id: 'drop-public-a-new',
+          curation_id: 'curation-public-a-other',
+          created_at: 3004,
+          updated_at: 3004,
+          wave_id: publicWaveA.id,
+          curated_by: authorDave.profile_id!
+        }
+      ]
+    },
+    {
       table: DROP_MEDIA_TABLE,
       rows: [
         aDropMediaRow({
@@ -296,6 +376,31 @@ describeWithSeed(
         { id: 'drop-public-a-new', serial_no: 103 },
         { id: 'drop-private', serial_no: 102 },
         { id: 'drop-public-a-old', serial_no: 101 }
+      ]);
+    });
+
+    it('finds latest drops by curation name across visible waves', async () => {
+      const results = await repo.findLatestDrops(
+        {
+          amount: 10,
+          serial_no_less_than: null,
+          group_ids_user_is_eligible_for: [],
+          group_id: null,
+          wave_id: null,
+          curation_id: null,
+          curation_name: 'Art',
+          author_id: null,
+          include_replies: false,
+          drop_type: null,
+          ids: null,
+          contains_media: false
+        },
+        ctx
+      );
+
+      expect(results.map((it) => it.id)).toEqual([
+        'drop-public-b',
+        'drop-public-a-old'
       ]);
     });
 

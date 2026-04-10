@@ -1032,6 +1032,17 @@ paths:
           schema:
             type: string
             format: uuid
+        - name: curation_name
+          in: query
+          description: >-
+            Only include drops with persisted membership in curations with this
+            ApiWaveCuration.name across all visible waves. Cannot be combined
+            with curation_id.
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 50
         - name: serial_no_less_than
           in: query
           description: Used to find older drops

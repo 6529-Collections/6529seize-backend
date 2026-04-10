@@ -5,6 +5,7 @@ import { WAVE_CURATIONS_TABLE } from '@/constants';
 @Index('idx_wave_curations_wave_name_unique', ['wave_id', 'name'], {
   unique: true
 })
+@Index('idx_wave_curations_name', ['name'])
 export class WaveCurationEntity {
   @PrimaryColumn({ type: 'varchar', length: 50, nullable: false })
   readonly id!: string;
