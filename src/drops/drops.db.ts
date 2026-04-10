@@ -34,6 +34,7 @@ import {
   WAVE_DROPPER_METRICS_TABLE,
   WAVE_LEADERBOARD_ENTRIES_TABLE,
   WAVE_METRICS_TABLE,
+  WAVE_CURATIONS_TABLE,
   WAVES_DECISION_WINNER_DROPS_TABLE,
   WAVES_TABLE,
   WINNER_DROP_VOTER_VOTES_TABLE
@@ -439,6 +440,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       group_id,
       wave_id,
       curation_id,
+      curation_name,
       author_id,
       include_replies,
       drop_type,
@@ -451,6 +453,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       amount: number;
       wave_id: string | null;
       curation_id?: string | null;
+      curation_name?: string | null;
       author_id: string | null;
       include_replies: boolean;
       drop_type: DropType | null;
@@ -472,8 +475,13 @@ export class DropsDb extends LazyDbAccessCompatibleService {
           where dc.drop_id = d.id and dc.curation_id = :curation_id
         )`
       : '';
+    const curationJoin = curation_name
+      ? `join ${DROP_CURATIONS_TABLE} dc on dc.drop_id = d.id and dc.wave_id = d.wave_id
+         join ${WAVE_CURATIONS_TABLE} wc on wc.id = dc.curation_id and wc.name = :curation_name`
+      : '';
     const serialNoLessThan = serial_no_less_than ?? Number.MAX_SAFE_INTEGER;
     const sql = `${sqlAndParams.sql} select d.* from ${DROPS_TABLE} d
+         ${curationJoin}
          join ${
            UserGroupsService.GENERATED_VIEW
          } cm on cm.profile_id = d.author_id
@@ -500,6 +508,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       author_id,
       wave_id,
       curation_id: curation_id ?? null,
+      curation_name: curation_name ?? null,
       drop_type,
       ids
     };

@@ -66,6 +66,7 @@ router.get(
         author?: string;
         wave_id?: string;
         curation_id?: string;
+        curation_name?: string;
         include_replies?: string;
         drop_type?: ApiDropType;
         ids?: string;
@@ -82,6 +83,7 @@ router.get(
       wave_id,
       group_id,
       curation_id,
+      curation_name,
       author_id,
       include_replies,
       drop_type,
@@ -97,6 +99,7 @@ router.get(
         ),
         wave_id,
         curation_id,
+        curation_name,
         author_id,
         include_replies,
         drop_type,
@@ -736,6 +739,7 @@ export async function prepLatestDropsSearchQuery(
       author?: string;
       wave_id?: string;
       curation_id?: string;
+      curation_name?: string;
       include_replies?: string;
       drop_type?: ApiDropType;
       ids?: string;
@@ -747,6 +751,7 @@ export async function prepLatestDropsSearchQuery(
   const limit = numbers.parseIntOrNull(req.query.limit) ?? 10;
   const wave_id = req.query.wave_id ?? null;
   const curation_id = req.query.curation_id ?? null;
+  const curation_name = req.query.curation_name?.trim() || null;
   const group_id = req.query.group_id ?? null;
   const include_replies = req.query.include_replies === 'true';
   const drop_type_str = (req.query.drop_type as string) ?? null;
@@ -768,6 +773,7 @@ export async function prepLatestDropsSearchQuery(
     limit,
     wave_id,
     curation_id,
+    curation_name,
     group_id,
     author_id,
     include_replies,

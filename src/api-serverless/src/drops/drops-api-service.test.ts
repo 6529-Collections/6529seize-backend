@@ -99,6 +99,7 @@ describe('DropsApiService', () => {
           serial_no_less_than: null,
           wave_id: null,
           curation_id: 'curation-1',
+          curation_name: null,
           author_id: null,
           include_replies: false,
           drop_type: null,
@@ -131,6 +132,7 @@ describe('DropsApiService', () => {
           serial_no_less_than: null,
           wave_id: null,
           curation_id: 'curation-1',
+          curation_name: null,
           author_id: null,
           include_replies: false,
           drop_type: null,
@@ -176,6 +178,7 @@ describe('DropsApiService', () => {
           serial_no_less_than: null,
           wave_id: null,
           curation_id: 'curation-1',
+          curation_name: null,
           author_id: null,
           include_replies: false,
           drop_type: null,
@@ -185,6 +188,64 @@ describe('DropsApiService', () => {
         ctx
       )
     ).rejects.toThrow(`Curation curation-1 not found`);
+
+    expect(dropsDb.findLatestDrops).not.toHaveBeenCalled();
+  });
+
+  it('passes curation name filters into latest drops without resolving a single wave', async () => {
+    const { service, dropsDb, curationsDb, ctx } = createService();
+
+    await expect(
+      service.findLatestDrops(
+        {
+          amount: 10,
+          group_id: null,
+          serial_no_less_than: null,
+          wave_id: null,
+          curation_id: null,
+          curation_name: ' Art ',
+          author_id: null,
+          include_replies: false,
+          drop_type: null,
+          ids: null,
+          contains_media: false
+        },
+        ctx
+      )
+    ).resolves.toEqual([]);
+
+    expect(curationsDb.findWaveCurationById).not.toHaveBeenCalled();
+    expect(dropsDb.findLatestDrops).toHaveBeenCalledWith(
+      expect.objectContaining({
+        wave_id: null,
+        curation_id: null,
+        curation_name: 'Art'
+      }),
+      ctx
+    );
+  });
+
+  it('rejects latest drop filtering by curation id and name together', async () => {
+    const { service, dropsDb, ctx } = createService();
+
+    await expect(
+      service.findLatestDrops(
+        {
+          amount: 10,
+          group_id: null,
+          serial_no_less_than: null,
+          wave_id: null,
+          curation_id: 'curation-1',
+          curation_name: 'Art',
+          author_id: null,
+          include_replies: false,
+          drop_type: null,
+          ids: null,
+          contains_media: false
+        },
+        ctx
+      )
+    ).rejects.toThrow(`Use either curation_id or curation_name, not both`);
 
     expect(dropsDb.findLatestDrops).not.toHaveBeenCalled();
   });

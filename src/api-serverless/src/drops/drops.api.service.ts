@@ -218,6 +218,7 @@ export class DropsApiService {
       group_id,
       wave_id,
       curation_id,
+      curation_name,
       serial_no_less_than,
       author_id,
       include_replies,
@@ -229,6 +230,7 @@ export class DropsApiService {
       serial_no_less_than: number | null;
       wave_id: string | null;
       curation_id: string | null;
+      curation_name: string | null;
       amount: number;
       author_id: string | null;
       include_replies: boolean;
@@ -249,9 +251,12 @@ export class DropsApiService {
     if (group_id && !group_ids_user_is_eligible_for.includes(group_id)) {
       return [];
     }
+    const normalizedCurationName =
+      this.normalizeCurationNameOrThrow(curation_name);
     const { curationFilter, resolvedWaveId } = await this.resolveCurationFilter(
       {
         curationId: curation_id,
+        curationName: normalizedCurationName,
         waveId: wave_id
       },
       ctx
@@ -264,6 +269,7 @@ export class DropsApiService {
         group_ids_user_is_eligible_for,
         wave_id: resolvedWaveId,
         curation_id: curationFilter,
+        curation_name: normalizedCurationName,
         author_id,
         include_replies,
         drop_type: drop_type ? enums.resolveOrThrow(DropType, drop_type) : null,
@@ -630,12 +636,27 @@ export class DropsApiService {
     }
   }
 
+  private normalizeCurationNameOrThrow(
+    curationName: string | null
+  ): string | null {
+    const normalized = curationName?.trim() ?? null;
+    if (!normalized) {
+      return null;
+    }
+    if (normalized.length > 50) {
+      throw new BadRequestException(`Curation name must be 1-50 chars`);
+    }
+    return normalized;
+  }
+
   private async resolveCurationFilter(
     {
       curationId,
+      curationName,
       waveId
     }: {
       curationId: string | null;
+      curationName?: string | null;
       waveId?: string | null;
     },
     ctx: RequestContext
@@ -643,6 +664,11 @@ export class DropsApiService {
     curationFilter: string | null;
     resolvedWaveId: string | null;
   }> {
+    if (curationId && curationName) {
+      throw new BadRequestException(
+        `Use either curation_id or curation_name, not both`
+      );
+    }
     if (!curationId) {
       return {
         curationFilter: null,
