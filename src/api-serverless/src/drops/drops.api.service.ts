@@ -134,7 +134,7 @@ export class DropsApiService {
       .then((it) => it[0]);
   }
 
-  public async findLatestLightDrops(
+  public async findLightDrops(
     {
       waveId,
       limit,

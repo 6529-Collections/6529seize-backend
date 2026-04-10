@@ -43,7 +43,7 @@ router.get(
     const maxSerialNo = numbers.parseIntOrNull(max_serial_no);
     const minSerialNo = numbers.parseIntOrNull(min_serial_no);
     const olderFirst = older_first === 'true';
-    const latestDrops = await dropsService.findLatestLightDrops(
+    const latestDrops = await dropsService.findLightDrops(
       {
         waveId: wave_id ?? null,
         limit: parsedLimit,

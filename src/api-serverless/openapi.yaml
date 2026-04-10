@@ -963,7 +963,7 @@ paths:
         - name: min_serial_no
           in: query
           required: false
-          description: Latest message if null
+          description: Oldest message if null
           schema:
             type: integer
             format: int64
