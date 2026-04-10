@@ -5,44 +5,44 @@ import {
   DropVotersStatsParams,
   LeaderboardParams,
   LeaderboardSort
-} from '../../../drops/drops.db';
-import { ConnectionWrapper } from '../../../sql-executor';
+} from '@/drops/drops.db';
+import { ConnectionWrapper } from '@/sql-executor';
 import {
   BadRequestException,
   ForbiddenException,
   NotFoundException
-} from '../../../exceptions';
+} from '@/exceptions';
 import { ApiDrop } from '../generated/models/ApiDrop';
 import {
   UserGroupsService,
   userGroupsService
 } from '../community-members/user-groups.service';
-import { AuthenticationContext } from '../../../auth-context';
-import { ProfileProxyActionType } from '../../../entities/IProfileProxyAction';
+import { AuthenticationContext } from '@/auth-context';
+import { ProfileProxyActionType } from '@/entities/IProfileProxyAction';
 import { ApiDropSubscriptionTargetAction } from '../generated/models/ApiDropSubscriptionTargetAction';
 import {
   ActivityEventAction,
   ActivityEventTargetType
-} from '../../../entities/IActivityEvent';
+} from '@/entities/IActivityEvent';
 import {
   identitySubscriptionsDb,
   IdentitySubscriptionsDb
 } from '../identity-subscriptions/identity-subscriptions.db';
 import { dropsMappers, DropsMappers } from './drops.mappers';
-import { RequestContext } from '../../../request.context';
+import { RequestContext } from '@/request.context';
 import { wavesApiDb } from '../waves/waves.api.db';
 import { ApiDropTraceItem } from '../generated/models/ApiDropTraceItem';
 import { ApiDropSearchStrategy } from '../generated/models/ApiDropSearchStrategy';
 import { ApiDropType } from '../generated/models/ApiDropType';
-import { DropEntity, DropType } from '../../../entities/IDrop';
+import { DropEntity, DropType } from '@/entities/IDrop';
 import { ApiWaveDropsFeed } from '../generated/models/ApiWaveDropsFeed';
 import { ApiDropsLeaderboardPage } from '../generated/models/ApiDropsLeaderboardPage';
-import { WaveType } from '../../../entities/IWave';
+import { WaveType } from '@/entities/IWave';
 import { ApiWaveLog } from '../generated/models/ApiWaveLog';
 import {
   ProfileActivityLog,
   ProfileActivityLogType
-} from '../../../entities/IProfileActivityLog';
+} from '@/entities/IProfileActivityLog';
 import { ApiProfileMin } from '../generated/models/ApiProfileMin';
 import { ApiWaveVotersPage } from '../generated/models/ApiWaveVotersPage';
 import { ApiWaveVoter } from '../generated/models/ApiWaveVoter';
@@ -52,17 +52,14 @@ import {
 } from '../identities/identity.fetcher';
 import { ApiLightDrop } from '../generated/models/ApiLightDrop';
 import { ApiDropMedia } from '../generated/models/ApiDropMedia';
-import { enums } from '../../../enums';
+import { enums } from '@/enums';
 import { ApiDropWithoutWavesPageWithoutCount } from '../generated/models/ApiDropWithoutWavesPageWithoutCount';
 import { ApiPageSortDirection } from '../generated/models/ApiPageSortDirection';
 import { ApiDropsPage } from '../generated/models/ApiDropsPage';
 import { ApiDropBoostsPage } from '../generated/models/ApiDropBoostsPage';
 import { ApiDropId } from '../generated/models/ApiDropId';
-import {
-  metricsRecorder,
-  MetricsRecorder
-} from '../../../metrics/MetricsRecorder';
-import { userNotifier } from '../../../notifications/user.notifier';
+import { metricsRecorder, MetricsRecorder } from '@/metrics/MetricsRecorder';
+import { userNotifier } from '@/notifications/user.notifier';
 import {
   wsListenersNotifier,
   WsListenersNotifier
@@ -137,12 +134,20 @@ export class DropsApiService {
       .then((it) => it[0]);
   }
 
-  public async findLatestLightDrops(
+  public async findLightDrops(
     {
       waveId,
       limit,
-      max_serial_no
-    }: { waveId: string | null; limit: number; max_serial_no: number | null },
+      max_serial_no,
+      min_serial_no,
+      older_first
+    }: {
+      waveId: string | null;
+      limit: number;
+      max_serial_no: number | null;
+      min_serial_no: number | null;
+      older_first: boolean;
+    },
     ctx: RequestContext
   ): Promise<ApiLightDrop[]> {
     const authenticationContext = ctx.authenticationContext;
@@ -154,20 +159,24 @@ export class DropsApiService {
         context_profile_id
       );
     const lightDropIds = waveId
-      ? await this.dropsDb.findLatestLightDropIdsByWave(
+      ? await this.dropsDb.findLightDropIdsByWave(
           {
             limit,
+            min_serial_no,
             max_serial_no,
             group_ids_user_is_eligible_for,
-            wave_id: waveId
+            wave_id: waveId,
+            older_first
           },
           ctx
         )
-      : await this.dropsDb.findLatestVisibleLightDropIds(
+      : await this.dropsDb.findVisibleLightDropIds(
           {
             limit,
+            min_serial_no,
             max_serial_no,
-            group_ids_user_is_eligible_for
+            group_ids_user_is_eligible_for,
+            older_first
           },
           ctx
         );

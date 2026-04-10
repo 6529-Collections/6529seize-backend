@@ -13,11 +13,11 @@ import {
   DELETED_DROPS_TABLE,
   DROP_BOOSTS_TABLE,
   DROP_CURATIONS_TABLE,
-  DROP_MENTIONED_GROUPS_TABLE,
-  DROP_NFT_LINKS_TABLE,
   DROP_MEDIA_TABLE,
+  DROP_MENTIONED_GROUPS_TABLE,
   DROP_MENTIONED_WAVES_TABLE,
   DROP_METADATA_TABLE,
+  DROP_NFT_LINKS_TABLE,
   DROP_REAL_VOTER_VOTE_IN_TIME_TABLE,
   DROP_REFERENCED_NFTS_TABLE,
   DROP_RELATIONS_TABLE,
@@ -506,23 +506,28 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     return this.db.execute<DropEntity>(sql, params);
   }
 
-  async findLatestLightDropIdsByWave(
+  async findLightDropIdsByWave(
     {
       limit,
+      min_serial_no,
       max_serial_no,
       group_ids_user_is_eligible_for,
-      wave_id
+      wave_id,
+      older_first
     }: {
       limit: number;
+      min_serial_no: number | null;
       max_serial_no: number | null;
       group_ids_user_is_eligible_for: string[];
       wave_id: string;
+      older_first: boolean;
     },
     ctx: RequestContext
   ): Promise<LightDropIdRow[]> {
     const timerLabel = `${this.constructor.name}->findLatestLightDropIdsByWave`;
     ctx.timer?.start(timerLabel);
     const maxSerialNo = max_serial_no ?? Number.MAX_SAFE_INTEGER;
+    const minSerialNo = min_serial_no ?? 0;
     const visibleWaveFilter = this.getVisibleWaveFilterSql(
       group_ids_user_is_eligible_for
     );
@@ -532,17 +537,19 @@ export class DropsDb extends LazyDbAccessCompatibleService {
          from ${DROPS_TABLE} d FORCE INDEX (idx_drop_wave_serial_no)
          where d.wave_id = :wave_id
            and d.serial_no <= :maxSerialNo
+           and d.serial_no >= :minSerialNo
            and exists (
              select 1
              from ${WAVES_TABLE} w
              where w.id = :wave_id
                and (${visibleWaveFilter})
            )
-         order by d.serial_no desc
+         order by d.serial_no ${older_first ? 'asc' : 'desc'}
          limit :limit`,
         {
           limit,
           maxSerialNo,
+          minSerialNo,
           groupsUserIsEligibleFor: group_ids_user_is_eligible_for,
           wave_id
         },
@@ -553,13 +560,17 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     }
   }
 
-  async findLatestVisibleLightDropIds(
+  async findVisibleLightDropIds(
     {
       limit,
+      older_first,
+      min_serial_no,
       max_serial_no,
       group_ids_user_is_eligible_for
     }: {
       limit: number;
+      older_first: boolean;
+      min_serial_no: number | null;
       max_serial_no: number | null;
       group_ids_user_is_eligible_for: string[];
     },
@@ -567,6 +578,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
   ): Promise<LightDropIdRow[]> {
     const timerLabel = `${this.constructor.name}->findLatestVisibleLightDropIds`;
     ctx.timer?.start(timerLabel);
+    const minSerialNo = min_serial_no ?? 0;
     const maxSerialNo = max_serial_no ?? Number.MAX_SAFE_INTEGER;
     const visibleWaveFilter = this.getVisibleWaveFilterSql(
       group_ids_user_is_eligible_for
@@ -575,17 +587,18 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       return await this.db.execute<LightDropIdRow>(
         `select d.id, d.serial_no
          from ${DROPS_TABLE} d FORCE INDEX (PRIMARY)
-         where d.serial_no <= :maxSerialNo
+         where d.serial_no <= :maxSerialNo and d.serial_no >= :minSerialNo
            and exists (
              select 1
              from ${WAVES_TABLE} w
              where w.id = d.wave_id
                and (${visibleWaveFilter})
            )
-         order by d.serial_no desc
+         order by d.serial_no ${older_first ? 'asc' : 'desc'}
          limit :limit`,
         {
           limit,
+          minSerialNo,
           maxSerialNo,
           groupsUserIsEligibleFor: group_ids_user_is_eligible_for
         },

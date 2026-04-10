@@ -42,8 +42,8 @@ describe('DropsApiService', () => {
     const dropsDb = {
       findLatestDrops: jest.fn().mockResolvedValue([]),
       findLatestDropsSimple: jest.fn().mockResolvedValue([]),
-      findLatestLightDropIdsByWave: jest.fn().mockResolvedValue([]),
-      findLatestVisibleLightDropIds: jest.fn().mockResolvedValue([]),
+      findLightDropIdsByWave: jest.fn().mockResolvedValue([]),
+      findVisibleLightDropIds: jest.fn().mockResolvedValue([]),
       findLightDropsByIds: jest.fn().mockResolvedValue([])
     };
     const dropsMappers = {
@@ -219,126 +219,5 @@ describe('DropsApiService', () => {
       }),
       ctx
     );
-  });
-
-  it('uses the wave-scoped light drop selector when wave id is provided', async () => {
-    const { service, dropsDb, ctx, userGroupsService } = createService();
-    dropsDb.findLatestLightDropIdsByWave.mockResolvedValue([
-      { id: 'drop-1', serial_no: 2 }
-    ]);
-    dropsDb.findLightDropsByIds.mockResolvedValue([
-      {
-        id: 'drop-1',
-        wave_id: 'wave-1',
-        wave_name: 'Wave 1',
-        author: 'alice',
-        created_at: 123,
-        serial_no: 2,
-        drop_type: 'CHAT',
-        title: null,
-        reply_to_drop_id: null,
-        part_content: 'hello',
-        part_quoted_drop_id: null,
-        medias_json: null
-      }
-    ]);
-    userGroupsService.getGroupsUserIsEligibleFor.mockResolvedValue(['group-1']);
-
-    await expect(
-      service.findLatestLightDrops(
-        {
-          waveId: 'wave-1',
-          limit: 10,
-          max_serial_no: 20
-        },
-        ctx
-      )
-    ).resolves.toEqual([
-      expect.objectContaining({
-        id: 'drop-1',
-        wave_id: 'wave-1',
-        wave_name: 'Wave 1',
-        author: 'alice',
-        created_at: 123,
-        serial_no: 2,
-        part_1_text: 'hello',
-        part_1_medias: []
-      })
-    ]);
-
-    expect(dropsDb.findLatestLightDropIdsByWave).toHaveBeenCalledWith(
-      {
-        limit: 10,
-        max_serial_no: 20,
-        group_ids_user_is_eligible_for: ['group-1'],
-        wave_id: 'wave-1'
-      },
-      ctx
-    );
-    expect(dropsDb.findLatestVisibleLightDropIds).not.toHaveBeenCalled();
-    expect(dropsDb.findLightDropsByIds).toHaveBeenCalledWith(['drop-1'], ctx);
-  });
-
-  it('uses the global light drop selector when wave id is omitted', async () => {
-    const { service, dropsDb, ctx, userGroupsService } = createService();
-    dropsDb.findLatestVisibleLightDropIds.mockResolvedValue([
-      { id: 'drop-2', serial_no: 3 }
-    ]);
-    dropsDb.findLightDropsByIds.mockResolvedValue([
-      {
-        id: 'drop-2',
-        wave_id: 'wave-2',
-        wave_name: 'Wave 2',
-        author: 'bob',
-        created_at: 456,
-        serial_no: 3,
-        drop_type: 'CHAT',
-        title: 'Title',
-        reply_to_drop_id: 'parent-1',
-        part_content: null,
-        part_quoted_drop_id: 'quoted-1',
-        medias_json:
-          '[{"url":"https://example.com/drop-2.png","mime_type":"image/png"}]'
-      }
-    ]);
-    userGroupsService.getGroupsUserIsEligibleFor.mockResolvedValue([]);
-
-    await expect(
-      service.findLatestLightDrops(
-        {
-          waveId: null,
-          limit: 5,
-          max_serial_no: null
-        },
-        ctx
-      )
-    ).resolves.toEqual([
-      expect.objectContaining({
-        id: 'drop-2',
-        wave_id: 'wave-2',
-        wave_name: 'Wave 2',
-        author: 'bob',
-        created_at: 456,
-        has_quote: true,
-        is_reply_drop: true,
-        part_1_medias: [
-          {
-            url: 'https://example.com/drop-2.png',
-            mime_type: 'image/png'
-          }
-        ]
-      })
-    ]);
-
-    expect(dropsDb.findLatestVisibleLightDropIds).toHaveBeenCalledWith(
-      {
-        limit: 5,
-        max_serial_no: null,
-        group_ids_user_is_eligible_for: []
-      },
-      ctx
-    );
-    expect(dropsDb.findLatestLightDropIdsByWave).not.toHaveBeenCalled();
-    expect(dropsDb.findLightDropsByIds).toHaveBeenCalledWith(['drop-2'], ctx);
   });
 });
