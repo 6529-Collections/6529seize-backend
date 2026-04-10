@@ -227,10 +227,12 @@ describeWithSeed(
   () => {
     it('finds the latest visible ids within a wave and respects max serial', async () => {
       await expect(
-        repo.findLatestLightDropIdsByWave(
+        repo.findLightDropIdsByWave(
           {
             limit: 10,
             max_serial_no: 103,
+            min_serial_no: 0,
+            older_first: false,
             group_ids_user_is_eligible_for: [],
             wave_id: publicWaveA.id
           },
@@ -244,10 +246,12 @@ describeWithSeed(
 
     it('returns no wave-scoped rows when the wave is not visible', async () => {
       await expect(
-        repo.findLatestLightDropIdsByWave(
+        repo.findLightDropIdsByWave(
           {
             limit: 10,
             max_serial_no: null,
+            min_serial_no: null,
+            older_first: false,
             group_ids_user_is_eligible_for: [],
             wave_id: privateWave.id
           },
@@ -258,10 +262,12 @@ describeWithSeed(
 
     it('finds the latest visible ids globally and skips private waves without membership', async () => {
       await expect(
-        repo.findLatestVisibleLightDropIds(
+        repo.findVisibleLightDropIds(
           {
             limit: 10,
+            min_serial_no: null,
             max_serial_no: null,
+            older_first: false,
             group_ids_user_is_eligible_for: []
           },
           ctx
@@ -275,10 +281,12 @@ describeWithSeed(
 
     it('includes eligible private waves in the global selector', async () => {
       await expect(
-        repo.findLatestVisibleLightDropIds(
+        repo.findVisibleLightDropIds(
           {
             limit: 10,
+            min_serial_no: null,
             max_serial_no: null,
+            older_first: false,
             group_ids_user_is_eligible_for: ['group-1']
           },
           ctx
