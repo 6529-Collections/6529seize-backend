@@ -74,7 +74,7 @@ router.get(
       groupName,
       authorId,
       createdAtLessThan,
-      query.include_profile_groups,
+      true,
       { authenticationContext, timer }
     );
     res.send(response);
