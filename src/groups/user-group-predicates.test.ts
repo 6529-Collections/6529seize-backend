@@ -22,6 +22,7 @@ import {
   isGroupTotalRepByUserOutgoing,
   isGroupTotalRepForCategoryIncoming,
   isGroupTotalRepForCategoryOutgoing,
+  isPureProfileGroup,
   isGroupViolatingAnySpecificCicCriteria,
   isGroupViolatingAnySpecificRepCriteria,
   isProfileHavingContractTokenOwningsMisMatch,
@@ -53,6 +54,15 @@ import {
   MEMES_CONTRACT
 } from '@/constants';
 import { RateMatter } from '../entities/IRating';
+
+function withDerivedFields(
+  group: Omit<UserGroupEntity, 'is_pure_profile_group'>
+): UserGroupEntity {
+  return {
+    ...group,
+    is_pure_profile_group: isPureProfileGroup(group as UserGroupEntity)
+  };
+}
 
 function aProfile({
   tdh,
@@ -130,7 +140,7 @@ function aGroup({
   excluded_profile_group_id?: string | null;
   is_beneficiary_of_grant_id?: string | null;
 }): UserGroupEntity {
-  return {
+  return withDerivedFields({
     id: 'a-group-id',
     name: 'A Group',
     cic_min: cic_min ?? null,
@@ -164,7 +174,7 @@ function aGroup({
     is_private: false,
     is_direct_message: false,
     is_beneficiary_of_grant_id: is_beneficiary_of_grant_id ?? null
-  };
+  });
 }
 
 describe('UserGroupPredicates', () => {
@@ -391,6 +401,40 @@ describe('UserGroupPredicates', () => {
           aGroup({ owns_nextgen: false }),
           aGroup({ owns_nextgen: false })
         ])
+      ).toBe(false);
+    });
+  });
+
+  describe('isPureProfileGroup', () => {
+    it('should return true when profile_group_id is the only meaningful criteria', () => {
+      expect(
+        isPureProfileGroup(aGroup({ profile_group_id: 'a-profile-group-id' }))
+      ).toBe(true);
+    });
+
+    it('should return false when profile_group_id is not set', () => {
+      expect(isPureProfileGroup(aGroup({}))).toBe(false);
+    });
+
+    it('should return false when excluded_profile_group_id is set', () => {
+      expect(
+        isPureProfileGroup(
+          aGroup({
+            profile_group_id: 'a-profile-group-id',
+            excluded_profile_group_id: 'another-profile-group-id'
+          })
+        )
+      ).toBe(false);
+    });
+
+    it('should return false when another meaningful criteria is set', () => {
+      expect(
+        isPureProfileGroup(
+          aGroup({
+            profile_group_id: 'a-profile-group-id',
+            tdh_min: 1
+          })
+        )
       ).toBe(false);
     });
   });

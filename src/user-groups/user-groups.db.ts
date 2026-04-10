@@ -31,7 +31,10 @@ import { DbPoolName } from '../db-query.options';
 const mysql = require('mysql');
 
 export class UserGroupsDb extends LazyDbAccessCompatibleService {
-  async save(entity: UserGroupEntity, connection: ConnectionWrapper<any>) {
+  async save(
+    entity: Omit<UserGroupEntity, 'is_pure_profile_group'>,
+    connection: ConnectionWrapper<any>
+  ) {
     await this.db.execute(
       `
           insert into ${USER_GROUPS_TABLE} (id,
@@ -212,6 +215,7 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
     name: string | null,
     authorId: string | null,
     created_at_less_than: number | null,
+    includeProfileGroups: boolean,
     authenticatedUserId: string | null,
     eligibleGroupIds: string[],
     ctx: RequestContext
@@ -224,6 +228,9 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
       authenticatedUserId,
       eligibleGroupIds
     };
+    if (!includeProfileGroups) {
+      sql += ` and is_pure_profile_group is false `;
+    }
     if (name) {
       sql += ` and name like :name `;
       params.name = `%${name}%`;

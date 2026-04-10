@@ -31,40 +31,38 @@ import { Timer } from '../../../time';
 import { RequestContext } from '../../../request.context';
 import { identityFetcher } from '../identities/identity.fetcher';
 import { enums } from '../../../enums';
-import { numbers } from '../../../numbers';
 import { collections } from '../../../collections';
 import { WALLET_REGEX } from '@/constants';
 import { ApiGroupTdhInclusionStrategy } from '../generated/models/ApiGroupTdhInclusionStrategy';
 
 const router = asyncRouter();
 
+interface SearchUserGroupsQuery {
+  group_name: string | null;
+  author_identity: string | null;
+  created_at_less_than: number | null;
+  include_profile_groups: boolean;
+}
+
 router.get(
   '/',
   maybeAuthenticatedUser(),
   async (
-    req: Request<
-      any,
-      any,
-      {
-        group_name: string;
-        author_identity: string;
-        created_at_less_than?: string;
-      },
-      any,
-      any
-    >,
+    req: Request<any, any, any, SearchUserGroupsQuery, any>,
     res: Response<ApiResponse<ApiGroupFull[]>>
   ) => {
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
-    const groupName = req.query.group_name ?? null;
-    const createdAtLessThan = numbers.parseIntOrNull(
-      req.query.created_at_less_than
+    const query = getValidatedByJoiOrThrow<SearchUserGroupsQuery>(
+      req.query,
+      SearchUserGroupsQuerySchema
     );
+    const groupName = query.group_name;
+    const createdAtLessThan = query.created_at_less_than;
     let authorId: string | null = null;
-    if (req.query.author_identity) {
+    if (query.author_identity) {
       authorId = await identityFetcher.getProfileIdByIdentityKey(
-        { identityKey: req.query.author_identity },
+        { identityKey: query.author_identity },
         {}
       );
       if (!authorId) {
@@ -76,6 +74,7 @@ router.get(
       groupName,
       authorId,
       createdAtLessThan,
+      query.include_profile_groups,
       { authenticationContext, timer }
     );
     res.send(response);
@@ -308,6 +307,14 @@ const NullableStringSchema: Joi.StringSchema = Joi.string()
   .optional()
   .allow(null)
   .default(null);
+
+const SearchUserGroupsQuerySchema: Joi.ObjectSchema<SearchUserGroupsQuery> =
+  Joi.object<SearchUserGroupsQuery>({
+    group_name: NullableStringSchema,
+    author_identity: NullableStringSchema,
+    created_at_less_than: NullableIntegerSchema,
+    include_profile_groups: Joi.boolean().optional().default(false)
+  });
 
 const GroupTdhFilterSchema: Joi.ObjectSchema<ApiGroupTdhFilter> =
   Joi.object<ApiGroupTdhFilter>({

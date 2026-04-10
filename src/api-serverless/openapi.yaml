@@ -1887,6 +1887,13 @@ paths:
           schema:
             type: number
             format: int64
+        - name: include_profile_groups
+          description: Include pure profile groups in search results
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
       responses:
         "200":
           description: successful operation

@@ -454,6 +454,14 @@ export const hasGroupGotAnyNonIdentityConditions = (
   );
 };
 
+export const isPureProfileGroup = (entity: UserGroupEntity) => {
+  return (
+    entity.profile_group_id !== null &&
+    entity.excluded_profile_group_id === null &&
+    !hasGroupGotAnyNonIdentityConditions(entity)
+  );
+};
+
 export const isProfileViolatingGroupsProfileTdhCriteria = (
   profile: ProfileSimpleMetrics,
   entity: UserGroupEntity
