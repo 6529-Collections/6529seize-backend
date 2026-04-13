@@ -268,7 +268,10 @@ export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
       .then((it) => it?.cnt ?? 0);
   }
 
-  async countWaveSubscribers(waveId: string) {
+  async countWaveSubscribers(
+    waveId: string,
+    connection?: ConnectionWrapper<any>
+  ) {
     return this.db
       .oneOrNull<{
         cnt: number;
@@ -282,7 +285,8 @@ export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
           waveId,
           targetType: ActivityEventTargetType.WAVE,
           targetAction: ActivityEventAction.DROP_CREATED
-        }
+        },
+        connection ? { wrappedConnection: connection } : undefined
       )
       .then((it) => it?.cnt ?? 0);
   }
