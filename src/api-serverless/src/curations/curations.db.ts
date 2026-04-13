@@ -14,6 +14,10 @@ import { RequestContext } from '@/request.context';
 import { Time } from '@/time';
 
 export class CurationsDb extends LazyDbAccessCompatibleService {
+  private readonly waveCurationOrderBy = `
+      order by (priority_order is null) asc, priority_order asc, created_at asc, id asc
+    `;
+
   public async findWaveCurationById(
     param: { id: string; wave_id?: string },
     connection?: ConnectionWrapper<any>
@@ -36,7 +40,7 @@ export class CurationsDb extends LazyDbAccessCompatibleService {
       `
       select * from ${WAVE_CURATIONS_TABLE}
       where wave_id = :waveId
-      order by created_at asc
+      ${this.waveCurationOrderBy}
       `,
       { waveId },
       connection ? { wrappedConnection: connection } : undefined
@@ -54,6 +58,7 @@ export class CurationsDb extends LazyDbAccessCompatibleService {
       `
       select * from ${WAVE_CURATIONS_TABLE}
       where wave_id in (:waveIds)
+      ${this.waveCurationOrderBy}
       `,
       { waveIds },
       connection ? { wrappedConnection: connection } : undefined
@@ -83,9 +88,9 @@ export class CurationsDb extends LazyDbAccessCompatibleService {
       await this.db.execute(
         `
         insert into ${WAVE_CURATIONS_TABLE}
-        (id, name, wave_id, community_group_id, created_at, updated_at)
+        (id, name, wave_id, community_group_id, created_at, updated_at, priority_order)
         values
-        (:id, :name, :wave_id, :community_group_id, :created_at, :updated_at)
+        (:id, :name, :wave_id, :community_group_id, :created_at, :updated_at, :priority_order)
       `,
         entity,
         { wrappedConnection: ctx.connection }
@@ -102,6 +107,7 @@ export class CurationsDb extends LazyDbAccessCompatibleService {
       name: string;
       community_group_id: string;
       updated_at: number;
+      priority_order: number;
     },
     ctx: RequestContext
   ): Promise<void> {
@@ -110,7 +116,11 @@ export class CurationsDb extends LazyDbAccessCompatibleService {
       await this.db.execute(
         `
         update ${WAVE_CURATIONS_TABLE}
-        set name = :name, community_group_id = :community_group_id, updated_at = :updated_at
+        set
+          name = :name,
+          community_group_id = :community_group_id,
+          updated_at = :updated_at,
+          priority_order = :priority_order
         where id = :id and wave_id = :wave_id
       `,
         param,
@@ -118,6 +128,95 @@ export class CurationsDb extends LazyDbAccessCompatibleService {
       );
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->updateWaveCuration`);
+    }
+  }
+
+  public async lockWaveCurationsByWaveId(
+    waveId: string,
+    ctx: RequestContext
+  ): Promise<WaveCurationEntity[]> {
+    try {
+      ctx.timer?.start(`${this.constructor.name}->lockWaveCurationsByWaveId`);
+      return await this.db.execute<WaveCurationEntity>(
+        `
+        select * from ${WAVE_CURATIONS_TABLE}
+        where wave_id = :waveId
+        ${this.waveCurationOrderBy}
+        for update
+        `,
+        { waveId },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->lockWaveCurationsByWaveId`);
+    }
+  }
+
+  public async incrementWaveCurationPriorityOrderRange(
+    param: {
+      wave_id: string;
+      from_priority_order: number;
+      to_priority_order?: number;
+    },
+    ctx: RequestContext
+  ): Promise<void> {
+    try {
+      ctx.timer?.start(
+        `${this.constructor.name}->incrementWaveCurationPriorityOrderRange`
+      );
+      await this.db.execute(
+        `
+        update ${WAVE_CURATIONS_TABLE}
+        set priority_order = priority_order + 1
+        where wave_id = :wave_id
+          and priority_order >= :from_priority_order
+          ${
+            param.to_priority_order === undefined
+              ? ''
+              : 'and priority_order <= :to_priority_order'
+          }
+      `,
+        param,
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(
+        `${this.constructor.name}->incrementWaveCurationPriorityOrderRange`
+      );
+    }
+  }
+
+  public async decrementWaveCurationPriorityOrderRange(
+    param: {
+      wave_id: string;
+      from_priority_order: number;
+      to_priority_order?: number;
+    },
+    ctx: RequestContext
+  ): Promise<void> {
+    try {
+      ctx.timer?.start(
+        `${this.constructor.name}->decrementWaveCurationPriorityOrderRange`
+      );
+      await this.db.execute(
+        `
+        update ${WAVE_CURATIONS_TABLE}
+        set priority_order = priority_order - 1
+        where wave_id = :wave_id
+          and priority_order >= :from_priority_order
+          ${
+            param.to_priority_order === undefined
+              ? ''
+              : 'and priority_order <= :to_priority_order'
+          }
+      `,
+        param,
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(
+        `${this.constructor.name}->decrementWaveCurationPriorityOrderRange`
+      );
     }
   }
 
@@ -251,7 +350,11 @@ export class CurationsDb extends LazyDbAccessCompatibleService {
       from ${WAVE_CURATIONS_TABLE} wcg
       join ${DROP_CURATIONS_TABLE} dc on dc.curation_id = wcg.id
       where dc.drop_id = :dropId
-      order by wcg.created_at asc, wcg.id asc
+      order by
+        (wcg.priority_order is null) asc,
+        wcg.priority_order asc,
+        wcg.created_at asc,
+        wcg.id asc
       `,
       { dropId },
       connection ? { wrappedConnection: connection } : undefined

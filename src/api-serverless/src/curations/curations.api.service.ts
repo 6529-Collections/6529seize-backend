@@ -49,9 +49,7 @@ export class CurationsApiService {
     );
     return await this.curationsDb
       .findWaveCurationsByWaveId(waveId, ctx.connection)
-      .then((entities) =>
-        entities.map((entity) => this.waveCurationToApi(entity))
-      );
+      .then((entities) => this.waveCurationsToApi(entities));
   }
 
   public async createWaveCuration(
@@ -72,6 +70,21 @@ export class CurationsApiService {
           },
           txCtx
         );
+        const lockedCurations =
+          await this.curationsDb.lockWaveCurationsByWaveId(wave.id, txCtx);
+        const priorityOrder = this.resolveRequestedPriorityOrderOrThrow({
+          requestedPriorityOrder: request.priority_order,
+          maxPriorityOrder: lockedCurations.length + 1
+        });
+        if (priorityOrder <= lockedCurations.length) {
+          await this.curationsDb.incrementWaveCurationPriorityOrderRange(
+            {
+              wave_id: wave.id,
+              from_priority_order: priorityOrder
+            },
+            txCtx
+          );
+        }
         const now = Time.currentMillis();
         const entity: WaveCurationEntity = {
           id: randomUUID(),
@@ -79,7 +92,8 @@ export class CurationsApiService {
           wave_id: wave.id,
           community_group_id: request.group_id,
           created_at: now,
-          updated_at: now
+          updated_at: now,
+          priority_order: priorityOrder
         };
         await this.curationsDb.insertWaveCuration(entity, txCtx);
         return this.waveCurationToApi(entity);
@@ -97,13 +111,18 @@ export class CurationsApiService {
       async (connection) => {
         const txCtx: RequestContext = { ...ctx, connection };
         const { wave } = await this.assertCanManageWaveCurations(waveId, txCtx);
-        const targetCuration = await this.curationsDb.findWaveCurationById(
-          { id: curationId, wave_id: wave.id },
-          connection
+        const lockedCurations =
+          await this.curationsDb.lockWaveCurationsByWaveId(wave.id, txCtx);
+        const targetCuration = lockedCurations.find(
+          (curation) => curation.id === curationId
         );
         if (!targetCuration) {
           throw new NotFoundException(`Curation ${curationId} not found`);
         }
+        const currentPriorityOrder = this.resolveCurrentPriorityOrder(
+          targetCuration,
+          lockedCurations
+        );
         const validatedName = this.validateNameOrThrow(request.name);
         await this.assertCommunityGroupCanBeUsed(request.group_id, txCtx);
         await this.assertCurationNameIsUniqueInWave(
@@ -114,13 +133,44 @@ export class CurationsApiService {
           },
           txCtx
         );
+        const requestedPriorityOrder = request.priority_order;
+        if (requestedPriorityOrder !== undefined) {
+          this.assertPriorityOrderWithinBoundariesOrThrow({
+            priorityOrder: requestedPriorityOrder,
+            maxPriorityOrder: lockedCurations.length + 1
+          });
+        }
+        const nextPriorityOrder =
+          requestedPriorityOrder === undefined
+            ? currentPriorityOrder
+            : Math.min(requestedPriorityOrder, lockedCurations.length);
+        if (nextPriorityOrder < currentPriorityOrder) {
+          await this.curationsDb.incrementWaveCurationPriorityOrderRange(
+            {
+              wave_id: wave.id,
+              from_priority_order: nextPriorityOrder,
+              to_priority_order: currentPriorityOrder - 1
+            },
+            txCtx
+          );
+        } else if (nextPriorityOrder > currentPriorityOrder) {
+          await this.curationsDb.decrementWaveCurationPriorityOrderRange(
+            {
+              wave_id: wave.id,
+              from_priority_order: currentPriorityOrder + 1,
+              to_priority_order: nextPriorityOrder
+            },
+            txCtx
+          );
+        }
         await this.curationsDb.updateWaveCuration(
           {
             id: curationId,
             wave_id: wave.id,
             name: validatedName,
             community_group_id: request.group_id,
-            updated_at: Time.currentMillis()
+            updated_at: Time.currentMillis(),
+            priority_order: nextPriorityOrder
           },
           txCtx
         );
@@ -145,13 +195,18 @@ export class CurationsApiService {
       async (connection) => {
         const txCtx: RequestContext = { ...ctx, connection };
         const { wave } = await this.assertCanManageWaveCurations(waveId, txCtx);
-        const targetCuration = await this.curationsDb.findWaveCurationById(
-          { id: curationId, wave_id: wave.id },
-          connection
+        const lockedCurations =
+          await this.curationsDb.lockWaveCurationsByWaveId(wave.id, txCtx);
+        const targetCuration = lockedCurations.find(
+          (curation) => curation.id === curationId
         );
         if (!targetCuration) {
           throw new NotFoundException(`Curation ${curationId} not found`);
         }
+        const currentPriorityOrder = this.resolveCurrentPriorityOrder(
+          targetCuration,
+          lockedCurations
+        );
         await this.curationsDb.deleteDropCurationsByCurationId(
           curationId,
           txCtx
@@ -160,6 +215,15 @@ export class CurationsApiService {
           { id: curationId, wave_id: wave.id },
           txCtx
         );
+        if (currentPriorityOrder < lockedCurations.length) {
+          await this.curationsDb.decrementWaveCurationPriorityOrderRange(
+            {
+              wave_id: wave.id,
+              from_priority_order: currentPriorityOrder + 1
+            },
+            txCtx
+          );
+        }
       }
     );
   }
@@ -233,12 +297,13 @@ export class CurationsApiService {
         this.curationsDb.findCurationIdsForDropId(drop.id, ctx.connection),
         this.getEligibleGroupIdsForAuthenticatedCurator(ctx)
       ]);
-    return waveCurations.map((entity) =>
+    return waveCurations.map((entity, index) =>
       this.dropCurationToApi(entity, {
         dropIncluded: dropCurationIds.has(entity.id),
         authenticatedUserCanCurate: curatorEligibleGroupIds.includes(
           entity.community_group_id
-        )
+        ),
+        fallbackPriorityOrder: index + 1
       })
     );
   }
@@ -394,14 +459,70 @@ export class CurationsApiService {
     }
   }
 
-  private waveCurationToApi(entity: WaveCurationEntity): ApiWaveCuration {
+  private resolveRequestedPriorityOrderOrThrow(param: {
+    requestedPriorityOrder: number | undefined;
+    maxPriorityOrder: number;
+  }): number {
+    const priorityOrder =
+      param.requestedPriorityOrder ?? param.maxPriorityOrder;
+    this.assertPriorityOrderWithinBoundariesOrThrow({
+      priorityOrder,
+      maxPriorityOrder: param.maxPriorityOrder
+    });
+    return priorityOrder;
+  }
+
+  private assertPriorityOrderWithinBoundariesOrThrow(param: {
+    priorityOrder: number;
+    maxPriorityOrder: number;
+  }): void {
+    if (
+      !Number.isInteger(param.priorityOrder) ||
+      param.priorityOrder < 1 ||
+      param.priorityOrder > param.maxPriorityOrder
+    ) {
+      throw new BadRequestException(
+        `Curation priority_order must be between 1 and ${param.maxPriorityOrder}`
+      );
+    }
+  }
+
+  private resolveCurrentPriorityOrder(
+    targetCuration: WaveCurationEntity,
+    orderedCurations: WaveCurationEntity[]
+  ): number {
+    return (
+      targetCuration.priority_order ??
+      orderedCurations.findIndex(
+        (curation) => curation.id === targetCuration.id
+      ) + 1
+    );
+  }
+
+  private waveCurationsToApi(
+    entities: WaveCurationEntity[]
+  ): ApiWaveCuration[] {
+    return entities.map((entity, index) =>
+      this.waveCurationToApi(entity, index + 1)
+    );
+  }
+
+  private waveCurationToApi(
+    entity: WaveCurationEntity,
+    fallbackPriorityOrder?: number
+  ): ApiWaveCuration {
+    const priorityOrder = entity.priority_order ?? fallbackPriorityOrder;
+    if (priorityOrder === undefined) {
+      throw new Error(`Curation ${entity.id} is missing priority_order`);
+    }
     return {
       id: entity.id,
       name: entity.name,
       wave_id: entity.wave_id,
       group_id: entity.community_group_id,
       created_at: entity.created_at,
-      updated_at: entity.updated_at
+      updated_at: entity.updated_at,
+      priority_order: priorityOrder
     };
   }
 
@@ -410,10 +531,11 @@ export class CurationsApiService {
     param: {
       dropIncluded: boolean;
       authenticatedUserCanCurate: boolean;
+      fallbackPriorityOrder?: number;
     }
   ): ApiDropCuration {
     return {
-      ...this.waveCurationToApi(entity),
+      ...this.waveCurationToApi(entity, param.fallbackPriorityOrder),
       drop_included: param.dropIncluded,
       authenticated_user_can_curate: param.authenticatedUserCanCurate
     };

@@ -26,4 +26,7 @@ export class WaveCurationEntity {
 
   @Column({ type: 'bigint', nullable: false })
   readonly updated_at!: number;
+
+  @Column({ type: 'int', nullable: true })
+  readonly priority_order!: number | null;
 }
