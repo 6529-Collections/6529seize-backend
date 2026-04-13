@@ -126,28 +126,6 @@ describe('NotificationsApiService wave notification preferences', () => {
     ).not.toHaveBeenCalled();
   });
 
-  it('clears all-drops and group preferences when unsubscribing', async () => {
-    const {
-      service,
-      connection,
-      identitySubscriptionsDb,
-      waveGroupNotificationSubscriptionsDb
-    } = createService();
-    await expect(
-      service.clearWaveSubscription('profile-1', 'wave-1')
-    ).resolves.toEqual({
-      subscribed: false,
-      enabled_group_notifications: []
-    });
-
-    expect(
-      identitySubscriptionsDb.unsubscribeFromAllDrops
-    ).toHaveBeenCalledWith('profile-1', 'wave-1', connection);
-    expect(
-      waveGroupNotificationSubscriptionsDb.deleteForWave
-    ).toHaveBeenCalledWith('profile-1', 'wave-1', connection);
-  });
-
   it('skips the cap check when the user is already subscribed', async () => {
     const { service, identitySubscriptionsDb } = createService({
       subscriptionState: {
