@@ -457,7 +457,6 @@ export class NotificationsApiService {
     const mentionedGroups = (
       normalizedRequest.enabled_group_notifications ?? []
     ).map((group) => enums.resolveOrThrow(DropGroupMention, group));
-
     return this.identitySubscriptionsDb.executeNativeQueriesInTransaction(
       async (connection) => {
         const [subscriptionState, existingEnabledGroups] = await Promise.all([
@@ -503,15 +502,6 @@ export class NotificationsApiService {
             waveId,
             connection
           );
-          await this.waveGroupNotificationSubscriptionsDb.deleteForWave(
-            identityId,
-            waveId,
-            connection
-          );
-          return {
-            subscribed: false,
-            enabled_group_notifications: []
-          };
         }
 
         if (
