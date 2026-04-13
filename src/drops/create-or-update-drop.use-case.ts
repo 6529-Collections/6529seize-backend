@@ -126,6 +126,10 @@ export class CreateOrUpdateDropUseCase {
     return dropId;
   }
 
+  private getAllDropsNotificationsSubscribersLimit(): number {
+    return env.getIntOrNull('ALL_DROPS_NOTIFICATIONS_SUBSCRIBERS_LIMIT') ?? 15;
+  }
+
   public async execute(
     model: CreateOrUpdateDropModel,
     isDescriptionDrop: boolean,
@@ -1451,15 +1455,17 @@ export class CreateOrUpdateDropUseCase {
     timer?.start(`${CreateOrUpdateDropUseCase.name}->notifyWaveDropRecipients`);
     const dropId = this.getRequiredDropId(model);
     const authorId = this.getRequiredAuthorId(model);
-    const followerRecipients =
-      await this.identitySubscriptionsDb.findWaveFollowersEligibleForDropNotifications(
+    const [followerRecipients, waveSubscribersCount] = await Promise.all([
+      this.identitySubscriptionsDb.findWaveFollowersEligibleForDropNotifications(
         {
           waveId: wave.id,
           authorId,
           mentionedGroups: model.mentioned_groups
         },
         connection
-      );
+      ),
+      this.identitySubscriptionsDb.countWaveSubscribers(wave.id, connection)
+    ]);
     const mutedDirectMentionedIdentityIds = new Set(
       await this.identitySubscriptionsDb.findMutedWaveReaders(
         wave.id,
@@ -1481,13 +1487,16 @@ export class CreateOrUpdateDropUseCase {
         .map((recipient) => recipient.identity_id)
     ]);
     const mentionedIdentityIdsSet = new Set(mentionedIdentityIds);
-    const allDropsSubscriberIds = followerRecipients
-      .filter(
-        (recipient) =>
-          recipient.subscribed_to_all_drops &&
-          !mentionedIdentityIdsSet.has(recipient.identity_id)
-      )
-      .map((recipient) => recipient.identity_id);
+    const allDropsSubscriberIds =
+      waveSubscribersCount < this.getAllDropsNotificationsSubscribersLimit()
+        ? followerRecipients
+            .filter(
+              (recipient) =>
+                recipient.subscribed_to_all_drops &&
+                !mentionedIdentityIdsSet.has(recipient.identity_id)
+            )
+            .map((recipient) => recipient.identity_id)
+        : [];
 
     const pendingPushNotificationIds =
       await this.userNotifier.notifyWaveDropCreatedRecipients(
