@@ -93,7 +93,8 @@ const router = asyncRouter();
 
 const WaveCurationSchema = Joi.object<ApiWaveCurationRequest>({
   name: Joi.string().trim().min(1).max(50).required(),
-  group_id: Joi.string().required()
+  group_id: Joi.string().required(),
+  priority_order: Joi.number().integer().min(1).optional()
 });
 
 async function handleSimpleWaveAction(

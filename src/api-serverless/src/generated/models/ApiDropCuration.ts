@@ -21,6 +21,7 @@ export class ApiDropCuration {
     'group_id': string;
     'created_at': number;
     'updated_at': number;
+    'priority_order': number;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -72,6 +73,12 @@ export class ApiDropCuration {
             "baseName": "updated_at",
             "type": "number",
             "format": "int64"
+        },
+        {
+            "name": "priority_order",
+            "baseName": "priority_order",
+            "type": "number",
+            "format": "int32"
         }    ];
 
     static getAttributeTypeMap() {

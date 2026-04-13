@@ -971,7 +971,9 @@ paths:
         - name: older_first
           in: query
           required: false
-          description: By default this endpoint orders things newer first, but if you set it to true then it starts from older drops.
+          description: >-
+            By default this endpoint orders things newer first, but if you set
+            it to true then it starts from older drops.
           schema:
             type: boolean
         - name: wave_id
@@ -11549,6 +11551,7 @@ components:
         - group_id
         - created_at
         - updated_at
+        - priority_order
       properties:
         id:
           type: string
@@ -11564,6 +11567,10 @@ components:
         updated_at:
           type: number
           format: int64
+        priority_order:
+          type: integer
+          format: int32
+          minimum: 1
     ApiWaveCurationRequest:
       type: object
       required:
@@ -11576,6 +11583,10 @@ components:
           maxLength: 50
         group_id:
           type: string
+        priority_order:
+          type: integer
+          format: int32
+          minimum: 1
     ApiWaveDecision:
       type: object
       required:
