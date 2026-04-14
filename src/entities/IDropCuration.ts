@@ -5,6 +5,10 @@ import { DROP_CURATIONS_TABLE } from '@/constants';
 @Index('idx_drop_curations_wave_drop', ['wave_id', 'drop_id'])
 @Index('idx_drop_curations_wave_curation', ['wave_id', 'curation_id'])
 @Index('idx_drop_curations_curation', ['curation_id'])
+@Index('idx_drop_curations_curation_priority_order', [
+  'curation_id',
+  'priority_order'
+])
 @Index('idx_drop_curations_curated_by', ['curated_by'])
 export class DropCurationEntity {
   @PrimaryColumn({ type: 'varchar', length: 100, nullable: false })
@@ -24,4 +28,7 @@ export class DropCurationEntity {
 
   @Column({ type: 'varchar', length: 100, nullable: false })
   readonly curated_by!: string;
+
+  @Column({ type: 'bigint', nullable: true })
+  readonly priority_order!: number | null;
 }

@@ -19,7 +19,8 @@ describe('CurationsApiService', () => {
     },
     eligibleGroupIds = ['community-group-1'],
     authenticationContext = AuthenticationContext.fromProfileId('profile-1'),
-    curatedCurationIds = ['curation-1'],
+    curatedCurationIds = [],
+    dropCurations,
     waveCurations = [
       {
         id: 'curation-1',
@@ -37,12 +38,25 @@ describe('CurationsApiService', () => {
     eligibleGroupIds?: string[];
     authenticationContext?: AuthenticationContext;
     curatedCurationIds?: string[];
+    dropCurations?: Record<string, unknown>[];
     waveCurations?: Record<string, unknown>[];
   } = {}) {
     const connection = { id: 'tx' } as any;
     const storedWaveCurations = waveCurations.map((curation) => ({
       ...curation
     }));
+    const storedDropCurations = (
+      dropCurations ??
+      curatedCurationIds.map((curationId, index) => ({
+        drop_id: 'drop-1',
+        curation_id: curationId,
+        curated_by: 'profile-1',
+        created_at: index + 1,
+        updated_at: index + 1,
+        wave_id: 'wave-1',
+        priority_order: index + 1
+      }))
+    ).map((curation) => ({ ...curation }));
     const getSortedWaveCurations = () =>
       [...storedWaveCurations].sort((a, b) => {
         const aPriority =
@@ -55,12 +69,32 @@ describe('CurationsApiService', () => {
           String(a.id).localeCompare(String(b.id))
         );
       });
+    const getSortedDropCurations = (curationId: string) =>
+      [...storedDropCurations]
+        .filter((curation) => curation.curation_id === curationId)
+        .sort((a, b) => {
+          const aPriority =
+            (a.priority_order as number | null) ?? Number.MAX_SAFE_INTEGER;
+          const bPriority =
+            (b.priority_order as number | null) ?? Number.MAX_SAFE_INTEGER;
+          return (
+            aPriority - bPriority ||
+            (a.created_at as number) - (b.created_at as number) ||
+            String(a.drop_id).localeCompare(String(b.drop_id))
+          );
+        });
     const curationsDb = {
       executeNativeQueriesInTransaction: jest.fn(async (fn) => fn(connection)),
       findCommunityGroupById: jest
         .fn()
         .mockResolvedValue({ id: 'community-group-1', is_private: false }),
       findWaveCurationById: jest
+        .fn()
+        .mockImplementation(
+          async ({ id }) =>
+            storedWaveCurations.find((curation) => curation.id === id) ?? null
+        ),
+      lockWaveCurationById: jest
         .fn()
         .mockImplementation(
           async ({ id }) =>
@@ -123,11 +157,96 @@ describe('CurationsApiService', () => {
       findWaveCurationsByWaveId: jest
         .fn()
         .mockImplementation(async () => getSortedWaveCurations()),
-      findCurationIdsForDropId: jest
+      findDropCurationsForDropId: jest
         .fn()
-        .mockResolvedValue(new Set(curatedCurationIds)),
-      upsertDropCuration: jest.fn().mockResolvedValue(undefined),
-      deleteDropCuration: jest.fn().mockResolvedValue(undefined),
+        .mockImplementation(async (dropId) =>
+          storedDropCurations.filter((curation) => curation.drop_id === dropId)
+        ),
+      lockDropCurationsByCurationId: jest
+        .fn()
+        .mockImplementation(async (curationId) =>
+          getSortedDropCurations(curationId)
+        ),
+      incrementDropCurationPriorityOrderRange: jest
+        .fn()
+        .mockImplementation(
+          async ({ curation_id, from_priority_order, to_priority_order }) => {
+            for (const curation of storedDropCurations) {
+              const priorityOrder = curation.priority_order as number | null;
+              if (
+                curation.curation_id === curation_id &&
+                priorityOrder !== null &&
+                priorityOrder >= from_priority_order &&
+                (to_priority_order === undefined ||
+                  priorityOrder <= to_priority_order)
+              ) {
+                curation.priority_order = priorityOrder + 1;
+              }
+            }
+          }
+        ),
+      decrementDropCurationPriorityOrderRange: jest
+        .fn()
+        .mockImplementation(
+          async ({ curation_id, from_priority_order, to_priority_order }) => {
+            for (const curation of storedDropCurations) {
+              const priorityOrder = curation.priority_order as number | null;
+              if (
+                curation.curation_id === curation_id &&
+                priorityOrder !== null &&
+                priorityOrder >= from_priority_order &&
+                (to_priority_order === undefined ||
+                  priorityOrder <= to_priority_order)
+              ) {
+                curation.priority_order = priorityOrder - 1;
+              }
+            }
+          }
+        ),
+      upsertDropCuration: jest.fn().mockImplementation(async (param) => {
+        const target = storedDropCurations.find(
+          (curation) =>
+            curation.drop_id === param.drop_id &&
+            curation.curation_id === param.curation_id
+        );
+        if (target) {
+          Object.assign(target, {
+            curated_by: param.curated_by,
+            updated_at: 2,
+            priority_order: param.priority_order
+          });
+        } else {
+          storedDropCurations.push({
+            ...param,
+            created_at: 1,
+            updated_at: 1
+          });
+        }
+      }),
+      updateDropCuration: jest.fn().mockImplementation(async (param) => {
+        const target = storedDropCurations.find(
+          (curation) =>
+            curation.drop_id === param.drop_id &&
+            curation.curation_id === param.curation_id
+        );
+        if (target) {
+          Object.assign(target, {
+            curated_by: param.curated_by,
+            updated_at: param.updated_at,
+            priority_order: param.priority_order
+          });
+        }
+      }),
+      deleteDropCuration: jest.fn().mockImplementation(async (param) => {
+        const targetIndex = storedDropCurations.findIndex(
+          (curation) =>
+            curation.drop_id === param.drop_id &&
+            curation.curation_id === param.curation_id
+        );
+        if (targetIndex !== -1) {
+          storedDropCurations.splice(targetIndex, 1);
+        }
+      }),
       deleteDropCurationsByCurationId: jest.fn().mockResolvedValue(undefined),
       deleteWaveCuration: jest.fn().mockImplementation(async ({ id }) => {
         const targetIndex = storedWaveCurations.findIndex(
@@ -157,6 +276,7 @@ describe('CurationsApiService', () => {
       ),
       curationsDb,
       storedWaveCurations,
+      storedDropCurations,
       ctx: {
         authenticationContext,
         timer: undefined
@@ -284,14 +404,29 @@ describe('CurationsApiService', () => {
         drop_id: 'drop-1',
         curation_id: 'curation-1',
         curated_by: 'profile-1',
-        wave_id: 'wave-1'
+        wave_id: 'wave-1',
+        priority_order: 1
       },
-      ctx
+      expect.objectContaining({
+        connection: expect.anything()
+      })
     );
   });
 
   it('removes drops from an explicitly selected curation', async () => {
-    const { service, curationsDb, ctx } = createService();
+    const { service, curationsDb, ctx } = createService({
+      dropCurations: [
+        {
+          drop_id: 'drop-1',
+          curation_id: 'curation-1',
+          curated_by: 'profile-1',
+          created_at: 1,
+          updated_at: 1,
+          wave_id: 'wave-1',
+          priority_order: 1
+        }
+      ]
+    });
 
     await expect(
       service.removeDropCuration(
@@ -306,8 +441,270 @@ describe('CurationsApiService', () => {
         drop_id: 'drop-1',
         curation_id: 'curation-1'
       },
+      expect.objectContaining({
+        connection: expect.anything()
+      })
+    );
+  });
+
+  it('adds a drop at an explicit priority and shifts later drops', async () => {
+    const { service, curationsDb, storedDropCurations, ctx } = createService({
+      dropCurations: [
+        {
+          drop_id: 'drop-2',
+          curation_id: 'curation-1',
+          curated_by: 'profile-1',
+          created_at: 2,
+          updated_at: 2,
+          wave_id: 'wave-1',
+          priority_order: 1
+        },
+        {
+          drop_id: 'drop-3',
+          curation_id: 'curation-1',
+          curated_by: 'profile-1',
+          created_at: 3,
+          updated_at: 3,
+          wave_id: 'wave-1',
+          priority_order: 2
+        }
+      ]
+    });
+
+    await service.addDropCuration(
+      'drop-1',
+      { curation_id: 'curation-1', priority_order: 1 } as any,
       ctx
     );
+
+    expect(
+      curationsDb.incrementDropCurationPriorityOrderRange
+    ).toHaveBeenCalledWith(
+      {
+        curation_id: 'curation-1',
+        from_priority_order: 1
+      },
+      expect.objectContaining({
+        connection: expect.anything()
+      })
+    );
+    expect(storedDropCurations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ drop_id: 'drop-1', priority_order: 1 }),
+        expect.objectContaining({ drop_id: 'drop-2', priority_order: 2 }),
+        expect.objectContaining({ drop_id: 'drop-3', priority_order: 3 })
+      ])
+    );
+  });
+
+  it('keeps existing drop priority when adding without priority_order again', async () => {
+    const { service, curationsDb, storedDropCurations, ctx } = createService({
+      dropCurations: [
+        {
+          drop_id: 'drop-1',
+          curation_id: 'curation-1',
+          curated_by: 'profile-2',
+          created_at: 1,
+          updated_at: 1,
+          wave_id: 'wave-1',
+          priority_order: 1
+        }
+      ]
+    });
+
+    await service.addDropCuration(
+      'drop-1',
+      { curation_id: 'curation-1' } as any,
+      ctx
+    );
+
+    expect(
+      curationsDb.incrementDropCurationPriorityOrderRange
+    ).not.toHaveBeenCalled();
+    expect(
+      curationsDb.decrementDropCurationPriorityOrderRange
+    ).not.toHaveBeenCalled();
+    expect(storedDropCurations).toEqual([
+      expect.objectContaining({
+        drop_id: 'drop-1',
+        curated_by: 'profile-1',
+        priority_order: 1
+      })
+    ]);
+  });
+
+  it('moves an existing drop and shifts the displaced range', async () => {
+    const { service, curationsDb, storedDropCurations, ctx } = createService({
+      dropCurations: [
+        {
+          drop_id: 'drop-1',
+          curation_id: 'curation-1',
+          curated_by: 'profile-1',
+          created_at: 1,
+          updated_at: 1,
+          wave_id: 'wave-1',
+          priority_order: 1
+        },
+        {
+          drop_id: 'drop-2',
+          curation_id: 'curation-1',
+          curated_by: 'profile-1',
+          created_at: 2,
+          updated_at: 2,
+          wave_id: 'wave-1',
+          priority_order: 2
+        },
+        {
+          drop_id: 'drop-3',
+          curation_id: 'curation-1',
+          curated_by: 'profile-1',
+          created_at: 3,
+          updated_at: 3,
+          wave_id: 'wave-1',
+          priority_order: 3
+        }
+      ]
+    });
+
+    await service.addDropCuration(
+      'drop-1',
+      { curation_id: 'curation-1', priority_order: 3 } as any,
+      ctx
+    );
+
+    expect(
+      curationsDb.decrementDropCurationPriorityOrderRange
+    ).toHaveBeenCalledWith(
+      {
+        curation_id: 'curation-1',
+        from_priority_order: 2,
+        to_priority_order: 3
+      },
+      expect.objectContaining({
+        connection: expect.anything()
+      })
+    );
+    expect(storedDropCurations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ drop_id: 'drop-1', priority_order: 3 }),
+        expect.objectContaining({ drop_id: 'drop-2', priority_order: 1 }),
+        expect.objectContaining({ drop_id: 'drop-3', priority_order: 2 })
+      ])
+    );
+  });
+
+  it('rejects moving an existing drop past the current max priority_order', async () => {
+    const { service, curationsDb, storedDropCurations, ctx } = createService({
+      dropCurations: [
+        {
+          drop_id: 'drop-1',
+          curation_id: 'curation-1',
+          curated_by: 'profile-1',
+          created_at: 1,
+          updated_at: 1,
+          wave_id: 'wave-1',
+          priority_order: 1
+        },
+        {
+          drop_id: 'drop-2',
+          curation_id: 'curation-1',
+          curated_by: 'profile-1',
+          created_at: 2,
+          updated_at: 2,
+          wave_id: 'wave-1',
+          priority_order: 2
+        },
+        {
+          drop_id: 'drop-3',
+          curation_id: 'curation-1',
+          curated_by: 'profile-1',
+          created_at: 3,
+          updated_at: 3,
+          wave_id: 'wave-1',
+          priority_order: 3
+        }
+      ]
+    });
+
+    await expect(
+      service.addDropCuration(
+        'drop-2',
+        { curation_id: 'curation-1', priority_order: 4 } as any,
+        ctx
+      )
+    ).rejects.toThrow(`Drop curation priority_order must be between 1 and 3`);
+
+    expect(
+      curationsDb.incrementDropCurationPriorityOrderRange
+    ).not.toHaveBeenCalled();
+    expect(
+      curationsDb.decrementDropCurationPriorityOrderRange
+    ).not.toHaveBeenCalled();
+    expect(storedDropCurations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ drop_id: 'drop-1', priority_order: 1 }),
+        expect.objectContaining({ drop_id: 'drop-2', priority_order: 2 }),
+        expect.objectContaining({ drop_id: 'drop-3', priority_order: 3 })
+      ])
+    );
+  });
+
+  it('compacts later drop priorities when a drop curation is removed', async () => {
+    const { service, curationsDb, storedDropCurations, ctx } = createService({
+      dropCurations: [
+        {
+          drop_id: 'drop-1',
+          curation_id: 'curation-1',
+          curated_by: 'profile-1',
+          created_at: 1,
+          updated_at: 1,
+          wave_id: 'wave-1',
+          priority_order: 1
+        },
+        {
+          drop_id: 'drop-2',
+          curation_id: 'curation-1',
+          curated_by: 'profile-1',
+          created_at: 2,
+          updated_at: 2,
+          wave_id: 'wave-1',
+          priority_order: 2
+        }
+      ]
+    });
+
+    await service.removeDropCuration(
+      'drop-1',
+      { curation_id: 'curation-1' } as any,
+      ctx
+    );
+
+    expect(
+      curationsDb.decrementDropCurationPriorityOrderRange
+    ).toHaveBeenCalledWith(
+      {
+        curation_id: 'curation-1',
+        from_priority_order: 2
+      },
+      expect.objectContaining({
+        connection: expect.anything()
+      })
+    );
+    expect(storedDropCurations).toEqual([
+      expect.objectContaining({ drop_id: 'drop-2', priority_order: 1 })
+    ]);
+  });
+
+  it('rejects out of range drop priority_order values', async () => {
+    const { service, ctx } = createService();
+
+    await expect(
+      service.addDropCuration(
+        'drop-1',
+        { curation_id: 'curation-1', priority_order: 2 } as any,
+        ctx
+      )
+    ).rejects.toThrow(`Drop curation priority_order must be between 1 and 1`);
   });
 
   it('rejects writes when the user is not eligible for the selected curation', async () => {
@@ -359,6 +756,7 @@ describe('CurationsApiService', () => {
         group_id: 'community-group-2',
         priority_order: 1,
         drop_included: false,
+        drop_priority_order: null,
         authenticated_user_can_curate: true
       }),
       expect.objectContaining({
@@ -367,6 +765,7 @@ describe('CurationsApiService', () => {
         group_id: 'community-group-1',
         priority_order: 2,
         drop_included: true,
+        drop_priority_order: 1,
         authenticated_user_can_curate: false
       })
     ]);

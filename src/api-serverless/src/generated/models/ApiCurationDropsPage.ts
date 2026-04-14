@@ -10,30 +10,38 @@
  * Do not edit the class manually.
  */
 
+import { ApiCurationDrop } from '../models/ApiCurationDrop';
 import { HttpFile } from '../http/http';
 
-export class ApiDropCurationRequest {
-    'curation_id': string;
-    'priority_order'?: number;
+export class ApiCurationDropsPage {
+    'data': Array<ApiCurationDrop>;
+    'page': number;
+    'next': boolean;
 
     static readonly discriminator: string | undefined = undefined;
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
         {
-            "name": "curation_id",
-            "baseName": "curation_id",
-            "type": "string",
+            "name": "data",
+            "baseName": "data",
+            "type": "Array<ApiCurationDrop>",
             "format": ""
         },
         {
-            "name": "priority_order",
-            "baseName": "priority_order",
+            "name": "page",
+            "baseName": "page",
             "type": "number",
             "format": "int64"
+        },
+        {
+            "name": "next",
+            "baseName": "next",
+            "type": "boolean",
+            "format": ""
         }    ];
 
     static getAttributeTypeMap() {
-        return ApiDropCurationRequest.attributeTypeMap;
+        return ApiCurationDropsPage.attributeTypeMap;
     }
 
     public constructor() {

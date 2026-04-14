@@ -24,6 +24,7 @@ import {
 import { wavesApiDb, WavesApiDb } from '@/api/waves/waves.api.db';
 import { CurationsDb, curationsDb } from '@/api/curations/curations.db';
 import { WaveCurationEntity } from '@/entities/IWaveCuration';
+import { DropCurationEntity } from '@/entities/IDropCuration';
 
 export class CurationsApiService {
   constructor(
@@ -232,21 +233,88 @@ export class CurationsApiService {
     dropId: string,
     request: ApiDropCurationRequest,
     ctx: RequestContext
-  ) {
-    const { profileId, drop, wave, curation } =
-      await this.getCurationContextForAuthenticatedCurator(
-        dropId,
-        request.curation_id,
-        ctx
-      );
-    await this.curationsDb.upsertDropCuration(
-      {
-        drop_id: drop.id,
-        curation_id: curation.id,
-        curated_by: profileId,
-        wave_id: wave.id
-      },
-      ctx
+  ): Promise<void> {
+    await this.curationsDb.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const txCtx: RequestContext = { ...ctx, connection };
+        const { profileId, drop, wave, curation } =
+          await this.getCurationContextForAuthenticatedCurator(
+            dropId,
+            request.curation_id,
+            txCtx
+          );
+        await this.lockWaveCurationOrThrow(curation, txCtx);
+        const lockedDropCurations =
+          await this.curationsDb.lockDropCurationsByCurationId(
+            curation.id,
+            txCtx
+          );
+        const existingDropCuration = lockedDropCurations.find(
+          (it) => it.drop_id === drop.id && it.curation_id === curation.id
+        );
+        const requestedPriorityOrder = request.priority_order;
+        if (existingDropCuration) {
+          const currentPriorityOrder = this.resolveCurrentDropPriorityOrder(
+            existingDropCuration,
+            lockedDropCurations
+          );
+          if (requestedPriorityOrder !== undefined) {
+            this.assertPriorityOrderWithinBoundariesOrThrow({
+              priorityOrder: requestedPriorityOrder,
+              maxPriorityOrder: lockedDropCurations.length,
+              label: 'Drop curation priority_order'
+            });
+          }
+          const nextPriorityOrder =
+            requestedPriorityOrder === undefined
+              ? currentPriorityOrder
+              : requestedPriorityOrder;
+          await this.shiftDropCurationPriorityOrdersForMove(
+            {
+              curationId: curation.id,
+              currentPriorityOrder,
+              nextPriorityOrder
+            },
+            txCtx
+          );
+          await this.curationsDb.updateDropCuration(
+            {
+              drop_id: drop.id,
+              curation_id: curation.id,
+              curated_by: profileId,
+              updated_at: Time.currentMillis(),
+              priority_order: nextPriorityOrder
+            },
+            txCtx
+          );
+          return;
+        }
+
+        const priorityOrder = this.resolveRequestedPriorityOrderOrThrow({
+          requestedPriorityOrder,
+          maxPriorityOrder: lockedDropCurations.length + 1,
+          label: 'Drop curation priority_order'
+        });
+        if (priorityOrder <= lockedDropCurations.length) {
+          await this.curationsDb.incrementDropCurationPriorityOrderRange(
+            {
+              curation_id: curation.id,
+              from_priority_order: priorityOrder
+            },
+            txCtx
+          );
+        }
+        await this.curationsDb.upsertDropCuration(
+          {
+            drop_id: drop.id,
+            curation_id: curation.id,
+            curated_by: profileId,
+            wave_id: wave.id,
+            priority_order: priorityOrder
+          },
+          txCtx
+        );
+      }
     );
   }
 
@@ -254,19 +322,49 @@ export class CurationsApiService {
     dropId: string,
     request: ApiDropCurationRequest,
     ctx: RequestContext
-  ) {
-    const { drop, curation } =
-      await this.getCurationContextForAuthenticatedCurator(
-        dropId,
-        request.curation_id,
-        ctx
-      );
-    await this.curationsDb.deleteDropCuration(
-      {
-        drop_id: drop.id,
-        curation_id: curation.id
-      },
-      ctx
+  ): Promise<void> {
+    await this.curationsDb.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const txCtx: RequestContext = { ...ctx, connection };
+        const { drop, curation } =
+          await this.getCurationContextForAuthenticatedCurator(
+            dropId,
+            request.curation_id,
+            txCtx
+          );
+        await this.lockWaveCurationOrThrow(curation, txCtx);
+        const lockedDropCurations =
+          await this.curationsDb.lockDropCurationsByCurationId(
+            curation.id,
+            txCtx
+          );
+        const targetDropCuration = lockedDropCurations.find(
+          (it) => it.drop_id === drop.id && it.curation_id === curation.id
+        );
+        if (!targetDropCuration) {
+          return;
+        }
+        const currentPriorityOrder = this.resolveCurrentDropPriorityOrder(
+          targetDropCuration,
+          lockedDropCurations
+        );
+        await this.curationsDb.deleteDropCuration(
+          {
+            drop_id: drop.id,
+            curation_id: curation.id
+          },
+          txCtx
+        );
+        if (currentPriorityOrder < lockedDropCurations.length) {
+          await this.curationsDb.decrementDropCurationPriorityOrderRange(
+            {
+              curation_id: curation.id,
+              from_priority_order: currentPriorityOrder + 1
+            },
+            txCtx
+          );
+        }
+      }
     );
   }
 
@@ -291,15 +389,18 @@ export class CurationsApiService {
       groupsUserIsEligibleFor,
       `Drop ${dropId} not found`
     );
-    const [waveCurations, dropCurationIds, curatorEligibleGroupIds] =
+    const [waveCurations, dropCurations, curatorEligibleGroupIds] =
       await Promise.all([
         this.curationsDb.findWaveCurationsByWaveId(wave!.id, ctx.connection),
-        this.curationsDb.findCurationIdsForDropId(drop.id, ctx.connection),
+        this.curationsDb.findDropCurationsForDropId(drop.id, ctx.connection),
         this.getEligibleGroupIdsForAuthenticatedCurator(ctx)
       ]);
+    const dropCurationByCurationId = new Map(
+      dropCurations.map((it) => [it.curation_id, it])
+    );
     return waveCurations.map((entity, index) =>
       this.dropCurationToApi(entity, {
-        dropIncluded: dropCurationIds.has(entity.id),
+        dropCuration: dropCurationByCurationId.get(entity.id) ?? null,
         authenticatedUserCanCurate: curatorEligibleGroupIds.includes(
           entity.community_group_id
         ),
@@ -379,6 +480,22 @@ export class CurationsApiService {
       allowCreator: true,
       requireAdminGroup: false
     });
+  }
+
+  private async lockWaveCurationOrThrow(
+    curation: WaveCurationEntity,
+    ctx: RequestContext
+  ): Promise<void> {
+    const lockedCuration = await this.curationsDb.lockWaveCurationById(
+      {
+        id: curation.id,
+        wave_id: curation.wave_id
+      },
+      ctx
+    );
+    if (!lockedCuration) {
+      throw new NotFoundException(`Curation ${curation.id} not found`);
+    }
   }
 
   private async assertProfileCanCurateCuration(
@@ -462,12 +579,14 @@ export class CurationsApiService {
   private resolveRequestedPriorityOrderOrThrow(param: {
     requestedPriorityOrder: number | undefined;
     maxPriorityOrder: number;
+    label?: string;
   }): number {
     const priorityOrder =
       param.requestedPriorityOrder ?? param.maxPriorityOrder;
     this.assertPriorityOrderWithinBoundariesOrThrow({
       priorityOrder,
-      maxPriorityOrder: param.maxPriorityOrder
+      maxPriorityOrder: param.maxPriorityOrder,
+      label: param.label
     });
     return priorityOrder;
   }
@@ -475,6 +594,7 @@ export class CurationsApiService {
   private assertPriorityOrderWithinBoundariesOrThrow(param: {
     priorityOrder: number;
     maxPriorityOrder: number;
+    label?: string;
   }): void {
     if (
       !Number.isInteger(param.priorityOrder) ||
@@ -482,7 +602,9 @@ export class CurationsApiService {
       param.priorityOrder > param.maxPriorityOrder
     ) {
       throw new BadRequestException(
-        `Curation priority_order must be between 1 and ${param.maxPriorityOrder}`
+        `${param.label ?? 'Curation priority_order'} must be between 1 and ${
+          param.maxPriorityOrder
+        }`
       );
     }
   }
@@ -497,6 +619,49 @@ export class CurationsApiService {
         (curation) => curation.id === targetCuration.id
       ) + 1
     );
+  }
+
+  private resolveCurrentDropPriorityOrder(
+    targetCuration: DropCurationEntity,
+    orderedCurations: DropCurationEntity[]
+  ): number {
+    return (
+      targetCuration.priority_order ??
+      orderedCurations.findIndex(
+        (curation) =>
+          curation.drop_id === targetCuration.drop_id &&
+          curation.curation_id === targetCuration.curation_id
+      ) + 1
+    );
+  }
+
+  private async shiftDropCurationPriorityOrdersForMove(
+    param: {
+      curationId: string;
+      currentPriorityOrder: number;
+      nextPriorityOrder: number;
+    },
+    ctx: RequestContext
+  ): Promise<void> {
+    if (param.nextPriorityOrder < param.currentPriorityOrder) {
+      await this.curationsDb.incrementDropCurationPriorityOrderRange(
+        {
+          curation_id: param.curationId,
+          from_priority_order: param.nextPriorityOrder,
+          to_priority_order: param.currentPriorityOrder - 1
+        },
+        ctx
+      );
+    } else if (param.nextPriorityOrder > param.currentPriorityOrder) {
+      await this.curationsDb.decrementDropCurationPriorityOrderRange(
+        {
+          curation_id: param.curationId,
+          from_priority_order: param.currentPriorityOrder + 1,
+          to_priority_order: param.nextPriorityOrder
+        },
+        ctx
+      );
+    }
   }
 
   private waveCurationsToApi(
@@ -529,15 +694,16 @@ export class CurationsApiService {
   private dropCurationToApi(
     entity: WaveCurationEntity,
     param: {
-      dropIncluded: boolean;
+      dropCuration: DropCurationEntity | null;
       authenticatedUserCanCurate: boolean;
       fallbackPriorityOrder?: number;
     }
   ): ApiDropCuration {
     return {
       ...this.waveCurationToApi(entity, param.fallbackPriorityOrder),
-      drop_included: param.dropIncluded,
-      authenticated_user_can_curate: param.authenticatedUserCanCurate
+      drop_included: !!param.dropCuration,
+      authenticated_user_can_curate: param.authenticatedUserCanCurate,
+      drop_priority_order: param.dropCuration?.priority_order ?? null
     };
   }
 }
