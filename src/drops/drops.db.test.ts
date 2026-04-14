@@ -252,7 +252,8 @@ describeWithSeed(
           created_at: 3001,
           updated_at: 3001,
           wave_id: publicWaveA.id,
-          curated_by: authorAlice.profile_id!
+          curated_by: authorAlice.profile_id!,
+          priority_order: 1
         },
         {
           drop_id: 'drop-public-b',
@@ -260,7 +261,8 @@ describeWithSeed(
           created_at: 3002,
           updated_at: 3002,
           wave_id: publicWaveB.id,
-          curated_by: authorBob.profile_id!
+          curated_by: authorBob.profile_id!,
+          priority_order: 1
         },
         {
           drop_id: 'drop-private',
@@ -268,7 +270,8 @@ describeWithSeed(
           created_at: 3003,
           updated_at: 3003,
           wave_id: privateWave.id,
-          curated_by: authorCarol.profile_id!
+          curated_by: authorCarol.profile_id!,
+          priority_order: 1
         },
         {
           drop_id: 'drop-public-a-new',
@@ -276,7 +279,17 @@ describeWithSeed(
           created_at: 3004,
           updated_at: 3004,
           wave_id: publicWaveA.id,
-          curated_by: authorDave.profile_id!
+          curated_by: authorDave.profile_id!,
+          priority_order: 1
+        },
+        {
+          drop_id: 'drop-public-a-old',
+          curation_id: 'curation-public-a-other',
+          created_at: 3005,
+          updated_at: 3005,
+          wave_id: publicWaveA.id,
+          curated_by: authorAlice.profile_id!,
+          priority_order: 2
         }
       ]
     },
@@ -401,6 +414,28 @@ describeWithSeed(
       expect(results.map((it) => it.id)).toEqual([
         'drop-public-b',
         'drop-public-a-old'
+      ]);
+    });
+
+    it('finds drops in a curation by priority order', async () => {
+      const results = await repo.findDropsByCurationPriorityOrder(
+        {
+          wave_id: publicWaveA.id,
+          curation_id: 'curation-public-a-other',
+          limit: 10,
+          offset: 0
+        },
+        ctx
+      );
+
+      expect(
+        results.map((it) => ({
+          id: it.id,
+          drop_priority_order: it.drop_priority_order
+        }))
+      ).toEqual([
+        { id: 'drop-public-a-new', drop_priority_order: 1 },
+        { id: 'drop-public-a-old', drop_priority_order: 2 }
       ]);
     });
 

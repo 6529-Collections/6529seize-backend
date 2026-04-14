@@ -6034,6 +6034,49 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiWaveCuration"
+  /waves/{id}/curations/{curation_id}/drops:
+    get:
+      tags:
+        - Waves
+      summary: List drops in a curation for wave
+      operationId: listWaveCurationDrops
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: curation_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+            default: 1
+        - name: page_size
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+            maximum: 100
+            default: 50
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiCurationDropsPage"
+        "404":
+          description: Wave or curation not found
   /waves/{id}/curations/{curationId}:
     post:
       tags:
@@ -8305,6 +8348,29 @@ components:
         description:
           type: string
           nullable: true
+    ApiCurationDrop:
+      type: object
+      required:
+        - drop_priority_order
+      allOf:
+        - $ref: "#/components/schemas/ApiDropWithoutWave"
+      properties:
+        drop_priority_order:
+          type: integer
+          format: int64
+          minimum: 1
+          nullable: true
+    ApiCurationDropsPage:
+      type: object
+      required:
+        - data
+      allOf:
+        - $ref: "#/components/schemas/ApiPageWithoutCount"
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiCurationDrop"
     ApiDistributionAirdropsCsvUploadRequest:
       type: object
       required:
@@ -8531,6 +8597,7 @@ components:
       required:
         - drop_included
         - authenticated_user_can_curate
+        - drop_priority_order
       allOf:
         - $ref: "#/components/schemas/ApiWaveCuration"
       properties:
@@ -8538,6 +8605,11 @@ components:
           type: boolean
         authenticated_user_can_curate:
           type: boolean
+        drop_priority_order:
+          type: integer
+          format: int64
+          minimum: 1
+          nullable: true
     ApiDropCurationRequest:
       type: object
       required:
@@ -8545,6 +8617,10 @@ components:
       properties:
         curation_id:
           type: string
+        priority_order:
+          type: integer
+          format: int64
+          minimum: 1
     ApiDropGroupMention:
       type: string
       enum:

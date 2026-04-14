@@ -53,6 +53,8 @@ import {
 import { ApiLightDrop } from '../generated/models/ApiLightDrop';
 import { ApiDropMedia } from '../generated/models/ApiDropMedia';
 import { enums } from '@/enums';
+import { ApiCurationDrop } from '@/api/generated/models/ApiCurationDrop';
+import { ApiCurationDropsPage } from '@/api/generated/models/ApiCurationDropsPage';
 import { ApiDropWithoutWavesPageWithoutCount } from '../generated/models/ApiDropWithoutWavesPageWithoutCount';
 import { ApiPageSortDirection } from '../generated/models/ApiPageSortDirection';
 import { ApiDropsPage } from '../generated/models/ApiDropsPage';
@@ -634,6 +636,63 @@ export class DropsApiService {
       ctx.timer?.stop('dropsApiService->findWaveDropsFeed');
       return resp;
     }
+  }
+
+  public async findWaveCurationDrops(
+    {
+      wave_id,
+      curation_id,
+      page,
+      page_size
+    }: {
+      wave_id: string;
+      curation_id: string;
+      page: number;
+      page_size: number;
+    },
+    ctx: RequestContext
+  ): Promise<ApiCurationDropsPage> {
+    if (!(page >= 1) || !(page_size > 0)) {
+      throw new BadRequestException(
+        `Curation drops pagination requires page >= 1 and page_size > 0`
+      );
+    }
+    const { curationFilter } = await this.resolveCurationFilter(
+      {
+        curationId: curation_id,
+        waveId: wave_id
+      },
+      ctx
+    );
+    if (!curationFilter) {
+      throw new NotFoundException(`Curation ${curation_id} not found`);
+    }
+    const entities = await this.dropsDb.findDropsByCurationPriorityOrder(
+      {
+        wave_id,
+        curation_id: curationFilter,
+        limit: page_size + 1,
+        offset: page_size * (page - 1)
+      },
+      ctx
+    );
+    const pageEntities = entities.slice(0, page_size);
+    const priorityOrderByDropId = new Map<string, number | null>(
+      pageEntities.map((it) => [it.id, it.drop_priority_order])
+    );
+    const drops = await this.dropsMappers.convertToDropsWithoutWaves(
+      pageEntities,
+      ctx
+    );
+    const data = drops.map((drop) => ({
+      ...drop,
+      drop_priority_order: priorityOrderByDropId.get(drop.id) ?? null
+    })) as ApiCurationDrop[];
+    return {
+      data,
+      page,
+      next: entities.length > page_size
+    };
   }
 
   private normalizeCurationNameOrThrow(

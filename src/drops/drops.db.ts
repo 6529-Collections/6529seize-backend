@@ -70,6 +70,10 @@ import { Time, Timer } from '../time';
 
 const mysql = require('mysql');
 
+export type CurationDropEntity = DropEntity & {
+  readonly drop_priority_order: number | null;
+};
+
 export class DropsDb extends LazyDbAccessCompatibleService {
   async getDropsByIds(
     ids: string[],
@@ -823,6 +827,44 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     });
     ctx.timer?.stop('dropsDb->findLatestDropRepliesSimple');
     return results;
+  }
+
+  async findDropsByCurationPriorityOrder(
+    param: {
+      wave_id: string;
+      curation_id: string;
+      limit: number;
+      offset: number;
+    },
+    ctx: RequestContext
+  ): Promise<CurationDropEntity[]> {
+    try {
+      ctx.timer?.start(
+        `${this.constructor.name}->findDropsByCurationPriorityOrder`
+      );
+      return await this.db.execute<CurationDropEntity>(
+        `
+        select d.*, dc.priority_order as drop_priority_order
+        from ${DROP_CURATIONS_TABLE} dc
+        join ${DROPS_TABLE} d on d.id = dc.drop_id
+        where dc.wave_id = :wave_id
+          and d.wave_id = :wave_id
+          and dc.curation_id = :curation_id
+        order by
+          (dc.priority_order is null) asc,
+          dc.priority_order asc,
+          d.created_at asc,
+          d.id asc
+        limit :limit offset :offset
+      `,
+        param,
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(
+        `${this.constructor.name}->findDropsByCurationPriorityOrder`
+      );
+    }
   }
 
   async findMentionsByDropIds(

@@ -1,5 +1,6 @@
 import { AuthenticationContext } from '@/auth-context';
 import { directMessageWaveDisplayService } from '@/api/waves/direct-message-wave-display.service';
+import { BadRequestException } from '@/exceptions';
 import { wavesApiDb } from '../waves/waves.api.db';
 import { ApiDropSearchStrategy } from '../generated/models/ApiDropSearchStrategy';
 import { DropsApiService } from './drops.api.service';
@@ -15,6 +16,7 @@ describe('DropsApiService', () => {
       wave_id: 'wave-1',
       community_group_id: 'community-group-1'
     },
+    curatedDropEntities = [],
     wave = {
       id: 'wave-1',
       name: 'Wave 1',
@@ -37,18 +39,24 @@ describe('DropsApiService', () => {
     }
   }: {
     curation?: Record<string, unknown> | null;
+    curatedDropEntities?: Record<string, unknown>[];
     wave?: Record<string, unknown> | null;
   } = {}) {
     const dropsDb = {
       findLatestDrops: jest.fn().mockResolvedValue([]),
       findLatestDropsSimple: jest.fn().mockResolvedValue([]),
+      findDropsByCurationPriorityOrder: jest
+        .fn()
+        .mockResolvedValue(curatedDropEntities),
       findLightDropIdsByWave: jest.fn().mockResolvedValue([]),
       findVisibleLightDropIds: jest.fn().mockResolvedValue([]),
       findLightDropsByIds: jest.fn().mockResolvedValue([])
     };
     const dropsMappers = {
       convertToDropFulls: jest.fn().mockResolvedValue([]),
-      convertToDropsWithoutWaves: jest.fn().mockResolvedValue([])
+      convertToDropsWithoutWaves: jest
+        .fn()
+        .mockImplementation(async (entities) => entities)
     };
     const curationsDb = {
       findWaveCurationById: jest.fn().mockResolvedValue(curation)
@@ -79,6 +87,7 @@ describe('DropsApiService', () => {
         {} as any
       ),
       dropsDb,
+      dropsMappers,
       curationsDb,
       userGroupsService,
       ctx: {
@@ -280,5 +289,106 @@ describe('DropsApiService', () => {
       }),
       ctx
     );
+  });
+
+  it('returns curation drops with no-count pagination', async () => {
+    const { service, dropsDb, dropsMappers, ctx } = createService({
+      curatedDropEntities: [
+        { id: 'drop-1', drop_priority_order: 1 },
+        { id: 'drop-2', drop_priority_order: 2 },
+        { id: 'drop-3', drop_priority_order: 3 }
+      ]
+    });
+    dropsMappers.convertToDropsWithoutWaves.mockResolvedValue([
+      { id: 'drop-1' },
+      { id: 'drop-2' }
+    ]);
+
+    await expect(
+      service.findWaveCurationDrops(
+        {
+          wave_id: 'wave-1',
+          curation_id: 'curation-1',
+          page: 2,
+          page_size: 2
+        },
+        ctx
+      )
+    ).resolves.toEqual({
+      data: [
+        { id: 'drop-1', drop_priority_order: 1 },
+        { id: 'drop-2', drop_priority_order: 2 }
+      ],
+      page: 2,
+      next: true
+    });
+
+    expect(dropsDb.findDropsByCurationPriorityOrder).toHaveBeenCalledWith(
+      {
+        wave_id: 'wave-1',
+        curation_id: 'curation-1',
+        limit: 3,
+        offset: 2
+      },
+      ctx
+    );
+    expect(dropsMappers.convertToDropsWithoutWaves).toHaveBeenCalledWith(
+      [
+        { id: 'drop-1', drop_priority_order: 1 },
+        { id: 'drop-2', drop_priority_order: 2 }
+      ],
+      ctx
+    );
+  });
+
+  it.each([
+    { page: 0, page_size: 2 },
+    { page: 1, page_size: 0 }
+  ])(
+    'rejects invalid curation drops pagination before querying drops',
+    async ({ page, page_size }) => {
+      const { service, dropsDb, dropsMappers, curationsDb, ctx } =
+        createService();
+
+      await expect(
+        service.findWaveCurationDrops(
+          {
+            wave_id: 'wave-1',
+            curation_id: 'curation-1',
+            page,
+            page_size
+          },
+          ctx
+        )
+      ).rejects.toThrow(BadRequestException);
+
+      expect(curationsDb.findWaveCurationById).not.toHaveBeenCalled();
+      expect(dropsDb.findDropsByCurationPriorityOrder).not.toHaveBeenCalled();
+      expect(dropsMappers.convertToDropsWithoutWaves).not.toHaveBeenCalled();
+    }
+  );
+
+  it('rejects curation drops when the curation is not in the requested wave', async () => {
+    const { service, dropsDb, ctx } = createService({
+      curation: {
+        id: 'curation-1',
+        wave_id: 'wave-2',
+        community_group_id: 'community-group-1'
+      }
+    });
+
+    await expect(
+      service.findWaveCurationDrops(
+        {
+          wave_id: 'wave-1',
+          curation_id: 'curation-1',
+          page: 1,
+          page_size: 2
+        },
+        ctx
+      )
+    ).rejects.toThrow(`Curation curation-1 not found`);
+
+    expect(dropsDb.findDropsByCurationPriorityOrder).not.toHaveBeenCalled();
   });
 });

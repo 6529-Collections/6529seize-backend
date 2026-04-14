@@ -15,6 +15,7 @@ import { HttpFile } from '../http/http';
 export class ApiDropCuration {
     'drop_included': boolean;
     'authenticated_user_can_curate': boolean;
+    'drop_priority_order': number | null;
     'id': string;
     'name': string;
     'wave_id': string;
@@ -37,6 +38,12 @@ export class ApiDropCuration {
             "baseName": "authenticated_user_can_curate",
             "type": "boolean",
             "format": ""
+        },
+        {
+            "name": "drop_priority_order",
+            "baseName": "drop_priority_order",
+            "type": "number",
+            "format": "int64"
         },
         {
             "name": "id",

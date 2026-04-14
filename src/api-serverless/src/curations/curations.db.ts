@@ -18,6 +18,10 @@ export class CurationsDb extends LazyDbAccessCompatibleService {
       order by (priority_order is null) asc, priority_order asc, created_at asc, id asc
     `;
 
+  private readonly dropCurationOrderBy = `
+      order by (priority_order is null) asc, priority_order asc, created_at asc, drop_id asc
+    `;
+
   public async findWaveCurationById(
     param: { id: string; wave_id?: string },
     connection?: ConnectionWrapper<any>
@@ -30,6 +34,26 @@ export class CurationsDb extends LazyDbAccessCompatibleService {
       param,
       connection ? { wrappedConnection: connection } : undefined
     );
+  }
+
+  public async lockWaveCurationById(
+    param: { id: string; wave_id: string },
+    ctx: RequestContext
+  ): Promise<WaveCurationEntity | null> {
+    try {
+      ctx.timer?.start(`${this.constructor.name}->lockWaveCurationById`);
+      return await this.db.oneOrNull<WaveCurationEntity>(
+        `
+        select * from ${WAVE_CURATIONS_TABLE}
+        where id = :id and wave_id = :wave_id
+        for update
+        `,
+        param,
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->lockWaveCurationById`);
+    }
   }
 
   public async findWaveCurationsByWaveId(
@@ -259,6 +283,7 @@ export class CurationsDb extends LazyDbAccessCompatibleService {
       curation_id: string;
       curated_by: string;
       wave_id: string;
+      priority_order: number;
     },
     ctx: RequestContext
   ): Promise<void> {
@@ -268,12 +293,13 @@ export class CurationsDb extends LazyDbAccessCompatibleService {
       await this.db.execute(
         `
         insert into ${DROP_CURATIONS_TABLE}
-        (drop_id, curation_id, curated_by, created_at, updated_at, wave_id)
+        (drop_id, curation_id, curated_by, created_at, updated_at, wave_id, priority_order)
         values
-        (:drop_id, :curation_id, :curated_by, :created_at, :updated_at, :wave_id)
+        (:drop_id, :curation_id, :curated_by, :created_at, :updated_at, :wave_id, :priority_order)
         on duplicate key update
           curated_by = values(curated_by),
-          updated_at = values(updated_at)
+          updated_at = values(updated_at),
+          priority_order = values(priority_order)
       `,
         {
           ...param,
@@ -284,6 +310,142 @@ export class CurationsDb extends LazyDbAccessCompatibleService {
       );
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->upsertDropCuration`);
+    }
+  }
+
+  public async updateDropCuration(
+    param: {
+      drop_id: string;
+      curation_id: string;
+      curated_by: string;
+      updated_at: number;
+      priority_order: number;
+    },
+    ctx: RequestContext
+  ): Promise<void> {
+    try {
+      ctx.timer?.start(`${this.constructor.name}->updateDropCuration`);
+      await this.db.execute(
+        `
+        update ${DROP_CURATIONS_TABLE}
+        set
+          curated_by = :curated_by,
+          updated_at = :updated_at,
+          priority_order = :priority_order
+        where drop_id = :drop_id and curation_id = :curation_id
+      `,
+        param,
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->updateDropCuration`);
+    }
+  }
+
+  public async findDropCuration(
+    param: { drop_id: string; curation_id: string },
+    connection?: ConnectionWrapper<any>
+  ): Promise<DropCurationEntity | null> {
+    return await this.db.oneOrNull<DropCurationEntity>(
+      `
+      select * from ${DROP_CURATIONS_TABLE}
+      where drop_id = :drop_id and curation_id = :curation_id
+      `,
+      param,
+      connection ? { wrappedConnection: connection } : undefined
+    );
+  }
+
+  public async lockDropCurationsByCurationId(
+    curationId: string,
+    ctx: RequestContext
+  ): Promise<DropCurationEntity[]> {
+    try {
+      ctx.timer?.start(
+        `${this.constructor.name}->lockDropCurationsByCurationId`
+      );
+      return await this.db.execute<DropCurationEntity>(
+        `
+        select * from ${DROP_CURATIONS_TABLE}
+        where curation_id = :curationId
+        ${this.dropCurationOrderBy}
+        for update
+        `,
+        { curationId },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(
+        `${this.constructor.name}->lockDropCurationsByCurationId`
+      );
+    }
+  }
+
+  public async incrementDropCurationPriorityOrderRange(
+    param: {
+      curation_id: string;
+      from_priority_order: number;
+      to_priority_order?: number;
+    },
+    ctx: RequestContext
+  ): Promise<void> {
+    try {
+      ctx.timer?.start(
+        `${this.constructor.name}->incrementDropCurationPriorityOrderRange`
+      );
+      await this.db.execute(
+        `
+        update ${DROP_CURATIONS_TABLE}
+        set priority_order = priority_order + 1
+        where curation_id = :curation_id
+          and priority_order >= :from_priority_order
+          ${
+            param.to_priority_order === undefined
+              ? ''
+              : 'and priority_order <= :to_priority_order'
+          }
+      `,
+        param,
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(
+        `${this.constructor.name}->incrementDropCurationPriorityOrderRange`
+      );
+    }
+  }
+
+  public async decrementDropCurationPriorityOrderRange(
+    param: {
+      curation_id: string;
+      from_priority_order: number;
+      to_priority_order?: number;
+    },
+    ctx: RequestContext
+  ): Promise<void> {
+    try {
+      ctx.timer?.start(
+        `${this.constructor.name}->decrementDropCurationPriorityOrderRange`
+      );
+      await this.db.execute(
+        `
+        update ${DROP_CURATIONS_TABLE}
+        set priority_order = priority_order - 1
+        where curation_id = :curation_id
+          and priority_order >= :from_priority_order
+          ${
+            param.to_priority_order === undefined
+              ? ''
+              : 'and priority_order <= :to_priority_order'
+          }
+      `,
+        param,
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(
+        `${this.constructor.name}->decrementDropCurationPriorityOrderRange`
+      );
     }
   }
 
@@ -328,16 +490,23 @@ export class CurationsDb extends LazyDbAccessCompatibleService {
     dropId: string,
     connection?: ConnectionWrapper<any>
   ): Promise<Set<string>> {
-    const rows = await this.db.execute<{ curation_id: string }>(
+    const rows = await this.findDropCurationsForDropId(dropId, connection);
+    return new Set(rows.map((it) => it.curation_id));
+  }
+
+  public async findDropCurationsForDropId(
+    dropId: string,
+    connection?: ConnectionWrapper<any>
+  ): Promise<DropCurationEntity[]> {
+    return await this.db.execute<DropCurationEntity>(
       `
-      select distinct curation_id
+      select *
       from ${DROP_CURATIONS_TABLE}
       where drop_id = :dropId
       `,
       { dropId },
       connection ? { wrappedConnection: connection } : undefined
     );
-    return new Set(rows.map((it) => it.curation_id));
   }
 
   public async findWaveCurationsForDropId(
@@ -428,14 +597,55 @@ export class CurationsDb extends LazyDbAccessCompatibleService {
   ): Promise<void> {
     try {
       ctx.timer?.start(`${this.constructor.name}->deleteDropCurationsByDropId`);
-      await this.db.execute(
-        `
-        delete from ${DROP_CURATIONS_TABLE}
-        where drop_id = :dropId
-      `,
-        { dropId },
-        { wrappedConnection: ctx.connection }
+      const targetCurations = (
+        await this.findDropCurationsForDropId(dropId, ctx.connection)
+      ).sort(
+        (a, b) =>
+          a.curation_id.localeCompare(b.curation_id) ||
+          a.wave_id.localeCompare(b.wave_id) ||
+          a.drop_id.localeCompare(b.drop_id)
       );
+      for (const targetCuration of targetCurations) {
+        await this.lockWaveCurationById(
+          {
+            id: targetCuration.curation_id,
+            wave_id: targetCuration.wave_id
+          },
+          ctx
+        );
+        const orderedDropCurations = await this.lockDropCurationsByCurationId(
+          targetCuration.curation_id,
+          ctx
+        );
+        const lockedTargetCuration = orderedDropCurations.find(
+          (curation) =>
+            curation.drop_id === targetCuration.drop_id &&
+            curation.curation_id === targetCuration.curation_id
+        );
+        if (!lockedTargetCuration) {
+          continue;
+        }
+        const currentPriorityOrder = this.resolveCurrentDropPriorityOrder(
+          lockedTargetCuration,
+          orderedDropCurations
+        );
+        await this.deleteDropCuration(
+          {
+            drop_id: targetCuration.drop_id,
+            curation_id: targetCuration.curation_id
+          },
+          ctx
+        );
+        if (currentPriorityOrder < orderedDropCurations.length) {
+          await this.decrementDropCurationPriorityOrderRange(
+            {
+              curation_id: targetCuration.curation_id,
+              from_priority_order: currentPriorityOrder + 1
+            },
+            ctx
+          );
+        }
+      }
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->deleteDropCurationsByDropId`);
     }
@@ -475,6 +685,20 @@ export class CurationsDb extends LazyDbAccessCompatibleService {
       `,
       { dropIds },
       connection ? { wrappedConnection: connection } : undefined
+    );
+  }
+
+  private resolveCurrentDropPriorityOrder(
+    targetCuration: DropCurationEntity,
+    orderedCurations: DropCurationEntity[]
+  ): number {
+    return (
+      targetCuration.priority_order ??
+      orderedCurations.findIndex(
+        (curation) =>
+          curation.drop_id === targetCuration.drop_id &&
+          curation.curation_id === targetCuration.curation_id
+      ) + 1
     );
   }
 }

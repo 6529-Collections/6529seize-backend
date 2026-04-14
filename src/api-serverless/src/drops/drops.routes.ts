@@ -806,7 +806,8 @@ const GetDropBoostsRequestSchema = Joi.object<GetDropsBoostsRequest>({
 });
 
 const DropCurationRequestSchema = Joi.object<ApiDropCurationRequest>({
-  curation_id: Joi.string().required()
+  curation_id: Joi.string().required(),
+  priority_order: Joi.number().integer().min(1).optional()
 });
 
 async function assertDropIsCorrectlySigned(
