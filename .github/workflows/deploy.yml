@@ -101,10 +101,15 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: 'pnpm'
-          cache-dependency-path: pnpm-lock.yaml
       - name: Setup Corepack pnpm
         run: bash scripts/setup-corepack-pnpm.sh
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/pnpm/store
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-store-${{ runner.os }}-
       - name: Install Socket Firewall
         run: npm install --global sfw
       - name: Install dependencies
