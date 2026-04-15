@@ -26,7 +26,7 @@ const publicWaveB = aWave(
   { id: 'wave-public-b', serial_no: 2, name: 'Public B' }
 );
 const privateWave = aWave(
-  { visibility_group_id: 'group-1' },
+  { visibility_group_id: 'group-1', admin_group_id: 'admin-group' },
   { id: 'wave-private', serial_no: 3, name: 'Private Wave' }
 );
 
@@ -392,6 +392,41 @@ describeWithSeed(
       ]);
     });
 
+    it('does not include private waves for admin-group-only eligibility in the global selector', async () => {
+      await expect(
+        repo.findVisibleLightDropIds(
+          {
+            limit: 10,
+            min_serial_no: null,
+            max_serial_no: null,
+            older_first: false,
+            group_ids_user_is_eligible_for: ['admin-group']
+          },
+          ctx
+        )
+      ).resolves.toEqual([
+        { id: 'drop-public-b', serial_no: 104 },
+        { id: 'drop-public-a-new', serial_no: 103 },
+        { id: 'drop-public-a-old', serial_no: 101 }
+      ]);
+    });
+
+    it('does not include private wave-scoped rows for admin-group-only eligibility', async () => {
+      await expect(
+        repo.findLightDropIdsByWave(
+          {
+            limit: 10,
+            max_serial_no: null,
+            min_serial_no: null,
+            older_first: false,
+            group_ids_user_is_eligible_for: ['admin-group'],
+            wave_id: privateWave.id
+          },
+          ctx
+        )
+      ).resolves.toEqual([]);
+    });
+
     it('finds latest drops by curation name across visible waves', async () => {
       const results = await repo.findLatestDrops(
         {
@@ -415,6 +450,72 @@ describeWithSeed(
         'drop-public-b',
         'drop-public-a-old'
       ]);
+    });
+
+    it('does not find latest drops by author through admin-group-only eligibility', async () => {
+      const results = await repo.findLatestDrops(
+        {
+          amount: 10,
+          serial_no_less_than: null,
+          group_ids_user_is_eligible_for: ['admin-group'],
+          group_id: null,
+          wave_id: null,
+          curation_id: null,
+          curation_name: null,
+          author_id: authorDave.profile_id,
+          include_replies: false,
+          drop_type: null,
+          ids: null,
+          contains_media: false
+        },
+        ctx
+      );
+
+      expect(results).toEqual([]);
+    });
+
+    it('does not find a private drop by id through admin-group-only eligibility', async () => {
+      await expect(
+        repo.findDropByIdWithEligibilityCheck(
+          'drop-private',
+          ['admin-group'],
+          undefined
+        )
+      ).resolves.toBeNull();
+      await expect(
+        repo.findDropByIdWithEligibilityCheck(
+          'drop-private',
+          ['group-1'],
+          undefined
+        )
+      ).resolves.toMatchObject({ id: 'drop-private' });
+    });
+
+    it('does not find private drop ids in a wave range through admin-group-only eligibility', async () => {
+      await expect(
+        repo.findDropIdsInWaveRange(
+          {
+            wave_id: privateWave.id,
+            min_serial_no: 0,
+            max_serial_no: 200,
+            limit: 10,
+            group_ids_user_is_eligible_for: ['admin-group']
+          },
+          ctx
+        )
+      ).resolves.toEqual([]);
+      await expect(
+        repo.findDropIdsInWaveRange(
+          {
+            wave_id: privateWave.id,
+            min_serial_no: 0,
+            max_serial_no: 200,
+            limit: 10,
+            group_ids_user_is_eligible_for: ['group-1']
+          },
+          ctx
+        )
+      ).resolves.toEqual([{ id: 'drop-private', serial_no: 102 }]);
     });
 
     it('finds drops in a curation by priority order', async () => {
