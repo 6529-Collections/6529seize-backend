@@ -423,6 +423,9 @@ importers:
       slugify:
         specifier: ^1.6.6
         version: 1.6.6
+      swagger-ui-dist:
+        specifier: ^5.32.1
+        version: 5.32.1
       swagger-ui-express:
         specifier: ^5.0.0
         version: 5.0.1(express@4.22.1)
