@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
 
@@ -129,7 +130,11 @@ child.stderr.on("data", (data) => {
   process.stderr.write(data);
 });
 
-child.on("close", (code = 1) => {
-  // Exit code 130 = SIGINT (Ctrl+C) — treat as clean exit.
-  process.exit(code === 130 ? 0 : code);
+child.on("close", (code = 1, signal) => {
+  if (signal) {
+    const signalNumber = os.constants.signals[signal];
+    process.exit(signalNumber ? 128 + signalNumber : 1);
+  }
+
+  process.exit(code);
 });
