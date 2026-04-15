@@ -20,6 +20,7 @@ export class ApiSeizeSettings {
     'distribution_admin_wallets': Array<string>;
     'claims_admin_wallets': Array<string>;
     'announcements_wave_id': string | null;
+    'quorum_wave_id': string | null;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -63,6 +64,12 @@ export class ApiSeizeSettings {
         {
             "name": "announcements_wave_id",
             "baseName": "announcements_wave_id",
+            "type": "string",
+            "format": ""
+        },
+        {
+            "name": "quorum_wave_id",
+            "baseName": "quorum_wave_id",
             "type": "string",
             "format": ""
         }    ];
