@@ -14,6 +14,7 @@ import {
   MINT_END_ANNOUNCEMENTS_DONE_MEME_TOKENS_TABLE,
   PUBLIC_PHASE_ENDING_SOON_ANNOUNCEMENTS_DONE_MEME_TOKENS_TABLE
 } from '@/constants';
+import { sendIdentityPushNotifications } from '@/api/push-notifications/push-notifications.service';
 
 interface PhaseConfig {
   readonly name: string;
@@ -199,36 +200,39 @@ export class AnnounceMintStateChangeUseCase {
         message += `\n\nMinting for this phase closes ${this.getPhaseCloseAtUtcString(announcementWindow.phase)}`;
       }
       this.logger.info(message);
-      await sqlExecutor.executeNativeQueriesInTransaction(
-        async (connection) => {
-          const ctxWithConnection = { ...ctx, connection };
-          await this.deployerDropper.drop(
-            { message, mentionedUsers, waves },
-            ctxWithConnection
-          );
-          if (announcementWindow.type === 'PHASE' && cardSoldOut) {
-            await sqlExecutor.execute(
-              `insert into ${MINT_ANNOUNCEMENTS_DONE_MEME_TOKENS_TABLE} (id) values (:id)`,
-              { id: mintingMeme.id },
-              { wrappedConnection: connection }
+      const pendingPushNotificationIds =
+        await sqlExecutor.executeNativeQueriesInTransaction(
+          async (connection) => {
+            const ctxWithConnection = { ...ctx, connection };
+            const pendingPushNotificationIds = await this.deployerDropper.drop(
+              { message, mentionedUsers, waves },
+              ctxWithConnection
             );
+            if (announcementWindow.type === 'PHASE' && cardSoldOut) {
+              await sqlExecutor.execute(
+                `insert into ${MINT_ANNOUNCEMENTS_DONE_MEME_TOKENS_TABLE} (id) values (:id)`,
+                { id: mintingMeme.id },
+                { wrappedConnection: connection }
+              );
+            }
+            if (announcementWindow.type === 'MINT_END') {
+              await sqlExecutor.execute(
+                `insert into ${MINT_END_ANNOUNCEMENTS_DONE_MEME_TOKENS_TABLE} (id) values (:id)`,
+                { id: mintingMeme.id },
+                { wrappedConnection: connection }
+              );
+            }
+            if (announcementWindow.type === 'PUBLIC_PHASE_ENDING_SOON') {
+              await sqlExecutor.execute(
+                `insert into ${PUBLIC_PHASE_ENDING_SOON_ANNOUNCEMENTS_DONE_MEME_TOKENS_TABLE} (id) values (:id)`,
+                { id: mintingMeme.id },
+                { wrappedConnection: connection }
+              );
+            }
+            return pendingPushNotificationIds;
           }
-          if (announcementWindow.type === 'MINT_END') {
-            await sqlExecutor.execute(
-              `insert into ${MINT_END_ANNOUNCEMENTS_DONE_MEME_TOKENS_TABLE} (id) values (:id)`,
-              { id: mintingMeme.id },
-              { wrappedConnection: connection }
-            );
-          }
-          if (announcementWindow.type === 'PUBLIC_PHASE_ENDING_SOON') {
-            await sqlExecutor.execute(
-              `insert into ${PUBLIC_PHASE_ENDING_SOON_ANNOUNCEMENTS_DONE_MEME_TOKENS_TABLE} (id) values (:id)`,
-              { id: mintingMeme.id },
-              { wrappedConnection: connection }
-            );
-          }
-        }
-      );
+        );
+      await sendIdentityPushNotifications(pendingPushNotificationIds);
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->handle`);
     }

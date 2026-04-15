@@ -34,6 +34,9 @@ const profileGroupWithTdh11Identity2 = aProfileGroup({
 const minTdh20Group = aUserGroup({ tdh_min: 20 });
 const maxTdh10Group = aUserGroup({ tdh_max: 10 });
 const tdhBetween15And25Group = aUserGroup({ tdh_min: 15, tdh_max: 20 });
+const pureProfileGroup = aUserGroup({
+  profile_group_id: profileGroupWithTdh11Identity1.profile_group_id
+});
 
 const minTdh20AndTdh11Identity1Group = aUserGroup({
   profile_group_id: profileGroupWithTdh11Identity1.profile_group_id,
@@ -71,6 +74,7 @@ describeWithSeed(
       minTdh20Group,
       maxTdh10Group,
       tdhBetween15And25Group,
+      pureProfileGroup,
       minTdh20AndTdh11Identity1Group,
       minTdh10AndTdh11Identity1ExcludedGroup,
       onlyInclusionAndExclusionGroupWhereSameIdentityIsIncludedAndExcluded,
@@ -81,6 +85,7 @@ describeWithSeed(
         minTdh20Group,
         maxTdh10Group,
         tdhBetween15And25Group,
+        pureProfileGroup,
         minTdh20AndTdh11Identity1Group,
         minTdh10AndTdh11Identity1ExcludedGroup,
         onlyInclusionAndExclusionGroupWhereSameIdentityIsIncludedAndExcluded,
@@ -135,6 +140,7 @@ describeWithSeed(
 
       it('tdh11Identity1 gets its groups', async () => {
         await expectIdentityToBeInExactGroups(tdh11Identity1, [
+          pureProfileGroup,
           minTdh20AndTdh11Identity1Group
         ]);
       });
@@ -199,6 +205,12 @@ describeWithSeed(
         ]);
       });
 
+      it('identities of pureProfileGroup ', async () => {
+        await expectGroupToContainExactIdentities(pureProfileGroup, [
+          tdh11Identity1
+        ]);
+      });
+
       it('identities of minTdh20AndTdh11Identity1Group ', async () => {
         await expectGroupToContainExactIdentities(
           minTdh20AndTdh11Identity1Group,
@@ -224,6 +236,33 @@ describeWithSeed(
           minTdh10GroupWhereTdh11Identity1IsIncludedAndExcluded,
           [tdh10Identity, tdh20Identity, tdh11Identity2]
         );
+      });
+    });
+
+    describe('is_pure_profile_group', () => {
+      it('is computed from the stored criteria', async () => {
+        const groups = await new UserGroupsDb(() => sqlExecutor).getByIds(
+          [
+            pureProfileGroup.id,
+            minTdh20AndTdh11Identity1Group.id,
+            onlyInclusionAndExclusionGroupWhereSameIdentityIsIncludedAndExcluded.id
+          ],
+          {}
+        );
+        const pureProfileGroupById = Object.fromEntries(
+          groups.map((group) => [group.id, group.is_pure_profile_group])
+        );
+
+        expect(pureProfileGroupById[pureProfileGroup.id]).toBe(true);
+        expect(pureProfileGroupById[minTdh20AndTdh11Identity1Group.id]).toBe(
+          false
+        );
+        expect(
+          pureProfileGroupById[
+            onlyInclusionAndExclusionGroupWhereSameIdentityIsIncludedAndExcluded
+              .id
+          ]
+        ).toBe(false);
       });
     });
   }

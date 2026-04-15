@@ -5,44 +5,44 @@ import {
   DropVotersStatsParams,
   LeaderboardParams,
   LeaderboardSort
-} from '../../../drops/drops.db';
-import { ConnectionWrapper } from '../../../sql-executor';
+} from '@/drops/drops.db';
+import { ConnectionWrapper } from '@/sql-executor';
 import {
   BadRequestException,
   ForbiddenException,
   NotFoundException
-} from '../../../exceptions';
+} from '@/exceptions';
 import { ApiDrop } from '../generated/models/ApiDrop';
 import {
   UserGroupsService,
   userGroupsService
 } from '../community-members/user-groups.service';
-import { AuthenticationContext } from '../../../auth-context';
-import { ProfileProxyActionType } from '../../../entities/IProfileProxyAction';
+import { AuthenticationContext } from '@/auth-context';
+import { ProfileProxyActionType } from '@/entities/IProfileProxyAction';
 import { ApiDropSubscriptionTargetAction } from '../generated/models/ApiDropSubscriptionTargetAction';
 import {
   ActivityEventAction,
   ActivityEventTargetType
-} from '../../../entities/IActivityEvent';
+} from '@/entities/IActivityEvent';
 import {
   identitySubscriptionsDb,
   IdentitySubscriptionsDb
 } from '../identity-subscriptions/identity-subscriptions.db';
 import { dropsMappers, DropsMappers } from './drops.mappers';
-import { RequestContext } from '../../../request.context';
+import { RequestContext } from '@/request.context';
 import { wavesApiDb } from '../waves/waves.api.db';
 import { ApiDropTraceItem } from '../generated/models/ApiDropTraceItem';
 import { ApiDropSearchStrategy } from '../generated/models/ApiDropSearchStrategy';
 import { ApiDropType } from '../generated/models/ApiDropType';
-import { DropEntity, DropType } from '../../../entities/IDrop';
+import { DropEntity, DropType } from '@/entities/IDrop';
 import { ApiWaveDropsFeed } from '../generated/models/ApiWaveDropsFeed';
 import { ApiDropsLeaderboardPage } from '../generated/models/ApiDropsLeaderboardPage';
-import { WaveType } from '../../../entities/IWave';
+import { WaveType } from '@/entities/IWave';
 import { ApiWaveLog } from '../generated/models/ApiWaveLog';
 import {
   ProfileActivityLog,
   ProfileActivityLogType
-} from '../../../entities/IProfileActivityLog';
+} from '@/entities/IProfileActivityLog';
 import { ApiProfileMin } from '../generated/models/ApiProfileMin';
 import { ApiWaveVotersPage } from '../generated/models/ApiWaveVotersPage';
 import { ApiWaveVoter } from '../generated/models/ApiWaveVoter';
@@ -52,17 +52,16 @@ import {
 } from '../identities/identity.fetcher';
 import { ApiLightDrop } from '../generated/models/ApiLightDrop';
 import { ApiDropMedia } from '../generated/models/ApiDropMedia';
-import { enums } from '../../../enums';
+import { enums } from '@/enums';
+import { ApiCurationDrop } from '@/api/generated/models/ApiCurationDrop';
+import { ApiCurationDropsPage } from '@/api/generated/models/ApiCurationDropsPage';
 import { ApiDropWithoutWavesPageWithoutCount } from '../generated/models/ApiDropWithoutWavesPageWithoutCount';
 import { ApiPageSortDirection } from '../generated/models/ApiPageSortDirection';
 import { ApiDropsPage } from '../generated/models/ApiDropsPage';
 import { ApiDropBoostsPage } from '../generated/models/ApiDropBoostsPage';
 import { ApiDropId } from '../generated/models/ApiDropId';
-import {
-  metricsRecorder,
-  MetricsRecorder
-} from '../../../metrics/MetricsRecorder';
-import { userNotifier } from '../../../notifications/user.notifier';
+import { metricsRecorder, MetricsRecorder } from '@/metrics/MetricsRecorder';
+import { userNotifier } from '@/notifications/user.notifier';
 import {
   wsListenersNotifier,
   WsListenersNotifier
@@ -79,6 +78,7 @@ import {
   getWaveMinPermissionMask,
   mapWaveToApiWaveMin
 } from '@/api/waves/wave-min.helpers';
+import { profileWavesDb } from '@/profiles/profile-waves.db';
 
 export class DropsApiService {
   constructor(
@@ -136,12 +136,20 @@ export class DropsApiService {
       .then((it) => it[0]);
   }
 
-  public async findLatestLightDrops(
+  public async findLightDrops(
     {
       waveId,
       limit,
-      max_serial_no
-    }: { waveId: string; limit: number; max_serial_no: number | null },
+      max_serial_no,
+      min_serial_no,
+      older_first
+    }: {
+      waveId: string | null;
+      limit: number;
+      max_serial_no: number | null;
+      min_serial_no: number | null;
+      older_first: boolean;
+    },
     ctx: RequestContext
   ): Promise<ApiLightDrop[]> {
     const authenticationContext = ctx.authenticationContext;
@@ -152,13 +160,30 @@ export class DropsApiService {
       await this.userGroupsService.getGroupsUserIsEligibleFor(
         context_profile_id
       );
-    const entities = await this.dropsDb.findLatestDropsWithPartsAndMedia(
-      {
-        limit,
-        max_serial_no,
-        group_ids_user_is_eligible_for,
-        wave_id: waveId
-      },
+    const lightDropIds = waveId
+      ? await this.dropsDb.findLightDropIdsByWave(
+          {
+            limit,
+            min_serial_no,
+            max_serial_no,
+            group_ids_user_is_eligible_for,
+            wave_id: waveId,
+            older_first
+          },
+          ctx
+        )
+      : await this.dropsDb.findVisibleLightDropIds(
+          {
+            limit,
+            min_serial_no,
+            max_serial_no,
+            group_ids_user_is_eligible_for,
+            older_first
+          },
+          ctx
+        );
+    const entities = await this.dropsDb.findLightDropsByIds(
+      lightDropIds.map((it) => it.id),
       ctx
     );
     const apiLightDrops = Object.values(
@@ -166,6 +191,10 @@ export class DropsApiService {
         (acc, it) => {
           acc[it.id] = {
             id: it.id,
+            wave_id: it.wave_id,
+            wave_name: it.wave_name,
+            author: it.author,
+            created_at: it.created_at,
             serial_no: it.serial_no,
             drop_type: enums.resolveOrThrow(
               ApiDropType,
@@ -191,6 +220,7 @@ export class DropsApiService {
       group_id,
       wave_id,
       curation_id,
+      curation_name,
       serial_no_less_than,
       author_id,
       include_replies,
@@ -202,6 +232,7 @@ export class DropsApiService {
       serial_no_less_than: number | null;
       wave_id: string | null;
       curation_id: string | null;
+      curation_name: string | null;
       amount: number;
       author_id: string | null;
       include_replies: boolean;
@@ -222,9 +253,12 @@ export class DropsApiService {
     if (group_id && !group_ids_user_is_eligible_for.includes(group_id)) {
       return [];
     }
+    const normalizedCurationName =
+      this.normalizeCurationNameOrThrow(curation_name);
     const { curationFilter, resolvedWaveId } = await this.resolveCurationFilter(
       {
         curationId: curation_id,
+        curationName: normalizedCurationName,
         waveId: wave_id
       },
       ctx
@@ -237,6 +271,7 @@ export class DropsApiService {
         group_ids_user_is_eligible_for,
         wave_id: resolvedWaveId,
         curation_id: curationFilter,
+        curation_name: normalizedCurationName,
         author_id,
         include_replies,
         drop_type: drop_type ? enums.resolveOrThrow(DropType, drop_type) : null,
@@ -500,7 +535,7 @@ export class DropsApiService {
       },
       ctx
     );
-    const [wave, pinnedWaveIds] = await Promise.all([
+    const [wave, pinnedWaveIds, identityWaveIds] = await Promise.all([
       wavesApiDb.findWaveById(wave_id),
       wavesApiDb.whichOfWavesArePinnedByGivenProfile(
         {
@@ -508,7 +543,8 @@ export class DropsApiService {
           profileId: context_profile_id
         },
         ctx
-      )
+      ),
+      profileWavesDb.findSelectedWaveIdsByWaveIds([wave_id], ctx)
     ]);
     if (
       !wave ||
@@ -531,7 +567,8 @@ export class DropsApiService {
       groupIdsUserIsEligibleFor: group_ids_user_is_eligible_for,
       noRightToVote,
       noRightToParticipate,
-      pinned: pinnedWaveIds.has(wave_id)
+      pinned: pinnedWaveIds.has(wave_id),
+      identityWave: identityWaveIds.has(wave_id)
     });
     if (drop_id) {
       const dropEntity = await this.dropsDb.findDropByIdWithEligibilityCheck(
@@ -601,12 +638,84 @@ export class DropsApiService {
     }
   }
 
+  public async findWaveCurationDrops(
+    {
+      wave_id,
+      curation_id,
+      page,
+      page_size
+    }: {
+      wave_id: string;
+      curation_id: string;
+      page: number;
+      page_size: number;
+    },
+    ctx: RequestContext
+  ): Promise<ApiCurationDropsPage> {
+    if (!(page >= 1) || !(page_size > 0)) {
+      throw new BadRequestException(
+        `Curation drops pagination requires page >= 1 and page_size > 0`
+      );
+    }
+    const { curationFilter } = await this.resolveCurationFilter(
+      {
+        curationId: curation_id,
+        waveId: wave_id
+      },
+      ctx
+    );
+    if (!curationFilter) {
+      throw new NotFoundException(`Curation ${curation_id} not found`);
+    }
+    const entities = await this.dropsDb.findDropsByCurationPriorityOrder(
+      {
+        wave_id,
+        curation_id: curationFilter,
+        limit: page_size + 1,
+        offset: page_size * (page - 1)
+      },
+      ctx
+    );
+    const pageEntities = entities.slice(0, page_size);
+    const priorityOrderByDropId = new Map<string, number | null>(
+      pageEntities.map((it) => [it.id, it.drop_priority_order])
+    );
+    const drops = await this.dropsMappers.convertToDropsWithoutWaves(
+      pageEntities,
+      ctx
+    );
+    const data = drops.map((drop) => ({
+      ...drop,
+      drop_priority_order: priorityOrderByDropId.get(drop.id) ?? null
+    })) as ApiCurationDrop[];
+    return {
+      data,
+      page,
+      next: entities.length > page_size
+    };
+  }
+
+  private normalizeCurationNameOrThrow(
+    curationName: string | null
+  ): string | null {
+    const normalized = curationName?.trim() ?? null;
+    if (!normalized) {
+      return null;
+    }
+    if (normalized.length > 50) {
+      throw new BadRequestException(`Curation name must be 1-50 chars`);
+    }
+    return normalized;
+  }
+
   private async resolveCurationFilter(
     {
       curationId,
+      curationName,
       waveId
     }: {
       curationId: string | null;
+      curationName?: string | null;
       waveId?: string | null;
     },
     ctx: RequestContext
@@ -614,6 +723,11 @@ export class DropsApiService {
     curationFilter: string | null;
     resolvedWaveId: string | null;
   }> {
+    if (curationId && curationName) {
+      throw new BadRequestException(
+        `Use either curation_id or curation_name, not both`
+      );
+    }
     if (!curationId) {
       return {
         curationFilter: null,
@@ -686,7 +800,7 @@ export class DropsApiService {
       },
       ctx
     );
-    const [waveEntity, pinnedWaveIds] = await Promise.all([
+    const [waveEntity, pinnedWaveIds, identityWaveIds] = await Promise.all([
       wavesApiDb.findWaveById(params.wave_id),
       wavesApiDb.whichOfWavesArePinnedByGivenProfile(
         {
@@ -694,7 +808,8 @@ export class DropsApiService {
           profileId: authenticatedProfileId
         },
         ctx
-      )
+      ),
+      profileWavesDb.findSelectedWaveIdsByWaveIds([params.wave_id], ctx)
     ]);
     if (
       !waveEntity ||
@@ -724,7 +839,8 @@ export class DropsApiService {
       groupIdsUserIsEligibleFor,
       noRightToVote,
       noRightToParticipate,
-      pinned: pinnedWaveIds.has(params.wave_id)
+      pinned: pinnedWaveIds.has(params.wave_id),
+      identityWave: identityWaveIds.has(params.wave_id)
     });
     const isTimeLockedWave =
       waveEntity.time_lock_ms !== null && waveEntity.time_lock_ms > 0;

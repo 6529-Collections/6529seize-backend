@@ -2,12 +2,17 @@ import {
   GroupTdhInclusionStrategy,
   UserGroupEntity
 } from '../../entities/IUserGroup';
+import { isPureProfileGroup } from '@/groups/user-group-predicates';
 import { Time } from '../../time';
 import { randomUUID } from 'node:crypto';
 import { Seed } from '../_setup/seed';
 import { USER_GROUPS_TABLE } from '@/constants';
 
-type BaseUserGroup = Omit<UserGroupEntity, 'id' | 'name'>;
+type BaseUserGroup = Omit<
+  UserGroupEntity,
+  'id' | 'name' | 'is_pure_profile_group'
+>;
+type PersistedUserGroup = Omit<UserGroupEntity, 'is_pure_profile_group'>;
 
 const aDefaultUserGroup: BaseUserGroup = {
   cic_min: null,
@@ -53,16 +58,26 @@ export function aUserGroup(
     id: randomUUID(),
     name: randomUUID()
   };
-  return {
+  const entity = {
     ...key,
     ...aDefaultUserGroup,
     ...params
+  };
+  return {
+    ...entity,
+    is_pure_profile_group: isPureProfileGroup(entity as UserGroupEntity)
   };
 }
 
 export function withUserGroups(entities: UserGroupEntity[]): Seed {
   return {
     table: USER_GROUPS_TABLE,
-    rows: entities
+    rows: entities.map((entity) => {
+      const persistedEntity = {
+        ...entity
+      } as PersistedUserGroup & { is_pure_profile_group?: boolean };
+      delete persistedEntity.is_pure_profile_group;
+      return persistedEntity;
+    })
   };
 }

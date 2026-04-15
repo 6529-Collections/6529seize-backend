@@ -10,7 +10,9 @@ jest.mock('@/alchemy', () => ({
 
 import { identitiesDb } from '@/identities/identities.db';
 import { DropType } from '@/entities/IDrop';
+import { DropGroupMention } from '@/entities/IWaveGroupNotificationSubscription';
 import { WaveIdentitySubmissionDuplicates } from '@/entities/IWave';
+import { env } from '@/env';
 import { profilesService } from '@/profiles/profiles.service';
 import { CreateOrUpdateDropUseCase } from './create-or-update-drop.use-case';
 
@@ -45,6 +47,32 @@ describe('CreateOrUpdateDropUseCase', () => {
     );
   }
 
+  function createUseCaseWithMocks(
+    overrides: {
+      dropsDb?: any;
+      wavesApiDb?: any;
+      userNotifier?: any;
+      identitySubscriptionsDb?: any;
+      deleteDropUseCase?: any;
+      artCurationTokenWatchService?: any;
+    } = {}
+  ) {
+    return new CreateOrUpdateDropUseCase(
+      overrides.dropsDb ?? ({} as any),
+      {} as any,
+      {} as any,
+      overrides.wavesApiDb ?? ({} as any),
+      overrides.userNotifier ?? ({} as any),
+      {} as any,
+      overrides.identitySubscriptionsDb ?? ({} as any),
+      {} as any,
+      overrides.deleteDropUseCase ?? ({} as any),
+      {} as any,
+      {} as any,
+      overrides.artCurationTokenWatchService ?? ({} as any)
+    );
+  }
+
   function createIdentitySubmissionModel(identity: string) {
     return {
       drop_id: null,
@@ -70,8 +98,15 @@ describe('CreateOrUpdateDropUseCase', () => {
       author_identity: 'author-profile',
       author_id: 'author-profile',
       drop_type: DropType.PARTICIPATORY,
-      mentions_all: false,
+      mentioned_groups: [],
       signature: null
+    };
+  }
+
+  function createGroupMentionModel() {
+    return {
+      ...createIdentitySubmissionModel('alice.eth'),
+      mentioned_groups: [DropGroupMention.ALL]
     };
   }
 
@@ -181,5 +216,208 @@ describe('CreateOrUpdateDropUseCase', () => {
       connection: {}
     });
     expect(mockResolveName).not.toHaveBeenCalled();
+  });
+
+  it('allows wave creators to use group mentions', () => {
+    const useCase = createUseCase({
+      existingNominations: []
+    });
+
+    expect(() =>
+      (useCase as any).verifyGroupMentions({
+        model: createGroupMentionModel(),
+        wave: {
+          created_by: 'author-profile',
+          admin_group_id: 'admins'
+        },
+        groupIdsUserIsEligibleFor: []
+      })
+    ).not.toThrow();
+  });
+
+  it('allows wave admins to use group mentions', () => {
+    const useCase = createUseCase({
+      existingNominations: []
+    });
+
+    expect(() =>
+      (useCase as any).verifyGroupMentions({
+        model: createGroupMentionModel(),
+        wave: {
+          created_by: 'another-profile',
+          admin_group_id: 'admins'
+        },
+        groupIdsUserIsEligibleFor: ['admins']
+      })
+    ).not.toThrow();
+  });
+
+  it('rejects group mentions from non-admins', () => {
+    const useCase = createUseCase({
+      existingNominations: []
+    });
+
+    expect(() =>
+      (useCase as any).verifyGroupMentions({
+        model: createGroupMentionModel(),
+        wave: {
+          created_by: 'another-profile',
+          admin_group_id: 'admins'
+        },
+        groupIdsUserIsEligibleFor: ['members']
+      })
+    ).toThrow(`Only wave creators or admins can mention groups`);
+  });
+
+  it('rejects group mentions on drop updates', () => {
+    const useCase = createUseCase({
+      existingNominations: []
+    });
+
+    expect(() =>
+      (useCase as any).verifyGroupMentions({
+        model: {
+          ...createGroupMentionModel(),
+          drop_id: 'drop-1'
+        },
+        wave: {
+          created_by: 'author-profile',
+          admin_group_id: 'admins'
+        },
+        groupIdsUserIsEligibleFor: ['admins']
+      })
+    ).toThrow(`Group mentions can only be used when creating a drop`);
+  });
+
+  it('skips all-drops notifications once the wave reaches the subscriber cap', async () => {
+    jest.spyOn(env, 'getIntOrNull').mockReturnValue(15);
+    const identitySubscriptionsDb = {
+      findWaveFollowersEligibleForDropNotifications: jest
+        .fn()
+        .mockResolvedValue([
+          {
+            identity_id: 'all-drops-1',
+            subscribed_to_all_drops: true,
+            has_group_mention: false
+          },
+          {
+            identity_id: 'group-mention-1',
+            subscribed_to_all_drops: false,
+            has_group_mention: true
+          },
+          {
+            identity_id: 'both-1',
+            subscribed_to_all_drops: true,
+            has_group_mention: true
+          }
+        ]),
+      countWaveSubscribers: jest.fn().mockResolvedValue(15),
+      findMutedWaveReaders: jest.fn().mockResolvedValue(['direct-muted'])
+    };
+    const userNotifier = {
+      notifyWaveDropCreatedRecipients: jest.fn().mockResolvedValue([101])
+    };
+    const useCase = createUseCaseWithMocks({
+      identitySubscriptionsDb,
+      userNotifier
+    });
+
+    await expect(
+      (useCase as any).notifyWaveDropRecipients(
+        {
+          model: {
+            drop_id: 'drop-1',
+            author_id: 'author-1',
+            mentioned_groups: [DropGroupMention.ALL]
+          },
+          wave: {
+            id: 'wave-1',
+            visibility_group_id: null
+          },
+          directlyMentionedIdentityIds: ['direct-1', 'direct-muted']
+        },
+        { connection: {} }
+      )
+    ).resolves.toEqual([101]);
+
+    expect(identitySubscriptionsDb.countWaveSubscribers).toHaveBeenCalledWith(
+      'wave-1',
+      {}
+    );
+    expect(userNotifier.notifyWaveDropCreatedRecipients).toHaveBeenCalledWith(
+      {
+        waveId: 'wave-1',
+        dropId: 'drop-1',
+        relatedIdentityId: 'author-1',
+        mentionedIdentityIds: ['direct-1', 'group-mention-1', 'both-1'],
+        allDropsSubscriberIds: []
+      },
+      null,
+      { timer: undefined, connection: {} }
+    );
+  });
+
+  it('keeps all-drops notifications below the subscriber cap while deduplicating @all mentions', async () => {
+    jest.spyOn(env, 'getIntOrNull').mockReturnValue(15);
+    const identitySubscriptionsDb = {
+      findWaveFollowersEligibleForDropNotifications: jest
+        .fn()
+        .mockResolvedValue([
+          {
+            identity_id: 'all-drops-1',
+            subscribed_to_all_drops: true,
+            has_group_mention: false
+          },
+          {
+            identity_id: 'group-mention-1',
+            subscribed_to_all_drops: false,
+            has_group_mention: true
+          },
+          {
+            identity_id: 'both-1',
+            subscribed_to_all_drops: true,
+            has_group_mention: true
+          }
+        ]),
+      countWaveSubscribers: jest.fn().mockResolvedValue(14),
+      findMutedWaveReaders: jest.fn().mockResolvedValue([])
+    };
+    const userNotifier = {
+      notifyWaveDropCreatedRecipients: jest.fn().mockResolvedValue([102])
+    };
+    const useCase = createUseCaseWithMocks({
+      identitySubscriptionsDb,
+      userNotifier
+    });
+
+    await expect(
+      (useCase as any).notifyWaveDropRecipients(
+        {
+          model: {
+            drop_id: 'drop-1',
+            author_id: 'author-1',
+            mentioned_groups: [DropGroupMention.ALL]
+          },
+          wave: {
+            id: 'wave-1',
+            visibility_group_id: null
+          },
+          directlyMentionedIdentityIds: ['direct-1']
+        },
+        { connection: {} }
+      )
+    ).resolves.toEqual([102]);
+
+    expect(userNotifier.notifyWaveDropCreatedRecipients).toHaveBeenCalledWith(
+      {
+        waveId: 'wave-1',
+        dropId: 'drop-1',
+        relatedIdentityId: 'author-1',
+        mentionedIdentityIds: ['direct-1', 'group-mention-1', 'both-1'],
+        allDropsSubscriberIds: ['all-drops-1']
+      },
+      null,
+      { timer: undefined, connection: {} }
+    );
   });
 });

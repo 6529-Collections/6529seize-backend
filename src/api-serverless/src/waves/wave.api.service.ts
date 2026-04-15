@@ -86,6 +86,12 @@ import {
   validateWaveSubmissionStrategy
 } from '@/api/waves/wave-submission-strategy';
 import { WaveType } from '@/entities/IWave';
+import { profileWavesDb } from '@/profiles/profile-waves.db';
+import {
+  WaveGroupNotificationSubscriptionsDb,
+  waveGroupNotificationSubscriptionsDb
+} from '@/notifications/wave-group-notification-subscriptions.db';
+import { sendIdentityPushNotifications } from '@/api/push-notifications/push-notifications.service';
 
 export class WaveApiService {
   constructor(
@@ -102,7 +108,8 @@ export class WaveApiService {
     private readonly identityFetcher: IdentityFetcher,
     private readonly metricsRecorder: MetricsRecorder,
     private readonly curationsDb: CurationsDb,
-    private readonly dropsDb: DropsDb
+    private readonly dropsDb: DropsDb,
+    private readonly waveGroupNotificationSubscriptionsDb: WaveGroupNotificationSubscriptionsDb
   ) {}
 
   private getRequiredTimer(
@@ -185,195 +192,205 @@ export class WaveApiService {
     timer.start(`${this.constructor.name}->createWave`);
     await this.validateWaveRelations(createWaveRequest, ctx);
     this.validateOutcomes(createWaveRequest);
-    const createdWave = await this.wavesApiDb.executeNativeQueriesInTransaction(
-      async (connection) => {
-        const ctxWithConnection = { ...ctx, connection };
-        const id = randomUUID();
-        const waveCreationTime = Time.currentMillis();
-        const newEntity = await this.waveMappers.createWaveToNewWaveEntity({
-          id,
-          serial_no: null,
-          created_at: waveCreationTime,
-          updated_at: null,
-          request: createWaveRequest,
-          created_by: actingAsId,
-          descriptionDropId: randomUUID(),
-          nextDecisionTime: this.calculateNextDecisionTimeRelativeToNow(
-            waveCreationTime,
-            createWaveRequest.wave.decisions_strategy
-          ),
-          isDirectMessage
-        });
-        await this.wavesApiDb.insertWave(newEntity, ctxWithConnection);
-        const apiOutcomes = createWaveRequest.outcomes;
-        const outcomeEntities: WaveOutcomeEntity[] = [];
-        const distiributionItemEntities: WaveOutcomeDistributionItemEntity[] =
-          [];
-        for (
-          let outcomeIndex = 0;
-          outcomeIndex < apiOutcomes.length;
-          outcomeIndex++
-        ) {
-          const apiOutcome = apiOutcomes[outcomeIndex];
-          if (!apiOutcome) {
-            continue;
-          }
-          const waveOutcomePosition = outcomeIndex + 1;
-          outcomeEntities.push({
-            wave_id: id,
-            type: enums.resolveOrThrow(WaveOutcomeType, apiOutcome.type),
-            subtype: apiOutcome.subtype
-              ? enums.resolveOrThrow(WaveOutcomeSubType, apiOutcome.subtype)
-              : null,
-            description: apiOutcome.description,
-            credit: apiOutcome.credit
-              ? enums.resolveOrThrow(WaveOutcomeCredit, apiOutcome.credit)
-              : null,
-            rep_category: apiOutcome.rep_category ?? null,
-            amount: apiOutcome.amount ?? null,
-            wave_outcome_position: waveOutcomePosition
+    const { createdWave, pendingPushNotificationIds } =
+      await this.wavesApiDb.executeNativeQueriesInTransaction(
+        async (connection) => {
+          const ctxWithConnection = { ...ctx, connection };
+          const id = randomUUID();
+          const waveCreationTime = Time.currentMillis();
+          const newEntity = await this.waveMappers.createWaveToNewWaveEntity({
+            id,
+            serial_no: null,
+            created_at: waveCreationTime,
+            updated_at: null,
+            request: createWaveRequest,
+            created_by: actingAsId,
+            descriptionDropId: randomUUID(),
+            nextDecisionTime: this.calculateNextDecisionTimeRelativeToNow(
+              waveCreationTime,
+              createWaveRequest.wave.decisions_strategy
+            ),
+            isDirectMessage
           });
-          const apiDistributionItems = apiOutcome.distribution ?? [];
+          await this.wavesApiDb.insertWave(newEntity, ctxWithConnection);
+          const apiOutcomes = createWaveRequest.outcomes;
+          const outcomeEntities: WaveOutcomeEntity[] = [];
+          const distiributionItemEntities: WaveOutcomeDistributionItemEntity[] =
+            [];
           for (
-            let distributionIndex = 0;
-            distributionIndex < apiDistributionItems.length;
-            distributionIndex++
+            let outcomeIndex = 0;
+            outcomeIndex < apiOutcomes.length;
+            outcomeIndex++
           ) {
-            const apiDistributionItem = apiDistributionItems[distributionIndex];
-            if (!apiDistributionItem) {
+            const apiOutcome = apiOutcomes[outcomeIndex];
+            if (!apiOutcome) {
               continue;
             }
-            distiributionItemEntities.push({
-              amount: numbers.parseIntOrNull(apiDistributionItem.amount),
-              description: apiDistributionItem.description ?? null,
-              wave_outcome_position: waveOutcomePosition,
-              wave_outcome_distribution_item_position: distributionIndex + 1,
-              wave_id: id
-            });
-          }
-        }
-        await this.wavesApiDb.insertOutcomes(
-          outcomeEntities,
-          ctxWithConnection
-        );
-        await this.wavesApiDb.insertOutcomeDistributionItems(
-          distiributionItemEntities,
-          ctxWithConnection
-        );
-        const descriptionDropModel =
-          this.dropsMappers.createDropApiToUseCaseModel({
-            request: {
-              ...createWaveRequest.description_drop,
+            const waveOutcomePosition = outcomeIndex + 1;
+            outcomeEntities.push({
               wave_id: id,
-              drop_type: ApiDropType.Chat
-            },
-            authorId: actingAsId
-          });
-        const descriptionDropId = await this.createOrUpdateDrop
-          .execute(descriptionDropModel, true, {
-            timer: ctxWithConnection.timer,
-            connection: ctxWithConnection.connection
-          })
-          .then((resp) => resp.drop_id);
-        await this.wavesApiDb.updateDescriptionDropId(
-          {
-            waveId: id,
-            newDescriptionDropId: descriptionDropId
-          },
-          connection
-        );
-        await this.metricsRecorder.recordActiveIdentity(
-          { identityId: newEntity.created_by },
-          ctxWithConnection
-        );
-        await this.identitySubscriptionsDb.addIdentitySubscription(
-          {
-            subscriber_id: newEntity.created_by,
-            target_id: id,
-            target_type: ActivityEventTargetType.WAVE,
-            target_action: ActivityEventAction.DROP_CREATED,
-            wave_id: id,
-            subscribed_to_all_drops: newEntity.is_direct_message
-          },
-          connection,
-          timer
-        );
-        timer.start(`${this.constructor.name}->findWaveById`);
-        const waveEntity = await this.wavesApiDb.findWaveById(id, connection);
-        timer.stop(`${this.constructor.name}->findWaveById`);
-
-        if (!waveEntity) {
-          throw new Error(`Something went wrong while creating wave ${id}`);
-        }
-
-        const waveGroups = Array.from(
-          new Set<string>(
-            [
-              waveEntity.visibility_group_id,
-              waveEntity.participation_group_id,
-              waveEntity.chat_group_id,
-              waveEntity.admin_group_id
-            ].filter((it): it is string => it !== null)
-          )
-        );
-
-        await this.activityRecorder.recordWaveCreated(
-          {
-            creator_id: waveEntity.created_by,
-            wave_id: id,
-            visibility_group_id: waveEntity.visibility_group_id
-          },
-          ctxWithConnection
-        );
-        let usersToNotify: string[];
-        if (waveEntity.is_direct_message) {
-          usersToNotify = await this.userGroupsService.findIdentitiesInGroups(
-            waveGroups,
+              type: enums.resolveOrThrow(WaveOutcomeType, apiOutcome.type),
+              subtype: apiOutcome.subtype
+                ? enums.resolveOrThrow(WaveOutcomeSubType, apiOutcome.subtype)
+                : null,
+              description: apiOutcome.description,
+              credit: apiOutcome.credit
+                ? enums.resolveOrThrow(WaveOutcomeCredit, apiOutcome.credit)
+                : null,
+              rep_category: apiOutcome.rep_category ?? null,
+              amount: apiOutcome.amount ?? null,
+              wave_outcome_position: waveOutcomePosition
+            });
+            const apiDistributionItems = apiOutcome.distribution ?? [];
+            for (
+              let distributionIndex = 0;
+              distributionIndex < apiDistributionItems.length;
+              distributionIndex++
+            ) {
+              const apiDistributionItem =
+                apiDistributionItems[distributionIndex];
+              if (!apiDistributionItem) {
+                continue;
+              }
+              distiributionItemEntities.push({
+                amount: numbers.parseIntOrNull(apiDistributionItem.amount),
+                description: apiDistributionItem.description ?? null,
+                wave_outcome_position: waveOutcomePosition,
+                wave_outcome_distribution_item_position: distributionIndex + 1,
+                wave_id: id
+              });
+            }
+          }
+          await this.wavesApiDb.insertOutcomes(
+            outcomeEntities,
             ctxWithConnection
           );
-        } else {
-          usersToNotify =
-            await this.userGroupsService.findFollowersOfUserInGroups(
-              waveEntity.created_by,
+          await this.wavesApiDb.insertOutcomeDistributionItems(
+            distiributionItemEntities,
+            ctxWithConnection
+          );
+          const descriptionDropModel =
+            this.dropsMappers.createDropApiToUseCaseModel({
+              request: {
+                ...createWaveRequest.description_drop,
+                wave_id: id,
+                drop_type: ApiDropType.Chat
+              },
+              authorId: actingAsId
+            });
+          const { drop_id: descriptionDropId, pending_push_notification_ids } =
+            await this.createOrUpdateDrop.execute(descriptionDropModel, true, {
+              timer: ctxWithConnection.timer,
+              connection: ctxWithConnection.connection
+            });
+          await this.wavesApiDb.updateDescriptionDropId(
+            {
+              waveId: id,
+              newDescriptionDropId: descriptionDropId
+            },
+            connection
+          );
+          await this.metricsRecorder.recordActiveIdentity(
+            { identityId: newEntity.created_by },
+            ctxWithConnection
+          );
+          await this.identitySubscriptionsDb.addIdentitySubscription(
+            {
+              subscriber_id: newEntity.created_by,
+              target_id: id,
+              target_type: ActivityEventTargetType.WAVE,
+              target_action: ActivityEventAction.DROP_CREATED,
+              wave_id: id,
+              subscribed_to_all_drops: newEntity.is_direct_message
+            },
+            connection,
+            timer
+          );
+          await this.waveGroupNotificationSubscriptionsDb.addDefaultGroupsForWaveSubscription(
+            newEntity.created_by,
+            id,
+            connection
+          );
+          timer.start(`${this.constructor.name}->findWaveById`);
+          const waveEntity = await this.wavesApiDb.findWaveById(id, connection);
+          timer.stop(`${this.constructor.name}->findWaveById`);
+
+          if (!waveEntity) {
+            throw new Error(`Something went wrong while creating wave ${id}`);
+          }
+
+          const waveGroups = Array.from(
+            new Set<string>(
+              [
+                waveEntity.visibility_group_id,
+                waveEntity.participation_group_id,
+                waveEntity.chat_group_id,
+                waveEntity.admin_group_id
+              ].filter((it): it is string => it !== null)
+            )
+          );
+
+          await this.activityRecorder.recordWaveCreated(
+            {
+              creator_id: waveEntity.created_by,
+              wave_id: id,
+              visibility_group_id: waveEntity.visibility_group_id
+            },
+            ctxWithConnection
+          );
+          let usersToNotify: string[];
+          if (waveEntity.is_direct_message) {
+            usersToNotify = await this.userGroupsService.findIdentitiesInGroups(
               waveGroups,
               ctxWithConnection
             );
-        }
-        await this.userNotifier.notifyOfWaveCreated(
-          waveEntity.id,
-          waveEntity.created_by,
-          usersToNotify,
-          ctxWithConnection
-        );
-
-        const groupIdsUserIsEligibleFor =
-          await this.userGroupsService.getGroupsUserIsEligibleFor(
-            actingAsId,
-            timer
+          } else {
+            usersToNotify =
+              await this.userGroupsService.findFollowersOfUserInGroups(
+                waveEntity.created_by,
+                waveGroups,
+                ctxWithConnection
+              );
+          }
+          await this.userNotifier.notifyOfWaveCreated(
+            waveEntity.id,
+            waveEntity.created_by,
+            usersToNotify,
+            ctxWithConnection
           );
-        const noRightToVote =
-          authenticationContext.isAuthenticatedAsProxy() &&
-          !authenticationContext.activeProxyActions[
-            ProfileProxyActionType.RATE_WAVE_DROP
-          ];
-        const noRightToParticipate =
-          authenticationContext.isAuthenticatedAsProxy() &&
-          !authenticationContext.activeProxyActions[
-            ProfileProxyActionType.CREATE_DROP_TO_WAVE
-          ];
-        return await this.waveMappers.waveEntityToApiWave(
-          {
-            waveEntity,
-            groupIdsUserIsEligibleFor,
-            noRightToVote,
-            noRightToParticipate
-          },
-          ctxWithConnection
-        );
-      }
-    );
+
+          const groupIdsUserIsEligibleFor =
+            await this.userGroupsService.getGroupsUserIsEligibleFor(
+              actingAsId,
+              timer
+            );
+          const noRightToVote =
+            authenticationContext.isAuthenticatedAsProxy() &&
+            !authenticationContext.activeProxyActions[
+              ProfileProxyActionType.RATE_WAVE_DROP
+            ];
+          const noRightToParticipate =
+            authenticationContext.isAuthenticatedAsProxy() &&
+            !authenticationContext.activeProxyActions[
+              ProfileProxyActionType.CREATE_DROP_TO_WAVE
+            ];
+          return {
+            createdWave: await this.waveMappers.waveEntityToApiWave(
+              {
+                waveEntity,
+                groupIdsUserIsEligibleFor,
+                noRightToVote,
+                noRightToParticipate
+              },
+              ctxWithConnection
+            ),
+            pendingPushNotificationIds: pending_push_notification_ids
+          };
+        }
+      );
     await giveReadReplicaTimeToCatchUp();
     await clearWaveGroupsCache();
+    await sendIdentityPushNotifications(pendingPushNotificationIds);
     timer.stop(`${this.constructor.name}->createWave`);
     return createdWave;
   }
@@ -972,6 +989,13 @@ export class WaveApiService {
             },
             connection
           );
+          if (action === ActivityEventAction.DROP_CREATED) {
+            await this.waveGroupNotificationSubscriptionsDb.addDefaultGroupsForWaveSubscription(
+              subscriber,
+              waveId,
+              connection
+            );
+          }
         }
         await this.metricsRecorder.recordActiveIdentity(
           { identityId: subscriber },
@@ -1019,6 +1043,16 @@ export class WaveApiService {
             },
             connection
           );
+          if (
+            enums.resolveOrThrow(ActivityEventAction, action) ===
+            ActivityEventAction.DROP_CREATED
+          ) {
+            await this.waveGroupNotificationSubscriptionsDb.deleteForWave(
+              subscriber,
+              waveId,
+              connection
+            );
+          }
         }
         await this.metricsRecorder.recordActiveIdentity(
           { identityId: subscriber },
@@ -1323,6 +1357,10 @@ export class WaveApiService {
             waveId,
             ctxWithConnection
           ),
+          this.dropsDb.deleteDropGroupMentionsByWaveId(
+            waveId,
+            ctxWithConnection
+          ),
           this.wavesApiDb.deleteDropMediaByWaveId(waveId, ctxWithConnection),
           this.wavesApiDb.deleteDropReferencedNftsByWaveId(
             waveId,
@@ -1345,6 +1383,11 @@ export class WaveApiService {
             waveId,
             ctxWithConnection
           ),
+          this.waveGroupNotificationSubscriptionsDb.deleteByWaveId(
+            waveId,
+            connection
+          ),
+          profileWavesDb.deleteByWaveId(waveId, ctxWithConnection),
           this.curationsDb.deleteDropCurationsByWaveId(
             waveId,
             ctxWithConnection
@@ -1423,6 +1466,15 @@ export class WaveApiService {
               `You can't update a wave you didn't create and are not an admin of`
             );
           }
+        }
+        const isSelectedProfileWave = await profileWavesDb
+          .findSelectedWaveIdsByWaveIds([waveId], ctxWithConnection)
+          .then((waveIds) => waveIds.has(waveId));
+        if (
+          isSelectedProfileWave &&
+          request.visibility.scope.group_id !== null
+        ) {
+          throw new BadRequestException(`Profile waves must remain public`);
         }
         this.assertImmutableWaveUpdateFieldsUnchanged({
           request,
@@ -1797,5 +1849,6 @@ export const waveApiService = new WaveApiService(
   identityFetcher,
   metricsRecorder,
   curationsDb,
-  dropsDb
+  dropsDb,
+  waveGroupNotificationSubscriptionsDb
 );

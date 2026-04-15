@@ -58,6 +58,7 @@ import {
 import { InsertWaveEntity, wavesApiDb, WavesApiDb } from './waves.api.db';
 import { enums } from '../../../enums';
 import { collections } from '../../../collections';
+import { profileWavesDb } from '@/profiles/profile-waves.db';
 
 type WaveMappingRelatedData = {
   contributors: Record<
@@ -77,6 +78,7 @@ type WaveMappingRelatedData = {
   firstUnreadDropSerialNoByWaveId: Record<string, number | null>;
   wavePauses: Record<string, WaveDecisionPauseEntity[]>;
   pinnedWaveIds: Set<string>;
+  identityWaveIds: Set<string>;
 };
 
 export class WavesMappers {
@@ -267,7 +269,8 @@ export class WavesMappers {
       yourUnreadDropsCountByWaveId,
       firstUnreadDropSerialNoByWaveId,
       wavePauses,
-      pinnedWaveIds
+      pinnedWaveIds,
+      identityWaveIds
     } = relatedData;
     const contributorsOverview: ApiWaveContributorOverview[] =
       contributors[waveEntity.id]?.map((it) => ({
@@ -418,7 +421,8 @@ export class WavesMappers {
       subscribed_actions: subscribedActions[waveEntity.id] ?? [],
       metrics: apiWaveMetrics,
       pauses,
-      pinned: pinnedWaveIds.has(waveEntity.id)
+      pinned: pinnedWaveIds.has(waveEntity.id),
+      identity_wave: identityWaveIds.has(waveEntity.id)
     };
   }
 
@@ -446,7 +450,8 @@ export class WavesMappers {
       yourUnreadDropsCountByWaveId,
       firstUnreadDropSerialNoByWaveId,
       wavePauses,
-      pinnedWaveIds
+      pinnedWaveIds,
+      identityWaveIds
     ] = await Promise.all([
       this.userGroupsService.getByIds(
         waveEntities.flatMap((waveEntity) =>
@@ -538,7 +543,8 @@ export class WavesMappers {
           profileId: authenticatedUserId
         },
         ctx
-      )
+      ),
+      profileWavesDb.findSelectedWaveIdsByWaveIds(waveIds, ctx)
     ]);
     const profileIds = collections.distinct([
       ...waveEntities.flatMap((waveEntity) =>
@@ -609,7 +615,8 @@ export class WavesMappers {
       yourUnreadDropsCountByWaveId,
       firstUnreadDropSerialNoByWaveId,
       wavePauses,
-      pinnedWaveIds
+      pinnedWaveIds,
+      identityWaveIds
     };
   }
 }

@@ -117,6 +117,7 @@ export class DeleteDropUseCase {
         this.dropsDb.deleteDropParts(dropId, { timer, connection }),
         this.dropsDb.deleteDropMentions(dropId, { timer, connection }),
         this.dropsDb.deleteDropMentionedWaves(dropId, { timer, connection }),
+        this.dropsDb.deleteDropGroupMentions(dropId, { timer, connection }),
         this.dropsDb.deleteDropMedia(dropId, { timer, connection }),
         this.dropsDb.deleteDropReferencedNfts(dropId, { timer, connection }),
         this.dropsDb.deleteDropMetadata(dropId, { timer, connection }),

@@ -23,6 +23,7 @@ export { MintingMerkleProof } from './IMintingMerkleProof';
 export { MintingMerkleRoot } from './IMintingMerkleRoot';
 export { MintingClaimActionEntity } from './IMintingClaimAction';
 export {
+  DropGroupMentionEntity,
   DropBoostEntity,
   DropEntity,
   DropMediaEntity,
@@ -87,6 +88,7 @@ export { PinnedWaveEntity } from './IPinnedWaveEntity';
 export { Prenode } from './IPrenode';
 export { Profile, ProfileArchived } from './IProfile';
 export { ProfileActivityLog } from './IProfileActivityLog';
+export { ProfileWaveEntity } from './IProfileWave';
 export { ProfileGroupEntity } from './IProfileGroup';
 export { ProfileGroupChangeEntity } from './IProfileGroupChangeEntity';
 export { ProfileLatestLogEntity } from './IProfileLatestLog';
@@ -163,6 +165,7 @@ export { WaveLeaderboardEntryEntity } from './IWaveLeaderboardEntry';
 export { WaveMetricEntity } from './IWaveMetric';
 export { WaveReaderMetricEntity } from './IWaveReaderMetric';
 export { WaveCurationEntity } from './IWaveCuration';
+export { WaveGroupNotificationSubscriptionEntity } from './IWaveGroupNotificationSubscription';
 export { WinnerDropVoterVoteEntity } from './IWinnerDropVoterVote';
 export { WSConnectionEntity } from './IWSConnection';
 export { XTdhGrantEntity } from './IXTdhGrant';

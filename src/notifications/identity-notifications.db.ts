@@ -18,6 +18,8 @@ import {
 } from '../sql-executor';
 import { Time } from '../time';
 
+type SerializableNotificationInsertRow = Record<string, string | number | null>;
+
 export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
   private readonly logger = Logger.get(IdentityNotificationsDb.name);
 
@@ -74,6 +76,85 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
         this.logger.error('No notification id returned from insert');
       }
     }
+  }
+
+  async insertManyNotifications(
+    notifications: NewIdentityNotification[],
+    connection?: ConnectionWrapper<any>
+  ): Promise<number[]> {
+    if (!this.isNotifierActivated() || !notifications.length) {
+      return [];
+    }
+
+    if (connection) {
+      return this.insertManyNotificationsWithConnection(
+        notifications,
+        connection
+      );
+    }
+
+    return this.executeNativeQueriesInTransaction((wrappedConnection) =>
+      this.insertManyNotificationsWithConnection(
+        notifications,
+        wrappedConnection
+      )
+    );
+  }
+
+  private async insertManyNotificationsWithConnection(
+    notifications: NewIdentityNotification[],
+    connection: ConnectionWrapper<any>
+  ): Promise<number[]> {
+    const insertedIds: number[] = [];
+    const chunkSize = 1000;
+    const columns = [
+      'identity_id',
+      'additional_identity_id',
+      'related_drop_id',
+      'related_drop_part_no',
+      'related_drop_2_id',
+      'related_drop_2_part_no',
+      'cause',
+      'additional_data',
+      'created_at',
+      'visibility_group_id',
+      'wave_id'
+    ] as const;
+    for (let i = 0; i < notifications.length; i += chunkSize) {
+      const chunk = notifications.slice(i, i + chunkSize);
+      const createdAt = Time.currentMillis();
+      const rows: SerializableNotificationInsertRow[] = chunk.map(
+        (notification) => ({
+          identity_id: notification.identity_id,
+          additional_identity_id: notification.additional_identity_id,
+          related_drop_id: notification.related_drop_id,
+          related_drop_part_no: notification.related_drop_part_no,
+          related_drop_2_id: notification.related_drop_2_id,
+          related_drop_2_part_no: notification.related_drop_2_part_no,
+          cause: notification.cause,
+          additional_data: JSON.stringify(notification.additional_data),
+          created_at: createdAt,
+          visibility_group_id: notification.visibility_group_id,
+          wave_id: notification.wave_id
+        })
+      );
+      await this.db.bulkInsert(
+        IDENTITY_NOTIFICATIONS_TABLE,
+        rows,
+        [...columns],
+        undefined,
+        { connection }
+      );
+      const firstInsertId = await this.getLastInsertId(connection);
+      insertedIds.push(
+        ...Array.from(
+          { length: chunk.length },
+          (_, index) => firstInsertId + index
+        )
+      );
+    }
+
+    return insertedIds;
   }
 
   async updateNotificationReadAt(

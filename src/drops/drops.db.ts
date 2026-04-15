@@ -7,16 +7,17 @@ import { PageSortDirection } from '../api-serverless/src/page-request';
 import { assertUnreachable } from '../assertions';
 import { collections } from '../collections';
 import {
+  ACTIVITY_EVENTS_TABLE,
   ART_CURATION_TOKEN_WATCH_DROPS_TABLE,
   ART_CURATION_TOKEN_WATCHES_TABLE,
-  ACTIVITY_EVENTS_TABLE,
   DELETED_DROPS_TABLE,
   DROP_BOOSTS_TABLE,
   DROP_CURATIONS_TABLE,
-  DROP_NFT_LINKS_TABLE,
   DROP_MEDIA_TABLE,
+  DROP_MENTIONED_GROUPS_TABLE,
   DROP_MENTIONED_WAVES_TABLE,
   DROP_METADATA_TABLE,
+  DROP_NFT_LINKS_TABLE,
   DROP_REAL_VOTER_VOTE_IN_TIME_TABLE,
   DROP_REFERENCED_NFTS_TABLE,
   DROP_RELATIONS_TABLE,
@@ -33,6 +34,7 @@ import {
   WAVE_DROPPER_METRICS_TABLE,
   WAVE_LEADERBOARD_ENTRIES_TABLE,
   WAVE_METRICS_TABLE,
+  WAVE_CURATIONS_TABLE,
   WAVES_DECISION_WINNER_DROPS_TABLE,
   WAVES_TABLE,
   WINNER_DROP_VOTER_VOTES_TABLE
@@ -42,6 +44,7 @@ import { DeletedDropEntity } from '../entities/IDeletedDrop';
 import {
   DropBoostEntity,
   DropEntity,
+  DropGroupMentionEntity,
   DropMediaEntity,
   DropMentionedWaveEntity,
   DropMentionEntity,
@@ -56,6 +59,7 @@ import { ProfileActivityLog } from '../entities/IProfileActivityLog';
 import { WaveCreditType, WaveEntity } from '../entities/IWave';
 import { WaveDecisionWinnerDropWithSaleEntity } from '@/entities/IWaveDecision';
 import { WinnerDropVoterVoteEntity } from '../entities/IWinnerDropVoterVote';
+import { DropGroupMention } from '@/entities/IWaveGroupNotificationSubscription';
 import { RequestContext } from '../request.context';
 import {
   ConnectionWrapper,
@@ -65,6 +69,10 @@ import {
 import { Time, Timer } from '../time';
 
 const mysql = require('mysql');
+
+export type CurationDropEntity = DropEntity & {
+  readonly drop_priority_order: number | null;
+};
 
 export class DropsDb extends LazyDbAccessCompatibleService {
   async getDropsByIds(
@@ -81,6 +89,20 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       },
       connection ? { wrappedConnection: connection } : undefined
     );
+  }
+
+  private getVisibleWaveFilterSql(groupIdsUserIsEligibleFor: string[]): string {
+    return [
+      'w.visibility_group_id is null',
+      groupIdsUserIsEligibleFor.length
+        ? `w.visibility_group_id in (:groupsUserIsEligibleFor)`
+        : null,
+      groupIdsUserIsEligibleFor.length
+        ? `w.admin_group_id in (:groupsUserIsEligibleFor)`
+        : null
+    ]
+      .filter((it): it is string => !!it)
+      .join(' or ');
   }
 
   async insertDrop(
@@ -279,6 +301,30 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     }
   }
 
+  async insertDropGroupMentions(
+    mentions: DropGroupMentionEntity[],
+    ctx: RequestContext
+  ) {
+    const distinctEntities = collections.distinctBy(
+      mentions,
+      (mention) => `${mention.drop_id}-${mention.mentioned_group}`
+    );
+    if (!distinctEntities.length) {
+      return;
+    }
+    ctx.timer?.start(`${this.constructor.name}->insertDropGroupMentions`);
+    try {
+      await this.db.bulkInsert(
+        DROP_MENTIONED_GROUPS_TABLE,
+        distinctEntities,
+        ['drop_id', 'mentioned_group'],
+        ctx
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->insertDropGroupMentions`);
+    }
+  }
+
   async insertReferencedNfts(
     references: Omit<DropReferencedNftEntity, 'id'>[],
     connection: ConnectionWrapper<any>,
@@ -398,6 +444,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       group_id,
       wave_id,
       curation_id,
+      curation_name,
       author_id,
       include_replies,
       drop_type,
@@ -410,6 +457,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       amount: number;
       wave_id: string | null;
       curation_id?: string | null;
+      curation_name?: string | null;
       author_id: string | null;
       include_replies: boolean;
       drop_type: DropType | null;
@@ -431,8 +479,13 @@ export class DropsDb extends LazyDbAccessCompatibleService {
           where dc.drop_id = d.id and dc.curation_id = :curation_id
         )`
       : '';
+    const curationJoin = curation_name
+      ? `join ${DROP_CURATIONS_TABLE} dc on dc.drop_id = d.id and dc.wave_id = d.wave_id
+         join ${WAVE_CURATIONS_TABLE} wc on wc.id = dc.curation_id and wc.name = :curation_name`
+      : '';
     const serialNoLessThan = serial_no_less_than ?? Number.MAX_SAFE_INTEGER;
     const sql = `${sqlAndParams.sql} select d.* from ${DROPS_TABLE} d
+         ${curationJoin}
          join ${
            UserGroupsService.GENERATED_VIEW
          } cm on cm.profile_id = d.author_id
@@ -459,32 +512,135 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       author_id,
       wave_id,
       curation_id: curation_id ?? null,
+      curation_name: curation_name ?? null,
       drop_type,
       ids
     };
     return this.db.execute<DropEntity>(sql, params);
   }
 
-  async findLatestDropsWithPartsAndMedia(
+  async findLightDropIdsByWave(
     {
       limit,
+      min_serial_no,
       max_serial_no,
       group_ids_user_is_eligible_for,
-      wave_id
+      wave_id,
+      older_first
     }: {
       limit: number;
+      min_serial_no: number | null;
       max_serial_no: number | null;
       group_ids_user_is_eligible_for: string[];
-      wave_id: string | null;
+      wave_id: string;
+      older_first: boolean;
     },
     ctx: RequestContext
-  ): Promise<DropWithMediaAndPart[]> {
+  ): Promise<LightDropIdRow[]> {
+    const timerLabel = `${this.constructor.name}->findLatestLightDropIdsByWave`;
+    ctx.timer?.start(timerLabel);
     const maxSerialNo = max_serial_no ?? Number.MAX_SAFE_INTEGER;
-    const sql = `select d.*, 
+    const minSerialNo = min_serial_no ?? 0;
+    const visibleWaveFilter = this.getVisibleWaveFilterSql(
+      group_ids_user_is_eligible_for
+    );
+    try {
+      return await this.db.execute<LightDropIdRow>(
+        `select d.id, d.serial_no
+         from ${DROPS_TABLE} d FORCE INDEX (idx_drop_wave_serial_no)
+         where d.wave_id = :wave_id
+           and d.serial_no <= :maxSerialNo
+           and d.serial_no >= :minSerialNo
+           and exists (
+             select 1
+             from ${WAVES_TABLE} w
+             where w.id = :wave_id
+               and (${visibleWaveFilter})
+           )
+         order by d.serial_no ${older_first ? 'asc' : 'desc'}
+         limit :limit`,
+        {
+          limit,
+          maxSerialNo,
+          minSerialNo,
+          groupsUserIsEligibleFor: group_ids_user_is_eligible_for,
+          wave_id
+        },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(timerLabel);
+    }
+  }
+
+  async findVisibleLightDropIds(
+    {
+      limit,
+      older_first,
+      min_serial_no,
+      max_serial_no,
+      group_ids_user_is_eligible_for
+    }: {
+      limit: number;
+      older_first: boolean;
+      min_serial_no: number | null;
+      max_serial_no: number | null;
+      group_ids_user_is_eligible_for: string[];
+    },
+    ctx: RequestContext
+  ): Promise<LightDropIdRow[]> {
+    const timerLabel = `${this.constructor.name}->findLatestVisibleLightDropIds`;
+    ctx.timer?.start(timerLabel);
+    const minSerialNo = min_serial_no ?? 0;
+    const maxSerialNo = max_serial_no ?? Number.MAX_SAFE_INTEGER;
+    const visibleWaveFilter = this.getVisibleWaveFilterSql(
+      group_ids_user_is_eligible_for
+    );
+    try {
+      return await this.db.execute<LightDropIdRow>(
+        `select d.id, d.serial_no
+         from ${DROPS_TABLE} d FORCE INDEX (PRIMARY)
+         where d.serial_no <= :maxSerialNo and d.serial_no >= :minSerialNo
+           and exists (
+             select 1
+             from ${WAVES_TABLE} w
+             where w.id = d.wave_id
+               and (${visibleWaveFilter})
+           )
+         order by d.serial_no ${older_first ? 'asc' : 'desc'}
+         limit :limit`,
+        {
+          limit,
+          minSerialNo,
+          maxSerialNo,
+          groupsUserIsEligibleFor: group_ids_user_is_eligible_for
+        },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(timerLabel);
+    }
+  }
+
+  async findLightDropsByIds(
+    dropIds: string[],
+    ctx: RequestContext
+  ): Promise<DropWithMediaAndPart[]> {
+    if (!dropIds.length) {
+      return [];
+    }
+
+    const timerLabel = `${this.constructor.name}->findLightDropsByIds`;
+    ctx.timer?.start(timerLabel);
+    try {
+      return await this.db.execute<DropWithMediaAndPart>(
+        `select d.*, 
     dp.drop_part_id as part_drop_part_id,
     dp.content as part_content,
     dp.quoted_drop_id as part_quoted_drop_id,
-    dm.medias_json as medias_json
+    dm.medias_json as medias_json,
+    w.name as wave_name,
+    COALESCE(i.handle, '') as author
     from ${DROPS_TABLE} d
          left join ${DROPS_PARTS_TABLE} dp on dp.drop_id = d.id and dp.drop_part_id = 1
          LEFT JOIN (
@@ -497,24 +653,19 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                     ) AS medias_json
             FROM    ${DROP_MEDIA_TABLE}
             WHERE   drop_part_id = 1
+              and drop_id in (:dropIds)
             GROUP BY drop_id
         ) dm ON dm.drop_id = d.id
-         join ${WAVES_TABLE} w on d.wave_id = w.id and (${
-           group_ids_user_is_eligible_for.length
-             ? `w.visibility_group_id in (:groupsUserIsEligibleFor) or w.admin_group_id in (:groupsUserIsEligibleFor) or`
-             : ``
-         } w.visibility_group_id is null) ${wave_id ? `and w.id = :wave_id` : ``}
-         where d.serial_no <= :maxSerialNo 
-          order by d.serial_no desc limit :limit`;
-    const params: Record<string, any> = {
-      limit,
-      maxSerialNo: maxSerialNo,
-      groupsUserIsEligibleFor: group_ids_user_is_eligible_for,
-      wave_id
-    };
-    return await this.db.execute<DropWithMediaAndPart>(sql, params, {
-      wrappedConnection: ctx.connection
-    });
+         join ${WAVES_TABLE} w on d.wave_id = w.id
+         join ${IDENTITIES_TABLE} i on i.profile_id = d.author_id
+         where d.id in (:dropIds)
+         order by d.serial_no desc`,
+        { dropIds },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(timerLabel);
+    }
   }
 
   async findLatestDropsSimple(
@@ -678,6 +829,44 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     return results;
   }
 
+  async findDropsByCurationPriorityOrder(
+    param: {
+      wave_id: string;
+      curation_id: string;
+      limit: number;
+      offset: number;
+    },
+    ctx: RequestContext
+  ): Promise<CurationDropEntity[]> {
+    try {
+      ctx.timer?.start(
+        `${this.constructor.name}->findDropsByCurationPriorityOrder`
+      );
+      return await this.db.execute<CurationDropEntity>(
+        `
+        select d.*, dc.priority_order as drop_priority_order
+        from ${DROP_CURATIONS_TABLE} dc
+        join ${DROPS_TABLE} d on d.id = dc.drop_id
+        where dc.wave_id = :wave_id
+          and d.wave_id = :wave_id
+          and dc.curation_id = :curation_id
+        order by
+          (dc.priority_order is null) asc,
+          dc.priority_order asc,
+          d.created_at asc,
+          d.id asc
+        limit :limit offset :offset
+      `,
+        param,
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(
+        `${this.constructor.name}->findDropsByCurationPriorityOrder`
+      );
+    }
+  }
+
   async findMentionsByDropIds(
     dropIds: string[],
     connection?: ConnectionWrapper<any>
@@ -703,6 +892,29 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       `select * from ${DROP_MENTIONED_WAVES_TABLE} where drop_id in (:dropIds)`,
       { dropIds },
       connection ? { wrappedConnection: connection } : undefined
+    );
+  }
+
+  async findDropGroupMentionsByDropIds(
+    dropIds: string[],
+    connection?: ConnectionWrapper<any>
+  ): Promise<DropGroupMentionEntity[]> {
+    if (dropIds.length === 0) {
+      return [];
+    }
+    return this.db.execute(
+      `select * from ${DROP_MENTIONED_GROUPS_TABLE} where drop_id in (:dropIds)`,
+      { dropIds },
+      connection ? { wrappedConnection: connection } : undefined
+    );
+  }
+
+  async getDropGroupMentions(
+    dropId: string,
+    connection?: ConnectionWrapper<any>
+  ): Promise<DropGroupMention[]> {
+    return this.findDropGroupMentionsByDropIds([dropId], connection).then(
+      (rows) => rows.map((row) => row.mentioned_group)
     );
   }
 
@@ -1079,6 +1291,32 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       { wrappedConnection: ctx.connection }
     );
     ctx.timer?.stop('dropsDb->deleteDropMentionedWaves');
+  }
+
+  public async deleteDropGroupMentions(dropId: string, ctx: RequestContext) {
+    ctx.timer?.start('dropsDb->deleteDropGroupMentions');
+    await this.db.execute(
+      `delete from ${DROP_MENTIONED_GROUPS_TABLE} where drop_id = :dropId`,
+      { dropId },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop('dropsDb->deleteDropGroupMentions');
+  }
+
+  public async deleteDropGroupMentionsByWaveId(
+    waveId: string,
+    ctx: RequestContext
+  ) {
+    ctx.timer?.start('dropsDb->deleteDropGroupMentionsByWaveId');
+    await this.db.execute(
+      `delete from ${DROP_MENTIONED_GROUPS_TABLE}
+       where drop_id in (
+         select id from ${DROPS_TABLE} where wave_id = :waveId
+       )`,
+      { waveId },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop('dropsDb->deleteDropGroupMentionsByWaveId');
   }
 
   public async deleteDropMedia(dropId: string, ctx: RequestContext) {
@@ -2680,11 +2918,18 @@ export interface DropVotersStatsParams {
   readonly sort: DropVotersStatsSort;
 }
 
+export interface LightDropIdRow {
+  readonly id: string;
+  readonly serial_no: number;
+}
+
 export type DropWithMediaAndPart = DropEntity & {
   part_drop_part_id: number | null;
   part_content: string | null;
   part_quoted_drop_id: string | null;
   medias_json: string | null;
+  wave_name: string;
+  author: string;
 };
 
 export interface IdentityNominationDrop {

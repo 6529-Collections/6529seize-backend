@@ -23,6 +23,7 @@ import {
 import { assertUnreachable } from '@/assertions';
 import { randomUUID } from 'crypto';
 import {
+  DropGroupMentionEntity,
   DropMediaEntity,
   DropMentionedWaveEntity,
   DropMentionEntity,
@@ -63,7 +64,6 @@ import {
   UserGroupsService
 } from '@/api/community-members/user-groups.service';
 import { wavesApiDb, WavesApiDb } from '@/api/waves/waves.api.db';
-import { seizeSettings } from '@/api/seize-settings';
 import {
   dropNftLinksDb,
   DropNftLinkInsertModel,
@@ -87,6 +87,11 @@ function isActiveIdentityNomination(nomination: { has_won: boolean }): boolean {
 type PreResolvedEnsIdentityNomination = Readonly<{
   normalizedEnsName: string;
   normalizedWallet: string;
+}>;
+
+type ResolvedMentionedUsers = Readonly<{
+  mentionEntities: Omit<DropMentionEntity, 'id'>[];
+  mentionedUserIds: string[];
 }>;
 
 export class CreateOrUpdateDropUseCase {
@@ -121,6 +126,10 @@ export class CreateOrUpdateDropUseCase {
     return dropId;
   }
 
+  private getAllDropsNotificationsSubscribersLimit(): number {
+    return env.getIntOrNull('ALL_DROPS_NOTIFICATIONS_SUBSCRIBERS_LIMIT') ?? 15;
+  }
+
   public async execute(
     model: CreateOrUpdateDropModel,
     isDescriptionDrop: boolean,
@@ -133,7 +142,7 @@ export class CreateOrUpdateDropUseCase {
       connection: ConnectionWrapper<any>;
       preResolvedIdentityNomination?: PreResolvedEnsIdentityNomination | null;
     }
-  ): Promise<{ drop_id: string }> {
+  ): Promise<{ drop_id: string; pending_push_notification_ids: number[] }> {
     timer?.start(`${CreateOrUpdateDropUseCase.name}->execute`);
     const authorId = model.author_id;
     const proxyIdNecessary = !!model.proxy_identity && !model.proxy_id;
@@ -251,7 +260,7 @@ export class CreateOrUpdateDropUseCase {
       connection: ConnectionWrapper<any>;
       preResolvedIdentityNomination?: PreResolvedEnsIdentityNomination | null;
     }
-  ): Promise<{ drop_id: string }> {
+  ): Promise<{ drop_id: string; pending_push_notification_ids: number[] }> {
     if (model.drop_type === DropType.WINNER) {
       throw new BadRequestException(`Can't modify a winner drop`);
     }
@@ -280,12 +289,13 @@ export class CreateOrUpdateDropUseCase {
       throw new BadRequestException('Chat waves only allow chat drops');
     }
     let dropId: string;
+    let pendingPushNotificationIds: number[] = [];
     if (preExistingDropId) {
       dropId = preExistingDropId;
-      const dropBeforeUpdate = await this.dropsDb.findDropById(
-        dropId,
-        connection
-      );
+      const [dropBeforeUpdate, existingMentionedGroups] = await Promise.all([
+        this.dropsDb.findDropById(dropId, connection),
+        this.dropsDb.getDropGroupMentions(dropId, connection)
+      ]);
       if (dropBeforeUpdate === null) {
         throw new NotFoundException(`Drop ${dropId} not found`);
       }
@@ -320,9 +330,13 @@ export class CreateOrUpdateDropUseCase {
         },
         { timer, connection }
       );
-      await this.insertAllDropComponents(
+      pendingPushNotificationIds = await this.insertAllDropComponents(
         {
-          model: { ...validatedModel, drop_id: dropId },
+          model: {
+            ...validatedModel,
+            drop_id: dropId,
+            mentioned_groups: existingMentionedGroups
+          },
           createdAt: dropBeforeUpdate.created_at,
           serialNo: dropBeforeUpdate.serial_no,
           updatedAt: Time.currentMillis(),
@@ -332,7 +346,7 @@ export class CreateOrUpdateDropUseCase {
       );
     } else {
       dropId = randomUUID();
-      await this.insertAllDropComponents(
+      pendingPushNotificationIds = await this.insertAllDropComponents(
         {
           model: { ...validatedModel, drop_id: dropId },
           createdAt: Time.currentMillis(),
@@ -367,7 +381,10 @@ export class CreateOrUpdateDropUseCase {
       { timer, connection }
     );
     timer?.stop(`${CreateOrUpdateDropUseCase.name}->execute`);
-    return { drop_id: dropId };
+    return {
+      drop_id: dropId,
+      pending_push_notification_ids: pendingPushNotificationIds
+    };
   }
 
   private async validateReferences(
@@ -440,6 +457,11 @@ export class CreateOrUpdateDropUseCase {
     ) {
       throw new ForbiddenException(`User is not eligible for this wave`);
     }
+    this.verifyGroupMentions({
+      model,
+      wave,
+      groupIdsUserIsEligibleFor
+    });
     await Promise.all([
       this.verifyParticipatoryLimitations(
         {
@@ -1004,12 +1026,16 @@ export class CreateOrUpdateDropUseCase {
       serialNo: number | null;
     },
     { connection, timer }: { connection: ConnectionWrapper<any>; timer?: Timer }
-  ) {
+  ): Promise<number[]> {
     timer?.start(`${CreateOrUpdateDropUseCase.name}->insertAllDropComponents`);
     const dropId = this.getRequiredDropId(model);
     const authorId = this.getRequiredAuthorId(model);
     const parts = model.parts;
     const dropNftLinks = this.buildDropNftLinks(model);
+    const resolvedMentionedUsers = await this.resolveMentionedUsers(
+      model,
+      connection
+    );
     if (model.drop_type === DropType.PARTICIPATORY) {
       if (
         wave &&
@@ -1074,13 +1100,25 @@ export class CreateOrUpdateDropUseCase {
         connection,
         timer
       ),
-      this.insertMentionsInDrop({ model, wave }, { timer, connection }),
+      this.insertMentionsInDrop(resolvedMentionedUsers.mentionEntities, {
+        timer,
+        connection
+      }),
       this.dropsDb.insertMentionedWaves(
         model.mentioned_waves?.map<Omit<DropMentionedWaveEntity, 'id'>>(
           (mentionedWave) => ({
             drop_id: dropId,
             wave_id: mentionedWave.wave_id,
             wave_name_in_content: mentionedWave.wave_name_in_content
+          })
+        ),
+        { connection, timer }
+      ),
+      this.dropsDb.insertDropGroupMentions(
+        model.mentioned_groups.map<DropGroupMentionEntity>(
+          (mentionedGroup) => ({
+            drop_id: dropId,
+            mentioned_group: mentionedGroup
           })
         ),
         { connection, timer }
@@ -1166,14 +1204,19 @@ export class CreateOrUpdateDropUseCase {
           vote: 0
         },
         { timer, connection }
-      ),
-      this.recordQuoteNotifications({ model, wave }, { timer, connection }),
-      this.recordAllNotificationsSubscribers(
-        { model, wave },
-        { timer, connection }
       )
     ]);
+    await this.recordQuoteNotifications({ model, wave }, { timer, connection });
+    const pendingPushNotificationIds = await this.notifyWaveDropRecipients(
+      {
+        model,
+        wave,
+        directlyMentionedIdentityIds: resolvedMentionedUsers.mentionedUserIds
+      },
+      { timer, connection }
+    );
     timer?.stop(`${CreateOrUpdateDropUseCase.name}->insertAllDropComponents`);
+    return pendingPushNotificationIds;
   }
 
   private buildDropNftLinks(
@@ -1236,6 +1279,34 @@ export class CreateOrUpdateDropUseCase {
       throw new NotFoundException('Wave not found');
     }
     timer?.stop(`${CreateOrUpdateDropUseCase.name}->verifyMentionedWaves`);
+  }
+
+  private verifyGroupMentions({
+    model,
+    wave,
+    groupIdsUserIsEligibleFor
+  }: {
+    model: CreateOrUpdateDropModel;
+    wave: WaveEntity;
+    groupIdsUserIsEligibleFor: string[];
+  }) {
+    if (!model.mentioned_groups.length) {
+      return;
+    }
+    if (model.drop_id !== null) {
+      throw new BadRequestException(
+        `Group mentions can only be used when creating a drop`
+      );
+    }
+    const isCreator = wave.created_by === this.getRequiredAuthorId(model);
+    const isAdmin =
+      wave.admin_group_id !== null &&
+      groupIdsUserIsEligibleFor.includes(wave.admin_group_id);
+    if (!isCreator && !isAdmin) {
+      throw new ForbiddenException(
+        `Only wave creators or admins can mention groups`
+      );
+    }
   }
 
   private async recordQuoteNotifications(
@@ -1309,12 +1380,10 @@ export class CreateOrUpdateDropUseCase {
     }
   }
 
-  private async insertMentionsInDrop(
-    { model, wave }: { model: CreateOrUpdateDropModel; wave: WaveEntity },
-    { timer, connection }: { connection: ConnectionWrapper<any>; timer?: Timer }
-  ) {
-    timer?.start(`${CreateOrUpdateDropUseCase.name}->insertMentionsInDrop`);
-
+  private async resolveMentionedUsers(
+    model: CreateOrUpdateDropModel,
+    connection: ConnectionWrapper<any>
+  ): Promise<ResolvedMentionedUsers> {
     const mentionedHandles = model.mentioned_users.map((it) => it.handle);
     const mentionedHandlesWithIds = Object.entries(
       await identitiesDb.getIdsByHandles(mentionedHandles, connection)
@@ -1329,37 +1398,20 @@ export class CreateOrUpdateDropUseCase {
       handle_in_content: handle,
       wave_id: waveId
     }));
-    let mentionedUsersIds = mentionEntities.map(
-      (it) => it.mentioned_profile_id
-    );
-    if (model.mentions_all) {
-      const followerIds =
-        await this.identitySubscriptionsDb.findWaveSubscribers(
-          wave.id,
-          connection
-        );
-      mentionedUsersIds = collections.distinct(
-        [...mentionedUsersIds, ...followerIds].filter(
-          (it) => it !== model.author_id
-        )
-      );
-    }
-    await Promise.all([
-      ...mentionedUsersIds.map((mentionedUserId) =>
-        this.userNotifier.notifyOfIdentityMention(
-          {
-            mentioned_identity_id: mentionedUserId,
-            drop_id: dropId,
-            mentioner_identity_id: model.author_identity,
-            wave_id: waveId
-          },
-          wave.visibility_group_id,
-          connection,
-          timer
-        )
-      ),
-      this.dropsDb.insertMentions(mentionEntities, connection)
-    ]);
+    return {
+      mentionEntities,
+      mentionedUserIds: collections.distinct(
+        mentionEntities.map((it) => it.mentioned_profile_id)
+      )
+    };
+  }
+
+  private async insertMentionsInDrop(
+    mentionEntities: Omit<DropMentionEntity, 'id'>[],
+    { timer, connection }: { connection: ConnectionWrapper<any>; timer?: Timer }
+  ) {
+    timer?.start(`${CreateOrUpdateDropUseCase.name}->insertMentionsInDrop`);
+    await this.dropsDb.insertMentions(mentionEntities, connection);
     timer?.stop(`${CreateOrUpdateDropUseCase.name}->insertMentionsInDrop`);
   }
 
@@ -1388,32 +1440,78 @@ export class CreateOrUpdateDropUseCase {
     );
   }
 
-  private async recordAllNotificationsSubscribers(
-    { model, wave }: { model: CreateOrUpdateDropModel; wave: WaveEntity },
+  private async notifyWaveDropRecipients(
+    {
+      model,
+      wave,
+      directlyMentionedIdentityIds
+    }: {
+      model: CreateOrUpdateDropModel;
+      wave: WaveEntity;
+      directlyMentionedIdentityIds: string[];
+    },
     { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
-  ) {
-    const subscriberIds =
-      await this.identitySubscriptionsDb.findWaveSubscribedAllSubscribers(
-        wave.id,
-        connection
-      );
-    if (
-      subscriberIds.length >
-      seizeSettings().all_drops_notifications_subscribers_limit
-    ) {
-      return;
-    }
+  ): Promise<number[]> {
+    timer?.start(`${CreateOrUpdateDropUseCase.name}->notifyWaveDropRecipients`);
     const dropId = this.getRequiredDropId(model);
     const authorId = this.getRequiredAuthorId(model);
-    await this.userNotifier.notifyAllNotificationsSubscribers(
-      {
-        waveId: wave.id,
-        dropId,
-        relatedIdentityId: authorId,
-        subscriberIds
-      },
-      { timer, connection }
+    const [followerRecipients, waveSubscribersCount] = await Promise.all([
+      this.identitySubscriptionsDb.findWaveFollowersEligibleForDropNotifications(
+        {
+          waveId: wave.id,
+          authorId,
+          mentionedGroups: model.mentioned_groups
+        },
+        connection
+      ),
+      this.identitySubscriptionsDb.countWaveSubscribers(wave.id, connection)
+    ]);
+    const mutedDirectMentionedIdentityIds = new Set(
+      await this.identitySubscriptionsDb.findMutedWaveReaders(
+        wave.id,
+        directlyMentionedIdentityIds,
+        connection
+      )
     );
+    const directMentionIdentityIds = collections.distinct(
+      directlyMentionedIdentityIds.filter(
+        (identityId) =>
+          identityId !== authorId &&
+          !mutedDirectMentionedIdentityIds.has(identityId)
+      )
+    );
+    const mentionedIdentityIds = collections.distinct([
+      ...directMentionIdentityIds,
+      ...followerRecipients
+        .filter((recipient) => recipient.has_group_mention)
+        .map((recipient) => recipient.identity_id)
+    ]);
+    const mentionedIdentityIdsSet = new Set(mentionedIdentityIds);
+    const allDropsSubscriberIds =
+      waveSubscribersCount < this.getAllDropsNotificationsSubscribersLimit()
+        ? followerRecipients
+            .filter(
+              (recipient) =>
+                recipient.subscribed_to_all_drops &&
+                !mentionedIdentityIdsSet.has(recipient.identity_id)
+            )
+            .map((recipient) => recipient.identity_id)
+        : [];
+
+    const pendingPushNotificationIds =
+      await this.userNotifier.notifyWaveDropCreatedRecipients(
+        {
+          waveId: wave.id,
+          dropId,
+          relatedIdentityId: authorId,
+          mentionedIdentityIds,
+          allDropsSubscriberIds
+        },
+        wave.visibility_group_id,
+        { timer, connection }
+      );
+    timer?.stop(`${CreateOrUpdateDropUseCase.name}->notifyWaveDropRecipients`);
+    return pendingPushNotificationIds;
   }
 }
 

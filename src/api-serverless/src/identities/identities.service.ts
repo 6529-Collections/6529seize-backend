@@ -45,6 +45,7 @@ import { Time } from '@/time';
 import { Profile, ProfileClassification } from '@/entities/IProfile';
 import { ids } from '@/ids';
 import { profilesDb } from '@/profiles/profiles.db';
+import { profileWavesDb } from '@/profiles/profile-waves.db';
 import { NULL_ADDRESS } from '@/constants';
 import { findEnsForAddress } from '@/ens-lookup';
 
@@ -424,12 +425,14 @@ export class IdentitiesService {
       mainStageSubmissions,
       mainStageWins,
       artistOfPrevoteCards,
-      waveCreatorIds
+      waveCreatorIds,
+      profileWaveIds
     ] = await Promise.all([
       this.identitiesDb.getActiveMainStageDropIds(identityIds, ctx),
       this.identitiesDb.getMainStageWinnerDropIds(identityIds, ctx),
       this.identitiesDb.getArtistOfPrevoteCards(identityIds, ctx),
-      this.identitiesDb.getWaveCreatorProfileIds(identityIds, ctx.connection)
+      this.identitiesDb.getWaveCreatorProfileIds(identityIds, ctx.connection),
+      profileWavesDb.findProfileWaveIdsByProfileIds(identityIds, ctx)
     ]);
     return identityEntities.map<ApiIdentity>((it) => {
       const classification = it.classification
@@ -459,6 +462,9 @@ export class IdentitiesService {
         consolidation_key: it.consolidation_key,
         classification,
         sub_classification: it.sub_classification,
+        profile_wave_id: it.profile_id
+          ? (profileWaveIds[it.profile_id] ?? null)
+          : null,
         active_main_stage_submission_ids: it.profile_id
           ? (mainStageSubmissions[it.profile_id] ?? [])
           : [],

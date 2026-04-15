@@ -7,6 +7,27 @@ export enum GroupTdhInclusionStrategy {
   BOTH = 'BOTH'
 }
 
+const IS_PURE_PROFILE_GROUP_EXPRESSION = `
+  profile_group_id IS NOT NULL
+  AND excluded_profile_group_id IS NULL
+  AND tdh_min IS NULL
+  AND tdh_max IS NULL
+  AND level_min IS NULL
+  AND level_max IS NULL
+  AND rep_min IS NULL
+  AND rep_max IS NULL
+  AND cic_min IS NULL
+  AND cic_max IS NULL
+  AND cic_user IS NULL
+  AND rep_user IS NULL
+  AND rep_category IS NULL
+  AND is_beneficiary_of_grant_id IS NULL
+  AND COALESCE(owns_meme, 0) = 0
+  AND COALESCE(owns_gradient, 0) = 0
+  AND COALESCE(owns_nextgen, 0) = 0
+  AND COALESCE(owns_lab, 0) = 0
+`;
+
 @Entity(USER_GROUPS_TABLE)
 @Index(['id', 'visible'])
 @Index(['profile_group_id', 'visible', 'id'])
@@ -76,6 +97,15 @@ export class UserGroupEntity {
   readonly profile_group_id!: string | null;
   @Column({ type: 'varchar', length: 50, nullable: true, default: null })
   readonly excluded_profile_group_id!: string | null;
+  @Column({
+    type: 'tinyint',
+    nullable: false,
+    insert: false,
+    update: false,
+    generatedType: 'STORED',
+    asExpression: IS_PURE_PROFILE_GROUP_EXPRESSION
+  })
+  readonly is_pure_profile_group!: boolean;
   @Index('idx_user_group_is_private')
   @Column({ type: 'boolean', nullable: false, default: false })
   readonly is_private!: boolean;

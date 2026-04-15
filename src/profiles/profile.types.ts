@@ -13,8 +13,12 @@ export interface CreateOrUpdateProfileCommand {
   pfp_url: string | null;
 }
 
+export interface ProfileWithWave extends Profile {
+  readonly profile_wave_id: string | null;
+}
+
 export interface ProfileAndConsolidations {
-  readonly profile: Profile | null;
+  readonly profile: ProfileWithWave | null;
   readonly consolidation: {
     wallets: { wallet: Wallet; tdh: number }[];
     tdh: number;

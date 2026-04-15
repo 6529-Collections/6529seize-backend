@@ -62,7 +62,8 @@ export function mapWaveToApiWaveMin({
   groupIdsUserIsEligibleFor,
   noRightToVote,
   noRightToParticipate,
-  pinned
+  pinned,
+  identityWave
 }: {
   wave: WaveMinSource;
   displayByWaveId: Record<string, WaveDisplayOverride>;
@@ -70,6 +71,7 @@ export function mapWaveToApiWaveMin({
   noRightToVote: boolean;
   noRightToParticipate: boolean;
   pinned: boolean;
+  identityWave: boolean;
 }): ApiWaveMin {
   return {
     id: wave.id,
@@ -106,6 +108,7 @@ export function mapWaveToApiWaveMin({
     voting_group_id: wave.voting_group_id,
     admin_drop_deletion_enabled: wave.admin_drop_deletion_enabled,
     forbid_negative_votes: wave.forbid_negative_votes,
-    pinned
+    pinned,
+    identity_wave: identityWave
   };
 }

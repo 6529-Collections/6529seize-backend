@@ -1,9 +1,10 @@
 import {
-  SQSClient,
-  SendMessageCommand,
-  SendMessageCommandInput
+  SendMessageBatchCommand,
+  SendMessageBatchCommandInput,
+  SQSClient
 } from '@aws-sdk/client-sqs';
 import { Logger } from '../../../logging';
+import { collections } from '@/collections';
 
 const logger = Logger.get('PUSH_NOTIFICATIONS');
 const region = process.env.AWS_REGION;
@@ -15,30 +16,52 @@ export function isActivated() {
 }
 
 export const sendIdentityPushNotification = async (id: number) => {
+  await sendIdentityPushNotifications([id]);
+};
+
+export const sendIdentityPushNotifications = async (ids: number[]) => {
   if (!isActivated()) {
     logger.info('Push notifications are not activated');
     return;
   }
+  const uniqueIds = collections.distinct(ids);
+  if (!uniqueIds.length) {
+    return;
+  }
 
-  try {
-    const message = {
-      identity_notification_id: id
-    };
-    await sendMessageToSQS(JSON.stringify(message));
-  } catch (error) {
-    logger.error(
-      `[IDENTITY NOTIFICATION ID ${id}] Error sending push notification: ${error}`
-    );
+  const batchSize = 10;
+  for (let i = 0; i < uniqueIds.length; i += batchSize) {
+    const chunk = uniqueIds.slice(i, i + batchSize);
+    try {
+      await sendBatchMessagesToSQS(
+        chunk.map((id) => ({
+          Id: `identity-notification-${id}`,
+          MessageBody: JSON.stringify({
+            identity_notification_id: id
+          })
+        }))
+      );
+    } catch (error) {
+      logger.error(
+        `[IDENTITY NOTIFICATION IDS ${chunk.join(',')}] Error sending push notification chunk from ${uniqueIds.join(',')}: ${error}`
+      );
+    }
   }
 };
 
-const sendMessageToSQS = async (messageBody: string) => {
-  const params: SendMessageCommandInput = {
+const sendBatchMessagesToSQS = async (
+  entries: NonNullable<SendMessageBatchCommandInput['Entries']>
+) => {
+  const params: SendMessageBatchCommandInput = {
     QueueUrl: `https://sqs.${region}.amazonaws.com/987989283142/firebase-push-notifications`,
-    MessageBody: messageBody
+    Entries: entries
   };
 
-  const command = new SendMessageCommand(params);
+  const command = new SendMessageBatchCommand(params);
   const response = await sqs.send(command);
-  logger.info(`Message sent: ${response.MessageId}`);
+  if (response.Failed?.length) {
+    throw new Error(
+      `Failed to enqueue push notifications: ${response.Failed.map((item) => item.Id).join(', ')}`
+    );
+  }
 };

@@ -46,8 +46,8 @@ import { DEFAULT_MAX_SIZE, DEFAULT_PAGE_SIZE } from '../page-request';
 import { ApiDropBoostsPage } from '../generated/models/ApiDropBoostsPage';
 import { curationsApiService } from '@/api/curations/curations.api.service';
 import { giveReadReplicaTimeToCatchUp } from '@/api/api-helpers';
+import { ApiDropCuration } from '@/api/generated/models/ApiDropCuration';
 import { ApiDropCurationRequest } from '@/api/generated/models/ApiDropCurationRequest';
-import { ApiWaveCuration } from '@/api/generated/models/ApiWaveCuration';
 
 const router = asyncRouter();
 
@@ -66,6 +66,7 @@ router.get(
         author?: string;
         wave_id?: string;
         curation_id?: string;
+        curation_name?: string;
         include_replies?: string;
         drop_type?: ApiDropType;
         ids?: string;
@@ -82,6 +83,7 @@ router.get(
       wave_id,
       group_id,
       curation_id,
+      curation_name,
       author_id,
       include_replies,
       drop_type,
@@ -97,6 +99,7 @@ router.get(
         ),
         wave_id,
         curation_id,
+        curation_name,
         author_id,
         include_replies,
         drop_type,
@@ -185,12 +188,12 @@ router.post(
       parts: newDrop.parts,
       referenced_nfts: newDrop.referenced_nfts,
       mentioned_users: newDrop.mentioned_users,
+      mentioned_groups: newDrop.mentioned_groups,
       mentioned_waves: newDrop.mentioned_waves,
       metadata: newDrop.metadata,
       wave_id: newDrop.wave_id,
       reply_to: newDrop.reply_to,
       drop_type: newDrop.drop_type,
-      mentions_all: newDrop.mentions_all,
       signature: newDrop.signature
     };
     const createdDrop = await dropCreationService.createDrop(
@@ -299,7 +302,7 @@ router.get(
   maybeAuthenticatedUser(),
   async (
     req: Request<{ drop_id: string }, any, any, any, any>,
-    res: Response<ApiResponse<ApiWaveCuration[]>>
+    res: Response<ApiResponse<ApiDropCuration[]>>
   ) => {
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
@@ -391,7 +394,7 @@ router.post(
         rater_profile_id: raterProfileId,
         groupIdsUserIsEligibleFor: group_ids_user_is_eligible_for,
         drop_id: dropId,
-        cheersChange: rating
+        newCheers: rating
       },
       ctx
     );
@@ -736,6 +739,7 @@ export async function prepLatestDropsSearchQuery(
       author?: string;
       wave_id?: string;
       curation_id?: string;
+      curation_name?: string;
       include_replies?: string;
       drop_type?: ApiDropType;
       ids?: string;
@@ -747,6 +751,7 @@ export async function prepLatestDropsSearchQuery(
   const limit = numbers.parseIntOrNull(req.query.limit) ?? 10;
   const wave_id = req.query.wave_id ?? null;
   const curation_id = req.query.curation_id ?? null;
+  const curation_name = req.query.curation_name?.trim() || null;
   const group_id = req.query.group_id ?? null;
   const include_replies = req.query.include_replies === 'true';
   const drop_type_str = (req.query.drop_type as string) ?? null;
@@ -768,6 +773,7 @@ export async function prepLatestDropsSearchQuery(
     limit,
     wave_id,
     curation_id,
+    curation_name,
     group_id,
     author_id,
     include_replies,
@@ -800,7 +806,8 @@ const GetDropBoostsRequestSchema = Joi.object<GetDropsBoostsRequest>({
 });
 
 const DropCurationRequestSchema = Joi.object<ApiDropCurationRequest>({
-  curation_id: Joi.string().required()
+  curation_id: Joi.string().required(),
+  priority_order: Joi.number().integer().min(1).optional()
 });
 
 async function assertDropIsCorrectlySigned(

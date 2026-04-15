@@ -88,12 +88,14 @@ import { ApiWaveParticipationSubmissionStrategy } from '@/api/generated/models/A
 import { ApiWaveParticipationSubmissionStrategyIdentityConf } from '@/api/generated/models/ApiWaveParticipationSubmissionStrategyIdentityConf';
 import { ApiWaveParticipationSubmissionStrategyType } from '@/api/generated/models/ApiWaveParticipationSubmissionStrategyType';
 import { curationsApiService } from '@/api/curations/curations.api.service';
+import { ApiCurationDropsPage } from '@/api/generated/models/ApiCurationDropsPage';
 
 const router = asyncRouter();
 
 const WaveCurationSchema = Joi.object<ApiWaveCurationRequest>({
   name: Joi.string().trim().min(1).max(50).required(),
-  group_id: Joi.string().required()
+  group_id: Joi.string().required(),
+  priority_order: Joi.number().integer().min(1).optional()
 });
 
 async function handleSimpleWaveAction(
@@ -606,6 +608,44 @@ router.post(
     );
     await giveReadReplicaTimeToCatchUp();
     res.send(created);
+  }
+);
+
+router.get(
+  '/:id/curations/:curation_id/drops',
+  maybeAuthenticatedUser(),
+  async (
+    req: Request<
+      { id: string; curation_id: string },
+      any,
+      any,
+      { page?: number; page_size?: number },
+      any
+    >,
+    res: Response<ApiResponse<ApiCurationDropsPage>>
+  ) => {
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
+    const { page, page_size } = getValidatedByJoiOrThrow<{
+      page: number;
+      page_size: number;
+    }>(
+      req.query as { page: number; page_size: number },
+      Joi.object<{ page: number; page_size: number }>({
+        page: Joi.number().integer().min(1).optional().default(1),
+        page_size: Joi.number().integer().min(1).max(100).optional().default(50)
+      })
+    );
+    const result = await dropsService.findWaveCurationDrops(
+      {
+        wave_id: req.params.id,
+        curation_id: req.params.curation_id,
+        page,
+        page_size
+      },
+      { authenticationContext, timer }
+    );
+    res.send(result);
   }
 );
 

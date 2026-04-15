@@ -1,5 +1,3 @@
-import { seizeSettings } from '@/api/seize-settings';
-import { identitySubscriptionsDb } from '../api-serverless/src/identity-subscriptions/identity-subscriptions.db';
 import { IdentityNotificationCause } from '../entities/IIdentityNotification';
 import { RequestContext } from '../request.context';
 import { ConnectionWrapper } from '../sql-executor';
@@ -310,66 +308,68 @@ export class UserNotifier {
     ctx.timer?.stop('userNotifier->notifyOfWaveCreated');
   }
 
-  public async notifyAllNotificationsSubscribers(
+  public async notifyWaveDropCreatedRecipients(
     {
       waveId,
       dropId,
       relatedIdentityId,
-      subscriberIds
+      mentionedIdentityIds,
+      allDropsSubscriberIds
     }: {
       waveId: string;
       dropId: string;
       relatedIdentityId: string;
-      subscriberIds: string[];
+      mentionedIdentityIds: string[];
+      allDropsSubscriberIds: string[];
     },
+    visibility_group_id: string | null,
     { timer, connection }: RequestContext
-  ) {
-    timer?.start('userNotifier->notifyAllNotificationsSubscribers');
-
-    const waveMembersCount =
-      await identitySubscriptionsDb.countWaveSubscribers(waveId);
-    const subscribersLimit =
-      seizeSettings().all_drops_notifications_subscribers_limit;
-
-    if (waveMembersCount > subscribersLimit) {
-      timer?.stop('userNotifier->notifyAllNotificationsSubscribers');
-      return;
-    }
-
-    const existingNotificationIdentities =
+  ): Promise<number[]> {
+    timer?.start('userNotifier->notifyWaveDropCreatedRecipients');
+    const alreadyNotifiedIdentityIds = new Set(
       await this.identityNotificationsDb.findIdentitiesNotification(
         waveId,
         dropId,
         connection
-      );
-
-    const ignoreProfileIds = existingNotificationIdentities ?? [];
-
-    const subscriberIdsToNotify = subscriberIds.filter(
-      (id) => !ignoreProfileIds.includes(id) && id !== relatedIdentityId
-    );
-
-    await Promise.all(
-      subscriberIdsToNotify.map((id) =>
-        this.identityNotificationsDb.insertNotification(
-          {
-            identity_id: id,
-            additional_identity_id: relatedIdentityId,
-            related_drop_id: dropId,
-            related_drop_part_no: null,
-            related_drop_2_id: null,
-            related_drop_2_part_no: null,
-            wave_id: waveId,
-            cause: IdentityNotificationCause.ALL_DROPS,
-            additional_data: {},
-            visibility_group_id: null
-          },
-          connection
-        )
       )
     );
-
-    timer?.stop('userNotifier->notifyAllNotificationsSubscribers');
+    const pendingPushNotificationIds =
+      await this.identityNotificationsDb.insertManyNotifications(
+        [
+          ...mentionedIdentityIds
+            .filter((id) => id !== relatedIdentityId)
+            .map((id) => ({
+              identity_id: id,
+              additional_identity_id: relatedIdentityId,
+              related_drop_id: dropId,
+              related_drop_part_no: null,
+              related_drop_2_id: null,
+              related_drop_2_part_no: null,
+              wave_id: waveId,
+              cause: IdentityNotificationCause.IDENTITY_MENTIONED,
+              additional_data: {},
+              visibility_group_id
+            })),
+          ...allDropsSubscriberIds
+            .filter((id) => id !== relatedIdentityId)
+            .filter((id) => !alreadyNotifiedIdentityIds.has(id))
+            .map((id) => ({
+              identity_id: id,
+              additional_identity_id: relatedIdentityId,
+              related_drop_id: dropId,
+              related_drop_part_no: null,
+              related_drop_2_id: null,
+              related_drop_2_part_no: null,
+              wave_id: waveId,
+              cause: IdentityNotificationCause.ALL_DROPS,
+              additional_data: {},
+              visibility_group_id
+            }))
+        ],
+        connection
+      );
+    timer?.stop('userNotifier->notifyWaveDropCreatedRecipients');
+    return pendingPushNotificationIds;
   }
 }
 

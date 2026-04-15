@@ -57,6 +57,7 @@ export class ApiWave {
     'metrics': ApiWaveMetrics;
     'pauses': Array<ApiWaveDecisionPause>;
     'pinned': boolean;
+    'identity_wave': boolean;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -166,6 +167,12 @@ export class ApiWave {
         {
             "name": "pinned",
             "baseName": "pinned",
+            "type": "boolean",
+            "format": ""
+        },
+        {
+            "name": "identity_wave",
+            "baseName": "identity_wave",
             "type": "boolean",
             "format": ""
         }    ];

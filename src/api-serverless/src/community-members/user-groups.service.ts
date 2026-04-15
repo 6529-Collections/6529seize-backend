@@ -74,7 +74,7 @@ import { xTdhGrantApiConverter } from '../xtdh/grants/xtdh-grant.api-converter';
 
 export type NewUserGroupEntity = Omit<
   UserGroupEntity,
-  'id' | 'created_at' | 'created_by'
+  'id' | 'created_at' | 'created_by' | 'is_pure_profile_group'
 >;
 
 type GClean = Omit<
@@ -1245,6 +1245,7 @@ export class UserGroupsService {
     name: string | null,
     authorId: string | null,
     createdAtLessThan: number | null,
+    includeProfileGroups: boolean,
     ctx: RequestContext
   ): Promise<ApiGroupFull[]> {
     ctx.timer?.start('userGroupsService->searchByNameOrAuthor');
@@ -1259,6 +1260,7 @@ export class UserGroupsService {
       name,
       authorId,
       createdAtLessThan,
+      includeProfileGroups,
       authenticatedUserId,
       eligibleGroupIds,
       ctx

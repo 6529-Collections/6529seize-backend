@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { ApiResponse } from '../api-response';
 import {
+  getAuthenticationContext,
   getAuthenticatedWalletOrNull,
   getWalletOrThrow,
   maybeAuthenticatedUser,
@@ -30,10 +31,12 @@ import { getProfileClassificationsBySubclassification } from './profile.helper';
 import { ApiIdentity } from '../generated/models/ApiIdentity';
 import { ApiCreateOrUpdateProfileRequest } from '../generated/models/ApiCreateOrUpdateProfileRequest';
 import { ApiProfileClassification } from '../generated/models/ApiProfileClassification';
+import { ApiSetProfileWaveRequest } from '../generated/models/ApiSetProfileWaveRequest';
 import { identitiesService } from '../identities/identities.service';
 import { identityFetcher } from '../identities/identity.fetcher';
 import { Timer } from '../../../time';
 import { enums } from '../../../enums';
+import { profileWavesApiService } from '@/api/profiles/profile-waves.api.service';
 
 const router = asyncRouter();
 
@@ -211,6 +214,63 @@ router.post(
   }
 );
 
+router.post(
+  `/:identity/wave`,
+  needsAuthenticatedUser(),
+  async function (
+    req: Request<
+      {
+        identity: string;
+      },
+      any,
+      ApiSetProfileWaveRequest,
+      any,
+      any
+    >,
+    res: Response<ApiResponse<ApiIdentity>>
+  ) {
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
+    const request = getValidatedByJoiOrThrow(
+      req.body,
+      ApiSetProfileWaveRequestSchema
+    );
+    const response = await profileWavesApiService.setProfileWave(
+      req.params.identity.toLowerCase(),
+      request,
+      { authenticationContext, timer }
+    );
+    await giveReadReplicaTimeToCatchUp();
+    res.status(200).send(response);
+  }
+);
+
+router.delete(
+  `/:identity/wave`,
+  needsAuthenticatedUser(),
+  async function (
+    req: Request<
+      {
+        identity: string;
+      },
+      any,
+      any,
+      any,
+      any
+    >,
+    res: Response<ApiResponse<ApiIdentity>>
+  ) {
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
+    const response = await profileWavesApiService.clearProfileWave(
+      req.params.identity.toLowerCase(),
+      { authenticationContext, timer }
+    );
+    await giveReadReplicaTimeToCatchUp();
+    res.status(200).send(response);
+  }
+);
+
 const HEX_COLOR_REGEX = /^#[0-9a-fA-F]{6}$/;
 const ALLOWED_BANNER_URL_PREFIX = 'https://d3lqz0a4bldqgf.cloudfront.net/';
 const BANNER_IMAGE_EXTENSION_REGEX = /\.(png|jpeg|jpg|gif|webp)$/i;
@@ -314,6 +374,11 @@ interface ApiUploadProfilePictureRequest {
 const ApiUploadProfilePictureRequestSchema: Joi.ObjectSchema<ApiUploadProfilePictureRequest> =
   Joi.object({
     meme: Joi.number().optional()
+  });
+
+const ApiSetProfileWaveRequestSchema: Joi.ObjectSchema<ApiSetProfileWaveRequest> =
+  Joi.object({
+    wave_id: Joi.string().trim().required().min(1).max(100)
   });
 
 router.use('/:identity/cic', profileCicRoutes);
