@@ -96,9 +96,6 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       'w.visibility_group_id is null',
       groupIdsUserIsEligibleFor.length
         ? `w.visibility_group_id in (:groupsUserIsEligibleFor)`
-        : null,
-      groupIdsUserIsEligibleFor.length
-        ? `w.admin_group_id in (:groupsUserIsEligibleFor)`
         : null
     ]
       .filter((it): it is string => !!it)
@@ -404,7 +401,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         select d.* from ${DROPS_TABLE} d
          join waves w on d.wave_id = w.id and (${
            group_ids_user_is_eligible_for.length
-             ? `w.visibility_group_id in (:group_ids_user_is_eligible_for) or w.admin_group_id in (:group_ids_user_is_eligible_for) or`
+             ? `w.visibility_group_id in (:group_ids_user_is_eligible_for) or`
              : ``
          } w.visibility_group_id is null)
          where d.id = :id
@@ -491,7 +488,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
          } cm on cm.profile_id = d.author_id
          join ${WAVES_TABLE} w on d.wave_id = w.id and (${
            group_ids_user_is_eligible_for.length
-             ? `w.visibility_group_id in (:groupsUserIsEligibleFor) or w.admin_group_id in (:groupsUserIsEligibleFor) or`
+             ? `w.visibility_group_id in (:groupsUserIsEligibleFor) or`
              : ``
          } w.visibility_group_id is null) ${wave_id ? `and w.id = :wave_id` : ``}
          where ${
@@ -748,7 +745,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       from ${DROPS_TABLE} d
       join ${WAVES_TABLE} w on d.wave_id = w.id and (${
         group_ids_user_is_eligible_for.length
-          ? `w.visibility_group_id in (:groupsUserIsEligibleFor) or w.admin_group_id in (:groupsUserIsEligibleFor) or`
+          ? `w.visibility_group_id in (:groupsUserIsEligibleFor) or`
           : ``
       } w.visibility_group_id is null)
       where d.wave_id = :wave_id

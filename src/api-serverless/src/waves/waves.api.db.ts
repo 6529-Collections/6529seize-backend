@@ -144,7 +144,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
          LEFT JOIN ${WAVE_METRICS_TABLE} wm ON wm.wave_id = w.id
          WHERE w.id in (:ids) and (w.visibility_group_id is null ${
            groupIdsUserIsEligibleFor.length
-             ? `or w.visibility_group_id in (:groupIdsUserIsEligibleFor) or w.admin_group_id in (:groupIdsUserIsEligibleFor)`
+             ? `or w.visibility_group_id in (:groupIdsUserIsEligibleFor)`
              : ``
          })`,
         { ids, groupIdsUserIsEligibleFor },
@@ -383,7 +383,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
              : ``
          }(${
            groupsUserIsEligibleFor.length
-             ? `w.visibility_group_id in (:groupsUserIsEligibleFor) or w.admin_group_id in (:groupsUserIsEligibleFor) or`
+             ? `w.visibility_group_id in (:groupsUserIsEligibleFor) or`
              : ``
          } w.visibility_group_id is null) and w.serial_no < :serialNoLessThan order by w.serial_no desc limit ${
            searchParams.limit
@@ -702,8 +702,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                 w.visibility_group_id is null
                 ${
                   eligibleGroups.length
-                    ? `or w.visibility_group_id in (:eligibleGroups)
-                       or w.admin_group_id in (:eligibleGroups)`
+                    ? `or w.visibility_group_id in (:eligibleGroups)`
                     : ``
                 }
               )
