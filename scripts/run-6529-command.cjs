@@ -129,8 +129,7 @@ child.stderr.on("data", (data) => {
   process.stderr.write(data);
 });
 
-child.on("close", (code) => {
+child.on("close", (code = 1) => {
   // Exit code 130 = SIGINT (Ctrl+C) — treat as clean exit.
-  const exitCode = code ?? 1;
-  process.exit(exitCode === 130 ? 0 : exitCode);
+  process.exit(code === 130 ? 0 : code);
 });

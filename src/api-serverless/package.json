@@ -15,8 +15,6 @@
   },
   "dependencies": {
     "@aws-sdk/client-managedblockchain": "^3.980.0",
-    "@ethersproject/hash": "^5.8.0",
-    "@ethersproject/keccak256": "^5.8.0",
     "@types/express": "^4.17.25",
     "@types/swagger-ui-express": "^4.1.8",
     "@wagmi/chains": "^1.8.0",
@@ -71,8 +69,5 @@
   },
   "author": "The serverless webpack authors (https://github.com/elastic-coders/serverless-webpack)",
   "license": "MIT",
-  "overrides": {
-    "jsonpath-plus": "10.3.0"
-  },
   "packageManager": "pnpm@10.33.0"
 }

@@ -1,14 +1,14 @@
 import { Request, Response } from 'express';
-import * as db from './api.oracle.db';
-import { asyncRouter } from '../async.router';
+import * as db from '@/api/oracle/api.oracle.db';
+import { asyncRouter } from '@/api/async.router';
 import * as SwaggerUI from 'swagger-ui-express';
-import { getIp, isLocalhost } from '../policies/policies';
-import { getPage, getPageSize } from '../api-helpers';
-import { numbers } from '../../../numbers';
+import { getIp, isLocalhost } from '@/api/policies/policies';
+import { getPage, getPageSize } from '@/api/api-helpers';
+import { numbers } from '@/numbers';
 
-const fs = require('fs');
+const fs = require('node:fs');
 const jsYaml = require('js-yaml');
-const path = require('path');
+const path = require('node:path');
 
 const router = asyncRouter();
 

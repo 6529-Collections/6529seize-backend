@@ -37,7 +37,7 @@ walk(repoRoot);
 if (denied.length > 0) {
   console.error("package-lock.json is not supported in this repository.");
   console.error("Remove these files and commit pnpm-lock.yaml instead:");
-  for (const file of denied.sort()) {
+  for (const file of denied.toSorted((a, b) => a.localeCompare(b))) {
     console.error(`  - ${file}`);
   }
   process.exit(1);

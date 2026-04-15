@@ -20,7 +20,7 @@ function detectPackageManager() {
     execBaseName === "npm" ||
     execBaseName === "npm-cli.js" ||
     npmExecPath.includes("/npm-cli.js") ||
-    npmExecPath.includes("\\npm-cli.js")
+    npmExecPath.includes(String.raw`\npm-cli.js`)
   ) {
     return "npm";
   }

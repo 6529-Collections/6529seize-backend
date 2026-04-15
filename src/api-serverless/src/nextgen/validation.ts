@@ -1,6 +1,5 @@
-import { ethers } from 'ethers';
+import { ethers, hashMessage, keccak256 } from 'ethers';
 import * as Joi from 'joi';
-import { hashMessage } from '@ethersproject/hash';
 import { Readable } from 'stream';
 import {
   getNextGenChainId,
@@ -13,7 +12,6 @@ import { numbers } from '../../../numbers';
 import { equalIgnoreCase } from '../../../strings';
 import { getRpcUrl } from '../../../alchemy';
 
-const { keccak256 } = require('@ethersproject/keccak256');
 const { MerkleTree } = require('merkletreejs');
 
 const csv = require('csv-parser');

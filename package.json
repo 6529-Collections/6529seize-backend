@@ -147,7 +147,6 @@
   "pnpm": {
     "overrides": {
       "axios": "1.15.0",
-      "elliptic": "6.6.1",
       "fast-xml-parser": "5.6.0",
       "follow-redirects": "1.16.0",
       "handlebars": "4.7.9",

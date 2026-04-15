@@ -22,6 +22,7 @@ fi
 
 log() {
   echo "$*" >&2
+  return
 }
 
 resolve_real_binary() {
@@ -45,6 +46,7 @@ resolve_real_binary() {
   fi
 
   printf -v "$varname" '%s' "$resolved"
+  return
 }
 
 resolve_npm_global_bin() {
@@ -114,6 +116,7 @@ ensure_socket_firewall() {
 ensure_pinned_pnpm() {
   log "Activating the repo-pinned pnpm version with Corepack..."
   bash "$REPO_ROOT/scripts/setup-corepack-pnpm.sh" >&2
+  return
 }
 
 detect_rc_file() {
@@ -127,6 +130,7 @@ detect_rc_file() {
       printf '%s\n' "${HOME}/.bashrc"
       ;;
   esac
+  return
 }
 
 remove_managed_global_shim() {
@@ -167,6 +171,7 @@ strip_managed_blocks() {
     $0 == managed_end { skipping = 0; next }
     !skipping { print }
   ' "$source_file" > "$output_file"
+  return
 }
 
 render_shell_hook_body() {
@@ -248,6 +253,7 @@ fi
 
 __6529_sync_repo_bin_path
 EOF
+  return
 }
 
 append_managed_block() {
@@ -267,6 +273,7 @@ append_managed_block() {
   } >> "$tmp_file"
 
   mv "$tmp_file" "$rc_file"
+  return
 }
 
 if [[ "$print_export_only" == "1" ]]; then

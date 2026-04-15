@@ -1609,8 +1609,8 @@ async function initializeApp() {
   app.use(rootRouter);
 
   const openapiYamlCandidates = [
-    path.join(__dirname, 'openapi.yaml'),      // Lambda (/var/task/) or esbuild bundle (dist/)
-    path.join(__dirname, '../openapi.yaml')    // ts-node (src/)
+    path.join(__dirname, 'openapi.yaml'), // Lambda (/var/task/) or esbuild bundle (dist/)
+    path.join(__dirname, '../openapi.yaml') // ts-node (src/)
   ];
   const openapiYamlPath = openapiYamlCandidates.find((p) => fs.existsSync(p));
   if (!openapiYamlPath) {
