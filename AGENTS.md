@@ -34,6 +34,16 @@ This is the 6529 SEIZE Backend repository, a Web3 NFT platform backend that hand
 
 ## Commands
 
+Bootstrap the repo-local command shim with `./bin/6529 bootstrap`.
+
+`direnv allow` is optional convenience only. This repo's `.envrc` just adds `bin/` to `PATH` while you are inside the repo.
+
+For the current shell only, use `source <(./bin/6529 bootstrap --print-export)`.
+
+Use `./bin/6529 run <script>` for repo `package.json` scripts.
+
+Use `./bin/6529 <pnpm-command>` for direct pnpm subcommands such as `./bin/6529 audit`.
+
 ### Development
 
 ```bash
@@ -317,7 +327,7 @@ The API (`src/api-serverless/src/`) is an Express application with:
 
 **API schemas**
 - API endpoints are described in `openapi.yaml` file.
-- Any time you change this file run `./bin/6529 exec pnpm --filter ./src/api-serverless run restructure-openapi && ./bin/6529 run generate:api`
+- Any time you change this file run `./bin/6529 run api:regen-openapi`
 - This will generate response models to `src/api-serverless/src/generated/models`, but only response models and POST/DELETE request bodies, not routes and query param models.
 - Routes themselves are manually created into `api-serverless` into files ending with `.routes.ts` and are wired in `app.ts` file.
 - Generated API models are used in those routes. For query param based requests, types are created manually.
@@ -334,7 +344,7 @@ Use path aliases for **new** imports where applicable. Do not change existing im
 All API request/response types must be defined via OpenAPI and the generated models. Do not hand-roll response types for API endpoints unless explicitly asked not to.
 
 1. **Define in OpenAPI**: Add the endpoint and its request/response schemas in `src/api-serverless/openapi.yaml` (paths and `components/schemas`).
-2. **Generate**: Run `./bin/6529 exec pnpm --filter ./src/api-serverless run restructure-openapi` then `./bin/6529 run generate:api`. This creates/updates types under `src/api-serverless/src/generated/models/`.
+2. **Generate**: Run `./bin/6529 run api:regen-openapi`. This creates/updates types under `src/api-serverless/src/generated/models/`.
 3. **Use in routes**: Import from `@/api/generated/models/...` (or `../generated/models/...`) and use the generated classes for responses (and for POST/PUT bodies where applicable). Map your DB/service output to the generated model shape (e.g. snake_case properties) before returning.
 
 # Database schema and migrations

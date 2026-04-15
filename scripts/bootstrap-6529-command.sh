@@ -8,6 +8,12 @@ LOCAL_BIN_DIR="${HOME}/.local/bin"
 GLOBAL_6529="${LOCAL_BIN_DIR}/6529"
 REAL_NPM=""
 NPM_GLOBAL_BIN=""
+SFW_BIN_PATH=""
+
+LEGACY_MARKER_BEGIN="# >>> 6529 repo bin >>>"
+LEGACY_MARKER_END="# <<< 6529 repo bin <<<"
+MANAGED_MARKER_BEGIN="# >>> 6529 command shim >>>"
+MANAGED_MARKER_END="# <<< 6529 command shim <<<"
 
 print_export_only="0"
 if [[ "${1:-}" == "--print-export" ]]; then
@@ -16,7 +22,6 @@ fi
 
 log() {
   echo "$*" >&2
-  return 0
 }
 
 resolve_real_binary() {
@@ -40,7 +45,6 @@ resolve_real_binary() {
   fi
 
   printf -v "$varname" '%s' "$resolved"
-  return 0
 }
 
 resolve_npm_global_bin() {
@@ -60,8 +64,6 @@ resolve_npm_global_bin() {
   if [[ -n "$NPM_GLOBAL_BIN" && ! -d "$NPM_GLOBAL_BIN" ]]; then
     NPM_GLOBAL_BIN=""
   fi
-
-  return 0
 }
 
 prepend_npm_global_bin_to_path() {
@@ -73,8 +75,6 @@ prepend_npm_global_bin_to_path() {
     *":$NPM_GLOBAL_BIN:"*) ;;
     *) export PATH="$NPM_GLOBAL_BIN:$PATH" ;;
   esac
-
-  return 0
 }
 
 ensure_socket_firewall() {
@@ -83,13 +83,8 @@ ensure_socket_firewall() {
   prepend_npm_global_bin_to_path
 
   if command -v sfw >/dev/null 2>&1 && sfw --help >/dev/null 2>&1; then
+    SFW_BIN_PATH="$(command -v sfw)"
     return 0
-  fi
-
-  if [[ "$print_export_only" == "1" ]]; then
-    log "Socket Firewall ('sfw') is not installed or not usable on PATH."
-    log "Run ./bin/6529 bootstrap first so it can install and wire up sfw."
-    exit 1
   fi
 
   log "Installing Socket Firewall globally with the real npm binary..."
@@ -112,211 +107,196 @@ ensure_socket_firewall() {
     log "Socket Firewall installation completed but 'sfw' is still not usable."
     exit 1
   fi
-  return 0
+
+  SFW_BIN_PATH="$(command -v sfw)"
 }
 
 ensure_pinned_pnpm() {
   log "Activating the repo-pinned pnpm version with Corepack..."
   bash "$REPO_ROOT/scripts/setup-corepack-pnpm.sh" >&2
-  return 0
 }
+
+detect_rc_file() {
+  local shell_name="${SHELL##*/}"
+
+  case "$shell_name" in
+    zsh)
+      printf '%s\n' "${HOME}/.zshrc"
+      ;;
+    bash|*)
+      printf '%s\n' "${HOME}/.bashrc"
+      ;;
+  esac
+}
+
+remove_managed_global_shim() {
+  if [[ ! -e "$GLOBAL_6529" && ! -L "$GLOBAL_6529" ]]; then
+    return 1
+  fi
+
+  if [[ -L "$GLOBAL_6529" ]]; then
+    local target=""
+    target="$(readlink "$GLOBAL_6529" 2>/dev/null || true)"
+    if [[ "$target" == *"/bin/6529"* ]]; then
+      rm -f "$GLOBAL_6529"
+      return 0
+    fi
+
+    return 1
+  fi
+
+  if [[ -f "$GLOBAL_6529" ]] && grep -q "/bin/6529" "$GLOBAL_6529" 2>/dev/null; then
+    rm -f "$GLOBAL_6529"
+    return 0
+  fi
+
+  return 1
+}
+
+strip_managed_blocks() {
+  local source_file="$1" output_file="$2"
+
+  awk \
+    -v legacy_begin="$LEGACY_MARKER_BEGIN" \
+    -v legacy_end="$LEGACY_MARKER_END" \
+    -v managed_begin="$MANAGED_MARKER_BEGIN" \
+    -v managed_end="$MANAGED_MARKER_END" '
+    $0 == legacy_begin { skipping = 1; next }
+    $0 == legacy_end { skipping = 0; next }
+    $0 == managed_begin { skipping = 1; next }
+    $0 == managed_end { skipping = 0; next }
+    !skipping { print }
+  ' "$source_file" > "$output_file"
+}
+
+render_shell_hook_body() {
+  cat <<EOF
+__6529_repo_root="$REPO_ROOT"
+__6529_repo_bin="\$__6529_repo_root/bin"
+EOF
+
+  if [[ -n "$SFW_BIN_PATH" ]]; then
+    cat <<EOF
+export SFW_BIN="$SFW_BIN_PATH"
+EOF
+  fi
+
+  cat <<'EOF'
+__6529_sync_repo_bin_path() {
+  local clean_path=""
+  local remaining="${PATH:-}"
+  local part=""
+
+  while [ -n "$remaining" ]; do
+    case "$remaining" in
+      *:*)
+        part="${remaining%%:*}"
+        remaining="${remaining#*:}"
+        ;;
+      *)
+        part="$remaining"
+        remaining=""
+        ;;
+    esac
+
+    if [ -z "$part" ] || [ "$part" = "$__6529_repo_bin" ]; then
+      continue
+    fi
+
+    if [ -z "$clean_path" ]; then
+      clean_path="$part"
+    else
+      clean_path="${clean_path}:$part"
+    fi
+  done
+
+  case "$PWD/" in
+    "$__6529_repo_root/"|"$__6529_repo_root"/*)
+      PATH="$__6529_repo_bin${clean_path:+:$clean_path}"
+      ;;
+    *)
+      PATH="$clean_path"
+      ;;
+  esac
+
+  export PATH
+  hash -r 2>/dev/null || true
+}
+
+if [ -n "${ZSH_VERSION:-}" ]; then
+  autoload -Uz add-zsh-hook 2>/dev/null || true
+  if command -v add-zsh-hook >/dev/null 2>&1; then
+    add-zsh-hook -d chpwd __6529_sync_repo_bin_path 2>/dev/null || true
+    add-zsh-hook -d precmd __6529_sync_repo_bin_path 2>/dev/null || true
+    add-zsh-hook chpwd __6529_sync_repo_bin_path
+    add-zsh-hook precmd __6529_sync_repo_bin_path
+  fi
+fi
+
+if [ -n "${BASH_VERSION:-}" ]; then
+  case ";${PROMPT_COMMAND:-};" in
+    *";__6529_sync_repo_bin_path;"*) ;;
+    *)
+      if [ -n "${PROMPT_COMMAND:-}" ]; then
+        PROMPT_COMMAND="__6529_sync_repo_bin_path;${PROMPT_COMMAND}"
+      else
+        PROMPT_COMMAND="__6529_sync_repo_bin_path"
+      fi
+      ;;
+  esac
+fi
+
+__6529_sync_repo_bin_path
+EOF
+}
+
+append_managed_block() {
+  local rc_file="$1"
+  local tmp_file=""
+
+  mkdir -p "$(dirname "$rc_file")"
+  touch "$rc_file"
+
+  tmp_file="$(mktemp)"
+  strip_managed_blocks "$rc_file" "$tmp_file"
+
+  {
+    printf '\n%s\n' "$MANAGED_MARKER_BEGIN"
+    render_shell_hook_body
+    printf '%s\n' "$MANAGED_MARKER_END"
+  } >> "$tmp_file"
+
+  mv "$tmp_file" "$rc_file"
+}
+
+if [[ "$print_export_only" == "1" ]]; then
+  render_shell_hook_body
+  exit 0
+fi
 
 ensure_socket_firewall
 ensure_pinned_pnpm
 
-shell_name="${SHELL##*/}"
-case "$shell_name" in
-  zsh)
-    rc_file="${HOME}/.zshrc"
-    ;;
-  bash|*)
-    rc_file="${HOME}/.bashrc"
-    ;;
-esac
-
-old_marker_begin="# >>> 6529 repo bin >>>"
-old_marker_end="# <<< 6529 repo bin <<<"
-new_marker_begin="# >>> 6529 command shim >>>"
-new_marker_end="# <<< 6529 command shim <<<"
-
-mkdir -p "$LOCAL_BIN_DIR"
-mkdir -p "$(dirname "$rc_file")"
-touch "$rc_file"
-
-cat > "$GLOBAL_6529" <<EOF
-#!/usr/bin/env bash
-set -euo pipefail
-cd "$REPO_ROOT"
-exec "$REPO_ROOT/bin/6529" "\$@"
-EOF
-chmod +x "$GLOBAL_6529"
-
-tmp_file="$(mktemp)"
-trap 'rm -f "$tmp_file"' EXIT
-
-awk \
-  -v old_begin="$old_marker_begin" \
-  -v old_end="$old_marker_end" \
-  -v new_begin="$new_marker_begin" \
-  -v new_end="$new_marker_end" '
-  $0 == old_begin { skipping = 1; next }
-  $0 == old_end { skipping = 0; next }
-  $0 == new_begin { skipping = 1; next }
-  $0 == new_end { skipping = 0; next }
-  !skipping { print }
-' "$rc_file" > "$tmp_file"
-
-block="$new_marker_begin
-"
-
-if [[ -n "$NPM_GLOBAL_BIN" ]]; then
-  block="${block}if [ -d \"$NPM_GLOBAL_BIN\" ]; then
-  case \":\$PATH:\" in
-    *\":$NPM_GLOBAL_BIN:\"*) ;;
-    *) export PATH=\"$NPM_GLOBAL_BIN:\$PATH\" ;;
-  esac
-fi
-"
+removed_global_shim="0"
+if remove_managed_global_shim; then
+  removed_global_shim="1"
 fi
 
-block="${block}if [ -d \"$LOCAL_BIN_DIR\" ]; then
-  case \":\$PATH:\" in
-    *\":$LOCAL_BIN_DIR:\"*) ;;
-    *) export PATH=\"$LOCAL_BIN_DIR:\$PATH\" ;;
-  esac
-fi
-__6529_repo_root=\"$REPO_ROOT\"
-__6529_in_repo() {
-  case \"\$PWD/\" in
-    \"$REPO_ROOT/\"|\"$REPO_ROOT\"/*) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-npm() {
-  if __6529_in_repo; then
-    \"$REPO_ROOT/bin/npm\" \"\$@\"
-  else
-    command npm \"\$@\"
-  fi
-}
-npx() {
-  if __6529_in_repo; then
-    \"$REPO_ROOT/bin/npx\" \"\$@\"
-  else
-    command npx \"\$@\"
-  fi
-}
-pnpm() {
-  if __6529_in_repo; then
-    \"$REPO_ROOT/bin/pnpm\" \"\$@\"
-  else
-    command pnpm \"\$@\"
-  fi
-}
-yarn() {
-  if __6529_in_repo; then
-    \"$REPO_ROOT/bin/yarn\" \"\$@\"
-  else
-    command yarn \"\$@\"
-  fi
-}
-$new_marker_end"
-
-printf '\n%s\n' "$block" >> "$tmp_file"
-mv "$tmp_file" "$rc_file"
-
-if [[ "$print_export_only" == "1" ]]; then
-  cat <<EOF
-_6529_old_repo_bin="$REPO_ROOT/bin"
-_6529_clean_path=""
-_6529_old_ifs="\$IFS"
-IFS=:
-set -- \$PATH
-IFS="\$_6529_old_ifs"
-for _6529_part in "\$@"; do
-  if [ -z "\$_6529_part" ] || [ "\$_6529_part" = "\$_6529_old_repo_bin" ]; then
-    continue
-  fi
-  if [ -z "\$_6529_clean_path" ]; then
-    _6529_clean_path="\$_6529_part"
-  else
-    _6529_clean_path="\${_6529_clean_path}:\$_6529_part"
-  fi
-done
-export PATH="\$_6529_clean_path"
-unset _6529_old_repo_bin _6529_clean_path _6529_old_ifs _6529_part
-
-EOF
-
-  if [[ -n "$NPM_GLOBAL_BIN" ]]; then
-    cat <<EOF
-if [ -d "$NPM_GLOBAL_BIN" ]; then
-  case ":\$PATH:" in
-    *":$NPM_GLOBAL_BIN:"*) ;;
-    *) export PATH="$NPM_GLOBAL_BIN:\$PATH" ;;
-  esac
-fi
-EOF
-  fi
-
-  cat <<EOF
-if [ -d "$LOCAL_BIN_DIR" ]; then
-  case ":\$PATH:" in
-    *":$LOCAL_BIN_DIR:"*) ;;
-    *) export PATH="$LOCAL_BIN_DIR:\$PATH" ;;
-  esac
-fi
-__6529_repo_root="$REPO_ROOT"
-__6529_in_repo() {
-  case "\$PWD/" in
-    "$REPO_ROOT/"|"$REPO_ROOT"/*) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-npm() {
-  if __6529_in_repo; then
-    "$REPO_ROOT/bin/npm" "\$@"
-  else
-    command npm "\$@"
-  fi
-}
-npx() {
-  if __6529_in_repo; then
-    "$REPO_ROOT/bin/npx" "\$@"
-  else
-    command npx "\$@"
-  fi
-}
-pnpm() {
-  if __6529_in_repo; then
-    "$REPO_ROOT/bin/pnpm" "\$@"
-  else
-    command pnpm "\$@"
-  fi
-}
-yarn() {
-  if __6529_in_repo; then
-    "$REPO_ROOT/bin/yarn" "\$@"
-  else
-    command yarn "\$@"
-  fi
-}
-EOF
-  exit 0
-fi
+rc_file="$(detect_rc_file)"
+append_managed_block "$rc_file"
 
 cat <<EOF
-Installed the global 6529 shim at:
-  $GLOBAL_6529
-
 Socket Firewall is installed and available at:
-  $(command -v sfw)
+  $SFW_BIN_PATH
 
 Pinned pnpm is active:
   $(pnpm --version)
 
 Updated:
   $rc_file
+
+The 6529 shim remains repo-local at:
+  $REPO_ROOT/bin/6529
 
 Open a new shell, or run:
   source "$rc_file"
@@ -325,10 +305,18 @@ If you want a one-liner for the current shell:
   source <("$REPO_ROOT/bin/6529" bootstrap --print-export)
 
 Then install project dependencies:
-  6529 install
+  ./bin/6529 install
 
-After that, these commands should resolve:
+After that, these commands should resolve inside this repo:
   6529 run build
   6529 run backend:local
   6529 run api:local
 EOF
+
+if [[ "$removed_global_shim" == "1" ]]; then
+  cat <<EOF
+
+Removed the old managed global shim:
+  $GLOBAL_6529
+EOF
+fi

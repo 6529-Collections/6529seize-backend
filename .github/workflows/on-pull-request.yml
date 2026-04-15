@@ -27,14 +27,14 @@ jobs:
         run: ./bin/6529 install:frozen
       - name: Verify generated files are committed
         run: |
-          ./bin/6529 generate:deploy-config
+          ./bin/6529 run generate:deploy-config
           if [[ -n "$(git status --porcelain -- .github/workflows/deploy.yml)" ]]; then
-            echo "::error::.github/workflows/deploy.yml is generated. Edit config/deploy-services.json, rerun ./bin/6529 generate:deploy-config, and commit the result."
+            echo "::error::.github/workflows/deploy.yml is generated. Edit config/deploy-services.json, rerun ./bin/6529 run generate:deploy-config, and commit the result."
             git diff --stat -- .github/workflows/deploy.yml
             exit 1
           fi
 
-          ./bin/6529 run generate:api
+          ./bin/6529 run api:generate-openapi
 
           if [[ -n "$(git status --porcelain -- src/api-serverless/src/generated)" ]]; then
             echo "::error::src/api-serverless/src/generated is generated from openapi.yaml. Rerun src/api-serverless generation and commit the result."

@@ -6,7 +6,9 @@ import { getIp, isLocalhost } from '../policies/policies';
 import { getPage, getPageSize } from '../api-helpers';
 import { numbers } from '../../../numbers';
 
-const YAML = require('yamljs');
+const fs = require('fs');
+const jsYaml = require('js-yaml');
+const path = require('path');
 
 const router = asyncRouter();
 
@@ -22,7 +24,20 @@ function isValidIP(ip: string): boolean {
   return octets.every((octet) => octet >= 0 && octet <= 255);
 }
 
-const swaggerDocumentOracle = YAML.load('openapi.oracle.yaml');
+const oracleYamlCandidates = [
+  path.join(__dirname, 'openapi.oracle.yaml'), // Lambda (/var/task/)
+  path.join(__dirname, '../openapi.oracle.yaml'), // esbuild bundle (dist/)
+  path.join(__dirname, '../../openapi.oracle.yaml') // ts-node (src/oracle/)
+];
+const oracleYamlPath = oracleYamlCandidates.find((p) => fs.existsSync(p));
+if (!oracleYamlPath) {
+  throw new Error(
+    `openapi.oracle.yaml not found. Tried: ${oracleYamlCandidates.join(', ')}`
+  );
+}
+const swaggerDocumentOracle = jsYaml.load(
+  fs.readFileSync(oracleYamlPath, 'utf8')
+);
 router.use(
   '/docs',
   SwaggerUI.serveFiles(swaggerDocumentOracle, { explorer: true }),

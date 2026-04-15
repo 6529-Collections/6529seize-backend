@@ -8,11 +8,13 @@ This is a 2-part repository for
 
 ## 0. Repo Helpers
 
-This repo includes a `.envrc` for `direnv`.
+This repo includes a `.envrc` for optional `direnv` use.
 
-It is only used for repo-local shell helpers. Right now it adds the repo `bin/` directory to your `PATH`, which makes commands like `ghruns` and `ghdeploy` available anywhere inside this repository.
+It only adds the repo `bin/` directory to your `PATH` while you are inside this repository, which makes commands like `ghruns`, `ghdeploy`, and `6529` available here without affecting shells outside the repo.
 
-It does not load `.env.local` and it does not set `NODE_ENV`.
+The main shim flow is still `./bin/6529 bootstrap`, which writes the same repo-scoped behavior into your shell rc file. `direnv` is just a convenience layer.
+
+`.envrc` does not load `.env.local` and it does not set `NODE_ENV`.
 
 ### 0.1 Setup direnv
 
@@ -156,33 +158,53 @@ If you run `ghdeploy` from an unsupported folder, it fails with a clear error in
 
 ### 1.0 Package Management
 
-Use the repo-local `6529` wrapper for all supported repo commands.
+Use the repo-local `6529` wrapper for all supported repo commands. `6529` is not installed globally.
 
 Fresh setup:
 
 ```bash
 ./bin/6529 bootstrap
+source ~/.zshrc  # or ~/.bashrc
 ```
 
-Manual setup:
+Current shell only:
 
 ```bash
-corepack enable pnpm
-corepack prepare pnpm@10.33.0 --activate
-npm install --global sfw
-./bin/6529 install
+source <(./bin/6529 bootstrap --print-export)
 ```
+
+Optional convenience:
+
+```bash
+direnv allow
+```
+
+`./bin/6529 bootstrap` ensures the required tooling, removes the old managed `~/.local/bin/6529` shim if it exists, and installs a repo-scoped shell hook that only exposes this repo's `bin/` commands while you are inside this repo tree.
+
+Command model:
+
+```bash
+6529 run <script>
+```
+
+for `package.json` scripts, and:
+
+```bash
+6529 <pnpm-command>
+```
+
+for direct pnpm subcommands such as `6529 audit` or `6529 add`.
 
 ### 1.1 Install
 
 ```
-./bin/6529 install
+6529 install
 ```
 
 ### 1.2 Build
 
 ```
-./bin/6529 run build
+6529 run build
 ```
 
 ### 1.3 Environment
@@ -200,18 +222,12 @@ Before running anything, either manually run `./bin/6529 run migrate:up` or make
 #### 1.4.1 using 6529
 
 ```
-./bin/6529 run backend:local
-```
-
-#### 1.4.2 using PM2
-
-```
-pm2 start ./bin/6529 --name=6529backend -- backend:local
+6529 run backend:local
 ```
 
 \* Note: backend commands are available as `backend:local` / `backend:dev` / `backend:prod`
 
-#### 1.4.3 using AWS Lambda
+#### 1.4.2 using AWS Lambda
 
 This repository is configured to be runnable through AWS Lambdas. Each 'loop' folder in the code represents a lambda function and can be built and deployed on AWS individually. \* Note: additional setup is required within AWS in order to configure environment variables and triggers for each lambda.
 
@@ -240,13 +256,13 @@ PATH: [src/api-serverless](https://github.com/6529-Collections/6529seize-backend
 ### 2.1 Install
 
 ```
-./bin/6529 install
+6529 install
 ```
 
 ### 2.2 Build
 
 ```
-./bin/6529 run build:api
+6529 run build:api
 ```
 
 ### 2.3 Environment
@@ -262,30 +278,22 @@ The name of your .env file must include the environment you want to run like `.e
 In project root directory:
 
 ```
-./bin/6529 run api:local
+6529 run api:local
 ```
 
 \* Note: API commands are available as `api:local` / `api:dev`
 
-### 2.5 RUN USING PM2
-
-```
-pm2 start ./bin/6529 --name=6529api -- api:local
-```
-
-\* Note: API commands are available as `api:local` / `api:dev`
-
-### 2.6 RUN USING AWS Lambda
+### 2.5 RUN USING AWS Lambda
 
 The API is also configured to run as an AWS lambda and can be built and deployed on AWS on its own. \* Note: additional setup is required within AWS in order to configure environment variables and API Gateway.
 
-### 2.7 Rate Limiting
+### 2.6 Rate Limiting
 
 The API implements rate limiting to protect against abuse and ensure fair usage. Rate limiting is applied to all API requests and uses Redis for distributed rate limit tracking.
 
 **Important:** Rate limiting requires Redis to be available. If Redis is not available, rate limiting will be automatically disabled even if `API_RATE_LIMIT_ENABLED` is set to `true`.
 
-#### 2.7.1 How It Works
+#### 2.6.1 How It Works
 
 Rate limiting uses a two-tier approach:
 
@@ -294,7 +302,7 @@ Rate limiting uses a two-tier approach:
 
 Both limits are checked for each request. If either limit is exceeded, the request is rejected with a `429 Too Many Requests` response.
 
-#### 2.7.2 User Identification Priority
+#### 2.6.2 User Identification Priority
 
 The rate limiter identifies users in the following priority order:
 

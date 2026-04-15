@@ -2,7 +2,7 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
-const { spawnSync } = require("node:child_process");
+const { spawn } = require("node:child_process");
 
 const rawArgs = process.argv.slice(2);
 const suggestOnly = rawArgs[0] === "--suggest-only";
@@ -101,13 +101,36 @@ if (args.length > 0) {
   pnpmArgs.push("--", ...args);
 }
 
-const result = spawnSync(realPnpm, pnpmArgs, {
-  stdio: "inherit",
+const child = spawn(realPnpm, pnpmArgs, {
+  stdio: ["inherit", "inherit", "pipe"],
   env: process.env
 });
 
-if (result.error) {
-  throw result.error;
-}
+child.on("error", (err) => {
+  throw err;
+});
 
-process.exit(result.status ?? 1);
+// Stay alive on Ctrl+C so we can filter pnpm's stderr before exiting.
+// The child processes (nodemon etc.) receive SIGINT too and will shut
+// down on their own — we just wait for the 'close' event below.
+process.on("SIGINT", () => {});
+
+// Pipe stderr but filter out pnpm's ELIFECYCLE noise that appears when
+// a long-running script (e.g. nodemon) is stopped with Ctrl+C.
+child.stderr.on("data", (data) => {
+  const text = data.toString();
+  if (
+    text.includes("ELIFECYCLE") ||
+    text.includes("ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL") ||
+    text.includes("Command failed with exit code 130")
+  ) {
+    return;
+  }
+  process.stderr.write(data);
+});
+
+child.on("close", (code) => {
+  // Exit code 130 = SIGINT (Ctrl+C) — treat as clean exit.
+  const exitCode = code ?? 1;
+  process.exit(exitCode === 130 ? 0 : exitCode);
+});

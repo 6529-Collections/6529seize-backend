@@ -20,9 +20,13 @@ Usage:
 
 Common commands:
   6529 bootstrap
+  6529 bootstrap --print-export
   6529 install
   6529 install:frozen
   6529 install:prod
+  6529 audit
+  6529 add <pkg>
+  6529 run generate:deploy-config
   6529 run build
   6529 run build:api
   6529 run build:service -- <service>
@@ -84,16 +88,6 @@ case "$command_name" in
     exec "$REAL_PNPM" exec "$@"
     ;;
   *)
-    echo "Unknown 6529 command: $command_name" >&2
-    echo "Repo scripts must be run through \`6529 run <script>\`." >&2
-    if [[ -n "$command_name" ]]; then
-      echo "If you meant a repo script, try \`6529 run $command_name\`." >&2
-    else
-      echo "Examples:" >&2
-      echo "  6529 install" >&2
-      echo "  6529 run build" >&2
-      echo "  6529 run backend:local" >&2
-    fi
-    exit 1
+    exec "$REAL_PNPM" "$command_name" "$@"
     ;;
 esac

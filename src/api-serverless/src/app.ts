@@ -140,7 +140,9 @@ import {
 import { wsListenersNotifier } from './ws/ws-listeners-notifier';
 import { WsMessageType } from './ws/ws-message';
 
-const YAML = require('yamljs');
+const fs = require('fs');
+const jsYaml = require('js-yaml');
+const path = require('path');
 const compression = require('compression');
 const express = require('express');
 const cors = require('cors');
@@ -1606,7 +1608,17 @@ async function initializeApp() {
   app.use(rateLimitingMiddleware());
   app.use(rootRouter);
 
-  const swaggerDocument = YAML.load('openapi.yaml');
+  const openapiYamlCandidates = [
+    path.join(__dirname, 'openapi.yaml'),      // Lambda (/var/task/) or esbuild bundle (dist/)
+    path.join(__dirname, '../openapi.yaml')    // ts-node (src/)
+  ];
+  const openapiYamlPath = openapiYamlCandidates.find((p) => fs.existsSync(p));
+  if (!openapiYamlPath) {
+    throw new Error(
+      `openapi.yaml not found. Tried: ${openapiYamlCandidates.join(', ')}`
+    );
+  }
+  const swaggerDocument = jsYaml.load(fs.readFileSync(openapiYamlPath, 'utf8'));
   app.use(
     '/docs',
     SwaggerUI.serve,
