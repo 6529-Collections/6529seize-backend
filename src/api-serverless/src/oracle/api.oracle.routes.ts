@@ -42,7 +42,7 @@ router.use(
   '/docs',
   SwaggerUI.serveFiles(swaggerDocumentOracle, { explorer: true }),
   SwaggerUI.setup(swaggerDocumentOracle, {
-    customSiteTitle: '6529 PreNode API',
+    customSiteTitle: '6529 TDH Oracle API',
     customCss: '.topbar { display: none }'
   })
 );
