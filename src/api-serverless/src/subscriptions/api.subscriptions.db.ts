@@ -41,6 +41,14 @@ import { Time } from '@/time';
 
 const SUBSCRIPTIONS_START_ID = 220;
 
+export interface RedeemedMemeSubscriptionCountsDownloadRow {
+  meme_id: number;
+  artist: string;
+  drop_date: string | null;
+  unique_profiles: number;
+  subscriptions_count: number;
+}
+
 async function getForConsolidationKey(
   consolidationKey: string,
   table: string,
@@ -816,7 +824,7 @@ export async function fetchPastMemeSubscriptionCounts(
   const fields = `
     ${NFTS_TABLE}.contract,
     ${NFTS_TABLE}.id AS token_id,
-    COALESCE(COUNT(${SUBSCRIPTIONS_REDEEMED_TABLE}.consolidation_key), 0) AS count,
+    COALESCE(SUM(${SUBSCRIPTIONS_REDEEMED_TABLE}.count), 0) AS count,
     ${NFTS_TABLE}.name AS name,
     ${NFTS_TABLE}.thumbnail AS image_url,
     ${NFTS_TABLE}.mint_date AS mint_date,
@@ -842,6 +850,46 @@ export async function fetchPastMemeSubscriptionCounts(
     joins,
     groupBy,
     { skipJoinsOnCountQuery: false }
+  );
+}
+
+export async function fetchRedeemedMemeSubscriptionCountsDownload(
+  szn?: number
+): Promise<RedeemedMemeSubscriptionCountsDownloadRow[]> {
+  let filters = constructFilters(
+    '',
+    `${NFTS_TABLE}.id >= :startId AND ${NFTS_TABLE}.contract = :contract`
+  );
+  const params: Record<string, number | string> = {
+    startId: SUBSCRIPTIONS_START_ID,
+    contract: MEMES_CONTRACT
+  };
+
+  if (szn !== undefined) {
+    filters = constructFilters(
+      filters,
+      `${MEMES_EXTENDED_DATA_TABLE}.season = :szn`
+    );
+    params.szn = szn;
+  }
+
+  return sqlExecutor.execute<RedeemedMemeSubscriptionCountsDownloadRow>(
+    `SELECT
+      ${NFTS_TABLE}.id AS meme_id,
+      ${NFTS_TABLE}.artist AS artist,
+      DATE_FORMAT(${NFTS_TABLE}.mint_date, '%Y/%m/%d') AS drop_date,
+      COALESCE(COUNT(DISTINCT ${SUBSCRIPTIONS_REDEEMED_TABLE}.consolidation_key), 0) AS unique_profiles,
+      COALESCE(SUM(${SUBSCRIPTIONS_REDEEMED_TABLE}.count), 0) AS subscriptions_count
+    FROM ${NFTS_TABLE}
+    LEFT JOIN ${SUBSCRIPTIONS_REDEEMED_TABLE}
+      ON ${SUBSCRIPTIONS_REDEEMED_TABLE}.contract = ${NFTS_TABLE}.contract
+      AND ${SUBSCRIPTIONS_REDEEMED_TABLE}.token_id = ${NFTS_TABLE}.id
+    LEFT JOIN ${MEMES_EXTENDED_DATA_TABLE}
+      ON ${MEMES_EXTENDED_DATA_TABLE}.id = ${NFTS_TABLE}.id
+    ${filters}
+    GROUP BY ${NFTS_TABLE}.id, ${NFTS_TABLE}.artist, ${NFTS_TABLE}.mint_date
+    ORDER BY ${NFTS_TABLE}.id DESC`,
+    params
   );
 }
 

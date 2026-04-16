@@ -17,7 +17,8 @@ import { Logger } from '@/logging';
 import {
   getPage,
   getPageSize,
-  giveReadReplicaTimeToCatchUp
+  giveReadReplicaTimeToCatchUp,
+  returnCSVResult
 } from '@/api/api-helpers';
 import { asyncRouter } from '@/api/async.router';
 import { getWalletOrThrow, needsAuthenticatedUser } from '@/api/auth/auth';
@@ -49,6 +50,7 @@ import {
   fetchFinalSubscriptionsByPhase,
   fetchLogsForConsolidationKey,
   fetchPastMemeSubscriptionCounts,
+  fetchRedeemedMemeSubscriptionCountsDownload,
   fetchRedeemedSubscriptionsForConsolidationKey,
   fetchSubscriptionUploads,
   fetchTopUpsForConsolidationKey,
@@ -63,6 +65,11 @@ import {
 
 const allowlistLogger = Logger.get('SUBSCRIPTIONS_ALLOWLIST');
 const CACHE_EVICTION_TIMEOUT_MS = 1_500;
+const redeemedMemeSubscriptionCountsDownloadQuerySchema = Joi.object<{
+  szn?: number;
+}>({
+  szn: Joi.number().integer().min(1).optional()
+});
 
 async function evictCacheWithContextLogging(
   context: string,
@@ -404,6 +411,43 @@ router.get(
 
     const result = await fetchUpcomingMemeSubscriptionCounts(cardCount);
     return res.json(result);
+  }
+);
+
+router.get(
+  `/redeemed-memes-counts/download`,
+  async function (
+    req: Request<
+      any,
+      any,
+      any,
+      {
+        szn?: string;
+      }
+    >,
+    res: Response<string>
+  ) {
+    const timer = Timer.getFromRequest(req);
+    timer.start('validate_redeemed_meme_subscription_counts_download');
+    const params = getValidatedByJoiOrThrow(
+      req.query,
+      redeemedMemeSubscriptionCountsDownloadQuerySchema
+    );
+    timer.stop('validate_redeemed_meme_subscription_counts_download');
+
+    timer.start('fetch_redeemed_meme_subscription_counts_download');
+    const result = await fetchRedeemedMemeSubscriptionCountsDownload(
+      params.szn
+    );
+    timer.stop('fetch_redeemed_meme_subscription_counts_download');
+
+    return returnCSVResult(
+      params.szn
+        ? `redeemed-memes-counts-szn-${params.szn}`
+        : `redeemed-memes-counts`,
+      result,
+      res
+    );
   }
 );
 
