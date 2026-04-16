@@ -810,17 +810,19 @@ export async function fetchUpcomingMemeSubscriptionCounts(
   return counts;
 }
 
+const REDEEMED_COUNTS_JOINS = `
+    LEFT JOIN ${SUBSCRIPTIONS_REDEEMED_TABLE}
+      ON ${SUBSCRIPTIONS_REDEEMED_TABLE}.contract = ${NFTS_TABLE}.contract
+      AND ${SUBSCRIPTIONS_REDEEMED_TABLE}.token_id = ${NFTS_TABLE}.id
+    LEFT JOIN ${MEMES_EXTENDED_DATA_TABLE}
+      ON ${MEMES_EXTENDED_DATA_TABLE}.id = ${NFTS_TABLE}.id
+  `;
+
 export async function fetchPastMemeSubscriptionCounts(
   pageSize: number,
   page: number
 ): Promise<PaginatedResponse<RedeemedSubscriptionCounts>> {
-  const joins = `
-    LEFT JOIN ${SUBSCRIPTIONS_REDEEMED_TABLE} 
-      ON ${SUBSCRIPTIONS_REDEEMED_TABLE}.contract = ${NFTS_TABLE}.contract 
-      AND ${SUBSCRIPTIONS_REDEEMED_TABLE}.token_id = ${NFTS_TABLE}.id 
-    LEFT JOIN ${MEMES_EXTENDED_DATA_TABLE}
-      ON ${MEMES_EXTENDED_DATA_TABLE}.id = ${NFTS_TABLE}.id
-  `;
+  const joins = REDEEMED_COUNTS_JOINS;
 
   const fields = `
     ${NFTS_TABLE}.contract,
@@ -885,11 +887,7 @@ export async function fetchRedeemedMemeSubscriptionCountsDownload(
       COALESCE(SUM(${SUBSCRIPTIONS_REDEEMED_TABLE}.count), 0) AS subscriptions_count,
       COALESCE(SUM(${SUBSCRIPTIONS_REDEEMED_TABLE}.count), 0) * :mintPrice AS proceeds
     FROM ${NFTS_TABLE}
-    LEFT JOIN ${SUBSCRIPTIONS_REDEEMED_TABLE}
-      ON ${SUBSCRIPTIONS_REDEEMED_TABLE}.contract = ${NFTS_TABLE}.contract
-      AND ${SUBSCRIPTIONS_REDEEMED_TABLE}.token_id = ${NFTS_TABLE}.id
-    LEFT JOIN ${MEMES_EXTENDED_DATA_TABLE}
-      ON ${MEMES_EXTENDED_DATA_TABLE}.id = ${NFTS_TABLE}.id
+    ${REDEEMED_COUNTS_JOINS}
     ${filters}
     GROUP BY ${NFTS_TABLE}.id, ${NFTS_TABLE}.artist, ${NFTS_TABLE}.mint_date
     ORDER BY ${NFTS_TABLE}.id DESC`,

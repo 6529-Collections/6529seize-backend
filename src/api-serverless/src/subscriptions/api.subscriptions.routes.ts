@@ -429,9 +429,19 @@ router.get(
   ) {
     const timer = Timer.getFromRequest(req);
     timer.start('validate_redeemed_meme_subscription_counts_download');
+    const rawSzn = req.query.szn;
+    const parsedSzn = numbers.parseIntOrNull(rawSzn);
+    if (
+      rawSzn !== undefined &&
+      rawSzn !== null &&
+      rawSzn !== '' &&
+      parsedSzn === null
+    ) {
+      throw new BadRequestException(`Invalid szn: ${rawSzn}`);
+    }
     const params = getValidatedByJoiOrThrow(
       {
-        szn: numbers.parseIntOrNull(req.query.szn) ?? undefined
+        szn: parsedSzn ?? undefined
       },
       redeemedMemeSubscriptionCountsDownloadQuerySchema
     );

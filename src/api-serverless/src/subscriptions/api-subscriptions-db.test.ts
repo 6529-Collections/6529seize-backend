@@ -2,6 +2,7 @@ import * as dbApi from '@/db-api';
 import {
   MEMES_CONTRACT,
   MEMES_EXTENDED_DATA_TABLE,
+  MEMES_MINT_PRICE,
   NFTS_TABLE,
   SUBSCRIPTIONS_REDEEMED_TABLE
 } from '@/constants';
@@ -98,7 +99,7 @@ describe('fetchRedeemedMemeSubscriptionCountsDownload', () => {
     expect(executeSpy.mock.calls[0][1]).toEqual({
       startId: 220,
       contract: MEMES_CONTRACT,
-      mintPrice: 0.06529
+      mintPrice: MEMES_MINT_PRICE
     });
   });
 
@@ -126,7 +127,7 @@ describe('fetchRedeemedMemeSubscriptionCountsDownload', () => {
     expect(params).toEqual({
       startId: 220,
       contract: MEMES_CONTRACT,
-      mintPrice: 0.06529,
+      mintPrice: MEMES_MINT_PRICE,
       szn: 14
     });
   });
