@@ -898,7 +898,7 @@ export async function fetchRedeemedMemeSubscriptionCountsDownload(
 
   if (results.length === 0) {
     throw new BadRequestException(
-      'No subscription data available for these filters'
+      'No data found for the selected filters'
     );
   }
 
