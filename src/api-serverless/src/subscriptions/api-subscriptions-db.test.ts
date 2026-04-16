@@ -86,10 +86,18 @@ describe('fetchRedeemedMemeSubscriptionCountsDownload', () => {
       `COALESCE(SUM(${SUBSCRIPTIONS_REDEEMED_TABLE}.count), 0) AS subscriptions_count`
     );
     expect(sql).toContain(
+      `COALESCE(SUM(${SUBSCRIPTIONS_REDEEMED_TABLE}.count), 0) * :mintPrice AS proceeds`
+    );
+    expect(sql).toContain(
       `DATE_FORMAT(${NFTS_TABLE}.mint_date, '%Y/%m/%d') AS drop_date`
     );
     expect(sql).toContain(`${NFTS_TABLE}.id >= :startId`);
     expect(sql).not.toContain(`${MEMES_EXTENDED_DATA_TABLE}.season = :szn`);
+    expect(executeSpy.mock.calls[0][1]).toEqual({
+      startId: 220,
+      contract: MEMES_CONTRACT,
+      mintPrice: 0.06529
+    });
   });
 
   it('applies the szn filter when provided', async () => {
@@ -106,6 +114,7 @@ describe('fetchRedeemedMemeSubscriptionCountsDownload', () => {
     expect(params).toEqual({
       startId: 220,
       contract: MEMES_CONTRACT,
+      mintPrice: 0.06529,
       szn: 14
     });
   });

@@ -47,6 +47,7 @@ export interface RedeemedMemeSubscriptionCountsDownloadRow {
   drop_date: string | null;
   unique_profiles: number;
   subscriptions_count: number;
+  proceeds: number;
 }
 
 async function getForConsolidationKey(
@@ -862,7 +863,8 @@ export async function fetchRedeemedMemeSubscriptionCountsDownload(
   );
   const params: Record<string, number | string> = {
     startId: SUBSCRIPTIONS_START_ID,
-    contract: MEMES_CONTRACT
+    contract: MEMES_CONTRACT,
+    mintPrice: MEMES_MINT_PRICE
   };
 
   if (szn !== undefined) {
@@ -879,7 +881,8 @@ export async function fetchRedeemedMemeSubscriptionCountsDownload(
       ${NFTS_TABLE}.artist AS artist,
       DATE_FORMAT(${NFTS_TABLE}.mint_date, '%Y/%m/%d') AS drop_date,
       COALESCE(COUNT(DISTINCT ${SUBSCRIPTIONS_REDEEMED_TABLE}.consolidation_key), 0) AS unique_profiles,
-      COALESCE(SUM(${SUBSCRIPTIONS_REDEEMED_TABLE}.count), 0) AS subscriptions_count
+      COALESCE(SUM(${SUBSCRIPTIONS_REDEEMED_TABLE}.count), 0) AS subscriptions_count,
+      COALESCE(SUM(${SUBSCRIPTIONS_REDEEMED_TABLE}.count), 0) * :mintPrice AS proceeds
     FROM ${NFTS_TABLE}
     LEFT JOIN ${SUBSCRIPTIONS_REDEEMED_TABLE}
       ON ${SUBSCRIPTIONS_REDEEMED_TABLE}.contract = ${NFTS_TABLE}.contract

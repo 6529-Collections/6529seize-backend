@@ -4366,9 +4366,9 @@ paths:
         - Subscriptions
       summary: Download redeemed meme subscription counts as CSV
       description: >-
-        Downloads a CSV with meme_id, artist, drop_date, unique_profiles, and
-        subscriptions_count for MEMES cards with id >= 220. When `szn` is
-        provided, only cards in that season are included.
+        Downloads a CSV with meme_id, artist, drop_date, unique_profiles,
+        subscriptions_count, and proceeds for MEMES cards with id >= 220. When
+        `szn` is provided, only cards in that season are included.
       operationId: downloadRedeemedMemeSubscriptionCounts
       parameters:
         - name: szn
