@@ -430,7 +430,9 @@ router.get(
     const timer = Timer.getFromRequest(req);
     timer.start('validate_redeemed_meme_subscription_counts_download');
     const params = getValidatedByJoiOrThrow(
-      req.query,
+      {
+        szn: numbers.parseIntOrNull(req.query.szn) ?? undefined
+      },
       redeemedMemeSubscriptionCountsDownloadQuerySchema
     );
     timer.stop('validate_redeemed_meme_subscription_counts_download');
