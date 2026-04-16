@@ -897,9 +897,7 @@ export async function fetchRedeemedMemeSubscriptionCountsDownload(
     );
 
   if (results.length === 0) {
-    throw new BadRequestException(
-      'No data found for the selected filters'
-    );
+    throw new BadRequestException('No data found for the selected filters');
   }
 
   return results;
