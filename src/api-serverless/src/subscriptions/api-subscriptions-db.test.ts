@@ -106,7 +106,7 @@ describe('fetchRedeemedMemeSubscriptionCountsDownload', () => {
     jest.spyOn(sqlExecutor, 'execute').mockResolvedValue([]);
 
     await expect(fetchRedeemedMemeSubscriptionCountsDownload()).rejects.toThrow(
-      'No subscription data available for these filters'
+      'No data found for the selected filters'
     );
   });
 
