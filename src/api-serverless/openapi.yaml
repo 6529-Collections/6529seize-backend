@@ -1567,7 +1567,7 @@ paths:
       responses:
         "200":
           description: successful operation
-  /drops/{dropId}/reactions:
+  /drops/{dropId}/reaction:
     post:
       tags:
         - Drops
