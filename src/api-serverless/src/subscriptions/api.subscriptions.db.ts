@@ -875,8 +875,9 @@ export async function fetchRedeemedMemeSubscriptionCountsDownload(
     params.szn = szn;
   }
 
-  return sqlExecutor.execute<RedeemedMemeSubscriptionCountsDownloadRow>(
-    `SELECT
+  const results =
+    await sqlExecutor.execute<RedeemedMemeSubscriptionCountsDownloadRow>(
+      `SELECT
       ${NFTS_TABLE}.id AS meme_id,
       ${NFTS_TABLE}.artist AS artist,
       DATE_FORMAT(${NFTS_TABLE}.mint_date, '%Y/%m/%d') AS drop_date,
@@ -892,8 +893,16 @@ export async function fetchRedeemedMemeSubscriptionCountsDownload(
     ${filters}
     GROUP BY ${NFTS_TABLE}.id, ${NFTS_TABLE}.artist, ${NFTS_TABLE}.mint_date
     ORDER BY ${NFTS_TABLE}.id DESC`,
-    params
-  );
+      params
+    );
+
+  if (results.length === 0) {
+    throw new BadRequestException(
+      'No subscription data available for these filters'
+    );
+  }
+
+  return results;
 }
 
 async function fetchSubscriptionModeForConsolidationKey(

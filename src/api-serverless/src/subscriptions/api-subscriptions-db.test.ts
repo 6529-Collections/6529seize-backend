@@ -66,7 +66,9 @@ describe('fetchRedeemedMemeSubscriptionCountsDownload', () => {
   });
 
   it('aggregates unique profiles and subscription counts for cards from id 220 onward', async () => {
-    const executeSpy = jest.spyOn(sqlExecutor, 'execute').mockResolvedValue([]);
+    const executeSpy = jest
+      .spyOn(sqlExecutor, 'execute')
+      .mockResolvedValue([{ meme_id: 220 }]);
 
     await fetchRedeemedMemeSubscriptionCountsDownload();
 
@@ -75,10 +77,10 @@ describe('fetchRedeemedMemeSubscriptionCountsDownload', () => {
       expect.stringContaining(
         `COALESCE(COUNT(DISTINCT ${SUBSCRIPTIONS_REDEEMED_TABLE}.consolidation_key), 0) AS unique_profiles`
       ),
-      {
+      expect.objectContaining({
         startId: 220,
         contract: MEMES_CONTRACT
-      }
+      })
     );
 
     const sql = executeSpy.mock.calls[0][0] as string;
@@ -100,8 +102,18 @@ describe('fetchRedeemedMemeSubscriptionCountsDownload', () => {
     });
   });
 
+  it('throws BadRequestException when query returns no results', async () => {
+    jest.spyOn(sqlExecutor, 'execute').mockResolvedValue([]);
+
+    await expect(fetchRedeemedMemeSubscriptionCountsDownload()).rejects.toThrow(
+      'No subscription data available for these filters'
+    );
+  });
+
   it('applies the szn filter when provided', async () => {
-    const executeSpy = jest.spyOn(sqlExecutor, 'execute').mockResolvedValue([]);
+    const executeSpy = jest
+      .spyOn(sqlExecutor, 'execute')
+      .mockResolvedValue([{ meme_id: 220 }]);
 
     await fetchRedeemedMemeSubscriptionCountsDownload(14);
 
