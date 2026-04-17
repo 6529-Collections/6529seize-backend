@@ -34,9 +34,8 @@ if (!oracleYamlPath) {
     `openapi.oracle.yaml not found. Tried: ${oracleYamlCandidates.join(', ')}`
   );
 }
-const swaggerDocumentOracle = jsYaml.load(
-  fs.readFileSync(oracleYamlPath, 'utf8')
-) as NonNullable<Parameters<typeof SwaggerUI.setup>[0]>;
+const swaggerDocumentOracle: NonNullable<Parameters<typeof SwaggerUI.setup>[0]> =
+  jsYaml.load(fs.readFileSync(oracleYamlPath, 'utf8'));
 router.use(
   '/docs',
   SwaggerUI.serveFiles(swaggerDocumentOracle, { explorer: true }),

@@ -31,14 +31,16 @@ function detectPackageManager() {
 const packageManager = detectPackageManager();
 
 if (process.env['SEIZE_6529_COMMAND'] !== '1') {
-  const leadingMessage =
-    packageManager === 'npm'
-      ? 'Direct npm usage is blocked in this repository.'
-      : packageManager === 'pnpm'
-        ? 'Direct pnpm usage is blocked in this repository.'
-        : packageManager === 'yarn'
-          ? 'Direct yarn usage is blocked in this repository.'
-          : 'This repository only allows repo commands through the `6529` wrapper.';
+  let leadingMessage =
+    'This repository only allows repo commands through the `6529` wrapper.';
+
+  if (packageManager === 'npm') {
+    leadingMessage = 'Direct npm usage is blocked in this repository.';
+  } else if (packageManager === 'pnpm') {
+    leadingMessage = 'Direct pnpm usage is blocked in this repository.';
+  } else if (packageManager === 'yarn') {
+    leadingMessage = 'Direct yarn usage is blocked in this repository.';
+  }
 
   console.error(leadingMessage);
   console.error('Use the `6529` wrapper instead.');

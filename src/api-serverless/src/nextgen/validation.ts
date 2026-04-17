@@ -375,10 +375,5 @@ async function validateAdmin(collection_id: number, address: string) {
 }
 
 function stringToHex(s: string) {
-  let hexString = '';
-  for (let i = 0; i < s.length; i++) {
-    const hex = s.charCodeAt(i).toString(16).padStart(2, '0');
-    hexString += hex;
-  }
-  return hexString;
+  return Buffer.from(s, 'utf8').toString('hex');
 }
