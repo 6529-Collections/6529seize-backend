@@ -69,7 +69,7 @@ const childEnv = {
 };
 
 if (mode === "deploy") {
-  childEnv["SLS_DISABLE_AUTO_UPDATE"] = "1";
+  childEnv["SEIZE_ALLOW_SERVERLESS_INTERNAL_NPM"] = "1";
 }
 
 const result = spawnSync(path.join(repoRoot, "bin", "pnpm"), args, {

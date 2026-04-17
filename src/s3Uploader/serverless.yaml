@@ -1,7 +1,5 @@
 service: s3Uploader
 
-frameworkVersion: '4'
-
 package:
   artifact: dist/index.zip
 

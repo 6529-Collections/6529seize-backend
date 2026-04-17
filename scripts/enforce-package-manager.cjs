@@ -3,6 +3,18 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
+function allowedOutside6529Wrapper() {
+  if (process.env["SEIZE_ALLOW_SERVERLESS_INTERNAL_NPM"] === "1") {
+    return true;
+  }
+  const cwd = path.normalize(process.cwd());
+  return cwd.includes(`${path.sep}.serverless${path.sep}releases${path.sep}`);
+}
+
+if (allowedOutside6529Wrapper()) {
+  process.exit(0);
+}
+
 const packageJsonPath = path.join(process.cwd(), "package.json");
 const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
 const userAgent = process.env["npm_config_user_agent"] ?? "";
