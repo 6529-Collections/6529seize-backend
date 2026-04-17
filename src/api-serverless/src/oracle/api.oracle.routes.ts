@@ -21,11 +21,11 @@ function isValidIP(ip: string): boolean {
   return octets.every((octet) => octet >= 0 && octet <= 255);
 }
 
-const swaggerDocumentOracle = loadOpenApiYaml(__dirname, 'openapi.oracle.yaml', [
-  '.',
-  '..',
-  '../..'
-]);
+const swaggerDocumentOracle = loadOpenApiYaml(
+  __dirname,
+  'openapi.oracle.yaml',
+  ['.', '..', '../..']
+);
 router.use(
   '/docs',
   SwaggerUI.serveFiles(swaggerDocumentOracle, { explorer: true }),
