@@ -1,5 +1,5 @@
 import { when } from 'jest-when';
-import { Mock, mock } from 'ts-jest-mocker';
+import { Mock, mock } from '@/tests/mock';
 import { EntityManager, Repository } from 'typeorm';
 import { DISTRIBUTION_AUTOMATIC_AIRDROP_PHASES } from '@/airdrop-phases';
 import {

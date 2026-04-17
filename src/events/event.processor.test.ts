@@ -1,6 +1,6 @@
 import { EventProcessor } from './event.processor';
 import { EventsDb } from './events.db';
-import { mock, Mock } from 'ts-jest-mocker';
+import { mock, Mock } from '@/tests/mock';
 import {
   expectExceptionWithMessage,
   mockDbService

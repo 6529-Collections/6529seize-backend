@@ -3,7 +3,7 @@ import { UserGroupsService } from '@/api/community-members/user-groups.service';
 import { DropEntity, DropType } from '@/entities/IDrop';
 import { WaveCreditType, WaveType } from '@/entities/IWave';
 import { BadRequestException, ForbiddenException } from '@/exceptions';
-import { mock } from 'ts-jest-mocker';
+import { mock } from '@/tests/mock';
 import { when } from 'jest-when';
 import { WaveQuickVoteApiService } from './wave-quick-vote.api.service';
 import { WaveQuickVoteDb } from './wave-quick-vote.db';

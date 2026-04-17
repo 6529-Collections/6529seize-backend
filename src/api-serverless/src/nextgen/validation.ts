@@ -1,4 +1,4 @@
-import { ethers, hashMessage, keccak256 } from 'ethers';
+import { ethers, getBytes, hashMessage, keccak256 } from 'ethers';
 import * as Joi from 'joi';
 import { Readable } from 'stream';
 import {
@@ -7,10 +7,10 @@ import {
   NEXTGEN_ADMIN_ABI,
   NEXTGEN_SET_COLLECTION_PHASES_SELECTOR
 } from './abis';
-import { Logger } from '../../../logging';
-import { numbers } from '../../../numbers';
-import { equalIgnoreCase } from '../../../strings';
-import { getRpcUrl } from '../../../alchemy';
+import { getRpcUrl } from '@/alchemy';
+import { Logger } from '@/logging';
+import { numbers } from '@/numbers';
+import { equalIgnoreCase } from '@/strings';
 
 const { MerkleTree } = require('merkletreejs');
 
@@ -288,8 +288,8 @@ async function computeMerkle(allowlist: UploadAllowlist[]): Promise<any> {
     const info = al.info;
     const parsedInfo = stringToHex(info);
     const concatenatedData = `${parsedAddress}${parsedSpots}${parsedInfo}`;
-    const bufferData = Buffer.from(concatenatedData, 'hex');
-    const result = keccak256(keccak256(bufferData)).slice(2);
+    const dataBytes = getBytes(`0x${concatenatedData}`);
+    const result = keccak256(keccak256(dataBytes)).slice(2);
 
     return {
       ...al,
@@ -316,8 +316,8 @@ async function computeMerkleBurn(
     const parsedTokenId = tokenId.toString(16).padStart(64, '0');
     const parsedInfo = stringToHex(info);
     const concatenatedData = `${parsedTokenId}${parsedInfo}`;
-    const bufferData = Buffer.from(concatenatedData, 'hex');
-    const result = keccak256(keccak256(bufferData)).slice(2);
+    const dataBytes = getBytes(`0x${concatenatedData}`);
+    const result = keccak256(keccak256(dataBytes)).slice(2);
 
     return {
       ...al,

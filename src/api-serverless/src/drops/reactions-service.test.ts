@@ -2,7 +2,7 @@ jest.mock('@/api/api-helpers', () => ({
   giveReadReplicaTimeToCatchUp: jest.fn().mockResolvedValue(undefined)
 }));
 
-import { mock } from 'ts-jest-mocker';
+import { mock } from '@/tests/mock';
 import { ReactionsDb } from '@/api/drops/reactions.db';
 import { WavesApiDb } from '@/api/waves/waves.api.db';
 import { DropsDb } from '@/drops/drops.db';

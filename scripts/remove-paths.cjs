@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 
+const fs = require("node:fs");
 const path = require("node:path");
-const rimraf = require("rimraf");
 
 for (const target of process.argv.slice(2)) {
-  rimraf.sync(path.resolve(process.cwd(), target), {
-    disableGlob: true,
+  fs.rmSync(path.resolve(process.cwd(), target), {
+    force: true,
+    maxRetries: 3,
+    recursive: true,
   });
 }
