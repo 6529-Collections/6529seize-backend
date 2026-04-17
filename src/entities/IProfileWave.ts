@@ -9,4 +9,8 @@ export class ProfileWaveEntity {
   @Index('idx_profile_waves_wave_id_unique', { unique: true })
   @Column({ type: 'varchar', length: 100, nullable: false })
   wave_id!: string;
+
+  @Index('idx_profile_waves_profile_curation_id')
+  @Column({ type: 'varchar', length: 50, nullable: true })
+  profile_curation_id!: string | null;
 }

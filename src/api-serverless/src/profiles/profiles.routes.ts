@@ -31,6 +31,7 @@ import { getProfileClassificationsBySubclassification } from './profile.helper';
 import { ApiIdentity } from '../generated/models/ApiIdentity';
 import { ApiCreateOrUpdateProfileRequest } from '../generated/models/ApiCreateOrUpdateProfileRequest';
 import { ApiProfileClassification } from '../generated/models/ApiProfileClassification';
+import { ApiProfileWave } from '@/api/generated/models/ApiProfileWave';
 import { ApiSetProfileWaveRequest } from '../generated/models/ApiSetProfileWaveRequest';
 import { identitiesService } from '../identities/identities.service';
 import { identityFetcher } from '../identities/identity.fetcher';
@@ -214,6 +215,29 @@ router.post(
   }
 );
 
+router.get(
+  `/:identity/wave`,
+  async function (
+    req: Request<
+      {
+        identity: string;
+      },
+      any,
+      any,
+      any,
+      any
+    >,
+    res: Response<ApiResponse<ApiProfileWave>>
+  ) {
+    const timer = Timer.getFromRequest(req);
+    const response = await profileWavesApiService.getProfileWave(
+      req.params.identity.toLowerCase(),
+      { timer }
+    );
+    res.status(200).send(response);
+  }
+);
+
 router.post(
   `/:identity/wave`,
   needsAuthenticatedUser(),
@@ -378,7 +402,8 @@ const ApiUploadProfilePictureRequestSchema: Joi.ObjectSchema<ApiUploadProfilePic
 
 const ApiSetProfileWaveRequestSchema: Joi.ObjectSchema<ApiSetProfileWaveRequest> =
   Joi.object({
-    wave_id: Joi.string().trim().required().min(1).max(100)
+    wave_id: Joi.string().trim().required().min(1).max(100),
+    profile_curation_id: Joi.string().trim().min(1).max(50).allow(null)
   });
 
 router.use('/:identity/cic', profileCicRoutes);
