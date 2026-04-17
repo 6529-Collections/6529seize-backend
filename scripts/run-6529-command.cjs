@@ -130,11 +130,11 @@ child.stderr.on("data", (data) => {
   process.stderr.write(data);
 });
 
-child.on("close", (code = 1, signal) => {
+child.on("close", (code, signal) => {
   if (signal) {
     const signalNumber = os.constants.signals[signal];
     process.exit(signalNumber ? 128 + signalNumber : 1);
   }
 
-  process.exit(code);
+  process.exit(code ?? 1);
 });

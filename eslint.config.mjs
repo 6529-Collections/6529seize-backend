@@ -44,5 +44,20 @@ export default [
       'no-prototype-builtins': 'off',
       'prettier/prettier': 'error'
     }
+  },
+
+  {
+    files: ['**/*.cjs'],
+    languageOptions: {
+      ecmaVersion: 'latest',
+      sourceType: 'script',
+      globals: {
+        ...globals.node
+      }
+    },
+    rules: {
+      '@typescript-eslint/no-require-imports': 'off',
+      'no-console': 'off'
+    }
   }
 ];
