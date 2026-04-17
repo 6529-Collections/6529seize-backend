@@ -2,8 +2,6 @@ import * as db from '../../db-api';
 import { ids } from '@/ids';
 
 import * as http from 'node:http';
-import * as fs from 'node:fs';
-import * as path from 'node:path';
 import WebSocket, { WebSocketServer } from 'ws';
 import aggregatedActivityRoutes from './aggregated-activity/api.aggregated-activity.routes';
 import authRoutes from './auth/auth.routes';
@@ -79,7 +77,6 @@ import { getJwtSecret } from './auth/auth';
 import * as awsServerlessExpressMiddleware from 'aws-serverless-express/middleware';
 import { randomUUID } from 'crypto';
 import * as crypto from 'node:crypto';
-import * as jsYaml from 'js-yaml';
 import { Strategy as AnonymousStrategy } from 'passport-anonymous';
 import * as process from 'process';
 import * as SwaggerUI from 'swagger-ui-express';
@@ -124,6 +121,7 @@ import { ApiUploadsPage } from './generated/models/ApiUploadsPage';
 import { githubIssueDropService } from './github/github-issue-drop.service';
 import { LOGO_SVG, renderHealthUI } from './health/health-ui.renderer';
 import { getHealthData } from './health/health.service';
+import { loadOpenApiYaml } from './openapi/load-openapi-yaml';
 import { DEFAULT_MAX_SIZE } from './page-request';
 import {
   initRateLimiting,
@@ -1608,19 +1606,10 @@ async function initializeApp() {
   app.use(rateLimitingMiddleware());
   app.use(rootRouter);
 
-  const openapiYamlCandidates = [
-    path.join(__dirname, 'openapi.yaml'), // Lambda (/var/task/) or esbuild bundle (dist/)
-    path.join(__dirname, '../openapi.yaml') // ts-node (src/)
-  ];
-  const openapiYamlPath = openapiYamlCandidates.find((p) => fs.existsSync(p));
-  if (!openapiYamlPath) {
-    throw new Error(
-      `openapi.yaml not found. Tried: ${openapiYamlCandidates.join(', ')}`
-    );
-  }
-  const swaggerDocument = jsYaml.load(
-    fs.readFileSync(openapiYamlPath, 'utf8')
-  ) as NonNullable<Parameters<typeof SwaggerUI.setup>[0]>;
+  const swaggerDocument = loadOpenApiYaml(__dirname, 'openapi.yaml', [
+    '.',
+    '..'
+  ]);
   app.use(
     '/docs',
     SwaggerUI.serve,

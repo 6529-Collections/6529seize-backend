@@ -29,7 +29,11 @@ const deployConfig = JSON.parse(
 const allowedServices = new Set(
   deployConfig.services.map((deployService) => deployService.name)
 );
-const normalizedService = service === 'api' ? 'api' : service;
+const aliasesByService = {
+  api: 'api',
+  'api-serverless': 'api'
+};
+const normalizedService = aliasesByService[service] ?? service;
 
 if (
   normalizedService.includes('..') ||
@@ -43,8 +47,9 @@ if (
 const relativeDir =
   normalizedService === 'api'
     ? 'src/api-serverless'
-    : path.join('src', normalizedService);
+    : `src/${normalizedService}`;
 const packageJsonPath = path.join(repoRoot, relativeDir, 'package.json');
+const filterPath = `./${relativeDir}`;
 
 if (!fs.existsSync(packageJsonPath)) {
   console.error(`Unknown service package: ${service}`);
@@ -54,7 +59,7 @@ if (!fs.existsSync(packageJsonPath)) {
 let args;
 
 if (mode === 'build') {
-  args = ['--dir', repoRoot, '--filter', `./${relativeDir}`, 'run', 'build'];
+  args = ['--dir', repoRoot, '--filter', filterPath, 'run', 'build'];
 } else if (mode === 'deploy') {
   if (!environment) {
     console.error(
@@ -84,7 +89,7 @@ if (mode === 'build') {
     '--dir',
     repoRoot,
     '--filter',
-    `./${relativeDir}`,
+    filterPath,
     'run',
     `sls-deploy:${environment}`
   ];

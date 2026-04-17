@@ -1,10 +1,8 @@
 import { Request, Response } from 'express';
-import * as fs from 'node:fs';
-import * as path from 'node:path';
 import * as db from '@/api/oracle/api.oracle.db';
 import { asyncRouter } from '@/api/async.router';
-import * as jsYaml from 'js-yaml';
 import * as SwaggerUI from 'swagger-ui-express';
+import { loadOpenApiYaml } from '@/api/openapi/load-openapi-yaml';
 import { getIp, isLocalhost } from '@/api/policies/policies';
 import { getPage, getPageSize } from '@/api/api-helpers';
 import { numbers } from '@/numbers';
@@ -23,20 +21,11 @@ function isValidIP(ip: string): boolean {
   return octets.every((octet) => octet >= 0 && octet <= 255);
 }
 
-const oracleYamlCandidates = [
-  path.join(__dirname, 'openapi.oracle.yaml'), // Lambda (/var/task/)
-  path.join(__dirname, '../openapi.oracle.yaml'), // esbuild bundle (dist/)
-  path.join(__dirname, '../../openapi.oracle.yaml') // ts-node (src/oracle/)
-];
-const oracleYamlPath = oracleYamlCandidates.find((p) => fs.existsSync(p));
-if (!oracleYamlPath) {
-  throw new Error(
-    `openapi.oracle.yaml not found. Tried: ${oracleYamlCandidates.join(', ')}`
-  );
-}
-const swaggerDocumentOracle = jsYaml.load(
-  fs.readFileSync(oracleYamlPath, 'utf8')
-) as NonNullable<Parameters<typeof SwaggerUI.setup>[0]>;
+const swaggerDocumentOracle = loadOpenApiYaml(__dirname, 'openapi.oracle.yaml', [
+  '.',
+  '..',
+  '../..'
+]);
 router.use(
   '/docs',
   SwaggerUI.serveFiles(swaggerDocumentOracle, { explorer: true }),

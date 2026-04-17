@@ -101,7 +101,7 @@ if (scripts.includes(scriptName)) {
 const pnpmArgs = ['run', scriptName];
 if (args.length > 0) {
   let forwarded = args;
-  while (forwarded[0] === '--') {
+  if (forwarded[0] === '--') {
     forwarded = forwarded.slice(1);
   }
   if (forwarded.length > 0) {

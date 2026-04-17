@@ -146,7 +146,7 @@ remove_managed_global_shim() {
     return 1
   fi
 
-  if [[ -f "$GLOBAL_6529" ]] && grep -q "/bin/6529" "$GLOBAL_6529" 2>/dev/null; then
+  if [[ -f "$GLOBAL_6529" ]] && grep -F -- "$REPO_ROOT/bin/6529" "$GLOBAL_6529" >/dev/null 2>&1; then
     rm -f "$GLOBAL_6529"
     return 0
   fi

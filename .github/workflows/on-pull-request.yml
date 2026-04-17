@@ -28,8 +28,21 @@ jobs:
           path: ${{ steps.pnpm-store.outputs.path }}
           key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
           restore-keys: pnpm-${{ runner.os }}-
+      - name: Resolve npm global prefix
+        id: npm-global-prefix
+        run: echo "path=$(npm prefix -g)" >> "$GITHUB_OUTPUT"
+      - name: Cache Socket Firewall
+        id: sfw-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ steps.npm-global-prefix.outputs.path }}/bin/sfw
+            ${{ steps.npm-global-prefix.outputs.path }}/lib/node_modules/sfw
+          key: sfw-${{ runner.os }}-2.0.4
+      # Pin sfw and cache the global install to avoid repeated downloads on PRs.
       - name: Install Socket Firewall
-        run: npm install --global sfw
+        if: steps.sfw-cache.outputs.cache-hit != 'true'
+        run: npm install --global sfw@2.0.4
       - name: Install dependencies
         run: ./bin/6529 install:frozen
       - name: Verify generated files are committed

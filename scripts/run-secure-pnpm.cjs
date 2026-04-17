@@ -37,7 +37,6 @@ const result = spawnSync(resolveSfwCommand(), ['pnpm', ...args], {
   shell: process.platform === 'win32',
   env: {
     ...process.env,
-    CI: process.env['CI'],
     PATH: `${path.join(repoRoot, 'bin')}${path.delimiter}${process.env['PATH'] ?? ''}`,
     PNPM_CONFIG_CONFIRM_MODULES_PURGE: 'false',
     SEIZE_SECURE_INSTALL: '1'

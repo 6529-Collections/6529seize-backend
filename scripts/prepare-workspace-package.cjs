@@ -45,6 +45,7 @@ if (!packageJson.name) {
 const targetDir = path.resolve(cwd, targetArg);
 const relativeTargetDir = path.relative(repoRoot, targetDir);
 if (
+  relativeTargetDir === '' ||
   relativeTargetDir.startsWith('..') ||
   path.isAbsolute(relativeTargetDir)
 ) {

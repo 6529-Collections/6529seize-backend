@@ -203,7 +203,7 @@ for direct pnpm subcommands such as `6529 audit` or `6529 add`.
 6529 install
 ```
 
-PR CI uses `./bin/6529 install:frozen` for lockfile-exact installs. Prefer that when reproducing CI or investigating lockfile-sensitive regressions so `pnpm-lock.yaml` is not updated implicitly.
+CI workflows use `./bin/6529 install:frozen` for lockfile-exact installs. Prefer that when reproducing CI or investigating lockfile-sensitive regressions so `pnpm-lock.yaml` is not updated implicitly.
 
 `6529 install` preserves the caller's environment. CI-style non-interactive behavior only applies when `CI` is already set, so local secure installs can remain interactive unless you explicitly run them in a CI environment.
 

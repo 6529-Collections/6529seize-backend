@@ -18,6 +18,7 @@
     "api:generate-openapi": "node scripts/require-6529-command.cjs && ./bin/pnpm --filter ./src/api-serverless run generate",
     "api:regen-openapi": "node scripts/require-6529-command.cjs && ./bin/pnpm --filter ./src/api-serverless run restructure-openapi && ./bin/pnpm --filter ./src/api-serverless run generate",
     "build:api": "node scripts/require-6529-command.cjs && ./bin/pnpm --filter ./src/api-serverless run build",
+    "build:services": "node scripts/require-6529-command.cjs && node scripts/build-services.cjs",
     "build:service": "node scripts/require-6529-command.cjs && node scripts/run-service-script.cjs build",
     "deploy:service": "node scripts/require-6529-command.cjs && node scripts/run-service-script.cjs deploy",
     "prebuild": "node scripts/require-6529-command.cjs && node scripts/generate-deploy-config.mjs",
