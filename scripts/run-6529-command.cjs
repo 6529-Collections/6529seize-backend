@@ -1,25 +1,25 @@
 #!/usr/bin/env node
 
-const fs = require("node:fs");
-const os = require("node:os");
-const path = require("node:path");
-const { spawn } = require("node:child_process");
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { spawn } = require('node:child_process');
 
 const rawArgs = process.argv.slice(2);
-const suggestOnly = rawArgs[0] === "--suggest-only";
+const suggestOnly = rawArgs[0] === '--suggest-only';
 const [repoRoot, realPnpm, scriptName, ...args] = suggestOnly
   ? rawArgs.slice(1)
   : rawArgs;
 
 if (!repoRoot || !realPnpm || !scriptName) {
   console.error(
-    "Usage: node scripts/run-6529-command.cjs <repo-root> <pnpm-bin> <script> [args...]"
+    'Usage: node scripts/run-6529-command.cjs <repo-root> <pnpm-bin> <script> [args...]'
   );
   process.exit(1);
 }
 
-const packageJsonPath = path.join(repoRoot, "package.json");
-const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
+const packageJsonPath = path.join(repoRoot, 'package.json');
+const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
 const scripts = Object.keys(packageJson.scripts ?? {});
 
 function levenshtein(a, b) {
@@ -64,7 +64,7 @@ function findSuggestion(input, candidates) {
     return null;
   }
 
-const maxAcceptedDistance = Math.max(2, Math.floor(bestCandidate.length / 3));
+  const maxAcceptedDistance = Math.max(2, Math.floor(bestCandidate.length / 3));
   return bestDistance <= maxAcceptedDistance ? bestCandidate : null;
 }
 
@@ -87,56 +87,56 @@ if (scripts.includes(scriptName)) {
   if (suggestion) {
     console.error(`Did you mean \`6529 run ${suggestion}\`?`);
   } else {
-    console.error("Use `6529 run <script>` for repo scripts.");
-    console.error("Examples:");
-    console.error("  6529 install");
-    console.error("  6529 run backend:local");
-    console.error("  6529 run build");
+    console.error('Use `6529 run <script>` for repo scripts.');
+    console.error('Examples:');
+    console.error('  6529 install');
+    console.error('  6529 run backend:local');
+    console.error('  6529 run build');
   }
 
   process.exit(1);
 }
 
-const pnpmArgs = ["run", scriptName];
+const pnpmArgs = ['run', scriptName];
 if (args.length > 0) {
   let forwarded = args;
-  while (forwarded[0] === "--") {
+  while (forwarded[0] === '--') {
     forwarded = forwarded.slice(1);
   }
   if (forwarded.length > 0) {
-    pnpmArgs.push("--", ...forwarded);
+    pnpmArgs.push('--', ...forwarded);
   }
 }
 
 const child = spawn(realPnpm, pnpmArgs, {
-  stdio: ["inherit", "inherit", "pipe"],
+  stdio: ['inherit', 'inherit', 'pipe'],
   env: process.env
 });
 
-child.on("error", (err) => {
+child.on('error', (err) => {
   throw err;
 });
 
 // Stay alive on Ctrl+C so we can filter pnpm's stderr before exiting.
 // The child processes (nodemon etc.) receive SIGINT too and will shut
 // down on their own — we just wait for the 'close' event below.
-process.on("SIGINT", () => {});
+process.on('SIGINT', () => {});
 
 // Pipe stderr but filter out pnpm's ELIFECYCLE noise that appears when
 // a long-running script (e.g. nodemon) is stopped with Ctrl+C.
-child.stderr.on("data", (data) => {
+child.stderr.on('data', (data) => {
   const text = data.toString();
   if (
-    text.includes("ELIFECYCLE") ||
-    text.includes("ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL") ||
-    text.includes("Command failed with exit code 130")
+    text.includes('ELIFECYCLE') ||
+    text.includes('ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL') ||
+    text.includes('Command failed with exit code 130')
   ) {
     return;
   }
   process.stderr.write(data);
 });
 
-child.on("close", (code, signal) => {
+child.on('close', (code, signal) => {
   if (signal) {
     const signalNumber = os.constants.signals[signal];
     process.exit(signalNumber ? 128 + signalNumber : 1);
