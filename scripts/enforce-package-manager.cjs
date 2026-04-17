@@ -7,10 +7,7 @@ function allowedOutside6529Wrapper() {
   if (process.env["SEIZE_ALLOW_SERVERLESS_INTERNAL_NPM"] === "1") {
     return true;
   }
-  if (
-    process.env["GITHUB_ACTIONS"] === "true" &&
-    process.env["npm_command"] === "install"
-  ) {
+  if (process.env["GITHUB_ACTIONS"] === "true") {
     return true;
   }
   return false;
