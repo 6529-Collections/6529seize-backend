@@ -29,6 +29,16 @@ function isServerlessInternalNpmAllowed(
 
   const npmUserAgent = env['npm_config_user_agent'] ?? '';
   const isNpmContext = npmUserAgent.includes('npm/');
+  const lifecycleEvent = env['npm_lifecycle_event'] ?? '';
+  const lifecycleScript = env['npm_lifecycle_script'] ?? '';
+  if (
+    isNpmContext &&
+    (lifecycleEvent.startsWith('sls-deploy:') ||
+      lifecycleScript.includes('serverless/run.js deploy'))
+  ) {
+    return true;
+  }
+
   if (
     isNpmContext &&
     (env['GITHUB_ACTIONS'] === 'true' || env['CI'] === 'true') &&
