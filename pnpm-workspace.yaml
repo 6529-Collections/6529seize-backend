@@ -8,3 +8,40 @@ overrides:
   ws: 8.18.0
   '@discordjs/rest@2.6.0>undici': 6.24.0
   'http-proxy-agent@5.0.0>@tootallnate/once': 3.0.1
+  'tar@<7.5.11': ^7.5.11
+  'file-type@>=13.0.0 <21.3.1': ^21.3.1
+
+auditConfig:
+  ignoreGhsas:
+    # aws-sdk v2 via serverless@3 — no patched version (advisory says migrate to v3).
+    # Dev-only dep; region is hardcoded in serverless.yaml so the vuln is not reachable.
+    - GHSA-j965-2qgj-vjmq
+    # elliptic via alchemy-sdk -> @ethersproject/signing-key — no patched version.
+    # Clears when the alchemy-sdk removal work lands.
+    - GHSA-848j-6mx2-7j84
+
+# pnpm 10 blocks all dependency build scripts by default. Packages below are
+# explicitly allowed to run their postinstall because we need the artefacts
+# they produce (native bindings, downloaded binaries, platform binaries, etc.).
+onlyBuiltDependencies:
+  - '@ffmpeg-installer/darwin-arm64'  # local dev (macOS) — ffmpeg binary for s3Loop
+  - '@ffmpeg-installer/linux-x64'     # prod Lambda — ffmpeg binary for s3Loop
+  - '@openapitools/openapi-generator-cli'  # downloads the OpenAPI JAR used by api:regen-openapi
+  - bufferutil                         # native ws accelerator
+  - cpu-features                       # native feature detection used by ssh2
+  - esbuild                            # platform-specific bundler binary
+  - protobufjs                         # wires up long.js types
+  - sharp                              # libvips native bindings for mediaResizerLoop
+  - ssh2                               # native crypto accelerator (testcontainers)
+  - unrs-resolver                      # native TS path resolver
+  - utf-8-validate                     # native ws accelerator
+
+# Explicitly denied — silences the "ignored build scripts" warning for
+# packages whose postinstall is telemetry/no-op and which we don't need.
+ignoredBuiltDependencies:
+  - '@firebase/util'                   # no-op setup
+  - '@nestjs/core'                     # no-op setup
+  - '@scarf/scarf'                     # analytics beacon
+  - aws-sdk                            # transitive via serverless@3; dev-only
+  - es5-ext                            # prints "thanks" message; no functional impact
+  - serverless                         # CLI autocomplete/telemetry; deploy works without it

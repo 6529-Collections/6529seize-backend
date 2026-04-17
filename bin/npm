@@ -2,36 +2,6 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REAL_CWD="$(pwd -P 2>/dev/null || pwd)"
-
-# Serverless Framework v4 downloads release packages to
-# ~/.serverless/releases/<version>/package and runs `npm install` there to
-# install its own Node dependencies. That npm invocation lands in this
-# shim because our `bin/` directory is first on PATH. When that happens,
-# fall through to the real npm so the deploy can proceed.
-#
-# NOTE: Use the real cwd (via `pwd`) rather than `$PWD`. The Serverless
-# binary spawns npm via Go's exec.Command with cmd.Dir set, which changes
-# the child's chdir but leaves the inherited PWD env var pointing at the
-# parent's directory.
-if [[ "$REAL_CWD" == *"/.serverless/releases/"* ]]; then
-  clean_path=""
-  IFS=':' read -r -a path_parts <<< "${PATH:-}"
-  for part in "${path_parts[@]}"; do
-    if [[ -z "$part" || "$part" == "$SCRIPT_DIR" ]]; then
-      continue
-    fi
-    clean_path="${clean_path:+${clean_path}:}${part}"
-  done
-  REAL_NPM="$(PATH="$clean_path" command -v npm || true)"
-  if [[ -z "$REAL_NPM" ]]; then
-    echo "Unable to locate the real npm binary outside the repo wrapper path." >&2
-    exit 1
-  fi
-  exec "$REAL_NPM" "$@"
-fi
-
 echo "Direct npm usage is blocked in this repository." >&2
 echo "Use the \`6529\` wrapper instead." >&2
 echo "Examples:" >&2
