@@ -7,8 +7,8 @@
     "prebuild": "node ../../scripts/require-6529-command.cjs && node ../../scripts/remove-paths.cjs dist .6529-deploy-package ../../.6529-deploy-packages/nftLinkMediaPreviewLoop && mkdir -p dist",
     "build": "node ../../scripts/prepare-workspace-package.cjs ../../.6529-deploy-packages/nftLinkMediaPreviewLoop && esbuild index.ts --bundle --external:sharp --sourcemap --platform=node --target=es2020 --outfile=dist/index.js",
     "postbuild": "cp -r ../../.6529-deploy-packages/nftLinkMediaPreviewLoop/node_modules dist/ && cp ../../.6529-deploy-packages/nftLinkMediaPreviewLoop/package.json dist/package.json && cd dist && zip -rq index.zip index.js index.js.map node_modules package.json && node ../../scripts/remove-paths.cjs node_modules package.json && cd .. && node ../../scripts/remove-paths.cjs ../../.6529-deploy-packages/nftLinkMediaPreviewLoop",
-    "sls-deploy:prod": "node ../../scripts/require-6529-command.cjs && node ../../node_modules/serverless/bin/serverless.js deploy --stage=prod --region=us-east-1",
-    "sls-deploy:staging": "node ../../scripts/require-6529-command.cjs && node ../../node_modules/serverless/bin/serverless.js deploy --stage=staging --region=eu-west-1",
+    "sls-deploy:prod": "node ../../scripts/require-6529-command.cjs && node ../../node_modules/serverless/run.js deploy --stage=prod --region=us-east-1",
+    "sls-deploy:staging": "node ../../scripts/require-6529-command.cjs && node ../../node_modules/serverless/run.js deploy --stage=staging --region=eu-west-1",
     "preinstall": "node ../../scripts/enforce-package-manager.cjs"
   },
   "author": "",

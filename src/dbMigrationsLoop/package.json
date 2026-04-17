@@ -7,8 +7,8 @@
     "prebuild": "node ../../scripts/require-6529-command.cjs && node ../../scripts/remove-paths.cjs dist .6529-deploy-package ../../.6529-deploy-packages/dbMigrationsLoop",
     "build": "node ../../scripts/prepare-workspace-package.cjs ../../.6529-deploy-packages/dbMigrationsLoop && esbuild index.ts --bundle --sourcemap --platform=node --target=es2020 --external:db-migrate --external:db-migrate-mysql --outfile=dist/index.js",
     "postbuild": "cp ../../database.json dist/ && cp -r ../../migrations dist/ && cp -r ../../.6529-deploy-packages/dbMigrationsLoop/node_modules dist/node_modules/ && cd dist && zip -r index.zip index.js* database.json migrations node_modules && cd .. && node ../../scripts/remove-paths.cjs ../../.6529-deploy-packages/dbMigrationsLoop",
-    "sls-deploy:prod": "node ../../scripts/require-6529-command.cjs && node ../../node_modules/serverless/bin/serverless.js deploy --stage=prod --region=us-east-1",
-    "sls-deploy:staging": "node ../../scripts/require-6529-command.cjs && node ../../node_modules/serverless/bin/serverless.js deploy --stage=staging --region=eu-west-1",
+    "sls-deploy:prod": "node ../../scripts/require-6529-command.cjs && node ../../node_modules/serverless/run.js deploy --stage=prod --region=us-east-1",
+    "sls-deploy:staging": "node ../../scripts/require-6529-command.cjs && node ../../node_modules/serverless/run.js deploy --stage=staging --region=eu-west-1",
     "preinstall": "node ../../scripts/enforce-package-manager.cjs"
   },
   "author": "",

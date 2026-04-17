@@ -7,8 +7,8 @@
     "prebuild": "node ../../scripts/require-6529-command.cjs && rm -rf dist",
     "build": "esbuild index.ts --bundle --sourcemap --platform=node --target=es2020 --outfile=dist/index.js",
     "postbuild": "cp team.csv dist && cd dist && zip -r index.zip index.js* *.csv",
-    "sls-deploy:prod": "node ../../scripts/require-6529-command.cjs && node ../../node_modules/serverless/bin/serverless.js deploy --stage=prod --region=us-east-1",
-    "sls-deploy:staging": "node ../../scripts/require-6529-command.cjs && node ../../node_modules/serverless/bin/serverless.js deploy --stage=staging --region=eu-west-1",
+    "sls-deploy:prod": "node ../../scripts/require-6529-command.cjs && node ../../node_modules/serverless/run.js deploy --stage=prod --region=us-east-1",
+    "sls-deploy:staging": "node ../../scripts/require-6529-command.cjs && node ../../node_modules/serverless/run.js deploy --stage=staging --region=eu-west-1",
     "preinstall": "node ../../scripts/enforce-package-manager.cjs"
   },
   "author": "",
