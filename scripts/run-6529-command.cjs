@@ -99,7 +99,13 @@ if (scripts.includes(scriptName)) {
 
 const pnpmArgs = ["run", scriptName];
 if (args.length > 0) {
-  pnpmArgs.push("--", ...args);
+  let forwarded = args;
+  while (forwarded[0] === "--") {
+    forwarded = forwarded.slice(1);
+  }
+  if (forwarded.length > 0) {
+    pnpmArgs.push("--", ...forwarded);
+  }
 }
 
 const child = spawn(realPnpm, pnpmArgs, {

@@ -9,7 +9,7 @@ require("./require-6529-command.cjs");
 const repoRoot = path.resolve(__dirname, "..");
 const rawArgs = process.argv.slice(2);
 
-if (rawArgs[1] === "--") {
+while (rawArgs[1] === "--") {
   rawArgs.splice(1, 1);
 }
 
