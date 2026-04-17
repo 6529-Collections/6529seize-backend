@@ -28,13 +28,19 @@ function isServerlessInternalNpmAllowed(
   }
 
   const npmUserAgent = env['npm_config_user_agent'] ?? '';
-  const isNpmContext = npmUserAgent.includes('npm/');
+  const npmExecPath = env['npm_execpath'] ?? '';
+  const execBaseName = path.basename(npmExecPath).toLowerCase();
+  const isNpmContext =
+    npmUserAgent.includes('npm/') ||
+    execBaseName === 'npm' ||
+    execBaseName === 'npm-cli.js' ||
+    npmExecPath.includes('/npm-cli.js') ||
+    npmExecPath.includes(String.raw`\npm-cli.js`);
   const lifecycleEvent = env['npm_lifecycle_event'] ?? '';
   const lifecycleScript = env['npm_lifecycle_script'] ?? '';
   if (
-    isNpmContext &&
-    (lifecycleEvent.startsWith('sls-deploy:') ||
-      lifecycleScript.includes('serverless/run.js deploy'))
+    lifecycleEvent.startsWith('sls-deploy:') ||
+    lifecycleScript.includes('serverless/run.js deploy')
   ) {
     return true;
   }
@@ -50,11 +56,13 @@ function isServerlessInternalNpmAllowed(
   const npmAudit = env['npm_config_audit'] ?? '';
   const npmFund = env['npm_config_fund'] ?? '';
   const npmProgress = env['npm_config_progress'] ?? '';
-  if (
-    isNpmContext &&
+  const hasServerlessInstallFlags =
     (npmAudit === 'false' || npmAudit === '0') &&
     (npmFund === 'false' || npmFund === '0') &&
-    (npmProgress === 'false' || npmProgress === '0')
+    (npmProgress === 'false' || npmProgress === '0');
+  if (
+    hasServerlessInstallFlags &&
+    (isNpmContext || env['GITHUB_ACTIONS'] === 'true' || env['CI'] === 'true')
   ) {
     return true;
   }
