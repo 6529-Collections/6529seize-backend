@@ -1,18 +1,11 @@
 #!/usr/bin/env node
 
 const path = require('node:path');
+const {
+  isServerlessInternalNpmAllowed
+} = require('./allow-serverless-internal-npm.cjs');
 
-function allowedOutside6529Wrapper() {
-  if (process.env['SEIZE_ALLOW_SERVERLESS_INTERNAL_NPM'] === '1') {
-    return true;
-  }
-  if (process.env['GITHUB_ACTIONS'] === 'true') {
-    return true;
-  }
-  return false;
-}
-
-if (allowedOutside6529Wrapper()) {
+if (isServerlessInternalNpmAllowed()) {
   if (require.main === module) {
     process.exit(0);
   }

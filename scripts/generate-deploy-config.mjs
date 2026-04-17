@@ -8,7 +8,9 @@ const require = createRequire(import.meta.url);
 const repoRoot = path.resolve(__dirname, '..');
 const sourcePath = path.join(repoRoot, 'src', 'config', 'deploy-services.json');
 const workflowPath = path.join(repoRoot, '.github', 'workflows', 'deploy.yml');
-const { validateDeployConfig } = require('../src/config/deploy-config.validation.js');
+const {
+  validateDeployConfig
+} = require('../src/config/deploy-config.validation.js');
 
 function indent(lines, prefix = '          ') {
   return lines.map((line) => `${prefix}${line}`).join('\n');
@@ -37,16 +39,12 @@ function buildWorkflowYaml(config) {
 
   const prodCondition = prodOnlyServices.length
     ? `(${prodOnlyServices
-        .map(
-          (service) => `github.event.inputs.service == '${service}'`
-        )
+        .map((service) => `github.event.inputs.service == '${service}'`)
         .join(' || ')}) && github.event.inputs.environment != 'prod'`
     : 'false';
   const stagingCondition = stagingOnlyServices.length
     ? `(${stagingOnlyServices
-        .map(
-          (service) => `github.event.inputs.service == '${service}'`
-        )
+        .map((service) => `github.event.inputs.service == '${service}'`)
         .join(' || ')}) && github.event.inputs.environment != 'staging'`
     : 'false';
 
