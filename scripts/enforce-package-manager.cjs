@@ -1,10 +1,5 @@
 #!/usr/bin/env node
 
-const fs = require('node:fs');
-const path = require('node:path');
-
-const packageJsonPath = path.join(process.cwd(), 'package.json');
-JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
 const userAgent = process.env['npm_config_user_agent'] ?? '';
 const secureInstall = process.env['SEIZE_SECURE_INSTALL'] === '1';
 

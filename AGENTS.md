@@ -49,6 +49,7 @@ Use `./bin/6529 <pnpm-command>` for direct pnpm subcommands such as `./bin/6529 
 ```bash
 # Install dependencies
 ./bin/6529 install
+# For CI reproduction or lockfile-sensitive regressions, prefer ./bin/6529 install:frozen so pnpm-lock.yaml is not updated implicitly.
 
 # Build the project (includes tests)
 ./bin/6529 run build

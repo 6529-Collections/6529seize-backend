@@ -12,7 +12,9 @@ This repo includes a `.envrc` for optional `direnv` use.
 
 It only adds the repo `bin/` directory to your `PATH` while you are inside this repository, which makes commands like `ghruns`, `ghdeploy`, and `6529` available here without affecting shells outside the repo.
 
-The main shim flow is still `./bin/6529 bootstrap`, which writes the same repo-scoped behavior into your shell rc file. `direnv` is just a convenience layer.
+The main shim flow is `./bin/6529 bootstrap`, which writes the same repo-scoped behavior into your shell rc file. `direnv` is just a convenience layer.
+
+Supported contributor environments are macOS/Linux shells. The bootstrap flow, `direnv` integration, and npm scripts assume `bash`/`zsh`-style shell behavior; Windows `cmd.exe` and PowerShell are not supported directly.
 
 `.envrc` does not load `.env.local` and it does not set `NODE_ENV`.
 
@@ -201,6 +203,10 @@ for direct pnpm subcommands such as `6529 audit` or `6529 add`.
 6529 install
 ```
 
+PR CI uses `./bin/6529 install:frozen` for lockfile-exact installs. Prefer that when reproducing CI or investigating lockfile-sensitive regressions so `pnpm-lock.yaml` is not updated implicitly.
+
+`6529 install` preserves the caller's environment. CI-style non-interactive behavior only applies when `CI` is already set, so local secure installs can remain interactive unless you explicitly run them in a CI environment.
+
 ### 1.2 Build
 
 ```
@@ -324,7 +330,7 @@ The rate limiter identifies users in the following priority order:
    - Uses unauthenticated rate limits
    - Format: `ip:{ipAddress}`
 
-#### 2.7.3 Internal Request Signing (SSR Requests)
+#### 2.6.3 Internal Request Signing (SSR Requests)
 
 For server-side requests from the web app, you can bypass IP-based rate limiting by sending signed headers. This is necessary when all requests appear to come from the same IP (e.g., AWS Elastic Beanstalk).
 
@@ -380,7 +386,7 @@ headers: {
 }
 ```
 
-#### 2.7.4 Configuration
+#### 2.6.4 Configuration
 
 Rate limiting is configured via environment variables (see `.env.sample`):
 
@@ -407,7 +413,7 @@ Rate limiting is configured via environment variables (see `.env.sample`):
 - `API_RATE_LIMIT_INTERNAL_ID`: Internal ID for signed requests (required)
 - `API_RATE_LIMIT_INTERNAL_SECRET`: Shared secret for signing requests (required)
 
-#### 2.7.5 Response Headers
+#### 2.6.5 Response Headers
 
 All responses include rate limit headers:
 
@@ -419,7 +425,7 @@ When rate limited (429 response):
 
 - `Retry-After`: Seconds to wait before retrying
 
-#### 2.7.6 Implementation Details
+#### 2.6.6 Implementation Details
 
 - **Storage**: Uses Redis sorted sets for efficient sliding window tracking
 - **Redis Required**: Rate limiting requires Redis to be available. If Redis is not available, rate limiting is automatically disabled at startup

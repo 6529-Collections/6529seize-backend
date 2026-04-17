@@ -54,13 +54,10 @@ resolve_npm_global_bin() {
     return 0
   fi
 
-  NPM_GLOBAL_BIN="$("$REAL_NPM" bin -g 2>/dev/null || true)"
-  if [[ -z "$NPM_GLOBAL_BIN" ]]; then
-    local npm_global_prefix=""
-    npm_global_prefix="$("$REAL_NPM" prefix -g 2>/dev/null || true)"
-    if [[ -n "$npm_global_prefix" ]]; then
-      NPM_GLOBAL_BIN="${npm_global_prefix}/bin"
-    fi
+  local npm_global_prefix=""
+  npm_global_prefix="$("$REAL_NPM" prefix -g 2>/dev/null || true)"
+  if [[ -n "$npm_global_prefix" ]]; then
+    NPM_GLOBAL_BIN="${npm_global_prefix}/bin"
   fi
 
   if [[ -n "$NPM_GLOBAL_BIN" && ! -d "$NPM_GLOBAL_BIN" ]]; then
@@ -283,6 +280,7 @@ fi
 
 ensure_socket_firewall
 ensure_pinned_pnpm
+PNPM_VERSION="$(pnpm --version 2>/dev/null || echo 'pnpm-not-found')"
 
 removed_global_shim="0"
 if remove_managed_global_shim; then
@@ -297,7 +295,7 @@ Socket Firewall is installed and available at:
   $SFW_BIN_PATH
 
 Pinned pnpm is active:
-  $(pnpm --version)
+  $PNPM_VERSION
 
 Updated:
   $rc_file

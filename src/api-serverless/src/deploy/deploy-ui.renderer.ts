@@ -1692,9 +1692,13 @@ export function renderDeployUiApp(): string {
         outcomeKey === 'startup_failure' ||
         outcomeKey === 'cancelled' ||
         outcomeKey === 'timed_out' ||
-        outcomeKey === 'action_required'
+        outcomeKey === 'action_required' ||
+        outcomeKey === 'skipped' ||
+        outcomeKey === 'stale'
       ) {
         outcomeClass = 'is-failed';
+      } else if (outcomeKey === 'neutral') {
+        outcomeClass = 'is-completed';
       }
 
       var safeUrl = sanitizeHttpUrl(run.url);

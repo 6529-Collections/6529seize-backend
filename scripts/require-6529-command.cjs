@@ -7,7 +7,7 @@ const npmExecPath = process.env['npm_execpath'] ?? '';
 const execBaseName = path.basename(npmExecPath).toLowerCase();
 
 function detectPackageManager() {
-  if (userAgent.includes('pnpm/') || npmExecPath.includes('pnpm')) {
+  if (userAgent.includes('pnpm/') || execBaseName.includes('pnpm')) {
     return 'pnpm';
   }
 
@@ -31,36 +31,20 @@ function detectPackageManager() {
 const packageManager = detectPackageManager();
 
 if (process.env['SEIZE_6529_COMMAND'] !== '1') {
-  if (packageManager === 'npm') {
-    console.error('Direct npm usage is blocked in this repository.');
-    console.error('Use the `6529` wrapper instead.');
-    console.error('Examples:');
-    console.error('  6529 install');
-    console.error('  6529 run backend:local');
-    console.error('  6529 run build');
-  } else if (packageManager === 'pnpm') {
-    console.error('Direct pnpm usage is blocked in this repository.');
-    console.error('Use the `6529` wrapper instead.');
-    console.error('Examples:');
-    console.error('  6529 install');
-    console.error('  6529 run backend:local');
-    console.error('  6529 run build');
-  } else if (packageManager === 'yarn') {
-    console.error('Direct yarn usage is blocked in this repository.');
-    console.error('Use the `6529` wrapper instead.');
-    console.error('Examples:');
-    console.error('  6529 install');
-    console.error('  6529 run backend:local');
-    console.error('  6529 run build');
-  } else {
-    console.error(
-      'This repository only allows repo commands through the `6529` wrapper.'
-    );
-    console.error('Use the wrapper command instead.');
-    console.error('Examples:');
-    console.error('  6529 install');
-    console.error('  6529 run backend:local');
-    console.error('  6529 run build');
-  }
+  const leadingMessage =
+    packageManager === 'npm'
+      ? 'Direct npm usage is blocked in this repository.'
+      : packageManager === 'pnpm'
+        ? 'Direct pnpm usage is blocked in this repository.'
+        : packageManager === 'yarn'
+          ? 'Direct yarn usage is blocked in this repository.'
+          : 'This repository only allows repo commands through the `6529` wrapper.';
+
+  console.error(leadingMessage);
+  console.error('Use the `6529` wrapper instead.');
+  console.error('Examples:');
+  console.error('  6529 install');
+  console.error('  6529 run backend:local');
+  console.error('  6529 run build');
   process.exit(1);
 }

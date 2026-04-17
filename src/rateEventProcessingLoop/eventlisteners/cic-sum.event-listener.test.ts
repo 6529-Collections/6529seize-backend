@@ -1,4 +1,4 @@
-import { Mock } from '@/tests/mock';
+import type { Mock } from '@/tests/mock';
 import { CicSumEventListener } from './cic-sum.event-listener';
 import { CicScoreAggregationDb } from '../../aggregations/cic-score-aggregation.db';
 import { mockDbService } from '../../tests/test.helper';

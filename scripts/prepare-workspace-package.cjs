@@ -43,6 +43,15 @@ if (!packageJson.name) {
 }
 
 const targetDir = path.resolve(cwd, targetArg);
+const relativeTargetDir = path.relative(repoRoot, targetDir);
+if (
+  relativeTargetDir.startsWith('..') ||
+  path.isAbsolute(relativeTargetDir)
+) {
+  console.error('Target directory must be inside the repository root.');
+  process.exit(1);
+}
+
 fs.rmSync(targetDir, { recursive: true, force: true });
 
 const extraArgs = process.argv.slice(3);

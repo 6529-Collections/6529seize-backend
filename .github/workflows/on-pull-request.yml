@@ -19,10 +19,13 @@ jobs:
           node-version: '22'
       - name: Setup Corepack pnpm
         run: bash scripts/setup-corepack-pnpm.sh
+      - name: Resolve pnpm store path
+        id: pnpm-store
+        run: echo "path=$(SEIZE_6529_COMMAND=1 ./bin/pnpm store path --silent)" >> "$GITHUB_OUTPUT"
       - name: Cache pnpm store
         uses: actions/cache@v4
         with:
-          path: ~/.pnpm-store
+          path: ${{ steps.pnpm-store.outputs.path }}
           key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
           restore-keys: pnpm-${{ runner.os }}-
       - name: Install Socket Firewall

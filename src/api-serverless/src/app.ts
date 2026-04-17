@@ -2,6 +2,8 @@ import * as db from '../../db-api';
 import { ids } from '@/ids';
 
 import * as http from 'node:http';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import WebSocket, { WebSocketServer } from 'ws';
 import aggregatedActivityRoutes from './aggregated-activity/api.aggregated-activity.routes';
 import authRoutes from './auth/auth.routes';
@@ -77,6 +79,7 @@ import { getJwtSecret } from './auth/auth';
 import * as awsServerlessExpressMiddleware from 'aws-serverless-express/middleware';
 import { randomUUID } from 'crypto';
 import * as crypto from 'node:crypto';
+import * as jsYaml from 'js-yaml';
 import { Strategy as AnonymousStrategy } from 'passport-anonymous';
 import * as process from 'process';
 import * as SwaggerUI from 'swagger-ui-express';
@@ -140,9 +143,6 @@ import {
 import { wsListenersNotifier } from './ws/ws-listeners-notifier';
 import { WsMessageType } from './ws/ws-message';
 
-const fs = require('fs');
-const jsYaml = require('js-yaml');
-const path = require('path');
 const compression = require('compression');
 const express = require('express');
 const cors = require('cors');
@@ -1618,7 +1618,9 @@ async function initializeApp() {
       `openapi.yaml not found. Tried: ${openapiYamlCandidates.join(', ')}`
     );
   }
-  const swaggerDocument = jsYaml.load(fs.readFileSync(openapiYamlPath, 'utf8'));
+  const swaggerDocument = jsYaml.load(
+    fs.readFileSync(openapiYamlPath, 'utf8')
+  ) as NonNullable<Parameters<typeof SwaggerUI.setup>[0]>;
   app.use(
     '/docs',
     SwaggerUI.serve,

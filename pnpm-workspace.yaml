@@ -1,12 +1,59 @@
 packages:
   - .
-  - src/*
+  - src/aggregatedActivityLoop
+  - src/api-serverless
+  - src/artCurationNftWatchLoop
+  - src/claimsBuilder
+  - src/claimsMediaArweaveUploader
+  - src/cloudwatchAlarmsToDiscordLoop
+  - src/customReplayLoop
+  - src/dbDumpsDaily
+  - src/dbMigrationsLoop
+  - src/delegationsLoop
+  - src/discoverEnsLoop
+  - src/dropVideoConversionInvokerLoop
+  - src/ethPriceLoop
+  - src/externalCollectionLiveTailingLoop
+  - src/externalCollectionSnapshottingLoop
+  - src/marketStatsLoop
+  - src/mediaResizerLoop
+  - src/mintAnnouncementsLoop
+  - src/nextgenContractLoop
+  - src/nextgenMediaImageResolutions
+  - src/nextgenMediaProxyInterceptor
+  - src/nextgenMediaUploader
+  - src/nextgenMetadataLoop
+  - src/nftHistoryLoop
+  - src/nftLinkMediaPreviewLoop
+  - src/nftLinkRefresherLoop
+  - src/nftOwnersLoop
+  - src/nftsLoop
+  - src/overRatesRevocationLoop
+  - src/ownersBalancesLoop
+  - src/populateHistoricConsolidatedTdh
+  - src/pushNotificationsHandler
+  - src/rateEventProcessingLoop
+  - src/refreshEnsLoop
+  - src/rememesLoop
+  - src/royaltiesLoop
+  - src/s3Uploader
+  - src/subscriptionsDaily
+  - src/subscriptionsTopUpLoop
+  - src/tdhHistoryLoop
+  - src/tdhLoop
+  - src/teamLoop
+  - src/transactionsLoop
+  - src/transactionsProcessingLoop
+  - src/waveDecisionExecutionLoop
+  - src/waveLeaderboardSnapshotterLoop
+  - src/xTdhGrantsReviewerLoop
+  - src/xTdhLoop
 
 overrides:
   axios: 1.15.0
   fast-xml-parser: 5.6.0
-  ws: 8.18.0
-  '@discordjs/rest@2.6.0>undici': 6.24.0
+  ws: 8.20.0
+  undici: 6.25.0
   'http-proxy-agent@5.0.0>@tootallnate/once': 3.0.1
   'tar@<7.5.11': ^7.5.11
   'file-type@>=13.0.0 <21.3.1': ^21.3.1

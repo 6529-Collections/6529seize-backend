@@ -3,6 +3,7 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const readline = require('node:readline');
 const { spawn } = require('node:child_process');
 
 const rawArgs = process.argv.slice(2);
@@ -114,7 +115,11 @@ const child = spawn(realPnpm, pnpmArgs, {
 });
 
 child.on('error', (err) => {
-  throw err;
+  console.error(`Failed to run 6529 script "${scriptName}": ${err.message}`);
+  if (err.stack) {
+    console.error(err.stack);
+  }
+  process.exit(1);
 });
 
 // Stay alive on Ctrl+C so we can filter pnpm's stderr before exiting.
@@ -124,16 +129,20 @@ process.on('SIGINT', () => {});
 
 // Pipe stderr but filter out pnpm's ELIFECYCLE noise that appears when
 // a long-running script (e.g. nodemon) is stopped with Ctrl+C.
-child.stderr.on('data', (data) => {
-  const text = data.toString();
+const stderrReader = readline.createInterface({
+  input: child.stderr,
+  crlfDelay: Number.POSITIVE_INFINITY
+});
+
+stderrReader.on('line', (line) => {
   if (
-    text.includes('ELIFECYCLE') ||
-    text.includes('ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL') ||
-    text.includes('Command failed with exit code 130')
+    line.includes('ELIFECYCLE') ||
+    line.includes('ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL') ||
+    line.includes('Command failed with exit code 130')
   ) {
     return;
   }
-  process.stderr.write(data);
+  process.stderr.write(`${line}\n`);
 });
 
 child.on('close', (code, signal) => {

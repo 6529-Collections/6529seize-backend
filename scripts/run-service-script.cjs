@@ -7,11 +7,7 @@ const { spawnSync } = require('node:child_process');
 require('./require-6529-command.cjs');
 
 const repoRoot = path.resolve(__dirname, '..');
-const rawArgs = process.argv.slice(2);
-
-while (rawArgs[1] === '--') {
-  rawArgs.splice(1, 1);
-}
+const rawArgs = process.argv.slice(2).filter((arg) => arg !== '--');
 
 const [mode, service, environment] = rawArgs;
 
@@ -24,8 +20,30 @@ if (!mode || !service) {
   process.exit(1);
 }
 
+const deployConfig = JSON.parse(
+  fs.readFileSync(
+    path.join(repoRoot, 'src', 'config', 'deploy-services.json'),
+    'utf8'
+  )
+);
+const allowedServices = new Set(
+  deployConfig.services.map((deployService) => deployService.name)
+);
+const normalizedService = service === 'api' ? 'api' : service;
+
+if (
+  normalizedService.includes('..') ||
+  path.isAbsolute(normalizedService) ||
+  !allowedServices.has(normalizedService)
+) {
+  console.error(`Invalid deployable service: ${service}`);
+  process.exit(1);
+}
+
 const relativeDir =
-  service === 'api' ? 'src/api-serverless' : path.join('src', service);
+  normalizedService === 'api'
+    ? 'src/api-serverless'
+    : path.join('src', normalizedService);
 const packageJsonPath = path.join(repoRoot, relativeDir, 'package.json');
 
 if (!fs.existsSync(packageJsonPath)) {
@@ -45,7 +63,7 @@ if (mode === 'build') {
     process.exit(1);
   }
 
-  if (service === 'api') {
+  if (normalizedService === 'api') {
     console.error(
       'API deployment is handled separately from workspace serverless deploy scripts.'
     );
@@ -53,11 +71,11 @@ if (mode === 'build') {
   }
 
   if (
-    service === 'mediaResizerLoop' ||
-    service === 'nextgenMediaProxyInterceptor'
+    normalizedService === 'mediaResizerLoop' ||
+    normalizedService === 'nextgenMediaProxyInterceptor'
   ) {
     console.error(
-      `${service} deployment is handled by a custom workflow step.`
+      `${normalizedService} deployment is handled by a custom workflow step.`
     );
     process.exit(1);
   }

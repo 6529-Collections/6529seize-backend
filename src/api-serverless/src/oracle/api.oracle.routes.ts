@@ -1,14 +1,13 @@
 import { Request, Response } from 'express';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import * as db from '@/api/oracle/api.oracle.db';
 import { asyncRouter } from '@/api/async.router';
+import * as jsYaml from 'js-yaml';
 import * as SwaggerUI from 'swagger-ui-express';
 import { getIp, isLocalhost } from '@/api/policies/policies';
 import { getPage, getPageSize } from '@/api/api-helpers';
 import { numbers } from '@/numbers';
-
-const fs = require('node:fs');
-const jsYaml = require('js-yaml');
-const path = require('node:path');
 
 const router = asyncRouter();
 
@@ -37,7 +36,7 @@ if (!oracleYamlPath) {
 }
 const swaggerDocumentOracle = jsYaml.load(
   fs.readFileSync(oracleYamlPath, 'utf8')
-);
+) as NonNullable<Parameters<typeof SwaggerUI.setup>[0]>;
 router.use(
   '/docs',
   SwaggerUI.serveFiles(swaggerDocumentOracle, { explorer: true }),
