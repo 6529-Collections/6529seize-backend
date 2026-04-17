@@ -40,7 +40,7 @@ import { Time, Timer } from '@/time';
 import * as mcache from 'memory-cache';
 import { RequestContext } from '@/request.context';
 import { NEXTGEN_CORE_CONTRACT } from '@/nextgen/nextgen_constants';
-import { Network } from 'alchemy-sdk';
+import { Network } from '@/alchemy-sdk';
 import {
   hasGroupGotAnyNonIdentityConditions,
   isAnyGroupByOwningsCriteria,

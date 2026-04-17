@@ -9,7 +9,7 @@ import {
   NEXTGEN_CF_BASE_PATH,
   getNextgenNetwork
 } from './nextgen_constants';
-import { Network } from 'alchemy-sdk';
+import { Network } from '@/alchemy-sdk';
 import { listS3Objects } from './nextgen_generator';
 import { S3Client } from '@aws-sdk/client-s3';
 

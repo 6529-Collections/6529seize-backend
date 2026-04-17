@@ -1,5 +1,5 @@
 import { goerli, sepolia } from '@wagmi/chains';
-import { Network } from 'alchemy-sdk';
+import { Network } from '@/alchemy-sdk';
 
 export const NEXTGEN_BLOCKS_TABLE = 'nextgen_blocks';
 export const NEXTGEN_LOGS_TABLE = 'nextgen_logs';

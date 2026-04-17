@@ -1,4 +1,4 @@
-import { Alchemy, Network } from 'alchemy-sdk';
+import { Alchemy, Network } from '@/alchemy-sdk';
 import { ALCHEMY_SETTINGS } from '@/constants';
 import { ethTools } from '@/eth-tools';
 import { Time } from '@/time';

@@ -1,5 +1,5 @@
 import { assertUnreachable } from '@/assertions';
-import { Network } from 'alchemy-sdk';
+import { Network } from '@/alchemy-sdk';
 import { JsonRpcProvider } from 'ethers';
 
 const RPC_6529_URL = 'https://rpc1.6529.io';

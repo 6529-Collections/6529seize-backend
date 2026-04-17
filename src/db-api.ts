@@ -41,7 +41,7 @@ import {
 } from './sql-executor';
 import { getConsolidationsSql } from './sql_helpers';
 
-import { Nft } from 'alchemy-sdk';
+import { Nft } from '@/alchemy-sdk';
 import * as mysql from 'mysql';
 import {
   NFTSearchResult,

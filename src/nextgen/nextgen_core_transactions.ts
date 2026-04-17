@@ -5,7 +5,7 @@ import {
   AssetTransfersWithMetadataParams,
   Network,
   SortingOrder
-} from 'alchemy-sdk';
+} from '@/alchemy-sdk';
 import { NEXTGEN_CORE_IFACE } from '@/abis/nextgen';
 import { CLOUDFRONT_LINK } from '@/constants';
 import { NextGenCollection, NextGenLog } from '@/entities/INextGen';

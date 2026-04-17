@@ -3,7 +3,7 @@ import { UUID_REGEX, WALLET_REGEX } from '@/constants';
 import { cicDb, CicDb } from '@/cic/cic.db';
 import { collections } from '@/collections';
 import { ratingsDb, RatingsDb } from '@/rates/ratings.db';
-import { Alchemy } from 'alchemy-sdk';
+import { Alchemy } from '@/alchemy-sdk';
 import { getAlchemyInstance } from '../../../alchemy';
 import { IdentityEntity } from '../../../entities/IIdentity';
 import { RequestContext } from '../../../request.context';

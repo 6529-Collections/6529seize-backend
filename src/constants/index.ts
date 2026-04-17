@@ -1,4 +1,4 @@
-import { Network } from 'alchemy-sdk';
+import { Network } from '@/alchemy-sdk';
 
 export * from './db-tables';
 export * from './delegations';

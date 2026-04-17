@@ -1,4 +1,4 @@
-import { Alchemy } from 'alchemy-sdk';
+import { Alchemy } from '@/alchemy-sdk';
 import { ethers } from 'ethers';
 import {
   ALCHEMY_SETTINGS,

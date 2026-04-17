@@ -3,7 +3,7 @@ import {
   AssetTransfersCategory,
   AssetTransfersWithMetadataResult,
   SortingOrder
-} from 'alchemy-sdk';
+} from '@/alchemy-sdk';
 import { SUBSCRIPTIONS_ADDRESS } from '@/constants';
 import { SubscriptionTopUp } from '../entities/ISubscription';
 

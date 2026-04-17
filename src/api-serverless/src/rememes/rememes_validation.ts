@@ -2,7 +2,7 @@ import { ethers } from 'ethers';
 import * as Joi from 'joi';
 import { hashMessage } from '@ethersproject/hash';
 import { ALCHEMY_SETTINGS } from '@/constants';
-import { Alchemy, Nft, NftContract } from 'alchemy-sdk';
+import { Alchemy, Nft, NftContract } from '@/alchemy-sdk';
 import { getTdhForAddress, rememeExists } from '../../../db-api';
 import { seizeSettings } from '@/api/seize-settings';
 import { equalIgnoreCase } from '../../../strings';
