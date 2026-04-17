@@ -2,13 +2,6 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const {
-  isServerlessInternalNpmAllowed
-} = require('./allow-serverless-internal-npm.cjs');
-
-if (isServerlessInternalNpmAllowed()) {
-  process.exit(0);
-}
 
 const packageJsonPath = path.join(process.cwd(), 'package.json');
 JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));

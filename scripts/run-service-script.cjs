@@ -80,10 +80,6 @@ const childEnv = {
   PATH: `${path.join(repoRoot, 'bin')}${path.delimiter}${process.env['PATH'] ?? ''}`
 };
 
-if (mode === 'deploy') {
-  childEnv['SEIZE_ALLOW_SERVERLESS_INTERNAL_NPM'] = '1';
-}
-
 const result = spawnSync(path.join(repoRoot, 'bin', 'pnpm'), args, {
   stdio: 'inherit',
   env: childEnv
