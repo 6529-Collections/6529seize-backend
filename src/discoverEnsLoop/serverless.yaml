@@ -1,5 +1,7 @@
 service: discoverEnsLoop
 
+frameworkVersion: '4'
+
 package:
   artifact: dist/index.zip
 

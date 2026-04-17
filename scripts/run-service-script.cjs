@@ -63,12 +63,18 @@ if (mode === "build") {
   process.exit(1);
 }
 
+const childEnv = {
+  ...process.env,
+  PATH: `${path.join(repoRoot, "bin")}${path.delimiter}${process.env["PATH"] ?? ""}`,
+};
+
+if (mode === "deploy") {
+  childEnv["SLS_DISABLE_AUTO_UPDATE"] = "1";
+}
+
 const result = spawnSync(path.join(repoRoot, "bin", "pnpm"), args, {
   stdio: "inherit",
-  env: {
-    ...process.env,
-    PATH: `${path.join(repoRoot, "bin")}${path.delimiter}${process.env["PATH"] ?? ""}`,
-  },
+  env: childEnv,
 });
 
 if (result.error) {

@@ -75,6 +75,7 @@ ${indent(yamlList(serviceNames))}
 env:
   SENTRY_DSN: \${{ secrets.SENTRY_DSN }}
   SENTRY_AUTH_TOKEN: \${{ secrets.SENTRY_AUTH_TOKEN }}
+  SLS_DISABLE_AUTO_UPDATE: "1"
 
 run-name: Deploy \${{ github.event.inputs.service }} to \${{ github.event.inputs.environment }}
 

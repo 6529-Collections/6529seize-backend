@@ -1,5 +1,7 @@
 service: delegationsLoop
 
+frameworkVersion: '4'
+
 package:
   artifact: dist/index.zip
 

@@ -1,5 +1,7 @@
 service: royaltiesLoop
 
+frameworkVersion: '4'
+
 package:
   artifact: dist/index.zip
 

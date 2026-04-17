@@ -1,5 +1,7 @@
 service: claimsMediaArweaveUploader
 
+frameworkVersion: '4'
+
 package:
   artifact: dist/index.zip
 
