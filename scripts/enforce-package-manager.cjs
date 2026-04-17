@@ -7,24 +7,12 @@ function allowedOutside6529Wrapper() {
   if (process.env["SEIZE_ALLOW_SERVERLESS_INTERNAL_NPM"] === "1") {
     return true;
   }
-  const cwd = path.normalize(process.cwd());
-  if (cwd.includes(`${path.sep}.serverless${path.sep}releases${path.sep}`)) {
-    return true;
-  }
-
-  const npmCommand = process.env["npm_command"] ?? "";
-  const npmAudit = process.env["npm_config_audit"] ?? "";
-  const npmFund = process.env["npm_config_fund"] ?? "";
-  const npmProgress = process.env["npm_config_progress"] ?? "";
   if (
-    npmCommand === "install" &&
-    (npmAudit === "false" || npmAudit === "0") &&
-    (npmFund === "false" || npmFund === "0") &&
-    (npmProgress === "false" || npmProgress === "0")
+    process.env["GITHUB_ACTIONS"] === "true" &&
+    process.env["npm_command"] === "install"
   ) {
     return true;
   }
-
   return false;
 }
 
