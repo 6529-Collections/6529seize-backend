@@ -27,21 +27,26 @@ function isServerlessInternalNpmAllowed(
     return true;
   }
 
-  if ((env['npm_command'] ?? '') === 'install') {
-    if (env['GITHUB_ACTIONS'] === 'true') {
-      return true;
-    }
+  const npmUserAgent = env['npm_config_user_agent'] ?? '';
+  const isNpmContext = npmUserAgent.includes('npm/');
+  if (
+    isNpmContext &&
+    (env['GITHUB_ACTIONS'] === 'true' || env['CI'] === 'true') &&
+    (env['npm_command'] ?? '') === 'install'
+  ) {
+    return true;
+  }
 
-    const npmAudit = env['npm_config_audit'] ?? '';
-    const npmFund = env['npm_config_fund'] ?? '';
-    const npmProgress = env['npm_config_progress'] ?? '';
-    if (
-      (npmAudit === 'false' || npmAudit === '0') &&
-      (npmFund === 'false' || npmFund === '0') &&
-      (npmProgress === 'false' || npmProgress === '0')
-    ) {
-      return true;
-    }
+  const npmAudit = env['npm_config_audit'] ?? '';
+  const npmFund = env['npm_config_fund'] ?? '';
+  const npmProgress = env['npm_config_progress'] ?? '';
+  if (
+    isNpmContext &&
+    (npmAudit === 'false' || npmAudit === '0') &&
+    (npmFund === 'false' || npmFund === '0') &&
+    (npmProgress === 'false' || npmProgress === '0')
+  ) {
+    return true;
   }
 
   return false;
