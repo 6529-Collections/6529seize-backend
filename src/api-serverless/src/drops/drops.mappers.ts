@@ -255,7 +255,8 @@ export class DropsMappers {
             noRightToVote,
             noRightToParticipate,
             pinned: pinnedWaveIds.has(wave.id),
-            identityWave: identityWaveIds.has(wave.id)
+            identityWave: identityWaveIds.has(wave.id),
+            authenticatedProfileId: readContextProfileId
           })
         : null;
       return {
@@ -590,7 +591,8 @@ export class DropsMappers {
           noRightToVote,
           noRightToParticipate,
           pinned: pinnedMentionedWaveIds.has(wave.id),
-          identityWave: identityWaveIds.has(wave.id)
+          identityWave: identityWaveIds.has(wave.id),
+          authenticatedProfileId: contextProfileId
         });
         return acc;
       },

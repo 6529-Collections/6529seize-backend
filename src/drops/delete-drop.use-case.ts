@@ -187,11 +187,17 @@ export class DeleteDropUseCase {
     timer?: Timer;
   }) {
     if (drop.author_id !== deleterId) {
+      if (
+        !wave?.admin_drop_deletion_enabled ||
+        model.deletion_purpose !== 'DELETE'
+      ) {
+        throw new ForbiddenException('User is not allowed to delete this drop');
+      }
+      if (wave.created_by === deleterId) {
+        return;
+      }
       const adminGroupId = wave?.admin_group_id;
-      const adminDropDeletionEnabled = !!(
-        wave?.admin_drop_deletion_enabled && adminGroupId
-      );
-      if (!adminDropDeletionEnabled || model.deletion_purpose !== 'DELETE') {
+      if (!adminGroupId) {
         throw new ForbiddenException('User is not allowed to delete this drop');
       }
       const groupsUserIsEligibleIn =
