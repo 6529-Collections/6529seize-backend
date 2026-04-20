@@ -4,42 +4,70 @@ import {
   MINTING_CLAIMS_TABLE
 } from '@/constants';
 import type { MemesMintStatPaymentDetails } from '@/entities/IMemesMintStat';
+import { Logger } from '@/logging';
 import { sqlExecutor } from '@/sql-executor';
 
 type PaymentDetailsRow = {
   payment_details: string | null;
 };
 
-function parsePaymentDetails(
-  raw: string | null
+const logger = Logger.get('MEMES_MINT_PAYMENT_DETAILS');
+
+/**
+ * Canonical parser for memes-mint payment details.
+ *
+ * Accepts either the raw JSON string stored in `drop_metadata.data_value` or
+ * an already-parsed object (e.g. from a `json` TypeORM column). Applies the
+ * same validation and defaulting rules everywhere and returns `null` when the
+ * input is missing or malformed.
+ */
+export function parseMemesMintPaymentDetails(
+  raw: string | MemesMintStatPaymentDetails | null | undefined
 ): MemesMintStatPaymentDetails | null {
-  if (raw == null || raw === '') {
+  let parsed: unknown;
+  if (raw == null) {
     return null;
   }
-
-  try {
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    if (typeof parsed.payment_address !== 'string') {
+  if (typeof raw === 'string') {
+    if (raw === '') {
       return null;
     }
+    try {
+      parsed = JSON.parse(raw);
+    } catch (err) {
+      logger.warn('Failed to parse payment_details JSON', {
+        raw: raw.slice(0, 200),
+        err
+      });
+      return null;
+    }
+  } else {
+    parsed = raw;
+  }
 
-    const hasDesignatedPayee =
-      typeof parsed.has_designated_payee === 'boolean'
-        ? parsed.has_designated_payee
-        : false;
-    const designatedPayeeName =
-      typeof parsed.designated_payee_name === 'string'
-        ? parsed.designated_payee_name
-        : '';
-
-    return {
-      payment_address: parsed.payment_address,
-      has_designated_payee: hasDesignatedPayee,
-      designated_payee_name: designatedPayeeName
-    };
-  } catch {
+  if (parsed === null || typeof parsed !== 'object') {
     return null;
   }
+
+  const candidate = parsed as Record<string, unknown>;
+  if (typeof candidate.payment_address !== 'string') {
+    return null;
+  }
+
+  const hasDesignatedPayee =
+    typeof candidate.has_designated_payee === 'boolean'
+      ? candidate.has_designated_payee
+      : false;
+  const designatedPayeeName =
+    typeof candidate.designated_payee_name === 'string'
+      ? candidate.designated_payee_name
+      : '';
+
+  return {
+    payment_address: candidate.payment_address,
+    has_designated_payee: hasDesignatedPayee,
+    designated_payee_name: designatedPayeeName
+  };
 }
 
 export async function fetchPaymentDetailsForMemeToken(
@@ -53,6 +81,7 @@ export async function fetchPaymentDetailsForMemeToken(
       AND dm.data_key = 'payment_info'
      WHERE mc.contract = :contract
        AND mc.claim_id = :tokenId
+     ORDER BY dm.id DESC
      LIMIT 1`,
     {
       contract: MEMES_CONTRACT.toLowerCase(),
@@ -60,5 +89,5 @@ export async function fetchPaymentDetailsForMemeToken(
     }
   );
 
-  return parsePaymentDetails(row?.payment_details ?? null);
+  return parseMemesMintPaymentDetails(row?.payment_details ?? null);
 }

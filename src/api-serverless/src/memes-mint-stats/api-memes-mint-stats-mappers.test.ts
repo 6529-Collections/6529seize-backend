@@ -60,4 +60,20 @@ describe('rowToApiMemesMintStat', () => {
 
     expect(rowToApiMemesMintStat(stat).payment_details).toBeNull();
   });
+
+  it('passes through an already-parsed payment_details object', () => {
+    const stat = baseStat({
+      payment_details: {
+        payment_address: '0xabc',
+        has_designated_payee: false,
+        designated_payee_name: ''
+      }
+    });
+
+    expect(rowToApiMemesMintStat(stat).payment_details).toEqual({
+      payment_address: '0xabc',
+      has_designated_payee: false,
+      designated_payee_name: ''
+    });
+  });
 });

@@ -10505,7 +10505,7 @@ components:
         - designated_payee_name
       properties:
         payment_address:
-          type: string
+          $ref: "#/components/schemas/ApiEthereumAddress"
         has_designated_payee:
           type: boolean
         designated_payee_name:
