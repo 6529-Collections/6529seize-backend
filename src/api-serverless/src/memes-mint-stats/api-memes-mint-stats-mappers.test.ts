@@ -36,6 +36,22 @@ describe('rowToApiMemesMintStat', () => {
     });
   });
 
+  it('maps numeric has_designated_payee from JSON strings', () => {
+    const stat = baseStat({
+      payment_details: JSON.stringify({
+        payment_address: '0x3ac61447a75149ba67639100ecc92c76fb20941c',
+        has_designated_payee: 1,
+        designated_payee_name: '0xa28fD178c686bEebd6818D6772E56f6e7A6ff5cc'
+      })
+    });
+
+    expect(rowToApiMemesMintStat(stat).payment_details).toEqual({
+      payment_address: '0x3ac61447a75149ba67639100ecc92c76fb20941c',
+      has_designated_payee: true,
+      designated_payee_name: '0xa28fD178c686bEebd6818D6772E56f6e7A6ff5cc'
+    });
+  });
+
   it('returns null payment details when metadata is missing', () => {
     expect(rowToApiMemesMintStat(baseStat()).payment_details).toBeNull();
   });
@@ -74,6 +90,22 @@ describe('rowToApiMemesMintStat', () => {
       payment_address: '0xabc',
       has_designated_payee: false,
       designated_payee_name: ''
+    });
+  });
+
+  it('maps numeric has_designated_payee from parsed objects', () => {
+    const stat = baseStat({
+      payment_details: {
+        payment_address: '0x3ac61447a75149ba67639100ecc92c76fb20941c',
+        has_designated_payee: 1,
+        designated_payee_name: '0xa28fD178c686bEebd6818D6772E56f6e7A6ff5cc'
+      } as any
+    });
+
+    expect(rowToApiMemesMintStat(stat).payment_details).toEqual({
+      payment_address: '0x3ac61447a75149ba67639100ecc92c76fb20941c',
+      has_designated_payee: true,
+      designated_payee_name: '0xa28fD178c686bEebd6818D6772E56f6e7A6ff5cc'
     });
   });
 });
