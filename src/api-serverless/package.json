@@ -71,6 +71,7 @@
   "author": "The serverless webpack authors (https://github.com/elastic-coders/serverless-webpack)",
   "license": "MIT",
   "overrides": {
-    "jsonpath-plus": "10.3.0"
+    "jsonpath-plus": "10.3.0",
+    "brace-expansion": "^2.0.2"
   }
 }
