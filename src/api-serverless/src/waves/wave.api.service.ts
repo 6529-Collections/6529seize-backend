@@ -568,7 +568,7 @@ export class WaveApiService {
       }
       const isUserInAdminGroup = await this.userGroupsService
         .getGroupsUserIsEligibleFor(authenticatedUserId, ctx.timer)
-        .then((it) => it.includes(authenticatedUserId));
+        .then((it) => it.includes(adminGroupId));
       if (!isUserInAdminGroup) {
         throw new ForbiddenException(
           `Wave modification not allowed for authenticated user`
