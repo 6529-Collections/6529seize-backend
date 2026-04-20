@@ -159,6 +159,7 @@ export * from '../models/ApiProfileProxy';
 export * from '../models/ApiProfileProxyAction';
 export * from '../models/ApiProfileProxyActionType';
 export * from '../models/ApiProfileRepCategorySummary';
+export * from '../models/ApiProfileWave';
 export * from '../models/ApiPushNotificationDevice';
 export * from '../models/ApiPushNotificationSettings';
 export * from '../models/ApiPushNotificationSettingsUpdate';
@@ -475,6 +476,7 @@ import { ApiProfileProxy } from '../models/ApiProfileProxy';
 import { ApiProfileProxyAction             } from '../models/ApiProfileProxyAction';
 import { ApiProfileProxyActionType } from '../models/ApiProfileProxyActionType';
 import { ApiProfileRepCategorySummary } from '../models/ApiProfileRepCategorySummary';
+import { ApiProfileWave } from '../models/ApiProfileWave';
 import { ApiPushNotificationDevice } from '../models/ApiPushNotificationDevice';
 import { ApiPushNotificationSettings } from '../models/ApiPushNotificationSettings';
 import { ApiPushNotificationSettingsUpdate } from '../models/ApiPushNotificationSettingsUpdate';
@@ -833,6 +835,7 @@ let typeMap: {[index: string]: any} = {
     "ApiProfileProxy": ApiProfileProxy,
     "ApiProfileProxyAction": ApiProfileProxyAction,
     "ApiProfileRepCategorySummary": ApiProfileRepCategorySummary,
+    "ApiProfileWave": ApiProfileWave,
     "ApiPushNotificationDevice": ApiPushNotificationDevice,
     "ApiPushNotificationSettings": ApiPushNotificationSettings,
     "ApiPushNotificationSettingsUpdate": ApiPushNotificationSettingsUpdate,
