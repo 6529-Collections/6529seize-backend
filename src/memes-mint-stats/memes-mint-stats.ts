@@ -8,10 +8,12 @@ import {
 } from '@/constants';
 import { getDataSource } from '@/db';
 import { MemesMintStat } from '@/entities/IMemesMintStat';
+import { Logger } from '@/logging';
 import { fetchPaymentDetailsForMemeToken } from '@/memes-mint-stats/payment-details';
 import { sqlExecutor } from '@/sql-executor';
 
 const ARTIST_SPLIT_RATIO = 0.5;
+const logger = Logger.get('MEMES_MINT_STATS');
 
 type MintTransactionRow = {
   token_count: number | string | null;
@@ -31,19 +33,27 @@ export async function calculateMemesMintStats(
   tokenId: number,
   mintDate: Date
 ): Promise<MemesMintStat> {
-  const [paymentDetails, mintTransactions] = await Promise.all([
-    fetchPaymentDetailsForMemeToken(tokenId),
-    sqlExecutor.execute<MintTransactionRow>(
-      `SELECT token_count, eth_price_usd
-      FROM ${TRANSACTIONS_TABLE}
-      WHERE contract = '${MEMES_CONTRACT}'
-        AND token_id = :tokenId
-        AND from_address IN ('${NULL_ADDRESS}', '${MANIFOLD}')
-        AND to_address NOT IN ('${NULL_ADDRESS}', '${MANIFOLD}')
-        AND value > 0`,
-      { tokenId }
-    )
-  ]);
+  const paymentDetailsPromise = fetchPaymentDetailsForMemeToken(tokenId).catch(
+    (err) => {
+      logger.warn('Failed to fetch MEMES payment details, defaulting to null', {
+        tokenId,
+        err
+      });
+      return null;
+    }
+  );
+
+  const mintTransactions = await sqlExecutor.execute<MintTransactionRow>(
+    `SELECT token_count, eth_price_usd
+    FROM ${TRANSACTIONS_TABLE}
+    WHERE contract = '${MEMES_CONTRACT}'
+      AND token_id = :tokenId
+      AND from_address IN ('${NULL_ADDRESS}', '${MANIFOLD}')
+      AND to_address NOT IN ('${NULL_ADDRESS}', '${MANIFOLD}')
+      AND value > 0`,
+    { tokenId }
+  );
+  const paymentDetails = await paymentDetailsPromise;
 
   const nonZeroEthUsd = mintTransactions
     .map((tx) => Number(tx.eth_price_usd ?? 0))
