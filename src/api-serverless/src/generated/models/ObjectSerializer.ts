@@ -152,6 +152,7 @@ export * from '../models/ApiPageBase';
 export * from '../models/ApiPageSortDirection';
 export * from '../models/ApiPageWithNextUriBase';
 export * from '../models/ApiPageWithoutCount';
+export * from '../models/ApiPaymentDetails';
 export * from '../models/ApiProfileClassification';
 export * from '../models/ApiProfileMin';
 export * from '../models/ApiProfileMinsPage';
@@ -469,6 +470,7 @@ import { ApiPageBase } from '../models/ApiPageBase';
 import { ApiPageSortDirection } from '../models/ApiPageSortDirection';
 import { ApiPageWithNextUriBase } from '../models/ApiPageWithNextUriBase';
 import { ApiPageWithoutCount } from '../models/ApiPageWithoutCount';
+import { ApiPaymentDetails } from '../models/ApiPaymentDetails';
 import { ApiProfileClassification } from '../models/ApiProfileClassification';
 import { ApiProfileMin } from '../models/ApiProfileMin';
 import { ApiProfileMinsPage } from '../models/ApiProfileMinsPage';
@@ -830,6 +832,7 @@ let typeMap: {[index: string]: any} = {
     "ApiPageBase": ApiPageBase,
     "ApiPageWithNextUriBase": ApiPageWithNextUriBase,
     "ApiPageWithoutCount": ApiPageWithoutCount,
+    "ApiPaymentDetails": ApiPaymentDetails,
     "ApiProfileMin": ApiProfileMin,
     "ApiProfileMinsPage": ApiProfileMinsPage,
     "ApiProfileProxy": ApiProfileProxy,

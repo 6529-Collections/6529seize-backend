@@ -1,10 +1,10 @@
 import { ARTISTS_TABLE, MEMES_MINT_STATS_TABLE } from '@/constants';
+import type { PaginatedResponse } from '@/api/api-constants';
 import { fetchPaginated } from '@/db-api';
 import { sqlExecutor } from '@/sql-executor';
-import { ApiMemesMintStat } from '@/api/generated/models/ApiMemesMintStat';
-import { ApiMemesMintStatsPage } from '@/api/generated/models/ApiMemesMintStatsPage';
 import { ApiMemesMintStatsTotals } from '@/api/generated/models/ApiMemesMintStatsTotals';
 import { ApiMemesMintStatsYearly } from '@/api/generated/models/ApiMemesMintStatsYearly';
+import type { ApiMemesMintStatRow } from '@/api/memes-mint-stats/api.memes-mint-stats.mappers';
 
 const MEMES_MINT_STATS_TABLE_ALIAS = 'mms';
 
@@ -17,15 +17,16 @@ const MEMES_MINT_STATS_FIELDS = `
   ${MEMES_MINT_STATS_TABLE_ALIAS}.proceeds_eth,
   ${MEMES_MINT_STATS_TABLE_ALIAS}.proceeds_usd,
   ${MEMES_MINT_STATS_TABLE_ALIAS}.artist_split_eth,
-  ${MEMES_MINT_STATS_TABLE_ALIAS}.artist_split_usd
+  ${MEMES_MINT_STATS_TABLE_ALIAS}.artist_split_usd,
+  ${MEMES_MINT_STATS_TABLE_ALIAS}.payment_details
 `;
 
 export async function fetchMemesMintStats(
   page: number,
   pageSize: number,
   sortDir: 'ASC' | 'DESC'
-): Promise<ApiMemesMintStatsPage> {
-  return fetchPaginated<ApiMemesMintStat>(
+): Promise<PaginatedResponse<ApiMemesMintStatRow>> {
+  return fetchPaginated<ApiMemesMintStatRow>(
     `${MEMES_MINT_STATS_TABLE} ${MEMES_MINT_STATS_TABLE_ALIAS}`,
     {},
     `${MEMES_MINT_STATS_TABLE_ALIAS}.id ${sortDir}`,
@@ -41,8 +42,8 @@ export async function fetchMemesMintStats(
 
 export async function fetchMemesMintStatById(
   id: number
-): Promise<ApiMemesMintStat | null> {
-  return sqlExecutor.oneOrNull<ApiMemesMintStat>(
+): Promise<ApiMemesMintStatRow | null> {
+  return sqlExecutor.oneOrNull<ApiMemesMintStatRow>(
     `SELECT
       ${MEMES_MINT_STATS_FIELDS}
     FROM ${MEMES_MINT_STATS_TABLE} ${MEMES_MINT_STATS_TABLE_ALIAS}

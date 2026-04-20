@@ -1,6 +1,12 @@
 import { Column, Entity, PrimaryColumn } from 'typeorm';
 import { MEMES_MINT_STATS_TABLE } from '@/constants';
 
+export interface MemesMintStatPaymentDetails {
+  payment_address: string;
+  has_designated_payee: boolean;
+  designated_payee_name: string;
+}
+
 @Entity(MEMES_MINT_STATS_TABLE)
 export class MemesMintStat {
   @PrimaryColumn({ type: 'int' })
@@ -29,4 +35,7 @@ export class MemesMintStat {
 
   @Column({ type: 'double' })
   artist_split_usd!: number;
+
+  @Column({ type: 'json', nullable: true })
+  payment_details!: MemesMintStatPaymentDetails | null;
 }

@@ -8,6 +8,7 @@ import {
 } from '@/constants';
 import { getDataSource } from '@/db';
 import { MemesMintStat } from '@/entities/IMemesMintStat';
+import { fetchPaymentDetailsForMemeToken } from '@/memes-mint-stats/payment-details';
 import { sqlExecutor } from '@/sql-executor';
 
 const ARTIST_SPLIT_RATIO = 0.5;
@@ -30,6 +31,7 @@ export async function calculateMemesMintStats(
   tokenId: number,
   mintDate: Date
 ): Promise<MemesMintStat> {
+  const paymentDetails = await fetchPaymentDetailsForMemeToken(tokenId);
   const mintTransactions = await sqlExecutor.execute<MintTransactionRow>(
     `SELECT token_count, eth_price_usd
     FROM ${TRANSACTIONS_TABLE}
@@ -101,7 +103,8 @@ export async function calculateMemesMintStats(
     proceeds_eth: proceedsEth,
     proceeds_usd: proceedsUsd,
     artist_split_eth: artistSplitEth,
-    artist_split_usd: artistSplitUsd
+    artist_split_usd: artistSplitUsd,
+    payment_details: paymentDetails
   };
 }
 
