@@ -9602,6 +9602,7 @@ components:
         - proceeds_usd
         - artist_split_eth
         - artist_split_usd
+        - payment_details
       properties:
         id:
           type: integer
@@ -9631,6 +9632,10 @@ components:
         artist_split_usd:
           type: number
           format: double
+        payment_details:
+          anyOf:
+            - type: "null"
+            - $ref: "#/components/schemas/ApiPaymentDetails"
     ApiMemesMintStatsPage:
       type: object
       required:
@@ -10492,6 +10497,19 @@ components:
           format: int64
         next:
           type: boolean
+    ApiPaymentDetails:
+      type: object
+      required:
+        - payment_address
+        - has_designated_payee
+        - designated_payee_name
+      properties:
+        payment_address:
+          $ref: "#/components/schemas/ApiEthereumAddress"
+        has_designated_payee:
+          type: boolean
+        designated_payee_name:
+          type: string
     ApiProfileClassification:
       type: string
       enum:

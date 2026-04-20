@@ -25,6 +25,14 @@ function actionRow(
 
 describe('buildMintingClaimActionsResponse', () => {
   it('fills in missing actions as incomplete in enum order', () => {
+    const researchAction =
+      MEMES_MINTING_CLAIM_ACTION_TYPES[
+        MEMES_MINTING_CLAIM_ACTION_TYPES.length - 2
+      ];
+    const payArtistAction =
+      MEMES_MINTING_CLAIM_ACTION_TYPES[
+        MEMES_MINTING_CLAIM_ACTION_TYPES.length - 1
+      ];
     const response = buildMintingClaimActionsResponse(
       '0x33FD426905F149f8376e227d0C9D3340AaD17aF1',
       123,
@@ -32,7 +40,7 @@ describe('buildMintingClaimActionsResponse', () => {
         actionRow(MEMES_MINTING_CLAIM_ACTION_TYPES[1], {
           completed: 1
         }),
-        actionRow(MEMES_MINTING_CLAIM_ACTION_TYPES[6], {
+        actionRow(researchAction, {
           completed: 0,
           updated_at: 3000
         })
@@ -65,8 +73,23 @@ describe('buildMintingClaimActionsResponse', () => {
       updated_by_wallet: '0x2222222222222222222222222222222222222222'
     });
 
-    expect(response.actions[6]?.completed).toBe(false);
-    expect(response.actions[6]?.updated_at).toBe(3000);
+    expect(
+      response.actions.find((action) => action.action === researchAction)
+    ).toEqual(
+      expect.objectContaining({
+        action: researchAction,
+        completed: false,
+        updated_at: 3000
+      })
+    );
+    expect(
+      response.actions.find((action) => action.action === payArtistAction)
+    ).toEqual(
+      expect.objectContaining({
+        action: payArtistAction,
+        completed: false
+      })
+    );
   });
 });
 
