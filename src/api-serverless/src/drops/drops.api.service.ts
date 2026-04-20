@@ -568,7 +568,8 @@ export class DropsApiService {
       noRightToVote,
       noRightToParticipate,
       pinned: pinnedWaveIds.has(wave_id),
-      identityWave: identityWaveIds.has(wave_id)
+      identityWave: identityWaveIds.has(wave_id),
+      authenticatedProfileId: context_profile_id
     });
     if (drop_id) {
       const dropEntity = await this.dropsDb.findDropByIdWithEligibilityCheck(
@@ -840,7 +841,8 @@ export class DropsApiService {
       noRightToVote,
       noRightToParticipate,
       pinned: pinnedWaveIds.has(params.wave_id),
-      identityWave: identityWaveIds.has(params.wave_id)
+      identityWave: identityWaveIds.has(params.wave_id),
+      authenticatedProfileId
     });
     const isTimeLockedWave =
       waveEntity.time_lock_ms !== null && waveEntity.time_lock_ms > 0;
