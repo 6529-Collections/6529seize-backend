@@ -1,5 +1,5 @@
 import 'reflect-metadata';
-import { PROFILE_WAVES_TABLE } from '@/constants';
+import { PROFILE_WAVES_TABLE, WAVE_CURATIONS_TABLE } from '@/constants';
 import { RequestContext } from '@/request.context';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
@@ -32,18 +32,21 @@ describeWithSeed(
       await repo.setProfileWave(
         {
           profileId: 'profile-1',
-          waveId: 'wave-2'
+          waveId: 'wave-2',
+          profileCurationId: null
         },
         ctx
       );
 
       await expect(repo.findByProfileId('profile-1')).resolves.toEqual({
         profile_id: 'profile-1',
-        wave_id: 'wave-2'
+        wave_id: 'wave-2',
+        profile_curation_id: null
       });
       await expect(repo.findByWaveId('wave-2', ctx)).resolves.toEqual({
         profile_id: 'profile-1',
-        wave_id: 'wave-2'
+        wave_id: 'wave-2',
+        profile_curation_id: null
       });
       await expect(
         repo.findSelectedWaveIdsByWaveIds(['wave-1', 'wave-2'], ctx)
@@ -76,7 +79,8 @@ describeWithSeed(
 
       await expect(repo.findByProfileId('profile-1')).resolves.toEqual({
         profile_id: 'profile-1',
-        wave_id: 'wave-1'
+        wave_id: 'wave-1',
+        profile_curation_id: null
       });
     });
 
@@ -92,7 +96,8 @@ describeWithSeed(
       await expect(repo.findByProfileId('profile-1')).resolves.toBeNull();
       await expect(repo.findByProfileId('profile-2')).resolves.toEqual({
         profile_id: 'profile-2',
-        wave_id: 'wave-1'
+        wave_id: 'wave-1',
+        profile_curation_id: null
       });
     });
   }
@@ -120,7 +125,154 @@ describeWithSeed(
       await expect(repo.findByProfileId('profile-1')).resolves.toBeNull();
       await expect(repo.findByProfileId('profile-2')).resolves.toEqual({
         profile_id: 'profile-2',
-        wave_id: 'wave-2'
+        wave_id: 'wave-2',
+        profile_curation_id: null
+      });
+    });
+  }
+);
+
+describeWithSeed(
+  'ProfileWavesDb profile curation choice',
+  [
+    {
+      table: PROFILE_WAVES_TABLE,
+      rows: [
+        {
+          profile_id: 'profile-1',
+          wave_id: 'wave-1',
+          profile_curation_id: 'curation-2'
+        }
+      ]
+    },
+    {
+      table: WAVE_CURATIONS_TABLE,
+      rows: [
+        {
+          id: 'curation-1',
+          name: 'Oldest',
+          wave_id: 'wave-1',
+          community_group_id: 'community-group-1',
+          created_at: 1,
+          updated_at: 1,
+          priority_order: 2
+        },
+        {
+          id: 'curation-2',
+          name: 'Selected',
+          wave_id: 'wave-1',
+          community_group_id: 'community-group-1',
+          created_at: 2,
+          updated_at: 2,
+          priority_order: 1
+        },
+        {
+          id: 'curation-3',
+          name: 'Other',
+          wave_id: 'wave-2',
+          community_group_id: 'community-group-1',
+          created_at: 1,
+          updated_at: 1,
+          priority_order: 1
+        }
+      ]
+    }
+  ],
+  () => {
+    it('returns the explicit profile curation when it exists in the profile wave', async () => {
+      await expect(
+        repo.findEffectiveProfileWaveByProfileId('profile-1', ctx)
+      ).resolves.toEqual({
+        profile_wave_id: 'wave-1',
+        profile_curation_id: 'curation-2'
+      });
+    });
+
+    it('clears explicit profile curation by deleted curation id', async () => {
+      await repo.clearProfileCurationByCurationId('curation-2', ctx);
+
+      await expect(repo.findByProfileId('profile-1')).resolves.toEqual({
+        profile_id: 'profile-1',
+        wave_id: 'wave-1',
+        profile_curation_id: null
+      });
+    });
+
+    it('clears profile curation when changing profile wave without a new curation', async () => {
+      await repo.setProfileWave(
+        {
+          profileId: 'profile-1',
+          waveId: 'wave-2',
+          profileCurationId: null
+        },
+        ctx
+      );
+
+      await expect(repo.findByProfileId('profile-1')).resolves.toEqual({
+        profile_id: 'profile-1',
+        wave_id: 'wave-2',
+        profile_curation_id: null
+      });
+    });
+  }
+);
+
+describeWithSeed(
+  'ProfileWavesDb profile curation fallback',
+  [
+    {
+      table: PROFILE_WAVES_TABLE,
+      rows: [{ profile_id: 'profile-1', wave_id: 'wave-1' }]
+    },
+    {
+      table: WAVE_CURATIONS_TABLE,
+      rows: [
+        {
+          id: 'curation-2',
+          name: 'Newer',
+          wave_id: 'wave-1',
+          community_group_id: 'community-group-1',
+          created_at: 2,
+          updated_at: 2,
+          priority_order: 1
+        },
+        {
+          id: 'curation-1',
+          name: 'Oldest',
+          wave_id: 'wave-1',
+          community_group_id: 'community-group-1',
+          created_at: 1,
+          updated_at: 1,
+          priority_order: 2
+        }
+      ]
+    }
+  ],
+  () => {
+    it('falls back to the oldest curation when no explicit curation is stored', async () => {
+      await expect(
+        repo.findEffectiveProfileWaveByProfileId('profile-1', ctx)
+      ).resolves.toEqual({
+        profile_wave_id: 'wave-1',
+        profile_curation_id: 'curation-1'
+      });
+    });
+  }
+);
+
+describeWithSeed(
+  'ProfileWavesDb profile curation fallback with no curations',
+  {
+    table: PROFILE_WAVES_TABLE,
+    rows: [{ profile_id: 'profile-1', wave_id: 'wave-1' }]
+  },
+  () => {
+    it('returns null profile curation when the profile wave has no curations', async () => {
+      await expect(
+        repo.findEffectiveProfileWaveByProfileId('profile-1', ctx)
+      ).resolves.toEqual({
+        profile_wave_id: 'wave-1',
+        profile_curation_id: null
       });
     });
   }

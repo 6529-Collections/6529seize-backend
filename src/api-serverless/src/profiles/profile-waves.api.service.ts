@@ -1,12 +1,30 @@
 import { ForbiddenException, NotFoundException } from '@/exceptions';
 import { RequestContext } from '@/request.context';
 import { ApiIdentity } from '@/api/generated/models/ApiIdentity';
+import { ApiProfileWave } from '@/api/generated/models/ApiProfileWave';
 import { ApiSetProfileWaveRequest } from '@/api/generated/models/ApiSetProfileWaveRequest';
 import { profileWavesDb } from '@/profiles/profile-waves.db';
 import { wavesApiDb } from '@/api/waves/waves.api.db';
 import { identityFetcher } from '@/api/identities/identity.fetcher';
+import { curationsDb } from '@/api/curations/curations.db';
 
 export class ProfileWavesApiService {
+  public async getProfileWave(
+    identityKey: string,
+    ctx: RequestContext
+  ): Promise<ApiProfileWave> {
+    const profileId = await identityFetcher.getProfileIdByIdentityKeyOrThrow(
+      { identityKey },
+      ctx
+    );
+    const profileWave =
+      await profileWavesDb.findEffectiveProfileWaveByProfileId(profileId, ctx);
+    return {
+      profile_wave_id: profileWave?.profile_wave_id ?? null,
+      profile_curation_id: profileWave?.profile_curation_id ?? null
+    };
+  }
+
   public async setProfileWave(
     identityKey: string,
     request: ApiSetProfileWaveRequest,
@@ -36,10 +54,23 @@ export class ProfileWavesApiService {
             `You can only select a wave you created as your profile wave`
           );
         }
+        const profileCurationId = request.profile_curation_id ?? null;
+        if (profileCurationId !== null) {
+          const curation = await curationsDb.findWaveCurationById(
+            { id: profileCurationId, wave_id: wave.id },
+            connection
+          );
+          if (!curation) {
+            throw new NotFoundException(
+              `Curation ${profileCurationId} not found`
+            );
+          }
+        }
         await profileWavesDb.setProfileWave(
           {
             profileId,
-            waveId: wave.id
+            waveId: wave.id,
+            profileCurationId
           },
           txCtx
         );

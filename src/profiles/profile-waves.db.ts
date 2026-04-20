@@ -3,9 +3,14 @@ import {
   dbSupplier,
   LazyDbAccessCompatibleService
 } from '@/sql-executor';
-import { PROFILE_WAVES_TABLE } from '@/constants';
+import { PROFILE_WAVES_TABLE, WAVE_CURATIONS_TABLE } from '@/constants';
 import { RequestContext } from '@/request.context';
 import { ProfileWaveEntity } from '@/entities/IProfileWave';
+
+export interface EffectiveProfileWave {
+  readonly profile_wave_id: string;
+  readonly profile_curation_id: string | null;
+}
 
 export class ProfileWavesDb extends LazyDbAccessCompatibleService {
   public async findProfileWaveIdsByProfileIds(
@@ -71,10 +76,12 @@ export class ProfileWavesDb extends LazyDbAccessCompatibleService {
   public async setProfileWave(
     {
       profileId,
-      waveId
+      waveId,
+      profileCurationId
     }: {
       profileId: string;
       waveId: string;
+      profileCurationId: string | null;
     },
     ctx: RequestContext
   ): Promise<void> {
@@ -90,10 +97,10 @@ export class ProfileWavesDb extends LazyDbAccessCompatibleService {
       );
       await this.db.execute(
         `
-          insert into ${PROFILE_WAVES_TABLE} (profile_id, wave_id)
-          values (:profileId, :waveId)
+          insert into ${PROFILE_WAVES_TABLE} (profile_id, wave_id, profile_curation_id)
+          values (:profileId, :waveId, :profileCurationId)
         `,
-        { profileId, waveId },
+        { profileId, waveId, profileCurationId },
         { wrappedConnection: ctx.connection }
       );
     } finally {
@@ -139,6 +146,30 @@ export class ProfileWavesDb extends LazyDbAccessCompatibleService {
     }
   }
 
+  public async clearProfileCurationByCurationId(
+    curationId: string,
+    ctx: RequestContext
+  ): Promise<void> {
+    try {
+      ctx.timer?.start(
+        `${this.constructor.name}->clearProfileCurationByCurationId`
+      );
+      await this.db.execute(
+        `
+          update ${PROFILE_WAVES_TABLE}
+          set profile_curation_id = null
+          where profile_curation_id = :curationId
+        `,
+        { curationId },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(
+        `${this.constructor.name}->clearProfileCurationByCurationId`
+      );
+    }
+  }
+
   public async findByWaveId(
     waveId: string,
     ctx: RequestContext
@@ -147,7 +178,7 @@ export class ProfileWavesDb extends LazyDbAccessCompatibleService {
       ctx.timer?.start(`${this.constructor.name}->findByWaveId`);
       return await this.db.oneOrNull<ProfileWaveEntity>(
         `
-          select profile_id, wave_id
+          select profile_id, wave_id, profile_curation_id
           from ${PROFILE_WAVES_TABLE}
           where wave_id = :waveId
         `,
@@ -176,7 +207,7 @@ export class ProfileWavesDb extends LazyDbAccessCompatibleService {
       }
       const rows = await this.db.execute<ProfileWaveEntity>(
         `
-          select profile_id, wave_id
+          select profile_id, wave_id, profile_curation_id
           from ${PROFILE_WAVES_TABLE}
           where profile_id in (:profileIds)
         `,
@@ -212,13 +243,50 @@ export class ProfileWavesDb extends LazyDbAccessCompatibleService {
   ): Promise<ProfileWaveEntity | null> {
     return await this.db.oneOrNull<ProfileWaveEntity>(
       `
-        select profile_id, wave_id
+        select profile_id, wave_id, profile_curation_id
         from ${PROFILE_WAVES_TABLE}
         where profile_id = :profileId
       `,
       { profileId },
       connection ? { wrappedConnection: connection } : undefined
     );
+  }
+
+  public async findEffectiveProfileWaveByProfileId(
+    profileId: string,
+    ctx: RequestContext
+  ): Promise<EffectiveProfileWave | null> {
+    try {
+      ctx.timer?.start(
+        `${this.constructor.name}->findEffectiveProfileWaveByProfileId`
+      );
+      return await this.db.oneOrNull<EffectiveProfileWave>(
+        `
+          select
+            pw.wave_id as profile_wave_id,
+            coalesce(selected_curation.id, fallback_curation.id) as profile_curation_id
+          from ${PROFILE_WAVES_TABLE} pw
+          left join ${WAVE_CURATIONS_TABLE} selected_curation
+            on selected_curation.id = pw.profile_curation_id
+            and selected_curation.wave_id = pw.wave_id
+          left join ${WAVE_CURATIONS_TABLE} fallback_curation
+            on fallback_curation.id = (
+              select wcg.id
+              from ${WAVE_CURATIONS_TABLE} wcg
+              where wcg.wave_id = pw.wave_id
+              order by wcg.created_at asc, wcg.id asc
+              limit 1
+            )
+          where pw.profile_id = :profileId
+        `,
+        { profileId },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(
+        `${this.constructor.name}->findEffectiveProfileWaveByProfileId`
+      );
+    }
   }
 }
 
