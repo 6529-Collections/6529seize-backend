@@ -1,4 +1,4 @@
-import { mock } from 'ts-jest-mocker';
+import { mock } from '@/tests/mock';
 import { when } from 'jest-when';
 import { WaveLeaderboardCalculationService } from './wave-leaderboard-calculation.service';
 import { DropVotingDb } from '../api-serverless/src/drops/drop-voting.db';

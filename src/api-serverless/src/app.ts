@@ -121,6 +121,7 @@ import { ApiUploadsPage } from './generated/models/ApiUploadsPage';
 import { githubIssueDropService } from './github/github-issue-drop.service';
 import { LOGO_SVG, renderHealthUI } from './health/health-ui.renderer';
 import { getHealthData } from './health/health.service';
+import { loadOpenApiYaml } from './openapi/load-openapi-yaml';
 import { DEFAULT_MAX_SIZE } from './page-request';
 import {
   initRateLimiting,
@@ -140,7 +141,6 @@ import {
 import { wsListenersNotifier } from './ws/ws-listeners-notifier';
 import { WsMessageType } from './ws/ws-message';
 
-const YAML = require('yamljs');
 const compression = require('compression');
 const express = require('express');
 const cors = require('cors');
@@ -1606,7 +1606,10 @@ async function initializeApp() {
   app.use(rateLimitingMiddleware());
   app.use(rootRouter);
 
-  const swaggerDocument = YAML.load('openapi.yaml');
+  const swaggerDocument = loadOpenApiYaml(__dirname, 'openapi.yaml', [
+    '.',
+    '..'
+  ]);
   app.use(
     '/docs',
     SwaggerUI.serve,

@@ -1,7 +1,7 @@
 openapi: 3.0.0
 
 info:
-  title: 6529 PreNode API
+  title: 6529 TDH Oracle API
   description: >-
     API for retrieving Total Days Held (TDH) including breakdowns for 6529 TDH eligible
     collections - The Memes, 6529 Gradient, NextGen

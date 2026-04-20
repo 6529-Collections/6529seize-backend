@@ -19,7 +19,7 @@ Signed-off-by: IAmAUser <1234567+IAmAUser@users.noreply.github.com>
 
 # Linting
 
-After you do your changes then run `npm run lint`. Make sure you fix all errors and warnings.
+After you do your changes then run `./bin/6529 run lint`. Make sure you fix all errors and warnings.
 
 # CLAUDE.md
 
@@ -34,63 +34,74 @@ This is the 6529 SEIZE Backend repository, a Web3 NFT platform backend that hand
 
 ## Commands
 
+Bootstrap the repo-local command shim with `./bin/6529 bootstrap`.
+
+`direnv allow` is optional convenience only. This repo's `.envrc` just adds `bin/` to `PATH` while you are inside the repo.
+
+For the current shell only, use `source <(./bin/6529 bootstrap --print-export)`.
+
+Use `./bin/6529 run <script>` for repo `package.json` scripts.
+
+Use `./bin/6529 <pnpm-command>` for direct pnpm subcommands such as `./bin/6529 audit`.
+
 ### Development
 
 ```bash
 # Install dependencies
-npm i
+./bin/6529 install
+# For CI reproduction or lockfile-sensitive regressions, prefer ./bin/6529 install:frozen so pnpm-lock.yaml is not updated implicitly.
 
 # Build the project (includes tests)
-npm run build
+./bin/6529 run build
 
 # Format code
-npm run format
+./bin/6529 run format
 
 # Lint code
-npm run lint
+./bin/6529 run lint
 
 # Run tests
-npm test
+./bin/6529 run test
 ```
 
 ### Backend Services
 
 ```bash
 # Run backend locally
-npm run backend:local
+./bin/6529 run backend:local
 
 # Run backend in development
-npm run backend:dev
+./bin/6529 run backend:dev
 
 # Run backend in production
-npm run backend:prod
+./bin/6529 run backend:prod
 ```
 
 ### API Services
 
 ```bash
 # Run API in development
-cd src/api-serverless && npm run api:local
+./bin/6529 run api:local
 
 # Build API separately
-cd src/api-serverless && npm run build
+./bin/6529 run build:api
 ```
 
 ### Database Migrations
 
 ```bash
 # Run migrations up (apply new migrations)
-npm run migrate:up
+./bin/6529 run migrate:up
 
 # Run migrations down (rollback)
-npm run migrate:down
+./bin/6529 run migrate:down
 
 # Create new migration
-npm run migrate:new name-of-the-migration
+./bin/6529 run migrate:new -- name-of-the-migration
 
 # Local development migrations
-npm run migrate-local:up
-npm run migrate-local:down
+./bin/6529 run migrate-local:up
+./bin/6529 run migrate-local:down
 ```
 
 After creating a migration, edit the generated SQL files in the `migrations` folder (write SQL in the "up" file, and just delete the "down" file, also replace the down implementation in js file with "do nothing" implementation).
@@ -99,10 +110,10 @@ After creating a migration, edit the generated SQL files in the `migrations` fol
 
 ```bash
 # Run all tests
-npm test
+./bin/6529 run test
 
 # Run specific test file
-npm test path/to/test.spec.ts
+./bin/6529 exec jest path/to/test.spec.ts
 ```
 
 The test configuration uses:
@@ -266,9 +277,9 @@ The API (`src/api-serverless/src/`) is an Express application with:
 **Running Locally:**
 1. Set up MySQL database (or use Docker: `docker-compose up -d`)
 2. Create `.env.local` with database credentials
-3. Run migrations: `npm run migrate-local:up`
-4. Start backend: `npm run backend:local` (optional)
-5. Start API: `cd src/api-serverless && npm run dev`
+3. Run migrations: `./bin/6529 run migrate-local:up`
+4. Start backend: `./bin/6529 run backend:local` (optional)
+5. Start API: `./bin/6529 run api:local`
 
 **Database Setup:**
 - Create database and user via docker-compose
@@ -317,7 +328,7 @@ The API (`src/api-serverless/src/`) is an Express application with:
 
 **API schemas**
 - API endpoints are described in `openapi.yaml` file.
-- Any time you change this file run `cd src/api-serverless && npm run restructure-openapi && npm run generate`
+- Any time you change this file run `./bin/6529 run api:regen-openapi`
 - This will generate response models to `src/api-serverless/src/generated/models`, but only response models and POST/DELETE request bodies, not routes and query param models.
 - Routes themselves are manually created into `api-serverless` into files ending with `.routes.ts` and are wired in `app.ts` file.
 - Generated API models are used in those routes. For query param based requests, types are created manually.
@@ -334,7 +345,7 @@ Use path aliases for **new** imports where applicable. Do not change existing im
 All API request/response types must be defined via OpenAPI and the generated models. Do not hand-roll response types for API endpoints unless explicitly asked not to.
 
 1. **Define in OpenAPI**: Add the endpoint and its request/response schemas in `src/api-serverless/openapi.yaml` (paths and `components/schemas`).
-2. **Generate**: From `src/api-serverless` run `npm run restructure-openapi` then `npm run generate`. This creates/updates types under `src/api-serverless/src/generated/models/`.
+2. **Generate**: Run `./bin/6529 run api:regen-openapi`. This creates/updates types under `src/api-serverless/src/generated/models/`.
 3. **Use in routes**: Import from `@/api/generated/models/...` (or `../generated/models/...`) and use the generated classes for responses (and for POST/PUT bodies where applicable). Map your DB/service output to the generated model shape (e.g. snake_case properties) before returning.
 
 # Database schema and migrations

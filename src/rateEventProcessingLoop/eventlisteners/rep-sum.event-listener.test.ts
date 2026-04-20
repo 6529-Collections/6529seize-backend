@@ -1,4 +1,4 @@
-import { Mock } from 'ts-jest-mocker';
+import { Mock } from '@/tests/mock';
 import { ProfileRepSumEventListener } from './profile-rep-sum.event-listener';
 import { RepScoreAggregationDb } from '../../aggregations/rep-score-aggregation.db';
 import { mockDbService } from '../../tests/test.helper';

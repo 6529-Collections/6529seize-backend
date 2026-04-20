@@ -1,12 +1,11 @@
 import { Request, Response } from 'express';
-import * as db from './api.oracle.db';
-import { asyncRouter } from '../async.router';
+import * as db from '@/api/oracle/api.oracle.db';
+import { asyncRouter } from '@/api/async.router';
 import * as SwaggerUI from 'swagger-ui-express';
-import { getIp, isLocalhost } from '../policies/policies';
-import { getPage, getPageSize } from '../api-helpers';
-import { numbers } from '../../../numbers';
-
-const YAML = require('yamljs');
+import { loadOpenApiYaml } from '@/api/openapi/load-openapi-yaml';
+import { getIp, isLocalhost } from '@/api/policies/policies';
+import { getPage, getPageSize } from '@/api/api-helpers';
+import { numbers } from '@/numbers';
 
 const router = asyncRouter();
 
@@ -22,12 +21,16 @@ function isValidIP(ip: string): boolean {
   return octets.every((octet) => octet >= 0 && octet <= 255);
 }
 
-const swaggerDocumentOracle = YAML.load('openapi.oracle.yaml');
+const swaggerDocumentOracle = loadOpenApiYaml(
+  __dirname,
+  'openapi.oracle.yaml',
+  ['.', '..', '../..']
+);
 router.use(
   '/docs',
   SwaggerUI.serveFiles(swaggerDocumentOracle, { explorer: true }),
   SwaggerUI.setup(swaggerDocumentOracle, {
-    customSiteTitle: '6529 PreNode API',
+    customSiteTitle: '6529 TDH Oracle API',
     customCss: '.topbar { display: none }'
   })
 );

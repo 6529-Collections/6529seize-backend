@@ -1683,11 +1683,22 @@ export function renderDeployUiApp(): string {
 
     runs.forEach(function (run) {
       var outcome = run.conclusion || run.status || 'unknown';
+      var outcomeKey = String(outcome).toLowerCase();
       var outcomeClass = 'is-progress';
-      if (outcome === 'success' || outcome === 'completed') {
+      if (outcomeKey === 'success' || outcomeKey === 'completed') {
         outcomeClass = 'is-completed';
-      } else if (outcome === 'failure' || outcome === 'cancelled' || outcome === 'timed_out' || outcome === 'action_required') {
+      } else if (
+        outcomeKey === 'failure' ||
+        outcomeKey === 'startup_failure' ||
+        outcomeKey === 'cancelled' ||
+        outcomeKey === 'timed_out' ||
+        outcomeKey === 'action_required' ||
+        outcomeKey === 'skipped' ||
+        outcomeKey === 'stale'
+      ) {
         outcomeClass = 'is-failed';
+      } else if (outcomeKey === 'neutral') {
+        outcomeClass = 'is-completed';
       }
 
       var safeUrl = sanitizeHttpUrl(run.url);

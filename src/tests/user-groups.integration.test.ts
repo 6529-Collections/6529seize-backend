@@ -11,7 +11,7 @@ import { aWave, withWaves } from './fixtures/wave.fixture';
 import { UserGroupsService } from '@/api/community-members/user-groups.service';
 import { sqlExecutor } from '@/sql-executor';
 import { UserGroupsDb } from '@/user-groups/user-groups.db';
-import { mock } from 'ts-jest-mocker';
+import { mock } from '@/tests/mock';
 import { IdentityEntity } from '@/entities/IIdentity';
 import { UserGroupEntity } from '@/entities/IUserGroup';
 

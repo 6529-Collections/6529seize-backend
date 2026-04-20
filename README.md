@@ -8,11 +8,15 @@ This is a 2-part repository for
 
 ## 0. Repo Helpers
 
-This repo includes a `.envrc` for `direnv`.
+This repo includes a `.envrc` for optional `direnv` use.
 
-It is only used for repo-local shell helpers. Right now it adds the repo `bin/` directory to your `PATH`, which makes commands like `ghruns` and `ghdeploy` available anywhere inside this repository.
+It only adds the repo `bin/` directory to your `PATH` while you are inside this repository, which makes commands like `ghruns`, `ghdeploy`, and `6529` available here without affecting shells outside the repo.
 
-It does not load `.env.local` and it does not set `NODE_ENV`.
+The main shim flow is `./bin/6529 bootstrap`, which writes the same repo-scoped behavior into your shell rc file. `direnv` is just a convenience layer.
+
+Supported contributor environments are macOS/Linux shells. The bootstrap flow, `direnv` integration, and npm scripts assume `bash`/`zsh`-style shell behavior; Windows `cmd.exe` and PowerShell are not supported directly.
+
+`.envrc` does not load `.env.local` and it does not set `NODE_ENV`.
 
 ### 0.1 Setup direnv
 
@@ -154,16 +158,59 @@ If you run `ghdeploy` from an unsupported folder, it fails with a clear error in
 
 ## 1. Backend
 
+### 1.0 Package Management
+
+Use the repo-local `6529` wrapper for all supported repo commands. `6529` is not installed globally.
+
+Fresh setup:
+
+```bash
+./bin/6529 bootstrap
+source ~/.zshrc  # or ~/.bashrc
+```
+
+Current shell only:
+
+```bash
+source <(./bin/6529 bootstrap --print-export)
+```
+
+Optional convenience:
+
+```bash
+direnv allow
+```
+
+`./bin/6529 bootstrap` ensures the required tooling, removes the old managed `~/.local/bin/6529` shim if it exists, and installs a repo-scoped shell hook that only exposes this repo's `bin/` commands while you are inside this repo tree.
+
+Command model:
+
+```bash
+6529 run <script>
+```
+
+for `package.json` scripts, and:
+
+```bash
+6529 <pnpm-command>
+```
+
+for direct pnpm subcommands such as `6529 audit` or `6529 add`.
+
 ### 1.1 Install
 
 ```
-npm i
+6529 install
 ```
+
+CI workflows use `./bin/6529 install:frozen` for lockfile-exact installs. Prefer that when reproducing CI or investigating lockfile-sensitive regressions so `pnpm-lock.yaml` is not updated implicitly.
+
+`6529 install` preserves the caller's environment. CI-style non-interactive behavior only applies when `CI` is already set, so local secure installs can remain interactive unless you explicitly run them in a CI environment.
 
 ### 1.2 Build
 
 ```
-npm run build
+6529 run build
 ```
 
 ### 1.3 Environment
@@ -176,23 +223,17 @@ The name of your .env file must include the environment you want to run like `.e
 
 ### 1.4 Run
 
-Before running anything, either manually run `npm run migrate:up` or make sure `dbMigrationsLoop` is run.
+Before running anything, either manually run `./bin/6529 run migrate:up` or make sure `dbMigrationsLoop` is run.
 
-#### 1.4.1 using npm
-
-```
-npm run backend:env
-```
-
-#### 1.4.2 using PM2
+#### 1.4.1 using 6529
 
 ```
-pm2 start npm --name=6529backend -- run backend:env
+6529 run backend:local
 ```
 
-\* Note: env can be one of: `local` / `dev` / `prod`
+\* Note: backend commands are available as `backend:local` / `backend:dev` / `backend:prod`
 
-#### 1.4.3 using AWS Lambda
+#### 1.4.2 using AWS Lambda
 
 This repository is configured to be runnable through AWS Lambdas. Each 'loop' folder in the code represents a lambda function and can be built and deployed on AWS individually. \* Note: additional setup is required within AWS in order to configure environment variables and triggers for each lambda.
 
@@ -202,7 +243,7 @@ This repository is configured to be runnable through AWS Lambdas. Each 'loop' fo
 
 - **Running database for development:** You can use docker and docker-compose for this. Run `docker-compose up -d` in project root and configure your `.env` exactly as DB part in `.env.sample`.
 
-- **Database and ORM:** Backend service is using [TYPEORM](https://www.npmjs.com/package/typeorm). When starting a service, if the database is successful then the ORM will take care of synchronising the schema for the database and creating the necessary tables. \* Note: You will need to create the database and user and provide them in the .env file. Only thing TypeORM doesn't take care of, are views. Those are created with migrations. So you should either run `npm run migrate:up` or make sure `dbMigrationsLoop` is run to be sure that all migrations are applied.
+- **Database and ORM:** Backend service is using [TYPEORM](https://www.npmjs.com/package/typeorm). When starting a service, if the database is successful then the ORM will take care of synchronising the schema for the database and creating the necessary tables. \* Note: You will need to create the database and user and provide them in the .env file. Only thing TypeORM doesn't take care of, are views. Those are created with migrations. So you should either run `./bin/6529 run migrate:up` or make sure `dbMigrationsLoop` is run to be sure that all migrations are applied.
 
 - **CRON:** When starting the service, there are several scheduled cron jobs running at specific intervals which will consume data from the chain, process and save the result to the database.
   e.g. discovering NFTs - there is a scheduled cron job to run every 3 minutes which detects new nfts minted on the chain or any changes to existing nfts.
@@ -210,7 +251,7 @@ This repository is configured to be runnable through AWS Lambdas. Each 'loop' fo
 - **S3 and Video Compression:** [S3Uploader](https://github.com/6529-Collections/6529seize-backend/tree/main/src/s3Uploader). The s3Uploader persists compressed versions of the nft images and videos on AWS S3. This worker is configured to only run in `prod` mode. Video compression requires ffmpeg installed on the running machine.
   Download instructions at: https://ffmpeg.org/
 
-- Creating new migrations: Run `npm run migrate:new name-of-the-migration`. Three new files are created in `migrations folder`. A javascript file and 2 SQL files. Find the "up" SQL file and write the SQL for new migration there. Then run `npm run migrate:up` to apply the new migration. You can write reverse migration if you wish in the "down" SQL file.
+- Creating new migrations: Run `./bin/6529 run migrate:new -- name-of-the-migration`. Three new files are created in `migrations folder`. A javascript file and 2 SQL files. Find the "up" SQL file and write the SQL for new migration there. Then run `./bin/6529 run migrate:up` to apply the new migration. You can write reverse migration if you wish in the "down" SQL file.
 
 ## 2. API
 
@@ -221,15 +262,13 @@ PATH: [src/api-serverless](https://github.com/6529-Collections/6529seize-backend
 ### 2.1 Install
 
 ```
-cd src/api-serverless
-npm i
+6529 install
 ```
 
 ### 2.2 Build
 
 ```
-cd src/api-serverless
-npm run build
+6529 run build:api
 ```
 
 ### 2.3 Environment
@@ -245,30 +284,22 @@ The name of your .env file must include the environment you want to run like `.e
 In project root directory:
 
 ```
-npm run api:env
+6529 run api:local
 ```
 
-\* Note: env can be one of: local / dev / prod
+\* Note: API commands are available as `api:local` / `api:dev`
 
-### 2.5 RUN USING PM2
-
-```
-pm2 start npm --name=6529api -- run api:env
-```
-
-\* Note: env can be one of: `local` / `dev` / `prod`
-
-### 2.6 RUN USING AWS Lambda
+### 2.5 RUN USING AWS Lambda
 
 The API is also configured to run as an AWS lambda and can be built and deployed on AWS on its own. \* Note: additional setup is required within AWS in order to configure environment variables and API Gateway.
 
-### 2.7 Rate Limiting
+### 2.6 Rate Limiting
 
 The API implements rate limiting to protect against abuse and ensure fair usage. Rate limiting is applied to all API requests and uses Redis for distributed rate limit tracking.
 
 **Important:** Rate limiting requires Redis to be available. If Redis is not available, rate limiting will be automatically disabled even if `API_RATE_LIMIT_ENABLED` is set to `true`.
 
-#### 2.7.1 How It Works
+#### 2.6.1 How It Works
 
 Rate limiting uses a two-tier approach:
 
@@ -277,7 +308,7 @@ Rate limiting uses a two-tier approach:
 
 Both limits are checked for each request. If either limit is exceeded, the request is rejected with a `429 Too Many Requests` response.
 
-#### 2.7.2 User Identification Priority
+#### 2.6.2 User Identification Priority
 
 The rate limiter identifies users in the following priority order:
 
@@ -299,7 +330,7 @@ The rate limiter identifies users in the following priority order:
    - Uses unauthenticated rate limits
    - Format: `ip:{ipAddress}`
 
-#### 2.7.3 Internal Request Signing (SSR Requests)
+#### 2.6.3 Internal Request Signing (SSR Requests)
 
 For server-side requests from the web app, you can bypass IP-based rate limiting by sending signed headers. This is necessary when all requests appear to come from the same IP (e.g., AWS Elastic Beanstalk).
 
@@ -355,7 +386,7 @@ headers: {
 }
 ```
 
-#### 2.7.4 Configuration
+#### 2.6.4 Configuration
 
 Rate limiting is configured via environment variables (see `.env.sample`):
 
@@ -382,7 +413,7 @@ Rate limiting is configured via environment variables (see `.env.sample`):
 - `API_RATE_LIMIT_INTERNAL_ID`: Internal ID for signed requests (required)
 - `API_RATE_LIMIT_INTERNAL_SECRET`: Shared secret for signing requests (required)
 
-#### 2.7.5 Response Headers
+#### 2.6.5 Response Headers
 
 All responses include rate limit headers:
 
@@ -394,7 +425,7 @@ When rate limited (429 response):
 
 - `Retry-After`: Seconds to wait before retrying
 
-#### 2.7.6 Implementation Details
+#### 2.6.6 Implementation Details
 
 - **Storage**: Uses Redis sorted sets for efficient sliding window tracking
 - **Redis Required**: Rate limiting requires Redis to be available. If Redis is not available, rate limiting is automatically disabled at startup

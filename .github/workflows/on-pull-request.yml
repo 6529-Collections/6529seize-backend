@@ -17,21 +17,44 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: 'npm'
+      - name: Setup Corepack pnpm
+        run: bash scripts/setup-corepack-pnpm.sh
+      - name: Resolve pnpm store path
+        id: pnpm-store
+        run: echo "path=$(SEIZE_6529_COMMAND=1 ./bin/pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-
+      - name: Resolve npm global prefix
+        id: npm-global-prefix
+        run: echo "path=$(npm prefix -g)" >> "$GITHUB_OUTPUT"
+      - name: Cache Socket Firewall
+        id: sfw-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ steps.npm-global-prefix.outputs.path }}/bin/sfw
+            ${{ steps.npm-global-prefix.outputs.path }}/lib/node_modules/sfw
+          key: sfw-${{ runner.os }}-2.0.4
+      # Pin sfw and cache the global install to avoid repeated downloads on PRs.
+      - name: Install Socket Firewall
+        if: steps.sfw-cache.outputs.cache-hit != 'true'
+        run: npm install --global sfw@2.0.4
       - name: Install dependencies
-        run: npm i && pushd src/api-serverless && npm i && popd
+        run: ./bin/6529 install:frozen
       - name: Verify generated files are committed
         run: |
-          npm run generate:deploy-config
+          ./bin/6529 run generate:deploy-config
           if [[ -n "$(git status --porcelain -- .github/workflows/deploy.yml)" ]]; then
-            echo "::error::.github/workflows/deploy.yml is generated. Edit config/deploy-services.json, rerun npm run generate:deploy-config, and commit the result."
+            echo "::error::.github/workflows/deploy.yml is generated. Edit config/deploy-services.json, rerun ./bin/6529 run generate:deploy-config, and commit the result."
             git diff --stat -- .github/workflows/deploy.yml
             exit 1
           fi
 
-          pushd src/api-serverless
-          npm run generate
-          popd
+          ./bin/6529 run api:generate-openapi
 
           if [[ -n "$(git status --porcelain -- src/api-serverless/src/generated)" ]]; then
             echo "::error::src/api-serverless/src/generated is generated from openapi.yaml. Rerun src/api-serverless generation and commit the result."
@@ -40,7 +63,7 @@ jobs:
           fi
       - name: Lint
         run: |
-          npm run lint -- --max-warnings=0
+          ./bin/6529 run lint
           if ! git diff --exit-code -- 'src/**/*.ts'; then
             echo "::error::Lint --fix changed source files. Commit the fixes."
             git diff --stat -- 'src/**/*.ts'
@@ -48,13 +71,13 @@ jobs:
           fi
       - name: Format
         run: |
-          npm run format
+          ./bin/6529 run format
           if ! git diff --exit-code -- 'src/**/*.ts'; then
-            echo "::error::Format changed source files. Run 'npm run format' and commit."
+            echo "::error::Format changed source files. Run './bin/6529 run format' and commit."
             git diff --stat -- 'src/**/*.ts'
             exit 1
           fi
       - name: Build backend
-        run: npm run build
+        run: ./bin/6529 run build
       - name: Build API
-        run: pushd src/api-serverless && npm run build && popd
+        run: ./bin/6529 run build:api

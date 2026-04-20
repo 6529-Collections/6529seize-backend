@@ -1,4 +1,4 @@
-import { mock } from 'ts-jest-mocker';
+import { mock } from '@/tests/mock';
 import { DropVotingDb } from '@/api-serverless/src/drops/drop-voting.db';
 import { DeployerDropper } from '@/deployer-dropper';
 import { DropsDb } from '@/drops/drops.db';

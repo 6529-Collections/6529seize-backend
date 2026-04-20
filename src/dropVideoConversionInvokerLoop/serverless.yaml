@@ -1,5 +1,4 @@
 service: dropVideoConversionInvokerLoop
-frameworkVersion: '3'
 
 package:
   artifact: dist/index.zip

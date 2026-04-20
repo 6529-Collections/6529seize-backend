@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+export COREPACK_HOME="${COREPACK_HOME:-${HOME:-${TMPDIR:-/tmp}}/.cache/6529-corepack}"
+export COREPACK_ENABLE_DOWNLOAD_PROMPT="0"
+export SEIZE_6529_COMMAND="1"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+export npm_config_store_dir="${npm_config_store_dir:-$REPO_ROOT/.pnpm-store}"
+export PATH="$SCRIPT_DIR${PATH:+:$PATH}"
+
+command_name="${1:-}"
+
+if [[ -z "$command_name" ]]; then
+  cat <<'EOF'
+Usage:
+  6529 <command> [args...]
+
+Common commands:
+  6529 bootstrap
+  6529 bootstrap --print-export
+  6529 install
+  6529 install:frozen
+  6529 install:prod
+  6529 audit
+  6529 add <pkg>
+  6529 run generate:deploy-config
+  6529 run build
+  6529 run build:api
+  6529 run build:service -- <service>
+  6529 run deploy:service -- <service> <environment>
+  6529 run test
+  6529 run lint
+EOF
+  exit 1
+fi
+
+shift
+
+case "$command_name" in
+  bootstrap)
+    exec bash "$REPO_ROOT/scripts/bootstrap-6529-command.sh" "$@"
+    ;;
+esac
+
+clean_path=""
+IFS=':' read -r -a path_parts <<< "${PATH:-}"
+for part in "${path_parts[@]}"; do
+  if [[ -z "$part" || "$part" == "$SCRIPT_DIR" ]]; then
+    continue
+  fi
+  clean_path="${clean_path:+${clean_path}:}${part}"
+done
+
+REAL_PNPM="$(PATH="$clean_path" command -v pnpm || true)"
+
+if [[ -z "$REAL_PNPM" ]]; then
+  echo "pnpm is not available. Activate the repo-pinned pnpm with Corepack first." >&2
+  exit 1
+fi
+
+case "$command_name" in
+  i|install)
+    exec "$REAL_PNPM" run install:secure "$@"
+    ;;
+  ci|install:frozen)
+    exec "$REAL_PNPM" run install:secure:frozen "$@"
+    ;;
+  install:prod)
+    exec "$REAL_PNPM" run install:secure:prod "$@"
+    ;;
+  run)
+    if [[ "$#" -eq 0 ]]; then
+      echo "Usage: 6529 run <script> [args...]" >&2
+      echo "Examples:" >&2
+      echo "  6529 run build" >&2
+      echo "  6529 run backend:local" >&2
+      exit 1
+    fi
+    exec node "$REPO_ROOT/scripts/run-6529-command.cjs" \
+      "$REPO_ROOT" \
+      "$REAL_PNPM" \
+      "$@"
+    ;;
+  exec)
+    exec "$REAL_PNPM" exec "$@"
+    ;;
+  *)
+    exec "$REAL_PNPM" "$command_name" "$@"
+    ;;
+esac

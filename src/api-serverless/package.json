@@ -5,16 +5,16 @@
   "main": "serverless.ts",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "NODE_ENV=local nodemon",
-    "restructure-openapi": "ts-node restructure-openapi.ts",
-    "generate": "rm -rf dist && rm -rf tmp_gen_outp && node ./node_modules/@openapitools/openapi-generator-cli/main generate -i openapi.yaml -g typescript -o tmp_gen_outp --additional-properties=modelPropertyNaming=snake_case && rm -rf src/generated && mkdir src/generated && mv tmp_gen_outp/models src/generated/models && rm -rf tmp_gen_outp && mkdir src/generated/http && echo 'export type HttpFile = any;' > src/generated/http/http.ts && rm src/generated/models/all.ts",
-    "prebuild": "npm run generate",
-    "build": "node esbuild.config.mjs && cp openapi.yaml dist/ && cp openapi.oracle.yaml dist/ && mkdir dist/tmp && cp node_modules/swagger-ui-dist/* dist/tmp && rm dist/tmp/index.js && cp dist/tmp/* dist/ && rm -rf dist/tmp",
-    "postbuild": "cd dist && zip -r index.zip *"
+    "dev": "node ../../scripts/require-6529-command.cjs && NODE_ENV=local nodemon",
+    "restructure-openapi": "node ../../scripts/require-6529-command.cjs && ts-node restructure-openapi.ts",
+    "generate": "node ../../scripts/require-6529-command.cjs && rm -rf dist && rm -rf tmp_gen_outp && openapi-generator-cli generate -i openapi.yaml -g typescript -o tmp_gen_outp --additional-properties=modelPropertyNaming=snake_case && rm -rf src/generated && mkdir src/generated && mv tmp_gen_outp/models src/generated/models && rm -rf tmp_gen_outp && mkdir src/generated/http && echo 'export type HttpFile = any;' > src/generated/http/http.ts && rm src/generated/models/all.ts",
+    "prebuild": "node ../../scripts/require-6529-command.cjs && pnpm run generate",
+    "build": "node ../../scripts/require-6529-command.cjs && node esbuild.config.mjs && cp openapi.yaml dist/ && cp openapi.oracle.yaml dist/ && mkdir dist/tmp && cp node_modules/swagger-ui-dist/* dist/tmp && rm dist/tmp/index.js && cp dist/tmp/* dist/ && rm -rf dist/tmp",
+    "postbuild": "node ../../scripts/require-6529-command.cjs && cd dist && zip -r index.zip *",
+    "preinstall": "node ../../scripts/enforce-package-manager.cjs"
   },
   "dependencies": {
     "@aws-sdk/client-managedblockchain": "^3.980.0",
-    "@openapitools/openapi-generator-cli": "^2.28.3",
     "@types/express": "^4.17.25",
     "@types/swagger-ui-express": "^4.1.8",
     "@wagmi/chains": "^1.8.0",
@@ -28,6 +28,7 @@
     "ethers": "^6.16.0",
     "express": "^4.22.1",
     "image-size": "^2.0.2",
+    "js-yaml": "^4.1.1",
     "js-sha256": "^0.11.0",
     "jsonwebtoken": "^9.0.3",
     "mcache": "^0.4.0",
@@ -42,12 +43,12 @@
     "pdf-lib": "^1.17.1",
     "serverless-http": "^4.0.0",
     "slugify": "^1.6.6",
-    "swagger-jsdoc": "^6.2.8",
+    "swagger-ui-dist": "^5.32.1",
     "swagger-ui-express": "^5.0.0",
-    "ws": "^8.18.1",
-    "yamljs": "^0.3.0"
+    "ws": "^8.18.1"
   },
   "devDependencies": {
+    "@openapitools/openapi-generator-cli": "^2.31.1",
     "@serverless/typescript": "^4.30.0",
     "@types/aws-serverless-express": "^3.3.10",
     "@types/js-yaml": "^4.0.9",
@@ -59,10 +60,6 @@
     "eslint": "^9.27.0",
     "eslint-config-prettier": "^10.1.5",
     "eslint-plugin-prettier": "^5.4.0",
-    "js-yaml": "^4.1.1",
-    "serverless": "^4.31.2",
-    "serverless-esbuild": "^1.57.0",
-    "serverless-offline": "^14.4.0",
     "swagger-autogen": "^2.23.0",
     "ts-node": "^10.4.0",
     "tsconfig-paths": "^3.9.0",
@@ -70,7 +67,5 @@
   },
   "author": "The serverless webpack authors (https://github.com/elastic-coders/serverless-webpack)",
   "license": "MIT",
-  "overrides": {
-    "jsonpath-plus": "10.3.0"
-  }
+  "packageManager": "pnpm@10.33.0"
 }

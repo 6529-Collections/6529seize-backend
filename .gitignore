@@ -2,12 +2,15 @@
 !.env.sample
 .direnv/
 node_modules
+.pnpm-store/
 .vscode
 build
 .DS_Store
 *.pem
 dist/
 .esbuild/
+.6529-deploy-package/
+.6529-deploy-packages/
 .idea
 src/*/.serverless
 src/*/.serverless-offline

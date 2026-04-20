@@ -8,7 +8,9 @@ const require = createRequire(import.meta.url);
 const repoRoot = path.resolve(__dirname, '..');
 const sourcePath = path.join(repoRoot, 'src', 'config', 'deploy-services.json');
 const workflowPath = path.join(repoRoot, '.github', 'workflows', 'deploy.yml');
-const { validateDeployConfig } = require('../src/config/deploy-config.validation.js');
+const {
+  validateDeployConfig
+} = require('../src/config/deploy-config.validation.js');
 
 function indent(lines, prefix = '          ') {
   return lines.map((line) => `${prefix}${line}`).join('\n');
@@ -37,16 +39,12 @@ function buildWorkflowYaml(config) {
 
   const prodCondition = prodOnlyServices.length
     ? `(${prodOnlyServices
-        .map(
-          (service) => `github.event.inputs.service == '${service}'`
-        )
+        .map((service) => `github.event.inputs.service == '${service}'`)
         .join(' || ')}) && github.event.inputs.environment != 'prod'`
     : 'false';
   const stagingCondition = stagingOnlyServices.length
     ? `(${stagingOnlyServices
-        .map(
-          (service) => `github.event.inputs.service == '${service}'`
-        )
+        .map((service) => `github.event.inputs.service == '${service}'`)
         .join(' || ')}) && github.event.inputs.environment != 'staging'`
     : 'false';
 
@@ -98,25 +96,34 @@ jobs:
         run: echo "branch=\${GITHUB_HEAD_REF:-\${GITHUB_REF#refs/heads/}}" >> $GITHUB_OUTPUT
         id: extract_branch
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           ref: \${{ steps.extract_branch.outputs.branch }}
-      - name: Install root dependencies
-        run: npm i
-      - name: Install lambda dependencies
-        if: github.event.inputs.service != 'api'
-        run: npm i && pushd src/\${{ github.event.inputs.service }} && npm i && popd
-      - name: Install api dependencies
-        if: github.event.inputs.service == 'api'
-        run: pushd src/api-serverless && npm i && popd
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Setup Corepack pnpm
+        run: bash scripts/setup-corepack-pnpm.sh
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: \${{ github.workspace }}/.pnpm-store
+          key: pnpm-store-\${{ runner.os }}-\${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-store-\${{ runner.os }}-
+      - name: Install Socket Firewall
+        run: npm install --global sfw
+      - name: Install dependencies
+        run: ./bin/6529 install:frozen
       - name: Build service
         if: github.event.inputs.service != 'api'
-        run: pushd src/\${{ github.event.inputs.service }} && npm run build && popd
+        run: ./bin/6529 run build:service -- \${{ github.event.inputs.service }}
       - name: Build API
         if: github.event.inputs.service == 'api'
-        run: pushd src/api-serverless && npm run build && popd
+        run: ./bin/6529 run build:api
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@13d241b293754004c80624b5567555c4a39ffbe3
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a
         with:
           aws-access-key-id: \${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: \${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -125,7 +132,7 @@ jobs:
         if: github.event.inputs.service != 'api' && github.event.inputs.service != 'nextgenMediaProxyInterceptor' && github.event.inputs.service != 'mediaResizerLoop'
         run: |
           export VERSION_DESCRIPTION="$(git rev-parse --short HEAD) - $(date) - $(git rev-parse --abbrev-ref HEAD) - $(git show -s --format=%s)"
-          pushd src/\${{ github.event.inputs.service }} && npm run sls-deploy:\${{ github.event.inputs.environment }} && popd
+          ./bin/6529 run deploy:service -- \${{ github.event.inputs.service }} \${{ github.event.inputs.environment }}
       - name: Deploy API
         if: github.event.inputs.service == 'api'
         run: |

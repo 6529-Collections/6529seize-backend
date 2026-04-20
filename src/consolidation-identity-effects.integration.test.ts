@@ -24,7 +24,7 @@ import {
   withAddressConsolidationKeys
 } from '@/tests/fixtures/address-consolidation-key.fixture';
 import { aProfile, withProfiles } from '@/tests/fixtures/profile.fixture';
-import { mock } from 'ts-jest-mocker';
+import { mock } from '@/tests/mock';
 import { when } from 'jest-when';
 import { IdentitiesService } from '@/api/identities/identities.service';
 import { AddressConsolidationKey } from '@/entities/IAddressConsolidationKey';
