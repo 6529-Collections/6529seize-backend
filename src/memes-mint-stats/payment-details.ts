@@ -55,9 +55,8 @@ export function parseMemesMintPaymentDetails(
   }
 
   const hasDesignatedPayee =
-    typeof candidate.has_designated_payee === 'boolean'
-      ? candidate.has_designated_payee
-      : false;
+    candidate.has_designated_payee === true ||
+    candidate.has_designated_payee === 1;
   const designatedPayeeName =
     typeof candidate.designated_payee_name === 'string'
       ? candidate.designated_payee_name
