@@ -23,6 +23,7 @@ import { BadRequestException, ForbiddenException } from '../exceptions';
 import { DropType } from '../entities/IDrop';
 import { ProfileActivityLogType } from '../entities/IProfileActivityLog';
 import { metricsRecorder, MetricsRecorder } from '../metrics/MetricsRecorder';
+import { isApproveWaveClosed } from '@/waves/wave-approve.helpers';
 
 export class VoteForDropUseCase {
   constructor(
@@ -142,6 +143,21 @@ export class VoteForDropUseCase {
     }
     if (wave.type === WaveType.CHAT) {
       throw new ForbiddenException('Voting is not allowed in chat waves');
+    }
+    let noOfDecisionsDone = 0;
+    if (wave.type === WaveType.APPROVE && wave.max_winners != null) {
+      noOfDecisionsDone = await this.wavesDb
+        .countWaveDecisionsByWaveIds([wave.id], ctx)
+        .then((it) => it[wave.id] ?? 0);
+    }
+    if (
+      isApproveWaveClosed({
+        waveType: wave.type,
+        maxWinners: wave.max_winners ?? null,
+        decisionsDone: noOfDecisionsDone
+      })
+    ) {
+      throw new BadRequestException(`Voting is closed in this wave`);
     }
     const change = votes - currentVote;
     const newVote = currentVote + change;

@@ -63,7 +63,7 @@ describe('WaveQuickVoteApiService', () => {
     type: WaveType.RANK,
     winning_min_threshold: null,
     winning_max_threshold: null,
-    max_winners: 3,
+    max_winners: null,
     time_lock_ms: null,
     decisions_strategy: null,
     next_decision_time: null,
@@ -78,6 +78,9 @@ describe('WaveQuickVoteApiService', () => {
     wavesApiDb = mock();
     userGroupsService = mock();
     dropsMappers = mock();
+    when(wavesApiDb.countWaveDecisionsByWaveIds)
+      .calledWith(['wave-1'], {})
+      .mockResolvedValue({});
     service = new WaveQuickVoteApiService(
       waveQuickVoteDb,
       wavesApiDb,
@@ -439,5 +442,31 @@ describe('WaveQuickVoteApiService', () => {
         {}
       )
     ).rejects.toThrow(BadRequestException);
+  });
+
+  it('rejects when the approve wave is already closed', async () => {
+    when(wavesApiDb.findWaveById)
+      .calledWith('wave-1', undefined)
+      .mockResolvedValue({
+        ...wave,
+        type: WaveType.APPROVE,
+        max_winners: 1
+      } as any);
+    when(wavesApiDb.countWaveDecisionsByWaveIds)
+      .calledWith(['wave-1'], {})
+      .mockResolvedValue({ 'wave-1': 1 });
+    when(userGroupsService.getGroupsUserIsEligibleFor)
+      .calledWith('identity-1', undefined)
+      .mockResolvedValue([]);
+
+    await expect(
+      service.findUndiscoveredDrop(
+        {
+          waveId: 'wave-1',
+          identityId: 'identity-1'
+        },
+        {}
+      )
+    ).rejects.toThrow(`Voting is closed in this wave`);
   });
 });

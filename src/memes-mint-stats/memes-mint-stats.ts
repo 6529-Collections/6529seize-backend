@@ -10,9 +10,11 @@ import { getDataSource } from '@/db';
 import { MemesMintStat } from '@/entities/IMemesMintStat';
 import { Logger } from '@/logging';
 import { fetchPaymentDetailsForMemeToken } from '@/memes-mint-stats/payment-details';
+import { numbers } from '@/numbers';
 import { sqlExecutor } from '@/sql-executor';
 
 const ARTIST_SPLIT_RATIO = 0.5;
+const MEMES_MINT_STATS_ETH_DECIMAL_PLACES = 10;
 const logger = Logger.get('MEMES_MINT_STATS');
 
 type MintTransactionRow = {
@@ -101,9 +103,15 @@ export async function calculateMemesMintStats(
   const subscriptionsCount = Number(redeemedAgg?.redeemedCount ?? 0);
   const redeemedUsdPrice = Number(redeemedAgg?.redeemedUsdPrice ?? 0);
   const totalCount = mintCount + subscriptionsCount;
-  const proceedsEth = totalCount * MEMES_MINT_PRICE;
+  const proceedsEth = numbers.roundDecimals(
+    totalCount * MEMES_MINT_PRICE,
+    MEMES_MINT_STATS_ETH_DECIMAL_PLACES
+  );
   const proceedsUsd = roundUsd(mintedUsdPrice + redeemedUsdPrice);
-  const artistSplitEth = proceedsEth * ARTIST_SPLIT_RATIO;
+  const artistSplitEth = numbers.roundDecimals(
+    proceedsEth * ARTIST_SPLIT_RATIO,
+    MEMES_MINT_STATS_ETH_DECIMAL_PLACES
+  );
   const artistSplitUsd = roundUsd(proceedsUsd * ARTIST_SPLIT_RATIO);
 
   return {
