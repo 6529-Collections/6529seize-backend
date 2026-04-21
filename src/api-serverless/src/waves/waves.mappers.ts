@@ -60,6 +60,10 @@ import { enums } from '../../../enums';
 import { collections } from '../../../collections';
 import { profileWavesDb } from '@/profiles/profile-waves.db';
 import { isWaveCreatorOrAdmin } from '@/waves/wave-admin.helpers';
+import {
+  getApproveWaveDecisionCounts,
+  isApproveWaveClosed
+} from '@/waves/wave-approve.helpers';
 
 type WaveMappingRelatedData = {
   contributors: Record<
@@ -78,6 +82,7 @@ type WaveMappingRelatedData = {
   yourUnreadDropsCountByWaveId: Record<string, number>;
   firstUnreadDropSerialNoByWaveId: Record<string, number | null>;
   wavePauses: Record<string, WaveDecisionPauseEntity[]>;
+  decisionsDoneByWaveId: Record<string, number>;
   pinnedWaveIds: Set<string>;
   identityWaveIds: Set<string>;
   authenticatedUserId: string | null;
@@ -174,9 +179,12 @@ export class WavesMappers {
       participation_period_start: request.participation.period?.min ?? null,
       participation_period_end: request.participation.period?.max ?? null,
       type: enums.resolveOrThrow(WaveType, request.wave.type),
-      winning_min_threshold: request.wave.winning_thresholds?.min ?? null,
-      winning_max_threshold: request.wave.winning_thresholds?.max ?? null,
-      max_winners: request.wave.max_winners ?? null,
+      winning_min_threshold: request.wave.winning_threshold ?? null,
+      winning_max_threshold: null,
+      max_winners:
+        request.wave.type === WaveTypeApi.Approve
+          ? (request.wave.max_winners ?? null)
+          : null,
       time_lock_ms: request.wave.time_lock_ms ?? null,
       decisions_strategy: request.wave.decisions_strategy ?? null,
       next_decision_time: nextDecisionTime,
@@ -271,9 +279,16 @@ export class WavesMappers {
       yourUnreadDropsCountByWaveId,
       firstUnreadDropSerialNoByWaveId,
       wavePauses,
+      decisionsDoneByWaveId,
       pinnedWaveIds,
       identityWaveIds
     } = relatedData;
+    const decisionsDone = decisionsDoneByWaveId[waveEntity.id] ?? 0;
+    const waveIsClosed = isApproveWaveClosed({
+      waveType: waveEntity.type,
+      maxWinners: waveEntity.max_winners,
+      decisionsDone
+    });
     const contributorsOverview: ApiWaveContributorOverview[] =
       contributors[waveEntity.id]?.map((it) => ({
         contributor_identity: it.contributor_identity,
@@ -291,6 +306,7 @@ export class WavesMappers {
       waveEntity.voting_credit_creditor
     );
     const authenticatedUserEligibleToVote =
+      !waveIsClosed &&
       !noRightToVote &&
       (!waveEntity.voting_group_id ||
         groupIdsUserIsEligibleFor.includes(waveEntity.voting_group_id));
@@ -316,6 +332,7 @@ export class WavesMappers {
       }
     };
     const authenticatedUserEligibleToParticipate =
+      !waveIsClosed &&
       !noRightToParticipate &&
       (!waveEntity.participation_group_id ||
         groupIdsUserIsEligibleFor.includes(waveEntity.participation_group_id));
@@ -358,13 +375,19 @@ export class WavesMappers {
       wave: waveEntity,
       groupIdsUserIsEligibleFor
     });
+    const approveDecisionCounts = getApproveWaveDecisionCounts({
+      waveType: waveEntity.type,
+      maxWinners: waveEntity.max_winners,
+      decisionsDone
+    });
     const waveConf: ApiWaveConfig = {
       type: enums.resolveOrThrow(WaveTypeApi, waveEntity.type),
-      winning_thresholds: {
-        min: waveEntity.winning_min_threshold,
-        max: waveEntity.winning_max_threshold
-      },
-      max_winners: waveEntity.max_winners,
+      winning_threshold:
+        waveEntity.type === WaveType.APPROVE
+          ? waveEntity.winning_min_threshold
+          : null,
+      max_winners:
+        waveEntity.type === WaveType.APPROVE ? waveEntity.max_winners : null,
       time_lock_ms: waveEntity.time_lock_ms,
       admin_group: {
         group: resolveGroup(waveEntity.admin_group_id)
@@ -372,7 +395,8 @@ export class WavesMappers {
       authenticated_user_eligible_for_admin: authenticatedUserEligibleForAdmin,
       decisions_strategy: waveEntity.decisions_strategy,
       next_decision_time: waveEntity.next_decision_time,
-      admin_drop_deletion_enabled: waveEntity.admin_drop_deletion_enabled
+      admin_drop_deletion_enabled: waveEntity.admin_drop_deletion_enabled,
+      ...approveDecisionCounts
     };
     const waveMetrics = metrics[waveEntity.id];
     const waveAuthenticatedUserMetrics =
@@ -454,6 +478,7 @@ export class WavesMappers {
       yourUnreadDropsCountByWaveId,
       firstUnreadDropSerialNoByWaveId,
       wavePauses,
+      decisionsDoneByWaveId,
       pinnedWaveIds,
       identityWaveIds
     ] = await Promise.all([
@@ -541,6 +566,7 @@ export class WavesMappers {
           )
         : Promise.resolve({} as Record<string, number | null>),
       this.wavesApiDb.getWavesPauses(waveIds, ctx),
+      this.wavesApiDb.countWaveDecisionsByWaveIds(waveIds, ctx),
       this.wavesApiDb.whichOfWavesArePinnedByGivenProfile(
         {
           waveIds,
@@ -619,6 +645,7 @@ export class WavesMappers {
       yourUnreadDropsCountByWaveId,
       firstUnreadDropSerialNoByWaveId,
       wavePauses,
+      decisionsDoneByWaveId,
       pinnedWaveIds,
       identityWaveIds,
       authenticatedUserId

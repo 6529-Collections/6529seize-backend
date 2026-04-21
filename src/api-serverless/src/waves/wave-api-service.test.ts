@@ -4,6 +4,7 @@ import {
   ActivityEventTargetType
 } from '@/entities/IActivityEvent';
 import { aWave } from '@/tests/fixtures/wave.fixture';
+import { ApiCreateNewWave } from '../generated/models/ApiCreateNewWave';
 import { ApiUpdateWaveRequest } from '../generated/models/ApiUpdateWaveRequest';
 import { ApiWaveCreditType } from '../generated/models/ApiWaveCreditType';
 import { ApiWaveParticipationIdentitySubmissionAllowDuplicates } from '../generated/models/ApiWaveParticipationIdentitySubmissionAllowDuplicates';
@@ -36,6 +37,7 @@ describe('WaveApiService updateWave immutability', () => {
         .fn()
         .mockResolvedValueOnce(waveBeforeUpdate)
         .mockResolvedValue(updatedWave ?? waveBeforeUpdate),
+      countWaveDecisionsByWaveIds: jest.fn().mockResolvedValue({}),
       deleteWave: jest.fn().mockResolvedValue(undefined),
       insertWave: jest.fn().mockResolvedValue(undefined),
       updateVisibilityInFeedEntities: jest.fn().mockResolvedValue(undefined),
@@ -128,8 +130,8 @@ describe('WaveApiService updateWave immutability', () => {
       },
       wave: {
         type,
-        winning_thresholds: null,
-        max_winners: 3,
+        winning_threshold: null,
+        max_winners: null,
         time_lock_ms: null,
         admin_group: { group_id: null },
         decisions_strategy: null,
@@ -280,6 +282,205 @@ describe('WaveApiService updateWave immutability', () => {
 
     expect(wavesApiDb.deleteWave).toHaveBeenCalled();
     expect(waveMappers.createWaveToNewWaveEntity).toHaveBeenCalled();
+  });
+
+  it('rejects lowering approve max_winners below existing decisions count', async () => {
+    const waveBeforeUpdate = aWave(
+      {
+        type: WaveType.APPROVE,
+        created_by: 'profile-1',
+        max_winners: 5,
+        winning_min_threshold: 10
+      },
+      {
+        id: 'wave-1',
+        name: 'wave-1',
+        serial_no: 1
+      }
+    );
+    const { service, wavesApiDb, ctx } = createService({ waveBeforeUpdate });
+    (wavesApiDb.countWaveDecisionsByWaveIds as jest.Mock).mockResolvedValue({
+      'wave-1': 4
+    });
+
+    await expect(
+      service.updateWave(
+        'wave-1',
+        {
+          ...updateRequest({ type: ApiWaveType.Approve }),
+          wave: {
+            ...updateRequest({ type: ApiWaveType.Approve }).wave,
+            winning_threshold: 10,
+            max_winners: 3
+          }
+        },
+        ctx
+      )
+    ).rejects.toThrow(
+      `max_winners can't be lower than already declared winners count`
+    );
+
+    expect(wavesApiDb.deleteWave).not.toHaveBeenCalled();
+  });
+});
+
+describe('WaveApiService validateWaveRelations', () => {
+  it('allows winning_threshold to be null for non-approve waves', async () => {
+    const service = new WaveApiService(
+      {} as any,
+      {
+        getByIds: jest.fn().mockResolvedValue([])
+      } as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {
+        getProfileIdByIdentityKey: jest.fn().mockResolvedValue(null)
+      } as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any
+    );
+
+    const request: ApiCreateNewWave = {
+      name: 'wave',
+      picture: null,
+      description_drop: {
+        title: null,
+        signature: null,
+        parts: [],
+        referenced_nfts: [],
+        mentioned_users: [],
+        metadata: []
+      },
+      voting: {
+        scope: { group_id: null },
+        credit_type: ApiWaveCreditType.Tdh,
+        credit_scope: undefined as any,
+        credit_category: null,
+        creditor_id: null,
+        signature_required: false,
+        period: undefined,
+        forbid_negative_votes: false
+      },
+      visibility: {
+        scope: { group_id: null }
+      },
+      participation: {
+        scope: { group_id: null },
+        no_of_applications_allowed_per_participant: null,
+        required_metadata: [],
+        required_media: [],
+        signature_required: false,
+        period: undefined,
+        terms: null,
+        submission_strategy: null
+      },
+      chat: {
+        scope: { group_id: null },
+        enabled: true
+      },
+      wave: {
+        type: ApiWaveType.Chat,
+        winning_threshold: null,
+        max_winners: null,
+        time_lock_ms: null,
+        admin_group: { group_id: null },
+        decisions_strategy: null,
+        admin_drop_deletion_enabled: false
+      },
+      outcomes: []
+    };
+
+    await expect(
+      (service as any).validateWaveRelations(request, {
+        timer: undefined
+      })
+    ).resolves.toBeUndefined();
+  });
+
+  it('allows missing winning_threshold for non-approve waves', async () => {
+    const service = new WaveApiService(
+      {} as any,
+      {
+        getByIds: jest.fn().mockResolvedValue([])
+      } as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {
+        getProfileIdByIdentityKey: jest.fn().mockResolvedValue(null)
+      } as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any
+    );
+
+    const request = {
+      name: 'wave',
+      picture: null,
+      description_drop: {
+        title: null,
+        signature: null,
+        parts: [],
+        referenced_nfts: [],
+        mentioned_users: [],
+        metadata: []
+      },
+      voting: {
+        scope: { group_id: null },
+        credit_type: ApiWaveCreditType.Tdh,
+        credit_scope: undefined,
+        credit_category: null,
+        creditor_id: null,
+        signature_required: false,
+        period: undefined,
+        forbid_negative_votes: false
+      },
+      visibility: {
+        scope: { group_id: null }
+      },
+      participation: {
+        scope: { group_id: null },
+        no_of_applications_allowed_per_participant: null,
+        required_metadata: [],
+        required_media: [],
+        signature_required: false,
+        period: undefined,
+        terms: null,
+        submission_strategy: null
+      },
+      chat: {
+        scope: { group_id: null },
+        enabled: true
+      },
+      wave: {
+        type: ApiWaveType.Rank,
+        time_lock_ms: null,
+        admin_group: { group_id: null },
+        decisions_strategy: null,
+        admin_drop_deletion_enabled: false
+      },
+      outcomes: []
+    };
+
+    await expect(
+      (service as any).validateWaveRelations(request, {
+        timer: undefined
+      })
+    ).resolves.toBeUndefined();
   });
 });
 

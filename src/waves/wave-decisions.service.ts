@@ -46,6 +46,17 @@ interface WaveOutcomeDistributionItem {
   description?: string | null;
 }
 
+interface ApproveWinnerCandidate {
+  wave_id: string;
+  drop_id: string;
+  created_at: number;
+  vote: number;
+  time_lock_ms: number | null;
+  max_winners: number | null;
+  decisions_done: number;
+  latest_decision_time: number | null;
+}
+
 export class WaveDecisionsService {
   private readonly logger: Logger = Logger.get(this.constructor.name);
 
@@ -69,43 +80,11 @@ export class WaveDecisionsService {
     const waveIds = collections.distinct(
       wavesLatestDecisionTimesWithStrategies.map((it) => it.wave_id)
     );
-    const outcomes = await wavesApiDb.getWavesOutcomes(waveIds, { timer });
-    const distributionItems =
-      await wavesApiDb.getWavesOutcomesDistributionItems(waveIds, { timer });
-    const withOutcomes = wavesLatestDecisionTimesWithStrategies.map((it) => {
-      const outcomeEntities = outcomes[it.wave_id] ?? [];
-      const distributionEntities = distributionItems[it.wave_id] ?? [];
-      const result = outcomeEntities
-        .sort((a, d) => a.wave_outcome_position - d.wave_outcome_position)
-        .map<WaveOutcome>((outcome) => {
-          const distributions = distributionEntities
-            .filter(
-              (it) => it.wave_outcome_position === outcome.wave_outcome_position
-            )
-            .sort(
-              (a, d) =>
-                a.wave_outcome_distribution_item_position -
-                d.wave_outcome_distribution_item_position
-            )
-            .map<WaveOutcomeDistributionItem>((item) => ({
-              amount: item.amount,
-              description: item.description
-            }));
-          return {
-            type: outcome.type,
-            subtype: outcome.subtype ?? undefined,
-            description: outcome.description,
-            credit: outcome.credit ?? undefined,
-            rep_category: outcome.rep_category ?? undefined,
-            amount: outcome.amount === null ? undefined : outcome.amount,
-            distribution: distributions
-          };
-        });
-      return {
-        ...it,
-        outcomes: result
-      };
-    });
+    const outcomesByWaveId = await this.loadWaveOutcomes(waveIds, timer);
+    const withOutcomes = wavesLatestDecisionTimesWithStrategies.map((it) => ({
+      ...it,
+      outcomes: outcomesByWaveId[it.wave_id] ?? []
+    }));
     this.logger.info(
       `Found ${wavesLatestDecisionTimesWithStrategies.length} waves with past execution deadlines. Starting to execute decisions`
     );
@@ -116,6 +95,13 @@ export class WaveDecisionsService {
         timer
       );
     }
+    this.logger.info(
+      `Refreshing weighted leaderboard entries before APPROVE pass`
+    );
+    await this.waveLeaderboardCalculationService.refreshLeaderboardEntriesForDropsInNeed(
+      timer
+    );
+    await this.createApproveDecisions(timer);
     this.logger.info(`Executed all overdue wave decisions`);
     timer.stop(`${this.constructor.name}->createMissingDecisionsForAllWaves`);
   }
@@ -226,6 +212,153 @@ export class WaveDecisionsService {
     );
   }
 
+  private async createApproveDecisions(timer: Timer): Promise<void> {
+    const currentTime = Time.currentMillis();
+    const candidates = await this.waveDecisionsDb.getApproveWinnerCandidates(
+      currentTime,
+      { timer }
+    );
+    const outcomesByWaveId = await this.loadWaveOutcomes(
+      collections.distinct(candidates.map((it) => it.wave_id)),
+      timer
+    );
+    this.logger.info(
+      `Found ${candidates.length} APPROVE winner candidates to formalize`
+    );
+    const candidatesByWaveId = candidates.reduce(
+      (acc, candidate) => {
+        if (!acc[candidate.wave_id]) {
+          acc[candidate.wave_id] = [];
+        }
+        acc[candidate.wave_id].push(candidate);
+        return acc;
+      },
+      {} as Record<string, ApproveWinnerCandidate[]>
+    );
+
+    for (const [waveId, waveCandidates] of Object.entries(candidatesByWaveId)) {
+      const firstCandidate = waveCandidates[0];
+      if (!firstCandidate) {
+        continue;
+      }
+      const wavePauses = await this.waveDecisionsDb.getWavePauses(waveId, {
+        timer
+      });
+      const remainingSlots =
+        firstCandidate.max_winners === null
+          ? waveCandidates.length
+          : Math.max(
+              firstCandidate.max_winners - firstCandidate.decisions_done,
+              0
+            );
+      const candidatesToProcess = waveCandidates.slice(0, remainingSlots);
+      let nextDecisionTime = Math.max(
+        currentTime,
+        (firstCandidate.latest_decision_time ?? 0) + 1
+      );
+
+      for (const candidate of candidatesToProcess) {
+        if (
+          wavePauses.find((pause) =>
+            Time.millis(nextDecisionTime).isInInterval(pause.start, pause.end)
+          )
+        ) {
+          this.logger.info(
+            `Stopping APPROVE winner formalization for wave ${waveId} at ${nextDecisionTime}. Found a pause on this time`
+          );
+          break;
+        }
+        let claimBuildDropId: string | null = null;
+        let pendingPushNotificationIds: number[] = [];
+        await this.waveDecisionsDb.executeNativeQueriesInTransaction(
+          async (connection) => {
+            this.logger.info(
+              `Formalizing APPROVE winner ${candidate.drop_id} for wave ${waveId} at ${nextDecisionTime}`
+            );
+            const decisionResult = await this.formalizeDecision(
+              {
+                decisionTime: nextDecisionTime,
+                waveId,
+                outcomes: outcomesByWaveId[waveId] ?? [],
+                time_lock_ms: candidate.time_lock_ms,
+                winnerDrops: [
+                  {
+                    drop_id: candidate.drop_id,
+                    vote: candidate.vote,
+                    rank: 1
+                  }
+                ]
+              },
+              { timer, connection }
+            );
+            claimBuildDropId = decisionResult.claimBuildDropId;
+            pendingPushNotificationIds =
+              decisionResult.pendingPushNotificationIds;
+          }
+        );
+        if (claimBuildDropId) {
+          await this.enqueueClaimBuild(claimBuildDropId, waveId);
+        }
+        try {
+          await sendIdentityPushNotifications(pendingPushNotificationIds);
+        } catch (error) {
+          this.logger.error(
+            `Failed to send push notifications for APPROVE decision ${waveId} with pending ids ${pendingPushNotificationIds.join(',')}`,
+            error
+          );
+        }
+        nextDecisionTime++;
+      }
+    }
+  }
+
+  private async loadWaveOutcomes(
+    waveIds: string[],
+    timer: Timer
+  ): Promise<Record<string, WaveOutcome[]>> {
+    if (!waveIds.length) {
+      return {};
+    }
+    const outcomes = await wavesApiDb.getWavesOutcomes(waveIds, { timer });
+    const distributionItems =
+      await wavesApiDb.getWavesOutcomesDistributionItems(waveIds, { timer });
+    return waveIds.reduce(
+      (acc, waveId) => {
+        const outcomeEntities = outcomes[waveId] ?? [];
+        const distributionEntities = distributionItems[waveId] ?? [];
+        acc[waveId] = outcomeEntities
+          .sort((a, d) => a.wave_outcome_position - d.wave_outcome_position)
+          .map<WaveOutcome>((outcome) => {
+            const distributions = distributionEntities
+              .filter(
+                (it) =>
+                  it.wave_outcome_position === outcome.wave_outcome_position
+              )
+              .sort(
+                (a, d) =>
+                  a.wave_outcome_distribution_item_position -
+                  d.wave_outcome_distribution_item_position
+              )
+              .map<WaveOutcomeDistributionItem>((item) => ({
+                amount: item.amount,
+                description: item.description
+              }));
+            return {
+              type: outcome.type,
+              subtype: outcome.subtype ?? undefined,
+              description: outcome.description,
+              credit: outcome.credit ?? undefined,
+              rep_category: outcome.rep_category ?? undefined,
+              amount: outcome.amount === null ? undefined : outcome.amount,
+              distribution: distributions
+            };
+          });
+        return acc;
+      },
+      {} as Record<string, WaveOutcome[]>
+    );
+  }
+
   private calculateNextDecisionPointer(
     decisionGaps: number[],
     decisionPointer: number,
@@ -263,18 +396,51 @@ export class WaveDecisionsService {
     pendingPushNotificationIds: number[];
   }> {
     ctx?.timer?.start(`${this.constructor.name}->createDecision`);
-    await this.waveDecisionsDb.insertDecision(
-      {
-        decision_time: decisionTime,
-        wave_id: waveId
-      },
-      ctx
-    );
     const n = outcomes
       .map((it) => it.distribution?.length ?? 1)
       .reduce((previous, cur) => (cur > previous ? cur : previous), 0);
     const winnerDrops = await this.getWinnerDropIdsOrderByPlaces(
       { waveId, n, time_lock_ms, decision_time: Time.millis(decisionTime) },
+      ctx
+    );
+    const result = await this.formalizeDecision(
+      {
+        decisionTime,
+        waveId,
+        winnerDrops,
+        outcomes,
+        time_lock_ms
+      },
+      ctx
+    );
+    ctx?.timer?.stop(`${this.constructor.name}->createDecision`);
+    return result;
+  }
+
+  private async formalizeDecision(
+    {
+      decisionTime,
+      waveId,
+      winnerDrops,
+      outcomes,
+      time_lock_ms
+    }: {
+      decisionTime: number;
+      waveId: string;
+      winnerDrops: { drop_id: string; vote: number; rank: number }[];
+      outcomes: WaveOutcome[];
+      time_lock_ms: number | null;
+    },
+    ctx: RequestContext
+  ): Promise<{
+    claimBuildDropId: string | null;
+    pendingPushNotificationIds: number[];
+  }> {
+    await this.waveDecisionsDb.insertDecision(
+      {
+        decision_time: decisionTime,
+        wave_id: waveId
+      },
       ctx
     );
     const decisionWinners: Omit<WaveDecisionWinnerDropEntity, 'id'>[] = [];
@@ -355,7 +521,6 @@ export class WaveDecisionsService {
       winnerDropIds,
       ctx
     );
-    ctx?.timer?.stop(`${this.constructor.name}->createDecision`);
     return { claimBuildDropId, pendingPushNotificationIds };
   }
 

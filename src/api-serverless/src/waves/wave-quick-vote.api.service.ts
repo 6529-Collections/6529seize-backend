@@ -18,6 +18,7 @@ import {
   waveQuickVoteDb
 } from '@/api/waves/wave-quick-vote.db';
 import { WavesApiDb, wavesApiDb } from '@/api/waves/waves.api.db';
+import { isApproveWaveClosed } from '@/waves/wave-approve.helpers';
 
 export class WaveQuickVoteApiService {
   constructor(
@@ -103,6 +104,18 @@ export class WaveQuickVoteApiService {
     }
     if (wave.type === WaveType.CHAT) {
       throw new BadRequestException(`Voting is not allowed in chat waves`);
+    }
+    const noOfDecisionsDone = await this.wavesApiDb
+      .countWaveDecisionsByWaveIds([wave.id], ctx)
+      .then((it) => it[wave.id] ?? 0);
+    if (
+      isApproveWaveClosed({
+        waveType: wave.type,
+        maxWinners: wave.max_winners ?? null,
+        decisionsDone: noOfDecisionsDone
+      })
+    ) {
+      throw new BadRequestException(`Voting is closed in this wave`);
     }
     if (
       wave.voting_group_id !== null &&

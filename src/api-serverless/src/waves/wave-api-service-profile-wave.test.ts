@@ -39,7 +39,7 @@ function updateRequest(visibilityGroupId: string | null): ApiUpdateWaveRequest {
     },
     wave: {
       type: ApiWaveType.Chat,
-      winning_thresholds: null,
+      winning_threshold: null,
       max_winners: null,
       time_lock_ms: null,
       admin_group: { group_id: null },

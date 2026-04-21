@@ -11,7 +11,7 @@ jest.mock('@/alchemy', () => ({
 import { identitiesDb } from '@/identities/identities.db';
 import { DropType } from '@/entities/IDrop';
 import { DropGroupMention } from '@/entities/IWaveGroupNotificationSubscription';
-import { WaveIdentitySubmissionDuplicates } from '@/entities/IWave';
+import { WaveIdentitySubmissionDuplicates, WaveType } from '@/entities/IWave';
 import { env } from '@/env';
 import { profilesService } from '@/profiles/profiles.service';
 import { CreateOrUpdateDropUseCase } from './create-or-update-drop.use-case';
@@ -419,5 +419,75 @@ describe('CreateOrUpdateDropUseCase', () => {
       null,
       { timer: undefined, connection: {} }
     );
+  });
+
+  it('rejects participatory drops in closed approve waves', async () => {
+    const wavesApiDb = {
+      countWaveDecisionsByWaveIds: jest.fn().mockResolvedValue({
+        'wave-1': 2
+      })
+    };
+    const useCase = createUseCaseWithMocks({ wavesApiDb });
+
+    await expect(
+      (useCase as any).verifyParticipatoryLimitations(
+        {
+          isDescriptionDrop: false,
+          wave: {
+            id: 'wave-1',
+            type: WaveType.APPROVE,
+            max_winners: 2,
+            participation_period_start: null,
+            participation_period_end: null,
+            chat_enabled: true,
+            participation_max_applications_per_participant: null
+          },
+          model: {
+            drop_id: null,
+            wave_id: 'wave-1',
+            drop_type: DropType.PARTICIPATORY,
+            signature: null,
+            author_identity: 'author-1'
+          }
+        },
+        { connection: {} }
+      )
+    ).rejects.toThrow(`Participation to this wave is closed`);
+  });
+
+  it('does not count wave decisions for waves that cannot be approve-closed', async () => {
+    const wavesApiDb = {
+      countWaveDecisionsByWaveIds: jest.fn().mockResolvedValue({
+        'wave-1': 2
+      })
+    };
+    const useCase = createUseCaseWithMocks({ wavesApiDb });
+
+    await expect(
+      (useCase as any).verifyParticipatoryLimitations(
+        {
+          isDescriptionDrop: false,
+          wave: {
+            id: 'wave-1',
+            type: WaveType.RANK,
+            max_winners: null,
+            participation_period_start: null,
+            participation_period_end: null,
+            chat_enabled: true,
+            participation_max_applications_per_participant: null
+          },
+          model: {
+            drop_id: null,
+            wave_id: 'wave-1',
+            drop_type: DropType.PARTICIPATORY,
+            signature: null,
+            author_identity: 'author-1'
+          }
+        },
+        { connection: {} }
+      )
+    ).resolves.toBeUndefined();
+
+    expect(wavesApiDb.countWaveDecisionsByWaveIds).not.toHaveBeenCalled();
   });
 });
