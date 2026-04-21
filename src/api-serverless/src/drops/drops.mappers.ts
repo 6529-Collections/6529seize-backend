@@ -56,6 +56,7 @@ import { ApiWaveOutcomeCredit } from '../generated/models/ApiWaveOutcomeCredit';
 import { WinnerDropVoterVoteEntity } from '../../../entities/IWinnerDropVoterVote';
 import { ApiDropContextProfileContext } from '../generated/models/ApiDropContextProfileContext';
 import { ApiDropResolvedIdentityProfile } from '../generated/models/ApiDropResolvedIdentityProfile';
+import { ApiProfileClassification } from '../generated/models/ApiProfileClassification';
 import {
   identityFetcher,
   IdentityFetcher
@@ -715,6 +716,8 @@ export class DropsMappers {
       xtdh_rate: 0,
       tdh_rate: 0,
       level: 0,
+      classification: ApiProfileClassification.Pseudonym,
+      sub_classification: null,
       archived: true,
       profile_wave_id: null,
       subscribed_actions: [],
