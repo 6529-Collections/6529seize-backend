@@ -3,6 +3,7 @@ import {
   DROP_RANK_TABLE,
   DROP_REAL_VOTE_IN_TIME_TABLE,
   DROPS_TABLE,
+  WAVE_LEADERBOARD_ENTRIES_TABLE,
   WAVES_DECISION_PAUSES_TABLE,
   WAVES_DECISION_WINNER_DROPS_TABLE,
   WAVES_DECISIONS_TABLE,
@@ -268,6 +269,93 @@ export class WaveDecisionsDb extends LazyDbAccessCompatibleService {
         }))
       );
     ctx.timer?.stop(`${this.constructor.name}->findAllDecisionWinners`);
+    return result;
+  }
+
+  async getApproveWinnerCandidates(
+    currentTime: number,
+    ctx: RequestContext
+  ): Promise<
+    {
+      wave_id: string;
+      drop_id: string;
+      created_at: number;
+      vote: number;
+      time_lock_ms: number | null;
+      max_winners: number | null;
+      decisions_done: number;
+      latest_decision_time: number | null;
+    }[]
+  > {
+    ctx.timer?.start(`${this.constructor.name}->getApproveWinnerCandidates`);
+    const result = await this.db.execute<{
+      wave_id: string;
+      drop_id: string;
+      created_at: number;
+      vote: number;
+      time_lock_ms: number | null;
+      max_winners: number | null;
+      decisions_done: number;
+      latest_decision_time: number | null;
+    }>(
+      `
+        select
+          d.wave_id as wave_id,
+          d.id as drop_id,
+          d.created_at as created_at,
+          cast(
+            case
+              when w.time_lock_ms is not null and w.time_lock_ms > 0
+                then ifnull(lb.vote, 0)
+              else ifnull(r.vote, 0)
+            end as signed
+          ) as vote,
+          w.time_lock_ms as time_lock_ms,
+          w.max_winners as max_winners,
+          ifnull(dc.decisions_done, 0) as decisions_done,
+          dc.latest_decision_time as latest_decision_time
+        from ${DROPS_TABLE} d
+        join ${WAVES_TABLE} w
+          on w.id = d.wave_id
+          and w.type = 'APPROVE'
+        left join ${DROP_RANK_TABLE} r
+          on r.drop_id = d.id
+        left join ${WAVE_LEADERBOARD_ENTRIES_TABLE} lb
+          on lb.drop_id = d.id
+          and lb.wave_id = d.wave_id
+        left join (
+          select
+            wave_id,
+            count(*) as decisions_done,
+            max(decision_time) as latest_decision_time
+          from ${WAVES_DECISIONS_TABLE}
+          group by 1
+        ) dc
+          on dc.wave_id = w.id
+        where d.drop_type = '${DropType.PARTICIPATORY}'
+          and w.winning_min_threshold is not null
+          and (
+            case
+              when w.time_lock_ms is not null and w.time_lock_ms > 0
+                then ifnull(lb.vote, 0)
+              else ifnull(r.vote, 0)
+            end
+          ) >= w.winning_min_threshold
+          and (
+            w.max_winners is null or ifnull(dc.decisions_done, 0) < w.max_winners
+          )
+          and not exists (
+            select 1
+            from ${WAVES_DECISION_PAUSES_TABLE} p
+            where p.wave_id = w.id
+              and :currentTime between p.start_time and p.end_time
+          )
+        order by d.wave_id asc, d.created_at asc, d.id asc
+      `,
+      { currentTime },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop(`${this.constructor.name}->getApproveWinnerCandidates`);
     return result;
   }
 

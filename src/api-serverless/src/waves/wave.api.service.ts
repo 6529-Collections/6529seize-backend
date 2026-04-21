@@ -451,7 +451,7 @@ export class WaveApiService {
     ctx: RequestContext
   ) {
     const decisionStrategy = wave.decisions_strategy;
-    if (decisionStrategy === null) {
+    if (wave.type !== WaveType.APPROVE && decisionStrategy === null) {
       throw new BadRequestException(
         `Can't add pauses to wave without a decision strategy`
       );
@@ -459,7 +459,7 @@ export class WaveApiService {
     const nextDecisionTime = wave.next_decision_time
       ? Time.millis(wave.next_decision_time)
       : null;
-    if (!nextDecisionTime) {
+    if (wave.type !== WaveType.APPROVE && !nextDecisionTime) {
       throw new BadRequestException(
         `Can't add pauses to wave without a next decision time`
       );
@@ -468,7 +468,7 @@ export class WaveApiService {
     if (proposedEndTime.isInPast()) {
       throw new BadRequestException(`Can't modify end_time to be in past`);
     }
-    if (nextDecisionTime.isInPast()) {
+    if (nextDecisionTime?.isInPast()) {
       throw new BadRequestException(
         `Can't modify pauses of a wave with unresolved decisions`
       );
@@ -519,12 +519,12 @@ export class WaveApiService {
     const nextDecisionTime = wave.next_decision_time
       ? Time.millis(wave.next_decision_time)
       : null;
-    if (!nextDecisionTime) {
+    if (wave.type !== WaveType.APPROVE && !nextDecisionTime) {
       throw new BadRequestException(
         `Can't add pauses to wave without a next decision time`
       );
     }
-    if (nextDecisionTime.isInPast()) {
+    if (nextDecisionTime?.isInPast()) {
       throw new BadRequestException(
         `Can't modify pauses of a wave with unresolved decisions`
       );
@@ -649,7 +649,7 @@ export class WaveApiService {
       },
       wave: {
         type: ApiWaveType.Chat,
-        winning_thresholds: null,
+        winning_threshold: null,
         max_winners: null,
         time_lock_ms: null,
         admin_group: {
@@ -677,6 +677,29 @@ export class WaveApiService {
       throw new BadRequestException(
         `Creating a wave with signed votes requirement is not yet supported`
       );
+    }
+    if (request.wave.type === ApiWaveType.Approve) {
+      if (
+        request.wave.winning_threshold == null ||
+        request.wave.winning_threshold < 1
+      ) {
+        throw new BadRequestException(
+          `Approve waves require a positive winning_threshold`
+        );
+      }
+    } else if (request.wave.winning_threshold != null) {
+      throw new BadRequestException(
+        `Only APPROVE waves support a winning_threshold`
+      );
+    }
+    if (request.wave.type === ApiWaveType.Approve) {
+      if (request.wave.max_winners != null && request.wave.max_winners < 1) {
+        throw new BadRequestException(
+          `Approve waves require max_winners to be positive when set`
+        );
+      }
+    } else if (request.wave.max_winners != null) {
+      throw new BadRequestException(`Only APPROVE waves support max_winners`);
     }
     validateWaveSubmissionStrategy(
       request.participation.submission_strategy,
@@ -1475,6 +1498,19 @@ export class WaveApiService {
           request.visibility.scope.group_id !== null
         ) {
           throw new BadRequestException(`Profile waves must remain public`);
+        }
+        if (
+          waveBeforeUpdate.type === WaveType.APPROVE &&
+          request.wave.max_winners !== null
+        ) {
+          const noOfDecisionsDone = await this.wavesApiDb
+            .countWaveDecisionsByWaveIds([waveId], ctxWithConnection)
+            .then((it) => it[waveId] ?? 0);
+          if (request.wave.max_winners < noOfDecisionsDone) {
+            throw new BadRequestException(
+              `max_winners can't be lower than already declared winners count`
+            );
+          }
         }
         this.assertImmutableWaveUpdateFieldsUnchanged({
           request,

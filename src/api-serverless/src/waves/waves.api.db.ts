@@ -19,6 +19,7 @@ import {
   WAVE_READER_METRICS_TABLE,
   WAVES_ARCHIVE_TABLE,
   WAVES_DECISION_PAUSES_TABLE,
+  WAVES_DECISIONS_TABLE,
   WAVES_TABLE
 } from '@/constants';
 import {
@@ -1274,6 +1275,28 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       { waveId },
       { wrappedConnection: ctx.connection }
     );
+  }
+
+  async countWaveDecisionsByWaveIds(
+    waveIds: string[],
+    ctx: RequestContext
+  ): Promise<Record<string, number>> {
+    if (!waveIds.length) {
+      return {};
+    }
+    const timerLabel = `${this.constructor.name}->countWaveDecisionsByWaveIds`;
+    ctx.timer?.start(timerLabel);
+    const rows = await this.db.execute<{ wave_id: string; cnt: number }>(
+      `select wave_id, count(*) as cnt from ${WAVES_DECISIONS_TABLE} where wave_id in (:waveIds) group by 1`,
+      { waveIds },
+      { wrappedConnection: ctx.connection }
+    );
+    const result = rows.reduce(
+      (acc, row) => ({ ...acc, [row.wave_id]: row.cnt }),
+      {} as Record<string, number>
+    );
+    ctx.timer?.stop(timerLabel);
+    return result;
   }
 
   async deletePause(id: number, connection: ConnectionWrapper<any>) {

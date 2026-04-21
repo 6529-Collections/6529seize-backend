@@ -79,6 +79,7 @@ import { env } from '@/env';
 import { UUID_REGEX, WALLET_REGEX } from '@/constants';
 import { getAlchemyInstance } from '@/alchemy';
 import { profilesService } from '@/profiles/profiles.service';
+import { isApproveWaveClosed } from '@/waves/wave-approve.helpers';
 
 function isActiveIdentityNomination(nomination: { has_won: boolean }): boolean {
   return !nomination.has_won;
@@ -563,6 +564,18 @@ export class CreateOrUpdateDropUseCase {
     }
     const now = Time.now();
     if (model.drop_type === DropType.PARTICIPATORY) {
+      const noOfDecisionsDone = await this.wavesApiDb
+        .countWaveDecisionsByWaveIds([wave.id], { timer, connection })
+        .then((it) => it[wave.id] ?? 0);
+      if (
+        isApproveWaveClosed({
+          waveType: wave.type,
+          maxWinners: wave.max_winners,
+          decisionsDone: noOfDecisionsDone
+        })
+      ) {
+        throw new ForbiddenException(`Participation to this wave is closed`);
+      }
       const participationPeriodStart = Time.millis(
         wave.participation_period_start ?? 0
       );
