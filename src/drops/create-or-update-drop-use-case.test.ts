@@ -454,4 +454,40 @@ describe('CreateOrUpdateDropUseCase', () => {
       )
     ).rejects.toThrow(`Participation to this wave is closed`);
   });
+
+  it('does not count wave decisions for waves that cannot be approve-closed', async () => {
+    const wavesApiDb = {
+      countWaveDecisionsByWaveIds: jest.fn().mockResolvedValue({
+        'wave-1': 2
+      })
+    };
+    const useCase = createUseCaseWithMocks({ wavesApiDb });
+
+    await expect(
+      (useCase as any).verifyParticipatoryLimitations(
+        {
+          isDescriptionDrop: false,
+          wave: {
+            id: 'wave-1',
+            type: WaveType.RANK,
+            max_winners: null,
+            participation_period_start: null,
+            participation_period_end: null,
+            chat_enabled: true,
+            participation_max_applications_per_participant: null
+          },
+          model: {
+            drop_id: null,
+            wave_id: 'wave-1',
+            drop_type: DropType.PARTICIPATORY,
+            signature: null,
+            author_identity: 'author-1'
+          }
+        },
+        { connection: {} }
+      )
+    ).resolves.toBeUndefined();
+
+    expect(wavesApiDb.countWaveDecisionsByWaveIds).not.toHaveBeenCalled();
+  });
 });

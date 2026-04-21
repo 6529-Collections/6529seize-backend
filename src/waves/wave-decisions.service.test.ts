@@ -31,6 +31,7 @@ describe('WaveDecisionsService', () => {
     jest
       .spyOn(wavesApiDb, 'getWavesOutcomesDistributionItems')
       .mockResolvedValue({});
+    (waveDecisionsDb.getWavePauses as jest.Mock).mockResolvedValue([]);
     service = new WaveDecisionsService(
       waveDecisionsDb,
       waveLeaderboardCalculationService,
@@ -196,6 +197,72 @@ describe('WaveDecisionsService', () => {
     expect(formalizeDecision).toHaveBeenCalledWith(
       {
         decisionTime: latestDecisionTime + 1,
+        waveId: 'wave-1',
+        outcomes: [],
+        time_lock_ms: null,
+        winnerDrops: [
+          {
+            drop_id: 'drop-older',
+            vote: 12,
+            rank: 1
+          }
+        ]
+      },
+      {
+        connection: {},
+        timer: {}
+      }
+    );
+  });
+
+  it('stops approve formalization when the next synthetic decision lands in a pause', async () => {
+    jest.spyOn(Time, 'currentMillis').mockReturnValue(1_000);
+    (waveDecisionsDb.getApproveWinnerCandidates as jest.Mock).mockResolvedValue(
+      [
+        {
+          wave_id: 'wave-1',
+          drop_id: 'drop-older',
+          created_at: 10,
+          vote: 12,
+          time_lock_ms: null,
+          max_winners: null,
+          decisions_done: 0,
+          latest_decision_time: 999
+        },
+        {
+          wave_id: 'wave-1',
+          drop_id: 'drop-newer',
+          created_at: 20,
+          vote: 14,
+          time_lock_ms: null,
+          max_winners: null,
+          decisions_done: 0,
+          latest_decision_time: 999
+        }
+      ]
+    );
+    (waveDecisionsDb.getWavePauses as jest.Mock).mockResolvedValue([
+      {
+        start: Time.millis(1_001),
+        end: Time.millis(2_000)
+      }
+    ]);
+    (
+      waveDecisionsDb.executeNativeQueriesInTransaction as jest.Mock
+    ).mockImplementation(async (fn) => fn({}));
+    const formalizeDecision = jest
+      .spyOn(service as any, 'formalizeDecision')
+      .mockResolvedValue({
+        claimBuildDropId: null,
+        pendingPushNotificationIds: []
+      });
+
+    await (service as any).createApproveDecisions({} as any);
+
+    expect(formalizeDecision).toHaveBeenCalledTimes(1);
+    expect(formalizeDecision).toHaveBeenCalledWith(
+      {
+        decisionTime: 1_000,
         waveId: 'wave-1',
         outcomes: [],
         time_lock_ms: null,

@@ -144,9 +144,12 @@ export class VoteForDropUseCase {
     if (wave.type === WaveType.CHAT) {
       throw new ForbiddenException('Voting is not allowed in chat waves');
     }
-    const noOfDecisionsDone = await this.wavesDb
-      .countWaveDecisionsByWaveIds([wave.id], ctx)
-      .then((it) => it[wave.id] ?? 0);
+    let noOfDecisionsDone = 0;
+    if (wave.type === WaveType.APPROVE && wave.max_winners != null) {
+      noOfDecisionsDone = await this.wavesDb
+        .countWaveDecisionsByWaveIds([wave.id], ctx)
+        .then((it) => it[wave.id] ?? 0);
+    }
     if (
       isApproveWaveClosed({
         waveType: wave.type,

@@ -564,17 +564,19 @@ export class CreateOrUpdateDropUseCase {
     }
     const now = Time.now();
     if (model.drop_type === DropType.PARTICIPATORY) {
-      const noOfDecisionsDone = await this.wavesApiDb
-        .countWaveDecisionsByWaveIds([wave.id], { timer, connection })
-        .then((it) => it[wave.id] ?? 0);
-      if (
-        isApproveWaveClosed({
-          waveType: wave.type,
-          maxWinners: wave.max_winners,
-          decisionsDone: noOfDecisionsDone
-        })
-      ) {
-        throw new ForbiddenException(`Participation to this wave is closed`);
+      if (wave.type === WaveType.APPROVE && wave.max_winners != null) {
+        const noOfDecisionsDone = await this.wavesApiDb
+          .countWaveDecisionsByWaveIds([wave.id], { timer, connection })
+          .then((it) => it[wave.id] ?? 0);
+        if (
+          isApproveWaveClosed({
+            waveType: wave.type,
+            maxWinners: wave.max_winners,
+            decisionsDone: noOfDecisionsDone
+          })
+        ) {
+          throw new ForbiddenException(`Participation to this wave is closed`);
+        }
       }
       const participationPeriodStart = Time.millis(
         wave.participation_period_start ?? 0

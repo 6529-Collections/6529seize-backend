@@ -118,6 +118,21 @@ describe('VoteForDropUseCase', () => {
     expect(userNotifier.notifyOfDropVote).not.toHaveBeenCalled();
   });
 
+  it('does not count wave decisions for waves that cannot be approve-closed', async () => {
+    await useCase.execute(
+      {
+        voter_id: 'voter-1',
+        drop_id: 'drop-1',
+        wave_id: 'wave-1',
+        votes: 2,
+        proxy_id: null
+      },
+      { connection }
+    );
+
+    expect(wavesDb.countWaveDecisionsByWaveIds).not.toHaveBeenCalled();
+  });
+
   it('rejects voting in closed approve waves', async () => {
     (wavesDb.findById as jest.Mock).mockResolvedValue({
       ...wave,

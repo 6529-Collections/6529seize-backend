@@ -241,6 +241,9 @@ export class WaveDecisionsService {
       if (!firstCandidate) {
         continue;
       }
+      const wavePauses = await this.waveDecisionsDb.getWavePauses(waveId, {
+        timer
+      });
       const remainingSlots =
         firstCandidate.max_winners === null
           ? waveCandidates.length
@@ -255,6 +258,16 @@ export class WaveDecisionsService {
       );
 
       for (const candidate of candidatesToProcess) {
+        if (
+          wavePauses.find((pause) =>
+            Time.millis(nextDecisionTime).isInInterval(pause.start, pause.end)
+          )
+        ) {
+          this.logger.info(
+            `Stopping APPROVE winner formalization for wave ${waveId} at ${nextDecisionTime}. Found a pause on this time`
+          );
+          break;
+        }
         let claimBuildDropId: string | null = null;
         let pendingPushNotificationIds: number[] = [];
         await this.waveDecisionsDb.executeNativeQueriesInTransaction(
