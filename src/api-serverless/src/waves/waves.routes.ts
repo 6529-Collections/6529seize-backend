@@ -1176,20 +1176,28 @@ const WaveDecisionsStrategySchema = Joi.object<ApiWaveDecisionsStrategy>({
 });
 
 const WaveConfigSchema = Joi.object<
-  ApiWaveConfig & { period?: ApiIntRange | null }
+  ApiWaveConfig & {
+    period?: ApiIntRange | null;
+    winning_thresholds?: unknown[] | null;
+  }
 >({
   type: Joi.string()
     .required()
     .valid(...Object.values(ApiWaveType)),
-  winning_thresholds: Joi.when('type', {
+  // Accept the legacy field from old clients and strip it before service code.
+  winning_thresholds: Joi.alternatives()
+    .try(Joi.array(), Joi.valid(null))
+    .optional()
+    .strip(),
+  winning_threshold: Joi.when('type', {
     is: Joi.string().valid(ApiWaveType.Approve),
-    then: IntRangeSchema.required().or('min', 'max'),
-    otherwise: Joi.valid(null)
+    then: Joi.number().integer().required().min(1),
+    otherwise: Joi.valid(null).default(null)
   }),
   max_winners: Joi.when('type', {
-    is: Joi.string().valid(ApiWaveType.Rank),
+    is: Joi.string().valid(ApiWaveType.Approve),
     then: Joi.number().integer().required().allow(null).min(1),
-    otherwise: Joi.valid(null)
+    otherwise: Joi.valid(null).default(null)
   }),
   time_lock_ms: Joi.number()
     .integer()

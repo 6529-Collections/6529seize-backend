@@ -35,7 +35,8 @@ describe('VoteForDropUseCase', () => {
     next_decision_time: null,
     forbid_negative_votes: false,
     visibility_group_id: null,
-    type: WaveType.RANK
+    type: WaveType.RANK,
+    max_winners: null
   } as any;
   const drop = {
     id: 'drop-1',
@@ -70,6 +71,7 @@ describe('VoteForDropUseCase', () => {
       undefined
     );
     (wavesDb.findById as jest.Mock).mockResolvedValue(wave);
+    (wavesDb.countWaveDecisionsByWaveIds as jest.Mock).mockResolvedValue({});
     (dropsDb.findDropById as jest.Mock).mockResolvedValue(drop);
     (
       userGroupsService.getGroupsUserIsEligibleFor as jest.Mock
@@ -114,5 +116,44 @@ describe('VoteForDropUseCase', () => {
     expect(votingDb.insertCreditSpending).not.toHaveBeenCalled();
     expect(profileActivityLogsDb.insert).not.toHaveBeenCalled();
     expect(userNotifier.notifyOfDropVote).not.toHaveBeenCalled();
+  });
+
+  it('does not count wave decisions for waves that cannot be approve-closed', async () => {
+    await useCase.execute(
+      {
+        voter_id: 'voter-1',
+        drop_id: 'drop-1',
+        wave_id: 'wave-1',
+        votes: 2,
+        proxy_id: null
+      },
+      { connection }
+    );
+
+    expect(wavesDb.countWaveDecisionsByWaveIds).not.toHaveBeenCalled();
+  });
+
+  it('rejects voting in closed approve waves', async () => {
+    (wavesDb.findById as jest.Mock).mockResolvedValue({
+      ...wave,
+      type: WaveType.APPROVE,
+      max_winners: 1
+    });
+    (wavesDb.countWaveDecisionsByWaveIds as jest.Mock).mockResolvedValue({
+      'wave-1': 1
+    });
+
+    await expect(
+      useCase.execute(
+        {
+          voter_id: 'voter-1',
+          drop_id: 'drop-1',
+          wave_id: 'wave-1',
+          votes: 3,
+          proxy_id: null
+        },
+        { connection }
+      )
+    ).rejects.toThrow(`Voting is closed in this wave`);
   });
 });
