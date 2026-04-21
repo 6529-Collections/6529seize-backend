@@ -849,7 +849,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
           and dc.curation_id = :curation_id
         order by
           (dc.priority_order is null) asc,
-          dc.priority_order asc,
+          dc.priority_order desc,
           d.created_at asc,
           d.id asc
         limit :limit offset :offset
