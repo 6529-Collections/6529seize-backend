@@ -123,11 +123,27 @@
     "winston": "^3.11.0"
   },
   "overrides": {
-    "elliptic": "6.6.1",
-    "ws": "^8.18.0",
-    "undici": "^7.24.0",
-    "tar": "^7.5.11",
-    "@tootallnate/once": "^3.0.1",
-    "brace-expansion": "^2.0.2"
+    "serverless": {
+      "tar": "7.5.13",
+      "ws": "8.18.0"
+    },
+    "@serverless/platform-client": {
+      "ws": "8.18.0"
+    },
+    "discord.js": {
+      "undici": "7.25.0"
+    },
+    "@discordjs/rest": {
+      "undici": "7.25.0"
+    },
+    "http-proxy-agent": {
+      "@tootallnate/once": "3.0.1"
+    },
+    "minimatch@3": {
+      "brace-expansion": "^2.0.2"
+    },
+    "minimatch@5": {
+      "brace-expansion": "^2.0.2"
+    }
   }
 }

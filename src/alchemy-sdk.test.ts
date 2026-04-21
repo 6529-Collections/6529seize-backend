@@ -23,6 +23,35 @@ jest.mock('axios', () => {
   return { __esModule: true, default: mock, AxiosError: MockAxiosError };
 });
 
+const mockProviderInstances: Array<{
+  getBlockNumber: jest.Mock;
+  getBlock: jest.Mock;
+  getTransaction: jest.Mock;
+  getTransactionReceipt: jest.Mock;
+  getLogs: jest.Mock;
+  resolveName: jest.Mock;
+}> = [];
+
+jest.mock('ethers', () => {
+  class MockJsonRpcProvider {
+    public readonly getBlockNumber = jest.fn();
+    public readonly getBlock = jest.fn();
+    public readonly getTransaction = jest.fn();
+    public readonly getTransactionReceipt = jest.fn();
+    public readonly getLogs = jest.fn();
+    public readonly resolveName = jest.fn();
+
+    constructor() {
+      mockProviderInstances.push(this);
+    }
+  }
+
+  return {
+    __esModule: true,
+    JsonRpcProvider: MockJsonRpcProvider
+  };
+});
+
 import axios from 'axios';
 import axiosRetry from 'axios-retry';
 import {
@@ -153,6 +182,25 @@ describe('Alchemy SDK replacement', () => {
           category: [AssetTransfersCategory.EXTERNAL]
         })
       ).rejects.toMatchObject({ message: 'bad params', code: -32602 });
+    });
+
+    it('retries provider-backed core calls using maxRetries', async () => {
+      const alchemy = new Alchemy({
+        network: Network.ETH_MAINNET,
+        apiKey: 'provider-retry-key',
+        maxRetries: 2
+      });
+      const provider = mockProviderInstances.at(-1)!;
+      const rateLimitError = Object.assign(new Error('Too many requests'), {
+        status: 429
+      });
+
+      provider.getBlockNumber
+        .mockRejectedValueOnce(rateLimitError)
+        .mockResolvedValueOnce(123);
+
+      await expect(alchemy.core.getBlockNumber()).resolves.toBe(123);
+      expect(provider.getBlockNumber).toHaveBeenCalledTimes(2);
     });
   });
 

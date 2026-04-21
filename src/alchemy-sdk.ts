@@ -108,6 +108,15 @@ type AlchemyConfig = {
 };
 
 const DEFAULT_MAX_RETRIES = 3;
+const PROVIDER_RETRYABLE_ERROR_CODES = new Set([
+  'ECONNABORTED',
+  'ECONNRESET',
+  'ENOTFOUND',
+  'ETIMEDOUT',
+  'NETWORK_ERROR',
+  'SERVER_ERROR',
+  'TIMEOUT'
+]);
 
 const providers = new Map<string, JsonRpcProvider>();
 
@@ -170,6 +179,98 @@ function createAlchemyAxios(maxRetries: number): AxiosInstance {
     retryCondition: isRetryableAlchemyError
   });
   return instance;
+}
+
+function getProviderRetryDelay(retryCount: number): number {
+  return axiosRetry.exponentialDelay(retryCount);
+}
+
+function getNestedErrorRecord(error: unknown):
+  | {
+      code?: unknown;
+      status?: unknown;
+      statusCode?: unknown;
+      message?: unknown;
+      shortMessage?: unknown;
+      error?: unknown;
+    }
+  | undefined {
+  if (!error || typeof error !== 'object') {
+    return undefined;
+  }
+  return error as {
+    code?: unknown;
+    status?: unknown;
+    statusCode?: unknown;
+    message?: unknown;
+    shortMessage?: unknown;
+    error?: unknown;
+  };
+}
+
+function extractProviderErrorStatus(error: unknown): number | undefined {
+  const topLevel = getNestedErrorRecord(error);
+  const nested = getNestedErrorRecord(topLevel?.error);
+  const candidate = [
+    topLevel?.status,
+    topLevel?.statusCode,
+    nested?.status,
+    nested?.statusCode
+  ].find((value) => typeof value === 'number');
+  return typeof candidate === 'number' ? candidate : undefined;
+}
+
+function extractProviderErrorCodes(error: unknown): string[] {
+  const topLevel = getNestedErrorRecord(error);
+  const nested = getNestedErrorRecord(topLevel?.error);
+  return [topLevel?.code, nested?.code].filter(
+    (value): value is string => typeof value === 'string'
+  );
+}
+
+function getProviderErrorMessage(error: unknown): string {
+  const topLevel = getNestedErrorRecord(error);
+  const nested = getNestedErrorRecord(topLevel?.error);
+  return `${String(topLevel?.message ?? '')} ${String(
+    topLevel?.shortMessage ?? ''
+  )} ${String(nested?.message ?? '')}`.toLowerCase();
+}
+
+function isRetryableProviderError(error: unknown): boolean {
+  const status = extractProviderErrorStatus(error);
+  if (status === 429 || (status != null && status >= 500)) {
+    return true;
+  }
+
+  if (
+    extractProviderErrorCodes(error).some((code) =>
+      PROVIDER_RETRYABLE_ERROR_CODES.has(code)
+    )
+  ) {
+    return true;
+  }
+
+  const message = getProviderErrorMessage(error);
+  return [
+    '429',
+    '502',
+    '503',
+    '504',
+    'econnaborted',
+    'econnreset',
+    'enotfound',
+    'etimedout',
+    'network',
+    'rate limit',
+    'socket hang up',
+    'timed out',
+    'timeout',
+    'too many requests'
+  ].some((snippet) => message.includes(snippet));
+}
+
+async function sleep(delayMs: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, delayMs));
 }
 
 async function postAlchemyRpc<T>(
@@ -283,7 +384,8 @@ class AlchemyCoreClient {
   constructor(
     private readonly network: Network,
     private readonly apiKey: string,
-    private readonly http: AxiosInstance
+    private readonly http: AxiosInstance,
+    private readonly maxRetries: number
   ) {
     const rpcUrl = getRpcUrl(network, apiKey);
     if (!providers.has(rpcUrl)) {
@@ -292,12 +394,32 @@ class AlchemyCoreClient {
     this.provider = providers.get(rpcUrl)!;
   }
 
+  private async withProviderRetries<T>(
+    operation: () => Promise<T>
+  ): Promise<T> {
+    let retryCount = 0;
+
+    while (true) {
+      try {
+        return await operation();
+      } catch (error) {
+        if (retryCount >= this.maxRetries || !isRetryableProviderError(error)) {
+          throw error;
+        }
+        retryCount += 1;
+        await sleep(getProviderRetryDelay(retryCount));
+      }
+    }
+  }
+
   async getBlockNumber(): Promise<number> {
-    return await this.provider.getBlockNumber();
+    return await this.withProviderRetries(() => this.provider.getBlockNumber());
   }
 
   async getBlock(blockHashOrBlockTag: BlockTag): Promise<Block> {
-    const block = await this.provider.getBlock(blockHashOrBlockTag);
+    const block = await this.withProviderRetries(() =>
+      this.provider.getBlock(blockHashOrBlockTag)
+    );
     if (!block) {
       throw new Error(`Block ${String(blockHashOrBlockTag)} not found`);
     }
@@ -320,13 +442,17 @@ class AlchemyCoreClient {
   async getTransaction(
     hash: string
   ): Promise<EthersTransactionResponse | null> {
-    return await this.provider.getTransaction(hash);
+    return await this.withProviderRetries(() =>
+      this.provider.getTransaction(hash)
+    );
   }
 
   async getTransactionReceipt(
     hash: string
   ): Promise<TransactionReceipt | null> {
-    return await this.provider.getTransactionReceipt(hash);
+    return await this.withProviderRetries(() =>
+      this.provider.getTransactionReceipt(hash)
+    );
   }
 
   async getLogs(filter: {
@@ -335,7 +461,9 @@ class AlchemyCoreClient {
     toBlock?: string;
     topics?: (string | string[] | null)[];
   }): Promise<Log[]> {
-    const logs = await this.provider.getLogs(filter);
+    const logs = await this.withProviderRetries(() =>
+      this.provider.getLogs(filter)
+    );
     return logs.map((log) => ({
       blockNumber: log.blockNumber,
       blockHash: log.blockHash,
@@ -350,7 +478,9 @@ class AlchemyCoreClient {
   }
 
   async resolveName(name: string): Promise<string | null> {
-    return await this.provider.resolveName(name);
+    return await this.withProviderRetries(() =>
+      this.provider.resolveName(name)
+    );
   }
 
   async getAssetTransfers(
@@ -454,7 +584,7 @@ export class Alchemy {
       maxRetries
     };
     const http = createAlchemyAxios(maxRetries);
-    this.core = new AlchemyCoreClient(network, apiKey, http);
+    this.core = new AlchemyCoreClient(network, apiKey, http, maxRetries);
     this.nft = new AlchemyNftClient(network, apiKey, http);
   }
 }
