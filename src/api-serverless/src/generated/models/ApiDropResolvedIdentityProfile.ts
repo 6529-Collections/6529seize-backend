@@ -11,6 +11,7 @@
  */
 
 import { ApiIdentitySubscriptionTargetAction } from '../models/ApiIdentitySubscriptionTargetAction';
+import { ApiProfileClassification } from '../models/ApiProfileClassification';
 import { ApiProfileRepCategorySummary } from '../models/ApiProfileRepCategorySummary';
 import { HttpFile } from '../http/http';
 
@@ -27,6 +28,8 @@ export class ApiDropResolvedIdentityProfile {
     'xtdh': number;
     'xtdh_rate': number;
     'level': number;
+    'classification': ApiProfileClassification;
+    'sub_classification': string | null;
     'primary_address': string;
     'subscribed_actions': Array<ApiIdentitySubscriptionTargetAction>;
     'archived': boolean;
@@ -114,6 +117,18 @@ export class ApiDropResolvedIdentityProfile {
             "format": "int64"
         },
         {
+            "name": "classification",
+            "baseName": "classification",
+            "type": "ApiProfileClassification",
+            "format": ""
+        },
+        {
+            "name": "sub_classification",
+            "baseName": "sub_classification",
+            "type": "string",
+            "format": ""
+        },
+        {
             "name": "primary_address",
             "baseName": "primary_address",
             "type": "string",
@@ -181,4 +196,6 @@ export class ApiDropResolvedIdentityProfile {
     public constructor() {
     }
 }
+
+
 
