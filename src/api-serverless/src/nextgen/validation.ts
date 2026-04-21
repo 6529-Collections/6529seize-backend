@@ -1,5 +1,8 @@
-import { ethers, hashMessage } from 'ethers';
+import csv from 'csv-parser';
+import { ethers, hashMessage, keccak256 } from 'ethers';
 import * as Joi from 'joi';
+import { MerkleTree } from 'merkletreejs';
+import path from 'path';
 import { Readable } from 'stream';
 import {
   getNextGenChainId,
@@ -11,12 +14,6 @@ import { Logger } from '../../../logging';
 import { numbers } from '../../../numbers';
 import { equalIgnoreCase } from '../../../strings';
 import { getRpcUrl } from '../../../alchemy';
-
-const { keccak256 } = require('@ethersproject/keccak256');
-const { MerkleTree } = require('merkletreejs');
-
-const csv = require('csv-parser');
-const path = require('path');
 
 const logger = Logger.get('NEXTGEN_VALIDATION');
 
@@ -290,7 +287,8 @@ async function computeMerkle(allowlist: UploadAllowlist[]): Promise<any> {
     const parsedInfo = stringToHex(info);
     const concatenatedData = `${parsedAddress}${parsedSpots}${parsedInfo}`;
     const bufferData = Buffer.from(concatenatedData, 'hex');
-    const result = keccak256(keccak256(bufferData)).slice(2);
+    const leafBytes = new Uint8Array(bufferData);
+    const result = keccak256(keccak256(leafBytes)).slice(2);
 
     return {
       ...al,
@@ -318,7 +316,8 @@ async function computeMerkleBurn(
     const parsedInfo = stringToHex(info);
     const concatenatedData = `${parsedTokenId}${parsedInfo}`;
     const bufferData = Buffer.from(concatenatedData, 'hex');
-    const result = keccak256(keccak256(bufferData)).slice(2);
+    const leafBytes = new Uint8Array(bufferData);
+    const result = keccak256(keccak256(leafBytes)).slice(2);
 
     return {
       ...al,
