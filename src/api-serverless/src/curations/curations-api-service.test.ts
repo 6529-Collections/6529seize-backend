@@ -266,15 +266,20 @@ describe('CurationsApiService', () => {
     const userGroupsService = {
       getGroupsUserIsEligibleFor: jest.fn().mockResolvedValue(eligibleGroupIds)
     };
+    const profileWavesDb = {
+      clearProfileCurationByCurationId: jest.fn().mockResolvedValue(undefined)
+    };
 
     return {
       service: new CurationsApiService(
         curationsDb as any,
         wavesApiDb as any,
         dropsDb as any,
-        userGroupsService as any
+        userGroupsService as any,
+        profileWavesDb as any
       ),
       curationsDb,
+      profileWavesDb,
       storedWaveCurations,
       storedDropCurations,
       ctx: {
@@ -847,34 +852,43 @@ describe('CurationsApiService', () => {
   });
 
   it('deletes persisted memberships when a curation is deleted', async () => {
-    const { service, curationsDb, storedWaveCurations, ctx } = createService({
-      waveCurations: [
-        {
-          id: 'curation-1',
-          wave_id: 'wave-1',
-          community_group_id: 'community-group-1',
-          name: 'Featured',
-          created_at: 1,
-          updated_at: 1,
-          priority_order: 1
-        },
-        {
-          id: 'curation-2',
-          wave_id: 'wave-1',
-          community_group_id: 'community-group-1',
-          name: 'Team Picks',
-          created_at: 2,
-          updated_at: 2,
-          priority_order: 2
-        }
-      ]
-    });
+    const { service, curationsDb, profileWavesDb, storedWaveCurations, ctx } =
+      createService({
+        waveCurations: [
+          {
+            id: 'curation-1',
+            wave_id: 'wave-1',
+            community_group_id: 'community-group-1',
+            name: 'Featured',
+            created_at: 1,
+            updated_at: 1,
+            priority_order: 1
+          },
+          {
+            id: 'curation-2',
+            wave_id: 'wave-1',
+            community_group_id: 'community-group-1',
+            name: 'Team Picks',
+            created_at: 2,
+            updated_at: 2,
+            priority_order: 2
+          }
+        ]
+      });
 
     await expect(
       service.deleteWaveCuration('wave-1', 'curation-1', ctx)
     ).resolves.toBeUndefined();
 
     expect(curationsDb.deleteDropCurationsByCurationId).toHaveBeenCalledWith(
+      'curation-1',
+      expect.objectContaining({
+        connection: expect.anything()
+      })
+    );
+    expect(
+      profileWavesDb.clearProfileCurationByCurationId
+    ).toHaveBeenCalledWith(
       'curation-1',
       expect.objectContaining({
         connection: expect.anything()

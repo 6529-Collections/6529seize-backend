@@ -8,12 +8,14 @@ import {
   resolveWavePictureOverride,
   WaveDisplayOverride
 } from '@/api/waves/direct-message-wave-display.service';
+import { isWaveCreatorOrAdmin } from '@/waves/wave-admin.helpers';
 
 export type WaveMinSource = {
   id: string;
   name: string;
   picture: string | null;
   description_drop_id: string;
+  created_by: string;
   last_drop_time: number;
   submission_type: string | null;
   chat_enabled: boolean;
@@ -63,7 +65,8 @@ export function mapWaveToApiWaveMin({
   noRightToVote,
   noRightToParticipate,
   pinned,
-  identityWave
+  identityWave,
+  authenticatedProfileId
 }: {
   wave: WaveMinSource;
   displayByWaveId: Record<string, WaveDisplayOverride>;
@@ -72,6 +75,7 @@ export function mapWaveToApiWaveMin({
   noRightToParticipate: boolean;
   pinned: boolean;
   identityWave: boolean;
+  authenticatedProfileId: string | null | undefined;
 }): ApiWaveMin {
   return {
     id: wave.id,
@@ -92,9 +96,11 @@ export function mapWaveToApiWaveMin({
       wave.chat_enabled &&
       (wave.chat_group_id === null ||
         groupIdsUserIsEligibleFor.includes(wave.chat_group_id)),
-    authenticated_user_admin:
-      wave.admin_group_id !== null &&
-      groupIdsUserIsEligibleFor.includes(wave.admin_group_id),
+    authenticated_user_admin: isWaveCreatorOrAdmin({
+      authenticatedProfileId,
+      wave,
+      groupIdsUserIsEligibleFor
+    }),
     voting_period_start: wave.voting_period_start,
     voting_period_end: wave.voting_period_end,
     voting_credit_type: enums.resolveOrThrow(

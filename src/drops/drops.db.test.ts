@@ -535,8 +535,8 @@ describeWithSeed(
           drop_priority_order: it.drop_priority_order
         }))
       ).toEqual([
-        { id: 'drop-public-a-new', drop_priority_order: 1 },
-        { id: 'drop-public-a-old', drop_priority_order: 2 }
+        { id: 'drop-public-a-old', drop_priority_order: 2 },
+        { id: 'drop-public-a-new', drop_priority_order: 1 }
       ]);
     });
 

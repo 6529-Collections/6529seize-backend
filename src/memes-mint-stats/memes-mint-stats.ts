@@ -8,9 +8,12 @@ import {
 } from '@/constants';
 import { getDataSource } from '@/db';
 import { MemesMintStat } from '@/entities/IMemesMintStat';
+import { Logger } from '@/logging';
+import { fetchPaymentDetailsForMemeToken } from '@/memes-mint-stats/payment-details';
 import { sqlExecutor } from '@/sql-executor';
 
 const ARTIST_SPLIT_RATIO = 0.5;
+const logger = Logger.get('MEMES_MINT_STATS');
 
 type MintTransactionRow = {
   token_count: number | string | null;
@@ -30,6 +33,16 @@ export async function calculateMemesMintStats(
   tokenId: number,
   mintDate: Date
 ): Promise<MemesMintStat> {
+  const paymentDetailsPromise = fetchPaymentDetailsForMemeToken(tokenId).catch(
+    (err) => {
+      logger.warn('Failed to fetch MEMES payment details, defaulting to null', {
+        tokenId,
+        err
+      });
+      return null;
+    }
+  );
+
   const mintTransactions = await sqlExecutor.execute<MintTransactionRow>(
     `SELECT token_count, eth_price_usd
     FROM ${TRANSACTIONS_TABLE}
@@ -40,6 +53,7 @@ export async function calculateMemesMintStats(
       AND value > 0`,
     { tokenId }
   );
+  const paymentDetails = await paymentDetailsPromise;
 
   const nonZeroEthUsd = mintTransactions
     .map((tx) => Number(tx.eth_price_usd ?? 0))
@@ -101,7 +115,8 @@ export async function calculateMemesMintStats(
     proceeds_eth: proceedsEth,
     proceeds_usd: proceedsUsd,
     artist_split_eth: artistSplitEth,
-    artist_split_usd: artistSplitUsd
+    artist_split_usd: artistSplitUsd,
+    payment_details: paymentDetails
   };
 }
 

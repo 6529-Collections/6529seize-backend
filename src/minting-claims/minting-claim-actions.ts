@@ -8,7 +8,8 @@ export const MEMES_MINTING_CLAIM_ACTION_TYPES = [
   'PHASE1_AIRDROP',
   'PHASE2_AIRDROP',
   'PUBLIC_PHASE_AIRDROP',
-  'RESEARCH_AIRDROP'
+  'RESEARCH_AIRDROP',
+  'PAY_ARTIST'
 ] as const;
 
 export function getSupportedMintingClaimActionTypes(

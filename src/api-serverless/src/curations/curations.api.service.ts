@@ -25,13 +25,15 @@ import { wavesApiDb, WavesApiDb } from '@/api/waves/waves.api.db';
 import { CurationsDb, curationsDb } from '@/api/curations/curations.db';
 import { WaveCurationEntity } from '@/entities/IWaveCuration';
 import { DropCurationEntity } from '@/entities/IDropCuration';
+import { profileWavesDb, ProfileWavesDb } from '@/profiles/profile-waves.db';
 
 export class CurationsApiService {
   constructor(
     private readonly curationsDb: CurationsDb,
     private readonly wavesApiDb: WavesApiDb,
     private readonly dropsDb: DropsDb,
-    private readonly userGroupsService: UserGroupsService
+    private readonly userGroupsService: UserGroupsService,
+    private readonly profileWavesDb: ProfileWavesDb
   ) {}
 
   public async findWaveCurations(
@@ -209,6 +211,10 @@ export class CurationsApiService {
           lockedCurations
         );
         await this.curationsDb.deleteDropCurationsByCurationId(
+          curationId,
+          txCtx
+        );
+        await this.profileWavesDb.clearProfileCurationByCurationId(
           curationId,
           txCtx
         );
@@ -712,5 +718,6 @@ export const curationsApiService = new CurationsApiService(
   curationsDb,
   wavesApiDb,
   dropsDb,
-  userGroupsService
+  userGroupsService,
+  profileWavesDb
 );

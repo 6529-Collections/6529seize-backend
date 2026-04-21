@@ -8,8 +8,8 @@ export class MediaChecker {
         ipfs.ifIpfsThenCloudflareElsePreserveOrEmptyIfUndefined(url)
       );
       const cType = response.headers['content-type'];
-      if (cType) {
-        return cType.split('/')[1].toLowerCase();
+      if (typeof cType === 'string') {
+        return cType.split('/')[1]?.toLowerCase() ?? null;
       }
       return null;
     } catch (error) {
@@ -18,8 +18,8 @@ export class MediaChecker {
           ipfs.ifIpfsThenIpfsIoElsePreserveOrEmptyIfUndefined(url)
         );
         const cType = response.headers['content-type'];
-        if (cType) {
-          return cType.split('/')[1].toLowerCase();
+        if (typeof cType === 'string') {
+          return cType.split('/')[1]?.toLowerCase() ?? null;
         }
         return null;
       } catch (error) {

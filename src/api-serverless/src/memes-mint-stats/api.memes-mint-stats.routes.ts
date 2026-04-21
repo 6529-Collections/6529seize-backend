@@ -7,7 +7,10 @@ import { ApiResponse } from '@/api/api-response';
 import { DEFAULT_MAX_SIZE, DEFAULT_PAGE_SIZE } from '@/api/page-request';
 import { ApiPageSortDirection } from '@/api/generated/models/ApiPageSortDirection';
 import { cacheRequest } from '@/api/request-cache';
-import { returnPaginatedResult } from '@/api/api-helpers';
+import {
+  returnPaginatedResult,
+  transformPaginatedResponse
+} from '@/api/api-helpers';
 import { ApiMemesMintStat } from '@/api/generated/models/ApiMemesMintStat';
 import { ApiMemesMintStatsPage } from '@/api/generated/models/ApiMemesMintStatsPage';
 import { ApiMemesMintStatsTotals } from '@/api/generated/models/ApiMemesMintStatsTotals';
@@ -18,6 +21,7 @@ import {
   fetchMemesMintStatsTotals,
   fetchMemesMintStatsYearly
 } from '@/api/memes-mint-stats/api.memes-mint-stats.db';
+import { rowToApiMemesMintStat } from '@/api/memes-mint-stats/api.memes-mint-stats.mappers';
 
 const router = asyncRouter();
 
@@ -55,7 +59,11 @@ router.get(
       query.page_size,
       query.sort_direction
     );
-    return returnPaginatedResult(result, req, res);
+    return returnPaginatedResult(
+      transformPaginatedResponse(rowToApiMemesMintStat, result),
+      req,
+      res
+    );
   }
 );
 
@@ -97,7 +105,7 @@ router.get(
       throw new NotFoundException(`Memes mint stats for id ${id} not found`);
     }
 
-    return res.json(result);
+    return res.json(rowToApiMemesMintStat(result));
   }
 );
 

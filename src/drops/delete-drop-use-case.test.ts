@@ -1,4 +1,5 @@
 import { identityFetcher } from '@/api-serverless/src/identities/identity.fetcher';
+import { userGroupsService } from '@/api-serverless/src/community-members/user-groups.service';
 import { DropType } from '@/entities/IDrop';
 import { DeleteDropUseCase } from './delete-drop.use-case';
 
@@ -157,5 +158,94 @@ describe('DeleteDropUseCase', () => {
       },
       { timer, connection }
     );
+  });
+
+  it("allows wave creators to delete another user's drop when admin drop deletion is enabled", async () => {
+    const connection = {} as any;
+    const drop = {
+      id: 'drop-1',
+      wave_id: 'wave-1',
+      serial_no: 7,
+      created_at: 123,
+      author_id: 'drop-author',
+      drop_type: DropType.PARTICIPATORY
+    };
+    const wave = {
+      description_drop_id: 'description-drop',
+      visibility_group_id: 'group-1',
+      created_by: 'wave-creator',
+      admin_group_id: null,
+      admin_drop_deletion_enabled: true
+    };
+    const { useCase, dropsDb } = createUseCase({ drop, wave });
+    const getGroupsUserIsEligibleForSpy = jest.spyOn(
+      userGroupsService,
+      'getGroupsUserIsEligibleFor'
+    );
+
+    await expect(
+      useCase.execute(
+        {
+          drop_id: 'drop-1',
+          deleter_id: 'wave-creator',
+          deletion_purpose: 'DELETE'
+        },
+        { connection }
+      )
+    ).resolves.toEqual({
+      id: 'drop-1',
+      serial_no: 7,
+      visibility_group_id: 'group-1',
+      wave_id: 'wave-1'
+    });
+
+    expect(getGroupsUserIsEligibleForSpy).not.toHaveBeenCalled();
+    expect(dropsDb.insertDeletedDrop).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'drop-1',
+        wave_id: 'wave-1',
+        author_id: 'drop-author'
+      }),
+      { timer: undefined, connection }
+    );
+  });
+
+  it("allows admin group members to delete another user's drop when admin drop deletion is enabled", async () => {
+    const connection = {} as any;
+    const drop = {
+      id: 'drop-1',
+      wave_id: 'wave-1',
+      serial_no: 7,
+      created_at: 123,
+      author_id: 'drop-author',
+      drop_type: DropType.PARTICIPATORY
+    };
+    const wave = {
+      description_drop_id: 'description-drop',
+      visibility_group_id: 'group-1',
+      created_by: 'wave-creator',
+      admin_group_id: 'admin-group',
+      admin_drop_deletion_enabled: true
+    };
+    const { useCase } = createUseCase({ drop, wave });
+    jest
+      .spyOn(userGroupsService, 'getGroupsUserIsEligibleFor')
+      .mockResolvedValue(['admin-group']);
+
+    await expect(
+      useCase.execute(
+        {
+          drop_id: 'drop-1',
+          deleter_id: 'admin-profile',
+          deletion_purpose: 'DELETE'
+        },
+        { connection }
+      )
+    ).resolves.toEqual({
+      id: 'drop-1',
+      serial_no: 7,
+      visibility_group_id: 'group-1',
+      wave_id: 'wave-1'
+    });
   });
 });

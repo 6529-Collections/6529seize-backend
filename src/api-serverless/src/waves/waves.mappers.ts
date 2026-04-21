@@ -59,6 +59,7 @@ import { InsertWaveEntity, wavesApiDb, WavesApiDb } from './waves.api.db';
 import { enums } from '../../../enums';
 import { collections } from '../../../collections';
 import { profileWavesDb } from '@/profiles/profile-waves.db';
+import { isWaveCreatorOrAdmin } from '@/waves/wave-admin.helpers';
 
 type WaveMappingRelatedData = {
   contributors: Record<
@@ -79,6 +80,7 @@ type WaveMappingRelatedData = {
   wavePauses: Record<string, WaveDecisionPauseEntity[]>;
   pinnedWaveIds: Set<string>;
   identityWaveIds: Set<string>;
+  authenticatedUserId: string | null;
 };
 
 export class WavesMappers {
@@ -351,10 +353,11 @@ export class WavesMappers {
           groupIdsUserIsEligibleFor.includes(waveEntity.chat_group_id)) &&
         waveEntity.chat_enabled
     };
-    const authenticatedUserEligibleForAdmin = !!(
-      waveEntity.admin_group_id &&
-      groupIdsUserIsEligibleFor.includes(waveEntity.admin_group_id)
-    );
+    const authenticatedUserEligibleForAdmin = isWaveCreatorOrAdmin({
+      authenticatedProfileId: relatedData.authenticatedUserId,
+      wave: waveEntity,
+      groupIdsUserIsEligibleFor
+    });
     const waveConf: ApiWaveConfig = {
       type: enums.resolveOrThrow(WaveTypeApi, waveEntity.type),
       winning_thresholds: {
@@ -433,7 +436,8 @@ export class WavesMappers {
   ): Promise<WaveMappingRelatedData> {
     ctx.timer?.start('wavesMappers->getRelatedData');
     const waveIds = waveEntities.map((it) => it.id);
-    const authenticatedUserId = ctx.authenticationContext?.getActingAsId();
+    const authenticatedUserId =
+      ctx.authenticationContext?.getActingAsId() ?? null;
     ctx.timer?.start('dropsService->findDropsByIdsOrThrow');
     ctx.timer?.start(
       'identitySubscriptionsDb->findIdentitySubscriptionActionsOfTargets'
@@ -616,7 +620,8 @@ export class WavesMappers {
       firstUnreadDropSerialNoByWaveId,
       wavePauses,
       pinnedWaveIds,
-      identityWaveIds
+      identityWaveIds,
+      authenticatedUserId
     };
   }
 }

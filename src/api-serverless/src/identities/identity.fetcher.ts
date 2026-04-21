@@ -34,6 +34,15 @@ export class IdentityFetcher {
     private readonly supplyAlchemy: () => Alchemy
   ) {}
 
+  private resolveApiProfileClassification(
+    classification: string | null
+  ): ApiProfileClassification {
+    return classification
+      ? (enums.resolve(ApiProfileClassification, classification) ??
+          ApiProfileClassification.Pseudonym)
+      : ApiProfileClassification.Pseudonym;
+  }
+
   public async getProfileIdByIdentityKeyOrThrow(
     { identityKey }: { identityKey: string },
     ctx: RequestContext
@@ -126,6 +135,8 @@ export class IdentityFetcher {
         granted_xtdh: p.granted_xtdh,
         tdh_rate: p.basetdh_rate,
         level: getLevelFromScore(p.level_raw),
+        classification: this.resolveApiProfileClassification(p.classification),
+        sub_classification: p.sub_classification,
         pfp: p.pfp,
         archived: false,
         profile_wave_id: profileWaveIds[p.profile_id] ?? null,
@@ -158,6 +169,10 @@ export class IdentityFetcher {
           produced_xtdh: 0,
           tdh_rate: 0,
           level: 0,
+          classification: this.resolveApiProfileClassification(
+            p.classification
+          ),
+          sub_classification: p.sub_classification,
           primary_address: p.primary_address,
           pfp: null,
           archived: true,
@@ -488,12 +503,6 @@ export class IdentityFetcher {
         ctx
       )
     ]);
-    const classification = identity.classification
-      ? (enums.resolve(
-          ApiProfileClassification,
-          identity.classification as string
-        ) ?? ApiProfileClassification.Pseudonym)
-      : ApiProfileClassification.Pseudonym;
     return {
       id: identity.profile_id,
       handle: identity.handle,
@@ -515,7 +524,9 @@ export class IdentityFetcher {
         display: it.ens ?? it.address,
         tdh: walletTdhs[it.address.toLowerCase()] ?? 0
       })),
-      classification,
+      classification: this.resolveApiProfileClassification(
+        identity.classification
+      ),
       sub_classification: identity.sub_classification,
       consolidation_key: identity.consolidation_key,
       query: query,

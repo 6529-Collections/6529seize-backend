@@ -19,8 +19,10 @@ import { ApiWaveCreditType } from '../generated/models/ApiWaveCreditType';
 import { Logger } from '@/logging';
 import { Time } from '@/time';
 import { identitiesDb } from '@/identities/identities.db';
+import { enums } from '@/enums';
 import { getLevelFromScore } from '@/profiles/profile-level';
 import { ApiProfileMin } from '../generated/models/ApiProfileMin';
+import { ApiProfileClassification } from '../generated/models/ApiProfileClassification';
 import { profileWavesDb } from '@/profiles/profile-waves.db';
 import { ApiNftLinkData } from '@/api/generated/models/ApiNftLinkData';
 
@@ -207,6 +209,13 @@ export class WsListenersNotifier {
       xtdh: identityEntity.xtdh,
       xtdh_rate: identityEntity.xtdh_rate,
       level: getLevelFromScore(identityEntity.level_raw),
+      classification: identityEntity.classification
+        ? (enums.resolve(
+            ApiProfileClassification,
+            identityEntity.classification as string
+          ) ?? ApiProfileClassification.Pseudonym)
+        : ApiProfileClassification.Pseudonym,
+      sub_classification: identityEntity.sub_classification,
       archived: false,
       primary_address: identityEntity.primary_address,
       profile_wave_id: profileWaveIds[identityId] ?? null,
