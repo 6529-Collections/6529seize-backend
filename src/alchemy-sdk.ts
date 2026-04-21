@@ -1,6 +1,7 @@
+import axios, { AxiosError, AxiosInstance } from 'axios';
+import axiosRetry from 'axios-retry';
 import {
   JsonRpcProvider,
-  Log as EthersLog,
   TransactionReceipt,
   TransactionResponse as EthersTransactionResponse
 } from 'ethers';
@@ -66,13 +67,47 @@ export type AssetTransfersResponse = {
 export type Nft = Record<string, any>;
 export type NftContract = Record<string, any>;
 export type TransactionResponse = EthersTransactionResponse;
-export type Log = EthersLog & { logIndex: number };
+export type Log = {
+  blockNumber: number;
+  blockHash: string;
+  transactionIndex: number;
+  transactionHash: string;
+  address: string;
+  data: string;
+  topics: readonly string[];
+  logIndex: number;
+  removed: boolean;
+};
+
+/**
+ * Block tag accepted by `getBlock`. Either a block number, a block hash, or
+ * one of the string tags "latest" / "pending" / "earliest" / "finalized" /
+ * "safe".
+ */
+export type BlockTag = number | string;
+
+export type Block = {
+  number: number;
+  hash: string | null;
+  parentHash: string;
+  timestamp: number;
+  nonce: string;
+  difficulty: bigint;
+  gasLimit: bigint;
+  gasUsed: bigint;
+  miner: string;
+  extraData: string;
+  baseFeePerGas: bigint | null;
+  transactions: readonly string[];
+};
 
 type AlchemyConfig = {
   network?: Network;
   apiKey?: string;
   maxRetries?: number;
 };
+
+const DEFAULT_MAX_RETRIES = 3;
 
 const providers = new Map<string, JsonRpcProvider>();
 
@@ -87,45 +122,159 @@ function getRpcUrl(network: Network, apiKey: string): string {
   return `https://${network}.g.alchemy.com/v2/${apiKey}`;
 }
 
+function getNftApiBaseUrl(network: Network, apiKey: string): string {
+  return `https://${network}.g.alchemy.com/nft/v3/${apiKey}`;
+}
+
+function toNftQueryParams(
+  params: Record<string, unknown>
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === null) continue;
+    out[key] = value;
+  }
+  return out;
+}
+
+type JsonRpcEnvelope<T> = {
+  result?: T;
+  error?: {
+    message?: string;
+    code?: number;
+  };
+};
+
+/**
+ * Retryable statuses: 429 (rate limit) and 5xx (transient server errors).
+ * Network errors and idempotent request errors are handled by the
+ * axios-retry helpers.
+ */
+function isRetryableAlchemyError(error: AxiosError): boolean {
+  const status = error.response?.status ?? 0;
+  return (
+    axiosRetry.isNetworkError(error) ||
+    axiosRetry.isRetryableError(error) ||
+    status === 429 ||
+    status >= 500
+  );
+}
+
+function createAlchemyAxios(maxRetries: number): AxiosInstance {
+  const instance = axios.create({
+    headers: { 'Content-Type': 'application/json' }
+  });
+  axiosRetry(instance, {
+    retries: maxRetries,
+    retryDelay: axiosRetry.exponentialDelay,
+    retryCondition: isRetryableAlchemyError
+  });
+  return instance;
+}
+
 async function postAlchemyRpc<T>(
+  http: AxiosInstance,
   network: Network,
   apiKey: string,
   method: string,
   params: unknown[]
 ): Promise<T> {
-  const response = await fetch(getRpcUrl(network, apiKey), {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      id: 1,
-      method,
-      params
-    })
-  });
-
-  const json = (await response.json()) as {
-    result?: T;
-    error?: {
-      message?: string;
-      code?: number;
-    };
-  };
-  if (!response.ok || json.error) {
-    const message =
-      json?.error?.message ??
-      `Alchemy method ${method} failed with HTTP ${response.status}`;
-    const error = new Error(message) as Error & {
-      status?: number;
-      code?: number;
-    };
-    error.status = response.status;
-    error.code = json?.error?.code;
-    throw error;
+  try {
+    const response = await http.post<JsonRpcEnvelope<T>>(
+      getRpcUrl(network, apiKey),
+      { jsonrpc: '2.0', id: 1, method, params },
+      { headers: { 'Content-Type': 'application/json' } }
+    );
+    const json = response.data;
+    if (json.error) {
+      const err = new Error(
+        json.error.message ?? `Alchemy method ${method} failed`
+      ) as Error & { status?: number; code?: number };
+      err.status = response.status;
+      err.code = json.error.code;
+      throw err;
+    }
+    return json.result as T;
+  } catch (e) {
+    if (e instanceof AxiosError) {
+      const data = e.response?.data as JsonRpcEnvelope<T> | undefined;
+      const message =
+        data?.error?.message ??
+        e.message ??
+        `Alchemy method ${method} failed with HTTP ${e.response?.status}`;
+      const err = new Error(message) as Error & {
+        status?: number;
+        code?: number;
+      };
+      err.status = e.response?.status;
+      err.code = data?.error?.code;
+      throw err;
+    }
+    throw e;
   }
-  return json.result as T;
+}
+
+async function getNftRest<T>(
+  http: AxiosInstance,
+  network: Network,
+  apiKey: string,
+  path: string,
+  params: Record<string, unknown> = {}
+): Promise<T> {
+  try {
+    const response = await http.get<T>(
+      `${getNftApiBaseUrl(network, apiKey)}/${path}`,
+      {
+        params: toNftQueryParams(params),
+        // Repeat array params (e.g. contractAddresses) as `key=a&key=b`,
+        // which is what Alchemy's NFT REST API expects.
+        paramsSerializer: {
+          indexes: null
+        }
+      }
+    );
+    return response.data;
+  } catch (e) {
+    throw toAlchemyError(e, `Alchemy NFT API ${path}`);
+  }
+}
+
+async function postNftRest<T>(
+  http: AxiosInstance,
+  network: Network,
+  apiKey: string,
+  path: string,
+  body: unknown
+): Promise<T> {
+  try {
+    const response = await http.post<T>(
+      `${getNftApiBaseUrl(network, apiKey)}/${path}`,
+      body,
+      { headers: { 'Content-Type': 'application/json' } }
+    );
+    return response.data;
+  } catch (e) {
+    throw toAlchemyError(e, `Alchemy NFT API ${path}`);
+  }
+}
+
+function toAlchemyError(e: unknown, context: string): Error {
+  if (e instanceof AxiosError) {
+    const data = e.response?.data as
+      | { message?: string; error?: string | { message?: string } }
+      | undefined;
+    const nestedMessage =
+      typeof data?.error === 'string' ? data.error : data?.error?.message;
+    const message =
+      data?.message ??
+      nestedMessage ??
+      e.message ??
+      `${context} failed with HTTP ${e.response?.status}`;
+    const err = new Error(message) as Error & { status?: number };
+    err.status = e.response?.status;
+    return err;
+  }
+  return e instanceof Error ? e : new Error(`${context} failed`);
 }
 
 class AlchemyCoreClient {
@@ -133,7 +282,8 @@ class AlchemyCoreClient {
 
   constructor(
     private readonly network: Network,
-    private readonly apiKey: string
+    private readonly apiKey: string,
+    private readonly http: AxiosInstance
   ) {
     const rpcUrl = getRpcUrl(network, apiKey);
     if (!providers.has(rpcUrl)) {
@@ -146,12 +296,25 @@ class AlchemyCoreClient {
     return await this.provider.getBlockNumber();
   }
 
-  async getBlock(blockNumber: number): Promise<{ timestamp: number }> {
-    const block = await this.provider.getBlock(blockNumber);
+  async getBlock(blockHashOrBlockTag: BlockTag): Promise<Block> {
+    const block = await this.provider.getBlock(blockHashOrBlockTag);
     if (!block) {
-      throw new Error(`Block ${blockNumber} not found`);
+      throw new Error(`Block ${String(blockHashOrBlockTag)} not found`);
     }
-    return { timestamp: Number(block.timestamp) };
+    return {
+      number: block.number,
+      hash: block.hash,
+      parentHash: block.parentHash,
+      timestamp: Number(block.timestamp),
+      nonce: block.nonce,
+      difficulty: block.difficulty,
+      gasLimit: block.gasLimit,
+      gasUsed: block.gasUsed,
+      miner: block.miner,
+      extraData: block.extraData,
+      baseFeePerGas: block.baseFeePerGas,
+      transactions: block.transactions
+    };
   }
 
   async getTransaction(
@@ -174,8 +337,15 @@ class AlchemyCoreClient {
   }): Promise<Log[]> {
     const logs = await this.provider.getLogs(filter);
     return logs.map((log) => ({
-      ...log,
-      logIndex: log.index
+      blockNumber: log.blockNumber,
+      blockHash: log.blockHash,
+      transactionIndex: log.transactionIndex,
+      transactionHash: log.transactionHash,
+      address: log.address,
+      data: log.data,
+      topics: log.topics,
+      logIndex: log.index,
+      removed: log.removed
     }));
   }
 
@@ -187,6 +357,7 @@ class AlchemyCoreClient {
     params: AssetTransfersWithMetadataParams
   ): Promise<AssetTransfersResponse> {
     return await postAlchemyRpc<AssetTransfersResponse>(
+      this.http,
       this.network,
       this.apiKey,
       'alchemy_getAssetTransfers',
@@ -198,7 +369,8 @@ class AlchemyCoreClient {
 class AlchemyNftClient {
   constructor(
     private readonly network: Network,
-    private readonly apiKey: string
+    private readonly apiKey: string,
+    private readonly http: AxiosInstance
   ) {}
 
   async getNftMetadata(
@@ -206,29 +378,36 @@ class AlchemyNftClient {
     tokenId: string,
     options?: Record<string, unknown>
   ): Promise<Nft> {
-    return await postAlchemyRpc<Nft>(
+    return await getNftRest<Nft>(
+      this.http,
       this.network,
       this.apiKey,
-      'alchemy_getNFTMetadata',
-      [contractAddress, tokenId, options]
+      'getNFTMetadata',
+      {
+        contractAddress,
+        tokenId,
+        ...(options ?? {})
+      }
     );
   }
 
   async getContractMetadata(contractAddress: string): Promise<NftContract> {
-    return await postAlchemyRpc<NftContract>(
+    return await getNftRest<NftContract>(
+      this.http,
       this.network,
       this.apiKey,
-      'alchemy_getContractMetadata',
-      [contractAddress]
+      'getContractMetadata',
+      { contractAddress }
     );
   }
 
   async searchContractMetadata(query: string): Promise<Record<string, any>> {
-    return await postAlchemyRpc<Record<string, any>>(
+    return await getNftRest<Record<string, any>>(
+      this.http,
       this.network,
       this.apiKey,
-      'alchemy_searchContractMetadata',
-      [query]
+      'searchContractMetadata',
+      { query }
     );
   }
 
@@ -236,22 +415,24 @@ class AlchemyNftClient {
     owner: string,
     options?: Record<string, unknown>
   ): Promise<Record<string, any>> {
-    return await postAlchemyRpc<Record<string, any>>(
+    return await getNftRest<Record<string, any>>(
+      this.http,
       this.network,
       this.apiKey,
-      'alchemy_getNFTsForOwner',
-      [owner, options]
+      'getNFTsForOwner',
+      { owner, ...(options ?? {}) }
     );
   }
 
   async getNftMetadataBatch(
     tokens: { contractAddress: string; tokenId: string }[]
   ): Promise<{ nfts: Nft[] }> {
-    return await postAlchemyRpc<{ nfts: Nft[] }>(
+    return await postNftRest<{ nfts: Nft[] }>(
+      this.http,
       this.network,
       this.apiKey,
-      'alchemy_getNFTMetadataBatch',
-      [tokens]
+      'getNFTMetadataBatch',
+      { tokens }
     );
   }
 }
@@ -265,13 +446,16 @@ export class Alchemy {
   constructor(config: AlchemyConfig = {}) {
     const network = config.network ?? Network.ETH_MAINNET;
     const apiKey = requireApiKey(config.apiKey ?? process.env.ALCHEMY_API_KEY);
+    const maxRetries = config.maxRetries ?? DEFAULT_MAX_RETRIES;
     this.config = {
       ...config,
       network,
-      apiKey
+      apiKey,
+      maxRetries
     };
-    this.core = new AlchemyCoreClient(network, apiKey);
-    this.nft = new AlchemyNftClient(network, apiKey);
+    const http = createAlchemyAxios(maxRetries);
+    this.core = new AlchemyCoreClient(network, apiKey, http);
+    this.nft = new AlchemyNftClient(network, apiKey, http);
   }
 }
 

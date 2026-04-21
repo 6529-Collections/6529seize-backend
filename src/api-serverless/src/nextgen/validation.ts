@@ -1,6 +1,5 @@
-import { ethers } from 'ethers';
+import { ethers, hashMessage } from 'ethers';
 import * as Joi from 'joi';
-import { hashMessage } from '@ethersproject/hash';
 import { Readable } from 'stream';
 import {
   getNextGenChainId,
