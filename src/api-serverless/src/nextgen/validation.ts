@@ -2,7 +2,7 @@ import csv from 'csv-parser';
 import { ethers, hashMessage, keccak256 } from 'ethers';
 import * as Joi from 'joi';
 import { MerkleTree } from 'merkletreejs';
-import path from 'path';
+import path from 'node:path';
 import { Readable } from 'stream';
 import {
   getNextGenChainId,

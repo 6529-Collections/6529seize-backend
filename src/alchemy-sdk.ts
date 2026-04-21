@@ -386,7 +386,7 @@ class AlchemyNftClient {
       {
         contractAddress,
         tokenId,
-        ...(options ?? {})
+        ...options
       }
     );
   }
@@ -420,7 +420,7 @@ class AlchemyNftClient {
       this.network,
       this.apiKey,
       'getNFTsForOwner',
-      { owner, ...(options ?? {}) }
+      { owner, ...options }
     );
   }
 
