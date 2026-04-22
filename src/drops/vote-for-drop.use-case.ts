@@ -163,13 +163,21 @@ export class VoteForDropUseCase {
     const newVote = currentVote + change;
     const diff = Math.abs(newVote) - Math.abs(currentVote);
 
-    if (diff + creditSpentBeforeThisVote > voterTotalCredit) {
-      throw new BadRequestException('Not enough credit to vote');
-    }
     if (wave.forbid_negative_votes && newVote < 0) {
       throw new BadRequestException(
         `Negative votes are not allowed in this wave`
       );
+    }
+    if (
+      wave.max_votes_per_identity_to_drop !== null &&
+      Math.abs(newVote) > wave.max_votes_per_identity_to_drop
+    ) {
+      throw new BadRequestException(
+        `max_votes_per_identity_to_drop exceeded for this drop`
+      );
+    }
+    if (diff + creditSpentBeforeThisVote > voterTotalCredit) {
+      throw new BadRequestException('Not enough credit to vote');
     }
     if (change === 0) {
       return false;

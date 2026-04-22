@@ -181,6 +181,34 @@ export class WaveApiService {
     }
   }
 
+  private assertMaxVotesPerIdentityToDropCanBeUpdated({
+    request,
+    waveBeforeUpdate
+  }: {
+    request: ApiUpdateWaveRequest;
+    waveBeforeUpdate: Pick<WaveEntity, 'max_votes_per_identity_to_drop'>;
+  }) {
+    const currentLimit = waveBeforeUpdate.max_votes_per_identity_to_drop;
+    const requestedLimit = request.wave.max_votes_per_identity_to_drop;
+    if (requestedLimit === undefined || currentLimit === requestedLimit) {
+      return;
+    }
+    if (currentLimit === null && requestedLimit !== null) {
+      throw new BadRequestException(
+        `max_votes_per_identity_to_drop can only be increased after creation`
+      );
+    }
+    if (
+      currentLimit !== null &&
+      requestedLimit !== null &&
+      requestedLimit < currentLimit
+    ) {
+      throw new BadRequestException(
+        `max_votes_per_identity_to_drop can only be increased after creation`
+      );
+    }
+  }
+
   public async createWave(
     createWaveRequest: ApiCreateNewWave,
     isDirectMessage: boolean,
@@ -651,6 +679,7 @@ export class WaveApiService {
         type: ApiWaveType.Chat,
         winning_threshold: null,
         max_winners: null,
+        max_votes_per_identity_to_drop: null,
         time_lock_ms: null,
         admin_group: {
           group_id: userGroup.id
@@ -700,6 +729,20 @@ export class WaveApiService {
       }
     } else if (request.wave.max_winners != null) {
       throw new BadRequestException(`Only APPROVE waves support max_winners`);
+    }
+    if (request.wave.type === ApiWaveType.Chat) {
+      if (request.wave.max_votes_per_identity_to_drop != null) {
+        throw new BadRequestException(
+          `Only APPROVE and RANK waves support max_votes_per_identity_to_drop`
+        );
+      }
+    } else if (
+      request.wave.max_votes_per_identity_to_drop != null &&
+      request.wave.max_votes_per_identity_to_drop < 1
+    ) {
+      throw new BadRequestException(
+        `max_votes_per_identity_to_drop must be positive when set`
+      );
     }
     validateWaveSubmissionStrategy(
       request.participation.submission_strategy,
@@ -1512,6 +1555,10 @@ export class WaveApiService {
             );
           }
         }
+        this.assertMaxVotesPerIdentityToDropCanBeUpdated({
+          request,
+          waveBeforeUpdate
+        });
         this.assertImmutableWaveUpdateFieldsUnchanged({
           request,
           waveBeforeUpdate
@@ -1532,7 +1579,8 @@ export class WaveApiService {
             request.wave.decisions_strategy
           ),
           isDirectMessage: waveBeforeUpdate.is_direct_message ?? false,
-          existingSubmissionStrategy: waveBeforeUpdate
+          existingSubmissionStrategy: waveBeforeUpdate,
+          existingWaveSettings: waveBeforeUpdate
         });
 
         await this.wavesApiDb.insertWave(updatedEntity, ctxWithConnection);

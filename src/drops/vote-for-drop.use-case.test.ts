@@ -36,7 +36,8 @@ describe('VoteForDropUseCase', () => {
     forbid_negative_votes: false,
     visibility_group_id: null,
     type: WaveType.RANK,
-    max_winners: null
+    max_winners: null,
+    max_votes_per_identity_to_drop: null
   } as any;
   const drop = {
     id: 'drop-1',
@@ -155,5 +156,46 @@ describe('VoteForDropUseCase', () => {
         { connection }
       )
     ).rejects.toThrow(`Voting is closed in this wave`);
+  });
+
+  it('rejects votes above max_votes_per_identity_to_drop', async () => {
+    (wavesDb.findById as jest.Mock).mockResolvedValue({
+      ...wave,
+      max_votes_per_identity_to_drop: 3
+    });
+
+    await expect(
+      useCase.execute(
+        {
+          voter_id: 'voter-1',
+          drop_id: 'drop-1',
+          wave_id: 'wave-1',
+          votes: 4,
+          proxy_id: null
+        },
+        { connection }
+      )
+    ).rejects.toThrow(`max_votes_per_identity_to_drop exceeded for this drop`);
+  });
+
+  it('rejects negative votes beyond max_votes_per_identity_to_drop', async () => {
+    (wavesDb.findById as jest.Mock).mockResolvedValue({
+      ...wave,
+      max_votes_per_identity_to_drop: 3
+    });
+    (votingDb.getDropVoterStateForDrop as jest.Mock).mockResolvedValue(-2);
+
+    await expect(
+      useCase.execute(
+        {
+          voter_id: 'voter-1',
+          drop_id: 'drop-1',
+          wave_id: 'wave-1',
+          votes: -4,
+          proxy_id: null
+        },
+        { connection }
+      )
+    ).rejects.toThrow(`max_votes_per_identity_to_drop exceeded for this drop`);
   });
 });

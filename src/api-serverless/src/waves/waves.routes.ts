@@ -1199,6 +1199,11 @@ const WaveConfigSchema = Joi.object<
     then: Joi.number().integer().required().allow(null).min(1),
     otherwise: Joi.valid(null).default(null)
   }),
+  max_votes_per_identity_to_drop: Joi.when('type', {
+    is: Joi.string().valid(ApiWaveType.Approve, ApiWaveType.Rank),
+    then: Joi.number().integer().optional().allow(null).min(1),
+    otherwise: Joi.valid(null).optional()
+  }),
   time_lock_ms: Joi.number()
     .integer()
     .required()

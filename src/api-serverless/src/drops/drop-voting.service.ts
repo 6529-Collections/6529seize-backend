@@ -137,25 +137,28 @@ export class DropVotingService {
           const activeVote = activeVotes[dropId];
           if (totalVotesInWave !== undefined && activeVote !== undefined) {
             const creditLeft = Math.max(0, totalCredit - totalVotesInWave);
+            let min: number;
+            let max: number;
             if (activeVote < 0) {
-              acc[dropId] = {
-                min: -(creditLeft - activeVote),
-                current: activeVote,
-                max: -activeVote + creditLeft
-              };
+              min = -(creditLeft - activeVote);
+              max = -activeVote + creditLeft;
             } else if (activeVote > 0) {
-              acc[dropId] = {
-                min: -activeVote - creditLeft,
-                current: activeVote,
-                max: activeVote + creditLeft
-              };
+              min = -activeVote - creditLeft;
+              max = activeVote + creditLeft;
             } else {
-              acc[dropId] = {
-                min: -creditLeft,
-                current: activeVote,
-                max: creditLeft
-              };
+              min = -creditLeft;
+              max = creditLeft;
             }
+            const perDropLimit = wave.max_votes_per_identity_to_drop;
+            if (perDropLimit !== null) {
+              min = Math.max(min, -perDropLimit);
+              max = Math.min(max, perDropLimit);
+            }
+            acc[dropId] = {
+              min,
+              current: activeVote,
+              max
+            };
           }
         }
         return acc;
