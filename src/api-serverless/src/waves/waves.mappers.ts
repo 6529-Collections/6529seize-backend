@@ -143,6 +143,15 @@ export class WavesMappers {
         strategy: request.participation.submission_strategy,
         existingStrategy: existingSubmissionStrategy
       });
+    let maxVotesPerIdentityToDrop: number | null;
+    if (request.wave.type === WaveTypeApi.Chat) {
+      maxVotesPerIdentityToDrop = null;
+    } else if (request.wave.max_votes_per_identity_to_drop !== undefined) {
+      maxVotesPerIdentityToDrop = request.wave.max_votes_per_identity_to_drop;
+    } else {
+      maxVotesPerIdentityToDrop =
+        existingWaveSettings?.max_votes_per_identity_to_drop ?? null;
+    }
     return {
       id,
       serial_no,
@@ -190,12 +199,7 @@ export class WavesMappers {
         request.wave.type === WaveTypeApi.Approve
           ? (request.wave.max_winners ?? null)
           : null,
-      max_votes_per_identity_to_drop:
-        request.wave.type === WaveTypeApi.Chat
-          ? null
-          : request.wave.max_votes_per_identity_to_drop !== undefined
-            ? request.wave.max_votes_per_identity_to_drop
-            : (existingWaveSettings?.max_votes_per_identity_to_drop ?? null),
+      max_votes_per_identity_to_drop: maxVotesPerIdentityToDrop,
       time_lock_ms: request.wave.time_lock_ms ?? null,
       decisions_strategy: request.wave.decisions_strategy ?? null,
       next_decision_time: nextDecisionTime,
