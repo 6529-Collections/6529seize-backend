@@ -184,10 +184,11 @@ function createAlchemyAxios(maxRetries: number): AxiosInstance {
 function normalizeAssetTransfersParams(
   params: AssetTransfersWithMetadataParams
 ): Record<string, unknown> {
+  const maxCount =
+    params.maxCount == null ? undefined : `0x${params.maxCount.toString(16)}`;
   return {
     ...params,
-    maxCount:
-      params.maxCount != null ? `0x${params.maxCount.toString(16)}` : undefined
+    maxCount
   };
 }
 
@@ -238,12 +239,20 @@ function extractProviderErrorCodes(error: unknown): string[] {
   );
 }
 
+function extractString(value: unknown): string {
+  return typeof value === 'string' ? value : '';
+}
+
 function getProviderErrorMessage(error: unknown): string {
   const topLevel = getNestedErrorRecord(error);
   const nested = getNestedErrorRecord(topLevel?.error);
-  return `${String(topLevel?.message ?? '')} ${String(
-    topLevel?.shortMessage ?? ''
-  )} ${String(nested?.message ?? '')}`.toLowerCase();
+  return [
+    extractString(topLevel?.message),
+    extractString(topLevel?.shortMessage),
+    extractString(nested?.message)
+  ]
+    .join(' ')
+    .toLowerCase();
 }
 
 function isRetryableProviderError(error: unknown): boolean {
