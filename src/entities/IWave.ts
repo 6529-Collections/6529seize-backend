@@ -45,6 +45,7 @@ export interface WaveBaseType {
   readonly winning_min_threshold: number | null;
   readonly winning_max_threshold: number | null;
   readonly max_winners: number | null;
+  readonly max_votes_per_identity_to_drop: number | null;
   readonly time_lock_ms: number | null;
   readonly decisions_strategy: WaveDecisionStrategy | null;
   readonly participation_terms: string | null;
@@ -145,6 +146,9 @@ export class WaveBase implements WaveBaseType {
 
   @Column({ type: 'bigint', nullable: true })
   readonly max_winners!: number | null;
+
+  @Column({ type: 'bigint', nullable: true })
+  readonly max_votes_per_identity_to_drop!: number | null;
 
   @Column({ type: 'bigint', nullable: true })
   readonly time_lock_ms!: number | null;
