@@ -155,7 +155,7 @@ describe('Alchemy SDK replacement', () => {
           method: 'alchemy_getAssetTransfers',
           params: [
             expect.objectContaining({
-              maxCount: 150,
+              maxCount: '0x96',
               withMetadata: true
             })
           ]

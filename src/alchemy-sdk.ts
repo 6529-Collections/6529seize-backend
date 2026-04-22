@@ -181,6 +181,16 @@ function createAlchemyAxios(maxRetries: number): AxiosInstance {
   return instance;
 }
 
+function normalizeAssetTransfersParams(
+  params: AssetTransfersWithMetadataParams
+): Record<string, unknown> {
+  return {
+    ...params,
+    maxCount:
+      params.maxCount != null ? `0x${params.maxCount.toString(16)}` : undefined
+  };
+}
+
 function getProviderRetryDelay(retryCount: number): number {
   return axiosRetry.exponentialDelay(retryCount);
 }
@@ -491,7 +501,7 @@ class AlchemyCoreClient {
       this.network,
       this.apiKey,
       'alchemy_getAssetTransfers',
-      [params]
+      [normalizeAssetTransfersParams(params)]
     );
   }
 }
