@@ -105,9 +105,11 @@ type AlchemyConfig = {
   network?: Network;
   apiKey?: string;
   maxRetries?: number;
+  timeoutMs?: number;
 };
 
 const DEFAULT_MAX_RETRIES = 3;
+const DEFAULT_TIMEOUT_MS = 30_000;
 const PROVIDER_RETRYABLE_ERROR_CODES = new Set([
   'ECONNABORTED',
   'ECONNRESET',
@@ -169,14 +171,19 @@ function isRetryableAlchemyError(error: AxiosError): boolean {
   );
 }
 
-function createAlchemyAxios(maxRetries: number): AxiosInstance {
+function createAlchemyAxios(
+  maxRetries: number,
+  timeoutMs: number
+): AxiosInstance {
   const instance = axios.create({
-    headers: { 'Content-Type': 'application/json' }
+    headers: { 'Content-Type': 'application/json' },
+    timeout: timeoutMs
   });
   axiosRetry(instance, {
     retries: maxRetries,
     retryDelay: axiosRetry.exponentialDelay,
-    retryCondition: isRetryableAlchemyError
+    retryCondition: isRetryableAlchemyError,
+    shouldResetTimeout: true
   });
   return instance;
 }
@@ -596,13 +603,15 @@ export class Alchemy {
     const network = config.network ?? Network.ETH_MAINNET;
     const apiKey = requireApiKey(config.apiKey ?? process.env.ALCHEMY_API_KEY);
     const maxRetries = config.maxRetries ?? DEFAULT_MAX_RETRIES;
+    const timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.config = {
       ...config,
       network,
       apiKey,
-      maxRetries
+      maxRetries,
+      timeoutMs
     };
-    const http = createAlchemyAxios(maxRetries);
+    const http = createAlchemyAxios(maxRetries, timeoutMs);
     this.core = new AlchemyCoreClient(network, apiKey, http, maxRetries);
     this.nft = new AlchemyNftClient(network, apiKey, http);
   }

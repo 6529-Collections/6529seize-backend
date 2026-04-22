@@ -90,18 +90,25 @@ describe('Alchemy SDK replacement', () => {
         })
         .then(() => {
           expect(mockedAxios.create).toHaveBeenCalled();
+          expect(mockedAxios.create).toHaveBeenCalledWith(
+            expect.objectContaining({
+              headers: { 'Content-Type': 'application/json' },
+              timeout: 30000
+            })
+          );
           expect(axiosRetry).toHaveBeenCalledWith(
             expect.anything(),
             expect.objectContaining({
               retries: 3,
               retryDelay: expect.any(Function),
-              retryCondition: expect.any(Function)
+              retryCondition: expect.any(Function),
+              shouldResetTimeout: true
             })
           );
         });
     });
 
-    it('honors a custom maxRetries', async () => {
+    it('honors custom retry and timeout settings', async () => {
       mockedAxios.post.mockResolvedValueOnce({
         status: 200,
         data: { result: { transfers: [] } }
@@ -110,11 +117,15 @@ describe('Alchemy SDK replacement', () => {
       await new Alchemy({
         network: Network.ETH_MAINNET,
         apiKey: 'test-key',
-        maxRetries: 7
+        maxRetries: 7,
+        timeoutMs: 7000
       }).core.getAssetTransfers({
         category: [AssetTransfersCategory.EXTERNAL]
       });
 
+      expect(mockedAxios.create).toHaveBeenCalledWith(
+        expect.objectContaining({ timeout: 7000 })
+      );
       expect(axiosRetry).toHaveBeenCalledWith(
         expect.anything(),
         expect.objectContaining({ retries: 7 })
