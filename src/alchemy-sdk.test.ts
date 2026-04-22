@@ -269,7 +269,7 @@ describe('Alchemy SDK replacement', () => {
     it('calls searchContractMetadata as REST GET', async () => {
       mockedAxios.get.mockResolvedValue({
         status: 200,
-        data: { contracts: [] }
+        data: { contracts: [{ address: '0xabc', name: 'Memes' }] }
       });
 
       const alchemy = new Alchemy({
@@ -277,8 +277,9 @@ describe('Alchemy SDK replacement', () => {
         apiKey: 'test-key'
       });
 
-      await alchemy.nft.searchContractMetadata('memes');
+      const result = await alchemy.nft.searchContractMetadata('memes');
 
+      expect(result).toEqual([{ address: '0xabc', name: 'Memes' }]);
       expect(mockedAxios.get).toHaveBeenCalledWith(
         'https://eth-mainnet.g.alchemy.com/nft/v3/test-key/searchContractMetadata',
         expect.objectContaining({

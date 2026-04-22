@@ -557,14 +557,13 @@ class AlchemyNftClient {
     );
   }
 
-  async searchContractMetadata(query: string): Promise<Record<string, any>> {
-    return await getNftRest<Record<string, any>>(
-      this.http,
-      this.network,
-      this.apiKey,
-      'searchContractMetadata',
-      { query }
-    );
+  async searchContractMetadata(query: string): Promise<NftContract[]> {
+    const response = await getNftRest<
+      NftContract[] | { contracts?: NftContract[] }
+    >(this.http, this.network, this.apiKey, 'searchContractMetadata', {
+      query
+    });
+    return Array.isArray(response) ? response : (response.contracts ?? []);
   }
 
   async getNftsForOwner(
