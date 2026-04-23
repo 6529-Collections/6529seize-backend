@@ -36,6 +36,7 @@ const aBaseWave: BaseWave = {
   winning_min_threshold: null,
   winning_max_threshold: null,
   max_winners: null,
+  max_votes_per_identity_to_drop: null,
   time_lock_ms: null,
   decisions_strategy: null,
   participation_signature_required: false,

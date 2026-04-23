@@ -93,11 +93,13 @@ describe('WaveApiService updateWave immutability', () => {
   function updateRequest({
     name = 'updated-wave',
     type = ApiWaveType.Rank,
-    submissionStrategy
+    submissionStrategy,
+    maxVotesPerIdentityToDrop
   }: {
     name?: string;
     type?: ApiWaveType;
     submissionStrategy?: ApiUpdateWaveRequest['participation']['submission_strategy'];
+    maxVotesPerIdentityToDrop?: number | null;
   }): ApiUpdateWaveRequest {
     return {
       name,
@@ -132,6 +134,7 @@ describe('WaveApiService updateWave immutability', () => {
         type,
         winning_threshold: null,
         max_winners: null,
+        max_votes_per_identity_to_drop: maxVotesPerIdentityToDrop,
         time_lock_ms: null,
         admin_group: { group_id: null },
         decisions_strategy: null,
@@ -322,6 +325,120 @@ describe('WaveApiService updateWave immutability', () => {
 
     expect(wavesApiDb.deleteWave).not.toHaveBeenCalled();
   });
+
+  it('rejects lowering max_votes_per_identity_to_drop', async () => {
+    const waveBeforeUpdate = aWave(
+      {
+        type: WaveType.RANK,
+        created_by: 'profile-1',
+        max_votes_per_identity_to_drop: 5
+      },
+      {
+        id: 'wave-1',
+        name: 'wave-1',
+        serial_no: 1
+      }
+    );
+    const { service, wavesApiDb, ctx } = createService({ waveBeforeUpdate });
+
+    await expect(
+      service.updateWave(
+        'wave-1',
+        updateRequest({ maxVotesPerIdentityToDrop: 4 }),
+        ctx
+      )
+    ).rejects.toThrow(
+      `max_votes_per_identity_to_drop can only be increased after creation`
+    );
+
+    expect(wavesApiDb.deleteWave).not.toHaveBeenCalled();
+  });
+
+  it('rejects changing max_votes_per_identity_to_drop from unlimited to finite', async () => {
+    const waveBeforeUpdate = aWave(
+      {
+        type: WaveType.RANK,
+        created_by: 'profile-1',
+        max_votes_per_identity_to_drop: null
+      },
+      {
+        id: 'wave-1',
+        name: 'wave-1',
+        serial_no: 1
+      }
+    );
+    const { service, wavesApiDb, ctx } = createService({ waveBeforeUpdate });
+
+    await expect(
+      service.updateWave(
+        'wave-1',
+        updateRequest({ maxVotesPerIdentityToDrop: 3 }),
+        ctx
+      )
+    ).rejects.toThrow(
+      `max_votes_per_identity_to_drop can only be increased after creation`
+    );
+
+    expect(wavesApiDb.deleteWave).not.toHaveBeenCalled();
+  });
+
+  it('allows increasing max_votes_per_identity_to_drop', async () => {
+    const waveBeforeUpdate = aWave(
+      {
+        type: WaveType.RANK,
+        created_by: 'profile-1',
+        max_votes_per_identity_to_drop: 3
+      },
+      {
+        id: 'wave-1',
+        name: 'wave-1',
+        serial_no: 1
+      }
+    );
+    const { service, wavesApiDb, waveMappers, ctx } = createService({
+      waveBeforeUpdate
+    });
+
+    await expect(
+      service.updateWave(
+        'wave-1',
+        updateRequest({ maxVotesPerIdentityToDrop: 5 }),
+        ctx
+      )
+    ).resolves.toEqual({ id: 'wave-1' });
+
+    expect(wavesApiDb.deleteWave).toHaveBeenCalled();
+    expect(waveMappers.createWaveToNewWaveEntity).toHaveBeenCalled();
+  });
+
+  it('allows removing max_votes_per_identity_to_drop by setting it to null', async () => {
+    const waveBeforeUpdate = aWave(
+      {
+        type: WaveType.RANK,
+        created_by: 'profile-1',
+        max_votes_per_identity_to_drop: 3
+      },
+      {
+        id: 'wave-1',
+        name: 'wave-1',
+        serial_no: 1
+      }
+    );
+    const { service, wavesApiDb, waveMappers, ctx } = createService({
+      waveBeforeUpdate
+    });
+
+    await expect(
+      service.updateWave(
+        'wave-1',
+        updateRequest({ maxVotesPerIdentityToDrop: null }),
+        ctx
+      )
+    ).resolves.toEqual({ id: 'wave-1' });
+
+    expect(wavesApiDb.deleteWave).toHaveBeenCalled();
+    expect(waveMappers.createWaveToNewWaveEntity).toHaveBeenCalled();
+  });
 });
 
 describe('WaveApiService validateWaveRelations', () => {
@@ -390,6 +507,7 @@ describe('WaveApiService validateWaveRelations', () => {
         type: ApiWaveType.Chat,
         winning_threshold: null,
         max_winners: null,
+        max_votes_per_identity_to_drop: null,
         time_lock_ms: null,
         admin_group: { group_id: null },
         decisions_strategy: null,
@@ -403,6 +521,89 @@ describe('WaveApiService validateWaveRelations', () => {
         timer: undefined
       })
     ).resolves.toBeUndefined();
+  });
+
+  it('rejects max_votes_per_identity_to_drop for chat waves', async () => {
+    const service = new WaveApiService(
+      {} as any,
+      {
+        getByIds: jest.fn().mockResolvedValue([])
+      } as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {
+        getProfileIdByIdentityKey: jest.fn().mockResolvedValue(null)
+      } as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any
+    );
+
+    const request: ApiCreateNewWave = {
+      name: 'wave',
+      picture: null,
+      description_drop: {
+        title: null,
+        signature: null,
+        parts: [],
+        referenced_nfts: [],
+        mentioned_users: [],
+        metadata: []
+      },
+      voting: {
+        scope: { group_id: null },
+        credit_type: ApiWaveCreditType.Tdh,
+        credit_scope: undefined as any,
+        credit_category: null,
+        creditor_id: null,
+        signature_required: false,
+        period: undefined,
+        forbid_negative_votes: false
+      },
+      visibility: {
+        scope: { group_id: null }
+      },
+      participation: {
+        scope: { group_id: null },
+        no_of_applications_allowed_per_participant: null,
+        required_metadata: [],
+        required_media: [],
+        signature_required: false,
+        period: undefined,
+        terms: null,
+        submission_strategy: null
+      },
+      chat: {
+        scope: { group_id: null },
+        enabled: true
+      },
+      wave: {
+        type: ApiWaveType.Chat,
+        winning_threshold: null,
+        max_winners: null,
+        max_votes_per_identity_to_drop: 1,
+        time_lock_ms: null,
+        admin_group: { group_id: null },
+        decisions_strategy: null,
+        admin_drop_deletion_enabled: false
+      },
+      outcomes: []
+    };
+
+    await expect(
+      (service as any).validateWaveRelations(request, {
+        timer: undefined
+      })
+    ).rejects.toThrow(
+      `Only APPROVE and RANK waves support max_votes_per_identity_to_drop`
+    );
   });
 
   it('allows missing winning_threshold for non-approve waves', async () => {
@@ -469,6 +670,7 @@ describe('WaveApiService validateWaveRelations', () => {
       wave: {
         type: ApiWaveType.Rank,
         time_lock_ms: null,
+        max_votes_per_identity_to_drop: null,
         admin_group: { group_id: null },
         decisions_strategy: null,
         admin_drop_deletion_enabled: false

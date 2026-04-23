@@ -106,7 +106,8 @@ export class WavesMappers {
     descriptionDropId,
     nextDecisionTime,
     isDirectMessage,
-    existingSubmissionStrategy
+    existingSubmissionStrategy,
+    existingWaveSettings
   }: {
     id: string;
     serial_no: number | null;
@@ -123,6 +124,10 @@ export class WavesMappers {
       | 'identity_submission_strategy'
       | 'identity_submission_duplicates'
     > | null;
+    existingWaveSettings?: Pick<
+      WaveEntity,
+      'max_votes_per_identity_to_drop'
+    > | null;
   }): Promise<InsertWaveEntity> {
     let creditorId = request.voting.creditor_id;
     if (creditorId) {
@@ -138,6 +143,15 @@ export class WavesMappers {
         strategy: request.participation.submission_strategy,
         existingStrategy: existingSubmissionStrategy
       });
+    let maxVotesPerIdentityToDrop: number | null;
+    if (request.wave.type === WaveTypeApi.Chat) {
+      maxVotesPerIdentityToDrop = null;
+    } else if (request.wave.max_votes_per_identity_to_drop !== undefined) {
+      maxVotesPerIdentityToDrop = request.wave.max_votes_per_identity_to_drop;
+    } else {
+      maxVotesPerIdentityToDrop =
+        existingWaveSettings?.max_votes_per_identity_to_drop ?? null;
+    }
     return {
       id,
       serial_no,
@@ -185,6 +199,7 @@ export class WavesMappers {
         request.wave.type === WaveTypeApi.Approve
           ? (request.wave.max_winners ?? null)
           : null,
+      max_votes_per_identity_to_drop: maxVotesPerIdentityToDrop,
       time_lock_ms: request.wave.time_lock_ms ?? null,
       decisions_strategy: request.wave.decisions_strategy ?? null,
       next_decision_time: nextDecisionTime,
@@ -388,6 +403,10 @@ export class WavesMappers {
           : null,
       max_winners:
         waveEntity.type === WaveType.APPROVE ? waveEntity.max_winners : null,
+      max_votes_per_identity_to_drop:
+        waveEntity.type === WaveType.CHAT
+          ? null
+          : waveEntity.max_votes_per_identity_to_drop,
       time_lock_ms: waveEntity.time_lock_ms,
       admin_group: {
         group: resolveGroup(waveEntity.admin_group_id)

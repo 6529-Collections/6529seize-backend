@@ -41,6 +41,7 @@ function updateRequest(visibilityGroupId: string | null): ApiUpdateWaveRequest {
       type: ApiWaveType.Chat,
       winning_threshold: null,
       max_winners: null,
+      max_votes_per_identity_to_drop: null,
       time_lock_ms: null,
       admin_group: { group_id: null },
       decisions_strategy: null,
