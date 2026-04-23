@@ -21,25 +21,30 @@ than a feature change. No public API of the backend moves.
 
 All under `src/alchemy-sdk.ts`, imported via `@/alchemy-sdk`:
 
-- `Alchemy` — constructed with `{ network, apiKey, maxRetries? }`. Owns a
-  dedicated axios instance (with `axios-retry` wired for 429 / 5xx / network
-  errors). `maxRetries` defaults to 3 and is honoured per-instance
+- `Alchemy` — constructed with `{ network, apiKey, maxRetries?, timeoutMs? }`.
+  Owns a dedicated axios instance with a finite request timeout
+  (`timeoutMs`, default `30000`) and `axios-retry` wired for 429 / 5xx /
+  network errors. `maxRetries` defaults to 3 and is honoured per-instance
   (nextgen passes `10`, preserving prior behaviour).
 - `alchemy.core`
   - `getBlockNumber()`, `getBlock(tag)`, `getTransaction(hash)`,
     `getTransactionReceipt(hash)`, `getLogs(filter)`, `resolveName(name)` —
-    forwarded to a cached `ethers.JsonRpcProvider`.
+    forwarded to a cached `ethers.JsonRpcProvider` and wrapped with the same
+    per-instance retry budget for transient provider errors.
   - `getBlock` now returns a stable POJO (`Block`) rather than an ethers
     class instance. Same fields, no methods.
   - `getLogs` returns plain `Log` objects (fields only, no
     `toJSON`/`getBlock`/`removedEvent` methods).
   - `getAssetTransfers(params)` — posts `alchemy_getAssetTransfers` as
-    JSON-RPC and surfaces in-band JSON-RPC errors as `Error` with
+    JSON-RPC, normalises numeric `maxCount` to the hex string format expected
+    by Alchemy, and surfaces in-band JSON-RPC errors as `Error` with
     `{ status, code }`.
 - `alchemy.nft`
   - `getNftMetadata(contract, tokenId, options?)` — REST `GET /getNFTMetadata`.
   - `getContractMetadata(contract)` — REST `GET /getContractMetadata`.
-  - `searchContractMetadata(query)` — REST `GET /searchContractMetadata`.
+  - `searchContractMetadata(query)` — REST `GET /searchContractMetadata`,
+    unwrapping Alchemy's `{ contracts: [...] }` REST envelope to preserve the
+    old SDK return shape.
   - `getNftsForOwner(owner, options?)` — REST `GET /getNFTsForOwner`, array
     params serialised as repeated `key=a&key=b` (what Alchemy's NFT REST v3
     expects).
@@ -48,9 +53,11 @@ All under `src/alchemy-sdk.ts`, imported via `@/alchemy-sdk`:
   Alchemy's subdomain segment (`eth-mainnet`, etc.).
 - `fromHex(hex)` — small helper kept for callers that need it.
 
-Retries are shared across JSON-RPC and NFT REST paths (single axios instance
-per Alchemy instance). Tests cover the retry wiring, JSON-RPC happy/error
-paths, and each NFT REST shape.
+Axios retries are shared across JSON-RPC and NFT REST paths (single axios
+instance per Alchemy instance). Provider-backed core calls use the same retry
+budget around `ethers.JsonRpcProvider` calls. Tests cover retry wiring,
+provider retries, JSON-RPC happy/error paths, `maxCount` normalisation, and each
+NFT REST shape.
 
 ## Behavioural notes and gotchas
 
@@ -72,6 +79,15 @@ paths, and each NFT REST shape.
   `api-serverless/src/nextgen/validation.ts` and
   `api-serverless/src/rememes/rememes_validation.ts`. The old
   `@ethersproject/hash` transitive dep is gone.
+- `api-serverless/src/nextgen/validation.ts` also moves `keccak256` from
+  `@ethersproject/keccak256` to `ethers` v6 and passes `Uint8Array` views of
+  the existing buffers into the double-hash calculations. The bytes being
+  hashed are unchanged, but the source of the hashing helper changed.
+- `package.json` and `src/api-serverless/package.json` scope the existing
+  security overrides more narrowly now that `alchemy-sdk` and its dependency
+  tree are gone. The root `elliptic` override was removed with the dependency
+  that required it; `ws`, `undici`, `tar`, `@tootallnate/once`, and
+  `brace-expansion` remain pinned for the packages that still pull them in.
 
 ## File-level change list
 
@@ -83,7 +99,11 @@ paths, and each NFT REST shape.
 ### Package changes
 
 - `package.json` — removed `alchemy-sdk` dependency. `axios` and
-  `axios-retry` were already present.
+  `axios-retry` were already present. Also narrows transitive security
+  overrides to the packages that still require them after removing
+  `alchemy-sdk`.
+- `src/api-serverless/package.json` — narrows the `brace-expansion` override to
+  the affected `minimatch` majors.
 - `src/nftOwnersLoop/package.json` — removed `alchemy-sdk` dep.
 - `src/ownersBalancesLoop/package.json` — removed `alchemy-sdk` dep.
 - `src/transactionsProcessingLoop/package.json` — removed `alchemy-sdk` dep.
@@ -122,7 +142,10 @@ paths, and each NFT REST shape.
 ### Small code edits
 
 - `src/alchemy.ts` — collapsed `if (!alchemy || alchemy.config.network != network)` into `if (alchemy?.config.network !== network)` (SonarQube S6582; also upgrades `!=` to `!==`).
-- `src/api-serverless/src/nextgen/validation.ts` — `hashMessage` now imported from `ethers` directly (alongside existing `ethers` import) instead of `@ethersproject/hash`.
+- `src/api-serverless/src/nextgen/validation.ts` — `hashMessage` and
+  `keccak256` now imported from `ethers` directly instead of
+  `@ethersproject/hash` / `@ethersproject/keccak256`; CommonJS imports for
+  `merkletreejs`, `csv-parser`, and `path` were converted to ES imports.
 - `src/api-serverless/src/rememes/rememes_validation.ts` — same `hashMessage` source change.
 
 ## Deployment plan (`deploy.yml` services)
