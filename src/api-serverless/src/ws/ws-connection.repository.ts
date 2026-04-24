@@ -13,6 +13,8 @@ import {
   WAVES_TABLE,
   WS_CONNECTIONS_TABLE
 } from '@/constants';
+import { CustomApiCompliantException } from '@/exceptions';
+import { Logger } from '@/logging';
 import { RequestContext } from '../../../request.context';
 import { WaveCreditType } from '../../../entities/IWave';
 import {
@@ -22,6 +24,8 @@ import {
 import { ANON_USER_ID } from './ws';
 
 export class WsConnectionRepository extends LazyDbAccessCompatibleService {
+  private readonly logger = Logger.get(this.constructor.name);
+
   constructor(
     sqlExecutorGetter: () => SqlExecutor,
     private readonly userGroupsService: UserGroupsService
@@ -173,12 +177,12 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
       case WaveCreditType.TDH:
       case WaveCreditType.XTDH:
       case WaveCreditType.TDH_PLUS_XTDH: {
-        const creditSql =
-          waveProps.credit_type === WaveCreditType.TDH
-            ? 'MAX(i.tdh)'
-            : waveProps.credit_type === WaveCreditType.XTDH
-              ? 'FLOOR(MAX(i.xtdh))'
-              : 'FLOOR(MAX(i.tdh + i.xtdh))';
+        let creditSql = 'MAX(i.tdh)';
+        if (waveProps.credit_type === WaveCreditType.XTDH) {
+          creditSql = 'FLOOR(MAX(i.xtdh))';
+        } else if (waveProps.credit_type === WaveCreditType.TDH_PLUS_XTDH) {
+          creditSql = 'FLOOR(MAX(i.tdh + i.xtdh))';
+        }
         const res = await this.db.execute<{
           profile_id: string;
           credit_left: number;
@@ -224,8 +228,9 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
           )
           .then((row) => row?.cnt ?? 0);
         if (!configuredCardCount) {
-          throw new Error(
-            `Wave ${waveId} is misconfigured: CARD_SET_TDH requires voting credit nfts`
+          throw new CustomApiCompliantException(
+            500,
+            `Wave ${waveId} is misconfigured: CARD_SET_TDH requires voting credit nfts [configuredCardCount=${configuredCardCount}]`
           );
         }
         const res = await this.db.execute<{
@@ -273,6 +278,9 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
         );
       }
       default:
+        this.logger.warn(
+          `[UNEXPECTED TDH CREDIT TYPE LOOKUP] [waveId=${waveId}] [creditType=${waveProps.credit_type}] [profileIds=${profileIds.join(',')}]`
+        );
         return profileIds.reduce(
           (acc, profileId) => {
             acc[profileId] = 0;

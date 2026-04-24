@@ -369,23 +369,21 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       { wrappedConnection: connection }
     );
     const waveArchiveId = await this.getLastInsertId(connection);
-    await Promise.all([
-      this.insertWaveVotingCreditNfts(
-        {
-          waveId: wave.id,
-          creditNfts: wave.voting_credit_nfts
-        },
-        ctx
-      ),
-      this.insertWaveVotingCreditNftArchives(
-        {
-          waveId: wave.id,
-          waveArchiveId,
-          creditNfts: wave.voting_credit_nfts
-        },
-        ctx
-      )
-    ]);
+    await this.insertWaveVotingCreditNfts(
+      {
+        waveId: wave.id,
+        creditNfts: wave.voting_credit_nfts
+      },
+      ctx
+    );
+    await this.insertWaveVotingCreditNftArchives(
+      {
+        waveId: wave.id,
+        waveArchiveId,
+        creditNfts: wave.voting_credit_nfts
+      },
+      ctx
+    );
     ctx.timer?.stop('waveApiDb->insertWave');
   }
 
@@ -504,25 +502,28 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       if (!groupedCreditNfts.length) {
         return new Set<string>();
       }
-      const rows = (
-        await Promise.all(
-          groupedCreditNfts.map(({ contract, tokenIds }) =>
-            this.db.execute<{ contract: string; token_id: number }>(
-              `
-                SELECT contract, id AS token_id
-                FROM ${NFTS_TABLE}
-                WHERE contract = :contract
-                  AND id IN (:tokenIds)
-              `,
-              {
-                contract,
-                tokenIds
-              },
-              queryOptions
-            )
-          )
-        )
-      ).flat();
+      const queryParams: Record<string, string | readonly number[]> = {};
+      const whereClauses = groupedCreditNfts.map(
+        ({ contract, tokenIds }, index) => {
+          const contractParam = `contract${index}`;
+          const tokenIdsParam = `tokenIds${index}`;
+          queryParams[contractParam] = contract;
+          queryParams[tokenIdsParam] = tokenIds;
+          return `(contract = :${contractParam} AND id IN (:${tokenIdsParam}))`;
+        }
+      );
+      const rows = await this.db.execute<{
+        contract: string;
+        token_id: number;
+      }>(
+        `
+          SELECT contract, id AS token_id
+          FROM ${NFTS_TABLE}
+          WHERE ${whereClauses.join(' OR ')}
+        `,
+        queryParams,
+        queryOptions
+      );
       return new Set(
         rows.map((row) =>
           waveVotingCreditNftKey(row.contract, Number(row.token_id))
@@ -1005,14 +1006,12 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
 
   async deleteWave(waveId: string, ctx: RequestContext) {
     ctx.timer?.start('wavesApiDb->deleteWave');
-    await Promise.all([
-      this.deleteWaveVotingCreditNfts(waveId, ctx),
-      this.db.execute(
-        `delete from ${WAVES_TABLE} where id = :waveId`,
-        { waveId },
-        { wrappedConnection: ctx.connection }
-      )
-    ]);
+    await this.deleteWaveVotingCreditNfts(waveId, ctx);
+    await this.db.execute(
+      `delete from ${WAVES_TABLE} where id = :waveId`,
+      { waveId },
+      { wrappedConnection: ctx.connection }
+    );
     ctx.timer?.stop('wavesApiDb->deleteWave');
   }
 

@@ -1,14 +1,30 @@
-import * as path from 'path';
+import * as path from 'node:path';
 import * as dbMigrationsLoop from './dbMigrationsLoop';
 import { Logger } from './logging';
 
 const logger = Logger.get('BACKEND');
 
+const DEFAULT_LOOP_EVENT = {
+  Records: [],
+  detail: {
+    object: {
+      key: ''
+    }
+  },
+  queryStringParameters: {}
+};
+
+const DEFAULT_LOOP_CONTEXT = {
+  getRemainingTimeInMillis: () => 30_000
+};
+
+const DEFAULT_LOOP_CALLBACK = () => undefined;
+
 type LambdaHandler = (
   event: unknown,
   context: unknown,
   callback: unknown
-) => Promise<unknown> | unknown;
+) => Promise<unknown> | void;
 
 function getRequestedLoopName(): string | undefined {
   const loopName = process.argv[2];
@@ -54,11 +70,15 @@ async function runRequestedLoopIfPresent() {
   };
 
   if (typeof loopModule.handler !== 'function') {
-    throw new Error(`[REQUESTED LOOP HAS NO HANDLER] [${loopName}]`);
+    throw new TypeError(`[REQUESTED LOOP HAS NO HANDLER] [${loopName}]`);
   }
 
   logger.info(`[EXECUTING REQUESTED LOOP] [${loopName}]`);
-  await loopModule.handler(null, null, null);
+  await loopModule.handler(
+    DEFAULT_LOOP_EVENT,
+    DEFAULT_LOOP_CONTEXT,
+    DEFAULT_LOOP_CALLBACK
+  );
 }
 
 async function start() {

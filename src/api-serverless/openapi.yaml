@@ -12169,6 +12169,7 @@ components:
           anyOf:
             - type: "null"
             - type: array
+              minItems: 1
               items:
                 $ref: "#/components/schemas/ApiWaveCreditNft"
         admin_drop_deletion_enabled:
