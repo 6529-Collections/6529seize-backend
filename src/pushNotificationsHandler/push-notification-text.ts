@@ -43,17 +43,24 @@ const SUPPORTED_MEDIA_EXTENSIONS_BY_LABEL = (
 const SUPPORTED_MEDIA_EXTENSIONS_PATTERN = Object.keys(
   SUPPORTED_MEDIA_EXTENSIONS_BY_LABEL
 )
-  .map((extension) => extension.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+  .map((extension) => extension.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`))
   .join('|');
 
 const MEDIA_URL_PATTERN = new RegExp(
-  `https?:\\/\\/[^\\s<>)]+(?:${SUPPORTED_MEDIA_EXTENSIONS_PATTERN})(?:\\?[^\\s<>)]*)?(?:#[^\\s<>)]*)?`,
+  String.raw`https?:\/\/[^\s<>)]+(?:${SUPPORTED_MEDIA_EXTENSIONS_PATTERN})(?:\?[^\s<>)]*)?(?:#[^\s<>)]*)?`,
   'gi'
 );
 
 function getMediaFileNameForUrl(url: string): string | null {
   const cleanUrl = url.split(/[?#]/)[0];
-  const fileName = cleanUrl.split('/').filter(Boolean).pop();
+  const pathSegments = cleanUrl.split('/');
+  let fileName: string | undefined;
+  for (let i = pathSegments.length - 1; i >= 0; i--) {
+    if (pathSegments[i]) {
+      fileName = pathSegments[i];
+      break;
+    }
+  }
   if (!fileName) {
     return null;
   }
@@ -94,17 +101,96 @@ function isSupportedMediaUrl(url: string): boolean {
   );
 }
 
+function isMarkdownWhitespace(char: string): boolean {
+  return char === ' ' || char === '\n' || char === '\r' || char === '\t';
+}
+
+function findMarkdownUrlEnd(input: string, start: number): number {
+  for (let i = start; i < input.length; i++) {
+    const char = input[i];
+    if (char === ')' || isMarkdownWhitespace(char)) {
+      return i;
+    }
+  }
+  return input.length;
+}
+
+function findMarkdownReferenceEnd(input: string, start: number): number {
+  for (let i = start; i < input.length; i++) {
+    if (input[i] === ')') {
+      return i + 1;
+    }
+  }
+  return input.length;
+}
+
+function replaceMarkdownMediaReferences(input: string): string {
+  let result = '';
+  let index = 0;
+
+  while (index < input.length) {
+    const isImage = input[index] === '!' && input[index + 1] === '[';
+    const isLink = input[index] === '[';
+
+    if (!isImage && !isLink) {
+      result += input[index];
+      index++;
+      continue;
+    }
+
+    const markdownStart = index;
+    const labelStart = index + (isImage ? 2 : 1);
+    const labelEnd = input.indexOf(']', labelStart);
+    if (labelEnd === -1) {
+      result += input.substring(index);
+      break;
+    }
+
+    const openParenIndex = labelEnd + 1;
+    if (input[openParenIndex] !== '(') {
+      result += input.substring(index, labelEnd + 1);
+      index = labelEnd + 1;
+      continue;
+    }
+
+    let urlStart = openParenIndex + 1;
+    while (isMarkdownWhitespace(input[urlStart])) {
+      urlStart++;
+    }
+
+    const wrappedInAngleBrackets = input[urlStart] === '<';
+    if (wrappedInAngleBrackets) {
+      urlStart++;
+    }
+
+    const urlEnd = wrappedInAngleBrackets
+      ? input.indexOf('>', urlStart)
+      : findMarkdownUrlEnd(input, urlStart);
+    if (urlEnd === -1) {
+      result += input.substring(index);
+      break;
+    }
+
+    const url = input.substring(urlStart, urlEnd);
+    const markdownEnd = findMarkdownReferenceEnd(input, urlEnd);
+    if (markdownEnd === input.length && input[input.length - 1] !== ')') {
+      result += input.substring(index);
+      break;
+    }
+
+    if (isImage || isSupportedMediaUrl(url)) {
+      result += ` ${getMediaPlaceholderForUrl(url)} `;
+    } else {
+      result += input.substring(markdownStart, markdownEnd);
+    }
+    index = markdownEnd;
+  }
+
+  return result;
+}
+
 export function sanitizePushNotificationText(input: string): string {
-  return input
-    .replace(
-      /!\[[^\]]*]\(\s*<?([^)\s>]+)>?(?:\s+"[^"]*")?\s*\)/g,
-      (_match, url: string) => ` ${getMediaPlaceholderForUrl(url)} `
-    )
-    .replace(
-      /(?<!!)\[[^\]]+]\(\s*<?([^)\s>]+)>?(?:\s+"[^"]*")?\s*\)/g,
-      (match, url: string) =>
-        isSupportedMediaUrl(url) ? ` ${getMediaPlaceholderForUrl(url)} ` : match
-    )
+  return replaceMarkdownMediaReferences(input)
     .replace(MEDIA_URL_PATTERN, (url) => ` ${getMediaPlaceholderForUrl(url)} `)
     .replace(/[ \t]{2,}/g, ' ')
     .trim();
