@@ -10,6 +10,7 @@ import { randomUUID } from 'crypto';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { Time } from '../../../time';
 import { ApiCreateMediaUrlResponse } from '../generated/models/ApiCreateMediaUrlResponse';
+import { getFileExtension, sanitizeFileName } from './sanitize-file-name';
 
 export class UploadMediaService {
   constructor(private readonly getS3: () => S3Client) {}
@@ -177,7 +178,7 @@ export class UploadMediaService {
     contract: string;
     card_id: number;
   }): string {
-    const fileExtension = this.getFileExtension(file_name);
+    const fileExtension = getFileExtension(file_name);
     return `distribution/${process.env.NODE_ENV}/${contract.toLowerCase()}/${card_id}-${randomUUID()}${fileExtension}`;
   }
 
@@ -188,8 +189,7 @@ export class UploadMediaService {
     file_name: string;
     author_id: string;
   }) {
-    const fileExtension = this.getFileExtension(file_name);
-    return `waves/author_${author_id}/${randomUUID()}${fileExtension}`;
+    return `waves/author_${author_id}/${sanitizeFileName(file_name)}`;
   }
 
   private createDropMediaKey({
@@ -199,8 +199,7 @@ export class UploadMediaService {
     file_name: string;
     author_id: string;
   }) {
-    const fileExtension = this.getFileExtension(file_name);
-    return `drops/author_${author_id}/${randomUUID()}${fileExtension}`;
+    return `drops/author_${author_id}/${sanitizeFileName(file_name)}`;
   }
 
   private async createSignedMediaUrl({
@@ -256,14 +255,6 @@ export class UploadMediaService {
       throw new Error('S3_BUCKET is not configured');
     }
     return bucket;
-  }
-
-  private getFileExtension(name: string): string {
-    const lastDotIndex = name.lastIndexOf('.');
-    if (lastDotIndex < 0) {
-      return '';
-    }
-    return name.substring(lastDotIndex);
   }
 }
 
