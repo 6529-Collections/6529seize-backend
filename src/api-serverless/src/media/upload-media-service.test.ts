@@ -75,11 +75,9 @@ describe('UploadMediaService', () => {
       author_id: 'author-123'
     });
 
-    const uuidPattern =
-      '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
     expect(result.media_url).toMatch(
       new RegExp(
-        `^${escapeRegex(CLOUDFRONT_LINK)}/drops/author_author-123/My-Vacation-Photo-${uuidPattern}\\.JPG$`
+        `^${escapeRegex(CLOUDFRONT_LINK)}/drops/author_author-123/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/My-Vacation-Photo\\.JPG$`
       )
     );
   });
@@ -98,11 +96,9 @@ describe('UploadMediaService', () => {
       author_id: 'author-123'
     });
 
-    const uuidPattern =
-      '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
     expect(result.media_url).toMatch(
       new RegExp(
-        `^${escapeRegex(CLOUDFRONT_LINK)}/drops/author_author-123/${uuidPattern}\\.jpg$`
+        `^${escapeRegex(CLOUDFRONT_LINK)}/drops/author_author-123/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/\\1\\.jpg$`
       )
     );
   });

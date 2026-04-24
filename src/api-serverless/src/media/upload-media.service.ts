@@ -10,7 +10,11 @@ import { randomUUID } from 'crypto';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { Time } from '../../../time';
 import { ApiCreateMediaUrlResponse } from '../generated/models/ApiCreateMediaUrlResponse';
-import { getFileExtension, sanitizeFileName } from './sanitize-file-name';
+import {
+  getFileExtension,
+  sanitizeFileName,
+  slugifyBaseName
+} from './sanitize-file-name';
 
 export class UploadMediaService {
   constructor(private readonly getS3: () => S3Client) {}
@@ -199,7 +203,16 @@ export class UploadMediaService {
     file_name: string;
     author_id: string;
   }) {
-    return `drops/author_${author_id}/${sanitizeFileName(file_name)}`;
+    const uploadId = randomUUID();
+    const fileExtension = getFileExtension(file_name);
+    const baseName = fileExtension
+      ? file_name.substring(0, file_name.length - fileExtension.length)
+      : file_name;
+    const slug = slugifyBaseName(baseName);
+    const sanitizedFileName = slug
+      ? `${slug}${fileExtension}`
+      : `${uploadId}${fileExtension}`;
+    return `drops/author_${author_id}/${uploadId}/${sanitizedFileName}`;
   }
 
   private async createSignedMediaUrl({
