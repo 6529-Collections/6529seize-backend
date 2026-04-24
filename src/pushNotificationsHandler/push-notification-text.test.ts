@@ -1,5 +1,8 @@
 import fc from 'fast-check';
-import { sanitizePushNotificationText } from './push-notification-text';
+import {
+  getDropMediaPlaceholderForPush,
+  sanitizePushNotificationText
+} from './push-notification-text';
 
 describe('sanitizePushNotificationText', () => {
   it('replaces markdown images with a short placeholder', () => {
@@ -58,5 +61,34 @@ describe('sanitizePushNotificationText', () => {
         expect(sanitizePushNotificationText(text)).not.toContain(url);
       })
     );
+  });
+});
+
+describe('getDropMediaPlaceholderForPush', () => {
+  it('labels csv from mime and filename from url path', () => {
+    expect(
+      getDropMediaPlaceholderForPush(
+        'https://cdn.example.com/waves/x/report.csv',
+        'text/csv'
+      )
+    ).toBe('[CSV (report.csv)]');
+  });
+
+  it('uses url extension when mime does not map to a known label', () => {
+    expect(
+      getDropMediaPlaceholderForPush(
+        'https://cdn.example.com/waves/x/report.csv',
+        'application/octet-stream'
+      )
+    ).toBe('[CSV (report.csv)]');
+  });
+
+  it('uses mime when url path has no media extension', () => {
+    expect(
+      getDropMediaPlaceholderForPush(
+        'https://cdn.example.com/objects/a1b2c3d4-e5f6',
+        'text/csv'
+      )
+    ).toBe('[CSV (a1b2c3d4-e5f6)]');
   });
 });

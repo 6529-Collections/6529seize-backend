@@ -14,7 +14,7 @@ const MAX_TITLE_LENGTH = 50;
 const MAX_BODY_LENGTH = 250;
 
 const DEFAULT_PUSH_NOTIFICATION_TITLE = 'New notification';
-const DEFAULT_PUSH_NOTIFICATION_BODY = 'View';
+const DEFAULT_PUSH_NOTIFICATION_BODY = 'View drop';
 
 function preparePushNotificationLine(value: string | null | undefined): string {
   const raw = value == null ? '' : String(value);

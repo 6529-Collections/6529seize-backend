@@ -94,6 +94,23 @@ function getMediaPlaceholderForUrl(url: string): string {
     : `[${label}]`;
 }
 
+export function getDropMediaPlaceholderForPush(
+  url: string,
+  mimeType: string | null | undefined
+): string {
+  const mimeTrimmed = mimeType?.trim();
+  if (mimeTrimmed) {
+    const label = getFileTypeLabel(mimeTrimmed);
+    if (label !== MEDIA_LABEL) {
+      const fileName = getMediaFileNameForUrl(url);
+      return fileName
+        ? `[${label} (${truncateMediaFileName(fileName)})]`
+        : `[${label}]`;
+    }
+  }
+  return getMediaPlaceholderForUrl(url);
+}
+
 function isSupportedMediaUrl(url: string): boolean {
   const cleanUrl = url.split(/[?#]/)[0].toLowerCase();
   return Object.keys(SUPPORTED_MEDIA_EXTENSIONS_BY_LABEL).some((extension) =>
