@@ -1,6 +1,7 @@
+import { MEMES_CONTRACT } from '@/constants';
 import { mock } from 'ts-jest-mocker';
 import { DropType } from '@/entities/IDrop';
-import { WaveType } from '@/entities/IWave';
+import { WaveCreditType, WaveType } from '@/entities/IWave';
 import { IdentitiesDb } from '@/identities/identities.db';
 import { RatingsDb } from '@/rates/ratings.db';
 import { aWave } from '@/tests/fixtures/wave.fixture';
@@ -48,6 +49,9 @@ describe('DropVotingService', () => {
         }
       )
     ]);
+    (wavesDb.findWaveVotingCreditNftsByWaveIds as jest.Mock).mockResolvedValue(
+      {}
+    );
     (votingDb.getVotersActiveVoteForDrops as jest.Mock).mockResolvedValue({
       'drop-1': 2
     });
@@ -78,5 +82,65 @@ describe('DropVotingService', () => {
         max: 3
       }
     });
+  });
+
+  it('uses combined CARD_SET_TDH credit when configured on the wave', async () => {
+    (wavesDb.findWavesByIds as jest.Mock).mockResolvedValue([
+      aWave(
+        {
+          type: WaveType.RANK,
+          max_votes_per_identity_to_drop: null,
+          voting_credit_type: WaveCreditType.CARD_SET_TDH
+        },
+        {
+          id: 'wave-1',
+          name: 'Wave 1',
+          serial_no: 1
+        }
+      )
+    ]);
+    (votingDb.getVotersActiveVoteForDrops as jest.Mock).mockResolvedValue({
+      'drop-1': 1
+    });
+    (votingDb.getVotersTotalLockedCreditInWaves as jest.Mock).mockResolvedValue(
+      {
+        'wave-1': 1
+      }
+    );
+    (wavesDb.findWaveVotingCreditNftsByWaveIds as jest.Mock).mockResolvedValue({
+      'wave-1': [
+        {
+          contract: MEMES_CONTRACT.toLowerCase(),
+          tokenId: 1
+        },
+        {
+          contract: MEMES_CONTRACT.toLowerCase(),
+          tokenId: 2
+        }
+      ]
+    });
+    (
+      identitiesDb.getSingleNftVotingCreditsByProfileId as jest.Mock
+    ).mockResolvedValue({
+      [`${MEMES_CONTRACT.toLowerCase()}:1`]: 4,
+      [`${MEMES_CONTRACT.toLowerCase()}:2`]: 2
+    });
+
+    const result = await service.findCreditLeftForVotingForDrops('profile-1', [
+      {
+        id: 'drop-1',
+        wave_id: 'wave-1',
+        drop_type: DropType.PARTICIPATORY
+      } as any
+    ]);
+
+    expect(result).toEqual({
+      'drop-1': {
+        min: -6,
+        current: 1,
+        max: 6
+      }
+    });
+    expect(identitiesDb.getIdentityByProfileId).not.toHaveBeenCalled();
   });
 });

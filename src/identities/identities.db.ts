@@ -18,6 +18,7 @@ import {
   PROFILES_TABLE,
   UUID_REGEX,
   WALLET_REGEX,
+  TDH_NFT_TABLE,
   WALLETS_TDH_TABLE,
   WAVES_TABLE,
   X_TDH_COEFFICIENT
@@ -32,6 +33,11 @@ import { collections } from '../collections';
 import { env } from '../env';
 import { DropType } from '../entities/IDrop';
 import { appFeatures } from '../app-features';
+import {
+  groupWaveVotingCreditNftsByContract,
+  normalizeWaveVotingCreditNfts,
+  waveVotingCreditNftKey
+} from '@/waves/wave-voting-credit-nfts';
 
 const mysql = require('mysql');
 
@@ -351,6 +357,88 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
       { id },
       { wrappedConnection: connectionHolder }
     );
+  }
+
+  public async getSingleNftVotingCreditByProfileId(
+    profileId: string,
+    creditNft: { contract: string; tokenId: number },
+    ctx: RequestContext
+  ): Promise<number> {
+    const creditKey = `${creditNft.contract.toLowerCase()}:${creditNft.tokenId}`;
+    return (
+      (
+        await this.getSingleNftVotingCreditsByProfileId(
+          profileId,
+          [creditNft],
+          ctx
+        )
+      )[creditKey] ?? 0
+    );
+  }
+
+  public async getSingleNftVotingCreditsByProfileId(
+    profileId: string,
+    creditNfts: { contract: string; tokenId: number }[],
+    ctx: RequestContext
+  ): Promise<Record<string, number>> {
+    const timerKey = `${this.constructor.name}->getSingleNftVotingCreditsByProfileId`;
+    ctx.timer?.start(timerKey);
+    try {
+      const normalizedCreditNfts = normalizeWaveVotingCreditNfts(creditNfts);
+      if (!normalizedCreditNfts.length) {
+        return {};
+      }
+      const credits = (
+        await Promise.all(
+          groupWaveVotingCreditNftsByContract(normalizedCreditNfts).map(
+            ({ contract, tokenIds }) =>
+              this.db.execute<{
+                contract: string;
+                token_id: number;
+                boosted_tdh: number;
+              }>(
+                `
+                  SELECT t.contract AS contract,
+                         t.id AS token_id,
+                         MAX(t.boosted_tdh) AS boosted_tdh
+                  FROM ${TDH_NFT_TABLE} t
+                  JOIN (
+                    SELECT DISTINCT consolidation_key
+                    FROM ${IDENTITIES_TABLE}
+                    WHERE profile_id = :profileId
+                  ) i
+                    ON i.consolidation_key = t.consolidation_key
+                  WHERE t.contract = :contract
+                    AND t.id IN (:tokenIds)
+                  GROUP BY t.contract, t.id
+                `,
+                {
+                  profileId,
+                  contract,
+                  tokenIds
+                },
+                { wrappedConnection: ctx.connection }
+              )
+          )
+        )
+      ).flat();
+      const creditByKey = normalizedCreditNfts.reduce(
+        (acc, creditNft) => {
+          acc[waveVotingCreditNftKey(creditNft.contract, creditNft.tokenId)] =
+            0;
+          return acc;
+        },
+        {} as Record<string, number>
+      );
+      for (const credit of credits) {
+        creditByKey[
+          waveVotingCreditNftKey(credit.contract, Number(credit.token_id))
+        ] = credit.boosted_tdh ?? 0;
+      }
+      return creditByKey;
+    } finally {
+      ctx.timer?.stop(timerKey);
+    }
   }
 
   async getIdentityByHandle(

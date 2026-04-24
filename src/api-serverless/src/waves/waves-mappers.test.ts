@@ -1,6 +1,7 @@
+import { MEMES_CONTRACT } from '@/constants';
 import { aWave } from '@/tests/fixtures/wave.fixture';
 import { WavesMappers } from '@/api/waves/waves.mappers';
-import { WaveType } from '@/entities/IWave';
+import { WaveCreditType, WaveType } from '@/entities/IWave';
 import { ApiWaveCreditType } from '../generated/models/ApiWaveCreditType';
 import { ApiWaveType } from '../generated/models/ApiWaveType';
 import { ApiUpdateWaveRequest } from '../generated/models/ApiUpdateWaveRequest';
@@ -57,6 +58,7 @@ describe('WavesMappers', () => {
         firstUnreadDropSerialNoByWaveId: {},
         wavePauses: {},
         decisionsDoneByWaveId: { 'wave-1': 2 },
+        votingCreditNftsByWaveId: {},
         pinnedWaveIds: new Set<string>(),
         identityWaveIds: new Set<string>(),
         authenticatedUserId: waveEntity.created_by
@@ -85,6 +87,7 @@ describe('WavesMappers', () => {
         scope: { group_id: null },
         credit_type: ApiWaveCreditType.Tdh,
         credit_category: null,
+        credit_nfts: null,
         creditor_id: null,
         signature_required: false,
         period: undefined,
@@ -134,5 +137,160 @@ describe('WavesMappers', () => {
     });
 
     expect(mapped.max_votes_per_identity_to_drop).toBe(7);
+  });
+
+  it('maps card-set TDH config into entity fields and API output', async () => {
+    const mapper = new WavesMappers({} as any, {} as any, {} as any, {} as any);
+    const request: ApiUpdateWaveRequest = {
+      name: 'Wave 1',
+      picture: null,
+      voting: {
+        scope: { group_id: null },
+        credit_type: ApiWaveCreditType.CardSetTdh,
+        credit_category: null,
+        credit_nfts: [
+          {
+            contract: MEMES_CONTRACT.toLowerCase(),
+            token_id: 1
+          },
+          {
+            contract: MEMES_CONTRACT.toLowerCase(),
+            token_id: 2
+          }
+        ],
+        creditor_id: null,
+        signature_required: false,
+        period: undefined,
+        forbid_negative_votes: false
+      },
+      visibility: {
+        scope: { group_id: null }
+      },
+      participation: {
+        scope: { group_id: null },
+        no_of_applications_allowed_per_participant: null,
+        required_metadata: [],
+        required_media: [],
+        signature_required: false,
+        period: undefined,
+        terms: null,
+        submission_strategy: null
+      },
+      chat: {
+        scope: { group_id: null },
+        enabled: true
+      },
+      wave: {
+        type: ApiWaveType.Rank,
+        winning_threshold: null,
+        max_winners: null,
+        time_lock_ms: null,
+        admin_group: { group_id: null },
+        decisions_strategy: null,
+        admin_drop_deletion_enabled: false
+      }
+    };
+
+    const entity = await mapper.createWaveToNewWaveEntity({
+      id: 'wave-1',
+      serial_no: 1,
+      created_at: 1,
+      updated_at: 2,
+      request,
+      created_by: 'profile-1',
+      descriptionDropId: 'drop-1',
+      nextDecisionTime: null,
+      isDirectMessage: false
+    });
+
+    expect(entity.voting_credit_nfts).toEqual([
+      {
+        contract: MEMES_CONTRACT.toLowerCase(),
+        tokenId: 1
+      },
+      {
+        contract: MEMES_CONTRACT.toLowerCase(),
+        tokenId: 2
+      }
+    ]);
+
+    const waveEntity = {
+      ...aWave(
+        {
+          type: WaveType.RANK,
+          voting_credit_type: WaveCreditType.CARD_SET_TDH
+        },
+        {
+          id: 'wave-1',
+          name: 'Wave 1',
+          serial_no: 1
+        }
+      ),
+      participation_required_metadata: [],
+      participation_required_media: []
+    };
+
+    const mapped = (mapper as any).mapWaveEntityToApiWave({
+      waveEntity,
+      relatedData: {
+        contributors: {},
+        profiles: {
+          [waveEntity.created_by]: { id: waveEntity.created_by } as any
+        },
+        curations: {},
+        displayByWaveId: {},
+        creationDrops: {
+          [waveEntity.description_drop_id]: {
+            id: waveEntity.description_drop_id
+          }
+        },
+        subscribedActions: {},
+        metrics: {
+          'wave-1': {
+            wave_id: 'wave-1',
+            drops_count: 0,
+            subscribers_count: 0,
+            participatory_drops_count: 0,
+            latest_drop_timestamp: 0
+          }
+        },
+        authenticatedUserMetrics: {},
+        authenticatedUserReaderMetrics: {},
+        yourParticipationDropsCountByWaveId: {},
+        yourUnreadDropsCountByWaveId: {},
+        firstUnreadDropSerialNoByWaveId: {},
+        wavePauses: {},
+        decisionsDoneByWaveId: {},
+        votingCreditNftsByWaveId: {
+          'wave-1': [
+            {
+              contract: MEMES_CONTRACT.toLowerCase(),
+              tokenId: 1
+            },
+            {
+              contract: MEMES_CONTRACT.toLowerCase(),
+              tokenId: 2
+            }
+          ]
+        },
+        pinnedWaveIds: new Set<string>(),
+        identityWaveIds: new Set<string>(),
+        authenticatedUserId: waveEntity.created_by
+      },
+      noRightToVote: false,
+      groupIdsUserIsEligibleFor: [],
+      noRightToParticipate: false
+    });
+
+    expect(mapped.voting.credit_nfts).toEqual([
+      {
+        contract: MEMES_CONTRACT.toLowerCase(),
+        token_id: 1
+      },
+      {
+        contract: MEMES_CONTRACT.toLowerCase(),
+        token_id: 2
+      }
+    ]);
   });
 });

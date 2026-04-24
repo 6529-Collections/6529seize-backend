@@ -1,3 +1,4 @@
+import { MEMES_CONTRACT } from '@/constants';
 import { mock } from 'ts-jest-mocker';
 import { DropVotingDb } from '@/api-serverless/src/drops/drop-voting.db';
 import { UserGroupsService } from '@/api-serverless/src/community-members/user-groups.service';
@@ -72,6 +73,9 @@ describe('VoteForDropUseCase', () => {
       undefined
     );
     (wavesDb.findById as jest.Mock).mockResolvedValue(wave);
+    (wavesDb.findWaveVotingCreditNftsByWaveIds as jest.Mock).mockResolvedValue(
+      {}
+    );
     (wavesDb.countWaveDecisionsByWaveIds as jest.Mock).mockResolvedValue({});
     (dropsDb.findDropById as jest.Mock).mockResolvedValue(drop);
     (
@@ -197,5 +201,91 @@ describe('VoteForDropUseCase', () => {
         { connection }
       )
     ).rejects.toThrow(`max_votes_per_identity_to_drop exceeded for this drop`);
+  });
+
+  it('uses combined CARD_SET_TDH credit when configured on the wave', async () => {
+    (wavesDb.findById as jest.Mock).mockResolvedValue({
+      ...wave,
+      voting_credit_type: WaveCreditType.CARD_SET_TDH
+    });
+    (wavesDb.findWaveVotingCreditNftsByWaveIds as jest.Mock).mockResolvedValue({
+      'wave-1': [
+        {
+          contract: MEMES_CONTRACT.toLowerCase(),
+          tokenId: 1
+        },
+        {
+          contract: MEMES_CONTRACT.toLowerCase(),
+          tokenId: 2
+        }
+      ]
+    });
+    (
+      identitiesDb.getSingleNftVotingCreditsByProfileId as jest.Mock
+    ).mockResolvedValue({
+      [`${MEMES_CONTRACT.toLowerCase()}:1`]: 3,
+      [`${MEMES_CONTRACT.toLowerCase()}:2`]: 2
+    });
+    (
+      votingDb.getVotingCreditLockedInWaveForVoter as jest.Mock
+    ).mockResolvedValue(2);
+
+    await expect(
+      useCase.execute(
+        {
+          voter_id: 'voter-1',
+          drop_id: 'drop-1',
+          wave_id: 'wave-1',
+          votes: 6,
+          proxy_id: null
+        },
+        { connection }
+      )
+    ).rejects.toThrow('Not enough credit to vote');
+
+    expect(
+      identitiesDb.getSingleNftVotingCreditsByProfileId
+    ).toHaveBeenCalledWith(
+      'voter-1',
+      [
+        {
+          contract: MEMES_CONTRACT.toLowerCase(),
+          tokenId: 1
+        },
+        {
+          contract: MEMES_CONTRACT.toLowerCase(),
+          tokenId: 2
+        }
+      ],
+      { connection }
+    );
+    expect(identitiesDb.getIdentityByProfileId).not.toHaveBeenCalled();
+  });
+
+  it('fails loudly when CARD_SET_TDH wave config has no configured NFTs', async () => {
+    (wavesDb.findById as jest.Mock).mockResolvedValue({
+      ...wave,
+      id: 'wave-bad',
+      voting_credit_type: WaveCreditType.CARD_SET_TDH
+    });
+
+    await expect(
+      useCase.execute(
+        {
+          voter_id: 'voter-1',
+          drop_id: 'drop-1',
+          wave_id: 'wave-bad',
+          votes: 6,
+          proxy_id: null
+        },
+        { connection }
+      )
+    ).rejects.toThrow(
+      `Wave wave-bad is misconfigured: CARD_SET_TDH requires voting credit nfts`
+    );
+
+    expect(
+      identitiesDb.getSingleNftVotingCreditsByProfileId
+    ).not.toHaveBeenCalled();
   });
 });
