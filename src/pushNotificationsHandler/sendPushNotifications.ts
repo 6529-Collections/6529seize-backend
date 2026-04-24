@@ -13,6 +13,16 @@ const logger = Logger.get('PUSH_NOTIFICATIONS_HANDLER_SEND');
 const MAX_TITLE_LENGTH = 50;
 const MAX_BODY_LENGTH = 250;
 
+const DEFAULT_PUSH_NOTIFICATION_TITLE = 'New notification';
+const DEFAULT_PUSH_NOTIFICATION_BODY = 'View';
+
+function preparePushNotificationLine(value: string | null | undefined): string {
+  const raw = value == null ? '' : String(value);
+  return emojify(
+    sanitizePushNotificationText(raw).replace(/@\[(.+?)\]/g, '@$1')
+  ).trim();
+}
+
 function isFcmAcceptableImageUrl(url: string | undefined): boolean {
   if (!url || typeof url !== 'string' || !url.trim()) return false;
   try {
@@ -54,12 +64,8 @@ export async function sendMessage(
 ) {
   init();
 
-  title = emojify(
-    sanitizePushNotificationText(title).replace(/@\[(.+?)\]/g, '@$1')
-  );
-  body = emojify(
-    sanitizePushNotificationText(body).replace(/@\[(.+?)\]/g, '@$1')
-  );
+  title = preparePushNotificationLine(title) || DEFAULT_PUSH_NOTIFICATION_TITLE;
+  body = preparePushNotificationLine(body) || DEFAULT_PUSH_NOTIFICATION_BODY;
 
   const badgeNumber = numbers.parseIntOrNull(badge) ?? 1;
 
