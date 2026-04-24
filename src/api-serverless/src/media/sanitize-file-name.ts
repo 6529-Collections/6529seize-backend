@@ -43,7 +43,7 @@ export function slugifyBaseName(baseName: string): string {
   const out: string[] = [];
   let lastWasDash = false;
   for (let i = 0; i < limit && out.length < MAX_SLUG_LENGTH; i++) {
-    const code = baseName.charCodeAt(i);
+    const code = baseName.codePointAt(i) ?? 0;
     const isAlphanumeric =
       (code >= 48 && code <= 57) || // 0-9
       (code >= 65 && code <= 90) || // A-Z
@@ -60,7 +60,7 @@ export function slugifyBaseName(baseName: string): string {
   }
   // Trailing dash can happen if the loop exits because we hit MAX_SLUG_LENGTH
   // right after emitting a dash, or because we ran out of input on one.
-  if (out.length > 0 && out[out.length - 1] === '-') {
+  if (out.length > 0 && out.at(-1) === '-') {
     out.pop();
   }
   return out.join('');
