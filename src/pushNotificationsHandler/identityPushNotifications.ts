@@ -605,10 +605,10 @@ async function getDropBodyTextForPush(
   );
 
   if (hasText && attachmentLabels.length > 0) {
-    return `${rawContent!.trim()} ${attachmentLabels.join(' ')}`.trim();
+    return `${rawContent.trim()} ${attachmentLabels.join(' ')}`.trim();
   }
   if (hasText) {
-    return rawContent!;
+    return rawContent;
   }
   if (attachmentLabels.length > 0) {
     return attachmentLabels.join(' ');
