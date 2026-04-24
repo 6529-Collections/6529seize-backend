@@ -580,34 +580,40 @@ async function getDropBodyTextForPush(
   emptyFallback = 'View drop'
 ): Promise<string> {
   const rawContent = dropPart?.content;
-  if (rawContent != null && rawContent.trim() !== '') {
-    return rawContent;
-  }
+  const hasText = rawContent != null && rawContent.trim() !== '';
   const dropId = notification.related_drop_id;
-  if (!dropId) {
-    return emptyFallback;
-  }
-  const mediaRepo = getDataSource().getRepository(DropMediaEntity);
+
   let mediaRows: DropMediaEntity[] = [];
-  if (dropPart?.drop_part_id != null) {
-    mediaRows = await mediaRepo.find({
-      where: { drop_id: dropId, drop_part_id: dropPart.drop_part_id },
-      order: { id: 'ASC' },
-      take: 1
-    });
+  if (dropId) {
+    const mediaRepo = getDataSource().getRepository(DropMediaEntity);
+    if (dropPart?.drop_part_id != null) {
+      mediaRows = await mediaRepo.find({
+        where: { drop_id: dropId, drop_part_id: dropPart.drop_part_id },
+        order: { id: 'ASC' }
+      });
+    }
+    if (mediaRows.length === 0) {
+      mediaRows = await mediaRepo.find({
+        where: { drop_id: dropId },
+        order: { drop_part_id: 'ASC', id: 'ASC' }
+      });
+    }
   }
-  if (mediaRows.length === 0) {
-    mediaRows = await mediaRepo.find({
-      where: { drop_id: dropId },
-      order: { drop_part_id: 'ASC', id: 'ASC' },
-      take: 1
-    });
+
+  const attachmentLabels = mediaRows.map((row) =>
+    getDropMediaPlaceholderForPush(row.url, row.mime_type)
+  );
+
+  if (hasText && attachmentLabels.length > 0) {
+    return `${rawContent!.trim()} ${attachmentLabels.join(' ')}`.trim();
   }
-  const first = mediaRows[0];
-  if (!first) {
-    return emptyFallback;
+  if (hasText) {
+    return rawContent!;
   }
-  return getDropMediaPlaceholderForPush(first.url, first.mime_type);
+  if (attachmentLabels.length > 0) {
+    return attachmentLabels.join(' ');
+  }
+  return emptyFallback;
 }
 
 async function getDropSerialNo(dropId: string | null) {
