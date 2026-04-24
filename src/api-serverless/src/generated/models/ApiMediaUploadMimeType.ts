@@ -15,6 +15,7 @@ import { HttpFile } from '../http/http';
 export enum ApiMediaUploadMimeType {
     ImagePng = 'image/png',
     ImageJpeg = 'image/jpeg',
+    ImageJpg = 'image/jpg',
     ImageGif = 'image/gif',
     VideoMp4 = 'video/mp4',
     VideoXMsvideo = 'video/x-msvideo',
