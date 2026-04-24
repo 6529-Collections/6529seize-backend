@@ -1716,7 +1716,9 @@ paths:
       tags:
         - Drops
       summary: Create S3 URL for drop media upload
-      description: Requires the user to be authenticated
+      description: >-
+        Requires authentication; content_type must be one of the defined MIME
+        types.
       operationId: createDropMediaUrl
       requestBody:
         required: true
@@ -1738,7 +1740,9 @@ paths:
       tags:
         - Drops
       summary: Get upload ID and key for multipart upload
-      description: Requires the user to be authenticated
+      description: >-
+        Requires authentication; content_type must be one of the defined MIME
+        types.
       operationId: createMultipartDropMediaUrl
       requestBody:
         required: true
@@ -7969,8 +7973,7 @@ components:
         - file_size
       properties:
         content_type:
-          type: string
-          example: image/png
+          $ref: "#/components/schemas/ApiMediaUploadMimeType"
         file_name:
           type: string
           example: image.png
@@ -9599,6 +9602,27 @@ components:
         first_unread_drop_serial_no:
           type: integer
           nullable: true
+    ApiMediaUploadMimeType:
+      type: string
+      enum:
+        - image/png
+        - image/jpeg
+        - image/jpg
+        - image/gif
+        - video/mp4
+        - video/x-msvideo
+        - audio/mpeg
+        - audio/mpeg3
+        - audio/ogg
+        - audio/mp3
+        - audio/wav
+        - audio/aac
+        - audio/x-aac
+        - model/gltf-binary
+        - video/quicktime
+        - image/webp
+        - application/pdf
+        - text/csv
     ApiMemesMintStat:
       type: object
       required:
