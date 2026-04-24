@@ -20,6 +20,10 @@ import {
   ApiUploadPartOfMultipartUploadRequestSchema,
   createMediaPrepRequestSchema
 } from '../media/media-uplodad.validators';
+import {
+  DROP_MEDIA_ALLOWED_EXTENSIONS_BY_MIME_TYPE,
+  DROP_MEDIA_ALLOWED_MIME_TYPES
+} from '@/api/media/media-mime-types';
 
 const router = asyncRouter();
 
@@ -131,22 +135,8 @@ router.post(
 );
 
 const MediaPrepRequestSchema = createMediaPrepRequestSchema({
-  allowedMimeTypes: [
-    'image/png',
-    'image/jpeg',
-    'image/gif',
-    'video/mp4',
-    'video/x-msvideo',
-    'audio/mpeg',
-    'audio/mpeg3',
-    'audio/ogg',
-    'audio/mp3',
-    'audio/wav',
-    'audio/aac',
-    'audio/x-aac',
-    'model/gltf-binary',
-    'video/quicktime'
-  ]
+  allowedMimeTypes: [...DROP_MEDIA_ALLOWED_MIME_TYPES],
+  allowedExtensionsByMimeType: DROP_MEDIA_ALLOWED_EXTENSIONS_BY_MIME_TYPE
 });
 
 export default router;

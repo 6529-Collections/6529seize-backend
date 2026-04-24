@@ -14,7 +14,11 @@ import { DropGroupMention } from '@/entities/IWaveGroupNotificationSubscription'
 import { WaveIdentitySubmissionDuplicates, WaveType } from '@/entities/IWave';
 import { env } from '@/env';
 import { profilesService } from '@/profiles/profiles.service';
-import { CreateOrUpdateDropUseCase } from './create-or-update-drop.use-case';
+import {
+  CreateOrUpdateDropUseCase,
+  DROP_MEDIA_CLOUDFRONT_ORIGIN,
+  validateDropMediaAttachment
+} from './create-or-update-drop.use-case';
 
 describe('CreateOrUpdateDropUseCase', () => {
   afterEach(() => {
@@ -489,5 +493,95 @@ describe('CreateOrUpdateDropUseCase', () => {
     ).resolves.toBeUndefined();
 
     expect(wavesApiDb.countWaveDecisionsByWaveIds).not.toHaveBeenCalled();
+  });
+
+  it('allows csv uploads for chat drops from CloudFront', () => {
+    expect(() =>
+      validateDropMediaAttachment({
+        mimeType: 'text/csv',
+        url: `${DROP_MEDIA_CLOUDFRONT_ORIGIN}/drops/author_1/file.csv`,
+        dropType: DropType.CHAT
+      })
+    ).not.toThrow();
+  });
+
+  it('rejects csv uploads for participatory drops', () => {
+    expect(() =>
+      validateDropMediaAttachment({
+        mimeType: 'text/csv',
+        url: `${DROP_MEDIA_CLOUDFRONT_ORIGIN}/drops/author_1/file.csv`,
+        dropType: DropType.PARTICIPATORY
+      })
+    ).toThrow('text/csv is only supported on chat drops');
+  });
+
+  it('rejects csv uploads outside CloudFront', () => {
+    expect(() =>
+      validateDropMediaAttachment({
+        mimeType: 'text/csv',
+        url: 'https://example.com/file.csv',
+        dropType: DropType.CHAT
+      })
+    ).toThrow(`text/csv needs to come from ${DROP_MEDIA_CLOUDFRONT_ORIGIN}`);
+  });
+
+  it('rejects csv uploads from spoofed CloudFront-like hosts', () => {
+    expect(() =>
+      validateDropMediaAttachment({
+        mimeType: 'text/csv',
+        url: 'https://d3lqz0a4bldqgf.cloudfront.net.evil.com/file.csv',
+        dropType: DropType.CHAT
+      })
+    ).toThrow(`text/csv needs to come from ${DROP_MEDIA_CLOUDFRONT_ORIGIN}`);
+  });
+
+  it('allows pdf uploads from CloudFront', () => {
+    expect(() =>
+      validateDropMediaAttachment({
+        mimeType: 'application/pdf',
+        url: `${DROP_MEDIA_CLOUDFRONT_ORIGIN}/drops/author_1/file.pdf`,
+        dropType: DropType.CHAT
+      })
+    ).not.toThrow();
+  });
+
+  it('rejects pdf uploads from spoofed CloudFront-like hosts', () => {
+    expect(() =>
+      validateDropMediaAttachment({
+        mimeType: 'application/pdf',
+        url: 'https://d3lqz0a4bldqgf.cloudfront.net.evil.com/file.pdf',
+        dropType: DropType.CHAT
+      })
+    ).toThrow(`Media needs to come from ${DROP_MEDIA_CLOUDFRONT_ORIGIN}`);
+  });
+
+  it('preserves html handling', () => {
+    expect(() =>
+      validateDropMediaAttachment({
+        mimeType: 'text/html',
+        url: 'https://arweave.net/some-html',
+        dropType: DropType.CHAT
+      })
+    ).not.toThrow();
+  });
+
+  it('rejects html uploads from spoofed Arweave-like hosts', () => {
+    expect(() =>
+      validateDropMediaAttachment({
+        mimeType: 'text/html',
+        url: 'https://arweave.net.evil.com/file.html',
+        dropType: DropType.CHAT
+      })
+    ).toThrow('text/html needs to be served from IPFS or Arweave');
+  });
+
+  it('preserves ipfs html handling', () => {
+    expect(() =>
+      validateDropMediaAttachment({
+        mimeType: 'text/html',
+        url: 'ipfs://bafybeigdyrzt/file.html',
+        dropType: DropType.CHAT
+      })
+    ).not.toThrow();
   });
 });

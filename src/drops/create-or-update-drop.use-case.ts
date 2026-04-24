@@ -80,9 +80,63 @@ import { UUID_REGEX, WALLET_REGEX } from '@/constants';
 import { getAlchemyInstance } from '@/alchemy';
 import { profilesService } from '@/profiles/profiles.service';
 import { isApproveWaveClosed } from '@/waves/wave-approve.helpers';
+import { DROP_MEDIA_DOCUMENT_MIME_TYPES } from '@/api/media/media-mime-types';
+
+export const DROP_MEDIA_CLOUDFRONT_ORIGIN =
+  'https://d3lqz0a4bldqgf.cloudfront.net';
+const ARWEAVE_ORIGIN = 'https://arweave.net';
 
 function isActiveIdentityNomination(nomination: { has_won: boolean }): boolean {
   return !nomination.has_won;
+}
+
+function parseDropMediaUrl(url: string): URL {
+  try {
+    return new URL(url);
+  } catch {
+    throw new BadRequestException(`Invalid media url ${url}`);
+  }
+}
+
+export function validateDropMediaAttachment({
+  mimeType,
+  url,
+  dropType
+}: {
+  mimeType: string;
+  url: string;
+  dropType: DropType;
+}): void {
+  const parsedUrl = parseDropMediaUrl(url);
+
+  if (
+    mimeType.startsWith('image/') ||
+    mimeType.startsWith('video/') ||
+    mimeType.startsWith('audio/') ||
+    (DROP_MEDIA_DOCUMENT_MIME_TYPES as readonly string[]).includes(mimeType)
+  ) {
+    if (mimeType === 'text/csv' && dropType !== DropType.CHAT) {
+      throw new BadRequestException(`text/csv is only supported on chat drops`);
+    }
+    if (parsedUrl.origin !== DROP_MEDIA_CLOUDFRONT_ORIGIN) {
+      const mediaLabel = mimeType === 'text/csv' ? 'text/csv' : 'Media';
+      throw new BadRequestException(
+        `${mediaLabel} needs to come from ${DROP_MEDIA_CLOUDFRONT_ORIGIN}`
+      );
+    }
+    return;
+  }
+
+  if (mimeType === 'text/html') {
+    if (parsedUrl.origin !== ARWEAVE_ORIGIN && parsedUrl.protocol !== 'ipfs:') {
+      throw new BadRequestException(
+        `text/html needs to be served from IPFS or Arweave`
+      );
+    }
+    return;
+  }
+
+  throw new BadRequestException(`Unsupported mime type ${mimeType}`);
 }
 
 type PreResolvedEnsIdentityNomination = Readonly<{
@@ -652,29 +706,11 @@ export class CreateOrUpdateDropUseCase {
     timer?.start(`${CreateOrUpdateDropUseCase.name}->verifyMedia`);
     for (const part of model.parts) {
       for (const media of part.media) {
-        const mimeType = media.mime_type;
-        if (
-          mimeType.startsWith('image/') ||
-          mimeType.startsWith('video/') ||
-          mimeType.startsWith('audio/')
-        ) {
-          if (!media.url.startsWith('https://d3lqz0a4bldqgf.cloudfront.net')) {
-            throw new BadRequestException(
-              `Media needs to come from https://d3lqz0a4bldqgf.cloudfront.net`
-            );
-          }
-        } else if (mimeType === 'text/html') {
-          if (
-            !media.url.startsWith('https://arweave.net/') &&
-            !media.url.startsWith('ipfs://')
-          ) {
-            throw new BadRequestException(
-              `text/html needs to be served from IPFS or Arweave`
-            );
-          }
-        } else {
-          throw new BadRequestException(`Unsupported mime type ${mimeType}`);
-        }
+        validateDropMediaAttachment({
+          mimeType: media.mime_type,
+          url: media.url,
+          dropType: model.drop_type
+        });
       }
     }
     const requiredMedias = wave.participation_required_media;

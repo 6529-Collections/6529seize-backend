@@ -3,6 +3,7 @@ import { ApiUploadPartOfMultipartUploadRequest } from '../generated/models/ApiUp
 import { ApiCompleteMultipartUploadRequestPart } from '../generated/models/ApiCompleteMultipartUploadRequestPart';
 import { ApiCompleteMultipartUploadRequest } from '../generated/models/ApiCompleteMultipartUploadRequest';
 import { ApiCreateMediaUploadUrlRequest } from '../generated/models/ApiCreateMediaUploadUrlRequest';
+import { DANGEROUS_MEDIA_FILE_EXTENSIONS } from '@/api/media/media-mime-types';
 
 export const ApiUploadPartOfMultipartUploadRequestSchema: Joi.ObjectSchema<ApiUploadPartOfMultipartUploadRequest> =
   Joi.object({
@@ -28,16 +29,33 @@ export const ApiCompleteMultipartUploadRequestSchema: Joi.ObjectSchema<ApiComple
   });
 
 export function createMediaPrepRequestSchema({
-  allowedMimeTypes
+  allowedMimeTypes,
+  allowedExtensionsByMimeType
 }: {
   allowedMimeTypes: string[];
+  allowedExtensionsByMimeType?: Record<string, readonly string[]>;
 }): Joi.ObjectSchema<ApiCreateMediaUploadUrlRequest & { author: string }> {
   return Joi.object({
     author: Joi.string().required(),
     content_type: Joi.string()
       .required()
       .valid(...allowedMimeTypes),
-    file_name: Joi.string().required()
+    file_name: Joi.string()
+      .required()
+      .custom((fileName, helpers) => {
+        const contentType = helpers.state.ancestors[0]?.content_type;
+        if (
+          allowedExtensionsByMimeType &&
+          !isAllowedMediaFileName(
+            fileName,
+            contentType,
+            allowedExtensionsByMimeType
+          )
+        ) {
+          return helpers.error('any.invalid');
+        }
+        return fileName;
+      })
   });
 }
 
@@ -52,4 +70,36 @@ export function createDistributionPhotoMediaPrepRequestSchema({
       .valid(...allowedMimeTypes),
     file_name: Joi.string().required()
   });
+}
+
+function isAllowedMediaFileName(
+  fileName: string,
+  contentType: unknown,
+  allowedExtensionsByMimeType: Record<string, readonly string[]>
+): boolean {
+  if (
+    typeof contentType !== 'string' ||
+    !(contentType in allowedExtensionsByMimeType) ||
+    fileName !== fileName.trim() ||
+    fileName.includes('/') ||
+    fileName.includes('\\') ||
+    fileName.includes('\0')
+  ) {
+    return false;
+  }
+
+  const lowerFileName = fileName.toLowerCase();
+  const fileExtensions = lowerFileName.match(/\.[^.]+/g) ?? [];
+  if (
+    fileExtensions.some((extension) =>
+      (DANGEROUS_MEDIA_FILE_EXTENSIONS as readonly string[]).includes(extension)
+    )
+  ) {
+    return false;
+  }
+
+  const allowedExtensions = allowedExtensionsByMimeType[contentType];
+  return allowedExtensions.some((extension) =>
+    lowerFileName.endsWith(extension)
+  );
 }
