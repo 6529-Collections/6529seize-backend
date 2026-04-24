@@ -6,6 +6,7 @@ import {
 import { Logger } from '../logging';
 import { numbers } from '../numbers';
 import { emojify } from './emojify';
+import { sanitizePushNotificationText } from './push-notification-text';
 
 const logger = Logger.get('PUSH_NOTIFICATIONS_HANDLER_SEND');
 
@@ -53,8 +54,12 @@ export async function sendMessage(
 ) {
   init();
 
-  title = emojify(title.replace(/@\[(.+?)\]/g, '@$1'));
-  body = emojify(body.replace(/@\[(.+?)\]/g, '@$1'));
+  title = emojify(
+    sanitizePushNotificationText(title).replace(/@\[(.+?)\]/g, '@$1')
+  );
+  body = emojify(
+    sanitizePushNotificationText(body).replace(/@\[(.+?)\]/g, '@$1')
+  );
 
   const badgeNumber = numbers.parseIntOrNull(badge) ?? 1;
 
