@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import * as Joi from 'joi';
+import { WALLET_REGEX } from '@/constants';
 import {
   DropLogsQueryParams,
   DropVotersStatsParams,
@@ -49,6 +50,7 @@ import { ApiUpdateWaveParticipationConfig } from '../generated/models/ApiUpdateW
 import { ApiUpdateWaveRequest } from '../generated/models/ApiUpdateWaveRequest';
 import { ApiWave } from '../generated/models/ApiWave';
 import { ApiWaveConfig } from '../generated/models/ApiWaveConfig';
+import { ApiWaveCreditNft } from '../generated/models/ApiWaveCreditNft';
 import { ApiWaveCreditScope } from '../generated/models/ApiWaveCreditScope';
 import { ApiWaveCreditType } from '../generated/models/ApiWaveCreditType';
 import { ApiWaveDecisionsPage } from '../generated/models/ApiWaveDecisionsPage';
@@ -1038,6 +1040,15 @@ const WaveVisibilitySchema = Joi.object<ApiCreateNewWaveVisibilityConfig>({
   scope: WaveScopeSchema.required()
 });
 
+const WaveCreditNftSchema = Joi.object<ApiWaveCreditNft>({
+  contract: Joi.string().required().regex(WALLET_REGEX).lowercase(),
+  token_id: Joi.number().integer().required().min(0)
+});
+const WaveCreditNftsSchema = Joi.array()
+  .items(WaveCreditNftSchema)
+  .required()
+  .min(1);
+
 const WaveVotingSchema = Joi.object<ApiCreateNewWaveVotingConfig>({
   scope: WaveScopeSchema.required(),
   credit_type: Joi.string()
@@ -1050,12 +1061,17 @@ const WaveVotingSchema = Joi.object<ApiCreateNewWaveVotingConfig>({
   credit_category: Joi.when('credit_type', {
     is: Joi.string().valid(ApiWaveCreditType.Rep),
     then: Joi.string().required().allow(null).max(100),
-    otherwise: Joi.valid(null)
+    otherwise: Joi.valid(null).default(null)
+  }),
+  credit_nfts: Joi.when('credit_type', {
+    is: Joi.string().valid(ApiWaveCreditType.CardSetTdh),
+    then: WaveCreditNftsSchema,
+    otherwise: Joi.valid(null).default(null)
   }),
   creditor_id: Joi.when('credit_type', {
     is: Joi.string().valid(ApiWaveCreditType.Rep),
     then: Joi.string().required().allow(null),
-    otherwise: Joi.valid(null)
+    otherwise: Joi.valid(null).default(null)
   }),
   signature_required: Joi.boolean().optional().default(false),
   period: IntRangeSchema.required().allow(null),

@@ -19,6 +19,7 @@ describe('mapWaveToApiWaveMin', () => {
       participation_group_id: null,
       admin_group_id: null,
       voting_credit_type: 'TDH',
+      voting_credit_nfts: null,
       voting_period_start: null,
       voting_period_end: null,
       visibility_group_id: null,
@@ -41,5 +42,41 @@ describe('mapWaveToApiWaveMin', () => {
     });
 
     expect(mapped.authenticated_user_admin).toBe(true);
+  });
+
+  it('maps card-set TDH config into ApiWaveMin', () => {
+    const mapped = mapWaveToApiWaveMin({
+      wave: wave({
+        voting_credit_type: 'CARD_SET_TDH',
+        voting_credit_nfts: [
+          {
+            contract: '0x33fd426905f149f8376e227d0c9d3340aad17af1',
+            tokenId: 1
+          },
+          {
+            contract: '0x33fd426905f149f8376e227d0c9d3340aad17af1',
+            tokenId: 2
+          }
+        ]
+      }),
+      displayByWaveId: {},
+      groupIdsUserIsEligibleFor: [],
+      noRightToVote: false,
+      noRightToParticipate: false,
+      pinned: false,
+      identityWave: false,
+      authenticatedProfileId: 'creator'
+    });
+
+    expect(mapped.voting_credit_nfts).toEqual([
+      {
+        contract: '0x33fd426905f149f8376e227d0c9d3340aad17af1',
+        token_id: 1
+      },
+      {
+        contract: '0x33fd426905f149f8376e227d0c9d3340aad17af1',
+        token_id: 2
+      }
+    ]);
   });
 });

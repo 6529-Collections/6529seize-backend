@@ -8234,6 +8234,14 @@ components:
             credits.
           type: string
           nullable: true
+        credit_nfts:
+          description: Only relevant when credit_type=CARD_SET_TDH
+          anyOf:
+            - type: "null"
+            - type: array
+              items:
+                $ref: "#/components/schemas/ApiWaveCreditNft"
+              minItems: 1
         creditor_id:
           description: Only relevant when credit_type=REP
           type: string
@@ -8245,6 +8253,53 @@ components:
           $ref: "#/components/schemas/ApiIntRange"
         forbid_negative_votes:
           type: boolean
+      oneOf:
+        - type: object
+          required:
+            - credit_type
+          properties:
+            credit_type:
+              type: string
+              enum:
+                - TDH
+        - type: object
+          required:
+            - credit_type
+          properties:
+            credit_type:
+              type: string
+              enum:
+                - REP
+        - type: object
+          required:
+            - credit_type
+          properties:
+            credit_type:
+              type: string
+              enum:
+                - XTDH
+        - type: object
+          required:
+            - credit_type
+          properties:
+            credit_type:
+              type: string
+              enum:
+                - TDH_PLUS_XTDH
+        - type: object
+          required:
+            - credit_type
+            - credit_nfts
+          properties:
+            credit_type:
+              type: string
+              enum:
+                - CARD_SET_TDH
+            credit_nfts:
+              type: array
+              items:
+                $ref: "#/components/schemas/ApiWaveCreditNft"
+              minItems: 1
     ApiCreateOrUpdateProfileRequest:
       type: object
       required:
@@ -11757,6 +11812,18 @@ components:
           type: string
         contributor_pfp:
           type: string
+    ApiWaveCreditNft:
+      type: object
+      required:
+        - contract
+        - token_id
+      properties:
+        contract:
+          $ref: "#/components/schemas/ApiEthereumAddress"
+        token_id:
+          type: integer
+          format: int64
+          minimum: 0
     ApiWaveCreditScope:
       description: |
         The scope of the credit. 
@@ -11772,6 +11839,7 @@ components:
         - REP
         - XTDH
         - TDH_PLUS_XTDH
+        - CARD_SET_TDH
     ApiWaveCuration:
       type: object
       required:
@@ -12036,6 +12104,7 @@ components:
         - voting_period_start
         - voting_period_end
         - voting_credit_type
+        - voting_credit_nfts
         - visibility_group_id
         - participation_group_id
         - chat_group_id
@@ -12096,6 +12165,13 @@ components:
           nullable: true
         voting_credit_type:
           $ref: "#/components/schemas/ApiWaveCreditType"
+        voting_credit_nfts:
+          anyOf:
+            - type: "null"
+            - type: array
+              minItems: 1
+              items:
+                $ref: "#/components/schemas/ApiWaveCreditNft"
         admin_drop_deletion_enabled:
           type: boolean
         forbid_negative_votes:
@@ -12395,6 +12471,7 @@ components:
         - scope
         - credit_type
         - credit_category
+        - credit_nfts
         - signature_required
         - creditor
         - authenticated_user_eligible
@@ -12411,6 +12488,13 @@ components:
             credits.
           type: string
           nullable: true
+        credit_nfts:
+          description: Only relevant when credit_type=CARD_SET_TDH
+          anyOf:
+            - type: "null"
+            - type: array
+              items:
+                $ref: "#/components/schemas/ApiWaveCreditNft"
         creditor:
           description: Only relevant when credit_type=REP
           anyOf:

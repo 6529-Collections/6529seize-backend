@@ -124,6 +124,9 @@ export const WAVES_TABLE = 'waves';
 export const WAVE_OUTCOMES_TABLE = 'wave_outcomes';
 export const WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE =
   'wave_outcome_distribution_items';
+export const WAVE_VOTING_CREDIT_NFTS_TABLE = 'wave_voting_credit_nfts';
+export const WAVE_VOTING_CREDIT_NFTS_ARCHIVE_TABLE =
+  'wave_voting_credit_nfts_archive';
 export const WAVES_DECISION_PAUSES_TABLE = 'waves_decision_pauses';
 export const WAVES_ARCHIVE_TABLE = 'waves_archive';
 export const WAVES_DECISIONS_TABLE = 'wave_decisions';

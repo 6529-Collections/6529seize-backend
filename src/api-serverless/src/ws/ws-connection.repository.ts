@@ -8,9 +8,15 @@ import {
   DROP_VOTER_STATE_TABLE,
   IDENTITIES_TABLE,
   RATINGS_TABLE,
+  TDH_NFT_TABLE,
+  WAVE_VOTING_CREDIT_NFTS_TABLE,
+  WAVES_TABLE,
   WS_CONNECTIONS_TABLE
 } from '@/constants';
+import { CustomApiCompliantException } from '@/exceptions';
+import { Logger } from '@/logging';
 import { RequestContext } from '../../../request.context';
+import { WaveCreditType } from '../../../entities/IWave';
 import {
   userGroupsService,
   UserGroupsService
@@ -18,6 +24,8 @@ import {
 import { ANON_USER_ID } from './ws';
 
 export class WsConnectionRepository extends LazyDbAccessCompatibleService {
+  private readonly logger = Logger.get(this.constructor.name);
+
   constructor(
     sqlExecutorGetter: () => SqlExecutor,
     private readonly userGroupsService: UserGroupsService
@@ -148,27 +156,139 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     if (!profileIds.length) {
       return {};
     }
-    const res = await this.db.execute<{
-      profile_id: string;
-      credit_left: number;
+    const waveProps = await this.db.oneOrNull<{
+      credit_type: WaveCreditType;
     }>(
-      `
-        with given_votes as (select voter_id as profile_id, sum(abs(votes)) as credit_spent from ${DROP_VOTER_STATE_TABLE}
-            where wave_id = :waveId and voter_id in (:profileIds)
-            group by 1)
-        select i.profile_id as profile_id, i.tdh - ifnull(v.credit_spent, 0) as credit_left from ${IDENTITIES_TABLE} i 
-             left join given_votes v on v.profile_id = i.profile_id
-             where i.profile_id in (:profileIds)
-    `,
-      { waveId, profileIds }
+      `select voting_credit_type as credit_type
+         from ${WAVES_TABLE}
+         where id = :waveId`,
+      { waveId }
     );
-    return profileIds.reduce(
-      (acc, it) => {
-        acc[it] = res.find((r) => r.profile_id)?.credit_left ?? 0;
-        return acc;
-      },
-      {} as Record<string, number>
-    );
+    if (!waveProps) {
+      return profileIds.reduce(
+        (acc, profileId) => {
+          acc[profileId] = 0;
+          return acc;
+        },
+        {} as Record<string, number>
+      );
+    }
+    switch (waveProps.credit_type) {
+      case WaveCreditType.TDH:
+      case WaveCreditType.XTDH:
+      case WaveCreditType.TDH_PLUS_XTDH: {
+        let creditSql = 'MAX(i.tdh)';
+        if (waveProps.credit_type === WaveCreditType.XTDH) {
+          creditSql = 'FLOOR(MAX(i.xtdh))';
+        } else if (waveProps.credit_type === WaveCreditType.TDH_PLUS_XTDH) {
+          creditSql = 'FLOOR(MAX(i.tdh + i.xtdh))';
+        }
+        const res = await this.db.execute<{
+          profile_id: string;
+          credit_left: number;
+        }>(
+          `
+            with given_votes as (
+              select voter_id as profile_id, sum(abs(votes)) as credit_spent
+              from ${DROP_VOTER_STATE_TABLE}
+              where wave_id = :waveId and voter_id in (:profileIds)
+              group by 1
+            ),
+            profile_credit as (
+              select i.profile_id as profile_id, ${creditSql} as total_credit
+              from ${IDENTITIES_TABLE} i
+              where i.profile_id in (:profileIds)
+              group by i.profile_id
+            )
+            select pc.profile_id as profile_id,
+                   pc.total_credit - ifnull(v.credit_spent, 0) as credit_left
+            from profile_credit pc
+            left join given_votes v on v.profile_id = pc.profile_id
+          `,
+          { waveId, profileIds }
+        );
+        return profileIds.reduce(
+          (acc, profileId) => {
+            acc[profileId] =
+              res.find((row) => row.profile_id === profileId)?.credit_left ?? 0;
+            return acc;
+          },
+          {} as Record<string, number>
+        );
+      }
+      case WaveCreditType.CARD_SET_TDH: {
+        const configuredCardCount = await this.db
+          .oneOrNull<{ cnt: number }>(
+            `
+              select count(*) as cnt
+              from ${WAVE_VOTING_CREDIT_NFTS_TABLE}
+              where wave_id = :waveId
+            `,
+            { waveId }
+          )
+          .then((row) => row?.cnt ?? 0);
+        if (!configuredCardCount) {
+          throw new CustomApiCompliantException(
+            500,
+            `Wave ${waveId} is misconfigured: CARD_SET_TDH requires voting credit nfts [configuredCardCount=${configuredCardCount}]`
+          );
+        }
+        const res = await this.db.execute<{
+          profile_id: string;
+          credit_left: number;
+        }>(
+          `
+            with given_votes as (
+              select voter_id as profile_id, sum(abs(votes)) as credit_spent
+              from ${DROP_VOTER_STATE_TABLE}
+              where wave_id = :waveId and voter_id in (:profileIds)
+              group by 1
+            ),
+            profile_consolidation_keys as (
+              select distinct profile_id, consolidation_key
+              from ${IDENTITIES_TABLE}
+              where profile_id in (:profileIds)
+            ),
+            profile_credit as (
+              select p.profile_id as profile_id,
+                     coalesce(sum(tn.boosted_tdh), 0) as total_credit
+              from profile_consolidation_keys p
+              join ${WAVE_VOTING_CREDIT_NFTS_TABLE} wvcn
+                on wvcn.wave_id = :waveId
+              left join ${TDH_NFT_TABLE} tn
+                on tn.consolidation_key = p.consolidation_key
+               and tn.contract = wvcn.contract
+               and tn.id = wvcn.token_id
+              group by p.profile_id
+            )
+            select pc.profile_id as profile_id,
+                   pc.total_credit - ifnull(v.credit_spent, 0) as credit_left
+            from profile_credit pc
+            left join given_votes v on v.profile_id = pc.profile_id
+          `,
+          { waveId, profileIds }
+        );
+        return profileIds.reduce(
+          (acc, profileId) => {
+            acc[profileId] =
+              res.find((row) => row.profile_id === profileId)?.credit_left ?? 0;
+            return acc;
+          },
+          {} as Record<string, number>
+        );
+      }
+      default:
+        this.logger.warn(
+          `[UNEXPECTED TDH CREDIT TYPE LOOKUP] [waveId=${waveId}] [creditType=${waveProps.credit_type}] [profileIds=${profileIds.join(',')}]`
+        );
+        return profileIds.reduce(
+          (acc, profileId) => {
+            acc[profileId] = 0;
+            return acc;
+          },
+          {} as Record<string, number>
+        );
+    }
   }
 
   async getCreditLeftForProfilesForRepBasedWave({

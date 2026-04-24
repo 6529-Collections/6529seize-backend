@@ -535,17 +535,19 @@ export class DropsApiService {
       },
       ctx
     );
-    const [wave, pinnedWaveIds, identityWaveIds] = await Promise.all([
-      wavesApiDb.findWaveById(wave_id),
-      wavesApiDb.whichOfWavesArePinnedByGivenProfile(
-        {
-          waveIds: [wave_id],
-          profileId: context_profile_id
-        },
-        ctx
-      ),
-      profileWavesDb.findSelectedWaveIdsByWaveIds([wave_id], ctx)
-    ]);
+    const [wave, waveVotingCreditNftsByWaveId, pinnedWaveIds, identityWaveIds] =
+      await Promise.all([
+        wavesApiDb.findWaveById(wave_id),
+        wavesApiDb.findWaveVotingCreditNftsByWaveIds([wave_id]),
+        wavesApiDb.whichOfWavesArePinnedByGivenProfile(
+          {
+            waveIds: [wave_id],
+            profileId: context_profile_id
+          },
+          ctx
+        ),
+        profileWavesDb.findSelectedWaveIdsByWaveIds([wave_id], ctx)
+      ]);
     if (
       !wave ||
       (wave.visibility_group_id &&
@@ -562,7 +564,10 @@ export class DropsApiService {
         ctx.connection
       );
     const waveMin = mapWaveToApiWaveMin({
-      wave,
+      wave: {
+        ...wave,
+        voting_credit_nfts: waveVotingCreditNftsByWaveId[wave.id] ?? null
+      },
       displayByWaveId,
       groupIdsUserIsEligibleFor: group_ids_user_is_eligible_for,
       noRightToVote,
@@ -801,8 +806,14 @@ export class DropsApiService {
       },
       ctx
     );
-    const [waveEntity, pinnedWaveIds, identityWaveIds] = await Promise.all([
+    const [
+      waveEntity,
+      waveVotingCreditNftsByWaveId,
+      pinnedWaveIds,
+      identityWaveIds
+    ] = await Promise.all([
       wavesApiDb.findWaveById(params.wave_id),
+      wavesApiDb.findWaveVotingCreditNftsByWaveIds([params.wave_id]),
       wavesApiDb.whichOfWavesArePinnedByGivenProfile(
         {
           waveIds: [params.wave_id],
@@ -834,6 +845,7 @@ export class DropsApiService {
     const waveMin = mapWaveToApiWaveMin({
       wave: {
         ...waveEntity,
+        voting_credit_nfts: waveVotingCreditNftsByWaveId[waveEntity.id] ?? null,
         voting_period_end: votingPeriodEnd
       },
       displayByWaveId,
