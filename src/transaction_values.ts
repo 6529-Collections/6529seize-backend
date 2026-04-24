@@ -25,7 +25,7 @@ import {
   SupportedRpcNetwork
 } from '@/rpc-provider';
 import { equalIgnoreCase } from '@/strings';
-import { Network } from 'alchemy-sdk';
+import { Network } from '@/alchemy-sdk';
 import { ethers } from 'ethers';
 import pLimit from 'p-limit';
 

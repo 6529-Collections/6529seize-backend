@@ -1,4 +1,4 @@
-import { Network } from 'alchemy-sdk';
+import { Network } from '@/alchemy-sdk';
 import { ethers } from 'ethers';
 import { Request, Response, Router } from 'express';
 import { getAlchemyInstance } from '../../../alchemy';

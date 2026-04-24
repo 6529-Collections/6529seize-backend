@@ -1,4 +1,4 @@
-import { Alchemy, Log } from 'alchemy-sdk';
+import { Alchemy, Log } from '@/alchemy-sdk';
 import { NEXTGEN_CORE_IFACE } from '@/abis/nextgen';
 import { NULL_ADDRESS, NULL_ADDRESS_DEAD } from '@/constants';
 import { getAlchemyInstance } from '@/alchemy';

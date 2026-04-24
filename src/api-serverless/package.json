@@ -72,6 +72,11 @@
   "license": "MIT",
   "overrides": {
     "jsonpath-plus": "10.3.0",
-    "brace-expansion": "^2.0.2"
+    "minimatch@3": {
+      "brace-expansion": "^2.0.2"
+    },
+    "minimatch@5": {
+      "brace-expansion": "^2.0.2"
+    }
   }
 }

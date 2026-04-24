@@ -1,4 +1,4 @@
-import { Alchemy, Network } from 'alchemy-sdk';
+import { Alchemy, Network } from '@/alchemy-sdk';
 import { ALCHEMY_SETTINGS } from '@/constants';
 import { ethTools } from '@/eth-tools';
 import { Time } from '@/time';
@@ -10,7 +10,7 @@ let alchemy: Alchemy | null = null;
 export function getAlchemyInstance(
   network: Network = Network.ETH_MAINNET
 ): Alchemy {
-  if (!alchemy || alchemy.config.network != network) {
+  if (alchemy?.config.network !== network) {
     alchemy = new Alchemy({
       ...ALCHEMY_SETTINGS,
       network,

@@ -4,7 +4,7 @@ import {
   AssetTransfersCategory,
   AssetTransfersWithMetadataParams,
   SortingOrder
-} from 'alchemy-sdk';
+} from '@/alchemy-sdk';
 import { NEXTGEN_MINTER_IFACE } from '@/abis/nextgen';
 import { NextGenLog } from '@/entities/INextGen';
 import {
