@@ -1,6 +1,7 @@
 export const DROP_MEDIA_ALLOWED_MIME_TYPES = [
   'image/png',
   'image/jpeg',
+  'image/jpg',
   'image/gif',
   'video/mp4',
   'video/x-msvideo',
@@ -24,6 +25,7 @@ export const DROP_MEDIA_ALLOWED_EXTENSIONS_BY_MIME_TYPE: Record<
 > = {
   'image/png': ['.png'],
   'image/jpeg': ['.jpg', '.jpeg'],
+  'image/jpg': ['.jpg', '.jpeg'],
   'image/gif': ['.gif'],
   'video/mp4': ['.mp4'],
   'video/x-msvideo': ['.avi'],

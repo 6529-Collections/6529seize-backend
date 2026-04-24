@@ -17,6 +17,8 @@ describe('media upload validators', () => {
     ['image/png', 'upload.png'],
     ['image/jpeg', 'upload.jpg'],
     ['image/jpeg', 'upload.jpeg'],
+    ['image/jpg', 'upload.jpg'],
+    ['image/jpg', 'upload.jpeg'],
     ['image/gif', 'upload.gif'],
     ['video/mp4', 'upload.mp4'],
     ['video/x-msvideo', 'upload.avi'],
