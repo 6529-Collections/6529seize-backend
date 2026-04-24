@@ -76,14 +76,12 @@ import {
 import { extractUrlCandidatesFromText } from '@/nft-links/nft-link-candidates';
 import { validateLinkUrl } from '@/nft-links/nft-link-resolver.validator';
 import { env } from '@/env';
-import { UUID_REGEX, WALLET_REGEX } from '@/constants';
+import { CLOUDFRONT_LINK, UUID_REGEX, WALLET_REGEX } from '@/constants';
 import { getAlchemyInstance } from '@/alchemy';
 import { profilesService } from '@/profiles/profiles.service';
 import { isApproveWaveClosed } from '@/waves/wave-approve.helpers';
 import { DROP_MEDIA_DOCUMENT_MIME_TYPES } from '@/api/media/media-mime-types';
 
-export const DROP_MEDIA_CLOUDFRONT_ORIGIN =
-  'https://d3lqz0a4bldqgf.cloudfront.net';
 const ARWEAVE_ORIGIN = 'https://arweave.net';
 
 function isActiveIdentityNomination(nomination: { has_won: boolean }): boolean {
@@ -118,10 +116,10 @@ export function validateDropMediaAttachment({
     if (mimeType === 'text/csv' && dropType !== DropType.CHAT) {
       throw new BadRequestException(`text/csv is only supported on chat drops`);
     }
-    if (parsedUrl.origin !== DROP_MEDIA_CLOUDFRONT_ORIGIN) {
+    if (parsedUrl.origin !== CLOUDFRONT_LINK) {
       const mediaLabel = mimeType === 'text/csv' ? 'text/csv' : 'Media';
       throw new BadRequestException(
-        `${mediaLabel} needs to come from ${DROP_MEDIA_CLOUDFRONT_ORIGIN}`
+        `${mediaLabel} needs to come from ${CLOUDFRONT_LINK}`
       );
     }
     return;

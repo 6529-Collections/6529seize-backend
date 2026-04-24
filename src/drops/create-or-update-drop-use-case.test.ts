@@ -14,9 +14,9 @@ import { DropGroupMention } from '@/entities/IWaveGroupNotificationSubscription'
 import { WaveIdentitySubmissionDuplicates, WaveType } from '@/entities/IWave';
 import { env } from '@/env';
 import { profilesService } from '@/profiles/profiles.service';
+import { CLOUDFRONT_LINK } from '@/constants';
 import {
   CreateOrUpdateDropUseCase,
-  DROP_MEDIA_CLOUDFRONT_ORIGIN,
   validateDropMediaAttachment
 } from './create-or-update-drop.use-case';
 
@@ -499,7 +499,7 @@ describe('CreateOrUpdateDropUseCase', () => {
     expect(() =>
       validateDropMediaAttachment({
         mimeType: 'text/csv',
-        url: `${DROP_MEDIA_CLOUDFRONT_ORIGIN}/drops/author_1/file.csv`,
+        url: `${CLOUDFRONT_LINK}/drops/author_1/file.csv`,
         dropType: DropType.CHAT
       })
     ).not.toThrow();
@@ -509,7 +509,7 @@ describe('CreateOrUpdateDropUseCase', () => {
     expect(() =>
       validateDropMediaAttachment({
         mimeType: 'text/csv',
-        url: `${DROP_MEDIA_CLOUDFRONT_ORIGIN}/drops/author_1/file.csv`,
+        url: `${CLOUDFRONT_LINK}/drops/author_1/file.csv`,
         dropType: DropType.PARTICIPATORY
       })
     ).toThrow('text/csv is only supported on chat drops');
@@ -522,7 +522,7 @@ describe('CreateOrUpdateDropUseCase', () => {
         url: 'https://example.com/file.csv',
         dropType: DropType.CHAT
       })
-    ).toThrow(`text/csv needs to come from ${DROP_MEDIA_CLOUDFRONT_ORIGIN}`);
+    ).toThrow(`text/csv needs to come from ${CLOUDFRONT_LINK}`);
   });
 
   it('rejects csv uploads from spoofed CloudFront-like hosts', () => {
@@ -532,14 +532,14 @@ describe('CreateOrUpdateDropUseCase', () => {
         url: 'https://d3lqz0a4bldqgf.cloudfront.net.evil.com/file.csv',
         dropType: DropType.CHAT
       })
-    ).toThrow(`text/csv needs to come from ${DROP_MEDIA_CLOUDFRONT_ORIGIN}`);
+    ).toThrow(`text/csv needs to come from ${CLOUDFRONT_LINK}`);
   });
 
   it('allows pdf uploads from CloudFront', () => {
     expect(() =>
       validateDropMediaAttachment({
         mimeType: 'application/pdf',
-        url: `${DROP_MEDIA_CLOUDFRONT_ORIGIN}/drops/author_1/file.pdf`,
+        url: `${CLOUDFRONT_LINK}/drops/author_1/file.pdf`,
         dropType: DropType.CHAT
       })
     ).not.toThrow();
@@ -552,7 +552,7 @@ describe('CreateOrUpdateDropUseCase', () => {
         url: 'https://d3lqz0a4bldqgf.cloudfront.net.evil.com/file.pdf',
         dropType: DropType.CHAT
       })
-    ).toThrow(`Media needs to come from ${DROP_MEDIA_CLOUDFRONT_ORIGIN}`);
+    ).toThrow(`Media needs to come from ${CLOUDFRONT_LINK}`);
   });
 
   it('preserves html handling', () => {
