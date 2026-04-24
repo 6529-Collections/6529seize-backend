@@ -124,6 +124,61 @@ function findMarkdownReferenceEnd(input: string, start: number): number {
   return input.length;
 }
 
+type ResolveMarkdownReferenceResult =
+  | { type: 'incomplete' }
+  | { type: 'noOpenParen'; copyExclusiveEnd: number; nextIndex: number }
+  | { type: 'resolved'; output: string; nextIndex: number };
+
+function resolveMarkdownReferenceAt(
+  input: string,
+  markdownStart: number,
+  isImage: boolean
+): ResolveMarkdownReferenceResult {
+  const labelStart = markdownStart + (isImage ? 2 : 1);
+  const labelEnd = input.indexOf(']', labelStart);
+  if (labelEnd === -1) {
+    return { type: 'incomplete' };
+  }
+
+  const openParenIndex = labelEnd + 1;
+  if (input[openParenIndex] !== '(') {
+    return {
+      type: 'noOpenParen',
+      copyExclusiveEnd: labelEnd + 1,
+      nextIndex: labelEnd + 1
+    };
+  }
+
+  let urlStart = openParenIndex + 1;
+  while (isMarkdownWhitespace(input[urlStart])) {
+    urlStart++;
+  }
+
+  const wrappedInAngleBrackets = input[urlStart] === '<';
+  if (wrappedInAngleBrackets) {
+    urlStart++;
+  }
+
+  const urlEnd = wrappedInAngleBrackets
+    ? input.indexOf('>', urlStart)
+    : findMarkdownUrlEnd(input, urlStart);
+  if (urlEnd === -1) {
+    return { type: 'incomplete' };
+  }
+
+  const url = input.substring(urlStart, urlEnd);
+  const markdownEnd = findMarkdownReferenceEnd(input, urlEnd);
+  if (markdownEnd === input.length && !input.endsWith(')')) {
+    return { type: 'incomplete' };
+  }
+
+  const output =
+    isImage || isSupportedMediaUrl(url)
+      ? ` ${getMediaPlaceholderForUrl(url)} `
+      : input.substring(markdownStart, markdownEnd);
+  return { type: 'resolved', output, nextIndex: markdownEnd };
+}
+
 function replaceMarkdownMediaReferences(input: string): string {
   let result = '';
   let index = 0;
@@ -138,52 +193,18 @@ function replaceMarkdownMediaReferences(input: string): string {
       continue;
     }
 
-    const markdownStart = index;
-    const labelStart = index + (isImage ? 2 : 1);
-    const labelEnd = input.indexOf(']', labelStart);
-    if (labelEnd === -1) {
+    const step = resolveMarkdownReferenceAt(input, index, isImage);
+    if (step.type === 'incomplete') {
       result += input.substring(index);
       break;
     }
-
-    const openParenIndex = labelEnd + 1;
-    if (input[openParenIndex] !== '(') {
-      result += input.substring(index, labelEnd + 1);
-      index = labelEnd + 1;
+    if (step.type === 'noOpenParen') {
+      result += input.substring(index, step.copyExclusiveEnd);
+      index = step.nextIndex;
       continue;
     }
-
-    let urlStart = openParenIndex + 1;
-    while (isMarkdownWhitespace(input[urlStart])) {
-      urlStart++;
-    }
-
-    const wrappedInAngleBrackets = input[urlStart] === '<';
-    if (wrappedInAngleBrackets) {
-      urlStart++;
-    }
-
-    const urlEnd = wrappedInAngleBrackets
-      ? input.indexOf('>', urlStart)
-      : findMarkdownUrlEnd(input, urlStart);
-    if (urlEnd === -1) {
-      result += input.substring(index);
-      break;
-    }
-
-    const url = input.substring(urlStart, urlEnd);
-    const markdownEnd = findMarkdownReferenceEnd(input, urlEnd);
-    if (markdownEnd === input.length && input[input.length - 1] !== ')') {
-      result += input.substring(index);
-      break;
-    }
-
-    if (isImage || isSupportedMediaUrl(url)) {
-      result += ` ${getMediaPlaceholderForUrl(url)} `;
-    } else {
-      result += input.substring(markdownStart, markdownEnd);
-    }
-    index = markdownEnd;
+    result += step.output;
+    index = step.nextIndex;
   }
 
   return result;
