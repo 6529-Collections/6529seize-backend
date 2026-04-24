@@ -55,6 +55,10 @@ import {
   mapWaveFieldsToApiSubmissionStrategy,
   resolveWaveSubmissionStrategyFieldsForWrite
 } from '@/api/waves/wave-submission-strategy';
+import {
+  normalizeWaveVotingCreditNfts,
+  WaveVotingCreditNft
+} from '@/waves/wave-voting-credit-nfts';
 import { InsertWaveEntity, wavesApiDb, WavesApiDb } from './waves.api.db';
 import { enums } from '../../../enums';
 import { collections } from '../../../collections';
@@ -83,6 +87,7 @@ type WaveMappingRelatedData = {
   firstUnreadDropSerialNoByWaveId: Record<string, number | null>;
   wavePauses: Record<string, WaveDecisionPauseEntity[]>;
   decisionsDoneByWaveId: Record<string, number>;
+  votingCreditNftsByWaveId: Record<string, WaveVotingCreditNft[]>;
   pinnedWaveIds: Set<string>;
   identityWaveIds: Set<string>;
   authenticatedUserId: string | null;
@@ -152,6 +157,12 @@ export class WavesMappers {
       maxVotesPerIdentityToDrop =
         existingWaveSettings?.max_votes_per_identity_to_drop ?? null;
     }
+    const votingCreditNfts = normalizeWaveVotingCreditNfts(
+      (request.voting.credit_nfts ?? []).map((creditNft) => ({
+        contract: creditNft.contract,
+        tokenId: creditNft.token_id
+      }))
+    );
     return {
       id,
       serial_no,
@@ -170,6 +181,7 @@ export class WavesMappers {
       ),
       voting_credit_category: request.voting.credit_category,
       voting_credit_creditor: creditorId,
+      voting_credit_nfts: votingCreditNfts,
       voting_signature_required: request.voting.signature_required,
       voting_period_start: request.voting.period?.min ?? null,
       voting_period_end: request.voting.period?.max ?? null,
@@ -295,6 +307,7 @@ export class WavesMappers {
       firstUnreadDropSerialNoByWaveId,
       wavePauses,
       decisionsDoneByWaveId,
+      votingCreditNftsByWaveId,
       pinnedWaveIds,
       identityWaveIds
     } = relatedData;
@@ -317,6 +330,11 @@ export class WavesMappers {
     const votingScope: ApiWaveScope = {
       group: resolveGroup(waveEntity.voting_group_id)
     };
+    const voteCreditNfts =
+      votingCreditNftsByWaveId[waveEntity.id]?.map((creditNft) => ({
+        contract: creditNft.contract,
+        token_id: creditNft.tokenId
+      })) ?? null;
     const voteCreditor: ApiProfileMin | null = resolveProfile(
       waveEntity.voting_credit_creditor
     );
@@ -332,6 +350,7 @@ export class WavesMappers {
         waveEntity.voting_credit_type
       ),
       credit_category: waveEntity.voting_credit_category,
+      credit_nfts: voteCreditNfts,
       creditor: voteCreditor,
       signature_required: waveEntity.voting_signature_required,
       period: {
@@ -498,6 +517,7 @@ export class WavesMappers {
       firstUnreadDropSerialNoByWaveId,
       wavePauses,
       decisionsDoneByWaveId,
+      votingCreditNftsByWaveId,
       pinnedWaveIds,
       identityWaveIds
     ] = await Promise.all([
@@ -586,6 +606,10 @@ export class WavesMappers {
         : Promise.resolve({} as Record<string, number | null>),
       this.wavesApiDb.getWavesPauses(waveIds, ctx),
       this.wavesApiDb.countWaveDecisionsByWaveIds(waveIds, ctx),
+      this.wavesApiDb.findWaveVotingCreditNftsByWaveIds(
+        waveIds,
+        ctx.connection
+      ),
       this.wavesApiDb.whichOfWavesArePinnedByGivenProfile(
         {
           waveIds,
@@ -665,6 +689,7 @@ export class WavesMappers {
       firstUnreadDropSerialNoByWaveId,
       wavePauses,
       decisionsDoneByWaveId,
+      votingCreditNftsByWaveId,
       pinnedWaveIds,
       identityWaveIds,
       authenticatedUserId

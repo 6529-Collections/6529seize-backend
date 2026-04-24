@@ -157,6 +157,10 @@ export {
   WaveOutcomeEntity
 } from './IWave';
 export {
+  WaveVotingCreditNftArchiveEntity,
+  WaveVotingCreditNftEntity
+} from './IWaveVotingCreditNft';
+export {
   WaveDecisionEntity,
   WaveDecisionWinnerDropEntity
 } from './IWaveDecision';

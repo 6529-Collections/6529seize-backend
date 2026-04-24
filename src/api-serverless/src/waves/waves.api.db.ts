@@ -11,17 +11,26 @@ import {
   DROPS_TABLE,
   IDENTITY_NOTIFICATIONS_TABLE,
   IDENTITY_SUBSCRIPTIONS_TABLE,
+  NFTS_TABLE,
   PINNED_WAVES_TABLE,
   WAVE_DROPPER_METRICS_TABLE,
   WAVE_METRICS_TABLE,
   WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE,
   WAVE_OUTCOMES_TABLE,
   WAVE_READER_METRICS_TABLE,
+  WAVE_VOTING_CREDIT_NFTS_ARCHIVE_TABLE,
+  WAVE_VOTING_CREDIT_NFTS_TABLE,
   WAVES_ARCHIVE_TABLE,
   WAVES_DECISION_PAUSES_TABLE,
   WAVES_DECISIONS_TABLE,
   WAVES_TABLE
 } from '@/constants';
+import {
+  groupWaveVotingCreditNftsByContract,
+  normalizeWaveVotingCreditNfts,
+  waveVotingCreditNftKey,
+  WaveVotingCreditNft
+} from '@/waves/wave-voting-credit-nfts';
 import {
   ActivityEventAction,
   ActivityEventTargetType
@@ -66,6 +75,12 @@ type RawWaveEntityWithLastDropTime = RawWaveEntity & {
 
 type WaveEntityWithLastDropTime = WaveEntity & {
   last_drop_time: number;
+};
+
+type WaveVotingCreditNftRow = {
+  wave_id: string;
+  contract: string;
+  token_id: number;
 };
 
 export class WavesApiDb extends LazyDbAccessCompatibleService {
@@ -348,12 +363,174 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                                    :decisions_strategy,
                                    :serial_no,
                                    :forbid_negative_votes,
-                                   :is_direct_message
+                           :is_direct_message
                            )`,
       { ...params, serial_no: serial, now: Time.currentMillis() },
       { wrappedConnection: connection }
     );
+    const waveArchiveId = await this.getLastInsertId(connection);
+    await Promise.all([
+      this.insertWaveVotingCreditNfts(
+        {
+          waveId: wave.id,
+          creditNfts: wave.voting_credit_nfts
+        },
+        ctx
+      ),
+      this.insertWaveVotingCreditNftArchives(
+        {
+          waveId: wave.id,
+          waveArchiveId,
+          creditNfts: wave.voting_credit_nfts
+        },
+        ctx
+      )
+    ]);
     ctx.timer?.stop('waveApiDb->insertWave');
+  }
+
+  private async insertWaveVotingCreditNfts(
+    {
+      waveId,
+      creditNfts
+    }: {
+      waveId: string;
+      creditNfts: readonly WaveVotingCreditNft[];
+    },
+    ctx: RequestContext
+  ): Promise<void> {
+    const timerKey = `${this.constructor.name}->insertWaveVotingCreditNfts`;
+    ctx.timer?.start(timerKey);
+    try {
+      const normalizedCreditNfts = normalizeWaveVotingCreditNfts(creditNfts);
+      if (!normalizedCreditNfts.length) {
+        return;
+      }
+      await this.db.bulkInsert(
+        WAVE_VOTING_CREDIT_NFTS_TABLE,
+        normalizedCreditNfts.map((creditNft) => ({
+          wave_id: waveId,
+          contract: creditNft.contract,
+          token_id: creditNft.tokenId
+        })),
+        ['wave_id', 'contract', 'token_id'],
+        ctx
+      );
+    } finally {
+      ctx.timer?.stop(timerKey);
+    }
+  }
+
+  private async insertWaveVotingCreditNftArchives(
+    {
+      waveId,
+      waveArchiveId,
+      creditNfts
+    }: {
+      waveId: string;
+      waveArchiveId: number;
+      creditNfts: readonly WaveVotingCreditNft[];
+    },
+    ctx: RequestContext
+  ): Promise<void> {
+    const timerKey = `${this.constructor.name}->insertWaveVotingCreditNftArchives`;
+    ctx.timer?.start(timerKey);
+    try {
+      const normalizedCreditNfts = normalizeWaveVotingCreditNfts(creditNfts);
+      if (!normalizedCreditNfts.length) {
+        return;
+      }
+      await this.db.bulkInsert(
+        WAVE_VOTING_CREDIT_NFTS_ARCHIVE_TABLE,
+        normalizedCreditNfts.map((creditNft) => ({
+          wave_archive_id: waveArchiveId,
+          wave_id: waveId,
+          contract: creditNft.contract,
+          token_id: creditNft.tokenId
+        })),
+        ['wave_archive_id', 'wave_id', 'contract', 'token_id'],
+        ctx
+      );
+    } finally {
+      ctx.timer?.stop(timerKey);
+    }
+  }
+
+  public async findWaveVotingCreditNftsByWaveIds(
+    waveIds: string[],
+    connection?: ConnectionWrapper<any>
+  ): Promise<Record<string, WaveVotingCreditNft[]>> {
+    if (!waveIds.length) {
+      return {};
+    }
+    return this.db
+      .execute<WaveVotingCreditNftRow>(
+        `
+          SELECT wave_id, contract, token_id
+          FROM ${WAVE_VOTING_CREDIT_NFTS_TABLE}
+          WHERE wave_id IN (:waveIds)
+          ORDER BY contract, token_id
+        `,
+        { waveIds },
+        connection ? { wrappedConnection: connection } : undefined
+      )
+      .then((rows) =>
+        rows.reduce(
+          (acc, row) => {
+            const creditNfts = acc[row.wave_id] ?? [];
+            creditNfts.push({
+              contract: row.contract,
+              tokenId: Number(row.token_id)
+            });
+            acc[row.wave_id] = creditNfts;
+            return acc;
+          },
+          {} as Record<string, WaveVotingCreditNft[]>
+        )
+      );
+  }
+
+  public async findExistingCardSetCreditNftKeys(
+    creditNfts: readonly WaveVotingCreditNft[],
+    ctx: RequestContext
+  ): Promise<Set<string>> {
+    const timerKey = `${this.constructor.name}->findExistingCardSetCreditNftKeys`;
+    ctx.timer?.start(timerKey);
+    try {
+      const queryOptions = ctx.connection
+        ? { wrappedConnection: ctx.connection }
+        : undefined;
+      const groupedCreditNfts = groupWaveVotingCreditNftsByContract(creditNfts);
+      if (!groupedCreditNfts.length) {
+        return new Set<string>();
+      }
+      const rows = (
+        await Promise.all(
+          groupedCreditNfts.map(({ contract, tokenIds }) =>
+            this.db.execute<{ contract: string; token_id: number }>(
+              `
+                SELECT contract, id AS token_id
+                FROM ${NFTS_TABLE}
+                WHERE contract = :contract
+                  AND id IN (:tokenIds)
+              `,
+              {
+                contract,
+                tokenIds
+              },
+              queryOptions
+            )
+          )
+        )
+      ).flat();
+      return new Set(
+        rows.map((row) =>
+          waveVotingCreditNftKey(row.contract, Number(row.token_id))
+        )
+      );
+    } finally {
+      ctx.timer?.stop(timerKey);
+    }
   }
 
   async searchWaves(
@@ -828,12 +1005,25 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
 
   async deleteWave(waveId: string, ctx: RequestContext) {
     ctx.timer?.start('wavesApiDb->deleteWave');
+    await Promise.all([
+      this.deleteWaveVotingCreditNfts(waveId, ctx),
+      this.db.execute(
+        `delete from ${WAVES_TABLE} where id = :waveId`,
+        { waveId },
+        { wrappedConnection: ctx.connection }
+      )
+    ]);
+    ctx.timer?.stop('wavesApiDb->deleteWave');
+  }
+
+  async deleteWaveVotingCreditNfts(waveId: string, ctx: RequestContext) {
+    ctx.timer?.start('wavesApiDb->deleteWaveVotingCreditNfts');
     await this.db.execute(
-      `delete from ${WAVES_TABLE} where id = :waveId`,
+      `delete from ${WAVE_VOTING_CREDIT_NFTS_TABLE} where wave_id = :waveId`,
       { waveId },
       { wrappedConnection: ctx.connection }
     );
-    ctx.timer?.stop('wavesApiDb->deleteWave');
+    ctx.timer?.stop('wavesApiDb->deleteWaveVotingCreditNfts');
   }
 
   async insertOutcomes(entities: WaveOutcomeEntity[], ctx: RequestContext) {
@@ -1725,6 +1915,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
 export interface InsertWaveEntity extends Omit<WaveEntity, 'serial_no'> {
   readonly serial_no: number | null;
   readonly is_direct_message: boolean;
+  readonly voting_credit_nfts: readonly WaveVotingCreditNft[];
 }
 
 export interface SearchWavesParams {

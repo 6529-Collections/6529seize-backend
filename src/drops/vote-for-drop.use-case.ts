@@ -19,11 +19,16 @@ import {
 import { userNotifier, UserNotifier } from '../notifications/user.notifier';
 import { profileActivityLogsDb } from '../profileActivityLogs/profile-activity-logs.db';
 import { WaveCreditType, WaveType } from '../entities/IWave';
-import { BadRequestException, ForbiddenException } from '../exceptions';
+import {
+  BadRequestException,
+  CustomApiCompliantException,
+  ForbiddenException
+} from '../exceptions';
 import { DropType } from '../entities/IDrop';
 import { ProfileActivityLogType } from '../entities/IProfileActivityLog';
 import { metricsRecorder, MetricsRecorder } from '../metrics/MetricsRecorder';
 import { isApproveWaveClosed } from '@/waves/wave-approve.helpers';
+import { sumWaveVotingCreditNftValues } from '@/waves/wave-voting-credit-nfts';
 
 export class VoteForDropUseCase {
   constructor(
@@ -67,6 +72,49 @@ export class VoteForDropUseCase {
       );
     }
     const isRepWave = wave?.voting_credit_type === WaveCreditType.REP;
+    let voterTotalCreditPromise: Promise<number>;
+    if (isRepWave) {
+      voterTotalCreditPromise = this.ratingsDb.getRepRating(
+        {
+          target_profile_id: voter_id,
+          category: wave?.voting_credit_category ?? null,
+          rater_profile_id: wave?.voting_credit_creditor ?? null
+        },
+        ctx
+      );
+    } else if (wave?.voting_credit_type === WaveCreditType.CARD_SET_TDH) {
+      voterTotalCreditPromise = this.wavesDb
+        .findWaveVotingCreditNftsByWaveIds([wave.id], ctx.connection)
+        .then(async (creditNftsByWaveId) => {
+          const creditNfts = creditNftsByWaveId[wave.id] ?? [];
+          if (!creditNfts.length) {
+            throw new CustomApiCompliantException(
+              500,
+              `Wave ${wave.id} is misconfigured: CARD_SET_TDH requires voting credit nfts`
+            );
+          }
+          const creditByKey =
+            await this.identitiesDb.getSingleNftVotingCreditsByProfileId(
+              voter_id,
+              creditNfts,
+              ctx
+            );
+          return sumWaveVotingCreditNftValues(creditNfts, creditByKey);
+        });
+    } else {
+      voterTotalCreditPromise = this.identitiesDb
+        .getIdentityByProfileId(voter_id, ctx.connection)
+        .then((identity) => {
+          const tdh = identity?.tdh ?? 0;
+          const xtdh = identity?.xtdh ?? 0;
+          if (wave?.voting_credit_type === WaveCreditType.TDH) return tdh;
+          if (wave?.voting_credit_type === WaveCreditType.XTDH) return xtdh;
+          if (wave?.voting_credit_type === WaveCreditType.TDH_PLUS_XTDH) {
+            return tdh + xtdh;
+          }
+          return 0;
+        });
+    }
     const [
       drop,
       groupsVoterIsEligibleFor,
@@ -87,27 +135,7 @@ export class VoteForDropUseCase {
         },
         ctx
       ),
-      isRepWave
-        ? this.ratingsDb.getRepRating(
-            {
-              target_profile_id: voter_id,
-              category: wave?.voting_credit_category ?? null,
-              rater_profile_id: wave?.voting_credit_creditor ?? null
-            },
-            ctx
-          )
-        : this.identitiesDb
-            .getIdentityByProfileId(voter_id, ctx.connection)
-            ?.then((identity) => {
-              const tdh = identity?.tdh ?? 0;
-              const xtdh = identity?.xtdh ?? 0;
-              if (wave?.voting_credit_type === WaveCreditType.TDH) return tdh;
-              if (wave?.voting_credit_type === WaveCreditType.XTDH) return xtdh;
-              if (wave?.voting_credit_type === WaveCreditType.TDH_PLUS_XTDH) {
-                return tdh + xtdh;
-              }
-              return 0;
-            })
+      voterTotalCreditPromise
     ]);
 
     if (!drop || drop.wave_id !== wave?.id) {

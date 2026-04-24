@@ -224,7 +224,8 @@ export enum WaveCreditType {
   TDH = 'TDH',
   REP = 'REP',
   XTDH = 'XTDH',
-  TDH_PLUS_XTDH = 'TDH_PLUS_XTDH'
+  TDH_PLUS_XTDH = 'TDH_PLUS_XTDH',
+  CARD_SET_TDH = 'CARD_SET_TDH'
 }
 
 export enum WaveType {

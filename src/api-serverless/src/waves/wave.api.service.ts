@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import { GRADIENT_CONTRACT, MEMES_CONTRACT } from '@/constants';
 import {
   activityRecorder,
   ActivityRecorder
@@ -88,10 +89,18 @@ import {
 import { WaveType } from '@/entities/IWave';
 import { profileWavesDb } from '@/profiles/profile-waves.db';
 import {
+  normalizeWaveVotingCreditNfts,
+  waveVotingCreditNftKey
+} from '@/waves/wave-voting-credit-nfts';
+import {
   WaveGroupNotificationSubscriptionsDb,
   waveGroupNotificationSubscriptionsDb
 } from '@/notifications/wave-group-notification-subscriptions.db';
 import { sendIdentityPushNotifications } from '@/api/push-notifications/push-notifications.service';
+
+const CARD_SET_TDH_SUPPORTED_CONTRACTS = new Set(
+  [MEMES_CONTRACT, GRADIENT_CONTRACT].map((contract) => contract.toLowerCase())
+);
 
 export class WaveApiService {
   constructor(
@@ -140,6 +149,10 @@ export class WaveApiService {
       throw new ForbiddenException(`Please create a profile first`);
     }
     return actingAsId;
+  }
+
+  private isSupportedCardSetTdhContract(contract: string): boolean {
+    return CARD_SET_TDH_SUPPORTED_CONTRACTS.has(contract.toLowerCase());
   }
 
   private assertImmutableWaveUpdateFieldsUnchanged({
@@ -641,6 +654,7 @@ export class WaveApiService {
         credit_type: ApiWaveCreditType.Tdh,
         credit_scope: ApiWaveCreditScope.Wave,
         credit_category: null,
+        credit_nfts: null,
         creditor_id: null,
         signature_required: false,
         period: {
@@ -706,6 +720,48 @@ export class WaveApiService {
       throw new BadRequestException(
         `Creating a wave with signed votes requirement is not yet supported`
       );
+    }
+    if (
+      request.voting.credit_type === ApiWaveCreditType.CardSetTdh &&
+      request.wave.type === ApiWaveType.Chat
+    ) {
+      throw new BadRequestException(
+        `Only APPROVE and RANK waves support CARD_SET_TDH`
+      );
+    }
+    if (request.voting.credit_type === ApiWaveCreditType.CardSetTdh) {
+      const creditNfts = normalizeWaveVotingCreditNfts(
+        (request.voting.credit_nfts ?? []).map((creditNft) => ({
+          contract: creditNft.contract,
+          tokenId: creditNft.token_id
+        }))
+      );
+      if (!creditNfts.length) {
+        throw new BadRequestException(
+          `CARD_SET_TDH requires credit_nfts configuration`
+        );
+      }
+      const unsupportedCreditNft = creditNfts.find(
+        (creditNft) => !this.isSupportedCardSetTdhContract(creditNft.contract)
+      );
+      if (unsupportedCreditNft) {
+        throw new BadRequestException(
+          `Only MEMES and GRADIENTS currently support CARD_SET_TDH`
+        );
+      }
+      const existingCreditNftKeys =
+        await this.wavesApiDb.findExistingCardSetCreditNftKeys(creditNfts, ctx);
+      const missingCreditNft = creditNfts.find(
+        (creditNft) =>
+          !existingCreditNftKeys.has(
+            waveVotingCreditNftKey(creditNft.contract, creditNft.tokenId)
+          )
+      );
+      if (missingCreditNft) {
+        throw new NotFoundException(
+          `NFT ${missingCreditNft.contract}/${missingCreditNft.tokenId} not found`
+        );
+      }
     }
     if (request.wave.type === ApiWaveType.Approve) {
       if (

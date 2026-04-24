@@ -217,8 +217,14 @@ export class DropsMappers {
     });
     const dropIds = dropEntities.map((it) => it.id);
     const waveIds = collections.distinct(dropEntities.map((it) => it.wave_id));
-    const [waveOverviews, pinnedWaveIds, identityWaveIds] = await Promise.all([
+    const [
+      waveOverviews,
+      waveVotingCreditNftsByWaveId,
+      pinnedWaveIds,
+      identityWaveIds
+    ] = await Promise.all([
       this.wavesApiDb.getWavesByDropIds(dropIds, connection),
+      this.wavesApiDb.findWaveVotingCreditNftsByWaveIds(waveIds, connection),
       this.wavesApiDb.whichOfWavesArePinnedByGivenProfile(
         {
           waveIds,
@@ -250,7 +256,10 @@ export class DropsMappers {
       const wave = waveOverviews[d.id];
       const waveMin: ApiWaveMin | null = wave
         ? mapWaveToApiWaveMin({
-            wave,
+            wave: {
+              ...wave,
+              voting_credit_nfts: waveVotingCreditNftsByWaveId[wave.id] ?? null
+            },
             displayByWaveId: waveDisplayByWaveId,
             groupIdsUserIsEligibleFor: group_ids_user_is_eligible_for,
             noRightToVote,
@@ -557,24 +566,32 @@ export class DropsMappers {
       await this.userGroupsService.getGroupsUserIsEligibleFor(
         contextProfileId ?? null
       );
-    const [mentionedWaveEntities, pinnedMentionedWaveIds, identityWaveIds] =
-      await Promise.all([
-        mentionedWaveIds.length
-          ? this.wavesApiDb.findWavesByIdsEligibleForRead(
-              mentionedWaveIds,
-              groupIdsUserIsEligibleFor,
-              ctx.connection
-            )
-          : Promise.resolve([]),
-        this.wavesApiDb.whichOfWavesArePinnedByGivenProfile(
-          {
-            waveIds: mentionedWaveIds,
-            profileId: contextProfileId
-          },
-          { connection: ctx.connection }
-        ),
-        profileWavesDb.findSelectedWaveIdsByWaveIds(mentionedWaveIds, ctx)
-      ]);
+    const [
+      mentionedWaveEntities,
+      mentionedWaveCreditNftsByWaveId,
+      pinnedMentionedWaveIds,
+      identityWaveIds
+    ] = await Promise.all([
+      mentionedWaveIds.length
+        ? this.wavesApiDb.findWavesByIdsEligibleForRead(
+            mentionedWaveIds,
+            groupIdsUserIsEligibleFor,
+            ctx.connection
+          )
+        : Promise.resolve([]),
+      this.wavesApiDb.findWaveVotingCreditNftsByWaveIds(
+        mentionedWaveIds,
+        ctx.connection
+      ),
+      this.wavesApiDb.whichOfWavesArePinnedByGivenProfile(
+        {
+          waveIds: mentionedWaveIds,
+          profileId: contextProfileId
+        },
+        { connection: ctx.connection }
+      ),
+      profileWavesDb.findSelectedWaveIdsByWaveIds(mentionedWaveIds, ctx)
+    ]);
     const mentionedWaveDisplayByWaveId =
       await directMessageWaveDisplayService.resolveWaveDisplayByWaveIdForContext(
         {
@@ -586,7 +603,10 @@ export class DropsMappers {
     const mentionedWavesById = mentionedWaveEntities.reduce(
       (acc, wave) => {
         acc[wave.id] = mapWaveToApiWaveMin({
-          wave,
+          wave: {
+            ...wave,
+            voting_credit_nfts: mentionedWaveCreditNftsByWaveId[wave.id] ?? null
+          },
           displayByWaveId: mentionedWaveDisplayByWaveId,
           groupIdsUserIsEligibleFor,
           noRightToVote,

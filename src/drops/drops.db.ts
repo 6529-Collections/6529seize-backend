@@ -31,9 +31,11 @@ import {
   NFT_LINKS_TABLE,
   PROFILES_ACTIVITY_LOGS_TABLE,
   RATINGS_TABLE,
+  TDH_NFT_TABLE,
   WAVE_DROPPER_METRICS_TABLE,
   WAVE_LEADERBOARD_ENTRIES_TABLE,
   WAVE_METRICS_TABLE,
+  WAVE_VOTING_CREDIT_NFTS_TABLE,
   WAVE_CURATIONS_TABLE,
   WAVES_DECISION_WINNER_DROPS_TABLE,
   WAVES_TABLE,
@@ -2136,10 +2138,56 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         )
       )
     ).flat();
+    const cardSetResults = await this.db.execute<ProfileOverVoteAmountInWave>(
+      `
+        with given_tdh_votes as (
+               select ${DROP_VOTER_STATE_TABLE}.voter_id,
+                      ${DROP_VOTER_STATE_TABLE}.wave_id,
+                      sum(abs(${DROP_VOTER_STATE_TABLE}.votes)) as total_given_votes
+               from ${DROP_VOTER_STATE_TABLE}
+               join ${DROPS_TABLE} on ${DROPS_TABLE}.id = ${DROP_VOTER_STATE_TABLE}.drop_id
+               where ${DROPS_TABLE}.drop_type = '${DropType.PARTICIPATORY}'
+               group by 1, 2
+             ),
+             profile_consolidation_keys as (
+               select distinct profile_id, consolidation_key
+               from ${IDENTITIES_TABLE}
+             ),
+             card_set_credit as (
+               select p.profile_id as profile_id,
+                      v.wave_id as wave_id,
+                      coalesce(sum(tn.boosted_tdh), 0) as credit_limit
+               from given_tdh_votes v
+               join ${WAVES_TABLE} w
+                 on w.id = v.wave_id
+                and w.voting_credit_type = '${WaveCreditType.CARD_SET_TDH}'
+               join profile_consolidation_keys p
+                 on p.profile_id = v.voter_id
+               join ${WAVE_VOTING_CREDIT_NFTS_TABLE} wvcn
+                 on wvcn.wave_id = w.id
+               left join ${TDH_NFT_TABLE} tn
+                 on tn.consolidation_key = p.consolidation_key
+                and tn.contract = wvcn.contract
+                and tn.id = wvcn.token_id
+               group by p.profile_id, v.wave_id
+             )
+        select v.voter_id as profile_id,
+               v.wave_id as wave_id,
+               c.credit_limit as credit_limit,
+               v.total_given_votes as total_given_votes
+          from given_tdh_votes v
+          join card_set_credit c
+            on c.profile_id = v.voter_id
+           and c.wave_id = v.wave_id
+         where v.total_given_votes > c.credit_limit
+      `,
+      {},
+      { wrappedConnection: ctx.connection }
+    );
     ctx.timer?.stop(
       `${this.constructor.name}->findWaveScopeTdhBasedSubmissionDropOvervotersWithOvervoteAmounts`
     );
-    return results;
+    return [...results, ...cardSetResults];
   }
 
   async hasProfileVotedInAnyOpenRepBasedWave(
