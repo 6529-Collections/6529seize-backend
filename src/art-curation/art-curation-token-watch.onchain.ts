@@ -1,6 +1,6 @@
 import { getRpcProvider } from '@/rpc-provider';
 import { getBestEffortArtCurationTransferPrice } from '@/art-curation/art-curation-token-watch-price';
-import { Network } from 'alchemy-sdk';
+import { Network } from '@/alchemy-sdk';
 import { Contract, ethers } from 'ethers';
 
 const ERC721_ABI = [

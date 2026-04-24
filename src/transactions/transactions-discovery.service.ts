@@ -8,7 +8,7 @@ import {
   AssetTransfersWithMetadataParams,
   AssetTransfersWithMetadataResult,
   fromHex
-} from 'alchemy-sdk';
+} from '@/alchemy-sdk';
 import { getAlchemyInstance } from '../alchemy';
 import { Logger } from '../logging';
 import { Transaction } from '../entities/ITransaction';

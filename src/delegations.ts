@@ -1,4 +1,4 @@
-import { Alchemy, Network } from 'alchemy-sdk';
+import { Alchemy, Network } from '@/alchemy-sdk';
 import {
   DELEGATION_ALL_ADDRESS,
   DELEGATION_CONTRACT,

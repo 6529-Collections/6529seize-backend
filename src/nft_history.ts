@@ -5,7 +5,7 @@ import {
   AssetTransfersWithMetadataResult,
   SortingOrder,
   TransactionResponse
-} from 'alchemy-sdk';
+} from '@/alchemy-sdk';
 import {
   ALCHEMY_SETTINGS,
   MEMELAB_CONTRACT,

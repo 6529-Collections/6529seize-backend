@@ -1,5 +1,5 @@
 import { sepolia } from '@wagmi/chains';
-import { Alchemy, Network } from 'alchemy-sdk';
+import { Alchemy, Network } from '@/alchemy-sdk';
 import { getAlchemyInstance } from '../alchemy';
 import { SubscriptionTopUp } from '../entities/ISubscription';
 import { Logger } from '../logging';

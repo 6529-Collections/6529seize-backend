@@ -1,7 +1,7 @@
 import { createReadStream } from 'fs';
 import { doInDbContext } from '../secrets';
 import { Rememe, RememeSource, RememeUpload } from '../entities/IRememe';
-import { Alchemy } from 'alchemy-sdk';
+import { Alchemy } from '@/alchemy-sdk';
 import { ALCHEMY_SETTINGS, CLOUDFRONT_LINK } from '@/constants';
 import {
   deleteRememes,
