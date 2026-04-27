@@ -592,7 +592,7 @@ async function getDropBodyTextForPush(
         order: { id: 'ASC' }
       });
     }
-    if (mediaRows.length === 0) {
+    if (mediaRows.length === 0 && !dropPart) {
       mediaRows = await mediaRepo.find({
         where: { drop_id: dropId },
         order: { drop_part_id: 'ASC', id: 'ASC' }
