@@ -15,6 +15,7 @@ import distributionPhotosRoutes from './distribution-photos/api.distribution_pho
 import distributionsRoutes from './distributions/api.distributions.routes';
 import bookmarkedDropsRoutes from './drops/bookmarked-drops.routes';
 import boostedDropsRoutes from './drops/boosted-drops.routes';
+import curatedProfileWaveDropsRoutes from './drops/curated-profile-wave-drops.routes';
 import dropIdsRoutes from './drops/drop-ids.routes';
 import dropsMediaRoutes from './drops/drops-media.routes';
 import dropsRoutes from './drops/drops.routes';
@@ -1547,6 +1548,7 @@ async function initializeApp() {
   });
 
   apiRouter.use(`/boosted-drops`, boostedDropsRoutes);
+  apiRouter.use(`/curated-profile-wave-drops`, curatedProfileWaveDropsRoutes);
   apiRouter.use(`/drop-ids`, dropIdsRoutes);
   apiRouter.use(`/drops-bookmarked`, bookmarkedDropsRoutes);
   apiRouter.use(`/feed`, feedRoutes);

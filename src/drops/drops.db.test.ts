@@ -4,6 +4,7 @@ import {
   DROP_MEDIA_TABLE,
   DROPS_PARTS_TABLE,
   DROPS_TABLE,
+  PROFILE_WAVES_TABLE,
   WAVE_CURATIONS_TABLE
 } from '@/constants';
 import { DropType } from '@/entities/IDrop';
@@ -37,6 +38,252 @@ const authorAlice = anIdentity(
     profile_id: 'profile-alice',
     primary_address: 'wallet-alice',
     handle: 'alice'
+  }
+);
+
+const explicitProfileWave = aWave(
+  { visibility_group_id: null, is_direct_message: false },
+  { id: 'profile-wave-explicit', serial_no: 11, name: 'Profile Explicit' }
+);
+const fallbackProfileWave = aWave(
+  { visibility_group_id: null, is_direct_message: false },
+  { id: 'profile-wave-fallback', serial_no: 12, name: 'Profile Fallback' }
+);
+const privateProfileWave = aWave(
+  { visibility_group_id: 'private-profile-group', is_direct_message: false },
+  { id: 'profile-wave-private', serial_no: 13, name: 'Profile Private' }
+);
+const directMessageProfileWave = aWave(
+  { visibility_group_id: null, is_direct_message: true },
+  { id: 'profile-wave-dm', serial_no: 14, name: 'Profile DM' }
+);
+
+describeWithSeed(
+  'DropsDb curated profile wave drops',
+  [
+    withWaves([
+      explicitProfileWave,
+      fallbackProfileWave,
+      privateProfileWave,
+      directMessageProfileWave
+    ]),
+    {
+      table: DROPS_TABLE,
+      rows: [
+        aDropRow({
+          id: 'drop-explicit-old',
+          serial_no: 301,
+          wave_id: explicitProfileWave.id,
+          author_id: 'profile-alice',
+          created_at: 301
+        }),
+        aDropRow({
+          id: 'drop-explicit-selected',
+          serial_no: 302,
+          wave_id: explicitProfileWave.id,
+          author_id: 'profile-bob',
+          created_at: 302,
+          reply_to_drop_id: 'drop-parent'
+        }),
+        aDropRow({
+          id: 'drop-fallback-old',
+          serial_no: 304,
+          wave_id: fallbackProfileWave.id,
+          author_id: 'profile-carol',
+          created_at: 304
+        }),
+        aDropRow({
+          id: 'drop-fallback-newer',
+          serial_no: 305,
+          wave_id: fallbackProfileWave.id,
+          author_id: 'profile-dave',
+          created_at: 305
+        }),
+        aDropRow({
+          id: 'drop-private-profile',
+          serial_no: 306,
+          wave_id: privateProfileWave.id,
+          author_id: 'profile-alice',
+          created_at: 306
+        }),
+        aDropRow({
+          id: 'drop-dm-profile',
+          serial_no: 307,
+          wave_id: directMessageProfileWave.id,
+          author_id: 'profile-bob',
+          created_at: 307
+        })
+      ]
+    },
+    {
+      table: WAVE_CURATIONS_TABLE,
+      rows: [
+        {
+          id: 'curation-explicit-old',
+          name: 'Old explicit',
+          wave_id: explicitProfileWave.id,
+          community_group_id: 'group-public',
+          created_at: 1,
+          updated_at: 1
+        },
+        {
+          id: 'curation-explicit-selected',
+          name: 'Selected explicit',
+          wave_id: explicitProfileWave.id,
+          community_group_id: 'group-public',
+          created_at: 2,
+          updated_at: 2
+        },
+        {
+          id: 'curation-fallback-old',
+          name: 'Old fallback',
+          wave_id: fallbackProfileWave.id,
+          community_group_id: 'group-public',
+          created_at: 1,
+          updated_at: 1
+        },
+        {
+          id: 'curation-fallback-newer',
+          name: 'New fallback',
+          wave_id: fallbackProfileWave.id,
+          community_group_id: 'group-public',
+          created_at: 2,
+          updated_at: 2
+        },
+        {
+          id: 'curation-private-profile',
+          name: 'Private profile',
+          wave_id: privateProfileWave.id,
+          community_group_id: 'group-public',
+          created_at: 1,
+          updated_at: 1
+        },
+        {
+          id: 'curation-dm-profile',
+          name: 'DM profile',
+          wave_id: directMessageProfileWave.id,
+          community_group_id: 'group-public',
+          created_at: 1,
+          updated_at: 1
+        }
+      ]
+    },
+    {
+      table: DROP_CURATIONS_TABLE,
+      rows: [
+        {
+          drop_id: 'drop-explicit-old',
+          curation_id: 'curation-explicit-old',
+          created_at: 1,
+          updated_at: 1,
+          wave_id: explicitProfileWave.id,
+          curated_by: 'profile-explicit',
+          priority_order: 1
+        },
+        {
+          drop_id: 'drop-explicit-selected',
+          curation_id: 'curation-explicit-selected',
+          created_at: 2,
+          updated_at: 2,
+          wave_id: explicitProfileWave.id,
+          curated_by: 'profile-explicit',
+          priority_order: 1
+        },
+        {
+          drop_id: 'drop-fallback-old',
+          curation_id: 'curation-fallback-old',
+          created_at: 3,
+          updated_at: 3,
+          wave_id: fallbackProfileWave.id,
+          curated_by: 'profile-fallback',
+          priority_order: 1
+        },
+        {
+          drop_id: 'drop-fallback-newer',
+          curation_id: 'curation-fallback-newer',
+          created_at: 4,
+          updated_at: 4,
+          wave_id: fallbackProfileWave.id,
+          curated_by: 'profile-fallback',
+          priority_order: 1
+        },
+        {
+          drop_id: 'drop-private-profile',
+          curation_id: 'curation-private-profile',
+          created_at: 5,
+          updated_at: 5,
+          wave_id: privateProfileWave.id,
+          curated_by: 'profile-private',
+          priority_order: 1
+        },
+        {
+          drop_id: 'drop-dm-profile',
+          curation_id: 'curation-dm-profile',
+          created_at: 6,
+          updated_at: 6,
+          wave_id: directMessageProfileWave.id,
+          curated_by: 'profile-dm',
+          priority_order: 1
+        }
+      ]
+    },
+    {
+      table: PROFILE_WAVES_TABLE,
+      rows: [
+        {
+          profile_id: 'profile-explicit',
+          wave_id: explicitProfileWave.id,
+          profile_curation_id: 'curation-explicit-selected'
+        },
+        {
+          profile_id: 'profile-fallback',
+          wave_id: fallbackProfileWave.id,
+          profile_curation_id: null
+        },
+        {
+          profile_id: 'profile-private',
+          wave_id: privateProfileWave.id,
+          profile_curation_id: 'curation-private-profile'
+        },
+        {
+          profile_id: 'profile-dm',
+          wave_id: directMessageProfileWave.id,
+          profile_curation_id: 'curation-dm-profile'
+        }
+      ]
+    }
+  ],
+  () => {
+    it('finds newest drops from effective public profile curations', async () => {
+      const results = await repo.findCuratedProfileWaveDrops(
+        {
+          limit: 10,
+          offset: 0
+        },
+        ctx
+      );
+
+      expect(results.map((it) => it.id)).toEqual([
+        'drop-fallback-old',
+        'drop-explicit-selected'
+      ]);
+      expect(
+        results.find((it) => it.id === 'drop-explicit-selected')
+          ?.reply_to_drop_id
+      ).toBe('drop-parent');
+    });
+
+    it('paginates curated profile wave drops by global recency', async () => {
+      const results = await repo.findCuratedProfileWaveDrops(
+        {
+          limit: 1,
+          offset: 1
+        },
+        ctx
+      );
+
+      expect(results.map((it) => it.id)).toEqual(['drop-explicit-selected']);
+    });
   }
 );
 const authorBob = anIdentity(

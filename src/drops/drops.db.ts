@@ -30,6 +30,7 @@ import {
   IDENTITY_SUBSCRIPTIONS_TABLE,
   NFT_LINKS_TABLE,
   PROFILES_ACTIVITY_LOGS_TABLE,
+  PROFILE_WAVES_TABLE,
   RATINGS_TABLE,
   TDH_NFT_TABLE,
   WAVE_DROPPER_METRICS_TABLE,
@@ -863,6 +864,53 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       ctx.timer?.stop(
         `${this.constructor.name}->findDropsByCurationPriorityOrder`
       );
+    }
+  }
+
+  async findCuratedProfileWaveDrops(
+    param: {
+      limit: number;
+      offset: number;
+    },
+    ctx: RequestContext
+  ): Promise<DropEntity[]> {
+    try {
+      ctx.timer?.start(`${this.constructor.name}->findCuratedProfileWaveDrops`);
+      return await this.db.execute<DropEntity>(
+        `
+        select d.*
+        from ${PROFILE_WAVES_TABLE} pw
+        join ${WAVES_TABLE} w on w.id = pw.wave_id
+        left join ${WAVE_CURATIONS_TABLE} selected_curation
+          on selected_curation.id = pw.profile_curation_id
+          and selected_curation.wave_id = pw.wave_id
+        left join ${WAVE_CURATIONS_TABLE} fallback_curation
+          on fallback_curation.id = (
+            select wcg.id
+            from ${WAVE_CURATIONS_TABLE} wcg
+            where wcg.wave_id = pw.wave_id
+            order by wcg.created_at asc, wcg.id asc
+            limit 1
+          )
+        join ${DROP_CURATIONS_TABLE} dc
+          on dc.wave_id = pw.wave_id
+          and dc.curation_id = coalesce(
+            selected_curation.id,
+            fallback_curation.id
+          )
+        join ${DROPS_TABLE} d
+          on d.id = dc.drop_id
+          and d.wave_id = pw.wave_id
+        where w.visibility_group_id is null
+          and coalesce(w.is_direct_message, false) = false
+        order by d.serial_no desc
+        limit :limit offset :offset
+      `,
+        param,
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->findCuratedProfileWaveDrops`);
     }
   }
 
