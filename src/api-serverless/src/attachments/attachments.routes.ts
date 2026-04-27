@@ -33,7 +33,7 @@ import { ApiAttachmentStatus } from '@/api/generated/models/ApiAttachmentStatus'
 import * as Joi from 'joi';
 import { mapAttachmentToApiAttachment } from '@/api/attachments/attachments.mappers';
 import { attachmentsStatusNotifier } from '@/attachments/attachments-status-notifier';
-import { randomUUID } from 'crypto';
+import { randomUUID } from 'node:crypto';
 import { Timer } from '@/time';
 
 const router = asyncRouter();
@@ -162,7 +162,7 @@ router.post(
     const attachment = await attachmentsDb.findAttachmentById(
       validatedRequest.attachment_id
     );
-    if (!attachment || attachment.owner_profile_id !== authenticatedProfileId) {
+    if (attachment?.owner_profile_id !== authenticatedProfileId) {
       throw new NotFoundException(
         `Attachment ${validatedRequest.attachment_id} not found`
       );

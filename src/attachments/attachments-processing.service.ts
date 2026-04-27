@@ -15,9 +15,9 @@ import {
   AttachmentsStatusNotifier
 } from '@/attachments/attachments-status-notifier';
 import { Logger } from '@/logging';
-import { createHash } from 'crypto';
-import { Readable } from 'stream';
-import { TextDecoder } from 'util';
+import { createHash } from 'node:crypto';
+import { Readable } from 'node:stream';
+import { TextDecoder } from 'node:util';
 import {
   getFileExtension,
   slugifyBaseName

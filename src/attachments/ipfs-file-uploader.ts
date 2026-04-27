@@ -87,7 +87,8 @@ export class IpfsFileUploader {
   }
 
   private extractRootCid(items: Record<string, unknown>[]): string {
-    for (const candidate of items.reverse()) {
+    const reversedItems = [...items].reverse();
+    for (const candidate of reversedItems) {
       const cid = candidate.Hash ?? candidate.cid ?? candidate.Cid;
       if (typeof cid === 'string' && cid.trim()) {
         return cid.trim();

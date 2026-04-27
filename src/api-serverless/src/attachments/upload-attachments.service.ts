@@ -75,7 +75,7 @@ export class UploadAttachmentsService {
         UploadId: upload_id,
         MultipartUpload: {
           Parts: parts.map((part) => ({
-            ETag: part.etag.replace(/(^")|("$)/g, ''),
+            ETag: part.etag.split('"').join(''),
             PartNumber: part.part_no
           }))
         }

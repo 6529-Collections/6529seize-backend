@@ -28,7 +28,9 @@ function parseRetryPayload(body: string): AttachmentOrchestrationRetryPayload {
     typeof parsed.original_key !== 'string' ||
     typeof parsed.attempt !== 'number'
   ) {
-    throw new Error(`Invalid attachment orchestration retry payload: ${body}`);
+    throw new TypeError(
+      `Invalid attachment orchestration retry payload: ${body}`
+    );
   }
   return parsed as AttachmentOrchestrationRetryPayload;
 }

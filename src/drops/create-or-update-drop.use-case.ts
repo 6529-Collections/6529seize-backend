@@ -1275,17 +1275,15 @@ export class CreateOrUpdateDropUseCase {
         timer
       ),
       this.attachmentsDb.insertDropAttachments(
-        parts
-          .map(
-            (part, index) =>
-              part.attachments?.map<DropAttachmentEntity>((attachment) => ({
-                drop_id: dropId,
-                drop_part_id: index + 1,
-                attachment_id: attachment.attachment_id,
-                wave_id: wave.id
-              })) ?? []
-          )
-          .flat(),
+        parts.flatMap(
+          (part, index) =>
+            part.attachments?.map<DropAttachmentEntity>((attachment) => ({
+              drop_id: dropId,
+              drop_part_id: index + 1,
+              attachment_id: attachment.attachment_id,
+              wave_id: wave.id
+            })) ?? []
+        ),
         connection,
         timer
       ),
