@@ -17,6 +17,7 @@ describe('DropsApiService', () => {
       community_group_id: 'community-group-1'
     },
     curatedDropEntities = [],
+    curatedProfileWaveDropEntities = [],
     wave = {
       id: 'wave-1',
       name: 'Wave 1',
@@ -40,6 +41,7 @@ describe('DropsApiService', () => {
   }: {
     curation?: Record<string, unknown> | null;
     curatedDropEntities?: Record<string, unknown>[];
+    curatedProfileWaveDropEntities?: Record<string, unknown>[];
     wave?: Record<string, unknown> | null;
   } = {}) {
     const dropsDb = {
@@ -48,6 +50,9 @@ describe('DropsApiService', () => {
       findDropsByCurationPriorityOrder: jest
         .fn()
         .mockResolvedValue(curatedDropEntities),
+      findCuratedProfileWaveDrops: jest
+        .fn()
+        .mockResolvedValue(curatedProfileWaveDropEntities),
       findLightDropIdsByWave: jest.fn().mockResolvedValue([]),
       findVisibleLightDropIds: jest.fn().mockResolvedValue([]),
       findLightDropsByIds: jest.fn().mockResolvedValue([])
@@ -338,6 +343,49 @@ describe('DropsApiService', () => {
         { id: 'drop-2', drop_priority_order: 2 }
       ],
       ctx
+    );
+  });
+
+  it('returns curated profile wave drops with no-count pagination', async () => {
+    const { service, dropsDb, dropsMappers, ctx } = createService({
+      curatedProfileWaveDropEntities: [
+        { id: 'drop-1' },
+        { id: 'drop-2' },
+        { id: 'drop-3' }
+      ]
+    });
+    dropsMappers.convertToDropFulls.mockResolvedValue([
+      { id: 'drop-1' },
+      { id: 'drop-2' }
+    ]);
+
+    await expect(
+      service.findCuratedProfileWaveDrops(
+        {
+          page: 2,
+          page_size: 2
+        },
+        ctx
+      )
+    ).resolves.toEqual({
+      data: [{ id: 'drop-1' }, { id: 'drop-2' }],
+      page: 2,
+      next: true
+    });
+
+    expect(dropsDb.findCuratedProfileWaveDrops).toHaveBeenCalledWith(
+      {
+        limit: 3,
+        offset: 2
+      },
+      ctx
+    );
+    expect(dropsMappers.convertToDropFulls).toHaveBeenCalledWith(
+      {
+        dropEntities: [{ id: 'drop-1' }, { id: 'drop-2' }],
+        authenticationContext: ctx.authenticationContext
+      },
+      ctx.connection
     );
   });
 
