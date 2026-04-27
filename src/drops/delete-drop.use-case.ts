@@ -31,6 +31,7 @@ import {
   artCurationTokenWatchService,
   ArtCurationTokenWatchService
 } from '@/art-curation/art-curation-token-watch.service';
+import { attachmentsDb, AttachmentsDb } from '@/attachments/attachments.db';
 
 export class DeleteDropUseCase {
   public constructor(
@@ -39,7 +40,8 @@ export class DeleteDropUseCase {
     private readonly dropsDb: DropsDb,
     private readonly dropBookmarksDb: DropBookmarksDb,
     private readonly curationsDb: CurationsDb,
-    private readonly artCurationTokenWatchService: ArtCurationTokenWatchService
+    private readonly artCurationTokenWatchService: ArtCurationTokenWatchService,
+    private readonly attachmentsDb: AttachmentsDb
   ) {}
 
   private async resolveDeleterId(
@@ -119,6 +121,7 @@ export class DeleteDropUseCase {
         this.dropsDb.deleteDropMentionedWaves(dropId, { timer, connection }),
         this.dropsDb.deleteDropGroupMentions(dropId, { timer, connection }),
         this.dropsDb.deleteDropMedia(dropId, { timer, connection }),
+        this.attachmentsDb.deleteDropAttachments(dropId, { timer, connection }),
         this.dropsDb.deleteDropReferencedNfts(dropId, { timer, connection }),
         this.dropsDb.deleteDropMetadata(dropId, { timer, connection }),
         this.dropsDb.deleteDropEntity(dropId, { timer, connection }),
@@ -215,5 +218,6 @@ export const deleteDrop = new DeleteDropUseCase(
   dropsDb,
   dropBookmarksDb,
   curationsDb,
-  artCurationTokenWatchService
+  artCurationTokenWatchService,
+  attachmentsDb
 );

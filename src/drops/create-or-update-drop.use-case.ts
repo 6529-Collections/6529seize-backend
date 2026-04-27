@@ -157,7 +157,7 @@ export class CreateOrUpdateDropUseCase {
     private readonly metricsRecorder: MetricsRecorder,
     private readonly dropNftLinksDb: DropNftLinksDb,
     private readonly artCurationTokenWatchService: ArtCurationTokenWatchService,
-    private readonly attachmentsDb: AttachmentsDb = attachmentsDb
+    private readonly attachmentsDb: AttachmentsDb
   ) {}
 
   private getRequiredAuthorId(model: CreateOrUpdateDropModel): string {
@@ -1640,5 +1640,6 @@ export const createOrUpdateDrop = new CreateOrUpdateDropUseCase(
   deleteDrop,
   metricsRecorder,
   dropNftLinksDb,
-  artCurationTokenWatchService
+  artCurationTokenWatchService,
+  attachmentsDb
 );

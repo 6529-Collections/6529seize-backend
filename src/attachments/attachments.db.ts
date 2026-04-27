@@ -9,6 +9,7 @@ import {
   dbSupplier,
   LazyDbAccessCompatibleService
 } from '@/sql-executor';
+import { RequestContext } from '@/request.context';
 import { Timer } from '@/time';
 
 export class AttachmentsDb extends LazyDbAccessCompatibleService {
@@ -186,6 +187,19 @@ export class AttachmentsDb extends LazyDbAccessCompatibleService {
       );
     } finally {
       timer?.stop(`${this.constructor.name}->insertDropAttachments`);
+    }
+  }
+
+  async deleteDropAttachments(dropId: string, ctx: RequestContext) {
+    ctx.timer?.start(`${this.constructor.name}->deleteDropAttachments`);
+    try {
+      await this.db.execute(
+        `delete from ${DROP_ATTACHMENTS_TABLE} where drop_id = :dropId`,
+        { dropId },
+        ctx.connection ? { wrappedConnection: ctx.connection } : undefined
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->deleteDropAttachments`);
     }
   }
 

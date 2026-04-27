@@ -170,11 +170,11 @@ Current DB storage behavior:
 
 Current public file URL shape:
 
-- `${IPFS_GATEWAY_ENDPOINT}/ipfs/<rootCid>/<published-file-name>`
+- `ipfs://<rootCid>/<published-file-name>`
 
 Current public metadata URL shape:
 
-- `${IPFS_GATEWAY_ENDPOINT}/ipfs/<rootCid>/metadata.json`
+- `ipfs://<rootCid>/metadata.json`
 
 ## MIME types
 
@@ -375,12 +375,8 @@ Also required outside the codebase:
 Currently used by `attachmentsProcessor`:
 
 - `IPFS_API_ENDPOINT`
-- `IPFS_GATEWAY_ENDPOINT`
 
-Current `serverless.yaml` hardcodes:
-
-- `IPFS_API_ENDPOINT=https://api-ipfs.6529.io`
-- `IPFS_GATEWAY_ENDPOINT=https://ipfs.6529.io`
+This is injected from deploy-time environment/secrets by `serverless.yaml`.
 
 The worker also needs AWS access to:
 

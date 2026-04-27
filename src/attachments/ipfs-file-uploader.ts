@@ -22,12 +22,8 @@ export class IpfsFileUploader {
     files: Record<string, string>;
   }> {
     const apiEndpoint = process.env.IPFS_API_ENDPOINT;
-    const gatewayEndpoint = process.env.IPFS_GATEWAY_ENDPOINT;
     if (!apiEndpoint) {
       throw new Error('IPFS_API_ENDPOINT not configured');
-    }
-    if (!gatewayEndpoint) {
-      throw new Error('IPFS_GATEWAY_ENDPOINT not configured');
     }
 
     const form = new FormData();
@@ -59,7 +55,7 @@ export class IpfsFileUploader {
 
     const items = this.extractItems(body);
     const cid = this.extractRootCid(items);
-    const rootUrl = `${gatewayEndpoint.replace(/\/$/, '')}/ipfs/${cid}`;
+    const rootUrl = `ipfs://${cid}`;
     const fileUrls = files.reduce(
       (acc, file) => {
         acc[file.fileName] = `${rootUrl}/${encodeURIComponent(file.fileName)}`;

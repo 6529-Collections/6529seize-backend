@@ -53,7 +53,7 @@ export class NotificationsApiService {
     private readonly identityNotificationsDb: IdentityNotificationsDb,
     private readonly identitySubscriptionsDb: IdentitySubscriptionsDb,
     private readonly wavesApiDb: WavesApiDb,
-    private readonly waveGroupNotificationSubscriptionsDb: WaveGroupNotificationSubscriptionsDb = waveGroupNotificationSubscriptionsDb
+    private readonly waveGroupNotificationSubscriptionsDb: WaveGroupNotificationSubscriptionsDb
   ) {}
 
   public async markNotificationAsRead(param: {

@@ -48,6 +48,7 @@ describe('CreateOrUpdateDropUseCase', () => {
       {} as any,
       {} as any,
       {} as any,
+      {} as any,
       {} as any
     );
   }

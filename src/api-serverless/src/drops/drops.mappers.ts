@@ -104,7 +104,7 @@ export class DropsMappers {
     private readonly dropNftLinksDb: DropNftLinksDb,
     private readonly nftLinksDb: NftLinksDb,
     private readonly nftLinkResolvingService: NftLinkResolvingService,
-    private readonly attachmentsDb: AttachmentsDb = attachmentsDb
+    private readonly attachmentsDb: AttachmentsDb
   ) {}
 
   public createDropApiToUseCaseModel({
@@ -1207,5 +1207,6 @@ export const dropsMappers = new DropsMappers(
   curationsDb,
   dropNftLinksDb,
   nftLinksDb,
-  nftLinkResolvingService
+  nftLinkResolvingService,
+  attachmentsDb
 );
