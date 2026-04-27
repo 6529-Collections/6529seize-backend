@@ -14,9 +14,7 @@ export const DROP_MEDIA_ALLOWED_MIME_TYPES = [
   'audio/x-aac',
   'model/gltf-binary',
   'video/quicktime',
-  'image/webp',
-  'application/pdf',
-  'text/csv'
+  'image/webp'
 ] as const;
 
 export const DROP_MEDIA_ALLOWED_EXTENSIONS_BY_MIME_TYPE: Record<
@@ -38,15 +36,21 @@ export const DROP_MEDIA_ALLOWED_EXTENSIONS_BY_MIME_TYPE: Record<
   'audio/x-aac': ['.aac'],
   'model/gltf-binary': ['.glb'],
   'video/quicktime': ['.mov', '.qt'],
-  'image/webp': ['.webp'],
-  'application/pdf': ['.pdf'],
-  'text/csv': ['.csv']
+  'image/webp': ['.webp']
 };
 
-export const DROP_MEDIA_DOCUMENT_MIME_TYPES = [
+export const ATTACHMENT_ALLOWED_MIME_TYPES = [
   'application/pdf',
   'text/csv'
 ] as const;
+
+export const ATTACHMENT_ALLOWED_EXTENSIONS_BY_MIME_TYPE: Record<
+  (typeof ATTACHMENT_ALLOWED_MIME_TYPES)[number],
+  readonly string[]
+> = {
+  'application/pdf': ['.pdf'],
+  'text/csv': ['.csv']
+};
 
 export const DANGEROUS_MEDIA_FILE_EXTENSIONS = [
   '.app',

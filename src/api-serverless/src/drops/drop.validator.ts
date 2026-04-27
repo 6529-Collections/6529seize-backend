@@ -12,6 +12,7 @@ import { ApiDropType } from '../generated/models/ApiDropType';
 import { ApiDropRatingRequest } from '../generated/models/ApiDropRatingRequest';
 import { ApiAddReactionToDropRequest } from '../generated/models/ApiAddReactionToDropRequest';
 import { ApiDropGroupMention } from '../generated/models/ApiDropGroupMention';
+import { ApiDropAttachmentReference } from '../generated/models/ApiDropAttachmentReference';
 
 export const ApiDropRatingRequestSchema: Joi.ObjectSchema<ApiDropRatingRequest> =
   Joi.object({
@@ -59,6 +60,14 @@ const NewDropPartSchema: Joi.ObjectSchema<ApiCreateDropPart> = Joi.object({
       Joi.object({
         mime_type: Joi.string().required(),
         url: Joi.string().required()
+      })
+    )
+    .default([]),
+  attachments: Joi.array()
+    .optional()
+    .items(
+      Joi.object<ApiDropAttachmentReference>({
+        attachment_id: Joi.string().required()
       })
     )
     .default([])

@@ -134,9 +134,10 @@ router.post(
   }
 );
 
-const MediaPrepRequestSchema = createMediaPrepRequestSchema({
-  allowedMimeTypes: [...DROP_MEDIA_ALLOWED_MIME_TYPES],
-  allowedExtensionsByMimeType: DROP_MEDIA_ALLOWED_EXTENSIONS_BY_MIME_TYPE
-});
+const MediaPrepRequestSchema =
+  createMediaPrepRequestSchema<ApiCreateMediaUploadUrlRequest>({
+    allowedMimeTypes: [...DROP_MEDIA_ALLOWED_MIME_TYPES],
+    allowedExtensionsByMimeType: DROP_MEDIA_ALLOWED_EXTENSIONS_BY_MIME_TYPE
+  });
 
 export default router;

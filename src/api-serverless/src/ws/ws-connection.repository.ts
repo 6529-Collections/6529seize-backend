@@ -346,6 +346,20 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     );
   }
 
+  async findConnectionIdsByIdentityId(identityId: string): Promise<string[]> {
+    if (!identityId || identityId === ANON_USER_ID) {
+      return [];
+    }
+    return this.db
+      .execute<{
+        connection_id: string;
+      }>(
+        `select connection_id from ${WS_CONNECTIONS_TABLE} where identity_id = :identityId`,
+        { identityId }
+      )
+      .then((res) => res.map((it) => it.connection_id));
+  }
+
   async findAllConnectionIds(): Promise<string[]> {
     return this.db
       .execute<{ connection_id: string }>(

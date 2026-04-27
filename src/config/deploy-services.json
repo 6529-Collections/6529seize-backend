@@ -4,6 +4,8 @@
   "services": [
     { "name": "api", "allowed_environments": ["staging", "prod"] },
     { "name": "aggregatedActivityLoop", "allowed_environments": ["staging", "prod"] },
+    { "name": "attachmentsOrchestrator", "allowed_environments": ["staging", "prod"] },
+    { "name": "attachmentsProcessor", "allowed_environments": ["staging", "prod"] },
     { "name": "artCurationNftWatchLoop", "allowed_environments": ["staging", "prod"] },
     { "name": "cloudwatchAlarmsToDiscordLoop", "allowed_environments": ["prod"] },
     { "name": "claimsBuilder", "allowed_environments": ["staging", "prod"] },

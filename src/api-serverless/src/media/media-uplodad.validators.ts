@@ -28,13 +28,15 @@ export const ApiCompleteMultipartUploadRequestSchema: Joi.ObjectSchema<ApiComple
       .items(ApiCompleteMultipartUploadRequestPartSchema)
   });
 
-export function createMediaPrepRequestSchema({
+export function createMediaPrepRequestSchema<
+  T extends { content_type: string; file_name: string }
+>({
   allowedMimeTypes,
   allowedExtensionsByMimeType
 }: {
   allowedMimeTypes: string[];
   allowedExtensionsByMimeType?: Record<string, readonly string[]>;
-}): Joi.ObjectSchema<ApiCreateMediaUploadUrlRequest & { author: string }> {
+}): Joi.ObjectSchema<T & { author: string }> {
   return Joi.object({
     author: Joi.string().required(),
     content_type: Joi.string()

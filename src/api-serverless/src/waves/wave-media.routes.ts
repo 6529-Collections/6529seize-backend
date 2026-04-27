@@ -130,8 +130,9 @@ router.post(
   }
 );
 
-const MediaPrepRequestSchema = createMediaPrepRequestSchema({
-  allowedMimeTypes: ['image/png', 'image/jpeg', 'image/gif']
-});
+const MediaPrepRequestSchema =
+  createMediaPrepRequestSchema<ApiCreateMediaUploadUrlRequest>({
+    allowedMimeTypes: ['image/png', 'image/jpeg', 'image/gif']
+  });
 
 export default router;

@@ -5,6 +5,12 @@ export {
 } from './IArtCurationTokenWatch';
 export { ArtCurationTokenWatchDropEntity } from './IArtCurationTokenWatchDrop';
 export { ActivityEventEntity } from './IActivityEvent';
+export {
+  AttachmentEntity,
+  AttachmentKind,
+  AttachmentStatus,
+  DropAttachmentEntity
+} from './IAttachment';
 export { AddressConsolidationKey } from './IAddressConsolidationKey';
 export {
   AggregatedActivity,
