@@ -5,7 +5,11 @@ import {
   getAuthenticatedProfileIdOrNull,
   needsAuthenticatedUser
 } from '@/api/auth/auth';
-import { ForbiddenException, NotFoundException } from '@/exceptions';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException
+} from '@/exceptions';
 import {
   ApiCompleteMultipartUploadRequestPartSchema,
   ApiUploadPartOfMultipartUploadRequestSchema,
@@ -38,11 +42,10 @@ import { Timer } from '@/time';
 
 const router = asyncRouter();
 
-const AttachmentMultipartUploadRequestSchema =
-  createMediaPrepRequestSchema<ApiCreateAttachmentMultipartUploadRequest>({
-    allowedMimeTypes: [...ATTACHMENT_ALLOWED_MIME_TYPES],
-    allowedExtensionsByMimeType: ATTACHMENT_ALLOWED_EXTENSIONS_BY_MIME_TYPE
-  });
+const AttachmentMultipartUploadRequestSchema = createMediaPrepRequestSchema({
+  allowedMimeTypes: [...ATTACHMENT_ALLOWED_MIME_TYPES],
+  allowedExtensionsByMimeType: ATTACHMENT_ALLOWED_EXTENSIONS_BY_MIME_TYPE
+});
 
 const AttachmentMultipartCompletionRequestSchema: Joi.ObjectSchema<ApiCompleteAttachmentMultipartUploadRequest> =
   Joi.object({
@@ -54,6 +57,21 @@ const AttachmentMultipartCompletionRequestSchema: Joi.ObjectSchema<ApiCompleteAt
       .min(1)
       .items(ApiCompleteMultipartUploadRequestPartSchema)
   });
+
+const ATTACHMENT_KIND_BY_MIME_TYPE: Record<string, AttachmentKind> = {
+  'application/pdf': AttachmentKind.PDF,
+  'text/csv': AttachmentKind.CSV
+};
+
+function getAttachmentKind(contentType: string): AttachmentKind {
+  const kind = ATTACHMENT_KIND_BY_MIME_TYPE[contentType];
+  if (!kind) {
+    throw new BadRequestException(
+      `Unsupported attachment content type ${contentType}`
+    );
+  }
+  return kind;
+}
 
 router.post(
   '/multipart-upload',
@@ -89,10 +107,7 @@ router.post(
       id: attachmentId,
       owner_profile_id: authenticatedProfileId,
       original_file_name: validated.file_name,
-      kind:
-        validated.content_type === 'application/pdf'
-          ? AttachmentKind.PDF
-          : AttachmentKind.CSV,
+      kind: getAttachmentKind(validated.content_type),
       declared_mime: validated.content_type,
       detected_mime: null,
       status: AttachmentStatus.UPLOADING,
@@ -203,7 +218,8 @@ router.get(
     const attachment = await attachmentsDb.findAttachmentById(
       req.params.attachment_id
     );
-    if (!attachment) {
+    const authenticatedProfileId = await getAuthenticatedProfileIdOrNull(req);
+    if (attachment?.owner_profile_id !== authenticatedProfileId) {
       throw new NotFoundException(
         `Attachment ${req.params.attachment_id} not found`
       );

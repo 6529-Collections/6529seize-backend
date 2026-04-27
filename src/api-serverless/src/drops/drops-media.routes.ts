@@ -38,9 +38,7 @@ router.post(
     if (!authenticatedProfileId) {
       throw new ForbiddenException(`Please create a profile first`);
     }
-    const validatedRequest: ApiCreateMediaUploadUrlRequest & {
-      author: string;
-    } = getValidatedByJoiOrThrow(
+    const validatedRequest = getValidatedByJoiOrThrow(
       {
         content_type: req.body.content_type,
         file_name: req.body.file_name,
@@ -68,9 +66,7 @@ router.post(
     if (!authenticatedProfileId) {
       throw new ForbiddenException(`Please create a profile first`);
     }
-    const validatedRequest: ApiCreateMediaUploadUrlRequest & {
-      author: string;
-    } = getValidatedByJoiOrThrow(
+    const validatedRequest = getValidatedByJoiOrThrow(
       {
         ...req.body,
         author: authenticatedProfileId
@@ -134,10 +130,9 @@ router.post(
   }
 );
 
-const MediaPrepRequestSchema =
-  createMediaPrepRequestSchema<ApiCreateMediaUploadUrlRequest>({
-    allowedMimeTypes: [...DROP_MEDIA_ALLOWED_MIME_TYPES],
-    allowedExtensionsByMimeType: DROP_MEDIA_ALLOWED_EXTENSIONS_BY_MIME_TYPE
-  });
+const MediaPrepRequestSchema = createMediaPrepRequestSchema({
+  allowedMimeTypes: [...DROP_MEDIA_ALLOWED_MIME_TYPES],
+  allowedExtensionsByMimeType: DROP_MEDIA_ALLOWED_EXTENSIONS_BY_MIME_TYPE
+});
 
 export default router;

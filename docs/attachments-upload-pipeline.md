@@ -94,6 +94,9 @@ API/public statuses:
 - `ready`
 - `bad`
 
+The public `bad` status represents both internal `BLOCKED` and `FAILED`
+outcomes, so clients can handle rejected and failed attachments uniformly.
+
 Expected flow:
 
 1. FE calls attachment multipart init
@@ -467,6 +470,7 @@ Transitions that broadcast a WS event:
 ## Recommended next steps
 
 1. Add stronger PDF sanitization / flattening if PDFs will be broadly used
-2. Add websocket status updates so FE does not need to poll for `ready`/`bad`
+2. Document client-side reconnect/replay semantics for missed
+   `ATTACHMENT_STATUS_UPDATE` messages
 3. Decide whether to expose metadata URL through API models directly
 4. Add richer public metadata only if the product actually needs it

@@ -16,8 +16,12 @@ provider:
 
 custom:
   nodeEnvByStage:
+    local: local
+    dev: development
+    development: development
     staging: development
     prod: production
+    production: production
 
 functions:
   attachmentsOrchestrator:

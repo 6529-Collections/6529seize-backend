@@ -752,6 +752,19 @@ export class CreateOrUpdateDropUseCase {
   ) {
     timer?.start(`${CreateOrUpdateDropUseCase.name}->verifyAttachments`);
     try {
+      for (const part of model.parts) {
+        const attachmentIdsInPart = part.attachments?.map(
+          (attachment) => attachment.attachment_id
+        );
+        if (
+          attachmentIdsInPart?.length &&
+          new Set(attachmentIdsInPart).size !== attachmentIdsInPart.length
+        ) {
+          throw new BadRequestException(
+            `Drop part contains duplicate attachments`
+          );
+        }
+      }
       const attachmentIds = model.parts
         .flatMap((part) => part.attachments ?? [])
         .map((attachment) => attachment.attachment_id);

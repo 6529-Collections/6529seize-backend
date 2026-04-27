@@ -10,7 +10,8 @@ type AttachmentOrchestrationRetryPayload = {
   attachment_id: string;
   original_bucket: string;
   original_key: string;
-  attempt: number;
+  upload_attempt: number;
+  scan_attempt: number;
 };
 
 type S3ObjectCreatedDetail = {
@@ -26,7 +27,8 @@ function parseRetryPayload(body: string): AttachmentOrchestrationRetryPayload {
     typeof parsed.attachment_id !== 'string' ||
     typeof parsed.original_bucket !== 'string' ||
     typeof parsed.original_key !== 'string' ||
-    typeof parsed.attempt !== 'number'
+    typeof parsed.upload_attempt !== 'number' ||
+    typeof parsed.scan_attempt !== 'number'
   ) {
     throw new TypeError(
       `Invalid attachment orchestration retry payload: ${body}`
@@ -48,7 +50,8 @@ async function handleSqs(event: Parameters<SQSHandler>[0]) {
           attachmentId: payload.attachment_id,
           originalBucket: payload.original_bucket,
           originalKey: payload.original_key,
-          attempt: payload.attempt
+          uploadAttempt: payload.upload_attempt,
+          scanAttempt: payload.scan_attempt
         });
       }
     },

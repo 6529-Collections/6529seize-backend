@@ -8,13 +8,15 @@ export async function enqueueAttachmentOrchestrationRetry({
   attachmentId,
   originalBucket,
   originalKey,
-  attempt,
+  uploadAttempt,
+  scanAttempt,
   delaySeconds
 }: {
   attachmentId: string;
   originalBucket: string;
   originalKey: string;
-  attempt: number;
+  uploadAttempt: number;
+  scanAttempt: number;
   delaySeconds: number;
 }): Promise<void> {
   await sqs.sendToQueueName({
@@ -23,11 +25,12 @@ export async function enqueueAttachmentOrchestrationRetry({
       attachment_id: attachmentId,
       original_bucket: originalBucket,
       original_key: originalKey,
-      attempt
+      upload_attempt: uploadAttempt,
+      scan_attempt: scanAttempt
     },
     delaySeconds
   });
   logger.info(
-    `Queued attachment orchestration retry attachment_id=${attachmentId} attempt=${attempt} delaySeconds=${delaySeconds}`
+    `Queued attachment orchestration retry attachment_id=${attachmentId} upload_attempt=${uploadAttempt} scan_attempt=${scanAttempt} delaySeconds=${delaySeconds}`
   );
 }

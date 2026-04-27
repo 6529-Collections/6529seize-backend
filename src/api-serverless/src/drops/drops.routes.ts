@@ -170,7 +170,7 @@ router.post(
     );
     if (invalidPart) {
       throw new BadRequestException(
-        'Each drop part must have content or media attached'
+        'Each drop part must have content, media, or attachments'
       );
     }
     const contentLength = newDrop.parts

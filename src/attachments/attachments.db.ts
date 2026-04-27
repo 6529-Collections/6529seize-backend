@@ -92,6 +92,41 @@ export class AttachmentsDb extends LazyDbAccessCompatibleService {
     }
   }
 
+  async transitionAttachmentStatus(
+    {
+      id,
+      fromStatus,
+      toStatus,
+      updatedAt
+    }: {
+      id: string;
+      fromStatus: AttachmentStatus;
+      toStatus: AttachmentStatus;
+      updatedAt: number;
+    },
+    {
+      connection,
+      timer
+    }: {
+      connection?: ConnectionWrapper<any>;
+      timer?: Timer;
+    } = {}
+  ): Promise<boolean> {
+    timer?.start(`${this.constructor.name}->transitionAttachmentStatus`);
+    try {
+      const result = await this.db.execute(
+        `update ${ATTACHMENTS_TABLE}
+         set status = :toStatus, updated_at = :updatedAt
+         where id = :id and status = :fromStatus`,
+        { id, fromStatus, toStatus, updatedAt },
+        connection ? { wrappedConnection: connection } : undefined
+      );
+      return this.db.getAffectedRows(result) === 1;
+    } finally {
+      timer?.stop(`${this.constructor.name}->transitionAttachmentStatus`);
+    }
+  }
+
   async findAttachmentById(
     id: string,
     connection?: ConnectionWrapper<any>
@@ -248,17 +283,18 @@ export class AttachmentsDb extends LazyDbAccessCompatibleService {
     ownerProfileId: string;
     connection?: ConnectionWrapper<any>;
   }): Promise<void> {
-    if (!attachmentIds.length) {
+    const uniqueAttachmentIds = Array.from(new Set(attachmentIds));
+    if (!uniqueAttachmentIds.length) {
       return;
     }
     const rows = await this.db.execute<{ id: string }>(
       `select id from ${ATTACHMENTS_TABLE}
        where id in (:attachmentIds)
          and owner_profile_id = :ownerProfileId`,
-      { attachmentIds, ownerProfileId },
+      { attachmentIds: uniqueAttachmentIds, ownerProfileId },
       connection ? { wrappedConnection: connection } : undefined
     );
-    if (rows.length !== attachmentIds.length) {
+    if (rows.length !== uniqueAttachmentIds.length) {
       throw new Error(`One or more attachments do not belong to the uploader`);
     }
   }

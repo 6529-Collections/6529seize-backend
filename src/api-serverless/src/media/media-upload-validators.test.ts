@@ -5,20 +5,16 @@ import {
   DROP_MEDIA_ALLOWED_MIME_TYPES
 } from '@/api/media/media-mime-types';
 import { createMediaPrepRequestSchema } from '@/api/media/media-uplodad.validators';
-import { ApiCreateAttachmentMultipartUploadRequest } from '@/api/generated/models/ApiCreateAttachmentMultipartUploadRequest';
-import { ApiCreateMediaUploadUrlRequest } from '@/api/generated/models/ApiCreateMediaUploadUrlRequest';
 
 describe('media upload validators', () => {
-  const dropMediaSchema =
-    createMediaPrepRequestSchema<ApiCreateMediaUploadUrlRequest>({
-      allowedMimeTypes: [...DROP_MEDIA_ALLOWED_MIME_TYPES],
-      allowedExtensionsByMimeType: DROP_MEDIA_ALLOWED_EXTENSIONS_BY_MIME_TYPE
-    });
-  const attachmentSchema =
-    createMediaPrepRequestSchema<ApiCreateAttachmentMultipartUploadRequest>({
-      allowedMimeTypes: [...ATTACHMENT_ALLOWED_MIME_TYPES],
-      allowedExtensionsByMimeType: ATTACHMENT_ALLOWED_EXTENSIONS_BY_MIME_TYPE
-    });
+  const dropMediaSchema = createMediaPrepRequestSchema({
+    allowedMimeTypes: [...DROP_MEDIA_ALLOWED_MIME_TYPES],
+    allowedExtensionsByMimeType: DROP_MEDIA_ALLOWED_EXTENSIONS_BY_MIME_TYPE
+  });
+  const attachmentSchema = createMediaPrepRequestSchema({
+    allowedMimeTypes: [...ATTACHMENT_ALLOWED_MIME_TYPES],
+    allowedExtensionsByMimeType: ATTACHMENT_ALLOWED_EXTENSIONS_BY_MIME_TYPE
+  });
 
   it.each([
     ['image/webp', 'upload.webp'],

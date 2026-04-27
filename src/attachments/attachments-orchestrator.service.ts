@@ -9,6 +9,7 @@ import {
 import { AttachmentStatus } from '@/entities/IAttachment';
 import { Logger } from '@/logging';
 import { getS3 } from '@/s3.client';
+import { Time } from '@/time';
 
 const GUARDDUTY_STATUS_TAG = 'GuardDutyMalwareScanStatus';
 const MAX_GUARDDUTY_POLL_ATTEMPTS = 20;
@@ -38,7 +39,8 @@ export class AttachmentsOrchestratorService {
     await this.orchestrate({
       originalBucket,
       originalKey,
-      attempt: 0
+      uploadAttempt: 0,
+      scanAttempt: 0
     });
   }
 
@@ -46,18 +48,21 @@ export class AttachmentsOrchestratorService {
     attachmentId,
     originalBucket,
     originalKey,
-    attempt
+    uploadAttempt,
+    scanAttempt
   }: {
     attachmentId: string;
     originalBucket: string;
     originalKey: string;
-    attempt: number;
+    uploadAttempt: number;
+    scanAttempt: number;
   }): Promise<void> {
     await this.orchestrate({
       attachmentId,
       originalBucket,
       originalKey,
-      attempt
+      uploadAttempt,
+      scanAttempt
     });
   }
 
@@ -65,12 +70,14 @@ export class AttachmentsOrchestratorService {
     attachmentId,
     originalBucket,
     originalKey,
-    attempt
+    uploadAttempt,
+    scanAttempt
   }: {
     attachmentId?: string;
     originalBucket: string;
     originalKey: string;
-    attempt: number;
+    uploadAttempt: number;
+    scanAttempt: number;
   }): Promise<void> {
     const attachment = attachmentId
       ? await this.attachmentsDb.findAttachmentById(attachmentId)
@@ -80,17 +87,18 @@ export class AttachmentsOrchestratorService {
         });
 
     if (!attachment) {
-      if (attempt >= MAX_GUARDDUTY_POLL_ATTEMPTS) {
+      if (uploadAttempt >= MAX_GUARDDUTY_POLL_ATTEMPTS) {
         throw new Error(
-          `Attachment row not found for ${originalBucket}/${originalKey} after ${attempt} attempts`
+          `Attachment row not found for ${originalBucket}/${originalKey} after ${uploadAttempt} attempts`
         );
       }
       await enqueueAttachmentOrchestrationRetry({
         attachmentId: attachmentId ?? '',
         originalBucket,
         originalKey,
-        attempt: attempt + 1,
-        delaySeconds: this.getRetryDelaySeconds(attempt)
+        uploadAttempt: uploadAttempt + 1,
+        scanAttempt,
+        delaySeconds: this.getRetryDelaySeconds(uploadAttempt)
       });
       return;
     }
@@ -107,12 +115,12 @@ export class AttachmentsOrchestratorService {
     }
 
     if (attachment.status === AttachmentStatus.UPLOADING) {
-      if (attempt >= MAX_GUARDDUTY_POLL_ATTEMPTS) {
+      if (uploadAttempt >= MAX_GUARDDUTY_POLL_ATTEMPTS) {
         const failedPatch = {
           status: AttachmentStatus.FAILED,
           verdict: 'UPLOAD_COMPLETION_TIMEOUT',
           error_reason: 'Attachment completion did not finalize in time',
-          updated_at: Date.now()
+          updated_at: Time.currentMillis()
         };
         await this.attachmentsDb.updateAttachment({
           id: attachment.id,
@@ -128,8 +136,9 @@ export class AttachmentsOrchestratorService {
         attachmentId: attachment.id,
         originalBucket,
         originalKey,
-        attempt: attempt + 1,
-        delaySeconds: this.getRetryDelaySeconds(attempt)
+        uploadAttempt: uploadAttempt + 1,
+        scanAttempt,
+        delaySeconds: this.getRetryDelaySeconds(uploadAttempt)
       });
       return;
     }
@@ -140,12 +149,12 @@ export class AttachmentsOrchestratorService {
     });
 
     if (!guardDutyStatus) {
-      if (attempt >= MAX_GUARDDUTY_POLL_ATTEMPTS) {
+      if (scanAttempt >= MAX_GUARDDUTY_POLL_ATTEMPTS) {
         const failedPatch = {
           status: AttachmentStatus.FAILED,
           verdict: 'MALWARE_SCAN_TIMEOUT',
           error_reason: 'GuardDuty scan result was not available in time',
-          updated_at: Date.now()
+          updated_at: Time.currentMillis()
         };
         await this.attachmentsDb.updateAttachment({
           id: attachment.id,
@@ -161,8 +170,9 @@ export class AttachmentsOrchestratorService {
         attachmentId: attachment.id,
         originalBucket,
         originalKey,
-        attempt: attempt + 1,
-        delaySeconds: this.getRetryDelaySeconds(attempt)
+        uploadAttempt,
+        scanAttempt: scanAttempt + 1,
+        delaySeconds: this.getRetryDelaySeconds(scanAttempt)
       });
       return;
     }
@@ -174,7 +184,7 @@ export class AttachmentsOrchestratorService {
           guardduty_status: guardDutyStatus,
           status: AttachmentStatus.VERIFYING,
           error_reason: null,
-          updated_at: Date.now()
+          updated_at: Time.currentMillis()
         }
       });
       await enqueueAttachmentProcessing(attachment.id);
@@ -190,7 +200,7 @@ export class AttachmentsOrchestratorService {
         status: AttachmentStatus.BLOCKED,
         verdict: `MALWARE_SCAN_${guardDutyStatus}`,
         error_reason: `GuardDuty blocked attachment (${guardDutyStatus})`,
-        updated_at: Date.now()
+        updated_at: Time.currentMillis()
       };
       await this.attachmentsDb.updateAttachment({
         id: attachment.id,
@@ -208,7 +218,7 @@ export class AttachmentsOrchestratorService {
       status: AttachmentStatus.FAILED,
       verdict: `MALWARE_SCAN_${guardDutyStatus}`,
       error_reason: `GuardDuty scan failed (${guardDutyStatus})`,
-      updated_at: Date.now()
+      updated_at: Time.currentMillis()
     };
     await this.attachmentsDb.updateAttachment({
       id: attachment.id,

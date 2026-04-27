@@ -22,6 +22,7 @@ import {
   getFileExtension,
   slugifyBaseName
 } from '@/api/media/sanitize-file-name';
+import { Time } from '@/time';
 
 const csvParser = require('csv-parser');
 const fileType = require('file-type');
@@ -66,17 +67,29 @@ export class AttachmentsProcessingService {
     if (!attachment.original_bucket || !attachment.original_key) {
       throw new Error(`Attachment ${attachmentId} is missing original storage`);
     }
-    await this.attachmentsDb.updateAttachment({
+    if (attachment.status !== AttachmentStatus.VERIFYING) {
+      this.logger.info(
+        `Skipping attachment ${attachmentId} processing because status is ${attachment.status}`
+      );
+      return;
+    }
+    const processingAt = Time.currentMillis();
+    const transitioned = await this.attachmentsDb.transitionAttachmentStatus({
       id: attachmentId,
-      patch: {
-        status: AttachmentStatus.PROCESSING,
-        updated_at: Date.now()
-      }
+      fromStatus: AttachmentStatus.VERIFYING,
+      toStatus: AttachmentStatus.PROCESSING,
+      updatedAt: processingAt
     });
+    if (!transitioned) {
+      this.logger.info(
+        `Skipping attachment ${attachmentId} processing because another worker claimed it`
+      );
+      return;
+    }
     await this.statusNotifier.notifyStatusTransition({
       ...attachment,
       status: AttachmentStatus.PROCESSING,
-      updated_at: Date.now()
+      updated_at: processingAt
     });
 
     try {
@@ -134,7 +147,7 @@ export class AttachmentsProcessingService {
         ipfs_url: upload.files[publishedFileName] ?? upload.url,
         status: AttachmentStatus.READY,
         error_reason: null,
-        updated_at: Date.now()
+        updated_at: Time.currentMillis()
       };
       await this.attachmentsDb.updateAttachment({
         id: attachment.id,
@@ -153,7 +166,7 @@ export class AttachmentsProcessingService {
       const blockedPatch = {
         status: AttachmentStatus.BLOCKED,
         error_reason: reason,
-        updated_at: Date.now()
+        updated_at: Time.currentMillis()
       };
       await this.attachmentsDb.updateAttachment({
         id: attachment.id,

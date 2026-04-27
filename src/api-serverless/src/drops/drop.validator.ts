@@ -70,6 +70,7 @@ const NewDropPartSchema: Joi.ObjectSchema<ApiCreateDropPart> = Joi.object({
         attachment_id: Joi.string().required()
       })
     )
+    .unique('attachment_id')
     .default([])
 });
 
