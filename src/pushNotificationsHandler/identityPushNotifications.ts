@@ -580,7 +580,8 @@ async function getDropBodyTextForPush(
   emptyFallback = 'View drop'
 ): Promise<string> {
   const rawContent = dropPart?.content;
-  const hasText = rawContent != null && rawContent.trim() !== '';
+  const rawContentTrimmed = rawContent?.trim();
+  const hasText = rawContentTrimmed != null && rawContentTrimmed !== '';
   const dropId = notification.related_drop_id;
 
   let mediaRows: DropMediaEntity[] = [];
@@ -605,10 +606,10 @@ async function getDropBodyTextForPush(
   );
 
   if (hasText && attachmentLabels.length > 0) {
-    return `${rawContent.trim()} ${attachmentLabels.join(' ')}`.trim();
+    return `${rawContentTrimmed} ${attachmentLabels.join(' ')}`.trim();
   }
   if (hasText) {
-    return rawContent;
+    return rawContentTrimmed;
   }
   if (attachmentLabels.length > 0) {
     return attachmentLabels.join(' ');
