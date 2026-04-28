@@ -19,6 +19,7 @@ describe('CurationsApiService', () => {
     },
     eligibleGroupIds = ['community-group-1'],
     authenticationContext = AuthenticationContext.fromProfileId('profile-1'),
+    communityGroup = { id: 'community-group-1', is_private: false },
     curatedCurationIds = [],
     dropCurations,
     waveCurations = [
@@ -37,6 +38,7 @@ describe('CurationsApiService', () => {
     drop?: Record<string, unknown> | null;
     eligibleGroupIds?: string[];
     authenticationContext?: AuthenticationContext;
+    communityGroup?: { id: string; is_private: boolean } | null;
     curatedCurationIds?: string[];
     dropCurations?: Record<string, unknown>[];
     waveCurations?: Record<string, unknown>[];
@@ -85,9 +87,7 @@ describe('CurationsApiService', () => {
         });
     const curationsDb = {
       executeNativeQueriesInTransaction: jest.fn(async (fn) => fn(connection)),
-      findCommunityGroupById: jest
-        .fn()
-        .mockResolvedValue({ id: 'community-group-1', is_private: false }),
+      findCommunityGroupById: jest.fn().mockResolvedValue(communityGroup),
       findWaveCurationById: jest
         .fn()
         .mockImplementation(
@@ -391,6 +391,69 @@ describe('CurationsApiService', () => {
         connection: expect.anything()
       })
     );
+  });
+
+  it('allows curations to use the private wave admin group', async () => {
+    const { service, curationsDb, ctx } = createService({
+      wave: {
+        id: 'wave-1',
+        type: WaveType.CHAT,
+        created_by: 'profile-2',
+        admin_group_id: 'admin-group'
+      },
+      eligibleGroupIds: ['admin-group'],
+      communityGroup: { id: 'admin-group', is_private: true },
+      waveCurations: []
+    });
+
+    await expect(
+      service.createWaveCuration(
+        'wave-1',
+        {
+          name: 'Admin Picks',
+          group_id: 'admin-group'
+        } as any,
+        ctx
+      )
+    ).resolves.toEqual(
+      expect.objectContaining({
+        name: 'Admin Picks',
+        wave_id: 'wave-1',
+        group_id: 'admin-group',
+        priority_order: 1
+      })
+    );
+
+    expect(curationsDb.insertWaveCuration).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'Admin Picks',
+        wave_id: 'wave-1',
+        community_group_id: 'admin-group',
+        priority_order: 1
+      }),
+      expect.objectContaining({
+        connection: expect.anything()
+      })
+    );
+  });
+
+  it('rejects curations that use a non-admin private group', async () => {
+    const { service, curationsDb, ctx } = createService({
+      communityGroup: { id: 'private-group', is_private: true }
+    });
+
+    await expect(
+      service.createWaveCuration(
+        'wave-1',
+        {
+          name: 'Private Picks',
+          group_id: 'private-group'
+        } as any,
+        ctx
+      )
+    ).rejects.toThrow(`Group private-group is private`);
+
+    expect(curationsDb.insertWaveCuration).not.toHaveBeenCalled();
   });
 
   it('allows chat drops in chat waves to be curated', async () => {
@@ -944,6 +1007,49 @@ describe('CurationsApiService', () => {
     expect(curationsDb.updateWaveCuration).toHaveBeenCalledWith(
       expect.objectContaining({
         id: 'curation-1',
+        priority_order: 1
+      }),
+      expect.objectContaining({
+        connection: expect.anything()
+      })
+    );
+  });
+
+  it('allows updates to use the private wave admin group', async () => {
+    const { service, curationsDb, ctx } = createService({
+      wave: {
+        id: 'wave-1',
+        type: WaveType.CHAT,
+        created_by: 'profile-2',
+        admin_group_id: 'admin-group'
+      },
+      eligibleGroupIds: ['admin-group'],
+      communityGroup: { id: 'admin-group', is_private: true }
+    });
+
+    await expect(
+      service.updateWaveCuration(
+        'wave-1',
+        'curation-1',
+        {
+          name: 'Admin Picks',
+          group_id: 'admin-group'
+        } as any,
+        ctx
+      )
+    ).resolves.toEqual(
+      expect.objectContaining({
+        name: 'Admin Picks',
+        wave_id: 'wave-1',
+        group_id: 'admin-group',
+        priority_order: 1
+      })
+    );
+
+    expect(curationsDb.updateWaveCuration).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'curation-1',
+        community_group_id: 'admin-group',
         priority_order: 1
       }),
       expect.objectContaining({

@@ -65,7 +65,13 @@ export class CurationsApiService {
         const txCtx: RequestContext = { ...ctx, connection };
         const { wave } = await this.assertCanManageWaveCurations(waveId, txCtx);
         const validatedName = this.validateNameOrThrow(request.name);
-        await this.assertCommunityGroupCanBeUsed(request.group_id, txCtx);
+        await this.assertCommunityGroupCanBeUsed(
+          {
+            groupId: request.group_id,
+            allowedPrivateGroupId: wave.admin_group_id
+          },
+          txCtx
+        );
         await this.assertCurationNameIsUniqueInWave(
           {
             waveId: wave.id,
@@ -127,7 +133,13 @@ export class CurationsApiService {
           lockedCurations
         );
         const validatedName = this.validateNameOrThrow(request.name);
-        await this.assertCommunityGroupCanBeUsed(request.group_id, txCtx);
+        await this.assertCommunityGroupCanBeUsed(
+          {
+            groupId: request.group_id,
+            allowedPrivateGroupId: wave.admin_group_id
+          },
+          txCtx
+        );
         await this.assertCurationNameIsUniqueInWave(
           {
             waveId: wave.id,
@@ -541,18 +553,18 @@ export class CurationsApiService {
   }
 
   private async assertCommunityGroupCanBeUsed(
-    groupId: string,
+    param: { groupId: string; allowedPrivateGroupId: string | null },
     ctx: RequestContext
   ): Promise<void> {
     const group = await this.curationsDb.findCommunityGroupById(
-      groupId,
+      param.groupId,
       ctx.connection
     );
     if (!group) {
-      throw new BadRequestException(`Group ${groupId} not found`);
+      throw new BadRequestException(`Group ${param.groupId} not found`);
     }
-    if (group.is_private) {
-      throw new BadRequestException(`Group ${groupId} is private`);
+    if (group.is_private && group.id !== param.allowedPrivateGroupId) {
+      throw new BadRequestException(`Group ${param.groupId} is private`);
     }
   }
 
