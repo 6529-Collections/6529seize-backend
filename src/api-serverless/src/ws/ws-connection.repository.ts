@@ -132,13 +132,13 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
       join ${UserGroupsService.GENERATED_VIEW} cm
       on ws.identity_id = cm.profile_id
     `;
-    const params = viewResult.params;
+    const sqlParams = viewResult.params;
     const result = await this.db
       .execute<{
         connection_id: string;
         profile_id: string | null;
         wave_id: string | null;
-      }>(sql, params)
+      }>(sql, sqlParams)
       .then((res) =>
         res.map((it) => ({
           connectionId: it.connection_id,
