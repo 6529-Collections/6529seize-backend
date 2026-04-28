@@ -17,6 +17,7 @@ const dotenv = require('dotenv');
 const path = require('path');
 
 const envs = ['local', 'development', 'production'];
+let secretsLoaded = false;
 
 function parseAwsTimestampOrNull(value: string): number | null {
   const match = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(value);
@@ -77,11 +78,15 @@ function getErrorMessage(error: unknown): string {
 }
 
 export async function prepEnvironment() {
-  if (!process.env.NODE_ENV) {
+  if (secretsLoaded) {
+    return;
+  }
+  if (process.env.AWS_LAMBDA_FUNCTION_NAME) {
     await loadSecrets();
   } else {
     await loadLocalConfig();
   }
+  secretsLoaded = true;
 }
 
 export async function loadSecrets() {

@@ -28,7 +28,7 @@ import { Time } from '@/time';
 const csvParser = require('csv-parser');
 
 const MAX_PDF_BYTES = 25 * 1024 * 1024;
-const MAX_CSV_BYTES = 10 * 1024 * 1024;
+const MAX_CSV_BYTES = 50 * 1024 * 1024;
 const MAX_PDF_PAGES = 100;
 const MAX_CSV_ROWS = 100_000;
 const MAX_CSV_COLUMNS = 256;
@@ -49,6 +49,10 @@ const PDF_BLOCKLIST_MARKERS = [
   '/Encrypt',
   '/ObjStm'
 ];
+
+function formatByteLimit(byteLimit: number): string {
+  return byteLimit.toLocaleString();
+}
 
 class ContentViolationError extends Error {}
 
@@ -201,7 +205,7 @@ export class AttachmentsProcessingService {
       response.ContentLength > maxBytes
     ) {
       throw new ContentViolationError(
-        `${attachment.kind} exceeds the ${maxBytes} byte limit`
+        `${attachment.kind} exceeds the ${formatByteLimit(maxBytes)} byte limit`
       );
     }
     const chunks: Buffer[] = [];
@@ -211,7 +215,7 @@ export class AttachmentsProcessingService {
       bytesRead += buffer.byteLength;
       if (bytesRead > maxBytes) {
         throw new ContentViolationError(
-          `${attachment.kind} exceeds the ${maxBytes} byte limit`
+          `${attachment.kind} exceeds the ${formatByteLimit(maxBytes)} byte limit`
         );
       }
       chunks.push(buffer);
@@ -245,7 +249,7 @@ export class AttachmentsProcessingService {
     const sizeBytes = fileBuffer.byteLength;
     if (sizeBytes > MAX_PDF_BYTES) {
       throw new ContentViolationError(
-        `PDF exceeds the ${MAX_PDF_BYTES} byte limit`
+        `PDF exceeds the ${formatByteLimit(MAX_PDF_BYTES)} byte limit`
       );
     }
     const text = this.normalizePdfText(fileBuffer);
@@ -269,7 +273,7 @@ export class AttachmentsProcessingService {
     const sizeBytes = fileBuffer.byteLength;
     if (sizeBytes > MAX_CSV_BYTES) {
       throw new ContentViolationError(
-        `CSV exceeds the ${MAX_CSV_BYTES} byte limit`
+        `CSV exceeds the ${formatByteLimit(MAX_CSV_BYTES)} byte limit`
       );
     }
     if (fileBuffer.includes(0)) {
