@@ -6,7 +6,7 @@ import {
   attachmentsStatusNotifier,
   AttachmentsStatusNotifier
 } from '@/attachments/attachments-status-notifier';
-import { AttachmentStatus } from '@/entities/IAttachment';
+import { AttachmentEntity, AttachmentStatus } from '@/entities/IAttachment';
 import { Logger } from '@/logging';
 import { getS3 } from '@/s3.client';
 import { Time } from '@/time';
@@ -20,6 +20,14 @@ type FinalGuardDutyStatus =
   | 'UNSUPPORTED'
   | 'ACCESS_DENIED'
   | 'FAILED';
+
+type OrchestrationRequest = {
+  attachmentId?: string;
+  originalBucket: string;
+  originalKey: string;
+  uploadAttempt: number;
+  scanAttempt: number;
+};
 
 export class AttachmentsOrchestratorService {
   private readonly logger = Logger.get(this.constructor.name);
@@ -66,198 +74,210 @@ export class AttachmentsOrchestratorService {
     });
   }
 
-  private async orchestrate({
+  private async orchestrate(request: OrchestrationRequest): Promise<void> {
+    const attachment = await this.findAttachment(request);
+
+    if (!attachment) {
+      await this.handleMissingAttachment(request);
+      return;
+    }
+
+    if (this.isFinalOrClaimed(attachment.status)) {
+      return;
+    }
+
+    if (attachment.status === AttachmentStatus.UPLOADING) {
+      await this.handleUploadingAttachment(attachment, request);
+      return;
+    }
+
+    const guardDutyStatus = await this.getGuardDutyStatus(request);
+
+    if (!guardDutyStatus) {
+      await this.handleMissingGuardDutyStatus(attachment, request);
+      return;
+    }
+
+    if (guardDutyStatus === 'NO_THREATS_FOUND') {
+      await this.enqueueCleanAttachment(attachment, guardDutyStatus);
+      return;
+    }
+
+    if (this.isBlockingGuardDutyStatus(guardDutyStatus)) {
+      await this.transitionAndNotify({
+        attachment,
+        toStatus: AttachmentStatus.BLOCKED,
+        patch: {
+          guardduty_status: guardDutyStatus,
+          verdict: `MALWARE_SCAN_${guardDutyStatus}`,
+          error_reason: `GuardDuty blocked attachment (${guardDutyStatus})`
+        }
+      });
+      return;
+    }
+
+    await this.transitionAndNotify({
+      attachment,
+      toStatus: AttachmentStatus.FAILED,
+      patch: {
+        guardduty_status: guardDutyStatus,
+        verdict: `MALWARE_SCAN_${guardDutyStatus}`,
+        error_reason: `GuardDuty scan failed (${guardDutyStatus})`
+      }
+    });
+  }
+
+  private async findAttachment({
     attachmentId,
     originalBucket,
-    originalKey,
-    uploadAttempt,
-    scanAttempt
-  }: {
-    attachmentId?: string;
-    originalBucket: string;
-    originalKey: string;
-    uploadAttempt: number;
-    scanAttempt: number;
-  }): Promise<void> {
-    const attachment = attachmentId
+    originalKey
+  }: OrchestrationRequest): Promise<AttachmentEntity | null> {
+    return attachmentId
       ? await this.attachmentsDb.findAttachmentById(attachmentId)
       : await this.attachmentsDb.findAttachmentByOriginalLocation({
           originalBucket,
           originalKey
         });
+  }
 
-    if (!attachment) {
-      if (uploadAttempt >= MAX_GUARDDUTY_POLL_ATTEMPTS) {
-        throw new Error(
-          `Attachment row not found for ${originalBucket}/${originalKey} after ${uploadAttempt} attempts`
-        );
-      }
-      await enqueueAttachmentOrchestrationRetry({
-        attachmentId: attachmentId ?? '',
-        originalBucket,
-        originalKey,
-        uploadAttempt: uploadAttempt + 1,
-        scanAttempt,
-        delaySeconds: this.getRetryDelaySeconds(uploadAttempt)
-      });
-      return;
+  private async handleMissingAttachment({
+    attachmentId,
+    originalBucket,
+    originalKey,
+    uploadAttempt,
+    scanAttempt
+  }: OrchestrationRequest): Promise<void> {
+    if (uploadAttempt >= MAX_GUARDDUTY_POLL_ATTEMPTS) {
+      throw new Error(
+        `Attachment row not found for ${originalBucket}/${originalKey} after ${uploadAttempt} attempts`
+      );
     }
+    await enqueueAttachmentOrchestrationRetry({
+      attachmentId: attachmentId ?? '',
+      originalBucket,
+      originalKey,
+      uploadAttempt: uploadAttempt + 1,
+      scanAttempt,
+      delaySeconds: this.getRetryDelaySeconds(uploadAttempt)
+    });
+  }
 
-    if (
-      [
-        AttachmentStatus.READY,
-        AttachmentStatus.BLOCKED,
-        AttachmentStatus.FAILED,
-        AttachmentStatus.PROCESSING
-      ].includes(attachment.status)
-    ) {
-      return;
-    }
+  private isFinalOrClaimed(status: AttachmentStatus): boolean {
+    return [
+      AttachmentStatus.READY,
+      AttachmentStatus.BLOCKED,
+      AttachmentStatus.FAILED,
+      AttachmentStatus.PROCESSING
+    ].includes(status);
+  }
 
-    if (attachment.status === AttachmentStatus.UPLOADING) {
-      if (uploadAttempt >= MAX_GUARDDUTY_POLL_ATTEMPTS) {
-        const updatedAt = Time.currentMillis();
-        const failedPatch = {
+  private async handleUploadingAttachment(
+    attachment: AttachmentEntity,
+    request: OrchestrationRequest
+  ): Promise<void> {
+    if (request.uploadAttempt >= MAX_GUARDDUTY_POLL_ATTEMPTS) {
+      await this.transitionAndNotify({
+        attachment,
+        fromStatus: AttachmentStatus.UPLOADING,
+        toStatus: AttachmentStatus.FAILED,
+        patch: {
           verdict: 'UPLOAD_COMPLETION_TIMEOUT',
           error_reason: 'Attachment completion did not finalize in time'
-        };
-        const transitioned =
-          await this.attachmentsDb.transitionAttachmentStatus({
-            id: attachment.id,
-            fromStatus: AttachmentStatus.UPLOADING,
-            toStatus: AttachmentStatus.FAILED,
-            updatedAt,
-            patch: failedPatch
-          });
-        if (transitioned) {
-          await this.statusNotifier.notifyStatusTransition({
-            ...attachment,
-            ...failedPatch,
-            status: AttachmentStatus.FAILED,
-            updated_at: updatedAt
-          });
         }
-        return;
-      }
-      await enqueueAttachmentOrchestrationRetry({
-        attachmentId: attachment.id,
-        originalBucket,
-        originalKey,
-        uploadAttempt: uploadAttempt + 1,
-        scanAttempt,
-        delaySeconds: this.getRetryDelaySeconds(uploadAttempt)
       });
       return;
     }
-
-    const guardDutyStatus = await this.getGuardDutyStatus({
-      originalBucket,
-      originalKey
+    await enqueueAttachmentOrchestrationRetry({
+      attachmentId: attachment.id,
+      originalBucket: request.originalBucket,
+      originalKey: request.originalKey,
+      uploadAttempt: request.uploadAttempt + 1,
+      scanAttempt: request.scanAttempt,
+      delaySeconds: this.getRetryDelaySeconds(request.uploadAttempt)
     });
+  }
 
-    if (!guardDutyStatus) {
-      if (scanAttempt >= MAX_GUARDDUTY_POLL_ATTEMPTS) {
-        const updatedAt = Time.currentMillis();
-        const failedPatch = {
+  private async handleMissingGuardDutyStatus(
+    attachment: AttachmentEntity,
+    request: OrchestrationRequest
+  ): Promise<void> {
+    if (request.scanAttempt >= MAX_GUARDDUTY_POLL_ATTEMPTS) {
+      await this.transitionAndNotify({
+        attachment,
+        toStatus: AttachmentStatus.FAILED,
+        patch: {
           verdict: 'MALWARE_SCAN_TIMEOUT',
           error_reason: 'GuardDuty scan result was not available in time'
-        };
-        const transitioned =
-          await this.attachmentsDb.transitionAttachmentStatus({
-            id: attachment.id,
-            fromStatus: AttachmentStatus.VERIFYING,
-            toStatus: AttachmentStatus.FAILED,
-            updatedAt,
-            patch: failedPatch
-          });
-        if (transitioned) {
-          await this.statusNotifier.notifyStatusTransition({
-            ...attachment,
-            ...failedPatch,
-            status: AttachmentStatus.FAILED,
-            updated_at: updatedAt
-          });
-        }
-        return;
-      }
-      await enqueueAttachmentOrchestrationRetry({
-        attachmentId: attachment.id,
-        originalBucket,
-        originalKey,
-        uploadAttempt,
-        scanAttempt: scanAttempt + 1,
-        delaySeconds: this.getRetryDelaySeconds(scanAttempt)
-      });
-      return;
-    }
-
-    if (guardDutyStatus === 'NO_THREATS_FOUND') {
-      const updatedAt = Time.currentMillis();
-      const transitioned = await this.attachmentsDb.transitionAttachmentStatus({
-        id: attachment.id,
-        fromStatus: AttachmentStatus.VERIFYING,
-        toStatus: AttachmentStatus.VERIFYING,
-        updatedAt,
-        patch: {
-          guardduty_status: guardDutyStatus,
-          error_reason: null
         }
       });
-      if (transitioned) {
-        await enqueueAttachmentProcessing(attachment.id);
-      }
       return;
     }
+    await enqueueAttachmentOrchestrationRetry({
+      attachmentId: attachment.id,
+      originalBucket: request.originalBucket,
+      originalKey: request.originalKey,
+      uploadAttempt: request.uploadAttempt,
+      scanAttempt: request.scanAttempt + 1,
+      delaySeconds: this.getRetryDelaySeconds(request.scanAttempt)
+    });
+  }
 
-    if (
-      guardDutyStatus === 'THREATS_FOUND' ||
-      guardDutyStatus === 'UNSUPPORTED'
-    ) {
-      const updatedAt = Time.currentMillis();
-      const blockedPatch = {
-        guardduty_status: guardDutyStatus,
-        verdict: `MALWARE_SCAN_${guardDutyStatus}`,
-        error_reason: `GuardDuty blocked attachment (${guardDutyStatus})`
-      };
-      const transitioned = await this.attachmentsDb.transitionAttachmentStatus({
-        id: attachment.id,
-        fromStatus: AttachmentStatus.VERIFYING,
-        toStatus: AttachmentStatus.BLOCKED,
-        updatedAt,
-        patch: blockedPatch
-      });
-      if (transitioned) {
-        await this.statusNotifier.notifyStatusTransition({
-          ...attachment,
-          ...blockedPatch,
-          status: AttachmentStatus.BLOCKED,
-          updated_at: updatedAt
-        });
-      }
-      return;
-    }
-
+  private async enqueueCleanAttachment(
+    attachment: AttachmentEntity,
+    guardDutyStatus: FinalGuardDutyStatus
+  ): Promise<void> {
     const updatedAt = Time.currentMillis();
-    const failedPatch = {
-      guardduty_status: guardDutyStatus,
-      verdict: `MALWARE_SCAN_${guardDutyStatus}`,
-      error_reason: `GuardDuty scan failed (${guardDutyStatus})`
-    };
     const transitioned = await this.attachmentsDb.transitionAttachmentStatus({
       id: attachment.id,
       fromStatus: AttachmentStatus.VERIFYING,
-      toStatus: AttachmentStatus.FAILED,
+      toStatus: AttachmentStatus.VERIFYING,
       updatedAt,
-      patch: failedPatch
+      patch: {
+        guardduty_status: guardDutyStatus,
+        error_reason: null
+      }
     });
     if (transitioned) {
-      await this.statusNotifier.notifyStatusTransition({
-        ...attachment,
-        ...failedPatch,
-        status: AttachmentStatus.FAILED,
-        updated_at: updatedAt
-      });
+      await enqueueAttachmentProcessing(attachment.id);
     }
+  }
+
+  private isBlockingGuardDutyStatus(status: FinalGuardDutyStatus): boolean {
+    return status === 'THREATS_FOUND' || status === 'UNSUPPORTED';
+  }
+
+  private async transitionAndNotify({
+    attachment,
+    fromStatus = AttachmentStatus.VERIFYING,
+    toStatus,
+    patch
+  }: {
+    attachment: AttachmentEntity;
+    fromStatus?: AttachmentStatus;
+    toStatus: AttachmentStatus;
+    patch: {
+      guardduty_status?: FinalGuardDutyStatus;
+      verdict: string;
+      error_reason: string;
+    };
+  }): Promise<void> {
+    const updatedAt = Time.currentMillis();
+    const transitioned = await this.attachmentsDb.transitionAttachmentStatus({
+      id: attachment.id,
+      fromStatus,
+      toStatus,
+      updatedAt,
+      patch
+    });
+    if (!transitioned) {
+      return;
+    }
+    await this.statusNotifier.notifyStatusTransition({
+      ...attachment,
+      ...patch,
+      status: toStatus,
+      updated_at: updatedAt
+    });
   }
 
   private async getGuardDutyStatus({

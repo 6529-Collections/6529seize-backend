@@ -1,3 +1,4 @@
+import { ApiAttachmentUploadMimeType } from '@/api/generated/models/ApiAttachmentUploadMimeType';
 import { ApiMediaUploadMimeType } from '@/api/generated/models/ApiMediaUploadMimeType';
 import { DROP_MEDIA_ALLOWED_EXTENSIONS_BY_MIME_TYPE } from '@/api/media/media-mime-types';
 
@@ -14,11 +15,12 @@ const FILE_TYPE_LABEL_RULES: ReadonlyArray<{
   { label: '3D Model', matches: (mimeType) => mimeType.startsWith('model/') },
   {
     label: 'PDF',
-    matches: (mimeType) => mimeType === ApiMediaUploadMimeType.ApplicationPdf
+    matches: (mimeType) =>
+      mimeType === ApiAttachmentUploadMimeType.ApplicationPdf
   },
   {
     label: 'CSV',
-    matches: (mimeType) => mimeType === ApiMediaUploadMimeType.TextCsv
+    matches: (mimeType) => mimeType === ApiAttachmentUploadMimeType.TextCsv
   }
 ];
 

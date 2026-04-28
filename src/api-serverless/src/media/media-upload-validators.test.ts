@@ -53,6 +53,22 @@ describe('media upload validators', () => {
   });
 
   it.each([
+    ['application/pdf', 'upload.pdf'],
+    ['text/csv', 'upload.csv']
+  ])(
+    'rejects attachment content type from drop media %s',
+    (contentType, fileName) => {
+      const { error } = dropMediaSchema.validate({
+        author: 'profile-id',
+        content_type: contentType,
+        file_name: fileName
+      });
+
+      expect(error).toBeDefined();
+    }
+  );
+
+  it.each([
     ['image/webp', 'upload.png'],
     ['image/png', '../upload.png'],
     ['image/png', ' folder/upload.png'],

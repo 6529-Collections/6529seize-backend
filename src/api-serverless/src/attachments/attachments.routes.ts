@@ -6,7 +6,9 @@ import {
   needsAuthenticatedUser
 } from '@/api/auth/auth';
 import {
+  ApiCompliantException,
   BadRequestException,
+  CustomApiCompliantException,
   ForbiddenException,
   NotFoundException
 } from '@/exceptions';
@@ -38,7 +40,7 @@ import * as Joi from 'joi';
 import { mapAttachmentToApiAttachment } from '@/api/attachments/attachments.mappers';
 import { attachmentsStatusNotifier } from '@/attachments/attachments-status-notifier';
 import { randomUUID } from 'node:crypto';
-import { Timer } from '@/time';
+import { Time, Timer } from '@/time';
 
 const router = asyncRouter();
 
@@ -58,6 +60,11 @@ const AttachmentMultipartCompletionRequestSchema: Joi.ObjectSchema<ApiCompleteAt
       .items(ApiCompleteMultipartUploadRequestPartSchema)
   });
 
+const AttachmentParamsSchema: Joi.ObjectSchema<{ attachment_id: string }> =
+  Joi.object({
+    attachment_id: Joi.string().required()
+  });
+
 const ATTACHMENT_KIND_BY_MIME_TYPE: Record<string, AttachmentKind> = {
   'application/pdf': AttachmentKind.PDF,
   'text/csv': AttachmentKind.CSV
@@ -71,6 +78,37 @@ function getAttachmentKind(contentType: string): AttachmentKind {
     );
   }
   return kind;
+}
+
+function mapMultipartCompletionError(error: unknown): ApiCompliantException {
+  if (error instanceof ApiCompliantException) {
+    return error;
+  }
+  const errorName =
+    typeof (error as { name?: unknown }).name === 'string'
+      ? (error as { name: string }).name
+      : '';
+  const errorCode =
+    typeof (error as { Code?: unknown }).Code === 'string'
+      ? (error as { Code: string }).Code
+      : '';
+  const code = errorName || errorCode;
+  if (
+    [
+      'NoSuchUpload',
+      'InvalidPart',
+      'InvalidPartOrder',
+      'EntityTooSmall'
+    ].includes(code)
+  ) {
+    return new BadRequestException(
+      error instanceof Error ? error.message : 'Invalid multipart upload'
+    );
+  }
+  return new CustomApiCompliantException(
+    500,
+    'Attachment multipart upload completion failed'
+  );
 }
 
 router.post(
@@ -95,7 +133,7 @@ router.post(
     );
 
     const attachmentId = randomUUID();
-    const now = Date.now();
+    const now = Time.currentMillis();
     const { key, upload_id } =
       await uploadAttachmentsService.createMultipartUpload({
         attachmentId,
@@ -198,13 +236,18 @@ router.post(
         `Attachment ${validatedRequest.attachment_id} key does not match`
       );
     }
-    await uploadAttachmentsService.completeMultipartUpload(validatedRequest);
+    try {
+      await uploadAttachmentsService.completeMultipartUpload(validatedRequest);
+    } catch (error) {
+      throw mapMultipartCompletionError(error);
+    }
+    const completedAt = Time.currentMillis();
     await attachmentsDb.updateAttachment(
       {
         id: attachment.id,
         patch: {
           status: AttachmentStatus.VERIFYING,
-          updated_at: Date.now()
+          updated_at: completedAt
         }
       },
       { timer }
@@ -215,7 +258,7 @@ router.post(
     const finalAttachment = refreshedAttachment ?? {
       ...attachment,
       status: AttachmentStatus.VERIFYING,
-      updated_at: Date.now()
+      updated_at: completedAt
     };
     await attachmentsStatusNotifier.notifyStatusTransition(finalAttachment, {
       timer
@@ -231,13 +274,14 @@ router.get(
     req: Request<{ attachment_id: string }, any, any, any, any>,
     res: Response<ApiResponse<ApiAttachment>>
   ) => {
+    const params = getValidatedByJoiOrThrow(req.params, AttachmentParamsSchema);
     const attachment = await attachmentsDb.findAttachmentById(
-      req.params.attachment_id
+      params.attachment_id
     );
     const authenticatedProfileId = await getAuthenticatedProfileIdOrNull(req);
     if (attachment?.owner_profile_id !== authenticatedProfileId) {
       throw new NotFoundException(
-        `Attachment ${req.params.attachment_id} not found`
+        `Attachment ${params.attachment_id} not found`
       );
     }
     res.send(mapAttachmentToApiAttachment(attachment));

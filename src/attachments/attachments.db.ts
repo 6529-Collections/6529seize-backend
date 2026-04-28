@@ -12,6 +12,12 @@ import {
 import { RequestContext } from '@/request.context';
 import { Timer } from '@/time';
 
+const hasOwn = (
+  Object as ObjectConstructor & {
+    hasOwn(object: object, propertyKey: PropertyKey): boolean;
+  }
+).hasOwn;
+
 const PATCHABLE_ATTACHMENT_COLUMNS = [
   'detected_mime',
   'status',
@@ -223,17 +229,20 @@ export class AttachmentsDb extends LazyDbAccessCompatibleService {
       if (!attachments.length) {
         return;
       }
-      await Promise.all(
-        attachments.map((attachment) =>
-          this.db.execute(
-            `insert into ${DROP_ATTACHMENTS_TABLE}
-              (drop_id, drop_part_id, attachment_id, wave_id)
-             values
-              (:drop_id, :drop_part_id, :attachment_id, :wave_id)`,
-            attachment,
-            { wrappedConnection: connection }
-          )
-        )
+      const params: Record<string, string | number | null> = {};
+      const values = attachments.map((attachment, index) => {
+        params[`drop_id_${index}`] = attachment.drop_id;
+        params[`drop_part_id_${index}`] = attachment.drop_part_id;
+        params[`attachment_id_${index}`] = attachment.attachment_id;
+        params[`wave_id_${index}`] = attachment.wave_id;
+        return `(:drop_id_${index}, :drop_part_id_${index}, :attachment_id_${index}, :wave_id_${index})`;
+      });
+      await this.db.execute(
+        `insert into ${DROP_ATTACHMENTS_TABLE}
+          (drop_id, drop_part_id, attachment_id, wave_id)
+         values ${values.join(', ')}`,
+        params,
+        { wrappedConnection: connection }
       );
     } finally {
       timer?.stop(`${this.constructor.name}->insertDropAttachments`);
@@ -316,7 +325,7 @@ export class AttachmentsDb extends LazyDbAccessCompatibleService {
 
   private getAllowedAttachmentPatch(patch: AttachmentPatch): AttachmentPatch {
     return PATCHABLE_ATTACHMENT_COLUMNS.reduce((acc, column) => {
-      if (Object.prototype.hasOwnProperty.call(patch, column)) {
+      if (hasOwn(patch, column)) {
         acc[column] = patch[column];
       }
       return acc;

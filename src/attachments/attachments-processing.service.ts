@@ -352,7 +352,7 @@ export class AttachmentsProcessingService {
     return fileBuffer
       .toString('latin1')
       .replace(/#([0-9a-fA-F]{2})/g, (_, hex: string) =>
-        String.fromCharCode(parseInt(hex, 16))
+        String.fromCodePoint(Number.parseInt(hex, 16))
       )
       .toLowerCase();
   }
