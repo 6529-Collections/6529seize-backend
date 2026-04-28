@@ -76,12 +76,10 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
   async getCurrentlyOnlineCommunityMemberConnectionIds(
     {
       groupId,
-      waveId,
-      allowDirectGroupMemberFallback = false
+      waveId
     }: {
       groupId: string | null;
       waveId: string;
-      allowDirectGroupMemberFallback?: boolean;
     },
     ctx: RequestContext
   ): Promise<
@@ -116,32 +114,10 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
       );
       return result;
     }
-    let viewResult: {
-      sql: string;
-      params: Record<string, any>;
-    } | null;
-    try {
-      viewResult = await this.userGroupsService.getSqlAndParamsByGroupId(
-        groupId,
-        ctx
-      );
-    } catch (error) {
-      if (!allowDirectGroupMemberFallback) {
-        throw error;
-      }
-      this.logger.warn(
-        `Could not resolve websocket community group ${groupId}; falling back to direct group members`,
-        error
-      );
-      const result = await this.findDirectGroupMemberConnectionIds({
-        groupId,
-        waveId
-      });
-      ctx?.timer?.stop(
-        `${this.constructor.name}->getCurrentlyOnlineCommunityMemberConnectionIds`
-      );
-      return result;
-    }
+    const viewResult = await this.userGroupsService.getSqlAndParamsByGroupId(
+      groupId,
+      ctx
+    );
     if (viewResult === null) {
       ctx?.timer?.stop(
         `${this.constructor.name}->getCurrentlyOnlineCommunityMemberConnectionIds`
@@ -176,6 +152,32 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
       `${this.constructor.name}->getCurrentlyOnlineCommunityMemberConnectionIds`
     );
     return result;
+  }
+
+  async getCurrentlyOnlineCommunityMemberConnectionIdsWithDirectGroupMemberFallback(
+    params: { groupId: string | null; waveId: string },
+    ctx: RequestContext
+  ): Promise<
+    { connectionId: string; profileId: string | null; wave_id: string | null }[]
+  > {
+    try {
+      return await this.getCurrentlyOnlineCommunityMemberConnectionIds(
+        params,
+        ctx
+      );
+    } catch (error) {
+      if (params.groupId === null) {
+        throw error;
+      }
+      this.logger.warn(
+        `Could not resolve websocket community group ${params.groupId}; falling back to direct group members`,
+        error
+      );
+      return await this.findDirectGroupMemberConnectionIds({
+        groupId: params.groupId,
+        waveId: params.waveId
+      });
+    }
   }
 
   private async findDirectGroupMemberConnectionIds({

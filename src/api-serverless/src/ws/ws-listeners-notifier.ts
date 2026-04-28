@@ -45,15 +45,21 @@ export class WsListenersNotifier {
   ): Promise<void> {
     ctx.timer?.start(`${this.constructor.name}->notifyAboutDrop`);
     try {
-      const onlineProfiles =
-        await this.wsConnectionRepository.getCurrentlyOnlineCommunityMemberConnectionIds(
-          {
-            groupId: inputDrop.wave.visibility_group_id,
-            waveId: inputDrop.wave.id,
-            allowDirectGroupMemberFallback
-          },
-          ctx
-        );
+      const onlineProfiles = allowDirectGroupMemberFallback
+        ? await this.wsConnectionRepository.getCurrentlyOnlineCommunityMemberConnectionIdsWithDirectGroupMemberFallback(
+            {
+              groupId: inputDrop.wave.visibility_group_id,
+              waveId: inputDrop.wave.id
+            },
+            ctx
+          )
+        : await this.wsConnectionRepository.getCurrentlyOnlineCommunityMemberConnectionIds(
+            {
+              groupId: inputDrop.wave.visibility_group_id,
+              waveId: inputDrop.wave.id
+            },
+            ctx
+          );
 
       const creditLefts = await this.getCreditLeftsForOnlineProfiles(
         onlineProfiles,
@@ -366,11 +372,10 @@ export class WsListenersNotifier {
               return [];
             }
             return await this.wsConnectionRepository
-              .getCurrentlyOnlineCommunityMemberConnectionIds(
+              .getCurrentlyOnlineCommunityMemberConnectionIdsWithDirectGroupMemberFallback(
                 {
                   groupId,
-                  waveId,
-                  allowDirectGroupMemberFallback: true
+                  waveId
                 },
                 ctx
               )
