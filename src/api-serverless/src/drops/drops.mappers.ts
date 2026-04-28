@@ -395,14 +395,23 @@ export class DropsMappers {
       ),
       this.dropsDb.getDropMedia(allDropIds, connection),
       dropAttachmentsPromise,
-      dropAttachmentsPromise.then((dropAttachments) =>
-        this.attachmentsDb.findAttachmentsByIds(
-          Object.values(dropAttachments)
-            .flat()
-            .map((it) => it.attachment_id),
+      dropAttachmentsPromise.then((dropAttachments) => {
+        const attachmentIds = Array.from(
+          new Set(
+            Object.values(dropAttachments)
+              .flat()
+              .map((it) => it.attachment_id)
+              .filter((id): id is string => !!id)
+          )
+        );
+        if (!attachmentIds.length) {
+          return Promise.resolve({});
+        }
+        return this.attachmentsDb.findAttachmentsByIds(
+          attachmentIds,
           connection
-        )
-      ),
+        );
+      }),
       !contextProfileId
         ? Promise.resolve({} as Record<string, ActivityEventAction[]>)
         : this.identitySubscriptionsDb.findIdentitySubscriptionActionsOfTargets(

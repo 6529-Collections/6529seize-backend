@@ -350,10 +350,11 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     waveId: string
   ): Promise<string | null | undefined> {
     return this.db
-      .oneOrNull<{ visibility_group_id: string | null }>(
-        `select visibility_group_id from ${WAVES_TABLE} where id = :waveId`,
-        { waveId }
-      )
+      .oneOrNull<{
+        visibility_group_id: string | null;
+      }>(`select visibility_group_id from ${WAVES_TABLE} where id = :waveId`, {
+        waveId
+      })
       .then((row) => row?.visibility_group_id);
   }
 
