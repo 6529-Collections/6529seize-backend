@@ -261,6 +261,46 @@ export function renderDeployUI(services: DeployServiceConfig[]): string {
       display: block;
     }
 
+    .panel-heading-actions {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      flex: 0 0 auto;
+    }
+
+    .panel-heading-link {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      min-height: 34px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      background: rgba(255, 255, 255, 0.05);
+      color: #e5e5e5;
+      font-size: 13px;
+      font-weight: 700;
+      line-height: 1;
+      text-decoration: none;
+      white-space: nowrap;
+      letter-spacing: 0.02em;
+      transition: transform 120ms ease, background 120ms ease, border-color 120ms ease;
+    }
+
+    .panel-heading-link:hover {
+      transform: translateY(-1px);
+      background: rgba(255, 255, 255, 0.08);
+      border-color: rgba(255, 255, 255, 0.18);
+    }
+
+    .panel-heading-link svg {
+      width: 14px;
+      height: 14px;
+      display: block;
+      flex: 0 0 auto;
+    }
+
     .accordion-content {
       display: grid;
       gap: 18px;
@@ -1068,10 +1108,25 @@ export function renderDeployUI(services: DeployServiceConfig[]): string {
         aria-expanded="false"
         aria-controls="recent-runs-content">
         <h2 class="panel-title">Recent Runs</h2>
-        <span class="panel-heading-indicator" aria-hidden="true">
-          <svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M6 3L11 8L6 13" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
+        <span class="panel-heading-actions">
+          <a
+            id="deploy-workflow-link"
+            class="panel-heading-link"
+            href="https://github.com/6529-Collections/6529seize-backend/actions/workflows/deploy.yml"
+            target="_blank"
+            rel="noreferrer">
+            <svg viewBox="0 0 16 16" fill="none" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+              <path d="M6.67 3.33H4.33C3.6 3.33 3 3.93 3 4.67V11.67C3 12.4 3.6 13 4.33 13H11.33C12.07 13 12.67 12.4 12.67 11.67V9.33" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M9.33 3H13V6.67" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M7.67 8.33L12.83 3.17" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <span>Github Workflow</span>
+          </a>
+          <span class="panel-heading-indicator" aria-hidden="true">
+            <svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M6 3L11 8L6 13" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </span>
         </span>
       </button>
       <div id="recent-runs-content" class="accordion-content">
@@ -1172,6 +1227,7 @@ export function renderDeployUiApp(): string {
   var connectButton = document.getElementById('connect-button');
   var forgetButton = document.getElementById('forget-button');
   var repoLink = document.getElementById('repo-link');
+  var deployWorkflowLink = document.getElementById('deploy-workflow-link');
   var authStatus = document.getElementById('auth-status');
   var sessionSummary = document.getElementById('session-summary');
   var deployTargetPanel = document.getElementById('deploy-target-panel');
@@ -2045,6 +2101,11 @@ export function renderDeployUiApp(): string {
       setAccordionExpanded(toggle, !expanded);
     });
   });
+  if (deployWorkflowLink) {
+    deployWorkflowLink.addEventListener('click', function (event) {
+      event.stopPropagation();
+    });
+  }
   selectVisibleButton.addEventListener('click', function () {
     serviceCards.forEach(function (card) {
       if (card.classList.contains('is-disabled') || card.classList.contains('is-hidden')) {
