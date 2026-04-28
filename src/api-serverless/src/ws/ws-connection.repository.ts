@@ -7,10 +7,8 @@ import { WSConnectionEntity } from '../../../entities/IWSConnection';
 import {
   DROP_VOTER_STATE_TABLE,
   IDENTITIES_TABLE,
-  PROFILE_GROUPS_TABLE,
   RATINGS_TABLE,
   TDH_NFT_TABLE,
-  USER_GROUPS_TABLE,
   WAVE_VOTING_CREDIT_NFTS_TABLE,
   WAVES_TABLE,
   WS_CONNECTIONS_TABLE
@@ -134,13 +132,13 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
       join ${UserGroupsService.GENERATED_VIEW} cm
       on ws.identity_id = cm.profile_id
     `;
-    const params = viewResult.params;
+    const sqlParams = viewResult.params;
     const result = await this.db
       .execute<{
         connection_id: string;
         profile_id: string | null;
         wave_id: string | null;
-      }>(sql, params)
+      }>(sql, sqlParams)
       .then((res) =>
         res.map((it) => ({
           connectionId: it.connection_id,
@@ -154,60 +152,43 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     return result;
   }
 
-  async getCurrentlyOnlineCommunityMemberConnectionIdsWithDirectGroupMemberFallback(
+  async getCurrentlyOnlineCommunityMemberConnectionIdsForSystemBroadcast(
     params: { groupId: string | null; waveId: string },
     ctx: RequestContext
   ): Promise<
     { connectionId: string; profileId: string | null; wave_id: string | null }[]
   > {
-    try {
+    if (params.groupId === null) {
       return await this.getCurrentlyOnlineCommunityMemberConnectionIds(
         params,
         ctx
       );
-    } catch (error) {
-      if (params.groupId === null) {
-        throw error;
-      }
-      this.logger.warn(
-        `Could not resolve websocket community group ${params.groupId}; falling back to direct group members`,
-        error
-      );
-      return await this.findDirectGroupMemberConnectionIds({
-        groupId: params.groupId,
-        waveId: params.waveId
-      });
     }
-  }
-
-  private async findDirectGroupMemberConnectionIds({
-    groupId,
-    waveId
-  }: {
-    groupId: string;
-    waveId: string;
-  }): Promise<
-    { connectionId: string; profileId: string | null; wave_id: string | null }[]
-  > {
-    return this.db
+    const viewResult =
+      await this.userGroupsService.getSqlAndParamsByGroupIdForSystemBroadcast(
+        params.groupId,
+        ctx
+      );
+    if (viewResult === null) {
+      return [];
+    }
+    const sql = `
+      ${viewResult.sql} 
+      select
+        ws.connection_id as connection_id,
+        ws.identity_id as profile_id,
+        ws.wave_id as wave_id
+      from ${WS_CONNECTIONS_TABLE} ws
+      join ${UserGroupsService.GENERATED_VIEW} cm
+      on ws.identity_id = cm.profile_id
+    `;
+    const sqlParams = viewResult.params;
+    const result = await this.db
       .execute<{
         connection_id: string;
         profile_id: string | null;
         wave_id: string | null;
-      }>(
-        `select
-          ws.connection_id as connection_id,
-          ws.identity_id as profile_id,
-          ws.wave_id as wave_id
-        from ${WS_CONNECTIONS_TABLE} ws
-        join ${USER_GROUPS_TABLE} ug
-          on ug.id = :groupId
-        join ${PROFILE_GROUPS_TABLE} pg
-          on ug.profile_group_id = pg.profile_group_id
-         and ws.identity_id = pg.profile_id
-        where ws.wave_id = :waveId or ws.wave_id is null`,
-        { groupId, waveId }
-      )
+      }>(sql, sqlParams)
       .then((res) =>
         res.map((it) => ({
           connectionId: it.connection_id,
@@ -215,6 +196,7 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
           profileId: it.profile_id === ANON_USER_ID ? null : it.profile_id
         }))
       );
+    return result;
   }
 
   async getCreditLeftForProfilesForTdhBasedWave({

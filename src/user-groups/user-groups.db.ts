@@ -189,6 +189,20 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
       .then((res) => res[0] ?? null);
   }
 
+  async getByIdWithoutVisibilityCheck(
+    id: string,
+    connection?: ConnectionWrapper<any>
+  ): Promise<UserGroupEntity | null> {
+    const opts = connection ? { wrappedConnection: connection } : undefined;
+    return this.db
+      .execute<UserGroupEntity>(
+        `select * from ${USER_GROUPS_TABLE} where id = :id`,
+        { id },
+        opts
+      )
+      .then((res) => res[0] ?? null);
+  }
+
   async changeVisibilityAndSetId(
     {
       currentId,
