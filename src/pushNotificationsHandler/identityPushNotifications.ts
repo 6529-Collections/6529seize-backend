@@ -7,7 +7,7 @@ import {
   resolveWavePictureOverride
 } from '../api-serverless/src/waves/direct-message-wave-display.service';
 import { getDataSource } from '../db';
-import { DropEntity, DropPartEntity } from '../entities/IDrop';
+import { DropEntity, DropMediaEntity, DropPartEntity } from '../entities/IDrop';
 import {
   IdentityNotificationCause,
   IdentityNotificationEntity
@@ -24,6 +24,7 @@ import { Logger } from '../logging';
 import { IdentityNotificationsDb } from '../notifications/identity-notifications.db';
 import { dbSupplier } from '../sql-executor';
 import { sumBadgeContributions } from './badge-count';
+import { getDropMediaPlaceholderForPush } from './push-notification-text';
 import { sendMessage } from './sendPushNotifications';
 
 const CAUSE_TO_SETTING_KEY: Partial<
@@ -416,7 +417,7 @@ async function handleIdentityMentioned(
   const dropPartMention = await getDropPart(notification, userProfile.handle!);
   const dropSerialNo = await getDropSerialNo(notification.related_drop_id);
   const title = `${additionalEntity.handle} mentioned you`;
-  const body = dropPartMention?.content ?? 'View drop';
+  const body = await getDropBodyTextForPush(notification, dropPartMention);
   const imageUrl = additionalEntity.pfp;
   const data = {
     redirect: 'waves',
@@ -434,7 +435,7 @@ async function handleDropQuoted(
   const dropSerialNo = await getDropSerialNo(notification.related_drop_id);
   const title = `${additionalEntity.handle} quoted you`;
   const imageUrl = additionalEntity.pfp;
-  const body = dropPart?.content ?? 'View drop';
+  const body = await getDropBodyTextForPush(notification, dropPart);
   const data = {
     redirect: 'waves',
     wave_id: notification.wave_id,
@@ -450,7 +451,7 @@ async function handleDropReplied(
   const dropPart = await getDropPart(notification);
   const dropSerialNo = await getDropSerialNo(notification.related_drop_id);
   const title = `${additionalEntity.handle} replied to your drop`;
-  const body = dropPart?.content ?? 'View drop';
+  const body = await getDropBodyTextForPush(notification, dropPart);
   const imageUrl = additionalEntity.pfp;
   const data = {
     redirect: 'waves',
@@ -477,7 +478,7 @@ async function handleDropVoted(
   const imageUrl = additionalEntity.pfp;
   const dropPart = await getDropPart(notification);
   const dropSerialNo = await getDropSerialNo(notification.related_drop_id);
-  const body = dropPart?.content ?? 'View drop';
+  const body = await getDropBodyTextForPush(notification, dropPart);
   const data = {
     redirect: 'waves',
     wave_id: notification.wave_id,
@@ -500,7 +501,7 @@ async function handleDropReacted(
   const imageUrl = additionalEntity.pfp;
   const dropPart = await getDropPart(notification);
   const dropSerialNo = await getDropSerialNo(notification.related_drop_id);
-  const body = dropPart?.content ?? 'View drop';
+  const body = await getDropBodyTextForPush(notification, dropPart);
   const data = {
     redirect: 'waves',
     wave_id: notification.wave_id,
@@ -517,7 +518,7 @@ async function handleDropBoosted(
   const imageUrl = additionalEntity.pfp;
   const dropPart = await getDropPart(notification);
   const dropSerialNo = await getDropSerialNo(notification.related_drop_id);
-  const body = dropPart?.content ?? 'View drop';
+  const body = await getDropBodyTextForPush(notification, dropPart);
   const data = {
     redirect: 'waves',
     wave_id: notification.wave_id,
@@ -571,6 +572,49 @@ async function getDropPart(
     query['content'] = Like(`%@[${handle}]%`);
   }
   return getDataSource().getRepository(DropPartEntity).findOneBy(query);
+}
+
+async function getDropBodyTextForPush(
+  notification: IdentityNotificationEntity,
+  dropPart: DropPartEntity | null,
+  emptyFallback = 'View drop'
+): Promise<string> {
+  const rawContent = dropPart?.content;
+  const rawContentTrimmed = rawContent?.trim();
+  const hasText = rawContentTrimmed != null && rawContentTrimmed !== '';
+  const dropId = notification.related_drop_id;
+
+  let mediaRows: DropMediaEntity[] = [];
+  if (dropId) {
+    const mediaRepo = getDataSource().getRepository(DropMediaEntity);
+    if (dropPart?.drop_part_id != null) {
+      mediaRows = await mediaRepo.find({
+        where: { drop_id: dropId, drop_part_id: dropPart.drop_part_id },
+        order: { id: 'ASC' }
+      });
+    }
+    if (mediaRows.length === 0 && !dropPart) {
+      mediaRows = await mediaRepo.find({
+        where: { drop_id: dropId },
+        order: { drop_part_id: 'ASC', id: 'ASC' }
+      });
+    }
+  }
+
+  const attachmentLabels = mediaRows.map((row) =>
+    getDropMediaPlaceholderForPush(row.url, row.mime_type)
+  );
+
+  if (hasText && attachmentLabels.length > 0) {
+    return `${rawContentTrimmed} ${attachmentLabels.join(' ')}`.trim();
+  }
+  if (hasText) {
+    return rawContentTrimmed;
+  }
+  if (attachmentLabels.length > 0) {
+    return attachmentLabels.join(' ');
+  }
+  return emptyFallback;
 }
 
 async function getDropSerialNo(dropId: string | null) {
@@ -662,7 +706,7 @@ async function handleAllDrops(
   const dropPart = await getDropPart(notification);
   const dropSerialNo = await getDropSerialNo(notification.related_drop_id);
   const imageUrl = waveDisplay.picture ?? additionalEntity.pfp;
-  const body = dropPart?.content ?? 'View drop';
+  const body = await getDropBodyTextForPush(notification, dropPart);
   const data = {
     redirect: 'waves',
     wave_id: notification.wave_id,
@@ -686,7 +730,11 @@ async function handlePriorityAlert(
   const dropSerialNo = await getDropSerialNo(notification.related_drop_id);
   const imageUrl = waveDisplay.picture ?? additionalEntity.pfp;
   const title = `🚨 ${drop?.title ?? 'Priority Alert'}`;
-  const body = dropPart?.content ?? 'View alert';
+  const body = await getDropBodyTextForPush(
+    notification,
+    dropPart,
+    'View alert'
+  );
   const data = {
     redirect: 'waves',
     wave_id: notification.wave_id,
