@@ -7,8 +7,10 @@ import { WSConnectionEntity } from '../../../entities/IWSConnection';
 import {
   DROP_VOTER_STATE_TABLE,
   IDENTITIES_TABLE,
+  PROFILE_GROUPS_TABLE,
   RATINGS_TABLE,
   TDH_NFT_TABLE,
+  USER_GROUPS_TABLE,
   WAVE_VOTING_CREDIT_NFTS_TABLE,
   WAVES_TABLE,
   WS_CONNECTIONS_TABLE
@@ -72,7 +74,15 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
   }
 
   async getCurrentlyOnlineCommunityMemberConnectionIds(
-    { groupId, waveId }: { groupId: string | null; waveId: string },
+    {
+      groupId,
+      waveId,
+      allowDirectGroupMemberFallback = false
+    }: {
+      groupId: string | null;
+      waveId: string;
+      allowDirectGroupMemberFallback?: boolean;
+    },
     ctx: RequestContext
   ): Promise<
     { connectionId: string; profileId: string | null; wave_id: string | null }[]
@@ -106,10 +116,32 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
       );
       return result;
     }
-    const viewResult = await this.userGroupsService.getSqlAndParamsByGroupId(
-      groupId,
-      ctx
-    );
+    let viewResult: {
+      sql: string;
+      params: Record<string, any>;
+    } | null;
+    try {
+      viewResult = await this.userGroupsService.getSqlAndParamsByGroupId(
+        groupId,
+        ctx
+      );
+    } catch (error) {
+      if (!allowDirectGroupMemberFallback) {
+        throw error;
+      }
+      this.logger.warn(
+        `Could not resolve websocket community group ${groupId}; falling back to direct group members`,
+        error
+      );
+      const result = await this.findDirectGroupMemberConnectionIds({
+        groupId,
+        waveId
+      });
+      ctx?.timer?.stop(
+        `${this.constructor.name}->getCurrentlyOnlineCommunityMemberConnectionIds`
+      );
+      return result;
+    }
     if (viewResult === null) {
       ctx?.timer?.stop(
         `${this.constructor.name}->getCurrentlyOnlineCommunityMemberConnectionIds`
@@ -144,6 +176,43 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
       `${this.constructor.name}->getCurrentlyOnlineCommunityMemberConnectionIds`
     );
     return result;
+  }
+
+  private async findDirectGroupMemberConnectionIds({
+    groupId,
+    waveId
+  }: {
+    groupId: string;
+    waveId: string;
+  }): Promise<
+    { connectionId: string; profileId: string | null; wave_id: string | null }[]
+  > {
+    return this.db
+      .execute<{
+        connection_id: string;
+        profile_id: string | null;
+        wave_id: string | null;
+      }>(
+        `select
+          ws.connection_id as connection_id,
+          ws.identity_id as profile_id,
+          ws.wave_id as wave_id
+        from ${WS_CONNECTIONS_TABLE} ws
+        join ${USER_GROUPS_TABLE} ug
+          on ug.id = :groupId
+        join ${PROFILE_GROUPS_TABLE} pg
+          on ug.profile_group_id = pg.profile_group_id
+         and ws.identity_id = pg.profile_id
+        where ws.wave_id = :waveId or ws.wave_id is null`,
+        { groupId, waveId }
+      )
+      .then((res) =>
+        res.map((it) => ({
+          connectionId: it.connection_id,
+          wave_id: it.wave_id,
+          profileId: it.profile_id === ANON_USER_ID ? null : it.profile_id
+        }))
+      );
   }
 
   async getCreditLeftForProfilesForTdhBasedWave({

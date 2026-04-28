@@ -91,18 +91,13 @@ class WebsocketClientConnections extends ClientConnections {
 class ApiGatewayClientConnections extends ClientConnections {
   private readonly logger = Logger.get(ApiGatewayManagementApiClient.name);
 
-  private client: ApiGatewayManagementApiClient | null = null;
-  private endpoint: string | undefined;
+  private readonly client: ApiGatewayManagementApiClient;
 
-  private getClient(): ApiGatewayManagementApiClient {
-    const endpoint = process.env.API_GATEWAY_WS_ENDPOINT;
-    if (!this.client || this.endpoint !== endpoint) {
-      this.endpoint = endpoint;
-      this.client = new ApiGatewayManagementApiClient({
-        endpoint
-      });
-    }
-    return this.client;
+  constructor() {
+    super();
+    this.client = new ApiGatewayManagementApiClient({
+      endpoint: process.env.API_GATEWAY_WS_ENDPOINT
+    });
   }
 
   override async sendMessage({
@@ -113,7 +108,7 @@ class ApiGatewayClientConnections extends ClientConnections {
     message: string;
   }) {
     try {
-      await this.getClient().send(
+      await this.client.send(
         new PostToConnectionCommand({
           ConnectionId: connectionId,
           Data: Buffer.from(message)
