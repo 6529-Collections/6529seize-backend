@@ -32,7 +32,7 @@ const MAX_CSV_BYTES = 50 * 1024 * 1024;
 const MAX_PDF_PAGES = 100;
 const MAX_CSV_ROWS = 100_000;
 const MAX_CSV_COLUMNS = 256;
-const MAX_CSV_CELL_LENGTH = 32 * 1024;
+const MAX_CSV_CELL_LENGTH = 256 * 1024;
 const MAX_CSV_LINE_LENGTH = 1024 * 1024;
 const DANGEROUS_CSV_PREFIX =
   /^[\uFEFF\s]*[=+\-@\t\r\n\uFF1D\uFF0B\uFF0D\uFF20]/;
@@ -311,7 +311,7 @@ export class AttachmentsProcessingService {
           if (cells.some((cell) => cell.length > MAX_CSV_CELL_LENGTH)) {
             reject(
               new ContentViolationError(
-                `CSV exceeds the ${MAX_CSV_CELL_LENGTH} cell limit`
+                `CSV contains a cell longer than ${MAX_CSV_CELL_LENGTH.toLocaleString()} characters`
               )
             );
             return;
