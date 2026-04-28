@@ -66,6 +66,7 @@ export * from '../models/ApiCreateWaveConfig';
 export * from '../models/ApiCreateWaveDropRequest';
 export * from '../models/ApiCreateWaveOutcome';
 export * from '../models/ApiCreateWaveOutcomeDistributionItem';
+export * from '../models/ApiCuratedProfileWaveDropsPage';
 export * from '../models/ApiCurationDrop';
 export * from '../models/ApiCurationDropsPage';
 export * from '../models/ApiDistributionAirdropsCsvUploadRequest';
@@ -391,6 +392,7 @@ import { ApiCreateWaveConfig         } from '../models/ApiCreateWaveConfig';
 import { ApiCreateWaveDropRequest } from '../models/ApiCreateWaveDropRequest';
 import { ApiCreateWaveOutcome        } from '../models/ApiCreateWaveOutcome';
 import { ApiCreateWaveOutcomeDistributionItem } from '../models/ApiCreateWaveOutcomeDistributionItem';
+import { ApiCuratedProfileWaveDropsPage } from '../models/ApiCuratedProfileWaveDropsPage';
 import { ApiCurationDrop                               } from '../models/ApiCurationDrop';
 import { ApiCurationDropsPage } from '../models/ApiCurationDropsPage';
 import { ApiDistributionAirdropsCsvUploadRequest } from '../models/ApiDistributionAirdropsCsvUploadRequest';
@@ -777,6 +779,7 @@ let typeMap: {[index: string]: any} = {
     "ApiCreateWaveDropRequest": ApiCreateWaveDropRequest,
     "ApiCreateWaveOutcome": ApiCreateWaveOutcome,
     "ApiCreateWaveOutcomeDistributionItem": ApiCreateWaveOutcomeDistributionItem,
+    "ApiCuratedProfileWaveDropsPage": ApiCuratedProfileWaveDropsPage,
     "ApiCurationDrop": ApiCurationDrop,
     "ApiCurationDropsPage": ApiCurationDropsPage,
     "ApiDistributionAirdropsCsvUploadRequest": ApiDistributionAirdropsCsvUploadRequest,

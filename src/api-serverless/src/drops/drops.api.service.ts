@@ -55,6 +55,7 @@ import { ApiDropMedia } from '../generated/models/ApiDropMedia';
 import { enums } from '@/enums';
 import { ApiCurationDrop } from '@/api/generated/models/ApiCurationDrop';
 import { ApiCurationDropsPage } from '@/api/generated/models/ApiCurationDropsPage';
+import { ApiCuratedProfileWaveDropsPage } from '@/api/generated/models/ApiCuratedProfileWaveDropsPage';
 import { ApiDropWithoutWavesPageWithoutCount } from '../generated/models/ApiDropWithoutWavesPageWithoutCount';
 import { ApiPageSortDirection } from '../generated/models/ApiPageSortDirection';
 import { ApiDropsPage } from '../generated/models/ApiDropsPage';
@@ -696,6 +697,43 @@ export class DropsApiService {
     })) as ApiCurationDrop[];
     return {
       data,
+      page,
+      next: entities.length > page_size
+    };
+  }
+
+  public async findCuratedProfileWaveDrops(
+    {
+      page,
+      page_size
+    }: {
+      page: number;
+      page_size: number;
+    },
+    ctx: RequestContext
+  ): Promise<ApiCuratedProfileWaveDropsPage> {
+    if (!(page >= 1) || !(page_size > 0)) {
+      throw new BadRequestException(
+        `Curated profile wave drops pagination requires page >= 1 and page_size > 0`
+      );
+    }
+    const entities = await this.dropsDb.findCuratedProfileWaveDrops(
+      {
+        limit: page_size + 1,
+        offset: page_size * (page - 1)
+      },
+      ctx
+    );
+    const pageEntities = entities.slice(0, page_size);
+    const drops = await this.dropsMappers.convertToDropFulls(
+      {
+        dropEntities: pageEntities,
+        authenticationContext: ctx.authenticationContext
+      },
+      ctx.connection
+    );
+    return {
+      data: drops,
       page,
       next: entities.length > page_size
     };
