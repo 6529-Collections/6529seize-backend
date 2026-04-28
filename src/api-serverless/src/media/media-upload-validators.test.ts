@@ -16,9 +16,10 @@ describe('media upload validators', () => {
     allowedMimeTypes: [...ATTACHMENT_ALLOWED_MIME_TYPES],
     allowedExtensionsByMimeType: ATTACHMENT_ALLOWED_EXTENSIONS_BY_MIME_TYPE
   });
-  const safeFileNameCharacters = [
-    ...'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-'
-  ];
+  const safeFileNameCharacters =
+    'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-'.split(
+      ''
+    );
   const safeBaseName = fc
     .array(fc.constantFrom(...safeFileNameCharacters), {
       minLength: 1,
