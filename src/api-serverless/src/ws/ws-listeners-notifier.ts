@@ -40,13 +40,13 @@ export class WsListenersNotifier {
     inputDrop: ApiDrop,
     ctx: RequestContext,
     {
-      allowDirectGroupMemberFallback = false
-    }: { allowDirectGroupMemberFallback?: boolean } = {}
+      useSystemBroadcastAudience = false
+    }: { useSystemBroadcastAudience?: boolean } = {}
   ): Promise<void> {
     ctx.timer?.start(`${this.constructor.name}->notifyAboutDrop`);
     try {
-      const onlineProfiles = allowDirectGroupMemberFallback
-        ? await this.wsConnectionRepository.getCurrentlyOnlineCommunityMemberConnectionIdsWithDirectGroupMemberFallback(
+      const onlineProfiles = useSystemBroadcastAudience
+        ? await this.wsConnectionRepository.getCurrentlyOnlineCommunityMemberConnectionIdsForSystemBroadcast(
             {
               groupId: inputDrop.wave.visibility_group_id,
               waveId: inputDrop.wave.id
@@ -372,7 +372,7 @@ export class WsListenersNotifier {
               return [];
             }
             return await this.wsConnectionRepository
-              .getCurrentlyOnlineCommunityMemberConnectionIdsWithDirectGroupMemberFallback(
+              .getCurrentlyOnlineCommunityMemberConnectionIdsForSystemBroadcast(
                 {
                   groupId,
                   waveId
