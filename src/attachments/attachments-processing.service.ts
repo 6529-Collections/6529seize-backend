@@ -16,7 +16,7 @@ import {
 } from '@/attachments/attachments-status-notifier';
 import { Logger } from '@/logging';
 import { createHash } from 'node:crypto';
-import { Readable } from 'node:stream';
+import { Readable, Transform } from 'node:stream';
 import { TextDecoder } from 'node:util';
 import { fromBuffer as fileTypeFromBuffer } from 'file-type';
 import {
@@ -28,7 +28,7 @@ import { Time } from '@/time';
 const csvParser = require('csv-parser');
 
 const MAX_PDF_BYTES = 25 * 1024 * 1024;
-const MAX_CSV_BYTES = 10 * 1024 * 1024;
+const MAX_CSV_BYTES = 50 * 1024 * 1024;
 const MAX_PDF_PAGES = 100;
 const MAX_CSV_ROWS = 100_000;
 const MAX_CSV_COLUMNS = 256;
@@ -49,6 +49,10 @@ const PDF_BLOCKLIST_MARKERS = [
   '/Encrypt',
   '/ObjStm'
 ];
+
+function formatByteLimit(byteLimit: number): string {
+  return byteLimit.toLocaleString();
+}
 
 class ContentViolationError extends Error {}
 
@@ -201,7 +205,7 @@ export class AttachmentsProcessingService {
       response.ContentLength > maxBytes
     ) {
       throw new ContentViolationError(
-        `${attachment.kind} exceeds the ${maxBytes} byte limit`
+        `${attachment.kind} exceeds the ${formatByteLimit(maxBytes)} byte limit`
       );
     }
     const chunks: Buffer[] = [];
@@ -211,7 +215,7 @@ export class AttachmentsProcessingService {
       bytesRead += buffer.byteLength;
       if (bytesRead > maxBytes) {
         throw new ContentViolationError(
-          `${attachment.kind} exceeds the ${maxBytes} byte limit`
+          `${attachment.kind} exceeds the ${formatByteLimit(maxBytes)} byte limit`
         );
       }
       chunks.push(buffer);
@@ -245,7 +249,7 @@ export class AttachmentsProcessingService {
     const sizeBytes = fileBuffer.byteLength;
     if (sizeBytes > MAX_PDF_BYTES) {
       throw new ContentViolationError(
-        `PDF exceeds the ${MAX_PDF_BYTES} byte limit`
+        `PDF exceeds the ${formatByteLimit(MAX_PDF_BYTES)} byte limit`
       );
     }
     const text = this.normalizePdfText(fileBuffer);
@@ -269,51 +273,41 @@ export class AttachmentsProcessingService {
     const sizeBytes = fileBuffer.byteLength;
     if (sizeBytes > MAX_CSV_BYTES) {
       throw new ContentViolationError(
-        `CSV exceeds the ${MAX_CSV_BYTES} byte limit`
+        `CSV exceeds the ${formatByteLimit(MAX_CSV_BYTES)} byte limit`
       );
     }
-    if (fileBuffer.includes(0)) {
-      throw new ContentViolationError('CSV contains NUL bytes');
-    }
-    const decoder = new TextDecoder('utf-8', { fatal: true });
-    let text: string;
-    try {
-      text = decoder.decode(fileBuffer);
-    } catch {
-      throw new ContentViolationError('CSV must be valid UTF-8');
-    }
-    const lines = text.split(/\r\n|\n|\r/);
-    if (lines.some((line: string) => line.length > MAX_CSV_LINE_LENGTH)) {
-      throw new ContentViolationError(`CSV contains an excessively long line`);
-    }
-    const rows = await this.parseCsvRows(text);
-    if (rows.length > MAX_CSV_ROWS) {
-      throw new ContentViolationError(
-        `CSV exceeds the ${MAX_CSV_ROWS} row limit`
-      );
-    }
-
-    const serializedRows = rows.map((row) => {
-      if (row.length > MAX_CSV_COLUMNS) {
-        throw new ContentViolationError(
-          `CSV exceeds the ${MAX_CSV_COLUMNS} column limit`
-        );
-      }
-      return row.map((cell) => this.serializeSafeCsvCell(cell)).join(',');
-    });
-
-    return Buffer.from(serializedRows.join('\n'), 'utf8');
+    return await this.serializeSafeCsvRows(fileBuffer);
   }
 
-  private async parseCsvRows(text: string): Promise<string[][]> {
-    return await new Promise<string[][]>((resolve, reject) => {
-      const rows: string[][] = [];
-      Readable.from([text])
-        .pipe(csvParser({ headers: false }))
+  private async serializeSafeCsvRows(fileBuffer: Buffer): Promise<Buffer> {
+    return await new Promise<Buffer>((resolve, reject) => {
+      const outputChunks: Buffer[] = [];
+      let rowCount = 0;
+
+      Readable.from([fileBuffer])
+        .pipe(this.createCsvInputValidator())
+        .pipe(csvParser({ headers: false, maxRowBytes: MAX_CSV_LINE_LENGTH }))
         .on('data', (row: Record<string, string>) => {
+          rowCount++;
+          if (rowCount > MAX_CSV_ROWS) {
+            reject(
+              new ContentViolationError(
+                `CSV exceeds the ${MAX_CSV_ROWS} row limit`
+              )
+            );
+            return;
+          }
           const cells = Object.keys(row)
             .sort((a, b) => Number(a) - Number(b))
             .map((key) => row[key] ?? '');
+          if (cells.length > MAX_CSV_COLUMNS) {
+            reject(
+              new ContentViolationError(
+                `CSV exceeds the ${MAX_CSV_COLUMNS} column limit`
+              )
+            );
+            return;
+          }
           if (cells.some((cell) => cell.length > MAX_CSV_CELL_LENGTH)) {
             reject(
               new ContentViolationError(
@@ -322,10 +316,59 @@ export class AttachmentsProcessingService {
             );
             return;
           }
-          rows.push(cells);
+          outputChunks.push(
+            Buffer.from(
+              `${cells.map((cell) => this.serializeSafeCsvCell(cell)).join(',')}\n`,
+              'utf8'
+            )
+          );
         })
-        .on('error', reject)
-        .on('end', () => resolve(rows));
+        .on('error', (error: Error) => {
+          if (error.message.includes('Row exceeds the maximum size')) {
+            reject(
+              new ContentViolationError('CSV contains an excessively long line')
+            );
+            return;
+          }
+          reject(error);
+        })
+        .on('end', () => {
+          if (outputChunks.length === 0) {
+            resolve(Buffer.alloc(0));
+            return;
+          }
+          outputChunks[outputChunks.length - 1] = Buffer.from(
+            outputChunks[outputChunks.length - 1].toString('utf8').slice(0, -1),
+            'utf8'
+          );
+          resolve(Buffer.concat(outputChunks));
+        });
+    });
+  }
+
+  private createCsvInputValidator(): Transform {
+    const decoder = new TextDecoder('utf-8', { fatal: true });
+    return new Transform({
+      transform(chunk: Buffer, _encoding, callback) {
+        if (chunk.includes(0)) {
+          callback(new ContentViolationError('CSV contains NUL bytes'));
+          return;
+        }
+        try {
+          decoder.decode(chunk, { stream: true });
+          callback(null, chunk);
+        } catch {
+          callback(new ContentViolationError('CSV must be valid UTF-8'));
+        }
+      },
+      flush(callback) {
+        try {
+          decoder.decode();
+          callback();
+        } catch {
+          callback(new ContentViolationError('CSV must be valid UTF-8'));
+        }
+      }
     });
   }
 
@@ -364,9 +407,7 @@ export class AttachmentsProcessingService {
     originalFileName: string;
     attachmentKind: AttachmentKind;
   }): string {
-    const extension =
-      getFileExtension(originalFileName).toLowerCase() ||
-      (attachmentKind === AttachmentKind.PDF ? '.pdf' : '.csv');
+    const extension = attachmentKind === AttachmentKind.PDF ? '.pdf' : '.csv';
     const baseName = originalFileName.slice(
       0,
       originalFileName.length - getFileExtension(originalFileName).length

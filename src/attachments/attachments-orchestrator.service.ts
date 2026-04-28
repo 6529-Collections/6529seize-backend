@@ -25,6 +25,7 @@ type OrchestrationRequest = {
   attachmentId?: string;
   originalBucket: string;
   originalKey: string;
+  lookupAttempt: number;
   uploadAttempt: number;
   scanAttempt: number;
 };
@@ -47,6 +48,7 @@ export class AttachmentsOrchestratorService {
     await this.orchestrate({
       originalBucket,
       originalKey,
+      lookupAttempt: 0,
       uploadAttempt: 0,
       scanAttempt: 0
     });
@@ -56,12 +58,14 @@ export class AttachmentsOrchestratorService {
     attachmentId,
     originalBucket,
     originalKey,
+    lookupAttempt = 0,
     uploadAttempt,
     scanAttempt
   }: {
     attachmentId: string;
     originalBucket: string;
     originalKey: string;
+    lookupAttempt?: number;
     uploadAttempt: number;
     scanAttempt: number;
   }): Promise<void> {
@@ -69,6 +73,7 @@ export class AttachmentsOrchestratorService {
       attachmentId,
       originalBucket,
       originalKey,
+      lookupAttempt,
       uploadAttempt,
       scanAttempt
     });
@@ -144,21 +149,23 @@ export class AttachmentsOrchestratorService {
     attachmentId,
     originalBucket,
     originalKey,
+    lookupAttempt,
     uploadAttempt,
     scanAttempt
   }: OrchestrationRequest): Promise<void> {
-    if (uploadAttempt >= MAX_GUARDDUTY_POLL_ATTEMPTS) {
+    if (lookupAttempt >= MAX_GUARDDUTY_POLL_ATTEMPTS) {
       throw new Error(
-        `Attachment row not found for ${originalBucket}/${originalKey} after ${uploadAttempt} attempts`
+        `Attachment row not found for ${originalBucket}/${originalKey} after ${lookupAttempt} attempts`
       );
     }
     await enqueueAttachmentOrchestrationRetry({
       attachmentId: attachmentId ?? '',
       originalBucket,
       originalKey,
-      uploadAttempt: uploadAttempt + 1,
+      lookupAttempt: lookupAttempt + 1,
+      uploadAttempt,
       scanAttempt,
-      delaySeconds: this.getRetryDelaySeconds(uploadAttempt)
+      delaySeconds: this.getRetryDelaySeconds(lookupAttempt)
     });
   }
 
@@ -191,6 +198,7 @@ export class AttachmentsOrchestratorService {
       attachmentId: attachment.id,
       originalBucket: request.originalBucket,
       originalKey: request.originalKey,
+      lookupAttempt: request.lookupAttempt,
       uploadAttempt: request.uploadAttempt + 1,
       scanAttempt: request.scanAttempt,
       delaySeconds: this.getRetryDelaySeconds(request.uploadAttempt)
@@ -216,6 +224,7 @@ export class AttachmentsOrchestratorService {
       attachmentId: attachment.id,
       originalBucket: request.originalBucket,
       originalKey: request.originalKey,
+      lookupAttempt: request.lookupAttempt,
       uploadAttempt: request.uploadAttempt,
       scanAttempt: request.scanAttempt + 1,
       delaySeconds: this.getRetryDelaySeconds(request.scanAttempt)

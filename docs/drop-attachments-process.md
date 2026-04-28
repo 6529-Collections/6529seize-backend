@@ -40,7 +40,7 @@ PDF:
 
 CSV:
 
-- max file size: 10 MB
+- max file size: 50 MB
 - max rows: 100,000
 - max columns: 256
 - max cell length: 32 KB
