@@ -1,6 +1,9 @@
 import { ApiAttachmentUploadMimeType } from '@/api/generated/models/ApiAttachmentUploadMimeType';
 import { ApiMediaUploadMimeType } from '@/api/generated/models/ApiMediaUploadMimeType';
-import { DROP_MEDIA_ALLOWED_EXTENSIONS_BY_MIME_TYPE } from '@/api/media/media-mime-types';
+import {
+  ATTACHMENT_ALLOWED_EXTENSIONS_BY_MIME_TYPE,
+  DROP_MEDIA_ALLOWED_EXTENSIONS_BY_MIME_TYPE
+} from '@/api/media/media-mime-types';
 
 const MAX_MEDIA_FILENAME_LENGTH = 64;
 const MEDIA_LABEL = 'Media';
@@ -31,12 +34,25 @@ function getFileTypeLabel(mimeType: string): string {
   );
 }
 
-const SUPPORTED_MEDIA_EXTENSIONS_BY_LABEL = (
-  Object.keys(
-    DROP_MEDIA_ALLOWED_EXTENSIONS_BY_MIME_TYPE
-  ) as ApiMediaUploadMimeType[]
-).reduce<Record<string, string>>((acc, mimeType) => {
-  DROP_MEDIA_ALLOWED_EXTENSIONS_BY_MIME_TYPE[mimeType].forEach((extension) => {
+const SUPPORTED_MEDIA_EXTENSIONS_BY_LABEL = [
+  ...(
+    Object.keys(
+      DROP_MEDIA_ALLOWED_EXTENSIONS_BY_MIME_TYPE
+    ) as ApiMediaUploadMimeType[]
+  ).map((mimeType) => ({
+    mimeType,
+    extensions: DROP_MEDIA_ALLOWED_EXTENSIONS_BY_MIME_TYPE[mimeType]
+  })),
+  ...(
+    Object.keys(
+      ATTACHMENT_ALLOWED_EXTENSIONS_BY_MIME_TYPE
+    ) as ApiAttachmentUploadMimeType[]
+  ).map((mimeType) => ({
+    mimeType,
+    extensions: ATTACHMENT_ALLOWED_EXTENSIONS_BY_MIME_TYPE[mimeType]
+  }))
+].reduce<Record<string, string>>((acc, { mimeType, extensions }) => {
+  extensions.forEach((extension) => {
     acc[extension.toLowerCase()] = getFileTypeLabel(mimeType);
   });
   return acc;
