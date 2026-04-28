@@ -21,6 +21,8 @@ export class MintingClaimAttribute {
 
     static readonly discriminator: string | undefined = undefined;
 
+    static readonly mapping: {[index: string]: string} | undefined = undefined;
+
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
         {
             "name": "trait_type",
@@ -54,4 +56,3 @@ export class MintingClaimAttribute {
     public constructor() {
     }
 }
-

@@ -17,6 +17,8 @@ export class UpdateSubscribeAllEditionsRequest {
 
     static readonly discriminator: string | undefined = undefined;
 
+    static readonly mapping: {[index: string]: string} | undefined = undefined;
+
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
         {
             "name": "subscribe_all_editions",
@@ -32,4 +34,3 @@ export class UpdateSubscribeAllEditionsRequest {
     public constructor() {
     }
 }
-
