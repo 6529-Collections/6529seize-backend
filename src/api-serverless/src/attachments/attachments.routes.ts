@@ -162,7 +162,7 @@ router.post(
       updated_at: now
     };
     await attachmentsDb.createAttachment(attachment, { timer });
-    res.send({
+    res.status(201).send({
       attachment_id: attachmentId,
       upload_id,
       key,
@@ -197,7 +197,7 @@ router.post(
       await uploadAttachmentsService.getSignedUrlForPartOfMultipartUpload(
         validatedRequest
       );
-    res.send({ upload_url });
+    res.status(201).send({ upload_url });
   }
 );
 
@@ -263,7 +263,7 @@ router.post(
     await attachmentsStatusNotifier.notifyStatusTransition(finalAttachment, {
       timer
     });
-    res.send(mapAttachmentToApiAttachment(finalAttachment));
+    res.status(201).send(mapAttachmentToApiAttachment(finalAttachment));
   }
 );
 
