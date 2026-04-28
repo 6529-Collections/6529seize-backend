@@ -1,4 +1,4 @@
-# Attachments Current State
+# Drop Attachments Process
 
 Date: 2026-04-28
 
@@ -30,6 +30,8 @@ Upload file names must:
 - avoid dangerous executable-style extensions
 
 Published IPFS file names are sanitized from the original file name.
+Published file extensions are forced from the attachment type, so PDF
+attachments publish as `.pdf` and CSV attachments publish as `.csv`.
 
 ## Size And Shape Limits
 
@@ -81,14 +83,23 @@ Authentication and ownership:
 - all attachment endpoints require an authenticated user
 - upload initialization requires an existing profile
 - attachment lookups only return attachments owned by the authenticated profile
+- signed upload part URLs are issued only after the backend verifies the
+  requested storage key belongs to an attachment owned by the authenticated
+  profile
+- upload completion verifies both attachment ownership and that the submitted
+  storage key matches the key recorded for that attachment
 - drop create/update validates that referenced attachments belong to the drop
   author
+- drop create/update rejects duplicate attachment references in a drop part
+- blocked or failed attachments cannot be used in drops
 
 Private ingest:
 
 - original uploads go to private storage
 - keys are scoped under the runtime environment, profile id, and attachment id
 - original private files are not returned as public URLs
+- clients upload directly to private storage using short-lived signed upload
+  URLs
 
 Malware scanning:
 
@@ -97,6 +108,8 @@ Malware scanning:
 - files with no threats found continue to processing
 - files with threats found, or files GuardDuty cannot support, are blocked
 - scan timeout, access denied, or failed scan states fail the attachment
+- status transitions use conditional updates so stale retry messages do not
+  overwrite newer attachment states
 
 PDF validation:
 
@@ -105,16 +118,21 @@ PDF validation:
 - JavaScript, auto-open actions, launch actions, embedded files, rich media,
   XFA, submit forms, and similar risky markers are blocked
 - file size and page limits are enforced
+- PDF files are validated and then published as the original PDF bytes when
+  they pass validation
 
 CSV validation and rewriting:
 
 - binary-looking files are blocked
 - NUL bytes are blocked
 - UTF-8 decoding is required
+- file size is enforced before and during download from private storage
 - row, column, cell, and line limits are enforced
 - spreadsheet formula injection is mitigated by prefixing formula-like cells
   with a tab
 - output CSV cells are quoted
+- the published CSV is rebuilt from parsed rows instead of publishing the
+  original uploaded CSV bytes
 
 Public artifact packaging:
 
@@ -122,6 +140,7 @@ Public artifact packaging:
 - public-safe metadata is included with the artifact
 - metadata includes declared MIME, detected MIME, SHA-256, size, owner profile
   id, original file name, published file name, and verdict
+- SHA-256 and size are calculated from the final published payload
 
 ## Real-Time Updates
 

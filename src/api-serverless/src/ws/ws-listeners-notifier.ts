@@ -352,10 +352,25 @@ export class WsListenersNotifier {
           ownerProfileId
         );
       const waveConnectionIdLists = await Promise.all(
-        Array.from(new Set(waveIds.filter((it) => !!it))).map((waveId) =>
-          this.wsConnectionRepository
-            .findAllByWaveId(waveId)
-            .then((rows) => rows.map((it) => it.connection_id))
+        Array.from(new Set(waveIds.filter((it) => !!it))).map(
+          async (waveId) => {
+            const groupId =
+              await this.wsConnectionRepository.findWaveVisibilityGroupId(
+                waveId
+              );
+            if (groupId === undefined) {
+              return [];
+            }
+            return await this.wsConnectionRepository
+              .getCurrentlyOnlineCommunityMemberConnectionIds(
+                {
+                  groupId,
+                  waveId
+                },
+                ctx
+              )
+              .then((rows) => rows.map((it) => it.connectionId));
+          }
         )
       );
       const uniqueConnectionIds = Array.from(
