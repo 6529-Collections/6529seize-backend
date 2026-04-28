@@ -8,6 +8,7 @@ export async function enqueueAttachmentOrchestrationRetry({
   attachmentId,
   originalBucket,
   originalKey,
+  lookupAttempt,
   uploadAttempt,
   scanAttempt,
   delaySeconds
@@ -15,6 +16,7 @@ export async function enqueueAttachmentOrchestrationRetry({
   attachmentId: string;
   originalBucket: string;
   originalKey: string;
+  lookupAttempt: number;
   uploadAttempt: number;
   scanAttempt: number;
   delaySeconds: number;
@@ -25,12 +27,13 @@ export async function enqueueAttachmentOrchestrationRetry({
       attachment_id: attachmentId,
       original_bucket: originalBucket,
       original_key: originalKey,
+      lookup_attempt: lookupAttempt,
       upload_attempt: uploadAttempt,
       scan_attempt: scanAttempt
     },
     delaySeconds
   });
   logger.info(
-    `Queued attachment orchestration retry attachment_id=${attachmentId} upload_attempt=${uploadAttempt} scan_attempt=${scanAttempt} delaySeconds=${delaySeconds}`
+    `Queued attachment orchestration retry attachment_id=${attachmentId} lookup_attempt=${lookupAttempt} upload_attempt=${uploadAttempt} scan_attempt=${scanAttempt} delaySeconds=${delaySeconds}`
   );
 }

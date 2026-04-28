@@ -18,6 +18,7 @@ const path = require('path');
 
 const envs = ['local', 'development', 'production'];
 let secretsLoaded = false;
+let secretsLoadPromise: Promise<void> | null = null;
 
 function parseAwsTimestampOrNull(value: string): number | null {
   const match = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(value);
@@ -81,12 +82,21 @@ export async function prepEnvironment() {
   if (secretsLoaded) {
     return;
   }
-  if (process.env.AWS_LAMBDA_FUNCTION_NAME) {
-    await loadSecrets();
-  } else {
-    await loadLocalConfig();
+  if (!secretsLoadPromise) {
+    secretsLoadPromise = (async () => {
+      try {
+        if (process.env.AWS_LAMBDA_FUNCTION_NAME) {
+          await loadSecrets();
+        } else {
+          await loadLocalConfig();
+        }
+        secretsLoaded = true;
+      } finally {
+        secretsLoadPromise = null;
+      }
+    })();
   }
-  secretsLoaded = true;
+  await secretsLoadPromise;
 }
 
 export async function loadSecrets() {

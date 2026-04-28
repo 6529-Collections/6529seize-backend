@@ -14,6 +14,7 @@ type AttachmentOrchestrationRetryPayload = {
   attachment_id: string;
   original_bucket: string;
   original_key: string;
+  lookup_attempt?: number;
   upload_attempt: number;
   scan_attempt: number;
 };
@@ -31,6 +32,8 @@ function parseRetryPayload(body: string): AttachmentOrchestrationRetryPayload {
     typeof parsed.attachment_id !== 'string' ||
     typeof parsed.original_bucket !== 'string' ||
     typeof parsed.original_key !== 'string' ||
+    (typeof parsed.lookup_attempt !== 'undefined' &&
+      typeof parsed.lookup_attempt !== 'number') ||
     typeof parsed.upload_attempt !== 'number' ||
     typeof parsed.scan_attempt !== 'number'
   ) {
@@ -58,6 +61,7 @@ async function handleSqs(
             attachmentId: payload.attachment_id,
             originalBucket: payload.original_bucket,
             originalKey: payload.original_key,
+            lookupAttempt: payload.lookup_attempt ?? 0,
             uploadAttempt: payload.upload_attempt,
             scanAttempt: payload.scan_attempt
           });

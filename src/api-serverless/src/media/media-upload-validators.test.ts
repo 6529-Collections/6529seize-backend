@@ -5,6 +5,7 @@ import {
   DROP_MEDIA_ALLOWED_MIME_TYPES
 } from '@/api/media/media-mime-types';
 import { createMediaPrepRequestSchema } from '@/api/media/media-uplodad.validators';
+import * as fc from 'fast-check';
 
 describe('media upload validators', () => {
   const dropMediaSchema = createMediaPrepRequestSchema({
@@ -14,6 +15,141 @@ describe('media upload validators', () => {
   const attachmentSchema = createMediaPrepRequestSchema({
     allowedMimeTypes: [...ATTACHMENT_ALLOWED_MIME_TYPES],
     allowedExtensionsByMimeType: ATTACHMENT_ALLOWED_EXTENSIONS_BY_MIME_TYPE
+  });
+  const safeFileNameCharacters = [
+    ...'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-'
+  ];
+  const safeBaseName = fc
+    .array(fc.constantFrom(...safeFileNameCharacters), {
+      minLength: 1,
+      maxLength: 33
+    })
+    .map((characters) => characters.join(''));
+  const allKnownExtensions = Array.from(
+    new Set(
+      [
+        ...Object.values(DROP_MEDIA_ALLOWED_EXTENSIONS_BY_MIME_TYPE).flat(),
+        ...Object.values(ATTACHMENT_ALLOWED_EXTENSIONS_BY_MIME_TYPE).flat(),
+        '.json',
+        '.txt',
+        '.exe'
+      ].map((extension) => extension.toLowerCase())
+    )
+  );
+
+  function allowedPairs(
+    allowedExtensionsByMimeType: Record<string, readonly string[]>
+  ): { contentType: string; extension: string }[] {
+    return Object.entries(allowedExtensionsByMimeType).flatMap(
+      ([contentType, extensions]) =>
+        extensions.map((extension) => ({ contentType, extension }))
+    );
+  }
+
+  function validateMedia(
+    schema: typeof dropMediaSchema,
+    contentType: string,
+    fileName: string
+  ) {
+    return schema.validate({
+      author: 'profile-id',
+      content_type: contentType,
+      file_name: fileName
+    });
+  }
+
+  it('allows configured drop media MIME and extension pairs', () => {
+    fc.assert(
+      fc.property(
+        fc.constantFrom(
+          ...allowedPairs(DROP_MEDIA_ALLOWED_EXTENSIONS_BY_MIME_TYPE)
+        ),
+        safeBaseName,
+        ({ contentType, extension }, baseName) => {
+          const { error } = validateMedia(
+            dropMediaSchema,
+            contentType,
+            `${baseName}${extension}`
+          );
+
+          expect(error).toBeUndefined();
+        }
+      )
+    );
+  });
+
+  it('rejects mismatched drop media MIME and extension pairs', () => {
+    fc.assert(
+      fc.property(
+        fc.constantFrom(
+          ...allowedPairs(DROP_MEDIA_ALLOWED_EXTENSIONS_BY_MIME_TYPE)
+        ),
+        fc.constantFrom(...allKnownExtensions),
+        safeBaseName,
+        ({ contentType }, extension, baseName) => {
+          fc.pre(
+            !DROP_MEDIA_ALLOWED_EXTENSIONS_BY_MIME_TYPE[
+              contentType as keyof typeof DROP_MEDIA_ALLOWED_EXTENSIONS_BY_MIME_TYPE
+            ].includes(extension)
+          );
+
+          const { error } = validateMedia(
+            dropMediaSchema,
+            contentType,
+            `${baseName}${extension}`
+          );
+
+          expect(error).toBeDefined();
+        }
+      )
+    );
+  });
+
+  it('allows configured attachment MIME and extension pairs', () => {
+    fc.assert(
+      fc.property(
+        fc.constantFrom(
+          ...allowedPairs(ATTACHMENT_ALLOWED_EXTENSIONS_BY_MIME_TYPE)
+        ),
+        safeBaseName,
+        ({ contentType, extension }, baseName) => {
+          const { error } = validateMedia(
+            attachmentSchema,
+            contentType,
+            `${baseName}${extension}`
+          );
+
+          expect(error).toBeUndefined();
+        }
+      )
+    );
+  });
+
+  it('rejects mismatched attachment MIME and extension pairs', () => {
+    fc.assert(
+      fc.property(
+        fc.constantFrom(
+          ...allowedPairs(ATTACHMENT_ALLOWED_EXTENSIONS_BY_MIME_TYPE)
+        ),
+        fc.constantFrom(...allKnownExtensions),
+        safeBaseName,
+        ({ contentType }, extension, baseName) => {
+          fc.pre(
+            !ATTACHMENT_ALLOWED_EXTENSIONS_BY_MIME_TYPE[
+              contentType as keyof typeof ATTACHMENT_ALLOWED_EXTENSIONS_BY_MIME_TYPE
+            ].includes(extension)
+          );
+
+          const { error } = validateMedia(
+            attachmentSchema,
+            contentType,
+            `${baseName}${extension}`
+          );
+
+          expect(error).toBeDefined();
+        }
+      )
+    );
   });
 
   it.each([

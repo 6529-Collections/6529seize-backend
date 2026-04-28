@@ -275,10 +275,15 @@ router.get(
     res: Response<ApiResponse<ApiAttachment>>
   ) => {
     const params = getValidatedByJoiOrThrow(req.params, AttachmentParamsSchema);
+    const authenticatedProfileId = await getAuthenticatedProfileIdOrNull(req);
+    if (!authenticatedProfileId) {
+      throw new NotFoundException(
+        `Attachment ${params.attachment_id} not found`
+      );
+    }
     const attachment = await attachmentsDb.findAttachmentById(
       params.attachment_id
     );
-    const authenticatedProfileId = await getAuthenticatedProfileIdOrNull(req);
     if (attachment?.owner_profile_id !== authenticatedProfileId) {
       throw new NotFoundException(
         `Attachment ${params.attachment_id} not found`
