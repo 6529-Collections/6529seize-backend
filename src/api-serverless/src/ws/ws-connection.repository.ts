@@ -346,6 +346,17 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     );
   }
 
+  async findWaveVisibilityGroupId(
+    waveId: string
+  ): Promise<string | null | undefined> {
+    return this.db
+      .oneOrNull<{ visibility_group_id: string | null }>(
+        `select visibility_group_id from ${WAVES_TABLE} where id = :waveId`,
+        { waveId }
+      )
+      .then((row) => row?.visibility_group_id);
+  }
+
   async findConnectionIdsByIdentityId(identityId: string): Promise<string[]> {
     if (!identityId || identityId === ANON_USER_ID) {
       return [];
