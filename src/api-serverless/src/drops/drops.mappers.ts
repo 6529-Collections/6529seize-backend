@@ -203,9 +203,9 @@ export class DropsMappers {
   }
 
   private toAttachmentReferencesArray(
-    attachments?: Set<ApiDropAttachmentReference>
+    attachments?: ApiDropAttachmentReference[]
   ): ApiDropAttachmentReference[] {
-    return Array.from(attachments ?? []);
+    return attachments ?? [];
   }
 
   public async convertToDropFulls(
