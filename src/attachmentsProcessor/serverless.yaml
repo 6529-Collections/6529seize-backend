@@ -33,7 +33,6 @@ functions:
     environment:
       SENTRY_DSN: ${env:SENTRY_DSN}
       SENTRY_ENVIRONMENT: 'attachmentsProcessor_${opt:stage, self:provider.stage}'
-      IPFS_API_ENDPOINT: ${env:IPFS_API_ENDPOINT}
 
 resources:
   Resources:
