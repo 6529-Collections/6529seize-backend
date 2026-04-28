@@ -580,7 +580,8 @@ async function getDropBodyTextForPush(
   emptyFallback = 'View drop'
 ): Promise<string> {
   const rawContent = dropPart?.content;
-  const hasText = rawContent != null && rawContent.trim() !== '';
+  const rawContentTrimmed = rawContent?.trim();
+  const hasText = rawContentTrimmed != null && rawContentTrimmed !== '';
   const dropId = notification.related_drop_id;
 
   let mediaRows: DropMediaEntity[] = [];
@@ -592,7 +593,7 @@ async function getDropBodyTextForPush(
         order: { id: 'ASC' }
       });
     }
-    if (mediaRows.length === 0) {
+    if (mediaRows.length === 0 && !dropPart) {
       mediaRows = await mediaRepo.find({
         where: { drop_id: dropId },
         order: { drop_part_id: 'ASC', id: 'ASC' }
@@ -605,10 +606,10 @@ async function getDropBodyTextForPush(
   );
 
   if (hasText && attachmentLabels.length > 0) {
-    return `${rawContent.trim()} ${attachmentLabels.join(' ')}`.trim();
+    return `${rawContentTrimmed} ${attachmentLabels.join(' ')}`.trim();
   }
   if (hasText) {
-    return rawContent;
+    return rawContentTrimmed;
   }
   if (attachmentLabels.length > 0) {
     return attachmentLabels.join(' ');
