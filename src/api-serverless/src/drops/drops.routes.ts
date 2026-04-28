@@ -166,7 +166,7 @@ router.post(
       (part) =>
         (part.content?.trim()?.length ?? 0) === 0 &&
         part.media.length === 0 &&
-        Array.from(part.attachments ?? []).length === 0
+        (part.attachments?.length ?? 0) === 0
     );
     if (invalidPart) {
       throw new BadRequestException(

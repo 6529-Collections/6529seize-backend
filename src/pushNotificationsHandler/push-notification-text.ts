@@ -5,7 +5,7 @@ import {
   DROP_MEDIA_ALLOWED_EXTENSIONS_BY_MIME_TYPE
 } from '@/api/media/media-mime-types';
 
-const MAX_MEDIA_FILENAME_LENGTH = 64;
+export const MAX_PUSH_NOTIFICATION_FILENAME_LENGTH = 64;
 const MEDIA_LABEL = 'Media';
 
 const FILE_TYPE_LABEL_RULES: ReadonlyArray<{
@@ -92,10 +92,10 @@ function getMediaFileNameForUrl(url: string): string | null {
 }
 
 function truncateMediaFileName(fileName: string): string {
-  if (fileName.length <= MAX_MEDIA_FILENAME_LENGTH) {
+  if (fileName.length <= MAX_PUSH_NOTIFICATION_FILENAME_LENGTH) {
     return fileName;
   }
-  return `${fileName.substring(0, MAX_MEDIA_FILENAME_LENGTH - 3)}...`;
+  return `${fileName.substring(0, MAX_PUSH_NOTIFICATION_FILENAME_LENGTH - 3)}...`;
 }
 
 function getMediaPlaceholderForUrl(url: string): string {
