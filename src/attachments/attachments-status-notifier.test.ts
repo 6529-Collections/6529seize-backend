@@ -68,7 +68,7 @@ describe('AttachmentsStatusNotifier', () => {
     ).toHaveBeenCalledWith(
       {
         attachment: {
-          id: baseAttachment.id,
+          attachment_id: baseAttachment.id,
           file_name: baseAttachment.original_file_name,
           mime_type: baseAttachment.declared_mime,
           kind: ApiAttachmentKind.Pdf,

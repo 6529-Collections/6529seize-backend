@@ -6,14 +6,15 @@ import {
 import { ApiAttachment } from '@/api/generated/models/ApiAttachment';
 import { ApiAttachmentKind } from '@/api/generated/models/ApiAttachmentKind';
 import { ApiAttachmentStatus } from '@/api/generated/models/ApiAttachmentStatus';
+import { ApiAttachmentUploadMimeType } from '@/api/generated/models/ApiAttachmentUploadMimeType';
 
 export function mapAttachmentToApiAttachment(
   attachment: AttachmentEntity
 ): ApiAttachment {
   return {
-    id: attachment.id,
+    attachment_id: attachment.id,
     file_name: attachment.original_file_name,
-    mime_type: attachment.declared_mime,
+    mime_type: mapAttachmentMimeTypeToApi(attachment.declared_mime),
     kind:
       attachment.kind === AttachmentKind.PDF
         ? ApiAttachmentKind.Pdf
@@ -22,6 +23,19 @@ export function mapAttachmentToApiAttachment(
     url: attachment.ipfs_url,
     error_reason: attachment.error_reason
   };
+}
+
+function mapAttachmentMimeTypeToApi(
+  mimeType: string
+): ApiAttachmentUploadMimeType {
+  switch (mimeType) {
+    case ApiAttachmentUploadMimeType.ApplicationPdf:
+      return ApiAttachmentUploadMimeType.ApplicationPdf;
+    case ApiAttachmentUploadMimeType.TextCsv:
+      return ApiAttachmentUploadMimeType.TextCsv;
+    default:
+      throw new Error(`Unsupported attachment MIME type ${mimeType}`);
+  }
 }
 
 export function mapAttachmentStatusToApi(

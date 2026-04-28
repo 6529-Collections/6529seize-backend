@@ -2,7 +2,7 @@ import { attachmentsProcessingService } from '@/attachments/attachments-processi
 import { Logger } from '@/logging';
 import { doInDbContext } from '@/secrets';
 import * as sentryContext from '@/sentry.context';
-import type { SQSHandler } from 'aws-lambda';
+import type { SQSBatchResponse, SQSHandler } from 'aws-lambda';
 
 const logger = Logger.get('ATTACHMENTS_PROCESSOR');
 
@@ -16,18 +16,28 @@ function parseRecordBody(body: string): { attachment_id: string } {
   return { attachment_id: attachmentId };
 }
 
-const sqsHandler: SQSHandler = async (event) => {
+const sqsHandler: SQSHandler = async (event): Promise<SQSBatchResponse> => {
+  const batchItemFailures: SQSBatchResponse['batchItemFailures'] = [];
   await doInDbContext(
     async () => {
       for (const record of event.Records) {
-        const message = parseRecordBody(record.body);
-        await attachmentsProcessingService.processAttachment(
-          message.attachment_id
-        );
+        try {
+          const message = parseRecordBody(record.body);
+          await attachmentsProcessingService.processAttachment(
+            message.attachment_id
+          );
+        } catch (error) {
+          logger.error(
+            `Failed processing attachment record ${record.messageId}`,
+            error
+          );
+          batchItemFailures.push({ itemIdentifier: record.messageId });
+        }
       }
     },
     { logger }
   );
+  return { batchItemFailures };
 };
 
 export const handler = sentryContext.wrapLambdaHandler(sqsHandler);

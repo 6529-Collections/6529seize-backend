@@ -12,6 +12,26 @@ import {
 import { RequestContext } from '@/request.context';
 import { Timer } from '@/time';
 
+const PATCHABLE_ATTACHMENT_COLUMNS = [
+  'detected_mime',
+  'status',
+  'original_bucket',
+  'original_key',
+  'size_bytes',
+  'sha256',
+  'guardduty_status',
+  'verdict',
+  'ipfs_cid',
+  'ipfs_url',
+  'error_reason',
+  'updated_at'
+] as const;
+
+type PatchableAttachmentColumn = (typeof PATCHABLE_ATTACHMENT_COLUMNS)[number];
+type AttachmentPatch = Partial<
+  Record<PatchableAttachmentColumn, AttachmentEntity[PatchableAttachmentColumn]>
+>;
+
 export class AttachmentsDb extends LazyDbAccessCompatibleService {
   async createAttachment(
     attachment: AttachmentEntity,
@@ -48,23 +68,7 @@ export class AttachmentsDb extends LazyDbAccessCompatibleService {
       patch
     }: {
       id: string;
-      patch: Partial<
-        Pick<
-          AttachmentEntity,
-          | 'detected_mime'
-          | 'status'
-          | 'original_bucket'
-          | 'original_key'
-          | 'size_bytes'
-          | 'sha256'
-          | 'guardduty_status'
-          | 'verdict'
-          | 'ipfs_cid'
-          | 'ipfs_url'
-          | 'error_reason'
-          | 'updated_at'
-        >
-      >;
+      patch: AttachmentPatch;
     },
     {
       connection,
@@ -76,7 +80,8 @@ export class AttachmentsDb extends LazyDbAccessCompatibleService {
   ) {
     timer?.start(`${this.constructor.name}->updateAttachment`);
     try {
-      const assignments = Object.keys(patch)
+      const allowedPatch = this.getAllowedAttachmentPatch(patch);
+      const assignments = Object.keys(allowedPatch)
         .map((key) => `${key} = :${key}`)
         .join(', ');
       if (!assignments) {
@@ -84,7 +89,7 @@ export class AttachmentsDb extends LazyDbAccessCompatibleService {
       }
       await this.db.execute(
         `update ${ATTACHMENTS_TABLE} set ${assignments} where id = :id`,
-        { id, ...patch },
+        { id, ...allowedPatch },
         connection ? { wrappedConnection: connection } : undefined
       );
     } finally {
@@ -97,12 +102,14 @@ export class AttachmentsDb extends LazyDbAccessCompatibleService {
       id,
       fromStatus,
       toStatus,
-      updatedAt
+      updatedAt,
+      patch = {}
     }: {
       id: string;
       fromStatus: AttachmentStatus;
       toStatus: AttachmentStatus;
       updatedAt: number;
+      patch?: Omit<AttachmentPatch, 'status' | 'updated_at'>;
     },
     {
       connection,
@@ -114,11 +121,19 @@ export class AttachmentsDb extends LazyDbAccessCompatibleService {
   ): Promise<boolean> {
     timer?.start(`${this.constructor.name}->transitionAttachmentStatus`);
     try {
+      const allowedPatch = this.getAllowedAttachmentPatch({
+        ...patch,
+        status: toStatus,
+        updated_at: updatedAt
+      });
+      const assignments = Object.keys(allowedPatch)
+        .map((key) => `${key} = :${key}`)
+        .join(', ');
       const result = await this.db.execute(
         `update ${ATTACHMENTS_TABLE}
-         set status = :toStatus, updated_at = :updatedAt
+         set ${assignments}
          where id = :id and status = :fromStatus`,
-        { id, fromStatus, toStatus, updatedAt },
+        { id, fromStatus, ...allowedPatch },
         connection ? { wrappedConnection: connection } : undefined
       );
       return this.db.getAffectedRows(result) === 1;
@@ -297,6 +312,15 @@ export class AttachmentsDb extends LazyDbAccessCompatibleService {
     if (rows.length !== uniqueAttachmentIds.length) {
       throw new Error(`One or more attachments do not belong to the uploader`);
     }
+  }
+
+  private getAllowedAttachmentPatch(patch: AttachmentPatch): AttachmentPatch {
+    return PATCHABLE_ATTACHMENT_COLUMNS.reduce((acc, column) => {
+      if (Object.prototype.hasOwnProperty.call(patch, column)) {
+        acc[column] = patch[column];
+      }
+      return acc;
+    }, {} as AttachmentPatch);
   }
 }
 

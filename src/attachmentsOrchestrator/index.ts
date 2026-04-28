@@ -2,7 +2,11 @@ import { attachmentsOrchestratorService } from '@/attachments/attachments-orches
 import { Logger } from '@/logging';
 import { doInDbContext } from '@/secrets';
 import * as sentryContext from '@/sentry.context';
-import type { EventBridgeEvent, SQSHandler } from 'aws-lambda';
+import type {
+  EventBridgeEvent,
+  SQSBatchResponse,
+  SQSHandler
+} from 'aws-lambda';
 
 const logger = Logger.get('ATTACHMENTS_ORCHESTRATOR');
 
@@ -41,22 +45,34 @@ function normalizeS3ObjectKey(key: string): string {
   return decodeURIComponent(key.replace(/\+/g, ' '));
 }
 
-async function handleSqs(event: Parameters<SQSHandler>[0]) {
+async function handleSqs(
+  event: Parameters<SQSHandler>[0]
+): Promise<SQSBatchResponse> {
+  const batchItemFailures: SQSBatchResponse['batchItemFailures'] = [];
   await doInDbContext(
     async () => {
       for (const record of event.Records) {
-        const payload = parseRetryPayload(record.body);
-        await attachmentsOrchestratorService.handleRetryMessage({
-          attachmentId: payload.attachment_id,
-          originalBucket: payload.original_bucket,
-          originalKey: payload.original_key,
-          uploadAttempt: payload.upload_attempt,
-          scanAttempt: payload.scan_attempt
-        });
+        try {
+          const payload = parseRetryPayload(record.body);
+          await attachmentsOrchestratorService.handleRetryMessage({
+            attachmentId: payload.attachment_id,
+            originalBucket: payload.original_bucket,
+            originalKey: payload.original_key,
+            uploadAttempt: payload.upload_attempt,
+            scanAttempt: payload.scan_attempt
+          });
+        } catch (error) {
+          logger.error(
+            `Failed orchestrating attachment record ${record.messageId}`,
+            error
+          );
+          batchItemFailures.push({ itemIdentifier: record.messageId });
+        }
       }
     },
     { logger }
   );
+  return { batchItemFailures };
 }
 
 async function handleEventBridge(
@@ -80,10 +96,9 @@ async function handleEventBridge(
   );
 }
 
-const handlerImpl = async (event: any): Promise<void> => {
+const handlerImpl = async (event: any): Promise<void | SQSBatchResponse> => {
   if (Array.isArray(event?.Records)) {
-    await handleSqs(event);
-    return;
+    return await handleSqs(event);
   }
   await handleEventBridge(event);
 };

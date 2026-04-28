@@ -18,6 +18,7 @@ import { Logger } from '@/logging';
 import { createHash } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { TextDecoder } from 'node:util';
+import { fromBuffer as fileTypeFromBuffer } from 'file-type';
 import {
   getFileExtension,
   slugifyBaseName
@@ -25,7 +26,6 @@ import {
 import { Time } from '@/time';
 
 const csvParser = require('csv-parser');
-const fileType = require('file-type');
 
 const MAX_PDF_BYTES = 25 * 1024 * 1024;
 const MAX_CSV_BYTES = 10 * 1024 * 1024;
@@ -46,8 +46,11 @@ const PDF_BLOCKLIST_MARKERS = [
   '/EmbeddedFile',
   '/RichMedia',
   '/XFA',
-  '/Encrypt'
+  '/Encrypt',
+  '/ObjStm'
 ];
+
+class ContentViolationError extends Error {}
 
 export class AttachmentsProcessingService {
   private readonly logger = Logger.get(this.constructor.name);
@@ -93,23 +96,20 @@ export class AttachmentsProcessingService {
     });
 
     try {
-      const fileBuffer = await this.downloadFromS3(
-        attachment.original_bucket,
-        attachment.original_key
-      );
+      const fileBuffer = await this.downloadFromS3(attachment);
       const detectedMime = await this.detectMimeType(fileBuffer, attachment);
-      const sha256 = createHash('sha256').update(fileBuffer).digest('hex');
-      const sizeBytes = fileBuffer.byteLength;
 
       let finalBuffer: Buffer;
       let finalMimeType: string;
       if (attachment.kind === AttachmentKind.PDF) {
-        finalBuffer = this.validatePdf(fileBuffer, sizeBytes);
+        finalBuffer = this.validatePdf(fileBuffer);
         finalMimeType = 'application/pdf';
       } else {
-        finalBuffer = await this.createSafeCsv(fileBuffer, sizeBytes);
+        finalBuffer = await this.createSafeCsv(fileBuffer);
         finalMimeType = 'text/csv';
       }
+      const sha256 = createHash('sha256').update(finalBuffer).digest('hex');
+      const sizeBytes = finalBuffer.byteLength;
 
       const publishedFileName = this.getPublishedFileName({
         originalFileName: attachment.original_file_name,
@@ -142,7 +142,7 @@ export class AttachmentsProcessingService {
         detected_mime: detectedMime,
         size_bytes: sizeBytes,
         sha256,
-        verdict: 'SAFE_FOR_PUBLIC_IPFS',
+        verdict: 'VALIDATED_FOR_PUBLIC_IPFS',
         ipfs_cid: upload.cid,
         ipfs_url: upload.files[publishedFileName] ?? upload.url,
         status: AttachmentStatus.READY,
@@ -163,8 +163,11 @@ export class AttachmentsProcessingService {
       this.logger.error(
         `Attachment processing failed ${attachmentId}: ${reason}`
       );
+      const status = this.isContentViolationError(error)
+        ? AttachmentStatus.BLOCKED
+        : AttachmentStatus.VERIFYING;
       const blockedPatch = {
-        status: AttachmentStatus.BLOCKED,
+        status,
         error_reason: reason,
         updated_at: Time.currentMillis()
       };
@@ -180,7 +183,10 @@ export class AttachmentsProcessingService {
     }
   }
 
-  private async downloadFromS3(bucket: string, key: string): Promise<Buffer> {
+  private async downloadFromS3(attachment: AttachmentEntity): Promise<Buffer> {
+    const bucket = attachment.original_bucket!;
+    const key = attachment.original_key!;
+    const maxBytes = this.getMaxBytes(attachment.kind);
     const response = await getS3().send(
       new GetObjectCommand({
         Bucket: bucket,
@@ -190,9 +196,25 @@ export class AttachmentsProcessingService {
     if (!response.Body) {
       throw new Error(`Attachment object ${bucket}/${key} has no body`);
     }
+    if (
+      typeof response.ContentLength === 'number' &&
+      response.ContentLength > maxBytes
+    ) {
+      throw new ContentViolationError(
+        `${attachment.kind} exceeds the ${maxBytes} byte limit`
+      );
+    }
     const chunks: Buffer[] = [];
+    let bytesRead = 0;
     for await (const chunk of response.Body as any) {
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      bytesRead += buffer.byteLength;
+      if (bytesRead > maxBytes) {
+        throw new ContentViolationError(
+          `${attachment.kind} exceeds the ${maxBytes} byte limit`
+        );
+      }
+      chunks.push(buffer);
     }
     return Buffer.concat(chunks);
   }
@@ -203,59 +225,79 @@ export class AttachmentsProcessingService {
   ): Promise<string> {
     if (attachment.kind === AttachmentKind.PDF) {
       if (!fileBuffer.slice(0, 5).equals(Buffer.from('%PDF-'))) {
-        throw new Error('Uploaded file does not have a valid PDF signature');
+        throw new ContentViolationError(
+          'Uploaded file does not have a valid PDF signature'
+        );
       }
       return 'application/pdf';
     }
 
-    const detected = await fileType.fromBuffer(fileBuffer);
+    const detected = await fileTypeFromBuffer(fileBuffer);
     if (detected?.mime) {
-      throw new Error(`CSV attachment appears to be binary (${detected.mime})`);
+      throw new ContentViolationError(
+        `CSV attachment appears to be binary (${detected.mime})`
+      );
     }
     return 'text/csv';
   }
 
-  private validatePdf(fileBuffer: Buffer, sizeBytes: number): Buffer {
+  private validatePdf(fileBuffer: Buffer): Buffer {
+    const sizeBytes = fileBuffer.byteLength;
     if (sizeBytes > MAX_PDF_BYTES) {
-      throw new Error(`PDF exceeds the ${MAX_PDF_BYTES} byte limit`);
+      throw new ContentViolationError(
+        `PDF exceeds the ${MAX_PDF_BYTES} byte limit`
+      );
     }
-    const text = fileBuffer.toString('latin1');
+    const text = this.normalizePdfText(fileBuffer);
     for (const marker of PDF_BLOCKLIST_MARKERS) {
-      if (text.includes(marker)) {
-        throw new Error(`PDF contains blocked feature ${marker}`);
+      if (text.includes(marker.toLowerCase())) {
+        throw new ContentViolationError(
+          `PDF contains blocked feature ${marker}`
+        );
       }
     }
-    const pageCount = text.match(/\/Type\s*\/Page\b/g)?.length ?? 0;
+    const pageCount = text.match(/\/type\s*\/page\b/g)?.length ?? 0;
     if (pageCount > MAX_PDF_PAGES) {
-      throw new Error(`PDF exceeds the ${MAX_PDF_PAGES} page limit`);
+      throw new ContentViolationError(
+        `PDF exceeds the ${MAX_PDF_PAGES} page limit`
+      );
     }
     return fileBuffer;
   }
 
-  private async createSafeCsv(
-    fileBuffer: Buffer,
-    sizeBytes: number
-  ): Promise<Buffer> {
+  private async createSafeCsv(fileBuffer: Buffer): Promise<Buffer> {
+    const sizeBytes = fileBuffer.byteLength;
     if (sizeBytes > MAX_CSV_BYTES) {
-      throw new Error(`CSV exceeds the ${MAX_CSV_BYTES} byte limit`);
+      throw new ContentViolationError(
+        `CSV exceeds the ${MAX_CSV_BYTES} byte limit`
+      );
     }
     if (fileBuffer.includes(0)) {
-      throw new Error('CSV contains NUL bytes');
+      throw new ContentViolationError('CSV contains NUL bytes');
     }
     const decoder = new TextDecoder('utf-8', { fatal: true });
-    const text = decoder.decode(fileBuffer);
+    let text: string;
+    try {
+      text = decoder.decode(fileBuffer);
+    } catch {
+      throw new ContentViolationError('CSV must be valid UTF-8');
+    }
     const lines = text.split(/\r\n|\n|\r/);
     if (lines.some((line: string) => line.length > MAX_CSV_LINE_LENGTH)) {
-      throw new Error(`CSV contains an excessively long line`);
+      throw new ContentViolationError(`CSV contains an excessively long line`);
     }
     const rows = await this.parseCsvRows(text);
     if (rows.length > MAX_CSV_ROWS) {
-      throw new Error(`CSV exceeds the ${MAX_CSV_ROWS} row limit`);
+      throw new ContentViolationError(
+        `CSV exceeds the ${MAX_CSV_ROWS} row limit`
+      );
     }
 
     const serializedRows = rows.map((row) => {
       if (row.length > MAX_CSV_COLUMNS) {
-        throw new Error(`CSV exceeds the ${MAX_CSV_COLUMNS} column limit`);
+        throw new ContentViolationError(
+          `CSV exceeds the ${MAX_CSV_COLUMNS} column limit`
+        );
       }
       return row.map((cell) => this.serializeSafeCsvCell(cell)).join(',');
     });
@@ -274,7 +316,9 @@ export class AttachmentsProcessingService {
             .map((key) => row[key] ?? '');
           if (cells.some((cell) => cell.length > MAX_CSV_CELL_LENGTH)) {
             reject(
-              new Error(`CSV exceeds the ${MAX_CSV_CELL_LENGTH} cell limit`)
+              new ContentViolationError(
+                `CSV exceeds the ${MAX_CSV_CELL_LENGTH} cell limit`
+              )
             );
             return;
           }
@@ -292,6 +336,25 @@ export class AttachmentsProcessingService {
       .replace(/\r/g, '\n');
     const safe = DANGEROUS_CSV_PREFIX.test(cleaned) ? `\t${cleaned}` : cleaned;
     return `"${safe.replace(/"/g, '""')}"`;
+  }
+
+  private getMaxBytes(attachmentKind: AttachmentKind): number {
+    return attachmentKind === AttachmentKind.PDF
+      ? MAX_PDF_BYTES
+      : MAX_CSV_BYTES;
+  }
+
+  private isContentViolationError(error: unknown): boolean {
+    return error instanceof ContentViolationError;
+  }
+
+  private normalizePdfText(fileBuffer: Buffer): string {
+    return fileBuffer
+      .toString('latin1')
+      .replace(/#([0-9a-fA-F]{2})/g, (_, hex: string) =>
+        String.fromCharCode(parseInt(hex, 16))
+      )
+      .toLowerCase();
   }
 
   private getPublishedFileName({
@@ -339,7 +402,7 @@ export class AttachmentsProcessingService {
       published_mime: finalMimeType,
       sha256,
       size_bytes: sizeBytes,
-      verdict: 'SAFE_FOR_PUBLIC_IPFS'
+      verdict: 'VALIDATED_FOR_PUBLIC_IPFS'
     };
   }
 }

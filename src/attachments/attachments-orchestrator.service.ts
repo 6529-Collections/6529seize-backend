@@ -116,20 +116,27 @@ export class AttachmentsOrchestratorService {
 
     if (attachment.status === AttachmentStatus.UPLOADING) {
       if (uploadAttempt >= MAX_GUARDDUTY_POLL_ATTEMPTS) {
+        const updatedAt = Time.currentMillis();
         const failedPatch = {
-          status: AttachmentStatus.FAILED,
           verdict: 'UPLOAD_COMPLETION_TIMEOUT',
-          error_reason: 'Attachment completion did not finalize in time',
-          updated_at: Time.currentMillis()
+          error_reason: 'Attachment completion did not finalize in time'
         };
-        await this.attachmentsDb.updateAttachment({
-          id: attachment.id,
-          patch: failedPatch
-        });
-        await this.statusNotifier.notifyStatusTransition({
-          ...attachment,
-          ...failedPatch
-        });
+        const transitioned =
+          await this.attachmentsDb.transitionAttachmentStatus({
+            id: attachment.id,
+            fromStatus: AttachmentStatus.UPLOADING,
+            toStatus: AttachmentStatus.FAILED,
+            updatedAt,
+            patch: failedPatch
+          });
+        if (transitioned) {
+          await this.statusNotifier.notifyStatusTransition({
+            ...attachment,
+            ...failedPatch,
+            status: AttachmentStatus.FAILED,
+            updated_at: updatedAt
+          });
+        }
         return;
       }
       await enqueueAttachmentOrchestrationRetry({
@@ -150,20 +157,27 @@ export class AttachmentsOrchestratorService {
 
     if (!guardDutyStatus) {
       if (scanAttempt >= MAX_GUARDDUTY_POLL_ATTEMPTS) {
+        const updatedAt = Time.currentMillis();
         const failedPatch = {
-          status: AttachmentStatus.FAILED,
           verdict: 'MALWARE_SCAN_TIMEOUT',
-          error_reason: 'GuardDuty scan result was not available in time',
-          updated_at: Time.currentMillis()
+          error_reason: 'GuardDuty scan result was not available in time'
         };
-        await this.attachmentsDb.updateAttachment({
-          id: attachment.id,
-          patch: failedPatch
-        });
-        await this.statusNotifier.notifyStatusTransition({
-          ...attachment,
-          ...failedPatch
-        });
+        const transitioned =
+          await this.attachmentsDb.transitionAttachmentStatus({
+            id: attachment.id,
+            fromStatus: AttachmentStatus.VERIFYING,
+            toStatus: AttachmentStatus.FAILED,
+            updatedAt,
+            patch: failedPatch
+          });
+        if (transitioned) {
+          await this.statusNotifier.notifyStatusTransition({
+            ...attachment,
+            ...failedPatch,
+            status: AttachmentStatus.FAILED,
+            updated_at: updatedAt
+          });
+        }
         return;
       }
       await enqueueAttachmentOrchestrationRetry({
@@ -178,16 +192,20 @@ export class AttachmentsOrchestratorService {
     }
 
     if (guardDutyStatus === 'NO_THREATS_FOUND') {
-      await this.attachmentsDb.updateAttachment({
+      const updatedAt = Time.currentMillis();
+      const transitioned = await this.attachmentsDb.transitionAttachmentStatus({
         id: attachment.id,
+        fromStatus: AttachmentStatus.VERIFYING,
+        toStatus: AttachmentStatus.VERIFYING,
+        updatedAt,
         patch: {
           guardduty_status: guardDutyStatus,
-          status: AttachmentStatus.VERIFYING,
-          error_reason: null,
-          updated_at: Time.currentMillis()
+          error_reason: null
         }
       });
-      await enqueueAttachmentProcessing(attachment.id);
+      if (transitioned) {
+        await enqueueAttachmentProcessing(attachment.id);
+      }
       return;
     }
 
@@ -195,39 +213,51 @@ export class AttachmentsOrchestratorService {
       guardDutyStatus === 'THREATS_FOUND' ||
       guardDutyStatus === 'UNSUPPORTED'
     ) {
+      const updatedAt = Time.currentMillis();
       const blockedPatch = {
         guardduty_status: guardDutyStatus,
-        status: AttachmentStatus.BLOCKED,
         verdict: `MALWARE_SCAN_${guardDutyStatus}`,
-        error_reason: `GuardDuty blocked attachment (${guardDutyStatus})`,
-        updated_at: Time.currentMillis()
+        error_reason: `GuardDuty blocked attachment (${guardDutyStatus})`
       };
-      await this.attachmentsDb.updateAttachment({
+      const transitioned = await this.attachmentsDb.transitionAttachmentStatus({
         id: attachment.id,
+        fromStatus: AttachmentStatus.VERIFYING,
+        toStatus: AttachmentStatus.BLOCKED,
+        updatedAt,
         patch: blockedPatch
       });
-      await this.statusNotifier.notifyStatusTransition({
-        ...attachment,
-        ...blockedPatch
-      });
+      if (transitioned) {
+        await this.statusNotifier.notifyStatusTransition({
+          ...attachment,
+          ...blockedPatch,
+          status: AttachmentStatus.BLOCKED,
+          updated_at: updatedAt
+        });
+      }
       return;
     }
 
+    const updatedAt = Time.currentMillis();
     const failedPatch = {
       guardduty_status: guardDutyStatus,
-      status: AttachmentStatus.FAILED,
       verdict: `MALWARE_SCAN_${guardDutyStatus}`,
-      error_reason: `GuardDuty scan failed (${guardDutyStatus})`,
-      updated_at: Time.currentMillis()
+      error_reason: `GuardDuty scan failed (${guardDutyStatus})`
     };
-    await this.attachmentsDb.updateAttachment({
+    const transitioned = await this.attachmentsDb.transitionAttachmentStatus({
       id: attachment.id,
+      fromStatus: AttachmentStatus.VERIFYING,
+      toStatus: AttachmentStatus.FAILED,
+      updatedAt,
       patch: failedPatch
     });
-    await this.statusNotifier.notifyStatusTransition({
-      ...attachment,
-      ...failedPatch
-    });
+    if (transitioned) {
+      await this.statusNotifier.notifyStatusTransition({
+        ...attachment,
+        ...failedPatch,
+        status: AttachmentStatus.FAILED,
+        updated_at: updatedAt
+      });
+    }
   }
 
   private async getGuardDutyStatus({

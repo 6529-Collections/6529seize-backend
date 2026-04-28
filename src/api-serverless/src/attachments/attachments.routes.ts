@@ -140,10 +140,21 @@ router.post(
     req: Request<any, any, ApiUploadPartOfMultipartUploadRequest, any, any>,
     res: Response<ApiResponse<ApiUploadPartOfMultipartUploadResponse>>
   ) => {
+    const authenticatedProfileId = await getAuthenticatedProfileIdOrNull(req);
+    if (!authenticatedProfileId) {
+      throw new ForbiddenException(`Please create a profile first`);
+    }
     const validatedRequest = getValidatedByJoiOrThrow(
       req.body,
       ApiUploadPartOfMultipartUploadRequestSchema
     );
+    const attachment = await attachmentsDb.findAttachmentByOriginalLocation({
+      originalBucket: process.env.ATTACHMENTS_INGEST_S3_BUCKET ?? '',
+      originalKey: validatedRequest.key
+    });
+    if (attachment?.owner_profile_id !== authenticatedProfileId) {
+      throw new NotFoundException(`Attachment upload not found`);
+    }
     const upload_url =
       await uploadAttachmentsService.getSignedUrlForPartOfMultipartUpload(
         validatedRequest
@@ -180,6 +191,11 @@ router.post(
     if (attachment?.owner_profile_id !== authenticatedProfileId) {
       throw new NotFoundException(
         `Attachment ${validatedRequest.attachment_id} not found`
+      );
+    }
+    if (validatedRequest.key !== attachment.original_key) {
+      throw new BadRequestException(
+        `Attachment ${validatedRequest.attachment_id} key does not match`
       );
     }
     await uploadAttachmentsService.completeMultipartUpload(validatedRequest);

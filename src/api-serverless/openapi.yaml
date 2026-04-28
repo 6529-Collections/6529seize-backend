@@ -7339,18 +7339,18 @@ components:
     ApiAttachment:
       type: object
       required:
-        - id
+        - attachment_id
         - file_name
         - mime_type
         - kind
         - status
       properties:
-        id:
+        attachment_id:
           type: string
         file_name:
           type: string
         mime_type:
-          type: string
+          $ref: "#/components/schemas/ApiAttachmentUploadMimeType"
         kind:
           $ref: "#/components/schemas/ApiAttachmentKind"
         status:
@@ -8105,6 +8105,8 @@ components:
             $ref: "#/components/schemas/ApiDropMedia"
         attachments:
           type: array
+          default: []
+          uniqueItems: true
           items:
             $ref: "#/components/schemas/ApiDropAttachmentReference"
     ApiCreateDropRequest:
@@ -8877,6 +8879,7 @@ components:
           $ref: "#/components/schemas/ApiDropVote"
     ApiDropAttachmentReference:
       type: object
+      additionalProperties: false
       required:
         - attachment_id
       properties:

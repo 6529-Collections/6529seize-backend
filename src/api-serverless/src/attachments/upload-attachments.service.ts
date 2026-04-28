@@ -8,6 +8,7 @@ import { getS3 } from '@/s3.client';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { Time } from '@/time';
 import { getFileExtension } from '@/api/media/sanitize-file-name';
+import { CustomApiCompliantException } from '@/exceptions';
 
 export class UploadAttachmentsService {
   constructor(private readonly getS3: () => S3Client) {}
@@ -74,10 +75,12 @@ export class UploadAttachmentsService {
         Key: key,
         UploadId: upload_id,
         MultipartUpload: {
-          Parts: parts.map((part) => ({
-            ETag: part.etag.split('"').join(''),
-            PartNumber: part.part_no
-          }))
+          Parts: [...parts]
+            .sort((a, b) => a.part_no - b.part_no)
+            .map((part) => ({
+              ETag: part.etag.split('"').join(''),
+              PartNumber: part.part_no
+            }))
         }
       })
     );
@@ -102,7 +105,10 @@ export class UploadAttachmentsService {
       })
     );
     if (!response.UploadId) {
-      throw new Error(`No multipart upload id returned for key ${key}`);
+      throw new CustomApiCompliantException(
+        500,
+        `No multipart upload id returned for key ${key}`
+      );
     }
     return response.UploadId;
   }
@@ -124,7 +130,10 @@ export class UploadAttachmentsService {
     return (
       process.env.ATTACHMENTS_INGEST_S3_BUCKET ??
       (() => {
-        throw new Error('ATTACHMENTS_INGEST_S3_BUCKET is not configured');
+        throw new CustomApiCompliantException(
+          500,
+          'ATTACHMENTS_INGEST_S3_BUCKET is not configured'
+        );
       })()
     );
   }

@@ -94,4 +94,14 @@ describe('media upload validators', () => {
 
     expect(error).toBeDefined();
   });
+
+  it('rejects unsupported attachment content types', () => {
+    const { error } = attachmentSchema.validate({
+      author: 'profile-id',
+      content_type: 'application/json',
+      file_name: 'upload.json'
+    });
+
+    expect(error).toBeDefined();
+  });
 });

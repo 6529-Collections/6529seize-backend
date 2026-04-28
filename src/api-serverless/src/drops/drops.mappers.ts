@@ -88,6 +88,7 @@ import { AttachmentEntity, DropAttachmentEntity } from '@/entities/IAttachment';
 import { attachmentsDb, AttachmentsDb } from '@/attachments/attachments.db';
 import { ApiAttachment } from '@/api/generated/models/ApiAttachment';
 import { mapAttachmentToApiAttachment } from '@/api/attachments/attachments.mappers';
+import { ApiDropAttachmentReference } from '@/api/generated/models/ApiDropAttachmentReference';
 
 export class DropsMappers {
   constructor(
@@ -169,9 +170,11 @@ export class DropsMappers {
           url: media.url,
           mime_type: media.mime_type
         })),
-        attachments: (it.attachments ?? []).map((attachment) => ({
-          attachment_id: attachment.attachment_id
-        })),
+        attachments: this.toAttachmentReferencesArray(it.attachments).map(
+          (attachment) => ({
+            attachment_id: attachment.attachment_id
+          })
+        ),
         quoted_drop: it.quoted_drop
           ? {
               drop_id: it.quoted_drop.drop_id,
@@ -197,6 +200,12 @@ export class DropsMappers {
       ),
       signature: request.signature
     };
+  }
+
+  private toAttachmentReferencesArray(
+    attachments?: Set<ApiDropAttachmentReference>
+  ): ApiDropAttachmentReference[] {
+    return Array.from(attachments ?? []);
   }
 
   public async convertToDropFulls(

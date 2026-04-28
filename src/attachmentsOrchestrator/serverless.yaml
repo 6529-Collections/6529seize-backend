@@ -35,6 +35,7 @@ functions:
           arn:
             Fn::GetAtt: [AttachmentsOrchestrationQueue, Arn]
           batchSize: 1
+          functionResponseType: ReportBatchItemFailures
       - eventBridge:
           pattern:
             source:
