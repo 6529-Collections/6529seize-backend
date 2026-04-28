@@ -38,7 +38,10 @@ export class WsListenersNotifier {
 
   async notifyAboutDropUpdate(
     inputDrop: ApiDrop,
-    ctx: RequestContext
+    ctx: RequestContext,
+    {
+      allowDirectGroupMemberFallback = false
+    }: { allowDirectGroupMemberFallback?: boolean } = {}
   ): Promise<void> {
     ctx.timer?.start(`${this.constructor.name}->notifyAboutDrop`);
     try {
@@ -46,7 +49,8 @@ export class WsListenersNotifier {
         await this.wsConnectionRepository.getCurrentlyOnlineCommunityMemberConnectionIds(
           {
             groupId: inputDrop.wave.visibility_group_id,
-            waveId: inputDrop.wave.id
+            waveId: inputDrop.wave.id,
+            allowDirectGroupMemberFallback
           },
           ctx
         );
@@ -365,7 +369,8 @@ export class WsListenersNotifier {
               .getCurrentlyOnlineCommunityMemberConnectionIds(
                 {
                   groupId,
-                  waveId
+                  waveId,
+                  allowDirectGroupMemberFallback: true
                 },
                 ctx
               )

@@ -68,7 +68,9 @@ export class AttachmentsStatusNotifier {
           },
           ctx
         );
-        await this.wsListenersNotifier.notifyAboutDropUpdate(drop, ctx);
+        await this.wsListenersNotifier.notifyAboutDropUpdate(drop, ctx, {
+          allowDirectGroupMemberFallback: true
+        });
       })
     );
   }
