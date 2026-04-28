@@ -28,7 +28,5 @@ export enum ApiMediaUploadMimeType {
     AudioXAac = 'audio/x-aac',
     ModelGltfBinary = 'model/gltf-binary',
     VideoQuicktime = 'video/quicktime',
-    ImageWebp = 'image/webp',
-    ApplicationPdf = 'application/pdf',
-    TextCsv = 'text/csv'
+    ImageWebp = 'image/webp'
 }

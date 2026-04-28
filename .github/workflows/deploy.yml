@@ -21,6 +21,8 @@ on:
         options:
           - api
           - aggregatedActivityLoop
+          - attachmentsOrchestrator
+          - attachmentsProcessor
           - artCurationNftWatchLoop
           - cloudwatchAlarmsToDiscordLoop
           - claimsBuilder

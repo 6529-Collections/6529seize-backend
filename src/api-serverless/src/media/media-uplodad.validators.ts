@@ -34,7 +34,11 @@ export function createMediaPrepRequestSchema({
 }: {
   allowedMimeTypes: string[];
   allowedExtensionsByMimeType?: Record<string, readonly string[]>;
-}): Joi.ObjectSchema<ApiCreateMediaUploadUrlRequest & { author: string }> {
+}): Joi.ObjectSchema<{
+  author: string;
+  content_type: string;
+  file_name: string;
+}> {
   return Joi.object({
     author: Joi.string().required(),
     content_type: Joi.string()

@@ -1,0 +1,95 @@
+service: attachmentsOrchestrator
+
+package:
+  artifact: dist/index.zip
+
+plugins:
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs22.x
+  memorySize: 1024
+  timeout: 900
+  architecture: arm64
+  logRetentionInDays: 60
+
+custom:
+  nodeEnvByStage:
+    local: local
+    dev: development
+    development: development
+    staging: development
+    prod: production
+    production: production
+
+functions:
+  attachmentsOrchestrator:
+    handler: index.handler
+    name: attachmentsOrchestrator
+    description: ${env:VERSION_DESCRIPTION}
+    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    reservedConcurrency: 2
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt: [AttachmentsOrchestrationQueue, Arn]
+          batchSize: 1
+          functionResponseType: ReportBatchItemFailures
+      - eventBridge:
+          pattern:
+            source:
+              - aws.s3
+            detail-type:
+              - Object Created
+            detail:
+              bucket:
+                name:
+                  - ${env:ATTACHMENTS_INGEST_S3_BUCKET}
+              object:
+                key:
+                  - prefix: ${self:custom.nodeEnvByStage.${opt:stage, self:provider.stage}}/attachments/incoming/
+    vpc:
+      securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
+      subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
+    environment:
+      SENTRY_DSN: ${env:SENTRY_DSN}
+      SENTRY_ENVIRONMENT: 'attachmentsOrchestrator_${opt:stage, self:provider.stage}'
+
+resources:
+  Resources:
+    AttachmentsOrchestratorLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/attachmentsOrchestrator
+        RetentionInDays: 60
+
+    AttachmentsOrchestrationQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: attachments-orchestration
+        VisibilityTimeout: 930
+        RedrivePolicy:
+          deadLetterTargetArn:
+            Fn::GetAtt: [AttachmentsOrchestrationDLQ, Arn]
+          maxReceiveCount: 10
+
+    AttachmentsOrchestrationDLQ:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: attachments-orchestration-dlq
+
+    AttachmentsOrchestrationQueuePolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+          - Ref: AttachmentsOrchestrationQueue
+        PolicyDocument:
+          Statement:
+            - Effect: Allow
+              Principal:
+                AWS: arn:aws:iam::987989283142:role/lambda-vpc-role
+              Action:
+                - sqs:SendMessage
+              Resource:
+                - !GetAtt AttachmentsOrchestrationQueue.Arn

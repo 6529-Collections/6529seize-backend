@@ -8,6 +8,10 @@ export * from '../models/ApiAggregatedActivity';
 export * from '../models/ApiAggregatedActivityMemes';
 export * from '../models/ApiAggregatedActivityPage';
 export * from '../models/ApiArtistNameItem';
+export * from '../models/ApiAttachment';
+export * from '../models/ApiAttachmentKind';
+export * from '../models/ApiAttachmentStatus';
+export * from '../models/ApiAttachmentUploadMimeType';
 export * from '../models/ApiAvailableRatingCredit';
 export * from '../models/ApiBlockItem';
 export * from '../models/ApiBlocksPage';
@@ -32,10 +36,13 @@ export * from '../models/ApiCommunityMetric';
 export * from '../models/ApiCommunityMetricSample';
 export * from '../models/ApiCommunityMetrics';
 export * from '../models/ApiCommunityMetricsSeries';
+export * from '../models/ApiCompleteAttachmentMultipartUploadRequest';
 export * from '../models/ApiCompleteMultipartUploadRequest';
 export * from '../models/ApiCompleteMultipartUploadRequestPart';
 export * from '../models/ApiCompleteMultipartUploadResponse';
 export * from '../models/ApiConsolidatedTdh';
+export * from '../models/ApiCreateAttachmentMultipartUploadRequest';
+export * from '../models/ApiCreateAttachmentMultipartUploadResponse';
 export * from '../models/ApiCreateDropPart';
 export * from '../models/ApiCreateDropRequest';
 export * from '../models/ApiCreateGroup';
@@ -73,6 +80,7 @@ export * from '../models/ApiDistributionAirdropsCsvUploadRequest';
 export * from '../models/ApiDistributionAirdropsUploadResponse';
 export * from '../models/ApiDrop';
 export * from '../models/ApiDropAndDropVote';
+export * from '../models/ApiDropAttachmentReference';
 export * from '../models/ApiDropBoost';
 export * from '../models/ApiDropBoostsPage';
 export * from '../models/ApiDropContextProfileContext';
@@ -334,6 +342,10 @@ import { ApiAggregatedActivity } from '../models/ApiAggregatedActivity';
 import { ApiAggregatedActivityMemes } from '../models/ApiAggregatedActivityMemes';
 import { ApiAggregatedActivityPage } from '../models/ApiAggregatedActivityPage';
 import { ApiArtistNameItem } from '../models/ApiArtistNameItem';
+import { ApiAttachment        } from '../models/ApiAttachment';
+import { ApiAttachmentKind } from '../models/ApiAttachmentKind';
+import { ApiAttachmentStatus } from '../models/ApiAttachmentStatus';
+import { ApiAttachmentUploadMimeType } from '../models/ApiAttachmentUploadMimeType';
 import { ApiAvailableRatingCredit } from '../models/ApiAvailableRatingCredit';
 import { ApiBlockItem } from '../models/ApiBlockItem';
 import { ApiBlocksPage } from '../models/ApiBlocksPage';
@@ -358,10 +370,13 @@ import { ApiCommunityMetric } from '../models/ApiCommunityMetric';
 import { ApiCommunityMetricSample } from '../models/ApiCommunityMetricSample';
 import { ApiCommunityMetrics } from '../models/ApiCommunityMetrics';
 import { ApiCommunityMetricsSeries } from '../models/ApiCommunityMetricsSeries';
+import { ApiCompleteAttachmentMultipartUploadRequest } from '../models/ApiCompleteAttachmentMultipartUploadRequest';
 import { ApiCompleteMultipartUploadRequest } from '../models/ApiCompleteMultipartUploadRequest';
 import { ApiCompleteMultipartUploadRequestPart } from '../models/ApiCompleteMultipartUploadRequestPart';
 import { ApiCompleteMultipartUploadResponse } from '../models/ApiCompleteMultipartUploadResponse';
 import { ApiConsolidatedTdh } from '../models/ApiConsolidatedTdh';
+import { ApiCreateAttachmentMultipartUploadRequest   } from '../models/ApiCreateAttachmentMultipartUploadRequest';
+import { ApiCreateAttachmentMultipartUploadResponse     } from '../models/ApiCreateAttachmentMultipartUploadResponse';
 import { ApiCreateDropPart } from '../models/ApiCreateDropPart';
 import { ApiCreateDropRequest              } from '../models/ApiCreateDropRequest';
 import { ApiCreateGroup } from '../models/ApiCreateGroup';
@@ -399,6 +414,7 @@ import { ApiDistributionAirdropsCsvUploadRequest } from '../models/ApiDistributi
 import { ApiDistributionAirdropsUploadResponse } from '../models/ApiDistributionAirdropsUploadResponse';
 import { ApiDrop                               } from '../models/ApiDrop';
 import { ApiDropAndDropVote } from '../models/ApiDropAndDropVote';
+import { ApiDropAttachmentReference } from '../models/ApiDropAttachmentReference';
 import { ApiDropBoost } from '../models/ApiDropBoost';
 import { ApiDropBoostsPage } from '../models/ApiDropBoostsPage';
 import { ApiDropContextProfileContext } from '../models/ApiDropContextProfileContext';
@@ -664,6 +680,9 @@ let primitives = [
 
 let enumsMap: Set<string> = new Set<string>([
     "AcceptActionRequestActionEnum",
+    "ApiAttachmentKind",
+    "ApiAttachmentStatus",
+    "ApiAttachmentUploadMimeType",
     "ApiCommunityMembersSortOption",
     "ApiCreateNewWaveVotingConfigOneOfCreditTypeEnum",
     "ApiCreateNewWaveVotingConfigOneOf1CreditTypeEnum",
@@ -722,6 +741,7 @@ let typeMap: {[index: string]: any} = {
     "ApiAggregatedActivityMemes": ApiAggregatedActivityMemes,
     "ApiAggregatedActivityPage": ApiAggregatedActivityPage,
     "ApiArtistNameItem": ApiArtistNameItem,
+    "ApiAttachment": ApiAttachment,
     "ApiAvailableRatingCredit": ApiAvailableRatingCredit,
     "ApiBlockItem": ApiBlockItem,
     "ApiBlocksPage": ApiBlocksPage,
@@ -745,10 +765,13 @@ let typeMap: {[index: string]: any} = {
     "ApiCommunityMetricSample": ApiCommunityMetricSample,
     "ApiCommunityMetrics": ApiCommunityMetrics,
     "ApiCommunityMetricsSeries": ApiCommunityMetricsSeries,
+    "ApiCompleteAttachmentMultipartUploadRequest": ApiCompleteAttachmentMultipartUploadRequest,
     "ApiCompleteMultipartUploadRequest": ApiCompleteMultipartUploadRequest,
     "ApiCompleteMultipartUploadRequestPart": ApiCompleteMultipartUploadRequestPart,
     "ApiCompleteMultipartUploadResponse": ApiCompleteMultipartUploadResponse,
     "ApiConsolidatedTdh": ApiConsolidatedTdh,
+    "ApiCreateAttachmentMultipartUploadRequest": ApiCreateAttachmentMultipartUploadRequest,
+    "ApiCreateAttachmentMultipartUploadResponse": ApiCreateAttachmentMultipartUploadResponse,
     "ApiCreateDropPart": ApiCreateDropPart,
     "ApiCreateDropRequest": ApiCreateDropRequest,
     "ApiCreateGroup": ApiCreateGroup,
@@ -786,6 +809,7 @@ let typeMap: {[index: string]: any} = {
     "ApiDistributionAirdropsUploadResponse": ApiDistributionAirdropsUploadResponse,
     "ApiDrop": ApiDrop,
     "ApiDropAndDropVote": ApiDropAndDropVote,
+    "ApiDropAttachmentReference": ApiDropAttachmentReference,
     "ApiDropBoost": ApiDropBoost,
     "ApiDropBoostsPage": ApiDropBoostsPage,
     "ApiDropContextProfileContext": ApiDropContextProfileContext,

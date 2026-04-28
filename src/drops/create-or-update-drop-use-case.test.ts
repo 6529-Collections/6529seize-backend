@@ -10,6 +10,7 @@ jest.mock('@/alchemy', () => ({
 
 import { identitiesDb } from '@/identities/identities.db';
 import { DropType } from '@/entities/IDrop';
+import { AttachmentStatus } from '@/entities/IAttachment';
 import { DropGroupMention } from '@/entities/IWaveGroupNotificationSubscription';
 import { WaveIdentitySubmissionDuplicates, WaveType } from '@/entities/IWave';
 import { env } from '@/env';
@@ -47,6 +48,7 @@ describe('CreateOrUpdateDropUseCase', () => {
       {} as any,
       {} as any,
       {} as any,
+      {} as any,
       {} as any
     );
   }
@@ -59,6 +61,7 @@ describe('CreateOrUpdateDropUseCase', () => {
       identitySubscriptionsDb?: any;
       deleteDropUseCase?: any;
       artCurationTokenWatchService?: any;
+      attachmentsDb?: any;
     } = {}
   ) {
     return new CreateOrUpdateDropUseCase(
@@ -73,7 +76,8 @@ describe('CreateOrUpdateDropUseCase', () => {
       overrides.deleteDropUseCase ?? ({} as any),
       {} as any,
       {} as any,
-      overrides.artCurationTokenWatchService ?? ({} as any)
+      overrides.artCurationTokenWatchService ?? ({} as any),
+      overrides.attachmentsDb ?? ({} as any)
     );
   }
 
@@ -495,64 +499,24 @@ describe('CreateOrUpdateDropUseCase', () => {
     expect(wavesApiDb.countWaveDecisionsByWaveIds).not.toHaveBeenCalled();
   });
 
-  it('allows csv uploads for chat drops from CloudFront', () => {
-    expect(() =>
-      validateDropMediaAttachment({
-        mimeType: 'text/csv',
-        url: `${CLOUDFRONT_LINK}/drops/author_1/file.csv`,
-        dropType: DropType.CHAT
-      })
-    ).not.toThrow();
-  });
-
-  it('rejects csv uploads for participatory drops', () => {
-    expect(() =>
-      validateDropMediaAttachment({
-        mimeType: 'text/csv',
-        url: `${CLOUDFRONT_LINK}/drops/author_1/file.csv`,
-        dropType: DropType.PARTICIPATORY
-      })
-    ).toThrow('text/csv is only supported on chat drops');
-  });
-
-  it('rejects csv uploads outside CloudFront', () => {
-    expect(() =>
-      validateDropMediaAttachment({
-        mimeType: 'text/csv',
-        url: 'https://example.com/file.csv',
-        dropType: DropType.CHAT
-      })
-    ).toThrow(`text/csv needs to come from ${CLOUDFRONT_LINK}`);
-  });
-
-  it('rejects csv uploads from spoofed CloudFront-like hosts', () => {
-    expect(() =>
-      validateDropMediaAttachment({
-        mimeType: 'text/csv',
-        url: 'https://d3lqz0a4bldqgf.cloudfront.net.evil.com/file.csv',
-        dropType: DropType.CHAT
-      })
-    ).toThrow(`text/csv needs to come from ${CLOUDFRONT_LINK}`);
-  });
-
-  it('allows pdf uploads from CloudFront', () => {
+  it('rejects pdf uploads from drop media URLs', () => {
     expect(() =>
       validateDropMediaAttachment({
         mimeType: 'application/pdf',
         url: `${CLOUDFRONT_LINK}/drops/author_1/file.pdf`,
         dropType: DropType.CHAT
       })
-    ).not.toThrow();
+    ).toThrow('Unsupported mime type application/pdf');
   });
 
-  it('rejects pdf uploads from spoofed CloudFront-like hosts', () => {
+  it('rejects csv uploads from drop media URLs', () => {
     expect(() =>
       validateDropMediaAttachment({
-        mimeType: 'application/pdf',
-        url: 'https://d3lqz0a4bldqgf.cloudfront.net.evil.com/file.pdf',
+        mimeType: 'text/csv',
+        url: `${CLOUDFRONT_LINK}/drops/author_1/file.csv`,
         dropType: DropType.CHAT
       })
-    ).toThrow(`Media needs to come from ${CLOUDFRONT_LINK}`);
+    ).toThrow('Unsupported mime type text/csv');
   });
 
   it('preserves html handling', () => {
@@ -583,5 +547,97 @@ describe('CreateOrUpdateDropUseCase', () => {
         dropType: DropType.CHAT
       })
     ).not.toThrow();
+  });
+
+  it('allows attachments owned by the author while they are still verifying', async () => {
+    const useCase = createUseCaseWithMocks({
+      attachmentsDb: {
+        findAttachmentsByIds: jest.fn().mockResolvedValue({
+          'attachment-1': {
+            id: 'attachment-1',
+            owner_profile_id: 'author-profile',
+            status: AttachmentStatus.VERIFYING
+          }
+        })
+      }
+    });
+
+    await expect(
+      (useCase as any).verifyAttachments(
+        {
+          model: {
+            author_id: 'author-profile',
+            parts: [
+              {
+                attachments: [{ attachment_id: 'attachment-1' }]
+              }
+            ]
+          }
+        },
+        { connection: {} }
+      )
+    ).resolves.toBeUndefined();
+  });
+
+  it('rejects attachments owned by another uploader', async () => {
+    const useCase = createUseCaseWithMocks({
+      attachmentsDb: {
+        findAttachmentsByIds: jest.fn().mockResolvedValue({
+          'attachment-1': {
+            id: 'attachment-1',
+            owner_profile_id: 'another-profile',
+            status: AttachmentStatus.READY
+          }
+        })
+      }
+    });
+
+    await expect(
+      (useCase as any).verifyAttachments(
+        {
+          model: {
+            author_id: 'author-profile',
+            parts: [
+              {
+                attachments: [{ attachment_id: 'attachment-1' }]
+              }
+            ]
+          }
+        },
+        { connection: {} }
+      )
+    ).rejects.toThrow(
+      'Attachment attachment-1 does not belong to the uploader'
+    );
+  });
+
+  it('rejects blocked attachments', async () => {
+    const useCase = createUseCaseWithMocks({
+      attachmentsDb: {
+        findAttachmentsByIds: jest.fn().mockResolvedValue({
+          'attachment-1': {
+            id: 'attachment-1',
+            owner_profile_id: 'author-profile',
+            status: AttachmentStatus.BLOCKED
+          }
+        })
+      }
+    });
+
+    await expect(
+      (useCase as any).verifyAttachments(
+        {
+          model: {
+            author_id: 'author-profile',
+            parts: [
+              {
+                attachments: [{ attachment_id: 'attachment-1' }]
+              }
+            ]
+          }
+        },
+        { connection: {} }
+      )
+    ).rejects.toThrow('Attachment attachment-1 is not usable');
   });
 });

@@ -30,6 +30,7 @@ import {
   DropPartEntity,
   DropType
 } from '@/entities/IDrop';
+import { AttachmentStatus, DropAttachmentEntity } from '@/entities/IAttachment';
 import {
   identitySubscriptionsDb,
   IdentitySubscriptionsDb
@@ -80,7 +81,7 @@ import { CLOUDFRONT_LINK, UUID_REGEX, WALLET_REGEX } from '@/constants';
 import { getAlchemyInstance } from '@/alchemy';
 import { profilesService } from '@/profiles/profiles.service';
 import { isApproveWaveClosed } from '@/waves/wave-approve.helpers';
-import { DROP_MEDIA_DOCUMENT_MIME_TYPES } from '@/api/media/media-mime-types';
+import { attachmentsDb, AttachmentsDb } from '@/attachments/attachments.db';
 
 const ARWEAVE_ORIGIN = 'https://arweave.net';
 
@@ -110,16 +111,11 @@ export function validateDropMediaAttachment({
   if (
     mimeType.startsWith('image/') ||
     mimeType.startsWith('video/') ||
-    mimeType.startsWith('audio/') ||
-    (DROP_MEDIA_DOCUMENT_MIME_TYPES as readonly string[]).includes(mimeType)
+    mimeType.startsWith('audio/')
   ) {
-    if (mimeType === 'text/csv' && dropType !== DropType.CHAT) {
-      throw new BadRequestException(`text/csv is only supported on chat drops`);
-    }
     if (parsedUrl.origin !== CLOUDFRONT_LINK) {
-      const mediaLabel = mimeType === 'text/csv' ? 'text/csv' : 'Media';
       throw new BadRequestException(
-        `${mediaLabel} needs to come from ${CLOUDFRONT_LINK}`
+        `Media needs to come from ${CLOUDFRONT_LINK}`
       );
     }
     return;
@@ -160,7 +156,8 @@ export class CreateOrUpdateDropUseCase {
     private readonly deleteDropUseCase: DeleteDropUseCase,
     private readonly metricsRecorder: MetricsRecorder,
     private readonly dropNftLinksDb: DropNftLinksDb,
-    private readonly artCurationTokenWatchService: ArtCurationTokenWatchService
+    private readonly artCurationTokenWatchService: ArtCurationTokenWatchService,
+    private readonly attachmentsDb: AttachmentsDb
   ) {}
 
   private getRequiredAuthorId(model: CreateOrUpdateDropModel): string {
@@ -699,7 +696,7 @@ export class CreateOrUpdateDropUseCase {
       wave: WaveEntity;
       model: CreateOrUpdateDropModel;
     },
-    { timer }: { timer?: Timer; connection: ConnectionWrapper<any> }
+    { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
   ) {
     timer?.start(`${CreateOrUpdateDropUseCase.name}->verifyMedia`);
     for (const part of model.parts) {
@@ -711,6 +708,7 @@ export class CreateOrUpdateDropUseCase {
         });
       }
     }
+    await this.verifyAttachments({ model }, { timer, connection });
     const requiredMedias = wave.participation_required_media;
     if (model.drop_type === DropType.PARTICIPATORY && requiredMedias.length) {
       const mimeTypes = model.parts
@@ -740,6 +738,70 @@ export class CreateOrUpdateDropUseCase {
       }
     }
     timer?.stop(`${CreateOrUpdateDropUseCase.name}->verifyMedia`);
+  }
+
+  private async verifyAttachments(
+    { model }: { model: CreateOrUpdateDropModel },
+    {
+      timer,
+      connection
+    }: {
+      timer?: Timer;
+      connection: ConnectionWrapper<any>;
+    }
+  ) {
+    timer?.start(`${CreateOrUpdateDropUseCase.name}->verifyAttachments`);
+    try {
+      for (const part of model.parts) {
+        const attachmentIdsInPart = part.attachments?.map(
+          (attachment) => attachment.attachment_id
+        );
+        if (
+          attachmentIdsInPart?.length &&
+          new Set(attachmentIdsInPart).size !== attachmentIdsInPart.length
+        ) {
+          throw new BadRequestException(
+            `Drop part contains duplicate attachments`
+          );
+        }
+      }
+      const attachmentIds = model.parts
+        .flatMap((part) => part.attachments ?? [])
+        .map((attachment) => attachment.attachment_id);
+      if (!attachmentIds.length) {
+        return;
+      }
+      const authorId = this.getRequiredAuthorId(model);
+      const attachments = await this.attachmentsDb.findAttachmentsByIds(
+        attachmentIds,
+        connection
+      );
+      for (const attachmentId of attachmentIds) {
+        const attachment = attachments[attachmentId];
+        if (!attachment) {
+          throw new BadRequestException(`Attachment ${attachmentId} not found`);
+        }
+        if (attachment.owner_profile_id !== authorId) {
+          throw new ForbiddenException(
+            `Attachment ${attachmentId} does not belong to the uploader`
+          );
+        }
+        if (
+          ![
+            AttachmentStatus.UPLOADING,
+            AttachmentStatus.VERIFYING,
+            AttachmentStatus.PROCESSING,
+            AttachmentStatus.READY
+          ].includes(attachment.status)
+        ) {
+          throw new BadRequestException(
+            `Attachment ${attachmentId} is not usable`
+          );
+        }
+      }
+    } finally {
+      timer?.stop(`${CreateOrUpdateDropUseCase.name}->verifyAttachments`);
+    }
   }
 
   private async verifyIdentitySubmissionMetadata(
@@ -1225,6 +1287,19 @@ export class CreateOrUpdateDropUseCase {
         connection,
         timer
       ),
+      this.attachmentsDb.insertDropAttachments(
+        parts.flatMap(
+          (part, index) =>
+            part.attachments?.map<DropAttachmentEntity>((attachment) => ({
+              drop_id: dropId,
+              drop_part_id: index + 1,
+              attachment_id: attachment.attachment_id,
+              wave_id: wave.id
+            })) ?? []
+        ),
+        connection,
+        timer
+      ),
       this.dropsDb.insertDropParts(
         parts.map<DropPartEntity>((part, index) => ({
           drop_id: dropId,
@@ -1576,5 +1651,6 @@ export const createOrUpdateDrop = new CreateOrUpdateDropUseCase(
   deleteDrop,
   metricsRecorder,
   dropNftLinksDb,
-  artCurationTokenWatchService
+  artCurationTokenWatchService,
+  attachmentsDb
 );

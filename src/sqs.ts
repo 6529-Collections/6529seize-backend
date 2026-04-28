@@ -27,11 +27,13 @@ export class SQS {
   async send({
     message,
     queue,
-    messageGroupId
+    messageGroupId,
+    delaySeconds
   }: {
     message: any;
     queue: string;
     messageGroupId?: string;
+    delaySeconds?: number;
   }): Promise<SendMessageCommandOutput> {
     const needsMessageGroupId = queue.endsWith('.fifo');
     const resolvedMessageGroupId =
@@ -40,6 +42,9 @@ export class SQS {
       new SendMessageCommand({
         QueueUrl: queue,
         MessageBody: JSON.stringify(message),
+        ...(typeof delaySeconds === 'number'
+          ? { DelaySeconds: delaySeconds }
+          : {}),
         ...(resolvedMessageGroupId && {
           MessageGroupId: resolvedMessageGroupId
         })
@@ -54,14 +59,16 @@ export class SQS {
   async sendToQueueName({
     message,
     queueName,
-    messageGroupId
+    messageGroupId,
+    delaySeconds
   }: {
     message: any;
     queueName: string;
     messageGroupId?: string;
+    delaySeconds?: number;
   }) {
     const queueUrl = await this.getQueueUrl(queueName);
-    await this.send({ message, queue: queueUrl, messageGroupId });
+    await this.send({ message, queue: queueUrl, messageGroupId, delaySeconds });
   }
 
   private async getQueueUrl(queueName: string): Promise<string> {

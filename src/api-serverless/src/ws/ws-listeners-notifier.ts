@@ -6,6 +6,7 @@ import {
 } from './ws-connection.repository';
 import { RequestContext } from '@/request.context';
 import {
+  attachmentStatusUpdateMessage,
   dropDeleteMessage,
   dropRatingUpdateMessage,
   dropReactionUpdateMessage,
@@ -25,6 +26,7 @@ import { ApiProfileMin } from '../generated/models/ApiProfileMin';
 import { ApiProfileClassification } from '../generated/models/ApiProfileClassification';
 import { profileWavesDb } from '@/profiles/profile-waves.db';
 import { ApiNftLinkData } from '@/api/generated/models/ApiNftLinkData';
+import { ApiAttachment } from '@/api/generated/models/ApiAttachment';
 
 export class WsListenersNotifier {
   private readonly logger: Logger = Logger.get(this.constructor.name);
@@ -326,6 +328,60 @@ export class WsListenersNotifier {
       );
     }
     return modifiedDrop;
+  }
+
+  async notifyAboutAttachmentStatusUpdate(
+    {
+      attachment,
+      ownerProfileId,
+      waveIds
+    }: {
+      attachment: ApiAttachment;
+      ownerProfileId: string;
+      waveIds: string[];
+    },
+    ctx: RequestContext
+  ): Promise<void> {
+    ctx.timer?.start(
+      `${this.constructor.name}->notifyAboutAttachmentStatusUpdate`
+    );
+    const message = JSON.stringify(attachmentStatusUpdateMessage(attachment));
+    try {
+      const ownerConnectionIds =
+        await this.wsConnectionRepository.findConnectionIdsByIdentityId(
+          ownerProfileId
+        );
+      const waveConnectionIdLists = await Promise.all(
+        Array.from(new Set(waveIds.filter((it) => !!it))).map((waveId) =>
+          this.wsConnectionRepository
+            .findAllByWaveId(waveId)
+            .then((rows) => rows.map((it) => it.connection_id))
+        )
+      );
+      const uniqueConnectionIds = Array.from(
+        new Set([...ownerConnectionIds, ...waveConnectionIdLists.flat()])
+      );
+      if (!uniqueConnectionIds.length) {
+        return;
+      }
+      await Promise.all(
+        uniqueConnectionIds.map((connectionId: string) =>
+          this.appWebSockets.send({
+            connectionId,
+            message
+          })
+        )
+      );
+    } catch (e) {
+      this.logger.error(
+        `Sending attachment status update to websockets failed. Params: ${message}`,
+        e
+      );
+    } finally {
+      ctx.timer?.stop(
+        `${this.constructor.name}->notifyAboutAttachmentStatusUpdate`
+      );
+    }
   }
 
   async notifyAboutNftLinkUpdate(

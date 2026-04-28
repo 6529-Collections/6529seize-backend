@@ -164,11 +164,13 @@ router.post(
     );
     const invalidPart = newDrop.parts.find(
       (part) =>
-        (part.content?.trim()?.length ?? 0) === 0 && part.media.length === 0
+        (part.content?.trim()?.length ?? 0) === 0 &&
+        part.media.length === 0 &&
+        Array.from(part.attachments ?? []).length === 0
     );
     if (invalidPart) {
       throw new BadRequestException(
-        'Each drop part must have content or media attached'
+        'Each drop part must have content, media, or attachments'
       );
     }
     const contentLength = newDrop.parts
