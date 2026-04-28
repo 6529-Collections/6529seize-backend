@@ -32,7 +32,7 @@ function parseRetryPayload(body: string): AttachmentOrchestrationRetryPayload {
     typeof parsed.attachment_id !== 'string' ||
     typeof parsed.original_bucket !== 'string' ||
     typeof parsed.original_key !== 'string' ||
-    (typeof parsed.lookup_attempt !== 'undefined' &&
+    (parsed.lookup_attempt !== undefined &&
       typeof parsed.lookup_attempt !== 'number') ||
     typeof parsed.upload_attempt !== 'number' ||
     typeof parsed.scan_attempt !== 'number'
