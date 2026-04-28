@@ -7,13 +7,16 @@ import {
   wsListenersNotifier,
   WsListenersNotifier
 } from '@/api/ws/ws-listeners-notifier';
+import { dropsService, DropsApiService } from '@/api/drops/drops.api.service';
+import { giveReadReplicaTimeToCatchUp } from '@/api/api-helpers';
 
 export class AttachmentsStatusNotifier {
   private readonly logger = Logger.get(this.constructor.name);
 
   constructor(
     private readonly attachmentsDb: AttachmentsDb,
-    private readonly wsListenersNotifier: WsListenersNotifier
+    private readonly wsListenersNotifier: WsListenersNotifier,
+    private readonly dropsService?: DropsApiService
   ) {}
 
   public async notifyStatusTransition(
@@ -33,6 +36,7 @@ export class AttachmentsStatusNotifier {
         },
         ctx
       );
+      await this.notifyDropUpdates(attachment.id, ctx);
     } catch (error) {
       this.logger.error(
         `Failed to broadcast attachment status update for ${attachment.id}`,
@@ -40,9 +44,38 @@ export class AttachmentsStatusNotifier {
       );
     }
   }
+
+  private async notifyDropUpdates(
+    attachmentId: string,
+    ctx: RequestContext
+  ): Promise<void> {
+    if (!this.dropsService) {
+      return;
+    }
+    const dropsService = this.dropsService;
+    const dropIds =
+      await this.attachmentsDb.findAttachmentDropIds(attachmentId);
+    if (!dropIds.length) {
+      return;
+    }
+    await giveReadReplicaTimeToCatchUp();
+    await Promise.all(
+      dropIds.map(async (dropId) => {
+        const drop = await dropsService.findDropByIdOrThrow(
+          {
+            dropId,
+            skipEligibilityCheck: true
+          },
+          ctx
+        );
+        await this.wsListenersNotifier.notifyAboutDropUpdate(drop, ctx);
+      })
+    );
+  }
 }
 
 export const attachmentsStatusNotifier = new AttachmentsStatusNotifier(
   attachmentsDb,
-  wsListenersNotifier
+  wsListenersNotifier,
+  dropsService
 );

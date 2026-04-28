@@ -277,6 +277,19 @@ export class AttachmentsDb extends LazyDbAccessCompatibleService {
       .filter((waveId): waveId is string => !!waveId);
   }
 
+  async findAttachmentDropIds(
+    attachmentId: string,
+    connection?: ConnectionWrapper<any>
+  ): Promise<string[]> {
+    const rows = await this.db.execute<{ drop_id: string }>(
+      `select distinct drop_id from ${DROP_ATTACHMENTS_TABLE}
+       where attachment_id = :attachmentId`,
+      { attachmentId },
+      connection ? { wrappedConnection: connection } : undefined
+    );
+    return rows.map((row) => row.drop_id);
+  }
+
   async getDropAttachments(
     dropIds: string[],
     connection?: ConnectionWrapper<any>

@@ -405,7 +405,7 @@ export class DropsMappers {
           )
         );
         if (!attachmentIds.length) {
-          return Promise.resolve({});
+          return {};
         }
         return this.attachmentsDb.findAttachmentsByIds(
           attachmentIds,
