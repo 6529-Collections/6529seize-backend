@@ -8,6 +8,16 @@ describe('deploy-ui.renderer', () => {
     expect(app).toContain('applyEnvironmentFilter();');
   });
 
+  it('updates the workflow link when the target changes', () => {
+    const app = renderDeployUiApp();
+
+    expect(app).toContain('function getCurrentWorkflowUrl() {');
+    expect(app).toContain('bootstrap.workflow_urls[state.deployTarget]');
+    expect(app).toContain(
+      "deployWorkflowLink.setAttribute('href', getCurrentWorkflowUrl());"
+    );
+  });
+
   it('recomputes deploy readiness when the ref changes', () => {
     const app = renderDeployUiApp();
 
