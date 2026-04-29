@@ -2,11 +2,13 @@ import {
   DEFAULT_DEPLOY_ENVIRONMENT,
   DEPLOY_REPO_NAME,
   DEPLOY_REPO_OWNER,
+  DEPLOY_WORKFLOW_FILE,
   DEPLOY_WORKFLOW_NAME,
   DeployEnvironment,
   DeployServiceConfig,
   FRONTEND_DEPLOY_REPO_NAME,
-  FRONTEND_DEPLOY_REPO_OWNER
+  FRONTEND_DEPLOY_REPO_OWNER,
+  FRONTEND_DEPLOY_WORKFLOW_FILE
 } from '@/api/deploy/deploy.config';
 import { LOGO_SVG } from '@/api/health/health-ui.renderer';
 
@@ -18,6 +20,7 @@ type DeployUiBootstrap = {
   repo_owner: string;
   repo_name: string;
   workflow_name: string;
+  workflow_urls: Record<'backend' | 'frontend', string>;
   services: DeployServiceConfig[];
 };
 
@@ -59,6 +62,25 @@ function renderBootstrap(bootstrap: DeployUiBootstrap): string {
   return escapeHtml(JSON.stringify(bootstrap));
 }
 
+function getWorkflowUrl(
+  repoOwner: string,
+  repoName: string,
+  workflowFile: string
+): string {
+  return `https://github.com/${encodeURIComponent(repoOwner)}/${encodeURIComponent(repoName)}/actions/workflows/${encodeURIComponent(workflowFile)}`;
+}
+
+const BACKEND_WORKFLOW_URL = getWorkflowUrl(
+  DEPLOY_REPO_OWNER,
+  DEPLOY_REPO_NAME,
+  DEPLOY_WORKFLOW_FILE
+);
+const FRONTEND_WORKFLOW_URL = getWorkflowUrl(
+  FRONTEND_DEPLOY_REPO_OWNER,
+  FRONTEND_DEPLOY_REPO_NAME,
+  FRONTEND_DEPLOY_WORKFLOW_FILE
+);
+
 export function renderDeployUI(services: DeployServiceConfig[]): string {
   const bootstrap: DeployUiBootstrap = {
     default_environment: DEFAULT_DEPLOY_ENVIRONMENT,
@@ -66,6 +88,10 @@ export function renderDeployUI(services: DeployServiceConfig[]): string {
     repo_owner: DEPLOY_REPO_OWNER,
     repo_name: DEPLOY_REPO_NAME,
     workflow_name: DEPLOY_WORKFLOW_NAME,
+    workflow_urls: {
+      backend: BACKEND_WORKFLOW_URL,
+      frontend: FRONTEND_WORKFLOW_URL
+    },
     services
   };
 
@@ -1112,7 +1138,7 @@ export function renderDeployUI(services: DeployServiceConfig[]): string {
           <a
             id="deploy-workflow-link"
             class="panel-heading-link"
-            href="https://github.com/6529-Collections/6529seize-backend/actions/workflows/deploy.yml"
+            href="${escapeHtml(BACKEND_WORKFLOW_URL)}"
             target="_blank"
             rel="noreferrer">
             <svg viewBox="0 0 16 16" fill="none" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
@@ -1219,6 +1245,10 @@ export function renderDeployUiApp(): string {
 
 (function () {
   var TOKEN_STORAGE_KEY = 'deploy-ui-token';
+  var DEFAULT_WORKFLOW_URLS = {
+    backend: ${JSON.stringify(BACKEND_WORKFLOW_URL)},
+    frontend: ${JSON.stringify(FRONTEND_WORKFLOW_URL)}
+  };
   var bootstrapNode = document.getElementById('deploy-ui-bootstrap');
   var bootstrap = JSON.parse((bootstrapNode && bootstrapNode.textContent) || '{}');
 
@@ -1312,6 +1342,11 @@ export function renderDeployUiApp(): string {
     return 'https://github.com/${encodeURIComponent(DEPLOY_REPO_OWNER)}/${encodeURIComponent(DEPLOY_REPO_NAME)}';
   }
 
+  function getCurrentWorkflowUrl() {
+    var urls = Object.assign({}, DEFAULT_WORKFLOW_URLS, (bootstrap && bootstrap.workflow_urls) || {});
+    return urls[state.deployTarget] || urls.backend;
+  }
+
   function getCurrentRef() {
     return state.deployTarget === 'frontend' ? state.frontendRef : state.backendRef;
   }
@@ -1395,6 +1430,9 @@ export function renderDeployUiApp(): string {
 
     if (repoLink) {
       repoLink.setAttribute('href', getCurrentRepoUrl());
+    }
+    if (deployWorkflowLink) {
+      deployWorkflowLink.setAttribute('href', getCurrentWorkflowUrl());
     }
 
     if (deployPanelTitle) {

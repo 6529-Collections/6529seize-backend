@@ -4,7 +4,7 @@ import {
   S3Client,
   UploadPartCommand
 } from '@aws-sdk/client-s3';
-import { getS3 } from '@/s3.client';
+import { getAttachmentsS3 } from '@/attachments/attachments-s3-client';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { Time } from '@/time';
 import { getFileExtension } from '@/api/media/sanitize-file-name';
@@ -139,4 +139,6 @@ export class UploadAttachmentsService {
   }
 }
 
-export const uploadAttachmentsService = new UploadAttachmentsService(getS3);
+export const uploadAttachmentsService = new UploadAttachmentsService(
+  getAttachmentsS3
+);
