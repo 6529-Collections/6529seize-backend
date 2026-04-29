@@ -21,9 +21,7 @@ describe('deploy-ui.renderer', () => {
     expect(app).toContain(
       'var urls = Object.assign({}, DEFAULT_WORKFLOW_URLS, (bootstrap && bootstrap.workflow_urls) || {});'
     );
-    expect(app).toContain(
-      'return urls[state.deployTarget] || urls.backend;'
-    );
+    expect(app).toContain('return urls[state.deployTarget] || urls.backend;');
     expect(app).toContain(
       "deployWorkflowLink.setAttribute('href', getCurrentWorkflowUrl());"
     );
