@@ -1,7 +1,8 @@
 # Backend Loop Map
 
-This is a codebase-derived schematic of the backend loop and worker layer. It
-uses `src/config/deploy-services.json` as the deployable service inventory,
+This is a codebase-derived schematic of the backend loop and worker layer, with
+the API Lambda included as request-facing context. It uses
+`src/config/deploy-services.json` as the deployable service inventory,
 `src/*/serverless.yaml` for Lambda trigger/sizing data, and `src/*/index.ts`
 for the primary runtime responsibility.
 
@@ -14,6 +15,7 @@ repository.
 ```mermaid
 flowchart LR
   EventBridge["EventBridge schedules"]
+  APIGateway["API Gateway / HTTP"]
   SQS["Amazon SQS queues"]
   SNS["Amazon SNS topics"]
   Manual["Manual or CI invocation"]
@@ -28,6 +30,10 @@ flowchart LR
   Arweave["Arweave"]
   Discord["Discord"]
   Firebase["Firebase Cloud Messaging"]
+
+  subgraph RequestFacing["Request-facing API"]
+    seizeAPI["seizeAPI<br/>Express API Lambda"]
+  end
 
   subgraph Scheduled["Scheduled Lambda loops"]
     subgraph ChainIndexing["NFT and chain indexing"]
@@ -115,11 +121,17 @@ flowchart LR
     tdhDone["tdh-calculation-done.fifo SNS topic"]
   end
 
+  APIGateway --> seizeAPI
   EventBridge --> Scheduled
   SQS --> QueueWorkers
   SNS --> TopicWorkers
   Manual --> ManualJobs
   CloudFront --> RequestDriven
+
+  seizeAPI --> DB
+  seizeAPI --> Redis
+  seizeAPI --> S3
+  seizeAPI --> Alchemy
 
   ChainIndexing --> DB
   ScoresAndRatings --> DB
@@ -143,6 +155,10 @@ flowchart LR
   s3Uploader --> CF
 
   waveDecisionExecutionLoop -. "CLAIMS_BUILDER_SQS_URL" .-> claimsBuilderQ
+  seizeAPI -. "claim media uploads" .-> claimsMediaQ
+  seizeAPI -. "push notification jobs" .-> firebaseQ
+  seizeAPI -. "NFT link refresh jobs" .-> nftLinkRefreshQ
+  seizeAPI -. "NFT link preview jobs" .-> nftLinkPreviewQ
   claimsBuilderQ --> claimsBuilder
   claimsBuilder --> DB
 
@@ -233,8 +249,8 @@ flowchart LR
   `overRatesRevocationLoop` subscribe through their FIFO SQS queues.
 - `waveDecisionExecutionLoop` publishes claim build jobs to `claims-builder`.
 - The API layer publishes push-notification jobs to `firebase-push-notifications`
-  and claim-media jobs to `claims-media-arweave-upload`; those API routes are
-  outside this loop-focused diagram.
+  and claim-media jobs to `claims-media-arweave-upload`. It also publishes NFT
+  link refresh/preview work through the link services.
 - NFT media jobs are published to `s3-uploader-jobs` by the S3 uploader queue
   helper. The helper is production-gated by `NODE_ENV === 'production'`.
 - `mediaResizerLoop` and `nextgenMediaProxyInterceptor` are deployable Lambda

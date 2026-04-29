@@ -1,0 +1,173 @@
+flowchart LR
+  EventBridge["EventBridge schedules"]
+  APIGateway["API Gateway / HTTP"]
+  SQS["Amazon SQS queues"]
+  SNS["Amazon SNS topics"]
+  Manual["Manual or CI invocation"]
+  CloudFront["CloudFront / HTTP request path"]
+
+  DB[("MySQL / RDS<br/>read + write pools")]
+  Redis[("Redis<br/>cache / rate-limit context")]
+  S3[("S3 buckets<br/>media, exports, dumps")]
+  CF["CloudFront CDN"]
+  MediaConvert["AWS MediaConvert"]
+  Alchemy["Alchemy / Ethereum RPC"]
+  Arweave["Arweave"]
+  Discord["Discord"]
+  Firebase["Firebase Cloud Messaging"]
+
+  subgraph RequestFacing["Request-facing API"]
+    seizeAPI["seizeAPI<br/>Express API Lambda"]
+  end
+
+  subgraph Scheduled["Scheduled Lambda loops"]
+    subgraph ChainIndexing["NFT and chain indexing"]
+      nftsLoop["nftsLoop<br/>NFT discovery, metadata, distribution info"]
+      nftOwnersLoop["nftOwnersLoop<br/>NFT owner snapshots"]
+      nftHistoryLoop["nftHistoryLoop<br/>NFT ownership history"]
+      transactionsLoop["transactionsLoop<br/>contract transaction discovery"]
+      transactionsProcessingLoop["transactionsProcessingLoop<br/>distribution mints and subscription redemption"]
+      delegationsLoop["delegationsLoop<br/>delegation discovery and reconsolidation"]
+      ownersBalancesLoop["ownersBalancesLoop<br/>owner balance snapshots"]
+    end
+
+    subgraph ScoresAndRatings["Scores, ratings, and community metrics"]
+      tdhLoop["tdhLoop<br/>daily TDH calculation"]
+      tdhHistoryLoop["tdhHistoryLoop<br/>TDH history snapshots"]
+      rateEventProcessingLoop["rateEventProcessingLoop<br/>rating event aggregations"]
+      aggregatedActivityLoop["aggregatedActivityLoop<br/>activity rollups"]
+      xTdhGrantsReviewerLoop["xTdhGrantsReviewerLoop<br/>xTDH grant review"]
+    end
+
+    subgraph MarketAndContent["Market, ENS, waves, and content"]
+      marketStatsLoop["marketStatsLoop<br/>MEMES, LAB, GRADIENT, NEXTGEN market stats"]
+      royaltiesLoop["royaltiesLoop<br/>royalty discovery"]
+      discoverEnsLoop["discoverEnsLoop<br/>ENS discovery"]
+      refreshEnsLoop["refreshEnsLoop<br/>ENS refresh"]
+      waveDecisionExecutionLoop["waveDecisionExecutionLoop<br/>wave decision creation"]
+      waveLeaderboardSnapshotterLoop["waveLeaderboardSnapshotterLoop<br/>wave leaderboard refresh"]
+      subscriptionsDaily["subscriptionsDaily<br/>daily subscription update"]
+      subscriptionsTopUpLoop["subscriptionsTopUpLoop<br/>top-up discovery"]
+      ethPriceLoop["ethPriceLoop<br/>ETH/USD price sync"]
+      mintAnnouncementsLoop["mintAnnouncementsLoop<br/>mint state announcements"]
+    end
+
+    subgraph ExternalAndNextgen["External collections and NextGen media"]
+      externalCollectionSnapshottingLoop["externalCollectionSnapshottingLoop<br/>external collection snapshots"]
+      externalCollectionLiveTailingLoop["externalCollectionLiveTailingLoop<br/>external collection live tailing"]
+      artCurationNftWatchLoop["artCurationNftWatchLoop<br/>art curation token watch"]
+      nextgenContractLoop["nextgenContractLoop<br/>NextGen contract events"]
+      nextgenMetadataLoop["nextgenMetadataLoop<br/>NextGen metadata refresh"]
+      nextgenMediaUploader["nextgenMediaUploader<br/>copy generated media to S3"]
+      nextgenMediaImageResolutions["nextgenMediaImageResolutions<br/>generate NextGen image resolutions"]
+      rememesLoop["rememesLoop<br/>rememe metadata, S3, Arweave uploads"]
+    end
+
+    subgraph ScheduledMaintenance["Scheduled maintenance"]
+      dbDumpsDaily["dbDumpsDaily<br/>daily DB CSV exports"]
+    end
+  end
+
+  subgraph QueueWorkers["SQS-driven workers"]
+    s3UploaderQ[["s3-uploader-jobs"]]
+    s3Uploader["s3Uploader<br/>upload and compress NFT media"]
+    claimsBuilderQ[["claims-builder"]]
+    claimsBuilder["claimsBuilder<br/>build minting claims"]
+    claimsMediaQ[["claims-media-arweave-upload"]]
+    claimsMediaArweaveUploader["claimsMediaArweaveUploader<br/>upload claim media to Arweave"]
+    nftLinkRefreshQ[["nft-link-refreshes"]]
+    nftLinkRefresherLoop["nftLinkRefresherLoop<br/>resolve NFT links"]
+    nftLinkPreviewQ[["nft-link-media-previews"]]
+    nftLinkMediaPreviewLoop["nftLinkMediaPreviewLoop<br/>build link media previews"]
+    firebaseQ[["firebase-push-notifications"]]
+    pushNotificationsHandler["pushNotificationsHandler<br/>deliver identity push notifications"]
+    xtdhQ[["xtdh-start.fifo"]]
+    xTdhLoop["xTdhLoop<br/>recalculate xTDH"]
+    overRatesQ[["over-rates-revocation-start.fifo"]]
+    overRatesRevocationLoop["overRatesRevocationLoop<br/>reduce over-rates"]
+  end
+
+  subgraph ManualJobs["Manual or one-off jobs"]
+    dbMigrationsLoop["dbMigrationsLoop<br/>db-migrate up"]
+    customReplayLoop["customReplayLoop<br/>custom replay"]
+    populateHistoricConsolidatedTdh["populateHistoricConsolidatedTdh<br/>historic consolidated TDH backfill"]
+    teamLoop["teamLoop<br/>team CSV and Arweave upload"]
+    dropVideoConversionInvokerLoop["dropVideoConversionInvokerLoop<br/>MediaConvert job invoker"]
+  end
+
+  subgraph RequestDriven["Request-driven Lambda deployables"]
+    mediaResizerLoop["mediaResizerLoop<br/>resize images on demand"]
+    nextgenMediaProxyInterceptor["nextgenMediaProxyInterceptor<br/>CloudFront metadata fallback"]
+  end
+
+  subgraph TopicWorkers["SNS-driven workers"]
+    cloudwatchAlarms["cloudwatch-alarms SNS topic"]
+    cloudwatchAlarmsToDiscordLoop["cloudwatchAlarmsToDiscordLoop<br/>alarm messages to Discord"]
+    tdhDone["tdh-calculation-done.fifo SNS topic"]
+  end
+
+  APIGateway --> seizeAPI
+  EventBridge --> Scheduled
+  SQS --> QueueWorkers
+  SNS --> TopicWorkers
+  Manual --> ManualJobs
+  CloudFront --> RequestDriven
+
+  seizeAPI --> DB
+  seizeAPI --> Redis
+  seizeAPI --> S3
+  seizeAPI --> Alchemy
+
+  ChainIndexing --> DB
+  ScoresAndRatings --> DB
+  MarketAndContent --> DB
+  ExternalAndNextgen --> DB
+  ScheduledMaintenance --> DB
+  QueueWorkers --> DB
+  ManualJobs --> DB
+
+  ChainIndexing --> Alchemy
+  ScoresAndRatings --> Alchemy
+  MarketAndContent --> Alchemy
+  ExternalAndNextgen --> Alchemy
+
+  tdhLoop -- "notifyTdhCalculationsDone" --> tdhDone
+  tdhDone --> xtdhQ --> xTdhLoop
+  tdhDone --> overRatesQ --> overRatesRevocationLoop
+
+  nftsLoop -. "enqueue media jobs" .-> s3UploaderQ
+  s3UploaderQ --> s3Uploader --> S3
+  s3Uploader --> CF
+
+  waveDecisionExecutionLoop -. "CLAIMS_BUILDER_SQS_URL" .-> claimsBuilderQ
+  seizeAPI -. "claim media uploads" .-> claimsMediaQ
+  seizeAPI -. "push notification jobs" .-> firebaseQ
+  seizeAPI -. "NFT link refresh jobs" .-> nftLinkRefreshQ
+  seizeAPI -. "NFT link preview jobs" .-> nftLinkPreviewQ
+  claimsBuilderQ --> claimsBuilder
+  claimsBuilder --> DB
+
+  claimsMediaQ --> claimsMediaArweaveUploader --> Arweave
+  nftLinkRefreshQ --> nftLinkRefresherLoop
+  nftLinkPreviewQ --> nftLinkMediaPreviewLoop
+  firebaseQ --> pushNotificationsHandler --> Firebase
+
+  dbDumpsDaily --> S3
+  nextgenMediaUploader --> S3
+  nextgenMediaUploader --> CF
+  nextgenMediaImageResolutions --> S3
+  rememesLoop --> S3
+  rememesLoop --> Arweave
+  teamLoop --> Arweave
+  dropVideoConversionInvokerLoop --> MediaConvert
+  mediaResizerLoop --> S3
+  mediaResizerLoop --> CF
+  CloudFront --> nextgenMediaProxyInterceptor
+
+  cloudwatchAlarms --> cloudwatchAlarmsToDiscordLoop --> Discord
+  mintAnnouncementsLoop --> Discord
+  nextgenMediaUploader --> Discord
+  nextgenMediaImageResolutions --> Discord
+
+  RuntimeContext["doInDbContext<br/>runtime context"] --> DB
+  RuntimeContext --> Redis
