@@ -773,6 +773,30 @@ export class UserGroupsService {
     }
   }
 
+  public async getSqlAndParamsByGroupIdForSystemBroadcast(
+    groupId: string | null,
+    ctx: RequestContext
+  ): Promise<{
+    sql: string;
+    params: Record<string, any>;
+  } | null> {
+    if (groupId === null) {
+      return await this.getSqlAndParamsByGroupId(groupId, ctx);
+    }
+    const group = await this.userGroupsDb.getByIdWithoutVisibilityCheck(
+      groupId,
+      ctx.connection
+    );
+    if (!group) {
+      return null;
+    }
+    const apiGroup = (await this.mapForApi([group], ctx)).at(0);
+    if (!apiGroup) {
+      return null;
+    }
+    return await this.getSqlAndParams(apiGroup.group, groupId, ctx);
+  }
+
   private async getSqlAndParams(
     group: GClean,
     group_id: string | null,

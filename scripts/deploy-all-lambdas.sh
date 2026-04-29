@@ -4,6 +4,8 @@
 SERVICES=(
   api
   aggregatedActivityLoop
+  attachmentsOrchestrator
+  attachmentsProcessor
   cloudwatchAlarmsToDiscordLoop
   claimsBuilder
   claimsMediaArweaveUploader

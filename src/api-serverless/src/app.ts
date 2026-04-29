@@ -5,6 +5,7 @@ import * as http from 'node:http';
 import WebSocket, { WebSocketServer } from 'ws';
 import aggregatedActivityRoutes from './aggregated-activity/api.aggregated-activity.routes';
 import authRoutes from './auth/auth.routes';
+import attachmentsRoutes from './attachments/attachments.routes';
 import communityMembersRoutes from './community-members/community-members.routes';
 import userGroupsImEligibleForRoutes from './community-members/user-groups-im-elgigible-for.routes';
 import userGroupsRoutes from './community-members/user-groups.routes';
@@ -1582,6 +1583,7 @@ async function initializeApp() {
   apiRouter.use(`/light-drops`, lightDropsRoutes);
   apiRouter.use(`/nft-owners`, nftOwnersRoutes);
   apiRouter.use(`/drop-media`, dropsMediaRoutes);
+  apiRouter.use(`/attachments`, attachmentsRoutes);
   apiRouter.use(`/wave-media`, waveMediaRoutes);
   apiRouter.use(`/profile-subclassifications`, profileSubClassificationsRoutes);
   apiRouter.use(`/delegations`, delegationsRoutes);

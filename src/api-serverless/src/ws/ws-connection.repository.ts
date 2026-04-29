@@ -72,7 +72,13 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
   }
 
   async getCurrentlyOnlineCommunityMemberConnectionIds(
-    { groupId, waveId }: { groupId: string | null; waveId: string },
+    {
+      groupId,
+      waveId
+    }: {
+      groupId: string | null;
+      waveId: string;
+    },
     ctx: RequestContext
   ): Promise<
     { connectionId: string; profileId: string | null; wave_id: string | null }[]
@@ -126,13 +132,13 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
       join ${UserGroupsService.GENERATED_VIEW} cm
       on ws.identity_id = cm.profile_id
     `;
-    const params = viewResult.params;
+    const sqlParams = viewResult.params;
     const result = await this.db
       .execute<{
         connection_id: string;
         profile_id: string | null;
         wave_id: string | null;
-      }>(sql, params)
+      }>(sql, sqlParams)
       .then((res) =>
         res.map((it) => ({
           connectionId: it.connection_id,
@@ -143,6 +149,53 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     ctx?.timer?.stop(
       `${this.constructor.name}->getCurrentlyOnlineCommunityMemberConnectionIds`
     );
+    return result;
+  }
+
+  async getCurrentlyOnlineCommunityMemberConnectionIdsForSystemBroadcast(
+    params: { groupId: string | null; waveId: string },
+    ctx: RequestContext
+  ): Promise<
+    { connectionId: string; profileId: string | null; wave_id: string | null }[]
+  > {
+    if (params.groupId === null) {
+      return await this.getCurrentlyOnlineCommunityMemberConnectionIds(
+        params,
+        ctx
+      );
+    }
+    const viewResult =
+      await this.userGroupsService.getSqlAndParamsByGroupIdForSystemBroadcast(
+        params.groupId,
+        ctx
+      );
+    if (viewResult === null) {
+      return [];
+    }
+    const sql = `
+      ${viewResult.sql} 
+      select
+        ws.connection_id as connection_id,
+        ws.identity_id as profile_id,
+        ws.wave_id as wave_id
+      from ${WS_CONNECTIONS_TABLE} ws
+      join ${UserGroupsService.GENERATED_VIEW} cm
+      on ws.identity_id = cm.profile_id
+    `;
+    const sqlParams = viewResult.params;
+    const result = await this.db
+      .execute<{
+        connection_id: string;
+        profile_id: string | null;
+        wave_id: string | null;
+      }>(sql, sqlParams)
+      .then((res) =>
+        res.map((it) => ({
+          connectionId: it.connection_id,
+          wave_id: it.wave_id,
+          profileId: it.profile_id === ANON_USER_ID ? null : it.profile_id
+        }))
+      );
     return result;
   }
 
@@ -344,6 +397,32 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     `,
       { waveId }
     );
+  }
+
+  async findWaveVisibilityGroupId(
+    waveId: string
+  ): Promise<string | null | undefined> {
+    return this.db
+      .oneOrNull<{
+        visibility_group_id: string | null;
+      }>(`select visibility_group_id from ${WAVES_TABLE} where id = :waveId`, {
+        waveId
+      })
+      .then((row) => row?.visibility_group_id);
+  }
+
+  async findConnectionIdsByIdentityId(identityId: string): Promise<string[]> {
+    if (!identityId || identityId === ANON_USER_ID) {
+      return [];
+    }
+    return this.db
+      .execute<{
+        connection_id: string;
+      }>(
+        `select connection_id from ${WS_CONNECTIONS_TABLE} where identity_id = :identityId`,
+        { identityId }
+      )
+      .then((res) => res.map((it) => it.connection_id));
   }
 
   async findAllConnectionIds(): Promise<string[]> {

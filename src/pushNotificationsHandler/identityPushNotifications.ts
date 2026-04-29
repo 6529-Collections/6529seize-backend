@@ -1,4 +1,4 @@
-import { Like } from 'typeorm';
+import { In, Like } from 'typeorm';
 import { userGroupsService } from '../api-serverless/src/community-members/user-groups.service';
 import { ApiIdentity } from '../api-serverless/src/generated/models/ApiIdentity';
 import { identityFetcher } from '../api-serverless/src/identities/identity.fetcher';
@@ -7,6 +7,11 @@ import {
   resolveWavePictureOverride
 } from '../api-serverless/src/waves/direct-message-wave-display.service';
 import { getDataSource } from '../db';
+import {
+  AttachmentEntity,
+  AttachmentKind,
+  DropAttachmentEntity
+} from '../entities/IAttachment';
 import { DropEntity, DropMediaEntity, DropPartEntity } from '../entities/IDrop';
 import {
   IdentityNotificationCause,
@@ -24,7 +29,11 @@ import { Logger } from '../logging';
 import { IdentityNotificationsDb } from '../notifications/identity-notifications.db';
 import { dbSupplier } from '../sql-executor';
 import { sumBadgeContributions } from './badge-count';
-import { getDropMediaPlaceholderForPush } from './push-notification-text';
+import {
+  getDropMediaInfoForPush,
+  truncatePushNotificationFileName
+} from './push-notification-text';
+import type { PushNotificationFileInfo } from './push-notification-text';
 import { sendMessage } from './sendPushNotifications';
 
 const CAUSE_TO_SETTING_KEY: Partial<
@@ -601,20 +610,102 @@ async function getDropBodyTextForPush(
     }
   }
 
-  const attachmentLabels = mediaRows.map((row) =>
-    getDropMediaPlaceholderForPush(row.url, row.mime_type)
-  );
-
-  if (hasText && attachmentLabels.length > 0) {
-    return `${rawContentTrimmed} ${attachmentLabels.join(' ')}`.trim();
-  }
   if (hasText) {
     return rawContentTrimmed;
   }
-  if (attachmentLabels.length > 0) {
-    return attachmentLabels.join(' ');
+
+  const mediaInfos = mediaRows.map((row) =>
+    getDropMediaInfoForPush(row.url, row.mime_type)
+  );
+  const attachmentInfos = await getDropAttachmentInfosForPush(dropId, dropPart);
+  const attachmentText = getAttachmentBodyText([
+    ...mediaInfos,
+    ...attachmentInfos
+  ]);
+
+  if (attachmentText) {
+    return attachmentText;
   }
   return emptyFallback;
+}
+
+function getAttachmentBodyText(
+  attachments: PushNotificationFileInfo[]
+): string | null {
+  if (attachments.length === 0) {
+    return null;
+  }
+  if (attachments.length > 1) {
+    return `${attachments.length} attachments`;
+  }
+  const attachment = attachments[0];
+  const label = `${attachment.label} attachment`;
+  return attachment.fileName ? `${label} · ${attachment.fileName}` : label;
+}
+
+async function getDropAttachmentInfosForPush(
+  dropId: string | null,
+  dropPart: DropPartEntity | null
+): Promise<PushNotificationFileInfo[]> {
+  if (!dropId) {
+    return [];
+  }
+  const dropAttachmentRepo =
+    getDataSource().getRepository(DropAttachmentEntity);
+  let dropAttachments: DropAttachmentEntity[] = [];
+  if (dropPart?.drop_part_id != null) {
+    dropAttachments = await dropAttachmentRepo.find({
+      where: { drop_id: dropId, drop_part_id: dropPart.drop_part_id }
+    });
+  }
+  if (dropAttachments.length === 0 && !dropPart) {
+    dropAttachments = await dropAttachmentRepo.find({
+      where: { drop_id: dropId },
+      order: { drop_part_id: 'ASC', attachment_id: 'ASC' }
+    });
+  }
+  const attachmentIds = dropAttachments.map(
+    (dropAttachment) => dropAttachment.attachment_id
+  );
+  if (attachmentIds.length === 0) {
+    return [];
+  }
+  const attachments = await getDataSource()
+    .getRepository(AttachmentEntity)
+    .find({
+      where: { id: In(attachmentIds) }
+    });
+  const attachmentsById = new Map(
+    attachments.map((attachment) => [attachment.id, attachment])
+  );
+  return attachmentIds.map((attachmentId) =>
+    getAttachmentInfoForPush(attachmentsById.get(attachmentId))
+  );
+}
+
+function getAttachmentInfoForPush(
+  attachment: AttachmentEntity | undefined
+): PushNotificationFileInfo {
+  if (!attachment) {
+    return { label: 'File', fileName: null };
+  }
+  const label = getAttachmentLabelForPush(attachment.kind);
+  const fileName = attachment.original_file_name?.trim();
+  return {
+    label,
+    fileName: fileName ? truncatePushNotificationFileName(fileName) : null
+  };
+}
+
+function getAttachmentLabelForPush(kind: AttachmentKind): string {
+  switch (kind) {
+    case AttachmentKind.PDF:
+      return 'PDF';
+    case AttachmentKind.CSV:
+      return 'CSV';
+    default:
+      return 'Attachment';
+  }
 }
 
 async function getDropSerialNo(dropId: string | null) {

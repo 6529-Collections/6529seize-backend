@@ -84,6 +84,11 @@ import {
 } from '@/api/waves/wave-min.helpers';
 import { profileWavesDb } from '@/profiles/profile-waves.db';
 import { DropGroupMention } from '@/entities/IWaveGroupNotificationSubscription';
+import { AttachmentEntity, DropAttachmentEntity } from '@/entities/IAttachment';
+import { attachmentsDb, AttachmentsDb } from '@/attachments/attachments.db';
+import { ApiAttachment } from '@/api/generated/models/ApiAttachment';
+import { mapAttachmentToApiAttachment } from '@/api/attachments/attachments.mappers';
+import { ApiDropAttachmentReference } from '@/api/generated/models/ApiDropAttachmentReference';
 
 export class DropsMappers {
   constructor(
@@ -99,7 +104,8 @@ export class DropsMappers {
     private readonly curationsDb: CurationsDb,
     private readonly dropNftLinksDb: DropNftLinksDb,
     private readonly nftLinksDb: NftLinksDb,
-    private readonly nftLinkResolvingService: NftLinkResolvingService
+    private readonly nftLinkResolvingService: NftLinkResolvingService,
+    private readonly attachmentsDb: AttachmentsDb
   ) {}
 
   public createDropApiToUseCaseModel({
@@ -164,6 +170,11 @@ export class DropsMappers {
           url: media.url,
           mime_type: media.mime_type
         })),
+        attachments: this.toAttachmentReferencesArray(it.attachments).map(
+          (attachment) => ({
+            attachment_id: attachment.attachment_id
+          })
+        ),
         quoted_drop: it.quoted_drop
           ? {
               drop_id: it.quoted_drop.drop_id,
@@ -189,6 +200,12 @@ export class DropsMappers {
       ),
       signature: request.signature
     };
+  }
+
+  private toAttachmentReferencesArray(
+    attachments?: ApiDropAttachmentReference[]
+  ): ApiDropAttachmentReference[] {
+    return attachments ?? [];
   }
 
   public async convertToDropFulls(
@@ -314,6 +331,10 @@ export class DropsMappers {
       ...allReplyDropIds,
       ...dropIds
     ]);
+    const dropAttachmentsPromise = this.attachmentsDb.getDropAttachments(
+      allDropIds,
+      connection
+    );
     const winningDropIds = allEntities
       .filter((it) => it.drop_type === DropType.WINNER)
       .map((it) => it.id);
@@ -332,6 +353,8 @@ export class DropsMappers {
       dropsTopVoters,
       dropsVoteCounts,
       dropMedia,
+      dropAttachments,
+      attachmentsById,
       subscribedActions,
       winDecisions,
       winningDropsTopRaters,
@@ -371,6 +394,24 @@ export class DropsMappers {
         { connection }
       ),
       this.dropsDb.getDropMedia(allDropIds, connection),
+      dropAttachmentsPromise,
+      dropAttachmentsPromise.then((dropAttachments) => {
+        const attachmentIds = Array.from(
+          new Set(
+            Object.values(dropAttachments)
+              .flat()
+              .map((it) => it.attachment_id)
+              .filter((id): id is string => !!id)
+          )
+        );
+        if (!attachmentIds.length) {
+          return {};
+        }
+        return this.attachmentsDb.findAttachmentsByIds(
+          attachmentIds,
+          connection
+        );
+      }),
       !contextProfileId
         ? Promise.resolve({} as Record<string, ActivityEventAction[]>)
         : this.identitySubscriptionsDb.findIdentitySubscriptionActionsOfTargets(
@@ -476,6 +517,8 @@ export class DropsMappers {
       dropsVoteCounts,
       dropsTopVoters,
       dropMedia,
+      dropAttachments,
+      attachmentsById,
       dropsParts,
       winDecisions,
       winningDropsTopRaters,
@@ -522,6 +565,8 @@ export class DropsMappers {
       metadata,
       dropsTopVoters,
       dropMedia,
+      dropAttachments,
+      attachmentsById,
       dropsParts,
       subscribedActions,
       deletedDrops,
@@ -762,6 +807,8 @@ export class DropsMappers {
         resolvedProfilesByIds: resolvedIdentityProfilesByIds,
         dropsParts,
         dropMedia,
+        dropAttachments,
+        attachmentsById,
         contextProfileId,
         referencedNfts,
         mentions,
@@ -801,6 +848,8 @@ export class DropsMappers {
     resolvedProfilesByIds,
     dropsParts,
     dropMedia,
+    dropAttachments,
+    attachmentsById,
     contextProfileId,
     referencedNfts,
     mentions,
@@ -836,6 +885,8 @@ export class DropsMappers {
     resolvedProfilesByIds: Record<string, ApiDropResolvedIdentityProfile>;
     dropsParts: Record<string, DropPartEntity[]>;
     dropMedia: Record<string, DropMediaEntity[]>;
+    dropAttachments: Record<string, DropAttachmentEntity[]>;
+    attachmentsById: Record<string, AttachmentEntity>;
     contextProfileId: string | undefined | null;
     referencedNfts: DropReferencedNftEntity[];
     mentions: DropMentionEntity[];
@@ -1003,6 +1054,8 @@ export class DropsMappers {
                   resolvedProfilesByIds,
                   dropsParts,
                   dropMedia,
+                  dropAttachments,
+                  attachmentsById,
                   contextProfileId,
                   referencedNfts,
                   mentions,
@@ -1056,6 +1109,8 @@ export class DropsMappers {
                           resolvedProfilesByIds,
                           dropsParts,
                           dropMedia,
+                          dropAttachments,
+                          attachmentsById,
                           contextProfileId,
                           referencedNfts,
                           mentions,
@@ -1095,7 +1150,18 @@ export class DropsMappers {
                 .map<ApiDropMedia>((it) => ({
                   url: it.url,
                   mime_type: it.mime_type
-                })) ?? []
+                })) ?? [],
+            attachments: (dropAttachments[dropEntity.id] ?? [])
+              .filter(
+                (attachment) => attachment.drop_part_id === it.drop_part_id
+              )
+              .map((attachment) => attachmentsById[attachment.attachment_id])
+              .filter(
+                (attachment): attachment is AttachmentEntity => !!attachment
+              )
+              .map<ApiAttachment>((attachment) =>
+                mapAttachmentToApiAttachment(attachment)
+              )
           };
         }) ?? [],
       parts_count: dropEntity.parts_count,
@@ -1159,5 +1225,6 @@ export const dropsMappers = new DropsMappers(
   curationsDb,
   dropNftLinksDb,
   nftLinksDb,
-  nftLinkResolvingService
+  nftLinkResolvingService,
+  attachmentsDb
 );

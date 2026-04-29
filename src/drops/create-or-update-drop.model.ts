@@ -24,6 +24,7 @@ export interface CreateOrUpdateDropPartModel {
   readonly content: string | null;
   readonly quoted_drop: DropPartIdentifierModel | null;
   readonly media: DropMediaModel[];
+  readonly attachments?: DropAttachmentReferenceModel[];
 }
 
 export interface DropPartIdentifierModel {
@@ -34,6 +35,10 @@ export interface DropPartIdentifierModel {
 export interface DropMediaModel {
   readonly url: string;
   readonly mime_type: string;
+}
+
+export interface DropAttachmentReferenceModel {
+  readonly attachment_id: string;
 }
 
 export interface DropReferencedNftModel {

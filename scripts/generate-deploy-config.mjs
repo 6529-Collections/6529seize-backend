@@ -75,6 +75,7 @@ ${indent(yamlList(serviceNames))}
 env:
   SENTRY_DSN: \${{ secrets.SENTRY_DSN }}
   SENTRY_AUTH_TOKEN: \${{ secrets.SENTRY_AUTH_TOKEN }}
+  ATTACHMENTS_INGEST_S3_BUCKET: \${{ secrets.ATTACHMENTS_INGEST_S3_BUCKET }}
 
 run-name: Deploy \${{ github.event.inputs.service }} to \${{ github.event.inputs.environment }}
 
@@ -139,7 +140,7 @@ jobs:
           aws lambda update-function-code --function-name seizeAPI --zip-file fileb://src/api-serverless/dist/index.zip --no-cli-pager > /dev/null 2>&1
           sleep 10
           aws lambda get-function-configuration --function-name seizeAPI --query 'Environment.Variables' --output json --no-cli-pager > /tmp/current_env.json 2>/dev/null || echo '{}' > /tmp/current_env.json
-          jq --arg commit "$GIT_COMMIT" --arg claimsMediaArweaveUploadSqsUrl "$CLAIMS_MEDIA_ARWEAVE_UPLOAD_SQS_URL" '. + {GIT_COMMIT: $commit, CLAIMS_MEDIA_ARWEAVE_UPLOAD_SQS_URL: $claimsMediaArweaveUploadSqsUrl} | {Variables: .}' /tmp/current_env.json > /tmp/env_config.json
+          jq --arg commit "$GIT_COMMIT" --arg claimsMediaArweaveUploadSqsUrl "$CLAIMS_MEDIA_ARWEAVE_UPLOAD_SQS_URL" --arg attachmentsIngestS3Bucket "$ATTACHMENTS_INGEST_S3_BUCKET" '. + {GIT_COMMIT: $commit, CLAIMS_MEDIA_ARWEAVE_UPLOAD_SQS_URL: $claimsMediaArweaveUploadSqsUrl, ATTACHMENTS_INGEST_S3_BUCKET: $attachmentsIngestS3Bucket} | {Variables: .}' /tmp/current_env.json > /tmp/env_config.json
           aws lambda update-function-configuration --function-name seizeAPI --description "$VERSION_DESCRIPTION" --environment file:///tmp/env_config.json --memory-size "$API_MEMORY_SIZE" --timeout "$API_TIMEOUT" --no-cli-pager > /dev/null 2>&1
           rm -f /tmp/current_env.json /tmp/env_config.json
       - name: Deploy mediaResizerLoop

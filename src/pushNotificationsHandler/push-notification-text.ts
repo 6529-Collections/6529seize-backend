@@ -1,7 +1,13 @@
+import { ApiAttachmentUploadMimeType } from '@/api/generated/models/ApiAttachmentUploadMimeType';
 import { ApiMediaUploadMimeType } from '@/api/generated/models/ApiMediaUploadMimeType';
-import { DROP_MEDIA_ALLOWED_EXTENSIONS_BY_MIME_TYPE } from '@/api/media/media-mime-types';
+import {
+  ATTACHMENT_ALLOWED_EXTENSIONS_BY_MIME_TYPE,
+  DROP_MEDIA_ALLOWED_EXTENSIONS_BY_MIME_TYPE
+} from '@/api/media/media-mime-types';
 
-const MAX_MEDIA_FILENAME_LENGTH = 64;
+export const MAX_PUSH_NOTIFICATION_FILENAME_LENGTH = 32;
+const FILENAME_TRUNCATION_MARKER = '.....';
+const FILENAME_TRUNCATION_EDGE_LENGTH = 4;
 const MEDIA_LABEL = 'Media';
 
 const FILE_TYPE_LABEL_RULES: ReadonlyArray<{
@@ -14,11 +20,12 @@ const FILE_TYPE_LABEL_RULES: ReadonlyArray<{
   { label: '3D Model', matches: (mimeType) => mimeType.startsWith('model/') },
   {
     label: 'PDF',
-    matches: (mimeType) => mimeType === ApiMediaUploadMimeType.ApplicationPdf
+    matches: (mimeType) =>
+      mimeType === ApiAttachmentUploadMimeType.ApplicationPdf
   },
   {
     label: 'CSV',
-    matches: (mimeType) => mimeType === ApiMediaUploadMimeType.TextCsv
+    matches: (mimeType) => mimeType === ApiAttachmentUploadMimeType.TextCsv
   }
 ];
 
@@ -29,12 +36,30 @@ function getFileTypeLabel(mimeType: string): string {
   );
 }
 
-const SUPPORTED_MEDIA_EXTENSIONS_BY_LABEL = (
-  Object.keys(
-    DROP_MEDIA_ALLOWED_EXTENSIONS_BY_MIME_TYPE
-  ) as ApiMediaUploadMimeType[]
-).reduce<Record<string, string>>((acc, mimeType) => {
-  DROP_MEDIA_ALLOWED_EXTENSIONS_BY_MIME_TYPE[mimeType].forEach((extension) => {
+export interface PushNotificationFileInfo {
+  readonly label: string;
+  readonly fileName: string | null;
+}
+
+const SUPPORTED_MEDIA_EXTENSIONS_BY_LABEL = [
+  ...(
+    Object.keys(
+      DROP_MEDIA_ALLOWED_EXTENSIONS_BY_MIME_TYPE
+    ) as ApiMediaUploadMimeType[]
+  ).map((mimeType) => ({
+    mimeType,
+    extensions: DROP_MEDIA_ALLOWED_EXTENSIONS_BY_MIME_TYPE[mimeType]
+  })),
+  ...(
+    Object.keys(
+      ATTACHMENT_ALLOWED_EXTENSIONS_BY_MIME_TYPE
+    ) as ApiAttachmentUploadMimeType[]
+  ).map((mimeType) => ({
+    mimeType,
+    extensions: ATTACHMENT_ALLOWED_EXTENSIONS_BY_MIME_TYPE[mimeType]
+  }))
+].reduce<Record<string, string>>((acc, { mimeType, extensions }) => {
+  extensions.forEach((extension) => {
     acc[extension.toLowerCase()] = getFileTypeLabel(mimeType);
   });
   return acc;
@@ -73,14 +98,28 @@ function getMediaFileNameForUrl(url: string): string | null {
   }
 }
 
-function truncateMediaFileName(fileName: string): string {
-  if (fileName.length <= MAX_MEDIA_FILENAME_LENGTH) {
+export function truncatePushNotificationFileName(fileName: string): string {
+  if (fileName.length <= MAX_PUSH_NOTIFICATION_FILENAME_LENGTH) {
     return fileName;
   }
-  return `${fileName.substring(0, MAX_MEDIA_FILENAME_LENGTH - 3)}...`;
+
+  const extensionStart = fileName.lastIndexOf('.');
+  const extension =
+    extensionStart > 0 ? fileName.substring(extensionStart) : '';
+  const extensionToPreserve = extension.length <= 10 ? extension : '';
+  const baseName = extensionToPreserve
+    ? fileName.substring(0, fileName.length - extensionToPreserve.length)
+    : fileName;
+
+  const prefix = baseName.substring(0, FILENAME_TRUNCATION_EDGE_LENGTH);
+  const suffix = baseName.substring(
+    Math.max(baseName.length - FILENAME_TRUNCATION_EDGE_LENGTH, prefix.length)
+  );
+
+  return `${prefix}${FILENAME_TRUNCATION_MARKER}${suffix}${extensionToPreserve}`;
 }
 
-function getMediaPlaceholderForUrl(url: string): string {
+function getMediaInfoForUrl(url: string): PushNotificationFileInfo {
   const cleanUrl = url.split(/[?#]/)[0].toLowerCase();
   const extension = Object.keys(SUPPORTED_MEDIA_EXTENSIONS_BY_LABEL).find(
     (extension) => cleanUrl.endsWith(extension)
@@ -89,26 +128,28 @@ function getMediaPlaceholderForUrl(url: string): string {
     ? SUPPORTED_MEDIA_EXTENSIONS_BY_LABEL[extension]
     : MEDIA_LABEL;
   const fileName = getMediaFileNameForUrl(url);
-  return fileName
-    ? `[${label} (${truncateMediaFileName(fileName)})]`
-    : `[${label}]`;
+  return {
+    label,
+    fileName: fileName ? truncatePushNotificationFileName(fileName) : null
+  };
 }
 
-export function getDropMediaPlaceholderForPush(
+export function getDropMediaInfoForPush(
   url: string,
   mimeType: string | null | undefined
-): string {
+): PushNotificationFileInfo {
   const mimeTrimmed = mimeType?.trim();
   if (mimeTrimmed) {
     const label = getFileTypeLabel(mimeTrimmed);
     if (label !== MEDIA_LABEL) {
       const fileName = getMediaFileNameForUrl(url);
-      return fileName
-        ? `[${label} (${truncateMediaFileName(fileName)})]`
-        : `[${label}]`;
+      return {
+        label,
+        fileName: fileName ? truncatePushNotificationFileName(fileName) : null
+      };
     }
   }
-  return getMediaPlaceholderForUrl(url);
+  return getMediaInfoForUrl(url);
 }
 
 function isSupportedMediaUrl(url: string): boolean {
@@ -191,7 +232,7 @@ function resolveMarkdownReferenceAt(
 
   const output =
     isImage || isSupportedMediaUrl(url)
-      ? ` ${getMediaPlaceholderForUrl(url)} `
+      ? ' '
       : input.substring(markdownStart, markdownEnd);
   return { type: 'resolved', output, nextIndex: markdownEnd };
 }
@@ -229,7 +270,7 @@ function replaceMarkdownMediaReferences(input: string): string {
 
 export function sanitizePushNotificationText(input: string): string {
   return replaceMarkdownMediaReferences(input)
-    .replace(MEDIA_URL_PATTERN, (url) => ` ${getMediaPlaceholderForUrl(url)} `)
+    .replace(MEDIA_URL_PATTERN, ' ')
     .replace(/[ \t]{2,}/g, ' ')
     .trim();
 }
