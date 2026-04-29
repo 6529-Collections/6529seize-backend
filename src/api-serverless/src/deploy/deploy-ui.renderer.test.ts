@@ -12,9 +12,17 @@ describe('deploy-ui.renderer', () => {
     const app = renderDeployUiApp();
 
     expect(app).toContain('function getCurrentWorkflowUrl() {');
-    expect(app).toContain('const urls = bootstrap?.workflow_urls || {};');
     expect(app).toContain(
-      "return urls[state.deployTarget] || urls.backend || '';"
+      'https://github.com/6529-Collections/6529seize-backend/actions/workflows/deploy.yml'
+    );
+    expect(app).toContain(
+      'https://github.com/6529-Collections/6529seize-frontend/actions/workflows/build-upload-deploy-prod.yml'
+    );
+    expect(app).toContain(
+      'var urls = Object.assign({}, DEFAULT_WORKFLOW_URLS, (bootstrap && bootstrap.workflow_urls) || {});'
+    );
+    expect(app).toContain(
+      'return urls[state.deployTarget] || urls.backend;'
     );
     expect(app).toContain(
       "deployWorkflowLink.setAttribute('href', getCurrentWorkflowUrl());"

@@ -70,6 +70,17 @@ function getWorkflowUrl(
   return `https://github.com/${encodeURIComponent(repoOwner)}/${encodeURIComponent(repoName)}/actions/workflows/${encodeURIComponent(workflowFile)}`;
 }
 
+const BACKEND_WORKFLOW_URL = getWorkflowUrl(
+  DEPLOY_REPO_OWNER,
+  DEPLOY_REPO_NAME,
+  DEPLOY_WORKFLOW_FILE
+);
+const FRONTEND_WORKFLOW_URL = getWorkflowUrl(
+  FRONTEND_DEPLOY_REPO_OWNER,
+  FRONTEND_DEPLOY_REPO_NAME,
+  FRONTEND_DEPLOY_WORKFLOW_FILE
+);
+
 export function renderDeployUI(services: DeployServiceConfig[]): string {
   const bootstrap: DeployUiBootstrap = {
     default_environment: DEFAULT_DEPLOY_ENVIRONMENT,
@@ -78,16 +89,8 @@ export function renderDeployUI(services: DeployServiceConfig[]): string {
     repo_name: DEPLOY_REPO_NAME,
     workflow_name: DEPLOY_WORKFLOW_NAME,
     workflow_urls: {
-      backend: getWorkflowUrl(
-        DEPLOY_REPO_OWNER,
-        DEPLOY_REPO_NAME,
-        DEPLOY_WORKFLOW_FILE
-      ),
-      frontend: getWorkflowUrl(
-        FRONTEND_DEPLOY_REPO_OWNER,
-        FRONTEND_DEPLOY_REPO_NAME,
-        FRONTEND_DEPLOY_WORKFLOW_FILE
-      )
+      backend: BACKEND_WORKFLOW_URL,
+      frontend: FRONTEND_WORKFLOW_URL
     },
     services
   };
@@ -1135,7 +1138,7 @@ export function renderDeployUI(services: DeployServiceConfig[]): string {
           <a
             id="deploy-workflow-link"
             class="panel-heading-link"
-            href="${escapeHtml(bootstrap.workflow_urls.backend)}"
+            href="${escapeHtml(BACKEND_WORKFLOW_URL)}"
             target="_blank"
             rel="noreferrer">
             <svg viewBox="0 0 16 16" fill="none" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
@@ -1242,6 +1245,10 @@ export function renderDeployUiApp(): string {
 
 (function () {
   var TOKEN_STORAGE_KEY = 'deploy-ui-token';
+  var DEFAULT_WORKFLOW_URLS = {
+    backend: ${JSON.stringify(BACKEND_WORKFLOW_URL)},
+    frontend: ${JSON.stringify(FRONTEND_WORKFLOW_URL)}
+  };
   var bootstrapNode = document.getElementById('deploy-ui-bootstrap');
   var bootstrap = JSON.parse((bootstrapNode && bootstrapNode.textContent) || '{}');
 
@@ -1336,8 +1343,8 @@ export function renderDeployUiApp(): string {
   }
 
   function getCurrentWorkflowUrl() {
-    const urls = bootstrap?.workflow_urls || {};
-    return urls[state.deployTarget] || urls.backend || '';
+    var urls = Object.assign({}, DEFAULT_WORKFLOW_URLS, (bootstrap && bootstrap.workflow_urls) || {});
+    return urls[state.deployTarget] || urls.backend;
   }
 
   function getCurrentRef() {
