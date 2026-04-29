@@ -8,7 +8,7 @@ import {
 } from '@/attachments/attachments-status-notifier';
 import { AttachmentEntity, AttachmentStatus } from '@/entities/IAttachment';
 import { Logger } from '@/logging';
-import { getS3 } from '@/s3.client';
+import { getAttachmentsS3 } from '@/attachments/attachments-s3-client';
 import { Time } from '@/time';
 
 const GUARDDUTY_STATUS_TAG = 'GuardDutyMalwareScanStatus';
@@ -296,7 +296,7 @@ export class AttachmentsOrchestratorService {
     originalBucket: string;
     originalKey: string;
   }): Promise<FinalGuardDutyStatus | null> {
-    const response = await getS3().send(
+    const response = await getAttachmentsS3().send(
       new GetObjectTaggingCommand({
         Bucket: originalBucket,
         Key: originalKey
