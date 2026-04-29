@@ -1336,7 +1336,8 @@ export function renderDeployUiApp(): string {
   }
 
   function getCurrentWorkflowUrl() {
-    return bootstrap.workflow_urls[state.deployTarget] || bootstrap.workflow_urls.backend;
+    const urls = bootstrap?.workflow_urls || {};
+    return urls[state.deployTarget] || urls.backend || '';
   }
 
   function getCurrentRef() {

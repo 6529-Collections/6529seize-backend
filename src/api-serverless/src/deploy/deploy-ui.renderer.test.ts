@@ -12,7 +12,10 @@ describe('deploy-ui.renderer', () => {
     const app = renderDeployUiApp();
 
     expect(app).toContain('function getCurrentWorkflowUrl() {');
-    expect(app).toContain('bootstrap.workflow_urls[state.deployTarget]');
+    expect(app).toContain('const urls = bootstrap?.workflow_urls || {};');
+    expect(app).toContain(
+      "return urls[state.deployTarget] || urls.backend || '';"
+    );
     expect(app).toContain(
       "deployWorkflowLink.setAttribute('href', getCurrentWorkflowUrl());"
     );
