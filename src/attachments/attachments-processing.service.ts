@@ -1,5 +1,5 @@
 import { GetObjectCommand } from '@aws-sdk/client-s3';
-import { getS3 } from '@/s3.client';
+import { getAttachmentsS3 } from '@/attachments/attachments-s3-client';
 import { attachmentsDb, AttachmentsDb } from '@/attachments/attachments.db';
 import {
   AttachmentEntity,
@@ -191,7 +191,7 @@ export class AttachmentsProcessingService {
     const bucket = attachment.original_bucket!;
     const key = attachment.original_key!;
     const maxBytes = this.getMaxBytes(attachment.kind);
-    const response = await getS3().send(
+    const response = await getAttachmentsS3().send(
       new GetObjectCommand({
         Bucket: bucket,
         Key: key
