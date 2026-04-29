@@ -75,7 +75,8 @@ ${indent(yamlList(serviceNames))}
 env:
   SENTRY_DSN: \${{ secrets.SENTRY_DSN }}
   SENTRY_AUTH_TOKEN: \${{ secrets.SENTRY_AUTH_TOKEN }}
-  ATTACHMENTS_INGEST_S3_BUCKET: \${{ secrets.ATTACHMENTS_INGEST_S3_BUCKET }}
+  ATTACHMENTS_INGEST_S3_BUCKET_PROD: \${{ secrets.ATTACHMENTS_INGEST_S3_BUCKET_PROD }}
+  ATTACHMENTS_INGEST_S3_BUCKET_STAGING: \${{ secrets.ATTACHMENTS_INGEST_S3_BUCKET_STAGING }}
 
 run-name: Deploy \${{ github.event.inputs.service }} to \${{ github.event.inputs.environment }}
 
@@ -122,6 +123,21 @@ jobs:
           aws-access-key-id: \${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: \${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: \${{ github.event.inputs.environment == 'prod' && 'us-east-1' || 'eu-west-1' }}
+      - name: Select environment-specific config
+        shell: bash
+        run: |
+          if [ "\${{ github.event.inputs.environment }}" = "prod" ]; then
+            ATTACHMENTS_BUCKET="$ATTACHMENTS_INGEST_S3_BUCKET_PROD"
+          else
+            ATTACHMENTS_BUCKET="$ATTACHMENTS_INGEST_S3_BUCKET_STAGING"
+          fi
+
+          if [ -z "$ATTACHMENTS_BUCKET" ]; then
+            echo "ATTACHMENTS_INGEST_S3_BUCKET is not configured for \${{ github.event.inputs.environment }}"
+            exit 1
+          fi
+
+          echo "ATTACHMENTS_INGEST_S3_BUCKET=$ATTACHMENTS_BUCKET" >> "$GITHUB_ENV"
       - name: Deploy service
         if: github.event.inputs.service != 'api' && github.event.inputs.service != 'nextgenMediaProxyInterceptor' && github.event.inputs.service != 'mediaResizerLoop'
         run: |
