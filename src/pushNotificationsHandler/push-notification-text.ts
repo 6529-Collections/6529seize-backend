@@ -36,23 +36,9 @@ function getFileTypeLabel(mimeType: string): string {
   );
 }
 
-function getFallbackFileText(label: string): string {
-  switch (label) {
-    case 'Image':
-      return 'an image';
-    case 'Video':
-      return 'a video';
-    case 'Audio':
-      return 'an audio file';
-    case '3D Model':
-      return 'a 3D model';
-    case 'PDF':
-      return 'a PDF';
-    case 'CSV':
-      return 'a CSV';
-    default:
-      return 'a file';
-  }
+export interface PushNotificationFileInfo {
+  readonly label: string;
+  readonly fileName: string | null;
 }
 
 const SUPPORTED_MEDIA_EXTENSIONS_BY_LABEL = [
@@ -133,7 +119,7 @@ export function truncatePushNotificationFileName(fileName: string): string {
   return `${prefix}${FILENAME_TRUNCATION_MARKER}${suffix}${extensionToPreserve}`;
 }
 
-function getMediaTextForUrl(url: string): string {
+function getMediaInfoForUrl(url: string): PushNotificationFileInfo {
   const cleanUrl = url.split(/[?#]/)[0].toLowerCase();
   const extension = Object.keys(SUPPORTED_MEDIA_EXTENSIONS_BY_LABEL).find(
     (extension) => cleanUrl.endsWith(extension)
@@ -142,26 +128,28 @@ function getMediaTextForUrl(url: string): string {
     ? SUPPORTED_MEDIA_EXTENSIONS_BY_LABEL[extension]
     : MEDIA_LABEL;
   const fileName = getMediaFileNameForUrl(url);
-  return fileName
-    ? truncatePushNotificationFileName(fileName)
-    : getFallbackFileText(label);
+  return {
+    label,
+    fileName: fileName ? truncatePushNotificationFileName(fileName) : null
+  };
 }
 
-export function getDropMediaTextForPush(
+export function getDropMediaInfoForPush(
   url: string,
   mimeType: string | null | undefined
-): string {
+): PushNotificationFileInfo {
   const mimeTrimmed = mimeType?.trim();
   if (mimeTrimmed) {
     const label = getFileTypeLabel(mimeTrimmed);
     if (label !== MEDIA_LABEL) {
       const fileName = getMediaFileNameForUrl(url);
-      return fileName
-        ? truncatePushNotificationFileName(fileName)
-        : getFallbackFileText(label);
+      return {
+        label,
+        fileName: fileName ? truncatePushNotificationFileName(fileName) : null
+      };
     }
   }
-  return getMediaTextForUrl(url);
+  return getMediaInfoForUrl(url);
 }
 
 function isSupportedMediaUrl(url: string): boolean {
@@ -244,7 +232,7 @@ function resolveMarkdownReferenceAt(
 
   const output =
     isImage || isSupportedMediaUrl(url)
-      ? ` sent ${getMediaTextForUrl(url)} `
+      ? ' '
       : input.substring(markdownStart, markdownEnd);
   return { type: 'resolved', output, nextIndex: markdownEnd };
 }
@@ -282,7 +270,7 @@ function replaceMarkdownMediaReferences(input: string): string {
 
 export function sanitizePushNotificationText(input: string): string {
   return replaceMarkdownMediaReferences(input)
-    .replace(MEDIA_URL_PATTERN, (url) => ` sent ${getMediaTextForUrl(url)} `)
+    .replace(MEDIA_URL_PATTERN, ' ')
     .replace(/[ \t]{2,}/g, ' ')
     .trim();
 }
