@@ -16,9 +16,9 @@ import {
   NFTS_TABLE,
   PROFILES_ARCHIVE_TABLE,
   PROFILES_TABLE,
+  TDH_NFT_TABLE,
   UUID_REGEX,
   WALLET_REGEX,
-  TDH_NFT_TABLE,
   WALLETS_TDH_TABLE,
   WAVES_TABLE,
   X_TDH_COEFFICIENT
@@ -782,6 +782,97 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
       { ids },
       connection ? { wrappedConnection: connection } : undefined
     );
+  }
+
+  async getIdentitiesForOverviewsByIds(
+    ids: string[],
+    ctx: RequestContext
+  ): Promise<
+    {
+      id: string;
+      handle?: string;
+      primary_address: string;
+      pfp?: string;
+      level_raw: number;
+      classification: ProfileClassification;
+    }[]
+  > {
+    ctx.timer?.start(
+      `${this.constructor.name}->getIdentitiesForOverviewaByIds`
+    );
+    try {
+      if (!ids.length) {
+        return [];
+      }
+      const dbResponse = await this.db.execute<{
+        id: string;
+        handle: string | null;
+        primary_address: string;
+        pfp: string | null;
+        level_raw: number;
+        classification: ProfileClassification;
+      }>(
+        `
+       select 
+        i.profile_id as id,
+        i.handle as handle,
+        i.primary_address as primary_address,
+        i.pfp as pfp,
+        i.level_raw as level_raw,
+        i.classification as classification
+       from ${IDENTITIES_TABLE} i where i.profile_id in (:ids)`,
+        { ids },
+        { wrappedConnection: ctx.connection }
+      );
+      return dbResponse.map((it) => ({
+        id: it.id,
+        handle: it.handle === null ? undefined : it.handle,
+        primary_address: it.primary_address,
+        pfp: it.pfp === null ? undefined : it.pfp,
+        level_raw: it.level_raw,
+        classification: it.classification
+      }));
+    } finally {
+      ctx.timer?.stop(
+        `${this.constructor.name}->getIdentitiesForOverviewaByIds`
+      );
+    }
+  }
+
+  async findProfileHandlesByIds(
+    ids: string[],
+    ctx: RequestContext
+  ): Promise<Record<string, string>> {
+    if (!ids.length) {
+      return {};
+    }
+    ctx.timer?.start(`${this.constructor.name}->findProfileHandlesByIds`);
+    try {
+      const rows = await this.db.execute<{
+        id: string;
+        handle: string | null;
+      }>(
+        `
+        select profile_id as id, handle
+        from ${IDENTITIES_TABLE}
+        where profile_id in (:ids)
+          and handle is not null
+      `,
+        { ids },
+        { wrappedConnection: ctx.connection }
+      );
+      return rows.reduce(
+        (acc, row) => {
+          if (row.handle !== null) {
+            acc[row.id] = row.handle;
+          }
+          return acc;
+        },
+        {} as Record<string, string>
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->findProfileHandlesByIds`);
+    }
   }
 
   async getNewestVersionHandlesOfArchivedProfiles(

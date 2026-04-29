@@ -13,6 +13,17 @@ import {
   userGroupsService
 } from '@/api/community-members/user-groups.service';
 
+export type WaveDisplaySource = Pick<
+  WaveEntity,
+  | 'id'
+  | 'is_direct_message'
+  | 'visibility_group_id'
+  | 'participation_group_id'
+  | 'chat_group_id'
+  | 'admin_group_id'
+  | 'voting_group_id'
+>;
+
 export type WaveDisplayOverride = {
   readonly name?: string;
   readonly picture?: string | null;
@@ -44,7 +55,7 @@ export class DirectMessageWaveDisplayService {
       curationEntities,
       profilesById
     }: {
-      waveEntities: WaveEntity[];
+      waveEntities: WaveDisplaySource[];
       contextProfileId: string | null;
       curationEntities?: UserGroupEntity[];
       profilesById?: Record<string, ApiProfileMin>;

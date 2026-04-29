@@ -83,6 +83,18 @@ type WaveVotingCreditNftRow = {
   token_id: number;
 };
 
+export interface WaveMentionOverview {
+  id: string;
+  name: string;
+  picture: string | null;
+  visibility_group_id: string | null;
+  participation_group_id: string | null;
+  chat_group_id: string | null;
+  admin_group_id: string | null;
+  voting_group_id: string | null;
+  is_direct_message: boolean | null;
+}
+
 export class WavesApiDb extends LazyDbAccessCompatibleService {
   private parseWaveEntity(entity: RawWaveEntity): WaveEntity {
     return {
@@ -167,6 +179,53 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         connection ? { wrappedConnection: connection } : undefined
       )
       .then((res) => res.map((it) => this.parseWaveEntityWithLastDropTime(it)));
+  }
+
+  public async findWaveMentionOverviewsByIds(
+    ids: string[],
+    groupIdsUserIsEligibleFor: string[],
+    ctx: RequestContext
+  ): Promise<Record<string, WaveMentionOverview>> {
+    if (!ids.length) {
+      return {};
+    }
+    ctx.timer?.start(`${this.constructor.name}->findWaveMentionOverviewsByIds`);
+    try {
+      const rows = await this.db.execute<WaveMentionOverview>(
+        `
+        select
+          id,
+          name,
+          picture,
+          visibility_group_id,
+          participation_group_id,
+          chat_group_id,
+          admin_group_id,
+          voting_group_id,
+          is_direct_message
+        from ${WAVES_TABLE}
+        where id in (:ids)
+          and (visibility_group_id is null ${
+            groupIdsUserIsEligibleFor.length
+              ? `or visibility_group_id in (:groupIdsUserIsEligibleFor)`
+              : ``
+          })
+      `,
+        { ids, groupIdsUserIsEligibleFor },
+        { wrappedConnection: ctx.connection }
+      );
+      return rows.reduce(
+        (acc, row) => {
+          acc[row.id] = row;
+          return acc;
+        },
+        {} as Record<string, WaveMentionOverview>
+      );
+    } finally {
+      ctx.timer?.stop(
+        `${this.constructor.name}->findWaveMentionOverviewsByIds`
+      );
+    }
   }
 
   public async insertWave(wave: InsertWaveEntity, ctx: RequestContext) {
@@ -923,10 +982,17 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         { waveIds },
         { wrappedConnection: connection }
       )
-      .then((results) =>
-        waveIds.reduce(
+      .then((results) => {
+        const existingMetricsByWaveId = results.reduce(
+          (acc, metric) => {
+            acc[metric.wave_id] = metric;
+            return acc;
+          },
+          {} as Record<string, WaveMetricEntity>
+        );
+        return waveIds.reduce(
           (acc, waveId) => {
-            acc[waveId] = results.find((it) => it.wave_id === waveId) ?? {
+            acc[waveId] = existingMetricsByWaveId[waveId] ?? {
               wave_id: waveId,
               subscribers_count: 0,
               drops_count: 0,
@@ -936,8 +1002,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
             return acc;
           },
           {} as Record<string, WaveMetricEntity>
-        )
-      );
+        );
+      });
     timer?.stop('wavesApiDb->findWavesMetricsByWaveIds');
     return result;
   }
@@ -1736,10 +1802,17 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         params,
         { wrappedConnection: connection }
       )
-      .then((results) =>
-        params.waveIds.reduce(
+      .then((results) => {
+        const existingMetricsByWaveId = results.reduce(
+          (acc, metric) => {
+            acc[metric.wave_id] = metric;
+            return acc;
+          },
+          {} as Record<string, WaveReaderMetricEntity>
+        );
+        return params.waveIds.reduce(
           (acc, waveId) => {
-            acc[waveId] = results.find((it) => it.wave_id === waveId) ?? {
+            acc[waveId] = existingMetricsByWaveId[waveId] ?? {
               wave_id: waveId,
               reader_id: params.readerId,
               latest_read_timestamp: 0,
@@ -1748,8 +1821,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
             return acc;
           },
           {} as Record<string, WaveReaderMetricEntity>
-        )
-      );
+        );
+      });
     timer?.stop('wavesApiDb->findWaveReaderMetricsByWaveIds');
     return result;
   }
