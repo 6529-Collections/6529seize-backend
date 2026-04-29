@@ -5,7 +5,9 @@ import {
   DROP_MEDIA_ALLOWED_EXTENSIONS_BY_MIME_TYPE
 } from '@/api/media/media-mime-types';
 
-export const MAX_PUSH_NOTIFICATION_FILENAME_LENGTH = 64;
+export const MAX_PUSH_NOTIFICATION_FILENAME_LENGTH = 32;
+const FILENAME_TRUNCATION_MARKER = '.....';
+const FILENAME_TRUNCATION_EDGE_LENGTH = 4;
 const MEDIA_LABEL = 'Media';
 
 const FILE_TYPE_LABEL_RULES: ReadonlyArray<{
@@ -32,6 +34,25 @@ function getFileTypeLabel(mimeType: string): string {
     FILE_TYPE_LABEL_RULES.find((rule) => rule.matches(mimeType))?.label ??
     MEDIA_LABEL
   );
+}
+
+function getFallbackFileText(label: string): string {
+  switch (label) {
+    case 'Image':
+      return 'an image';
+    case 'Video':
+      return 'a video';
+    case 'Audio':
+      return 'an audio file';
+    case '3D Model':
+      return 'a 3D model';
+    case 'PDF':
+      return 'a PDF';
+    case 'CSV':
+      return 'a CSV';
+    default:
+      return 'a file';
+  }
 }
 
 const SUPPORTED_MEDIA_EXTENSIONS_BY_LABEL = [
@@ -91,14 +112,28 @@ function getMediaFileNameForUrl(url: string): string | null {
   }
 }
 
-function truncateMediaFileName(fileName: string): string {
+export function truncatePushNotificationFileName(fileName: string): string {
   if (fileName.length <= MAX_PUSH_NOTIFICATION_FILENAME_LENGTH) {
     return fileName;
   }
-  return `${fileName.substring(0, MAX_PUSH_NOTIFICATION_FILENAME_LENGTH - 3)}...`;
+
+  const extensionStart = fileName.lastIndexOf('.');
+  const extension =
+    extensionStart > 0 ? fileName.substring(extensionStart) : '';
+  const extensionToPreserve = extension.length <= 10 ? extension : '';
+  const baseName = extensionToPreserve
+    ? fileName.substring(0, fileName.length - extensionToPreserve.length)
+    : fileName;
+
+  const prefix = baseName.substring(0, FILENAME_TRUNCATION_EDGE_LENGTH);
+  const suffix = baseName.substring(
+    Math.max(baseName.length - FILENAME_TRUNCATION_EDGE_LENGTH, prefix.length)
+  );
+
+  return `${prefix}${FILENAME_TRUNCATION_MARKER}${suffix}${extensionToPreserve}`;
 }
 
-function getMediaPlaceholderForUrl(url: string): string {
+function getMediaTextForUrl(url: string): string {
   const cleanUrl = url.split(/[?#]/)[0].toLowerCase();
   const extension = Object.keys(SUPPORTED_MEDIA_EXTENSIONS_BY_LABEL).find(
     (extension) => cleanUrl.endsWith(extension)
@@ -108,11 +143,11 @@ function getMediaPlaceholderForUrl(url: string): string {
     : MEDIA_LABEL;
   const fileName = getMediaFileNameForUrl(url);
   return fileName
-    ? `[${label} (${truncateMediaFileName(fileName)})]`
-    : `[${label}]`;
+    ? truncatePushNotificationFileName(fileName)
+    : getFallbackFileText(label);
 }
 
-export function getDropMediaPlaceholderForPush(
+export function getDropMediaTextForPush(
   url: string,
   mimeType: string | null | undefined
 ): string {
@@ -122,11 +157,11 @@ export function getDropMediaPlaceholderForPush(
     if (label !== MEDIA_LABEL) {
       const fileName = getMediaFileNameForUrl(url);
       return fileName
-        ? `[${label} (${truncateMediaFileName(fileName)})]`
-        : `[${label}]`;
+        ? truncatePushNotificationFileName(fileName)
+        : getFallbackFileText(label);
     }
   }
-  return getMediaPlaceholderForUrl(url);
+  return getMediaTextForUrl(url);
 }
 
 function isSupportedMediaUrl(url: string): boolean {
@@ -209,7 +244,7 @@ function resolveMarkdownReferenceAt(
 
   const output =
     isImage || isSupportedMediaUrl(url)
-      ? ` ${getMediaPlaceholderForUrl(url)} `
+      ? ` sent ${getMediaTextForUrl(url)} `
       : input.substring(markdownStart, markdownEnd);
   return { type: 'resolved', output, nextIndex: markdownEnd };
 }
@@ -247,7 +282,7 @@ function replaceMarkdownMediaReferences(input: string): string {
 
 export function sanitizePushNotificationText(input: string): string {
   return replaceMarkdownMediaReferences(input)
-    .replace(MEDIA_URL_PATTERN, (url) => ` ${getMediaPlaceholderForUrl(url)} `)
+    .replace(MEDIA_URL_PATTERN, (url) => ` sent ${getMediaTextForUrl(url)} `)
     .replace(/[ \t]{2,}/g, ' ')
     .trim();
 }

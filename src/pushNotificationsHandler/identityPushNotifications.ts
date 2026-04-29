@@ -30,8 +30,8 @@ import { IdentityNotificationsDb } from '../notifications/identity-notifications
 import { dbSupplier } from '../sql-executor';
 import { sumBadgeContributions } from './badge-count';
 import {
-  getDropMediaPlaceholderForPush,
-  MAX_PUSH_NOTIFICATION_FILENAME_LENGTH
+  getDropMediaTextForPush,
+  truncatePushNotificationFileName
 } from './push-notification-text';
 import { sendMessage } from './sendPushNotifications';
 
@@ -609,28 +609,37 @@ async function getDropBodyTextForPush(
     }
   }
 
-  const mediaLabels = mediaRows.map((row) =>
-    getDropMediaPlaceholderForPush(row.url, row.mime_type)
+  const mediaTexts = mediaRows.map((row) =>
+    getDropMediaTextForPush(row.url, row.mime_type)
   );
-  const attachmentLabels = await getDropAttachmentLabelsForPush(
-    dropId,
-    dropPart
-  );
-  const labels = [...mediaLabels, ...attachmentLabels];
+  const attachmentTexts = await getDropAttachmentTextsForPush(dropId, dropPart);
+  const sentFilesText = getSentFilesText([...mediaTexts, ...attachmentTexts]);
 
-  if (hasText && labels.length > 0) {
-    return `${rawContentTrimmed} ${labels.join(' ')}`.trim();
+  if (hasText && sentFilesText) {
+    return `${rawContentTrimmed} ${sentFilesText}`.trim();
   }
   if (hasText) {
     return rawContentTrimmed;
   }
-  if (labels.length > 0) {
-    return labels.join(' ');
+  if (sentFilesText) {
+    return sentFilesText;
   }
   return emptyFallback;
 }
 
-async function getDropAttachmentLabelsForPush(
+function getSentFilesText(fileTexts: string[]): string | null {
+  if (fileTexts.length === 0) {
+    return null;
+  }
+  if (fileTexts.length === 1) {
+    return `sent ${fileTexts[0]}`;
+  }
+  const last = fileTexts.at(-1);
+  const rest = fileTexts.slice(0, -1);
+  return `sent ${rest.join(', ')} and ${last}`;
+}
+
+async function getDropAttachmentTextsForPush(
   dropId: string | null,
   dropPart: DropPartEntity | null
 ): Promise<string[]> {
@@ -666,21 +675,19 @@ async function getDropAttachmentLabelsForPush(
     attachments.map((attachment) => [attachment.id, attachment])
   );
   return attachmentIds.map((attachmentId) =>
-    getAttachmentPlaceholderForPush(attachmentsById.get(attachmentId))
+    getAttachmentTextForPush(attachmentsById.get(attachmentId))
   );
 }
 
-function getAttachmentPlaceholderForPush(
+function getAttachmentTextForPush(
   attachment: AttachmentEntity | undefined
 ): string {
   if (!attachment) {
-    return '[Attachment]';
+    return 'a file';
   }
   const label = getAttachmentLabelForPush(attachment.kind);
   const fileName = attachment.original_file_name?.trim();
-  return fileName
-    ? `[${label} (${truncateAttachmentFileName(fileName)})]`
-    : `[${label}]`;
+  return fileName ? truncatePushNotificationFileName(fileName) : label;
 }
 
 function getAttachmentLabelForPush(kind: AttachmentKind): string {
@@ -692,13 +699,6 @@ function getAttachmentLabelForPush(kind: AttachmentKind): string {
     default:
       return 'Attachment';
   }
-}
-
-function truncateAttachmentFileName(fileName: string): string {
-  if (fileName.length <= MAX_PUSH_NOTIFICATION_FILENAME_LENGTH) {
-    return fileName;
-  }
-  return `${fileName.substring(0, MAX_PUSH_NOTIFICATION_FILENAME_LENGTH - 3)}...`;
 }
 
 async function getDropSerialNo(dropId: string | null) {
