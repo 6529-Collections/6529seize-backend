@@ -24,6 +24,7 @@ import { NotFoundException } from '../../../exceptions';
 import { ApiCommunityMemberMinimal } from '../generated/models/ApiCommunityMemberMinimal';
 import { enums } from '../../../enums';
 import { profileWavesDb } from '@/profiles/profile-waves.db';
+import { ApiIdentityOverview } from '@/api/generated/models/ApiIdentityOverview';
 
 export class IdentityFetcher {
   constructor(
@@ -87,6 +88,84 @@ export class IdentityFetcher {
       ctx.timer?.stop(
         `${this.constructor.name}->getIdentityAndConsolidationsByIdentityKey(${key})`
       );
+    }
+  }
+
+  public async getApiIdentityOverviewsByIds(
+    ids: string[],
+    ctx: RequestContext
+  ): Promise<Record<string, ApiIdentityOverview>> {
+    ctx.timer?.start(`${this.constructor.name}->getApiIdentityOverviewsByIds`);
+    try {
+      const [
+        identities,
+        subscribedActions,
+        mainStageSubmissions,
+        mainStageWins,
+        artistOfPrevoteCards,
+        profileWaveIds
+      ] = await Promise.all([
+        this.identitiesDb.getIdentitiesForOverviewsByIds(ids, ctx),
+        this.getSubscribedActions({
+          authenticatedProfileId: ctx.authenticationContext?.getActingAsId(),
+          ids
+        }),
+        this.identitiesDb.getActiveMainStageDropIds(ids, ctx),
+        this.identitiesDb.getMainStageWinnerDropIds(ids, ctx),
+        this.identitiesDb.getArtistOfPrevoteCards(ids, ctx),
+        profileWavesDb.findProfileWaveIdsByProfileIds(ids, ctx)
+      ]);
+      return ids.reduce(
+        (acc, id) => {
+          const identity = identities.find((it) => id === it.id);
+          if (!identity) {
+            acc[id] = {
+              id,
+              primary_address: 'UNKNOWN',
+              level: 0,
+              classification: ApiProfileClassification.Pseudonym,
+              badges: {
+                artist_of_main_stage_submissions: 0,
+                artist_of_memes: 0
+              }
+            };
+          } else {
+            acc[id] = {
+              id,
+              primary_address: identity.primary_address,
+              handle: identity.handle,
+              pfp: identity.pfp,
+              level: getLevelFromScore(identity.level_raw),
+              classification:
+                enums.resolve(
+                  ApiProfileClassification,
+                  identity.classification
+                ) ?? ApiProfileClassification.Pseudonym,
+              context_profile_context:
+                ctx.authenticationContext?.isUserFullyAuthenticated()
+                  ? {
+                      subscribed:
+                        subscribedActions[id]?.includes(
+                          ApiIdentitySubscriptionTargetAction.DropCreated
+                        ) ?? false
+                    }
+                  : undefined,
+              badges: {
+                artist_of_main_stage_submissions:
+                  mainStageSubmissions[id]?.length ?? 0,
+                artist_of_memes:
+                  (mainStageWins[id]?.length ?? 0) +
+                  (artistOfPrevoteCards[id]?.length ?? 0),
+                profile_wave_id: profileWaveIds[id]
+              }
+            };
+          }
+          return acc;
+        },
+        {} as Record<string, ApiIdentityOverview>
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->getApiIdentityOverviewsByIds`);
     }
   }
 

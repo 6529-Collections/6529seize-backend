@@ -29,15 +29,15 @@ import {
   IDENTITY_NOTIFICATIONS_TABLE,
   IDENTITY_SUBSCRIPTIONS_TABLE,
   NFT_LINKS_TABLE,
-  PROFILES_ACTIVITY_LOGS_TABLE,
   PROFILE_WAVES_TABLE,
+  PROFILES_ACTIVITY_LOGS_TABLE,
   RATINGS_TABLE,
   TDH_NFT_TABLE,
+  WAVE_CURATIONS_TABLE,
   WAVE_DROPPER_METRICS_TABLE,
   WAVE_LEADERBOARD_ENTRIES_TABLE,
   WAVE_METRICS_TABLE,
   WAVE_VOTING_CREDIT_NFTS_TABLE,
-  WAVE_CURATIONS_TABLE,
   WAVES_DECISION_WINNER_DROPS_TABLE,
   WAVES_TABLE,
   WINNER_DROP_VOTER_VOTES_TABLE
@@ -77,6 +77,14 @@ export type CurationDropEntity = DropEntity & {
   readonly drop_priority_order: number | null;
 };
 
+export interface DropReplyPreview {
+  readonly id: string;
+  readonly serial_no: number;
+  readonly content: string | null;
+  readonly author_handle: string | null;
+  readonly author_pfp: string | null;
+}
+
 export class DropsDb extends LazyDbAccessCompatibleService {
   async getDropsByIds(
     ids: string[],
@@ -92,6 +100,111 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       },
       connection ? { wrappedConnection: connection } : undefined
     );
+  }
+
+  async getDropPartOnes(
+    dropIds: string[],
+    ctx: RequestContext
+  ): Promise<Record<string, DropPartEntity>> {
+    if (!dropIds.length) {
+      return {};
+    }
+    ctx.timer?.start(`${this.constructor.name}->getDropPartOnes`);
+    try {
+      const rows = await this.db.execute<DropPartEntity>(
+        `
+        select *
+        from ${DROPS_PARTS_TABLE}
+        where drop_id in (:dropIds)
+          and drop_part_id = 1
+      `,
+        { dropIds },
+        { wrappedConnection: ctx.connection }
+      );
+      return rows.reduce(
+        (acc, row) => {
+          acc[row.drop_id] = row;
+          return acc;
+        },
+        {} as Record<string, DropPartEntity>
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->getDropPartOnes`);
+    }
+  }
+
+  async getDropPartOneMedia(
+    dropIds: string[],
+    ctx: RequestContext
+  ): Promise<Record<string, DropMediaEntity[]>> {
+    if (!dropIds.length) {
+      return {};
+    }
+    ctx.timer?.start(`${this.constructor.name}->getDropPartOneMedia`);
+    try {
+      const rows = await this.db.execute<DropMediaEntity>(
+        `
+        select *
+        from ${DROP_MEDIA_TABLE}
+        where drop_id in (:dropIds)
+          and drop_part_id = 1
+        order by id asc
+      `,
+        { dropIds },
+        { wrappedConnection: ctx.connection }
+      );
+      return rows.reduce(
+        (acc, row) => {
+          const media = acc[row.drop_id] ?? [];
+          media.push(row);
+          acc[row.drop_id] = media;
+          return acc;
+        },
+        {} as Record<string, DropMediaEntity[]>
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->getDropPartOneMedia`);
+    }
+  }
+
+  async getReplyPreviewsByDropIds(
+    dropIds: string[],
+    ctx: RequestContext
+  ): Promise<Record<string, DropReplyPreview>> {
+    if (!dropIds.length) {
+      return {};
+    }
+    ctx.timer?.start(`${this.constructor.name}->getReplyPreviewsByDropIds`);
+    try {
+      const rows = await this.db.execute<DropReplyPreview>(
+        `
+        select
+          d.id,
+          d.serial_no,
+          dp.content,
+          i.handle as author_handle,
+          i.pfp as author_pfp
+        from ${DROPS_TABLE} d
+        left join ${DROPS_PARTS_TABLE} dp
+          on dp.drop_id = d.id
+          and dp.drop_part_id = 1
+        left join ${IDENTITIES_TABLE} i
+          on i.profile_id = d.author_id
+        where d.id in (:dropIds)
+      `,
+        { dropIds },
+        { wrappedConnection: ctx.connection }
+      );
+      return rows.reduce(
+        (acc, row) => {
+          acc[row.id] = row;
+          return acc;
+        },
+        {} as Record<string, DropReplyPreview>
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->getReplyPreviewsByDropIds`);
+    }
   }
 
   private getVisibleWaveFilterSql(groupIdsUserIsEligibleFor: string[]): string {
@@ -991,6 +1104,27 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       { dropIds },
       connection ? { wrappedConnection: connection } : undefined
     );
+  }
+
+  async findDropIdsWithMetadata(
+    dropIds: string[],
+    ctx: RequestContext
+  ): Promise<Set<string>> {
+    if (!dropIds.length) {
+      return new Set<string>();
+    }
+    const timerKey = `${this.constructor.name}->findDropIdsWithMetadata`;
+    ctx.timer?.start(timerKey);
+    try {
+      const result = await this.db.execute<{ drop_id: string }>(
+        `select distinct drop_id from ${DROP_METADATA_TABLE} where drop_id in (:dropIds)`,
+        { dropIds },
+        { wrappedConnection: ctx.connection }
+      );
+      return new Set(result.map((it) => it.drop_id));
+    } finally {
+      ctx.timer?.stop(timerKey);
+    }
   }
 
   async findIdentityNominationWaveIdsByProfileIds(

@@ -12,6 +12,16 @@ export interface DropReactionsResult {
   context_profile_reaction: string | null;
 }
 
+export interface DropReactionCounter {
+  reaction: string;
+  count: number;
+}
+
+export interface DropReactionCountersResult {
+  reactions: DropReactionCounter[];
+  context_profile_reaction?: string;
+}
+
 function getChangedRowsFromWriteResult(result: unknown): number {
   if (result != null && typeof result === 'object' && 'changedRows' in result) {
     return Number((result as { changedRows?: unknown }).changedRows ?? 0);
@@ -174,6 +184,61 @@ export class ReactionsDb extends LazyDbAccessCompatibleService {
     ctx.timer?.stop(`${this.constructor.name}->getByDropIds`);
 
     return result;
+  }
+
+  public async getCountersByDropIds(
+    dropIds: string[],
+    contextProfileId: string | null,
+    ctx: RequestContext
+  ): Promise<Map<string, DropReactionCountersResult>> {
+    if (!dropIds.length) {
+      return new Map();
+    }
+    ctx.timer?.start(`${this.constructor.name}->getCountersByDropIds`);
+    try {
+      const [counterRows, contextRows] = await Promise.all([
+        this.db.execute<{ drop_id: string; reaction: string; cnt: number }>(
+          `
+          select drop_id, reaction, count(*) as cnt
+          from ${DROP_REACTIONS_TABLE}
+          where drop_id in (:dropIds)
+          group by drop_id, reaction
+          order by drop_id asc, cnt desc, reaction asc
+        `,
+          { dropIds },
+          { wrappedConnection: ctx.connection }
+        ),
+        contextProfileId
+          ? this.db.execute<{ drop_id: string; reaction: string }>(
+              `
+              select drop_id, reaction
+              from ${DROP_REACTIONS_TABLE}
+              where profile_id = :profileId
+                and drop_id in (:dropIds)
+            `,
+              { profileId: contextProfileId, dropIds },
+              { wrappedConnection: ctx.connection }
+            )
+          : Promise.resolve([] as { drop_id: string; reaction: string }[])
+      ]);
+      const result = new Map<string, DropReactionCountersResult>();
+      for (const row of counterRows) {
+        const entry = result.get(row.drop_id) ?? { reactions: [] };
+        entry.reactions.push({
+          reaction: row.reaction,
+          count: Number(row.cnt)
+        });
+        result.set(row.drop_id, entry);
+      }
+      for (const row of contextRows) {
+        const entry = result.get(row.drop_id) ?? { reactions: [] };
+        entry.context_profile_reaction = row.reaction;
+        result.set(row.drop_id, entry);
+      }
+      return result;
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->getCountersByDropIds`);
+    }
   }
 
   public async deleteReactionsByDrop(dropId: string, ctx: RequestContext) {

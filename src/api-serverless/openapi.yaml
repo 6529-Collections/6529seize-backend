@@ -8856,6 +8856,16 @@ components:
           $ref: "#/components/schemas/ApiDrop"
         vote:
           $ref: "#/components/schemas/ApiDropVote"
+    ApiDropAndWave:
+      type: object
+      required:
+        - drop
+        - wave
+      properties:
+        drop:
+          $ref: "#/components/schemas/ApiDropV2"
+        wave:
+          $ref: "#/components/schemas/ApiWaveOverview"
     ApiDropAttachmentReference:
       type: object
       additionalProperties: false
@@ -8963,6 +8973,11 @@ components:
         serial_no:
           type: integer
           format: int64
+    ApiDropMainType:
+      type: string
+      enum:
+        - CHAT
+        - SUBMISSION
     ApiDropMedia:
       type: object
       required:
@@ -9096,6 +9111,17 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ApiProfileMin"
+    ApiDropReactionCounter:
+      type: object
+      required:
+        - reaction
+        - count
+      properties:
+        reaction:
+          type: string
+        count:
+          type: integer
+          format: int64
     ApiDropReferencedNFT:
       type: object
       required:
@@ -9188,6 +9214,101 @@ components:
         - CHAT
         - PARTICIPATORY
         - WINNER
+    ApiDropV2:
+      type: object
+      required:
+        - id
+        - serial_no
+        - is_signed
+        - parts_count
+        - author
+        - created_at
+        - boosts
+        - drop_type
+        - hide_link_preview
+      properties:
+        id:
+          type: string
+        serial_no:
+          type: integer
+          format: int64
+        created_at:
+          type: integer
+          format: int64
+        updated_at:
+          type: integer
+          format: int64
+        is_signed:
+          type: boolean
+        hide_link_preview:
+          type: boolean
+        title:
+          type: string
+        content:
+          type: string
+        media:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiDropMedia"
+        attachments:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiAttachment"
+        parts_count:
+          type: integer
+          format: int64
+        author:
+          $ref: "#/components/schemas/ApiIdentityOverview"
+        drop_type:
+          $ref: "#/components/schemas/ApiDropMainType"
+        referenced_nfts:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiDropReferencedNFT"
+        mentioned_users:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiDropMentionedUser"
+        mentioned_groups:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiDropGroupMention"
+        mentioned_waves:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiMentionedWaveV2"
+        nft_links:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiDropNftLink"
+        reactions:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiDropReactionCounter"
+        boosts:
+          type: integer
+          format: int64
+        reply_to_drop:
+          $ref: "#/components/schemas/ApiReplyToDropV2"
+        submission_context:
+          $ref: "#/components/schemas/ApiSubmissionDropContext"
+        context_profile_context:
+          $ref: "#/components/schemas/ApiDropV2ContextProfileContext"
+    ApiDropV2ContextProfileContext:
+      type: object
+      required:
+        - boosted
+        - bookmarked
+        - subscribed
+      properties:
+        reaction:
+          type: string
+        boosted:
+          type: boolean
+        bookmarked:
+          type: boolean
+        subscribed:
+          type: boolean
     ApiDropVote:
       type: object
       required:
@@ -9740,6 +9861,53 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ApiIdentitySubscriptionTargetAction"
+    ApiIdentityOverview:
+      type: object
+      required:
+        - id
+        - primary_address
+        - level
+        - classification
+        - badges
+      properties:
+        id:
+          type: string
+        handle:
+          type: string
+        primary_address:
+          type: string
+        pfp:
+          type: string
+        level:
+          type: integer
+          format: int64
+        classification:
+          $ref: "#/components/schemas/ApiProfileClassification"
+        context_profile_context:
+          $ref: "#/components/schemas/ApiIdentityOverviewContextProfileContext"
+        badges:
+          $ref: "#/components/schemas/ApiIdentityOverviewBadges"
+    ApiIdentityOverviewBadges:
+      type: object
+      required:
+        - artist_of_main_stage_submissions
+        - artist_of_memes
+      properties:
+        artist_of_main_stage_submissions:
+          type: integer
+          format: int64
+        artist_of_memes:
+          type: integer
+          format: int64
+        profile_wave_id:
+          type: string
+    ApiIdentityOverviewContextProfileContext:
+      type: object
+      required:
+        - subscribed
+      properties:
+        subscribed:
+          type: boolean
     ApiIdentitySubscriptionActions:
       type: object
       required:
@@ -10036,6 +10204,20 @@ components:
           type: string
         wave:
           $ref: "#/components/schemas/ApiWaveMin"
+    ApiMentionedWaveV2:
+      type: object
+      required:
+        - id
+        - in_content
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        pfp:
+          type: string
+        in_content:
+          type: string
     ApiMintingClaimAction:
       type: object
       required:
@@ -11321,6 +11503,16 @@ components:
         drop_part_id:
           type: number
           format: int64
+    ApiReplyToDropAuthor:
+      type: object
+      required:
+        - handle
+        - pfp
+      properties:
+        handle:
+          type: string
+        pfp:
+          type: string
     ApiReplyToDropResponse:
       type: object
       required:
@@ -11337,6 +11529,20 @@ components:
           type: boolean
         drop:
           $ref: "#/components/schemas/ApiDropWithoutWave"
+    ApiReplyToDropV2:
+      type: object
+      required:
+        - id
+      properties:
+        id:
+          type: string
+        serial_no:
+          type: integer
+          format: int64
+        content:
+          type: string
+        author:
+          $ref: "#/components/schemas/ApiReplyToDropAuthor"
     ApiRepOverview:
       type: object
       required:
@@ -11433,6 +11639,72 @@ components:
           type: string
         key:
           type: string
+    ApiSubmissionDropContext:
+      type: object
+      required:
+        - status
+        - voting
+        - has_metadata
+      properties:
+        status:
+          $ref: "#/components/schemas/ApiSubmissionDropStatus"
+        voting:
+          $ref: "#/components/schemas/ApiSubmissionDropVoting"
+        has_metadata:
+          type: boolean
+    ApiSubmissionDropStatus:
+      type: string
+      enum:
+        - ACTIVE
+        - WINNER
+    ApiSubmissionDropVoting:
+      type: object
+      required:
+        - is_open
+        - total_votes_given
+        - current_calculated_vote
+        - predicted_final_vote
+        - voters_count
+        - place
+      properties:
+        is_open:
+          type: boolean
+        context_profile_context:
+          $ref: "#/components/schemas/ApiSubmissionDropVotingContextProfileContext"
+        total_votes_given:
+          type: integer
+          format: int64
+        current_calculated_vote:
+          type: integer
+          format: int64
+        predicted_final_vote:
+          type: integer
+          format: int64
+        voters_count:
+          type: integer
+          format: int64
+        place:
+          type: integer
+          format: int64
+    ApiSubmissionDropVotingContextProfileContext:
+      type: object
+      required:
+        - can_vote
+        - min
+        - max
+        - current
+      properties:
+        can_vote:
+          type: boolean
+        min:
+          type: integer
+          format: int64
+        max:
+          type: integer
+          format: int64
+        current:
+          type: integer
+          format: int64
     ApiTargetAndSubscriptionActions:
       type: object
       required:
@@ -12482,6 +12754,58 @@ components:
       enum:
         - AUTOMATIC
         - MANUAL
+    ApiWaveOverview:
+      type: object
+      required:
+        - id
+        - name
+        - last_drop_time
+        - created_at
+        - subscribers_count
+        - has_competition
+        - is_dm_wave
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        pfp:
+          type: string
+        last_drop_time:
+          type: integer
+          format: int64
+        created_at:
+          type: integer
+          format: int64
+        subscribers_count:
+          type: integer
+          format: int64
+        has_competition:
+          type: boolean
+        is_dm_wave:
+          type: boolean
+        context_profile_context:
+          $ref: "#/components/schemas/ApiWaveOverviewContextProfileContext"
+    ApiWaveOverviewContextProfileContext:
+      type: object
+      required:
+        - subscribed
+        - pinned
+        - can_chat
+        - unread_drops
+        - muted
+      properties:
+        subscribed:
+          type: boolean
+        pinned:
+          type: boolean
+        can_chat:
+          type: boolean
+        unread_drops:
+          type: integer
+          format: int64
+        muted:
+          type: boolean
     ApiWaveParticipationConfig:
       type: object
       required:

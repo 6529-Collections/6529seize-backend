@@ -11,7 +11,9 @@ import {
   DROPS_TABLE,
   DROPS_VOTES_CREDIT_SPENDINGS_TABLE,
   WAVE_LEADERBOARD_ENTRIES_TABLE,
+  WAVES_DECISION_WINNER_DROPS_TABLE,
   WAVES_TABLE,
+  WAVES_DECISIONS_TABLE,
   WINNER_DROP_VOTER_VOTES_TABLE
 } from '@/constants';
 import { DropVoterStateEntity } from '../../../entities/IDropVoterState';
@@ -31,6 +33,18 @@ type MergedDropRealVoterVoteChange = {
   vote: number;
   timestamp: number;
 };
+
+export interface DropSubmissionVotingSummary {
+  drop_id: string;
+  status: DropType.PARTICIPATORY | DropType.WINNER;
+  is_open: boolean;
+  total_votes_given: number;
+  current_calculated_vote: number;
+  predicted_final_vote: number;
+  voters_count: number;
+  place: number;
+  forbid_negative_votes: boolean;
+}
 
 export function buildMergedDropRealVoteHistoryStates({
   voteChanges,
@@ -528,6 +542,173 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
       );
     ctx.timer?.stop(`${this.constructor.name}->getTallyForDrops`);
     return result;
+  }
+
+  public async getDropV2SubmissionVotingSummaries(
+    dropIds: string[],
+    ctx: RequestContext
+  ): Promise<Record<string, DropSubmissionVotingSummary>> {
+    if (!dropIds.length) {
+      return {};
+    }
+    ctx.timer?.start(
+      `${this.constructor.name}->getDropV2SubmissionVotingSummaries`
+    );
+    try {
+      const now = Time.currentMillis();
+      const rows = await this.db.execute<
+        Omit<
+          DropSubmissionVotingSummary,
+          'is_open' | 'forbid_negative_votes'
+        > & {
+          is_open: boolean | number;
+          forbid_negative_votes: boolean | number;
+        }
+      >(
+        `
+        with target_submissions as (
+          select id, wave_id, drop_type, created_at
+          from ${DROPS_TABLE}
+          where id in (:dropIds)
+            and drop_type in ('${DropType.PARTICIPATORY}', '${DropType.WINNER}')
+        ),
+        target_waves as (
+          select distinct wave_id
+          from target_submissions
+        ),
+        vote_counts as (
+          select
+            drop_id,
+            sum(votes) as tally,
+            count(distinct voter_id) as voters_count
+          from ${DROP_VOTER_STATE_TABLE}
+          where drop_id in (:dropIds)
+            and votes <> 0
+          group by 1
+        ),
+        winner_voter_counts as (
+          select drop_id, count(*) as voters_count
+          from ${WINNER_DROP_VOTER_VOTES_TABLE}
+          where drop_id in (:dropIds)
+            and votes <> 0
+          group by 1
+        ),
+        decision_counts as (
+          select wave_id, count(*) as decisions_done
+          from ${WAVES_DECISIONS_TABLE}
+          where wave_id in (select wave_id from target_waves)
+          group by 1
+        ),
+        realtime_ranks as (
+          select drop_id, rnk
+          from (
+            select
+              d.id as drop_id,
+              rank() over (
+                partition by d.wave_id
+                order by ifnull(r.vote, 0) desc,
+                  ifnull(r.last_increased, d.created_at) asc
+              ) as rnk
+            from ${DROPS_TABLE} d
+            left join ${DROP_RANK_TABLE} r on r.drop_id = d.id
+            where d.drop_type = '${DropType.PARTICIPATORY}'
+              and d.wave_id in (select wave_id from target_waves)
+          ) ranked
+          where drop_id in (:dropIds)
+        ),
+        weighted_ranks as (
+          select drop_id, rnk
+          from (
+            select
+              d.id as drop_id,
+              rank() over (
+                partition by d.wave_id
+                order by cast(ifnull(lb.vote, 0) as signed) desc,
+                  cast(ifnull(lb.timestamp, d.created_at) as signed) asc
+              ) as rnk
+            from ${DROPS_TABLE} d
+            join ${WAVES_TABLE} w on w.id = d.wave_id
+            left join ${WAVE_LEADERBOARD_ENTRIES_TABLE} lb on lb.drop_id = d.id
+            where d.drop_type = '${DropType.PARTICIPATORY}'
+              and d.wave_id in (select wave_id from target_waves)
+              and w.time_lock_ms is not null
+              and w.time_lock_ms > 0
+          ) ranked
+          where drop_id in (:dropIds)
+        )
+        select
+          t.id as drop_id,
+          t.drop_type as status,
+          case
+            when t.drop_type = '${DropType.WINNER}' then 0
+            when w.type <> 'CHAT'
+              and (w.voting_period_start is null or w.voting_period_start < :now)
+              and (w.voting_period_end is null or w.voting_period_end > :now)
+              and not (
+                w.type = 'APPROVE'
+                and w.max_winners is not null
+                and coalesce(dc.decisions_done, 0) >= w.max_winners
+              )
+            then 1
+            else 0
+          end as is_open,
+          case
+            when t.drop_type = '${DropType.WINNER}' then coalesce(wd.final_vote, 0)
+            else coalesce(vc.tally, 0)
+          end as total_votes_given,
+          case
+            when t.drop_type = '${DropType.WINNER}' then coalesce(wd.final_vote, 0)
+            else coalesce(lb.vote, vc.tally, 0)
+          end as current_calculated_vote,
+          case
+            when t.drop_type = '${DropType.WINNER}' then coalesce(wd.final_vote, 0)
+            else coalesce(lb.vote_on_decision_time, vc.tally, 0)
+          end as predicted_final_vote,
+          case
+            when t.drop_type = '${DropType.WINNER}' then coalesce(wvc.voters_count, 0)
+            else coalesce(vc.voters_count, 0)
+          end as voters_count,
+          case
+            when t.drop_type = '${DropType.WINNER}' then coalesce(wd.ranking, 0)
+            else coalesce(wr.rnk, rr.rnk, 0)
+          end as place,
+          w.forbid_negative_votes as forbid_negative_votes
+        from target_submissions t
+        join ${WAVES_TABLE} w on w.id = t.wave_id
+        left join vote_counts vc on vc.drop_id = t.id
+        left join ${WAVE_LEADERBOARD_ENTRIES_TABLE} lb on lb.drop_id = t.id
+        left join realtime_ranks rr on rr.drop_id = t.id
+        left join weighted_ranks wr on wr.drop_id = t.id
+        left join ${WAVES_DECISION_WINNER_DROPS_TABLE} wd on wd.drop_id = t.id
+        left join winner_voter_counts wvc on wvc.drop_id = t.id
+        left join decision_counts dc on dc.wave_id = t.wave_id
+      `,
+        { dropIds, now },
+        { wrappedConnection: ctx.connection }
+      );
+      return rows.reduce(
+        (acc, row) => {
+          acc[row.drop_id] = {
+            ...row,
+            is_open: row.is_open === true || Number(row.is_open) === 1,
+            forbid_negative_votes:
+              row.forbid_negative_votes === true ||
+              Number(row.forbid_negative_votes) === 1,
+            total_votes_given: Number(row.total_votes_given),
+            current_calculated_vote: Number(row.current_calculated_vote),
+            predicted_final_vote: Number(row.predicted_final_vote),
+            voters_count: Number(row.voters_count),
+            place: Number(row.place)
+          };
+          return acc;
+        },
+        {} as Record<string, DropSubmissionVotingSummary>
+      );
+    } finally {
+      ctx.timer?.stop(
+        `${this.constructor.name}->getDropV2SubmissionVotingSummaries`
+      );
+    }
   }
 
   public async getWeightedDropRates(
