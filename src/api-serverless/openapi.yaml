@@ -1996,6 +1996,27 @@ paths:
                 $ref: "#/components/schemas/ApiCompleteMultipartUploadResponse"
         "400":
           description: Invalid request
+  /v2/drops/{id}:
+    get:
+      tags:
+        - DropsV2
+      summary: Get V2 drop by ID.
+      operationId: getDropV2ById
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiDropAndWave"
+        "404":
+          description: Drop not found
   /feed:
     get:
       tags:
