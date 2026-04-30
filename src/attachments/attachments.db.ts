@@ -311,6 +311,39 @@ export class AttachmentsDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  async getDropPartOneAttachments(
+    dropIds: string[],
+    ctx: RequestContext
+  ): Promise<Record<string, DropAttachmentEntity[]>> {
+    if (!dropIds.length) {
+      return {};
+    }
+    ctx.timer?.start(`${this.constructor.name}->getDropPartOneAttachments`);
+    try {
+      const rows = await this.db.execute<DropAttachmentEntity>(
+        `
+        select *
+        from ${DROP_ATTACHMENTS_TABLE}
+        where drop_id in (:dropIds)
+          and drop_part_id = 1
+      `,
+        { dropIds },
+        ctx.connection ? { wrappedConnection: ctx.connection } : undefined
+      );
+      return rows.reduce(
+        (acc, row) => {
+          const attachments = acc[row.drop_id] ?? [];
+          attachments.push(row);
+          acc[row.drop_id] = attachments;
+          return acc;
+        },
+        {} as Record<string, DropAttachmentEntity[]>
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->getDropPartOneAttachments`);
+    }
+  }
+
   async assertOwnedByProfile({
     attachmentIds,
     ownerProfileId,
