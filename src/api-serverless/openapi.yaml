@@ -5918,7 +5918,6 @@ paths:
         - name: serial_no_less_than
           in: query
           required: false
-          deprecated: true
           schema:
             type: integer
             format: int64
@@ -6499,6 +6498,80 @@ paths:
                 $ref: "#/components/schemas/ApiWaveSubscriptionActions"
         "404":
           description: Wave not found
+  /v2/waves/{id}/drops:
+    get:
+      tags:
+        - WavesV2
+      summary: Get V2 drops related to wave or parent drop
+      operationId: getWaveDropsV2
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: drop_id
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+            maximum: 200
+            default: 20
+        - name: serial_no_limit
+          in: query
+          required: false
+          description: >-
+            Use instead of serial_no_less_than. If you use serial_no_less_than
+            and this then serial_no_less_than is preferred (until future when
+            it"s deleted)
+          schema:
+            type: integer
+            format: int64
+        - name: search_strategy
+          in: query
+          required: false
+          description: >-
+            Use in combination with serial_no_limit. If this not set then
+            FIND_OLDER is used. If serial_no_less_than is set then this is
+            ignored.
+          schema:
+            $ref: "#/components/schemas/ApiDropSearchStrategy"
+        - name: serial_no_less_than
+          in: query
+          required: false
+          deprecated: true
+          schema:
+            type: integer
+            format: int64
+        - name: drop_type
+          in: query
+          description: Filter by drop type
+          required: false
+          schema:
+            $ref: "#/components/schemas/ApiDropType"
+        - name: curation_id
+          in: query
+          description: >-
+            Only include drops with persisted membership in the curation
+            identified by ApiWaveCuration.id (UUID string)
+          required: false
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiWaveDropsFeedV2"
   /xtdh/stats:
     get:
       tags:
@@ -12518,6 +12591,24 @@ components:
             $ref: "#/components/schemas/ApiDropWithoutWave"
         root_drop:
           $ref: "#/components/schemas/ApiDropWithoutWave"
+        trace:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiDropTraceItem"
+    ApiWaveDropsFeedV2:
+      type: object
+      required:
+        - wave
+        - drops
+      properties:
+        wave:
+          $ref: "#/components/schemas/ApiWaveOverview"
+        drops:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiDropV2"
+        root_drop:
+          $ref: "#/components/schemas/ApiDropV2"
         trace:
           type: array
           items:
