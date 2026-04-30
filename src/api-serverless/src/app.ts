@@ -4,6 +4,7 @@ import { ids } from '@/ids';
 import * as http from 'node:http';
 import WebSocket, { WebSocketServer } from 'ws';
 import aggregatedActivityRoutes from './aggregated-activity/api.aggregated-activity.routes';
+import apiV2Routes from './api-v2.router';
 import authRoutes from './auth/auth.routes';
 import attachmentsRoutes from './attachments/attachments.routes';
 import communityMembersRoutes from './community-members/community-members.routes';
@@ -1598,6 +1599,7 @@ async function initializeApp() {
   apiRouter.use(`/push-notifications`, pushNotificationsRoutes);
   apiRouter.use(`/xtdh`, xtdhRoutes);
   apiRouter.use(`/nft-link`, nftLinksRoutes);
+  apiRouter.use(`/v2`, apiV2Routes);
 
   rootRouter.use(BASE_PATH, apiRouter);
   rootRouter.use(`/desktop`, desktopRoutes);
