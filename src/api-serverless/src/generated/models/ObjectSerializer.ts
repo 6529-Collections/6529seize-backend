@@ -249,6 +249,7 @@ export * from '../models/ApiWaveDecisionWinner';
 export * from '../models/ApiWaveDecisionsPage';
 export * from '../models/ApiWaveDecisionsStrategy';
 export * from '../models/ApiWaveDropsFeed';
+export * from '../models/ApiWaveDropsFeedV2';
 export * from '../models/ApiWaveLog';
 export * from '../models/ApiWaveMetadataType';
 export * from '../models/ApiWaveMetrics';
@@ -598,6 +599,7 @@ import { ApiWaveDecisionWinner } from '../models/ApiWaveDecisionWinner';
 import { ApiWaveDecisionsPage } from '../models/ApiWaveDecisionsPage';
 import { ApiWaveDecisionsStrategy } from '../models/ApiWaveDecisionsStrategy';
 import { ApiWaveDropsFeed } from '../models/ApiWaveDropsFeed';
+import { ApiWaveDropsFeedV2 } from '../models/ApiWaveDropsFeedV2';
 import { ApiWaveLog } from '../models/ApiWaveLog';
 import { ApiWaveMetadataType } from '../models/ApiWaveMetadataType';
 import { ApiWaveMetrics } from '../models/ApiWaveMetrics';
@@ -985,6 +987,7 @@ let typeMap: {[index: string]: any} = {
     "ApiWaveDecisionsPage": ApiWaveDecisionsPage,
     "ApiWaveDecisionsStrategy": ApiWaveDecisionsStrategy,
     "ApiWaveDropsFeed": ApiWaveDropsFeed,
+    "ApiWaveDropsFeedV2": ApiWaveDropsFeedV2,
     "ApiWaveLog": ApiWaveLog,
     "ApiWaveMetrics": ApiWaveMetrics,
     "ApiWaveMin": ApiWaveMin,
