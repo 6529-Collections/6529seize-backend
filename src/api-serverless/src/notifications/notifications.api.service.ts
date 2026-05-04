@@ -15,6 +15,15 @@ import {
 } from '../../../notifications/user-notifications.reader';
 import { RequestContext } from '../../../request.context';
 import { Time } from '../../../time';
+import { ApiDropV2 } from '@/api/generated/models/ApiDropV2';
+import { ApiIdentityOverview } from '@/api/generated/models/ApiIdentityOverview';
+import { ApiNotificationV2 } from '@/api/generated/models/ApiNotificationV2';
+import { ApiNotificationsResponseV2 } from '@/api/generated/models/ApiNotificationsResponseV2';
+import {
+  DropReactionProfileRow,
+  reactionsDb as defaultReactionsDb,
+  ReactionsDb
+} from '@/api/drops/reactions.db';
 import { seizeSettings } from '@/api/seize-settings';
 import {
   userGroupsService,
@@ -44,6 +53,14 @@ import {
   WaveGroupNotificationSubscriptionsDb
 } from '@/notifications/wave-group-notification-subscriptions.db';
 
+interface DropReactedNotificationAdditionalContextV2 {
+  reaction: string;
+  reactors: Array<{
+    handle?: string;
+    pfp?: string;
+  }>;
+}
+
 export class NotificationsApiService {
   constructor(
     private readonly notificationsReader: UserNotificationsReader,
@@ -53,7 +70,8 @@ export class NotificationsApiService {
     private readonly identityNotificationsDb: IdentityNotificationsDb,
     private readonly identitySubscriptionsDb: IdentitySubscriptionsDb,
     private readonly wavesApiDb: WavesApiDb,
-    private readonly waveGroupNotificationSubscriptionsDb: WaveGroupNotificationSubscriptionsDb
+    private readonly waveGroupNotificationSubscriptionsDb: WaveGroupNotificationSubscriptionsDb,
+    private readonly reactionsDb: ReactionsDb = defaultReactionsDb
   ) {}
 
   public async markNotificationAsRead(param: {
@@ -137,6 +155,105 @@ export class NotificationsApiService {
     };
   }
 
+  public async getNotificationsV2(
+    param: {
+      id_less_than: number | null;
+      limit: number;
+      cause: string | null;
+      cause_exclude: string | null;
+      unread_only: boolean;
+    },
+    authenticationContext: AuthenticationContext,
+    ctx: RequestContext
+  ): Promise<ApiNotificationsResponseV2> {
+    const requestContext = { ...ctx, authenticationContext };
+    const eligible_group_ids =
+      await this.userGroupsService.getGroupsUserIsEligibleFor(
+        authenticationContext.getActingAsId(),
+        requestContext.timer
+      );
+    const notifications =
+      await this.notificationsReader.getNotificationsForIdentity({
+        ...param,
+        identity_id: authenticationContext.getActingAsId()!,
+        eligible_group_ids
+      });
+    const apiNotifications = await this.mapToApiNotificationsV2(
+      notifications.notifications,
+      requestContext
+    );
+    return {
+      notifications: apiNotifications,
+      unread_count: notifications.total_unread
+    };
+  }
+
+  private async mapToApiNotificationsV2(
+    notifications: UserNotification[],
+    ctx: RequestContext
+  ): Promise<ApiNotificationV2[]> {
+    const { profileIds, dropIds } = this.getAllRelatedIds(notifications);
+    const reactionRowsByDropId = await this.getReactionRowsByDropId(
+      notifications,
+      ctx
+    );
+    const reactorProfileIds =
+      this.getAllReactorProfileIds(reactionRowsByDropId);
+    const [drops, profiles] = await Promise.all([
+      this.dropsService.findDropsV2ByIds(dropIds, ctx),
+      this.identityFetcher.getApiIdentityOverviewsByIds(
+        collections.distinct([...profileIds, ...reactorProfileIds]),
+        ctx
+      )
+    ]);
+    return notifications
+      .filter((notification) => this.hasAllRelatedDropsV2(notification, drops))
+      .map((notification) =>
+        this.mapToApiNotificationV2({
+          notification,
+          drops,
+          profiles,
+          reactionRowsByDropId
+        })
+      );
+  }
+
+  private async getReactionRowsByDropId(
+    notifications: UserNotification[],
+    ctx: RequestContext
+  ): Promise<Map<string, DropReactionProfileRow[]>> {
+    const dropIds = collections.distinct(
+      notifications.flatMap((notification) =>
+        notification.cause === IdentityNotificationCause.DROP_REACTED
+          ? [notification.data.drop_id]
+          : []
+      )
+    );
+    if (!dropIds.length) {
+      return new Map();
+    }
+    const entries = await Promise.all(
+      dropIds.map(async (dropId) => {
+        const rows = await this.reactionsDb.getReactionProfilesByDropId(
+          dropId,
+          ctx
+        );
+        return [dropId, rows] as const;
+      })
+    );
+    return new Map(entries);
+  }
+
+  private getAllReactorProfileIds(
+    reactionRowsByDropId: Map<string, DropReactionProfileRow[]>
+  ): string[] {
+    return collections.distinct(
+      Array.from(reactionRowsByDropId.values()).flatMap((rows) =>
+        rows.map((row) => row.profile_id)
+      )
+    );
+  }
+
   private async mapToApiNotifications(
     notifications: UserNotification[],
     authenticationContext: AuthenticationContext
@@ -150,14 +267,14 @@ export class NotificationsApiService {
     ]);
     return notifications
       .filter((notification) =>
-        this.hasAllRelatedDrops({ notification, drops })
+        this.hasAllRelatedDropsV1({ notification, drops })
       )
       .map((notification) =>
         this.mapToApiNotification({ notification, drops, profiles })
       );
   }
 
-  private hasAllRelatedDrops({
+  private hasAllRelatedDropsV1({
     notification,
     drops
   }: {
@@ -247,6 +364,272 @@ export class NotificationsApiService {
     return {
       profileIds: collections.distinct(profileIds),
       dropIds: collections.distinct(dropIds)
+    };
+  }
+
+  private hasAllRelatedDropsV2(
+    notification: UserNotification,
+    drops: Record<string, ApiDropV2>
+  ): boolean {
+    return this.getRelatedDropIds(notification).every(
+      (dropId) => drops[dropId]
+    );
+  }
+
+  private getRelatedDropIds(notification: UserNotification): string[] {
+    const notificationCause = notification.cause;
+    switch (notificationCause) {
+      case IdentityNotificationCause.IDENTITY_SUBSCRIBED:
+      case IdentityNotificationCause.IDENTITY_REP:
+      case IdentityNotificationCause.IDENTITY_NIC:
+      case IdentityNotificationCause.WAVE_CREATED: {
+        return [];
+      }
+      case IdentityNotificationCause.IDENTITY_MENTIONED:
+      case IdentityNotificationCause.DROP_VOTED:
+      case IdentityNotificationCause.DROP_REACTED:
+      case IdentityNotificationCause.DROP_BOOSTED:
+      case IdentityNotificationCause.ALL_DROPS:
+      case IdentityNotificationCause.PRIORITY_ALERT: {
+        return [notification.data.drop_id];
+      }
+      case IdentityNotificationCause.DROP_QUOTED: {
+        return [
+          notification.data.quote_drop_id,
+          notification.data.quoted_drop_id
+        ];
+      }
+      case IdentityNotificationCause.DROP_REPLIED: {
+        return [
+          notification.data.replied_drop_id,
+          notification.data.reply_drop_id
+        ];
+      }
+      default: {
+        return assertUnreachable(notificationCause);
+      }
+    }
+  }
+
+  private mapToApiNotificationV2({
+    notification,
+    drops,
+    profiles,
+    reactionRowsByDropId
+  }: {
+    notification: UserNotification;
+    drops: Record<string, ApiDropV2>;
+    profiles: Record<string, ApiIdentityOverview>;
+    reactionRowsByDropId: Map<string, DropReactionProfileRow[]>;
+  }): ApiNotificationV2 {
+    const notificationCause = notification.cause;
+    switch (notificationCause) {
+      case IdentityNotificationCause.IDENTITY_SUBSCRIBED: {
+        const data = notification.data;
+        return {
+          id: notification.id,
+          created_at: notification.created_at,
+          read_at: notification.read_at,
+          cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
+          related_identity: profiles[data.subscriber_id],
+          related_drops: [],
+          additional_context: {}
+        };
+      }
+      case IdentityNotificationCause.IDENTITY_MENTIONED: {
+        const data = notification.data;
+        return {
+          id: notification.id,
+          created_at: notification.created_at,
+          read_at: notification.read_at,
+          cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
+          related_identity: profiles[data.mentioner_identity_id],
+          related_drops: [drops[data.drop_id]],
+          additional_context: {}
+        };
+      }
+      case IdentityNotificationCause.IDENTITY_REP: {
+        const data = notification.data;
+        return {
+          id: notification.id,
+          created_at: notification.created_at,
+          read_at: notification.read_at,
+          cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
+          related_identity: profiles[data.rater_id],
+          related_drops: [],
+          additional_context: {
+            amount: data.amount,
+            total: data.total,
+            category: data.category
+          }
+        };
+      }
+      case IdentityNotificationCause.IDENTITY_NIC: {
+        const data = notification.data;
+        return {
+          id: notification.id,
+          created_at: notification.created_at,
+          read_at: notification.read_at,
+          cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
+          related_identity: profiles[data.rater_id],
+          related_drops: [],
+          additional_context: {
+            amount: data.amount,
+            total: data.total
+          }
+        };
+      }
+      case IdentityNotificationCause.DROP_VOTED: {
+        const data = notification.data;
+        return {
+          id: notification.id,
+          created_at: notification.created_at,
+          read_at: notification.read_at,
+          cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
+          related_identity: profiles[data.voter_id],
+          related_drops: [drops[data.drop_id]],
+          additional_context: {
+            vote: data.vote
+          }
+        };
+      }
+      case IdentityNotificationCause.DROP_REACTED: {
+        const data = notification.data;
+        return {
+          id: notification.id,
+          created_at: notification.created_at,
+          read_at: notification.read_at,
+          cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
+          related_identity: profiles[data.profile_id],
+          related_drops: [drops[data.drop_id]],
+          additional_context: this.getDropReactedAdditionalContextV2({
+            dropId: data.drop_id,
+            reaction: data.reaction,
+            profiles,
+            reactionRowsByDropId
+          })
+        };
+      }
+      case IdentityNotificationCause.DROP_BOOSTED: {
+        const data = notification.data;
+        return {
+          id: notification.id,
+          created_at: notification.created_at,
+          read_at: notification.read_at,
+          cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
+          related_identity: profiles[data.booster_id],
+          related_drops: [drops[data.drop_id]],
+          additional_context: {}
+        };
+      }
+      case IdentityNotificationCause.DROP_QUOTED: {
+        const data = notification.data;
+        return {
+          id: notification.id,
+          created_at: notification.created_at,
+          read_at: notification.read_at,
+          cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
+          related_identity: profiles[data.quote_drop_author_id],
+          related_drops: [
+            drops[data.quote_drop_id],
+            drops[data.quoted_drop_id]
+          ],
+          additional_context: {
+            quote_drop_id: data.quote_drop_id,
+            quote_drop_part: data.quote_drop_part,
+            quoted_drop_id: data.quoted_drop_id,
+            quoted_drop_part: data.quoted_drop_part
+          }
+        };
+      }
+      case IdentityNotificationCause.DROP_REPLIED: {
+        const data = notification.data;
+        return {
+          id: notification.id,
+          created_at: notification.created_at,
+          read_at: notification.read_at,
+          cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
+          related_identity: profiles[data.reply_drop_author_id],
+          related_drops: [
+            drops[data.replied_drop_id],
+            drops[data.reply_drop_id]
+          ],
+          additional_context: {
+            reply_drop_id: data.reply_drop_id,
+            replied_drop_id: data.replied_drop_id,
+            replied_drop_part: data.replied_drop_part
+          }
+        };
+      }
+      case IdentityNotificationCause.WAVE_CREATED: {
+        const data = notification.data;
+        return {
+          id: notification.id,
+          created_at: notification.created_at,
+          read_at: notification.read_at,
+          cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
+          related_identity: profiles[data.created_by],
+          related_drops: [],
+          additional_context: {
+            wave_id: data.wave_id
+          }
+        };
+      }
+      case IdentityNotificationCause.ALL_DROPS: {
+        const data = notification.data;
+        return {
+          id: notification.id,
+          created_at: notification.created_at,
+          read_at: notification.read_at,
+          cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
+          related_identity: profiles[data.additional_identity_id],
+          related_drops: [drops[data.drop_id]],
+          additional_context: {
+            vote: data.vote
+          }
+        };
+      }
+      case IdentityNotificationCause.PRIORITY_ALERT: {
+        const data = notification.data;
+        return {
+          id: notification.id,
+          created_at: notification.created_at,
+          read_at: notification.read_at,
+          cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
+          related_identity: profiles[data.additional_identity_id],
+          related_drops: [drops[data.drop_id]],
+          additional_context: {}
+        };
+      }
+      default: {
+        return assertUnreachable(notificationCause);
+      }
+    }
+  }
+
+  private getDropReactedAdditionalContextV2({
+    dropId,
+    reaction,
+    profiles,
+    reactionRowsByDropId
+  }: {
+    dropId: string;
+    reaction: string;
+    profiles: Record<string, ApiIdentityOverview>;
+    reactionRowsByDropId: Map<string, DropReactionProfileRow[]>;
+  }): DropReactedNotificationAdditionalContextV2 {
+    const rows = reactionRowsByDropId.get(dropId) ?? [];
+    const reactors = rows
+      .filter((row) => row.reaction === reaction)
+      .map((row) => profiles[row.profile_id])
+      .filter((profile): profile is ApiIdentityOverview => !!profile)
+      .map((profile) => ({
+        handle: profile.handle,
+        pfp: profile.pfp
+      }));
+    return {
+      reaction,
+      reactors
     };
   }
 

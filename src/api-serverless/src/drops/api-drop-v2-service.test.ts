@@ -21,6 +21,7 @@ import {
   ProfileActivityLogType
 } from '@/entities/IProfileActivityLog';
 import { PageSortDirection } from '@/api/page-request';
+import { ApiPageSortDirection } from '@/api/generated/models/ApiPageSortDirection';
 
 function makeDrop(overrides: Partial<DropEntity> = {}): DropEntity {
   return {
@@ -201,6 +202,8 @@ function createService() {
     findDropPartByDropIdAndPartNo: jest.fn().mockResolvedValue(makePart()),
     findDropPartMedia: jest.fn().mockResolvedValue([]),
     findDropBoostsByDropId: jest.fn().mockResolvedValue([]),
+    findBoostedDrops: jest.fn().mockResolvedValue([]),
+    countBoostedDrops: jest.fn().mockResolvedValue(0),
     findDropVoteEditLogEntities: jest.fn().mockResolvedValue([]),
     findDropVotersByAbsoluteVote: jest.fn().mockResolvedValue([]),
     countDropVotersByAbsoluteVote: jest.fn().mockResolvedValue(0),
@@ -211,9 +214,15 @@ function createService() {
     getGroupsUserIsEligibleFor: jest.fn().mockResolvedValue(['group-1'])
   };
   const apiDropMapper = {
-    mapDrops: jest.fn().mockResolvedValue({
-      'drop-1': { id: 'drop-1' }
-    })
+    mapDrops: jest.fn().mockImplementation(async (drops: DropEntity[]) =>
+      drops.reduce(
+        (acc, drop) => ({
+          ...acc,
+          [drop.id]: { id: drop.id }
+        }),
+        {}
+      )
+    )
   };
   const apiWaveOverviewMapper = {
     mapWaves: jest.fn().mockResolvedValue({
@@ -222,7 +231,10 @@ function createService() {
   };
   const identityFetcher = {
     getDropResolvedIdentityProfilesV2ByIds: jest.fn().mockResolvedValue({}),
-    getApiIdentityOverviewsByIds: jest.fn().mockResolvedValue({})
+    getApiIdentityOverviewsByIds: jest.fn().mockResolvedValue({}),
+    getProfileIdByIdentityKeyOrThrow: jest
+      .fn()
+      .mockResolvedValue('resolved-profile-1')
   };
   const attachmentsDb = {
     getDropPartAttachments: jest.fn().mockResolvedValue([]),
@@ -649,6 +661,80 @@ describe('ApiDropV2Service', () => {
     expect(
       deps.identityFetcher.getApiIdentityOverviewsByIds
     ).not.toHaveBeenCalled();
+  });
+
+  it('finds boosted drops and maps them with V2 models', async () => {
+    const { service, deps } = createService();
+    const dropEntities = [
+      makeDrop({ id: 'drop-1' }),
+      makeDrop({ id: 'drop-2' })
+    ];
+    deps.dropsDb.findBoostedDrops.mockResolvedValue(dropEntities);
+    deps.dropsDb.countBoostedDrops.mockResolvedValue(3);
+    deps.identityFetcher.getProfileIdByIdentityKeyOrThrow
+      .mockResolvedValueOnce('booster-profile-1')
+      .mockResolvedValueOnce('author-profile-1');
+    const ctx = {
+      authenticationContext: AuthenticationContext.fromProfileId('viewer-1')
+    };
+
+    const result = await service.findBoostedDrops(
+      {
+        author: 'alice',
+        booster: 'bob',
+        wave_id: 'wave-1',
+        min_boosts: 2,
+        count_only_boosts_after: 100,
+        page_size: 2,
+        page: 1,
+        sort_direction: ApiPageSortDirection.Desc,
+        sort: 'last_boosted_at'
+      },
+      ctx
+    );
+
+    expect(
+      deps.userGroupsService.getGroupsUserIsEligibleFor
+    ).toHaveBeenCalledWith('viewer-1', undefined);
+    expect(
+      deps.identityFetcher.getProfileIdByIdentityKeyOrThrow
+    ).toHaveBeenNthCalledWith(1, { identityKey: 'bob' }, ctx);
+    expect(
+      deps.identityFetcher.getProfileIdByIdentityKeyOrThrow
+    ).toHaveBeenNthCalledWith(2, { identityKey: 'alice' }, ctx);
+    expect(deps.dropsDb.findBoostedDrops).toHaveBeenCalledWith(
+      {
+        wave_id: 'wave-1',
+        eligibile_groups: ['group-1'],
+        limit: 2,
+        offset: 0,
+        booster_id: 'booster-profile-1',
+        author_id: 'author-profile-1',
+        order_by: 'last_boosted_at',
+        order: ApiPageSortDirection.Desc,
+        min_boosts: 2,
+        count_only_boosts_after: 100
+      },
+      ctx
+    );
+    expect(deps.dropsDb.countBoostedDrops).toHaveBeenCalledWith(
+      {
+        wave_id: 'wave-1',
+        eligibile_groups: ['group-1'],
+        booster_id: 'booster-profile-1',
+        author_id: 'author-profile-1',
+        min_boosts: 2,
+        count_only_boosts_after: 100
+      },
+      ctx
+    );
+    expect(deps.apiDropMapper.mapDrops).toHaveBeenCalledWith(dropEntities, ctx);
+    expect(result).toEqual({
+      data: [{ id: 'drop-1' }, { id: 'drop-2' }],
+      count: 3,
+      page: 1,
+      next: true
+    });
   });
 
   it('finds visible drop reactions and maps reactors to identity overviews', async () => {

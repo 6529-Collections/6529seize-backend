@@ -1,7 +1,311 @@
+import { AuthenticationContext } from '@/auth-context';
 import { ApiDropGroupMention } from '@/api/generated/models/ApiDropGroupMention';
+import { ApiNotificationCause } from '@/api/generated/models/ApiNotificationCause';
 import { NotificationsApiService } from '@/api/notifications/notifications.api.service';
 import { IdentityNotificationCause } from '@/entities/IIdentityNotification';
 import { DropGroupMention } from '@/entities/IWaveGroupNotificationSubscription';
+
+describe('NotificationsApiService V2 notifications', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  function makeIdentity(id: string, handle: string, pfp: string) {
+    return {
+      id,
+      handle,
+      pfp,
+      primary_address: `0x${id}`,
+      level: 1,
+      classification: 'PSEUDONYM',
+      badges: {
+        artist_of_main_stage_submissions: 0,
+        artist_of_memes: 0
+      }
+    };
+  }
+
+  function createService() {
+    const notificationsReader = {
+      getNotificationsForIdentity: jest.fn().mockResolvedValue({
+        notifications: [],
+        total_unread: 0
+      })
+    };
+    const userGroupsService = {
+      getGroupsUserIsEligibleFor: jest.fn().mockResolvedValue(['group-1'])
+    };
+    const identityFetcher = {
+      getApiIdentityOverviewsByIds: jest.fn().mockResolvedValue({})
+    };
+    const dropsService = {
+      findDropsV2ByIds: jest.fn().mockResolvedValue({})
+    };
+    const reactionsDb = {
+      getReactionProfilesByDropId: jest.fn().mockResolvedValue([])
+    };
+    const service = new NotificationsApiService(
+      notificationsReader as any,
+      userGroupsService as any,
+      identityFetcher as any,
+      dropsService as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      reactionsDb as any
+    );
+    return {
+      service,
+      notificationsReader,
+      userGroupsService,
+      identityFetcher,
+      dropsService,
+      reactionsDb
+    };
+  }
+
+  it('maps V2 notifications with ApiIdentityOverview and ApiDropV2', async () => {
+    const { service, notificationsReader, identityFetcher, dropsService } =
+      createService();
+    const subscriber = makeIdentity(
+      'subscriber-profile-1',
+      'alice',
+      'alice.png'
+    );
+    notificationsReader.getNotificationsForIdentity.mockResolvedValue({
+      notifications: [
+        {
+          id: 1,
+          created_at: 1000,
+          read_at: null,
+          cause: IdentityNotificationCause.IDENTITY_SUBSCRIBED,
+          data: {
+            subscriber_id: 'subscriber-profile-1',
+            subscribed_to: 'viewer-1'
+          }
+        }
+      ],
+      total_unread: 2
+    });
+    identityFetcher.getApiIdentityOverviewsByIds.mockResolvedValue({
+      'subscriber-profile-1': subscriber
+    });
+
+    const authenticationContext =
+      AuthenticationContext.fromProfileId('viewer-1');
+    const result = await service.getNotificationsV2(
+      {
+        id_less_than: null,
+        limit: 10,
+        cause: null,
+        cause_exclude: null,
+        unread_only: false
+      },
+      authenticationContext,
+      { authenticationContext }
+    );
+
+    expect(dropsService.findDropsV2ByIds).toHaveBeenCalledWith(
+      [],
+      expect.objectContaining({ authenticationContext })
+    );
+    expect(identityFetcher.getApiIdentityOverviewsByIds).toHaveBeenCalledWith(
+      ['subscriber-profile-1'],
+      expect.objectContaining({ authenticationContext })
+    );
+    expect(result).toEqual({
+      notifications: [
+        {
+          id: 1,
+          created_at: 1000,
+          read_at: null,
+          cause: ApiNotificationCause.IdentitySubscribed,
+          related_identity: subscriber,
+          related_drops: [],
+          additional_context: {}
+        }
+      ],
+      unread_count: 2
+    });
+  });
+
+  it('adds matching reactors to DROP_REACTED additional context', async () => {
+    const {
+      service,
+      notificationsReader,
+      identityFetcher,
+      dropsService,
+      reactionsDb
+    } = createService();
+    const drop = { id: 'drop-1', content: 'v2 drop' };
+    const reactorOne = makeIdentity('reactor-1', 'alice', 'alice.png');
+    const reactorTwo = makeIdentity('reactor-2', 'bob', 'bob.png');
+    const reactorForOtherReaction = makeIdentity(
+      'reactor-3',
+      'carol',
+      'carol.png'
+    );
+    notificationsReader.getNotificationsForIdentity.mockResolvedValue({
+      notifications: [
+        {
+          id: 7,
+          created_at: 2000,
+          read_at: null,
+          cause: IdentityNotificationCause.DROP_REACTED,
+          data: {
+            profile_id: 'reactor-1',
+            drop_id: 'drop-1',
+            drop_author_id: 'author-1',
+            reaction: 'LIKE',
+            wave_id: 'wave-1'
+          }
+        }
+      ],
+      total_unread: 5
+    });
+    dropsService.findDropsV2ByIds.mockResolvedValue({
+      'drop-1': drop
+    });
+    reactionsDb.getReactionProfilesByDropId.mockResolvedValue([
+      { reaction: 'LIKE', profile_id: 'reactor-1' },
+      { reaction: 'LIKE', profile_id: 'reactor-2' },
+      { reaction: 'LOVE', profile_id: 'reactor-3' }
+    ]);
+    identityFetcher.getApiIdentityOverviewsByIds.mockResolvedValue({
+      'reactor-1': reactorOne,
+      'reactor-2': reactorTwo,
+      'reactor-3': reactorForOtherReaction
+    });
+
+    const authenticationContext =
+      AuthenticationContext.fromProfileId('viewer-1');
+    const result = await service.getNotificationsV2(
+      {
+        id_less_than: null,
+        limit: 10,
+        cause: null,
+        cause_exclude: null,
+        unread_only: false
+      },
+      authenticationContext,
+      { authenticationContext }
+    );
+
+    expect(reactionsDb.getReactionProfilesByDropId).toHaveBeenCalledWith(
+      'drop-1',
+      expect.objectContaining({ authenticationContext })
+    );
+    expect(dropsService.findDropsV2ByIds).toHaveBeenCalledWith(
+      ['drop-1'],
+      expect.objectContaining({ authenticationContext })
+    );
+    expect(identityFetcher.getApiIdentityOverviewsByIds).toHaveBeenCalledWith(
+      ['reactor-1', 'reactor-2', 'reactor-3'],
+      expect.objectContaining({ authenticationContext })
+    );
+    expect(result).toEqual({
+      notifications: [
+        {
+          id: 7,
+          created_at: 2000,
+          read_at: null,
+          cause: ApiNotificationCause.DropReacted,
+          related_identity: reactorOne,
+          related_drops: [drop],
+          additional_context: {
+            reaction: 'LIKE',
+            reactors: [
+              { handle: 'alice', pfp: 'alice.png' },
+              { handle: 'bob', pfp: 'bob.png' }
+            ]
+          }
+        }
+      ],
+      unread_count: 5
+    });
+    expect(
+      Object.keys(result.notifications[0].additional_context.reactors[0])
+    ).toEqual(['handle', 'pfp']);
+  });
+
+  it('skips V2 notifications when a related drop is missing', async () => {
+    const { service, notificationsReader, identityFetcher, dropsService } =
+      createService();
+    const subscriber = makeIdentity(
+      'subscriber-profile-1',
+      'alice',
+      'alice.png'
+    );
+    const reactor = makeIdentity('reactor-1', 'bob', 'bob.png');
+    notificationsReader.getNotificationsForIdentity.mockResolvedValue({
+      notifications: [
+        {
+          id: 11,
+          created_at: 3000,
+          read_at: null,
+          cause: IdentityNotificationCause.DROP_REACTED,
+          data: {
+            profile_id: 'reactor-1',
+            drop_id: 'missing-drop',
+            drop_author_id: 'author-1',
+            reaction: 'LIKE',
+            wave_id: 'wave-1'
+          }
+        },
+        {
+          id: 12,
+          created_at: 4000,
+          read_at: null,
+          cause: IdentityNotificationCause.IDENTITY_SUBSCRIBED,
+          data: {
+            subscriber_id: 'subscriber-profile-1',
+            subscribed_to: 'viewer-1'
+          }
+        }
+      ],
+      total_unread: 2
+    });
+    dropsService.findDropsV2ByIds.mockResolvedValue({});
+    identityFetcher.getApiIdentityOverviewsByIds.mockResolvedValue({
+      'reactor-1': reactor,
+      'subscriber-profile-1': subscriber
+    });
+
+    const authenticationContext =
+      AuthenticationContext.fromProfileId('viewer-1');
+    const result = await service.getNotificationsV2(
+      {
+        id_less_than: null,
+        limit: 10,
+        cause: null,
+        cause_exclude: null,
+        unread_only: false
+      },
+      authenticationContext,
+      { authenticationContext }
+    );
+
+    expect(dropsService.findDropsV2ByIds).toHaveBeenCalledWith(
+      ['missing-drop'],
+      expect.objectContaining({ authenticationContext })
+    );
+    expect(result).toEqual({
+      notifications: [
+        {
+          id: 12,
+          created_at: 4000,
+          read_at: null,
+          cause: ApiNotificationCause.IdentitySubscribed,
+          related_identity: subscriber,
+          related_drops: [],
+          additional_context: {}
+        }
+      ],
+      unread_count: 2
+    });
+  });
+});
 
 describe('NotificationsApiService wave notification preferences', () => {
   afterEach(() => {

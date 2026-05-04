@@ -23,8 +23,10 @@ import { AttachmentEntity, DropAttachmentEntity } from '@/entities/IAttachment';
 import { ApiAttachment } from '@/api/generated/models/ApiAttachment';
 import { mapAttachmentToApiAttachment } from '@/api/attachments/attachments.mappers';
 import { ApiDropBoostV2 } from '@/api/generated/models/ApiDropBoostV2';
+import { ApiDropV2Page } from '@/api/generated/models/ApiDropV2Page';
 import { ApiDropVoteEditLog } from '@/api/generated/models/ApiDropVoteEditLog';
 import { PageSortDirection } from '@/api/page-request';
+import { ApiPageSortDirection } from '@/api/generated/models/ApiPageSortDirection';
 import { ApiDropVotersPage } from '@/api/generated/models/ApiDropVotersPage';
 import { DropEntity, DropType } from '@/entities/IDrop';
 import { ApiDropReactionV2 } from '@/api/generated/models/ApiDropReactionV2';
@@ -42,6 +44,18 @@ export type DropVoteEditLogsSearchParams = {
   limit: number;
   sort_direction: PageSortDirection;
 };
+
+export interface FindBoostedDropsV2Request {
+  author: string | null;
+  booster: string | null;
+  wave_id: string | null;
+  min_boosts: number | null;
+  count_only_boosts_after: number;
+  page_size: number;
+  page: number;
+  sort_direction: ApiPageSortDirection;
+  sort: 'last_boosted_at' | 'first_boosted_at' | 'drop_created_at' | 'boosts';
+}
 
 export class ApiDropV2Service {
   constructor(
@@ -259,6 +273,76 @@ export class ApiDropV2Service {
           reactors: profileIds.map((profileId) => reactorsById[profileId])
         })
       );
+    } finally {
+      ctx.timer?.stop(timerKey);
+    }
+  }
+
+  public async findBoostedDrops(
+    req: FindBoostedDropsV2Request,
+    ctx: RequestContext
+  ): Promise<ApiDropV2Page> {
+    const timerKey = `${this.constructor.name}->findBoostedDrops`;
+    ctx.timer?.start(timerKey);
+    try {
+      const contextProfileId = getWaveReadContextProfileId(
+        ctx.authenticationContext
+      );
+      const groupIdsUserIsEligibleFor =
+        await this.userGroupsService.getGroupsUserIsEligibleFor(
+          contextProfileId,
+          ctx.timer
+        );
+      const boosterId =
+        req.booster === null
+          ? null
+          : await this.identityFetcher.getProfileIdByIdentityKeyOrThrow(
+              { identityKey: req.booster },
+              ctx
+            );
+      const authorId =
+        req.author === null
+          ? null
+          : await this.identityFetcher.getProfileIdByIdentityKeyOrThrow(
+              { identityKey: req.author },
+              ctx
+            );
+      const offset = req.page_size * (req.page - 1);
+      const [dropEntities, count] = await Promise.all([
+        this.dropsDb.findBoostedDrops(
+          {
+            wave_id: req.wave_id,
+            eligibile_groups: groupIdsUserIsEligibleFor,
+            limit: req.page_size,
+            offset,
+            booster_id: boosterId,
+            author_id: authorId,
+            order_by: req.sort,
+            order: req.sort_direction,
+            min_boosts: req.min_boosts,
+            count_only_boosts_after: req.count_only_boosts_after
+          },
+          ctx
+        ),
+        this.dropsDb.countBoostedDrops(
+          {
+            wave_id: req.wave_id,
+            eligibile_groups: groupIdsUserIsEligibleFor,
+            booster_id: boosterId,
+            author_id: authorId,
+            min_boosts: req.min_boosts,
+            count_only_boosts_after: req.count_only_boosts_after
+          },
+          ctx
+        )
+      ]);
+      const dropsById = await this.apiDropMapper.mapDrops(dropEntities, ctx);
+      return {
+        data: dropEntities.map((drop) => dropsById[drop.id]),
+        count,
+        page: req.page,
+        next: count > req.page_size * req.page
+      };
     } finally {
       ctx.timer?.stop(timerKey);
     }

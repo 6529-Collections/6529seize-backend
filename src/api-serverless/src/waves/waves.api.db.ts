@@ -613,10 +613,11 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     }
     const serialNoLessThan =
       searchParams.serial_no_less_than ?? Number.MAX_SAFE_INTEGER;
+    const offset = searchParams.offset ?? 0;
     const sql = `${sqlAndParams.sql} select w.* from ${WAVES_TABLE} w
-         join ${
-           UserGroupsService.GENERATED_VIEW
-         } cm on cm.profile_id = w.created_by
+	         join ${
+             UserGroupsService.GENERATED_VIEW
+           } cm on cm.profile_id = w.created_by
          where ${searchParams.author ? ` w.created_by = :author and ` : ``} ${
            searchParams.name ? ` w.name like :name and ` : ``
          } ${
@@ -629,11 +630,12 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
              : ``
          } w.visibility_group_id is null) and w.serial_no < :serialNoLessThan order by w.serial_no desc limit ${
            searchParams.limit
-         }`;
+         } offset :offset`;
     const params: Record<string, any> = {
       ...sqlAndParams.params,
       groupsUserIsEligibleFor,
       serialNoLessThan,
+      offset,
       name: searchParams.name ? `%${searchParams.name}%` : undefined,
       author: searchParams.author,
       direct_message: searchParams.direct_message
@@ -1338,11 +1340,13 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
   async findHotWaves({
     cutoffTimestamp,
     limit,
+    offset = 0,
     authenticated_user_id,
     exclude_followed
   }: {
     cutoffTimestamp: number;
     limit: number;
+    offset?: number;
     authenticated_user_id: string | null;
     exclude_followed: boolean;
   }): Promise<WaveEntity[]> {
@@ -1365,17 +1369,18 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
             and w.visibility_group_id is null
             and w.chat_group_id is null
             ${exclude_followed ? `and f.id is null` : ``}
-          group by w.id
-          having count(distinct d.author_id) >= 3
-          order by drop_count desc
-          limit :limit
-        )
-        select w.* from ${WAVES_TABLE} w
-        join hot_waves hw on hw.id = w.id
+	          group by w.id
+	          having count(distinct d.author_id) >= 3
+	          order by drop_count desc
+	          limit :limit offset :offset
+	        )
+	        select w.* from ${WAVES_TABLE} w
+	        join hot_waves hw on hw.id = w.id
         order by hw.drop_count desc, w.id`,
         {
           cutoffTimestamp,
           limit,
+          offset,
           authenticated_user_id,
           wave_target_type: ActivityEventTargetType.WAVE,
           drop_created_action: ActivityEventAction.DROP_CREATED
@@ -1994,6 +1999,7 @@ export interface SearchWavesParams {
   readonly author?: string;
   readonly name?: string;
   readonly limit: number;
+  readonly offset?: number;
   readonly serial_no_less_than?: number;
   readonly group_id?: string;
   readonly direct_message?: boolean;

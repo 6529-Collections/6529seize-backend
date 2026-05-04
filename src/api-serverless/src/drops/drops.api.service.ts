@@ -13,6 +13,7 @@ import {
   NotFoundException
 } from '@/exceptions';
 import { ApiDrop } from '../generated/models/ApiDrop';
+import { ApiDropV2 } from '@/api/generated/models/ApiDropV2';
 import {
   UserGroupsService,
   userGroupsService
@@ -37,6 +38,7 @@ import { ApiDropType } from '../generated/models/ApiDropType';
 import { DropEntity, DropType } from '@/entities/IDrop';
 import { ApiWaveDropsFeed } from '../generated/models/ApiWaveDropsFeed';
 import { ApiDropsLeaderboardPage } from '../generated/models/ApiDropsLeaderboardPage';
+import { ApiDropsLeaderboardPageV2 } from '@/api/generated/models/ApiDropsLeaderboardPageV2';
 import { WaveType } from '@/entities/IWave';
 import { ApiWaveLog } from '../generated/models/ApiWaveLog';
 import {
@@ -80,6 +82,8 @@ import {
   mapWaveToApiWaveMin
 } from '@/api/waves/wave-min.helpers';
 import { profileWavesDb } from '@/profiles/profile-waves.db';
+import { ApiWaveMin } from '@/api/generated/models/ApiWaveMin';
+import { apiDropMapper, ApiDropMapper } from '@/api/drops/api-drop.mapper';
 
 export class DropsApiService {
   constructor(
@@ -90,7 +94,8 @@ export class DropsApiService {
     private readonly identitySubscriptionsDb: IdentitySubscriptionsDb,
     private readonly identityFetcher: IdentityFetcher,
     private readonly metricsRecorder: MetricsRecorder,
-    private readonly wsListenersNotifier: WsListenersNotifier
+    private readonly wsListenersNotifier: WsListenersNotifier,
+    private readonly apiDropMapper: ApiDropMapper
   ) {}
 
   public async findDropByIdOrThrow(
@@ -345,6 +350,17 @@ export class DropsApiService {
       );
     }
     return result;
+  }
+
+  public async findDropsV2ByIds(
+    dropIds: string[],
+    ctx: RequestContext
+  ): Promise<Record<string, ApiDropV2>> {
+    const dropEntities = await this.dropsDb.getDropsByIds(
+      dropIds,
+      ctx.connection
+    );
+    return this.apiDropMapper.mapDrops(dropEntities, ctx);
   }
 
   public async findDropsByIds(
@@ -806,6 +822,47 @@ export class DropsApiService {
     params: LeaderboardParams,
     ctx: RequestContext
   ): Promise<ApiDropsLeaderboardPage> {
+    const leaderboard = await this.findLeaderboardData(params, ctx);
+    const drops = await this.dropsMappers.convertToDropsWithoutWaves(
+      leaderboard.dropEntities,
+      ctx
+    );
+    return {
+      wave: leaderboard.wave,
+      drops,
+      count: leaderboard.count,
+      page: params.page,
+      next: leaderboard.next
+    };
+  }
+
+  async findLeaderboardV2(
+    params: LeaderboardParams,
+    ctx: RequestContext
+  ): Promise<ApiDropsLeaderboardPageV2> {
+    const leaderboard = await this.findLeaderboardData(params, ctx);
+    const dropsById = await this.apiDropMapper.mapDrops(
+      leaderboard.dropEntities,
+      ctx
+    );
+    return {
+      wave: leaderboard.wave,
+      drops: leaderboard.dropEntities.map((drop) => dropsById[drop.id]),
+      count: leaderboard.count,
+      page: params.page,
+      next: leaderboard.next
+    };
+  }
+
+  private async findLeaderboardData(
+    params: LeaderboardParams,
+    ctx: RequestContext
+  ): Promise<{
+    wave: ApiWaveMin;
+    dropEntities: DropEntity[];
+    count: number;
+    next: boolean;
+  }> {
     const authContext = ctx.authenticationContext!;
     const { noRightToVote, noRightToParticipate } =
       getWaveMinPermissionMask(authContext);
@@ -905,25 +962,16 @@ export class DropsApiService {
       ctx,
       authenticatedProfileId
     );
-    const drops = await this.findLeaderboardDrops(
+    const dropEntities = await this.findLeaderboardDrops(
       resolvedParams,
       isTimeLockedWave,
       ctx,
       authenticatedProfileId
-    ).then(async (drops) => {
-      ctx.timer?.start(`${this.constructor.name}->convertLeaderboardDrops`);
-      const results = await this.dropsMappers.convertToDropsWithoutWaves(
-        drops,
-        ctx
-      );
-      ctx.timer?.stop(`${this.constructor.name}->convertLeaderboardDrops`);
-      return results;
-    });
+    );
     return {
       wave: waveMin,
-      drops: drops,
+      dropEntities,
       count: count,
-      page: params.page,
       next: count > params.page_size * params.page
     };
   }
@@ -1441,5 +1489,6 @@ export const dropsService = new DropsApiService(
   identitySubscriptionsDb,
   identityFetcher,
   metricsRecorder,
-  wsListenersNotifier
+  wsListenersNotifier,
+  apiDropMapper
 );
