@@ -26,7 +26,6 @@ router.get(
       {
         drop_id?: string;
         limit?: string;
-        serial_no_less_than?: string;
         serial_no_limit?: string;
         search_strategy?: string;
         drop_type?: ApiDropType;
@@ -41,16 +40,10 @@ router.get(
     const authenticationContext = await getAuthenticationContext(req, timer);
     const dropId = req.query.drop_id ?? null;
     const amount = numbers.parseIntOrNull(req.query.limit) ?? 200;
-    const serialNoLessThan = numbers.parseIntOrNull(
-      req.query.serial_no_less_than
-    );
-    const serialNoLimit =
-      serialNoLessThan ?? numbers.parseIntOrNull(req.query.serial_no_limit);
+    const serialNoLimit = numbers.parseIntOrNull(req.query.serial_no_limit);
     const searchStrategy =
-      serialNoLessThan === null
-        ? (enums.resolve(ApiDropSearchStrategy, req.query.search_strategy) ??
-          ApiDropSearchStrategy.Older)
-        : ApiDropSearchStrategy.Older;
+      enums.resolve(ApiDropSearchStrategy, req.query.search_strategy) ??
+      ApiDropSearchStrategy.Older;
     const dropType = req.query.drop_type
       ? (enums.resolve(ApiDropType, req.query.drop_type) ?? null)
       : null;

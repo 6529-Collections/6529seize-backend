@@ -58,7 +58,10 @@ import {
 } from '../entities/IDrop';
 import { DropRelationEntity } from '../entities/IDropRelation';
 import { DropVoterStateEntity } from '../entities/IDropVoterState';
-import { ProfileActivityLog } from '../entities/IProfileActivityLog';
+import {
+  ProfileActivityLog,
+  ProfileActivityLogType
+} from '../entities/IProfileActivityLog';
 import { WaveCreditType, WaveEntity } from '../entities/IWave';
 import { WaveDecisionWinnerDropWithSaleEntity } from '@/entities/IWaveDecision';
 import { WinnerDropVoterVoteEntity } from '../entities/IWinnerDropVoterVote';
@@ -164,6 +167,53 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       );
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->getDropPartOneMedia`);
+    }
+  }
+
+  async findDropPartByDropIdAndPartNo(
+    dropId: string,
+    partNo: number,
+    ctx: RequestContext
+  ): Promise<DropPartEntity | null> {
+    const timerKey = `${this.constructor.name}->findDropPartByDropIdAndPartNo`;
+    ctx.timer?.start(timerKey);
+    try {
+      return await this.db.oneOrNull<DropPartEntity>(
+        `
+        select *
+        from ${DROPS_PARTS_TABLE}
+        where drop_id = :dropId
+          and drop_part_id = :partNo
+      `,
+        { dropId, partNo },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(timerKey);
+    }
+  }
+
+  async findDropPartMedia(
+    dropId: string,
+    partNo: number,
+    ctx: RequestContext
+  ): Promise<DropMediaEntity[]> {
+    const timerKey = `${this.constructor.name}->findDropPartMedia`;
+    ctx.timer?.start(timerKey);
+    try {
+      return await this.db.execute<DropMediaEntity>(
+        `
+        select *
+        from ${DROP_MEDIA_TABLE}
+        where drop_id = :dropId
+          and drop_part_id = :partNo
+        order by id asc
+      `,
+        { dropId, partNo },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(timerKey);
     }
   }
 
@@ -1104,6 +1154,23 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       { dropIds },
       connection ? { wrappedConnection: connection } : undefined
     );
+  }
+
+  async findMetadataByDropId(
+    dropId: string,
+    ctx: RequestContext
+  ): Promise<DropMetadataEntity[]> {
+    const timerKey = `${this.constructor.name}->findMetadataByDropId`;
+    ctx.timer?.start(timerKey);
+    try {
+      return await this.db.execute<DropMetadataEntity>(
+        `select * from ${DROP_METADATA_TABLE} where drop_id = :dropId order by id asc`,
+        { dropId },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(timerKey);
+    }
   }
 
   async findDropIdsWithMetadata(
@@ -2522,6 +2589,49 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     return results;
   }
 
+  async findDropVoteEditLogEntities(
+    {
+      wave_id,
+      drop_id,
+      offset,
+      limit,
+      sort_direction
+    }: {
+      wave_id: string;
+      drop_id: string;
+      offset: number;
+      limit: number;
+      sort_direction: PageSortDirection;
+    },
+    ctx: RequestContext
+  ): Promise<ProfileActivityLog[]> {
+    const timerKey = `${this.constructor.name}->findDropVoteEditLogEntities`;
+    ctx.timer?.start(timerKey);
+    try {
+      return await this.db.execute<ProfileActivityLog>(
+        `
+        select *
+        from ${PROFILES_ACTIVITY_LOGS_TABLE}
+        where additional_data_2 = :wave_id
+          and target_id = :drop_id
+          and type = :log_type
+        order by created_at ${sort_direction}
+        limit :limit offset :offset
+      `,
+        {
+          wave_id,
+          drop_id,
+          log_type: ProfileActivityLogType.DROP_VOTE_EDIT,
+          limit,
+          offset
+        },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(timerKey);
+    }
+  }
+
   async findVotersInfo(
     params: DropVotersStatsParams,
     ctx: RequestContext
@@ -2598,6 +2708,59 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       .then((it) => it?.cnt ?? 0);
     ctx.timer?.stop(`${this.constructor.name}->findVotersInfo`);
     return result;
+  }
+
+  async findDropVotersByAbsoluteVote(
+    params: DropVotersByAbsoluteVoteParams,
+    ctx: RequestContext
+  ): Promise<DropVoterVoteFromDb[]> {
+    const timerKey = `${this.constructor.name}->findDropVotersByAbsoluteVote`;
+    ctx.timer?.start(timerKey);
+    try {
+      return await this.db.execute<DropVoterVoteFromDb>(
+        `
+        select voter_id, votes as vote
+        from ${DROP_VOTER_STATE_TABLE}
+        where wave_id = :wave_id
+          and drop_id = :drop_id
+          and votes <> 0
+        order by abs(votes) ${params.sort_direction}
+        limit :page_size offset :offset
+      `,
+        {
+          ...params,
+          offset: params.page_size * (params.page - 1)
+        },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(timerKey);
+    }
+  }
+
+  async countDropVotersByAbsoluteVote(
+    params: Pick<DropVotersByAbsoluteVoteParams, 'wave_id' | 'drop_id'>,
+    ctx: RequestContext
+  ): Promise<number> {
+    const timerKey = `${this.constructor.name}->countDropVotersByAbsoluteVote`;
+    ctx.timer?.start(timerKey);
+    try {
+      return await this.db
+        .oneOrNull<{ cnt: number }>(
+          `
+          select count(*) as cnt
+          from ${DROP_VOTER_STATE_TABLE}
+          where wave_id = :wave_id
+            and drop_id = :drop_id
+            and votes <> 0
+        `,
+          params,
+          { wrappedConnection: ctx.connection }
+        )
+        .then((it) => it?.cnt ?? 0);
+    } finally {
+      ctx.timer?.stop(timerKey);
+    }
   }
 
   async getWinDecisionsForDrops(
@@ -3012,6 +3175,28 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     }
   }
 
+  async findDropBoostsByDropId(
+    dropId: string,
+    ctx: RequestContext
+  ): Promise<DropBoostEntity[]> {
+    const timerKey = `${this.constructor.name}->findDropBoostsByDropId`;
+    ctx.timer?.start(timerKey);
+    try {
+      return await this.db.execute<DropBoostEntity>(
+        `
+        select *
+        from ${DROP_BOOSTS_TABLE}
+        where drop_id = :dropId
+        order by boosted_at desc
+      `,
+        { dropId },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(timerKey);
+    }
+  }
+
   async countDropBoosts(
     {
       drop_id
@@ -3082,6 +3267,19 @@ export interface DropVotersInfoFromDb {
   readonly min_vote: number;
   readonly average_vote: number;
   readonly different_drops_voted: number;
+}
+
+export interface DropVoterVoteFromDb {
+  readonly voter_id: string;
+  readonly vote: number;
+}
+
+export interface DropVotersByAbsoluteVoteParams {
+  readonly wave_id: string;
+  readonly drop_id: string;
+  readonly page_size: number;
+  readonly page: number;
+  readonly sort_direction: PageSortDirection;
 }
 
 export interface ProfileOverVoteAmountInWave extends TotalGivenVotesInWave {

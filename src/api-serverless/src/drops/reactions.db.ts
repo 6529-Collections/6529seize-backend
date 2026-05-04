@@ -22,6 +22,11 @@ export interface DropReactionCountersResult {
   context_profile_reaction?: string;
 }
 
+export interface DropReactionProfileRow {
+  reaction: string;
+  profile_id: string;
+}
+
 function getChangedRowsFromWriteResult(result: unknown): number {
   if (result != null && typeof result === 'object' && 'changedRows' in result) {
     return Number((result as { changedRows?: unknown }).changedRows ?? 0);
@@ -238,6 +243,28 @@ export class ReactionsDb extends LazyDbAccessCompatibleService {
       return result;
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->getCountersByDropIds`);
+    }
+  }
+
+  public async getReactionProfilesByDropId(
+    dropId: string,
+    ctx: RequestContext
+  ): Promise<DropReactionProfileRow[]> {
+    const timerKey = `${this.constructor.name}->getReactionProfilesByDropId`;
+    ctx.timer?.start(timerKey);
+    try {
+      return await this.db.execute<DropReactionProfileRow>(
+        `
+        select reaction, profile_id
+        from ${DROP_REACTIONS_TABLE}
+        where drop_id = :dropId
+        order by created_at desc
+      `,
+        { dropId },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(timerKey);
     }
   }
 
