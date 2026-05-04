@@ -1371,7 +1371,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
             ${exclude_followed ? `and f.id is null` : ``}
 	          group by w.id
 	          having count(distinct d.author_id) >= 3
-	          order by drop_count desc
+	          order by drop_count desc, w.id
 	          limit :limit offset :offset
 	        )
 	        select w.* from ${WAVES_TABLE} w

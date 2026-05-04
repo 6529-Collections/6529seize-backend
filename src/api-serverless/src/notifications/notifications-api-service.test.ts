@@ -224,9 +224,9 @@ describe('NotificationsApiService V2 notifications', () => {
       ],
       unread_count: 5
     });
-    expect(
-      Object.keys(result.notifications[0].additional_context.reactors[0])
-    ).toEqual(['handle', 'pfp']);
+    const reactors = result.notifications[0].additional_context.reactors ?? [];
+    expect(reactors).toHaveLength(2);
+    expect(Object.keys(reactors[0])).toEqual(['handle', 'pfp']);
   });
 
   it('skips V2 notifications when a related drop is missing', async () => {

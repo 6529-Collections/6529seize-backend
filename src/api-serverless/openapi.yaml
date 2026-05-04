@@ -11620,6 +11620,49 @@ components:
             $ref: "#/components/schemas/ApiDrop"
         additional_context:
           type: object
+    ApiNotificationAdditionalContextV2:
+      type: object
+      properties:
+        amount:
+          type: number
+          format: double
+        total:
+          type: number
+          format: double
+        category:
+          type: string
+        vote:
+          type: number
+          format: double
+        reaction:
+          type: string
+        reactors:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiNotificationDropReactedReactor"
+        quote_drop_id:
+          type: string
+        quote_drop_part:
+          type: number
+          format: int64
+        quoted_drop_id:
+          type: string
+        quoted_drop_part:
+          type: number
+          format: int64
+        reply_drop_id:
+          type: string
+        replied_drop_id:
+          type: string
+        replied_drop_part:
+          type: number
+          format: int64
+        wave_id:
+          type: string
+      description: >-
+        Notification-specific additional context. For DROP_REACTED notifications
+        this includes reaction and reactors, where each reactor only has handle
+        and pfp.
     ApiNotificationCause:
       type: string
       enum:
@@ -11635,6 +11678,13 @@ components:
         - WAVE_CREATED
         - ALL_DROPS
         - PRIORITY_ALERT
+    ApiNotificationDropReactedReactor:
+      type: object
+      properties:
+        handle:
+          type: string
+        pfp:
+          type: string
     ApiNotificationsResponse:
       type: object
       required:
@@ -11691,10 +11741,7 @@ components:
           items:
             $ref: "#/components/schemas/ApiDropV2"
         additional_context:
-          type: object
-          description: >-
-            For DROP_REACTED notifications this includes reaction and reactors,
-            where each reactor only has handle and pfp.
+          $ref: "#/components/schemas/ApiNotificationAdditionalContextV2"
     ApiOutgoingIdentitySubscriptionsPage:
       type: object
       required:

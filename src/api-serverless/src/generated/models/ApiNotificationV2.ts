@@ -12,6 +12,7 @@
 
 import { ApiDropV2 } from '../models/ApiDropV2';
 import { ApiIdentityOverview } from '../models/ApiIdentityOverview';
+import { ApiNotificationAdditionalContextV2 } from '../models/ApiNotificationAdditionalContextV2';
 import { ApiNotificationCause } from '../models/ApiNotificationCause';
 import { HttpFile } from '../http/http';
 
@@ -22,10 +23,7 @@ export class ApiNotificationV2 {
     'read_at': number | null;
     'related_identity': ApiIdentityOverview;
     'related_drops': Array<ApiDropV2>;
-    /**
-    * For DROP_REACTED notifications this includes reaction and reactors, where each reactor only has handle and pfp.
-    */
-    'additional_context': any;
+    'additional_context': ApiNotificationAdditionalContextV2;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -71,7 +69,7 @@ export class ApiNotificationV2 {
         {
             "name": "additional_context",
             "baseName": "additional_context",
-            "type": "any",
+            "type": "ApiNotificationAdditionalContextV2",
             "format": ""
         }    ];
 

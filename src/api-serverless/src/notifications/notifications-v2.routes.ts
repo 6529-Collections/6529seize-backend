@@ -33,7 +33,7 @@ const causesValidator = (value: unknown, helpers: Joi.CustomHelpers) => {
       return helpers.error('any.invalid');
     }
   }
-  return value;
+  return values.join(',');
 };
 
 function assertCanAccessNotifications(
