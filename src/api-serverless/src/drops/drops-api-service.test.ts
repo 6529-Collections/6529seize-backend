@@ -4,6 +4,9 @@ import { BadRequestException } from '@/exceptions';
 import { wavesApiDb } from '../waves/waves.api.db';
 import { ApiDropSearchStrategy } from '../generated/models/ApiDropSearchStrategy';
 import { DropsApiService } from './drops.api.service';
+import { profileWavesDb } from '@/profiles/profile-waves.db';
+import { PageSortDirection } from '@/api/page-request';
+import { LeaderboardSort } from '@/drops/drops.db';
 
 afterEach(() => {
   jest.restoreAllMocks();
@@ -23,6 +26,7 @@ describe('DropsApiService', () => {
       name: 'Wave 1',
       picture: null,
       description_drop_id: 'description-drop-1',
+      created_by: 'creator-1',
       last_drop_time: 1,
       submission_type: null,
       chat_enabled: false,
@@ -36,7 +40,8 @@ describe('DropsApiService', () => {
       visibility_group_id: null,
       admin_drop_deletion_enabled: false,
       forbid_negative_votes: false,
-      time_lock_ms: null
+      time_lock_ms: null,
+      type: 'APPROVE'
     }
   }: {
     curation?: Record<string, unknown> | null;
@@ -55,7 +60,9 @@ describe('DropsApiService', () => {
         .mockResolvedValue(curatedProfileWaveDropEntities),
       findLightDropIdsByWave: jest.fn().mockResolvedValue([]),
       findVisibleLightDropIds: jest.fn().mockResolvedValue([]),
-      findLightDropsByIds: jest.fn().mockResolvedValue([])
+      findLightDropsByIds: jest.fn().mockResolvedValue([]),
+      countParticipatoryDrops: jest.fn().mockResolvedValue(0),
+      findRealtimeLeaderboardDrops: jest.fn().mockResolvedValue([])
     };
     const dropsMappers = {
       convertToDropFulls: jest.fn().mockResolvedValue([]),
@@ -74,11 +81,21 @@ describe('DropsApiService', () => {
       .spyOn(wavesApiDb, 'whichOfWavesArePinnedByGivenProfile')
       .mockResolvedValue(new Set<string>());
     jest
+      .spyOn(wavesApiDb, 'findWaveVotingCreditNftsByWaveIds')
+      .mockResolvedValue({});
+    jest
+      .spyOn(profileWavesDb, 'findSelectedWaveIdsByWaveIds')
+      .mockResolvedValue(new Set<string>());
+    jest
       .spyOn(
         directMessageWaveDisplayService,
         'resolveWaveDisplayByWaveIdForContext'
       )
       .mockResolvedValue({});
+
+    const apiDropMapper = {
+      mapDrops: jest.fn().mockResolvedValue({})
+    };
 
     return {
       service: new DropsApiService(
@@ -89,10 +106,12 @@ describe('DropsApiService', () => {
         {} as any,
         {} as any,
         {} as any,
-        {} as any
+        {} as any,
+        apiDropMapper as any
       ),
       dropsDb,
       dropsMappers,
+      apiDropMapper,
       curationsDb,
       userGroupsService,
       ctx: {
@@ -131,6 +150,62 @@ describe('DropsApiService', () => {
       }),
       ctx
     );
+  });
+
+  it('maps leaderboard drops with ApiDropV2 for the V2 leaderboard', async () => {
+    const { service, dropsDb, apiDropMapper, ctx } = createService();
+    const dropEntities = [{ id: 'drop-1' }, { id: 'drop-2' }];
+    dropsDb.countParticipatoryDrops.mockResolvedValue(3);
+    dropsDb.findRealtimeLeaderboardDrops.mockResolvedValue(dropEntities);
+    apiDropMapper.mapDrops.mockResolvedValue({
+      'drop-1': { id: 'drop-1', parts_count: 1 },
+      'drop-2': { id: 'drop-2', parts_count: 1 }
+    });
+
+    const result = await service.findLeaderboardV2(
+      {
+        wave_id: 'wave-1',
+        page_size: 2,
+        page: 1,
+        curation_id: null,
+        unvoted_by_me: false,
+        price_currency: null,
+        min_price: null,
+        max_price: null,
+        sort_direction: PageSortDirection.ASC,
+        sort: LeaderboardSort.RANK
+      },
+      ctx
+    );
+
+    expect(dropsDb.findRealtimeLeaderboardDrops).toHaveBeenCalledWith(
+      {
+        wave_id: 'wave-1',
+        limit: 2,
+        offset: 0,
+        sort_order: PageSortDirection.ASC,
+        curation_id: null,
+        unvoted_by_me: false,
+        voter_id: 'profile-1',
+        price_currency: null,
+        min_price: null,
+        max_price: null
+      },
+      ctx
+    );
+    expect(apiDropMapper.mapDrops).toHaveBeenCalledWith(dropEntities, ctx);
+    expect(result).toEqual(
+      expect.objectContaining({
+        drops: [
+          { id: 'drop-1', parts_count: 1 },
+          { id: 'drop-2', parts_count: 1 }
+        ],
+        count: 3,
+        page: 1,
+        next: true
+      })
+    );
+    expect(result.wave.id).toBe('wave-1');
   });
 
   it('rejects latest drop filtering when the curation does not exist', async () => {
