@@ -2017,6 +2017,199 @@ paths:
                 $ref: "#/components/schemas/ApiDropAndWave"
         "404":
           description: Drop not found
+  /v2/drops/{id}/metadata:
+    get:
+      tags:
+        - DropsV2
+      summary: Get V2 drop metadata by drop ID.
+      operationId: getDropV2MetadataById
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ApiDropMetadataV2"
+        "404":
+          description: Drop not found
+  /v2/drops/{id}/parts/{part_no}:
+    get:
+      tags:
+        - DropsV2
+      summary: Get a single V2 drop part by drop ID and part number.
+      operationId: getDropV2PartById
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: part_no
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiDropPartV2"
+        "400":
+          description: Invalid request
+        "404":
+          description: Drop or drop part not found
+  /v2/drops/{id}/boosts:
+    get:
+      tags:
+        - DropsV2
+      summary: Get V2 drop boosts by drop ID.
+      operationId: getDropV2BoostsById
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ApiDropBoostV2"
+        "404":
+          description: Drop not found
+  /v2/drops/{id}/reactions:
+    get:
+      tags:
+        - DropsV2
+      summary: Get V2 drop reactions by drop ID.
+      operationId: getDropV2ReactionsById
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ApiDropReactionV2"
+        "404":
+          description: Drop not found
+  /v2/drops/{id}/votes:
+    get:
+      tags:
+        - DropsV2
+      summary: Get V2 drop voters by drop ID.
+      operationId: getDropV2VotersById
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: page_size
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+            default: 1
+        - name: sort_direction
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/ApiPageSortDirection"
+            default: DESC
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiDropVotersPage"
+        "400":
+          description: Invalid request
+        "404":
+          description: Drop not found
+  /v2/drops/{id}/votes/logs:
+    get:
+      tags:
+        - DropsV2
+      summary: Get V2 drop vote edit logs by drop ID.
+      operationId: getDropV2VoteEditLogsById
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+            default: 0
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: sort_direction
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/ApiPageSortDirection"
+            default: DESC
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ApiDropVoteEditLog"
+        "400":
+          description: Invalid request
+        "404":
+          description: Drop not found
   /feed:
     get:
       tags:
@@ -8980,6 +9173,17 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ApiDropBoost"
+    ApiDropBoostV2:
+      type: object
+      required:
+        - booster
+        - boosted_at
+      properties:
+        booster:
+          $ref: "#/components/schemas/ApiIdentityOverview"
+        boosted_at:
+          type: integer
+          format: int64
     ApiDropContextProfileContext:
       type: object
       required:
@@ -9117,6 +9321,20 @@ components:
           anyOf:
             - type: "null"
             - $ref: "#/components/schemas/ApiDropResolvedIdentityProfile"
+    ApiDropMetadataV2:
+      type: object
+      required:
+        - data_key
+        - data_value
+      properties:
+        data_key:
+          type: string
+          maxLength: 500
+        data_value:
+          type: string
+          maxLength: 5000
+        resolved_profile:
+          $ref: "#/components/schemas/ApiDropResolvedIdentityProfileV2"
     ApiDropNftLink:
       type: object
       required:
@@ -9159,6 +9377,39 @@ components:
           anyOf:
             - $ref: "#/components/schemas/ApiQuotedDropResponse"
             - type: "null"
+    ApiDropPartQuoteV2:
+      type: object
+      required:
+        - drop_id
+        - drop_part_id
+      properties:
+        drop_id:
+          type: string
+        drop_part_id:
+          type: integer
+          format: int64
+    ApiDropPartV2:
+      type: object
+      required:
+        - part_no
+      properties:
+        part_no:
+          type: integer
+          format: int64
+          minimum: 1
+        content:
+          type: string
+          maxLength: 25000
+        media:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiDropMedia"
+        attachments:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiAttachment"
+        quoted_drop:
+          $ref: "#/components/schemas/ApiDropPartQuoteV2"
     ApiDropRater:
       type: object
       required:
@@ -9205,6 +9456,18 @@ components:
         count:
           type: integer
           format: int64
+    ApiDropReactionV2:
+      type: object
+      required:
+        - reaction
+        - reactors
+      properties:
+        reaction:
+          type: string
+        reactors:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiIdentityOverview"
     ApiDropReferencedNFT:
       type: object
       required:
@@ -9232,6 +9495,17 @@ components:
             bio:
               type: string
               nullable: true
+            top_rep_categories:
+              type: array
+              items:
+                $ref: "#/components/schemas/ApiProfileRepCategorySummary"
+    ApiDropResolvedIdentityProfileV2:
+      allOf:
+        - $ref: "#/components/schemas/ApiIdentityOverview"
+        - type: object
+          properties:
+            bio:
+              type: string
             top_rep_categories:
               type: array
               items:
@@ -9407,6 +9681,50 @@ components:
         time:
           type: number
           format: int64
+    ApiDropVoteEditLog:
+      type: object
+      required:
+        - id
+        - old_vote
+        - new_vote
+        - created_at
+        - voter
+      properties:
+        id:
+          type: string
+        old_vote:
+          type: number
+          format: int64
+        new_vote:
+          type: number
+          format: int64
+        created_at:
+          type: integer
+          format: int64
+        voter:
+          $ref: "#/components/schemas/ApiIdentityOverview"
+    ApiDropVoter:
+      type: object
+      required:
+        - voter
+        - vote
+      properties:
+        voter:
+          $ref: "#/components/schemas/ApiIdentityOverview"
+        vote:
+          type: number
+          format: int64
+    ApiDropVotersPage:
+      type: object
+      required:
+        - data
+      allOf:
+        - $ref: "#/components/schemas/ApiPageBase"
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiDropVoter"
     ApiDropWinningContext:
       type: object
       required:
