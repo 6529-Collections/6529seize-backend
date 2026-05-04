@@ -4,6 +4,9 @@ import { WaveCreditType, WaveEntity, WaveType } from '@/entities/IWave';
 import { NotFoundException } from '@/exceptions';
 import { ApiDropSearchStrategy } from '@/api/generated/models/ApiDropSearchStrategy';
 import { ApiDropType } from '@/api/generated/models/ApiDropType';
+import { ApiWavesOverviewType } from '@/api/generated/models/ApiWavesOverviewType';
+import { ApiWavesPinFilter } from '@/api/generated/models/ApiWavesPinFilter';
+import { ApiWavesV2ListType } from '@/api/generated/models/ApiWavesV2ListType';
 import { ApiWaveV2Service } from '@/api/waves/api-wave-v2.service';
 
 function makeDrop(overrides: Partial<DropEntity> = {}): DropEntity {
@@ -87,6 +90,14 @@ function createService() {
       .fn()
       .mockResolvedValue([
         makeDrop({ id: 'reply-1', reply_to_drop_id: 'root-drop' })
+      ]),
+    findDropsByCurationPriorityOrder: jest.fn().mockResolvedValue([]),
+    searchDropsContainingPhraseInWave: jest
+      .fn()
+      .mockResolvedValue([
+        makeDrop({ id: 'search-drop-1' }),
+        makeDrop({ id: 'search-drop-2' }),
+        makeDrop({ id: 'search-drop-3' })
       ])
   };
   const curationsDb = {
@@ -97,6 +108,18 @@ function createService() {
   };
   const userGroupsService = {
     getGroupsUserIsEligibleFor: jest.fn().mockResolvedValue(['group-1'])
+  };
+  const wavesApiDb = {
+    searchWaves: jest.fn().mockResolvedValue([]),
+    findMostSubscribedWaves: jest.fn().mockResolvedValue([]),
+    findRecentlyDroppedToWaves: jest.fn().mockResolvedValue([]),
+    findHotWaves: jest.fn().mockResolvedValue([]),
+    findFavouriteWavesOfIdentity: jest.fn().mockResolvedValue([])
+  };
+  const identityFetcher = {
+    getProfileIdByIdentityKeyOrThrow: jest
+      .fn()
+      .mockResolvedValue('resolved-profile-1')
   };
   const apiDropMapper = {
     mapDrops: jest.fn().mockImplementation(async (drops: DropEntity[]) =>
@@ -110,9 +133,15 @@ function createService() {
     )
   };
   const apiWaveOverviewMapper = {
-    mapWaves: jest.fn().mockResolvedValue({
-      'wave-1': { id: 'wave-1' }
-    })
+    mapWaves: jest.fn().mockImplementation(async (waves: WaveEntity[]) =>
+      waves.reduce(
+        (acc, wave) => ({
+          ...acc,
+          [wave.id]: { id: wave.id }
+        }),
+        {}
+      )
+    )
   };
 
   return {
@@ -120,6 +149,8 @@ function createService() {
       dropsDb as any,
       curationsDb as any,
       userGroupsService as any,
+      wavesApiDb as any,
+      identityFetcher as any,
       apiDropMapper as any,
       apiWaveOverviewMapper as any
     ),
@@ -127,6 +158,8 @@ function createService() {
       dropsDb,
       curationsDb,
       userGroupsService,
+      wavesApiDb,
+      identityFetcher,
       apiDropMapper,
       apiWaveOverviewMapper
     },
@@ -135,6 +168,176 @@ function createService() {
 }
 
 describe('ApiWaveV2Service', () => {
+  it('searches waves with V2 overview pagination', async () => {
+    const { service, deps } = createService();
+    const waveEntities = [
+      makeWave({ id: 'wave-1' }),
+      makeWave({ id: 'wave-2' }),
+      makeWave({ id: 'wave-3' })
+    ];
+    deps.wavesApiDb.searchWaves.mockResolvedValue(waveEntities);
+    const ctx = {
+      authenticationContext: AuthenticationContext.fromProfileId('viewer-1')
+    };
+
+    const result = await service.findWaves(
+      {
+        view: ApiWavesV2ListType.Search,
+        page: 2,
+        page_size: 2,
+        name: 'art',
+        author: 'alice',
+        direct_message: false
+      },
+      ctx
+    );
+
+    expect(
+      deps.identityFetcher.getProfileIdByIdentityKeyOrThrow
+    ).toHaveBeenCalledWith({ identityKey: 'alice' }, ctx);
+    expect(deps.wavesApiDb.searchWaves).toHaveBeenCalledWith(
+      {
+        author: 'resolved-profile-1',
+        name: 'art',
+        limit: 3,
+        offset: 2,
+        serial_no_less_than: undefined,
+        group_id: undefined,
+        direct_message: false
+      },
+      ['group-1'],
+      ctx
+    );
+    expect(deps.apiWaveOverviewMapper.mapWaves).toHaveBeenCalledWith(
+      waveEntities.slice(0, 2),
+      ctx
+    );
+    expect(result).toEqual({
+      data: [{ id: 'wave-1' }, { id: 'wave-2' }],
+      page: 2,
+      next: true
+    });
+  });
+
+  it('gets overview waves with V2 overview pagination', async () => {
+    const { service, deps } = createService();
+    const waveEntities = [
+      makeWave({ id: 'wave-1' }),
+      makeWave({ id: 'wave-2' })
+    ];
+    deps.wavesApiDb.findMostSubscribedWaves.mockResolvedValue(waveEntities);
+    const ctx = {
+      authenticationContext: AuthenticationContext.fromProfileId('viewer-1')
+    };
+
+    const result = await service.findWaves(
+      {
+        view: ApiWavesV2ListType.Overview,
+        page: 1,
+        page_size: 1,
+        overview_type: ApiWavesOverviewType.MostSubscribed,
+        only_waves_followed_by_authenticated_user: true,
+        direct_message: true,
+        pinned: ApiWavesPinFilter.Pinned
+      },
+      ctx
+    );
+
+    expect(deps.wavesApiDb.findMostSubscribedWaves).toHaveBeenCalledWith({
+      authenticated_user_id: 'viewer-1',
+      only_waves_followed_by_authenticated_user: true,
+      offset: 0,
+      limit: 2,
+      eligibleGroups: ['group-1'],
+      direct_message: true,
+      pinned: ApiWavesPinFilter.Pinned
+    });
+    expect(result).toEqual({
+      data: [{ id: 'wave-1' }],
+      page: 1,
+      next: true
+    });
+  });
+
+  it('gets favourite waves for an identity with V2 overview pagination', async () => {
+    const { service, deps } = createService();
+    const waveEntities = [
+      makeWave({ id: 'wave-1' }),
+      makeWave({ id: 'wave-2' }),
+      makeWave({ id: 'wave-3' })
+    ];
+    deps.wavesApiDb.findFavouriteWavesOfIdentity.mockResolvedValue(
+      waveEntities
+    );
+    const ctx = {
+      authenticationContext: AuthenticationContext.fromProfileId('viewer-1')
+    };
+
+    const result = await service.findWaves(
+      {
+        view: ApiWavesV2ListType.Favourites,
+        page: 2,
+        page_size: 2,
+        identity: 'bob'
+      },
+      ctx
+    );
+
+    expect(
+      deps.identityFetcher.getProfileIdByIdentityKeyOrThrow
+    ).toHaveBeenCalledWith({ identityKey: 'bob' }, ctx);
+    expect(deps.wavesApiDb.findFavouriteWavesOfIdentity).toHaveBeenCalledWith(
+      {
+        identityId: 'resolved-profile-1',
+        eligibleGroups: ['group-1'],
+        limit: 3,
+        offset: 2
+      },
+      ctx
+    );
+    expect(result).toEqual({
+      data: [{ id: 'wave-1' }, { id: 'wave-2' }],
+      page: 2,
+      next: true
+    });
+  });
+
+  it('gets hot waves with V2 overview pagination', async () => {
+    const { service, deps } = createService();
+    const waveEntities = [
+      makeWave({ id: 'wave-1' }),
+      makeWave({ id: 'wave-2' })
+    ];
+    deps.wavesApiDb.findHotWaves.mockResolvedValue(waveEntities);
+    const ctx = {
+      authenticationContext: AuthenticationContext.fromProfileId('viewer-1')
+    };
+
+    const result = await service.findWaves(
+      {
+        view: ApiWavesV2ListType.Hot,
+        page: 2,
+        page_size: 1,
+        exclude_followed: false
+      },
+      ctx
+    );
+
+    expect(deps.wavesApiDb.findHotWaves).toHaveBeenCalledWith(
+      expect.objectContaining({
+        limit: 2,
+        offset: 1,
+        authenticated_user_id: 'viewer-1',
+        exclude_followed: false
+      })
+    );
+    expect(result).toEqual({
+      data: [{ id: 'wave-1' }],
+      page: 2,
+      next: true
+    });
+  });
+
   it('finds a visible wave feed and maps drops with V2 models', async () => {
     const { service, deps, wave } = createService();
     const ctx = {
@@ -182,6 +385,54 @@ describe('ApiWaveV2Service', () => {
       ctx
     );
     expect(deps.apiDropMapper.mapDrops).toHaveBeenCalledWith([makeDrop()], ctx);
+  });
+
+  it('finds curation drops and maps them with V2 models', async () => {
+    const { service, deps } = createService();
+    const curationDrops = [
+      makeDrop({ id: 'curated-drop-1' }),
+      makeDrop({ id: 'curated-drop-2' }),
+      makeDrop({ id: 'curated-drop-3' })
+    ];
+    deps.dropsDb.findDropsByCurationPriorityOrder.mockResolvedValue(
+      curationDrops
+    );
+    const ctx = {
+      authenticationContext: AuthenticationContext.fromProfileId('viewer-1')
+    };
+
+    const result = await service.findWaveCurationDrops(
+      {
+        wave_id: 'wave-1',
+        curation_id: 'curation-1',
+        page: 2,
+        page_size: 2
+      },
+      ctx
+    );
+
+    expect(deps.curationsDb.findWaveCurationById).toHaveBeenCalledWith(
+      { id: 'curation-1' },
+      undefined
+    );
+    expect(deps.dropsDb.findDropsByCurationPriorityOrder).toHaveBeenCalledWith(
+      {
+        wave_id: 'wave-1',
+        curation_id: 'curation-1',
+        limit: 3,
+        offset: 2
+      },
+      ctx
+    );
+    expect(deps.apiDropMapper.mapDrops).toHaveBeenCalledWith(
+      curationDrops.slice(0, 2),
+      ctx
+    );
+    expect(result).toEqual({
+      data: [{ id: 'curated-drop-1' }, { id: 'curated-drop-2' }],
+      page: 2,
+      next: true
+    });
   });
 
   it('finds reply feeds with a V2 root drop and trace', async () => {
@@ -260,5 +511,41 @@ describe('ApiWaveV2Service', () => {
 
     expect(deps.dropsDb.findLatestDropsSimple).not.toHaveBeenCalled();
     expect(deps.apiDropMapper.mapDrops).not.toHaveBeenCalled();
+  });
+
+  it('searches a visible wave and maps V2 drops with no-count pagination', async () => {
+    const { service, deps } = createService();
+    const ctx = {
+      authenticationContext: AuthenticationContext.fromProfileId('viewer-1')
+    };
+
+    const result = await service.searchDropsContainingPhraseInWave(
+      {
+        wave_id: 'wave-1',
+        term: 'matching text',
+        page: 2,
+        size: 2
+      },
+      ctx
+    );
+
+    expect(deps.dropsDb.searchDropsContainingPhraseInWave).toHaveBeenCalledWith(
+      {
+        wave_id: 'wave-1',
+        term: 'matching text',
+        limit: 3,
+        offset: 2
+      },
+      ctx
+    );
+    expect(deps.apiDropMapper.mapDrops).toHaveBeenCalledWith(
+      [makeDrop({ id: 'search-drop-1' }), makeDrop({ id: 'search-drop-2' })],
+      ctx
+    );
+    expect(result).toEqual({
+      data: [{ id: 'search-drop-1' }, { id: 'search-drop-2' }],
+      next: true,
+      page: 2
+    });
   });
 });
