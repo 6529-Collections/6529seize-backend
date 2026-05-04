@@ -1,5 +1,6 @@
 import { ApiDropGroupMention } from '@/api/generated/models/ApiDropGroupMention';
 import { NotificationsApiService } from '@/api/notifications/notifications.api.service';
+import { IdentityNotificationCause } from '@/entities/IIdentityNotification';
 import { DropGroupMention } from '@/entities/IWaveGroupNotificationSubscription';
 
 describe('NotificationsApiService wave notification preferences', () => {
@@ -171,5 +172,76 @@ describe('NotificationsApiService wave notification preferences', () => {
       identitySubscriptionsDb.countWaveSubscribersForUpdate
     ).not.toHaveBeenCalled();
     expect(identitySubscriptionsDb.subscribeToAllDrops).not.toHaveBeenCalled();
+  });
+
+  it('skips drop notifications when a related drop is missing', async () => {
+    const notificationsReader = {
+      getNotificationsForIdentity: jest.fn().mockResolvedValue({
+        notifications: [
+          {
+            id: 1,
+            created_at: 1000,
+            read_at: null,
+            cause: IdentityNotificationCause.DROP_QUOTED,
+            data: {
+              quote_drop_id: 'quote-drop',
+              quote_drop_part: 1,
+              quote_drop_author_id: 'quote-author',
+              quoted_drop_id: 'deleted-original-drop',
+              quoted_drop_part: 1,
+              quoted_drop_author_id: 'recipient',
+              wave_id: 'wave-1'
+            }
+          }
+        ],
+        total_unread: 1
+      })
+    };
+    const userGroupsService = {
+      getGroupsUserIsEligibleFor: jest.fn().mockResolvedValue([])
+    };
+    const identityFetcher = {
+      getOverviewsByIds: jest.fn().mockResolvedValue({
+        'quote-author': { id: 'quote-author' }
+      })
+    };
+    const dropsService = {
+      findDropsByIds: jest.fn().mockResolvedValue({
+        'quote-drop': { id: 'quote-drop' }
+      })
+    };
+    const service = new NotificationsApiService(
+      notificationsReader as any,
+      userGroupsService as any,
+      identityFetcher as any,
+      dropsService as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any
+    );
+
+    await expect(
+      service.getNotifications(
+        {
+          id_less_than: null,
+          limit: 20,
+          cause: null,
+          cause_exclude: null,
+          unread_only: false
+        },
+        {
+          getActingAsId: () => 'recipient'
+        } as any
+      )
+    ).resolves.toEqual({
+      notifications: [],
+      unread_count: 1
+    });
+
+    expect(dropsService.findDropsByIds).toHaveBeenCalledWith(
+      ['deleted-original-drop', 'quote-drop'],
+      expect.anything()
+    );
   });
 });

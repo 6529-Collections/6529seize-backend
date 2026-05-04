@@ -143,13 +143,29 @@ export class NotificationsApiService {
   ): Promise<ApiNotification[]> {
     const { profileIds, dropIds } = this.getAllRelatedIds(notifications);
     const [drops, profiles] = await Promise.all([
-      this.dropsService.findDropsByIdsOrThrow(dropIds, authenticationContext),
+      this.dropsService.findDropsByIds(dropIds, authenticationContext),
       this.identityFetcher.getOverviewsByIds(profileIds, {
         authenticationContext
       })
     ]);
-    return notifications.map((notification) =>
-      this.mapToApiNotification({ notification, drops, profiles })
+    return notifications
+      .filter((notification) =>
+        this.hasAllRelatedDrops({ notification, drops })
+      )
+      .map((notification) =>
+        this.mapToApiNotification({ notification, drops, profiles })
+      );
+  }
+
+  private hasAllRelatedDrops({
+    notification,
+    drops
+  }: {
+    notification: UserNotification;
+    drops: Record<string, ApiDrop>;
+  }): boolean {
+    return this.getAllRelatedIds([notification]).dropIds.every(
+      (dropId) => !!drops[dropId]
     );
   }
 
