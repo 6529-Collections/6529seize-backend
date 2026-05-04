@@ -8,6 +8,7 @@ import { getAlchemyInstance } from '../../../alchemy';
 import { IdentityEntity } from '../../../entities/IIdentity';
 import { RequestContext } from '../../../request.context';
 import { ApiDropResolvedIdentityProfile } from '../generated/models/ApiDropResolvedIdentityProfile';
+import { ApiDropResolvedIdentityProfileV2 } from '../generated/models/ApiDropResolvedIdentityProfileV2';
 import { ApiIdentity } from '../generated/models/ApiIdentity';
 import { getLevelFromScore } from '../../../profiles/profile-level';
 import { ConnectionWrapper } from '../../../sql-executor';
@@ -283,13 +284,91 @@ export class IdentityFetcher {
     },
     ctx: RequestContext
   ): Promise<Record<string, ApiDropResolvedIdentityProfile>> {
+    return this.getDropResolvedProfilesByIds<
+      ApiProfileMin,
+      ApiDropResolvedIdentityProfile
+    >(
+      {
+        ids,
+        baseProfilesById,
+        timerKey: `${this.constructor.name}->getDropResolvedIdentitiesByIds`,
+        fetchProfilesByIds: (missingIds, requestContext) =>
+          this.getOverviewsByIds(missingIds, requestContext),
+        mapProfile: (profile, bio, topRepCategories) => ({
+          ...profile,
+          bio: bio ?? null,
+          top_rep_categories: topRepCategories ?? []
+        })
+      },
+      ctx
+    );
+  }
+
+  public async getDropResolvedIdentityProfilesV2ByIds(
+    {
+      ids,
+      baseProfilesById
+    }: {
+      ids: string[];
+      baseProfilesById?: Record<string, ApiIdentityOverview>;
+    },
+    ctx: RequestContext
+  ): Promise<Record<string, ApiDropResolvedIdentityProfileV2>> {
+    return this.getDropResolvedProfilesByIds<
+      ApiIdentityOverview,
+      ApiDropResolvedIdentityProfileV2
+    >(
+      {
+        ids,
+        baseProfilesById,
+        timerKey: `${this.constructor.name}->getDropResolvedIdentityProfilesV2ByIds`,
+        fetchProfilesByIds: (missingIds, requestContext) =>
+          this.getApiIdentityOverviewsByIds(missingIds, requestContext),
+        mapProfile: (profile, bio, topRepCategories) => {
+          const resolvedProfile: ApiDropResolvedIdentityProfileV2 = {
+            ...profile
+          };
+          if (bio !== undefined) {
+            resolvedProfile.bio = bio;
+          }
+          if (topRepCategories?.length) {
+            resolvedProfile.top_rep_categories = topRepCategories;
+          }
+          return resolvedProfile;
+        }
+      },
+      ctx
+    );
+  }
+
+  private async getDropResolvedProfilesByIds<TBase, TResolved>(
+    {
+      ids,
+      baseProfilesById,
+      timerKey,
+      fetchProfilesByIds,
+      mapProfile
+    }: {
+      ids: string[];
+      baseProfilesById?: Record<string, TBase>;
+      timerKey: string;
+      fetchProfilesByIds: (
+        missingIds: string[],
+        ctx: RequestContext
+      ) => Promise<Record<string, TBase>>;
+      mapProfile: (
+        profile: TBase,
+        bio: string | undefined,
+        topRepCategories: ApiProfileRepCategorySummary[] | undefined
+      ) => TResolved;
+    },
+    ctx: RequestContext
+  ): Promise<Record<string, TResolved>> {
     const distinctIds = collections.distinct(ids);
     if (!distinctIds.length) {
       return {};
     }
-    ctx.timer?.start(
-      `${this.constructor.name}->getDropResolvedIdentitiesByIds`
-    );
+    ctx.timer?.start(timerKey);
     try {
       const providedProfiles = distinctIds.reduce(
         (acc, id) => {
@@ -299,13 +378,13 @@ export class IdentityFetcher {
           }
           return acc;
         },
-        {} as Record<string, ApiProfileMin>
+        {} as Record<string, TBase>
       );
       const missingIds = distinctIds.filter((id) => !providedProfiles[id]);
       const [fetchedProfiles, bios, topRepCategoriesRows] = await Promise.all([
         missingIds.length
-          ? this.getOverviewsByIds(missingIds, ctx)
-          : Promise.resolve({} as Record<string, ApiProfileMin>),
+          ? fetchProfilesByIds(missingIds, ctx)
+          : Promise.resolve({} as Record<string, TBase>),
         this.cicDb.getLatestBiosByProfileIds(distinctIds, ctx),
         this.ratingsDb.getTopAbsoluteRepCategoriesByTargetIds(
           {
@@ -344,19 +423,17 @@ export class IdentityFetcher {
           if (!profile) {
             return acc;
           }
-          acc[id] = {
-            ...profile,
-            bio: biosByProfileId[id] ?? null,
-            top_rep_categories: topRepCategoriesByProfileId[id] ?? []
-          };
+          acc[id] = mapProfile(
+            profile,
+            biosByProfileId[id],
+            topRepCategoriesByProfileId[id]
+          );
           return acc;
         },
-        {} as Record<string, ApiDropResolvedIdentityProfile>
+        {} as Record<string, TResolved>
       );
     } finally {
-      ctx.timer?.stop(
-        `${this.constructor.name}->getDropResolvedIdentitiesByIds`
-      );
+      ctx.timer?.stop(timerKey);
     }
   }
 
