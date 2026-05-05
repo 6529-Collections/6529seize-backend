@@ -59,7 +59,7 @@ export class ApiWaveOverviewMapper {
         pinnedWaveIds,
         readerMetricsByWaveId,
         unreadDropsCountByWaveId,
-        lastUnreadDropSerialNoByWaveId
+        firstUnreadDropSerialNoByWaveId
       ] = await Promise.all([
         this.wavesApiDb.findWavesMetricsByWaveIds(waveIds, ctx),
         contextProfileId
@@ -115,7 +115,7 @@ export class ApiWaveOverviewMapper {
             )
           : Promise.resolve({} as Record<string, number>),
         contextProfileId
-          ? this.wavesApiDb.findLastUnreadDropSerialNoByWaveId(
+          ? this.wavesApiDb.findFirstUnreadDropSerialNoByWaveId(
               {
                 identityId: contextProfileId,
                 waveIds
@@ -154,8 +154,8 @@ export class ApiWaveOverviewMapper {
               pinnedWaveIds,
               readerMetric: readerMetricsByWaveId[wave.id],
               unreadDropsCount: unreadDropsCountByWaveId[wave.id] ?? 0,
-              lastUnreadDropSerialNo:
-                lastUnreadDropSerialNoByWaveId[wave.id] ?? undefined
+              firstUnreadDropSerialNo:
+                firstUnreadDropSerialNoByWaveId[wave.id] ?? undefined
             });
           }
 
@@ -187,7 +187,7 @@ export class ApiWaveOverviewMapper {
     pinnedWaveIds,
     readerMetric,
     unreadDropsCount,
-    lastUnreadDropSerialNo
+    firstUnreadDropSerialNo
   }: {
     wave: WaveEntity;
     groupIdsUserIsEligibleFor: string[];
@@ -195,7 +195,7 @@ export class ApiWaveOverviewMapper {
     pinnedWaveIds: Set<string>;
     readerMetric?: WaveReaderMetricEntity;
     unreadDropsCount: number;
-    lastUnreadDropSerialNo?: number;
+    firstUnreadDropSerialNo?: number;
   }): ApiWaveOverviewContextProfileContext {
     const result: ApiWaveOverviewContextProfileContext = {
       subscribed: subscribedActions.includes(ActivityEventAction.DROP_CREATED),
@@ -208,8 +208,8 @@ export class ApiWaveOverviewMapper {
       muted: readerMetric?.muted ?? false
     };
 
-    if (lastUnreadDropSerialNo !== undefined) {
-      result.last_unread_drop_serial_no = lastUnreadDropSerialNo;
+    if (firstUnreadDropSerialNo !== undefined) {
+      result.first_unread_drop_serial_no = firstUnreadDropSerialNo;
     }
 
     return result;
