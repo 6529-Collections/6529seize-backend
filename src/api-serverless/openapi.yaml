@@ -13868,7 +13868,7 @@ components:
         unread_drops:
           type: integer
           format: int64
-        last_unread_drop_serial_no:
+        first_unread_drop_serial_no:
           type: integer
           format: int64
         muted:

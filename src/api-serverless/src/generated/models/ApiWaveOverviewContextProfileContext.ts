@@ -17,7 +17,7 @@ export class ApiWaveOverviewContextProfileContext {
     'pinned': boolean;
     'can_chat': boolean;
     'unread_drops': number;
-    'last_unread_drop_serial_no'?: number;
+    'first_unread_drop_serial_no'?: number;
     'muted': boolean;
 
     static readonly discriminator: string | undefined = undefined;
@@ -50,8 +50,8 @@ export class ApiWaveOverviewContextProfileContext {
             "format": "int64"
         },
         {
-            "name": "last_unread_drop_serial_no",
-            "baseName": "last_unread_drop_serial_no",
+            "name": "first_unread_drop_serial_no",
+            "baseName": "first_unread_drop_serial_no",
             "type": "number",
             "format": "int64"
         },
