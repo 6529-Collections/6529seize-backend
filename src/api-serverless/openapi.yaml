@@ -11777,6 +11777,8 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ApiDropV2"
+        related_wave:
+          $ref: "#/components/schemas/ApiWaveOverview"
         additional_context:
           $ref: "#/components/schemas/ApiNotificationAdditionalContextV2"
     ApiOutgoingIdentitySubscriptionsPage:

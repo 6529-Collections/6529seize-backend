@@ -63,11 +63,13 @@ export interface AllDropsNotificationData {
   additional_identity_id: string;
   drop_id: string;
   vote: number;
+  wave_id: string;
 }
 
 export interface PriorityAlertNotificationData {
   additional_identity_id: string;
   drop_id: string;
+  wave_id: string;
 }
 
 export interface IdentityRepNotificationData {
