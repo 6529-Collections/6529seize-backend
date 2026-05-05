@@ -9,6 +9,7 @@ import { Timer } from '@/time';
 import { ApiDropAndWave } from '@/api/generated/models/ApiDropAndWave';
 import {
   apiDropV2Service,
+  FindDropsV2Request,
   DropVotersSearchParams,
   DropVoteEditLogsSearchParams
 } from '@/api/drops/api-drop-v2.service';
@@ -21,6 +22,7 @@ import { ApiDropVoteEditLog } from '@/api/generated/models/ApiDropVoteEditLog';
 import { PageSortDirection } from '@/api/page-request';
 import { ApiDropVotersPage } from '@/api/generated/models/ApiDropVotersPage';
 import { ApiDropReactionV2 } from '@/api/generated/models/ApiDropReactionV2';
+import { ApiDropV2PageWithoutCount } from '@/api/generated/models/ApiDropV2PageWithoutCount';
 
 const router = asyncRouter();
 
@@ -52,6 +54,35 @@ const DropVotersQuerySchema: Joi.ObjectSchema<DropVotersSearchParams> =
       .valid(...Object.values(PageSortDirection))
       .default(PageSortDirection.DESC)
   });
+
+const FindDropsV2QuerySchema: Joi.ObjectSchema<FindDropsV2Request> = Joi.object(
+  {
+    parent_drop_id: Joi.string().trim().empty('').optional().default(null),
+    page_size: Joi.number().integer().min(1).max(100).default(50),
+    page: Joi.number().integer().min(1).default(1)
+  }
+);
+
+router.get(
+  '/',
+  maybeAuthenticatedUser(),
+  async (
+    req: Request<any, any, any, Partial<FindDropsV2Request>, any>,
+    res: Response<ApiResponse<ApiDropV2PageWithoutCount>>
+  ) => {
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
+    const query = getValidatedByJoiOrThrow(
+      req.query as unknown as FindDropsV2Request,
+      FindDropsV2QuerySchema
+    );
+    const drops = await apiDropV2Service.findDrops(query, {
+      timer,
+      authenticationContext
+    });
+    res.send(drops);
+  }
+);
 
 router.get(
   '/:drop_id/metadata',

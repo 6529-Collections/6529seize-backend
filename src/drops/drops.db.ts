@@ -785,6 +785,56 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     }
   }
 
+  async findVisibleDrops(
+    {
+      limit,
+      offset,
+      parent_drop_id,
+      group_ids_user_is_eligible_for
+    }: {
+      limit: number;
+      offset: number;
+      parent_drop_id: string | null;
+      group_ids_user_is_eligible_for: string[];
+    },
+    ctx: RequestContext
+  ): Promise<DropEntity[]> {
+    const timerLabel = `${this.constructor.name}->findVisibleDrops`;
+    ctx.timer?.start(timerLabel);
+    const visibleWaveFilter = this.getVisibleWaveFilterSql(
+      group_ids_user_is_eligible_for
+    );
+    try {
+      return await this.db.execute<DropEntity>(
+        `select d.*
+         from ${DROPS_TABLE} d
+         ${
+           parent_drop_id
+             ? `join ${DROP_RELATIONS_TABLE} dr on dr.child_id = d.id and dr.parent_id = :parent_drop_id`
+             : ``
+         }
+         where ${parent_drop_id ? `` : `d.reply_to_drop_id is null and`}
+           exists (
+             select 1
+             from ${WAVES_TABLE} w
+             where w.id = d.wave_id
+               and (${visibleWaveFilter})
+           )
+         order by d.serial_no desc
+         limit :limit offset :offset`,
+        {
+          limit,
+          offset,
+          parent_drop_id,
+          groupsUserIsEligibleFor: group_ids_user_is_eligible_for
+        },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(timerLabel);
+    }
+  }
+
   async findLightDropsByIds(
     dropIds: string[],
     ctx: RequestContext
