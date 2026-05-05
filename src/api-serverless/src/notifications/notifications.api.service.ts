@@ -19,12 +19,17 @@ import { ApiDropV2 } from '@/api/generated/models/ApiDropV2';
 import { ApiIdentityOverview } from '@/api/generated/models/ApiIdentityOverview';
 import { ApiNotificationV2 } from '@/api/generated/models/ApiNotificationV2';
 import { ApiNotificationsResponseV2 } from '@/api/generated/models/ApiNotificationsResponseV2';
+import { ApiWaveOverview } from '@/api/generated/models/ApiWaveOverview';
 import {
   DropReactionProfileRow,
   reactionsDb as defaultReactionsDb,
   ReactionsDb
 } from '@/api/drops/reactions.db';
 import { seizeSettings } from '@/api/seize-settings';
+import {
+  apiWaveOverviewMapper as defaultApiWaveOverviewMapper,
+  ApiWaveOverviewMapper
+} from '@/api/waves/api-wave-overview.mapper';
 import {
   userGroupsService,
   UserGroupsService
@@ -71,7 +76,8 @@ export class NotificationsApiService {
     private readonly identitySubscriptionsDb: IdentitySubscriptionsDb,
     private readonly wavesApiDb: WavesApiDb,
     private readonly waveGroupNotificationSubscriptionsDb: WaveGroupNotificationSubscriptionsDb,
-    private readonly reactionsDb: ReactionsDb = defaultReactionsDb
+    private readonly reactionsDb: ReactionsDb = defaultReactionsDb,
+    private readonly apiWaveOverviewMapper: ApiWaveOverviewMapper = defaultApiWaveOverviewMapper
   ) {}
 
   public async markNotificationAsRead(param: {
@@ -180,6 +186,7 @@ export class NotificationsApiService {
       });
     const apiNotifications = await this.mapToApiNotificationsV2(
       notifications.notifications,
+      eligible_group_ids,
       requestContext
     );
     return {
@@ -190,21 +197,24 @@ export class NotificationsApiService {
 
   private async mapToApiNotificationsV2(
     notifications: UserNotification[],
+    eligibleGroupIds: string[],
     ctx: RequestContext
   ): Promise<ApiNotificationV2[]> {
     const { profileIds, dropIds } = this.getAllRelatedIds(notifications);
+    const waveIds = this.getAllRelatedWaveIds(notifications);
     const reactionRowsByDropId = await this.getReactionRowsByDropId(
       notifications,
       ctx
     );
     const reactorProfileIds =
       this.getAllReactorProfileIds(reactionRowsByDropId);
-    const [drops, profiles] = await Promise.all([
+    const [drops, profiles, waves] = await Promise.all([
       this.dropsService.findDropsV2ByIds(dropIds, ctx),
       this.identityFetcher.getApiIdentityOverviewsByIds(
         collections.distinct([...profileIds, ...reactorProfileIds]),
         ctx
-      )
+      ),
+      this.findRelatedWaveOverviews(waveIds, eligibleGroupIds, ctx)
     ]);
     return notifications
       .filter((notification) => this.hasAllRelatedDropsV2(notification, drops))
@@ -213,9 +223,26 @@ export class NotificationsApiService {
           notification,
           drops,
           profiles,
+          waves,
           reactionRowsByDropId
         })
       );
+  }
+
+  private async findRelatedWaveOverviews(
+    waveIds: string[],
+    eligibleGroupIds: string[],
+    ctx: RequestContext
+  ): Promise<Record<string, ApiWaveOverview>> {
+    if (!waveIds.length) {
+      return {};
+    }
+    const waveEntities = await this.wavesApiDb.findWavesByIds(
+      waveIds,
+      eligibleGroupIds,
+      ctx.connection
+    );
+    return this.apiWaveOverviewMapper.mapWaves(waveEntities, ctx);
   }
 
   private async getReactionRowsByDropId(
@@ -376,6 +403,40 @@ export class NotificationsApiService {
     );
   }
 
+  private getAllRelatedWaveIds(notifications: UserNotification[]): string[] {
+    return collections.distinct(
+      notifications.flatMap((notification) => {
+        const waveId = this.getRelatedWaveId(notification);
+        return waveId ? [waveId] : [];
+      })
+    );
+  }
+
+  private getRelatedWaveId(notification: UserNotification): string | null {
+    const notificationCause = notification.cause;
+    switch (notificationCause) {
+      case IdentityNotificationCause.IDENTITY_SUBSCRIBED:
+      case IdentityNotificationCause.IDENTITY_REP:
+      case IdentityNotificationCause.IDENTITY_NIC: {
+        return null;
+      }
+      case IdentityNotificationCause.IDENTITY_MENTIONED:
+      case IdentityNotificationCause.DROP_VOTED:
+      case IdentityNotificationCause.DROP_REACTED:
+      case IdentityNotificationCause.DROP_BOOSTED:
+      case IdentityNotificationCause.DROP_QUOTED:
+      case IdentityNotificationCause.DROP_REPLIED:
+      case IdentityNotificationCause.WAVE_CREATED:
+      case IdentityNotificationCause.ALL_DROPS:
+      case IdentityNotificationCause.PRIORITY_ALERT: {
+        return notification.data.wave_id;
+      }
+      default: {
+        return assertUnreachable(notificationCause);
+      }
+    }
+  }
+
   private getRelatedDropIds(notification: UserNotification): string[] {
     const notificationCause = notification.cause;
     switch (notificationCause) {
@@ -412,6 +473,32 @@ export class NotificationsApiService {
   }
 
   private mapToApiNotificationV2({
+    notification,
+    drops,
+    profiles,
+    waves,
+    reactionRowsByDropId
+  }: {
+    notification: UserNotification;
+    drops: Record<string, ApiDropV2>;
+    profiles: Record<string, ApiIdentityOverview>;
+    waves: Record<string, ApiWaveOverview>;
+    reactionRowsByDropId: Map<string, DropReactionProfileRow[]>;
+  }): ApiNotificationV2 {
+    const apiNotification = this.mapToApiNotificationV2WithoutRelatedWave({
+      notification,
+      drops,
+      profiles,
+      reactionRowsByDropId
+    });
+    return this.withRelatedWave({
+      notification,
+      apiNotification,
+      waves
+    });
+  }
+
+  private mapToApiNotificationV2WithoutRelatedWave({
     notification,
     drops,
     profiles,
@@ -605,6 +692,23 @@ export class NotificationsApiService {
         return assertUnreachable(notificationCause);
       }
     }
+  }
+
+  private withRelatedWave({
+    notification,
+    apiNotification,
+    waves
+  }: {
+    notification: UserNotification;
+    apiNotification: ApiNotificationV2;
+    waves: Record<string, ApiWaveOverview>;
+  }): ApiNotificationV2 {
+    const waveId = this.getRelatedWaveId(notification);
+    if (!waveId) {
+      return apiNotification;
+    }
+    const wave = waves[waveId];
+    return wave ? { ...apiNotification, related_wave: wave } : apiNotification;
   }
 
   private getDropReactedAdditionalContextV2({

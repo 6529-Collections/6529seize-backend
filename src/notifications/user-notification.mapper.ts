@@ -245,7 +245,8 @@ export class UserNotificationMapper {
       data: {
         additional_identity_id: entity.additional_identity_id!,
         drop_id: entity.related_drop_id!,
-        vote: numbers.parseIntOrNull(entity.additional_data.vote)!
+        vote: numbers.parseIntOrNull(entity.additional_data.vote)!,
+        wave_id: entity.wave_id!
       }
     };
   }
@@ -260,7 +261,8 @@ export class UserNotificationMapper {
       cause: IdentityNotificationCause.PRIORITY_ALERT,
       data: {
         additional_identity_id: entity.additional_identity_id!,
-        drop_id: entity.related_drop_id!
+        drop_id: entity.related_drop_id!,
+        wave_id: entity.wave_id!
       }
     };
   }
