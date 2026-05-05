@@ -24,9 +24,15 @@ export type WaveDisplaySource = Pick<
   | 'voting_group_id'
 >;
 
+export type WaveDisplayContributor = {
+  readonly handle: string | null;
+  readonly pfp: string | null;
+};
+
 export type WaveDisplayOverride = {
   readonly name?: string;
   readonly picture?: string | null;
+  readonly contributors?: WaveDisplayContributor[];
 };
 
 export function resolveWavePictureOverride(
@@ -160,6 +166,13 @@ export class DirectMessageWaveDisplayService {
         const participantProfiles = participantProfileIds
           .map((profileId) => allProfilesById[profileId])
           .filter((it): it is ApiProfileMin => !!it);
+        const sortedParticipantProfiles = [...participantProfiles]
+          .filter((profile) => !!profile.id)
+          .sort(
+            (a, b) =>
+              (a.handle ?? '').localeCompare(b.handle ?? '') ||
+              a.id.localeCompare(b.id)
+          );
         const displayProfiles = participantProfiles.filter(
           (it) => it.id !== contextProfileId
         );
@@ -182,12 +195,22 @@ export class DirectMessageWaveDisplayService {
         const picture = hasMoreThanTwoParties
           ? null
           : sortedEffectiveDisplayProfiles.find((it) => !!it.pfp)?.pfp;
-        if (handles.length || hasMoreThanTwoParties || picture) {
+        const contributors = sortedParticipantProfiles.map((profile) => ({
+          handle: profile.handle,
+          pfp: profile.pfp
+        }));
+        if (
+          handles.length ||
+          hasMoreThanTwoParties ||
+          picture ||
+          contributors.length
+        ) {
           acc[waveId] = {
             ...(handles.length ? { name: handles.join(', ') } : {}),
             ...(hasMoreThanTwoParties || picture
               ? { picture: picture ?? null }
-              : {})
+              : {}),
+            contributors
           };
         }
         return acc;

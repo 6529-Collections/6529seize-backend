@@ -1980,6 +1980,53 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     return result;
   }
 
+  async findLastUnreadDropSerialNoByWaveId(
+    param: {
+      identityId: string;
+      waveIds: string[];
+    },
+    ctx: RequestContext
+  ): Promise<Record<string, number | null>> {
+    if (!param.waveIds.length) {
+      return {};
+    }
+
+    const timerLabel = `${this.constructor.name}->findLastUnreadDropSerialNoByWaveId`;
+    ctx.timer?.start(timerLabel);
+
+    const dbresult = await this.db.execute<{
+      wave_id: string;
+      serial_no: number;
+    }>(
+      `
+        SELECT r.wave_id, MAX(d.serial_no) AS serial_no
+        FROM ${WAVE_READER_METRICS_TABLE} r
+        INNER JOIN ${DROPS_TABLE} d USE INDEX (idx_drop_wave_created_at)
+          ON d.wave_id = r.wave_id
+          AND d.created_at > r.latest_read_timestamp
+        WHERE r.reader_id = :identityId
+          AND r.wave_id IN (:waveIds)
+          AND r.latest_read_timestamp IS NOT NULL
+          AND COALESCE(r.muted, false) = false
+        GROUP BY r.wave_id
+    `,
+      param,
+      { wrappedConnection: ctx.connection }
+    );
+
+    const result = dbresult.reduce(
+      (acc, row) => {
+        acc[row.wave_id] = row.serial_no;
+        return acc;
+      },
+      {} as Record<string, number | null>
+    );
+
+    ctx.timer?.stop(timerLabel);
+
+    return result;
+  }
+
   async deleteBoosts(waveId: string, ctx: RequestContext) {
     await this.db.execute(
       `DELETE FROM ${DROP_BOOSTS_TABLE} where wave_id = :waveId`,
