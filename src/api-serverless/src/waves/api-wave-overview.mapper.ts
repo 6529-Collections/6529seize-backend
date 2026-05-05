@@ -2,13 +2,17 @@ import {
   ActivityEventAction,
   ActivityEventTargetType
 } from '@/entities/IActivityEvent';
+import { DropMediaEntity, DropPartEntity } from '@/entities/IDrop';
 import { WaveEntity, WaveType } from '@/entities/IWave';
 import { WaveReaderMetricEntity } from '@/entities/IWaveReaderMetric';
 import { collections } from '@/collections';
 import { RequestContext } from '@/request.context';
+import { dropsDb, DropsDb } from '@/drops/drops.db';
+import { ApiDropMedia } from '@/api/generated/models/ApiDropMedia';
 import { ApiWaveOverview } from '@/api/generated/models/ApiWaveOverview';
 import { ApiWaveOverviewContributor } from '@/api/generated/models/ApiWaveOverviewContributor';
 import { ApiWaveOverviewContextProfileContext } from '@/api/generated/models/ApiWaveOverviewContextProfileContext';
+import { ApiWaveOverviewDescriptionDrop } from '@/api/generated/models/ApiWaveOverviewDescriptionDrop';
 import {
   identitySubscriptionsDb,
   IdentitySubscriptionsDb
@@ -29,6 +33,7 @@ import { wavesApiDb, WavesApiDb } from '@/api/waves/waves.api.db';
 export class ApiWaveOverviewMapper {
   constructor(
     private readonly wavesApiDb: WavesApiDb,
+    private readonly dropsDb: DropsDb,
     private readonly identitySubscriptionsDb: IdentitySubscriptionsDb,
     private readonly userGroupsService: UserGroupsService,
     private readonly directMessageWaveDisplayService: DirectMessageWaveDisplayService
@@ -47,12 +52,17 @@ export class ApiWaveOverviewMapper {
       }
 
       const waveIds = entities.map((wave) => wave.id);
+      const descriptionDropIds = collections.distinct(
+        entities.map((wave) => wave.description_drop_id)
+      );
       const contextProfileId = getWaveReadContextProfileId(
         ctx.authenticationContext
       );
 
       const [
         metricsByWaveId,
+        descriptionDropPartOnesByDropId,
+        descriptionDropPartOneMediaByDropId,
         groupIdsUserIsEligibleFor,
         displayByWaveId,
         subscribedActionsByWaveId,
@@ -62,6 +72,8 @@ export class ApiWaveOverviewMapper {
         firstUnreadDropSerialNoByWaveId
       ] = await Promise.all([
         this.wavesApiDb.findWavesMetricsByWaveIds(waveIds, ctx),
+        this.dropsDb.getDropPartOnes(descriptionDropIds, ctx),
+        this.dropsDb.getDropPartOneMedia(descriptionDropIds, ctx),
         contextProfileId
           ? this.userGroupsService.getGroupsUserIsEligibleFor(
               contextProfileId,
@@ -129,15 +141,22 @@ export class ApiWaveOverviewMapper {
         (acc, wave) => {
           const display = displayByWaveId[wave.id];
           const pfp = resolveWavePictureOverride(wave.picture, display);
+          const metrics = metricsByWaveId[wave.id];
           const overview: ApiWaveOverview = {
             id: wave.id,
             name: display?.name ?? wave.name,
-            last_drop_time:
-              metricsByWaveId[wave.id]?.latest_drop_timestamp ?? 0,
+            last_drop_time: metrics?.latest_drop_timestamp ?? 0,
             created_at: wave.created_at,
-            subscribers_count: metricsByWaveId[wave.id]?.subscribers_count ?? 0,
+            subscribers_count: metrics?.subscribers_count ?? 0,
             has_competition: wave.type !== WaveType.CHAT,
-            is_dm_wave: wave.is_direct_message === true
+            is_dm_wave: wave.is_direct_message === true,
+            description_drop: this.mapDescriptionDrop({
+              part: descriptionDropPartOnesByDropId[wave.description_drop_id],
+              media:
+                descriptionDropPartOneMediaByDropId[wave.description_drop_id]
+            }),
+            total_drops_count: metrics?.drops_count ?? 0,
+            is_private: wave.visibility_group_id !== null
           };
 
           if (pfp) {
@@ -180,6 +199,33 @@ export class ApiWaveOverviewMapper {
     );
   }
 
+  private mapDescriptionDrop({
+    part,
+    media
+  }: {
+    part?: DropPartEntity;
+    media?: DropMediaEntity[];
+  }): ApiWaveOverviewDescriptionDrop {
+    const result: ApiWaveOverviewDescriptionDrop = {};
+
+    if (part?.content !== null && part?.content !== undefined) {
+      result.contents = part.content;
+    }
+
+    if (media?.length) {
+      result.media = this.mapDescriptionDropMedia(media);
+    }
+
+    return result;
+  }
+
+  private mapDescriptionDropMedia(media: DropMediaEntity[]): ApiDropMedia[] {
+    return media.map((item) => ({
+      url: item.url,
+      mime_type: item.mime_type
+    }));
+  }
+
   private mapContextProfileContext({
     wave,
     groupIdsUserIsEligibleFor,
@@ -218,6 +264,7 @@ export class ApiWaveOverviewMapper {
 
 export const apiWaveOverviewMapper = new ApiWaveOverviewMapper(
   wavesApiDb,
+  dropsDb,
   identitySubscriptionsDb,
   userGroupsService,
   directMessageWaveDisplayService
