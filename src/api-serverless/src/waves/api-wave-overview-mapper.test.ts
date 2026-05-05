@@ -73,6 +73,10 @@ function createMapper() {
     findIdentityUnreadDropsCountByWaveId: jest.fn().mockResolvedValue({}),
     findFirstUnreadDropSerialNoByWaveId: jest.fn().mockResolvedValue({})
   };
+  const dropsDb = {
+    getDropPartOnes: jest.fn().mockResolvedValue({}),
+    getDropPartOneMedia: jest.fn().mockResolvedValue({})
+  };
   const identitySubscriptionsDb = {
     findIdentitySubscriptionActionsOfTargets: jest.fn().mockResolvedValue({})
   };
@@ -86,12 +90,14 @@ function createMapper() {
   return {
     mapper: new ApiWaveOverviewMapper(
       wavesApiDb as any,
+      dropsDb as any,
       identitySubscriptionsDb as any,
       userGroupsService as any,
       directMessageWaveDisplayService as any
     ),
     deps: {
       wavesApiDb,
+      dropsDb,
       identitySubscriptionsDb,
       userGroupsService,
       directMessageWaveDisplayService
@@ -102,10 +108,11 @@ function createMapper() {
 describe('ApiWaveOverviewMapper', () => {
   it('maps minimal overview and omits missing optional fields', async () => {
     const { mapper, deps } = createMapper();
-
-    const result = await mapper.mapWaves([makeWave()], {
+    const ctx = {
       authenticationContext: AuthenticationContext.notAuthenticated()
-    });
+    };
+
+    const result = await mapper.mapWaves([makeWave()], ctx);
 
     expect(result['wave-1']).toEqual({
       id: 'wave-1',
@@ -114,7 +121,10 @@ describe('ApiWaveOverviewMapper', () => {
       created_at: 100,
       subscribers_count: 11,
       has_competition: false,
-      is_dm_wave: false
+      is_dm_wave: false,
+      description_drop: {},
+      total_drops_count: 3,
+      is_private: false
     });
     expect(result['wave-1']).not.toHaveProperty('pfp');
     expect(result['wave-1']).not.toHaveProperty('context_profile_context');
@@ -127,6 +137,63 @@ describe('ApiWaveOverviewMapper', () => {
     expect(
       deps.directMessageWaveDisplayService.resolveWaveDisplayByWaveIdForContext
     ).not.toHaveBeenCalled();
+    expect(deps.dropsDb.getDropPartOnes).toHaveBeenCalledWith(
+      ['description-drop-1'],
+      ctx
+    );
+    expect(deps.dropsDb.getDropPartOneMedia).toHaveBeenCalledWith(
+      ['description-drop-1'],
+      ctx
+    );
+  });
+
+  it('maps part-one description drop content, media, total drops count and privacy', async () => {
+    const { mapper, deps } = createMapper();
+    deps.dropsDb.getDropPartOnes.mockResolvedValue({
+      'description-drop-1': {
+        drop_id: 'description-drop-1',
+        drop_part_id: 1,
+        content: 'Wave description',
+        quoted_drop_id: null,
+        quoted_drop_part_id: null,
+        wave_id: 'wave-1'
+      }
+    });
+    deps.dropsDb.getDropPartOneMedia.mockResolvedValue({
+      'description-drop-1': [
+        {
+          id: '1',
+          drop_id: 'description-drop-1',
+          drop_part_id: 1,
+          url: 'https://example.com/image.png',
+          mime_type: 'image/png',
+          wave_id: 'wave-1'
+        }
+      ]
+    });
+
+    const result = await mapper.mapWaves(
+      [makeWave({ visibility_group_id: 'viewer-group' })],
+      {
+        authenticationContext: AuthenticationContext.notAuthenticated()
+      }
+    );
+
+    expect(result['wave-1']).toEqual(
+      expect.objectContaining({
+        description_drop: {
+          contents: 'Wave description',
+          media: [
+            {
+              url: 'https://example.com/image.png',
+              mime_type: 'image/png'
+            }
+          ]
+        },
+        total_drops_count: 3,
+        is_private: true
+      })
+    );
   });
 
   it('maps authenticated context and direct-message display overrides', async () => {
@@ -194,6 +261,9 @@ describe('ApiWaveOverviewMapper', () => {
       subscribers_count: 11,
       has_competition: true,
       is_dm_wave: true,
+      description_drop: {},
+      total_drops_count: 3,
+      is_private: false,
       contributors: [
         {
           handle: 'alice',
