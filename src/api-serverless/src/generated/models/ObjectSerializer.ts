@@ -283,6 +283,7 @@ export * from '../models/ApiWaveOutcomeType';
 export * from '../models/ApiWaveOutcomesPage';
 export * from '../models/ApiWaveOverview';
 export * from '../models/ApiWaveOverviewContextProfileContext';
+export * from '../models/ApiWaveOverviewContributor';
 export * from '../models/ApiWaveOverviewPage';
 export * from '../models/ApiWaveParticipationConfig';
 export * from '../models/ApiWaveParticipationIdentitySubmissionAllowDuplicates';
@@ -654,6 +655,7 @@ import { ApiWaveOutcomeType } from '../models/ApiWaveOutcomeType';
 import { ApiWaveOutcomesPage } from '../models/ApiWaveOutcomesPage';
 import { ApiWaveOverview } from '../models/ApiWaveOverview';
 import { ApiWaveOverviewContextProfileContext } from '../models/ApiWaveOverviewContextProfileContext';
+import { ApiWaveOverviewContributor } from '../models/ApiWaveOverviewContributor';
 import { ApiWaveOverviewPage } from '../models/ApiWaveOverviewPage';
 import { ApiWaveParticipationConfig } from '../models/ApiWaveParticipationConfig';
 import { ApiWaveParticipationIdentitySubmissionAllowDuplicates } from '../models/ApiWaveParticipationIdentitySubmissionAllowDuplicates';
@@ -1060,6 +1062,7 @@ let typeMap: {[index: string]: any} = {
     "ApiWaveOutcomesPage": ApiWaveOutcomesPage,
     "ApiWaveOverview": ApiWaveOverview,
     "ApiWaveOverviewContextProfileContext": ApiWaveOverviewContextProfileContext,
+    "ApiWaveOverviewContributor": ApiWaveOverviewContributor,
     "ApiWaveOverviewPage": ApiWaveOverviewPage,
     "ApiWaveParticipationConfig": ApiWaveParticipationConfig,
     "ApiWaveParticipationSubmissionStrategy": ApiWaveParticipationSubmissionStrategy,

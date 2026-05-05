@@ -7,6 +7,7 @@ import { WaveReaderMetricEntity } from '@/entities/IWaveReaderMetric';
 import { collections } from '@/collections';
 import { RequestContext } from '@/request.context';
 import { ApiWaveOverview } from '@/api/generated/models/ApiWaveOverview';
+import { ApiWaveOverviewContributor } from '@/api/generated/models/ApiWaveOverviewContributor';
 import { ApiWaveOverviewContextProfileContext } from '@/api/generated/models/ApiWaveOverviewContextProfileContext';
 import {
   identitySubscriptionsDb,
@@ -142,6 +143,9 @@ export class ApiWaveOverviewMapper {
           if (pfp) {
             overview.pfp = pfp;
           }
+          if (wave.is_direct_message === true) {
+            overview.contributors = this.mapDirectMessageContributors(display);
+          }
           if (contextProfileId) {
             overview.context_profile_context = this.mapContextProfileContext({
               wave,
@@ -163,6 +167,17 @@ export class ApiWaveOverviewMapper {
     } finally {
       ctx.timer?.stop(timerKey);
     }
+  }
+
+  private mapDirectMessageContributors(
+    display: WaveDisplayOverride | undefined
+  ): ApiWaveOverviewContributor[] {
+    return (
+      display?.contributors?.map((contributor) => ({
+        handle: contributor.handle,
+        pfp: contributor.pfp
+      })) ?? []
+    );
   }
 
   private mapContextProfileContext({

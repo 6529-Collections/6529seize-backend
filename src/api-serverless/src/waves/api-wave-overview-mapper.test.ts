@@ -141,7 +141,17 @@ describe('ApiWaveOverviewMapper', () => {
       {
         'wave-1': {
           name: 'Direct Chat',
-          picture: 'display.png'
+          picture: 'display.png',
+          contributors: [
+            {
+              handle: 'alice',
+              pfp: 'alice.png'
+            },
+            {
+              handle: 'bob',
+              pfp: null
+            }
+          ]
         }
       }
     );
@@ -184,6 +194,16 @@ describe('ApiWaveOverviewMapper', () => {
       subscribers_count: 11,
       has_competition: true,
       is_dm_wave: true,
+      contributors: [
+        {
+          handle: 'alice',
+          pfp: 'alice.png'
+        },
+        {
+          handle: 'bob',
+          pfp: null
+        }
+      ],
       context_profile_context: {
         subscribed: true,
         pinned: true,

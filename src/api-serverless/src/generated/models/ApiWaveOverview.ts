@@ -11,6 +11,7 @@
  */
 
 import { ApiWaveOverviewContextProfileContext } from '../models/ApiWaveOverviewContextProfileContext';
+import { ApiWaveOverviewContributor } from '../models/ApiWaveOverviewContributor';
 import { HttpFile } from '../http/http';
 
 export class ApiWaveOverview {
@@ -22,6 +23,7 @@ export class ApiWaveOverview {
     'subscribers_count': number;
     'has_competition': boolean;
     'is_dm_wave': boolean;
+    'contributors'?: Array<ApiWaveOverviewContributor>;
     'context_profile_context'?: ApiWaveOverviewContextProfileContext;
 
     static readonly discriminator: string | undefined = undefined;
@@ -75,6 +77,12 @@ export class ApiWaveOverview {
             "name": "is_dm_wave",
             "baseName": "is_dm_wave",
             "type": "boolean",
+            "format": ""
+        },
+        {
+            "name": "contributors",
+            "baseName": "contributors",
+            "type": "Array<ApiWaveOverviewContributor>",
             "format": ""
         },
         {
