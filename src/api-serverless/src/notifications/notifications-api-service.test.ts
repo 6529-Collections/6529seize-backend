@@ -41,6 +41,12 @@ describe('NotificationsApiService V2 notifications', () => {
     const dropsService = {
       findDropsV2ByIds: jest.fn().mockResolvedValue({})
     };
+    const wavesApiDb = {
+      findWavesByIds: jest.fn().mockResolvedValue([])
+    };
+    const apiWaveOverviewMapper = {
+      mapWaves: jest.fn().mockResolvedValue({})
+    };
     const reactionsDb = {
       getReactionProfilesByDropId: jest.fn().mockResolvedValue([])
     };
@@ -51,9 +57,10 @@ describe('NotificationsApiService V2 notifications', () => {
       dropsService as any,
       {} as any,
       {} as any,
+      wavesApiDb as any,
       {} as any,
-      {} as any,
-      reactionsDb as any
+      reactionsDb as any,
+      apiWaveOverviewMapper as any
     );
     return {
       service,
@@ -61,6 +68,8 @@ describe('NotificationsApiService V2 notifications', () => {
       userGroupsService,
       identityFetcher,
       dropsService,
+      wavesApiDb,
+      apiWaveOverviewMapper,
       reactionsDb
     };
   }
@@ -127,6 +136,93 @@ describe('NotificationsApiService V2 notifications', () => {
         }
       ],
       unread_count: 2
+    });
+  });
+
+  it('adds related wave overview to V2 notifications with a wave id', async () => {
+    const {
+      service,
+      notificationsReader,
+      identityFetcher,
+      wavesApiDb,
+      apiWaveOverviewMapper
+    } = createService();
+    const creator = makeIdentity('creator-1', 'creator', 'creator.png');
+    const waveEntity = { id: 'wave-1' };
+    const waveOverview = {
+      id: 'wave-1',
+      name: 'Wave 1',
+      last_drop_time: 3000,
+      created_at: 1000,
+      subscribers_count: 12,
+      has_competition: false,
+      is_dm_wave: false,
+      description_drop: {},
+      total_drops_count: 3,
+      is_private: false
+    };
+    notificationsReader.getNotificationsForIdentity.mockResolvedValue({
+      notifications: [
+        {
+          id: 3,
+          created_at: 5000,
+          read_at: null,
+          cause: IdentityNotificationCause.WAVE_CREATED,
+          data: {
+            wave_id: 'wave-1',
+            created_by: 'creator-1'
+          }
+        }
+      ],
+      total_unread: 1
+    });
+    identityFetcher.getApiIdentityOverviewsByIds.mockResolvedValue({
+      'creator-1': creator
+    });
+    wavesApiDb.findWavesByIds.mockResolvedValue([waveEntity]);
+    apiWaveOverviewMapper.mapWaves.mockResolvedValue({
+      'wave-1': waveOverview
+    });
+
+    const authenticationContext =
+      AuthenticationContext.fromProfileId('viewer-1');
+    const result = await service.getNotificationsV2(
+      {
+        id_less_than: null,
+        limit: 10,
+        cause: null,
+        cause_exclude: null,
+        unread_only: false
+      },
+      authenticationContext,
+      { authenticationContext }
+    );
+
+    expect(wavesApiDb.findWavesByIds).toHaveBeenCalledWith(
+      ['wave-1'],
+      ['group-1'],
+      undefined
+    );
+    expect(apiWaveOverviewMapper.mapWaves).toHaveBeenCalledWith(
+      [waveEntity],
+      expect.objectContaining({ authenticationContext })
+    );
+    expect(result).toEqual({
+      notifications: [
+        {
+          id: 3,
+          created_at: 5000,
+          read_at: null,
+          cause: ApiNotificationCause.WaveCreated,
+          related_identity: creator,
+          related_drops: [],
+          related_wave: waveOverview,
+          additional_context: {
+            wave_id: 'wave-1'
+          }
+        }
+      ],
+      unread_count: 1
     });
   });
 

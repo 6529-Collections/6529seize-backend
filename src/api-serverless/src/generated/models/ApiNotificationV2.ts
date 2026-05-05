@@ -14,6 +14,7 @@ import { ApiDropV2 } from '../models/ApiDropV2';
 import { ApiIdentityOverview } from '../models/ApiIdentityOverview';
 import { ApiNotificationAdditionalContextV2 } from '../models/ApiNotificationAdditionalContextV2';
 import { ApiNotificationCause } from '../models/ApiNotificationCause';
+import { ApiWaveOverview } from '../models/ApiWaveOverview';
 import { HttpFile } from '../http/http';
 
 export class ApiNotificationV2 {
@@ -23,6 +24,7 @@ export class ApiNotificationV2 {
     'read_at': number | null;
     'related_identity': ApiIdentityOverview;
     'related_drops': Array<ApiDropV2>;
+    'related_wave'?: ApiWaveOverview;
     'additional_context': ApiNotificationAdditionalContextV2;
 
     static readonly discriminator: string | undefined = undefined;
@@ -64,6 +66,12 @@ export class ApiNotificationV2 {
             "name": "related_drops",
             "baseName": "related_drops",
             "type": "Array<ApiDropV2>",
+            "format": ""
+        },
+        {
+            "name": "related_wave",
+            "baseName": "related_wave",
+            "type": "ApiWaveOverview",
             "format": ""
         },
         {
