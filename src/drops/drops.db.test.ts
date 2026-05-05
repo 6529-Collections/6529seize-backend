@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import {
   DROP_CURATIONS_TABLE,
   DROP_MEDIA_TABLE,
+  DROP_RELATIONS_TABLE,
   DROPS_PARTS_TABLE,
   DROPS_TABLE,
   PROFILE_WAVES_TABLE,
@@ -562,6 +563,23 @@ describeWithSeed(
           mime_type: 'image/png'
         })
       ]
+    },
+    {
+      table: DROP_RELATIONS_TABLE,
+      rows: [
+        {
+          parent_id: 'drop-parent',
+          child_id: 'drop-public-a-new',
+          child_serial_no: 103,
+          wave_id: publicWaveA.id
+        },
+        {
+          parent_id: 'drop-parent',
+          child_id: 'drop-private',
+          child_serial_no: 102,
+          wave_id: privateWave.id
+        }
+      ]
     }
   ],
   () => {
@@ -637,6 +655,36 @@ describeWithSeed(
         { id: 'drop-private', serial_no: 102 },
         { id: 'drop-public-a-old', serial_no: 101 }
       ]);
+    });
+
+    it('finds visible drops by parent drop id and wave visibility', async () => {
+      await expect(
+        repo
+          .findVisibleDrops(
+            {
+              limit: 10,
+              offset: 0,
+              parent_drop_id: 'drop-parent',
+              group_ids_user_is_eligible_for: []
+            },
+            ctx
+          )
+          .then((drops) => drops.map((drop) => drop.id))
+      ).resolves.toEqual(['drop-public-a-new']);
+
+      await expect(
+        repo
+          .findVisibleDrops(
+            {
+              limit: 10,
+              offset: 0,
+              parent_drop_id: 'drop-parent',
+              group_ids_user_is_eligible_for: ['group-1']
+            },
+            ctx
+          )
+          .then((drops) => drops.map((drop) => drop.id))
+      ).resolves.toEqual(['drop-public-a-new', 'drop-private']);
     });
 
     it('does not include private waves for admin-group-only eligibility in the global selector', async () => {

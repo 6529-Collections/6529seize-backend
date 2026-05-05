@@ -202,6 +202,7 @@ function createService() {
     findDropPartByDropIdAndPartNo: jest.fn().mockResolvedValue(makePart()),
     findDropPartMedia: jest.fn().mockResolvedValue([]),
     findDropBoostsByDropId: jest.fn().mockResolvedValue([]),
+    findVisibleDrops: jest.fn().mockResolvedValue([]),
     findBoostedDrops: jest.fn().mockResolvedValue([]),
     countBoostedDrops: jest.fn().mockResolvedValue(0),
     findDropVoteEditLogEntities: jest.fn().mockResolvedValue([]),
@@ -267,6 +268,87 @@ function createService() {
 }
 
 describe('ApiDropV2Service', () => {
+  it('finds visible V2 drops by parent drop id', async () => {
+    const { service, deps } = createService();
+    const parentDrop = makeDrop({ id: 'parent-drop' });
+    const firstReply = makeDrop({
+      id: 'reply-1',
+      reply_to_drop_id: 'parent-drop'
+    });
+    const secondReply = makeDrop({
+      id: 'reply-2',
+      reply_to_drop_id: 'parent-drop'
+    });
+    const overflowReply = makeDrop({
+      id: 'reply-3',
+      reply_to_drop_id: 'parent-drop'
+    });
+    const authenticationContext =
+      AuthenticationContext.fromProfileId('viewer-1');
+    const connection = {} as any;
+    deps.dropsDb.findDropByIdWithEligibilityCheck.mockResolvedValue(parentDrop);
+    deps.dropsDb.findVisibleDrops.mockResolvedValue([
+      firstReply,
+      secondReply,
+      overflowReply
+    ]);
+
+    const result = await service.findDrops(
+      {
+        parent_drop_id: 'parent-drop',
+        page_size: 2,
+        page: 2
+      },
+      { authenticationContext, connection }
+    );
+
+    expect(
+      deps.userGroupsService.getGroupsUserIsEligibleFor
+    ).toHaveBeenCalledWith('viewer-1', undefined);
+    expect(deps.dropsDb.findDropByIdWithEligibilityCheck).toHaveBeenCalledWith(
+      'parent-drop',
+      ['group-1'],
+      connection
+    );
+    expect(deps.dropsDb.findVisibleDrops).toHaveBeenCalledWith(
+      {
+        parent_drop_id: 'parent-drop',
+        group_ids_user_is_eligible_for: ['group-1'],
+        limit: 3,
+        offset: 2
+      },
+      { authenticationContext, connection }
+    );
+    expect(deps.apiDropMapper.mapDrops).toHaveBeenCalledWith(
+      [firstReply, secondReply],
+      { authenticationContext, connection }
+    );
+    expect(result).toEqual({
+      data: [{ id: 'reply-1' }, { id: 'reply-2' }],
+      page: 2,
+      next: true
+    });
+  });
+
+  it('throws when parent drop is missing or not visible', async () => {
+    const { service, deps } = createService();
+    deps.dropsDb.findDropByIdWithEligibilityCheck.mockResolvedValue(null);
+
+    await expect(
+      service.findDrops(
+        {
+          parent_drop_id: 'missing-parent',
+          page_size: 50,
+          page: 1
+        },
+        { authenticationContext: AuthenticationContext.notAuthenticated() }
+      )
+    ).rejects.toThrow(NotFoundException);
+
+    expect(deps.dropsDb.findVisibleDrops).not.toHaveBeenCalled();
+    expect(deps.apiDropMapper.mapDrops).not.toHaveBeenCalled();
+  });
+
   it('finds visible drop and maps it with wave overview', async () => {
     const { service, deps } = createService();
     const drop = makeDrop();
