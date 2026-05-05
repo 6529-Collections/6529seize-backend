@@ -13824,6 +13824,9 @@ components:
         - subscribers_count
         - has_competition
         - is_dm_wave
+        - description_drop
+        - total_drops_count
+        - is_private
       properties:
         id:
           type: string
@@ -13843,6 +13846,13 @@ components:
         has_competition:
           type: boolean
         is_dm_wave:
+          type: boolean
+        description_drop:
+          $ref: "#/components/schemas/ApiWaveOverviewDescriptionDrop"
+        total_drops_count:
+          type: integer
+          format: int64
+        is_private:
           type: boolean
         contributors:
           type: array
@@ -13885,6 +13895,15 @@ components:
         pfp:
           type: string
           nullable: true
+    ApiWaveOverviewDescriptionDrop:
+      type: object
+      properties:
+        contents:
+          type: string
+        media:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiDropMedia"
     ApiWaveOverviewPage:
       type: object
       required:
