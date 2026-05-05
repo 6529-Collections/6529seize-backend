@@ -24,6 +24,7 @@ import { ApiAttachment } from '@/api/generated/models/ApiAttachment';
 import { mapAttachmentToApiAttachment } from '@/api/attachments/attachments.mappers';
 import { ApiDropBoostV2 } from '@/api/generated/models/ApiDropBoostV2';
 import { ApiDropV2Page } from '@/api/generated/models/ApiDropV2Page';
+import { ApiDropV2PageWithoutCount } from '@/api/generated/models/ApiDropV2PageWithoutCount';
 import { ApiDropVoteEditLog } from '@/api/generated/models/ApiDropVoteEditLog';
 import { PageSortDirection } from '@/api/page-request';
 import { ApiPageSortDirection } from '@/api/generated/models/ApiPageSortDirection';
@@ -44,6 +45,12 @@ export type DropVoteEditLogsSearchParams = {
   limit: number;
   sort_direction: PageSortDirection;
 };
+
+export interface FindDropsV2Request {
+  parent_drop_id: string | null;
+  page_size: number;
+  page: number;
+}
 
 export interface FindBoostedDropsV2Request {
   author: string | null;
@@ -67,6 +74,55 @@ export class ApiDropV2Service {
     private readonly attachmentsDb: AttachmentsDb,
     private readonly reactionsDb: ReactionsDb
   ) {}
+
+  public async findDrops(
+    req: FindDropsV2Request,
+    ctx: RequestContext
+  ): Promise<ApiDropV2PageWithoutCount> {
+    const timerKey = `${this.constructor.name}->findDrops`;
+    ctx.timer?.start(timerKey);
+    try {
+      const contextProfileId = getWaveReadContextProfileId(
+        ctx.authenticationContext
+      );
+      const groupIdsUserIsEligibleFor =
+        await this.userGroupsService.getGroupsUserIsEligibleFor(
+          contextProfileId,
+          ctx.timer
+        );
+      if (req.parent_drop_id) {
+        const parentDrop = await this.dropsDb.findDropByIdWithEligibilityCheck(
+          req.parent_drop_id,
+          groupIdsUserIsEligibleFor,
+          ctx.connection
+        );
+        if (!parentDrop) {
+          throw new NotFoundException(`Drop ${req.parent_drop_id} not found`);
+        }
+      }
+      const dropEntities = await this.dropsDb.findVisibleDrops(
+        {
+          parent_drop_id: req.parent_drop_id,
+          group_ids_user_is_eligible_for: groupIdsUserIsEligibleFor,
+          limit: req.page_size + 1,
+          offset: req.page_size * (req.page - 1)
+        },
+        ctx
+      );
+      const pageDropEntities = dropEntities.slice(0, req.page_size);
+      const dropsById = await this.apiDropMapper.mapDrops(
+        pageDropEntities,
+        ctx
+      );
+      return {
+        data: pageDropEntities.map((drop) => dropsById[drop.id]),
+        page: req.page,
+        next: dropEntities.length > req.page_size
+      };
+    } finally {
+      ctx.timer?.stop(timerKey);
+    }
+  }
 
   public async findWithWaveByIdOrThrow(
     id: string,

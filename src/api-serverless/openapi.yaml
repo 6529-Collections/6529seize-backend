@@ -2076,6 +2076,43 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiDropV2Page"
+  /v2/drops:
+    get:
+      tags:
+        - DropsV2
+      summary: Get V2 drops.
+      operationId: getDropsV2
+      parameters:
+        - name: parent_drop_id
+          in: query
+          description: Return replies under this parent drop.
+          required: false
+          schema:
+            type: string
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+            default: 1
+        - name: page_size
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+            maximum: 100
+            default: 50
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiDropV2PageWithoutCount"
   /v2/drops/{id}:
     get:
       tags:
