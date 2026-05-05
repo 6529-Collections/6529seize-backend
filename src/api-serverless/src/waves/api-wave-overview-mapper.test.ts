@@ -70,7 +70,8 @@ function createMapper() {
       .fn()
       .mockResolvedValue(new Set<string>()),
     findWaveReaderMetricsByWaveIds: jest.fn().mockResolvedValue({}),
-    findIdentityUnreadDropsCountByWaveId: jest.fn().mockResolvedValue({})
+    findIdentityUnreadDropsCountByWaveId: jest.fn().mockResolvedValue({}),
+    findLastUnreadDropSerialNoByWaveId: jest.fn().mockResolvedValue({})
   };
   const identitySubscriptionsDb = {
     findIdentitySubscriptionActionsOfTargets: jest.fn().mockResolvedValue({})
@@ -166,6 +167,9 @@ describe('ApiWaveOverviewMapper', () => {
     deps.wavesApiDb.findIdentityUnreadDropsCountByWaveId.mockResolvedValue({
       'wave-1': 7
     });
+    deps.wavesApiDb.findLastUnreadDropSerialNoByWaveId.mockResolvedValue({
+      'wave-1': 19
+    });
 
     const result = await mapper.mapWaves([wave], {
       authenticationContext: AuthenticationContext.fromProfileId('viewer-1')
@@ -185,6 +189,7 @@ describe('ApiWaveOverviewMapper', () => {
         pinned: true,
         can_chat: true,
         unread_drops: 7,
+        last_unread_drop_serial_no: 19,
         muted: true
       }
     });

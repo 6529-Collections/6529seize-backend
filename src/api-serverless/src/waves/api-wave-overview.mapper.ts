@@ -57,7 +57,8 @@ export class ApiWaveOverviewMapper {
         subscribedActionsByWaveId,
         pinnedWaveIds,
         readerMetricsByWaveId,
-        unreadDropsCountByWaveId
+        unreadDropsCountByWaveId,
+        lastUnreadDropSerialNoByWaveId
       ] = await Promise.all([
         this.wavesApiDb.findWavesMetricsByWaveIds(waveIds, ctx),
         contextProfileId
@@ -111,7 +112,16 @@ export class ApiWaveOverviewMapper {
               },
               ctx
             )
-          : Promise.resolve({} as Record<string, number>)
+          : Promise.resolve({} as Record<string, number>),
+        contextProfileId
+          ? this.wavesApiDb.findLastUnreadDropSerialNoByWaveId(
+              {
+                identityId: contextProfileId,
+                waveIds
+              },
+              ctx
+            )
+          : Promise.resolve({} as Record<string, number | null>)
       ]);
 
       return entities.reduce(
@@ -139,7 +149,9 @@ export class ApiWaveOverviewMapper {
               subscribedActions: subscribedActionsByWaveId[wave.id] ?? [],
               pinnedWaveIds,
               readerMetric: readerMetricsByWaveId[wave.id],
-              unreadDropsCount: unreadDropsCountByWaveId[wave.id] ?? 0
+              unreadDropsCount: unreadDropsCountByWaveId[wave.id] ?? 0,
+              lastUnreadDropSerialNo:
+                lastUnreadDropSerialNoByWaveId[wave.id] ?? undefined
             });
           }
 
@@ -159,7 +171,8 @@ export class ApiWaveOverviewMapper {
     subscribedActions,
     pinnedWaveIds,
     readerMetric,
-    unreadDropsCount
+    unreadDropsCount,
+    lastUnreadDropSerialNo
   }: {
     wave: WaveEntity;
     groupIdsUserIsEligibleFor: string[];
@@ -167,8 +180,9 @@ export class ApiWaveOverviewMapper {
     pinnedWaveIds: Set<string>;
     readerMetric?: WaveReaderMetricEntity;
     unreadDropsCount: number;
+    lastUnreadDropSerialNo?: number;
   }): ApiWaveOverviewContextProfileContext {
-    return {
+    const result: ApiWaveOverviewContextProfileContext = {
       subscribed: subscribedActions.includes(ActivityEventAction.DROP_CREATED),
       pinned: pinnedWaveIds.has(wave.id),
       can_chat:
@@ -178,6 +192,12 @@ export class ApiWaveOverviewMapper {
       unread_drops: unreadDropsCount,
       muted: readerMetric?.muted ?? false
     };
+
+    if (lastUnreadDropSerialNo !== undefined) {
+      result.last_unread_drop_serial_no = lastUnreadDropSerialNo;
+    }
+
+    return result;
   }
 }
 
