@@ -64,6 +64,11 @@ export interface FindBoostedDropsV2Request {
   sort: 'last_boosted_at' | 'first_boosted_at' | 'drop_created_at' | 'boosts';
 }
 
+export interface FindCuratedProfileWaveDropsV2Request {
+  page_size: number;
+  page: number;
+}
+
 export class ApiDropV2Service {
   constructor(
     private readonly dropsDb: DropsDb,
@@ -104,6 +109,35 @@ export class ApiDropV2Service {
         {
           parent_drop_id: req.parent_drop_id,
           group_ids_user_is_eligible_for: groupIdsUserIsEligibleFor,
+          limit: req.page_size + 1,
+          offset: req.page_size * (req.page - 1)
+        },
+        ctx
+      );
+      const pageDropEntities = dropEntities.slice(0, req.page_size);
+      const dropsById = await this.apiDropMapper.mapDrops(
+        pageDropEntities,
+        ctx
+      );
+      return {
+        data: pageDropEntities.map((drop) => dropsById[drop.id]),
+        page: req.page,
+        next: dropEntities.length > req.page_size
+      };
+    } finally {
+      ctx.timer?.stop(timerKey);
+    }
+  }
+
+  public async findCuratedProfileWaveDrops(
+    req: FindCuratedProfileWaveDropsV2Request,
+    ctx: RequestContext
+  ): Promise<ApiDropV2PageWithoutCount> {
+    const timerKey = `${this.constructor.name}->findCuratedProfileWaveDrops`;
+    ctx.timer?.start(timerKey);
+    try {
+      const dropEntities = await this.dropsDb.findCuratedProfileWaveDrops(
+        {
           limit: req.page_size + 1,
           offset: req.page_size * (req.page - 1)
         },

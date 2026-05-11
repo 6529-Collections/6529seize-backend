@@ -203,6 +203,7 @@ function createService() {
     findDropPartMedia: jest.fn().mockResolvedValue([]),
     findDropBoostsByDropId: jest.fn().mockResolvedValue([]),
     findVisibleDrops: jest.fn().mockResolvedValue([]),
+    findCuratedProfileWaveDrops: jest.fn().mockResolvedValue([]),
     findBoostedDrops: jest.fn().mockResolvedValue([]),
     countBoostedDrops: jest.fn().mockResolvedValue(0),
     findDropVoteEditLogEntities: jest.fn().mockResolvedValue([]),
@@ -347,6 +348,46 @@ describe('ApiDropV2Service', () => {
 
     expect(deps.dropsDb.findVisibleDrops).not.toHaveBeenCalled();
     expect(deps.apiDropMapper.mapDrops).not.toHaveBeenCalled();
+  });
+
+  it('finds curated profile wave drops and maps them with V2 models', async () => {
+    const { service, deps } = createService();
+    const firstDrop = makeDrop({ id: 'drop-1' });
+    const secondDrop = makeDrop({ id: 'drop-2' });
+    const overflowDrop = makeDrop({ id: 'drop-3' });
+    const authenticationContext =
+      AuthenticationContext.fromProfileId('viewer-1');
+    const connection = {} as any;
+    deps.dropsDb.findCuratedProfileWaveDrops.mockResolvedValue([
+      firstDrop,
+      secondDrop,
+      overflowDrop
+    ]);
+
+    const result = await service.findCuratedProfileWaveDrops(
+      {
+        page_size: 2,
+        page: 3
+      },
+      { authenticationContext, connection }
+    );
+
+    expect(deps.dropsDb.findCuratedProfileWaveDrops).toHaveBeenCalledWith(
+      {
+        limit: 3,
+        offset: 4
+      },
+      { authenticationContext, connection }
+    );
+    expect(deps.apiDropMapper.mapDrops).toHaveBeenCalledWith(
+      [firstDrop, secondDrop],
+      { authenticationContext, connection }
+    );
+    expect(result).toEqual({
+      data: [{ id: 'drop-1' }, { id: 'drop-2' }],
+      page: 3,
+      next: true
+    });
   });
 
   it('finds visible drop and maps it with wave overview', async () => {
