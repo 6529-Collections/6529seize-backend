@@ -8,6 +8,7 @@ import {
   DropGroupMentionEntity,
   DropMentionedWaveEntity,
   DropMentionEntity,
+  DropMetadataEntity,
   DropReferencedNftEntity,
   DropType
 } from '@/entities/IDrop';
@@ -25,6 +26,7 @@ import { ApiAttachment } from '@/api/generated/models/ApiAttachment';
 import { ApiDropGroupMention } from '@/api/generated/models/ApiDropGroupMention';
 import { ApiDropMainType } from '@/api/generated/models/ApiDropMainType';
 import { ApiDropMentionedUser } from '@/api/generated/models/ApiDropMentionedUser';
+import { ApiDropMetadataV2 } from '@/api/generated/models/ApiDropMetadataV2';
 import { ApiDropNftLink } from '@/api/generated/models/ApiDropNftLink';
 import { ApiDropReactionCounter } from '@/api/generated/models/ApiDropReactionCounter';
 import { ApiDropReferencedNFT } from '@/api/generated/models/ApiDropReferencedNFT';
@@ -83,11 +85,14 @@ import {
   nftLinkResolvingService,
   NftLinkResolvingService
 } from '@/nft-links/nft-link-resolving.service';
+import { env } from '@/env';
 
 type VoteRangeByDropId = Record<
   string,
   { min: number; max: number; current: number }
 >;
+
+const PRIORITY_METADATA_ADDITIONAL_MEDIA_KEY = 'additional_media';
 
 export class ApiDropMapper {
   constructor(
@@ -138,6 +143,12 @@ export class ApiDropMapper {
       const participatoryDropEntities = submissionEntities.filter(
         (drop) => drop.drop_type === DropType.PARTICIPATORY
       );
+      const mainStageWaveId = env.getStringOrNull('MAIN_STAGE_WAVE_ID');
+      const priorityMetadataDropIds = mainStageWaveId
+        ? submissionEntities
+            .filter((drop) => drop.wave_id === mainStageWaveId)
+            .map((drop) => drop.id)
+        : [];
       const winnerDropIds = submissionEntities
         .filter((drop) => drop.drop_type === DropType.WINNER)
         .map((drop) => drop.id);
@@ -178,6 +189,7 @@ export class ApiDropMapper {
         mentionedWaveOverviews,
         nftLinksByDropId,
         submissionDropIdsWithMetadata,
+        priorityMetadataRows,
         reactionsByDropId,
         boostsCount,
         boostedDropIds,
@@ -203,6 +215,12 @@ export class ApiDropMapper {
         submissionDropIds.length
           ? this.dropsDb.findDropIdsWithMetadata(submissionDropIds, ctx)
           : Promise.resolve(new Set<string>()),
+        priorityMetadataDropIds.length
+          ? this.dropsDb.findMetadataByDropIds(
+              priorityMetadataDropIds,
+              ctx.connection
+            )
+          : Promise.resolve([] as DropMetadataEntity[]),
         this.reactionsDb.getCountersByDropIds(dropIds, contextProfileId, ctx),
         this.dropsDb.countBoostsOfGivenDrops(dropIds, ctx),
         contextProfileId
@@ -257,6 +275,8 @@ export class ApiDropMapper {
       const mentionedGroupsByDropId =
         this.mapMentionedGroupsByDropId(mentionedGroups);
       const mentionedWavesByDropId = this.groupByDropId(mentionedWaves);
+      const priorityMetadataByDropId =
+        this.mapPriorityMetadataByDropId(priorityMetadataRows);
 
       return entities.reduce(
         (acc, drop) => {
@@ -274,6 +294,7 @@ export class ApiDropMapper {
             mentionedWaves: mentionedWavesByDropId[drop.id] ?? [],
             mentionedWaveOverviews,
             nftLinks: nftLinksByDropId[drop.id] ?? [],
+            priorityMetadata: priorityMetadataByDropId[drop.id] ?? [],
             hasMetadata: submissionDropIdsWithMetadata.has(drop.id),
             reactions: reactionsByDropId.get(drop.id),
             boosts: boostsCount[drop.id] ?? 0,
@@ -311,6 +332,7 @@ export class ApiDropMapper {
     mentionedWaves,
     mentionedWaveOverviews,
     nftLinks,
+    priorityMetadata,
     hasMetadata,
     reactions,
     boosts,
@@ -336,6 +358,7 @@ export class ApiDropMapper {
     mentionedWaves: DropMentionedWaveEntity[];
     mentionedWaveOverviews: Record<string, WaveMentionOverview>;
     nftLinks: ApiDropNftLink[];
+    priorityMetadata: ApiDropMetadataV2[];
     hasMetadata: boolean;
     reactions?: DropReactionCountersResult;
     boosts: number;
@@ -428,6 +451,9 @@ export class ApiDropMapper {
     }
     if (nftLinks.length) {
       apiDrop.nft_links = nftLinks;
+    }
+    if (priorityMetadata.length) {
+      apiDrop.priority_metadata = priorityMetadata;
     }
     const reactionCounters = (reactions?.reactions ?? []).map(
       (reaction): ApiDropReactionCounter => ({
@@ -732,6 +758,29 @@ export class ApiDropMapper {
         return acc;
       },
       {} as Record<string, ApiDropGroupMention[]>
+    );
+  }
+
+  private mapPriorityMetadataByDropId(
+    metadata: DropMetadataEntity[]
+  ): Record<string, ApiDropMetadataV2[]> {
+    return metadata.reduce(
+      (acc, item) => {
+        if (
+          item.data_key !== PRIORITY_METADATA_ADDITIONAL_MEDIA_KEY ||
+          item.data_value.trim().length === 0
+        ) {
+          return acc;
+        }
+        const items = acc[item.drop_id] ?? [];
+        items.push({
+          data_key: item.data_key,
+          data_value: item.data_value
+        });
+        acc[item.drop_id] = items;
+        return acc;
+      },
+      {} as Record<string, ApiDropMetadataV2[]>
     );
   }
 

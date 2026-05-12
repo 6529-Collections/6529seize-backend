@@ -62,6 +62,7 @@ function createMapper() {
     findDropGroupMentionsByDropIds: jest.fn().mockResolvedValue([]),
     findMentionedWavesByDropIds: jest.fn().mockResolvedValue([]),
     findDropIdsWithMetadata: jest.fn().mockResolvedValue(new Set<string>()),
+    findMetadataByDropIds: jest.fn().mockResolvedValue([]),
     countBoostsOfGivenDrops: jest.fn().mockResolvedValue({}),
     whichOfGivenDropsAreBoostedByIdentity: jest
       .fn()
@@ -432,5 +433,58 @@ describe('ApiDropMapper', () => {
         authenticationContext: AuthenticationContext.fromProfileId('viewer-1')
       }
     );
+  });
+
+  it('maps priority metadata for main stage submission drops', async () => {
+    const previousMainStageWaveId = process.env.MAIN_STAGE_WAVE_ID;
+    process.env.MAIN_STAGE_WAVE_ID = 'main-stage-wave';
+    try {
+      const { mapper, deps } = createMapper();
+      const drop = makeDrop({
+        id: 'drop-3',
+        wave_id: 'main-stage-wave',
+        drop_type: DropType.WINNER
+      });
+      deps.dropsDb.findMetadataByDropIds.mockResolvedValue([
+        {
+          id: 'metadata-1',
+          drop_id: 'drop-3',
+          data_key: 'additional_media',
+          data_value: '{"preview_image":"https://example.com/image.png"}',
+          wave_id: 'main-stage-wave'
+        },
+        {
+          id: 'metadata-2',
+          drop_id: 'drop-3',
+          data_key: 'artist',
+          data_value: 'Artist',
+          wave_id: 'main-stage-wave'
+        }
+      ]);
+
+      const result = await mapper.mapDrops([drop], {
+        authenticationContext: AuthenticationContext.notAuthenticated()
+      });
+
+      expect(deps.dropsDb.findMetadataByDropIds).toHaveBeenCalledWith(
+        ['drop-3'],
+        undefined
+      );
+      expect(result['drop-3']).toMatchObject({
+        drop_type: ApiDropMainType.Submission,
+        priority_metadata: [
+          {
+            data_key: 'additional_media',
+            data_value: '{"preview_image":"https://example.com/image.png"}'
+          }
+        ]
+      });
+    } finally {
+      if (previousMainStageWaveId === undefined) {
+        delete process.env.MAIN_STAGE_WAVE_ID;
+      } else {
+        process.env.MAIN_STAGE_WAVE_ID = previousMainStageWaveId;
+      }
+    }
   });
 });

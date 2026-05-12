@@ -89,35 +89,6 @@ import { attachmentsDb, AttachmentsDb } from '@/attachments/attachments.db';
 import { ApiAttachment } from '@/api/generated/models/ApiAttachment';
 import { mapAttachmentToApiAttachment } from '@/api/attachments/attachments.mappers';
 import { ApiDropAttachmentReference } from '@/api/generated/models/ApiDropAttachmentReference';
-import { env } from '@/env';
-
-const PRIORITY_METADATA_ADDITIONAL_MEDIA_KEY = 'additional_media';
-
-export function resolveApiDropPriorityMetadata({
-  dropType,
-  waveId,
-  metadata,
-  mainStageWaveId = env.getStringOrNull('MAIN_STAGE_WAVE_ID')
-}: {
-  dropType: ApiDropType;
-  waveId: string | null | undefined;
-  metadata: ApiDropMetadataResponse[];
-  mainStageWaveId?: string | null;
-}): ApiDropMetadataResponse[] | undefined {
-  if (
-    !mainStageWaveId ||
-    waveId !== mainStageWaveId ||
-    dropType !== ApiDropType.Participatory
-  ) {
-    return undefined;
-  }
-  const priorityMetadata = metadata.filter(
-    (item) =>
-      item.data_key === PRIORITY_METADATA_ADDITIONAL_MEDIA_KEY &&
-      item.data_value.trim().length > 0
-  );
-  return priorityMetadata.length ? priorityMetadata : undefined;
-}
 
 export class DropsMappers {
   constructor(
@@ -298,10 +269,6 @@ export class DropsMappers {
     const { noRightToVote, noRightToParticipate } = getWaveMinPermissionMask(
       effectiveAuthenticationContext
     );
-    const waveIdsByDropId = new Map(
-      dropEntities.map((dropEntity) => [dropEntity.id, dropEntity.wave_id])
-    );
-    const mainStageWaveId = env.getStringOrNull('MAIN_STAGE_WAVE_ID');
     return dWoW.map<ApiDrop>((d) => {
       const wave = waveOverviews[d.id];
       const waveMin: ApiWaveMin | null = wave
@@ -319,20 +286,10 @@ export class DropsMappers {
             authenticatedProfileId: readContextProfileId
           })
         : null;
-      const priorityMetadata = resolveApiDropPriorityMetadata({
-        dropType: d.drop_type,
-        waveId: waveIdsByDropId.get(d.id),
-        metadata: d.metadata,
-        mainStageWaveId
-      });
-      const apiDrop: ApiDrop = {
+      return {
         ...d,
         wave: waveMin as any
       };
-      if (priorityMetadata) {
-        apiDrop.priority_metadata = priorityMetadata;
-      }
-      return apiDrop;
     });
   }
 
