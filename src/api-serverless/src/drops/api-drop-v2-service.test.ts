@@ -208,8 +208,10 @@ function createService() {
     countBoostedDrops: jest.fn().mockResolvedValue(0),
     findDropVoteEditLogEntities: jest.fn().mockResolvedValue([]),
     findDropVotersByAbsoluteVote: jest.fn().mockResolvedValue([]),
+    findAllDropVotersByVoteDesc: jest.fn().mockResolvedValue([]),
     countDropVotersByAbsoluteVote: jest.fn().mockResolvedValue(0),
     getWinnerDropVoters: jest.fn().mockResolvedValue([]),
+    getAllWinnerDropVotersByVoteDesc: jest.fn().mockResolvedValue([]),
     countWinnerDropVoters: jest.fn().mockResolvedValue(0)
   };
   const userGroupsService = {
@@ -1352,6 +1354,148 @@ describe('ApiDropV2Service', () => {
     });
     expect(deps.dropsDb.findDropVotersByAbsoluteVote).toHaveBeenCalled();
     expect(deps.dropsDb.countDropVotersByAbsoluteVote).toHaveBeenCalled();
+    expect(
+      deps.identityFetcher.getApiIdentityOverviewsByIds
+    ).not.toHaveBeenCalled();
+  });
+
+  it('exports all visible drop voters sorted by signed vote descending', async () => {
+    const { service, deps } = createService();
+    const authenticationContext =
+      AuthenticationContext.fromProfileId('viewer-1');
+    const connection = {} as any;
+    deps.dropsDb.findAllDropVotersByVoteDesc.mockResolvedValue([
+      {
+        voter_id: 'voter-1',
+        vote: 12
+      },
+      {
+        voter_id: 'voter-2',
+        vote: -3
+      }
+    ]);
+    deps.identityFetcher.getApiIdentityOverviewsByIds.mockResolvedValue({
+      'voter-1': {
+        id: 'voter-1',
+        handle: 'alice',
+        primary_address: '0x1',
+        level: 5,
+        classification: 'PSEUDONYM',
+        badges: {
+          artist_of_main_stage_submissions: 0,
+          artist_of_memes: 0
+        }
+      },
+      'voter-2': {
+        id: 'voter-2',
+        handle: 'bob',
+        primary_address: '0x2',
+        level: 2,
+        classification: 'PSEUDONYM',
+        badges: {
+          artist_of_main_stage_submissions: 0,
+          artist_of_memes: 0
+        }
+      }
+    });
+
+    const result = await service.findVotersCsvByDropIdOrThrow('drop-1', {
+      authenticationContext,
+      connection
+    });
+
+    expect(result).toEqual([
+      {
+        handle: 'alice',
+        level: 5,
+        primary_address: '0x1',
+        vote: 12
+      },
+      {
+        handle: 'bob',
+        level: 2,
+        primary_address: '0x2',
+        vote: -3
+      }
+    ]);
+    expect(deps.dropsDb.findAllDropVotersByVoteDesc).toHaveBeenCalledWith(
+      {
+        wave_id: 'wave-1',
+        drop_id: 'drop-1'
+      },
+      {
+        authenticationContext,
+        connection
+      }
+    );
+    expect(
+      deps.dropsDb.getAllWinnerDropVotersByVoteDesc
+    ).not.toHaveBeenCalled();
+    expect(
+      deps.identityFetcher.getApiIdentityOverviewsByIds
+    ).toHaveBeenCalledWith(['voter-1', 'voter-2'], {
+      authenticationContext,
+      connection
+    });
+  });
+
+  it('exports all visible winner drop voters from winner votes', async () => {
+    const { service, deps } = createService();
+    deps.dropsDb.findDropByIdWithEligibilityCheck.mockResolvedValue(
+      makeDrop({ drop_type: DropType.WINNER })
+    );
+    deps.dropsDb.getAllWinnerDropVotersByVoteDesc.mockResolvedValue([
+      {
+        voter_id: 'voter-1',
+        drop_id: 'drop-1',
+        wave_id: 'wave-1',
+        votes: 8
+      }
+    ]);
+    deps.identityFetcher.getApiIdentityOverviewsByIds.mockResolvedValue({
+      'voter-1': {
+        id: 'voter-1',
+        handle: 'alice',
+        primary_address: '0x1',
+        level: 5,
+        classification: 'PSEUDONYM',
+        badges: {
+          artist_of_main_stage_submissions: 0,
+          artist_of_memes: 0
+        }
+      }
+    });
+
+    const result = await service.findVotersCsvByDropIdOrThrow('drop-1', {
+      authenticationContext: AuthenticationContext.fromProfileId('viewer-1')
+    });
+
+    expect(result).toEqual([
+      {
+        handle: 'alice',
+        level: 5,
+        primary_address: '0x1',
+        vote: 8
+      }
+    ]);
+    expect(deps.dropsDb.getAllWinnerDropVotersByVoteDesc).toHaveBeenCalledWith(
+      'drop-1',
+      {
+        authenticationContext: AuthenticationContext.fromProfileId('viewer-1')
+      }
+    );
+    expect(deps.dropsDb.findAllDropVotersByVoteDesc).not.toHaveBeenCalled();
+  });
+
+  it('exports empty voters without resolving identities', async () => {
+    const { service, deps } = createService();
+    deps.dropsDb.findAllDropVotersByVoteDesc.mockResolvedValue([]);
+
+    const result = await service.findVotersCsvByDropIdOrThrow('drop-1', {
+      authenticationContext: AuthenticationContext.fromProfileId('viewer-1')
+    });
+
+    expect(result).toEqual([]);
     expect(
       deps.identityFetcher.getApiIdentityOverviewsByIds
     ).not.toHaveBeenCalled();

@@ -40,6 +40,13 @@ export type DropVotersSearchParams = {
   sort_direction: PageSortDirection;
 };
 
+export type DropVotersCsvRow = {
+  handle: string;
+  level: number;
+  primary_address: string;
+  vote: number;
+};
+
 export type DropVoteEditLogsSearchParams = {
   offset: number;
   limit: number;
@@ -545,6 +552,57 @@ export class ApiDropV2Service {
           vote: Number(row.vote)
         }))
       };
+    } finally {
+      ctx.timer?.stop(timerKey);
+    }
+  }
+
+  public async findVotersCsvByDropIdOrThrow(
+    id: string,
+    ctx: RequestContext
+  ): Promise<DropVotersCsvRow[]> {
+    const timerKey = `${this.constructor.name}->findVotersCsvByDropIdOrThrow`;
+    ctx.timer?.start(timerKey);
+    try {
+      const dropEntity = await this.findVisibleDropByIdOrThrow(id, ctx);
+
+      const rows =
+        dropEntity.drop_type === DropType.WINNER
+          ? await this.dropsDb
+              .getAllWinnerDropVotersByVoteDesc(id, ctx)
+              .then((voters) =>
+                voters.map((voter) => ({
+                  voter_id: voter.voter_id,
+                  vote: voter.votes
+                }))
+              )
+          : await this.dropsDb.findAllDropVotersByVoteDesc(
+              {
+                wave_id: dropEntity.wave_id,
+                drop_id: id
+              },
+              ctx
+            );
+
+      if (!rows.length) {
+        return [];
+      }
+
+      const votersById =
+        await this.identityFetcher.getApiIdentityOverviewsByIds(
+          rows.map((row) => row.voter_id),
+          ctx
+        );
+
+      return rows.map((row) => {
+        const voter = votersById[row.voter_id];
+        return {
+          handle: voter?.handle ?? '',
+          level: voter?.level ?? 0,
+          primary_address: voter?.primary_address ?? '',
+          vote: Number(row.vote)
+        };
+      });
     } finally {
       ctx.timer?.stop(timerKey);
     }
