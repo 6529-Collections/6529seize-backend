@@ -2955,11 +2955,17 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     dropId: string,
     ctx: RequestContext
   ): Promise<WinnerDropVoterVoteEntity[]> {
-    return await this.db.execute<WinnerDropVoterVoteEntity>(
-      `select * from ${WINNER_DROP_VOTER_VOTES_TABLE} where drop_id = :dropId and votes <> 0 order by votes desc`,
-      { dropId },
-      { wrappedConnection: ctx.connection }
-    );
+    const timerKey = `${this.constructor.name}->getAllWinnerDropVotersByVoteDesc`;
+    ctx.timer?.start(timerKey);
+    try {
+      return await this.db.execute<WinnerDropVoterVoteEntity>(
+        `select * from ${WINNER_DROP_VOTER_VOTES_TABLE} where drop_id = :dropId and votes <> 0 order by votes desc`,
+        { dropId },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(timerKey);
+    }
   }
 
   async searchDropsContainingPhraseInWave(

@@ -1466,8 +1466,10 @@ describe('ApiDropV2Service', () => {
       }
     });
 
+    const authenticationContext =
+      AuthenticationContext.fromProfileId('viewer-1');
     const result = await service.findVotersCsvByDropIdOrThrow('drop-1', {
-      authenticationContext: AuthenticationContext.fromProfileId('viewer-1')
+      authenticationContext
     });
 
     expect(result).toEqual([
@@ -1481,7 +1483,7 @@ describe('ApiDropV2Service', () => {
     expect(deps.dropsDb.getAllWinnerDropVotersByVoteDesc).toHaveBeenCalledWith(
       'drop-1',
       {
-        authenticationContext: AuthenticationContext.fromProfileId('viewer-1')
+        authenticationContext
       }
     );
     expect(deps.dropsDb.findAllDropVotersByVoteDesc).not.toHaveBeenCalled();

@@ -600,7 +600,7 @@ export class ApiDropV2Service {
           handle: voter?.handle ?? '',
           level: voter?.level ?? 0,
           primary_address: voter?.primary_address ?? '',
-          vote: Number(row.vote)
+          vote: this.parseVoteValue(row.vote)
         };
       });
     } finally {
