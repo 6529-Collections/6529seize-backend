@@ -2788,6 +2788,30 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     }
   }
 
+  async findAllDropVotersByVoteDesc(
+    params: Pick<DropVotersByAbsoluteVoteParams, 'wave_id' | 'drop_id'>,
+    ctx: RequestContext
+  ): Promise<DropVoterVoteFromDb[]> {
+    const timerKey = `${this.constructor.name}->findAllDropVotersByVoteDesc`;
+    ctx.timer?.start(timerKey);
+    try {
+      return await this.db.execute<DropVoterVoteFromDb>(
+        `
+        select voter_id, votes as vote
+        from ${DROP_VOTER_STATE_TABLE}
+        where wave_id = :wave_id
+          and drop_id = :drop_id
+          and votes <> 0
+        order by votes desc
+      `,
+        params,
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(timerKey);
+    }
+  }
+
   async countDropVotersByAbsoluteVote(
     params: Pick<DropVotersByAbsoluteVoteParams, 'wave_id' | 'drop_id'>,
     ctx: RequestContext
@@ -2925,6 +2949,17 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         { wrappedConnection: ctx.connection }
       )
       .then((res) => res?.cnt ?? 0);
+  }
+
+  async getAllWinnerDropVotersByVoteDesc(
+    dropId: string,
+    ctx: RequestContext
+  ): Promise<WinnerDropVoterVoteEntity[]> {
+    return await this.db.execute<WinnerDropVoterVoteEntity>(
+      `select * from ${WINNER_DROP_VOTER_VOTES_TABLE} where drop_id = :dropId and votes <> 0 order by votes desc`,
+      { dropId },
+      { wrappedConnection: ctx.connection }
+    );
   }
 
   async searchDropsContainingPhraseInWave(
