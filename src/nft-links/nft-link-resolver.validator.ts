@@ -14,7 +14,8 @@ const HOST_ALLOWLIST = {
     'studio.manifold.xyz',
     'help.manifold.xyz'
   ]),
-  TRANSIENT: new Set(['transient.xyz', 'lab.transient.xyz'])
+  TRANSIENT: new Set(['transient.xyz', 'lab.transient.xyz']),
+  GAMMA: new Set(['gamma.io'])
 } as const;
 
 const TRACKING_KEYS_PREFIXES = ['utm_'];
@@ -126,6 +127,9 @@ function buildCanonicalId(
       return `${platform}:claim:${identifiers.instanceId}`;
     if (identifiers.instanceSlug)
       return `${platform}:slug:${identifiers.instanceSlug.toLowerCase()}`;
+  }
+  if (identifiers.kind === 'URL_ONLY' && identifiers.customId) {
+    return `${platform}:${identifiers.customId}`;
   }
   return `${platform}:url:${Buffer.from(viewUrl).toString('base64url')}`;
 }
@@ -511,6 +515,52 @@ function parseManifold(u: URL, inputUrl: string): CanonicalLink {
   return ok(inputUrl, 'MANIFOLD', viewUrl, { kind: 'MANIFOLD_CLAIM', ...ids });
 }
 
+function parseGamma(u: URL, inputUrl: string): CanonicalLink {
+  const viewUrl = normalizeUrlForView(u);
+  const effectivePath = getEffectivePath(u);
+  const pathSegments = effectivePath
+    .split('/')
+    .map((s) => decodeURIComponent(s).trim())
+    .filter(Boolean);
+
+  const ordinalId = pathSegments.find((segment) =>
+    /^[a-fA-F0-9]{64}i\d+$/.test(segment)
+  );
+  if (ordinalId) {
+    return ok(inputUrl, 'GAMMA', viewUrl, {
+      kind: 'URL_ONLY',
+      customId: `ordinal:${ordinalId.toLowerCase()}`
+    });
+  }
+
+  const collectionsIndex = pathSegments.indexOf('collections');
+  if (collectionsIndex >= 0) {
+    const collectionSlug = pathSegments[collectionsIndex + 1];
+    const tokenSegment =
+      pathSegments[collectionsIndex + 2] === 'tokens'
+        ? pathSegments[collectionsIndex + 3]
+        : pathSegments[collectionsIndex + 2];
+
+    if (
+      collectionSlug &&
+      tokenSegment &&
+      /^[a-zA-Z0-9][a-zA-Z0-9_-]{1,128}$/.test(collectionSlug)
+    ) {
+      const tokenId = normalizeTokenId(tokenSegment);
+      if (tokenId) {
+        return ok(inputUrl, 'GAMMA', viewUrl, {
+          kind: 'URL_ONLY',
+          customId: `collection:${collectionSlug.toLowerCase()}:${tokenId}`
+        });
+      }
+    }
+  }
+
+  throw new NftLinkResolverValidationError(
+    `Gamma link must include an ordinal inscription id or look like /collections/{collectionSlug}/{tokenId}.`
+  );
+}
+
 /**
  * validateLinkUrl
  *
@@ -536,12 +586,13 @@ export function validateLinkUrl(input: string): CanonicalLink {
   if (HOST_ALLOWLIST.OPENSEA.has(host)) return parseOpenSea(u, input);
   if (HOST_ALLOWLIST.FOUNDATION.has(host)) return parseFoundation(u, input);
   if (HOST_ALLOWLIST.TRANSIENT.has(host)) return parseTransient(u, input);
+  if (HOST_ALLOWLIST.GAMMA.has(host)) return parseGamma(u, input);
 
   if (HOST_ALLOWLIST.MANIFOLD.has(host) || host.endsWith('.manifold.xyz')) {
     return parseManifold(u, input);
   }
 
   throw new NftLinkResolverValidationError(
-    'Unsupported URL. Supported links: SuperRare, OpenSea, Foundation, Manifold, Transient.'
+    'Unsupported URL. Supported links: SuperRare, OpenSea, Foundation, Manifold, Transient, Gamma.'
   );
 }

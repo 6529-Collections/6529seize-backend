@@ -9,7 +9,8 @@ export const Platforms = [
   'OPENSEA',
   'FOUNDATION',
   'MANIFOLD',
-  'TRANSIENT'
+  'TRANSIENT',
+  'GAMMA'
 ] as const;
 export type Platform = (typeof Platforms)[number];
 
@@ -40,6 +41,7 @@ export type CanonicalIdentifiers =
     }
   | {
       kind: 'URL_ONLY';
+      customId?: string;
     };
 
 export interface CanonicalLink {
