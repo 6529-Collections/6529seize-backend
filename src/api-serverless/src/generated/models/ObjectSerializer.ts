@@ -449,7 +449,7 @@ import { ApiCurationDrop                               } from '../models/ApiCura
 import { ApiCurationDropsPage } from '../models/ApiCurationDropsPage';
 import { ApiDistributionAirdropsCsvUploadRequest } from '../models/ApiDistributionAirdropsCsvUploadRequest';
 import { ApiDistributionAirdropsUploadResponse } from '../models/ApiDistributionAirdropsUploadResponse';
-import { ApiDrop                               } from '../models/ApiDrop';
+import { ApiDrop                                } from '../models/ApiDrop';
 import { ApiDropAndDropVote } from '../models/ApiDropAndDropVote';
 import { ApiDropAndWave } from '../models/ApiDropAndWave';
 import { ApiDropAttachmentReference } from '../models/ApiDropAttachmentReference';

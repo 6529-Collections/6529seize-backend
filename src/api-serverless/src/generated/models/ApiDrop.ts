@@ -59,6 +59,7 @@ export class ApiDrop {
     'mentioned_groups': Array<ApiDropGroupMention>;
     'mentioned_waves': Array<ApiMentionedWave>;
     'metadata': Array<ApiDropMetadataResponse>;
+    'priority_metadata'?: Array<ApiDropMetadataResponse>;
     'rating': number;
     'realtime_rating': number;
     'rating_prediction': number;
@@ -182,6 +183,12 @@ export class ApiDrop {
         {
             "name": "metadata",
             "baseName": "metadata",
+            "type": "Array<ApiDropMetadataResponse>",
+            "format": ""
+        },
+        {
+            "name": "priority_metadata",
+            "baseName": "priority_metadata",
             "type": "Array<ApiDropMetadataResponse>",
             "format": ""
         },

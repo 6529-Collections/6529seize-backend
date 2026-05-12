@@ -9660,6 +9660,10 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ApiDropMetadataResponse"
+        priority_metadata:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiDropMetadataResponse"
         rating:
           type: number
           format: int64
