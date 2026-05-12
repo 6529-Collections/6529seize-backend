@@ -85,7 +85,6 @@ import {
   nftLinkResolvingService,
   NftLinkResolvingService
 } from '@/nft-links/nft-link-resolving.service';
-import { env } from '@/env';
 
 type VoteRangeByDropId = Record<
   string,
@@ -143,12 +142,6 @@ export class ApiDropMapper {
       const participatoryDropEntities = submissionEntities.filter(
         (drop) => drop.drop_type === DropType.PARTICIPATORY
       );
-      const mainStageWaveId = env.getStringOrNull('MAIN_STAGE_WAVE_ID');
-      const priorityMetadataDropIds = mainStageWaveId
-        ? submissionEntities
-            .filter((drop) => drop.wave_id === mainStageWaveId)
-            .map((drop) => drop.id)
-        : [];
       const winnerDropIds = submissionEntities
         .filter((drop) => drop.drop_type === DropType.WINNER)
         .map((drop) => drop.id);
@@ -215,11 +208,8 @@ export class ApiDropMapper {
         submissionDropIds.length
           ? this.dropsDb.findDropIdsWithMetadata(submissionDropIds, ctx)
           : Promise.resolve(new Set<string>()),
-        priorityMetadataDropIds.length
-          ? this.dropsDb.findMetadataByDropIds(
-              priorityMetadataDropIds,
-              ctx.connection
-            )
+        dropIds.length
+          ? this.dropsDb.findMetadataByDropIds(dropIds, ctx.connection)
           : Promise.resolve([] as DropMetadataEntity[]),
         this.reactionsDb.getCountersByDropIds(dropIds, contextProfileId, ctx),
         this.dropsDb.countBoostsOfGivenDrops(dropIds, ctx),
