@@ -2344,6 +2344,7 @@ paths:
             text/csv:
               schema:
                 type: string
+                format: binary
         "404":
           description: Drop not found
   /v2/drops/{id}/votes/logs:

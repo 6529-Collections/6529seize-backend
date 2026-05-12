@@ -32,11 +32,19 @@ type DropPartPathParams = {
   part_no: number;
 };
 
+type DropIdPathParams = {
+  drop_id: string;
+};
+
 const DropPartPathParamsSchema: Joi.ObjectSchema<DropPartPathParams> =
   Joi.object({
     drop_id: Joi.string().required(),
     part_no: Joi.number().integer().min(1).required()
   });
+
+const DropIdPathParamsSchema: Joi.ObjectSchema<DropIdPathParams> = Joi.object({
+  drop_id: Joi.string().required()
+});
 
 const DropVoteEditLogsQuerySchema: Joi.ObjectSchema<DropVoteEditLogsSearchParams> =
   Joi.object({
@@ -231,12 +239,18 @@ router.get(
   ) => {
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
-    const dropId = req.params.drop_id;
-    const voters = await apiDropV2Service.findVotersCsvByDropIdOrThrow(dropId, {
-      timer,
-      authenticationContext
-    });
-    return returnCSVResult(`drop-${dropId}-votes`, voters, res);
+    const { drop_id } = getValidatedByJoiOrThrow(
+      req.params,
+      DropIdPathParamsSchema
+    );
+    const voters = await apiDropV2Service.findVotersCsvByDropIdOrThrow(
+      drop_id,
+      {
+        timer,
+        authenticationContext
+      }
+    );
+    return returnCSVResult(`drop-${drop_id}-votes`, voters, res);
   }
 );
 
