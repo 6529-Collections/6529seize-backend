@@ -23,6 +23,7 @@ import { PageSortDirection } from '@/api/page-request';
 import { ApiDropVotersPage } from '@/api/generated/models/ApiDropVotersPage';
 import { ApiDropReactionV2 } from '@/api/generated/models/ApiDropReactionV2';
 import { ApiDropV2PageWithoutCount } from '@/api/generated/models/ApiDropV2PageWithoutCount';
+import { returnCSVResult } from '@/api/api-helpers';
 
 const router = asyncRouter();
 
@@ -31,11 +32,19 @@ type DropPartPathParams = {
   part_no: number;
 };
 
+type DropIdPathParams = {
+  drop_id: string;
+};
+
 const DropPartPathParamsSchema: Joi.ObjectSchema<DropPartPathParams> =
   Joi.object({
     drop_id: Joi.string().required(),
     part_no: Joi.number().integer().min(1).required()
   });
+
+const DropIdPathParamsSchema: Joi.ObjectSchema<DropIdPathParams> = Joi.object({
+  drop_id: Joi.string().required()
+});
 
 const DropVoteEditLogsQuerySchema: Joi.ObjectSchema<DropVoteEditLogsSearchParams> =
   Joi.object({
@@ -218,6 +227,30 @@ router.get(
       }
     );
     res.send(voters);
+  }
+);
+
+router.get(
+  '/:drop_id/votes/download',
+  maybeAuthenticatedUser(),
+  async (
+    req: Request<{ drop_id: string }, any, any, any, any>,
+    res: Response<string>
+  ) => {
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
+    const { drop_id } = getValidatedByJoiOrThrow(
+      req.params,
+      DropIdPathParamsSchema
+    );
+    const voters = await apiDropV2Service.findVotersCsvByDropIdOrThrow(
+      drop_id,
+      {
+        timer,
+        authenticationContext
+      }
+    );
+    return returnCSVResult(`drop-${drop_id}-votes`, voters, res);
   }
 );
 
