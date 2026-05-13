@@ -1,4 +1,4 @@
-import * as db from '../../../db-api';
+import * as db from '@/db-api';
 import {
   ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
   CONTENT_TYPE_HEADER,
@@ -65,16 +65,15 @@ router.post(`/validate`, validateRememe, function (req: any, res: any) {
     .end();
 });
 
-router.post(`/add`, validateRememeAdd, function (req: any, res: any) {
+router.post(`/add`, validateRememeAdd, async function (req: any, res: any) {
   const body = req.validatedBody;
   const valid = body.valid;
   res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
   res.setHeader(ACCESS_CONTROL_ALLOW_ORIGIN_HEADER, corsOptions.origin);
   if (valid) {
-    db.addRememe(req.body.address, body).then(() => {
-      res.status(201).send(JSON.stringify(body));
-      res.end();
-    });
+    await db.addRememe(req.body.address, body);
+    res.status(201).send(JSON.stringify(body));
+    res.end();
   } else {
     res.status(400).send(JSON.stringify(body));
     res.end();

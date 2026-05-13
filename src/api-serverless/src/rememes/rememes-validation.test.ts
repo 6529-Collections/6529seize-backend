@@ -1,9 +1,21 @@
-import { getTdhForAddress } from '@/db-api';
-import { validateTDH } from './rememes_validation';
+import { getTdhForAddress, rememeExists } from '@/db-api';
+import { validateRememe, validateTDH } from './rememes_validation';
+
+const mockGetContractMetadata = jest.fn();
+const mockGetNftMetadata = jest.fn();
 
 jest.mock('@/db-api', () => ({
   getTdhForAddress: jest.fn(),
   rememeExists: jest.fn()
+}));
+
+jest.mock('@/alchemy-sdk', () => ({
+  Alchemy: jest.fn().mockImplementation(() => ({
+    nft: {
+      getContractMetadata: mockGetContractMetadata,
+      getNftMetadata: mockGetNftMetadata
+    }
+  }))
 }));
 
 jest.mock('@/api/seize-settings', () => ({
@@ -15,6 +27,80 @@ jest.mock('@/api/seize-settings', () => ({
 const getTdhForAddressMock = getTdhForAddress as jest.MockedFunction<
   typeof getTdhForAddress
 >;
+const rememeExistsMock = rememeExists as jest.MockedFunction<
+  typeof rememeExists
+>;
+
+describe('validateRememe', () => {
+  afterEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('returns an invalid response when token metadata fetch fails', async () => {
+    mockGetContractMetadata.mockResolvedValue({
+      address: '0xcontract',
+      contractDeployer: '0xdeployer'
+    });
+    mockGetNftMetadata.mockRejectedValue(new Error('metadata unavailable'));
+
+    const req: any = {
+      body: {
+        contract: '0xcontract',
+        token_ids: ['1'],
+        references: [1]
+      }
+    };
+    const next = jest.fn();
+
+    await validateRememe(req, {}, next);
+
+    expect(req.validatedBody).toEqual({
+      valid: false,
+      contract: {
+        address: '0xcontract',
+        contractDeployer: '0xdeployer'
+      },
+      nfts: [
+        {
+          metadataError:
+            'Error fetching metadata for token_id 1: metadata unavailable'
+        }
+      ]
+    });
+    expect(next).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses the request contract when Alchemy contract metadata has no address', async () => {
+    mockGetContractMetadata.mockResolvedValue({
+      contractDeployer: '0xdeployer',
+      tokenType: 'ERC721'
+    });
+    mockGetNftMetadata.mockResolvedValue({
+      tokenId: '1',
+      raw: {
+        metadata: {}
+      }
+    });
+    rememeExistsMock.mockResolvedValue(false);
+
+    const req: any = {
+      body: {
+        contract: '0xcontract',
+        token_ids: ['1'],
+        references: [1]
+      }
+    };
+
+    await validateRememe(req, {}, jest.fn());
+
+    expect(req.validatedBody.contract).toEqual({
+      address: '0xcontract',
+      contractDeployer: '0xdeployer',
+      tokenType: 'ERC721'
+    });
+    expect(req.validatedBody.valid).toBe(true);
+  });
+});
 
 describe('validateTDH', () => {
   afterEach(() => {

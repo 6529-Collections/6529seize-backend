@@ -2,9 +2,9 @@ import { ethers, hashMessage } from 'ethers';
 import * as Joi from 'joi';
 import { ALCHEMY_SETTINGS } from '@/constants';
 import { Alchemy, Nft, NftContract } from '@/alchemy-sdk';
-import { getTdhForAddress, rememeExists } from '../../../db-api';
+import { getTdhForAddress, rememeExists } from '@/db-api';
 import { seizeSettings } from '@/api/seize-settings';
-import { equalIgnoreCase } from '../../../strings';
+import { equalIgnoreCase } from '@/strings';
 
 const rememeSchema = Joi.object({
   contract: Joi.string().required(),
@@ -121,6 +121,7 @@ async function validateRememeBody(body: any) {
           );
           const exists = await rememeExists(value.contract, token_id);
           if (exists) {
+            nftMeta.raw = nftMeta.raw ?? {};
             nftMeta.raw.error = 'Rememe already exists';
           }
           delete nftMeta.contract;
@@ -134,8 +135,12 @@ async function validateRememeBody(body: any) {
     );
 
     return {
-      valid: myNfts.find((n) => n.raw.error) === undefined,
-      contract: myContract,
+      valid:
+        myNfts.find((n: any) => n.raw?.error || n.metadataError) === undefined,
+      contract: {
+        ...myContract,
+        address: myContract.address ?? value.contract
+      },
       nfts: myNfts
     };
   }
