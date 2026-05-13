@@ -15,7 +15,10 @@ jest.mock('@/alchemy-sdk', () => ({
       getContractMetadata: mockGetContractMetadata,
       getNftMetadata: mockGetNftMetadata
     }
-  }))
+  })),
+  Network: {
+    ETH_MAINNET: 'eth-mainnet'
+  }
 }));
 
 jest.mock('@/api/seize-settings', () => ({
