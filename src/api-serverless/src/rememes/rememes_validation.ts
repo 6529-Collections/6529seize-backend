@@ -46,7 +46,6 @@ export async function validateRememeAdd(req: any, res: any, next: any) {
       );
       const tdhValidation = await validateTDH(
         value.address,
-        rememeValidation.contract?.address,
         rememeValidation.contract?.contractDeployer
       );
       if (!signatureValidation) {
@@ -158,16 +157,12 @@ function validateSignature(
   }
 }
 
-async function validateTDH(
-  address?: string,
-  contractAddress?: string,
-  deployer?: string
-) {
-  if (!address || !contractAddress || !deployer) {
+export async function validateTDH(address?: string, deployer?: string) {
+  if (!address) {
     return false;
   }
 
-  if (equalIgnoreCase(address, deployer)) {
+  if (deployer && equalIgnoreCase(address, deployer)) {
     return true;
   }
 
