@@ -1265,17 +1265,17 @@ export async function rememeExists(contract: string, token_id: string) {
 
 export async function addRememe(by: string, rememe: any) {
   const contract = rememe.contract.address;
-  const deployer = rememe.contract.contractDeployer;
-  const openseaData = rememe.contract.openSeaMetadata;
+  const deployer = rememe.contract.contractDeployer ?? '';
+  const openseaData = rememe.contract.openSeaMetadata ?? {};
 
   const tokens: Nft[] = rememe.nfts;
 
   for (const t of tokens) {
     const token_id = t.tokenId;
-    const tokenType = t.tokenType;
-    const tokenUri = t.tokenUri ? t.tokenUri : t.raw.tokenUri;
-    const media = t.image;
-    const metadata = t.raw.metadata;
+    const tokenType = t.tokenType ?? '';
+    const tokenUri = t.tokenUri ?? t.raw?.tokenUri ?? '';
+    const media = t.image ?? {};
+    const metadata = t.raw?.metadata ?? {};
     let image = '';
     if (metadata) {
       image = metadata.image ?? metadata.image_url ?? '';
