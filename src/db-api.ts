@@ -1272,7 +1272,7 @@ export async function addRememe(by: string, rememe: any) {
 
   for (const t of tokens) {
     const token_id = t.tokenId;
-    const tokenType = t.tokenType ?? '';
+    const tokenType = t.tokenType ?? rememe.contract.tokenType ?? '';
     const tokenUri = t.tokenUri ?? t.raw?.tokenUri ?? '';
     const media = t.image ?? {};
     const metadata = t.raw?.metadata ?? {};
