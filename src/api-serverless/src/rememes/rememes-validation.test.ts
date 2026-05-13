@@ -1,7 +1,7 @@
-import { getTdhForAddress } from '../../../db-api';
+import { getTdhForAddress } from '@/db-api';
 import { validateTDH } from './rememes_validation';
 
-jest.mock('../../../db-api', () => ({
+jest.mock('@/db-api', () => ({
   getTdhForAddress: jest.fn(),
   rememeExists: jest.fn()
 }));
