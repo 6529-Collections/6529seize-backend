@@ -542,7 +542,7 @@ router.get(
       wave_id: id,
       ...getValidatedByJoiOrThrow(
         req.query,
-        Joi.object<LeaderboardParams>({
+        Joi.object<Omit<LeaderboardParams, 'wave_id'>>({
           page_size: Joi.number().integer().min(1).max(100).default(50),
           page: Joi.number().integer().min(1).default(1),
           curation_id: Joi.string().optional().default(null),

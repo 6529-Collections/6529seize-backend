@@ -1,22 +1,15 @@
-import { Request, Response } from 'express';
-import * as Joi from 'joi';
 import { AuthenticationContext } from '@/auth-context';
+import { getAuthenticationContext } from '@/api/auth/auth';
+import { ApiNotificationsResponseV2 } from '@/api/generated/models/ApiNotificationsResponseV2';
+import { GetNotificationsV2Request } from '@/api/generated/routes/operations';
+import { notificationsApiService } from '@/api/notifications/notifications.api.service';
+import { getValidatedByJoiOrThrow } from '@/api/validation';
 import { IdentityNotificationCause } from '@/entities/IIdentityNotification';
 import { ForbiddenException } from '@/exceptions';
 import { Timer } from '@/time';
-import { ApiResponse } from '@/api/api-response';
-import { asyncRouter } from '@/api/async.router';
-import {
-  getAuthenticationContext,
-  needsAuthenticatedUser
-} from '@/api/auth/auth';
-import { ApiNotificationsResponseV2 } from '@/api/generated/models/ApiNotificationsResponseV2';
-import { notificationsApiService } from '@/api/notifications/notifications.api.service';
-import { getValidatedByJoiOrThrow } from '@/api/validation';
+import * as Joi from 'joi';
 
-const router = asyncRouter();
-
-interface GetNotificationsV2Request {
+interface GetNotificationsV2Query {
   id_less_than: number | null;
   limit: number;
   cause: string | null;
@@ -25,7 +18,9 @@ interface GetNotificationsV2Request {
 }
 
 const causesValidator = (value: unknown, helpers: Joi.CustomHelpers) => {
-  if (typeof value !== 'string') return null;
+  if (typeof value !== 'string') {
+    return null;
+  }
   const values = value.split(',').map((v) => v.trim());
   const validCauses = Object.values(IdentityNotificationCause);
   for (const val of values) {
@@ -49,7 +44,7 @@ function assertCanAccessNotifications(
   }
 }
 
-const GetNotificationsV2RequestSchema = Joi.object<GetNotificationsV2Request>({
+const GetNotificationsV2QuerySchema = Joi.object<GetNotificationsV2Query>({
   id_less_than: Joi.number().optional().integer().default(null),
   limit: Joi.number().optional().integer().default(10).min(1).max(100),
   cause: Joi.string()
@@ -69,27 +64,19 @@ const GetNotificationsV2RequestSchema = Joi.object<GetNotificationsV2Request>({
   unread_only: Joi.boolean().optional().default(false)
 });
 
-router.get(
-  '/',
-  needsAuthenticatedUser(),
-  async (
-    req: Request<any, any, any, GetNotificationsV2Request, any>,
-    res: Response<ApiResponse<ApiNotificationsResponseV2>>
-  ) => {
-    const timer = Timer.getFromRequest(req);
-    const authenticationContext = await getAuthenticationContext(req, timer);
-    assertCanAccessNotifications(authenticationContext);
-    const request = getValidatedByJoiOrThrow(
-      req.query,
-      GetNotificationsV2RequestSchema
-    );
-    const notifications = await notificationsApiService.getNotificationsV2(
-      request,
-      authenticationContext,
-      { timer, authenticationContext }
-    );
-    res.send(notifications);
-  }
-);
-
-export default router;
+export async function handleGetNotificationsV2(
+  req: GetNotificationsV2Request
+): Promise<ApiNotificationsResponseV2> {
+  const timer = Timer.getFromRequest(req);
+  const authenticationContext = await getAuthenticationContext(req, timer);
+  assertCanAccessNotifications(authenticationContext);
+  const request = getValidatedByJoiOrThrow(
+    req.query,
+    GetNotificationsV2QuerySchema
+  );
+  return notificationsApiService.getNotificationsV2(
+    request,
+    authenticationContext,
+    { timer, authenticationContext }
+  );
+}
