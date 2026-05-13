@@ -44,9 +44,10 @@ export async function validateRememeAdd(req: any, res: any, next: any) {
         value.signature,
         value.rememe
       );
+      const contract = rememeValidation.contract as NftContract | undefined;
       const tdhValidation = await validateTDH(
         value.address,
-        rememeValidation.contract?.contractDeployer
+        contract?.contractDeployer
       );
       if (!signatureValidation) {
         req.validatedBody = {
@@ -135,8 +136,7 @@ async function validateRememeBody(body: any) {
     );
 
     return {
-      valid:
-        myNfts.find((n: any) => n.raw?.error || n.metadataError) === undefined,
+      valid: !myNfts.some((n: any) => n.raw?.error || n.metadataError),
       contract: {
         ...myContract,
         address: myContract.address ?? value.contract
