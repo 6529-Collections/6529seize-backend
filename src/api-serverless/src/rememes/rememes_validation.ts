@@ -2,9 +2,9 @@ import { ethers, hashMessage } from 'ethers';
 import * as Joi from 'joi';
 import { ALCHEMY_SETTINGS } from '@/constants';
 import { Alchemy, Nft, NftContract } from '@/alchemy-sdk';
-import { getTdhForAddress, rememeExists } from '../../../db-api';
+import { getTdhForAddress, rememeExists } from '@/db-api';
 import { seizeSettings } from '@/api/seize-settings';
-import { equalIgnoreCase } from '../../../strings';
+import { equalIgnoreCase } from '@/strings';
 
 const rememeSchema = Joi.object({
   contract: Joi.string().required(),
@@ -44,10 +44,10 @@ export async function validateRememeAdd(req: any, res: any, next: any) {
         value.signature,
         value.rememe
       );
+      const contract = rememeValidation.contract as NftContract | undefined;
       const tdhValidation = await validateTDH(
         value.address,
-        rememeValidation.contract?.address,
-        rememeValidation.contract?.contractDeployer
+        contract?.contractDeployer
       );
       if (!signatureValidation) {
         req.validatedBody = {
@@ -122,6 +122,7 @@ async function validateRememeBody(body: any) {
           );
           const exists = await rememeExists(value.contract, token_id);
           if (exists) {
+            nftMeta.raw = nftMeta.raw ?? {};
             nftMeta.raw.error = 'Rememe already exists';
           }
           delete nftMeta.contract;
@@ -135,8 +136,11 @@ async function validateRememeBody(body: any) {
     );
 
     return {
-      valid: myNfts.find((n) => n.raw.error) === undefined,
-      contract: myContract,
+      valid: !myNfts.some((n: any) => n.raw?.error || n.metadataError),
+      contract: {
+        ...myContract,
+        address: myContract.address ?? value.contract
+      },
       nfts: myNfts
     };
   }
@@ -158,16 +162,12 @@ function validateSignature(
   }
 }
 
-async function validateTDH(
-  address?: string,
-  contractAddress?: string,
-  deployer?: string
-) {
-  if (!address || !contractAddress || !deployer) {
+export async function validateTDH(address?: string, deployer?: string) {
+  if (!address) {
     return false;
   }
 
-  if (equalIgnoreCase(address, deployer)) {
+  if (deployer && equalIgnoreCase(address, deployer)) {
     return true;
   }
 
