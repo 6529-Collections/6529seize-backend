@@ -44,9 +44,10 @@ export async function validateRememeAdd(req: any, res: any, next: any) {
         value.signature,
         value.rememe
       );
+      const contract = rememeValidation.contract as NftContract | undefined;
       const tdhValidation = await validateTDH(
         value.address,
-        rememeValidation.contract?.contractDeployer
+        contract?.contractDeployer
       );
       if (!signatureValidation) {
         req.validatedBody = {
