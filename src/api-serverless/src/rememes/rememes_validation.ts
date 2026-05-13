@@ -135,8 +135,7 @@ async function validateRememeBody(body: any) {
     );
 
     return {
-      valid:
-        myNfts.find((n: any) => n.raw?.error || n.metadataError) === undefined,
+      valid: !myNfts.some((n: any) => n.raw?.error || n.metadataError),
       contract: {
         ...myContract,
         address: myContract.address ?? value.contract
