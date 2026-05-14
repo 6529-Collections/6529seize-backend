@@ -225,6 +225,8 @@ describe('drops v2 handlers', () => {
       expect(mockFindDrops).toHaveBeenCalledWith(
         {
           parent_drop_id: null,
+          serial_nos: null,
+          ids: null,
           page_size: 50,
           page: 1
         },
@@ -239,6 +241,8 @@ describe('drops v2 handlers', () => {
       const req = {
         query: {
           parent_drop_id: '',
+          serial_nos: '7, 5,7',
+          ids: 'drop-1, drop-2,drop-1',
           page_size: '25',
           page: '2'
         }
@@ -249,6 +253,8 @@ describe('drops v2 handlers', () => {
       expect(mockFindDrops).toHaveBeenCalledWith(
         {
           parent_drop_id: null,
+          serial_nos: [7, 5],
+          ids: ['drop-1', 'drop-2'],
           page_size: 25,
           page: 2
         },
@@ -264,6 +270,24 @@ describe('drops v2 handlers', () => {
 
       await expect(handleGetDropsV2(req)).rejects.toThrow(
         '"page_size" must be less than or equal to 100'
+      );
+      expect(mockFindDrops).not.toHaveBeenCalled();
+    });
+
+    it('rejects invalid serial numbers', async () => {
+      const req = { query: { serial_nos: '10, nope' } } as any;
+
+      await expect(handleGetDropsV2(req)).rejects.toThrow(
+        '"serial_nos" must be a comma-separated list of positive integers'
+      );
+      expect(mockFindDrops).not.toHaveBeenCalled();
+    });
+
+    it('rejects invalid drop ids', async () => {
+      const req = { query: { ids: 'drop-1,,drop-2' } } as any;
+
+      await expect(handleGetDropsV2(req)).rejects.toThrow(
+        '"ids" must be a comma-separated list of non-empty drop IDs'
       );
       expect(mockFindDrops).not.toHaveBeenCalled();
     });

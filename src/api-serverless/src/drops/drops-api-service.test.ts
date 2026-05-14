@@ -137,6 +137,7 @@ describe('DropsApiService', () => {
           include_replies: false,
           drop_type: null,
           ids: null,
+          serial_nos: null,
           contains_media: false
         },
         ctx
@@ -226,6 +227,7 @@ describe('DropsApiService', () => {
           include_replies: false,
           drop_type: null,
           ids: null,
+          serial_nos: null,
           contains_media: false
         },
         ctx
@@ -272,6 +274,7 @@ describe('DropsApiService', () => {
           include_replies: false,
           drop_type: null,
           ids: null,
+          serial_nos: null,
           contains_media: false
         },
         ctx
@@ -297,6 +300,7 @@ describe('DropsApiService', () => {
           include_replies: false,
           drop_type: null,
           ids: null,
+          serial_nos: null,
           contains_media: false
         },
         ctx
@@ -330,6 +334,7 @@ describe('DropsApiService', () => {
           include_replies: false,
           drop_type: null,
           ids: null,
+          serial_nos: null,
           contains_media: false
         },
         ctx
