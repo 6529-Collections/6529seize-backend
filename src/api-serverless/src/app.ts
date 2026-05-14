@@ -4,7 +4,6 @@ import { ids } from '@/ids';
 import * as http from 'node:http';
 import WebSocket, { WebSocketServer } from 'ws';
 import aggregatedActivityRoutes from './aggregated-activity/api.aggregated-activity.routes';
-import apiV2Routes from './api-v2.router';
 import authRoutes from './auth/auth.routes';
 import attachmentsRoutes from './attachments/attachments.routes';
 import communityMembersRoutes from './community-members/community-members.routes';
@@ -24,6 +23,7 @@ import dropsRoutes from './drops/drops.routes';
 import lightDropsRoutes from './drops/light-drops.routes';
 import feedRoutes from './feed/feed.routes';
 import gasRoutes from './gas/gas.routes';
+import generatedOpenApiRoutes from './generated/routes/openapi-generated.routes';
 import identitiesRoutes from './identities/identities.routes';
 import identitySubscriptionsRoutes from './identity-subscriptions/identity-subscriptions.routes';
 import mintingClaimsRoutes from './minting-claims/api.minting-claims.routes';
@@ -1599,7 +1599,7 @@ async function initializeApp() {
   apiRouter.use(`/push-notifications`, pushNotificationsRoutes);
   apiRouter.use(`/xtdh`, xtdhRoutes);
   apiRouter.use(`/nft-link`, nftLinksRoutes);
-  apiRouter.use(`/v2`, apiV2Routes);
+  apiRouter.use(``, generatedOpenApiRoutes);
 
   rootRouter.use(BASE_PATH, apiRouter);
   rootRouter.use(`/desktop`, desktopRoutes);
