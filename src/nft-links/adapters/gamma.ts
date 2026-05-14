@@ -7,7 +7,7 @@ import { fetchTextWithTimeout } from '@/nft-links/lib/http';
 import { extractOg } from '@/nft-links/lib/og';
 import { CanonicalLink } from '@/nft-links/types';
 import { env } from '@/env';
-import { BadRequestException } from '@/exceptions';
+import { CustomApiCompliantException } from '@/exceptions';
 
 type GammaIdentifier =
   | { kind: 'ordinal'; inscriptionId: string }
@@ -50,6 +50,9 @@ function extractJsonLdBlocks(html: string): Record<string, unknown>[] {
       if (Array.isArray(parsed)) {
         blocks.push(...parsed.filter(isRecord));
       } else if (isRecord(parsed)) {
+        if (Array.isArray(parsed['@graph'])) {
+          blocks.push(...parsed['@graph'].filter(isRecord));
+        }
         blocks.push(parsed);
       }
     } catch {
@@ -149,7 +152,8 @@ export class GammaAdapter implements PlatformAdapter {
     );
 
     if (!primaryJsonLd || !hasGammaMetadata(title, description, imageUrl)) {
-      throw new BadRequestException(
+      throw new CustomApiCompliantException(
+        502,
         `Unable to extract Gamma metadata from ${canonical.viewUrl}`
       );
     }

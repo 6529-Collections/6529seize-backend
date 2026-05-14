@@ -96,6 +96,44 @@ describe('NftLinkResolver Gamma support', () => {
     });
   });
 
+  it('resolves Gamma links from JSON-LD @graph metadata', async () => {
+    fetchTextWithTimeoutMock.mockResolvedValue(`
+      <html>
+        <head>
+          <script type="application/ld+json">
+            {
+              "@context": "https://schema.org",
+              "@graph": [
+                {
+                  "@type": "WebSite",
+                  "name": "Gamma"
+                },
+                {
+                  "@type": "VisualArtwork",
+                  "name": "Graph Token",
+                  "image": "https://cdn.gamma.io/graph-token.png"
+                }
+              ]
+            }
+          </script>
+        </head>
+      </html>
+    `);
+
+    const result = await new NftLinkResolver().resolve(
+      'https://gamma.io/collections/thisisnumberone-v2/1058',
+      resolveContext
+    );
+
+    expect(result.asset).toMatchObject({
+      title: 'Gamma',
+      media: {
+        kind: 'image',
+        imageUrl: 'https://cdn.gamma.io/graph-token.png'
+      }
+    });
+  });
+
   it('fails when Gamma page metadata cannot be extracted', async () => {
     fetchTextWithTimeoutMock.mockResolvedValue('<html><head></head></html>');
 
