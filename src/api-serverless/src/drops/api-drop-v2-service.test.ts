@@ -305,6 +305,7 @@ describe('ApiDropV2Service', () => {
       {
         parent_drop_id: 'parent-drop',
         serial_nos: null,
+        ids: null,
         page_size: 2,
         page: 2
       },
@@ -323,6 +324,7 @@ describe('ApiDropV2Service', () => {
       {
         parent_drop_id: 'parent-drop',
         serial_nos: null,
+        ids: null,
         group_ids_user_is_eligible_for: ['group-1'],
         limit: 3,
         offset: 2
@@ -361,6 +363,7 @@ describe('ApiDropV2Service', () => {
         {
           parent_drop_id: 'missing-parent',
           serial_nos: null,
+          ids: null,
           page_size: 50,
           page: 1
         },
@@ -396,6 +399,7 @@ describe('ApiDropV2Service', () => {
       {
         parent_drop_id: null,
         serial_nos: [10, 8],
+        ids: null,
         page_size: 50,
         page: 1
       },
@@ -409,6 +413,64 @@ describe('ApiDropV2Service', () => {
       {
         parent_drop_id: null,
         serial_nos: [10, 8],
+        ids: null,
+        group_ids_user_is_eligible_for: ['group-1'],
+        limit: 51,
+        offset: 0
+      },
+      { authenticationContext }
+    );
+    expect(deps.wavesApiDb.findWavesByIdsEligibleForRead).toHaveBeenCalledWith(
+      ['wave-1', 'wave-2'],
+      ['group-1'],
+      undefined
+    );
+    expect(result).toEqual({
+      data: [
+        { id: 'drop-1', wave: { id: 'wave-1' } },
+        { id: 'drop-2', wave: { id: 'wave-2' } }
+      ],
+      page: 1,
+      next: false
+    });
+  });
+
+  it('finds visible V2 drops by ids', async () => {
+    const { service, deps } = createService();
+    const firstDrop = makeDrop({ id: 'drop-1', serial_no: 10 });
+    const secondDrop = makeDrop({
+      id: 'drop-2',
+      serial_no: 8,
+      wave_id: 'wave-2'
+    });
+    const authenticationContext =
+      AuthenticationContext.fromProfileId('viewer-1');
+    deps.dropsDb.findVisibleDrops.mockResolvedValue([firstDrop, secondDrop]);
+    deps.wavesApiDb.findWavesByIdsEligibleForRead.mockResolvedValue([
+      makeWave(),
+      makeWave({ id: 'wave-2', name: 'Wave 2' })
+    ]);
+    deps.apiWaveOverviewMapper.mapWaves.mockResolvedValue({
+      'wave-1': { id: 'wave-1' },
+      'wave-2': { id: 'wave-2' }
+    });
+
+    const result = await service.findDrops(
+      {
+        parent_drop_id: null,
+        serial_nos: null,
+        ids: ['drop-1', 'drop-2'],
+        page_size: 50,
+        page: 1
+      },
+      { authenticationContext }
+    );
+
+    expect(deps.dropsDb.findVisibleDrops).toHaveBeenCalledWith(
+      {
+        parent_drop_id: null,
+        serial_nos: null,
+        ids: ['drop-1', 'drop-2'],
         group_ids_user_is_eligible_for: ['group-1'],
         limit: 51,
         offset: 0

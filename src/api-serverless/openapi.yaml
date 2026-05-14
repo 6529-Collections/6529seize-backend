@@ -2165,6 +2165,12 @@ paths:
           required: false
           schema:
             type: string
+        - name: ids
+          in: query
+          description: Comma-separated list of drop IDs to fetch.
+          required: false
+          schema:
+            type: string
         - name: page
           in: query
           required: false

@@ -57,6 +57,7 @@ export type DropVoteEditLogsSearchParams = {
 export interface FindDropsV2Request {
   parent_drop_id: string | null;
   serial_nos: number[] | null;
+  ids: string[] | null;
   page_size: number;
   page: number;
 }
@@ -119,6 +120,7 @@ export class ApiDropV2Service {
         {
           parent_drop_id: req.parent_drop_id,
           serial_nos: req.serial_nos,
+          ids: req.ids,
           group_ids_user_is_eligible_for: groupIdsUserIsEligibleFor,
           limit: req.page_size + 1,
           offset: req.page_size * (req.page - 1)

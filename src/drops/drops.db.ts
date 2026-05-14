@@ -796,12 +796,14 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       offset,
       parent_drop_id,
       serial_nos,
+      ids,
       group_ids_user_is_eligible_for
     }: {
       limit: number;
       offset: number;
       parent_drop_id: string | null;
       serial_nos: number[] | null;
+      ids: string[] | null;
       group_ids_user_is_eligible_for: string[];
     },
     ctx: RequestContext
@@ -821,11 +823,12 @@ export class DropsDb extends LazyDbAccessCompatibleService {
              : ``
          }
          where ${
-           parent_drop_id || serial_nos?.length
+           parent_drop_id || serial_nos?.length || ids?.length
              ? ``
              : `d.reply_to_drop_id is null and`
          }
-           ${serial_nos?.length ? `d.serial_no in (:serial_nos) and` : ``}
+          ${serial_nos?.length ? `d.serial_no in (:serial_nos) and` : ``}
+          ${ids?.length ? `d.id in (:ids) and` : ``}
            exists (
              select 1
              from ${WAVES_TABLE} w
@@ -839,6 +842,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
           offset,
           parent_drop_id,
           serial_nos,
+          ids,
           groupsUserIsEligibleFor: group_ids_user_is_eligible_for
         },
         { wrappedConnection: ctx.connection }

@@ -666,6 +666,7 @@ describeWithSeed(
               offset: 0,
               parent_drop_id: 'drop-parent',
               serial_nos: null,
+              ids: null,
               group_ids_user_is_eligible_for: []
             },
             ctx
@@ -681,6 +682,7 @@ describeWithSeed(
               offset: 0,
               parent_drop_id: 'drop-parent',
               serial_nos: null,
+              ids: null,
               group_ids_user_is_eligible_for: ['group-1']
             },
             ctx
@@ -698,6 +700,7 @@ describeWithSeed(
               offset: 0,
               parent_drop_id: null,
               serial_nos: [104, 103, 102, 101],
+              ids: null,
               group_ids_user_is_eligible_for: []
             },
             ctx
@@ -717,6 +720,7 @@ describeWithSeed(
               offset: 0,
               parent_drop_id: null,
               serial_nos: [104, 103, 102, 101],
+              ids: null,
               group_ids_user_is_eligible_for: ['group-1']
             },
             ctx
@@ -727,6 +731,44 @@ describeWithSeed(
         'drop-public-a-new',
         'drop-private',
         'drop-public-a-old'
+      ]);
+    });
+
+    it('finds visible drops by ids across waves', async () => {
+      await expect(
+        repo
+          .findVisibleDrops(
+            {
+              limit: 10,
+              offset: 0,
+              parent_drop_id: null,
+              serial_nos: null,
+              ids: ['drop-public-b', 'drop-private', 'drop-public-a-new'],
+              group_ids_user_is_eligible_for: []
+            },
+            ctx
+          )
+          .then((drops) => drops.map((drop) => drop.id))
+      ).resolves.toEqual(['drop-public-b', 'drop-public-a-new']);
+
+      await expect(
+        repo
+          .findVisibleDrops(
+            {
+              limit: 10,
+              offset: 0,
+              parent_drop_id: null,
+              serial_nos: null,
+              ids: ['drop-public-b', 'drop-private', 'drop-public-a-new'],
+              group_ids_user_is_eligible_for: ['group-1']
+            },
+            ctx
+          )
+          .then((drops) => drops.map((drop) => drop.id))
+      ).resolves.toEqual([
+        'drop-public-b',
+        'drop-public-a-new',
+        'drop-private'
       ]);
     });
 

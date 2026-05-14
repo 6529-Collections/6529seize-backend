@@ -62,6 +62,7 @@ export type GetDropsV2PathParams = Record<string, never>;
 export interface GetDropsV2Query {
   "parent_drop_id"?: string;
   "serial_nos"?: string;
+  "ids"?: string;
   "page"?: number;
   "page_size"?: number;
 }
