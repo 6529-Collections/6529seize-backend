@@ -84,4 +84,17 @@ describe('NftLinkResolver Gamma support', () => {
       }
     });
   });
+
+  it('fails when Gamma page metadata cannot be extracted', async () => {
+    fetchTextWithTimeoutMock.mockResolvedValue('<html><head></head></html>');
+
+    await expect(
+      new NftLinkResolver().resolve(
+        'https://gamma.io/collections/thisisnumberone-v2/1058',
+        {} as any
+      )
+    ).rejects.toThrow(
+      'Unable to extract Gamma metadata from https://gamma.io/collections/thisisnumberone-v2/1058'
+    );
+  });
 });

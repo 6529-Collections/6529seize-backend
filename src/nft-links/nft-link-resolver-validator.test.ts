@@ -61,7 +61,9 @@ describe('validateLinkUrl', () => {
     it('rejects Gamma links with malformed percent-encoding in the path', () => {
       expect(() =>
         validateLinkUrl('https://gamma.io/collections/bad%zz/123')
-      ).toThrow('Gamma link has malformed percent-encoding in path.');
+      ).toThrow(
+        'Gamma link has malformed percent-encoding in path segment: bad%zz.'
+      );
     });
 
     it('rejects Gamma collection token identifiers that cannot fit persistence', () => {

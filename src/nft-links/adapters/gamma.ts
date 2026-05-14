@@ -1,7 +1,10 @@
-import type { AdapterResult, PlatformAdapter } from './types';
-import { buildPrimaryAction } from '../lib/market';
-import { fetchTextWithTimeout } from '../lib/http';
-import { extractOg } from '../lib/og';
+import type {
+  AdapterResult,
+  PlatformAdapter
+} from '@/nft-links/adapters/types';
+import { buildPrimaryAction } from '@/nft-links/lib/market';
+import { fetchTextWithTimeout } from '@/nft-links/lib/http';
+import { extractOg } from '@/nft-links/lib/og';
 import { CanonicalLink } from '@/nft-links/types';
 import { env } from '@/env';
 
@@ -28,8 +31,12 @@ function decodeHtmlEntities(value: string): string {
   );
 }
 
-function extractJsonLdBlocks(html: string): Record<string, any>[] {
-  const blocks: Record<string, any>[] = [];
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function extractJsonLdBlocks(html: string): Record<string, unknown>[] {
+  const blocks: Record<string, unknown>[] = [];
   const scriptRegex =
     /<script\b[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
   let match: RegExpExecArray | null;
@@ -38,14 +45,10 @@ function extractJsonLdBlocks(html: string): Record<string, any>[] {
     const rawJson = decodeHtmlEntities(match[1] ?? '').trim();
     if (!rawJson) continue;
     try {
-      const parsed = JSON.parse(rawJson);
+      const parsed: unknown = JSON.parse(rawJson);
       if (Array.isArray(parsed)) {
-        blocks.push(
-          ...parsed.filter(
-            (it): it is Record<string, any> => !!it && typeof it === 'object'
-          )
-        );
-      } else if (parsed && typeof parsed === 'object') {
+        blocks.push(...parsed.filter(isRecord));
+      } else if (isRecord(parsed)) {
         blocks.push(parsed);
       }
     } catch {
@@ -65,16 +68,24 @@ function firstString(...values: unknown[]): string | undefined {
   return undefined;
 }
 
-function getJsonLdImage(block: Record<string, any>): string | undefined {
+function getJsonLdImage(block: Record<string, unknown>): string | undefined {
   const image = block.image;
   if (typeof image === 'string') return image;
   if (Array.isArray(image)) {
     return firstString(...image);
   }
-  if (image && typeof image === 'object') {
+  if (isRecord(image)) {
     return firstString(image.url, image.contentUrl);
   }
   return undefined;
+}
+
+function hasGammaMetadata(
+  title: string | undefined,
+  description: string | undefined,
+  imageUrl: string | undefined
+): boolean {
+  return !!(title || description || imageUrl);
 }
 
 function slugToName(slug: string): string {
@@ -136,7 +147,13 @@ export class GammaAdapter implements PlatformAdapter {
       primaryJsonLd ? getJsonLdImage(primaryJsonLd) : undefined
     );
 
-    const patch: any = {
+    if (!primaryJsonLd && !hasGammaMetadata(title, description, imageUrl)) {
+      throw new Error(
+        `Unable to extract Gamma metadata from ${canonical.viewUrl}`
+      );
+    }
+
+    const patch: Partial<AdapterResult['patch']> = {
       asset: {
         title,
         description,

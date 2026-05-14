@@ -520,11 +520,21 @@ function getGammaPathSegments(u: URL): string[] {
   try {
     return getEffectivePath(u)
       .split('/')
-      .map((s) => decodeURIComponent(s).trim())
+      .map((segment) => decodeURIComponent(segment).trim())
       .filter(Boolean);
   } catch {
+    const malformedSegment = getEffectivePath(u)
+      .split('/')
+      .find((segment) => {
+        try {
+          decodeURIComponent(segment);
+          return false;
+        } catch {
+          return true;
+        }
+      });
     throw new NftLinkResolverValidationError(
-      'Gamma link has malformed percent-encoding in path.'
+      `Gamma link has malformed percent-encoding in path segment: ${malformedSegment ?? 'unknown'}.`
     );
   }
 }

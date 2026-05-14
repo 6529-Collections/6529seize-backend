@@ -104,8 +104,8 @@ const changedTsFiles = changedSourceTsFiles(options.baseRef);
 
 if (!changedTsFiles.length) {
   console.log(`No changed src/**/*.ts files found since ${options.baseRef}.`);
+  run('npm', ['run', 'generate:deploy-config']);
   if (!options.skipTypecheck) {
-    run('npm', ['run', 'generate:deploy-config']);
     run(
       'npx',
       ['tsc', '-p', 'tsconfig.json', '--noEmit'],
