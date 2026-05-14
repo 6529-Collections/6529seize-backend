@@ -126,7 +126,7 @@ describe('NftLinkResolver Gamma support', () => {
     );
 
     expect(result.asset).toMatchObject({
-      title: 'Gamma',
+      title: 'Graph Token',
       media: {
         kind: 'image',
         imageUrl: 'https://cdn.gamma.io/graph-token.png'

@@ -139,12 +139,12 @@ export class GammaAdapter implements PlatformAdapter {
 
     const og = extractOg(html);
     const jsonLd = extractJsonLdBlocks(html);
-    const primaryJsonLd = jsonLd.find(
-      (block) => getJsonLdImage(block) || firstString(block.name)
-    );
+    const primaryJsonLd =
+      jsonLd.find((block) => getJsonLdImage(block)) ??
+      jsonLd.find((block) => firstString(block.name));
     const identifier = parseGammaIdentifier(canonical);
 
-    const title = firstString(og.title, primaryJsonLd?.name);
+    const title = firstString(primaryJsonLd?.name, og.title);
     const description = firstString(og.description, primaryJsonLd?.description);
     const imageUrl = firstString(
       og.image,
