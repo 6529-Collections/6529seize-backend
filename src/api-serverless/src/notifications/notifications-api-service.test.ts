@@ -10,7 +10,12 @@ describe('NotificationsApiService V2 notifications', () => {
     jest.restoreAllMocks();
   });
 
-  function makeIdentity(id: string, handle: string, pfp: string) {
+  function makeIdentity(
+    id: string,
+    handle: string,
+    pfp: string,
+    subscribed?: boolean
+  ) {
     return {
       id,
       handle,
@@ -21,7 +26,9 @@ describe('NotificationsApiService V2 notifications', () => {
       badges: {
         artist_of_main_stage_submissions: 0,
         artist_of_memes: 0
-      }
+      },
+      context_profile_context:
+        subscribed === undefined ? undefined : { subscribed }
     };
   }
 
@@ -235,8 +242,8 @@ describe('NotificationsApiService V2 notifications', () => {
       reactionsDb
     } = createService();
     const drop = { id: 'drop-1', content: 'v2 drop' };
-    const reactorOne = makeIdentity('reactor-1', 'alice', 'alice.png');
-    const reactorTwo = makeIdentity('reactor-2', 'bob', 'bob.png');
+    const reactorOne = makeIdentity('reactor-1', 'alice', 'alice.png', true);
+    const reactorTwo = makeIdentity('reactor-2', 'bob', 'bob.png', false);
     const reactorForOtherReaction = makeIdentity(
       'reactor-3',
       'carol',
@@ -312,8 +319,8 @@ describe('NotificationsApiService V2 notifications', () => {
           additional_context: {
             reaction: 'LIKE',
             reactors: [
-              { handle: 'alice', pfp: 'alice.png' },
-              { handle: 'bob', pfp: 'bob.png' }
+              { handle: 'alice', pfp: 'alice.png', subscribed: true },
+              { handle: 'bob', pfp: 'bob.png', subscribed: false }
             ]
           }
         }
@@ -322,7 +329,7 @@ describe('NotificationsApiService V2 notifications', () => {
     });
     const reactors = result.notifications[0].additional_context.reactors ?? [];
     expect(reactors).toHaveLength(2);
-    expect(Object.keys(reactors[0])).toEqual(['handle', 'pfp']);
+    expect(Object.keys(reactors[0])).toEqual(['handle', 'pfp', 'subscribed']);
   });
 
   it('skips V2 notifications when a related drop is missing', async () => {
