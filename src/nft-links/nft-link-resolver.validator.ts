@@ -15,7 +15,7 @@ const HOST_ALLOWLIST = {
     'help.manifold.xyz'
   ]),
   TRANSIENT: new Set(['transient.xyz', 'lab.transient.xyz']),
-  GAMMA: new Set(['gamma.io'])
+  GAMMAIO: new Set(['gamma.io'])
 } as const;
 
 const TRACKING_KEYS_PREFIXES = ['utm_'];
@@ -516,7 +516,7 @@ function parseManifold(u: URL, inputUrl: string): CanonicalLink {
   return ok(inputUrl, 'MANIFOLD', viewUrl, { kind: 'MANIFOLD_CLAIM', ...ids });
 }
 
-function getGammaPathSegments(u: URL): string[] {
+function getGammaIoPathSegments(u: URL): string[] {
   try {
     return getEffectivePath(u)
       .split('/')
@@ -534,12 +534,12 @@ function getGammaPathSegments(u: URL): string[] {
         }
       });
     throw new NftLinkResolverValidationError(
-      `Gamma link has malformed percent-encoding in path segment: ${malformedSegment ?? 'unknown'}.`
+      `Gamma.io link has malformed percent-encoding in path segment: ${malformedSegment ?? 'unknown'}.`
     );
   }
 }
 
-function parseGammaOrdinal(
+function parseGammaIoOrdinal(
   pathSegments: string[],
   inputUrl: string,
   viewUrl: string
@@ -554,16 +554,16 @@ function parseGammaOrdinal(
   const customId = `ordinal:${ordinalId.toLowerCase()}`;
   if (customId.length > MAX_CUSTOM_ID_LENGTH) {
     throw new NftLinkResolverValidationError(
-      `Gamma ordinal inscription id is too long.`
+      `Gamma.io ordinal inscription id is too long.`
     );
   }
-  return ok(inputUrl, 'GAMMA', viewUrl, {
+  return ok(inputUrl, 'GAMMAIO', viewUrl, {
     kind: 'URL_ONLY',
     customId
   });
 }
 
-function parseGammaCollection(
+function parseGammaIoCollection(
   pathSegments: string[],
   inputUrl: string,
   viewUrl: string
@@ -594,26 +594,54 @@ function parseGammaCollection(
   const customId = `collection:${collectionSlug.toLowerCase()}:${tokenId}`;
   if (customId.length > MAX_CUSTOM_ID_LENGTH) {
     throw new NftLinkResolverValidationError(
-      `Gamma collection token identifier is too long.`
+      `Gamma.io collection token identifier is too long.`
     );
   }
-  return ok(inputUrl, 'GAMMA', viewUrl, {
+  return ok(inputUrl, 'GAMMAIO', viewUrl, {
     kind: 'URL_ONLY',
     customId
   });
 }
 
-function parseGamma(u: URL, inputUrl: string): CanonicalLink {
+function parseGammaIoStacksNft(
+  pathSegments: string[],
+  inputUrl: string,
+  viewUrl: string
+): CanonicalLink | null {
+  const stacksIndex = pathSegments.indexOf('stacks');
+  if (stacksIndex < 0 || pathSegments[stacksIndex + 1] !== 'nfts') {
+    return null;
+  }
+
+  const nftId = pathSegments[stacksIndex + 2];
+  if (!nftId || !/^[A-Z0-9.][A-Z0-9._-]{10,90}$/i.test(nftId)) {
+    return null;
+  }
+
+  const customId = `stacks:${nftId}`;
+  if (customId.length > MAX_CUSTOM_ID_LENGTH) {
+    throw new NftLinkResolverValidationError(
+      `Gamma.io Stacks NFT identifier is too long.`
+    );
+  }
+  return ok(inputUrl, 'GAMMAIO', viewUrl, {
+    kind: 'URL_ONLY',
+    customId
+  });
+}
+
+function parseGammaIo(u: URL, inputUrl: string): CanonicalLink {
   const viewUrl = normalizeUrlForView(u);
-  const pathSegments = getGammaPathSegments(u);
+  const pathSegments = getGammaIoPathSegments(u);
   const parsed =
-    parseGammaOrdinal(pathSegments, inputUrl, viewUrl) ??
-    parseGammaCollection(pathSegments, inputUrl, viewUrl);
+    parseGammaIoOrdinal(pathSegments, inputUrl, viewUrl) ??
+    parseGammaIoCollection(pathSegments, inputUrl, viewUrl) ??
+    parseGammaIoStacksNft(pathSegments, inputUrl, viewUrl);
   if (parsed) {
     return parsed;
   }
   throw new NftLinkResolverValidationError(
-    `Gamma link must include an ordinal inscription id or look like /collections/{collectionSlug}/{tokenId}.`
+    `Gamma.io link must include an ordinal inscription id, look like /collections/{collectionSlug}/{tokenId}, or look like /stacks/nfts/{nftId}.`
   );
 }
 
@@ -642,13 +670,13 @@ export function validateLinkUrl(input: string): CanonicalLink {
   if (HOST_ALLOWLIST.OPENSEA.has(host)) return parseOpenSea(u, input);
   if (HOST_ALLOWLIST.FOUNDATION.has(host)) return parseFoundation(u, input);
   if (HOST_ALLOWLIST.TRANSIENT.has(host)) return parseTransient(u, input);
-  if (HOST_ALLOWLIST.GAMMA.has(host)) return parseGamma(u, input);
+  if (HOST_ALLOWLIST.GAMMAIO.has(host)) return parseGammaIo(u, input);
 
   if (HOST_ALLOWLIST.MANIFOLD.has(host) || host.endsWith('.manifold.xyz')) {
     return parseManifold(u, input);
   }
 
   throw new NftLinkResolverValidationError(
-    'Unsupported URL. Supported links: SuperRare, OpenSea, Foundation, Manifold, Transient, Gamma.'
+    'Unsupported URL. Supported links: SuperRare, OpenSea, Foundation, Manifold, Transient, Gamma.io.'
   );
 }

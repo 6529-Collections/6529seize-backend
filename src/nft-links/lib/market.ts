@@ -37,8 +37,8 @@ export function platformName(platform: Platform): string {
       return 'Manifold';
     case 'TRANSIENT':
       return 'Transient';
-    case 'GAMMA':
-      return 'Gamma';
+    case 'GAMMAIO':
+      return 'Gamma.io';
   }
 }
 

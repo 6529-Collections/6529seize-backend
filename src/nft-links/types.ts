@@ -10,7 +10,7 @@ export const Platforms = [
   'FOUNDATION',
   'MANIFOLD',
   'TRANSIENT',
-  'GAMMA'
+  'GAMMAIO'
 ] as const;
 export type Platform = (typeof Platforms)[number];
 
