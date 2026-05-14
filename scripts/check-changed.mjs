@@ -82,7 +82,9 @@ function changedFilesSince(baseRef) {
   const staged = readLines('git', ['diff', '--cached', '--name-only']);
   const unstaged = readLines('git', ['diff', '--name-only']);
 
-  return [...new Set([...committed, ...staged, ...unstaged].map(normalizeFileName))].sort();
+  return [...new Set([...committed, ...staged, ...unstaged].map(normalizeFileName))].sort((a, b) =>
+    a.localeCompare(b)
+  );
 }
 
 function changedSourceTsFiles(baseRef) {

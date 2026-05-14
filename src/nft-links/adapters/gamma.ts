@@ -10,16 +10,22 @@ type GammaIdentifier =
   | { kind: 'collection'; collectionSlug: string; tokenId: string }
   | null;
 
+const HTML_ENTITIES: Record<string, string> = {
+  '&quot;': '"',
+  '&#34;': '"',
+  '&amp;': '&',
+  '&#38;': '&',
+  '&lt;': '<',
+  '&#60;': '<',
+  '&gt;': '>',
+  '&#62;': '>'
+};
+
 function decodeHtmlEntities(value: string): string {
-  return value
-    .replace(/&quot;/g, '"')
-    .replace(/&#34;/g, '"')
-    .replace(/&amp;/g, '&')
-    .replace(/&#38;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&#60;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&#62;/g, '>');
+  return value.replace(
+    /&(quot|amp|lt|gt|#34|#38|#60|#62);/g,
+    (entity) => HTML_ENTITIES[entity] ?? entity
+  );
 }
 
 function extractJsonLdBlocks(html: string): Record<string, any>[] {
