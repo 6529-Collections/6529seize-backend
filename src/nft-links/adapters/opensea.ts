@@ -246,8 +246,11 @@ function selectBestListingPrice(
     (it) => it.currency.toUpperCase() === 'ETH' && it.rawAmount != null
   );
   if (ethListingsWithRawAmount.length) {
-    return ethListingsWithRawAmount.reduce((best, current) =>
-      current.rawAmount! < best.rawAmount! ? current : best
+    const [first, ...rest] = ethListingsWithRawAmount;
+    return rest.reduce(
+      (best, current) =>
+        current.rawAmount! < best.rawAmount! ? current : best,
+      first
     );
   }
   return parsedListings[0];
