@@ -1,4 +1,6 @@
+/* eslint-env node */
 import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 
 const DEFAULT_BASE_REF = 'origin/main';
@@ -76,6 +78,10 @@ function normalizeFileName(fileName) {
   return fileName.split(path.sep).join('/');
 }
 
+function fileExists(fileName) {
+  return existsSync(path.join(repoRoot, fileName));
+}
+
 function changedFilesSince(baseRef) {
   const mergeBase = getMergeBase(baseRef);
   const committed = readLines('git', ['diff', '--name-only', `${mergeBase}...HEAD`]);
@@ -89,7 +95,8 @@ function changedFilesSince(baseRef) {
 
 function changedSourceTsFiles(baseRef) {
   return changedFilesSince(baseRef).filter(
-    (fileName) => fileName.startsWith('src/') && fileName.endsWith('.ts')
+    (fileName) =>
+      fileName.startsWith('src/') && fileName.endsWith('.ts') && fileExists(fileName)
   );
 }
 

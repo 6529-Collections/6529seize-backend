@@ -517,10 +517,16 @@ function parseManifold(u: URL, inputUrl: string): CanonicalLink {
 }
 
 function getGammaPathSegments(u: URL): string[] {
-  return getEffectivePath(u)
-    .split('/')
-    .map((s) => decodeURIComponent(s).trim())
-    .filter(Boolean);
+  try {
+    return getEffectivePath(u)
+      .split('/')
+      .map((s) => decodeURIComponent(s).trim())
+      .filter(Boolean);
+  } catch {
+    throw new NftLinkResolverValidationError(
+      'Gamma link has malformed percent-encoding in path.'
+    );
+  }
 }
 
 function parseGammaOrdinal(

@@ -58,6 +58,12 @@ describe('validateLinkUrl', () => {
       ).toThrow(NftLinkResolverValidationError);
     });
 
+    it('rejects Gamma links with malformed percent-encoding in the path', () => {
+      expect(() =>
+        validateLinkUrl('https://gamma.io/collections/bad%zz/123')
+      ).toThrow('Gamma link has malformed percent-encoding in path.');
+    });
+
     it('rejects Gamma collection token identifiers that cannot fit persistence', () => {
       expect(() =>
         validateLinkUrl(`https://gamma.io/collections/${'a'.repeat(65)}/123`)
