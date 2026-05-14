@@ -25,9 +25,6 @@ type ParsedListingPrice = {
   rawAmount?: bigint;
   decimals?: number;
 };
-type ParsedListingPriceWithRawAmount = ParsedListingPrice & {
-  rawAmount: bigint;
-};
 
 function getApiKeyHeader(): Record<string, string> {
   const key = env.getStringOrNull('OPENSEA_API_KEY');
@@ -248,26 +245,12 @@ function toMarketPrice(
   };
 }
 
-function hasEthRawAmount(
-  listing: ParsedListingPrice
-): listing is ParsedListingPriceWithRawAmount {
-  return listing.currency.toUpperCase() === 'ETH' && listing.rawAmount != null;
-}
-
 function selectBestListingPrice(
   listings: AnyObj[]
 ): ParsedListingPrice | undefined {
   const parsedListings = listings
     .map((listing) => parseBestListing(listing))
     .filter((it): it is ParsedListingPrice => !!it?.amount && !!it?.currency);
-  const ethListingsWithRawAmount = parsedListings.filter(hasEthRawAmount);
-  if (ethListingsWithRawAmount.length) {
-    const [first, ...rest] = ethListingsWithRawAmount;
-    return rest.reduce(
-      (best, current) => (current.rawAmount < best.rawAmount ? current : best),
-      first
-    );
-  }
   return parsedListings[0];
 }
 

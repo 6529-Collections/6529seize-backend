@@ -142,7 +142,7 @@ describe('OpenSeaAdapter', () => {
     });
   });
 
-  it('chooses the lowest normalized unit price from legacy listings', async () => {
+  it('respects server ordering for legacy listings', async () => {
     const price = await resolveWithLegacyOrders([
       legacyOrder({
         currentPrice: BigInt('120000000000000000'),
@@ -155,7 +155,7 @@ describe('OpenSeaAdapter', () => {
     ]);
 
     expect(price).toEqual({
-      amount: '0.05',
+      amount: '0.06',
       currency: 'ETH'
     });
   });
