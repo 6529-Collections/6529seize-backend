@@ -57,5 +57,17 @@ describe('validateLinkUrl', () => {
         validateLinkUrl('https://gamma.io/collections/stacks-collection')
       ).toThrow(NftLinkResolverValidationError);
     });
+
+    it('rejects Gamma collection token identifiers that cannot fit persistence', () => {
+      expect(() =>
+        validateLinkUrl(`https://gamma.io/collections/${'a'.repeat(65)}/123`)
+      ).toThrow(NftLinkResolverValidationError);
+
+      expect(() =>
+        validateLinkUrl(
+          `https://gamma.io/collections/${'a'.repeat(64)}/${'1'.repeat(30)}`
+        )
+      ).toThrow(NftLinkResolverValidationError);
+    });
   });
 });

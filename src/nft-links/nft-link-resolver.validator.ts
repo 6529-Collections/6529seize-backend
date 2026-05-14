@@ -28,6 +28,7 @@ const TRACKING_KEYS_EXACT = new Set([
   'mc_cid',
   'mc_eid'
 ]);
+const MAX_CUSTOM_ID_LENGTH = 100;
 
 function cleanInputUrl(raw: string): string {
   let s = (raw ?? '').trim();
@@ -524,12 +525,18 @@ function parseGamma(u: URL, inputUrl: string): CanonicalLink {
     .filter(Boolean);
 
   const ordinalId = pathSegments.find((segment) =>
-    /^[a-fA-F0-9]{64}i\d+$/.test(segment)
+    /^[a-fA-F0-9]{64}i\d{1,10}$/.test(segment)
   );
   if (ordinalId) {
+    const customId = `ordinal:${ordinalId.toLowerCase()}`;
+    if (customId.length > MAX_CUSTOM_ID_LENGTH) {
+      throw new NftLinkResolverValidationError(
+        `Gamma ordinal inscription id is too long.`
+      );
+    }
     return ok(inputUrl, 'GAMMA', viewUrl, {
       kind: 'URL_ONLY',
-      customId: `ordinal:${ordinalId.toLowerCase()}`
+      customId
     });
   }
 
@@ -544,13 +551,19 @@ function parseGamma(u: URL, inputUrl: string): CanonicalLink {
     if (
       collectionSlug &&
       tokenSegment &&
-      /^[a-zA-Z0-9][a-zA-Z0-9_-]{1,128}$/.test(collectionSlug)
+      /^[a-zA-Z0-9][a-zA-Z0-9_-]{1,63}$/.test(collectionSlug)
     ) {
       const tokenId = normalizeTokenId(tokenSegment);
       if (tokenId) {
+        const customId = `collection:${collectionSlug.toLowerCase()}:${tokenId}`;
+        if (customId.length > MAX_CUSTOM_ID_LENGTH) {
+          throw new NftLinkResolverValidationError(
+            `Gamma collection token identifier is too long.`
+          );
+        }
         return ok(inputUrl, 'GAMMA', viewUrl, {
           kind: 'URL_ONLY',
-          customId: `collection:${collectionSlug.toLowerCase()}:${tokenId}`
+          customId
         });
       }
     }

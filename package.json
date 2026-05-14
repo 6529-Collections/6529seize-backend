@@ -21,6 +21,7 @@
     "pretest": "npm run generate:deploy-config",
     "test": "jest",
     "check": "npm run format && npm run lint && npm run build",
+    "check:changed": "node scripts/check-changed.mjs",
     "format": "prettier --write \"src/**/*.ts\"",
     "prelint": "npm run generate:deploy-config",
     "lint": "NODE_OPTIONS=--max-old-space-size=8192 eslint \"src/**/*.ts\" --fix --max-warnings=0"
