@@ -14,6 +14,28 @@ import { ApiAddReactionToDropRequest } from '../generated/models/ApiAddReactionT
 import { ApiDropGroupMention } from '../generated/models/ApiDropGroupMention';
 import { ApiDropAttachmentReference } from '../generated/models/ApiDropAttachmentReference';
 
+function parseSerialNos(value: string, helpers: Joi.CustomHelpers): number[] {
+  const parts = value.split(',').map((part) => part.trim());
+  const serialNos = parts.map((part) => Number(part));
+  if (
+    parts.some((part) => !part) ||
+    serialNos.some((serialNo) => !Number.isInteger(serialNo) || serialNo < 1)
+  ) {
+    return helpers.error('serialNos.invalid') as unknown as number[];
+  }
+  return Array.from(new Set(serialNos));
+}
+
+export const SerialNosQueryParamSchema = Joi.string()
+  .trim()
+  .empty('')
+  .custom(parseSerialNos)
+  .default(null)
+  .messages({
+    'serialNos.invalid':
+      '"serial_nos" must be a comma-separated list of positive integers'
+  });
+
 export const ApiDropRatingRequestSchema: Joi.ObjectSchema<ApiDropRatingRequest> =
   Joi.object({
     rating: Joi.number().integer().required(),

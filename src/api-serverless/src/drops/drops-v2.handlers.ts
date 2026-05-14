@@ -40,6 +40,7 @@ import { getValidatedByJoiOrThrow } from '@/api/validation';
 import { Timer } from '@/time';
 import { Response } from 'express';
 import * as Joi from 'joi';
+import { SerialNosQueryParamSchema } from '@/api/drops/drop.validator';
 
 const FindBoostedDropsV2RequestSchema: Joi.ObjectSchema<FindBoostedDropsV2Request> =
   Joi.object<FindBoostedDropsV2Request>({
@@ -72,14 +73,12 @@ const FindCuratedProfileWaveDropsV2RequestSchema: Joi.ObjectSchema<FindCuratedPr
       .min(1)
   });
 
-const FindDropsV2QuerySchema: Joi.ObjectSchema<FindDropsV2Request> = Joi.object<
-  FindDropsV2Request,
-  true
->({
+const FindDropsV2QuerySchema = Joi.object({
   parent_drop_id: Joi.string().trim().empty('').optional().default(null),
+  serial_nos: SerialNosQueryParamSchema,
   page_size: Joi.number().integer().min(1).max(100).default(50),
   page: Joi.number().integer().min(1).default(1)
-});
+}) as Joi.ObjectSchema<FindDropsV2Request>;
 
 type GetDropV2ByIdPathParams = {
   id: string;

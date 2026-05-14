@@ -32,6 +32,7 @@ import { ApiDropVotersPage } from '@/api/generated/models/ApiDropVotersPage';
 import { DropEntity, DropType } from '@/entities/IDrop';
 import { ApiDropReactionV2 } from '@/api/generated/models/ApiDropReactionV2';
 import { reactionsDb, ReactionsDb } from '@/api/drops/reactions.db';
+import { wavesApiDb, WavesApiDb } from '@/api/waves/waves.api.db';
 
 export type ApiDropWithWave = ApiDropAndWave;
 export type DropVotersSearchParams = {
@@ -55,6 +56,7 @@ export type DropVoteEditLogsSearchParams = {
 
 export interface FindDropsV2Request {
   parent_drop_id: string | null;
+  serial_nos: number[] | null;
   page_size: number;
   page: number;
 }
@@ -80,6 +82,7 @@ export class ApiDropV2Service {
   constructor(
     private readonly dropsDb: DropsDb,
     private readonly userGroupsService: UserGroupsService,
+    private readonly wavesApiDb: WavesApiDb,
     private readonly apiDropMapper: ApiDropMapper,
     private readonly apiWaveOverviewMapper: ApiWaveOverviewMapper,
     private readonly identityFetcher: IdentityFetcher,
@@ -115,6 +118,7 @@ export class ApiDropV2Service {
       const dropEntities = await this.dropsDb.findVisibleDrops(
         {
           parent_drop_id: req.parent_drop_id,
+          serial_nos: req.serial_nos,
           group_ids_user_is_eligible_for: groupIdsUserIsEligibleFor,
           limit: req.page_size + 1,
           offset: req.page_size * (req.page - 1)
@@ -122,12 +126,33 @@ export class ApiDropV2Service {
         ctx
       );
       const pageDropEntities = dropEntities.slice(0, req.page_size);
-      const dropsById = await this.apiDropMapper.mapDrops(
+      const waveIds = Array.from(
+        new Set(pageDropEntities.map((drop) => drop.wave_id))
+      );
+      const dropsByIdPromise = this.apiDropMapper.mapDrops(
         pageDropEntities,
         ctx
       );
+      const wavesByIdPromise = this.wavesApiDb
+        .findWavesByIdsEligibleForRead(
+          waveIds,
+          groupIdsUserIsEligibleFor,
+          ctx.connection
+        )
+        .then((waves) => this.apiWaveOverviewMapper.mapWaves(waves, ctx));
+      const [dropsById, wavesById] = await Promise.all([
+        dropsByIdPromise,
+        wavesByIdPromise
+      ]);
       return {
-        data: pageDropEntities.map((drop) => dropsById[drop.id]),
+        data: pageDropEntities.map((drop) => {
+          const apiDrop = dropsById[drop.id];
+          const wave = wavesById[drop.wave_id];
+          if (wave) {
+            apiDrop.wave = wave;
+          }
+          return apiDrop;
+        }),
         page: req.page,
         next: dropEntities.length > req.page_size
       };
@@ -683,6 +708,7 @@ export class ApiDropV2Service {
 export const apiDropV2Service = new ApiDropV2Service(
   dropsDb,
   userGroupsService,
+  wavesApiDb,
   apiDropMapper,
   apiWaveOverviewMapper,
   identityFetcher,

@@ -665,6 +665,7 @@ describeWithSeed(
               limit: 10,
               offset: 0,
               parent_drop_id: 'drop-parent',
+              serial_nos: null,
               group_ids_user_is_eligible_for: []
             },
             ctx
@@ -679,12 +680,54 @@ describeWithSeed(
               limit: 10,
               offset: 0,
               parent_drop_id: 'drop-parent',
+              serial_nos: null,
               group_ids_user_is_eligible_for: ['group-1']
             },
             ctx
           )
           .then((drops) => drops.map((drop) => drop.id))
       ).resolves.toEqual(['drop-public-a-new', 'drop-private']);
+    });
+
+    it('finds visible drops by serial numbers across waves', async () => {
+      await expect(
+        repo
+          .findVisibleDrops(
+            {
+              limit: 10,
+              offset: 0,
+              parent_drop_id: null,
+              serial_nos: [104, 103, 102, 101],
+              group_ids_user_is_eligible_for: []
+            },
+            ctx
+          )
+          .then((drops) => drops.map((drop) => drop.id))
+      ).resolves.toEqual([
+        'drop-public-b',
+        'drop-public-a-new',
+        'drop-public-a-old'
+      ]);
+
+      await expect(
+        repo
+          .findVisibleDrops(
+            {
+              limit: 10,
+              offset: 0,
+              parent_drop_id: null,
+              serial_nos: [104, 103, 102, 101],
+              group_ids_user_is_eligible_for: ['group-1']
+            },
+            ctx
+          )
+          .then((drops) => drops.map((drop) => drop.id))
+      ).resolves.toEqual([
+        'drop-public-b',
+        'drop-public-a-new',
+        'drop-private',
+        'drop-public-a-old'
+      ]);
     });
 
     it('does not include private waves for admin-group-only eligibility in the global selector', async () => {
@@ -736,6 +779,7 @@ describeWithSeed(
           include_replies: false,
           drop_type: null,
           ids: null,
+          serial_nos: null,
           contains_media: false
         },
         ctx
@@ -761,12 +805,66 @@ describeWithSeed(
           include_replies: false,
           drop_type: null,
           ids: null,
+          serial_nos: null,
           contains_media: false
         },
         ctx
       );
 
       expect(results).toEqual([]);
+    });
+
+    it('finds latest drops by serial numbers across eligible waves', async () => {
+      const resultsWithoutPrivate = await repo.findLatestDrops(
+        {
+          amount: 10,
+          serial_no_less_than: null,
+          group_ids_user_is_eligible_for: [],
+          group_id: null,
+          wave_id: null,
+          curation_id: null,
+          curation_name: null,
+          author_id: null,
+          include_replies: false,
+          drop_type: null,
+          ids: null,
+          serial_nos: [104, 103, 102, 101],
+          contains_media: false
+        },
+        ctx
+      );
+
+      expect(resultsWithoutPrivate.map((it) => it.id)).toEqual([
+        'drop-public-b',
+        'drop-public-a-new',
+        'drop-public-a-old'
+      ]);
+
+      const resultsWithPrivate = await repo.findLatestDrops(
+        {
+          amount: 10,
+          serial_no_less_than: null,
+          group_ids_user_is_eligible_for: ['group-1'],
+          group_id: null,
+          wave_id: null,
+          curation_id: null,
+          curation_name: null,
+          author_id: null,
+          include_replies: false,
+          drop_type: null,
+          ids: null,
+          serial_nos: [104, 103, 102, 101],
+          contains_media: false
+        },
+        ctx
+      );
+
+      expect(resultsWithPrivate.map((it) => it.id)).toEqual([
+        'drop-public-b',
+        'drop-public-a-new',
+        'drop-private',
+        'drop-public-a-old'
+      ]);
     });
 
     it('does not find a private drop by id through admin-group-only eligibility', async () => {

@@ -612,6 +612,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       include_replies,
       drop_type,
       ids,
+      serial_nos,
       contains_media
     }: {
       group_id: string | null;
@@ -625,6 +626,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       include_replies: boolean;
       drop_type: DropType | null;
       ids: string[] | null;
+      serial_nos: number[] | null;
       contains_media: boolean;
     },
     ctx: RequestContext
@@ -660,10 +662,12 @@ export class DropsDb extends LazyDbAccessCompatibleService {
          where ${
            drop_type ? ` d.drop_type = :drop_type and ` : ``
          } d.serial_no < :serialNoLessThan ${
-           !include_replies ? `and reply_to_drop_id is null` : ``
+           !include_replies && !serial_nos?.length
+             ? `and reply_to_drop_id is null`
+             : ``
          } ${author_id ? ` and d.author_id = :author_id ` : ``}${
            ids?.length ? ` and d.id in (:ids) ` : ``
-         }${
+         }${serial_nos?.length ? ` and d.serial_no in (:serial_nos) ` : ``}${
            contains_media
              ? ` and exists (select 1 from ${DROP_MEDIA_TABLE} dm where dm.drop_id = d.id) `
              : ``
@@ -677,7 +681,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       curation_id: curation_id ?? null,
       curation_name: curation_name ?? null,
       drop_type,
-      ids
+      ids,
+      serial_nos
     };
     return this.db.execute<DropEntity>(sql, params);
   }
@@ -790,11 +795,13 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       limit,
       offset,
       parent_drop_id,
+      serial_nos,
       group_ids_user_is_eligible_for
     }: {
       limit: number;
       offset: number;
       parent_drop_id: string | null;
+      serial_nos: number[] | null;
       group_ids_user_is_eligible_for: string[];
     },
     ctx: RequestContext
@@ -813,7 +820,12 @@ export class DropsDb extends LazyDbAccessCompatibleService {
              ? `join ${DROP_RELATIONS_TABLE} dr on dr.child_id = d.id and dr.parent_id = :parent_drop_id`
              : ``
          }
-         where ${parent_drop_id ? `` : `d.reply_to_drop_id is null and`}
+         where ${
+           parent_drop_id || serial_nos?.length
+             ? ``
+             : `d.reply_to_drop_id is null and`
+         }
+           ${serial_nos?.length ? `d.serial_no in (:serial_nos) and` : ``}
            exists (
              select 1
              from ${WAVES_TABLE} w
@@ -826,6 +838,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
           limit,
           offset,
           parent_drop_id,
+          serial_nos,
           groupsUserIsEligibleFor: group_ids_user_is_eligible_for
         },
         { wrappedConnection: ctx.connection }
