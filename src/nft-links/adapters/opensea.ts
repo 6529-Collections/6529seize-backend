@@ -19,6 +19,12 @@ function toOpenSeaApiChain(chain: string): string {
 }
 
 type AnyObj = Record<string, any>;
+type ParsedListingPrice = {
+  amount: string;
+  currency: string;
+  rawAmount?: bigint;
+  decimals?: number;
+};
 
 function getApiKeyHeader(): Record<string, string> {
   const key = env.getStringOrNull('OPENSEA_API_KEY');
@@ -68,13 +74,16 @@ function parseMetadata(meta: AnyObj): {
     meta.creator?.username
   );
 
-  const collectionName = pick<string>(
-    nft.collection?.name,
-    meta.collection?.name
-  );
+  const collection = nft.collection ?? meta.collection;
+  const collectionName =
+    collection && typeof collection === 'object'
+      ? pick<string>(collection.name, meta.collection?.name)
+      : undefined;
   const collectionSlug = pick<string>(
-    nft.collection?.slug,
-    meta.collection?.slug
+    typeof collection === 'string' ? collection : undefined,
+    collection?.slug,
+    nft.collection_slug,
+    meta.collection_slug
   );
 
   return {
@@ -96,37 +105,152 @@ function parseCollectionSlug(res: AnyObj): string | undefined {
   return undefined;
 }
 
-function parseBestListing(
-  res: AnyObj
-): { amount?: string; currency?: string } | undefined {
+function parseIntegerLike(value: any): bigint | undefined {
+  if (value == null) return undefined;
+  if (typeof value === 'bigint') return value;
+  if (typeof value === 'number') {
+    if (!Number.isInteger(value) || value < 0) return undefined;
+    return BigInt(value);
+  }
+  const asString = String(value).trim();
+  const match = /^(\d+)(?:\.0+)?$/.exec(asString);
+  if (!match) return undefined;
+  return BigInt(match[1]);
+}
+
+function parseDecimals(value: any): number | undefined {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 0 || parsed > 255) {
+    return undefined;
+  }
+  return parsed;
+}
+
+function getListingQuantity(listing: AnyObj): bigint | undefined {
+  const quantity = parseIntegerLike(
+    pick<any>(
+      listing?.remaining_quantity,
+      listing?.quantity,
+      listing?.protocol_data?.parameters?.offer?.[0]?.startAmount
+    )
+  );
+  if (!quantity || quantity <= BigInt(1)) {
+    return undefined;
+  }
+  return quantity;
+}
+
+function formatRawTokenAmount(amount: bigint, decimals: number): string {
+  return formatTokenAmount(amount, decimals);
+}
+
+function parseBestListing(res: AnyObj): ParsedListingPrice | undefined {
   // The shape changes over time; be permissive.
   const listing = res.listing ?? res.best_listing ?? res;
-  const price =
-    listing?.price ??
+  const structuredPrice = listing?.price?.current ?? listing?.price;
+
+  const structuredAmount = pick<any>(
+    structuredPrice?.value,
+    structuredPrice?.amount
+  );
+  const structuredCurrency = pick<any>(
+    structuredPrice?.currency,
+    structuredPrice?.currency_symbol
+  );
+  if (structuredAmount != null && structuredCurrency != null) {
+    const rawAmount = parseIntegerLike(structuredAmount);
+    const quantity =
+      rawAmount == null ? undefined : getListingQuantity(listing);
+    const normalizedRawAmount =
+      quantity && quantity > BigInt(1) ? rawAmount! / quantity : rawAmount;
+    return {
+      amount:
+        normalizedRawAmount == null
+          ? String(structuredAmount)
+          : normalizedRawAmount.toString(),
+      currency: String(structuredCurrency),
+      rawAmount: normalizedRawAmount,
+      decimals: parseDecimals(structuredPrice?.decimals)
+    };
+  }
+
+  const legacyPrice =
     listing?.current_price ??
     listing?.protocol_data?.parameters?.consideration?.[0];
 
   // Common patterns
   const amount = pick<any>(
-    price?.amount,
-    price?.value,
-    listing?.price?.current?.value,
-    listing?.price?.value,
+    legacyPrice?.amount,
+    legacyPrice?.value,
     listing?.current_price
   );
   const currency = pick<any>(
-    price?.currency,
-    price?.currency_symbol,
-    listing?.price?.current?.currency,
+    legacyPrice?.currency,
+    legacyPrice?.currency_symbol,
     listing?.payment_token?.symbol,
-    listing?.protocol_data?.payment_token?.symbol
+    listing?.protocol_data?.payment_token?.symbol,
+    listing?.taker_asset_bundle?.assets?.[0]?.asset_contract?.symbol
   );
 
-  if (amount == null && currency == null) return undefined;
+  if (amount == null || currency == null) return undefined;
+  const rawAmount = parseIntegerLike(amount);
+  const quantity = rawAmount == null ? undefined : getListingQuantity(listing);
+  const normalizedRawAmount =
+    quantity && quantity > BigInt(1) ? rawAmount! / quantity : rawAmount;
   return {
-    amount: amount == null ? undefined : String(amount),
-    currency: currency == null ? undefined : String(currency)
+    amount:
+      normalizedRawAmount == null
+        ? String(amount)
+        : normalizedRawAmount.toString(),
+    currency: String(currency),
+    rawAmount: normalizedRawAmount,
+    decimals:
+      String(currency).toUpperCase() === 'ETH'
+        ? ETH_DEFAULT_DECIMALS
+        : undefined
   };
+}
+
+function toMarketPrice(
+  parsed: ParsedListingPrice
+): { amount: string; currency: string } | undefined {
+  if (!parsed.amount || !parsed.currency) {
+    return undefined;
+  }
+  const currency = parsed.currency;
+  if (parsed.rawAmount != null && parsed.decimals != null) {
+    return {
+      amount: formatRawTokenAmount(parsed.rawAmount, parsed.decimals),
+      currency
+    };
+  }
+  if (currency.toUpperCase() === 'ETH' && parsed.rawAmount != null) {
+    return {
+      amount: formatRawTokenAmount(parsed.rawAmount, ETH_DEFAULT_DECIMALS),
+      currency
+    };
+  }
+  return {
+    amount: parsed.amount,
+    currency
+  };
+}
+
+function selectBestListingPrice(
+  listings: AnyObj[]
+): ParsedListingPrice | undefined {
+  const parsedListings = listings
+    .map((listing) => parseBestListing(listing))
+    .filter((it): it is ParsedListingPrice => !!it?.amount && !!it?.currency);
+  const ethListingsWithRawAmount = parsedListings.filter(
+    (it) => it.currency.toUpperCase() === 'ETH' && it.rawAmount != null
+  );
+  if (ethListingsWithRawAmount.length) {
+    return ethListingsWithRawAmount.reduce((best, current) =>
+      current.rawAmount! < best.rawAmount! ? current : best
+    );
+  }
+  return parsedListings[0];
 }
 
 export class OpenSeaAdapter implements PlatformAdapter {
@@ -159,81 +283,70 @@ export class OpenSeaAdapter implements PlatformAdapter {
 
     const m = parseMetadata(meta);
 
-    // Listings: use Seaport orders endpoint (best-effort; shape may evolve)
+    // Listings: prefer the NFT-specific best-listing endpoint. The legacy
+    // orders endpoint reports ERC1155 aggregate prices, so keep it as fallback.
     let price: { amount: string; currency: string } | undefined;
     let saleType: 'FIXED' | 'UNKNOWN' = 'UNKNOWN';
 
-    const ordersUrl = new URL(
-      `${apiBase}/api/v2/orders/${encodeURIComponent(apiChain)}/seaport/listings`
-    );
-    ordersUrl.searchParams.set('asset_contract_address', contract);
-    ordersUrl.searchParams.set('token_ids', tokenId);
-    ordersUrl.searchParams.set('limit', '1');
-    // Prefer lowest price when server supports ordering
-    ordersUrl.searchParams.set('order_by', 'eth_price');
-    ordersUrl.searchParams.set('order_direction', 'asc');
-
-    try {
-      const orders = await fetchJsonWithTimeout<AnyObj>(ordersUrl.toString(), {
-        timeoutMs,
-        headers
-      });
-      const first = orders?.orders?.[0];
-      const parsed = first ? parseBestListing(first) : undefined;
-      if (parsed?.amount && parsed?.currency) {
-        price = {
-          amount:
-            parsed?.currency === 'ETH'
-              ? formatTokenAmount(BigInt(parsed.amount), ETH_DEFAULT_DECIMALS)
-              : parsed.amount,
-          currency: parsed.currency
-        };
-        saleType = 'FIXED';
+    let collectionSlug = m.collectionSlug;
+    if (!collectionSlug) {
+      try {
+        const collectionUrl = `${apiBase}/api/v2/chain/${encodeURIComponent(apiChain)}/contract/${encodeURIComponent(contract)}/nfts/${encodeURIComponent(tokenId)}/collection`;
+        const col = await fetchJsonWithTimeout<AnyObj>(collectionUrl, {
+          timeoutMs,
+          headers
+        });
+        collectionSlug = parseCollectionSlug(col);
+      } catch {
+        // ignore
       }
-    } catch {
-      // ignore
     }
 
-    // Backward-compatible fallback: best listing by collection slug
-    if (!price) {
-      let collectionSlug = m.collectionSlug;
-      if (!collectionSlug) {
-        try {
-          const collectionUrl = `${apiBase}/api/v2/chain/${encodeURIComponent(apiChain)}/contract/${encodeURIComponent(contract)}/nfts/${encodeURIComponent(tokenId)}/collection`;
-          const col = await fetchJsonWithTimeout<AnyObj>(collectionUrl, {
-            timeoutMs,
-            headers
-          });
-          collectionSlug = parseCollectionSlug(col);
-        } catch {
-          // ignore
+    if (collectionSlug) {
+      const bestUrl = `${apiBase}/api/v2/listings/collection/${encodeURIComponent(collectionSlug)}/nfts/${encodeURIComponent(tokenId)}/best`;
+      try {
+        const best = await fetchJsonWithTimeout<AnyObj>(bestUrl, {
+          timeoutMs,
+          headers
+        });
+        const parsed = parseBestListing(best);
+        const marketPrice = parsed ? toMarketPrice(parsed) : undefined;
+        if (marketPrice) {
+          price = marketPrice;
+          saleType = 'FIXED';
         }
+      } catch {
+        // ignore
       }
+    }
 
-      if (collectionSlug) {
-        const bestUrl = `${apiBase}/api/v2/listings/collection/${encodeURIComponent(collectionSlug)}/nfts/${encodeURIComponent(tokenId)}/best`;
-        try {
-          const best = await fetchJsonWithTimeout<AnyObj>(bestUrl, {
+    if (!price) {
+      const ordersUrl = new URL(
+        `${apiBase}/api/v2/orders/${encodeURIComponent(apiChain)}/seaport/listings`
+      );
+      ordersUrl.searchParams.set('asset_contract_address', contract);
+      ordersUrl.searchParams.set('token_ids', tokenId);
+      ordersUrl.searchParams.set('limit', '200');
+      // Prefer lowest price when server supports ordering
+      ordersUrl.searchParams.set('order_by', 'eth_price');
+      ordersUrl.searchParams.set('order_direction', 'asc');
+
+      try {
+        const orders = await fetchJsonWithTimeout<AnyObj>(
+          ordersUrl.toString(),
+          {
             timeoutMs,
             headers
-          });
-          const parsed = parseBestListing(best);
-          if (parsed?.amount && parsed?.currency) {
-            price = {
-              amount:
-                parsed?.currency === 'ETH'
-                  ? formatTokenAmount(
-                      BigInt(parsed.amount),
-                      ETH_DEFAULT_DECIMALS
-                    )
-                  : parsed.amount,
-              currency: parsed.currency
-            };
-            saleType = 'FIXED';
           }
-        } catch {
-          // ignore
+        );
+        const parsed = selectBestListingPrice(orders?.orders ?? []);
+        const marketPrice = parsed ? toMarketPrice(parsed) : undefined;
+        if (marketPrice) {
+          price = marketPrice;
+          saleType = 'FIXED';
         }
+      } catch {
+        // ignore
       }
     }
 
