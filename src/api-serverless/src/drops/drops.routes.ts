@@ -36,6 +36,7 @@ import {
   ApiAddReactionToDropRequestSchema,
   ApiDropRatingRequestSchema,
   NewDropSchema,
+  SerialNosQueryParamSchema,
   UpdateDropSchema
 } from './drop.validator';
 import { dropsService, GetDropsBoostsRequest } from './drops.api.service';
@@ -50,6 +51,12 @@ import { ApiDropCuration } from '@/api/generated/models/ApiDropCuration';
 import { ApiDropCurationRequest } from '@/api/generated/models/ApiDropCurationRequest';
 
 const router = asyncRouter();
+
+const LatestDropsSerialNosQuerySchema: Joi.ObjectSchema<{
+  serial_nos: number[] | null;
+}> = Joi.object({
+  serial_nos: SerialNosQueryParamSchema
+});
 
 router.get(
   '/',
@@ -70,6 +77,7 @@ router.get(
         include_replies?: string;
         drop_type?: ApiDropType;
         ids?: string;
+        serial_nos?: string;
         contains_media?: string;
       },
       any
@@ -88,6 +96,7 @@ router.get(
       include_replies,
       drop_type,
       ids,
+      serial_nos,
       contains_media
     } = await prepLatestDropsSearchQuery(req);
     const latestDrops = await dropsService.findLatestDrops(
@@ -104,6 +113,7 @@ router.get(
         include_replies,
         drop_type,
         ids,
+        serial_nos,
         contains_media
       },
       { timer, authenticationContext }
@@ -745,6 +755,7 @@ export async function prepLatestDropsSearchQuery(
       include_replies?: string;
       drop_type?: ApiDropType;
       ids?: string;
+      serial_nos?: string;
       contains_media?: string;
     },
     any
@@ -770,6 +781,10 @@ export async function prepLatestDropsSearchQuery(
         .map((id) => id.trim())
         .filter((id) => id.length > 0)
     : null;
+  const { serial_nos } = getValidatedByJoiOrThrow(
+    { serial_nos: req.query.serial_nos },
+    LatestDropsSerialNosQuerySchema
+  );
   const contains_media = req.query.contains_media === 'true';
   return {
     limit,
@@ -781,6 +796,7 @@ export async function prepLatestDropsSearchQuery(
     include_replies,
     drop_type: drop_type_enum,
     ids,
+    serial_nos,
     contains_media
   };
 }

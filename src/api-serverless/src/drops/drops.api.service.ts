@@ -232,6 +232,7 @@ export class DropsApiService {
       include_replies,
       drop_type,
       ids,
+      serial_nos,
       contains_media
     }: {
       group_id: string | null;
@@ -244,6 +245,7 @@ export class DropsApiService {
       include_replies: boolean;
       drop_type: ApiDropType | null;
       ids: string[] | null;
+      serial_nos: number[] | null;
       contains_media: boolean;
     },
     ctx: RequestContext
@@ -282,6 +284,7 @@ export class DropsApiService {
         include_replies,
         drop_type: drop_type ? enums.resolveOrThrow(DropType, drop_type) : null,
         ids,
+        serial_nos,
         contains_media
       },
       ctx
