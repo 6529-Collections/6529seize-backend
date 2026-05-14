@@ -25,6 +25,9 @@ type ParsedListingPrice = {
   rawAmount?: bigint;
   decimals?: number;
 };
+type ParsedListingPriceWithRawAmount = ParsedListingPrice & {
+  rawAmount: bigint;
+};
 
 function getApiKeyHeader(): Record<string, string> {
   const key = env.getStringOrNull('OPENSEA_API_KEY');
@@ -140,6 +143,20 @@ function getListingQuantity(listing: AnyObj): bigint | undefined {
   return quantity;
 }
 
+function normalizeAggregateRawAmount(
+  rawAmount: bigint | undefined,
+  listing: AnyObj
+): bigint | undefined {
+  if (rawAmount == null) {
+    return undefined;
+  }
+  const quantity = getListingQuantity(listing);
+  if (quantity && quantity > BigInt(1)) {
+    return rawAmount / quantity;
+  }
+  return rawAmount;
+}
+
 function formatRawTokenAmount(amount: bigint, decimals: number): string {
   return formatTokenAmount(amount, decimals);
 }
@@ -159,10 +176,7 @@ function parseBestListing(res: AnyObj): ParsedListingPrice | undefined {
   );
   if (structuredAmount != null && structuredCurrency != null) {
     const rawAmount = parseIntegerLike(structuredAmount);
-    const quantity =
-      rawAmount == null ? undefined : getListingQuantity(listing);
-    const normalizedRawAmount =
-      quantity && quantity > BigInt(1) ? rawAmount! / quantity : rawAmount;
+    const normalizedRawAmount = normalizeAggregateRawAmount(rawAmount, listing);
     return {
       amount:
         normalizedRawAmount == null
@@ -194,9 +208,7 @@ function parseBestListing(res: AnyObj): ParsedListingPrice | undefined {
 
   if (amount == null || currency == null) return undefined;
   const rawAmount = parseIntegerLike(amount);
-  const quantity = rawAmount == null ? undefined : getListingQuantity(listing);
-  const normalizedRawAmount =
-    quantity && quantity > BigInt(1) ? rawAmount! / quantity : rawAmount;
+  const normalizedRawAmount = normalizeAggregateRawAmount(rawAmount, listing);
   return {
     amount:
       normalizedRawAmount == null
@@ -236,20 +248,23 @@ function toMarketPrice(
   };
 }
 
+function hasEthRawAmount(
+  listing: ParsedListingPrice
+): listing is ParsedListingPriceWithRawAmount {
+  return listing.currency.toUpperCase() === 'ETH' && listing.rawAmount != null;
+}
+
 function selectBestListingPrice(
   listings: AnyObj[]
 ): ParsedListingPrice | undefined {
   const parsedListings = listings
     .map((listing) => parseBestListing(listing))
     .filter((it): it is ParsedListingPrice => !!it?.amount && !!it?.currency);
-  const ethListingsWithRawAmount = parsedListings.filter(
-    (it) => it.currency.toUpperCase() === 'ETH' && it.rawAmount != null
-  );
+  const ethListingsWithRawAmount = parsedListings.filter(hasEthRawAmount);
   if (ethListingsWithRawAmount.length) {
     const [first, ...rest] = ethListingsWithRawAmount;
     return rest.reduce(
-      (best, current) =>
-        current.rawAmount! < best.rawAmount! ? current : best,
+      (best, current) => (current.rawAmount < best.rawAmount ? current : best),
       first
     );
   }
