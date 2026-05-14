@@ -246,6 +246,55 @@ describe('generateOpenApiRouteFiles', () => {
     );
   });
 
+  it('groups handler imports by module', () => {
+    const response = {
+      content: {
+        'application/json': {
+          schema: { $ref: '#/components/schemas/ApiDropAndWave' }
+        }
+      }
+    };
+    const document: OpenApiDocument = {
+      paths: {
+        '/v2/drops': {
+          get: {
+            operationId: 'getDropsV2',
+            'x-6529-router': {
+              enabled: true,
+              auth: 'optional',
+              handler: {
+                import: '@/api/drops/drops-v2.handlers',
+                name: 'handleGetDropsV2'
+              }
+            },
+            responses: { '200': response }
+          }
+        },
+        '/v2/drops/{id}': {
+          get: {
+            operationId: 'getDropV2ById',
+            'x-6529-router': {
+              enabled: true,
+              auth: 'optional',
+              handler: {
+                import: '@/api/drops/drops-v2.handlers',
+                name: 'handleGetDropV2ById'
+              }
+            },
+            responses: { '200': response }
+          }
+        }
+      }
+    };
+
+    const routes = getFile(document, 'openapi-generated.routes.ts');
+
+    expect(routes).toContain(
+      "import { handleGetDropsV2, handleGetDropV2ById } from '@/api/drops/drops-v2.handlers';"
+    );
+    expect(routes.match(/@\/api\/drops\/drops-v2\.handlers/g)).toHaveLength(1);
+  });
+
   it('generates optional cache middleware', () => {
     const document: OpenApiDocument = {
       paths: {

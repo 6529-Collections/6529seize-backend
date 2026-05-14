@@ -427,12 +427,7 @@ function renderOperationsFile(operations: GeneratedOperation[]): string {
 }
 
 function renderRoutesFile(operations: GeneratedOperation[]): string {
-  const handlerImports = operations
-    .map(
-      (operation) =>
-        `import { ${operation.handlerName} } from '${operation.handlerImport}';`
-    )
-    .sort(compareStrings);
+  const handlerImports = renderHandlerImports(operations);
   const typeImports = operations
     .flatMap((operation) => [
       operation.requestTypeName,
@@ -489,6 +484,24 @@ function renderRoutesFile(operations: GeneratedOperation[]): string {
   ]
     .filter((line) => line !== '')
     .join('\n');
+}
+
+function renderHandlerImports(operations: GeneratedOperation[]): string[] {
+  const handlerNamesByImport = new Map<string, Set<string>>();
+  for (const operation of operations) {
+    const handlerNames =
+      handlerNamesByImport.get(operation.handlerImport) ?? new Set<string>();
+    handlerNames.add(operation.handlerName);
+    handlerNamesByImport.set(operation.handlerImport, handlerNames);
+  }
+  return Array.from(handlerNamesByImport.entries())
+    .sort(([a], [b]) => compareStrings(a, b))
+    .map(([importPath, handlerNames]) => {
+      const sortedHandlerNames = Array.from(handlerNames).sort(compareStrings);
+      return `import { ${sortedHandlerNames.join(
+        ', '
+      )} } from '${importPath}';`;
+    });
 }
 
 function renderRouteBlock(operation: GeneratedOperation): string {
