@@ -63,6 +63,7 @@ interface DropReactedNotificationAdditionalContextV2 {
   reactors: Array<{
     handle?: string;
     pfp?: string;
+    subscribed: boolean;
   }>;
 }
 
@@ -729,7 +730,8 @@ export class NotificationsApiService {
       .filter((profile): profile is ApiIdentityOverview => !!profile)
       .map((profile) => ({
         handle: profile.handle,
-        pfp: profile.pfp
+        pfp: profile.pfp,
+        subscribed: profile.context_profile_context?.subscribed ?? false
       }));
     return {
       reaction,
