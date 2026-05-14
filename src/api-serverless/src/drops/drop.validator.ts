@@ -14,6 +14,46 @@ import { ApiAddReactionToDropRequest } from '../generated/models/ApiAddReactionT
 import { ApiDropGroupMention } from '../generated/models/ApiDropGroupMention';
 import { ApiDropAttachmentReference } from '../generated/models/ApiDropAttachmentReference';
 
+function parseSerialNos(value: string, helpers: Joi.CustomHelpers): number[] {
+  const parts = value.split(',').map((part) => part.trim());
+  const serialNos = parts.map((part) => Number(part));
+  if (
+    parts.some((part) => !part) ||
+    serialNos.some((serialNo) => !Number.isInteger(serialNo) || serialNo < 1)
+  ) {
+    return helpers.error('serialNos.invalid') as unknown as number[];
+  }
+  return Array.from(new Set(serialNos));
+}
+
+function parseDropIds(value: string, helpers: Joi.CustomHelpers): string[] {
+  const dropIds = value.split(',').map((part) => part.trim());
+  if (dropIds.some((dropId) => !dropId || dropId.length > 100)) {
+    return helpers.error('dropIds.invalid') as unknown as string[];
+  }
+  return Array.from(new Set(dropIds));
+}
+
+export const SerialNosQueryParamSchema = Joi.string()
+  .trim()
+  .empty('')
+  .custom(parseSerialNos)
+  .default(null)
+  .messages({
+    'serialNos.invalid':
+      '"serial_nos" must be a comma-separated list of positive integers'
+  });
+
+export const DropIdsQueryParamSchema = Joi.string()
+  .trim()
+  .empty('')
+  .custom(parseDropIds)
+  .default(null)
+  .messages({
+    'dropIds.invalid':
+      '"ids" must be a comma-separated list of non-empty drop IDs'
+  });
+
 export const ApiDropRatingRequestSchema: Joi.ObjectSchema<ApiDropRatingRequest> =
   Joi.object({
     rating: Joi.number().integer().required(),
