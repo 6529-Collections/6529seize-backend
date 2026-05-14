@@ -7,6 +7,7 @@ import { fetchTextWithTimeout } from '@/nft-links/lib/http';
 import { extractOg } from '@/nft-links/lib/og';
 import { CanonicalLink } from '@/nft-links/types';
 import { env } from '@/env';
+import { BadRequestException } from '@/exceptions';
 
 type GammaIdentifier =
   | { kind: 'ordinal'; inscriptionId: string }
@@ -147,8 +148,8 @@ export class GammaAdapter implements PlatformAdapter {
       primaryJsonLd ? getJsonLdImage(primaryJsonLd) : undefined
     );
 
-    if (!primaryJsonLd && !hasGammaMetadata(title, description, imageUrl)) {
-      throw new Error(
+    if (!primaryJsonLd || !hasGammaMetadata(title, description, imageUrl)) {
+      throw new BadRequestException(
         `Unable to extract Gamma metadata from ${canonical.viewUrl}`
       );
     }

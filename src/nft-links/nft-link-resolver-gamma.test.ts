@@ -6,7 +6,11 @@ jest.mock('@/nft-links/lib/http', () => ({
 
 import { NftLinkResolver } from '@/nft-links/nft-link-resolver';
 
+type ResolveContext = Parameters<NftLinkResolver['resolve']>[1];
+
 describe('NftLinkResolver Gamma support', () => {
+  const resolveContext: ResolveContext = {};
+
   beforeEach(() => {
     fetchTextWithTimeoutMock.mockReset();
   });
@@ -18,13 +22,20 @@ describe('NftLinkResolver Gamma support', () => {
           <meta property="og:title" content="Hash One #1058" />
           <meta property="og:description" content="A Stacks NFT on Gamma" />
           <meta property="og:image" content="https://cdn.gamma.io/hash-one.png" />
+          <script type="application/ld+json">
+            {
+              "@type": "VisualArtwork",
+              "name": "Hash One #1058",
+              "image": "https://cdn.gamma.io/hash-one.png"
+            }
+          </script>
         </head>
       </html>
     `);
 
     const result = await new NftLinkResolver().resolve(
       'https://gamma.io/collections/thisisnumberone-v2/1058?utm_source=test',
-      {} as any
+      resolveContext
     );
 
     expect(result.identifier.platform).toBe('GAMMA');
@@ -68,7 +79,7 @@ describe('NftLinkResolver Gamma support', () => {
 
     const result = await new NftLinkResolver().resolve(
       `https://gamma.io/ordinals/${inscriptionId}`,
-      {} as any
+      resolveContext
     );
 
     expect(result.identifier.platform).toBe('GAMMA');
@@ -91,7 +102,7 @@ describe('NftLinkResolver Gamma support', () => {
     await expect(
       new NftLinkResolver().resolve(
         'https://gamma.io/collections/thisisnumberone-v2/1058',
-        {} as any
+        resolveContext
       )
     ).rejects.toThrow(
       'Unable to extract Gamma metadata from https://gamma.io/collections/thisisnumberone-v2/1058'
