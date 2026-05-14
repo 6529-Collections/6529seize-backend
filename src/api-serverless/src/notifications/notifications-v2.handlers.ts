@@ -1,9 +1,9 @@
-import { AuthenticationContext } from '@/auth-context';
 import { getAuthenticationContext } from '@/api/auth/auth';
 import { ApiNotificationsResponseV2 } from '@/api/generated/models/ApiNotificationsResponseV2';
 import { GetNotificationsV2Request } from '@/api/generated/routes/operations';
 import { notificationsApiService } from '@/api/notifications/notifications.api.service';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
+import { AuthenticationContext } from '@/auth-context';
 import { IdentityNotificationCause } from '@/entities/IIdentityNotification';
 import { ForbiddenException } from '@/exceptions';
 import { Timer } from '@/time';
@@ -30,19 +30,6 @@ const causesValidator = (value: unknown, helpers: Joi.CustomHelpers) => {
   }
   return values.join(',');
 };
-
-function assertCanAccessNotifications(
-  authenticationContext: AuthenticationContext
-) {
-  if (!authenticationContext.getActingAsId()) {
-    throw new ForbiddenException(
-      `You need to create a profile before you can access notifications`
-    );
-  }
-  if (authenticationContext.isAuthenticatedAsProxy()) {
-    throw new ForbiddenException(`Proxies cannot access notifications`);
-  }
-}
 
 const GetNotificationsV2QuerySchema = Joi.object<GetNotificationsV2Query>({
   id_less_than: Joi.number().optional().integer().default(null),
@@ -79,4 +66,17 @@ export async function handleGetNotificationsV2(
     authenticationContext,
     { timer, authenticationContext }
   );
+}
+
+function assertCanAccessNotifications(
+  authenticationContext: AuthenticationContext
+) {
+  if (!authenticationContext.getActingAsId()) {
+    throw new ForbiddenException(
+      `You need to create a profile before you can access notifications`
+    );
+  }
+  if (authenticationContext.isAuthenticatedAsProxy()) {
+    throw new ForbiddenException(`Proxies cannot access notifications`);
+  }
 }

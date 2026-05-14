@@ -2016,7 +2016,7 @@ paths:
         enabled: true
         auth: optional
         handler:
-          import: "@/api/drops/get-boosted-drops-v2.handler"
+          import: "@/api/drops/drops-v2.handlers"
           name: handleGetBoostedDropsV2
       parameters:
         - name: author
@@ -2107,7 +2107,7 @@ paths:
         enabled: true
         auth: optional
         handler:
-          import: "@/api/drops/get-curated-profile-wave-drops-v2.handler"
+          import: "@/api/drops/drops-v2.handlers"
           name: handleGetCuratedProfileWaveDropsV2
       parameters:
         - name: page
@@ -2144,7 +2144,7 @@ paths:
         enabled: true
         auth: optional
         handler:
-          import: "@/api/drops/get-drops-v2.handler"
+          import: "@/api/drops/drops-v2.handlers"
           name: handleGetDropsV2
       parameters:
         - name: parent_drop_id
@@ -2187,7 +2187,7 @@ paths:
         enabled: true
         auth: optional
         handler:
-          import: "@/api/drops/get-drop-v2-by-id.handler"
+          import: "@/api/drops/drops-v2.handlers"
           name: handleGetDropV2ById
       parameters:
         - name: id
@@ -2214,7 +2214,7 @@ paths:
         enabled: true
         auth: optional
         handler:
-          import: "@/api/drops/get-drop-v2-metadata-by-id.handler"
+          import: "@/api/drops/drops-v2.handlers"
           name: handleGetDropV2MetadataById
       parameters:
         - name: id
@@ -2243,7 +2243,7 @@ paths:
         enabled: true
         auth: optional
         handler:
-          import: "@/api/drops/get-drop-v2-part-by-id.handler"
+          import: "@/api/drops/drops-v2.handlers"
           name: handleGetDropV2PartById
       parameters:
         - name: id
@@ -2279,7 +2279,7 @@ paths:
         enabled: true
         auth: optional
         handler:
-          import: "@/api/drops/get-drop-v2-boosts-by-id.handler"
+          import: "@/api/drops/drops-v2.handlers"
           name: handleGetDropV2BoostsById
       parameters:
         - name: id
@@ -2308,7 +2308,7 @@ paths:
         enabled: true
         auth: optional
         handler:
-          import: "@/api/drops/get-drop-v2-reactions-by-id.handler"
+          import: "@/api/drops/drops-v2.handlers"
           name: handleGetDropV2ReactionsById
       parameters:
         - name: id
@@ -2337,7 +2337,7 @@ paths:
         enabled: true
         auth: optional
         handler:
-          import: "@/api/drops/get-drop-v2-voters-by-id.handler"
+          import: "@/api/drops/drops-v2.handlers"
           name: handleGetDropV2VotersById
       parameters:
         - name: id
@@ -2389,7 +2389,7 @@ paths:
         enabled: true
         auth: optional
         handler:
-          import: "@/api/drops/download-drop-v2-voters-by-id.handler"
+          import: "@/api/drops/drops-v2.handlers"
           name: handleDownloadDropV2VotersById
       parameters:
         - name: id
@@ -2417,7 +2417,7 @@ paths:
         enabled: true
         auth: optional
         handler:
-          import: "@/api/drops/get-drop-v2-vote-edit-logs-by-id.handler"
+          import: "@/api/drops/drops-v2.handlers"
           name: handleGetDropV2VoteEditLogsById
       parameters:
         - name: id
@@ -3678,7 +3678,7 @@ paths:
         enabled: true
         auth: required
         handler:
-          import: "@/api/notifications/get-notifications-v2.handler"
+          import: "@/api/notifications/notifications-v2.handlers"
           name: handleGetNotificationsV2
       parameters:
         - name: limit
@@ -7034,7 +7034,7 @@ paths:
         enabled: true
         auth: optional
         handler:
-          import: "@/api/waves/get-waves-v2.handler"
+          import: "@/api/waves/waves-v2.handlers"
           name: handleGetWavesV2
       parameters:
         - name: view
@@ -7150,7 +7150,7 @@ paths:
         enabled: true
         auth: optional
         handler:
-          import: "@/api/waves/get-wave-drops-v2.handler"
+          import: "@/api/waves/waves-v2.handlers"
           name: handleGetWaveDropsV2
       parameters:
         - name: id
@@ -7205,7 +7205,7 @@ paths:
         enabled: true
         auth: optional
         handler:
-          import: "@/api/waves/list-wave-curation-drops-v2.handler"
+          import: "@/api/waves/waves-v2.handlers"
           name: handleListWaveCurationDropsV2
       parameters:
         - name: id
@@ -7254,7 +7254,7 @@ paths:
         enabled: true
         auth: optional
         handler:
-          import: "@/api/waves/get-wave-decisions-v2.handler"
+          import: "@/api/waves/waves-v2.handlers"
           name: handleGetWaveDecisionsV2
       parameters:
         - name: id
@@ -7315,7 +7315,7 @@ paths:
         enabled: true
         auth: optional
         handler:
-          import: "@/api/waves/get-wave-leaderboard-v2.handler"
+          import: "@/api/waves/waves-v2.handlers"
           name: handleGetWaveLeaderboardV2
       parameters:
         - name: id
@@ -7422,7 +7422,7 @@ paths:
         enabled: true
         auth: optional
         handler:
-          import: "@/api/waves/search-drops-in-wave-v2.handler"
+          import: "@/api/waves/waves-v2.handlers"
           name: handleSearchDropsInWaveV2
       parameters:
         - name: waveId

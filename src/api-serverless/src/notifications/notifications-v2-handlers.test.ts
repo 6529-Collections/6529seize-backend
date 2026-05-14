@@ -13,13 +13,18 @@ jest.mock('@/api/notifications/notifications.api.service', () => ({
 }));
 
 jest.mock('@/time', () => ({
+  Time: {
+    minutes: jest.fn(() => ({
+      toMillis: jest.fn(() => 60000)
+    }))
+  },
   Timer: {
     getFromRequest: mockGetFromRequest
   }
 }));
 
 import { IdentityNotificationCause } from '@/entities/IIdentityNotification';
-import { handleGetNotificationsV2 } from './get-notifications-v2.handler';
+import { handleGetNotificationsV2 } from './notifications-v2.handlers';
 
 describe('handleGetNotificationsV2', () => {
   const timer = { marker: 'timer' } as any;
