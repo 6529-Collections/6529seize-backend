@@ -109,6 +109,72 @@ describe('NftLinkResolver Gamma.io support', () => {
     );
   });
 
+  it('normalizes Gamma.io Stacks listing price display noise', async () => {
+    const nftId = 'SP9XSD8AP4KW7KV9JGAZZXXTJQH5MYRY70ENQCZB.zest-nft_751';
+
+    fetchTextWithTimeoutMock.mockResolvedValue('<html><head></head></html>');
+    fetchJsonWithTimeoutMock.mockResolvedValue({
+      item: {
+        id: nftId,
+        name: 'Zest Genesis NFT #751',
+        asset_content: {
+          content_url: 'https://cdn.gamma.io/zest.png'
+        },
+        market_summary: {
+          listing: {
+            price_amount: {
+              amount: 700000001,
+              unit: 'micro_stacks'
+            }
+          }
+        }
+      }
+    });
+
+    const result = await new NftLinkResolver().resolve(
+      `https://gamma.io/stacks/nfts/${nftId}`,
+      resolveContext
+    );
+
+    expect(result.market.price).toEqual({
+      amount: '700.0',
+      currency: 'STX'
+    });
+  });
+
+  it('keeps sub-STX Gamma.io Stacks listing precision', async () => {
+    const nftId = 'SP9XSD8AP4KW7KV9JGAZZXXTJQH5MYRY70ENQCZB.zest-nft_752';
+
+    fetchTextWithTimeoutMock.mockResolvedValue('<html><head></head></html>');
+    fetchJsonWithTimeoutMock.mockResolvedValue({
+      item: {
+        id: nftId,
+        name: 'Tiny STX Listing',
+        asset_content: {
+          content_url: 'https://cdn.gamma.io/tiny.png'
+        },
+        market_summary: {
+          listing: {
+            price_amount: {
+              amount: 1,
+              unit: 'micro_stacks'
+            }
+          }
+        }
+      }
+    });
+
+    const result = await new NftLinkResolver().resolve(
+      `https://gamma.io/stacks/nfts/${nftId}`,
+      resolveContext
+    );
+
+    expect(result.market.price).toEqual({
+      amount: '0.000001',
+      currency: 'STX'
+    });
+  });
+
   it('resolves Gamma.io ordinal print links from Gamma API metadata and mint price', async () => {
     const printId = 'cmlzfnfj50002l904lujsztqj';
 
