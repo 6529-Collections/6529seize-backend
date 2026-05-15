@@ -11,6 +11,7 @@ import {
   WaveType
 } from '../../../entities/IWave';
 import { WaveDropperMetricEntity } from '../../../entities/IWaveDropperMetric';
+import { WaveChatDropCooldownEntity } from '@/entities/IWaveChatDropCooldown';
 import { WaveMetricEntity } from '../../../entities/IWaveMetric';
 import { WaveReaderMetricEntity } from '../../../entities/IWaveReaderMetric';
 import { RequestContext } from '../../../request.context';
@@ -68,6 +69,7 @@ import {
   getApproveWaveDecisionCounts,
   isApproveWaveClosed
 } from '@/waves/wave-approve.helpers';
+import { resolveNextDropAllowed } from '@/waves/wave-chat-slow-mode.helpers';
 
 type WaveMappingRelatedData = {
   contributors: Record<
@@ -82,6 +84,7 @@ type WaveMappingRelatedData = {
   metrics: Record<string, WaveMetricEntity>;
   authenticatedUserMetrics: Record<string, WaveDropperMetricEntity>;
   authenticatedUserReaderMetrics: Record<string, WaveReaderMetricEntity>;
+  chatDropCooldowns: Record<string, WaveChatDropCooldownEntity>;
   yourParticipationDropsCountByWaveId: Record<string, number>;
   yourUnreadDropsCountByWaveId: Record<string, number>;
   firstUnreadDropSerialNoByWaveId: Record<string, number | null>;
@@ -163,6 +166,7 @@ export class WavesMappers {
         tokenId: creditNft.token_id
       }))
     );
+    const chatSlowModeCooldownMs = request.chat.slow_mode_cooldown_ms ?? null;
     return {
       id,
       serial_no,
@@ -188,6 +192,7 @@ export class WavesMappers {
       visibility_group_id: request.visibility.scope.group_id,
       participation_group_id: request.participation.scope.group_id,
       chat_group_id: request.chat.scope.group_id,
+      chat_slow_mode_cooldown_ms: chatSlowModeCooldownMs,
       participation_max_applications_per_participant:
         request.participation.no_of_applications_allowed_per_participant,
       participation_required_metadata:
@@ -302,6 +307,7 @@ export class WavesMappers {
       metrics,
       authenticatedUserMetrics,
       authenticatedUserReaderMetrics,
+      chatDropCooldowns,
       yourParticipationDropsCountByWaveId,
       yourUnreadDropsCountByWaveId,
       firstUnreadDropSerialNoByWaveId,
@@ -394,21 +400,36 @@ export class WavesMappers {
       terms: waveEntity.participation_terms,
       submission_strategy: mapWaveFieldsToApiSubmissionStrategy(waveEntity)
     };
-    const chat: ApiWaveChatConfig = {
-      scope: {
-        group: resolveGroup(waveEntity.chat_group_id)
-      },
-      enabled: waveEntity.chat_enabled,
-      authenticated_user_eligible:
-        (waveEntity.chat_group_id === null ||
-          groupIdsUserIsEligibleFor.includes(waveEntity.chat_group_id)) &&
-        waveEntity.chat_enabled
-    };
     const authenticatedUserEligibleForAdmin = isWaveCreatorOrAdmin({
       authenticatedProfileId: relatedData.authenticatedUserId,
       wave: waveEntity,
       groupIdsUserIsEligibleFor
     });
+    const nextDropAllowed = resolveNextDropAllowed({
+      wave: waveEntity,
+      authenticatedProfileId: relatedData.authenticatedUserId,
+      groupIdsUserIsEligibleFor,
+      nextDropTimestamp: chatDropCooldowns[waveEntity.id]?.next_drop_timestamp
+    });
+    const authenticatedUserEligibleToChat =
+      (waveEntity.chat_group_id === null ||
+        groupIdsUserIsEligibleFor.includes(waveEntity.chat_group_id)) &&
+      waveEntity.chat_enabled &&
+      nextDropAllowed === undefined;
+    const chat: ApiWaveChatConfig = {
+      scope: {
+        group: resolveGroup(waveEntity.chat_group_id)
+      },
+      enabled: waveEntity.chat_enabled,
+      authenticated_user_eligible: authenticatedUserEligibleToChat
+    };
+    if (nextDropAllowed !== undefined) {
+      chat.next_drop_allowed = nextDropAllowed;
+    }
+    const slowModeCooldownMs = waveEntity.chat_slow_mode_cooldown_ms;
+    if (slowModeCooldownMs !== null && slowModeCooldownMs > 0) {
+      chat.slow_mode_cooldown_ms = slowModeCooldownMs;
+    }
     const approveDecisionCounts = getApproveWaveDecisionCounts({
       waveType: waveEntity.type,
       maxWinners: waveEntity.max_winners,
@@ -509,6 +530,7 @@ export class WavesMappers {
       metrics,
       authenticatedUserMetrics,
       authenticatedUserReaderMetrics,
+      chatDropCooldowns,
       contributorsOverViews,
       creationDropsByDropId,
       subscribedActions,
@@ -546,6 +568,15 @@ export class WavesMappers {
             ctx
           )
         : Promise.resolve({} as Record<string, WaveReaderMetricEntity>),
+      authenticatedUserId
+        ? this.wavesApiDb.findWaveChatDropCooldownsByWaveIds(
+            {
+              profileId: authenticatedUserId,
+              waveIds
+            },
+            ctx
+          )
+        : Promise.resolve({} as Record<string, WaveChatDropCooldownEntity>),
       this.wavesApiDb.getWavesContributorsOverviews(waveIds, ctx),
 
       dropsService
@@ -684,6 +715,7 @@ export class WavesMappers {
       metrics,
       authenticatedUserMetrics,
       authenticatedUserReaderMetrics,
+      chatDropCooldowns,
       yourParticipationDropsCountByWaveId,
       yourUnreadDropsCountByWaveId,
       firstUnreadDropSerialNoByWaveId,

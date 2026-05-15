@@ -157,6 +157,7 @@ router.post(
       request = {
         ...request,
         chat: {
+          ...request.chat,
           scope: { group_id: request.participation.scope.group_id },
           enabled: request.chat.enabled
         }
@@ -258,6 +259,7 @@ router.post(
       request = {
         ...request,
         chat: {
+          ...request.chat,
           scope: { group_id: request.participation.scope.group_id },
           enabled: request.chat.enabled
         }
@@ -1176,7 +1178,11 @@ const UpdateWaveParticipationSchema =
 
 const WaveChatSchema = Joi.object<ApiCreateNewWaveChatConfig>({
   scope: WaveScopeSchema.required(),
-  enabled: Joi.boolean().optional().default(true)
+  enabled: Joi.boolean().optional().default(true),
+  slow_mode_cooldown_ms: Joi.number()
+    .integer()
+    .optional()
+    .min(Time.seconds(1).toMillis())
 });
 
 const WaveDecisionsStrategySchema = Joi.object<ApiWaveDecisionsStrategy>({
@@ -1288,7 +1294,10 @@ const waveSchemaBaseValidations = {
   voting: WaveVotingSchema.required(),
   visibility: WaveVisibilitySchema.required(),
   participation: WaveParticipationSchema.required(),
-  chat: WaveChatSchema.optional().default({ scope: { group_id: null } }),
+  chat: WaveChatSchema.optional().default({
+    scope: { group_id: null },
+    enabled: true
+  }),
   wave: WaveConfigSchema.required()
 };
 

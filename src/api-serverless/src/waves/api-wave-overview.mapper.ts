@@ -4,6 +4,7 @@ import {
 } from '@/entities/IActivityEvent';
 import { DropMediaEntity, DropPartEntity } from '@/entities/IDrop';
 import { WaveEntity, WaveType } from '@/entities/IWave';
+import { WaveChatDropCooldownEntity } from '@/entities/IWaveChatDropCooldown';
 import { WaveReaderMetricEntity } from '@/entities/IWaveReaderMetric';
 import { collections } from '@/collections';
 import { RequestContext } from '@/request.context';
@@ -29,6 +30,7 @@ import {
 } from '@/api/waves/direct-message-wave-display.service';
 import { getWaveReadContextProfileId } from '@/api/waves/wave-access.helpers';
 import { wavesApiDb, WavesApiDb } from '@/api/waves/waves.api.db';
+import { resolveNextDropAllowed } from '@/waves/wave-chat-slow-mode.helpers';
 
 export class ApiWaveOverviewMapper {
   constructor(
@@ -69,7 +71,8 @@ export class ApiWaveOverviewMapper {
         pinnedWaveIds,
         readerMetricsByWaveId,
         unreadDropsCountByWaveId,
-        firstUnreadDropSerialNoByWaveId
+        firstUnreadDropSerialNoByWaveId,
+        chatDropCooldownsByWaveId
       ] = await Promise.all([
         this.wavesApiDb.findWavesMetricsByWaveIds(waveIds, ctx),
         this.dropsDb.getDropPartOnes(descriptionDropIds, ctx),
@@ -134,7 +137,16 @@ export class ApiWaveOverviewMapper {
               },
               ctx
             )
-          : Promise.resolve({} as Record<string, number | null>)
+          : Promise.resolve({} as Record<string, number | null>),
+        contextProfileId
+          ? this.wavesApiDb.findWaveChatDropCooldownsByWaveIds(
+              {
+                profileId: contextProfileId,
+                waveIds
+              },
+              ctx
+            )
+          : Promise.resolve({} as Record<string, WaveChatDropCooldownEntity>)
       ]);
 
       return entities.reduce(
@@ -174,7 +186,10 @@ export class ApiWaveOverviewMapper {
               readerMetric: readerMetricsByWaveId[wave.id],
               unreadDropsCount: unreadDropsCountByWaveId[wave.id] ?? 0,
               firstUnreadDropSerialNo:
-                firstUnreadDropSerialNoByWaveId[wave.id] ?? undefined
+                firstUnreadDropSerialNoByWaveId[wave.id] ?? undefined,
+              contextProfileId,
+              nextDropTimestamp:
+                chatDropCooldownsByWaveId[wave.id]?.next_drop_timestamp
             });
           }
 
@@ -233,7 +248,9 @@ export class ApiWaveOverviewMapper {
     pinnedWaveIds,
     readerMetric,
     unreadDropsCount,
-    firstUnreadDropSerialNo
+    firstUnreadDropSerialNo,
+    contextProfileId,
+    nextDropTimestamp
   }: {
     wave: WaveEntity;
     groupIdsUserIsEligibleFor: string[];
@@ -242,17 +259,30 @@ export class ApiWaveOverviewMapper {
     readerMetric?: WaveReaderMetricEntity;
     unreadDropsCount: number;
     firstUnreadDropSerialNo?: number;
+    contextProfileId: string;
+    nextDropTimestamp?: number;
   }): ApiWaveOverviewContextProfileContext {
+    const nextDropAllowed = resolveNextDropAllowed({
+      wave,
+      authenticatedProfileId: contextProfileId,
+      groupIdsUserIsEligibleFor,
+      nextDropTimestamp
+    });
     const result: ApiWaveOverviewContextProfileContext = {
       subscribed: subscribedActions.includes(ActivityEventAction.DROP_CREATED),
       pinned: pinnedWaveIds.has(wave.id),
       can_chat:
         wave.chat_enabled &&
         (wave.chat_group_id === null ||
-          groupIdsUserIsEligibleFor.includes(wave.chat_group_id)),
+          groupIdsUserIsEligibleFor.includes(wave.chat_group_id)) &&
+        nextDropAllowed === undefined,
       unread_drops: unreadDropsCount,
       muted: readerMetric?.muted ?? false
     };
+
+    if (nextDropAllowed !== undefined) {
+      result.next_drop_allowed = nextDropAllowed;
+    }
 
     if (firstUnreadDropSerialNo !== undefined) {
       result.first_unread_drop_serial_no = firstUnreadDropSerialNo;
