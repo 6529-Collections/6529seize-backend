@@ -27,19 +27,19 @@ export class DropSignatureVerifier {
       drop,
       termsOfService
     });
-    const signingAddress = await this.getSigningAddress({
+    const signingAddresses = await this.getSigningAddresses({
       hash,
       clientSignature: signature,
       isSafeSignature: drop.is_safe_signature,
       signerAddress: drop.signer_address
     });
-    if (!signingAddress) {
-      return false;
-    }
-    return wallets.map((it) => it.toLowerCase()).includes(signingAddress);
+    const walletSet = new Set(wallets.map((it) => it.toLowerCase()));
+    return signingAddresses.some((signingAddress) =>
+      walletSet.has(signingAddress)
+    );
   }
 
-  private async getSigningAddress({
+  private async getSigningAddresses({
     hash,
     clientSignature,
     signerAddress,
@@ -49,11 +49,11 @@ export class DropSignatureVerifier {
     clientSignature: string;
     isSafeSignature?: boolean;
     signerAddress?: string;
-  }): Promise<string | null> {
+  }): Promise<string[]> {
     try {
       if (isSafeSignature) {
         if (!signerAddress) {
-          return null;
+          return [];
         }
 
         const EIP1271_ABI = [
@@ -75,21 +75,74 @@ export class DropSignatureVerifier {
         const MAGIC_VALUE = '0x1626ba7e';
 
         if (result === MAGIC_VALUE) {
-          return signerAddress?.toLowerCase();
-        } else {
-          return null;
+          return [signerAddress.toLowerCase()];
         }
+        return [];
       }
-      const signingAddress = ethers
-        .verifyMessage(hash, clientSignature)
-        ?.toLowerCase();
-      if (signerAddress && signingAddress !== signerAddress?.toLowerCase()) {
-        return null;
-      }
-      return signingAddress ?? null;
-    } catch (e) {
+      return this.filterBySignerAddress({
+        signerAddress,
+        signingAddresses: [
+          this.recoverTextSigningAddress({ hash, clientSignature }),
+          this.recoverRawHashBytesSigningAddress({ hash, clientSignature })
+        ]
+      });
+    } catch {
+      return [];
+    }
+  }
+
+  private recoverTextSigningAddress({
+    hash,
+    clientSignature
+  }: {
+    hash: string;
+    clientSignature: string;
+  }): string | null {
+    try {
+      return ethers.verifyMessage(hash, clientSignature)?.toLowerCase() ?? null;
+    } catch {
       return null;
     }
+  }
+
+  private recoverRawHashBytesSigningAddress({
+    hash,
+    clientSignature
+  }: {
+    hash: string;
+    clientSignature: string;
+  }): string | null {
+    try {
+      return (
+        ethers
+          .verifyMessage(ethers.getBytes(`0x${hash}`), clientSignature)
+          ?.toLowerCase() ?? null
+      );
+    } catch {
+      return null;
+    }
+  }
+
+  private filterBySignerAddress({
+    signerAddress,
+    signingAddresses
+  }: {
+    signerAddress?: string;
+    signingAddresses: (string | null)[];
+  }): string[] {
+    const signerAddressLowerCase = signerAddress?.toLowerCase();
+    return signingAddresses.reduce<string[]>((acc, signingAddress) => {
+      if (!signingAddress) {
+        return acc;
+      }
+      if (signerAddressLowerCase && signingAddress !== signerAddressLowerCase) {
+        return acc;
+      }
+      if (!acc.includes(signingAddress)) {
+        acc.push(signingAddress);
+      }
+      return acc;
+    }, []);
   }
 }
 
