@@ -21,7 +21,8 @@ export class NftLinkResolver {
           'testnets.opensea.io',
           'foundation.app',
           'transient.xyz',
-          'lab.transient.xyz'
+          'lab.transient.xyz',
+          'gamma.io'
         ].includes(host)
       )
         return true;

@@ -14,7 +14,8 @@ const HOST_ALLOWLIST = {
     'studio.manifold.xyz',
     'help.manifold.xyz'
   ]),
-  TRANSIENT: new Set(['transient.xyz', 'lab.transient.xyz'])
+  TRANSIENT: new Set(['transient.xyz', 'lab.transient.xyz']),
+  GAMMAIO: new Set(['gamma.io'])
 } as const;
 
 const TRACKING_KEYS_PREFIXES = ['utm_'];
@@ -27,6 +28,7 @@ const TRACKING_KEYS_EXACT = new Set([
   'mc_cid',
   'mc_eid'
 ]);
+const MAX_CUSTOM_ID_LENGTH = 100;
 
 function cleanInputUrl(raw: string): string {
   let s = (raw ?? '').trim();
@@ -126,6 +128,9 @@ function buildCanonicalId(
       return `${platform}:claim:${identifiers.instanceId}`;
     if (identifiers.instanceSlug)
       return `${platform}:slug:${identifiers.instanceSlug.toLowerCase()}`;
+  }
+  if (identifiers.kind === 'URL_ONLY' && identifiers.customId) {
+    return `${platform}:${identifiers.customId}`;
   }
   return `${platform}:url:${Buffer.from(viewUrl).toString('base64url')}`;
 }
@@ -511,6 +516,135 @@ function parseManifold(u: URL, inputUrl: string): CanonicalLink {
   return ok(inputUrl, 'MANIFOLD', viewUrl, { kind: 'MANIFOLD_CLAIM', ...ids });
 }
 
+function getGammaIoPathSegments(u: URL): string[] {
+  try {
+    return getEffectivePath(u)
+      .split('/')
+      .map((segment) => decodeURIComponent(segment).trim())
+      .filter(Boolean);
+  } catch {
+    const malformedSegment = getEffectivePath(u)
+      .split('/')
+      .find((segment) => {
+        try {
+          decodeURIComponent(segment);
+          return false;
+        } catch {
+          return true;
+        }
+      });
+    throw new NftLinkResolverValidationError(
+      `Gamma.io link has malformed percent-encoding in path segment: ${malformedSegment ?? 'unknown'}.`
+    );
+  }
+}
+
+function parseGammaIoOrdinal(
+  pathSegments: string[],
+  inputUrl: string,
+  viewUrl: string
+): CanonicalLink | null {
+  const ordinalId = pathSegments.find((segment) =>
+    /^[a-fA-F0-9]{64}i\d{1,10}$/.test(segment)
+  );
+  if (!ordinalId) {
+    return null;
+  }
+
+  const customId = `ordinal:${ordinalId.toLowerCase()}`;
+  if (customId.length > MAX_CUSTOM_ID_LENGTH) {
+    throw new NftLinkResolverValidationError(
+      `Gamma.io ordinal inscription id is too long.`
+    );
+  }
+  return ok(inputUrl, 'GAMMAIO', viewUrl, {
+    kind: 'URL_ONLY',
+    customId
+  });
+}
+
+function parseGammaIoCollection(
+  pathSegments: string[],
+  inputUrl: string,
+  viewUrl: string
+): CanonicalLink | null {
+  const collectionsIndex = pathSegments.indexOf('collections');
+  if (collectionsIndex < 0) {
+    return null;
+  }
+
+  const collectionSlug = pathSegments[collectionsIndex + 1];
+  const tokenSegment =
+    pathSegments[collectionsIndex + 2] === 'tokens'
+      ? pathSegments[collectionsIndex + 3]
+      : pathSegments[collectionsIndex + 2];
+  if (
+    !collectionSlug ||
+    !tokenSegment ||
+    !/^[a-zA-Z0-9][a-zA-Z0-9_-]{1,63}$/.test(collectionSlug)
+  ) {
+    return null;
+  }
+
+  const tokenId = normalizeTokenId(tokenSegment);
+  if (!tokenId) {
+    return null;
+  }
+
+  const customId = `collection:${collectionSlug.toLowerCase()}:${tokenId}`;
+  if (customId.length > MAX_CUSTOM_ID_LENGTH) {
+    throw new NftLinkResolverValidationError(
+      `Gamma.io collection token identifier is too long.`
+    );
+  }
+  return ok(inputUrl, 'GAMMAIO', viewUrl, {
+    kind: 'URL_ONLY',
+    customId
+  });
+}
+
+function parseGammaIoStacksNft(
+  pathSegments: string[],
+  inputUrl: string,
+  viewUrl: string
+): CanonicalLink | null {
+  const stacksIndex = pathSegments.indexOf('stacks');
+  if (stacksIndex < 0 || pathSegments[stacksIndex + 1] !== 'nfts') {
+    return null;
+  }
+
+  const nftId = pathSegments[stacksIndex + 2];
+  if (!nftId || !/^[A-Z0-9.][A-Z0-9._-]{10,90}$/i.test(nftId)) {
+    return null;
+  }
+
+  const customId = `stacks:${nftId}`;
+  if (customId.length > MAX_CUSTOM_ID_LENGTH) {
+    throw new NftLinkResolverValidationError(
+      `Gamma.io Stacks NFT identifier is too long.`
+    );
+  }
+  return ok(inputUrl, 'GAMMAIO', viewUrl, {
+    kind: 'URL_ONLY',
+    customId
+  });
+}
+
+function parseGammaIo(u: URL, inputUrl: string): CanonicalLink {
+  const viewUrl = normalizeUrlForView(u);
+  const pathSegments = getGammaIoPathSegments(u);
+  const parsed =
+    parseGammaIoOrdinal(pathSegments, inputUrl, viewUrl) ??
+    parseGammaIoCollection(pathSegments, inputUrl, viewUrl) ??
+    parseGammaIoStacksNft(pathSegments, inputUrl, viewUrl);
+  if (parsed) {
+    return parsed;
+  }
+  throw new NftLinkResolverValidationError(
+    `Gamma.io link must include an ordinal inscription id, look like /collections/{collectionSlug}/{tokenId}, or look like /stacks/nfts/{nftId}.`
+  );
+}
+
 /**
  * validateLinkUrl
  *
@@ -536,12 +670,13 @@ export function validateLinkUrl(input: string): CanonicalLink {
   if (HOST_ALLOWLIST.OPENSEA.has(host)) return parseOpenSea(u, input);
   if (HOST_ALLOWLIST.FOUNDATION.has(host)) return parseFoundation(u, input);
   if (HOST_ALLOWLIST.TRANSIENT.has(host)) return parseTransient(u, input);
+  if (HOST_ALLOWLIST.GAMMAIO.has(host)) return parseGammaIo(u, input);
 
   if (HOST_ALLOWLIST.MANIFOLD.has(host) || host.endsWith('.manifold.xyz')) {
     return parseManifold(u, input);
   }
 
   throw new NftLinkResolverValidationError(
-    'Unsupported URL. Supported links: SuperRare, OpenSea, Foundation, Manifold, Transient.'
+    'Unsupported URL. Supported links: SuperRare, OpenSea, Foundation, Manifold, Transient, Gamma.io.'
   );
 }

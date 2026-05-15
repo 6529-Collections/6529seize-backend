@@ -5,6 +5,7 @@ import { OpenSeaAdapter } from './opensea';
 import { FoundationAdapter } from './foundation';
 import { ManifoldAdapter } from './manifold';
 import { TransientAdapter } from './transient';
+import { GammaIoAdapter } from './gammaio';
 import { env } from '@/env';
 
 type RegisteredSource = {
@@ -118,6 +119,11 @@ const sources: RegisteredSource[] = [
   {
     id: 'TRANSIENT_ONCHAIN',
     adapter: new TransientAdapter(),
+    defaultEnabled: true
+  },
+  {
+    id: 'GAMMAIO_PAGE_METADATA',
+    adapter: new GammaIoAdapter(),
     defaultEnabled: true
   }
 ];

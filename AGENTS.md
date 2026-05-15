@@ -21,6 +21,15 @@ Signed-off-by: IAmAUser <1234567+IAmAUser@users.noreply.github.com>
 
 After you do your changes then run `npm run lint`. Make sure you fix all errors and warnings.
 
+# Sonar
+
+When writing or changing code, keep predictable SonarCloud findings in mind before opening a PR:
+
+1. Always pass an explicit compare function to `Array.prototype.sort`, even when sorting strings.
+2. Avoid long chains of `String.prototype.replace` calls for literal replacements. Prefer `replaceAll` when available, or use a single regex/callback replacement when TypeScript library support makes `replaceAll` unsuitable.
+3. Keep cognitive complexity low. Split nested parsing/validation logic into small helper functions before it reaches Sonar thresholds.
+4. Avoid adding broad `any` types, duplicated branches, deep nesting, and large functions when a local typed helper would keep intent clearer.
+
 # CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
