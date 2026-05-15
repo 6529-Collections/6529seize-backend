@@ -16,6 +16,7 @@ export class ApiWaveOverviewContextProfileContext {
     'subscribed': boolean;
     'pinned': boolean;
     'can_chat': boolean;
+    'next_drop_allowed'?: number;
     'unread_drops': number;
     'first_unread_drop_serial_no'?: number;
     'muted': boolean;
@@ -42,6 +43,12 @@ export class ApiWaveOverviewContextProfileContext {
             "baseName": "can_chat",
             "type": "boolean",
             "format": ""
+        },
+        {
+            "name": "next_drop_allowed",
+            "baseName": "next_drop_allowed",
+            "type": "number",
+            "format": "int64"
         },
         {
             "name": "unread_drops",

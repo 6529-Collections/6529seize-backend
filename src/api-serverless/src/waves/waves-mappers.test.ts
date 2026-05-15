@@ -53,6 +53,7 @@ describe('WavesMappers', () => {
         },
         authenticatedUserMetrics: {},
         authenticatedUserReaderMetrics: {},
+        chatDropCooldowns: {},
         yourParticipationDropsCountByWaveId: {},
         yourUnreadDropsCountByWaveId: {},
         firstUnreadDropSerialNoByWaveId: {},
@@ -76,6 +77,81 @@ describe('WavesMappers', () => {
     expect(mapped.voting.authenticated_user_eligible).toBe(false);
     expect(mapped.participation.authenticated_user_eligible).toBe(false);
     expect(mapped.chat.authenticated_user_eligible).toBe(true);
+    expect(mapped.chat).not.toHaveProperty('next_drop_allowed');
+    expect(mapped.chat).not.toHaveProperty('slow_mode_cooldown_ms');
+  });
+
+  it('maps active chat slow mode cooldown into ApiWave chat context', () => {
+    const mapper = new WavesMappers({} as any, {} as any, {} as any, {} as any);
+    const nextDropTimestamp = Date.now() + 60000;
+    const waveEntity = {
+      ...aWave(
+        {
+          chat_slow_mode_cooldown_ms: 60000
+        },
+        {
+          id: 'wave-1',
+          name: 'Wave 1',
+          serial_no: 1
+        }
+      ),
+      participation_required_metadata: [],
+      participation_required_media: []
+    };
+
+    const mapped = (mapper as any).mapWaveEntityToApiWave({
+      waveEntity,
+      relatedData: {
+        contributors: {},
+        profiles: {
+          [waveEntity.created_by]: { id: waveEntity.created_by } as any
+        },
+        curations: {},
+        displayByWaveId: {},
+        creationDrops: {
+          [waveEntity.description_drop_id]: {
+            id: waveEntity.description_drop_id
+          }
+        },
+        subscribedActions: {},
+        metrics: {
+          'wave-1': {
+            wave_id: 'wave-1',
+            drops_count: 0,
+            subscribers_count: 0,
+            participatory_drops_count: 0,
+            latest_drop_timestamp: 0
+          }
+        },
+        authenticatedUserMetrics: {},
+        authenticatedUserReaderMetrics: {},
+        chatDropCooldowns: {
+          'wave-1': {
+            wave_id: 'wave-1',
+            profile_id: 'viewer-1',
+            next_drop_timestamp: nextDropTimestamp,
+            created_at: 1,
+            updated_at: 1
+          }
+        },
+        yourParticipationDropsCountByWaveId: {},
+        yourUnreadDropsCountByWaveId: {},
+        firstUnreadDropSerialNoByWaveId: {},
+        wavePauses: {},
+        decisionsDoneByWaveId: {},
+        votingCreditNftsByWaveId: {},
+        pinnedWaveIds: new Set<string>(),
+        identityWaveIds: new Set<string>(),
+        authenticatedUserId: 'viewer-1'
+      },
+      noRightToVote: false,
+      groupIdsUserIsEligibleFor: [],
+      noRightToParticipate: false
+    });
+
+    expect(mapped.chat.authenticated_user_eligible).toBe(false);
+    expect(mapped.chat.next_drop_allowed).toBe(nextDropTimestamp);
+    expect(mapped.chat.slow_mode_cooldown_ms).toBe(60000);
   });
 
   it('preserves max_votes_per_identity_to_drop on update when omitted', async () => {
@@ -137,6 +213,66 @@ describe('WavesMappers', () => {
     });
 
     expect(mapped.max_votes_per_identity_to_drop).toBe(7);
+    expect(mapped.chat_slow_mode_cooldown_ms).toBeNull();
+  });
+
+  it('maps chat slow mode config into entity fields', async () => {
+    const mapper = new WavesMappers({} as any, {} as any, {} as any, {} as any);
+    const request: ApiUpdateWaveRequest = {
+      name: 'Wave 1',
+      picture: null,
+      voting: {
+        scope: { group_id: null },
+        credit_type: ApiWaveCreditType.Tdh,
+        credit_category: null,
+        credit_nfts: null,
+        creditor_id: null,
+        signature_required: false,
+        period: undefined,
+        forbid_negative_votes: false
+      },
+      visibility: {
+        scope: { group_id: null }
+      },
+      participation: {
+        scope: { group_id: null },
+        no_of_applications_allowed_per_participant: null,
+        required_metadata: [],
+        required_media: [],
+        signature_required: false,
+        period: undefined,
+        terms: null,
+        submission_strategy: null
+      },
+      chat: {
+        scope: { group_id: null },
+        enabled: true,
+        slow_mode_cooldown_ms: 45000
+      },
+      wave: {
+        type: ApiWaveType.Chat,
+        winning_threshold: null,
+        max_winners: null,
+        time_lock_ms: null,
+        admin_group: { group_id: null },
+        decisions_strategy: null,
+        admin_drop_deletion_enabled: false
+      }
+    };
+
+    const mapped = await mapper.createWaveToNewWaveEntity({
+      id: 'wave-1',
+      serial_no: 1,
+      created_at: 1,
+      updated_at: 2,
+      request,
+      created_by: 'profile-1',
+      descriptionDropId: 'drop-1',
+      nextDecisionTime: null,
+      isDirectMessage: false
+    });
+
+    expect(mapped.chat_slow_mode_cooldown_ms).toBe(45000);
   });
 
   it('maps card-set TDH config into entity fields and API output', async () => {
@@ -256,6 +392,7 @@ describe('WavesMappers', () => {
         },
         authenticatedUserMetrics: {},
         authenticatedUserReaderMetrics: {},
+        chatDropCooldowns: {},
         yourParticipationDropsCountByWaveId: {},
         yourUnreadDropsCountByWaveId: {},
         firstUnreadDropSerialNoByWaveId: {},

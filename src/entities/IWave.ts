@@ -33,6 +33,7 @@ export interface WaveBaseType {
   readonly participation_group_id: string | null;
   readonly chat_enabled: boolean;
   readonly chat_group_id: string | null;
+  readonly chat_slow_mode_cooldown_ms: number | null;
   readonly participation_max_applications_per_participant: number | null;
   readonly participation_required_metadata: WaveRequiredMetadataItem[];
   readonly participation_required_media: ParticipationRequiredMedia[];
@@ -107,6 +108,9 @@ export class WaveBase implements WaveBaseType {
 
   @Column({ type: 'varchar', length: 100, nullable: true })
   readonly chat_group_id!: string | null;
+
+  @Column({ type: 'bigint', nullable: true, default: null })
+  readonly chat_slow_mode_cooldown_ms!: number | null;
 
   @Column({ type: 'bigint', nullable: true })
   readonly participation_max_applications_per_participant!: number | null;

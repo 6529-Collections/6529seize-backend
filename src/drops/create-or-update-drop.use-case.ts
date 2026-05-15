@@ -82,6 +82,10 @@ import { getAlchemyInstance } from '@/alchemy';
 import { profilesService } from '@/profiles/profiles.service';
 import { isApproveWaveClosed } from '@/waves/wave-approve.helpers';
 import { attachmentsDb, AttachmentsDb } from '@/attachments/attachments.db';
+import {
+  isWaveChatSlowModeActive,
+  isWaveChatSlowModeExempt
+} from '@/waves/wave-chat-slow-mode.helpers';
 
 const ARWEAVE_ORIGIN = 'https://arweave.net';
 
@@ -314,15 +318,12 @@ export class CreateOrUpdateDropUseCase {
     if (model.drop_type === DropType.WINNER) {
       throw new BadRequestException(`Can't modify a winner drop`);
     }
-    const validatedModel = await this.validateReferences(
-      model,
-      isDescriptionDrop,
-      {
+    const { validatedModel, groupIdsUserIsEligibleFor } =
+      await this.validateReferences(model, isDescriptionDrop, {
         timer,
         connection,
         preResolvedIdentityNomination
-      }
-    );
+      });
     const authorId = this.getRequiredAuthorId(validatedModel);
     const preExistingDropId = validatedModel.drop_id;
     const wave = await this.wavesApiDb.findById(
@@ -337,6 +338,22 @@ export class CreateOrUpdateDropUseCase {
       validatedModel.drop_type !== DropType.CHAT
     ) {
       throw new BadRequestException('Chat waves only allow chat drops');
+    }
+    if (
+      !isDescriptionDrop &&
+      preExistingDropId === null &&
+      validatedModel.drop_type === DropType.CHAT &&
+      isWaveChatSlowModeActive(wave)
+    ) {
+      await this.verifyChatSlowModeLimitations(
+        {
+          isDescriptionDrop,
+          wave,
+          model: validatedModel,
+          groupIdsUserIsEligibleFor
+        },
+        { timer, connection }
+      );
     }
     let dropId: string;
     let pendingPushNotificationIds: number[] = [];
@@ -449,7 +466,10 @@ export class CreateOrUpdateDropUseCase {
       connection: ConnectionWrapper<any>;
       preResolvedIdentityNomination?: PreResolvedEnsIdentityNomination | null;
     }
-  ): Promise<CreateOrUpdateDropModel> {
+  ): Promise<{
+    validatedModel: CreateOrUpdateDropModel;
+    groupIdsUserIsEligibleFor: string[];
+  }> {
     timer?.start(`${CreateOrUpdateDropUseCase.name}->validateReferences`);
     const authorId = this.getRequiredAuthorId(model);
     const groupIdsUserIsEligibleFor =
@@ -473,7 +493,7 @@ export class CreateOrUpdateDropUseCase {
       this.verifyReplyDrop(model, { timer, connection })
     ]);
     timer?.stop(`${CreateOrUpdateDropUseCase.name}->validateReferences`);
-    return validatedModel;
+    return { validatedModel, groupIdsUserIsEligibleFor };
   }
 
   private async verifyWaveLimitations(
@@ -539,6 +559,68 @@ export class CreateOrUpdateDropUseCase {
     );
     timer?.stop(`${CreateOrUpdateDropUseCase.name}->verifyWaveLimitations`);
     return validatedModel;
+  }
+
+  private async verifyChatSlowModeLimitations(
+    {
+      isDescriptionDrop,
+      wave,
+      model,
+      groupIdsUserIsEligibleFor
+    }: {
+      isDescriptionDrop: boolean;
+      wave: WaveEntity;
+      model: CreateOrUpdateDropModel;
+      groupIdsUserIsEligibleFor: string[];
+    },
+    { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
+  ) {
+    timer?.start(
+      `${CreateOrUpdateDropUseCase.name}->verifyChatSlowModeLimitations`
+    );
+    try {
+      if (
+        isDescriptionDrop ||
+        model.drop_id !== null ||
+        model.drop_type !== DropType.CHAT ||
+        !isWaveChatSlowModeActive(wave)
+      ) {
+        return;
+      }
+      const authorId = this.getRequiredAuthorId(model);
+      if (
+        isWaveChatSlowModeExempt({
+          authenticatedProfileId: authorId,
+          wave,
+          groupIdsUserIsEligibleFor
+        })
+      ) {
+        return;
+      }
+      const now = Time.currentMillis();
+      const cooldownMs = wave.chat_slow_mode_cooldown_ms;
+      if (cooldownMs === null || cooldownMs <= 0) {
+        return;
+      }
+      const blockedUntil = await this.wavesApiDb.reserveWaveChatDropCooldown(
+        {
+          waveId: wave.id,
+          profileId: authorId,
+          now,
+          cooldownMs
+        },
+        { timer, connection }
+      );
+      if (blockedUntil !== null) {
+        throw new ForbiddenException(
+          `Slow mode is enabled. You can create your next chat drop at ${blockedUntil}`
+        );
+      }
+    } finally {
+      timer?.stop(
+        `${CreateOrUpdateDropUseCase.name}->verifyChatSlowModeLimitations`
+      );
+    }
   }
 
   private async verifyMetadata(
