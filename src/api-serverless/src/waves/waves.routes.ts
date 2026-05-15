@@ -1185,57 +1185,101 @@ const WaveChatSchema = Joi.object<ApiCreateNewWaveChatConfig>({
     .min(Time.seconds(1).toMillis())
 });
 
-const WaveDecisionsStrategySchema = Joi.object<ApiWaveDecisionsStrategy>({
-  first_decision_time: Joi.number()
-    .integer()
-    .required()
-    .min(Time.currentMillis())
-    .message('first_decision_time must be in the future'),
-  subsequent_decisions: Joi.array()
-    .required()
-    .items(Joi.number().integer().min(Time.hours(1).toMillis())),
-  is_rolling: Joi.boolean().required()
+function createWaveDecisionsStrategySchema({
+  requireFutureFirstDecisionTime
+}: {
+  requireFutureFirstDecisionTime: boolean;
+}): Joi.ObjectSchema<ApiWaveDecisionsStrategy> {
+  const firstDecisionTimeSchema = requireFutureFirstDecisionTime
+    ? Joi.number()
+        .integer()
+        .required()
+        .custom((value, helpers) => {
+          if (value <= Time.currentMillis()) {
+            return helpers.error('firstDecisionTime.future');
+          }
+          return value;
+        }, 'future time check')
+        .messages({
+          'firstDecisionTime.future':
+            'first_decision_time must be in the future'
+        })
+    : Joi.number().integer().required();
+
+  return Joi.object<ApiWaveDecisionsStrategy>({
+    first_decision_time: firstDecisionTimeSchema,
+    subsequent_decisions: Joi.array()
+      .required()
+      .items(Joi.number().integer().min(Time.hours(1).toMillis())),
+    is_rolling: Joi.boolean().required()
+  });
+}
+
+export const CreateWaveDecisionsStrategySchema =
+  createWaveDecisionsStrategySchema({
+    requireFutureFirstDecisionTime: true
+  });
+
+const UpdateWaveDecisionsStrategySchema = createWaveDecisionsStrategySchema({
+  requireFutureFirstDecisionTime: false
 });
 
-const WaveConfigSchema = Joi.object<
+function createWaveConfigSchema(
+  decisionsStrategySchema: Joi.ObjectSchema<ApiWaveDecisionsStrategy>
+): Joi.ObjectSchema<
   ApiWaveConfig & {
     period?: ApiIntRange | null;
     winning_thresholds?: unknown[] | null;
   }
->({
-  type: Joi.string()
-    .required()
-    .valid(...Object.values(ApiWaveType)),
-  // Accept the legacy field from old clients and strip it before service code.
-  winning_thresholds: Joi.alternatives()
-    .try(Joi.array(), Joi.valid(null))
-    .optional()
-    .strip(),
-  winning_threshold: Joi.when('type', {
-    is: Joi.string().valid(ApiWaveType.Approve),
-    then: Joi.number().integer().required().min(1),
-    otherwise: Joi.valid(null).default(null)
-  }),
-  max_winners: Joi.when('type', {
-    is: Joi.string().valid(ApiWaveType.Approve),
-    then: Joi.number().integer().required().allow(null).min(1),
-    otherwise: Joi.valid(null).default(null)
-  }),
-  max_votes_per_identity_to_drop: Joi.when('type', {
-    is: Joi.string().valid(ApiWaveType.Approve, ApiWaveType.Rank),
-    then: Joi.number().integer().optional().allow(null).min(1),
-    otherwise: Joi.valid(null).optional()
-  }),
-  time_lock_ms: Joi.number()
-    .integer()
-    .required()
-    .allow(null)
-    .min(Time.minutes(5).toMillis()),
-  period: IntRangeSchema.optional(),
-  admin_group: WaveScopeSchema.required(),
-  decisions_strategy: WaveDecisionsStrategySchema.optional().allow(null),
-  admin_drop_deletion_enabled: Joi.boolean().optional().default(false)
-});
+> {
+  return Joi.object<
+    ApiWaveConfig & {
+      period?: ApiIntRange | null;
+      winning_thresholds?: unknown[] | null;
+    }
+  >({
+    type: Joi.string()
+      .required()
+      .valid(...Object.values(ApiWaveType)),
+    // Accept the legacy field from old clients and strip it before service code.
+    winning_thresholds: Joi.alternatives()
+      .try(Joi.array(), Joi.valid(null))
+      .optional()
+      .strip(),
+    winning_threshold: Joi.when('type', {
+      is: Joi.string().valid(ApiWaveType.Approve),
+      then: Joi.number().integer().required().min(1),
+      otherwise: Joi.valid(null).default(null)
+    }),
+    max_winners: Joi.when('type', {
+      is: Joi.string().valid(ApiWaveType.Approve),
+      then: Joi.number().integer().required().allow(null).min(1),
+      otherwise: Joi.valid(null).default(null)
+    }),
+    max_votes_per_identity_to_drop: Joi.when('type', {
+      is: Joi.string().valid(ApiWaveType.Approve, ApiWaveType.Rank),
+      then: Joi.number().integer().optional().allow(null).min(1),
+      otherwise: Joi.valid(null).optional()
+    }),
+    time_lock_ms: Joi.number()
+      .integer()
+      .required()
+      .allow(null)
+      .min(Time.minutes(5).toMillis()),
+    period: IntRangeSchema.optional(),
+    admin_group: WaveScopeSchema.required(),
+    decisions_strategy: decisionsStrategySchema.optional().allow(null),
+    admin_drop_deletion_enabled: Joi.boolean().optional().default(false)
+  });
+}
+
+const WaveConfigSchema = createWaveConfigSchema(
+  CreateWaveDecisionsStrategySchema
+);
+
+const UpdateWaveConfigSchema = createWaveConfigSchema(
+  UpdateWaveDecisionsStrategySchema
+);
 
 const WaveOutcomeDistributionItemSchema =
   Joi.object<ApiWaveOutcomeDistributionItem>({
@@ -1301,15 +1345,16 @@ const waveSchemaBaseValidations = {
   wave: WaveConfigSchema.required()
 };
 
-const WaveSchema = Joi.object<ApiCreateNewWave>({
+export const WaveSchema = Joi.object<ApiCreateNewWave>({
   ...waveSchemaBaseValidations,
   description_drop: NewWaveDropSchema.required(),
   outcomes: Joi.array().required().min(0).items(WaveOutcomeSchema)
 });
 
-const UpdateWaveSchema = Joi.object<ApiUpdateWaveRequest>({
+export const UpdateWaveSchema = Joi.object<ApiUpdateWaveRequest>({
   ...waveSchemaBaseValidations,
-  participation: UpdateWaveParticipationSchema.required()
+  participation: UpdateWaveParticipationSchema.required(),
+  wave: UpdateWaveConfigSchema.required()
 });
 
 const SetPinnedDropSchema = Joi.object<ApiSetPinnedDropRequest>({

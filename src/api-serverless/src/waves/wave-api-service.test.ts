@@ -6,6 +6,7 @@ import {
 import { aWave } from '@/tests/fixtures/wave.fixture';
 import { ApiCreateNewWave } from '../generated/models/ApiCreateNewWave';
 import { ApiUpdateWaveRequest } from '../generated/models/ApiUpdateWaveRequest';
+import { ApiWaveDecisionsStrategy } from '../generated/models/ApiWaveDecisionsStrategy';
 import { ApiWaveCreditType } from '../generated/models/ApiWaveCreditType';
 import { ApiWaveParticipationIdentitySubmissionAllowDuplicates } from '../generated/models/ApiWaveParticipationIdentitySubmissionAllowDuplicates';
 import { ApiWaveParticipationIdentitySubmissionWhoCanBeSubmitted } from '../generated/models/ApiWaveParticipationIdentitySubmissionWhoCanBeSubmitted';
@@ -94,12 +95,14 @@ describe('WaveApiService updateWave immutability', () => {
     name = 'updated-wave',
     type = ApiWaveType.Rank,
     submissionStrategy,
-    maxVotesPerIdentityToDrop
+    maxVotesPerIdentityToDrop,
+    decisionsStrategy = null
   }: {
     name?: string;
     type?: ApiWaveType;
     submissionStrategy?: ApiUpdateWaveRequest['participation']['submission_strategy'];
     maxVotesPerIdentityToDrop?: number | null;
+    decisionsStrategy?: ApiWaveDecisionsStrategy | null;
   }): ApiUpdateWaveRequest {
     return {
       name,
@@ -137,7 +140,7 @@ describe('WaveApiService updateWave immutability', () => {
         max_votes_per_identity_to_drop: maxVotesPerIdentityToDrop,
         time_lock_ms: null,
         admin_group: { group_id: null },
-        decisions_strategy: null,
+        decisions_strategy: decisionsStrategy,
         admin_drop_deletion_enabled: false
       }
     };
@@ -285,6 +288,122 @@ describe('WaveApiService updateWave immutability', () => {
 
     expect(wavesApiDb.deleteWave).toHaveBeenCalled();
     expect(waveMappers.createWaveToNewWaveEntity).toHaveBeenCalled();
+  });
+
+  it('allows renaming an ended wave with an existing past decision strategy', async () => {
+    const existingDecisionStrategy = {
+      first_decision_time: Time.currentMillis() - Time.hours(2).toMillis(),
+      subsequent_decisions: [Time.hours(1).toMillis()],
+      is_rolling: false
+    };
+    const waveBeforeUpdate = aWave(
+      {
+        type: WaveType.RANK,
+        created_by: 'profile-1',
+        decisions_strategy: existingDecisionStrategy,
+        next_decision_time: null
+      },
+      {
+        id: 'wave-1',
+        name: 'wave-1',
+        serial_no: 1
+      }
+    );
+    const { service, wavesApiDb, waveMappers, ctx } = createService({
+      waveBeforeUpdate
+    });
+
+    await expect(
+      service.updateWave(
+        'wave-1',
+        updateRequest({
+          name: 'renamed-ended-wave',
+          decisionsStrategy: existingDecisionStrategy
+        }),
+        ctx
+      )
+    ).resolves.toEqual({ id: 'wave-1' });
+
+    expect(wavesApiDb.deleteWave).toHaveBeenCalled();
+    expect(waveMappers.createWaveToNewWaveEntity).toHaveBeenCalled();
+  });
+
+  it('preserves pending future decision time when the decision strategy is unchanged', async () => {
+    const currentMillis = Time.currentMillis();
+    const existingDecisionStrategy = {
+      first_decision_time: currentMillis - Time.hours(5).toMillis(),
+      subsequent_decisions: [Time.hours(10).toMillis()],
+      is_rolling: false
+    };
+    const pendingDecisionTime = currentMillis + Time.hours(2).toMillis();
+    const waveBeforeUpdate = aWave(
+      {
+        type: WaveType.RANK,
+        created_by: 'profile-1',
+        decisions_strategy: existingDecisionStrategy,
+        next_decision_time: pendingDecisionTime
+      },
+      {
+        id: 'wave-1',
+        name: 'wave-1',
+        serial_no: 1
+      }
+    );
+    const { service, waveMappers, ctx } = createService({
+      waveBeforeUpdate
+    });
+
+    await expect(
+      service.updateWave(
+        'wave-1',
+        updateRequest({
+          name: 'renamed-wave',
+          decisionsStrategy: existingDecisionStrategy
+        }),
+        ctx
+      )
+    ).resolves.toEqual({ id: 'wave-1' });
+
+    expect(waveMappers.createWaveToNewWaveEntity).toHaveBeenCalledWith(
+      expect.objectContaining({ nextDecisionTime: pendingDecisionTime })
+    );
+  });
+
+  it('rejects changing a decision strategy to start in the past', async () => {
+    const waveBeforeUpdate = aWave(
+      {
+        type: WaveType.RANK,
+        created_by: 'profile-1',
+        decisions_strategy: {
+          first_decision_time: Time.currentMillis() + Time.hours(1).toMillis(),
+          subsequent_decisions: [],
+          is_rolling: false
+        }
+      },
+      {
+        id: 'wave-1',
+        name: 'wave-1',
+        serial_no: 1
+      }
+    );
+    const { service, wavesApiDb, ctx } = createService({ waveBeforeUpdate });
+
+    await expect(
+      service.updateWave(
+        'wave-1',
+        updateRequest({
+          decisionsStrategy: {
+            first_decision_time:
+              Time.currentMillis() - Time.hours(2).toMillis(),
+            subsequent_decisions: [],
+            is_rolling: false
+          }
+        }),
+        ctx
+      )
+    ).rejects.toThrow(`first_decision_time must be in the future`);
+
+    expect(wavesApiDb.deleteWave).not.toHaveBeenCalled();
   });
 
   it('rejects lowering approve max_winners below existing decisions count', async () => {

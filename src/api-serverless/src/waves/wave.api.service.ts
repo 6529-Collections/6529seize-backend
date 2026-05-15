@@ -101,6 +101,13 @@ import { sendIdentityPushNotifications } from '@/api/push-notifications/push-not
 const CARD_SET_TDH_SUPPORTED_CONTRACTS = new Set(
   [MEMES_CONTRACT, GRADIENT_CONTRACT].map((contract) => contract.toLowerCase())
 );
+const FIRST_DECISION_TIME_IN_FUTURE_ERROR =
+  'first_decision_time must be in the future';
+
+type ComparableDecisionStrategy = Pick<
+  ApiWaveDecisionsStrategy,
+  'first_decision_time' | 'subsequent_decisions' | 'is_rolling'
+>;
 
 export class WaveApiService {
   constructor(
@@ -220,6 +227,78 @@ export class WaveApiService {
         `max_votes_per_identity_to_drop can only be increased after creation`
       );
     }
+  }
+
+  private assertChangedDecisionStrategyStartsInFuture({
+    request,
+    waveBeforeUpdate,
+    currentMillis
+  }: {
+    request: ApiUpdateWaveRequest;
+    waveBeforeUpdate: Pick<WaveEntity, 'decisions_strategy'>;
+    currentMillis: number;
+  }) {
+    const requestedDecisionStrategy = request.wave.decisions_strategy ?? null;
+    if (
+      this.areDecisionStrategiesEqual(
+        requestedDecisionStrategy,
+        waveBeforeUpdate.decisions_strategy
+      )
+    ) {
+      return;
+    }
+    if (
+      requestedDecisionStrategy !== null &&
+      requestedDecisionStrategy.first_decision_time < currentMillis
+    ) {
+      throw new BadRequestException(FIRST_DECISION_TIME_IN_FUTURE_ERROR);
+    }
+  }
+
+  private areDecisionStrategiesEqual(
+    left: ComparableDecisionStrategy | null,
+    right: ComparableDecisionStrategy | null
+  ): boolean {
+    if (left === null || right === null) {
+      return left === right;
+    }
+    if (
+      left.first_decision_time !== right.first_decision_time ||
+      left.is_rolling !== right.is_rolling ||
+      left.subsequent_decisions.length !== right.subsequent_decisions.length
+    ) {
+      return false;
+    }
+    return left.subsequent_decisions.every(
+      (decisionGap, index) => decisionGap === right.subsequent_decisions[index]
+    );
+  }
+
+  private getNextDecisionTimeForWaveUpdate({
+    request,
+    waveBeforeUpdate,
+    waveUpdateTime
+  }: {
+    request: ApiUpdateWaveRequest;
+    waveBeforeUpdate: Pick<
+      WaveEntity,
+      'decisions_strategy' | 'next_decision_time'
+    >;
+    waveUpdateTime: number;
+  }): number | null {
+    const requestedDecisionStrategy = request.wave.decisions_strategy ?? null;
+    if (
+      this.areDecisionStrategiesEqual(
+        requestedDecisionStrategy,
+        waveBeforeUpdate.decisions_strategy
+      )
+    ) {
+      return waveBeforeUpdate.next_decision_time;
+    }
+    return this.calculateNextDecisionTimeRelativeToNow(
+      waveUpdateTime,
+      requestedDecisionStrategy
+    );
   }
 
   public async createWave(
@@ -1571,9 +1650,10 @@ export class WaveApiService {
         if (!waveBeforeUpdate) {
           throw new NotFoundException(`Wave ${waveId} not found`);
         }
+        const currentMillis = Time.currentMillis();
         if (
           waveBeforeUpdate.next_decision_time !== null &&
-          waveBeforeUpdate.next_decision_time < Time.currentMillis()
+          waveBeforeUpdate.next_decision_time < currentMillis
         ) {
           throw new ForbiddenException(
             `Wave has unresolved decisions and can't be edited at the moment. Try again later`
@@ -1615,6 +1695,11 @@ export class WaveApiService {
           request,
           waveBeforeUpdate
         });
+        this.assertChangedDecisionStrategyStartsInFuture({
+          request,
+          waveBeforeUpdate,
+          currentMillis
+        });
         this.assertImmutableWaveUpdateFieldsUnchanged({
           request,
           waveBeforeUpdate
@@ -1630,10 +1715,11 @@ export class WaveApiService {
           request,
           created_by: waveBeforeUpdate.created_by,
           descriptionDropId: waveBeforeUpdate.description_drop_id,
-          nextDecisionTime: this.calculateNextDecisionTimeRelativeToNow(
-            waveUpdateTime,
-            request.wave.decisions_strategy
-          ),
+          nextDecisionTime: this.getNextDecisionTimeForWaveUpdate({
+            request,
+            waveBeforeUpdate,
+            waveUpdateTime
+          }),
           isDirectMessage: waveBeforeUpdate.is_direct_message ?? false,
           existingSubmissionStrategy: waveBeforeUpdate,
           existingWaveSettings: waveBeforeUpdate
