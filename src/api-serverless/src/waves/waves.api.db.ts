@@ -14,6 +14,7 @@ import {
   NFTS_TABLE,
   PINNED_WAVES_TABLE,
   WAVE_DROPPER_METRICS_TABLE,
+  WAVE_CHAT_DROP_COOLDOWNS_TABLE,
   WAVE_METRICS_TABLE,
   WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE,
   WAVE_OUTCOMES_TABLE,
@@ -43,6 +44,7 @@ import {
   WaveOutcomeEntity
 } from '../../../entities/IWave';
 import { WaveDropperMetricEntity } from '../../../entities/IWaveDropperMetric';
+import { WaveChatDropCooldownEntity } from '@/entities/IWaveChatDropCooldown';
 import { WaveMetricEntity } from '../../../entities/IWaveMetric';
 import { WaveReaderMetricEntity } from '../../../entities/IWaveReaderMetric';
 import { RequestContext } from '../../../request.context';
@@ -83,6 +85,15 @@ type WaveVotingCreditNftRow = {
   token_id: number;
 };
 
+type WaveChatDropCooldownPolicyRow = {
+  wave_id: string;
+  chat_slow_mode_cooldown_ms: number | string | null;
+  latest_drop_timestamp: number | string | null;
+  stored_next_drop_timestamp: number | string | null;
+  stored_created_at: number | string | null;
+  stored_updated_at: number | string | null;
+};
+
 export interface WaveMentionOverview {
   id: string;
   name: string;
@@ -96,6 +107,33 @@ export interface WaveMentionOverview {
 }
 
 export class WavesApiDb extends LazyDbAccessCompatibleService {
+  private toNullableNumber(
+    value: number | string | null | undefined
+  ): number | null {
+    return value === null || value === undefined ? null : Number(value);
+  }
+
+  private resolveWaveChatDropCooldownPolicy(
+    row: Pick<
+      WaveChatDropCooldownPolicyRow,
+      'chat_slow_mode_cooldown_ms' | 'latest_drop_timestamp'
+    >
+  ): {
+    cooldownMs: number | null;
+    latestDropTimestamp: number | null;
+    nextDropTimestamp: number;
+  } {
+    const cooldownMs = this.toNullableNumber(row.chat_slow_mode_cooldown_ms);
+    const latestDropTimestamp = this.toNullableNumber(
+      row.latest_drop_timestamp
+    );
+    const nextDropTimestamp =
+      latestDropTimestamp !== null && cooldownMs !== null && cooldownMs > 0
+        ? latestDropTimestamp + cooldownMs
+        : 0;
+    return { cooldownMs, latestDropTimestamp, nextDropTimestamp };
+  }
+
   private parseWaveEntity(entity: RawWaveEntity): WaveEntity {
     return {
       ...entity,
@@ -268,6 +306,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
            visibility_group_id,
            chat_group_id,
            chat_enabled,
+           chat_slow_mode_cooldown_ms,
            participation_group_id,
            participation_max_applications_per_participant,
            participation_required_metadata,
@@ -308,6 +347,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                   :visibility_group_id,
                   :chat_group_id,
                   :chat_enabled,
+                  :chat_slow_mode_cooldown_ms,
                   :participation_group_id,
                   :participation_max_applications_per_participant,
                   :participation_required_metadata,
@@ -358,6 +398,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                             visibility_group_id,
                             chat_group_id,
                             chat_enabled,
+                            chat_slow_mode_cooldown_ms,
                             participation_group_id,
                             participation_max_applications_per_participant,
                             participation_required_metadata,
@@ -401,6 +442,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                                    :visibility_group_id,
                                    :chat_group_id,
                                    :chat_enabled,
+                                   :chat_slow_mode_cooldown_ms,
                                    :participation_group_id,
                                    :participation_max_applications_per_participant,
                                    :participation_required_metadata,
@@ -1041,6 +1083,194 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       );
     timer?.stop('wavesApiDb->findWaveDropperMetricsByWaveIds');
     return result;
+  }
+
+  async findWaveChatDropCooldownsByWaveIds(
+    params: { profileId: string; waveIds: string[] },
+    ctx: RequestContext
+  ): Promise<Record<string, WaveChatDropCooldownEntity>> {
+    if (!params.waveIds.length) {
+      return {};
+    }
+    const timerKey = `${this.constructor.name}->findWaveChatDropCooldownsByWaveIds`;
+    ctx.timer?.start(timerKey);
+    try {
+      const queryOptions = ctx.connection
+        ? { wrappedConnection: ctx.connection }
+        : undefined;
+      const now = Time.currentMillis();
+      const rows = await this.db.execute<WaveChatDropCooldownPolicyRow>(
+        `select w.id as wave_id,
+                w.chat_slow_mode_cooldown_ms,
+                max(d.created_at) as latest_drop_timestamp,
+                c.next_drop_timestamp as stored_next_drop_timestamp,
+                c.created_at as stored_created_at,
+                c.updated_at as stored_updated_at
+         from ${WAVES_TABLE} w
+         left join ${DROPS_TABLE} d
+           on d.wave_id = w.id
+          and d.author_id = :profileId
+          and d.drop_type = :dropType
+         left join ${WAVE_CHAT_DROP_COOLDOWNS_TABLE} c
+           on c.wave_id = w.id
+          and c.profile_id = :profileId
+         where w.id in (:waveIds)
+         group by w.id,
+                  w.chat_slow_mode_cooldown_ms,
+                  c.next_drop_timestamp,
+                  c.created_at,
+                  c.updated_at`,
+        {
+          waveIds: Array.from(new Set(params.waveIds)),
+          profileId: params.profileId,
+          dropType: DropType.CHAT
+        },
+        queryOptions
+      );
+      const result: Record<string, WaveChatDropCooldownEntity> = {};
+      const updatePromises: Promise<unknown>[] = [];
+      for (const row of rows) {
+        const policy = this.resolveWaveChatDropCooldownPolicy(row);
+        const storedNextDropTimestamp = this.toNullableNumber(
+          row.stored_next_drop_timestamp
+        );
+        const hasStoredRow = storedNextDropTimestamp !== null;
+        const storedRowDrifted =
+          hasStoredRow && storedNextDropTimestamp !== policy.nextDropTimestamp;
+        if (storedRowDrifted) {
+          updatePromises.push(
+            this.db.execute(
+              `update ${WAVE_CHAT_DROP_COOLDOWNS_TABLE}
+               set next_drop_timestamp = :nextDropTimestamp,
+                   updated_at = :now
+               where wave_id = :waveId and profile_id = :profileId`,
+              {
+                waveId: row.wave_id,
+                profileId: params.profileId,
+                nextDropTimestamp: policy.nextDropTimestamp,
+                now
+              },
+              queryOptions
+            )
+          );
+        }
+        if (!hasStoredRow && policy.nextDropTimestamp <= now) {
+          continue;
+        }
+        result[row.wave_id] = {
+          wave_id: row.wave_id,
+          profile_id: params.profileId,
+          next_drop_timestamp: policy.nextDropTimestamp,
+          created_at:
+            this.toNullableNumber(row.stored_created_at) ??
+            policy.latestDropTimestamp ??
+            now,
+          updated_at: storedRowDrifted
+            ? now
+            : (this.toNullableNumber(row.stored_updated_at) ??
+              policy.latestDropTimestamp ??
+              now)
+        };
+      }
+      await Promise.all(updatePromises);
+
+      return result;
+    } finally {
+      ctx.timer?.stop(timerKey);
+    }
+  }
+
+  async reserveWaveChatDropCooldown(
+    params: {
+      waveId: string;
+      profileId: string;
+      now: number;
+      cooldownMs: number;
+    },
+    ctx: RequestContext
+  ): Promise<number | null> {
+    const connection = ctx.connection;
+    if (!connection) {
+      throw new Error('reserveWaveChatDropCooldown requires a connection');
+    }
+    const timerKey = `${this.constructor.name}->reserveWaveChatDropCooldown`;
+    ctx.timer?.start(timerKey);
+    try {
+      await this.db.execute(
+        `insert ignore into ${WAVE_CHAT_DROP_COOLDOWNS_TABLE}
+         (wave_id, profile_id, next_drop_timestamp, created_at, updated_at)
+         values (:waveId, :profileId, 0, :now, :now)`,
+        params,
+        { wrappedConnection: connection }
+      );
+      const existing = await this.db.oneOrNull<WaveChatDropCooldownEntity>(
+        `select * from ${WAVE_CHAT_DROP_COOLDOWNS_TABLE}
+         where wave_id = :waveId and profile_id = :profileId
+         for update`,
+        params,
+        { wrappedConnection: connection }
+      );
+      if (!existing) {
+        throw new Error('Failed to lock wave chat drop cooldown row');
+      }
+      const wavePolicy = await this.db.oneOrNull<{
+        chat_slow_mode_cooldown_ms: number | null;
+      }>(
+        `select chat_slow_mode_cooldown_ms
+         from ${WAVES_TABLE}
+         where id = :waveId
+         for update`,
+        params,
+        { wrappedConnection: connection }
+      );
+      if (!wavePolicy) {
+        throw new Error(`Wave ${params.waveId} not found`);
+      }
+      const latestDrop = await this.db.oneOrNull<{
+        latest_drop_timestamp: number | null;
+      }>(
+        `select created_at as latest_drop_timestamp
+         from ${DROPS_TABLE}
+         where wave_id = :waveId
+           and author_id = :profileId
+           and drop_type = :dropType
+         order by created_at desc
+         limit 1
+         for update`,
+        { ...params, dropType: DropType.CHAT },
+        { wrappedConnection: connection }
+      );
+      const policy = this.resolveWaveChatDropCooldownPolicy({
+        chat_slow_mode_cooldown_ms: wavePolicy.chat_slow_mode_cooldown_ms,
+        latest_drop_timestamp: latestDrop?.latest_drop_timestamp ?? null
+      });
+      const existingNextDropTimestamp = Number(existing.next_drop_timestamp);
+      const blockedUntil = policy.nextDropTimestamp;
+      let nextDropTimestamp: number;
+      if (blockedUntil > params.now) {
+        nextDropTimestamp = blockedUntil;
+      } else if (policy.cooldownMs !== null && policy.cooldownMs > 0) {
+        nextDropTimestamp = params.now + policy.cooldownMs;
+      } else {
+        nextDropTimestamp = 0;
+      }
+      if (existingNextDropTimestamp !== nextDropTimestamp) {
+        await this.db.execute(
+          `update ${WAVE_CHAT_DROP_COOLDOWNS_TABLE}
+           set next_drop_timestamp = :nextDropTimestamp,
+               updated_at = :now
+           where wave_id = :waveId and profile_id = :profileId`,
+          { ...params, nextDropTimestamp },
+          { wrappedConnection: connection }
+        );
+      }
+      if (blockedUntil > params.now) {
+        return blockedUntil;
+      }
+      return null;
+    } finally {
+      ctx.timer?.stop(timerKey);
+    }
   }
 
   async findById(

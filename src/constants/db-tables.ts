@@ -137,6 +137,7 @@ export const MINTING_CLAIMS_TABLE = 'minting_claims';
 export const MINTING_CLAIM_ACTIONS_TABLE = 'minting_claim_actions';
 export const WAVE_METRICS_TABLE = 'wave_metrics';
 export const WAVE_DROPPER_METRICS_TABLE = 'wave_dropper_metrics';
+export const WAVE_CHAT_DROP_COOLDOWNS_TABLE = 'wave_chat_drop_cooldowns';
 export const WAVE_READER_METRICS_TABLE = 'wave_reader_metrics';
 export const WAVE_CURATIONS_TABLE = 'wave_curation_groups';
 export const METRIC_ROLLUP_HOUR_TABLE = 'metric_rollup_hour';

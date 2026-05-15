@@ -170,6 +170,7 @@ export {
   WaveDecisionEntity,
   WaveDecisionWinnerDropEntity
 } from './IWaveDecision';
+export { WaveChatDropCooldownEntity } from './IWaveChatDropCooldown';
 export { WaveDropperMetricEntity } from './IWaveDropperMetric';
 export { WaveLeaderboardEntryEntity } from './IWaveLeaderboardEntry';
 export { WaveMetricEntity } from './IWaveMetric';

@@ -118,6 +118,29 @@ describe('CreateOrUpdateDropUseCase', () => {
     };
   }
 
+  function createSlowModeWave(overrides: Record<string, unknown> = {}) {
+    return {
+      id: 'wave-1',
+      created_by: 'creator-profile',
+      admin_group_id: null,
+      chat_enabled: true,
+      chat_group_id: null,
+      chat_slow_mode_cooldown_ms: 60000,
+      ...overrides
+    };
+  }
+
+  function createChatDropModel(overrides: Record<string, unknown> = {}) {
+    return {
+      drop_id: null,
+      wave_id: 'wave-1',
+      drop_type: DropType.CHAT,
+      author_identity: 'author-profile',
+      author_id: 'author-profile',
+      ...overrides
+    };
+  }
+
   async function verifyIdentitySubmissionDuplicates(
     useCase: CreateOrUpdateDropUseCase
   ) {
@@ -497,6 +520,109 @@ describe('CreateOrUpdateDropUseCase', () => {
     ).resolves.toBeUndefined();
 
     expect(wavesApiDb.countWaveDecisionsByWaveIds).not.toHaveBeenCalled();
+  });
+
+  it('reserves chat slow mode cooldown for non-admin chat drops', async () => {
+    const wavesApiDb = {
+      reserveWaveChatDropCooldown: jest.fn().mockResolvedValue(null)
+    };
+    const useCase = createUseCaseWithMocks({ wavesApiDb });
+
+    await expect(
+      (useCase as any).verifyChatSlowModeLimitations(
+        {
+          isDescriptionDrop: false,
+          wave: createSlowModeWave(),
+          model: createChatDropModel(),
+          groupIdsUserIsEligibleFor: []
+        },
+        { connection: {} }
+      )
+    ).resolves.toBeUndefined();
+
+    expect(wavesApiDb.reserveWaveChatDropCooldown).toHaveBeenCalledWith(
+      expect.objectContaining({
+        waveId: 'wave-1',
+        profileId: 'author-profile',
+        cooldownMs: 60000
+      }),
+      { timer: undefined, connection: {} }
+    );
+  });
+
+  it('rejects non-admin chat drops while slow mode cooldown is active', async () => {
+    const wavesApiDb = {
+      reserveWaveChatDropCooldown: jest.fn().mockResolvedValue(12345)
+    };
+    const useCase = createUseCaseWithMocks({ wavesApiDb });
+
+    await expect(
+      (useCase as any).verifyChatSlowModeLimitations(
+        {
+          isDescriptionDrop: false,
+          wave: createSlowModeWave(),
+          model: createChatDropModel(),
+          groupIdsUserIsEligibleFor: []
+        },
+        { connection: {} }
+      )
+    ).rejects.toThrow(
+      'Slow mode is enabled. You can create your next chat drop at 12345'
+    );
+  });
+
+  it('does not enforce chat slow mode for wave admins', async () => {
+    const wavesApiDb = {
+      reserveWaveChatDropCooldown: jest.fn()
+    };
+    const useCase = createUseCaseWithMocks({ wavesApiDb });
+
+    await expect(
+      (useCase as any).verifyChatSlowModeLimitations(
+        {
+          isDescriptionDrop: false,
+          wave: createSlowModeWave({ admin_group_id: 'admin-group' }),
+          model: createChatDropModel(),
+          groupIdsUserIsEligibleFor: ['admin-group']
+        },
+        { connection: {} }
+      )
+    ).resolves.toBeUndefined();
+
+    expect(wavesApiDb.reserveWaveChatDropCooldown).not.toHaveBeenCalled();
+  });
+
+  it('does not enforce chat slow mode for participatory drops or edits', async () => {
+    const wavesApiDb = {
+      reserveWaveChatDropCooldown: jest.fn()
+    };
+    const useCase = createUseCaseWithMocks({ wavesApiDb });
+
+    await expect(
+      (useCase as any).verifyChatSlowModeLimitations(
+        {
+          isDescriptionDrop: false,
+          wave: createSlowModeWave(),
+          model: createChatDropModel({ drop_type: DropType.PARTICIPATORY }),
+          groupIdsUserIsEligibleFor: []
+        },
+        { connection: {} }
+      )
+    ).resolves.toBeUndefined();
+
+    await expect(
+      (useCase as any).verifyChatSlowModeLimitations(
+        {
+          isDescriptionDrop: false,
+          wave: createSlowModeWave(),
+          model: createChatDropModel({ drop_id: 'drop-1' }),
+          groupIdsUserIsEligibleFor: []
+        },
+        { connection: {} }
+      )
+    ).resolves.toBeUndefined();
+
+    expect(wavesApiDb.reserveWaveChatDropCooldown).not.toHaveBeenCalled();
   });
 
   it('rejects pdf uploads from drop media URLs', () => {

@@ -1,10 +1,16 @@
 import 'reflect-metadata';
-import { WAVE_DROPPER_METRICS_TABLE } from '@/constants';
+import {
+  DROPS_TABLE,
+  WAVE_CHAT_DROP_COOLDOWNS_TABLE,
+  WAVE_DROPPER_METRICS_TABLE
+} from '@/constants';
+import { DropType } from '@/entities/IDrop';
 import { RequestContext } from '@/request.context';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import { anIdentity, withIdentities } from '@/tests/fixtures/identity.fixture';
 import { aWave, withWaves } from '@/tests/fixtures/wave.fixture';
+import { Time } from '@/time';
 import { WavesApiDb } from './waves.api.db';
 
 const repo = new WavesApiDb(() => sqlExecutor);
@@ -124,6 +130,197 @@ describeWithSeed(
         expect.objectContaining({ id: privateWave.id }),
         expect.objectContaining({ id: publicWave.id })
       ]);
+    });
+  }
+);
+
+const slowModeCooldownMs = Time.minutes(5).toMillis();
+const recentDropTimestamp = Time.minutesAgo(1).toMillis();
+const expiredDropTimestamp = Time.minutesAgo(10).toMillis();
+const staleCooldownTimestamp = Time.minutesFromNow(30).toMillis();
+const slowModeWave = aWave(
+  {
+    created_by: author.profile_id!,
+    chat_slow_mode_cooldown_ms: slowModeCooldownMs
+  },
+  { id: 'wave-slow-mode', serial_no: 3, name: 'Slow Mode Wave' }
+);
+const reserveSlowModeWave = aWave(
+  {
+    created_by: author.profile_id!,
+    chat_slow_mode_cooldown_ms: slowModeCooldownMs
+  },
+  { id: 'wave-slow-mode-reserve', serial_no: 4, name: 'Slow Reserve Wave' }
+);
+
+describeWithSeed(
+  'WavesApiDb chat slow mode cooldown reads',
+  [
+    withIdentities([author]),
+    withWaves([slowModeWave]),
+    {
+      table: DROPS_TABLE,
+      rows: [
+        {
+          id: 'recent-chat-drop',
+          wave_id: slowModeWave.id,
+          author_id: author.profile_id!,
+          created_at: recentDropTimestamp,
+          updated_at: null,
+          title: null,
+          parts_count: 1,
+          reply_to_drop_id: null,
+          reply_to_part_id: null,
+          drop_type: DropType.CHAT,
+          signature: null,
+          hide_link_preview: false
+        }
+      ]
+    }
+  ],
+  () => {
+    it('infers next drop timestamp from recent chat drops when no cooldown row exists', async () => {
+      await expect(
+        repo.findWaveChatDropCooldownsByWaveIds(
+          {
+            profileId: author.profile_id!,
+            waveIds: [slowModeWave.id]
+          },
+          ctx
+        )
+      ).resolves.toEqual({
+        [slowModeWave.id]: expect.objectContaining({
+          wave_id: slowModeWave.id,
+          profile_id: author.profile_id!,
+          next_drop_timestamp: recentDropTimestamp + slowModeCooldownMs
+        })
+      });
+    });
+  }
+);
+
+describeWithSeed(
+  'WavesApiDb chat slow mode cooldown reconciliation',
+  [
+    withIdentities([author]),
+    withWaves([slowModeWave, reserveSlowModeWave]),
+    {
+      table: DROPS_TABLE,
+      rows: [
+        {
+          id: 'recent-chat-drop',
+          wave_id: slowModeWave.id,
+          author_id: author.profile_id!,
+          created_at: recentDropTimestamp,
+          updated_at: null,
+          title: null,
+          parts_count: 1,
+          reply_to_drop_id: null,
+          reply_to_part_id: null,
+          drop_type: DropType.CHAT,
+          signature: null,
+          hide_link_preview: false
+        },
+        {
+          id: 'expired-chat-drop',
+          wave_id: reserveSlowModeWave.id,
+          author_id: author.profile_id!,
+          created_at: expiredDropTimestamp,
+          updated_at: null,
+          title: null,
+          parts_count: 1,
+          reply_to_drop_id: null,
+          reply_to_part_id: null,
+          drop_type: DropType.CHAT,
+          signature: null,
+          hide_link_preview: false
+        }
+      ]
+    },
+    {
+      table: WAVE_CHAT_DROP_COOLDOWNS_TABLE,
+      rows: [
+        {
+          wave_id: slowModeWave.id,
+          profile_id: author.profile_id!,
+          next_drop_timestamp: staleCooldownTimestamp,
+          created_at: 1,
+          updated_at: 1
+        },
+        {
+          wave_id: reserveSlowModeWave.id,
+          profile_id: author.profile_id!,
+          next_drop_timestamp: staleCooldownTimestamp,
+          created_at: 1,
+          updated_at: 1
+        }
+      ]
+    }
+  ],
+  () => {
+    it('recomputes and persists stale stored cooldown rows on read', async () => {
+      const expectedNextDropTimestamp =
+        recentDropTimestamp + slowModeCooldownMs;
+
+      await expect(
+        repo.findWaveChatDropCooldownsByWaveIds(
+          {
+            profileId: author.profile_id!,
+            waveIds: [slowModeWave.id]
+          },
+          ctx
+        )
+      ).resolves.toEqual({
+        [slowModeWave.id]: expect.objectContaining({
+          wave_id: slowModeWave.id,
+          profile_id: author.profile_id!,
+          next_drop_timestamp: expectedNextDropTimestamp
+        })
+      });
+
+      const stored = await sqlExecutor.oneOrNull<{
+        next_drop_timestamp: number;
+      }>(
+        `select next_drop_timestamp
+         from ${WAVE_CHAT_DROP_COOLDOWNS_TABLE}
+         where wave_id = :waveId and profile_id = :profileId`,
+        { waveId: slowModeWave.id, profileId: author.profile_id! }
+      );
+      expect(Number(stored?.next_drop_timestamp)).toBe(
+        expectedNextDropTimestamp
+      );
+    });
+
+    it('recomputes stale stored cooldown rows before enforcing reserve', async () => {
+      const now = Time.currentMillis();
+
+      await sqlExecutor.executeNativeQueriesInTransaction(
+        async (connection) => {
+          await expect(
+            repo.reserveWaveChatDropCooldown(
+              {
+                waveId: reserveSlowModeWave.id,
+                profileId: author.profile_id!,
+                now,
+                cooldownMs: Time.hours(1).toMillis()
+              },
+              { timer: undefined, connection }
+            )
+          ).resolves.toBeNull();
+        }
+      );
+
+      const stored = await sqlExecutor.oneOrNull<{
+        next_drop_timestamp: number;
+      }>(
+        `select next_drop_timestamp
+         from ${WAVE_CHAT_DROP_COOLDOWNS_TABLE}
+         where wave_id = :waveId and profile_id = :profileId`,
+        { waveId: reserveSlowModeWave.id, profileId: author.profile_id! }
+      );
+      expect(Number(stored?.next_drop_timestamp)).toBe(
+        now + slowModeCooldownMs
+      );
     });
   }
 );

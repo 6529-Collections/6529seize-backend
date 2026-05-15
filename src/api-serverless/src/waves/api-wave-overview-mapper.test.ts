@@ -25,6 +25,7 @@ function makeWave(overrides: Partial<WaveEntity> = {}): WaveEntity {
     participation_group_id: null,
     chat_enabled: true,
     chat_group_id: null,
+    chat_slow_mode_cooldown_ms: null,
     participation_max_applications_per_participant: null,
     participation_required_metadata: [],
     participation_required_media: [],
@@ -71,7 +72,8 @@ function createMapper() {
       .mockResolvedValue(new Set<string>()),
     findWaveReaderMetricsByWaveIds: jest.fn().mockResolvedValue({}),
     findIdentityUnreadDropsCountByWaveId: jest.fn().mockResolvedValue({}),
-    findFirstUnreadDropSerialNoByWaveId: jest.fn().mockResolvedValue({})
+    findFirstUnreadDropSerialNoByWaveId: jest.fn().mockResolvedValue({}),
+    findWaveChatDropCooldownsByWaveIds: jest.fn().mockResolvedValue({})
   };
   const dropsDb = {
     getDropPartOnes: jest.fn().mockResolvedValue({}),
@@ -292,5 +294,39 @@ describe('ApiWaveOverviewMapper', () => {
       },
       undefined
     );
+  });
+
+  it('maps active chat slow mode cooldown in context profile context', async () => {
+    const { mapper, deps } = createMapper();
+    const nextDropTimestamp = Date.now() + 60000;
+    deps.wavesApiDb.findWaveChatDropCooldownsByWaveIds.mockResolvedValue({
+      'wave-1': {
+        wave_id: 'wave-1',
+        profile_id: 'viewer-1',
+        next_drop_timestamp: nextDropTimestamp,
+        created_at: 1,
+        updated_at: 1
+      }
+    });
+
+    const result = await mapper.mapWaves(
+      [
+        makeWave({
+          chat_slow_mode_cooldown_ms: 60000
+        })
+      ],
+      {
+        authenticationContext: AuthenticationContext.fromProfileId('viewer-1')
+      }
+    );
+
+    expect(result['wave-1']?.context_profile_context).toEqual({
+      subscribed: false,
+      pinned: false,
+      can_chat: false,
+      next_drop_allowed: nextDropTimestamp,
+      unread_drops: 0,
+      muted: false
+    });
   });
 });
