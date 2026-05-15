@@ -284,6 +284,13 @@ export class GammaIoAdapter implements PlatformAdapter {
     );
     const price = apiData?.price;
     const saleType = price ? 'FIXED' : 'UNKNOWN';
+    const collection =
+      identifier?.kind === 'collection'
+        ? { name: slugToName(identifier.collectionSlug) }
+        : undefined;
+    const apiCollection = apiData?.collectionName
+      ? { name: apiData.collectionName }
+      : undefined;
 
     if (!hasGammaIoMetadata(title, description, imageUrl)) {
       throw new CustomApiCompliantException(
@@ -296,12 +303,7 @@ export class GammaIoAdapter implements PlatformAdapter {
       asset: {
         title,
         description,
-        collection:
-          identifier?.kind === 'collection'
-            ? { name: slugToName(identifier.collectionSlug) }
-            : apiData?.collectionName
-              ? { name: apiData.collectionName }
-              : undefined,
+        collection: collection ?? apiCollection,
         tokenId:
           identifier?.kind === 'collection'
             ? identifier.tokenId
