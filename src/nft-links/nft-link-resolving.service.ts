@@ -58,6 +58,7 @@ export class NftLinkResolvingService {
             identifiers.instanceSlug ??
             identifiers.instanceId ??
             identifiers.appId ??
+            identifiers.customId ??
             null
         },
         ctx
@@ -251,6 +252,7 @@ export class NftLinkResolvingService {
                 identifiers.instanceSlug ??
                 identifiers.instanceId ??
                 identifiers.appId ??
+                identifiers.customId ??
                 null
             },
             ctx
