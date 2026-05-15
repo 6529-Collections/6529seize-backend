@@ -109,6 +109,54 @@ describe('NftLinkResolver Gamma.io support', () => {
     );
   });
 
+  it('resolves Gamma.io ordinal print links from Gamma API metadata and mint price', async () => {
+    const printId = 'cmlzfnfj50002l904lujsztqj';
+
+    fetchTextWithTimeoutMock.mockResolvedValue('<html><head></head></html>');
+    fetchJsonWithTimeoutMock.mockResolvedValue({
+      collection: {
+        id: printId,
+        name: 'HEART BALLOON FIELDS',
+        description: 'HEART BALLOON FIELDS',
+        content_url:
+          'https://ord-mainnet.gamma.io/content/8bb71b80ace4483d68558f4fae011c80a90850b1a2b917d0574c7fe20fbe6b6di0',
+        mint_information: {
+          mint_price: {
+            amount: 40000,
+            unit: 'sats'
+          }
+        }
+      }
+    });
+
+    const result = await new NftLinkResolver().resolve(
+      `https://gamma.io/ordinals/prints/${printId}/details`,
+      resolveContext
+    );
+
+    expect(result.identifier.platform).toBe('GAMMAIO');
+    expect(result.identifier.canonicalId).toBe(`GAMMAIO:print:${printId}`);
+    expect(result.asset).toMatchObject({
+      title: 'HEART BALLOON FIELDS',
+      description: 'HEART BALLOON FIELDS',
+      collection: { name: 'HEART BALLOON FIELDS' },
+      media: {
+        kind: 'image',
+        imageUrl:
+          'https://ord-mainnet.gamma.io/content/8bb71b80ace4483d68558f4fae011c80a90850b1a2b917d0574c7fe20fbe6b6di0'
+      }
+    });
+    expect(result.market.price).toEqual({
+      amount: '0.0004',
+      currency: 'BTC'
+    });
+    expect(result.market.saleType).toBe('CLAIM');
+    expect(fetchJsonWithTimeoutMock).toHaveBeenCalledWith(
+      `https://gamma.io/api/get-print?print_id=${printId}`,
+      expect.any(Object)
+    );
+  });
+
   it('resolves Gamma.io ordinal links from JSON-LD metadata', async () => {
     const inscriptionId =
       '521f8eccffa4c41a3a7728dd012ea5a4a02feed81f41159231251ecf1e5c79dai0';

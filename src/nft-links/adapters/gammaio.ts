@@ -15,6 +15,7 @@ import { CustomApiCompliantException } from '@/exceptions';
 
 type GammaIoIdentifier =
   | { kind: 'ordinal'; inscriptionId: string }
+  | { kind: 'print'; printId: string }
   | { kind: 'stacks'; nftId: string }
   | { kind: 'collection'; collectionSlug: string; tokenId: string }
   | null;
@@ -31,6 +32,7 @@ type GammaIoApiData = {
   collectionName?: string;
   tokenId?: string;
   price?: GammaIoPrice;
+  saleType?: 'FIXED' | 'CLAIM';
 };
 
 const HTML_ENTITIES: Record<string, string> = {
@@ -132,6 +134,11 @@ function parseGammaIoIdentifier(canonical: CanonicalLink): GammaIoIdentifier {
     return { kind: 'ordinal', inscriptionId: ordinalMatch[1] };
   }
 
+  const printMatch = /^print:(.+)$/.exec(customId);
+  if (printMatch?.[1]) {
+    return { kind: 'print', printId: printMatch[1] };
+  }
+
   const stacksMatch = /^stacks:(.+)$/.exec(customId);
   if (stacksMatch?.[1]) {
     return { kind: 'stacks', nftId: stacksMatch[1] };
@@ -193,8 +200,43 @@ function extractListingPrice(response: unknown): GammaIoPrice | undefined {
   return parseGammaIoPrice(listing.price_amount);
 }
 
+function extractPrintPrice(
+  collection: Record<string, unknown>
+): GammaIoPrice | undefined {
+  const mintInformation = collection.mint_information;
+  if (isRecord(mintInformation)) {
+    const mintPrice = parseGammaIoPrice(mintInformation.mint_price);
+    if (mintPrice) return mintPrice;
+  }
+  const stats = collection.stats;
+  if (isRecord(stats)) {
+    return parseGammaIoPrice(stats.lowest_purchasable_price);
+  }
+  return undefined;
+}
+
+function extractApiCollectionData(
+  collection: Record<string, unknown>
+): GammaIoApiData {
+  return {
+    title: firstString(collection.name),
+    description: firstString(collection.description),
+    imageUrl: firstString(
+      collection.content_url,
+      collection.collection_image_url
+    ),
+    collectionName: firstString(collection.name),
+    price: extractPrintPrice(collection),
+    saleType: 'CLAIM'
+  };
+}
+
 function extractApiItemData(response: unknown): GammaIoApiData | undefined {
-  if (!isRecord(response) || !isRecord(response.item)) return undefined;
+  if (!isRecord(response)) return undefined;
+  if (isRecord(response.collection)) {
+    return extractApiCollectionData(response.collection);
+  }
+  if (!isRecord(response.item)) return undefined;
 
   const assetContent = response.item.asset_content;
   const collection = response.item.collection;
@@ -218,6 +260,11 @@ function getGammaIoApiUrl(identifier: GammaIoIdentifier): string | undefined {
   if (identifier?.kind === 'ordinal') {
     return `https://gamma.io/api/get-inscription?id=${encodeURIComponent(
       identifier.inscriptionId
+    )}`;
+  }
+  if (identifier?.kind === 'print') {
+    return `https://gamma.io/api/get-print?print_id=${encodeURIComponent(
+      identifier.printId
     )}`;
   }
   if (identifier?.kind === 'stacks') {
@@ -283,7 +330,7 @@ export class GammaIoAdapter implements PlatformAdapter {
       primaryJsonLd ? getJsonLdImage(primaryJsonLd) : undefined
     );
     const price = apiData?.price;
-    const saleType = price ? 'FIXED' : 'UNKNOWN';
+    const saleType = apiData?.saleType ?? (price ? 'FIXED' : 'UNKNOWN');
     const collection =
       identifier?.kind === 'collection'
         ? { name: slugToName(identifier.collectionSlug) }

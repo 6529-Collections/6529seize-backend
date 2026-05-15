@@ -66,6 +66,26 @@ describe('validateLinkUrl', () => {
       expect(result.viewUrl).toBe(`https://gamma.io/stacks/nfts/${nftId}`);
     });
 
+    it('recognizes ordinal print URLs', () => {
+      const printId = 'cmlzfnfj50002l904lujsztqj';
+      const urls = [
+        `https://gamma.io/ordinals/prints/${printId}`,
+        `https://gamma.io/ordinals/prints/${printId}/details`
+      ];
+
+      for (const url of urls) {
+        const result = validateLinkUrl(url);
+
+        expect(result.platform).toBe('GAMMAIO');
+        expect(result.identifiers).toEqual({
+          kind: 'URL_ONLY',
+          customId: `print:${printId}`
+        });
+        expect(result.canonicalId).toBe(`GAMMAIO:print:${printId}`);
+        expect(result.viewUrl).toBe(url);
+      }
+    });
+
     it('rejects Gamma.io collection pages without a token or inscription id', () => {
       expect(() =>
         validateLinkUrl('https://gamma.io/collections/stacks-collection')

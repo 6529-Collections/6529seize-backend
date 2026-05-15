@@ -603,6 +603,33 @@ function parseGammaIoCollection(
   });
 }
 
+function parseGammaIoPrint(
+  pathSegments: string[],
+  inputUrl: string,
+  viewUrl: string
+): CanonicalLink | null {
+  const ordinalsIndex = pathSegments.indexOf('ordinals');
+  if (ordinalsIndex < 0 || pathSegments[ordinalsIndex + 1] !== 'prints') {
+    return null;
+  }
+
+  const printId = pathSegments[ordinalsIndex + 2];
+  if (!printId || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{10,63}$/.test(printId)) {
+    return null;
+  }
+
+  const customId = `print:${printId}`;
+  if (customId.length > MAX_CUSTOM_ID_LENGTH) {
+    throw new NftLinkResolverValidationError(
+      `Gamma.io ordinal print identifier is too long.`
+    );
+  }
+  return ok(inputUrl, 'GAMMAIO', viewUrl, {
+    kind: 'URL_ONLY',
+    customId
+  });
+}
+
 function parseGammaIoStacksNft(
   pathSegments: string[],
   inputUrl: string,
@@ -636,12 +663,13 @@ function parseGammaIo(u: URL, inputUrl: string): CanonicalLink {
   const parsed =
     parseGammaIoOrdinal(pathSegments, inputUrl, viewUrl) ??
     parseGammaIoCollection(pathSegments, inputUrl, viewUrl) ??
+    parseGammaIoPrint(pathSegments, inputUrl, viewUrl) ??
     parseGammaIoStacksNft(pathSegments, inputUrl, viewUrl);
   if (parsed) {
     return parsed;
   }
   throw new NftLinkResolverValidationError(
-    `Gamma.io link must include an ordinal inscription id, look like /collections/{collectionSlug}/{tokenId}, or look like /stacks/nfts/{nftId}.`
+    `Gamma.io link must include an ordinal inscription id, look like /collections/{collectionSlug}/{tokenId}, look like /ordinals/prints/{printId}, or look like /stacks/nfts/{nftId}.`
   );
 }
 
