@@ -47,7 +47,8 @@ const HTML_ENTITIES: Record<string, string> = {
 };
 
 const MICRO_STACKS_PER_STX = BigInt(1_000_000);
-const MICRO_STACKS_ROUND_UP_REMAINDER = BigInt(999_999);
+const MICRO_STACKS_DISPLAY_INCREMENT = BigInt(1_000);
+const MICRO_STACKS_DISPLAY_ROUNDING_OFFSET = BigInt(500);
 
 function decodeHtmlEntities(value: string): string {
   return value.replace(
@@ -174,11 +175,11 @@ function parseGammaIoPrice(value: unknown): GammaIoPrice | undefined {
 
   try {
     let amount = BigInt(value.amount);
-    if (
-      value.unit === 'micro_stacks' &&
-      amount % MICRO_STACKS_PER_STX === MICRO_STACKS_ROUND_UP_REMAINDER
-    ) {
-      amount += BigInt(1);
+    if (value.unit === 'micro_stacks' && amount >= MICRO_STACKS_PER_STX) {
+      amount =
+        ((amount + MICRO_STACKS_DISPLAY_ROUNDING_OFFSET) /
+          MICRO_STACKS_DISPLAY_INCREMENT) *
+        MICRO_STACKS_DISPLAY_INCREMENT;
     }
     return {
       amount: formatTokenAmount(amount, unit.decimals),
