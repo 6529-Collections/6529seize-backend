@@ -54,12 +54,12 @@ router.get(
     >,
     res: any
   ) {
-    const value = req.params.value;
+    const value = numbers.parseNumberOrNull(req.params.value);
     const includeEntries = req.params.extra === 'entries';
-    if (Number.isNaN(value)) {
+    if (value === null) {
       return res.status(400).send({ error: 'Invalid value' });
     }
-    const result = await db.fetchTDHAbove(Number(value), includeEntries);
+    const result = await db.fetchTDHAbove(value, includeEntries);
     return res.json(result);
   }
 );
@@ -281,7 +281,11 @@ router.get(
   ) {
     const contract = req.params.contract;
     const id = req.params.id;
-    const result = await db.fetchNfts(contract, id);
+    const tokenId = id ? numbers.parseIntOrNull(id) : undefined;
+    if (id && tokenId === null) {
+      return res.status(400).send({ error: 'Invalid token id' });
+    }
+    const result = await db.fetchNfts(contract, tokenId);
     if (contract && id) {
       if (result.nfts.length === 0) {
         return res.status(404).send({ error: 'NFT not found' });
