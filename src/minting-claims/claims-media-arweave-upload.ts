@@ -15,7 +15,7 @@ const logger = Logger.get('claims-media-arweave-upload');
 export const MIN_EDITION_SIZE = 300;
 
 const FETCH_MEDIA_TIMEOUT_MS = 60_000;
-const MAX_ARWEAVE_UPLOAD_BYTES = 100 * 1024 * 1024;
+const MAX_ARWEAVE_UPLOAD_BYTES = 200 * 1024 * 1024;
 const ARWEAVE_METADATA_CREATED_BY = '6529 Collections';
 const ARWEAVE_POINTS_TRAIT_PREFIX = 'Points - ';
 const TYPE_MEME_TRAIT = 'Type - Meme';
