@@ -127,6 +127,7 @@ const DistributionQuerySchema = Joi.object<DistributionQueryParams>({
       Joi.string().valid('true', 'false', '1', '0'),
       Joi.number().valid(1, 0)
     )
+    .empty('')
     .custom((value: boolean | string | number) => {
       return value === true || value === 'true' || value === '1' || value === 1;
     })

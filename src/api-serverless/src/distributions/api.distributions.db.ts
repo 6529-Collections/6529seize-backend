@@ -28,6 +28,15 @@ export interface DistributionFilters {
   minted: boolean | undefined;
 }
 
+function splitCsvFilter(filter: string | undefined): string[] {
+  return filter
+    ? filter
+        .split(',')
+        .map((entry) => entry.trim())
+        .filter(Boolean)
+    : [];
+}
+
 export async function fetchDistributionPhases(
   contract: string,
   cardId: number
@@ -54,17 +63,15 @@ export async function fetchDistributions(
 ): Promise<PaginatedResponse<DistributionNormalized>> {
   const { search, cards, contracts, wallets, phases, minted } =
     distributionFilters;
-  const parsedPhases = phases
-    ? phases
-        .split(',')
-        .map((phase) => phase.trim())
-        .filter(Boolean)
-    : [];
+  const parsedCards = splitCsvFilter(cards);
+  const parsedContracts = splitCsvFilter(contracts);
+  const parsedWallets = splitCsvFilter(wallets);
+  const parsedPhases = splitCsvFilter(phases);
   if (
     !search &&
-    !cards &&
-    !contracts &&
-    !wallets &&
+    parsedCards.length === 0 &&
+    parsedContracts.length === 0 &&
+    parsedWallets.length === 0 &&
     parsedPhases.length === 0 &&
     minted === undefined
   ) {
@@ -93,26 +100,26 @@ export async function fetchDistributions(
       ...searchFilters.params
     };
   }
-  if (cards) {
+  if (parsedCards.length > 0) {
     filters = constructFilters(
       filters,
       `${DISTRIBUTION_NORMALIZED_TABLE}.card_id in (:cards)`
     );
-    params.cards = cards.split(',');
+    params.cards = parsedCards;
   }
-  if (contracts) {
+  if (parsedContracts.length > 0) {
     filters = constructFilters(
       filters,
       `${DISTRIBUTION_NORMALIZED_TABLE}.contract in (:contracts)`
     );
-    params.contracts = contracts.split(',');
+    params.contracts = parsedContracts;
   }
-  if (wallets) {
+  if (parsedWallets.length > 0) {
     filters = constructFilters(
       filters,
       `LOWER(${DISTRIBUTION_NORMALIZED_TABLE}.wallet) in (:wallets)`
     );
-    params.wallets = wallets.split(',').map((w: string) => w.toLowerCase());
+    params.wallets = parsedWallets.map((wallet) => wallet.toLowerCase());
   }
   if (parsedPhases.length > 0) {
     const phaseFilters = parsedPhases.map(

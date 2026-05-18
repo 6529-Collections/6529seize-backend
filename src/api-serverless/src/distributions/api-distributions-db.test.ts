@@ -57,9 +57,9 @@ describe('fetchDistributions', () => {
     await fetchDistributions(
       {
         search: '',
-        cards: '440,441',
-        contracts: '0xContractA,0xContractB',
-        wallets: '0xWalletA,0xWalletB',
+        cards: '440, 441',
+        contracts: '0xContractA, 0xContractB',
+        wallets: '0xWalletA, 0xWalletB',
         phases: '',
         minted: undefined
       },
