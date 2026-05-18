@@ -148,6 +148,9 @@ export class UserNotifier {
     visibility_group_id: string | null,
     connection?: ConnectionWrapper<any>
   ) {
+    if (voter_id === drop_author_id) {
+      return;
+    }
     await this.identityNotificationsDb.insertNotification(
       {
         identity_id: drop_author_id,
