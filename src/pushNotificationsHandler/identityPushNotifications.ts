@@ -81,17 +81,20 @@ function numbersOrNull(value: unknown): number | null {
 }
 
 function buildRatingUpdateBody({
+  prefixLines = [],
   amount,
   raterRating,
   total,
   totalLabel
 }: {
+  prefixLines?: string[];
   amount: number;
   raterRating: number | null;
   total: number;
   totalLabel: string;
 }): string {
   const lines = [
+    ...prefixLines,
     `Change: ${formatSignedLocaleNumber(amount)}`,
     raterRating === null
       ? null
@@ -521,9 +524,10 @@ async function handleIdentityRep(
   );
   const total = Number((notification.additional_data as any).total);
   const category = (notification.additional_data as any).category;
-  const categoryText = category ? ` for ${category}` : '';
-  const title = `${getRatingChangeEmoji(amount)}${additionalEntity.handle} updated your REP${categoryText}`;
+  const categoryLine = category ? `Category: ${category}` : null;
+  const title = `${getRatingChangeEmoji(amount)}${additionalEntity.handle} updated your REP`;
   const body = buildRatingUpdateBody({
+    prefixLines: categoryLine ? [categoryLine] : [],
     amount,
     raterRating,
     total,
