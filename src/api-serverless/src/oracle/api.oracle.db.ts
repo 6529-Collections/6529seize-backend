@@ -8,15 +8,15 @@ import {
   TDH_BLOCKS_TABLE,
   TDH_NFT_TABLE
 } from '@/constants';
-import { fetchPaginated } from '../../../db-api';
-import { MemesExtendedData } from '../../../entities/INFT';
-import { NftTDH } from '../../../entities/ITDH';
+import { fetchPaginated } from '@/db-api';
+import { MemesExtendedData } from '@/entities/INFT';
+import { NftTDH } from '@/entities/ITDH';
 import {
   getNextgenNetwork,
   NEXTGEN_CORE_CONTRACT
-} from '../../../nextgen/nextgen_constants';
-import { sqlExecutor } from '../../../sql-executor';
-import { getIpInfo } from '../policies/policies';
+} from '@/nextgen/nextgen_constants';
+import { sqlExecutor } from '@/sql-executor';
+import { getIpInfo } from '@/api/policies/policies';
 
 const formatNumber = (num: number) => {
   return parseFloat(num.toFixed(0));

@@ -4,7 +4,7 @@ import {
   fetchNfts,
   fetchSingleAddressTDH,
   fetchTDHAbove
-} from './api.oracle.db';
+} from '@/api/oracle/api.oracle.db';
 
 class MockSqlExecutor extends SqlExecutor {
   public constructor(
@@ -74,7 +74,7 @@ describe('api.oracle.db', () => {
     expect(addressQueryCalls).toHaveLength(2);
     for (const [sql, params] of addressQueryCalls) {
       expect(sql).toContain('like :addressPattern');
-      expect(sql).not.toContain('OR 1=1');
+      expect(sql).not.toMatch(/or\s+1\s*=\s*1/i);
       expect(params).toEqual({
         addressPattern: "%0xabc%' or 1=1 --%"
       });
@@ -94,7 +94,7 @@ describe('api.oracle.db', () => {
     const [sql, params] = nftQueryCall!;
     expect(sql).toContain('WHERE contract = :contract');
     expect(sql).toContain('AND id = :id');
-    expect(sql).not.toContain('OR 1=1');
+    expect(sql).not.toMatch(/or\s+1\s*=\s*1/i);
     expect(params).toEqual({
       contract: "memes%' or 1=1 --",
       id: 1
