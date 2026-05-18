@@ -547,6 +547,7 @@ export class NotificationsApiService {
           related_drops: [],
           additional_context: {
             amount: data.amount,
+            rater_rating: data.rater_rating ?? undefined,
             total: data.total,
             category: data.category
           }
@@ -563,6 +564,7 @@ export class NotificationsApiService {
           related_drops: [],
           additional_context: {
             amount: data.amount,
+            rater_rating: data.rater_rating ?? undefined,
             total: data.total
           }
         };
@@ -577,7 +579,9 @@ export class NotificationsApiService {
           related_identity: profiles[data.voter_id],
           related_drops: [drops[data.drop_id]],
           additional_context: {
-            vote: data.vote
+            vote: data.vote,
+            vote_change: data.vote_change ?? undefined,
+            total_vote: data.total_vote ?? undefined
           }
         };
       }
@@ -785,6 +789,7 @@ export class NotificationsApiService {
           related_drops: [],
           additional_context: {
             amount: data.amount,
+            rater_rating: data.rater_rating ?? undefined,
             total: data.total,
             category: data.category
           }
@@ -801,6 +806,7 @@ export class NotificationsApiService {
           related_drops: [],
           additional_context: {
             amount: data.amount,
+            rater_rating: data.rater_rating ?? undefined,
             total: data.total
           }
         };
@@ -815,7 +821,9 @@ export class NotificationsApiService {
           related_identity: profiles[data.voter_id],
           related_drops: [drops[data.drop_id]],
           additional_context: {
-            vote: data.vote
+            vote: data.vote,
+            vote_change: data.vote_change ?? undefined,
+            total_vote: data.total_vote ?? undefined
           }
         };
       }

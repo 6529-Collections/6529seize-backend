@@ -316,6 +316,7 @@ export class RatingsService {
               rater_id: request.rater_profile_id,
               rated_id: request.matter_target_id,
               amount: change,
+              rater_rating: request.rating,
               total: totalRep,
               category: request.matter_category
             },
@@ -338,6 +339,7 @@ export class RatingsService {
               rater_id: request.rater_profile_id,
               rated_id: request.matter_target_id,
               amount: change,
+              rater_rating: request.rating,
               total: totalNic
             },
             connection

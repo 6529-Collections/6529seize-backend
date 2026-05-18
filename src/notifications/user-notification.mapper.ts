@@ -104,6 +104,9 @@ export class UserNotificationMapper {
         rater_id: entity.additional_identity_id!,
         rated_id: entity.identity_id,
         amount: numbers.parseIntOrNull(entity.additional_data.amount)!,
+        rater_rating: numbers.parseIntOrNull(
+          entity.additional_data.rater_rating
+        ),
         total: numbers.parseIntOrNull(entity.additional_data.total)!,
         category: entity.additional_data.category ?? ''
       }
@@ -122,6 +125,9 @@ export class UserNotificationMapper {
         rater_id: entity.additional_identity_id!,
         rated_id: entity.identity_id,
         amount: numbers.parseIntOrNull(entity.additional_data.amount)!,
+        rater_rating: numbers.parseIntOrNull(
+          entity.additional_data.rater_rating
+        ),
         total: numbers.parseIntOrNull(entity.additional_data.total)!
       }
     };
@@ -140,6 +146,8 @@ export class UserNotificationMapper {
         drop_id: entity.related_drop_id!,
         voter_id: entity.additional_identity_id!,
         vote: numbers.parseIntOrNull(entity.additional_data.vote)!,
+        vote_change: numbers.parseIntOrNull(entity.additional_data.vote_change),
+        total_vote: numbers.parseIntOrNull(entity.additional_data.total_vote),
         wave_id: entity.wave_id!
       }
     };

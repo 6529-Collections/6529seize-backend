@@ -159,12 +159,20 @@ async function reduceVotesForDrops(
           wave_id: wave_id
         },
         ctx
-      ),
+      )
+    ]);
+    const totalDropRating = await dropVotingDb.getAggregateDropRankVote(
+      drop_id,
+      ctx
+    );
+    await Promise.all([
       userNotifier.notifyOfDropVote(
         {
           voter_id: profile_id,
           drop_id,
           vote: voteAfterRevocation,
+          vote_change: voteAfterRevocation - votes,
+          total_vote: totalDropRating,
           wave_id,
           drop_author_id: author_id
         },

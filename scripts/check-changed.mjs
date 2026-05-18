@@ -100,7 +100,14 @@ function changedSourceTsFiles(baseRef) {
   );
 }
 
+function isGeneratedSourceFile(fileName) {
+  return fileName.startsWith('src/api-serverless/src/generated/');
+}
+
 const changedTsFiles = changedSourceTsFiles(options.baseRef);
+const checkableTsFiles = changedTsFiles.filter(
+  (fileName) => !isGeneratedSourceFile(fileName)
+);
 
 if (!changedTsFiles.length) {
   console.log(`No changed src/**/*.ts files found since ${options.baseRef}.`);
@@ -116,15 +123,22 @@ if (!changedTsFiles.length) {
 }
 
 console.log(`Checking ${changedTsFiles.length} changed src/**/*.ts file(s) since ${options.baseRef}.`);
+if (checkableTsFiles.length !== changedTsFiles.length) {
+  console.log(
+    `Skipping ${changedTsFiles.length - checkableTsFiles.length} generated src/**/*.ts file(s) for prettier/eslint/related tests.`
+  );
+}
 
 run('npm', ['run', 'generate:deploy-config']);
-run('npx', ['prettier', '--write', ...changedTsFiles]);
-run(
-  'npx',
-  ['eslint', '--fix', '--max-warnings=0', ...changedTsFiles],
-  { env: { NODE_OPTIONS: '--max-old-space-size=8192' } }
-);
-run('npx', ['jest', '--findRelatedTests', ...changedTsFiles, '--passWithNoTests']);
+if (checkableTsFiles.length) {
+  run('npx', ['prettier', '--write', ...checkableTsFiles]);
+  run(
+    'npx',
+    ['eslint', '--fix', '--max-warnings=0', ...checkableTsFiles],
+    { env: { NODE_OPTIONS: '--max-old-space-size=8192' } }
+  );
+  run('npx', ['jest', '--findRelatedTests', ...checkableTsFiles, '--passWithNoTests']);
+}
 
 if (!options.skipTypecheck) {
   run(

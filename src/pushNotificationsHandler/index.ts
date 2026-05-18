@@ -1,4 +1,4 @@
-import { SQSHandler } from 'aws-lambda';
+import { SQSBatchResponse, SQSHandler } from 'aws-lambda';
 import {
   AttachmentEntity,
   DropAttachmentEntity
@@ -12,19 +12,59 @@ import { WaveReaderMetricEntity } from '../entities/IWaveReaderMetric';
 import { Logger } from '../logging';
 import { doInDbContext } from '../secrets';
 import * as sentryContext from '../sentry.context';
-import { sendIdentityNotification } from './identityPushNotifications';
+import { sendIdentityNotificationsBatch } from './identityPushNotifications';
 
 const logger = Logger.get('PUSH_NOTIFICATIONS_HANDLER');
 
-const sqsHandler: SQSHandler = async (event) => {
-  await doInDbContext(
+const sqsHandler: SQSHandler = async (event): Promise<SQSBatchResponse> => {
+  return doInDbContext(
     async () => {
-      await Promise.all(
-        event.Records.map(async (record) => {
-          const messageBody = record.body;
-          await processNotification(messageBody);
-        })
-      );
+      const identityNotificationRecords: {
+        messageId: string;
+        identityNotificationId: number;
+      }[] = [];
+      const failures: { itemIdentifier: string }[] = [];
+
+      for (const record of event.Records) {
+        try {
+          const notification = JSON.parse(record.body);
+          if (notification.identity_notification_id) {
+            identityNotificationRecords.push({
+              messageId: record.messageId,
+              identityNotificationId: notification.identity_notification_id
+            });
+          } else {
+            logger.warn(`Unknown notification type: ${record.body}`);
+          }
+        } catch (error) {
+          logger.error(
+            `Failed to parse push notification message ${record.messageId}: ${error}`
+          );
+          failures.push({ itemIdentifier: record.messageId });
+        }
+      }
+
+      if (identityNotificationRecords.length) {
+        const failedNotificationIds = await sendIdentityNotificationsBatch(
+          identityNotificationRecords.map(
+            (record) => record.identityNotificationId
+          )
+        );
+        const failedNotificationIdSet = new Set(failedNotificationIds);
+        failures.push(
+          ...identityNotificationRecords
+            .filter((record) =>
+              failedNotificationIdSet.has(record.identityNotificationId)
+            )
+            .map((record) => ({
+              itemIdentifier: record.messageId
+            }))
+        );
+      }
+
+      return {
+        batchItemFailures: failures
+      };
     },
     {
       logger,
@@ -42,16 +82,6 @@ const sqsHandler: SQSHandler = async (event) => {
       ]
     }
   );
-};
-
-const processNotification = async (messageBody: string) => {
-  const notification = JSON.parse(messageBody);
-  if (notification.identity_notification_id) {
-    await sendIdentityNotification(notification.identity_notification_id);
-    return;
-  }
-
-  logger.warn(`Unknown notification type: ${messageBody}`);
 };
 
 export const handler = sentryContext.wrapLambdaHandler(sqsHandler);

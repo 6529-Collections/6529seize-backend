@@ -45,3 +45,43 @@ describe('UserNotifier notifyWaveDropCreatedRecipients', () => {
     );
   });
 });
+
+describe('UserNotifier notifyOfDropVote', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('stores vote change with the new vote total', async () => {
+    const identityNotificationsDb = {
+      insertNotification: jest.fn()
+    };
+    const notifier = new UserNotifier(identityNotificationsDb as any);
+    const connection = {} as any;
+
+    await notifier.notifyOfDropVote(
+      {
+        voter_id: 'voter-1',
+        drop_id: 'drop-1',
+        drop_author_id: 'author-1',
+        vote: 171,
+        vote_change: -1030,
+        total_vote: 12345,
+        wave_id: 'wave-1'
+      },
+      null,
+      connection
+    );
+
+    expect(identityNotificationsDb.insertNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cause: IdentityNotificationCause.DROP_VOTED,
+        additional_data: {
+          vote: 171,
+          vote_change: -1030,
+          total_vote: 12345
+        }
+      }),
+      connection
+    );
+  });
+});

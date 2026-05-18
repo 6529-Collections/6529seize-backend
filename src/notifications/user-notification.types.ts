@@ -17,6 +17,8 @@ export interface DropVoteNotificationData {
   drop_id: string;
   drop_author_id: string;
   vote: number;
+  vote_change?: number | null;
+  total_vote?: number | null;
   wave_id: string;
 }
 
@@ -76,6 +78,7 @@ export interface IdentityRepNotificationData {
   rater_id: string;
   rated_id: string;
   amount: number;
+  rater_rating?: number | null;
   total: number;
   category: string;
 }
@@ -84,6 +87,7 @@ export interface IdentityNicNotificationData {
   rater_id: string;
   rated_id: string;
   amount: number;
+  rater_rating?: number | null;
   total: number;
 }
 
