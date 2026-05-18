@@ -1,16 +1,38 @@
 import { Request, Response } from 'express';
-import * as db from './api.oracle.db';
-import { asyncRouter } from '../async.router';
+import * as Joi from 'joi';
+import * as db from '@/api/oracle/api.oracle.db';
+import { asyncRouter } from '@/api/async.router';
 import * as SwaggerUI from 'swagger-ui-express';
-import { getIp, isLocalhost } from '../policies/policies';
-import { getPage, getPageSize } from '../api-helpers';
-import { numbers } from '../../../numbers';
+import { getIp, isLocalhost } from '@/api/policies/policies';
+import { getPage, getPageSize } from '@/api/api-helpers';
+import { numbers } from '@/numbers';
+import { getValidatedByJoiOrThrow } from '@/api/validation';
 
 const YAML = require('yamljs');
 
 const router = asyncRouter();
 
 export default router;
+
+type TdhAboveParams = {
+  value: number;
+  extra?: 'entries';
+};
+
+const TdhAboveParamsSchema = Joi.object<TdhAboveParams>({
+  value: Joi.number().required(),
+  extra: Joi.string().valid('entries').optional()
+});
+
+type OracleNftsParams = {
+  contract?: string;
+  id?: number;
+};
+
+const OracleNftsParamsSchema = Joi.object<OracleNftsParams>({
+  contract: Joi.string().optional(),
+  id: Joi.number().integer().optional()
+});
 
 function isValidIP(ip: string): boolean {
   const ipv4FormatRegex = /^(\d{1,3}\.){3}\d{1,3}$/;
@@ -54,12 +76,10 @@ router.get(
     >,
     res: any
   ) {
-    const value = req.params.value;
-    const includeEntries = req.params.extra === 'entries';
-    if (Number.isNaN(value)) {
-      return res.status(400).send({ error: 'Invalid value' });
-    }
-    const result = await db.fetchTDHAbove(Number(value), includeEntries);
+    const params = getValidatedByJoiOrThrow(req.params, TdhAboveParamsSchema);
+    const includeEntries = params.extra === 'entries';
+    const value = params.value;
+    const result = await db.fetchTDHAbove(value, includeEntries);
     return res.json(result);
   }
 );
@@ -279,10 +299,11 @@ router.get(
     >,
     res: any
   ) {
-    const contract = req.params.contract;
-    const id = req.params.id;
-    const result = await db.fetchNfts(contract, id);
-    if (contract && id) {
+    const params = getValidatedByJoiOrThrow(req.params, OracleNftsParamsSchema);
+    const contract = params.contract;
+    const tokenId = params.id;
+    const result = await db.fetchNfts(contract, tokenId);
+    if (contract && tokenId !== undefined) {
       if (result.nfts.length === 0) {
         return res.status(404).send({ error: 'NFT not found' });
       } else {
