@@ -40,12 +40,13 @@ export function buildDropVotePushBody({
   voteChange,
   totalVote
 }: {
-  dropBody: string;
+  dropBody: string | null;
   vote: number;
   voteChange: number | null;
   totalVote: number | null;
 }): string {
-  const lines = [`Drop: ${truncateDropLabel(dropBody)}`];
+  const dropLabel = dropBody === null ? '' : truncateDropLabel(dropBody);
+  const lines = dropLabel ? [`Drop: ${dropLabel}`] : [];
   if (voteChange !== null) {
     lines.push(`Change: ${formatSignedLocaleNumber(voteChange)}`);
   }

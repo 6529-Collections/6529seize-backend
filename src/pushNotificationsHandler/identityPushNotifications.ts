@@ -702,7 +702,7 @@ async function handleDropVoted(
   const imageUrl = additionalEntity.pfp;
   const dropPart = await getDropPart(notification);
   const dropSerialNo = await getDropSerialNo(notification.related_drop_id);
-  const dropBody = await getDropBodyTextForPush(notification, dropPart);
+  const dropBody = await getDropBodyTextForPush(notification, dropPart, '');
   const voterHandle =
     additionalEntity.handle ??
     additionalEntity.normalised_handle ??

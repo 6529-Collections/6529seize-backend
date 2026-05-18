@@ -57,6 +57,17 @@ describe('drop vote push notification text', () => {
     );
   });
 
+  it('omits the drop line when there is no real drop content', () => {
+    expect(
+      buildDropVotePushBody({
+        dropBody: '',
+        vote: 5,
+        voteChange: 5,
+        totalVote: 12345
+      })
+    ).toBe('Change: +5\nNew rating: +5\nTotal Drop Rating: +12,345');
+  });
+
   it('formats negative values with the sign before locale separators', () => {
     expect(formatSignedLocaleNumber(-1201)).toBe('-1,201');
   });
