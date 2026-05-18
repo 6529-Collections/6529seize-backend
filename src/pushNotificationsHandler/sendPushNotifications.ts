@@ -71,32 +71,6 @@ function init() {
   }
 }
 
-export async function sendMessage(
-  title: string,
-  body: string,
-  token: string,
-  notification_id: number,
-  extra_data: any,
-  badge?: number,
-  imageUrl?: string
-) {
-  const [result] = await sendMessages([
-    {
-      title,
-      body,
-      token,
-      notification_id,
-      extra_data,
-      badge,
-      imageUrl
-    }
-  ]);
-
-  if (!result.response.success) {
-    throw result.response.error;
-  }
-}
-
 export async function sendMessages(
   inputs: PushNotificationMessageInput[]
 ): Promise<PushNotificationSendResult[]> {

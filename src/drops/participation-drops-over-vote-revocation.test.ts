@@ -66,4 +66,30 @@ describe('revokeTdhBasedDropWavesOverVotes', () => {
       dropVotingDb.snapshotDropVotersRealVoteInTimeBasedOnVoterState
     ).not.toHaveBeenCalled();
   });
+
+  it('skips notification total lookup for self-vote revocations', async () => {
+    jest.spyOn(dropsDb, 'findDropVotesForWaves').mockResolvedValue([
+      {
+        drop_id: 'drop-1',
+        votes: 2,
+        author_id: 'voter-1',
+        visibility_group_id: null
+      } as any
+    ]);
+
+    await revokeTdhBasedDropWavesOverVotes(connection);
+
+    expect(dropVotingDb.upsertState).toHaveBeenCalled();
+    expect(dropVotingDb.upsertAggregateDropRank).toHaveBeenCalledWith(
+      expect.objectContaining({
+        drop_id: 'drop-1',
+        change: -1,
+        wave_id: 'wave-1'
+      }),
+      expect.anything()
+    );
+    expect(dropVotingDb.getAggregateDropRankVote).not.toHaveBeenCalled();
+    expect(userNotifier.notifyOfDropVote).not.toHaveBeenCalled();
+    expect(profileActivityLogsDb.insert).toHaveBeenCalled();
+  });
 });

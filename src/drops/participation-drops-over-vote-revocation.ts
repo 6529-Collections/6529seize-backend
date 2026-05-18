@@ -243,6 +243,10 @@ async function notifyOfDropVoteRevocation({
   visibility_group_id: string | null;
   ctx: RequestContext;
 }) {
+  if (profile_id === author_id) {
+    return;
+  }
+
   const totalDropRating = await dropVotingDb.getAggregateDropRankVote(
     drop_id,
     ctx
