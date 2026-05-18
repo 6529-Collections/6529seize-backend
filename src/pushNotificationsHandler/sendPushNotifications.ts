@@ -173,7 +173,8 @@ function buildMessageData(
   const data: Record<string, string> = {
     notification_id: input.notification_id.toString()
   };
-  for (const [key, value] of Object.entries(input.extra_data)) {
+  const extraData = input.extra_data ?? {};
+  for (const [key, value] of Object.entries(extraData)) {
     if (value == null) {
       continue;
     }
