@@ -15,6 +15,21 @@ import type { SQSHandler } from 'aws-lambda';
 const logger = Logger.get('CLAIMS_MEDIA_ARWEAVE_UPLOADER');
 const ALERT_TITLE = 'Claims Media Arweave Uploader';
 
+function buildUploadErrorWithContext(
+  contract: string,
+  claimId: number,
+  error: unknown
+): Error {
+  const errorMessage = error instanceof Error ? error.message : String(error);
+  const contextualError = new Error(
+    `Failed to upload claim media to Arweave for contract=${contract} claim_id=${claimId}: ${errorMessage}`
+  );
+  if (error instanceof Error && error.stack) {
+    contextualError.stack = error.stack;
+  }
+  return contextualError;
+}
+
 function parseRecordBody(body: string): { contract: string; claim_id: number } {
   const parsed = JSON.parse(body) as { contract?: unknown; claim_id?: unknown };
   const contract =
@@ -85,7 +100,10 @@ async function processMintingClaimUpload(
         rollbackError
       });
     }
-    await priorityAlertsContext.sendPriorityAlert(ALERT_TITLE, error);
+    await priorityAlertsContext.sendPriorityAlert(
+      ALERT_TITLE,
+      buildUploadErrorWithContext(contract, claimId, error)
+    );
     throw error;
   }
 }
