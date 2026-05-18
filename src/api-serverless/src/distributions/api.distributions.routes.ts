@@ -20,6 +20,7 @@ import { ForbiddenException } from '@/exceptions';
 import { numbers } from '@/numbers';
 import { evictRedisCacheForPathWithTimeout } from '@/redis';
 import { Logger } from '@/logging';
+import type { DistributionFilters } from '@/api/distributions/api.distributions.db';
 import {
   fetchDistributionPhaseAirdrops,
   fetchDistributionOverview,
@@ -100,6 +101,27 @@ function parseAirdropCsv(csvData: string): AirdropEntry[] {
 const router = asyncRouter();
 const logger = Logger.get('DISTRIBUTIONS');
 const CACHE_EVICTION_TIMEOUT_MS = 1_500;
+
+function getDistributionQueryValue(value: unknown): string | undefined {
+  const firstValue = Array.isArray(value) ? value[0] : value;
+  return typeof firstValue === 'string' ? firstValue : undefined;
+}
+
+function parseDistributionMintedFilter(minted: unknown): boolean | undefined {
+  const mintedValue = getDistributionQueryValue(minted);
+  if (mintedValue === undefined) {
+    return undefined;
+  }
+
+  const normalizedMinted = mintedValue.trim().toLowerCase();
+  if (normalizedMinted === 'true' || normalizedMinted === '1') {
+    return true;
+  }
+  if (normalizedMinted === 'false' || normalizedMinted === '0') {
+    return false;
+  }
+  return undefined;
+}
 
 async function evictDistributionCacheForPathWithTimeout(
   contract: string,
@@ -273,24 +295,30 @@ router.get(
   `/distributions`,
   cacheRequest(),
   async function (req: any, res: any) {
-    const search = req.query.search;
-    const cards = req.query.card_id;
-    const contracts = req.query.contract;
-    const wallets = req.query.wallet;
+    const search = getDistributionQueryValue(req.query.search);
+    const cards = getDistributionQueryValue(req.query.card_id);
+    const contracts = getDistributionQueryValue(req.query.contract);
+    const wallets = getDistributionQueryValue(req.query.wallet);
+    const phases = getDistributionQueryValue(req.query.phase);
+    const minted = parseDistributionMintedFilter(req.query.minted);
 
     const pageSize = getPageSize(req, DISTRIBUTION_PAGE_SIZE);
     const page = getPage(req);
 
-    await fetchDistributions(
+    const distributionFilters: DistributionFilters = {
       search,
       cards,
       contracts,
       wallets,
-      pageSize,
-      page
-    ).then((result) => {
-      return returnPaginatedResult(result, req, res);
-    });
+      phases,
+      minted
+    };
+
+    await fetchDistributions(distributionFilters, pageSize, page).then(
+      (result) => {
+        return returnPaginatedResult(result, req, res);
+      }
+    );
   }
 );
 
