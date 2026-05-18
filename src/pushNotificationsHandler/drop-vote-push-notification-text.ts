@@ -1,4 +1,4 @@
-const MAX_DROP_LABEL_LENGTH = 80;
+export const MAX_DROP_LABEL_LENGTH = 80;
 
 export function getRatingChangeEmoji(value: number): string {
   if (value > 0) {

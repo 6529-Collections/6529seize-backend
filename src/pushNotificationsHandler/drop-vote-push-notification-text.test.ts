@@ -3,6 +3,7 @@ import {
   buildDropVotePushTitle,
   formatSignedLocaleNumber,
   getRatingChangeEmoji,
+  MAX_DROP_LABEL_LENGTH,
   truncateDropLabel
 } from '@/pushNotificationsHandler/drop-vote-push-notification-text';
 
@@ -91,12 +92,19 @@ describe('drop vote push notification text', () => {
   });
 
   it('truncates long drop labels to a single short line', () => {
-    expect(truncateDropLabel(`${'a'.repeat(90)}\nsecond line`)).toBe(
-      `${'a'.repeat(77)}...`
-    );
+    const visibleCharacters = MAX_DROP_LABEL_LENGTH - 3;
+    expect(
+      truncateDropLabel(
+        `${'a'.repeat(MAX_DROP_LABEL_LENGTH + 10)}\nsecond line`
+      )
+    ).toBe(`${'a'.repeat(visibleCharacters)}...`);
   });
 
   it('truncates drop labels without splitting emoji surrogate pairs', () => {
-    expect(truncateDropLabel('🚀'.repeat(80))).toBe(`${'🚀'.repeat(77)}...`);
+    const rocket = '\u{1F680}';
+    const visibleCharacters = MAX_DROP_LABEL_LENGTH - 3;
+    expect(truncateDropLabel(rocket.repeat(MAX_DROP_LABEL_LENGTH + 1))).toBe(
+      `${rocket.repeat(visibleCharacters)}...`
+    );
   });
 });
