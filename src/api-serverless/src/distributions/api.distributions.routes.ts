@@ -1,5 +1,6 @@
 import { ethers } from 'ethers';
 import { Request, Response } from 'express';
+import * as Joi from 'joi';
 import {
   DISTRIBUTION_PHASE_AIRDROP_ARTIST,
   DISTRIBUTION_PHASE_AIRDROP_TEAM
@@ -16,10 +17,12 @@ import { asyncRouter } from '@/api/async.router';
 import { needsAuthenticatedUser } from '@/api/auth/auth';
 import { cacheRequest } from '@/api/request-cache';
 import { authenticateSubscriptionsAdmin } from '@/api/subscriptions/api.subscriptions.allowlist';
+import { getValidatedByJoiOrThrow } from '@/api/validation';
 import { ForbiddenException } from '@/exceptions';
 import { numbers } from '@/numbers';
 import { evictRedisCacheForPathWithTimeout } from '@/redis';
 import { Logger } from '@/logging';
+import type { DistributionFilters } from '@/api/distributions/api.distributions.db';
 import {
   fetchDistributionPhaseAirdrops,
   fetchDistributionOverview,
@@ -100,6 +103,38 @@ function parseAirdropCsv(csvData: string): AirdropEntry[] {
 const router = asyncRouter();
 const logger = Logger.get('DISTRIBUTIONS');
 const CACHE_EVICTION_TIMEOUT_MS = 1_500;
+
+interface DistributionQueryParams {
+  search?: string;
+  card_id?: string;
+  contract?: string;
+  wallet?: string;
+  phase?: string;
+  minted?: boolean;
+  page?: string;
+  page_size?: string;
+}
+
+const DistributionQuerySchema = Joi.object<DistributionQueryParams>({
+  search: Joi.string().allow('').optional(),
+  card_id: Joi.string().allow('').optional(),
+  contract: Joi.string().allow('').optional(),
+  wallet: Joi.string().allow('').optional(),
+  phase: Joi.string().allow('').optional(),
+  minted: Joi.alternatives()
+    .try(
+      Joi.boolean().strict(),
+      Joi.string().valid('true', 'false', '1', '0'),
+      Joi.number().valid(1, 0)
+    )
+    .empty('')
+    .custom((value: boolean | string | number) => {
+      return value === true || value === 'true' || value === '1' || value === 1;
+    })
+    .optional(),
+  page: Joi.string().allow('').optional(),
+  page_size: Joi.string().allow('').optional()
+}).unknown(false);
 
 async function evictDistributionCacheForPathWithTimeout(
   contract: string,
@@ -273,24 +308,25 @@ router.get(
   `/distributions`,
   cacheRequest(),
   async function (req: any, res: any) {
-    const search = req.query.search;
-    const cards = req.query.card_id;
-    const contracts = req.query.contract;
-    const wallets = req.query.wallet;
+    const query = getValidatedByJoiOrThrow(req.query, DistributionQuerySchema);
 
     const pageSize = getPageSize(req, DISTRIBUTION_PAGE_SIZE);
     const page = getPage(req);
 
-    await fetchDistributions(
-      search,
-      cards,
-      contracts,
-      wallets,
-      pageSize,
-      page
-    ).then((result) => {
-      return returnPaginatedResult(result, req, res);
-    });
+    const distributionFilters: DistributionFilters = {
+      search: query.search,
+      cards: query.card_id,
+      contracts: query.contract,
+      wallets: query.wallet,
+      phases: query.phase,
+      minted: query.minted
+    };
+
+    await fetchDistributions(distributionFilters, pageSize, page).then(
+      (result) => {
+        return returnPaginatedResult(result, req, res);
+      }
+    );
   }
 );
 

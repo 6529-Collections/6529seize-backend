@@ -19,6 +19,24 @@ import { checkIsNormalized } from '@/api/distributions/api.distributions.service
 import { fetchPaginated } from '@/db-api';
 import { sqlExecutor } from '@/sql-executor';
 
+export interface DistributionFilters {
+  search: string | undefined;
+  cards: string | undefined;
+  contracts: string | undefined;
+  wallets: string | undefined;
+  phases: string | undefined;
+  minted: boolean | undefined;
+}
+
+function splitCsvFilter(filter: string | undefined): string[] {
+  return filter
+    ? filter
+        .split(',')
+        .map((entry) => entry.trim())
+        .filter(Boolean)
+    : [];
+}
+
 export async function fetchDistributionPhases(
   contract: string,
   cardId: number
@@ -39,14 +57,24 @@ export async function fetchDistributionPhases(
 }
 
 export async function fetchDistributions(
-  search: string,
-  cards: string,
-  contracts: string,
-  wallets: string,
+  distributionFilters: DistributionFilters,
   pageSize: number,
   page: number
 ): Promise<PaginatedResponse<DistributionNormalized>> {
-  if (!search && !cards && !contracts && !wallets) {
+  const { search, cards, contracts, wallets, phases, minted } =
+    distributionFilters;
+  const parsedCards = splitCsvFilter(cards);
+  const parsedContracts = splitCsvFilter(contracts);
+  const parsedWallets = splitCsvFilter(wallets);
+  const parsedPhases = splitCsvFilter(phases);
+  if (
+    !search &&
+    parsedCards.length === 0 &&
+    parsedContracts.length === 0 &&
+    parsedWallets.length === 0 &&
+    parsedPhases.length === 0 &&
+    minted === undefined
+  ) {
     return {
       count: 0,
       page: 1,
@@ -72,26 +100,42 @@ export async function fetchDistributions(
       ...searchFilters.params
     };
   }
-  if (cards) {
+  if (parsedCards.length > 0) {
     filters = constructFilters(
       filters,
       `${DISTRIBUTION_NORMALIZED_TABLE}.card_id in (:cards)`
     );
-    params.cards = cards.split(',');
+    params.cards = parsedCards;
   }
-  if (contracts) {
+  if (parsedContracts.length > 0) {
     filters = constructFilters(
       filters,
       `${DISTRIBUTION_NORMALIZED_TABLE}.contract in (:contracts)`
     );
-    params.contracts = contracts.split(',');
+    params.contracts = parsedContracts;
   }
-  if (wallets) {
+  if (parsedWallets.length > 0) {
     filters = constructFilters(
       filters,
       `LOWER(${DISTRIBUTION_NORMALIZED_TABLE}.wallet) in (:wallets)`
     );
-    params.wallets = wallets.split(',').map((w: string) => w.toLowerCase());
+    params.wallets = parsedWallets.map((wallet) => wallet.toLowerCase());
+  }
+  if (parsedPhases.length > 0) {
+    const phaseFilters = parsedPhases.map(
+      (_, index) =>
+        `JSON_CONTAINS(${DISTRIBUTION_NORMALIZED_TABLE}.phases, JSON_QUOTE(:phase_${index}))`
+    );
+    filters = constructFilters(filters, `(${phaseFilters.join(' OR ')})`);
+    parsedPhases.forEach((phase, index) => {
+      params[`phase_${index}`] = phase;
+    });
+  }
+  if (minted !== undefined) {
+    filters = constructFilters(
+      filters,
+      `${DISTRIBUTION_NORMALIZED_TABLE}.minted ${minted ? '>' : '='} 0`
+    );
   }
 
   const results = await fetchPaginated(
