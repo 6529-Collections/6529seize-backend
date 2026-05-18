@@ -1,4 +1,5 @@
 import { fetchPaginated } from '@/db-api';
+import { DISTRIBUTION_NORMALIZED_TABLE } from '@/constants';
 import { fetchDistributions } from '@/api/distributions/api.distributions.db';
 
 jest.mock('@/db-api', () => ({
@@ -67,7 +68,7 @@ describe('fetchDistributions', () => {
     );
 
     expect(fetchPaginatedMock).toHaveBeenCalledWith(
-      'distribution_normalized',
+      DISTRIBUTION_NORMALIZED_TABLE,
       {
         cards: ['440', '441'],
         contracts: ['0xContractA', '0xContractB'],
@@ -76,7 +77,9 @@ describe('fetchDistributions', () => {
       expect.any(String),
       2000,
       1,
-      expect.stringContaining('distribution_normalized.card_id in (:cards)')
+      expect.stringContaining(
+        `${DISTRIBUTION_NORMALIZED_TABLE}.card_id in (:cards)`
+      )
     );
   });
 
@@ -95,12 +98,12 @@ describe('fetchDistributions', () => {
     );
 
     expect(fetchPaginatedMock).toHaveBeenCalledWith(
-      'distribution_normalized',
+      DISTRIBUTION_NORMALIZED_TABLE,
       { cards: ['440'] },
       expect.any(String),
       2000,
       1,
-      expect.stringContaining('distribution_normalized.minted > 0')
+      expect.stringContaining(`${DISTRIBUTION_NORMALIZED_TABLE}.minted > 0`)
     );
   });
 
@@ -119,12 +122,12 @@ describe('fetchDistributions', () => {
     );
 
     expect(fetchPaginatedMock).toHaveBeenCalledWith(
-      'distribution_normalized',
+      DISTRIBUTION_NORMALIZED_TABLE,
       { cards: ['440'] },
       expect.any(String),
       2000,
       1,
-      expect.stringContaining('distribution_normalized.minted = 0')
+      expect.stringContaining(`${DISTRIBUTION_NORMALIZED_TABLE}.minted = 0`)
     );
   });
 
@@ -143,7 +146,7 @@ describe('fetchDistributions', () => {
     );
 
     expect(fetchPaginatedMock).toHaveBeenCalledWith(
-      'distribution_normalized',
+      DISTRIBUTION_NORMALIZED_TABLE,
       {
         cards: ['440'],
         phase_0: 'Phase 1',
@@ -153,7 +156,7 @@ describe('fetchDistributions', () => {
       2000,
       1,
       expect.stringContaining(
-        'JSON_CONTAINS(distribution_normalized.phases, JSON_QUOTE(:phase_0)) OR JSON_CONTAINS(distribution_normalized.phases, JSON_QUOTE(:phase_1))'
+        `JSON_CONTAINS(${DISTRIBUTION_NORMALIZED_TABLE}.phases, JSON_QUOTE(:phase_0)) OR JSON_CONTAINS(${DISTRIBUTION_NORMALIZED_TABLE}.phases, JSON_QUOTE(:phase_1))`
       )
     );
   });

@@ -1,5 +1,6 @@
 import { ethers } from 'ethers';
 import { Request, Response } from 'express';
+import * as Joi from 'joi';
 import {
   DISTRIBUTION_PHASE_AIRDROP_ARTIST,
   DISTRIBUTION_PHASE_AIRDROP_TEAM
@@ -16,6 +17,7 @@ import { asyncRouter } from '@/api/async.router';
 import { needsAuthenticatedUser } from '@/api/auth/auth';
 import { cacheRequest } from '@/api/request-cache';
 import { authenticateSubscriptionsAdmin } from '@/api/subscriptions/api.subscriptions.allowlist';
+import { getValidatedByJoiOrThrow } from '@/api/validation';
 import { ForbiddenException } from '@/exceptions';
 import { numbers } from '@/numbers';
 import { evictRedisCacheForPathWithTimeout } from '@/redis';
@@ -102,26 +104,36 @@ const router = asyncRouter();
 const logger = Logger.get('DISTRIBUTIONS');
 const CACHE_EVICTION_TIMEOUT_MS = 1_500;
 
-function getDistributionQueryValue(value: unknown): string | undefined {
-  const firstValue = Array.isArray(value) ? value[0] : value;
-  return typeof firstValue === 'string' ? firstValue : undefined;
+interface DistributionQueryParams {
+  search?: string;
+  card_id?: string;
+  contract?: string;
+  wallet?: string;
+  phase?: string;
+  minted?: boolean;
+  page?: string;
+  page_size?: string;
 }
 
-function parseDistributionMintedFilter(minted: unknown): boolean | undefined {
-  const mintedValue = getDistributionQueryValue(minted);
-  if (mintedValue === undefined) {
-    return undefined;
-  }
-
-  const normalizedMinted = mintedValue.trim().toLowerCase();
-  if (normalizedMinted === 'true' || normalizedMinted === '1') {
-    return true;
-  }
-  if (normalizedMinted === 'false' || normalizedMinted === '0') {
-    return false;
-  }
-  return undefined;
-}
+const DistributionQuerySchema = Joi.object<DistributionQueryParams>({
+  search: Joi.string().optional(),
+  card_id: Joi.string().optional(),
+  contract: Joi.string().optional(),
+  wallet: Joi.string().optional(),
+  phase: Joi.string().optional(),
+  minted: Joi.alternatives()
+    .try(
+      Joi.boolean().strict(),
+      Joi.string().valid('true', 'false', '1', '0'),
+      Joi.number().valid(1, 0)
+    )
+    .custom((value: boolean | string | number) => {
+      return value === true || value === 'true' || value === '1' || value === 1;
+    })
+    .optional(),
+  page: Joi.string().optional(),
+  page_size: Joi.string().optional()
+}).unknown(false);
 
 async function evictDistributionCacheForPathWithTimeout(
   contract: string,
@@ -295,23 +307,18 @@ router.get(
   `/distributions`,
   cacheRequest(),
   async function (req: any, res: any) {
-    const search = getDistributionQueryValue(req.query.search);
-    const cards = getDistributionQueryValue(req.query.card_id);
-    const contracts = getDistributionQueryValue(req.query.contract);
-    const wallets = getDistributionQueryValue(req.query.wallet);
-    const phases = getDistributionQueryValue(req.query.phase);
-    const minted = parseDistributionMintedFilter(req.query.minted);
+    const query = getValidatedByJoiOrThrow(req.query, DistributionQuerySchema);
 
     const pageSize = getPageSize(req, DISTRIBUTION_PAGE_SIZE);
     const page = getPage(req);
 
     const distributionFilters: DistributionFilters = {
-      search,
-      cards,
-      contracts,
-      wallets,
-      phases,
-      minted
+      search: query.search,
+      cards: query.card_id,
+      contracts: query.contract,
+      wallets: query.wallet,
+      phases: query.phase,
+      minted: query.minted
     };
 
     await fetchDistributions(distributionFilters, pageSize, page).then(
