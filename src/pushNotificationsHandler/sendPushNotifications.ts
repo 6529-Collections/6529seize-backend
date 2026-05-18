@@ -150,10 +150,7 @@ function buildMessage(
   return {
     notification,
     token: input.token,
-    data: {
-      notification_id: input.notification_id.toString(),
-      ...input.extra_data
-    },
+    data: buildMessageData(input),
     android: {
       notification: {
         sound: 'default'
@@ -170,11 +167,29 @@ function buildMessage(
   };
 }
 
+function buildMessageData(
+  input: PushNotificationMessageInput
+): Record<string, string> {
+  const data: Record<string, string> = {
+    notification_id: input.notification_id.toString()
+  };
+  for (const [key, value] of Object.entries(input.extra_data)) {
+    if (value == null) {
+      continue;
+    }
+    data[key] = String(value);
+  }
+  return data;
+}
+
 function truncatePreparedLine(value: string, maxLength: number): string {
   if (value.length <= maxLength) {
     return value;
   }
-  return `${value.substring(0, maxLength)}...`;
+  if (maxLength <= 3) {
+    return value.substring(0, maxLength);
+  }
+  return `${value.substring(0, maxLength - 3)}...`;
 }
 
 async function handleSendResponse(

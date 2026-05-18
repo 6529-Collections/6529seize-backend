@@ -12,7 +12,7 @@ import { WaveReaderMetricEntity } from '../entities/IWaveReaderMetric';
 import { Logger } from '../logging';
 import { doInDbContext } from '../secrets';
 import * as sentryContext from '../sentry.context';
-import { sendIdentityNotificationsBatch } from './identityPushNotifications';
+import { sendIdentityNotificationsBatch } from '@/pushNotificationsHandler/identityPushNotifications';
 
 const logger = Logger.get('PUSH_NOTIFICATIONS_HANDLER');
 

@@ -40,7 +40,7 @@ resources:
       Type: AWS::SQS::Queue
       Properties:
         QueueName: firebase-push-notifications
-        VisibilityTimeout: 60
+        VisibilityTimeout: 300
         DelaySeconds: 3
         RedrivePolicy:
           deadLetterTargetArn:

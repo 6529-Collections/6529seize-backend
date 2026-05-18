@@ -34,17 +34,17 @@ import {
   buildDropVotePushTitle,
   formatSignedLocaleNumber,
   getRatingChangeEmoji
-} from './drop-vote-push-notification-text';
+} from '@/pushNotificationsHandler/drop-vote-push-notification-text';
 import {
   getDropMediaInfoForPush,
   truncatePushNotificationFileName
-} from './push-notification-text';
-import type { PushNotificationFileInfo } from './push-notification-text';
+} from '@/pushNotificationsHandler/push-notification-text';
+import type { PushNotificationFileInfo } from '@/pushNotificationsHandler/push-notification-text';
 import {
   PushNotificationMessageInput,
   PushNotificationSendResult,
   sendMessages
-} from './sendPushNotifications';
+} from '@/pushNotificationsHandler/sendPushNotifications';
 
 const CAUSE_TO_SETTING_KEY: Partial<
   Record<IdentityNotificationCause, keyof PushNotificationSettingsData>
@@ -62,6 +62,7 @@ const CAUSE_TO_SETTING_KEY: Partial<
 };
 
 const logger = Logger.get('PUSH_NOTIFICATIONS_HANDLER_IDENTITY');
+const SKIP_NOTIFICATION_PUSH = Symbol('SKIP_NOTIFICATION_PUSH');
 
 const identityNotificationsDb = new IdentityNotificationsDb(dbSupplier);
 
@@ -327,6 +328,10 @@ async function buildIdentityNotificationMessages(
   }
 
   const notificationData = await generateNotificationData(notification);
+  if (notificationData === SKIP_NOTIFICATION_PUSH) {
+    logger.info(`[ID ${notification.id}] Skipping push notification`);
+    return [];
+  }
   if (!notificationData) {
     logger.error(`Failed to generate notification data: ${notification.id}`);
     return [];
@@ -434,14 +439,20 @@ async function handleSendResults(
         logger.warn(
           `[ID ${result.input.notification_id}] token-not-registered for profile ${message.identityId} device ${message.device.device_id}`
         );
-        await getDataSource().getRepository(PushNotificationDevice).delete({
-          device_id: message.device.device_id,
-          profile_id: message.identityId,
-          token: message.device.token
-        });
-        logger.info(
-          `[ID ${result.input.notification_id}] Deleted unregistered token row for profile ${message.identityId} device ${message.device.device_id}`
-        );
+        try {
+          await getDataSource().getRepository(PushNotificationDevice).delete({
+            device_id: message.device.device_id,
+            profile_id: message.identityId,
+            token: message.device.token
+          });
+          logger.info(
+            `[ID ${result.input.notification_id}] Deleted unregistered token row for profile ${message.identityId} device ${message.device.device_id}`
+          );
+        } catch (deleteError) {
+          logger.error(
+            `[ID ${result.input.notification_id}] Failed to delete unregistered token row for profile ${message.identityId} device ${message.device.device_id}: ${deleteError}`
+          );
+        }
         return;
       }
       logger.error(`Failed to send notification: ${error?.message}`, {
@@ -623,9 +634,6 @@ async function handleDropVoted(
   const totalVote = numbersOrNull(
     (notification.additional_data as any).total_vote
   );
-  if (vote === 0) {
-    return;
-  }
   if (!Number.isFinite(vote)) {
     throw new TypeError(
       `[ID ${notification.id}] Vote additional data not found`
@@ -635,6 +643,9 @@ async function handleDropVoted(
     throw new TypeError(
       `[ID ${notification.id}] Vote change additional data is invalid`
     );
+  }
+  if (vote === 0 && voteChange === 0) {
+    return SKIP_NOTIFICATION_PUSH;
   }
   const imageUrl = additionalEntity.pfp;
   const dropPart = await getDropPart(notification);

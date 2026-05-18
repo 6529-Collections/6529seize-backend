@@ -4,7 +4,7 @@ import {
   formatSignedLocaleNumber,
   getRatingChangeEmoji,
   truncateDropLabel
-} from './drop-vote-push-notification-text';
+} from '@/pushNotificationsHandler/drop-vote-push-notification-text';
 
 describe('drop vote push notification text', () => {
   it('formats initial votes with locale separators', () => {
@@ -34,6 +34,26 @@ describe('drop vote push notification text', () => {
       })
     ).toBe(
       'Drop: Intern test\nChange: -1,030\nNew rating: +171\nTotal Drop Rating: +12,345'
+    );
+  });
+
+  it('formats vote removals as negative updates with zero new rating', () => {
+    expect(
+      buildDropVotePushTitle({
+        voterHandle: 'prxt0',
+        vote: 0,
+        voteChange: -5
+      })
+    ).toBe('💔 prxt0 updated their rating on your drop');
+    expect(
+      buildDropVotePushBody({
+        dropBody: 'Intern test',
+        vote: 0,
+        voteChange: -5,
+        totalVote: 12340
+      })
+    ).toBe(
+      'Drop: Intern test\nChange: -5\nNew rating: 0\nTotal Drop Rating: +12,340'
     );
   });
 

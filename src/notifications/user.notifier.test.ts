@@ -84,4 +84,63 @@ describe('UserNotifier notifyOfDropVote', () => {
       connection
     );
   });
+
+  it('stores the rater REP rating', async () => {
+    const identityNotificationsDb = {
+      insertNotification: jest.fn()
+    };
+    const notifier = new UserNotifier(identityNotificationsDb as any);
+    const connection = {} as any;
+
+    await notifier.notifyOfIdentityRep(
+      {
+        rater_id: 'rater-1',
+        rated_id: 'rated-1',
+        amount: -1030,
+        rater_rating: 171,
+        total: 12345,
+        category: 'Memes'
+      },
+      connection
+    );
+
+    expect(identityNotificationsDb.insertNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cause: IdentityNotificationCause.IDENTITY_REP,
+        additional_data: expect.objectContaining({
+          rater_rating: 171
+        })
+      }),
+      connection
+    );
+  });
+
+  it('stores the rater NIC rating', async () => {
+    const identityNotificationsDb = {
+      insertNotification: jest.fn()
+    };
+    const notifier = new UserNotifier(identityNotificationsDb as any);
+    const connection = {} as any;
+
+    await notifier.notifyOfIdentityNic(
+      {
+        rater_id: 'rater-1',
+        rated_id: 'rated-1',
+        amount: -1030,
+        rater_rating: 171,
+        total: 12345
+      },
+      connection
+    );
+
+    expect(identityNotificationsDb.insertNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cause: IdentityNotificationCause.IDENTITY_NIC,
+        additional_data: expect.objectContaining({
+          rater_rating: 171
+        })
+      }),
+      connection
+    );
+  });
 });
