@@ -84,12 +84,14 @@ function buildRatingUpdateBody({
   prefixLines = [],
   amount,
   raterRating,
+  raterHandle,
   total,
   totalLabel
 }: {
   prefixLines?: string[];
   amount: number;
   raterRating: number | null;
+  raterHandle: string;
   total: number;
   totalLabel: string;
 }): string {
@@ -98,7 +100,7 @@ function buildRatingUpdateBody({
     `Change: ${formatSignedLocaleNumber(amount)}`,
     raterRating === null
       ? null
-      : `New rating: ${formatSignedLocaleNumber(raterRating)}`,
+      : `${raterHandle}'s rating: ${formatSignedLocaleNumber(raterRating)}`,
     `${totalLabel}: ${formatSignedLocaleNumber(total)}`
   ];
   return lines.filter((line): line is string => line !== null).join('\n');
@@ -525,11 +527,17 @@ async function handleIdentityRep(
   const total = Number((notification.additional_data as any).total);
   const category = (notification.additional_data as any).category;
   const categoryLine = category ? `Category: ${category}` : null;
-  const title = `${getRatingChangeEmoji(amount)}${additionalEntity.handle} updated your REP`;
+  const raterHandle =
+    additionalEntity.handle ??
+    additionalEntity.normalised_handle ??
+    notification.additional_identity_id ??
+    'Someone';
+  const title = `${getRatingChangeEmoji(amount)}${raterHandle} updated your REP`;
   const body = buildRatingUpdateBody({
     prefixLines: categoryLine ? [categoryLine] : [],
     amount,
     raterRating,
+    raterHandle,
     total,
     totalLabel: 'Total REP'
   });
@@ -552,10 +560,16 @@ async function handleIdentityNic(
     (notification.additional_data as any).rater_rating
   );
   const total = Number((notification.additional_data as any).total);
-  const title = `${getRatingChangeEmoji(amount)}${additionalEntity.handle} updated your NIC rating`;
+  const raterHandle =
+    additionalEntity.handle ??
+    additionalEntity.normalised_handle ??
+    notification.additional_identity_id ??
+    'Someone';
+  const title = `${getRatingChangeEmoji(amount)}${raterHandle} updated your NIC rating`;
   const body = buildRatingUpdateBody({
     amount,
     raterRating,
+    raterHandle,
     total,
     totalLabel: 'Total NIC'
   });

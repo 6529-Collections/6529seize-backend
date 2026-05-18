@@ -112,7 +112,10 @@ export async function sendMessages(
       response = await admin.messaging().sendEach(messages);
     } catch (error) {
       logger.error(`Error sending notification batch: ${error}`);
-      throw error;
+      results.push(
+        ...chunk.map((input) => buildFailedSendResult(input, error))
+      );
+      continue;
     }
 
     logger.info(
@@ -127,6 +130,19 @@ export async function sendMessages(
     results.push(...retryResults);
   }
   return results;
+}
+
+function buildFailedSendResult(
+  input: PushNotificationMessageInput,
+  error: unknown
+): PushNotificationSendResult {
+  return {
+    input,
+    response: {
+      success: false,
+      error: error as SendResponse['error']
+    }
+  };
 }
 
 function buildMessage(
