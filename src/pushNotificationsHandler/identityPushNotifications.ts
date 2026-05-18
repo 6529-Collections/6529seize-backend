@@ -72,14 +72,16 @@ interface IdentityPushNotificationMessage {
   device: PushNotificationDevice;
 }
 
+type AdditionalDataNumber = string | number | null;
+
 interface AdditionalDataPayload {
-  amount?: string | number | null;
-  rater_rating?: string | number | null;
-  total?: string | number | null;
+  amount?: AdditionalDataNumber;
+  rater_rating?: AdditionalDataNumber;
+  total?: AdditionalDataNumber;
   category?: string | null;
-  vote?: string | number | null;
-  vote_change?: string | number | null;
-  total_vote?: string | number | null;
+  vote?: AdditionalDataNumber;
+  vote_change?: AdditionalDataNumber;
+  total_vote?: AdditionalDataNumber;
   reaction?: string | null;
 }
 
