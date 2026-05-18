@@ -95,4 +95,8 @@ describe('drop vote push notification text', () => {
       `${'a'.repeat(77)}...`
     );
   });
+
+  it('truncates drop labels without splitting emoji surrogate pairs', () => {
+    expect(truncateDropLabel('🚀'.repeat(80))).toBe(`${'🚀'.repeat(77)}...`);
+  });
 });

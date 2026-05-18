@@ -59,8 +59,9 @@ export function buildDropVotePushBody({
 
 export function truncateDropLabel(value: string): string {
   const normalized = value.replace(/\s+/g, ' ').trim();
-  if (normalized.length <= MAX_DROP_LABEL_LENGTH) {
+  const characters = Array.from(normalized);
+  if (characters.length <= MAX_DROP_LABEL_LENGTH) {
     return normalized;
   }
-  return `${normalized.substring(0, MAX_DROP_LABEL_LENGTH - 3)}...`;
+  return `${characters.slice(0, MAX_DROP_LABEL_LENGTH - 3).join('')}...`;
 }

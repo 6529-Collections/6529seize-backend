@@ -174,13 +174,14 @@ function buildMessageData(
 }
 
 function truncatePreparedLine(value: string, maxLength: number): string {
-  if (value.length <= maxLength) {
+  const characters = Array.from(value);
+  if (characters.length <= maxLength) {
     return value;
   }
   if (maxLength <= 3) {
-    return value.substring(0, maxLength);
+    return characters.slice(0, maxLength).join('');
   }
-  return `${value.substring(0, maxLength - 3)}...`;
+  return `${characters.slice(0, maxLength - 3).join('')}...`;
 }
 
 async function handleSendResponse(
