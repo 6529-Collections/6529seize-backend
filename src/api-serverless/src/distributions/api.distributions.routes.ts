@@ -116,11 +116,11 @@ interface DistributionQueryParams {
 }
 
 const DistributionQuerySchema = Joi.object<DistributionQueryParams>({
-  search: Joi.string().optional(),
-  card_id: Joi.string().optional(),
-  contract: Joi.string().optional(),
-  wallet: Joi.string().optional(),
-  phase: Joi.string().optional(),
+  search: Joi.string().allow('').optional(),
+  card_id: Joi.string().allow('').optional(),
+  contract: Joi.string().allow('').optional(),
+  wallet: Joi.string().allow('').optional(),
+  phase: Joi.string().allow('').optional(),
   minted: Joi.alternatives()
     .try(
       Joi.boolean().strict(),
@@ -131,8 +131,8 @@ const DistributionQuerySchema = Joi.object<DistributionQueryParams>({
       return value === true || value === 'true' || value === '1' || value === 1;
     })
     .optional(),
-  page: Joi.string().optional(),
-  page_size: Joi.string().optional()
+  page: Joi.string().allow('').optional(),
+  page_size: Joi.string().allow('').optional()
 }).unknown(false);
 
 async function evictDistributionCacheForPathWithTimeout(
