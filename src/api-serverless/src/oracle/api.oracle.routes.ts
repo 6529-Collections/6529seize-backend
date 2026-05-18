@@ -24,6 +24,16 @@ const TdhAboveParamsSchema = Joi.object<TdhAboveParams>({
   extra: Joi.string().valid('entries').optional()
 });
 
+type OracleNftsParams = {
+  contract?: string;
+  id?: number;
+};
+
+const OracleNftsParamsSchema = Joi.object<OracleNftsParams>({
+  contract: Joi.string().optional(),
+  id: Joi.number().integer().optional()
+});
+
 function isValidIP(ip: string): boolean {
   const ipv4FormatRegex = /^(\d{1,3}\.){3}\d{1,3}$/;
   if (!ipv4FormatRegex.test(ip)) {
@@ -289,18 +299,11 @@ router.get(
     >,
     res: any
   ) {
-    const contract = req.params.contract;
-    const id = req.params.id;
-    let tokenId: number | undefined;
-    if (id) {
-      const parsedTokenId = numbers.parseIntOrNull(id);
-      if (parsedTokenId === null) {
-        return res.status(400).send({ error: 'Invalid token id' });
-      }
-      tokenId = parsedTokenId;
-    }
+    const params = getValidatedByJoiOrThrow(req.params, OracleNftsParamsSchema);
+    const contract = params.contract;
+    const tokenId = params.id;
     const result = await db.fetchNfts(contract, tokenId);
-    if (contract && id) {
+    if (contract && tokenId !== undefined) {
       if (result.nfts.length === 0) {
         return res.status(404).send({ error: 'NFT not found' });
       } else {
