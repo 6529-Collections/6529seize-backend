@@ -696,7 +696,7 @@ async function handleDropVoted(
       `[ID ${notification.id}] Vote change additional data is invalid`
     );
   }
-  if (vote === 0 && voteChange === 0) {
+  if (vote === 0 && (voteChange === null || voteChange === 0)) {
     return SKIP_NOTIFICATION_PUSH;
   }
   const imageUrl = additionalEntity.pfp;
