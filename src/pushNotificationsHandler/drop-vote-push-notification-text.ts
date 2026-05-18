@@ -15,7 +15,7 @@ export function formatSignedLocaleNumber(value: number): string {
     return '0';
   }
   const sign = value >= 0 ? '+' : '-';
-  return `${sign}${Math.abs(value).toLocaleString()}`;
+  return `${sign}${Math.abs(value).toLocaleString('en-US')}`;
 }
 
 export function buildDropVotePushTitle({
@@ -47,7 +47,7 @@ export function buildDropVotePushBody({
 }): string {
   const dropLabel = dropBody === null ? '' : truncateDropLabel(dropBody);
   const lines = dropLabel ? [`Drop: ${dropLabel}`] : [];
-  if (voteChange !== null) {
+  if (voteChange !== null && voteChange !== vote) {
     lines.push(`Change: ${formatSignedLocaleNumber(voteChange)}`);
   }
   lines.push(`New rating: ${formatSignedLocaleNumber(vote)}`);

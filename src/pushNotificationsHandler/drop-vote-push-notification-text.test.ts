@@ -15,6 +15,14 @@ describe('drop vote push notification text', () => {
         voteChange: 1201
       })
     ).toBe('🚀 prxt0 rated your drop');
+    expect(
+      buildDropVotePushBody({
+        dropBody: 'Intern test',
+        vote: 1201,
+        voteChange: 1201,
+        totalVote: 12345
+      })
+    ).toBe('Drop: Intern test\nNew rating: +1,201\nTotal Drop Rating: +12,345');
   });
 
   it('formats vote edits by change and includes ratings in the body', () => {
@@ -65,7 +73,7 @@ describe('drop vote push notification text', () => {
         voteChange: 5,
         totalVote: 12345
       })
-    ).toBe('Change: +5\nNew rating: +5\nTotal Drop Rating: +12,345');
+    ).toBe('New rating: +5\nTotal Drop Rating: +12,345');
   });
 
   it('formats negative values with the sign before locale separators', () => {
