@@ -79,6 +79,27 @@ function numbersOrNull(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function buildRatingUpdateBody({
+  amount,
+  raterRating,
+  total,
+  totalLabel
+}: {
+  amount: number;
+  raterRating: number | null;
+  total: number;
+  totalLabel: string;
+}): string {
+  const lines = [
+    `Change: ${formatSignedLocaleNumber(amount)}`,
+    raterRating === null
+      ? null
+      : `New rating: ${formatSignedLocaleNumber(raterRating)}`,
+    `${totalLabel}: ${formatSignedLocaleNumber(total)}`
+  ];
+  return lines.filter((line): line is string => line !== null).join('\n');
+}
+
 async function getDeviceSettings(
   profileId: string,
   deviceId: string
@@ -491,15 +512,12 @@ async function handleIdentityRep(
   const category = (notification.additional_data as any).category;
   const categoryText = category ? ` for ${category}` : '';
   const title = `${getRatingChangeEmoji(amount)}${additionalEntity.handle} updated your REP${categoryText}`;
-  const body = [
-    `Change: ${formatSignedLocaleNumber(amount)}`,
-    raterRating === null
-      ? null
-      : `New rating: ${formatSignedLocaleNumber(raterRating)}`,
-    `Total REP: ${formatSignedLocaleNumber(total)}`
-  ]
-    .filter((line): line is string => line !== null)
-    .join('\n');
+  const body = buildRatingUpdateBody({
+    amount,
+    raterRating,
+    total,
+    totalLabel: 'Total REP'
+  });
   const imageUrl = additionalEntity.pfp;
   const receiverProfile = await getIdentityOrThrow(notification.identity_id);
   const data = {
@@ -520,15 +538,12 @@ async function handleIdentityNic(
   );
   const total = Number((notification.additional_data as any).total);
   const title = `${getRatingChangeEmoji(amount)}${additionalEntity.handle} updated your NIC rating`;
-  const body = [
-    `Change: ${formatSignedLocaleNumber(amount)}`,
-    raterRating === null
-      ? null
-      : `New rating: ${formatSignedLocaleNumber(raterRating)}`,
-    `Total NIC: ${formatSignedLocaleNumber(total)}`
-  ]
-    .filter((line): line is string => line !== null)
-    .join('\n');
+  const body = buildRatingUpdateBody({
+    amount,
+    raterRating,
+    total,
+    totalLabel: 'Total NIC'
+  });
   const imageUrl = additionalEntity.pfp;
   const receiverProfile = await getIdentityOrThrow(notification.identity_id);
   const data = {
@@ -612,10 +627,12 @@ async function handleDropVoted(
     return;
   }
   if (!Number.isFinite(vote)) {
-    throw new Error(`[ID ${notification.id}] Vote additional data not found`);
+    throw new TypeError(
+      `[ID ${notification.id}] Vote additional data not found`
+    );
   }
   if (voteChange !== null && !Number.isFinite(voteChange)) {
-    throw new Error(
+    throw new TypeError(
       `[ID ${notification.id}] Vote change additional data is invalid`
     );
   }

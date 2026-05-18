@@ -67,6 +67,19 @@ interface DropReactedNotificationAdditionalContextV2 {
   }>;
 }
 
+type IdentityRepNotification = Extract<
+  UserNotification,
+  { cause: IdentityNotificationCause.IDENTITY_REP }
+>;
+type IdentityNicNotification = Extract<
+  UserNotification,
+  { cause: IdentityNotificationCause.IDENTITY_NIC }
+>;
+type DropVotedNotification = Extract<
+  UserNotification,
+  { cause: IdentityNotificationCause.DROP_VOTED }
+>;
+
 export class NotificationsApiService {
   constructor(
     private readonly notificationsReader: UserNotificationsReader,
@@ -545,12 +558,7 @@ export class NotificationsApiService {
           cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
           related_identity: profiles[data.rater_id],
           related_drops: [],
-          additional_context: {
-            amount: data.amount,
-            rater_rating: data.rater_rating ?? undefined,
-            total: data.total,
-            category: data.category
-          }
+          additional_context: this.getIdentityRepAdditionalContext(data)
         };
       }
       case IdentityNotificationCause.IDENTITY_NIC: {
@@ -562,11 +570,7 @@ export class NotificationsApiService {
           cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
           related_identity: profiles[data.rater_id],
           related_drops: [],
-          additional_context: {
-            amount: data.amount,
-            rater_rating: data.rater_rating ?? undefined,
-            total: data.total
-          }
+          additional_context: this.getIdentityNicAdditionalContext(data)
         };
       }
       case IdentityNotificationCause.DROP_VOTED: {
@@ -578,11 +582,7 @@ export class NotificationsApiService {
           cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
           related_identity: profiles[data.voter_id],
           related_drops: [drops[data.drop_id]],
-          additional_context: {
-            vote: data.vote,
-            vote_change: data.vote_change ?? undefined,
-            total_vote: data.total_vote ?? undefined
-          }
+          additional_context: this.getDropVotedAdditionalContext(data)
         };
       }
       case IdentityNotificationCause.DROP_REACTED: {
@@ -716,6 +716,35 @@ export class NotificationsApiService {
     return wave ? { ...apiNotification, related_wave: wave } : apiNotification;
   }
 
+  private getIdentityRepAdditionalContext(
+    data: IdentityRepNotification['data']
+  ) {
+    return {
+      amount: data.amount,
+      rater_rating: data.rater_rating ?? undefined,
+      total: data.total,
+      category: data.category
+    };
+  }
+
+  private getIdentityNicAdditionalContext(
+    data: IdentityNicNotification['data']
+  ) {
+    return {
+      amount: data.amount,
+      rater_rating: data.rater_rating ?? undefined,
+      total: data.total
+    };
+  }
+
+  private getDropVotedAdditionalContext(data: DropVotedNotification['data']) {
+    return {
+      vote: data.vote,
+      vote_change: data.vote_change ?? undefined,
+      total_vote: data.total_vote ?? undefined
+    };
+  }
+
   private getDropReactedAdditionalContextV2({
     dropId,
     reaction,
@@ -787,12 +816,7 @@ export class NotificationsApiService {
           cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
           related_identity: profiles[data.rater_id],
           related_drops: [],
-          additional_context: {
-            amount: data.amount,
-            rater_rating: data.rater_rating ?? undefined,
-            total: data.total,
-            category: data.category
-          }
+          additional_context: this.getIdentityRepAdditionalContext(data)
         };
       }
       case IdentityNotificationCause.IDENTITY_NIC: {
@@ -804,11 +828,7 @@ export class NotificationsApiService {
           cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
           related_identity: profiles[data.rater_id],
           related_drops: [],
-          additional_context: {
-            amount: data.amount,
-            rater_rating: data.rater_rating ?? undefined,
-            total: data.total
-          }
+          additional_context: this.getIdentityNicAdditionalContext(data)
         };
       }
       case IdentityNotificationCause.DROP_VOTED: {
@@ -820,11 +840,7 @@ export class NotificationsApiService {
           cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
           related_identity: profiles[data.voter_id],
           related_drops: [drops[data.drop_id]],
-          additional_context: {
-            vote: data.vote,
-            vote_change: data.vote_change ?? undefined,
-            total_vote: data.total_vote ?? undefined
-          }
+          additional_context: this.getDropVotedAdditionalContext(data)
         };
       }
       case IdentityNotificationCause.DROP_REACTED: {
