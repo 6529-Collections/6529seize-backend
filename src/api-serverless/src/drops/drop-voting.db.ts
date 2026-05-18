@@ -125,6 +125,24 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
     ctx.timer?.stop(`${this.constructor.name}->upsertAggregateDropRank`);
   }
 
+  public async getAggregateDropRankVote(
+    dropId: string,
+    ctx: RequestContext
+  ): Promise<number> {
+    ctx.timer?.start(`${this.constructor.name}->getAggregateDropRankVote`);
+    const vote = await this.db
+      .oneOrNull<{
+        vote: number;
+      }>(
+        `select vote from ${DROP_RANK_TABLE} where drop_id = :dropId`,
+        { dropId },
+        { wrappedConnection: ctx.connection }
+      )
+      .then((result) => result?.vote ?? 0);
+    ctx.timer?.stop(`${this.constructor.name}->getAggregateDropRankVote`);
+    return vote;
+  }
+
   public async lockDropsCurrentRealVote(dropId: string, ctx: RequestContext) {
     ctx.timer?.start(`${this.constructor.name}->lockDropsCurrentTealVote`);
     await this.db.oneOrNull<{ vote: number }>(
