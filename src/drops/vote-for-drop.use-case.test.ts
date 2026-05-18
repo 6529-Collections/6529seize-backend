@@ -128,6 +128,9 @@ describe('VoteForDropUseCase', () => {
       ...drop,
       author_id: 'voter-1'
     });
+    (
+      votingDb.getVotingCreditLockedInWaveForVoter as jest.Mock
+    ).mockResolvedValue(0);
 
     await useCase.execute(
       {
