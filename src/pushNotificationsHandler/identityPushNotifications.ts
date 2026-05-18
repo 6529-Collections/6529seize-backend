@@ -263,7 +263,7 @@ export async function sendIdentityNotificationsBatch(
     .filter((id) => !notificationsById.has(id))
     .forEach((id) => logger.error(`Notification not found: ${id}`));
 
-  const failedIds = uniqueIds.filter((id) => !notificationsById.has(id));
+  const failedIds: number[] = [];
   const messagesByNotification = await Promise.all(
     uniqueIds.map(async (id) => {
       const notification = notificationsById.get(id);
@@ -696,13 +696,13 @@ async function handleDropVoted(
       `[ID ${notification.id}] Vote change additional data is invalid`
     );
   }
-  if (vote === 0 && voteChange === 0) {
+  if (vote === 0 && (voteChange === null || voteChange === 0)) {
     return SKIP_NOTIFICATION_PUSH;
   }
   const imageUrl = additionalEntity.pfp;
   const dropPart = await getDropPart(notification);
   const dropSerialNo = await getDropSerialNo(notification.related_drop_id);
-  const dropBody = await getDropBodyTextForPush(notification, dropPart);
+  const dropBody = await getDropBodyTextForPush(notification, dropPart, '');
   const voterHandle =
     additionalEntity.handle ??
     additionalEntity.normalised_handle ??

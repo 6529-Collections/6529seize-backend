@@ -237,10 +237,6 @@ export class VoteForDropUseCase {
         ctx
       )
     ]);
-    const totalDropRating = await this.votingDb.getAggregateDropRankVote(
-      drop_id,
-      ctx
-    );
     await Promise.all([
       this.votingDb.snapShotDropsRealVoteInTimeBasedOnRank(
         drop_id,
@@ -283,6 +279,10 @@ export class VoteForDropUseCase {
       )
     ]);
     if (drop.author_id !== voter_id) {
+      const totalDropRating = await this.votingDb.getAggregateDropRankVote(
+        drop_id,
+        ctx
+      );
       await this.userNotifier.notifyOfDropVote(
         {
           voter_id,
