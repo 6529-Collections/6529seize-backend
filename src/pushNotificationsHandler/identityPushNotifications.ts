@@ -263,7 +263,7 @@ export async function sendIdentityNotificationsBatch(
     .filter((id) => !notificationsById.has(id))
     .forEach((id) => logger.error(`Notification not found: ${id}`));
 
-  const failedIds = uniqueIds.filter((id) => !notificationsById.has(id));
+  const failedIds: number[] = [];
   const messagesByNotification = await Promise.all(
     uniqueIds.map(async (id) => {
       const notification = notificationsById.get(id);
