@@ -8,15 +8,15 @@ import {
   TDH_BLOCKS_TABLE,
   TDH_NFT_TABLE
 } from '@/constants';
-import { fetchPaginated } from '../../../db-api';
-import { MemesExtendedData } from '../../../entities/INFT';
-import { NftTDH } from '../../../entities/ITDH';
+import { fetchPaginated } from '@/db-api';
+import { MemesExtendedData } from '@/entities/INFT';
+import { NftTDH } from '@/entities/ITDH';
 import {
   getNextgenNetwork,
   NEXTGEN_CORE_CONTRACT
-} from '../../../nextgen/nextgen_constants';
-import { sqlExecutor } from '../../../sql-executor';
-import { getIpInfo } from '../policies/policies';
+} from '@/nextgen/nextgen_constants';
+import { sqlExecutor } from '@/sql-executor';
+import { getIpInfo } from '@/api/policies/policies';
 
 const formatNumber = (num: number) => {
   return parseFloat(num.toFixed(0));
@@ -44,7 +44,8 @@ const getBlock = async () => {
 
 const getMerkleRoot = async (block: number): Promise<string | null> => {
   const merkleRootResult = await sqlExecutor.oneOrNull<{ merkle_root: string }>(
-    `SELECT merkle_root from ${TDH_BLOCKS_TABLE} WHERE block_number = ${block}`
+    `SELECT merkle_root from ${TDH_BLOCKS_TABLE} WHERE block_number = :block`,
+    { block }
   );
   return merkleRootResult?.merkle_root ?? null;
 };
@@ -52,9 +53,11 @@ const getMerkleRoot = async (block: number): Promise<string | null> => {
 const fetchBlockAndAddressTdh = async (address: string) => {
   const block = await getBlock();
   const sql = `
-    SELECT * from ${CONSOLIDATED_WALLETS_TDH_TABLE} where LOWER(consolidation_key) like '%${address.toLowerCase()}%'
+    SELECT * from ${CONSOLIDATED_WALLETS_TDH_TABLE} where LOWER(consolidation_key) like :addressPattern
   `;
-  const tdh = await sqlExecutor.execute(sql);
+  const tdh = await sqlExecutor.execute(sql, {
+    addressPattern: `%${address.toLowerCase()}%`
+  });
 
   return {
     block,
@@ -171,9 +174,10 @@ export const fetchTotalTDH = async () => {
   return totals;
 };
 
-export const fetchNfts = async (contract?: string, id?: string) => {
+export const fetchNfts = async (contract?: string, id?: number) => {
   const block = await getBlock();
   const merkleRoot = await getMerkleRoot(block);
+  let resolvedContract: string | undefined;
   let sql = `
     SELECT 
       contract,
@@ -190,14 +194,18 @@ export const fetchNfts = async (contract?: string, id?: string) => {
     } else if (contractQuery === 'nextgen') {
       contractQuery = NEXTGEN_CORE_CONTRACT[getNextgenNetwork()];
     }
-    sql = `${sql} WHERE contract = '${contractQuery.toLowerCase()}'`;
+    resolvedContract = contractQuery.toLowerCase();
+    sql = `${sql} WHERE contract = :contract`;
 
-    if (id) {
-      sql = `${sql} AND id = ${id}`;
+    if (id !== undefined) {
+      sql = `${sql} AND id = :id`;
     }
   }
   sql = `${sql} GROUP BY contract, id ORDER BY contract ASC, id ASC`;
-  const nftResponse = await sqlExecutor.execute(sql);
+  const nftResponse = await sqlExecutor.execute(sql, {
+    contract: resolvedContract,
+    id
+  });
   const nfts = nftResponse.map((n: NftTDH) => {
     return {
       id: n.id,
@@ -256,10 +264,10 @@ export async function fetchTDHAbove(value: number, includeEntries: boolean) {
   const merkleRoot = await getMerkleRoot(block);
   const sql = `
     SELECT * from ${CONSOLIDATED_WALLETS_TDH_TABLE} 
-    WHERE boosted_tdh >= ${value}
+    WHERE boosted_tdh >= :value
     ORDER BY boosted_tdh DESC
   `;
-  const tdh = await sqlExecutor.execute(sql);
+  const tdh = await sqlExecutor.execute(sql, { value });
   const response: any = {
     count: tdh.length,
     block,
