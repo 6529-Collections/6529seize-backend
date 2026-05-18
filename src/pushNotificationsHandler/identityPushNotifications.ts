@@ -72,6 +72,25 @@ interface IdentityPushNotificationMessage {
   device: PushNotificationDevice;
 }
 
+type AdditionalDataNumber = string | number | null;
+
+interface AdditionalDataPayload {
+  amount?: AdditionalDataNumber;
+  rater_rating?: AdditionalDataNumber;
+  total?: AdditionalDataNumber;
+  category?: string | null;
+  vote?: AdditionalDataNumber;
+  vote_change?: AdditionalDataNumber;
+  total_vote?: AdditionalDataNumber;
+  reaction?: string | null;
+}
+
+function extractAdditionalData(
+  notification: IdentityNotificationEntity
+): AdditionalDataPayload {
+  return (notification.additional_data ?? {}) as AdditionalDataPayload;
+}
+
 function numbersOrNull(value: unknown): number | null {
   if (value == null) {
     return null;
@@ -80,16 +99,23 @@ function numbersOrNull(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function numberOrZero(value: unknown): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 function buildRatingUpdateBody({
   prefixLines = [],
   amount,
   raterRating,
+  raterHandle,
   total,
   totalLabel
 }: {
   prefixLines?: string[];
   amount: number;
   raterRating: number | null;
+  raterHandle: string;
   total: number;
   totalLabel: string;
 }): string {
@@ -98,7 +124,7 @@ function buildRatingUpdateBody({
     `Change: ${formatSignedLocaleNumber(amount)}`,
     raterRating === null
       ? null
-      : `New rating: ${formatSignedLocaleNumber(raterRating)}`,
+      : `${raterHandle}'s rating: ${formatSignedLocaleNumber(raterRating)}`,
     `${totalLabel}: ${formatSignedLocaleNumber(total)}`
   ];
   return lines.filter((line): line is string => line !== null).join('\n');
@@ -335,9 +361,10 @@ async function buildIdentityNotificationMessages(
     logger.info(`[ID ${notification.id}] Skipping push notification`);
     return [];
   }
-  if (!notificationData) {
-    logger.error(`Failed to generate notification data: ${notification.id}`);
-    return [];
+  if (notificationData === null) {
+    throw new Error(
+      `[ID ${notification.id}] Failed to generate notification data`
+    );
   }
 
   const { title, body, data, imageUrl } = notificationData;
@@ -427,10 +454,20 @@ async function handleSendResults(
   messages: IdentityPushNotificationMessage[],
   results: PushNotificationSendResult[]
 ): Promise<number[]> {
-  const failedIds: number[] = [];
+  const outcomesByNotificationId = new Map<
+    number,
+    { hasSuccess: boolean; hasRetryableFailure: boolean }
+  >();
   await Promise.all(
     results.map(async (result, index) => {
+      const notificationId = result.input.notification_id;
+      const outcome = outcomesByNotificationId.get(notificationId) ?? {
+        hasSuccess: false,
+        hasRetryableFailure: false
+      };
+      outcomesByNotificationId.set(notificationId, outcome);
       if (result.response.success) {
+        outcome.hasSuccess = true;
         return;
       }
       const message = messages[index];
@@ -461,11 +498,13 @@ async function handleSendResults(
       logger.error(`Failed to send notification: ${error?.message}`, {
         error
       });
-      failedIds.push(result.input.notification_id);
+      outcome.hasRetryableFailure = true;
     })
   );
 
-  return failedIds;
+  return Array.from(outcomesByNotificationId.entries())
+    .filter(([, outcome]) => !outcome.hasSuccess && outcome.hasRetryableFailure)
+    .map(([notificationId]) => notificationId);
 }
 
 async function generateNotificationData(
@@ -518,18 +557,23 @@ async function handleIdentityRep(
   notification: IdentityNotificationEntity,
   additionalEntity: ApiIdentity
 ) {
-  const amount = Number((notification.additional_data as any).amount);
-  const raterRating = numbersOrNull(
-    (notification.additional_data as any).rater_rating
-  );
-  const total = Number((notification.additional_data as any).total);
-  const category = (notification.additional_data as any).category;
+  const additionalData = extractAdditionalData(notification);
+  const amount = numberOrZero(additionalData.amount);
+  const raterRating = numbersOrNull(additionalData.rater_rating);
+  const total = numberOrZero(additionalData.total);
+  const category = additionalData.category;
   const categoryLine = category ? `Category: ${category}` : null;
-  const title = `${getRatingChangeEmoji(amount)}${additionalEntity.handle} updated your REP`;
+  const raterHandle =
+    additionalEntity.handle ??
+    additionalEntity.normalised_handle ??
+    notification.additional_identity_id ??
+    'Someone';
+  const title = `${getRatingChangeEmoji(amount)}${raterHandle} updated your REP`;
   const body = buildRatingUpdateBody({
     prefixLines: categoryLine ? [categoryLine] : [],
     amount,
     raterRating,
+    raterHandle,
     total,
     totalLabel: 'Total REP'
   });
@@ -547,15 +591,20 @@ async function handleIdentityNic(
   notification: IdentityNotificationEntity,
   additionalEntity: ApiIdentity
 ) {
-  const amount = Number((notification.additional_data as any).amount);
-  const raterRating = numbersOrNull(
-    (notification.additional_data as any).rater_rating
-  );
-  const total = Number((notification.additional_data as any).total);
-  const title = `${getRatingChangeEmoji(amount)}${additionalEntity.handle} updated your NIC rating`;
+  const additionalData = extractAdditionalData(notification);
+  const amount = numberOrZero(additionalData.amount);
+  const raterRating = numbersOrNull(additionalData.rater_rating);
+  const total = numberOrZero(additionalData.total);
+  const raterHandle =
+    additionalEntity.handle ??
+    additionalEntity.normalised_handle ??
+    notification.additional_identity_id ??
+    'Someone';
+  const title = `${getRatingChangeEmoji(amount)}${raterHandle} updated your NIC rating`;
   const body = buildRatingUpdateBody({
     amount,
     raterRating,
+    raterHandle,
     total,
     totalLabel: 'Total NIC'
   });
@@ -632,12 +681,11 @@ async function handleDropVoted(
   notification: IdentityNotificationEntity,
   additionalEntity: ApiIdentity
 ) {
-  const vote = Number((notification.additional_data as any).vote);
-  const rawVoteChange = (notification.additional_data as any).vote_change;
+  const additionalData = extractAdditionalData(notification);
+  const vote = Number(additionalData.vote);
+  const rawVoteChange = additionalData.vote_change;
   const voteChange = rawVoteChange == null ? null : Number(rawVoteChange);
-  const totalVote = numbersOrNull(
-    (notification.additional_data as any).total_vote
-  );
+  const totalVote = numbersOrNull(additionalData.total_vote);
   if (!Number.isFinite(vote)) {
     throw new TypeError(
       `[ID ${notification.id}] Vote additional data not found`
@@ -683,7 +731,7 @@ async function handleDropReacted(
   notification: IdentityNotificationEntity,
   additionalEntity: ApiIdentity
 ) {
-  const reaction: string = (notification.additional_data as any).reaction;
+  const reaction = extractAdditionalData(notification).reaction;
   if (!reaction) {
     throw new Error(
       `[ID ${notification.id}] Reaction additional data not found`
@@ -962,12 +1010,12 @@ async function handleAllDrops(
     notification.wave_id
   );
   const waveDisplay = await getWaveDisplayForRecipient(notification, wave);
-  const isRating =
-    typeof (notification.additional_data as any).vote === 'number';
+  const additionalData = extractAdditionalData(notification);
+  const isRating = typeof additionalData.vote === 'number';
 
   let title;
   if (isRating) {
-    const vote = Number((notification.additional_data as any).vote);
+    const vote = Number(additionalData.vote);
     title = `${additionalEntity.handle} rated a drop: ${formatSignedLocaleNumber(vote)}`;
   } else {
     title = `${additionalEntity.handle}`;

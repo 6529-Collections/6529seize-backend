@@ -85,6 +85,29 @@ describe('UserNotifier notifyOfDropVote', () => {
     );
   });
 
+  it('skips self-vote notifications', async () => {
+    const identityNotificationsDb = {
+      insertNotification: jest.fn()
+    };
+    const notifier = new UserNotifier(identityNotificationsDb as any);
+
+    await notifier.notifyOfDropVote(
+      {
+        voter_id: 'profile-1',
+        drop_id: 'drop-1',
+        drop_author_id: 'profile-1',
+        vote: 171,
+        vote_change: -1030,
+        total_vote: 12345,
+        wave_id: 'wave-1'
+      },
+      null,
+      {} as any
+    );
+
+    expect(identityNotificationsDb.insertNotification).not.toHaveBeenCalled();
+  });
+
   it('stores the rater REP rating', async () => {
     const identityNotificationsDb = {
       insertNotification: jest.fn()
