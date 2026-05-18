@@ -1,0 +1,1 @@
+export const MAX_MINTING_CLAIM_MEDIA_BYTES = 200 * 1024 * 1024;

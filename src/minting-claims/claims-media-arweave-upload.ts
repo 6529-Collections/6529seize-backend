@@ -8,6 +8,7 @@ import { BadRequestException } from '@/exceptions';
 import { fetchPublicUrlToBuffer } from '@/http/safe-fetch';
 import { Logger } from '@/logging';
 import { isMemesContract } from '@/minting-claims/external-url';
+import { MAX_MINTING_CLAIM_MEDIA_BYTES } from '@/minting-claims/media-limits';
 import { normalizeIpfsUri } from '@/nft-links/lib/uri';
 import { createHash } from 'node:crypto';
 
@@ -15,7 +16,6 @@ const logger = Logger.get('claims-media-arweave-upload');
 export const MIN_EDITION_SIZE = 300;
 
 const FETCH_MEDIA_TIMEOUT_MS = 60_000;
-const MAX_ARWEAVE_UPLOAD_BYTES = 200 * 1024 * 1024;
 const ARWEAVE_METADATA_CREATED_BY = '6529 Collections';
 const ARWEAVE_POINTS_TRAIT_PREFIX = 'Points - ';
 const TYPE_MEME_TRAIT = 'Type - Meme';
@@ -151,7 +151,7 @@ async function fetchUrlToBuffer(
 ): Promise<{ buffer: Buffer; contentType: string }> {
   const { buffer, contentType } = await fetchPublicUrlToBuffer(url, {
     timeoutMs: FETCH_MEDIA_TIMEOUT_MS,
-    maxBytes: MAX_ARWEAVE_UPLOAD_BYTES,
+    maxBytes: MAX_MINTING_CLAIM_MEDIA_BYTES,
     headers: {
       'User-Agent':
         'Mozilla/5.0 (compatible; 6529ArweaveUpload/1.0; +https://6529.io)',

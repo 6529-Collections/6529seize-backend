@@ -24,8 +24,11 @@ function buildUploadErrorWithContext(
   const contextualError = new Error(
     `Failed to upload claim media to Arweave for contract=${contract} claim_id=${claimId}: ${errorMessage}`
   );
-  if (error instanceof Error && error.stack) {
-    contextualError.stack = error.stack;
+  if (error instanceof Error) {
+    contextualError.name = error.name;
+    if (error.stack) {
+      contextualError.stack = `${contextualError.name}: ${contextualError.message}\nCaused by: ${error.stack}`;
+    }
   }
   return contextualError;
 }
