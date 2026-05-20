@@ -75,7 +75,9 @@ export class DeployerDropper {
           const { pending_push_notification_ids } =
             await this.createDrop.execute(model, false, {
               timer: ctx.timer,
-              connection: ctx.connection!
+              connection: ctx.connection!,
+              bypassChatLinkRestrictions: true,
+              bypassChatSlowModeRestrictions: true
             });
           return pending_push_notification_ids;
         })

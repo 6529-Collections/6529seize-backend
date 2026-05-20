@@ -191,11 +191,15 @@ export class CreateOrUpdateDropUseCase {
     {
       timer,
       connection,
-      preResolvedIdentityNomination
+      preResolvedIdentityNomination,
+      bypassChatLinkRestrictions,
+      bypassChatSlowModeRestrictions
     }: {
       timer?: Timer;
       connection: ConnectionWrapper<any>;
       preResolvedIdentityNomination?: PreResolvedEnsIdentityNomination | null;
+      bypassChatLinkRestrictions?: boolean;
+      bypassChatSlowModeRestrictions?: boolean;
     }
   ): Promise<{ drop_id: string; pending_push_notification_ids: number[] }> {
     timer?.start(`${CreateOrUpdateDropUseCase.name}->execute`);
@@ -213,7 +217,13 @@ export class CreateOrUpdateDropUseCase {
       return this.execute(
         { ...model, author_id: resolvedAuthorId },
         isDescriptionDrop,
-        { timer, connection, preResolvedIdentityNomination }
+        {
+          timer,
+          connection,
+          preResolvedIdentityNomination,
+          bypassChatLinkRestrictions,
+          bypassChatSlowModeRestrictions
+        }
       );
     } else if (proxyIdNecessary) {
       const proxyIdentity = model.proxy_identity;
@@ -238,13 +248,21 @@ export class CreateOrUpdateDropUseCase {
       return this.execute(
         { ...model, proxy_id: resolvedProxyId },
         isDescriptionDrop,
-        { timer, connection, preResolvedIdentityNomination }
+        {
+          timer,
+          connection,
+          preResolvedIdentityNomination,
+          bypassChatLinkRestrictions,
+          bypassChatSlowModeRestrictions
+        }
       );
     }
     return await this.createOrUpdateDrop(model, isDescriptionDrop, {
       timer,
       connection,
-      preResolvedIdentityNomination
+      preResolvedIdentityNomination,
+      bypassChatLinkRestrictions,
+      bypassChatSlowModeRestrictions
     });
   }
 
@@ -309,11 +327,15 @@ export class CreateOrUpdateDropUseCase {
     {
       timer,
       connection,
-      preResolvedIdentityNomination
+      preResolvedIdentityNomination,
+      bypassChatLinkRestrictions,
+      bypassChatSlowModeRestrictions
     }: {
       timer?: Timer;
       connection: ConnectionWrapper<any>;
       preResolvedIdentityNomination?: PreResolvedEnsIdentityNomination | null;
+      bypassChatLinkRestrictions?: boolean;
+      bypassChatSlowModeRestrictions?: boolean;
     }
   ): Promise<{ drop_id: string; pending_push_notification_ids: number[] }> {
     if (model.drop_type === DropType.WINNER) {
@@ -344,7 +366,8 @@ export class CreateOrUpdateDropUseCase {
       isDescriptionDrop,
       wave,
       model: validatedModel,
-      groupIdsUserIsEligibleFor
+      groupIdsUserIsEligibleFor,
+      bypassChatLinkRestrictions
     });
     if (
       !isDescriptionDrop &&
@@ -357,7 +380,8 @@ export class CreateOrUpdateDropUseCase {
           isDescriptionDrop,
           wave,
           model: validatedModel,
-          groupIdsUserIsEligibleFor
+          groupIdsUserIsEligibleFor,
+          bypassChatSlowModeRestrictions
         },
         { timer, connection }
       );
@@ -573,12 +597,14 @@ export class CreateOrUpdateDropUseCase {
       isDescriptionDrop,
       wave,
       model,
-      groupIdsUserIsEligibleFor
+      groupIdsUserIsEligibleFor,
+      bypassChatSlowModeRestrictions
     }: {
       isDescriptionDrop: boolean;
       wave: WaveEntity;
       model: CreateOrUpdateDropModel;
       groupIdsUserIsEligibleFor: string[];
+      bypassChatSlowModeRestrictions?: boolean;
     },
     { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
   ) {
@@ -588,6 +614,7 @@ export class CreateOrUpdateDropUseCase {
     try {
       if (
         isDescriptionDrop ||
+        bypassChatSlowModeRestrictions ||
         model.drop_id !== null ||
         model.drop_type !== DropType.CHAT ||
         !isWaveChatSlowModeActive(wave)
@@ -634,15 +661,18 @@ export class CreateOrUpdateDropUseCase {
     isDescriptionDrop,
     wave,
     model,
-    groupIdsUserIsEligibleFor
+    groupIdsUserIsEligibleFor,
+    bypassChatLinkRestrictions
   }: {
     isDescriptionDrop: boolean;
     wave: WaveEntity;
     model: CreateOrUpdateDropModel;
     groupIdsUserIsEligibleFor: string[];
+    bypassChatLinkRestrictions?: boolean;
   }) {
     if (
       isDescriptionDrop ||
+      bypassChatLinkRestrictions ||
       !wave.chat_links_disabled ||
       model.drop_type !== DropType.CHAT ||
       isWaveCreatorOrAdmin({
