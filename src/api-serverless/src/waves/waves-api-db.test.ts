@@ -28,7 +28,8 @@ const author = anIdentity(
 
 const publicWave = aWave(
   {
-    created_by: author.profile_id!
+    created_by: author.profile_id!,
+    chat_links_disabled: true
   },
   { id: 'wave-public', serial_no: 1, name: 'Public Wave' }
 );
@@ -75,6 +76,7 @@ describeWithSeed(
         undefined
       );
       expect(adminOnlyResults.map((wave) => wave.id)).toEqual([publicWave.id]);
+      expect(adminOnlyResults[0]?.chat_links_disabled).toBe(true);
 
       const visibilityResults = await repo.findWavesByIdsEligibleForRead(
         [publicWave.id, privateWave.id],

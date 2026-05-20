@@ -134,7 +134,7 @@ export class WavesMappers {
     > | null;
     existingWaveSettings?: Pick<
       WaveEntity,
-      'max_votes_per_identity_to_drop'
+      'max_votes_per_identity_to_drop' | 'chat_links_disabled'
     > | null;
   }): Promise<InsertWaveEntity> {
     let creditorId = request.voting.creditor_id;
@@ -193,6 +193,10 @@ export class WavesMappers {
       participation_group_id: request.participation.scope.group_id,
       chat_group_id: request.chat.scope.group_id,
       chat_slow_mode_cooldown_ms: chatSlowModeCooldownMs,
+      chat_links_disabled:
+        request.chat.links_disabled ??
+        existingWaveSettings?.chat_links_disabled ??
+        false,
       participation_max_applications_per_participant:
         request.participation.no_of_applications_allowed_per_participant,
       participation_required_metadata:
@@ -421,6 +425,7 @@ export class WavesMappers {
         group: resolveGroup(waveEntity.chat_group_id)
       },
       enabled: waveEntity.chat_enabled,
+      links_disabled: waveEntity.chat_links_disabled,
       authenticated_user_eligible: authenticatedUserEligibleToChat
     };
     if (nextDropAllowed !== undefined) {

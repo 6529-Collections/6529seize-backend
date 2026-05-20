@@ -1182,7 +1182,8 @@ const WaveChatSchema = Joi.object<ApiCreateNewWaveChatConfig>({
   slow_mode_cooldown_ms: Joi.number()
     .integer()
     .optional()
-    .min(Time.seconds(1).toMillis())
+    .min(Time.seconds(1).toMillis()),
+  links_disabled: Joi.boolean().optional()
 });
 
 function createWaveDecisionsStrategySchema({

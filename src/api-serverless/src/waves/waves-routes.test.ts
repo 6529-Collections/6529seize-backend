@@ -103,4 +103,14 @@ describe('waves route validation', () => {
 
     expect(result.error).toBeUndefined();
   });
+
+  it('accepts chat links disabled setting on wave update', () => {
+    const request = updateWaveRequest(Time.currentMillis());
+    request.chat.links_disabled = true;
+
+    const result = UpdateWaveSchema.validate(request);
+
+    expect(result.error).toBeUndefined();
+    expect(result.value.chat.links_disabled).toBe(true);
+  });
 });

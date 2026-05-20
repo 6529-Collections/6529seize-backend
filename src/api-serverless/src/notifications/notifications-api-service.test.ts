@@ -164,6 +164,7 @@ describe('NotificationsApiService V2 notifications', () => {
       subscribers_count: 12,
       has_competition: false,
       is_dm_wave: false,
+      links_disabled: false,
       description_drop: {},
       total_drops_count: 3,
       is_private: false
