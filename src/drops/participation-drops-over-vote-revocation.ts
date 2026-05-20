@@ -128,7 +128,20 @@ async function reduceVotesForDrops(
     const now = Time.currentMillis();
     await dropVotingDb.lockDropsCurrentRealVote(drop_id, ctx);
     const voteAfterRevocation = Math.floor(votes * reductionCoefficient);
-    votes_still_given -= Math.abs(votes - voteAfterRevocation);
+    const voteChange = voteAfterRevocation - votes;
+    if (voteChange === 0) {
+      logger.info(
+        `Skipping drop vote revocation for unchanged vote ${JSON.stringify({
+          ...drop,
+          reductionCoefficient,
+          credit_limit,
+          voteAfterRevocation,
+          votes_still_given
+        })}`
+      );
+      continue;
+    }
+    votes_still_given -= Math.abs(voteChange);
     logger.info(
       `Revoking drop votes ${JSON.stringify({
         ...drop,
@@ -155,22 +168,23 @@ async function reduceVotesForDrops(
       dropVotingDb.upsertAggregateDropRank(
         {
           drop_id,
-          change: voteAfterRevocation - votes,
+          change: voteChange,
           wave_id: wave_id
         },
         ctx
-      ),
-      userNotifier.notifyOfDropVote(
-        {
-          voter_id: profile_id,
-          drop_id,
-          vote: voteAfterRevocation,
-          wave_id,
-          drop_author_id: author_id
-        },
+      )
+    ]);
+    await Promise.all([
+      notifyOfDropVoteRevocation({
+        profile_id,
+        drop_id,
+        voteAfterRevocation,
+        voteChange,
+        wave_id,
+        author_id,
         visibility_group_id,
-        ctx.connection
-      ),
+        ctx
+      }),
       profileActivityLogsDb.insert(
         {
           profile_id,
@@ -208,4 +222,46 @@ async function reduceVotesForDrops(
       break;
     }
   }
+}
+
+async function notifyOfDropVoteRevocation({
+  profile_id,
+  drop_id,
+  voteAfterRevocation,
+  voteChange,
+  wave_id,
+  author_id,
+  visibility_group_id,
+  ctx
+}: {
+  profile_id: string;
+  drop_id: string;
+  voteAfterRevocation: number;
+  voteChange: number;
+  wave_id: string;
+  author_id: string;
+  visibility_group_id: string | null;
+  ctx: RequestContext;
+}) {
+  if (profile_id === author_id) {
+    return;
+  }
+
+  const totalDropRating = await dropVotingDb.getAggregateDropRankVote(
+    drop_id,
+    ctx
+  );
+  await userNotifier.notifyOfDropVote(
+    {
+      voter_id: profile_id,
+      drop_id,
+      vote: voteAfterRevocation,
+      vote_change: voteChange,
+      total_vote: totalDropRating,
+      wave_id,
+      drop_author_id: author_id
+    },
+    visibility_group_id,
+    ctx.connection
+  );
 }

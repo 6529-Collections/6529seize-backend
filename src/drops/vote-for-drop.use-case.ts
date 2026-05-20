@@ -279,12 +279,18 @@ export class VoteForDropUseCase {
       )
     ]);
     if (drop.author_id !== voter_id) {
+      const totalDropRating = await this.votingDb.getAggregateDropRankVote(
+        drop_id,
+        ctx
+      );
       await this.userNotifier.notifyOfDropVote(
         {
           voter_id,
           drop_id: drop_id,
           drop_author_id: drop.author_id,
           vote: votes,
+          vote_change: change,
+          total_vote: totalDropRating,
           wave_id: wave_id
         },
         wave.visibility_group_id,

@@ -123,6 +123,30 @@ describe('VoteForDropUseCase', () => {
     expect(userNotifier.notifyOfDropVote).not.toHaveBeenCalled();
   });
 
+  it('skips notification total lookup for self-votes', async () => {
+    (dropsDb.findDropById as jest.Mock).mockResolvedValue({
+      ...drop,
+      author_id: 'voter-1'
+    });
+    (
+      votingDb.getVotingCreditLockedInWaveForVoter as jest.Mock
+    ).mockResolvedValue(0);
+
+    await useCase.execute(
+      {
+        voter_id: 'voter-1',
+        drop_id: 'drop-1',
+        wave_id: 'wave-1',
+        votes: 3,
+        proxy_id: null
+      },
+      { connection }
+    );
+
+    expect(votingDb.getAggregateDropRankVote).not.toHaveBeenCalled();
+    expect(userNotifier.notifyOfDropVote).not.toHaveBeenCalled();
+  });
+
   it('does not count wave decisions for waves that cannot be approve-closed', async () => {
     await useCase.execute(
       {

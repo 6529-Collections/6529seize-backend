@@ -30,11 +30,21 @@ import { IdentityNotificationsDb } from '../notifications/identity-notifications
 import { dbSupplier } from '../sql-executor';
 import { sumBadgeContributions } from './badge-count';
 import {
+  buildDropVotePushBody,
+  buildDropVotePushTitle,
+  formatSignedLocaleNumber,
+  getRatingChangeEmoji
+} from '@/pushNotificationsHandler/drop-vote-push-notification-text';
+import {
   getDropMediaInfoForPush,
   truncatePushNotificationFileName
-} from './push-notification-text';
-import type { PushNotificationFileInfo } from './push-notification-text';
-import { sendMessage } from './sendPushNotifications';
+} from '@/pushNotificationsHandler/push-notification-text';
+import type { PushNotificationFileInfo } from '@/pushNotificationsHandler/push-notification-text';
+import {
+  PushNotificationMessageInput,
+  PushNotificationSendResult,
+  sendMessages
+} from '@/pushNotificationsHandler/sendPushNotifications';
 
 const CAUSE_TO_SETTING_KEY: Partial<
   Record<IdentityNotificationCause, keyof PushNotificationSettingsData>
@@ -52,8 +62,73 @@ const CAUSE_TO_SETTING_KEY: Partial<
 };
 
 const logger = Logger.get('PUSH_NOTIFICATIONS_HANDLER_IDENTITY');
+const SKIP_NOTIFICATION_PUSH = Symbol('SKIP_NOTIFICATION_PUSH');
 
 const identityNotificationsDb = new IdentityNotificationsDb(dbSupplier);
+
+interface IdentityPushNotificationMessage {
+  input: PushNotificationMessageInput;
+  identityId: string;
+  device: PushNotificationDevice;
+}
+
+type AdditionalDataNumber = string | number | null;
+
+interface AdditionalDataPayload {
+  amount?: AdditionalDataNumber;
+  rater_rating?: AdditionalDataNumber;
+  total?: AdditionalDataNumber;
+  category?: string | null;
+  vote?: AdditionalDataNumber;
+  vote_change?: AdditionalDataNumber;
+  total_vote?: AdditionalDataNumber;
+  reaction?: string | null;
+}
+
+function extractAdditionalData(
+  notification: IdentityNotificationEntity
+): AdditionalDataPayload {
+  return (notification.additional_data ?? {}) as AdditionalDataPayload;
+}
+
+function numbersOrNull(value: unknown): number | null {
+  if (value == null) {
+    return null;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function numberOrZero(value: unknown): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function buildRatingUpdateBody({
+  prefixLines = [],
+  amount,
+  raterRating,
+  raterHandle,
+  total,
+  totalLabel
+}: {
+  prefixLines?: string[];
+  amount: number;
+  raterRating: number | null;
+  raterHandle: string;
+  total: number;
+  totalLabel: string;
+}): string {
+  const lines = [
+    ...prefixLines,
+    `Change: ${formatSignedLocaleNumber(amount)}`,
+    raterRating === null
+      ? null
+      : `${raterHandle}'s rating: ${formatSignedLocaleNumber(raterRating)}`,
+    `${totalLabel}: ${formatSignedLocaleNumber(total)}`
+  ];
+  return lines.filter((line): line is string => line !== null).join('\n');
+}
 
 async function getDeviceSettings(
   profileId: string,
@@ -154,22 +229,70 @@ async function getSharedDeviceTokenKeysForOtherProfiles(
   }, new Map<string, Set<string>>());
 }
 
-export async function sendIdentityNotification(id: number) {
-  logger.info(`Sending identity notification: ${id}`);
-
-  const notification = await getDataSource()
-    .getRepository(IdentityNotificationEntity)
-    .findOneBy({ id });
-  if (!notification) {
-    logger.error(`Notification not found: ${id}`);
-    return;
+export async function sendIdentityNotificationsBatch(
+  ids: number[]
+): Promise<number[]> {
+  const uniqueIds = Array.from(new Set(ids));
+  if (uniqueIds.length === 0) {
+    return [];
   }
 
+  logger.info(`Sending identity notifications: ${uniqueIds.join(',')}`);
+
+  const notifications = await getDataSource()
+    .getRepository(IdentityNotificationEntity)
+    .find({ where: { id: In(uniqueIds) } });
+  const notificationsById = new Map(
+    notifications.map((notification) => [Number(notification.id), notification])
+  );
+
+  uniqueIds
+    .filter((id) => !notificationsById.has(id))
+    .forEach((id) => logger.error(`Notification not found: ${id}`));
+
+  const failedIds: number[] = [];
+  const messagesByNotification = await Promise.all(
+    uniqueIds.map(async (id) => {
+      const notification = notificationsById.get(id);
+      if (!notification) {
+        return [];
+      }
+      try {
+        return await buildIdentityNotificationMessages(notification);
+      } catch (error) {
+        logger.error(`Failed to build notification ${id}: ${error}`);
+        failedIds.push(id);
+        return [];
+      }
+    })
+  );
+  const messages = messagesByNotification.flat();
+
+  if (messages.length === 0) {
+    return failedIds;
+  }
+
+  try {
+    const results = await sendMessages(
+      messages.map((message) => message.input)
+    );
+    failedIds.push(...(await handleSendResults(messages, results)));
+  } catch (error) {
+    logger.error(`Failed to send notification messages: ${error}`);
+    failedIds.push(...messages.map((message) => message.input.notification_id));
+  }
+
+  return Array.from(new Set(failedIds));
+}
+
+async function buildIdentityNotificationMessages(
+  notification: IdentityNotificationEntity
+): Promise<IdentityPushNotificationMessage[]> {
   if (notification.read_at) {
     logger.info(
       `[ID ${notification.id}] Notification already read at ${notification.read_at}`
     );
-    return;
+    return [];
   }
 
   if (notification.wave_id) {
@@ -183,7 +306,7 @@ export async function sendIdentityNotification(id: number) {
       logger.info(
         `[ID ${notification.id}] Wave ${notification.wave_id} is muted by user ${notification.identity_id}`
       );
-      return;
+      return [];
     }
   }
 
@@ -197,7 +320,7 @@ export async function sendIdentityNotification(id: number) {
     logger.info(
       `[ID ${notification.id}] No device token found for user ${notification.identity_id}`
     );
-    return;
+    return [];
   }
 
   const profileIdsByDeviceToken =
@@ -221,106 +344,154 @@ export async function sendIdentityNotification(id: number) {
   }
 
   const notificationData = await generateNotificationData(notification);
-  if (notificationData) {
-    const { title, body, data, imageUrl } = notificationData;
-
-    await Promise.all(
-      userDevices.map(async (device) => {
-        const recipientSettings = await getDeviceSettings(
-          notification.identity_id,
-          device.device_id
-        );
-        if (
-          !isNotificationEnabledForDevice(notification.cause, recipientSettings)
-        ) {
-          logger.info(
-            `[ID ${notification.id}] Notification type ${notification.cause} disabled for device ${device.device_id}`
-          );
-          return;
-        }
-
-        const deviceKey = getDeviceTokenKey(device.device_id, device.token);
-        const relevantProfiles =
-          profileIdsByDeviceToken.get(deviceKey) ??
-          new Set([notification.identity_id]);
-
-        const contributions = await Promise.allSettled(
-          Array.from(relevantProfiles).map(async (profileId) => {
-            const settings = await getDeviceSettings(
-              profileId,
-              device.device_id
-            );
-            const enabledCauses = getEnabledCauses(settings);
-            if (enabledCauses.length === 0) return 0;
-            const eligibleGroupIds =
-              await userGroupsService.getGroupsUserIsEligibleFor(profileId);
-            const options: {
-              includeNotificationId?: number;
-              enabledCauses?: IdentityNotificationCause[];
-            } = { enabledCauses };
-            if (profileId === notification.identity_id) {
-              options.includeNotificationId = notification.id;
-            }
-            return identityNotificationsDb.countUnreadNotificationsForIdentity(
-              profileId,
-              eligibleGroupIds,
-              undefined,
-              options
-            );
-          })
-        );
-        const badge = sumBadgeContributions(contributions);
-
-        const shouldPrefixTitle =
-          multiProfileTitlePrefix !== null &&
-          sharedDeviceTokenKeys.has(deviceKey);
-        const titleForDevice = shouldPrefixTitle
-          ? `${multiProfileTitlePrefix} ${title}`
-          : title;
-        const dataForDevice = {
-          ...data,
-          target_profile_id: notification.identity_id,
-          target_profile_handle: targetProfileHandle
-        };
-
-        try {
-          await sendMessage(
-            titleForDevice,
-            body,
-            device.token,
-            notification.id,
-            dataForDevice,
-            badge,
-            imageUrl ?? undefined
-          );
-        } catch (error: any) {
-          if (
-            error.code === 'messaging/registration-token-not-registered' ||
-            error.code === 'messaging/invalid-registration-token'
-          ) {
-            logger.warn(
-              `[ID ${notification.id}] token-not-registered for profile ${notification.identity_id} device ${device.device_id}`
-            );
-            await getDataSource().getRepository(PushNotificationDevice).delete({
-              device_id: device.device_id,
-              profile_id: notification.identity_id,
-              token: device.token
-            });
-            logger.info(
-              `[ID ${notification.id}] Deleted unregistered token row for profile ${notification.identity_id} device ${device.device_id}`
-            );
-          } else {
-            logger.error(`Failed to send notification: ${error.message}`, {
-              error
-            });
-            throw error;
-          }
-        }
-      })
-    );
-  } else {
-    logger.error(`Failed to generate notification data: ${notification.id}`);
+  if (notificationData === SKIP_NOTIFICATION_PUSH) {
+    logger.info(`[ID ${notification.id}] Skipping push notification`);
+    return [];
   }
+  if (notificationData === null) {
+    throw new Error(
+      `[ID ${notification.id}] Failed to generate notification data`
+    );
+  }
+
+  const { title, body, data, imageUrl } = notificationData;
+
+  return (
+    await Promise.all(
+      userDevices.map(
+        async (device): Promise<IdentityPushNotificationMessage | null> => {
+          const recipientSettings = await getDeviceSettings(
+            notification.identity_id,
+            device.device_id
+          );
+          if (
+            !isNotificationEnabledForDevice(
+              notification.cause,
+              recipientSettings
+            )
+          ) {
+            logger.info(
+              `[ID ${notification.id}] Notification type ${notification.cause} disabled for device ${device.device_id}`
+            );
+            return null;
+          }
+
+          const deviceKey = getDeviceTokenKey(device.device_id, device.token);
+          const relevantProfiles =
+            profileIdsByDeviceToken.get(deviceKey) ??
+            new Set([notification.identity_id]);
+
+          const contributions = await Promise.allSettled(
+            Array.from(relevantProfiles).map(async (profileId) => {
+              const settings = await getDeviceSettings(
+                profileId,
+                device.device_id
+              );
+              const enabledCauses = getEnabledCauses(settings);
+              if (enabledCauses.length === 0) return 0;
+              const eligibleGroupIds =
+                await userGroupsService.getGroupsUserIsEligibleFor(profileId);
+              const options: {
+                includeNotificationId?: number;
+                enabledCauses?: IdentityNotificationCause[];
+              } = { enabledCauses };
+              if (profileId === notification.identity_id) {
+                options.includeNotificationId = notification.id;
+              }
+              return identityNotificationsDb.countUnreadNotificationsForIdentity(
+                profileId,
+                eligibleGroupIds,
+                undefined,
+                options
+              );
+            })
+          );
+          const badge = sumBadgeContributions(contributions);
+
+          const shouldPrefixTitle =
+            multiProfileTitlePrefix !== null &&
+            sharedDeviceTokenKeys.has(deviceKey);
+          const titleForDevice = shouldPrefixTitle
+            ? `${multiProfileTitlePrefix} ${title}`
+            : title;
+          return {
+            input: {
+              title: titleForDevice,
+              body,
+              token: device.token,
+              notification_id: Number(notification.id),
+              extra_data: {
+                ...data,
+                target_profile_id: notification.identity_id,
+                target_profile_handle: targetProfileHandle
+              },
+              badge,
+              imageUrl: imageUrl ?? undefined
+            },
+            identityId: notification.identity_id,
+            device
+          };
+        }
+      )
+    )
+  ).filter((message): message is IdentityPushNotificationMessage => !!message);
+}
+
+async function handleSendResults(
+  messages: IdentityPushNotificationMessage[],
+  results: PushNotificationSendResult[]
+): Promise<number[]> {
+  const outcomesByNotificationId = new Map<
+    number,
+    { hasSuccess: boolean; hasRetryableFailure: boolean }
+  >();
+  await Promise.all(
+    results.map(async (result, index) => {
+      const notificationId = result.input.notification_id;
+      const outcome = outcomesByNotificationId.get(notificationId) ?? {
+        hasSuccess: false,
+        hasRetryableFailure: false
+      };
+      outcomesByNotificationId.set(notificationId, outcome);
+      if (result.response.success) {
+        outcome.hasSuccess = true;
+        return;
+      }
+      const message = messages[index];
+      const error = result.response.error;
+      if (
+        error?.code === 'messaging/registration-token-not-registered' ||
+        error?.code === 'messaging/invalid-registration-token'
+      ) {
+        logger.warn(
+          `[ID ${result.input.notification_id}] token-not-registered for profile ${message.identityId} device ${message.device.device_id}`
+        );
+        try {
+          await getDataSource().getRepository(PushNotificationDevice).delete({
+            device_id: message.device.device_id,
+            profile_id: message.identityId,
+            token: message.device.token
+          });
+          logger.info(
+            `[ID ${result.input.notification_id}] Deleted unregistered token row for profile ${message.identityId} device ${message.device.device_id}`
+          );
+        } catch (deleteError) {
+          logger.error(
+            `[ID ${result.input.notification_id}] Failed to delete unregistered token row for profile ${message.identityId} device ${message.device.device_id}: ${deleteError}`
+          );
+        }
+        return;
+      }
+      logger.error(`Failed to send notification: ${error?.message}`, {
+        error
+      });
+      outcome.hasRetryableFailure = true;
+    })
+  );
+
+  return Array.from(outcomesByNotificationId.entries())
+    .filter(([, outcome]) => !outcome.hasSuccess && outcome.hasRetryableFailure)
+    .map(([notificationId]) => notificationId);
 }
 
 async function generateNotificationData(
@@ -373,14 +544,26 @@ async function handleIdentityRep(
   notification: IdentityNotificationEntity,
   additionalEntity: ApiIdentity
 ) {
-  const amount = (notification.additional_data as any).amount;
-  const total = (notification.additional_data as any).total;
-  const category = (notification.additional_data as any).category;
-  const categoryText = category ? ` for category '${category}'` : '';
-  const emoji = amount > 0 ? '🚀' : '💔';
-  const title = `${emoji} Updated REP${categoryText}`;
-  const sign = amount > 0 ? '+' : '';
-  const body = `${additionalEntity.handle} updated your REP by ${sign}${Number(amount).toLocaleString()}\nNew Total: ${Number(total).toLocaleString()}`;
+  const additionalData = extractAdditionalData(notification);
+  const amount = numberOrZero(additionalData.amount);
+  const raterRating = numbersOrNull(additionalData.rater_rating);
+  const total = numberOrZero(additionalData.total);
+  const category = additionalData.category;
+  const categoryLine = category ? `Category: ${category}` : null;
+  const raterHandle =
+    additionalEntity.handle ??
+    additionalEntity.normalised_handle ??
+    notification.additional_identity_id ??
+    'Someone';
+  const title = `${getRatingChangeEmoji(amount)}${raterHandle} updated your REP`;
+  const body = buildRatingUpdateBody({
+    prefixLines: categoryLine ? [categoryLine] : [],
+    amount,
+    raterRating,
+    raterHandle,
+    total,
+    totalLabel: 'Total REP'
+  });
   const imageUrl = additionalEntity.pfp;
   const receiverProfile = await getIdentityOrThrow(notification.identity_id);
   const data = {
@@ -395,12 +578,23 @@ async function handleIdentityNic(
   notification: IdentityNotificationEntity,
   additionalEntity: ApiIdentity
 ) {
-  const amount = (notification.additional_data as any).amount;
-  const total = (notification.additional_data as any).total;
-  const emoji = amount > 0 ? '🚀' : '💔';
-  const title = `${emoji} Updated NIC Rating`;
-  const sign = amount > 0 ? '+' : '';
-  const body = `${additionalEntity.handle} updated your NIC by ${sign}${Number(amount).toLocaleString()}\nNew Total: ${Number(total).toLocaleString()}`;
+  const additionalData = extractAdditionalData(notification);
+  const amount = numberOrZero(additionalData.amount);
+  const raterRating = numbersOrNull(additionalData.rater_rating);
+  const total = numberOrZero(additionalData.total);
+  const raterHandle =
+    additionalEntity.handle ??
+    additionalEntity.normalised_handle ??
+    notification.additional_identity_id ??
+    'Someone';
+  const title = `${getRatingChangeEmoji(amount)}${raterHandle} updated your NIC rating`;
+  const body = buildRatingUpdateBody({
+    amount,
+    raterRating,
+    raterHandle,
+    total,
+    totalLabel: 'Total NIC'
+  });
   const imageUrl = additionalEntity.pfp;
   const receiverProfile = await getIdentityOrThrow(notification.identity_id);
   const data = {
@@ -474,20 +668,44 @@ async function handleDropVoted(
   notification: IdentityNotificationEntity,
   additionalEntity: ApiIdentity
 ) {
-  const vote = (notification.additional_data as any).vote;
-  if (vote === 0) {
-    return;
+  const additionalData = extractAdditionalData(notification);
+  const vote = Number(additionalData.vote);
+  const rawVoteChange = additionalData.vote_change;
+  const voteChange = rawVoteChange == null ? null : Number(rawVoteChange);
+  const totalVote = numbersOrNull(additionalData.total_vote);
+  if (!Number.isFinite(vote)) {
+    throw new TypeError(
+      `[ID ${notification.id}] Vote additional data not found`
+    );
   }
-  if (!vote) {
-    throw new Error(`[ID ${notification.id}] Vote additional data not found`);
+  if (voteChange !== null && !Number.isFinite(voteChange)) {
+    throw new TypeError(
+      `[ID ${notification.id}] Vote change additional data is invalid`
+    );
   }
-  const title = `${additionalEntity.handle} rated your drop: ${
-    vote > 0 ? '+' : '-'
-  }${Math.abs(vote)}`;
+  if (vote === 0 && (voteChange === null || voteChange === 0)) {
+    return SKIP_NOTIFICATION_PUSH;
+  }
   const imageUrl = additionalEntity.pfp;
   const dropPart = await getDropPart(notification);
   const dropSerialNo = await getDropSerialNo(notification.related_drop_id);
-  const body = await getDropBodyTextForPush(notification, dropPart);
+  const dropBody = await getDropBodyTextForPush(notification, dropPart, '');
+  const voterHandle =
+    additionalEntity.handle ??
+    additionalEntity.normalised_handle ??
+    notification.additional_identity_id ??
+    'Someone';
+  const title = buildDropVotePushTitle({
+    voterHandle,
+    vote,
+    voteChange
+  });
+  const body = buildDropVotePushBody({
+    dropBody,
+    vote,
+    voteChange,
+    totalVote
+  });
   const data = {
     redirect: 'waves',
     wave_id: notification.wave_id,
@@ -500,7 +718,7 @@ async function handleDropReacted(
   notification: IdentityNotificationEntity,
   additionalEntity: ApiIdentity
 ) {
-  const reaction: string = (notification.additional_data as any).reaction;
+  const reaction = extractAdditionalData(notification).reaction;
   if (!reaction) {
     throw new Error(
       `[ID ${notification.id}] Reaction additional data not found`
@@ -779,15 +997,13 @@ async function handleAllDrops(
     notification.wave_id
   );
   const waveDisplay = await getWaveDisplayForRecipient(notification, wave);
-  const isRating =
-    typeof (notification.additional_data as any).vote === 'number';
+  const additionalData = extractAdditionalData(notification);
+  const isRating = typeof additionalData.vote === 'number';
 
   let title;
   if (isRating) {
-    const vote = (notification.additional_data as any).vote;
-    title = `${additionalEntity.handle} rated a drop: ${
-      vote > 0 ? '+' : '-'
-    }${Math.abs(vote)}`;
+    const vote = Number(additionalData.vote);
+    title = `${additionalEntity.handle} rated a drop: ${formatSignedLocaleNumber(vote)}`;
   } else {
     title = `${additionalEntity.handle}`;
   }

@@ -1,7 +1,9 @@
 import * as admin from 'firebase-admin';
 import {
+  BatchResponse,
   Message,
-  Notification
+  Notification,
+  SendResponse
 } from 'firebase-admin/lib/messaging/messaging-api';
 import { Logger } from '../logging';
 import { numbers } from '../numbers';
@@ -15,6 +17,22 @@ const MAX_BODY_LENGTH = 250;
 
 const DEFAULT_PUSH_NOTIFICATION_TITLE = 'New notification';
 const DEFAULT_PUSH_NOTIFICATION_BODY = 'View drop';
+const FCM_BATCH_SIZE = 500;
+
+export interface PushNotificationMessageInput {
+  title: string;
+  body: string;
+  token: string;
+  notification_id: number;
+  extra_data: Record<string, string | number | null | undefined>;
+  badge?: number;
+  imageUrl?: string;
+}
+
+export interface PushNotificationSendResult {
+  input: PushNotificationMessageInput;
+  response: SendResponse;
+}
 
 function preparePushNotificationLine(value: string | null | undefined): string {
   const raw = value == null ? '' : String(value);
@@ -53,47 +71,76 @@ function init() {
   }
 }
 
-export async function sendMessage(
-  title: string,
-  body: string,
-  token: string,
-  notification_id: number,
-  extra_data: any,
-  badge?: number,
-  imageUrl?: string
-) {
+export async function sendMessages(
+  inputs: PushNotificationMessageInput[]
+): Promise<PushNotificationSendResult[]> {
   init();
 
-  title = preparePushNotificationLine(title) || DEFAULT_PUSH_NOTIFICATION_TITLE;
-  body = preparePushNotificationLine(body) || DEFAULT_PUSH_NOTIFICATION_BODY;
+  const results: PushNotificationSendResult[] = [];
+  for (let i = 0; i < inputs.length; i += FCM_BATCH_SIZE) {
+    const chunk = inputs.slice(i, i + FCM_BATCH_SIZE);
+    const messages = chunk.map((input) => buildMessage(input, true));
 
-  const badgeNumber = numbers.parseIntOrNull(badge) ?? 1;
+    let response: BatchResponse;
+    try {
+      response = await admin.messaging().sendEach(messages);
+    } catch (error) {
+      logger.error(`Error sending notification batch: ${error}`);
+      results.push(
+        ...chunk.map((input) => buildFailedSendResult(input, error))
+      );
+      continue;
+    }
 
-  if (title.length > MAX_TITLE_LENGTH) {
-    title = title.substring(0, MAX_TITLE_LENGTH) + '...';
+    logger.info(
+      `Sent notification batch: ${response.successCount} succeeded, ${response.failureCount} failed`
+    );
+
+    const retryResults = await Promise.all(
+      response.responses.map((sendResponse, index) =>
+        handleSendResponse(chunk[index], sendResponse)
+      )
+    );
+    results.push(...retryResults);
   }
+  return results;
+}
 
-  if (body.length > MAX_BODY_LENGTH) {
-    body = body.substring(0, MAX_BODY_LENGTH) + '...';
-  }
-
-  const notification: Notification = {
-    title,
-    body
+function buildFailedSendResult(
+  input: PushNotificationMessageInput,
+  error: unknown
+): PushNotificationSendResult {
+  return {
+    input,
+    response: {
+      success: false,
+      error: error as SendResponse['error']
+    }
   };
-  if (isFcmAcceptableImageUrl(imageUrl)) {
-    notification.imageUrl = imageUrl!.trim();
+}
+
+function buildMessage(
+  input: PushNotificationMessageInput,
+  includeImage: boolean
+): Message {
+  const title = truncatePreparedLine(
+    preparePushNotificationLine(input.title) || DEFAULT_PUSH_NOTIFICATION_TITLE,
+    MAX_TITLE_LENGTH
+  );
+  const body = truncatePreparedLine(
+    preparePushNotificationLine(input.body) || DEFAULT_PUSH_NOTIFICATION_BODY,
+    MAX_BODY_LENGTH
+  );
+
+  const notification: Notification = { title, body };
+  if (includeImage && isFcmAcceptableImageUrl(input.imageUrl)) {
+    notification.imageUrl = input.imageUrl!.trim();
   }
 
-  const data: any = {
-    notification_id: notification_id.toString(),
-    ...extra_data
-  };
-
-  const message: Message = {
+  return {
     notification,
-    token,
-    data,
+    token: input.token,
+    data: buildMessageData(input),
     android: {
       notification: {
         sound: 'default'
@@ -102,24 +149,83 @@ export async function sendMessage(
     apns: {
       payload: {
         aps: {
-          badge: badgeNumber,
+          badge: numbers.parseIntOrNull(input.badge) ?? 1,
           sound: 'default'
         }
       }
     }
   };
+}
 
-  try {
-    const response = await admin.messaging().send(message);
-    logger.info(`Successfully sent notification: ${response}`);
-  } catch (error: any) {
-    if (imageUrl && error.code === 'messaging/invalid-payload') {
-      logger.info(
-        `Invalid payload (e.g. imageUrl), retrying without image: ${error.message}`
-      );
-      return sendMessage(title, body, token, notification_id, extra_data);
+function buildMessageData(
+  input: PushNotificationMessageInput
+): Record<string, string> {
+  const data: Record<string, string> = {
+    notification_id: input.notification_id.toString()
+  };
+  const extraData = input.extra_data ?? {};
+  for (const [key, value] of Object.entries(extraData)) {
+    if (value == null) {
+      continue;
     }
-    logger.error(`Error sending notification: ${error}`);
-    throw error;
+    data[key] = String(value);
+  }
+  return data;
+}
+
+function truncatePreparedLine(value: string, maxLength: number): string {
+  const characters = Array.from(value);
+  if (characters.length <= maxLength) {
+    return value;
+  }
+  if (maxLength <= 3) {
+    return characters.slice(0, maxLength).join('');
+  }
+  return `${characters.slice(0, maxLength - 3).join('')}...`;
+}
+
+async function handleSendResponse(
+  input: PushNotificationMessageInput,
+  response: SendResponse
+): Promise<PushNotificationSendResult> {
+  if (response.success) {
+    logger.info(`Successfully sent notification: ${response.messageId}`);
+    return { input, response };
+  }
+
+  const error = response.error;
+  if (input.imageUrl && error?.code === 'messaging/invalid-payload') {
+    logger.info(
+      `Invalid payload (e.g. imageUrl), retrying without image: ${error.message}`
+    );
+    return retryMessageWithoutImage(input);
+  }
+
+  logger.error(`Error sending notification: ${error}`);
+  return { input, response };
+}
+
+async function retryMessageWithoutImage(
+  input: PushNotificationMessageInput
+): Promise<PushNotificationSendResult> {
+  try {
+    const messageId = await admin.messaging().send(buildMessage(input, false));
+    logger.info(`Successfully sent notification without image: ${messageId}`);
+    return {
+      input,
+      response: {
+        success: true,
+        messageId
+      }
+    };
+  } catch (error: any) {
+    logger.error(`Error sending notification without image: ${error}`);
+    return {
+      input,
+      response: {
+        success: false,
+        error
+      }
+    };
   }
 }
