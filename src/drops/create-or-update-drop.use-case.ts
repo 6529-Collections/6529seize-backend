@@ -88,6 +88,7 @@ import {
 import { isWaveCreatorOrAdmin } from '@/waves/wave-admin.helpers';
 
 const ARWEAVE_ORIGIN = 'https://arweave.net';
+const ALLOWED_CHAT_LINK_ORIGINS = new Set(['https://media.tenor.com']);
 
 function isActiveIdentityNomination(nomination: { has_won: boolean }): boolean {
   return !nomination.has_won;
@@ -682,15 +683,39 @@ export class CreateOrUpdateDropUseCase {
     ) {
       return;
     }
-    if (
-      model.parts.some(
-        (part) => extractUrlCandidatesFromText(part.content, 1).length > 0
-      )
-    ) {
+    if (this.hasRestrictedChatLink(model)) {
       throw new ForbiddenException(
         `Chat drops with links are not allowed in this wave`
       );
     }
+  }
+
+  private hasRestrictedChatLink(model: CreateOrUpdateDropModel): boolean {
+    return model.parts.some((part) =>
+      extractUrlCandidatesFromText(part.content, Number.MAX_SAFE_INTEGER).some(
+        (candidate) => !this.isAllowedChatLink(candidate)
+      )
+    );
+  }
+
+  private isAllowedChatLink(candidate: string): boolean {
+    try {
+      return ALLOWED_CHAT_LINK_ORIGINS.has(
+        new URL(this.normalizeChatLinkCandidate(candidate)).origin
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  private normalizeChatLinkCandidate(candidate: string): string {
+    if (/^[a-z][a-z\d+.-]*:/i.test(candidate)) {
+      return candidate;
+    }
+    if (candidate.startsWith('//')) {
+      return `https:${candidate}`;
+    }
+    return `https://${candidate}`;
   }
 
   private async verifyMetadata(

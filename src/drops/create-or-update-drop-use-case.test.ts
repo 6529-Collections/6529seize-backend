@@ -435,6 +435,86 @@ describe('CreateOrUpdateDropUseCase', () => {
     ).not.toThrow();
   });
 
+  it('allows Tenor media links when chat links are disabled', () => {
+    const useCase = createUseCaseWithMocks();
+
+    expect(() =>
+      (useCase as any).verifyChatLinksAreAllowed({
+        isDescriptionDrop: false,
+        wave: createSlowModeWave({ chat_links_disabled: true }),
+        model: createChatDropModel({
+          parts: [
+            {
+              content: 'reaction https://media.tenor.com/abc123/tenor.gif',
+              quoted_drop: null,
+              media: []
+            }
+          ]
+        }),
+        groupIdsUserIsEligibleFor: []
+      })
+    ).not.toThrow();
+  });
+
+  it('allows scheme-less Tenor candidates in chat link allowlist', () => {
+    const useCase = createUseCaseWithMocks();
+
+    expect(
+      (useCase as any).isAllowedChatLink('media.tenor.com/abc123/tenor.gif')
+    ).toBe(true);
+    expect(
+      (useCase as any).isAllowedChatLink('//media.tenor.com/abc123/tenor.gif')
+    ).toBe(true);
+    expect(
+      (useCase as any).isAllowedChatLink(
+        'media.tenor.com.evil/abc123/tenor.gif'
+      )
+    ).toBe(false);
+  });
+
+  it('rejects mixed Tenor and non-Tenor links when chat links are disabled', () => {
+    const useCase = createUseCaseWithMocks();
+
+    expect(() =>
+      (useCase as any).verifyChatLinksAreAllowed({
+        isDescriptionDrop: false,
+        wave: createSlowModeWave({ chat_links_disabled: true }),
+        model: createChatDropModel({
+          parts: [
+            {
+              content:
+                'reaction https://media.tenor.com/abc123/tenor.gif https://example.com',
+              quoted_drop: null,
+              media: []
+            }
+          ]
+        }),
+        groupIdsUserIsEligibleFor: []
+      })
+    ).toThrow(`Chat drops with links are not allowed in this wave`);
+  });
+
+  it('rejects Tenor lookalike links when chat links are disabled', () => {
+    const useCase = createUseCaseWithMocks();
+
+    expect(() =>
+      (useCase as any).verifyChatLinksAreAllowed({
+        isDescriptionDrop: false,
+        wave: createSlowModeWave({ chat_links_disabled: true }),
+        model: createChatDropModel({
+          parts: [
+            {
+              content: 'fake https://media.tenor.com.evil/abc123/tenor.gif',
+              quoted_drop: null,
+              media: []
+            }
+          ]
+        }),
+        groupIdsUserIsEligibleFor: []
+      })
+    ).toThrow(`Chat drops with links are not allowed in this wave`);
+  });
+
   it('allows chat drops with links when link disabling is off', () => {
     const useCase = createUseCaseWithMocks();
 
