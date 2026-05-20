@@ -86,6 +86,7 @@ import {
   isWaveChatSlowModeActive,
   isWaveChatSlowModeExempt
 } from '@/waves/wave-chat-slow-mode.helpers';
+import { isWaveCreatorOrAdmin } from '@/waves/wave-admin.helpers';
 
 const ARWEAVE_ORIGIN = 'https://arweave.net';
 
@@ -339,6 +340,12 @@ export class CreateOrUpdateDropUseCase {
     ) {
       throw new BadRequestException('Chat waves only allow chat drops');
     }
+    this.verifyChatLinksAreAllowed({
+      isDescriptionDrop,
+      wave,
+      model: validatedModel,
+      groupIdsUserIsEligibleFor
+    });
     if (
       !isDescriptionDrop &&
       preExistingDropId === null &&
@@ -619,6 +626,40 @@ export class CreateOrUpdateDropUseCase {
     } finally {
       timer?.stop(
         `${CreateOrUpdateDropUseCase.name}->verifyChatSlowModeLimitations`
+      );
+    }
+  }
+
+  private verifyChatLinksAreAllowed({
+    isDescriptionDrop,
+    wave,
+    model,
+    groupIdsUserIsEligibleFor
+  }: {
+    isDescriptionDrop: boolean;
+    wave: WaveEntity;
+    model: CreateOrUpdateDropModel;
+    groupIdsUserIsEligibleFor: string[];
+  }) {
+    if (
+      isDescriptionDrop ||
+      !wave.chat_links_disabled ||
+      model.drop_type !== DropType.CHAT ||
+      isWaveCreatorOrAdmin({
+        authenticatedProfileId: this.getRequiredAuthorId(model),
+        wave,
+        groupIdsUserIsEligibleFor
+      })
+    ) {
+      return;
+    }
+    if (
+      model.parts.some(
+        (part) => extractUrlCandidatesFromText(part.content, 1).length > 0
+      )
+    ) {
+      throw new ForbiddenException(
+        `Chat drops with links are not allowed in this wave`
       );
     }
   }

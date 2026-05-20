@@ -77,6 +77,7 @@ describe('WavesMappers', () => {
     expect(mapped.voting.authenticated_user_eligible).toBe(false);
     expect(mapped.participation.authenticated_user_eligible).toBe(false);
     expect(mapped.chat.authenticated_user_eligible).toBe(true);
+    expect(mapped.chat.links_disabled).toBe(false);
     expect(mapped.chat).not.toHaveProperty('next_drop_allowed');
     expect(mapped.chat).not.toHaveProperty('slow_mode_cooldown_ms');
   });
@@ -208,12 +209,14 @@ describe('WavesMappers', () => {
       nextDecisionTime: null,
       isDirectMessage: false,
       existingWaveSettings: {
-        max_votes_per_identity_to_drop: 7
+        max_votes_per_identity_to_drop: 7,
+        chat_links_disabled: true
       }
     });
 
     expect(mapped.max_votes_per_identity_to_drop).toBe(7);
     expect(mapped.chat_slow_mode_cooldown_ms).toBeNull();
+    expect(mapped.chat_links_disabled).toBe(true);
   });
 
   it('maps chat slow mode config into entity fields', async () => {
@@ -247,7 +250,8 @@ describe('WavesMappers', () => {
       chat: {
         scope: { group_id: null },
         enabled: true,
-        slow_mode_cooldown_ms: 45000
+        slow_mode_cooldown_ms: 45000,
+        links_disabled: true
       },
       wave: {
         type: ApiWaveType.Chat,
@@ -273,6 +277,7 @@ describe('WavesMappers', () => {
     });
 
     expect(mapped.chat_slow_mode_cooldown_ms).toBe(45000);
+    expect(mapped.chat_links_disabled).toBe(true);
   });
 
   it('maps card-set TDH config into entity fields and API output', async () => {

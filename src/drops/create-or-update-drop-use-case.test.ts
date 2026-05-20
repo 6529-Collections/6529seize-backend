@@ -126,6 +126,7 @@ describe('CreateOrUpdateDropUseCase', () => {
       chat_enabled: true,
       chat_group_id: null,
       chat_slow_mode_cooldown_ms: 60000,
+      chat_links_disabled: false,
       ...overrides
     };
   }
@@ -137,6 +138,13 @@ describe('CreateOrUpdateDropUseCase', () => {
       drop_type: DropType.CHAT,
       author_identity: 'author-profile',
       author_id: 'author-profile',
+      parts: [
+        {
+          content: 'hello',
+          quoted_drop: null,
+          media: []
+        }
+      ],
       ...overrides
     };
   }
@@ -318,6 +326,134 @@ describe('CreateOrUpdateDropUseCase', () => {
         groupIdsUserIsEligibleFor: ['admins']
       })
     ).toThrow(`Group mentions can only be used when creating a drop`);
+  });
+
+  it('rejects non-admin chat drops with links when links are disabled', () => {
+    const useCase = createUseCaseWithMocks();
+
+    expect(() =>
+      (useCase as any).verifyChatLinksAreAllowed({
+        isDescriptionDrop: false,
+        wave: createSlowModeWave({ chat_links_disabled: true }),
+        model: createChatDropModel({
+          parts: [
+            {
+              content: 'see https://example.com',
+              quoted_drop: null,
+              media: []
+            }
+          ]
+        }),
+        groupIdsUserIsEligibleFor: []
+      })
+    ).toThrow(`Chat drops with links are not allowed in this wave`);
+  });
+
+  it('rejects non-admin chat drop edits with links when links are disabled', () => {
+    const useCase = createUseCaseWithMocks();
+
+    expect(() =>
+      (useCase as any).verifyChatLinksAreAllowed({
+        isDescriptionDrop: false,
+        wave: createSlowModeWave({ chat_links_disabled: true }),
+        model: createChatDropModel({
+          drop_id: 'drop-1',
+          parts: [
+            {
+              content: 'edited to www.example.com',
+              quoted_drop: null,
+              media: []
+            }
+          ]
+        }),
+        groupIdsUserIsEligibleFor: []
+      })
+    ).toThrow(`Chat drops with links are not allowed in this wave`);
+  });
+
+  it('allows wave creators and admins to send chat drops with links when links are disabled', () => {
+    const useCase = createUseCaseWithMocks();
+    const model = createChatDropModel({
+      parts: [
+        {
+          content: 'see http://example.com',
+          quoted_drop: null,
+          media: []
+        }
+      ]
+    });
+
+    expect(() =>
+      (useCase as any).verifyChatLinksAreAllowed({
+        isDescriptionDrop: false,
+        wave: createSlowModeWave({
+          created_by: 'author-profile',
+          chat_links_disabled: true
+        }),
+        model,
+        groupIdsUserIsEligibleFor: []
+      })
+    ).not.toThrow();
+
+    expect(() =>
+      (useCase as any).verifyChatLinksAreAllowed({
+        isDescriptionDrop: false,
+        wave: createSlowModeWave({
+          created_by: 'another-profile',
+          admin_group_id: 'admins',
+          chat_links_disabled: true
+        }),
+        model,
+        groupIdsUserIsEligibleFor: ['admins']
+      })
+    ).not.toThrow();
+  });
+
+  it('does not treat media URLs as disabled chat links', () => {
+    const useCase = createUseCaseWithMocks();
+
+    expect(() =>
+      (useCase as any).verifyChatLinksAreAllowed({
+        isDescriptionDrop: false,
+        wave: createSlowModeWave({ chat_links_disabled: true }),
+        model: createChatDropModel({
+          parts: [
+            {
+              content: 'image attached',
+              quoted_drop: null,
+              media: [
+                {
+                  url: 'https://example.com/image.png',
+                  mime_type: 'image/png'
+                }
+              ]
+            }
+          ]
+        }),
+        groupIdsUserIsEligibleFor: []
+      })
+    ).not.toThrow();
+  });
+
+  it('allows chat drops with links when link disabling is off', () => {
+    const useCase = createUseCaseWithMocks();
+
+    expect(() =>
+      (useCase as any).verifyChatLinksAreAllowed({
+        isDescriptionDrop: false,
+        wave: createSlowModeWave({ chat_links_disabled: false }),
+        model: createChatDropModel({
+          parts: [
+            {
+              content: 'see https://example.com',
+              quoted_drop: null,
+              media: []
+            }
+          ]
+        }),
+        groupIdsUserIsEligibleFor: []
+      })
+    ).not.toThrow();
   });
 
   it('skips all-drops notifications once the wave reaches the subscriber cap', async () => {

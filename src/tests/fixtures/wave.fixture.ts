@@ -25,6 +25,7 @@ const aBaseWave: BaseWave = {
   participation_group_id: null,
   chat_group_id: null,
   chat_slow_mode_cooldown_ms: null,
+  chat_links_disabled: false,
   participation_max_applications_per_participant: null,
   participation_required_metadata: [],
   participation_required_media: [],

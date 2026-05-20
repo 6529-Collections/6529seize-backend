@@ -162,6 +162,7 @@ export class ApiWaveOverviewMapper {
             subscribers_count: metrics?.subscribers_count ?? 0,
             has_competition: wave.type !== WaveType.CHAT,
             is_dm_wave: wave.is_direct_message === true,
+            links_disabled: wave.chat_links_disabled,
             description_drop: this.mapDescriptionDrop({
               part: descriptionDropPartOnesByDropId[wave.description_drop_id],
               media:

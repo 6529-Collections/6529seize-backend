@@ -26,6 +26,7 @@ function makeWave(overrides: Partial<WaveEntity> = {}): WaveEntity {
     chat_enabled: true,
     chat_group_id: null,
     chat_slow_mode_cooldown_ms: null,
+    chat_links_disabled: false,
     participation_max_applications_per_participant: null,
     participation_required_metadata: [],
     participation_required_media: [],
@@ -124,6 +125,7 @@ describe('ApiWaveOverviewMapper', () => {
       subscribers_count: 11,
       has_competition: false,
       is_dm_wave: false,
+      links_disabled: false,
       description_drop: {},
       total_drops_count: 3,
       is_private: false
@@ -147,6 +149,19 @@ describe('ApiWaveOverviewMapper', () => {
       ['description-drop-1'],
       ctx
     );
+  });
+
+  it('maps disabled links flag from wave settings', async () => {
+    const { mapper } = createMapper();
+
+    const result = await mapper.mapWaves(
+      [makeWave({ chat_links_disabled: true })],
+      {
+        authenticationContext: AuthenticationContext.notAuthenticated()
+      }
+    );
+
+    expect(result['wave-1']?.links_disabled).toBe(true);
   });
 
   it('maps part-one description drop content, media, total drops count and privacy', async () => {
@@ -263,6 +278,7 @@ describe('ApiWaveOverviewMapper', () => {
       subscribers_count: 11,
       has_competition: true,
       is_dm_wave: true,
+      links_disabled: false,
       description_drop: {},
       total_drops_count: 3,
       is_private: false,
