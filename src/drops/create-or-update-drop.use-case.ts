@@ -52,7 +52,6 @@ import {
   ProfileProxyApiService
 } from '@/api/proxies/proxy.api.service';
 import { ProfileProxyActionType } from '@/entities/IProfileProxyAction';
-import process from 'node:process';
 import { deleteDrop, DeleteDropUseCase } from './delete-drop.use-case';
 import { dropVotingDb, DropVotingDb } from '@/api/drops/drop-voting.db';
 import { identityFetcher } from '@/api/identities/identity.fetcher';
@@ -66,8 +65,8 @@ import {
 } from '@/api/community-members/user-groups.service';
 import { wavesApiDb, WavesApiDb } from '@/api/waves/waves.api.db';
 import {
-  dropNftLinksDb,
   DropNftLinkInsertModel,
+  dropNftLinksDb,
   DropNftLinksDb
 } from '@/drops/drop-nft-links.db';
 import {
@@ -412,7 +411,7 @@ export class CreateOrUpdateDropUseCase {
         dropBeforeUpdate.updated_at ?? dropBeforeUpdate.created_at
       );
       const maximumTimeAllowedForEdit = Time.millis(
-        numbers.parseIntOrNull(process.env.MAX_DROP_EDIT_TIME_MS) ?? 0
+        env.getIntOrNull('MAX_DROP_EDIT_TIME_MS') ?? 0
       );
       if (dropLastTouched.diffFromNow().gt(maximumTimeAllowedForEdit)) {
         throw new ForbiddenException(
