@@ -456,6 +456,28 @@ describe('CreateOrUpdateDropUseCase', () => {
     ).not.toThrow();
   });
 
+  it('allows internal chat drops with links when link restrictions are bypassed', () => {
+    const useCase = createUseCaseWithMocks();
+
+    expect(() =>
+      (useCase as any).verifyChatLinksAreAllowed({
+        isDescriptionDrop: false,
+        wave: createSlowModeWave({ chat_links_disabled: true }),
+        model: createChatDropModel({
+          parts: [
+            {
+              content: 'system update https://example.com',
+              quoted_drop: null,
+              media: []
+            }
+          ]
+        }),
+        groupIdsUserIsEligibleFor: [],
+        bypassChatLinkRestrictions: true
+      })
+    ).not.toThrow();
+  });
+
   it('skips all-drops notifications once the wave reaches the subscriber cap', async () => {
     jest.spyOn(env, 'getIntOrNull').mockReturnValue(15);
     const identitySubscriptionsDb = {
@@ -705,6 +727,28 @@ describe('CreateOrUpdateDropUseCase', () => {
     ).rejects.toThrow(
       'Slow mode is enabled. You can create your next chat drop at 12345'
     );
+  });
+
+  it('does not enforce chat slow mode when restrictions are bypassed', async () => {
+    const wavesApiDb = {
+      reserveWaveChatDropCooldown: jest.fn()
+    };
+    const useCase = createUseCaseWithMocks({ wavesApiDb });
+
+    await expect(
+      (useCase as any).verifyChatSlowModeLimitations(
+        {
+          isDescriptionDrop: false,
+          wave: createSlowModeWave(),
+          model: createChatDropModel(),
+          groupIdsUserIsEligibleFor: [],
+          bypassChatSlowModeRestrictions: true
+        },
+        { connection: {} }
+      )
+    ).resolves.toBeUndefined();
+
+    expect(wavesApiDb.reserveWaveChatDropCooldown).not.toHaveBeenCalled();
   });
 
   it('does not enforce chat slow mode for wave admins', async () => {
