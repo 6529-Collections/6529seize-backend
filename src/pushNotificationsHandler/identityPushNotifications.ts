@@ -229,19 +229,6 @@ async function getSharedDeviceTokenKeysForOtherProfiles(
   }, new Map<string, Set<string>>());
 }
 
-export async function sendIdentityNotification(id: number) {
-  await sendIdentityNotifications([id]);
-}
-
-export async function sendIdentityNotifications(ids: number[]) {
-  const failedIds = await sendIdentityNotificationsBatch(ids);
-  if (failedIds.length) {
-    throw new Error(
-      `Failed to send identity notifications: ${failedIds.join(',')}`
-    );
-  }
-}
-
 export async function sendIdentityNotificationsBatch(
   ids: number[]
 ): Promise<number[]> {

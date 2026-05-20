@@ -1,4 +1,4 @@
-const MAX_DROP_LABEL_LENGTH = 80;
+export const MAX_DROP_LABEL_LENGTH = 80;
 
 export function getRatingChangeEmoji(value: number): string {
   if (value > 0) {
@@ -15,7 +15,7 @@ export function formatSignedLocaleNumber(value: number): string {
     return '0';
   }
   const sign = value >= 0 ? '+' : '-';
-  return `${sign}${Math.abs(value).toLocaleString()}`;
+  return `${sign}${Math.abs(value).toLocaleString('en-US')}`;
 }
 
 export function buildDropVotePushTitle({
@@ -47,7 +47,7 @@ export function buildDropVotePushBody({
 }): string {
   const dropLabel = dropBody === null ? '' : truncateDropLabel(dropBody);
   const lines = dropLabel ? [`Drop: ${dropLabel}`] : [];
-  if (voteChange !== null) {
+  if (voteChange !== null && voteChange !== vote) {
     lines.push(`Change: ${formatSignedLocaleNumber(voteChange)}`);
   }
   lines.push(`New rating: ${formatSignedLocaleNumber(vote)}`);
@@ -59,8 +59,9 @@ export function buildDropVotePushBody({
 
 export function truncateDropLabel(value: string): string {
   const normalized = value.replace(/\s+/g, ' ').trim();
-  if (normalized.length <= MAX_DROP_LABEL_LENGTH) {
+  const characters = Array.from(normalized);
+  if (characters.length <= MAX_DROP_LABEL_LENGTH) {
     return normalized;
   }
-  return `${normalized.substring(0, MAX_DROP_LABEL_LENGTH - 3)}...`;
+  return `${characters.slice(0, MAX_DROP_LABEL_LENGTH - 3).join('')}...`;
 }

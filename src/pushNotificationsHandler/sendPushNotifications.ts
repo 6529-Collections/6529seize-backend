@@ -71,32 +71,6 @@ function init() {
   }
 }
 
-export async function sendMessage(
-  title: string,
-  body: string,
-  token: string,
-  notification_id: number,
-  extra_data: any,
-  badge?: number,
-  imageUrl?: string
-) {
-  const [result] = await sendMessages([
-    {
-      title,
-      body,
-      token,
-      notification_id,
-      extra_data,
-      badge,
-      imageUrl
-    }
-  ]);
-
-  if (!result.response.success) {
-    throw result.response.error;
-  }
-}
-
 export async function sendMessages(
   inputs: PushNotificationMessageInput[]
 ): Promise<PushNotificationSendResult[]> {
@@ -200,13 +174,14 @@ function buildMessageData(
 }
 
 function truncatePreparedLine(value: string, maxLength: number): string {
-  if (value.length <= maxLength) {
+  const characters = Array.from(value);
+  if (characters.length <= maxLength) {
     return value;
   }
   if (maxLength <= 3) {
-    return value.substring(0, maxLength);
+    return characters.slice(0, maxLength).join('');
   }
-  return `${value.substring(0, maxLength - 3)}...`;
+  return `${characters.slice(0, maxLength - 3).join('')}...`;
 }
 
 async function handleSendResponse(
