@@ -16,6 +16,7 @@ import { HttpFile } from '../http/http';
 export class ApiWaveChatConfig {
     'scope': ApiWaveScope;
     'enabled': boolean;
+    'links_disabled': boolean;
     'authenticated_user_eligible': boolean;
     'next_drop_allowed'?: number;
     'slow_mode_cooldown_ms'?: number;
@@ -34,6 +35,12 @@ export class ApiWaveChatConfig {
         {
             "name": "enabled",
             "baseName": "enabled",
+            "type": "boolean",
+            "format": ""
+        },
+        {
+            "name": "links_disabled",
+            "baseName": "links_disabled",
             "type": "boolean",
             "format": ""
         },
