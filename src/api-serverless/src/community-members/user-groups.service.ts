@@ -93,6 +93,32 @@ export class UserGroupsService {
     private readonly metricsRecorder: MetricsRecorder
   ) {}
 
+  private async timeAsync<T>(
+    timer: Timer | undefined,
+    key: string,
+    action: () => Promise<T>
+  ): Promise<T> {
+    timer?.start(key);
+    try {
+      return await action();
+    } finally {
+      timer?.stop(key);
+    }
+  }
+
+  private timeSync<T>(
+    timer: Timer | undefined,
+    key: string,
+    action: () => T
+  ): T {
+    timer?.start(key);
+    try {
+      return action();
+    } finally {
+      timer?.stop(key);
+    }
+  }
+
   async save(
     group: Omit<
       NewUserGroupEntity,
@@ -246,54 +272,73 @@ export class UserGroupsService {
     },
     timer?: Timer
   ): Promise<string[]> {
-    if (!givenGroups.length) {
-      return [];
-    }
-    const identityEntity =
-      await this.userGroupsDb.getIdentityByProfileId(profileId);
-    if (!identityEntity) {
-      return [];
-    }
-    const profile: ProfileSimpleMetrics = {
-      profile_id: identityEntity.profile_id!,
-      rep: identityEntity.rep,
-      cic: identityEntity.cic,
-      tdh: identityEntity.tdh,
-      xtdh: identityEntity.xtdh,
-      level: getLevelFromScore(identityEntity.level_raw)
-    };
-    const givenGroupEntities = await this.getGivenGroupEntities(
-      { givenGroups, allWaveGroups },
-      timer
-    );
-    if (!givenGroupEntities.length) {
-      return [];
-    }
-    const { groupsWhereUserIsInByIdentity, groupsInNeedOfAdditionalCheck } =
-      await this.eliminateBannedGroupsAndGroupRestByInByIdentityAndNeedsAdditionalCheck(
-        givenGroupEntities,
-        profile
-      );
-
-    const groupEntitiesWhichPassedAllChecks =
-      await this.eliminateGroupsBySimpleMetricsViolations(
-        groupsInNeedOfAdditionalCheck,
-        profile
-      )
-        .then((groups) =>
-          this.eliminateGroupsByFullOutgoingCicAndRep(groups, profile)
-        )
-        .then((groups) => this.eliminateGroupsByOwnings(groups, profile))
-        .then((groups) =>
-          this.eliminateGroupsByGranularRatings(groups, profile)
-        )
-        .then((groups) =>
-          this.eliminateGroupsByBeneficiaryGrants(groups, profile, { timer })
+    return this.timeAsync(
+      timer,
+      'whichOfGivenGroupsIsUserEligibleFor',
+      async () => {
+        if (!givenGroups.length) {
+          return [];
+        }
+        const identityEntity = await this.timeAsync(
+          timer,
+          'whichOfGivenGroupsIsUserEligibleFor->getIdentityByProfileId',
+          () => this.userGroupsDb.getIdentityByProfileId(profileId)
         );
-    return [
-      ...groupEntitiesWhichPassedAllChecks.map((it) => it.id),
-      ...groupsWhereUserIsInByIdentity.map((it) => it.id)
-    ];
+        if (!identityEntity) {
+          return [];
+        }
+        const profile: ProfileSimpleMetrics = {
+          profile_id: identityEntity.profile_id!,
+          rep: identityEntity.rep,
+          cic: identityEntity.cic,
+          tdh: identityEntity.tdh,
+          xtdh: identityEntity.xtdh,
+          level: getLevelFromScore(identityEntity.level_raw)
+        };
+        const givenGroupEntities = await this.getGivenGroupEntities(
+          { givenGroups, allWaveGroups },
+          timer
+        );
+        if (!givenGroupEntities.length) {
+          return [];
+        }
+        const { groupsWhereUserIsInByIdentity, groupsInNeedOfAdditionalCheck } =
+          await this.eliminateBannedGroupsAndGroupRestByInByIdentityAndNeedsAdditionalCheck(
+            givenGroupEntities,
+            profile,
+            timer
+          );
+
+        const groupEntitiesWhichPassedAllChecks =
+          await this.eliminateGroupsBySimpleMetricsViolations(
+            groupsInNeedOfAdditionalCheck,
+            profile,
+            timer
+          )
+            .then((groups) =>
+              this.eliminateGroupsByFullOutgoingCicAndRep(
+                groups,
+                profile,
+                timer
+              )
+            )
+            .then((groups) =>
+              this.eliminateGroupsByOwnings(groups, profile, timer)
+            )
+            .then((groups) =>
+              this.eliminateGroupsByGranularRatings(groups, profile, timer)
+            )
+            .then((groups) =>
+              this.eliminateGroupsByBeneficiaryGrants(groups, profile, {
+                timer
+              })
+            );
+        return [
+          ...groupEntitiesWhichPassedAllChecks.map((it) => it.id),
+          ...groupsWhereUserIsInByIdentity.map((it) => it.id)
+        ];
+      }
+    );
   }
 
   private async getGivenGroupEntities(
@@ -303,19 +348,30 @@ export class UserGroupsService {
     }: { givenGroups: string[]; allWaveGroups: boolean },
     timer?: Timer
   ): Promise<UserGroupEntity[]> {
-    if (!allWaveGroups) {
-      return await this.userGroupsDb.getByIds(givenGroups, {
-        timer
-      });
-    }
-    const ttlSec = env.getIntOrNull('WAVE_GROUPS_CACHE_TTL_SEC') ?? 60;
-    return redisCached<UserGroupEntity[]>(
-      'cache_6529_wave_groups',
-      Time.seconds(ttlSec),
-      async () =>
-        this.userGroupsDb.getByIds(givenGroups, {
-          timer
-        })
+    return this.timeAsync(
+      timer,
+      'whichOfGivenGroupsIsUserEligibleFor->getGivenGroupEntities',
+      async () => {
+        if (!allWaveGroups) {
+          return await this.userGroupsDb.getByIds(givenGroups, {
+            timer
+          });
+        }
+        const ttlSec = env.getIntOrNull('WAVE_GROUPS_CACHE_TTL_SEC') ?? 60;
+        return redisCached<UserGroupEntity[]>(
+          'cache_6529_wave_groups',
+          Time.seconds(ttlSec),
+          async () =>
+            this.timeAsync(
+              timer,
+              'whichOfGivenGroupsIsUserEligibleFor->getGivenGroupEntities->redisMissGetByIds',
+              () =>
+                this.userGroupsDb.getByIds(givenGroups, {
+                  timer
+                })
+            )
+        );
+      }
     );
   }
 
@@ -323,58 +379,71 @@ export class UserGroupsService {
     groups: UserGroupEntity[],
     profile: ProfileSimpleMetrics,
     ctx: RequestContext
-  ) {
-    const beneficiaryGrantIds = groups
-      .map((group) => group.is_beneficiary_of_grant_id)
-      .filter((it) => !!it) as string[];
-    if (!beneficiaryGrantIds.length) {
-      return groups;
-    }
-    const grantsWhereProfileIsBeneficiary =
-      await this.userGroupsDb.inWhichOfGrantsIsProfileBeneficiary(
-        {
-          beneficiaryGrantIds,
-          profileId: profile.profile_id
-        },
-        ctx
-      );
-    return groups.filter(
-      (group) =>
-        !group.is_beneficiary_of_grant_id ||
-        grantsWhereProfileIsBeneficiary.includes(
-          group.is_beneficiary_of_grant_id
-        )
+  ): Promise<UserGroupEntity[]> {
+    return this.timeAsync(
+      ctx.timer,
+      'whichOfGivenGroupsIsUserEligibleFor->eliminateGroupsByBeneficiaryGrants',
+      async () => {
+        const beneficiaryGrantIds = groups
+          .map((group) => group.is_beneficiary_of_grant_id)
+          .filter((it) => !!it) as string[];
+        if (!beneficiaryGrantIds.length) {
+          return groups;
+        }
+        const grantsWhereProfileIsBeneficiary =
+          await this.userGroupsDb.inWhichOfGrantsIsProfileBeneficiary(
+            {
+              beneficiaryGrantIds,
+              profileId: profile.profile_id
+            },
+            ctx
+          );
+        return groups.filter(
+          (group) =>
+            !group.is_beneficiary_of_grant_id ||
+            grantsWhereProfileIsBeneficiary.includes(
+              group.is_beneficiary_of_grant_id
+            )
+        );
+      }
     );
   }
 
   private async eliminateGroupsByGranularRatings(
     groups: UserGroupEntity[],
-    profile: ProfileSimpleMetrics
-  ) {
-    const { users, categories } =
-      this.extractAllCicRepUsersAndCategoriesFromGroups(groups);
-    if (users.length !== 0 || categories.length !== 0) {
-      const { outgoingRatings, incomingRatings } =
-        await this.getIncomingOutgoingGroupedRatings(
-          profile,
-          users,
-          categories
-        );
-      return groups.filter(
-        (entity) =>
-          !isGroupViolatingAnySpecificRepCriteria(
-            entity,
-            incomingRatings,
-            outgoingRatings
-          ) &&
-          !isGroupViolatingAnySpecificCicCriteria(
-            entity,
-            incomingRatings,
-            outgoingRatings
-          )
-      );
-    }
-    return groups;
+    profile: ProfileSimpleMetrics,
+    timer?: Timer
+  ): Promise<UserGroupEntity[]> {
+    return this.timeAsync(
+      timer,
+      'whichOfGivenGroupsIsUserEligibleFor->eliminateGroupsByGranularRatings',
+      async () => {
+        const { users, categories } =
+          this.extractAllCicRepUsersAndCategoriesFromGroups(groups);
+        if (users.length !== 0 || categories.length !== 0) {
+          const { outgoingRatings, incomingRatings } = await this.timeAsync(
+            timer,
+            'whichOfGivenGroupsIsUserEligibleFor->getIncomingOutgoingGroupedRatings',
+            () =>
+              this.getIncomingOutgoingGroupedRatings(profile, users, categories)
+          );
+          return groups.filter(
+            (entity) =>
+              !isGroupViolatingAnySpecificRepCriteria(
+                entity,
+                incomingRatings,
+                outgoingRatings
+              ) &&
+              !isGroupViolatingAnySpecificCicCriteria(
+                entity,
+                incomingRatings,
+                outgoingRatings
+              )
+          );
+        }
+        return groups;
+      }
+    );
   }
 
   private async getIncomingOutgoingGroupedRatings(
@@ -455,48 +524,70 @@ export class UserGroupsService {
 
   private async eliminateGroupsByOwnings(
     groups: UserGroupEntity[],
-    profile: ProfileSimpleMetrics
+    profile: ProfileSimpleMetrics,
+    timer?: Timer
   ): Promise<UserGroupEntity[]> {
-    if (isAnyGroupByOwningsCriteria(groups)) {
-      const ownings =
-        await this.userGroupsDb.getAllProfileOwnedTokensByProfileIdGroupedByContract(
-          profile.profile_id,
-          {}
-        );
-      return groups.filter(
-        (entity) => !isProfileViolatingOwnsCriteria(entity, ownings)
-      );
-    }
-    return groups;
+    return this.timeAsync(
+      timer,
+      'whichOfGivenGroupsIsUserEligibleFor->eliminateGroupsByOwnings',
+      async () => {
+        if (isAnyGroupByOwningsCriteria(groups)) {
+          const ownings =
+            await this.userGroupsDb.getAllProfileOwnedTokensByProfileIdGroupedByContract(
+              profile.profile_id,
+              { timer }
+            );
+          return groups.filter(
+            (entity) => !isProfileViolatingOwnsCriteria(entity, ownings)
+          );
+        }
+        return groups;
+      }
+    );
   }
 
   private async eliminateGroupsByFullOutgoingCicAndRep(
     groups: UserGroupEntity[],
-    profile: ProfileSimpleMetrics
+    profile: ProfileSimpleMetrics,
+    timer?: Timer
   ): Promise<UserGroupEntity[]> {
-    if (isAnyGroupByTotalSentCicOrRepCriteria(groups)) {
-      const { cic, rep } = await this.userGroupsDb.getGivenCicAndRep(
-        profile.profile_id
-      );
-      return groups.filter(
-        (entity) =>
-          !isProfileViolatingTotalSentCicCriteria(cic, entity) &&
-          !isProfileViolatingTotalSentRepCriteria(rep, entity)
-      );
-    }
-    return groups;
+    return this.timeAsync(
+      timer,
+      'whichOfGivenGroupsIsUserEligibleFor->eliminateGroupsByFullOutgoingCicAndRep',
+      async () => {
+        if (isAnyGroupByTotalSentCicOrRepCriteria(groups)) {
+          const { cic, rep } = await this.timeAsync(
+            timer,
+            'whichOfGivenGroupsIsUserEligibleFor->getGivenCicAndRep',
+            () => this.userGroupsDb.getGivenCicAndRep(profile.profile_id)
+          );
+          return groups.filter(
+            (entity) =>
+              !isProfileViolatingTotalSentCicCriteria(cic, entity) &&
+              !isProfileViolatingTotalSentRepCriteria(rep, entity)
+          );
+        }
+        return groups;
+      }
+    );
   }
 
   private async eliminateGroupsBySimpleMetricsViolations(
     groups: UserGroupEntity[],
-    profile: ProfileSimpleMetrics
+    profile: ProfileSimpleMetrics,
+    timer?: Timer
   ): Promise<UserGroupEntity[]> {
-    return groups.filter(
-      (entity) =>
-        !isProfileViolatingGroupsProfileTdhCriteria(profile, entity) &&
-        !isProfileViolatingGroupsProfileLevelCriteria(profile, entity) &&
-        !isProfileViolatingGroupsProfileCicCriteria(profile, entity) &&
-        !isProfileViolatingGroupsProfileRepCriteria(profile, entity)
+    return this.timeSync(
+      timer,
+      'whichOfGivenGroupsIsUserEligibleFor->eliminateGroupsBySimpleMetricsViolations',
+      () =>
+        groups.filter(
+          (entity) =>
+            !isProfileViolatingGroupsProfileTdhCriteria(profile, entity) &&
+            !isProfileViolatingGroupsProfileLevelCriteria(profile, entity) &&
+            !isProfileViolatingGroupsProfileCicCriteria(profile, entity) &&
+            !isProfileViolatingGroupsProfileRepCriteria(profile, entity)
+        )
     );
   }
 
@@ -508,76 +599,106 @@ export class UserGroupsService {
       level: number;
       cic: number;
       rep: number;
-    }
+    },
+    timer?: Timer
   ): Promise<{
     groupsWhereUserIsInByIdentity: UserGroupEntity[];
     groupsInNeedOfAdditionalCheck: UserGroupEntity[];
   }> {
-    const {
-      groupsIdsUserIsEligibleByIdentity,
-      groupIdsUserIsBannedFromByIdentity
-    } = await this.getGroupsUserIsDirectlyInvolvedIn({
-      profileId: profile.profile_id,
-      candidates: groups.map((it) => it.id)
-    });
+    return this.timeAsync(
+      timer,
+      'whichOfGivenGroupsIsUserEligibleFor->eliminateBannedGroupsAndDirectIdentityGroups',
+      async () => {
+        const {
+          groupsIdsUserIsEligibleByIdentity,
+          groupIdsUserIsBannedFromByIdentity
+        } = await this.getGroupsUserIsDirectlyInvolvedIn(
+          {
+            profileId: profile.profile_id,
+            candidates: groups.map((it) => it.id)
+          },
+          timer
+        );
 
-    const nonBannedGroups = groups.filter(
-      (it) => !groupIdsUserIsBannedFromByIdentity.includes(it.id)
+        const nonBannedGroups = groups.filter(
+          (it) => !groupIdsUserIsBannedFromByIdentity.includes(it.id)
+        );
+        const groupsWhereUserIsInByIdentity = nonBannedGroups.filter((it) =>
+          groupsIdsUserIsEligibleByIdentity.includes(it.id)
+        );
+        const groupsInNeedOfAdditionalCheck = nonBannedGroups
+          .filter((it) => hasGroupGotAnyNonIdentityConditions(it))
+          .filter((it) => !groupsIdsUserIsEligibleByIdentity.includes(it.id));
+        const groupsWhereUserIsInJustByMissingExclusion =
+          nonBannedGroups.filter(
+            (it) =>
+              !it.profile_group_id &&
+              !!it.excluded_profile_group_id &&
+              !groupIdsUserIsBannedFromByIdentity.includes(it.id) &&
+              !hasGroupGotAnyNonIdentityConditions(it)
+          );
+        return {
+          groupsWhereUserIsInByIdentity,
+          groupsInNeedOfAdditionalCheck: [
+            ...groupsInNeedOfAdditionalCheck,
+            ...groupsWhereUserIsInJustByMissingExclusion
+          ]
+        };
+      }
     );
-    const groupsWhereUserIsInByIdentity = nonBannedGroups.filter((it) =>
-      groupsIdsUserIsEligibleByIdentity.includes(it.id)
-    );
-    const groupsInNeedOfAdditionalCheck = nonBannedGroups
-      .filter((it) => hasGroupGotAnyNonIdentityConditions(it))
-      .filter((it) => !groupsIdsUserIsEligibleByIdentity.includes(it.id));
-    const groupsWhereUserIsInJustByMissingExclusion = nonBannedGroups.filter(
-      (it) =>
-        !it.profile_group_id &&
-        !!it.excluded_profile_group_id &&
-        !groupIdsUserIsBannedFromByIdentity.includes(it.id) &&
-        !hasGroupGotAnyNonIdentityConditions(it)
-    );
-    return {
-      groupsWhereUserIsInByIdentity: groupsWhereUserIsInByIdentity,
-      groupsInNeedOfAdditionalCheck: [
-        ...groupsInNeedOfAdditionalCheck,
-        ...groupsWhereUserIsInJustByMissingExclusion
-      ]
-    };
   }
 
-  private async getGroupsUserIsDirectlyInvolvedIn({
-    profileId,
-    candidates
-  }: {
-    profileId: string;
-    candidates: string[];
-  }): Promise<{
+  private async getGroupsUserIsDirectlyInvolvedIn(
+    {
+      profileId,
+      candidates
+    }: {
+      profileId: string;
+      candidates: string[];
+    },
+    timer?: Timer
+  ): Promise<{
     groupsIdsUserIsEligibleByIdentity: string[];
     groupIdsUserIsBannedFromByIdentity: string[];
   }> {
-    const [
-      groupsIdsUserIsEligibleByIdentity,
-      groupIdsUserIsBannedFromByIdentity
-    ] = await Promise.all([
-      this.userGroupsDb.getGroupsUserIsEligibleByIdentity({
-        profileId
-      }),
-      this.userGroupsDb.getGroupsUserIsExcludedFromByIdentity({
-        profileId
-      })
-    ]);
+    return this.timeAsync(
+      timer,
+      'whichOfGivenGroupsIsUserEligibleFor->getGroupsUserIsDirectlyInvolvedIn',
+      async () => {
+        const [
+          groupsIdsUserIsEligibleByIdentity,
+          groupIdsUserIsBannedFromByIdentity
+        ] = await Promise.all([
+          this.timeAsync(
+            timer,
+            'whichOfGivenGroupsIsUserEligibleFor->getGroupsUserIsDirectlyInvolvedIn->eligibleByIdentity',
+            () =>
+              this.userGroupsDb.getGroupsUserIsEligibleByIdentity({
+                profileId
+              })
+          ),
+          this.timeAsync(
+            timer,
+            'whichOfGivenGroupsIsUserEligibleFor->getGroupsUserIsDirectlyInvolvedIn->excludedByIdentity',
+            () =>
+              this.userGroupsDb.getGroupsUserIsExcludedFromByIdentity({
+                profileId
+              })
+          )
+        ]);
 
-    return {
-      groupsIdsUserIsEligibleByIdentity:
-        groupsIdsUserIsEligibleByIdentity.filter((it) =>
-          candidates.includes(it)
-        ),
-      groupIdsUserIsBannedFromByIdentity:
-        groupIdsUserIsBannedFromByIdentity.filter((it) =>
-          candidates.includes(it)
-        )
-    };
+        return {
+          groupsIdsUserIsEligibleByIdentity:
+            groupsIdsUserIsEligibleByIdentity.filter((it) =>
+              candidates.includes(it)
+            ),
+          groupIdsUserIsBannedFromByIdentity:
+            groupIdsUserIsBannedFromByIdentity.filter((it) =>
+              candidates.includes(it)
+            )
+        };
+      }
+    );
   }
 
   public async invalidateGroupsUserIsEligibleFor(profileId: string) {
@@ -592,29 +713,42 @@ export class UserGroupsService {
     if (!profileId) {
       return [];
     }
-    const key = `eligible-groups-${profileId}`;
-    const ignoreCache = profileId
-      ? await this.userGroupsDb.profileHasRecentGroupChanges(
-          profileId,
-          Time.minutes(1)
-        )
-      : false;
-    if (!ignoreCache) {
-      const cachedGroupsUserIsEligibleFor = mcache.get(key);
-      if (cachedGroupsUserIsEligibleFor) {
-        return cachedGroupsUserIsEligibleFor;
-      }
-    }
     const timerKey = 'getGroupsUserIsEligibleFor';
-    timer?.start(timerKey);
-    const groups = await this.userGroupsDb.getAllWaveRelatedGroups({ timer });
-    const results = await this.whichOfGivenGroupsIsUserEligibleFor(
-      { profileId, givenGroups: groups, allWaveGroups: true },
-      timer
-    );
-    mcache.put(key, results, Time.minutes(1).toMillis());
-    timer?.stop(timerKey);
-    return results;
+    return this.timeAsync(timer, timerKey, async () => {
+      const key = `eligible-groups-${profileId}`;
+      const ignoreCache = await this.timeAsync(
+        timer,
+        `${timerKey}->profileHasRecentGroupChanges`,
+        () =>
+          this.userGroupsDb.profileHasRecentGroupChanges(
+            profileId,
+            Time.minutes(1)
+          )
+      );
+      if (!ignoreCache) {
+        const cachedGroupsUserIsEligibleFor = this.timeSync(
+          timer,
+          `${timerKey}->memoryCacheLookup`,
+          () => mcache.get(key) as string[] | null
+        );
+        if (cachedGroupsUserIsEligibleFor) {
+          return cachedGroupsUserIsEligibleFor;
+        }
+      }
+      const groups = await this.timeAsync(
+        timer,
+        `${timerKey}->getAllWaveRelatedGroups`,
+        () => this.userGroupsDb.getAllWaveRelatedGroups({ timer })
+      );
+      const results = await this.whichOfGivenGroupsIsUserEligibleFor(
+        { profileId, givenGroups: groups, allWaveGroups: true },
+        timer
+      );
+      this.timeSync(timer, `${timerKey}->memoryCachePut`, () =>
+        mcache.put(key, results, Time.minutes(1).toMillis())
+      );
+      return results;
+    });
   }
 
   async changeVisibility(
