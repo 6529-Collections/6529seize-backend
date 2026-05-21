@@ -62,7 +62,7 @@ import { identitiesDb } from '@/identities/identities.db';
 import { enums } from '@/enums';
 import { ids } from '@/ids';
 import { collections } from '@/collections';
-import { clearWaveGroupsCache, redisCached } from '@/redis';
+import { clearWaveGroupsCache, getRedisClient } from '@/redis';
 import { env } from '@/env';
 import { ApiGroupTdhInclusionStrategy } from '../generated/models/ApiGroupTdhInclusionStrategy';
 import { assertUnreachable } from '@/assertions';
@@ -357,22 +357,61 @@ export class UserGroupsService {
             timer
           });
         }
-        const ttlSec = env.getIntOrNull('WAVE_GROUPS_CACHE_TTL_SEC') ?? 60;
-        return redisCached<UserGroupEntity[]>(
-          'cache_6529_wave_groups',
-          Time.seconds(ttlSec),
-          async () =>
-            this.timeAsync(
-              timer,
-              'whichOfGivenGroupsIsUserEligibleFor->getGivenGroupEntities->redisMissGetByIds',
-              () =>
-                this.userGroupsDb.getByIds(givenGroups, {
-                  timer
-                })
-            )
-        );
+        return await this.getCachedWaveGroupEntities(givenGroups, timer);
       }
     );
+  }
+
+  private async getCachedWaveGroupEntities(
+    givenGroups: string[],
+    timer?: Timer
+  ): Promise<UserGroupEntity[]> {
+    const timerPrefix =
+      'whichOfGivenGroupsIsUserEligibleFor->getGivenGroupEntities';
+    const cacheKey = 'cache_6529_wave_groups';
+    const ttlSec = env.getIntOrNull('WAVE_GROUPS_CACHE_TTL_SEC') ?? 60;
+    const redisClient = getRedisClient();
+    if (!redisClient) {
+      return await this.timeAsync(
+        timer,
+        `${timerPrefix}->redisUnavailableGetByIds`,
+        () =>
+          this.userGroupsDb.getByIds(givenGroups, {
+            timer
+          })
+      );
+    }
+
+    const cachedValue = await this.timeAsync(
+      timer,
+      `${timerPrefix}->redisGet`,
+      () => redisClient.get(cacheKey)
+    );
+    if (cachedValue) {
+      return this.timeSync(timer, `${timerPrefix}->redisJsonParse`, () =>
+        JSON.parse(cachedValue)
+      ) as UserGroupEntity[];
+    }
+
+    const value = await this.timeAsync(
+      timer,
+      `${timerPrefix}->redisMissGetByIds`,
+      () =>
+        this.userGroupsDb.getByIds(givenGroups, {
+          timer
+        })
+    );
+    const payload = this.timeSync(
+      timer,
+      `${timerPrefix}->redisJsonStringify`,
+      () => JSON.stringify(value)
+    );
+    await this.timeAsync(timer, `${timerPrefix}->redisSet`, () =>
+      redisClient.set(cacheKey, payload, {
+        EX: Time.seconds(ttlSec).toSeconds()
+      })
+    );
+    return value;
   }
 
   private async eliminateGroupsByBeneficiaryGrants(
