@@ -451,15 +451,29 @@ export class Timer {
   private readonly creationTime: Time = Time.now();
   private readonly ongoingTimers: Record<string, Time> = {};
   private readonly stoppedTimers: Record<string, Time> = {};
+  private readonly startedTimerCounts: Record<string, number> = {};
+  private readonly ongoingTimerKeysByOriginalKey: Record<string, string[]> = {};
 
   public start(key: string) {
-    this.ongoingTimers[key] = Time.now();
+    const startedCount = (this.startedTimerCounts[key] ?? 0) + 1;
+    this.startedTimerCounts[key] = startedCount;
+    const reportKey = startedCount === 1 ? key : `${key}#${startedCount}`;
+    this.ongoingTimers[reportKey] = Time.now();
+    this.ongoingTimerKeysByOriginalKey[key] = [
+      ...(this.ongoingTimerKeysByOriginalKey[key] ?? []),
+      reportKey
+    ];
   }
 
   public stop(key: string) {
-    if (this.ongoingTimers[key]) {
-      this.stoppedTimers[key] = this.ongoingTimers[key].diffFromNow();
-      delete this.ongoingTimers[key];
+    const reportKey = this.ongoingTimerKeysByOriginalKey[key]?.pop();
+    if (reportKey && this.ongoingTimers[reportKey]) {
+      this.stoppedTimers[reportKey] =
+        this.ongoingTimers[reportKey].diffFromNow();
+      delete this.ongoingTimers[reportKey];
+      if (!this.ongoingTimerKeysByOriginalKey[key]?.length) {
+        delete this.ongoingTimerKeysByOriginalKey[key];
+      }
     }
   }
 
