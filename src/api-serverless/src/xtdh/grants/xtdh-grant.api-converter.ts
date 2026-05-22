@@ -5,10 +5,7 @@ import {
   XTdhGrantModel
 } from '../../../../xtdh/xtdh-grant.models';
 import { collections } from '../../../../collections';
-import {
-  IdentityFetcher,
-  identityFetcher
-} from '../../identities/identity.fetcher';
+import { identityFetcher } from '../../identities/identity.fetcher';
 import { XTdhGrantStatus } from '../../../../entities/IXTdhGrant';
 import { enums } from '../../../../enums';
 import { RequestContext } from '../../../../request.context';
@@ -24,10 +21,7 @@ import {
 } from '../../../../xtdh/xtdh.repository';
 
 export class XTdhGrantApiConverter {
-  constructor(
-    private readonly identityFetcher: IdentityFetcher,
-    private readonly xTdhRepository: XTdhRepository
-  ) {}
+  constructor(private readonly xTdhRepository: XTdhRepository) {}
 
   public fromApiCreateXTdhGrantToModel({
     apiCreateXTdhGrant,
@@ -80,7 +74,7 @@ export class XTdhGrantApiConverter {
     const grantorIds = collections.distinct(
       models.map((model) => model.grantor_id)
     );
-    const grantorIdentities = await this.identityFetcher.getOverviewsByIds(
+    const grantorIdentities = await identityFetcher.getOverviewsByIds(
       grantorIds,
       ctx
     );
@@ -235,7 +229,4 @@ export class XTdhGrantApiConverter {
   }
 }
 
-export const xTdhGrantApiConverter = new XTdhGrantApiConverter(
-  identityFetcher,
-  xTdhRepository
-);
+export const xTdhGrantApiConverter = new XTdhGrantApiConverter(xTdhRepository);
