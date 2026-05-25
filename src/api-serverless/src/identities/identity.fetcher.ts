@@ -157,7 +157,9 @@ export class IdentityFetcher {
                 artist_of_memes:
                   (mainStageWins[id]?.length ?? 0) +
                   (artistOfPrevoteCards[id]?.length ?? 0),
-                profile_wave: profileWaves[id]
+                profile_wave_id: profileWaves[id]?.id,
+                profile_wave_name: profileWaves[id]?.name,
+                profile_wave_pfp: profileWaves[id]?.pfp
               }
             };
           }

@@ -10,13 +10,14 @@
  * Do not edit the class manually.
  */
 
-import { ApiProfileWaveMin } from '../models/ApiProfileWaveMin';
 import { HttpFile } from '../http/http';
 
 export class ApiIdentityOverviewBadges {
     'artist_of_main_stage_submissions': number;
     'artist_of_memes': number;
-    'profile_wave'?: ApiProfileWaveMin;
+    'profile_wave_id'?: string;
+    'profile_wave_name'?: string;
+    'profile_wave_pfp'?: string | null;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -36,9 +37,21 @@ export class ApiIdentityOverviewBadges {
             "format": "int64"
         },
         {
-            "name": "profile_wave",
-            "baseName": "profile_wave",
-            "type": "ApiProfileWaveMin",
+            "name": "profile_wave_id",
+            "baseName": "profile_wave_id",
+            "type": "string",
+            "format": ""
+        },
+        {
+            "name": "profile_wave_name",
+            "baseName": "profile_wave_name",
+            "type": "string",
+            "format": ""
+        },
+        {
+            "name": "profile_wave_pfp",
+            "baseName": "profile_wave_pfp",
+            "type": "string",
             "format": ""
         }    ];
 
