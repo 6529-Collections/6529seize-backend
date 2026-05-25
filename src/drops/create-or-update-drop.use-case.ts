@@ -88,10 +88,8 @@ import {
 import { isWaveCreatorOrAdmin } from '@/waves/wave-admin.helpers';
 
 const ARWEAVE_ORIGIN = 'https://arweave.net';
-const ALLOWED_CHAT_LINK_ORIGINS = new Set([
-  'https://media.tenor.com',
-  CLOUDFRONT_LINK
-]);
+const TENOR_CHAT_LINK_ORIGIN = 'https://media.tenor.com';
+const ALLOWED_TENOR_CHAT_LINK_EXTENSION_REGEX = /\.(?:gif|mp4|jpg|webp)$/i;
 
 function isActiveIdentityNomination(nomination: { has_won: boolean }): boolean {
   return !nomination.has_won;
@@ -703,8 +701,13 @@ export class CreateOrUpdateDropUseCase {
 
   private isAllowedChatLink(candidate: string): boolean {
     try {
-      return ALLOWED_CHAT_LINK_ORIGINS.has(
-        new URL(this.normalizeChatLinkCandidate(candidate)).origin
+      const url = new URL(this.normalizeChatLinkCandidate(candidate));
+      if (url.origin === CLOUDFRONT_LINK) {
+        return true;
+      }
+      return (
+        url.origin === TENOR_CHAT_LINK_ORIGIN &&
+        ALLOWED_TENOR_CHAT_LINK_EXTENSION_REGEX.test(url.pathname)
       );
     } catch {
       return false;
