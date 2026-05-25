@@ -11087,8 +11087,8 @@ components:
         artist_of_memes:
           type: integer
           format: int64
-        profile_wave_id:
-          type: string
+        profile_wave:
+          $ref: "#/components/schemas/ApiProfileWaveMin"
     ApiIdentityOverviewContextProfileContext:
       type: object
       required:
@@ -12526,6 +12526,20 @@ components:
           type: string
           nullable: true
         profile_curation_id:
+          type: string
+          nullable: true
+    ApiProfileWaveMin:
+      type: object
+      required:
+        - id
+        - name
+        - pfp
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        pfp:
           type: string
           nullable: true
     ApiPushNotificationDevice:

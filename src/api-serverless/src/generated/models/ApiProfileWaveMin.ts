@@ -10,13 +10,12 @@
  * Do not edit the class manually.
  */
 
-import { ApiProfileWaveMin } from '../models/ApiProfileWaveMin';
 import { HttpFile } from '../http/http';
 
-export class ApiIdentityOverviewBadges {
-    'artist_of_main_stage_submissions': number;
-    'artist_of_memes': number;
-    'profile_wave'?: ApiProfileWaveMin;
+export class ApiProfileWaveMin {
+    'id': string;
+    'name': string;
+    'pfp': string | null;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -24,26 +23,26 @@ export class ApiIdentityOverviewBadges {
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
         {
-            "name": "artist_of_main_stage_submissions",
-            "baseName": "artist_of_main_stage_submissions",
-            "type": "number",
-            "format": "int64"
+            "name": "id",
+            "baseName": "id",
+            "type": "string",
+            "format": ""
         },
         {
-            "name": "artist_of_memes",
-            "baseName": "artist_of_memes",
-            "type": "number",
-            "format": "int64"
+            "name": "name",
+            "baseName": "name",
+            "type": "string",
+            "format": ""
         },
         {
-            "name": "profile_wave",
-            "baseName": "profile_wave",
-            "type": "ApiProfileWaveMin",
+            "name": "pfp",
+            "baseName": "pfp",
+            "type": "string",
             "format": ""
         }    ];
 
     static getAttributeTypeMap() {
-        return ApiIdentityOverviewBadges.attributeTypeMap;
+        return ApiProfileWaveMin.attributeTypeMap;
     }
 
     public constructor() {
