@@ -456,6 +456,28 @@ describe('CreateOrUpdateDropUseCase', () => {
     ).not.toThrow();
   });
 
+  it('allows CloudFront media links when chat links are disabled', () => {
+    const useCase = createUseCaseWithMocks();
+
+    expect(() =>
+      (useCase as any).verifyChatLinksAreAllowed({
+        isDescriptionDrop: false,
+        wave: createSlowModeWave({ chat_links_disabled: true }),
+        model: createChatDropModel({
+          parts: [
+            {
+              content:
+                'uploaded https://d3lqz0a4bldqgf.cloudfront.net/drops/asset.png',
+              quoted_drop: null,
+              media: []
+            }
+          ]
+        }),
+        groupIdsUserIsEligibleFor: []
+      })
+    ).not.toThrow();
+  });
+
   it('allows scheme-less Tenor candidates in chat link allowlist', () => {
     const useCase = createUseCaseWithMocks();
 
@@ -505,6 +527,28 @@ describe('CreateOrUpdateDropUseCase', () => {
           parts: [
             {
               content: 'fake https://media.tenor.com.evil/abc123/tenor.gif',
+              quoted_drop: null,
+              media: []
+            }
+          ]
+        }),
+        groupIdsUserIsEligibleFor: []
+      })
+    ).toThrow(`Chat drops with links are not allowed in this wave`);
+  });
+
+  it('rejects CloudFront lookalike links when chat links are disabled', () => {
+    const useCase = createUseCaseWithMocks();
+
+    expect(() =>
+      (useCase as any).verifyChatLinksAreAllowed({
+        isDescriptionDrop: false,
+        wave: createSlowModeWave({ chat_links_disabled: true }),
+        model: createChatDropModel({
+          parts: [
+            {
+              content:
+                'fake https://d3lqz0a4bldqgf.cloudfront.net.evil/drops/asset.png',
               quoted_drop: null,
               media: []
             }

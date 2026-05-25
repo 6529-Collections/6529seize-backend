@@ -88,7 +88,10 @@ import {
 import { isWaveCreatorOrAdmin } from '@/waves/wave-admin.helpers';
 
 const ARWEAVE_ORIGIN = 'https://arweave.net';
-const ALLOWED_CHAT_LINK_ORIGINS = new Set(['https://media.tenor.com']);
+const ALLOWED_CHAT_LINK_ORIGINS = new Set([
+  'https://media.tenor.com',
+  CLOUDFRONT_LINK
+]);
 
 function isActiveIdentityNomination(nomination: { has_won: boolean }): boolean {
   return !nomination.has_won;
