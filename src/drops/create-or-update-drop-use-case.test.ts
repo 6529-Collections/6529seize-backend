@@ -456,6 +456,28 @@ describe('CreateOrUpdateDropUseCase', () => {
     ).not.toThrow();
   });
 
+  it('allows only configured Tenor file extensions in chat link allowlist', () => {
+    const useCase = createUseCaseWithMocks();
+
+    for (const extension of ['gif', 'mp4', 'jpg', 'webp']) {
+      expect(
+        (useCase as any).isAllowedChatLink(
+          `https://media.tenor.com/abc123/tenor.${extension}?item=1`
+        )
+      ).toBe(true);
+    }
+    for (const extension of ['jpeg', 'png', 'html']) {
+      expect(
+        (useCase as any).isAllowedChatLink(
+          `https://media.tenor.com/abc123/tenor.${extension}`
+        )
+      ).toBe(false);
+    }
+    expect(
+      (useCase as any).isAllowedChatLink('https://media.tenor.com/abc123/tenor')
+    ).toBe(false);
+  });
+
   it('allows CloudFront media links when chat links are disabled', () => {
     const useCase = createUseCaseWithMocks();
 
@@ -476,6 +498,11 @@ describe('CreateOrUpdateDropUseCase', () => {
         groupIdsUserIsEligibleFor: []
       })
     ).not.toThrow();
+    expect(
+      (useCase as any).isAllowedChatLink(
+        'https://d3lqz0a4bldqgf.cloudfront.net/drops/asset.html'
+      )
+    ).toBe(true);
   });
 
   it('allows scheme-less Tenor candidates in chat link allowlist', () => {
