@@ -11,7 +11,8 @@ const config: Config = {
     '^.+\\.ts?$': 'ts-jest'
   },
   transformIgnorePatterns: ['<rootDir>/node_modules/'],
-  testPathIgnorePatterns: ['<rootDir>/build/'],
+  modulePathIgnorePatterns: ['<rootDir>/src/.*/dist/'],
+  testPathIgnorePatterns: ['<rootDir>/build/', '<rootDir>/src/.*/dist/'],
   globalSetup: './src/tests/_setup/globalSetup.ts',
   globalTeardown: './src/tests/_setup/globalTeardown.ts',
   setupFilesAfterEnv: ['./src/tests/_setup/perTestHooks.ts'],
