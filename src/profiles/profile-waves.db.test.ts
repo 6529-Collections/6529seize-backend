@@ -62,6 +62,58 @@ describeWithSeed(
 );
 
 describeWithSeed(
+  'ProfileWavesDb profile wave mins',
+  [
+    withWaves([
+      aWave(
+        { created_by: 'profile-1', picture: 'wave-1.png' },
+        { id: 'wave-1', serial_no: 1, name: 'Wave 1' }
+      ),
+      aWave(
+        {
+          created_by: 'profile-2',
+          picture: 'wave-2.png',
+          visibility_group_id: 'group-1'
+        },
+        { id: 'wave-2', serial_no: 2, name: 'Wave 2' }
+      ),
+      aWave(
+        {
+          created_by: 'profile-3',
+          picture: 'wave-3.png',
+          is_direct_message: true
+        },
+        { id: 'wave-3', serial_no: 3, name: 'Wave 3' }
+      )
+    ]),
+    {
+      table: PROFILE_WAVES_TABLE,
+      rows: [
+        { profile_id: 'profile-1', wave_id: 'wave-1' },
+        { profile_id: 'profile-2', wave_id: 'wave-2' },
+        { profile_id: 'profile-3', wave_id: 'wave-3' }
+      ]
+    }
+  ],
+  () => {
+    it('returns public non-direct-message profile wave mins by profile id', async () => {
+      await expect(
+        repo.findProfileWaveMinsByProfileIds(
+          ['profile-1', 'profile-2', 'profile-3'],
+          ctx
+        )
+      ).resolves.toEqual({
+        'profile-1': {
+          id: 'wave-1',
+          name: 'Wave 1',
+          pfp: 'wave-1.png'
+        }
+      });
+    });
+  }
+);
+
+describeWithSeed(
   'ProfileWavesDb mergeOnProfileIdChange',
   {
     table: PROFILE_WAVES_TABLE,
