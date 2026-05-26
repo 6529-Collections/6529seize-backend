@@ -215,6 +215,42 @@ describe('WaveDecisionsService', () => {
     );
   });
 
+  it('parses approve latest decision time before incrementing it', async () => {
+    jest.spyOn(Time, 'currentMillis').mockReturnValue(1_000);
+    (waveDecisionsDb.getApproveWinnerCandidates as jest.Mock).mockResolvedValue(
+      [
+        {
+          wave_id: 'wave-1',
+          drop_id: 'drop-older',
+          created_at: 10,
+          vote: 12,
+          time_lock_ms: null,
+          max_winners: 1,
+          decisions_done: 0,
+          latest_decision_time: '1776135540000'
+        }
+      ]
+    );
+    (
+      waveDecisionsDb.executeNativeQueriesInTransaction as jest.Mock
+    ).mockImplementation(async (fn) => fn({}));
+    const formalizeDecision = jest
+      .spyOn(service as any, 'formalizeDecision')
+      .mockResolvedValue({
+        claimBuildDropId: null,
+        pendingPushNotificationIds: []
+      });
+
+    await (service as any).createApproveDecisions({} as any);
+
+    expect(formalizeDecision).toHaveBeenCalledWith(
+      expect.objectContaining({
+        decisionTime: 1_776_135_540_001
+      }),
+      expect.anything()
+    );
+  });
+
   it('stops approve formalization when the next synthetic decision lands in a pause', async () => {
     jest.spyOn(Time, 'currentMillis').mockReturnValue(1_000);
     (waveDecisionsDb.getApproveWinnerCandidates as jest.Mock).mockResolvedValue(
