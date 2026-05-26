@@ -81,10 +81,41 @@ const MentionedWaveSchema: Joi.ObjectSchema = Joi.object({
   wave_id: Joi.string().min(1).max(100).required()
 });
 
+const DROP_METADATA_VALUE_LIMITS = {
+  default: 5000,
+  description: 8000,
+  title: 255
+} as const;
+
+function getDropMetadataValueMaxLength(dataKey: string): number {
+  if (dataKey === 'title') return DROP_METADATA_VALUE_LIMITS.title;
+  if (dataKey === 'description') return DROP_METADATA_VALUE_LIMITS.description;
+  return DROP_METADATA_VALUE_LIMITS.default;
+}
+
+function validateDropMetadataValue(
+  metadata: DropMetadataEntity,
+  helpers: Joi.CustomHelpers
+): DropMetadataEntity | Joi.ErrorReport {
+  const maxLength = getDropMetadataValueMaxLength(metadata.data_key);
+  if (metadata.data_value.length > maxLength) {
+    return helpers.error('dropMetadata.dataValueMax', {
+      dataKey: metadata.data_key,
+      maxLength
+    });
+  }
+  return metadata;
+}
+
 const MetadataSchema: Joi.ObjectSchema<DropMetadataEntity> = Joi.object({
-  data_key: Joi.string().min(1).max(100).required(),
-  data_value: Joi.string().min(1).max(5000).required()
-});
+  data_key: Joi.string().min(1).max(500).required(),
+  data_value: Joi.string().min(1).required()
+})
+  .custom(validateDropMetadataValue)
+  .messages({
+    'dropMetadata.dataValueMax':
+      'metadata value for "{{#dataKey}}" must be less than or equal to {{#maxLength}} characters long'
+  });
 
 const QuotedDropSchema: Joi.ObjectSchema<ApiQuotedDrop> = Joi.object({
   drop_id: Joi.string().required(),
