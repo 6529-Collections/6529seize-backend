@@ -561,6 +561,100 @@ describe('WaveApiService updateWave immutability', () => {
 });
 
 describe('WaveApiService validateWaveRelations', () => {
+  function validationService(): WaveApiService {
+    return new WaveApiService(
+      {} as any,
+      {
+        getByIds: jest.fn().mockResolvedValue([])
+      } as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {
+        getProfileIdByIdentityKey: jest.fn().mockResolvedValue(null)
+      } as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any
+    );
+  }
+
+  function baseCreateWaveRequest(): ApiCreateNewWave {
+    return {
+      name: 'wave',
+      picture: null,
+      description_drop: {
+        title: null,
+        signature: null,
+        parts: [],
+        referenced_nfts: [],
+        mentioned_users: [],
+        metadata: []
+      },
+      voting: {
+        scope: { group_id: null },
+        credit_type: ApiWaveCreditType.Tdh,
+        credit_scope: undefined as any,
+        credit_category: null,
+        creditor_id: null,
+        signature_required: false,
+        period: undefined,
+        forbid_negative_votes: false
+      },
+      visibility: {
+        scope: { group_id: null }
+      },
+      participation: {
+        scope: { group_id: null },
+        no_of_applications_allowed_per_participant: null,
+        required_metadata: [],
+        required_media: [],
+        signature_required: false,
+        period: undefined,
+        terms: null,
+        submission_strategy: null
+      },
+      chat: {
+        scope: { group_id: null },
+        enabled: true
+      },
+      wave: {
+        type: ApiWaveType.Approve,
+        winning_threshold: 100,
+        winning_threshold_min_duration_ms: 0,
+        max_winners: null,
+        max_votes_per_identity_to_drop: null,
+        time_lock_ms: null,
+        admin_group: { group_id: null },
+        decisions_strategy: null,
+        admin_drop_deletion_enabled: false
+      },
+      outcomes: []
+    };
+  }
+
+  it('rejects threshold duration combined with approve time lock', async () => {
+    const service = validationService();
+    const request = baseCreateWaveRequest();
+    request.wave.winning_threshold_min_duration_ms =
+      Time.minutes(10).toMillis();
+    request.wave.time_lock_ms = Time.minutes(5).toMillis();
+
+    await expect(
+      (service as any).validateWaveRelations(request, {
+        timer: undefined
+      })
+    ).rejects.toThrow(
+      `APPROVE waves can't combine time_lock_ms and winning_threshold_min_duration_ms`
+    );
+  });
+
   it('allows winning_threshold to be null for non-approve waves', async () => {
     const service = new WaveApiService(
       {} as any,

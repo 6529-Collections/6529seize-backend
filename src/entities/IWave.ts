@@ -46,6 +46,7 @@ export interface WaveBaseType {
   readonly type: WaveType;
   readonly winning_min_threshold: number | null;
   readonly winning_max_threshold: number | null;
+  readonly winning_threshold_min_duration_ms: number;
   readonly max_winners: number | null;
   readonly max_votes_per_identity_to_drop: number | null;
   readonly time_lock_ms: number | null;
@@ -151,6 +152,9 @@ export class WaveBase implements WaveBaseType {
 
   @Column({ type: 'bigint', nullable: true })
   readonly winning_max_threshold!: number | null;
+
+  @Column({ type: 'bigint', nullable: false, default: 0 })
+  readonly winning_threshold_min_duration_ms!: number;
 
   @Column({ type: 'bigint', nullable: true })
   readonly max_winners!: number | null;

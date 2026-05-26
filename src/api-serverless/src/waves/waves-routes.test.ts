@@ -10,6 +10,7 @@ import { ApiWaveCreditType } from '../generated/models/ApiWaveCreditType';
 import { ApiWaveType } from '../generated/models/ApiWaveType';
 import {
   CreateWaveDecisionsStrategySchema,
+  WaveSchema,
   UpdateWaveSchema
 } from './waves.routes';
 import { Time } from '@/time';
@@ -112,5 +113,86 @@ describe('waves route validation', () => {
 
     expect(result.error).toBeUndefined();
     expect(result.value.chat.links_disabled).toBe(true);
+  });
+
+  it('defaults approve winning_threshold_min_duration_ms to 0', () => {
+    const request = updateWaveRequest(Time.currentMillis());
+    request.wave = {
+      ...request.wave,
+      type: ApiWaveType.Approve,
+      winning_threshold: 100,
+      max_winners: null,
+      decisions_strategy: null
+    };
+
+    const result = UpdateWaveSchema.validate(request);
+
+    expect(result.error).toBeUndefined();
+    expect(result.value.wave.winning_threshold_min_duration_ms).toBe(0);
+  });
+
+  it('rejects threshold duration on non-approve waves', () => {
+    const request = updateWaveRequest(Time.currentMillis());
+    request.wave.winning_threshold_min_duration_ms =
+      Time.minutes(10).toMillis();
+
+    const result = UpdateWaveSchema.validate(request);
+
+    expect(result.error).toBeDefined();
+  });
+
+  it('rejects approve threshold duration mixed with time lock', () => {
+    const request = updateWaveRequest(Time.currentMillis());
+    request.wave = {
+      ...request.wave,
+      type: ApiWaveType.Approve,
+      winning_threshold: 100,
+      winning_threshold_min_duration_ms: Time.minutes(10).toMillis(),
+      max_winners: null,
+      time_lock_ms: Time.minutes(5).toMillis(),
+      decisions_strategy: null
+    };
+
+    const result = UpdateWaveSchema.validate(request);
+
+    expect(result.error?.message).toContain(
+      'APPROVE waves cannot combine time_lock_ms and winning_threshold_min_duration_ms'
+    );
+  });
+
+  it('validates the threshold duration on create requests', () => {
+    const request = {
+      ...updateWaveRequest(Time.currentMillis()),
+      description_drop: {
+        title: null,
+        signature: null,
+        parts: [
+          {
+            content: 'description',
+            media: [],
+            quoted_drop: null
+          }
+        ],
+        referenced_nfts: [],
+        mentioned_users: [],
+        metadata: []
+      },
+      outcomes: []
+    };
+    request.wave = {
+      ...request.wave,
+      type: ApiWaveType.Approve,
+      winning_threshold: 100,
+      winning_threshold_min_duration_ms: Time.minutes(10).toMillis(),
+      max_winners: null,
+      decisions_strategy: null
+    };
+
+    const result = WaveSchema.validate(request);
+
+    expect(result.error).toBeUndefined();
+    expect(result.value.wave.winning_threshold_min_duration_ms).toBe(
+      Time.minutes(10).toMillis()
+    );
   });
 });

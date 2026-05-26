@@ -65,6 +65,7 @@ function makeWave(overrides: Partial<WaveEntity> = {}): WaveEntity {
     type: WaveType.CHAT,
     winning_min_threshold: null,
     winning_max_threshold: null,
+    winning_threshold_min_duration_ms: 0,
     max_winners: null,
     max_votes_per_identity_to_drop: null,
     time_lock_ms: null,

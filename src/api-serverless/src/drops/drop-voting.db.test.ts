@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 import {
   DROP_RANK_TABLE,
+  DROP_REAL_VOTE_IN_TIME_TABLE,
   DROP_VOTER_STATE_TABLE,
   DROPS_TABLE,
   WAVE_LEADERBOARD_ENTRIES_TABLE,
@@ -172,6 +173,87 @@ describe('DropVotingDb.mergeDropVoteState', () => {
   });
 });
 
+describe('DropVotingDb.getDropV2SubmissionVotingSummaries', () => {
+  function createSummaryRow(overrides: Record<string, unknown>) {
+    return {
+      drop_id: 'drop-1',
+      status: DropType.PARTICIPATORY,
+      wave_type: 'APPROVE',
+      winning_min_threshold: 100,
+      time_lock_ms: null,
+      is_open: 1,
+      over_threshold_since_ms: null,
+      total_votes_given: 99,
+      current_calculated_vote: 99,
+      predicted_final_vote: 99,
+      voters_count: 1,
+      place: 1,
+      forbid_negative_votes: 0,
+      ...overrides
+    };
+  }
+
+  it('does not query real vote history when no drop is currently over threshold', async () => {
+    const execute = jest.fn().mockResolvedValueOnce([createSummaryRow({})]);
+    const service = new DropVotingDb(
+      () =>
+        ({
+          execute
+        }) as any
+    );
+
+    const result = await service.getDropV2SubmissionVotingSummaries(
+      ['drop-1'],
+      {}
+    );
+
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute.mock.calls[0][0]).not.toContain(
+      DROP_REAL_VOTE_IN_TIME_TABLE
+    );
+    expect(result['drop-1']?.over_threshold_since_ms).toBeNull();
+  });
+
+  it('queries real vote history only for current over-threshold candidates', async () => {
+    const execute = jest
+      .fn()
+      .mockResolvedValueOnce([
+        createSummaryRow({
+          drop_id: 'over-threshold-drop',
+          total_votes_given: 101
+        }),
+        createSummaryRow({
+          drop_id: 'below-threshold-drop',
+          total_votes_given: 99
+        })
+      ])
+      .mockResolvedValueOnce([
+        {
+          drop_id: 'over-threshold-drop',
+          over_threshold_since_ms: 1234
+        }
+      ]);
+    const service = new DropVotingDb(
+      () =>
+        ({
+          execute
+        }) as any
+    );
+
+    const result = await service.getDropV2SubmissionVotingSummaries(
+      ['over-threshold-drop', 'below-threshold-drop'],
+      {}
+    );
+
+    expect(execute).toHaveBeenCalledTimes(2);
+    expect(execute.mock.calls[1][1]).toMatchObject({
+      dropIds: ['over-threshold-drop']
+    });
+    expect(result['over-threshold-drop']?.over_threshold_since_ms).toBe(1234);
+    expect(result['below-threshold-drop']?.over_threshold_since_ms).toBeNull();
+  });
+});
+
 const repo = new DropVotingDb(() => sqlExecutor);
 const ctx: RequestContext = { timer: undefined };
 
@@ -180,6 +262,7 @@ const realtimeWave = aWave(
     type: WaveType.APPROVE,
     voting_period_start: 1,
     voting_period_end: 9999999999999,
+    winning_min_threshold: 100,
     forbid_negative_votes: true
   },
   { id: 'summary-realtime-wave', serial_no: 1, name: 'Realtime Summary' }
@@ -297,6 +380,31 @@ async function insertVoteState({
       values (:voterId, :dropId, :waveId, :votes)
     `,
     { voterId, dropId, waveId, votes }
+  );
+}
+
+async function insertRealVote({
+  dropId,
+  waveId,
+  timestamp,
+  vote
+}: {
+  dropId: string;
+  waveId: string;
+  timestamp: number;
+  vote: number;
+}) {
+  await sqlExecutor.execute(
+    `
+      insert into ${DROP_REAL_VOTE_IN_TIME_TABLE} (
+        drop_id,
+        wave_id,
+        timestamp,
+        vote
+      )
+      values (:dropId, :waveId, :timestamp, :vote)
+    `,
+    { dropId, waveId, timestamp, vote }
   );
 }
 
@@ -470,6 +578,99 @@ describeWithSeed(
         predicted_final_vote: 6,
         place: 3
       });
+    });
+
+    it('returns over-threshold start only for active approve drops currently over threshold', async () => {
+      await insertDrop({
+        id: 'over-threshold-drop',
+        waveId: realtimeWave.id,
+        dropType: DropType.PARTICIPATORY,
+        createdAt: 100
+      });
+      await insertDrop({
+        id: 'below-threshold-drop',
+        waveId: realtimeWave.id,
+        dropType: DropType.PARTICIPATORY,
+        createdAt: 200
+      });
+      await insertDrop({
+        id: 'winner-threshold-drop',
+        waveId: realtimeWave.id,
+        dropType: DropType.WINNER,
+        createdAt: 300
+      });
+      await insertVoteState({
+        voterId: 'voter-1',
+        dropId: 'over-threshold-drop',
+        waveId: realtimeWave.id,
+        votes: 150
+      });
+      await insertVoteState({
+        voterId: 'voter-2',
+        dropId: 'below-threshold-drop',
+        waveId: realtimeWave.id,
+        votes: 99
+      });
+      await insertRealVote({
+        dropId: 'over-threshold-drop',
+        waveId: realtimeWave.id,
+        timestamp: 1_000,
+        vote: 0
+      });
+      await insertRealVote({
+        dropId: 'over-threshold-drop',
+        waveId: realtimeWave.id,
+        timestamp: 2_000,
+        vote: 101
+      });
+      await insertRealVote({
+        dropId: 'over-threshold-drop',
+        waveId: realtimeWave.id,
+        timestamp: 3_000,
+        vote: 150
+      });
+      await insertRealVote({
+        dropId: 'below-threshold-drop',
+        waveId: realtimeWave.id,
+        timestamp: 1_000,
+        vote: 99
+      });
+      await sqlExecutor.execute(
+        `
+          insert into ${WAVES_DECISION_WINNER_DROPS_TABLE} (
+            decision_time,
+            drop_id,
+            wave_id,
+            ranking,
+            final_vote,
+            prizes
+          )
+          values (
+            1000,
+            'winner-threshold-drop',
+            :waveId,
+            1,
+            150,
+            '[]'
+          )
+        `,
+        { waveId: realtimeWave.id }
+      );
+
+      const result = await repo.getDropV2SubmissionVotingSummaries(
+        [
+          'over-threshold-drop',
+          'below-threshold-drop',
+          'winner-threshold-drop'
+        ],
+        ctx
+      );
+
+      expect(result['over-threshold-drop'].over_threshold_since_ms).toBe(2_000);
+      expect(result['below-threshold-drop'].over_threshold_since_ms).toBeNull();
+      expect(
+        result['winner-threshold-drop'].over_threshold_since_ms
+      ).toBeNull();
     });
 
     it('returns final voting summary for winner drops', async () => {

@@ -347,6 +347,7 @@ describe('ApiDropMapper', () => {
         predicted_final_vote: 9,
         voters_count: 3,
         place: 4,
+        over_threshold_since_ms: 1_234,
         forbid_negative_votes: true
       }
     });
@@ -411,6 +412,7 @@ describe('ApiDropMapper', () => {
       submission_context: {
         status: ApiSubmissionDropStatus.Active,
         has_metadata: true,
+        over_threshold_since_ms: 1_234,
         voting: {
           is_open: true,
           total_votes_given: 7,

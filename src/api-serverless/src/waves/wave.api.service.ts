@@ -856,6 +856,25 @@ export class WaveApiService {
         `Only APPROVE waves support a winning_threshold`
       );
     }
+    if (
+      request.wave.type !== ApiWaveType.Approve &&
+      request.wave.winning_threshold_min_duration_ms != null &&
+      request.wave.winning_threshold_min_duration_ms > 0
+    ) {
+      throw new BadRequestException(
+        `Only APPROVE waves support a winning_threshold_min_duration_ms`
+      );
+    }
+    if (
+      request.wave.type === ApiWaveType.Approve &&
+      (request.wave.winning_threshold_min_duration_ms ?? 0) > 0 &&
+      request.wave.time_lock_ms != null &&
+      request.wave.time_lock_ms > 0
+    ) {
+      throw new BadRequestException(
+        `APPROVE waves can't combine time_lock_ms and winning_threshold_min_duration_ms`
+      );
+    }
     if (request.wave.type === ApiWaveType.Approve) {
       if (request.wave.max_winners != null && request.wave.max_winners < 1) {
         throw new BadRequestException(
