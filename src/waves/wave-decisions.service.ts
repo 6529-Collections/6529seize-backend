@@ -20,6 +20,7 @@ import { WinnerDropVoterVoteEntity } from '../entities/IWinnerDropVoterVote';
 import { env } from '../env';
 import { deployerDropper, DeployerDropper } from '@/deployer-dropper';
 import { Logger } from '../logging';
+import { numbers } from '@/numbers';
 import { RequestContext } from '../request.context';
 import { Time, Timer } from '../time';
 import { waveDecisionsDb, WaveDecisionsDb } from './wave-decisions.db';
@@ -54,7 +55,7 @@ interface ApproveWinnerCandidate {
   time_lock_ms: number | null;
   max_winners: number | null;
   decisions_done: number;
-  latest_decision_time: number | null;
+  latest_decision_time: number | string | bigint | null;
 }
 
 export class WaveDecisionsService {
@@ -252,10 +253,9 @@ export class WaveDecisionsService {
               0
             );
       const candidatesToProcess = waveCandidates.slice(0, remainingSlots);
-      let nextDecisionTime = Math.max(
-        currentTime,
-        (firstCandidate.latest_decision_time ?? 0) + 1
-      );
+      const latestDecisionTime =
+        numbers.parseIntOrNull(firstCandidate.latest_decision_time) ?? 0;
+      let nextDecisionTime = Math.max(currentTime, latestDecisionTime + 1);
 
       for (const candidate of candidatesToProcess) {
         if (

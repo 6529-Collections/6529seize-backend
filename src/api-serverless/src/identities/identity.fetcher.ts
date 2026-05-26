@@ -104,7 +104,7 @@ export class IdentityFetcher {
         mainStageSubmissions,
         mainStageWins,
         artistOfPrevoteCards,
-        profileWaveIds
+        profileWaves
       ] = await Promise.all([
         this.identitiesDb.getIdentitiesForOverviewsByIds(ids, ctx),
         this.getSubscribedActions({
@@ -114,7 +114,7 @@ export class IdentityFetcher {
         this.identitiesDb.getActiveMainStageDropIds(ids, ctx),
         this.identitiesDb.getMainStageWinnerDropIds(ids, ctx),
         this.identitiesDb.getArtistOfPrevoteCards(ids, ctx),
-        profileWavesDb.findProfileWaveIdsByProfileIds(ids, ctx)
+        profileWavesDb.findProfileWaveMinsByProfileIds(ids, ctx)
       ]);
       return ids.reduce(
         (acc, id) => {
@@ -157,7 +157,9 @@ export class IdentityFetcher {
                 artist_of_memes:
                   (mainStageWins[id]?.length ?? 0) +
                   (artistOfPrevoteCards[id]?.length ?? 0),
-                profile_wave_id: profileWaveIds[id]
+                profile_wave_id: profileWaves[id]?.id,
+                profile_wave_name: profileWaves[id]?.name,
+                profile_wave_pfp: profileWaves[id]?.pfp
               }
             };
           }

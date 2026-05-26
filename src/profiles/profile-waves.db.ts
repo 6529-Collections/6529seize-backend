@@ -3,13 +3,27 @@ import {
   dbSupplier,
   LazyDbAccessCompatibleService
 } from '@/sql-executor';
-import { PROFILE_WAVES_TABLE, WAVE_CURATIONS_TABLE } from '@/constants';
+import {
+  PROFILE_WAVES_TABLE,
+  WAVE_CURATIONS_TABLE,
+  WAVES_TABLE
+} from '@/constants';
 import { RequestContext } from '@/request.context';
 import { ProfileWaveEntity } from '@/entities/IProfileWave';
 
 export interface EffectiveProfileWave {
   readonly profile_wave_id: string;
   readonly profile_curation_id: string | null;
+}
+
+export interface ProfileWaveMin {
+  readonly id: string;
+  readonly name: string;
+  readonly pfp: string | null;
+}
+
+interface ProfileWaveMinRow extends ProfileWaveMin {
+  readonly profile_id: string;
 }
 
 export class ProfileWavesDb extends LazyDbAccessCompatibleService {
@@ -43,6 +57,51 @@ export class ProfileWavesDb extends LazyDbAccessCompatibleService {
     } finally {
       ctx.timer?.stop(
         `${this.constructor.name}->findProfileWaveIdsByProfileIds`
+      );
+    }
+  }
+
+  public async findProfileWaveMinsByProfileIds(
+    profileIds: string[],
+    ctx: RequestContext
+  ): Promise<Record<string, ProfileWaveMin>> {
+    try {
+      ctx.timer?.start(
+        `${this.constructor.name}->findProfileWaveMinsByProfileIds`
+      );
+      if (!profileIds.length) {
+        return {};
+      }
+      const rows = await this.db.execute<ProfileWaveMinRow>(
+        `
+          select
+            pw.profile_id,
+            w.id,
+            w.name,
+            w.picture as pfp
+          from ${PROFILE_WAVES_TABLE} pw
+          join ${WAVES_TABLE} w on w.id = pw.wave_id
+          where pw.profile_id in (:profileIds)
+            and w.visibility_group_id is null
+            and (w.is_direct_message is null or w.is_direct_message = false)
+        `,
+        { profileIds },
+        { wrappedConnection: ctx.connection }
+      );
+      return rows.reduce(
+        (acc, row) => {
+          acc[row.profile_id] = {
+            id: row.id,
+            name: row.name,
+            pfp: row.pfp
+          };
+          return acc;
+        },
+        {} as Record<string, ProfileWaveMin>
+      );
+    } finally {
+      ctx.timer?.stop(
+        `${this.constructor.name}->findProfileWaveMinsByProfileIds`
       );
     }
   }
