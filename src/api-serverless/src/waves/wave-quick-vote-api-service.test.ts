@@ -63,6 +63,7 @@ describe('WaveQuickVoteApiService', () => {
     type: WaveType.RANK,
     winning_min_threshold: null,
     winning_max_threshold: null,
+    winning_threshold_min_duration_ms: 0,
     max_winners: null,
     time_lock_ms: null,
     decisions_strategy: null,

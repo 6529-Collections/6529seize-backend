@@ -216,6 +216,8 @@ export class WavesMappers {
       type: enums.resolveOrThrow(WaveType, request.wave.type),
       winning_min_threshold: request.wave.winning_threshold ?? null,
       winning_max_threshold: null,
+      winning_threshold_min_duration_ms:
+        request.wave.winning_threshold_min_duration_ms ?? 0,
       max_winners:
         request.wave.type === WaveTypeApi.Approve
           ? (request.wave.max_winners ?? null)
@@ -445,6 +447,10 @@ export class WavesMappers {
       winning_threshold:
         waveEntity.type === WaveType.APPROVE
           ? waveEntity.winning_min_threshold
+          : null,
+      winning_threshold_min_duration_ms:
+        waveEntity.type === WaveType.APPROVE
+          ? waveEntity.winning_threshold_min_duration_ms
           : null,
       max_winners:
         waveEntity.type === WaveType.APPROVE ? waveEntity.max_winners : null,
