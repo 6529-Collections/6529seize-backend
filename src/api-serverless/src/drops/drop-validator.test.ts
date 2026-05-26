@@ -36,6 +36,17 @@ describe('NewDropSchema', () => {
     expect(result.error).toBeUndefined();
   });
 
+  it('rejects metadata keys over 500 characters', () => {
+    const result = NewDropSchema.validate(
+      createDropWithMetadata('a'.repeat(501), 'value')
+    );
+
+    expect(result.error).toBeDefined();
+    expect(result.error?.message).toContain(
+      '"metadata[0].data_key" length must be less than or equal to 500 characters long'
+    );
+  });
+
   it('rejects metadata values over 5000 characters', () => {
     const result = NewDropSchema.validate(
       createDropWithMetadata('artist', 'a'.repeat(5001))
