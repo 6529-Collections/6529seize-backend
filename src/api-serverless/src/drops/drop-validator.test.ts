@@ -46,6 +46,14 @@ describe('NewDropSchema', () => {
     );
   });
 
+  it('accepts metadata values up to 5000 characters by default', () => {
+    const result = NewDropSchema.validate(
+      createDropWithMetadata('artist', 'a'.repeat(5000))
+    );
+
+    expect(result.error).toBeUndefined();
+  });
+
   it('rejects metadata title values over 255 characters', () => {
     const result = NewDropSchema.validate(
       createDropWithMetadata('title', 'a'.repeat(256))
@@ -54,6 +62,14 @@ describe('NewDropSchema', () => {
     expect(result.error?.message).toContain(
       'metadata value for "title" must be less than or equal to 255 characters long'
     );
+  });
+
+  it('accepts metadata title values up to 255 characters', () => {
+    const result = NewDropSchema.validate(
+      createDropWithMetadata('title', 'a'.repeat(255))
+    );
+
+    expect(result.error).toBeUndefined();
   });
 
   it('accepts metadata description values up to 8000 characters', () => {
@@ -70,7 +86,7 @@ describe('NewDropSchema', () => {
     );
 
     expect(result.error?.message).toContain(
-      '"metadata[0].data_value" length must be less than or equal to 8000 characters long'
+      'metadata value for "description" must be less than or equal to 8000 characters long'
     );
   });
 });

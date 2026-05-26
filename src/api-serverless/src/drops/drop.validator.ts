@@ -109,10 +109,7 @@ function validateDropMetadataValue(
 
 const MetadataSchema: Joi.ObjectSchema<DropMetadataEntity> = Joi.object({
   data_key: Joi.string().min(1).max(500).required(),
-  data_value: Joi.string()
-    .min(1)
-    .max(DROP_METADATA_VALUE_LIMITS.description)
-    .required()
+  data_value: Joi.string().min(1).required()
 })
   .custom(validateDropMetadataValue)
   .messages({
