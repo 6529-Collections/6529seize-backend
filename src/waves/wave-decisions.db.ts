@@ -299,6 +299,60 @@ export class WaveDecisionsDb extends LazyDbAccessCompatibleService {
       latest_decision_time: number | null;
     }>(
       `
+        with last_below_threshold_vote as (
+          select
+            drop_id,
+            timestamp,
+            id
+          from (
+            select
+              drv.drop_id,
+              drv.timestamp,
+              drv.id,
+              row_number() over (
+                partition by drv.drop_id
+                order by drv.timestamp desc, drv.id desc
+              ) as rn
+            from ${DROP_REAL_VOTE_IN_TIME_TABLE} drv
+            join ${WAVES_TABLE} threshold_wave
+              on threshold_wave.id = drv.wave_id
+              and threshold_wave.type = 'APPROVE'
+              and threshold_wave.winning_min_threshold is not null
+              and threshold_wave.winning_threshold_min_duration_ms > 0
+            where drv.vote < threshold_wave.winning_min_threshold
+              and drv.timestamp <= :currentTime
+          ) ranked_below_threshold_votes
+          where rn = 1
+        ),
+        current_above_threshold_period as (
+          select
+            drv.drop_id,
+            min(drv.timestamp) as above_threshold_since
+          from ${DROP_REAL_VOTE_IN_TIME_TABLE} drv
+          join ${WAVES_TABLE} threshold_wave
+            on threshold_wave.id = drv.wave_id
+            and threshold_wave.type = 'APPROVE'
+            and threshold_wave.winning_min_threshold is not null
+            and threshold_wave.winning_threshold_min_duration_ms > 0
+          left join last_below_threshold_vote lbtv
+            on lbtv.drop_id = drv.drop_id
+          where drv.vote >= threshold_wave.winning_min_threshold
+            and drv.timestamp <= :currentTime
+            and (
+              lbtv.drop_id is null
+              or drv.timestamp > lbtv.timestamp
+              or (drv.timestamp = lbtv.timestamp and drv.id > lbtv.id)
+            )
+          group by drv.drop_id
+        ),
+        wave_decision_counts as (
+          select
+            wave_id,
+            count(*) as decisions_done,
+            max(decision_time) as latest_decision_time
+          from ${WAVES_DECISIONS_TABLE}
+          group by 1
+        )
         select
           d.wave_id as wave_id,
           d.id as drop_id,
@@ -323,15 +377,10 @@ export class WaveDecisionsDb extends LazyDbAccessCompatibleService {
         left join ${WAVE_LEADERBOARD_ENTRIES_TABLE} lb
           on lb.drop_id = d.id
           and lb.wave_id = d.wave_id
-        left join (
-          select
-            wave_id,
-            count(*) as decisions_done,
-            max(decision_time) as latest_decision_time
-          from ${WAVES_DECISIONS_TABLE}
-          group by 1
-        ) dc
+        left join wave_decision_counts dc
           on dc.wave_id = w.id
+        left join current_above_threshold_period catp
+          on catp.drop_id = d.id
         where d.drop_type = '${DropType.PARTICIPATORY}'
           and w.winning_min_threshold is not null
           and (
@@ -341,6 +390,14 @@ export class WaveDecisionsDb extends LazyDbAccessCompatibleService {
               else ifnull(r.vote, 0)
             end
           ) >= w.winning_min_threshold
+          and (
+            w.winning_threshold_min_duration_ms = 0
+            or (
+              (w.time_lock_ms is null or w.time_lock_ms = 0)
+              and catp.above_threshold_since is not null
+              and catp.above_threshold_since + w.winning_threshold_min_duration_ms <= :currentTime
+            )
+          )
           and (
             w.max_winners is null or ifnull(dc.decisions_done, 0) < w.max_winners
           )

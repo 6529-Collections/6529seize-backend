@@ -539,7 +539,7 @@ export class ApiDropMapper {
         winningDropsRatingsByVoter
       });
     }
-    return {
+    const submissionContext: ApiSubmissionDropContext = {
       status:
         drop.drop_type === DropType.WINNER
           ? ApiSubmissionDropStatus.Winner
@@ -547,6 +547,11 @@ export class ApiDropMapper {
       voting,
       has_metadata: hasMetadata
     };
+    if (votingSummary.over_threshold_since_ms !== null) {
+      submissionContext.over_threshold_since_ms =
+        votingSummary.over_threshold_since_ms;
+    }
+    return submissionContext;
   }
 
   private mapSubmissionVotingContext({

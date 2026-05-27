@@ -14,6 +14,7 @@ describe('WavesMappers', () => {
         {
           type: WaveType.APPROVE,
           winning_min_threshold: 10,
+          winning_threshold_min_duration_ms: 60_000,
           max_winners: 2,
           max_votes_per_identity_to_drop: 3
         },
@@ -70,6 +71,7 @@ describe('WavesMappers', () => {
     });
 
     expect(mapped.wave.winning_threshold).toBe(10);
+    expect(mapped.wave.winning_threshold_min_duration_ms).toBe(60_000);
     expect(mapped.wave.max_votes_per_identity_to_drop).toBe(3);
     expect(mapped.wave.total_no_of_decisions).toBe(2);
     expect(mapped.wave.no_of_decisions_done).toBe(2);

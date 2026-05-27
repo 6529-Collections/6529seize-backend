@@ -38,6 +38,7 @@ export interface DropSubmissionVotingSummary {
   drop_id: string;
   status: DropType.PARTICIPATORY | DropType.WINNER;
   is_open: boolean;
+  over_threshold_since_ms: number | null;
   total_votes_given: number;
   current_calculated_vote: number;
   predicted_final_vote: number;
@@ -45,6 +46,17 @@ export interface DropSubmissionVotingSummary {
   place: number;
   forbid_negative_votes: boolean;
 }
+
+type DropSubmissionVotingSummaryRow = Omit<
+  DropSubmissionVotingSummary,
+  'is_open' | 'forbid_negative_votes'
+> & {
+  is_open: boolean | number;
+  forbid_negative_votes: boolean | number;
+  wave_type: string;
+  winning_min_threshold: number | null;
+  time_lock_ms: number | null;
+};
 
 export function buildMergedDropRealVoteHistoryStates({
   voteChanges,
@@ -574,15 +586,7 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
     );
     try {
       const now = Time.currentMillis();
-      const rows = await this.db.execute<
-        Omit<
-          DropSubmissionVotingSummary,
-          'is_open' | 'forbid_negative_votes'
-        > & {
-          is_open: boolean | number;
-          forbid_negative_votes: boolean | number;
-        }
-      >(
+      const rows = await this.db.execute<DropSubmissionVotingSummaryRow>(
         `
         with target_submissions as (
           select id, wave_id, drop_type, created_at
@@ -657,6 +661,9 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
         select
           t.id as drop_id,
           t.drop_type as status,
+          w.type as wave_type,
+          w.winning_min_threshold as winning_min_threshold,
+          w.time_lock_ms as time_lock_ms,
           case
             when t.drop_type = '${DropType.WINNER}' then 0
             when w.type <> 'CHAT'
@@ -670,6 +677,7 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
             then 1
             else 0
           end as is_open,
+          null as over_threshold_since_ms,
           case
             when t.drop_type = '${DropType.WINNER}' then coalesce(wd.final_vote, 0)
             else coalesce(vc.tally, 0)
@@ -704,11 +712,20 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
         { dropIds, now },
         { wrappedConnection: ctx.connection }
       );
+      const overThresholdSinceByDropId =
+        await this.getOverThresholdSinceByDropId(
+          this.getOverThresholdCandidateDropIds(rows),
+          now,
+          ctx
+        );
       return rows.reduce(
         (acc, row) => {
           acc[row.drop_id] = {
-            ...row,
+            drop_id: row.drop_id,
+            status: row.status,
             is_open: row.is_open === true || Number(row.is_open) === 1,
+            over_threshold_since_ms:
+              overThresholdSinceByDropId[row.drop_id] ?? null,
             forbid_negative_votes:
               row.forbid_negative_votes === true ||
               Number(row.forbid_negative_votes) === 1,
@@ -725,6 +742,110 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
     } finally {
       ctx.timer?.stop(
         `${this.constructor.name}->getDropV2SubmissionVotingSummaries`
+      );
+    }
+  }
+
+  private getOverThresholdCandidateDropIds(
+    rows: DropSubmissionVotingSummaryRow[]
+  ): string[] {
+    return rows
+      .filter(
+        (row) =>
+          row.status === DropType.PARTICIPATORY &&
+          row.wave_type === 'APPROVE' &&
+          row.winning_min_threshold !== null &&
+          (row.time_lock_ms === null || Number(row.time_lock_ms) === 0) &&
+          Number(row.total_votes_given) >= Number(row.winning_min_threshold)
+      )
+      .map((row) => row.drop_id);
+  }
+
+  private async getOverThresholdSinceByDropId(
+    dropIds: string[],
+    now: number,
+    ctx: RequestContext
+  ): Promise<Record<string, number>> {
+    if (!dropIds.length) {
+      return {};
+    }
+    ctx.timer?.start(`${this.constructor.name}->getOverThresholdSinceByDropId`);
+    try {
+      const rows = await this.db.execute<{
+        drop_id: string;
+        over_threshold_since_ms: number;
+      }>(
+        `
+        with threshold_drops as (
+          select
+            d.id as drop_id,
+            d.wave_id,
+            w.winning_min_threshold
+          from ${DROPS_TABLE} d
+          join ${WAVES_TABLE} w
+            on w.id = d.wave_id
+          where d.id in (:dropIds)
+            and d.drop_type = '${DropType.PARTICIPATORY}'
+            and w.type = 'APPROVE'
+            and w.winning_min_threshold is not null
+            and (w.time_lock_ms is null or w.time_lock_ms = 0)
+        ),
+        last_below_threshold_vote as (
+          select
+            drop_id,
+            timestamp,
+            id
+          from (
+            select
+              drv.drop_id,
+              drv.timestamp,
+              drv.id,
+              row_number() over (
+                partition by drv.drop_id
+                order by drv.timestamp desc, drv.id desc
+              ) as rn
+            from threshold_drops td
+            join ${DROP_REAL_VOTE_IN_TIME_TABLE} drv
+              on drv.drop_id = td.drop_id
+            where drv.vote < td.winning_min_threshold
+              and drv.timestamp <= :now
+          ) ranked_below_threshold_votes
+          where rn = 1
+        ),
+        current_above_threshold_period as (
+          select
+            drv.drop_id,
+            min(drv.timestamp) as over_threshold_since_ms
+          from threshold_drops td
+          join ${DROP_REAL_VOTE_IN_TIME_TABLE} drv
+            on drv.drop_id = td.drop_id
+          left join last_below_threshold_vote lbtv
+            on lbtv.drop_id = drv.drop_id
+          where drv.vote >= td.winning_min_threshold
+            and drv.timestamp <= :now
+            and (
+              lbtv.drop_id is null
+              or drv.timestamp > lbtv.timestamp
+              or (drv.timestamp = lbtv.timestamp and drv.id > lbtv.id)
+            )
+          group by drv.drop_id
+        )
+        select drop_id, over_threshold_since_ms
+        from current_above_threshold_period
+      `,
+        { dropIds, now },
+        { wrappedConnection: ctx.connection }
+      );
+      return rows.reduce(
+        (acc, row) => ({
+          ...acc,
+          [row.drop_id]: Number(row.over_threshold_since_ms)
+        }),
+        {} as Record<string, number>
+      );
+    } finally {
+      ctx.timer?.stop(
+        `${this.constructor.name}->getOverThresholdSinceByDropId`
       );
     }
   }
