@@ -4,7 +4,7 @@ import { DropVotingDb } from '@/api-serverless/src/drops/drop-voting.db';
 import { UserGroupsService } from '@/api-serverless/src/community-members/user-groups.service';
 import { WavesApiDb } from '@/api-serverless/src/waves/waves.api.db';
 import { DropType } from '@/entities/IDrop';
-import { WaveCreditType, WaveType } from '@/entities/IWave';
+import { WaveCreditScope, WaveCreditType, WaveType } from '@/entities/IWave';
 import { IdentitiesDb } from '@/identities/identities.db';
 import { MetricsRecorder } from '@/metrics/MetricsRecorder';
 import { UserNotifier } from '@/notifications/user.notifier';
@@ -28,6 +28,7 @@ describe('VoteForDropUseCase', () => {
   const wave = {
     id: 'wave-1',
     voting_credit_type: WaveCreditType.TDH,
+    voting_credit_scope: WaveCreditScope.WAVE,
     voting_credit_category: null,
     voting_credit_creditor: null,
     voting_group_id: null,
@@ -204,6 +205,61 @@ describe('VoteForDropUseCase', () => {
         { connection }
       )
     ).rejects.toThrow(`max_votes_per_identity_to_drop exceeded for this drop`);
+  });
+
+  it('allows full credit to be spent on each drop when credit scope is DROP', async () => {
+    (wavesDb.findById as jest.Mock).mockResolvedValue({
+      ...wave,
+      voting_credit_scope: WaveCreditScope.DROP
+    });
+    (votingDb.getDropVoterStateForDrop as jest.Mock).mockResolvedValue(0);
+    (
+      votingDb.getVotingCreditLockedInWaveForVoter as jest.Mock
+    ).mockResolvedValue(10);
+
+    const result = await useCase.execute(
+      {
+        voter_id: 'voter-1',
+        drop_id: 'drop-1',
+        wave_id: 'wave-1',
+        votes: 10,
+        proxy_id: null
+      },
+      { connection }
+    );
+
+    expect(result).toBe(true);
+    expect(votingDb.getVotingCreditLockedInWaveForVoter).not.toHaveBeenCalled();
+    expect(votingDb.upsertState).toHaveBeenCalledWith(
+      expect.objectContaining({
+        voter_id: 'voter-1',
+        drop_id: 'drop-1',
+        wave_id: 'wave-1',
+        votes: 10
+      }),
+      expect.anything()
+    );
+  });
+
+  it('rejects single-drop votes above total credit when credit scope is DROP', async () => {
+    (wavesDb.findById as jest.Mock).mockResolvedValue({
+      ...wave,
+      voting_credit_scope: WaveCreditScope.DROP
+    });
+    (votingDb.getDropVoterStateForDrop as jest.Mock).mockResolvedValue(0);
+
+    await expect(
+      useCase.execute(
+        {
+          voter_id: 'voter-1',
+          drop_id: 'drop-1',
+          wave_id: 'wave-1',
+          votes: 11,
+          proxy_id: null
+        },
+        { connection }
+      )
+    ).rejects.toThrow('Not enough credit to vote');
   });
 
   it('rejects negative votes beyond max_votes_per_identity_to_drop', async () => {

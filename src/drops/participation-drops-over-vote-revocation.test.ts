@@ -3,6 +3,7 @@ import { userNotifier } from '@/notifications/user.notifier';
 import { profileActivityLogsDb } from '@/profileActivityLogs/profile-activity-logs.db';
 import { dropsDb } from '@/drops/drops.db';
 import { revokeTdhBasedDropWavesOverVotes } from '@/drops/participation-drops-over-vote-revocation';
+import { WaveCreditScope } from '@/entities/IWave';
 
 describe('revokeTdhBasedDropWavesOverVotes', () => {
   const connection = {} as any;
@@ -91,5 +92,48 @@ describe('revokeTdhBasedDropWavesOverVotes', () => {
     expect(dropVotingDb.getAggregateDropRankVote).not.toHaveBeenCalled();
     expect(userNotifier.notifyOfDropVote).not.toHaveBeenCalled();
     expect(profileActivityLogsDb.insert).toHaveBeenCalled();
+  });
+
+  it('caps only the offending drop when credit scope is DROP', async () => {
+    jest
+      .spyOn(dropsDb, 'findTdhBasedSubmissionDropOvervotersWithOvervoteAmounts')
+      .mockResolvedValue([
+        {
+          profile_id: 'voter-1',
+          wave_id: 'wave-1',
+          drop_id: 'drop-1',
+          credit_scope: WaveCreditScope.DROP,
+          credit_limit: 5,
+          total_given_votes: 10
+        } as any
+      ]);
+    jest.spyOn(dropsDb, 'findDropVotesForWaves').mockResolvedValue([
+      {
+        drop_id: 'drop-1',
+        votes: 10,
+        author_id: 'author-1',
+        visibility_group_id: null
+      } as any
+    ]);
+
+    await revokeTdhBasedDropWavesOverVotes(connection);
+
+    expect(dropsDb.findDropVotesForWaves).toHaveBeenCalledWith(
+      {
+        profile_id: 'voter-1',
+        wave_id: 'wave-1',
+        drop_id: 'drop-1'
+      },
+      expect.anything()
+    );
+    expect(dropVotingDb.upsertState).toHaveBeenCalledWith(
+      expect.objectContaining({
+        voter_id: 'voter-1',
+        drop_id: 'drop-1',
+        wave_id: 'wave-1',
+        votes: 5
+      }),
+      expect.anything()
+    );
   });
 });

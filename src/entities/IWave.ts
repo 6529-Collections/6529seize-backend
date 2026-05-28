@@ -23,6 +23,7 @@ export interface WaveBaseType {
   readonly admin_group_id: string | null;
   readonly voting_group_id: string | null;
   readonly voting_credit_type: WaveCreditType;
+  readonly voting_credit_scope: WaveCreditScope;
   readonly voting_credit_category: string | null;
   readonly voting_credit_creditor: string | null;
   readonly voting_signature_required: boolean;
@@ -83,6 +84,14 @@ export class WaveBase implements WaveBaseType {
 
   @Column({ type: 'varchar', length: 100, nullable: false })
   readonly voting_credit_type!: WaveCreditType;
+
+  @Column({
+    type: 'varchar',
+    length: 20,
+    nullable: false,
+    default: 'WAVE'
+  })
+  readonly voting_credit_scope!: WaveCreditScope;
 
   @Column({ type: 'varchar', length: 100, nullable: true })
   readonly voting_credit_category!: string | null;
@@ -238,6 +247,11 @@ export enum WaveCreditType {
   XTDH = 'XTDH',
   TDH_PLUS_XTDH = 'TDH_PLUS_XTDH',
   CARD_SET_TDH = 'CARD_SET_TDH'
+}
+
+export enum WaveCreditScope {
+  WAVE = 'WAVE',
+  DROP = 'DROP'
 }
 
 export enum WaveType {

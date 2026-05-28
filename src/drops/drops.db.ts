@@ -62,7 +62,7 @@ import {
   ProfileActivityLog,
   ProfileActivityLogType
 } from '../entities/IProfileActivityLog';
-import { WaveCreditType, WaveEntity } from '../entities/IWave';
+import { WaveCreditScope, WaveCreditType, WaveEntity } from '../entities/IWave';
 import { WaveDecisionWinnerDropWithSaleEntity } from '@/entities/IWaveDecision';
 import { WinnerDropVoterVoteEntity } from '../entities/IWinnerDropVoterVote';
 import { DropGroupMention } from '@/entities/IWaveGroupNotificationSubscription';
@@ -2436,17 +2436,21 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         optionPairs.map(({ credit_type, identity_field }) =>
           this.db.execute<ProfileOverVoteAmountInWave>(
             `
-        with given_tdh_votes as (select ${DROP_VOTER_STATE_TABLE}.voter_id, ${DROP_VOTER_STATE_TABLE}.wave_id, sum(abs(${DROP_VOTER_STATE_TABLE}.votes)) as total_given_votes
+        with given_tdh_votes as (select ${DROP_VOTER_STATE_TABLE}.voter_id,
+                                        ${DROP_VOTER_STATE_TABLE}.wave_id,
+                                        case when w.voting_credit_scope = '${WaveCreditScope.DROP}' then ${DROP_VOTER_STATE_TABLE}.drop_id else null end as drop_id,
+                                        w.voting_credit_scope as credit_scope,
+                                        sum(abs(${DROP_VOTER_STATE_TABLE}.votes)) as total_given_votes
                                  from ${DROP_VOTER_STATE_TABLE}
                                  join ${DROPS_TABLE} on ${DROPS_TABLE}.id = ${DROP_VOTER_STATE_TABLE}.drop_id
+                                 join ${WAVES_TABLE} w on ${DROP_VOTER_STATE_TABLE}.wave_id = w.id
                                  where ${DROPS_TABLE}.drop_type = '${DropType.PARTICIPATORY}'
-                                 group by 1, 2)
-        select v.voter_id as profile_id, wave_id, ${identity_field} as credit_limit, v.total_given_votes as total_given_votes
+                                   and w.voting_credit_type = '${credit_type}'
+                                 group by 1, 2, 3, 4)
+        select v.voter_id as profile_id, v.wave_id, v.drop_id, v.credit_scope, ${identity_field} as credit_limit, v.total_given_votes as total_given_votes
                              from given_tdh_votes v
                                       join ${IDENTITIES_TABLE} i on v.voter_id = i.profile_id
-                                      join ${WAVES_TABLE} w on v.wave_id = w.id
-                             where w.voting_credit_type = '${credit_type}'
-                               and v.total_given_votes > ${identity_field}
+                             where v.total_given_votes > ${identity_field}
     `,
             {},
             { wrappedConnection: ctx.connection }
@@ -2459,21 +2463,29 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         with given_tdh_votes as (
                select ${DROP_VOTER_STATE_TABLE}.voter_id,
                       ${DROP_VOTER_STATE_TABLE}.wave_id,
+                      case when w.voting_credit_scope = '${WaveCreditScope.DROP}' then ${DROP_VOTER_STATE_TABLE}.drop_id else null end as drop_id,
+                      w.voting_credit_scope as credit_scope,
                       sum(abs(${DROP_VOTER_STATE_TABLE}.votes)) as total_given_votes
                from ${DROP_VOTER_STATE_TABLE}
                join ${DROPS_TABLE} on ${DROPS_TABLE}.id = ${DROP_VOTER_STATE_TABLE}.drop_id
+               join ${WAVES_TABLE} w on ${DROP_VOTER_STATE_TABLE}.wave_id = w.id
                where ${DROPS_TABLE}.drop_type = '${DropType.PARTICIPATORY}'
-               group by 1, 2
+                 and w.voting_credit_type = '${WaveCreditType.CARD_SET_TDH}'
+               group by 1, 2, 3, 4
              ),
              profile_consolidation_keys as (
                select distinct profile_id, consolidation_key
                from ${IDENTITIES_TABLE}
              ),
+             card_set_voter_waves as (
+               select distinct voter_id, wave_id
+               from given_tdh_votes
+             ),
              card_set_credit as (
                select p.profile_id as profile_id,
                       v.wave_id as wave_id,
                       coalesce(sum(tn.boosted_tdh), 0) as credit_limit
-               from given_tdh_votes v
+               from card_set_voter_waves v
                join ${WAVES_TABLE} w
                  on w.id = v.wave_id
                 and w.voting_credit_type = '${WaveCreditType.CARD_SET_TDH}'
@@ -2489,6 +2501,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
              )
         select v.voter_id as profile_id,
                v.wave_id as wave_id,
+               v.drop_id as drop_id,
+               v.credit_scope as credit_scope,
                c.credit_limit as credit_limit,
                v.total_given_votes as total_given_votes
           from given_tdh_votes v
@@ -2551,11 +2565,15 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     const now = Time.currentMillis();
     const results = await this.db.execute<TotalGivenVotesInWave>(
       `
-          with given_rep_votes as (select wave_id, sum(abs(votes)) as total_given_votes
-                                   from ${DROP_VOTER_STATE_TABLE}
-                                   where voter_id = :voter_id
-                                   group by 1)
-          select t.wave_id as wave_id, t.total_given_votes as total_given_votes
+          with given_rep_votes as (select s.wave_id,
+                                          case when w.voting_credit_scope = '${WaveCreditScope.DROP}' then s.drop_id else null end as drop_id,
+                                          w.voting_credit_scope as credit_scope,
+                                          sum(abs(s.votes)) as total_given_votes
+                                   from ${DROP_VOTER_STATE_TABLE} s
+                                   join ${WAVES_TABLE} w on s.wave_id = w.id
+                                   where s.voter_id = :voter_id
+                                   group by 1, 2, 3)
+          select t.wave_id as wave_id, t.drop_id as drop_id, t.credit_scope as credit_scope, t.total_given_votes as total_given_votes
                                from given_rep_votes t
                                         join ${WAVES_TABLE} w on t.wave_id = w.id
                                where (w.voting_period_start is null or w.voting_period_start < :now) and (w.voting_period_end is null or w.voting_period_end > :now) and
@@ -2582,7 +2600,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
   }
 
   async findDropVotesForWaves(
-    params: { profile_id: string; wave_id: string },
+    params: { profile_id: string; wave_id: string; drop_id?: string | null },
     ctx: RequestContext
   ): Promise<
     (DropVoterStateEntity & {
@@ -2602,6 +2620,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
          join ${DROPS_TABLE} d on d.id = v.drop_id
          join ${WAVES_TABLE} w on w.id = d.wave_id
          where v.wave_id = :wave_id and v.voter_id = :profile_id and votes <> 0 and d.drop_type = '${DropType.PARTICIPATORY}'
+           ${params.drop_id ? `and v.drop_id = :drop_id` : ``}
       `,
       params,
       { wrappedConnection: ctx.connection }
@@ -3397,6 +3416,8 @@ export interface ProfileOverVoteAmountInWave extends TotalGivenVotesInWave {
 
 export interface TotalGivenVotesInWave {
   readonly wave_id: string;
+  readonly drop_id: string | null;
+  readonly credit_scope: WaveCreditScope;
   readonly total_given_votes: number;
 }
 

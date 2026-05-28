@@ -11,6 +11,7 @@
  */
 
 import { ApiWaveCreditNft } from '../models/ApiWaveCreditNft';
+import { ApiWaveCreditScope } from '../models/ApiWaveCreditScope';
 import { ApiWaveCreditType } from '../models/ApiWaveCreditType';
 import { ApiWaveParticipationSubmissionStrategyType } from '../models/ApiWaveParticipationSubmissionStrategyType';
 import { HttpFile } from '../http/http';
@@ -37,6 +38,7 @@ export class ApiWaveMin {
     'voting_period_start': number | null;
     'voting_period_end': number | null;
     'voting_credit_type': ApiWaveCreditType;
+    'voting_credit_scope': ApiWaveCreditScope;
     'voting_credit_nfts': Array<ApiWaveCreditNft> | null;
     'admin_drop_deletion_enabled': boolean;
     'forbid_negative_votes': boolean;
@@ -154,6 +156,12 @@ export class ApiWaveMin {
             "name": "voting_credit_type",
             "baseName": "voting_credit_type",
             "type": "ApiWaveCreditType",
+            "format": ""
+        },
+        {
+            "name": "voting_credit_scope",
+            "baseName": "voting_credit_scope",
+            "type": "ApiWaveCreditScope",
             "format": ""
         },
         {

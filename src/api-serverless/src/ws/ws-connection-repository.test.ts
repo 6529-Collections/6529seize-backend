@@ -5,7 +5,7 @@ import {
   WAVE_VOTING_CREDIT_NFTS_TABLE,
   WAVES_TABLE
 } from '@/constants';
-import { WaveCreditType } from '@/entities/IWave';
+import { WaveCreditScope, WaveCreditType } from '@/entities/IWave';
 import { CustomApiCompliantException } from '@/exceptions';
 import { Logger } from '@/logging';
 import { WsConnectionRepository } from './ws-connection.repository';
@@ -19,7 +19,8 @@ describe('WsConnectionRepository', () => {
     const oneOrNull = jest
       .fn()
       .mockResolvedValueOnce({
-        credit_type: WaveCreditType.CARD_SET_TDH
+        credit_type: WaveCreditType.CARD_SET_TDH,
+        credit_scope: WaveCreditScope.WAVE
       })
       .mockResolvedValueOnce({ cnt: 2 });
     const execute = jest.fn().mockResolvedValue([
@@ -60,17 +61,20 @@ describe('WsConnectionRepository', () => {
     expect(sql).toContain(`from ${IDENTITIES_TABLE}`);
     expect(sql).toContain(`join ${WAVE_VOTING_CREDIT_NFTS_TABLE} wvcn`);
     expect(sql).toContain(`left join ${TDH_NFT_TABLE} tn`);
-    expect(params).toEqual({
-      waveId: 'wave-1',
-      profileIds: ['profile-1']
-    });
+    expect(params).toEqual(
+      expect.objectContaining({
+        waveId: 'wave-1',
+        profileIds: ['profile-1']
+      })
+    );
   });
 
   it('throws an api-compliant error when a CARD_SET_TDH wave has no configured cards', async () => {
     const oneOrNull = jest
       .fn()
       .mockResolvedValueOnce({
-        credit_type: WaveCreditType.CARD_SET_TDH
+        credit_type: WaveCreditType.CARD_SET_TDH,
+        credit_scope: WaveCreditScope.WAVE
       })
       .mockResolvedValueOnce({ cnt: 0 });
     const repo = new WsConnectionRepository(
@@ -102,7 +106,8 @@ describe('WsConnectionRepository', () => {
       .spyOn(Logger.prototype, 'warn')
       .mockImplementation(() => undefined);
     const oneOrNull = jest.fn().mockResolvedValue({
-      credit_type: WaveCreditType.REP
+      credit_type: WaveCreditType.REP,
+      credit_scope: WaveCreditScope.WAVE
     });
     const repo = new WsConnectionRepository(
       () =>
@@ -125,5 +130,43 @@ describe('WsConnectionRepository', () => {
     expect(warn).toHaveBeenCalledWith(
       '[UNEXPECTED TDH CREDIT TYPE LOOKUP] [waveId=wave-1] [creditType=REP] [profileIds=profile-1,profile-2]'
     );
+  });
+
+  it('subtracts only the active drop vote when credit scope is DROP', async () => {
+    const oneOrNull = jest.fn().mockResolvedValue({
+      credit_type: WaveCreditType.TDH,
+      credit_scope: WaveCreditScope.DROP
+    });
+    const execute = jest.fn().mockResolvedValue([
+      {
+        profile_id: 'profile-1',
+        credit_left: 8
+      }
+    ]);
+    const repo = new WsConnectionRepository(
+      () =>
+        ({
+          oneOrNull,
+          execute
+        }) as any,
+      {} as any
+    );
+
+    const result = await repo.getCreditLeftForProfilesForTdhBasedWave({
+      profileIds: ['profile-1'],
+      waveId: 'wave-1',
+      dropId: 'drop-1'
+    });
+
+    expect(result).toEqual({
+      'profile-1': 8
+    });
+    const [sql, params] = execute.mock.calls[0];
+    expect(sql).toContain(`drop_id = :dropId`);
+    expect(params).toEqual({
+      waveId: 'wave-1',
+      dropId: 'drop-1',
+      profileIds: ['profile-1']
+    });
   });
 });
