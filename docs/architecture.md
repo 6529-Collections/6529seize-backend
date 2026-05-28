@@ -107,41 +107,41 @@ flowchart TD
 
 ## Lambda Inventory
 
-### Scheduled Lambdas
+### Scheduled Lambdas (EventBridge)
 
-| Lambda | Trigger | Purpose |
-|---|---|---|
-| `nftsLoop` | EventBridge schedule | Discover, refresh, and audit NFTs. |
-| `transactionsLoop` | EventBridge schedule | Index MEMES, Gradients, and Meme Lab transfers. |
-| `nftOwnersLoop` | EventBridge schedule | Maintain current owner balance snapshots. |
-| `nftHistoryLoop` | EventBridge schedule | Maintain ownership history. |
-| `delegationsLoop` | EventBridge schedule | Sync delegation.cash and consolidation data. |
-| `nextgenContractLoop` | EventBridge schedule | Index NextGen contract events. |
-| `nextgenMetadataLoop` | EventBridge schedule | Refresh NextGen metadata. |
-| `externalCollectionSnapshottingLoop` | EventBridge schedule | Snapshot external collection ownership. |
-| `externalCollectionLiveTailingLoop` | EventBridge schedule | Live-tail external collection transfers. |
-| `transactionsProcessingLoop` | EventBridge schedule | Normalize raw transactions into processed state. |
-| `tdhLoop` | EventBridge schedule | Calculate TDH and publish TDH completion. |
-| `tdhHistoryLoop` | EventBridge schedule | Write historical TDH snapshots. |
-| `ownersBalancesLoop` | EventBridge schedule | Project owner balance aggregates. |
-| `aggregatedActivityLoop` | EventBridge schedule | Calculate activity aggregates. |
-| `marketStatsLoop` | EventBridge schedule | Aggregate market stats for MEMES, Lab, Gradients, and NextGen. |
-| `rateEventProcessingLoop` | EventBridge schedule | Process DB-backed rating events. |
-| `waveDecisionExecutionLoop` | EventBridge schedule | Execute wave decisions and enqueue claim builds. |
-| `waveLeaderboardSnapshotterLoop` | EventBridge schedule | Snapshot wave leaderboards. |
-| `xTdhGrantsReviewerLoop` | EventBridge schedule | Review xTDH grants. |
-| `subscriptionsDaily` | EventBridge schedule | Process daily subscription work. |
-| `subscriptionsTopUpLoop` | EventBridge schedule | Process subscription top-ups. |
-| `discoverEnsLoop` | EventBridge schedule | Discover ENS names. |
-| `refreshEnsLoop` | EventBridge schedule | Refresh known ENS names. |
-| `ethPriceLoop` | EventBridge schedule | Snapshot ETH price. |
-| `mintAnnouncementsLoop` | EventBridge schedule | Publish mint announcements. |
-| `artCurationNftWatchLoop` | EventBridge schedule | Watch curated NFT state. |
-| `rememesLoop` | EventBridge schedule | Refresh rememes S3 files and metadata. |
-| `royaltiesLoop` | EventBridge schedule | Refresh royalty state. |
-| `dbDumpsDaily` | EventBridge schedule | Create daily database dumps. |
-| `nextgenMediaUploader` | EventBridge schedule | Upload NextGen media. |
-| `nextgenMediaImageResolutions` | EventBridge schedule | Generate NextGen image resolutions. |
+| Lambda | Purpose |
+|---|---|
+| `nftsLoop` | Discover, refresh, and audit NFTs. |
+| `transactionsLoop` | Index MEMES, Gradients, and Meme Lab transfers. |
+| `nftOwnersLoop` | Maintain current owner balance snapshots. |
+| `nftHistoryLoop` | Maintain ownership history. |
+| `delegationsLoop` | Sync delegation.cash and consolidation data. |
+| `nextgenContractLoop` | Index NextGen contract events. |
+| `nextgenMetadataLoop` | Refresh NextGen metadata. |
+| `externalCollectionSnapshottingLoop` | Snapshot external collection ownership. |
+| `externalCollectionLiveTailingLoop` | Live-tail external collection transfers. |
+| `transactionsProcessingLoop` | Normalize raw transactions into processed state. |
+| `tdhLoop` | Calculate TDH and publish TDH completion. |
+| `tdhHistoryLoop` | Write historical TDH snapshots. |
+| `ownersBalancesLoop` | Project owner balance aggregates. |
+| `aggregatedActivityLoop` | Calculate activity aggregates. |
+| `marketStatsLoop` | Aggregate market stats for MEMES, Lab, Gradients, and NextGen. |
+| `rateEventProcessingLoop` | Process DB-backed rating events. |
+| `waveDecisionExecutionLoop` | Execute wave decisions and enqueue claim builds. |
+| `waveLeaderboardSnapshotterLoop` | Snapshot wave leaderboards. |
+| `xTdhGrantsReviewerLoop` | Review xTDH grants. |
+| `subscriptionsDaily` | Process daily subscription work. |
+| `subscriptionsTopUpLoop` | Process subscription top-ups. |
+| `discoverEnsLoop` | Discover ENS names. |
+| `refreshEnsLoop` | Refresh known ENS names. |
+| `ethPriceLoop` | Snapshot ETH price. |
+| `mintAnnouncementsLoop` | Publish mint announcements. |
+| `artCurationNftWatchLoop` | Watch curated NFT state. |
+| `rememesLoop` | Refresh rememes S3 files and metadata. |
+| `royaltiesLoop` | Refresh royalty state. |
+| `dbDumpsDaily` | Create daily database dumps. |
+| `nextgenMediaUploader` | Upload NextGen media. |
+| `nextgenMediaImageResolutions` | Generate NextGen image resolutions. |
 
 ### Triggered Lambdas
 
@@ -165,12 +165,12 @@ flowchart TD
 
 ### Manual Or One-Off Lambdas
 
-| Lambda | Trigger | Purpose |
-|---|---|---|
-| `dbMigrationsLoop` | Deploy workflow/manual invoke | TypeORM sync and `db-migrate` work. |
-| `customReplayLoop` | Manual invoke | Controlled replay job. |
-| `populateHistoricConsolidatedTdh` | Manual invoke | Historic consolidated TDH backfill. |
-| `teamLoop` | Manual invoke | Team CSV and Arweave upload. |
+| Lambda | Purpose |
+|---|---|
+| `dbMigrationsLoop` | TypeORM sync and `db-migrate` work, usually run from deploy workflow. |
+| `customReplayLoop` | Controlled replay job. |
+| `populateHistoricConsolidatedTdh` | Historic consolidated TDH backfill. |
+| `teamLoop` | Team CSV and Arweave upload. |
 
 ## Runtime Shape
 
@@ -222,18 +222,18 @@ There are three async patterns:
 
 Most long-running scheduled jobs have reserved concurrency set low, usually `1`, which protects shared tables from concurrent writer races. SQS workers use queue visibility timeouts, DLQs, and batch failure reporting where configured.
 
-## Claim Queue Flows
+## Drops -> Minting Claim Queue Flows
 
-The claim flows are representative of how this codebase uses SQS: synchronous code commits the durable state change first, then publishes a small message to a purpose-built queue, and the worker re-reads the full entity from MySQL before doing expensive or external work.
+This is the concrete path where a winning drop becomes a minting claim. It is also representative of how this codebase uses SQS: synchronous code commits the durable state change first, then publishes a small message to a purpose-built queue, and the worker re-reads the full entity from MySQL before doing expensive or external work.
 
 ```mermaid
 %%{init: {"flowchart": {"nodeSpacing": 24, "rankSpacing": 44, "curve": "basis"}} }%%
 flowchart TD
-  WaveDecision["waveDecisionExecutionLoop"] --> DecisionTx["commit winning drop"]
+  WaveDecision["waveDecisionExecutionLoop"] --> DecisionTx["commit winning drop decision"]
   DecisionTx --> ClaimBuildPublisher["enqueueClaimBuild(drop_id)"]
   ClaimBuildPublisher --> ClaimsBuilderSqs["SQS: claims-builder"]
   ClaimsBuilderSqs --> ClaimsBuilder["claimsBuilder"]
-  ClaimsBuilder --> MintingClaimsService["createClaimForDropIfMissing"]
+  ClaimsBuilder --> MintingClaimsService["create minting claim if missing"]
   MintingClaimsService --> MintingClaimsTable["minting claim tables"]
 
   MintingClaimsTable -. "admin media upload path" .-> AdminClient["Distribution admin client"]
