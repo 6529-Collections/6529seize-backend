@@ -2477,11 +2477,15 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                select distinct profile_id, consolidation_key
                from ${IDENTITIES_TABLE}
              ),
+             card_set_voter_waves as (
+               select distinct voter_id, wave_id
+               from given_tdh_votes
+             ),
              card_set_credit as (
                select p.profile_id as profile_id,
                       v.wave_id as wave_id,
                       coalesce(sum(tn.boosted_tdh), 0) as credit_limit
-               from given_tdh_votes v
+               from card_set_voter_waves v
                join ${WAVES_TABLE} w
                  on w.id = v.wave_id
                 and w.voting_credit_type = '${WaveCreditType.CARD_SET_TDH}'

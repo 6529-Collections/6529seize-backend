@@ -368,7 +368,7 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
       rep_category: string | null;
       credit_scope: WaveCreditScope;
     }>(
-      `select voting_credit_category as rep_category, voting_credit_creditor as rep_giver, voting_credit_scope as credit_scope from waves where id = :waveId`,
+      `select voting_credit_category as rep_category, voting_credit_creditor as rep_giver, voting_credit_scope as credit_scope from ${WAVES_TABLE} where id = :waveId`,
       { waveId }
     );
     const rep_giver = waveProps?.rep_giver ?? null;
