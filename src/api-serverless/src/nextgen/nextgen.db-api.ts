@@ -851,15 +851,41 @@ export async function fetchNextGenCollectionTraitSetsUltimate(
   pageSize: number,
   page: number
 ) {
-  const traits = traitsStr.split(',');
+  const traits = Array.from(
+    new Set(
+      traitsStr
+        .split(',')
+        .map((trait) => trait.trim())
+        .filter(Boolean)
+    )
+  );
+
+  if (traits.length === 0) {
+    return {
+      count: 0,
+      page,
+      next: false,
+      data: []
+    };
+  }
 
   const countsPerTrait = await sqlExecutor.execute(
     `SELECT DISTINCT trait, trait_count FROM ${NEXTGEN_TOKEN_TRAITS_TABLE} 
-      WHERE trait in (:traits)`,
+      WHERE collection_id = :collectionId AND trait in (:traits)`,
     {
-      traits: traits
+      traits: traits,
+      collectionId: collectionId
     }
   );
+
+  if (countsPerTrait.length !== traits.length) {
+    return {
+      count: 0,
+      page,
+      next: false,
+      data: []
+    };
+  }
 
   let fields = `
     ${NEXTGEN_TOKENS_TABLE}.owner,
@@ -868,7 +894,7 @@ export async function fetchNextGenCollectionTraitSetsUltimate(
     0 as level,
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh as tdh,
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display as consolidation_display,
-    ${IDENTITIES_TABLE}.rep as rep_score
+    ${IDENTITIES_TABLE}.rep as rep_score,
     ${IDENTITIES_TABLE}.xtdh as xtdh`;
 
   const params: any = {
@@ -904,7 +930,7 @@ export async function fetchNextGenCollectionTraitSetsUltimate(
     ${IDENTITIES_TABLE}.handle, 
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh, 
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display, 
-    ${IDENTITIES_TABLE}.rep
+    ${IDENTITIES_TABLE}.rep,
     ${IDENTITIES_TABLE}.xtdh`;
 
   const limit = `LIMIT ${pageSize}`;
