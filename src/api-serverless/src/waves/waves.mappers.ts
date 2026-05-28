@@ -4,6 +4,7 @@ import {
 } from '../../../entities/IActivityEvent';
 import {
   ParticipationRequiredMedia,
+  WaveCreditScope,
   WaveCreditType,
   WaveDecisionPauseEntity,
   WaveEntity,
@@ -30,6 +31,7 @@ import { ApiWaveChatConfig } from '../generated/models/ApiWaveChatConfig';
 import { ApiWaveConfig } from '../generated/models/ApiWaveConfig';
 import { ApiWaveContributorOverview } from '../generated/models/ApiWaveContributorOverview';
 import { ApiWaveCreditType as WaveCreditTypeApi } from '../generated/models/ApiWaveCreditType';
+import { ApiWaveCreditScope as WaveCreditScopeApi } from '../generated/models/ApiWaveCreditScope';
 import { ApiWaveMetadataType } from '../generated/models/ApiWaveMetadataType';
 import { ApiWaveMetrics } from '../generated/models/ApiWaveMetrics';
 import { ApiWaveParticipationConfig } from '../generated/models/ApiWaveParticipationConfig';
@@ -134,7 +136,9 @@ export class WavesMappers {
     > | null;
     existingWaveSettings?: Pick<
       WaveEntity,
-      'max_votes_per_identity_to_drop' | 'chat_links_disabled'
+      | 'max_votes_per_identity_to_drop'
+      | 'chat_links_disabled'
+      | 'voting_credit_scope'
     > | null;
   }): Promise<InsertWaveEntity> {
     let creditorId = request.voting.creditor_id;
@@ -166,6 +170,9 @@ export class WavesMappers {
         tokenId: creditNft.token_id
       }))
     );
+    const votingCreditScope = request.voting.credit_scope
+      ? enums.resolveOrThrow(WaveCreditScope, request.voting.credit_scope)
+      : (existingWaveSettings?.voting_credit_scope ?? WaveCreditScope.WAVE);
     const chatSlowModeCooldownMs = request.chat.slow_mode_cooldown_ms ?? null;
     return {
       id,
@@ -183,6 +190,7 @@ export class WavesMappers {
         WaveCreditType,
         request.voting.credit_type
       ),
+      voting_credit_scope: votingCreditScope,
       voting_credit_category: request.voting.credit_category,
       voting_credit_creditor: creditorId,
       voting_credit_nfts: votingCreditNfts,
@@ -360,6 +368,10 @@ export class WavesMappers {
       credit_type: enums.resolveOrThrow(
         WaveCreditTypeApi,
         waveEntity.voting_credit_type
+      ),
+      credit_scope: enums.resolveOrThrow(
+        WaveCreditScopeApi,
+        waveEntity.voting_credit_scope
       ),
       credit_category: waveEntity.voting_credit_category,
       credit_nfts: voteCreditNfts,

@@ -1,6 +1,11 @@
 import { AuthenticationContext } from '@/auth-context';
 import { ActivityEventAction } from '@/entities/IActivityEvent';
-import { WaveCreditType, WaveEntity, WaveType } from '@/entities/IWave';
+import {
+  WaveCreditScope,
+  WaveCreditType,
+  WaveEntity,
+  WaveType
+} from '@/entities/IWave';
 import { ApiWaveOverviewMapper } from './api-wave-overview.mapper';
 
 function makeWave(overrides: Partial<WaveEntity> = {}): WaveEntity {
@@ -16,6 +21,7 @@ function makeWave(overrides: Partial<WaveEntity> = {}): WaveEntity {
     voting_group_id: null,
     admin_group_id: null,
     voting_credit_type: WaveCreditType.TDH,
+    voting_credit_scope: WaveCreditScope.WAVE,
     voting_credit_category: null,
     voting_credit_creditor: null,
     voting_signature_required: false,

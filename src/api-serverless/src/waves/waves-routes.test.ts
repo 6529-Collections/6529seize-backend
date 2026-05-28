@@ -6,6 +6,7 @@ jest.mock('passport', () => ({
 
 import { ApiCreateNewWave } from '../generated/models/ApiCreateNewWave';
 import { ApiUpdateWaveRequest } from '../generated/models/ApiUpdateWaveRequest';
+import { ApiWaveCreditScope } from '../generated/models/ApiWaveCreditScope';
 import { ApiWaveCreditType } from '../generated/models/ApiWaveCreditType';
 import { ApiWaveType } from '../generated/models/ApiWaveType';
 import {
@@ -113,6 +114,16 @@ describe('waves route validation', () => {
 
     expect(result.error).toBeUndefined();
     expect(result.value.chat.links_disabled).toBe(true);
+  });
+
+  it('accepts DROP credit scope on wave update', () => {
+    const request = updateWaveRequest(Time.currentMillis());
+    request.voting.credit_scope = ApiWaveCreditScope.Drop;
+
+    const result = UpdateWaveSchema.validate(request);
+
+    expect(result.error).toBeUndefined();
+    expect(result.value.voting.credit_scope).toBe(ApiWaveCreditScope.Drop);
   });
 
   it('defaults approve winning_threshold_min_duration_ms to 0', () => {

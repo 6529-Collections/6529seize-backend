@@ -1,5 +1,6 @@
 import { AuthenticationContext } from '@/auth-context';
 import { ApiWaveMin } from '@/api/generated/models/ApiWaveMin';
+import { ApiWaveCreditScope as WaveCreditScopeApi } from '@/api/generated/models/ApiWaveCreditScope';
 import { ApiWaveCreditType as WaveCreditTypeApi } from '@/api/generated/models/ApiWaveCreditType';
 import { WaveVotingCreditNft } from '@/waves/wave-voting-credit-nfts';
 import { ApiWaveParticipationSubmissionStrategyType } from '@/api/generated/models/ApiWaveParticipationSubmissionStrategyType';
@@ -25,6 +26,7 @@ export type WaveMinSource = {
   participation_group_id: string | null;
   admin_group_id: string | null;
   voting_credit_type: string;
+  voting_credit_scope: string;
   voting_credit_nfts?: WaveVotingCreditNft[] | null;
   voting_period_start: number | null;
   voting_period_end: number | null;
@@ -108,6 +110,10 @@ export function mapWaveToApiWaveMin({
     voting_credit_type: enums.resolveOrThrow(
       WaveCreditTypeApi,
       wave.voting_credit_type
+    ),
+    voting_credit_scope: enums.resolveOrThrow(
+      WaveCreditScopeApi,
+      wave.voting_credit_scope
     ),
     voting_credit_nfts:
       wave.voting_credit_nfts?.map((creditNft) => ({

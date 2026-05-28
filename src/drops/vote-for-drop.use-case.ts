@@ -18,7 +18,7 @@ import {
 } from '../api-serverless/src/community-members/user-groups.service';
 import { userNotifier, UserNotifier } from '../notifications/user.notifier';
 import { profileActivityLogsDb } from '../profileActivityLogs/profile-activity-logs.db';
-import { WaveCreditType, WaveType } from '../entities/IWave';
+import { WaveCreditScope, WaveCreditType, WaveType } from '../entities/IWave';
 import {
   BadRequestException,
   CustomApiCompliantException,
@@ -128,13 +128,15 @@ export class VoteForDropUseCase {
         { voterId: voter_id, drop_id: drop_id },
         ctx
       ),
-      this.votingDb.getVotingCreditLockedInWaveForVoter(
-        {
-          waveId: wave_id,
-          voterId: voter_id
-        },
-        ctx
-      ),
+      wave?.voting_credit_scope === WaveCreditScope.DROP
+        ? Promise.resolve(0)
+        : this.votingDb.getVotingCreditLockedInWaveForVoter(
+            {
+              waveId: wave_id,
+              voterId: voter_id
+            },
+            ctx
+          ),
       voterTotalCreditPromise
     ]);
 
@@ -204,7 +206,11 @@ export class VoteForDropUseCase {
         `max_votes_per_identity_to_drop exceeded for this drop`
       );
     }
-    if (diff + creditSpentBeforeThisVote > voterTotalCredit) {
+    const creditSpentAfterThisVote =
+      wave.voting_credit_scope === WaveCreditScope.DROP
+        ? Math.abs(newVote)
+        : diff + creditSpentBeforeThisVote;
+    if (creditSpentAfterThisVote > voterTotalCredit) {
       throw new BadRequestException('Not enough credit to vote');
     }
     if (change === 0) {

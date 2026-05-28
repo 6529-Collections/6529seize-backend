@@ -8,6 +8,7 @@ import { ProfileActivityLogType } from '../entities/IProfileActivityLog';
 import { Logger } from '../logging';
 import { dropVotingDb } from '../api-serverless/src/drops/drop-voting.db';
 import { appFeatures } from '../app-features';
+import { WaveCreditScope } from '../entities/IWave';
 
 const logger = Logger.get('PARTICIPATION_DROPS_OVER_VOTE_REVOCATION');
 
@@ -54,11 +55,14 @@ export async function revokeRepBasedDropOverVotes(
     );
   for (const overratedWave of overratedWaves) {
     const profile_id = param.rep_recipient_id;
-    const { wave_id, credit_limit, total_given_votes } = overratedWave;
+    const { wave_id, drop_id, credit_limit, credit_scope, total_given_votes } =
+      overratedWave;
     await reduceVotesForDrops(
       {
         profile_id,
         wave_id,
+        drop_id: credit_scope === WaveCreditScope.DROP ? drop_id : null,
+        credit_scope,
         credit_limit,
         total_given_votes
       },
@@ -83,12 +87,20 @@ export async function revokeTdhBasedDropWavesOverVotes(
     await dropsDb.findTdhBasedSubmissionDropOvervotersWithOvervoteAmounts(ctx);
 
   for (const overratedWave of overratedWaves) {
-    const { profile_id, wave_id, credit_limit, total_given_votes } =
-      overratedWave;
+    const {
+      profile_id,
+      wave_id,
+      drop_id,
+      credit_scope,
+      credit_limit,
+      total_given_votes
+    } = overratedWave;
     await reduceVotesForDrops(
       {
         profile_id,
         wave_id,
+        drop_id: credit_scope === WaveCreditScope.DROP ? drop_id : null,
+        credit_scope,
         credit_limit,
         total_given_votes
       },
@@ -104,11 +116,15 @@ async function reduceVotesForDrops(
   {
     profile_id,
     wave_id,
+    drop_id,
+    credit_scope,
     credit_limit,
     total_given_votes
   }: {
     profile_id: string;
     wave_id: string;
+    drop_id: string | null;
+    credit_scope: WaveCreditScope;
     credit_limit: number;
     total_given_votes: number;
   },
@@ -117,7 +133,8 @@ async function reduceVotesForDrops(
   const dropsForWaves = await dropsDb.findDropVotesForWaves(
     {
       profile_id,
-      wave_id
+      wave_id,
+      drop_id
     },
     ctx
   );
@@ -127,7 +144,10 @@ async function reduceVotesForDrops(
     const { drop_id, votes, author_id, visibility_group_id } = drop;
     const now = Time.currentMillis();
     await dropVotingDb.lockDropsCurrentRealVote(drop_id, ctx);
-    const voteAfterRevocation = Math.floor(votes * reductionCoefficient);
+    const voteAfterRevocation =
+      credit_scope === WaveCreditScope.DROP
+        ? limitVoteToCredit(votes, credit_limit)
+        : Math.floor(votes * reductionCoefficient);
     const voteChange = voteAfterRevocation - votes;
     if (voteChange === 0) {
       logger.info(
@@ -222,6 +242,17 @@ async function reduceVotesForDrops(
       break;
     }
   }
+}
+
+function limitVoteToCredit(votes: number, creditLimit: number): number {
+  const allowedCredit = Math.floor(Math.max(0, creditLimit));
+  if (votes > allowedCredit) {
+    return allowedCredit;
+  }
+  if (votes < -allowedCredit) {
+    return -allowedCredit;
+  }
+  return votes;
 }
 
 async function notifyOfDropVoteRevocation({

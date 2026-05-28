@@ -1,7 +1,8 @@
 import { MEMES_CONTRACT } from '@/constants';
 import { aWave } from '@/tests/fixtures/wave.fixture';
 import { WavesMappers } from '@/api/waves/waves.mappers';
-import { WaveCreditType, WaveType } from '@/entities/IWave';
+import { WaveCreditScope, WaveCreditType, WaveType } from '@/entities/IWave';
+import { ApiWaveCreditScope } from '../generated/models/ApiWaveCreditScope';
 import { ApiWaveCreditType } from '../generated/models/ApiWaveCreditType';
 import { ApiWaveType } from '../generated/models/ApiWaveType';
 import { ApiUpdateWaveRequest } from '../generated/models/ApiUpdateWaveRequest';
@@ -212,11 +213,13 @@ describe('WavesMappers', () => {
       isDirectMessage: false,
       existingWaveSettings: {
         max_votes_per_identity_to_drop: 7,
-        chat_links_disabled: true
+        chat_links_disabled: true,
+        voting_credit_scope: WaveCreditScope.DROP
       }
     });
 
     expect(mapped.max_votes_per_identity_to_drop).toBe(7);
+    expect(mapped.voting_credit_scope).toBe(WaveCreditScope.DROP);
     expect(mapped.chat_slow_mode_cooldown_ms).toBeNull();
     expect(mapped.chat_links_disabled).toBe(true);
   });
@@ -290,6 +293,7 @@ describe('WavesMappers', () => {
       voting: {
         scope: { group_id: null },
         credit_type: ApiWaveCreditType.CardSetTdh,
+        credit_scope: ApiWaveCreditScope.Drop,
         credit_category: null,
         credit_nfts: [
           {
@@ -356,6 +360,7 @@ describe('WavesMappers', () => {
         tokenId: 2
       }
     ]);
+    expect(entity.voting_credit_scope).toBe(WaveCreditScope.DROP);
 
     const waveEntity = {
       ...aWave(
@@ -436,5 +441,6 @@ describe('WavesMappers', () => {
         token_id: 2
       }
     ]);
+    expect(mapped.voting.credit_scope).toBe(ApiWaveCreditScope.Wave);
   });
 });

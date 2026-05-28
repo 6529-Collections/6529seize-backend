@@ -268,13 +268,14 @@ export class WsListenersNotifier {
           await this.wsConnectionRepository.getCreditLeftForProfilesForRepBasedWave(
             {
               profileIds,
-              waveId: inputDrop.wave.id
+              waveId: inputDrop.wave.id,
+              dropId: inputDrop.id
             }
           );
       } else {
         creditLefts =
           await this.wsConnectionRepository.getCreditLeftForProfilesForTdhBasedWave(
-            { waveId: inputDrop.wave.id, profileIds }
+            { waveId: inputDrop.wave.id, dropId: inputDrop.id, profileIds }
           );
       }
     }

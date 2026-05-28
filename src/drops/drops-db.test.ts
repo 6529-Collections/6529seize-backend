@@ -30,6 +30,7 @@ describe('DropsDb', () => {
     expect(sql).toContain(`join ${DROPS_TABLE}`);
     expect(sql).toContain(`from ${IDENTITIES_TABLE}`);
     expect(sql).toContain(`join ${WAVES_TABLE} w`);
+    expect(sql).toContain(`voting_credit_scope`);
     expect(sql).toContain(`join ${WAVE_VOTING_CREDIT_NFTS_TABLE} wvcn`);
     expect(sql).toContain(`left join ${TDH_NFT_TABLE} tn`);
     expect(sql).toContain(`CARD_SET_TDH`);
