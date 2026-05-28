@@ -14,14 +14,14 @@ The main runtime pieces are:
 
 These diagrams are split into stacked, top-to-bottom maps so they render naturally in a browser.
 Every deployable Lambda service has its own box.
-Each Lambda box says whether it is scheduled, request-facing, SQS-triggered, SNS-triggered, S3 event-triggered, edge-triggered, or manual.
+Lambda boxes use explicit `Trigger:`, `Does:`, and sometimes `Scope:` lines instead of unlabeled shorthand.
 Some inventory diagrams use invisible Mermaid layout links to keep long service lists vertical; those links do not imply execution order.
 
 ```mermaid
 %%{init: {"flowchart": {"nodeSpacing": 24, "rankSpacing": 44, "curve": "basis"}} }%%
 flowchart TD
   Client["Client / web app"] --> APIGW["API Gateway<br/>HTTP + WebSocket"]
-  APIGW --> SeizeAPI["seizeAPI<br/>request-facing Lambda<br/>Express REST API + WebSocket routes"]
+  APIGW --> SeizeAPI["seizeAPI<br/>Trigger: API Gateway request<br/>Does: Express REST API + WebSocket routes"]
   SeizeAPI --> Auth["Auth<br/>wallet signatures, Safe signatures,<br/>JWT, profile proxy roles"]
   Auth --> DomainRoutes["Domain routers<br/>drops, waves, profiles, ratings,<br/>NFTs, TDH, subscriptions, notifications"]
   DomainRoutes --> OpenApi["OpenAPI contract<br/>generated models + manual route wiring"]
@@ -42,15 +42,15 @@ flowchart TD
 ```mermaid
 %%{init: {"flowchart": {"nodeSpacing": 24, "rankSpacing": 40, "curve": "basis"}} }%%
 flowchart TD
-  ChainSchedules["EventBridge schedule trigger<br/>chain and NFT jobs"] --> NftsLoop["nftsLoop<br/>scheduled Lambda<br/>NFT discovery, refresh, audit"]
-  TransactionsLoop["transactionsLoop<br/>scheduled Lambda<br/>MEMES, Gradients, Meme Lab transfers"]
-  NftOwnersLoop["nftOwnersLoop<br/>scheduled Lambda<br/>owner balance snapshots"]
-  NftHistoryLoop["nftHistoryLoop<br/>scheduled Lambda<br/>ownership history"]
-  DelegationsLoop["delegationsLoop<br/>scheduled Lambda<br/>delegation.cash + consolidations"]
-  NextgenContractLoop["nextgenContractLoop<br/>scheduled Lambda<br/>NextGen contract events"]
-  NextgenMetadataLoop["nextgenMetadataLoop<br/>scheduled Lambda<br/>NextGen metadata refresh"]
-  ExternalSnapshotLoop["externalCollectionSnapshottingLoop<br/>scheduled Lambda<br/>initial external collection state"]
-  ExternalLiveTailLoop["externalCollectionLiveTailingLoop<br/>scheduled Lambda<br/>external collection live tailing"]
+  ChainSchedules["EventBridge schedule trigger<br/>chain and NFT jobs"] --> NftsLoop["nftsLoop<br/>Trigger: EventBridge schedule<br/>Does: discover, refresh, audit NFTs"]
+  TransactionsLoop["transactionsLoop<br/>Trigger: EventBridge schedule<br/>Does: index contract transfers<br/>Scope: MEMES, Gradients, Meme Lab"]
+  NftOwnersLoop["nftOwnersLoop<br/>Trigger: EventBridge schedule<br/>Does: snapshot owner balances"]
+  NftHistoryLoop["nftHistoryLoop<br/>Trigger: EventBridge schedule<br/>Does: maintain ownership history"]
+  DelegationsLoop["delegationsLoop<br/>Trigger: EventBridge schedule<br/>Does: sync delegation.cash + consolidations"]
+  NextgenContractLoop["nextgenContractLoop<br/>Trigger: EventBridge schedule<br/>Does: index NextGen contract events"]
+  NextgenMetadataLoop["nextgenMetadataLoop<br/>Trigger: EventBridge schedule<br/>Does: refresh NextGen metadata"]
+  ExternalSnapshotLoop["externalCollectionSnapshottingLoop<br/>Trigger: EventBridge schedule<br/>Does: snapshot external collection state"]
+  ExternalLiveTailLoop["externalCollectionLiveTailingLoop<br/>Trigger: EventBridge schedule<br/>Does: live-tail external collection transfers"]
   NftsLoop ~~~ TransactionsLoop
   TransactionsLoop ~~~ NftOwnersLoop
   NftOwnersLoop ~~~ NftHistoryLoop
@@ -66,16 +66,16 @@ flowchart TD
 ```mermaid
 %%{init: {"flowchart": {"nodeSpacing": 24, "rankSpacing": 40, "curve": "basis"}} }%%
 flowchart TD
-  DerivedSchedules["EventBridge schedule trigger<br/>derived state jobs"] --> TransactionsProcessingLoop["transactionsProcessingLoop<br/>scheduled Lambda<br/>normalize raw transactions"]
-  TdhLoop["tdhLoop<br/>scheduled Lambda<br/>calculate TDH + publish completion"]
-  TdhHistoryLoop["tdhHistoryLoop<br/>scheduled Lambda<br/>historical TDH snapshots"]
-  OwnersBalancesLoop["ownersBalancesLoop<br/>scheduled Lambda<br/>owner balance projections"]
-  AggregatedActivityLoop["aggregatedActivityLoop<br/>scheduled Lambda<br/>activity aggregates"]
-  MarketStatsLoop["marketStatsLoop<br/>scheduled Lambda<br/>market stats per collection"]
-  RateEventProcessingLoop["rateEventProcessingLoop<br/>scheduled Lambda<br/>DB-backed rating events"]
-  WaveDecisionExecutionLoop["waveDecisionExecutionLoop<br/>scheduled Lambda<br/>execute wave decisions"]
-  WaveLeaderboardSnapshotterLoop["waveLeaderboardSnapshotterLoop<br/>scheduled Lambda<br/>wave leaderboard snapshots"]
-  XTdhGrantsReviewerLoop["xTdhGrantsReviewerLoop<br/>scheduled Lambda<br/>grant review automation"]
+  DerivedSchedules["EventBridge schedule trigger<br/>derived state jobs"] --> TransactionsProcessingLoop["transactionsProcessingLoop<br/>Trigger: EventBridge schedule<br/>Does: normalize raw transactions"]
+  TdhLoop["tdhLoop<br/>Trigger: EventBridge schedule<br/>Does: calculate TDH + publish completion"]
+  TdhHistoryLoop["tdhHistoryLoop<br/>Trigger: EventBridge schedule<br/>Does: write historical TDH snapshots"]
+  OwnersBalancesLoop["ownersBalancesLoop<br/>Trigger: EventBridge schedule<br/>Does: project owner balances"]
+  AggregatedActivityLoop["aggregatedActivityLoop<br/>Trigger: EventBridge schedule<br/>Does: calculate activity aggregates"]
+  MarketStatsLoop["marketStatsLoop<br/>Trigger: EventBridge schedule<br/>Does: aggregate market stats<br/>Scope: MEMES, Lab, Gradients, NextGen"]
+  RateEventProcessingLoop["rateEventProcessingLoop<br/>Trigger: EventBridge schedule<br/>Does: process DB-backed rating events"]
+  WaveDecisionExecutionLoop["waveDecisionExecutionLoop<br/>Trigger: EventBridge schedule<br/>Does: execute wave decisions"]
+  WaveLeaderboardSnapshotterLoop["waveLeaderboardSnapshotterLoop<br/>Trigger: EventBridge schedule<br/>Does: snapshot wave leaderboards"]
+  XTdhGrantsReviewerLoop["xTdhGrantsReviewerLoop<br/>Trigger: EventBridge schedule<br/>Does: review xTDH grants"]
   TransactionsProcessingLoop ~~~ TdhLoop
   TdhLoop ~~~ TdhHistoryLoop
   TdhHistoryLoop ~~~ OwnersBalancesLoop
@@ -92,18 +92,18 @@ flowchart TD
 ```mermaid
 %%{init: {"flowchart": {"nodeSpacing": 24, "rankSpacing": 40, "curve": "basis"}} }%%
 flowchart TD
-  SupportSchedules["EventBridge schedule trigger<br/>support and media jobs"] --> SubscriptionsDaily["subscriptionsDaily<br/>scheduled Lambda<br/>daily subscription processing"]
-  SubscriptionsTopUpLoop["subscriptionsTopUpLoop<br/>scheduled Lambda<br/>subscription top-ups"]
-  DiscoverEnsLoop["discoverEnsLoop<br/>scheduled Lambda<br/>discover ENS names"]
-  RefreshEnsLoop["refreshEnsLoop<br/>scheduled Lambda<br/>refresh known ENS names"]
-  EthPriceLoop["ethPriceLoop<br/>scheduled Lambda<br/>ETH price snapshots"]
-  MintAnnouncementsLoop["mintAnnouncementsLoop<br/>scheduled Lambda<br/>mint announcement automation"]
-  ArtCurationNftWatchLoop["artCurationNftWatchLoop<br/>scheduled Lambda<br/>watch curated NFT state"]
-  RememesLoop["rememesLoop<br/>scheduled Lambda<br/>S3, metadata, and file variants"]
-  RoyaltiesLoop["royaltiesLoop<br/>scheduled Lambda<br/>royalty state refresh"]
-  DbDumpsDaily["dbDumpsDaily<br/>scheduled Lambda<br/>daily database dumps"]
-  NextgenMediaUploader["nextgenMediaUploader<br/>scheduled Lambda<br/>upload NextGen media"]
-  NextgenMediaImageResolutions["nextgenMediaImageResolutions<br/>scheduled Lambda<br/>generate NextGen image resolutions"]
+  SupportSchedules["EventBridge schedule trigger<br/>support and media jobs"] --> SubscriptionsDaily["subscriptionsDaily<br/>Trigger: EventBridge schedule<br/>Does: process daily subscriptions"]
+  SubscriptionsTopUpLoop["subscriptionsTopUpLoop<br/>Trigger: EventBridge schedule<br/>Does: process subscription top-ups"]
+  DiscoverEnsLoop["discoverEnsLoop<br/>Trigger: EventBridge schedule<br/>Does: discover ENS names"]
+  RefreshEnsLoop["refreshEnsLoop<br/>Trigger: EventBridge schedule<br/>Does: refresh known ENS names"]
+  EthPriceLoop["ethPriceLoop<br/>Trigger: EventBridge schedule<br/>Does: snapshot ETH price"]
+  MintAnnouncementsLoop["mintAnnouncementsLoop<br/>Trigger: EventBridge schedule<br/>Does: publish mint announcements"]
+  ArtCurationNftWatchLoop["artCurationNftWatchLoop<br/>Trigger: EventBridge schedule<br/>Does: watch curated NFT state"]
+  RememesLoop["rememesLoop<br/>Trigger: EventBridge schedule<br/>Does: refresh rememes S3, metadata, files"]
+  RoyaltiesLoop["royaltiesLoop<br/>Trigger: EventBridge schedule<br/>Does: refresh royalty state"]
+  DbDumpsDaily["dbDumpsDaily<br/>Trigger: EventBridge schedule<br/>Does: create daily database dumps"]
+  NextgenMediaUploader["nextgenMediaUploader<br/>Trigger: EventBridge schedule<br/>Does: upload NextGen media"]
+  NextgenMediaImageResolutions["nextgenMediaImageResolutions<br/>Trigger: EventBridge schedule<br/>Does: generate NextGen image resolutions"]
   SubscriptionsDaily ~~~ SubscriptionsTopUpLoop
   SubscriptionsTopUpLoop ~~~ DiscoverEnsLoop
   DiscoverEnsLoop ~~~ RefreshEnsLoop
@@ -122,13 +122,13 @@ flowchart TD
 ```mermaid
 %%{init: {"flowchart": {"nodeSpacing": 24, "rankSpacing": 40, "curve": "basis"}} }%%
 flowchart TD
-  WaveDecisionExecutionLoop["waveDecisionExecutionLoop<br/>scheduled Lambda<br/>winning drop needs minting claim"] --> ClaimsBuilderQueue["SQS trigger: claims-builder<br/>payload: drop_id"]
-  ClaimsBuilderQueue --> ClaimsBuilder["claimsBuilder<br/>SQS-triggered Lambda<br/>build minting claim for winning drop"]
+  WaveDecisionExecutionLoop["waveDecisionExecutionLoop<br/>Trigger: EventBridge schedule<br/>Does: enqueue claim build for winning drop"] --> ClaimsBuilderQueue["SQS trigger: claims-builder<br/>Payload: drop_id"]
+  ClaimsBuilderQueue --> ClaimsBuilder["claimsBuilder<br/>Trigger: SQS claims-builder<br/>Does: build minting claim"]
   ClaimsBuilder --> MintingClaimsTables["MySQL<br/>minting claims + claim actions"]
 
-  MintingClaimsTables -. "separate API request path" .-> SeizeAPI["seizeAPI<br/>request-facing Lambda<br/>claim media upload request"]
-  SeizeAPI --> ClaimsMediaQueue["SQS trigger: claims-media-arweave-upload<br/>payload: contract, claim_id"]
-  ClaimsMediaQueue --> ClaimsMediaArweaveUploader["claimsMediaArweaveUploader<br/>SQS-triggered Lambda<br/>upload claim media + metadata"]
+  MintingClaimsTables -. "separate API request path" .-> SeizeAPI["seizeAPI<br/>Trigger: API Gateway request<br/>Does: enqueue claim media upload"]
+  SeizeAPI --> ClaimsMediaQueue["SQS trigger: claims-media-arweave-upload<br/>Payload: contract, claim_id"]
+  ClaimsMediaQueue --> ClaimsMediaArweaveUploader["claimsMediaArweaveUploader<br/>Trigger: SQS claims-media-arweave-upload<br/>Does: upload claim media + metadata"]
   ClaimsMediaArweaveUploader --> Arweave["Arweave"]
   Arweave --> MintingClaimsTables
 ```
@@ -136,48 +136,48 @@ flowchart TD
 ```mermaid
 %%{init: {"flowchart": {"nodeSpacing": 24, "rankSpacing": 40, "curve": "basis"}} }%%
 flowchart TD
-  NftsLoop["nftsLoop<br/>scheduled Lambda<br/>discovers NFT media work"] --> S3UploaderQueue["SQS trigger: s3-uploader-jobs"]
-  S3UploaderQueue --> S3Uploader["s3Uploader<br/>SQS-triggered Lambda<br/>mirror, compress, and upload NFT media"]
+  NftsLoop["nftsLoop<br/>Trigger: EventBridge schedule<br/>Does: enqueue NFT media work"] --> S3UploaderQueue["SQS trigger: s3-uploader-jobs"]
+  S3UploaderQueue --> S3Uploader["s3Uploader<br/>Trigger: SQS s3-uploader-jobs<br/>Does: mirror, compress, upload NFT media"]
   S3Uploader --> S3["S3 buckets"]
 ```
 
 ```mermaid
 %%{init: {"flowchart": {"nodeSpacing": 24, "rankSpacing": 40, "curve": "basis"}} }%%
 flowchart TD
-  SeizeAPI["seizeAPI<br/>request-facing Lambda<br/>attachment producer"] --> AttachOrchestrationQueue["SQS trigger: attachments-orchestration"]
-  AttachOrchestrationQueue --> AttachmentsOrchestrator["attachmentsOrchestrator<br/>SQS-triggered Lambda<br/>lookup object, retry, enqueue processing"]
+  SeizeAPI["seizeAPI<br/>Trigger: API Gateway request<br/>Does: enqueue attachment work"] --> AttachOrchestrationQueue["SQS trigger: attachments-orchestration"]
+  AttachOrchestrationQueue --> AttachmentsOrchestrator["attachmentsOrchestrator<br/>Trigger: SQS attachments-orchestration<br/>Does: lookup object, retry, enqueue processing"]
   AttachmentsOrchestrator --> AttachProcessingQueue["SQS trigger: attachments-processing"]
-  AttachProcessingQueue --> AttachmentsProcessor["attachmentsProcessor<br/>SQS-triggered Lambda<br/>scan/process attachment"]
+  AttachProcessingQueue --> AttachmentsProcessor["attachmentsProcessor<br/>Trigger: SQS attachments-processing<br/>Does: scan/process attachment"]
   AttachmentsProcessor --> MySQL["MySQL / RDS"]
 ```
 
 ```mermaid
 %%{init: {"flowchart": {"nodeSpacing": 24, "rankSpacing": 40, "curve": "basis"}} }%%
 flowchart TD
-  SeizeAPI["seizeAPI<br/>request-facing Lambda<br/>NFT-link producer"] --> NftLinkRefreshQueue["SQS trigger: nft-link-refreshes"]
-  NftLinkRefreshQueue --> NftLinkRefresherLoop["nftLinkRefresherLoop<br/>SQS-triggered Lambda<br/>resolve external NFT links"]
+  SeizeAPI["seizeAPI<br/>Trigger: API Gateway request<br/>Does: enqueue NFT-link refresh"] --> NftLinkRefreshQueue["SQS trigger: nft-link-refreshes"]
+  NftLinkRefreshQueue --> NftLinkRefresherLoop["nftLinkRefresherLoop<br/>Trigger: SQS nft-link-refreshes<br/>Does: resolve external NFT links"]
   NftLinkRefresherLoop --> NftLinkPreviewQueue["SQS trigger: nft-link-media-previews"]
-  NftLinkPreviewQueue --> NftLinkMediaPreviewLoop["nftLinkMediaPreviewLoop<br/>SQS-triggered Lambda<br/>generate preview media"]
+  NftLinkPreviewQueue --> NftLinkMediaPreviewLoop["nftLinkMediaPreviewLoop<br/>Trigger: SQS nft-link-media-previews<br/>Does: generate preview media"]
   NftLinkMediaPreviewLoop --> S3["S3 buckets"]
 ```
 
 ```mermaid
 %%{init: {"flowchart": {"nodeSpacing": 24, "rankSpacing": 40, "curve": "basis"}} }%%
 flowchart TD
-  SeizeAPI["seizeAPI<br/>request-facing Lambda<br/>notification producer"] --> PushQueue["SQS trigger: firebase-push-notifications"]
-  PushQueue --> PushNotificationsHandler["pushNotificationsHandler<br/>SQS-triggered Lambda<br/>deliver Firebase push notification"]
+  SeizeAPI["seizeAPI<br/>Trigger: API Gateway/internal request<br/>Does: enqueue push notification"] --> PushQueue["SQS trigger: firebase-push-notifications"]
+  PushQueue --> PushNotificationsHandler["pushNotificationsHandler<br/>Trigger: SQS firebase-push-notifications<br/>Does: deliver Firebase push notification"]
   PushNotificationsHandler --> Firebase["Firebase Cloud Messaging"]
 ```
 
 ```mermaid
 %%{init: {"flowchart": {"nodeSpacing": 24, "rankSpacing": 40, "curve": "basis"}} }%%
 flowchart TD
-  TdhLoop["tdhLoop<br/>scheduled Lambda<br/>TDH calculation complete"] --> TdhDoneTopic["SNS FIFO topic: tdh-calculation-done.fifo"]
+  TdhLoop["tdhLoop<br/>Trigger: EventBridge schedule<br/>Does: publish TDH completion"] --> TdhDoneTopic["SNS FIFO topic: tdh-calculation-done.fifo"]
   TdhDoneTopic --> XTdhQueue["SQS trigger: xtdh-start.fifo"]
-  XTdhQueue --> XTdhLoop["xTdhLoop<br/>SNS/SQS-triggered Lambda<br/>recalculate xTDH"]
+  XTdhQueue --> XTdhLoop["xTdhLoop<br/>Trigger: SNS topic via SQS<br/>Does: recalculate xTDH"]
   XTdhLoop --> MySQL["MySQL / RDS"]
   TdhDoneTopic --> OverRatesQueue["SQS trigger: over-rates-revocation-start.fifo"]
-  OverRatesQueue --> OverRatesRevocationLoop["overRatesRevocationLoop<br/>SNS/SQS-triggered Lambda<br/>revoke over-rates after TDH changes"]
+  OverRatesQueue --> OverRatesRevocationLoop["overRatesRevocationLoop<br/>Trigger: SNS topic via SQS<br/>Does: revoke over-rates after TDH changes"]
   OverRatesRevocationLoop --> MySQL
 ```
 
@@ -185,15 +185,15 @@ flowchart TD
 %%{init: {"flowchart": {"nodeSpacing": 24, "rankSpacing": 40, "curve": "basis"}} }%%
 flowchart TD
   S3["S3 buckets"] --> CloudFront["CloudFront"]
-  CloudFront --> MediaResizerLoop["mediaResizerLoop<br/>request-triggered Lambda<br/>on-demand image resizing"]
-  CloudFront --> NextgenMediaProxyInterceptor["nextgenMediaProxyInterceptor<br/>edge-triggered Lambda<br/>Lambda@Edge metadata fallback"]
+  CloudFront --> MediaResizerLoop["mediaResizerLoop<br/>Trigger: CloudFront request<br/>Does: on-demand image resizing"]
+  CloudFront --> NextgenMediaProxyInterceptor["nextgenMediaProxyInterceptor<br/>Trigger: Lambda@Edge request<br/>Does: NextGen metadata fallback"]
 ```
 
 ```mermaid
 %%{init: {"flowchart": {"nodeSpacing": 24, "rankSpacing": 40, "curve": "basis"}} }%%
 flowchart TD
   S3["S3 buckets"] --> DropsVideoCreatedRule["EventBridge trigger<br/>S3 Object Created under drops/"]
-  DropsVideoCreatedRule --> DropVideoConversionInvokerLoop["dropVideoConversionInvokerLoop<br/>S3 event-triggered Lambda<br/>invoke MediaConvert job"]
+  DropsVideoCreatedRule --> DropVideoConversionInvokerLoop["dropVideoConversionInvokerLoop<br/>Trigger: S3 Object Created event<br/>Does: invoke MediaConvert job"]
   DropVideoConversionInvokerLoop --> MediaConvert["AWS MediaConvert"]
 ```
 
@@ -201,16 +201,16 @@ flowchart TD
 %%{init: {"flowchart": {"nodeSpacing": 24, "rankSpacing": 40, "curve": "basis"}} }%%
 flowchart TD
   S3["S3 buckets"] --> AttachmentObjectCreatedRule["EventBridge trigger<br/>attachment object created"]
-  AttachmentObjectCreatedRule --> AttachmentsOrchestrator["attachmentsOrchestrator<br/>S3 event-triggered Lambda<br/>S3 object-created path"]
+  AttachmentObjectCreatedRule --> AttachmentsOrchestrator["attachmentsOrchestrator<br/>Trigger: S3 Object Created event<br/>Does: orchestrate attachment processing"]
 ```
 
 ```mermaid
 %%{init: {"flowchart": {"nodeSpacing": 24, "rankSpacing": 40, "curve": "basis"}} }%%
 flowchart TD
-  Operator["Operator / deploy workflow / manual invoke"] --> DbMigrationsLoop["dbMigrationsLoop<br/>manual Lambda<br/>TypeORM sync + db-migrate"]
-  CustomReplayLoop["customReplayLoop<br/>manual Lambda<br/>controlled replay job"]
-  PopulateHistoricConsolidatedTdh["populateHistoricConsolidatedTdh<br/>manual Lambda<br/>historic consolidated TDH backfill"]
-  TeamLoop["teamLoop<br/>manual Lambda<br/>team CSV + Arweave upload"]
+  Operator["Operator / deploy workflow / manual invoke"] --> DbMigrationsLoop["dbMigrationsLoop<br/>Trigger: deploy/manual invoke<br/>Does: TypeORM sync + db-migrate"]
+  CustomReplayLoop["customReplayLoop<br/>Trigger: manual invoke<br/>Does: controlled replay job"]
+  PopulateHistoricConsolidatedTdh["populateHistoricConsolidatedTdh<br/>Trigger: manual invoke<br/>Does: historic consolidated TDH backfill"]
+  TeamLoop["teamLoop<br/>Trigger: manual invoke<br/>Does: team CSV + Arweave upload"]
   DbMigrationsLoop ~~~ CustomReplayLoop
   CustomReplayLoop ~~~ PopulateHistoricConsolidatedTdh
   PopulateHistoricConsolidatedTdh ~~~ TeamLoop
@@ -220,7 +220,7 @@ flowchart TD
 %%{init: {"flowchart": {"nodeSpacing": 24, "rankSpacing": 40, "curve": "basis"}} }%%
 flowchart TD
   CloudwatchTopic["SNS trigger: cloudwatch-alarms"]
-  CloudwatchTopic --> CloudwatchAlarmsToDiscordLoop["cloudwatchAlarmsToDiscordLoop<br/>SNS-triggered Lambda<br/>post alarm messages to Discord"]
+  CloudwatchTopic --> CloudwatchAlarmsToDiscordLoop["cloudwatchAlarmsToDiscordLoop<br/>Trigger: SNS cloudwatch-alarms<br/>Does: post alarm messages to Discord"]
 ```
 
 The vertical inventory keeps the rendered width bounded. The specific interaction diagrams below call out the queue and DB handoffs where ordering matters.
@@ -282,19 +282,19 @@ The claim flows are representative of how this codebase uses SQS: synchronous co
 ```mermaid
 %%{init: {"flowchart": {"nodeSpacing": 24, "rankSpacing": 44, "curve": "basis"}} }%%
 flowchart TD
-  WaveDecision["waveDecisionExecutionLoop<br/>scheduled Lambda<br/>executes wave decision"] --> DecisionTx["DB transaction<br/>winner drop + decision rows committed"]
+  WaveDecision["waveDecisionExecutionLoop<br/>Trigger: EventBridge schedule<br/>Does: execute wave decision"] --> DecisionTx["DB transaction<br/>winner drop + decision rows committed"]
   DecisionTx --> ClaimBuildPublisher["enqueueClaimBuild(drop_id)"]
   ClaimBuildPublisher --> ClaimsBuilderSqs["SQS trigger: claims-builder<br/>batchSize=1<br/>DLQ: claims-builder-dlq"]
-  ClaimsBuilderSqs --> ClaimsBuilder["claimsBuilder<br/>SQS-triggered Lambda<br/>reservedConcurrency=1"]
+  ClaimsBuilderSqs --> ClaimsBuilder["claimsBuilder<br/>Trigger: SQS claims-builder<br/>Does: create missing claim<br/>reservedConcurrency=1"]
   ClaimsBuilder --> MintingClaimsService["mintingClaimsService.createClaimForDropIfMissing(drop_id)"]
   MintingClaimsService --> MintingClaimsTable["MySQL: minting_claims<br/>minting_claim_actions<br/>merkle roots/proofs"]
 
   MintingClaimsTable -. "admin media upload path" .-> AdminClient["Distribution admin client"]
-  AdminClient --> UploadEndpoint["seizeAPI<br/>request-facing Lambda<br/>POST /minting-claims/{contract}/claims/{claim_id}/arweave-upload"]
+  AdminClient --> UploadEndpoint["seizeAPI<br/>Trigger: API Gateway request<br/>Does: POST /minting-claims/{contract}/claims/{claim_id}/arweave-upload"]
   UploadEndpoint --> UploadLock["MySQL update<br/>media_uploading=true<br/>only if not already uploading"]
   UploadLock --> MediaPublisher["enqueueClaimMediaArweaveUpload(contract, claim_id)"]
   MediaPublisher --> MediaSqs["SQS trigger: claims-media-arweave-upload<br/>batchSize=1<br/>DLQ: claims-media-arweave-upload-dlq"]
-  MediaSqs --> MediaUploader["claimsMediaArweaveUploader<br/>SQS-triggered Lambda<br/>reservedConcurrency=2"]
+  MediaSqs --> MediaUploader["claimsMediaArweaveUploader<br/>Trigger: SQS claims-media-arweave-upload<br/>Does: upload media + metadata<br/>reservedConcurrency=2"]
   MediaUploader --> FetchClaim["Fetch claim by contract + claim_id"]
   FetchClaim --> ArweaveUpload["Upload image, animation if present,<br/>and generated metadata to Arweave"]
   ArweaveUpload --> UpdateClaim["MySQL update<br/>image_location, animation_location,<br/>metadata_location, media_uploading=false"]
