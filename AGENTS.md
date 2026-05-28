@@ -122,6 +122,8 @@ The test configuration uses:
 
 ## Architecture
 
+Keep `docs/architecture.md` up to date when changing the system shape. Update it in the same change whenever you add, remove, rename, or materially rewire a Lambda, API boundary, SQS/SNS queue or topic, EventBridge trigger, DB/runtime pattern, media/edge flow, deployable service, or major external integration. If a development touches those areas but does not require a docs update, say that explicitly in the final response.
+
 ### Loop-Based Services (Backend)
 
 The backend consists of independent "loop" services that run as AWS Lambda functions or cron jobs. Each loop is self-contained in `src/*Loop/` directories:
