@@ -1,8 +1,8 @@
 import { IDENTITIES_TABLE } from '@/constants';
-import { sqlExecutor } from '../../../sql-executor';
+import { sqlExecutor } from '@/sql-executor';
 import { fetchNextGenCollectionTraitSetsUltimate } from './nextgen.db-api';
 
-jest.mock('../../../sql-executor', () => ({
+jest.mock('@/sql-executor', () => ({
   sqlExecutor: {
     execute: jest.fn()
   }
