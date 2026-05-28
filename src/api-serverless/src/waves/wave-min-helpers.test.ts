@@ -19,6 +19,7 @@ describe('mapWaveToApiWaveMin', () => {
       participation_group_id: null,
       admin_group_id: null,
       voting_credit_type: 'TDH',
+      voting_credit_scope: 'WAVE',
       voting_credit_nfts: null,
       voting_period_start: null,
       voting_period_end: null,
@@ -78,5 +79,6 @@ describe('mapWaveToApiWaveMin', () => {
         token_id: 2
       }
     ]);
+    expect(mapped.voting_credit_scope).toBe('WAVE');
   });
 });

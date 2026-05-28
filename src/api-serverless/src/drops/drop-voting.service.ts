@@ -7,7 +7,11 @@ import {
 } from '../community-members/user-groups.service';
 import { DropEntity, DropType } from '../../../entities/IDrop';
 import { DropVotingDb, dropVotingDb } from './drop-voting.db';
-import { WaveCreditType, WaveEntity } from '../../../entities/IWave';
+import {
+  WaveCreditScope,
+  WaveCreditType,
+  WaveEntity
+} from '../../../entities/IWave';
 import { ConnectionWrapper } from '../../../sql-executor';
 import { ratingsDb, RatingsDb } from '../../../rates/ratings.db';
 import { Rating } from '../../../entities/IRating';
@@ -43,6 +47,7 @@ export class DropVotingService {
       WaveWithVotingCreditNfts,
       | 'id'
       | 'voting_credit_type'
+      | 'voting_credit_scope'
       | 'voting_credit_category'
       | 'voting_credit_creditor'
       | 'voting_credit_nfts'
@@ -88,14 +93,20 @@ export class DropVotingService {
     activeVote,
     totalCredit,
     totalVotesInWave,
+    creditScope,
     perDropLimit
   }: {
     activeVote: number;
     totalCredit: number;
     totalVotesInWave: number;
+    creditScope: WaveCreditScope;
     perDropLimit: number | null;
   }): { min: number; current: number; max: number } {
-    const creditLeft = Math.max(0, totalCredit - totalVotesInWave);
+    const creditSpent =
+      creditScope === WaveCreditScope.DROP
+        ? Math.abs(activeVote)
+        : totalVotesInWave;
+    const creditLeft = Math.max(0, totalCredit - creditSpent);
     let min: number;
     let max: number;
 
@@ -267,6 +278,7 @@ export class DropVotingService {
           activeVote,
           totalCredit,
           totalVotesInWave,
+          creditScope: wave.voting_credit_scope,
           perDropLimit: wave.max_votes_per_identity_to_drop
         });
         return acc;

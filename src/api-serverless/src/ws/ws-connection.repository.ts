@@ -16,7 +16,7 @@ import {
 import { CustomApiCompliantException } from '@/exceptions';
 import { Logger } from '@/logging';
 import { RequestContext } from '../../../request.context';
-import { WaveCreditType } from '../../../entities/IWave';
+import { WaveCreditScope, WaveCreditType } from '../../../entities/IWave';
 import {
   userGroupsService,
   UserGroupsService
@@ -201,18 +201,21 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
 
   async getCreditLeftForProfilesForTdhBasedWave({
     profileIds,
-    waveId
+    waveId,
+    dropId
   }: {
     profileIds: string[];
     waveId: string;
+    dropId?: string;
   }): Promise<Record<string, number>> {
     if (!profileIds.length) {
       return {};
     }
     const waveProps = await this.db.oneOrNull<{
       credit_type: WaveCreditType;
+      credit_scope: WaveCreditScope;
     }>(
-      `select voting_credit_type as credit_type
+      `select voting_credit_type as credit_type, voting_credit_scope as credit_scope
          from ${WAVES_TABLE}
          where id = :waveId`,
       { waveId }
@@ -226,6 +229,10 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
         {} as Record<string, number>
       );
     }
+    const creditSpentFilter =
+      waveProps.credit_scope === WaveCreditScope.DROP && dropId
+        ? `wave_id = :waveId and drop_id = :dropId`
+        : `wave_id = :waveId`;
     switch (waveProps.credit_type) {
       case WaveCreditType.TDH:
       case WaveCreditType.XTDH:
@@ -244,7 +251,7 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
             with given_votes as (
               select voter_id as profile_id, sum(abs(votes)) as credit_spent
               from ${DROP_VOTER_STATE_TABLE}
-              where wave_id = :waveId and voter_id in (:profileIds)
+              where ${creditSpentFilter} and voter_id in (:profileIds)
               group by 1
             ),
             profile_credit as (
@@ -258,7 +265,7 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
             from profile_credit pc
             left join given_votes v on v.profile_id = pc.profile_id
           `,
-          { waveId, profileIds }
+          { waveId, dropId, profileIds }
         );
         return profileIds.reduce(
           (acc, profileId) => {
@@ -294,7 +301,7 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
             with given_votes as (
               select voter_id as profile_id, sum(abs(votes)) as credit_spent
               from ${DROP_VOTER_STATE_TABLE}
-              where wave_id = :waveId and voter_id in (:profileIds)
+              where ${creditSpentFilter} and voter_id in (:profileIds)
               group by 1
             ),
             profile_consolidation_keys as (
@@ -319,7 +326,7 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
             from profile_credit pc
             left join given_votes v on v.profile_id = pc.profile_id
           `,
-          { waveId, profileIds }
+          { waveId, dropId, profileIds }
         );
         return profileIds.reduce(
           (acc, profileId) => {
@@ -346,10 +353,12 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
 
   async getCreditLeftForProfilesForRepBasedWave({
     profileIds,
-    waveId
+    waveId,
+    dropId
   }: {
     profileIds: string[];
     waveId: string;
+    dropId?: string;
   }): Promise<Record<string, number>> {
     if (!profileIds.length) {
       return {};
@@ -357,19 +366,24 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     const waveProps = await this.db.oneOrNull<{
       rep_giver: string | null;
       rep_category: string | null;
+      credit_scope: WaveCreditScope;
     }>(
-      `select voting_credit_category as rep_category, voting_credit_creditor as rep_giver from waves where id = :waveId`,
+      `select voting_credit_category as rep_category, voting_credit_creditor as rep_giver, voting_credit_scope as credit_scope from ${WAVES_TABLE} where id = :waveId`,
       { waveId }
     );
     const rep_giver = waveProps?.rep_giver ?? null;
     const rep_category = waveProps?.rep_category ?? null;
+    const creditSpentFilter =
+      waveProps?.credit_scope === WaveCreditScope.DROP && dropId
+        ? `wave_id = :waveId and drop_id = :dropId`
+        : `wave_id = :waveId`;
     const res = await this.db.execute<{
       profile_id: string;
       credit_left: number;
     }>(
       `
         with given_votes as (select voter_id as profile_id, sum(abs(votes)) as credit_spent from ${DROP_VOTER_STATE_TABLE}
-            where wave_id = :waveId and voter_id in (:profileIds)
+            where ${creditSpentFilter} and voter_id in (:profileIds)
             group by 1),
         total_reps as (select matter_target_id as profile_id, sum(rating) as rep from ${RATINGS_TABLE} where matter_target_id in (:profileIds) and matter = 'REP' and rating <> 0 ${
           rep_giver ? ` and rater_profile_id = :rep_giver ` : ``
@@ -379,11 +393,11 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
              left join given_votes v on v.profile_id = i.profile_id
              where i.profile_id in (:profileIds)
     `,
-      { waveId, profileIds, rep_giver, rep_category }
+      { waveId, dropId, profileIds, rep_giver, rep_category }
     );
     return profileIds.reduce(
       (acc, it) => {
-        acc[it] = res.find((r) => r.profile_id)?.credit_left ?? 0;
+        acc[it] = res.find((r) => r.profile_id === it)?.credit_left ?? 0;
         return acc;
       },
       {} as Record<string, number>

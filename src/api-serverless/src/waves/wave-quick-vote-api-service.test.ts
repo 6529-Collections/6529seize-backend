@@ -1,7 +1,7 @@
 import { DropsMappers } from '@/api/drops/drops.mappers';
 import { UserGroupsService } from '@/api/community-members/user-groups.service';
 import { DropEntity, DropType } from '@/entities/IDrop';
-import { WaveCreditType, WaveType } from '@/entities/IWave';
+import { WaveCreditScope, WaveCreditType, WaveType } from '@/entities/IWave';
 import { BadRequestException, ForbiddenException } from '@/exceptions';
 import { mock } from 'ts-jest-mocker';
 import { when } from 'jest-when';
@@ -44,6 +44,7 @@ describe('WaveQuickVoteApiService', () => {
     voting_group_id: null,
     admin_group_id: null,
     voting_credit_type: WaveCreditType.TDH,
+    voting_credit_scope: WaveCreditScope.WAVE,
     voting_credit_category: null,
     voting_credit_creditor: null,
     voting_signature_required: false,
