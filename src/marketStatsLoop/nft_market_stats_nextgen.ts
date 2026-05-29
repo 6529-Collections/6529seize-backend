@@ -16,7 +16,7 @@ const logger = Logger.get('NEXTGEN_MARKET_STATS');
 
 const OPENSEA_API_BASE_URL = 'https://api.opensea.io/api/v2';
 const OPENSEA_CHAIN = 'ethereum';
-const OPENSEA_COLLECTION_LISTINGS_LIMIT = 200;
+const OPENSEA_COLLECTION_LISTINGS_LIMIT = 100;
 
 interface OpenSeaContractResponse {
   collection?: string;
@@ -122,7 +122,7 @@ export async function getOpenSeaCollectionSlug(
   const data = await fetchOpenSeaJson<OpenSeaContractResponse>(url);
 
   if (!data.collection) {
-    throw new Error(
+    throw new TypeError(
       `OpenSea contract response did not include collection slug`
     );
   }
@@ -154,7 +154,7 @@ export async function fetchOpenSeaCollectionListings(
     logger.info(`Fetched ${url.toString()}`);
 
     if (!Array.isArray(data.listings)) {
-      throw new Error(
+      throw new TypeError(
         `OpenSea collection listings response is missing listings`
       );
     }

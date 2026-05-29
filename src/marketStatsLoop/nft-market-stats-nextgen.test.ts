@@ -114,11 +114,11 @@ describe('NextGen OpenSea market stats helpers', () => {
     expect(firstUrl.pathname).toBe(
       '/api/v2/listings/collection/pebbles-by-zeblocks/all'
     );
-    expect(firstUrl.searchParams.get('limit')).toBe('200');
+    expect(firstUrl.searchParams.get('limit')).toBe('100');
     expect(firstUrl.searchParams.has('next')).toBe(false);
 
     const secondUrl = new URL(fetchMock.mock.calls[1][0]);
-    expect(secondUrl.searchParams.get('limit')).toBe('200');
+    expect(secondUrl.searchParams.get('limit')).toBe('100');
     expect(secondUrl.searchParams.get('next')).toBe('cursor-1');
   });
 
