@@ -33,6 +33,7 @@ import { DropEntity, DropType } from '@/entities/IDrop';
 import { ApiDropReactionV2 } from '@/api/generated/models/ApiDropReactionV2';
 import { reactionsDb, ReactionsDb } from '@/api/drops/reactions.db';
 import { wavesApiDb, WavesApiDb } from '@/api/waves/waves.api.db';
+import { ApiWaveOverview } from '@/api/generated/models/ApiWaveOverview';
 
 export type ApiDropWithWave = ApiDropAndWave;
 export type DropVotersSearchParams = {
@@ -460,9 +461,28 @@ export class ApiDropV2Service {
           ctx
         )
       ]);
-      const dropsById = await this.apiDropMapper.mapDrops(dropEntities, ctx);
+      const dropsByIdPromise = this.apiDropMapper.mapDrops(dropEntities, ctx);
+      const wavesByIdPromise =
+        req.wave_id === null
+          ? this.mapBoostedDropWaves(
+              dropEntities,
+              groupIdsUserIsEligibleFor,
+              ctx
+            )
+          : Promise.resolve({} as Record<string, ApiWaveOverview>);
+      const [dropsById, wavesById] = await Promise.all([
+        dropsByIdPromise,
+        wavesByIdPromise
+      ]);
       return {
-        data: dropEntities.map((drop) => dropsById[drop.id]),
+        data: dropEntities.map((drop) => {
+          const apiDrop = dropsById[drop.id];
+          const wave = wavesById[drop.wave_id];
+          if (wave) {
+            apiDrop.wave = wave;
+          }
+          return apiDrop;
+        }),
         count,
         page: req.page,
         next: count > req.page_size * req.page
@@ -470,6 +490,25 @@ export class ApiDropV2Service {
     } finally {
       ctx.timer?.stop(timerKey);
     }
+  }
+
+  private async mapBoostedDropWaves(
+    dropEntities: DropEntity[],
+    groupIdsUserIsEligibleFor: string[],
+    ctx: RequestContext
+  ): Promise<Record<string, ApiWaveOverview>> {
+    if (!dropEntities.length) {
+      return {};
+    }
+    const waveIds = Array.from(
+      new Set(dropEntities.map((drop) => drop.wave_id))
+    );
+    const waveEntities = await this.wavesApiDb.findWavesByIdsEligibleForRead(
+      waveIds,
+      groupIdsUserIsEligibleFor,
+      ctx.connection
+    );
+    return this.apiWaveOverviewMapper.mapWaves(waveEntities, ctx);
   }
 
   public async findVoteEditLogsByDropIdOrThrow(
