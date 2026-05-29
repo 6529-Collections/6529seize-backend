@@ -14,40 +14,305 @@ import { Time } from '../time';
 
 const logger = Logger.get('NEXTGEN_MARKET_STATS');
 
-async function getOpenseaResponseForPage(url: string, pageToken: string) {
-  if (pageToken) {
-    url += `&cursor=${pageToken}`;
-  }
-  return await fetch(url, {
-    headers: {
-      'x-api-key': process.env.OPENSEA_API_KEY!
-    }
-  });
+const OPENSEA_API_BASE_URL = 'https://api.opensea.io/api/v2';
+const OPENSEA_CHAIN = 'ethereum';
+const OPENSEA_COLLECTION_LISTINGS_LIMIT = 200;
+
+interface OpenSeaContractResponse {
+  collection?: string;
 }
 
-async function getOpenseaResponse(url: string): Promise<any[]> {
-  let pageToken: any = '';
-  const response: any[] = [];
-  while (pageToken !== null) {
-    try {
-      const res = await getOpenseaResponseForPage(url, pageToken);
-      const data: any = await res.json();
-      if (Array.isArray(data.orders)) {
-        response.push(...data.orders);
-      }
-      pageToken = data.next;
-    } catch (e) {
-      logger.error(`[OPENSEA ERROR] ${e}`);
-      pageToken = null;
+interface OpenSeaPrice {
+  decimals?: number;
+  value?: string;
+}
+
+interface OpenSeaOfferItem {
+  identifierOrCriteria?: string;
+  identifier_or_criteria?: string;
+  startAmount?: string;
+}
+
+interface OpenSeaConsiderationItem extends OpenSeaOfferItem {
+  recipient?: string;
+}
+
+interface OpenSeaProtocolData {
+  parameters?: {
+    offer?: OpenSeaOfferItem[];
+    consideration?: OpenSeaConsiderationItem[];
+    startTime?: number | string;
+    endTime?: number | string;
+  };
+}
+
+interface OpenSeaFee {
+  account?: {
+    address?: string;
+  };
+  basis_points?: number;
+}
+
+export interface OpenSeaListing {
+  current_price?: number | string;
+  expiration_time?: number | string;
+  listing_time?: number | string;
+  maker_fees?: OpenSeaFee[];
+  nft?: {
+    identifier?: number | string;
+  };
+  criteria?: {
+    data?: {
+      token?: {
+        tokenId?: number | string;
+      };
+    };
+  };
+  price?: {
+    current?: OpenSeaPrice;
+  };
+  protocol_data?: OpenSeaProtocolData;
+}
+
+interface OpenSeaCollectionListingsResponse {
+  listings?: OpenSeaListing[];
+  next?: string | null;
+}
+
+export interface OpenSeaListingStats {
+  expirationTime: number;
+  listingTime: number;
+  price: number;
+  royalty: number;
+}
+
+function getOpenSeaHeaders(): Record<string, string> {
+  const apiKey = process.env.OPENSEA_API_KEY;
+  if (!apiKey) {
+    throw new Error('Missing OPENSEA_API_KEY');
+  }
+
+  return {
+    accept: 'application/json',
+    'x-api-key': apiKey
+  };
+}
+
+async function fetchOpenSeaJson<T>(url: string): Promise<T> {
+  const response = await fetch(url, {
+    headers: {
+      ...getOpenSeaHeaders()
+    }
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(
+      `[OPENSEA ERROR] ${response.status} ${response.statusText}: ${body}`
+    );
+  }
+
+  return (await response.json()) as T;
+}
+
+export async function getOpenSeaCollectionSlug(
+  contract: string
+): Promise<string> {
+  const url = `${OPENSEA_API_BASE_URL}/chain/${OPENSEA_CHAIN}/contract/${contract}`;
+  const data = await fetchOpenSeaJson<OpenSeaContractResponse>(url);
+
+  if (!data.collection) {
+    throw new Error(
+      `OpenSea contract response did not include collection slug`
+    );
+  }
+
+  return data.collection;
+}
+
+export async function fetchOpenSeaCollectionListings(
+  collectionSlug: string
+): Promise<OpenSeaListing[]> {
+  let next: string | null = null;
+  const listings: OpenSeaListing[] = [];
+
+  do {
+    const url = new URL(
+      `${OPENSEA_API_BASE_URL}/listings/collection/${encodeURIComponent(
+        collectionSlug
+      )}/all`
+    );
+    url.searchParams.set('limit', OPENSEA_COLLECTION_LISTINGS_LIMIT.toString());
+    if (next) {
+      url.searchParams.set('next', next);
+    }
+
+    logger.info(`Fetching ${url.toString()}`);
+    const data = await fetchOpenSeaJson<OpenSeaCollectionListingsResponse>(
+      url.toString()
+    );
+    logger.info(`Fetched ${url.toString()}`);
+
+    if (!Array.isArray(data.listings)) {
+      throw new Error(
+        `OpenSea collection listings response is missing listings`
+      );
+    }
+
+    listings.push(...data.listings);
+    next = data.next ?? null;
+  } while (next);
+
+  return listings;
+}
+
+function toStringOrNull(value: number | string | undefined): string | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+
+  return value.toString();
+}
+
+function toNumberOrZero(value: number | string | undefined): number {
+  const numberValue = Number(value);
+  return Number.isFinite(numberValue) ? numberValue : 0;
+}
+
+function getTokenIdFromOpenSeaListing(listing: OpenSeaListing): string | null {
+  const offer = listing.protocol_data?.parameters?.offer ?? [];
+  const tokenOffer = offer.find(
+    (item) =>
+      item.identifierOrCriteria !== undefined ||
+      item.identifier_or_criteria !== undefined
+  );
+
+  return (
+    toStringOrNull(tokenOffer?.identifierOrCriteria) ??
+    toStringOrNull(tokenOffer?.identifier_or_criteria) ??
+    toStringOrNull(listing.criteria?.data?.token?.tokenId) ??
+    toStringOrNull(listing.nft?.identifier)
+  );
+}
+
+function getOpenSeaStructuredPrice(price?: OpenSeaPrice): number {
+  if (!price?.value) {
+    return 0;
+  }
+
+  const value = Number(price.value);
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+
+  const decimals = price.decimals ?? 18;
+  return value / Math.pow(10, decimals);
+}
+
+function getOpenSeaRawPriceValue(listing: OpenSeaListing): number {
+  return toNumberOrZero(listing.price?.current?.value ?? listing.current_price);
+}
+
+function getOpenSeaEthPrice(listing: OpenSeaListing): number {
+  const structuredPrice = getOpenSeaStructuredPrice(listing.price?.current);
+  if (structuredPrice > 0) {
+    return structuredPrice;
+  }
+
+  const currentPrice = toNumberOrZero(listing.current_price);
+  return currentPrice > 0 ? ethTools.weiToEth(currentPrice) : 0;
+}
+
+function getOpenSeaLegacyRoyaltyPercent(listing: OpenSeaListing): number {
+  const listingRoyalty = listing.maker_fees?.find((fee) =>
+    equalIgnoreCase(fee.account?.address ?? '', NEXTGEN_ROYALTIES_ADDRESS)
+  );
+  const basisPoints = toNumberOrZero(listingRoyalty?.basis_points);
+  return basisPoints > 0 ? basisPoints / 100 : 0;
+}
+
+function getOpenSeaConsiderationRoyaltyPercent(
+  listing: OpenSeaListing
+): number {
+  const priceValue = getOpenSeaRawPriceValue(listing);
+  if (priceValue <= 0) {
+    return 0;
+  }
+
+  const royaltyValue =
+    listing.protocol_data?.parameters?.consideration
+      ?.filter((item) =>
+        equalIgnoreCase(item.recipient ?? '', NEXTGEN_ROYALTIES_ADDRESS)
+      )
+      .reduce((total, item) => total + toNumberOrZero(item.startAmount), 0) ??
+    0;
+
+  return royaltyValue > 0 ? (royaltyValue / priceValue) * 100 : 0;
+}
+
+function getOpenSeaRoyaltyPercent(listing: OpenSeaListing): number {
+  const legacyRoyaltyPercent = getOpenSeaLegacyRoyaltyPercent(listing);
+  return legacyRoyaltyPercent > 0
+    ? legacyRoyaltyPercent
+    : getOpenSeaConsiderationRoyaltyPercent(listing);
+}
+
+export function getOpenSeaListingStats(
+  listing: OpenSeaListing
+): OpenSeaListingStats {
+  return {
+    expirationTime: toNumberOrZero(
+      listing.expiration_time ?? listing.protocol_data?.parameters?.endTime
+    ),
+    listingTime: toNumberOrZero(
+      listing.listing_time ?? listing.protocol_data?.parameters?.startTime
+    ),
+    price: getOpenSeaEthPrice(listing),
+    royalty: getOpenSeaRoyaltyPercent(listing)
+  };
+}
+
+export function indexBestOpenSeaListingsByTokenId(
+  listings: OpenSeaListing[]
+): Map<string, OpenSeaListing> {
+  const listingsByTokenId = new Map<string, OpenSeaListing>();
+
+  for (const listing of listings) {
+    const tokenId = getTokenIdFromOpenSeaListing(listing);
+    const price = getOpenSeaEthPrice(listing);
+    if (!tokenId || price <= 0) {
+      continue;
+    }
+
+    const existingListing = listingsByTokenId.get(tokenId);
+    if (!existingListing || price < getOpenSeaEthPrice(existingListing)) {
+      listingsByTokenId.set(tokenId, listing);
     }
   }
-  return response;
+
+  return listingsByTokenId;
 }
 
 export const findNextgenMarketStats = async (contract: string) => {
   logger.info(`[CONTRACT ${contract}] [RUNNING]`);
 
+  logger.info(`Getting OpenSea collection slug for contract: ${contract}`);
+  const openSeaCollectionSlug = await getOpenSeaCollectionSlug(contract);
+  logger.info(
+    `Getting OpenSea listings for collection: ${openSeaCollectionSlug}`
+  );
+  const openSeaListings = await fetchOpenSeaCollectionListings(
+    openSeaCollectionSlug
+  );
+  const openSeaListingsByTokenId =
+    indexBestOpenSeaListingsByTokenId(openSeaListings);
+  logger.info(
+    `Got ${openSeaListings.length} OpenSea listings for collection: ${openSeaCollectionSlug}. Indexed ${openSeaListingsByTokenId.size} tokens.`
+  );
+
+  logger.info(`Getting Blur listings for contract: ${contract}`);
   const blurListings = await getBlurListings(contract);
+  logger.info(`Got Blur listings for contract: ${contract}`);
 
   //Disabling Magic Eden listings for now
   // const meListings = await getMagicEdenListings(contract);
@@ -55,20 +320,32 @@ export const findNextgenMarketStats = async (contract: string) => {
 
   const dataSource = getDataSource();
   await dataSource.transaction(async (entityManager) => {
+    logger.info(`Fetching NextGen tokens`);
     const tokens: NextGenToken[] = await fetchNextgenTokens(entityManager);
+    logger.info(
+      `Fetched ${tokens.length} NextGen tokens. Sorting and batching them...`
+    );
     const sortedTokens = tokens.slice().sort((a, b) => a.id - b.id);
     const batchedTokens = collections.chunkArray(sortedTokens, 30);
-
+    logger.info(
+      `Starting to process ${batchedTokens.length} NextGen token batches.`
+    );
+    let i = 0;
     for (const batch of batchedTokens) {
+      i++;
+      logger.info(`Processing batch ${i}/${batchedTokens.length}`);
       await processBatch(
         entityManager,
         batch,
         contract,
+        openSeaListingsByTokenId,
         blurListings,
         meListings
       );
       await new Promise((resolve) => setTimeout(resolve, 500));
+      logger.info(`Batch ${i}/${batchedTokens.length} processed`);
     }
+    logger.info(`All NextGen token batches processed.`);
   });
 };
 
@@ -76,14 +353,10 @@ async function processBatch(
   manager: EntityManager,
   tokens: NextGenToken[],
   contract: string,
+  openSeaListingsByTokenId: Map<string, OpenSeaListing>,
   blurListings: any[],
   meListings: any[]
 ) {
-  let url = `https://api.opensea.io/api/v2/orders/ethereum/seaport/listings?asset_contract_address=${contract}&limit=${tokens.length}`;
-  for (const token of tokens) {
-    url += `&token_ids=${token.id}`;
-  }
-  const orders: any[] = await getOpenseaResponse(url);
   const listings: NextGenTokenListing[] = [];
 
   for (const token of tokens) {
@@ -97,19 +370,13 @@ async function processBatch(
     let meListingTime = 0;
     let meExpirationTime = 0;
     let meRoyalty = 0;
-    const osOrder = orders?.find(
-      (o) =>
-        o.protocol_data.parameters.offer[0].identifierOrCriteria ===
-        token.id.toString()
-    );
+    const osOrder = openSeaListingsByTokenId.get(token.id.toString());
     if (osOrder) {
-      osPrice = ethTools.weiToEth(osOrder.current_price);
-      const listingRoyalty = osOrder.maker_fees?.find((f: any) =>
-        equalIgnoreCase(f.account.address, NEXTGEN_ROYALTIES_ADDRESS)
-      );
-      osRoyalty = listingRoyalty ? listingRoyalty.basis_points / 100 : 0;
-      osListingTime = osOrder.listing_time;
-      osExpirationTime = osOrder.expiration_time;
+      const osStats = getOpenSeaListingStats(osOrder);
+      osPrice = osStats.price;
+      osRoyalty = osStats.royalty;
+      osListingTime = osStats.listingTime;
+      osExpirationTime = osStats.expirationTime;
     }
 
     const blurListing = blurListings.find(
