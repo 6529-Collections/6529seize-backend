@@ -532,7 +532,7 @@ router.get(
       { id: string },
       any,
       any,
-      Omit<LeaderboardParams, 'wave_id'>,
+      Omit<LeaderboardParams, 'wave_id' | 'is_additional_action_promised'>,
       any
     >,
     res: Response<ApiResponse<ApiDropsLeaderboardPage>>
@@ -544,7 +544,9 @@ router.get(
       wave_id: id,
       ...getValidatedByJoiOrThrow(
         req.query,
-        Joi.object<Omit<LeaderboardParams, 'wave_id'>>({
+        Joi.object<
+          Omit<LeaderboardParams, 'wave_id' | 'is_additional_action_promised'>
+        >({
           page_size: Joi.number().integer().min(1).max(100).default(50),
           page: Joi.number().integer().min(1).default(1),
           curation_id: Joi.string().optional().default(null),
@@ -563,7 +565,8 @@ router.get(
             .valid(...Object.values(LeaderboardSort))
             .default(LeaderboardSort.RANK)
         })
-      )
+      ),
+      is_additional_action_promised: null
     };
     const result = await dropsService.findLeaderboard(
       {
@@ -849,7 +852,7 @@ router.get(
       { id: string },
       any,
       any,
-      Omit<WaveDecisionsQuery, 'wave_id'>,
+      Omit<WaveDecisionsQuery, 'wave_id' | 'is_additional_action_promised'>,
       any
     >,
     res: Response<ApiResponse<ApiWaveDecisionsPage>>
@@ -862,7 +865,9 @@ router.get(
       wave_id: id,
       ...getValidatedByJoiOrThrow(
         req.query,
-        Joi.object<Omit<WaveDecisionsQuery, 'wave_id'>>({
+        Joi.object<
+          Omit<WaveDecisionsQuery, 'wave_id' | 'is_additional_action_promised'>
+        >({
           page_size: Joi.number().integer().min(1).max(2000).default(100),
           page: Joi.number().integer().min(1).default(1),
           sort_direction: Joi.string()
@@ -872,7 +877,8 @@ router.get(
             .valid(...Object.values(WaveDecisionsQuerySort))
             .default(WaveDecisionsQuerySort.decision_time)
         })
-      )
+      ),
+      is_additional_action_promised: null
     };
     const result = await waveDecisionsApiService.searchConcludedWaveDecisions(
       params,
@@ -906,7 +912,7 @@ router.get(
       wave_id: wave_id,
       ...getValidatedByJoiOrThrow(
         req.query,
-        Joi.object<Omit<WaveDecisionsQuery, 'wave_id'>>({
+        Joi.object<Omit<WaveOutcomesQuery, 'wave_id'>>({
           page_size: Joi.number().integer().min(1).max(2000).default(100),
           page: Joi.number().integer().min(1).default(1),
           sort_direction: Joi.string()

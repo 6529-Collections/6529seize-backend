@@ -70,7 +70,8 @@ export class DeployerDropper {
             author_identity: MEMES_DEPLOYER,
             drop_type: DropType.CHAT,
             mentioned_groups: [],
-            signature: null
+            signature: null,
+            is_additional_action_promised: null
           };
           const { pending_push_notification_ids } =
             await this.createDrop.execute(model, false, {

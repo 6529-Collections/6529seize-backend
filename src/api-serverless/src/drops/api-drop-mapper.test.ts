@@ -27,6 +27,7 @@ function makeDrop(overrides: Partial<DropEntity> = {}): DropEntity {
     reply_to_part_id: null,
     drop_type: DropType.CHAT,
     signature: null,
+    is_additional_action_promised: null,
     hide_link_preview: false,
     ...overrides
   };
@@ -231,6 +232,7 @@ describe('ApiDropMapper', () => {
       id: 'drop-2',
       serial_no: 2,
       drop_type: DropType.PARTICIPATORY,
+      is_additional_action_promised: true,
       title: 'Title',
       updated_at: 120,
       reply_to_drop_id: 'reply-1',
@@ -412,6 +414,7 @@ describe('ApiDropMapper', () => {
       submission_context: {
         status: ApiSubmissionDropStatus.Active,
         has_metadata: true,
+        is_additional_action_promised: true,
         over_threshold_since_ms: 1_234,
         voting: {
           is_open: true,

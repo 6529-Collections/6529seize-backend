@@ -291,6 +291,7 @@ export interface GetWaveDecisionsV2Query {
   "sort"?: "decision_time";
   "page"?: number;
   "page_size"?: number;
+  "is_additional_action_promised"?: boolean;
 }
 
 export type GetWaveDecisionsV2Response = ApiWaveDecisionsPageV2;
@@ -338,6 +339,7 @@ export interface GetWaveLeaderboardV2Query {
   "max_price"?: number;
   "curation_id"?: string;
   "unvoted_by_me"?: boolean;
+  "is_additional_action_promised"?: boolean;
 }
 
 export type GetWaveLeaderboardV2Response = ApiDropsLeaderboardPageV2;

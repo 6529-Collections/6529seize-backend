@@ -1360,7 +1360,8 @@ export class CreateOrUpdateDropUseCase {
           updated_at: updatedAt,
           serial_no: serialNo,
           drop_type: model.drop_type,
-          signature: model.signature
+          signature: model.signature,
+          is_additional_action_promised: model.is_additional_action_promised
         },
         connection
       ),

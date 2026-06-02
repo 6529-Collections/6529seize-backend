@@ -6,6 +6,7 @@ import {
   WAVE_VOTING_CREDIT_NFTS_TABLE,
   WAVES_TABLE
 } from '@/constants';
+import { PageSortDirection } from '@/api/page-request';
 import { DropsDb } from './drops.db';
 
 describe('DropsDb', () => {
@@ -37,5 +38,41 @@ describe('DropsDb', () => {
     expect(sql).toContain(`card_set_voter_waves as`);
     expect(sql).toContain(`select distinct voter_id, wave_id`);
     expect(sql).toContain(`from card_set_voter_waves v`);
+  });
+
+  it('filters realtime leaderboard drops by additional action promise flag', async () => {
+    const execute = jest.fn().mockResolvedValue([]);
+    const repo = new DropsDb(
+      () =>
+        ({
+          execute
+        }) as any
+    );
+
+    await repo.findRealtimeLeaderboardDrops(
+      {
+        wave_id: 'wave-1',
+        limit: 10,
+        offset: 0,
+        sort_order: PageSortDirection.ASC,
+        unvoted_by_me: false,
+        voter_id: null,
+        curation_id: null,
+        price_currency: null,
+        min_price: null,
+        max_price: null,
+        is_additional_action_promised: false
+      },
+      { timer: undefined }
+    );
+
+    expect(execute).toHaveBeenCalledTimes(1);
+    const [sql, params] = execute.mock.calls[0];
+    expect(sql).toContain(
+      'd.is_additional_action_promised = :is_additional_action_promised'
+    );
+    expect(params).toMatchObject({
+      is_additional_action_promised: false
+    });
   });
 });

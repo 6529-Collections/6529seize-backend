@@ -171,6 +171,7 @@ describe('DropsApiService', () => {
         page: 1,
         curation_id: null,
         unvoted_by_me: false,
+        is_additional_action_promised: true,
         price_currency: null,
         min_price: null,
         max_price: null,
@@ -189,6 +190,7 @@ describe('DropsApiService', () => {
         curation_id: null,
         unvoted_by_me: false,
         voter_id: 'profile-1',
+        is_additional_action_promised: true,
         price_currency: null,
         min_price: null,
         max_price: null

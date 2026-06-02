@@ -68,14 +68,22 @@ export class WaveDecisionsApiService {
           limit: query.page_size,
           offset: query.page_size * (query.page - 1),
           sort_direction: query.sort_direction,
-          sort: query.sort
+          sort: query.sort,
+          is_additional_action_promised: query.is_additional_action_promised
         },
         ctx
       ),
-      this.waveDecisionsDb.countDecisions(query.wave_id, ctx)
+      this.waveDecisionsDb.countDecisions(
+        {
+          wave_id: query.wave_id,
+          is_additional_action_promised: query.is_additional_action_promised
+        },
+        ctx
+      )
     ]);
     const decisionWinners = await this.waveDecisionsDb.findAllDecisionWinners(
       decisionEntities,
+      query.is_additional_action_promised,
       ctx
     );
     const winningDropIds = decisionWinners.map((it) => it.drop_id);
@@ -139,14 +147,22 @@ export class WaveDecisionsApiService {
             limit: query.page_size,
             offset: query.page_size * (query.page - 1),
             sort_direction: query.sort_direction,
-            sort: query.sort
+            sort: query.sort,
+            is_additional_action_promised: query.is_additional_action_promised
           },
           ctx
         ),
-        this.waveDecisionsDb.countDecisions(query.wave_id, ctx)
+        this.waveDecisionsDb.countDecisions(
+          {
+            wave_id: query.wave_id,
+            is_additional_action_promised: query.is_additional_action_promised
+          },
+          ctx
+        )
       ]);
       const decisionWinners = await this.waveDecisionsDb.findAllDecisionWinners(
         decisionEntities,
+        query.is_additional_action_promised,
         ctx
       );
       const winningDropIds = decisionWinners
@@ -340,6 +356,7 @@ export interface WaveDecisionsQuery {
   readonly page: number;
   readonly sort_direction: PageSortDirection;
   readonly sort: string;
+  readonly is_additional_action_promised: boolean | null;
 }
 
 export interface WaveOutcomesQuery {
