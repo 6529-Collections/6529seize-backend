@@ -7328,6 +7328,14 @@ paths:
             minimum: 1
             maximum: 2000
             default: 100
+        - name: is_additional_action_promised
+          in: query
+          description: >-
+            Optional filter for winner drops by whether an additional action was
+            promised
+          required: false
+          schema:
+            type: boolean
       responses:
         "200":
           description: successful operation
@@ -7437,6 +7445,14 @@ paths:
           schema:
             type: boolean
             default: false
+        - name: is_additional_action_promised
+          in: query
+          description: >-
+            Optional filter for participatory drops by whether an additional
+            action was promised
+          required: false
+          schema:
+            type: boolean
       responses:
         "200":
           description: successful operation
@@ -9137,6 +9153,8 @@ components:
           $ref: "#/components/schemas/ApiReplyToDrop"
         drop_type:
           $ref: "#/components/schemas/ApiDropType"
+        is_additional_action_promised:
+          type: boolean
         mentioned_groups:
           type: array
           items:
@@ -9770,6 +9788,7 @@ components:
         - is_signed
         - reactions
         - boosts
+        - is_additional_action_promised
         - hide_link_preview
       properties:
         id:
@@ -9870,6 +9889,9 @@ components:
         boosts:
           type: number
           format: int64
+        is_additional_action_promised:
+          type: boolean
+          nullable: true
         hide_link_preview:
           type: boolean
         nft_links:
@@ -10587,6 +10609,7 @@ components:
         - is_signed
         - reactions
         - boosts
+        - is_additional_action_promised
         - hide_link_preview
       properties:
         id:
@@ -10685,6 +10708,9 @@ components:
         boosts:
           type: number
           format: int64
+        is_additional_action_promised:
+          type: boolean
+          nullable: true
         hide_link_preview:
           type: boolean
         nft_links:
@@ -12967,6 +12993,7 @@ components:
         - status
         - voting
         - has_metadata
+        - is_additional_action_promised
       properties:
         status:
           $ref: "#/components/schemas/ApiSubmissionDropStatus"
@@ -12974,6 +13001,9 @@ components:
           $ref: "#/components/schemas/ApiSubmissionDropVoting"
         has_metadata:
           type: boolean
+        is_additional_action_promised:
+          type: boolean
+          nullable: true
         over_threshold_since_ms:
           description: >-
             Unix timestamp in milliseconds when this active APPROVE submission

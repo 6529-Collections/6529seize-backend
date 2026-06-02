@@ -68,6 +68,7 @@ export class ApiCurationDrop {
     'is_signed': boolean;
     'reactions': Array<ApiDropReaction>;
     'boosts': number;
+    'is_additional_action_promised': boolean | null;
     'hide_link_preview': boolean;
     'nft_links'?: Array<ApiDropNftLink>;
 
@@ -243,6 +244,12 @@ export class ApiCurationDrop {
             "baseName": "boosts",
             "type": "number",
             "format": "int64"
+        },
+        {
+            "name": "is_additional_action_promised",
+            "baseName": "is_additional_action_promised",
+            "type": "boolean",
+            "format": ""
         },
         {
             "name": "hide_link_preview",

@@ -42,6 +42,7 @@ function makeDrop(overrides: Partial<DropEntity> = {}): DropEntity {
     reply_to_part_id: null,
     drop_type: DropType.CHAT,
     signature: null,
+    is_additional_action_promised: null,
     hide_link_preview: false,
     ...overrides
   };

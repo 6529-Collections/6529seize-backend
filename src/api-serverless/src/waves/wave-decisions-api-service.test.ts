@@ -84,11 +84,35 @@ describe('WaveDecisionsApiService', () => {
         page: 1,
         page_size: 100,
         sort_direction: PageSortDirection.DESC,
-        sort: WaveDecisionsQuerySort.decision_time
+        sort: WaveDecisionsQuerySort.decision_time,
+        is_additional_action_promised: true
       },
       ctx
     );
 
+    expect(waveDecisionsDb.searchForDecisions).toHaveBeenCalledWith(
+      {
+        wave_id: 'wave-1',
+        limit: 100,
+        offset: 0,
+        sort_direction: PageSortDirection.DESC,
+        sort: WaveDecisionsQuerySort.decision_time,
+        is_additional_action_promised: true
+      },
+      ctx
+    );
+    expect(waveDecisionsDb.countDecisions).toHaveBeenCalledWith(
+      {
+        wave_id: 'wave-1',
+        is_additional_action_promised: true
+      },
+      ctx
+    );
+    expect(waveDecisionsDb.findAllDecisionWinners).toHaveBeenCalledWith(
+      [decision],
+      true,
+      ctx
+    );
     expect(dropsDb.getDropsByIds).toHaveBeenCalledWith(['drop-1'], undefined);
     expect(apiDropMapper.mapDrops).toHaveBeenCalledWith([dropEntity], ctx);
     expect(result.data[0].winners[0].drop).toEqual({

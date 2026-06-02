@@ -185,7 +185,12 @@ export const NewDropSchema: Joi.ObjectSchema<ApiCreateDropRequest> = Joi.object(
     drop_type: Joi.string()
       .optional()
       .default(ApiDropType.Chat)
-      .valid(...[ApiDropType.Chat, ApiDropType.Participatory])
+      .valid(...[ApiDropType.Chat, ApiDropType.Participatory]),
+    is_additional_action_promised: Joi.when('drop_type', {
+      is: ApiDropType.Chat,
+      then: Joi.forbidden(),
+      otherwise: Joi.boolean().optional()
+    })
   }
 );
 

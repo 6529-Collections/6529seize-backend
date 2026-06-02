@@ -307,6 +307,7 @@ describe('waves v2 handlers', () => {
           wave_id: 'wave-1',
           page_size: 100,
           page: 1,
+          is_additional_action_promised: null,
           sort_direction: PageSortDirection.DESC,
           sort: 'decision_time'
         },
@@ -323,6 +324,7 @@ describe('waves v2 handlers', () => {
         query: {
           page_size: '50',
           page: '2',
+          is_additional_action_promised: 'false',
           sort_direction: PageSortDirection.ASC,
           sort: 'decision_time'
         }
@@ -335,6 +337,7 @@ describe('waves v2 handlers', () => {
           wave_id: 'wave-1',
           page_size: 50,
           page: 2,
+          is_additional_action_promised: false,
           sort_direction: PageSortDirection.ASC,
           sort: 'decision_time'
         },
@@ -379,6 +382,7 @@ describe('waves v2 handlers', () => {
           page: 1,
           curation_id: null,
           unvoted_by_me: false,
+          is_additional_action_promised: null,
           price_currency: null,
           min_price: null,
           max_price: null,
@@ -400,6 +404,7 @@ describe('waves v2 handlers', () => {
           page: '2',
           curation_id: 'curation-1',
           unvoted_by_me: 'true',
+          is_additional_action_promised: 'false',
           price_currency: 'eth',
           min_price: '1.5',
           max_price: '3',
@@ -417,6 +422,7 @@ describe('waves v2 handlers', () => {
           page: 2,
           curation_id: 'curation-1',
           unvoted_by_me: true,
+          is_additional_action_promised: false,
           price_currency: 'eth',
           min_price: 1.5,
           max_price: 3,

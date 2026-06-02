@@ -206,7 +206,8 @@ router.post(
       wave_id: newDrop.wave_id,
       reply_to: newDrop.reply_to,
       drop_type: newDrop.drop_type,
-      signature: newDrop.signature
+      signature: newDrop.signature,
+      is_additional_action_promised: newDrop.is_additional_action_promised
     };
     const createdDrop = await dropCreationService.createDrop(
       {

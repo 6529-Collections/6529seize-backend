@@ -80,6 +80,7 @@ const GetWaveDecisionsV2QuerySchema: Joi.ObjectSchema<
 > = Joi.object<Omit<WaveDecisionsQuery, 'wave_id'>>({
   page_size: Joi.number().integer().min(1).max(2000).default(100),
   page: Joi.number().integer().min(1).default(1),
+  is_additional_action_promised: Joi.boolean().optional().default(null),
   sort_direction: Joi.string()
     .valid(...Object.values(PageSortDirection))
     .default(PageSortDirection.DESC),
@@ -104,6 +105,7 @@ const GetWaveLeaderboardV2QuerySchema: Joi.ObjectSchema<
   page: Joi.number().integer().min(1).default(1),
   curation_id: Joi.string().optional().default(null),
   unvoted_by_me: Joi.boolean().optional().default(false),
+  is_additional_action_promised: Joi.boolean().optional().default(null),
   price_currency: Joi.string().trim().empty('').optional().default(null),
   min_price: Joi.number().min(0).optional().default(null),
   max_price: Joi.number().min(0).optional().default(null),

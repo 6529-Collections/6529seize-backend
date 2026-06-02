@@ -143,6 +143,7 @@ export class DropsMappers {
     request: ApiUpdateDropRequest & {
       drop_type: ApiDropType;
       mentioned_groups?: ApiDropGroupMention[];
+      is_additional_action_promised?: boolean | null;
     };
     waveId: string;
     replyTo: DropPartIdentifierModel | null;
@@ -198,7 +199,9 @@ export class DropsMappers {
         (group: ApiDropGroupMention) =>
           enums.resolveOrThrow(DropGroupMention, group)
       ),
-      signature: request.signature
+      signature: request.signature,
+      is_additional_action_promised:
+        request.is_additional_action_promised ?? null
     };
   }
 
@@ -1204,6 +1207,7 @@ export class DropsMappers {
       is_signed: !!dropEntity.signature,
       reactions: dropReactions.get(dropEntity.id)?.reactions ?? [],
       boosts: boostsCount[dropEntity.id] ?? 0,
+      is_additional_action_promised: dropEntity.is_additional_action_promised,
       hide_link_preview: !!dropEntity.hide_link_preview,
       nft_links: rootDropIds.has(dropEntity.id)
         ? (rootDropNftLinksByDropId[dropEntity.id] ?? [])

@@ -997,7 +997,8 @@ export class DropsApiService {
           voter_id: authenticatedProfileId,
           price_currency: params.price_currency,
           min_price: params.min_price,
-          max_price: params.max_price
+          max_price: params.max_price,
+          is_additional_action_promised: params.is_additional_action_promised
         },
         ctx
       );
@@ -1014,7 +1015,8 @@ export class DropsApiService {
           voter_id: authenticatedProfileId,
           price_currency: params.price_currency,
           min_price: params.min_price,
-          max_price: params.max_price
+          max_price: params.max_price,
+          is_additional_action_promised: params.is_additional_action_promised
         },
         ctx
       );
@@ -1058,7 +1060,8 @@ export class DropsApiService {
           unvoted_by_me: params.unvoted_by_me,
           price_currency: params.price_currency,
           min_price: params.min_price,
-          max_price: params.max_price
+          max_price: params.max_price,
+          is_additional_action_promised: params.is_additional_action_promised
         },
         ctx
       );
@@ -1074,7 +1077,8 @@ export class DropsApiService {
         voter_id: authenticatedProfileId,
         price_currency: params.price_currency,
         min_price: params.min_price,
-        max_price: params.max_price
+        max_price: params.max_price,
+        is_additional_action_promised: params.is_additional_action_promised
       },
       ctx
     );

@@ -107,7 +107,8 @@ describe('CreateOrUpdateDropUseCase', () => {
       author_id: 'author-profile',
       drop_type: DropType.PARTICIPATORY,
       mentioned_groups: [],
-      signature: null
+      signature: null,
+      is_additional_action_promised: null
     };
   }
 
