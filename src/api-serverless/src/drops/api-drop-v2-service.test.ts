@@ -1003,11 +1003,70 @@ describe('ApiDropV2Service', () => {
       ctx
     );
     expect(deps.apiDropMapper.mapDrops).toHaveBeenCalledWith(dropEntities, ctx);
+    expect(
+      deps.wavesApiDb.findWavesByIdsEligibleForRead
+    ).not.toHaveBeenCalled();
+    expect(deps.apiWaveOverviewMapper.mapWaves).not.toHaveBeenCalled();
     expect(result).toEqual({
       data: [{ id: 'drop-1' }, { id: 'drop-2' }],
       count: 3,
       page: 1,
       next: true
+    });
+  });
+
+  it('fills wave overviews for global boosted drops', async () => {
+    const { service, deps } = createService();
+    const dropEntities = [
+      makeDrop({ id: 'drop-1', wave_id: 'wave-1' }),
+      makeDrop({ id: 'drop-2', wave_id: 'wave-2' })
+    ];
+    const waveEntities = [makeWave(), makeWave({ id: 'wave-2' })];
+    const ctx = {
+      authenticationContext: AuthenticationContext.fromProfileId('viewer-1')
+    };
+    deps.dropsDb.findBoostedDrops.mockResolvedValue(dropEntities);
+    deps.dropsDb.countBoostedDrops.mockResolvedValue(2);
+    deps.wavesApiDb.findWavesByIdsEligibleForRead.mockResolvedValue(
+      waveEntities
+    );
+    deps.apiWaveOverviewMapper.mapWaves.mockResolvedValue({
+      'wave-1': { id: 'wave-1' },
+      'wave-2': { id: 'wave-2' }
+    });
+
+    const result = await service.findBoostedDrops(
+      {
+        author: null,
+        booster: null,
+        wave_id: null,
+        min_boosts: null,
+        count_only_boosts_after: 1,
+        page_size: 2,
+        page: 1,
+        sort_direction: ApiPageSortDirection.Desc,
+        sort: 'last_boosted_at'
+      },
+      ctx
+    );
+
+    expect(deps.wavesApiDb.findWavesByIdsEligibleForRead).toHaveBeenCalledWith(
+      ['wave-1', 'wave-2'],
+      ['group-1'],
+      undefined
+    );
+    expect(deps.apiWaveOverviewMapper.mapWaves).toHaveBeenCalledWith(
+      waveEntities,
+      ctx
+    );
+    expect(result).toEqual({
+      data: [
+        { id: 'drop-1', wave: { id: 'wave-1' } },
+        { id: 'drop-2', wave: { id: 'wave-2' } }
+      ],
+      count: 2,
+      page: 1,
+      next: false
     });
   });
 
