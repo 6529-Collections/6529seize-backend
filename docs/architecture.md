@@ -167,7 +167,7 @@ flowchart TD
 
 | Lambda | Purpose |
 |---|---|
-| `dbMigrationsLoop` | TypeORM sync and `db-migrate` work, usually run from deploy workflow. |
+| `dbMigrationsLoop` | TypeORM entity synchronization, usually run from deploy workflow. |
 | `customReplayLoop` | Controlled replay job. |
 | `populateHistoricConsolidatedTdh` | Historic consolidated TDH backfill. |
 | `teamLoop` | Team CSV and Arweave upload. |
@@ -208,7 +208,7 @@ Important API responsibilities:
 There are two DB access modes:
 
 - API mode uses mysql read/write pools. Simple SQL classification routes `INSERT`, `UPDATE`, `DELETE`, and `REPLACE` to the write pool; other queries default to the read pool unless forced.
-- Loop mode uses TypeORM initialization and the shared `SqlExecutor` abstraction. Most schema ownership lives in entities, with `dbMigrationsLoop` running TypeORM synchronization and optional `db-migrate` migrations.
+- Loop mode uses TypeORM initialization and the shared `SqlExecutor` abstraction. Schema ownership is entities-first: add or update TypeORM entity classes, export them from `src/entities/entities.ts`, and let `dbMigrationsLoop` run entity synchronization. Do not create SQL migrations for schema changes unless explicitly requested; migrations are reserved for one-off data work or views.
 
 The core architectural choice is that MySQL is both the system of record and the internal integration layer. This keeps the system understandable, but it makes table contracts, migrations, backfills, indexes, and worker idempotency especially important.
 
@@ -264,7 +264,7 @@ Most Lambdas deploy through each service's `serverless.yaml`. The API is package
 
 Typical deployment order when schema or generated API contracts change:
 
-1. `dbMigrationsLoop` if entities or DB migrations changed.
+1. `dbMigrationsLoop` if TypeORM entities changed, or if an explicit data/view migration was requested.
 2. Producer Lambdas that start writing new fields or queue payloads.
 3. Consumer Lambdas that read those new fields or consume those payloads.
 4. `api` when routes, OpenAPI models, auth behavior, upload behavior, or user-facing responses changed.
