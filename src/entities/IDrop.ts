@@ -62,6 +62,8 @@ export class DropEntity {
   readonly drop_type!: DropType;
   @Column({ type: 'text', nullable: true, default: null })
   readonly signature!: string | null;
+  @Column({ type: 'boolean', nullable: true, default: null })
+  readonly is_additional_action_promised!: boolean | null;
   @Column({ type: 'boolean', default: false })
   readonly hide_link_preview?: boolean;
 }

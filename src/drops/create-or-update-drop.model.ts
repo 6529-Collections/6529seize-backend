@@ -18,6 +18,7 @@ export interface CreateOrUpdateDropModel {
   readonly drop_type: DropType;
   readonly mentioned_groups: DropGroupMention[];
   readonly signature: string | null;
+  readonly is_additional_action_promised: boolean | null;
 }
 
 export interface CreateOrUpdateDropPartModel {

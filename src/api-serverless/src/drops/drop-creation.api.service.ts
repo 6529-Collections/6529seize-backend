@@ -238,7 +238,8 @@ export class DropCreationApiService {
       this.dropsMappers.updateDropApiToUseCaseModel({
         request: {
           ...request,
-          drop_type: dropType
+          drop_type: dropType,
+          is_additional_action_promised: drop.is_additional_action_promised
         },
         authorId,
         proxyId,

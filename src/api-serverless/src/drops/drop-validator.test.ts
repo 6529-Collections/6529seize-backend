@@ -100,4 +100,51 @@ describe('NewDropSchema', () => {
       'metadata value for "description" must be less than or equal to 8000 characters long'
     );
   });
+
+  it('accepts additional action promise flag for participatory drops', () => {
+    const result = NewDropSchema.validate({
+      ...createDropWithMetadata('artist', 'Artist'),
+      is_additional_action_promised: true
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.value.is_additional_action_promised).toBe(true);
+  });
+
+  it('allows participatory drops to omit additional action promise flag', () => {
+    const result = NewDropSchema.validate(
+      createDropWithMetadata('artist', 'Artist')
+    );
+
+    expect(result.error).toBeUndefined();
+    expect(result.value.is_additional_action_promised).toBeUndefined();
+  });
+
+  it('rejects additional action promise flag for chat drops', () => {
+    const result = NewDropSchema.validate({
+      ...createDropWithMetadata('artist', 'Artist'),
+      drop_type: ApiDropType.Chat,
+      is_additional_action_promised: false
+    });
+
+    expect(result.error?.message).toContain(
+      '"is_additional_action_promised" is not allowed'
+    );
+  });
+
+  it('rejects additional action promise flag when drop type defaults to chat', () => {
+    const { drop_type, ...chatDrop } = createDropWithMetadata(
+      'artist',
+      'Artist'
+    );
+    const result = NewDropSchema.validate({
+      ...chatDrop,
+      is_additional_action_promised: true
+    });
+
+    expect(drop_type).toBe(ApiDropType.Participatory);
+    expect(result.error?.message).toContain(
+      '"is_additional_action_promised" is not allowed'
+    );
+  });
 });

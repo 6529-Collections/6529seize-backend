@@ -130,7 +130,8 @@ async function handlePriorityAlert(
           updated_at: null,
           serial_no: null,
           drop_type: DropType.CHAT,
-          signature: null
+          signature: null,
+          is_additional_action_promised: null
         },
         connection
       );

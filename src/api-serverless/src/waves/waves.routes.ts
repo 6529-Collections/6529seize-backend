@@ -549,6 +549,10 @@ router.get(
           page: Joi.number().integer().min(1).default(1),
           curation_id: Joi.string().optional().default(null),
           unvoted_by_me: Joi.boolean().optional().default(false),
+          is_additional_action_promised: Joi.boolean()
+            .optional()
+            .allow(null)
+            .default(null),
           price_currency: Joi.string()
             .trim()
             .empty('')
@@ -865,6 +869,10 @@ router.get(
         Joi.object<Omit<WaveDecisionsQuery, 'wave_id'>>({
           page_size: Joi.number().integer().min(1).max(2000).default(100),
           page: Joi.number().integer().min(1).default(1),
+          is_additional_action_promised: Joi.boolean()
+            .optional()
+            .allow(null)
+            .default(null),
           sort_direction: Joi.string()
             .valid(...Object.values(PageSortDirection))
             .default(PageSortDirection.DESC),
@@ -906,7 +914,7 @@ router.get(
       wave_id: wave_id,
       ...getValidatedByJoiOrThrow(
         req.query,
-        Joi.object<Omit<WaveDecisionsQuery, 'wave_id'>>({
+        Joi.object<Omit<WaveOutcomesQuery, 'wave_id'>>({
           page_size: Joi.number().integer().min(1).max(2000).default(100),
           page: Joi.number().integer().min(1).default(1),
           sort_direction: Joi.string()

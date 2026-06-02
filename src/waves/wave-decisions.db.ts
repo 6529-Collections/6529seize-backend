@@ -26,6 +26,49 @@ import { Time } from '../time';
 const mysql = require('mysql');
 
 export class WaveDecisionsDb extends LazyDbAccessCompatibleService {
+  private getAdditionalActionPromiseWinnerFilterSql(params: {
+    is_additional_action_promised?: boolean | null;
+  }): string {
+    if (params.is_additional_action_promised == null) {
+      return '';
+    }
+    return `
+      and exists (
+        select 1
+        from ${WAVES_DECISION_WINNER_DROPS_TABLE} wdwd
+        join ${DROPS_TABLE} d
+          on d.id = wdwd.drop_id
+          and d.is_additional_action_promised = :is_additional_action_promised
+        where wdwd.wave_id = wd.wave_id
+          and wdwd.decision_time = wd.decision_time
+      )
+    `;
+  }
+
+  private getAdditionalActionPromiseSqlParams(params: {
+    is_additional_action_promised?: boolean | null;
+  }): { is_additional_action_promised?: boolean } {
+    if (params.is_additional_action_promised == null) {
+      return {};
+    }
+    return {
+      is_additional_action_promised: params.is_additional_action_promised
+    };
+  }
+
+  private getAdditionalActionPromiseWinnerJoinSql(params: {
+    is_additional_action_promised?: boolean | null;
+  }): string {
+    if (params.is_additional_action_promised == null) {
+      return '';
+    }
+    return `
+      join ${DROPS_TABLE} d
+        on d.id = wdwd.drop_id
+        and d.is_additional_action_promised = :is_additional_action_promised
+    `;
+  }
+
   public async insertDecision(
     decision: WaveDecisionEntity,
     ctx: RequestContext
@@ -208,14 +251,25 @@ export class WaveDecisionsDb extends LazyDbAccessCompatibleService {
       wave_id: string;
       limit: number;
       sort: string;
+      is_additional_action_promised?: boolean | null;
     },
     ctx: RequestContext
   ): Promise<WaveDecisionEntity[]> {
     ctx.timer?.start(`${this.constructor.name}->searchForDecisions`);
+    const additionalActionPromiseFilter =
+      this.getAdditionalActionPromiseWinnerFilterSql(param);
     const result = await this.db.execute<WaveDecisionEntity>(
       `
-      select * from ${WAVES_DECISIONS_TABLE} where wave_id = :wave_id order by ${param.sort} ${param.sort_direction} limit :limit offset :offset`,
-      param,
+      select wd.*
+      from ${WAVES_DECISIONS_TABLE} wd
+      where wd.wave_id = :wave_id
+        ${additionalActionPromiseFilter}
+      order by wd.${param.sort} ${param.sort_direction}
+      limit :limit offset :offset`,
+      {
+        ...param,
+        ...this.getAdditionalActionPromiseSqlParams(param)
+      },
       {
         wrappedConnection: ctx.connection
       }
@@ -224,13 +278,27 @@ export class WaveDecisionsDb extends LazyDbAccessCompatibleService {
     return result;
   }
 
-  async countDecisions(waveId: string, ctx: RequestContext): Promise<number> {
+  async countDecisions(
+    params: {
+      wave_id: string;
+      is_additional_action_promised?: boolean | null;
+    },
+    ctx: RequestContext
+  ): Promise<number> {
     ctx.timer?.start(`${this.constructor.name}->countDecisions`);
+    const additionalActionPromiseFilter =
+      this.getAdditionalActionPromiseWinnerFilterSql(params);
     const result = await this.db
       .oneOrNull<{ cnt: number }>(
         `
-      select count(*) as cnt from ${WAVES_DECISIONS_TABLE} where wave_id = :waveId`,
-        { waveId },
+      select count(*) as cnt
+      from ${WAVES_DECISIONS_TABLE} wd
+      where wd.wave_id = :wave_id
+        ${additionalActionPromiseFilter}`,
+        {
+          ...params,
+          ...this.getAdditionalActionPromiseSqlParams(params)
+        },
         {
           wrappedConnection: ctx.connection
         }
@@ -242,6 +310,7 @@ export class WaveDecisionsDb extends LazyDbAccessCompatibleService {
 
   async findAllDecisionWinners(
     decisionEntities: WaveDecisionEntity[],
+    isAdditionalActionPromised: boolean | null,
     ctx: RequestContext
   ): Promise<WaveDecisionWinnerDropEntity[]> {
     if (!decisionEntities.length) {
@@ -252,14 +321,31 @@ export class WaveDecisionsDb extends LazyDbAccessCompatibleService {
       decisionEntities.map((it) => it.wave_id)
     );
     const decisionTimes = decisionEntities.map((it) => it.decision_time);
+    const additionalActionPromiseParams = {
+      is_additional_action_promised: isAdditionalActionPromised
+    };
+    const additionalActionPromiseJoin =
+      this.getAdditionalActionPromiseWinnerJoinSql(
+        additionalActionPromiseParams
+      );
     const result = await this.db
       .execute<
         Omit<WaveDecisionWinnerDropEntity, 'prizes'> & { prizes: string }
       >(
         `
-      select * from ${WAVES_DECISION_WINNER_DROPS_TABLE} where wave_id in (:waveIds) and decision_time in (:decisionTimes)
+      select wdwd.*
+      from ${WAVES_DECISION_WINNER_DROPS_TABLE} wdwd
+      ${additionalActionPromiseJoin}
+      where wdwd.wave_id in (:waveIds)
+        and wdwd.decision_time in (:decisionTimes)
     `,
-        { waveIds, decisionTimes },
+        {
+          waveIds,
+          decisionTimes,
+          ...this.getAdditionalActionPromiseSqlParams(
+            additionalActionPromiseParams
+          )
+        },
         { wrappedConnection: ctx.connection }
       )
       .then((res) =>

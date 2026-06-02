@@ -29,6 +29,7 @@ describe('WaveQuickVoteApiService', () => {
     reply_to_part_id: null,
     drop_type: DropType.PARTICIPATORY,
     signature: null,
+    is_additional_action_promised: null,
     hide_link_preview: false
   };
 

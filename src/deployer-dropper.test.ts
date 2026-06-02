@@ -41,6 +41,7 @@ describe('DeployerDropper', () => {
         metadata: [],
         author_identity: MEMES_DEPLOYER,
         drop_type: DropType.CHAT,
+        is_additional_action_promised: null,
         mentioned_groups: [],
         signature: null
       },
