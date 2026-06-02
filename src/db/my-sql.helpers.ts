@@ -25,16 +25,12 @@ const BigIntToNumberCaster: TypeCast = function castField(field, next) {
 const TinyIntToBooleanCaster: TypeCast = function castField(field, next) {
   if (field.type === 'TINY') {
     const value = field.string();
-    if (value !== null) {
-      const res = Number(value);
-      return !!res;
-    }
-
-    const bytes = field.buffer();
-    if (!bytes || bytes.length === 0) {
+    if (value === null) {
       return null;
     }
-    return !!bytes.readUInt8(0);
+
+    const res = Number(value);
+    return !!res;
   }
 
   return next();
