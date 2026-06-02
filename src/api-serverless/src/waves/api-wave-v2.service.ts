@@ -17,6 +17,7 @@ import { ApiDropSearchStrategy } from '@/api/generated/models/ApiDropSearchStrat
 import { ApiDropTraceItem } from '@/api/generated/models/ApiDropTraceItem';
 import { ApiDropType } from '@/api/generated/models/ApiDropType';
 import { ApiDropV2PageWithoutCount } from '@/api/generated/models/ApiDropV2PageWithoutCount';
+import { ApiSubwavesSort } from '@/api/generated/models/ApiSubwavesSort';
 import { ApiWaveOverviewPage } from '@/api/generated/models/ApiWaveOverviewPage';
 import { ApiWaveDropsFeedV2 } from '@/api/generated/models/ApiWaveDropsFeedV2';
 import { ApiWavesOverviewType } from '@/api/generated/models/ApiWavesOverviewType';
@@ -30,9 +31,13 @@ import {
   apiWaveOverviewMapper,
   ApiWaveOverviewMapper
 } from '@/api/waves/api-wave-overview.mapper';
-import { getWaveReadContextProfileId } from '@/api/waves/wave-access.helpers';
+import {
+  assertWaveAndParentVisibleOrThrow,
+  getWaveReadContextProfileId
+} from '@/api/waves/wave-access.helpers';
 import {
   SearchWavesParams,
+  WaveSubwavesSort,
   wavesApiDb,
   WavesApiDb
 } from '@/api/waves/waves.api.db';
@@ -61,6 +66,13 @@ export interface FindWavesV2Request {
   readonly pinned?: ApiWavesPinFilter | null;
   readonly exclude_followed?: boolean;
   readonly identity?: string;
+}
+
+export interface FindSubwavesRequest {
+  readonly wave_id: string;
+  readonly page: number;
+  readonly page_size: number;
+  readonly sort: ApiSubwavesSort;
 }
 
 export class ApiWaveV2Service {
@@ -98,6 +110,41 @@ export class ApiWaveV2Service {
     }
   }
 
+  public async findSubwaves(
+    request: FindSubwavesRequest,
+    ctx: RequestContext
+  ): Promise<ApiWaveOverviewPage> {
+    const timerKey = `${this.constructor.name}->findSubwaves`;
+    ctx.timer?.start(timerKey);
+    try {
+      const { eligibleGroups } = await this.getReadableWaveContext(ctx);
+      const wave = await this.wavesApiDb.findWaveById(
+        request.wave_id,
+        ctx.connection
+      );
+      await assertWaveAndParentVisibleOrThrow({
+        wave,
+        groupsUserIsEligibleFor: eligibleGroups,
+        message: `Wave ${request.wave_id} not found`,
+        wavesApiDb: this.wavesApiDb,
+        ctx
+      });
+      const waveEntities = await this.wavesApiDb.findSubwaves(
+        {
+          parentWaveId: request.wave_id,
+          eligibleGroups,
+          limit: request.page_size + 1,
+          offset: this.getOffset(request),
+          sort: this.mapSubwavesSort(request.sort)
+        },
+        ctx
+      );
+      return await this.mapWaveEntitiesPage(waveEntities, request, ctx);
+    } finally {
+      ctx.timer?.stop(timerKey);
+    }
+  }
+
   public async findDropsFeed(
     request: FindWaveDropsFeedV2Request,
     ctx: RequestContext
@@ -127,16 +174,20 @@ export class ApiWaveV2Service {
         groupIdsUserIsEligibleForPromise,
         waveAndCurationFilterPromise
       ]);
-      if (!this.canSeeWave(wave, groupIdsUserIsEligibleFor)) {
-        throw new NotFoundException(notFoundMessage);
-      }
+      const visibleWave = await assertWaveAndParentVisibleOrThrow({
+        wave,
+        groupsUserIsEligibleFor: groupIdsUserIsEligibleFor,
+        message: notFoundMessage,
+        wavesApiDb: this.wavesApiDb,
+        ctx
+      });
 
       return request.drop_id
         ? await this.findReplyFeed(
             {
               ...request,
               drop_id: request.drop_id,
-              wave,
+              wave: visibleWave,
               curationFilter,
               groupIdsUserIsEligibleFor
             },
@@ -145,7 +196,7 @@ export class ApiWaveV2Service {
         : await this.findWaveFeed(
             {
               ...request,
-              wave,
+              wave: visibleWave,
               curationFilter
             },
             ctx
@@ -178,16 +229,21 @@ export class ApiWaveV2Service {
         ctx.authenticationContext
       );
       const visibilityGroupId = wave.visibility_group_id;
-      if (visibilityGroupId) {
-        const groupIdsUserIsEligibleFor =
-          await this.userGroupsService.getGroupsUserIsEligibleFor(
-            contextProfileId,
-            ctx.timer
-          );
-        if (!groupIdsUserIsEligibleFor.includes(visibilityGroupId)) {
-          throw new NotFoundException(`Wave ${wave_id} not found`);
-        }
-      }
+      const groupIdsUserIsEligibleFor =
+        await this.userGroupsService.getGroupsUserIsEligibleFor(
+          contextProfileId,
+          ctx.timer
+        );
+      await assertWaveAndParentVisibleOrThrow({
+        wave: {
+          ...wave,
+          visibility_group_id: visibilityGroupId
+        },
+        groupsUserIsEligibleFor: groupIdsUserIsEligibleFor,
+        message: `Wave ${wave_id} not found`,
+        wavesApiDb: this.wavesApiDb,
+        ctx
+      });
       const offset = size * (page - 1);
       const dropEntities = await this.dropsDb.searchDropsContainingPhraseInWave(
         { wave_id, term, limit: size + 1, offset },
@@ -236,7 +292,14 @@ export class ApiWaveV2Service {
           },
           ctx
         );
-      if (!this.canSeeWave(wave, eligibleGroups) || !curationFilter) {
+      await assertWaveAndParentVisibleOrThrow({
+        wave,
+        groupsUserIsEligibleFor: eligibleGroups,
+        message: notFoundMessage,
+        wavesApiDb: this.wavesApiDb,
+        ctx
+      });
+      if (!curationFilter) {
         throw new NotFoundException(notFoundMessage);
       }
       const dropEntities = await this.dropsDb.findDropsByCurationPriorityOrder(
@@ -563,15 +626,15 @@ export class ApiWaveV2Service {
     };
   }
 
-  private canSeeWave(
-    wave: WaveEntity | null,
-    groupIdsUserIsEligibleFor: string[]
-  ): wave is WaveEntity {
-    return (
-      !!wave &&
-      (!wave.visibility_group_id ||
-        groupIdsUserIsEligibleFor.includes(wave.visibility_group_id))
-    );
+  private mapSubwavesSort(sort: ApiSubwavesSort): WaveSubwavesSort {
+    switch (sort) {
+      case ApiSubwavesSort.CreatedAt:
+        return WaveSubwavesSort.CREATED_AT;
+      case ApiSubwavesSort.Name:
+        return WaveSubwavesSort.NAME;
+      default:
+        return assertUnreachable(sort);
+    }
   }
 
   private resolveDropType(dropType: ApiDropType | null): DropType | null {

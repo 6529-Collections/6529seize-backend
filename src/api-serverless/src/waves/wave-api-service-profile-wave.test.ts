@@ -127,6 +127,7 @@ describe('WaveApiService profile wave safeguards', () => {
           }
         )
       ),
+      findSubwaveIdsByParentWaveId: jest.fn().mockResolvedValue([]),
       deleteDropPartsByWaveId: jest.fn().mockResolvedValue(undefined),
       deleteDropMentionsByWaveId: jest.fn().mockResolvedValue(undefined),
       deleteDropMentionedWavesByWaveId: jest.fn().mockResolvedValue(undefined),
@@ -188,5 +189,92 @@ describe('WaveApiService profile wave safeguards', () => {
     expect(
       waveGroupNotificationSubscriptionsDb.deleteByWaveId
     ).toHaveBeenCalledWith('wave-1', connection);
+  });
+
+  it('deletes subwaves before deleting the parent wave', async () => {
+    const connection = {} as any;
+    const dropsDb = {
+      deleteDropGroupMentionsByWaveId: jest.fn().mockResolvedValue(undefined)
+    };
+    const waveGroupNotificationSubscriptionsDb = {
+      deleteByWaveId: jest.fn().mockResolvedValue(undefined)
+    };
+    const wavesApiDb = {
+      executeNativeQueriesInTransaction: jest.fn(
+        async (fn) => await fn(connection)
+      ),
+      findWaveById: jest.fn().mockResolvedValue(
+        aWave(
+          {
+            created_by: 'profile-1'
+          },
+          {
+            id: 'parent-wave',
+            name: 'parent-wave',
+            serial_no: 1
+          }
+        )
+      ),
+      findSubwaveIdsByParentWaveId: jest.fn().mockResolvedValue(['child-wave']),
+      deleteDropPartsByWaveId: jest.fn().mockResolvedValue(undefined),
+      deleteDropMentionsByWaveId: jest.fn().mockResolvedValue(undefined),
+      deleteDropMentionedWavesByWaveId: jest.fn().mockResolvedValue(undefined),
+      deleteDropMediaByWaveId: jest.fn().mockResolvedValue(undefined),
+      deleteDropReferencedNftsByWaveId: jest.fn().mockResolvedValue(undefined),
+      deleteDropMetadataByWaveId: jest.fn().mockResolvedValue(undefined),
+      deleteDropFeedItemsByWaveId: jest.fn().mockResolvedValue(undefined),
+      deleteDropNotificationsByWaveId: jest.fn().mockResolvedValue(undefined),
+      deleteDropSubscriptionsByWaveId: jest.fn().mockResolvedValue(undefined),
+      deleteDropEntitiesByWaveId: jest.fn().mockResolvedValue(undefined),
+      deleteWaveMetrics: jest.fn().mockResolvedValue(undefined),
+      deleteWave: jest.fn().mockResolvedValue(undefined),
+      deleteWaveOutcomes: jest.fn().mockResolvedValue(undefined),
+      deleteWaveOutcomeDistributionItems: jest
+        .fn()
+        .mockResolvedValue(undefined),
+      deleteDropRelations: jest.fn().mockResolvedValue(undefined),
+      deleteBoosts: jest.fn().mockResolvedValue(undefined)
+    };
+    jest.spyOn(profileWavesDb, 'deleteByWaveId').mockResolvedValue(undefined);
+    const service = new WaveApiService(
+      wavesApiDb as any,
+      { getGroupsUserIsEligibleFor: jest.fn().mockResolvedValue([]) } as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      { deleteVoteByWave: jest.fn().mockResolvedValue(undefined) } as any,
+      { deleteReactionsByWave: jest.fn().mockResolvedValue(undefined) } as any,
+      {} as any,
+      {} as any,
+      { recordActiveIdentity: jest.fn().mockResolvedValue(undefined) } as any,
+      {
+        deleteDropCurationsByWaveId: jest.fn().mockResolvedValue(undefined),
+        deleteWaveCurationsByWaveId: jest.fn().mockResolvedValue(undefined)
+      } as any,
+      dropsDb as any,
+      waveGroupNotificationSubscriptionsDb as any
+    );
+
+    await service.deleteWave('parent-wave', {
+      authenticationContext: AuthenticationContext.fromProfileId('profile-1'),
+      timer: undefined
+    } as any);
+
+    expect(wavesApiDb.findSubwaveIdsByParentWaveId).toHaveBeenCalledWith(
+      'parent-wave',
+      expect.objectContaining({ connection })
+    );
+    expect(wavesApiDb.deleteWave).toHaveBeenNthCalledWith(
+      1,
+      'child-wave',
+      expect.objectContaining({ connection })
+    );
+    expect(wavesApiDb.deleteWave).toHaveBeenNthCalledWith(
+      2,
+      'parent-wave',
+      expect.objectContaining({ connection })
+    );
   });
 });

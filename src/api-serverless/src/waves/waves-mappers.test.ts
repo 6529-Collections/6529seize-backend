@@ -214,7 +214,8 @@ describe('WavesMappers', () => {
       existingWaveSettings: {
         max_votes_per_identity_to_drop: 7,
         chat_links_disabled: true,
-        voting_credit_scope: WaveCreditScope.DROP
+        voting_credit_scope: WaveCreditScope.DROP,
+        parent_wave_id: null
       }
     });
 

@@ -11,7 +11,7 @@ import { describeWithSeed } from '@/tests/_setup/seed';
 import { anIdentity, withIdentities } from '@/tests/fixtures/identity.fixture';
 import { aWave, withWaves } from '@/tests/fixtures/wave.fixture';
 import { Time } from '@/time';
-import { WavesApiDb } from './waves.api.db';
+import { WavesApiDb, WaveSubwavesSort } from './waves.api.db';
 
 const repo = new WavesApiDb(() => sqlExecutor);
 const ctx: RequestContext = { timer: undefined };
@@ -41,6 +41,45 @@ const privateWave = aWave(
     admin_group_id: 'admin-group'
   },
   { id: 'wave-private', serial_no: 2, name: 'Private Wave' }
+);
+
+const parentWave = aWave(
+  {
+    created_by: author.profile_id!
+  },
+  { id: 'wave-parent', serial_no: 10, name: 'Parent Wave' }
+);
+
+const alphaSubwave = aWave(
+  {
+    created_by: author.profile_id!,
+    parent_wave_id: parentWave.id
+  },
+  { id: 'wave-sub-alpha', serial_no: 11, name: 'Alpha Subwave' }
+);
+
+const betaSubwave = aWave(
+  {
+    created_by: author.profile_id!,
+    parent_wave_id: parentWave.id
+  },
+  { id: 'wave-sub-beta', serial_no: 12, name: 'Beta Subwave' }
+);
+
+const hiddenParentWave = aWave(
+  {
+    created_by: author.profile_id!,
+    visibility_group_id: 'hidden-parent-group'
+  },
+  { id: 'wave-hidden-parent', serial_no: 13, name: 'Hidden Parent Wave' }
+);
+
+const publicSubwaveOfHiddenParent = aWave(
+  {
+    created_by: author.profile_id!,
+    parent_wave_id: hiddenParentWave.id
+  },
+  { id: 'wave-hidden-parent-child', serial_no: 14, name: 'Visible Child' }
 );
 
 describeWithSeed(
@@ -131,6 +170,94 @@ describeWithSeed(
       ).resolves.toEqual([
         expect.objectContaining({ id: privateWave.id }),
         expect.objectContaining({ id: publicWave.id })
+      ]);
+    });
+  }
+);
+
+describeWithSeed(
+  'WavesApiDb subwaves',
+  [
+    withIdentities([author]),
+    withWaves([
+      parentWave,
+      alphaSubwave,
+      betaSubwave,
+      hiddenParentWave,
+      publicSubwaveOfHiddenParent
+    ]),
+    {
+      table: WAVE_DROPPER_METRICS_TABLE,
+      rows: [
+        {
+          wave_id: alphaSubwave.id,
+          dropper_id: author.profile_id!,
+          drops_count: 5,
+          participatory_drops_count: 0,
+          latest_drop_timestamp: 2005
+        },
+        {
+          wave_id: betaSubwave.id,
+          dropper_id: author.profile_id!,
+          drops_count: 4,
+          participatory_drops_count: 0,
+          latest_drop_timestamp: 2004
+        }
+      ]
+    }
+  ],
+  () => {
+    it('excludes subwaves from top-level search results', async () => {
+      const waves = await repo.searchWaves(
+        {
+          limit: 10,
+          direct_message: false
+        },
+        ['hidden-parent-group'],
+        ctx
+      );
+
+      expect(waves.map((wave) => wave.id)).toEqual([
+        hiddenParentWave.id,
+        parentWave.id
+      ]);
+    });
+
+    it('lists visible subwaves alphabetically by default', async () => {
+      const subwaves = await repo.findSubwaves(
+        {
+          parentWaveId: parentWave.id,
+          eligibleGroups: [],
+          limit: 10,
+          offset: 0,
+          sort: WaveSubwavesSort.NAME
+        },
+        ctx
+      );
+
+      expect(subwaves.map((wave) => wave.id)).toEqual([
+        alphaSubwave.id,
+        betaSubwave.id
+      ]);
+    });
+
+    it('hides subwaves when the parent is not visible', async () => {
+      await expect(
+        repo.findWavesByIdsEligibleForRead(
+          [publicSubwaveOfHiddenParent.id],
+          [],
+          undefined
+        )
+      ).resolves.toEqual([]);
+
+      await expect(
+        repo.findWavesByIdsEligibleForRead(
+          [publicSubwaveOfHiddenParent.id],
+          ['hidden-parent-group'],
+          undefined
+        )
+      ).resolves.toEqual([
+        expect.objectContaining({ id: publicSubwaveOfHiddenParent.id })
       ]);
     });
   }

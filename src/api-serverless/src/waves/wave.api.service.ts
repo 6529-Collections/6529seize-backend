@@ -97,6 +97,8 @@ import {
   waveGroupNotificationSubscriptionsDb
 } from '@/notifications/wave-group-notification-subscriptions.db';
 import { sendIdentityPushNotifications } from '@/api/push-notifications/push-notifications.service';
+import { isWaveCreatorOrAdmin } from '@/waves/wave-admin.helpers';
+import { assertWaveAndParentVisibleOrThrow } from '@/api/waves/wave-access.helpers';
 
 const CARD_SET_TDH_SUPPORTED_CONTRACTS = new Set(
   [MEMES_CONTRACT, GRADIENT_CONTRACT].map((contract) => contract.toLowerCase())
@@ -350,6 +352,11 @@ export class WaveApiService {
     const authenticationContext = this.getRequiredAuthenticationContext(ctx);
     const actingAsId = this.getRequiredActingAsId(authenticationContext);
     timer.start(`${this.constructor.name}->createWave`);
+    await this.validateSubwaveCreationParent({
+      request: createWaveRequest,
+      actingAsId,
+      ctx
+    });
     await this.validateWaveRelations(createWaveRequest, ctx);
     this.validateOutcomes(createWaveRequest);
     const { createdWave, pendingPushNotificationIds } =
@@ -736,6 +743,47 @@ export class WaveApiService {
       }
     }
     return wave;
+  }
+
+  private async validateSubwaveCreationParent({
+    request,
+    actingAsId,
+    ctx
+  }: {
+    request: ApiCreateNewWave;
+    actingAsId: string;
+    ctx: RequestContext;
+  }) {
+    const parentWaveId = request.parent_wave_id ?? null;
+    if (!parentWaveId) {
+      return;
+    }
+    const parentWave = await this.wavesApiDb.findWaveById(
+      parentWaveId,
+      ctx.connection
+    );
+    if (!parentWave) {
+      throw new NotFoundException(`Parent wave ${parentWaveId} not found`);
+    }
+    if (parentWave.parent_wave_id !== null) {
+      throw new BadRequestException(`Subwaves cannot be parent waves`);
+    }
+    const groupIdsUserIsEligibleFor =
+      await this.userGroupsService.getGroupsUserIsEligibleFor(
+        actingAsId,
+        ctx.timer
+      );
+    if (
+      !isWaveCreatorOrAdmin({
+        authenticatedProfileId: actingAsId,
+        wave: parentWave,
+        groupIdsUserIsEligibleFor
+      })
+    ) {
+      throw new ForbiddenException(
+        `You can't create a subwave for a wave you didn't create and are not an admin of`
+      );
+    }
   }
 
   public async findOrCreateDirectMessageWave(
@@ -1166,14 +1214,13 @@ export class WaveApiService {
     ctx: RequestContext
   ): Promise<ApiWave> {
     const authenticationContext = ctx.authenticationContext;
-    const entity = await this.wavesApiDb.findWaveById(id);
-    if (
-      !entity ||
-      (entity.visibility_group_id !== null &&
-        !groupIdsUserIsEligibleFor.includes(entity.visibility_group_id))
-    ) {
-      throw new NotFoundException(`Wave ${id} not found`);
-    }
+    const entity = await assertWaveAndParentVisibleOrThrow({
+      wave: await this.wavesApiDb.findWaveById(id),
+      groupsUserIsEligibleFor: groupIdsUserIsEligibleFor,
+      message: `Wave ${id} not found`,
+      wavesApiDb: this.wavesApiDb,
+      ctx
+    });
     const noRightToVote =
       !authenticationContext?.isUserFullyAuthenticated() ||
       (authenticationContext?.isAuthenticatedAsProxy() &&
@@ -1599,74 +1646,51 @@ export class WaveApiService {
           );
         }
 
-        await Promise.all([
-          this.wavesApiDb.deleteDropPartsByWaveId(waveId, ctxWithConnection),
-          this.wavesApiDb.deleteDropMentionsByWaveId(waveId, ctxWithConnection),
-          this.wavesApiDb.deleteDropMentionedWavesByWaveId(
-            waveId,
-            ctxWithConnection
-          ),
-          this.dropsDb.deleteDropGroupMentionsByWaveId(
-            waveId,
-            ctxWithConnection
-          ),
-          this.wavesApiDb.deleteDropMediaByWaveId(waveId, ctxWithConnection),
-          this.wavesApiDb.deleteDropReferencedNftsByWaveId(
-            waveId,
-            ctxWithConnection
-          ),
-          this.wavesApiDb.deleteDropMetadataByWaveId(waveId, ctxWithConnection),
-          this.reactionsService.deleteReactionsByWave(
-            waveId,
-            ctxWithConnection
-          ),
-          this.wavesApiDb.deleteDropFeedItemsByWaveId(
-            waveId,
-            ctxWithConnection
-          ),
-          this.wavesApiDb.deleteDropNotificationsByWaveId(
-            waveId,
-            ctxWithConnection
-          ),
-          this.wavesApiDb.deleteDropSubscriptionsByWaveId(
-            waveId,
-            ctxWithConnection
-          ),
-          this.waveGroupNotificationSubscriptionsDb.deleteByWaveId(
-            waveId,
-            connection
-          ),
-          profileWavesDb.deleteByWaveId(waveId, ctxWithConnection),
-          this.curationsDb.deleteDropCurationsByWaveId(
-            waveId,
-            ctxWithConnection
-          ),
-          this.dropVotingService.deleteVoteByWave(waveId, ctxWithConnection),
-          this.reactionsService.deleteReactionsByWave(
-            waveId,
-            ctxWithConnection
-          ),
-          this.wavesApiDb.deleteDropEntitiesByWaveId(waveId, ctxWithConnection),
-          this.wavesApiDb.deleteWaveMetrics(waveId, ctxWithConnection),
-          this.wavesApiDb.deleteWave(waveId, ctxWithConnection),
-          this.curationsDb.deleteWaveCurationsByWaveId(
-            waveId,
-            ctxWithConnection
-          ),
-          this.wavesApiDb.deleteWaveOutcomes(waveId, ctxWithConnection),
-          this.wavesApiDb.deleteWaveOutcomeDistributionItems(
-            waveId,
-            ctxWithConnection
-          ),
-          this.wavesApiDb.deleteDropRelations(waveId, ctxWithConnection),
-          this.wavesApiDb.deleteBoosts(waveId, ctxWithConnection),
-          this.metricsRecorder.recordActiveIdentity(
-            { identityId: authenticatedUserId },
-            ctxWithConnection
-          )
-        ]);
+        const subwaveIds = await this.wavesApiDb.findSubwaveIdsByParentWaveId(
+          waveId,
+          ctxWithConnection
+        );
+        for (const subwaveId of subwaveIds) {
+          await this.deleteWaveData(subwaveId, ctxWithConnection);
+        }
+        await this.deleteWaveData(waveId, ctxWithConnection);
+        await this.metricsRecorder.recordActiveIdentity(
+          { identityId: authenticatedUserId },
+          ctxWithConnection
+        );
       }
     );
+  }
+
+  private async deleteWaveData(waveId: string, ctx: RequestContext) {
+    await Promise.all([
+      this.wavesApiDb.deleteDropPartsByWaveId(waveId, ctx),
+      this.wavesApiDb.deleteDropMentionsByWaveId(waveId, ctx),
+      this.wavesApiDb.deleteDropMentionedWavesByWaveId(waveId, ctx),
+      this.dropsDb.deleteDropGroupMentionsByWaveId(waveId, ctx),
+      this.wavesApiDb.deleteDropMediaByWaveId(waveId, ctx),
+      this.wavesApiDb.deleteDropReferencedNftsByWaveId(waveId, ctx),
+      this.wavesApiDb.deleteDropMetadataByWaveId(waveId, ctx),
+      this.reactionsService.deleteReactionsByWave(waveId, ctx),
+      this.wavesApiDb.deleteDropFeedItemsByWaveId(waveId, ctx),
+      this.wavesApiDb.deleteDropNotificationsByWaveId(waveId, ctx),
+      this.wavesApiDb.deleteDropSubscriptionsByWaveId(waveId, ctx),
+      this.waveGroupNotificationSubscriptionsDb.deleteByWaveId(
+        waveId,
+        ctx.connection!
+      ),
+      profileWavesDb.deleteByWaveId(waveId, ctx),
+      this.curationsDb.deleteDropCurationsByWaveId(waveId, ctx),
+      this.dropVotingService.deleteVoteByWave(waveId, ctx),
+      this.wavesApiDb.deleteDropEntitiesByWaveId(waveId, ctx),
+      this.wavesApiDb.deleteWaveMetrics(waveId, ctx),
+      this.wavesApiDb.deleteWave(waveId, ctx),
+      this.curationsDb.deleteWaveCurationsByWaveId(waveId, ctx),
+      this.wavesApiDb.deleteWaveOutcomes(waveId, ctx),
+      this.wavesApiDb.deleteWaveOutcomeDistributionItems(waveId, ctx),
+      this.wavesApiDb.deleteDropRelations(waveId, ctx),
+      this.wavesApiDb.deleteBoosts(waveId, ctx)
+    ]);
   }
 
   async updateWave(

@@ -5,8 +5,8 @@ import { maybeAuthenticatedUser, needsAuthenticatedUser } from '@/api/auth/auth'
 import { Response } from 'express';
 import { handleDownloadDropV2VotersById, handleGetBoostedDropsV2, handleGetCuratedProfileWaveDropsV2, handleGetDropsV2, handleGetDropV2BoostsById, handleGetDropV2ById, handleGetDropV2MetadataById, handleGetDropV2PartById, handleGetDropV2ReactionsById, handleGetDropV2VoteEditLogsById, handleGetDropV2VotersById } from '@/api/drops/drops-v2.handlers';
 import { handleGetNotificationsV2 } from '@/api/notifications/notifications-v2.handlers';
-import { handleGetWaveDecisionsV2, handleGetWaveDropsV2, handleGetWaveLeaderboardV2, handleGetWavesV2, handleListWaveCurationDropsV2, handleSearchDropsInWaveV2 } from '@/api/waves/waves-v2.handlers';
-import { DownloadDropV2VotersByIdRequest, DownloadDropV2VotersByIdResponse, GetBoostedDropsV2Request, GetBoostedDropsV2Response, GetCuratedProfileWaveDropsV2Request, GetCuratedProfileWaveDropsV2Response, GetDropsV2Request, GetDropsV2Response, GetDropV2BoostsByIdRequest, GetDropV2BoostsByIdResponse, GetDropV2ByIdRequest, GetDropV2ByIdResponse, GetDropV2MetadataByIdRequest, GetDropV2MetadataByIdResponse, GetDropV2PartByIdRequest, GetDropV2PartByIdResponse, GetDropV2ReactionsByIdRequest, GetDropV2ReactionsByIdResponse, GetDropV2VoteEditLogsByIdRequest, GetDropV2VoteEditLogsByIdResponse, GetDropV2VotersByIdRequest, GetDropV2VotersByIdResponse, GetNotificationsV2Request, GetNotificationsV2Response, GetWaveDecisionsV2Request, GetWaveDecisionsV2Response, GetWaveDropsV2Request, GetWaveDropsV2Response, GetWaveLeaderboardV2Request, GetWaveLeaderboardV2Response, GetWavesV2Request, GetWavesV2Response, ListWaveCurationDropsV2Request, ListWaveCurationDropsV2Response, SearchDropsInWaveV2Request, SearchDropsInWaveV2Response } from './operations';
+import { handleGetWaveDecisionsV2, handleGetWaveDropsV2, handleGetWaveLeaderboardV2, handleGetWavesV2, handleListWaveCurationDropsV2, handleListWaveSubwaves, handleSearchDropsInWaveV2 } from '@/api/waves/waves-v2.handlers';
+import { DownloadDropV2VotersByIdRequest, DownloadDropV2VotersByIdResponse, GetBoostedDropsV2Request, GetBoostedDropsV2Response, GetCuratedProfileWaveDropsV2Request, GetCuratedProfileWaveDropsV2Response, GetDropsV2Request, GetDropsV2Response, GetDropV2BoostsByIdRequest, GetDropV2BoostsByIdResponse, GetDropV2ByIdRequest, GetDropV2ByIdResponse, GetDropV2MetadataByIdRequest, GetDropV2MetadataByIdResponse, GetDropV2PartByIdRequest, GetDropV2PartByIdResponse, GetDropV2ReactionsByIdRequest, GetDropV2ReactionsByIdResponse, GetDropV2VoteEditLogsByIdRequest, GetDropV2VoteEditLogsByIdResponse, GetDropV2VotersByIdRequest, GetDropV2VotersByIdResponse, GetNotificationsV2Request, GetNotificationsV2Response, GetWaveDecisionsV2Request, GetWaveDecisionsV2Response, GetWaveDropsV2Request, GetWaveDropsV2Response, GetWaveLeaderboardV2Request, GetWaveLeaderboardV2Response, GetWavesV2Request, GetWavesV2Response, ListWaveCurationDropsV2Request, ListWaveCurationDropsV2Response, ListWaveSubwavesRequest, ListWaveSubwavesResponse, SearchDropsInWaveV2Request, SearchDropsInWaveV2Response } from './operations';
 const router = asyncRouter();
 router.get(
   '/v2/boosted-drops',
@@ -203,6 +203,17 @@ router.get(
     res: Response<ApiResponse<SearchDropsInWaveV2Response>>
   ) => {
     res.send(await handleSearchDropsInWaveV2(req));
+  }
+);
+
+router.get(
+  '/waves/:id/subwaves',
+  maybeAuthenticatedUser(),
+  async (
+    req: ListWaveSubwavesRequest,
+    res: Response<ApiResponse<ListWaveSubwavesResponse>>
+  ) => {
+    res.send(await handleListWaveSubwaves(req));
   }
 );
 export default router;

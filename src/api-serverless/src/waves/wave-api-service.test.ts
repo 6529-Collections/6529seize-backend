@@ -964,6 +964,125 @@ describe('WaveApiService validateWaveRelations', () => {
   });
 });
 
+describe('WaveApiService subwave creation authorization', () => {
+  function createService({
+    parentWave,
+    eligibleGroups
+  }: {
+    parentWave: any;
+    eligibleGroups: string[];
+  }) {
+    const wavesApiDb = {
+      findWaveById: jest.fn().mockResolvedValue(parentWave)
+    };
+    const userGroupsService = {
+      getGroupsUserIsEligibleFor: jest.fn().mockResolvedValue(eligibleGroups)
+    };
+    const service = new WaveApiService(
+      wavesApiDb as any,
+      userGroupsService as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any
+    );
+    return { service, wavesApiDb, userGroupsService };
+  }
+
+  const request = {
+    parent_wave_id: 'parent-wave'
+  } as ApiCreateNewWave;
+
+  it('allows parent wave admins to create subwaves', async () => {
+    const parentWave = aWave(
+      {
+        created_by: 'creator-profile',
+        admin_group_id: 'admin-group'
+      },
+      {
+        id: 'parent-wave',
+        name: 'Parent Wave',
+        serial_no: 1
+      }
+    );
+    const { service } = createService({
+      parentWave,
+      eligibleGroups: ['admin-group']
+    });
+
+    await expect(
+      (service as any).validateSubwaveCreationParent({
+        request,
+        actingAsId: 'admin-profile',
+        ctx: { timer: undefined }
+      })
+    ).resolves.toBeUndefined();
+  });
+
+  it('rejects users who are neither parent creator nor parent admin', async () => {
+    const parentWave = aWave(
+      {
+        created_by: 'creator-profile',
+        admin_group_id: 'admin-group'
+      },
+      {
+        id: 'parent-wave',
+        name: 'Parent Wave',
+        serial_no: 1
+      }
+    );
+    const { service } = createService({
+      parentWave,
+      eligibleGroups: []
+    });
+
+    await expect(
+      (service as any).validateSubwaveCreationParent({
+        request,
+        actingAsId: 'other-profile',
+        ctx: { timer: undefined }
+      })
+    ).rejects.toThrow(
+      `You can't create a subwave for a wave you didn't create and are not an admin of`
+    );
+  });
+
+  it('rejects subwaves as parent waves', async () => {
+    const parentWave = aWave(
+      {
+        created_by: 'creator-profile',
+        parent_wave_id: 'grandparent-wave'
+      },
+      {
+        id: 'parent-wave',
+        name: 'Parent Wave',
+        serial_no: 1
+      }
+    );
+    const { service } = createService({
+      parentWave,
+      eligibleGroups: []
+    });
+
+    await expect(
+      (service as any).validateSubwaveCreationParent({
+        request,
+        actingAsId: 'creator-profile',
+        ctx: { timer: undefined }
+      })
+    ).rejects.toThrow(`Subwaves cannot be parent waves`);
+  });
+});
+
 describe('WaveApiService wave pause authorization', () => {
   it('allows admin group members to create wave pauses when they are not the wave creator', async () => {
     const replicaCatchupDelay = process.env.REPLICA_CATCHUP_DELAY_AFTER_WRITE;

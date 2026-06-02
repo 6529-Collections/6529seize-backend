@@ -7,6 +7,7 @@ import { ApiDropV2PageWithoutCount } from '@/api/generated/models/ApiDropV2PageW
 import { ApiWaveDecisionsPageV2 } from '@/api/generated/models/ApiWaveDecisionsPageV2';
 import { ApiWaveDropsFeedV2 } from '@/api/generated/models/ApiWaveDropsFeedV2';
 import { ApiWaveOverviewPage } from '@/api/generated/models/ApiWaveOverviewPage';
+import { ApiSubwavesSort } from '@/api/generated/models/ApiSubwavesSort';
 import { ApiWavesOverviewType } from '@/api/generated/models/ApiWavesOverviewType';
 import { ApiWavesPinFilter } from '@/api/generated/models/ApiWavesPinFilter';
 import { ApiWavesV2ListType } from '@/api/generated/models/ApiWavesV2ListType';
@@ -15,6 +16,7 @@ import {
   GetWaveDropsV2Request,
   GetWaveLeaderboardV2Request,
   GetWavesV2Request,
+  ListWaveSubwavesRequest,
   ListWaveCurationDropsV2Request,
   SearchDropsInWaveV2Request
 } from '@/api/generated/routes/operations';
@@ -96,6 +98,31 @@ type GetWaveLeaderboardV2PathParams = {
 const GetWaveLeaderboardV2PathParamsSchema: Joi.ObjectSchema<GetWaveLeaderboardV2PathParams> =
   Joi.object({
     id: Joi.string().required()
+  });
+
+type ListWaveSubwavesPathParams = {
+  id: string;
+};
+
+type ListWaveSubwavesQuery = {
+  page: number;
+  page_size: number;
+  sort: ApiSubwavesSort;
+};
+
+const ListWaveSubwavesPathParamsSchema: Joi.ObjectSchema<ListWaveSubwavesPathParams> =
+  Joi.object({
+    id: Joi.string().required()
+  });
+
+const ListWaveSubwavesQuerySchema: Joi.ObjectSchema<ListWaveSubwavesQuery> =
+  Joi.object<ListWaveSubwavesQuery>({
+    page: Joi.number().integer().min(1).optional().default(1),
+    page_size: Joi.number().integer().min(1).max(100).optional().default(50),
+    sort: Joi.string()
+      .valid(...Object.values(ApiSubwavesSort))
+      .optional()
+      .default(ApiSubwavesSort.Name)
   });
 
 const GetWaveLeaderboardV2QuerySchema: Joi.ObjectSchema<
@@ -247,6 +274,30 @@ export async function handleGetWaveLeaderboardV2(
     authenticationContext,
     timer
   });
+}
+
+export async function handleListWaveSubwaves(
+  req: ListWaveSubwavesRequest
+): Promise<ApiWaveOverviewPage> {
+  const { id } = getValidatedByJoiOrThrow(
+    req.params,
+    ListWaveSubwavesPathParamsSchema
+  );
+  const { page, page_size, sort } = getValidatedByJoiOrThrow(
+    req.query,
+    ListWaveSubwavesQuerySchema
+  );
+  const timer = Timer.getFromRequest(req);
+  const authenticationContext = await getAuthenticationContext(req, timer);
+  return apiWaveV2Service.findSubwaves(
+    {
+      wave_id: id,
+      page,
+      page_size,
+      sort
+    },
+    { authenticationContext, timer }
+  );
 }
 
 export async function handleSearchDropsInWaveV2(
