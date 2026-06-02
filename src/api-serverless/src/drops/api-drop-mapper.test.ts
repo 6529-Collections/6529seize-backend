@@ -440,6 +440,59 @@ describe('ApiDropMapper', () => {
     );
   });
 
+  it('omits additional action promise from submission context when null', async () => {
+    const { mapper, deps } = createMapper();
+    const drop = makeDrop({
+      id: 'drop-null',
+      drop_type: DropType.PARTICIPATORY,
+      is_additional_action_promised: null
+    });
+    deps.dropsDb.getDropPartOnes.mockResolvedValue({
+      'drop-null': {
+        drop_id: 'drop-null',
+        drop_part_id: 1,
+        content: 'submission text',
+        quoted_drop_id: null,
+        quoted_drop_part_id: null,
+        wave_id: 'wave-1'
+      }
+    });
+    deps.dropVotingDb.getDropV2SubmissionVotingSummaries.mockResolvedValue({
+      'drop-null': {
+        drop_id: 'drop-null',
+        status: DropType.PARTICIPATORY,
+        is_open: false,
+        total_votes_given: 0,
+        current_calculated_vote: 0,
+        predicted_final_vote: 0,
+        voters_count: 0,
+        place: 1,
+        over_threshold_since_ms: null,
+        forbid_negative_votes: false
+      }
+    });
+
+    const result = await mapper.mapDrops([drop], {
+      authenticationContext: AuthenticationContext.notAuthenticated()
+    });
+
+    expect(result['drop-null'].submission_context).toMatchObject({
+      status: ApiSubmissionDropStatus.Active,
+      has_metadata: false,
+      voting: {
+        is_open: false,
+        total_votes_given: 0,
+        current_calculated_vote: 0,
+        predicted_final_vote: 0,
+        voters_count: 0,
+        place: 1
+      }
+    });
+    expect(result['drop-null'].submission_context).not.toHaveProperty(
+      'is_additional_action_promised'
+    );
+  });
+
   it('maps priority metadata whenever additional media metadata exists', async () => {
     const { mapper, deps } = createMapper();
     const drop = makeDrop({

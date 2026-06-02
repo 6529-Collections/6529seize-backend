@@ -89,6 +89,26 @@ export interface DropReplyPreview {
 }
 
 export class DropsDb extends LazyDbAccessCompatibleService {
+  private getDropEntitySelectFields(alias: string): string {
+    return [
+      'serial_no',
+      'id',
+      'wave_id',
+      'author_id',
+      'created_at',
+      'updated_at',
+      'title',
+      'parts_count',
+      'reply_to_drop_id',
+      'reply_to_part_id',
+      'drop_type',
+      'signature',
+      'hide_link_preview'
+    ]
+      .map((column) => `${alias}.${column} as ${column}`)
+      .join(', ');
+  }
+
   async getDropsByIds(
     ids: string[],
     connection?: ConnectionWrapper<any>
@@ -865,14 +885,16 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     const timerLabel = `${this.constructor.name}->findLightDropsByIds`;
     ctx.timer?.start(timerLabel);
     try {
+      const dropFields = this.getDropEntitySelectFields('d');
       return await this.db.execute<DropWithMediaAndPart>(
-        `select d.*, 
+        `select ${dropFields},
     dp.drop_part_id as part_drop_part_id,
     dp.content as part_content,
     dp.quoted_drop_id as part_quoted_drop_id,
     dm.medias_json as medias_json,
     w.name as wave_name,
-    COALESCE(i.handle, '') as author
+    COALESCE(i.handle, '') as author,
+    d.is_additional_action_promised as is_additional_action_promised
     from ${DROPS_TABLE} d
          left join ${DROPS_PARTS_TABLE} dp on dp.drop_id = d.id and dp.drop_part_id = 1
          LEFT JOIN (
@@ -1074,9 +1096,12 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       ctx.timer?.start(
         `${this.constructor.name}->findDropsByCurationPriorityOrder`
       );
+      const dropFields = this.getDropEntitySelectFields('d');
       return await this.db.execute<CurationDropEntity>(
         `
-        select d.*, dc.priority_order as drop_priority_order
+        select ${dropFields},
+          dc.priority_order as drop_priority_order,
+          d.is_additional_action_promised as is_additional_action_promised
         from ${DROP_CURATIONS_TABLE} dc
         join ${DROPS_TABLE} d on d.id = dc.drop_id
         where dc.wave_id = :wave_id

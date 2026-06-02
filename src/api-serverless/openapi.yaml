@@ -12993,7 +12993,6 @@ components:
         - status
         - voting
         - has_metadata
-        - is_additional_action_promised
       properties:
         status:
           $ref: "#/components/schemas/ApiSubmissionDropStatus"
@@ -13003,7 +13002,6 @@ components:
           type: boolean
         is_additional_action_promised:
           type: boolean
-          nullable: true
         over_threshold_since_ms:
           description: >-
             Unix timestamp in milliseconds when this active APPROVE submission

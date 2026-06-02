@@ -545,9 +545,12 @@ export class ApiDropMapper {
           ? ApiSubmissionDropStatus.Winner
           : ApiSubmissionDropStatus.Active,
       voting,
-      has_metadata: hasMetadata,
-      is_additional_action_promised: drop.is_additional_action_promised
+      has_metadata: hasMetadata
     };
+    if (drop.is_additional_action_promised !== null) {
+      submissionContext.is_additional_action_promised =
+        drop.is_additional_action_promised;
+    }
     if (votingSummary.over_threshold_since_ms !== null) {
       submissionContext.over_threshold_since_ms =
         votingSummary.over_threshold_since_ms;
