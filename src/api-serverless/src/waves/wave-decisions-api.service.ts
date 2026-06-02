@@ -26,7 +26,17 @@ import { ApiWaveOutcomeSubType } from '../generated/models/ApiWaveOutcomeSubType
 import { ApiWaveOutcomeCredit } from '../generated/models/ApiWaveOutcomeCredit';
 import { ApiWaveOutcomeDistributionItem } from '../generated/models/ApiWaveOutcomeDistributionItem';
 import { apiDropMapper, ApiDropMapper } from '@/api/drops/api-drop.mapper';
-import { WaveDecisionWinnerPrize } from '@/entities/IWaveDecision';
+import {
+  WaveDecisionEntity,
+  WaveDecisionWinnerDropEntity,
+  WaveDecisionWinnerPrize
+} from '@/entities/IWaveDecision';
+
+interface ConcludedWaveDecisionData {
+  readonly decisionEntities: WaveDecisionEntity[];
+  readonly count: number;
+  readonly decisionWinners: WaveDecisionWinnerDropEntity[];
+}
 
 export class WaveDecisionsApiService {
   constructor(
@@ -42,7 +52,88 @@ export class WaveDecisionsApiService {
     query: WaveDecisionsQuery,
     ctx: RequestContext
   ): Promise<ApiWaveDecisionsPage> {
-    ctx.timer?.start(`${this.constructor.name}->searchConcludedWaveDecisions`);
+    const timerKey = `${this.constructor.name}->searchConcludedWaveDecisions`;
+    ctx.timer?.start(timerKey);
+    try {
+      const { decisionEntities, count, decisionWinners } =
+        await this.getConcludedWaveDecisionData(query, ctx);
+      const winningDropIds = decisionWinners.map((it) => it.drop_id);
+      const drops = await this.dropsApiService.findDropsByIds(
+        winningDropIds,
+        ctx.authenticationContext,
+        ctx.connection
+      );
+      return {
+        page: query.page,
+        next: false,
+        count: count,
+        data: decisionEntities.map<ApiWaveDecision>((decisionEntity) => {
+          const winningEntities = decisionWinners.filter(
+            (winner) => winner.decision_time === decisionEntity.decision_time
+          );
+          return {
+            decision_time: decisionEntity.decision_time,
+            winners: winningEntities.map((winner) => ({
+              drop: drops[winner.drop_id],
+              place: winner.ranking,
+              awards: winner.prizes.map(
+                (it) => it as unknown as ApiWaveDecisionAward
+              )
+            }))
+          };
+        })
+      };
+    } finally {
+      ctx.timer?.stop(timerKey);
+    }
+  }
+
+  public async searchConcludedWaveDecisionsV2(
+    query: WaveDecisionsQuery,
+    ctx: RequestContext
+  ): Promise<ApiWaveDecisionsPageV2> {
+    const timerKey = `${this.constructor.name}->searchConcludedWaveDecisionsV2`;
+    ctx.timer?.start(timerKey);
+    try {
+      const { decisionEntities, count, decisionWinners } =
+        await this.getConcludedWaveDecisionData(query, ctx);
+      const winningDropIds = decisionWinners
+        .map((it) => it.drop_id)
+        .filter((dropId, index, dropIds) => dropIds.indexOf(dropId) === index);
+      const dropEntities = await this.dropsDb.getDropsByIds(
+        winningDropIds,
+        ctx.connection
+      );
+      const drops = await this.apiDropMapper.mapDrops(dropEntities, ctx);
+      return {
+        page: query.page,
+        next: false,
+        count: count,
+        data: decisionEntities.map<ApiWaveDecisionV2>((decisionEntity) => {
+          const winningEntities = decisionWinners.filter(
+            (winner) => winner.decision_time === decisionEntity.decision_time
+          );
+          return {
+            decision_time: decisionEntity.decision_time,
+            winners: winningEntities.map((winner) => ({
+              drop: drops[winner.drop_id],
+              place: winner.ranking,
+              awards: winner.prizes.map((prize) =>
+                this.mapDecisionAwardWithoutNulls(prize)
+              )
+            }))
+          };
+        })
+      };
+    } finally {
+      ctx.timer?.stop(timerKey);
+    }
+  }
+
+  private async getConcludedWaveDecisionData(
+    query: WaveDecisionsQuery,
+    ctx: RequestContext
+  ): Promise<ConcludedWaveDecisionData> {
     const groupsUserIsEligibleFor =
       await this.userGroupsService.getGroupsUserIsEligibleFor(
         ctx.authenticationContext?.getActingAsId() ?? null,
@@ -86,116 +177,11 @@ export class WaveDecisionsApiService {
       query.is_additional_action_promised,
       ctx
     );
-    const winningDropIds = decisionWinners.map((it) => it.drop_id);
-    const drops = await this.dropsApiService.findDropsByIds(
-      winningDropIds,
-      ctx.authenticationContext,
-      ctx.connection
-    );
-    ctx.timer?.stop(`${this.constructor.name}->searchConcludedWaveDecisions`);
     return {
-      page: query.page,
-      next: false,
-      count: count,
-      data: decisionEntities.map<ApiWaveDecision>((decisionEntity) => {
-        const winningEntities = decisionWinners.filter(
-          (winner) => winner.decision_time === decisionEntity.decision_time
-        );
-        return {
-          decision_time: decisionEntity.decision_time,
-          winners: winningEntities.map((winner) => ({
-            drop: drops[winner.drop_id],
-            place: winner.ranking,
-            awards: winner.prizes.map(
-              (it) => it as unknown as ApiWaveDecisionAward
-            )
-          }))
-        };
-      })
+      decisionEntities,
+      count,
+      decisionWinners
     };
-  }
-
-  public async searchConcludedWaveDecisionsV2(
-    query: WaveDecisionsQuery,
-    ctx: RequestContext
-  ): Promise<ApiWaveDecisionsPageV2> {
-    const timerKey = `${this.constructor.name}->searchConcludedWaveDecisionsV2`;
-    ctx.timer?.start(timerKey);
-    try {
-      const groupsUserIsEligibleFor =
-        await this.userGroupsService.getGroupsUserIsEligibleFor(
-          ctx.authenticationContext?.getActingAsId() ?? null,
-          ctx.timer
-        );
-      const waveEntity = await this.wavesApiDb.findWaveById(
-        query.wave_id,
-        ctx.connection
-      );
-      if (!waveEntity) {
-        throw new NotFoundException(`Wave not found`);
-      }
-      if (
-        waveEntity.visibility_group_id !== null &&
-        !groupsUserIsEligibleFor.includes(waveEntity.visibility_group_id)
-      ) {
-        throw new NotFoundException(`Wave not found`);
-      }
-      const [decisionEntities, count] = await Promise.all([
-        this.waveDecisionsDb.searchForDecisions(
-          {
-            wave_id: query.wave_id,
-            limit: query.page_size,
-            offset: query.page_size * (query.page - 1),
-            sort_direction: query.sort_direction,
-            sort: query.sort,
-            is_additional_action_promised: query.is_additional_action_promised
-          },
-          ctx
-        ),
-        this.waveDecisionsDb.countDecisions(
-          {
-            wave_id: query.wave_id,
-            is_additional_action_promised: query.is_additional_action_promised
-          },
-          ctx
-        )
-      ]);
-      const decisionWinners = await this.waveDecisionsDb.findAllDecisionWinners(
-        decisionEntities,
-        query.is_additional_action_promised,
-        ctx
-      );
-      const winningDropIds = decisionWinners
-        .map((it) => it.drop_id)
-        .filter((dropId, index, dropIds) => dropIds.indexOf(dropId) === index);
-      const dropEntities = await this.dropsDb.getDropsByIds(
-        winningDropIds,
-        ctx.connection
-      );
-      const drops = await this.apiDropMapper.mapDrops(dropEntities, ctx);
-      return {
-        page: query.page,
-        next: false,
-        count: count,
-        data: decisionEntities.map<ApiWaveDecisionV2>((decisionEntity) => {
-          const winningEntities = decisionWinners.filter(
-            (winner) => winner.decision_time === decisionEntity.decision_time
-          );
-          return {
-            decision_time: decisionEntity.decision_time,
-            winners: winningEntities.map((winner) => ({
-              drop: drops[winner.drop_id],
-              place: winner.ranking,
-              awards: winner.prizes.map((prize) =>
-                this.mapDecisionAwardWithoutNulls(prize)
-              )
-            }))
-          };
-        })
-      };
-    } finally {
-      ctx.timer?.stop(timerKey);
-    }
   }
 
   private mapDecisionAwardWithoutNulls(

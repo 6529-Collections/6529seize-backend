@@ -532,7 +532,7 @@ router.get(
       { id: string },
       any,
       any,
-      Omit<LeaderboardParams, 'wave_id' | 'is_additional_action_promised'>,
+      Omit<LeaderboardParams, 'wave_id'>,
       any
     >,
     res: Response<ApiResponse<ApiDropsLeaderboardPage>>
@@ -544,13 +544,15 @@ router.get(
       wave_id: id,
       ...getValidatedByJoiOrThrow(
         req.query,
-        Joi.object<
-          Omit<LeaderboardParams, 'wave_id' | 'is_additional_action_promised'>
-        >({
+        Joi.object<Omit<LeaderboardParams, 'wave_id'>>({
           page_size: Joi.number().integer().min(1).max(100).default(50),
           page: Joi.number().integer().min(1).default(1),
           curation_id: Joi.string().optional().default(null),
           unvoted_by_me: Joi.boolean().optional().default(false),
+          is_additional_action_promised: Joi.boolean()
+            .optional()
+            .allow(null)
+            .default(null),
           price_currency: Joi.string()
             .trim()
             .empty('')
@@ -565,8 +567,7 @@ router.get(
             .valid(...Object.values(LeaderboardSort))
             .default(LeaderboardSort.RANK)
         })
-      ),
-      is_additional_action_promised: null
+      )
     };
     const result = await dropsService.findLeaderboard(
       {
@@ -852,7 +853,7 @@ router.get(
       { id: string },
       any,
       any,
-      Omit<WaveDecisionsQuery, 'wave_id' | 'is_additional_action_promised'>,
+      Omit<WaveDecisionsQuery, 'wave_id'>,
       any
     >,
     res: Response<ApiResponse<ApiWaveDecisionsPage>>
@@ -865,11 +866,13 @@ router.get(
       wave_id: id,
       ...getValidatedByJoiOrThrow(
         req.query,
-        Joi.object<
-          Omit<WaveDecisionsQuery, 'wave_id' | 'is_additional_action_promised'>
-        >({
+        Joi.object<Omit<WaveDecisionsQuery, 'wave_id'>>({
           page_size: Joi.number().integer().min(1).max(2000).default(100),
           page: Joi.number().integer().min(1).default(1),
+          is_additional_action_promised: Joi.boolean()
+            .optional()
+            .allow(null)
+            .default(null),
           sort_direction: Joi.string()
             .valid(...Object.values(PageSortDirection))
             .default(PageSortDirection.DESC),
@@ -877,8 +880,7 @@ router.get(
             .valid(...Object.values(WaveDecisionsQuerySort))
             .default(WaveDecisionsQuerySort.decision_time)
         })
-      ),
-      is_additional_action_promised: null
+      )
     };
     const result = await waveDecisionsApiService.searchConcludedWaveDecisions(
       params,
