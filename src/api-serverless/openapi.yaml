@@ -12287,6 +12287,18 @@ components:
         primary_address:
           type: string
           nullable: true
+        profile_enabled_at:
+          type: integer
+          format: int64
+          nullable: true
+        classification:
+          $ref: "#/components/schemas/ApiProfileClassification"
+        sub_classification:
+          type: string
+          nullable: true
+        followers_count:
+          type: integer
+          format: int64
         rep:
           type: integer
           format: int64
