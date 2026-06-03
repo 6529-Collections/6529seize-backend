@@ -11,6 +11,15 @@ import { BadRequestException } from '../exceptions';
 import { collections } from '../collections';
 import { numbers } from '../numbers';
 
+type DropVoteState =
+  | DropRealVoteInTimeWithoutId
+  | DropRealVoterVoteInTimeEntityWithoutId;
+
+interface WeightedThresholdIntervalAnalysis {
+  crossedThresholdAtMs: number | null;
+  wasBelowThreshold: boolean;
+}
+
 export class WaveLeaderboardCalculationService {
   private readonly logger = Logger.get(WaveLeaderboardCalculationService.name);
 
@@ -32,6 +41,12 @@ export class WaveLeaderboardCalculationService {
             {
               dropId: it.drop_id,
               waveId: it.wave_id,
+              winningMinThreshold: numbers.parseIntOrNull(
+                it.winning_min_threshold
+              ),
+              winningThresholdMinDurationMs:
+                numbers.parseIntOrNull(it.winning_threshold_min_duration_ms) ??
+                0,
               startTime: now.minusMillis(it.time_lock_ms),
               endTime: now,
               nextDecisionTime: it.next_decision_time
@@ -65,12 +80,16 @@ export class WaveLeaderboardCalculationService {
     {
       dropId,
       waveId,
+      winningMinThreshold,
+      winningThresholdMinDurationMs,
       startTime,
       endTime,
       nextDecisionTime
     }: {
       dropId: string;
       waveId: string;
+      winningMinThreshold: number | null;
+      winningThresholdMinDurationMs: number | null;
       startTime: Time;
       endTime: Time;
       nextDecisionTime: Time | null;
@@ -80,10 +99,31 @@ export class WaveLeaderboardCalculationService {
     await this.dropVotingDb.executeNativeQueriesInTransaction(
       async (connection) => {
         const ctxWithConnection = { ...ctx, connection };
+        const shouldTrackOverThreshold =
+          winningMinThreshold !== null &&
+          (winningThresholdMinDurationMs ?? 0) > 0;
+        const liveLeaderboardState = shouldTrackOverThreshold
+          ? await this.dropVotingDb.getWaveLeaderboardEntryThresholdStateForUpdate(
+              { dropId, waveId },
+              ctxWithConnection
+            )
+          : null;
+        const previousLeaderboardTimestamp = numbers.parseIntOrNull(
+          liveLeaderboardState?.leaderboard_timestamp
+        );
+        const previousOverThresholdSinceMs = numbers.parseIntOrNull(
+          liveLeaderboardState?.over_threshold_since_ms
+        );
+        const voteHistoryStartTime = this.getVoteHistoryStartTime({
+          previousLeaderboardTimestamp,
+          startTime,
+          endTime,
+          shouldTrackOverThreshold
+        });
         const voteStates = await this.dropVotingDb.getDropVoteStatesInTimespan(
           {
             dropId,
-            fromTime: startTime.toMillis(),
+            fromTime: voteHistoryStartTime.toMillis(),
             toTime: endTime.toMillis()
           },
           ctxWithConnection
@@ -100,13 +140,24 @@ export class WaveLeaderboardCalculationService {
               startTime: nextDecisionTime.minus(endTime.minus(startTime))
             })
           : finalVote;
+        const overThresholdSinceMs = this.calculateOverThresholdSinceMs({
+          winningMinThreshold,
+          winningThresholdMinDurationMs,
+          previousOverThresholdSinceMs,
+          previousLeaderboardTimestamp,
+          finalVote,
+          voteStates,
+          startTime,
+          endTime
+        });
         await this.dropVotingDb.upsertWaveLeaderboardEntry(
           {
             drop_id: dropId,
             wave_id: waveId,
             vote: finalVote,
             timestamp: endTime.toMillis(),
-            vote_on_decision_time: finalVoteInDecisionTime
+            vote_on_decision_time: finalVoteInDecisionTime,
+            over_threshold_since_ms: overThresholdSinceMs
           },
           ctxWithConnection
         );
@@ -114,15 +165,217 @@ export class WaveLeaderboardCalculationService {
     );
   }
 
+  private getVoteHistoryStartTime({
+    previousLeaderboardTimestamp,
+    startTime,
+    endTime,
+    shouldTrackOverThreshold
+  }: {
+    previousLeaderboardTimestamp: number | null;
+    startTime: Time;
+    endTime: Time;
+    shouldTrackOverThreshold: boolean;
+  }): Time {
+    const timeLockDuration = endTime.minus(startTime);
+    if (!shouldTrackOverThreshold) {
+      return startTime;
+    }
+    const thresholdEvaluationStartTime =
+      previousLeaderboardTimestamp === null
+        ? startTime
+        : Time.millis(previousLeaderboardTimestamp);
+    return thresholdEvaluationStartTime.minus(timeLockDuration);
+  }
+
+  private calculateOverThresholdSinceMs({
+    winningMinThreshold,
+    winningThresholdMinDurationMs,
+    previousOverThresholdSinceMs,
+    previousLeaderboardTimestamp,
+    finalVote,
+    voteStates,
+    startTime,
+    endTime
+  }: {
+    winningMinThreshold: number | null;
+    winningThresholdMinDurationMs: number | null;
+    previousOverThresholdSinceMs: number | null;
+    previousLeaderboardTimestamp: number | null;
+    finalVote: number;
+    voteStates: DropVoteState[];
+    startTime: Time;
+    endTime: Time;
+  }): number | null {
+    if (
+      winningMinThreshold === null ||
+      (winningThresholdMinDurationMs ?? 0) <= 0
+    ) {
+      return null;
+    }
+    if (finalVote < winningMinThreshold) {
+      return null;
+    }
+    const thresholdEvaluationStartTime =
+      previousLeaderboardTimestamp === null
+        ? startTime
+        : Time.millis(previousLeaderboardTimestamp);
+    const thresholdIntervalAnalysis = this.analyzeWeightedThresholdInterval({
+      voteStates,
+      startTime: thresholdEvaluationStartTime,
+      endTime,
+      timeLockDuration: endTime.minus(startTime),
+      winningMinThreshold
+    });
+    if (
+      previousOverThresholdSinceMs !== null &&
+      previousLeaderboardTimestamp !== null &&
+      !thresholdIntervalAnalysis.wasBelowThreshold
+    ) {
+      return previousOverThresholdSinceMs;
+    }
+    return (
+      thresholdIntervalAnalysis.crossedThresholdAtMs ??
+      thresholdEvaluationStartTime.toMillis()
+    );
+  }
+
+  private analyzeWeightedThresholdInterval({
+    voteStates,
+    startTime,
+    endTime,
+    timeLockDuration,
+    winningMinThreshold
+  }: {
+    voteStates: DropVoteState[];
+    startTime: Time;
+    endTime: Time;
+    timeLockDuration: Time;
+    winningMinThreshold: number;
+  }): WeightedThresholdIntervalAnalysis {
+    const checkpoints = this.getWeightedVoteCheckpoints({
+      voteStates,
+      startTime,
+      endTime,
+      timeLockDuration
+    });
+    let previousCheckpoint = checkpoints[0];
+    let previousScore = this.calculateWeightedVoteForDrop({
+      voteStates,
+      startTime: previousCheckpoint.minus(timeLockDuration),
+      endTime: previousCheckpoint
+    });
+    let wasBelowThreshold = previousScore < winningMinThreshold;
+    let crossedThresholdAtMs: number | null = null;
+
+    for (let i = 1; i < checkpoints.length; i++) {
+      const checkpoint = checkpoints[i];
+      const score = this.calculateWeightedVoteForDrop({
+        voteStates,
+        startTime: checkpoint.minus(timeLockDuration),
+        endTime: checkpoint
+      });
+      if (previousScore < winningMinThreshold && score >= winningMinThreshold) {
+        crossedThresholdAtMs = this.interpolateThresholdCrossingMs({
+          previousCheckpoint,
+          previousScore,
+          checkpoint,
+          score,
+          winningMinThreshold
+        });
+      }
+      if (score < winningMinThreshold) {
+        wasBelowThreshold = true;
+        crossedThresholdAtMs = null;
+      }
+      previousCheckpoint = checkpoint;
+      previousScore = score;
+    }
+
+    return {
+      crossedThresholdAtMs,
+      wasBelowThreshold
+    };
+  }
+
+  private interpolateThresholdCrossingMs({
+    previousCheckpoint,
+    previousScore,
+    checkpoint,
+    score,
+    winningMinThreshold
+  }: {
+    previousCheckpoint: Time;
+    previousScore: number;
+    checkpoint: Time;
+    score: number;
+    winningMinThreshold: number;
+  }): number {
+    const previousMillis = previousCheckpoint.toMillis();
+    const checkpointMillis = checkpoint.toMillis();
+    if (checkpointMillis <= previousMillis || score <= previousScore) {
+      return checkpointMillis;
+    }
+    const crossedAfter =
+      ((winningMinThreshold - previousScore) / (score - previousScore)) *
+      (checkpointMillis - previousMillis);
+    const crossingMillis = previousMillis + Math.ceil(crossedAfter);
+    return Math.min(checkpointMillis, Math.max(previousMillis, crossingMillis));
+  }
+
+  private getWeightedVoteCheckpoints({
+    voteStates,
+    startTime,
+    endTime,
+    timeLockDuration
+  }: {
+    voteStates: DropVoteState[];
+    startTime: Time;
+    endTime: Time;
+    timeLockDuration: Time;
+  }): Time[] {
+    const startMillis = startTime.toMillis();
+    const endMillis = endTime.toMillis();
+    const timeLockMillis = timeLockDuration.toMillis();
+    if (startMillis >= endMillis) {
+      return [endTime];
+    }
+    const checkpointMillis = new Set<number>([startMillis, endMillis]);
+    for (const voteState of voteStates) {
+      if (
+        voteState.timestamp > startMillis &&
+        voteState.timestamp < endMillis
+      ) {
+        checkpointMillis.add(voteState.timestamp);
+      }
+      const expiryTimestamp = voteState.timestamp + timeLockMillis;
+      if (expiryTimestamp > startMillis && expiryTimestamp < endMillis) {
+        checkpointMillis.add(expiryTimestamp);
+      }
+    }
+    return Array.from(checkpointMillis)
+      .sort((a, d) => a - d)
+      .map((timestamp) => Time.millis(timestamp));
+  }
   public calculateFinalVoteForDrop({
     voteStates,
     endTime,
     startTime
   }: {
-    voteStates: (
-      | DropRealVoteInTimeWithoutId
-      | DropRealVoterVoteInTimeEntityWithoutId
-    )[];
+    voteStates: DropVoteState[];
+    endTime: Time;
+    startTime: Time;
+  }) {
+    return Math.floor(
+      this.calculateWeightedVoteForDrop({ voteStates, endTime, startTime })
+    );
+  }
+
+  private calculateWeightedVoteForDrop({
+    voteStates,
+    endTime,
+    startTime
+  }: {
+    voteStates: DropVoteState[];
     endTime: Time;
     startTime: Time;
   }) {
@@ -141,15 +394,9 @@ export class WaveLeaderboardCalculationService {
         }
         return acc;
       },
-      null as
-        | DropRealVoteInTimeWithoutId
-        | DropRealVoterVoteInTimeEntityWithoutId
-        | null
+      null as DropVoteState | null
     );
-    const finalVoteStates: (
-      | DropRealVoteInTimeWithoutId
-      | DropRealVoterVoteInTimeEntityWithoutId
-    )[] = [];
+    const finalVoteStates: DropVoteState[] = [];
     if (newestVoteStateBeforeTime) {
       finalVoteStates.push({
         ...newestVoteStateBeforeTime,
@@ -174,7 +421,7 @@ export class WaveLeaderboardCalculationService {
       weightedDropVotes.push(weightedVote);
     }
     const nonFlooredResult = numbers.sum(weightedDropVotes);
-    return Math.floor(nonFlooredResult);
+    return nonFlooredResult;
   }
 
   public async calculateWeightedVoteForDropAtTime({
@@ -190,8 +437,30 @@ export class WaveLeaderboardCalculationService {
         `Drop ${dropId} is not in a timelocked wave`
       );
     }
+    return await this.calculateWeightedVoteForDropInTime(
+      {
+        dropId,
+        time,
+        timeLockMs: timelock
+      },
+      {}
+    );
+  }
+
+  public async calculateWeightedVoteForDropInTime(
+    {
+      dropId,
+      time,
+      timeLockMs
+    }: {
+      dropId: string;
+      time: Time;
+      timeLockMs: number;
+    },
+    ctx: RequestContext
+  ) {
     const endTime = time;
-    const startTime = endTime.minus(Time.millis(timelock));
+    const startTime = endTime.minusMillis(timeLockMs);
     const voteStates =
       await this.dropVotingDb.getDropsParticipatoryDropsVoteStatesInTimespan(
         {
@@ -199,7 +468,7 @@ export class WaveLeaderboardCalculationService {
           toTime: endTime.toMillis(),
           fromTime: startTime.toMillis()
         },
-        {}
+        ctx
       );
     return this.calculateFinalVoteForDrop({ voteStates, endTime, startTime });
   }

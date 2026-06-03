@@ -104,6 +104,82 @@ describe('buildMergedDropRealVoteHistoryStates', () => {
   });
 });
 
+describe('DropVotingDb leaderboard threshold clears', () => {
+  it('invalidates the snapshot timestamp when clearing one drop threshold state', async () => {
+    const execute = jest.fn().mockResolvedValue(undefined);
+    const db = new DropVotingDb(
+      () =>
+        ({
+          execute
+        }) as any
+    );
+
+    await db.clearWaveLeaderboardEntryOverThresholdSince('drop-id', {});
+
+    expect(execute).toHaveBeenCalledWith(
+      expect.stringContaining('timestamp = 0'),
+      { dropId: 'drop-id' },
+      { wrappedConnection: undefined }
+    );
+  });
+
+  it('invalidates snapshot timestamps when clearing wave threshold state', async () => {
+    const execute = jest.fn().mockResolvedValue(undefined);
+    const db = new DropVotingDb(
+      () =>
+        ({
+          execute
+        }) as any
+    );
+
+    await db.clearWaveLeaderboardEntriesOverThresholdSinceByWaveId(
+      'wave-id',
+      {}
+    );
+
+    expect(execute).toHaveBeenCalledWith(
+      expect.stringContaining('timestamp = 0'),
+      { waveId: 'wave-id' },
+      { wrappedConnection: undefined }
+    );
+  });
+
+  it('locks and reads the live leaderboard threshold state', async () => {
+    const connection = { id: 'connection' };
+    const oneOrNull = jest.fn().mockResolvedValue({
+      leaderboard_timestamp: 1_234,
+      over_threshold_since_ms: 567
+    });
+    const db = new DropVotingDb(
+      () =>
+        ({
+          oneOrNull
+        }) as any
+    );
+
+    const result = await db.getWaveLeaderboardEntryThresholdStateForUpdate(
+      {
+        dropId: 'drop-id',
+        waveId: 'wave-id'
+      },
+      { connection: connection as any }
+    );
+
+    expect(result).toEqual({
+      leaderboard_timestamp: 1_234,
+      over_threshold_since_ms: 567
+    });
+    expect(oneOrNull).toHaveBeenCalledWith(
+      expect.stringContaining('for update'),
+      {
+        dropId: 'drop-id',
+        waveId: 'wave-id'
+      },
+      { wrappedConnection: connection }
+    );
+  });
+});
+
 describe('DropVotingDb.mergeDropVoteState', () => {
   function createDb() {
     const execute = jest.fn().mockResolvedValue([]);
