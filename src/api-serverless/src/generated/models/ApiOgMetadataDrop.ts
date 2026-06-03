@@ -11,16 +11,12 @@
  */
 
 import { ApiDropMainType } from '../models/ApiDropMainType';
-import { ApiOgMetadataProfile } from '../models/ApiOgMetadataProfile';
-import { ApiOgMetadataWave } from '../models/ApiOgMetadataWave';
 import { HttpFile } from '../http/http';
 
 export class ApiOgMetadataDrop {
     'id': string;
     'serial_no': number;
     'drop_type': ApiDropMainType;
-    'author'?: ApiOgMetadataProfile;
-    'wave'?: ApiOgMetadataWave;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -43,18 +39,6 @@ export class ApiOgMetadataDrop {
             "name": "drop_type",
             "baseName": "drop_type",
             "type": "ApiDropMainType",
-            "format": ""
-        },
-        {
-            "name": "author",
-            "baseName": "author",
-            "type": "ApiOgMetadataProfile",
-            "format": ""
-        },
-        {
-            "name": "wave",
-            "baseName": "wave",
-            "type": "ApiOgMetadataWave",
             "format": ""
         }    ];
 

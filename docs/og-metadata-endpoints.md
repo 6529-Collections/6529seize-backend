@@ -55,57 +55,44 @@ Recommended schema name: `ApiOgMetadata`.
   "entity_id": "3f4267fe-83d0-4d1f-934e-46ab57f95efa",
   "title": "Submission title",
   "description": "Submission description or clean text preview.",
-  "image": {
-    "url": "https://cdn.6529.io/drop-image.jpg",
-    "mime_type": "image/jpeg",
-    "width": null,
-    "height": null,
-    "alt": "Submission title"
+  "media": {
+    "image": {
+      "url": "https://cdn.6529.io/drop-image.jpg",
+      "mime_type": "image/jpeg",
+      "width": null,
+      "height": null,
+      "alt": "Submission title"
+    },
+    "video": null,
+    "audio": null
   },
-  "video": null,
-  "audio": null,
+  "author": {
+    "id": "3c469d89-3ef6-46d8-a911-8ab54f3e6f11",
+    "handle": "creator",
+    "primary_address": "0x1234567890abcdef1234567890abcdef12345678",
+    "pfp": "https://cdn.6529.io/profile.jpg",
+    "rep": null,
+    "level": null,
+    "tdh": null,
+    "description": null,
+    "twitter_handle": null
+  },
   "wave": {
     "id": "7aa5653c-75ad-418a-9ddb-53e23e7f8f48",
     "name": "The Memes",
-    "picture": "https://cdn.6529.io/wave.jpg",
-    "creator": {
-      "id": "3c469d89-3ef6-46d8-a911-8ab54f3e6f11",
-      "handle": "6529er",
-      "primary_address": "0x1234567890abcdef1234567890abcdef12345678",
-      "pfp": "https://cdn.6529.io/profile.jpg",
-      "rep": 100,
-      "level": 5,
-      "tdh": 12345.67,
-      "description": "Profile bio.",
-      "twitter_handle": null
-    }
+    "picture": "https://cdn.6529.io/wave.jpg"
   },
   "drop": {
     "id": "3f4267fe-83d0-4d1f-934e-46ab57f95efa",
     "serial_no": 12345,
-    "drop_type": "SUBMISSION",
-    "author": {
-      "id": "3c469d89-3ef6-46d8-a911-8ab54f3e6f11",
-      "handle": "creator",
-      "primary_address": "0x1234567890abcdef1234567890abcdef12345678",
-      "pfp": "https://cdn.6529.io/profile.jpg",
-      "rep": 100,
-      "level": 5,
-      "tdh": 12345.67,
-      "description": "Profile bio.",
-      "twitter_handle": null
-    },
-    "wave": {
-      "id": "7aa5653c-75ad-418a-9ddb-53e23e7f8f48",
-      "name": "The Memes",
-      "picture": "https://cdn.6529.io/wave.jpg"
-    }
+    "drop_type": "SUBMISSION"
   }
 }
 ```
 
-`image`, `video`, and `audio` are selected media inputs. Clients decide whether
-to render them as `og:image`, `twitter:image`, `og:video`, or other tags.
+`media.image`, `media.video`, and `media.audio` are selected media inputs.
+Clients decide whether to render them as `og:image`, `twitter:image`,
+`og:video`, or other tags.
 
 `mime_type` is nullable because drop media has MIME type data, but profile pfp
 and wave picture fields are stored as URLs only.
@@ -121,7 +108,7 @@ Profile responses return:
 - `entity_id`: profile id
 - `title`: profile handle or a fallback display value
 - `description`: profile bio/description or fallback text
-- `image`: profile `pfp` when available
+- `media.image`: profile `pfp` when available
 - `profile`: profile detail object
 
 For the profile endpoint, profile detail includes:
@@ -136,7 +123,7 @@ For the profile endpoint, profile detail includes:
 - `description`
 - `twitter_handle`
 
-For wave creator and drop author objects, the API only needs to return author
+Top-level `author` objects for waves and drops only need to return author
 preview fields:
 
 - `id`
@@ -155,10 +142,11 @@ Wave responses return:
 - `entity_id`: wave id
 - `title`: wave name
 - `description`: wave description drop content, or fallback text
-- `image`: wave picture, first description-drop image, creator pfp, or null
-- `video`: first description-drop video, or null
-- `audio`: first description-drop audio, or null
-- `wave`: wave detail object, including lightweight creator info when available
+- `media.image`: wave picture, first description-drop image, author pfp, or null
+- `media.video`: first description-drop video, or null
+- `media.audio`: first description-drop audio, or null
+- `author`: lightweight wave creator info when available
+- `wave`: wave detail object
 
 ## Drop Metadata
 
@@ -170,9 +158,11 @@ Drop responses return:
   fallback text
 - `description`: priority metadata description, content preview, quoted content
   preview, or fallback text
-- `image`: first drop image, wave picture, author pfp, or null
-- `video`: first drop video, or null
-- `audio`: first drop audio, or null
+- `media.image`: first drop image, wave picture, author pfp, or null
+- `media.video`: first drop video, or null
+- `media.audio`: first drop audio, or null
+- `author`: lightweight drop author info
+- `wave`: wave detail object
 - `drop`: drop detail object
 
 Drop detail includes:
@@ -180,8 +170,6 @@ Drop detail includes:
 - `id`
 - `serial_no`
 - `drop_type`
-- `author`
-- `wave`
 
 `drop_type` uses the existing V2 drop main type: `CHAT` or `SUBMISSION`.
 

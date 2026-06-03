@@ -3,6 +3,8 @@ import { ApiOgMetadataEntityType } from '@/api/generated/models/ApiOgMetadataEnt
 import { OgMetadataService } from '@/api/og-metadata/og-metadata.service';
 import { BadRequestException, NotFoundException } from '@/exceptions';
 
+const IPFS_CID = 'QmYwAPJzv5CZsnAzt8auVTL6rQJ8K8Y1YwecqHHU1Q6iCk';
+
 function makeService() {
   const identityFetcher = {
     getIdentityAndConsolidationsByIdentityKey: jest.fn(),
@@ -42,7 +44,7 @@ describe('OgMetadataService', () => {
         id: 'profile-1',
         handle: 'alice',
         primary_wallet: '0xabc',
-        pfp: 'https://cdn.example/alice.jpg',
+        pfp: `ipfs://${IPFS_CID}/alice.jpg`,
         rep: 100,
         level: 7,
         tdh: 1234.5
@@ -57,20 +59,22 @@ describe('OgMetadataService', () => {
       entity_id: 'profile-1',
       title: '@alice',
       description: 'Alice bio',
-      image: {
-        url: 'https://cdn.example/alice.jpg',
-        mime_type: null,
-        width: null,
-        height: null,
-        alt: '@alice profile picture'
+      media: {
+        image: {
+          url: `https://ipfs.6529.io/ipfs/${IPFS_CID}/alice.jpg`,
+          mime_type: null,
+          width: null,
+          height: null,
+          alt: '@alice profile picture'
+        },
+        video: null,
+        audio: null
       },
-      video: null,
-      audio: null,
       profile: {
         id: 'profile-1',
         handle: 'alice',
         primary_address: '0xabc',
-        pfp: 'https://cdn.example/alice.jpg',
+        pfp: `https://ipfs.6529.io/ipfs/${IPFS_CID}/alice.jpg`,
         rep: 100,
         level: 7,
         tdh: 1234.5,
@@ -107,7 +111,7 @@ describe('OgMetadataService', () => {
           title: null,
           content: 'Drop content',
           media: [
-            { url: 'https://cdn.example/drop.png', mime_type: 'image/png' }
+            { url: `ipfs://${IPFS_CID}/drop.png`, mime_type: 'image/png' }
           ],
           priority_metadata: [{ data_key: 'title', data_value: 'Drop title' }],
           author: { id: 'author-1' },
@@ -115,7 +119,7 @@ describe('OgMetadataService', () => {
           wave: {
             id: 'wave-1',
             name: 'Wave',
-            pfp: 'https://cdn.example/wave.jpg'
+            pfp: `ipfs://${IPFS_CID}/wave.jpg`
           }
         }
       ]
@@ -125,7 +129,7 @@ describe('OgMetadataService', () => {
         id: 'author-1',
         handle: 'artist',
         primary_address: '0xartist',
-        pfp: 'https://cdn.example/artist.jpg'
+        pfp: `ipfs://${IPFS_CID}/artist.jpg`
       }
     });
 
@@ -134,20 +138,27 @@ describe('OgMetadataService', () => {
       entity_id: 'drop-1',
       title: 'Drop title',
       description: 'Drop content',
-      image: {
-        url: 'https://cdn.example/drop.png',
-        mime_type: 'image/png'
+      media: {
+        image: {
+          url: `https://ipfs.6529.io/ipfs/${IPFS_CID}/drop.png`,
+          mime_type: 'image/png'
+        }
+      },
+      author: {
+        id: 'author-1',
+        handle: 'artist',
+        pfp: `https://ipfs.6529.io/ipfs/${IPFS_CID}/artist.jpg`,
+        twitter_handle: null
       },
       drop: {
         id: 'drop-1',
         serial_no: 42,
-        drop_type: ApiDropMainType.Submission,
-        author: {
-          id: 'author-1',
-          handle: 'artist',
-          pfp: 'https://cdn.example/artist.jpg',
-          twitter_handle: null
-        }
+        drop_type: ApiDropMainType.Submission
+      },
+      wave: {
+        id: 'wave-1',
+        name: 'Wave',
+        picture: `https://ipfs.6529.io/ipfs/${IPFS_CID}/wave.jpg`
       }
     });
     expect(dropV2Service.findDrops).toHaveBeenCalledWith(

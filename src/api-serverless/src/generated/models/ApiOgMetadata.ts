@@ -10,9 +10,9 @@
  * Do not edit the class manually.
  */
 
-import { ApiOgMediaAsset } from '../models/ApiOgMediaAsset';
 import { ApiOgMetadataDrop } from '../models/ApiOgMetadataDrop';
 import { ApiOgMetadataEntityType } from '../models/ApiOgMetadataEntityType';
+import { ApiOgMetadataMedia } from '../models/ApiOgMetadataMedia';
 import { ApiOgMetadataProfile } from '../models/ApiOgMetadataProfile';
 import { ApiOgMetadataWave } from '../models/ApiOgMetadataWave';
 import { HttpFile } from '../http/http';
@@ -22,9 +22,8 @@ export class ApiOgMetadata {
     'entity_id': string;
     'title': string;
     'description': string;
-    'image': ApiOgMediaAsset | null;
-    'video': ApiOgMediaAsset | null;
-    'audio': ApiOgMediaAsset | null;
+    'media': ApiOgMetadataMedia;
+    'author'?: ApiOgMetadataProfile;
     'profile'?: ApiOgMetadataProfile;
     'wave'?: ApiOgMetadataWave;
     'drop'?: ApiOgMetadataDrop;
@@ -59,21 +58,15 @@ export class ApiOgMetadata {
             "format": ""
         },
         {
-            "name": "image",
-            "baseName": "image",
-            "type": "ApiOgMediaAsset",
+            "name": "media",
+            "baseName": "media",
+            "type": "ApiOgMetadataMedia",
             "format": ""
         },
         {
-            "name": "video",
-            "baseName": "video",
-            "type": "ApiOgMediaAsset",
-            "format": ""
-        },
-        {
-            "name": "audio",
-            "baseName": "audio",
-            "type": "ApiOgMediaAsset",
+            "name": "author",
+            "baseName": "author",
+            "type": "ApiOgMetadataProfile",
             "format": ""
         },
         {

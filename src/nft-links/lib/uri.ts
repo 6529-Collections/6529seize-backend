@@ -4,6 +4,9 @@
  * Intentionally conservative: we only rewrite well-known schemes.
  */
 
+const IPFS_6529_GATEWAY_DOMAIN = 'ipfs.6529.io';
+const IPFS_6529_GATEWAY_IPFS_PATH = `https://${IPFS_6529_GATEWAY_DOMAIN}/ipfs`;
+
 export function normalizeIpfsUri(uri?: string | null): string | undefined {
   if (!uri) return undefined;
   const s = String(uri).trim();
@@ -13,10 +16,21 @@ export function normalizeIpfsUri(uri?: string | null): string | undefined {
   // - ipfs://CID
   // - ipfs://ipfs/CID
   // - https://ipfs.io/ipfs/CID
-  if (s.startsWith('ipfs://')) {
-    const rest = s.slice('ipfs://'.length);
-    const cid = rest.startsWith('ipfs/') ? rest.slice('ipfs/'.length) : rest;
-    return `https://ipfs.6529.io/ipfs/${cid}`;
+  const lower = s.toLowerCase();
+  if (lower.startsWith('ipfs://')) {
+    return to6529IpfsGatewayUrl(s.slice('ipfs://'.length));
+  }
+
+  const ipfsPathMarker = '/ipfs/';
+  const ipfsPathMarkerIndex = lower.indexOf(ipfsPathMarker);
+  if (ipfsPathMarkerIndex !== -1) {
+    return to6529IpfsGatewayUrl(
+      s.slice(ipfsPathMarkerIndex + ipfsPathMarker.length)
+    );
+  }
+
+  if (looksLikeIpfsCid(s)) {
+    return to6529IpfsGatewayUrl(s);
   }
 
   return s;
@@ -37,4 +51,26 @@ export function normalizeArUri(uri?: string | null): string | undefined {
 export function normalizeMetadataUri(uri?: string | null): string | undefined {
   // Apply in order.
   return normalizeArUri(normalizeIpfsUri(uri));
+}
+
+function to6529IpfsGatewayUrl(path: string): string {
+  const normalizedPath = normalizeIpfsPath(path);
+  return `${IPFS_6529_GATEWAY_IPFS_PATH}/${normalizedPath}`;
+}
+
+function normalizeIpfsPath(path: string): string {
+  let normalized = path.trim();
+  while (normalized.startsWith('/')) {
+    normalized = normalized.slice(1);
+  }
+  if (normalized.toLowerCase().startsWith('ipfs/')) {
+    normalized = normalized.slice('ipfs/'.length);
+  }
+  return normalized;
+}
+
+function looksLikeIpfsCid(value: string): boolean {
+  return /^(Qm[1-9A-HJ-NP-Za-km-z]{44}|[bB][aA][fF][a-zA-Z2-7]{20,})$/.test(
+    value
+  );
 }

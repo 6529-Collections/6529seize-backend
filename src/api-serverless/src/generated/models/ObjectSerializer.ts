@@ -186,6 +186,7 @@ export * from '../models/ApiOgMediaAsset';
 export * from '../models/ApiOgMetadata';
 export * from '../models/ApiOgMetadataDrop';
 export * from '../models/ApiOgMetadataEntityType';
+export * from '../models/ApiOgMetadataMedia';
 export * from '../models/ApiOgMetadataProfile';
 export * from '../models/ApiOgMetadataWave';
 export * from '../models/ApiOutgoingIdentitySubscriptionsPage';
@@ -562,9 +563,10 @@ import { ApiNotificationV2         } from '../models/ApiNotificationV2';
 import { ApiNotificationsResponse } from '../models/ApiNotificationsResponse';
 import { ApiNotificationsResponseV2 } from '../models/ApiNotificationsResponseV2';
 import { ApiOgMediaAsset } from '../models/ApiOgMediaAsset';
-import { ApiOgMetadata           } from '../models/ApiOgMetadata';
-import { ApiOgMetadataDrop      } from '../models/ApiOgMetadataDrop';
+import { ApiOgMetadata          } from '../models/ApiOgMetadata';
+import { ApiOgMetadataDrop    } from '../models/ApiOgMetadataDrop';
 import { ApiOgMetadataEntityType } from '../models/ApiOgMetadataEntityType';
+import { ApiOgMetadataMedia } from '../models/ApiOgMetadataMedia';
 import { ApiOgMetadataProfile } from '../models/ApiOgMetadataProfile';
 import { ApiOgMetadataWave } from '../models/ApiOgMetadataWave';
 import { ApiOutgoingIdentitySubscriptionsPage } from '../models/ApiOutgoingIdentitySubscriptionsPage';
@@ -991,6 +993,7 @@ let typeMap: {[index: string]: any} = {
     "ApiOgMediaAsset": ApiOgMediaAsset,
     "ApiOgMetadata": ApiOgMetadata,
     "ApiOgMetadataDrop": ApiOgMetadataDrop,
+    "ApiOgMetadataMedia": ApiOgMetadataMedia,
     "ApiOgMetadataProfile": ApiOgMetadataProfile,
     "ApiOgMetadataWave": ApiOgMetadataWave,
     "ApiOutgoingIdentitySubscriptionsPage": ApiOutgoingIdentitySubscriptionsPage,
