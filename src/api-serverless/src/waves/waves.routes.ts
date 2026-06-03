@@ -1262,7 +1262,7 @@ function createWaveConfigSchema(
     winning_threshold_min_duration_ms: Joi.when('type', {
       is: Joi.string().valid(ApiWaveType.Approve),
       then: Joi.number().integer().optional().allow(null).min(0).default(0),
-      otherwise: Joi.valid(null, 0).optional().default(null)
+      otherwise: Joi.valid(null).optional().default(null)
     }),
     max_winners: Joi.when('type', {
       is: Joi.string().valid(ApiWaveType.Approve),
@@ -1283,23 +1283,7 @@ function createWaveConfigSchema(
     admin_group: WaveScopeSchema.required(),
     decisions_strategy: decisionsStrategySchema.optional().allow(null),
     admin_drop_deletion_enabled: Joi.boolean().optional().default(false)
-  })
-    .custom((value, helpers) => {
-      if (
-        value.type === ApiWaveType.Approve &&
-        (value.winning_threshold_min_duration_ms ?? 0) > 0 &&
-        value.time_lock_ms !== null &&
-        value.time_lock_ms !== undefined &&
-        value.time_lock_ms > 0
-      ) {
-        return helpers.error('wave.timeLockAndThresholdDuration');
-      }
-      return value;
-    })
-    .messages({
-      'wave.timeLockAndThresholdDuration':
-        'APPROVE waves cannot combine time_lock_ms and winning_threshold_min_duration_ms'
-    });
+  });
 }
 
 const WaveConfigSchema = createWaveConfigSchema(

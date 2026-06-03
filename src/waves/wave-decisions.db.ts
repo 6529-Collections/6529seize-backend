@@ -367,6 +367,7 @@ export class WaveDecisionsDb extends LazyDbAccessCompatibleService {
       drop_id: string;
       created_at: number;
       vote: number;
+      winning_min_threshold: number;
       time_lock_ms: number | null;
       max_winners: number | null;
       decisions_done: number;
@@ -379,6 +380,7 @@ export class WaveDecisionsDb extends LazyDbAccessCompatibleService {
       drop_id: string;
       created_at: number;
       vote: number;
+      winning_min_threshold: number;
       time_lock_ms: number | null;
       max_winners: number | null;
       decisions_done: number;
@@ -405,6 +407,10 @@ export class WaveDecisionsDb extends LazyDbAccessCompatibleService {
               and threshold_wave.type = 'APPROVE'
               and threshold_wave.winning_min_threshold is not null
               and threshold_wave.winning_threshold_min_duration_ms > 0
+              and (
+                threshold_wave.time_lock_ms is null
+                or threshold_wave.time_lock_ms = 0
+              )
             where drv.vote < threshold_wave.winning_min_threshold
               and drv.timestamp <= :currentTime
           ) ranked_below_threshold_votes
@@ -420,6 +426,10 @@ export class WaveDecisionsDb extends LazyDbAccessCompatibleService {
             and threshold_wave.type = 'APPROVE'
             and threshold_wave.winning_min_threshold is not null
             and threshold_wave.winning_threshold_min_duration_ms > 0
+            and (
+              threshold_wave.time_lock_ms is null
+              or threshold_wave.time_lock_ms = 0
+            )
           left join last_below_threshold_vote lbtv
             on lbtv.drop_id = drv.drop_id
           where drv.vote >= threshold_wave.winning_min_threshold
@@ -450,6 +460,7 @@ export class WaveDecisionsDb extends LazyDbAccessCompatibleService {
               else ifnull(r.vote, 0)
             end as signed
           ) as vote,
+          w.winning_min_threshold as winning_min_threshold,
           w.time_lock_ms as time_lock_ms,
           w.max_winners as max_winners,
           ifnull(dc.decisions_done, 0) as decisions_done,
@@ -478,6 +489,12 @@ export class WaveDecisionsDb extends LazyDbAccessCompatibleService {
           ) >= w.winning_min_threshold
           and (
             w.winning_threshold_min_duration_ms = 0
+            or (
+              w.time_lock_ms is not null
+              and w.time_lock_ms > 0
+              and lb.over_threshold_since_ms is not null
+              and lb.over_threshold_since_ms + w.winning_threshold_min_duration_ms <= :currentTime
+            )
             or (
               (w.time_lock_ms is null or w.time_lock_ms = 0)
               and catp.above_threshold_since is not null
