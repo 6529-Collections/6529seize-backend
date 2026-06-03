@@ -1,5 +1,6 @@
 import { ApiDropMainType } from '@/api/generated/models/ApiDropMainType';
 import { ApiOgMetadataEntityType } from '@/api/generated/models/ApiOgMetadataEntityType';
+import { ApiProfileClassification } from '@/api/generated/models/ApiProfileClassification';
 import { OgMetadataService } from '@/api/og-metadata/og-metadata.service';
 import { BadRequestException, NotFoundException } from '@/exceptions';
 
@@ -21,24 +22,41 @@ function makeService() {
     findWithWaveByIdOrThrow: jest.fn(),
     findDrops: jest.fn()
   };
+  const profilesDb = {
+    getProfileById: jest.fn()
+  };
+  const identitySubscriptionsDb = {
+    countDistinctSubscriberIdsForTarget: jest.fn()
+  };
 
   return {
     service: new OgMetadataService(
       identityFetcher as any,
       wavesApiDb as any,
       apiWaveOverviewMapper as any,
-      dropV2Service as any
+      dropV2Service as any,
+      profilesDb as any,
+      identitySubscriptionsDb as any
     ),
     identityFetcher,
     wavesApiDb,
     apiWaveOverviewMapper,
-    dropV2Service
+    dropV2Service,
+    profilesDb,
+    identitySubscriptionsDb
   };
 }
 
 describe('OgMetadataService', () => {
   it('returns rich profile metadata for resolved identity keys', async () => {
-    const { service, identityFetcher } = makeService();
+    const { service, identityFetcher, profilesDb, identitySubscriptionsDb } =
+      makeService();
+    profilesDb.getProfileById.mockResolvedValue({
+      created_at: new Date('2026-01-02T03:04:05.000Z')
+    });
+    identitySubscriptionsDb.countDistinctSubscriberIdsForTarget.mockResolvedValue(
+      42
+    );
     identityFetcher.getIdentityAndConsolidationsByIdentityKey.mockResolvedValue(
       {
         id: 'profile-1',
@@ -49,7 +67,9 @@ describe('OgMetadataService', () => {
         banner2: '#000000',
         rep: 100,
         level: 7,
-        tdh: 1234.5
+        tdh: 1234.5,
+        classification: ApiProfileClassification.Bot,
+        sub_classification: 'assistant'
       }
     );
     identityFetcher.getDropResolvedIdentityProfilesV2ByIds.mockResolvedValue({
@@ -63,6 +83,10 @@ describe('OgMetadataService', () => {
         id: 'profile-1',
         handle: 'alice',
         primary_address: '0xabc',
+        profile_enabled_at: new Date('2026-01-02T03:04:05.000Z').getTime(),
+        classification: ApiProfileClassification.Bot,
+        sub_classification: 'assistant',
+        followers_count: 42,
         rep: 100,
         level: 7,
         tdh: 1234.5,
@@ -86,10 +110,23 @@ describe('OgMetadataService', () => {
     expect(
       identityFetcher.getIdentityAndConsolidationsByIdentityKey
     ).toHaveBeenCalledWith({ identityKey: 'alice' }, {});
+    expect(
+      identitySubscriptionsDb.countDistinctSubscriberIdsForTarget
+    ).toHaveBeenCalledWith({
+      target_id: 'profile-1',
+      target_type: 'IDENTITY'
+    });
   });
 
   it('returns profile banner image media when banner is stored as a URL', async () => {
-    const { service, identityFetcher } = makeService();
+    const { service, identityFetcher, profilesDb, identitySubscriptionsDb } =
+      makeService();
+    profilesDb.getProfileById.mockResolvedValue({
+      created_at: new Date('2026-01-02T03:04:05.000Z')
+    });
+    identitySubscriptionsDb.countDistinctSubscriberIdsForTarget.mockResolvedValue(
+      42
+    );
     identityFetcher.getIdentityAndConsolidationsByIdentityKey.mockResolvedValue(
       {
         id: 'profile-1',
@@ -142,7 +179,19 @@ describe('OgMetadataService', () => {
   });
 
   it('resolves numeric drops by serial number and returns lightweight author info', async () => {
-    const { service, identityFetcher, dropV2Service } = makeService();
+    const {
+      service,
+      identityFetcher,
+      dropV2Service,
+      profilesDb,
+      identitySubscriptionsDb
+    } = makeService();
+    profilesDb.getProfileById.mockResolvedValue({
+      created_at: new Date('2026-01-02T03:04:05.000Z')
+    });
+    identitySubscriptionsDb.countDistinctSubscriberIdsForTarget.mockResolvedValue(
+      7
+    );
     dropV2Service.findDrops.mockResolvedValue({
       data: [
         {
@@ -188,7 +237,8 @@ describe('OgMetadataService', () => {
         id: 'author-1',
         handle: 'artist',
         primary_address: '0xartist',
-        pfp: `ipfs://${IPFS_CID}/artist.jpg`
+        pfp: `ipfs://${IPFS_CID}/artist.jpg`,
+        classification: ApiProfileClassification.Pseudonym
       }
     });
 
@@ -198,6 +248,10 @@ describe('OgMetadataService', () => {
       author: {
         id: 'author-1',
         handle: 'artist',
+        profile_enabled_at: new Date('2026-01-02T03:04:05.000Z').getTime(),
+        classification: ApiProfileClassification.Pseudonym,
+        sub_classification: null,
+        followers_count: 7,
         twitter_handle: null,
         media: [
           {

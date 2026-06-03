@@ -20,14 +20,20 @@ import {
   IdentityFetcher
 } from '@/api/identities/identity.fetcher';
 import {
+  identitySubscriptionsDb,
+  IdentitySubscriptionsDb
+} from '@/api/identity-subscriptions/identity-subscriptions.db';
+import {
   apiWaveOverviewMapper,
   ApiWaveOverviewMapper
 } from '@/api/waves/api-wave-overview.mapper';
 import { wavesApiDb, WavesApiDb } from '@/api/waves/waves.api.db';
 import { UUID_REGEX } from '@/constants';
+import { ActivityEventTargetType } from '@/entities/IActivityEvent';
 import { BadRequestException, NotFoundException } from '@/exceptions';
 import { WaveEntity } from '@/entities/IWave';
 import { normalizeIpfsUri } from '@/nft-links/lib/uri';
+import { profilesDb, ProfilesDb } from '@/profiles/profiles.db';
 import { RequestContext } from '@/request.context';
 
 const TWITTER_HANDLE_NOT_AVAILABLE = null;
@@ -55,7 +61,9 @@ export class OgMetadataService {
     private readonly identityFetcher: IdentityFetcher,
     private readonly wavesApiDb: WavesApiDb,
     private readonly apiWaveOverviewMapper: ApiWaveOverviewMapper,
-    private readonly dropV2Service: typeof apiDropV2Service
+    private readonly dropV2Service: typeof apiDropV2Service,
+    private readonly profilesDb: ProfilesDb,
+    private readonly identitySubscriptionsDb: IdentitySubscriptionsDb
   ) {}
 
   public async getProfileMetadata(
@@ -73,8 +81,17 @@ export class OgMetadataService {
       );
     }
 
-    const description = await this.findProfileDescription(profile.id, ctx);
-    const apiProfile = this.mapFullProfile(profile, description);
+    const [description, profileRecord, followersCount] = await Promise.all([
+      this.findProfileDescription(profile.id, ctx),
+      this.profilesDb.getProfileById(profile.id, ctx.connection),
+      this.countProfileFollowers(profile.id)
+    ]);
+    const apiProfile = this.mapFullProfile(
+      profile,
+      description,
+      this.toTimestamp(profileRecord?.created_at),
+      followersCount
+    );
 
     return {
       entity_type: ApiOgMetadataEntityType.Profile,
@@ -201,21 +218,32 @@ export class OgMetadataService {
     profileId: string,
     ctx: RequestContext
   ): Promise<ApiOgMetadataProfile> {
-    const profiles = await this.identityFetcher.getApiIdentityOverviewsByIds(
-      [profileId],
-      ctx
+    const [profiles, profileRecord, followersCount] = await Promise.all([
+      this.identityFetcher.getApiIdentityOverviewsByIds([profileId], ctx),
+      this.profilesDb.getProfileById(profileId, ctx.connection),
+      this.countProfileFollowers(profileId)
+    ]);
+    return this.mapLightProfile(
+      profiles[profileId] ?? { id: profileId },
+      this.toTimestamp(profileRecord?.created_at),
+      followersCount
     );
-    return this.mapLightProfile(profiles[profileId] ?? { id: profileId });
   }
 
   private mapFullProfile(
     profile: ApiIdentityWithId,
-    description: string | null
+    description: string | null,
+    profileEnabledAt: number | null,
+    followersCount: number
   ): ApiOgMetadataProfile {
     return {
       id: profile.id,
       handle: profile.handle,
       primary_address: profile.primary_wallet,
+      profile_enabled_at: profileEnabledAt,
+      classification: profile.classification,
+      sub_classification: profile.sub_classification,
+      followers_count: followersCount,
       rep: profile.rep,
       level: profile.level,
       tdh: profile.tdh,
@@ -229,12 +257,19 @@ export class OgMetadataService {
   private mapLightProfile(
     profile: Pick<ApiIdentityOverview, 'id' | 'handle' | 'pfp'> & {
       readonly primary_address?: string;
-    }
+      readonly classification?: ApiIdentityOverview['classification'];
+    },
+    profileEnabledAt: number | null,
+    followersCount: number
   ): ApiOgMetadataProfile {
     return {
       id: profile.id,
       handle: profile.handle ?? null,
       primary_address: profile.primary_address ?? null,
+      profile_enabled_at: profileEnabledAt,
+      classification: profile.classification,
+      sub_classification: null,
+      followers_count: followersCount,
       twitter_handle: TWITTER_HANDLE_NOT_AVAILABLE,
       media: this.singleUrlMedia(profile.pfp)
     };
@@ -391,6 +426,24 @@ export class OgMetadataService {
     return normalizeIpfsUri(url) ?? null;
   }
 
+  private countProfileFollowers(profileId: string): Promise<number> {
+    return this.identitySubscriptionsDb.countDistinctSubscriberIdsForTarget({
+      target_id: profileId,
+      target_type: ActivityEventTargetType.IDENTITY
+    });
+  }
+
+  private toTimestamp(
+    value: Date | string | number | null | undefined
+  ): number | null {
+    if (value === null || value === undefined) {
+      return null;
+    }
+    const date = value instanceof Date ? value : new Date(value);
+    const timestamp = date.getTime();
+    return Number.isFinite(timestamp) ? timestamp : null;
+  }
+
   private hasProfileId(
     profile: ApiIdentity | null
   ): profile is ApiIdentityWithId {
@@ -402,5 +455,7 @@ export const ogMetadataService = new OgMetadataService(
   identityFetcher,
   wavesApiDb,
   apiWaveOverviewMapper,
-  apiDropV2Service
+  apiDropV2Service,
+  profilesDb,
+  identitySubscriptionsDb
 );

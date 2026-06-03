@@ -12,12 +12,17 @@
 
 import { ApiOgMediaAsset } from '../models/ApiOgMediaAsset';
 import { ApiOgMetadataProfileBanner } from '../models/ApiOgMetadataProfileBanner';
+import { ApiProfileClassification } from '../models/ApiProfileClassification';
 import { HttpFile } from '../http/http';
 
 export class ApiOgMetadataProfile {
     'id': string;
     'handle'?: string | null;
     'primary_address'?: string | null;
+    'profile_enabled_at'?: number | null;
+    'classification'?: ApiProfileClassification;
+    'sub_classification'?: string | null;
+    'followers_count'?: number;
     'rep'?: number | null;
     'level'?: number | null;
     'tdh'?: number | null;
@@ -48,6 +53,30 @@ export class ApiOgMetadataProfile {
             "baseName": "primary_address",
             "type": "string",
             "format": ""
+        },
+        {
+            "name": "profile_enabled_at",
+            "baseName": "profile_enabled_at",
+            "type": "number",
+            "format": "int64"
+        },
+        {
+            "name": "classification",
+            "baseName": "classification",
+            "type": "ApiProfileClassification",
+            "format": ""
+        },
+        {
+            "name": "sub_classification",
+            "baseName": "sub_classification",
+            "type": "string",
+            "format": ""
+        },
+        {
+            "name": "followers_count",
+            "baseName": "followers_count",
+            "type": "number",
+            "format": "int64"
         },
         {
             "name": "rep",
@@ -99,3 +128,5 @@ export class ApiOgMetadataProfile {
     public constructor() {
     }
 }
+
+

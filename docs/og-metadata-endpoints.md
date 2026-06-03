@@ -57,6 +57,10 @@ Recommended schema name: `ApiOgMetadata`.
     "id": "3c469d89-3ef6-46d8-a911-8ab54f3e6f11",
     "handle": "creator",
     "primary_address": "0x1234567890abcdef1234567890abcdef12345678",
+    "profile_enabled_at": 1712345678901,
+    "classification": "PSEUDONYM",
+    "sub_classification": null,
+    "followers_count": 42,
     "rep": null,
     "level": null,
     "tdh": null,
@@ -154,6 +158,10 @@ For the profile endpoint, profile detail includes:
 - `id`
 - `handle`
 - `primary_address`
+- `profile_enabled_at`
+- `classification`
+- `sub_classification`
+- `followers_count`
 - `rep`
 - `level`
 - `tdh`
@@ -172,6 +180,10 @@ preview fields:
 - `id`
 - `handle`
 - `primary_address`
+- `profile_enabled_at`
+- `classification`
+- `sub_classification`
+- `followers_count`
 - `twitter_handle`
 - `media`
 
