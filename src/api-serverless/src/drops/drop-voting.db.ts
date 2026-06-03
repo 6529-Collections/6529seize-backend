@@ -1345,8 +1345,6 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
       next_decision_time: number | null;
       winning_min_threshold: number | null;
       winning_threshold_min_duration_ms: number | null;
-      over_threshold_since_ms: number | null;
-      leaderboard_timestamp: number | null;
     }[]
   > {
     return this.db.execute<{
@@ -1356,8 +1354,6 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
       next_decision_time: number | null;
       winning_min_threshold: number | null;
       winning_threshold_min_duration_ms: number | null;
-      over_threshold_since_ms: number | null;
-      leaderboard_timestamp: number | null;
     }>(
       `select
         lvc.drop_id as drop_id,
@@ -1365,9 +1361,7 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
         lvc.wave_id as wave_id,
         lvc.next_decision_time as next_decision_time,
         lvc.winning_min_threshold as winning_min_threshold,
-        lvc.winning_threshold_min_duration_ms as winning_threshold_min_duration_ms,
-        lb.over_threshold_since_ms as over_threshold_since_ms,
-        lb.timestamp as leaderboard_timestamp
+        lvc.winning_threshold_min_duration_ms as winning_threshold_min_duration_ms
 from (select d.drop_id, d.wave_id as wave_id, w.time_lock_ms as time_lock_ms, w.next_decision_time, w.winning_min_threshold, w.winning_threshold_min_duration_ms, max(d.timestamp) as timestamp
       from ${DROP_REAL_VOTE_IN_TIME_TABLE} d
                join ${WAVES_TABLE} w
@@ -1381,6 +1375,46 @@ where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
       undefined,
       { wrappedConnection: ctx.connection }
     );
+  }
+
+  async getWaveLeaderboardEntryThresholdStateForUpdate(
+    {
+      dropId,
+      waveId
+    }: {
+      dropId: string;
+      waveId: string;
+    },
+    ctx: RequestContext
+  ): Promise<{
+    over_threshold_since_ms: number | null;
+    leaderboard_timestamp: number | null;
+  } | null> {
+    ctx.timer?.start(
+      `${this.constructor.name}->getWaveLeaderboardEntryThresholdStateForUpdate`
+    );
+    try {
+      return await this.db.oneOrNull<{
+        over_threshold_since_ms: number | null;
+        leaderboard_timestamp: number | null;
+      }>(
+        `
+        select
+          over_threshold_since_ms,
+          timestamp as leaderboard_timestamp
+        from ${WAVE_LEADERBOARD_ENTRIES_TABLE}
+        where drop_id = :dropId
+          and wave_id = :waveId
+        for update
+        `,
+        { dropId, waveId },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(
+        `${this.constructor.name}->getWaveLeaderboardEntryThresholdStateForUpdate`
+      );
+    }
   }
 
   async getDropVoteStatesInTimespan(

@@ -143,6 +143,41 @@ describe('DropVotingDb leaderboard threshold clears', () => {
       { wrappedConnection: undefined }
     );
   });
+
+  it('locks and reads the live leaderboard threshold state', async () => {
+    const connection = { id: 'connection' };
+    const oneOrNull = jest.fn().mockResolvedValue({
+      leaderboard_timestamp: 1_234,
+      over_threshold_since_ms: 567
+    });
+    const db = new DropVotingDb(
+      () =>
+        ({
+          oneOrNull
+        }) as any
+    );
+
+    const result = await db.getWaveLeaderboardEntryThresholdStateForUpdate(
+      {
+        dropId: 'drop-id',
+        waveId: 'wave-id'
+      },
+      { connection: connection as any }
+    );
+
+    expect(result).toEqual({
+      leaderboard_timestamp: 1_234,
+      over_threshold_since_ms: 567
+    });
+    expect(oneOrNull).toHaveBeenCalledWith(
+      expect.stringContaining('for update'),
+      {
+        dropId: 'drop-id',
+        waveId: 'wave-id'
+      },
+      { wrappedConnection: connection }
+    );
+  });
 });
 
 describe('DropVotingDb.mergeDropVoteState', () => {

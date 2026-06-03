@@ -41,18 +41,12 @@ export class WaveLeaderboardCalculationService {
             {
               dropId: it.drop_id,
               waveId: it.wave_id,
-              previousLeaderboardTimestamp: numbers.parseIntOrNull(
-                it.leaderboard_timestamp
-              ),
               winningMinThreshold: numbers.parseIntOrNull(
                 it.winning_min_threshold
               ),
               winningThresholdMinDurationMs:
                 numbers.parseIntOrNull(it.winning_threshold_min_duration_ms) ??
                 0,
-              previousOverThresholdSinceMs: numbers.parseIntOrNull(
-                it.over_threshold_since_ms
-              ),
               startTime: now.minusMillis(it.time_lock_ms),
               endTime: now,
               nextDecisionTime: it.next_decision_time
@@ -86,20 +80,16 @@ export class WaveLeaderboardCalculationService {
     {
       dropId,
       waveId,
-      previousLeaderboardTimestamp,
       winningMinThreshold,
       winningThresholdMinDurationMs,
-      previousOverThresholdSinceMs,
       startTime,
       endTime,
       nextDecisionTime
     }: {
       dropId: string;
       waveId: string;
-      previousLeaderboardTimestamp: number | null;
       winningMinThreshold: number | null;
       winningThresholdMinDurationMs: number | null;
-      previousOverThresholdSinceMs: number | null;
       startTime: Time;
       endTime: Time;
       nextDecisionTime: Time | null;
@@ -109,14 +99,26 @@ export class WaveLeaderboardCalculationService {
     await this.dropVotingDb.executeNativeQueriesInTransaction(
       async (connection) => {
         const ctxWithConnection = { ...ctx, connection };
+        const shouldTrackOverThreshold =
+          winningMinThreshold !== null &&
+          (winningThresholdMinDurationMs ?? 0) > 0;
+        const liveLeaderboardState = shouldTrackOverThreshold
+          ? await this.dropVotingDb.getWaveLeaderboardEntryThresholdStateForUpdate(
+              { dropId, waveId },
+              ctxWithConnection
+            )
+          : null;
+        const previousLeaderboardTimestamp = numbers.parseIntOrNull(
+          liveLeaderboardState?.leaderboard_timestamp
+        );
+        const previousOverThresholdSinceMs = numbers.parseIntOrNull(
+          liveLeaderboardState?.over_threshold_since_ms
+        );
         const voteHistoryStartTime = this.getVoteHistoryStartTime({
           previousLeaderboardTimestamp,
-          previousOverThresholdSinceMs,
           startTime,
           endTime,
-          shouldTrackOverThreshold:
-            winningMinThreshold !== null &&
-            (winningThresholdMinDurationMs ?? 0) > 0
+          shouldTrackOverThreshold
         });
         const voteStates = await this.dropVotingDb.getDropVoteStatesInTimespan(
           {
@@ -165,13 +167,11 @@ export class WaveLeaderboardCalculationService {
 
   private getVoteHistoryStartTime({
     previousLeaderboardTimestamp,
-    previousOverThresholdSinceMs,
     startTime,
     endTime,
     shouldTrackOverThreshold
   }: {
     previousLeaderboardTimestamp: number | null;
-    previousOverThresholdSinceMs: number | null;
     startTime: Time;
     endTime: Time;
     shouldTrackOverThreshold: boolean;
@@ -181,7 +181,6 @@ export class WaveLeaderboardCalculationService {
       return startTime;
     }
     const thresholdEvaluationStartTime =
-      previousOverThresholdSinceMs === null ||
       previousLeaderboardTimestamp === null
         ? startTime
         : Time.millis(previousLeaderboardTimestamp);
@@ -217,7 +216,6 @@ export class WaveLeaderboardCalculationService {
       return null;
     }
     const thresholdEvaluationStartTime =
-      previousOverThresholdSinceMs === null ||
       previousLeaderboardTimestamp === null
         ? startTime
         : Time.millis(previousLeaderboardTimestamp);
@@ -267,6 +265,7 @@ export class WaveLeaderboardCalculationService {
       endTime: previousCheckpoint
     });
     let wasBelowThreshold = previousScore < winningMinThreshold;
+    let crossedThresholdAtMs: number | null = null;
 
     for (let i = 1; i < checkpoints.length; i++) {
       const checkpoint = checkpoints[i];
@@ -276,26 +275,24 @@ export class WaveLeaderboardCalculationService {
         endTime: checkpoint
       });
       if (previousScore < winningMinThreshold && score >= winningMinThreshold) {
-        return {
-          crossedThresholdAtMs: this.interpolateThresholdCrossingMs({
-            previousCheckpoint,
-            previousScore,
-            checkpoint,
-            score,
-            winningMinThreshold
-          }),
-          wasBelowThreshold: true
-        };
+        crossedThresholdAtMs = this.interpolateThresholdCrossingMs({
+          previousCheckpoint,
+          previousScore,
+          checkpoint,
+          score,
+          winningMinThreshold
+        });
       }
       if (score < winningMinThreshold) {
         wasBelowThreshold = true;
+        crossedThresholdAtMs = null;
       }
       previousCheckpoint = checkpoint;
       previousScore = score;
     }
 
     return {
-      crossedThresholdAtMs: null,
+      crossedThresholdAtMs,
       wasBelowThreshold
     };
   }
@@ -359,7 +356,6 @@ export class WaveLeaderboardCalculationService {
       .sort((a, d) => a - d)
       .map((timestamp) => Time.millis(timestamp));
   }
-
   public calculateFinalVoteForDrop({
     voteStates,
     endTime,
