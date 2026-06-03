@@ -3,6 +3,7 @@ import {
   DROP_RANK_TABLE,
   DROP_REAL_VOTE_IN_TIME_TABLE,
   DROPS_TABLE,
+  WAVE_LEADERBOARD_ENTRIES_TABLE,
   WAVES_DECISION_WINNER_DROPS_TABLE,
   WAVES_DECISIONS_TABLE
 } from '@/constants';
@@ -203,6 +204,19 @@ describeWithSeed(
           winning_threshold_min_duration_ms: tenMinutes
         },
         { id: 'duration-wave', name: 'Duration', serial_no: 2 }
+      ),
+      aWave(
+        {
+          type: WaveType.APPROVE,
+          winning_min_threshold: 100,
+          winning_threshold_min_duration_ms: tenMinutes,
+          time_lock_ms: tenMinutes
+        },
+        {
+          id: 'weighted-duration-wave',
+          name: 'Weighted Duration',
+          serial_no: 3
+        }
       )
     ]),
     withRows(DROPS_TABLE, [
@@ -225,6 +239,21 @@ describeWithSeed(
         id: 'reset-drop',
         waveId: 'duration-wave',
         createdAt: 4
+      }),
+      participatoryDrop({
+        id: 'weighted-ready-drop',
+        waveId: 'weighted-duration-wave',
+        createdAt: 5
+      }),
+      participatoryDrop({
+        id: 'weighted-waiting-drop',
+        waveId: 'weighted-duration-wave',
+        createdAt: 6
+      }),
+      participatoryDrop({
+        id: 'weighted-below-drop',
+        waveId: 'weighted-duration-wave',
+        createdAt: 7
       })
     ]),
     withRows(DROP_RANK_TABLE, [
@@ -232,6 +261,32 @@ describeWithSeed(
       rank({ dropId: 'ready-drop', waveId: 'duration-wave', vote: 150 }),
       rank({ dropId: 'waiting-drop', waveId: 'duration-wave', vote: 150 }),
       rank({ dropId: 'reset-drop', waveId: 'duration-wave', vote: 150 })
+    ]),
+    withRows(WAVE_LEADERBOARD_ENTRIES_TABLE, [
+      {
+        drop_id: 'weighted-ready-drop',
+        wave_id: 'weighted-duration-wave',
+        timestamp: 15 * minute,
+        vote: 150,
+        vote_on_decision_time: 150,
+        over_threshold_since_ms: 5 * minute
+      },
+      {
+        drop_id: 'weighted-waiting-drop',
+        wave_id: 'weighted-duration-wave',
+        timestamp: 15 * minute,
+        vote: 150,
+        vote_on_decision_time: 150,
+        over_threshold_since_ms: 10 * minute
+      },
+      {
+        drop_id: 'weighted-below-drop',
+        wave_id: 'weighted-duration-wave',
+        timestamp: 15 * minute,
+        vote: 99,
+        vote_on_decision_time: 99,
+        over_threshold_since_ms: null
+      }
     ]),
     withRows(DROP_REAL_VOTE_IN_TIME_TABLE, [
       aggregateVote({
@@ -312,8 +367,11 @@ describeWithSeed(
       const candidateDropIds = candidates.map((candidate) => candidate.drop_id);
       expect(candidateDropIds).toContain('immediate-drop');
       expect(candidateDropIds).toContain('ready-drop');
+      expect(candidateDropIds).toContain('weighted-ready-drop');
       expect(candidateDropIds).not.toContain('waiting-drop');
       expect(candidateDropIds).not.toContain('reset-drop');
+      expect(candidateDropIds).not.toContain('weighted-waiting-drop');
+      expect(candidateDropIds).not.toContain('weighted-below-drop');
     });
 
     it('restarts the duration after the latest below-threshold aggregate vote', async () => {

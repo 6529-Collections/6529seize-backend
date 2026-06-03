@@ -159,6 +159,119 @@ describe('WaveLeaderboardCalculationService', () => {
     });
   });
 
+  describe('calculateLeaderboardEntryForDrop', () => {
+    beforeEach(() => {
+      (
+        dropVotingDb.executeNativeQueriesInTransaction as jest.Mock
+      ).mockImplementation(async (callback) => callback({}));
+      (dropVotingDb.upsertWaveLeaderboardEntry as jest.Mock).mockResolvedValue(
+        undefined
+      );
+    });
+
+    it('starts weighted over-threshold time when weighted vote reaches threshold', async () => {
+      (dropVotingDb.getDropVoteStatesInTimespan as jest.Mock).mockResolvedValue(
+        [
+          {
+            timestamp: 0,
+            vote: 100,
+            drop_id: 'drop-id',
+            wave_id: 'wave-id'
+          }
+        ]
+      );
+
+      await service.calculateLeaderboardEntryForDrop(
+        {
+          dropId: 'drop-id',
+          waveId: 'wave-id',
+          winningMinThreshold: 50,
+          previousOverThresholdSinceMs: null,
+          startTime: Time.millis(0),
+          endTime: Time.millis(1_000),
+          nextDecisionTime: null
+        },
+        {}
+      );
+
+      expect(dropVotingDb.upsertWaveLeaderboardEntry).toHaveBeenCalledWith(
+        expect.objectContaining({
+          vote: 100,
+          over_threshold_since_ms: 1_000
+        }),
+        expect.anything()
+      );
+    });
+
+    it('preserves weighted over-threshold time while weighted vote stays over threshold', async () => {
+      (dropVotingDb.getDropVoteStatesInTimespan as jest.Mock).mockResolvedValue(
+        [
+          {
+            timestamp: 0,
+            vote: 100,
+            drop_id: 'drop-id',
+            wave_id: 'wave-id'
+          }
+        ]
+      );
+
+      await service.calculateLeaderboardEntryForDrop(
+        {
+          dropId: 'drop-id',
+          waveId: 'wave-id',
+          winningMinThreshold: 50,
+          previousOverThresholdSinceMs: 500,
+          startTime: Time.millis(0),
+          endTime: Time.millis(1_000),
+          nextDecisionTime: null
+        },
+        {}
+      );
+
+      expect(dropVotingDb.upsertWaveLeaderboardEntry).toHaveBeenCalledWith(
+        expect.objectContaining({
+          vote: 100,
+          over_threshold_since_ms: 500
+        }),
+        expect.anything()
+      );
+    });
+
+    it('clears weighted over-threshold time when weighted vote falls below threshold', async () => {
+      (dropVotingDb.getDropVoteStatesInTimespan as jest.Mock).mockResolvedValue(
+        [
+          {
+            timestamp: 0,
+            vote: 40,
+            drop_id: 'drop-id',
+            wave_id: 'wave-id'
+          }
+        ]
+      );
+
+      await service.calculateLeaderboardEntryForDrop(
+        {
+          dropId: 'drop-id',
+          waveId: 'wave-id',
+          winningMinThreshold: 50,
+          previousOverThresholdSinceMs: 500,
+          startTime: Time.millis(0),
+          endTime: Time.millis(1_000),
+          nextDecisionTime: null
+        },
+        {}
+      );
+
+      expect(dropVotingDb.upsertWaveLeaderboardEntry).toHaveBeenCalledWith(
+        expect.objectContaining({
+          vote: 40,
+          over_threshold_since_ms: null
+        }),
+        expect.anything()
+      );
+    });
+  });
+
   describe('calculateWaveLeaderBoardInTimeAndGetTopNDropsWithVotes', () => {
     it('orders drops with equal final votes by most recent vote increase', async () => {
       when(dropVotingDb.getWavesParticipatoryDropsVoteStatesInTimespan)

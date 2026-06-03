@@ -57,6 +57,11 @@ describe('WaveApiService updateWave immutability', () => {
     const metricsRecorder = {
       recordActiveIdentity: jest.fn().mockResolvedValue(undefined)
     };
+    const dropVotingService = {
+      clearWaveLeaderboardEntriesOverThresholdSinceByWaveId: jest
+        .fn()
+        .mockResolvedValue(undefined)
+    };
     const service = new WaveApiService(
       wavesApiDb as any,
       userGroupsService as any,
@@ -65,7 +70,7 @@ describe('WaveApiService updateWave immutability', () => {
       {} as any,
       {} as any,
       {} as any,
-      {} as any,
+      dropVotingService as any,
       {} as any,
       {} as any,
       {} as any,
@@ -82,6 +87,8 @@ describe('WaveApiService updateWave immutability', () => {
       wavesApiDb,
       waveMappers,
       metricsRecorder,
+      dropVotingService,
+      connection,
       ctx: {
         authenticationContext: AuthenticationContext.fromProfileId(
           waveBeforeUpdate.created_by
@@ -558,6 +565,47 @@ describe('WaveApiService updateWave immutability', () => {
     expect(wavesApiDb.deleteWave).toHaveBeenCalled();
     expect(waveMappers.createWaveToNewWaveEntity).toHaveBeenCalled();
   });
+
+  it('clears approve threshold state when threshold config changes', async () => {
+    const waveBeforeUpdate = aWave(
+      {
+        type: WaveType.APPROVE,
+        created_by: 'profile-1',
+        winning_min_threshold: 10,
+        winning_threshold_min_duration_ms: 0,
+        time_lock_ms: null
+      },
+      {
+        id: 'wave-1',
+        name: 'wave-1',
+        serial_no: 1
+      }
+    );
+    const { service, dropVotingService, connection, ctx } = createService({
+      waveBeforeUpdate
+    });
+
+    await expect(
+      service.updateWave(
+        'wave-1',
+        {
+          ...updateRequest({ type: ApiWaveType.Approve }),
+          wave: {
+            ...updateRequest({ type: ApiWaveType.Approve }).wave,
+            winning_threshold: 20,
+            winning_threshold_min_duration_ms: Time.minutes(5).toMillis(),
+            max_winners: null,
+            time_lock_ms: Time.minutes(5).toMillis()
+          }
+        },
+        ctx
+      )
+    ).resolves.toEqual({ id: 'wave-1' });
+
+    expect(
+      dropVotingService.clearWaveLeaderboardEntriesOverThresholdSinceByWaveId
+    ).toHaveBeenCalledWith('wave-1', expect.objectContaining({ connection }));
+  });
 });
 
 describe('WaveApiService validateWaveRelations', () => {
@@ -639,7 +687,7 @@ describe('WaveApiService validateWaveRelations', () => {
     };
   }
 
-  it('rejects threshold duration combined with approve time lock', async () => {
+  it('allows threshold duration combined with approve time lock', async () => {
     const service = validationService();
     const request = baseCreateWaveRequest();
     request.wave.winning_threshold_min_duration_ms =
@@ -650,9 +698,7 @@ describe('WaveApiService validateWaveRelations', () => {
       (service as any).validateWaveRelations(request, {
         timer: undefined
       })
-    ).rejects.toThrow(
-      `APPROVE waves can't combine time_lock_ms and winning_threshold_min_duration_ms`
-    );
+    ).resolves.toBeUndefined();
   });
 
   it('allows winning_threshold to be null for non-approve waves', async () => {

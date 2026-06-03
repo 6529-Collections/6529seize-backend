@@ -32,6 +32,12 @@ export class WaveLeaderboardCalculationService {
             {
               dropId: it.drop_id,
               waveId: it.wave_id,
+              winningMinThreshold: numbers.parseIntOrNull(
+                it.winning_min_threshold
+              ),
+              previousOverThresholdSinceMs: numbers.parseIntOrNull(
+                it.over_threshold_since_ms
+              ),
               startTime: now.minusMillis(it.time_lock_ms),
               endTime: now,
               nextDecisionTime: it.next_decision_time
@@ -65,12 +71,16 @@ export class WaveLeaderboardCalculationService {
     {
       dropId,
       waveId,
+      winningMinThreshold,
+      previousOverThresholdSinceMs,
       startTime,
       endTime,
       nextDecisionTime
     }: {
       dropId: string;
       waveId: string;
+      winningMinThreshold: number | null;
+      previousOverThresholdSinceMs: number | null;
       startTime: Time;
       endTime: Time;
       nextDecisionTime: Time | null;
@@ -100,18 +110,45 @@ export class WaveLeaderboardCalculationService {
               startTime: nextDecisionTime.minus(endTime.minus(startTime))
             })
           : finalVote;
+        const overThresholdSinceMs = this.calculateOverThresholdSinceMs({
+          winningMinThreshold,
+          previousOverThresholdSinceMs,
+          vote: finalVote,
+          timestamp: endTime.toMillis()
+        });
         await this.dropVotingDb.upsertWaveLeaderboardEntry(
           {
             drop_id: dropId,
             wave_id: waveId,
             vote: finalVote,
             timestamp: endTime.toMillis(),
-            vote_on_decision_time: finalVoteInDecisionTime
+            vote_on_decision_time: finalVoteInDecisionTime,
+            over_threshold_since_ms: overThresholdSinceMs
           },
           ctxWithConnection
         );
       }
     );
+  }
+
+  private calculateOverThresholdSinceMs({
+    winningMinThreshold,
+    previousOverThresholdSinceMs,
+    vote,
+    timestamp
+  }: {
+    winningMinThreshold: number | null;
+    previousOverThresholdSinceMs: number | null;
+    vote: number;
+    timestamp: number;
+  }): number | null {
+    if (winningMinThreshold === null) {
+      return null;
+    }
+    if (vote < winningMinThreshold) {
+      return null;
+    }
+    return previousOverThresholdSinceMs ?? timestamp;
   }
 
   public calculateFinalVoteForDrop({
@@ -190,8 +227,30 @@ export class WaveLeaderboardCalculationService {
         `Drop ${dropId} is not in a timelocked wave`
       );
     }
+    return await this.calculateWeightedVoteForDropInTime(
+      {
+        dropId,
+        time,
+        timeLockMs: timelock
+      },
+      {}
+    );
+  }
+
+  public async calculateWeightedVoteForDropInTime(
+    {
+      dropId,
+      time,
+      timeLockMs
+    }: {
+      dropId: string;
+      time: Time;
+      timeLockMs: number;
+    },
+    ctx: RequestContext
+  ) {
     const endTime = time;
-    const startTime = endTime.minus(Time.millis(timelock));
+    const startTime = endTime.minusMillis(timeLockMs);
     const voteStates =
       await this.dropVotingDb.getDropsParticipatoryDropsVoteStatesInTimespan(
         {
@@ -199,7 +258,7 @@ export class WaveLeaderboardCalculationService {
           toTime: endTime.toMillis(),
           fromTime: startTime.toMillis()
         },
-        {}
+        ctx
       );
     return this.calculateFinalVoteForDrop({ voteStates, endTime, startTime });
   }

@@ -51,8 +51,9 @@ interface ApproveWinnerCandidate {
   wave_id: string;
   drop_id: string;
   created_at: number;
-  vote: number;
-  time_lock_ms: number | null;
+  vote: number | string | bigint;
+  winning_min_threshold: number | string | bigint;
+  time_lock_ms: number | string | bigint | null;
   max_winners: number | null;
   decisions_done: number;
   latest_decision_time: number | string | bigint | null;
@@ -252,12 +253,15 @@ export class WaveDecisionsService {
               firstCandidate.max_winners - firstCandidate.decisions_done,
               0
             );
-      const candidatesToProcess = waveCandidates.slice(0, remainingSlots);
       const latestDecisionTime =
         numbers.parseIntOrNull(firstCandidate.latest_decision_time) ?? 0;
       let nextDecisionTime = Math.max(currentTime, latestDecisionTime + 1);
+      let winnersProcessed = 0;
 
-      for (const candidate of candidatesToProcess) {
+      for (const candidate of waveCandidates) {
+        if (winnersProcessed >= remainingSlots) {
+          break;
+        }
         if (
           wavePauses.find((pause) =>
             Time.millis(nextDecisionTime).isInInterval(pause.start, pause.end)
@@ -268,6 +272,19 @@ export class WaveDecisionsService {
           );
           break;
         }
+        const liveVote = await this.getLiveApproveCandidateVote(
+          {
+            candidate,
+            decisionTime: nextDecisionTime
+          },
+          { timer }
+        );
+        if (liveVote === null) {
+          continue;
+        }
+        const candidateTimeLockMs = numbers.parseIntOrNull(
+          candidate.time_lock_ms
+        );
         let claimBuildDropId: string | null = null;
         let pendingPushNotificationIds: number[] = [];
         await this.waveDecisionsDb.executeNativeQueriesInTransaction(
@@ -280,11 +297,11 @@ export class WaveDecisionsService {
                 decisionTime: nextDecisionTime,
                 waveId,
                 outcomes: outcomesByWaveId[waveId] ?? [],
-                time_lock_ms: candidate.time_lock_ms,
+                time_lock_ms: candidateTimeLockMs,
                 winnerDrops: [
                   {
                     drop_id: candidate.drop_id,
-                    vote: candidate.vote,
+                    vote: liveVote,
                     rank: 1
                   }
                 ]
@@ -307,9 +324,49 @@ export class WaveDecisionsService {
             error
           );
         }
+        winnersProcessed++;
         nextDecisionTime++;
       }
     }
+  }
+
+  private async getLiveApproveCandidateVote(
+    {
+      candidate,
+      decisionTime
+    }: {
+      candidate: ApproveWinnerCandidate;
+      decisionTime: number;
+    },
+    ctx: RequestContext
+  ): Promise<number | null> {
+    const timeLockMs = numbers.parseIntOrNull(candidate.time_lock_ms);
+    if (timeLockMs === null || timeLockMs <= 0) {
+      return numbers.parseIntOrThrow(candidate.vote);
+    }
+    const liveVote =
+      await this.waveLeaderboardCalculationService.calculateWeightedVoteForDropInTime(
+        {
+          dropId: candidate.drop_id,
+          time: Time.millis(decisionTime),
+          timeLockMs
+        },
+        ctx
+      );
+    const winningMinThreshold = numbers.parseIntOrThrow(
+      candidate.winning_min_threshold
+    );
+    if (liveVote >= winningMinThreshold) {
+      return liveVote;
+    }
+    this.logger.info(
+      `Skipping APPROVE winner ${candidate.drop_id}. Live weighted vote ${liveVote} is below threshold ${winningMinThreshold}`
+    );
+    await this.dropVotingDb.clearWaveLeaderboardEntryOverThresholdSince(
+      candidate.drop_id,
+      ctx
+    );
+    return null;
   }
 
   private async loadWaveOutcomes(

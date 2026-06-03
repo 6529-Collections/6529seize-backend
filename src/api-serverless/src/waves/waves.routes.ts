@@ -1283,23 +1283,7 @@ function createWaveConfigSchema(
     admin_group: WaveScopeSchema.required(),
     decisions_strategy: decisionsStrategySchema.optional().allow(null),
     admin_drop_deletion_enabled: Joi.boolean().optional().default(false)
-  })
-    .custom((value, helpers) => {
-      if (
-        value.type === ApiWaveType.Approve &&
-        (value.winning_threshold_min_duration_ms ?? 0) > 0 &&
-        value.time_lock_ms !== null &&
-        value.time_lock_ms !== undefined &&
-        value.time_lock_ms > 0
-      ) {
-        return helpers.error('wave.timeLockAndThresholdDuration');
-      }
-      return value;
-    })
-    .messages({
-      'wave.timeLockAndThresholdDuration':
-        'APPROVE waves cannot combine time_lock_ms and winning_threshold_min_duration_ms'
-    });
+  });
 }
 
 const WaveConfigSchema = createWaveConfigSchema(

@@ -14,4 +14,7 @@ export class WaveLeaderboardEntryEntity {
   readonly vote!: number;
   @Column({ type: 'bigint', nullable: false, default: 0 })
   readonly vote_on_decision_time!: number;
+
+  @Column({ type: 'bigint', nullable: true, default: null })
+  readonly over_threshold_since_ms!: number | null;
 }

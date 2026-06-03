@@ -677,7 +677,14 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
             then 1
             else 0
           end as is_open,
-          null as over_threshold_since_ms,
+          case
+            when t.drop_type = '${DropType.WINNER}' then null
+            when w.type = 'APPROVE'
+              and w.time_lock_ms is not null
+              and w.time_lock_ms > 0
+            then lb.over_threshold_since_ms
+            else null
+          end as over_threshold_since_ms,
           case
             when t.drop_type = '${DropType.WINNER}' then coalesce(wd.final_vote, 0)
             else coalesce(vc.tally, 0)
@@ -720,12 +727,17 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
         );
       return rows.reduce(
         (acc, row) => {
+          const cachedOverThresholdSinceMs =
+            row.over_threshold_since_ms == null
+              ? null
+              : Number(row.over_threshold_since_ms);
           acc[row.drop_id] = {
             drop_id: row.drop_id,
             status: row.status,
             is_open: row.is_open === true || Number(row.is_open) === 1,
             over_threshold_since_ms:
-              overThresholdSinceByDropId[row.drop_id] ?? null,
+              overThresholdSinceByDropId[row.drop_id] ??
+              cachedOverThresholdSinceMs,
             forbid_negative_votes:
               row.forbid_negative_votes === true ||
               Number(row.forbid_negative_votes) === 1,
@@ -1331,6 +1343,8 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
       time_lock_ms: number;
       wave_id: string;
       next_decision_time: number | null;
+      winning_min_threshold: number | null;
+      over_threshold_since_ms: number | null;
     }[]
   > {
     return this.db.execute<{
@@ -1338,16 +1352,24 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
       time_lock_ms: number;
       wave_id: string;
       next_decision_time: number | null;
+      winning_min_threshold: number | null;
+      over_threshold_since_ms: number | null;
     }>(
-      `select lvc.drop_id as drop_id, lvc.time_lock_ms as time_lock_ms, lvc.wave_id as wave_id, lvc.next_decision_time as next_decision_time
-from (select d.drop_id, d.wave_id as wave_id, w.time_lock_ms as time_lock_ms, w.next_decision_time, max(d.timestamp) as timestamp
+      `select
+        lvc.drop_id as drop_id,
+        lvc.time_lock_ms as time_lock_ms,
+        lvc.wave_id as wave_id,
+        lvc.next_decision_time as next_decision_time,
+        lvc.winning_min_threshold as winning_min_threshold,
+        lb.over_threshold_since_ms as over_threshold_since_ms
+from (select d.drop_id, d.wave_id as wave_id, w.time_lock_ms as time_lock_ms, w.next_decision_time, w.winning_min_threshold, max(d.timestamp) as timestamp
       from ${DROP_REAL_VOTE_IN_TIME_TABLE} d
                join ${WAVES_TABLE} w
                     on w.id = d.wave_id and w.time_lock_ms is not null and w.time_lock_ms > 0
                join ${DROPS_TABLE} dr on d.drop_id = dr.id
                where dr.drop_type = '${DropType.PARTICIPATORY}'
-      group by 1, 2, 3, 4) lvc
-         left join wave_leaderboard_entries lb
+      group by 1, 2, 3, 4, 5) lvc
+         left join ${WAVE_LEADERBOARD_ENTRIES_TABLE} lb
                    on lvc.drop_id = lb.drop_id and lvc.wave_id = lb.wave_id
 where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
       undefined,
@@ -1477,13 +1499,79 @@ where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
   ) {
     await this.db.execute(
       `
-          insert into ${WAVE_LEADERBOARD_ENTRIES_TABLE} (drop_id, wave_id, timestamp, vote, vote_on_decision_time)
-          values (:drop_id, :wave_id, :timestamp, :vote, :vote_on_decision_time)
-          on duplicate key update vote = :vote, vote_on_decision_time = :vote_on_decision_time, timestamp = :timestamp
+          insert into ${WAVE_LEADERBOARD_ENTRIES_TABLE} (
+            drop_id,
+            wave_id,
+            timestamp,
+            vote,
+            vote_on_decision_time,
+            over_threshold_since_ms
+          )
+          values (
+            :drop_id,
+            :wave_id,
+            :timestamp,
+            :vote,
+            :vote_on_decision_time,
+            :over_threshold_since_ms
+          )
+          on duplicate key update
+            vote = :vote,
+            vote_on_decision_time = :vote_on_decision_time,
+            timestamp = :timestamp,
+            over_threshold_since_ms = :over_threshold_since_ms
       `,
       entry,
       { wrappedConnection: ctx.connection }
     );
+  }
+
+  async clearWaveLeaderboardEntryOverThresholdSince(
+    dropId: string,
+    ctx: RequestContext
+  ) {
+    ctx.timer?.start(
+      `${this.constructor.name}->clearWaveLeaderboardEntryOverThresholdSince`
+    );
+    try {
+      await this.db.execute(
+        `
+        update ${WAVE_LEADERBOARD_ENTRIES_TABLE}
+        set over_threshold_since_ms = null
+        where drop_id = :dropId
+        `,
+        { dropId },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(
+        `${this.constructor.name}->clearWaveLeaderboardEntryOverThresholdSince`
+      );
+    }
+  }
+
+  async clearWaveLeaderboardEntriesOverThresholdSinceByWaveId(
+    waveId: string,
+    ctx: RequestContext
+  ) {
+    ctx.timer?.start(
+      `${this.constructor.name}->clearWaveLeaderboardEntriesOverThresholdSinceByWaveId`
+    );
+    try {
+      await this.db.execute(
+        `
+        update ${WAVE_LEADERBOARD_ENTRIES_TABLE}
+        set over_threshold_since_ms = null
+        where wave_id = :waveId
+        `,
+        { waveId },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(
+        `${this.constructor.name}->clearWaveLeaderboardEntriesOverThresholdSinceByWaveId`
+      );
+    }
   }
 
   async deleteStaleLeaderboardEntries(ctx: RequestContext) {

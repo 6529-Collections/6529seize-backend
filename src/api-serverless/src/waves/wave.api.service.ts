@@ -229,6 +229,46 @@ export class WaveApiService {
     }
   }
 
+  private shouldClearApproveThresholdState({
+    request,
+    waveBeforeUpdate
+  }: {
+    request: ApiUpdateWaveRequest;
+    waveBeforeUpdate: Pick<
+      WaveEntity,
+      | 'type'
+      | 'winning_min_threshold'
+      | 'winning_threshold_min_duration_ms'
+      | 'time_lock_ms'
+    >;
+  }): boolean {
+    if (waveBeforeUpdate.type !== WaveType.APPROVE) {
+      return false;
+    }
+    const previousWinningThreshold = numbers.parseIntOrNull(
+      waveBeforeUpdate.winning_min_threshold
+    );
+    const requestedWinningThreshold = numbers.parseIntOrNull(
+      request.wave.winning_threshold
+    );
+    const previousMinDuration =
+      numbers.parseIntOrNull(
+        waveBeforeUpdate.winning_threshold_min_duration_ms
+      ) ?? 0;
+    const requestedMinDuration =
+      numbers.parseIntOrNull(request.wave.winning_threshold_min_duration_ms) ??
+      0;
+    const previousTimeLock = numbers.parseIntOrNull(
+      waveBeforeUpdate.time_lock_ms
+    );
+    const requestedTimeLock = numbers.parseIntOrNull(request.wave.time_lock_ms);
+    return (
+      previousWinningThreshold !== requestedWinningThreshold ||
+      previousMinDuration !== requestedMinDuration ||
+      previousTimeLock !== requestedTimeLock
+    );
+  }
+
   private assertChangedDecisionStrategyStartsInFuture({
     request,
     waveBeforeUpdate,
@@ -863,16 +903,6 @@ export class WaveApiService {
     ) {
       throw new BadRequestException(
         `Only APPROVE waves support a winning_threshold_min_duration_ms`
-      );
-    }
-    if (
-      request.wave.type === ApiWaveType.Approve &&
-      (request.wave.winning_threshold_min_duration_ms ?? 0) > 0 &&
-      request.wave.time_lock_ms != null &&
-      request.wave.time_lock_ms > 0
-    ) {
-      throw new BadRequestException(
-        `APPROVE waves can't combine time_lock_ms and winning_threshold_min_duration_ms`
       );
     }
     if (request.wave.type === ApiWaveType.Approve) {
@@ -1745,6 +1775,17 @@ export class WaveApiService {
         });
 
         await this.wavesApiDb.insertWave(updatedEntity, ctxWithConnection);
+        if (
+          this.shouldClearApproveThresholdState({
+            request,
+            waveBeforeUpdate
+          })
+        ) {
+          await this.dropVotingService.clearWaveLeaderboardEntriesOverThresholdSinceByWaveId(
+            waveId,
+            ctxWithConnection
+          );
+        }
         await this.metricsRecorder.recordActiveIdentity(
           { identityId: authenticatedProfileId },
           ctxWithConnection
