@@ -3760,6 +3760,7 @@ paths:
         - OG Metadata
       summary: Get OG metadata for a profile
       operationId: getOgMetadataProfile
+      security: []
       x-6529-router:
         enabled: true
         auth: none
@@ -3790,6 +3791,7 @@ paths:
         - OG Metadata
       summary: Get OG metadata for a wave
       operationId: getOgMetadataWave
+      security: []
       x-6529-router:
         enabled: true
         auth: none
@@ -3820,6 +3822,7 @@ paths:
         - OG Metadata
       summary: Get OG metadata for a drop by id or serial number
       operationId: getOgMetadataDrop
+      security: []
       x-6529-router:
         enabled: true
         auth: none
@@ -12227,9 +12230,7 @@ components:
         - entity_id
         - title
         - description
-        - image
-        - video
-        - audio
+        - media
       properties:
         entity_type:
           $ref: "#/components/schemas/ApiOgMetadataEntityType"
@@ -12241,18 +12242,10 @@ components:
         description:
           type: string
           maxLength: 300
-        image:
-          anyOf:
-            - type: "null"
-            - $ref: "#/components/schemas/ApiOgMediaAsset"
-        video:
-          anyOf:
-            - type: "null"
-            - $ref: "#/components/schemas/ApiOgMediaAsset"
-        audio:
-          anyOf:
-            - type: "null"
-            - $ref: "#/components/schemas/ApiOgMediaAsset"
+        media:
+          $ref: "#/components/schemas/ApiOgMetadataMedia"
+        author:
+          $ref: "#/components/schemas/ApiOgMetadataProfile"
         profile:
           $ref: "#/components/schemas/ApiOgMetadataProfile"
         wave:
@@ -12273,16 +12266,31 @@ components:
           format: int64
         drop_type:
           $ref: "#/components/schemas/ApiDropMainType"
-        author:
-          $ref: "#/components/schemas/ApiOgMetadataProfile"
-        wave:
-          $ref: "#/components/schemas/ApiOgMetadataWave"
     ApiOgMetadataEntityType:
       type: string
       enum:
         - PROFILE
         - WAVE
         - DROP
+    ApiOgMetadataMedia:
+      type: object
+      required:
+        - image
+        - video
+        - audio
+      properties:
+        image:
+          anyOf:
+            - type: "null"
+            - $ref: "#/components/schemas/ApiOgMediaAsset"
+        video:
+          anyOf:
+            - type: "null"
+            - $ref: "#/components/schemas/ApiOgMediaAsset"
+        audio:
+          anyOf:
+            - type: "null"
+            - $ref: "#/components/schemas/ApiOgMediaAsset"
     ApiOgMetadataProfile:
       type: object
       required:
@@ -12330,8 +12338,6 @@ components:
         picture:
           type: string
           nullable: true
-        creator:
-          $ref: "#/components/schemas/ApiOgMetadataProfile"
     ApiOutgoingIdentitySubscriptionsPage:
       type: object
       required:
