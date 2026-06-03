@@ -6,6 +6,13 @@
 
 const IPFS_6529_GATEWAY_DOMAIN = 'ipfs.6529.io';
 const IPFS_6529_GATEWAY_IPFS_PATH = `https://${IPFS_6529_GATEWAY_DOMAIN}/ipfs`;
+const KNOWN_IPFS_GATEWAY_HOSTS = new Set([
+  IPFS_6529_GATEWAY_DOMAIN,
+  'ipfs.io',
+  'cf-ipfs.com',
+  'cloudflare-ipfs.com',
+  'gateway.pinata.cloud'
+]);
 
 export function normalizeIpfsUri(uri?: string | null): string | undefined {
   if (!uri) return undefined;
@@ -22,11 +29,9 @@ export function normalizeIpfsUri(uri?: string | null): string | undefined {
   }
 
   const ipfsPathMarker = '/ipfs/';
-  const ipfsPathMarkerIndex = lower.indexOf(ipfsPathMarker);
-  if (ipfsPathMarkerIndex !== -1) {
-    return to6529IpfsGatewayUrl(
-      s.slice(ipfsPathMarkerIndex + ipfsPathMarker.length)
-    );
+  const ipfsPath = getKnownGatewayIpfsPath(s, ipfsPathMarker);
+  if (ipfsPath) {
+    return to6529IpfsGatewayUrl(ipfsPath);
   }
 
   if (looksLikeIpfsCid(s)) {
@@ -34,6 +39,31 @@ export function normalizeIpfsUri(uri?: string | null): string | undefined {
   }
 
   return s;
+}
+
+function getKnownGatewayIpfsPath(
+  uri: string,
+  ipfsPathMarker: string
+): string | null {
+  let url: URL;
+  try {
+    url = new URL(uri);
+  } catch {
+    return null;
+  }
+  if (!KNOWN_IPFS_GATEWAY_HOSTS.has(url.hostname.toLowerCase())) {
+    return null;
+  }
+  const lowerPathname = url.pathname.toLowerCase();
+  const ipfsPathMarkerIndex = lowerPathname.indexOf(ipfsPathMarker);
+  if (ipfsPathMarkerIndex === -1) {
+    return null;
+  }
+  const ipfsPath = url.pathname.slice(
+    ipfsPathMarkerIndex + ipfsPathMarker.length
+  );
+  const cid = ipfsPath.split('/')[0] ?? '';
+  return looksLikeIpfsCid(cid) ? ipfsPath : null;
 }
 
 export function normalizeArUri(uri?: string | null): string | undefined {
@@ -69,6 +99,10 @@ function normalizeIpfsPath(path: string): string {
   return normalized;
 }
 
+/**
+ * Matches CIDv0 as "Qm" plus 44 base58 characters, or CIDv1 base32 strings
+ * with a case-insensitive "baf" prefix and at least 20 base32 characters.
+ */
 function looksLikeIpfsCid(value: string): boolean {
   return /^(Qm[1-9A-HJ-NP-Za-km-z]{44}|[bB][aA][fF][a-zA-Z2-7]{20,})$/.test(
     value

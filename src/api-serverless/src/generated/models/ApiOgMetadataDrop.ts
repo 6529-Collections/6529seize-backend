@@ -11,12 +11,19 @@
  */
 
 import { ApiDropMainType } from '../models/ApiDropMainType';
+import { ApiOgMediaAsset } from '../models/ApiOgMediaAsset';
+import { ApiSubmissionDropVoting } from '../models/ApiSubmissionDropVoting';
 import { HttpFile } from '../http/http';
 
 export class ApiOgMetadataDrop {
     'id': string;
     'serial_no': number;
     'drop_type': ApiDropMainType;
+    'title'?: string | null;
+    'description'?: string | null;
+    'content'?: string | null;
+    'votes'?: ApiSubmissionDropVoting;
+    'media'?: Array<ApiOgMediaAsset>;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -39,6 +46,36 @@ export class ApiOgMetadataDrop {
             "name": "drop_type",
             "baseName": "drop_type",
             "type": "ApiDropMainType",
+            "format": ""
+        },
+        {
+            "name": "title",
+            "baseName": "title",
+            "type": "string",
+            "format": ""
+        },
+        {
+            "name": "description",
+            "baseName": "description",
+            "type": "string",
+            "format": ""
+        },
+        {
+            "name": "content",
+            "baseName": "content",
+            "type": "string",
+            "format": ""
+        },
+        {
+            "name": "votes",
+            "baseName": "votes",
+            "type": "ApiSubmissionDropVoting",
+            "format": ""
+        },
+        {
+            "name": "media",
+            "baseName": "media",
+            "type": "Array<ApiOgMediaAsset>",
             "format": ""
         }    ];
 

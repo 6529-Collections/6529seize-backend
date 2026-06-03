@@ -10,18 +10,21 @@
  * Do not edit the class manually.
  */
 
+import { ApiOgMediaAsset } from '../models/ApiOgMediaAsset';
+import { ApiOgMetadataProfileBanner } from '../models/ApiOgMetadataProfileBanner';
 import { HttpFile } from '../http/http';
 
 export class ApiOgMetadataProfile {
     'id': string;
     'handle'?: string | null;
     'primary_address'?: string | null;
-    'pfp'?: string | null;
     'rep'?: number | null;
     'level'?: number | null;
     'tdh'?: number | null;
     'description'?: string | null;
     'twitter_handle'?: string | null;
+    'media'?: Array<ApiOgMediaAsset>;
+    'banner'?: ApiOgMetadataProfileBanner;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -43,12 +46,6 @@ export class ApiOgMetadataProfile {
         {
             "name": "primary_address",
             "baseName": "primary_address",
-            "type": "string",
-            "format": ""
-        },
-        {
-            "name": "pfp",
-            "baseName": "pfp",
             "type": "string",
             "format": ""
         },
@@ -80,6 +77,18 @@ export class ApiOgMetadataProfile {
             "name": "twitter_handle",
             "baseName": "twitter_handle",
             "type": "string",
+            "format": ""
+        },
+        {
+            "name": "media",
+            "baseName": "media",
+            "type": "Array<ApiOgMediaAsset>",
+            "format": ""
+        },
+        {
+            "name": "banner",
+            "baseName": "banner",
+            "type": "ApiOgMetadataProfileBanner",
             "format": ""
         }    ];
 

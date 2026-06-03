@@ -12,7 +12,6 @@
 
 import { ApiOgMetadataDrop } from '../models/ApiOgMetadataDrop';
 import { ApiOgMetadataEntityType } from '../models/ApiOgMetadataEntityType';
-import { ApiOgMetadataMedia } from '../models/ApiOgMetadataMedia';
 import { ApiOgMetadataProfile } from '../models/ApiOgMetadataProfile';
 import { ApiOgMetadataWave } from '../models/ApiOgMetadataWave';
 import { HttpFile } from '../http/http';
@@ -20,9 +19,6 @@ import { HttpFile } from '../http/http';
 export class ApiOgMetadata {
     'entity_type': ApiOgMetadataEntityType;
     'entity_id': string;
-    'title': string;
-    'description': string;
-    'media': ApiOgMetadataMedia;
     'author'?: ApiOgMetadataProfile;
     'profile'?: ApiOgMetadataProfile;
     'wave'?: ApiOgMetadataWave;
@@ -43,24 +39,6 @@ export class ApiOgMetadata {
             "name": "entity_id",
             "baseName": "entity_id",
             "type": "string",
-            "format": ""
-        },
-        {
-            "name": "title",
-            "baseName": "title",
-            "type": "string",
-            "format": ""
-        },
-        {
-            "name": "description",
-            "baseName": "description",
-            "type": "string",
-            "format": ""
-        },
-        {
-            "name": "media",
-            "baseName": "media",
-            "type": "ApiOgMetadataMedia",
             "format": ""
         },
         {

@@ -12221,31 +12221,16 @@ components:
           type: integer
           format: int64
           nullable: true
-        alt:
-          type: string
-          maxLength: 300
-          nullable: true
     ApiOgMetadata:
       type: object
       required:
         - entity_type
         - entity_id
-        - title
-        - description
-        - media
       properties:
         entity_type:
           $ref: "#/components/schemas/ApiOgMetadataEntityType"
         entity_id:
           type: string
-        title:
-          type: string
-          maxLength: 120
-        description:
-          type: string
-          maxLength: 300
-        media:
-          $ref: "#/components/schemas/ApiOgMetadataMedia"
         author:
           $ref: "#/components/schemas/ApiOgMetadataProfile"
         profile:
@@ -12268,31 +12253,27 @@ components:
           format: int64
         drop_type:
           $ref: "#/components/schemas/ApiDropMainType"
+        title:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        content:
+          type: string
+          nullable: true
+        votes:
+          $ref: "#/components/schemas/ApiSubmissionDropVoting"
+        media:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiOgMediaAsset"
     ApiOgMetadataEntityType:
       type: string
       enum:
         - PROFILE
         - WAVE
         - DROP
-    ApiOgMetadataMedia:
-      type: object
-      required:
-        - image
-        - video
-        - audio
-      properties:
-        image:
-          anyOf:
-            - type: "null"
-            - $ref: "#/components/schemas/ApiOgMediaAsset"
-        video:
-          anyOf:
-            - type: "null"
-            - $ref: "#/components/schemas/ApiOgMediaAsset"
-        audio:
-          anyOf:
-            - type: "null"
-            - $ref: "#/components/schemas/ApiOgMediaAsset"
     ApiOgMetadataProfile:
       type: object
       required:
@@ -12304,9 +12285,6 @@ components:
           type: string
           nullable: true
         primary_address:
-          type: string
-          nullable: true
-        pfp:
           type: string
           nullable: true
         rep:
@@ -12327,6 +12305,29 @@ components:
         twitter_handle:
           type: string
           nullable: true
+        media:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiOgMediaAsset"
+        banner:
+          $ref: "#/components/schemas/ApiOgMetadataProfileBanner"
+    ApiOgMetadataProfileBanner:
+      type: object
+      required:
+        - primary
+        - secondary
+        - media
+      properties:
+        primary:
+          type: string
+          nullable: true
+        secondary:
+          type: string
+          nullable: true
+        media:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiOgMediaAsset"
     ApiOgMetadataWave:
       type: object
       required:
@@ -12337,9 +12338,19 @@ components:
           type: string
         name:
           type: string
-        picture:
+        description:
           type: string
           nullable: true
+        subscribers_count:
+          type: integer
+          format: int64
+        drops_count:
+          type: integer
+          format: int64
+        media:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiOgMediaAsset"
     ApiOutgoingIdentitySubscriptionsPage:
       type: object
       required:

@@ -17,7 +17,6 @@ export class ApiOgMediaAsset {
     'mime_type'?: string | null;
     'width'?: number | null;
     'height'?: number | null;
-    'alt'?: string | null;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -47,12 +46,6 @@ export class ApiOgMediaAsset {
             "baseName": "height",
             "type": "number",
             "format": "int64"
-        },
-        {
-            "name": "alt",
-            "baseName": "alt",
-            "type": "string",
-            "format": ""
         }    ];
 
     static getAttributeTypeMap() {

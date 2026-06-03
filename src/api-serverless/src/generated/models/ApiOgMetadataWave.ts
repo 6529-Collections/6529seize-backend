@@ -10,12 +10,16 @@
  * Do not edit the class manually.
  */
 
+import { ApiOgMediaAsset } from '../models/ApiOgMediaAsset';
 import { HttpFile } from '../http/http';
 
 export class ApiOgMetadataWave {
     'id': string;
     'name': string;
-    'picture'?: string | null;
+    'description'?: string | null;
+    'subscribers_count'?: number;
+    'drops_count'?: number;
+    'media'?: Array<ApiOgMediaAsset>;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -35,9 +39,27 @@ export class ApiOgMetadataWave {
             "format": ""
         },
         {
-            "name": "picture",
-            "baseName": "picture",
+            "name": "description",
+            "baseName": "description",
             "type": "string",
+            "format": ""
+        },
+        {
+            "name": "subscribers_count",
+            "baseName": "subscribers_count",
+            "type": "number",
+            "format": "int64"
+        },
+        {
+            "name": "drops_count",
+            "baseName": "drops_count",
+            "type": "number",
+            "format": "int64"
+        },
+        {
+            "name": "media",
+            "baseName": "media",
+            "type": "Array<ApiOgMediaAsset>",
             "format": ""
         }    ];
 
