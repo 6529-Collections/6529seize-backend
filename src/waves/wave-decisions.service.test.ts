@@ -251,6 +251,154 @@ describe('WaveDecisionsService', () => {
     );
   });
 
+  it('formalizes a time-locked approve candidate with live weighted vote', async () => {
+    jest.spyOn(Time, 'currentMillis').mockReturnValue(1_000);
+    (waveDecisionsDb.getApproveWinnerCandidates as jest.Mock).mockResolvedValue(
+      [
+        {
+          wave_id: 'wave-1',
+          drop_id: 'drop-older',
+          created_at: 10,
+          vote: 12,
+          winning_min_threshold: 10,
+          time_lock_ms: 500,
+          max_winners: 1,
+          decisions_done: 0,
+          latest_decision_time: 999
+        }
+      ]
+    );
+    (
+      waveLeaderboardCalculationService.calculateWeightedVoteForDropInTime as jest.Mock
+    ).mockResolvedValue(11);
+    (
+      waveDecisionsDb.executeNativeQueriesInTransaction as jest.Mock
+    ).mockImplementation(async (fn) => fn({}));
+    const formalizeDecision = jest
+      .spyOn(service as any, 'formalizeDecision')
+      .mockResolvedValue({
+        claimBuildDropId: null,
+        pendingPushNotificationIds: []
+      });
+
+    await (service as any).createApproveDecisions({} as any);
+
+    expect(
+      waveLeaderboardCalculationService.calculateWeightedVoteForDropInTime
+    ).toHaveBeenCalledTimes(1);
+    const weightedVoteCall = (
+      waveLeaderboardCalculationService.calculateWeightedVoteForDropInTime as jest.Mock
+    ).mock.calls[0];
+    expect(weightedVoteCall[0]).toMatchObject({
+      dropId: 'drop-older',
+      timeLockMs: 500
+    });
+    expect(weightedVoteCall[0].time.toMillis()).toBe(1_000);
+    expect(weightedVoteCall[1]).toEqual({ timer: {} });
+    expect(formalizeDecision).toHaveBeenCalledWith(
+      expect.objectContaining({
+        winnerDrops: [
+          {
+            drop_id: 'drop-older',
+            vote: 11,
+            rank: 1
+          }
+        ]
+      }),
+      expect.anything()
+    );
+  });
+
+  it('uses current time for live weighted vote when decision sequence is ahead', async () => {
+    jest.spyOn(Time, 'currentMillis').mockReturnValue(1_000);
+    (waveDecisionsDb.getApproveWinnerCandidates as jest.Mock).mockResolvedValue(
+      [
+        {
+          wave_id: 'wave-1',
+          drop_id: 'drop-older',
+          created_at: 10,
+          vote: 12,
+          winning_min_threshold: 10,
+          time_lock_ms: 500,
+          max_winners: 1,
+          decisions_done: 0,
+          latest_decision_time: 1_500
+        }
+      ]
+    );
+    (
+      waveLeaderboardCalculationService.calculateWeightedVoteForDropInTime as jest.Mock
+    ).mockResolvedValue(11);
+    (
+      waveDecisionsDb.executeNativeQueriesInTransaction as jest.Mock
+    ).mockImplementation(async (fn) => fn({}));
+    const formalizeDecision = jest
+      .spyOn(service as any, 'formalizeDecision')
+      .mockResolvedValue({
+        claimBuildDropId: null,
+        pendingPushNotificationIds: []
+      });
+
+    await (service as any).createApproveDecisions({} as any);
+
+    const weightedVoteCall = (
+      waveLeaderboardCalculationService.calculateWeightedVoteForDropInTime as jest.Mock
+    ).mock.calls[0];
+    expect(weightedVoteCall[0].time.toMillis()).toBe(1_000);
+    expect(formalizeDecision).toHaveBeenCalledWith(
+      expect.objectContaining({
+        decisionTime: 1_501
+      }),
+      expect.anything()
+    );
+  });
+
+  it('skips and refreshes a stale time-locked approve candidate below live weighted threshold', async () => {
+    jest.spyOn(Time, 'currentMillis').mockReturnValue(1_000);
+    (waveDecisionsDb.getApproveWinnerCandidates as jest.Mock).mockResolvedValue(
+      [
+        {
+          wave_id: 'wave-1',
+          drop_id: 'drop-older',
+          created_at: 10,
+          vote: 12,
+          winning_min_threshold: 10,
+          time_lock_ms: 500,
+          max_winners: 1,
+          decisions_done: 0,
+          latest_decision_time: 999
+        }
+      ]
+    );
+    (
+      waveLeaderboardCalculationService.calculateWeightedVoteForDropInTime as jest.Mock
+    ).mockResolvedValue(9);
+    const formalizeDecision = jest
+      .spyOn(service as any, 'formalizeDecision')
+      .mockResolvedValue({
+        claimBuildDropId: null,
+        pendingPushNotificationIds: []
+      });
+
+    await (service as any).createApproveDecisions({} as any);
+
+    expect(formalizeDecision).not.toHaveBeenCalled();
+    expect(dropVotingDb.upsertWaveLeaderboardEntry).toHaveBeenCalledWith(
+      {
+        drop_id: 'drop-older',
+        wave_id: 'wave-1',
+        vote: 9,
+        timestamp: 1_000,
+        vote_on_decision_time: 9,
+        over_threshold_since_ms: null
+      },
+      { timer: {} }
+    );
+    expect(
+      dropVotingDb.clearWaveLeaderboardEntryOverThresholdSince
+    ).not.toHaveBeenCalled();
+  });
+
   it('stops approve formalization when the next synthetic decision lands in a pause', async () => {
     jest.spyOn(Time, 'currentMillis').mockReturnValue(1_000);
     (waveDecisionsDb.getApproveWinnerCandidates as jest.Mock).mockResolvedValue(

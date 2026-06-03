@@ -308,6 +308,16 @@ export class DropVotingService {
       this.votingDb.deleteDropRealVoterVoteInTimesForWave(waveId, ctx)
     ]);
   }
+
+  public async clearWaveLeaderboardEntriesOverThresholdSinceByWaveId(
+    waveId: string,
+    ctx: RequestContext
+  ) {
+    await this.votingDb.clearWaveLeaderboardEntriesOverThresholdSinceByWaveId(
+      waveId,
+      ctx
+    );
+  }
 }
 
 export const dropVotingService = new DropVotingService(

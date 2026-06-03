@@ -9696,7 +9696,9 @@ components:
           description: >-
             Milliseconds a drop must continuously stay at or above
             winning_threshold before winning an APPROVE wave. Defaults to 0,
-            which declares a winner as soon as the threshold is reached.
+            which declares a winner as soon as the threshold is reached. When
+            time_lock_ms is set, this duration is measured against the
+            time-scaled weighted vote.
           type: integer
           format: int64
           minimum: 0
@@ -9720,9 +9722,9 @@ components:
         time_lock_ms:
           nullable: true
           description: >-
-            Vote of a voter is considered eligible after this amount of time
-            after casting it. If not set then votes are eligible immediately
-            after casting.
+            When set, vote totals use a trailing time-scaled weighted average
+            over this duration, so new vote changes gradually gain or lose
+            influence. If not set, votes are counted immediately.
           type: integer
           format: int64
           minimum: 1
@@ -13860,7 +13862,8 @@ components:
           description: >-
             Milliseconds a drop must continuously stay at or above
             winning_threshold before winning an APPROVE wave. Null for
-            non-APPROVE waves.
+            non-APPROVE waves. When time_lock_ms is set, this duration is
+            measured against the time-scaled weighted vote.
           type: integer
           format: int64
           minimum: 0
@@ -13884,9 +13887,9 @@ components:
         time_lock_ms:
           nullable: true
           description: >-
-            Vote of a voter is considered eligible after this amount of time
-            after casting it. If not set then votes are eligible immediately
-            after casting.
+            When set, vote totals use a trailing time-scaled weighted average
+            over this duration, so new vote changes gradually gain or lose
+            influence. If not set, votes are counted immediately.
           type: integer
           format: int64
           minimum: 1
