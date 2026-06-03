@@ -289,6 +289,12 @@ export class OgMetadataService {
       classification: profile.classification,
       sub_classification: profile.sub_classification,
       followers_count: followersCount,
+      has_active_submissions: this.hasItems(
+        profile.active_main_stage_submission_ids
+      ),
+      has_winning_submissions: this.hasItems(
+        profile.winner_main_stage_drop_ids
+      ),
       cic: profile.cic,
       rep: profile.rep,
       level: profile.level,
@@ -306,6 +312,9 @@ export class OgMetadataService {
       readonly classification?: ApiProfileMin['classification'];
       readonly sub_classification?: string | null;
       readonly cic?: number;
+      readonly level?: number;
+      readonly active_main_stage_submission_ids?: string[];
+      readonly winner_main_stage_drop_ids?: string[];
     },
     profileEnabledAt: number | null,
     followersCount: number
@@ -318,7 +327,14 @@ export class OgMetadataService {
       classification: profile.classification,
       sub_classification: profile.sub_classification ?? null,
       followers_count: followersCount,
+      has_active_submissions: this.hasItems(
+        profile.active_main_stage_submission_ids
+      ),
+      has_winning_submissions: this.hasItems(
+        profile.winner_main_stage_drop_ids
+      ),
       cic: profile.cic ?? null,
+      level: profile.level ?? null,
       twitter_handle: TWITTER_HANDLE_NOT_AVAILABLE,
       media: this.singleUrlMedia(profile.pfp)
     };
@@ -467,17 +483,72 @@ export class OgMetadataService {
   }
 
   private removeMarkdownMarkersAndCollapseWhitespace(value: string): string {
-    const withoutMarkdown = value
+    const withoutMarkdown = this.replaceMarkdownLinks(value)
       .replace(/(^|\n)[ \t]{0,3}#{1,6}[ \t]+/g, '$1')
       .replace(/(^|\n)[ \t]{0,3}>[ \t]?/g, '$1')
-      .replace(/!\[([^\]\n]*)\]\([^\s)\n]+(?:[ \t]+"[^"\n]*")?\)/g, '$1')
-      .replace(/\[([^\]\n]+)\]\([^\s)\n]+(?:[ \t]+"[^"\n]*")?\)/g, '$1')
       .replace(/\\([\\`*_[\]()#+\-.!>])/g, '$1')
       .replace(/`([^`\n]+)`/g, '$1')
       .replace(/(\*{1,3})(\w(?:[^*\n]*?\w)?)\1/g, '$2')
       .replace(/(^|[^\w])(_{1,3})(\w(?:[^_\n]*?\w)?)\2($|[^\w])/g, '$1$3$4')
       .replace(/```/g, '');
     return this.collapseWhitespace(withoutMarkdown);
+  }
+
+  private replaceMarkdownLinks(value: string): string {
+    let result = '';
+    let index = 0;
+
+    while (index < value.length) {
+      const imageTextStart =
+        value[index] === '!' && value[index + 1] === '[' ? index + 2 : null;
+      const textStart =
+        imageTextStart ?? (value[index] === '[' ? index + 1 : null);
+
+      if (textStart === null) {
+        result += value[index];
+        index++;
+        continue;
+      }
+
+      const textEnd = this.findMarkdownDelimiter(value, textStart, ']');
+      if (textEnd === null) {
+        result += value.slice(index);
+        break;
+      }
+      if (value[textEnd + 1] !== '(') {
+        result += value.slice(index, textEnd + 1);
+        index = textEnd + 1;
+        continue;
+      }
+
+      const urlEnd = this.findMarkdownDelimiter(value, textEnd + 2, ')');
+      if (urlEnd === null) {
+        result += value.slice(index);
+        break;
+      }
+
+      result += value.slice(textStart, textEnd);
+      index = urlEnd + 1;
+    }
+
+    return result;
+  }
+
+  private findMarkdownDelimiter(
+    value: string,
+    start: number,
+    delimiter: string
+  ): number | null {
+    for (let index = start; index < value.length; index++) {
+      const char = value[index];
+      if (char === '\n' || char === '\r') {
+        return null;
+      }
+      if (char === delimiter) {
+        return index;
+      }
+    }
+    return null;
   }
 
   private collapseWhitespace(value: string): string {
@@ -506,6 +577,10 @@ export class OgMetadataService {
       target_id: profileId,
       target_type: ActivityEventTargetType.IDENTITY
     });
+  }
+
+  private hasItems(value: readonly unknown[] | null | undefined): boolean {
+    return (value?.length ?? 0) > 0;
   }
 
   private toTimestamp(

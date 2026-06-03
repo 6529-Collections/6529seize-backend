@@ -3765,7 +3765,7 @@ paths:
         enabled: true
         auth: none
         cache:
-          ttlSeconds: 900
+          ttlSeconds: 300
         handler:
           import: "@/api/og-metadata/og-metadata.handlers"
           name: handleGetOgMetadataProfile
@@ -3796,7 +3796,7 @@ paths:
         enabled: true
         auth: none
         cache:
-          ttlSeconds: 900
+          ttlSeconds: 300
         handler:
           import: "@/api/og-metadata/og-metadata.handlers"
           name: handleGetOgMetadataWave
@@ -3827,7 +3827,7 @@ paths:
         enabled: true
         auth: none
         cache:
-          ttlSeconds: 900
+          ttlSeconds: 300
         handler:
           import: "@/api/og-metadata/og-metadata.handlers"
           name: handleGetOgMetadataDrop
@@ -12299,6 +12299,10 @@ components:
         followers_count:
           type: integer
           format: int64
+        has_active_submissions:
+          type: boolean
+        has_winning_submissions:
+          type: boolean
         cic:
           type: integer
           format: int64

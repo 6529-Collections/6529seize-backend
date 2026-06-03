@@ -23,6 +23,8 @@ export class ApiOgMetadataProfile {
     'classification'?: ApiProfileClassification;
     'sub_classification'?: string | null;
     'followers_count'?: number;
+    'has_active_submissions'?: boolean;
+    'has_winning_submissions'?: boolean;
     'cic'?: number | null;
     'rep'?: number | null;
     'level'?: number | null;
@@ -78,6 +80,18 @@ export class ApiOgMetadataProfile {
             "baseName": "followers_count",
             "type": "number",
             "format": "int64"
+        },
+        {
+            "name": "has_active_submissions",
+            "baseName": "has_active_submissions",
+            "type": "boolean",
+            "format": ""
+        },
+        {
+            "name": "has_winning_submissions",
+            "baseName": "has_winning_submissions",
+            "type": "boolean",
+            "format": ""
         },
         {
             "name": "cic",

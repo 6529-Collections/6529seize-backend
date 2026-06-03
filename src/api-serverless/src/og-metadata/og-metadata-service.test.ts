@@ -4,14 +4,13 @@ import {
 } from '@/api/drops/api-drop-v2.service';
 import { ApiDropResolvedIdentityProfileV2 } from '@/api/generated/models/ApiDropResolvedIdentityProfileV2';
 import { ApiDropMainType } from '@/api/generated/models/ApiDropMainType';
+import { ApiSubmissionDropStatus } from '@/api/generated/models/ApiSubmissionDropStatus';
 import { ApiIdentity } from '@/api/generated/models/ApiIdentity';
 import { ApiOgMetadataEntityType } from '@/api/generated/models/ApiOgMetadataEntityType';
 import { ApiProfileMin } from '@/api/generated/models/ApiProfileMin';
 import { ApiProfileClassification } from '@/api/generated/models/ApiProfileClassification';
 import { IdentityFetcher } from '@/api/identities/identity.fetcher';
-import {
-  IdentitySubscriptionsDb
-} from '@/api/identity-subscriptions/identity-subscriptions.db';
+import { IdentitySubscriptionsDb } from '@/api/identity-subscriptions/identity-subscriptions.db';
 import { OgMetadataService } from '@/api/og-metadata/og-metadata.service';
 import { ApiWaveOverviewMapper } from '@/api/waves/api-wave-overview.mapper';
 import { WavesApiDb } from '@/api/waves/waves.api.db';
@@ -92,16 +91,33 @@ function makeDropWithWave(id: string, serialNo: number): ApiDropWithWave {
     drop: {
       id,
       serial_no: serialNo,
-      title: null,
+      created_at: 1,
+      is_signed: false,
+      hide_link_preview: false,
       content: 'Drop content',
       media: [{ url: `ipfs://${IPFS_CID}/drop.png`, mime_type: 'image/png' }],
+      parts_count: 1,
       priority_metadata: [
         { data_key: 'title', data_value: 'Drop title' },
         { data_key: 'description', data_value: 'Drop description' }
       ],
-      author: { id: 'author-1' },
+      author: {
+        id: 'author-1',
+        handle: 'artist',
+        primary_address: '0xartist',
+        pfp: `ipfs://${IPFS_CID}/artist.jpg`,
+        level: 9,
+        classification: ApiProfileClassification.Pseudonym,
+        badges: {
+          artist_of_main_stage_submissions: 0,
+          artist_of_memes: 0
+        }
+      },
       drop_type: ApiDropMainType.Submission,
+      boosts: 0,
       submission_context: {
+        status: ApiSubmissionDropStatus.Active,
+        has_metadata: true,
         voting: {
           is_open: true,
           total_votes_given: 11,
@@ -115,15 +131,21 @@ function makeDropWithWave(id: string, serialNo: number): ApiDropWithWave {
     wave: {
       id: 'wave-1',
       name: 'Wave',
+      last_drop_time: 1,
+      created_at: 1,
       subscribers_count: 12,
-      total_drops_count: 34,
+      has_competition: false,
+      is_dm_wave: false,
+      links_disabled: false,
       pfp: `ipfs://${IPFS_CID}/wave.jpg`,
       description_drop: {
         contents: 'Wave description',
         media: []
-      }
+      },
+      total_drops_count: 34,
+      is_private: false
     }
-  } as ApiDropWithWave;
+  };
 }
 
 function makeApiIdentity(overrides: Partial<ApiIdentity>): ApiIdentity {
@@ -212,7 +234,8 @@ function makeResolvedProfile(
 
 function mockAuthorProfile(
   identityFetcher: IdentityFetcherMock,
-  cic = 8
+  cic = 8,
+  level = 9
 ): void {
   identityFetcher.getOverviewsByIds.mockResolvedValue({
     'author-1': makeApiProfileMin({
@@ -222,7 +245,10 @@ function mockAuthorProfile(
       pfp: `ipfs://${IPFS_CID}/artist.jpg`,
       classification: ApiProfileClassification.Pseudonym,
       sub_classification: null,
-      cic
+      cic,
+      level,
+      active_main_stage_submission_ids: ['active-drop'],
+      winner_main_stage_drop_ids: ['winning-drop']
     })
   });
 }
@@ -250,7 +276,9 @@ describe('OgMetadataService', () => {
         level: 7,
         tdh: 1234.5,
         classification: ApiProfileClassification.Bot,
-        sub_classification: 'assistant'
+        sub_classification: 'assistant',
+        active_main_stage_submission_ids: ['active-drop'],
+        winner_main_stage_drop_ids: ['winning-drop']
       })
     );
     identityFetcher.getDropResolvedIdentityProfilesV2ByIds.mockResolvedValue({
@@ -268,6 +296,8 @@ describe('OgMetadataService', () => {
         classification: ApiProfileClassification.Bot,
         sub_classification: 'assistant',
         followers_count: 42,
+        has_active_submissions: true,
+        has_winning_submissions: true,
         cic: 10,
         rep: 100,
         level: 7,
@@ -397,7 +427,10 @@ describe('OgMetadataService', () => {
         classification: ApiProfileClassification.Pseudonym,
         sub_classification: null,
         followers_count: 7,
+        has_active_submissions: true,
+        has_winning_submissions: true,
         cic: 8,
+        level: 9,
         twitter_handle: null,
         media: [
           {
@@ -488,7 +521,10 @@ describe('OgMetadataService', () => {
         id: 'author-1',
         handle: 'artist',
         followers_count: 7,
-        cic: 8
+        has_active_submissions: true,
+        has_winning_submissions: true,
+        cic: 8,
+        level: 9
       },
       drop: {
         id: UUID_DROP_ID,

@@ -61,11 +61,10 @@ Recommended schema name: `ApiOgMetadata`.
     "classification": "PSEUDONYM",
     "sub_classification": null,
     "followers_count": 42,
+    "has_active_submissions": true,
+    "has_winning_submissions": false,
     "cic": 10,
-    "rep": null,
-    "level": null,
-    "tdh": null,
-    "description": null,
+    "level": 12,
     "twitter_handle": null,
     "media": [
       {
@@ -74,12 +73,7 @@ Recommended schema name: `ApiOgMetadata`.
         "width": null,
         "height": null
       }
-    ],
-    "banner": {
-      "primary": "#0f3BAc",
-      "secondary": "#000000",
-      "media": []
-    }
+    ]
   },
   "wave": {
     "id": "7aa5653c-75ad-418a-9ddb-53e23e7f8f48",
@@ -163,6 +157,8 @@ For the profile endpoint, profile detail includes:
 - `classification`
 - `sub_classification`
 - `followers_count`
+- `has_active_submissions`
+- `has_winning_submissions`
 - `cic`
 - `rep`
 - `level`
@@ -186,7 +182,10 @@ preview fields:
 - `classification`
 - `sub_classification`
 - `followers_count`
+- `has_active_submissions`
+- `has_winning_submissions`
 - `cic`
+- `level`
 - `twitter_handle`
 - `media`
 
