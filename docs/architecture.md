@@ -192,12 +192,13 @@ MySQL is the integration contract between nearly all modules. API routes, schedu
 
 ## API Boundary
 
-The API is organized by domain routers under `src/api-serverless/src`. The OpenAPI file defines the public contract and generated models, while route implementation remains manual. This gives strong response model consistency without forcing generated routing.
+The API is organized by domain routers under `src/api-serverless/src`. The OpenAPI file defines the public contract and generated models. Legacy routes are wired manually, while newer OpenAPI operations can opt into generated route wiring through `x-6529-router` and thin domain handlers.
 
 Important API responsibilities:
 
 - Authentication and refresh-token flows.
 - Public read APIs for NFTs, TDH, waves, drops, profiles, community metrics, subscriptions, and notifications.
+- Public OG metadata inputs for profile, wave, and drop link previews under `/og-metadata`.
 - Authenticated social writes: drops, votes, reactions, curations, subscriptions, groups, proxies, minting claims, and push settings.
 - Upload preparation and multipart completion for drop media, wave media, distribution photos, and attachments.
 - WebSocket connection registration and real-time wave-related messages.

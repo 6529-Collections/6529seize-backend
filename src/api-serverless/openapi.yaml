@@ -3754,6 +3754,98 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiNotificationsResponseV2"
+  /og-metadata/profiles/{identity}:
+    get:
+      tags:
+        - OG Metadata
+      summary: Get OG metadata for a profile
+      operationId: getOgMetadataProfile
+      x-6529-router:
+        enabled: true
+        auth: none
+        cache:
+          ttlSeconds: 900
+        handler:
+          import: "@/api/og-metadata/og-metadata.handlers"
+          name: handleGetOgMetadataProfile
+      parameters:
+        - name: identity
+          in: path
+          required: true
+          description: Profile id, handle, wallet address, or ENS name
+          schema:
+            type: string
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiOgMetadata"
+        "404":
+          description: Profile not found
+  /og-metadata/waves/{id}:
+    get:
+      tags:
+        - OG Metadata
+      summary: Get OG metadata for a wave
+      operationId: getOgMetadataWave
+      x-6529-router:
+        enabled: true
+        auth: none
+        cache:
+          ttlSeconds: 900
+        handler:
+          import: "@/api/og-metadata/og-metadata.handlers"
+          name: handleGetOgMetadataWave
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Wave id
+          schema:
+            type: string
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiOgMetadata"
+        "404":
+          description: Wave not found
+  /og-metadata/drops/{drop}:
+    get:
+      tags:
+        - OG Metadata
+      summary: Get OG metadata for a drop by id or serial number
+      operationId: getOgMetadataDrop
+      x-6529-router:
+        enabled: true
+        auth: none
+        cache:
+          ttlSeconds: 900
+        handler:
+          import: "@/api/og-metadata/og-metadata.handlers"
+          name: handleGetOgMetadataDrop
+      parameters:
+        - name: drop
+          in: path
+          required: true
+          description: Drop UUID or numeric drop serial number
+          schema:
+            type: string
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiOgMetadata"
+        "400":
+          description: Invalid drop identifier
+        "404":
+          description: Drop not found
   /blocks:
     get:
       tags:
@@ -12104,6 +12196,142 @@ components:
           $ref: "#/components/schemas/ApiWaveOverview"
         additional_context:
           $ref: "#/components/schemas/ApiNotificationAdditionalContextV2"
+    ApiOgMediaAsset:
+      type: object
+      required:
+        - url
+      properties:
+        url:
+          type: string
+          maxLength: 2000
+        mime_type:
+          type: string
+          maxLength: 100
+          nullable: true
+        width:
+          type: integer
+          format: int64
+          nullable: true
+        height:
+          type: integer
+          format: int64
+          nullable: true
+        alt:
+          type: string
+          maxLength: 300
+          nullable: true
+    ApiOgMetadata:
+      type: object
+      required:
+        - entity_type
+        - entity_id
+        - title
+        - description
+        - image
+        - video
+        - audio
+      properties:
+        entity_type:
+          $ref: "#/components/schemas/ApiOgMetadataEntityType"
+        entity_id:
+          type: string
+        title:
+          type: string
+          maxLength: 120
+        description:
+          type: string
+          maxLength: 300
+        image:
+          anyOf:
+            - type: "null"
+            - $ref: "#/components/schemas/ApiOgMediaAsset"
+        video:
+          anyOf:
+            - type: "null"
+            - $ref: "#/components/schemas/ApiOgMediaAsset"
+        audio:
+          anyOf:
+            - type: "null"
+            - $ref: "#/components/schemas/ApiOgMediaAsset"
+        profile:
+          $ref: "#/components/schemas/ApiOgMetadataProfile"
+        wave:
+          $ref: "#/components/schemas/ApiOgMetadataWave"
+        drop:
+          $ref: "#/components/schemas/ApiOgMetadataDrop"
+    ApiOgMetadataDrop:
+      type: object
+      required:
+        - id
+        - serial_no
+        - drop_type
+      properties:
+        id:
+          type: string
+        serial_no:
+          type: integer
+          format: int64
+        drop_type:
+          $ref: "#/components/schemas/ApiDropMainType"
+        author:
+          $ref: "#/components/schemas/ApiOgMetadataProfile"
+        wave:
+          $ref: "#/components/schemas/ApiOgMetadataWave"
+    ApiOgMetadataEntityType:
+      type: string
+      enum:
+        - PROFILE
+        - WAVE
+        - DROP
+    ApiOgMetadataProfile:
+      type: object
+      required:
+        - id
+      properties:
+        id:
+          type: string
+        handle:
+          type: string
+          nullable: true
+        primary_address:
+          type: string
+          nullable: true
+        pfp:
+          type: string
+          nullable: true
+        rep:
+          type: integer
+          format: int64
+          nullable: true
+        level:
+          type: integer
+          format: int64
+          nullable: true
+        tdh:
+          type: number
+          format: double
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        twitter_handle:
+          type: string
+          nullable: true
+    ApiOgMetadataWave:
+      type: object
+      required:
+        - id
+        - name
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        picture:
+          type: string
+          nullable: true
+        creator:
+          $ref: "#/components/schemas/ApiOgMetadataProfile"
     ApiOutgoingIdentitySubscriptionsPage:
       type: object
       required:

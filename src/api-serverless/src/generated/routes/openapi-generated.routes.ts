@@ -2,12 +2,48 @@
 import { asyncRouter } from '@/api/async.router';
 import { ApiResponse } from '@/api/api-response';
 import { maybeAuthenticatedUser, needsAuthenticatedUser } from '@/api/auth/auth';
+import { cacheRequest } from '@/api/request-cache';
+import { Time } from '@/time';
 import { Response } from 'express';
 import { handleDownloadDropV2VotersById, handleGetBoostedDropsV2, handleGetCuratedProfileWaveDropsV2, handleGetDropsV2, handleGetDropV2BoostsById, handleGetDropV2ById, handleGetDropV2MetadataById, handleGetDropV2PartById, handleGetDropV2ReactionsById, handleGetDropV2VoteEditLogsById, handleGetDropV2VotersById } from '@/api/drops/drops-v2.handlers';
 import { handleGetNotificationsV2 } from '@/api/notifications/notifications-v2.handlers';
+import { handleGetOgMetadataDrop, handleGetOgMetadataProfile, handleGetOgMetadataWave } from '@/api/og-metadata/og-metadata.handlers';
 import { handleGetWaveDecisionsV2, handleGetWaveDropsV2, handleGetWaveLeaderboardV2, handleGetWavesV2, handleListWaveCurationDropsV2, handleSearchDropsInWaveV2 } from '@/api/waves/waves-v2.handlers';
-import { DownloadDropV2VotersByIdRequest, DownloadDropV2VotersByIdResponse, GetBoostedDropsV2Request, GetBoostedDropsV2Response, GetCuratedProfileWaveDropsV2Request, GetCuratedProfileWaveDropsV2Response, GetDropsV2Request, GetDropsV2Response, GetDropV2BoostsByIdRequest, GetDropV2BoostsByIdResponse, GetDropV2ByIdRequest, GetDropV2ByIdResponse, GetDropV2MetadataByIdRequest, GetDropV2MetadataByIdResponse, GetDropV2PartByIdRequest, GetDropV2PartByIdResponse, GetDropV2ReactionsByIdRequest, GetDropV2ReactionsByIdResponse, GetDropV2VoteEditLogsByIdRequest, GetDropV2VoteEditLogsByIdResponse, GetDropV2VotersByIdRequest, GetDropV2VotersByIdResponse, GetNotificationsV2Request, GetNotificationsV2Response, GetWaveDecisionsV2Request, GetWaveDecisionsV2Response, GetWaveDropsV2Request, GetWaveDropsV2Response, GetWaveLeaderboardV2Request, GetWaveLeaderboardV2Response, GetWavesV2Request, GetWavesV2Response, ListWaveCurationDropsV2Request, ListWaveCurationDropsV2Response, SearchDropsInWaveV2Request, SearchDropsInWaveV2Response } from './operations';
+import { DownloadDropV2VotersByIdRequest, DownloadDropV2VotersByIdResponse, GetBoostedDropsV2Request, GetBoostedDropsV2Response, GetCuratedProfileWaveDropsV2Request, GetCuratedProfileWaveDropsV2Response, GetDropsV2Request, GetDropsV2Response, GetDropV2BoostsByIdRequest, GetDropV2BoostsByIdResponse, GetDropV2ByIdRequest, GetDropV2ByIdResponse, GetDropV2MetadataByIdRequest, GetDropV2MetadataByIdResponse, GetDropV2PartByIdRequest, GetDropV2PartByIdResponse, GetDropV2ReactionsByIdRequest, GetDropV2ReactionsByIdResponse, GetDropV2VoteEditLogsByIdRequest, GetDropV2VoteEditLogsByIdResponse, GetDropV2VotersByIdRequest, GetDropV2VotersByIdResponse, GetNotificationsV2Request, GetNotificationsV2Response, GetOgMetadataDropRequest, GetOgMetadataDropResponse, GetOgMetadataProfileRequest, GetOgMetadataProfileResponse, GetOgMetadataWaveRequest, GetOgMetadataWaveResponse, GetWaveDecisionsV2Request, GetWaveDecisionsV2Response, GetWaveDropsV2Request, GetWaveDropsV2Response, GetWaveLeaderboardV2Request, GetWaveLeaderboardV2Response, GetWavesV2Request, GetWavesV2Response, ListWaveCurationDropsV2Request, ListWaveCurationDropsV2Response, SearchDropsInWaveV2Request, SearchDropsInWaveV2Response } from './operations';
 const router = asyncRouter();
+router.get(
+  '/og-metadata/drops/:drop',
+  cacheRequest({ ttl: Time.seconds(900) }),
+  async (
+    req: GetOgMetadataDropRequest,
+    res: Response<ApiResponse<GetOgMetadataDropResponse>>
+  ) => {
+    res.send(await handleGetOgMetadataDrop(req));
+  }
+);
+
+router.get(
+  '/og-metadata/profiles/:identity',
+  cacheRequest({ ttl: Time.seconds(900) }),
+  async (
+    req: GetOgMetadataProfileRequest,
+    res: Response<ApiResponse<GetOgMetadataProfileResponse>>
+  ) => {
+    res.send(await handleGetOgMetadataProfile(req));
+  }
+);
+
+router.get(
+  '/og-metadata/waves/:id',
+  cacheRequest({ ttl: Time.seconds(900) }),
+  async (
+    req: GetOgMetadataWaveRequest,
+    res: Response<ApiResponse<GetOgMetadataWaveResponse>>
+  ) => {
+    res.send(await handleGetOgMetadataWave(req));
+  }
+);
+
 router.get(
   '/v2/boosted-drops',
   maybeAuthenticatedUser(),
