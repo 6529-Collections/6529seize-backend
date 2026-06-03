@@ -10,7 +10,7 @@ function makeService() {
   const identityFetcher = {
     getIdentityAndConsolidationsByIdentityKey: jest.fn(),
     getDropResolvedIdentityProfilesV2ByIds: jest.fn(),
-    getApiIdentityOverviewsByIds: jest.fn()
+    getOverviewsByIds: jest.fn()
   };
   const wavesApiDb = {
     findWavesByIdsEligibleForRead: jest.fn()
@@ -65,6 +65,7 @@ describe('OgMetadataService', () => {
         pfp: `ipfs://${IPFS_CID}/alice.jpg`,
         banner1: '#0f3BAc',
         banner2: '#000000',
+        cic: 10,
         rep: 100,
         level: 7,
         tdh: 1234.5,
@@ -87,6 +88,7 @@ describe('OgMetadataService', () => {
         classification: ApiProfileClassification.Bot,
         sub_classification: 'assistant',
         followers_count: 42,
+        cic: 10,
         rep: 100,
         level: 7,
         tdh: 1234.5,
@@ -135,6 +137,7 @@ describe('OgMetadataService', () => {
         pfp: null,
         banner1: `ipfs://${IPFS_CID}/banner.jpg`,
         banner2: null,
+        cic: 10,
         rep: 100,
         level: 7,
         tdh: 1234.5
@@ -232,13 +235,15 @@ describe('OgMetadataService', () => {
         }
       ]
     });
-    identityFetcher.getApiIdentityOverviewsByIds.mockResolvedValue({
+    identityFetcher.getOverviewsByIds.mockResolvedValue({
       'author-1': {
         id: 'author-1',
         handle: 'artist',
         primary_address: '0xartist',
         pfp: `ipfs://${IPFS_CID}/artist.jpg`,
-        classification: ApiProfileClassification.Pseudonym
+        classification: ApiProfileClassification.Pseudonym,
+        sub_classification: null,
+        cic: 8
       }
     });
 
@@ -252,6 +257,7 @@ describe('OgMetadataService', () => {
         classification: ApiProfileClassification.Pseudonym,
         sub_classification: null,
         followers_count: 7,
+        cic: 8,
         twitter_handle: null,
         media: [
           {

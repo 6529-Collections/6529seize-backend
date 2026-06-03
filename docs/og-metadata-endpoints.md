@@ -61,6 +61,7 @@ Recommended schema name: `ApiOgMetadata`.
     "classification": "PSEUDONYM",
     "sub_classification": null,
     "followers_count": 42,
+    "cic": 10,
     "rep": null,
     "level": null,
     "tdh": null,
@@ -162,6 +163,7 @@ For the profile endpoint, profile detail includes:
 - `classification`
 - `sub_classification`
 - `followers_count`
+- `cic`
 - `rep`
 - `level`
 - `tdh`
@@ -184,6 +186,7 @@ preview fields:
 - `classification`
 - `sub_classification`
 - `followers_count`
+- `cic`
 - `twitter_handle`
 - `media`
 

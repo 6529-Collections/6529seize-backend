@@ -23,6 +23,7 @@ export class ApiOgMetadataProfile {
     'classification'?: ApiProfileClassification;
     'sub_classification'?: string | null;
     'followers_count'?: number;
+    'cic'?: number | null;
     'rep'?: number | null;
     'level'?: number | null;
     'tdh'?: number | null;
@@ -75,6 +76,12 @@ export class ApiOgMetadataProfile {
         {
             "name": "followers_count",
             "baseName": "followers_count",
+            "type": "number",
+            "format": "int64"
+        },
+        {
+            "name": "cic",
+            "baseName": "cic",
             "type": "number",
             "format": "int64"
         },
