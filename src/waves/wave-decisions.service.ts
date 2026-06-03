@@ -272,10 +272,11 @@ export class WaveDecisionsService {
           );
           break;
         }
+        const voteEvaluationTime = Math.min(currentTime, nextDecisionTime);
         const liveVote = await this.getLiveApproveCandidateVote(
           {
             candidate,
-            decisionTime: nextDecisionTime
+            voteEvaluationTime
           },
           { timer }
         );
@@ -333,10 +334,10 @@ export class WaveDecisionsService {
   private async getLiveApproveCandidateVote(
     {
       candidate,
-      decisionTime
+      voteEvaluationTime
     }: {
       candidate: ApproveWinnerCandidate;
-      decisionTime: number;
+      voteEvaluationTime: number;
     },
     ctx: RequestContext
   ): Promise<number | null> {
@@ -348,7 +349,7 @@ export class WaveDecisionsService {
       await this.waveLeaderboardCalculationService.calculateWeightedVoteForDropInTime(
         {
           dropId: candidate.drop_id,
-          time: Time.millis(decisionTime),
+          time: Time.millis(voteEvaluationTime),
           timeLockMs
         },
         ctx
@@ -362,8 +363,15 @@ export class WaveDecisionsService {
     this.logger.info(
       `Skipping APPROVE winner ${candidate.drop_id}. Live weighted vote ${liveVote} is below threshold ${winningMinThreshold}`
     );
-    await this.dropVotingDb.clearWaveLeaderboardEntryOverThresholdSince(
-      candidate.drop_id,
+    await this.dropVotingDb.upsertWaveLeaderboardEntry(
+      {
+        drop_id: candidate.drop_id,
+        wave_id: candidate.wave_id,
+        vote: liveVote,
+        timestamp: voteEvaluationTime,
+        vote_on_decision_time: liveVote,
+        over_threshold_since_ms: null
+      },
       ctx
     );
     return null;

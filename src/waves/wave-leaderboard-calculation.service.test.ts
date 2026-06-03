@@ -185,7 +185,9 @@ describe('WaveLeaderboardCalculationService', () => {
         {
           dropId: 'drop-id',
           waveId: 'wave-id',
+          previousLeaderboardTimestamp: null,
           winningMinThreshold: 50,
+          winningThresholdMinDurationMs: 1,
           previousOverThresholdSinceMs: null,
           startTime: Time.millis(0),
           endTime: Time.millis(1_000),
@@ -194,10 +196,62 @@ describe('WaveLeaderboardCalculationService', () => {
         {}
       );
 
+      expect(dropVotingDb.getDropVoteStatesInTimespan).toHaveBeenCalledWith(
+        {
+          dropId: 'drop-id',
+          fromTime: -1_000,
+          toTime: 1_000
+        },
+        expect.anything()
+      );
       expect(dropVotingDb.upsertWaveLeaderboardEntry).toHaveBeenCalledWith(
         expect.objectContaining({
           vote: 100,
-          over_threshold_since_ms: 1_000
+          over_threshold_since_ms: 500
+        }),
+        expect.anything()
+      );
+    });
+
+    it('does not track over-threshold time when threshold duration is disabled', async () => {
+      (dropVotingDb.getDropVoteStatesInTimespan as jest.Mock).mockResolvedValue(
+        [
+          {
+            timestamp: 0,
+            vote: 100,
+            drop_id: 'drop-id',
+            wave_id: 'wave-id'
+          }
+        ]
+      );
+
+      await service.calculateLeaderboardEntryForDrop(
+        {
+          dropId: 'drop-id',
+          waveId: 'wave-id',
+          previousLeaderboardTimestamp: null,
+          winningMinThreshold: 50,
+          winningThresholdMinDurationMs: 0,
+          previousOverThresholdSinceMs: null,
+          startTime: Time.millis(0),
+          endTime: Time.millis(1_000),
+          nextDecisionTime: null
+        },
+        {}
+      );
+
+      expect(dropVotingDb.getDropVoteStatesInTimespan).toHaveBeenCalledWith(
+        {
+          dropId: 'drop-id',
+          fromTime: 0,
+          toTime: 1_000
+        },
+        expect.anything()
+      );
+      expect(dropVotingDb.upsertWaveLeaderboardEntry).toHaveBeenCalledWith(
+        expect.objectContaining({
+          vote: 100,
+          over_threshold_since_ms: null
         }),
         expect.anything()
       );
@@ -219,7 +273,9 @@ describe('WaveLeaderboardCalculationService', () => {
         {
           dropId: 'drop-id',
           waveId: 'wave-id',
+          previousLeaderboardTimestamp: 500,
           winningMinThreshold: 50,
+          winningThresholdMinDurationMs: 1,
           previousOverThresholdSinceMs: 500,
           startTime: Time.millis(0),
           endTime: Time.millis(1_000),
@@ -253,7 +309,9 @@ describe('WaveLeaderboardCalculationService', () => {
         {
           dropId: 'drop-id',
           waveId: 'wave-id',
+          previousLeaderboardTimestamp: 500,
           winningMinThreshold: 50,
+          winningThresholdMinDurationMs: 1,
           previousOverThresholdSinceMs: 500,
           startTime: Time.millis(0),
           endTime: Time.millis(1_000),
@@ -266,6 +324,62 @@ describe('WaveLeaderboardCalculationService', () => {
         expect.objectContaining({
           vote: 40,
           over_threshold_since_ms: null
+        }),
+        expect.anything()
+      );
+    });
+
+    it('resets weighted over-threshold time when weighted vote dips between snapshots', async () => {
+      (dropVotingDb.getDropVoteStatesInTimespan as jest.Mock).mockResolvedValue(
+        [
+          {
+            timestamp: 0,
+            vote: 100,
+            drop_id: 'drop-id',
+            wave_id: 'wave-id'
+          },
+          {
+            timestamp: 1_000,
+            vote: 0,
+            drop_id: 'drop-id',
+            wave_id: 'wave-id'
+          },
+          {
+            timestamp: 1_500,
+            vote: 200,
+            drop_id: 'drop-id',
+            wave_id: 'wave-id'
+          }
+        ]
+      );
+
+      await service.calculateLeaderboardEntryForDrop(
+        {
+          dropId: 'drop-id',
+          waveId: 'wave-id',
+          previousLeaderboardTimestamp: 1_000,
+          winningMinThreshold: 60,
+          winningThresholdMinDurationMs: 1,
+          previousOverThresholdSinceMs: 500,
+          startTime: Time.millis(1_000),
+          endTime: Time.millis(2_000),
+          nextDecisionTime: null
+        },
+        {}
+      );
+
+      expect(dropVotingDb.getDropVoteStatesInTimespan).toHaveBeenCalledWith(
+        {
+          dropId: 'drop-id',
+          fromTime: 0,
+          toTime: 2_000
+        },
+        expect.anything()
+      );
+      expect(dropVotingDb.upsertWaveLeaderboardEntry).toHaveBeenCalledWith(
+        expect.objectContaining({
+          vote: 100,
+          over_threshold_since_ms: 1_600
         }),
         expect.anything()
       );

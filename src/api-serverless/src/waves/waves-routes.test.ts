@@ -152,6 +152,15 @@ describe('waves route validation', () => {
     expect(result.error).toBeDefined();
   });
 
+  it('rejects zero threshold duration on non-approve waves', () => {
+    const request = updateWaveRequest(Time.currentMillis());
+    request.wave.winning_threshold_min_duration_ms = 0;
+
+    const result = UpdateWaveSchema.validate(request);
+
+    expect(result.error).toBeDefined();
+  });
+
   it('allows approve threshold duration mixed with time lock', () => {
     const request = updateWaveRequest(Time.currentMillis());
     request.wave = {

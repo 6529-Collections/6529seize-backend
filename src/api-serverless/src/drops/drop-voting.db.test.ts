@@ -104,6 +104,47 @@ describe('buildMergedDropRealVoteHistoryStates', () => {
   });
 });
 
+describe('DropVotingDb leaderboard threshold clears', () => {
+  it('invalidates the snapshot timestamp when clearing one drop threshold state', async () => {
+    const execute = jest.fn().mockResolvedValue(undefined);
+    const db = new DropVotingDb(
+      () =>
+        ({
+          execute
+        }) as any
+    );
+
+    await db.clearWaveLeaderboardEntryOverThresholdSince('drop-id', {});
+
+    expect(execute).toHaveBeenCalledWith(
+      expect.stringContaining('timestamp = 0'),
+      { dropId: 'drop-id' },
+      { wrappedConnection: undefined }
+    );
+  });
+
+  it('invalidates snapshot timestamps when clearing wave threshold state', async () => {
+    const execute = jest.fn().mockResolvedValue(undefined);
+    const db = new DropVotingDb(
+      () =>
+        ({
+          execute
+        }) as any
+    );
+
+    await db.clearWaveLeaderboardEntriesOverThresholdSinceByWaveId(
+      'wave-id',
+      {}
+    );
+
+    expect(execute).toHaveBeenCalledWith(
+      expect.stringContaining('timestamp = 0'),
+      { waveId: 'wave-id' },
+      { wrappedConnection: undefined }
+    );
+  });
+});
+
 describe('DropVotingDb.mergeDropVoteState', () => {
   function createDb() {
     const execute = jest.fn().mockResolvedValue([]);

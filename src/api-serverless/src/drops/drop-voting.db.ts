@@ -1344,7 +1344,9 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
       wave_id: string;
       next_decision_time: number | null;
       winning_min_threshold: number | null;
+      winning_threshold_min_duration_ms: number | null;
       over_threshold_since_ms: number | null;
+      leaderboard_timestamp: number | null;
     }[]
   > {
     return this.db.execute<{
@@ -1353,7 +1355,9 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
       wave_id: string;
       next_decision_time: number | null;
       winning_min_threshold: number | null;
+      winning_threshold_min_duration_ms: number | null;
       over_threshold_since_ms: number | null;
+      leaderboard_timestamp: number | null;
     }>(
       `select
         lvc.drop_id as drop_id,
@@ -1361,14 +1365,16 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
         lvc.wave_id as wave_id,
         lvc.next_decision_time as next_decision_time,
         lvc.winning_min_threshold as winning_min_threshold,
-        lb.over_threshold_since_ms as over_threshold_since_ms
-from (select d.drop_id, d.wave_id as wave_id, w.time_lock_ms as time_lock_ms, w.next_decision_time, w.winning_min_threshold, max(d.timestamp) as timestamp
+        lvc.winning_threshold_min_duration_ms as winning_threshold_min_duration_ms,
+        lb.over_threshold_since_ms as over_threshold_since_ms,
+        lb.timestamp as leaderboard_timestamp
+from (select d.drop_id, d.wave_id as wave_id, w.time_lock_ms as time_lock_ms, w.next_decision_time, w.winning_min_threshold, w.winning_threshold_min_duration_ms, max(d.timestamp) as timestamp
       from ${DROP_REAL_VOTE_IN_TIME_TABLE} d
                join ${WAVES_TABLE} w
                     on w.id = d.wave_id and w.time_lock_ms is not null and w.time_lock_ms > 0
                join ${DROPS_TABLE} dr on d.drop_id = dr.id
                where dr.drop_type = '${DropType.PARTICIPATORY}'
-      group by 1, 2, 3, 4, 5) lvc
+      group by 1, 2, 3, 4, 5, 6) lvc
          left join ${WAVE_LEADERBOARD_ENTRIES_TABLE} lb
                    on lvc.drop_id = lb.drop_id and lvc.wave_id = lb.wave_id
 where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
@@ -1537,7 +1543,9 @@ where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
       await this.db.execute(
         `
         update ${WAVE_LEADERBOARD_ENTRIES_TABLE}
-        set over_threshold_since_ms = null
+        set
+          over_threshold_since_ms = null,
+          timestamp = 0
         where drop_id = :dropId
         `,
         { dropId },
@@ -1561,7 +1569,9 @@ where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
       await this.db.execute(
         `
         update ${WAVE_LEADERBOARD_ENTRIES_TABLE}
-        set over_threshold_since_ms = null
+        set
+          over_threshold_since_ms = null,
+          timestamp = 0
         where wave_id = :waveId
         `,
         { waveId },

@@ -898,8 +898,7 @@ export class WaveApiService {
     }
     if (
       request.wave.type !== ApiWaveType.Approve &&
-      request.wave.winning_threshold_min_duration_ms != null &&
-      request.wave.winning_threshold_min_duration_ms > 0
+      request.wave.winning_threshold_min_duration_ms != null
     ) {
       throw new BadRequestException(
         `Only APPROVE waves support a winning_threshold_min_duration_ms`

@@ -701,6 +701,25 @@ describe('WaveApiService validateWaveRelations', () => {
     ).resolves.toBeUndefined();
   });
 
+  it('rejects zero threshold duration for non-approve waves', async () => {
+    const service = validationService();
+    const request = baseCreateWaveRequest();
+    request.wave = {
+      ...request.wave,
+      type: ApiWaveType.Chat,
+      winning_threshold: null,
+      winning_threshold_min_duration_ms: 0
+    };
+
+    await expect(
+      (service as any).validateWaveRelations(request, {
+        timer: undefined
+      })
+    ).rejects.toThrow(
+      'Only APPROVE waves support a winning_threshold_min_duration_ms'
+    );
+  });
+
   it('allows winning_threshold to be null for non-approve waves', async () => {
     const service = new WaveApiService(
       {} as any,

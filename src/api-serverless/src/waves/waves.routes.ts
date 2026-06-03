@@ -1262,7 +1262,7 @@ function createWaveConfigSchema(
     winning_threshold_min_duration_ms: Joi.when('type', {
       is: Joi.string().valid(ApiWaveType.Approve),
       then: Joi.number().integer().optional().allow(null).min(0).default(0),
-      otherwise: Joi.valid(null, 0).optional().default(null)
+      otherwise: Joi.valid(null).optional().default(null)
     }),
     max_winners: Joi.when('type', {
       is: Joi.string().valid(ApiWaveType.Approve),
