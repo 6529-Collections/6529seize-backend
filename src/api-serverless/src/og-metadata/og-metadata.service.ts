@@ -15,6 +15,7 @@ import { ApiOgMetadataProfileBanner } from '@/api/generated/models/ApiOgMetadata
 import { ApiOgMetadataWave } from '@/api/generated/models/ApiOgMetadataWave';
 import { ApiProfileMin } from '@/api/generated/models/ApiProfileMin';
 import { ApiWaveOverview } from '@/api/generated/models/ApiWaveOverview';
+import { Logger } from '@/logging';
 import {
   identityFetcher,
   IdentityFetcher
@@ -35,35 +36,49 @@ import { WaveEntity } from '@/entities/IWave';
 import { normalizeIpfsUri } from '@/nft-links/lib/uri';
 import { profilesDb, ProfilesDb } from '@/profiles/profiles.db';
 import { RequestContext } from '@/request.context';
+import { Time } from '@/time';
 
 const TWITTER_HANDLE_NOT_AVAILABLE = null;
 const HEX_COLOR_REGEX = /^#[0-9a-fA-F]{6}$/;
-const MARKDOWN_TEXT_MARKERS = new Set([
-  '!',
-  '#',
-  '(',
-  ')',
-  '*',
-  '>',
-  '[',
-  ']',
-  '_',
-  '`',
-  '~'
-]);
 
 type ApiIdentityWithId = ApiIdentity & {
   readonly id: string;
 };
 
+type OgIdentityFetcher = Pick<
+  IdentityFetcher,
+  | 'getIdentityAndConsolidationsByIdentityKey'
+  | 'getDropResolvedIdentityProfilesV2ByIds'
+  | 'getOverviewsByIds'
+>;
+type OgWavesApiDb = Pick<WavesApiDb, 'findWavesByIdsEligibleForRead'>;
+type OgWaveOverviewMapper = Pick<ApiWaveOverviewMapper, 'mapWaves'>;
+type OgDropV2Service = Pick<
+  typeof apiDropV2Service,
+  'findWithWaveByIdOrThrow' | 'findDrops'
+>;
+type OgProfilesDb = Pick<ProfilesDb, 'getProfileById'>;
+type OgIdentitySubscriptionsDb = Pick<
+  IdentitySubscriptionsDb,
+  'countDistinctSubscriberIdsForTarget'
+>;
+
+type ProfileEnrichment = {
+  readonly description: string | null;
+  readonly profileEnabledAt: number | null;
+  readonly followersCount: number;
+};
+
 export class OgMetadataService {
+  private readonly logger = Logger.get(this.constructor.name);
+
   constructor(
-    private readonly identityFetcher: IdentityFetcher,
-    private readonly wavesApiDb: WavesApiDb,
-    private readonly apiWaveOverviewMapper: ApiWaveOverviewMapper,
-    private readonly dropV2Service: typeof apiDropV2Service,
-    private readonly profilesDb: ProfilesDb,
-    private readonly identitySubscriptionsDb: IdentitySubscriptionsDb
+    private readonly identityFetcher: OgIdentityFetcher,
+    private readonly wavesApiDb: OgWavesApiDb,
+    private readonly apiWaveOverviewMapper: OgWaveOverviewMapper,
+    private readonly dropV2Service: OgDropV2Service,
+    private readonly profilesDb: OgProfilesDb,
+    private readonly identitySubscriptionsDb: OgIdentitySubscriptionsDb
   ) {}
 
   public async getProfileMetadata(
@@ -81,15 +96,12 @@ export class OgMetadataService {
       );
     }
 
-    const [description, profileRecord, followersCount] = await Promise.all([
-      this.findProfileDescription(profile.id, ctx),
-      this.profilesDb.getProfileById(profile.id, ctx.connection),
-      this.countProfileFollowers(profile.id)
-    ]);
+    const { description, profileEnabledAt, followersCount } =
+      await this.findProfileEnrichment(profile.id, ctx);
     const apiProfile = this.mapFullProfile(
       profile,
       description,
-      this.toTimestamp(profileRecord?.created_at),
+      profileEnabledAt,
       followersCount
     );
 
@@ -106,11 +118,11 @@ export class OgMetadataService {
   ): Promise<ApiOgMetadata> {
     const { entity, overview } = await this.findPublicWaveOverview(id, ctx);
     const author = await this.findLightProfile(entity.created_by, ctx);
-    const descriptionMedia = overview.description_drop.media ?? [];
+    const descriptionDrop = overview.description_drop;
     const wave = this.mapWave(
       overview,
-      this.cleanText(overview.description_drop.contents),
-      descriptionMedia
+      this.cleanText(descriptionDrop?.contents),
+      descriptionDrop?.media ?? []
     );
 
     return {
@@ -128,10 +140,11 @@ export class OgMetadataService {
     const dropWithWave = await this.findDrop(dropIdentifier, ctx);
     const { drop, wave } = dropWithWave;
     const author = await this.findLightProfile(drop.author.id, ctx);
+    const descriptionDrop = wave.description_drop;
     const apiWave = this.mapWave(
       wave,
-      this.cleanText(wave.description_drop.contents),
-      wave.description_drop.media ?? []
+      this.cleanText(descriptionDrop?.contents),
+      descriptionDrop?.media ?? []
     );
 
     return {
@@ -214,19 +227,51 @@ export class OgMetadataService {
     return this.cleanText(profiles[profileId]?.bio ?? null);
   }
 
+  private async findProfileEnrichment(
+    profileId: string,
+    ctx: RequestContext
+  ): Promise<ProfileEnrichment> {
+    const [description, profileRecord, followersCount] = await Promise.all([
+      this.failOpen(
+        () => this.findProfileDescription(profileId, ctx),
+        null,
+        `Failed to load profile description for ${profileId}`
+      ),
+      this.failOpen(
+        () => this.profilesDb.getProfileById(profileId, ctx.connection),
+        null,
+        `Failed to load profile created_at for ${profileId}`
+      ),
+      this.failOpen(
+        () => this.countProfileFollowers(profileId),
+        0,
+        `Failed to count profile followers for ${profileId}`
+      )
+    ]);
+    return {
+      description,
+      profileEnabledAt: this.toTimestamp(profileRecord?.created_at),
+      followersCount
+    };
+  }
+
   private async findLightProfile(
     profileId: string,
     ctx: RequestContext
   ): Promise<ApiOgMetadataProfile> {
-    const [profiles, profileRecord, followersCount] = await Promise.all([
-      this.identityFetcher.getOverviewsByIds([profileId], ctx),
-      this.profilesDb.getProfileById(profileId, ctx.connection),
-      this.countProfileFollowers(profileId)
+    const emptyProfiles: Record<string, ApiProfileMin> = {};
+    const [profiles, enrichment] = await Promise.all([
+      this.failOpen(
+        () => this.identityFetcher.getOverviewsByIds([profileId], ctx),
+        emptyProfiles,
+        `Failed to load profile overview for ${profileId}`
+      ),
+      this.findProfileEnrichment(profileId, ctx)
     ]);
     return this.mapLightProfile(
-      profiles[profileId] ?? { id: profileId },
-      this.toTimestamp(profileRecord?.created_at),
-      followersCount
+      profiles[profileId] ?? { id: profileId, handle: null, pfp: null },
+      enrichment.profileEnabledAt,
+      enrichment.followersCount
     );
   }
 
@@ -387,7 +432,8 @@ export class OgMetadataService {
     let result = '';
     let insideTag = false;
     let pendingSpace = false;
-    for (const char of value) {
+    for (let i = 0; i < value.length; i++) {
+      const char = value[i];
       if (insideTag) {
         if (char === '>') {
           insideTag = false;
@@ -395,7 +441,7 @@ export class OgMetadataService {
         }
         continue;
       }
-      if (char === '<') {
+      if (char === '<' && this.isLikelyHtmlTagStart(value[i + 1])) {
         insideTag = true;
         pendingSpace = result.length > 0;
         continue;
@@ -409,11 +455,36 @@ export class OgMetadataService {
     return result;
   }
 
+  private isLikelyHtmlTagStart(char: string | undefined): boolean {
+    return (
+      char !== undefined &&
+      ((char >= 'a' && char <= 'z') ||
+        (char >= 'A' && char <= 'Z') ||
+        char === '/' ||
+        char === '!' ||
+        char === '?')
+    );
+  }
+
   private removeMarkdownMarkersAndCollapseWhitespace(value: string): string {
+    const withoutMarkdown = value
+      .replace(/(^|\n)[ \t]{0,3}#{1,6}[ \t]+/g, '$1')
+      .replace(/(^|\n)[ \t]{0,3}>[ \t]?/g, '$1')
+      .replace(/!\[([^\]\n]*)\]\([^\s)\n]+(?:[ \t]+"[^"\n]*")?\)/g, '$1')
+      .replace(/\[([^\]\n]+)\]\([^\s)\n]+(?:[ \t]+"[^"\n]*")?\)/g, '$1')
+      .replace(/\\([\\`*_[\]()#+\-.!>])/g, '$1')
+      .replace(/`([^`\n]+)`/g, '$1')
+      .replace(/(\*{1,3})(\w(?:[^*\n]*?\w)?)\1/g, '$2')
+      .replace(/(^|[^\w])(_{1,3})(\w(?:[^_\n]*?\w)?)\2($|[^\w])/g, '$1$3$4')
+      .replace(/```/g, '');
+    return this.collapseWhitespace(withoutMarkdown);
+  }
+
+  private collapseWhitespace(value: string): string {
     let result = '';
     let pendingSpace = false;
     for (const char of value) {
-      if (MARKDOWN_TEXT_MARKERS.has(char) || char.trim().length === 0) {
+      if (char.trim().length === 0) {
         pendingSpace = result.length > 0;
         continue;
       }
@@ -443,15 +514,32 @@ export class OgMetadataService {
     if (value === null || value === undefined) {
       return null;
     }
-    const date = value instanceof Date ? value : new Date(value);
-    const timestamp = date.getTime();
-    return Number.isFinite(timestamp) ? timestamp : null;
+    if (typeof value === 'number') {
+      return Time.millis(value).toMillis();
+    }
+    if (value instanceof Date) {
+      return Time.fromDate(value).toMillis();
+    }
+    return Time.fromString(value).toMillis();
   }
 
   private hasProfileId(
     profile: ApiIdentity | null
   ): profile is ApiIdentityWithId {
     return typeof profile?.id === 'string' && profile.id.length > 0;
+  }
+
+  private async failOpen<T>(
+    fn: () => Promise<T>,
+    fallback: T,
+    message: string
+  ): Promise<T> {
+    try {
+      return await fn();
+    } catch (error) {
+      this.logger.warn(message, error);
+      return fallback;
+    }
   }
 }
 
