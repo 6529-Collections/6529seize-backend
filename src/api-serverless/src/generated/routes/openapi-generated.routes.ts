@@ -13,7 +13,7 @@ import { DownloadDropV2VotersByIdRequest, DownloadDropV2VotersByIdResponse, GetB
 const router = asyncRouter();
 router.get(
   '/og-metadata/drops/:drop',
-  cacheRequest({ ttl: Time.seconds(900) }),
+  cacheRequest({ ttl: Time.seconds(300) }),
   async (
     req: GetOgMetadataDropRequest,
     res: Response<ApiResponse<GetOgMetadataDropResponse>>
@@ -24,7 +24,7 @@ router.get(
 
 router.get(
   '/og-metadata/profiles/:identity',
-  cacheRequest({ ttl: Time.seconds(900) }),
+  cacheRequest({ ttl: Time.seconds(300) }),
   async (
     req: GetOgMetadataProfileRequest,
     res: Response<ApiResponse<GetOgMetadataProfileResponse>>
@@ -35,7 +35,7 @@ router.get(
 
 router.get(
   '/og-metadata/waves/:id',
-  cacheRequest({ ttl: Time.seconds(900) }),
+  cacheRequest({ ttl: Time.seconds(300) }),
   async (
     req: GetOgMetadataWaveRequest,
     res: Response<ApiResponse<GetOgMetadataWaveResponse>>

@@ -100,8 +100,10 @@ function normalizeIpfsPath(path: string): string {
 }
 
 /**
- * Matches CIDv0 as "Qm" plus 44 base58 characters, or CIDv1 base32 strings
- * with a case-insensitive "baf" prefix and at least 20 base32 characters.
+ * Pragmatic CID heuristic, not a full CID validator. It covers CIDv0 as "Qm"
+ * plus 44 base58 characters and CIDv1 in the common base32 "baf" form. Other
+ * CIDv1 multibase encodings, such as base58btc with a "z" prefix, are
+ * intentionally outside this regex.
  */
 function looksLikeIpfsCid(value: string): boolean {
   return /^(Qm[1-9A-HJ-NP-Za-km-z]{44}|[bB][aA][fF][a-zA-Z2-7]{20,})$/.test(
