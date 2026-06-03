@@ -6,7 +6,6 @@ import { ApiDropMedia } from '@/api/generated/models/ApiDropMedia';
 import { ApiDropMetadataV2 } from '@/api/generated/models/ApiDropMetadataV2';
 import { ApiDropV2 } from '@/api/generated/models/ApiDropV2';
 import { ApiIdentity } from '@/api/generated/models/ApiIdentity';
-import { ApiIdentityOverview } from '@/api/generated/models/ApiIdentityOverview';
 import { ApiOgMediaAsset } from '@/api/generated/models/ApiOgMediaAsset';
 import { ApiOgMetadata } from '@/api/generated/models/ApiOgMetadata';
 import { ApiOgMetadataDrop } from '@/api/generated/models/ApiOgMetadataDrop';
@@ -14,6 +13,7 @@ import { ApiOgMetadataEntityType } from '@/api/generated/models/ApiOgMetadataEnt
 import { ApiOgMetadataProfile } from '@/api/generated/models/ApiOgMetadataProfile';
 import { ApiOgMetadataProfileBanner } from '@/api/generated/models/ApiOgMetadataProfileBanner';
 import { ApiOgMetadataWave } from '@/api/generated/models/ApiOgMetadataWave';
+import { ApiProfileMin } from '@/api/generated/models/ApiProfileMin';
 import { ApiWaveOverview } from '@/api/generated/models/ApiWaveOverview';
 import {
   identityFetcher,
@@ -219,7 +219,7 @@ export class OgMetadataService {
     ctx: RequestContext
   ): Promise<ApiOgMetadataProfile> {
     const [profiles, profileRecord, followersCount] = await Promise.all([
-      this.identityFetcher.getApiIdentityOverviewsByIds([profileId], ctx),
+      this.identityFetcher.getOverviewsByIds([profileId], ctx),
       this.profilesDb.getProfileById(profileId, ctx.connection),
       this.countProfileFollowers(profileId)
     ]);
@@ -244,6 +244,7 @@ export class OgMetadataService {
       classification: profile.classification,
       sub_classification: profile.sub_classification,
       followers_count: followersCount,
+      cic: profile.cic,
       rep: profile.rep,
       level: profile.level,
       tdh: profile.tdh,
@@ -255,9 +256,11 @@ export class OgMetadataService {
   }
 
   private mapLightProfile(
-    profile: Pick<ApiIdentityOverview, 'id' | 'handle' | 'pfp'> & {
+    profile: Pick<ApiProfileMin, 'id' | 'handle' | 'pfp'> & {
       readonly primary_address?: string;
-      readonly classification?: ApiIdentityOverview['classification'];
+      readonly classification?: ApiProfileMin['classification'];
+      readonly sub_classification?: string | null;
+      readonly cic?: number;
     },
     profileEnabledAt: number | null,
     followersCount: number
@@ -268,8 +271,9 @@ export class OgMetadataService {
       primary_address: profile.primary_address ?? null,
       profile_enabled_at: profileEnabledAt,
       classification: profile.classification,
-      sub_classification: null,
+      sub_classification: profile.sub_classification ?? null,
       followers_count: followersCount,
+      cic: profile.cic ?? null,
       twitter_handle: TWITTER_HANDLE_NOT_AVAILABLE,
       media: this.singleUrlMedia(profile.pfp)
     };

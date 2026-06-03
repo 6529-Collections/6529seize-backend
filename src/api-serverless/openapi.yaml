@@ -12299,6 +12299,10 @@ components:
         followers_count:
           type: integer
           format: int64
+        cic:
+          type: integer
+          format: int64
+          nullable: true
         rep:
           type: integer
           format: int64
