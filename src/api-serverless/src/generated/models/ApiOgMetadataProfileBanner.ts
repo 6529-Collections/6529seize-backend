@@ -13,10 +13,10 @@
 import { ApiOgMediaAsset } from '../models/ApiOgMediaAsset';
 import { HttpFile } from '../http/http';
 
-export class ApiOgMetadataMedia {
-    'image': ApiOgMediaAsset | null;
-    'video': ApiOgMediaAsset | null;
-    'audio': ApiOgMediaAsset | null;
+export class ApiOgMetadataProfileBanner {
+    'primary': string | null;
+    'secondary': string | null;
+    'media': Array<ApiOgMediaAsset>;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -24,26 +24,26 @@ export class ApiOgMetadataMedia {
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
         {
-            "name": "image",
-            "baseName": "image",
-            "type": "ApiOgMediaAsset",
+            "name": "primary",
+            "baseName": "primary",
+            "type": "string",
             "format": ""
         },
         {
-            "name": "video",
-            "baseName": "video",
-            "type": "ApiOgMediaAsset",
+            "name": "secondary",
+            "baseName": "secondary",
+            "type": "string",
             "format": ""
         },
         {
-            "name": "audio",
-            "baseName": "audio",
-            "type": "ApiOgMediaAsset",
+            "name": "media",
+            "baseName": "media",
+            "type": "Array<ApiOgMediaAsset>",
             "format": ""
         }    ];
 
     static getAttributeTypeMap() {
-        return ApiOgMetadataMedia.attributeTypeMap;
+        return ApiOgMetadataProfileBanner.attributeTypeMap;
     }
 
     public constructor() {

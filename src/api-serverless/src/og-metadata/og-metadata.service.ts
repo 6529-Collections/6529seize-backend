@@ -9,8 +9,10 @@ import { ApiIdentity } from '@/api/generated/models/ApiIdentity';
 import { ApiIdentityOverview } from '@/api/generated/models/ApiIdentityOverview';
 import { ApiOgMediaAsset } from '@/api/generated/models/ApiOgMediaAsset';
 import { ApiOgMetadata } from '@/api/generated/models/ApiOgMetadata';
+import { ApiOgMetadataDrop } from '@/api/generated/models/ApiOgMetadataDrop';
 import { ApiOgMetadataEntityType } from '@/api/generated/models/ApiOgMetadataEntityType';
 import { ApiOgMetadataProfile } from '@/api/generated/models/ApiOgMetadataProfile';
+import { ApiOgMetadataProfileBanner } from '@/api/generated/models/ApiOgMetadataProfileBanner';
 import { ApiOgMetadataWave } from '@/api/generated/models/ApiOgMetadataWave';
 import { ApiWaveOverview } from '@/api/generated/models/ApiWaveOverview';
 import {
@@ -29,8 +31,7 @@ import { normalizeIpfsUri } from '@/nft-links/lib/uri';
 import { RequestContext } from '@/request.context';
 
 const TWITTER_HANDLE_NOT_AVAILABLE = null;
-const TITLE_MAX_LENGTH = 120;
-const DESCRIPTION_MAX_LENGTH = 300;
+const HEX_COLOR_REGEX = /^#[0-9a-fA-F]{6}$/;
 const MARKDOWN_TEXT_MARKERS = new Set([
   '!',
   '#',
@@ -74,25 +75,10 @@ export class OgMetadataService {
 
     const description = await this.findProfileDescription(profile.id, ctx);
     const apiProfile = this.mapFullProfile(profile, description);
-    const title = this.buildProfileTitle(apiProfile);
-    const previewDescription = this.firstText(
-      [description, this.getProfileFallbackDescription(apiProfile)],
-      DESCRIPTION_MAX_LENGTH
-    );
 
     return {
       entity_type: ApiOgMetadataEntityType.Profile,
       entity_id: profile.id,
-      title,
-      description: previewDescription,
-      media: {
-        image: this.imageFromUrl(
-          apiProfile.pfp ?? null,
-          `${title} profile picture`
-        ),
-        video: null,
-        audio: null
-      },
       profile: apiProfile
     };
   }
@@ -103,36 +89,16 @@ export class OgMetadataService {
   ): Promise<ApiOgMetadata> {
     const { entity, overview } = await this.findPublicWaveOverview(id, ctx);
     const author = await this.findLightProfile(entity.created_by, ctx);
-    const wave = this.mapWave(overview);
-    const title = this.firstText(
-      [overview.name, '6529 Wave'],
-      TITLE_MAX_LENGTH
-    );
-    const description = this.firstText(
-      [
-        overview.description_drop.contents,
-        `Join the ${overview.name} wave on 6529.`
-      ],
-      DESCRIPTION_MAX_LENGTH
-    );
     const descriptionMedia = overview.description_drop.media ?? [];
+    const wave = this.mapWave(
+      overview,
+      this.cleanText(overview.description_drop.contents),
+      descriptionMedia
+    );
 
     return {
       entity_type: ApiOgMetadataEntityType.Wave,
       entity_id: entity.id,
-      title,
-      description,
-      media: {
-        image:
-          this.imageFromUrl(wave.picture ?? null, `${title} wave image`) ??
-          this.firstMediaAsset(descriptionMedia, 'image', title) ??
-          this.imageFromUrl(
-            author.pfp ?? null,
-            `${title} creator profile picture`
-          ),
-        video: this.firstMediaAsset(descriptionMedia, 'video', title),
-        audio: this.firstMediaAsset(descriptionMedia, 'audio', title)
-      },
       author,
       wave
     };
@@ -145,34 +111,18 @@ export class OgMetadataService {
     const dropWithWave = await this.findDrop(dropIdentifier, ctx);
     const { drop, wave } = dropWithWave;
     const author = await this.findLightProfile(drop.author.id, ctx);
-    const apiWave = this.mapWave(wave);
-    const title = this.findDropTitle(drop, author);
-    const description = this.findDropDescription(drop, author);
-    const media = drop.media ?? [];
+    const apiWave = this.mapWave(
+      wave,
+      this.cleanText(wave.description_drop.contents),
+      wave.description_drop.media ?? []
+    );
 
     return {
       entity_type: ApiOgMetadataEntityType.Drop,
       entity_id: drop.id,
-      title,
-      description,
-      media: {
-        image:
-          this.firstMediaAsset(media, 'image', title) ??
-          this.imageFromUrl(wave.pfp ?? null, `${wave.name} wave image`) ??
-          this.imageFromUrl(
-            author.pfp ?? null,
-            `${title} author profile picture`
-          ),
-        video: this.firstMediaAsset(media, 'video', title),
-        audio: this.firstMediaAsset(media, 'audio', title)
-      },
       author,
       wave: apiWave,
-      drop: {
-        id: drop.id,
-        serial_no: drop.serial_no,
-        drop_type: drop.drop_type
-      }
+      drop: this.mapDrop(drop)
     };
   }
 
@@ -266,12 +216,13 @@ export class OgMetadataService {
       id: profile.id,
       handle: profile.handle,
       primary_address: profile.primary_wallet,
-      pfp: this.gatewayMediaUrl(profile.pfp),
       rep: profile.rep,
       level: profile.level,
       tdh: profile.tdh,
       description,
-      twitter_handle: TWITTER_HANDLE_NOT_AVAILABLE
+      twitter_handle: TWITTER_HANDLE_NOT_AVAILABLE,
+      media: this.singleUrlMedia(profile.pfp),
+      banner: this.mapBanner(profile.banner1, profile.banner2)
     };
   }
 
@@ -284,66 +235,69 @@ export class OgMetadataService {
       id: profile.id,
       handle: profile.handle ?? null,
       primary_address: profile.primary_address ?? null,
-      pfp: this.gatewayMediaUrl(profile.pfp),
-      twitter_handle: TWITTER_HANDLE_NOT_AVAILABLE
+      twitter_handle: TWITTER_HANDLE_NOT_AVAILABLE,
+      media: this.singleUrlMedia(profile.pfp)
+    };
+  }
+
+  private mapBanner(
+    banner1: string | null | undefined,
+    banner2: string | null | undefined
+  ): ApiOgMetadataProfileBanner {
+    return {
+      primary: this.isHexColor(banner1) ? banner1 : null,
+      secondary: this.isHexColor(banner2) ? banner2 : null,
+      media: this.isBannerMediaUrl(banner1) ? this.singleUrlMedia(banner1) : []
     };
   }
 
   private mapWave(
-    wave: Pick<ApiWaveOverview, 'id' | 'name' | 'pfp'>
+    wave: Pick<
+      ApiWaveOverview,
+      'id' | 'name' | 'pfp' | 'subscribers_count' | 'total_drops_count'
+    >,
+    description: string | null,
+    media: ApiDropMedia[]
   ): ApiOgMetadataWave {
     return {
       id: wave.id,
       name: wave.name,
-      picture: this.gatewayMediaUrl(wave.pfp)
+      description,
+      subscribers_count: wave.subscribers_count,
+      drops_count: wave.total_drops_count,
+      media: [...this.singleUrlMedia(wave.pfp), ...this.mapMedia(media)]
     };
   }
 
-  private findDropTitle(
-    drop: Pick<ApiDropV2, 'title' | 'content' | 'priority_metadata'>,
-    author: ApiOgMetadataProfile
-  ): string {
-    return this.firstText(
-      [
-        this.findPriorityMetadataValue(drop.priority_metadata, 'title'),
-        drop.title,
-        this.firstLine(drop.content),
-        author.handle ? `Drop by @${author.handle}` : null,
-        'Drop on 6529'
-      ],
-      TITLE_MAX_LENGTH
-    );
-  }
-
-  private findDropDescription(
-    drop: Pick<ApiDropV2, 'content' | 'priority_metadata'>,
-    author: ApiOgMetadataProfile
-  ): string {
-    return this.firstText(
-      [
-        this.findPriorityMetadataValue(drop.priority_metadata, 'description'),
-        drop.content,
-        author.handle ? `View this drop by @${author.handle} on 6529.` : null,
-        'View this drop on 6529.'
-      ],
-      DESCRIPTION_MAX_LENGTH
-    );
-  }
-
-  private buildProfileTitle(profile: ApiOgMetadataProfile): string {
-    if (profile.handle) {
-      return this.trimToLimit(`@${profile.handle}`, TITLE_MAX_LENGTH);
-    }
-    if (profile.primary_address) {
-      return this.trimToLimit(profile.primary_address, TITLE_MAX_LENGTH);
-    }
-    return '6529 Profile';
-  }
-
-  private getProfileFallbackDescription(profile: ApiOgMetadataProfile): string {
-    return profile.handle
-      ? `View @${profile.handle}'s 6529 profile.`
-      : 'View this 6529 profile.';
+  private mapDrop(
+    drop: Pick<
+      ApiDropV2,
+      | 'id'
+      | 'serial_no'
+      | 'drop_type'
+      | 'title'
+      | 'content'
+      | 'priority_metadata'
+      | 'submission_context'
+      | 'media'
+    >
+  ): ApiOgMetadataDrop {
+    return {
+      id: drop.id,
+      serial_no: drop.serial_no,
+      drop_type: drop.drop_type,
+      title: this.cleanText(
+        this.findPriorityMetadataValue(drop.priority_metadata, 'title') ??
+          drop.title ??
+          null
+      ),
+      description: this.cleanText(
+        this.findPriorityMetadataValue(drop.priority_metadata, 'description')
+      ),
+      content: this.cleanText(drop.content),
+      votes: drop.submission_context?.voting,
+      media: this.mapMedia(drop.media ?? [])
+    };
   }
 
   private findPriorityMetadataValue(
@@ -353,53 +307,31 @@ export class OgMetadataService {
     return metadata?.find((row) => row.data_key === key)?.data_value ?? null;
   }
 
-  private firstMediaAsset(
-    media: ApiDropMedia[],
-    kind: 'image' | 'video' | 'audio',
-    alt: string
-  ): ApiOgMediaAsset | null {
-    const item = media.find((candidate) =>
-      candidate.mime_type.startsWith(`${kind}/`)
-    );
-    return item ? this.mediaAsset(item.url, item.mime_type, alt) : null;
+  private mapMedia(media: ApiDropMedia[]): ApiOgMediaAsset[] {
+    return media.map((item) => this.mediaAsset(item.url, item.mime_type));
   }
 
-  private imageFromUrl(
-    url: string | null,
-    alt: string
-  ): ApiOgMediaAsset | null {
-    return url ? this.mediaAsset(url, null, alt) : null;
+  private singleUrlMedia(url: string | null | undefined): ApiOgMediaAsset[] {
+    return url ? [this.mediaAsset(url, null)] : [];
   }
 
-  private mediaAsset(
-    url: string,
-    mimeType: string | null,
-    alt: string
-  ): ApiOgMediaAsset {
+  private mediaAsset(url: string, mimeType: string | null): ApiOgMediaAsset {
     return {
       url: this.gatewayMediaUrl(url) ?? url,
       mime_type: mimeType,
       width: null,
-      height: null,
-      alt: this.trimToLimit(this.cleanText(alt) ?? alt, DESCRIPTION_MAX_LENGTH)
+      height: null
     };
   }
 
-  private firstLine(value: string | undefined): string | null {
-    return this.cleanText(value?.split('\n')[0]) ?? null;
+  private isHexColor(value: string | null | undefined): value is string {
+    return typeof value === 'string' && HEX_COLOR_REGEX.test(value);
   }
 
-  private firstText(
-    values: (string | null | undefined)[],
-    limit: number
-  ): string {
-    for (const value of values) {
-      const cleaned = this.cleanText(value);
-      if (cleaned) {
-        return this.trimToLimit(cleaned, limit);
-      }
-    }
-    return '';
+  private isBannerMediaUrl(value: string | null | undefined): value is string {
+    return (
+      typeof value === 'string' && value.length > 0 && !this.isHexColor(value)
+    );
   }
 
   private cleanText(value: string | null | undefined): string | null {
@@ -453,12 +385,6 @@ export class OgMetadataService {
       result += char;
     }
     return result.trim();
-  }
-
-  private trimToLimit(value: string, limit: number): string {
-    return value.length <= limit
-      ? value
-      : value.substring(0, limit - 1).trimEnd();
   }
 
   private gatewayMediaUrl(url: string | null | undefined): string | null {

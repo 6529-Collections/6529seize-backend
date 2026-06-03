@@ -45,6 +45,8 @@ describe('OgMetadataService', () => {
         handle: 'alice',
         primary_wallet: '0xabc',
         pfp: `ipfs://${IPFS_CID}/alice.jpg`,
+        banner1: '#0f3BAc',
+        banner2: '#000000',
         rep: 100,
         level: 7,
         tdh: 1234.5
@@ -57,34 +59,72 @@ describe('OgMetadataService', () => {
     await expect(service.getProfileMetadata('alice', {})).resolves.toEqual({
       entity_type: ApiOgMetadataEntityType.Profile,
       entity_id: 'profile-1',
-      title: '@alice',
-      description: 'Alice bio',
-      media: {
-        image: {
-          url: `https://ipfs.6529.io/ipfs/${IPFS_CID}/alice.jpg`,
-          mime_type: null,
-          width: null,
-          height: null,
-          alt: '@alice profile picture'
-        },
-        video: null,
-        audio: null
-      },
       profile: {
         id: 'profile-1',
         handle: 'alice',
         primary_address: '0xabc',
-        pfp: `https://ipfs.6529.io/ipfs/${IPFS_CID}/alice.jpg`,
         rep: 100,
         level: 7,
         tdh: 1234.5,
         description: 'Alice bio',
-        twitter_handle: null
+        twitter_handle: null,
+        media: [
+          {
+            url: `https://ipfs.6529.io/ipfs/${IPFS_CID}/alice.jpg`,
+            mime_type: null,
+            width: null,
+            height: null
+          }
+        ],
+        banner: {
+          primary: '#0f3BAc',
+          secondary: '#000000',
+          media: []
+        }
       }
     });
     expect(
       identityFetcher.getIdentityAndConsolidationsByIdentityKey
     ).toHaveBeenCalledWith({ identityKey: 'alice' }, {});
+  });
+
+  it('returns profile banner image media when banner is stored as a URL', async () => {
+    const { service, identityFetcher } = makeService();
+    identityFetcher.getIdentityAndConsolidationsByIdentityKey.mockResolvedValue(
+      {
+        id: 'profile-1',
+        handle: 'alice',
+        primary_wallet: '0xabc',
+        pfp: null,
+        banner1: `ipfs://${IPFS_CID}/banner.jpg`,
+        banner2: null,
+        rep: 100,
+        level: 7,
+        tdh: 1234.5
+      }
+    );
+    identityFetcher.getDropResolvedIdentityProfilesV2ByIds.mockResolvedValue({
+      'profile-1': { bio: null }
+    });
+
+    await expect(
+      service.getProfileMetadata('alice', {})
+    ).resolves.toMatchObject({
+      profile: {
+        banner: {
+          primary: null,
+          secondary: null,
+          media: [
+            {
+              url: `https://ipfs.6529.io/ipfs/${IPFS_CID}/banner.jpg`,
+              mime_type: null,
+              width: null,
+              height: null
+            }
+          ]
+        }
+      }
+    });
   });
 
   it('returns 404 for waves hidden by existing public wave visibility', async () => {
@@ -113,13 +153,32 @@ describe('OgMetadataService', () => {
           media: [
             { url: `ipfs://${IPFS_CID}/drop.png`, mime_type: 'image/png' }
           ],
-          priority_metadata: [{ data_key: 'title', data_value: 'Drop title' }],
+          priority_metadata: [
+            { data_key: 'title', data_value: 'Drop title' },
+            { data_key: 'description', data_value: 'Drop description' }
+          ],
           author: { id: 'author-1' },
           drop_type: ApiDropMainType.Submission,
+          submission_context: {
+            voting: {
+              is_open: true,
+              total_votes_given: 11,
+              current_calculated_vote: 9,
+              predicted_final_vote: 10,
+              voters_count: 3,
+              place: 2
+            }
+          },
           wave: {
             id: 'wave-1',
             name: 'Wave',
-            pfp: `ipfs://${IPFS_CID}/wave.jpg`
+            subscribers_count: 12,
+            total_drops_count: 34,
+            pfp: `ipfs://${IPFS_CID}/wave.jpg`,
+            description_drop: {
+              contents: 'Wave description',
+              media: []
+            }
           }
         }
       ]
@@ -136,29 +195,57 @@ describe('OgMetadataService', () => {
     await expect(service.getDropMetadata('42', {})).resolves.toMatchObject({
       entity_type: ApiOgMetadataEntityType.Drop,
       entity_id: 'drop-1',
-      title: 'Drop title',
-      description: 'Drop content',
-      media: {
-        image: {
-          url: `https://ipfs.6529.io/ipfs/${IPFS_CID}/drop.png`,
-          mime_type: 'image/png'
-        }
-      },
       author: {
         id: 'author-1',
         handle: 'artist',
-        pfp: `https://ipfs.6529.io/ipfs/${IPFS_CID}/artist.jpg`,
-        twitter_handle: null
+        twitter_handle: null,
+        media: [
+          {
+            url: `https://ipfs.6529.io/ipfs/${IPFS_CID}/artist.jpg`,
+            mime_type: null,
+            width: null,
+            height: null
+          }
+        ]
       },
       drop: {
         id: 'drop-1',
         serial_no: 42,
-        drop_type: ApiDropMainType.Submission
+        drop_type: ApiDropMainType.Submission,
+        title: 'Drop title',
+        description: 'Drop description',
+        content: 'Drop content',
+        votes: {
+          is_open: true,
+          total_votes_given: 11,
+          current_calculated_vote: 9,
+          predicted_final_vote: 10,
+          voters_count: 3,
+          place: 2
+        },
+        media: [
+          {
+            url: `https://ipfs.6529.io/ipfs/${IPFS_CID}/drop.png`,
+            mime_type: 'image/png',
+            width: null,
+            height: null
+          }
+        ]
       },
       wave: {
         id: 'wave-1',
         name: 'Wave',
-        picture: `https://ipfs.6529.io/ipfs/${IPFS_CID}/wave.jpg`
+        description: 'Wave description',
+        subscribers_count: 12,
+        drops_count: 34,
+        media: [
+          {
+            url: `https://ipfs.6529.io/ipfs/${IPFS_CID}/wave.jpg`,
+            mime_type: null,
+            width: null,
+            height: null
+          }
+        ]
       }
     });
     expect(dropV2Service.findDrops).toHaveBeenCalledWith(
