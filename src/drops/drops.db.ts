@@ -18,6 +18,7 @@ import {
   DROP_MENTIONED_WAVES_TABLE,
   DROP_METADATA_TABLE,
   DROP_NFT_LINKS_TABLE,
+  DROP_RANK_TABLE,
   DROP_REAL_VOTER_VOTE_IN_TIME_TABLE,
   DROP_REFERENCED_NFTS_TABLE,
   DROP_RELATIONS_TABLE,
@@ -1981,6 +1982,14 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     voterId: string | null = null
   ): Promise<DropEntity[]> {
     ctx.timer?.start(`${this.constructor.name}->findWeightedLeaderboardDrops`);
+    const orderBy = getVoteOrRankLeaderboardOrderBy({
+      sortByVote: params.sort === LeaderboardSort.REALTIME_VOTE,
+      sortOrder: params.sort_direction,
+      voteColumn: 'r.vote',
+      timestampColumn: 'r.timestamp',
+      rankColumn: 'r.rnk',
+      dropIdColumn: 'r.drop_id'
+    });
     const hasPriceBounds = this.hasLeaderboardPriceBounds(params);
     const priceSql = this.getLeaderboardPriceSqlParts(hasPriceBounds);
     const unvotedByMeSql = this.getLeaderboardUnvotedByMeSqlParts(
@@ -2008,7 +2017,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
               ${additionalActionPromiseFilter}
         ),
              dranks as (
-                 select drop_id, rnk, vote from (select drop_id,
+                 select drop_id, rnk, vote, timestamp from (select drop_id,
                                                         vote,
                                                         timestamp,
                                                         RANK() OVER (ORDER BY vote DESC, timestamp ASC) AS rnk
@@ -2021,7 +2030,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         where 1 = 1
         ${unvotedByMeSql.filterClause}
         ${priceSql.filterClause}
-        order by r.rnk ${params.sort_direction} limit :page_size offset :offset
+        order by ${orderBy} limit :page_size offset :offset
     `;
     const sqlParams = {
       wave_id: params.wave_id,
@@ -2290,6 +2299,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       limit: number;
       wave_id: string;
       sort_order: PageSortDirection;
+      sort_by_realtime_vote: boolean;
       unvoted_by_me: boolean;
       voter_id?: string | null;
       curation_id?: string | null;
@@ -2301,6 +2311,14 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     ctx: RequestContext
   ): Promise<DropEntity[]> {
     ctx.timer?.start(`${this.constructor.name}->findLeaderboardDrops`);
+    const orderBy = getVoteOrRankLeaderboardOrderBy({
+      sortByVote: params.sort_by_realtime_vote,
+      sortOrder: params.sort_order,
+      voteColumn: 'r.vote',
+      timestampColumn: 'r.timestamp',
+      rankColumn: 'r.rnk',
+      dropIdColumn: 'r.drop_id'
+    });
     const hasPriceBounds = this.hasLeaderboardPriceBounds(params);
     const priceSql = this.getLeaderboardPriceSqlParts(hasPriceBounds);
     const unvotedByMeSql = this.getLeaderboardUnvotedByMeSqlParts(
@@ -2320,13 +2338,13 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                       cast(ifnull(r.vote, 0) as signed)         as vote,
                       cast(ifnull(r.last_increased, d.created_at) as signed) as timestamp
                from ${DROPS_TABLE} d
-                        left join drop_ranks r ON r.drop_id = d.id
+                        left join ${DROP_RANK_TABLE} r ON r.drop_id = d.id
                where d.wave_id = :wave_id
                  and d.drop_type = '${DropType.PARTICIPATORY}'
                  ${curationFilter}
                  ${additionalActionPromiseFilter}),
       dranks as (
-            select drop_id, rnk, vote from (select drop_id,
+            select drop_id, rnk, vote, timestamp from (select drop_id,
                                                  vote,
                                                  timestamp,
                                                  RANK() OVER (ORDER BY vote DESC, timestamp ASC) AS rnk
@@ -2339,7 +2357,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       where 1 = 1
       ${unvotedByMeSql.filterClause}
       ${priceSql.filterClause}
-      order by r.rnk ${params.sort_order} limit :limit offset :offset
+      order by ${orderBy} limit :limit offset :offset
     `;
     const sqlParams = {
       wave_id: params.wave_id,
@@ -2376,6 +2394,12 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     ctx.timer?.start(
       `${this.constructor.name}->findRealtimeLeaderboardDropsOrderedByUsersVotes`
     );
+    const orderBy = getVoteLeaderboardOrderBy({
+      sortOrder: params.sort_order,
+      voteColumn: 'r.vote',
+      timestampColumn: 'r.timestamp',
+      dropIdColumn: 'r.drop_id'
+    });
     const hasPriceBounds = this.hasLeaderboardPriceBounds(params);
     const priceSql = this.getLeaderboardPriceSqlParts(hasPriceBounds);
     const unvotedByMeSql = this.getLeaderboardUnvotedByMeSqlParts(
@@ -2404,7 +2428,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                  ${curationFilter}
                  ${additionalActionPromiseFilter}),
       dranks as (
-            select drop_id, rnk, vote from (select drop_id,
+            select drop_id, rnk, vote, timestamp from (select drop_id,
                                                  vote,
                                                  timestamp,
                                                  RANK() OVER (ORDER BY vote DESC, timestamp ASC) AS rnk
@@ -2419,7 +2443,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
           params.unvoted_by_me ? unvotedByMeSql.filterClause : 'and r.vote <> 0'
         }
         ${priceSql.filterClause}
-      order by r.rnk ${params.sort_order} limit :limit offset :offset
+      order by ${orderBy} limit :limit offset :offset
     `;
     const sqlParams = {
       wave_id: params.wave_id,
@@ -3559,6 +3583,59 @@ export interface DropVotersStatsParams {
 export interface LightDropIdRow {
   readonly id: string;
   readonly serial_no: number;
+}
+
+function getVoteOrRankLeaderboardOrderBy({
+  sortByVote,
+  sortOrder,
+  voteColumn,
+  timestampColumn,
+  rankColumn,
+  dropIdColumn
+}: {
+  readonly sortByVote: boolean;
+  readonly sortOrder: PageSortDirection;
+  readonly voteColumn: string;
+  readonly timestampColumn: string;
+  readonly rankColumn: string;
+  readonly dropIdColumn: string;
+}): string {
+  if (!sortByVote) {
+    return `${rankColumn} ${sortOrder}, ${dropIdColumn} ASC`;
+  }
+  return getVoteLeaderboardOrderBy({
+    sortOrder,
+    voteColumn,
+    timestampColumn,
+    dropIdColumn
+  });
+}
+
+function getVoteLeaderboardOrderBy({
+  sortOrder,
+  voteColumn,
+  timestampColumn,
+  dropIdColumn
+}: {
+  readonly sortOrder: PageSortDirection;
+  readonly voteColumn: string;
+  readonly timestampColumn: string;
+  readonly dropIdColumn: string;
+}): string {
+  return `${voteColumn} ${sortOrder}, ${timestampColumn} ${reverseSortDirection(
+    sortOrder
+  )}, ${dropIdColumn} ASC`;
+}
+
+function reverseSortDirection(sortOrder: PageSortDirection): PageSortDirection {
+  switch (sortOrder) {
+    case PageSortDirection.ASC:
+      return PageSortDirection.DESC;
+    case PageSortDirection.DESC:
+      return PageSortDirection.ASC;
+    default:
+      return assertUnreachable(sortOrder);
+  }
 }
 
 export type DropWithMediaAndPart = DropEntity & {

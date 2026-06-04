@@ -7,7 +7,7 @@ import {
   WAVES_TABLE
 } from '@/constants';
 import { PageSortDirection } from '@/api/page-request';
-import { DropsDb } from './drops.db';
+import { DropsDb, LeaderboardSort } from './drops.db';
 
 describe('DropsDb', () => {
   it('uses wave voting credit nft rows when finding CARD_SET_TDH overvoters', async () => {
@@ -55,6 +55,7 @@ describe('DropsDb', () => {
         limit: 10,
         offset: 0,
         sort_order: PageSortDirection.ASC,
+        sort_by_realtime_vote: false,
         unvoted_by_me: false,
         voter_id: null,
         curation_id: null,
@@ -74,5 +75,133 @@ describe('DropsDb', () => {
     expect(params).toMatchObject({
       is_additional_action_promised: false
     });
+  });
+
+  it('orders realtime leaderboard vote sorting by vote direction', async () => {
+    const execute = jest.fn().mockResolvedValue([]);
+    const repo = new DropsDb(
+      () =>
+        ({
+          execute
+        }) as any
+    );
+
+    await repo.findRealtimeLeaderboardDrops(
+      {
+        wave_id: 'wave-1',
+        limit: 10,
+        offset: 0,
+        sort_order: PageSortDirection.DESC,
+        sort_by_realtime_vote: true,
+        unvoted_by_me: false,
+        voter_id: null,
+        curation_id: null,
+        price_currency: null,
+        min_price: null,
+        max_price: null,
+        is_additional_action_promised: null
+      },
+      { timer: undefined }
+    );
+
+    const [sql] = execute.mock.calls[0];
+    expect(sql).toMatch(
+      /order by\s+r\.vote DESC,\s+r\.timestamp ASC,\s+r\.drop_id ASC\s+limit/
+    );
+  });
+
+  it('keeps rank sorting ordered by rank direction', async () => {
+    const execute = jest.fn().mockResolvedValue([]);
+    const repo = new DropsDb(
+      () =>
+        ({
+          execute
+        }) as any
+    );
+
+    await repo.findRealtimeLeaderboardDrops(
+      {
+        wave_id: 'wave-1',
+        limit: 10,
+        offset: 0,
+        sort_order: PageSortDirection.DESC,
+        sort_by_realtime_vote: false,
+        unvoted_by_me: false,
+        voter_id: null,
+        curation_id: null,
+        price_currency: null,
+        min_price: null,
+        max_price: null,
+        is_additional_action_promised: null
+      },
+      { timer: undefined }
+    );
+
+    const [sql] = execute.mock.calls[0];
+    expect(sql).toMatch(/order by\s+r\.rnk DESC,\s+r\.drop_id ASC\s+limit/);
+  });
+
+  it('orders my realtime vote sorting by voter vote direction', async () => {
+    const execute = jest.fn().mockResolvedValue([]);
+    const repo = new DropsDb(
+      () =>
+        ({
+          execute
+        }) as any
+    );
+
+    await repo.findRealtimeLeaderboardDropsOrderedByUsersVotesOrCreationTime(
+      {
+        wave_id: 'wave-1',
+        voter_id: 'voter-1',
+        limit: 10,
+        offset: 0,
+        sort_order: PageSortDirection.DESC,
+        unvoted_by_me: false,
+        curation_id: null,
+        price_currency: null,
+        min_price: null,
+        max_price: null,
+        is_additional_action_promised: null
+      },
+      { timer: undefined }
+    );
+
+    const [sql] = execute.mock.calls[0];
+    expect(sql).toMatch(
+      /order by\s+r\.vote DESC,\s+r\.timestamp ASC,\s+r\.drop_id ASC\s+limit/
+    );
+  });
+
+  it('orders weighted realtime leaderboard sorting by weighted vote direction', async () => {
+    const execute = jest.fn().mockResolvedValue([]);
+    const repo = new DropsDb(
+      () =>
+        ({
+          execute
+        }) as any
+    );
+
+    await repo.findWeightedLeaderboardDrops(
+      {
+        wave_id: 'wave-1',
+        page_size: 10,
+        page: 1,
+        sort_direction: PageSortDirection.DESC,
+        sort: LeaderboardSort.REALTIME_VOTE,
+        curation_id: null,
+        unvoted_by_me: false,
+        is_additional_action_promised: null,
+        price_currency: null,
+        min_price: null,
+        max_price: null
+      },
+      { timer: undefined }
+    );
+
+    const [sql] = execute.mock.calls[0];
+    expect(sql).toMatch(
+      /order by\s+r\.vote DESC,\s+r\.timestamp ASC,\s+r\.drop_id ASC\s+limit/
+    );
   });
 });
