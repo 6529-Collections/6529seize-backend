@@ -22,6 +22,8 @@ export class ApiOgMetadataDrop {
     'serial_no': number;
     'drop_type': ApiDropMainType;
     'submission_status'?: ApiSubmissionDropStatus;
+    'submitted_at'?: number | null;
+    'won_at'?: number | null;
     'title'?: string | null;
     'description'?: string | null;
     'content'?: string | null;
@@ -57,6 +59,18 @@ export class ApiOgMetadataDrop {
             "baseName": "submission_status",
             "type": "ApiSubmissionDropStatus",
             "format": ""
+        },
+        {
+            "name": "submitted_at",
+            "baseName": "submitted_at",
+            "type": "number",
+            "format": "int64"
+        },
+        {
+            "name": "won_at",
+            "baseName": "won_at",
+            "type": "number",
+            "format": "int64"
         },
         {
             "name": "title",

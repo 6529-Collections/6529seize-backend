@@ -381,6 +381,7 @@ export class OgMetadataService {
       ApiDropV2,
       | 'id'
       | 'serial_no'
+      | 'created_at'
       | 'drop_type'
       | 'title'
       | 'content'
@@ -390,11 +391,14 @@ export class OgMetadataService {
       | 'attachments'
     >
   ): ApiOgMetadataDrop {
+    const isSubmission = !!drop.submission_context;
     return {
       id: drop.id,
       serial_no: drop.serial_no,
       drop_type: drop.drop_type,
       submission_status: drop.submission_context?.status,
+      submitted_at: isSubmission ? drop.created_at : null,
+      won_at: drop.submission_context?.won_at ?? null,
       title: this.cleanText(
         this.findPriorityMetadataValue(drop.priority_metadata, 'title') ??
           drop.title ??

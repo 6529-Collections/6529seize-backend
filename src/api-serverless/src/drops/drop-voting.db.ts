@@ -39,6 +39,7 @@ export interface DropSubmissionVotingSummary {
   status: DropType.PARTICIPATORY | DropType.WINNER;
   is_open: boolean;
   over_threshold_since_ms: number | null;
+  won_at: number | null;
   total_votes_given: number;
   current_calculated_vote: number;
   predicted_final_vote: number;
@@ -686,6 +687,10 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
             else null
           end as over_threshold_since_ms,
           case
+            when t.drop_type = '${DropType.WINNER}' then wd.decision_time
+            else null
+          end as won_at,
+          case
             when t.drop_type = '${DropType.WINNER}' then coalesce(wd.final_vote, 0)
             else coalesce(vc.tally, 0)
           end as total_votes_given,
@@ -738,6 +743,10 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
             over_threshold_since_ms:
               overThresholdSinceByDropId[row.drop_id] ??
               cachedOverThresholdSinceMs,
+            won_at:
+              row.won_at === null || row.won_at === undefined
+                ? null
+                : Number(row.won_at),
             forbid_negative_votes:
               row.forbid_negative_votes === true ||
               Number(row.forbid_negative_votes) === 1,

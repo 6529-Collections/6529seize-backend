@@ -479,6 +479,8 @@ describe('OgMetadataService', () => {
         serial_no: 42,
         drop_type: ApiDropMainType.Submission,
         submission_status: ApiSubmissionDropStatus.Active,
+        submitted_at: 1,
+        won_at: null,
         title: 'Drop title',
         description: 'Drop description',
         content: 'Drop content',
@@ -547,6 +549,42 @@ describe('OgMetadataService', () => {
       },
       {}
     );
+  });
+
+  it('adds winner decision time for winner submission drops', async () => {
+    const {
+      service,
+      identityFetcher,
+      dropV2Service,
+      profilesDb,
+      identitySubscriptionsDb
+    } = makeService();
+    profilesDb.getProfileById.mockResolvedValue(
+      makeProfileRecord(new Date('2026-01-02T03:04:05.000Z'))
+    );
+    identitySubscriptionsDb.countDistinctSubscriberIdsForTarget.mockResolvedValue(
+      7
+    );
+    const dropWithWave = makeDropWithWave('winner-drop', 44);
+    dropWithWave.drop.submission_context = {
+      ...dropWithWave.drop.submission_context!,
+      status: ApiSubmissionDropStatus.Winner,
+      won_at: 1234567890
+    };
+    dropV2Service.findWithWaveByIdOrThrow.mockResolvedValue(dropWithWave);
+    mockAuthorProfile(identityFetcher);
+
+    await expect(
+      service.getDropMetadata(UUID_DROP_ID, {})
+    ).resolves.toMatchObject({
+      drop: {
+        id: 'winner-drop',
+        serial_no: 44,
+        submission_status: ApiSubmissionDropStatus.Winner,
+        submitted_at: 1,
+        won_at: 1234567890
+      }
+    });
   });
 
   it('resolves UUID drops by id and returns metadata', async () => {
