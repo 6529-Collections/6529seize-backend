@@ -63,7 +63,8 @@ describe('DropsApiService', () => {
       findVisibleLightDropIds: jest.fn().mockResolvedValue([]),
       findLightDropsByIds: jest.fn().mockResolvedValue([]),
       countParticipatoryDrops: jest.fn().mockResolvedValue(0),
-      findRealtimeLeaderboardDrops: jest.fn().mockResolvedValue([])
+      findRealtimeLeaderboardDrops: jest.fn().mockResolvedValue([]),
+      findWeightedLeaderboardDrops: jest.fn().mockResolvedValue([])
     };
     const dropsMappers = {
       convertToDropFulls: jest.fn().mockResolvedValue([]),
@@ -187,6 +188,7 @@ describe('DropsApiService', () => {
         limit: 2,
         offset: 0,
         sort_order: PageSortDirection.ASC,
+        sort_by_realtime_vote: false,
         curation_id: null,
         unvoted_by_me: false,
         voter_id: 'profile-1',
@@ -210,6 +212,102 @@ describe('DropsApiService', () => {
       })
     );
     expect(result.wave.id).toBe('wave-1');
+  });
+
+  it('marks realtime leaderboard sorting for non-time-locked waves', async () => {
+    const { service, dropsDb, apiDropMapper, ctx } = createService();
+    const dropEntities = [{ id: 'drop-1' }];
+    dropsDb.countParticipatoryDrops.mockResolvedValue(1);
+    dropsDb.findRealtimeLeaderboardDrops.mockResolvedValue(dropEntities);
+    apiDropMapper.mapDrops.mockResolvedValue({
+      'drop-1': { id: 'drop-1', parts_count: 1 }
+    });
+
+    await service.findLeaderboardV2(
+      {
+        wave_id: 'wave-1',
+        page_size: 50,
+        page: 1,
+        curation_id: null,
+        unvoted_by_me: false,
+        is_additional_action_promised: null,
+        price_currency: null,
+        min_price: null,
+        max_price: null,
+        sort_direction: PageSortDirection.DESC,
+        sort: LeaderboardSort.REALTIME_VOTE
+      },
+      ctx
+    );
+
+    expect(dropsDb.findRealtimeLeaderboardDrops).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sort_order: PageSortDirection.DESC,
+        sort_by_realtime_vote: true
+      }),
+      ctx
+    );
+  });
+
+  it('uses weighted leaderboard entries for time-locked realtime vote sorting', async () => {
+    const { service, dropsDb, apiDropMapper, ctx } = createService({
+      wave: {
+        id: 'wave-1',
+        name: 'Wave 1',
+        picture: null,
+        description_drop_id: 'description-drop-1',
+        created_by: 'creator-1',
+        last_drop_time: 1,
+        submission_type: null,
+        chat_enabled: false,
+        chat_group_id: null,
+        voting_group_id: null,
+        participation_group_id: null,
+        admin_group_id: null,
+        voting_credit_type: 'TDH',
+        voting_credit_scope: 'WAVE',
+        voting_period_start: null,
+        voting_period_end: null,
+        visibility_group_id: null,
+        admin_drop_deletion_enabled: false,
+        forbid_negative_votes: false,
+        time_lock_ms: 1000,
+        type: 'APPROVE'
+      }
+    });
+    const dropEntities = [{ id: 'drop-1' }];
+    dropsDb.countParticipatoryDrops.mockResolvedValue(1);
+    dropsDb.findWeightedLeaderboardDrops.mockResolvedValue(dropEntities);
+    apiDropMapper.mapDrops.mockResolvedValue({
+      'drop-1': { id: 'drop-1', parts_count: 1 }
+    });
+
+    await service.findLeaderboardV2(
+      {
+        wave_id: 'wave-1',
+        page_size: 50,
+        page: 1,
+        curation_id: null,
+        unvoted_by_me: false,
+        is_additional_action_promised: null,
+        price_currency: null,
+        min_price: null,
+        max_price: null,
+        sort_direction: PageSortDirection.DESC,
+        sort: LeaderboardSort.REALTIME_VOTE
+      },
+      ctx
+    );
+
+    expect(dropsDb.findWeightedLeaderboardDrops).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sort_direction: PageSortDirection.DESC,
+        sort: LeaderboardSort.REALTIME_VOTE
+      }),
+      ctx,
+      'profile-1'
+    );
+    expect(dropsDb.findRealtimeLeaderboardDrops).not.toHaveBeenCalled();
   });
 
   it('rejects latest drop filtering when the curation does not exist', async () => {

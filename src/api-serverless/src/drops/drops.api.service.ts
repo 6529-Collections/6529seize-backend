@@ -1026,7 +1026,10 @@ export class DropsApiService {
       );
     }
     if (isTimeLockedWave) {
-      if (params.sort === LeaderboardSort.RANK) {
+      if (
+        params.sort === LeaderboardSort.RANK ||
+        params.sort === LeaderboardSort.REALTIME_VOTE
+      ) {
         return this.dropsDb.findWeightedLeaderboardDrops(
           params,
           ctx,
@@ -1076,6 +1079,7 @@ export class DropsApiService {
         limit: params.page_size,
         offset: (params.page - 1) * params.page_size,
         sort_order: params.sort_direction,
+        sort_by_realtime_vote: params.sort === LeaderboardSort.REALTIME_VOTE,
         curation_id: params.curation_id,
         unvoted_by_me: params.unvoted_by_me,
         voter_id: authenticatedProfileId,
