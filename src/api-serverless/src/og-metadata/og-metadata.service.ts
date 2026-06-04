@@ -71,6 +71,11 @@ type ProfileEnrichment = {
   readonly followersCount: number;
 };
 
+type MarkdownLinkReplacement = {
+  readonly replacement: string;
+  readonly endIndex: number;
+};
+
 export class OgMetadataService {
   private readonly logger = Logger.get(this.constructor.name);
 
@@ -570,42 +575,53 @@ export class OgMetadataService {
     let index = 0;
 
     while (index < value.length) {
-      const imageTextStart =
-        value[index] === '!' && value[index + 1] === '[' ? index + 2 : null;
-      const isImage = imageTextStart !== null;
-      const textStart =
-        imageTextStart ?? (value[index] === '[' ? index + 1 : null);
-
-      if (textStart === null) {
-        result += value[index];
-        index++;
+      const linkReplacement = this.readMarkdownLinkReplacement(value, index);
+      if (linkReplacement) {
+        result += linkReplacement.replacement;
+        index = linkReplacement.endIndex;
         continue;
       }
-
-      const textEnd = this.findMarkdownDelimiter(value, textStart, ']');
-      if (textEnd === null) {
-        result += value.slice(index);
-        break;
-      }
-      if (value[textEnd + 1] !== '(') {
-        result += value.slice(index, textEnd + 1);
-        index = textEnd + 1;
-        continue;
-      }
-
-      const urlEnd = this.findMarkdownDelimiter(value, textEnd + 2, ')');
-      if (urlEnd === null) {
-        result += value.slice(index);
-        break;
-      }
-
-      if (!isImage) {
-        result += value.slice(textStart, textEnd);
-      }
-      index = urlEnd + 1;
+      result += value[index];
+      index++;
     }
 
     return result;
+  }
+
+  private readMarkdownLinkReplacement(
+    value: string,
+    index: number
+  ): MarkdownLinkReplacement | null {
+    const imageTextStart =
+      value[index] === '!' && value[index + 1] === '[' ? index + 2 : null;
+    const isImage = imageTextStart !== null;
+    const textStart =
+      imageTextStart ?? (value[index] === '[' ? index + 1 : null);
+
+    if (textStart === null) {
+      return null;
+    }
+
+    const textEnd = this.findMarkdownDelimiter(value, textStart, ']');
+    if (textEnd === null) {
+      return { replacement: value.slice(index), endIndex: value.length };
+    }
+    if (value[textEnd + 1] !== '(') {
+      return {
+        replacement: value.slice(index, textEnd + 1),
+        endIndex: textEnd + 1
+      };
+    }
+
+    const urlEnd = this.findMarkdownDelimiter(value, textEnd + 2, ')');
+    if (urlEnd === null) {
+      return { replacement: value.slice(index), endIndex: value.length };
+    }
+
+    return {
+      replacement: isImage ? '' : value.slice(textStart, textEnd),
+      endIndex: urlEnd + 1
+    };
   }
 
   private findMarkdownImageUrls(value: string | null | undefined): string[] {
@@ -645,7 +661,7 @@ export class OgMetadataService {
     if (!trimmed) {
       return null;
     }
-    if (trimmed[0] === '<') {
+    if (trimmed.startsWith('<')) {
       const end = trimmed.indexOf('>');
       return end > 1 ? trimmed.slice(1, end) : null;
     }
