@@ -94,6 +94,7 @@ Recommended schema name: `ApiOgMetadata`.
     "id": "3f4267fe-83d0-4d1f-934e-46ab57f95efa",
     "serial_no": 12345,
     "drop_type": "SUBMISSION",
+    "submission_status": "ACTIVE",
     "title": "Submission title",
     "description": "Submission description.",
     "content": "Submission content.",
@@ -107,10 +108,27 @@ Recommended schema name: `ApiOgMetadata`.
     },
     "media": [
       {
-        "url": "https://cdn.6529.io/drop-image.jpg",
+        "url": "https://cdn.6529.io/drop-preview.jpg",
         "mime_type": "image/jpeg",
         "width": null,
         "height": null
+      },
+      {
+        "url": "https://cdn.6529.io/drop-video.mp4",
+        "mime_type": "video/mp4",
+        "width": null,
+        "height": null
+      }
+    ],
+    "files": [
+      {
+        "attachment_id": "attachment-1",
+        "file_name": "submission.pdf",
+        "mime_type": "application/pdf",
+        "kind": "pdf",
+        "status": "ready",
+        "url": "https://cdn.6529.io/submission.pdf",
+        "error_reason": null
       }
     ]
   }
@@ -225,13 +243,27 @@ Drop detail includes:
 - `id`
 - `serial_no`
 - `drop_type`
+- `submission_status` for submission drops
 - `title`
 - `description`
 - `content`
 - `votes` for submission drops
 - `media`
+- `files`
 
 `drop_type` uses the existing V2 drop main type: `CHAT` or `SUBMISSION`.
+For submission drops, `submission_status` is `ACTIVE` for active
+participatory submissions and `WINNER` for winning submissions.
+
+For submission drops, `drop.media` includes media uploaded on the drop. If
+priority metadata contains `additional_media.preview_image`, the preview image
+is included first so clients have an image candidate for video submissions.
+Inline markdown images in drop content are also included in `drop.media` and
+removed from cleaned `drop.content`.
+
+`drop.files` contains ready document attachments with URLs, using the existing
+attachment shape. Attachments in other statuses, or ready attachments without a
+URL, are omitted.
 
 ## Text Normalization
 

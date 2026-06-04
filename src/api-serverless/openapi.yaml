@@ -12312,6 +12312,8 @@ components:
           format: int64
         drop_type:
           $ref: "#/components/schemas/ApiDropMainType"
+        submission_status:
+          $ref: "#/components/schemas/ApiSubmissionDropStatus"
         title:
           type: string
           nullable: true
@@ -12327,6 +12329,10 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ApiOgMediaAsset"
+        files:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiAttachment"
     ApiOgMetadataEntityType:
       type: string
       enum:

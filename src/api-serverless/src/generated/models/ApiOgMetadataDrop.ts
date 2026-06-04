@@ -10,8 +10,10 @@
  * Do not edit the class manually.
  */
 
+import { ApiAttachment } from '../models/ApiAttachment';
 import { ApiDropMainType } from '../models/ApiDropMainType';
 import { ApiOgMediaAsset } from '../models/ApiOgMediaAsset';
+import { ApiSubmissionDropStatus } from '../models/ApiSubmissionDropStatus';
 import { ApiSubmissionDropVoting } from '../models/ApiSubmissionDropVoting';
 import { HttpFile } from '../http/http';
 
@@ -19,11 +21,13 @@ export class ApiOgMetadataDrop {
     'id': string;
     'serial_no': number;
     'drop_type': ApiDropMainType;
+    'submission_status'?: ApiSubmissionDropStatus;
     'title'?: string | null;
     'description'?: string | null;
     'content'?: string | null;
     'votes'?: ApiSubmissionDropVoting;
     'media'?: Array<ApiOgMediaAsset>;
+    'files'?: Array<ApiAttachment>;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -46,6 +50,12 @@ export class ApiOgMetadataDrop {
             "name": "drop_type",
             "baseName": "drop_type",
             "type": "ApiDropMainType",
+            "format": ""
+        },
+        {
+            "name": "submission_status",
+            "baseName": "submission_status",
+            "type": "ApiSubmissionDropStatus",
             "format": ""
         },
         {
@@ -76,6 +86,12 @@ export class ApiOgMetadataDrop {
             "name": "media",
             "baseName": "media",
             "type": "Array<ApiOgMediaAsset>",
+            "format": ""
+        },
+        {
+            "name": "files",
+            "baseName": "files",
+            "type": "Array<ApiAttachment>",
             "format": ""
         }    ];
 
