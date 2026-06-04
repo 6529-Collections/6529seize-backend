@@ -105,7 +105,9 @@ describe('DropsDb', () => {
     );
 
     const [sql] = execute.mock.calls[0];
-    expect(sql).toMatch(/order by\s+r\.vote DESC,\s+r\.timestamp ASC\s+limit/);
+    expect(sql).toMatch(
+      /order by\s+r\.vote DESC,\s+r\.timestamp ASC,\s+r\.drop_id ASC\s+limit/
+    );
   });
 
   it('keeps rank sorting ordered by rank direction', async () => {
@@ -136,7 +138,7 @@ describe('DropsDb', () => {
     );
 
     const [sql] = execute.mock.calls[0];
-    expect(sql).toMatch(/order by\s+r\.rnk DESC\s+limit/);
+    expect(sql).toMatch(/order by\s+r\.rnk DESC,\s+r\.drop_id ASC\s+limit/);
   });
 
   it('orders my realtime vote sorting by voter vote direction', async () => {
@@ -166,7 +168,9 @@ describe('DropsDb', () => {
     );
 
     const [sql] = execute.mock.calls[0];
-    expect(sql).toMatch(/order by\s+r\.vote DESC,\s+r\.timestamp ASC\s+limit/);
+    expect(sql).toMatch(
+      /order by\s+r\.vote DESC,\s+r\.timestamp ASC,\s+r\.drop_id ASC\s+limit/
+    );
   });
 
   it('orders weighted realtime leaderboard sorting by weighted vote direction', async () => {
@@ -196,6 +200,8 @@ describe('DropsDb', () => {
     );
 
     const [sql] = execute.mock.calls[0];
-    expect(sql).toMatch(/order by\s+r\.vote DESC,\s+r\.timestamp ASC\s+limit/);
+    expect(sql).toMatch(
+      /order by\s+r\.vote DESC,\s+r\.timestamp ASC,\s+r\.drop_id ASC\s+limit/
+    );
   });
 });

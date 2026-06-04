@@ -1987,7 +1987,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       sortOrder: params.sort_direction,
       voteColumn: 'r.vote',
       timestampColumn: 'r.timestamp',
-      rankColumn: 'r.rnk'
+      rankColumn: 'r.rnk',
+      dropIdColumn: 'r.drop_id'
     });
     const hasPriceBounds = this.hasLeaderboardPriceBounds(params);
     const priceSql = this.getLeaderboardPriceSqlParts(hasPriceBounds);
@@ -2315,7 +2316,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       sortOrder: params.sort_order,
       voteColumn: 'r.vote',
       timestampColumn: 'r.timestamp',
-      rankColumn: 'r.rnk'
+      rankColumn: 'r.rnk',
+      dropIdColumn: 'r.drop_id'
     });
     const hasPriceBounds = this.hasLeaderboardPriceBounds(params);
     const priceSql = this.getLeaderboardPriceSqlParts(hasPriceBounds);
@@ -2395,7 +2397,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     const orderBy = getVoteLeaderboardOrderBy({
       sortOrder: params.sort_order,
       voteColumn: 'r.vote',
-      timestampColumn: 'r.timestamp'
+      timestampColumn: 'r.timestamp',
+      dropIdColumn: 'r.drop_id'
     });
     const hasPriceBounds = this.hasLeaderboardPriceBounds(params);
     const priceSql = this.getLeaderboardPriceSqlParts(hasPriceBounds);
@@ -3587,36 +3590,41 @@ function getVoteOrRankLeaderboardOrderBy({
   sortOrder,
   voteColumn,
   timestampColumn,
-  rankColumn
+  rankColumn,
+  dropIdColumn
 }: {
   readonly sortByVote: boolean;
   readonly sortOrder: PageSortDirection;
   readonly voteColumn: string;
   readonly timestampColumn: string;
   readonly rankColumn: string;
+  readonly dropIdColumn: string;
 }): string {
   if (!sortByVote) {
-    return `${rankColumn} ${sortOrder}`;
+    return `${rankColumn} ${sortOrder}, ${dropIdColumn} ASC`;
   }
   return getVoteLeaderboardOrderBy({
     sortOrder,
     voteColumn,
-    timestampColumn
+    timestampColumn,
+    dropIdColumn
   });
 }
 
 function getVoteLeaderboardOrderBy({
   sortOrder,
   voteColumn,
-  timestampColumn
+  timestampColumn,
+  dropIdColumn
 }: {
   readonly sortOrder: PageSortDirection;
   readonly voteColumn: string;
   readonly timestampColumn: string;
+  readonly dropIdColumn: string;
 }): string {
   return `${voteColumn} ${sortOrder}, ${timestampColumn} ${reverseSortDirection(
     sortOrder
-  )}`;
+  )}, ${dropIdColumn} ASC`;
 }
 
 function reverseSortDirection(sortOrder: PageSortDirection): PageSortDirection {
