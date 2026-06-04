@@ -18,6 +18,7 @@ import { ApiDropTraceItem } from '@/api/generated/models/ApiDropTraceItem';
 import { ApiDropType } from '@/api/generated/models/ApiDropType';
 import { ApiDropV2PageWithoutCount } from '@/api/generated/models/ApiDropV2PageWithoutCount';
 import { ApiSubwavesSort } from '@/api/generated/models/ApiSubwavesSort';
+import { ApiWaveOverview } from '@/api/generated/models/ApiWaveOverview';
 import { ApiWaveOverviewPage } from '@/api/generated/models/ApiWaveOverviewPage';
 import { ApiWaveDropsFeedV2 } from '@/api/generated/models/ApiWaveDropsFeedV2';
 import { ApiWavesOverviewType } from '@/api/generated/models/ApiWavesOverviewType';
@@ -140,6 +141,29 @@ export class ApiWaveV2Service {
         ctx
       );
       return await this.mapWaveEntitiesPage(waveEntities, request, ctx);
+    } finally {
+      ctx.timer?.stop(timerKey);
+    }
+  }
+
+  public async findOfficialWaves(
+    ctx: RequestContext
+  ): Promise<ApiWaveOverview[]> {
+    const timerKey = `${this.constructor.name}->findOfficialWaves`;
+    ctx.timer?.start(timerKey);
+    try {
+      const { eligibleGroups } = await this.getReadableWaveContext(ctx);
+      const waveEntities = await this.wavesApiDb.findOfficialWaves(
+        eligibleGroups,
+        ctx
+      );
+      const wavesById = await this.apiWaveOverviewMapper.mapWaves(
+        waveEntities,
+        ctx
+      );
+      return waveEntities
+        .map((wave) => wavesById[wave.id])
+        .filter((wave): wave is ApiWaveOverview => !!wave);
     } finally {
       ctx.timer?.stop(timerKey);
     }

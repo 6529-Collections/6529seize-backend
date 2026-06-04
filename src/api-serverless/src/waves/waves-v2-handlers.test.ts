@@ -1,4 +1,5 @@
 const mockFindWaves = jest.fn();
+const mockFindOfficialWaves = jest.fn();
 const mockFindDropsFeed = jest.fn();
 const mockFindWaveCurationDrops = jest.fn();
 const mockSearchDropsContainingPhraseInWave = jest.fn();
@@ -20,6 +21,7 @@ jest.mock('@/api/drops/drops.api.service', () => ({
 jest.mock('@/api/waves/api-wave-v2.service', () => ({
   apiWaveV2Service: {
     findWaves: mockFindWaves,
+    findOfficialWaves: mockFindOfficialWaves,
     findDropsFeed: mockFindDropsFeed,
     findWaveCurationDrops: mockFindWaveCurationDrops,
     searchDropsContainingPhraseInWave: mockSearchDropsContainingPhraseInWave
@@ -69,6 +71,7 @@ import {
   handleGetWaveDecisionsV2,
   handleGetWaveDropsV2,
   handleGetWaveLeaderboardV2,
+  handleGetOfficialWaves,
   handleGetWavesV2,
   handleListWaveCurationDropsV2,
   handleSearchDropsInWaveV2
@@ -148,6 +151,27 @@ describe('waves v2 handlers', () => {
         '"unexpected" is not allowed'
       );
       expect(mockFindWaves).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('handleGetOfficialWaves', () => {
+    const result = [{ id: 'wave-1' }] as any;
+
+    beforeEach(() => {
+      mockFindOfficialWaves.mockResolvedValue(result);
+    });
+
+    it('passes authenticated request context to the service', async () => {
+      const req = { query: {} } as any;
+
+      await expect(handleGetOfficialWaves(req)).resolves.toBe(result);
+
+      expect(mockGetFromRequest).toHaveBeenCalledWith(req);
+      expect(mockGetAuthenticationContext).toHaveBeenCalledWith(req, timer);
+      expect(mockFindOfficialWaves).toHaveBeenCalledWith({
+        authenticationContext,
+        timer
+      });
     });
   });
 
