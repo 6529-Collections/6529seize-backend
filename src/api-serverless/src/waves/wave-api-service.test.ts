@@ -26,10 +26,12 @@ import { Time } from '@/time';
 describe('WaveApiService updateWave immutability', () => {
   function createService({
     waveBeforeUpdate,
-    updatedWave
+    updatedWave,
+    eligibleGroups = []
   }: {
     waveBeforeUpdate: any;
     updatedWave?: any;
+    eligibleGroups?: string[];
   }) {
     const connection = {} as any;
     const wavesApiDb = {
@@ -38,6 +40,8 @@ describe('WaveApiService updateWave immutability', () => {
         .fn()
         .mockResolvedValueOnce(waveBeforeUpdate)
         .mockResolvedValue(updatedWave ?? waveBeforeUpdate),
+      findWaveByIdForUpdate: jest.fn().mockResolvedValue(waveBeforeUpdate),
+      findSubwaveIdsByParentWaveId: jest.fn().mockResolvedValue([]),
       countWaveDecisionsByWaveIds: jest.fn().mockResolvedValue({}),
       deleteWave: jest.fn().mockResolvedValue(undefined),
       insertWave: jest.fn().mockResolvedValue(undefined),
@@ -45,7 +49,7 @@ describe('WaveApiService updateWave immutability', () => {
       updateVisibilityInNotifications: jest.fn().mockResolvedValue(undefined)
     };
     const userGroupsService = {
-      getGroupsUserIsEligibleFor: jest.fn().mockResolvedValue([]),
+      getGroupsUserIsEligibleFor: jest.fn().mockResolvedValue(eligibleGroups),
       getByIds: jest.fn().mockResolvedValue([])
     };
     const waveMappers = {
@@ -101,12 +105,14 @@ describe('WaveApiService updateWave immutability', () => {
   function updateRequest({
     name = 'updated-wave',
     type = ApiWaveType.Rank,
+    visibilityGroupId = null,
     submissionStrategy,
     maxVotesPerIdentityToDrop,
     decisionsStrategy = null
   }: {
     name?: string;
     type?: ApiWaveType;
+    visibilityGroupId?: string | null;
     submissionStrategy?: ApiUpdateWaveRequest['participation']['submission_strategy'];
     maxVotesPerIdentityToDrop?: number | null;
     decisionsStrategy?: ApiWaveDecisionsStrategy | null;
@@ -124,7 +130,7 @@ describe('WaveApiService updateWave immutability', () => {
         forbid_negative_votes: false
       },
       visibility: {
-        scope: { group_id: null }
+        scope: { group_id: visibilityGroupId }
       },
       participation: {
         scope: { group_id: null },
@@ -606,6 +612,77 @@ describe('WaveApiService updateWave immutability', () => {
       dropVotingService.clearWaveLeaderboardEntriesOverThresholdSinceByWaveId
     ).toHaveBeenCalledWith('wave-1', expect.objectContaining({ connection }));
   });
+
+  it('rejects subwave visibility updates that differ from the parent', async () => {
+    const parentWave = aWave(
+      {
+        visibility_group_id: 'parent-group'
+      },
+      {
+        id: 'parent-wave',
+        name: 'Parent Wave',
+        serial_no: 1
+      }
+    );
+    const waveBeforeUpdate = aWave(
+      {
+        created_by: 'profile-1',
+        parent_wave_id: parentWave.id,
+        visibility_group_id: 'parent-group'
+      },
+      {
+        id: 'subwave-1',
+        name: 'Subwave',
+        serial_no: 2
+      }
+    );
+    const { service, wavesApiDb, ctx } = createService({
+      waveBeforeUpdate,
+      eligibleGroups: ['parent-group']
+    });
+    wavesApiDb.findWaveByIdForUpdate.mockResolvedValue(parentWave);
+
+    await expect(
+      service.updateWave(
+        'subwave-1',
+        updateRequest({ type: ApiWaveType.Chat }),
+        ctx
+      )
+    ).rejects.toThrow(`Subwave visibility must match parent wave visibility`);
+
+    expect(wavesApiDb.deleteWave).not.toHaveBeenCalled();
+  });
+
+  it('rejects parent visibility updates while subwaves exist', async () => {
+    const waveBeforeUpdate = aWave(
+      {
+        created_by: 'profile-1',
+        visibility_group_id: null
+      },
+      {
+        id: 'parent-wave',
+        name: 'Parent Wave',
+        serial_no: 1
+      }
+    );
+    const { service, wavesApiDb, ctx } = createService({ waveBeforeUpdate });
+    wavesApiDb.findSubwaveIdsByParentWaveId.mockResolvedValue(['subwave-1']);
+
+    await expect(
+      service.updateWave(
+        'parent-wave',
+        updateRequest({
+          type: ApiWaveType.Chat,
+          visibilityGroupId: 'private-group'
+        }),
+        ctx
+      )
+    ).rejects.toThrow(
+      `Parent wave visibility cannot be changed while it has subwaves`
+    );
+
+    expect(wavesApiDb.deleteWave).not.toHaveBeenCalled();
+  });
 });
 
 describe('WaveApiService validateWaveRelations', () => {
@@ -961,6 +1038,284 @@ describe('WaveApiService validateWaveRelations', () => {
         timer: undefined
       })
     ).resolves.toBeUndefined();
+  });
+});
+
+describe('WaveApiService subwave creation authorization', () => {
+  function createService({
+    parentWave,
+    eligibleGroups
+  }: {
+    parentWave: any;
+    eligibleGroups: string[];
+  }) {
+    const wavesApiDb = {
+      findWaveById: jest.fn().mockResolvedValue(parentWave),
+      findWaveByIdForUpdate: jest.fn().mockResolvedValue(parentWave)
+    };
+    const userGroupsService = {
+      getGroupsUserIsEligibleFor: jest.fn().mockResolvedValue(eligibleGroups)
+    };
+    const service = new WaveApiService(
+      wavesApiDb as any,
+      userGroupsService as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any
+    );
+    return { service, wavesApiDb, userGroupsService };
+  }
+
+  const request = {
+    parent_wave_id: 'parent-wave',
+    visibility: {
+      scope: { group_id: null }
+    }
+  } as ApiCreateNewWave;
+
+  it('allows parent wave admins to create subwaves', async () => {
+    const parentWave = aWave(
+      {
+        created_by: 'creator-profile',
+        admin_group_id: 'admin-group'
+      },
+      {
+        id: 'parent-wave',
+        name: 'Parent Wave',
+        serial_no: 1
+      }
+    );
+    const { service } = createService({
+      parentWave,
+      eligibleGroups: ['admin-group']
+    });
+
+    await expect(
+      (service as any).validateSubwaveCreationParent({
+        request,
+        actingAsId: 'admin-profile',
+        ctx: { timer: undefined }
+      })
+    ).resolves.toBeUndefined();
+  });
+
+  it('locks the parent wave when validating inside a transaction', async () => {
+    const parentWave = aWave(
+      {
+        created_by: 'creator-profile',
+        admin_group_id: 'admin-group'
+      },
+      {
+        id: 'parent-wave',
+        name: 'Parent Wave',
+        serial_no: 1
+      }
+    );
+    const { service, wavesApiDb } = createService({
+      parentWave,
+      eligibleGroups: ['admin-group']
+    });
+    const connection = {} as any;
+
+    await expect(
+      (service as any).validateSubwaveCreationParent({
+        request,
+        actingAsId: 'admin-profile',
+        ctx: { connection, timer: undefined }
+      })
+    ).resolves.toBeUndefined();
+
+    expect(wavesApiDb.findWaveByIdForUpdate).toHaveBeenCalledWith(
+      'parent-wave',
+      expect.objectContaining({ connection })
+    );
+    expect(wavesApiDb.findWaveById).not.toHaveBeenCalled();
+  });
+
+  it('hides parent waves the caller cannot see', async () => {
+    const parentWave = aWave(
+      {
+        created_by: 'creator-profile',
+        admin_group_id: 'admin-group',
+        visibility_group_id: 'parent-group'
+      },
+      {
+        id: 'parent-wave',
+        name: 'Parent Wave',
+        serial_no: 1
+      }
+    );
+    const { service } = createService({
+      parentWave,
+      eligibleGroups: ['admin-group']
+    });
+
+    await expect(
+      (service as any).validateSubwaveCreationParent({
+        request,
+        actingAsId: 'admin-profile',
+        ctx: { timer: undefined }
+      })
+    ).rejects.toThrow(`Parent wave parent-wave not found`);
+  });
+
+  it('rejects subwaves with visibility that differs from the parent', async () => {
+    const parentWave = aWave(
+      {
+        created_by: 'creator-profile',
+        visibility_group_id: 'parent-group'
+      },
+      {
+        id: 'parent-wave',
+        name: 'Parent Wave',
+        serial_no: 1
+      }
+    );
+    const { service } = createService({
+      parentWave,
+      eligibleGroups: ['parent-group']
+    });
+
+    await expect(
+      (service as any).validateSubwaveCreationParent({
+        request,
+        actingAsId: 'creator-profile',
+        ctx: { timer: undefined }
+      })
+    ).rejects.toThrow(`Subwave visibility must match parent wave visibility`);
+  });
+
+  it('rejects users who are neither parent creator nor parent admin', async () => {
+    const parentWave = aWave(
+      {
+        created_by: 'creator-profile',
+        admin_group_id: 'admin-group'
+      },
+      {
+        id: 'parent-wave',
+        name: 'Parent Wave',
+        serial_no: 1
+      }
+    );
+    const { service } = createService({
+      parentWave,
+      eligibleGroups: []
+    });
+
+    await expect(
+      (service as any).validateSubwaveCreationParent({
+        request,
+        actingAsId: 'other-profile',
+        ctx: { timer: undefined }
+      })
+    ).rejects.toThrow(
+      `You can't create a subwave for a wave you didn't create and are not an admin of`
+    );
+  });
+
+  it('rejects subwaves as parent waves', async () => {
+    const parentWave = aWave(
+      {
+        created_by: 'creator-profile',
+        parent_wave_id: 'grandparent-wave'
+      },
+      {
+        id: 'parent-wave',
+        name: 'Parent Wave',
+        serial_no: 1
+      }
+    );
+    const { service, wavesApiDb } = createService({
+      parentWave,
+      eligibleGroups: []
+    });
+    const grandparentWave = aWave(
+      {
+        created_by: 'creator-profile'
+      },
+      {
+        id: 'grandparent-wave',
+        name: 'Grandparent Wave',
+        serial_no: 2
+      }
+    );
+    wavesApiDb.findWaveById.mockImplementation(async (id: string) =>
+      id === grandparentWave.id ? grandparentWave : parentWave
+    );
+
+    await expect(
+      (service as any).validateSubwaveCreationParent({
+        request,
+        actingAsId: 'creator-profile',
+        ctx: { timer: undefined }
+      })
+    ).rejects.toThrow(`Subwaves cannot be parent waves`);
+  });
+});
+
+describe('WaveApiService authenticated wave actions', () => {
+  it('hides a public subwave when the parent is not visible', async () => {
+    const parentWave = aWave(
+      {
+        created_by: 'creator-profile',
+        visibility_group_id: 'parent-group'
+      },
+      {
+        id: 'parent-wave',
+        name: 'Parent Wave',
+        serial_no: 1
+      }
+    );
+    const subwave = aWave(
+      {
+        created_by: 'creator-profile',
+        parent_wave_id: parentWave.id
+      },
+      {
+        id: 'subwave-1',
+        name: 'Subwave',
+        serial_no: 2
+      }
+    );
+    const wavesApiDb = {
+      findWaveById: jest.fn(async (id: string) =>
+        id === subwave.id ? subwave : parentWave
+      )
+    };
+    const service = new WaveApiService(
+      wavesApiDb as any,
+      { getGroupsUserIsEligibleFor: jest.fn().mockResolvedValue([]) } as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any
+    );
+
+    await expect(
+      (service as any).assertWaveExistsForAuthenticatedUser(subwave.id, {
+        authenticationContext: AuthenticationContext.fromProfileId('profile-1'),
+        timer: undefined
+      })
+    ).rejects.toThrow(`Wave ${subwave.id} not found.`);
   });
 });
 

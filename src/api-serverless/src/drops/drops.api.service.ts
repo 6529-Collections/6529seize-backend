@@ -73,7 +73,7 @@ import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import { CurationsDb, curationsDb } from '@/api/curations/curations.db';
 import { directMessageWaveDisplayService } from '@/api/waves/direct-message-wave-display.service';
 import {
-  assertWaveVisibleOrThrow,
+  assertWaveAndParentVisibleOrThrow,
   getGroupsUserIsEligibleForReadContext,
   getWaveReadContextProfileId
 } from '@/api/waves/wave-access.helpers';
@@ -568,25 +568,25 @@ export class DropsApiService {
         ),
         profileWavesDb.findSelectedWaveIdsByWaveIds([wave_id], ctx)
       ]);
-    if (
-      !wave ||
-      (wave.visibility_group_id &&
-        !group_ids_user_is_eligible_for.includes(wave.visibility_group_id))
-    ) {
-      throw new NotFoundException(`Wave ${wave_id} not found`);
-    }
+    const visibleWave = await assertWaveAndParentVisibleOrThrow({
+      wave,
+      groupsUserIsEligibleFor: group_ids_user_is_eligible_for,
+      message: `Wave ${wave_id} not found`,
+      wavesApiDb,
+      ctx
+    });
     const displayByWaveId =
       await directMessageWaveDisplayService.resolveWaveDisplayByWaveIdForContext(
         {
-          waveEntities: [wave],
+          waveEntities: [visibleWave],
           contextProfileId: context_profile_id
         },
         ctx.connection
       );
     const waveMin = mapWaveToApiWaveMin({
       wave: {
-        ...wave,
-        voting_credit_nfts: waveVotingCreditNftsByWaveId[wave.id] ?? null
+        ...visibleWave,
+        voting_credit_nfts: waveVotingCreditNftsByWaveId[visibleWave.id] ?? null
       },
       displayByWaveId,
       groupIdsUserIsEligibleFor: group_ids_user_is_eligible_for,
@@ -640,7 +640,7 @@ export class DropsApiService {
     } else {
       const dropEntities = await this.dropsDb.findLatestDropsSimple(
         {
-          wave_id: wave.id,
+          wave_id: visibleWave.id,
           amount,
           serial_no_limit,
           search_strategy,
@@ -810,11 +810,13 @@ export class DropsApiService {
     );
     const resolvedWaveId = waveId ?? curation.wave_id;
     const wave = await wavesApiDb.findWaveById(resolvedWaveId, ctx.connection);
-    assertWaveVisibleOrThrow(
+    await assertWaveAndParentVisibleOrThrow({
       wave,
       groupsUserIsEligibleFor,
-      `Curation ${curationId} not found`
-    );
+      message: `Curation ${curationId} not found`,
+      wavesApiDb,
+      ctx
+    });
     return {
       curationFilter: curation.id,
       resolvedWaveId
@@ -921,29 +923,30 @@ export class DropsApiService {
       ),
       profileWavesDb.findSelectedWaveIdsByWaveIds([params.wave_id], ctx)
     ]);
-    if (
-      !waveEntity ||
-      (waveEntity.visibility_group_id !== null &&
-        !groupIdsUserIsEligibleFor.includes(waveEntity.visibility_group_id))
-    ) {
-      throw new ForbiddenException(`Wave ${params.wave_id} not found`);
-    }
-    if (waveEntity.type === WaveType.CHAT) {
+    const visibleWaveEntity = await assertWaveAndParentVisibleOrThrow({
+      wave: waveEntity,
+      groupsUserIsEligibleFor: groupIdsUserIsEligibleFor,
+      message: `Wave ${params.wave_id} not found`,
+      wavesApiDb,
+      ctx
+    });
+    if (visibleWaveEntity.type === WaveType.CHAT) {
       throw new BadRequestException(`CHAT waves don't have a leaderboard`);
     }
     const displayByWaveId =
       await directMessageWaveDisplayService.resolveWaveDisplayByWaveIdForContext(
         {
-          waveEntities: [waveEntity],
+          waveEntities: [visibleWaveEntity],
           contextProfileId: authenticatedProfileId
         },
         ctx.connection
       );
-    const votingPeriodEnd = waveEntity.voting_period_end;
+    const votingPeriodEnd = visibleWaveEntity.voting_period_end;
     const waveMin = mapWaveToApiWaveMin({
       wave: {
-        ...waveEntity,
-        voting_credit_nfts: waveVotingCreditNftsByWaveId[waveEntity.id] ?? null,
+        ...visibleWaveEntity,
+        voting_credit_nfts:
+          waveVotingCreditNftsByWaveId[visibleWaveEntity.id] ?? null,
         voting_period_end: votingPeriodEnd
       },
       displayByWaveId,
@@ -955,7 +958,8 @@ export class DropsApiService {
       authenticatedProfileId
     });
     const isTimeLockedWave =
-      waveEntity.time_lock_ms !== null && waveEntity.time_lock_ms > 0;
+      visibleWaveEntity.time_lock_ms !== null &&
+      visibleWaveEntity.time_lock_ms > 0;
     const resolvedParams: LeaderboardParams = {
       ...params,
       curation_id: curationFilter
@@ -1114,23 +1118,22 @@ export class DropsApiService {
     ctx: RequestContext
   ) {
     const waveEntity = await wavesApiDb.findWaveById(waveId);
-    if (!waveEntity) {
-      throw new NotFoundException(`Wave not found`);
-    }
-    const visibilityGroupId = waveEntity.visibility_group_id;
-    if (visibilityGroupId !== null) {
-      const authContext = ctx.authenticationContext;
-      if (authContext?.hasRightsTo(ProfileProxyActionType.READ_WAVE)) {
-        const eligibleGroups =
-          await this.userGroupsService.getGroupsUserIsEligibleFor(
-            authContext?.getActingAsId(),
-            ctx.timer
-          );
-        if (!eligibleGroups.includes(visibilityGroupId)) {
-          throw new NotFoundException(`Wave not found`);
-        }
-      }
-    }
+    const authContext = ctx.authenticationContext;
+    const eligibleGroups = authContext?.hasRightsTo(
+      ProfileProxyActionType.READ_WAVE
+    )
+      ? await this.userGroupsService.getGroupsUserIsEligibleFor(
+          authContext.getActingAsId(),
+          ctx.timer
+        )
+      : [];
+    await assertWaveAndParentVisibleOrThrow({
+      wave: waveEntity,
+      groupsUserIsEligibleFor: eligibleGroups,
+      message: `Wave not found`,
+      wavesApiDb,
+      ctx
+    });
   }
 
   private findDropLogRelatedProfiles(
@@ -1247,16 +1250,18 @@ export class DropsApiService {
     const contextProfileId = getWaveReadContextProfileId(
       ctx.authenticationContext
     );
-    const visibilityGroupId = wave.visibility_group_id;
-    if (visibilityGroupId) {
-      const group_ids_user_is_eligible_for =
-        await this.userGroupsService.getGroupsUserIsEligibleFor(
-          contextProfileId
-        );
-      if (!group_ids_user_is_eligible_for.includes(visibilityGroupId)) {
-        throw new NotFoundException(`Wave ${wave_id} not found`);
-      }
-    }
+    const groupIdsUserIsEligibleFor =
+      await this.userGroupsService.getGroupsUserIsEligibleFor(
+        contextProfileId,
+        ctx.timer
+      );
+    await assertWaveAndParentVisibleOrThrow({
+      wave,
+      groupsUserIsEligibleFor: groupIdsUserIsEligibleFor,
+      message: `Wave ${wave_id} not found`,
+      wavesApiDb,
+      ctx
+    });
     const offset = size * (page - 1);
     const entities = await this.dropsDb.searchDropsContainingPhraseInWave(
       { wave_id, term, limit: size + 1, offset },

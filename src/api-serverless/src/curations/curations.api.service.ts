@@ -16,7 +16,7 @@ import { ApiDropCurationRequest } from '@/api/generated/models/ApiDropCurationRe
 import { ApiWaveCuration } from '@/api/generated/models/ApiWaveCuration';
 import { ApiWaveCurationRequest } from '@/api/generated/models/ApiWaveCurationRequest';
 import {
-  assertWaveVisibleOrThrow,
+  assertWaveAndParentVisibleOrThrow,
   getAuthenticatedNonProxyProfileIdOrThrow,
   getGroupsUserIsEligibleForReadContext,
   getWaveManagementContextOrThrow
@@ -45,11 +45,13 @@ export class CurationsApiService {
       ctx
     );
     const wave = await this.wavesApiDb.findWaveById(waveId, ctx.connection);
-    assertWaveVisibleOrThrow(
+    await assertWaveAndParentVisibleOrThrow({
       wave,
       groupsUserIsEligibleFor,
-      `Wave ${waveId} not found`
-    );
+      message: `Wave ${waveId} not found`,
+      wavesApiDb: this.wavesApiDb,
+      ctx
+    });
     return await this.curationsDb
       .findWaveCurationsByWaveId(waveId, ctx.connection)
       .then((entities) => this.waveCurationsToApi(entities));
@@ -398,18 +400,16 @@ export class CurationsApiService {
     if (!drop) {
       throw new NotFoundException(`Drop ${dropId} not found`);
     }
-    const wave = await this.wavesApiDb.findWaveById(
-      drop.wave_id,
-      ctx.connection
-    );
-    assertWaveVisibleOrThrow(
-      wave,
+    const wave = await assertWaveAndParentVisibleOrThrow({
+      wave: await this.wavesApiDb.findWaveById(drop.wave_id, ctx.connection),
       groupsUserIsEligibleFor,
-      `Drop ${dropId} not found`
-    );
+      message: `Drop ${dropId} not found`,
+      wavesApiDb: this.wavesApiDb,
+      ctx
+    });
     const [waveCurations, dropCurations, curatorEligibleGroupIds] =
       await Promise.all([
-        this.curationsDb.findWaveCurationsByWaveId(wave!.id, ctx.connection),
+        this.curationsDb.findWaveCurationsByWaveId(wave.id, ctx.connection),
         this.curationsDb.findDropCurationsForDropId(drop.id, ctx.connection),
         this.getEligibleGroupIdsForAuthenticatedCurator(ctx)
       ]);

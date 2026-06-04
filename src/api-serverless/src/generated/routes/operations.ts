@@ -420,3 +420,23 @@ export type SearchDropsInWaveV2Request = Request<
   SearchDropsInWaveV2Query,
   Record<string, never>
 >;
+
+export interface ListWaveSubwavesPathParams {
+  "id": string;
+}
+
+export interface ListWaveSubwavesQuery {
+  "page"?: number;
+  "page_size"?: number;
+  "sort"?: string;
+}
+
+export type ListWaveSubwavesResponse = ApiWaveOverviewPage;
+
+export type ListWaveSubwavesRequest = Request<
+  ListWaveSubwavesPathParams,
+  ApiResponse<ListWaveSubwavesResponse>,
+  never,
+  ListWaveSubwavesQuery,
+  Record<string, never>
+>;
