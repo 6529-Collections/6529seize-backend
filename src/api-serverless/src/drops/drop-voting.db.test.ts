@@ -259,6 +259,7 @@ describe('DropVotingDb.getDropV2SubmissionVotingSummaries', () => {
       time_lock_ms: null,
       is_open: 1,
       over_threshold_since_ms: null,
+      won_at: null,
       total_votes_given: 99,
       current_calculated_vote: 99,
       predicted_final_vote: 99,

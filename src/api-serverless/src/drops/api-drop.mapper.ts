@@ -555,6 +555,9 @@ export class ApiDropMapper {
       submissionContext.over_threshold_since_ms =
         votingSummary.over_threshold_since_ms;
     }
+    if (votingSummary.won_at !== null) {
+      submissionContext.won_at = votingSummary.won_at;
+    }
     return submissionContext;
   }
 

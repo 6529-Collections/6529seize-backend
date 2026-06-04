@@ -350,6 +350,7 @@ describe('ApiDropMapper', () => {
         voters_count: 3,
         place: 4,
         over_threshold_since_ms: 1_234,
+        won_at: null,
         forbid_negative_votes: true
       }
     });
@@ -468,6 +469,7 @@ describe('ApiDropMapper', () => {
         voters_count: 0,
         place: 1,
         over_threshold_since_ms: null,
+        won_at: null,
         forbid_negative_votes: false
       }
     });
