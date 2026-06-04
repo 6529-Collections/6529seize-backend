@@ -123,6 +123,7 @@ export const PROFILE_PROXY_ACTIONS_TABLE = 'profile_proxy_actions';
 export const PROFILE_PROXY_RATING_CREDIT_BALANCES_TABLE =
   'profile_proxy_rating_credit_balances';
 export const WAVES_TABLE = 'waves';
+export const OFFICIAL_WAVES_TABLE = 'official_waves';
 export const WAVE_OUTCOMES_TABLE = 'wave_outcomes';
 export const WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE =
   'wave_outcome_distribution_items';

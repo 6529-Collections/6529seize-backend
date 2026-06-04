@@ -7122,6 +7122,27 @@ paths:
                 $ref: "#/components/schemas/ApiWaveSubscriptionActions"
         "404":
           description: Wave not found
+  /v2/official-waves:
+    get:
+      tags:
+        - WavesV2
+      summary: Get official waves
+      operationId: getOfficialWaves
+      x-6529-router:
+        enabled: true
+        auth: optional
+        handler:
+          import: "@/api/waves/waves-v2.handlers"
+          name: handleGetOfficialWaves
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ApiWaveOverview"
   /v2/waves:
     get:
       tags:

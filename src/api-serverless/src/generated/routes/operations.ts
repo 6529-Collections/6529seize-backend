@@ -14,6 +14,7 @@ import { ApiDropVotersPage } from '@/api/generated/models/ApiDropVotersPage';
 import { ApiNotificationsResponseV2 } from '@/api/generated/models/ApiNotificationsResponseV2';
 import { ApiWaveDecisionsPageV2 } from '@/api/generated/models/ApiWaveDecisionsPageV2';
 import { ApiWaveDropsFeedV2 } from '@/api/generated/models/ApiWaveDropsFeedV2';
+import { ApiWaveOverview } from '@/api/generated/models/ApiWaveOverview';
 import { ApiWaveOverviewPage } from '@/api/generated/models/ApiWaveOverviewPage';
 
 export type GetBoostedDropsV2PathParams = Record<string, never>;
@@ -231,6 +232,20 @@ export type GetNotificationsV2Request = Request<
   ApiResponse<GetNotificationsV2Response>,
   never,
   GetNotificationsV2Query,
+  Record<string, never>
+>;
+
+export type GetOfficialWavesPathParams = Record<string, never>;
+
+export type GetOfficialWavesQuery = Record<string, never>;
+
+export type GetOfficialWavesResponse = ApiWaveOverview[];
+
+export type GetOfficialWavesRequest = Request<
+  GetOfficialWavesPathParams,
+  ApiResponse<GetOfficialWavesResponse>,
+  never,
+  GetOfficialWavesQuery,
   Record<string, never>
 >;
 

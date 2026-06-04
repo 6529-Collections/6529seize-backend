@@ -6,6 +6,7 @@ import { ApiDropsLeaderboardPageV2 } from '@/api/generated/models/ApiDropsLeader
 import { ApiDropV2PageWithoutCount } from '@/api/generated/models/ApiDropV2PageWithoutCount';
 import { ApiWaveDecisionsPageV2 } from '@/api/generated/models/ApiWaveDecisionsPageV2';
 import { ApiWaveDropsFeedV2 } from '@/api/generated/models/ApiWaveDropsFeedV2';
+import { ApiWaveOverview } from '@/api/generated/models/ApiWaveOverview';
 import { ApiWaveOverviewPage } from '@/api/generated/models/ApiWaveOverviewPage';
 import { ApiSubwavesSort } from '@/api/generated/models/ApiSubwavesSort';
 import { ApiWavesOverviewType } from '@/api/generated/models/ApiWavesOverviewType';
@@ -16,6 +17,7 @@ import {
   GetWaveDropsV2Request,
   GetWaveLeaderboardV2Request,
   GetWavesV2Request,
+  GetOfficialWavesRequest,
   ListWaveSubwavesRequest,
   ListWaveCurationDropsV2Request,
   SearchDropsInWaveV2Request
@@ -175,6 +177,17 @@ export async function handleGetWavesV2(
     req.query as Partial<FindWavesV2Request>
   );
   return apiWaveV2Service.findWaves(params, {
+    authenticationContext,
+    timer
+  });
+}
+
+export async function handleGetOfficialWaves(
+  req: GetOfficialWavesRequest
+): Promise<ApiWaveOverview[]> {
+  const timer = Timer.getFromRequest(req);
+  const authenticationContext = await getAuthenticationContext(req, timer);
+  return apiWaveV2Service.findOfficialWaves({
     authenticationContext,
     timer
   });

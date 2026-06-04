@@ -12,6 +12,7 @@ import {
   IDENTITY_NOTIFICATIONS_TABLE,
   IDENTITY_SUBSCRIPTIONS_TABLE,
   NFTS_TABLE,
+  OFFICIAL_WAVES_TABLE,
   PINNED_WAVES_TABLE,
   WAVE_DROPPER_METRICS_TABLE,
   WAVE_CHAT_DROP_COOLDOWNS_TABLE,
@@ -335,6 +336,36 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       ctx.timer?.stop(
         `${this.constructor.name}->findWaveMentionOverviewsByIds`
       );
+    }
+  }
+
+  public async findOfficialWaves(
+    eligibleGroups: string[],
+    ctx: RequestContext
+  ): Promise<WaveEntity[]> {
+    const timerKey = `${this.constructor.name}->findOfficialWaves`;
+    ctx.timer?.start(timerKey);
+    try {
+      const rows = await this.db.execute<RawWaveEntity>(
+        `
+          select w.*
+          from ${OFFICIAL_WAVES_TABLE} ow
+            join ${WAVES_TABLE} w on w.id = ow.wave_id
+            left join ${WAVES_TABLE} parent on parent.id = w.parent_wave_id
+          where ${this.getWaveAndParentVisibilityFilter(
+            'w',
+            'parent',
+            eligibleGroups,
+            'eligibleGroups'
+          )}
+          order by w.serial_no desc, w.id asc
+        `,
+        { eligibleGroups },
+        ctx.connection ? { wrappedConnection: ctx.connection } : undefined
+      );
+      return rows.map((row) => this.parseWaveEntity(row));
+    } finally {
+      ctx.timer?.stop(timerKey);
     }
   }
 

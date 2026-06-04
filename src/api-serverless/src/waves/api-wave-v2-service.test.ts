@@ -125,7 +125,8 @@ function createService() {
     findMostSubscribedWaves: jest.fn().mockResolvedValue([]),
     findRecentlyDroppedToWaves: jest.fn().mockResolvedValue([]),
     findHotWaves: jest.fn().mockResolvedValue([]),
-    findFavouriteWavesOfIdentity: jest.fn().mockResolvedValue([])
+    findFavouriteWavesOfIdentity: jest.fn().mockResolvedValue([]),
+    findOfficialWaves: jest.fn().mockResolvedValue([])
   };
   const identityFetcher = {
     getProfileIdByIdentityKeyOrThrow: jest
@@ -347,6 +348,30 @@ describe('ApiWaveV2Service', () => {
       page: 2,
       next: true
     });
+  });
+
+  it('gets official waves visible to the caller', async () => {
+    const { service, deps } = createService();
+    const waveEntities = [
+      makeWave({ id: 'wave-1' }),
+      makeWave({ id: 'wave-2' })
+    ];
+    deps.wavesApiDb.findOfficialWaves.mockResolvedValue(waveEntities);
+    const ctx = {
+      authenticationContext: AuthenticationContext.fromProfileId('viewer-1')
+    };
+
+    const result = await service.findOfficialWaves(ctx);
+
+    expect(deps.wavesApiDb.findOfficialWaves).toHaveBeenCalledWith(
+      ['group-1'],
+      ctx
+    );
+    expect(deps.apiWaveOverviewMapper.mapWaves).toHaveBeenCalledWith(
+      waveEntities,
+      ctx
+    );
+    expect(result).toEqual([{ id: 'wave-1' }, { id: 'wave-2' }]);
   });
 
   it('finds a visible wave feed and maps drops with V2 models', async () => {
