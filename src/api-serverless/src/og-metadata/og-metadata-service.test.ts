@@ -2,6 +2,9 @@ import {
   apiDropV2Service,
   ApiDropWithWave
 } from '@/api/drops/api-drop-v2.service';
+import { ApiAttachmentKind } from '@/api/generated/models/ApiAttachmentKind';
+import { ApiAttachmentStatus } from '@/api/generated/models/ApiAttachmentStatus';
+import { ApiAttachmentUploadMimeType } from '@/api/generated/models/ApiAttachmentUploadMimeType';
 import { ApiDropResolvedIdentityProfileV2 } from '@/api/generated/models/ApiDropResolvedIdentityProfileV2';
 import { ApiDropMainType } from '@/api/generated/models/ApiDropMainType';
 import { ApiSubmissionDropStatus } from '@/api/generated/models/ApiSubmissionDropStatus';
@@ -94,12 +97,42 @@ function makeDropWithWave(id: string, serialNo: number): ApiDropWithWave {
       created_at: 1,
       is_signed: false,
       hide_link_preview: false,
-      content: 'Drop content',
-      media: [{ url: `ipfs://${IPFS_CID}/drop.png`, mime_type: 'image/png' }],
+      content:
+        'Drop content\n\n![Inline image](https://example.com/inline.webp)',
+      media: [{ url: `ipfs://${IPFS_CID}/drop.mp4`, mime_type: 'video/mp4' }],
+      attachments: [
+        {
+          attachment_id: 'attachment-1',
+          file_name: 'submission.pdf',
+          mime_type: ApiAttachmentUploadMimeType.ApplicationPdf,
+          kind: ApiAttachmentKind.Pdf,
+          status: ApiAttachmentStatus.Ready,
+          url: `ipfs://${IPFS_CID}/submission.pdf`
+        },
+        {
+          attachment_id: 'attachment-2',
+          file_name: 'processing.pdf',
+          mime_type: ApiAttachmentUploadMimeType.ApplicationPdf,
+          kind: ApiAttachmentKind.Pdf,
+          status: ApiAttachmentStatus.Processing,
+          url: `ipfs://${IPFS_CID}/processing.pdf`
+        },
+        {
+          attachment_id: 'attachment-3',
+          file_name: 'missing-url.pdf',
+          mime_type: ApiAttachmentUploadMimeType.ApplicationPdf,
+          kind: ApiAttachmentKind.Pdf,
+          status: ApiAttachmentStatus.Ready
+        }
+      ],
       parts_count: 1,
       priority_metadata: [
         { data_key: 'title', data_value: 'Drop title' },
-        { data_key: 'description', data_value: 'Drop description' }
+        { data_key: 'description', data_value: 'Drop description' },
+        {
+          data_key: 'additional_media',
+          data_value: `{"preview_image":"ipfs://${IPFS_CID}/preview.png"}`
+        }
       ],
       author: {
         id: 'author-1',
@@ -445,6 +478,7 @@ describe('OgMetadataService', () => {
         id: 'drop-1',
         serial_no: 42,
         drop_type: ApiDropMainType.Submission,
+        submission_status: ApiSubmissionDropStatus.Active,
         title: 'Drop title',
         description: 'Drop description',
         content: 'Drop content',
@@ -458,10 +492,32 @@ describe('OgMetadataService', () => {
         },
         media: [
           {
-            url: `https://ipfs.6529.io/ipfs/${IPFS_CID}/drop.png`,
-            mime_type: 'image/png',
+            url: `https://ipfs.6529.io/ipfs/${IPFS_CID}/preview.png`,
+            mime_type: null,
             width: null,
             height: null
+          },
+          {
+            url: 'https://example.com/inline.webp',
+            mime_type: 'image/webp',
+            width: null,
+            height: null
+          },
+          {
+            url: `https://ipfs.6529.io/ipfs/${IPFS_CID}/drop.mp4`,
+            mime_type: 'video/mp4',
+            width: null,
+            height: null
+          }
+        ],
+        files: [
+          {
+            attachment_id: 'attachment-1',
+            file_name: 'submission.pdf',
+            mime_type: ApiAttachmentUploadMimeType.ApplicationPdf,
+            kind: ApiAttachmentKind.Pdf,
+            status: ApiAttachmentStatus.Ready,
+            url: `https://ipfs.6529.io/ipfs/${IPFS_CID}/submission.pdf`
           }
         ]
       },
@@ -530,6 +586,7 @@ describe('OgMetadataService', () => {
         id: UUID_DROP_ID,
         serial_no: 43,
         drop_type: ApiDropMainType.Submission,
+        submission_status: ApiSubmissionDropStatus.Active,
         title: 'Drop title',
         description: 'Drop description'
       },

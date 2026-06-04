@@ -2,6 +2,8 @@ import {
   apiDropV2Service,
   ApiDropWithWave
 } from '@/api/drops/api-drop-v2.service';
+import { ApiAttachment } from '@/api/generated/models/ApiAttachment';
+import { ApiAttachmentStatus } from '@/api/generated/models/ApiAttachmentStatus';
 import { ApiDropMedia } from '@/api/generated/models/ApiDropMedia';
 import { ApiDropMetadataV2 } from '@/api/generated/models/ApiDropMetadataV2';
 import { ApiDropV2 } from '@/api/generated/models/ApiDropV2';
@@ -380,12 +382,14 @@ export class OgMetadataService {
       | 'priority_metadata'
       | 'submission_context'
       | 'media'
+      | 'attachments'
     >
   ): ApiOgMetadataDrop {
     return {
       id: drop.id,
       serial_no: drop.serial_no,
       drop_type: drop.drop_type,
+      submission_status: drop.submission_context?.status,
       title: this.cleanText(
         this.findPriorityMetadataValue(drop.priority_metadata, 'title') ??
           drop.title ??
@@ -396,8 +400,56 @@ export class OgMetadataService {
       ),
       content: this.cleanText(drop.content),
       votes: drop.submission_context?.voting,
-      media: this.mapMedia(drop.media ?? [])
+      media: this.mapDropMedia(drop),
+      files: this.mapFiles(drop.attachments ?? [])
     };
+  }
+
+  private mapFiles(files: ApiAttachment[]): ApiAttachment[] {
+    return files
+      .filter((file) => file.status === ApiAttachmentStatus.Ready && file.url)
+      .map((file) => ({
+        ...file,
+        url: this.gatewayMediaUrl(file.url) ?? file.url
+      }));
+  }
+
+  private mapDropMedia(
+    drop: Pick<ApiDropV2, 'content' | 'priority_metadata' | 'media'>
+  ): ApiOgMediaAsset[] {
+    const media = [
+      ...this.mapInlineImageMedia(drop.content),
+      ...this.mapMedia(drop.media ?? [])
+    ];
+    const previewImage = this.findAdditionalMediaPreviewImage(
+      drop.priority_metadata
+    );
+    if (!previewImage) {
+      return this.uniqueMedia(media);
+    }
+    const previewAsset = this.mediaAsset(previewImage, null);
+    return this.uniqueMedia([previewAsset, ...media]);
+  }
+
+  private findAdditionalMediaPreviewImage(
+    metadata: ApiDropMetadataV2[] | undefined
+  ): string | null {
+    const additionalMedia = this.findPriorityMetadataValue(
+      metadata,
+      'additional_media'
+    );
+    if (!additionalMedia) {
+      return null;
+    }
+    try {
+      const parsed = JSON.parse(additionalMedia) as Record<string, unknown>;
+      const previewImage = parsed.preview_image;
+      return typeof previewImage === 'string' && previewImage.length > 0
+        ? previewImage
+        : null;
+    } catch {
+      return null;
+    }
   }
 
   private findPriorityMetadataValue(
@@ -409,6 +461,25 @@ export class OgMetadataService {
 
   private mapMedia(media: ApiDropMedia[]): ApiOgMediaAsset[] {
     return media.map((item) => this.mediaAsset(item.url, item.mime_type));
+  }
+
+  private mapInlineImageMedia(
+    content: string | null | undefined
+  ): ApiOgMediaAsset[] {
+    return this.findMarkdownImageUrls(content).map((url) =>
+      this.mediaAsset(url, this.inferImageMimeType(url))
+    );
+  }
+
+  private uniqueMedia(media: ApiOgMediaAsset[]): ApiOgMediaAsset[] {
+    const seen = new Set<string>();
+    return media.filter((item) => {
+      if (seen.has(item.url)) {
+        return false;
+      }
+      seen.add(item.url);
+      return true;
+    });
   }
 
   private singleUrlMedia(url: string | null | undefined): ApiOgMediaAsset[] {
@@ -501,6 +572,7 @@ export class OgMetadataService {
     while (index < value.length) {
       const imageTextStart =
         value[index] === '!' && value[index + 1] === '[' ? index + 2 : null;
+      const isImage = imageTextStart !== null;
       const textStart =
         imageTextStart ?? (value[index] === '[' ? index + 1 : null);
 
@@ -527,11 +599,87 @@ export class OgMetadataService {
         break;
       }
 
-      result += value.slice(textStart, textEnd);
+      if (!isImage) {
+        result += value.slice(textStart, textEnd);
+      }
       index = urlEnd + 1;
     }
 
     return result;
+  }
+
+  private findMarkdownImageUrls(value: string | null | undefined): string[] {
+    if (!value) {
+      return [];
+    }
+    const urls: string[] = [];
+    let index = 0;
+    while (index < value.length) {
+      if (value[index] !== '!' || value[index + 1] !== '[') {
+        index++;
+        continue;
+      }
+      const textEnd = this.findMarkdownDelimiter(value, index + 2, ']');
+      if (textEnd === null || value[textEnd + 1] !== '(') {
+        index++;
+        continue;
+      }
+      const urlEnd = this.findMarkdownDelimiter(value, textEnd + 2, ')');
+      if (urlEnd === null) {
+        index++;
+        continue;
+      }
+      const url = this.parseMarkdownDestination(
+        value.slice(textEnd + 2, urlEnd)
+      );
+      if (url) {
+        urls.push(url);
+      }
+      index = urlEnd + 1;
+    }
+    return urls;
+  }
+
+  private parseMarkdownDestination(value: string): string | null {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return null;
+    }
+    if (trimmed[0] === '<') {
+      const end = trimmed.indexOf('>');
+      return end > 1 ? trimmed.slice(1, end) : null;
+    }
+    const separator = this.findFirstWhitespace(trimmed);
+    return separator === null ? trimmed : trimmed.slice(0, separator);
+  }
+
+  private findFirstWhitespace(value: string): number | null {
+    for (let index = 0; index < value.length; index++) {
+      if (value[index].trim().length === 0) {
+        return index;
+      }
+    }
+    return null;
+  }
+
+  private inferImageMimeType(url: string): string | null {
+    const path = url.split('?')[0].split('#')[0].toLowerCase();
+    if (path.endsWith('.jpg') || path.endsWith('.jpeg')) {
+      return 'image/jpeg';
+    }
+    if (path.endsWith('.png')) {
+      return 'image/png';
+    }
+    if (path.endsWith('.gif')) {
+      return 'image/gif';
+    }
+    if (path.endsWith('.webp')) {
+      return 'image/webp';
+    }
+    if (path.endsWith('.svg')) {
+      return 'image/svg+xml';
+    }
+    return null;
   }
 
   private findMarkdownDelimiter(
