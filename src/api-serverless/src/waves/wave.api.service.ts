@@ -111,6 +111,10 @@ type ComparableDecisionStrategy = Pick<
   'first_decision_time' | 'subsequent_decisions' | 'is_rolling'
 >;
 
+type RequestContextWithConnection = RequestContext & {
+  connection: NonNullable<RequestContext['connection']>;
+};
+
 export class WaveApiService {
   constructor(
     private readonly wavesApiDb: WavesApiDb,
@@ -352,17 +356,17 @@ export class WaveApiService {
     const authenticationContext = this.getRequiredAuthenticationContext(ctx);
     const actingAsId = this.getRequiredActingAsId(authenticationContext);
     timer.start(`${this.constructor.name}->createWave`);
-    await this.validateSubwaveCreationParent({
-      request: createWaveRequest,
-      actingAsId,
-      ctx
-    });
     await this.validateWaveRelations(createWaveRequest, ctx);
     this.validateOutcomes(createWaveRequest);
     const { createdWave, pendingPushNotificationIds } =
       await this.wavesApiDb.executeNativeQueriesInTransaction(
         async (connection) => {
           const ctxWithConnection = { ...ctx, connection };
+          await this.validateSubwaveCreationParent({
+            request: createWaveRequest,
+            actingAsId,
+            ctx: ctxWithConnection
+          });
           const id = randomUUID();
           const waveCreationTime = Time.currentMillis();
           const newEntity = await this.waveMappers.createWaveToNewWaveEntity({
@@ -758,30 +762,99 @@ export class WaveApiService {
     if (!parentWaveId) {
       return;
     }
-    const parentWave = await this.wavesApiDb.findWaveById(
-      parentWaveId,
-      ctx.connection
-    );
-    if (!parentWave) {
-      throw new NotFoundException(`Parent wave ${parentWaveId} not found`);
-    }
-    if (parentWave.parent_wave_id !== null) {
-      throw new BadRequestException(`Subwaves cannot be parent waves`);
-    }
+    const parentWave = ctx.connection
+      ? await this.wavesApiDb.findWaveByIdForUpdate(parentWaveId, ctx)
+      : await this.wavesApiDb.findWaveById(parentWaveId, ctx.connection);
     const groupIdsUserIsEligibleFor =
       await this.userGroupsService.getGroupsUserIsEligibleFor(
         actingAsId,
         ctx.timer
       );
+    const visibleParentWave = await assertWaveAndParentVisibleOrThrow({
+      wave: parentWave,
+      groupsUserIsEligibleFor: groupIdsUserIsEligibleFor,
+      message: `Parent wave ${parentWaveId} not found`,
+      wavesApiDb: this.wavesApiDb,
+      ctx
+    });
+    if (visibleParentWave.parent_wave_id !== null) {
+      throw new BadRequestException(`Subwaves cannot be parent waves`);
+    }
+    this.assertSubwaveVisibilityMatchesParent({
+      requestedVisibilityGroupId: request.visibility.scope.group_id,
+      parentWave: visibleParentWave
+    });
     if (
       !isWaveCreatorOrAdmin({
         authenticatedProfileId: actingAsId,
-        wave: parentWave,
+        wave: visibleParentWave,
         groupIdsUserIsEligibleFor
       })
     ) {
       throw new ForbiddenException(
         `You can't create a subwave for a wave you didn't create and are not an admin of`
+      );
+    }
+  }
+
+  private assertSubwaveVisibilityMatchesParent({
+    requestedVisibilityGroupId,
+    parentWave
+  }: {
+    requestedVisibilityGroupId: string | null;
+    parentWave: Pick<WaveEntity, 'visibility_group_id'>;
+  }) {
+    if (requestedVisibilityGroupId !== parentWave.visibility_group_id) {
+      throw new BadRequestException(
+        `Subwave visibility must match parent wave visibility`
+      );
+    }
+  }
+
+  private async validateWaveVisibilityInheritanceOnUpdate({
+    request,
+    waveBeforeUpdate,
+    groupIdsUserIsEligibleFor,
+    ctx
+  }: {
+    request: ApiUpdateWaveRequest;
+    waveBeforeUpdate: Pick<
+      WaveEntity,
+      'id' | 'parent_wave_id' | 'visibility_group_id'
+    >;
+    groupIdsUserIsEligibleFor: string[];
+    ctx: RequestContextWithConnection;
+  }) {
+    const requestedVisibilityGroupId = request.visibility.scope.group_id;
+    const parentWaveId = waveBeforeUpdate.parent_wave_id;
+    if (parentWaveId) {
+      const parentWave = await assertWaveAndParentVisibleOrThrow({
+        wave: await this.wavesApiDb.findWaveByIdForUpdate(parentWaveId, ctx),
+        groupsUserIsEligibleFor: groupIdsUserIsEligibleFor,
+        message: `Wave ${waveBeforeUpdate.id} not found`,
+        wavesApiDb: this.wavesApiDb,
+        ctx
+      });
+      if (parentWave.parent_wave_id !== null) {
+        throw new BadRequestException(`Subwaves cannot be parent waves`);
+      }
+      this.assertSubwaveVisibilityMatchesParent({
+        requestedVisibilityGroupId,
+        parentWave
+      });
+      return;
+    }
+
+    if (requestedVisibilityGroupId === waveBeforeUpdate.visibility_group_id) {
+      return;
+    }
+    const subwaveIds = await this.wavesApiDb.findSubwaveIdsByParentWaveId(
+      waveBeforeUpdate.id,
+      ctx
+    );
+    if (subwaveIds.length) {
+      throw new BadRequestException(
+        `Parent wave visibility cannot be changed while it has subwaves`
       );
     }
   }
@@ -1662,7 +1735,10 @@ export class WaveApiService {
     );
   }
 
-  private async deleteWaveData(waveId: string, ctx: RequestContext) {
+  private async deleteWaveData(
+    waveId: string,
+    ctx: RequestContextWithConnection
+  ) {
     await Promise.all([
       this.wavesApiDb.deleteDropPartsByWaveId(waveId, ctx),
       this.wavesApiDb.deleteDropMentionsByWaveId(waveId, ctx),
@@ -1677,7 +1753,7 @@ export class WaveApiService {
       this.wavesApiDb.deleteDropSubscriptionsByWaveId(waveId, ctx),
       this.waveGroupNotificationSubscriptionsDb.deleteByWaveId(
         waveId,
-        ctx.connection!
+        ctx.connection
       ),
       profileWavesDb.deleteByWaveId(waveId, ctx),
       this.curationsDb.deleteDropCurationsByWaveId(waveId, ctx),
@@ -1777,6 +1853,12 @@ export class WaveApiService {
           waveBeforeUpdate
         });
         await this.validateWaveRelations(request, ctxWithConnection);
+        await this.validateWaveVisibilityInheritanceOnUpdate({
+          request,
+          waveBeforeUpdate,
+          groupIdsUserIsEligibleFor: groupsUserIsEligibleFor,
+          ctx: ctxWithConnection
+        });
         await this.wavesApiDb.deleteWave(waveId, ctxWithConnection);
         const waveUpdateTime = Time.currentMillis();
         const updatedEntity = await this.waveMappers.createWaveToNewWaveEntity({
@@ -2115,13 +2197,17 @@ export class WaveApiService {
       throw new ForbiddenException(`User must be authenticated`);
     }
     const groupsUserIsEligibleFor =
-      await userGroupsService.getGroupsUserIsEligibleFor(actingAsId, ctx.timer);
-    if (
-      waveEntity.visibility_group_id &&
-      !groupsUserIsEligibleFor.includes(waveEntity.visibility_group_id)
-    ) {
-      throw new NotFoundException(`Wave ${waveId} not found.`);
-    }
+      await this.userGroupsService.getGroupsUserIsEligibleFor(
+        actingAsId,
+        ctx.timer
+      );
+    await assertWaveAndParentVisibleOrThrow({
+      wave: waveEntity,
+      groupsUserIsEligibleFor,
+      message: `Wave ${waveId} not found.`,
+      wavesApiDb: this.wavesApiDb,
+      ctx
+    });
   }
 }
 

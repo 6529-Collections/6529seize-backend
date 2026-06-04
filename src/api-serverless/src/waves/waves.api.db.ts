@@ -208,6 +208,32 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       .then((it) => (it ? this.parseWaveEntityWithLastDropTime(it) : null));
   }
 
+  public async findWaveByIdForUpdate(
+    id: string,
+    ctx: RequestContext
+  ): Promise<WaveEntity | null> {
+    const connection = ctx.connection;
+    if (!connection) {
+      throw new Error('findWaveByIdForUpdate requires a connection');
+    }
+    const timerKey = `${this.constructor.name}->findWaveByIdForUpdate`;
+    ctx.timer?.start(timerKey);
+    try {
+      return await this.db
+        .oneOrNull<RawWaveEntity>(
+          `SELECT w.*
+           FROM ${WAVES_TABLE} w
+           WHERE w.id = :id
+           FOR UPDATE`,
+          { id },
+          { wrappedConnection: connection }
+        )
+        .then((it) => (it ? this.parseWaveEntity(it) : null));
+    } finally {
+      ctx.timer?.stop(timerKey);
+    }
+  }
+
   public async findWavesByIds(
     ids: string[],
     groupIdsUserIsEligibleFor: string[],
