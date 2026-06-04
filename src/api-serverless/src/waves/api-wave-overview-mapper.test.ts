@@ -13,6 +13,7 @@ function makeWave(overrides: Partial<WaveEntity> = {}): WaveEntity {
     id: 'wave-1',
     serial_no: 1,
     name: 'Wave 1',
+    parent_wave_id: null,
     picture: null,
     description_drop_id: 'description-drop-1',
     created_at: 100,
@@ -81,7 +82,11 @@ function createMapper() {
     findWaveReaderMetricsByWaveIds: jest.fn().mockResolvedValue({}),
     findIdentityUnreadDropsCountByWaveId: jest.fn().mockResolvedValue({}),
     findFirstUnreadDropSerialNoByWaveId: jest.fn().mockResolvedValue({}),
-    findWaveChatDropCooldownsByWaveIds: jest.fn().mockResolvedValue({})
+    findWaveChatDropCooldownsByWaveIds: jest.fn().mockResolvedValue({}),
+    findVisibleParentWavesByChildWaveIds: jest.fn().mockResolvedValue({}),
+    findWaveIdsWithVisibleSubwaves: jest
+      .fn()
+      .mockResolvedValue(new Set<string>())
   };
   const dropsDb = {
     getDropPartOnes: jest.fn().mockResolvedValue({}),
@@ -169,6 +174,51 @@ describe('ApiWaveOverviewMapper', () => {
     );
 
     expect(result['wave-1']?.links_disabled).toBe(true);
+  });
+
+  it('maps visible parent wave and visible child presence', async () => {
+    const { mapper, deps } = createMapper();
+    const parentWave = makeWave({
+      id: 'parent-wave',
+      name: 'Parent Wave',
+      description_drop_id: 'parent-description-drop'
+    });
+    const subwave = makeWave({
+      id: 'subwave-1',
+      name: 'Subwave',
+      parent_wave_id: parentWave.id
+    });
+    deps.wavesApiDb.findVisibleParentWavesByChildWaveIds.mockResolvedValue({
+      [subwave.id]: parentWave
+    });
+    deps.wavesApiDb.findWaveIdsWithVisibleSubwaves.mockResolvedValue(
+      new Set([parentWave.id])
+    );
+    deps.wavesApiDb.findWavesMetricsByWaveIds.mockImplementation(
+      async (waveIds: string[]) =>
+        waveIds.reduce(
+          (acc, waveId) => ({
+            ...acc,
+            [waveId]: makeMetric({ wave_id: waveId })
+          }),
+          {} as Record<string, ReturnType<typeof makeMetric>>
+        )
+    );
+
+    const result = await mapper.mapWaves([subwave], {
+      authenticationContext: AuthenticationContext.notAuthenticated()
+    });
+
+    expect(result[subwave.id]).toEqual(
+      expect.objectContaining({
+        id: subwave.id,
+        parent_wave: expect.objectContaining({
+          id: parentWave.id,
+          name: parentWave.name,
+          has_subwaves: true
+        })
+      })
+    );
   });
 
   it('maps part-one description drop content, media, total drops count and privacy', async () => {

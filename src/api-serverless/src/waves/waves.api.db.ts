@@ -94,6 +94,11 @@ type WaveChatDropCooldownPolicyRow = {
   stored_updated_at: number | string | null;
 };
 
+export enum WaveSubwavesSort {
+  NAME = 'NAME',
+  CREATED_AT = 'CREATED_AT'
+}
+
 export interface WaveMentionOverview {
   id: string;
   name: string;
@@ -107,6 +112,35 @@ export interface WaveMentionOverview {
 }
 
 export class WavesApiDb extends LazyDbAccessCompatibleService {
+  private getWaveVisibilityFilter(
+    alias: string,
+    groupIds: readonly string[],
+    groupIdsParamName: string
+  ): string {
+    return `(${alias}.visibility_group_id is null ${
+      groupIds.length
+        ? `or ${alias}.visibility_group_id in (:${groupIdsParamName})`
+        : ``
+    })`;
+  }
+
+  private getWaveAndParentVisibilityFilter(
+    waveAlias: string,
+    parentAlias: string,
+    groupIds: readonly string[],
+    groupIdsParamName: string
+  ): string {
+    return `${this.getWaveVisibilityFilter(
+      waveAlias,
+      groupIds,
+      groupIdsParamName
+    )} and (${waveAlias}.parent_wave_id is null or (${parentAlias}.id is not null and ${parentAlias}.parent_wave_id is null and ${this.getWaveVisibilityFilter(
+      parentAlias,
+      groupIds,
+      groupIdsParamName
+    )}))`;
+  }
+
   private toNullableNumber(
     value: number | string | null | undefined
   ): number | null {
@@ -174,6 +208,32 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       .then((it) => (it ? this.parseWaveEntityWithLastDropTime(it) : null));
   }
 
+  public async findWaveByIdForUpdate(
+    id: string,
+    ctx: RequestContext
+  ): Promise<WaveEntity | null> {
+    const connection = ctx.connection;
+    if (!connection) {
+      throw new Error('findWaveByIdForUpdate requires a connection');
+    }
+    const timerKey = `${this.constructor.name}->findWaveByIdForUpdate`;
+    ctx.timer?.start(timerKey);
+    try {
+      return await this.db
+        .oneOrNull<RawWaveEntity>(
+          `SELECT w.*
+           FROM ${WAVES_TABLE} w
+           WHERE w.id = :id
+           FOR UPDATE`,
+          { id },
+          { wrappedConnection: connection }
+        )
+        .then((it) => (it ? this.parseWaveEntity(it) : null));
+    } finally {
+      ctx.timer?.stop(timerKey);
+    }
+  }
+
   public async findWavesByIds(
     ids: string[],
     groupIdsUserIsEligibleFor: string[],
@@ -182,13 +242,19 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     if (!ids.length) {
       return [];
     }
+    const visibilityFilter = this.getWaveAndParentVisibilityFilter(
+      'w',
+      'pw',
+      groupIdsUserIsEligibleFor,
+      'groupIdsUserIsEligibleFor'
+    );
     return this.db
       .execute<RawWaveEntity>(
-        `SELECT * FROM ${WAVES_TABLE} WHERE id in (:ids) and (visibility_group_id is null ${
-          groupIdsUserIsEligibleFor.length
-            ? `or visibility_group_id in (:groupIdsUserIsEligibleFor)`
-            : ``
-        })`,
+        `SELECT w.*
+         FROM ${WAVES_TABLE} w
+         LEFT JOIN ${WAVES_TABLE} pw ON pw.id = w.parent_wave_id
+         WHERE w.id in (:ids)
+           and ${visibilityFilter}`,
         { ids, groupIdsUserIsEligibleFor },
         connection ? { wrappedConnection: connection } : undefined
       )
@@ -203,16 +269,20 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     if (!ids.length) {
       return [];
     }
+    const visibilityFilter = this.getWaveAndParentVisibilityFilter(
+      'w',
+      'pw',
+      groupIdsUserIsEligibleFor,
+      'groupIdsUserIsEligibleFor'
+    );
     return this.db
       .execute<RawWaveEntityWithLastDropTime>(
         `SELECT w.*, COALESCE(wm.latest_drop_timestamp, 0) as last_drop_time
          FROM ${WAVES_TABLE} w
+         LEFT JOIN ${WAVES_TABLE} pw ON pw.id = w.parent_wave_id
          LEFT JOIN ${WAVE_METRICS_TABLE} wm ON wm.wave_id = w.id
-         WHERE w.id in (:ids) and (w.visibility_group_id is null ${
-           groupIdsUserIsEligibleFor.length
-             ? `or w.visibility_group_id in (:groupIdsUserIsEligibleFor)`
-             : ``
-         })`,
+         WHERE w.id in (:ids)
+           and ${visibilityFilter}`,
         { ids, groupIdsUserIsEligibleFor },
         connection ? { wrappedConnection: connection } : undefined
       )
@@ -232,22 +302,24 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       const rows = await this.db.execute<WaveMentionOverview>(
         `
         select
-          id,
-          name,
-          picture,
-          visibility_group_id,
-          participation_group_id,
-          chat_group_id,
-          admin_group_id,
-          voting_group_id,
-          is_direct_message
-        from ${WAVES_TABLE}
-        where id in (:ids)
-          and (visibility_group_id is null ${
-            groupIdsUserIsEligibleFor.length
-              ? `or visibility_group_id in (:groupIdsUserIsEligibleFor)`
-              : ``
-          })
+          w.id,
+          w.name,
+          w.picture,
+          w.visibility_group_id,
+          w.participation_group_id,
+          w.chat_group_id,
+          w.admin_group_id,
+          w.voting_group_id,
+          w.is_direct_message
+        from ${WAVES_TABLE} w
+        left join ${WAVES_TABLE} pw on pw.id = w.parent_wave_id
+        where w.id in (:ids)
+          and ${this.getWaveAndParentVisibilityFilter(
+            'w',
+            'pw',
+            groupIdsUserIsEligibleFor,
+            'groupIdsUserIsEligibleFor'
+          )}
       `,
         { ids, groupIdsUserIsEligibleFor },
         { wrappedConnection: ctx.connection }
@@ -290,6 +362,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           insert into ${WAVES_TABLE}
           (id,
            name,
+           parent_wave_id,
            picture,
            description_drop_id,
            created_at,
@@ -334,6 +407,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
            is_direct_message${wave.serial_no !== null ? ', serial_no' : ''})
           values (:id,
                   :name,
+                  :parent_wave_id,
                   :picture,
                   :description_drop_id,
                   :created_at,
@@ -388,6 +462,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                             archival_entry_created_at,
                             id,
                             name,
+                            parent_wave_id,
                             picture,
                             description_drop_id,
                             created_at,
@@ -435,6 +510,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                                    :now,
                                    :id,
                                    :name,
+                                   :parent_wave_id,
                                    :picture,
                                    :description_drop_id,
                                    :created_at,
@@ -682,7 +758,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
            groupsUserIsEligibleFor.length
              ? `w.visibility_group_id in (:groupsUserIsEligibleFor) or`
              : ``
-         } w.visibility_group_id is null) and w.serial_no < :serialNoLessThan order by w.serial_no desc limit ${
+         } w.visibility_group_id is null) and w.parent_wave_id is null and w.serial_no < :serialNoLessThan order by w.serial_no desc limit ${
            searchParams.limit
          } offset :offset`;
     const params: Record<string, any> = {
@@ -761,6 +837,152 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           {} as Record<string, WaveEntityWithLastDropTime>
         )
       );
+  }
+
+  async findVisibleParentWavesByChildWaveIds(
+    childWaveIds: string[],
+    groupIdsUserIsEligibleFor: string[],
+    ctx: RequestContext
+  ): Promise<Record<string, WaveEntity>> {
+    if (!childWaveIds.length) {
+      return {};
+    }
+    const timerKey = `${this.constructor.name}->findVisibleParentWavesByChildWaveIds`;
+    ctx.timer?.start(timerKey);
+    try {
+      const rows = await this.db.execute<
+        RawWaveEntity & { child_wave_id: string }
+      >(
+        `
+          select child.id as child_wave_id, parent.*
+          from ${WAVES_TABLE} child
+          join ${WAVES_TABLE} parent on parent.id = child.parent_wave_id
+          where child.id in (:childWaveIds)
+            and parent.parent_wave_id is null
+            and ${this.getWaveVisibilityFilter(
+              'parent',
+              groupIdsUserIsEligibleFor,
+              'groupIdsUserIsEligibleFor'
+            )}
+        `,
+        { childWaveIds, groupIdsUserIsEligibleFor },
+        { wrappedConnection: ctx.connection }
+      );
+      return rows.reduce(
+        (acc, row) => {
+          const { child_wave_id, ...parent } = row;
+          acc[child_wave_id] = this.parseWaveEntity(parent);
+          return acc;
+        },
+        {} as Record<string, WaveEntity>
+      );
+    } finally {
+      ctx.timer?.stop(timerKey);
+    }
+  }
+
+  async findWaveIdsWithVisibleSubwaves(
+    waveIds: string[],
+    groupIdsUserIsEligibleFor: string[],
+    ctx: RequestContext
+  ): Promise<Set<string>> {
+    if (!waveIds.length) {
+      return new Set<string>();
+    }
+    const timerKey = `${this.constructor.name}->findWaveIdsWithVisibleSubwaves`;
+    ctx.timer?.start(timerKey);
+    try {
+      const rows = await this.db.execute<{ wave_id: string }>(
+        `
+          select distinct w.parent_wave_id as wave_id
+          from ${WAVES_TABLE} w
+          join ${WAVES_TABLE} parent
+            on parent.id = w.parent_wave_id
+           and parent.parent_wave_id is null
+          where w.parent_wave_id in (:waveIds)
+            and ${this.getWaveVisibilityFilter(
+              'w',
+              groupIdsUserIsEligibleFor,
+              'groupIdsUserIsEligibleFor'
+            )}
+        `,
+        { waveIds, groupIdsUserIsEligibleFor },
+        { wrappedConnection: ctx.connection }
+      );
+      return new Set(rows.map((row) => row.wave_id));
+    } finally {
+      ctx.timer?.stop(timerKey);
+    }
+  }
+
+  async findSubwaves(
+    {
+      parentWaveId,
+      eligibleGroups,
+      limit,
+      offset,
+      sort
+    }: {
+      parentWaveId: string;
+      eligibleGroups: string[];
+      limit: number;
+      offset: number;
+      sort: WaveSubwavesSort;
+    },
+    ctx: RequestContext
+  ): Promise<WaveEntity[]> {
+    const timerKey = `${this.constructor.name}->findSubwaves`;
+    ctx.timer?.start(timerKey);
+    try {
+      const orderBy =
+        sort === WaveSubwavesSort.CREATED_AT
+          ? `w.created_at desc, w.id asc`
+          : `lower(w.name) asc, w.name asc, w.id asc`;
+      const rows = await this.db.execute<RawWaveEntity>(
+        `
+          select w.*
+          from ${WAVES_TABLE} w
+          left join ${WAVES_TABLE} parent on parent.id = w.parent_wave_id
+          where w.parent_wave_id = :parentWaveId
+            and ${this.getWaveAndParentVisibilityFilter(
+              'w',
+              'parent',
+              eligibleGroups,
+              'eligibleGroups'
+            )}
+          order by ${orderBy}
+          limit :limit offset :offset
+        `,
+        { parentWaveId, eligibleGroups, limit, offset },
+        { wrappedConnection: ctx.connection }
+      );
+      return rows.map((row) => this.parseWaveEntity(row));
+    } finally {
+      ctx.timer?.stop(timerKey);
+    }
+  }
+
+  async findSubwaveIdsByParentWaveId(
+    parentWaveId: string,
+    ctx: RequestContext
+  ): Promise<string[]> {
+    const timerKey = `${this.constructor.name}->findSubwaveIdsByParentWaveId`;
+    ctx.timer?.start(timerKey);
+    try {
+      const rows = await this.db.execute<{ id: string }>(
+        `
+          select id
+          from ${WAVES_TABLE}
+          where parent_wave_id = :parentWaveId
+          order by id asc
+        `,
+        { parentWaveId },
+        { wrappedConnection: ctx.connection }
+      );
+      return rows.map((row) => row.id);
+    } finally {
+      ctx.timer?.stop(timerKey);
+    }
   }
 
   async getWavesContributorsOverviews(
@@ -903,7 +1125,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           direct_message !== undefined
             ? ` w.is_direct_message = :direct_message and `
             : ``
-        } (w.visibility_group_id is null ${
+        } w.parent_wave_id is null and (w.visibility_group_id is null ${
           eligibleGroups.length
             ? `or w.visibility_group_id in (:eligibleGroups)`
             : ``
@@ -937,7 +1159,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         direct_message !== undefined
           ? ` w.is_direct_message = :direct_message and `
           : ``
-      } (w.visibility_group_id is null ${
+      } w.parent_wave_id is null and (w.visibility_group_id is null ${
         eligibleGroups.length
           ? `or w.visibility_group_id in (:eligibleGroups)`
           : ``
@@ -996,6 +1218,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
             where wdm.dropper_id = :identityId
               and wdm.drops_count > 0
               and w.is_direct_message = false
+              and w.parent_wave_id is null
               and (
                 w.visibility_group_id is null
                 ${
@@ -1610,6 +1833,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           where d.created_at >= :cutoffTimestamp
             and w.visibility_group_id is null
             and w.chat_group_id is null
+            and w.parent_wave_id is null
             ${exclude_followed ? `and f.id is null` : ``}
 	          group by w.id
 	          having count(distinct d.author_id) >= 3
@@ -1672,11 +1896,12 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         ? `f.subscriber_id = :authenticated_user_id and`
         : ``
     }
-    ${
-      param.direct_message !== undefined
-        ? ` w.is_direct_message = :direct_message and `
-        : ``
-    }
+     ${
+       param.direct_message !== undefined
+         ? ` w.is_direct_message = :direct_message and `
+         : ``
+     }
+     w.parent_wave_id is null and
      (w.visibility_group_id is null ${
        param.eligibleGroups.length
          ? `or w.visibility_group_id in (:eligibleGroups)`

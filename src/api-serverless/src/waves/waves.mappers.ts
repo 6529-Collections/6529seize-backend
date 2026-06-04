@@ -34,6 +34,7 @@ import { ApiWaveCreditType as WaveCreditTypeApi } from '../generated/models/ApiW
 import { ApiWaveCreditScope as WaveCreditScopeApi } from '../generated/models/ApiWaveCreditScope';
 import { ApiWaveMetadataType } from '../generated/models/ApiWaveMetadataType';
 import { ApiWaveMetrics } from '../generated/models/ApiWaveMetrics';
+import { ApiWaveOverview } from '../generated/models/ApiWaveOverview';
 import { ApiWaveParticipationConfig } from '../generated/models/ApiWaveParticipationConfig';
 import { ApiWaveParticipationRequirement } from '../generated/models/ApiWaveParticipationRequirement';
 import { ApiWaveScope } from '../generated/models/ApiWaveScope';
@@ -54,6 +55,7 @@ import {
   resolveWavePictureOverride,
   WaveDisplayOverride
 } from '@/api/waves/direct-message-wave-display.service';
+import { apiWaveOverviewMapper } from '@/api/waves/api-wave-overview.mapper';
 import {
   mapWaveFieldsToApiSubmissionStrategy,
   resolveWaveSubmissionStrategyFieldsForWrite
@@ -95,6 +97,8 @@ type WaveMappingRelatedData = {
   votingCreditNftsByWaveId: Record<string, WaveVotingCreditNft[]>;
   pinnedWaveIds: Set<string>;
   identityWaveIds: Set<string>;
+  parentWaveOverviewsByChildWaveId: Record<string, ApiWaveOverview>;
+  waveIdsWithVisibleSubwaves: Set<string>;
   authenticatedUserId: string | null;
 };
 
@@ -139,6 +143,7 @@ export class WavesMappers {
       | 'max_votes_per_identity_to_drop'
       | 'chat_links_disabled'
       | 'voting_credit_scope'
+      | 'parent_wave_id'
     > | null;
   }): Promise<InsertWaveEntity> {
     let creditorId = request.voting.creditor_id;
@@ -181,6 +186,10 @@ export class WavesMappers {
       updated_at,
       chat_enabled: request.chat.enabled,
       name: request.name,
+      parent_wave_id:
+        (request as ApiCreateNewWave).parent_wave_id ??
+        existingWaveSettings?.parent_wave_id ??
+        null,
       description_drop_id: descriptionDropId,
       picture: request.picture,
       created_by,
@@ -329,7 +338,9 @@ export class WavesMappers {
       decisionsDoneByWaveId,
       votingCreditNftsByWaveId,
       pinnedWaveIds,
-      identityWaveIds
+      identityWaveIds,
+      parentWaveOverviewsByChildWaveId,
+      waveIdsWithVisibleSubwaves
     } = relatedData;
     const decisionsDone = decisionsDoneByWaveId[waveEntity.id] ?? 0;
     const waveIsClosed = isApproveWaveClosed({
@@ -509,7 +520,7 @@ export class WavesMappers {
         start_time: +entity.start_time,
         end_time: +entity.end_time
       }));
-    return {
+    const apiWave: ApiWave = {
       id: waveEntity.id,
       name: displayByWaveId[waveEntity.id]?.name ?? waveEntity.name,
       picture: resolveWavePictureOverride(
@@ -533,6 +544,14 @@ export class WavesMappers {
       pinned: pinnedWaveIds.has(waveEntity.id),
       identity_wave: identityWaveIds.has(waveEntity.id)
     };
+    const parentWave = parentWaveOverviewsByChildWaveId?.[waveEntity.id];
+    if (parentWave) {
+      apiWave.parent_wave = parentWave;
+    }
+    if (waveIdsWithVisibleSubwaves?.has(waveEntity.id)) {
+      apiWave.has_subwaves = true;
+    }
+    return apiWave;
   }
 
   private async getRelatedData(
@@ -544,6 +563,28 @@ export class WavesMappers {
     const waveIds = waveEntities.map((it) => it.id);
     const authenticatedUserId =
       ctx.authenticationContext?.getActingAsId() ?? null;
+    const parentWavesByChildWaveId =
+      await this.wavesApiDb.findVisibleParentWavesByChildWaveIds(
+        waveIds,
+        groupIdsUserIsEligibleFor,
+        ctx
+      );
+    const parentWaveOverviewsByWaveId = await apiWaveOverviewMapper.mapWaves(
+      Object.values(parentWavesByChildWaveId),
+      ctx
+    );
+    const parentWaveOverviewsByChildWaveId = Object.entries(
+      parentWavesByChildWaveId
+    ).reduce(
+      (acc, [childWaveId, parentWave]) => {
+        const parentWaveOverview = parentWaveOverviewsByWaveId[parentWave.id];
+        if (parentWaveOverview) {
+          acc[childWaveId] = parentWaveOverview;
+        }
+        return acc;
+      },
+      {} as Record<string, ApiWaveOverview>
+    );
     ctx.timer?.start('dropsService->findDropsByIdsOrThrow');
     ctx.timer?.start(
       'identitySubscriptionsDb->findIdentitySubscriptionActionsOfTargets'
@@ -564,7 +605,8 @@ export class WavesMappers {
       decisionsDoneByWaveId,
       votingCreditNftsByWaveId,
       pinnedWaveIds,
-      identityWaveIds
+      identityWaveIds,
+      waveIdsWithVisibleSubwaves
     ] = await Promise.all([
       this.userGroupsService.getByIds(
         waveEntities.flatMap((waveEntity) =>
@@ -671,7 +713,12 @@ export class WavesMappers {
         },
         ctx
       ),
-      profileWavesDb.findSelectedWaveIdsByWaveIds(waveIds, ctx)
+      profileWavesDb.findSelectedWaveIdsByWaveIds(waveIds, ctx),
+      this.wavesApiDb.findWaveIdsWithVisibleSubwaves(
+        waveIds,
+        groupIdsUserIsEligibleFor,
+        ctx
+      )
     ]);
     const profileIds = collections.distinct([
       ...waveEntities.flatMap((waveEntity) =>
@@ -747,6 +794,8 @@ export class WavesMappers {
       votingCreditNftsByWaveId,
       pinnedWaveIds,
       identityWaveIds,
+      parentWaveOverviewsByChildWaveId,
+      waveIdsWithVisibleSubwaves,
       authenticatedUserId
     };
   }

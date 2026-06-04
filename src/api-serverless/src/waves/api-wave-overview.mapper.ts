@@ -53,40 +53,51 @@ export class ApiWaveOverviewMapper {
         return {};
       }
 
-      const waveIds = entities.map((wave) => wave.id);
-      const descriptionDropIds = collections.distinct(
-        entities.map((wave) => wave.description_drop_id)
-      );
       const contextProfileId = getWaveReadContextProfileId(
         ctx.authenticationContext
+      );
+      const groupIdsUserIsEligibleFor = contextProfileId
+        ? await this.userGroupsService.getGroupsUserIsEligibleFor(
+            contextProfileId,
+            ctx.timer
+          )
+        : [];
+      const requestedWaveIds = entities.map((wave) => wave.id);
+      const parentWavesByChildWaveId =
+        await this.wavesApiDb.findVisibleParentWavesByChildWaveIds(
+          requestedWaveIds,
+          groupIdsUserIsEligibleFor,
+          ctx
+        );
+      const relatedEntities = collections.distinctBy(
+        [...entities, ...Object.values(parentWavesByChildWaveId)],
+        (wave) => wave.id
+      );
+      const waveIds = relatedEntities.map((wave) => wave.id);
+      const descriptionDropIds = collections.distinct(
+        relatedEntities.map((wave) => wave.description_drop_id)
       );
 
       const [
         metricsByWaveId,
         descriptionDropPartOnesByDropId,
         descriptionDropPartOneMediaByDropId,
-        groupIdsUserIsEligibleFor,
         displayByWaveId,
         subscribedActionsByWaveId,
         pinnedWaveIds,
         readerMetricsByWaveId,
         unreadDropsCountByWaveId,
         firstUnreadDropSerialNoByWaveId,
-        chatDropCooldownsByWaveId
+        chatDropCooldownsByWaveId,
+        waveIdsWithVisibleSubwaves
       ] = await Promise.all([
         this.wavesApiDb.findWavesMetricsByWaveIds(waveIds, ctx),
         this.dropsDb.getDropPartOnes(descriptionDropIds, ctx),
         this.dropsDb.getDropPartOneMedia(descriptionDropIds, ctx),
         contextProfileId
-          ? this.userGroupsService.getGroupsUserIsEligibleFor(
-              contextProfileId,
-              ctx.timer
-            )
-          : Promise.resolve([]),
-        contextProfileId
           ? this.directMessageWaveDisplayService.resolveWaveDisplayByWaveIdForContext(
               {
-                waveEntities: entities,
+                waveEntities: relatedEntities,
                 contextProfileId
               },
               ctx.connection
@@ -146,54 +157,46 @@ export class ApiWaveOverviewMapper {
               },
               ctx
             )
-          : Promise.resolve({} as Record<string, WaveChatDropCooldownEntity>)
+          : Promise.resolve({} as Record<string, WaveChatDropCooldownEntity>),
+        this.wavesApiDb.findWaveIdsWithVisibleSubwaves(
+          waveIds,
+          groupIdsUserIsEligibleFor,
+          ctx
+        )
       ]);
+
+      const overviewsByWaveId = relatedEntities.reduce(
+        (acc, wave) => {
+          acc[wave.id] = this.mapWaveOverview({
+            wave,
+            metrics: metricsByWaveId[wave.id],
+            descriptionDropPartOnesByDropId,
+            descriptionDropPartOneMediaByDropId,
+            display: displayByWaveId[wave.id],
+            contextProfileId,
+            groupIdsUserIsEligibleFor,
+            subscribedActions: subscribedActionsByWaveId[wave.id] ?? [],
+            pinnedWaveIds,
+            readerMetric: readerMetricsByWaveId[wave.id],
+            unreadDropsCount: unreadDropsCountByWaveId[wave.id] ?? 0,
+            firstUnreadDropSerialNo:
+              firstUnreadDropSerialNoByWaveId[wave.id] ?? undefined,
+            nextDropTimestamp:
+              chatDropCooldownsByWaveId[wave.id]?.next_drop_timestamp,
+            hasSubwaves: waveIdsWithVisibleSubwaves.has(wave.id)
+          });
+          return acc;
+        },
+        {} as Record<string, ApiWaveOverview>
+      );
 
       return entities.reduce(
         (acc, wave) => {
-          const display = displayByWaveId[wave.id];
-          const pfp = resolveWavePictureOverride(wave.picture, display);
-          const metrics = metricsByWaveId[wave.id];
-          const overview: ApiWaveOverview = {
-            id: wave.id,
-            name: display?.name ?? wave.name,
-            last_drop_time: metrics?.latest_drop_timestamp ?? 0,
-            created_at: wave.created_at,
-            subscribers_count: metrics?.subscribers_count ?? 0,
-            has_competition: wave.type !== WaveType.CHAT,
-            is_dm_wave: wave.is_direct_message === true,
-            links_disabled: wave.chat_links_disabled,
-            description_drop: this.mapDescriptionDrop({
-              part: descriptionDropPartOnesByDropId[wave.description_drop_id],
-              media:
-                descriptionDropPartOneMediaByDropId[wave.description_drop_id]
-            }),
-            total_drops_count: metrics?.drops_count ?? 0,
-            is_private: wave.visibility_group_id !== null
-          };
-
-          if (pfp) {
-            overview.pfp = pfp;
+          const overview = overviewsByWaveId[wave.id];
+          const parentWave = parentWavesByChildWaveId[wave.id];
+          if (parentWave) {
+            overview.parent_wave = overviewsByWaveId[parentWave.id];
           }
-          if (wave.is_direct_message === true) {
-            overview.contributors = this.mapDirectMessageContributors(display);
-          }
-          if (contextProfileId) {
-            overview.context_profile_context = this.mapContextProfileContext({
-              wave,
-              groupIdsUserIsEligibleFor,
-              subscribedActions: subscribedActionsByWaveId[wave.id] ?? [],
-              pinnedWaveIds,
-              readerMetric: readerMetricsByWaveId[wave.id],
-              unreadDropsCount: unreadDropsCountByWaveId[wave.id] ?? 0,
-              firstUnreadDropSerialNo:
-                firstUnreadDropSerialNoByWaveId[wave.id] ?? undefined,
-              contextProfileId,
-              nextDropTimestamp:
-                chatDropCooldownsByWaveId[wave.id]?.next_drop_timestamp
-            });
-          }
-
           acc[wave.id] = overview;
           return acc;
         },
@@ -202,6 +205,85 @@ export class ApiWaveOverviewMapper {
     } finally {
       ctx.timer?.stop(timerKey);
     }
+  }
+
+  private mapWaveOverview({
+    wave,
+    metrics,
+    descriptionDropPartOnesByDropId,
+    descriptionDropPartOneMediaByDropId,
+    display,
+    contextProfileId,
+    groupIdsUserIsEligibleFor,
+    subscribedActions,
+    pinnedWaveIds,
+    readerMetric,
+    unreadDropsCount,
+    firstUnreadDropSerialNo,
+    nextDropTimestamp,
+    hasSubwaves
+  }: {
+    wave: WaveEntity;
+    metrics?: {
+      latest_drop_timestamp: number;
+      subscribers_count: number;
+      drops_count: number;
+    };
+    descriptionDropPartOnesByDropId: Record<string, DropPartEntity>;
+    descriptionDropPartOneMediaByDropId: Record<string, DropMediaEntity[]>;
+    display?: WaveDisplayOverride;
+    contextProfileId: string | null;
+    groupIdsUserIsEligibleFor: string[];
+    subscribedActions: ActivityEventAction[];
+    pinnedWaveIds: Set<string>;
+    readerMetric?: WaveReaderMetricEntity;
+    unreadDropsCount: number;
+    firstUnreadDropSerialNo?: number;
+    nextDropTimestamp?: number;
+    hasSubwaves: boolean;
+  }): ApiWaveOverview {
+    const pfp = resolveWavePictureOverride(wave.picture, display);
+    const overview: ApiWaveOverview = {
+      id: wave.id,
+      name: display?.name ?? wave.name,
+      last_drop_time: metrics?.latest_drop_timestamp ?? 0,
+      created_at: wave.created_at,
+      subscribers_count: metrics?.subscribers_count ?? 0,
+      has_competition: wave.type !== WaveType.CHAT,
+      is_dm_wave: wave.is_direct_message === true,
+      links_disabled: wave.chat_links_disabled,
+      description_drop: this.mapDescriptionDrop({
+        part: descriptionDropPartOnesByDropId[wave.description_drop_id],
+        media: descriptionDropPartOneMediaByDropId[wave.description_drop_id]
+      }),
+      total_drops_count: metrics?.drops_count ?? 0,
+      is_private: wave.visibility_group_id !== null
+    };
+
+    if (pfp) {
+      overview.pfp = pfp;
+    }
+    if (hasSubwaves) {
+      overview.has_subwaves = true;
+    }
+    if (wave.is_direct_message === true) {
+      overview.contributors = this.mapDirectMessageContributors(display);
+    }
+    if (contextProfileId) {
+      overview.context_profile_context = this.mapContextProfileContext({
+        wave,
+        groupIdsUserIsEligibleFor,
+        subscribedActions,
+        pinnedWaveIds,
+        readerMetric,
+        unreadDropsCount,
+        firstUnreadDropSerialNo,
+        contextProfileId,
+        nextDropTimestamp
+      });
+    }
+
+    return overview;
   }
 
   private mapDirectMessageContributors(

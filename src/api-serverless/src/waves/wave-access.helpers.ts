@@ -37,13 +37,13 @@ export async function getGroupsUserIsEligibleForReadContext(
   );
 }
 
-export function assertWaveVisibleOrThrow(
-  wave: {
-    visibility_group_id: string | null;
-  } | null,
+export function assertWaveVisibleOrThrow<
+  TWave extends { visibility_group_id: string | null }
+>(
+  wave: TWave | null,
   groupsUserIsEligibleFor: string[],
   message: string
-) {
+): asserts wave is TWave {
   if (
     !wave ||
     (wave.visibility_group_id &&
@@ -51,6 +51,42 @@ export function assertWaveVisibleOrThrow(
   ) {
     throw new NotFoundException(message);
   }
+}
+
+export async function assertWaveAndParentVisibleOrThrow<
+  TWave extends {
+    visibility_group_id: string | null;
+    parent_wave_id?: string | null;
+  }
+>({
+  wave,
+  groupsUserIsEligibleFor,
+  message,
+  wavesApiDb,
+  ctx
+}: {
+  wave: TWave | null;
+  groupsUserIsEligibleFor: string[];
+  message: string;
+  wavesApiDb: WavesApiDb;
+  ctx: RequestContext;
+}): Promise<TWave> {
+  assertWaveVisibleOrThrow(wave, groupsUserIsEligibleFor, message);
+
+  const parentWaveId = wave.parent_wave_id ?? null;
+  if (!parentWaveId) {
+    return wave;
+  }
+
+  const parentWave = await wavesApiDb.findWaveById(
+    parentWaveId,
+    ctx.connection
+  );
+  assertWaveVisibleOrThrow(parentWave, groupsUserIsEligibleFor, message);
+  if (parentWave.parent_wave_id !== null) {
+    throw new NotFoundException(message);
+  }
+  return wave;
 }
 
 export function getAuthenticatedNonProxyProfileIdOrThrow(

@@ -15,6 +15,7 @@ import {
 
 export interface WaveBaseType {
   readonly name: string;
+  readonly parent_wave_id: string | null;
   readonly picture: string | null;
   readonly description_drop_id: string;
   readonly created_by: string;
@@ -60,6 +61,9 @@ export interface WaveBaseType {
 export class WaveBase implements WaveBaseType {
   @Column({ type: 'varchar', length: 250, nullable: false })
   readonly name!: string;
+
+  @Column({ type: 'varchar', length: 100, nullable: true, default: null })
+  readonly parent_wave_id!: string | null;
 
   @Column({ type: 'text', nullable: true, default: null })
   readonly picture!: string | null;
@@ -193,6 +197,7 @@ export class WaveBase implements WaveBaseType {
 
 @Entity(WAVES_TABLE)
 @Index('idx_wave_serialno_id', ['serial_no', 'id'])
+@Index('idx_wave_parent_wave_id', ['parent_wave_id'])
 export class WaveEntity extends WaveBase {
   @Column({ type: 'varchar', length: 100, unique: true, nullable: false })
   readonly id!: string;
