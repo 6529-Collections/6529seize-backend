@@ -31,6 +31,7 @@ import {
   WaveDecisionWinnerDropEntity,
   WaveDecisionWinnerPrize
 } from '@/entities/IWaveDecision';
+import { assertWaveAndParentVisibleOrThrow } from '@/api/waves/wave-access.helpers';
 
 interface ConcludedWaveDecisionData {
   readonly decisionEntities: WaveDecisionEntity[];
@@ -143,15 +144,13 @@ export class WaveDecisionsApiService {
       query.wave_id,
       ctx.connection
     );
-    if (!waveEntity) {
-      throw new NotFoundException(`Wave not found`);
-    }
-    if (
-      waveEntity.visibility_group_id !== null &&
-      !groupsUserIsEligibleFor.includes(waveEntity.visibility_group_id)
-    ) {
-      throw new NotFoundException(`Wave not found`);
-    }
+    await assertWaveAndParentVisibleOrThrow({
+      wave: waveEntity,
+      groupsUserIsEligibleFor,
+      message: `Wave not found`,
+      wavesApiDb: this.wavesApiDb,
+      ctx
+    });
     const [decisionEntities, count] = await Promise.all([
       this.waveDecisionsDb.searchForDecisions(
         {
@@ -227,12 +226,13 @@ export class WaveDecisionsApiService {
           ctx.authenticationContext?.getActingAsId() ?? null,
           ctx.timer
         );
-      if (
-        waveEntity.visibility_group_id !== null &&
-        !eligibleGroups.includes(waveEntity.visibility_group_id)
-      ) {
-        throw new NotFoundException(`Wave not found`);
-      }
+      await assertWaveAndParentVisibleOrThrow({
+        wave: waveEntity,
+        groupsUserIsEligibleFor: eligibleGroups,
+        message: `Wave not found`,
+        wavesApiDb: this.wavesApiDb,
+        ctx
+      });
       const [data, count] = await Promise.all([
         this.wavesApiDb.findOutcomes(
           {
@@ -291,12 +291,13 @@ export class WaveDecisionsApiService {
           ctx.authenticationContext?.getActingAsId() ?? null,
           ctx.timer
         );
-      if (
-        waveEntity.visibility_group_id !== null &&
-        !eligibleGroups.includes(waveEntity.visibility_group_id)
-      ) {
-        throw new NotFoundException(`Wave not found`);
-      }
+      await assertWaveAndParentVisibleOrThrow({
+        wave: waveEntity,
+        groupsUserIsEligibleFor: eligibleGroups,
+        message: `Wave not found`,
+        wavesApiDb: this.wavesApiDb,
+        ctx
+      });
       const [data, count] = await Promise.all([
         this.wavesApiDb.findOutcomeDistributionItems(
           {

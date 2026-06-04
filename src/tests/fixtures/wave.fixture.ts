@@ -12,6 +12,7 @@ import { WAVES_TABLE } from '@/constants';
 type BaseWave = Omit<WaveEntity, 'serial_no' | 'id' | 'name'>;
 const aBaseWave: BaseWave = {
   next_decision_time: null,
+  parent_wave_id: null,
   created_at: Time.millis(0).toMillis(),
   updated_at: Time.millis(0).toMillis(),
   chat_enabled: true,

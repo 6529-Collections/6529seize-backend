@@ -39,6 +39,7 @@ function makeWave(overrides: Partial<WaveEntity> = {}): WaveEntity {
     id: 'wave-1',
     serial_no: 1,
     name: 'Wave 1',
+    parent_wave_id: null,
     picture: null,
     description_drop_id: 'description-drop-1',
     created_at: 100,

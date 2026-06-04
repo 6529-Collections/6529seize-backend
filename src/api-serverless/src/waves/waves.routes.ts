@@ -1360,6 +1360,7 @@ const waveSchemaBaseValidations = {
 
 export const WaveSchema = Joi.object<ApiCreateNewWave>({
   ...waveSchemaBaseValidations,
+  parent_wave_id: Joi.string().optional().allow(null).default(null),
   description_drop: NewWaveDropSchema.required(),
   outcomes: Joi.array().required().min(0).items(WaveOutcomeSchema)
 });
