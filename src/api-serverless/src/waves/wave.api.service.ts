@@ -100,6 +100,7 @@ import { sendIdentityPushNotifications } from '@/api/push-notifications/push-not
 import { isWaveCreatorOrAdmin } from '@/waves/wave-admin.helpers';
 import { assertWaveAndParentVisibleOrThrow } from '@/api/waves/wave-access.helpers';
 import { waveMetadataDb } from '@/api/waves/wave-metadata.db';
+import { dropPollsDb } from '@/api/drops/drop-polls.db';
 
 const CARD_SET_TDH_SUPPORTED_CONTRACTS = new Set(
   [MEMES_CONTRACT, GRADIENT_CONTRACT].map((contract) => contract.toLowerCase())
@@ -1752,6 +1753,7 @@ export class WaveApiService {
       this.wavesApiDb.deleteDropFeedItemsByWaveId(waveId, ctx),
       this.wavesApiDb.deleteDropNotificationsByWaveId(waveId, ctx),
       this.wavesApiDb.deleteDropSubscriptionsByWaveId(waveId, ctx),
+      dropPollsDb.deleteByWaveId(waveId, ctx),
       this.waveGroupNotificationSubscriptionsDb.deleteByWaveId(
         waveId,
         ctx.connection

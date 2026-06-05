@@ -57,6 +57,10 @@ import { identitiesService } from '../api-serverless/src/identities/identities.s
 import { xTdhRepository, XTdhRepository } from '../xtdh/xtdh.repository';
 import { profileWavesDb, ProfileWavesDb } from '@/profiles/profile-waves.db';
 import { waveGroupNotificationSubscriptionsDb } from '@/notifications/wave-group-notification-subscriptions.db';
+import {
+  dropPollsDb,
+  DropPollsDb
+} from '@/api-serverless/src/drops/drop-polls.db';
 
 export class ProfilesService {
   private readonly logger = Logger.get('PROFILES_SERVICE');
@@ -75,7 +79,8 @@ export class ProfilesService {
     private readonly dropBookmarksDb: DropBookmarksDb,
     private readonly curationsDb: CurationsDb,
     private readonly waveQuickVoteDb: WaveQuickVoteDb,
-    private readonly profileWavesDb: ProfileWavesDb
+    private readonly profileWavesDb: ProfileWavesDb,
+    private readonly dropPollsDb: DropPollsDb
   ) {}
 
   public async getProfileAndConsolidationsByIdentity(
@@ -403,6 +408,11 @@ export class ProfilesService {
           connectionHolder
         );
         await this.mergeVotingStuff(sourceIdentity, target, connectionHolder);
+        await this.mergePollVotingStuff(
+          sourceIdentity,
+          target,
+          connectionHolder
+        );
         await this.mergeBookmarks(sourceIdentity, target, connectionHolder);
         await this.mergeCurations(sourceIdentity, target, connectionHolder);
         await this.mergeQuickVoteSkips(
@@ -567,6 +577,17 @@ export class ProfilesService {
     connectionHolder: ConnectionWrapper<any>
   ) {
     await this.dropVotingDb.mergeOnProfileIdChange(
+      { previous_id: sourceIdentity, new_id: target },
+      { connection: connectionHolder }
+    );
+  }
+
+  private async mergePollVotingStuff(
+    sourceIdentity: string,
+    target: string,
+    connectionHolder: ConnectionWrapper<any>
+  ) {
+    await this.dropPollsDb.mergeOnProfileIdChange(
       { previous_id: sourceIdentity, new_id: target },
       { connection: connectionHolder }
     );
@@ -875,5 +896,6 @@ export const profilesService = new ProfilesService(
   dropBookmarksDb,
   curationsDb,
   waveQuickVoteDb,
-  profileWavesDb
+  profileWavesDb,
+  dropPollsDb
 );

@@ -5,11 +5,12 @@ import { maybeAuthenticatedUser, needsAuthenticatedUser } from '@/api/auth/auth'
 import { cacheRequest } from '@/api/request-cache';
 import { Time } from '@/time';
 import { Response } from 'express';
+import { handleGetDropPollOptionVotersV2, handleGetWavePollsV2, handleVoteDropPollV2 } from '@/api/drops/drop-polls.handlers';
 import { handleDownloadDropV2VotersById, handleGetBoostedDropsV2, handleGetCuratedProfileWaveDropsV2, handleGetDropsV2, handleGetDropV2BoostsById, handleGetDropV2ById, handleGetDropV2MetadataById, handleGetDropV2PartById, handleGetDropV2ReactionsById, handleGetDropV2VoteEditLogsById, handleGetDropV2VotersById } from '@/api/drops/drops-v2.handlers';
 import { handleGetNotificationsV2 } from '@/api/notifications/notifications-v2.handlers';
 import { handleGetOgMetadataDrop, handleGetOgMetadataProfile, handleGetOgMetadataWave } from '@/api/og-metadata/og-metadata.handlers';
 import { handleCreateWaveMetadata, handleDeleteWaveMetadata, handleGetOfficialWaves, handleGetWaveDecisionsV2, handleGetWaveDropsV2, handleGetWaveLeaderboardV2, handleGetWaveMetadata, handleGetWavesV2, handleListWaveCurationDropsV2, handleListWaveSubwaves, handleSearchDropsInWaveV2 } from '@/api/waves/waves-v2.handlers';
-import { CreateWaveMetadataRequest, CreateWaveMetadataResponse, DeleteWaveMetadataRequest, DeleteWaveMetadataResponse, DownloadDropV2VotersByIdRequest, DownloadDropV2VotersByIdResponse, GetBoostedDropsV2Request, GetBoostedDropsV2Response, GetCuratedProfileWaveDropsV2Request, GetCuratedProfileWaveDropsV2Response, GetDropsV2Request, GetDropsV2Response, GetDropV2BoostsByIdRequest, GetDropV2BoostsByIdResponse, GetDropV2ByIdRequest, GetDropV2ByIdResponse, GetDropV2MetadataByIdRequest, GetDropV2MetadataByIdResponse, GetDropV2PartByIdRequest, GetDropV2PartByIdResponse, GetDropV2ReactionsByIdRequest, GetDropV2ReactionsByIdResponse, GetDropV2VoteEditLogsByIdRequest, GetDropV2VoteEditLogsByIdResponse, GetDropV2VotersByIdRequest, GetDropV2VotersByIdResponse, GetNotificationsV2Request, GetNotificationsV2Response, GetOfficialWavesRequest, GetOfficialWavesResponse, GetOgMetadataDropRequest, GetOgMetadataDropResponse, GetOgMetadataProfileRequest, GetOgMetadataProfileResponse, GetOgMetadataWaveRequest, GetOgMetadataWaveResponse, GetWaveDecisionsV2Request, GetWaveDecisionsV2Response, GetWaveDropsV2Request, GetWaveDropsV2Response, GetWaveLeaderboardV2Request, GetWaveLeaderboardV2Response, GetWaveMetadataRequest, GetWaveMetadataResponse, GetWavesV2Request, GetWavesV2Response, ListWaveCurationDropsV2Request, ListWaveCurationDropsV2Response, ListWaveSubwavesRequest, ListWaveSubwavesResponse, SearchDropsInWaveV2Request, SearchDropsInWaveV2Response } from './operations';
+import { CreateWaveMetadataRequest, CreateWaveMetadataResponse, DeleteWaveMetadataRequest, DeleteWaveMetadataResponse, DownloadDropV2VotersByIdRequest, DownloadDropV2VotersByIdResponse, GetBoostedDropsV2Request, GetBoostedDropsV2Response, GetCuratedProfileWaveDropsV2Request, GetCuratedProfileWaveDropsV2Response, GetDropPollOptionVotersV2Request, GetDropPollOptionVotersV2Response, GetDropsV2Request, GetDropsV2Response, GetDropV2BoostsByIdRequest, GetDropV2BoostsByIdResponse, GetDropV2ByIdRequest, GetDropV2ByIdResponse, GetDropV2MetadataByIdRequest, GetDropV2MetadataByIdResponse, GetDropV2PartByIdRequest, GetDropV2PartByIdResponse, GetDropV2ReactionsByIdRequest, GetDropV2ReactionsByIdResponse, GetDropV2VoteEditLogsByIdRequest, GetDropV2VoteEditLogsByIdResponse, GetDropV2VotersByIdRequest, GetDropV2VotersByIdResponse, GetNotificationsV2Request, GetNotificationsV2Response, GetOfficialWavesRequest, GetOfficialWavesResponse, GetOgMetadataDropRequest, GetOgMetadataDropResponse, GetOgMetadataProfileRequest, GetOgMetadataProfileResponse, GetOgMetadataWaveRequest, GetOgMetadataWaveResponse, GetWaveDecisionsV2Request, GetWaveDecisionsV2Response, GetWaveDropsV2Request, GetWaveDropsV2Response, GetWaveLeaderboardV2Request, GetWaveLeaderboardV2Response, GetWaveMetadataRequest, GetWaveMetadataResponse, GetWavePollsV2Request, GetWavePollsV2Response, GetWavesV2Request, GetWavesV2Response, ListWaveCurationDropsV2Request, ListWaveCurationDropsV2Response, ListWaveSubwavesRequest, ListWaveSubwavesResponse, SearchDropsInWaveV2Request, SearchDropsInWaveV2Response, VoteDropPollV2Request, VoteDropPollV2Response } from './operations';
 const router = asyncRouter();
 router.get(
   '/og-metadata/drops/:drop',
@@ -118,6 +119,28 @@ router.get(
     res: Response<ApiResponse<GetDropV2PartByIdResponse>>
   ) => {
     res.send(await handleGetDropV2PartById(req));
+  }
+);
+
+router.get(
+  '/v2/drops/:id/poll/:option_no/voters',
+  maybeAuthenticatedUser(),
+  async (
+    req: GetDropPollOptionVotersV2Request,
+    res: Response<ApiResponse<GetDropPollOptionVotersV2Response>>
+  ) => {
+    res.send(await handleGetDropPollOptionVotersV2(req));
+  }
+);
+
+router.post(
+  '/v2/drops/:id/poll/vote',
+  needsAuthenticatedUser(),
+  async (
+    req: VoteDropPollV2Request,
+    res: Response<ApiResponse<VoteDropPollV2Response>>
+  ) => {
+    res.send(await handleVoteDropPollV2(req));
   }
 );
 
@@ -272,6 +295,17 @@ router.delete(
     res: Response<ApiResponse<DeleteWaveMetadataResponse>>
   ) => {
     res.send(await handleDeleteWaveMetadata(req));
+  }
+);
+
+router.get(
+  '/v2/waves/:id/polls',
+  maybeAuthenticatedUser(),
+  async (
+    req: GetWavePollsV2Request,
+    res: Response<ApiResponse<GetWavePollsV2Response>>
+  ) => {
+    res.send(await handleGetWavePollsV2(req));
   }
 );
 

@@ -2,6 +2,8 @@ import { ApiDropType } from '@/api/generated/models/ApiDropType';
 import { NewDropSchema } from '@/api/drops/drop.validator';
 
 describe('NewDropSchema', () => {
+  const futureTimestamp = Date.now() + 60_000;
+
   function createDropWithMetadata(dataKey: string, dataValue: string) {
     return {
       wave_id: 'wave-1',
@@ -145,6 +147,70 @@ describe('NewDropSchema', () => {
     expect(drop_type).toBe(ApiDropType.Participatory);
     expect(result.error?.message).toContain(
       '"is_additional_action_promised" is not allowed'
+    );
+  });
+
+  it('accepts polls for chat drops', () => {
+    const result = NewDropSchema.validate({
+      ...createDropWithMetadata('artist', 'Artist'),
+      drop_type: ApiDropType.Chat,
+      poll: {
+        options: ['First', 'Second'],
+        multichoice: false,
+        closing_time: futureTimestamp
+      }
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.value.poll).toMatchObject({
+      options: ['First', 'Second'],
+      multichoice: false,
+      closing_time: futureTimestamp
+    });
+  });
+
+  it('rejects polls for participatory drops', () => {
+    const result = NewDropSchema.validate({
+      ...createDropWithMetadata('artist', 'Artist'),
+      poll: {
+        options: ['First', 'Second'],
+        multichoice: false,
+        closing_time: futureTimestamp
+      }
+    });
+
+    expect(result.error?.message).toContain('"poll" is not allowed');
+  });
+
+  it('rejects polls with fewer than two options', () => {
+    const result = NewDropSchema.validate({
+      ...createDropWithMetadata('artist', 'Artist'),
+      drop_type: ApiDropType.Chat,
+      poll: {
+        options: ['Only'],
+        multichoice: false,
+        closing_time: futureTimestamp
+      }
+    });
+
+    expect(result.error?.message).toContain(
+      '"poll.options" must contain at least 2 items'
+    );
+  });
+
+  it('rejects polls with past closing time', () => {
+    const result = NewDropSchema.validate({
+      ...createDropWithMetadata('artist', 'Artist'),
+      drop_type: ApiDropType.Chat,
+      poll: {
+        options: ['First', 'Second'],
+        multichoice: false,
+        closing_time: Date.now() - 1
+      }
+    });
+
+    expect(result.error?.message).toContain(
+      'poll closing_time must be in the future'
     );
   });
 });

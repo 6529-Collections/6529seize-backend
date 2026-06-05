@@ -32,6 +32,10 @@ import {
   ArtCurationTokenWatchService
 } from '@/art-curation/art-curation-token-watch.service';
 import { attachmentsDb, AttachmentsDb } from '@/attachments/attachments.db';
+import {
+  dropPollsDb,
+  DropPollsDb
+} from '@/api-serverless/src/drops/drop-polls.db';
 
 export class DeleteDropUseCase {
   public constructor(
@@ -41,7 +45,8 @@ export class DeleteDropUseCase {
     private readonly dropBookmarksDb: DropBookmarksDb,
     private readonly curationsDb: CurationsDb,
     private readonly artCurationTokenWatchService: ArtCurationTokenWatchService,
-    private readonly attachmentsDb: AttachmentsDb
+    private readonly attachmentsDb: AttachmentsDb,
+    private readonly dropPollsDb: DropPollsDb
   ) {}
 
   private async resolveDeleterId(
@@ -129,6 +134,7 @@ export class DeleteDropUseCase {
           timer,
           connection
         }),
+        this.dropPollsDb.deleteByDropId(dropId, { timer, connection }),
         this.dropVotingService.deleteVotes(dropId, { timer, connection }),
         this.curationsDb.deleteDropCurationsByDropId(dropId, {
           timer,
@@ -219,5 +225,6 @@ export const deleteDrop = new DeleteDropUseCase(
   dropBookmarksDb,
   curationsDb,
   artCurationTokenWatchService,
-  attachmentsDb
+  attachmentsDb,
+  dropPollsDb
 );
