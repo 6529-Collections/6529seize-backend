@@ -12,10 +12,59 @@ import { ApiDropV2PageWithoutCount } from '@/api/generated/models/ApiDropV2PageW
 import { ApiDropVoteEditLog } from '@/api/generated/models/ApiDropVoteEditLog';
 import { ApiDropVotersPage } from '@/api/generated/models/ApiDropVotersPage';
 import { ApiNotificationsResponseV2 } from '@/api/generated/models/ApiNotificationsResponseV2';
+import { ApiOgMetadata } from '@/api/generated/models/ApiOgMetadata';
 import { ApiWaveDecisionsPageV2 } from '@/api/generated/models/ApiWaveDecisionsPageV2';
 import { ApiWaveDropsFeedV2 } from '@/api/generated/models/ApiWaveDropsFeedV2';
 import { ApiWaveOverview } from '@/api/generated/models/ApiWaveOverview';
 import { ApiWaveOverviewPage } from '@/api/generated/models/ApiWaveOverviewPage';
+
+export interface GetOgMetadataDropPathParams {
+  "drop": string;
+}
+
+export type GetOgMetadataDropQuery = Record<string, never>;
+
+export type GetOgMetadataDropResponse = ApiOgMetadata;
+
+export type GetOgMetadataDropRequest = Request<
+  GetOgMetadataDropPathParams,
+  ApiResponse<GetOgMetadataDropResponse>,
+  never,
+  GetOgMetadataDropQuery,
+  Record<string, never>
+>;
+
+export interface GetOgMetadataProfilePathParams {
+  "identity": string;
+}
+
+export type GetOgMetadataProfileQuery = Record<string, never>;
+
+export type GetOgMetadataProfileResponse = ApiOgMetadata;
+
+export type GetOgMetadataProfileRequest = Request<
+  GetOgMetadataProfilePathParams,
+  ApiResponse<GetOgMetadataProfileResponse>,
+  never,
+  GetOgMetadataProfileQuery,
+  Record<string, never>
+>;
+
+export interface GetOgMetadataWavePathParams {
+  "id": string;
+}
+
+export type GetOgMetadataWaveQuery = Record<string, never>;
+
+export type GetOgMetadataWaveResponse = ApiOgMetadata;
+
+export type GetOgMetadataWaveRequest = Request<
+  GetOgMetadataWavePathParams,
+  ApiResponse<GetOgMetadataWaveResponse>,
+  never,
+  GetOgMetadataWaveQuery,
+  Record<string, never>
+>;
 
 export type GetBoostedDropsV2PathParams = Record<string, never>;
 
