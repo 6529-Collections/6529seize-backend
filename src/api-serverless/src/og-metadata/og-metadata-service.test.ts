@@ -98,7 +98,7 @@ function makeDropWithWave(id: string, serialNo: number): ApiDropWithWave {
       is_signed: false,
       hide_link_preview: false,
       content:
-        'Drop content\n\nSecond paragraph\n\n![Inline image](https://example.com/inline.webp)',
+        'Drop content\n\nSecond paragraph\n\n\nThird paragraph\n\n![Inline image](https://example.com/inline.webp)',
       media: [{ url: `ipfs://${IPFS_CID}/drop.mp4`, mime_type: 'video/mp4' }],
       attachments: [
         {
@@ -485,7 +485,7 @@ describe('OgMetadataService', () => {
         is_additional_action_promised: true,
         title: 'Drop title',
         description: 'Drop description',
-        content: 'Drop content\n\nSecond paragraph',
+        content: 'Drop content\nSecond paragraph\n\nThird paragraph',
         votes: {
           is_open: true,
           total_votes_given: 11,

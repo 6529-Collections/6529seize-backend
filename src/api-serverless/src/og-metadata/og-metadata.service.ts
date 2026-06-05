@@ -758,10 +758,13 @@ export class OgMetadataService {
     const lines = normalized
       .split('\n')
       .map((line) => this.collapseWhitespace(line));
-    return lines
-      .join('\n')
-      .replace(/\n{3,}/g, '\n\n')
-      .trim();
+    return this.normalizeRenderedLineBreaks(lines.join('\n')).trim();
+  }
+
+  private normalizeRenderedLineBreaks(value: string): string {
+    return value.replace(/\n{2,}/g, (lineBreaks) =>
+      '\n'.repeat(lineBreaks.length - 1)
+    );
   }
 
   private gatewayMediaUrl(url: string | null | undefined): string | null {
