@@ -189,6 +189,74 @@ describe('generateOpenApiRouteFiles', () => {
     );
   });
 
+  it('generates request body model types for json body refs', () => {
+    const document: OpenApiDocument = {
+      paths: {
+        '/v2/waves/{id}/metadata': {
+          post: {
+            operationId: 'createWaveMetadata',
+            'x-6529-router': {
+              enabled: true,
+              auth: 'required',
+              handler: {
+                import: '@/api/waves/waves-v2.handlers',
+                name: 'handleCreateWaveMetadata'
+              }
+            },
+            parameters: [
+              {
+                name: 'id',
+                in: 'path',
+                required: true,
+                schema: { type: 'string' }
+              }
+            ],
+            requestBody: {
+              content: {
+                'application/json': {
+                  schema: {
+                    $ref: '#/components/schemas/ApiCreateWaveMetadataRequest'
+                  }
+                }
+              }
+            },
+            responses: {
+              '200': {
+                content: {
+                  'application/json': {
+                    schema: {
+                      $ref: '#/components/schemas/ApiWaveMetadata'
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    };
+
+    const routes = getFile(document, 'openapi-generated.routes.ts');
+    const operations = getFile(document, 'operations.ts');
+
+    expect(routes).toContain("router.post(\n  '/v2/waves/:id/metadata'");
+    expect(routes).toContain('needsAuthenticatedUser()');
+    expect(operations).toContain(
+      "import { ApiCreateWaveMetadataRequest } from '@/api/generated/models/ApiCreateWaveMetadataRequest';"
+    );
+    expect(operations).toContain(
+      'export type CreateWaveMetadataResponse = ApiWaveMetadata;'
+    );
+    expect(operations).toContain(
+      [
+        'export type CreateWaveMetadataRequest = Request<',
+        '  CreateWaveMetadataPathParams,',
+        '  ApiResponse<CreateWaveMetadataResponse>,',
+        '  ApiCreateWaveMetadataRequest,'
+      ].join('\n')
+    );
+  });
+
   it('generates raw csv response route wiring', () => {
     const document: OpenApiDocument = {
       paths: {

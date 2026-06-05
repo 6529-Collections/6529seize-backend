@@ -99,6 +99,7 @@ import {
 import { sendIdentityPushNotifications } from '@/api/push-notifications/push-notifications.service';
 import { isWaveCreatorOrAdmin } from '@/waves/wave-admin.helpers';
 import { assertWaveAndParentVisibleOrThrow } from '@/api/waves/wave-access.helpers';
+import { waveMetadataDb } from '@/api/waves/wave-metadata.db';
 
 const CARD_SET_TDH_SUPPORTED_CONTRACTS = new Set(
   [MEMES_CONTRACT, GRADIENT_CONTRACT].map((contract) => contract.toLowerCase())
@@ -1765,7 +1766,8 @@ export class WaveApiService {
       this.wavesApiDb.deleteWaveOutcomes(waveId, ctx),
       this.wavesApiDb.deleteWaveOutcomeDistributionItems(waveId, ctx),
       this.wavesApiDb.deleteDropRelations(waveId, ctx),
-      this.wavesApiDb.deleteBoosts(waveId, ctx)
+      this.wavesApiDb.deleteBoosts(waveId, ctx),
+      waveMetadataDb.deleteByWaveId(waveId, ctx)
     ]);
   }
 

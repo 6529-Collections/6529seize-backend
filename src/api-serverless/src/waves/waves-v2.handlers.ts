@@ -4,8 +4,10 @@ import { ApiDropSearchStrategy } from '@/api/generated/models/ApiDropSearchStrat
 import { ApiDropType } from '@/api/generated/models/ApiDropType';
 import { ApiDropsLeaderboardPageV2 } from '@/api/generated/models/ApiDropsLeaderboardPageV2';
 import { ApiDropV2PageWithoutCount } from '@/api/generated/models/ApiDropV2PageWithoutCount';
+import { ApiCreateWaveMetadataRequest } from '@/api/generated/models/ApiCreateWaveMetadataRequest';
 import { ApiWaveDecisionsPageV2 } from '@/api/generated/models/ApiWaveDecisionsPageV2';
 import { ApiWaveDropsFeedV2 } from '@/api/generated/models/ApiWaveDropsFeedV2';
+import { ApiWaveMetadata } from '@/api/generated/models/ApiWaveMetadata';
 import { ApiWaveOverview } from '@/api/generated/models/ApiWaveOverview';
 import { ApiWaveOverviewPage } from '@/api/generated/models/ApiWaveOverviewPage';
 import { ApiSubwavesSort } from '@/api/generated/models/ApiSubwavesSort';
@@ -17,6 +19,9 @@ import {
   GetWaveDropsV2Request,
   GetWaveLeaderboardV2Request,
   GetWavesV2Request,
+  CreateWaveMetadataRequest,
+  DeleteWaveMetadataRequest,
+  GetWaveMetadataRequest,
   GetOfficialWavesRequest,
   ListWaveSubwavesRequest,
   ListWaveCurationDropsV2Request,
@@ -33,6 +38,7 @@ import {
   WaveDecisionsQuery,
   WaveDecisionsQuerySort
 } from '@/api/waves/wave-decisions-api.service';
+import { waveMetadataApiService } from '@/api/waves/wave-metadata.api.service';
 import { LeaderboardParams, LeaderboardSort } from '@/drops/drops.db';
 import { enums } from '@/enums';
 import { numbers } from '@/numbers';
@@ -43,9 +49,35 @@ type GetWaveDropsV2PathParams = {
   id: string;
 };
 
+type WaveMetadataPathParams = {
+  id: string;
+};
+
+type DeleteWaveMetadataPathParams = {
+  id: string;
+  metadata_id: number;
+};
+
 const GetWaveDropsV2PathParamsSchema: Joi.ObjectSchema<GetWaveDropsV2PathParams> =
   Joi.object({
     id: Joi.string().required()
+  });
+
+const WaveMetadataPathParamsSchema: Joi.ObjectSchema<WaveMetadataPathParams> =
+  Joi.object({
+    id: Joi.string().required()
+  });
+
+const DeleteWaveMetadataPathParamsSchema: Joi.ObjectSchema<DeleteWaveMetadataPathParams> =
+  Joi.object({
+    id: Joi.string().required(),
+    metadata_id: Joi.number().integer().min(1).required()
+  });
+
+const CreateWaveMetadataBodySchema: Joi.ObjectSchema<ApiCreateWaveMetadataRequest> =
+  Joi.object<ApiCreateWaveMetadataRequest>({
+    data_key: Joi.string().trim().min(1).max(500).required(),
+    data_value: Joi.string().min(1).max(8000).required()
   });
 
 type ListWaveCurationDropsV2PathParams = {
@@ -191,6 +223,65 @@ export async function handleGetOfficialWaves(
     authenticationContext,
     timer
   });
+}
+
+export async function handleGetWaveMetadata(
+  req: GetWaveMetadataRequest
+): Promise<ApiWaveMetadata[]> {
+  const { id } = getValidatedByJoiOrThrow(
+    req.params,
+    WaveMetadataPathParamsSchema
+  );
+  const timer = Timer.getFromRequest(req);
+  const authenticationContext = await getAuthenticationContext(req, timer);
+  return waveMetadataApiService.list(id, {
+    authenticationContext,
+    timer
+  });
+}
+
+export async function handleCreateWaveMetadata(
+  req: CreateWaveMetadataRequest
+): Promise<ApiWaveMetadata> {
+  const { id } = getValidatedByJoiOrThrow(
+    req.params,
+    WaveMetadataPathParamsSchema
+  );
+  const body = getValidatedByJoiOrThrow(req.body, CreateWaveMetadataBodySchema);
+  const timer = Timer.getFromRequest(req);
+  const authenticationContext = await getAuthenticationContext(req, timer);
+  return waveMetadataApiService.create(
+    {
+      waveId: id,
+      dataKey: body.data_key,
+      dataValue: body.data_value
+    },
+    {
+      authenticationContext,
+      timer
+    }
+  );
+}
+
+export async function handleDeleteWaveMetadata(
+  req: DeleteWaveMetadataRequest
+): Promise<ApiWaveMetadata> {
+  const { id, metadata_id } = getValidatedByJoiOrThrow(
+    req.params,
+    DeleteWaveMetadataPathParamsSchema
+  );
+  const timer = Timer.getFromRequest(req);
+  const authenticationContext = await getAuthenticationContext(req, timer);
+  return waveMetadataApiService.delete(
+    {
+      waveId: id,
+      metadataId: metadata_id
+    },
+    {
+      authenticationContext,
+      timer
+    }
+  );
 }
 
 export async function handleGetWaveDropsV2(
