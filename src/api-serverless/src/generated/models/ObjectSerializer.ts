@@ -69,6 +69,7 @@ export * from '../models/ApiCreateNewWaveVotingConfigBase';
 export * from '../models/ApiCreateOrUpdateProfileRequest';
 export * from '../models/ApiCreateWaveConfig';
 export * from '../models/ApiCreateWaveDropRequest';
+export * from '../models/ApiCreateWaveMetadataRequest';
 export * from '../models/ApiCreateWaveOutcome';
 export * from '../models/ApiCreateWaveOutcomeDistributionItem';
 export * from '../models/ApiCuratedProfileWaveDropsPage';
@@ -278,6 +279,7 @@ export * from '../models/ApiWaveDecisionsStrategy';
 export * from '../models/ApiWaveDropsFeed';
 export * from '../models/ApiWaveDropsFeedV2';
 export * from '../models/ApiWaveLog';
+export * from '../models/ApiWaveMetadata';
 export * from '../models/ApiWaveMetadataType';
 export * from '../models/ApiWaveMetrics';
 export * from '../models/ApiWaveMin';
@@ -450,6 +452,7 @@ import { ApiCreateNewWaveVotingConfigBase          } from '../models/ApiCreateNe
 import { ApiCreateOrUpdateProfileRequest        } from '../models/ApiCreateOrUpdateProfileRequest';
 import { ApiCreateWaveConfig          } from '../models/ApiCreateWaveConfig';
 import { ApiCreateWaveDropRequest } from '../models/ApiCreateWaveDropRequest';
+import { ApiCreateWaveMetadataRequest } from '../models/ApiCreateWaveMetadataRequest';
 import { ApiCreateWaveOutcome        } from '../models/ApiCreateWaveOutcome';
 import { ApiCreateWaveOutcomeDistributionItem } from '../models/ApiCreateWaveOutcomeDistributionItem';
 import { ApiCuratedProfileWaveDropsPage } from '../models/ApiCuratedProfileWaveDropsPage';
@@ -659,6 +662,7 @@ import { ApiWaveDecisionsStrategy } from '../models/ApiWaveDecisionsStrategy';
 import { ApiWaveDropsFeed } from '../models/ApiWaveDropsFeed';
 import { ApiWaveDropsFeedV2 } from '../models/ApiWaveDropsFeedV2';
 import { ApiWaveLog } from '../models/ApiWaveLog';
+import { ApiWaveMetadata } from '../models/ApiWaveMetadata';
 import { ApiWaveMetadataType } from '../models/ApiWaveMetadataType';
 import { ApiWaveMetrics } from '../models/ApiWaveMetrics';
 import { ApiWaveMin                         } from '../models/ApiWaveMin';
@@ -892,6 +896,7 @@ let typeMap: {[index: string]: any} = {
     "ApiCreateOrUpdateProfileRequest": ApiCreateOrUpdateProfileRequest,
     "ApiCreateWaveConfig": ApiCreateWaveConfig,
     "ApiCreateWaveDropRequest": ApiCreateWaveDropRequest,
+    "ApiCreateWaveMetadataRequest": ApiCreateWaveMetadataRequest,
     "ApiCreateWaveOutcome": ApiCreateWaveOutcome,
     "ApiCreateWaveOutcomeDistributionItem": ApiCreateWaveOutcomeDistributionItem,
     "ApiCuratedProfileWaveDropsPage": ApiCuratedProfileWaveDropsPage,
@@ -1079,6 +1084,7 @@ let typeMap: {[index: string]: any} = {
     "ApiWaveDropsFeed": ApiWaveDropsFeed,
     "ApiWaveDropsFeedV2": ApiWaveDropsFeedV2,
     "ApiWaveLog": ApiWaveLog,
+    "ApiWaveMetadata": ApiWaveMetadata,
     "ApiWaveMetrics": ApiWaveMetrics,
     "ApiWaveMin": ApiWaveMin,
     "ApiWaveNotificationPreferences": ApiWaveNotificationPreferences,

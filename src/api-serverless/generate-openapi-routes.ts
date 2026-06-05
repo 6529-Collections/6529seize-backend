@@ -30,6 +30,10 @@ type OpenApiResponse = {
   content?: Record<string, { schema?: OpenApiSchema }>;
 };
 
+type OpenApiRequestBody = {
+  content?: Record<string, { schema?: OpenApiSchema }>;
+};
+
 type RouteHandlerConfig = {
   import: string;
   name: string;
@@ -54,7 +58,7 @@ type RouteGenerationConfig = {
 type OpenApiOperation = {
   operationId?: string;
   parameters?: OpenApiParameter[];
-  requestBody?: unknown;
+  requestBody?: OpenApiRequestBody;
   responses?: Record<string, OpenApiResponse>;
   'x-6529-router'?: RouteGenerationConfig;
 };
@@ -78,6 +82,8 @@ type GeneratedOperation = {
   operationId: string;
   pathParamsTypeName: string;
   queryTypeName: string;
+  requestBodyModelImports: string[];
+  requestBodyTypeExpression: string;
   requestTypeName: string;
   responseMode: 'json' | 'raw';
   responseModelImports: string[];
@@ -171,11 +177,6 @@ function toGeneratedOperation({
       `Cannot generate route for ${operation.operationId}: missing handler import/name`
     );
   }
-  if (operation.requestBody) {
-    throw new Error(
-      `Cannot generate route for ${operation.operationId}: requestBody generation is not supported yet`
-    );
-  }
 
   const expressPath = toExpressPath(openApiPath);
   const routeKey = `${method.toUpperCase()} ${expressPath}`;
@@ -185,6 +186,7 @@ function toGeneratedOperation({
   seenRoutes.add(routeKey);
 
   const responseType = getResponseType(operation);
+  const requestBodyType = getRequestBodyType(operation);
   const typePrefix = toPascalCase(operation.operationId);
   const parameters = operation.parameters ?? [];
   const unsupportedParameters = parameters.filter(
@@ -210,6 +212,8 @@ function toGeneratedOperation({
     operationId: operation.operationId,
     pathParamsTypeName: `${typePrefix}PathParams`,
     queryTypeName: `${typePrefix}Query`,
+    requestBodyModelImports: requestBodyType.modelImports,
+    requestBodyTypeExpression: requestBodyType.typeExpression,
     requestTypeName: `${typePrefix}Request`,
     responseMode: responseType.responseMode,
     responseModelImports: responseType.modelImports,
@@ -329,6 +333,33 @@ function getResponseType(operation: OpenApiOperation): JsonResponseType {
   );
 }
 
+function getRequestBodyType(operation: OpenApiOperation): {
+  modelImports: string[];
+  typeExpression: string;
+} {
+  if (!operation.requestBody) {
+    return {
+      modelImports: [],
+      typeExpression: 'never'
+    };
+  }
+
+  const jsonSchema =
+    operation.requestBody.content?.['application/json']?.schema;
+  const ref = jsonSchema?.$ref;
+  if (ref) {
+    const modelName = getRefModelName(ref);
+    return {
+      modelImports: [modelName],
+      typeExpression: modelName
+    };
+  }
+
+  throw new Error(
+    `Cannot generate route for ${operation.operationId}: expected an application/json requestBody $ref`
+  );
+}
+
 function toExpressPath(openApiPath: string): string {
   return openApiPath.replace(/{([^}]+)}/g, ':$1');
 }
@@ -383,8 +414,13 @@ function renderParameterInterface(
 }
 
 function renderOperationsFile(operations: GeneratedOperation[]): string {
-  const responseImports = Array.from(
-    new Set(operations.flatMap((operation) => operation.responseModelImports))
+  const modelImports = Array.from(
+    new Set(
+      operations.flatMap((operation) => [
+        ...operation.responseModelImports,
+        ...operation.requestBodyModelImports
+      ])
+    )
   ).sort(compareStrings);
   const importsApiResponse = operations.some(
     (operation) => operation.responseMode === 'json'
@@ -405,7 +441,7 @@ function renderOperationsFile(operations: GeneratedOperation[]): string {
           operation.queryParams
         ).trimEnd(),
         `export type ${operation.responseTypeName} = ${operation.responseTypeExpression};`,
-        `export type ${operation.requestTypeName} = Request<\n  ${operation.pathParamsTypeName},\n  ${responseBodyType},\n  never,\n  ${operation.queryTypeName},\n  Record<string, never>\n>;`
+        `export type ${operation.requestTypeName} = Request<\n  ${operation.pathParamsTypeName},\n  ${responseBodyType},\n  ${operation.requestBodyTypeExpression},\n  ${operation.queryTypeName},\n  Record<string, never>\n>;`
       ].join('\n\n');
     })
     .join('\n\n');
@@ -416,7 +452,7 @@ function renderOperationsFile(operations: GeneratedOperation[]): string {
     importsApiResponse
       ? "import { ApiResponse } from '@/api/api-response';"
       : '',
-    ...responseImports.map(
+    ...modelImports.map(
       (modelName) =>
         `import { ${modelName} } from '@/api/generated/models/${modelName}';`
     ),

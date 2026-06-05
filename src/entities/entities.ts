@@ -174,6 +174,7 @@ export {
 export { WaveChatDropCooldownEntity } from './IWaveChatDropCooldown';
 export { WaveDropperMetricEntity } from './IWaveDropperMetric';
 export { WaveLeaderboardEntryEntity } from './IWaveLeaderboardEntry';
+export { WaveMetadataEntity } from './IWaveMetadata';
 export { WaveMetricEntity } from './IWaveMetric';
 export { WaveReaderMetricEntity } from './IWaveReaderMetric';
 export { WaveCurationEntity } from './IWaveCuration';
