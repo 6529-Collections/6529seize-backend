@@ -399,6 +399,8 @@ export class OgMetadataService {
       submission_status: drop.submission_context?.status,
       submitted_at: isSubmission ? drop.created_at : null,
       won_at: drop.submission_context?.won_at ?? null,
+      is_additional_action_promised:
+        drop.submission_context?.is_additional_action_promised ?? null,
       title: this.cleanText(
         this.findPriorityMetadataValue(drop.priority_metadata, 'title') ??
           drop.title ??

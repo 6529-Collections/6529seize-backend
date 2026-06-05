@@ -151,6 +151,7 @@ function makeDropWithWave(id: string, serialNo: number): ApiDropWithWave {
       submission_context: {
         status: ApiSubmissionDropStatus.Active,
         has_metadata: true,
+        is_additional_action_promised: true,
         voting: {
           is_open: true,
           total_votes_given: 11,
@@ -481,6 +482,7 @@ describe('OgMetadataService', () => {
         submission_status: ApiSubmissionDropStatus.Active,
         submitted_at: 1,
         won_at: null,
+        is_additional_action_promised: true,
         title: 'Drop title',
         description: 'Drop description',
         content: 'Drop content',
@@ -582,7 +584,8 @@ describe('OgMetadataService', () => {
         serial_no: 44,
         submission_status: ApiSubmissionDropStatus.Winner,
         submitted_at: 1,
-        won_at: 1234567890
+        won_at: 1234567890,
+        is_additional_action_promised: true
       }
     });
   });
