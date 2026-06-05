@@ -758,7 +758,10 @@ export class OgMetadataService {
     const lines = normalized
       .split('\n')
       .map((line) => this.collapseWhitespace(line));
-    return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+    return lines
+      .join('\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
   }
 
   private gatewayMediaUrl(url: string | null | undefined): string | null {
