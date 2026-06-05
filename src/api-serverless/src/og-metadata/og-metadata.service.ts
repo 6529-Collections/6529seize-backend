@@ -76,6 +76,10 @@ type MarkdownLinkReplacement = {
   readonly endIndex: number;
 };
 
+type CleanTextOptions = {
+  readonly preserveLineBreaks?: boolean;
+};
+
 export class OgMetadataService {
   private readonly logger = Logger.get(this.constructor.name);
 
@@ -409,7 +413,7 @@ export class OgMetadataService {
       description: this.cleanText(
         this.findPriorityMetadataValue(drop.priority_metadata, 'description')
       ),
-      content: this.cleanText(drop.content),
+      content: this.cleanText(drop.content, { preserveLineBreaks: true }),
       votes: drop.submission_context?.voting,
       media: this.mapDropMedia(drop),
       files: this.mapFiles(drop.attachments ?? [])
@@ -516,13 +520,18 @@ export class OgMetadataService {
     );
   }
 
-  private cleanText(value: string | null | undefined): string | null {
+  private cleanText(
+    value: string | null | undefined,
+    options: CleanTextOptions = {}
+  ): string | null {
     if (!value) {
       return null;
     }
     const withoutTags = this.stripHtmlTags(value);
-    const cleaned =
-      this.removeMarkdownMarkersAndCollapseWhitespace(withoutTags);
+    const cleaned = this.removeMarkdownMarkersAndCollapseWhitespace(
+      withoutTags,
+      options
+    );
     return cleaned.length ? cleaned : null;
   }
 
@@ -564,7 +573,10 @@ export class OgMetadataService {
     );
   }
 
-  private removeMarkdownMarkersAndCollapseWhitespace(value: string): string {
+  private removeMarkdownMarkersAndCollapseWhitespace(
+    value: string,
+    options: CleanTextOptions
+  ): string {
     const withoutMarkdown = this.replaceMarkdownLinks(value)
       .replace(/(^|\n)[ \t]{0,3}#{1,6}[ \t]+/g, '$1')
       .replace(/(^|\n)[ \t]{0,3}>[ \t]?/g, '$1')
@@ -573,6 +585,9 @@ export class OgMetadataService {
       .replace(/(\*{1,3})(\w(?:[^*\n]*?\w)?)\1/g, '$2')
       .replace(/(^|[^\w])(_{1,3})(\w(?:[^_\n]*?\w)?)\2($|[^\w])/g, '$1$3$4')
       .replace(/```/g, '');
+    if (options.preserveLineBreaks) {
+      return this.collapseWhitespacePreservingLineBreaks(withoutMarkdown);
+    }
     return this.collapseWhitespace(withoutMarkdown);
   }
 
@@ -736,6 +751,20 @@ export class OgMetadataService {
       result += char;
     }
     return result.trim();
+  }
+
+  private collapseWhitespacePreservingLineBreaks(value: string): string {
+    const normalized = value.replace(/\r\n?/g, '\n');
+    const lines = normalized
+      .split('\n')
+      .map((line) => this.collapseWhitespace(line));
+    return this.normalizeRenderedLineBreaks(lines.join('\n')).trim();
+  }
+
+  private normalizeRenderedLineBreaks(value: string): string {
+    return value.replace(/\n{2,}/g, (lineBreaks) =>
+      '\n'.repeat(lineBreaks.length - 1)
+    );
   }
 
   private gatewayMediaUrl(url: string | null | undefined): string | null {
