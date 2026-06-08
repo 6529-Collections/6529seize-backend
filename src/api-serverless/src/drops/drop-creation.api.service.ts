@@ -45,7 +45,7 @@ function normalizeCreateDropPollRequest(
   poll: ApiCreateDropPollRequest | null | undefined
 ): CreateDropPollRequest | null | undefined {
   if (!poll) {
-    return poll;
+    return undefined;
   }
   return {
     ...poll,
