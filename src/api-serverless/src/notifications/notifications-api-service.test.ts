@@ -333,6 +333,74 @@ describe('NotificationsApiService V2 notifications', () => {
     expect(Object.keys(reactors[0])).toEqual(['handle', 'pfp', 'subscribed']);
   });
 
+  it('maps DROP_POLL_VOTED selected options into additional context', async () => {
+    const { service, notificationsReader, identityFetcher, dropsService } =
+      createService();
+    const drop = { id: 'drop-1', content: 'poll drop' };
+    const voter = makeIdentity('voter-1', 'alice', 'alice.png');
+    notificationsReader.getNotificationsForIdentity.mockResolvedValue({
+      notifications: [
+        {
+          id: 8,
+          created_at: 2500,
+          read_at: null,
+          cause: IdentityNotificationCause.DROP_POLL_VOTED,
+          data: {
+            voter_id: 'voter-1',
+            drop_id: 'drop-1',
+            drop_author_id: 'author-1',
+            poll_options: [
+              { option_no: 1, option_string: 'First' },
+              { option_no: 3, option_string: 'Third' }
+            ],
+            wave_id: 'wave-1'
+          }
+        }
+      ],
+      total_unread: 1
+    });
+    dropsService.findDropsV2ByIds.mockResolvedValue({
+      'drop-1': drop
+    });
+    identityFetcher.getApiIdentityOverviewsByIds.mockResolvedValue({
+      'voter-1': voter
+    });
+
+    const authenticationContext =
+      AuthenticationContext.fromProfileId('viewer-1');
+    const result = await service.getNotificationsV2(
+      {
+        id_less_than: null,
+        limit: 10,
+        cause: null,
+        cause_exclude: null,
+        unread_only: false
+      },
+      authenticationContext,
+      { authenticationContext }
+    );
+
+    expect(result).toEqual({
+      notifications: [
+        {
+          id: 8,
+          created_at: 2500,
+          read_at: null,
+          cause: ApiNotificationCause.DropPollVoted,
+          related_identity: voter,
+          related_drops: [drop],
+          additional_context: {
+            poll_options: [
+              { option_no: 1, option_string: 'First' },
+              { option_no: 3, option_string: 'Third' }
+            ]
+          }
+        }
+      ],
+      unread_count: 1
+    });
+  });
+
   it('skips V2 notifications when a related drop is missing', async () => {
     const { service, notificationsReader, identityFetcher, dropsService } =
       createService();

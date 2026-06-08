@@ -22,6 +22,19 @@ export interface DropVoteNotificationData {
   wave_id: string;
 }
 
+export interface DropPollVoteNotificationOption {
+  option_no: number;
+  option_string: string;
+}
+
+export interface DropPollVoteNotificationData {
+  voter_id: string;
+  drop_id: string;
+  drop_author_id: string;
+  poll_options: DropPollVoteNotificationOption[];
+  wave_id: string;
+}
+
 export interface DropReactionNotificationData {
   profile_id: string;
   drop_id: string;
@@ -122,6 +135,11 @@ export interface DropVoteNotification extends UserNotificationBase {
   data: DropVoteNotificationData;
 }
 
+export interface DropPollVoteNotification extends UserNotificationBase {
+  cause: IdentityNotificationCause.DROP_POLL_VOTED;
+  data: DropPollVoteNotificationData;
+}
+
 export interface DropReactionNotification extends UserNotificationBase {
   cause: IdentityNotificationCause.DROP_REACTED;
   data: DropReactionNotificationData;
@@ -163,6 +181,7 @@ export type UserNotification =
   | IdentityRepNotification
   | IdentityNicNotification
   | DropVoteNotification
+  | DropPollVoteNotification
   | DropReactionNotification
   | DropBoostNotification
   | DropReplyNotification

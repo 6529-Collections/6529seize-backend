@@ -74,4 +74,39 @@ describe('UserNotificationMapper', () => {
       }
     ]);
   });
+
+  it('maps drop poll vote notifications with selected options', () => {
+    const [notification] = mapper.mapNotifications([
+      notificationEntity({
+        identity_id: 'author-1',
+        additional_identity_id: 'voter-1',
+        cause: IdentityNotificationCause.DROP_POLL_VOTED,
+        additional_data: {
+          poll_options: [
+            { option_no: '1', option_string: 'First' },
+            { option_no: 3, option_string: 'Third' }
+          ]
+        },
+        visibility_group_id: 'visibility-group',
+        wave_id: 'wave-1'
+      })
+    ]);
+
+    expect(notification).toEqual({
+      id: 1,
+      created_at: 1000,
+      read_at: null,
+      cause: IdentityNotificationCause.DROP_POLL_VOTED,
+      data: {
+        drop_author_id: 'author-1',
+        drop_id: 'drop-1',
+        voter_id: 'voter-1',
+        poll_options: [
+          { option_no: 1, option_string: 'First' },
+          { option_no: 3, option_string: 'Third' }
+        ],
+        wave_id: 'wave-1'
+      }
+    });
+  });
 });

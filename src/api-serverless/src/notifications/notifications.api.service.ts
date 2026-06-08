@@ -79,6 +79,10 @@ type DropVotedNotification = Extract<
   UserNotification,
   { cause: IdentityNotificationCause.DROP_VOTED }
 >;
+type DropPollVotedNotification = Extract<
+  UserNotification,
+  { cause: IdentityNotificationCause.DROP_POLL_VOTED }
+>;
 
 export class NotificationsApiService {
   constructor(
@@ -359,6 +363,12 @@ export class NotificationsApiService {
           dropIds.push(data.drop_id);
           break;
         }
+        case IdentityNotificationCause.DROP_POLL_VOTED: {
+          const data = notification.data;
+          profileIds.push(data.voter_id);
+          dropIds.push(data.drop_id);
+          break;
+        }
         case IdentityNotificationCause.DROP_REACTED: {
           const data = notification.data;
           profileIds.push(data.profile_id);
@@ -436,6 +446,7 @@ export class NotificationsApiService {
       }
       case IdentityNotificationCause.IDENTITY_MENTIONED:
       case IdentityNotificationCause.DROP_VOTED:
+      case IdentityNotificationCause.DROP_POLL_VOTED:
       case IdentityNotificationCause.DROP_REACTED:
       case IdentityNotificationCause.DROP_BOOSTED:
       case IdentityNotificationCause.DROP_QUOTED:
@@ -462,6 +473,7 @@ export class NotificationsApiService {
       }
       case IdentityNotificationCause.IDENTITY_MENTIONED:
       case IdentityNotificationCause.DROP_VOTED:
+      case IdentityNotificationCause.DROP_POLL_VOTED:
       case IdentityNotificationCause.DROP_REACTED:
       case IdentityNotificationCause.DROP_BOOSTED:
       case IdentityNotificationCause.ALL_DROPS:
@@ -583,6 +595,18 @@ export class NotificationsApiService {
           related_identity: profiles[data.voter_id],
           related_drops: [drops[data.drop_id]],
           additional_context: this.getDropVotedAdditionalContext(data)
+        };
+      }
+      case IdentityNotificationCause.DROP_POLL_VOTED: {
+        const data = notification.data;
+        return {
+          id: notification.id,
+          created_at: notification.created_at,
+          read_at: notification.read_at,
+          cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
+          related_identity: profiles[data.voter_id],
+          related_drops: [drops[data.drop_id]],
+          additional_context: this.getDropPollVotedAdditionalContext(data)
         };
       }
       case IdentityNotificationCause.DROP_REACTED: {
@@ -745,6 +769,14 @@ export class NotificationsApiService {
     };
   }
 
+  private getDropPollVotedAdditionalContext(
+    data: DropPollVotedNotification['data']
+  ) {
+    return {
+      poll_options: data.poll_options
+    };
+  }
+
   private getDropReactedAdditionalContextV2({
     dropId,
     reaction,
@@ -841,6 +873,18 @@ export class NotificationsApiService {
           related_identity: profiles[data.voter_id],
           related_drops: [drops[data.drop_id]],
           additional_context: this.getDropVotedAdditionalContext(data)
+        };
+      }
+      case IdentityNotificationCause.DROP_POLL_VOTED: {
+        const data = notification.data;
+        return {
+          id: notification.id,
+          created_at: notification.created_at,
+          read_at: notification.read_at,
+          cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
+          related_identity: profiles[data.voter_id],
+          related_drops: [drops[data.drop_id]],
+          additional_context: this.getDropPollVotedAdditionalContext(data)
         };
       }
       case IdentityNotificationCause.DROP_REACTED: {

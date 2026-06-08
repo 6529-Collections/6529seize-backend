@@ -23,19 +23,21 @@ function createService() {
     ),
     findPollByDropIdForUpdate: jest.fn(),
     findOptionsByPollId: jest.fn(),
-    replaceVoterVotes: jest.fn().mockResolvedValue(undefined)
+    replaceVoterVotes: jest.fn().mockResolvedValue(true)
   };
   const dropsDb = {
     findDropByIdWithEligibilityCheck: jest.fn().mockResolvedValue({
       id: 'drop-1',
-      wave_id: 'wave-1'
+      wave_id: 'wave-1',
+      author_id: 'author-1'
     })
   };
   const wavesApiDb = {
     findById: jest.fn().mockResolvedValue({
       id: 'wave-1',
       created_by: 'creator-1',
-      admin_group_id: 'admin-group'
+      admin_group_id: 'admin-group',
+      visibility_group_id: 'visibility-group'
     })
   };
   const userGroupsService = {
@@ -53,6 +55,9 @@ function createService() {
   const wsListenersNotifier = {
     notifyAboutDropUpdate: jest.fn().mockResolvedValue(undefined)
   };
+  const userNotifier = {
+    notifyOfDropPollVote: jest.fn().mockResolvedValue(undefined)
+  };
 
   return {
     service: new DropPollsApiService(
@@ -62,7 +67,8 @@ function createService() {
       userGroupsService as any,
       identityFetcher as any,
       dropsService as any,
-      wsListenersNotifier as any
+      wsListenersNotifier as any,
+      userNotifier as any
     ),
     deps: {
       dropPollsDb,
@@ -70,7 +76,8 @@ function createService() {
       wavesApiDb,
       userGroupsService,
       dropsService,
-      wsListenersNotifier
+      wsListenersNotifier,
+      userNotifier
     }
   };
 }
@@ -217,9 +224,27 @@ describe('DropPollsApiService', () => {
       multichoice: true
     });
     deps.dropPollsDb.findOptionsByPollId.mockResolvedValue([
-      { poll_id: 'poll-1', wave_id: 'wave-1', drop_id: 'drop-1', option_no: 1 },
-      { poll_id: 'poll-1', wave_id: 'wave-1', drop_id: 'drop-1', option_no: 2 },
-      { poll_id: 'poll-1', wave_id: 'wave-1', drop_id: 'drop-1', option_no: 3 }
+      {
+        poll_id: 'poll-1',
+        wave_id: 'wave-1',
+        drop_id: 'drop-1',
+        option_no: 1,
+        option_string: 'First'
+      },
+      {
+        poll_id: 'poll-1',
+        wave_id: 'wave-1',
+        drop_id: 'drop-1',
+        option_no: 2,
+        option_string: 'Second'
+      },
+      {
+        poll_id: 'poll-1',
+        wave_id: 'wave-1',
+        drop_id: 'drop-1',
+        option_no: 3,
+        option_string: 'Third'
+      }
     ]);
 
     const result = await service.vote(
@@ -242,6 +267,19 @@ describe('DropPollsApiService', () => {
       },
       expect.objectContaining({ connection: 'tx-connection' })
     );
+    expect(deps.userNotifier.notifyOfDropPollVote).toHaveBeenCalledWith(
+      {
+        voter_id: 'voter-1',
+        drop_id: 'drop-1',
+        drop_author_id: 'author-1',
+        poll_options: [
+          { option_no: 2, option_string: 'Second' },
+          { option_no: 3, option_string: 'Third' }
+        ],
+        wave_id: 'wave-1'
+      },
+      'visibility-group'
+    );
     expect(
       (giveReadReplicaTimeToCatchUp as jest.Mock).mock.invocationCallOrder[0]
     ).toBeLessThan(
@@ -249,6 +287,56 @@ describe('DropPollsApiService', () => {
     );
     expect(deps.wsListenersNotifier.notifyAboutDropUpdate).toHaveBeenCalledWith(
       { id: 'drop-1' },
+      { authenticationContext: AuthenticationContext.fromProfileId('voter-1') }
+    );
+    expect(result).toEqual({ id: 'drop-1' });
+  });
+
+  it('does not notify or broadcast when poll vote selections are unchanged', async () => {
+    jest.spyOn(Time, 'currentMillis').mockReturnValue(1_000);
+    const { service, deps } = createService();
+    deps.dropPollsDb.replaceVoterVotes.mockResolvedValue(false);
+    deps.dropPollsDb.findPollByDropIdForUpdate.mockResolvedValue({
+      id: 'poll-1',
+      wave_id: 'wave-1',
+      drop_id: 'drop-1',
+      closing_time: 2_000,
+      multichoice: true
+    });
+    deps.dropPollsDb.findOptionsByPollId.mockResolvedValue([
+      {
+        poll_id: 'poll-1',
+        wave_id: 'wave-1',
+        drop_id: 'drop-1',
+        option_no: 2,
+        option_string: 'Second'
+      },
+      {
+        poll_id: 'poll-1',
+        wave_id: 'wave-1',
+        drop_id: 'drop-1',
+        option_no: 3,
+        option_string: 'Third'
+      }
+    ]);
+
+    const result = await service.vote(
+      {
+        dropId: 'drop-1',
+        voterId: 'voter-1',
+        options: [2, 3]
+      },
+      { authenticationContext: AuthenticationContext.fromProfileId('voter-1') }
+    );
+
+    expect(deps.userNotifier.notifyOfDropPollVote).not.toHaveBeenCalled();
+    expect(giveReadReplicaTimeToCatchUp).not.toHaveBeenCalled();
+    expect(deps.dropsService.findDropByIdOrThrow).not.toHaveBeenCalled();
+    expect(
+      deps.wsListenersNotifier.notifyAboutDropUpdate
+    ).not.toHaveBeenCalled();
+    expect(deps.dropsService.findDropsV2ByIds).toHaveBeenCalledWith(
+      ['drop-1'],
       { authenticationContext: AuthenticationContext.fromProfileId('voter-1') }
     );
     expect(result).toEqual({ id: 'drop-1' });
