@@ -21,6 +21,7 @@ export function mapDropPollToApi(
   return {
     id: poll.id,
     options: mapOptions(poll),
+    voted: [...(poll.voted ?? [])].sort((a, b) => a - b),
     multichoice: poll.multichoice,
     closing_time: poll.closing_time,
     is_open: now < poll.closing_time

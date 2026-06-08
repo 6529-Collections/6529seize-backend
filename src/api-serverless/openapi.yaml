@@ -10694,6 +10694,7 @@ components:
       required:
         - id
         - options
+        - voted
         - multichoice
         - closing_time
         - is_open
@@ -10704,6 +10705,13 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ApiDropPollOption"
+        voted:
+          description: Option numbers voted for by the authenticated context profile.
+          type: array
+          items:
+            type: integer
+            format: int64
+            minimum: 1
         multichoice:
           type: boolean
         closing_time:
@@ -15191,6 +15199,7 @@ components:
         - drop_id
         - created_at
         - options
+        - voted
         - multichoice
         - closing_time
         - is_open
@@ -15208,6 +15217,13 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ApiDropPollOption"
+        voted:
+          description: Option numbers voted for by the authenticated context profile.
+          type: array
+          items:
+            type: integer
+            format: int64
+            minimum: 1
         multichoice:
           type: boolean
         closing_time:
