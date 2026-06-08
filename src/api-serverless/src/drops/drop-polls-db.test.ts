@@ -102,7 +102,7 @@ describe('DropPollsDb', () => {
     );
   });
 
-  it('deletes only matching poll option conflicts before profile vote merge', async () => {
+  it('drops source poll votes when the merge target already voted in the same poll', async () => {
     const { service, execute } = createDb();
 
     await service.mergeOnProfileIdChange(
@@ -111,7 +111,8 @@ describe('DropPollsDb', () => {
     );
 
     expect(execute.mock.calls[0][0]).toContain(
-      'target_votes.option_no = source_votes.option_no'
+      'target_votes.poll_id = source_votes.poll_id'
     );
+    expect(execute.mock.calls[0][0]).not.toContain('target_votes.option_no');
   });
 });

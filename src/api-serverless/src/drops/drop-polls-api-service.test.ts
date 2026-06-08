@@ -1,9 +1,15 @@
+jest.mock('@/api/api-helpers', () => ({
+  giveReadReplicaTimeToCatchUp: jest.fn().mockResolvedValue(undefined)
+}));
+
 import { AuthenticationContext } from '@/auth-context';
+import { giveReadReplicaTimeToCatchUp } from '@/api/api-helpers';
 import { DropPollsApiService } from '@/api/drops/drop-polls.api.service';
 import { DropType } from '@/entities/IDrop';
 import { Time } from '@/time';
 
 afterEach(() => {
+  jest.clearAllMocks();
   jest.restoreAllMocks();
 });
 
@@ -235,6 +241,11 @@ describe('DropPollsApiService', () => {
         voteTime: 1_000
       },
       expect.objectContaining({ connection: 'tx-connection' })
+    );
+    expect(
+      (giveReadReplicaTimeToCatchUp as jest.Mock).mock.invocationCallOrder[0]
+    ).toBeLessThan(
+      deps.dropsService.findDropByIdOrThrow.mock.invocationCallOrder[0]
     );
     expect(deps.wsListenersNotifier.notifyAboutDropUpdate).toHaveBeenCalledWith(
       { id: 'drop-1' },

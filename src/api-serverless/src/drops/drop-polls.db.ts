@@ -442,7 +442,6 @@ export class DropPollsDb extends LazyDbAccessCompatibleService {
         from ${DROP_POLL_VOTES_TABLE} source_votes
         join ${DROP_POLL_VOTES_TABLE} target_votes
           on target_votes.poll_id = source_votes.poll_id
-          and target_votes.option_no = source_votes.option_no
           and target_votes.voter_id = :new_id
         where source_votes.voter_id = :previous_id
       `,

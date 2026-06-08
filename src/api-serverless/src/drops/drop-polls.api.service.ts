@@ -41,6 +41,7 @@ import {
   wsListenersNotifier,
   WsListenersNotifier
 } from '@/api/ws/ws-listeners-notifier';
+import { giveReadReplicaTimeToCatchUp } from '@/api/api-helpers';
 
 export type CreateDropPollRequest = {
   readonly options: string[];
@@ -244,6 +245,7 @@ export class DropPollsApiService {
         );
       }
     );
+    await giveReadReplicaTimeToCatchUp();
     const legacyDrop = await this.dropsService.findDropByIdOrThrow(
       { dropId, skipEligibilityCheck: true },
       ctx
