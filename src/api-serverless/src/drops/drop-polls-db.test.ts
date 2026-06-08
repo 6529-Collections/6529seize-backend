@@ -1,4 +1,8 @@
-import { DROP_POLL_OPTIONS_TABLE, DROP_POLLS_TABLE } from '@/constants';
+import {
+  DROP_POLL_OPTIONS_TABLE,
+  DROP_POLL_VOTES_TABLE,
+  DROP_POLLS_TABLE
+} from '@/constants';
 import { AuthenticationContext } from '@/auth-context';
 import { PageSortDirection } from '@/api/page-request';
 import {
@@ -233,6 +237,72 @@ describe('DropPollsDb', () => {
       pollIds: ['poll-1'],
       contextProfileId: 'viewer-1'
     });
+  });
+
+  it('skips replacing voter votes when selected options are unchanged', async () => {
+    const { service, execute, bulkInsert } = createDb();
+    execute.mockResolvedValueOnce([{ option_no: '2' }, { option_no: 3 }]);
+
+    const result = await service.replaceVoterVotes(
+      {
+        pollId: 'poll-1',
+        waveId: 'wave-1',
+        dropId: 'drop-1',
+        voterId: 'voter-1',
+        optionNos: [3, 2],
+        voteTime: 1_000
+      },
+      {}
+    );
+
+    expect(result).toBe(false);
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute).toHaveBeenCalledWith(
+      expect.stringContaining(`from ${DROP_POLL_VOTES_TABLE}`),
+      { pollId: 'poll-1', voterId: 'voter-1' },
+      { wrappedConnection: undefined }
+    );
+    expect(bulkInsert).not.toHaveBeenCalled();
+  });
+
+  it('reports changed and replaces voter votes when selected options differ', async () => {
+    const { service, execute, bulkInsert } = createDb();
+    execute.mockResolvedValueOnce([{ option_no: 1 }]);
+
+    const result = await service.replaceVoterVotes(
+      {
+        pollId: 'poll-1',
+        waveId: 'wave-1',
+        dropId: 'drop-1',
+        voterId: 'voter-1',
+        optionNos: [2],
+        voteTime: 1_000
+      },
+      {}
+    );
+
+    expect(result).toBe(true);
+    expect(execute).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining(`delete from ${DROP_POLL_VOTES_TABLE}`),
+      { pollId: 'poll-1', voterId: 'voter-1' },
+      { wrappedConnection: undefined }
+    );
+    expect(bulkInsert).toHaveBeenCalledWith(
+      DROP_POLL_VOTES_TABLE,
+      [
+        {
+          poll_id: 'poll-1',
+          wave_id: 'wave-1',
+          drop_id: 'drop-1',
+          option_no: 2,
+          vote_time: 1_000,
+          voter_id: 'voter-1'
+        }
+      ],
+      ['poll_id', 'wave_id', 'drop_id', 'option_no', 'vote_time', 'voter_id'],
+      {}
+    );
   });
 
   it('drops source poll votes when the merge target already voted in the same poll', async () => {

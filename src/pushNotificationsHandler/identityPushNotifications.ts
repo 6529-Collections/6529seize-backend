@@ -56,6 +56,7 @@ const CAUSE_TO_SETTING_KEY: Partial<
   [IdentityNotificationCause.DROP_QUOTED]: 'drop_quoted',
   [IdentityNotificationCause.DROP_REPLIED]: 'drop_replied',
   [IdentityNotificationCause.DROP_VOTED]: 'drop_voted',
+  [IdentityNotificationCause.DROP_POLL_VOTED]: 'drop_voted',
   [IdentityNotificationCause.DROP_REACTED]: 'drop_reacted',
   [IdentityNotificationCause.DROP_BOOSTED]: 'drop_boosted',
   [IdentityNotificationCause.WAVE_CREATED]: 'wave_created'
@@ -83,6 +84,12 @@ interface AdditionalDataPayload {
   vote_change?: AdditionalDataNumber;
   total_vote?: AdditionalDataNumber;
   reaction?: string | null;
+  poll_options?: unknown;
+}
+
+interface PollVoteAdditionalDataOption {
+  option_no: number;
+  option_string: string;
 }
 
 function extractAdditionalData(
@@ -514,6 +521,8 @@ async function generateNotificationData(
       return handleDropReplied(notification, additionalEntity);
     case IdentityNotificationCause.DROP_VOTED:
       return handleDropVoted(notification, additionalEntity);
+    case IdentityNotificationCause.DROP_POLL_VOTED:
+      return handleDropPollVoted(notification, additionalEntity);
     case IdentityNotificationCause.DROP_REACTED:
       return handleDropReacted(notification, additionalEntity);
     case IdentityNotificationCause.DROP_BOOSTED:
@@ -712,6 +721,60 @@ async function handleDropVoted(
     drop_id: dropSerialNo
   };
   return { title, body, data, imageUrl };
+}
+
+async function handleDropPollVoted(
+  notification: IdentityNotificationEntity,
+  additionalEntity: ApiIdentity
+) {
+  const pollOptions = getPollVoteOptions(notification);
+  if (!pollOptions.length) {
+    throw new Error(
+      `[ID ${notification.id}] Poll vote additional data not found`
+    );
+  }
+  const imageUrl = additionalEntity.pfp;
+  const dropSerialNo = await getDropSerialNo(notification.related_drop_id);
+  const voterHandle =
+    additionalEntity.handle ??
+    additionalEntity.normalised_handle ??
+    notification.additional_identity_id ??
+    'Someone';
+  const title = `${voterHandle} voted on your poll`;
+  const body =
+    pollOptions.length === 1
+      ? `Option: ${pollOptions[0].option_string}`
+      : `Options: ${pollOptions.map((option) => option.option_string).join(', ')}`;
+  const data = {
+    redirect: 'waves',
+    wave_id: notification.wave_id,
+    drop_id: dropSerialNo
+  };
+  return { title, body, data, imageUrl };
+}
+
+function getPollVoteOptions(
+  notification: IdentityNotificationEntity
+): PollVoteAdditionalDataOption[] {
+  const rawOptions = extractAdditionalData(notification).poll_options;
+  if (!Array.isArray(rawOptions)) {
+    return [];
+  }
+  return rawOptions
+    .map((option) => {
+      const optionNo = numbersOrNull(option.option_no);
+      const optionString = option.option_string;
+      if (optionNo === null || typeof optionString !== 'string') {
+        return null;
+      }
+      return {
+        option_no: optionNo,
+        option_string: optionString
+      };
+    })
+    .filter(
+      (option): option is PollVoteAdditionalDataOption => option !== null
+    );
 }
 
 async function handleDropReacted(
