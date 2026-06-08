@@ -13,7 +13,7 @@
 import { HttpFile } from '../http/http';
 
 export class ApiCreateDropPollRequest {
-    'options': Array<string>;
+    'options': Set<string>;
     'multichoice': boolean;
     /**
     * Future Unix timestamp in milliseconds.
@@ -28,7 +28,7 @@ export class ApiCreateDropPollRequest {
         {
             "name": "options",
             "baseName": "options",
-            "type": "Array<string>",
+            "type": "Set<string>",
             "format": ""
         },
         {

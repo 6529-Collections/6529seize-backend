@@ -154,6 +154,26 @@ describe('DropPollsApiService', () => {
     expect(deps.dropPollsDb.replaceVoterVotes).not.toHaveBeenCalled();
   });
 
+  it('rejects duplicate vote options', async () => {
+    jest.spyOn(Time, 'currentMillis').mockReturnValue(1_000);
+    const { service, deps } = createService();
+
+    await expect(
+      service.vote(
+        {
+          dropId: 'drop-1',
+          voterId: 'voter-1',
+          options: [2, 2]
+        },
+        {
+          authenticationContext: AuthenticationContext.fromProfileId('voter-1')
+        }
+      )
+    ).rejects.toThrow('Poll options must be unique');
+    expect(deps.dropPollsDb.findPollByDropIdForUpdate).not.toHaveBeenCalled();
+    expect(deps.dropPollsDb.replaceVoterVotes).not.toHaveBeenCalled();
+  });
+
   it('rejects votes after poll closing time', async () => {
     jest.spyOn(Time, 'currentMillis').mockReturnValue(2_000);
     const { service, deps } = createService();
@@ -180,7 +200,7 @@ describe('DropPollsApiService', () => {
     expect(deps.dropPollsDb.replaceVoterVotes).not.toHaveBeenCalled();
   });
 
-  it('replaces previous poll votes with de-duplicated choices', async () => {
+  it('replaces previous poll votes with selected choices', async () => {
     jest.spyOn(Time, 'currentMillis').mockReturnValue(1_000);
     const { service, deps } = createService();
     deps.dropPollsDb.findPollByDropIdForUpdate.mockResolvedValue({
@@ -200,7 +220,7 @@ describe('DropPollsApiService', () => {
       {
         dropId: 'drop-1',
         voterId: 'voter-1',
-        options: [2, 2, 3]
+        options: [2, 3]
       },
       { authenticationContext: AuthenticationContext.fromProfileId('voter-1') }
     );

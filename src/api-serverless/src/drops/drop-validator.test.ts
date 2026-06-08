@@ -198,6 +198,20 @@ describe('NewDropSchema', () => {
     );
   });
 
+  it('rejects polls with duplicate options', () => {
+    const result = NewDropSchema.validate({
+      ...createDropWithMetadata('artist', 'Artist'),
+      drop_type: ApiDropType.Chat,
+      poll: {
+        options: ['Same', 'Same'],
+        multichoice: false,
+        closing_time: futureTimestamp
+      }
+    });
+
+    expect(result.error?.message).toContain('duplicate');
+  });
+
   it('rejects polls with past closing time', () => {
     const result = NewDropSchema.validate({
       ...createDropWithMetadata('artist', 'Artist'),

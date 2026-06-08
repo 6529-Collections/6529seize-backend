@@ -64,6 +64,7 @@ const DropPollVoteBodySchema: Joi.ObjectSchema<ApiDropPollVoteRequest> =
       .items(Joi.number().integer().min(1))
       .min(1)
       .max(100)
+      .unique()
       .required()
   });
 
@@ -134,7 +135,7 @@ export async function handleVoteDropPollV2(
     {
       dropId: id,
       voterId,
-      options: body.options
+      options: Array.from(body.options)
     },
     { authenticationContext, timer }
   );

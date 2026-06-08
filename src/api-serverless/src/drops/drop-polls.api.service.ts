@@ -1,4 +1,4 @@
-import { randomUUID } from 'crypto';
+import { randomUUID } from 'node:crypto';
 import { AuthenticationContext } from '@/auth-context';
 import {
   userGroupsService,
@@ -194,6 +194,9 @@ export class DropPollsApiService {
       authenticationContext: AuthenticationContext.fromProfileId(voterId)
     });
     const uniqueOptions = Array.from(new Set(options));
+    if (uniqueOptions.length !== options.length) {
+      throw new BadRequestException(`Poll options must be unique`);
+    }
     if (!uniqueOptions.length) {
       throw new BadRequestException(`At least one poll option is required`);
     }

@@ -9597,6 +9597,7 @@ components:
           type: array
           minItems: 2
           maxItems: 100
+          uniqueItems: true
           items:
             type: string
             minLength: 1
@@ -10747,6 +10748,7 @@ components:
           type: array
           minItems: 1
           maxItems: 100
+          uniqueItems: true
           items:
             type: integer
             format: int64

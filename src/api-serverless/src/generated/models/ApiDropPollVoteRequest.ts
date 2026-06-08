@@ -13,7 +13,7 @@
 import { HttpFile } from '../http/http';
 
 export class ApiDropPollVoteRequest {
-    'options': Array<number>;
+    'options': Set<number>;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -23,7 +23,7 @@ export class ApiDropPollVoteRequest {
         {
             "name": "options",
             "baseName": "options",
-            "type": "Array<number>",
+            "type": "Set<number>",
             "format": "int64"
         }    ];
 

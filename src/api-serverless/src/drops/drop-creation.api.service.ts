@@ -39,6 +39,19 @@ import {
   dropPollsApiService,
   DropPollsApiService
 } from '@/api/drops/drop-polls.api.service';
+import { ApiCreateDropPollRequest } from '@/api/generated/models/ApiCreateDropPollRequest';
+
+function normalizeCreateDropPollRequest(
+  poll: ApiCreateDropPollRequest | null | undefined
+): CreateDropPollRequest | null | undefined {
+  if (!poll) {
+    return poll;
+  }
+  return {
+    ...poll,
+    options: Array.from(poll.options)
+  };
+}
 
 export class DropCreationApiService {
   private readonly logger = Logger.get(this.constructor.name);
@@ -83,7 +96,7 @@ export class DropCreationApiService {
         async (connection) => {
           return await this.createDropWithGivenConnection(
             { model, authorId, preResolvedIdentityNomination },
-            createDropRequest.poll,
+            normalizeCreateDropPollRequest(createDropRequest.poll),
             { timer: ctx.timer!, connection }
           );
         }

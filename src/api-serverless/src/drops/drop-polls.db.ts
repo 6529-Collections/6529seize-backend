@@ -4,11 +4,7 @@ import {
   DROP_POLLS_TABLE,
   DROPS_TABLE
 } from '@/constants';
-import {
-  DropPollEntity,
-  DropPollOptionEntity,
-  DropPollVoteEntity
-} from '@/entities/IDropPoll';
+import { DropPollEntity, DropPollOptionEntity } from '@/entities/IDropPoll';
 import { PageSortDirection } from '@/api/page-request';
 import { RequestContext } from '@/request.context';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
@@ -65,37 +61,13 @@ export class DropPollsDb extends LazyDbAccessCompatibleService {
     const timerKey = `${this.constructor.name}->createPoll`;
     ctx.timer?.start(timerKey);
     try {
-      await this.db.execute(
-        `
-        insert into ${DROP_POLLS_TABLE} (
-          id,
-          wave_id,
-          drop_id,
-          closing_time,
-          multichoice
-        ) values (
-          :id,
-          :wave_id,
-          :drop_id,
-          :closing_time,
-          :multichoice
-        )
-      `,
-        command,
-        { wrappedConnection: ctx.connection }
-      );
-      await this.db.bulkInsert(
-        DROP_POLL_OPTIONS_TABLE,
-        command.options.map((option) => ({
-          poll_id: command.id,
-          wave_id: command.wave_id,
-          drop_id: command.drop_id,
-          option_no: option.option_no,
-          option_string: option.option_string
-        })),
-        ['poll_id', 'wave_id', 'drop_id', 'option_no', 'option_string'],
-        ctx
-      );
+      if (ctx.connection) {
+        await this.insertPollRows(command, ctx);
+        return;
+      }
+      await this.executeNativeQueriesInTransaction(async (connection) => {
+        await this.insertPollRows(command, { ...ctx, connection });
+      });
     } finally {
       ctx.timer?.stop(timerKey);
     }
@@ -470,6 +442,7 @@ export class DropPollsDb extends LazyDbAccessCompatibleService {
         from ${DROP_POLL_VOTES_TABLE} source_votes
         join ${DROP_POLL_VOTES_TABLE} target_votes
           on target_votes.poll_id = source_votes.poll_id
+          and target_votes.option_no = source_votes.option_no
           and target_votes.voter_id = :new_id
         where source_votes.voter_id = :previous_id
       `,
@@ -488,6 +461,44 @@ export class DropPollsDb extends LazyDbAccessCompatibleService {
     } finally {
       ctx.timer?.stop(timerKey);
     }
+  }
+
+  private async insertPollRows(
+    command: CreateDropPollCommand,
+    ctx: RequestContext
+  ): Promise<void> {
+    await this.db.execute(
+      `
+        insert into ${DROP_POLLS_TABLE} (
+          id,
+          wave_id,
+          drop_id,
+          closing_time,
+          multichoice
+        ) values (
+          :id,
+          :wave_id,
+          :drop_id,
+          :closing_time,
+          :multichoice
+        )
+      `,
+      command,
+      { wrappedConnection: ctx.connection }
+    );
+    await this.db.bulkInsert(
+      DROP_POLL_OPTIONS_TABLE,
+      command.options.map((option) => ({
+        poll_id: command.id,
+        wave_id: command.wave_id,
+        drop_id: command.drop_id,
+        option_no: option.option_no,
+        option_string: option.option_string
+      })),
+      ['poll_id', 'wave_id', 'drop_id', 'option_no', 'option_string'],
+      ctx,
+      { connection: ctx.connection }
+    );
   }
 
   private async findOptionsWithVotesByPollIds(
