@@ -6,6 +6,7 @@ import {
 } from '@/constants';
 import { DropPollEntity, DropPollOptionEntity } from '@/entities/IDropPoll';
 import { PageSortDirection } from '@/api/page-request';
+import { getWaveReadContextProfileId } from '@/api/waves/wave-access.helpers';
 import { RequestContext } from '@/request.context';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
 
@@ -21,11 +22,13 @@ export enum DropPollsOrderBy {
 
 export type DropPollOptionWithVotes = DropPollOptionEntity & {
   readonly votes: number;
+  readonly voted_by_context_profile: boolean;
 };
 
 export type DropPollWithOptions = DropPollEntity & {
   readonly created_at?: number;
   readonly options: DropPollOptionWithVotes[];
+  readonly voted: number[];
 };
 
 export type CreateDropPollCommand = {
@@ -43,6 +46,7 @@ export type CreateDropPollCommand = {
 type DropPollOptionVoteRow = DropPollEntity &
   DropPollOptionEntity & {
     readonly votes: number | string;
+    readonly voted_by_context_profile: boolean | number | string;
   };
 
 type DropPollRowWithCreatedAt = DropPollEntity & {
@@ -83,6 +87,9 @@ export class DropPollsDb extends LazyDbAccessCompatibleService {
     const timerKey = `${this.constructor.name}->findPollsByDropIds`;
     ctx.timer?.start(timerKey);
     try {
+      const contextProfileId = getWaveReadContextProfileId(
+        ctx.authenticationContext
+      );
       const rows = await this.db.execute<DropPollOptionVoteRow>(
         `
         select
@@ -93,12 +100,17 @@ export class DropPollsDb extends LazyDbAccessCompatibleService {
           p.multichoice,
           o.option_no,
           o.option_string,
-          count(v.voter_id) as votes
+          count(v.voter_id) as votes,
+          max(case when viewer_votes.voter_id is null then 0 else 1 end) as voted_by_context_profile
         from ${DROP_POLLS_TABLE} p
         join ${DROP_POLL_OPTIONS_TABLE} o on o.poll_id = p.id
         left join ${DROP_POLL_VOTES_TABLE} v
           on v.poll_id = o.poll_id
           and v.option_no = o.option_no
+        left join ${DROP_POLL_VOTES_TABLE} viewer_votes
+          on viewer_votes.poll_id = o.poll_id
+          and viewer_votes.option_no = o.option_no
+          and viewer_votes.voter_id = :contextProfileId
         where p.drop_id in (:dropIds)
         group by
           p.id,
@@ -110,7 +122,7 @@ export class DropPollsDb extends LazyDbAccessCompatibleService {
           o.option_string
         order by p.drop_id asc, o.option_no asc
       `,
-        { dropIds },
+        { dropIds, contextProfileId },
         { wrappedConnection: ctx.connection }
       );
       return this.mapPollRowsByDropId(rows);
@@ -323,11 +335,15 @@ export class DropPollsDb extends LazyDbAccessCompatibleService {
         rows.map((row) => row.id),
         ctx
       );
-      return rows.map((row) => ({
-        ...this.mapPollRow(row),
-        created_at: Number(row.created_at),
-        options: optionsByPollId[row.id] ?? []
-      }));
+      return rows.map((row) => {
+        const options = optionsByPollId[row.id] ?? [];
+        return {
+          ...this.mapPollRow(row),
+          created_at: Number(row.created_at),
+          options,
+          voted: this.getVotedOptions(options)
+        };
+      });
     } finally {
       ctx.timer?.stop(timerKey);
     }
@@ -507,8 +523,14 @@ export class DropPollsDb extends LazyDbAccessCompatibleService {
     if (!pollIds.length) {
       return {};
     }
+    const contextProfileId = getWaveReadContextProfileId(
+      ctx.authenticationContext
+    );
     const rows = await this.db.execute<
-      DropPollOptionEntity & { votes: number | string }
+      DropPollOptionEntity & {
+        votes: number | string;
+        voted_by_context_profile: boolean | number | string;
+      }
     >(
       `
       select
@@ -517,11 +539,16 @@ export class DropPollsDb extends LazyDbAccessCompatibleService {
         o.drop_id,
         o.option_no,
         o.option_string,
-        count(v.voter_id) as votes
+        count(v.voter_id) as votes,
+        max(case when viewer_votes.voter_id is null then 0 else 1 end) as voted_by_context_profile
       from ${DROP_POLL_OPTIONS_TABLE} o
       left join ${DROP_POLL_VOTES_TABLE} v
         on v.poll_id = o.poll_id
         and v.option_no = o.option_no
+      left join ${DROP_POLL_VOTES_TABLE} viewer_votes
+        on viewer_votes.poll_id = o.poll_id
+        and viewer_votes.option_no = o.option_no
+        and viewer_votes.voter_id = :contextProfileId
       where o.poll_id in (:pollIds)
       group by
         o.poll_id,
@@ -531,7 +558,7 @@ export class DropPollsDb extends LazyDbAccessCompatibleService {
         o.option_string
       order by o.poll_id asc, o.option_no asc
     `,
-      { pollIds },
+      { pollIds, contextProfileId },
       { wrappedConnection: ctx.connection }
     );
     return rows.reduce(
@@ -543,7 +570,8 @@ export class DropPollsDb extends LazyDbAccessCompatibleService {
           drop_id: row.drop_id,
           option_no: Number(row.option_no),
           option_string: row.option_string,
-          votes: Number(row.votes)
+          votes: Number(row.votes),
+          voted_by_context_profile: toBoolean(row.voted_by_context_profile)
         });
         acc[row.poll_id] = options;
         return acc;
@@ -559,16 +587,23 @@ export class DropPollsDb extends LazyDbAccessCompatibleService {
       (acc, row) => {
         const poll = acc[row.drop_id] ?? {
           ...this.mapPollRow(row),
-          options: []
+          options: [],
+          voted: []
         };
+        const optionNo = Number(row.option_no);
+        const votedByContextProfile = toBoolean(row.voted_by_context_profile);
         poll.options.push({
           poll_id: row.id,
           wave_id: row.wave_id,
           drop_id: row.drop_id,
-          option_no: Number(row.option_no),
+          option_no: optionNo,
           option_string: row.option_string,
-          votes: Number(row.votes)
+          votes: Number(row.votes),
+          voted_by_context_profile: votedByContextProfile
         });
+        if (votedByContextProfile) {
+          poll.voted.push(optionNo);
+        }
         acc[row.drop_id] = poll;
         return acc;
       },
@@ -584,6 +619,13 @@ export class DropPollsDb extends LazyDbAccessCompatibleService {
       closing_time: Number(row.closing_time),
       multichoice: toBoolean(row.multichoice)
     };
+  }
+
+  private getVotedOptions(options: DropPollOptionWithVotes[]): number[] {
+    return options
+      .filter((option) => option.voted_by_context_profile)
+      .map((option) => option.option_no)
+      .sort((a, b) => a - b);
   }
 
   private getOrderBySql(orderBy: DropPollsOrderBy): string {

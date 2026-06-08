@@ -250,6 +250,7 @@ describe('ApiDropMapper', () => {
         drop_id: 'drop-1',
         closing_time: Date.now() + 10_000,
         multichoice: true,
+        voted: [2],
         options: [
           {
             poll_id: 'poll-1',
@@ -279,6 +280,7 @@ describe('ApiDropMapper', () => {
       id: 'poll-1',
       multichoice: true,
       is_open: true,
+      voted: [2],
       options: [
         { option_no: 1, option_string: 'First', votes: 5 },
         { option_no: 2, option_string: 'Second', votes: 3 }

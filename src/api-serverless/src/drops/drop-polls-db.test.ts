@@ -1,5 +1,11 @@
 import { DROP_POLL_OPTIONS_TABLE, DROP_POLLS_TABLE } from '@/constants';
-import { DropPollsDb, CreateDropPollCommand } from './drop-polls.db';
+import { AuthenticationContext } from '@/auth-context';
+import { PageSortDirection } from '@/api/page-request';
+import {
+  CreateDropPollCommand,
+  DropPollsDb,
+  DropPollsOrderBy
+} from './drop-polls.db';
 
 function createPollCommand(): CreateDropPollCommand {
   return {
@@ -100,6 +106,133 @@ describe('DropPollsDb', () => {
       { connection: existingConnection },
       { connection: existingConnection }
     );
+  });
+
+  it('maps authenticated poll vote option numbers when finding polls by drop ids', async () => {
+    const { service, execute } = createDb();
+    execute.mockResolvedValueOnce([
+      {
+        id: 'poll-1',
+        wave_id: 'wave-1',
+        drop_id: 'drop-1',
+        closing_time: '2000',
+        multichoice: 1,
+        option_no: 1,
+        option_string: 'First',
+        votes: '5',
+        voted_by_context_profile: 0
+      },
+      {
+        id: 'poll-1',
+        wave_id: 'wave-1',
+        drop_id: 'drop-1',
+        closing_time: '2000',
+        multichoice: 1,
+        option_no: 2,
+        option_string: 'Second',
+        votes: '3',
+        voted_by_context_profile: 1
+      }
+    ]);
+
+    const result = await service.findPollsByDropIds(['drop-1'], {
+      authenticationContext: AuthenticationContext.fromProfileId('viewer-1')
+    });
+
+    expect(result['drop-1']).toMatchObject({
+      id: 'poll-1',
+      voted: [2],
+      options: [
+        {
+          option_no: 1,
+          votes: 5,
+          voted_by_context_profile: false
+        },
+        {
+          option_no: 2,
+          votes: 3,
+          voted_by_context_profile: true
+        }
+      ]
+    });
+    expect(execute).toHaveBeenCalledWith(
+      expect.stringContaining('viewer_votes.voter_id = :contextProfileId'),
+      {
+        dropIds: ['drop-1'],
+        contextProfileId: 'viewer-1'
+      },
+      { wrappedConnection: undefined }
+    );
+  });
+
+  it('maps authenticated poll vote option numbers when finding wave polls', async () => {
+    const { service, execute } = createDb();
+    execute
+      .mockResolvedValueOnce([
+        {
+          id: 'poll-1',
+          wave_id: 'wave-1',
+          drop_id: 'drop-1',
+          closing_time: '2000',
+          multichoice: 1,
+          created_at: '1000'
+        }
+      ])
+      .mockResolvedValueOnce([
+        {
+          poll_id: 'poll-1',
+          wave_id: 'wave-1',
+          drop_id: 'drop-1',
+          option_no: 2,
+          option_string: 'Second',
+          votes: '3',
+          voted_by_context_profile: 1
+        },
+        {
+          poll_id: 'poll-1',
+          wave_id: 'wave-1',
+          drop_id: 'drop-1',
+          option_no: 1,
+          option_string: 'First',
+          votes: '5',
+          voted_by_context_profile: 0
+        }
+      ]);
+
+    const result = await service.findWavePolls(
+      {
+        waveId: 'wave-1',
+        limit: 20,
+        offset: 0,
+        order: PageSortDirection.ASC,
+        orderBy: DropPollsOrderBy.CREATED_AT,
+        state: null,
+        now: 1_500
+      },
+      {
+        authenticationContext: AuthenticationContext.fromProfileId('viewer-1')
+      }
+    );
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      id: 'poll-1',
+      voted: [2],
+      options: [
+        {
+          option_no: 2,
+          voted_by_context_profile: true
+        },
+        {
+          option_no: 1,
+          voted_by_context_profile: false
+        }
+      ]
+    });
+    expect(execute.mock.calls[1][1]).toEqual({
+      pollIds: ['poll-1'],
+      contextProfileId: 'viewer-1'
+    });
   });
 
   it('drops source poll votes when the merge target already voted in the same poll', async () => {
