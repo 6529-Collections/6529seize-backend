@@ -89,6 +89,12 @@ import { attachmentsDb, AttachmentsDb } from '@/attachments/attachments.db';
 import { ApiAttachment } from '@/api/generated/models/ApiAttachment';
 import { mapAttachmentToApiAttachment } from '@/api/attachments/attachments.mappers';
 import { ApiDropAttachmentReference } from '@/api/generated/models/ApiDropAttachmentReference';
+import {
+  dropPollsDb,
+  DropPollsDb,
+  DropPollWithOptions
+} from '@/api/drops/drop-polls.db';
+import { mapDropPollToApi } from '@/api/drops/drop-polls.mappers';
 
 export class DropsMappers {
   constructor(
@@ -105,7 +111,8 @@ export class DropsMappers {
     private readonly dropNftLinksDb: DropNftLinksDb,
     private readonly nftLinksDb: NftLinksDb,
     private readonly nftLinkResolvingService: NftLinkResolvingService,
-    private readonly attachmentsDb: AttachmentsDb
+    private readonly attachmentsDb: AttachmentsDb,
+    private readonly dropPollsDb: DropPollsDb
   ) {}
 
   public createDropApiToUseCaseModel({
@@ -371,7 +378,8 @@ export class DropsMappers {
       boostsCount,
       boostsByAuthenticatedUser,
       bookmarksByAuthenticatedUser,
-      rootDropNftLinks
+      rootDropNftLinks,
+      dropPollsByDropId
     ] = await Promise.all([
       this.dropVotingDb.getParticipationDropsRealtimeRanks(
         participatoryDropIds,
@@ -472,7 +480,8 @@ export class DropsMappers {
             connection
           )
         : Promise.resolve(new Set<string>()),
-      this.dropNftLinksDb.findByDropIds(rootDropIds, connection)
+      this.dropNftLinksDb.findByDropIds(rootDropIds, connection),
+      this.dropPollsDb.findPollsByDropIds(allDropIds, { connection })
     ]);
     const canonicalIdsOfRootDropLinks = collections.distinct(
       rootDropNftLinks.map((it) => it.canonical_id)
@@ -545,6 +554,7 @@ export class DropsMappers {
       boostsCount,
       boostsByAuthenticatedUser,
       bookmarksByAuthenticatedUser,
+      dropPollsByDropId,
       rootDropNftLinksByDropId
     };
   }
@@ -587,6 +597,7 @@ export class DropsMappers {
       boostsCount,
       boostsByAuthenticatedUser,
       bookmarksByAuthenticatedUser,
+      dropPollsByDropId,
       rootDropNftLinksByDropId
     } = await this.getAllDropsRelatedData(
       {
@@ -838,6 +849,7 @@ export class DropsMappers {
         boostsCount,
         boostsByAuthenticatedUser,
         bookmarksByAuthenticatedUser,
+        dropPollsByDropId,
         rootDropNftLinksByDropId,
         rootDropIds
       });
@@ -879,6 +891,7 @@ export class DropsMappers {
     boostsCount,
     boostsByAuthenticatedUser,
     bookmarksByAuthenticatedUser,
+    dropPollsByDropId,
     rootDropNftLinksByDropId,
     rootDropIds
   }: {
@@ -922,6 +935,7 @@ export class DropsMappers {
     boostsCount: Record<string, number>;
     boostsByAuthenticatedUser: Set<string>;
     bookmarksByAuthenticatedUser: Set<string>;
+    dropPollsByDropId: Record<string, DropPollWithOptions>;
     rootDropNftLinksByDropId: Record<string, ApiDropNftLink[]>;
     rootDropIds: Set<string>;
   }): ApiDropWithoutWave {
@@ -1085,6 +1099,7 @@ export class DropsMappers {
                   boostsCount,
                   boostsByAuthenticatedUser,
                   bookmarksByAuthenticatedUser,
+                  dropPollsByDropId,
                   rootDropNftLinksByDropId,
                   rootDropIds
                 })
@@ -1140,6 +1155,7 @@ export class DropsMappers {
                           boostsCount,
                           boostsByAuthenticatedUser,
                           bookmarksByAuthenticatedUser,
+                          dropPollsByDropId,
                           rootDropNftLinksByDropId,
                           rootDropIds
                         })
@@ -1209,6 +1225,9 @@ export class DropsMappers {
       boosts: boostsCount[dropEntity.id] ?? 0,
       is_additional_action_promised: dropEntity.is_additional_action_promised,
       hide_link_preview: !!dropEntity.hide_link_preview,
+      poll: dropPollsByDropId[dropEntity.id]
+        ? mapDropPollToApi(dropPollsByDropId[dropEntity.id])
+        : undefined,
       nft_links: rootDropIds.has(dropEntity.id)
         ? (rootDropNftLinksByDropId[dropEntity.id] ?? [])
         : []
@@ -1230,5 +1249,6 @@ export const dropsMappers = new DropsMappers(
   dropNftLinksDb,
   nftLinksDb,
   nftLinkResolvingService,
-  attachmentsDb
+  attachmentsDb,
+  dropPollsDb
 );

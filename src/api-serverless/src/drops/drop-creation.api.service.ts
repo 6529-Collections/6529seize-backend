@@ -34,6 +34,24 @@ import {
 } from '@/nft-links/nft-link-resolving.service';
 import { Logger } from '@/logging';
 import { sendIdentityPushNotifications } from '@/api/push-notifications/push-notifications.service';
+import {
+  CreateDropPollRequest,
+  dropPollsApiService,
+  DropPollsApiService
+} from '@/api/drops/drop-polls.api.service';
+import { ApiCreateDropPollRequest } from '@/api/generated/models/ApiCreateDropPollRequest';
+
+function normalizeCreateDropPollRequest(
+  poll: ApiCreateDropPollRequest | null | undefined
+): CreateDropPollRequest | null | undefined {
+  if (!poll) {
+    return undefined;
+  }
+  return {
+    ...poll,
+    options: Array.from(poll.options)
+  };
+}
 
 export class DropCreationApiService {
   private readonly logger = Logger.get(this.constructor.name);
@@ -46,7 +64,8 @@ export class DropCreationApiService {
     private readonly deleteDrop: DeleteDropUseCase,
     private readonly wsListenersNotifier: WsListenersNotifier,
     private readonly dropNftLinksDb: DropNftLinksDb,
-    private readonly nftLinkResolvingService: NftLinkResolvingService
+    private readonly nftLinkResolvingService: NftLinkResolvingService,
+    private readonly dropPollsApiService: DropPollsApiService
   ) {}
 
   public async createDrop(
@@ -77,6 +96,7 @@ export class DropCreationApiService {
         async (connection) => {
           return await this.createDropWithGivenConnection(
             { model, authorId, preResolvedIdentityNomination },
+            normalizeCreateDropPollRequest(createDropRequest.poll),
             { timer: ctx.timer!, connection }
           );
         }
@@ -102,6 +122,7 @@ export class DropCreationApiService {
         ReturnType<CreateOrUpdateDropUseCase['preResolveIdentityNomination']>
       > | null;
     },
+    poll: CreateDropPollRequest | null | undefined,
     { timer, connection }: { timer: Timer; connection: ConnectionWrapper<any> }
   ): Promise<{ drop: ApiDrop; pendingPushNotificationIds: number[] }> {
     const { drop_id, pending_push_notification_ids } =
@@ -110,6 +131,20 @@ export class DropCreationApiService {
         connection,
         preResolvedIdentityNomination
       });
+    await this.dropPollsApiService.createPollForDrop(
+      {
+        poll,
+        dropId: drop_id,
+        waveId: model.wave_id,
+        authorId,
+        dropType: model.drop_type
+      },
+      {
+        timer,
+        connection,
+        authenticationContext: AuthenticationContext.fromProfileId(authorId)
+      }
+    );
     const drop = await this.dropsService.findDropByIdOrThrow(
       {
         dropId: drop_id,
@@ -336,5 +371,6 @@ export const dropCreationService = new DropCreationApiService(
   deleteDrop,
   wsListenersNotifier,
   dropNftLinksDb,
-  nftLinkResolvingService
+  nftLinkResolvingService,
+  dropPollsApiService
 );

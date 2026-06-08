@@ -79,6 +79,12 @@ import {
   dropVotingService,
   DropVotingService
 } from '@/api/drops/drop-voting.service';
+import {
+  dropPollsDb,
+  DropPollsDb,
+  DropPollWithOptions
+} from '@/api/drops/drop-polls.db';
+import { mapDropPollToApi } from '@/api/drops/drop-polls.mappers';
 import { nftLinksDb, NftLinksDb } from '@/nft-links/nft-links.db';
 import { mapNftLinkEntityToApiLink } from '@/nft-links/nft-link-api.mapper';
 import {
@@ -107,6 +113,7 @@ export class ApiDropMapper {
     private readonly dropBookmarksDb: DropBookmarksDb,
     private readonly dropVotingDb: DropVotingDb,
     private readonly dropVotingService: DropVotingService,
+    private readonly dropPollsDb: DropPollsDb,
     private readonly dropNftLinksDb: DropNftLinksDb,
     private readonly nftLinksDb: NftLinksDb,
     private readonly nftLinkResolvingService: NftLinkResolvingService
@@ -191,7 +198,8 @@ export class ApiDropMapper {
         replyPreviews,
         submissionVotingSummaries,
         votingRanges,
-        winningDropsRatingsByVoter
+        winningDropsRatingsByVoter,
+        pollsByDropId
       ] = await Promise.all([
         this.identityFetcher.getApiIdentityOverviewsByIds(authorIds, ctx),
         this.dropsDb.getDropPartOnes(dropIds, ctx),
@@ -257,7 +265,8 @@ export class ApiDropMapper {
               contextProfileId,
               ctx
             )
-          : Promise.resolve({} as Record<string, number>)
+          : Promise.resolve({} as Record<string, number>),
+        this.dropPollsDb.findPollsByDropIds(dropIds, ctx)
       ]);
 
       const referencedNftsByDropId = this.groupByDropId(referencedNfts);
@@ -297,6 +306,7 @@ export class ApiDropMapper {
             submissionVotingSummary: submissionVotingSummaries[drop.id],
             votingRanges,
             winningDropsRatingsByVoter,
+            poll: pollsByDropId[drop.id],
             contextProfileId
           });
           return acc;
@@ -333,6 +343,7 @@ export class ApiDropMapper {
     submissionVotingSummary,
     votingRanges,
     winningDropsRatingsByVoter,
+    poll,
     contextProfileId
   }: {
     drop: DropEntity;
@@ -359,6 +370,7 @@ export class ApiDropMapper {
     submissionVotingSummary?: DropSubmissionVotingSummary;
     votingRanges: VoteRangeByDropId;
     winningDropsRatingsByVoter: Record<string, number>;
+    poll?: DropPollWithOptions;
     contextProfileId: string | null;
   }): ApiDropV2 {
     const apiDrop: ApiDropV2 = {
@@ -469,6 +481,9 @@ export class ApiDropMapper {
         contextProfileId,
         hasMetadata
       });
+    }
+    if (poll) {
+      apiDrop.poll = mapDropPollToApi(poll);
     }
     if (contextProfileId) {
       const context: ApiDropV2ContextProfileContext = {
@@ -813,6 +828,7 @@ export const apiDropMapper = new ApiDropMapper(
   dropBookmarksDb,
   dropVotingDb,
   dropVotingService,
+  dropPollsDb,
   dropNftLinksDb,
   nftLinksDb,
   nftLinkResolvingService
