@@ -16,6 +16,10 @@ import { HttpFile } from '../http/http';
 export class ApiDropPoll {
     'id': string;
     'options': Array<ApiDropPollOption>;
+    /**
+    * Option numbers voted for by the authenticated context profile.
+    */
+    'voted': Array<number>;
     'multichoice': boolean;
     'closing_time': number;
     'is_open': boolean;
@@ -36,6 +40,12 @@ export class ApiDropPoll {
             "baseName": "options",
             "type": "Array<ApiDropPollOption>",
             "format": ""
+        },
+        {
+            "name": "voted",
+            "baseName": "voted",
+            "type": "Array<number>",
+            "format": "int64"
         },
         {
             "name": "multichoice",

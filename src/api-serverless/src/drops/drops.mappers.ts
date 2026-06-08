@@ -481,7 +481,12 @@ export class DropsMappers {
           )
         : Promise.resolve(new Set<string>()),
       this.dropNftLinksDb.findByDropIds(rootDropIds, connection),
-      this.dropPollsDb.findPollsByDropIds(allDropIds, { connection })
+      this.dropPollsDb.findPollsByDropIds(allDropIds, {
+        connection,
+        authenticationContext: contextProfileId
+          ? AuthenticationContext.fromProfileId(contextProfileId)
+          : AuthenticationContext.notAuthenticated()
+      })
     ]);
     const canonicalIdsOfRootDropLinks = collections.distinct(
       rootDropNftLinks.map((it) => it.canonical_id)

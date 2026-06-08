@@ -19,6 +19,10 @@ export class ApiWavePoll {
     'drop_id': string;
     'created_at': number;
     'options': Array<ApiDropPollOption>;
+    /**
+    * Option numbers voted for by the authenticated context profile.
+    */
+    'voted': Array<number>;
     'multichoice': boolean;
     'closing_time': number;
     'is_open': boolean;
@@ -57,6 +61,12 @@ export class ApiWavePoll {
             "baseName": "options",
             "type": "Array<ApiDropPollOption>",
             "format": ""
+        },
+        {
+            "name": "voted",
+            "baseName": "voted",
+            "type": "Array<number>",
+            "format": "int64"
         },
         {
             "name": "multichoice",
