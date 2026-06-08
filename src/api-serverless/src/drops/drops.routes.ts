@@ -203,6 +203,7 @@ router.post(
       mentioned_groups: newDrop.mentioned_groups,
       mentioned_waves: newDrop.mentioned_waves,
       metadata: newDrop.metadata,
+      poll: newDrop.poll,
       wave_id: newDrop.wave_id,
       reply_to: newDrop.reply_to,
       drop_type: newDrop.drop_type,

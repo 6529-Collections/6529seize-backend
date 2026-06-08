@@ -99,6 +99,9 @@ function createMapper() {
   const dropVotingService = {
     findCreditLeftForVotingForDrops: jest.fn().mockResolvedValue({})
   };
+  const dropPollsDb = {
+    findPollsByDropIds: jest.fn().mockResolvedValue({})
+  };
   const dropNftLinksDb = {
     findByDropIds: jest.fn().mockResolvedValue([])
   };
@@ -123,6 +126,7 @@ function createMapper() {
       dropBookmarksDb as any,
       dropVotingDb as any,
       dropVotingService as any,
+      dropPollsDb as any,
       dropNftLinksDb as any,
       nftLinksDb as any,
       nftLinkResolvingService as any
@@ -140,6 +144,7 @@ function createMapper() {
       dropBookmarksDb,
       dropVotingDb,
       dropVotingService,
+      dropPollsDb,
       dropNftLinksDb,
       nftLinksDb,
       nftLinkResolvingService
@@ -224,6 +229,61 @@ describe('ApiDropMapper', () => {
     expect(result['drop-1']).not.toHaveProperty('referenced_nfts');
     expect(result['drop-1']).not.toHaveProperty('has_metadata');
     expect(deps.dropsDb.findDropIdsWithMetadata).not.toHaveBeenCalled();
+  });
+
+  it('maps chat poll details', async () => {
+    const { mapper, deps } = createMapper();
+    deps.dropsDb.getDropPartOnes.mockResolvedValue({
+      'drop-1': {
+        drop_id: 'drop-1',
+        drop_part_id: 1,
+        content: 'poll text',
+        quoted_drop_id: null,
+        quoted_drop_part_id: null,
+        wave_id: 'wave-1'
+      }
+    });
+    deps.dropPollsDb.findPollsByDropIds.mockResolvedValue({
+      'drop-1': {
+        id: 'poll-1',
+        wave_id: 'wave-1',
+        drop_id: 'drop-1',
+        closing_time: Date.now() + 10_000,
+        multichoice: true,
+        options: [
+          {
+            poll_id: 'poll-1',
+            wave_id: 'wave-1',
+            drop_id: 'drop-1',
+            option_no: 2,
+            option_string: 'Second',
+            votes: 3
+          },
+          {
+            poll_id: 'poll-1',
+            wave_id: 'wave-1',
+            drop_id: 'drop-1',
+            option_no: 1,
+            option_string: 'First',
+            votes: 5
+          }
+        ]
+      }
+    });
+
+    const result = await mapper.mapDrops([makeDrop()], {
+      authenticationContext: AuthenticationContext.notAuthenticated()
+    });
+
+    expect(result['drop-1'].poll).toMatchObject({
+      id: 'poll-1',
+      multichoice: true,
+      is_open: true,
+      options: [
+        { option_no: 1, option_string: 'First', votes: 5 },
+        { option_no: 2, option_string: 'Second', votes: 3 }
+      ]
+    });
   });
 
   it('maps attachments, mentions, replies, and submission voting context', async () => {

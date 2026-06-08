@@ -13,6 +13,8 @@ import { ApiDropRatingRequest } from '../generated/models/ApiDropRatingRequest';
 import { ApiAddReactionToDropRequest } from '../generated/models/ApiAddReactionToDropRequest';
 import { ApiDropGroupMention } from '../generated/models/ApiDropGroupMention';
 import { ApiDropAttachmentReference } from '../generated/models/ApiDropAttachmentReference';
+import { ApiCreateDropPollRequest } from '../generated/models/ApiCreateDropPollRequest';
+import { Time } from '@/time';
 
 function parseSerialNos(value: string, helpers: Joi.CustomHelpers): number[] {
   const parts = value.split(',').map((part) => part.trim());
@@ -107,6 +109,16 @@ function validateDropMetadataValue(
   return metadata;
 }
 
+function validateFuturePollClosingTime(
+  closingTime: number,
+  helpers: Joi.CustomHelpers
+): number | Joi.ErrorReport {
+  if (closingTime <= Time.currentMillis()) {
+    return helpers.error('dropPoll.closingTimeFuture');
+  }
+  return closingTime;
+}
+
 const MetadataSchema: Joi.ObjectSchema<DropMetadataEntity> = Joi.object({
   data_key: Joi.string().min(1).max(500).required(),
   data_value: Joi.string().min(1).required()
@@ -144,6 +156,23 @@ const NewDropPartSchema: Joi.ObjectSchema<ApiCreateDropPart> = Joi.object({
     .unique('attachment_id')
     .default([])
 });
+
+const NewDropPollSchema: Joi.ObjectSchema<ApiCreateDropPollRequest> =
+  Joi.object<ApiCreateDropPollRequest>({
+    options: Joi.array()
+      .items(Joi.string().trim().min(1).max(500))
+      .min(2)
+      .max(100)
+      .unique()
+      .required(),
+    multichoice: Joi.boolean().required(),
+    closing_time: Joi.number()
+      .integer()
+      .required()
+      .custom(validateFuturePollClosingTime)
+  }).messages({
+    'dropPoll.closingTimeFuture': 'poll closing_time must be in the future'
+  });
 
 const baseDropFieldsValidators = {
   title: Joi.string().optional().max(250).default(null).allow(null),
@@ -190,6 +219,11 @@ export const NewDropSchema: Joi.ObjectSchema<ApiCreateDropRequest> = Joi.object(
       is: ApiDropType.Chat,
       then: Joi.forbidden(),
       otherwise: Joi.boolean().optional()
+    }),
+    poll: Joi.when('drop_type', {
+      is: ApiDropType.Chat,
+      then: NewDropPollSchema.optional(),
+      otherwise: Joi.forbidden()
     })
   }
 );

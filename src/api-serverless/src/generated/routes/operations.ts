@@ -6,8 +6,12 @@ import { ApiDropAndWave } from '@/api/generated/models/ApiDropAndWave';
 import { ApiDropBoostV2 } from '@/api/generated/models/ApiDropBoostV2';
 import { ApiDropMetadataV2 } from '@/api/generated/models/ApiDropMetadataV2';
 import { ApiDropPartV2 } from '@/api/generated/models/ApiDropPartV2';
+import { ApiDropPollsPage } from '@/api/generated/models/ApiDropPollsPage';
+import { ApiDropPollVoteRequest } from '@/api/generated/models/ApiDropPollVoteRequest';
+import { ApiDropPollVotersPage } from '@/api/generated/models/ApiDropPollVotersPage';
 import { ApiDropReactionV2 } from '@/api/generated/models/ApiDropReactionV2';
 import { ApiDropsLeaderboardPageV2 } from '@/api/generated/models/ApiDropsLeaderboardPageV2';
+import { ApiDropV2 } from '@/api/generated/models/ApiDropV2';
 import { ApiDropV2Page } from '@/api/generated/models/ApiDropV2Page';
 import { ApiDropV2PageWithoutCount } from '@/api/generated/models/ApiDropV2PageWithoutCount';
 import { ApiDropVoteEditLog } from '@/api/generated/models/ApiDropVoteEditLog';
@@ -191,6 +195,42 @@ export type GetDropV2PartByIdRequest = Request<
   ApiResponse<GetDropV2PartByIdResponse>,
   never,
   GetDropV2PartByIdQuery,
+  Record<string, never>
+>;
+
+export interface GetDropPollOptionVotersV2PathParams {
+  "id": string;
+  "option_no": number;
+}
+
+export interface GetDropPollOptionVotersV2Query {
+  "page"?: number;
+  "page_size"?: number;
+}
+
+export type GetDropPollOptionVotersV2Response = ApiDropPollVotersPage;
+
+export type GetDropPollOptionVotersV2Request = Request<
+  GetDropPollOptionVotersV2PathParams,
+  ApiResponse<GetDropPollOptionVotersV2Response>,
+  never,
+  GetDropPollOptionVotersV2Query,
+  Record<string, never>
+>;
+
+export interface VoteDropPollV2PathParams {
+  "id": string;
+}
+
+export type VoteDropPollV2Query = Record<string, never>;
+
+export type VoteDropPollV2Response = ApiDropV2;
+
+export type VoteDropPollV2Request = Request<
+  VoteDropPollV2PathParams,
+  ApiResponse<VoteDropPollV2Response>,
+  ApiDropPollVoteRequest,
+  VoteDropPollV2Query,
   Record<string, never>
 >;
 
@@ -464,6 +504,28 @@ export type DeleteWaveMetadataRequest = Request<
   ApiResponse<DeleteWaveMetadataResponse>,
   never,
   DeleteWaveMetadataQuery,
+  Record<string, never>
+>;
+
+export interface GetWavePollsV2PathParams {
+  "id": string;
+}
+
+export interface GetWavePollsV2Query {
+  "page"?: number;
+  "page_size"?: number;
+  "order"?: string;
+  "order_by"?: "created_at" | "closing_time";
+  "state"?: "open" | "closed";
+}
+
+export type GetWavePollsV2Response = ApiDropPollsPage;
+
+export type GetWavePollsV2Request = Request<
+  GetWavePollsV2PathParams,
+  ApiResponse<GetWavePollsV2Response>,
+  never,
+  GetWavePollsV2Query,
   Record<string, never>
 >;
 

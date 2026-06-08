@@ -6,6 +6,7 @@ import { ApiWaveType } from '../generated/models/ApiWaveType';
 import { WaveApiService } from './wave.api.service';
 import { profileWavesDb } from '@/profiles/profile-waves.db';
 import { WaveType } from '@/entities/IWave';
+import { dropPollsDb } from '@/api/drops/drop-polls.db';
 
 function updateRequest(visibilityGroupId: string | null): ApiUpdateWaveRequest {
   return {
@@ -150,6 +151,9 @@ describe('WaveApiService profile wave safeguards', () => {
     const deleteByWaveIdSpy = jest
       .spyOn(profileWavesDb, 'deleteByWaveId')
       .mockResolvedValue(undefined);
+    const deletePollsByWaveIdSpy = jest
+      .spyOn(dropPollsDb, 'deleteByWaveId')
+      .mockResolvedValue(undefined);
     const service = new WaveApiService(
       wavesApiDb as any,
       { getGroupsUserIsEligibleFor: jest.fn().mockResolvedValue([]) } as any,
@@ -183,6 +187,10 @@ describe('WaveApiService profile wave safeguards', () => {
       expect.objectContaining({ connection })
     );
     expect(dropsDb.deleteDropGroupMentionsByWaveId).toHaveBeenCalledWith(
+      'wave-1',
+      expect.objectContaining({ connection })
+    );
+    expect(deletePollsByWaveIdSpy).toHaveBeenCalledWith(
       'wave-1',
       expect.objectContaining({ connection })
     );
@@ -236,6 +244,7 @@ describe('WaveApiService profile wave safeguards', () => {
       deleteBoosts: jest.fn().mockResolvedValue(undefined)
     };
     jest.spyOn(profileWavesDb, 'deleteByWaveId').mockResolvedValue(undefined);
+    jest.spyOn(dropPollsDb, 'deleteByWaveId').mockResolvedValue(undefined);
     const service = new WaveApiService(
       wavesApiDb as any,
       { getGroupsUserIsEligibleFor: jest.fn().mockResolvedValue([]) } as any,
