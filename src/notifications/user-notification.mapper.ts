@@ -5,6 +5,8 @@ import { IdentityNotificationDeserialized } from './identity-notifications.db';
 import {
   AllDropsNotification,
   DropBoostNotification,
+  DropPollVoteNotification,
+  DropPollVoteNotificationOption,
   DropQuoteNotification,
   DropReactionNotification,
   DropReplyNotification,
@@ -40,6 +42,8 @@ export class UserNotificationMapper {
         return this.mapIdentityNicNotification(entity);
       case IdentityNotificationCause.DROP_VOTED:
         return this.mapDropVoteNotification(entity);
+      case IdentityNotificationCause.DROP_POLL_VOTED:
+        return this.mapDropPollVoteNotification(entity);
       case IdentityNotificationCause.DROP_REACTED:
         return this.mapDropReactionNotification(entity);
       case IdentityNotificationCause.DROP_BOOSTED:
@@ -151,6 +155,34 @@ export class UserNotificationMapper {
         wave_id: entity.wave_id!
       }
     };
+  }
+
+  private mapDropPollVoteNotification(
+    entity: IdentityNotificationDeserialized
+  ): DropPollVoteNotification {
+    return {
+      id: entity.id,
+      created_at: entity.created_at,
+      read_at: entity.read_at,
+      cause: IdentityNotificationCause.DROP_POLL_VOTED,
+      data: {
+        drop_author_id: entity.identity_id,
+        drop_id: entity.related_drop_id!,
+        voter_id: entity.additional_identity_id!,
+        poll_options: this.mapPollOptions(entity.additional_data.poll_options),
+        wave_id: entity.wave_id!
+      }
+    };
+  }
+
+  private mapPollOptions(value: unknown): DropPollVoteNotificationOption[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+    return value.map((option) => ({
+      option_no: numbers.parseIntOrNull(option.option_no) ?? 0,
+      option_string: String(option.option_string ?? '')
+    }));
   }
 
   private mapDropReactionNotification(

@@ -27,6 +27,7 @@ import {
 } from '@/api/waves/wave-access.helpers';
 import { wavesApiDb, WavesApiDb } from '@/api/waves/waves.api.db';
 import { DropType } from '@/entities/IDrop';
+import { DropPollOptionEntity } from '@/entities/IDropPoll';
 import {
   BadRequestException,
   ForbiddenException,
@@ -42,6 +43,12 @@ import {
   WsListenersNotifier
 } from '@/api/ws/ws-listeners-notifier';
 import { giveReadReplicaTimeToCatchUp } from '@/api/api-helpers';
+import { userNotifier, UserNotifier } from '@/notifications/user.notifier';
+
+type SelectedPollOption = {
+  readonly option_no: number;
+  readonly option_string: string;
+};
 
 export type CreateDropPollRequest = {
   readonly options: string[];
@@ -53,8 +60,8 @@ export type FindWavePollsRequest = {
   readonly wave_id: string;
   readonly page: number;
   readonly page_size: number;
-  readonly order: PageSortDirection;
-  readonly order_by: DropPollsOrderBy;
+  readonly sort_direction: PageSortDirection;
+  readonly sort: DropPollsOrderBy;
   readonly state: DropPollState | null;
 };
 
@@ -66,7 +73,8 @@ export class DropPollsApiService {
     private readonly userGroupsService: UserGroupsService,
     private readonly identityFetcher: IdentityFetcher,
     private readonly dropsService: DropsApiService,
-    private readonly wsListenersNotifier: WsListenersNotifier
+    private readonly wsListenersNotifier: WsListenersNotifier,
+    private readonly userNotifier: UserNotifier
   ) {}
 
   public async createPollForDrop(
@@ -201,6 +209,12 @@ export class DropPollsApiService {
     if (!uniqueOptions.length) {
       throw new BadRequestException(`At least one poll option is required`);
     }
+    const wave = await this.wavesApiDb.findById(drop.wave_id, ctx.connection);
+    if (!wave) {
+      throw new NotFoundException(`Wave ${drop.wave_id} not found`);
+    }
+    let selectedPollOptions: SelectedPollOption[] = [];
+    let pollVoteChanged = false;
     await this.dropPollsDb.executeNativeQueriesInTransaction(
       async (connection) => {
         const txCtx = { ...ctx, connection };
@@ -232,7 +246,11 @@ export class DropPollsApiService {
             `Poll option ${invalidOption} not found`
           );
         }
-        await this.dropPollsDb.replaceVoterVotes(
+        selectedPollOptions = this.getSelectedPollOptions(
+          pollOptions,
+          uniqueOptions
+        );
+        pollVoteChanged = await this.dropPollsDb.replaceVoterVotes(
           {
             pollId: poll.id,
             waveId: drop.wave_id,
@@ -245,18 +263,43 @@ export class DropPollsApiService {
         );
       }
     );
-    await giveReadReplicaTimeToCatchUp();
-    const legacyDrop = await this.dropsService.findDropByIdOrThrow(
-      { dropId, skipEligibilityCheck: true },
-      ctx
-    );
-    await this.wsListenersNotifier.notifyAboutDropUpdate(legacyDrop, ctx);
+    if (pollVoteChanged) {
+      await this.userNotifier.notifyOfDropPollVote(
+        {
+          voter_id: voterId,
+          drop_id: dropId,
+          drop_author_id: drop.author_id,
+          poll_options: selectedPollOptions,
+          wave_id: drop.wave_id
+        },
+        wave.visibility_group_id
+      );
+      await giveReadReplicaTimeToCatchUp();
+      const legacyDrop = await this.dropsService.findDropByIdOrThrow(
+        { dropId, skipEligibilityCheck: true },
+        ctx
+      );
+      await this.wsListenersNotifier.notifyAboutDropUpdate(legacyDrop, ctx);
+    }
     const dropsById = await this.dropsService.findDropsV2ByIds([dropId], ctx);
     const apiDrop = dropsById[dropId];
     if (!apiDrop) {
       throw new NotFoundException(`Drop ${dropId} not found`);
     }
     return apiDrop;
+  }
+
+  private getSelectedPollOptions(
+    pollOptions: DropPollOptionEntity[],
+    selectedOptionNos: number[]
+  ): SelectedPollOption[] {
+    const selectedOptionNoSet = new Set(selectedOptionNos);
+    return pollOptions
+      .filter((option) => selectedOptionNoSet.has(option.option_no))
+      .map((option) => ({
+        option_no: option.option_no,
+        option_string: option.option_string
+      }));
   }
 
   public async findWavePolls(
@@ -294,8 +337,8 @@ export class DropPollsApiService {
           waveId: request.wave_id,
           limit: request.page_size,
           offset,
-          order: request.order,
-          orderBy: request.order_by,
+          order: request.sort_direction,
+          orderBy: request.sort,
           state: request.state,
           now
         },
@@ -338,5 +381,6 @@ export const dropPollsApiService = new DropPollsApiService(
   userGroupsService,
   identityFetcher,
   dropsService,
-  wsListenersNotifier
+  wsListenersNotifier,
+  userNotifier
 );

@@ -8,6 +8,7 @@ import {
 } from './identity-notifications.db';
 import {
   DropBoostNotificationData,
+  DropPollVoteNotificationData,
   DropQuoteNotificationData,
   DropReactionNotificationData,
   DropReplyNotificationData,
@@ -161,6 +162,37 @@ export class UserNotifier {
         related_drop_2_part_no: null,
         cause: IdentityNotificationCause.DROP_VOTED,
         additional_data: { vote, vote_change, total_vote },
+        wave_id,
+        visibility_group_id
+      },
+      connection
+    );
+  }
+
+  public async notifyOfDropPollVote(
+    {
+      voter_id,
+      drop_id,
+      drop_author_id,
+      poll_options,
+      wave_id
+    }: DropPollVoteNotificationData,
+    visibility_group_id: string | null,
+    connection?: ConnectionWrapper<any>
+  ) {
+    if (voter_id === drop_author_id) {
+      return;
+    }
+    await this.identityNotificationsDb.insertNotification(
+      {
+        identity_id: drop_author_id,
+        additional_identity_id: voter_id,
+        related_drop_id: drop_id,
+        related_drop_part_no: null,
+        related_drop_2_id: null,
+        related_drop_2_part_no: null,
+        cause: IdentityNotificationCause.DROP_POLL_VOTED,
+        additional_data: { poll_options },
         wave_id,
         visibility_group_id
       },

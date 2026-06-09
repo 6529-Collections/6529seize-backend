@@ -167,3 +167,74 @@ describe('UserNotifier notifyOfDropVote', () => {
     );
   });
 });
+
+describe('UserNotifier notifyOfDropPollVote', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('stores selected poll options for the drop author', async () => {
+    const identityNotificationsDb = {
+      insertNotification: jest.fn()
+    };
+    const notifier = new UserNotifier(identityNotificationsDb as any);
+    const connection = {} as any;
+
+    await notifier.notifyOfDropPollVote(
+      {
+        voter_id: 'voter-1',
+        drop_id: 'drop-1',
+        drop_author_id: 'author-1',
+        poll_options: [
+          { option_no: 1, option_string: 'First' },
+          { option_no: 3, option_string: 'Third' }
+        ],
+        wave_id: 'wave-1'
+      },
+      'visibility-group',
+      connection
+    );
+
+    expect(identityNotificationsDb.insertNotification).toHaveBeenCalledWith(
+      {
+        identity_id: 'author-1',
+        additional_identity_id: 'voter-1',
+        related_drop_id: 'drop-1',
+        related_drop_part_no: null,
+        related_drop_2_id: null,
+        related_drop_2_part_no: null,
+        cause: IdentityNotificationCause.DROP_POLL_VOTED,
+        additional_data: {
+          poll_options: [
+            { option_no: 1, option_string: 'First' },
+            { option_no: 3, option_string: 'Third' }
+          ]
+        },
+        wave_id: 'wave-1',
+        visibility_group_id: 'visibility-group'
+      },
+      connection
+    );
+  });
+
+  it('skips poll vote notifications for the author voting on their own poll', async () => {
+    const identityNotificationsDb = {
+      insertNotification: jest.fn()
+    };
+    const notifier = new UserNotifier(identityNotificationsDb as any);
+
+    await notifier.notifyOfDropPollVote(
+      {
+        voter_id: 'profile-1',
+        drop_id: 'drop-1',
+        drop_author_id: 'profile-1',
+        poll_options: [{ option_no: 1, option_string: 'First' }],
+        wave_id: 'wave-1'
+      },
+      null,
+      {} as any
+    );
+
+    expect(identityNotificationsDb.insertNotification).not.toHaveBeenCalled();
+  });
+});

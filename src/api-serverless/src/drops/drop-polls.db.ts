@@ -192,10 +192,17 @@ export class DropPollsDb extends LazyDbAccessCompatibleService {
       readonly voteTime: number;
     },
     ctx: RequestContext
-  ): Promise<void> {
+  ): Promise<boolean> {
     const timerKey = `${this.constructor.name}->replaceVoterVotes`;
     ctx.timer?.start(timerKey);
     try {
+      const existingOptionNos = await this.findVoterOptionNos(
+        { pollId, voterId },
+        ctx
+      );
+      if (this.haveSameOptionNos(existingOptionNos, optionNos)) {
+        return false;
+      }
       await this.db.execute(
         `
         delete from ${DROP_POLL_VOTES_TABLE}
@@ -218,6 +225,7 @@ export class DropPollsDb extends LazyDbAccessCompatibleService {
         ['poll_id', 'wave_id', 'drop_id', 'option_no', 'vote_time', 'voter_id'],
         ctx
       );
+      return true;
     } finally {
       ctx.timer?.stop(timerKey);
     }
@@ -577,6 +585,44 @@ export class DropPollsDb extends LazyDbAccessCompatibleService {
         return acc;
       },
       {} as Record<string, DropPollOptionWithVotes[]>
+    );
+  }
+
+  private async findVoterOptionNos(
+    {
+      pollId,
+      voterId
+    }: {
+      readonly pollId: string;
+      readonly voterId: string;
+    },
+    ctx: RequestContext
+  ): Promise<number[]> {
+    const rows = await this.db.execute<{ option_no: number | string }>(
+      `
+      select option_no
+      from ${DROP_POLL_VOTES_TABLE}
+      where poll_id = :pollId
+        and voter_id = :voterId
+      order by option_no asc
+    `,
+      { pollId, voterId },
+      { wrappedConnection: ctx.connection }
+    );
+    return rows.map((row) => Number(row.option_no));
+  }
+
+  private haveSameOptionNos(
+    left: readonly number[],
+    right: readonly number[]
+  ): boolean {
+    if (left.length !== right.length) {
+      return false;
+    }
+    const sortedLeft = [...left].sort((a, b) => a - b);
+    const sortedRight = [...right].sort((a, b) => a - b);
+    return sortedLeft.every(
+      (optionNo, index) => optionNo === sortedRight[index]
     );
   }
 
