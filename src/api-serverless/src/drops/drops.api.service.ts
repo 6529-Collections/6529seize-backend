@@ -84,6 +84,7 @@ import {
 import { profileWavesDb } from '@/profiles/profile-waves.db';
 import { ApiWaveMin } from '@/api/generated/models/ApiWaveMin';
 import { apiDropMapper, ApiDropMapper } from '@/api/drops/api-drop.mapper';
+import { isWaveCreatorOrAdmin } from '@/waves/wave-admin.helpers';
 
 export class DropsApiService {
   constructor(
@@ -1331,6 +1332,7 @@ export class DropsApiService {
         );
       }
       const apiDrop = await this.findDropByIdOrThrow({ dropId }, ctx);
+      await this.assertSelfBoostAllowed({ apiDrop, boosterId, ctx });
       const updatedDrop = await this.dropsDb.executeNativeQueriesInTransaction(
         async (connection) => {
           await this.dropsDb.boostDrop(
@@ -1366,6 +1368,39 @@ export class DropsApiService {
       await this.wsListenersNotifier.notifyAboutDropUpdate(updatedDrop, ctx);
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->boostDrop`);
+    }
+  }
+
+  private async assertSelfBoostAllowed({
+    apiDrop,
+    boosterId,
+    ctx
+  }: {
+    readonly apiDrop: ApiDrop;
+    readonly boosterId: string;
+    readonly ctx: RequestContext;
+  }): Promise<void> {
+    if (apiDrop.author.id !== boosterId) {
+      return;
+    }
+
+    const [wave, groupIdsUserIsEligibleFor] = await Promise.all([
+      wavesApiDb.findById(apiDrop.wave.id, ctx.connection),
+      this.userGroupsService.getGroupsUserIsEligibleFor(boosterId, ctx.timer)
+    ]);
+    if (!wave) {
+      throw new NotFoundException(`Wave ${apiDrop.wave.id} not found`);
+    }
+    if (
+      !isWaveCreatorOrAdmin({
+        authenticatedProfileId: boosterId,
+        wave,
+        groupIdsUserIsEligibleFor
+      })
+    ) {
+      throw new ForbiddenException(
+        `You can't boost your own drop unless you created the wave or are an admin of it`
+      );
     }
   }
 
