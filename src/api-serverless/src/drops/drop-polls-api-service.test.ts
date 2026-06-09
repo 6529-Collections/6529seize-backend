@@ -5,6 +5,8 @@ jest.mock('@/api/api-helpers', () => ({
 import { AuthenticationContext } from '@/auth-context';
 import { giveReadReplicaTimeToCatchUp } from '@/api/api-helpers';
 import { DropPollsApiService } from '@/api/drops/drop-polls.api.service';
+import { DropPollsOrderBy, DropPollState } from '@/api/drops/drop-polls.db';
+import { PageSortDirection } from '@/api/page-request';
 import { DropType } from '@/entities/IDrop';
 import { Time } from '@/time';
 
@@ -16,11 +18,13 @@ afterEach(() => {
 function createService() {
   const dropPollsDb = {
     createPoll: jest.fn().mockResolvedValue(undefined),
+    countWavePolls: jest.fn(),
     executeNativeQueriesInTransaction: jest.fn(
       async (callback: (connection: unknown) => Promise<void>) => {
         await callback('tx-connection');
       }
     ),
+    findWavePolls: jest.fn(),
     findPollByDropIdForUpdate: jest.fn(),
     findOptionsByPollId: jest.fn(),
     replaceVoterVotes: jest.fn().mockResolvedValue(true)
@@ -38,6 +42,11 @@ function createService() {
       created_by: 'creator-1',
       admin_group_id: 'admin-group',
       visibility_group_id: 'visibility-group'
+    }),
+    findWaveById: jest.fn().mockResolvedValue({
+      id: 'wave-1',
+      parent_wave_id: null,
+      visibility_group_id: null
     })
   };
   const userGroupsService = {
@@ -340,5 +349,80 @@ describe('DropPollsApiService', () => {
       { authenticationContext: AuthenticationContext.fromProfileId('voter-1') }
     );
     expect(result).toEqual({ id: 'drop-1' });
+  });
+
+  it('returns wave poll drops in poll query order', async () => {
+    jest.spyOn(Time, 'currentMillis').mockReturnValue(5_000);
+    const { service, deps } = createService();
+    deps.dropPollsDb.countWavePolls.mockResolvedValue(3);
+    deps.dropPollsDb.findWavePolls.mockResolvedValue([
+      {
+        id: 'poll-2',
+        wave_id: 'wave-1',
+        drop_id: 'drop-2',
+        closing_time: 7_000,
+        multichoice: false,
+        created_at: 2_000,
+        options: [],
+        voted: []
+      },
+      {
+        id: 'poll-1',
+        wave_id: 'wave-1',
+        drop_id: 'drop-1',
+        closing_time: 6_000,
+        multichoice: true,
+        created_at: 1_000,
+        options: [],
+        voted: []
+      }
+    ]);
+    deps.dropsService.findDropsV2ByIds.mockResolvedValue({
+      'drop-1': { id: 'drop-1' },
+      'drop-2': { id: 'drop-2' }
+    });
+
+    const result = await service.findWavePolls(
+      {
+        wave_id: 'wave-1',
+        page: 1,
+        page_size: 2,
+        sort_direction: PageSortDirection.DESC,
+        sort: DropPollsOrderBy.CREATED_AT,
+        state: DropPollState.OPEN
+      },
+      {}
+    );
+
+    expect(deps.dropPollsDb.countWavePolls).toHaveBeenCalledWith(
+      {
+        waveId: 'wave-1',
+        state: DropPollState.OPEN,
+        now: 5_000
+      },
+      {}
+    );
+    expect(deps.dropPollsDb.findWavePolls).toHaveBeenCalledWith(
+      {
+        waveId: 'wave-1',
+        limit: 2,
+        offset: 0,
+        order: PageSortDirection.DESC,
+        orderBy: DropPollsOrderBy.CREATED_AT,
+        state: DropPollState.OPEN,
+        now: 5_000
+      },
+      {}
+    );
+    expect(deps.dropsService.findDropsV2ByIds).toHaveBeenCalledWith(
+      ['drop-2', 'drop-1'],
+      {}
+    );
+    expect(result).toEqual({
+      count: 3,
+      page: 1,
+      next: true,
+      data: [{ id: 'drop-2' }, { id: 'drop-1' }]
+    });
   });
 });
