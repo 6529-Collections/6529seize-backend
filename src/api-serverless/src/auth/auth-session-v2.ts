@@ -280,8 +280,8 @@ export async function logoutWebSession({
   );
   if (allSessions && existing) {
     await authDb.revokeWalletAuthSessionsForAddress(existing.address, now);
-  } else {
-    await authDb.revokeWalletAuthSession(cookie.sessionId, now);
+  } else if (existing) {
+    await authDb.revokeWalletAuthSession(existing.id, now);
   }
   return clearWalletSessionCookie();
 }

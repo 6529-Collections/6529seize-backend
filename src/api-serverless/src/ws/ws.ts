@@ -332,7 +332,8 @@ export async function authenticateWebSocketToken(
             identityId: it ?? ANON_USER_ID,
             jwtExpiry: user.exp ?? Time.now().plusDays(1).toSeconds()
           })
-        );
+        )
+        .catch(() => resolve(null));
     })(req, res, () => {
       return resolve(null);
     });
