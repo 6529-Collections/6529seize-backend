@@ -33,7 +33,9 @@ Apply this skill any time work involves database schema, queries, repositories, 
 2. Use caller-level transactions only when work must span multiple repositories:
    ```typescript
    await sqlExecutor.executeNativeQueriesInTransaction(async (connection) => {
-     // pass connection through RequestContext to all participating repositories
+     const txCtx: RequestContext = { ...ctx, connection };
+     await firstRepository.doWork(txCtx);
+     await secondRepository.doMoreWork(txCtx);
    });
    ```
 3. Make `ctx: RequestContext` the last argument of new repository functions unless the surrounding class has an established incompatible pattern.
@@ -47,7 +49,15 @@ Apply this skill any time work involves database schema, queries, repositories, 
      ctx.timer?.stop(timerName);
    }
    ```
-5. Use `ctx.connection` when present so operations participate in caller-provided transactions.
+5. Use `ctx.connection` when present so operations participate in caller-provided transactions:
+   ```typescript
+   const rows = await this.db.execute<MyEntity>(
+     `select * from ${MY_TABLE} where id = :id`,
+     { id },
+     ctx.connection ? { wrappedConnection: ctx.connection } : undefined
+   );
+   ```
+   For TypeORM transaction blocks, obtain repositories from the transaction manager passed by the transaction callback instead of the global data source.
 6. Never use generated `Api*` classes in repositories.
 7. Allow callers to use entity classes and repository-defined types.
 8. Use constants from `src/constants/db-tables.ts` instead of hardcoded table names whenever possible.
@@ -57,13 +67,13 @@ Apply this skill any time work involves database schema, queries, repositories, 
 ## Data Migrations
 
 1. Use db-migrate only for explicit data migrations or view/one-off changes requested by the user.
-2. Never use db-migrate for schema changes.
+2. Avoid db-migrate for schema changes unless the user explicitly asks for a migration; schema/table changes should normally come from TypeORM entities and `dbMigrationsLoop` sync.
 3. Create migrations with:
    ```bash
    npm run migrate:new migration-name
    ```
 4. Edit files created under `migrations/`.
-5. Delete the `down` migration path; do not implement revert logic.
+5. Delete the generated `.down.sql` file and leave `exports.down` present as a no-op; do not implement revert logic.
 
 ## Tests
 
@@ -71,7 +81,7 @@ Place DB/repository tests next to the file under test and name them with lowerca
 
 ## Validation
 
-- [ ] Kept schema changes in entity classes, not SQL migrations.
+- [ ] Kept schema changes in entity classes unless the user explicitly requested a schema migration.
 - [ ] Preserved entity naming convention and exported new entities.
 - [ ] Checked entity edits for data-loss risk.
 - [ ] Avoided foreign keys.
@@ -84,6 +94,6 @@ Place DB/repository tests next to the file under test and name them with lowerca
 - [ ] Timed repository methods and used `ctx.connection` when available.
 - [ ] Avoided generated `Api*` models in repositories.
 - [ ] Used typed query methods and table constants in SQL.
-- [ ] Used db-migrate only for explicit data migration and removed down paths.
+- [ ] Used db-migrate only for explicit data/view migration work and left `exports.down` as a no-op.
 - [ ] Added or updated focused tests for changed DB behavior.
 - [ ] Ran `npm run lint`.

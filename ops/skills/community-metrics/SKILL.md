@@ -44,7 +44,7 @@ Do not create a migration by default. If the user explicitly asks for historical
 npm run migrate:new backfill-metric-name-metric
 ```
 
-Write SQL in the `up` migration only, delete the generated `.down.sql`, and make the JS `down()` implementation do nothing. Never use migrations for schema changes in this repo.
+Write SQL in the `up` migration only, delete the generated `.down.sql`, and leave the JS `down()` implementation as a no-op. The repo is entities-first for schema/table changes: prefer TypeORM entities plus `dbMigrationsLoop` sync, and avoid schema migrations unless the user explicitly asks for one. Reserve migrations primarily for one-off data backfills or rare view changes.
 
 ## Aggregation Patterns
 

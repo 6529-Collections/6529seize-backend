@@ -38,7 +38,12 @@ Use this workflow for API contract, route, handler, and generated-model changes.
 5. Do not add duplicate manual `.routes.ts` wiring or app wiring for generated endpoints. The generated router is already mounted in `src/api-serverless/src/app.ts`.
 6. If the generator rejects a needed route shape, extend `src/api-serverless/generate-openapi-routes.ts` when that is in scope; otherwise use a manual route and call out why.
 
-Generated routes currently support path/query params, JSON request bodies that are `$ref`s, `200 application/json` object or array `$ref` responses, and `text/csv` string responses.
+Generated routes currently support:
+
+- parameters with `in: path` or `in: query`; all other parameter locations are rejected
+- no `requestBody`, which generates a request body type of `never`
+- `requestBody.content.application/json.schema.$ref` request bodies; other request body shapes are rejected
+- responses from the `200` response only: `application/json` with a direct schema `$ref`, `application/json` with an array whose `items` are a `$ref`, or `text/csv` with schema `type: string`
 
 ## Middleware Options
 
@@ -59,7 +64,7 @@ x-6529-router:
 - `cache: true` emits `cacheRequest()`.
 - `cache.ttlSeconds` emits `cacheRequest({ ttl: Time.seconds(value) })`.
 - `cache.authDependent: true` includes the authenticated/anonymous identity in the cache key.
-- `cache.methods` can be used for non-GET generated routes when needed.
+- Use `cache.methods` when a generated route should cache non-GET methods.
 
 ## Handler Rules
 
