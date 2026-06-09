@@ -233,6 +233,7 @@ paths:
         - Authentication
       summary: Authenticate and create a wallet auth session
       operationId: createWalletAuthSession
+      security: []
       requestBody:
         required: true
         content:
@@ -256,6 +257,7 @@ paths:
         - Authentication
       summary: Rotate a wallet auth session and issue a fresh JWT
       operationId: refreshWalletAuthSession
+      security: []
       requestBody:
         required: false
         content:
@@ -281,6 +283,7 @@ paths:
         - Authentication
       summary: Revoke a wallet auth session
       operationId: logoutWalletAuthSession
+      security: []
       requestBody:
         required: false
         content:

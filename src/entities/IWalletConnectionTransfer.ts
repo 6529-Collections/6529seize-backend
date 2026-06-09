@@ -3,7 +3,7 @@ import { WALLET_CONNECTION_TRANSFERS_TABLE } from '@/constants';
 import { WalletAuthClientType } from './IWalletAuthSession';
 
 @Entity(WALLET_CONNECTION_TRANSFERS_TABLE)
-export class WalletConnectionTransfer {
+export class WalletConnectionTransferEntity {
   @PrimaryColumn({ type: 'varchar', length: 36, nullable: false })
   readonly id!: string;
 

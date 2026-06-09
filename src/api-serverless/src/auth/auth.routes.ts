@@ -200,7 +200,7 @@ router.post(
   ) {
     assertSessionV2Enabled();
     const body = req.body ?? {};
-    const clientType = body.client_type === 'native' ? 'native' : 'web';
+    const clientType = getSessionClientType(body);
     if (clientType === 'native') {
       const refreshRequest = getValidatedByJoiOrThrow(
         body,
@@ -245,7 +245,7 @@ router.post(
   ) {
     assertSessionV2Enabled();
     const body = req.body ?? {};
-    const clientType = body.client_type === 'native' ? 'native' : 'web';
+    const clientType = getSessionClientType(body);
     if (clientType === 'native') {
       const logoutRequest = getValidatedByJoiOrThrow(
         body,
@@ -370,6 +370,18 @@ function assertTransferCodesEnabled(): void {
   }
 }
 
+function getSessionClientType(body: {
+  readonly client_type?: unknown;
+}): 'web' | 'native' {
+  if (body.client_type == null) {
+    return 'web';
+  }
+  if (body.client_type === 'web' || body.client_type === 'native') {
+    return body.client_type;
+  }
+  throw new BadRequestException('client_type must be either web or native');
+}
+
 async function resolveAuthenticatedRole(
   signingAddress: string,
   role: string | null,
@@ -402,7 +414,7 @@ async function resolveAuthenticatedRole(
     });
     if (proxy === null) {
       throw new BadRequestException(
-        `Profile ${role} hasn't creared a proxy for you, so you can't authenticated as this role.`
+        `Profile ${role} hasn't created a proxy for you, so you can't authenticate as this role.`
       );
     }
     chosenRole = roleId;
@@ -517,7 +529,7 @@ const SessionRefreshNativeRequestSchema: Joi.ObjectSchema<ApiSessionRefreshNativ
   Joi.object<ApiSessionRefreshNativeRequest>({
     client_type: Joi.string().valid('native').required(),
     client_address: Joi.string().required(),
-    native_refresh_token: Joi.string().min(32).required(),
+    native_refresh_token: Joi.string().hex().length(128).required(),
     role: Joi.string().optional().allow(null)
   });
 
@@ -531,7 +543,7 @@ const SessionLogoutNativeRequestSchema: Joi.ObjectSchema<ApiSessionLogoutNativeR
   Joi.object<ApiSessionLogoutNativeRequest>({
     client_type: Joi.string().valid('native').required(),
     client_address: Joi.string().required(),
-    native_refresh_token: Joi.string().min(32).required(),
+    native_refresh_token: Joi.string().hex().length(128).required(),
     all_sessions: Joi.boolean().optional().default(false)
   });
 
@@ -543,7 +555,7 @@ const CreateConnectionTransferRequestSchema: Joi.ObjectSchema<ApiCreateConnectio
 
 const RedeemConnectionTransferRequestSchema: Joi.ObjectSchema<ApiRedeemConnectionTransferRequest> =
   Joi.object<ApiRedeemConnectionTransferRequest>({
-    transfer_code: Joi.string().min(22).required(),
+    transfer_code: Joi.string().hex().length(64).required(),
     target_client_type: Joi.string().valid('native').required()
   });
 

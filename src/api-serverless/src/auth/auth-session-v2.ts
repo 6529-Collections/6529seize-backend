@@ -1,8 +1,8 @@
-import { createHmac, randomBytes, randomUUID } from 'crypto';
+import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import * as jwt from 'jsonwebtoken';
-import { env } from '../../../env';
-import { WalletAuthClientType } from '../../../entities/IWalletAuthSession';
-import { Time } from '../../../time';
+import { env } from '@/env';
+import { WalletAuthClientType } from '@/entities/IWalletAuthSession';
+import { Time } from '@/time';
 import { getJwtExpiry, getJwtSecret } from './auth';
 import { authDb } from './auth.db';
 import {

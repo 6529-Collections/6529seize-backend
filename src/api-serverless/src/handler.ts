@@ -55,6 +55,7 @@ async function wsHandler(
   const { routeKey, connectionId } = event.requestContext;
   const { identityId, jwtExpiry } =
     await authenticateWebSocketJwtOrGetByConnectionId(event);
+  let activeIdentityId = identityId;
   switch (routeKey) {
     case '$connect':
       try {
@@ -111,6 +112,7 @@ async function wsHandler(
               },
               {}
             );
+            activeIdentityId = authenticated.identityId;
             await appWebSockets.send({
               connectionId: connectionId!,
               message: JSON.stringify({
@@ -155,7 +157,7 @@ async function wsHandler(
               };
             } else {
               await wsListenersNotifier.notifyAboutUserIsTyping({
-                identityId,
+                identityId: activeIdentityId,
                 waveId
               });
             }
