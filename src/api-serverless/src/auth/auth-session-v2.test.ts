@@ -4,6 +4,7 @@ import {
   createConnectionTransfer,
   createWebSession,
   logoutNativeSession,
+  logoutWebSession,
   parseWalletSessionCookieHeader,
   redeemConnectionTransfer,
   refreshNativeSession,
@@ -14,7 +15,9 @@ jest.mock('./auth.db', () => ({
   authDb: {
     createWalletAuthSession: jest.fn(),
     getActiveNativeSessionByRefreshHash: jest.fn(),
+    getActiveWebSessionBySecretHash: jest.fn(),
     rotateNativeSessionRefreshToken: jest.fn(),
+    revokeWalletAuthSession: jest.fn(),
     revokeWalletAuthSessionsForAddress: jest.fn(),
     revokeWalletAuthSessionByRefreshHash: jest.fn(),
     createWalletConnectionTransfer: jest.fn(),
@@ -144,6 +147,53 @@ describe('auth-session-v2', () => {
     );
     expect(authDbMock.revokeWalletAuthSessionsForAddress).toHaveBeenCalledWith(
       '0xabc',
+      expect.any(Date)
+    );
+  });
+
+  it('requires web session cookie secret ownership before revoking a session', async () => {
+    authDbMock.getActiveWebSessionBySecretHash.mockResolvedValueOnce(null);
+
+    const clearedCookie = await logoutWebSession({
+      cookie: {
+        sessionId: 'session-1',
+        secret: 'wrong-secret'
+      },
+      allSessions: false
+    });
+
+    expect(authDbMock.getActiveWebSessionBySecretHash).toHaveBeenCalledWith(
+      'session-1',
+      expect.stringMatching(/^[a-f0-9]{64}$/),
+      expect.any(Date)
+    );
+    expect(authDbMock.revokeWalletAuthSession).not.toHaveBeenCalled();
+    expect(clearedCookie).toBe(clearWalletSessionCookie());
+
+    authDbMock.getActiveWebSessionBySecretHash.mockResolvedValueOnce({
+      id: 'session-1',
+      address: '0xabc',
+      role: null,
+      client_type: 'web',
+      secret_hash: 'secret-hash',
+      refresh_token_hash: null,
+      user_agent_hash: null,
+      created_at: new Date(),
+      last_used_at: new Date(),
+      expires_at: new Date(Date.now() + 60_000),
+      revoked_at: null
+    });
+
+    await logoutWebSession({
+      cookie: {
+        sessionId: 'session-1',
+        secret: 'valid-secret'
+      },
+      allSessions: false
+    });
+
+    expect(authDbMock.revokeWalletAuthSession).toHaveBeenCalledWith(
+      'session-1',
       expect.any(Date)
     );
   });
