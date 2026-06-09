@@ -1,27 +1,28 @@
+jest.mock('@/api/api-helpers', () => ({
+  giveReadReplicaTimeToCatchUp: jest.fn().mockResolvedValue(undefined)
+}));
+
 import { AuthenticationContext } from '@/auth-context';
 import { directMessageWaveDisplayService } from '@/api/waves/direct-message-wave-display.service';
-import { BadRequestException } from '@/exceptions';
+import { BadRequestException, ForbiddenException } from '@/exceptions';
 import { wavesApiDb } from '../waves/waves.api.db';
 import { ApiDropSearchStrategy } from '../generated/models/ApiDropSearchStrategy';
 import { DropsApiService } from './drops.api.service';
 import { profileWavesDb } from '@/profiles/profile-waves.db';
 import { PageSortDirection } from '@/api/page-request';
 import { LeaderboardSort } from '@/drops/drops.db';
+import { userNotifier } from '@/notifications/user.notifier';
+import { giveReadReplicaTimeToCatchUp } from '@/api/api-helpers';
+import { ApiDrop } from '@/api/generated/models/ApiDrop';
 
 afterEach(() => {
+  jest.clearAllMocks();
   jest.restoreAllMocks();
 });
 
 describe('DropsApiService', () => {
-  function createService({
-    curation = {
-      id: 'curation-1',
-      wave_id: 'wave-1',
-      community_group_id: 'community-group-1'
-    },
-    curatedDropEntities = [],
-    curatedProfileWaveDropEntities = [],
-    wave = {
+  function makeWave(overrides: Record<string, unknown> = {}) {
+    return {
       id: 'wave-1',
       name: 'Wave 1',
       picture: null,
@@ -42,8 +43,34 @@ describe('DropsApiService', () => {
       admin_drop_deletion_enabled: false,
       forbid_negative_votes: false,
       time_lock_ms: null,
-      type: 'APPROVE'
-    }
+      type: 'APPROVE',
+      ...overrides
+    };
+  }
+
+  function makeApiDrop({
+    authorId = 'profile-1',
+    waveId = 'wave-1'
+  }: {
+    authorId?: string;
+    waveId?: string;
+  } = {}) {
+    return {
+      id: 'drop-1',
+      author: { id: authorId },
+      wave: { id: waveId, visibility_group_id: null }
+    } as ApiDrop;
+  }
+
+  function createService({
+    curation = {
+      id: 'curation-1',
+      wave_id: 'wave-1',
+      community_group_id: 'community-group-1'
+    },
+    curatedDropEntities = [],
+    curatedProfileWaveDropEntities = [],
+    wave = makeWave()
   }: {
     curation?: Record<string, unknown> | null;
     curatedDropEntities?: Record<string, unknown>[];
@@ -64,7 +91,12 @@ describe('DropsApiService', () => {
       findLightDropsByIds: jest.fn().mockResolvedValue([]),
       countParticipatoryDrops: jest.fn().mockResolvedValue(0),
       findRealtimeLeaderboardDrops: jest.fn().mockResolvedValue([]),
-      findWeightedLeaderboardDrops: jest.fn().mockResolvedValue([])
+      findWeightedLeaderboardDrops: jest.fn().mockResolvedValue([]),
+      executeNativeQueriesInTransaction: jest.fn(
+        async (callback: (connection: unknown) => Promise<unknown>) =>
+          await callback('tx-connection')
+      ),
+      boostDrop: jest.fn().mockResolvedValue(undefined)
     };
     const dropsMappers = {
       convertToDropFulls: jest.fn().mockResolvedValue([]),
@@ -78,7 +110,14 @@ describe('DropsApiService', () => {
     const userGroupsService = {
       getGroupsUserIsEligibleFor: jest.fn().mockResolvedValue([])
     };
+    const metricsRecorder = {
+      recordActiveIdentity: jest.fn().mockResolvedValue(undefined)
+    };
+    const wsListenersNotifier = {
+      notifyAboutDropUpdate: jest.fn().mockResolvedValue(undefined)
+    };
     jest.spyOn(wavesApiDb, 'findWaveById').mockResolvedValue(wave as any);
+    jest.spyOn(wavesApiDb, 'findById').mockResolvedValue(wave as any);
     jest
       .spyOn(wavesApiDb, 'whichOfWavesArePinnedByGivenProfile')
       .mockResolvedValue(new Set<string>());
@@ -94,6 +133,7 @@ describe('DropsApiService', () => {
         'resolveWaveDisplayByWaveIdForContext'
       )
       .mockResolvedValue({});
+    jest.spyOn(userNotifier, 'notifyOfDropBoost').mockResolvedValue(undefined);
 
     const apiDropMapper = {
       mapDrops: jest.fn().mockResolvedValue({})
@@ -107,8 +147,8 @@ describe('DropsApiService', () => {
         userGroupsService as any,
         {} as any,
         {} as any,
-        {} as any,
-        {} as any,
+        metricsRecorder as any,
+        wsListenersNotifier as any,
         apiDropMapper as any
       ),
       dropsDb,
@@ -116,12 +156,94 @@ describe('DropsApiService', () => {
       apiDropMapper,
       curationsDb,
       userGroupsService,
+      metricsRecorder,
+      wsListenersNotifier,
       ctx: {
         authenticationContext: AuthenticationContext.fromProfileId('profile-1'),
         timer: undefined
       } as any
     };
   }
+
+  it('rejects self-boosts from non-admin wave participants', async () => {
+    const { service, dropsDb, ctx } = createService({
+      wave: makeWave({ admin_group_id: 'admin-group' })
+    });
+    jest.spyOn(service, 'findDropByIdOrThrow').mockResolvedValue(makeApiDrop());
+
+    await expect(service.boostDrop('drop-1', ctx)).rejects.toThrow(
+      ForbiddenException
+    );
+
+    expect(wavesApiDb.findById).toHaveBeenCalledWith('wave-1', ctx.connection);
+    expect(dropsDb.executeNativeQueriesInTransaction).not.toHaveBeenCalled();
+    expect(dropsDb.boostDrop).not.toHaveBeenCalled();
+  });
+
+  it('allows self-boosts from the wave creator', async () => {
+    const { service, dropsDb, ctx, metricsRecorder, wsListenersNotifier } =
+      createService({
+        wave: makeWave({ created_by: 'profile-1' })
+      });
+    const apiDrop = makeApiDrop();
+    const updatedDrop = { ...apiDrop, boosts: 1 };
+    jest
+      .spyOn(service, 'findDropByIdOrThrow')
+      .mockResolvedValueOnce(apiDrop)
+      .mockResolvedValueOnce(updatedDrop);
+
+    await service.boostDrop('drop-1', ctx);
+
+    expect(dropsDb.boostDrop).toHaveBeenCalledWith(
+      {
+        drop_id: 'drop-1',
+        booster_id: 'profile-1',
+        wave_id: 'wave-1'
+      },
+      expect.objectContaining({ connection: 'tx-connection' })
+    );
+    expect(userNotifier.notifyOfDropBoost).toHaveBeenCalledWith(
+      {
+        booster_id: 'profile-1',
+        drop_id: 'drop-1',
+        drop_author_id: 'profile-1',
+        wave_id: 'wave-1'
+      },
+      null,
+      'tx-connection'
+    );
+    expect(metricsRecorder.recordActiveIdentity).toHaveBeenCalledWith(
+      { identityId: 'profile-1' },
+      expect.objectContaining({ connection: 'tx-connection' })
+    );
+    expect(giveReadReplicaTimeToCatchUp).toHaveBeenCalledTimes(1);
+    expect(wsListenersNotifier.notifyAboutDropUpdate).toHaveBeenCalledWith(
+      updatedDrop,
+      ctx
+    );
+  });
+
+  it('allows self-boosts from wave admins', async () => {
+    const { service, dropsDb, userGroupsService, ctx } = createService({
+      wave: makeWave({ admin_group_id: 'admin-group' })
+    });
+    userGroupsService.getGroupsUserIsEligibleFor.mockResolvedValue([
+      'admin-group'
+    ]);
+    const apiDrop = makeApiDrop();
+    jest
+      .spyOn(service, 'findDropByIdOrThrow')
+      .mockResolvedValueOnce(apiDrop)
+      .mockResolvedValueOnce({ ...apiDrop, boosts: 1 });
+
+    await service.boostDrop('drop-1', ctx);
+
+    expect(userGroupsService.getGroupsUserIsEligibleFor).toHaveBeenCalledWith(
+      'profile-1',
+      ctx.timer
+    );
+    expect(dropsDb.boostDrop).toHaveBeenCalledTimes(1);
+  });
 
   it('constrains latest drop filtering to the curation wave and persisted membership', async () => {
     const { service, dropsDb, ctx } = createService();
