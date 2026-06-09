@@ -1,4 +1,5 @@
 import {
+  ConnectionWrapper,
   dbSupplier,
   LazyDbAccessCompatibleService
 } from '../../../sql-executor';
@@ -18,6 +19,12 @@ import { WalletConnectionTransferEntity } from '../../../entities/IWalletConnect
 
 const CLIENT_TYPE_WEB: WalletAuthClientType = 'web';
 const CLIENT_TYPE_NATIVE: WalletAuthClientType = 'native';
+
+type AuthDbConnection = ConnectionWrapper<any>;
+
+function getDbOptions(connection?: AuthDbConnection) {
+  return connection ? { wrappedConnection: connection } : undefined;
+}
 
 type CreateWalletAuthSessionParams = {
   readonly id: string;
@@ -68,15 +75,17 @@ export class AuthDb extends LazyDbAccessCompatibleService {
   }
 
   async createWalletAuthSession(
-    params: CreateWalletAuthSessionParams
+    params: CreateWalletAuthSessionParams,
+    connection?: AuthDbConnection
   ): Promise<WalletAuthSessionEntity> {
     await this.db.execute(
       `insert into ${WALLET_AUTH_SESSIONS_TABLE}
        (id, address, role, client_type, secret_hash, refresh_token_hash, user_agent_hash, expires_at)
        values (:id, :address, :role, :clientType, :secretHash, :refreshTokenHash, :userAgentHash, :expiresAt)`,
-      params
+      params,
+      getDbOptions(connection)
     );
-    return this.getWalletAuthSessionByIdOrThrow(params.id);
+    return this.getWalletAuthSessionByIdOrThrow(params.id, connection);
   }
 
   async getActiveWebSessionBySecretHash(
@@ -206,11 +215,14 @@ export class AuthDb extends LazyDbAccessCompatibleService {
     return this.getWalletConnectionTransferByIdOrThrow(params.id);
   }
 
-  async consumeWalletConnectionTransfer(params: {
-    readonly transferCodeHash: string;
-    readonly targetClientType: WalletAuthClientType;
-    readonly now: Date;
-  }): Promise<WalletConnectionTransferEntity | null> {
+  async consumeWalletConnectionTransfer(
+    params: {
+      readonly transferCodeHash: string;
+      readonly targetClientType: WalletAuthClientType;
+      readonly now: Date;
+    },
+    connection?: AuthDbConnection
+  ): Promise<WalletConnectionTransferEntity | null> {
     const result = await this.db.execute(
       `update ${WALLET_CONNECTION_TRANSFERS_TABLE}
        set consumed_at = :now
@@ -218,7 +230,8 @@ export class AuthDb extends LazyDbAccessCompatibleService {
          and target_client_type = :targetClientType
          and consumed_at is null
          and expires_at > :now`,
-      params
+      params,
+      getDbOptions(connection)
     );
     if (this.db.getAffectedRows(result) !== 1) {
       return null;
@@ -226,28 +239,38 @@ export class AuthDb extends LazyDbAccessCompatibleService {
     return this.db.oneOrNull<WalletConnectionTransferEntity>(
       `select * from ${WALLET_CONNECTION_TRANSFERS_TABLE}
        where transfer_code_hash = :transferCodeHash`,
-      { transferCodeHash: params.transferCodeHash }
+      { transferCodeHash: params.transferCodeHash },
+      getDbOptions(connection)
     );
   }
 
   async markWalletConnectionTransferSession(
     transferId: string,
-    sessionId: string
+    sessionId: string,
+    connection?: AuthDbConnection
   ): Promise<void> {
-    await this.db.execute(
+    const result = await this.db.execute(
       `update ${WALLET_CONNECTION_TRANSFERS_TABLE}
        set consumed_session_id = :sessionId
        where id = :transferId`,
-      { transferId, sessionId }
+      { transferId, sessionId },
+      getDbOptions(connection)
     );
+    if (this.db.getAffectedRows(result) !== 1) {
+      throw new Error(
+        `Wallet connection transfer ${transferId} not found while marking consumed session`
+      );
+    }
   }
 
   private async getWalletAuthSessionByIdOrThrow(
-    id: string
+    id: string,
+    connection?: AuthDbConnection
   ): Promise<WalletAuthSessionEntity> {
     const session = await this.db.oneOrNull<WalletAuthSessionEntity>(
       `select * from ${WALLET_AUTH_SESSIONS_TABLE} where id = :id`,
-      { id }
+      { id },
+      getDbOptions(connection)
     );
     if (!session) {
       throw new Error(`Wallet auth session ${id} not found after write`);

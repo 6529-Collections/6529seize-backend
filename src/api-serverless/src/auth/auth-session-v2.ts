@@ -2,6 +2,7 @@ import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import * as jwt from 'jsonwebtoken';
 import { env } from '@/env';
 import { WalletAuthClientType } from '@/entities/IWalletAuthSession';
+import { ConnectionWrapper } from '@/sql-executor';
 import { Time } from '@/time';
 import { getJwtExpiry, getJwtSecret } from './auth';
 import { authDb } from './auth.db';
@@ -53,6 +54,8 @@ export type ParsedSessionCookie = {
   readonly secret: string;
 } | null;
 
+type AuthDbConnection = ConnectionWrapper<any>;
+
 export function issueAccessToken(
   address: string,
   role?: string | null
@@ -103,7 +106,12 @@ export function parseWalletSessionCookieHeader(
       continue;
     }
     const rawValue = rawValueParts.join('=').trim();
-    const decoded = decodeURIComponent(rawValue);
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(rawValue);
+    } catch {
+      return null;
+    }
     const [sessionId, secret] = decoded.split('.');
     if (
       !sessionId ||
@@ -288,14 +296,19 @@ export async function logoutNativeSession({
   readonly allSessions: boolean;
 }): Promise<void> {
   const now = new Date();
+  const refreshTokenHash = hashSecret(nativeRefreshToken);
   if (allSessions) {
-    await authDb.revokeWalletAuthSessionsForAddress(address.toLowerCase(), now);
+    const existing = await authDb.getActiveNativeSessionByRefreshHash(
+      address.toLowerCase(),
+      refreshTokenHash,
+      now
+    );
+    if (existing) {
+      await authDb.revokeWalletAuthSessionsForAddress(existing.address, now);
+    }
     return;
   }
-  await authDb.revokeWalletAuthSessionByRefreshHash(
-    hashSecret(nativeRefreshToken),
-    now
-  );
+  await authDb.revokeWalletAuthSessionByRefreshHash(refreshTokenHash, now);
 }
 
 export async function createConnectionTransfer({
@@ -343,23 +356,38 @@ export async function redeemConnectionTransfer({
   readonly targetClientType: WalletAuthClientType;
   readonly userAgent: string | null;
 }): Promise<RedeemedConnectionTransfer | null> {
-  const transfer = await authDb.consumeWalletConnectionTransfer({
-    transferCodeHash: hashSecret(transferCode),
-    targetClientType,
-    now: new Date()
-  });
-  if (!transfer) {
+  const session = await authDb.executeNativeQueriesInTransaction(
+    async (connection) => {
+      const transfer = await authDb.consumeWalletConnectionTransfer(
+        {
+          transferCodeHash: hashSecret(transferCode),
+          targetClientType,
+          now: new Date()
+        },
+        connection
+      );
+      if (!transfer) {
+        return null;
+      }
+      const createdSession = await createNativeSessionRecord(
+        {
+          address: transfer.address,
+          role: transfer.role,
+          userAgent
+        },
+        connection
+      );
+      await authDb.markWalletConnectionTransferSession(
+        transfer.id,
+        createdSession.sessionId,
+        connection
+      );
+      return createdSession;
+    }
+  );
+  if (!session) {
     return null;
   }
-  const session = await createNativeSessionRecord({
-    address: transfer.address,
-    role: transfer.role,
-    userAgent
-  });
-  await authDb.markWalletConnectionTransferSession(
-    transfer.id,
-    session.sessionId
-  );
   return {
     response: {
       address: session.response.address,
@@ -386,28 +414,34 @@ function toWebSessionResponse(
   };
 }
 
-async function createNativeSessionRecord({
-  address,
-  role,
-  userAgent
-}: {
-  readonly address: string;
-  readonly role: string | null;
-  readonly userAgent: string | null;
-}): Promise<CreatedNativeSession & { readonly sessionId: string }> {
+async function createNativeSessionRecord(
+  {
+    address,
+    role,
+    userAgent
+  }: {
+    readonly address: string;
+    readonly role: string | null;
+    readonly userAgent: string | null;
+  },
+  connection?: AuthDbConnection
+): Promise<CreatedNativeSession & { readonly sessionId: string }> {
   const sessionId = randomUUID();
   const nativeRefreshToken = createOpaqueSecret(64);
   const expiresAt = getSessionRefreshExpiresAt();
-  const session = await authDb.createWalletAuthSession({
-    id: sessionId,
-    address: address.toLowerCase(),
-    role,
-    clientType: 'native',
-    secretHash: null,
-    refreshTokenHash: hashSecret(nativeRefreshToken),
-    userAgentHash: userAgent ? hashPublicValue(userAgent) : null,
-    expiresAt
-  });
+  const session = await authDb.createWalletAuthSession(
+    {
+      id: sessionId,
+      address: address.toLowerCase(),
+      role,
+      clientType: 'native',
+      secretHash: null,
+      refreshTokenHash: hashSecret(nativeRefreshToken),
+      userAgentHash: userAgent ? hashPublicValue(userAgent) : null,
+      expiresAt
+    },
+    connection
+  );
   const accessToken = issueAccessToken(session.address, session.role);
   return {
     sessionId,
