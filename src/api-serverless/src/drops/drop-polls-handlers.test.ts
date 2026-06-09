@@ -19,8 +19,8 @@ jest.mock('@/time', () => ({
 }));
 
 import { PageSortDirection } from '@/api/page-request';
-import { DropPollsOrderBy, DropPollState } from './drop-polls.db';
-import { handleGetWavePollsV2 } from './drop-polls.handlers';
+import { DropPollsOrderBy, DropPollState } from '@/api/drops/drop-polls.db';
+import { handleGetWavePollsV2 } from '@/api/drops/drop-polls.handlers';
 
 describe('drop polls handlers', () => {
   const timer = { marker: 'timer' } as any;
