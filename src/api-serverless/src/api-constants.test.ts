@@ -37,6 +37,13 @@ describe('api CORS constants', () => {
     );
   });
 
+  it('allows requests without an Origin header for same-origin and non-browser clients', () => {
+    process.env.NODE_ENV = 'production';
+
+    expect(isCorsOriginAllowed(undefined)).toBe(true);
+    expect(getCorsResponseOrigin(undefined)).toBe('https://6529.io');
+  });
+
   it('allows localhost origins outside production for local frontend development', () => {
     process.env.NODE_ENV = 'local';
 
