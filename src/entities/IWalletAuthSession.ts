@@ -4,7 +4,7 @@ import { WALLET_AUTH_SESSIONS_TABLE } from '@/constants';
 export type WalletAuthClientType = 'web' | 'native';
 
 @Entity(WALLET_AUTH_SESSIONS_TABLE)
-export class WalletAuthSession {
+export class WalletAuthSessionEntity {
   @PrimaryColumn({ type: 'varchar', length: 36, nullable: false })
   readonly id!: string;
 

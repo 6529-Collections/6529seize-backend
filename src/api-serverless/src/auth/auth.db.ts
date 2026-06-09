@@ -8,13 +8,16 @@ import {
   WALLET_AUTH_SESSIONS_TABLE,
   WALLET_CONNECTION_TRANSFERS_TABLE
 } from '@/constants';
-import { randomBytes } from 'crypto';
+import { randomBytes } from 'node:crypto';
 import { equalIgnoreCase } from '../../../strings';
 import {
   WalletAuthClientType,
-  WalletAuthSession
+  WalletAuthSessionEntity
 } from '../../../entities/IWalletAuthSession';
-import { WalletConnectionTransfer } from '../../../entities/IWalletConnectionTransfer';
+import { WalletConnectionTransferEntity } from '../../../entities/IWalletConnectionTransfer';
+
+const CLIENT_TYPE_WEB: WalletAuthClientType = 'web';
+const CLIENT_TYPE_NATIVE: WalletAuthClientType = 'native';
 
 type CreateWalletAuthSessionParams = {
   readonly id: string;
@@ -66,7 +69,7 @@ export class AuthDb extends LazyDbAccessCompatibleService {
 
   async createWalletAuthSession(
     params: CreateWalletAuthSessionParams
-  ): Promise<WalletAuthSession> {
+  ): Promise<WalletAuthSessionEntity> {
     await this.db.execute(
       `insert into ${WALLET_AUTH_SESSIONS_TABLE}
        (id, address, role, client_type, secret_hash, refresh_token_hash, user_agent_hash, expires_at)
@@ -80,15 +83,15 @@ export class AuthDb extends LazyDbAccessCompatibleService {
     id: string,
     secretHash: string,
     now: Date
-  ): Promise<WalletAuthSession | null> {
-    return this.db.oneOrNull<WalletAuthSession>(
+  ): Promise<WalletAuthSessionEntity | null> {
+    return this.db.oneOrNull<WalletAuthSessionEntity>(
       `select * from ${WALLET_AUTH_SESSIONS_TABLE}
        where id = :id
-         and client_type = 'web'
+         and client_type = :clientType
          and secret_hash = :secretHash
          and revoked_at is null
          and expires_at > :now`,
-      { id, secretHash, now }
+      { id, secretHash, now, clientType: CLIENT_TYPE_WEB }
     );
   }
 
@@ -96,15 +99,15 @@ export class AuthDb extends LazyDbAccessCompatibleService {
     address: string,
     refreshTokenHash: string,
     now: Date
-  ): Promise<WalletAuthSession | null> {
-    return this.db.oneOrNull<WalletAuthSession>(
+  ): Promise<WalletAuthSessionEntity | null> {
+    return this.db.oneOrNull<WalletAuthSessionEntity>(
       `select * from ${WALLET_AUTH_SESSIONS_TABLE}
        where address = :address
-         and client_type = 'native'
+         and client_type = :clientType
          and refresh_token_hash = :refreshTokenHash
          and revoked_at is null
          and expires_at > :now`,
-      { address, refreshTokenHash, now }
+      { address, refreshTokenHash, now, clientType: CLIENT_TYPE_NATIVE }
     );
   }
 
@@ -114,18 +117,18 @@ export class AuthDb extends LazyDbAccessCompatibleService {
     readonly nextSecretHash: string;
     readonly expiresAt: Date;
     readonly now: Date;
-  }): Promise<WalletAuthSession | null> {
+  }): Promise<WalletAuthSessionEntity | null> {
     const result = await this.db.execute(
       `update ${WALLET_AUTH_SESSIONS_TABLE}
        set secret_hash = :nextSecretHash,
            expires_at = :expiresAt,
            last_used_at = :now
        where id = :sessionId
-         and client_type = 'web'
+         and client_type = :clientType
          and secret_hash = :previousSecretHash
          and revoked_at is null
          and expires_at > :now`,
-      params
+      { ...params, clientType: CLIENT_TYPE_WEB }
     );
     if (this.db.getAffectedRows(result) !== 1) {
       return null;
@@ -139,18 +142,18 @@ export class AuthDb extends LazyDbAccessCompatibleService {
     readonly nextRefreshTokenHash: string;
     readonly expiresAt: Date;
     readonly now: Date;
-  }): Promise<WalletAuthSession | null> {
+  }): Promise<WalletAuthSessionEntity | null> {
     const result = await this.db.execute(
       `update ${WALLET_AUTH_SESSIONS_TABLE}
        set refresh_token_hash = :nextRefreshTokenHash,
            expires_at = :expiresAt,
            last_used_at = :now
        where id = :sessionId
-         and client_type = 'native'
+         and client_type = :clientType
          and refresh_token_hash = :previousRefreshTokenHash
          and revoked_at is null
          and expires_at > :now`,
-      params
+      { ...params, clientType: CLIENT_TYPE_NATIVE }
     );
     if (this.db.getAffectedRows(result) !== 1) {
       return null;
@@ -193,7 +196,7 @@ export class AuthDb extends LazyDbAccessCompatibleService {
 
   async createWalletConnectionTransfer(
     params: CreateWalletConnectionTransferParams
-  ): Promise<WalletConnectionTransfer> {
+  ): Promise<WalletConnectionTransferEntity> {
     await this.db.execute(
       `insert into ${WALLET_CONNECTION_TRANSFERS_TABLE}
        (id, transfer_code_hash, address, role, target_client_type, expires_at)
@@ -207,7 +210,7 @@ export class AuthDb extends LazyDbAccessCompatibleService {
     readonly transferCodeHash: string;
     readonly targetClientType: WalletAuthClientType;
     readonly now: Date;
-  }): Promise<WalletConnectionTransfer | null> {
+  }): Promise<WalletConnectionTransferEntity | null> {
     const result = await this.db.execute(
       `update ${WALLET_CONNECTION_TRANSFERS_TABLE}
        set consumed_at = :now
@@ -220,7 +223,7 @@ export class AuthDb extends LazyDbAccessCompatibleService {
     if (this.db.getAffectedRows(result) !== 1) {
       return null;
     }
-    return this.db.oneOrNull<WalletConnectionTransfer>(
+    return this.db.oneOrNull<WalletConnectionTransferEntity>(
       `select * from ${WALLET_CONNECTION_TRANSFERS_TABLE}
        where transfer_code_hash = :transferCodeHash`,
       { transferCodeHash: params.transferCodeHash }
@@ -241,8 +244,8 @@ export class AuthDb extends LazyDbAccessCompatibleService {
 
   private async getWalletAuthSessionByIdOrThrow(
     id: string
-  ): Promise<WalletAuthSession> {
-    const session = await this.db.oneOrNull<WalletAuthSession>(
+  ): Promise<WalletAuthSessionEntity> {
+    const session = await this.db.oneOrNull<WalletAuthSessionEntity>(
       `select * from ${WALLET_AUTH_SESSIONS_TABLE} where id = :id`,
       { id }
     );
@@ -254,8 +257,8 @@ export class AuthDb extends LazyDbAccessCompatibleService {
 
   private async getWalletConnectionTransferByIdOrThrow(
     id: string
-  ): Promise<WalletConnectionTransfer> {
-    const transfer = await this.db.oneOrNull<WalletConnectionTransfer>(
+  ): Promise<WalletConnectionTransferEntity> {
+    const transfer = await this.db.oneOrNull<WalletConnectionTransferEntity>(
       `select * from ${WALLET_CONNECTION_TRANSFERS_TABLE} where id = :id`,
       { id }
     );
