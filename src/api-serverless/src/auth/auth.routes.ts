@@ -4,7 +4,11 @@ import * as jwt from 'jsonwebtoken';
 import { ApiResponse } from '../api-response';
 import * as Joi from 'joi';
 import { ethers } from 'ethers';
-import { getJwtExpiry, getJwtSecret } from './auth';
+import {
+  getAuthenticatedWalletOrNull,
+  getJwtSecret,
+  needsAuthenticatedUser
+} from './auth';
 import { asyncRouter } from '../async.router';
 import { getValidatedByJoiOrThrow } from '../validation';
 import {
@@ -16,10 +20,38 @@ import { ApiLoginRequest } from '../generated/models/ApiLoginRequest';
 import { profileProxyApiService } from '../proxies/proxy.api.service';
 import { ApiRedeemRefreshTokenRequest } from '../generated/models/ApiRedeemRefreshTokenRequest';
 import { ApiRedeemRefreshTokenResponse } from '../generated/models/ApiRedeemRefreshTokenResponse';
+import { ApiCreateConnectionTransferRequest } from '../generated/models/ApiCreateConnectionTransferRequest';
+import { ApiCreateConnectionTransferResponse } from '../generated/models/ApiCreateConnectionTransferResponse';
+import { ApiRedeemConnectionTransferRequest } from '../generated/models/ApiRedeemConnectionTransferRequest';
+import { ApiRedeemConnectionTransferResponse } from '../generated/models/ApiRedeemConnectionTransferResponse';
+import { ApiSessionLoginRequest } from '../generated/models/ApiSessionLoginRequest';
+import { ApiSessionLogoutNativeRequest } from '../generated/models/ApiSessionLogoutNativeRequest';
+import { ApiSessionLogoutWebRequest } from '../generated/models/ApiSessionLogoutWebRequest';
+import { ApiSessionRefreshNativeRequest } from '../generated/models/ApiSessionRefreshNativeRequest';
+import { ApiSessionRefreshWebRequest } from '../generated/models/ApiSessionRefreshWebRequest';
+import { CreateWalletAuthSession201Response } from '../generated/models/CreateWalletAuthSession201Response';
+import { LogoutWalletAuthSessionRequest } from '../generated/models/LogoutWalletAuthSessionRequest';
+import { RefreshWalletAuthSessionRequest } from '../generated/models/RefreshWalletAuthSessionRequest';
 import { identityFetcher } from '../identities/identity.fetcher';
 import { Timer } from '../../../time';
 import { authDb } from './auth.db';
 import { env } from '../../../env';
+import {
+  clearWalletSessionCookie,
+  createConnectionTransfer,
+  createNativeSession,
+  createWebSession,
+  isAuthSessionV2Enabled,
+  isAuthTransferCodesEnabled,
+  isLegacyRefreshEnabled,
+  issueAccessToken,
+  logoutNativeSession,
+  logoutWebSession,
+  parseWalletSessionCookieHeader,
+  redeemConnectionTransfer,
+  refreshNativeSession,
+  refreshWebSession
+} from './auth-session-v2';
 
 const router = asyncRouter();
 
@@ -89,40 +121,12 @@ router.post(
         client_address ?? null,
         is_safe_wallet
       );
-      const signingProfile = await identityFetcher.getProfileIdByIdentityKey(
-        { identityKey: signingAddress },
-        { timer }
+      const chosenRole = await resolveAuthenticatedRole(
+        signingAddress,
+        role ?? null,
+        timer
       );
-      let chosenRole = role;
-      if (signingProfile == null) {
-        if (role) {
-          throw new BadRequestException(
-            `You need to create a profile before you can choose a role`
-          );
-        }
-      } else if (!role) {
-        chosenRole = signingProfile;
-      } else {
-        const roleId = await identityFetcher.getProfileIdByIdentityKey(
-          { identityKey: role },
-          {}
-        );
-        if (!roleId) {
-          throw new BadRequestException(`Role ${role} not found`);
-        }
-        const proxy =
-          await profileProxyApiService.getProxyByGrantedByAndGrantedTo({
-            granted_to_profile_id: signingProfile,
-            granted_by_profile_id: roleId
-          });
-        if (proxy === null) {
-          throw new BadRequestException(
-            `Profile ${role} hasn't creared a proxy for you, so you can't authenticated as this role.`
-          );
-        }
-        chosenRole = roleId;
-      }
-      const accessToken = getAccessToken(signingAddress, chosenRole);
+      const accessToken = issueAccessToken(signingAddress, chosenRole).token;
       const refreshToken =
         await authDb.retrieveOrGenerateRefreshToken(signingAddress);
       res.status(201).send({
@@ -136,11 +140,203 @@ router.post(
 );
 
 router.post(
+  '/session-login',
+  async function (
+    req: Request<any, any, ApiSessionLoginRequest, any, any>,
+    res: Response<ApiResponse<CreateWalletAuthSession201Response>>
+  ) {
+    assertSessionV2Enabled();
+    const timer = Timer.getFromRequest(req);
+    const loginRequest = getValidatedByJoiOrThrow(
+      req.body,
+      SessionLoginRequestSchema
+    );
+    try {
+      const nonce = verifyServerSignature(loginRequest.server_signature);
+      const signingAddress = await verifyClientSignature(
+        nonce,
+        loginRequest.client_signature,
+        loginRequest.client_address,
+        loginRequest.is_safe_wallet
+      );
+      const chosenRole = await resolveAuthenticatedRole(
+        signingAddress,
+        loginRequest.role ?? null,
+        timer
+      );
+      if (loginRequest.client_type === 'native') {
+        const created = await createNativeSession({
+          address: signingAddress,
+          role: chosenRole,
+          userAgent: getUserAgent(req)
+        });
+        res.status(201).send(created.response);
+        return;
+      }
+      const created = await createWebSession({
+        address: signingAddress,
+        role: chosenRole,
+        userAgent: getUserAgent(req)
+      });
+      res.setHeader('Set-Cookie', created.setCookie);
+      res.status(201).send(created.response);
+    } catch (err: any) {
+      throw new UnauthorisedException(`Authentication failed: ${err.message}`);
+    }
+  }
+);
+
+router.post(
+  '/session-refresh',
+  async function (
+    req: Request<
+      any,
+      any,
+      RefreshWalletAuthSessionRequest | undefined,
+      any,
+      any
+    >,
+    res: Response<ApiResponse<CreateWalletAuthSession201Response>>
+  ) {
+    assertSessionV2Enabled();
+    const body = req.body ?? {};
+    const clientType = body.client_type === 'native' ? 'native' : 'web';
+    if (clientType === 'native') {
+      const refreshRequest = getValidatedByJoiOrThrow(
+        body,
+        SessionRefreshNativeRequestSchema
+      );
+      const refreshed = await refreshNativeSession({
+        address: refreshRequest.client_address,
+        nativeRefreshToken: refreshRequest.native_refresh_token
+      });
+      if (!refreshed) {
+        throw new UnauthorisedException('Invalid session');
+      }
+      res.status(201).send(refreshed.response);
+      return;
+    }
+    getValidatedByJoiOrThrow(
+      { ...body, client_type: 'web' },
+      SessionRefreshWebRequestSchema
+    );
+    const cookie = parseWalletSessionCookieHeader(req.headers.cookie);
+    const refreshed = await refreshWebSession({ cookie });
+    if (!refreshed) {
+      res.setHeader('Set-Cookie', clearWalletSessionCookie());
+      throw new UnauthorisedException('Invalid session');
+    }
+    res.setHeader('Set-Cookie', refreshed.setCookie);
+    res.status(201).send(refreshed.response);
+  }
+);
+
+router.post(
+  '/session-logout',
+  async function (
+    req: Request<
+      any,
+      any,
+      LogoutWalletAuthSessionRequest | undefined,
+      any,
+      any
+    >,
+    res: Response<void>
+  ) {
+    assertSessionV2Enabled();
+    const body = req.body ?? {};
+    const clientType = body.client_type === 'native' ? 'native' : 'web';
+    if (clientType === 'native') {
+      const logoutRequest = getValidatedByJoiOrThrow(
+        body,
+        SessionLogoutNativeRequestSchema
+      );
+      await logoutNativeSession({
+        address: logoutRequest.client_address,
+        nativeRefreshToken: logoutRequest.native_refresh_token,
+        allSessions: logoutRequest.all_sessions ?? false
+      });
+      res.status(204).send();
+      return;
+    }
+    const logoutRequest = getValidatedByJoiOrThrow(
+      { ...body, client_type: 'web' },
+      SessionLogoutWebRequestSchema
+    );
+    const setCookie = await logoutWebSession({
+      cookie: parseWalletSessionCookieHeader(req.headers.cookie),
+      allSessions: logoutRequest.all_sessions ?? false
+    });
+    res.setHeader('Set-Cookie', setCookie);
+    res.status(204).send();
+  }
+);
+
+router.post(
+  '/connection-transfer',
+  needsAuthenticatedUser(),
+  async function (
+    req: Request<any, any, ApiCreateConnectionTransferRequest, any, any>,
+    res: Response<ApiResponse<ApiCreateConnectionTransferResponse>>
+  ) {
+    assertSessionV2Enabled();
+    assertTransferCodesEnabled();
+    const transferRequest = getValidatedByJoiOrThrow(
+      req.body,
+      CreateConnectionTransferRequestSchema
+    );
+    const authenticatedWallet = getAuthenticatedWalletOrNull(req);
+    if (!authenticatedWallet) {
+      throw new UnauthorisedException('Authentication required');
+    }
+    const authRole = ((req.user as any)?.role ?? null) as string | null;
+    if (transferRequest.role && transferRequest.role !== authRole) {
+      throw new BadRequestException(
+        'Transfer role must match authenticated session role'
+      );
+    }
+    const created = await createConnectionTransfer({
+      address: authenticatedWallet,
+      role: authRole,
+      targetClientType: transferRequest.target_client_type
+    });
+    res.status(201).send(created);
+  }
+);
+
+router.post(
+  '/connection-transfer/redeem',
+  async function (
+    req: Request<any, any, ApiRedeemConnectionTransferRequest, any, any>,
+    res: Response<ApiResponse<ApiRedeemConnectionTransferResponse>>
+  ) {
+    assertSessionV2Enabled();
+    assertTransferCodesEnabled();
+    const redeemRequest = getValidatedByJoiOrThrow(
+      req.body,
+      RedeemConnectionTransferRequestSchema
+    );
+    const redeemed = await redeemConnectionTransfer({
+      transferCode: redeemRequest.transfer_code,
+      targetClientType: redeemRequest.target_client_type,
+      userAgent: getUserAgent(req)
+    });
+    if (!redeemed) {
+      throw new UnauthorisedException('Invalid transfer code');
+    }
+    res.status(201).send(redeemed.response);
+  }
+);
+
+router.post(
   '/redeem-refresh-token',
   async function (
     req: Request<any, any, ApiRedeemRefreshTokenRequest, any, any>,
     res: Response<ApiResponse<ApiRedeemRefreshTokenResponse>>
   ) {
+    if (!isLegacyRefreshEnabled()) {
+      throw new BadRequestException('Legacy refresh token auth is disabled');
+    }
     const tokenAddress = req.body.address?.toLowerCase();
     const refreshToken = req.body.token;
     const role = req.body.role;
@@ -154,7 +350,7 @@ router.post(
     if (!redeemed) {
       throw new BadRequestException('Invalid refresh token');
     }
-    const accessToken = getAccessToken(tokenAddress, role);
+    const accessToken = issueAccessToken(tokenAddress, role).token;
     res.status(201).send({
       address: tokenAddress,
       token: accessToken
@@ -162,18 +358,56 @@ router.post(
   }
 );
 
-function getAccessToken(address: string, role?: string) {
-  return jwt.sign(
-    {
-      id: randomUUID(),
-      sub: address.toLowerCase(),
-      role
-    },
-    getJwtSecret(),
-    {
-      expiresIn: getJwtExpiry()
-    }
+function assertSessionV2Enabled(): void {
+  if (!isAuthSessionV2Enabled()) {
+    throw new BadRequestException('Wallet auth session v2 is disabled');
+  }
+}
+
+function assertTransferCodesEnabled(): void {
+  if (!isAuthTransferCodesEnabled()) {
+    throw new BadRequestException('Wallet auth transfer codes are disabled');
+  }
+}
+
+async function resolveAuthenticatedRole(
+  signingAddress: string,
+  role: string | null,
+  timer: Timer
+): Promise<string | null> {
+  const signingProfile = await identityFetcher.getProfileIdByIdentityKey(
+    { identityKey: signingAddress },
+    { timer }
   );
+  let chosenRole = role;
+  if (signingProfile == null) {
+    if (role) {
+      throw new BadRequestException(
+        `You need to create a profile before you can choose a role`
+      );
+    }
+  } else if (!role) {
+    chosenRole = signingProfile;
+  } else {
+    const roleId = await identityFetcher.getProfileIdByIdentityKey(
+      { identityKey: role },
+      {}
+    );
+    if (!roleId) {
+      throw new BadRequestException(`Role ${role} not found`);
+    }
+    const proxy = await profileProxyApiService.getProxyByGrantedByAndGrantedTo({
+      granted_to_profile_id: signingProfile,
+      granted_by_profile_id: roleId
+    });
+    if (proxy === null) {
+      throw new BadRequestException(
+        `Profile ${role} hasn't creared a proxy for you, so you can't authenticated as this role.`
+      );
+    }
+    chosenRole = roleId;
+  }
+  return chosenRole ?? null;
 }
 
 function verifyServerSignature(serverSignature: string): string {
@@ -197,7 +431,7 @@ async function verifyClientSignature(
         `client_address is mandatory in safe signatures`
       );
     }
-    const messageHash = ethers.hashMessage(nonce); // returns bytes32
+    const messageHash = ethers.hashMessage(nonce);
 
     const EIP1271_ABI = [
       'function isValidSignature(bytes32 _messageHash, bytes _signature) public view returns (bytes4)'
@@ -236,6 +470,17 @@ async function verifyClientSignature(
   }
 }
 
+function getUserAgent(req: Request<any, any, any, any, any>): string | null {
+  const value = req.headers['user-agent'];
+  if (typeof value === 'string' && value.trim().length > 0) {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.find((it) => it.trim().length > 0) ?? null;
+  }
+  return null;
+}
+
 const LoginRequestSchema: Joi.ObjectSchema<ApiLoginRequest> =
   Joi.object<ApiLoginRequest>({
     server_signature: Joi.string().required(),
@@ -243,6 +488,63 @@ const LoginRequestSchema: Joi.ObjectSchema<ApiLoginRequest> =
     role: Joi.string().optional(),
     client_address: Joi.string().optional().allow(null).default(null),
     is_safe_wallet: Joi.boolean().optional().default(false)
+  });
+
+const ClientTypeSchema = Joi.string().valid('web', 'native');
+
+const SessionLoginRequestSchema: Joi.ObjectSchema<ApiSessionLoginRequest> =
+  Joi.object<ApiSessionLoginRequest>({
+    client_type: ClientTypeSchema.required(),
+    server_signature: Joi.string().required(),
+    client_signature: Joi.string().required(),
+    role: Joi.string().optional().allow(null).default(null),
+    client_address: Joi.string().required(),
+    is_safe_wallet: Joi.boolean().optional().default(false),
+    wallet_kind_hint: Joi.string()
+      .valid('eoa', 'contract', 'unknown')
+      .optional()
+      .allow(null),
+    version: Joi.number().integer().optional()
+  });
+
+const SessionRefreshWebRequestSchema: Joi.ObjectSchema<ApiSessionRefreshWebRequest> =
+  Joi.object<ApiSessionRefreshWebRequest>({
+    client_type: Joi.string().valid('web').required(),
+    role: Joi.string().optional().allow(null)
+  });
+
+const SessionRefreshNativeRequestSchema: Joi.ObjectSchema<ApiSessionRefreshNativeRequest> =
+  Joi.object<ApiSessionRefreshNativeRequest>({
+    client_type: Joi.string().valid('native').required(),
+    client_address: Joi.string().required(),
+    native_refresh_token: Joi.string().min(32).required(),
+    role: Joi.string().optional().allow(null)
+  });
+
+const SessionLogoutWebRequestSchema: Joi.ObjectSchema<ApiSessionLogoutWebRequest> =
+  Joi.object<ApiSessionLogoutWebRequest>({
+    client_type: Joi.string().valid('web').required(),
+    all_sessions: Joi.boolean().optional().default(false)
+  });
+
+const SessionLogoutNativeRequestSchema: Joi.ObjectSchema<ApiSessionLogoutNativeRequest> =
+  Joi.object<ApiSessionLogoutNativeRequest>({
+    client_type: Joi.string().valid('native').required(),
+    client_address: Joi.string().required(),
+    native_refresh_token: Joi.string().min(32).required(),
+    all_sessions: Joi.boolean().optional().default(false)
+  });
+
+const CreateConnectionTransferRequestSchema: Joi.ObjectSchema<ApiCreateConnectionTransferRequest> =
+  Joi.object<ApiCreateConnectionTransferRequest>({
+    target_client_type: Joi.string().valid('native').required(),
+    role: Joi.string().optional().allow(null)
+  });
+
+const RedeemConnectionTransferRequestSchema: Joi.ObjectSchema<ApiRedeemConnectionTransferRequest> =
+  Joi.object<ApiRedeemConnectionTransferRequest>({
+    transfer_code: Joi.string().min(22).required(),
+    target_client_type: Joi.string().valid('native').required()
   });
 
 interface ApiLoginResponse {

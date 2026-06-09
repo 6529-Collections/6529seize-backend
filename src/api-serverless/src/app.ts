@@ -138,6 +138,7 @@ import { getValidatedByJoiOrThrow } from './validation';
 import {
   appWebSockets,
   authenticateWebSocketJwtOrGetByConnectionId,
+  authenticateWebSocketToken,
   mapHttpRequestToGatewayEvent
 } from './ws/ws';
 import { wsListenersNotifier } from './ws/ws-listeners-notifier';
@@ -1649,6 +1650,7 @@ async function initializeApp() {
         );
         const { identityId, jwtExpiry } =
           await authenticateWebSocketJwtOrGetByConnectionId(event);
+        let activeIdentityId = identityId;
         await appWebSockets.register({
           identityId,
           connectionId,
@@ -1663,6 +1665,41 @@ async function initializeApp() {
             const message = JSON.parse(rawData.toString());
 
             switch (message.type) {
+              case WsMessageType.AUTHENTICATE: {
+                const accessToken = (
+                  message.access_token ?? message.token
+                )?.toString();
+                const authenticated = accessToken
+                  ? await authenticateWebSocketToken(accessToken)
+                  : null;
+                if (!authenticated) {
+                  socket.send(
+                    JSON.stringify({
+                      type: WsMessageType.AUTHENTICATION_FAILED
+                    })
+                  );
+                  break;
+                }
+                activeIdentityId = authenticated.identityId;
+                await appWebSockets.authenticateConnection(
+                  {
+                    connectionId,
+                    identityId: authenticated.identityId,
+                    jwtExpiry: authenticated.jwtExpiry
+                  },
+                  {}
+                );
+                socket.send(
+                  JSON.stringify({
+                    type: WsMessageType.AUTHENTICATED,
+                    identity_id: authenticated.identityId,
+                    expires_at: new Date(
+                      authenticated.jwtExpiry * 1000
+                    ).toISOString()
+                  })
+                );
+                break;
+              }
               case WsMessageType.SUBSCRIBE_TO_WAVE: {
                 const waveId = message.wave_id?.toString() ?? null;
                 if (waveId && !ids.isValidUuid(waveId)) {
@@ -1690,7 +1727,7 @@ async function initializeApp() {
                   );
                 } else {
                   await wsListenersNotifier.notifyAboutUserIsTyping({
-                    identityId,
+                    identityId: activeIdentityId,
                     waveId
                   });
                 }

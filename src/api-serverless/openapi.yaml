@@ -227,6 +227,117 @@ paths:
                 $ref: "#/components/schemas/ApiRedeemRefreshTokenResponse"
         "400":
           description: Invalid request
+  /auth/session-login:
+    post:
+      tags:
+        - Authentication
+      summary: Authenticate and create a wallet auth session
+      operationId: createWalletAuthSession
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApiSessionLoginRequest"
+      responses:
+        "201":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ApiSessionWebResponse"
+                  - $ref: "#/components/schemas/ApiSessionNativeResponse"
+        "400":
+          description: Invalid request
+  /auth/session-refresh:
+    post:
+      tags:
+        - Authentication
+      summary: Rotate a wallet auth session and issue a fresh JWT
+      operationId: refreshWalletAuthSession
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: "#/components/schemas/ApiSessionRefreshWebRequest"
+                - $ref: "#/components/schemas/ApiSessionRefreshNativeRequest"
+      responses:
+        "201":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ApiSessionWebResponse"
+                  - $ref: "#/components/schemas/ApiSessionNativeResponse"
+        "400":
+          description: Invalid request
+  /auth/session-logout:
+    post:
+      tags:
+        - Authentication
+      summary: Revoke a wallet auth session
+      operationId: logoutWalletAuthSession
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: "#/components/schemas/ApiSessionLogoutWebRequest"
+                - $ref: "#/components/schemas/ApiSessionLogoutNativeRequest"
+      responses:
+        "204":
+          description: successful operation
+        "400":
+          description: Invalid request
+  /auth/connection-transfer:
+    post:
+      tags:
+        - Authentication
+      summary: Create a one-time wallet connection transfer code
+      operationId: createWalletConnectionTransfer
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApiCreateConnectionTransferRequest"
+      responses:
+        "201":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiCreateConnectionTransferResponse"
+        "400":
+          description: Invalid request
+  /auth/connection-transfer/redeem:
+    post:
+      tags:
+        - Authentication
+      summary: Redeem a one-time wallet connection transfer code
+      operationId: redeemWalletConnectionTransfer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApiRedeemConnectionTransferRequest"
+      responses:
+        "201":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiRedeemConnectionTransferResponse"
+        "400":
+          description: Invalid request
   /collected-stats/{identityKey}:
     get:
       tags:
@@ -9564,6 +9675,43 @@ components:
           type: string
         status:
           $ref: "#/components/schemas/ApiAttachmentStatus"
+    ApiCreateConnectionTransferRequest:
+      type: object
+      required:
+        - target_client_type
+      properties:
+        target_client_type:
+          type: string
+          enum:
+            - native
+        role:
+          type: string
+          nullable: true
+    ApiCreateConnectionTransferResponse:
+      type: object
+      required:
+        - transfer_code
+        - expires_at
+        - address
+        - target_client_type
+        - deep_link_path
+      properties:
+        transfer_code:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+        address:
+          type: string
+        role:
+          type: string
+          nullable: true
+        target_client_type:
+          type: string
+          enum:
+            - native
+        deep_link_path:
+          type: string
     ApiCreateDropPart:
       type: object
       required:
@@ -13522,6 +13670,42 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ApiRatingWithProfileInfoAndLevel"
+    ApiRedeemConnectionTransferRequest:
+      type: object
+      required:
+        - transfer_code
+        - target_client_type
+      properties:
+        transfer_code:
+          type: string
+        target_client_type:
+          type: string
+          enum:
+            - native
+    ApiRedeemConnectionTransferResponse:
+      type: object
+      required:
+        - address
+        - access_token
+        - access_token_expires_at
+        - native_refresh_token
+        - refresh_token_expires_at
+      properties:
+        address:
+          type: string
+        role:
+          type: string
+          nullable: true
+        access_token:
+          type: string
+        access_token_expires_at:
+          type: string
+          format: date-time
+        native_refresh_token:
+          type: string
+        refresh_token_expires_at:
+          type: string
+          format: date-time
     ApiRedeemRefreshTokenRequest:
       type: object
       required:
@@ -13740,6 +13924,145 @@ components:
         quorum_wave_id:
           type: string
           nullable: true
+    ApiSessionLoginRequest:
+      type: object
+      required:
+        - client_type
+        - client_address
+        - client_signature
+        - server_signature
+        - is_safe_wallet
+      properties:
+        client_type:
+          type: string
+          enum:
+            - web
+            - native
+        is_safe_wallet:
+          type: boolean
+        client_address:
+          type: string
+        client_signature:
+          type: string
+        server_signature:
+          type: string
+        role:
+          type: string
+          nullable: true
+        wallet_kind_hint:
+          type: string
+          nullable: true
+          enum:
+            - eoa
+            - contract
+            - unknown
+        version:
+          type: integer
+    ApiSessionLogoutNativeRequest:
+      type: object
+      required:
+        - client_type
+        - client_address
+        - native_refresh_token
+      properties:
+        client_type:
+          type: string
+          enum:
+            - native
+        client_address:
+          type: string
+        native_refresh_token:
+          type: string
+        all_sessions:
+          type: boolean
+    ApiSessionLogoutWebRequest:
+      type: object
+      properties:
+        client_type:
+          type: string
+          enum:
+            - web
+        all_sessions:
+          type: boolean
+    ApiSessionNativeResponse:
+      type: object
+      required:
+        - address
+        - access_token
+        - access_token_expires_at
+        - client_type
+        - native_refresh_token
+        - refresh_token_expires_at
+      properties:
+        address:
+          type: string
+        role:
+          type: string
+          nullable: true
+        access_token:
+          type: string
+        access_token_expires_at:
+          type: string
+          format: date-time
+        client_type:
+          type: string
+          enum:
+            - native
+        native_refresh_token:
+          type: string
+        refresh_token_expires_at:
+          type: string
+          format: date-time
+    ApiSessionRefreshNativeRequest:
+      type: object
+      required:
+        - client_type
+        - client_address
+        - native_refresh_token
+      properties:
+        client_type:
+          type: string
+          enum:
+            - native
+        client_address:
+          type: string
+        native_refresh_token:
+          type: string
+        role:
+          type: string
+          nullable: true
+    ApiSessionRefreshWebRequest:
+      type: object
+      properties:
+        client_type:
+          type: string
+          enum:
+            - web
+        role:
+          type: string
+          nullable: true
+    ApiSessionWebResponse:
+      type: object
+      required:
+        - address
+        - access_token
+        - access_token_expires_at
+        - client_type
+      properties:
+        address:
+          type: string
+        role:
+          type: string
+          nullable: true
+        access_token:
+          type: string
+        access_token_expires_at:
+          type: string
+          format: date-time
+        client_type:
+          type: string
+          enum:
+            - web
     ApiSetPinnedDropRequest:
       type: object
       required:
