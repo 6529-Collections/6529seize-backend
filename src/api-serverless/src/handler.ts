@@ -7,7 +7,8 @@ import type {
 } from 'aws-lambda';
 import {
   appWebSockets,
-  authenticateWebSocketJwtOrGetByConnectionId
+  authenticateWebSocketJwtOrGetByConnectionId,
+  authenticateWebSocketToken
 } from './ws/ws';
 import { Logger } from '../../logging';
 import { WsMessageType } from './ws/ws-message';
@@ -83,6 +84,48 @@ async function wsHandler(
           )}`
         );
         switch (message.type) {
+          case WsMessageType.AUTHENTICATE: {
+            const accessToken = (
+              message.access_token ?? message.token
+            )?.toString();
+            const authenticated = accessToken
+              ? await authenticateWebSocketToken(accessToken)
+              : null;
+            if (!authenticated) {
+              await appWebSockets.send({
+                connectionId: connectionId!,
+                message: JSON.stringify({
+                  type: WsMessageType.AUTHENTICATION_FAILED
+                })
+              });
+              return {
+                statusCode: 401,
+                body: JSON.stringify({ message: 'Authentication failed' })
+              };
+            }
+            await appWebSockets.authenticateConnection(
+              {
+                connectionId: connectionId!,
+                identityId: authenticated.identityId,
+                jwtExpiry: authenticated.jwtExpiry
+              },
+              {}
+            );
+            await appWebSockets.send({
+              connectionId: connectionId!,
+              message: JSON.stringify({
+                type: WsMessageType.AUTHENTICATED,
+                identity_id: authenticated.identityId,
+                expires_at: new Date(
+                  authenticated.jwtExpiry * 1000
+                ).toISOString()
+              })
+            });
+            return {
+              statusCode: 200,
+              body: JSON.stringify({ message: 'OK' })
+            };
+          }
           case WsMessageType.SUBSCRIBE_TO_WAVE: {
             const waveId = message.wave_id?.toString() ?? null;
             if (waveId && !ids.isValidUuid(waveId)) {

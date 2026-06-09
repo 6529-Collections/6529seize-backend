@@ -10,7 +10,8 @@ export const SORT_DIRECTIONS = [PageSortDirection.ASC, PageSortDirection.DESC];
 export const CACHE_TIME_MS = Time.minutes(1).toMillis();
 
 export const corsOptions = {
-  origin: '*',
+  origin: true,
+  credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'OPTIONS', 'HEAD', 'DELETE'],
   allowedHeaders: [
     'Content-Type',

@@ -172,6 +172,9 @@ export {
   WaveVotingCreditNftArchiveEntity,
   WaveVotingCreditNftEntity
 } from './IWaveVotingCreditNft';
+export { WalletAuthSession } from './IWalletAuthSession';
+export type { WalletAuthClientType } from './IWalletAuthSession';
+export { WalletConnectionTransfer } from './IWalletConnectionTransfer';
 export {
   WaveDecisionEntity,
   WaveDecisionWinnerDropEntity
