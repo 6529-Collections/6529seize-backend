@@ -14,6 +14,7 @@ import { Logger } from '../../logging';
 import { WsMessageType } from './ws/ws-message';
 import { ids } from '../../ids';
 import { wsListenersNotifier } from './ws/ws-listeners-notifier';
+import { redactWebSocketMessageForLog } from './ws/ws-log-redaction';
 
 const serverlessHttp = require('serverless-http');
 const logger = Logger.get('API_HANDLER');
@@ -79,9 +80,10 @@ async function wsHandler(
     case '$default':
       try {
         const message = JSON.parse(event.body || '{}');
+        const logSafeMessage = redactWebSocketMessageForLog(message);
         wsHandlerLogger.info(
           `WS $default. Identity: ${identityId}. Message: ${JSON.stringify(
-            message
+            logSafeMessage
           )}`
         );
         switch (message.type) {

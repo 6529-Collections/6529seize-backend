@@ -14,7 +14,6 @@ import { HttpFile } from '../http/http';
 
 export class ApiSessionRefreshWebRequest {
     'client_type'?: ApiSessionRefreshWebRequestClientTypeEnum;
-    'role'?: string | null;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -25,12 +24,6 @@ export class ApiSessionRefreshWebRequest {
             "name": "client_type",
             "baseName": "client_type",
             "type": "ApiSessionRefreshWebRequestClientTypeEnum",
-            "format": ""
-        },
-        {
-            "name": "role",
-            "baseName": "role",
-            "type": "string",
             "format": ""
         }    ];
 
@@ -45,4 +38,3 @@ export class ApiSessionRefreshWebRequest {
 export enum ApiSessionRefreshWebRequestClientTypeEnum {
     Web = 'web'
 }
-
