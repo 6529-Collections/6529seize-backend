@@ -514,9 +514,9 @@ export interface GetWavePollsV2PathParams {
 export interface GetWavePollsV2Query {
   "page"?: number;
   "page_size"?: number;
-  "order"?: string;
-  "order_by"?: "created_at" | "closing_time";
-  "state"?: "open" | "closed";
+  "sort_direction"?: string;
+  "sort"?: "created_at" | "closing_time";
+  "state"?: "OPEN" | "CLOSED";
 }
 
 export type GetWavePollsV2Response = ApiDropPollsPage;

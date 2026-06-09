@@ -37,9 +37,7 @@ type WavePollsPathParams = {
   readonly id: string;
 };
 
-type WavePollsQuery = Omit<FindWavePollsRequest, 'wave_id' | 'state'> & {
-  readonly state: 'open' | 'closed' | null;
-};
+type WavePollsQuery = Omit<FindWavePollsRequest, 'wave_id'>;
 
 const DropPollOptionVotersPathParamsSchema: Joi.ObjectSchema<DropPollOptionVotersPathParams> =
   Joi.object({
@@ -77,18 +75,18 @@ const WavePollsQuerySchema: Joi.ObjectSchema<WavePollsQuery> =
   Joi.object<WavePollsQuery>({
     page: Joi.number().integer().min(1).optional().default(1),
     page_size: Joi.number().integer().min(1).max(100).optional().default(20),
-    order: Joi.string()
+    sort_direction: Joi.string()
       .uppercase()
       .valid(...Object.values(PageSortDirection))
       .optional()
-      .default(PageSortDirection.ASC),
-    order_by: Joi.string()
+      .default(PageSortDirection.DESC),
+    sort: Joi.string()
       .valid(...Object.values(DropPollsOrderBy))
       .optional()
       .default(DropPollsOrderBy.CREATED_AT),
     state: Joi.string()
-      .lowercase()
-      .valid('open', 'closed')
+      .uppercase()
+      .valid(...Object.values(DropPollState))
       .optional()
       .default(null)
   });
@@ -156,21 +154,10 @@ export async function handleGetWavePollsV2(
       wave_id: id,
       page: query.page,
       page_size: query.page_size,
-      order: query.order,
-      order_by: query.order_by,
-      state: mapPollState(query.state)
+      sort_direction: query.sort_direction,
+      sort: query.sort,
+      state: query.state
     },
     { authenticationContext, timer }
   );
-}
-
-function mapPollState(state: 'open' | 'closed' | null): DropPollState | null {
-  switch (state) {
-    case 'open':
-      return DropPollState.OPEN;
-    case 'closed':
-      return DropPollState.CLOSED;
-    case null:
-      return null;
-  }
 }
