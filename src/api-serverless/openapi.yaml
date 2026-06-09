@@ -7640,13 +7640,13 @@ paths:
             minimum: 1
             maximum: 100
             default: 20
-        - name: order
+        - name: sort_direction
           in: query
           required: false
           schema:
             $ref: "#/components/schemas/ApiPageSortDirection"
-            default: ASC
-        - name: order_by
+            default: DESC
+        - name: sort
           in: query
           required: false
           schema:
@@ -7661,8 +7661,8 @@ paths:
           schema:
             type: string
             enum:
-              - open
-              - closed
+              - OPEN
+              - CLOSED
       responses:
         "200":
           description: successful operation

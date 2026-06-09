@@ -8,7 +8,8 @@ import { PageSortDirection } from '@/api/page-request';
 import {
   CreateDropPollCommand,
   DropPollsDb,
-  DropPollsOrderBy
+  DropPollsOrderBy,
+  DropPollState
 } from './drop-polls.db';
 
 function createPollCommand(): CreateDropPollCommand {
@@ -27,6 +28,7 @@ function createPollCommand(): CreateDropPollCommand {
 
 function createDb() {
   const execute = jest.fn().mockResolvedValue([]);
+  const oneOrNull = jest.fn().mockResolvedValue(null);
   const bulkInsert = jest.fn().mockResolvedValue(undefined);
   const transactionalConnection = { connection: { id: 'tx' } };
   const executeNativeQueriesInTransaction = jest.fn(async (fn) =>
@@ -36,6 +38,7 @@ function createDb() {
     () =>
       ({
         execute,
+        oneOrNull,
         bulkInsert,
         executeNativeQueriesInTransaction
       }) as any
@@ -44,6 +47,7 @@ function createDb() {
   return {
     service,
     execute,
+    oneOrNull,
     bulkInsert,
     executeNativeQueriesInTransaction,
     transactionalConnection
@@ -236,6 +240,57 @@ describe('DropPollsDb', () => {
     expect(execute.mock.calls[1][1]).toEqual({
       pollIds: ['poll-1'],
       contextProfileId: 'viewer-1'
+    });
+  });
+
+  it('sorts wave polls by closing time and filters closed polls', async () => {
+    const { service, execute } = createDb();
+
+    const result = await service.findWavePolls(
+      {
+        waveId: 'wave-1',
+        limit: 10,
+        offset: 5,
+        order: PageSortDirection.DESC,
+        orderBy: DropPollsOrderBy.CLOSING_TIME,
+        state: DropPollState.CLOSED,
+        now: 2_000
+      },
+      {}
+    );
+
+    expect(result).toEqual([]);
+    expect(execute).toHaveBeenCalledTimes(1);
+    const [sql, params] = execute.mock.calls[0];
+    expect(sql).toContain('and p.closing_time <= :now');
+    expect(sql).toContain('order by p.closing_time DESC, p.id DESC');
+    expect(params).toEqual({
+      waveId: 'wave-1',
+      now: 2_000,
+      limit: 10,
+      offset: 5
+    });
+  });
+
+  it('counts only open wave polls when open state is requested', async () => {
+    const { service, oneOrNull } = createDb();
+    oneOrNull.mockResolvedValueOnce({ cnt: '3' });
+
+    const count = await service.countWavePolls(
+      {
+        waveId: 'wave-1',
+        state: DropPollState.OPEN,
+        now: 2_000
+      },
+      {}
+    );
+
+    expect(count).toBe(3);
+    const [sql, params] = oneOrNull.mock.calls[0];
+    expect(sql).toContain('and p.closing_time > :now');
+    expect(params).toEqual({
+      waveId: 'wave-1',
+      now: 2_000
     });
   });
 

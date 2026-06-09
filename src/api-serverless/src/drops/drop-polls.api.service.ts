@@ -60,8 +60,8 @@ export type FindWavePollsRequest = {
   readonly wave_id: string;
   readonly page: number;
   readonly page_size: number;
-  readonly order: PageSortDirection;
-  readonly order_by: DropPollsOrderBy;
+  readonly sort_direction: PageSortDirection;
+  readonly sort: DropPollsOrderBy;
   readonly state: DropPollState | null;
 };
 
@@ -337,8 +337,8 @@ export class DropPollsApiService {
           waveId: request.wave_id,
           limit: request.page_size,
           offset,
-          order: request.order,
-          orderBy: request.order_by,
+          order: request.sort_direction,
+          orderBy: request.sort,
           state: request.state,
           now
         },
