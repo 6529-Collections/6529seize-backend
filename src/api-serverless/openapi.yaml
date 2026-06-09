@@ -326,6 +326,7 @@ paths:
         - Authentication
       summary: Redeem a one-time wallet connection transfer code
       operationId: redeemWalletConnectionTransfer
+      security: []
       requestBody:
         required: true
         content:
@@ -14031,9 +14032,6 @@ components:
           type: string
         native_refresh_token:
           type: string
-        role:
-          type: string
-          nullable: true
     ApiSessionRefreshWebRequest:
       type: object
       properties:
@@ -14041,9 +14039,6 @@ components:
           type: string
           enum:
             - web
-        role:
-          type: string
-          nullable: true
     ApiSessionWebResponse:
       type: object
       required:

@@ -16,7 +16,6 @@ export class ApiSessionRefreshNativeRequest {
     'client_type': ApiSessionRefreshNativeRequestClientTypeEnum;
     'client_address': string;
     'native_refresh_token': string;
-    'role'?: string | null;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -40,12 +39,6 @@ export class ApiSessionRefreshNativeRequest {
             "baseName": "native_refresh_token",
             "type": "string",
             "format": ""
-        },
-        {
-            "name": "role",
-            "baseName": "role",
-            "type": "string",
-            "format": ""
         }    ];
 
     static getAttributeTypeMap() {
@@ -59,4 +52,3 @@ export class ApiSessionRefreshNativeRequest {
 export enum ApiSessionRefreshNativeRequestClientTypeEnum {
     Native = 'native'
 }
-

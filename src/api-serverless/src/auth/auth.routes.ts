@@ -521,17 +521,15 @@ const SessionLoginRequestSchema: Joi.ObjectSchema<ApiSessionLoginRequest> =
 
 const SessionRefreshWebRequestSchema: Joi.ObjectSchema<ApiSessionRefreshWebRequest> =
   Joi.object<ApiSessionRefreshWebRequest>({
-    client_type: Joi.string().valid('web').required(),
-    role: Joi.string().optional().allow(null)
-  });
+    client_type: Joi.string().valid('web').required()
+  }).unknown(false);
 
 const SessionRefreshNativeRequestSchema: Joi.ObjectSchema<ApiSessionRefreshNativeRequest> =
   Joi.object<ApiSessionRefreshNativeRequest>({
     client_type: Joi.string().valid('native').required(),
     client_address: Joi.string().required(),
-    native_refresh_token: Joi.string().hex().length(128).required(),
-    role: Joi.string().optional().allow(null)
-  });
+    native_refresh_token: Joi.string().hex().length(128).required()
+  }).unknown(false);
 
 const SessionLogoutWebRequestSchema: Joi.ObjectSchema<ApiSessionLogoutWebRequest> =
   Joi.object<ApiSessionLogoutWebRequest>({
