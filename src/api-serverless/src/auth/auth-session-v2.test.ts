@@ -3,6 +3,7 @@ import {
   clearWalletSessionCookie,
   createConnectionTransfer,
   createWebSession,
+  logoutNativeSession,
   parseWalletSessionCookieHeader,
   redeemConnectionTransfer,
   refreshNativeSession,
@@ -14,9 +15,14 @@ jest.mock('./auth.db', () => ({
     createWalletAuthSession: jest.fn(),
     getActiveNativeSessionByRefreshHash: jest.fn(),
     rotateNativeSessionRefreshToken: jest.fn(),
+    revokeWalletAuthSessionsForAddress: jest.fn(),
+    revokeWalletAuthSessionByRefreshHash: jest.fn(),
     createWalletConnectionTransfer: jest.fn(),
     consumeWalletConnectionTransfer: jest.fn(),
-    markWalletConnectionTransferSession: jest.fn()
+    markWalletConnectionTransferSession: jest.fn(),
+    executeNativeQueriesInTransaction: jest.fn(async (fn) =>
+      fn({ connection: { id: 'tx' } })
+    )
   }
 }));
 
@@ -90,8 +96,55 @@ describe('auth-session-v2', () => {
     expect(
       parseWalletSessionCookieHeader(`${WALLET_SESSION_COOKIE_NAME}=badvalue`)
     ).toBeNull();
+    expect(
+      parseWalletSessionCookieHeader(`${WALLET_SESSION_COOKIE_NAME}=%`)
+    ).toBeNull();
     expect(clearWalletSessionCookie()).toBe(
       `${WALLET_SESSION_COOKIE_NAME}=; Max-Age=0; Path=/api/auth; HttpOnly; Secure; SameSite=Lax`
+    );
+  });
+
+  it('requires native refresh-token ownership before revoking all sessions', async () => {
+    authDbMock.getActiveNativeSessionByRefreshHash.mockResolvedValueOnce(null);
+
+    await logoutNativeSession({
+      address: '0xABC',
+      nativeRefreshToken: 'invalid-native-refresh-token',
+      allSessions: true
+    });
+
+    expect(
+      authDbMock.revokeWalletAuthSessionsForAddress
+    ).not.toHaveBeenCalled();
+
+    authDbMock.getActiveNativeSessionByRefreshHash.mockResolvedValueOnce({
+      id: 'session-1',
+      address: '0xabc',
+      role: null,
+      client_type: 'native',
+      secret_hash: null,
+      refresh_token_hash: 'refresh-hash',
+      user_agent_hash: null,
+      created_at: new Date(),
+      last_used_at: new Date(),
+      expires_at: new Date(Date.now() + 60_000),
+      revoked_at: null
+    });
+
+    await logoutNativeSession({
+      address: '0xABC',
+      nativeRefreshToken: 'valid-native-refresh-token',
+      allSessions: true
+    });
+
+    expect(authDbMock.getActiveNativeSessionByRefreshHash).toHaveBeenCalledWith(
+      '0xabc',
+      expect.stringMatching(/^[a-f0-9]{64}$/),
+      expect.any(Date)
+    );
+    expect(authDbMock.revokeWalletAuthSessionsForAddress).toHaveBeenCalledWith(
+      '0xabc',
+      expect.any(Date)
     );
   });
 
@@ -233,9 +286,13 @@ describe('auth-session-v2', () => {
     expect(consumeParams.transferCodeHash).toMatch(/^[a-f0-9]{64}$/);
     expect(consumeParams.transferCodeHash).not.toBe(created.transfer_code);
     expect(consumeParams.targetClientType).toBe('native');
+    expect(authDbMock.executeNativeQueriesInTransaction).toHaveBeenCalledTimes(
+      1
+    );
     expect(authDbMock.markWalletConnectionTransferSession).toHaveBeenCalledWith(
       'transfer-1',
-      expect.any(String)
+      expect.any(String),
+      { connection: { id: 'tx' } }
     );
   });
 });
