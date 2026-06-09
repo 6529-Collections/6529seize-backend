@@ -11,7 +11,6 @@ import {
   DropPollState,
   dropPollsDb
 } from '@/api/drops/drop-polls.db';
-import { mapDropPollToApiWavePoll } from '@/api/drops/drop-polls.mappers';
 import { ApiDropPollsPage } from '@/api/generated/models/ApiDropPollsPage';
 import { ApiDropPollVotersPage } from '@/api/generated/models/ApiDropPollVotersPage';
 import { ApiDropV2 } from '@/api/generated/models/ApiDropV2';
@@ -345,11 +344,17 @@ export class DropPollsApiService {
         ctx
       )
     ]);
+    const dropIds = polls.map((poll) => poll.drop_id);
+    const dropsById = dropIds.length
+      ? await this.dropsService.findDropsV2ByIds(dropIds, ctx)
+      : {};
     return {
       count,
       page: request.page,
       next: count > request.page * request.page_size,
-      data: polls.map((poll) => mapDropPollToApiWavePoll(poll, now))
+      data: dropIds
+        .map((dropId) => dropsById[dropId])
+        .filter((drop): drop is ApiDropV2 => drop !== undefined)
     };
   }
 

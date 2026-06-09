@@ -10746,7 +10746,7 @@ components:
         data:
           type: array
           items:
-            $ref: "#/components/schemas/ApiWavePoll"
+            $ref: "#/components/schemas/ApiDropV2"
     ApiDropPollVoteRequest:
       type: object
       required:
