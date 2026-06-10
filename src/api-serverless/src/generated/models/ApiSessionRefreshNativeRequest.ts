@@ -52,3 +52,4 @@ export class ApiSessionRefreshNativeRequest {
 export enum ApiSessionRefreshNativeRequestClientTypeEnum {
     Native = 'native'
 }
+
