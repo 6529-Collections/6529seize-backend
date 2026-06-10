@@ -4,18 +4,18 @@ jest.mock('passport', () => ({
   authenticate: (...args: unknown[]) => mockPassportAuthenticate(...args)
 }));
 
-jest.mock('../auth/auth-session-v2', () => ({
+jest.mock('@/api/auth/auth-session-v2', () => ({
   isLegacyWsQueryTokenEnabled: jest.fn(() => false)
 }));
 
-jest.mock('../identities/identity.fetcher', () => ({
+jest.mock('@/api/identities/identity.fetcher', () => ({
   identityFetcher: {
     getProfileIdByIdentityKey: jest.fn()
   }
 }));
 
-import { identityFetcher } from '../identities/identity.fetcher';
-import { authenticateWebSocketToken } from './ws';
+import { identityFetcher } from '@/api/identities/identity.fetcher';
+import { authenticateWebSocketToken } from '@/api/ws/ws';
 
 const identityFetcherMock = identityFetcher as jest.Mocked<
   typeof identityFetcher
