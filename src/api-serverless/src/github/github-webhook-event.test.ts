@@ -49,6 +49,44 @@ describe('github webhook event parsing', () => {
     }
   );
 
+  it('parses a merged pull request event', () => {
+    expect(
+      parseGitHubWebhookEvent(
+        {
+          action: 'closed',
+          pull_request: {
+            html_url: PR_URL,
+            merged: true,
+            title: 'Improve release notes',
+            body: 'Adds release notes that explain user-facing changes.'
+          }
+        },
+        'pull_request'
+      )
+    ).toEqual({
+      kind: 'pull_request',
+      action: 'merged',
+      htmlUrl: PR_URL,
+      title: 'Improve release notes',
+      body: 'Adds release notes that explain user-facing changes.'
+    });
+  });
+
+  it('ignores closed pull requests that were not merged', () => {
+    expect(
+      parseGitHubWebhookEvent(
+        {
+          action: 'closed',
+          pull_request: {
+            html_url: PR_URL,
+            merged: false
+          }
+        },
+        'pull_request'
+      )
+    ).toBeNull();
+  });
+
   it('ignores unsupported actions', () => {
     expect(
       parseGitHubWebhookEvent(

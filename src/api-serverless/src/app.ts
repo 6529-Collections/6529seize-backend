@@ -1509,7 +1509,12 @@ async function initializeApp() {
       try {
         await githubIssueDropService.postGhIssueDrop(
           webhookEvent.htmlUrl,
-          targetKind
+          targetKind,
+          {
+            action: webhookEvent.action,
+            title: webhookEvent.title,
+            body: webhookEvent.body
+          }
         );
         if (redis) {
           try {
