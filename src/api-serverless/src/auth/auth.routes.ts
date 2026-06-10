@@ -52,6 +52,12 @@ import {
   refreshNativeSession,
   refreshWebSession
 } from './auth-session-v2';
+import {
+  buildStructuredWalletSignatureMessage,
+  isStructuredSignaturesRequired,
+  isStructuredWalletSignatureMessage,
+  verifyStructuredWalletSignature
+} from '../wallet-signatures/structured-wallet-signatures';
 
 const router = asyncRouter();
 
@@ -62,21 +68,53 @@ router.get(
       any,
       any,
       any,
-      { signer_address: string; short_nonce?: string },
+      {
+        signer_address: string;
+        short_nonce?: string;
+        structured_signature?: string;
+        domain?: string;
+        chain_id?: string;
+      },
       any
     >,
     res: Response<ApiResponse<ApiNonceResponse>>
   ) {
     const shortNonce = req.query.short_nonce?.toLowerCase() === 'true';
+    const structuredSignature =
+      req.query.structured_signature?.toLowerCase() === 'true';
     const signerAddress = req.query.signer_address?.toLocaleLowerCase();
     if (!signerAddress || !ethers.isAddress(signerAddress)) {
       throw new UnauthorisedException(
         `Invalid signer address ${signerAddress}`
       );
     }
-    const nonce = shortNonce
-      ? randomUUID()
-      : `
+    const structuredSignatureChainId = Number(req.query.chain_id ?? 1);
+    if (
+      structuredSignature &&
+      (!Number.isInteger(structuredSignatureChainId) ||
+        structuredSignatureChainId < 1)
+    ) {
+      throw new BadRequestException(`Invalid signature chain id`);
+    }
+    if (
+      structuredSignature &&
+      (!req.query.domain || req.query.domain.trim().length === 0)
+    ) {
+      throw new BadRequestException(`Signature domain is required`);
+    }
+    const nonce = structuredSignature
+      ? buildStructuredWalletSignatureMessage({
+          kind: 'authentication',
+          domain: req.query.domain ?? '',
+          wallet: signerAddress,
+          chainId: structuredSignatureChainId,
+          nonce: randomUUID(),
+          action: 'login',
+          purpose: 'Sign this message to authenticate with 6529.'
+        })
+      : shortNonce
+        ? randomUUID()
+        : `
 Are you ready to Seize The Memes of Production?
 
 Please sign to confirm ownership of this address to allow use of the social features of 6529.io.
@@ -437,6 +475,30 @@ async function verifyClientSignature(
   isSafeWallet: boolean
 ): Promise<string> {
   clientAddress = clientAddress?.toLowerCase() ?? null;
+  if (isStructuredWalletSignatureMessage(nonce)) {
+    if (!clientAddress) {
+      throw new BadRequestException(
+        `client_address is mandatory in structured signatures`
+      );
+    }
+    const signingAddress = await verifyStructuredWalletSignature({
+      message: nonce,
+      signature: clientSignature,
+      expectedAddress: clientAddress,
+      expectedAction: 'login',
+      expectedKind: 'authentication',
+      isContractWalletHint: isSafeWallet
+    });
+    if (!signingAddress) {
+      throw new Error('Invalid client signature');
+    }
+    return signingAddress;
+  }
+
+  if (isStructuredSignaturesRequired()) {
+    throw new Error('Structured wallet signature required');
+  }
+
   if (isSafeWallet) {
     if (!clientAddress) {
       throw new BadRequestException(

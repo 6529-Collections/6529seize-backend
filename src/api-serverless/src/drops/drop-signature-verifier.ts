@@ -2,6 +2,14 @@ import { ApiCreateDropRequest } from '../generated/models/ApiCreateDropRequest';
 import { ethers } from 'ethers';
 import { dropHasher, DropHasher } from './drop-hasher';
 import { env } from '../../../env';
+import {
+  isStructuredSignaturesRequired,
+  verifyStructuredWalletSignature
+} from '../wallet-signatures/structured-wallet-signatures';
+
+type StructuredDropSignatureRequest = ApiCreateDropRequest & {
+  signature_message?: string | null;
+};
 
 export class DropSignatureVerifier {
   constructor(private readonly dropHasher: DropHasher) {}
@@ -12,7 +20,7 @@ export class DropSignatureVerifier {
     termsOfService
   }: {
     wallets: string[];
-    drop: ApiCreateDropRequest;
+    drop: StructuredDropSignatureRequest;
     termsOfService: string | null;
   }): Promise<boolean> {
     if (!wallets.length) {
@@ -27,6 +35,28 @@ export class DropSignatureVerifier {
       drop,
       termsOfService
     });
+    const structuredMessage = drop.signature_message ?? null;
+    if (structuredMessage) {
+      const signingAddress = await verifyStructuredWalletSignature({
+        message: structuredMessage,
+        signature,
+        expectedAddress: drop.signer_address ?? '',
+        expectedAction: 'create_drop',
+        expectedKind: 'action',
+        expectedPayloadHash: hash,
+        isContractWalletHint: drop.is_safe_signature
+      });
+      if (!signingAddress) {
+        return false;
+      }
+      const walletSet = new Set(wallets.map((it) => it.toLowerCase()));
+      return walletSet.has(signingAddress);
+    }
+
+    if (isStructuredSignaturesRequired()) {
+      return false;
+    }
+
     const signingAddresses = await this.getSigningAddresses({
       hash,
       clientSignature: signature,

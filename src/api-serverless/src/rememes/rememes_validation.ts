@@ -5,6 +5,11 @@ import { Alchemy, Nft, NftContract } from '@/alchemy-sdk';
 import { getTdhForAddress, rememeExists } from '@/db-api';
 import { seizeSettings } from '@/api/seize-settings';
 import { equalIgnoreCase } from '@/strings';
+import {
+  hashStructuredWalletSignaturePayload,
+  isStructuredSignaturesRequired,
+  verifyStructuredWalletSignature
+} from '@/api/wallet-signatures/structured-wallet-signatures';
 
 const rememeSchema = Joi.object({
   contract: Joi.string().required(),
@@ -15,6 +20,7 @@ const rememeSchema = Joi.object({
 const rememeAddSchema = Joi.object({
   address: Joi.string().required(),
   signature: Joi.string().required(),
+  signature_message: Joi.string().optional().allow(null),
   rememe: rememeSchema
 });
 
@@ -39,10 +45,11 @@ export async function validateRememeAdd(req: any, res: any, next: any) {
       };
       next();
     } else {
-      const signatureValidation = validateSignature(
+      const signatureValidation = await validateSignature(
         value.address,
         value.signature,
-        value.rememe
+        value.rememe,
+        value.signature_message ?? null
       );
       const contract = rememeValidation.contract as NftContract | undefined;
       const tdhValidation = await validateTDH(
@@ -146,11 +153,28 @@ async function validateRememeBody(body: any) {
   }
 }
 
-function validateSignature(
+async function validateSignature(
   address: string,
   signature: string,
-  rememe: { contract: string; id: number; meme_references: number[] }
-) {
+  rememe: unknown,
+  signatureMessage: string | null
+): Promise<boolean> {
+  if (signatureMessage) {
+    const signingAddress = await verifyStructuredWalletSignature({
+      message: signatureMessage,
+      signature,
+      expectedAddress: address,
+      expectedAction: 'add_rememe',
+      expectedKind: 'action',
+      expectedPayloadHash: hashStructuredWalletSignaturePayload(rememe)
+    });
+    return signingAddress !== null;
+  }
+
+  if (isStructuredSignaturesRequired()) {
+    return false;
+  }
+
   try {
     const verifySigner = ethers.recoverAddress(
       hashMessage(JSON.stringify(rememe)),
