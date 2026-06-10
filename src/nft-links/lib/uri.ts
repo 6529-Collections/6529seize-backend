@@ -29,7 +29,7 @@ export function normalizeArUri(uri?: string | null): string | undefined {
   if (!s) return undefined;
 
   const ref = parseDecentralizedMediaRef(s);
-  if (!ref || ref.protocol !== 'arweave') return s;
+  if (ref?.protocol !== 'arweave') return s;
 
   return to6529ResolverUrl(ref);
 }

@@ -354,7 +354,7 @@ function buildSubdomainUrl(
 
 function normalizeOrigin(origin: string): string {
   let end = origin.length;
-  while (end > 0 && origin.charCodeAt(end - 1) === 47) {
+  while (end > 0 && origin.codePointAt(end - 1) === 47) {
     end -= 1;
   }
 
@@ -398,7 +398,7 @@ function getUnrecognizedWarnings(input: string): string[] {
     return parseHttpUrl(trimmed) ? [] : ['invalid_url'];
   }
   if (/^[a-z][a-z0-9+.-]*:\/\//i.exec(trimmed)) return ['unsupported_scheme'];
-  if (trimmed.indexOf('://') >= 0) return ['invalid_url'];
+  if (trimmed.includes('://')) return ['invalid_url'];
   return [];
 }
 
