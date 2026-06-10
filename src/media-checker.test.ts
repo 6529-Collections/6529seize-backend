@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { MediaChecker } from './media-checker';
+import { MediaChecker } from '@/media-checker';
 
 jest.mock('axios', () => ({
   __esModule: true,
