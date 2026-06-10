@@ -122,7 +122,8 @@ async function wsHandler(
                 expires_at: new Date(
                   authenticated.jwtExpiry * 1000
                 ).toISOString()
-              })
+              }),
+              skipStaleConnectionCheck: true
             });
             return {
               statusCode: 200,
