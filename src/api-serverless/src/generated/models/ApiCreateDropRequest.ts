@@ -35,7 +35,7 @@ export class ApiCreateDropRequest {
     'mentioned_waves'?: Array<ApiCreateMentionedWave>;
     'metadata': Array<ApiDropMetadata>;
     /**
-    * If wave requires drop signatures then this needs to be set. Signature of a drop is ethSign(creatorWallet, sha256(oneLineJsonWithAlphabeticallySortedFieldsRecursive(ApiCreateDropRequest - signature (+ wave.participation.terms if it exists))))
+    * If wave requires drop signatures then this needs to be set. Signature of a drop is ethSign(creatorWallet, sha256(oneLineJsonWithAlphabeticallySortedFieldsRecursive(ApiCreateDropRequest - signature - signature_message (+ wave.participation.terms if it exists))))
     */
     'signature': string | null;
     /**
@@ -154,4 +154,5 @@ export class ApiCreateDropRequest {
     public constructor() {
     }
 }
+
 
