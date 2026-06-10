@@ -8,6 +8,9 @@ import {
   clearStructuredWalletSignatureReplayCacheForTests
 } from '@/api/wallet-signatures/structured-wallet-signatures';
 
+const EIP1271_MAGIC_VALUE = '0x1626ba7e';
+const EIP1271_INVALID_VALUE = '0xffffffff';
+
 describe('DropSignatureVerifier', () => {
   const dropHasher = new DropHasher();
   const verifier = new DropSignatureVerifier(dropHasher);
@@ -18,15 +21,28 @@ describe('DropSignatureVerifier', () => {
     '0x59c6995e998f97a5a0044966f094538e9d874d2fe3df31d0f01e3be7f0ca0a84'
   );
   const termsOfService = 'Terms accepted';
+  let isValidSignatureMock: jest.Mock;
 
   beforeEach(() => {
     clearStructuredWalletSignatureReplayCacheForTests();
     process.env.AUTH_SIGNATURE_ALLOWED_DOMAINS = 'example.com';
+    process.env.ALCHEMY_API_KEY = 'test-key';
+    isValidSignatureMock = jest.fn().mockResolvedValue(EIP1271_INVALID_VALUE);
+    const contractConstructor = jest.fn().mockImplementation(() => ({
+      isValidSignature: isValidSignatureMock
+    }));
+    jest
+      .spyOn(ethers, 'Contract', 'get')
+      .mockReturnValue(
+        contractConstructor as unknown as typeof ethers.Contract
+      );
   });
 
   afterEach(() => {
     delete process.env.AUTH_SIGNATURE_ALLOWED_DOMAINS;
     delete process.env.AUTH_STRUCTURED_SIGNATURES_REQUIRED;
+    delete process.env.ALCHEMY_API_KEY;
+    jest.restoreAllMocks();
   });
 
   function createDrop(signerAddress = wallet.address): ApiCreateDropRequest {
@@ -166,6 +182,24 @@ describe('DropSignatureVerifier', () => {
         termsOfService
       })
     ).resolves.toBe(false);
+  });
+
+  it('accepts legacy EIP-1271 signatures even when the Safe hint is false', async () => {
+    isValidSignatureMock.mockResolvedValue(EIP1271_MAGIC_VALUE);
+    const contractWalletAddress = otherWallet.address;
+    const drop = {
+      ...createDrop(contractWalletAddress),
+      is_safe_signature: false,
+      signature: await wallet.signMessage('not-the-drop-hash')
+    };
+
+    await expect(
+      verifier.isDropSignedByAnyOfGivenWallets({
+        wallets: [contractWalletAddress],
+        drop,
+        termsOfService
+      })
+    ).resolves.toBe(true);
   });
 
   it('rejects signatures from wallets outside the candidate list', async () => {

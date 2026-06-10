@@ -1,11 +1,13 @@
 import { ApiCreateDropRequest } from '../generated/models/ApiCreateDropRequest';
 import { ethers } from 'ethers';
 import { dropHasher, DropHasher } from './drop-hasher';
-import { env } from '../../../env';
 import {
   ETHEREUM_MAINNET_CHAIN_ID,
+  hashWalletSignatureMessage,
   isStructuredSignaturesRequired,
   parseStructuredWalletSignatureMessage,
+  recoverWalletMessageSigner,
+  verifyContractWalletSignatureHash,
   verifyStructuredWalletSignature
 } from '../wallet-signatures/structured-wallet-signatures';
 
@@ -53,8 +55,7 @@ export class DropSignatureVerifier {
         expectedChainId: ETHEREUM_MAINNET_CHAIN_ID,
         expectedAction: 'create_drop',
         expectedKind: 'action',
-        expectedPayloadHash: hash,
-        isContractWalletHint: drop.is_safe_signature
+        expectedPayloadHash: hash
       });
       if (!signingAddress) {
         return false;
@@ -70,8 +71,8 @@ export class DropSignatureVerifier {
     const signingAddresses = await this.getSigningAddresses({
       hash,
       clientSignature: signature,
-      isSafeSignature: drop.is_safe_signature,
-      signerAddress: drop.signer_address
+      signerAddress: drop.signer_address,
+      candidateWallets: wallets
     });
     const walletSet = new Set(wallets.map((it) => it.toLowerCase()));
     return signingAddresses.some((signingAddress) =>
@@ -95,49 +96,42 @@ export class DropSignatureVerifier {
     hash,
     clientSignature,
     signerAddress,
-    isSafeSignature
+    candidateWallets
   }: {
     hash: string;
     clientSignature: string;
-    isSafeSignature?: boolean;
     signerAddress?: string;
+    candidateWallets: string[];
   }): Promise<string[]> {
     try {
-      if (isSafeSignature) {
-        if (!signerAddress) {
-          return [];
-        }
-
-        const EIP1271_ABI = [
-          'function isValidSignature(bytes32 _messageHash, bytes _signature) public view returns (bytes4)'
-        ];
-
-        const provider = new ethers.JsonRpcProvider(
-          `https://eth-mainnet.alchemyapi.io/v2/${env.getStringOrThrow(`ALCHEMY_API_KEY`)}`
-        );
-        const safeContract = new ethers.Contract(
-          signerAddress,
-          EIP1271_ABI,
-          provider
-        );
-        const result = await safeContract.isValidSignature(
-          hash,
-          clientSignature
-        );
-        const MAGIC_VALUE = '0x1626ba7e';
-
-        if (result === MAGIC_VALUE) {
-          return [signerAddress.toLowerCase()];
-        }
-        return [];
-      }
-      return this.filterBySignerAddress({
+      const signingAddresses = this.filterBySignerAddress({
         signerAddress,
         signingAddresses: [
           this.recoverTextSigningAddress({ hash, clientSignature }),
           this.recoverRawHashBytesSigningAddress({ hash, clientSignature })
         ]
       });
+      const seen = new Set(signingAddresses);
+      const contractWalletCandidates = this.getContractWalletCandidates({
+        signerAddress,
+        candidateWallets
+      });
+      for (const candidateAddress of contractWalletCandidates) {
+        if (seen.has(candidateAddress)) {
+          continue;
+        }
+        const contractSignatureMatches =
+          await this.isLegacyContractWalletDropSignature({
+            address: candidateAddress,
+            hash,
+            clientSignature
+          });
+        if (contractSignatureMatches) {
+          signingAddresses.push(candidateAddress);
+          seen.add(candidateAddress);
+        }
+      }
+      return signingAddresses;
     } catch {
       return [];
     }
@@ -151,7 +145,7 @@ export class DropSignatureVerifier {
     clientSignature: string;
   }): string | null {
     try {
-      return ethers.verifyMessage(hash, clientSignature)?.toLowerCase() ?? null;
+      return recoverWalletMessageSigner(hash, clientSignature);
     } catch {
       return null;
     }
@@ -165,14 +159,71 @@ export class DropSignatureVerifier {
     clientSignature: string;
   }): string | null {
     try {
-      return (
-        ethers
-          .verifyMessage(ethers.getBytes(`0x${hash}`), clientSignature)
-          ?.toLowerCase() ?? null
+      return recoverWalletMessageSigner(
+        ethers.getBytes(this.toBytes32Hex(hash)),
+        clientSignature
       );
     } catch {
       return null;
     }
+  }
+
+  private async isLegacyContractWalletDropSignature({
+    address,
+    hash,
+    clientSignature
+  }: {
+    address: string;
+    hash: string;
+    clientSignature: string;
+  }): Promise<boolean> {
+    const rawHash = this.toBytes32Hex(hash);
+    const candidateHashes = new Set([
+      rawHash,
+      hashWalletSignatureMessage(hash),
+      hashWalletSignatureMessage(ethers.getBytes(rawHash))
+    ]);
+    for (const messageHash of Array.from(candidateHashes)) {
+      const isValid = await verifyContractWalletSignatureHash({
+        address,
+        chainId: ETHEREUM_MAINNET_CHAIN_ID,
+        messageHash,
+        signature: clientSignature
+      });
+      if (isValid) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private getContractWalletCandidates({
+    signerAddress,
+    candidateWallets
+  }: {
+    signerAddress?: string;
+    candidateWallets: string[];
+  }): string[] {
+    if (signerAddress) {
+      const normalizedSignerAddress = this.normalizeAddress(signerAddress);
+      return normalizedSignerAddress ? [normalizedSignerAddress] : [];
+    }
+    const candidates = new Set<string>();
+    for (const wallet of candidateWallets) {
+      const normalized = this.normalizeAddress(wallet);
+      if (normalized) {
+        candidates.add(normalized);
+      }
+    }
+    return Array.from(candidates);
+  }
+
+  private normalizeAddress(address: string): string | null {
+    return ethers.isAddress(address) ? address.toLowerCase() : null;
+  }
+
+  private toBytes32Hex(hash: string): string {
+    return hash.startsWith('0x') ? hash : `0x${hash}`;
   }
 
   private filterBySignerAddress({

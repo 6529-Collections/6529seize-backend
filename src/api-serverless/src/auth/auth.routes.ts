@@ -35,7 +35,6 @@ import { RefreshWalletAuthSessionRequest } from '../generated/models/RefreshWall
 import { identityFetcher } from '../identities/identity.fetcher';
 import { Timer } from '../../../time';
 import { authDb } from './auth.db';
-import { env } from '../../../env';
 import {
   clearWalletSessionCookie,
   createConnectionTransfer,
@@ -54,10 +53,12 @@ import {
 } from './auth-session-v2';
 import {
   buildStructuredWalletSignatureMessage,
+  ETHEREUM_MAINNET_CHAIN_ID,
   isStructuredSignaturesRequired,
   isStructuredWalletSignatureMessage,
   parseStructuredWalletSignatureMessage,
-  verifyStructuredWalletSignature
+  verifyStructuredWalletSignature,
+  verifyWalletMessageSignature
 } from '../wallet-signatures/structured-wallet-signatures';
 
 const router = asyncRouter();
@@ -136,20 +137,14 @@ router.post(
   ) {
     const timer = Timer.getFromRequest(req);
     const loginRequest = getValidatedByJoiOrThrow(req.body, LoginRequestSchema);
-    const {
-      server_signature,
-      client_signature,
-      role,
-      client_address,
-      is_safe_wallet
-    } = loginRequest;
+    const { server_signature, client_signature, role, client_address } =
+      loginRequest;
     try {
       const nonce = verifyServerSignature(server_signature);
       const signingAddress = await verifyClientSignature(
         nonce,
         client_signature,
-        client_address ?? null,
-        is_safe_wallet
+        client_address ?? null
       );
       const chosenRole = await resolveAuthenticatedRole(
         signingAddress,
@@ -186,8 +181,7 @@ router.post(
       const signingAddress = await verifyClientSignature(
         nonce,
         loginRequest.client_signature,
-        loginRequest.client_address,
-        loginRequest.is_safe_wallet
+        loginRequest.client_address
       );
       const chosenRole = await resolveAuthenticatedRole(
         signingAddress,
@@ -462,8 +456,7 @@ function verifyServerSignature(serverSignature: string): string {
 async function verifyClientSignature(
   nonce: string,
   clientSignature: string,
-  clientAddress: string | null,
-  isSafeWallet: boolean
+  clientAddress: string | null
 ): Promise<string> {
   clientAddress = clientAddress?.toLowerCase() ?? null;
   if (isStructuredWalletSignatureMessage(nonce)) {
@@ -482,8 +475,7 @@ async function verifyClientSignature(
       expectedAddress: clientAddress,
       expectedChainId: parsedMessage.chainId,
       expectedAction: 'login',
-      expectedKind: 'authentication',
-      isContractWalletHint: isSafeWallet
+      expectedKind: 'authentication'
     });
     if (!signingAddress) {
       throw new Error('Invalid client signature');
@@ -495,49 +487,16 @@ async function verifyClientSignature(
     throw new Error('Structured wallet signature required');
   }
 
-  if (isSafeWallet) {
-    if (!clientAddress) {
-      throw new BadRequestException(
-        `client_address is mandatory in safe signatures`
-      );
-    }
-    const messageHash = ethers.hashMessage(nonce);
-
-    const EIP1271_ABI = [
-      'function isValidSignature(bytes32 _messageHash, bytes _signature) public view returns (bytes4)'
-    ];
-
-    const provider = new ethers.JsonRpcProvider(
-      `https://eth-mainnet.alchemyapi.io/v2/${env.getStringOrThrow(`ALCHEMY_API_KEY`)}`
-    );
-    const safeContract = new ethers.Contract(
-      clientAddress,
-      EIP1271_ABI,
-      provider
-    );
-    const result = await safeContract.isValidSignature(
-      messageHash,
-      clientSignature
-    );
-    const MAGIC_VALUE = '0x1626ba7e';
-
-    if (result === MAGIC_VALUE) {
-      return clientAddress;
-    } else {
-      throw new Error('Invalid client signature');
-    }
-  } else {
-    const signingAddress = ethers
-      .verifyMessage(nonce, clientSignature)
-      ?.toLowerCase();
-    if (
-      !signingAddress ||
-      (clientAddress && signingAddress !== clientAddress)
-    ) {
-      throw new Error('Invalid client signature');
-    }
-    return signingAddress;
+  const signingAddress = await verifyWalletMessageSignature({
+    message: nonce,
+    signature: clientSignature,
+    expectedAddress: clientAddress,
+    chainId: ETHEREUM_MAINNET_CHAIN_ID
+  });
+  if (!signingAddress) {
+    throw new Error('Invalid client signature');
   }
+  return signingAddress;
 }
 
 function getUserAgent(req: Request<any, any, any, any, any>): string | null {

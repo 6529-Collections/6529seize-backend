@@ -66,8 +66,21 @@ interface VerifyStructuredWalletSignatureParams {
   expectedAction: StructuredWalletSignatureAction;
   expectedPayloadHash?: string | null;
   expectedKind?: StructuredWalletSignatureKind;
-  isContractWalletHint?: boolean;
   consumeNonce?: boolean;
+}
+
+interface VerifyWalletMessageSignatureParams {
+  message: string | Uint8Array;
+  signature: string;
+  expectedAddress?: string | null;
+  chainId?: number;
+}
+
+interface VerifyContractWalletSignatureHashParams {
+  address: string;
+  chainId: number;
+  messageHash: string;
+  signature: string;
 }
 
 export function isStructuredSignaturesRequired(): boolean {
@@ -209,7 +222,6 @@ export async function verifyStructuredWalletSignature({
   expectedAction,
   expectedPayloadHash,
   expectedKind,
-  isContractWalletHint = false,
   consumeNonce = true
 }: VerifyStructuredWalletSignatureParams): Promise<string | null> {
   const parsed = parseStructuredWalletSignatureMessage(message);
@@ -238,16 +250,13 @@ export async function verifyStructuredWalletSignature({
     return null;
   }
 
-  const recoveredAddress = recoverPersonalSignAddress(message, signature);
   const signatureMatches =
-    recoveredAddress === expectedAddressLowerCase ||
-    (isContractWalletHint &&
-      (await verifyContractWalletSignature({
-        address: expectedAddressLowerCase,
-        chainId: expectedChainId,
-        message,
-        signature
-      })));
+    (await verifyWalletMessageSignature({
+      message,
+      signature,
+      expectedAddress: expectedAddressLowerCase,
+      chainId: expectedChainId
+    })) === expectedAddressLowerCase;
 
   if (!signatureMatches) {
     return null;
@@ -375,8 +384,8 @@ function isStructuredSignatureDomainAllowed(domain: string): boolean {
   );
 }
 
-function recoverPersonalSignAddress(
-  message: string,
+export function recoverWalletMessageSigner(
+  message: string | Uint8Array,
   signature: string
 ): string | null {
   try {
@@ -386,28 +395,55 @@ function recoverPersonalSignAddress(
   }
 }
 
-async function verifyContractWalletSignature({
+export function hashWalletSignatureMessage(
+  message: string | Uint8Array
+): string {
+  return ethers.hashMessage(message);
+}
+
+export async function verifyWalletMessageSignature({
+  message,
+  signature,
+  expectedAddress,
+  chainId = ETHEREUM_MAINNET_CHAIN_ID
+}: VerifyWalletMessageSignatureParams): Promise<string | null> {
+  const recoveredAddress = recoverWalletMessageSigner(message, signature);
+  const expectedAddressLowerCase = expectedAddress?.toLowerCase() ?? null;
+  if (!expectedAddressLowerCase) {
+    return recoveredAddress;
+  }
+  if (!ethers.isAddress(expectedAddressLowerCase)) {
+    return null;
+  }
+  if (recoveredAddress === expectedAddressLowerCase) {
+    return expectedAddressLowerCase;
+  }
+  const contractSignatureMatches = await verifyContractWalletSignatureHash({
+    address: expectedAddressLowerCase,
+    chainId,
+    messageHash: hashWalletSignatureMessage(message),
+    signature
+  });
+  return contractSignatureMatches ? expectedAddressLowerCase : null;
+}
+
+export async function verifyContractWalletSignatureHash({
   address,
   chainId,
-  message,
+  messageHash,
   signature
-}: {
-  address: string;
-  chainId: number;
-  message: string;
-  signature: string;
-}): Promise<boolean> {
+}: VerifyContractWalletSignatureHashParams): Promise<boolean> {
   try {
     const provider = getAlchemyProviderForChain(chainId);
     if (!provider) {
       logger.warn(`Unsupported structured signature chain id ${chainId}`);
       return false;
     }
+    if (!ethers.isAddress(address) || !ethers.isHexString(messageHash, 32)) {
+      return false;
+    }
     const contract = new ethers.Contract(address, EIP1271_ABI, provider);
-    const result = await contract.isValidSignature(
-      ethers.hashMessage(message),
-      signature
-    );
+    const result = await contract.isValidSignature(messageHash, signature);
     return String(result).toLowerCase() === EIP1271_MAGIC_VALUE;
   } catch (error) {
     logger.warn(
