@@ -193,6 +193,7 @@ const baseDropFieldsValidators = {
     .default([]),
   metadata: Joi.array().optional().items(MetadataSchema).default([]),
   signature: Joi.string().optional().allow(null).default(null),
+  signature_message: Joi.string().optional().allow(null).default(null),
   is_safe_signature: Joi.boolean().optional(),
   signer_address: Joi.string().optional()
 };
