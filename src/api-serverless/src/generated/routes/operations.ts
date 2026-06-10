@@ -16,6 +16,8 @@ import { ApiDropV2Page } from '@/api/generated/models/ApiDropV2Page';
 import { ApiDropV2PageWithoutCount } from '@/api/generated/models/ApiDropV2PageWithoutCount';
 import { ApiDropVoteEditLog } from '@/api/generated/models/ApiDropVoteEditLog';
 import { ApiDropVotersPage } from '@/api/generated/models/ApiDropVotersPage';
+import { ApiMediaResolveRequest } from '@/api/generated/models/ApiMediaResolveRequest';
+import { ApiMediaResolveResponse } from '@/api/generated/models/ApiMediaResolveResponse';
 import { ApiNotificationsResponseV2 } from '@/api/generated/models/ApiNotificationsResponseV2';
 import { ApiOgMetadata } from '@/api/generated/models/ApiOgMetadata';
 import { ApiWaveDecisionsPageV2 } from '@/api/generated/models/ApiWaveDecisionsPageV2';
@@ -23,6 +25,20 @@ import { ApiWaveDropsFeedV2 } from '@/api/generated/models/ApiWaveDropsFeedV2';
 import { ApiWaveMetadata } from '@/api/generated/models/ApiWaveMetadata';
 import { ApiWaveOverview } from '@/api/generated/models/ApiWaveOverview';
 import { ApiWaveOverviewPage } from '@/api/generated/models/ApiWaveOverviewPage';
+
+export type ResolveDecentralizedMediaPathParams = Record<string, never>;
+
+export type ResolveDecentralizedMediaQuery = Record<string, never>;
+
+export type ResolveDecentralizedMediaResponse = ApiMediaResolveResponse;
+
+export type ResolveDecentralizedMediaRequest = Request<
+  ResolveDecentralizedMediaPathParams,
+  ApiResponse<ResolveDecentralizedMediaResponse>,
+  ApiMediaResolveRequest,
+  ResolveDecentralizedMediaQuery,
+  Record<string, never>
+>;
 
 export interface GetOgMetadataDropPathParams {
   "drop": string;

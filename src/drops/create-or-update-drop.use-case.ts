@@ -86,8 +86,8 @@ import {
   isWaveChatSlowModeExempt
 } from '@/waves/wave-chat-slow-mode.helpers';
 import { isWaveCreatorOrAdmin } from '@/waves/wave-admin.helpers';
+import { parseDecentralizedMediaRef } from '@/decentralized-media/decentralized-media';
 
-const ARWEAVE_ORIGIN = 'https://arweave.net';
 const TENOR_CHAT_LINK_ORIGIN = 'https://media.tenor.com';
 const ALLOWED_TENOR_CHAT_LINK_EXTENSION_REGEX = /\.(?:gif|mp4|jpg|webp)$/i;
 
@@ -128,7 +128,7 @@ export function validateDropMediaAttachment({
   }
 
   if (mimeType === 'text/html') {
-    if (parsedUrl.origin !== ARWEAVE_ORIGIN && parsedUrl.protocol !== 'ipfs:') {
+    if (!isDecentralizedHtmlMediaUrl(url)) {
       throw new BadRequestException(
         `text/html needs to be served from IPFS or Arweave`
       );
@@ -137,6 +137,15 @@ export function validateDropMediaAttachment({
   }
 
   throw new BadRequestException(`Unsupported mime type ${mimeType}`);
+}
+
+function isDecentralizedHtmlMediaUrl(url: string): boolean {
+  const ref = parseDecentralizedMediaRef(url);
+  return (
+    ref?.protocol === 'ipfs' ||
+    ref?.protocol === 'ipns' ||
+    ref?.protocol === 'arweave'
+  );
 }
 
 type PreResolvedEnsIdentityNomination = Readonly<{

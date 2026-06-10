@@ -9,7 +9,11 @@ import { fetchPublicUrlToBuffer } from '@/http/safe-fetch';
 import { Logger } from '@/logging';
 import { isMemesContract } from '@/minting-claims/external-url';
 import { MAX_MINTING_CLAIM_MEDIA_BYTES } from '@/minting-claims/media-limits';
-import { normalizeIpfsUri } from '@/nft-links/lib/uri';
+import {
+  normalizeDecentralizedMediaUri,
+  parseDecentralizedMediaRef,
+  to6529ResolverUrl
+} from '@/decentralized-media/decentralized-media';
 import { createHash } from 'node:crypto';
 
 const logger = Logger.get('claims-media-arweave-upload');
@@ -128,22 +132,9 @@ function parseJsonOrNull<T>(raw: string | null): T | null {
 export function arweaveTxIdFromUrl(url: string): string {
   const trimmed = url.trim();
   if (!trimmed) return trimmed;
-  if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
-    return trimmed;
-  }
-  try {
-    const parsed = new URL(trimmed);
-    if (parsed.hostname.toLowerCase() === 'arweave.net') {
-      const firstPathSegment = parsed.pathname
-        .split('/')
-        .find((segment) => segment.length > 0);
-      return firstPathSegment ?? trimmed;
-    }
-  } catch {
-    // Keep original string below for malformed URLs.
-  }
-  const base = 'https://arweave.net/';
-  return trimmed.startsWith(base) ? trimmed.slice(base.length) : trimmed;
+  const ref = parseDecentralizedMediaRef(trimmed);
+  if (ref?.protocol === 'arweave') return ref.id;
+  return trimmed;
 }
 
 async function fetchUrlToBuffer(
@@ -189,15 +180,12 @@ function isProtocolUrl(value: string): boolean {
 }
 
 function isIpfsUrl(value: string): boolean {
-  return value.trim().toLowerCase().startsWith('ipfs://');
+  const ref = parseDecentralizedMediaRef(value);
+  return ref?.protocol === 'ipfs' || ref?.protocol === 'ipns';
 }
 
 function isArweaveUrl(value: string): boolean {
-  try {
-    return new URL(value).hostname.toLowerCase() === 'arweave.net';
-  } catch {
-    return false;
-  }
+  return parseDecentralizedMediaRef(value)?.protocol === 'arweave';
 }
 
 function buildStoredLocationUrl(
@@ -207,22 +195,24 @@ function buildStoredLocationUrl(
   if (location == null) return null;
   const trimmed = location.trim();
   if (trimmed === '') return null;
+  const ref = parseDecentralizedMediaRef(trimmed);
+  if (ref) {
+    if (ref.protocol === 'arweave' || allowProtocolPassthrough) {
+      return to6529ResolverUrl(ref);
+    }
+  }
   if (isProtocolUrl(trimmed)) {
-    if (allowProtocolPassthrough || isArweaveUrl(trimmed)) {
+    if (allowProtocolPassthrough) {
       return trimmed;
     }
-    return `https://arweave.net/${trimmed}`;
+    return to6529ResolverUrl({ protocol: 'arweave', id: trimmed, path: '' });
   }
-  return `https://arweave.net/${trimmed}`;
+  return to6529ResolverUrl({ protocol: 'arweave', id: trimmed, path: '' });
 }
 
 function resolveAnimationFetchUrl(url: string): string {
   const trimmed = url.trim();
-  if (!isIpfsUrl(trimmed)) {
-    return normalizeIpfsUri(trimmed) ?? trimmed;
-  }
-  const ipfsPath = trimmed.replace(/^ipfs:\/\//i, '').replace(/^ipfs\//i, '');
-  return normalizeIpfsUri(`ipfs://${ipfsPath}`) ?? trimmed;
+  return normalizeDecentralizedMediaUri(trimmed) ?? trimmed;
 }
 
 function contentTypeFromAnimationFormat(format: string | null | undefined) {
@@ -276,7 +266,7 @@ async function uploadImageToArweaveOrThrow(
     fetched.buffer,
     contentType
   );
-  return url;
+  return buildStoredLocationUrl(url, false) ?? url;
 }
 
 async function uploadAnimationToArweaveIfPresent(
@@ -335,7 +325,7 @@ async function uploadAnimationToArweaveIfPresent(
     buffer,
     contentTypeToUpload
   );
-  return url;
+  return buildStoredLocationUrl(url, false) ?? url;
 }
 
 function resolveAnimationContentTypeForUpload({
@@ -584,7 +574,7 @@ async function uploadClaimMetadataToArweave(
     buffer,
     'application/json'
   );
-  return url;
+  return buildStoredLocationUrl(url, false) ?? url;
 }
 
 function buildArweaveMetadataPayload(
