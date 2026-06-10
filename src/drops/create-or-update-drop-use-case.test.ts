@@ -1007,6 +1007,36 @@ describe('CreateOrUpdateDropUseCase', () => {
     ).not.toThrow();
   });
 
+  it('accepts html uploads from the 6529 media resolver', () => {
+    expect(() =>
+      validateDropMediaAttachment({
+        mimeType: 'text/html',
+        url: 'https://media.6529.io/arweave/some-html/file.html',
+        dropType: DropType.CHAT
+      })
+    ).not.toThrow();
+  });
+
+  it('accepts html uploads from recognized IPFS gateway URLs', () => {
+    expect(() =>
+      validateDropMediaAttachment({
+        mimeType: 'text/html',
+        url: 'https://ipfs.io/ipfs/bafybeigdyrzt/file.html',
+        dropType: DropType.CHAT
+      })
+    ).not.toThrow();
+  });
+
+  it('accepts html uploads from recognized IPFS subdomain gateway URLs', () => {
+    expect(() =>
+      validateDropMediaAttachment({
+        mimeType: 'text/html',
+        url: 'https://bafybeigdyrzt.ipfs.nftstorage.link/file.html',
+        dropType: DropType.CHAT
+      })
+    ).not.toThrow();
+  });
+
   it('allows attachments owned by the author while they are still verifying', async () => {
     const useCase = createUseCaseWithMocks({
       attachmentsDb: {

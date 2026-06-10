@@ -345,7 +345,7 @@ describe('OgMetadataService', () => {
         twitter_handle: null,
         media: [
           {
-            url: `https://ipfs.6529.io/ipfs/${IPFS_CID}/alice.jpg`,
+            url: `https://media.6529.io/ipfs/${IPFS_CID}/alice.jpg`,
             mime_type: null,
             width: null,
             height: null
@@ -405,7 +405,7 @@ describe('OgMetadataService', () => {
           secondary: null,
           media: [
             {
-              url: `https://ipfs.6529.io/ipfs/${IPFS_CID}/banner.jpg`,
+              url: `https://media.6529.io/ipfs/${IPFS_CID}/banner.jpg`,
               mime_type: null,
               width: null,
               height: null
@@ -513,7 +513,7 @@ describe('OgMetadataService', () => {
         twitter_handle: null,
         media: [
           {
-            url: `https://ipfs.6529.io/ipfs/${IPFS_CID}/artist.jpg`,
+            url: `https://media.6529.io/ipfs/${IPFS_CID}/artist.jpg`,
             mime_type: null,
             width: null,
             height: null
@@ -541,7 +541,7 @@ describe('OgMetadataService', () => {
         },
         media: [
           {
-            url: `https://ipfs.6529.io/ipfs/${IPFS_CID}/preview.png`,
+            url: `https://media.6529.io/ipfs/${IPFS_CID}/preview.png`,
             mime_type: null,
             width: null,
             height: null
@@ -553,7 +553,7 @@ describe('OgMetadataService', () => {
             height: null
           },
           {
-            url: `https://ipfs.6529.io/ipfs/${IPFS_CID}/drop.mp4`,
+            url: `https://media.6529.io/ipfs/${IPFS_CID}/drop.mp4`,
             mime_type: 'video/mp4',
             width: null,
             height: null
@@ -566,7 +566,7 @@ describe('OgMetadataService', () => {
             mime_type: ApiAttachmentUploadMimeType.ApplicationPdf,
             kind: ApiAttachmentKind.Pdf,
             status: ApiAttachmentStatus.Ready,
-            url: `https://ipfs.6529.io/ipfs/${IPFS_CID}/submission.pdf`
+            url: `https://media.6529.io/ipfs/${IPFS_CID}/submission.pdf`
           }
         ]
       },
@@ -578,7 +578,7 @@ describe('OgMetadataService', () => {
         drops_count: 34,
         media: [
           {
-            url: `https://ipfs.6529.io/ipfs/${IPFS_CID}/wave.jpg`,
+            url: `https://media.6529.io/ipfs/${IPFS_CID}/wave.jpg`,
             mime_type: null,
             width: null,
             height: null
