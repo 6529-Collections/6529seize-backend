@@ -3,10 +3,15 @@ import fetch from 'node-fetch';
 import { env } from '../../../env';
 import { Logger } from '../../../logging';
 
+type GitHubDropTargetKind = 'issue' | 'pull request';
+
 export class GitHubIssueDropService {
   private readonly logger = Logger.get(this.constructor.name);
 
-  async postGhIssueDrop(issueUrl: string) {
+  async postGhIssueDrop(
+    targetUrl: string,
+    targetKind: GitHubDropTargetKind = 'issue'
+  ) {
     const privateKey = env.getStringOrThrow('GH_WEBHOOK_WALLET_PRIVATE_KEY');
     const waveId = env.getStringOrThrow('GH_WEBHOOK_WAVE_ID');
 
@@ -14,13 +19,15 @@ export class GitHubIssueDropService {
     const clientAddress = wallet.address;
 
     this.logger.info(
-      `Authenticating as ${clientAddress} to post GitHub issue drop`
+      `Authenticating as ${clientAddress} to post GitHub ${targetKind} drop`
     );
 
     const token = await this.getAuthToken(wallet, clientAddress);
-    await this.createDrop(token, clientAddress, waveId, issueUrl);
+    await this.createDrop(token, clientAddress, waveId, targetUrl);
 
-    this.logger.info(`Successfully posted drop for issue: ${issueUrl}`);
+    this.logger.info(
+      `Successfully posted drop for GitHub ${targetKind}: ${targetUrl}`
+    );
   }
 
   private async getAuthToken(

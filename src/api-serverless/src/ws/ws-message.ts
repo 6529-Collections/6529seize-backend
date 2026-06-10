@@ -17,13 +17,23 @@ export enum WsMessageType {
 export interface WsMessage<MESSAGE_DATA> {
   type: WsMessageType;
   data: MESSAGE_DATA;
+  reason?: string;
 }
 
-export function dropUpdateMessage(data: ApiDrop): WsMessage<ApiDrop> {
-  return {
+export const DROP_UPDATE_REASON_POLL_RESPONSE = 'POLL_RESPONSE';
+
+export function dropUpdateMessage(
+  data: ApiDrop,
+  reason?: string
+): WsMessage<ApiDrop> {
+  const message: WsMessage<ApiDrop> = {
     type: WsMessageType.DROP_UPDATE,
     data
   };
+  if (reason !== undefined) {
+    message.reason = reason;
+  }
+  return message;
 }
 
 export function dropRatingUpdateMessage(data: ApiDrop): WsMessage<ApiDrop> {

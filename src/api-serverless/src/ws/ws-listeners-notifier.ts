@@ -40,8 +40,9 @@ export class WsListenersNotifier {
     inputDrop: ApiDrop,
     ctx: RequestContext,
     {
+      reason,
       useSystemBroadcastAudience = false
-    }: { useSystemBroadcastAudience?: boolean } = {}
+    }: { reason?: string; useSystemBroadcastAudience?: boolean } = {}
   ): Promise<void> {
     ctx.timer?.start(`${this.constructor.name}->notifyAboutDrop`);
     try {
@@ -74,7 +75,8 @@ export class WsListenersNotifier {
                 this.removeDropsAuthRequestContext(
                   inputDrop,
                   profileId === null ? 0 : (creditLefts[profileId] ?? 0)
-                )
+                ),
+                reason
               )
             )
           })

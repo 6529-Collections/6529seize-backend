@@ -41,6 +41,7 @@ import {
   wsListenersNotifier,
   WsListenersNotifier
 } from '@/api/ws/ws-listeners-notifier';
+import { DROP_UPDATE_REASON_POLL_RESPONSE } from '@/api/ws/ws-message';
 import { giveReadReplicaTimeToCatchUp } from '@/api/api-helpers';
 import { userNotifier, UserNotifier } from '@/notifications/user.notifier';
 
@@ -278,7 +279,9 @@ export class DropPollsApiService {
         { dropId, skipEligibilityCheck: true },
         ctx
       );
-      await this.wsListenersNotifier.notifyAboutDropUpdate(legacyDrop, ctx);
+      await this.wsListenersNotifier.notifyAboutDropUpdate(legacyDrop, ctx, {
+        reason: DROP_UPDATE_REASON_POLL_RESPONSE
+      });
     }
     const dropsById = await this.dropsService.findDropsV2ByIds([dropId], ctx);
     const apiDrop = dropsById[dropId];
