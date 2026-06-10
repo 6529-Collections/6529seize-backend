@@ -38,3 +38,4 @@ export class ApiSessionRefreshWebRequest {
 export enum ApiSessionRefreshWebRequestClientTypeEnum {
     Web = 'web'
 }
+
