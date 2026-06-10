@@ -1,7 +1,11 @@
 import { WsMessageType } from './ws-message';
 
 export function redactWebSocketMessageForLog(message: unknown): unknown {
-  if (typeof message !== 'object' || !message || Array.isArray(message)) {
+  if (Array.isArray(message)) {
+    return message.map(redactWebSocketMessageForLog);
+  }
+
+  if (typeof message !== 'object' || !message) {
     return message;
   }
 

@@ -25,4 +25,27 @@ describe('redactWebSocketMessageForLog', () => {
       token: '[REDACTED]'
     });
   });
+
+  it('redacts token-bearing websocket messages inside arrays', () => {
+    expect(
+      redactWebSocketMessageForLog([
+        {
+          type: WsMessageType.AUTHENTICATE,
+          access_token: 'live-jwt'
+        },
+        {
+          type: WsMessageType.SUBSCRIBE_TO_WAVE,
+          wave_id: 'wave-1',
+          token: 'accidental-token'
+        }
+      ])
+    ).toEqual([
+      { type: WsMessageType.AUTHENTICATE },
+      {
+        type: WsMessageType.SUBSCRIBE_TO_WAVE,
+        wave_id: 'wave-1',
+        token: '[REDACTED]'
+      }
+    ]);
+  });
 });
