@@ -39,7 +39,7 @@ describe('handleResolveDecentralizedMedia', () => {
     await expect(
       handleResolveDecentralizedMedia({
         body: {
-          inputs: ['https://%zz', 'https://example.com/image.png'],
+          inputs: ['https://%zz', 'https://example.com/image.png', '', '   '],
           include_external_fallbacks: true
         }
       } as any)
@@ -56,6 +56,18 @@ describe('handleResolveDecentralizedMedia', () => {
           recognized: false,
           external_fallback_urls: [],
           warnings: []
+        },
+        {
+          input: '',
+          recognized: false,
+          external_fallback_urls: [],
+          warnings: ['invalid_url']
+        },
+        {
+          input: '   ',
+          recognized: false,
+          external_fallback_urls: [],
+          warnings: ['invalid_url']
         }
       ]
     });

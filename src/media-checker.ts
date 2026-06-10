@@ -14,7 +14,7 @@ export class MediaChecker {
         if (typeof cType === 'string') {
           return cType.split('/')[1]?.toLowerCase() ?? null;
         }
-        return null;
+        continue;
       } catch {
         // Try the next decentralized fallback, if any.
       }
