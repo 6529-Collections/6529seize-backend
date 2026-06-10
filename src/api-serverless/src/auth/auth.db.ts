@@ -3,6 +3,7 @@ import {
   dbSupplier,
   LazyDbAccessCompatibleService
 } from '../../../sql-executor';
+import { DbPoolName, DbQueryOptions } from '@/db-query.options';
 import { RefreshToken } from '../../../entities/IRefreshToken';
 import {
   REFRESH_TOKENS_TABLE,
@@ -22,8 +23,10 @@ const CLIENT_TYPE_NATIVE: WalletAuthClientType = 'native';
 
 type AuthDbConnection = ConnectionWrapper<any>;
 
-function getDbOptions(connection?: AuthDbConnection) {
-  return connection ? { wrappedConnection: connection } : undefined;
+function getDbOptions(connection?: AuthDbConnection): DbQueryOptions {
+  return connection
+    ? { wrappedConnection: connection }
+    : { forcePool: DbPoolName.WRITE };
 }
 
 type CreateWalletAuthSessionParams = {
@@ -279,11 +282,13 @@ export class AuthDb extends LazyDbAccessCompatibleService {
   }
 
   private async getWalletConnectionTransferByIdOrThrow(
-    id: string
+    id: string,
+    connection?: AuthDbConnection
   ): Promise<WalletConnectionTransferEntity> {
     const transfer = await this.db.oneOrNull<WalletConnectionTransferEntity>(
       `select * from ${WALLET_CONNECTION_TRANSFERS_TABLE} where id = :id`,
-      { id }
+      { id },
+      getDbOptions(connection)
     );
     if (!transfer) {
       throw new Error(`Wallet connection transfer ${id} not found after write`);
