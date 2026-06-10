@@ -429,7 +429,7 @@ describe('uploadMintingClaimToArweave', () => {
     expect(uploadedMetadata.animation_details).toEqual({ format: 'HTML' });
   });
 
-  it('copies html ipfs animation_url to animation_location as is', async () => {
+  it('copies html ipfs animation_url to animation_location as resolver URL', async () => {
     uploadFileMock.mockReset();
     uploadFileMock
       .mockResolvedValueOnce({ url: 'https://arweave.net/image-tx' })
@@ -446,7 +446,7 @@ describe('uploadMintingClaimToArweave', () => {
     );
 
     expect(result.animationLocationUrl).toBe(
-      'ipfs://bafybeigdyrzt5-example-animation'
+      'https://media.6529.io/ipfs/bafybeigdyrzt5-example-animation'
     );
     expect(uploadFileMock).toHaveBeenCalledTimes(2);
     expect(fetchPublicUrlToBufferMock).toHaveBeenCalledTimes(1);
@@ -461,12 +461,12 @@ describe('uploadMintingClaimToArweave', () => {
 
     expect(uploadedMetadata.animation).toBeUndefined();
     expect(uploadedMetadata.animation_url).toBe(
-      'ipfs://bafybeigdyrzt5-example-animation'
+      'https://media.6529.io/ipfs/bafybeigdyrzt5-example-animation'
     );
     expect(uploadedMetadata.animation_details).toEqual({ format: 'HTML' });
   });
 
-  it('copies html arweave animation_url to animation_location as is', async () => {
+  it('copies html arweave animation_url to animation_location as resolver URL', async () => {
     uploadFileMock.mockReset();
     uploadFileMock
       .mockResolvedValueOnce({ url: 'https://arweave.net/image-tx' })
@@ -483,7 +483,7 @@ describe('uploadMintingClaimToArweave', () => {
     );
 
     expect(result.animationLocationUrl).toBe(
-      'https://arweave.net/existing-html-animation-tx'
+      'https://media.6529.io/arweave/existing-html-animation-tx'
     );
     expect(uploadFileMock).toHaveBeenCalledTimes(2);
     expect(fetchPublicUrlToBufferMock).toHaveBeenCalledTimes(1);
@@ -498,7 +498,7 @@ describe('uploadMintingClaimToArweave', () => {
 
     expect(uploadedMetadata.animation).toBeUndefined();
     expect(uploadedMetadata.animation_url).toBe(
-      'https://arweave.net/existing-html-animation-tx'
+      'https://media.6529.io/arweave/existing-html-animation-tx'
     );
     expect(uploadedMetadata.animation_details).toEqual({ format: 'HTML' });
   });
@@ -514,7 +514,7 @@ describe('uploadMintingClaimToArweave', () => {
       .mockResolvedValueOnce({
         buffer: Buffer.from('video-bytes'),
         contentType: 'application/octet-stream',
-        finalUrl: 'https://ipfs.6529.io/ipfs/bafybeigdyrzt5-example-animation'
+        finalUrl: 'https://media.6529.io/ipfs/bafybeigdyrzt5-example-animation'
       });
     uploadFileMock
       .mockResolvedValueOnce({ url: 'https://arweave.net/image-tx' })
@@ -537,9 +537,11 @@ describe('uploadMintingClaimToArweave', () => {
       })
     );
 
-    expect(result.animationLocationUrl).toBe('https://arweave.net/video-tx');
+    expect(result.animationLocationUrl).toBe(
+      'https://media.6529.io/arweave/video-tx'
+    );
     expect(fetchPublicUrlToBufferMock.mock.calls[1]?.[0]).toBe(
-      'https://ipfs.6529.io/ipfs/bafybeigdyrzt5-example-animation'
+      'https://media.6529.io/ipfs/bafybeigdyrzt5-example-animation'
     );
     expect(uploadFileMock).toHaveBeenNthCalledWith(
       2,
@@ -550,8 +552,12 @@ describe('uploadMintingClaimToArweave', () => {
     const metadataUploadBuffer = uploadFileMock.mock.calls[2]?.[0] as Buffer;
     const uploadedMetadata = JSON.parse(metadataUploadBuffer.toString('utf8'));
 
-    expect(uploadedMetadata.animation).toBe('https://arweave.net/video-tx');
-    expect(uploadedMetadata.animation_url).toBe('https://arweave.net/video-tx');
+    expect(uploadedMetadata.animation).toBe(
+      'https://media.6529.io/arweave/video-tx'
+    );
+    expect(uploadedMetadata.animation_url).toBe(
+      'https://media.6529.io/arweave/video-tx'
+    );
   });
 
   it('uploads non-html uppercase ipfs animation_url via gateway fetch', async () => {
@@ -565,7 +571,7 @@ describe('uploadMintingClaimToArweave', () => {
       .mockResolvedValueOnce({
         buffer: Buffer.from('video-bytes'),
         contentType: 'application/octet-stream',
-        finalUrl: 'https://ipfs.6529.io/ipfs/bafybeigdyrzt5-example-animation'
+        finalUrl: 'https://media.6529.io/ipfs/bafybeigdyrzt5-example-animation'
       });
     uploadFileMock
       .mockResolvedValueOnce({ url: 'https://arweave.net/image-tx' })
@@ -588,9 +594,11 @@ describe('uploadMintingClaimToArweave', () => {
       })
     );
 
-    expect(result.animationLocationUrl).toBe('https://arweave.net/video-tx');
+    expect(result.animationLocationUrl).toBe(
+      'https://media.6529.io/arweave/video-tx'
+    );
     expect(fetchPublicUrlToBufferMock.mock.calls[1]?.[0]).toBe(
-      'https://ipfs.6529.io/ipfs/bafybeigdyrzt5-example-animation'
+      'https://media.6529.io/ipfs/bafybeigdyrzt5-example-animation'
     );
     expect(uploadFileMock).toHaveBeenNthCalledWith(
       2,
@@ -627,8 +635,12 @@ describe('uploadMintingClaimToArweave', () => {
     const metadataUploadBuffer = uploadFileMock.mock.calls[2]?.[0] as Buffer;
     const uploadedMetadata = JSON.parse(metadataUploadBuffer.toString('utf8'));
 
-    expect(uploadedMetadata.animation).toBe('https://arweave.net/glb-tx');
-    expect(uploadedMetadata.animation_url).toBe('https://arweave.net/glb-tx');
+    expect(uploadedMetadata.animation).toBe(
+      'https://media.6529.io/arweave/glb-tx'
+    );
+    expect(uploadedMetadata.animation_url).toBe(
+      'https://media.6529.io/arweave/glb-tx'
+    );
     expect(uploadedMetadata.animation_details).toEqual({
       bytes: 8133420,
       format: 'GLB',

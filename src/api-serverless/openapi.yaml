@@ -2910,6 +2910,39 @@ paths:
                 $ref: "#/components/schemas/ApiIdentityActivity"
         "404":
           description: Identity not found
+  /media/resolve:
+    post:
+      tags:
+        - Media
+      summary: Resolve decentralized media references
+      description: >-
+        Resolves native IPFS, IPNS, Arweave, 6529 media resolver, and recognized
+        third-party gateway URLs into canonical native URIs, 6529 resolver URLs,
+        and optional external fallback URLs. Unrecognized HTTP(S) URLs are
+        returned as unrecognized items instead of failing the batch.
+      operationId: resolveDecentralizedMedia
+      security: []
+      x-6529-router:
+        enabled: true
+        auth: none
+        handler:
+          import: "@/api/media/decentralized-media.handlers"
+          name: handleResolveDecentralizedMedia
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApiMediaResolveRequest"
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiMediaResolveResponse"
+        "400":
+          description: Invalid request shape
   /memes-mint-stats:
     get:
       tags:
@@ -10233,6 +10266,44 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ApiCurationDrop"
+    ApiDecentralizedMediaProtocol:
+      type: string
+      enum:
+        - ipfs
+        - ipns
+        - arweave
+    ApiDecentralizedMediaResolution:
+      type: object
+      required:
+        - input
+        - recognized
+        - external_fallback_urls
+        - warnings
+      properties:
+        input:
+          type: string
+        recognized:
+          type: boolean
+        protocol:
+          $ref: "#/components/schemas/ApiDecentralizedMediaProtocol"
+        native_uri:
+          type: string
+        id:
+          type: string
+        path:
+          type: string
+        resolver_url:
+          type: string
+          format: uri
+        external_fallback_urls:
+          type: array
+          items:
+            type: string
+            format: uri
+        warnings:
+          type: array
+          items:
+            type: string
     ApiDistributionAirdropsCsvUploadRequest:
       type: object
       required:
@@ -11873,6 +11944,29 @@ components:
         first_unread_drop_serial_no:
           type: integer
           nullable: true
+    ApiMediaResolveRequest:
+      type: object
+      required:
+        - inputs
+      properties:
+        inputs:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            type: string
+        include_external_fallbacks:
+          type: boolean
+          default: true
+    ApiMediaResolveResponse:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiDecentralizedMediaResolution"
     ApiMediaUploadMimeType:
       type: string
       enum:

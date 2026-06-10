@@ -52,6 +52,8 @@ import {
   S3UploaderJob
 } from '@/s3Uploader/s3-uploader.jobs';
 import { withArweaveFallback } from '@/arweave-gateway-fallback';
+import { parseDecentralizedMediaRef } from '@/decentralized-media/decentralized-media';
+import { normalizeMetadataUri } from '@/nft-links/lib/uri';
 import axios from 'axios';
 import { ethers } from 'ethers';
 import { EntityManager, In, MoreThan } from 'typeorm';
@@ -130,9 +132,11 @@ function getTokenPath(contract: string, tokenId: number, format: string) {
 }
 
 function isValidUrl(uri: string): boolean {
+  if (parseDecentralizedMediaRef(uri)) return true;
+
   try {
     const u = new URL(uri);
-    return u.protocol === 'https:' || uri.startsWith('ipfs://');
+    return u.protocol === 'https:';
   } catch {
     return false;
   }
@@ -141,9 +145,7 @@ function isValidUrl(uri: string): boolean {
 const METADATA_FETCH_TIMEOUT_MS = 10000;
 
 async function fetchMetadata(uri: string): Promise<any> {
-  const url = uri.startsWith('ipfs://')
-    ? uri.replace('ipfs://', 'https://ipfs.6529.io/ipfs/')
-    : uri;
+  const url = normalizeMetadataUri(uri) ?? uri;
   try {
     return await withArweaveFallback(url, (u) =>
       axios.get(u, { timeout: METADATA_FETCH_TIMEOUT_MS }).then((res) => {
