@@ -12,7 +12,6 @@
 
 import { AuthNonceStructuredQuery } from '../models/AuthNonceStructuredQuery';
 import { AuthNonceUnstructuredQuery } from '../models/AuthNonceUnstructuredQuery';
-import { HttpFile } from '../http/http';
 
 /**
  * @type AuthNonceQuery
@@ -30,4 +29,3 @@ export class AuthNonceQueryClass {
 
     static readonly mapping: {[index: string]: string} | undefined = undefined;
 }
-

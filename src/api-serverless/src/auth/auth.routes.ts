@@ -573,7 +573,7 @@ const NonceQueryRequestSchema: Joi.ObjectSchema<NonceQueryRequest> =
       .falsy('false')
       .optional()
       .default(false),
-    domain: Joi.string().trim().optional(),
+    domain: Joi.string().trim().min(1).optional(),
     chain_id: Joi.number().integer().min(1).optional().default(1)
   }).unknown(false);
 
