@@ -1,4 +1,4 @@
-export type GitHubWebhookAction = 'opened' | 'reopened';
+export type GitHubWebhookAction = 'opened' | 'reopened' | 'merged';
 export type GitHubWebhookKind = 'issue' | 'pull_request';
 export type GitHubWebhookKindLabel = 'issue' | 'pull request';
 
@@ -6,6 +6,8 @@ export interface GitHubWebhookEvent {
   readonly kind: GitHubWebhookKind;
   readonly action: GitHubWebhookAction;
   readonly htmlUrl: string;
+  readonly title?: string;
+  readonly body?: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -21,8 +23,30 @@ function normalizeString(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-function isSupportedAction(value: unknown): value is GitHubWebhookAction {
+function isOpeningAction(
+  value: unknown
+): value is Extract<GitHubWebhookAction, 'opened' | 'reopened'> {
   return value === 'opened' || value === 'reopened';
+}
+
+function resolveWebhookAction(
+  rawAction: unknown,
+  kind: GitHubWebhookKind,
+  targetPayload: Record<string, unknown>
+): GitHubWebhookAction | null {
+  if (isOpeningAction(rawAction)) {
+    return rawAction;
+  }
+
+  if (
+    rawAction === 'closed' &&
+    kind === 'pull_request' &&
+    targetPayload.merged === true
+  ) {
+    return 'merged';
+  }
+
+  return null;
 }
 
 function normalizeHtmlUrl(value: unknown): string | null {
@@ -79,7 +103,7 @@ export function parseGitHubWebhookEvent(
   payload: unknown,
   eventName: unknown
 ): GitHubWebhookEvent | null {
-  if (!isRecord(payload) || !isSupportedAction(payload.action)) {
+  if (!isRecord(payload)) {
     return null;
   }
 
@@ -92,17 +116,37 @@ export function parseGitHubWebhookEvent(
   }
 
   const targetPayload = getTargetPayload(payload, kind);
-  const htmlUrl = targetPayload
-    ? normalizeHtmlUrl(targetPayload.html_url)
-    : null;
+  if (!targetPayload) {
+    return null;
+  }
+
+  const action = resolveWebhookAction(payload.action, kind, targetPayload);
+  if (!action) {
+    return null;
+  }
+
+  const htmlUrl = normalizeHtmlUrl(targetPayload.html_url);
   if (!htmlUrl) {
     return null;
   }
 
   return {
     kind,
-    action: payload.action,
-    htmlUrl
+    action,
+    htmlUrl,
+    ...buildOptionalWebhookTextFields(targetPayload)
+  };
+}
+
+function buildOptionalWebhookTextFields(
+  targetPayload: Record<string, unknown>
+): Pick<GitHubWebhookEvent, 'title' | 'body'> {
+  const title = normalizeString(targetPayload.title);
+  const body = normalizeString(targetPayload.body);
+
+  return {
+    ...(title ? { title } : {}),
+    ...(body ? { body } : {})
   };
 }
 
