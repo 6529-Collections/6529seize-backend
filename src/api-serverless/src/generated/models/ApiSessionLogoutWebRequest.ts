@@ -13,7 +13,7 @@
 import { HttpFile } from '../http/http';
 
 export class ApiSessionLogoutWebRequest {
-    'client_type'?: ApiSessionLogoutWebRequestClientTypeEnum;
+    'client_type': ApiSessionLogoutWebRequestClientTypeEnum;
     'all_sessions'?: boolean;
 
     static readonly discriminator: string | undefined = undefined;

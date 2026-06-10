@@ -170,7 +170,8 @@ export class AppWebSockets {
         connectionId,
         {}
       );
-      if (!entity || Time.seconds(entity.jwt_expiry).lt(Time.now())) {
+      const jwtExpiry = getActiveJwtExpiry(entity?.jwt_expiry);
+      if (!entity || jwtExpiry === null) {
         this.logger.info(
           `Discovered a stale websocket ${connectionId}. Can't send messages to it. Will close it.`
         );
@@ -281,11 +282,18 @@ export async function authenticateWebSocketJwtOrGetByConnectionId(
         connectionId,
         {}
       );
-      if (connection?.identity_id) {
+      const jwtExpiry = getActiveJwtExpiry(connection?.jwt_expiry);
+      if (connection?.identity_id && jwtExpiry !== null) {
         return {
           identityId: connection.identity_id,
-          jwtExpiry: connection.jwt_expiry
+          jwtExpiry
         };
+      }
+      if (connection?.identity_id) {
+        Logger.get('WEBSOCKET_AUTH').info(
+          `Rejecting expired websocket auth for connection ${connectionId}`
+        );
+        await appWebSockets.deregister({ connectionId });
       }
     }
   }
@@ -329,12 +337,16 @@ export async function authenticateWebSocketToken(
       if (!user) {
         return resolve(null);
       }
+      const jwtExpiry = getFiniteJwtExpiry(user.exp);
+      if (jwtExpiry === null) {
+        return resolve(null);
+      }
       return identityFetcher
         .getProfileIdByIdentityKey({ identityKey: user.wallet }, {})
         .then((it) =>
           resolve({
             identityId: it ?? ANON_USER_ID,
-            jwtExpiry: user.exp ?? Time.now().plusDays(1).toSeconds()
+            jwtExpiry
           })
         )
         .catch(() => resolve(null));
@@ -342,6 +354,29 @@ export async function authenticateWebSocketToken(
       return resolve(null);
     });
   });
+}
+
+function getFiniteJwtExpiry(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return null;
+  }
+  return value;
+}
+
+function getActiveJwtExpiry(value: unknown): number | null {
+  const jwtExpiry =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string'
+        ? Number(value)
+        : null;
+  if (jwtExpiry === null || !Number.isFinite(jwtExpiry)) {
+    return null;
+  }
+  if (!Time.seconds(jwtExpiry).gt(Time.now())) {
+    return null;
+  }
+  return jwtExpiry;
 }
 
 // mean only for dev environment

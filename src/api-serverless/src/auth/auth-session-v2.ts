@@ -1,6 +1,7 @@
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import * as jwt from 'jsonwebtoken';
 import { env } from '@/env';
+import { BadRequestException } from '@/exceptions';
 import { WalletAuthClientType } from '@/entities/IWalletAuthSession';
 import { ConnectionWrapper } from '@/sql-executor';
 import { Time } from '@/time';
@@ -320,6 +321,7 @@ export async function createConnectionTransfer({
   readonly role: string | null;
   readonly targetClientType: WalletAuthClientType;
 }): Promise<CreatedConnectionTransfer> {
+  assertNativeConnectionTransferTarget(targetClientType);
   const transferCode = createOpaqueSecret();
   const expiresAt = getTransferExpiresAt();
   const transfer = await authDb.createWalletConnectionTransfer({
@@ -356,6 +358,7 @@ export async function redeemConnectionTransfer({
   readonly targetClientType: WalletAuthClientType;
   readonly userAgent: string | null;
 }): Promise<RedeemedConnectionTransfer | null> {
+  assertNativeConnectionTransferTarget(targetClientType);
   const session = await authDb.executeNativeQueriesInTransaction(
     async (connection) => {
       const transfer = await authDb.consumeWalletConnectionTransfer(
@@ -398,6 +401,16 @@ export async function redeemConnectionTransfer({
       refresh_token_expires_at: session.response.refresh_token_expires_at
     }
   };
+}
+
+function assertNativeConnectionTransferTarget(
+  targetClientType: WalletAuthClientType
+): void {
+  if (targetClientType !== 'native') {
+    throw new BadRequestException(
+      'Connection transfer codes currently support native clients only'
+    );
+  }
 }
 
 function toWebSessionResponse(

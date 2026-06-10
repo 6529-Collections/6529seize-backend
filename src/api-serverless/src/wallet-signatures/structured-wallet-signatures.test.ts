@@ -12,7 +12,7 @@ describe('structured wallet signatures', () => {
     '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80'
   );
   const issuedAt = new Date('2026-06-10T00:00:00.000Z');
-  const expirationTime = new Date(Date.now() + 60_000);
+  const getExpirationTime = () => new Date(Date.now() + 60_000);
 
   beforeEach(() => {
     clearStructuredWalletSignatureReplayCacheForTests();
@@ -35,7 +35,7 @@ describe('structured wallet signatures', () => {
       domain: 'example.com',
       wallet: wallet.address,
       issuedAt,
-      expirationTime,
+      expirationTime: getExpirationTime(),
       nonce: 'nonce-12345',
       action: 'create_drop',
       payloadHash,
@@ -59,7 +59,7 @@ describe('structured wallet signatures', () => {
       domain: 'example.com',
       wallet: wallet.address,
       issuedAt,
-      expirationTime,
+      expirationTime: getExpirationTime(),
       nonce: 'nonce-with-colon-value',
       action: 'login',
       purpose: 'Sign this message: authenticate with 6529.'
@@ -77,7 +77,7 @@ describe('structured wallet signatures', () => {
       kind: 'action',
       domain: 'example.com',
       wallet: wallet.address,
-      expirationTime,
+      expirationTime: getExpirationTime(),
       nonce: 'replay-nonce-1',
       action: 'add_rememe',
       payloadHash,
@@ -90,6 +90,7 @@ describe('structured wallet signatures', () => {
         message,
         signature,
         expectedAddress: wallet.address,
+        expectedChainId: 1,
         expectedAction: 'add_rememe',
         expectedKind: 'action',
         expectedPayloadHash: payloadHash
@@ -101,6 +102,7 @@ describe('structured wallet signatures', () => {
         message,
         signature,
         expectedAddress: wallet.address,
+        expectedChainId: 1,
         expectedAction: 'add_rememe',
         expectedKind: 'action',
         expectedPayloadHash: payloadHash
@@ -113,7 +115,7 @@ describe('structured wallet signatures', () => {
       kind: 'action',
       domain: 'example.com',
       wallet: wallet.address,
-      expirationTime,
+      expirationTime: getExpirationTime(),
       nonce: 'payload-nonce-1',
       action: 'nextgen_admin',
       payloadHash: hashStructuredWalletSignaturePayload({ a: 1 }),
@@ -126,9 +128,35 @@ describe('structured wallet signatures', () => {
         message,
         signature,
         expectedAddress: wallet.address,
+        expectedChainId: 1,
         expectedAction: 'nextgen_admin',
         expectedKind: 'action',
         expectedPayloadHash: hashStructuredWalletSignaturePayload({ a: 2 })
+      })
+    ).resolves.toBeNull();
+  });
+
+  it('rejects chain id mismatches', async () => {
+    const message = buildStructuredWalletSignatureMessage({
+      kind: 'authentication',
+      domain: 'example.com',
+      wallet: wallet.address,
+      chainId: 11155111,
+      expirationTime: getExpirationTime(),
+      nonce: 'chain-nonce-1',
+      action: 'login',
+      purpose: 'Sign this message to authenticate with 6529.'
+    });
+    const signature = await wallet.signMessage(message);
+
+    await expect(
+      verifyStructuredWalletSignature({
+        message,
+        signature,
+        expectedAddress: wallet.address,
+        expectedChainId: 1,
+        expectedAction: 'login',
+        expectedKind: 'authentication'
       })
     ).resolves.toBeNull();
   });

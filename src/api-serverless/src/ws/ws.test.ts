@@ -15,8 +15,17 @@ jest.mock('@/api/identities/identity.fetcher', () => ({
 }));
 
 import { identityFetcher } from '@/api/identities/identity.fetcher';
-import { WsConnectionRepository } from '@/api/ws/ws-connection.repository';
-import { AppWebSockets, authenticateWebSocketToken } from '@/api/ws/ws';
+import {
+  wsConnectionRepository,
+  WsConnectionRepository
+} from '@/api/ws/ws-connection.repository';
+import {
+  ANON_USER_ID,
+  appWebSockets,
+  AppWebSockets,
+  authenticateWebSocketJwtOrGetByConnectionId,
+  authenticateWebSocketToken
+} from '@/api/ws/ws';
 import WebSocket from 'ws';
 
 const identityFetcherMock = identityFetcher as jest.Mocked<
@@ -38,6 +47,48 @@ describe('authenticateWebSocketToken', () => {
     );
 
     await expect(authenticateWebSocketToken('valid-token')).resolves.toBeNull();
+  });
+
+  it('resolves null when JWT exp is missing', async () => {
+    mockPassportAuthenticate.mockImplementation(
+      (_strategy, _options, callback) => (_req: unknown, _res: unknown) =>
+        callback(null, { wallet: '0xabc' })
+    );
+
+    await expect(authenticateWebSocketToken('missing-exp')).resolves.toBeNull();
+    expect(
+      identityFetcherMock.getProfileIdByIdentityKey
+    ).not.toHaveBeenCalled();
+  });
+});
+
+describe('authenticateWebSocketJwtOrGetByConnectionId', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('rejects expired stored websocket auth and deregisters the connection', async () => {
+    jest.spyOn(wsConnectionRepository, 'getByConnectionId').mockResolvedValue({
+      connection_id: 'connection-expired',
+      identity_id: 'identity-1',
+      jwt_expiry: Math.floor(Date.now() / 1000) - 60,
+      wave_id: null
+    });
+    const deregisterSpy = jest
+      .spyOn(appWebSockets, 'deregister')
+      .mockResolvedValue(undefined);
+
+    const result = await authenticateWebSocketJwtOrGetByConnectionId({
+      headers: {},
+      requestContext: {
+        connectionId: 'connection-expired'
+      }
+    } as any);
+
+    expect(result.identityId).toBe(ANON_USER_ID);
+    expect(deregisterSpy).toHaveBeenCalledWith({
+      connectionId: 'connection-expired'
+    });
   });
 });
 

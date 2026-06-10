@@ -253,6 +253,7 @@ async function validateSignature(
       message: signatureMessage,
       signature,
       expectedAddress: address,
+      expectedChainId: getNextGenChainId(),
       expectedAction: 'nextgen_admin',
       expectedKind: 'action',
       expectedPayloadHash: hashStructuredWalletSignaturePayload(payload)

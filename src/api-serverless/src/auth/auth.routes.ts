@@ -56,58 +56,50 @@ import {
   buildStructuredWalletSignatureMessage,
   isStructuredSignaturesRequired,
   isStructuredWalletSignatureMessage,
+  parseStructuredWalletSignatureMessage,
   verifyStructuredWalletSignature
 } from '../wallet-signatures/structured-wallet-signatures';
 
 const router = asyncRouter();
 
+interface NonceQueryRequest {
+  signer_address: string;
+  short_nonce: boolean;
+  structured_signature: boolean;
+  domain?: string;
+  chain_id: number;
+}
+
 router.get(
   '/nonce',
   function (
-    req: Request<
-      any,
-      any,
-      any,
-      {
-        signer_address: string;
-        short_nonce?: string;
-        structured_signature?: string;
-        domain?: string;
-        chain_id?: string;
-      },
-      any
-    >,
+    req: Request<any, any, any, NonceQueryRequest, any>,
     res: Response<ApiResponse<ApiNonceResponse>>
   ) {
-    const shortNonce = req.query.short_nonce?.toLowerCase() === 'true';
-    const structuredSignature =
-      req.query.structured_signature?.toLowerCase() === 'true';
-    const signerAddress = req.query.signer_address?.toLocaleLowerCase();
+    const nonceRequest = getValidatedByJoiOrThrow(
+      req.query,
+      NonceQueryRequestSchema
+    );
+    const shortNonce = nonceRequest.short_nonce;
+    const structuredSignature = nonceRequest.structured_signature;
+    const signerAddress = nonceRequest.signer_address.toLowerCase();
     if (!signerAddress || !ethers.isAddress(signerAddress)) {
       throw new UnauthorisedException(
         `Invalid signer address ${signerAddress}`
       );
     }
-    const structuredSignatureChainId = Number(req.query.chain_id ?? 1);
     if (
       structuredSignature &&
-      (!Number.isInteger(structuredSignatureChainId) ||
-        structuredSignatureChainId < 1)
-    ) {
-      throw new BadRequestException(`Invalid signature chain id`);
-    }
-    if (
-      structuredSignature &&
-      (!req.query.domain || req.query.domain.trim().length === 0)
+      (!nonceRequest.domain || nonceRequest.domain.trim().length === 0)
     ) {
       throw new BadRequestException(`Signature domain is required`);
     }
     const nonce = structuredSignature
       ? buildStructuredWalletSignatureMessage({
           kind: 'authentication',
-          domain: req.query.domain ?? '',
+          domain: nonceRequest.domain ?? '',
           wallet: signerAddress,
-          chainId: structuredSignatureChainId,
+          chainId: nonceRequest.chain_id,
           nonce: randomUUID(),
           action: 'login',
           purpose: 'Sign this message to authenticate with 6529.'
@@ -377,20 +369,19 @@ router.post(
     }
     const tokenAddress = req.body.address?.toLowerCase();
     const refreshToken = req.body.token;
-    const role = req.body.role;
     if (!refreshToken) {
       throw new BadRequestException('Refresh token is required');
     }
-    const redeemed = await authDb.redeemRefreshToken(
+    const redeemedAddress = await authDb.redeemRefreshToken(
       tokenAddress,
       refreshToken
     );
-    if (!redeemed) {
+    if (!redeemedAddress) {
       throw new BadRequestException('Invalid refresh token');
     }
-    const accessToken = issueAccessToken(tokenAddress, role).token;
+    const accessToken = issueAccessToken(redeemedAddress).token;
     res.status(201).send({
-      address: tokenAddress,
+      address: redeemedAddress,
       token: accessToken
     });
   }
@@ -481,10 +472,15 @@ async function verifyClientSignature(
         `client_address is mandatory in structured signatures`
       );
     }
+    const parsedMessage = parseStructuredWalletSignatureMessage(nonce);
+    if (!parsedMessage) {
+      throw new Error('Invalid structured signature message');
+    }
     const signingAddress = await verifyStructuredWalletSignature({
       message: nonce,
       signature: clientSignature,
       expectedAddress: clientAddress,
+      expectedChainId: parsedMessage.chainId,
       expectedAction: 'login',
       expectedKind: 'authentication',
       isContractWalletHint: isSafeWallet
@@ -564,6 +560,23 @@ const LoginRequestSchema: Joi.ObjectSchema<ApiLoginRequest> =
     is_safe_wallet: Joi.boolean().optional().default(false)
   });
 
+const NonceQueryRequestSchema: Joi.ObjectSchema<NonceQueryRequest> =
+  Joi.object<NonceQueryRequest>({
+    signer_address: Joi.string().required(),
+    short_nonce: Joi.boolean()
+      .truthy('true')
+      .falsy('false')
+      .optional()
+      .default(false),
+    structured_signature: Joi.boolean()
+      .truthy('true')
+      .falsy('false')
+      .optional()
+      .default(false),
+    domain: Joi.string().trim().optional(),
+    chain_id: Joi.number().integer().min(1).optional().default(1)
+  }).unknown(false);
+
 const ClientTypeSchema = Joi.string().valid('web', 'native');
 
 const SessionLoginRequestSchema: Joi.ObjectSchema<ApiSessionLoginRequest> =
@@ -597,7 +610,7 @@ const SessionLogoutWebRequestSchema: Joi.ObjectSchema<ApiSessionLogoutWebRequest
   Joi.object<ApiSessionLogoutWebRequest>({
     client_type: Joi.string().valid('web').required(),
     all_sessions: Joi.boolean().optional().default(false)
-  });
+  }).unknown(false);
 
 const SessionLogoutNativeRequestSchema: Joi.ObjectSchema<ApiSessionLogoutNativeRequest> =
   Joi.object<ApiSessionLogoutNativeRequest>({

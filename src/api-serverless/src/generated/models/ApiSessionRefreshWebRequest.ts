@@ -13,7 +13,7 @@
 import { HttpFile } from '../http/http';
 
 export class ApiSessionRefreshWebRequest {
-    'client_type'?: ApiSessionRefreshWebRequestClientTypeEnum;
+    'client_type': ApiSessionRefreshWebRequestClientTypeEnum;
 
     static readonly discriminator: string | undefined = undefined;
 
