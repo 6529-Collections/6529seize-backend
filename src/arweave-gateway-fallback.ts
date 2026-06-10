@@ -34,7 +34,12 @@ export function getArweaveFallbackUrl(url: string): string | null {
 }
 
 function stripQueryAndHash(url: string): string {
-  return url.replace(/[?#].*$/, '');
+  const queryIndex = url.indexOf('?');
+  const hashIndex = url.indexOf('#');
+  const indexes = [queryIndex, hashIndex].filter((index) => index >= 0);
+  if (indexes.length === 0) return url;
+
+  return url.slice(0, Math.min(...indexes));
 }
 
 function stringifyErr(err: unknown): string {
