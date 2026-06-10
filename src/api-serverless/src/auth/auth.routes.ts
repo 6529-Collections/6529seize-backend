@@ -511,7 +511,7 @@ const SessionLoginRequestSchema: Joi.ObjectSchema<ApiSessionLoginRequest> =
     client_signature: Joi.string().required(),
     role: Joi.string().optional().allow(null).default(null),
     client_address: Joi.string().required(),
-    is_safe_wallet: Joi.boolean().optional().default(false),
+    is_safe_wallet: Joi.boolean().required(),
     wallet_kind_hint: Joi.string()
       .valid('eoa', 'contract', 'unknown')
       .optional()

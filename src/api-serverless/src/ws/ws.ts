@@ -158,21 +158,25 @@ export class AppWebSockets {
 
   async send({
     connectionId,
-    message
+    message,
+    skipStaleConnectionCheck = false
   }: {
     connectionId: string;
     message: string;
+    skipStaleConnectionCheck?: boolean;
   }) {
-    const entity = await this.wsConnectionRepository.getByConnectionId(
-      connectionId,
-      {}
-    );
-    if (!entity || Time.seconds(entity.jwt_expiry).lt(Time.now())) {
-      this.logger.info(
-        `Discovered a stale websocket ${connectionId}. Can't send messages to it. Will close it.`
+    if (!skipStaleConnectionCheck) {
+      const entity = await this.wsConnectionRepository.getByConnectionId(
+        connectionId,
+        {}
       );
-      await this.deregister({ connectionId });
-      return;
+      if (!entity || Time.seconds(entity.jwt_expiry).lt(Time.now())) {
+        this.logger.info(
+          `Discovered a stale websocket ${connectionId}. Can't send messages to it. Will close it.`
+        );
+        await this.deregister({ connectionId });
+        return;
+      }
     }
     try {
       await ClientConnections.Get().sendMessage({ connectionId, message });

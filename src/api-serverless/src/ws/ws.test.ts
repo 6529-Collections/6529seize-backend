@@ -15,7 +15,9 @@ jest.mock('@/api/identities/identity.fetcher', () => ({
 }));
 
 import { identityFetcher } from '@/api/identities/identity.fetcher';
-import { authenticateWebSocketToken } from '@/api/ws/ws';
+import { WsConnectionRepository } from '@/api/ws/ws-connection.repository';
+import { AppWebSockets, authenticateWebSocketToken } from '@/api/ws/ws';
+import WebSocket from 'ws';
 
 const identityFetcherMock = identityFetcher as jest.Mocked<
   typeof identityFetcher
@@ -36,5 +38,47 @@ describe('authenticateWebSocketToken', () => {
     );
 
     await expect(authenticateWebSocketToken('valid-token')).resolves.toBeNull();
+  });
+});
+
+describe('AppWebSockets.send', () => {
+  const originalNodeEnv = process.env.NODE_ENV;
+
+  afterEach(() => {
+    process.env.NODE_ENV = originalNodeEnv;
+  });
+
+  it('can send protocol failure frames without the stale expiry lookup', async () => {
+    process.env.NODE_ENV = 'local';
+    const connectionId = 'connection-auth-failure';
+    const repository = {
+      save: jest.fn().mockResolvedValue(undefined),
+      getByConnectionId: jest.fn(),
+      deleteByConnectionId: jest.fn().mockResolvedValue(undefined)
+    };
+    const socket = {
+      send: jest.fn(),
+      close: jest.fn()
+    };
+    const appWebSockets = new AppWebSockets(
+      repository as unknown as WsConnectionRepository
+    );
+
+    await appWebSockets.register({
+      identityId: 'identity-1',
+      connectionId,
+      jwtExpiry: 1,
+      ws: socket as unknown as WebSocket
+    });
+    repository.getByConnectionId.mockClear();
+
+    await appWebSockets.send({
+      connectionId,
+      message: 'AUTHENTICATION_FAILED',
+      skipStaleConnectionCheck: true
+    });
+
+    expect(repository.getByConnectionId).not.toHaveBeenCalled();
+    expect(socket.send).toHaveBeenCalledWith('AUTHENTICATION_FAILED');
   });
 });
