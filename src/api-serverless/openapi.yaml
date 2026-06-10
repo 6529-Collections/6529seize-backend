@@ -156,6 +156,7 @@ paths:
         - Authentication
       summary: Get a message to sign with your web3 wallet
       operationId: getNonce
+      security: []
       parameters:
         - name: signer_address
           in: query
@@ -14021,6 +14022,9 @@ components:
           type: boolean
     ApiSessionLogoutWebRequest:
       type: object
+      required:
+        - client_type
+      additionalProperties: false
       properties:
         client_type:
           type: string
@@ -14074,6 +14078,9 @@ components:
           type: string
     ApiSessionRefreshWebRequest:
       type: object
+      required:
+        - client_type
+      additionalProperties: false
       properties:
         client_type:
           type: string

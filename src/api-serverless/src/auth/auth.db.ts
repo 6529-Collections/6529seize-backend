@@ -67,14 +67,20 @@ export class AuthDb extends LazyDbAccessCompatibleService {
   }
 
   async redeemRefreshToken(
-    address: string,
+    address: string | null | undefined,
     refreshToken: string
-  ): Promise<boolean> {
+  ): Promise<string | null> {
     const result = await this.db.oneOrNull<RefreshToken>(
       `select address from ${REFRESH_TOKENS_TABLE} where refresh_token = :refreshToken`,
       { refreshToken }
     );
-    return !!result?.address && equalIgnoreCase(address, result.address);
+    if (!result?.address) {
+      return null;
+    }
+    if (address && !equalIgnoreCase(address, result.address)) {
+      return null;
+    }
+    return result.address.toLowerCase();
   }
 
   async createWalletAuthSession(

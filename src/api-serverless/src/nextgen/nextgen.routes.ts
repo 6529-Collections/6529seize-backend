@@ -60,6 +60,14 @@ function validateCollectionId(req: any, _: any, next: any) {
   next();
 }
 
+function setNextGenJsonCorsHeaders(req: any, res: any) {
+  res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
+  res.setHeader(
+    ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
+    getCorsResponseOrigin(req.headers.origin)
+  );
+}
+
 router.post(
   '/create_allowlist',
   initMulterSingleMiddleware('allowlist'),
@@ -71,11 +79,7 @@ router.post(
       added_by: body.added_by
     });
     const valid = body.valid;
-    res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
-    res.setHeader(
-      ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
-      getCorsResponseOrigin(req.headers.origin)
-    );
+    setNextGenJsonCorsHeaders(req, res);
     if (valid) {
       await persistAllowlist(body);
       res
@@ -98,11 +102,7 @@ router.post(
 
     logger.info(`[VALID ${valid}]`);
 
-    res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
-    res.setHeader(
-      ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
-      getCorsResponseOrigin(req.headers.origin)
-    );
+    setNextGenJsonCorsHeaders(req, res);
     if (valid) {
       await persistCollectionBurn(body);
       res.status(200).send(JSON.stringify({ body }));

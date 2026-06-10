@@ -11,10 +11,16 @@ export const STRUCTURED_WALLET_SIGNATURE_VERSION = 2;
 export const STRUCTURED_WALLET_SIGNATURE_TTL_SECONDS = 5 * 60;
 const MAX_ISSUED_AT_FUTURE_SKEW_MS = 5 * 60 * 1000;
 const MAX_SIGNATURE_TTL_MS = 10 * 60 * 1000;
+export const ETHEREUM_MAINNET_CHAIN_ID = 1;
 const EIP1271_MAGIC_VALUE = '0x1626ba7e';
 const EIP1271_ABI = [
   'function isValidSignature(bytes32 _messageHash, bytes _signature) public view returns (bytes4)'
 ];
+const ALCHEMY_NETWORK_BY_CHAIN_ID = new Map<number, string>([
+  [ETHEREUM_MAINNET_CHAIN_ID, 'eth-mainnet'],
+  [5, 'eth-goerli'],
+  [11155111, 'eth-sepolia']
+]);
 
 const localConsumedNonceExpirations = new Map<string, number>();
 
@@ -56,6 +62,7 @@ interface VerifyStructuredWalletSignatureParams {
   message: string;
   signature: string;
   expectedAddress: string;
+  expectedChainId: number;
   expectedAction: StructuredWalletSignatureAction;
   expectedPayloadHash?: string | null;
   expectedKind?: StructuredWalletSignatureKind;
@@ -119,7 +126,7 @@ export function canonicalJSONStringify(value: unknown): string {
 
   const record = value as Record<string, unknown>;
   const keyValuePairs = Object.keys(record)
-    .sort((a, b) => a.localeCompare(b))
+    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
     .filter((key) => record[key] !== undefined)
     .map(
       (key) => `${JSON.stringify(key)}:${canonicalJSONStringify(record[key])}`
@@ -198,6 +205,7 @@ export async function verifyStructuredWalletSignature({
   message,
   signature,
   expectedAddress,
+  expectedChainId,
   expectedAction,
   expectedPayloadHash,
   expectedKind,
@@ -212,6 +220,8 @@ export async function verifyStructuredWalletSignature({
 
   if (
     parsed.wallet !== expectedAddressLowerCase ||
+    !Number.isInteger(expectedChainId) ||
+    parsed.chainId !== expectedChainId ||
     parsed.action !== expectedAction ||
     (expectedKind && parsed.kind !== expectedKind) ||
     !isSignatureTimingValid(parsed) ||
@@ -234,6 +244,7 @@ export async function verifyStructuredWalletSignature({
     (isContractWalletHint &&
       (await verifyContractWalletSignature({
         address: expectedAddressLowerCase,
+        chainId: expectedChainId,
         message,
         signature
       })));
@@ -377,17 +388,21 @@ function recoverPersonalSignAddress(
 
 async function verifyContractWalletSignature({
   address,
+  chainId,
   message,
   signature
 }: {
   address: string;
+  chainId: number;
   message: string;
   signature: string;
 }): Promise<boolean> {
   try {
-    const provider = new ethers.JsonRpcProvider(
-      `https://eth-mainnet.alchemyapi.io/v2/${env.getStringOrThrow(`ALCHEMY_API_KEY`)}`
-    );
+    const provider = getAlchemyProviderForChain(chainId);
+    if (!provider) {
+      logger.warn(`Unsupported structured signature chain id ${chainId}`);
+      return false;
+    }
     const contract = new ethers.Contract(address, EIP1271_ABI, provider);
     const result = await contract.isValidSignature(
       ethers.hashMessage(message),
@@ -403,6 +418,18 @@ async function verifyContractWalletSignature({
   }
 }
 
+function getAlchemyProviderForChain(
+  chainId: number
+): ethers.JsonRpcProvider | null {
+  const network = ALCHEMY_NETWORK_BY_CHAIN_ID.get(chainId);
+  if (!network) {
+    return null;
+  }
+  return new ethers.JsonRpcProvider(
+    `https://${network}.alchemyapi.io/v2/${env.getStringOrThrow(`ALCHEMY_API_KEY`)}`
+  );
+}
+
 async function consumeStructuredSignatureNonce(
   parsed: ParsedStructuredWalletSignatureMessage
 ): Promise<boolean> {
@@ -411,7 +438,11 @@ async function consumeStructuredSignatureNonce(
   const ttlSeconds = Math.max(1, Math.ceil((expiresAtMs - Date.now()) / 1000));
   const redis = getRedisClient();
   if (!redis) {
-    return consumeLocalNonce(key, expiresAtMs);
+    if (canUseLocalNonceReplayFallback()) {
+      return consumeLocalNonce(key, expiresAtMs);
+    }
+    logger.error('Structured signature nonce replay check unavailable');
+    return false;
   }
 
   try {
@@ -422,8 +453,15 @@ async function consumeStructuredSignatureNonce(
     return result === 'OK';
   } catch (error) {
     logger.error('Structured signature nonce replay check failed', error);
+    if (!canUseLocalNonceReplayFallback()) {
+      return false;
+    }
     return consumeLocalNonce(key, expiresAtMs);
   }
+}
+
+function canUseLocalNonceReplayFallback(): boolean {
+  return process.env.NODE_ENV === 'local' || process.env.NODE_ENV === 'test';
 }
 
 function buildReplayKey(

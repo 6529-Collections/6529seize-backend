@@ -3,7 +3,9 @@ import { ethers } from 'ethers';
 import { dropHasher, DropHasher } from './drop-hasher';
 import { env } from '../../../env';
 import {
+  ETHEREUM_MAINNET_CHAIN_ID,
   isStructuredSignaturesRequired,
+  parseStructuredWalletSignatureMessage,
   verifyStructuredWalletSignature
 } from '../wallet-signatures/structured-wallet-signatures';
 
@@ -37,10 +39,18 @@ export class DropSignatureVerifier {
     });
     const structuredMessage = drop.signature_message ?? null;
     if (structuredMessage) {
+      const expectedAddress = this.getStructuredSigningAddress(
+        structuredMessage,
+        drop.signer_address
+      );
+      if (!expectedAddress) {
+        return false;
+      }
       const signingAddress = await verifyStructuredWalletSignature({
         message: structuredMessage,
         signature,
-        expectedAddress: drop.signer_address ?? '',
+        expectedAddress,
+        expectedChainId: ETHEREUM_MAINNET_CHAIN_ID,
         expectedAction: 'create_drop',
         expectedKind: 'action',
         expectedPayloadHash: hash,
@@ -66,6 +76,18 @@ export class DropSignatureVerifier {
     const walletSet = new Set(wallets.map((it) => it.toLowerCase()));
     return signingAddresses.some((signingAddress) =>
       walletSet.has(signingAddress)
+    );
+  }
+
+  private getStructuredSigningAddress(
+    structuredMessage: string,
+    signerAddress?: string
+  ): string | null {
+    if (signerAddress) {
+      return signerAddress;
+    }
+    return (
+      parseStructuredWalletSignatureMessage(structuredMessage)?.wallet ?? null
     );
   }
 

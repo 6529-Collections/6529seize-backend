@@ -128,6 +128,21 @@ describe('DropSignatureVerifier', () => {
     ).resolves.toBe(true);
   });
 
+  it('accepts structured drop signatures using the message wallet when signer_address is omitted', async () => {
+    const drop = await signDropAsStructuredMessage({
+      ...createDrop(),
+      signer_address: undefined
+    });
+
+    await expect(
+      verifier.isDropSignedByAnyOfGivenWallets({
+        wallets: [wallet.address],
+        drop,
+        termsOfService
+      })
+    ).resolves.toBe(true);
+  });
+
   it('rejects legacy drop signatures when structured signatures are required', async () => {
     process.env.AUTH_STRUCTURED_SIGNATURES_REQUIRED = 'true';
     const drop = await signDropAsText(createDrop());

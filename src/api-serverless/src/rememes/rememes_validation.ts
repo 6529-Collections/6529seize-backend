@@ -6,6 +6,7 @@ import { getTdhForAddress, rememeExists } from '@/db-api';
 import { seizeSettings } from '@/api/seize-settings';
 import { equalIgnoreCase } from '@/strings';
 import {
+  ETHEREUM_MAINNET_CHAIN_ID,
   hashStructuredWalletSignaturePayload,
   isStructuredSignaturesRequired,
   verifyStructuredWalletSignature
@@ -164,6 +165,7 @@ async function validateSignature(
       message: signatureMessage,
       signature,
       expectedAddress: address,
+      expectedChainId: ETHEREUM_MAINNET_CHAIN_ID,
       expectedAction: 'add_rememe',
       expectedKind: 'action',
       expectedPayloadHash: hashStructuredWalletSignaturePayload(rememe)

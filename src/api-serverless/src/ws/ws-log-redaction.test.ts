@@ -1,5 +1,5 @@
-import { WsMessageType } from './ws-message';
-import { redactWebSocketMessageForLog } from './ws-log-redaction';
+import { redactWebSocketMessageForLog } from '@/api/ws/ws-log-redaction';
+import { WsMessageType } from '@/api/ws/ws-message';
 
 describe('redactWebSocketMessageForLog', () => {
   it('does not log authenticate bearer tokens', () => {

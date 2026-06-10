@@ -345,4 +345,22 @@ describe('auth-session-v2', () => {
       { connection: { id: 'tx' } }
     );
   });
+
+  it('rejects web connection-transfer targets at the service boundary', async () => {
+    await expect(
+      createConnectionTransfer({
+        address: '0xABC',
+        role: null,
+        targetClientType: 'web'
+      })
+    ).rejects.toThrow('native clients only');
+
+    await expect(
+      redeemConnectionTransfer({
+        transferCode: 'a'.repeat(64),
+        targetClientType: 'web',
+        userAgent: 'Mozilla/5.0'
+      })
+    ).rejects.toThrow('native clients only');
+  });
 });
