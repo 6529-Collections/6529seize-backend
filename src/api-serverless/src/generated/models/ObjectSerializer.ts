@@ -452,7 +452,7 @@ import { ApiCreateConnectionTransferRequest, ApiCreateConnectionTransferRequestT
 import { ApiCreateConnectionTransferResponse    , ApiCreateConnectionTransferResponseTargetClientTypeEnum    } from '../models/ApiCreateConnectionTransferResponse';
 import { ApiCreateDropPart } from '../models/ApiCreateDropPart';
 import { ApiCreateDropPollRequest } from '../models/ApiCreateDropPollRequest';
-import { ApiCreateDropRequest                } from '../models/ApiCreateDropRequest';
+import { ApiCreateDropRequest                 } from '../models/ApiCreateDropRequest';
 import { ApiCreateGroup } from '../models/ApiCreateGroup';
 import { ApiCreateGroupDescription } from '../models/ApiCreateGroupDescription';
 import { ApiCreateMediaUploadUrlRequest   } from '../models/ApiCreateMediaUploadUrlRequest';
