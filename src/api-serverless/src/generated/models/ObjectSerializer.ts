@@ -352,6 +352,9 @@ export * from '../models/ApiXTdhGrantsPage';
 export * from '../models/ApiXTdhStats';
 export * from '../models/ApiXTdhToken';
 export * from '../models/ApiXTdhTokensPage';
+export * from '../models/AuthNonceQuery';
+export * from '../models/AuthNonceStructuredQuery';
+export * from '../models/AuthNonceUnstructuredQuery';
 export * from '../models/CreateDirectMessageWaveRequest';
 export * from '../models/CreateWalletAuthSession201Response';
 export * from '../models/DistributionNormalized';
@@ -757,6 +760,9 @@ import { ApiXTdhGrantsPage } from '../models/ApiXTdhGrantsPage';
 import { ApiXTdhStats } from '../models/ApiXTdhStats';
 import { ApiXTdhToken } from '../models/ApiXTdhToken';
 import { ApiXTdhTokensPage } from '../models/ApiXTdhTokensPage';
+import { AuthNonceQueryClass } from '../models/AuthNonceQuery';
+import { AuthNonceStructuredQuery } from '../models/AuthNonceStructuredQuery';
+import { AuthNonceUnstructuredQuery } from '../models/AuthNonceUnstructuredQuery';
 import { CreateDirectMessageWaveRequest } from '../models/CreateDirectMessageWaveRequest';
 import { CreateWalletAuthSession201ResponseClass } from '../models/CreateWalletAuthSession201Response';
 import { DistributionNormalized } from '../models/DistributionNormalized';
@@ -1200,6 +1206,9 @@ let typeMap: {[index: string]: any} = {
     "ApiXTdhStats": ApiXTdhStats,
     "ApiXTdhToken": ApiXTdhToken,
     "ApiXTdhTokensPage": ApiXTdhTokensPage,
+    "AuthNonceQuery": AuthNonceQueryClass,
+    "AuthNonceStructuredQuery": AuthNonceStructuredQuery,
+    "AuthNonceUnstructuredQuery": AuthNonceUnstructuredQuery,
     "CreateDirectMessageWaveRequest": CreateDirectMessageWaveRequest,
     "CreateWalletAuthSession201Response": CreateWalletAuthSession201ResponseClass,
     "DistributionNormalized": DistributionNormalized,
