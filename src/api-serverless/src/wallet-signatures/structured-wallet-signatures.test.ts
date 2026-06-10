@@ -53,6 +53,24 @@ describe('structured wallet signatures', () => {
     });
   });
 
+  it('parses field values that contain additional colons', () => {
+    const message = buildStructuredWalletSignatureMessage({
+      kind: 'authentication',
+      domain: 'example.com',
+      wallet: wallet.address,
+      issuedAt,
+      expirationTime,
+      nonce: 'nonce-with-colon-value',
+      action: 'login',
+      purpose: 'Sign this message: authenticate with 6529.'
+    });
+
+    expect(parseStructuredWalletSignatureMessage(message)).toMatchObject({
+      kind: 'authentication',
+      purpose: 'Sign this message: authenticate with 6529.'
+    });
+  });
+
   it('verifies an EOA signature once and rejects nonce replay', async () => {
     const payloadHash = hashStructuredWalletSignaturePayload({ a: 1 });
     const message = buildStructuredWalletSignatureMessage({

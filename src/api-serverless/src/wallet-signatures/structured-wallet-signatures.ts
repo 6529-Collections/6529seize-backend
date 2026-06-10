@@ -274,12 +274,12 @@ function parseFields(lines: string[]): Map<string, string> | null {
     if (line.trim().length === 0) {
       continue;
     }
-    const match = /^([^:]+):\s*(.*)$/.exec(line);
-    if (!match) {
+    const delimiterIndex = line.indexOf(':');
+    if (delimiterIndex <= 0) {
       return null;
     }
-    const key = match[1].trim();
-    const value = match[2].trim();
+    const key = line.slice(0, delimiterIndex).trim();
+    const value = line.slice(delimiterIndex + 1).trim();
     if (fields.has(key)) {
       return null;
     }
