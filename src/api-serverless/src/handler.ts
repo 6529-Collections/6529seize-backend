@@ -56,7 +56,6 @@ async function wsHandler(
   const { routeKey, connectionId } = event.requestContext;
   const { identityId, jwtExpiry } =
     await authenticateWebSocketJwtOrGetByConnectionId(event);
-  let activeIdentityId = identityId;
   switch (routeKey) {
     case '$connect':
       try {
@@ -99,7 +98,8 @@ async function wsHandler(
                 connectionId: connectionId!,
                 message: JSON.stringify({
                   type: WsMessageType.AUTHENTICATION_FAILED
-                })
+                }),
+                skipStaleConnectionCheck: true
               });
               return {
                 statusCode: 401,
@@ -114,7 +114,6 @@ async function wsHandler(
               },
               {}
             );
-            activeIdentityId = authenticated.identityId;
             await appWebSockets.send({
               connectionId: connectionId!,
               message: JSON.stringify({
@@ -159,7 +158,7 @@ async function wsHandler(
               };
             } else {
               await wsListenersNotifier.notifyAboutUserIsTyping({
-                identityId: activeIdentityId,
+                identityId,
                 waveId
               });
             }
