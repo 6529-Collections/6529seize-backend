@@ -10,8 +10,6 @@
  * Do not edit the class manually.
  */
 
-import { HttpFile } from '../http/http';
-
 export class AuthNonceStructuredQuery {
     /**
     * Your wallet address
@@ -77,4 +75,3 @@ export class AuthNonceStructuredQuery {
     public constructor() {
     }
 }
-
