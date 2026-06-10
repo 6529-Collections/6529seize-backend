@@ -130,7 +130,7 @@ export function validateDropMediaAttachment({
   if (mimeType === 'text/html') {
     if (!isDecentralizedHtmlMediaUrl(url)) {
       throw new BadRequestException(
-        `text/html needs to be served from IPFS or Arweave`
+        `text/html needs to be served from IPFS, IPNS, or Arweave`
       );
     }
     return;

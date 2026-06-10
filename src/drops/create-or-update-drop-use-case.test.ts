@@ -981,7 +981,7 @@ describe('CreateOrUpdateDropUseCase', () => {
     expect(() =>
       validateDropMediaAttachment({
         mimeType: 'text/html',
-        url: 'https://arweave.net/some-html',
+        url: 'https://arweave.net/OI6-rpJ2C3Ab4HiZRWt5A1SumhjnYigmSPBPX0ICBj8',
         dropType: DropType.CHAT
       })
     ).not.toThrow();
@@ -994,14 +994,14 @@ describe('CreateOrUpdateDropUseCase', () => {
         url: 'https://arweave.net.evil.com/file.html',
         dropType: DropType.CHAT
       })
-    ).toThrow('text/html needs to be served from IPFS or Arweave');
+    ).toThrow('text/html needs to be served from IPFS, IPNS, or Arweave');
   });
 
   it('preserves ipfs html handling', () => {
     expect(() =>
       validateDropMediaAttachment({
         mimeType: 'text/html',
-        url: 'ipfs://bafybeigdyrzt/file.html',
+        url: 'ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi/file.html',
         dropType: DropType.CHAT
       })
     ).not.toThrow();
@@ -1011,7 +1011,7 @@ describe('CreateOrUpdateDropUseCase', () => {
     expect(() =>
       validateDropMediaAttachment({
         mimeType: 'text/html',
-        url: 'https://media.6529.io/arweave/some-html/file.html',
+        url: 'https://media.6529.io/arweave/OI6-rpJ2C3Ab4HiZRWt5A1SumhjnYigmSPBPX0ICBj8/file.html',
         dropType: DropType.CHAT
       })
     ).not.toThrow();
@@ -1021,7 +1021,7 @@ describe('CreateOrUpdateDropUseCase', () => {
     expect(() =>
       validateDropMediaAttachment({
         mimeType: 'text/html',
-        url: 'https://ipfs.io/ipfs/bafybeigdyrzt/file.html',
+        url: 'https://ipfs.io/ipfs/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi/file.html',
         dropType: DropType.CHAT
       })
     ).not.toThrow();
@@ -1031,7 +1031,7 @@ describe('CreateOrUpdateDropUseCase', () => {
     expect(() =>
       validateDropMediaAttachment({
         mimeType: 'text/html',
-        url: 'https://bafybeigdyrzt.ipfs.nftstorage.link/file.html',
+        url: 'https://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi.ipfs.nftstorage.link/file.html',
         dropType: DropType.CHAT
       })
     ).not.toThrow();
