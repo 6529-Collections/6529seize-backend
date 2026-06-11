@@ -3,7 +3,6 @@ import { ethers } from 'ethers';
 import { env } from '@/env';
 import { Logger } from '@/logging';
 import { getRedisClient } from '@/redis';
-import { isCorsOriginAllowed } from '@/api/api-constants';
 
 const logger = Logger.get('STRUCTURED_WALLET_SIGNATURES');
 
@@ -21,6 +20,17 @@ const ALCHEMY_NETWORK_BY_CHAIN_ID = new Map<number, string>([
   [5, 'eth-goerli'],
   [11155111, 'eth-sepolia']
 ]);
+const DEFAULT_SIGNATURE_ALLOWED_DOMAINS = [
+  '6529.io',
+  'www.6529.io',
+  'app.6529.io'
+];
+const LOCAL_SIGNATURE_ALLOWED_DOMAINS = [
+  'localhost:3000',
+  'localhost:3001',
+  '127.0.0.1:3000',
+  '127.0.0.1:3001'
+];
 
 const localConsumedNonceExpirations = new Map<string, number>();
 
@@ -373,15 +383,15 @@ function isStructuredSignatureDomainAllowed(domain: string): boolean {
     process.env.AUTH_SIGNATURE_ALLOWED_DOMAINS?.split(',')
       .map((it) => normalizeDomain(it))
       .filter((it): it is string => !!it) ?? [];
-
-  if (configuredDomains.includes(domain)) {
-    return true;
-  }
-
-  return (
-    isCorsOriginAllowed(`https://${domain}`) ||
-    isCorsOriginAllowed(`http://${domain}`)
-  );
+  const localDomains =
+    process.env.NODE_ENV === 'production'
+      ? []
+      : LOCAL_SIGNATURE_ALLOWED_DOMAINS;
+  return new Set([
+    ...DEFAULT_SIGNATURE_ALLOWED_DOMAINS,
+    ...localDomains,
+    ...configuredDomains
+  ]).has(domain);
 }
 
 export function recoverWalletMessageSigner(
