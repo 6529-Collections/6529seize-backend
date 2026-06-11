@@ -25,7 +25,13 @@ import { handleGetWavePollsV2 } from '@/api/drops/drop-polls.handlers';
 describe('drop polls handlers', () => {
   const timer = { marker: 'timer' } as any;
   const authenticationContext = { marker: 'auth' } as any;
-  const result = { count: 0, page: 1, next: false, data: [] };
+  const result = {
+    count: 0,
+    open_unanswered: 0,
+    page: 1,
+    next: false,
+    data: []
+  };
 
   beforeEach(() => {
     jest.clearAllMocks();
