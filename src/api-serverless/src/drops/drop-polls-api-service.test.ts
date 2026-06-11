@@ -296,7 +296,8 @@ describe('DropPollsApiService', () => {
     );
     expect(deps.wsListenersNotifier.notifyAboutDropUpdate).toHaveBeenCalledWith(
       { id: 'drop-1' },
-      { authenticationContext: AuthenticationContext.fromProfileId('voter-1') }
+      { authenticationContext: AuthenticationContext.fromProfileId('voter-1') },
+      { reason: 'POLL_RESPONSE' }
     );
     expect(result).toEqual({ id: 'drop-1' });
   });

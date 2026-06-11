@@ -121,6 +121,11 @@ import { ApiSeizeSettings } from './generated/models/ApiSeizeSettings';
 import { ApiTransactionPage } from './generated/models/ApiTransactionPage';
 import { ApiUploadItem } from './generated/models/ApiUploadItem';
 import { ApiUploadsPage } from './generated/models/ApiUploadsPage';
+import {
+  buildGitHubWebhookDedupeKey,
+  formatGitHubWebhookKind,
+  parseGitHubWebhookEvent
+} from '@/api/github/github-webhook-event';
 import { githubIssueDropService } from './github/github-issue-drop.service';
 import { LOGO_SVG, renderHealthUI } from './health/health-ui.renderer';
 import { getHealthData } from './health/health.service';
@@ -1447,9 +1452,6 @@ async function initializeApp() {
       if (aView.length !== bView.length) return false;
       return crypto.timingSafeEqual(aView, bView);
     }
-    const body = req.body;
-    const action = body?.action;
-    const html_url = body?.issue?.html_url;
     const sig256 = req.get('x-hub-signature-256');
     if (!sig256) {
       return res.status(400).send('Missing x-hub-signature-256');
@@ -1468,15 +1470,26 @@ async function initializeApp() {
     if (!timingSafeEqual(expected, sig256)) {
       return res.status(401).send('Invalid signature');
     }
-    if (action === 'opened' && html_url) {
+
+    const webhookEvent = parseGitHubWebhookEvent(
+      req.body,
+      req.get('x-github-event')
+    );
+    if (webhookEvent) {
+      const targetKind = formatGitHubWebhookKind(webhookEvent.kind);
       const redis = getRedisClient();
-      const cacheKey = `gh-webhook:${html_url}`;
+      const cacheKey = buildGitHubWebhookDedupeKey(
+        webhookEvent,
+        req.get('x-github-delivery')
+      );
       const processingKey = `${cacheKey}:processing`;
       let lockAcquired = false;
       if (redis) {
         const alreadyProcessed = await redis.get(cacheKey);
         if (alreadyProcessed) {
-          logger.info(`Duplicate webhook for ${html_url}, skipping`);
+          logger.info(
+            `Duplicate GitHub ${targetKind} ${webhookEvent.action} webhook for ${webhookEvent.htmlUrl}, skipping`
+          );
           return res.send({});
         }
         const lockWasSet = await redis.set(processingKey, '1', {
@@ -1485,15 +1498,25 @@ async function initializeApp() {
         });
         if (!lockWasSet) {
           logger.info(
-            `Webhook for ${html_url} is already being processed, skipping`
+            `GitHub ${targetKind} ${webhookEvent.action} webhook for ${webhookEvent.htmlUrl} is already being processed, skipping`
           );
           return res.send({});
         }
         lockAcquired = true;
       }
-      logger.info(`New issue was opened: ${html_url}`);
+      logger.info(
+        `GitHub ${targetKind} was ${webhookEvent.action}: ${webhookEvent.htmlUrl}`
+      );
       try {
-        await githubIssueDropService.postGhIssueDrop(html_url);
+        await githubIssueDropService.postGhIssueDrop(
+          webhookEvent.htmlUrl,
+          targetKind,
+          {
+            action: webhookEvent.action,
+            title: webhookEvent.title,
+            body: webhookEvent.body
+          }
+        );
         if (redis) {
           try {
             await redis.set(cacheKey, '1', {
@@ -1501,19 +1524,21 @@ async function initializeApp() {
             });
           } catch (err) {
             logger.warn(
-              `Failed to persist GitHub webhook dedupe key for ${html_url}: ${err}`
+              `Failed to persist GitHub webhook dedupe key for ${webhookEvent.htmlUrl}: ${err}`
             );
           }
         }
       } catch (err) {
-        logger.error(`Failed to post drop for issue ${html_url}: ${err}`);
+        logger.error(
+          `Failed to post drop for GitHub ${targetKind} ${webhookEvent.htmlUrl}: ${err}`
+        );
       } finally {
         if (redis && lockAcquired) {
           try {
             await redis.del(processingKey);
           } catch (err) {
             logger.warn(
-              `Failed to release GitHub webhook processing lock for ${html_url}: ${err}`
+              `Failed to release GitHub webhook processing lock for ${webhookEvent.htmlUrl}: ${err}`
             );
           }
         }
