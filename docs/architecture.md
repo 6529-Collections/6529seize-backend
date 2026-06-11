@@ -27,6 +27,7 @@ flowchart TD
   WritePool --> MySQL
   SeizeAPI --> Redis["Redis"]
   SeizeAPI --> S3["S3"]
+  SeizeAPI --> MediaResolver["Decentralized media resolver<br/>native URI + gateway URL mapping"]
   SeizeAPI --> AiRpc["AI / RPC / webhooks"]
 
   subgraph Scheduled["Scheduled Lambdas (EventBridge)"]
@@ -199,6 +200,10 @@ Important API responsibilities:
 - Authentication and refresh-token flows.
 - Public read APIs for NFTs, TDH, waves, drops, profiles, community metrics, subscriptions, and notifications.
 - Public OG metadata inputs for profile, wave, and drop link previews under `/og-metadata`.
+- Public decentralized media resolution under `/media/resolve`, which maps
+  native `ipfs://`, `ipns://`, and `ar://` references plus recognized gateway
+  URLs to canonical native URIs, `media.6529.io` resolver URLs, and explicit
+  external fallback URLs. This v1 API does not proxy media bytes.
 - Authenticated social writes: drops, votes, reactions, curations, subscriptions, groups, proxies, minting claims, and push settings.
 - Upload preparation and multipart completion for drop media, wave media, distribution photos, and attachments.
 - WebSocket connection registration and real-time wave-related messages.
