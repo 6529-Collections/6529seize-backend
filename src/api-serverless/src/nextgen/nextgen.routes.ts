@@ -20,8 +20,8 @@ import { sqlExecutor } from '../../../sql-executor';
 import {
   ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
   CONTENT_TYPE_HEADER,
+  corsOptions,
   DISTRIBUTION_PAGE_SIZE,
-  getCorsResponseOrigin,
   JSON_HEADER_VALUE
 } from '../api-constants';
 import { NextGenCollectionStatus } from '../api-filters';
@@ -60,14 +60,6 @@ function validateCollectionId(req: any, _: any, next: any) {
   next();
 }
 
-function setNextGenJsonCorsHeaders(req: any, res: any) {
-  res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
-  res.setHeader(
-    ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
-    getCorsResponseOrigin(req.headers.origin)
-  );
-}
-
 router.post(
   '/create_allowlist',
   initMulterSingleMiddleware('allowlist'),
@@ -79,7 +71,8 @@ router.post(
       added_by: body.added_by
     });
     const valid = body.valid;
-    setNextGenJsonCorsHeaders(req, res);
+    res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
+    res.setHeader(ACCESS_CONTROL_ALLOW_ORIGIN_HEADER, corsOptions.origin);
     if (valid) {
       await persistAllowlist(body);
       res
@@ -102,7 +95,8 @@ router.post(
 
     logger.info(`[VALID ${valid}]`);
 
-    setNextGenJsonCorsHeaders(req, res);
+    res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
+    res.setHeader(ACCESS_CONTROL_ALLOW_ORIGIN_HEADER, corsOptions.origin);
     if (valid) {
       await persistCollectionBurn(body);
       res.status(200).send(JSON.stringify({ body }));
@@ -124,10 +118,7 @@ router.get(`/merkle_roots/:merkle_root`, async function (req: any, res: any) {
       result = null;
     }
     res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
-    res.setHeader(
-      ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
-      getCorsResponseOrigin(req.headers.origin)
-    );
+    res.setHeader(ACCESS_CONTROL_ALLOW_ORIGIN_HEADER, corsOptions.origin);
     res.end(JSON.stringify(result));
   });
 });
@@ -154,10 +145,7 @@ router.get(
       page
     ).then((result) => {
       res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
-      res.setHeader(
-        ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
-        getCorsResponseOrigin(req.headers.origin)
-      );
+      res.setHeader(ACCESS_CONTROL_ALLOW_ORIGIN_HEADER, corsOptions.origin);
       res.end(JSON.stringify(result));
     });
   }
@@ -170,10 +158,7 @@ router.get(`/proofs`, async function (req: any, res: any) {
 
   db.fetchNextGenProofs(addresses, pageSize, page).then((result) => {
     res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
-    res.setHeader(
-      ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
-      getCorsResponseOrigin(req.headers.origin)
-    );
+    res.setHeader(ACCESS_CONTROL_ALLOW_ORIGIN_HEADER, corsOptions.origin);
     res.end(JSON.stringify(result));
   });
 });
@@ -186,10 +171,7 @@ router.get(
 
     db.fetchNextGenAllowlist(merkleRoot, address).then((result) => {
       res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
-      res.setHeader(
-        ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
-        getCorsResponseOrigin(req.headers.origin)
-      );
+      res.setHeader(ACCESS_CONTROL_ALLOW_ORIGIN_HEADER, corsOptions.origin);
       res.end(JSON.stringify(result));
     });
   }
@@ -207,10 +189,7 @@ router.get(
 
     db.fetchNextGenBurnAllowlist(merkleRoot, tokenId).then((result) => {
       res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
-      res.setHeader(
-        ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
-        getCorsResponseOrigin(req.headers.origin)
-      );
+      res.setHeader(ACCESS_CONTROL_ALLOW_ORIGIN_HEADER, corsOptions.origin);
       res.end(JSON.stringify(result));
     });
   }

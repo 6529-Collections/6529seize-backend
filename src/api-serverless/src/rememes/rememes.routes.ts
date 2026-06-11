@@ -2,8 +2,8 @@ import * as db from '@/db-api';
 import {
   ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
   CONTENT_TYPE_HEADER,
+  corsOptions,
   DISTRIBUTION_PAGE_SIZE,
-  getCorsResponseOrigin,
   JSON_HEADER_VALUE,
   SORT_DIRECTIONS
 } from '../api-constants';
@@ -58,10 +58,7 @@ router.get(``, async function (req: any, res: any) {
 router.post(`/validate`, validateRememe, function (req: any, res: any) {
   const body = req.validatedBody;
   res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
-  res.setHeader(
-    ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
-    getCorsResponseOrigin(req.headers.origin)
-  );
+  res.setHeader(ACCESS_CONTROL_ALLOW_ORIGIN_HEADER, corsOptions.origin);
   res
     .status(body.valid ? 200 : 400)
     .send(JSON.stringify(body))
@@ -72,10 +69,7 @@ router.post(`/add`, validateRememeAdd, async function (req: any, res: any) {
   const body = req.validatedBody;
   const valid = body.valid;
   res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
-  res.setHeader(
-    ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
-    getCorsResponseOrigin(req.headers.origin)
-  );
+  res.setHeader(ACCESS_CONTROL_ALLOW_ORIGIN_HEADER, corsOptions.origin);
   if (valid) {
     await db.addRememe(req.body.address, body);
     res.status(201).send(JSON.stringify(body));
