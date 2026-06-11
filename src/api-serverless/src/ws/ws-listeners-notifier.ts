@@ -326,6 +326,9 @@ export class WsListenersNotifier {
       (modifiedDrop.author as any).subscribed_actions = undefined;
       (modifiedDrop as any).context_profile_context = undefined;
     }
+    if (modifiedDrop.poll?.anonymous) {
+      modifiedDrop.poll.voted = [];
+    }
     for (const part of modifiedDrop.parts) {
       if (part.quoted_drop?.drop) {
         part.quoted_drop.drop = this.removeDropsAuthRequestContext(

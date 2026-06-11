@@ -21,6 +21,7 @@ export class ApiDropPoll {
     */
     'voted': Array<number>;
     'multichoice': boolean;
+    'anonymous': boolean;
     'closing_time': number;
     'is_open': boolean;
 
@@ -50,6 +51,12 @@ export class ApiDropPoll {
         {
             "name": "multichoice",
             "baseName": "multichoice",
+            "type": "boolean",
+            "format": ""
+        },
+        {
+            "name": "anonymous",
+            "baseName": "anonymous",
             "type": "boolean",
             "format": ""
         },

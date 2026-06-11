@@ -166,6 +166,7 @@ const NewDropPollSchema: Joi.ObjectSchema<ApiCreateDropPollRequest> =
       .unique()
       .required(),
     multichoice: Joi.boolean().required(),
+    anonymous: Joi.boolean().optional().default(false),
     closing_time: Joi.number()
       .integer()
       .required()

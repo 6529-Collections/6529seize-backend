@@ -37,6 +37,7 @@ export type CreateDropPollCommand = {
   readonly drop_id: string;
   readonly closing_time: number;
   readonly multichoice: boolean;
+  readonly anonymous: boolean;
   readonly options: readonly {
     readonly option_no: number;
     readonly option_string: string;
@@ -98,6 +99,7 @@ export class DropPollsDb extends LazyDbAccessCompatibleService {
           p.drop_id,
           p.closing_time,
           p.multichoice,
+          p.anonymous,
           o.option_no,
           o.option_string,
           count(v.voter_id) as votes,
@@ -118,6 +120,7 @@ export class DropPollsDb extends LazyDbAccessCompatibleService {
           p.drop_id,
           p.closing_time,
           p.multichoice,
+          p.anonymous,
           o.option_no,
           o.option_string
         order by p.drop_id asc, o.option_no asc
@@ -328,6 +331,7 @@ export class DropPollsDb extends LazyDbAccessCompatibleService {
           p.drop_id,
           p.closing_time,
           p.multichoice,
+          p.anonymous,
           d.created_at
         from ${DROP_POLLS_TABLE} p
         join ${DROPS_TABLE} d on d.id = p.drop_id
@@ -380,6 +384,47 @@ export class DropPollsDb extends LazyDbAccessCompatibleService {
           ${this.getStateFilter(state)}
       `,
         { waveId, now },
+        { wrappedConnection: ctx.connection }
+      );
+      return Number(row?.cnt ?? 0);
+    } finally {
+      ctx.timer?.stop(timerKey);
+    }
+  }
+
+  public async countOpenUnansweredWavePolls(
+    {
+      waveId,
+      now
+    }: {
+      readonly waveId: string;
+      readonly now: number;
+    },
+    ctx: RequestContext
+  ): Promise<number> {
+    const timerKey = `${this.constructor.name}->countOpenUnansweredWavePolls`;
+    ctx.timer?.start(timerKey);
+    try {
+      const contextProfileId = getWaveReadContextProfileId(
+        ctx.authenticationContext
+      );
+      const row = await this.db.oneOrNull<{ cnt: number | string }>(
+        `
+        select count(*) as cnt
+        from ${DROP_POLLS_TABLE} p
+        where p.wave_id = :waveId
+          and p.closing_time > :now
+          and (
+            :contextProfileId is null
+            or not exists (
+              select 1
+              from ${DROP_POLL_VOTES_TABLE} v
+              where v.poll_id = p.id
+                and v.voter_id = :contextProfileId
+            )
+          )
+      `,
+        { waveId, now, contextProfileId },
         { wrappedConnection: ctx.connection }
       );
       return Number(row?.cnt ?? 0);
@@ -497,13 +542,15 @@ export class DropPollsDb extends LazyDbAccessCompatibleService {
           wave_id,
           drop_id,
           closing_time,
-          multichoice
+          multichoice,
+          anonymous
         ) values (
           :id,
           :wave_id,
           :drop_id,
           :closing_time,
-          :multichoice
+          :multichoice,
+          :anonymous
         )
       `,
       command,
@@ -663,7 +710,8 @@ export class DropPollsDb extends LazyDbAccessCompatibleService {
       wave_id: row.wave_id,
       drop_id: row.drop_id,
       closing_time: Number(row.closing_time),
-      multichoice: toBoolean(row.multichoice)
+      multichoice: toBoolean(row.multichoice),
+      anonymous: toBoolean(row.anonymous)
     };
   }
 
