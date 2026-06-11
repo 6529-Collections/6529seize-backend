@@ -325,11 +325,18 @@ export class DropPollsApiService {
     });
     const now = Time.currentMillis();
     const offset = (request.page - 1) * request.page_size;
-    const [count, polls] = await Promise.all([
+    const [count, openUnanswered, polls] = await Promise.all([
       this.dropPollsDb.countWavePolls(
         {
           waveId: request.wave_id,
           state: request.state,
+          now
+        },
+        ctx
+      ),
+      this.dropPollsDb.countOpenUnansweredWavePolls(
+        {
+          waveId: request.wave_id,
           now
         },
         ctx
@@ -353,6 +360,7 @@ export class DropPollsApiService {
       : {};
     return {
       count,
+      open_unanswered: openUnanswered,
       page: request.page,
       next: count > request.page * request.page_size,
       data: dropIds

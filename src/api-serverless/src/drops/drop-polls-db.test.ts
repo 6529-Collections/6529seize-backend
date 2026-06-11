@@ -294,6 +294,56 @@ describe('DropPollsDb', () => {
     });
   });
 
+  it('counts all open wave polls as unanswered without a read context profile', async () => {
+    const { service, oneOrNull } = createDb();
+    oneOrNull.mockResolvedValueOnce({ cnt: '4' });
+
+    const count = await service.countOpenUnansweredWavePolls(
+      {
+        waveId: 'wave-1',
+        now: 2_000
+      },
+      {}
+    );
+
+    expect(count).toBe(4);
+    const [sql, params] = oneOrNull.mock.calls[0];
+    expect(sql).toContain('and p.closing_time > :now');
+    expect(sql).toContain(':contextProfileId is null');
+    expect(sql).toContain(`from ${DROP_POLL_VOTES_TABLE} v`);
+    expect(params).toEqual({
+      waveId: 'wave-1',
+      now: 2_000,
+      contextProfileId: null
+    });
+  });
+
+  it('excludes open wave polls already answered by the read context profile', async () => {
+    const { service, oneOrNull } = createDb();
+    oneOrNull.mockResolvedValueOnce({ cnt: 2 });
+
+    const count = await service.countOpenUnansweredWavePolls(
+      {
+        waveId: 'wave-1',
+        now: 2_000
+      },
+      {
+        authenticationContext: AuthenticationContext.fromProfileId('viewer-1')
+      }
+    );
+
+    expect(count).toBe(2);
+    const [sql, params] = oneOrNull.mock.calls[0];
+    expect(sql).toContain('not exists');
+    expect(sql).toContain('v.poll_id = p.id');
+    expect(sql).toContain('and v.voter_id = :contextProfileId');
+    expect(params).toEqual({
+      waveId: 'wave-1',
+      now: 2_000,
+      contextProfileId: 'viewer-1'
+    });
+  });
+
   it('skips replacing voter votes when selected options are unchanged', async () => {
     const { service, execute, bulkInsert } = createDb();
     execute.mockResolvedValueOnce([{ option_no: '2' }, { option_no: 3 }]);
