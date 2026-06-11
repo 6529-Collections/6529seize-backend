@@ -25,6 +25,9 @@ export class DropPollEntity {
 
   @Column({ type: 'boolean', nullable: false })
   readonly multichoice!: boolean;
+
+  @Column({ type: 'boolean', nullable: false, default: false })
+  readonly anonymous!: boolean;
 }
 
 @Entity(DROP_POLL_OPTIONS_TABLE)

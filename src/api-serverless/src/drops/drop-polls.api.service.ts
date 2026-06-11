@@ -53,6 +53,7 @@ type SelectedPollOption = {
 export type CreateDropPollRequest = {
   readonly options: string[];
   readonly multichoice: boolean;
+  readonly anonymous?: boolean;
   readonly closing_time: number;
 };
 
@@ -127,6 +128,7 @@ export class DropPollsApiService {
         drop_id: dropId,
         closing_time: poll.closing_time,
         multichoice: poll.multichoice,
+        anonymous: poll.anonymous ?? false,
         options: poll.options.map((option, index) => ({
           option_no: index + 1,
           option_string: option.trim()
@@ -161,6 +163,9 @@ export class DropPollsApiService {
       throw new NotFoundException(
         `Poll option ${optionNo} not found for drop ${dropId}`
       );
+    }
+    if (poll.anonymous) {
+      throw new ForbiddenException(`Poll is anonymous`);
     }
     const offset = (page - 1) * pageSize;
     const [count, voterIds] = await Promise.all([
@@ -215,6 +220,7 @@ export class DropPollsApiService {
     }
     let selectedPollOptions: SelectedPollOption[] = [];
     let pollVoteChanged = false;
+    let pollAnonymous = false;
     await this.dropPollsDb.executeNativeQueriesInTransaction(
       async (connection) => {
         const txCtx = { ...ctx, connection };
@@ -231,6 +237,7 @@ export class DropPollsApiService {
         if (!poll.multichoice && uniqueOptions.length > 1) {
           throw new BadRequestException(`Poll does not allow multiple options`);
         }
+        pollAnonymous = poll.anonymous;
         const pollOptions = await this.dropPollsDb.findOptionsByPollId(
           poll.id,
           txCtx
@@ -264,16 +271,18 @@ export class DropPollsApiService {
       }
     );
     if (pollVoteChanged) {
-      await this.userNotifier.notifyOfDropPollVote(
-        {
-          voter_id: voterId,
-          drop_id: dropId,
-          drop_author_id: drop.author_id,
-          poll_options: selectedPollOptions,
-          wave_id: drop.wave_id
-        },
-        wave.visibility_group_id
-      );
+      if (!pollAnonymous) {
+        await this.userNotifier.notifyOfDropPollVote(
+          {
+            voter_id: voterId,
+            drop_id: dropId,
+            drop_author_id: drop.author_id,
+            poll_options: selectedPollOptions,
+            wave_id: drop.wave_id
+          },
+          wave.visibility_group_id
+        );
+      }
       await giveReadReplicaTimeToCatchUp();
       const legacyDrop = await this.dropsService.findDropByIdOrThrow(
         { dropId, skipEligibilityCheck: true },

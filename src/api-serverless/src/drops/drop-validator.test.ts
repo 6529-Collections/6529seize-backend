@@ -165,8 +165,44 @@ describe('NewDropSchema', () => {
     expect(result.value.poll).toMatchObject({
       options: ['First', 'Second'],
       multichoice: false,
+      anonymous: false,
       closing_time: futureTimestamp
     });
+  });
+
+  it('accepts anonymous polls for chat drops', () => {
+    const result = NewDropSchema.validate({
+      ...createDropWithMetadata('artist', 'Artist'),
+      drop_type: ApiDropType.Chat,
+      poll: {
+        options: ['First', 'Second'],
+        multichoice: false,
+        anonymous: true,
+        closing_time: futureTimestamp
+      }
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.value.poll).toMatchObject({
+      anonymous: true
+    });
+  });
+
+  it('rejects polls with invalid anonymous values', () => {
+    const result = NewDropSchema.validate({
+      ...createDropWithMetadata('artist', 'Artist'),
+      drop_type: ApiDropType.Chat,
+      poll: {
+        options: ['First', 'Second'],
+        multichoice: false,
+        anonymous: 'invalid',
+        closing_time: futureTimestamp
+      }
+    });
+
+    expect(result.error?.message).toContain(
+      '"poll.anonymous" must be a boolean'
+    );
   });
 
   it('rejects polls for participatory drops', () => {
