@@ -1,16 +1,30 @@
+import { AiPrompter } from '@/abusiveness/ai-prompter';
+import { openAiPrompter } from '@/abusiveness/open-ai.prompter';
 import { Wallet } from 'ethers';
 import fetch from 'node-fetch';
 import { env } from '../../../env';
 import { Logger } from '../../../logging';
+import { GitHubWebhookAction } from './github-webhook-event';
 
 type GitHubDropTargetKind = 'issue' | 'pull request';
+type PostGitHubDropOptions = {
+  readonly action?: GitHubWebhookAction;
+  readonly title?: string;
+  readonly body?: string;
+};
+
+const PULL_REQUEST_SUMMARY_MAX_LENGTH = 1000;
+const PULL_REQUEST_PROMPT_BODY_MAX_LENGTH = 12000;
 
 export class GitHubIssueDropService {
   private readonly logger = Logger.get(this.constructor.name);
 
+  constructor(private readonly aiPrompter: AiPrompter = openAiPrompter) {}
+
   async postGhIssueDrop(
     targetUrl: string,
-    targetKind: GitHubDropTargetKind = 'issue'
+    targetKind: GitHubDropTargetKind = 'issue',
+    options: PostGitHubDropOptions = {}
   ) {
     const privateKey = env.getStringOrThrow('GH_WEBHOOK_WALLET_PRIVATE_KEY');
     const waveId = env.getStringOrThrow('GH_WEBHOOK_WAVE_ID');
@@ -23,7 +37,12 @@ export class GitHubIssueDropService {
     );
 
     const token = await this.getAuthToken(wallet, clientAddress);
-    await this.createDrop(token, clientAddress, waveId, targetUrl);
+    const content = await this.buildDropContent({
+      targetUrl,
+      targetKind,
+      options
+    });
+    await this.createDrop(token, clientAddress, waveId, content);
 
     this.logger.info(
       `Successfully posted drop for GitHub ${targetKind}: ${targetUrl}`
@@ -78,6 +97,103 @@ export class GitHubIssueDropService {
 
     const { token } = await loginResp.json();
     return token;
+  }
+
+  private async buildDropContent({
+    targetUrl,
+    targetKind,
+    options
+  }: {
+    targetUrl: string;
+    targetKind: GitHubDropTargetKind;
+    options: PostGitHubDropOptions;
+  }): Promise<string> {
+    if (targetKind !== 'pull request' || options.action !== 'merged') {
+      return targetUrl;
+    }
+
+    const summary = await this.summarizeMergedPullRequest({
+      targetUrl,
+      title: options.title,
+      body: options.body
+    });
+
+    return `${targetUrl}\n\n${summary}`;
+  }
+
+  private async summarizeMergedPullRequest({
+    targetUrl,
+    title,
+    body
+  }: {
+    targetUrl: string;
+    title?: string;
+    body?: string;
+  }): Promise<string> {
+    try {
+      const reply = await this.aiPrompter.promptAndGetReply(
+        this.buildPullRequestSummaryPrompt({
+          targetUrl,
+          title,
+          body
+        })
+      );
+      const summary = this.truncateText(
+        reply.trim(),
+        PULL_REQUEST_SUMMARY_MAX_LENGTH
+      );
+
+      return summary || this.buildFallbackMergedPullRequestSummary(title);
+    } catch (err) {
+      this.logger.warn(
+        `Failed to summarize merged pull request ${targetUrl}: ${err}`
+      );
+      return this.buildFallbackMergedPullRequestSummary(title);
+    }
+  }
+
+  private buildPullRequestSummaryPrompt({
+    targetUrl,
+    title,
+    body
+  }: {
+    targetUrl: string;
+    title?: string;
+    body?: string;
+  }): string {
+    const prTitle = title ?? 'No title provided.';
+    const prBody = body
+      ? this.truncateText(body, PULL_REQUEST_PROMPT_BODY_MAX_LENGTH)
+      : 'No description provided.';
+
+    return [
+      'Summarize this merged GitHub pull request in 1-2 sentences.',
+      'Write for a non-developer audience and focus on what changed or improved.',
+      'Avoid technical jargon unless it is essential.',
+      'Use only the information provided. If details are sparse, say only what can be inferred.',
+      'Return only the summary with no markdown, bullet points, or preamble.',
+      '',
+      `Pull request link: ${targetUrl}`,
+      `Pull request title: ${prTitle}`,
+      'Pull request description:',
+      prBody
+    ].join('\n');
+  }
+
+  private buildFallbackMergedPullRequestSummary(title?: string): string {
+    if (title) {
+      return `This pull request was merged: ${title}.`;
+    }
+
+    return 'This pull request was merged, but the webhook did not include enough detail to summarize the changes.';
+  }
+
+  private truncateText(value: string, maxLength: number): string {
+    if (value.length <= maxLength) {
+      return value;
+    }
+
+    return `${value.slice(0, maxLength - 3)}...`;
   }
 
   private async createDrop(
