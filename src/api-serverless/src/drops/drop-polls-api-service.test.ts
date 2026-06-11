@@ -19,6 +19,7 @@ function createService() {
   const dropPollsDb = {
     createPoll: jest.fn().mockResolvedValue(undefined),
     countWavePolls: jest.fn(),
+    countOpenUnansweredWavePolls: jest.fn().mockResolvedValue(0),
     executeNativeQueriesInTransaction: jest.fn(
       async (callback: (connection: unknown) => Promise<void>) => {
         await callback('tx-connection');
@@ -356,6 +357,7 @@ describe('DropPollsApiService', () => {
     jest.spyOn(Time, 'currentMillis').mockReturnValue(5_000);
     const { service, deps } = createService();
     deps.dropPollsDb.countWavePolls.mockResolvedValue(3);
+    deps.dropPollsDb.countOpenUnansweredWavePolls.mockResolvedValue(1);
     deps.dropPollsDb.findWavePolls.mockResolvedValue([
       {
         id: 'poll-2',
@@ -403,6 +405,13 @@ describe('DropPollsApiService', () => {
       },
       {}
     );
+    expect(deps.dropPollsDb.countOpenUnansweredWavePolls).toHaveBeenCalledWith(
+      {
+        waveId: 'wave-1',
+        now: 5_000
+      },
+      {}
+    );
     expect(deps.dropPollsDb.findWavePolls).toHaveBeenCalledWith(
       {
         waveId: 'wave-1',
@@ -421,6 +430,7 @@ describe('DropPollsApiService', () => {
     );
     expect(result).toEqual({
       count: 3,
+      open_unanswered: 1,
       page: 1,
       next: true,
       data: [{ id: 'drop-2' }, { id: 'drop-1' }]
