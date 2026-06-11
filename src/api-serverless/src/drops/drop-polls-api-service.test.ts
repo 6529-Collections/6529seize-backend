@@ -20,12 +20,15 @@ function createService() {
     createPoll: jest.fn().mockResolvedValue(undefined),
     countWavePolls: jest.fn(),
     countOpenUnansweredWavePolls: jest.fn().mockResolvedValue(0),
+    countOptionVoters: jest.fn().mockResolvedValue(0),
     executeNativeQueriesInTransaction: jest.fn(
       async (callback: (connection: unknown) => Promise<void>) => {
         await callback('tx-connection');
       }
     ),
     findWavePolls: jest.fn(),
+    findPollsByDropIds: jest.fn(),
+    findOptionVoterIds: jest.fn().mockResolvedValue([]),
     findPollByDropIdForUpdate: jest.fn(),
     findOptionsByPollId: jest.fn(),
     replaceVoterVotes: jest.fn().mockResolvedValue(true)
@@ -85,6 +88,7 @@ function createService() {
       dropsDb,
       wavesApiDb,
       userGroupsService,
+      identityFetcher,
       dropsService,
       wsListenersNotifier,
       userNotifier
@@ -119,6 +123,7 @@ describe('DropPollsApiService', () => {
         drop_id: 'drop-1',
         closing_time: 2_000,
         multichoice: false,
+        anonymous: false,
         options: [
           { option_no: 1, option_string: 'First' },
           { option_no: 2, option_string: 'Second' }
@@ -126,6 +131,78 @@ describe('DropPollsApiService', () => {
       }),
       {}
     );
+  });
+
+  it('creates anonymous polls when requested', async () => {
+    jest.spyOn(Time, 'currentMillis').mockReturnValue(1_000);
+    const { service, deps } = createService();
+
+    await service.createPollForDrop(
+      {
+        poll: {
+          options: ['First', 'Second'],
+          multichoice: false,
+          anonymous: true,
+          closing_time: 2_000
+        },
+        dropId: 'drop-1',
+        waveId: 'wave-1',
+        authorId: 'creator-1',
+        dropType: DropType.CHAT
+      },
+      {}
+    );
+
+    expect(deps.dropPollsDb.createPoll).toHaveBeenCalledWith(
+      expect.objectContaining({
+        anonymous: true
+      }),
+      {}
+    );
+  });
+
+  it('rejects voter identity lookup for anonymous polls', async () => {
+    const { service, deps } = createService();
+    deps.dropPollsDb.findPollsByDropIds.mockResolvedValue({
+      'drop-1': {
+        id: 'poll-1',
+        wave_id: 'wave-1',
+        drop_id: 'drop-1',
+        closing_time: 2_000,
+        multichoice: false,
+        anonymous: true,
+        voted: [],
+        options: [
+          {
+            poll_id: 'poll-1',
+            wave_id: 'wave-1',
+            drop_id: 'drop-1',
+            option_no: 1,
+            option_string: 'First',
+            votes: 3,
+            voted_by_context_profile: false
+          }
+        ]
+      }
+    });
+
+    await expect(
+      service.findOptionVoters(
+        {
+          dropId: 'drop-1',
+          optionNo: 1,
+          page: 1,
+          pageSize: 20
+        },
+        {}
+      )
+    ).rejects.toThrow('Poll is anonymous');
+
+    expect(deps.dropPollsDb.countOptionVoters).not.toHaveBeenCalled();
+    expect(deps.dropPollsDb.findOptionVoterIds).not.toHaveBeenCalled();
+    expect(
+      deps.identityFetcher.getApiIdentityOverviewsByIds
+    ).not.toHaveBeenCalled();
   });
 
   it('rejects poll creation by users who are not wave creators or admins', async () => {
@@ -205,7 +282,8 @@ describe('DropPollsApiService', () => {
       wave_id: 'wave-1',
       drop_id: 'drop-1',
       closing_time: 2_000,
-      multichoice: true
+      multichoice: true,
+      anonymous: false
     });
 
     await expect(
@@ -301,6 +379,46 @@ describe('DropPollsApiService', () => {
       { reason: 'POLL_RESPONSE' }
     );
     expect(result).toEqual({ id: 'drop-1' });
+  });
+
+  it('does not notify the drop author when an anonymous poll vote changes', async () => {
+    jest.spyOn(Time, 'currentMillis').mockReturnValue(1_000);
+    const { service, deps } = createService();
+    deps.dropPollsDb.findPollByDropIdForUpdate.mockResolvedValue({
+      id: 'poll-1',
+      wave_id: 'wave-1',
+      drop_id: 'drop-1',
+      closing_time: 2_000,
+      multichoice: true,
+      anonymous: true
+    });
+    deps.dropPollsDb.findOptionsByPollId.mockResolvedValue([
+      {
+        poll_id: 'poll-1',
+        wave_id: 'wave-1',
+        drop_id: 'drop-1',
+        option_no: 2,
+        option_string: 'Second'
+      }
+    ]);
+
+    await service.vote(
+      {
+        dropId: 'drop-1',
+        voterId: 'voter-1',
+        options: [2]
+      },
+      { authenticationContext: AuthenticationContext.fromProfileId('voter-1') }
+    );
+
+    expect(deps.dropPollsDb.replaceVoterVotes).toHaveBeenCalled();
+    expect(deps.userNotifier.notifyOfDropPollVote).not.toHaveBeenCalled();
+    expect(giveReadReplicaTimeToCatchUp).toHaveBeenCalled();
+    expect(deps.wsListenersNotifier.notifyAboutDropUpdate).toHaveBeenCalledWith(
+      { id: 'drop-1' },
+      { authenticationContext: AuthenticationContext.fromProfileId('voter-1') },
+      { reason: 'POLL_RESPONSE' }
+    );
   });
 
   it('does not notify or broadcast when poll vote selections are unchanged', async () => {
