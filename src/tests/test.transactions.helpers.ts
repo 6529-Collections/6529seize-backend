@@ -1,5 +1,5 @@
-import { uuid } from 'short-uuid';
-import { Transaction } from '../entities/ITransaction';
+import { generate } from 'short-uuid';
+import { Transaction } from '@/entities/ITransaction';
 
 export function generateRandomTokenId(): number {
   return Math.floor(Math.random() * 10000) + 1;
@@ -13,9 +13,9 @@ export function buildTransaction(
   token_count: number = 1,
   value: number = 0
 ): Transaction {
-  const transaction: Transaction = {
+  return {
     created_at: new Date(),
-    transaction: uuid(),
+    transaction: generate(),
     block: 1,
     transaction_date: new Date(),
     from_address,
@@ -34,5 +34,4 @@ export function buildTransaction(
     value_usd: 0,
     gas_usd: 0
   };
-  return transaction;
 }
