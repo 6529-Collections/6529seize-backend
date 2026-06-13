@@ -14,6 +14,11 @@ import { Logger } from '../../../logging';
 import { numbers } from '../../../numbers';
 import { equalIgnoreCase } from '../../../strings';
 import { getRpcUrl } from '../../../alchemy';
+import {
+  hashStructuredWalletSignaturePayload,
+  isStructuredSignaturesRequired,
+  verifyStructuredWalletSignature
+} from '@/api/wallet-signatures/structured-wallet-signatures';
 
 const logger = Logger.get('NEXTGEN_VALIDATION');
 
@@ -25,6 +30,7 @@ export enum NextGenAllowlistType {
 const nextgenSchema = Joi.object({
   wallet: Joi.string().required(),
   signature: Joi.string().required(),
+  signature_message: Joi.string().optional().allow(null),
   collection_id: Joi.number().required(),
   uuid: Joi.string().required(),
   phase: Joi.string().required(),
@@ -39,6 +45,7 @@ const nextgenSchema = Joi.object({
 const nextgenCollectionBurnSchema = Joi.object({
   wallet: Joi.string().required(),
   signature: Joi.string().required(),
+  signature_message: Joi.string().optional().allow(null),
   uuid: Joi.string().required(),
   collection_id: Joi.number().required(),
   burn_collection: Joi.string().required(),
@@ -58,6 +65,27 @@ interface UploadAllowlist {
 interface UploadAllowlistBurn {
   token_id: string;
   info: string;
+}
+
+interface NextgenAllowlistSignaturePayload {
+  collection_id: number;
+  uuid: string;
+  al_type: NextGenAllowlistType;
+  phase: string;
+  start_time: number;
+  end_time: number;
+  mint_price: number;
+}
+
+interface NextgenBurnSignaturePayload {
+  uuid: string;
+  collection_id: number;
+  burn_collection: string;
+  burn_collection_id: number;
+  min_token_index: number;
+  max_token_index: number;
+  burn_address: string;
+  status: boolean;
 }
 
 export async function validateNextgen(req: any, res: any, next: any) {
@@ -84,10 +112,12 @@ export async function validateNextgen(req: any, res: any, next: any) {
       return handleValidationFailure(req, false, 'Invalid file', next);
     }
 
-    const signatureValidation = validateSignature(
+    const signatureValidation = await validateSignature(
       value.wallet,
       value.signature,
-      value.uuid
+      value.uuid,
+      value.signature_message ?? null,
+      getNextgenAllowlistSignaturePayload(value)
     );
 
     if (!signatureValidation) {
@@ -160,10 +190,12 @@ export async function validateNextgenBurn(req: any, res: any, next: any) {
       return handleValidationFailure(req, false, error.message, next);
     }
 
-    const signatureValidation = validateSignature(
+    const signatureValidation = await validateSignature(
       value.wallet,
       value.signature,
-      value.uuid
+      value.uuid,
+      value.signature_message ?? null,
+      getNextgenBurnSignaturePayload(value)
     );
 
     if (!signatureValidation) {
@@ -209,7 +241,30 @@ function handleValidationFailure(
   return next();
 }
 
-function validateSignature(address: string, signature: string, uuid: string) {
+async function validateSignature(
+  address: string,
+  signature: string,
+  uuid: string,
+  signatureMessage: string | null,
+  payload: unknown
+): Promise<boolean> {
+  if (signatureMessage) {
+    const signingAddress = await verifyStructuredWalletSignature({
+      message: signatureMessage,
+      signature,
+      expectedAddress: address,
+      expectedChainId: getNextGenChainId(),
+      expectedAction: 'nextgen_admin',
+      expectedKind: 'action',
+      expectedPayloadHash: hashStructuredWalletSignaturePayload(payload)
+    });
+    return signingAddress !== null;
+  }
+
+  if (isStructuredSignaturesRequired()) {
+    return false;
+  }
+
   try {
     const verifySigner = ethers.recoverAddress(hashMessage(uuid), signature);
     return equalIgnoreCase(address, verifySigner);
@@ -217,6 +272,35 @@ function validateSignature(address: string, signature: string, uuid: string) {
     logger.error('error', e);
     return false;
   }
+}
+
+function getNextgenAllowlistSignaturePayload(
+  value: NextgenAllowlistSignaturePayload
+): NextgenAllowlistSignaturePayload {
+  return {
+    collection_id: value.collection_id,
+    uuid: value.uuid,
+    al_type: value.al_type,
+    phase: value.phase,
+    start_time: value.start_time,
+    end_time: value.end_time,
+    mint_price: value.mint_price
+  };
+}
+
+function getNextgenBurnSignaturePayload(
+  value: NextgenBurnSignaturePayload
+): NextgenBurnSignaturePayload {
+  return {
+    uuid: value.uuid,
+    collection_id: value.collection_id,
+    burn_collection: value.burn_collection,
+    burn_collection_id: value.burn_collection_id,
+    min_token_index: value.min_token_index,
+    max_token_index: value.max_token_index,
+    burn_address: value.burn_address,
+    status: value.status
+  };
 }
 
 async function readAllowlist(

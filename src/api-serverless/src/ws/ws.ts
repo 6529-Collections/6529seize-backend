@@ -16,6 +16,7 @@ import {
 } from '@aws-sdk/client-apigatewaymanagementapi';
 import { RequestContext } from '../../../request.context';
 import { identityFetcher } from '../identities/identity.fetcher';
+import { isLegacyWsQueryTokenEnabled } from '../auth/auth-session-v2';
 
 export class SocketNotAvailableException extends Error {
   constructor() {
@@ -157,21 +158,26 @@ export class AppWebSockets {
 
   async send({
     connectionId,
-    message
+    message,
+    skipStaleConnectionCheck = false
   }: {
     connectionId: string;
     message: string;
+    skipStaleConnectionCheck?: boolean;
   }) {
-    const entity = await this.wsConnectionRepository.getByConnectionId(
-      connectionId,
-      {}
-    );
-    if (!entity || Time.seconds(entity.jwt_expiry).lt(Time.now())) {
-      this.logger.info(
-        `Discovered a stale websocket ${connectionId}. Can't send messages to it. Will close it.`
+    if (!skipStaleConnectionCheck) {
+      const entity = await this.wsConnectionRepository.getByConnectionId(
+        connectionId,
+        {}
       );
-      await this.deregister({ connectionId });
-      return;
+      const jwtExpiry = getActiveJwtExpiry(entity?.jwt_expiry);
+      if (!entity || jwtExpiry === null) {
+        this.logger.info(
+          `Discovered a stale websocket ${connectionId}. Can't send messages to it. Will close it.`
+        );
+        await this.deregister({ connectionId });
+        return;
+      }
     }
     try {
       await ClientConnections.Get().sendMessage({ connectionId, message });
@@ -238,6 +244,28 @@ export class AppWebSockets {
       ctx
     );
   }
+
+  async authenticateConnection(
+    {
+      connectionId,
+      identityId,
+      jwtExpiry
+    }: {
+      connectionId: string;
+      identityId: string;
+      jwtExpiry: number;
+    },
+    ctx: RequestContext
+  ) {
+    await this.wsConnectionRepository.updateIdentityForConnection(
+      {
+        connectionId,
+        identityId,
+        jwtExpiry
+      },
+      ctx
+    );
+  }
 }
 
 export const ANON_USER_ID = '$ANONONYMOUS_USER$';
@@ -254,28 +282,47 @@ export async function authenticateWebSocketJwtOrGetByConnectionId(
         connectionId,
         {}
       );
-      if (connection?.identity_id) {
+      const jwtExpiry = getActiveJwtExpiry(connection?.jwt_expiry);
+      if (connection?.identity_id && jwtExpiry !== null) {
         return {
           identityId: connection.identity_id,
-          jwtExpiry: connection.jwt_expiry
+          jwtExpiry
         };
+      }
+      if (connection?.identity_id) {
+        Logger.get('WEBSOCKET_AUTH').info(
+          `Rejecting expired websocket auth for connection ${connectionId}`
+        );
+        await appWebSockets.deregister({ connectionId });
       }
     }
   }
   let token: string | undefined;
   if (authorizationHeader?.startsWith('Bearer ')) {
     token = authorizationHeader.substring('Bearer '.length);
-  } else {
+  } else if (isLegacyWsQueryTokenEnabled()) {
     token = event.queryStringParameters?.token;
   }
 
   if (!token) {
     return {
       identityId: ANON_USER_ID,
-      jwtExpiry: Time.now().plusDays(1).toMillis()
+      jwtExpiry: Time.now().plusDays(1).toSeconds()
     };
   }
 
+  const authenticated = await authenticateWebSocketToken(token);
+  return (
+    authenticated ?? {
+      identityId: ANON_USER_ID,
+      jwtExpiry: Time.now().plusDays(1).toSeconds()
+    }
+  );
+}
+
+export async function authenticateWebSocketToken(
+  token: string
+): Promise<{ identityId: string; jwtExpiry: number } | null> {
   const req = {
     headers: {
       authorization: `Bearer ${token}`
@@ -283,38 +330,53 @@ export async function authenticateWebSocketJwtOrGetByConnectionId(
   };
   const res = {};
   return new Promise((resolve) => {
-    passport.authenticate(
-      ['jwt', 'anonymous'],
-      { session: false },
-      (err: any, user: any) => {
-        if (err) {
-          return resolve({
-            identityId: ANON_USER_ID,
-            jwtExpiry: Time.now().plusDays(1).toMillis()
-          });
-        }
-        if (!user) {
-          return resolve({
-            identityId: ANON_USER_ID,
-            jwtExpiry: Time.now().plusDays(1).toMillis()
-          });
-        }
-        return identityFetcher
-          .getProfileIdByIdentityKey({ identityKey: user.wallet }, {})
-          .then((it) =>
-            resolve({
-              identityId: it ?? ANON_USER_ID,
-              jwtExpiry: user.exp ?? Time.now().plusDays(1).toMillis()
-            })
-          );
+    passport.authenticate('jwt', { session: false }, (err: any, user: any) => {
+      if (err) {
+        return resolve(null);
       }
-    )(req, res, () => {
-      return resolve({
-        identityId: ANON_USER_ID,
-        jwtExpiry: Time.now().plusDays(1).toMillis()
-      });
+      if (!user) {
+        return resolve(null);
+      }
+      const jwtExpiry = getFiniteJwtExpiry(user.exp);
+      if (jwtExpiry === null) {
+        return resolve(null);
+      }
+      return identityFetcher
+        .getProfileIdByIdentityKey({ identityKey: user.wallet }, {})
+        .then((it) =>
+          resolve({
+            identityId: it ?? ANON_USER_ID,
+            jwtExpiry
+          })
+        )
+        .catch(() => resolve(null));
+    })(req, res, () => {
+      return resolve(null);
     });
   });
+}
+
+function getFiniteJwtExpiry(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return null;
+  }
+  return value;
+}
+
+function getActiveJwtExpiry(value: unknown): number | null {
+  const jwtExpiry =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string'
+        ? Number(value)
+        : null;
+  if (jwtExpiry === null || !Number.isFinite(jwtExpiry)) {
+    return null;
+  }
+  if (!Time.seconds(jwtExpiry).gt(Time.now())) {
+    return null;
+  }
+  return jwtExpiry;
 }
 
 // mean only for dev environment

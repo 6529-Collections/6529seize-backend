@@ -52,6 +52,24 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     );
   }
 
+  public async updateIdentityForConnection(
+    params: {
+      connectionId: string;
+      identityId: string;
+      jwtExpiry: number;
+    },
+    ctx: RequestContext
+  ) {
+    await this.db.execute(
+      `update ${WS_CONNECTIONS_TABLE}
+       set identity_id = :identityId,
+           jwt_expiry = :jwtExpiry
+       where connection_id = :connectionId`,
+      params,
+      { wrappedConnection: ctx.connection }
+    );
+  }
+
   public async deleteByConnectionId(connectionId: string, ctx: RequestContext) {
     await this.db.execute(
       `delete from ${WS_CONNECTIONS_TABLE} where connection_id = :connectionId`,
