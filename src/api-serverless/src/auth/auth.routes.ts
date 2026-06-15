@@ -54,12 +54,14 @@ import {
 import {
   buildStructuredWalletSignatureMessage,
   ETHEREUM_MAINNET_CHAIN_ID,
+  getDefaultStructuredWalletSignatureAudience,
   isStructuredSignaturesRequired,
   isStructuredWalletSignatureMessage,
   parseStructuredWalletSignatureMessage,
   verifyStructuredWalletSignature,
   verifyWalletMessageSignature
 } from '../wallet-signatures/structured-wallet-signatures';
+import type { StructuredWalletSignatureSessionType } from '../wallet-signatures/structured-wallet-signatures';
 
 const router = asyncRouter();
 
@@ -68,6 +70,9 @@ interface NonceQueryRequest {
   short_nonce: boolean;
   structured_signature: boolean;
   domain?: string;
+  audience?: string;
+  client_origin?: string;
+  session_type?: StructuredWalletSignatureSessionType;
   chain_id: number;
 }
 
@@ -95,10 +100,19 @@ router.get(
     ) {
       throw new BadRequestException(`Signature domain is required`);
     }
+    const clientOrigin = nonceRequest.client_origin ?? getRequestOrigin(req);
+    if (structuredSignature) {
+      assertClientOriginMatchesRequest(req, clientOrigin);
+    }
     const nonce = structuredSignature
       ? buildStructuredWalletSignatureMessage({
           kind: 'authentication',
+          audience:
+            nonceRequest.audience ??
+            getDefaultStructuredWalletSignatureAudience(),
           domain: nonceRequest.domain ?? '',
+          clientOrigin,
+          sessionType: nonceRequest.session_type ?? 'external_client',
           wallet: signerAddress,
           chainId: nonceRequest.chain_id,
           nonce: randomUUID(),
@@ -189,6 +203,7 @@ router.post(
         timer
       );
       if (loginRequest.client_type === 'native') {
+        assertSessionLoginSignatureType(nonce, 'native');
         const created = await createNativeSession({
           address: signingAddress,
           role: chosenRole,
@@ -197,6 +212,7 @@ router.post(
         res.status(201).send(created.response);
         return;
       }
+      assertSessionLoginSignatureType(nonce, 'web');
       const created = await createWebSession({
         address: signingAddress,
         role: chosenRole,
@@ -475,7 +491,8 @@ async function verifyClientSignature(
       expectedAddress: clientAddress,
       expectedChainId: parsedMessage.chainId,
       expectedAction: 'login',
-      expectedKind: 'authentication'
+      expectedKind: 'authentication',
+      requireAllowedDomain: parsedMessage.sessionType === 'first_party_web'
     });
     if (!signingAddress) {
       throw new Error('Invalid client signature');
@@ -499,6 +516,25 @@ async function verifyClientSignature(
   return signingAddress;
 }
 
+function assertSessionLoginSignatureType(
+  nonce: string,
+  clientType: 'web' | 'native'
+): void {
+  const expectedSessionType =
+    clientType === 'web' ? 'first_party_web' : 'native';
+  if (!isStructuredWalletSignatureMessage(nonce)) {
+    throw new BadRequestException(
+      'Wallet auth sessions require a structured signature'
+    );
+  }
+  const parsedMessage = parseStructuredWalletSignatureMessage(nonce);
+  if (!parsedMessage || parsedMessage.sessionType !== expectedSessionType) {
+    throw new BadRequestException(
+      `Wallet auth ${clientType} sessions require a ${expectedSessionType} structured signature`
+    );
+  }
+}
+
 function getUserAgent(req: Request<any, any, any, any, any>): string | null {
   const value = req.headers['user-agent'];
   if (typeof value === 'string' && value.trim().length > 0) {
@@ -508,6 +544,53 @@ function getUserAgent(req: Request<any, any, any, any, any>): string | null {
     return value.find((it) => it.trim().length > 0) ?? null;
   }
   return null;
+}
+
+function getRequestOrigin(
+  req: Request<any, any, any, any, any>
+): string | null {
+  const value = req.headers.origin;
+  if (typeof value === 'string' && value.trim().length > 0) {
+    return value.trim();
+  }
+  if (Array.isArray(value)) {
+    return value.find((it) => it.trim().length > 0) ?? null;
+  }
+  return null;
+}
+
+function normalizeOrigin(value: string | null | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+  try {
+    const origin = new URL(value.trim().toLowerCase()).origin;
+    return origin === 'null' ? null : origin;
+  } catch {
+    return null;
+  }
+}
+
+function assertClientOriginMatchesRequest(
+  req: Request<any, any, any, any, any>,
+  clientOrigin: string | null | undefined
+): void {
+  const requestOrigin = normalizeOrigin(getRequestOrigin(req));
+  const requestedClientOrigin = normalizeOrigin(clientOrigin);
+  if (clientOrigin && !requestedClientOrigin) {
+    throw new BadRequestException(
+      'Signature client_origin must be a valid origin'
+    );
+  }
+  if (
+    requestOrigin &&
+    requestedClientOrigin &&
+    requestOrigin !== requestedClientOrigin
+  ) {
+    throw new BadRequestException(
+      'Signature client_origin must match the request Origin header'
+    );
+  }
 }
 
 const LoginRequestSchema: Joi.ObjectSchema<ApiLoginRequest> =
@@ -533,6 +616,11 @@ const NonceQueryRequestSchema: Joi.ObjectSchema<NonceQueryRequest> =
       .optional()
       .default(false),
     domain: Joi.string().trim().min(1).optional(),
+    audience: Joi.string().trim().min(1).optional(),
+    client_origin: Joi.string().trim().min(1).optional(),
+    session_type: Joi.string()
+      .valid('first_party_web', 'external_client', 'native')
+      .optional(),
     chain_id: Joi.number().integer().min(1).optional().default(1)
   }).unknown(false);
 

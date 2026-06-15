@@ -179,7 +179,8 @@ paths:
             default: false
           description: >-
             If true, the nonce is returned as a structured wallet signature
-            message and domain is required.
+            message and domain is required. The message includes an API audience
+            so external clients do not need pre-registered domains for signing.
         - name: domain
           in: query
           required: false
@@ -187,6 +188,38 @@ paths:
             type: string
             minLength: 1
           description: Required when structured_signature is true.
+        - name: audience
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+          description: >-
+            API audience embedded in the structured message. Defaults to the
+            configured 6529 API host.
+        - name: client_origin
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uri
+          description: >-
+            Optional visible client origin embedded in the structured message.
+            Browser requests must match the Origin header when both are present.
+        - name: session_type
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - first_party_web
+              - external_client
+              - native
+            default: external_client
+          description: >-
+            first_party_web keeps strict first-party domain validation and
+            cookie sessions still require registered credentialed-CORS origins;
+            external_client and native are audience-based for signing.
         - name: chain_id
           in: query
           required: false
@@ -258,6 +291,11 @@ paths:
       tags:
         - Authentication
       summary: Authenticate and create a wallet auth session
+      description: >
+        V2 wallet sessions require structured authentication signatures. Web
+        cookie sessions require Session Type first_party_web; native refresh
+        token sessions require Session Type native. External clients should use
+        the non-cookie bearer-token login flow.
       operationId: createWalletAuthSession
       security: []
       requestBody:
@@ -12687,70 +12725,6 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ApiNft"
-    AuthNonceQuery:
-      oneOf:
-        - $ref: "#/components/schemas/AuthNonceUnstructuredQuery"
-        - $ref: "#/components/schemas/AuthNonceStructuredQuery"
-    AuthNonceUnstructuredQuery:
-      type: object
-      additionalProperties: false
-      required:
-        - signer_address
-      properties:
-        signer_address:
-          type: string
-          description: Your wallet address
-        short_nonce:
-          type: boolean
-          default: false
-          description: >-
-            If true, the nonce will be shorter and easier to sign. Default is
-            false.
-        structured_signature:
-          type: boolean
-          enum:
-            - false
-          default: false
-        chain_id:
-          type: integer
-          minimum: 1
-          default: 1
-          description: >-
-            Accepted for flat query parity; ignored unless structured_signature
-            is true.
-    AuthNonceStructuredQuery:
-      type: object
-      additionalProperties: false
-      required:
-        - signer_address
-        - structured_signature
-        - domain
-      properties:
-        signer_address:
-          type: string
-          description: Your wallet address
-        short_nonce:
-          type: boolean
-          default: false
-          description: >-
-            If true, the nonce will be shorter and easier to sign. Default is
-            false.
-        structured_signature:
-          type: boolean
-          enum:
-            - true
-          description: >-
-            Returns the nonce as a structured wallet signature message with
-            domain, wallet, expiry, nonce, and action fields.
-        domain:
-          type: string
-          minLength: 1
-          description: Required when structured_signature is true.
-        chain_id:
-          type: integer
-          minimum: 1
-          default: 1
-          description: Chain id embedded in structured signatures.
     ApiNonceResponse:
       type: object
       required:
@@ -14060,6 +14034,11 @@ components:
           type: string
         server_signature:
           type: string
+          description: >
+            Server-signed structured challenge token. /auth/session-login only
+            accepts first_party_web challenges for web cookie sessions and native
+            challenges for native refresh-token sessions; external_client
+            challenges use /auth/login bearer-token auth instead.
         role:
           type: string
           nullable: true
@@ -16238,6 +16217,93 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ApiXTdhToken"
+    AuthNonceQuery:
+      oneOf:
+        - $ref: "#/components/schemas/AuthNonceUnstructuredQuery"
+        - $ref: "#/components/schemas/AuthNonceStructuredQuery"
+    AuthNonceStructuredQuery:
+      type: object
+      additionalProperties: false
+      required:
+        - signer_address
+        - structured_signature
+        - domain
+      properties:
+        signer_address:
+          type: string
+          description: Your wallet address
+        short_nonce:
+          type: boolean
+          default: false
+          description: >-
+            If true, the nonce will be shorter and easier to sign. Default is
+            false.
+        structured_signature:
+          type: boolean
+          enum:
+            - true
+          description: >-
+            Returns the nonce as a structured wallet signature message with
+            audience, domain, wallet, expiry, nonce, and action fields.
+        domain:
+          type: string
+          minLength: 1
+          description: Required when structured_signature is true.
+        audience:
+          type: string
+          minLength: 1
+          description: >-
+            API audience embedded in the structured message. Defaults to the
+            configured 6529 API host.
+        client_origin:
+          type: string
+          format: uri
+          description: >-
+            Optional visible client origin embedded in the structured message.
+            Browser requests must match the Origin header when both are present.
+        session_type:
+          type: string
+          enum:
+            - first_party_web
+            - external_client
+            - native
+          default: external_client
+          description: >-
+            first_party_web keeps strict first-party domain validation and
+            cookie sessions still require registered credentialed-CORS origins;
+            external_client and native are audience-based for signing.
+        chain_id:
+          type: integer
+          minimum: 1
+          default: 1
+          description: Chain id embedded in structured signatures.
+    AuthNonceUnstructuredQuery:
+      type: object
+      additionalProperties: false
+      required:
+        - signer_address
+      properties:
+        signer_address:
+          type: string
+          description: Your wallet address
+        short_nonce:
+          type: boolean
+          default: false
+          description: >-
+            If true, the nonce will be shorter and easier to sign. Default is
+            false.
+        structured_signature:
+          type: boolean
+          enum:
+            - false
+          default: false
+        chain_id:
+          type: integer
+          minimum: 1
+          default: 1
+          description: >-
+            Accepted for flat query parity; ignored unless structured_signature
+            is true.
     DistributionNormalized:
       type: object
       required:

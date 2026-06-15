@@ -22,12 +22,16 @@ describe('structured wallet signatures', () => {
   beforeEach(() => {
     clearStructuredWalletSignatureReplayCacheForTests();
     process.env.AUTH_SIGNATURE_ALLOWED_DOMAINS = 'example.com';
+    process.env.AUTH_SIGNATURE_AUDIENCE = 'api.6529.io';
     process.env.ALCHEMY_API_KEY = 'test-key';
     delete process.env.AUTH_STRUCTURED_SIGNATURES_REQUIRED;
+    delete process.env.AUTH_SIGNATURE_ALLOWED_AUDIENCES;
   });
 
   afterEach(() => {
     delete process.env.AUTH_SIGNATURE_ALLOWED_DOMAINS;
+    delete process.env.AUTH_SIGNATURE_AUDIENCE;
+    delete process.env.AUTH_SIGNATURE_ALLOWED_AUDIENCES;
     delete process.env.ALCHEMY_API_KEY;
     delete process.env.AUTH_STRUCTURED_SIGNATURES_REQUIRED;
     jest.restoreAllMocks();
@@ -52,12 +56,35 @@ describe('structured wallet signatures', () => {
 
     expect(parseStructuredWalletSignatureMessage(message)).toMatchObject({
       kind: 'action',
+      audience: 'api.6529.io',
       domain: 'example.com',
       wallet: wallet.address.toLowerCase(),
       chainId: 1,
       action: 'create_drop',
       payloadHash,
       purpose: 'Sign this message to create a 6529 drop.'
+    });
+  });
+
+  it('parses optional client origin and session type fields', () => {
+    const message = buildStructuredWalletSignatureMessage({
+      kind: 'authentication',
+      domain: 'example.com',
+      clientOrigin: 'https://example.com',
+      sessionType: 'first_party_web',
+      wallet: wallet.address,
+      issuedAt,
+      expirationTime: getExpirationTime(),
+      nonce: 'login-nonce-with-origin',
+      action: 'login',
+      purpose: 'Sign this message to authenticate with 6529.'
+    });
+
+    expect(parseStructuredWalletSignatureMessage(message)).toMatchObject({
+      audience: 'api.6529.io',
+      domain: 'example.com',
+      clientOrigin: 'https://example.com',
+      sessionType: 'first_party_web'
     });
   });
 
@@ -165,6 +192,115 @@ describe('structured wallet signatures', () => {
         expectedChainId: 1,
         expectedAction: 'login',
         expectedKind: 'authentication'
+      })
+    ).resolves.toBeNull();
+  });
+
+  it('accepts external structured signatures from unregistered client domains', async () => {
+    process.env.AUTH_SIGNATURE_ALLOWED_DOMAINS = '6529.io';
+    const message = buildStructuredWalletSignatureMessage({
+      kind: 'authentication',
+      domain: 'community-client.example',
+      sessionType: 'external_client',
+      wallet: wallet.address,
+      expirationTime: getExpirationTime(),
+      nonce: 'external-client-login-nonce',
+      action: 'login',
+      purpose: 'Sign this message to authenticate with 6529.'
+    });
+    const signature = await wallet.signMessage(message);
+
+    await expect(
+      verifyStructuredWalletSignature({
+        message,
+        signature,
+        expectedAddress: wallet.address,
+        expectedChainId: 1,
+        expectedAction: 'login',
+        expectedKind: 'authentication',
+        consumeNonce: false
+      })
+    ).resolves.toBe(wallet.address.toLowerCase());
+  });
+
+  it('rejects first-party web signatures from unregistered domains', async () => {
+    process.env.AUTH_SIGNATURE_ALLOWED_DOMAINS = '6529.io';
+    const message = buildStructuredWalletSignatureMessage({
+      kind: 'authentication',
+      domain: 'community-client.example',
+      sessionType: 'first_party_web',
+      wallet: wallet.address,
+      expirationTime: getExpirationTime(),
+      nonce: 'first-party-unregistered-domain-nonce',
+      action: 'login',
+      purpose: 'Sign this message to authenticate with 6529.'
+    });
+    const signature = await wallet.signMessage(message);
+
+    await expect(
+      verifyStructuredWalletSignature({
+        message,
+        signature,
+        expectedAddress: wallet.address,
+        expectedChainId: 1,
+        expectedAction: 'login',
+        expectedKind: 'authentication',
+        requireAllowedDomain: true,
+        consumeNonce: false
+      })
+    ).resolves.toBeNull();
+  });
+
+  it('accepts first-party web signatures from registered domains', async () => {
+    const message = buildStructuredWalletSignatureMessage({
+      kind: 'authentication',
+      domain: 'example.com',
+      sessionType: 'first_party_web',
+      wallet: wallet.address,
+      expirationTime: getExpirationTime(),
+      nonce: 'first-party-registered-domain-nonce',
+      action: 'login',
+      purpose: 'Sign this message to authenticate with 6529.'
+    });
+    const signature = await wallet.signMessage(message);
+
+    await expect(
+      verifyStructuredWalletSignature({
+        message,
+        signature,
+        expectedAddress: wallet.address,
+        expectedChainId: 1,
+        expectedAction: 'login',
+        expectedKind: 'authentication',
+        requireAllowedDomain: true,
+        consumeNonce: false
+      })
+    ).resolves.toBe(wallet.address.toLowerCase());
+  });
+
+  it('rejects structured signatures for unsupported API audiences', async () => {
+    const message = buildStructuredWalletSignatureMessage({
+      kind: 'authentication',
+      audience: 'untrusted-api.example',
+      domain: 'example.com',
+      sessionType: 'external_client',
+      wallet: wallet.address,
+      expirationTime: getExpirationTime(),
+      nonce: 'unsupported-audience-nonce',
+      action: 'login',
+      purpose: 'Sign this message to authenticate with 6529.'
+    });
+    const signature = await wallet.signMessage(message);
+
+    await expect(
+      verifyStructuredWalletSignature({
+        message,
+        signature,
+        expectedAddress: wallet.address,
+        expectedChainId: 1,
+        expectedAction: 'login',
+        expectedKind: 'authentication',
+        consumeNonce: false
       })
     ).resolves.toBeNull();
   });

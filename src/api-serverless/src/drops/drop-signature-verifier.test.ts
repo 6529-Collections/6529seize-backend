@@ -26,6 +26,7 @@ describe('DropSignatureVerifier', () => {
   beforeEach(() => {
     clearStructuredWalletSignatureReplayCacheForTests();
     process.env.AUTH_SIGNATURE_ALLOWED_DOMAINS = 'example.com';
+    process.env.AUTH_SIGNATURE_AUDIENCE = 'api.6529.io';
     process.env.ALCHEMY_API_KEY = 'test-key';
     isValidSignatureMock = jest.fn().mockResolvedValue(EIP1271_INVALID_VALUE);
     const contractConstructor = jest.fn().mockImplementation(() => ({
@@ -40,6 +41,7 @@ describe('DropSignatureVerifier', () => {
 
   afterEach(() => {
     delete process.env.AUTH_SIGNATURE_ALLOWED_DOMAINS;
+    delete process.env.AUTH_SIGNATURE_AUDIENCE;
     delete process.env.AUTH_STRUCTURED_SIGNATURES_REQUIRED;
     delete process.env.ALCHEMY_API_KEY;
     jest.restoreAllMocks();
@@ -89,12 +91,13 @@ describe('DropSignatureVerifier', () => {
   }
 
   async function signDropAsStructuredMessage(
-    drop: ApiCreateDropRequest
+    drop: ApiCreateDropRequest,
+    domain = 'example.com'
   ): Promise<ApiCreateDropRequest & { signature_message: string }> {
     const hash = dropHasher.hash({ drop, termsOfService });
     const signatureMessage = buildStructuredWalletSignatureMessage({
       kind: 'action',
-      domain: 'example.com',
+      domain,
       wallet: wallet.address,
       nonce: 'drop-nonce-1',
       action: 'create_drop',
@@ -134,6 +137,22 @@ describe('DropSignatureVerifier', () => {
 
   it('accepts structured drop signatures', async () => {
     const drop = await signDropAsStructuredMessage(createDrop());
+
+    await expect(
+      verifier.isDropSignedByAnyOfGivenWallets({
+        wallets: [wallet.address],
+        drop,
+        termsOfService
+      })
+    ).resolves.toBe(true);
+  });
+
+  it('accepts structured drop signatures from unregistered client domains', async () => {
+    process.env.AUTH_SIGNATURE_ALLOWED_DOMAINS = '6529.io';
+    const drop = await signDropAsStructuredMessage(
+      createDrop(),
+      'community-client.example'
+    );
 
     await expect(
       verifier.isDropSignedByAnyOfGivenWallets({
