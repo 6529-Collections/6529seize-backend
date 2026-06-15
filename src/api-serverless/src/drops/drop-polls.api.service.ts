@@ -26,7 +26,8 @@ import {
 } from '@/api/waves/wave-access.helpers';
 import { wavesApiDb, WavesApiDb } from '@/api/waves/waves.api.db';
 import { DropType } from '@/entities/IDrop';
-import { DropPollOptionEntity } from '@/entities/IDropPoll';
+import { DropPollEntity, DropPollOptionEntity } from '@/entities/IDropPoll';
+import { WaveEntity } from '@/entities/IWave';
 import {
   BadRequestException,
   ForbiddenException,
@@ -54,6 +55,7 @@ export type CreateDropPollRequest = {
   readonly options: string[];
   readonly multichoice: boolean;
   readonly anonymous?: boolean;
+  readonly only_droppers_can_respond?: boolean;
   readonly closing_time: number;
 };
 
@@ -121,6 +123,11 @@ export class DropPollsApiService {
         `Only wave creators and admins can create polls`
       );
     }
+    if ((poll.only_droppers_can_respond ?? false) && !wave.chat_enabled) {
+      throw new BadRequestException(
+        `Poll responses can only be restricted to droppers when chat is enabled`
+      );
+    }
     await this.dropPollsDb.createPoll(
       {
         id: randomUUID(),
@@ -129,6 +136,7 @@ export class DropPollsApiService {
         closing_time: poll.closing_time,
         multichoice: poll.multichoice,
         anonymous: poll.anonymous ?? false,
+        only_droppers_can_respond: poll.only_droppers_can_respond ?? false,
         options: poll.options.map((option, index) => ({
           option_no: index + 1,
           option_string: option.trim()
@@ -237,6 +245,12 @@ export class DropPollsApiService {
         if (!poll.multichoice && uniqueOptions.length > 1) {
           throw new BadRequestException(`Poll does not allow multiple options`);
         }
+        await this.assertPollRespondentCanVote({
+          poll,
+          wave,
+          voterId,
+          ctx
+        });
         pollAnonymous = poll.anonymous;
         const pollOptions = await this.dropPollsDb.findOptionsByPollId(
           poll.id,
@@ -298,6 +312,45 @@ export class DropPollsApiService {
       throw new NotFoundException(`Drop ${dropId} not found`);
     }
     return apiDrop;
+  }
+
+  private async assertPollRespondentCanVote({
+    poll,
+    wave,
+    voterId,
+    ctx
+  }: {
+    readonly poll: DropPollEntity;
+    readonly wave: WaveEntity;
+    readonly voterId: string;
+    readonly ctx: RequestContext;
+  }): Promise<void> {
+    if (!poll.only_droppers_can_respond) {
+      return;
+    }
+    if (wave.chat_enabled && wave.chat_group_id === null) {
+      return;
+    }
+    if (wave.created_by === voterId) {
+      return;
+    }
+    const groupIdsUserIsEligibleFor =
+      await this.userGroupsService.getGroupsUserIsEligibleFor(
+        voterId,
+        ctx.timer
+      );
+    const userCanChatInGroup =
+      wave.chat_enabled &&
+      wave.chat_group_id !== null &&
+      groupIdsUserIsEligibleFor.includes(wave.chat_group_id);
+    const userCanManageWave = isWaveCreatorOrAdmin({
+      authenticatedProfileId: voterId,
+      wave,
+      groupIdsUserIsEligibleFor
+    });
+    if (!userCanChatInGroup && !userCanManageWave) {
+      throw new ForbiddenException(`Only wave chat participants can vote`);
+    }
   }
 
   private getSelectedPollOptions(
