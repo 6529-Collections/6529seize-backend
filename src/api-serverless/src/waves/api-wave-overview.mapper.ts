@@ -14,10 +14,16 @@ import { ApiWaveOverview } from '@/api/generated/models/ApiWaveOverview';
 import { ApiWaveOverviewContributor } from '@/api/generated/models/ApiWaveOverviewContributor';
 import { ApiWaveOverviewContextProfileContext } from '@/api/generated/models/ApiWaveOverviewContextProfileContext';
 import { ApiWaveOverviewDescriptionDrop } from '@/api/generated/models/ApiWaveOverviewDescriptionDrop';
+import { ApiProfileMin } from '@/api/generated/models/ApiProfileMin';
+import { ApiProfileClassification } from '@/api/generated/models/ApiProfileClassification';
 import {
   identitySubscriptionsDb,
   IdentitySubscriptionsDb
 } from '@/api/identity-subscriptions/identity-subscriptions.db';
+import {
+  identityFetcher,
+  IdentityFetcher
+} from '@/api/identities/identity.fetcher';
 import {
   userGroupsService,
   UserGroupsService
@@ -38,7 +44,8 @@ export class ApiWaveOverviewMapper {
     private readonly dropsDb: DropsDb,
     private readonly identitySubscriptionsDb: IdentitySubscriptionsDb,
     private readonly userGroupsService: UserGroupsService,
-    private readonly directMessageWaveDisplayService: DirectMessageWaveDisplayService
+    private readonly directMessageWaveDisplayService: DirectMessageWaveDisplayService,
+    private readonly identityFetcher: IdentityFetcher
   ) {}
 
   public async mapWaves(
@@ -89,7 +96,8 @@ export class ApiWaveOverviewMapper {
         unreadDropsCountByWaveId,
         firstUnreadDropSerialNoByWaveId,
         chatDropCooldownsByWaveId,
-        waveIdsWithVisibleSubwaves
+        waveIdsWithVisibleSubwaves,
+        profilesById
       ] = await Promise.all([
         this.wavesApiDb.findWavesMetricsByWaveIds(waveIds, ctx),
         this.dropsDb.getDropPartOnes(descriptionDropIds, ctx),
@@ -162,6 +170,10 @@ export class ApiWaveOverviewMapper {
           waveIds,
           groupIdsUserIsEligibleFor,
           ctx
+        ),
+        this.identityFetcher.getOverviewsByIds(
+          collections.distinct(relatedEntities.map((wave) => wave.created_by)),
+          ctx
         )
       ]);
 
@@ -183,7 +195,8 @@ export class ApiWaveOverviewMapper {
               firstUnreadDropSerialNoByWaveId[wave.id] ?? undefined,
             nextDropTimestamp:
               chatDropCooldownsByWaveId[wave.id]?.next_drop_timestamp,
-            hasSubwaves: waveIdsWithVisibleSubwaves.has(wave.id)
+            hasSubwaves: waveIdsWithVisibleSubwaves.has(wave.id),
+            profilesById
           });
           return acc;
         },
@@ -221,7 +234,8 @@ export class ApiWaveOverviewMapper {
     unreadDropsCount,
     firstUnreadDropSerialNo,
     nextDropTimestamp,
-    hasSubwaves
+    hasSubwaves,
+    profilesById
   }: {
     wave: WaveEntity;
     metrics?: {
@@ -241,11 +255,13 @@ export class ApiWaveOverviewMapper {
     firstUnreadDropSerialNo?: number;
     nextDropTimestamp?: number;
     hasSubwaves: boolean;
+    profilesById: Record<string, ApiProfileMin>;
   }): ApiWaveOverview {
     const pfp = resolveWavePictureOverride(wave.picture, display);
     const overview: ApiWaveOverview = {
       id: wave.id,
       name: display?.name ?? wave.name,
+      creator: this.getProfileMinOrUnknown(wave.created_by, profilesById),
       last_drop_time: metrics?.latest_drop_timestamp ?? 0,
       created_at: wave.created_at,
       subscribers_count: metrics?.subscribers_count ?? 0,
@@ -373,6 +389,38 @@ export class ApiWaveOverviewMapper {
 
     return result;
   }
+
+  private getProfileMinOrUnknown(
+    profileId: string,
+    profilesById: Record<string, ApiProfileMin>
+  ): ApiProfileMin {
+    return (
+      profilesById[profileId] ?? {
+        id: profileId,
+        handle: 'Unknown profile',
+        banner1_color: null,
+        banner2_color: null,
+        pfp: null,
+        cic: 0,
+        rep: 0,
+        tdh: 0,
+        xtdh: 0,
+        xtdh_rate: 0,
+        tdh_rate: 0,
+        level: 0,
+        classification: ApiProfileClassification.Pseudonym,
+        sub_classification: null,
+        archived: true,
+        profile_wave_id: null,
+        subscribed_actions: [],
+        primary_address: '',
+        active_main_stage_submission_ids: [],
+        winner_main_stage_drop_ids: [],
+        artist_of_prevote_cards: [],
+        is_wave_creator: false
+      }
+    );
+  }
 }
 
 export const apiWaveOverviewMapper = new ApiWaveOverviewMapper(
@@ -380,5 +428,6 @@ export const apiWaveOverviewMapper = new ApiWaveOverviewMapper(
   dropsDb,
   identitySubscriptionsDb,
   userGroupsService,
-  directMessageWaveDisplayService
+  directMessageWaveDisplayService,
+  identityFetcher
 );
