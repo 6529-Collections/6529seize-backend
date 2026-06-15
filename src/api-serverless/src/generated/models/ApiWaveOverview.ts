@@ -22,7 +22,7 @@ export class ApiWaveOverview {
     'id': string;
     'name': string;
     'pfp'?: string;
-    'creator': ApiProfileMin | null;
+    'creator': ApiProfileMin;
     'last_drop_time': number;
     'created_at': number;
     'subscribers_count': number;

@@ -15442,9 +15442,7 @@ components:
         pfp:
           type: string
         creator:
-          anyOf:
-            - type: "null"
-            - $ref: "#/components/schemas/ApiProfileMin"
+          $ref: "#/components/schemas/ApiProfileMin"
         last_drop_time:
           type: integer
           format: int64
