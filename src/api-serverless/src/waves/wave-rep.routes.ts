@@ -2,7 +2,11 @@ import { Request, Response } from 'express';
 import * as Joi from 'joi';
 import { REP_CATEGORY_PATTERN } from '@/entities/IAbusivenessDetectionResult';
 import { RateMatter } from '@/entities/IRating';
-import { BadRequestException, ForbiddenException } from '@/exceptions';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException
+} from '@/exceptions';
 import { ratingsDb } from '@/rates/ratings.db';
 import { ratingsService } from '@/rates/ratings.service';
 import { RequestContext } from '@/request.context';
@@ -248,6 +252,9 @@ async function assertWaveVisible(waveId: string, ctx: RequestContext) {
       )
     : [];
   const wave = await wavesApiDb.findWaveById(waveId, ctx.connection);
+  if (!wave) {
+    throw new NotFoundException(`Wave ${waveId} not found`);
+  }
   await assertWaveAndParentVisibleOrThrow({
     wave,
     groupsUserIsEligibleFor: eligibleGroups,
@@ -255,7 +262,7 @@ async function assertWaveVisible(waveId: string, ctx: RequestContext) {
     wavesApiDb,
     ctx
   });
-  return wave!;
+  return wave;
 }
 
 const ChangeWaveRepRatingSchema: Joi.ObjectSchema<ApiChangeWaveRepRating> =

@@ -15442,7 +15442,9 @@ components:
         pfp:
           type: string
         creator:
-          $ref: "#/components/schemas/ApiProfileMin"
+          anyOf:
+            - type: "null"
+            - $ref: "#/components/schemas/ApiProfileMin"
         last_drop_time:
           type: integer
           format: int64
@@ -15912,6 +15914,7 @@ components:
       required:
         - single_actor_penalty
         - low_trust_flood_penalty
+        - cross_post_pressure
         - cross_post_penalty
         - negative_rep_penalty
         - safety_multiplier

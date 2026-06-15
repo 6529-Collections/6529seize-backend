@@ -15,7 +15,7 @@ import { HttpFile } from '../http/http';
 export class ApiWaveScorePenalties {
     'single_actor_penalty': number;
     'low_trust_flood_penalty': number;
-    'cross_post_pressure'?: number;
+    'cross_post_pressure': number;
     'cross_post_penalty': number;
     'negative_rep_penalty': number;
     'safety_multiplier': number;

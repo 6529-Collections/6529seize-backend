@@ -177,6 +177,9 @@ export class WaveRepOverviewApiService {
         )
       : [];
     const wave = await this.wavesApiDb.findWaveById(waveId, ctx.connection);
+    if (!wave) {
+      throw new NotFoundException(`Wave ${waveId} not found`);
+    }
     await assertWaveAndParentVisibleOrThrow({
       wave,
       groupsUserIsEligibleFor: eligibleGroups,
@@ -184,9 +187,6 @@ export class WaveRepOverviewApiService {
       wavesApiDb: this.wavesApiDb,
       ctx
     });
-    if (!wave) {
-      throw new NotFoundException(`Wave ${waveId} not found`);
-    }
   }
 
   private async mapContributorsPage(

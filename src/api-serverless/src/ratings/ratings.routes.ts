@@ -155,6 +155,7 @@ const SnapshotsRequestSchema: Joi.ObjectSchema<RatingsSnapshotsPageRequest> =
 const BulkRateRequestSchema: Joi.ObjectSchema<ApiBulkRateRequest> =
   Joi.object<ApiBulkRateRequest>({
     amount_to_add: Joi.number().integer().not(0).required(),
+    // Wave REP is wave-scoped and uses /waves/:id/rep/rating, not profile bulk rating.
     matter: Joi.string().valid(ApiRateMatter.Rep, ApiRateMatter.Cic).required(),
     category: Joi.when('matter', {
       is: RateMatter.REP,
