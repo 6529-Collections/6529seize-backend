@@ -113,3 +113,4 @@ export enum AuthNonceStructuredQuerySessionTypeEnum {
     ExternalClient = 'external_client',
     Native = 'native'
 }
+

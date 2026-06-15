@@ -649,7 +649,7 @@ import { ApiReplyToDropAuthor } from '../models/ApiReplyToDropAuthor';
 import { ApiReplyToDropResponse } from '../models/ApiReplyToDropResponse';
 import { ApiReplyToDropV2 } from '../models/ApiReplyToDropV2';
 import { ApiSeizeSettings } from '../models/ApiSeizeSettings';
-import { ApiSessionLoginRequest, ApiSessionLoginRequestClientTypeEnum       , ApiSessionLoginRequestWalletKindHintEnum    } from '../models/ApiSessionLoginRequest';
+import { ApiSessionLoginRequest, ApiSessionLoginRequestClientTypeEnum      , ApiSessionLoginRequestWalletKindHintEnum  , ApiSessionLoginRequestSignatureVersionEnum   } from '../models/ApiSessionLoginRequest';
 import { ApiSessionLogoutNativeRequest, ApiSessionLogoutNativeRequestClientTypeEnum      } from '../models/ApiSessionLogoutNativeRequest';
 import { ApiSessionLogoutWebRequest, ApiSessionLogoutWebRequestClientTypeEnum    } from '../models/ApiSessionLogoutWebRequest';
 import { ApiSessionNativeResponse    , ApiSessionNativeResponseClientTypeEnum     } from '../models/ApiSessionNativeResponse';
@@ -858,6 +858,7 @@ let enumsMap: Set<string> = new Set<string>([
     "ApiRepDirection",
     "ApiSessionLoginRequestClientTypeEnum",
     "ApiSessionLoginRequestWalletKindHintEnum",
+    "ApiSessionLoginRequestSignatureVersionEnum",
     "ApiSessionLogoutNativeRequestClientTypeEnum",
     "ApiSessionLogoutWebRequestClientTypeEnum",
     "ApiSessionNativeResponseClientTypeEnum",

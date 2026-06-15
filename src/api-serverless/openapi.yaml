@@ -14032,7 +14032,7 @@ components:
           type: string
         server_signature:
           type: string
-          description: >
+          description: >-
             Server-signed structured challenge token. /auth/session-login only
             accepts first_party_web challenges for web cookie sessions and native
             challenges for native refresh-token sessions; external_client
