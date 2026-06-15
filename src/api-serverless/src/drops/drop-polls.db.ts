@@ -38,6 +38,7 @@ export type CreateDropPollCommand = {
   readonly closing_time: number;
   readonly multichoice: boolean;
   readonly anonymous: boolean;
+  readonly only_droppers_can_respond: boolean;
   readonly options: readonly {
     readonly option_no: number;
     readonly option_string: string;
@@ -100,6 +101,7 @@ export class DropPollsDb extends LazyDbAccessCompatibleService {
           p.closing_time,
           p.multichoice,
           p.anonymous,
+          p.only_droppers_can_respond,
           o.option_no,
           o.option_string,
           count(v.voter_id) as votes,
@@ -121,6 +123,7 @@ export class DropPollsDb extends LazyDbAccessCompatibleService {
           p.closing_time,
           p.multichoice,
           p.anonymous,
+          p.only_droppers_can_respond,
           o.option_no,
           o.option_string
         order by p.drop_id asc, o.option_no asc
@@ -332,6 +335,7 @@ export class DropPollsDb extends LazyDbAccessCompatibleService {
           p.closing_time,
           p.multichoice,
           p.anonymous,
+          p.only_droppers_can_respond,
           d.created_at
         from ${DROP_POLLS_TABLE} p
         join ${DROPS_TABLE} d on d.id = p.drop_id
@@ -543,14 +547,16 @@ export class DropPollsDb extends LazyDbAccessCompatibleService {
           drop_id,
           closing_time,
           multichoice,
-          anonymous
+          anonymous,
+          only_droppers_can_respond
         ) values (
           :id,
           :wave_id,
           :drop_id,
           :closing_time,
           :multichoice,
-          :anonymous
+          :anonymous,
+          :only_droppers_can_respond
         )
       `,
       command,
@@ -711,7 +717,8 @@ export class DropPollsDb extends LazyDbAccessCompatibleService {
       drop_id: row.drop_id,
       closing_time: Number(row.closing_time),
       multichoice: toBoolean(row.multichoice),
-      anonymous: toBoolean(row.anonymous)
+      anonymous: toBoolean(row.anonymous),
+      only_droppers_can_respond: toBoolean(row.only_droppers_can_respond)
     };
   }
 

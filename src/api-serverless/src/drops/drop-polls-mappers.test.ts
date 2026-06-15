@@ -11,6 +11,7 @@ describe('drop poll mappers', () => {
     closing_time: 2_000,
     multichoice: true,
     anonymous: true,
+    only_droppers_can_respond: true,
     created_at: 1_000,
     voted: [2, 1],
     options: [
@@ -45,6 +46,7 @@ describe('drop poll mappers', () => {
       voted: [1, 2],
       multichoice: true,
       anonymous: true,
+      only_droppers_can_respond: true,
       closing_time: 2_000,
       is_open: true
     });
@@ -57,6 +59,7 @@ describe('drop poll mappers', () => {
       drop_id: 'drop-1',
       created_at: 1_000,
       anonymous: true,
+      only_droppers_can_respond: true,
       is_open: false
     });
   });

@@ -166,6 +166,7 @@ describe('NewDropSchema', () => {
       options: ['First', 'Second'],
       multichoice: false,
       anonymous: false,
+      only_droppers_can_respond: false,
       closing_time: futureTimestamp
     });
   });
@@ -186,6 +187,41 @@ describe('NewDropSchema', () => {
     expect(result.value.poll).toMatchObject({
       anonymous: true
     });
+  });
+
+  it('accepts polls restricted to wave chat participants for chat drops', () => {
+    const result = NewDropSchema.validate({
+      ...createDropWithMetadata('artist', 'Artist'),
+      drop_type: ApiDropType.Chat,
+      poll: {
+        options: ['First', 'Second'],
+        multichoice: false,
+        only_droppers_can_respond: true,
+        closing_time: futureTimestamp
+      }
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.value.poll).toMatchObject({
+      only_droppers_can_respond: true
+    });
+  });
+
+  it('rejects polls with invalid only_droppers_can_respond values', () => {
+    const result = NewDropSchema.validate({
+      ...createDropWithMetadata('artist', 'Artist'),
+      drop_type: ApiDropType.Chat,
+      poll: {
+        options: ['First', 'Second'],
+        multichoice: false,
+        only_droppers_can_respond: 'invalid',
+        closing_time: futureTimestamp
+      }
+    });
+
+    expect(result.error?.message).toContain(
+      '"poll.only_droppers_can_respond" must be a boolean'
+    );
   });
 
   it('rejects polls with invalid anonymous values', () => {

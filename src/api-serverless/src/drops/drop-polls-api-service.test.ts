@@ -45,7 +45,9 @@ function createService() {
       id: 'wave-1',
       created_by: 'creator-1',
       admin_group_id: 'admin-group',
-      visibility_group_id: 'visibility-group'
+      visibility_group_id: 'visibility-group',
+      chat_enabled: true,
+      chat_group_id: null
     }),
     findWaveById: jest.fn().mockResolvedValue({
       id: 'wave-1',
@@ -124,6 +126,7 @@ describe('DropPollsApiService', () => {
         closing_time: 2_000,
         multichoice: false,
         anonymous: false,
+        only_droppers_can_respond: false,
         options: [
           { option_no: 1, option_string: 'First' },
           { option_no: 2, option_string: 'Second' }
@@ -161,6 +164,34 @@ describe('DropPollsApiService', () => {
     );
   });
 
+  it('creates polls restricted to wave chat participants when requested', async () => {
+    jest.spyOn(Time, 'currentMillis').mockReturnValue(1_000);
+    const { service, deps } = createService();
+
+    await service.createPollForDrop(
+      {
+        poll: {
+          options: ['First', 'Second'],
+          multichoice: false,
+          only_droppers_can_respond: true,
+          closing_time: 2_000
+        },
+        dropId: 'drop-1',
+        waveId: 'wave-1',
+        authorId: 'creator-1',
+        dropType: DropType.CHAT
+      },
+      {}
+    );
+
+    expect(deps.dropPollsDb.createPoll).toHaveBeenCalledWith(
+      expect.objectContaining({
+        only_droppers_can_respond: true
+      }),
+      {}
+    );
+  });
+
   it('rejects voter identity lookup for anonymous polls', async () => {
     const { service, deps } = createService();
     deps.dropPollsDb.findPollsByDropIds.mockResolvedValue({
@@ -171,6 +202,7 @@ describe('DropPollsApiService', () => {
         closing_time: 2_000,
         multichoice: false,
         anonymous: true,
+        only_droppers_can_respond: false,
         voted: [],
         options: [
           {
@@ -285,6 +317,14 @@ describe('DropPollsApiService', () => {
       multichoice: true,
       anonymous: false
     });
+    deps.wavesApiDb.findById.mockResolvedValueOnce({
+      id: 'wave-1',
+      created_by: 'creator-1',
+      admin_group_id: 'admin-group',
+      visibility_group_id: 'visibility-group',
+      chat_enabled: true,
+      chat_group_id: null
+    });
 
     await expect(
       service.vote(
@@ -299,6 +339,100 @@ describe('DropPollsApiService', () => {
       )
     ).rejects.toThrow('Poll is closed');
     expect(deps.dropPollsDb.replaceVoterVotes).not.toHaveBeenCalled();
+  });
+
+  it('rejects restricted poll votes from users who cannot chat in the wave', async () => {
+    jest.spyOn(Time, 'currentMillis').mockReturnValue(1_000);
+    const { service, deps } = createService();
+    deps.wavesApiDb.findById.mockResolvedValueOnce({
+      id: 'wave-1',
+      created_by: 'creator-1',
+      admin_group_id: 'admin-group',
+      visibility_group_id: 'visibility-group',
+      chat_enabled: true,
+      chat_group_id: 'chat-group'
+    });
+    deps.userGroupsService.getGroupsUserIsEligibleFor.mockResolvedValue([]);
+    deps.dropPollsDb.findPollByDropIdForUpdate.mockResolvedValue({
+      id: 'poll-1',
+      wave_id: 'wave-1',
+      drop_id: 'drop-1',
+      closing_time: 2_000,
+      multichoice: false,
+      anonymous: false,
+      only_droppers_can_respond: true
+    });
+
+    await expect(
+      service.vote(
+        {
+          dropId: 'drop-1',
+          voterId: 'voter-1',
+          options: [1]
+        },
+        {
+          authenticationContext: AuthenticationContext.fromProfileId('voter-1')
+        }
+      )
+    ).rejects.toThrow('Only wave chat participants can vote');
+    expect(deps.dropPollsDb.findOptionsByPollId).not.toHaveBeenCalled();
+    expect(deps.dropPollsDb.replaceVoterVotes).not.toHaveBeenCalled();
+  });
+
+  it('allows restricted poll votes from users who can chat in the wave', async () => {
+    jest.spyOn(Time, 'currentMillis').mockReturnValue(1_000);
+    const { service, deps } = createService();
+    deps.wavesApiDb.findById.mockResolvedValueOnce({
+      id: 'wave-1',
+      created_by: 'creator-1',
+      admin_group_id: 'admin-group',
+      visibility_group_id: 'visibility-group',
+      chat_enabled: true,
+      chat_group_id: 'chat-group'
+    });
+    deps.userGroupsService.getGroupsUserIsEligibleFor.mockResolvedValue([
+      'chat-group'
+    ]);
+    deps.dropPollsDb.replaceVoterVotes.mockResolvedValue(false);
+    deps.dropPollsDb.findPollByDropIdForUpdate.mockResolvedValue({
+      id: 'poll-1',
+      wave_id: 'wave-1',
+      drop_id: 'drop-1',
+      closing_time: 2_000,
+      multichoice: false,
+      anonymous: false,
+      only_droppers_can_respond: true
+    });
+    deps.dropPollsDb.findOptionsByPollId.mockResolvedValue([
+      {
+        poll_id: 'poll-1',
+        wave_id: 'wave-1',
+        drop_id: 'drop-1',
+        option_no: 1,
+        option_string: 'First'
+      }
+    ]);
+
+    await expect(
+      service.vote(
+        {
+          dropId: 'drop-1',
+          voterId: 'voter-1',
+          options: [1]
+        },
+        {
+          authenticationContext: AuthenticationContext.fromProfileId('voter-1')
+        }
+      )
+    ).resolves.toEqual({ id: 'drop-1' });
+    expect(deps.dropPollsDb.replaceVoterVotes).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pollId: 'poll-1',
+        voterId: 'voter-1',
+        optionNos: [1]
+      }),
+      expect.objectContaining({ connection: 'tx-connection' })
+    );
   });
 
   it('replaces previous poll votes with selected choices', async () => {
