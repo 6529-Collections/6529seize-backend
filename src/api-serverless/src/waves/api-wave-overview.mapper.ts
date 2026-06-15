@@ -38,6 +38,39 @@ import { getWaveReadContextProfileId } from '@/api/waves/wave-access.helpers';
 import { wavesApiDb, WavesApiDb } from '@/api/waves/waves.api.db';
 import { resolveNextDropAllowed } from '@/waves/wave-chat-slow-mode.helpers';
 
+export function createUnknownWaveCreatorProfile({
+  profileId,
+  waveId
+}: {
+  profileId?: string | null;
+  waveId: string;
+}): ApiProfileMin {
+  return {
+    id: profileId ?? `unknown-wave-creator-${waveId}`,
+    handle: 'Unknown profile',
+    banner1_color: null,
+    banner2_color: null,
+    pfp: null,
+    cic: 0,
+    rep: 0,
+    tdh: 0,
+    xtdh: 0,
+    xtdh_rate: 0,
+    tdh_rate: 0,
+    level: 0,
+    classification: ApiProfileClassification.Pseudonym,
+    sub_classification: null,
+    archived: true,
+    profile_wave_id: null,
+    subscribed_actions: [],
+    primary_address: '',
+    active_main_stage_submission_ids: [],
+    winner_main_stage_drop_ids: [],
+    artist_of_prevote_cards: [],
+    is_wave_creator: false
+  };
+}
+
 export class ApiWaveOverviewMapper {
   constructor(
     private readonly wavesApiDb: WavesApiDb,
@@ -83,6 +116,11 @@ export class ApiWaveOverviewMapper {
       const waveIds = relatedEntities.map((wave) => wave.id);
       const descriptionDropIds = collections.distinct(
         relatedEntities.map((wave) => wave.description_drop_id)
+      );
+      const creatorIds = collections.distinct(
+        relatedEntities
+          .map((wave) => wave.created_by)
+          .filter((profileId): profileId is string => !!profileId)
       );
 
       const [
@@ -171,10 +209,9 @@ export class ApiWaveOverviewMapper {
           groupIdsUserIsEligibleFor,
           ctx
         ),
-        this.identityFetcher.getOverviewsByIds(
-          collections.distinct(relatedEntities.map((wave) => wave.created_by)),
-          ctx
-        )
+        creatorIds.length
+          ? this.identityFetcher.getOverviewsByIds(creatorIds, ctx)
+          : Promise.resolve({} as Record<string, ApiProfileMin>)
       ]);
 
       const overviewsByWaveId = relatedEntities.reduce(
@@ -261,7 +298,7 @@ export class ApiWaveOverviewMapper {
     const overview: ApiWaveOverview = {
       id: wave.id,
       name: display?.name ?? wave.name,
-      creator: this.getProfileMinOrUnknown(wave.created_by, profilesById),
+      creator: this.getProfileMinOrUnknown(wave, profilesById),
       last_drop_time: metrics?.latest_drop_timestamp ?? 0,
       created_at: wave.created_at,
       subscribers_count: metrics?.subscribers_count ?? 0,
@@ -391,34 +428,16 @@ export class ApiWaveOverviewMapper {
   }
 
   private getProfileMinOrUnknown(
-    profileId: string,
+    wave: WaveEntity,
     profilesById: Record<string, ApiProfileMin>
   ): ApiProfileMin {
+    const profileId = wave.created_by;
+    if (!profileId) {
+      return createUnknownWaveCreatorProfile({ waveId: wave.id });
+    }
     return (
-      profilesById[profileId] ?? {
-        id: profileId,
-        handle: 'Unknown profile',
-        banner1_color: null,
-        banner2_color: null,
-        pfp: null,
-        cic: 0,
-        rep: 0,
-        tdh: 0,
-        xtdh: 0,
-        xtdh_rate: 0,
-        tdh_rate: 0,
-        level: 0,
-        classification: ApiProfileClassification.Pseudonym,
-        sub_classification: null,
-        archived: true,
-        profile_wave_id: null,
-        subscribed_actions: [],
-        primary_address: '',
-        active_main_stage_submission_ids: [],
-        winner_main_stage_drop_ids: [],
-        artist_of_prevote_cards: [],
-        is_wave_creator: false
-      }
+      profilesById[profileId] ??
+      createUnknownWaveCreatorProfile({ profileId, waveId: wave.id })
     );
   }
 }

@@ -6,7 +6,10 @@ import {
   WaveEntity,
   WaveType
 } from '@/entities/IWave';
-import { ApiWaveOverviewMapper } from './api-wave-overview.mapper';
+import {
+  ApiWaveOverviewMapper,
+  createUnknownWaveCreatorProfile
+} from './api-wave-overview.mapper';
 
 function makeWave(overrides: Partial<WaveEntity> = {}): WaveEntity {
   return {
@@ -96,33 +99,6 @@ function makeProfile(overrides: Record<string, unknown> = {}) {
     profile_wave_id: null,
     is_wave_creator: true,
     ...overrides
-  };
-}
-
-function makeUnknownProfile(profileId: string) {
-  return {
-    id: profileId,
-    handle: 'Unknown profile',
-    banner1_color: null,
-    banner2_color: null,
-    pfp: null,
-    cic: 0,
-    rep: 0,
-    tdh: 0,
-    xtdh: 0,
-    xtdh_rate: 0,
-    tdh_rate: 0,
-    level: 0,
-    classification: 'PSEUDONYM',
-    sub_classification: null,
-    archived: true,
-    profile_wave_id: null,
-    subscribed_actions: [],
-    primary_address: '',
-    active_main_stage_submission_ids: [],
-    winner_main_stage_drop_ids: [],
-    artist_of_prevote_cards: [],
-    is_wave_creator: false
   };
 }
 
@@ -255,7 +231,28 @@ describe('ApiWaveOverviewMapper', () => {
       authenticationContext: AuthenticationContext.notAuthenticated()
     });
 
-    expect(result['wave-1'].creator).toEqual(makeUnknownProfile('creator-1'));
+    expect(result['wave-1'].creator).toEqual(
+      createUnknownWaveCreatorProfile({
+        profileId: 'creator-1',
+        waveId: 'wave-1'
+      })
+    );
+  });
+
+  it('does not fetch a malformed creator id when created_by is missing', async () => {
+    const { mapper, deps } = createMapper();
+    const waveWithoutCreator = makeWave({
+      created_by: undefined as unknown as string
+    });
+
+    const result = await mapper.mapWaves([waveWithoutCreator], {
+      authenticationContext: AuthenticationContext.notAuthenticated()
+    });
+
+    expect(deps.identityFetcher.getOverviewsByIds).not.toHaveBeenCalled();
+    expect(result['wave-1'].creator).toEqual(
+      createUnknownWaveCreatorProfile({ waveId: 'wave-1' })
+    );
   });
 
   it('maps visible parent wave and visible child presence', async () => {
@@ -298,6 +295,10 @@ describe('ApiWaveOverviewMapper', () => {
         parent_wave: expect.objectContaining({
           id: parentWave.id,
           name: parentWave.name,
+          creator: makeProfile({
+            id: 'parent-creator',
+            handle: 'parentCreator'
+          }),
           has_subwaves: true
         })
       })
