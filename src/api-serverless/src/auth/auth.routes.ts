@@ -633,13 +633,12 @@ const SessionLoginRequestSchema: Joi.ObjectSchema<ApiSessionLoginRequest> =
     client_signature: Joi.string().required(),
     role: Joi.string().optional().allow(null).default(null),
     client_address: Joi.string().required(),
-    is_safe_wallet: Joi.boolean().required(),
     wallet_kind_hint: Joi.string()
       .valid('eoa', 'contract', 'unknown')
       .optional()
       .allow(null),
-    version: Joi.number().integer().optional()
-  });
+    signature_version: Joi.number().integer().valid(1, 2).optional().default(2)
+  }).unknown(false);
 
 const SessionRefreshWebRequestSchema: Joi.ObjectSchema<ApiSessionRefreshWebRequest> =
   Joi.object<ApiSessionRefreshWebRequest>({

@@ -14,13 +14,12 @@ import { HttpFile } from '../http/http';
 
 export class ApiSessionLoginRequest {
     'client_type': ApiSessionLoginRequestClientTypeEnum;
-    'is_safe_wallet': boolean;
     'client_address': string;
     'client_signature': string;
     'server_signature': string;
     'role'?: string | null;
     'wallet_kind_hint'?: ApiSessionLoginRequestWalletKindHintEnum | null;
-    'version'?: number;
+    'signature_version'?: number;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -31,12 +30,6 @@ export class ApiSessionLoginRequest {
             "name": "client_type",
             "baseName": "client_type",
             "type": "ApiSessionLoginRequestClientTypeEnum",
-            "format": ""
-        },
-        {
-            "name": "is_safe_wallet",
-            "baseName": "is_safe_wallet",
-            "type": "boolean",
             "format": ""
         },
         {
@@ -70,8 +63,8 @@ export class ApiSessionLoginRequest {
             "format": ""
         },
         {
-            "name": "version",
-            "baseName": "version",
+            "name": "signature_version",
+            "baseName": "signature_version",
             "type": "number",
             "format": ""
         }    ];
@@ -93,4 +86,3 @@ export enum ApiSessionLoginRequestWalletKindHintEnum {
     Contract = 'contract',
     Unknown = 'unknown'
 }
-

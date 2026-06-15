@@ -14014,20 +14014,18 @@ components:
           nullable: true
     ApiSessionLoginRequest:
       type: object
+      additionalProperties: false
       required:
         - client_type
         - client_address
         - client_signature
         - server_signature
-        - is_safe_wallet
       properties:
         client_type:
           type: string
           enum:
             - web
             - native
-        is_safe_wallet:
-          type: boolean
         client_address:
           type: string
         client_signature:
@@ -14049,8 +14047,12 @@ components:
             - eoa
             - contract
             - unknown
-        version:
+        signature_version:
           type: integer
+          enum:
+            - 1
+            - 2
+          default: 2
     ApiSessionLogoutNativeRequest:
       type: object
       required:
