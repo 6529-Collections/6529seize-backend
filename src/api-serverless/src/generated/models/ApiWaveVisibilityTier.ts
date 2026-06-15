@@ -12,8 +12,9 @@
 
 import { HttpFile } from '../http/http';
 
-export enum ApiRateMatter {
-    Rep = 'REP',
-    Cic = 'CIC',
-    WaveRep = 'WAVE_REP'
+export enum ApiWaveVisibilityTier {
+    TrustedVisible = 'TRUSTED_VISIBLE',
+    ExplorationNeutral = 'EXPLORATION_NEUTRAL',
+    Demoted = 'DEMOTED',
+    Suppressed = 'SUPPRESSED'
 }

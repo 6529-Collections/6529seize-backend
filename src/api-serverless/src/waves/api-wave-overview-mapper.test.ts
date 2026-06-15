@@ -183,7 +183,8 @@ describe('ApiWaveOverviewMapper', () => {
       links_disabled: false,
       description_drop: {},
       total_drops_count: 3,
-      is_private: false
+      is_private: false,
+      ...expectedNeutralWaveRepAndScore()
     });
     expect(result['wave-1']).not.toHaveProperty('pfp');
     expect(result['wave-1']).not.toHaveProperty('context_profile_context');
@@ -441,7 +442,8 @@ describe('ApiWaveOverviewMapper', () => {
         unread_drops: 7,
         first_unread_drop_serial_no: 19,
         muted: true
-      }
+      },
+      ...expectedNeutralWaveRepAndScore()
     });
     expect(
       deps.directMessageWaveDisplayService.resolveWaveDisplayByWaveIdForContext
@@ -488,3 +490,78 @@ describe('ApiWaveOverviewMapper', () => {
     });
   });
 });
+
+function expectedNeutralWaveRepAndScore() {
+  return {
+    wave_rep: {
+      total_rep: 0,
+      positive_rep: 0,
+      negative_rep: 0,
+      contributor_count: 0,
+      positive_contributor_count: 0,
+      negative_contributor_count: 0,
+      authenticated_user_contribution: null,
+      categories: []
+    },
+    wave_score: {
+      score_version: 'wave-score-v1',
+      visibility_tier: 'EXPLORATION_NEUTRAL',
+      quality_score: 0,
+      hotness_score: 0,
+      rep_sort_score: 50,
+      visibility_score: 0,
+      components: {
+        creator_score: 0,
+        level_weighted_participation_score: 0,
+        trusted_diversity_score: 0,
+        wave_rep_component_score: 50,
+        trusted_subscription_score: 0,
+        recent_trusted_activity_score: 0
+      },
+      penalties: {
+        single_actor_penalty: 0,
+        low_trust_flood_penalty: 0,
+        cross_post_pressure: 0,
+        cross_post_penalty: 0,
+        negative_rep_penalty: 0,
+        safety_multiplier: 1
+      },
+      quality_gate: {
+        threshold: 25,
+        multiplier: 0,
+        gated_hotness_score: 0
+      },
+      formula: {
+        max_level_raw_for_score: 25000000,
+        max_wave_rep_for_score: 200000000,
+        trusted_level_raw: 1000,
+        low_trust_level_raw: 25,
+        recent_activity_window_ms: 604800000,
+        recent_activity_half_life_ms: 172800000,
+        participation_saturation_scale: 600,
+        trusted_diversity_saturation_scale: 8,
+        trusted_subscription_saturation_scale: 30,
+        recent_activity_saturation_scale: 250,
+        trusted_visible_min_visibility_score: 55,
+        exploration_neutral_min_visibility_score: 25,
+        demoted_min_visibility_score: 10,
+        quality_component_weights: {
+          creator_score: 0.2,
+          level_weighted_participation_score: 0.2,
+          trusted_diversity_score: 0.15,
+          trusted_subscription_score: 0.1,
+          wave_rep_component_score: 0.35
+        },
+        hotness_component_weights: {
+          recent_trusted_activity_score: 0.65,
+          quality_score: 0.35
+        },
+        visibility_component_weights: {
+          quality_score: 0.65,
+          gated_hotness_score: 0.35
+        }
+      },
+      calculated_at: 0
+    }
+  };
+}

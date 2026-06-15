@@ -50,7 +50,8 @@ flowchart TD
     MarketStatsLoop ~~~ RateEventProcessingLoop["rateEventProcessingLoop"]
     RateEventProcessingLoop ~~~ WaveDecisionExecutionLoop["waveDecisionExecutionLoop"]
     WaveDecisionExecutionLoop ~~~ WaveLeaderboardSnapshotterLoop["waveLeaderboardSnapshotterLoop"]
-    WaveLeaderboardSnapshotterLoop ~~~ XTdhGrantsReviewerLoop["xTdhGrantsReviewerLoop"]
+    WaveLeaderboardSnapshotterLoop ~~~ WaveScoreRefreshLoop["waveScoreRefreshLoop"]
+    WaveScoreRefreshLoop ~~~ XTdhGrantsReviewerLoop["xTdhGrantsReviewerLoop"]
     XTdhGrantsReviewerLoop ~~~ SubscriptionsDaily["subscriptionsDaily"]
     SubscriptionsDaily ~~~ SubscriptionsTopUpLoop["subscriptionsTopUpLoop"]
     SubscriptionsTopUpLoop ~~~ DiscoverEnsLoop["discoverEnsLoop"]
@@ -130,6 +131,7 @@ flowchart TD
 | `rateEventProcessingLoop` | Process DB-backed rating events. |
 | `waveDecisionExecutionLoop` | Execute wave decisions and enqueue claim builds. |
 | `waveLeaderboardSnapshotterLoop` | Snapshot wave leaderboards. |
+| `waveScoreRefreshLoop` | Refresh materialized wave REP and Wave Score discovery fields. |
 | `xTdhGrantsReviewerLoop` | Review xTDH grants. |
 | `subscriptionsDaily` | Process daily subscription work. |
 | `subscriptionsTopUpLoop` | Process subscription top-ups. |

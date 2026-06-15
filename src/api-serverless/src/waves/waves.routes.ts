@@ -91,6 +91,7 @@ import { ApiWaveParticipationSubmissionStrategyIdentityConf } from '@/api/genera
 import { ApiWaveParticipationSubmissionStrategyType } from '@/api/generated/models/ApiWaveParticipationSubmissionStrategyType';
 import { curationsApiService } from '@/api/curations/curations.api.service';
 import { ApiCurationDropsPage } from '@/api/generated/models/ApiCurationDropsPage';
+import waveRepRoutes from './wave-rep.routes';
 
 const router = asyncRouter();
 
@@ -293,6 +294,8 @@ router.get(
     res.send(waves);
   }
 );
+
+router.use('/:id/rep', waveRepRoutes);
 
 router.get(
   '/:id',

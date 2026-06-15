@@ -175,7 +175,7 @@ from general_stats
       ),
       this.db.oneOrNull<{ total_credit_spent_on_matter: number }>(
         `
-          select sum(rating) as total_credit_spent_on_matter from ${RATINGS_TABLE}
+          select sum(abs(rating)) as total_credit_spent_on_matter from ${RATINGS_TABLE}
           where rater_profile_id = :rater_profile_id
             and matter = :matter
       `,
@@ -197,7 +197,7 @@ from general_stats
   ): Promise<number> {
     return this.db
       .oneOrNull<{ total_tdh_spent: number }>(
-        `select sum(rating) as total_tdh_spent_on_matter from ${RATINGS_TABLE}
+        `select sum(abs(rating)) as total_tdh_spent from ${RATINGS_TABLE}
           where rater_profile_id = :rater_profile_id
             and matter = :matter`,
         { matter, rater_profile_id },
@@ -327,9 +327,9 @@ from general_stats
       `
           with rate_tallies as (select r.rater_profile_id,
                                        r.matter,
-                                       sum(r.rating) as tally
+                                       sum(abs(r.rating)) as tally
                                 from ${RATINGS_TABLE} r
-                                where r.matter in ('REP', 'CIC')
+                                where r.matter in ('REP', 'CIC', 'WAVE_REP')
                                 group by 1, 2)
           select rt.rater_profile_id, rt.matter, rt.tally , i.tdh + i.xtdh as rater_credit
           from rate_tallies rt
@@ -747,6 +747,30 @@ from grouped_rates r
     }
     return this.db
       .execute(sql, sqlParam, { wrappedConnection: ctx.connection })
+      .then((results) => results[0]?.rating ?? 0);
+  }
+
+  async getRatingForMatterTarget(param: {
+    rater_profile_id: string | null;
+    matter_target_id: string;
+    matter: RateMatter;
+    category: string | null;
+  }): Promise<number> {
+    const sqlParam: Record<string, any> = {
+      matter_target_id: param.matter_target_id,
+      matter: param.matter
+    };
+    let sql = `select sum(rating) as rating from ${RATINGS_TABLE} where matter = :matter and matter_target_id = :matter_target_id`;
+    if (param.rater_profile_id) {
+      sqlParam.rater_profile_id = param.rater_profile_id;
+      sql += ` and rater_profile_id = :rater_profile_id`;
+    }
+    if (param.category) {
+      sqlParam.category = param.category;
+      sql += ` and matter_category = :category`;
+    }
+    return this.db
+      .execute(sql, sqlParam)
       .then((results) => results[0]?.rating ?? 0);
   }
 

@@ -64,6 +64,7 @@ import { ApiWaveOutcomeType } from '../generated/models/ApiWaveOutcomeType';
 import { ApiWaveSubscriptionTargetAction } from '../generated/models/ApiWaveSubscriptionTargetAction';
 import { ApiWaveType } from '../generated/models/ApiWaveType';
 import { ApiWavesOverviewType } from '../generated/models/ApiWavesOverviewType';
+import { ApiWaveScoreSort } from '../generated/models/ApiWaveScoreSort';
 import { ApiWavesPinFilter } from '../generated/models/ApiWavesPinFilter';
 import {
   IdentityFetcher,
@@ -1669,6 +1670,17 @@ export class WaveApiService {
           offset,
           direct_message,
           pinned
+        });
+      case ApiWavesOverviewType.ScoredRecentlyDroppedTo:
+        return await this.wavesApiDb.findScoredRecentlyDroppedToWaves({
+          eligibleGroups,
+          only_waves_followed_by_authenticated_user,
+          authenticated_user_id: authenticatedUserId,
+          limit,
+          offset,
+          direct_message,
+          pinned,
+          score_sort: ApiWaveScoreSort.Balanced
         });
       default:
         assertUnreachable(type);

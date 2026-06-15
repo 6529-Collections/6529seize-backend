@@ -179,14 +179,7 @@ export class RatingsService {
           identityUpdates: identityUpdate ? [identityUpdate] : []
         };
       } else {
-        const action =
-          request.matter === RateMatter.REP
-            ? request.authenticationContext.activeProxyActions[
-                ProfileProxyActionType.ALLOCATE_REP
-              ]
-            : request.authenticationContext.activeProxyActions[
-                ProfileProxyActionType.ALLOCATE_CIC
-              ];
+        const action = this.getProxyActionForRatingMatter(request);
         if (!action) {
           throw new ForbiddenException(
             `Proxy is not allowed to give ${request.matter} ratings`
@@ -211,6 +204,23 @@ export class RatingsService {
       }
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->updateRatingInternal`);
+    }
+  }
+
+  private getProxyActionForRatingMatter(request: UpdateRatingViaApiRequest) {
+    switch (request.matter) {
+      case RateMatter.REP:
+        return request.authenticationContext.activeProxyActions[
+          ProfileProxyActionType.ALLOCATE_REP
+        ];
+      case RateMatter.CIC:
+        return request.authenticationContext.activeProxyActions[
+          ProfileProxyActionType.ALLOCATE_CIC
+        ];
+      case RateMatter.WAVE_REP:
+        throw new ForbiddenException(
+          `Proxy is not allowed to give WAVE_REP ratings`
+        );
     }
   }
 
@@ -1202,7 +1212,7 @@ export class RatingsService {
   }): Promise<ApiAvailableRatingCredit> {
     const totalProfileCredits =
       await identitiesDb.getTdhAndXTdhCombinedAndFloored(rater_id);
-    const [repSpent, cicSpent] = await Promise.all([
+    const [repSpent, cicSpent, waveRepSpent] = await Promise.all([
       this.ratingsDb.getRatesSpentOnMatterByProfile({
         profile_id: rater_id,
         matter: RateMatter.REP
@@ -1210,10 +1220,15 @@ export class RatingsService {
       this.ratingsDb.getRatesSpentOnMatterByProfile({
         profile_id: rater_id,
         matter: RateMatter.CIC
+      }),
+      this.ratingsDb.getRatesSpentOnMatterByProfile({
+        profile_id: rater_id,
+        matter: RateMatter.WAVE_REP
       })
     ]);
     let repLeft = totalProfileCredits - repSpent;
     let cicLeft = totalProfileCredits - cicSpent;
+    const waveRepLeft = totalProfileCredits - waveRepSpent;
     if (rater_representative_id && rater_representative_id !== rater_id) {
       const proxies =
         await this.profileProxiesDb.findProfileProxiesByGrantorAndGrantee({
@@ -1251,7 +1266,8 @@ export class RatingsService {
     }
     return {
       rep_credit: repLeft,
-      cic_credit: cicLeft
+      cic_credit: cicLeft,
+      wave_rep_credit: waveRepLeft
     };
   }
 
