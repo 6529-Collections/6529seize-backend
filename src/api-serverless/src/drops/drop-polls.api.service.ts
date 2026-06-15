@@ -51,10 +51,6 @@ type SelectedPollOption = {
   readonly option_string: string;
 };
 
-function isTruthyDatabaseBoolean(value: unknown): boolean {
-  return value === true || value === 1 || value === '1';
-}
-
 export type CreateDropPollRequest = {
   readonly options: string[];
   readonly multichoice: boolean;
@@ -125,6 +121,11 @@ export class DropPollsApiService {
     ) {
       throw new ForbiddenException(
         `Only wave creators and admins can create polls`
+      );
+    }
+    if ((poll.only_droppers_can_respond ?? false) && !wave.chat_enabled) {
+      throw new BadRequestException(
+        `Poll responses can only be restricted to droppers when chat is enabled`
       );
     }
     await this.dropPollsDb.createPoll(
@@ -324,7 +325,13 @@ export class DropPollsApiService {
     readonly voterId: string;
     readonly ctx: RequestContext;
   }): Promise<void> {
-    if (!isTruthyDatabaseBoolean(poll.only_droppers_can_respond)) {
+    if (!poll.only_droppers_can_respond) {
+      return;
+    }
+    if (wave.chat_enabled && wave.chat_group_id === null) {
+      return;
+    }
+    if (wave.created_by === voterId) {
       return;
     }
     const groupIdsUserIsEligibleFor =
@@ -332,11 +339,16 @@ export class DropPollsApiService {
         voterId,
         ctx.timer
       );
-    const userCanChat =
+    const userCanChatInGroup =
       wave.chat_enabled &&
-      (wave.chat_group_id === null ||
-        groupIdsUserIsEligibleFor.includes(wave.chat_group_id));
-    if (!userCanChat) {
+      wave.chat_group_id !== null &&
+      groupIdsUserIsEligibleFor.includes(wave.chat_group_id);
+    const userCanManageWave = isWaveCreatorOrAdmin({
+      authenticatedProfileId: voterId,
+      wave,
+      groupIdsUserIsEligibleFor
+    });
+    if (!userCanChatInGroup && !userCanManageWave) {
       throw new ForbiddenException(`Only wave chat participants can vote`);
     }
   }
