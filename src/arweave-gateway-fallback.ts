@@ -1,74 +1,45 @@
-const ARWEAVE_GATEWAYS: readonly string[] = [
-  'arweave.net',
-  'gateway.arweave.net',
-  'gateway.ar.io',
-  'ar-io.net'
-] as const;
+import {
+  parseDecentralizedMediaRef,
+  toExternalFallbackUrls
+} from '@/decentralized-media/decentralized-media';
 
 function dedupe(list: readonly string[]): string[] {
   return Array.from(new Set(list));
 }
 
-function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
-}
-
-const ARWEAVE_HOSTS_PATTERN = ARWEAVE_GATEWAYS.map(escapeRegex).join('|');
-
 /**
- * Capture:
- *  1) host (without www.)
- *  2) path (starting with /), optional
- *  3) query (starting with ?), optional
- * Ignores hash fragment.
- */
-const ARWEAVE_URL_RE = new RegExp(
-  String.raw`^https?:\/\/(?:www\.)?(${ARWEAVE_HOSTS_PATTERN})(?=(?::\d+)?(?:\/|$|\?|#))(\/[^#?]*)?(\?[^#]*)?`,
-  'i'
-);
-
-function parseArweaveUrl(url: string): { host: string; suffix: string } | null {
-  const match = ARWEAVE_URL_RE.exec(url);
-  if (!match?.[1]) return null;
-
-  const host = match[1].toLowerCase();
-  const path = match[2] ?? '/';
-  const query = match[3] ?? '';
-
-  return { host, suffix: `${path}${query}` };
-}
-
-/**
- * Returns all gateway variants for the given URL (in priority order),
- * preserving full path and query string.
+ * Returns all external Arweave gateway variants for the given URL.
  */
 export function getArweaveFallbackUrls(url: string): string[] {
-  const parsed = parseArweaveUrl(url);
-  if (!parsed) return [];
+  const ref = parseDecentralizedMediaRef(url);
+  if (ref?.protocol !== 'arweave') return [];
 
-  return ARWEAVE_GATEWAYS.map((host) => `https://${host}${parsed.suffix}`);
+  return toExternalFallbackUrls(ref);
 }
 
 /**
- * Returns the “next” gateway URL after the current URL’s host.
- * If current host isn’t in the list, returns the first gateway URL.
- * If current host is the last, returns null.
+ * Returns the next Arweave gateway URL after the current URL.
+ * If the current URL is not itself one of the external fallbacks, returns the
+ * first external fallback.
  */
 export function getArweaveFallbackUrl(url: string): string | null {
-  const parsed = parseArweaveUrl(url);
-  if (!parsed) return null;
+  const urls = getArweaveFallbackUrls(url);
+  if (urls.length < 1) return null;
 
-  const urls = ARWEAVE_GATEWAYS.map(
-    (host) => `https://${host}${parsed.suffix}`
-  );
-  if (urls.length < 2) return null;
+  const currentIndex = urls.indexOf(stripQueryAndHash(url));
+  if (currentIndex < 0) return urls[0] ?? null;
+  if (currentIndex >= urls.length - 1) return null;
 
-  const idx = ARWEAVE_GATEWAYS.indexOf(parsed.host);
+  return urls[currentIndex + 1] ?? null;
+}
 
-  if (idx < 0) return urls[0] ?? null;
-  if (idx >= urls.length - 1) return null;
+function stripQueryAndHash(url: string): string {
+  const queryIndex = url.indexOf('?');
+  const hashIndex = url.indexOf('#');
+  const indexes = [queryIndex, hashIndex].filter((index) => index >= 0);
+  if (indexes.length === 0) return url;
 
-  return urls[idx + 1] ?? null;
+  return url.slice(0, Math.min(...indexes));
 }
 
 function stringifyErr(err: unknown): string {
@@ -76,20 +47,15 @@ function stringifyErr(err: unknown): string {
 }
 
 /**
- * Tries the URL across gateways in order until fetchFn succeeds.
- * If url isn’t a recognised gateway URL, it just tries url once.
+ * Tries the URL first, then external Arweave fallbacks in order.
+ * If url is not a recognized Arweave reference, it just tries url once.
  */
 export async function withArweaveFallback<T>(
   url: string,
   fetchFn: (url: string) => Promise<T>
 ): Promise<T> {
   const urls = getArweaveFallbackUrls(url);
-
-  // If the URL is an Arweave gateway URL, try all gateway variants.
-  // Otherwise, just try the URL as-is.
-  const toTry = urls.length > 0 ? urls : [url];
-
-  // Optional: avoid trying the exact same string twice
+  const toTry = urls.length > 0 ? [url, ...urls] : [url];
   const uniqueToTry = dedupe(toTry);
 
   let lastErr: unknown;
@@ -103,7 +69,9 @@ export async function withArweaveFallback<T>(
 
   const msg =
     uniqueToTry.length > 1
-      ? `Arweave: all ${uniqueToTry.length} gateways failed. Last: ${stringifyErr(lastErr)}`
+      ? `Arweave: all ${uniqueToTry.length} URLs failed. Last: ${stringifyErr(
+          lastErr
+        )}`
       : stringifyErr(lastErr);
 
   throw Object.assign(new Error(msg), { cause: lastErr });
