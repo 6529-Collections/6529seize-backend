@@ -1,31 +1,31 @@
+import { getDecentralizedMediaFetchUrls } from '@/decentralized-media/decentralized-media';
+import { Time } from '@/time';
 import axios, { AxiosResponse } from 'axios';
-import { ipfs } from './ipfs';
+
+const CONTENT_TYPE_PROBE_TIMEOUT_MS = Time.seconds(5).toMillis();
 
 export class MediaChecker {
   public async getContentType(url: string): Promise<string | null> {
-    try {
-      const response: AxiosResponse = await axios.head(
-        ipfs.ifIpfsThenCloudflareElsePreserveOrEmptyIfUndefined(url)
-      );
-      const cType = response.headers['content-type'];
-      if (typeof cType === 'string') {
-        return cType.split('/')[1]?.toLowerCase() ?? null;
-      }
-      return null;
-    } catch (error) {
+    const urls = getDecentralizedMediaFetchUrls(url, {
+      includeExternalFallbacks: true
+    });
+
+    for (const currentUrl of urls) {
       try {
-        const response: AxiosResponse = await axios.head(
-          ipfs.ifIpfsThenIpfsIoElsePreserveOrEmptyIfUndefined(url)
-        );
+        const response: AxiosResponse = await axios.head(currentUrl, {
+          timeout: CONTENT_TYPE_PROBE_TIMEOUT_MS
+        });
         const cType = response.headers['content-type'];
         if (typeof cType === 'string') {
           return cType.split('/')[1]?.toLowerCase() ?? null;
         }
-        return null;
-      } catch (error) {
-        return null;
+        continue;
+      } catch {
+        // Try the next decentralized fallback, if any.
       }
     }
+
+    return null;
   }
 }
 
