@@ -171,65 +171,6 @@ paths:
             type: boolean
             default: false
           description: If true, the nonce will be shorter and easier to sign.
-        - name: structured_signature
-          in: query
-          required: false
-          schema:
-            type: boolean
-            default: false
-          description: >-
-            If true, the nonce is returned as a structured wallet signature
-            message and domain is required. The message includes an API audience
-            so external clients do not need pre-registered domains for signing.
-        - name: domain
-          in: query
-          required: false
-          schema:
-            type: string
-            minLength: 1
-          description: Required when structured_signature is true.
-        - name: audience
-          in: query
-          required: false
-          schema:
-            type: string
-            minLength: 1
-          description: >-
-            API audience embedded in the structured message. Defaults to the
-            configured 6529 API host.
-        - name: client_origin
-          in: query
-          required: false
-          schema:
-            type: string
-            format: uri
-          description: >-
-            Optional visible client origin embedded in the structured message.
-            Browser requests must match the Origin header when both are present.
-        - name: session_type
-          in: query
-          required: false
-          schema:
-            type: string
-            enum:
-              - first_party_web
-              - external_client
-              - native
-            default: external_client
-          description: >-
-            first_party_web keeps strict first-party domain validation and
-            cookie sessions still require registered credentialed-CORS origins;
-            external_client and native are audience-based for signing.
-        - name: chain_id
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 1
-            default: 1
-          description: Chain id embedded in structured signatures.
-      x-6529-query-schema:
-        $ref: "#/components/schemas/AuthNonceQuery"
       responses:
         "200":
           description: successful operation
@@ -284,6 +225,56 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiRedeemRefreshTokenResponse"
+        "400":
+          description: Invalid request
+  /auth/session-nonce:
+    get:
+      tags:
+        - Authentication
+      summary: Get a structured wallet auth session message to sign
+      description: >
+        V2 wallet session nonce endpoint. Web session challenges derive their
+        domain and client origin from the request Origin header and require a
+        configured first-party origin. Native challenges are selected with
+        client_type=native and never receive first-party web semantics.
+      operationId: getWalletAuthSessionNonce
+      security: []
+      parameters:
+        - name: signer_address
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Your wallet address
+        - name: client_type
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - web
+              - native
+            default: web
+          description: >
+            Web challenges require an allowed Origin header. Native challenges
+            are explicitly requested by native clients.
+        - name: chain_id
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+          description: Chain id embedded in the structured session signature.
+      x-6529-query-schema:
+        $ref: "#/components/schemas/ApiSessionNonceQuery"
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiNonceResponse"
         "400":
           description: Invalid request
   /auth/session-login:
@@ -361,12 +352,12 @@ paths:
           description: successful operation
         "400":
           description: Invalid request
-  /auth/connection-transfer:
+  /auth/connection-share:
     post:
       tags:
         - Authentication
-      summary: Create a one-time wallet connection transfer code
-      operationId: createWalletConnectionTransfer
+      summary: Create a one-time wallet connection share code
+      operationId: createWalletConnectionShare
       security:
         - bearerAuth: []
       requestBody:
@@ -374,36 +365,36 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/ApiCreateConnectionTransferRequest"
+              $ref: "#/components/schemas/ApiCreateConnectionShareRequest"
       responses:
         "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ApiCreateConnectionTransferResponse"
+                $ref: "#/components/schemas/ApiCreateConnectionShareResponse"
         "400":
           description: Invalid request
-  /auth/connection-transfer/redeem:
+  /auth/connection-share/redeem:
     post:
       tags:
         - Authentication
-      summary: Redeem a one-time wallet connection transfer code
-      operationId: redeemWalletConnectionTransfer
+      summary: Redeem a one-time wallet connection share code
+      operationId: redeemWalletConnectionShare
       security: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/ApiRedeemConnectionTransferRequest"
+              $ref: "#/components/schemas/ApiRedeemConnectionShareRequest"
       responses:
         "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ApiRedeemConnectionTransferResponse"
+                $ref: "#/components/schemas/ApiRedeemConnectionShareResponse"
         "400":
           description: Invalid request
   /collected-stats/{identityKey}:
@@ -9745,7 +9736,7 @@ components:
           type: string
         status:
           $ref: "#/components/schemas/ApiAttachmentStatus"
-    ApiCreateConnectionTransferRequest:
+    ApiCreateConnectionShareRequest:
       type: object
       required:
         - target_client_type
@@ -9757,16 +9748,16 @@ components:
         role:
           type: string
           nullable: true
-    ApiCreateConnectionTransferResponse:
+    ApiCreateConnectionShareResponse:
       type: object
       required:
-        - transfer_code
+        - connection_share_code
         - expires_at
         - address
         - target_client_type
         - deep_link_path
       properties:
-        transfer_code:
+        connection_share_code:
           type: string
         expires_at:
           type: string
@@ -13764,19 +13755,19 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ApiRatingWithProfileInfoAndLevel"
-    ApiRedeemConnectionTransferRequest:
+    ApiRedeemConnectionShareRequest:
       type: object
       required:
-        - transfer_code
+        - connection_share_code
         - target_client_type
       properties:
-        transfer_code:
+        connection_share_code:
           type: string
         target_client_type:
           type: string
           enum:
             - native
-    ApiRedeemConnectionTransferResponse:
+    ApiRedeemConnectionShareResponse:
       type: object
       required:
         - address
@@ -14040,8 +14031,8 @@ components:
           type: string
           description: >-
             Server-signed structured challenge token. /auth/session-login only
-            accepts first_party_web challenges for web cookie sessions and native
-            challenges for native refresh-token sessions; external_client
+            accepts first_party_web challenges for web cookie sessions and
+            native challenges for native refresh-token sessions; external_client
             challenges use /auth/login bearer-token auth instead.
         role:
           type: string
@@ -14117,6 +14108,26 @@ components:
         refresh_token_expires_at:
           type: string
           format: date-time
+    ApiSessionNonceQuery:
+      type: object
+      additionalProperties: false
+      required:
+        - signer_address
+      properties:
+        signer_address:
+          type: string
+          description: Your wallet address
+        client_type:
+          type: string
+          enum:
+            - web
+            - native
+          default: web
+        chain_id:
+          type: integer
+          minimum: 1
+          default: 1
+          description: Chain id embedded in the structured session signature.
     ApiSessionRefreshNativeRequest:
       type: object
       required:
@@ -16231,93 +16242,6 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ApiXTdhToken"
-    AuthNonceQuery:
-      oneOf:
-        - $ref: "#/components/schemas/AuthNonceUnstructuredQuery"
-        - $ref: "#/components/schemas/AuthNonceStructuredQuery"
-    AuthNonceStructuredQuery:
-      type: object
-      additionalProperties: false
-      required:
-        - signer_address
-        - structured_signature
-        - domain
-      properties:
-        signer_address:
-          type: string
-          description: Your wallet address
-        short_nonce:
-          type: boolean
-          default: false
-          description: >-
-            If true, the nonce will be shorter and easier to sign. Default is
-            false.
-        structured_signature:
-          type: boolean
-          enum:
-            - true
-          description: >-
-            Returns the nonce as a structured wallet signature message with
-            audience, domain, wallet, expiry, nonce, and action fields.
-        domain:
-          type: string
-          minLength: 1
-          description: Required when structured_signature is true.
-        audience:
-          type: string
-          minLength: 1
-          description: >-
-            API audience embedded in the structured message. Defaults to the
-            configured 6529 API host.
-        client_origin:
-          type: string
-          format: uri
-          description: >-
-            Optional visible client origin embedded in the structured message.
-            Browser requests must match the Origin header when both are present.
-        session_type:
-          type: string
-          enum:
-            - first_party_web
-            - external_client
-            - native
-          default: external_client
-          description: >-
-            first_party_web keeps strict first-party domain validation and
-            cookie sessions still require registered credentialed-CORS origins;
-            external_client and native are audience-based for signing.
-        chain_id:
-          type: integer
-          minimum: 1
-          default: 1
-          description: Chain id embedded in structured signatures.
-    AuthNonceUnstructuredQuery:
-      type: object
-      additionalProperties: false
-      required:
-        - signer_address
-      properties:
-        signer_address:
-          type: string
-          description: Your wallet address
-        short_nonce:
-          type: boolean
-          default: false
-          description: >-
-            If true, the nonce will be shorter and easier to sign. Default is
-            false.
-        structured_signature:
-          type: boolean
-          enum:
-            - false
-          default: false
-        chain_id:
-          type: integer
-          minimum: 1
-          default: 1
-          description: >-
-            Accepted for flat query parity; ignored unless structured_signature
-            is true.
     DistributionNormalized:
       type: object
       required:

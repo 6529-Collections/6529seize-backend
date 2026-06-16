@@ -486,7 +486,7 @@ function isStructuredSignatureAudienceAllowed(audience: string): boolean {
   ]).has(audience);
 }
 
-function isStructuredSignatureDomainAllowed(domain: string): boolean {
+export function isStructuredSignatureDomainAllowed(domain: string): boolean {
   if (isLocalhostSignatureHostAllowed(domain)) {
     return true;
   }

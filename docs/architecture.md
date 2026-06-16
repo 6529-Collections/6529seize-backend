@@ -196,7 +196,16 @@ The API is organized by domain routers under `src/api-serverless/src`. The OpenA
 
 Important API responsibilities:
 
-- Authentication and refresh-token flows.
+- Authentication and refresh-token flows. Legacy wallet auth keeps `/auth/nonce`,
+  `/auth/login`, and `/auth/redeem-refresh-token`; wallet auth session v2 uses
+  separate structured-session endpoints such as `/auth/session-nonce`,
+  `/auth/session-login`, `/auth/session-refresh`, and `/auth/session-logout`.
+  Web session v2 challenges derive their domain and client origin from the
+  request `Origin` header and refresh/logout checks are bound to the stored
+  origin. Native session v2 challenges are explicitly requested with
+  `client_type=native` and do not receive first-party web semantics. The full
+  auth contract is documented in
+  [Wallet Authentication](auth/wallet-auth.md).
 - Public read APIs for NFTs, TDH, waves, drops, profiles, community metrics, subscriptions, and notifications.
 - Public OG metadata inputs for profile, wave, and drop link previews under `/og-metadata`.
 - Authenticated social writes: drops, votes, reactions, curations, subscriptions, groups, proxies, minting claims, and push settings.
@@ -222,6 +231,13 @@ There are two DB access modes:
 - Loop mode uses TypeORM initialization and the shared `SqlExecutor` abstraction. Schema ownership is entities-first: add or update TypeORM entity classes, export them from `src/entities/entities.ts`, and let `dbMigrationsLoop` run entity synchronization. Do not create SQL migrations for schema changes unless explicitly requested; migrations are reserved for one-off data work or views.
 
 The core architectural choice is that MySQL is both the system of record and the internal integration layer. This keeps the system understandable, but it makes table contracts, migrations, backfills, indexes, and worker idempotency especially important.
+
+Wallet auth session v2 state is stored in `wallet_auth_sessions` and one-time
+connection share state is stored in `wallet_connection_shares`. Web
+sessions persist the signed domain and normalized client origin so refresh and
+logout requests can be bound to the same browser origin that created the
+session; native sessions store refresh-token hashes instead of browser-origin
+metadata.
 
 ## Async Processing
 

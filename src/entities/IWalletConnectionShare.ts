@@ -1,15 +1,15 @@
 import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
-import { WALLET_CONNECTION_TRANSFERS_TABLE } from '@/constants';
+import { WALLET_CONNECTION_SHARES_TABLE } from '@/constants';
 import { WalletAuthClientType } from './IWalletAuthSession';
 
-@Entity(WALLET_CONNECTION_TRANSFERS_TABLE)
-export class WalletConnectionTransferEntity {
+@Entity(WALLET_CONNECTION_SHARES_TABLE)
+export class WalletConnectionShareEntity {
   @PrimaryColumn({ type: 'varchar', length: 36, nullable: false })
   readonly id!: string;
 
   @Index({ unique: true })
   @Column({ type: 'char', length: 64, nullable: false })
-  readonly transfer_code_hash!: string;
+  readonly connection_share_code_hash!: string;
 
   @Index()
   @Column({ type: 'varchar', length: 100, nullable: false })

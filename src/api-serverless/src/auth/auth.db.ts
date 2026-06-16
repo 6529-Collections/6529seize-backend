@@ -8,7 +8,7 @@ import { RefreshToken } from '../../../entities/IRefreshToken';
 import {
   REFRESH_TOKENS_TABLE,
   WALLET_AUTH_SESSIONS_TABLE,
-  WALLET_CONNECTION_TRANSFERS_TABLE
+  WALLET_CONNECTION_SHARES_TABLE
 } from '@/constants';
 import { randomBytes } from 'node:crypto';
 import { equalIgnoreCase } from '../../../strings';
@@ -16,7 +16,7 @@ import {
   WalletAuthClientType,
   WalletAuthSessionEntity
 } from '../../../entities/IWalletAuthSession';
-import { WalletConnectionTransferEntity } from '../../../entities/IWalletConnectionTransfer';
+import { WalletConnectionShareEntity } from '../../../entities/IWalletConnectionShare';
 
 const CLIENT_TYPE_WEB: WalletAuthClientType = 'web';
 const CLIENT_TYPE_NATIVE: WalletAuthClientType = 'native';
@@ -37,12 +37,14 @@ type CreateWalletAuthSessionParams = {
   readonly secretHash: string | null;
   readonly refreshTokenHash: string | null;
   readonly userAgentHash: string | null;
+  readonly signatureDomain: string | null;
+  readonly clientOrigin: string | null;
   readonly expiresAt: Date;
 };
 
-type CreateWalletConnectionTransferParams = {
+type CreateWalletConnectionShareParams = {
   readonly id: string;
-  readonly transferCodeHash: string;
+  readonly connectionShareCodeHash: string;
   readonly address: string;
   readonly role: string | null;
   readonly targetClientType: WalletAuthClientType;
@@ -89,8 +91,8 @@ export class AuthDb extends LazyDbAccessCompatibleService {
   ): Promise<WalletAuthSessionEntity> {
     await this.db.execute(
       `insert into ${WALLET_AUTH_SESSIONS_TABLE}
-       (id, address, role, client_type, secret_hash, refresh_token_hash, user_agent_hash, expires_at)
-       values (:id, :address, :role, :clientType, :secretHash, :refreshTokenHash, :userAgentHash, :expiresAt)`,
+       (id, address, role, client_type, secret_hash, refresh_token_hash, user_agent_hash, signature_domain, client_origin, expires_at)
+       values (:id, :address, :role, :clientType, :secretHash, :refreshTokenHash, :userAgentHash, :signatureDomain, :clientOrigin, :expiresAt)`,
       params,
       getDbOptions(connection)
     );
@@ -212,30 +214,30 @@ export class AuthDb extends LazyDbAccessCompatibleService {
     );
   }
 
-  async createWalletConnectionTransfer(
-    params: CreateWalletConnectionTransferParams
-  ): Promise<WalletConnectionTransferEntity> {
+  async createWalletConnectionShare(
+    params: CreateWalletConnectionShareParams
+  ): Promise<WalletConnectionShareEntity> {
     await this.db.execute(
-      `insert into ${WALLET_CONNECTION_TRANSFERS_TABLE}
-       (id, transfer_code_hash, address, role, target_client_type, expires_at)
-       values (:id, :transferCodeHash, :address, :role, :targetClientType, :expiresAt)`,
+      `insert into ${WALLET_CONNECTION_SHARES_TABLE}
+       (id, connection_share_code_hash, address, role, target_client_type, expires_at)
+       values (:id, :connectionShareCodeHash, :address, :role, :targetClientType, :expiresAt)`,
       params
     );
-    return this.getWalletConnectionTransferByIdOrThrow(params.id);
+    return this.getWalletConnectionShareByIdOrThrow(params.id);
   }
 
-  async consumeWalletConnectionTransfer(
+  async consumeWalletConnectionShare(
     params: {
-      readonly transferCodeHash: string;
+      readonly connectionShareCodeHash: string;
       readonly targetClientType: WalletAuthClientType;
       readonly now: Date;
     },
     connection?: AuthDbConnection
-  ): Promise<WalletConnectionTransferEntity | null> {
+  ): Promise<WalletConnectionShareEntity | null> {
     const result = await this.db.execute(
-      `update ${WALLET_CONNECTION_TRANSFERS_TABLE}
+      `update ${WALLET_CONNECTION_SHARES_TABLE}
        set consumed_at = :now
-       where transfer_code_hash = :transferCodeHash
+       where connection_share_code_hash = :connectionShareCodeHash
          and target_client_type = :targetClientType
          and consumed_at is null
          and expires_at > :now`,
@@ -245,29 +247,29 @@ export class AuthDb extends LazyDbAccessCompatibleService {
     if (this.db.getAffectedRows(result) !== 1) {
       return null;
     }
-    return this.db.oneOrNull<WalletConnectionTransferEntity>(
-      `select * from ${WALLET_CONNECTION_TRANSFERS_TABLE}
-       where transfer_code_hash = :transferCodeHash`,
-      { transferCodeHash: params.transferCodeHash },
+    return this.db.oneOrNull<WalletConnectionShareEntity>(
+      `select * from ${WALLET_CONNECTION_SHARES_TABLE}
+       where connection_share_code_hash = :connectionShareCodeHash`,
+      { connectionShareCodeHash: params.connectionShareCodeHash },
       getDbOptions(connection)
     );
   }
 
-  async markWalletConnectionTransferSession(
-    transferId: string,
+  async markWalletConnectionShareSession(
+    shareId: string,
     sessionId: string,
     connection?: AuthDbConnection
   ): Promise<void> {
     const result = await this.db.execute(
-      `update ${WALLET_CONNECTION_TRANSFERS_TABLE}
+      `update ${WALLET_CONNECTION_SHARES_TABLE}
        set consumed_session_id = :sessionId
-       where id = :transferId`,
-      { transferId, sessionId },
+       where id = :shareId`,
+      { shareId, sessionId },
       getDbOptions(connection)
     );
     if (this.db.getAffectedRows(result) !== 1) {
       throw new Error(
-        `Wallet connection transfer ${transferId} not found while marking consumed session`
+        `Wallet connection share ${shareId} not found while marking consumed session`
       );
     }
   }
@@ -287,19 +289,19 @@ export class AuthDb extends LazyDbAccessCompatibleService {
     return session;
   }
 
-  private async getWalletConnectionTransferByIdOrThrow(
+  private async getWalletConnectionShareByIdOrThrow(
     id: string,
     connection?: AuthDbConnection
-  ): Promise<WalletConnectionTransferEntity> {
-    const transfer = await this.db.oneOrNull<WalletConnectionTransferEntity>(
-      `select * from ${WALLET_CONNECTION_TRANSFERS_TABLE} where id = :id`,
+  ): Promise<WalletConnectionShareEntity> {
+    const share = await this.db.oneOrNull<WalletConnectionShareEntity>(
+      `select * from ${WALLET_CONNECTION_SHARES_TABLE} where id = :id`,
       { id },
       getDbOptions(connection)
     );
-    if (!transfer) {
-      throw new Error(`Wallet connection transfer ${id} not found after write`);
+    if (!share) {
+      throw new Error(`Wallet connection share ${id} not found after write`);
     }
-    return transfer;
+    return share;
   }
 }
 

@@ -8,10 +8,10 @@ import { Time } from '@/time';
 import { getJwtExpiry, getJwtSecret } from './auth';
 import { authDb } from './auth.db';
 import {
-  ApiCreateConnectionTransferResponse,
-  ApiCreateConnectionTransferResponseTargetClientTypeEnum
-} from '../generated/models/ApiCreateConnectionTransferResponse';
-import { ApiRedeemConnectionTransferResponse } from '../generated/models/ApiRedeemConnectionTransferResponse';
+  ApiCreateConnectionShareResponse,
+  ApiCreateConnectionShareResponseTargetClientTypeEnum
+} from '../generated/models/ApiCreateConnectionShareResponse';
+import { ApiRedeemConnectionShareResponse } from '../generated/models/ApiRedeemConnectionShareResponse';
 import {
   ApiSessionNativeResponse,
   ApiSessionNativeResponseClientTypeEnum
@@ -24,7 +24,7 @@ import {
 export const WALLET_SESSION_COOKIE_NAME = '6529_session';
 
 const DEFAULT_SESSION_REFRESH_DAYS = 30;
-const DEFAULT_TRANSFER_CODE_TTL_SECONDS = 5 * 60;
+const DEFAULT_CONNECTION_SHARE_CODE_TTL_SECONDS = 5 * 60;
 
 export interface IssuedAccessToken {
   readonly token: string;
@@ -44,11 +44,11 @@ export interface CreatedNativeSession {
   readonly response: SessionV2NativeResponse;
 }
 
-export interface RedeemedConnectionTransfer {
-  readonly response: ApiRedeemConnectionTransferResponse;
+export interface RedeemedConnectionShare {
+  readonly response: ApiRedeemConnectionShareResponse;
 }
 
-export type CreatedConnectionTransfer = ApiCreateConnectionTransferResponse;
+export type CreatedConnectionShare = ApiCreateConnectionShareResponse;
 
 export type ParsedSessionCookie = {
   readonly sessionId: string;
@@ -77,16 +77,8 @@ export function issueAccessToken(
   return { token, expiresAt };
 }
 
-export function isAuthSessionV2Enabled(): boolean {
-  return process.env.AUTH_SESSION_V2_ENABLED === 'true';
-}
-
-export function isAuthTransferCodesEnabled(): boolean {
-  return process.env.AUTH_TRANSFER_CODES_ENABLED === 'true';
-}
-
-export function isLegacyRefreshEnabled(): boolean {
-  return process.env.AUTH_LEGACY_REFRESH_ENABLED !== 'false';
+export function isAuthConnectionSharingEnabled(): boolean {
+  return process.env.AUTH_CONNECTION_SHARING_ENABLED === 'true';
 }
 
 export function isLegacyWsQueryTokenEnabled(): boolean {
@@ -141,11 +133,15 @@ export function clearWalletSessionCookie(): string {
 export async function createWebSession({
   address,
   role,
-  userAgent
+  userAgent,
+  signatureDomain,
+  clientOrigin
 }: {
   readonly address: string;
   readonly role: string | null;
   readonly userAgent: string | null;
+  readonly signatureDomain: string;
+  readonly clientOrigin: string;
 }): Promise<CreatedWebSession> {
   const sessionId = randomUUID();
   const secret = createOpaqueSecret();
@@ -159,6 +155,8 @@ export async function createWebSession({
     secretHash,
     refreshTokenHash: null,
     userAgentHash: userAgent ? hashPublicValue(userAgent) : null,
+    signatureDomain,
+    clientOrigin,
     expiresAt
   });
   const accessToken = issueAccessToken(session.address, session.role);
@@ -186,9 +184,11 @@ export async function createNativeSession({
 }
 
 export async function refreshWebSession({
-  cookie
+  cookie,
+  requestOrigin
 }: {
   readonly cookie: ParsedSessionCookie;
+  readonly requestOrigin: string | null;
 }): Promise<CreatedWebSession | null> {
   if (!cookie) {
     return null;
@@ -200,6 +200,9 @@ export async function refreshWebSession({
     now
   );
   if (!existing) {
+    return null;
+  }
+  if (!isMatchingSessionOrigin(existing.client_origin, requestOrigin)) {
     return null;
   }
   const nextSecret = createOpaqueSecret();
@@ -265,10 +268,12 @@ export async function refreshNativeSession({
 
 export async function logoutWebSession({
   cookie,
-  allSessions
+  allSessions,
+  requestOrigin
 }: {
   readonly cookie: ParsedSessionCookie;
   readonly allSessions: boolean;
+  readonly requestOrigin: string | null;
 }): Promise<string> {
   if (!cookie) {
     return clearWalletSessionCookie();
@@ -279,6 +284,12 @@ export async function logoutWebSession({
     hashSecret(cookie.secret),
     now
   );
+  if (
+    existing &&
+    !isMatchingSessionOrigin(existing.client_origin, requestOrigin)
+  ) {
+    return clearWalletSessionCookie();
+  }
   if (allSessions && existing) {
     await authDb.revokeWalletAuthSessionsForAddress(existing.address, now);
   } else if (existing) {
@@ -312,7 +323,7 @@ export async function logoutNativeSession({
   await authDb.revokeWalletAuthSessionByRefreshHash(refreshTokenHash, now);
 }
 
-export async function createConnectionTransfer({
+export async function createConnectionShare({
   address,
   role,
   targetClientType
@@ -320,68 +331,68 @@ export async function createConnectionTransfer({
   readonly address: string;
   readonly role: string | null;
   readonly targetClientType: WalletAuthClientType;
-}): Promise<CreatedConnectionTransfer> {
-  assertNativeConnectionTransferTarget(targetClientType);
-  const transferCode = createOpaqueSecret();
-  const expiresAt = getTransferExpiresAt();
-  const transfer = await authDb.createWalletConnectionTransfer({
+}): Promise<CreatedConnectionShare> {
+  assertNativeConnectionShareTarget(targetClientType);
+  const connectionShareCode = createOpaqueSecret();
+  const expiresAt = getConnectionShareExpiresAt();
+  const share = await authDb.createWalletConnectionShare({
     id: randomUUID(),
-    transferCodeHash: hashSecret(transferCode),
+    connectionShareCodeHash: hashSecret(connectionShareCode),
     address: address.toLowerCase(),
     role,
     targetClientType,
     expiresAt
   });
   const queryParams = new URLSearchParams();
-  queryParams.set('transfer_code', transferCode);
-  queryParams.set('address', transfer.address);
-  if (transfer.role) {
-    queryParams.set('role', transfer.role);
+  queryParams.set('connection_share_code', connectionShareCode);
+  queryParams.set('address', share.address);
+  if (share.role) {
+    queryParams.set('role', share.role);
   }
   return {
-    transfer_code: transferCode,
-    expires_at: toDate(transfer.expires_at),
-    address: transfer.address,
-    role: transfer.role,
+    connection_share_code: connectionShareCode,
+    expires_at: toDate(share.expires_at),
+    address: share.address,
+    role: share.role,
     target_client_type:
-      ApiCreateConnectionTransferResponseTargetClientTypeEnum.Native,
+      ApiCreateConnectionShareResponseTargetClientTypeEnum.Native,
     deep_link_path: `/accept-connection-sharing?${queryParams.toString()}`
   };
 }
 
-export async function redeemConnectionTransfer({
-  transferCode,
+export async function redeemConnectionShare({
+  connectionShareCode,
   targetClientType,
   userAgent
 }: {
-  readonly transferCode: string;
+  readonly connectionShareCode: string;
   readonly targetClientType: WalletAuthClientType;
   readonly userAgent: string | null;
-}): Promise<RedeemedConnectionTransfer | null> {
-  assertNativeConnectionTransferTarget(targetClientType);
+}): Promise<RedeemedConnectionShare | null> {
+  assertNativeConnectionShareTarget(targetClientType);
   const session = await authDb.executeNativeQueriesInTransaction(
     async (connection) => {
-      const transfer = await authDb.consumeWalletConnectionTransfer(
+      const share = await authDb.consumeWalletConnectionShare(
         {
-          transferCodeHash: hashSecret(transferCode),
+          connectionShareCodeHash: hashSecret(connectionShareCode),
           targetClientType,
           now: new Date()
         },
         connection
       );
-      if (!transfer) {
+      if (!share) {
         return null;
       }
       const createdSession = await createNativeSessionRecord(
         {
-          address: transfer.address,
-          role: transfer.role,
+          address: share.address,
+          role: share.role,
           userAgent
         },
         connection
       );
-      await authDb.markWalletConnectionTransferSession(
-        transfer.id,
+      await authDb.markWalletConnectionShareSession(
+        share.id,
         createdSession.sessionId,
         connection
       );
@@ -403,12 +414,12 @@ export async function redeemConnectionTransfer({
   };
 }
 
-function assertNativeConnectionTransferTarget(
+function assertNativeConnectionShareTarget(
   targetClientType: WalletAuthClientType
 ): void {
   if (targetClientType !== 'native') {
     throw new BadRequestException(
-      'Connection transfer codes currently support native clients only'
+      'Connection share codes currently support native clients only'
     );
   }
 }
@@ -451,6 +462,8 @@ async function createNativeSessionRecord(
       secretHash: null,
       refreshTokenHash: hashSecret(nativeRefreshToken),
       userAgentHash: userAgent ? hashPublicValue(userAgent) : null,
+      signatureDomain: null,
+      clientOrigin: null,
       expiresAt
     },
     connection
@@ -491,6 +504,13 @@ function serializeSessionCookie(
   ].join('; ');
 }
 
+function isMatchingSessionOrigin(
+  storedOrigin: string | null,
+  requestOrigin: string | null
+): boolean {
+  return !!storedOrigin && !!requestOrigin && storedOrigin === requestOrigin;
+}
+
 function createOpaqueSecret(bytes = 32): string {
   return randomBytes(bytes).toString('hex');
 }
@@ -518,10 +538,10 @@ function getSessionRefreshExpiresAt(): Date {
   return new Date(Date.now() + Time.days(days).toMillis());
 }
 
-function getTransferExpiresAt(): Date {
+function getConnectionShareExpiresAt(): Date {
   const seconds =
-    env.getIntOrNull('AUTH_TRANSFER_CODE_TTL_SECONDS') ??
-    DEFAULT_TRANSFER_CODE_TTL_SECONDS;
+    env.getIntOrNull('AUTH_CONNECTION_SHARE_CODE_TTL_SECONDS') ??
+    DEFAULT_CONNECTION_SHARE_CODE_TTL_SECONDS;
   return new Date(Date.now() + Time.seconds(seconds).toMillis());
 }
 

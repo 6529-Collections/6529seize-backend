@@ -12,31 +12,19 @@
 
 import { HttpFile } from '../http/http';
 
-export class ApiCreateConnectionTransferResponse {
-    'transfer_code': string;
-    'expires_at': Date;
+export class ApiRedeemConnectionShareResponse {
     'address': string;
     'role'?: string | null;
-    'target_client_type': ApiCreateConnectionTransferResponseTargetClientTypeEnum;
-    'deep_link_path': string;
+    'access_token': string;
+    'access_token_expires_at': Date;
+    'native_refresh_token': string;
+    'refresh_token_expires_at': Date;
 
     static readonly discriminator: string | undefined = undefined;
 
     static readonly mapping: {[index: string]: string} | undefined = undefined;
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
-        {
-            "name": "transfer_code",
-            "baseName": "transfer_code",
-            "type": "string",
-            "format": ""
-        },
-        {
-            "name": "expires_at",
-            "baseName": "expires_at",
-            "type": "Date",
-            "format": "date-time"
-        },
         {
             "name": "address",
             "baseName": "address",
@@ -50,27 +38,34 @@ export class ApiCreateConnectionTransferResponse {
             "format": ""
         },
         {
-            "name": "target_client_type",
-            "baseName": "target_client_type",
-            "type": "ApiCreateConnectionTransferResponseTargetClientTypeEnum",
+            "name": "access_token",
+            "baseName": "access_token",
+            "type": "string",
             "format": ""
         },
         {
-            "name": "deep_link_path",
-            "baseName": "deep_link_path",
+            "name": "access_token_expires_at",
+            "baseName": "access_token_expires_at",
+            "type": "Date",
+            "format": "date-time"
+        },
+        {
+            "name": "native_refresh_token",
+            "baseName": "native_refresh_token",
             "type": "string",
             "format": ""
+        },
+        {
+            "name": "refresh_token_expires_at",
+            "baseName": "refresh_token_expires_at",
+            "type": "Date",
+            "format": "date-time"
         }    ];
 
     static getAttributeTypeMap() {
-        return ApiCreateConnectionTransferResponse.attributeTypeMap;
+        return ApiRedeemConnectionShareResponse.attributeTypeMap;
     }
 
     public constructor() {
     }
 }
-
-export enum ApiCreateConnectionTransferResponseTargetClientTypeEnum {
-    Native = 'native'
-}
-

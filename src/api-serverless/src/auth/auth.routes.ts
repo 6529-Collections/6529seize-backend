@@ -20,10 +20,10 @@ import { ApiLoginRequest } from '../generated/models/ApiLoginRequest';
 import { profileProxyApiService } from '../proxies/proxy.api.service';
 import { ApiRedeemRefreshTokenRequest } from '../generated/models/ApiRedeemRefreshTokenRequest';
 import { ApiRedeemRefreshTokenResponse } from '../generated/models/ApiRedeemRefreshTokenResponse';
-import { ApiCreateConnectionTransferRequest } from '../generated/models/ApiCreateConnectionTransferRequest';
-import { ApiCreateConnectionTransferResponse } from '../generated/models/ApiCreateConnectionTransferResponse';
-import { ApiRedeemConnectionTransferRequest } from '../generated/models/ApiRedeemConnectionTransferRequest';
-import { ApiRedeemConnectionTransferResponse } from '../generated/models/ApiRedeemConnectionTransferResponse';
+import { ApiCreateConnectionShareRequest } from '../generated/models/ApiCreateConnectionShareRequest';
+import { ApiCreateConnectionShareResponse } from '../generated/models/ApiCreateConnectionShareResponse';
+import { ApiRedeemConnectionShareRequest } from '../generated/models/ApiRedeemConnectionShareRequest';
+import { ApiRedeemConnectionShareResponse } from '../generated/models/ApiRedeemConnectionShareResponse';
 import { ApiSessionLoginRequest } from '../generated/models/ApiSessionLoginRequest';
 import { ApiSessionLogoutNativeRequest } from '../generated/models/ApiSessionLogoutNativeRequest';
 import { ApiSessionLogoutWebRequest } from '../generated/models/ApiSessionLogoutWebRequest';
@@ -37,17 +37,15 @@ import { Timer } from '../../../time';
 import { authDb } from './auth.db';
 import {
   clearWalletSessionCookie,
-  createConnectionTransfer,
+  createConnectionShare,
   createNativeSession,
   createWebSession,
-  isAuthSessionV2Enabled,
-  isAuthTransferCodesEnabled,
-  isLegacyRefreshEnabled,
+  isAuthConnectionSharingEnabled,
   issueAccessToken,
   logoutNativeSession,
   logoutWebSession,
   parseWalletSessionCookieHeader,
-  redeemConnectionTransfer,
+  redeemConnectionShare,
   refreshNativeSession,
   refreshWebSession
 } from './auth-session-v2';
@@ -56,24 +54,34 @@ import {
   ETHEREUM_MAINNET_CHAIN_ID,
   getDefaultStructuredWalletSignatureAudience,
   isStructuredSignaturesRequired,
+  isStructuredSignatureDomainAllowed,
   isStructuredWalletSignatureMessage,
   parseStructuredWalletSignatureMessage,
   verifyStructuredWalletSignature,
   verifyWalletMessageSignature
 } from '../wallet-signatures/structured-wallet-signatures';
-import type { StructuredWalletSignatureSessionType } from '../wallet-signatures/structured-wallet-signatures';
+import type {
+  ParsedStructuredWalletSignatureMessage,
+  StructuredWalletSignatureSessionType
+} from '../wallet-signatures/structured-wallet-signatures';
 
 const router = asyncRouter();
 
 interface NonceQueryRequest {
   signer_address: string;
   short_nonce: boolean;
-  structured_signature: boolean;
-  domain?: string;
-  audience?: string;
-  client_origin?: string;
-  session_type?: StructuredWalletSignatureSessionType;
+}
+
+interface SessionNonceQueryRequest {
+  signer_address: string;
+  client_type: 'web' | 'native';
   chain_id: number;
+}
+
+interface ResolvedSessionNonceContext {
+  readonly domain: string;
+  readonly clientOrigin: string | null;
+  readonly sessionType: StructuredWalletSignatureSessionType;
 }
 
 router.get(
@@ -87,41 +95,15 @@ router.get(
       NonceQueryRequestSchema
     );
     const shortNonce = nonceRequest.short_nonce;
-    const structuredSignature = nonceRequest.structured_signature;
     const signerAddress = nonceRequest.signer_address.toLowerCase();
     if (!signerAddress || !ethers.isAddress(signerAddress)) {
       throw new UnauthorisedException(
         `Invalid signer address ${signerAddress}`
       );
     }
-    if (
-      structuredSignature &&
-      (!nonceRequest.domain || nonceRequest.domain.trim().length === 0)
-    ) {
-      throw new BadRequestException(`Signature domain is required`);
-    }
-    const clientOrigin = nonceRequest.client_origin ?? getRequestOrigin(req);
-    if (structuredSignature) {
-      assertClientOriginMatchesRequest(req, clientOrigin);
-    }
-    const nonce = structuredSignature
-      ? buildStructuredWalletSignatureMessage({
-          kind: 'authentication',
-          audience:
-            nonceRequest.audience ??
-            getDefaultStructuredWalletSignatureAudience(),
-          domain: nonceRequest.domain ?? '',
-          clientOrigin,
-          sessionType: nonceRequest.session_type ?? 'external_client',
-          wallet: signerAddress,
-          chainId: nonceRequest.chain_id,
-          nonce: randomUUID(),
-          action: 'login',
-          purpose: 'Sign this message to authenticate with 6529.'
-        })
-      : shortNonce
-        ? randomUUID()
-        : `
+    const nonce = shortNonce
+      ? randomUUID()
+      : `
 Are you ready to Seize The Memes of Production?
 
 Please sign to confirm ownership of this address to allow use of the social features of 6529.io.
@@ -135,6 +117,43 @@ ${signerAddress}
 
 Nonce (Unique Identifier)
 ${randomUUID()}`;
+    const serverSignature = jwt.sign(nonce, getJwtSecret());
+    res.status(200).send({
+      nonce,
+      server_signature: serverSignature
+    });
+  }
+);
+
+router.get(
+  '/session-nonce',
+  function (
+    req: Request<any, any, any, SessionNonceQueryRequest, any>,
+    res: Response<ApiResponse<ApiNonceResponse>>
+  ) {
+    const nonceRequest = getValidatedByJoiOrThrow(
+      req.query,
+      SessionNonceQueryRequestSchema
+    );
+    const signerAddress = nonceRequest.signer_address.toLowerCase();
+    if (!signerAddress || !ethers.isAddress(signerAddress)) {
+      throw new UnauthorisedException(
+        `Invalid signer address ${signerAddress}`
+      );
+    }
+    const nonceContext = resolveSessionNonceContext(req, nonceRequest);
+    const nonce = buildStructuredWalletSignatureMessage({
+      kind: 'authentication',
+      audience: getDefaultStructuredWalletSignatureAudience(),
+      domain: nonceContext.domain,
+      clientOrigin: nonceContext.clientOrigin,
+      sessionType: nonceContext.sessionType,
+      wallet: signerAddress,
+      chainId: nonceRequest.chain_id,
+      nonce: randomUUID(),
+      action: 'login',
+      purpose: 'Sign this message to authenticate with 6529.'
+    });
     const serverSignature = jwt.sign(nonce, getJwtSecret());
     res.status(200).send({
       nonce,
@@ -184,7 +203,6 @@ router.post(
     req: Request<any, any, ApiSessionLoginRequest, any, any>,
     res: Response<ApiResponse<CreateWalletAuthSession201Response>>
   ) {
-    assertSessionV2Enabled();
     const timer = Timer.getFromRequest(req);
     const loginRequest = getValidatedByJoiOrThrow(
       req.body,
@@ -212,11 +230,19 @@ router.post(
         res.status(201).send(created.response);
         return;
       }
-      assertSessionLoginSignatureType(nonce, 'web');
+      const parsedMessage = assertSessionLoginSignatureType(nonce, 'web');
+      if (!parsedMessage.clientOrigin) {
+        throw new BadRequestException(
+          'Wallet auth web sessions require a client origin'
+        );
+      }
+      assertSessionOriginMatchesRequest(req, parsedMessage.clientOrigin);
       const created = await createWebSession({
         address: signingAddress,
         role: chosenRole,
-        userAgent: getUserAgent(req)
+        userAgent: getUserAgent(req),
+        signatureDomain: parsedMessage.domain,
+        clientOrigin: parsedMessage.clientOrigin
       });
       res.setHeader('Set-Cookie', created.setCookie);
       res.status(201).send(created.response);
@@ -238,7 +264,6 @@ router.post(
     >,
     res: Response<ApiResponse<CreateWalletAuthSession201Response>>
   ) {
-    assertSessionV2Enabled();
     const body = req.body ?? {};
     const clientType = getSessionClientType(body);
     if (clientType === 'native') {
@@ -261,7 +286,10 @@ router.post(
       SessionRefreshWebRequestSchema
     );
     const cookie = parseWalletSessionCookieHeader(req.headers.cookie);
-    const refreshed = await refreshWebSession({ cookie });
+    const refreshed = await refreshWebSession({
+      cookie,
+      requestOrigin: getNormalizedRequestOrigin(req)
+    });
     if (!refreshed) {
       res.setHeader('Set-Cookie', clearWalletSessionCookie());
       throw new UnauthorisedException('Invalid session');
@@ -283,7 +311,6 @@ router.post(
     >,
     res: Response<void>
   ) {
-    assertSessionV2Enabled();
     const body = req.body ?? {};
     const clientType = getSessionClientType(body);
     if (clientType === 'native') {
@@ -305,7 +332,8 @@ router.post(
     );
     const setCookie = await logoutWebSession({
       cookie: parseWalletSessionCookieHeader(req.headers.cookie),
-      allSessions: logoutRequest.all_sessions ?? false
+      allSessions: logoutRequest.all_sessions ?? false,
+      requestOrigin: getNormalizedRequestOrigin(req)
     });
     res.setHeader('Set-Cookie', setCookie);
     res.status(204).send();
@@ -313,56 +341,54 @@ router.post(
 );
 
 router.post(
-  '/connection-transfer',
+  '/connection-share',
   needsAuthenticatedUser(),
   async function (
-    req: Request<any, any, ApiCreateConnectionTransferRequest, any, any>,
-    res: Response<ApiResponse<ApiCreateConnectionTransferResponse>>
+    req: Request<any, any, ApiCreateConnectionShareRequest, any, any>,
+    res: Response<ApiResponse<ApiCreateConnectionShareResponse>>
   ) {
-    assertSessionV2Enabled();
-    assertTransferCodesEnabled();
-    const transferRequest = getValidatedByJoiOrThrow(
+    assertConnectionSharingEnabled();
+    const shareRequest = getValidatedByJoiOrThrow(
       req.body,
-      CreateConnectionTransferRequestSchema
+      CreateConnectionShareRequestSchema
     );
     const authenticatedWallet = getAuthenticatedWalletOrNull(req);
     if (!authenticatedWallet) {
       throw new UnauthorisedException('Authentication required');
     }
     const authRole = ((req.user as any)?.role ?? null) as string | null;
-    if (transferRequest.role && transferRequest.role !== authRole) {
+    if (shareRequest.role && shareRequest.role !== authRole) {
       throw new BadRequestException(
-        'Transfer role must match authenticated session role'
+        'Share role must match authenticated session role'
       );
     }
-    const created = await createConnectionTransfer({
+    const created = await createConnectionShare({
       address: authenticatedWallet,
       role: authRole,
-      targetClientType: transferRequest.target_client_type
+      targetClientType: shareRequest.target_client_type
     });
     res.status(201).send(created);
   }
 );
 
 router.post(
-  '/connection-transfer/redeem',
+  '/connection-share/redeem',
   async function (
-    req: Request<any, any, ApiRedeemConnectionTransferRequest, any, any>,
-    res: Response<ApiResponse<ApiRedeemConnectionTransferResponse>>
+    req: Request<any, any, ApiRedeemConnectionShareRequest, any, any>,
+    res: Response<ApiResponse<ApiRedeemConnectionShareResponse>>
   ) {
-    assertSessionV2Enabled();
-    assertTransferCodesEnabled();
+    assertConnectionSharingEnabled();
     const redeemRequest = getValidatedByJoiOrThrow(
       req.body,
-      RedeemConnectionTransferRequestSchema
+      RedeemConnectionShareRequestSchema
     );
-    const redeemed = await redeemConnectionTransfer({
-      transferCode: redeemRequest.transfer_code,
+    const redeemed = await redeemConnectionShare({
+      connectionShareCode: redeemRequest.connection_share_code,
       targetClientType: redeemRequest.target_client_type,
       userAgent: getUserAgent(req)
     });
     if (!redeemed) {
-      throw new UnauthorisedException('Invalid transfer code');
+      throw new UnauthorisedException('Invalid connection share code');
     }
     res.status(201).send(redeemed.response);
   }
@@ -374,11 +400,9 @@ router.post(
     req: Request<any, any, ApiRedeemRefreshTokenRequest, any, any>,
     res: Response<ApiResponse<ApiRedeemRefreshTokenResponse>>
   ) {
-    if (!isLegacyRefreshEnabled()) {
-      throw new BadRequestException('Legacy refresh token auth is disabled');
-    }
     const tokenAddress = req.body.address?.toLowerCase();
     const refreshToken = req.body.token;
+    const role = req.body.role ?? null;
     if (!refreshToken) {
       throw new BadRequestException('Refresh token is required');
     }
@@ -389,7 +413,7 @@ router.post(
     if (!redeemedAddress) {
       throw new BadRequestException('Invalid refresh token');
     }
-    const accessToken = issueAccessToken(redeemedAddress).token;
+    const accessToken = issueAccessToken(redeemedAddress, role).token;
     res.status(201).send({
       address: redeemedAddress,
       token: accessToken
@@ -397,15 +421,9 @@ router.post(
   }
 );
 
-function assertSessionV2Enabled(): void {
-  if (!isAuthSessionV2Enabled()) {
-    throw new BadRequestException('Wallet auth session v2 is disabled');
-  }
-}
-
-function assertTransferCodesEnabled(): void {
-  if (!isAuthTransferCodesEnabled()) {
-    throw new BadRequestException('Wallet auth transfer codes are disabled');
+function assertConnectionSharingEnabled(): void {
+  if (!isAuthConnectionSharingEnabled()) {
+    throw new BadRequestException('Wallet auth connection sharing is disabled');
   }
 }
 
@@ -519,7 +537,7 @@ async function verifyClientSignature(
 function assertSessionLoginSignatureType(
   nonce: string,
   clientType: 'web' | 'native'
-): void {
+): ParsedStructuredWalletSignatureMessage {
   const expectedSessionType =
     clientType === 'web' ? 'first_party_web' : 'native';
   if (!isStructuredWalletSignatureMessage(nonce)) {
@@ -533,6 +551,7 @@ function assertSessionLoginSignatureType(
       `Wallet auth ${clientType} sessions require a ${expectedSessionType} structured signature`
     );
   }
+  return parsedMessage;
 }
 
 function getUserAgent(req: Request<any, any, any, any, any>): string | null {
@@ -559,6 +578,12 @@ function getRequestOrigin(
   return null;
 }
 
+function getNormalizedRequestOrigin(
+  req: Request<any, any, any, any, any>
+): string | null {
+  return normalizeOrigin(getRequestOrigin(req));
+}
+
 function normalizeOrigin(value: string | null | undefined): string | null {
   if (!value) {
     return null;
@@ -571,24 +596,60 @@ function normalizeOrigin(value: string | null | undefined): string | null {
   }
 }
 
-function assertClientOriginMatchesRequest(
+function normalizeDomain(value: string | null | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+  try {
+    return new URL(value.includes('://') ? value : `https://${value}`).host;
+  } catch {
+    return null;
+  }
+}
+
+function resolveSessionNonceContext(
   req: Request<any, any, any, any, any>,
-  clientOrigin: string | null | undefined
-): void {
-  const requestOrigin = normalizeOrigin(getRequestOrigin(req));
-  const requestedClientOrigin = normalizeOrigin(clientOrigin);
-  if (clientOrigin && !requestedClientOrigin) {
+  nonceRequest: SessionNonceQueryRequest
+): ResolvedSessionNonceContext {
+  if (nonceRequest.client_type === 'native') {
+    return {
+      domain: 'native',
+      clientOrigin: null,
+      sessionType: 'native'
+    };
+  }
+  const requestOrigin = getNormalizedRequestOrigin(req);
+  if (!requestOrigin) {
     throw new BadRequestException(
-      'Signature client_origin must be a valid origin'
+      'Wallet auth web sessions require an Origin header'
     );
   }
-  if (
-    requestOrigin &&
-    requestedClientOrigin &&
-    requestOrigin !== requestedClientOrigin
-  ) {
+  const domain = normalizeDomain(requestOrigin);
+  if (!domain) {
     throw new BadRequestException(
-      'Signature client_origin must match the request Origin header'
+      'Wallet auth web sessions require a valid Origin header'
+    );
+  }
+  if (!isStructuredSignatureDomainAllowed(domain)) {
+    throw new BadRequestException(
+      'Wallet auth web sessions require a first-party Origin'
+    );
+  }
+  return {
+    domain,
+    clientOrigin: requestOrigin,
+    sessionType: 'first_party_web'
+  };
+}
+
+function assertSessionOriginMatchesRequest(
+  req: Request<any, any, any, any, any>,
+  signedClientOrigin: string
+): void {
+  const requestOrigin = getNormalizedRequestOrigin(req);
+  if (!requestOrigin || requestOrigin !== signedClientOrigin) {
+    throw new BadRequestException(
+      'Wallet auth web session Origin does not match the signed challenge'
     );
   }
 }
@@ -609,18 +670,13 @@ const NonceQueryRequestSchema: Joi.ObjectSchema<NonceQueryRequest> =
       .truthy('true')
       .falsy('false')
       .optional()
-      .default(false),
-    structured_signature: Joi.boolean()
-      .truthy('true')
-      .falsy('false')
-      .optional()
-      .default(false),
-    domain: Joi.string().trim().min(1).optional(),
-    audience: Joi.string().trim().min(1).optional(),
-    client_origin: Joi.string().trim().min(1).optional(),
-    session_type: Joi.string()
-      .valid('first_party_web', 'external_client', 'native')
-      .optional(),
+      .default(false)
+  }).unknown(false);
+
+const SessionNonceQueryRequestSchema: Joi.ObjectSchema<SessionNonceQueryRequest> =
+  Joi.object<SessionNonceQueryRequest>({
+    signer_address: Joi.string().required(),
+    client_type: Joi.string().valid('web', 'native').optional().default('web'),
     chain_id: Joi.number().integer().min(1).optional().default(1)
   }).unknown(false);
 
@@ -666,15 +722,15 @@ const SessionLogoutNativeRequestSchema: Joi.ObjectSchema<ApiSessionLogoutNativeR
     all_sessions: Joi.boolean().optional().default(false)
   });
 
-const CreateConnectionTransferRequestSchema: Joi.ObjectSchema<ApiCreateConnectionTransferRequest> =
-  Joi.object<ApiCreateConnectionTransferRequest>({
+const CreateConnectionShareRequestSchema: Joi.ObjectSchema<ApiCreateConnectionShareRequest> =
+  Joi.object<ApiCreateConnectionShareRequest>({
     target_client_type: Joi.string().valid('native').required(),
     role: Joi.string().optional().allow(null)
   });
 
-const RedeemConnectionTransferRequestSchema: Joi.ObjectSchema<ApiRedeemConnectionTransferRequest> =
-  Joi.object<ApiRedeemConnectionTransferRequest>({
-    transfer_code: Joi.string().hex().length(64).required(),
+const RedeemConnectionShareRequestSchema: Joi.ObjectSchema<ApiRedeemConnectionShareRequest> =
+  Joi.object<ApiRedeemConnectionShareRequest>({
+    connection_share_code: Joi.string().hex().length(64).required(),
     target_client_type: Joi.string().valid('native').required()
   });
 

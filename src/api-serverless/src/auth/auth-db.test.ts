@@ -26,6 +26,8 @@ describe('AuthDb', () => {
       secret_hash: 'secret-hash',
       refresh_token_hash: null,
       user_agent_hash: null,
+      signature_domain: '6529.io',
+      client_origin: 'https://6529.io',
       created_at: new Date(),
       last_used_at: new Date(),
       expires_at: new Date(),
@@ -41,6 +43,8 @@ describe('AuthDb', () => {
       secretHash: 'secret-hash',
       refreshTokenHash: null,
       userAgentHash: null,
+      signatureDomain: '6529.io',
+      clientOrigin: 'https://6529.io',
       expiresAt: new Date()
     });
 
@@ -62,6 +66,8 @@ describe('AuthDb', () => {
       secret_hash: null,
       refresh_token_hash: 'refresh-hash',
       user_agent_hash: null,
+      signature_domain: null,
+      client_origin: null,
       created_at: new Date(),
       last_used_at: new Date(),
       expires_at: new Date(),
@@ -77,6 +83,8 @@ describe('AuthDb', () => {
         secretHash: null,
         refreshTokenHash: 'refresh-hash',
         userAgentHash: null,
+        signatureDomain: null,
+        clientOrigin: null,
         expiresAt: new Date()
       },
       connection
@@ -89,11 +97,11 @@ describe('AuthDb', () => {
     );
   });
 
-  it('reads newly written connection transfers from the write pool', async () => {
+  it('reads newly written connection shares from the write pool', async () => {
     const { authDb, oneOrNull } = createExecutor();
     oneOrNull.mockResolvedValueOnce({
-      id: 'transfer-1',
-      transfer_code_hash: 'transfer-hash',
+      id: 'share-1',
+      connection_share_code_hash: 'share-hash',
       address: '0xabc',
       role: null,
       target_client_type: 'native',
@@ -103,9 +111,9 @@ describe('AuthDb', () => {
       consumed_session_id: null
     });
 
-    await authDb.createWalletConnectionTransfer({
-      id: 'transfer-1',
-      transferCodeHash: 'transfer-hash',
+    await authDb.createWalletConnectionShare({
+      id: 'share-1',
+      connectionShareCodeHash: 'share-hash',
       address: '0xabc',
       role: null,
       targetClientType: 'native',
@@ -113,8 +121,8 @@ describe('AuthDb', () => {
     });
 
     expect(oneOrNull).toHaveBeenCalledWith(
-      expect.stringContaining('wallet_connection_transfers'),
-      { id: 'transfer-1' },
+      expect.stringContaining('wallet_connection_shares'),
+      { id: 'share-1' },
       { forcePool: DbPoolName.WRITE }
     );
   });
