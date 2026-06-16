@@ -12,14 +12,19 @@ import { RateMatter } from '@/entities/IRating';
 import { RequestContext } from '@/request.context';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
 import { Time } from '@/time';
+import {
+  LOW_TRUST_LEVEL_RAW,
+  MAX_LEVEL_RAW_FOR_SCORE,
+  MAX_WAVE_REP_FOR_SCORE,
+  MIN_QUALITY_FOR_FULL_HOTNESS_VISIBILITY,
+  RECENT_ACTIVITY_WINDOW_MS,
+  TRUSTED_LEVEL_RAW,
+  WAVE_SCORE_HOTNESS_COMPONENT_WEIGHTS,
+  WAVE_SCORE_QUALITY_COMPONENT_WEIGHTS,
+  WAVE_SCORE_VERSION,
+  WAVE_SCORE_VISIBILITY_COMPONENT_WEIGHTS
+} from './wave-score.constants';
 
-const SCORE_VERSION = 'wave-score-v1';
-const MAX_LEVEL_RAW_FOR_SCORE = 25000000;
-const MAX_WAVE_REP_FOR_SCORE = 200000000;
-const MIN_QUALITY_FOR_FULL_HOTNESS_VISIBILITY = 25;
-const TRUSTED_LEVEL_RAW = 1000;
-const LOW_TRUST_LEVEL_RAW = 25;
-const RECENT_ACTIVITY_WINDOW_MS = Time.days(7).toMillis();
 const DEFAULT_BACKFILL_BATCH_SIZE = 250;
 
 export interface RefreshAllWaveScoresOptions {
@@ -362,21 +367,31 @@ export class WaveScoreService extends LazyDbAccessCompatibleService {
       1
     );
     const qualityScore =
-      (0.2 * creatorScore +
-        0.2 * participationScore +
-        0.15 * diversityScore +
-        0.1 * subscriptionScore +
-        0.35 * repScore) *
+      (WAVE_SCORE_QUALITY_COMPONENT_WEIGHTS.creator_score * creatorScore +
+        WAVE_SCORE_QUALITY_COMPONENT_WEIGHTS.level_weighted_participation_score *
+          participationScore +
+        WAVE_SCORE_QUALITY_COMPONENT_WEIGHTS.trusted_diversity_score *
+          diversityScore +
+        WAVE_SCORE_QUALITY_COMPONENT_WEIGHTS.trusted_subscription_score *
+          subscriptionScore +
+        WAVE_SCORE_QUALITY_COMPONENT_WEIGHTS.wave_rep_component_score *
+          repScore) *
       safetyMultiplier;
     const hotnessScore =
-      (0.65 * recentScore + 0.35 * qualityScore) * safetyMultiplier;
+      (WAVE_SCORE_HOTNESS_COMPONENT_WEIGHTS.recent_trusted_activity_score *
+        recentScore +
+        WAVE_SCORE_HOTNESS_COMPONENT_WEIGHTS.quality_score * qualityScore) *
+      safetyMultiplier;
     const hotnessVisibilityMultiplier = this.clamp(
       qualityScore / MIN_QUALITY_FOR_FULL_HOTNESS_VISIBILITY,
       0,
       1
     );
     const gatedHotnessScore = hotnessScore * hotnessVisibilityMultiplier;
-    const visibilityScore = 0.65 * qualityScore + 0.35 * gatedHotnessScore;
+    const visibilityScore =
+      WAVE_SCORE_VISIBILITY_COMPONENT_WEIGHTS.quality_score * qualityScore +
+      WAVE_SCORE_VISIBILITY_COMPONENT_WEIGHTS.gated_hotness_score *
+        gatedHotnessScore;
     const tier = this.resolveTier(
       visibilityScore,
       qualityScore,
@@ -394,7 +409,7 @@ export class WaveScoreService extends LazyDbAccessCompatibleService {
       wave_rep_negative_contributor_count: this.toNumber(
         row.wave_rep_negative_contributor_count
       ),
-      wave_score_version: SCORE_VERSION,
+      wave_score_version: WAVE_SCORE_VERSION,
       wave_visibility_tier: tier,
       wave_visibility_rank: this.resolveTierRank(tier),
       wave_quality_score: this.roundScore(qualityScore),
