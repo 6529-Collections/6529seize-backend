@@ -1,5 +1,7 @@
-import { createHash } from 'crypto';
+import { createHash } from 'node:crypto';
 import { ethers } from 'ethers';
+import { Network } from '@/alchemy-sdk';
+import { getRpcUrlFromNetwork } from '@/alchemy';
 import { env } from '@/env';
 import { Logger } from '@/logging';
 import { getRedisClient } from '@/redis';
@@ -15,11 +17,16 @@ const EIP1271_MAGIC_VALUE = '0x1626ba7e';
 const EIP1271_ABI = [
   'function isValidSignature(bytes32 _messageHash, bytes _signature) public view returns (bytes4)'
 ];
-const ALCHEMY_NETWORK_BY_CHAIN_ID = new Map<number, string>([
-  [ETHEREUM_MAINNET_CHAIN_ID, 'eth-mainnet'],
-  [5, 'eth-goerli'],
-  [11155111, 'eth-sepolia']
+const ALCHEMY_NETWORK_BY_CHAIN_ID = new Map<number, Network>([
+  [ETHEREUM_MAINNET_CHAIN_ID, Network.ETH_MAINNET],
+  [5, Network.ETH_GOERLI],
+  [11155111, Network.ETH_SEPOLIA]
 ]);
+const DEFAULT_STRUCTURED_WALLET_SIGNATURE_AUDIENCE = 'api.6529.io';
+const DEFAULT_SIGNATURE_ALLOWED_AUDIENCES = [
+  DEFAULT_STRUCTURED_WALLET_SIGNATURE_AUDIENCE
+];
+const LOCAL_SIGNATURE_ALLOWED_AUDIENCES = ['localhost:3000', '127.0.0.1:3000'];
 const DEFAULT_SIGNATURE_ALLOWED_DOMAINS = [
   '6529.io',
   'www.6529.io',
@@ -32,6 +39,7 @@ const LOCAL_SIGNATURE_ALLOWED_DOMAINS = [
   '127.0.0.1:3001'
 ];
 
+// Local replay protection is only a local/test fallback; production fails closed if Redis is unavailable.
 const localConsumedNonceExpirations = new Map<string, number>();
 
 export type StructuredWalletSignatureKind = 'authentication' | 'action';
@@ -42,9 +50,17 @@ export type StructuredWalletSignatureAction =
   | 'add_rememe'
   | 'nextgen_admin';
 
+export type StructuredWalletSignatureSessionType =
+  | 'first_party_web'
+  | 'external_client'
+  | 'native';
+
 export interface ParsedStructuredWalletSignatureMessage {
   kind: StructuredWalletSignatureKind;
+  audience: string;
   domain: string;
+  clientOrigin?: string;
+  sessionType?: StructuredWalletSignatureSessionType;
   wallet: string;
   chainId: number;
   issuedAt: Date;
@@ -57,7 +73,10 @@ export interface ParsedStructuredWalletSignatureMessage {
 
 interface StructuredWalletSignatureMessageInput {
   kind: StructuredWalletSignatureKind;
+  audience?: string;
   domain: string;
+  clientOrigin?: string | null;
+  sessionType?: StructuredWalletSignatureSessionType | null;
   wallet: string;
   chainId?: number;
   issuedAt?: Date;
@@ -77,6 +96,7 @@ interface VerifyStructuredWalletSignatureParams {
   expectedPayloadHash?: string | null;
   expectedKind?: StructuredWalletSignatureKind;
   consumeNonce?: boolean;
+  requireAllowedDomain?: boolean;
 }
 
 interface VerifyWalletMessageSignatureParams {
@@ -104,9 +124,22 @@ export function isStructuredWalletSignatureMessage(message: string): boolean {
   );
 }
 
+export function getDefaultStructuredWalletSignatureAudience(): string {
+  return (
+    normalizeDomain(
+      process.env.AUTH_SIGNATURE_AUDIENCE ??
+        process.env.API_BASE_URL ??
+        DEFAULT_STRUCTURED_WALLET_SIGNATURE_AUDIENCE
+    ) ?? DEFAULT_STRUCTURED_WALLET_SIGNATURE_AUDIENCE
+  );
+}
+
 export function buildStructuredWalletSignatureMessage({
   kind,
+  audience = getDefaultStructuredWalletSignatureAudience(),
   domain,
+  clientOrigin,
+  sessionType,
   wallet,
   chainId = 1,
   issuedAt = new Date(),
@@ -118,17 +151,29 @@ export function buildStructuredWalletSignatureMessage({
   payloadHash,
   purpose
 }: StructuredWalletSignatureMessageInput): string {
-  const lines = [
+  const lines: string[] = [
     kind === 'authentication' ? '6529 Authentication' : '6529 Action',
     `Version: ${STRUCTURED_WALLET_SIGNATURE_VERSION}`,
-    `Domain: ${domain}`,
+    `Audience: ${audience}`,
+    `Domain: ${domain}`
+  ];
+
+  if (clientOrigin) {
+    lines.push(`Client Origin: ${clientOrigin}`);
+  }
+
+  if (sessionType) {
+    lines.push(`Session Type: ${sessionType}`);
+  }
+
+  lines.push(
     `Wallet: ${wallet}`,
     `Chain ID: ${chainId}`,
     `Issued At: ${issuedAt.toISOString()}`,
     `Expiration Time: ${expirationTime.toISOString()}`,
     `Nonce: ${nonce}`,
     `Action: ${action}`
-  ];
+  );
 
   if (payloadHash) {
     lines.push(`Payload Hash: ${payloadHash}`);
@@ -149,7 +194,7 @@ export function canonicalJSONStringify(value: unknown): string {
 
   const record = value as Record<string, unknown>;
   const keyValuePairs = Object.keys(record)
-    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+    .sort(compareStrings)
     .filter((key) => record[key] !== undefined)
     .map(
       (key) => `${JSON.stringify(key)}:${canonicalJSONStringify(record[key])}`
@@ -178,7 +223,10 @@ export function parseStructuredWalletSignatureMessage(
   }
 
   const version = fields.get('Version');
+  const audience = normalizeDomain(fields.get('Audience'));
   const domain = normalizeDomain(fields.get('Domain'));
+  const clientOrigin = normalizeClientOrigin(fields.get('Client Origin'));
+  const sessionType = parseSessionType(fields.get('Session Type'));
   const wallet = fields.get('Wallet');
   const chainId = Number(fields.get('Chain ID'));
   const issuedAt = parseDateField(fields.get('Issued At'));
@@ -190,7 +238,10 @@ export function parseStructuredWalletSignatureMessage(
 
   if (
     version !== String(STRUCTURED_WALLET_SIGNATURE_VERSION) ||
+    !audience ||
     !domain ||
+    (fields.has('Client Origin') && !clientOrigin) ||
+    (fields.has('Session Type') && !sessionType) ||
     !wallet ||
     !ethers.isAddress(wallet) ||
     !Number.isInteger(chainId) ||
@@ -212,7 +263,10 @@ export function parseStructuredWalletSignatureMessage(
 
   return {
     kind,
+    audience,
     domain,
+    ...(clientOrigin ? { clientOrigin } : {}),
+    ...(sessionType ? { sessionType } : {}),
     wallet: wallet.toLowerCase(),
     chainId,
     issuedAt,
@@ -232,7 +286,8 @@ export async function verifyStructuredWalletSignature({
   expectedAction,
   expectedPayloadHash,
   expectedKind,
-  consumeNonce = true
+  consumeNonce = true,
+  requireAllowedDomain = false
 }: VerifyStructuredWalletSignatureParams): Promise<string | null> {
   const parsed = parseStructuredWalletSignatureMessage(message);
   const expectedAddressLowerCase = expectedAddress.toLowerCase();
@@ -247,7 +302,8 @@ export async function verifyStructuredWalletSignature({
     parsed.action !== expectedAction ||
     (expectedKind && parsed.kind !== expectedKind) ||
     !isSignatureTimingValid(parsed) ||
-    !isStructuredSignatureDomainAllowed(parsed.domain)
+    !isStructuredSignatureAudienceAllowed(parsed.audience) ||
+    (requireAllowedDomain && !isStructuredSignatureDomainAllowed(parsed.domain))
   ) {
     return null;
   }
@@ -332,6 +388,19 @@ function parseAction(
   return null;
 }
 
+function parseSessionType(
+  value: string | undefined
+): StructuredWalletSignatureSessionType | null {
+  if (
+    value === 'first_party_web' ||
+    value === 'external_client' ||
+    value === 'native'
+  ) {
+    return value;
+  }
+  return null;
+}
+
 function parseDateField(value: string | undefined): Date | null {
   if (!value) {
     return null;
@@ -358,6 +427,22 @@ function normalizeDomain(value: string | undefined): string | null {
   }
 }
 
+function normalizeClientOrigin(value: string | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+  const trimmed = value.trim().toLowerCase();
+  if (!trimmed) {
+    return null;
+  }
+  try {
+    const origin = new URL(trimmed).origin;
+    return origin === 'null' ? null : origin;
+  } catch {
+    return null;
+  }
+}
+
 function isValidNonce(value: string): boolean {
   return (
     value.length >= 8 && value.length <= 128 && /^[A-Za-z0-9._:-]+$/.test(value)
@@ -378,11 +463,37 @@ function isSignatureTimingValid(
   );
 }
 
-function isStructuredSignatureDomainAllowed(domain: string): boolean {
-  const configuredDomains =
-    process.env.AUTH_SIGNATURE_ALLOWED_DOMAINS?.split(',')
+function getConfiguredNormalizedDomains(envName: string): string[] {
+  return (
+    process.env[envName]
+      ?.split(',')
       .map((it) => normalizeDomain(it))
-      .filter((it): it is string => !!it) ?? [];
+      .filter((it): it is string => !!it) ?? []
+  );
+}
+
+function isStructuredSignatureAudienceAllowed(audience: string): boolean {
+  if (isLocalhostSignatureHostAllowed(audience)) {
+    return true;
+  }
+
+  const localAudiences =
+    process.env.NODE_ENV === 'production'
+      ? []
+      : LOCAL_SIGNATURE_ALLOWED_AUDIENCES;
+  return new Set([
+    ...DEFAULT_SIGNATURE_ALLOWED_AUDIENCES,
+    getDefaultStructuredWalletSignatureAudience(),
+    ...localAudiences,
+    ...getConfiguredNormalizedDomains('AUTH_SIGNATURE_ALLOWED_AUDIENCES')
+  ]).has(audience);
+}
+
+export function isStructuredSignatureDomainAllowed(domain: string): boolean {
+  if (isLocalhostSignatureHostAllowed(domain)) {
+    return true;
+  }
+
   const localDomains =
     process.env.NODE_ENV === 'production'
       ? []
@@ -390,8 +501,20 @@ function isStructuredSignatureDomainAllowed(domain: string): boolean {
   return new Set([
     ...DEFAULT_SIGNATURE_ALLOWED_DOMAINS,
     ...localDomains,
-    ...configuredDomains
+    ...getConfiguredNormalizedDomains('AUTH_SIGNATURE_ALLOWED_DOMAINS')
   ]).has(domain);
+}
+
+function isLocalhostSignatureHostAllowed(host: string): boolean {
+  if (process.env.NODE_ENV === 'production') {
+    return false;
+  }
+  try {
+    const parsed = new URL(host.includes('://') ? host : `https://${host}`);
+    return parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1';
+  } catch {
+    return false;
+  }
 }
 
 export function recoverWalletMessageSigner(
@@ -471,9 +594,8 @@ function getAlchemyProviderForChain(
   if (!network) {
     return null;
   }
-  return new ethers.JsonRpcProvider(
-    `https://${network}.alchemyapi.io/v2/${env.getStringOrThrow(`ALCHEMY_API_KEY`)}`
-  );
+  env.getStringOrThrow('ALCHEMY_API_KEY');
+  return new ethers.JsonRpcProvider(getRpcUrlFromNetwork(network));
 }
 
 async function consumeStructuredSignatureNonce(
@@ -536,4 +658,14 @@ function consumeLocalNonce(key: string, expiresAtMs: number): boolean {
 
   localConsumedNonceExpirations.set(key, expiresAtMs);
   return true;
+}
+
+function compareStrings(a: string, b: string): number {
+  if (a < b) {
+    return -1;
+  }
+  if (a > b) {
+    return 1;
+  }
+  return 0;
 }

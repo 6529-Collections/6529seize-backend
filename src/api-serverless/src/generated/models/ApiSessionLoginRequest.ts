@@ -14,13 +14,15 @@ import { HttpFile } from '../http/http';
 
 export class ApiSessionLoginRequest {
     'client_type': ApiSessionLoginRequestClientTypeEnum;
-    'is_safe_wallet': boolean;
     'client_address': string;
     'client_signature': string;
+    /**
+    * Server-signed structured challenge token. /auth/session-login only accepts first_party_web challenges for web cookie sessions and native challenges for native refresh-token sessions; external_client challenges use /auth/login bearer-token auth instead.
+    */
     'server_signature': string;
     'role'?: string | null;
     'wallet_kind_hint'?: ApiSessionLoginRequestWalletKindHintEnum | null;
-    'version'?: number;
+    'signature_version'?: ApiSessionLoginRequestSignatureVersionEnum;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -31,12 +33,6 @@ export class ApiSessionLoginRequest {
             "name": "client_type",
             "baseName": "client_type",
             "type": "ApiSessionLoginRequestClientTypeEnum",
-            "format": ""
-        },
-        {
-            "name": "is_safe_wallet",
-            "baseName": "is_safe_wallet",
-            "type": "boolean",
             "format": ""
         },
         {
@@ -70,9 +66,9 @@ export class ApiSessionLoginRequest {
             "format": ""
         },
         {
-            "name": "version",
-            "baseName": "version",
-            "type": "number",
+            "name": "signature_version",
+            "baseName": "signature_version",
+            "type": "ApiSessionLoginRequestSignatureVersionEnum",
             "format": ""
         }    ];
 
@@ -92,5 +88,9 @@ export enum ApiSessionLoginRequestWalletKindHintEnum {
     Eoa = 'eoa',
     Contract = 'contract',
     Unknown = 'unknown'
+}
+export enum ApiSessionLoginRequestSignatureVersionEnum {
+    NUMBER_1 = 1,
+    NUMBER_2 = 2
 }
 

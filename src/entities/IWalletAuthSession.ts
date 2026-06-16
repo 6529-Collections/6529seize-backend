@@ -29,6 +29,12 @@ export class WalletAuthSessionEntity {
   @Column({ type: 'char', length: 64, nullable: true, default: null })
   readonly user_agent_hash!: string | null;
 
+  @Column({ type: 'varchar', length: 255, nullable: true, default: null })
+  readonly signature_domain!: string | null;
+
+  @Column({ type: 'varchar', length: 255, nullable: true, default: null })
+  readonly client_origin!: string | null;
+
   @Column({
     type: 'datetime',
     precision: 3,

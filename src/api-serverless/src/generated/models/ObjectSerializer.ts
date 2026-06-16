@@ -43,8 +43,8 @@ export * from '../models/ApiCompleteMultipartUploadResponse';
 export * from '../models/ApiConsolidatedTdh';
 export * from '../models/ApiCreateAttachmentMultipartUploadRequest';
 export * from '../models/ApiCreateAttachmentMultipartUploadResponse';
-export * from '../models/ApiCreateConnectionTransferRequest';
-export * from '../models/ApiCreateConnectionTransferResponse';
+export * from '../models/ApiCreateConnectionShareRequest';
+export * from '../models/ApiCreateConnectionShareResponse';
 export * from '../models/ApiCreateDropPart';
 export * from '../models/ApiCreateDropPollRequest';
 export * from '../models/ApiCreateDropRequest';
@@ -228,8 +228,8 @@ export * from '../models/ApiQuotedDropResponse';
 export * from '../models/ApiRateMatter';
 export * from '../models/ApiRatingWithProfileInfoAndLevel';
 export * from '../models/ApiRatingWithProfileInfoAndLevelPage';
-export * from '../models/ApiRedeemConnectionTransferRequest';
-export * from '../models/ApiRedeemConnectionTransferResponse';
+export * from '../models/ApiRedeemConnectionShareRequest';
+export * from '../models/ApiRedeemConnectionShareResponse';
 export * from '../models/ApiRedeemRefreshTokenRequest';
 export * from '../models/ApiRedeemRefreshTokenResponse';
 export * from '../models/ApiRegisterPushNotificationTokenRequest';
@@ -249,6 +249,7 @@ export * from '../models/ApiSessionLoginRequest';
 export * from '../models/ApiSessionLogoutNativeRequest';
 export * from '../models/ApiSessionLogoutWebRequest';
 export * from '../models/ApiSessionNativeResponse';
+export * from '../models/ApiSessionNonceQuery';
 export * from '../models/ApiSessionRefreshNativeRequest';
 export * from '../models/ApiSessionRefreshWebRequest';
 export * from '../models/ApiSessionWebResponse';
@@ -356,9 +357,6 @@ export * from '../models/ApiXTdhGrantsPage';
 export * from '../models/ApiXTdhStats';
 export * from '../models/ApiXTdhToken';
 export * from '../models/ApiXTdhTokensPage';
-export * from '../models/AuthNonceQuery';
-export * from '../models/AuthNonceStructuredQuery';
-export * from '../models/AuthNonceUnstructuredQuery';
 export * from '../models/CreateDirectMessageWaveRequest';
 export * from '../models/CreateWalletAuthSession201Response';
 export * from '../models/DistributionNormalized';
@@ -455,8 +453,8 @@ import { ApiCompleteMultipartUploadResponse } from '../models/ApiCompleteMultipa
 import { ApiConsolidatedTdh } from '../models/ApiConsolidatedTdh';
 import { ApiCreateAttachmentMultipartUploadRequest   } from '../models/ApiCreateAttachmentMultipartUploadRequest';
 import { ApiCreateAttachmentMultipartUploadResponse     } from '../models/ApiCreateAttachmentMultipartUploadResponse';
-import { ApiCreateConnectionTransferRequest, ApiCreateConnectionTransferRequestTargetClientTypeEnum    } from '../models/ApiCreateConnectionTransferRequest';
-import { ApiCreateConnectionTransferResponse    , ApiCreateConnectionTransferResponseTargetClientTypeEnum    } from '../models/ApiCreateConnectionTransferResponse';
+import { ApiCreateConnectionShareRequest, ApiCreateConnectionShareRequestTargetClientTypeEnum    } from '../models/ApiCreateConnectionShareRequest';
+import { ApiCreateConnectionShareResponse    , ApiCreateConnectionShareResponseTargetClientTypeEnum    } from '../models/ApiCreateConnectionShareResponse';
 import { ApiCreateDropPart } from '../models/ApiCreateDropPart';
 import { ApiCreateDropPollRequest } from '../models/ApiCreateDropPollRequest';
 import { ApiCreateDropRequest                 } from '../models/ApiCreateDropRequest';
@@ -640,8 +638,8 @@ import { ApiQuotedDropResponse } from '../models/ApiQuotedDropResponse';
 import { ApiRateMatter } from '../models/ApiRateMatter';
 import { ApiRatingWithProfileInfoAndLevel } from '../models/ApiRatingWithProfileInfoAndLevel';
 import { ApiRatingWithProfileInfoAndLevelPage } from '../models/ApiRatingWithProfileInfoAndLevelPage';
-import { ApiRedeemConnectionTransferRequest , ApiRedeemConnectionTransferRequestTargetClientTypeEnum   } from '../models/ApiRedeemConnectionTransferRequest';
-import { ApiRedeemConnectionTransferResponse } from '../models/ApiRedeemConnectionTransferResponse';
+import { ApiRedeemConnectionShareRequest , ApiRedeemConnectionShareRequestTargetClientTypeEnum   } from '../models/ApiRedeemConnectionShareRequest';
+import { ApiRedeemConnectionShareResponse } from '../models/ApiRedeemConnectionShareResponse';
 import { ApiRedeemRefreshTokenRequest } from '../models/ApiRedeemRefreshTokenRequest';
 import { ApiRedeemRefreshTokenResponse } from '../models/ApiRedeemRefreshTokenResponse';
 import { ApiRegisterPushNotificationTokenRequest } from '../models/ApiRegisterPushNotificationTokenRequest';
@@ -657,10 +655,11 @@ import { ApiReplyToDropAuthor } from '../models/ApiReplyToDropAuthor';
 import { ApiReplyToDropResponse } from '../models/ApiReplyToDropResponse';
 import { ApiReplyToDropV2 } from '../models/ApiReplyToDropV2';
 import { ApiSeizeSettings } from '../models/ApiSeizeSettings';
-import { ApiSessionLoginRequest, ApiSessionLoginRequestClientTypeEnum       , ApiSessionLoginRequestWalletKindHintEnum    } from '../models/ApiSessionLoginRequest';
+import { ApiSessionLoginRequest, ApiSessionLoginRequestClientTypeEnum      , ApiSessionLoginRequestWalletKindHintEnum  , ApiSessionLoginRequestSignatureVersionEnum   } from '../models/ApiSessionLoginRequest';
 import { ApiSessionLogoutNativeRequest, ApiSessionLogoutNativeRequestClientTypeEnum      } from '../models/ApiSessionLogoutNativeRequest';
 import { ApiSessionLogoutWebRequest, ApiSessionLogoutWebRequestClientTypeEnum    } from '../models/ApiSessionLogoutWebRequest';
 import { ApiSessionNativeResponse    , ApiSessionNativeResponseClientTypeEnum     } from '../models/ApiSessionNativeResponse';
+import { ApiSessionNonceQuery , ApiSessionNonceQueryClientTypeEnum    } from '../models/ApiSessionNonceQuery';
 import { ApiSessionRefreshNativeRequest, ApiSessionRefreshNativeRequestClientTypeEnum     } from '../models/ApiSessionRefreshNativeRequest';
 import { ApiSessionRefreshWebRequest, ApiSessionRefreshWebRequestClientTypeEnum   } from '../models/ApiSessionRefreshWebRequest';
 import { ApiSessionWebResponse    , ApiSessionWebResponseClientTypeEnum   } from '../models/ApiSessionWebResponse';
@@ -768,9 +767,6 @@ import { ApiXTdhGrantsPage } from '../models/ApiXTdhGrantsPage';
 import { ApiXTdhStats } from '../models/ApiXTdhStats';
 import { ApiXTdhToken } from '../models/ApiXTdhToken';
 import { ApiXTdhTokensPage } from '../models/ApiXTdhTokensPage';
-import { AuthNonceQueryClass } from '../models/AuthNonceQuery';
-import { AuthNonceStructuredQuery } from '../models/AuthNonceStructuredQuery';
-import { AuthNonceUnstructuredQuery } from '../models/AuthNonceUnstructuredQuery';
 import { CreateDirectMessageWaveRequest } from '../models/CreateDirectMessageWaveRequest';
 import { CreateWalletAuthSession201ResponseClass } from '../models/CreateWalletAuthSession201Response';
 import { DistributionNormalized } from '../models/DistributionNormalized';
@@ -840,8 +836,8 @@ let enumsMap: Set<string> = new Set<string>([
     "ApiAttachmentStatus",
     "ApiAttachmentUploadMimeType",
     "ApiCommunityMembersSortOption",
-    "ApiCreateConnectionTransferRequestTargetClientTypeEnum",
-    "ApiCreateConnectionTransferResponseTargetClientTypeEnum",
+    "ApiCreateConnectionShareRequestTargetClientTypeEnum",
+    "ApiCreateConnectionShareResponseTargetClientTypeEnum",
     "ApiDecentralizedMediaProtocol",
     "ApiDropGroupMention",
     "ApiDropMainType",
@@ -863,13 +859,15 @@ let enumsMap: Set<string> = new Set<string>([
     "ApiProfileClassification",
     "ApiProfileProxyActionType",
     "ApiRateMatter",
-    "ApiRedeemConnectionTransferRequestTargetClientTypeEnum",
+    "ApiRedeemConnectionShareRequestTargetClientTypeEnum",
     "ApiRepDirection",
     "ApiSessionLoginRequestClientTypeEnum",
     "ApiSessionLoginRequestWalletKindHintEnum",
+    "ApiSessionLoginRequestSignatureVersionEnum",
     "ApiSessionLogoutNativeRequestClientTypeEnum",
     "ApiSessionLogoutWebRequestClientTypeEnum",
     "ApiSessionNativeResponseClientTypeEnum",
+    "ApiSessionNonceQueryClientTypeEnum",
     "ApiSessionRefreshNativeRequestClientTypeEnum",
     "ApiSessionRefreshWebRequestClientTypeEnum",
     "ApiSessionWebResponseClientTypeEnum",
@@ -943,8 +941,8 @@ let typeMap: {[index: string]: any} = {
     "ApiConsolidatedTdh": ApiConsolidatedTdh,
     "ApiCreateAttachmentMultipartUploadRequest": ApiCreateAttachmentMultipartUploadRequest,
     "ApiCreateAttachmentMultipartUploadResponse": ApiCreateAttachmentMultipartUploadResponse,
-    "ApiCreateConnectionTransferRequest": ApiCreateConnectionTransferRequest,
-    "ApiCreateConnectionTransferResponse": ApiCreateConnectionTransferResponse,
+    "ApiCreateConnectionShareRequest": ApiCreateConnectionShareRequest,
+    "ApiCreateConnectionShareResponse": ApiCreateConnectionShareResponse,
     "ApiCreateDropPart": ApiCreateDropPart,
     "ApiCreateDropPollRequest": ApiCreateDropPollRequest,
     "ApiCreateDropRequest": ApiCreateDropRequest,
@@ -1110,8 +1108,8 @@ let typeMap: {[index: string]: any} = {
     "ApiQuotedDropResponse": ApiQuotedDropResponse,
     "ApiRatingWithProfileInfoAndLevel": ApiRatingWithProfileInfoAndLevel,
     "ApiRatingWithProfileInfoAndLevelPage": ApiRatingWithProfileInfoAndLevelPage,
-    "ApiRedeemConnectionTransferRequest": ApiRedeemConnectionTransferRequest,
-    "ApiRedeemConnectionTransferResponse": ApiRedeemConnectionTransferResponse,
+    "ApiRedeemConnectionShareRequest": ApiRedeemConnectionShareRequest,
+    "ApiRedeemConnectionShareResponse": ApiRedeemConnectionShareResponse,
     "ApiRedeemRefreshTokenRequest": ApiRedeemRefreshTokenRequest,
     "ApiRedeemRefreshTokenResponse": ApiRedeemRefreshTokenResponse,
     "ApiRegisterPushNotificationTokenRequest": ApiRegisterPushNotificationTokenRequest,
@@ -1130,6 +1128,7 @@ let typeMap: {[index: string]: any} = {
     "ApiSessionLogoutNativeRequest": ApiSessionLogoutNativeRequest,
     "ApiSessionLogoutWebRequest": ApiSessionLogoutWebRequest,
     "ApiSessionNativeResponse": ApiSessionNativeResponse,
+    "ApiSessionNonceQuery": ApiSessionNonceQuery,
     "ApiSessionRefreshNativeRequest": ApiSessionRefreshNativeRequest,
     "ApiSessionRefreshWebRequest": ApiSessionRefreshWebRequest,
     "ApiSessionWebResponse": ApiSessionWebResponse,
@@ -1218,9 +1217,6 @@ let typeMap: {[index: string]: any} = {
     "ApiXTdhStats": ApiXTdhStats,
     "ApiXTdhToken": ApiXTdhToken,
     "ApiXTdhTokensPage": ApiXTdhTokensPage,
-    "AuthNonceQuery": AuthNonceQueryClass,
-    "AuthNonceStructuredQuery": AuthNonceStructuredQuery,
-    "AuthNonceUnstructuredQuery": AuthNonceUnstructuredQuery,
     "CreateDirectMessageWaveRequest": CreateDirectMessageWaveRequest,
     "CreateWalletAuthSession201Response": CreateWalletAuthSession201ResponseClass,
     "DistributionNormalized": DistributionNormalized,

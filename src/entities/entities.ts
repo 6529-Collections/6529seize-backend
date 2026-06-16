@@ -174,7 +174,7 @@ export {
 } from './IWaveVotingCreditNft';
 export { WalletAuthSessionEntity } from './IWalletAuthSession';
 export type { WalletAuthClientType } from './IWalletAuthSession';
-export { WalletConnectionTransferEntity } from './IWalletConnectionTransfer';
+export { WalletConnectionShareEntity } from './IWalletConnectionShare';
 export {
   WaveDecisionEntity,
   WaveDecisionWinnerDropEntity

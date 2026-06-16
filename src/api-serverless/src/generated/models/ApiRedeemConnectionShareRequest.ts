@@ -12,9 +12,9 @@
 
 import { HttpFile } from '../http/http';
 
-export class ApiCreateConnectionTransferRequest {
-    'target_client_type': ApiCreateConnectionTransferRequestTargetClientTypeEnum;
-    'role'?: string | null;
+export class ApiRedeemConnectionShareRequest {
+    'connection_share_code': string;
+    'target_client_type': ApiRedeemConnectionShareRequestTargetClientTypeEnum;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -22,27 +22,27 @@ export class ApiCreateConnectionTransferRequest {
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
         {
-            "name": "target_client_type",
-            "baseName": "target_client_type",
-            "type": "ApiCreateConnectionTransferRequestTargetClientTypeEnum",
+            "name": "connection_share_code",
+            "baseName": "connection_share_code",
+            "type": "string",
             "format": ""
         },
         {
-            "name": "role",
-            "baseName": "role",
-            "type": "string",
+            "name": "target_client_type",
+            "baseName": "target_client_type",
+            "type": "ApiRedeemConnectionShareRequestTargetClientTypeEnum",
             "format": ""
         }    ];
 
     static getAttributeTypeMap() {
-        return ApiCreateConnectionTransferRequest.attributeTypeMap;
+        return ApiRedeemConnectionShareRequest.attributeTypeMap;
     }
 
     public constructor() {
     }
 }
 
-export enum ApiCreateConnectionTransferRequestTargetClientTypeEnum {
+export enum ApiRedeemConnectionShareRequestTargetClientTypeEnum {
     Native = 'native'
 }
 

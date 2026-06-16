@@ -12,18 +12,14 @@
 
 import { HttpFile } from '../http/http';
 
-export class AuthNonceUnstructuredQuery {
+export class ApiSessionNonceQuery {
     /**
     * Your wallet address
     */
     'signer_address': string;
+    'client_type'?: ApiSessionNonceQueryClientTypeEnum;
     /**
-    * If true, the nonce will be shorter and easier to sign. Default is false.
-    */
-    'short_nonce'?: boolean;
-    'structured_signature'?: boolean;
-    /**
-    * Accepted for flat query parity; ignored unless structured_signature is true.
+    * Chain id embedded in the structured session signature.
     */
     'chain_id'?: number;
 
@@ -39,15 +35,9 @@ export class AuthNonceUnstructuredQuery {
             "format": ""
         },
         {
-            "name": "short_nonce",
-            "baseName": "short_nonce",
-            "type": "boolean",
-            "format": ""
-        },
-        {
-            "name": "structured_signature",
-            "baseName": "structured_signature",
-            "type": "boolean",
+            "name": "client_type",
+            "baseName": "client_type",
+            "type": "ApiSessionNonceQueryClientTypeEnum",
             "format": ""
         },
         {
@@ -58,9 +48,15 @@ export class AuthNonceUnstructuredQuery {
         }    ];
 
     static getAttributeTypeMap() {
-        return AuthNonceUnstructuredQuery.attributeTypeMap;
+        return ApiSessionNonceQuery.attributeTypeMap;
     }
 
     public constructor() {
     }
 }
+
+export enum ApiSessionNonceQueryClientTypeEnum {
+    Web = 'web',
+    Native = 'native'
+}
+
