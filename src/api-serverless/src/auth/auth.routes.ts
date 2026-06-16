@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { randomUUID } from 'crypto';
+import { randomUUID } from 'node:crypto';
 import * as jwt from 'jsonwebtoken';
 import { ApiResponse } from '../api-response';
 import * as Joi from 'joi';
@@ -546,7 +546,7 @@ function assertSessionLoginSignatureType(
     );
   }
   const parsedMessage = parseStructuredWalletSignatureMessage(nonce);
-  if (!parsedMessage || parsedMessage.sessionType !== expectedSessionType) {
+  if (parsedMessage?.sessionType !== expectedSessionType) {
     throw new BadRequestException(
       `Wallet auth ${clientType} sessions require a ${expectedSessionType} structured signature`
     );

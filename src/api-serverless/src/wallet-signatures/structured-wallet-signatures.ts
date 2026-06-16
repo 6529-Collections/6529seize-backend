@@ -1,5 +1,7 @@
-import { createHash } from 'crypto';
+import { createHash } from 'node:crypto';
 import { ethers } from 'ethers';
+import { Network } from '@/alchemy-sdk';
+import { getRpcUrlFromNetwork } from '@/alchemy';
 import { env } from '@/env';
 import { Logger } from '@/logging';
 import { getRedisClient } from '@/redis';
@@ -15,10 +17,10 @@ const EIP1271_MAGIC_VALUE = '0x1626ba7e';
 const EIP1271_ABI = [
   'function isValidSignature(bytes32 _messageHash, bytes _signature) public view returns (bytes4)'
 ];
-const ALCHEMY_NETWORK_BY_CHAIN_ID = new Map<number, string>([
-  [ETHEREUM_MAINNET_CHAIN_ID, 'eth-mainnet'],
-  [5, 'eth-goerli'],
-  [11155111, 'eth-sepolia']
+const ALCHEMY_NETWORK_BY_CHAIN_ID = new Map<number, Network>([
+  [ETHEREUM_MAINNET_CHAIN_ID, Network.ETH_MAINNET],
+  [5, Network.ETH_GOERLI],
+  [11155111, Network.ETH_SEPOLIA]
 ]);
 const DEFAULT_STRUCTURED_WALLET_SIGNATURE_AUDIENCE = 'api.6529.io';
 const DEFAULT_SIGNATURE_ALLOWED_AUDIENCES = [
@@ -37,6 +39,7 @@ const LOCAL_SIGNATURE_ALLOWED_DOMAINS = [
   '127.0.0.1:3001'
 ];
 
+// Local replay protection is only a local/test fallback; production fails closed if Redis is unavailable.
 const localConsumedNonceExpirations = new Map<string, number>();
 
 export type StructuredWalletSignatureKind = 'authentication' | 'action';
@@ -191,7 +194,7 @@ export function canonicalJSONStringify(value: unknown): string {
 
   const record = value as Record<string, unknown>;
   const keyValuePairs = Object.keys(record)
-    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+    .sort(compareStrings)
     .filter((key) => record[key] !== undefined)
     .map(
       (key) => `${JSON.stringify(key)}:${canonicalJSONStringify(record[key])}`
@@ -591,9 +594,8 @@ function getAlchemyProviderForChain(
   if (!network) {
     return null;
   }
-  return new ethers.JsonRpcProvider(
-    `https://${network}.alchemyapi.io/v2/${env.getStringOrThrow(`ALCHEMY_API_KEY`)}`
-  );
+  env.getStringOrThrow('ALCHEMY_API_KEY');
+  return new ethers.JsonRpcProvider(getRpcUrlFromNetwork(network));
 }
 
 async function consumeStructuredSignatureNonce(
@@ -656,4 +658,14 @@ function consumeLocalNonce(key: string, expiresAtMs: number): boolean {
 
   localConsumedNonceExpirations.set(key, expiresAtMs);
   return true;
+}
+
+function compareStrings(a: string, b: string): number {
+  if (a < b) {
+    return -1;
+  }
+  if (a > b) {
+    return 1;
+  }
+  return 0;
 }

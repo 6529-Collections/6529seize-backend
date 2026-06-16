@@ -343,4 +343,38 @@ describe('structured wallet signatures', () => {
       signatureFromDifferentEoa
     );
   });
+
+  it('rejects EIP-1271 signatures on unsupported chains without falling back to mainnet', async () => {
+    const contractConstructor = jest.fn();
+    jest
+      .spyOn(ethers, 'Contract', 'get')
+      .mockReturnValue(
+        contractConstructor as unknown as typeof ethers.Contract
+      );
+    const message = buildStructuredWalletSignatureMessage({
+      kind: 'authentication',
+      domain: 'example.com',
+      wallet: wallet.address,
+      chainId: 137,
+      expirationTime: getExpirationTime(),
+      nonce: 'eip-1271-polygon-login-nonce',
+      action: 'login',
+      purpose: 'Sign this message to authenticate with 6529.'
+    });
+    const signatureFromDifferentEoa = await otherWallet.signMessage(message);
+
+    await expect(
+      verifyStructuredWalletSignature({
+        message,
+        signature: signatureFromDifferentEoa,
+        expectedAddress: wallet.address,
+        expectedChainId: 137,
+        expectedAction: 'login',
+        expectedKind: 'authentication',
+        consumeNonce: false
+      })
+    ).resolves.toBeNull();
+
+    expect(contractConstructor).not.toHaveBeenCalled();
+  });
 });

@@ -364,12 +364,12 @@ function getFiniteJwtExpiry(value: unknown): number | null {
 }
 
 function getActiveJwtExpiry(value: unknown): number | null {
-  const jwtExpiry =
-    typeof value === 'number'
-      ? value
-      : typeof value === 'string'
-        ? Number(value)
-        : null;
+  let jwtExpiry: number | null = null;
+  if (typeof value === 'number') {
+    jwtExpiry = value;
+  } else if (typeof value === 'string') {
+    jwtExpiry = Number(value);
+  }
   if (jwtExpiry === null || !Number.isFinite(jwtExpiry)) {
     return null;
   }
