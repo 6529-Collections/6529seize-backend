@@ -1525,7 +1525,7 @@ export class CreateOrUpdateDropUseCase {
         { timer, connection }
       )
     ]);
-    await waveScoreService.refreshWaveScoresForWaveIds([wave.id], {
+    await waveScoreService.refreshWaveScoresForWaveIdsBestEffort([wave.id], {
       timer,
       connection
     });

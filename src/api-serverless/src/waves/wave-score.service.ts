@@ -7,25 +7,35 @@ import {
   WAVE_METRICS_TABLE,
   WAVES_TABLE
 } from '@/constants';
+import { assertUnreachable } from '@/assertions';
 import { ApiWaveVisibilityTier } from '@/api/generated/models/ApiWaveVisibilityTier';
 import { RateMatter } from '@/entities/IRating';
+import { Logger } from '@/logging';
 import { RequestContext } from '@/request.context';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
 import { Time } from '@/time';
 import {
+  DEMOTED_MIN_VISIBILITY_SCORE,
+  EXPLORATION_NEUTRAL_MIN_VISIBILITY_SCORE,
   LOW_TRUST_LEVEL_RAW,
   MAX_LEVEL_RAW_FOR_SCORE,
   MAX_WAVE_REP_FOR_SCORE,
   MIN_QUALITY_FOR_FULL_HOTNESS_VISIBILITY,
+  PARTICIPATION_SATURATION_SCALE,
+  RECENT_ACTIVITY_HALF_LIFE_MS,
+  RECENT_ACTIVITY_SATURATION_SCALE,
   RECENT_ACTIVITY_WINDOW_MS,
   TRUSTED_LEVEL_RAW,
+  TRUSTED_DIVERSITY_SATURATION_SCALE,
+  TRUSTED_SUBSCRIPTION_SATURATION_SCALE,
+  TRUSTED_VISIBLE_MIN_VISIBILITY_SCORE,
+  WAVE_SCORE_DEFAULT_BACKFILL_BATCH_SIZE,
   WAVE_SCORE_HOTNESS_COMPONENT_WEIGHTS,
+  WAVE_SCORE_MAX_BACKFILL_BATCH_SIZE,
   WAVE_SCORE_QUALITY_COMPONENT_WEIGHTS,
   WAVE_SCORE_VERSION,
   WAVE_SCORE_VISIBILITY_COMPONENT_WEIGHTS
 } from './wave-score.constants';
-
-const DEFAULT_BACKFILL_BATCH_SIZE = 250;
 
 export interface RefreshAllWaveScoresOptions {
   readonly batchSize?: number | undefined;
@@ -95,6 +105,8 @@ interface WaveScoreCalculation {
 }
 
 export class WaveScoreService extends LazyDbAccessCompatibleService {
+  private readonly logger = Logger.get(this.constructor.name);
+
   public async refreshWaveScoresForWaveIds(
     waveIds: string[],
     ctx: RequestContext = {}
@@ -118,13 +130,30 @@ export class WaveScoreService extends LazyDbAccessCompatibleService {
     }
   }
 
+  public async refreshWaveScoresForWaveIdsBestEffort(
+    waveIds: string[],
+    ctx: RequestContext = {}
+  ): Promise<void> {
+    try {
+      await this.refreshWaveScoresForWaveIds(waveIds, ctx);
+    } catch (error) {
+      this.logger.error(`Failed to refresh wave scores for ${waveIds.length}`, {
+        waveIds,
+        error
+      });
+    }
+  }
+
   public async refreshAllWaveScores(
     options: RefreshAllWaveScoresOptions = {},
     ctx: RequestContext = {}
   ): Promise<RefreshAllWaveScoresResult> {
     const batchSize = Math.max(
       1,
-      Math.min(1000, options.batchSize ?? DEFAULT_BACKFILL_BATCH_SIZE)
+      Math.min(
+        WAVE_SCORE_MAX_BACKFILL_BATCH_SIZE,
+        options.batchSize ?? WAVE_SCORE_DEFAULT_BACKFILL_BATCH_SIZE
+      )
     );
     const maxBatches = Math.max(
       1,
@@ -325,16 +354,16 @@ export class WaveScoreService extends LazyDbAccessCompatibleService {
     const creatorScore = this.rawLevelScore(row.creator_level_raw);
     const participationScore = this.saturatingScore(
       this.toNumber(row.level_weighted_posts),
-      600
+      PARTICIPATION_SATURATION_SCALE
     );
     const diversityScore = this.saturatingScore(
       this.toNumber(row.trusted_author_count),
-      8
+      TRUSTED_DIVERSITY_SATURATION_SCALE
     );
     const subscriptionScore = this.saturatingScore(
       this.toNumber(row.trusted_subscriber_count) +
         this.toNumber(row.trusted_subscription_weight) / 100,
-      30
+      TRUSTED_SUBSCRIPTION_SATURATION_SCALE
     );
     const recentScore = this.recentTrustedActivityScore(row, now);
     const repScore = this.repComponentScore(totalRep);
@@ -444,10 +473,15 @@ export class WaveScoreService extends LazyDbAccessCompatibleService {
     if (recentTrustedWeight <= 0 || latestTrustedDropTimestamp <= 0) {
       return 0;
     }
-    const activityScore = this.saturatingScore(recentTrustedWeight, 250);
+    const activityScore = this.saturatingScore(
+      recentTrustedWeight,
+      RECENT_ACTIVITY_SATURATION_SCALE
+    );
     const ageMs = Math.max(0, now - latestTrustedDropTimestamp);
-    const halfLifeMs = Time.days(2).toMillis();
-    const recencyMultiplier = Math.pow(0.5, ageMs / halfLifeMs);
+    const recencyMultiplier = Math.pow(
+      0.5,
+      ageMs / RECENT_ACTIVITY_HALF_LIFE_MS
+    );
     return activityScore * recencyMultiplier;
   }
 
@@ -529,16 +563,16 @@ export class WaveScoreService extends LazyDbAccessCompatibleService {
     gatedHotnessScore: number
   ): ApiWaveVisibilityTier {
     if (
-      visibilityScore >= 55 &&
+      visibilityScore >= TRUSTED_VISIBLE_MIN_VISIBILITY_SCORE &&
       (qualityScore >= MIN_QUALITY_FOR_FULL_HOTNESS_VISIBILITY ||
-        gatedHotnessScore >= 55)
+        gatedHotnessScore >= TRUSTED_VISIBLE_MIN_VISIBILITY_SCORE)
     ) {
       return ApiWaveVisibilityTier.TrustedVisible;
     }
-    if (visibilityScore >= 25) {
+    if (visibilityScore >= EXPLORATION_NEUTRAL_MIN_VISIBILITY_SCORE) {
       return ApiWaveVisibilityTier.ExplorationNeutral;
     }
-    if (visibilityScore >= 10) {
+    if (visibilityScore >= DEMOTED_MIN_VISIBILITY_SCORE) {
       return ApiWaveVisibilityTier.Demoted;
     }
     return ApiWaveVisibilityTier.Suppressed;
@@ -554,6 +588,8 @@ export class WaveScoreService extends LazyDbAccessCompatibleService {
         return 3;
       case ApiWaveVisibilityTier.Suppressed:
         return 4;
+      default:
+        return assertUnreachable(tier);
     }
   }
 

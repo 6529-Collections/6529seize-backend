@@ -163,4 +163,29 @@ describe('WaveScoreService', () => {
     expect(result.wave_cross_post_penalty).toBe(20);
     expect(result.wave_safety_multiplier).toBe(0.8);
   });
+
+  it('does not fail callers when a best-effort score refresh fails', async () => {
+    const service = new WaveScoreService(() => ({}) as any);
+    jest
+      .spyOn(service, 'refreshWaveScoresForWaveIds')
+      .mockRejectedValue(new Error('score refresh failed'));
+
+    await expect(
+      service.refreshWaveScoresForWaveIdsBestEffort(['wave-1'])
+    ).resolves.toBeUndefined();
+  });
+
+  it('caps refresh-all batch size for the join-heavy scoring query', async () => {
+    const service = new WaveScoreService(() => ({}) as any);
+    const getWaveIdsPage = jest
+      .spyOn(service as any, 'getWaveIdsPage')
+      .mockResolvedValue(['wave-1']);
+    jest
+      .spyOn(service, 'refreshWaveScoresForWaveIds')
+      .mockResolvedValue(undefined);
+
+    await service.refreshAllWaveScores({ batchSize: 1000, maxBatches: 1 });
+
+    expect(getWaveIdsPage).toHaveBeenCalledWith(null, 100, {});
+  });
 });

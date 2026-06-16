@@ -199,7 +199,10 @@ router.post(
       },
       ctx
     );
-    await waveScoreService.refreshWaveScoresForWaveIds([req.params.id], ctx);
+    await waveScoreService.refreshWaveScoresForWaveIdsBestEffort(
+      [req.params.id],
+      ctx
+    );
     await giveReadReplicaTimeToCatchUp();
     res.send({});
   }
@@ -221,14 +224,14 @@ router.get(
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
     await assertWaveVisible(req.params.id, { authenticationContext, timer });
-    const fromIdentity = req.query.from_identity;
+    const fromIdentity = req.query.from_identity?.trim() || null;
     const raterProfileId = fromIdentity
       ? await identityFetcher.getProfileIdByIdentityKey(
           { identityKey: fromIdentity },
           { timer, authenticationContext }
         )
-      : null;
-    if (fromIdentity && !raterProfileId) {
+      : (authenticationContext.getActingAsId() ?? null);
+    if (!raterProfileId) {
       res.send({ rating: 0 });
       return;
     }

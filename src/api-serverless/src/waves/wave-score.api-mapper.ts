@@ -5,12 +5,20 @@ import { ApiWaveRepSummary } from '@/api/generated/models/ApiWaveRepSummary';
 import { ApiWaveScore } from '@/api/generated/models/ApiWaveScore';
 import { ApiWaveVisibilityTier } from '@/api/generated/models/ApiWaveVisibilityTier';
 import {
+  DEMOTED_MIN_VISIBILITY_SCORE,
+  EXPLORATION_NEUTRAL_MIN_VISIBILITY_SCORE,
   LOW_TRUST_LEVEL_RAW,
   MAX_LEVEL_RAW_FOR_SCORE,
   MAX_WAVE_REP_FOR_SCORE,
   MIN_QUALITY_FOR_FULL_HOTNESS_VISIBILITY,
+  PARTICIPATION_SATURATION_SCALE,
+  RECENT_ACTIVITY_HALF_LIFE_MS,
+  RECENT_ACTIVITY_SATURATION_SCALE,
   RECENT_ACTIVITY_WINDOW_MS,
   TRUSTED_LEVEL_RAW,
+  TRUSTED_DIVERSITY_SATURATION_SCALE,
+  TRUSTED_SUBSCRIPTION_SATURATION_SCALE,
+  TRUSTED_VISIBLE_MIN_VISIBILITY_SCORE,
   WAVE_SCORE_HOTNESS_COMPONENT_WEIGHTS,
   WAVE_SCORE_QUALITY_COMPONENT_WEIGHTS,
   WAVE_SCORE_VERSION,
@@ -93,6 +101,17 @@ export function mapWaveScore(
       trusted_level_raw: TRUSTED_LEVEL_RAW,
       low_trust_level_raw: LOW_TRUST_LEVEL_RAW,
       recent_activity_window_ms: RECENT_ACTIVITY_WINDOW_MS,
+      recent_activity_half_life_ms: RECENT_ACTIVITY_HALF_LIFE_MS,
+      participation_saturation_scale: PARTICIPATION_SATURATION_SCALE,
+      trusted_diversity_saturation_scale: TRUSTED_DIVERSITY_SATURATION_SCALE,
+      trusted_subscription_saturation_scale:
+        TRUSTED_SUBSCRIPTION_SATURATION_SCALE,
+      recent_activity_saturation_scale: RECENT_ACTIVITY_SATURATION_SCALE,
+      trusted_visible_min_visibility_score:
+        TRUSTED_VISIBLE_MIN_VISIBILITY_SCORE,
+      exploration_neutral_min_visibility_score:
+        EXPLORATION_NEUTRAL_MIN_VISIBILITY_SCORE,
+      demoted_min_visibility_score: DEMOTED_MIN_VISIBILITY_SCORE,
       quality_component_weights: WAVE_SCORE_QUALITY_COMPONENT_WEIGHTS,
       hotness_component_weights: WAVE_SCORE_HOTNESS_COMPONENT_WEIGHTS,
       visibility_component_weights: WAVE_SCORE_VISIBILITY_COMPONENT_WEIGHTS
