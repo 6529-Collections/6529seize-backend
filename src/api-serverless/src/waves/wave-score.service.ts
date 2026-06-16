@@ -321,7 +321,12 @@ export class WaveScoreService extends LazyDbAccessCompatibleService {
           select
             s.target_id as wave_id,
             count(distinct case when coalesce(i.level_raw, 0) >= :trustedLevelRaw then s.subscriber_id end) as trusted_subscriber_count,
-            sum(least(100, 100 * log10(1 + greatest(coalesce(i.level_raw, 0), 0)) / log10(1 + :maxLevelRawForScore))) as trusted_subscription_weight
+            sum(
+              case when coalesce(i.level_raw, 0) >= :trustedLevelRaw
+                then least(100, 100 * log10(1 + greatest(coalesce(i.level_raw, 0), 0)) / log10(1 + :maxLevelRawForScore))
+                else 0
+              end
+            ) as trusted_subscription_weight
           from ${IDENTITY_SUBSCRIPTIONS_TABLE} s
             left join ${IDENTITIES_TABLE} i on i.profile_id = s.subscriber_id
           where s.target_type = 'WAVE'

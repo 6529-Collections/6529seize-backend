@@ -784,7 +784,8 @@ from grouped_rates r
     ctx?.timer?.start('ratingsDb->deleteRatingsForMatter');
     await this.db.execute(
       `delete from ${RATINGS_TABLE} where matter_target_id = :matter_target_id and matter = :matter`,
-      param
+      param,
+      ctx.connection ? { wrappedConnection: ctx.connection } : undefined
     );
     ctx?.timer?.stop('ratingsDb->deleteRatingsForMatter');
   }

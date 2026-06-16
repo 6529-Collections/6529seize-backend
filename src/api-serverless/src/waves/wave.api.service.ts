@@ -102,6 +102,8 @@ import { isWaveCreatorOrAdmin } from '@/waves/wave-admin.helpers';
 import { assertWaveAndParentVisibleOrThrow } from '@/api/waves/wave-access.helpers';
 import { waveMetadataDb } from '@/api/waves/wave-metadata.db';
 import { dropPollsDb } from '@/api/drops/drop-polls.db';
+import { RateMatter } from '@/entities/IRating';
+import { ratingsDb } from '@/rates/ratings.db';
 
 const CARD_SET_TDH_SUPPORTED_CONTRACTS = new Set(
   [MEMES_CONTRACT, GRADIENT_CONTRACT].map((contract) => contract.toLowerCase())
@@ -1781,7 +1783,14 @@ export class WaveApiService {
       this.wavesApiDb.deleteWaveOutcomeDistributionItems(waveId, ctx),
       this.wavesApiDb.deleteDropRelations(waveId, ctx),
       this.wavesApiDb.deleteBoosts(waveId, ctx),
-      waveMetadataDb.deleteByWaveId(waveId, ctx)
+      waveMetadataDb.deleteByWaveId(waveId, ctx),
+      ratingsDb.deleteRatingsForMatter(
+        {
+          matter_target_id: waveId,
+          matter: RateMatter.WAVE_REP
+        },
+        ctx
+      )
     ]);
   }
 
