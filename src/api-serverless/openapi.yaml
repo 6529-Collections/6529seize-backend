@@ -2293,6 +2293,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiWaveDropsFeedV2"
+        "400":
+          description: Invalid reply feed query params
         "404":
           description: Drop not found
   /v2/drops/{id}/metadata:
@@ -7991,6 +7993,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiWaveDropsFeedV2"
+        "400":
+          description: Invalid wave timeline feed query params
   /v2/waves/{id}/polls:
     get:
       tags:

@@ -732,6 +732,8 @@ export class ApiWaveV2Service {
       ),
       this.apiWaveOverviewMapper.mapWaves([wave], ctx)
     ]);
+    // This remains defensive for callers that provide a wave separately from
+    // the root drop lookup.
     if (rootDrop?.wave_id !== wave.id) {
       throw new NotFoundException(`Drop ${dropId} not found`);
     }
