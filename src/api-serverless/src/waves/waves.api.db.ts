@@ -2023,28 +2023,39 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     min_rep_sort_score?: number;
     visibility_tier?: ApiWaveVisibilityTier;
   }): Promise<WaveEntity[]> {
+    const applyMutedScoreFloor = (column: string) =>
+      param.authenticated_user_id
+        ? `CASE WHEN COALESCE(wrm.muted, false) = true THEN 0 ELSE ${column} END`
+        : column;
     const scoreColumn = this.getWaveScoreSortColumn(param.score_sort);
     const tierRankExpr = param.authenticated_user_id
       ? `CASE WHEN COALESCE(wrm.muted, false) = true THEN 999 ELSE wm.wave_visibility_rank END`
       : `wm.wave_visibility_rank`;
-    const scoreExpr = param.authenticated_user_id
-      ? `CASE WHEN COALESCE(wrm.muted, false) = true THEN 0 ELSE ${scoreColumn} END`
-      : scoreColumn;
+    const scoreExpr = applyMutedScoreFloor(scoreColumn);
+    const visibilityScoreExpr = applyMutedScoreFloor(
+      `wm.wave_visibility_score`
+    );
+    const qualityScoreExpr = applyMutedScoreFloor(`wm.wave_quality_score`);
+    const hotnessScoreExpr = applyMutedScoreFloor(`wm.wave_hotness_score`);
+    const repSortScoreExpr = applyMutedScoreFloor(`wm.wave_rep_sort_score`);
+    const visibilityTierExpr = param.authenticated_user_id
+      ? `CASE WHEN COALESCE(wrm.muted, false) = true THEN NULL ELSE wm.wave_visibility_tier END`
+      : `wm.wave_visibility_tier`;
     const filters = [
       param.min_visibility_score !== undefined
-        ? `wm.wave_visibility_score >= :min_visibility_score`
+        ? `${visibilityScoreExpr} >= :min_visibility_score`
         : null,
       param.min_quality_score !== undefined
-        ? `wm.wave_quality_score >= :min_quality_score`
+        ? `${qualityScoreExpr} >= :min_quality_score`
         : null,
       param.min_hotness_score !== undefined
-        ? `wm.wave_hotness_score >= :min_hotness_score`
+        ? `${hotnessScoreExpr} >= :min_hotness_score`
         : null,
       param.min_rep_sort_score !== undefined
-        ? `wm.wave_rep_sort_score >= :min_rep_sort_score`
+        ? `${repSortScoreExpr} >= :min_rep_sort_score`
         : null,
       param.visibility_tier !== undefined
-        ? `wm.wave_visibility_tier = :visibility_tier`
+        ? `${visibilityTierExpr} = :visibility_tier`
         : null
     ]
       .filter((it): it is string => !!it)
