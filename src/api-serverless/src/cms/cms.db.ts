@@ -25,7 +25,7 @@ export type CmsPublishedPackageRow = {
   readonly description: string | null;
   readonly static_path: string;
   readonly canonical_url: string | null;
-  readonly package_json: unknown;
+  readonly package_json: Record<string, unknown>;
   readonly storage_json: unknown;
   readonly signature_json: unknown;
   readonly published_at: number;
@@ -44,21 +44,20 @@ export type NewCmsSite = Pick<
   | 'created_by_wallet'
 >;
 
-export type NewCmsPublishedPackage = CmsPublishedPackageRow;
-
 export type CmsPublishedSiteRow = {
   readonly site: CmsSiteRow;
   readonly published_package: CmsPublishedPackageRow;
 };
 
-type JoinedPublishedSiteRow = CmsSiteRow & {
+type JoinedPublishedSiteRow = Omit<CmsSiteRow, 'primary_package_hash'> & {
+  readonly primary_package_hash: string;
   readonly package_payload_hash: string;
   readonly package_schema: string;
   readonly package_title: string;
   readonly package_description: string | null;
   readonly package_static_path: string;
   readonly package_canonical_url: string | null;
-  readonly package_json: unknown;
+  readonly package_json: Record<string, unknown>;
   readonly package_storage_json: unknown;
   readonly package_signature_json: unknown;
   readonly package_published_at: number;
@@ -83,7 +82,7 @@ function mapJoinedPublishedSiteRow(
       updated_by_wallet: row.updated_by_wallet
     },
     published_package: {
-      package_hash: row.primary_package_hash!,
+      package_hash: row.primary_package_hash,
       payload_hash: row.package_payload_hash,
       schema: row.package_schema,
       site_id: row.id,
@@ -197,7 +196,7 @@ export class CmsDb extends LazyDbAccessCompatibleService {
   }
 
   public async publishPackage(
-    cmsPackage: NewCmsPublishedPackage,
+    cmsPackage: CmsPublishedPackageRow,
     setPrimary: boolean
   ): Promise<void> {
     await this.executeNativeQueriesInTransaction(async (connection) => {

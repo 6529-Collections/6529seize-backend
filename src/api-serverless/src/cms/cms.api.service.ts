@@ -161,7 +161,7 @@ function mapPublishedPackage(
     description: row.description,
     static_path: row.static_path,
     canonical_url: row.canonical_url,
-    package_json: row.package_json as Record<string, unknown>,
+    package_json: row.package_json,
     storage: row.storage_json as ApiCmsStorageLocation[],
     signature: row.signature_json as ApiCmsSignatureEnvelope,
     published_at: row.published_at,

@@ -43,7 +43,8 @@ function serializeCmsJson(value: unknown, path: string): string {
 
     return `{${entries
       .map(([key, item]) => {
-        return `${JSON.stringify(key)}:${serializeCmsJson(item, `${path}.${key}`)}`;
+        const itemPath = `${path}.${key}`;
+        return `${JSON.stringify(key)}:${serializeCmsJson(item, itemPath)}`;
       })
       .join(',')}}`;
   }
