@@ -578,6 +578,7 @@ export class OgMetadataService {
     options: CleanTextOptions
   ): string {
     const withoutMarkdown = this.replaceMarkdownLinks(value)
+      .replace(/([@#])\[([^\]\r\n]+)\]/g, '$1$2')
       .replace(/(^|\n)[ \t]{0,3}#{1,6}[ \t]+/g, '$1')
       .replace(/(^|\n)[ \t]{0,3}>[ \t]?/g, '$1')
       .replace(/\\([\\`*_[\]()#+\-.!>])/g, '$1')
