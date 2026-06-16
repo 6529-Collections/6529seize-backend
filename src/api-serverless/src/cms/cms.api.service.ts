@@ -21,6 +21,7 @@ import {
   CmsPublishedSiteRow,
   CmsSiteRow
 } from './cms.db';
+import { getCmsPackageHash, hashCmsJson } from './cms.hashing';
 
 type CmsServiceContext = RequestContext & {
   readonly authenticationContext: AuthenticationContext;
@@ -52,6 +53,85 @@ function assertHash(value: string, fieldName: string): void {
 
 function normalizeSlug(slug: string): string {
   return slug.trim().toLowerCase();
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function getPackageJson(
+  request: ApiCmsPublishPackageRequest
+): Record<string, unknown> {
+  if (!isObjectRecord(request.package_json)) {
+    throw new BadRequestException('package_json must be an object.');
+  }
+  return request.package_json;
+}
+
+function assertPackageField(
+  packageJson: Record<string, unknown>,
+  fieldName: string,
+  expectedValue: unknown
+): void {
+  if (packageJson[fieldName] !== expectedValue) {
+    throw new BadRequestException(
+      `package_json.${fieldName} must match ${fieldName}.`
+    );
+  }
+}
+
+function assertCanonicalJsonMatches(
+  packageJson: Record<string, unknown>,
+  fieldName: string,
+  expectedValue: unknown
+): void {
+  try {
+    if (hashCmsJson(packageJson[fieldName]) !== hashCmsJson(expectedValue)) {
+      throw new BadRequestException(
+        `package_json.${fieldName} must match ${fieldName}.`
+      );
+    }
+  } catch (error) {
+    if (error instanceof BadRequestException) {
+      throw error;
+    }
+    throw new BadRequestException(
+      `package_json.${fieldName} must be canonical JSON.`
+    );
+  }
+}
+
+function assertPackageHashes(request: ApiCmsPublishPackageRequest): void {
+  const packageJson = getPackageJson(request);
+  const payload = packageJson.payload;
+  if (payload === undefined) {
+    throw new BadRequestException('package_json.payload is required.');
+  }
+
+  assertPackageField(packageJson, 'schema', request.schema);
+  assertPackageField(packageJson, 'payload_hash', request.payload_hash);
+  assertPackageField(packageJson, 'package_hash', request.package_hash);
+  assertCanonicalJsonMatches(packageJson, 'storage', request.storage);
+  assertCanonicalJsonMatches(packageJson, 'signature', request.signature);
+
+  try {
+    const actualPayloadHash = hashCmsJson(payload);
+    if (actualPayloadHash !== request.payload_hash) {
+      throw new BadRequestException(
+        'payload_hash must match package_json.payload.'
+      );
+    }
+
+    const actualPackageHash = getCmsPackageHash(packageJson);
+    if (actualPackageHash !== request.package_hash) {
+      throw new BadRequestException('package_hash must match package_json.');
+    }
+  } catch (error) {
+    if (error instanceof BadRequestException) {
+      throw error;
+    }
+    throw new BadRequestException('package_json must be canonical JSON.');
+  }
 }
 
 function mapSite(row: CmsSiteRow): ApiCmsSite {
@@ -179,6 +259,7 @@ export class CmsApiService {
     if (site.owner_profile_id !== ownerProfileId) {
       throw new ForbiddenException('You can only publish your own CMS sites.');
     }
+    assertPackageHashes(request);
     const existingPackage = await cmsDb.findPublishedPackageByHash(
       request.package_hash
     );

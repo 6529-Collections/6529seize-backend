@@ -9204,9 +9204,11 @@ components:
         package_hash:
           type: string
           pattern: ^sha256:[a-f0-9]{64}$
+          description: Server verifies this equals sha256(canonical package_json with package_hash set to null).
         payload_hash:
           type: string
           pattern: ^sha256:[a-f0-9]{64}$
+          description: Server verifies this equals sha256(canonical package_json.payload).
         schema:
           type: string
         site_id:
@@ -9226,6 +9228,7 @@ components:
         package_json:
           type: object
           additionalProperties: true
+          description: Full portable CMS package. package_hash, payload_hash, schema, storage, and signature must match the sibling request fields.
         storage:
           type: array
           items:
@@ -9235,8 +9238,10 @@ components:
         published_at:
           type: integer
           format: int64
+          description: Server-derived publish timestamp in milliseconds since epoch.
         published_by_wallet:
           type: string
+          description: Server-derived authenticated wallet that published the package.
     ApiCmsPublishedSite:
       type: object
       required:
@@ -9295,8 +9300,10 @@ components:
           $ref: '#/components/schemas/ApiCmsSignatureEnvelope'
         set_primary:
           type: boolean
+          description: Defaults to true. Only the authenticated owner of the site can mutate the public primary package pointer.
     ApiCmsSignatureEnvelope:
       type: object
+      description: Opaque package signature envelope for this vertical slice. The server stores it and verifies hash consistency with package_json; wallet signature verification is a future publish-adapter responsibility.
       required:
         - signature_type
         - signing_wallet
@@ -9309,6 +9316,7 @@ components:
           type: string
         signed_at:
           type: string
+          description: Client-supplied signing timestamp stored as envelope metadata.
         signature:
           type: string
       additionalProperties: true
