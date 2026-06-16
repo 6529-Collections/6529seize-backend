@@ -68,18 +68,23 @@ describe('WaveScoreService', () => {
     });
   });
 
-  it('weights signed REP as 35 percent of quality on a tens-of-millions scale', () => {
+  it('weights signed REP as 35 percent of quality on a hundreds-of-millions scale', () => {
     jest.spyOn(Time, 'currentMillis').mockReturnValue(1_000);
 
-    const strongPositiveRep = calculate({
+    const largePositiveRep = calculate({
       wave_rep_total: 25_000_000,
       wave_rep_positive: 25_000_000
     });
+    const strongPositiveRep = calculate({
+      wave_rep_total: 200_000_000,
+      wave_rep_positive: 200_000_000
+    });
     const strongNegativeRep = calculate({
-      wave_rep_total: -25_000_000,
-      wave_rep_negative: -25_000_000
+      wave_rep_total: -200_000_000,
+      wave_rep_negative: -200_000_000
     });
 
+    expect(largePositiveRep.wave_rep_sort_score).toBe(94.56);
     expect(strongPositiveRep).toMatchObject({
       wave_rep_sort_score: 100,
       wave_rep_component_score: 100,
@@ -134,8 +139,8 @@ describe('WaveScoreService', () => {
     const result = calculate({
       latest_trusted_drop_timestamp: 10_000,
       recent_level_weighted_posts: 600,
-      wave_rep_total: -25_000_000,
-      wave_rep_negative: -25_000_000
+      wave_rep_total: -200_000_000,
+      wave_rep_negative: -200_000_000
     });
 
     expect(result.wave_recent_trusted_activity_score).toBeGreaterThan(80);
