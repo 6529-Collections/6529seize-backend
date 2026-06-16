@@ -1,6 +1,7 @@
 const mockFindWaves = jest.fn();
 const mockFindOfficialWaves = jest.fn();
 const mockFindDropsFeed = jest.fn();
+const mockFindDropRepliesFeed = jest.fn();
 const mockFindWaveCurationDrops = jest.fn();
 const mockSearchDropsContainingPhraseInWave = jest.fn();
 const mockSearchConcludedWaveDecisionsV2 = jest.fn();
@@ -23,6 +24,7 @@ jest.mock('@/api/waves/api-wave-v2.service', () => ({
     findWaves: mockFindWaves,
     findOfficialWaves: mockFindOfficialWaves,
     findDropsFeed: mockFindDropsFeed,
+    findDropRepliesFeed: mockFindDropRepliesFeed,
     findWaveCurationDrops: mockFindWaveCurationDrops,
     searchDropsContainingPhraseInWave: mockSearchDropsContainingPhraseInWave
   }
@@ -69,6 +71,7 @@ import { PageSortDirection } from '@/api/page-request';
 import { LeaderboardSort } from '@/drops/drops.db';
 import {
   handleGetWaveDecisionsV2,
+  handleGetDropRepliesV2,
   handleGetWaveDropsV2,
   handleGetWaveLeaderboardV2,
   handleGetOfficialWaves,
@@ -211,7 +214,7 @@ describe('waves v2 handlers', () => {
       const req = {
         params: { id: 'wave-1' },
         query: {
-          limit: '25',
+          limit: '200',
           serial_no_limit: '100',
           search_strategy: ApiDropSearchStrategy.Newer,
           drop_type: ApiDropType.Chat
@@ -224,7 +227,7 @@ describe('waves v2 handlers', () => {
         {
           wave_id: 'wave-1',
           drop_id: null,
-          amount: 25,
+          amount: 200,
           serial_no_limit: 100,
           search_strategy: ApiDropSearchStrategy.Newer,
           drop_type: ApiDropType.Chat,
@@ -244,6 +247,120 @@ describe('waves v2 handlers', () => {
         '"id" is required'
       );
       expect(mockFindDropsFeed).not.toHaveBeenCalled();
+    });
+
+    it('rejects invalid feed query params', async () => {
+      const req = {
+        params: { id: 'wave-1' },
+        query: {
+          limit: '201',
+          serial_no_limit: '0',
+          search_strategy: 'SIDEWAYS'
+        }
+      } as any;
+
+      await expect(handleGetWaveDropsV2(req)).rejects.toThrow(
+        '"limit" must be less than or equal to 200'
+      );
+      expect(mockFindDropsFeed).not.toHaveBeenCalled();
+    });
+
+    it('rejects legacy reply feed params on the main wave feed', async () => {
+      const req = {
+        params: { id: 'wave-1' },
+        query: { drop_id: 'drop-1' }
+      } as any;
+
+      await expect(handleGetWaveDropsV2(req)).rejects.toThrow(
+        '"drop_id" is not allowed'
+      );
+      expect(mockFindDropsFeed).not.toHaveBeenCalled();
+    });
+
+    it('rejects curation params on the main wave feed', async () => {
+      const req = {
+        params: { id: 'wave-1' },
+        query: { curation_id: 'curation-1' }
+      } as any;
+
+      await expect(handleGetWaveDropsV2(req)).rejects.toThrow(
+        '"curation_id" is not allowed'
+      );
+      expect(mockFindDropsFeed).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('handleGetDropRepliesV2', () => {
+    const result = {
+      drops: [],
+      wave: { id: 'wave-1' },
+      root_drop: { id: 'drop-1' }
+    } as any;
+
+    beforeEach(() => {
+      mockFindDropRepliesFeed.mockResolvedValue(result);
+    });
+
+    it('applies reply feed defaults before calling the service', async () => {
+      const req = { params: { id: 'drop-1' }, query: {} } as any;
+
+      await expect(handleGetDropRepliesV2(req)).resolves.toBe(result);
+
+      expect(mockGetFromRequest).toHaveBeenCalledWith(req);
+      expect(mockGetAuthenticationContext).toHaveBeenCalledWith(req, timer);
+      expect(mockFindDropRepliesFeed).toHaveBeenCalledWith(
+        {
+          drop_id: 'drop-1',
+          amount: 50,
+          serial_no_limit: null,
+          search_strategy: ApiDropSearchStrategy.Older,
+          drop_type: null
+        },
+        {
+          authenticationContext,
+          timer
+        }
+      );
+    });
+
+    it('normalizes reply feed query params before calling the service', async () => {
+      const req = {
+        params: { id: 'drop-1' },
+        query: {
+          limit: '200',
+          serial_no_limit: '100',
+          search_strategy: ApiDropSearchStrategy.Newer,
+          drop_type: ApiDropType.Chat
+        }
+      } as any;
+
+      await handleGetDropRepliesV2(req);
+
+      expect(mockFindDropRepliesFeed).toHaveBeenCalledWith(
+        {
+          drop_id: 'drop-1',
+          amount: 200,
+          serial_no_limit: 100,
+          search_strategy: ApiDropSearchStrategy.Newer,
+          drop_type: ApiDropType.Chat
+        },
+        {
+          authenticationContext,
+          timer
+        }
+      );
+    });
+
+    it('rejects invalid reply feed query params', async () => {
+      const req = {
+        params: { id: 'drop-1' },
+        query: { drop_type: 'UNKNOWN' }
+      } as any;
+
+      await expect(handleGetDropRepliesV2(req)).rejects.toThrow(
+        '"drop_type" must be one of'
+      );
+      expect(mockFindDropRepliesFeed).not.toHaveBeenCalled();
     });
   });
 
