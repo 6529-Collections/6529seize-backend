@@ -362,6 +362,18 @@ describe('waves v2 handlers', () => {
       );
       expect(mockFindDropRepliesFeed).not.toHaveBeenCalled();
     });
+
+    it('rejects unsupported params on the reply feed', async () => {
+      const req = {
+        params: { id: 'drop-1' },
+        query: { curation_id: 'curation-1' }
+      } as any;
+
+      await expect(handleGetDropRepliesV2(req)).rejects.toThrow(
+        '"curation_id" is not allowed'
+      );
+      expect(mockFindDropRepliesFeed).not.toHaveBeenCalled();
+    });
   });
 
   describe('handleListWaveCurationDropsV2', () => {
