@@ -20,6 +20,7 @@ function createPollCommand(): CreateDropPollCommand {
     closing_time: 2_000,
     multichoice: false,
     anonymous: false,
+    only_droppers_can_respond: false,
     options: [
       { option_no: 1, option_string: 'First' },
       { option_no: 2, option_string: 'Second' }
@@ -127,6 +128,7 @@ describe('DropPollsDb', () => {
         closing_time: '2000',
         multichoice: 1,
         anonymous: 0,
+        only_droppers_can_respond: 1,
         option_no: 1,
         option_string: 'First',
         votes: '5',
@@ -139,6 +141,7 @@ describe('DropPollsDb', () => {
         closing_time: '2000',
         multichoice: 1,
         anonymous: 0,
+        only_droppers_can_respond: 1,
         option_no: 2,
         option_string: 'Second',
         votes: '3',
@@ -153,6 +156,7 @@ describe('DropPollsDb', () => {
     expect(result['drop-1']).toMatchObject({
       id: 'poll-1',
       anonymous: false,
+      only_droppers_can_respond: true,
       voted: [2],
       options: [
         {
@@ -188,6 +192,7 @@ describe('DropPollsDb', () => {
           closing_time: '2000',
           multichoice: 1,
           anonymous: '1',
+          only_droppers_can_respond: '0',
           created_at: '1000'
         }
       ])
@@ -231,6 +236,7 @@ describe('DropPollsDb', () => {
     expect(result[0]).toMatchObject({
       id: 'poll-1',
       anonymous: true,
+      only_droppers_can_respond: false,
       voted: [2],
       options: [
         {
