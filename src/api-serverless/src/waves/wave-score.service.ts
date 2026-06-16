@@ -505,11 +505,7 @@ export class WaveScoreService extends LazyDbAccessCompatibleService {
     const signedSignal =
       (50 * Math.log10(1 + repMagnitude)) /
       Math.log10(1 + MAX_WAVE_REP_FOR_SCORE);
-    return this.clamp(
-      50 + Math.sign(totalRep) * signedSignal,
-      0,
-      100
-    );
+    return this.clamp(50 + Math.sign(totalRep) * signedSignal, 0, 100);
   }
 
   private resolveTier(
