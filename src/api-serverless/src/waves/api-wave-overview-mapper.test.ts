@@ -6,7 +6,10 @@ import {
   WaveEntity,
   WaveType
 } from '@/entities/IWave';
-import { ApiWaveOverviewMapper } from './api-wave-overview.mapper';
+import {
+  ApiWaveOverviewMapper,
+  createUnknownWaveCreatorProfile
+} from './api-wave-overview.mapper';
 
 function makeWave(overrides: Partial<WaveEntity> = {}): WaveEntity {
   return {
@@ -71,6 +74,34 @@ function makeMetric(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function makeProfile(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'creator-1',
+    handle: 'creator',
+    pfp: 'creator.png',
+    banner1_color: null,
+    banner2_color: null,
+    cic: 0,
+    rep: 0,
+    tdh: 0,
+    tdh_rate: 0,
+    xtdh: 0,
+    xtdh_rate: 0,
+    level: 42,
+    classification: 'PSEUDONYM',
+    sub_classification: null,
+    primary_address: '0x0000000000000000000000000000000000000000',
+    subscribed_actions: [],
+    archived: false,
+    active_main_stage_submission_ids: [],
+    winner_main_stage_drop_ids: [],
+    artist_of_prevote_cards: [],
+    profile_wave_id: null,
+    is_wave_creator: true,
+    ...overrides
+  };
+}
+
 function createMapper() {
   const wavesApiDb = {
     findWavesMetricsByWaveIds: jest.fn().mockResolvedValue({
@@ -101,6 +132,15 @@ function createMapper() {
   const directMessageWaveDisplayService = {
     resolveWaveDisplayByWaveIdForContext: jest.fn().mockResolvedValue({})
   };
+  const identityFetcher = {
+    getOverviewsByIds: jest.fn().mockResolvedValue({
+      'creator-1': makeProfile(),
+      'parent-creator': makeProfile({
+        id: 'parent-creator',
+        handle: 'parentCreator'
+      })
+    })
+  };
 
   return {
     mapper: new ApiWaveOverviewMapper(
@@ -108,14 +148,16 @@ function createMapper() {
       dropsDb as any,
       identitySubscriptionsDb as any,
       userGroupsService as any,
-      directMessageWaveDisplayService as any
+      directMessageWaveDisplayService as any,
+      identityFetcher as any
     ),
     deps: {
       wavesApiDb,
       dropsDb,
       identitySubscriptionsDb,
       userGroupsService,
-      directMessageWaveDisplayService
+      directMessageWaveDisplayService,
+      identityFetcher
     }
   };
 }
@@ -132,6 +174,7 @@ describe('ApiWaveOverviewMapper', () => {
     expect(result['wave-1']).toEqual({
       id: 'wave-1',
       name: 'Wave 1',
+      creator: makeProfile(),
       last_drop_time: 456,
       created_at: 100,
       subscribers_count: 11,
@@ -161,6 +204,10 @@ describe('ApiWaveOverviewMapper', () => {
       ['description-drop-1'],
       ctx
     );
+    expect(deps.identityFetcher.getOverviewsByIds).toHaveBeenCalledWith(
+      ['creator-1'],
+      ctx
+    );
   });
 
   it('maps disabled links flag from wave settings', async () => {
@@ -176,11 +223,44 @@ describe('ApiWaveOverviewMapper', () => {
     expect(result['wave-1']?.links_disabled).toBe(true);
   });
 
+  it('maps a level zero creator fallback when the profile is missing', async () => {
+    const { mapper, deps } = createMapper();
+    deps.identityFetcher.getOverviewsByIds.mockResolvedValue({});
+
+    const result = await mapper.mapWaves([makeWave()], {
+      authenticationContext: AuthenticationContext.notAuthenticated()
+    });
+
+    expect(result['wave-1'].creator).toEqual(
+      createUnknownWaveCreatorProfile({
+        profileId: 'creator-1',
+        waveId: 'wave-1'
+      })
+    );
+  });
+
+  it('does not fetch a malformed creator id when created_by is missing', async () => {
+    const { mapper, deps } = createMapper();
+    const waveWithoutCreator = makeWave({
+      created_by: undefined as unknown as string
+    });
+
+    const result = await mapper.mapWaves([waveWithoutCreator], {
+      authenticationContext: AuthenticationContext.notAuthenticated()
+    });
+
+    expect(deps.identityFetcher.getOverviewsByIds).not.toHaveBeenCalled();
+    expect(result['wave-1'].creator).toEqual(
+      createUnknownWaveCreatorProfile({ waveId: 'wave-1' })
+    );
+  });
+
   it('maps visible parent wave and visible child presence', async () => {
     const { mapper, deps } = createMapper();
     const parentWave = makeWave({
       id: 'parent-wave',
       name: 'Parent Wave',
+      created_by: 'parent-creator',
       description_drop_id: 'parent-description-drop'
     });
     const subwave = makeWave({
@@ -215,6 +295,10 @@ describe('ApiWaveOverviewMapper', () => {
         parent_wave: expect.objectContaining({
           id: parentWave.id,
           name: parentWave.name,
+          creator: makeProfile({
+            id: 'parent-creator',
+            handle: 'parentCreator'
+          }),
           has_subwaves: true
         })
       })
@@ -329,6 +413,7 @@ describe('ApiWaveOverviewMapper', () => {
     expect(result['wave-1']).toEqual({
       id: 'wave-1',
       name: 'Direct Chat',
+      creator: makeProfile(),
       pfp: 'display.png',
       last_drop_time: 456,
       created_at: 100,

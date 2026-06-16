@@ -165,6 +165,11 @@ function makeDropWithWave(id: string, serialNo: number): ApiDropWithWave {
     wave: {
       id: 'wave-1',
       name: 'Wave',
+      creator: makeApiProfileMin({
+        id: 'creator-1',
+        handle: 'creator',
+        level: 7
+      }),
       last_drop_time: 1,
       created_at: 1,
       subscribers_count: 12,
@@ -316,7 +321,7 @@ describe('OgMetadataService', () => {
       })
     );
     identityFetcher.getDropResolvedIdentityProfilesV2ByIds.mockResolvedValue({
-      'profile-1': makeResolvedProfile('Alice bio')
+      'profile-1': makeResolvedProfile('Alice bio with @[bob] and #[QUORUM]')
     });
 
     await expect(service.getProfileMetadata('alice', {})).resolves.toEqual({
@@ -336,7 +341,7 @@ describe('OgMetadataService', () => {
         rep: 100,
         level: 7,
         tdh: 1234.5,
-        description: 'Alice bio',
+        description: 'Alice bio with @bob and #QUORUM',
         twitter_handle: null,
         media: [
           {
@@ -423,6 +428,46 @@ describe('OgMetadataService', () => {
       [],
       undefined
     );
+  });
+
+  it('removes square brackets from wave description tokens', async () => {
+    const {
+      service,
+      identityFetcher,
+      wavesApiDb,
+      apiWaveOverviewMapper,
+      profilesDb,
+      identitySubscriptionsDb
+    } = makeService();
+    wavesApiDb.findWavesByIdsEligibleForRead.mockResolvedValue([
+      { id: 'wave-1', created_by: 'author-1' } as any
+    ]);
+    apiWaveOverviewMapper.mapWaves.mockResolvedValue({
+      'wave-1': {
+        id: 'wave-1',
+        name: 'Wave',
+        pfp: null,
+        subscribers_count: 12,
+        total_drops_count: 34,
+        description_drop: {
+          contents: 'Wave description with @[alice] and #[QUORUM]',
+          media: []
+        }
+      } as any
+    });
+    profilesDb.getProfileById.mockResolvedValue(
+      makeProfileRecord(new Date('2026-01-02T03:04:05.000Z'))
+    );
+    identitySubscriptionsDb.countDistinctSubscriberIdsForTarget.mockResolvedValue(
+      7
+    );
+    mockAuthorProfile(identityFetcher);
+
+    await expect(service.getWaveMetadata('wave-1', {})).resolves.toMatchObject({
+      wave: {
+        description: 'Wave description with @alice and #QUORUM'
+      }
+    });
   });
 
   it('resolves numeric drops by serial number and returns lightweight author info', async () => {
@@ -586,6 +631,36 @@ describe('OgMetadataService', () => {
         submitted_at: 1,
         won_at: 1234567890,
         is_additional_action_promised: true
+      }
+    });
+  });
+
+  it('removes square brackets from drop content tokens', async () => {
+    const {
+      service,
+      identityFetcher,
+      dropV2Service,
+      profilesDb,
+      identitySubscriptionsDb
+    } = makeService();
+    profilesDb.getProfileById.mockResolvedValue(
+      makeProfileRecord(new Date('2026-01-02T03:04:05.000Z'))
+    );
+    identitySubscriptionsDb.countDistinctSubscriberIdsForTarget.mockResolvedValue(
+      7
+    );
+    const dropWithWave = makeDropWithWave(UUID_DROP_ID, 45);
+    dropWithWave.drop.content =
+      '@[sepicaso] just bumped your rep up to 50k so you can submit now #[QUORUM]';
+    dropV2Service.findWithWaveByIdOrThrow.mockResolvedValue(dropWithWave);
+    mockAuthorProfile(identityFetcher);
+
+    await expect(
+      service.getDropMetadata(UUID_DROP_ID, {})
+    ).resolves.toMatchObject({
+      drop: {
+        content:
+          '@sepicaso just bumped your rep up to 50k so you can submit now #QUORUM'
       }
     });
   });
