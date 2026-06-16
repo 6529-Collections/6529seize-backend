@@ -57,5 +57,9 @@ function toApiProtocol(
       return ApiDecentralizedMediaProtocol.Ipns;
     case 'arweave':
       return ApiDecentralizedMediaProtocol.Arweave;
+    default: {
+      const exhaustive: never = protocol;
+      return exhaustive;
+    }
   }
 }

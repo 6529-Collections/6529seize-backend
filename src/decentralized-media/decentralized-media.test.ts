@@ -140,6 +140,17 @@ describe('decentralized media resolver', () => {
     expect(parseDecentralizedMediaRef('ar://not-a-txid')).toBeNull();
   });
 
+  it('does not recognize nested IPFS gateway prefixes', () => {
+    expect(
+      parseDecentralizedMediaRef(`https://ipfs.io/foo/ipfs/${cid}/image.png`)
+    ).toBeNull();
+    expect(
+      parseDecentralizedMediaRef(
+        `https://ipfs.io/foo/ipns/k51qzi5uqu5dl/example.json`
+      )
+    ).toBeNull();
+  });
+
   it('strips query strings and hashes from canonical forms with a warning', () => {
     const [resolution] = resolveDecentralizedMediaInputs([
       `https://ipfs.io/ipfs/${cid}/image.png?download=1#preview`
