@@ -165,6 +165,11 @@ function makeDropWithWave(id: string, serialNo: number): ApiDropWithWave {
     wave: {
       id: 'wave-1',
       name: 'Wave',
+      creator: makeApiProfileMin({
+        id: 'creator-1',
+        handle: 'creator',
+        level: 7
+      }),
       last_drop_time: 1,
       created_at: 1,
       subscribers_count: 12,

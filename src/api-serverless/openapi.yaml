@@ -15029,6 +15029,7 @@ components:
       required:
         - id
         - name
+        - creator
         - last_drop_time
         - created_at
         - subscribers_count
@@ -15045,6 +15046,8 @@ components:
           type: string
         pfp:
           type: string
+        creator:
+          $ref: "#/components/schemas/ApiProfileMin"
         last_drop_time:
           type: integer
           format: int64
