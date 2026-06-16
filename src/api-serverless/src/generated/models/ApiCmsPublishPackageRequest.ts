@@ -25,6 +25,9 @@ export class ApiCmsPublishPackageRequest {
     'package_json': { [key: string]: any; };
     'storage': Array<ApiCmsStorageLocation>;
     'signature': ApiCmsSignatureEnvelope;
+    /**
+    * Defaults to true. Only the authenticated owner of the site can mutate the public primary package pointer.
+    */
     'set_primary'?: boolean;
 
     static readonly discriminator: string | undefined = undefined;

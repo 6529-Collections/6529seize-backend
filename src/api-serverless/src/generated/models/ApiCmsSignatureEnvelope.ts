@@ -12,9 +12,15 @@
 
 import { HttpFile } from '../http/http';
 
+/**
+* Opaque package signature envelope for this vertical slice. The server stores it and verifies hash consistency with package_json; wallet signature verification is a future publish-adapter responsibility.
+*/
 export class ApiCmsSignatureEnvelope {
     'signature_type': string;
     'signing_wallet': string;
+    /**
+    * Client-supplied signing timestamp stored as envelope metadata.
+    */
     'signed_at': string;
     'signature': string;
 

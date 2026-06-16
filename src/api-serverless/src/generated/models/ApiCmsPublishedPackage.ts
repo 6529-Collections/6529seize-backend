@@ -15,7 +15,13 @@ import { ApiCmsStorageLocation } from '../models/ApiCmsStorageLocation';
 import { HttpFile } from '../http/http';
 
 export class ApiCmsPublishedPackage {
+    /**
+    * Server verifies this equals sha256(canonical package_json with package_hash set to null).
+    */
     'package_hash': string;
+    /**
+    * Server verifies this equals sha256(canonical package_json.payload).
+    */
     'payload_hash': string;
     'schema': string;
     'site_id': string;
@@ -24,10 +30,19 @@ export class ApiCmsPublishedPackage {
     'description'?: string | null;
     'static_path': string;
     'canonical_url'?: string | null;
+    /**
+    * Full portable CMS package. package_hash, payload_hash, schema, storage, and signature must match the sibling request fields.
+    */
     'package_json': { [key: string]: any; };
     'storage': Array<ApiCmsStorageLocation>;
     'signature': ApiCmsSignatureEnvelope;
+    /**
+    * Server-derived publish timestamp in milliseconds since epoch.
+    */
     'published_at': number;
+    /**
+    * Server-derived authenticated wallet that published the package.
+    */
     'published_by_wallet': string;
 
     static readonly discriminator: string | undefined = undefined;
