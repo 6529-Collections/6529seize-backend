@@ -1,5 +1,6 @@
 import { ApiWaveVisibilityTier } from '@/api/generated/models/ApiWaveVisibilityTier';
 import { Time } from '@/time';
+import { mapWaveScore } from './wave-score.api-mapper';
 import { WaveScoreService } from './wave-score.service';
 
 function makeInput(overrides: Record<string, unknown> = {}) {
@@ -150,6 +151,31 @@ describe('WaveScoreService', () => {
     expect(result.wave_visibility_tier).toBe(ApiWaveVisibilityTier.Suppressed);
   });
 
+  it('maps gated hotness from the persisted score calculation', () => {
+    jest.spyOn(Time, 'currentMillis').mockReturnValue(10_000);
+
+    const result = calculate({
+      latest_trusted_drop_timestamp: 10_000,
+      recent_level_weighted_posts: 300
+    });
+
+    const mappedScore = mapWaveScore(result as any);
+
+    expect(result.wave_quality_score).toBeGreaterThan(0);
+    expect(result.wave_quality_score).toBeLessThan(25);
+    expect(mappedScore.quality_gate).toMatchObject({
+      threshold: 25,
+      multiplier: Math.round((result.wave_quality_score / 25) * 100) / 100,
+      gated_hotness_score:
+        Math.round(
+          result.wave_hotness_score * (result.wave_quality_score / 25) * 100
+        ) / 100
+    });
+    expect(mappedScore.quality_gate.gated_hotness_score).toBeLessThan(
+      result.wave_hotness_score
+    );
+  });
+
   it('records cross-post pressure and applies the safety penalty', () => {
     jest.spyOn(Time, 'currentMillis').mockReturnValue(1_000);
 
@@ -187,5 +213,27 @@ describe('WaveScoreService', () => {
     await service.refreshAllWaveScores({ batchSize: 1000, maxBatches: 1 });
 
     expect(getWaveIdsPage).toHaveBeenCalledWith(null, 100, {});
+  });
+
+  it('chunks oversized explicit refresh requests for the join-heavy scoring query', async () => {
+    const service = new WaveScoreService(() => ({}) as any);
+    const ensureWaveMetricRows = jest
+      .spyOn(service as any, 'ensureWaveMetricRows')
+      .mockResolvedValue(undefined);
+    const getScoreInputRows = jest
+      .spyOn(service as any, 'getScoreInputRows')
+      .mockResolvedValue([]);
+    const waveIds = Array.from({ length: 205 }, (_, index) => `wave-${index}`);
+
+    await service.refreshWaveScoresForWaveIds(waveIds);
+
+    expect(ensureWaveMetricRows).toHaveBeenCalledTimes(3);
+    expect(getScoreInputRows).toHaveBeenCalledTimes(3);
+    expect(
+      ensureWaveMetricRows.mock.calls.map(([ids]) => (ids as string[]).length)
+    ).toEqual([100, 100, 5]);
+    expect(
+      getScoreInputRows.mock.calls.map(([ids]) => (ids as string[]).length)
+    ).toEqual([100, 100, 5]);
   });
 });

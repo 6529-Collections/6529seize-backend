@@ -117,14 +117,24 @@ export class WaveScoreService extends LazyDbAccessCompatibleService {
     }
     ctx.timer?.start(`${this.constructor.name}->refreshWaveScoresForWaveIds`);
     try {
-      await this.ensureWaveMetricRows(distinctWaveIds, ctx);
-      const inputRows = await this.getScoreInputRows(distinctWaveIds, ctx);
-      const calculations = inputRows.map((row) => this.calculate(row));
-      await Promise.all(
-        calculations.map((calculation) =>
-          this.persistCalculation(calculation, ctx)
-        )
-      );
+      for (
+        let i = 0;
+        i < distinctWaveIds.length;
+        i += WAVE_SCORE_MAX_BACKFILL_BATCH_SIZE
+      ) {
+        const waveIdsChunk = distinctWaveIds.slice(
+          i,
+          i + WAVE_SCORE_MAX_BACKFILL_BATCH_SIZE
+        );
+        await this.ensureWaveMetricRows(waveIdsChunk, ctx);
+        const inputRows = await this.getScoreInputRows(waveIdsChunk, ctx);
+        const calculations = inputRows.map((row) => this.calculate(row));
+        await Promise.all(
+          calculations.map((calculation) =>
+            this.persistCalculation(calculation, ctx)
+          )
+        );
+      }
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->refreshWaveScoresForWaveIds`);
     }
