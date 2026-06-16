@@ -26,5 +26,8 @@ describe('MediaChecker', () => {
       )
     ).resolves.toBe('png');
     expect(mockedHead).toHaveBeenCalledTimes(2);
+    expect(mockedHead).toHaveBeenCalledWith(expect.any(String), {
+      timeout: 5000
+    });
   });
 });

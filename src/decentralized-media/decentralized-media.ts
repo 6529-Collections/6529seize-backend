@@ -258,16 +258,13 @@ function parseIpfsPathGatewayUrl(url: URL): ParsedDecentralizedMedia | null {
   if (!IPFS_PATH_GATEWAY_SET.has(normalizeHostname(url.hostname))) return null;
 
   const parts = splitPath(url.pathname);
-  const prefixIndex = parts.findIndex(
-    (part) => part.toLowerCase() === 'ipfs' || part.toLowerCase() === 'ipns'
-  );
-  if (prefixIndex < 0) return null;
+  const prefix = (parts[0] ?? '').toLowerCase();
+  if (prefix !== 'ipfs' && prefix !== 'ipns') return null;
 
-  const protocol = parts[prefixIndex].toLowerCase() as 'ipfs' | 'ipns';
   return makeParsed(
-    protocol,
-    parts[prefixIndex + 1] ?? '',
-    parts.slice(prefixIndex + 2),
+    prefix,
+    parts[1] ?? '',
+    parts.slice(2),
     getUrlWarnings(url)
   );
 }
@@ -446,6 +443,8 @@ function isValidProtocolId(
 }
 
 function looksLikeIpfsCid(value: string): boolean {
+  // Deliberately limited to DNS-safe gateway forms covered by tests: CIDv0
+  // and base32 bafy CIDv1. Other valid CIDv1 prefixes are outside this helper.
   return /^(Qm[1-9A-HJ-NP-Za-km-z]{44}|[bB][aA][fF][a-zA-Z2-7]{20,})$/.test(
     value
   );
