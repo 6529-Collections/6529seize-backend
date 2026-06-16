@@ -48,10 +48,10 @@ describe('WaveScoreService', () => {
       wave_score_version: 'wave-score-v1',
       wave_visibility_tier: ApiWaveVisibilityTier.Demoted,
       wave_visibility_rank: 3,
-      wave_quality_score: 7.5,
-      wave_hotness_score: 9.38,
+      wave_quality_score: 17.5,
+      wave_hotness_score: 6.13,
       wave_rep_sort_score: 50,
-      wave_visibility_score: 12.41,
+      wave_visibility_score: 12.88,
       wave_creator_score: 0,
       wave_level_weighted_participation_score: 0,
       wave_trusted_diversity_score: 0,
@@ -66,6 +66,34 @@ describe('WaveScoreService', () => {
       wave_safety_multiplier: 1,
       wave_score_calculated_at: 1_000
     });
+  });
+
+  it('weights signed REP as 35 percent of quality on a tens-of-millions scale', () => {
+    jest.spyOn(Time, 'currentMillis').mockReturnValue(1_000);
+
+    const strongPositiveRep = calculate({
+      wave_rep_total: 25_000_000,
+      wave_rep_positive: 25_000_000
+    });
+    const strongNegativeRep = calculate({
+      wave_rep_total: -25_000_000,
+      wave_rep_negative: -25_000_000
+    });
+
+    expect(strongPositiveRep).toMatchObject({
+      wave_rep_sort_score: 100,
+      wave_rep_component_score: 100,
+      wave_quality_score: 35,
+      wave_visibility_score: 27.04
+    });
+    expect(strongNegativeRep).toMatchObject({
+      wave_rep_sort_score: 0,
+      wave_rep_component_score: 0,
+      wave_quality_score: 0,
+      wave_visibility_score: 0,
+      wave_visibility_tier: ApiWaveVisibilityTier.Suppressed
+    });
+    expect(strongNegativeRep.wave_negative_rep_penalty).toBeCloseTo(35, 2);
   });
 
   it('rewards trusted poster levels, diversity, subscribers and recent activity', () => {
@@ -97,6 +125,24 @@ describe('WaveScoreService', () => {
     expect(result.wave_recent_trusted_activity_score).toBeGreaterThan(80);
     expect(result.wave_quality_score).toBeGreaterThan(75);
     expect(result.wave_hotness_score).toBeGreaterThan(80);
+    expect(result.wave_visibility_score).toBeGreaterThan(80);
+  });
+
+  it('gates hotness contribution when quality is below the threshold', () => {
+    jest.spyOn(Time, 'currentMillis').mockReturnValue(10_000);
+
+    const result = calculate({
+      latest_trusted_drop_timestamp: 10_000,
+      recent_level_weighted_posts: 600,
+      wave_rep_total: -25_000_000,
+      wave_rep_negative: -25_000_000
+    });
+
+    expect(result.wave_recent_trusted_activity_score).toBeGreaterThan(80);
+    expect(result.wave_quality_score).toBe(0);
+    expect(result.wave_hotness_score).toBeGreaterThan(35);
+    expect(result.wave_visibility_score).toBe(0);
+    expect(result.wave_visibility_tier).toBe(ApiWaveVisibilityTier.Suppressed);
   });
 
   it('records cross-post pressure and applies the safety penalty', () => {

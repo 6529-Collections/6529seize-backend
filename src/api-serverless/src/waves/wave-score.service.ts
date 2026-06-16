@@ -15,6 +15,8 @@ import { Time } from '@/time';
 
 const SCORE_VERSION = 'wave-score-v1';
 const MAX_LEVEL_RAW_FOR_SCORE = 25000000;
+const MAX_WAVE_REP_FOR_SCORE = 25000000;
+const MIN_QUALITY_FOR_FULL_HOTNESS_VISIBILITY = 25;
 const TRUSTED_LEVEL_RAW = 1000;
 const LOW_TRUST_LEVEL_RAW = 25;
 const RECENT_ACTIVITY_WINDOW_MS = Time.days(7).toMillis();
@@ -360,19 +362,26 @@ export class WaveScoreService extends LazyDbAccessCompatibleService {
       1
     );
     const qualityScore =
-      (0.25 * creatorScore +
-        0.25 * participationScore +
-        0.2 * diversityScore +
-        0.15 * subscriptionScore +
-        0.15 * repScore) *
+      (0.2 * creatorScore +
+        0.2 * participationScore +
+        0.15 * diversityScore +
+        0.1 * subscriptionScore +
+        0.35 * repScore) *
       safetyMultiplier;
     const hotnessScore =
-      (0.6 * recentScore + 0.25 * qualityScore + 0.15 * repScore) *
-      safetyMultiplier;
-    const visibilityScore =
-      (0.55 * qualityScore + 0.35 * hotnessScore + 0.1 * repScore) *
-      safetyMultiplier;
-    const tier = this.resolveTier(visibilityScore, qualityScore, repScore);
+      (0.65 * recentScore + 0.35 * qualityScore) * safetyMultiplier;
+    const hotnessVisibilityMultiplier = this.clamp(
+      qualityScore / MIN_QUALITY_FOR_FULL_HOTNESS_VISIBILITY,
+      0,
+      1
+    );
+    const gatedHotnessScore = hotnessScore * hotnessVisibilityMultiplier;
+    const visibilityScore = 0.65 * qualityScore + 0.35 * gatedHotnessScore;
+    const tier = this.resolveTier(
+      visibilityScore,
+      qualityScore,
+      gatedHotnessScore
+    );
     return {
       wave_id: row.wave_id,
       wave_rep_total: totalRep,
@@ -489,16 +498,30 @@ export class WaveScoreService extends LazyDbAccessCompatibleService {
   }
 
   private repComponentScore(totalRep: number): number {
-    const signedSignal = 2 / (1 + Math.exp(-totalRep / 500)) - 1;
-    return this.clamp(50 + 50 * signedSignal, 0, 100);
+    if (totalRep === 0) {
+      return 50;
+    }
+    const repMagnitude = Math.min(Math.abs(totalRep), MAX_WAVE_REP_FOR_SCORE);
+    const signedSignal =
+      (50 * Math.log10(1 + repMagnitude)) /
+      Math.log10(1 + MAX_WAVE_REP_FOR_SCORE);
+    return this.clamp(
+      50 + Math.sign(totalRep) * signedSignal,
+      0,
+      100
+    );
   }
 
   private resolveTier(
     visibilityScore: number,
     qualityScore: number,
-    repScore: number
+    gatedHotnessScore: number
   ): ApiWaveVisibilityTier {
-    if (visibilityScore >= 55 && (qualityScore >= 55 || repScore >= 55)) {
+    if (
+      visibilityScore >= 55 &&
+      (qualityScore >= MIN_QUALITY_FOR_FULL_HOTNESS_VISIBILITY ||
+        gatedHotnessScore >= 55)
+    ) {
       return ApiWaveVisibilityTier.TrustedVisible;
     }
     if (visibilityScore >= 25) {
