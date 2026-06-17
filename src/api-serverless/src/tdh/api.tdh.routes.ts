@@ -1,41 +1,53 @@
 import { Request, Response } from 'express';
 import { CONSOLIDATED_WALLETS_TDH_TABLE, WALLETS_TDH_TABLE } from '@/constants';
-import { enums } from '../../../enums';
-import { NotFoundException } from '../../../exceptions';
-import { parseTdhDataFromDB } from '../../../sql_helpers';
-import { Timer } from '../../../time';
-import { NFT_TDH_SORT } from '../api-filters';
+import { enums } from '@/enums';
+import { BadRequestException, NotFoundException } from '@/exceptions';
+import { parseTdhDataFromDB } from '@/sql_helpers';
+import { Timer } from '@/time';
+import { NFT_TDH_SORT } from '@/api/api-filters';
 import {
   resolveSortDirection,
   returnCSVResult,
   returnPaginatedResult
-} from '../api-helpers';
-import { ApiResponse } from '../api-response';
-import { asyncRouter } from '../async.router';
-import { ApiConsolidatedTdh } from '../generated/models/ApiConsolidatedTdh';
-import { identityFetcher } from '../identities/identity.fetcher';
-import { DEFAULT_PAGE_SIZE } from '../page-request';
-import { cacheRequest } from '../request-cache';
+} from '@/api/api-helpers';
+import { ApiResponse } from '@/api/api-response';
+import { asyncRouter } from '@/api/async.router';
+import { ApiConsolidatedTdh } from '@/api/generated/models/ApiConsolidatedTdh';
+import { identityFetcher } from '@/api/identities/identity.fetcher';
+import { DEFAULT_PAGE_SIZE } from '@/api/page-request';
+import { cacheRequest } from '@/api/request-cache';
+import { resolveMetricsSort } from '@/api/tdh/api.tdh.metrics-sort';
 import {
   fetchConsolidatedMetrics,
   fetchNftTdh,
+  MetricsConsolidatedTdhView,
   fetchTDH,
   MetricsCollector,
   MetricsContent
-} from './api.tdh.db';
+} from '@/api/tdh/api.tdh.db';
 
 const router = asyncRouter();
 
 export default router;
 
-export const METRICS_SORT = [
-  'level',
-  'balance',
-  'unique_memes',
-  'memes_cards_sets',
-  'boosted_tdh',
-  'day_change'
-];
+export function resolveMetricsTdhView(
+  tdhView: string | undefined
+): MetricsConsolidatedTdhView {
+  if (!tdhView) {
+    return MetricsConsolidatedTdhView.BOOSTED;
+  }
+
+  const normalizedTdhView = tdhView.toLowerCase();
+  if (
+    !Object.values(MetricsConsolidatedTdhView).includes(
+      normalizedTdhView as MetricsConsolidatedTdhView
+    )
+  ) {
+    throw new BadRequestException(`Unsupported tdh_view: ${tdhView}`);
+  }
+
+  return normalizedTdhView as MetricsConsolidatedTdhView;
+}
 
 router.get(
   `/nft/:contract/:nft_id`,
@@ -100,6 +112,7 @@ router.get(
         content?: string;
         collector?: string;
         season?: number;
+        tdh_view?: string;
         download_page?: boolean;
         download_all?: boolean;
       }
@@ -108,15 +121,13 @@ router.get(
   ) {
     let page = req.query.page ?? 1;
     let pageSize = req.query.page_size ?? DEFAULT_PAGE_SIZE;
-    const sort =
-      req.query.sort && METRICS_SORT.includes(req.query.sort.toLowerCase())
-        ? req.query.sort
-        : METRICS_SORT[0];
+    const sort = resolveMetricsSort(req.query.sort);
     const sortDir = resolveSortDirection(req.query.sort_direction);
     const search = req.query.search;
     const content = enums.resolve(MetricsContent, req.query.content);
     const season = req.query.season;
     const collector = enums.resolve(MetricsCollector, req.query.collector);
+    const tdhView = resolveMetricsTdhView(req.query.tdh_view);
 
     const downloadPage = req.query.download_page;
     const downloadAll = req.query.download_all;
@@ -129,7 +140,8 @@ router.get(
       search,
       content,
       collector,
-      season
+      season,
+      tdhView
     }).then((result) => {
       if (downloadAll || downloadPage) {
         return returnCSVResult('consolidated_metrics', result.data, res);
