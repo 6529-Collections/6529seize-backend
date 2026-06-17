@@ -1,6 +1,6 @@
 import { collections } from '@/collections';
 import { assertUnreachable } from '@/assertions';
-import { DropType } from '@/entities/IDrop';
+import { DropEntity, DropType } from '@/entities/IDrop';
 import { WaveEntity } from '@/entities/IWave';
 import { enums } from '@/enums';
 import { BadRequestException, NotFoundException } from '@/exceptions';
@@ -53,6 +53,14 @@ export interface FindWaveDropsFeedV2Request {
   readonly search_strategy: ApiDropSearchStrategy;
   readonly drop_type: ApiDropType | null;
   readonly curation_id: string | null;
+}
+
+export interface FindDropRepliesFeedV2Request {
+  readonly drop_id: string;
+  readonly serial_no_limit: number | null;
+  readonly amount: number;
+  readonly search_strategy: ApiDropSearchStrategy;
+  readonly drop_type: ApiDropType | null;
 }
 
 export interface FindWavesV2Request {
@@ -233,6 +241,59 @@ export class ApiWaveV2Service {
             },
             ctx
           );
+    } finally {
+      ctx.timer?.stop(timerKey);
+    }
+  }
+
+  public async findDropRepliesFeed(
+    request: FindDropRepliesFeedV2Request,
+    ctx: RequestContext
+  ): Promise<ApiWaveDropsFeedV2> {
+    const timerKey = `${this.constructor.name}->findDropRepliesFeed`;
+    ctx.timer?.start(timerKey);
+    try {
+      const contextProfileId = getWaveReadContextProfileId(
+        ctx.authenticationContext
+      );
+      const groupIdsUserIsEligibleFor =
+        await this.userGroupsService.getGroupsUserIsEligibleFor(
+          contextProfileId,
+          ctx.timer
+        );
+      const rootDrop = await this.findVisibleRootDropOrThrow(
+        request.drop_id,
+        groupIdsUserIsEligibleFor,
+        ctx
+      );
+      const { wave, curationFilter, notFoundMessage } =
+        await this.findWaveAndCurationFilter(
+          {
+            waveId: rootDrop.wave_id,
+            curationId: null
+          },
+          ctx
+        );
+      const visibleWave = await assertWaveAndParentVisibleOrThrow({
+        wave,
+        groupsUserIsEligibleFor: groupIdsUserIsEligibleFor,
+        message: notFoundMessage,
+        wavesApiDb: this.wavesApiDb,
+        ctx
+      });
+
+      return await this.findReplyFeed(
+        {
+          ...request,
+          wave_id: visibleWave.id,
+          wave: visibleWave,
+          curationFilter,
+          curation_id: null,
+          groupIdsUserIsEligibleFor,
+          rootDrop
+        },
+        ctx
+      );
     } finally {
       ctx.timer?.stop(timerKey);
     }
@@ -576,6 +637,22 @@ export class ApiWaveV2Service {
     };
   }
 
+  private async findVisibleRootDropOrThrow(
+    dropId: string,
+    groupIdsUserIsEligibleFor: string[],
+    ctx: RequestContext
+  ): Promise<DropEntity> {
+    const rootDrop = await this.dropsDb.findDropByIdWithEligibilityCheck(
+      dropId,
+      groupIdsUserIsEligibleFor,
+      ctx.connection
+    );
+    if (!rootDrop) {
+      throw new NotFoundException(`Drop ${dropId} not found`);
+    }
+    return rootDrop;
+  }
+
   private async findWaveFeed(
     {
       wave,
@@ -620,23 +697,27 @@ export class ApiWaveV2Service {
       search_strategy,
       curationFilter,
       drop_type,
-      groupIdsUserIsEligibleFor
+      groupIdsUserIsEligibleFor,
+      rootDrop: providedRootDrop
     }: Omit<FindWaveDropsFeedV2Request, 'drop_id'> & {
       readonly drop_id: string;
       readonly wave: WaveEntity;
       readonly curationFilter: string | null;
       readonly groupIdsUserIsEligibleFor: string[];
+      readonly rootDrop?: DropEntity;
     },
     ctx: RequestContext
   ): Promise<ApiWaveDropsFeedV2> {
     const dropId = drop_id;
     const resolvedDropType = this.resolveDropType(drop_type);
     const [rootDrop, trace, dropEntities, apiWaveById] = await Promise.all([
-      this.dropsDb.findDropByIdWithEligibilityCheck(
-        dropId,
-        groupIdsUserIsEligibleFor,
-        ctx.connection
-      ),
+      providedRootDrop
+        ? Promise.resolve(providedRootDrop)
+        : this.dropsDb.findDropByIdWithEligibilityCheck(
+            dropId,
+            groupIdsUserIsEligibleFor,
+            ctx.connection
+          ),
       this.dropsDb.getTraceForDrop(dropId, ctx),
       this.dropsDb.findLatestDropRepliesSimple(
         {
@@ -651,6 +732,8 @@ export class ApiWaveV2Service {
       ),
       this.apiWaveOverviewMapper.mapWaves([wave], ctx)
     ]);
+    // This remains defensive for callers that provide a wave separately from
+    // the root drop lookup.
     if (rootDrop?.wave_id !== wave.id) {
       throw new NotFoundException(`Drop ${dropId} not found`);
     }

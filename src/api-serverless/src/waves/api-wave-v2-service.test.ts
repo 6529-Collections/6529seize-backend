@@ -566,6 +566,57 @@ describe('ApiWaveV2Service', () => {
     );
   });
 
+  it('finds reply feeds by drop id and resolves the owning visible wave', async () => {
+    const { service, deps } = createService();
+    const rootDrop = makeDrop({ id: 'root-drop', wave_id: 'wave-1' });
+    const reply = makeDrop({ id: 'reply-1', reply_to_drop_id: 'root-drop' });
+    deps.dropsDb.findDropByIdWithEligibilityCheck.mockResolvedValue(rootDrop);
+    deps.dropsDb.findLatestDropRepliesSimple.mockResolvedValue([reply]);
+
+    const result = await service.findDropRepliesFeed(
+      {
+        drop_id: 'root-drop',
+        amount: 5,
+        serial_no_limit: null,
+        search_strategy: ApiDropSearchStrategy.Newer,
+        drop_type: null
+      },
+      {
+        authenticationContext: AuthenticationContext.fromProfileId('viewer-1')
+      }
+    );
+
+    expect(result).toEqual({
+      drops: [{ id: 'reply-1' }],
+      wave: { id: 'wave-1' },
+      trace: [{ drop_id: 'root-drop', is_deleted: false }],
+      root_drop: { id: 'root-drop' }
+    });
+    expect(deps.dropsDb.findDropByIdWithEligibilityCheck).toHaveBeenCalledTimes(
+      1
+    );
+    expect(deps.dropsDb.findDropByIdWithEligibilityCheck).toHaveBeenCalledWith(
+      'root-drop',
+      ['group-1'],
+      undefined
+    );
+    expect(deps.dropsDb.findWaveByIdOrNull).toHaveBeenCalledWith(
+      'wave-1',
+      undefined
+    );
+    expect(deps.dropsDb.findLatestDropRepliesSimple).toHaveBeenCalledWith(
+      {
+        drop_id: 'root-drop',
+        amount: 5,
+        serial_no_limit: null,
+        search_strategy: ApiDropSearchStrategy.Newer,
+        curation_id: null,
+        drop_type: null
+      },
+      expect.any(Object)
+    );
+  });
+
   it('hides curation feeds when the wave is not visible', async () => {
     const { service, deps } = createService();
     deps.userGroupsService.getGroupsUserIsEligibleFor.mockResolvedValue([]);
