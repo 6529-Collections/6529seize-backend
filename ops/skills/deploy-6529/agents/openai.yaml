@@ -1,0 +1,4 @@
+interface:
+  display_name: "Deploy 6529"
+  short_description: "Run 6529 backend staging and production deploys."
+  default_prompt: "Use $deploy-6529 to merge, deploy, validate, and coordinate a 6529 backend release."
