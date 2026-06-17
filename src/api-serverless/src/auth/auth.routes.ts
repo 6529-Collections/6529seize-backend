@@ -27,6 +27,7 @@ import { ApiRedeemConnectionShareResponse } from '../generated/models/ApiRedeemC
 import { ApiSessionLoginRequest } from '../generated/models/ApiSessionLoginRequest';
 import { ApiSessionLogoutNativeRequest } from '../generated/models/ApiSessionLogoutNativeRequest';
 import { ApiSessionLogoutWebRequest } from '../generated/models/ApiSessionLogoutWebRequest';
+import { ApiSessionNonceResponse } from '../generated/models/ApiSessionNonceResponse';
 import { ApiSessionRefreshNativeRequest } from '../generated/models/ApiSessionRefreshNativeRequest';
 import { ApiSessionRefreshWebRequest } from '../generated/models/ApiSessionRefreshWebRequest';
 import { CreateWalletAuthSession201Response } from '../generated/models/CreateWalletAuthSession201Response';
@@ -129,7 +130,7 @@ router.get(
   '/session-nonce',
   function (
     req: Request<any, any, any, SessionNonceQueryRequest, any>,
-    res: Response<ApiResponse<ApiNonceResponse>>
+    res: Response<ApiResponse<ApiSessionNonceResponse>>
   ) {
     const nonceRequest = getValidatedByJoiOrThrow(
       req.query,
@@ -142,7 +143,7 @@ router.get(
       );
     }
     const nonceContext = resolveSessionNonceContext(req, nonceRequest);
-    const nonce = buildStructuredWalletSignatureMessage({
+    const signableMessage = buildStructuredWalletSignatureMessage({
       kind: 'authentication',
       audience: getDefaultStructuredWalletSignatureAudience(),
       domain: nonceContext.domain,
@@ -154,9 +155,9 @@ router.get(
       action: 'login',
       purpose: 'Sign this message to authenticate with 6529.'
     });
-    const serverSignature = jwt.sign(nonce, getJwtSecret());
+    const serverSignature = jwt.sign(signableMessage, getJwtSecret());
     res.status(200).send({
-      nonce,
+      signable_message: signableMessage,
       server_signature: serverSignature
     });
   }

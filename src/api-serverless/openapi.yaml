@@ -274,7 +274,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ApiNonceResponse"
+                $ref: "#/components/schemas/ApiSessionNonceResponse"
         "400":
           description: Invalid request
   /auth/session-login:
@@ -14128,6 +14128,16 @@ components:
           minimum: 1
           default: 1
           description: Chain id embedded in the structured session signature.
+    ApiSessionNonceResponse:
+      type: object
+      required:
+        - signable_message
+        - server_signature
+      properties:
+        signable_message:
+          type: string
+        server_signature:
+          type: string
     ApiSessionRefreshNativeRequest:
       type: object
       required:
