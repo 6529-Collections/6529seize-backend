@@ -3,6 +3,7 @@ import { ApiCmsValidationResult } from '@/api/generated/models/ApiCmsValidationR
 import { ApiProfileCmsPackage } from '@/api/generated/models/ApiProfileCmsPackage';
 import { ApiProfileCmsPrimaryPackage } from '@/api/generated/models/ApiProfileCmsPrimaryPackage';
 import {
+  GetProfileCmsPackageByVersionRequest,
   GetPrimaryProfileCmsPackageRequest,
   SaveProfileCmsPackageDraftRequest,
   ValidateProfileCmsPackageRequest
@@ -18,7 +19,8 @@ const mockGetAuthenticationContext = jest.fn();
 const mockProfileCmsApiService = {
   saveDraft: jest.fn(),
   validatePackage: jest.fn(),
-  getPrimaryByHandle: jest.fn()
+  getPrimaryByHandle: jest.fn(),
+  getByVersion: jest.fn()
 };
 
 jest.mock('@/api/auth/auth', () => ({
@@ -30,6 +32,7 @@ jest.mock('@/api/profile-cms/profile-cms.api.service', () => ({
 }));
 
 import {
+  handleGetProfileCmsPackageByVersion,
   handleGetPrimaryProfileCmsPackage,
   handleSaveProfileCmsPackageDraft,
   handleValidateProfileCmsPackage
@@ -130,5 +133,48 @@ describe('profile CMS handlers', () => {
     await expect(
       handleGetPrimaryProfileCmsPackage(request)
     ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('coerces version path params before package version lookup', async () => {
+    const authenticationContext = AuthenticationContext.fromProfileId(
+      PROFILE_CMS_FIXTURE_PROFILE_ID
+    );
+    const cmsPackage = createValidProfileCmsPackage();
+    const apiPackage = {
+      id: 'cms-package-id',
+      package: cmsPackage,
+      profile_id: PROFILE_CMS_FIXTURE_PROFILE_ID,
+      profile_handle: PROFILE_CMS_FIXTURE_HANDLE,
+      package_id: cmsPackage.package_id,
+      version: 2,
+      status: 'published',
+      package_hash: cmsPackage.integrity.package_hash,
+      payload_hash: cmsPackage.integrity.payload_hash,
+      updated_at: 1000,
+      created_at: 1000,
+      published_at: 1000
+    } as unknown as ApiProfileCmsPackage;
+    mockGetAuthenticationContext.mockResolvedValue(authenticationContext);
+    mockProfileCmsApiService.getByVersion.mockResolvedValue(apiPackage);
+
+    const request = {
+      params: {
+        profile_id: PROFILE_CMS_FIXTURE_PROFILE_ID,
+        package_id: cmsPackage.package_id,
+        version: '2'
+      },
+      body: undefined,
+      query: {}
+    } as unknown as GetProfileCmsPackageByVersionRequest;
+
+    await expect(handleGetProfileCmsPackageByVersion(request)).resolves.toBe(
+      apiPackage
+    );
+    expect(mockProfileCmsApiService.getByVersion).toHaveBeenCalledWith(
+      PROFILE_CMS_FIXTURE_PROFILE_ID,
+      cmsPackage.package_id,
+      2,
+      { authenticationContext, timer: undefined }
+    );
   });
 });

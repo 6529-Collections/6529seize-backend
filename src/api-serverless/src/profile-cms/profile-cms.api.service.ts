@@ -73,6 +73,7 @@ export interface ProfileCmsPrimaryPackageResponse {
 interface ProfileHandleIdentity {
   readonly id: string;
   readonly handle: string;
+  readonly wallets: ReadonlySet<string>;
 }
 
 export class ProfileCmsApiService {
@@ -87,8 +88,12 @@ export class ProfileCmsApiService {
   ): Promise<ProfileCmsPackageResponse> {
     this.assertCanManageProfile(request.profile_id, ctx.authenticationContext);
     const cmsPackage = this.parsePackageOrThrow(request.cms_package);
-    const profile = await this.getProfileIdentityOrThrow(request.profile_id);
+    const profile = await this.getProfileIdentityOrThrow(
+      request.profile_id,
+      ctx
+    );
     this.assertPackageProfileMatches(cmsPackage, profile);
+    this.assertPackageWalletsMatch(cmsPackage, profile);
     const createdByProfileId = this.getLoggedInProfileId(
       ctx.authenticationContext
     );
@@ -110,8 +115,9 @@ export class ProfileCmsApiService {
       cms_package: cmsPackage,
       payload_hash: cmsPackage.integrity.payload_hash,
       package_hash: cmsPackage.integrity.package_hash,
-      primary_path: `/${cmsPackage.profile.handle}/index.html`,
+      primary_path: `/${profile.handle}/index.html`,
       is_primary: false,
+      production_valid: false,
       created_by_profile_id: createdByProfileId,
       published_by_profile_id: null,
       created_at: now,
@@ -156,8 +162,6 @@ export class ProfileCmsApiService {
     this.assertDraftCanBePublished(entity);
     this.assertExpectedHashes(entity, request);
 
-    const validatingAt = Time.currentMillis();
-    await this.packagesDb.markValidating(entity.id, validatingAt, ctx);
     const validationResult = validateCmsPackageV1(entity.cms_package, {
       allowFixtureSignatures: false,
       allowFixtureStorage: false,
@@ -166,6 +170,7 @@ export class ProfileCmsApiService {
 
     if (!validationResult.valid) {
       const failedAt = Time.currentMillis();
+      await this.packagesDb.markValidating(entity.id, failedAt, ctx);
       await this.packagesDb.markFailed(
         entity.id,
         validationResult,
@@ -183,14 +188,34 @@ export class ProfileCmsApiService {
     await this.packagesDb.executeNativeQueriesInTransaction(
       async (connection) => {
         const txCtx: RequestContext = { ...ctx, connection };
-        await this.packagesDb.supersedePrimaryForProfile(
+        await this.packagesDb.lockProfilePackagesForUpdate(
           entity.profile_id,
+          txCtx
+        );
+        const lockedEntity = await this.packagesDb.findByIdForUpdate(
           entity.id,
+          txCtx
+        );
+        if (!lockedEntity) {
+          throw new NotFoundException(
+            `Profile CMS package ${entity.id} was not found`
+          );
+        }
+        this.assertDraftCanBePublished(lockedEntity);
+        this.assertExpectedHashes(lockedEntity, request);
+        await this.packagesDb.markValidating(
+          lockedEntity.id,
+          publishedAt,
+          txCtx
+        );
+        await this.packagesDb.supersedePrimaryForProfile(
+          lockedEntity.profile_id,
+          lockedEntity.id,
           publishedAt,
           txCtx
         );
         await this.packagesDb.markPublished(
-          entity.id,
+          lockedEntity.id,
           publishedByProfileId,
           validationResult,
           publishedAt,
@@ -226,11 +251,16 @@ export class ProfileCmsApiService {
     handle: string,
     ctx: RequestContext
   ): Promise<ProfileCmsPrimaryPackageResponse> {
-    const entity = await this.packagesDb.findPrimaryPublishedByHandle(
-      handle,
+    const profile = await this.getProfileIdentityOrThrow(handle, ctx);
+    const entity = await this.packagesDb.findPrimaryPublishedByProfileId(
+      profile.id,
       ctx
     );
-    if (!entity || !this.isPublicPackage(entity)) {
+    if (
+      !entity ||
+      !this.isPublicPackage(entity) ||
+      entity.profile_handle.toLowerCase() !== profile.handle.toLowerCase()
+    ) {
       throw new NotFoundException(
         `Profile ${handle} has no primary published CMS package`
       );
@@ -279,7 +309,9 @@ export class ProfileCmsApiService {
     if (publicEntity) {
       return this.toPackageResponse(publicEntity);
     }
-    const privateEntity = entities.find((entity) =>
+    const privateEntity = (
+      await this.packagesDb.findAllByHash(packageHash, ctx)
+    ).find((entity) =>
       this.canManageProfile(entity.profile_id, ctx.authenticationContext)
     );
     if (privateEntity) {
@@ -329,17 +361,30 @@ export class ProfileCmsApiService {
   }
 
   private async getProfileIdentityOrThrow(
-    profileId: string
+    profileId: string,
+    ctx: RequestContext
   ): Promise<ProfileHandleIdentity> {
     const identity =
       await this.identityFetcher.getIdentityAndConsolidationsByIdentityKey(
         { identityKey: profileId },
-        {}
+        ctx
       );
-    if (!identity?.handle || !identity.id) {
+    if (!identity?.handle || !identity.id || !identity.primary_wallet) {
       throw new NotFoundException(`Profile ${profileId} not found`);
     }
-    return { id: identity.id, handle: identity.handle };
+    const wallets = new Set(
+      [
+        identity.primary_wallet,
+        ...(identity.wallets ?? []).map((it) => it.wallet)
+      ]
+        .map((wallet) => normalizeWallet(wallet))
+        .filter((wallet): wallet is string => !!wallet)
+    );
+    return {
+      id: identity.id,
+      handle: identity.handle,
+      wallets
+    };
   }
 
   private assertPackageProfileMatches(
@@ -361,6 +406,30 @@ export class ProfileCmsApiService {
         'CMS package handle does not match profile'
       );
     }
+  }
+
+  private assertPackageWalletsMatch(
+    cmsPackage: CmsPackageV1,
+    profile: ProfileHandleIdentity
+  ): void {
+    const packagePrimaryWallet = normalizeWallet(
+      cmsPackage.profile.primary_wallet
+    );
+    if (!packagePrimaryWallet || !profile.wallets.has(packagePrimaryWallet)) {
+      throw new BadRequestException(
+        'CMS package primary_wallet does not belong to the profile'
+      );
+    }
+    cmsPackage.signatures
+      .filter((signature) => signature.type === 'eip712')
+      .forEach((signature) => {
+        const signer = normalizeWallet(signature.signer);
+        if (!signer || !profile.wallets.has(signer)) {
+          throw new BadRequestException(
+            'CMS package eip712 signer does not belong to the profile'
+          );
+        }
+      });
   }
 
   private assertCanManageProfile(
@@ -436,20 +505,27 @@ export class ProfileCmsApiService {
   private isPublicPackage(entity: ProfileCmsPackageEntity): boolean {
     return (
       entity.status === ProfileCmsPackageStatus.PUBLISHED &&
+      entity.production_valid &&
       this.isProductionSafePackage(entity.cms_package)
     );
   }
 
   private isProductionSafePackage(input: unknown): boolean {
-    const parsed = cmsPackageSchema.safeParse(input);
-    if (!parsed.success) {
+    if (!isRecord(input)) {
       return false;
     }
-    return validateCmsPackageV1(parsed.data, {
-      allowFixtureSignatures: false,
-      allowFixtureStorage: false,
-      enforceHashes: true
-    }).valid;
+    const signatures = input.signatures;
+    const storage = input.storage;
+    return (
+      Array.isArray(signatures) &&
+      signatures.every(
+        (signature) => isRecord(signature) && signature.type !== 'fixture'
+      ) &&
+      Array.isArray(storage) &&
+      storage.every(
+        (receipt) => isRecord(receipt) && receipt.provider !== 'fixture'
+      )
+    );
   }
 
   private getIndexedStorageReceipt(
@@ -503,3 +579,11 @@ export const profileCmsApiService = new ProfileCmsApiService(
   profileCmsPackagesDb,
   identityFetcher
 );
+
+function normalizeWallet(wallet: string | null | undefined): string | null {
+  return typeof wallet === 'string' ? wallet.toLowerCase() : null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}

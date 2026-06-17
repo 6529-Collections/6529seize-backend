@@ -72,6 +72,13 @@ The package hash intentionally excludes signatures, storage receipts, and the
 filter for published production-safe rows so fixture packages are not served
 even if they share a package hash with a later production package.
 
+EIP-712 signature recovery and remote storage byte/CID verification are not in
+this service lane. The backend currently treats signatures and storage receipts
+as CMS package metadata after structural validation, profile-wallet binding for
+`eip712` signers, fixture rejection, and hash enforcement over the package JSON.
+Consumers must not treat the signature envelope or storage `content_hash` as a
+cryptographic proof until the protocol adds those verification rules.
+
 ## Storage Receipt Indexing
 
 `profile_cms_packages` stores the full package `storage` array and indexes one

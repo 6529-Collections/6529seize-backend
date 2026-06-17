@@ -55,6 +55,7 @@ export class ProfileCmsPackagesDb extends LazyDbAccessCompatibleService {
         package_hash,
         primary_path,
         is_primary,
+        production_valid,
         created_by_profile_id,
         published_by_profile_id,
         created_at,
@@ -86,6 +87,7 @@ export class ProfileCmsPackagesDb extends LazyDbAccessCompatibleService {
         :package_hash,
         :primary_path,
         :is_primary,
+        :production_valid,
         :created_by_profile_id,
         :published_by_profile_id,
         :created_at,
@@ -163,8 +165,27 @@ export class ProfileCmsPackagesDb extends LazyDbAccessCompatibleService {
         'findByHash',
         `select * from ${PROFILE_CMS_PACKAGES_TABLE}
          where package_hash = :packageHash
+           and status = '${ProfileCmsPackageStatus.PUBLISHED}'
+           and production_valid = true
          order by published_at desc, updated_at desc
-         limit 20`,
+         limit 50`,
+        { packageHash },
+        ctx
+      )
+    );
+  }
+
+  async findAllByHash(
+    packageHash: string,
+    ctx: RequestContext
+  ): Promise<ProfileCmsPackageEntity[]> {
+    return this.hydrateMany(
+      await this.timedExecute<ProfileCmsPackageEntity>(
+        'findAllByHash',
+        `select * from ${PROFILE_CMS_PACKAGES_TABLE}
+         where package_hash = :packageHash
+         order by published_at desc, updated_at desc
+         limit 50`,
         { packageHash },
         ctx
       )
@@ -191,22 +212,53 @@ export class ProfileCmsPackagesDb extends LazyDbAccessCompatibleService {
     );
   }
 
-  async findPrimaryPublishedByHandle(
-    handle: string,
+  async findPrimaryPublishedByProfileId(
+    profileId: string,
     ctx: RequestContext
   ): Promise<ProfileCmsPackageEntity | null> {
     return this.hydrate(
       await this.timedOneOrNull<ProfileCmsPackageEntity>(
-        'findPrimaryPublishedByHandle',
+        'findPrimaryPublishedByProfileId',
         `select * from ${PROFILE_CMS_PACKAGES_TABLE}
-         where lower(profile_handle) = lower(:handle)
+         where profile_id = :profileId
            and status = '${ProfileCmsPackageStatus.PUBLISHED}'
            and is_primary = true
+           and production_valid = true
          order by published_at desc, updated_at desc
          limit 1`,
-        { handle },
+        { profileId },
         ctx
       )
+    );
+  }
+
+  async findByIdForUpdate(
+    id: string,
+    ctx: RequestContext
+  ): Promise<ProfileCmsPackageEntity | null> {
+    return this.hydrate(
+      await this.timedOneOrNull<ProfileCmsPackageEntity>(
+        'findByIdForUpdate',
+        `select * from ${PROFILE_CMS_PACKAGES_TABLE}
+         where id = :id
+         for update`,
+        { id },
+        ctx
+      )
+    );
+  }
+
+  async lockProfilePackagesForUpdate(
+    profileId: string,
+    ctx: RequestContext
+  ): Promise<void> {
+    await this.timedExecute(
+      'lockProfilePackagesForUpdate',
+      `select id from ${PROFILE_CMS_PACKAGES_TABLE}
+       where profile_id = :profileId
+       for update`,
+      { profileId },
+      ctx
     );
   }
 
@@ -220,6 +272,7 @@ export class ProfileCmsPackagesDb extends LazyDbAccessCompatibleService {
         id,
         status: ProfileCmsPackageStatus.VALIDATING,
         updated_at: now,
+        production_valid: false,
         validated_at: null,
         failed_at: null,
         validation_result: null,
@@ -241,6 +294,7 @@ export class ProfileCmsPackagesDb extends LazyDbAccessCompatibleService {
         id,
         status: ProfileCmsPackageStatus.FAILED,
         updated_at: now,
+        production_valid: false,
         validated_at: now,
         failed_at: now,
         validation_result: JSON.stringify(validationResult),
@@ -293,6 +347,7 @@ export class ProfileCmsPackagesDb extends LazyDbAccessCompatibleService {
            updated_at = :now,
            validated_at = :now,
            published_at = :now,
+           production_valid = true,
            failed_at = null,
            validation_result = :validationResult,
            validation_error = null
@@ -313,6 +368,7 @@ export class ProfileCmsPackagesDb extends LazyDbAccessCompatibleService {
       readonly id: string;
       readonly status: ProfileCmsPackageStatus;
       readonly updated_at: number;
+      readonly production_valid: boolean;
       readonly validated_at?: number | null;
       readonly failed_at?: number | null;
       readonly validation_result?: string | null;
@@ -325,6 +381,7 @@ export class ProfileCmsPackagesDb extends LazyDbAccessCompatibleService {
       `update ${PROFILE_CMS_PACKAGES_TABLE}
        set status = :status,
            updated_at = :updated_at,
+           production_valid = :production_valid,
            validated_at = :validated_at,
            failed_at = :failed_at,
            validation_result = :validation_result,
@@ -357,6 +414,7 @@ export class ProfileCmsPackagesDb extends LazyDbAccessCompatibleService {
       validation_result: parseJsonColumn(row.validation_result),
       storage_receipts: parseJsonColumn(row.storage_receipts),
       is_primary: !!row.is_primary,
+      production_valid: !!row.production_valid,
       storage_pinned: nullableBoolean(row.storage_pinned),
       storage_canonical: nullableBoolean(row.storage_canonical)
     };
@@ -375,6 +433,7 @@ export class ProfileCmsPackagesDb extends LazyDbAccessCompatibleService {
           : JSON.stringify(entity.validation_result),
       storage_receipts: JSON.stringify(entity.storage_receipts),
       is_primary: entity.is_primary ? 1 : 0,
+      production_valid: entity.production_valid ? 1 : 0,
       storage_pinned: nullableBooleanParam(entity.storage_pinned),
       storage_canonical: nullableBooleanParam(entity.storage_canonical),
       validated_at: entity.validated_at ?? null,
@@ -428,7 +487,14 @@ export class ProfileCmsPackagesDb extends LazyDbAccessCompatibleService {
 }
 
 function parseJsonColumn(value: unknown): unknown {
-  return typeof value === 'string' ? JSON.parse(value) : value;
+  if (typeof value !== 'string') {
+    return value;
+  }
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
 }
 
 function nullableBoolean(value: unknown): boolean | null {

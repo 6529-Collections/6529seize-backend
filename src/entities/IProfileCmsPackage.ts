@@ -13,11 +13,11 @@ export enum ProfileCmsPackageStatus {
 @Entity(PROFILE_CMS_PACKAGES_TABLE)
 @Index('idx_profile_cms_packages_profile_state', ['profile_id', 'status'])
 @Index('idx_profile_cms_packages_profile_primary', ['profile_id', 'is_primary'])
-@Index('idx_profile_cms_packages_package_version', [
-  'profile_id',
-  'package_id',
-  'version'
-])
+@Index(
+  'idx_profile_cms_packages_package_version',
+  ['profile_id', 'package_id', 'version'],
+  { unique: true }
+)
 export class ProfileCmsPackageEntity {
   @PrimaryColumn({ type: 'varchar', length: 100 })
   readonly id!: string;
@@ -53,6 +53,9 @@ export class ProfileCmsPackageEntity {
 
   @Column({ type: 'boolean', default: false })
   readonly is_primary!: boolean;
+
+  @Column({ type: 'boolean', default: false })
+  readonly production_valid!: boolean;
 
   @Column({ type: 'varchar', length: 100 })
   readonly created_by_profile_id!: string;

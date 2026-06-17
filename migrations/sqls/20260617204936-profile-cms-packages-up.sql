@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS profile_cms_packages (
   package_hash varchar(100) NOT NULL,
   primary_path varchar(512) NOT NULL,
   is_primary tinyint(1) NOT NULL DEFAULT 0,
+  production_valid tinyint(1) NOT NULL DEFAULT 0,
   created_by_profile_id varchar(100) NOT NULL,
   published_by_profile_id varchar(100) DEFAULT NULL,
   created_at bigint NOT NULL,
@@ -32,7 +33,7 @@ CREATE TABLE IF NOT EXISTS profile_cms_packages (
   PRIMARY KEY (id),
   KEY idx_profile_cms_packages_profile_state (profile_id, status),
   KEY idx_profile_cms_packages_profile_primary (profile_id, is_primary),
-  KEY idx_profile_cms_packages_package_version (profile_id, package_id, version),
+  UNIQUE KEY idx_profile_cms_packages_package_version (profile_id, package_id, version),
   KEY idx_profile_cms_packages_handle (profile_handle),
   KEY idx_profile_cms_packages_package_hash (package_hash)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

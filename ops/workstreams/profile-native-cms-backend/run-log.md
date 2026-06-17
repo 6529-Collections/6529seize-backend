@@ -38,3 +38,17 @@
 - PR #1645 opened. Snyk passed, CodeRabbit was rate-limited, and Sonar
   quality gate passed with 18 maintainability findings. Addressed the
   actionable Sonar findings locally with no CMS protocol schema changes.
+- Addressed 6529bot backend-service review feedback:
+  - primary lookup now resolves the live handle identity and queries by
+    profile id, rejecting stale handle rows.
+  - publish stores and reads a `production_valid` flag instead of full public
+    re-validation on every anonymous read.
+  - package version has a unique `(profile_id, package_id, version)` index.
+  - publish locks profile package rows and the draft row before superseding the
+    previous primary.
+  - public by-hash lookup is scoped to published production-valid rows.
+  - draft save validates package `primary_wallet` and `eip712` signer ownership
+    against the resolved profile wallets.
+  - migration SQL debug logging was removed.
+- Regenerated API models/routes using the primary checkout OpenAPI generator
+  dependency junction so the generated CMS model files match CI output.
