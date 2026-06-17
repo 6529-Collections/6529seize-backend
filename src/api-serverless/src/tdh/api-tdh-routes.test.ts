@@ -1,12 +1,11 @@
 const mockFetchConsolidatedMetrics = jest.fn();
 
-jest.mock('../request-cache', () => ({
-  cacheRequest: () => (_req: unknown, _res: unknown, next: () => void) =>
-    next()
+jest.mock('@/api/request-cache', () => ({
+  cacheRequest: () => (_req: unknown, _res: unknown, next: () => void) => next()
 }));
 
-jest.mock('./api.tdh.db', () => {
-  const actual = jest.requireActual('./api.tdh.db');
+jest.mock('@/api/tdh/api.tdh.db', () => {
+  const actual = jest.requireActual('@/api/tdh/api.tdh.db');
   return {
     ...actual,
     fetchConsolidatedMetrics: mockFetchConsolidatedMetrics
@@ -16,27 +15,23 @@ jest.mock('./api.tdh.db', () => {
 import express, { NextFunction, Request, Response } from 'express';
 import { Server } from 'http';
 import { BadRequestException, ApiCompliantException } from '@/exceptions';
-import { MetricsConsolidatedTdhView } from './api.tdh.db';
-import router, {
-  resolveMetricsSort,
-  resolveMetricsTdhView
-} from './api.tdh.routes';
+import { resolveMetricsSort } from '@/api/tdh/api.tdh.metrics-sort';
+import { MetricsConsolidatedTdhView } from '@/api/tdh/api.tdh.db';
+import router, { resolveMetricsTdhView } from '@/api/tdh/api.tdh.routes';
 
 function createTestApp() {
   const app = express();
   app.use('/api/tdh', router);
-  app.use(
-    (err: Error, _req: Request, res: Response, next: NextFunction) => {
-      if (err instanceof ApiCompliantException) {
-        res.status(err.getStatusCode()).send({ error: err.message });
-        next();
-        return;
-      }
-
-      res.status(500).send({ error: 'Something went wrong...' });
-      next(err);
+  app.use((err: Error, _req: Request, res: Response, next: NextFunction) => {
+    if (err instanceof ApiCompliantException) {
+      res.status(err.getStatusCode()).send({ error: err.message });
+      next();
+      return;
     }
-  );
+
+    res.status(500).send({ error: 'Something went wrong...' });
+    next(err);
+  });
   return app;
 }
 
@@ -175,6 +170,22 @@ describe('api.tdh.routes', () => {
     });
 
     it('returns paginated JSON for the default response path', async () => {
+      mockFetchConsolidatedMetrics.mockResolvedValueOnce({
+        count: 1,
+        page: 1,
+        next: null,
+        data: [
+          {
+            consolidation_key: 'abc',
+            tdh: 8,
+            tdh_view: 'unboosted',
+            boosted_tdh: 10,
+            unboosted_tdh: 8,
+            day_change: 1
+          }
+        ]
+      });
+
       const response = await getRoute(
         '/api/tdh/consolidated_metrics?sort=tdh&tdh_view=unboosted'
       );
@@ -188,8 +199,8 @@ describe('api.tdh.routes', () => {
         data: [
           {
             consolidation_key: 'abc',
-            tdh: 10,
-            tdh_view: 'boosted',
+            tdh: 8,
+            tdh_view: 'unboosted',
             boosted_tdh: 10,
             unboosted_tdh: 8,
             day_change: 1

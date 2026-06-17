@@ -1,4 +1,5 @@
-import { constructFilters, constructFiltersOR } from '../api-helpers';
+import { constructFilters, constructFiltersOR } from '@/api/api-helpers';
+import { MetricsSort } from '@/api/tdh/api.tdh.metrics-sort';
 import { BadRequestException } from '@/exceptions';
 import {
   CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE,
@@ -14,12 +15,9 @@ import {
   NULL_ADDRESS,
   TDH_NFT_TABLE
 } from '@/constants';
-import { fetchPaginated } from '../../../db-api';
-import {
-  calculateLevel,
-  getLevelFromScore
-} from '../../../profiles/profile-level';
-import { sqlExecutor } from '../../../sql-executor';
+import { fetchPaginated } from '@/db-api';
+import { calculateLevel, getLevelFromScore } from '@/profiles/profile-level';
+import { sqlExecutor } from '@/sql-executor';
 
 export enum MetricsContent {
   MEMES = 'Memes',
@@ -55,8 +53,8 @@ function resolveConsolidatedMetricsSortDirection(
 }
 
 function resolveConsolidatedMetricsSortExpression(
-  sort: string,
-  sortExpressions: Record<string, string>
+  sort: MetricsSort,
+  sortExpressions: Record<MetricsSort, string>
 ): string {
   const sortExpression = sortExpressions[sort];
   if (!sortExpression) {
@@ -237,7 +235,7 @@ function getCollectorFilters(
 }
 
 export const fetchConsolidatedMetrics = async (
-  sort: string,
+  sort: MetricsSort,
   sortDir: string,
   page: number,
   pageSize: number,

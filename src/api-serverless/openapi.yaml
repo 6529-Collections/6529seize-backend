@@ -5772,8 +5772,8 @@ paths:
         - name: sort
           in: query
           description: >-
-            Default is level. boosted_tdh is a backward-compatible alias for tdh
-            with tdh_view=boosted.
+            Default is level. Use tdh to sort by the selected tdh_view. Use
+            boosted_tdh to sort by boosted TDH regardless of tdh_view.
           required: false
           schema:
             $ref: "#/components/schemas/ApiConsolidatedTdhMetricsSort"
@@ -5826,6 +5826,7 @@ paths:
             text/csv:
               schema:
                 type: string
+                format: binary
         "400":
           description: Unsupported sort field or TDH view
   /tdh/consolidation/{identity}:

@@ -1,21 +1,22 @@
 import { Request, Response } from 'express';
 import { CONSOLIDATED_WALLETS_TDH_TABLE, WALLETS_TDH_TABLE } from '@/constants';
-import { enums } from '../../../enums';
-import { BadRequestException, NotFoundException } from '../../../exceptions';
-import { parseTdhDataFromDB } from '../../../sql_helpers';
-import { Timer } from '../../../time';
-import { NFT_TDH_SORT } from '../api-filters';
+import { enums } from '@/enums';
+import { BadRequestException, NotFoundException } from '@/exceptions';
+import { parseTdhDataFromDB } from '@/sql_helpers';
+import { Timer } from '@/time';
+import { NFT_TDH_SORT } from '@/api/api-filters';
 import {
   resolveSortDirection,
   returnCSVResult,
   returnPaginatedResult
-} from '../api-helpers';
-import { ApiResponse } from '../api-response';
-import { asyncRouter } from '../async.router';
-import { ApiConsolidatedTdh } from '../generated/models/ApiConsolidatedTdh';
-import { identityFetcher } from '../identities/identity.fetcher';
-import { DEFAULT_PAGE_SIZE } from '../page-request';
-import { cacheRequest } from '../request-cache';
+} from '@/api/api-helpers';
+import { ApiResponse } from '@/api/api-response';
+import { asyncRouter } from '@/api/async.router';
+import { ApiConsolidatedTdh } from '@/api/generated/models/ApiConsolidatedTdh';
+import { identityFetcher } from '@/api/identities/identity.fetcher';
+import { DEFAULT_PAGE_SIZE } from '@/api/page-request';
+import { cacheRequest } from '@/api/request-cache';
+import { resolveMetricsSort } from '@/api/tdh/api.tdh.metrics-sort';
 import {
   fetchConsolidatedMetrics,
   fetchNftTdh,
@@ -23,34 +24,11 @@ import {
   fetchTDH,
   MetricsCollector,
   MetricsContent
-} from './api.tdh.db';
+} from '@/api/tdh/api.tdh.db';
 
 const router = asyncRouter();
 
 export default router;
-
-export const METRICS_SORT = [
-  'level',
-  'balance',
-  'unique_memes',
-  'memes_cards_sets',
-  'tdh',
-  'boosted_tdh',
-  'day_change'
-];
-
-export function resolveMetricsSort(sort: string | undefined): string {
-  if (!sort) {
-    return METRICS_SORT[0];
-  }
-
-  const normalizedSort = sort.toLowerCase();
-  if (!METRICS_SORT.includes(normalizedSort)) {
-    throw new BadRequestException(`Unsupported sort field: ${sort}`);
-  }
-
-  return normalizedSort;
-}
 
 export function resolveMetricsTdhView(
   tdhView: string | undefined
