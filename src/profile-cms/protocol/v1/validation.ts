@@ -32,13 +32,13 @@ export interface CmsValidationOptions {
 }
 
 interface IssueInput {
-  severity?: CmsValidationIssueV1['severity'] | undefined;
+  severity?: CmsValidationIssueV1['severity'];
   code: string;
   message: string;
   path: string;
-  pageId?: string | undefined;
-  blockId?: string | undefined;
-  suggestedFix?: string | undefined;
+  pageId?: string;
+  blockId?: string;
+  suggestedFix?: string;
 }
 
 type IdMap<T extends { id: string }> = Map<string, { value: T; index: number }>;
@@ -154,7 +154,7 @@ function buildValidationResult({
   checkedAt: string;
   issues: CmsValidationIssueV1[];
   options: CmsValidationOptions;
-  target?: CmsValidationResultV1['target'] | undefined;
+  target?: CmsValidationResultV1['target'];
 }): CmsValidationResultV1 {
   const result = {
     schema: CMS_VALIDATION_RESULT_SCHEMA,
@@ -477,7 +477,7 @@ function validatePages(
       });
     }
 
-    validateOptionalAssetReference(
+    validateCmsAssetReference(
       page.metadata.social_image_asset_id,
       assetMap,
       `${pagePath}/metadata/social_image_asset_id`,
@@ -485,7 +485,7 @@ function validatePages(
       'asset.reference_missing',
       page.id
     );
-    validateOptionalAssetReference(
+    validateCmsAssetReference(
       page.metadata.square_social_image_asset_id,
       assetMap,
       `${pagePath}/metadata/square_social_image_asset_id`,
@@ -665,7 +665,7 @@ function validateNftMediaProfiles(
     }
 
     profile.original_asset_ids?.forEach((assetId, assetIndex) => {
-      validateAssetReference(
+      validateCmsAssetReference(
         assetId,
         assetMap,
         `${path}/original_asset_ids/${assetIndex}`,
@@ -674,7 +674,7 @@ function validateNftMediaProfiles(
       );
     });
 
-    validateOptionalAssetReference(
+    validateCmsAssetReference(
       profile.poster_asset_id,
       assetMap,
       `${path}/poster_asset_id`,
@@ -683,14 +683,14 @@ function validateNftMediaProfiles(
     );
 
     profile.display_variants.forEach((variant, variantIndex) => {
-      validateAssetReference(
+      validateCmsAssetReference(
         variant.asset_id,
         assetMap,
         `${path}/display_variants/${variantIndex}/asset_id`,
         issues,
         'asset.reference_missing'
       );
-      validateOptionalAssetReference(
+      validateCmsAssetReference(
         variant.source_asset_id,
         assetMap,
         `${path}/display_variants/${variantIndex}/source_asset_id`,
@@ -717,7 +717,7 @@ function validateDeepZoomManifests(
 ): void {
   manifests.forEach((manifest, index) => {
     const path = `/payload/deep_zoom_manifests/${index}`;
-    validateAssetReference(
+    validateCmsAssetReference(
       manifest.source_asset_id,
       assetMap,
       `${path}/source_asset_id`,
@@ -746,7 +746,7 @@ function validateExhibitionRooms(
 ): void {
   rooms.forEach((room, roomIndex) => {
     const path = `/payload/exhibition_rooms/${roomIndex}`;
-    validateOptionalAssetReference(
+    validateCmsAssetReference(
       room.poster_asset_id,
       assetMap,
       `${path}/poster_asset_id`,
@@ -763,7 +763,7 @@ function validateExhibitionRooms(
 
     room.placements.forEach((placement, placementIndex) => {
       const placementPath = `${path}/placements/${placementIndex}`;
-      validateAssetReference(
+      validateCmsAssetReference(
         placement.asset_id,
         assetMap,
         `${placementPath}/asset_id`,
@@ -1029,7 +1029,7 @@ function validateInteractivePolicyReferences(
     return;
   }
 
-  validateAssetReference(
+  validateCmsAssetReference(
     block.interactive_policy.fallback_asset_id,
     assetMap,
     `${blockPath}/interactive_policy/fallback_asset_id`,
@@ -1162,27 +1162,7 @@ function validateBlockReferenceArrayFields<T extends { id: string }>(
   });
 }
 
-function validateAssetReference(
-  assetId: string,
-  assetMap: IdMap<CmsAssetV1>,
-  path: string,
-  issues: CmsValidationIssueV1[],
-  code: string,
-  pageId?: string,
-  blockId?: string
-): void {
-  validateOptionalReference(
-    assetId,
-    assetMap,
-    path,
-    issues,
-    code,
-    pageId,
-    blockId
-  );
-}
-
-function validateOptionalAssetReference(
+function validateCmsAssetReference(
   assetId: string | undefined,
   assetMap: IdMap<CmsAssetV1>,
   path: string,
@@ -1322,7 +1302,7 @@ function isSafeRelativeUri(value: string): boolean {
 
 function hasUnsafeRelativeUriCharacter(value: string): boolean {
   for (let index = 0; index < value.length; index++) {
-    const characterCode = value.charCodeAt(index);
+    const characterCode = value.codePointAt(index) ?? -1;
     if (value[index] === '\\' || characterCode <= 31 || characterCode === 127) {
       return true;
     }

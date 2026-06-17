@@ -35,3 +35,6 @@
   - targeted ESLint on CMS protocol/service/handler/entity/test files
   - focused Jest CMS set: 3 suites, 17 tests
   - `codex-diff-check`
+- PR #1645 opened. Snyk passed, CodeRabbit was rate-limited, and Sonar
+  quality gate passed with 18 maintainability findings. Addressed the
+  actionable Sonar findings locally with no CMS protocol schema changes.

@@ -338,7 +338,7 @@ export class ProfileCmsPackagesDb extends LazyDbAccessCompatibleService {
   private hydrateMany(
     rows: ProfileCmsPackageEntity[]
   ): ProfileCmsPackageEntity[] {
-    return rows.map((row) => this.hydrate(row)!);
+    return rows.map((row) => this.hydrateRow(row));
   }
 
   private hydrate(
@@ -347,6 +347,10 @@ export class ProfileCmsPackagesDb extends LazyDbAccessCompatibleService {
     if (!row) {
       return null;
     }
+    return this.hydrateRow(row);
+  }
+
+  private hydrateRow(row: ProfileCmsPackageEntity): ProfileCmsPackageEntity {
     return {
       ...row,
       cms_package: parseJsonColumn(row.cms_package),

@@ -82,7 +82,7 @@ export class ProfileCmsPackageEntity {
   readonly superseded_by_id!: string | null;
 
   @Column({ type: 'json', nullable: true })
-  readonly validation_result!: unknown | null;
+  readonly validation_result!: unknown;
 
   @Column({ type: 'text', nullable: true, default: null })
   readonly validation_error!: string | null;

@@ -254,9 +254,9 @@ export const exhibitionRoomSchema = z
 
 export interface CmsNavigationItemShape {
   label: string;
-  page_id?: string | undefined;
-  url?: string | undefined;
-  children?: CmsNavigationItemShape[] | undefined;
+  page_id?: string;
+  url?: string;
+  children?: CmsNavigationItemShape[];
 }
 
 export const navigationItemSchema: z.ZodType<CmsNavigationItemShape> = z.lazy(

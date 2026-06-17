@@ -1,4 +1,4 @@
-import { createHash } from 'crypto';
+import { createHash } from 'node:crypto';
 
 import { canonicalizeJson } from './canonical-json';
 import type { CmsPackageV1, CmsPayloadV1 } from './schemas';

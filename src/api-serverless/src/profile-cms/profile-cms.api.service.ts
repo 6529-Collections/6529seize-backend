@@ -22,7 +22,7 @@ import {
 } from '@/profile-cms/protocol/v1';
 import { RequestContext } from '@/request.context';
 import { Time } from '@/time';
-import { randomUUID } from 'crypto';
+import { randomUUID } from 'node:crypto';
 import {
   identityFetcher,
   IdentityFetcher
@@ -89,6 +89,9 @@ export class ProfileCmsApiService {
     const cmsPackage = this.parsePackageOrThrow(request.cms_package);
     const profile = await this.getProfileIdentityOrThrow(request.profile_id);
     this.assertPackageProfileMatches(cmsPackage, profile);
+    const createdByProfileId = this.getLoggedInProfileId(
+      ctx.authenticationContext
+    );
 
     const now = Time.currentMillis();
     const version = await this.packagesDb.getNextVersion(
@@ -109,8 +112,7 @@ export class ProfileCmsApiService {
       package_hash: cmsPackage.integrity.package_hash,
       primary_path: `/${cmsPackage.profile.handle}/index.html`,
       is_primary: false,
-      created_by_profile_id:
-        ctx.authenticationContext!.getLoggedInUsersProfileId()!,
+      created_by_profile_id: createdByProfileId,
       published_by_profile_id: null,
       created_at: now,
       updated_at: now,
@@ -175,6 +177,9 @@ export class ProfileCmsApiService {
     }
 
     const publishedAt = Time.currentMillis();
+    const publishedByProfileId = this.getLoggedInProfileId(
+      ctx.authenticationContext
+    );
     await this.packagesDb.executeNativeQueriesInTransaction(
       async (connection) => {
         const txCtx: RequestContext = { ...ctx, connection };
@@ -186,7 +191,7 @@ export class ProfileCmsApiService {
         );
         await this.packagesDb.markPublished(
           entity.id,
-          ctx.authenticationContext!.getLoggedInUsersProfileId()!,
+          publishedByProfileId,
           validationResult,
           publishedAt,
           txCtx
@@ -367,6 +372,19 @@ export class ProfileCmsApiService {
         'You cannot manage CMS packages for this profile'
       );
     }
+  }
+
+  private getLoggedInProfileId(
+    authenticationContext: AuthenticationContext | undefined
+  ): string {
+    const loggedInProfileId =
+      authenticationContext?.getLoggedInUsersProfileId();
+    if (!loggedInProfileId) {
+      throw new ForbiddenException(
+        'You cannot manage CMS packages for this profile'
+      );
+    }
+    return loggedInProfileId;
   }
 
   private canManageProfile(
