@@ -12,6 +12,7 @@ import { ApiDropType } from '@/api/generated/models/ApiDropType';
 import { ApiWavesOverviewType } from '@/api/generated/models/ApiWavesOverviewType';
 import { ApiWavesPinFilter } from '@/api/generated/models/ApiWavesPinFilter';
 import { ApiWavesV2ListType } from '@/api/generated/models/ApiWavesV2ListType';
+import { ApiWaveScoreSort } from '@/api/generated/models/ApiWaveScoreSort';
 import { ApiWaveV2Service } from '@/api/waves/api-wave-v2.service';
 
 function makeDrop(overrides: Partial<DropEntity> = {}): DropEntity {
@@ -124,6 +125,7 @@ function createService() {
     searchWaves: jest.fn().mockResolvedValue([]),
     findMostSubscribedWaves: jest.fn().mockResolvedValue([]),
     findRecentlyDroppedToWaves: jest.fn().mockResolvedValue([]),
+    findScoredRecentlyDroppedToWaves: jest.fn().mockResolvedValue([]),
     findHotWaves: jest.fn().mockResolvedValue([]),
     findFavouriteWavesOfIdentity: jest.fn().mockResolvedValue([]),
     findOfficialWaves: jest.fn().mockResolvedValue([])
@@ -341,6 +343,49 @@ describe('ApiWaveV2Service', () => {
         offset: 1,
         authenticated_user_id: 'viewer-1',
         exclude_followed: false
+      })
+    );
+    expect(result).toEqual({
+      data: [{ id: 'wave-1' }],
+      page: 2,
+      next: true
+    });
+  });
+
+  it('gets scored overview waves excluding followed waves', async () => {
+    const { service, deps } = createService();
+    const waveEntities = [
+      makeWave({ id: 'wave-1' }),
+      makeWave({ id: 'wave-2' })
+    ];
+    deps.wavesApiDb.findScoredRecentlyDroppedToWaves.mockResolvedValue(
+      waveEntities
+    );
+    const ctx = {
+      authenticationContext: AuthenticationContext.fromProfileId('viewer-1')
+    };
+
+    const result = await service.findWaves(
+      {
+        view: ApiWavesV2ListType.Overview,
+        overview_type: ApiWavesOverviewType.ScoredRecentlyDroppedTo,
+        page: 2,
+        page_size: 1,
+        score_sort: ApiWaveScoreSort.Rep,
+        exclude_followed: true
+      },
+      ctx
+    );
+
+    expect(
+      deps.wavesApiDb.findScoredRecentlyDroppedToWaves
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        limit: 2,
+        offset: 1,
+        authenticated_user_id: 'viewer-1',
+        score_sort: ApiWaveScoreSort.Rep,
+        exclude_followed: true
       })
     );
     expect(result).toEqual({

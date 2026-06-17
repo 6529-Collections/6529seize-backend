@@ -1682,7 +1682,8 @@ export class WaveApiService {
           offset,
           direct_message,
           pinned,
-          score_sort: ApiWaveScoreSort.Balanced
+          score_sort: ApiWaveScoreSort.Balanced,
+          exclude_followed: false
         });
       default:
         assertUnreachable(type);

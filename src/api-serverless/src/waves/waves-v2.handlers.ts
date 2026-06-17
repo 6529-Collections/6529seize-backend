@@ -482,6 +482,7 @@ function validateWavesV2Params(
             .uppercase()
             .valid(...Object.values(ApiWaveScoreSort))
             .optional(),
+          exclude_followed: booleanQuerySchema().optional().default(false),
           min_visibility_score: Joi.number().min(0).max(100).optional(),
           min_quality_score: Joi.number().min(0).max(100).optional(),
           min_hotness_score: Joi.number().min(0).max(100).optional(),
