@@ -42,6 +42,12 @@ export * from '../models/ApiCompleteMultipartUploadRequest';
 export * from '../models/ApiCompleteMultipartUploadRequestPart';
 export * from '../models/ApiCompleteMultipartUploadResponse';
 export * from '../models/ApiConsolidatedTdh';
+export * from '../models/ApiConsolidatedTdhMetrics';
+export * from '../models/ApiConsolidatedTdhMetricsCollector';
+export * from '../models/ApiConsolidatedTdhMetricsContent';
+export * from '../models/ApiConsolidatedTdhMetricsPage';
+export * from '../models/ApiConsolidatedTdhMetricsSort';
+export * from '../models/ApiConsolidatedTdhView';
 export * from '../models/ApiCreateAttachmentMultipartUploadRequest';
 export * from '../models/ApiCreateAttachmentMultipartUploadResponse';
 export * from '../models/ApiCreateDropPart';
@@ -456,6 +462,12 @@ import { ApiCompleteMultipartUploadRequest } from '../models/ApiCompleteMultipar
 import { ApiCompleteMultipartUploadRequestPart } from '../models/ApiCompleteMultipartUploadRequestPart';
 import { ApiCompleteMultipartUploadResponse } from '../models/ApiCompleteMultipartUploadResponse';
 import { ApiConsolidatedTdh } from '../models/ApiConsolidatedTdh';
+import { ApiConsolidatedTdhMetrics                   } from '../models/ApiConsolidatedTdhMetrics';
+import { ApiConsolidatedTdhMetricsCollector } from '../models/ApiConsolidatedTdhMetricsCollector';
+import { ApiConsolidatedTdhMetricsContent } from '../models/ApiConsolidatedTdhMetricsContent';
+import { ApiConsolidatedTdhMetricsPage } from '../models/ApiConsolidatedTdhMetricsPage';
+import { ApiConsolidatedTdhMetricsSort } from '../models/ApiConsolidatedTdhMetricsSort';
+import { ApiConsolidatedTdhView } from '../models/ApiConsolidatedTdhView';
 import { ApiCreateAttachmentMultipartUploadRequest   } from '../models/ApiCreateAttachmentMultipartUploadRequest';
 import { ApiCreateAttachmentMultipartUploadResponse     } from '../models/ApiCreateAttachmentMultipartUploadResponse';
 import { ApiCreateDropPart } from '../models/ApiCreateDropPart';
@@ -844,6 +856,10 @@ let enumsMap: Set<string> = new Set<string>([
     "ApiAttachmentStatus",
     "ApiAttachmentUploadMimeType",
     "ApiCommunityMembersSortOption",
+    "ApiConsolidatedTdhMetricsCollector",
+    "ApiConsolidatedTdhMetricsContent",
+    "ApiConsolidatedTdhMetricsSort",
+    "ApiConsolidatedTdhView",
     "ApiDecentralizedMediaProtocol",
     "ApiDropGroupMention",
     "ApiDropMainType",
@@ -934,6 +950,8 @@ let typeMap: {[index: string]: any} = {
     "ApiCompleteMultipartUploadRequestPart": ApiCompleteMultipartUploadRequestPart,
     "ApiCompleteMultipartUploadResponse": ApiCompleteMultipartUploadResponse,
     "ApiConsolidatedTdh": ApiConsolidatedTdh,
+    "ApiConsolidatedTdhMetrics": ApiConsolidatedTdhMetrics,
+    "ApiConsolidatedTdhMetricsPage": ApiConsolidatedTdhMetricsPage,
     "ApiCreateAttachmentMultipartUploadRequest": ApiCreateAttachmentMultipartUploadRequest,
     "ApiCreateAttachmentMultipartUploadResponse": ApiCreateAttachmentMultipartUploadResponse,
     "ApiCreateDropPart": ApiCreateDropPart,

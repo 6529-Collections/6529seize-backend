@@ -37,6 +37,11 @@ export enum MetricsCollector {
   NEXTGEN = 'NextGen'
 }
 
+export enum MetricsConsolidatedTdhView {
+  BOOSTED = 'boosted',
+  UNBOOSTED = 'unboosted'
+}
+
 export const fetchNftTdh = async (
   contract: string,
   nftId: number,
@@ -217,6 +222,7 @@ export const fetchConsolidatedMetrics = async (
     content: MetricsContent | undefined;
     collector: MetricsCollector | undefined;
     season: number | undefined;
+    tdhView: MetricsConsolidatedTdhView;
   }
 ) => {
   let filters = '';
@@ -235,7 +241,8 @@ export const fetchConsolidatedMetrics = async (
   let uniqueMemesColumn = 'unique_memes';
   let memeCardSetsColumn = 'memes_cards_sets';
   let balancesTable = CONSOLIDATED_OWNERS_BALANCES_TABLE;
-  let tdhField = `${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh as boosted_tdh`;
+  let boostedTdhField = `${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh`;
+  let unboostedTdhField = `${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh`;
 
   switch (query.content) {
     case MetricsContent.MEMES:
@@ -244,23 +251,28 @@ export const fetchConsolidatedMetrics = async (
         balanceColumn = 'balance';
         uniqueMemesColumn = 'unique';
         memeCardSetsColumn = 'sets';
-        tdhField = `${CONSOLIDATED_WALLETS_TDH_MEMES_TABLE}.boosted_tdh as boosted_tdh`;
+        boostedTdhField = `${CONSOLIDATED_WALLETS_TDH_MEMES_TABLE}.boosted_tdh`;
+        unboostedTdhField = `${CONSOLIDATED_WALLETS_TDH_MEMES_TABLE}.tdh`;
       } else {
         balanceColumn = 'memes_balance';
-        tdhField = `${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_memes_tdh as boosted_tdh`;
+        boostedTdhField = `${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_memes_tdh`;
+        unboostedTdhField = `${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh`;
       }
       break;
     case MetricsContent.GRADIENTS:
       balanceColumn = 'gradients_balance';
-      tdhField = `${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_gradients_tdh as boosted_tdh`;
+      boostedTdhField = `${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_gradients_tdh`;
+      unboostedTdhField = `${CONSOLIDATED_WALLETS_TDH_TABLE}.gradients_tdh`;
       break;
     case MetricsContent.MEMELAB:
       balanceColumn = 'memelab_balance';
-      tdhField = '0 as boosted_tdh';
+      boostedTdhField = '0';
+      unboostedTdhField = '0';
       break;
     case MetricsContent.NEXTGEN:
       balanceColumn = 'nextgen_balance';
-      tdhField = `${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_nextgen_tdh as boosted_tdh`;
+      boostedTdhField = `${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_nextgen_tdh`;
+      unboostedTdhField = `${CONSOLIDATED_WALLETS_TDH_TABLE}.nextgen_tdh`;
       break;
   }
 
@@ -273,6 +285,17 @@ export const fetchConsolidatedMetrics = async (
     ${balancesTable}.${balanceColumn} as balance,
     ${balancesTable}.${uniqueMemesColumn} as unique_memes,
     ${balancesTable}.${memeCardSetsColumn} as memes_cards_sets`;
+  const selectedTdhField =
+    query.tdhView === MetricsConsolidatedTdhView.BOOSTED
+      ? boostedTdhField
+      : unboostedTdhField;
+  const selectedTdhExpression = `COALESCE(${selectedTdhField}, 0)`;
+  const boostedTdhExpression = `COALESCE(${boostedTdhField}, 0)`;
+  const unboostedTdhExpression = `COALESCE(${unboostedTdhField}, 0)`;
+  const dayChangeField =
+    query.tdhView === MetricsConsolidatedTdhView.BOOSTED
+      ? `${LATEST_TDH_HISTORY_TABLE}.net_boosted_tdh`
+      : `${LATEST_TDH_HISTORY_TABLE}.net_tdh`;
 
   const fields = `${balancesTableField}, 
     ${IDENTITIES_TABLE}.handle,
@@ -282,9 +305,12 @@ export const fetchConsolidatedMetrics = async (
     ${IDENTITIES_TABLE}.primary_address as primary_wallet,
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display as consolidation_display,
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh as total_tdh,
-    ${tdhField},
+    ${selectedTdhExpression} as tdh,
+    '${query.tdhView}' as tdh_view,
+    ${boostedTdhExpression} as boosted_tdh,
+    ${unboostedTdhExpression} as unboosted_tdh,
     ${IDENTITIES_TABLE}.level_raw as level,
-    COALESCE(${LATEST_TDH_HISTORY_TABLE}.net_boosted_tdh, 0) as day_change`;
+    COALESCE(${dayChangeField}, 0) as day_change`;
 
   let joins = ` LEFT JOIN ${IDENTITIES_TABLE} on ${IDENTITIES_TABLE}.consolidation_key = ${CONSOLIDATED_OWNERS_BALANCES_TABLE}.consolidation_key`;
   joins += ` LEFT JOIN ${CONSOLIDATED_WALLETS_TDH_TABLE} ON ${CONSOLIDATED_OWNERS_BALANCES_TABLE}.consolidation_key = ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key`;
@@ -304,7 +330,7 @@ export const fetchConsolidatedMetrics = async (
   const results = await fetchPaginated(
     CONSOLIDATED_OWNERS_BALANCES_TABLE,
     params,
-    `${sort} ${sortDir}, ${CONSOLIDATED_OWNERS_BALANCES_TABLE}.total_balance ${sortDir}`,
+    `${sort === 'tdh' ? selectedTdhExpression : sort} ${sortDir}, ${CONSOLIDATED_OWNERS_BALANCES_TABLE}.total_balance ${sortDir}`,
     pageSize,
     page,
     filters,
