@@ -251,6 +251,7 @@ export * from '../models/ApiSessionLogoutNativeRequest';
 export * from '../models/ApiSessionLogoutWebRequest';
 export * from '../models/ApiSessionNativeResponse';
 export * from '../models/ApiSessionNonceQuery';
+export * from '../models/ApiSessionNonceResponse';
 export * from '../models/ApiSessionRefreshNativeRequest';
 export * from '../models/ApiSessionRefreshWebRequest';
 export * from '../models/ApiSessionWebResponse';
@@ -680,6 +681,7 @@ import { ApiSessionLogoutNativeRequest, ApiSessionLogoutNativeRequestClientTypeE
 import { ApiSessionLogoutWebRequest, ApiSessionLogoutWebRequestClientTypeEnum    } from '../models/ApiSessionLogoutWebRequest';
 import { ApiSessionNativeResponse    , ApiSessionNativeResponseClientTypeEnum     } from '../models/ApiSessionNativeResponse';
 import { ApiSessionNonceQuery , ApiSessionNonceQueryClientTypeEnum    } from '../models/ApiSessionNonceQuery';
+import { ApiSessionNonceResponse } from '../models/ApiSessionNonceResponse';
 import { ApiSessionRefreshNativeRequest, ApiSessionRefreshNativeRequestClientTypeEnum     } from '../models/ApiSessionRefreshNativeRequest';
 import { ApiSessionRefreshWebRequest, ApiSessionRefreshWebRequestClientTypeEnum   } from '../models/ApiSessionRefreshWebRequest';
 import { ApiSessionWebResponse    , ApiSessionWebResponseClientTypeEnum   } from '../models/ApiSessionWebResponse';
@@ -1170,6 +1172,7 @@ let typeMap: {[index: string]: any} = {
     "ApiSessionLogoutWebRequest": ApiSessionLogoutWebRequest,
     "ApiSessionNativeResponse": ApiSessionNativeResponse,
     "ApiSessionNonceQuery": ApiSessionNonceQuery,
+    "ApiSessionNonceResponse": ApiSessionNonceResponse,
     "ApiSessionRefreshNativeRequest": ApiSessionRefreshNativeRequest,
     "ApiSessionRefreshWebRequest": ApiSessionRefreshWebRequest,
     "ApiSessionWebResponse": ApiSessionWebResponse,

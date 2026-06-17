@@ -26,12 +26,14 @@ describe('structured wallet signatures', () => {
     process.env.ALCHEMY_API_KEY = 'test-key';
     delete process.env.AUTH_STRUCTURED_SIGNATURES_REQUIRED;
     delete process.env.AUTH_SIGNATURE_ALLOWED_AUDIENCES;
+    delete process.env.AUTH_SIGNATURE_ALLOWED_DOMAIN_SUFFIXES;
   });
 
   afterEach(() => {
     delete process.env.AUTH_SIGNATURE_ALLOWED_DOMAINS;
     delete process.env.AUTH_SIGNATURE_AUDIENCE;
     delete process.env.AUTH_SIGNATURE_ALLOWED_AUDIENCES;
+    delete process.env.AUTH_SIGNATURE_ALLOWED_DOMAIN_SUFFIXES;
     delete process.env.ALCHEMY_API_KEY;
     delete process.env.AUTH_STRUCTURED_SIGNATURES_REQUIRED;
     jest.restoreAllMocks();
@@ -276,6 +278,64 @@ describe('structured wallet signatures', () => {
         consumeNonce: false
       })
     ).resolves.toBe(wallet.address.toLowerCase());
+  });
+
+  it('accepts first-party web signatures from configured domain suffixes', async () => {
+    process.env.AUTH_SIGNATURE_ALLOWED_DOMAINS = '';
+    process.env.AUTH_SIGNATURE_ALLOWED_DOMAIN_SUFFIXES = 'staging.6529.io';
+    const message = buildStructuredWalletSignatureMessage({
+      kind: 'authentication',
+      domain: 'app.staging.6529.io',
+      sessionType: 'first_party_web',
+      wallet: wallet.address,
+      expirationTime: getExpirationTime(),
+      nonce: 'first-party-suffix-domain-nonce',
+      action: 'login',
+      purpose: 'Sign this message to authenticate with 6529.'
+    });
+    const signature = await wallet.signMessage(message);
+
+    await expect(
+      verifyStructuredWalletSignature({
+        message,
+        signature,
+        expectedAddress: wallet.address,
+        expectedChainId: 1,
+        expectedAction: 'login',
+        expectedKind: 'authentication',
+        requireAllowedDomain: true,
+        consumeNonce: false
+      })
+    ).resolves.toBe(wallet.address.toLowerCase());
+  });
+
+  it('rejects first-party web signatures from lookalike domain suffixes', async () => {
+    process.env.AUTH_SIGNATURE_ALLOWED_DOMAINS = '';
+    process.env.AUTH_SIGNATURE_ALLOWED_DOMAIN_SUFFIXES = 'staging.6529.io';
+    const message = buildStructuredWalletSignatureMessage({
+      kind: 'authentication',
+      domain: 'fake-staging.6529.io',
+      sessionType: 'first_party_web',
+      wallet: wallet.address,
+      expirationTime: getExpirationTime(),
+      nonce: 'first-party-lookalike-suffix-domain-nonce',
+      action: 'login',
+      purpose: 'Sign this message to authenticate with 6529.'
+    });
+    const signature = await wallet.signMessage(message);
+
+    await expect(
+      verifyStructuredWalletSignature({
+        message,
+        signature,
+        expectedAddress: wallet.address,
+        expectedChainId: 1,
+        expectedAction: 'login',
+        expectedKind: 'authentication',
+        requireAllowedDomain: true,
+        consumeNonce: false
+      })
+    ).resolves.toBeNull();
   });
 
   it('rejects structured signatures for unsupported API audiences', async () => {

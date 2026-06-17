@@ -498,11 +498,19 @@ export function isStructuredSignatureDomainAllowed(domain: string): boolean {
     process.env.NODE_ENV === 'production'
       ? []
       : LOCAL_SIGNATURE_ALLOWED_DOMAINS;
-  return new Set([
-    ...DEFAULT_SIGNATURE_ALLOWED_DOMAINS,
-    ...localDomains,
-    ...getConfiguredNormalizedDomains('AUTH_SIGNATURE_ALLOWED_DOMAINS')
-  ]).has(domain);
+  if (
+    new Set([
+      ...DEFAULT_SIGNATURE_ALLOWED_DOMAINS,
+      ...localDomains,
+      ...getConfiguredNormalizedDomains('AUTH_SIGNATURE_ALLOWED_DOMAINS')
+    ]).has(domain)
+  ) {
+    return true;
+  }
+
+  return getConfiguredNormalizedDomains(
+    'AUTH_SIGNATURE_ALLOWED_DOMAIN_SUFFIXES'
+  ).some((suffix) => isDomainUnderSuffix(domain, suffix));
 }
 
 function isLocalhostSignatureHostAllowed(host: string): boolean {
@@ -515,6 +523,10 @@ function isLocalhostSignatureHostAllowed(host: string): boolean {
   } catch {
     return false;
   }
+}
+
+function isDomainUnderSuffix(domain: string, suffix: string): boolean {
+  return domain === suffix || domain.endsWith(`.${suffix}`);
 }
 
 export function recoverWalletMessageSigner(

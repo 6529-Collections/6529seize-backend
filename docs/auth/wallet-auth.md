@@ -36,7 +36,9 @@ Connection sharing is a separate optional flow:
 
 ## Session V2 Nonce
 
-`GET /api/auth/session-nonce` always returns a structured wallet signature message.
+`GET /api/auth/session-nonce` always returns a structured wallet signature
+message in the `signable_message` response field, plus a `server_signature`
+over that exact message.
 
 For web clients:
 
@@ -118,7 +120,8 @@ Connection share state is stored in `wallet_connection_shares`. Share codes are 
 The revised auth flow uses these relevant flags/config values:
 
 - `AUTH_STRUCTURED_SIGNATURES_REQUIRED`: default false. When true, legacy signature verification paths reject unstructured wallet messages where structured verification is used.
-- `AUTH_SIGNATURE_ALLOWED_DOMAINS`: comma-separated extra domains allowed for first-party web structured signatures. The built-in production domains include `6529.io`, `www.6529.io`, and `app.6529.io`; non-production also allows localhost origins.
+- `AUTH_SIGNATURE_ALLOWED_DOMAINS`: comma-separated extra exact domains allowed for first-party web structured signatures. The built-in production domains include `6529.io`, `www.6529.io`, and `app.6529.io`; non-production also allows localhost origins.
+- `AUTH_SIGNATURE_ALLOWED_DOMAIN_SUFFIXES`: comma-separated domain suffixes allowed for first-party web structured signatures. A value of `staging.6529.io` allows `staging.6529.io` and any host below it, such as `app.staging.6529.io`, but does not allow lookalike hosts such as `fake-staging.6529.io`.
 - `AUTH_SIGNATURE_AUDIENCE`: structured-signature audience used when issuing session-v2 nonces.
 - `AUTH_SIGNATURE_ALLOWED_AUDIENCES`: optional comma-separated audiences accepted during structured-signature verification.
 - `AUTH_SESSION_HASH_SECRET`: secret used for hashing session cookies, native refresh tokens, connection share codes, and public user-agent values. Defaults to the JWT secret if unset.
