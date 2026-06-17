@@ -1,11 +1,16 @@
 import 'reflect-metadata';
 import {
   DROPS_TABLE,
+  IDENTITY_SUBSCRIPTIONS_TABLE,
   WAVE_CHAT_DROP_COOLDOWNS_TABLE,
   WAVE_DROPPER_METRICS_TABLE,
   WAVE_METRICS_TABLE,
   WAVE_READER_METRICS_TABLE
 } from '@/constants';
+import {
+  ActivityEventAction,
+  ActivityEventTargetType
+} from '@/entities/IActivityEvent';
 import { DropType } from '@/entities/IDrop';
 import { RequestContext } from '@/request.context';
 import { sqlExecutor } from '@/sql-executor';
@@ -224,6 +229,19 @@ describeWithSeed(
       ]
     },
     {
+      table: IDENTITY_SUBSCRIPTIONS_TABLE,
+      rows: [
+        {
+          subscriber_id: author.profile_id!,
+          target_id: mutedHighScoreWave.id,
+          target_type: ActivityEventTargetType.WAVE,
+          target_action: ActivityEventAction.DROP_CREATED,
+          wave_id: mutedHighScoreWave.id,
+          subscribed_to_all_drops: false
+        }
+      ]
+    },
+    {
       table: WAVE_READER_METRICS_TABLE,
       rows: [
         {
@@ -246,11 +264,28 @@ describeWithSeed(
         direct_message: false,
         pinned: null,
         score_sort: ApiWaveScoreSort.Balanced,
+        exclude_followed: false,
         min_visibility_score: 50,
         min_quality_score: 50,
         min_hotness_score: 50,
         min_rep_sort_score: 50,
         visibility_tier: ApiWaveVisibilityTier.TrustedVisible
+      });
+
+      expect(waves.map((wave) => wave.id)).toEqual([visibleScoredWave.id]);
+    });
+
+    it('excludes followed waves from scored sort results', async () => {
+      const waves = await repo.findScoredRecentlyDroppedToWaves({
+        authenticated_user_id: author.profile_id!,
+        only_waves_followed_by_authenticated_user: false,
+        offset: 0,
+        limit: 10,
+        eligibleGroups: [],
+        direct_message: false,
+        pinned: null,
+        score_sort: ApiWaveScoreSort.Quality,
+        exclude_followed: true
       });
 
       expect(waves.map((wave) => wave.id)).toEqual([visibleScoredWave.id]);

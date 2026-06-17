@@ -2017,6 +2017,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     direct_message?: boolean;
     pinned: ApiWavesPinFilter | null;
     score_sort: ApiWaveScoreSort;
+    exclude_followed: boolean;
     min_visibility_score?: number;
     min_quality_score?: number;
     min_hotness_score?: number;
@@ -2084,6 +2085,15 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           ? `join ${IDENTITY_SUBSCRIPTIONS_TABLE} f on f.target_type = 'WAVE' and f.target_action = 'DROP_CREATED' and f.target_id = w.id`
           : ``
       }
+      ${
+        param.exclude_followed
+          ? `left join ${IDENTITY_SUBSCRIPTIONS_TABLE} xf
+              on xf.subscriber_id = :authenticated_user_id
+             and xf.target_id = w.id
+             and xf.target_type = :wave_target_type
+             and xf.target_action = :drop_created_action`
+          : ``
+      }
       join ${WAVE_METRICS_TABLE} wm on wm.wave_id = w.id
       ${
         param.authenticated_user_id
@@ -2097,6 +2107,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
             ? `f.subscriber_id = :authenticated_user_id and`
             : ``
         }
+        ${param.exclude_followed ? `xf.id is null and` : ``}
         ${
           param.direct_message !== undefined
             ? ` w.is_direct_message = :direct_message and `
@@ -2117,7 +2128,11 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       join wids on w.id = wids.id
     order by wids.tier_rank asc, wids.sort_val desc, wids.latest_drop_timestamp desc, w.id desc`;
     return this.db
-      .execute<RawWaveEntity>(sql, param)
+      .execute<RawWaveEntity>(sql, {
+        ...param,
+        wave_target_type: ActivityEventTargetType.WAVE,
+        drop_created_action: ActivityEventAction.DROP_CREATED
+      })
       .then((res) => res.map((it) => this.parseWaveEntity(it)));
   }
 

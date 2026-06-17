@@ -135,7 +135,8 @@ describe('waves v2 handlers', () => {
           overview_type: ApiWavesOverviewType.MostSubscribed,
           only_waves_followed_by_authenticated_user: true,
           direct_message: false,
-          pinned: ApiWavesPinFilter.Pinned
+          pinned: ApiWavesPinFilter.Pinned,
+          exclude_followed: false
         },
         {
           authenticationContext,
