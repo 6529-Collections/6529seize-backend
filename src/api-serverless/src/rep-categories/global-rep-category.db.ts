@@ -4,6 +4,8 @@ import { RateMatter } from '@/entities/IRating';
 import { RequestContext } from '@/request.context';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
 
+const LIKE_ESCAPE_REPLACEMENT = String.raw`\$&`;
+
 export type GlobalRepCategoryDbInteger = string | number | bigint;
 
 export type GlobalRepCategoryPairOrderBy =
@@ -379,7 +381,7 @@ export class GlobalRepCategoryDb extends LazyDbAccessCompatibleService {
   }
 
   private toEscapedLikeContains(value: string): string {
-    return `%${value.replace(/[\\%_]/g, String.raw`\$&`)}%`;
+    return `%${value.replace(/[\\%_]/g, LIKE_ESCAPE_REPLACEMENT)}%`;
   }
 }
 
