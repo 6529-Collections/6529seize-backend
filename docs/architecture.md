@@ -211,6 +211,7 @@ Important API responsibilities:
   auth contract is documented in
   [Wallet Authentication](auth/wallet-auth.md).
 - Public read APIs for NFTs, TDH, waves, drops, profiles, community metrics, subscriptions, and notifications.
+- Global REP category analytics under `/rep/categories/{category}`, backed by current non-zero REP rating rows for category overview, giver-recipient pairings, recipient rankings, and giver rankings.
 - Public OG metadata inputs for profile, wave, and drop link previews under `/og-metadata`.
 - Public decentralized media resolution under `/media/resolve`, which maps
   native `ipfs://`, `ipns://`, and `ar://` references plus recognized gateway
