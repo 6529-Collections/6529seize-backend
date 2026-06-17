@@ -56,3 +56,6 @@
   of mixing string indexes with `codePointAt`; focused ESLint, focused CMS Jest
   set (3 suites, 23 tests), and `codex-diff-check -- . ':(exclude)src/api-serverless/src/generated'`
   passed afterward.
+- Extended the public primary lookup index to `(profile_id, is_primary,
+  production_valid)` in the entity and explicit migration to match the hot-path
+  query shape.

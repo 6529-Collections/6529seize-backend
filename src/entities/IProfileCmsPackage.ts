@@ -12,7 +12,11 @@ export enum ProfileCmsPackageStatus {
 
 @Entity(PROFILE_CMS_PACKAGES_TABLE)
 @Index('idx_profile_cms_packages_profile_state', ['profile_id', 'status'])
-@Index('idx_profile_cms_packages_profile_primary', ['profile_id', 'is_primary'])
+@Index('idx_profile_cms_packages_profile_primary', [
+  'profile_id',
+  'is_primary',
+  'production_valid'
+])
 @Index(
   'idx_profile_cms_packages_package_version',
   ['profile_id', 'package_id', 'version'],

@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS profile_cms_packages (
   storage_canonical tinyint(1) DEFAULT NULL,
   PRIMARY KEY (id),
   KEY idx_profile_cms_packages_profile_state (profile_id, status),
-  KEY idx_profile_cms_packages_profile_primary (profile_id, is_primary),
+  KEY idx_profile_cms_packages_profile_primary (profile_id, is_primary, production_valid),
   UNIQUE KEY idx_profile_cms_packages_package_version (profile_id, package_id, version),
   KEY idx_profile_cms_packages_handle (profile_handle),
   KEY idx_profile_cms_packages_package_hash (package_hash)
