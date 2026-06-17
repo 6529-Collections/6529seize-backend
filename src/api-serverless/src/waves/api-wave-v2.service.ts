@@ -20,6 +20,8 @@ import { ApiDropV2PageWithoutCount } from '@/api/generated/models/ApiDropV2PageW
 import { ApiSubwavesSort } from '@/api/generated/models/ApiSubwavesSort';
 import { ApiWaveOverview } from '@/api/generated/models/ApiWaveOverview';
 import { ApiWaveOverviewPage } from '@/api/generated/models/ApiWaveOverviewPage';
+import { ApiWaveScoreSort } from '@/api/generated/models/ApiWaveScoreSort';
+import { ApiWaveVisibilityTier } from '@/api/generated/models/ApiWaveVisibilityTier';
 import { ApiWaveDropsFeedV2 } from '@/api/generated/models/ApiWaveDropsFeedV2';
 import { ApiWavesOverviewType } from '@/api/generated/models/ApiWavesOverviewType';
 import { ApiWavesPinFilter } from '@/api/generated/models/ApiWavesPinFilter';
@@ -65,6 +67,12 @@ export interface FindWavesV2Request {
   readonly overview_type?: ApiWavesOverviewType;
   readonly only_waves_followed_by_authenticated_user?: boolean;
   readonly pinned?: ApiWavesPinFilter | null;
+  readonly score_sort?: ApiWaveScoreSort;
+  readonly min_visibility_score?: number;
+  readonly min_quality_score?: number;
+  readonly min_hotness_score?: number;
+  readonly min_rep_sort_score?: number;
+  readonly visibility_tier?: ApiWaveVisibilityTier;
   readonly exclude_followed?: boolean;
   readonly identity?: string;
 }
@@ -411,7 +419,17 @@ export class ApiWaveV2Service {
         ? await this.wavesApiDb.findMostSubscribedWaves(findParams)
         : overviewType === ApiWavesOverviewType.RecentlyDroppedTo
           ? await this.wavesApiDb.findRecentlyDroppedToWaves(findParams)
-          : assertUnreachable(overviewType);
+          : overviewType === ApiWavesOverviewType.ScoredRecentlyDroppedTo
+            ? await this.wavesApiDb.findScoredRecentlyDroppedToWaves({
+                ...findParams,
+                score_sort: request.score_sort ?? ApiWaveScoreSort.Balanced,
+                min_visibility_score: request.min_visibility_score,
+                min_quality_score: request.min_quality_score,
+                min_hotness_score: request.min_hotness_score,
+                min_rep_sort_score: request.min_rep_sort_score,
+                visibility_tier: request.visibility_tier
+              })
+            : assertUnreachable(overviewType);
     return await this.mapWaveEntitiesPage(waveEntities, request, ctx);
   }
 

@@ -11,6 +11,8 @@ import { ApiWaveMetadata } from '@/api/generated/models/ApiWaveMetadata';
 import { ApiWaveOverview } from '@/api/generated/models/ApiWaveOverview';
 import { ApiWaveOverviewPage } from '@/api/generated/models/ApiWaveOverviewPage';
 import { ApiSubwavesSort } from '@/api/generated/models/ApiSubwavesSort';
+import { ApiWaveScoreSort } from '@/api/generated/models/ApiWaveScoreSort';
+import { ApiWaveVisibilityTier } from '@/api/generated/models/ApiWaveVisibilityTier';
 import { ApiWavesOverviewType } from '@/api/generated/models/ApiWavesOverviewType';
 import { ApiWavesPinFilter } from '@/api/generated/models/ApiWavesPinFilter';
 import { ApiWavesV2ListType } from '@/api/generated/models/ApiWavesV2ListType';
@@ -475,7 +477,19 @@ function validateWavesV2Params(
             .empty('')
             .valid(...Object.values(ApiWavesPinFilter))
             .optional()
-            .default(null)
+            .default(null),
+          score_sort: Joi.string()
+            .uppercase()
+            .valid(...Object.values(ApiWaveScoreSort))
+            .optional(),
+          min_visibility_score: Joi.number().min(0).max(100).optional(),
+          min_quality_score: Joi.number().min(0).max(100).optional(),
+          min_hotness_score: Joi.number().min(0).max(100).optional(),
+          min_rep_sort_score: Joi.number().min(0).max(100).optional(),
+          visibility_tier: Joi.string()
+            .uppercase()
+            .valid(...Object.values(ApiWaveVisibilityTier))
+            .optional()
         }).unknown(false)
       );
     case ApiWavesV2ListType.Hot:

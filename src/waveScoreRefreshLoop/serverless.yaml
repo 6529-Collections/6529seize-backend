@@ -1,0 +1,104 @@
+service: waveScoreRefreshLoop
+
+package:
+  artifact: dist/index.zip
+
+plugins:
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs22.x
+  memorySize: 1024
+  timeout: 900
+  architecture: arm64
+  logRetentionInDays: 60
+
+functions:
+  waveScoreRefreshLoop:
+    handler: index.handler
+    reservedConcurrency: 1
+    name: waveScoreRefreshLoop
+    description: ${env:VERSION_DESCRIPTION}
+    events:
+      - sqs:
+          batchSize: 1
+          arn:
+            Fn::GetAtt:
+              - WaveScoreRefreshStartQueue
+              - Arn
+    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    vpc:
+      securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
+      subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
+    environment:
+      SENTRY_DSN: ${env:SENTRY_DSN}
+      SENTRY_ENVIRONMENT: 'waveScoreRefreshLoop_${opt:stage, self:provider.stage}'
+
+resources:
+  Resources:
+    WaveScoreRefreshStartQueue:
+      Type: 'AWS::SQS::Queue'
+      Properties:
+        QueueName: 'wave-score-refresh-start.fifo'
+        FifoQueue: true
+        VisibilityTimeout: 1000
+        ContentBasedDeduplication: true
+    WaveScoreRefreshTDHCalculatedSubscription:
+      Type: AWS::SNS::Subscription
+      Properties:
+        TopicArn: arn:aws:sns:${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):region}:987989283142:tdh-calculation-done.fifo
+        Protocol: sqs
+        Endpoint: !GetAtt
+          - WaveScoreRefreshStartQueue
+          - Arn
+        RawMessageDelivery: true
+    WaveScoreRefreshStartQueuePolicy:
+      Type: 'AWS::SQS::QueuePolicy'
+      Properties:
+        Queues:
+          - Ref: 'WaveScoreRefreshStartQueue'
+        PolicyDocument:
+          Statement:
+            - Effect: 'Allow'
+              Principal:
+                Service: 'sns.amazonaws.com'
+              Action:
+                - sqs:SendMessage
+                - sqs:ReceiveMessage
+                - sqs:DeleteMessage
+                - sqs:GetQueueUrl
+                - sqs:GetQueueAttributes
+                - sqs:ListQueueTags
+                - sqs:ChangeMessageVisibility
+              Resource:
+                - !GetAtt WaveScoreRefreshStartQueue.Arn
+    WaveScoreRefreshLoopOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      Properties:
+        LogGroupName: /aws/lambda/waveScoreRefreshLoop
+        FilterPattern: 'Runtime.OutOfMemory'
+        MetricTransformations:
+          - MetricNamespace: 'Lambda/OOM'
+            MetricName: 'waveScoreRefreshLoop_OOMErrorCount'
+            MetricValue: '1'
+            DefaultValue: 0
+
+    WaveScoreRefreshLoopOOMAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: WaveScoreRefreshLoopOOMFilter
+      Properties:
+        AlarmName: !Sub '${AWS::StackName}-waveScoreRefreshLoop-OOM'
+        AlarmDescription: !Sub 'Lambda waveScoreRefreshLoop OutOfMemory in ${AWS::Region}'
+        Namespace: 'Lambda/OOM'
+        MetricName: 'waveScoreRefreshLoop_OOMErrorCount'
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}

@@ -12,8 +12,9 @@
 
 import { HttpFile } from '../http/http';
 
-export enum ApiRateMatter {
-    Rep = 'REP',
-    Cic = 'CIC',
-    WaveRep = 'WAVE_REP'
+export enum ApiWaveScoreSort {
+    Balanced = 'BALANCED',
+    Quality = 'QUALITY',
+    Hotness = 'HOTNESS',
+    Rep = 'REP'
 }
