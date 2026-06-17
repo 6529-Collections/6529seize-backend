@@ -1,8 +1,5 @@
 import { PROFILE_CMS_POINTER_EVENTS_TABLE } from '@/constants';
-import {
-  ProfileCmsPointerEventEntity,
-  ProfileCmsPointerEventType
-} from '@/entities/IProfileCmsPointerEvent';
+import { ProfileCmsPointerEventEntity } from '@/entities/IProfileCmsPointerEvent';
 import { RequestContext } from '@/request.context';
 import {
   ConnectionWrapper,
@@ -36,6 +33,7 @@ export class ProfileCmsPointerEventsDb extends LazyDbAccessCompatibleService {
         typed_data,
         typed_data_hash,
         storage_receipt,
+        event_sequence,
         created_at
       ) values (
         :id,
@@ -54,6 +52,7 @@ export class ProfileCmsPointerEventsDb extends LazyDbAccessCompatibleService {
         :typed_data,
         :typed_data_hash,
         :storage_receipt,
+        :event_sequence,
         :created_at
       )`,
       this.toParams(entity),
@@ -70,7 +69,7 @@ export class ProfileCmsPointerEventsDb extends LazyDbAccessCompatibleService {
         'listByPackageId',
         `select * from ${PROFILE_CMS_POINTER_EVENTS_TABLE}
          where package_db_id = :packageDbId
-         order by created_at asc, id asc`,
+         order by created_at asc, event_sequence asc, id asc`,
         { packageDbId },
         ctx
       )
@@ -86,7 +85,7 @@ export class ProfileCmsPointerEventsDb extends LazyDbAccessCompatibleService {
         'listByProfileId',
         `select * from ${PROFILE_CMS_POINTER_EVENTS_TABLE}
          where profile_id = :profileId
-         order by created_at asc, id asc`,
+         order by created_at asc, event_sequence asc, id asc`,
         { profileId },
         ctx
       )
@@ -98,7 +97,7 @@ export class ProfileCmsPointerEventsDb extends LazyDbAccessCompatibleService {
   ): ProfileCmsPointerEventEntity[] {
     return rows.map((row) => ({
       ...row,
-      event_type: row.event_type as ProfileCmsPointerEventType,
+      event_type: row.event_type,
       typed_data: parseJsonColumn(row.typed_data),
       storage_receipt: parseJsonColumn(row.storage_receipt)
     }));

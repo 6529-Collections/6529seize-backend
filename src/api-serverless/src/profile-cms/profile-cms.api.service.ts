@@ -23,6 +23,10 @@ import {
   profileCmsPointerEventsDb
 } from '@/profile-cms/profile-cms-pointer-events.db';
 import {
+  ProfileCmsPublishSignaturesDb,
+  profileCmsPublishSignaturesDb
+} from '@/profile-cms/profile-cms-publish-signatures.db';
+import {
   ProfileCmsPublishSignatureRequest,
   ProfileCmsPublishSignatureVerificationResult,
   verifyProfileCmsPublishSignature
@@ -117,6 +121,7 @@ export interface ProfileCmsPointerEventResponse {
   readonly signer_address?: string;
   readonly typed_data_hash?: string;
   readonly storage_receipt?: unknown;
+  readonly event_sequence: number;
   readonly created_at: number;
 }
 
@@ -143,11 +148,14 @@ interface ProfileHandleIdentity {
   readonly wallets: ReadonlySet<string>;
 }
 
+const PROFILE_CMS_PUBLISH_MAX_DEADLINE_MS = 15 * 60 * 1000;
+
 export class ProfileCmsApiService {
   constructor(
     private readonly packagesDb: ProfileCmsPackagesDb,
     private readonly identityFetcher: IdentityFetcher,
     private readonly pointerEventsDb: ProfileCmsPointerEventsDb,
+    private readonly publishSignaturesDb: ProfileCmsPublishSignaturesDb,
     private readonly storageReceiptVerifier: ProfileCmsStorageReceiptVerifier,
     private readonly publishSignatureVerifier = verifyProfileCmsPublishSignature
   ) {}
@@ -317,6 +325,12 @@ export class ProfileCmsApiService {
         }
         this.assertDraftCanBePublished(lockedEntity);
         this.assertExpectedHashes(lockedEntity, request);
+        await this.consumePublishSignatureOrThrow(
+          lockedEntity,
+          request,
+          signatureVerification,
+          txCtx
+        );
         const previousPrimary =
           await this.packagesDb.findPrimaryPublishedByProfileIdForUpdate(
             lockedEntity.profile_id,
@@ -913,8 +927,14 @@ export class ProfileCmsApiService {
   }
 
   private assertPublishDeadline(deadline: number): void {
-    if (!Number.isInteger(deadline) || deadline < Time.currentMillis()) {
+    const now = Time.currentMillis();
+    if (!Number.isInteger(deadline) || deadline < now) {
       throw new BadRequestException('CMS publish signature is expired');
+    }
+    if (deadline > now + PROFILE_CMS_PUBLISH_MAX_DEADLINE_MS) {
+      throw new BadRequestException(
+        'CMS publish signature deadline is too far in the future'
+      );
     }
   }
 
@@ -979,8 +999,46 @@ export class ProfileCmsApiService {
     events: ProfileCmsPointerEventEntity[],
     ctx: RequestContext
   ): Promise<void> {
-    for (const event of events) {
-      await this.pointerEventsDb.insert(event, ctx);
+    for (let index = 0; index < events.length; index++) {
+      const event = events[index];
+      await this.pointerEventsDb.insert(
+        {
+          ...event,
+          event_sequence: index
+        },
+        ctx
+      );
+    }
+  }
+
+  private async consumePublishSignatureOrThrow(
+    entity: ProfileCmsPackageEntity,
+    request: ProfileCmsPublishSignatureRequest,
+    signatureVerification: ProfileCmsPublishSignatureVerificationResult,
+    ctx: RequestContext
+  ): Promise<void> {
+    if (!signatureVerification.signer_address) {
+      throw new BadRequestException('CMS publish signature signer is missing');
+    }
+    const consumed = await this.publishSignaturesDb.insertConsumed(
+      {
+        id: randomUUID(),
+        typed_data_hash: signatureVerification.typed_data_hash,
+        profile_id: entity.profile_id,
+        package_db_id: entity.id,
+        package_id: entity.package_id,
+        package_version: entity.version,
+        package_hash: entity.package_hash,
+        signer_address: signatureVerification.signer_address,
+        deadline: request.deadline,
+        created_at: Time.currentMillis()
+      },
+      ctx
+    );
+    if (!consumed) {
+      throw new BadRequestException(
+        'CMS publish signature has already been consumed'
+      );
     }
   }
 
@@ -1020,6 +1078,7 @@ export class ProfileCmsApiService {
       typed_data: signatureVerification?.typed_data ?? null,
       typed_data_hash: signatureVerification?.typed_data_hash ?? null,
       storage_receipt: storageReceipt ?? null,
+      event_sequence: 0,
       created_at: createdAt
     };
   }
@@ -1107,6 +1166,7 @@ export class ProfileCmsApiService {
       ...(entity.storage_receipt
         ? { storage_receipt: entity.storage_receipt }
         : {}),
+      event_sequence: entity.event_sequence,
       created_at: entity.created_at
     };
   }
@@ -1116,6 +1176,7 @@ export const profileCmsApiService = new ProfileCmsApiService(
   profileCmsPackagesDb,
   identityFetcher,
   profileCmsPointerEventsDb,
+  profileCmsPublishSignaturesDb,
   profileCmsStorageReceiptVerifier
 );
 

@@ -18,6 +18,7 @@ import {
 } from '@/exceptions';
 import { ProfileCmsPackagesDb } from '@/profile-cms/profile-cms-packages.db';
 import { ProfileCmsPointerEventsDb } from '@/profile-cms/profile-cms-pointer-events.db';
+import { ProfileCmsPublishSignaturesDb } from '@/profile-cms/profile-cms-publish-signatures.db';
 import { ProfileCmsStorageReceiptVerifier } from '@/profile-cms/profile-cms-storage';
 import { ProfileCmsPublishSignatureVerificationResult } from '@/profile-cms/profile-cms-signing';
 import { CmsPackageV1 } from '@/profile-cms/protocol/v1';
@@ -60,6 +61,11 @@ type PointerEventsDbMock = Pick<
   'insert' | 'listByPackageId'
 >;
 
+type PublishSignaturesDbMock = Pick<
+  ProfileCmsPublishSignaturesDb,
+  'insertConsumed'
+>;
+
 type IdentityFetcherMock = Pick<
   IdentityFetcher,
   'getIdentityAndConsolidationsByIdentityKey'
@@ -68,6 +74,7 @@ type IdentityFetcherMock = Pick<
 describe('ProfileCmsApiService', () => {
   let packagesDb: jest.Mocked<PackagesDbMock>;
   let pointerEventsDb: jest.Mocked<PointerEventsDbMock>;
+  let publishSignaturesDb: jest.Mocked<PublishSignaturesDbMock>;
   let identityFetcher: jest.Mocked<IdentityFetcherMock>;
   let publishSignatureVerifier: jest.Mock;
   let service: ProfileCmsApiService;
@@ -97,6 +104,9 @@ describe('ProfileCmsApiService', () => {
       insert: jest.fn(),
       listByPackageId: jest.fn()
     };
+    publishSignaturesDb = {
+      insertConsumed: jest.fn()
+    };
     identityFetcher = {
       getIdentityAndConsolidationsByIdentityKey: jest.fn()
     };
@@ -115,6 +125,7 @@ describe('ProfileCmsApiService', () => {
     packagesDb.executeNativeQueriesInTransaction.mockImplementation(
       async (callback) => callback({} as unknown as ConnectionWrapper<unknown>)
     );
+    publishSignaturesDb.insertConsumed.mockResolvedValue(true);
     publishSignatureVerifier = jest.fn(async ({ request }) =>
       createSignatureVerification(request.signer_address)
     );
@@ -122,6 +133,7 @@ describe('ProfileCmsApiService', () => {
       packagesDb as unknown as ProfileCmsPackagesDb,
       identityFetcher as unknown as IdentityFetcher,
       pointerEventsDb as unknown as ProfileCmsPointerEventsDb,
+      publishSignaturesDb as unknown as ProfileCmsPublishSignaturesDb,
       new ProfileCmsStorageReceiptVerifier(),
       publishSignatureVerifier
     );
@@ -370,6 +382,14 @@ describe('ProfileCmsApiService', () => {
       expect.any(Number),
       expect.objectContaining({ connection: expect.any(Object) })
     );
+    expect(publishSignaturesDb.insertConsumed).toHaveBeenCalledWith(
+      expect.objectContaining({
+        typed_data_hash: '0xtypeddatahash',
+        package_db_id: draft.id,
+        signer_address: '0xf58fe66af1a8c792cd64d8d706eddabadfcb2fd0'
+      }),
+      expect.any(Object)
+    );
     expect(result).toMatchObject({
       id: draft.id,
       status: 'published',
@@ -379,6 +399,7 @@ describe('ProfileCmsApiService', () => {
       expect.objectContaining({
         event_type: ProfileCmsPointerEventType.PUBLISH,
         package_db_id: draft.id,
+        event_sequence: 0,
         previous_package_db_id: previousPrimary.id
       }),
       expect.objectContaining({ connection: expect.any(Object) })
@@ -386,10 +407,41 @@ describe('ProfileCmsApiService', () => {
     expect(pointerEventsDb.insert).toHaveBeenCalledWith(
       expect.objectContaining({
         event_type: ProfileCmsPointerEventType.SET_PRIMARY,
-        package_db_id: draft.id
+        package_db_id: draft.id,
+        event_sequence: 2
       }),
       expect.any(Object)
     );
+  });
+
+  it('rejects publish when the EIP-712 deadline exceeds the server max horizon', async () => {
+    const draft = createEntity();
+    packagesDb.findById.mockResolvedValue(draft);
+
+    await expect(
+      service.publish(
+        draft.id,
+        {
+          ...publishSignatureRequest(),
+          deadline: Date.now() + 16 * 60 * 1000
+        },
+        ownerContext()
+      )
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(publishSignatureVerifier).not.toHaveBeenCalled();
+    expect(publishSignaturesDb.insertConsumed).not.toHaveBeenCalled();
+  });
+
+  it('rejects publish when the typed-data hash was already consumed', async () => {
+    const draft = createEntity();
+    packagesDb.findById.mockResolvedValue(draft);
+    packagesDb.findByIdForUpdate.mockResolvedValue(draft);
+    publishSignaturesDb.insertConsumed.mockResolvedValue(false);
+
+    await expect(
+      service.publish(draft.id, publishSignatureRequest(), ownerContext())
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(packagesDb.markPublished).not.toHaveBeenCalled();
   });
 
   it('rejects publish when the EIP-712 publish signature is invalid', async () => {
@@ -410,6 +462,20 @@ describe('ProfileCmsApiService', () => {
         ownerContext()
       )
     ).rejects.toBeInstanceOf(BadRequestException);
+    expect(packagesDb.markPublished).not.toHaveBeenCalled();
+  });
+
+  it('rejects publish when recovered signer is not a profile wallet', async () => {
+    const draft = createEntity();
+    packagesDb.findById.mockResolvedValue(draft);
+    publishSignatureVerifier.mockResolvedValue(
+      createSignatureVerification('0xfDF8bcf56aF0584026f9DB963381db72C5cc8e3b')
+    );
+
+    await expect(
+      service.publish(draft.id, publishSignatureRequest(), ownerContext())
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(publishSignaturesDb.insertConsumed).not.toHaveBeenCalled();
     expect(packagesDb.markPublished).not.toHaveBeenCalled();
   });
 
@@ -597,11 +663,21 @@ describe('ProfileCmsApiService', () => {
       expect.any(Number),
       expect.objectContaining({ connection: expect.any(Object) })
     );
+    expect(packagesDb.supersedePrimaryForProfile).toHaveBeenCalledWith(
+      target.profile_id,
+      target.id,
+      expect.any(Number),
+      expect.objectContaining({ connection: expect.any(Object) })
+    );
+    expect(
+      packagesDb.supersedePrimaryForProfile.mock.invocationCallOrder[0]
+    ).toBeLessThan(packagesDb.markPrimary.mock.invocationCallOrder[0]);
     expect(result.id).toBe(target.id);
     expect(pointerEventsDb.insert).toHaveBeenCalledWith(
       expect.objectContaining({
         event_type: ProfileCmsPointerEventType.ROLLBACK,
         package_db_id: target.id,
+        event_sequence: 0,
         previous_package_db_id: current.id
       }),
       expect.any(Object)
@@ -636,6 +712,24 @@ describe('ProfileCmsApiService', () => {
     expect(packagesDb.markPrimary).not.toHaveBeenCalled();
   });
 
+  it('rejects rollback to a package that is not production-valid', async () => {
+    const target = createEntity({
+      id: 'previous-package',
+      status: ProfileCmsPackageStatus.SUPERSEDED,
+      production_valid: false
+    });
+    packagesDb.findById.mockResolvedValue(target);
+
+    await expect(
+      service.rollbackPrimary(
+        target.id,
+        { expected_current_package_id: 'current-package' },
+        ownerContext()
+      )
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(packagesDb.executeNativeQueriesInTransaction).not.toHaveBeenCalled();
+  });
+
   it('exports package storage receipts with pointer events', async () => {
     const published = createEntity({
       status: ProfileCmsPackageStatus.PUBLISHED,
@@ -661,6 +755,7 @@ describe('ProfileCmsApiService', () => {
         typed_data: null,
         typed_data_hash: '0xtypeddatahash',
         storage_receipt: published.storage_receipts,
+        event_sequence: 0,
         created_at: 1000
       }
     ]);
@@ -675,10 +770,17 @@ describe('ProfileCmsApiService', () => {
       pointer_events: [
         {
           event_type: 'publish',
-          typed_data_hash: '0xtypeddatahash'
+          event_sequence: 0,
+          typed_data_hash: '0xtypeddatahash',
+          signer_address: '0xf58fe66af1a8c792cd64d8d706eddabadfcb2fd0'
         }
       ]
     });
+    const result = await service.exportPackage(published.id, {
+      authenticationContext: AuthenticationContext.notAuthenticated()
+    });
+    expect(result.pointer_events[0]).not.toHaveProperty('signature');
+    expect(result.pointer_events[0]).not.toHaveProperty('typed_data');
   });
 });
 
@@ -751,7 +853,7 @@ function publishSignatureRequest() {
     signer_address: '0xf58fE66AF1A8C792Cd64D8d706edDabAdFCB2FD0',
     signature: '0xsignature',
     chain_id: 1,
-    deadline: 1792345678000
+    deadline: Date.now() + 60_000
   };
 }
 
@@ -783,7 +885,7 @@ function createSignatureVerification(
         storageUri:
           'ipfs://bafybeigdyrztmrgfydgytzqojqfaytmqmvqwxqk66xcs4i6hj5yq',
         storageContentHash: PROFILE_CMS_FIXTURE_ZERO_HASH,
-        deadline: 1792345678000
+        deadline: Date.now() + 60_000
       }
     },
     typed_data_hash: '0xtypeddatahash',

@@ -12,7 +12,8 @@ export enum ProfileCmsPointerEventType {
 @Entity(PROFILE_CMS_POINTER_EVENTS_TABLE)
 @Index('idx_profile_cms_pointer_events_profile_created', [
   'profile_id',
-  'created_at'
+  'created_at',
+  'event_sequence'
 ])
 @Index('idx_profile_cms_pointer_events_package', ['package_db_id'])
 export class ProfileCmsPointerEventEntity {
@@ -63,6 +64,9 @@ export class ProfileCmsPointerEventEntity {
 
   @Column({ type: 'json', nullable: true })
   readonly storage_receipt!: unknown;
+
+  @Column({ type: 'int' })
+  readonly event_sequence!: number;
 
   @Column({ type: 'bigint' })
   readonly created_at!: number;

@@ -55,6 +55,10 @@ export interface ProfileCmsPublishSignatureInput {
 }
 
 export interface Eip1271SignatureVerifier {
+  hasContractCode(params: {
+    readonly contractAddress: string;
+    readonly chainId: number;
+  }): Promise<boolean>;
   isValidSignature(params: {
     readonly contractAddress: string;
     readonly chainId: number;
@@ -112,6 +116,17 @@ export async function verifyProfileCmsPublishSignature(
   if (input.request.is_safe_signature) {
     let valid = false;
     try {
+      const hasContractCode = await safeVerifier.hasContractCode({
+        contractAddress: signerAddress,
+        chainId: input.request.chain_id
+      });
+      if (!hasContractCode) {
+        return invalidResult(
+          typedData,
+          typedDataHash,
+          'eip1271_signer_has_no_contract_code'
+        );
+      }
       valid = await safeVerifier.isValidSignature({
         contractAddress: signerAddress,
         chainId: input.request.chain_id,
@@ -191,6 +206,19 @@ function normalizeAddress(address: string | null | undefined): string | null {
 }
 
 class DefaultEip1271SignatureVerifier implements Eip1271SignatureVerifier {
+  async hasContractCode({
+    contractAddress,
+    chainId
+  }: {
+    readonly contractAddress: string;
+    readonly chainId: number;
+  }): Promise<boolean> {
+    const code = await getRpcProvider(getRpcNetwork(chainId)).getCode(
+      contractAddress
+    );
+    return code !== '0x';
+  }
+
   async isValidSignature({
     contractAddress,
     chainId,

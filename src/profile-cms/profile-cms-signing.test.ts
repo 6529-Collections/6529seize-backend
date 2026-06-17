@@ -5,7 +5,7 @@ import {
   ProfileCmsPublishTypedDataMessage,
   verifyProfileCmsPublishSignature
 } from '@/profile-cms/profile-cms-signing';
-import { Wallet } from 'ethers';
+import { Wallet, ZeroAddress } from 'ethers';
 
 describe('profile CMS publish signing', () => {
   const wallet = new Wallet(
@@ -75,8 +75,40 @@ describe('profile CMS publish signing', () => {
     });
   });
 
+  it('verifies an EOA signature when verifying_contract is in the domain', async () => {
+    const request = {
+      ...requestBase,
+      verifying_contract: ZeroAddress,
+      signature: '0x'
+    };
+    const typedData = buildProfileCmsPublishTypedData({
+      request,
+      message
+    });
+    const signature = await wallet.signTypedData(
+      typedData.domain,
+      typedData.types,
+      typedData.message
+    );
+
+    await expect(
+      verifyProfileCmsPublishSignature({
+        request: { ...request, signature },
+        message
+      })
+    ).resolves.toMatchObject({
+      valid: true,
+      typed_data: {
+        domain: expect.objectContaining({
+          verifyingContract: ZeroAddress
+        })
+      }
+    });
+  });
+
   it('supports EIP-1271 verification through an injected verifier', async () => {
     const verifier: Eip1271SignatureVerifier = {
+      hasContractCode: jest.fn().mockResolvedValue(true),
       isValidSignature: jest.fn().mockResolvedValue(true)
     };
 
@@ -98,9 +130,39 @@ describe('profile CMS publish signing', () => {
     });
     expect(verifier.isValidSignature).toHaveBeenCalledWith(
       expect.objectContaining({
+        chainId: 1,
         contractAddress: wallet.address.toLowerCase(),
         signature: '0xsafe'
       })
     );
+  });
+
+  it('rejects EIP-1271 verification when signer has no contract code on the selected chain', async () => {
+    const verifier: Eip1271SignatureVerifier = {
+      hasContractCode: jest.fn().mockResolvedValue(false),
+      isValidSignature: jest.fn()
+    };
+
+    await expect(
+      verifyProfileCmsPublishSignature(
+        {
+          request: {
+            ...requestBase,
+            signature: '0xsafe',
+            is_safe_signature: true
+          },
+          message
+        },
+        verifier
+      )
+    ).resolves.toMatchObject({
+      valid: false,
+      reason: 'eip1271_signer_has_no_contract_code'
+    });
+    expect(verifier.hasContractCode).toHaveBeenCalledWith({
+      chainId: 1,
+      contractAddress: wallet.address.toLowerCase()
+    });
+    expect(verifier.isValidSignature).not.toHaveBeenCalled();
   });
 });

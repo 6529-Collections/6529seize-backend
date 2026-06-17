@@ -112,13 +112,6 @@ function extractArweaveTransactionId(uri: string): string | null {
   if (nativeMatch && isLikelyArweaveTransactionId(nativeMatch[1])) {
     return nativeMatch[1];
   }
-  const gatewayMatch =
-    /^https:\/\/(?:arweave\.net|gateway\.arweave\.net|gateway\.ar\.io|ar-io\.net)\/([^/?#]+)(?:[/?#].*)?$/.exec(
-      uri
-    );
-  if (gatewayMatch && isLikelyArweaveTransactionId(gatewayMatch[1])) {
-    return gatewayMatch[1];
-  }
   return null;
 }
 

@@ -14182,6 +14182,7 @@ components:
         - package_hash
         - payload_hash
         - actor_profile_id
+        - event_sequence
         - created_at
       properties:
         id:
@@ -14220,6 +14221,10 @@ components:
         storage_receipt:
           type: object
           additionalProperties: true
+        event_sequence:
+          type: integer
+          format: int64
+          description: Logical ordering for pointer events created in the same millisecond.
         created_at:
           type: integer
           format: int64
@@ -14491,18 +14496,32 @@ components:
           type: string
         signer_address:
           type: string
+          description: >-
+            EOA wallet or Safe contract address expected to verify the CMS
+            publish signature.
         signature:
           type: string
+          description: EIP-712 signature over the ProfileCmsPublish typed data.
         chain_id:
           type: integer
           format: int64
+          description: >-
+            EIP-712 domain chain id; Safe/EIP-1271 verification uses this same
+            RPC chain.
         deadline:
           type: integer
           format: int64
+          description: >-
+            Unix epoch milliseconds. Must be in the future and no more than 15
+            minutes from server receipt.
         is_safe_signature:
           type: boolean
+          description: Set true only for Safe/EIP-1271 contract signatures.
         verifying_contract:
           type: string
+          description: >-
+            Optional EIP-712 domain verifyingContract. Omit or pass null when
+            the client signed without one.
           nullable: true
     ApiPushNotificationDevice:
       type: object

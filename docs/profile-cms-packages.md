@@ -95,9 +95,10 @@ The publish request body extends the expected hash guard with signing intent:
 }
 ```
 
-`deadline` is epoch milliseconds and must be in the future when the server
-publishes. `verifying_contract` is optional and becomes the EIP-712 domain
-`verifyingContract` when supplied.
+`deadline` is Unix epoch milliseconds and must be in the future when the server
+publishes. The server caps deadlines to 15 minutes from receipt, so CMS publish
+intents are short-lived. `verifying_contract` is optional and becomes the
+EIP-712 domain `verifyingContract` when supplied.
 
 ## Publish Signature
 
@@ -133,11 +134,18 @@ primary type is `ProfileCmsPublish`:
 
 EOA signatures are recovered server-side and must match `signer_address` and a
 wallet consolidated into the target profile. Safe/EIP-1271 signatures set
-`is_safe_signature=true`; the backend calls `isValidSignature(bytes32,bytes)`
-against `signer_address` using the repo RPC provider for chain ids `1`, `5`, or
-`11155111`. Production Safe verification requires `ALCHEMY_API_KEY` so the RPC
-provider can be constructed. Unsupported chains and failed RPC checks fail
-closed.
+`is_safe_signature=true`; the backend first requires contract bytecode at
+`signer_address` on the request `chain_id`, then calls
+`isValidSignature(bytes32,bytes)` using the same repo RPC chain. Chain ids `1`,
+`5`, and `11155111` are supported. Production Safe verification requires
+`ALCHEMY_API_KEY` so the RPC provider can be constructed. Unsupported chains and
+failed RPC checks fail closed.
+
+Verified publish signatures are consumed by `typed_data_hash` in
+`profile_cms_publish_signatures` inside the publish transaction before package
+pointer mutations. That makes a valid publish intent single-use once it reaches
+the state-changing path while avoiding signature burn on stale expected-hash
+failures.
 
 ## Storage Receipt Indexing
 
@@ -157,9 +165,9 @@ receipt:
 
 - IPFS canonical receipts must use native `ipfs://<cid>` URIs. The optional
   `provider_content_id` must match the CID.
-- Arweave canonical receipts must use native `ar://<txid>` or recognized
-  Arweave gateway URLs. The optional `provider_content_id` must match the
-  transaction id.
+- Arweave canonical receipts must use native `ar://<txid>` URIs. The optional
+  `provider_content_id` must match the transaction id. Gateway URLs can be kept
+  as non-canonical mirrors, but do not satisfy production publish.
 - Canonical receipt `content_hash` must equal the CMS package hash.
 - S3 and fixture receipts may be retained as non-canonical metadata, but they
   cannot satisfy production publish.
@@ -173,8 +181,9 @@ deployment concern for later acceleration and mirror work.
 `profile_cms_pointer_events` records `publish`, `set_primary`, `supersede`,
 `rollback`, and `archive` events. Events include package ids, hashes, previous
 primary row id when relevant, actor profile id, publish typed-data hash,
-signature, and canonical storage receipt. The log is append-only enough to
-reconstruct primary pointer history for a profile.
+signature, canonical storage receipt, and an `event_sequence` that preserves
+logical ordering for events written in the same millisecond. The log is
+append-only enough to reconstruct primary pointer history for a profile.
 
 Rollback requires `expected_current_package_id` and optionally
 `expected_current_package_hash` so clients cannot accidentally move a stale
@@ -182,7 +191,10 @@ pointer. Only published or superseded production-safe packages can become
 primary again.
 
 The export endpoint returns the CMS package JSON, indexed hashes/version/status,
-the stored receipt array, and pointer events. It is intended for future
-standalone renderers and mirrors; public access is limited to published
-production-safe packages, with private rows still requiring profile CMS
-permissions.
+the stored receipt array, and pointer events. Public pointer metadata
+intentionally includes `actor_profile_id`, `signer_address`, `typed_data_hash`,
+and storage receipt data so mirrors can verify who moved the pointer and which
+decentralized receipt was selected. The response intentionally omits raw
+`signature` and full `typed_data`. It is intended for future standalone
+renderers and mirrors; public access is limited to published production-safe
+packages, with private rows still requiring profile CMS permissions.

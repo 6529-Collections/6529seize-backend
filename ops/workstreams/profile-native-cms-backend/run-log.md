@@ -28,6 +28,21 @@
   source and tests. Root/API `tsc --noEmit` were attempted but blocked by the
   borrowed local dependency tree and base CMS protocol typing issues before
   providing a clean branch-specific signal.
+- Addressed PR #1647 6529bot review feedback locally:
+  - added a 15-minute server-side publish deadline cap and documented the
+    epoch-millisecond unit in OpenAPI.
+  - added `profile_cms_publish_signatures` to consume verified typed-data
+    hashes before the pointer transaction.
+  - required Safe/EIP-1271 signers to have contract bytecode on the same RPC
+    chain selected by `chain_id`.
+  - added deterministic `event_sequence` ordering to pointer events.
+  - tightened canonical Arweave publish receipts to native `ar://` URIs.
+  - added focused tests for verifying-contract domain parity, consumed
+    signatures, deadline cap, signer wallet rejection, rollback production
+    validity, rollback transaction order, and export omission of raw signature
+    and typed data.
+  - resolved the Sonar `typescript:S4325` redundant assertion in pointer event
+    hydration.
 
 - Created backend profile CMS package persistence:
   `profile_cms_packages` TypeORM entity, table constant, explicit SQL migration,

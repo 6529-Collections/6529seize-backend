@@ -648,7 +648,7 @@ import { ApiProfileClassification } from '../models/ApiProfileClassification';
 import { ApiProfileCmsPackage             } from '../models/ApiProfileCmsPackage';
 import { ApiProfileCmsPackageExport               } from '../models/ApiProfileCmsPackageExport';
 import { ApiProfileCmsPackageStatus } from '../models/ApiProfileCmsPackageStatus';
-import { ApiProfileCmsPointerEvent , ApiProfileCmsPointerEventEventTypeEnum                } from '../models/ApiProfileCmsPointerEvent';
+import { ApiProfileCmsPointerEvent , ApiProfileCmsPointerEventEventTypeEnum                 } from '../models/ApiProfileCmsPointerEvent';
 import { ApiProfileCmsPrimaryPackage } from '../models/ApiProfileCmsPrimaryPackage';
 import { ApiProfileMin                       } from '../models/ApiProfileMin';
 import { ApiProfileMinsPage } from '../models/ApiProfileMinsPage';

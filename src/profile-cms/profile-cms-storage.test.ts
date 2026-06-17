@@ -38,6 +38,30 @@ describe('profile CMS storage receipt verifier', () => {
     ).toMatchObject({ valid: true });
   });
 
+  it('rejects Arweave gateway URLs as canonical publish receipts', () => {
+    const cmsPackage = createValidProfileCmsPackage();
+    const arweaveId = 'a'.repeat(43);
+
+    expect(
+      verifier.validateForPublish({
+        ...cmsPackage,
+        storage: [
+          {
+            provider: 'arweave',
+            uri: `https://arweave.net/${arweaveId}`,
+            content_hash: cmsPackage.integrity.package_hash,
+            provider_content_id: arweaveId,
+            canonical: true,
+            recorded_at: '2026-06-17T00:00:00.000Z'
+          }
+        ]
+      })
+    ).toMatchObject({
+      valid: false,
+      reason: 'invalid_arweave_uri'
+    });
+  });
+
   it('rejects fixture storage for production publish', () => {
     const cmsPackage = createValidProfileCmsPackage();
 

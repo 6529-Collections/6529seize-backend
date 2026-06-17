@@ -25,9 +25,16 @@
   provider/URI/content hash, and deadline.
 - Production publish requires exactly one canonical decentralized receipt
   (`ipfs` or `arweave`) whose `content_hash` equals the package hash. S3 and
-  fixture receipts are not sufficient for publish.
+  fixture receipts are not sufficient for publish. Canonical Arweave receipts
+  use native `ar://` URIs.
+- Publish deadlines are Unix epoch milliseconds and may be at most 15 minutes
+  in the future when received by the server.
+- Verified publish typed-data hashes are consumed in
+  `profile_cms_publish_signatures` inside the publish transaction before
+  package pointer mutations.
 - Pointer events live in `profile_cms_pointer_events` and cover publish,
-  set-primary, supersede, rollback, and archive.
+  set-primary, supersede, rollback, and archive. `event_sequence` preserves
+  logical ordering for same-millisecond event groups.
 
 ## Local Validation Notes
 
@@ -36,8 +43,9 @@
   missing local type files from the interrupted install.
 - Focused tests run with a lightweight Jest config that skips the repository
   global MySQL testcontainer setup because these are unit/protocol tests.
-- Current stacked branch focused checks passed: targeted ESLint and focused CMS
-  Jest set (5 suites, 39 tests) using the lightweight Jest config.
+- Current local bot-response patch focused checks passed: targeted ESLint,
+  focused CMS Jest set (5 suites, 46 tests), `npm run generate:deploy-config`,
+  and `codex-diff-check` for non-generated changes.
 - Root `tsc --noEmit` currently fails before a useful branch-specific signal
   because the borrowed dependency tree resolves `openai` without declarations.
   API `tsc --noEmit` also reports base protocol typing and dependency lib

@@ -15,11 +15,29 @@ import { HttpFile } from '../http/http';
 export class ApiPublishProfileCmsPackageRequest {
     'expected_package_hash'?: string;
     'expected_payload_hash'?: string;
+    /**
+    * EOA wallet or Safe contract address expected to verify the CMS publish signature.
+    */
     'signer_address': string;
+    /**
+    * EIP-712 signature over the ProfileCmsPublish typed data.
+    */
     'signature': string;
+    /**
+    * EIP-712 domain chain id; Safe/EIP-1271 verification uses this same RPC chain.
+    */
     'chain_id': number;
+    /**
+    * Unix epoch milliseconds. Must be in the future and no more than 15 minutes from server receipt.
+    */
     'deadline': number;
+    /**
+    * Set true only for Safe/EIP-1271 contract signatures.
+    */
     'is_safe_signature'?: boolean;
+    /**
+    * Optional EIP-712 domain verifyingContract. Omit or pass null when the client signed without one.
+    */
     'verifying_contract'?: string | null;
 
     static readonly discriminator: string | undefined = undefined;

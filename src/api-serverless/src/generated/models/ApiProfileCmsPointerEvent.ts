@@ -27,6 +27,10 @@ export class ApiProfileCmsPointerEvent {
     'signer_address'?: string;
     'typed_data_hash'?: string;
     'storage_receipt'?: { [key: string]: any; };
+    /**
+    * Logical ordering for pointer events created in the same millisecond.
+    */
+    'event_sequence': number;
     'created_at': number;
 
     static readonly discriminator: string | undefined = undefined;
@@ -117,6 +121,12 @@ export class ApiProfileCmsPointerEvent {
             "baseName": "storage_receipt",
             "type": "{ [key: string]: any; }",
             "format": ""
+        },
+        {
+            "name": "event_sequence",
+            "baseName": "event_sequence",
+            "type": "number",
+            "format": "int64"
         },
         {
             "name": "created_at",
