@@ -7744,8 +7744,9 @@ paths:
         - name: exclude_followed
           in: query
           description: >-
-            HOT view only. If true then result excludes waves the authenticated
-            user already follows.
+            HOT view and OVERVIEW view with
+            overview_type=SCORED_RECENTLY_DROPPED_TO only. If true then result
+            excludes waves the authenticated user already follows.
           required: false
           schema:
             type: boolean
