@@ -277,10 +277,10 @@ export class GlobalRepCategoryDb extends LazyDbAccessCompatibleService {
     if (!search) {
       return '';
     }
-    return `
+    return String.raw`
       and (
-        r.rater_profile_id like :searchLike escape '\\\\'
-        or r.matter_target_id like :searchLike escape '\\\\'
+        r.rater_profile_id like :searchLike escape '\\'
+        or r.matter_target_id like :searchLike escape '\\'
         or exists (
           select 1
           from ${IDENTITIES_TABLE} searched_identity
@@ -289,9 +289,9 @@ export class GlobalRepCategoryDb extends LazyDbAccessCompatibleService {
             r.matter_target_id
           )
             and (
-              searched_identity.handle like :searchLike escape '\\\\'
-              or searched_identity.normalised_handle like :searchLike escape '\\\\'
-              or searched_identity.primary_address like :searchLike escape '\\\\'
+              searched_identity.handle like :searchLike escape '\\'
+              or searched_identity.normalised_handle like :searchLike escape '\\'
+              or searched_identity.primary_address like :searchLike escape '\\'
             )
         )
       )`;
@@ -304,17 +304,17 @@ export class GlobalRepCategoryDb extends LazyDbAccessCompatibleService {
     if (!search) {
       return '';
     }
-    return `
+    return String.raw`
       and (
-        r.${profileColumn} like :searchLike escape '\\\\'
+        r.${profileColumn} like :searchLike escape '\\'
         or exists (
           select 1
           from ${IDENTITIES_TABLE} searched_identity
           where searched_identity.profile_id = r.${profileColumn}
             and (
-              searched_identity.handle like :searchLike escape '\\\\'
-              or searched_identity.normalised_handle like :searchLike escape '\\\\'
-              or searched_identity.primary_address like :searchLike escape '\\\\'
+              searched_identity.handle like :searchLike escape '\\'
+              or searched_identity.normalised_handle like :searchLike escape '\\'
+              or searched_identity.primary_address like :searchLike escape '\\'
             )
         )
       )`;
@@ -379,7 +379,7 @@ export class GlobalRepCategoryDb extends LazyDbAccessCompatibleService {
   }
 
   private toEscapedLikeContains(value: string): string {
-    return `%${value.replace(/[\\%_]/g, '\\$&')}%`;
+    return `%${value.replace(/[\\%_]/g, String.raw`\$&`)}%`;
   }
 }
 
