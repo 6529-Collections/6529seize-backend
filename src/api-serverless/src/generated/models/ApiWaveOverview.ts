@@ -14,6 +14,8 @@ import { ApiProfileMin } from '../models/ApiProfileMin';
 import { ApiWaveOverviewContextProfileContext } from '../models/ApiWaveOverviewContextProfileContext';
 import { ApiWaveOverviewContributor } from '../models/ApiWaveOverviewContributor';
 import { ApiWaveOverviewDescriptionDrop } from '../models/ApiWaveOverviewDescriptionDrop';
+import { ApiWaveRepSummary } from '../models/ApiWaveRepSummary';
+import { ApiWaveScore } from '../models/ApiWaveScore';
 import { HttpFile } from '../http/http';
 
 export class ApiWaveOverview {
@@ -34,6 +36,8 @@ export class ApiWaveOverview {
     'context_profile_context'?: ApiWaveOverviewContextProfileContext;
     'parent_wave'?: ApiWaveOverview;
     'has_subwaves'?: boolean;
+    'wave_rep'?: ApiWaveRepSummary;
+    'wave_score'?: ApiWaveScore;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -140,6 +144,18 @@ export class ApiWaveOverview {
             "name": "has_subwaves",
             "baseName": "has_subwaves",
             "type": "boolean",
+            "format": ""
+        },
+        {
+            "name": "wave_rep",
+            "baseName": "wave_rep",
+            "type": "ApiWaveRepSummary",
+            "format": ""
+        },
+        {
+            "name": "wave_score",
+            "baseName": "wave_score",
+            "type": "ApiWaveScore",
             "format": ""
         }    ];
 

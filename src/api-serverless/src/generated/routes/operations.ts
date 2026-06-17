@@ -370,6 +370,12 @@ export interface GetWavesV2Query {
   "overview_type"?: string;
   "only_waves_followed_by_authenticated_user"?: boolean;
   "pinned"?: string;
+  "score_sort"?: string;
+  "min_visibility_score"?: number;
+  "min_quality_score"?: number;
+  "min_hotness_score"?: number;
+  "min_rep_sort_score"?: number;
+  "visibility_tier"?: string;
   "exclude_followed"?: boolean;
   "identity"?: string;
 }

@@ -29,7 +29,7 @@ export class AbusivenessCheckService {
     );
     if (invalidPhrase) {
       throw new BadRequestException(
-        `REP Category "${invalidPhrase}" doesn't match condition of being 1-100 characters or containing only alphanumeric characters, spaces, commas, punctuation, parentheses and single quotes.`
+        `REP Category "${invalidPhrase}" doesn't match condition of being 1-100 characters or containing only letters, numbers, spaces, commas, punctuation, parentheses and single quotes.`
       );
     }
     const existingResults = await this.abusivenessCheckDb.findResults(
@@ -72,7 +72,7 @@ export class AbusivenessCheckService {
     }
     if (!REP_CATEGORY_PATTERN.exec(txt)) {
       throw new BadRequestException(
-        `Rep statement contains invalid characters, is shorter than one character or is longer than 100 characters. Only alphanumeric characters, spaces, commas, punctuation, parentheses and single quotes are allowed.`
+        `Rep statement contains invalid characters, is shorter than one character or is longer than 100 characters. Only letters, numbers, spaces, commas, punctuation, parentheses and single quotes are allowed.`
       );
     }
     const existingResult = await this.abusivenessCheckDb.findResult(txt);

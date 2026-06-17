@@ -5,6 +5,7 @@ import {
 import { DropMediaEntity, DropPartEntity } from '@/entities/IDrop';
 import { WaveEntity, WaveType } from '@/entities/IWave';
 import { WaveChatDropCooldownEntity } from '@/entities/IWaveChatDropCooldown';
+import { WaveMetricEntity } from '@/entities/IWaveMetric';
 import { WaveReaderMetricEntity } from '@/entities/IWaveReaderMetric';
 import { collections } from '@/collections';
 import { RequestContext } from '@/request.context';
@@ -36,6 +37,10 @@ import {
 } from '@/api/waves/direct-message-wave-display.service';
 import { getWaveReadContextProfileId } from '@/api/waves/wave-access.helpers';
 import { wavesApiDb, WavesApiDb } from '@/api/waves/waves.api.db';
+import {
+  mapWaveRepSummary,
+  mapWaveScore
+} from '@/api/waves/wave-score.api-mapper';
 import { resolveNextDropAllowed } from '@/waves/wave-chat-slow-mode.helpers';
 
 export function createUnknownWaveCreatorProfile({
@@ -275,11 +280,7 @@ export class ApiWaveOverviewMapper {
     profilesById
   }: {
     wave: WaveEntity;
-    metrics?: {
-      latest_drop_timestamp: number;
-      subscribers_count: number;
-      drops_count: number;
-    };
+    metrics?: WaveMetricEntity;
     descriptionDropPartOnesByDropId: Record<string, DropPartEntity>;
     descriptionDropPartOneMediaByDropId: Record<string, DropMediaEntity[]>;
     display?: WaveDisplayOverride;
@@ -310,7 +311,9 @@ export class ApiWaveOverviewMapper {
         media: descriptionDropPartOneMediaByDropId[wave.description_drop_id]
       }),
       total_drops_count: metrics?.drops_count ?? 0,
-      is_private: wave.visibility_group_id !== null
+      is_private: wave.visibility_group_id !== null,
+      wave_rep: mapWaveRepSummary(metrics),
+      wave_score: mapWaveScore(metrics)
     };
 
     if (pfp) {

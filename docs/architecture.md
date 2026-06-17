@@ -50,7 +50,8 @@ flowchart TD
     MarketStatsLoop ~~~ RateEventProcessingLoop["rateEventProcessingLoop"]
     RateEventProcessingLoop ~~~ WaveDecisionExecutionLoop["waveDecisionExecutionLoop"]
     WaveDecisionExecutionLoop ~~~ WaveLeaderboardSnapshotterLoop["waveLeaderboardSnapshotterLoop"]
-    WaveLeaderboardSnapshotterLoop ~~~ XTdhGrantsReviewerLoop["xTdhGrantsReviewerLoop"]
+    WaveLeaderboardSnapshotterLoop ~~~ WaveScoreRefreshLoop["waveScoreRefreshLoop"]
+    WaveScoreRefreshLoop ~~~ XTdhGrantsReviewerLoop["xTdhGrantsReviewerLoop"]
     XTdhGrantsReviewerLoop ~~~ SubscriptionsDaily["subscriptionsDaily"]
     SubscriptionsDaily ~~~ SubscriptionsTopUpLoop["subscriptionsTopUpLoop"]
     SubscriptionsTopUpLoop ~~~ DiscoverEnsLoop["discoverEnsLoop"]
@@ -78,6 +79,7 @@ flowchart TD
     TdhLoop --> TdhDoneTopic["SNS: tdh-calculation-done.fifo"]
     TdhDoneTopic --> XTdhQueue["SQS: xtdh-start.fifo"] --> XTdhLoop["xTdhLoop"]
     TdhDoneTopic --> OverRatesQueue["SQS: over-rates-revocation-start.fifo"] --> OverRatesRevocationLoop["overRatesRevocationLoop"]
+    TdhDoneTopic --> WaveScoreRefreshQueue["SQS: wave-score-refresh-start.fifo"] --> WaveScoreRefreshLoop["waveScoreRefreshLoop"]
   end
 
   subgraph RequestEventManual["Request, event, edge, SNS, and manual Lambdas"]
@@ -159,6 +161,7 @@ flowchart TD
 | `pushNotificationsHandler` | SQS `firebase-push-notifications` | Deliver Firebase push notifications. |
 | `xTdhLoop` | SNS `tdh-calculation-done.fifo` via SQS `xtdh-start.fifo` | Recalculate xTDH after TDH finishes. |
 | `overRatesRevocationLoop` | SNS `tdh-calculation-done.fifo` via SQS `over-rates-revocation-start.fifo` | Revoke over-rates after TDH changes. |
+| `waveScoreRefreshLoop` | SNS `tdh-calculation-done.fifo` via SQS `wave-score-refresh-start.fifo` | Refresh materialized wave REP and Wave Score discovery fields after TDH changes. |
 | `mediaResizerLoop` | CloudFront/request path | Resize images on demand. |
 | `nextgenMediaProxyInterceptor` | Lambda@Edge / CloudFront request | Provide NextGen metadata fallback. |
 | `dropVideoConversionInvokerLoop` | S3 object-created event for `drops/` | Invoke MediaConvert for uploaded drop videos. |

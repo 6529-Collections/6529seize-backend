@@ -73,6 +73,7 @@ import {
   artCurationTokenWatchService,
   ArtCurationTokenWatchService
 } from '@/art-curation/art-curation-token-watch.service';
+import { waveScoreService } from '@/api/waves/wave-score.service';
 import { extractUrlCandidatesFromText } from '@/nft-links/nft-link-candidates';
 import { validateLinkUrl } from '@/nft-links/nft-link-resolver.validator';
 import { env } from '@/env';
@@ -1524,6 +1525,10 @@ export class CreateOrUpdateDropUseCase {
         { timer, connection }
       )
     ]);
+    await waveScoreService.refreshWaveScoresForWaveIdsBestEffort([wave.id], {
+      timer,
+      connection
+    });
     await this.recordQuoteNotifications({ model, wave }, { timer, connection });
     const pendingPushNotificationIds = await this.notifyWaveDropRecipients(
       {

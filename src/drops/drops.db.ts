@@ -1764,6 +1764,72 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     ctx.timer?.stop('dropsDb->resyncParticipatoryDropCountsForWaves');
   }
 
+  public async resyncDropCountsForWaves(
+    waveIds: string[],
+    ctx: RequestContext
+  ) {
+    if (!waveIds.length) {
+      return;
+    }
+    ctx.timer?.start('dropsDb->resyncDropCountsForWaves');
+    await Promise.all([
+      this.db.execute(
+        `
+          update ${WAVE_DROPPER_METRICS_TABLE} wdm
+            left join (
+              select
+                wave_id,
+                author_id,
+                sum(case when drop_type = 'CHAT' then 1 else 0 end) drops_count,
+                sum(case when drop_type = 'PARTICIPATORY' then 1 else 0 end) participatory_drops_count,
+                max(created_at) latest_drop_timestamp
+              from ${DROPS_TABLE}
+              where wave_id in (:waveIds)
+              group by wave_id, author_id
+            ) actual on wdm.wave_id = actual.wave_id and wdm.dropper_id = actual.author_id
+          set wdm.drops_count = ifnull(actual.drops_count, 0),
+              wdm.participatory_drops_count = ifnull(actual.participatory_drops_count, 0),
+              wdm.latest_drop_timestamp = ifnull(actual.latest_drop_timestamp, 0)
+          where wdm.wave_id in (:waveIds)
+            and (
+              wdm.drops_count <> ifnull(actual.drops_count, 0)
+              or wdm.participatory_drops_count <> ifnull(actual.participatory_drops_count, 0)
+              or wdm.latest_drop_timestamp <> ifnull(actual.latest_drop_timestamp, 0)
+            )
+        `,
+        { waveIds },
+        { wrappedConnection: ctx.connection }
+      ),
+      this.db.execute(
+        `
+          update ${WAVE_METRICS_TABLE} wm
+            left join (
+              select
+                wave_id,
+                sum(case when drop_type = 'CHAT' then 1 else 0 end) drops_count,
+                sum(case when drop_type = 'PARTICIPATORY' then 1 else 0 end) participatory_drops_count,
+                max(created_at) latest_drop_timestamp
+              from ${DROPS_TABLE}
+              where wave_id in (:waveIds)
+              group by wave_id
+            ) actual on wm.wave_id = actual.wave_id
+          set wm.drops_count = ifnull(actual.drops_count, 0),
+              wm.participatory_drops_count = ifnull(actual.participatory_drops_count, 0),
+              wm.latest_drop_timestamp = ifnull(actual.latest_drop_timestamp, 0)
+          where wm.wave_id in (:waveIds)
+            and (
+              wm.drops_count <> ifnull(actual.drops_count, 0)
+              or wm.participatory_drops_count <> ifnull(actual.participatory_drops_count, 0)
+              or wm.latest_drop_timestamp <> ifnull(actual.latest_drop_timestamp, 0)
+            )
+        `,
+        { waveIds },
+        { wrappedConnection: ctx.connection }
+      )
+    ]);
+    ctx.timer?.stop('dropsDb->resyncDropCountsForWaves');
+  }
+
   public async deleteDropSubscriptions(dropId: string, ctx: RequestContext) {
     ctx.timer?.start('dropsDb->deleteDropSubscriptions');
     await this.db.execute(

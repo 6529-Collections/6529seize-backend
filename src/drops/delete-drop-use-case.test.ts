@@ -1,5 +1,6 @@
 import { identityFetcher } from '@/api-serverless/src/identities/identity.fetcher';
 import { userGroupsService } from '@/api-serverless/src/community-members/user-groups.service';
+import { waveScoreService } from '@/api/waves/wave-score.service';
 import { DropType } from '@/entities/IDrop';
 import { DeleteDropUseCase } from './delete-drop.use-case';
 
@@ -29,9 +30,7 @@ describe('DeleteDropUseCase', () => {
       deleteDropFeedItems: jest.fn().mockResolvedValue(undefined),
       deleteDropNotifications: jest.fn().mockResolvedValue(undefined),
       deleteDropSubscriptions: jest.fn().mockResolvedValue(undefined),
-      resyncParticipatoryDropCountsForWaves: jest
-        .fn()
-        .mockResolvedValue(undefined),
+      resyncDropCountsForWaves: jest.fn().mockResolvedValue(undefined),
       insertDeletedDrop: jest.fn().mockResolvedValue(undefined)
     };
     const reactionsService = {
@@ -102,6 +101,9 @@ describe('DeleteDropUseCase', () => {
       identityFetcher,
       'getProfileIdByIdentityKey'
     );
+    const refreshWaveScoresSpy = jest
+      .spyOn(waveScoreService, 'refreshWaveScoresForWaveIdsBestEffort')
+      .mockResolvedValue(undefined);
 
     await expect(
       useCase.execute(
@@ -128,6 +130,14 @@ describe('DeleteDropUseCase', () => {
       connection
     });
     expect(dropPollsDb.deleteByDropId).toHaveBeenCalledWith('drop-1', {
+      timer: undefined,
+      connection
+    });
+    expect(dropsDb.resyncDropCountsForWaves).toHaveBeenCalledWith(['wave-1'], {
+      timer: undefined,
+      connection
+    });
+    expect(refreshWaveScoresSpy).toHaveBeenCalledWith(['wave-1'], {
       timer: undefined,
       connection
     });
