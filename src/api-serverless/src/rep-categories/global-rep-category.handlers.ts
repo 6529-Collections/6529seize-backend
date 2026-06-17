@@ -95,7 +95,7 @@ export async function handleGetGlobalRepCategoryRatings(
   req: GetGlobalRepCategoryRatingsRequest
 ): Promise<ApiGlobalRepCategoryRatingsPage> {
   const params = getValidatedByJoiOrThrow(
-    { ...req.params, ...req.query },
+    { ...req.query, ...req.params },
     RatingsSchema
   ) as RatingsParams;
   return globalRepCategoryApiService.getRatings(
@@ -115,7 +115,7 @@ export async function handleGetGlobalRepCategoryRecipients(
   req: GetGlobalRepCategoryRecipientsRequest
 ): Promise<ApiGlobalRepCategoryRecipientsPage> {
   const params = getValidatedByJoiOrThrow(
-    { ...req.params, ...req.query },
+    { ...req.query, ...req.params },
     ProfileRankingSchema
   ) as ProfileRankingParams;
   return globalRepCategoryApiService.getRecipients(
@@ -135,7 +135,7 @@ export async function handleGetGlobalRepCategoryGivers(
   req: GetGlobalRepCategoryGiversRequest
 ): Promise<ApiGlobalRepCategoryGiversPage> {
   const params = getValidatedByJoiOrThrow(
-    { ...req.params, ...req.query },
+    { ...req.query, ...req.params },
     ProfileRankingSchema
   ) as ProfileRankingParams;
   return globalRepCategoryApiService.getGivers(

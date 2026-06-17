@@ -4,6 +4,8 @@ import { RateMatter } from '@/entities/IRating';
 import { RequestContext } from '@/request.context';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
 
+export type GlobalRepCategoryDbInteger = string | number | bigint;
+
 export type GlobalRepCategoryPairOrderBy =
   | 'rep'
   | 'last_modified'
@@ -16,31 +18,31 @@ export type GlobalRepCategoryProfileOrderBy =
   | 'profile';
 
 export interface GlobalRepCategoryOverviewStatsRow {
-  readonly total_rep: number;
-  readonly pair_count: number;
-  readonly giver_count: number;
-  readonly recipient_count: number;
+  readonly total_rep: GlobalRepCategoryDbInteger;
+  readonly pair_count: GlobalRepCategoryDbInteger;
+  readonly giver_count: GlobalRepCategoryDbInteger;
+  readonly recipient_count: GlobalRepCategoryDbInteger;
 }
 
 export interface GlobalRepCategoryRatingRow {
   readonly giver_profile_id: string;
   readonly recipient_profile_id: string;
-  readonly rep: number;
+  readonly rep: GlobalRepCategoryDbInteger;
   readonly last_modified: string | Date;
   readonly category: string;
 }
 
 export interface GlobalRepCategoryRecipientRow {
   readonly profile_id: string;
-  readonly total_rep: number;
-  readonly rater_count: number;
+  readonly total_rep: GlobalRepCategoryDbInteger;
+  readonly rater_count: GlobalRepCategoryDbInteger;
   readonly last_modified: string | Date;
 }
 
 export interface GlobalRepCategoryGiverRow {
   readonly profile_id: string;
-  readonly total_rep: number;
-  readonly recipient_count: number;
+  readonly total_rep: GlobalRepCategoryDbInteger;
+  readonly recipient_count: GlobalRepCategoryDbInteger;
   readonly last_modified: string | Date;
 }
 
@@ -68,10 +70,10 @@ export class GlobalRepCategoryDb extends LazyDbAccessCompatibleService {
         { wrappedConnection: ctx.connection }
       );
       return {
-        total_rep: row?.total_rep ?? 0,
-        pair_count: row?.pair_count ?? 0,
-        giver_count: row?.giver_count ?? 0,
-        recipient_count: row?.recipient_count ?? 0
+        total_rep: row?.total_rep ?? '0',
+        pair_count: row?.pair_count ?? '0',
+        giver_count: row?.giver_count ?? '0',
+        recipient_count: row?.recipient_count ?? '0'
       };
     } finally {
       ctx.timer?.stop(timerName);
@@ -267,7 +269,7 @@ export class GlobalRepCategoryDb extends LazyDbAccessCompatibleService {
       matter: RateMatter.REP,
       offset,
       limitPlusOne,
-      searchLike: search ? `%${search}%` : null
+      searchLike: search ? this.toEscapedLikeContains(search) : null
     };
   }
 
@@ -277,8 +279,8 @@ export class GlobalRepCategoryDb extends LazyDbAccessCompatibleService {
     }
     return `
       and (
-        r.rater_profile_id like :searchLike
-        or r.matter_target_id like :searchLike
+        r.rater_profile_id like :searchLike escape '\\\\'
+        or r.matter_target_id like :searchLike escape '\\\\'
         or exists (
           select 1
           from ${IDENTITIES_TABLE} searched_identity
@@ -287,9 +289,9 @@ export class GlobalRepCategoryDb extends LazyDbAccessCompatibleService {
             r.matter_target_id
           )
             and (
-              searched_identity.handle like :searchLike
-              or searched_identity.normalised_handle like :searchLike
-              or searched_identity.primary_address like :searchLike
+              searched_identity.handle like :searchLike escape '\\\\'
+              or searched_identity.normalised_handle like :searchLike escape '\\\\'
+              or searched_identity.primary_address like :searchLike escape '\\\\'
             )
         )
       )`;
@@ -304,15 +306,15 @@ export class GlobalRepCategoryDb extends LazyDbAccessCompatibleService {
     }
     return `
       and (
-        r.${profileColumn} like :searchLike
+        r.${profileColumn} like :searchLike escape '\\\\'
         or exists (
           select 1
           from ${IDENTITIES_TABLE} searched_identity
           where searched_identity.profile_id = r.${profileColumn}
             and (
-              searched_identity.handle like :searchLike
-              or searched_identity.normalised_handle like :searchLike
-              or searched_identity.primary_address like :searchLike
+              searched_identity.handle like :searchLike escape '\\\\'
+              or searched_identity.normalised_handle like :searchLike escape '\\\\'
+              or searched_identity.primary_address like :searchLike escape '\\\\'
             )
         )
       )`;
@@ -374,6 +376,10 @@ export class GlobalRepCategoryDb extends LazyDbAccessCompatibleService {
 
   private toSqlSortDirection(order: PageSortDirection): 'asc' | 'desc' {
     return order === PageSortDirection.ASC ? 'asc' : 'desc';
+  }
+
+  private toEscapedLikeContains(value: string): string {
+    return `%${value.replace(/[\\%_]/g, '\\$&')}%`;
   }
 }
 

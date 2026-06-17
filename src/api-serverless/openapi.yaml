@@ -4630,6 +4630,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 100
+            pattern: ^[\p{L}\p{N}?!,.\x27() ]{1,100}$
           description: URL-encoded REP category name.
       responses:
         "200":
@@ -4658,6 +4659,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 100
+            pattern: ^[\p{L}\p{N}?!,.\x27() ]{1,100}$
           description: URL-encoded REP category name.
         - name: page
           in: query
@@ -4723,6 +4725,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 100
+            pattern: ^[\p{L}\p{N}?!,.\x27() ]{1,100}$
           description: URL-encoded REP category name.
         - name: page
           in: query
@@ -4787,6 +4790,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 100
+            pattern: ^[\p{L}\p{N}?!,.\x27() ]{1,100}$
           description: URL-encoded REP category name.
         - name: page
           in: query

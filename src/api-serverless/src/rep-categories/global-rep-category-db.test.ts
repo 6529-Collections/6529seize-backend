@@ -1,20 +1,23 @@
 import { PageSortDirection } from '@/api/page-request';
+import { GlobalRepCategoryDb } from '@/api/rep-categories/global-rep-category.db';
 import { IDENTITIES_TABLE, RATINGS_TABLE } from '@/constants';
 import { RateMatter } from '@/entities/IRating';
-import { GlobalRepCategoryDb } from './global-rep-category.db';
+import { SqlExecutor } from '@/sql-executor';
+
+type SqlExecutorMock = Pick<SqlExecutor, 'execute' | 'oneOrNull'>;
 
 function createDb() {
   const execute = jest.fn().mockResolvedValue([]);
   const oneOrNull = jest.fn().mockResolvedValue(null);
-  const service = new GlobalRepCategoryDb(
-    () =>
-      ({
-        execute,
-        oneOrNull
-      }) as any
+  const service = new GlobalRepCategoryDb(() =>
+    createSqlExecutorMock({ execute, oneOrNull })
   );
 
   return { service, execute, oneOrNull };
+}
+
+function createSqlExecutorMock(executor: SqlExecutorMock): SqlExecutor {
+  return executor as unknown as SqlExecutor;
 }
 
 describe('GlobalRepCategoryDb', () => {
@@ -151,6 +154,7 @@ describe('GlobalRepCategoryDb', () => {
     expect(sql).toContain('r.matter_target_id as profile_id');
     expect(sql).toContain('count(distinct r.rater_profile_id) as rater_count');
     expect(sql).toContain(`from ${IDENTITIES_TABLE} searched_identity`);
+    expect(sql).toContain("like :searchLike escape '\\\\'");
     expect(sql).toContain('order by coalesce(');
     expect(sql).toContain('asc, gp.profile_id asc');
     expect(params).toMatchObject({
@@ -158,6 +162,28 @@ describe('GlobalRepCategoryDb', () => {
       searchLike: '%alice%',
       offset: 0,
       limitPlusOne: 51
+    });
+  });
+
+  it('escapes LIKE wildcards in search terms', async () => {
+    const { service, execute } = createDb();
+
+    await service.getRatingsPage(
+      {
+        category: 'Dev extraordinaire',
+        page: 1,
+        page_size: 50,
+        order: PageSortDirection.DESC,
+        order_by: 'last_modified',
+        search: '50%_alice\\'
+      },
+      {}
+    );
+
+    const [sql, params] = execute.mock.calls[0];
+    expect(sql).toContain("like :searchLike escape '\\\\'");
+    expect(params).toMatchObject({
+      searchLike: '%50\\%\\_alice\\\\%'
     });
   });
 });

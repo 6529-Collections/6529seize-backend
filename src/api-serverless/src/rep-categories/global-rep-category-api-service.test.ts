@@ -1,21 +1,41 @@
 import { PageSortDirection } from '@/api/page-request';
-import { GlobalRepCategoryApiService } from './global-rep-category.api.service';
+import { ApiProfileClassification } from '@/api/generated/models/ApiProfileClassification';
+import { ApiProfileMin } from '@/api/generated/models/ApiProfileMin';
+import { IdentityFetcher } from '@/api/identities/identity.fetcher';
+import { GlobalRepCategoryApiService } from '@/api/rep-categories/global-rep-category.api.service';
+import { GlobalRepCategoryDb } from '@/api/rep-categories/global-rep-category.db';
 
-function makeProfile(id: string) {
+type GlobalRepCategoryDbMock = jest.Mocked<
+  Pick<
+    GlobalRepCategoryDb,
+    | 'getOverviewStats'
+    | 'getRecipientsPage'
+    | 'getGiversPage'
+    | 'getRatingsPage'
+  >
+>;
+
+type IdentityFetcherMock = jest.Mocked<
+  Pick<IdentityFetcher, 'getOverviewsByIds'>
+>;
+
+function makeProfile(id: string): ApiProfileMin {
   return {
     id,
     handle: id,
     primary_address: `${id}-wallet`,
     pfp: null,
+    banner1_color: null,
+    banner2_color: null,
     cic: 0,
     rep: 0,
     tdh: 0,
     xtdh: 0,
     xtdh_rate: 0,
-    produced_xtdh: 0,
-    granted_xtdh: 0,
     tdh_rate: 0,
     level: 0,
+    classification: ApiProfileClassification.Pseudonym,
+    sub_classification: null,
     archived: false,
     profile_wave_id: null,
     subscribed_actions: [],
@@ -27,7 +47,7 @@ function makeProfile(id: string) {
 }
 
 function createService() {
-  const globalRepCategoryDb = {
+  const globalRepCategoryDb: GlobalRepCategoryDbMock = {
     getOverviewStats: jest.fn().mockResolvedValue({
       total_rep: '-5',
       pair_count: '3',
@@ -77,16 +97,16 @@ function createService() {
       acc[id] = makeProfile(id);
       return acc;
     },
-    {} as Record<string, ReturnType<typeof makeProfile>>
+    {} as Record<string, ApiProfileMin>
   );
-  const identityFetcher = {
+  const identityFetcher: IdentityFetcherMock = {
     getOverviewsByIds: jest.fn().mockResolvedValue(profiles)
   };
 
   return {
     service: new GlobalRepCategoryApiService(
-      globalRepCategoryDb as any,
-      identityFetcher as any
+      globalRepCategoryDb as unknown as GlobalRepCategoryDb,
+      identityFetcher as unknown as IdentityFetcher
     ),
     globalRepCategoryDb,
     identityFetcher,
@@ -200,6 +220,35 @@ describe('GlobalRepCategoryApiService', () => {
         search: 'bob'
       },
       {}
+    );
+  });
+
+  it('does not mask invalid or unsafe DB integers as zero', async () => {
+    const { service, globalRepCategoryDb } = createService();
+    globalRepCategoryDb.getOverviewStats.mockResolvedValueOnce({
+      total_rep: 'not-a-number',
+      pair_count: '1',
+      giver_count: '1',
+      recipient_count: '1'
+    });
+
+    await expect(
+      service.getOverview({ category: 'Dev extraordinaire' }, {})
+    ).rejects.toThrow(
+      'Invalid integer value for global REP category field total_rep'
+    );
+
+    globalRepCategoryDb.getOverviewStats.mockResolvedValueOnce({
+      total_rep: `${Number.MAX_SAFE_INTEGER + 1}`,
+      pair_count: '1',
+      giver_count: '1',
+      recipient_count: '1'
+    });
+
+    await expect(
+      service.getOverview({ category: 'Dev extraordinaire' }, {})
+    ).rejects.toThrow(
+      'Invalid integer value for global REP category field total_rep'
     );
   });
 });

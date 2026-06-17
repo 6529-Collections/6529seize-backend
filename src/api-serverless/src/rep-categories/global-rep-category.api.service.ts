@@ -15,6 +15,7 @@ import {
 } from '@/api/identities/identity.fetcher';
 import {
   GlobalRepCategoryDb,
+  GlobalRepCategoryDbInteger,
   globalRepCategoryDb,
   GlobalRepCategoryGiverRow,
   GlobalRepCategoryPairOrderBy,
@@ -76,10 +77,13 @@ export class GlobalRepCategoryApiService {
 
     return {
       category,
-      total_rep: numbers.parseIntOrNull(stats.total_rep) ?? 0,
-      pair_count: numbers.parseIntOrNull(stats.pair_count) ?? 0,
-      giver_count: numbers.parseIntOrNull(stats.giver_count) ?? 0,
-      recipient_count: numbers.parseIntOrNull(stats.recipient_count) ?? 0,
+      total_rep: this.parseDbInteger(stats.total_rep, 'total_rep'),
+      pair_count: this.parseDbInteger(stats.pair_count, 'pair_count'),
+      giver_count: this.parseDbInteger(stats.giver_count, 'giver_count'),
+      recipient_count: this.parseDbInteger(
+        stats.recipient_count,
+        'recipient_count'
+      ),
       top_recipients: await this.mapRecipients(topRecipients.data, ctx),
       top_givers: await this.mapGivers(topGivers.data, ctx),
       recently_updated: await this.mapRatings(recentlyUpdated.data, ctx)
@@ -188,7 +192,7 @@ export class GlobalRepCategoryApiService {
       category: row.category,
       giver: this.getProfileOrThrow(profilesById, row.giver_profile_id),
       recipient: this.getProfileOrThrow(profilesById, row.recipient_profile_id),
-      rep: numbers.parseIntOrNull(row.rep) ?? 0,
+      rep: this.parseDbInteger(row.rep, 'rep'),
       last_modified: this.toApiDate(row.last_modified)
     }));
   }
@@ -206,8 +210,8 @@ export class GlobalRepCategoryApiService {
     );
     return rows.map<ApiGlobalRepCategoryRecipient>((row) => ({
       profile: this.getProfileOrThrow(profilesById, row.profile_id),
-      total_rep: numbers.parseIntOrNull(row.total_rep) ?? 0,
-      rater_count: numbers.parseIntOrNull(row.rater_count) ?? 0,
+      total_rep: this.parseDbInteger(row.total_rep, 'total_rep'),
+      rater_count: this.parseDbInteger(row.rater_count, 'rater_count'),
       last_modified: this.toApiDate(row.last_modified)
     }));
   }
@@ -225,8 +229,11 @@ export class GlobalRepCategoryApiService {
     );
     return rows.map<ApiGlobalRepCategoryGiver>((row) => ({
       profile: this.getProfileOrThrow(profilesById, row.profile_id),
-      total_rep: numbers.parseIntOrNull(row.total_rep) ?? 0,
-      recipient_count: numbers.parseIntOrNull(row.recipient_count) ?? 0,
+      total_rep: this.parseDbInteger(row.total_rep, 'total_rep'),
+      recipient_count: this.parseDbInteger(
+        row.recipient_count,
+        'recipient_count'
+      ),
       last_modified: this.toApiDate(row.last_modified)
     }));
   }
@@ -254,6 +261,19 @@ export class GlobalRepCategoryApiService {
 
   private toApiDate(value: string | Date): string {
     return value instanceof Date ? value.toISOString() : value;
+  }
+
+  private parseDbInteger(
+    value: GlobalRepCategoryDbInteger,
+    fieldName: string
+  ): number {
+    const parsed = numbers.parseIntOrNull(value);
+    if (parsed === null || !Number.isSafeInteger(parsed)) {
+      throw new Error(
+        `Invalid integer value for global REP category field ${fieldName}`
+      );
+    }
+    return parsed;
   }
 }
 
