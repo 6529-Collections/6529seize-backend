@@ -20,4 +20,6 @@
 - Focused tests run with a lightweight Jest config that skips the repository
   global MySQL testcontainer setup because these are unit/protocol tests.
 - Final focused checks passed: targeted ESLint, focused CMS Jest set
-  (3 suites, 17 tests), and `codex-diff-check`.
+  (3 suites, 23 tests), and `codex-diff-check -- . ':(exclude)src/api-serverless/src/generated'`.
+- PR #1645 is in bot/check iteration. Latest local follow-up addresses a URI
+  safety helper review nit without changing CMS V1 schema or hashes.

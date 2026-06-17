@@ -33,7 +33,7 @@
   `node node_modules/jest/bin/jest.js src/profile-cms/protocol/v1/profile-cms-protocol-v1.test.ts src/api-serverless/src/profile-cms/profile-cms-api-service.test.ts src/api-serverless/src/profile-cms/profile-cms-handlers.test.ts --runInBand --config %TEMP%/jest-profile-cms.config.cjs`
 - Final PR-readiness checks passed:
   - targeted ESLint on CMS protocol/service/handler/entity/test files
-  - focused Jest CMS set: 3 suites, 17 tests
+  - focused Jest CMS set: 3 suites, 23 tests
   - `codex-diff-check`
 - PR #1645 opened. Snyk passed, CodeRabbit was rate-limited, and Sonar
   quality gate passed with 18 maintainability findings. Addressed the
@@ -52,3 +52,7 @@
   - migration SQL debug logging was removed.
 - Regenerated API models/routes using the primary checkout OpenAPI generator
   dependency junction so the generated CMS model files match CI output.
+- Addressed the URI safety helper bot nit by iterating over characters instead
+  of mixing string indexes with `codePointAt`; focused ESLint, focused CMS Jest
+  set (3 suites, 23 tests), and `codex-diff-check -- . ':(exclude)src/api-serverless/src/generated'`
+  passed afterward.

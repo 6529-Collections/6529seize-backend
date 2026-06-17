@@ -1301,9 +1301,9 @@ function isSafeRelativeUri(value: string): boolean {
 }
 
 function hasUnsafeRelativeUriCharacter(value: string): boolean {
-  for (let index = 0; index < value.length; index++) {
-    const characterCode = value.codePointAt(index) ?? -1;
-    if (value[index] === '\\' || characterCode <= 31 || characterCode === 127) {
+  for (const character of value) {
+    const characterCode = character.codePointAt(0) ?? -1;
+    if (character === '\\' || characterCode <= 31 || characterCode === 127) {
       return true;
     }
   }
