@@ -111,6 +111,10 @@ export {
   ProfileCmsPackageEntity,
   ProfileCmsPackageStatus
 } from './IProfileCmsPackage';
+export {
+  ProfileCmsPointerEventEntity,
+  ProfileCmsPointerEventType
+} from './IProfileCmsPointerEvent';
 export { PushNotificationDevice } from './IPushNotification';
 export { PushNotificationSettingsEntity } from './IPushNotificationSettings';
 export { Rating } from './IRating';

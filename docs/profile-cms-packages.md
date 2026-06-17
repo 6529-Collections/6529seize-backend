@@ -45,7 +45,13 @@ Private endpoints are OpenAPI-backed and mounted under `/api/profile-cms`:
 
 - `POST /profile-cms/packages` saves a draft package for a profile.
 - `POST /profile-cms/packages/validate` validates a package against CMS V1.
-- `POST /profile-cms/packages/{id}/publish` validates and publishes a draft.
+- `POST /profile-cms/packages/{id}/publish` validates, verifies storage and
+  signature intent, and publishes a draft.
+- `POST /profile-cms/packages/{id}/rollback` sets an earlier published or
+  superseded production-safe package as primary with an expected-current guard.
+- `POST /profile-cms/packages/{id}/archive` archives a non-primary package.
+- `GET /profile-cms/packages/{id}/export` returns the package, storage receipts,
+  and pointer events for mirror/renderer inspection.
 - `GET /profile-cms/profiles/{profile_id}/packages` lists packages for a profile.
 - `GET /profile-cms/packages/{id}` fetches by database id.
 - `GET /profile-cms/profiles/{profile_id}/packages/{package_id}/versions/{version}` fetches by protocol package id and version.
@@ -66,18 +72,72 @@ Publish runs CMS V1 validation with production options:
 - Only draft packages can be published.
 - Publishing a package marks it primary and supersedes the previous primary
   package for that profile.
+- Publishing requires a canonical decentralized storage receipt and an EIP-712
+  publish signature by a wallet in the target profile.
 
 The package hash intentionally excludes signatures, storage receipts, and the
 `integrity.package_hash` field itself. Public by-hash and primary reads still
 filter for published production-safe rows so fixture packages are not served
 even if they share a package hash with a later production package.
 
-EIP-712 signature recovery and remote storage byte/CID verification are not in
-this service lane. The backend currently treats signatures and storage receipts
-as CMS package metadata after structural validation, profile-wallet binding for
-`eip712` signers, fixture rejection, and hash enforcement over the package JSON.
-Consumers must not treat the signature envelope or storage `content_hash` as a
-cryptographic proof until the protocol adds those verification rules.
+The publish request body extends the expected hash guard with signing intent:
+
+```json
+{
+  "expected_package_hash": "sha256:...",
+  "expected_payload_hash": "sha256:...",
+  "signer_address": "0x...",
+  "signature": "0x...",
+  "chain_id": 1,
+  "deadline": 1792345678000,
+  "is_safe_signature": false,
+  "verifying_contract": null
+}
+```
+
+`deadline` is epoch milliseconds and must be in the future when the server
+publishes. `verifying_contract` is optional and becomes the EIP-712 domain
+`verifyingContract` when supplied.
+
+## Publish Signature
+
+The exact EIP-712 domain is:
+
+```json
+{
+  "name": "6529 Profile CMS",
+  "version": "1",
+  "chainId": 1,
+  "verifyingContract": "0x..."
+}
+```
+
+`verifyingContract` is omitted when the request does not provide one. The exact
+primary type is `ProfileCmsPublish`:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `action` | `string` | Literal `publish`; prevents signature reuse across future actions. |
+| `profileId` | `string` | Target profile id. |
+| `handle` | `string` | Live profile handle resolved by the backend. |
+| `packageId` | `string` | CMS package protocol id. |
+| `version` | `uint256` | CMS package version. |
+| `draftId` | `string` | Backend package row id being published. |
+| `payloadHash` | `string` | CMS V1 payload hash. |
+| `packageHash` | `string` | CMS V1 package hash. |
+| `primaryPath` | `string` | Expected public path, e.g. `/handle/index.html`. |
+| `storageProvider` | `string` | Canonical decentralized receipt provider. |
+| `storageUri` | `string` | Canonical decentralized receipt URI. |
+| `storageContentHash` | `string` | Canonical receipt content hash. |
+| `deadline` | `uint256` | Epoch-millis replay window end. |
+
+EOA signatures are recovered server-side and must match `signer_address` and a
+wallet consolidated into the target profile. Safe/EIP-1271 signatures set
+`is_safe_signature=true`; the backend calls `isValidSignature(bytes32,bytes)`
+against `signer_address` using the repo RPC provider for chain ids `1`, `5`, or
+`11155111`. Production Safe verification requires `ALCHEMY_API_KEY` so the RPC
+provider can be constructed. Unsupported chains and failed RPC checks fail
+closed.
 
 ## Storage Receipt Indexing
 
@@ -92,6 +152,37 @@ selected receipt for later acceleration work:
 - `storage_pinned`
 - `storage_canonical`
 
-The model supports content-addressed IPFS and Arweave receipts as canonical
-storage, plus S3 acceleration receipts for later delivery work. S3 receipts are
-not allowed to be canonical by CMS V1 validation.
+The publish-time storage verifier requires exactly one canonical decentralized
+receipt:
+
+- IPFS canonical receipts must use native `ipfs://<cid>` URIs. The optional
+  `provider_content_id` must match the CID.
+- Arweave canonical receipts must use native `ar://<txid>` or recognized
+  Arweave gateway URLs. The optional `provider_content_id` must match the
+  transaction id.
+- Canonical receipt `content_hash` must equal the CMS package hash.
+- S3 and fixture receipts may be retained as non-canonical metadata, but they
+  cannot satisfy production publish.
+
+This verifier checks provider shape and package-hash consistency. It does not
+fetch remote bytes from IPFS/Arweave yet; that remains a storage adapter
+deployment concern for later acceleration and mirror work.
+
+## Pointer Events And Export
+
+`profile_cms_pointer_events` records `publish`, `set_primary`, `supersede`,
+`rollback`, and `archive` events. Events include package ids, hashes, previous
+primary row id when relevant, actor profile id, publish typed-data hash,
+signature, and canonical storage receipt. The log is append-only enough to
+reconstruct primary pointer history for a profile.
+
+Rollback requires `expected_current_package_id` and optionally
+`expected_current_package_hash` so clients cannot accidentally move a stale
+pointer. Only published or superseded production-safe packages can become
+primary again.
+
+The export endpoint returns the CMS package JSON, indexed hashes/version/status,
+the stored receipt array, and pointer events. It is intended for future
+standalone renderers and mirrors; public access is limited to published
+production-safe packages, with private rows still requiring profile CMS
+permissions.

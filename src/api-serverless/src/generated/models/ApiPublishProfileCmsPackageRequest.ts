@@ -15,6 +15,12 @@ import { HttpFile } from '../http/http';
 export class ApiPublishProfileCmsPackageRequest {
     'expected_package_hash'?: string;
     'expected_payload_hash'?: string;
+    'signer_address': string;
+    'signature': string;
+    'chain_id': number;
+    'deadline': number;
+    'is_safe_signature'?: boolean;
+    'verifying_contract'?: string | null;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -30,6 +36,42 @@ export class ApiPublishProfileCmsPackageRequest {
         {
             "name": "expected_payload_hash",
             "baseName": "expected_payload_hash",
+            "type": "string",
+            "format": ""
+        },
+        {
+            "name": "signer_address",
+            "baseName": "signer_address",
+            "type": "string",
+            "format": ""
+        },
+        {
+            "name": "signature",
+            "baseName": "signature",
+            "type": "string",
+            "format": ""
+        },
+        {
+            "name": "chain_id",
+            "baseName": "chain_id",
+            "type": "number",
+            "format": "int64"
+        },
+        {
+            "name": "deadline",
+            "baseName": "deadline",
+            "type": "number",
+            "format": "int64"
+        },
+        {
+            "name": "is_safe_signature",
+            "baseName": "is_safe_signature",
+            "type": "boolean",
+            "format": ""
+        },
+        {
+            "name": "verifying_contract",
+            "baseName": "verifying_contract",
             "type": "string",
             "format": ""
         }    ];

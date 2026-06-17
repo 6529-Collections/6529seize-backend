@@ -10,12 +10,16 @@ import {
   ProfileCmsPackageEntity,
   ProfileCmsPackageStatus
 } from '@/entities/IProfileCmsPackage';
+import { ProfileCmsPointerEventType } from '@/entities/IProfileCmsPointerEvent';
 import {
   BadRequestException,
   ForbiddenException,
   NotFoundException
 } from '@/exceptions';
 import { ProfileCmsPackagesDb } from '@/profile-cms/profile-cms-packages.db';
+import { ProfileCmsPointerEventsDb } from '@/profile-cms/profile-cms-pointer-events.db';
+import { ProfileCmsStorageReceiptVerifier } from '@/profile-cms/profile-cms-storage';
+import { ProfileCmsPublishSignatureVerificationResult } from '@/profile-cms/profile-cms-signing';
 import { CmsPackageV1 } from '@/profile-cms/protocol/v1';
 import { RequestContext } from '@/request.context';
 import { ConnectionWrapper } from '@/sql-executor';
@@ -39,13 +43,21 @@ type PackagesDbMock = Pick<
   | 'findAllByHash'
   | 'findByVersion'
   | 'findPrimaryPublishedByProfileId'
+  | 'findPrimaryPublishedByProfileIdForUpdate'
   | 'listByProfile'
   | 'lockProfilePackagesForUpdate'
+  | 'archive'
   | 'markFailed'
+  | 'markPrimary'
   | 'markPublished'
   | 'markValidating'
   | 'supersedePrimaryForProfile'
   | 'executeNativeQueriesInTransaction'
+>;
+
+type PointerEventsDbMock = Pick<
+  ProfileCmsPointerEventsDb,
+  'insert' | 'listByPackageId'
 >;
 
 type IdentityFetcherMock = Pick<
@@ -55,7 +67,9 @@ type IdentityFetcherMock = Pick<
 
 describe('ProfileCmsApiService', () => {
   let packagesDb: jest.Mocked<PackagesDbMock>;
+  let pointerEventsDb: jest.Mocked<PointerEventsDbMock>;
   let identityFetcher: jest.Mocked<IdentityFetcherMock>;
+  let publishSignatureVerifier: jest.Mock;
   let service: ProfileCmsApiService;
 
   beforeEach(() => {
@@ -68,13 +82,20 @@ describe('ProfileCmsApiService', () => {
       findAllByHash: jest.fn(),
       findByVersion: jest.fn(),
       findPrimaryPublishedByProfileId: jest.fn(),
+      findPrimaryPublishedByProfileIdForUpdate: jest.fn(),
       listByProfile: jest.fn(),
       lockProfilePackagesForUpdate: jest.fn(),
+      archive: jest.fn(),
       markFailed: jest.fn(),
+      markPrimary: jest.fn(),
       markPublished: jest.fn(),
       markValidating: jest.fn(),
       supersedePrimaryForProfile: jest.fn(),
       executeNativeQueriesInTransaction: jest.fn()
+    };
+    pointerEventsDb = {
+      insert: jest.fn(),
+      listByPackageId: jest.fn()
     };
     identityFetcher = {
       getIdentityAndConsolidationsByIdentityKey: jest.fn()
@@ -94,9 +115,15 @@ describe('ProfileCmsApiService', () => {
     packagesDb.executeNativeQueriesInTransaction.mockImplementation(
       async (callback) => callback({} as unknown as ConnectionWrapper<unknown>)
     );
+    publishSignatureVerifier = jest.fn(async ({ request }) =>
+      createSignatureVerification(request.signer_address)
+    );
     service = new ProfileCmsApiService(
       packagesDb as unknown as ProfileCmsPackagesDb,
-      identityFetcher as unknown as IdentityFetcher
+      identityFetcher as unknown as IdentityFetcher,
+      pointerEventsDb as unknown as ProfileCmsPointerEventsDb,
+      new ProfileCmsStorageReceiptVerifier(),
+      publishSignatureVerifier
     );
   });
 
@@ -132,9 +159,11 @@ describe('ProfileCmsApiService', () => {
         primary_path: `/${PROFILE_CMS_FIXTURE_HANDLE}/index.html`,
         production_valid: false,
         storage_provider: 'ipfs',
-        storage_uri: 'ipfs://bafybeicmsv1fixture',
-        storage_content_hash: PROFILE_CMS_FIXTURE_ZERO_HASH,
-        storage_provider_content_id: 'bafybeicmsv1fixture',
+        storage_uri:
+          'ipfs://bafybeigdyrztmrgfydgytzqojqfaytmqmvqwxqk66xcs4i6hj5yq',
+        storage_content_hash: cmsPackage.integrity.package_hash,
+        storage_provider_content_id:
+          'bafybeigdyrztmrgfydgytzqojqfaytmqmvqwxqk66xcs4i6hj5yq',
         storage_pinned: true,
         storage_canonical: true
       }),
@@ -253,7 +282,10 @@ describe('ProfileCmsApiService', () => {
     await expect(
       service.publish(
         entity.id,
-        { expected_package_hash: PROFILE_CMS_FIXTURE_ZERO_HASH },
+        {
+          expected_package_hash: PROFILE_CMS_FIXTURE_ZERO_HASH,
+          ...publishSignatureRequest()
+        },
         ownerContext()
       )
     ).rejects.toBeInstanceOf(BadRequestException);
@@ -270,7 +302,7 @@ describe('ProfileCmsApiService', () => {
     packagesDb.findById.mockResolvedValue(entity);
 
     await expect(
-      service.publish(entity.id, {}, ownerContext())
+      service.publish(entity.id, publishSignatureRequest(), ownerContext())
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(packagesDb.markValidating).toHaveBeenCalledWith(
       entity.id,
@@ -289,6 +321,13 @@ describe('ProfileCmsApiService', () => {
 
   it('publishes a valid draft and supersedes the previous primary package', async () => {
     const draft = createEntity();
+    const previousPrimary = createEntity({
+      id: 'previous-primary',
+      status: ProfileCmsPackageStatus.PUBLISHED,
+      is_primary: true,
+      published_at: 1000,
+      production_valid: true
+    });
     const published = createEntity({
       id: draft.id,
       status: ProfileCmsPackageStatus.PUBLISHED,
@@ -300,12 +339,16 @@ describe('ProfileCmsApiService', () => {
       .mockResolvedValueOnce(draft)
       .mockResolvedValueOnce(published);
     packagesDb.findByIdForUpdate.mockResolvedValue(draft);
+    packagesDb.findPrimaryPublishedByProfileIdForUpdate.mockResolvedValue(
+      previousPrimary
+    );
 
     const result = await service.publish(
       draft.id,
       {
         expected_package_hash: draft.package_hash,
-        expected_payload_hash: draft.payload_hash
+        expected_payload_hash: draft.payload_hash,
+        ...publishSignatureRequest()
       },
       ownerContext()
     );
@@ -332,6 +375,71 @@ describe('ProfileCmsApiService', () => {
       status: 'published',
       published_at: 1234
     });
+    expect(pointerEventsDb.insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event_type: ProfileCmsPointerEventType.PUBLISH,
+        package_db_id: draft.id,
+        previous_package_db_id: previousPrimary.id
+      }),
+      expect.objectContaining({ connection: expect.any(Object) })
+    );
+    expect(pointerEventsDb.insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event_type: ProfileCmsPointerEventType.SET_PRIMARY,
+        package_db_id: draft.id
+      }),
+      expect.any(Object)
+    );
+  });
+
+  it('rejects publish when the EIP-712 publish signature is invalid', async () => {
+    const draft = createEntity();
+    packagesDb.findById.mockResolvedValue(draft);
+    publishSignatureVerifier.mockResolvedValue(
+      createSignatureVerification(null, false)
+    );
+
+    await expect(
+      service.publish(
+        draft.id,
+        {
+          expected_package_hash: draft.package_hash,
+          expected_payload_hash: draft.payload_hash,
+          ...publishSignatureRequest()
+        },
+        ownerContext()
+      )
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(packagesDb.markPublished).not.toHaveBeenCalled();
+  });
+
+  it('rejects publish when canonical storage is S3-only', async () => {
+    const basePackage = createValidProfileCmsPackage();
+    const cmsPackage = {
+      ...basePackage,
+      storage: [
+        {
+          provider: 's3' as const,
+          uri: 'https://s3.example.invalid/profile-cms/package.json',
+          content_hash: basePackage.integrity.package_hash,
+          canonical: true,
+          recorded_at: '2026-06-17T00:00:00.000Z'
+        }
+      ]
+    };
+    const draft = createEntity({ cms_package: cmsPackage });
+    packagesDb.findById.mockResolvedValue(draft);
+
+    await expect(
+      service.publish(draft.id, publishSignatureRequest(), ownerContext())
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(packagesDb.markFailed).toHaveBeenCalledWith(
+      draft.id,
+      expect.objectContaining({ valid: false }),
+      expect.stringContaining('storage.s3_cannot_be_canonical'),
+      expect.any(Number),
+      expect.any(Object)
+    );
   });
 
   it('returns 404 when a profile has no primary published CMS package', async () => {
@@ -446,6 +554,132 @@ describe('ProfileCmsApiService', () => {
       status: 'draft'
     });
   });
+
+  it('rolls back primary to a previous published package with a current guard', async () => {
+    const target = createEntity({
+      id: 'previous-package',
+      status: ProfileCmsPackageStatus.SUPERSEDED,
+      production_valid: true,
+      is_primary: false,
+      published_at: 1000
+    });
+    const current = createEntity({
+      id: 'current-package',
+      status: ProfileCmsPackageStatus.PUBLISHED,
+      production_valid: true,
+      is_primary: true,
+      published_at: 2000
+    });
+    const restored = createEntity({
+      ...target,
+      status: ProfileCmsPackageStatus.PUBLISHED,
+      is_primary: true
+    });
+    packagesDb.findById
+      .mockResolvedValueOnce(target)
+      .mockResolvedValue(restored);
+    packagesDb.findByIdForUpdate.mockResolvedValue(target);
+    packagesDb.findPrimaryPublishedByProfileIdForUpdate.mockResolvedValue(
+      current
+    );
+
+    const result = await service.rollbackPrimary(
+      target.id,
+      {
+        expected_current_package_id: current.id,
+        expected_current_package_hash: current.package_hash
+      },
+      ownerContext()
+    );
+
+    expect(packagesDb.markPrimary).toHaveBeenCalledWith(
+      target.id,
+      expect.any(Number),
+      expect.objectContaining({ connection: expect.any(Object) })
+    );
+    expect(result.id).toBe(target.id);
+    expect(pointerEventsDb.insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event_type: ProfileCmsPointerEventType.ROLLBACK,
+        package_db_id: target.id,
+        previous_package_db_id: current.id
+      }),
+      expect.any(Object)
+    );
+  });
+
+  it('rejects rollback when expected current package does not match', async () => {
+    const target = createEntity({
+      id: 'previous-package',
+      status: ProfileCmsPackageStatus.SUPERSEDED,
+      production_valid: true
+    });
+    const current = createEntity({
+      id: 'current-package',
+      status: ProfileCmsPackageStatus.PUBLISHED,
+      production_valid: true,
+      is_primary: true
+    });
+    packagesDb.findById.mockResolvedValue(target);
+    packagesDb.findByIdForUpdate.mockResolvedValue(target);
+    packagesDb.findPrimaryPublishedByProfileIdForUpdate.mockResolvedValue(
+      current
+    );
+
+    await expect(
+      service.rollbackPrimary(
+        target.id,
+        { expected_current_package_id: 'other-package' },
+        ownerContext()
+      )
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(packagesDb.markPrimary).not.toHaveBeenCalled();
+  });
+
+  it('exports package storage receipts with pointer events', async () => {
+    const published = createEntity({
+      status: ProfileCmsPackageStatus.PUBLISHED,
+      production_valid: true,
+      published_at: 1000
+    });
+    packagesDb.findById.mockResolvedValue(published);
+    pointerEventsDb.listByPackageId.mockResolvedValue([
+      {
+        id: 'event-1',
+        event_type: ProfileCmsPointerEventType.PUBLISH,
+        profile_id: published.profile_id,
+        profile_handle: published.profile_handle,
+        package_db_id: published.id,
+        package_id: published.package_id,
+        package_version: published.version,
+        package_hash: published.package_hash,
+        payload_hash: published.payload_hash,
+        previous_package_db_id: null,
+        actor_profile_id: PROFILE_CMS_FIXTURE_PROFILE_ID,
+        signer_address: '0xf58fe66af1a8c792cd64d8d706eddabadfcb2fd0',
+        signature: '0xsignature',
+        typed_data: null,
+        typed_data_hash: '0xtypeddatahash',
+        storage_receipt: published.storage_receipts,
+        created_at: 1000
+      }
+    ]);
+
+    await expect(
+      service.exportPackage(published.id, {
+        authenticationContext: AuthenticationContext.notAuthenticated()
+      })
+    ).resolves.toMatchObject({
+      package_db_id: published.id,
+      storage_receipts: published.storage_receipts,
+      pointer_events: [
+        {
+          event_type: 'publish',
+          typed_data_hash: '0xtypeddatahash'
+        }
+      ]
+    });
+  });
 });
 
 function createEntity(
@@ -509,6 +743,51 @@ function createHashMismatchPackage(): CmsPackageV1 {
       ...cmsPackage.integrity,
       package_hash: PROFILE_CMS_FIXTURE_ZERO_HASH
     }
+  };
+}
+
+function publishSignatureRequest() {
+  return {
+    signer_address: '0xf58fE66AF1A8C792Cd64D8d706edDabAdFCB2FD0',
+    signature: '0xsignature',
+    chain_id: 1,
+    deadline: 1792345678000
+  };
+}
+
+function createSignatureVerification(
+  signerAddress: string | null,
+  valid = true
+): ProfileCmsPublishSignatureVerificationResult {
+  return {
+    valid,
+    signer_address: signerAddress?.toLowerCase() ?? null,
+    typed_data: {
+      domain: {
+        name: '6529 Profile CMS',
+        version: '1',
+        chainId: 1
+      },
+      types: {},
+      message: {
+        action: 'publish',
+        profileId: PROFILE_CMS_FIXTURE_PROFILE_ID,
+        handle: PROFILE_CMS_FIXTURE_HANDLE,
+        packageId: 'profile-native-home',
+        version: 1,
+        draftId: 'cms-package-id',
+        payloadHash: PROFILE_CMS_FIXTURE_ZERO_HASH,
+        packageHash: PROFILE_CMS_FIXTURE_ZERO_HASH,
+        primaryPath: `/${PROFILE_CMS_FIXTURE_HANDLE}/index.html`,
+        storageProvider: 'ipfs',
+        storageUri:
+          'ipfs://bafybeigdyrztmrgfydgytzqojqfaytmqmvqwxqk66xcs4i6hj5yq',
+        storageContentHash: PROFILE_CMS_FIXTURE_ZERO_HASH,
+        deadline: 1792345678000
+      }
+    },
+    typed_data_hash: '0xtypeddatahash',
+    ...(valid ? {} : { reason: 'invalid_eoa_signature' })
   };
 }
 

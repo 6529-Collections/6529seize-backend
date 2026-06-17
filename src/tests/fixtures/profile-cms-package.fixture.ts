@@ -22,7 +22,7 @@ export function createValidProfileCmsPackage(
   const handle = options.handle ?? PROFILE_CMS_FIXTURE_HANDLE;
   const profileId = options.profileId ?? PROFILE_CMS_FIXTURE_PROFILE_ID;
 
-  return withComputedCmsHashes({
+  const cmsPackage = withComputedCmsHashes({
     schema: CMS_PACKAGE_SCHEMA,
     package_id: 'profile-native-home',
     profile: {
@@ -87,9 +87,10 @@ export function createValidProfileCmsPackage(
     storage: [
       {
         provider: 'ipfs',
-        uri: 'ipfs://bafybeicmsv1fixture',
+        uri: 'ipfs://bafybeigdyrztmrgfydgytzqojqfaytmqmvqwxqk66xcs4i6hj5yq',
         content_hash: PROFILE_CMS_FIXTURE_ZERO_HASH,
-        provider_content_id: 'bafybeicmsv1fixture',
+        provider_content_id:
+          'bafybeigdyrztmrgfydgytzqojqfaytmqmvqwxqk66xcs4i6hj5yq',
         pinned: true,
         canonical: true,
         recorded_at: '2026-06-17T00:00:00.000Z'
@@ -101,6 +102,13 @@ export function createValidProfileCmsPackage(
       created_at: '2026-06-17T00:00:00.000Z'
     }
   });
+  return {
+    ...cmsPackage,
+    storage: cmsPackage.storage.map((receipt) => ({
+      ...receipt,
+      content_hash: cmsPackage.integrity.package_hash
+    }))
+  };
 }
 
 export function createFixtureProfileCmsSignature(): CmsPackageV1['signatures'][number] {

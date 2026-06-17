@@ -4422,6 +4422,115 @@ paths:
           description: Missing CMS publish permissions
         "404":
           description: CMS package not found
+  /profile-cms/packages/{id}/rollback:
+    post:
+      tags:
+        - Profile CMS
+      summary: Roll back primary CMS package pointer
+      description: >-
+        Requires the profile owner or delegated CMS publisher. Sets a previous
+        published package as primary with an expected-current concurrency guard.
+      operationId: rollbackProfileCmsPackage
+      x-6529-router:
+        enabled: true
+        auth: required
+        handler:
+          import: "@/api/profile-cms/profile-cms.handlers"
+          name: handleRollbackProfileCmsPackage
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApiRollbackProfileCmsPackageRequest"
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiProfileCmsPackage"
+        "400":
+          description: Concurrency guard or state check failed
+        "403":
+          description: Missing CMS publish permissions
+        "404":
+          description: CMS package not found
+  /profile-cms/packages/{id}/archive:
+    post:
+      tags:
+        - Profile CMS
+      summary: Archive a non-primary CMS package
+      description: Requires the profile owner or delegated CMS publisher.
+      operationId: archiveProfileCmsPackage
+      x-6529-router:
+        enabled: true
+        auth: required
+        handler:
+          import: "@/api/profile-cms/profile-cms.handlers"
+          name: handleArchiveProfileCmsPackage
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApiArchiveProfileCmsPackageRequest"
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiProfileCmsPackage"
+        "400":
+          description: State check failed
+        "403":
+          description: Missing CMS publish permissions
+        "404":
+          description: CMS package not found
+  /profile-cms/packages/{id}/export:
+    get:
+      tags:
+        - Profile CMS
+      summary: Export CMS package inspection data
+      description: >-
+        Returns package JSON, storage receipts, and pointer events needed by
+        future standalone renderers and mirrors. Published production packages
+        are public; private rows require profile CMS permissions.
+      operationId: exportProfileCmsPackage
+      x-6529-router:
+        enabled: true
+        auth: optional
+        handler:
+          import: "@/api/profile-cms/profile-cms.handlers"
+          name: handleExportProfileCmsPackage
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiProfileCmsPackageExport"
+        "404":
+          description: CMS package not found
   /profile-cms/packages/by-hash/{package_hash}:
     get:
       tags:
@@ -9446,6 +9555,11 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ApiAggregatedActivity"
+    ApiArchiveProfileCmsPackageRequest:
+      type: object
+      properties:
+        expected_package_hash:
+          type: string
     ApiArtistNameItem:
       type: object
       required:
@@ -13992,6 +14106,60 @@ components:
         published_at:
           type: integer
           format: int64
+    ApiProfileCmsPackageExport:
+      type: object
+      required:
+        - package
+        - package_id
+        - package_db_id
+        - version
+        - status
+        - profile_id
+        - profile_handle
+        - primary_path
+        - package_hash
+        - payload_hash
+        - storage_receipts
+        - pointer_events
+        - updated_at
+      properties:
+        package:
+          type: object
+          additionalProperties: true
+        package_id:
+          type: string
+        package_db_id:
+          type: string
+        version:
+          type: integer
+          format: int64
+        status:
+          $ref: "#/components/schemas/ApiProfileCmsPackageStatus"
+        profile_id:
+          type: string
+        profile_handle:
+          type: string
+        primary_path:
+          type: string
+        package_hash:
+          type: string
+        payload_hash:
+          type: string
+        storage_receipts:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        pointer_events:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiProfileCmsPointerEvent"
+        updated_at:
+          type: integer
+          format: int64
+        published_at:
+          type: integer
+          format: int64
     ApiProfileCmsPackageStatus:
       type: string
       enum:
@@ -14001,6 +14169,60 @@ components:
         - failed
         - archived
         - superseded
+    ApiProfileCmsPointerEvent:
+      type: object
+      required:
+        - id
+        - event_type
+        - profile_id
+        - profile_handle
+        - package_id
+        - package_db_id
+        - package_version
+        - package_hash
+        - payload_hash
+        - actor_profile_id
+        - created_at
+      properties:
+        id:
+          type: string
+        event_type:
+          type: string
+          enum:
+            - publish
+            - set_primary
+            - supersede
+            - rollback
+            - archive
+        profile_id:
+          type: string
+        profile_handle:
+          type: string
+        package_id:
+          type: string
+        package_db_id:
+          type: string
+        package_version:
+          type: integer
+          format: int64
+        package_hash:
+          type: string
+        payload_hash:
+          type: string
+        previous_package_db_id:
+          type: string
+        actor_profile_id:
+          type: string
+        signer_address:
+          type: string
+        typed_data_hash:
+          type: string
+        storage_receipt:
+          type: object
+          additionalProperties: true
+        created_at:
+          type: integer
+          format: int64
     ApiProfileCmsPrimaryPackage:
       type: object
       required:
@@ -14257,11 +14479,31 @@ components:
           nullable: true
     ApiPublishProfileCmsPackageRequest:
       type: object
+      required:
+        - signer_address
+        - signature
+        - chain_id
+        - deadline
       properties:
         expected_package_hash:
           type: string
         expected_payload_hash:
           type: string
+        signer_address:
+          type: string
+        signature:
+          type: string
+        chain_id:
+          type: integer
+          format: int64
+        deadline:
+          type: integer
+          format: int64
+        is_safe_signature:
+          type: boolean
+        verifying_contract:
+          type: string
+          nullable: true
     ApiPushNotificationDevice:
       type: object
       required:
@@ -14603,6 +14845,15 @@ components:
         rating:
           type: number
           format: int64
+    ApiRollbackProfileCmsPackageRequest:
+      type: object
+      required:
+        - expected_current_package_id
+      properties:
+        expected_current_package_id:
+          type: string
+        expected_current_package_hash:
+          type: string
     ApiSaveProfileCmsPackageDraftRequest:
       type: object
       required:
