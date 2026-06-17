@@ -437,7 +437,7 @@ describe('uploadMintingClaimToArweave', () => {
     expect(uploadedMetadata.animation_details).toEqual({ format: 'HTML' });
   });
 
-  it('copies html ipfs animation_url to animation_location as resolver URL', async () => {
+  it('copies html ipfs animation_url to animation_location as the original URL', async () => {
     uploadFileMock.mockReset();
     uploadFileMock
       .mockResolvedValueOnce({
@@ -459,7 +459,7 @@ describe('uploadMintingClaimToArweave', () => {
     );
 
     expect(result.animationLocationUrl).toBe(
-      'https://media.6529.io/ipfs/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi'
+      'ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi'
     );
     expect(uploadFileMock).toHaveBeenCalledTimes(2);
     expect(fetchPublicUrlToBufferMock).toHaveBeenCalledTimes(1);
@@ -476,12 +476,12 @@ describe('uploadMintingClaimToArweave', () => {
 
     expect(uploadedMetadata.animation).toBeUndefined();
     expect(uploadedMetadata.animation_url).toBe(
-      'https://media.6529.io/ipfs/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi'
+      'ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi'
     );
     expect(uploadedMetadata.animation_details).toEqual({ format: 'HTML' });
   });
 
-  it('copies html arweave animation_url to animation_location as resolver URL', async () => {
+  it('copies html arweave animation_url to animation_location as an Arweave URL', async () => {
     uploadFileMock.mockReset();
     uploadFileMock
       .mockResolvedValueOnce({
@@ -503,7 +503,7 @@ describe('uploadMintingClaimToArweave', () => {
     );
 
     expect(result.animationLocationUrl).toBe(
-      'https://media.6529.io/arweave/oi6-rpj2c3ab4hizrwt5a1sumhjnyigmspbpx0icbj8'
+      'https://arweave.net/oi6-rpj2c3ab4hizrwt5a1sumhjnyigmspbpx0icbj8'
     );
     expect(uploadFileMock).toHaveBeenCalledTimes(2);
     expect(fetchPublicUrlToBufferMock).toHaveBeenCalledTimes(1);
@@ -520,7 +520,7 @@ describe('uploadMintingClaimToArweave', () => {
 
     expect(uploadedMetadata.animation).toBeUndefined();
     expect(uploadedMetadata.animation_url).toBe(
-      'https://media.6529.io/arweave/oi6-rpj2c3ab4hizrwt5a1sumhjnyigmspbpx0icbj8'
+      'https://arweave.net/oi6-rpj2c3ab4hizrwt5a1sumhjnyigmspbpx0icbj8'
     );
     expect(uploadedMetadata.animation_details).toEqual({ format: 'HTML' });
   });
@@ -537,7 +537,7 @@ describe('uploadMintingClaimToArweave', () => {
         buffer: Buffer.from('video-bytes'),
         contentType: 'application/octet-stream',
         finalUrl:
-          'https://media.6529.io/ipfs/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi'
+          'https://ipfs.io/ipfs/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi'
       });
     uploadFileMock
       .mockResolvedValueOnce({
@@ -568,10 +568,10 @@ describe('uploadMintingClaimToArweave', () => {
     );
 
     expect(result.animationLocationUrl).toBe(
-      'https://media.6529.io/arweave/OdpVtqurZU9P-uEAJ4BsDIjAduAufQ6_sJxTu6MNYHc'
+      'https://arweave.net/OdpVtqurZU9P-uEAJ4BsDIjAduAufQ6_sJxTu6MNYHc'
     );
     expect(fetchPublicUrlToBufferMock.mock.calls[1]?.[0]).toBe(
-      'https://media.6529.io/ipfs/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi'
+      'https://ipfs.io/ipfs/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi'
     );
     expect(uploadFileMock).toHaveBeenNthCalledWith(
       2,
@@ -583,10 +583,10 @@ describe('uploadMintingClaimToArweave', () => {
     const uploadedMetadata = JSON.parse(metadataUploadBuffer.toString('utf8'));
 
     expect(uploadedMetadata.animation).toBe(
-      'https://media.6529.io/arweave/OdpVtqurZU9P-uEAJ4BsDIjAduAufQ6_sJxTu6MNYHc'
+      'https://arweave.net/OdpVtqurZU9P-uEAJ4BsDIjAduAufQ6_sJxTu6MNYHc'
     );
     expect(uploadedMetadata.animation_url).toBe(
-      'https://media.6529.io/arweave/OdpVtqurZU9P-uEAJ4BsDIjAduAufQ6_sJxTu6MNYHc'
+      'https://arweave.net/OdpVtqurZU9P-uEAJ4BsDIjAduAufQ6_sJxTu6MNYHc'
     );
   });
 
@@ -602,7 +602,7 @@ describe('uploadMintingClaimToArweave', () => {
         buffer: Buffer.from('video-bytes'),
         contentType: 'application/octet-stream',
         finalUrl:
-          'https://media.6529.io/ipfs/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi'
+          'https://ipfs.io/ipfs/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi'
       });
     uploadFileMock
       .mockResolvedValueOnce({
@@ -633,10 +633,10 @@ describe('uploadMintingClaimToArweave', () => {
     );
 
     expect(result.animationLocationUrl).toBe(
-      'https://media.6529.io/arweave/OdpVtqurZU9P-uEAJ4BsDIjAduAufQ6_sJxTu6MNYHc'
+      'https://arweave.net/OdpVtqurZU9P-uEAJ4BsDIjAduAufQ6_sJxTu6MNYHc'
     );
     expect(fetchPublicUrlToBufferMock.mock.calls[1]?.[0]).toBe(
-      'https://media.6529.io/ipfs/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi'
+      'https://ipfs.io/ipfs/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi'
     );
     expect(uploadFileMock).toHaveBeenNthCalledWith(
       2,
@@ -680,10 +680,10 @@ describe('uploadMintingClaimToArweave', () => {
     const uploadedMetadata = JSON.parse(metadataUploadBuffer.toString('utf8'));
 
     expect(uploadedMetadata.animation).toBe(
-      'https://media.6529.io/arweave/4nB40b2aSkEM2w69cZIK9YHyg4Zy80iTA6fcwJwZk6w'
+      'https://arweave.net/4nB40b2aSkEM2w69cZIK9YHyg4Zy80iTA6fcwJwZk6w'
     );
     expect(uploadedMetadata.animation_url).toBe(
-      'https://media.6529.io/arweave/4nB40b2aSkEM2w69cZIK9YHyg4Zy80iTA6fcwJwZk6w'
+      'https://arweave.net/4nB40b2aSkEM2w69cZIK9YHyg4Zy80iTA6fcwJwZk6w'
     );
     expect(uploadedMetadata.animation_details).toEqual({
       bytes: 8133420,

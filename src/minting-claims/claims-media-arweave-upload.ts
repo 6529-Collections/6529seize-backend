@@ -10,9 +10,9 @@ import { Logger } from '@/logging';
 import { isMemesContract } from '@/minting-claims/external-url';
 import { MAX_MINTING_CLAIM_MEDIA_BYTES } from '@/minting-claims/media-limits';
 import {
-  normalizeDecentralizedMediaUri,
   parseDecentralizedMediaRef,
-  to6529ResolverUrl
+  toExternalFallbackUrls,
+  toNativeUri
 } from '@/decentralized-media/decentralized-media';
 import { createHash } from 'node:crypto';
 
@@ -188,7 +188,15 @@ function isArweaveUrl(value: string): boolean {
   return parseDecentralizedMediaRef(value)?.protocol === 'arweave';
 }
 
-function buildStoredLocationUrl(
+function is6529MediaResolverUrl(value: string): boolean {
+  try {
+    return new URL(value).hostname.toLowerCase() === 'media.6529.io';
+  } catch {
+    return false;
+  }
+}
+
+function buildMintingClaimLocationUrl(
   location: string | null | undefined,
   allowProtocolPassthrough = false
 ): string | null {
@@ -197,22 +205,26 @@ function buildStoredLocationUrl(
   if (trimmed === '') return null;
   const ref = parseDecentralizedMediaRef(trimmed);
   if (ref) {
-    if (ref.protocol === 'arweave' || allowProtocolPassthrough) {
-      return to6529ResolverUrl(ref);
+    if (ref.protocol === 'arweave') {
+      return toExternalFallbackUrls(ref)[0] ?? trimmed;
+    }
+    if (allowProtocolPassthrough) {
+      return is6529MediaResolverUrl(trimmed) ? toNativeUri(ref) : trimmed;
     }
   }
   if (isProtocolUrl(trimmed)) {
     if (allowProtocolPassthrough) {
       return trimmed;
     }
-    return to6529ResolverUrl({ protocol: 'arweave', id: trimmed, path: '' });
+    return trimmed;
   }
-  return to6529ResolverUrl({ protocol: 'arweave', id: trimmed, path: '' });
+  return `https://arweave.net/${trimmed}`;
 }
 
 function resolveAnimationFetchUrl(url: string): string {
   const trimmed = url.trim();
-  return normalizeDecentralizedMediaUri(trimmed) ?? trimmed;
+  const ref = parseDecentralizedMediaRef(trimmed);
+  return ref ? (toExternalFallbackUrls(ref)[0] ?? trimmed) : trimmed;
 }
 
 function contentTypeFromAnimationFormat(format: string | null | undefined) {
@@ -250,7 +262,7 @@ async function uploadImageToArweaveOrThrow(
   const existingDetails =
     parseJsonOrNull<{ sha256?: unknown }>(claim.image_details) ?? null;
   const existingSha256 = normalizeSha256(existingDetails?.sha256);
-  const existingArweaveUrl = buildStoredLocationUrl(
+  const existingArweaveUrl = buildMintingClaimLocationUrl(
     claim.image_location,
     false
   );
@@ -266,7 +278,7 @@ async function uploadImageToArweaveOrThrow(
     fetched.buffer,
     contentType
   );
-  return buildStoredLocationUrl(url, false) ?? url;
+  return buildMintingClaimLocationUrl(url, false) ?? url;
 }
 
 async function uploadAnimationToArweaveIfPresent(
@@ -279,7 +291,7 @@ async function uploadAnimationToArweaveIfPresent(
     parseJsonOrNull<{ format?: string }>(claim.animation_details) ?? null;
   if (details?.format === 'HTML') {
     if (isIpfsUrl(animationUrl) || isArweaveUrl(animationUrl)) {
-      return buildStoredLocationUrl(animationUrl, true);
+      return buildMintingClaimLocationUrl(animationUrl, true);
     }
     return null;
   }
@@ -309,7 +321,7 @@ async function uploadAnimationToArweaveIfPresent(
   const existingSha256 = normalizeSha256(
     (details as { sha256?: unknown }).sha256
   );
-  const existingArweaveUrl = buildStoredLocationUrl(
+  const existingArweaveUrl = buildMintingClaimLocationUrl(
     claim.animation_location,
     false
   );
@@ -325,7 +337,7 @@ async function uploadAnimationToArweaveIfPresent(
     buffer,
     contentTypeToUpload
   );
-  return buildStoredLocationUrl(url, false) ?? url;
+  return buildMintingClaimLocationUrl(url, false) ?? url;
 }
 
 function resolveAnimationContentTypeForUpload({
@@ -574,7 +586,7 @@ async function uploadClaimMetadataToArweave(
     buffer,
     'application/json'
   );
-  return buildStoredLocationUrl(url, false) ?? url;
+  return buildMintingClaimLocationUrl(url, false) ?? url;
 }
 
 function buildArweaveMetadataPayload(
