@@ -398,6 +398,43 @@ describe('uploadMintingClaimToArweave', () => {
     );
   });
 
+  it('does not re-emit stored media resolver URLs on image reuse', async () => {
+    uploadFileMock.mockReset();
+    uploadFileMock.mockResolvedValueOnce({
+      url: 'https://arweave.net/_MSzxiISR3AgFJqhzBoAbCtFGMglSqRmZi5NTgZLfL4'
+    });
+
+    const result = await uploadMintingClaimToArweave(
+      MEMES_CONTRACT,
+      baseClaim({
+        image_location:
+          'https://media.6529.io/ipfs/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi',
+        image_details: JSON.stringify({
+          bytes: 123,
+          format: 'PNG',
+          sha256:
+            '2c8648d103e3dd7ad87660da0f126a1443b6d21ac1bd3ec000c5e24e2373a90c',
+          width: 800,
+          height: 800
+        })
+      })
+    );
+
+    expect(result.imageLocationUrl).toBe(
+      'ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi'
+    );
+    expect(uploadFileMock).toHaveBeenCalledTimes(1);
+    const metadataUploadBuffer = uploadFileMock.mock.calls[0]?.[0] as Buffer;
+    const uploadedMetadata = JSON.parse(metadataUploadBuffer.toString('utf8'));
+
+    expect(uploadedMetadata.image).toBe(
+      'ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi'
+    );
+    expect(uploadedMetadata.image_url).toBe(
+      'ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi'
+    );
+  });
+
   it('uploads HTML MEMES metadata in object shape', async () => {
     uploadFileMock.mockReset();
     uploadFileMock
@@ -470,6 +507,43 @@ describe('uploadMintingClaimToArweave', () => {
           'ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi'
       )
     ).toBe(false);
+
+    const metadataUploadBuffer = uploadFileMock.mock.calls[1]?.[0] as Buffer;
+    const uploadedMetadata = JSON.parse(metadataUploadBuffer.toString('utf8'));
+
+    expect(uploadedMetadata.animation).toBeUndefined();
+    expect(uploadedMetadata.animation_url).toBe(
+      'ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi'
+    );
+    expect(uploadedMetadata.animation_details).toEqual({ format: 'HTML' });
+  });
+
+  it('copies html media resolver animation_url to animation_location as native ipfs', async () => {
+    uploadFileMock.mockReset();
+    uploadFileMock
+      .mockResolvedValueOnce({
+        url: 'https://arweave.net/OI6-rpJ2C3Ab4HiZRWt5A1SumhjnYigmSPBPX0ICBj8'
+      })
+      .mockResolvedValueOnce({
+        url: 'https://arweave.net/_MSzxiISR3AgFJqhzBoAbCtFGMglSqRmZi5NTgZLfL4'
+      });
+
+    const result = await uploadMintingClaimToArweave(
+      MEMES_CONTRACT,
+      baseClaim({
+        animation_url:
+          'https://media.6529.io/ipfs/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi',
+        animation_details: JSON.stringify({
+          format: 'HTML'
+        })
+      })
+    );
+
+    expect(result.animationLocationUrl).toBe(
+      'ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi'
+    );
+    expect(uploadFileMock).toHaveBeenCalledTimes(2);
+    expect(fetchPublicUrlToBufferMock).toHaveBeenCalledTimes(1);
 
     const metadataUploadBuffer = uploadFileMock.mock.calls[1]?.[0] as Buffer;
     const uploadedMetadata = JSON.parse(metadataUploadBuffer.toString('utf8'));
@@ -642,6 +716,52 @@ describe('uploadMintingClaimToArweave', () => {
       2,
       Buffer.from('video-bytes'),
       'video/mp4'
+    );
+  });
+
+  it('fetches non-html bare arweave animation_url as an Arweave gateway URL', async () => {
+    const arweaveTxId = 'OdpVtqurZU9P-uEAJ4BsDIjAduAufQ6_sJxTu6MNYHc';
+    uploadFileMock.mockReset();
+    fetchPublicUrlToBufferMock
+      .mockResolvedValueOnce({
+        buffer: Buffer.from('image-bytes'),
+        contentType: 'image/png',
+        finalUrl: 'https://cdn.example.com/image.png'
+      })
+      .mockResolvedValueOnce({
+        buffer: Buffer.from('video-bytes'),
+        contentType: 'video/mp4',
+        finalUrl: `https://arweave.net/${arweaveTxId}`
+      });
+    uploadFileMock
+      .mockResolvedValueOnce({
+        url: 'https://arweave.net/OI6-rpJ2C3Ab4HiZRWt5A1SumhjnYigmSPBPX0ICBj8'
+      })
+      .mockResolvedValueOnce({
+        url: `https://arweave.net/${arweaveTxId}`
+      })
+      .mockResolvedValueOnce({
+        url: 'https://arweave.net/_MSzxiISR3AgFJqhzBoAbCtFGMglSqRmZi5NTgZLfL4'
+      });
+
+    await uploadMintingClaimToArweave(
+      MEMES_CONTRACT,
+      baseClaim({
+        animation_url: arweaveTxId,
+        animation_details: JSON.stringify({
+          bytes: 456,
+          format: 'MP4',
+          duration: 4,
+          sha256: 'b'.repeat(64),
+          width: 1000,
+          height: 1000,
+          codecs: ['avc1']
+        })
+      })
+    );
+
+    expect(fetchPublicUrlToBufferMock.mock.calls[1]?.[0]).toBe(
+      `https://arweave.net/${arweaveTxId}`
     );
   });
 
