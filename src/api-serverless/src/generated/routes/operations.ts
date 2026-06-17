@@ -266,6 +266,27 @@ export type GetDropV2ReactionsByIdRequest = Request<
   Record<string, never>
 >;
 
+export interface GetDropRepliesV2PathParams {
+  "id": string;
+}
+
+export interface GetDropRepliesV2Query {
+  "limit"?: number;
+  "serial_no_limit"?: number;
+  "search_strategy"?: string;
+  "drop_type"?: string;
+}
+
+export type GetDropRepliesV2Response = ApiWaveDropsFeedV2;
+
+export type GetDropRepliesV2Request = Request<
+  GetDropRepliesV2PathParams,
+  ApiResponse<GetDropRepliesV2Response>,
+  never,
+  GetDropRepliesV2Query,
+  Record<string, never>
+>;
+
 export interface GetDropV2VotersByIdPathParams {
   "id": string;
 }
