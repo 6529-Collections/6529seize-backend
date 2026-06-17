@@ -2,7 +2,9 @@ import 'reflect-metadata';
 import {
   DROPS_TABLE,
   WAVE_CHAT_DROP_COOLDOWNS_TABLE,
-  WAVE_DROPPER_METRICS_TABLE
+  WAVE_DROPPER_METRICS_TABLE,
+  WAVE_METRICS_TABLE,
+  WAVE_READER_METRICS_TABLE
 } from '@/constants';
 import { DropType } from '@/entities/IDrop';
 import { RequestContext } from '@/request.context';
@@ -12,6 +14,8 @@ import { anIdentity, withIdentities } from '@/tests/fixtures/identity.fixture';
 import { aWave, withWaves } from '@/tests/fixtures/wave.fixture';
 import { Time } from '@/time';
 import { WavesApiDb, WaveSubwavesSort } from './waves.api.db';
+import { ApiWaveScoreSort } from '../generated/models/ApiWaveScoreSort';
+import { ApiWaveVisibilityTier } from '../generated/models/ApiWaveVisibilityTier';
 
 const repo = new WavesApiDb(() => sqlExecutor);
 const ctx: RequestContext = { timer: undefined };
@@ -32,6 +36,20 @@ const publicWave = aWave(
     chat_links_disabled: true
   },
   { id: 'wave-public', serial_no: 1, name: 'Public Wave' }
+);
+
+const mutedHighScoreWave = aWave(
+  {
+    created_by: author.profile_id!
+  },
+  { id: 'wave-muted-high-score', serial_no: 3, name: 'Muted High Score Wave' }
+);
+
+const visibleScoredWave = aWave(
+  {
+    created_by: author.profile_id!
+  },
+  { id: 'wave-visible-score', serial_no: 4, name: 'Visible Score Wave' }
 );
 
 const privateWave = aWave(
@@ -171,6 +189,71 @@ describeWithSeed(
         expect.objectContaining({ id: privateWave.id }),
         expect.objectContaining({ id: publicWave.id })
       ]);
+    });
+  }
+);
+
+describeWithSeed(
+  'WavesApiDb scored overview filters',
+  [
+    withIdentities([author]),
+    withWaves([mutedHighScoreWave, visibleScoredWave]),
+    {
+      table: WAVE_METRICS_TABLE,
+      rows: [
+        {
+          wave_id: mutedHighScoreWave.id,
+          latest_drop_timestamp: 3002,
+          wave_visibility_tier: ApiWaveVisibilityTier.TrustedVisible,
+          wave_visibility_rank: 1,
+          wave_visibility_score: 99,
+          wave_quality_score: 99,
+          wave_hotness_score: 99,
+          wave_rep_sort_score: 99
+        },
+        {
+          wave_id: visibleScoredWave.id,
+          latest_drop_timestamp: 3001,
+          wave_visibility_tier: ApiWaveVisibilityTier.TrustedVisible,
+          wave_visibility_rank: 1,
+          wave_visibility_score: 70,
+          wave_quality_score: 70,
+          wave_hotness_score: 70,
+          wave_rep_sort_score: 70
+        }
+      ]
+    },
+    {
+      table: WAVE_READER_METRICS_TABLE,
+      rows: [
+        {
+          wave_id: mutedHighScoreWave.id,
+          reader_id: author.profile_id!,
+          latest_read_timestamp: 0,
+          muted: true
+        }
+      ]
+    }
+  ],
+  () => {
+    it('applies muted score floors to scored min filters and tier filters', async () => {
+      const waves = await repo.findScoredRecentlyDroppedToWaves({
+        authenticated_user_id: author.profile_id!,
+        only_waves_followed_by_authenticated_user: false,
+        offset: 0,
+        limit: 10,
+        eligibleGroups: [],
+        direct_message: false,
+        pinned: null,
+        score_sort: ApiWaveScoreSort.Balanced,
+        min_visibility_score: 50,
+        min_quality_score: 50,
+        min_hotness_score: 50,
+        min_rep_sort_score: 50,
+        visibility_tier: ApiWaveVisibilityTier.TrustedVisible
+      });
+
+      expect(waves.map((wave) => wave.id)).toEqual([visibleScoredWave.id]);
     });
   }
 );

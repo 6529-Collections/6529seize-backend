@@ -18,4 +18,7 @@ export class AbusivenessDetectionResult {
   readonly external_check_performed_at!: Date;
 }
 
-export const REP_CATEGORY_PATTERN = /^[a-zA-Z0-9?!,.'() ]{1,100}$/;
+export const REP_CATEGORY_PATTERN = new RegExp(
+  "^[\\p{L}\\p{N}?!,.'() ]{1,100}$",
+  'u'
+);

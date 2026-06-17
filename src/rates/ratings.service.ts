@@ -5,6 +5,7 @@ import { ApiBulkRateRequest } from '../api-serverless/src/generated/models/ApiBu
 import { ApiBulkRepRequest } from '../api-serverless/src/generated/models/ApiBulkRepRequest';
 import { ApiRatingWithProfileInfoAndLevel } from '../api-serverless/src/generated/models/ApiRatingWithProfileInfoAndLevel';
 import { ApiRatingWithProfileInfoAndLevelPage } from '../api-serverless/src/generated/models/ApiRatingWithProfileInfoAndLevelPage';
+import { waveScoreService } from '../api-serverless/src/waves/wave-score.service';
 import { identityFetcher } from '../api-serverless/src/identities/identity.fetcher';
 import { FullPageRequest, Page } from '../api-serverless/src/page-request';
 import {
@@ -179,14 +180,7 @@ export class RatingsService {
           identityUpdates: identityUpdate ? [identityUpdate] : []
         };
       } else {
-        const action =
-          request.matter === RateMatter.REP
-            ? request.authenticationContext.activeProxyActions[
-                ProfileProxyActionType.ALLOCATE_REP
-              ]
-            : request.authenticationContext.activeProxyActions[
-                ProfileProxyActionType.ALLOCATE_CIC
-              ];
+        const action = this.getProxyActionForRatingMatter(request);
         if (!action) {
           throw new ForbiddenException(
             `Proxy is not allowed to give ${request.matter} ratings`
@@ -211,6 +205,23 @@ export class RatingsService {
       }
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->updateRatingInternal`);
+    }
+  }
+
+  private getProxyActionForRatingMatter(request: UpdateRatingViaApiRequest) {
+    switch (request.matter) {
+      case RateMatter.REP:
+        return request.authenticationContext.activeProxyActions[
+          ProfileProxyActionType.ALLOCATE_REP
+        ];
+      case RateMatter.CIC:
+        return request.authenticationContext.activeProxyActions[
+          ProfileProxyActionType.ALLOCATE_CIC
+        ];
+      case RateMatter.WAVE_REP:
+        throw new ForbiddenException(
+          `Proxy is not allowed to give WAVE_REP ratings`
+        );
     }
   }
 
@@ -589,50 +600,68 @@ export class RatingsService {
     profileMatters: OverRateMatter[]
   ) {
     this.logger.info(`Reducing rates for profile ${raterProfileId}`);
+    const waveRepTargetsToRefresh = new Set<string>();
     for (const overRatedMatter of profileMatters) {
       const coefficient = overRatedMatter.rater_credit / overRatedMatter.tally;
-      await this.ratingsDb.executeNativeQueriesInTransaction(
-        async (connection) => {
-          const ratings = await this.ratingsDb.getRatingsOnMatter(
-            {
-              rater_profile_id: raterProfileId,
-              matter: overRatedMatter.matter
-            },
-            connection
-          );
-          let overCredit =
-            Math.abs(overRatedMatter.tally) - overRatedMatter.rater_credit;
-          const identityUpdates: IdentityUpdate[] = [];
+      const changedWaveRepTargetIds =
+        await this.ratingsDb.executeNativeQueriesInTransaction(
+          async (connection) => {
+            const changedWaveRepTargetIds: string[] = [];
+            const ratings = await this.ratingsDb.getRatingsOnMatter(
+              {
+                rater_profile_id: raterProfileId,
+                matter: overRatedMatter.matter
+              },
+              connection
+            );
+            let overCredit =
+              Math.abs(overRatedMatter.tally) - overRatedMatter.rater_credit;
+            const identityUpdates: IdentityUpdate[] = [];
 
-          for (const rating of ratings) {
-            if (rating.rating !== 0) {
-              const newRating =
-                Math.floor(Math.abs(rating.rating * coefficient)) *
-                (rating.rating / Math.abs(rating.rating));
-              overCredit =
-                overCredit - (Math.abs(rating.rating) - Math.abs(newRating));
-              const identityUpdate = await this.insertLostCreditRating(
-                rating,
-                newRating,
-                connection
-              );
-              if (identityUpdate) {
-                identityUpdates.push(identityUpdate);
+            for (const rating of ratings) {
+              if (rating.rating !== 0) {
+                const newRating =
+                  Math.floor(Math.abs(rating.rating * coefficient)) *
+                  (rating.rating / Math.abs(rating.rating));
+                overCredit =
+                  overCredit - (Math.abs(rating.rating) - Math.abs(newRating));
+                if (
+                  overRatedMatter.matter === RateMatter.WAVE_REP &&
+                  newRating !== rating.rating
+                ) {
+                  changedWaveRepTargetIds.push(rating.matter_target_id);
+                }
+                const identityUpdate = await this.insertLostCreditRating(
+                  rating,
+                  newRating,
+                  connection
+                );
+                if (identityUpdate) {
+                  identityUpdates.push(identityUpdate);
+                }
+              }
+
+              if (overCredit <= 0) {
+                break;
               }
             }
 
-            if (overCredit <= 0) {
-              break;
+            if (identityUpdates.length > 0) {
+              await this.ratingsDb.applyBulkIdentityUpdates(
+                identityUpdates,
+                connection
+              );
             }
+            return changedWaveRepTargetIds;
           }
-
-          if (identityUpdates.length > 0) {
-            await this.ratingsDb.applyBulkIdentityUpdates(
-              identityUpdates,
-              connection
-            );
-          }
-        }
+        );
+      changedWaveRepTargetIds.forEach((waveId) => {
+        waveRepTargetsToRefresh.add(waveId);
+      });
+    }
+    if (waveRepTargetsToRefresh.size > 0) {
+      await waveScoreService.refreshWaveScoresForWaveIdsBestEffort(
+        Array.from(waveRepTargetsToRefresh)
       );
     }
     this.logger.info(`Reduced rates for profile ${raterProfileId}`);
@@ -1202,7 +1231,7 @@ export class RatingsService {
   }): Promise<ApiAvailableRatingCredit> {
     const totalProfileCredits =
       await identitiesDb.getTdhAndXTdhCombinedAndFloored(rater_id);
-    const [repSpent, cicSpent] = await Promise.all([
+    const [repSpent, cicSpent, waveRepSpent] = await Promise.all([
       this.ratingsDb.getRatesSpentOnMatterByProfile({
         profile_id: rater_id,
         matter: RateMatter.REP
@@ -1210,10 +1239,15 @@ export class RatingsService {
       this.ratingsDb.getRatesSpentOnMatterByProfile({
         profile_id: rater_id,
         matter: RateMatter.CIC
+      }),
+      this.ratingsDb.getRatesSpentOnMatterByProfile({
+        profile_id: rater_id,
+        matter: RateMatter.WAVE_REP
       })
     ]);
     let repLeft = totalProfileCredits - repSpent;
     let cicLeft = totalProfileCredits - cicSpent;
+    const waveRepLeft = totalProfileCredits - waveRepSpent;
     if (rater_representative_id && rater_representative_id !== rater_id) {
       const proxies =
         await this.profileProxiesDb.findProfileProxiesByGrantorAndGrantee({
@@ -1251,7 +1285,8 @@ export class RatingsService {
     }
     return {
       rep_credit: repLeft,
-      cic_credit: cicLeft
+      cic_credit: cicLeft,
+      wave_rep_credit: waveRepLeft
     };
   }
 

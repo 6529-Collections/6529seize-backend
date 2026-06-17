@@ -27,6 +27,7 @@ flowchart TD
   WritePool --> MySQL
   SeizeAPI --> Redis["Redis"]
   SeizeAPI --> S3["S3"]
+  SeizeAPI --> MediaResolver["Decentralized media resolver<br/>native URI + gateway URL mapping"]
   SeizeAPI --> AiRpc["AI / RPC / webhooks"]
 
   subgraph Scheduled["Scheduled Lambdas (EventBridge)"]
@@ -49,7 +50,8 @@ flowchart TD
     MarketStatsLoop ~~~ RateEventProcessingLoop["rateEventProcessingLoop"]
     RateEventProcessingLoop ~~~ WaveDecisionExecutionLoop["waveDecisionExecutionLoop"]
     WaveDecisionExecutionLoop ~~~ WaveLeaderboardSnapshotterLoop["waveLeaderboardSnapshotterLoop"]
-    WaveLeaderboardSnapshotterLoop ~~~ XTdhGrantsReviewerLoop["xTdhGrantsReviewerLoop"]
+    WaveLeaderboardSnapshotterLoop ~~~ WaveScoreRefreshLoop["waveScoreRefreshLoop"]
+    WaveScoreRefreshLoop ~~~ XTdhGrantsReviewerLoop["xTdhGrantsReviewerLoop"]
     XTdhGrantsReviewerLoop ~~~ SubscriptionsDaily["subscriptionsDaily"]
     SubscriptionsDaily ~~~ SubscriptionsTopUpLoop["subscriptionsTopUpLoop"]
     SubscriptionsTopUpLoop ~~~ DiscoverEnsLoop["discoverEnsLoop"]
@@ -77,6 +79,7 @@ flowchart TD
     TdhLoop --> TdhDoneTopic["SNS: tdh-calculation-done.fifo"]
     TdhDoneTopic --> XTdhQueue["SQS: xtdh-start.fifo"] --> XTdhLoop["xTdhLoop"]
     TdhDoneTopic --> OverRatesQueue["SQS: over-rates-revocation-start.fifo"] --> OverRatesRevocationLoop["overRatesRevocationLoop"]
+    TdhDoneTopic --> WaveScoreRefreshQueue["SQS: wave-score-refresh-start.fifo"] --> WaveScoreRefreshLoop["waveScoreRefreshLoop"]
   end
 
   subgraph RequestEventManual["Request, event, edge, SNS, and manual Lambdas"]
@@ -158,6 +161,7 @@ flowchart TD
 | `pushNotificationsHandler` | SQS `firebase-push-notifications` | Deliver Firebase push notifications. |
 | `xTdhLoop` | SNS `tdh-calculation-done.fifo` via SQS `xtdh-start.fifo` | Recalculate xTDH after TDH finishes. |
 | `overRatesRevocationLoop` | SNS `tdh-calculation-done.fifo` via SQS `over-rates-revocation-start.fifo` | Revoke over-rates after TDH changes. |
+| `waveScoreRefreshLoop` | SNS `tdh-calculation-done.fifo` via SQS `wave-score-refresh-start.fifo` | Refresh materialized wave REP and Wave Score discovery fields after TDH changes. |
 | `mediaResizerLoop` | CloudFront/request path | Resize images on demand. |
 | `nextgenMediaProxyInterceptor` | Lambda@Edge / CloudFront request | Provide NextGen metadata fallback. |
 | `dropVideoConversionInvokerLoop` | S3 object-created event for `drops/` | Invoke MediaConvert for uploaded drop videos. |
@@ -208,6 +212,10 @@ Important API responsibilities:
   [Wallet Authentication](auth/wallet-auth.md).
 - Public read APIs for NFTs, TDH, waves, drops, profiles, community metrics, subscriptions, and notifications.
 - Public OG metadata inputs for profile, wave, and drop link previews under `/og-metadata`.
+- Public decentralized media resolution under `/media/resolve`, which maps
+  native `ipfs://`, `ipns://`, and `ar://` references plus recognized gateway
+  URLs to canonical native URIs, `media.6529.io` resolver URLs, and explicit
+  external fallback URLs. This v1 API does not proxy media bytes.
 - Authenticated social writes: drops, votes, reactions, curations, subscriptions, groups, proxies, minting claims, and push settings.
 - Upload preparation and multipart completion for drop media, wave media, distribution photos, and attachments.
 - WebSocket connection registration and real-time wave-related messages.

@@ -91,6 +91,8 @@ import { ApiWaveParticipationSubmissionStrategyIdentityConf } from '@/api/genera
 import { ApiWaveParticipationSubmissionStrategyType } from '@/api/generated/models/ApiWaveParticipationSubmissionStrategyType';
 import { curationsApiService } from '@/api/curations/curations.api.service';
 import { ApiCurationDropsPage } from '@/api/generated/models/ApiCurationDropsPage';
+import waveRepRoutes from './wave-rep.routes';
+import { waveScoreService } from './wave-score.service';
 
 const router = asyncRouter();
 
@@ -294,6 +296,8 @@ router.get(
   }
 );
 
+router.use('/:id/rep', waveRepRoutes);
+
 router.get(
   '/:id',
   maybeAuthenticatedUser(),
@@ -303,7 +307,7 @@ router.get(
   ) => {
     const { id } = req.params;
     const timer = Timer.getFromRequest(req);
-    const authenticationContext = await getAuthenticationContext(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
     const profileId = authenticationContext.getActingAsId();
     const group_ids_user_is_eligible_for =
       !profileId ||
@@ -345,7 +349,8 @@ router.post(
     req: Request<{ id: string }, any, ApiWaveSubscriptionActions, any, any>,
     res: Response<ApiResponse<ApiWaveSubscriptionActions>>
   ) => {
-    const authenticationContext = await getAuthenticationContext(req);
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
     const authenticatedProfileId = authenticationContext.getActingAsId();
     if (!authenticatedProfileId) {
       throw new ForbiddenException(`Please create a profile first`);
@@ -369,6 +374,10 @@ router.post(
       subscriber: authenticatedProfileId,
       actions: request.actions
     });
+    await waveScoreService.refreshWaveScoresForWaveIdsBestEffort(
+      [req.params.id],
+      { authenticationContext, timer }
+    );
     res.send({
       actions: activeActions
     });
@@ -437,7 +446,8 @@ router.delete(
     req: Request<{ id: string }, any, ApiWaveSubscriptionActions, any, any>,
     res: Response<ApiResponse<ApiWaveSubscriptionActions>>
   ) => {
-    const authenticationContext = await getAuthenticationContext(req);
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
     const authenticatedProfileId = authenticationContext.getActingAsId();
     if (!authenticatedProfileId) {
       throw new ForbiddenException(`Please create a profile first`);
@@ -461,6 +471,10 @@ router.delete(
       subscriber: authenticatedProfileId,
       actions: request.actions
     });
+    await waveScoreService.refreshWaveScoresForWaveIdsBestEffort(
+      [req.params.id],
+      { authenticationContext, timer }
+    );
     res.send({
       actions: activeActions
     });

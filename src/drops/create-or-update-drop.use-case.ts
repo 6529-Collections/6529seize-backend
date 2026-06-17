@@ -73,6 +73,7 @@ import {
   artCurationTokenWatchService,
   ArtCurationTokenWatchService
 } from '@/art-curation/art-curation-token-watch.service';
+import { waveScoreService } from '@/api/waves/wave-score.service';
 import { extractUrlCandidatesFromText } from '@/nft-links/nft-link-candidates';
 import { validateLinkUrl } from '@/nft-links/nft-link-resolver.validator';
 import { env } from '@/env';
@@ -86,8 +87,8 @@ import {
   isWaveChatSlowModeExempt
 } from '@/waves/wave-chat-slow-mode.helpers';
 import { isWaveCreatorOrAdmin } from '@/waves/wave-admin.helpers';
+import { parseDecentralizedMediaRef } from '@/decentralized-media/decentralized-media';
 
-const ARWEAVE_ORIGIN = 'https://arweave.net';
 const TENOR_CHAT_LINK_ORIGIN = 'https://media.tenor.com';
 const ALLOWED_TENOR_CHAT_LINK_EXTENSION_REGEX = /\.(?:gif|mp4|jpg|webp)$/i;
 
@@ -128,15 +129,24 @@ export function validateDropMediaAttachment({
   }
 
   if (mimeType === 'text/html') {
-    if (parsedUrl.origin !== ARWEAVE_ORIGIN && parsedUrl.protocol !== 'ipfs:') {
+    if (!isDecentralizedHtmlMediaUrl(url)) {
       throw new BadRequestException(
-        `text/html needs to be served from IPFS or Arweave`
+        `text/html needs to be served from IPFS, IPNS, or Arweave`
       );
     }
     return;
   }
 
   throw new BadRequestException(`Unsupported mime type ${mimeType}`);
+}
+
+function isDecentralizedHtmlMediaUrl(url: string): boolean {
+  const ref = parseDecentralizedMediaRef(url);
+  return (
+    ref?.protocol === 'ipfs' ||
+    ref?.protocol === 'ipns' ||
+    ref?.protocol === 'arweave'
+  );
 }
 
 type PreResolvedEnsIdentityNomination = Readonly<{
@@ -1515,6 +1525,10 @@ export class CreateOrUpdateDropUseCase {
         { timer, connection }
       )
     ]);
+    await waveScoreService.refreshWaveScoresForWaveIdsBestEffort([wave.id], {
+      timer,
+      connection
+    });
     await this.recordQuoteNotifications({ model, wave }, { timer, connection });
     const pendingPushNotificationIds = await this.notifyWaveDropRecipients(
       {
