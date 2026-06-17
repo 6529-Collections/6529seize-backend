@@ -49,7 +49,7 @@ export function resolveMetricsSort(sort: string | undefined): string {
     throw new BadRequestException(`Unsupported sort field: ${sort}`);
   }
 
-  return normalizedSort === 'boosted_tdh' ? 'tdh' : normalizedSort;
+  return normalizedSort;
 }
 
 export function resolveMetricsTdhView(
