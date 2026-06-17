@@ -27,6 +27,9 @@ export * from '../models/ApiChangeWaveRepRating';
 export * from '../models/ApiCicContributor';
 export * from '../models/ApiCicContributorsPage';
 export * from '../models/ApiCicOverview';
+export * from '../models/ApiCmsValidationIssue';
+export * from '../models/ApiCmsValidationResult';
+export * from '../models/ApiCmsValidationResultTarget';
 export * from '../models/ApiCollectedStats';
 export * from '../models/ApiCollectedStatsSeason';
 export * from '../models/ApiCommunityMemberMinimal';
@@ -57,6 +60,7 @@ export * from '../models/ApiCreateNewProfileProxyAllocateCicAction';
 export * from '../models/ApiCreateNewProfileProxyAllocateRepAction';
 export * from '../models/ApiCreateNewProfileProxyCreateWaveAction';
 export * from '../models/ApiCreateNewProfileProxyCreateWaveParticipationDropAction';
+export * from '../models/ApiCreateNewProfileProxyPublishCmsAction';
 export * from '../models/ApiCreateNewProfileProxyRateWaveDropAction';
 export * from '../models/ApiCreateNewProfileProxyReadWaveAction';
 export * from '../models/ApiCreateNewWave';
@@ -212,6 +216,9 @@ export * from '../models/ApiPageWithNextUriBase';
 export * from '../models/ApiPageWithoutCount';
 export * from '../models/ApiPaymentDetails';
 export * from '../models/ApiProfileClassification';
+export * from '../models/ApiProfileCmsPackage';
+export * from '../models/ApiProfileCmsPackageStatus';
+export * from '../models/ApiProfileCmsPrimaryPackage';
 export * from '../models/ApiProfileMin';
 export * from '../models/ApiProfileMinsPage';
 export * from '../models/ApiProfileProxy';
@@ -219,6 +226,7 @@ export * from '../models/ApiProfileProxyAction';
 export * from '../models/ApiProfileProxyActionType';
 export * from '../models/ApiProfileRepCategorySummary';
 export * from '../models/ApiProfileWave';
+export * from '../models/ApiPublishProfileCmsPackageRequest';
 export * from '../models/ApiPushNotificationDevice';
 export * from '../models/ApiPushNotificationSettings';
 export * from '../models/ApiPushNotificationSettingsUpdate';
@@ -241,6 +249,7 @@ export * from '../models/ApiReplyToDrop';
 export * from '../models/ApiReplyToDropAuthor';
 export * from '../models/ApiReplyToDropResponse';
 export * from '../models/ApiReplyToDropV2';
+export * from '../models/ApiSaveProfileCmsPackageDraftRequest';
 export * from '../models/ApiSeizeSettings';
 export * from '../models/ApiSetPinnedDropRequest';
 export * from '../models/ApiSetProfileWaveRequest';
@@ -269,6 +278,7 @@ export * from '../models/ApiUploadItem';
 export * from '../models/ApiUploadPartOfMultipartUploadRequest';
 export * from '../models/ApiUploadPartOfMultipartUploadResponse';
 export * from '../models/ApiUploadsPage';
+export * from '../models/ApiValidateProfileCmsPackageRequest';
 export * from '../models/ApiWallet';
 export * from '../models/ApiWave';
 export * from '../models/ApiWaveChatConfig';
@@ -441,6 +451,9 @@ import { ApiChangeWaveRepRating } from '../models/ApiChangeWaveRepRating';
 import { ApiCicContributor } from '../models/ApiCicContributor';
 import { ApiCicContributorsPage } from '../models/ApiCicContributorsPage';
 import { ApiCicOverview } from '../models/ApiCicOverview';
+import { ApiCmsValidationIssue, ApiCmsValidationIssueSeverityEnum         } from '../models/ApiCmsValidationIssue';
+import { ApiCmsValidationResult, ApiCmsValidationResultSchemaEnum         } from '../models/ApiCmsValidationResult';
+import { ApiCmsValidationResultTarget } from '../models/ApiCmsValidationResultTarget';
 import { ApiCollectedStats } from '../models/ApiCollectedStats';
 import { ApiCollectedStatsSeason } from '../models/ApiCollectedStatsSeason';
 import { ApiCommunityMemberMinimal } from '../models/ApiCommunityMemberMinimal';
@@ -471,6 +484,7 @@ import { ApiCreateNewProfileProxyAllocateCicAction    } from '../models/ApiCreat
 import { ApiCreateNewProfileProxyAllocateRepAction    } from '../models/ApiCreateNewProfileProxyAllocateRepAction';
 import { ApiCreateNewProfileProxyCreateWaveAction   } from '../models/ApiCreateNewProfileProxyCreateWaveAction';
 import { ApiCreateNewProfileProxyCreateWaveParticipationDropAction   } from '../models/ApiCreateNewProfileProxyCreateWaveParticipationDropAction';
+import { ApiCreateNewProfileProxyPublishCmsAction   } from '../models/ApiCreateNewProfileProxyPublishCmsAction';
 import { ApiCreateNewProfileProxyRateWaveDropAction   } from '../models/ApiCreateNewProfileProxyRateWaveDropAction';
 import { ApiCreateNewProfileProxyReadWaveAction   } from '../models/ApiCreateNewProfileProxyReadWaveAction';
 import { ApiCreateNewWave } from '../models/ApiCreateNewWave';
@@ -626,6 +640,9 @@ import { ApiPageWithNextUriBase } from '../models/ApiPageWithNextUriBase';
 import { ApiPageWithoutCount } from '../models/ApiPageWithoutCount';
 import { ApiPaymentDetails } from '../models/ApiPaymentDetails';
 import { ApiProfileClassification } from '../models/ApiProfileClassification';
+import { ApiProfileCmsPackage             } from '../models/ApiProfileCmsPackage';
+import { ApiProfileCmsPackageStatus } from '../models/ApiProfileCmsPackageStatus';
+import { ApiProfileCmsPrimaryPackage } from '../models/ApiProfileCmsPrimaryPackage';
 import { ApiProfileMin                       } from '../models/ApiProfileMin';
 import { ApiProfileMinsPage } from '../models/ApiProfileMinsPage';
 import { ApiProfileProxy } from '../models/ApiProfileProxy';
@@ -633,6 +650,7 @@ import { ApiProfileProxyAction             } from '../models/ApiProfileProxyActi
 import { ApiProfileProxyActionType } from '../models/ApiProfileProxyActionType';
 import { ApiProfileRepCategorySummary } from '../models/ApiProfileRepCategorySummary';
 import { ApiProfileWave } from '../models/ApiProfileWave';
+import { ApiPublishProfileCmsPackageRequest } from '../models/ApiPublishProfileCmsPackageRequest';
 import { ApiPushNotificationDevice } from '../models/ApiPushNotificationDevice';
 import { ApiPushNotificationSettings } from '../models/ApiPushNotificationSettings';
 import { ApiPushNotificationSettingsUpdate } from '../models/ApiPushNotificationSettingsUpdate';
@@ -655,6 +673,7 @@ import { ApiReplyToDrop } from '../models/ApiReplyToDrop';
 import { ApiReplyToDropAuthor } from '../models/ApiReplyToDropAuthor';
 import { ApiReplyToDropResponse } from '../models/ApiReplyToDropResponse';
 import { ApiReplyToDropV2 } from '../models/ApiReplyToDropV2';
+import { ApiSaveProfileCmsPackageDraftRequest } from '../models/ApiSaveProfileCmsPackageDraftRequest';
 import { ApiSeizeSettings } from '../models/ApiSeizeSettings';
 import { ApiSetPinnedDropRequest } from '../models/ApiSetPinnedDropRequest';
 import { ApiSetProfileWaveRequest } from '../models/ApiSetProfileWaveRequest';
@@ -683,6 +702,7 @@ import { ApiUploadItem } from '../models/ApiUploadItem';
 import { ApiUploadPartOfMultipartUploadRequest } from '../models/ApiUploadPartOfMultipartUploadRequest';
 import { ApiUploadPartOfMultipartUploadResponse } from '../models/ApiUploadPartOfMultipartUploadResponse';
 import { ApiUploadsPage } from '../models/ApiUploadsPage';
+import { ApiValidateProfileCmsPackageRequest } from '../models/ApiValidateProfileCmsPackageRequest';
 import { ApiWallet } from '../models/ApiWallet';
 import { ApiWave } from '../models/ApiWave';
 import { ApiWaveChatConfig } from '../models/ApiWaveChatConfig';
@@ -843,6 +863,8 @@ let enumsMap: Set<string> = new Set<string>([
     "ApiAttachmentKind",
     "ApiAttachmentStatus",
     "ApiAttachmentUploadMimeType",
+    "ApiCmsValidationIssueSeverityEnum",
+    "ApiCmsValidationResultSchemaEnum",
     "ApiCommunityMembersSortOption",
     "ApiDecentralizedMediaProtocol",
     "ApiDropGroupMention",
@@ -863,6 +885,7 @@ let enumsMap: Set<string> = new Set<string>([
     "ApiOgMetadataEntityType",
     "ApiPageSortDirection",
     "ApiProfileClassification",
+    "ApiProfileCmsPackageStatus",
     "ApiProfileProxyActionType",
     "ApiRateMatter",
     "ApiRepDirection",
@@ -920,6 +943,9 @@ let typeMap: {[index: string]: any} = {
     "ApiCicContributor": ApiCicContributor,
     "ApiCicContributorsPage": ApiCicContributorsPage,
     "ApiCicOverview": ApiCicOverview,
+    "ApiCmsValidationIssue": ApiCmsValidationIssue,
+    "ApiCmsValidationResult": ApiCmsValidationResult,
+    "ApiCmsValidationResultTarget": ApiCmsValidationResultTarget,
     "ApiCollectedStats": ApiCollectedStats,
     "ApiCollectedStatsSeason": ApiCollectedStatsSeason,
     "ApiCommunityMemberMinimal": ApiCommunityMemberMinimal,
@@ -949,6 +975,7 @@ let typeMap: {[index: string]: any} = {
     "ApiCreateNewProfileProxyAllocateRepAction": ApiCreateNewProfileProxyAllocateRepAction,
     "ApiCreateNewProfileProxyCreateWaveAction": ApiCreateNewProfileProxyCreateWaveAction,
     "ApiCreateNewProfileProxyCreateWaveParticipationDropAction": ApiCreateNewProfileProxyCreateWaveParticipationDropAction,
+    "ApiCreateNewProfileProxyPublishCmsAction": ApiCreateNewProfileProxyPublishCmsAction,
     "ApiCreateNewProfileProxyRateWaveDropAction": ApiCreateNewProfileProxyRateWaveDropAction,
     "ApiCreateNewProfileProxyReadWaveAction": ApiCreateNewProfileProxyReadWaveAction,
     "ApiCreateNewWave": ApiCreateNewWave,
@@ -1088,12 +1115,15 @@ let typeMap: {[index: string]: any} = {
     "ApiPageWithNextUriBase": ApiPageWithNextUriBase,
     "ApiPageWithoutCount": ApiPageWithoutCount,
     "ApiPaymentDetails": ApiPaymentDetails,
+    "ApiProfileCmsPackage": ApiProfileCmsPackage,
+    "ApiProfileCmsPrimaryPackage": ApiProfileCmsPrimaryPackage,
     "ApiProfileMin": ApiProfileMin,
     "ApiProfileMinsPage": ApiProfileMinsPage,
     "ApiProfileProxy": ApiProfileProxy,
     "ApiProfileProxyAction": ApiProfileProxyAction,
     "ApiProfileRepCategorySummary": ApiProfileRepCategorySummary,
     "ApiProfileWave": ApiProfileWave,
+    "ApiPublishProfileCmsPackageRequest": ApiPublishProfileCmsPackageRequest,
     "ApiPushNotificationDevice": ApiPushNotificationDevice,
     "ApiPushNotificationSettings": ApiPushNotificationSettings,
     "ApiPushNotificationSettingsUpdate": ApiPushNotificationSettingsUpdate,
@@ -1114,6 +1144,7 @@ let typeMap: {[index: string]: any} = {
     "ApiReplyToDropAuthor": ApiReplyToDropAuthor,
     "ApiReplyToDropResponse": ApiReplyToDropResponse,
     "ApiReplyToDropV2": ApiReplyToDropV2,
+    "ApiSaveProfileCmsPackageDraftRequest": ApiSaveProfileCmsPackageDraftRequest,
     "ApiSeizeSettings": ApiSeizeSettings,
     "ApiSetPinnedDropRequest": ApiSetPinnedDropRequest,
     "ApiSetProfileWaveRequest": ApiSetProfileWaveRequest,
@@ -1140,6 +1171,7 @@ let typeMap: {[index: string]: any} = {
     "ApiUploadPartOfMultipartUploadRequest": ApiUploadPartOfMultipartUploadRequest,
     "ApiUploadPartOfMultipartUploadResponse": ApiUploadPartOfMultipartUploadResponse,
     "ApiUploadsPage": ApiUploadsPage,
+    "ApiValidateProfileCmsPackageRequest": ApiValidateProfileCmsPackageRequest,
     "ApiWallet": ApiWallet,
     "ApiWave": ApiWave,
     "ApiWaveChatConfig": ApiWaveChatConfig,

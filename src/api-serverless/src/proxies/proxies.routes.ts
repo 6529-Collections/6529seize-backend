@@ -14,6 +14,7 @@ import { ApiCreateNewProfileProxyCreateWaveAction } from '../generated/models/Ap
 import { ApiCreateNewProfileProxyReadWaveAction } from '../generated/models/ApiCreateNewProfileProxyReadWaveAction';
 import { ApiProfileProxyActionType } from '../generated/models/ApiProfileProxyActionType';
 import { ApiCreateNewProfileProxyRateWaveDropAction } from '../generated/models/ApiCreateNewProfileProxyRateWaveDropAction';
+import { ApiCreateNewProfileProxyPublishCmsAction } from '../generated/models/ApiCreateNewProfileProxyPublishCmsAction';
 import { assertUnreachable } from '../../../assertions';
 import { ApiProfileProxy } from '../generated/models/ApiProfileProxy';
 import {
@@ -136,6 +137,12 @@ router.post(
         getValidatedByJoiOrThrow(
           req.body,
           NewProfileProxyRateWaveDropActionSchema
+        );
+        break;
+      case ApiProfileProxyActionType.PublishCms:
+        getValidatedByJoiOrThrow(
+          req.body,
+          NewProfileProxyPublishCmsActionSchema
         );
         break;
       default:
@@ -279,6 +286,14 @@ const NewProfileProxyRateWaveDropActionSchema =
   Joi.object<ApiCreateNewProfileProxyRateWaveDropAction>({
     action_type: Joi.string()
       .valid(ApiProfileProxyActionType.RateWaveDrop)
+      .required(),
+    end_time: Joi.number().optional().allow(null)
+  });
+
+const NewProfileProxyPublishCmsActionSchema =
+  Joi.object<ApiCreateNewProfileProxyPublishCmsAction>({
+    action_type: Joi.string()
+      .valid(ApiProfileProxyActionType.PublishCms)
       .required(),
     end_time: Joi.number().optional().allow(null)
   });

@@ -46,7 +46,8 @@
     "swagger-jsdoc": "^6.2.8",
     "swagger-ui-express": "^5.0.0",
     "ws": "^8.18.1",
-    "yamljs": "^0.3.0"
+    "yamljs": "^0.3.0",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@serverless/typescript": "^4.30.0",

@@ -4266,6 +4266,257 @@ paths:
                   $ref: "#/components/schemas/ApiOwnerBalanceMemes"
         "404":
           description: Memes Owner Balance for consolidation key not found
+  /profile-cms/{handle}/primary:
+    get:
+      tags:
+        - Profile CMS
+      summary: Get a profile"s primary published CMS package
+      description: >-
+        Public mutable lookup used by profile-native sites, including
+        /{handle}/index.html. Returns 404 when the profile has no primary
+        published production CMS package.
+      operationId: getPrimaryProfileCmsPackage
+      x-6529-router:
+        enabled: true
+        auth: none
+        handler:
+          import: "@/api/profile-cms/profile-cms.handlers"
+          name: handleGetPrimaryProfileCmsPackage
+      parameters:
+        - name: handle
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiProfileCmsPrimaryPackage"
+        "404":
+          description: Primary published CMS package not found
+  /profile-cms/packages:
+    post:
+      tags:
+        - Profile CMS
+      summary: Save a draft CMS package
+      description: Requires the profile owner or delegated CMS publisher.
+      operationId: saveProfileCmsPackageDraft
+      x-6529-router:
+        enabled: true
+        auth: required
+        handler:
+          import: "@/api/profile-cms/profile-cms.handlers"
+          name: handleSaveProfileCmsPackageDraft
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApiSaveProfileCmsPackageDraftRequest"
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiProfileCmsPackage"
+        "400":
+          description: Invalid CMS package
+        "403":
+          description: Missing CMS publish permissions
+  /profile-cms/packages/validate:
+    post:
+      tags:
+        - Profile CMS
+      summary: Validate a CMS package against V1 protocol
+      description: Requires authentication. Publish uses stricter production options.
+      operationId: validateProfileCmsPackage
+      x-6529-router:
+        enabled: true
+        auth: required
+        handler:
+          import: "@/api/profile-cms/profile-cms.handlers"
+          name: handleValidateProfileCmsPackage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApiValidateProfileCmsPackageRequest"
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiCmsValidationResult"
+        "400":
+          description: Invalid request
+  /profile-cms/packages/{id}:
+    get:
+      tags:
+        - Profile CMS
+      summary: Fetch a CMS package by database id
+      operationId: getProfileCmsPackageById
+      x-6529-router:
+        enabled: true
+        auth: optional
+        handler:
+          import: "@/api/profile-cms/profile-cms.handlers"
+          name: handleGetProfileCmsPackageById
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiProfileCmsPackage"
+        "404":
+          description: CMS package not found
+  /profile-cms/packages/{id}/publish:
+    post:
+      tags:
+        - Profile CMS
+      summary: Publish a draft CMS package
+      description: >-
+        Requires the profile owner or delegated CMS publisher. The backend runs
+        CMS V1 validation with production options and enforces package hashes.
+      operationId: publishProfileCmsPackage
+      x-6529-router:
+        enabled: true
+        auth: required
+        handler:
+          import: "@/api/profile-cms/profile-cms.handlers"
+          name: handlePublishProfileCmsPackage
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApiPublishProfileCmsPackageRequest"
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiProfileCmsPackage"
+        "400":
+          description: Validation or hash check failed
+        "403":
+          description: Missing CMS publish permissions
+        "404":
+          description: CMS package not found
+  /profile-cms/packages/by-hash/{package_hash}:
+    get:
+      tags:
+        - Profile CMS
+      summary: Fetch a CMS package by package hash
+      operationId: getProfileCmsPackageByHash
+      x-6529-router:
+        enabled: true
+        auth: optional
+        handler:
+          import: "@/api/profile-cms/profile-cms.handlers"
+          name: handleGetProfileCmsPackageByHash
+      parameters:
+        - name: package_hash
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiProfileCmsPackage"
+        "404":
+          description: CMS package not found
+  /profile-cms/profiles/{profile_id}/packages:
+    get:
+      tags:
+        - Profile CMS
+      summary: List CMS packages for a profile
+      operationId: listProfileCmsPackages
+      x-6529-router:
+        enabled: true
+        auth: optional
+        handler:
+          import: "@/api/profile-cms/profile-cms.handlers"
+          name: handleListProfileCmsPackages
+      parameters:
+        - name: profile_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ApiProfileCmsPackage"
+        "404":
+          description: Profile not found
+  /profile-cms/profiles/{profile_id}/packages/{package_id}/versions/{version}:
+    get:
+      tags:
+        - Profile CMS
+      summary: Fetch a CMS package by profile, package id, and version
+      operationId: getProfileCmsPackageByVersion
+      x-6529-router:
+        enabled: true
+        auth: optional
+        handler:
+          import: "@/api/profile-cms/profile-cms.handlers"
+          name: handleGetProfileCmsPackageByVersion
+      parameters:
+        - name: profile_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: package_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: version
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiProfileCmsPackage"
+        "404":
+          description: CMS package not found
   /profiles/{identity}/cic/rating:
     post:
       tags:
@@ -4905,6 +5156,10 @@ paths:
                 - $ref: "#/components/schemas/ApiCreateNewProfileProxyReadWaveAction"
                 - $ref: >-
                     #/components/schemas/ApiCreateNewProfileProxyCreateWaveParticipationDropAction
+                - $ref: >-
+                    #/components/schemas/ApiCreateNewProfileProxyRateWaveDropAction
+                - $ref: >-
+                    #/components/schemas/ApiCreateNewProfileProxyPublishCmsAction
       responses:
         "201":
           description: successful operation
@@ -9455,6 +9710,65 @@ components:
           format: int64
         contributors:
           $ref: "#/components/schemas/ApiCicContributorsPage"
+    ApiCmsValidationIssue:
+      type: object
+      required:
+        - severity
+        - code
+        - message
+        - path
+      properties:
+        severity:
+          type: string
+          enum:
+            - error
+            - warning
+            - note
+        code:
+          type: string
+        message:
+          type: string
+        path:
+          type: string
+        page_id:
+          type: string
+        block_id:
+          type: string
+        suggested_fix:
+          type: string
+    ApiCmsValidationResult:
+      type: object
+      required:
+        - schema
+        - valid
+        - checked_at
+        - issues
+      properties:
+        schema:
+          type: string
+          enum:
+            - 6529.cms.validation_result.v1
+        valid:
+          type: boolean
+        checked_at:
+          type: string
+        validator:
+          type: string
+        validator_version:
+          type: string
+        target:
+          type: object
+          properties:
+            package_hash:
+              type: string
+            draft_id:
+              type: string
+            package_id:
+              type: string
+        issues:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiCmsValidationIssue"
     ApiCollectedStats:
       type: object
       required:
@@ -10194,6 +10508,19 @@ components:
             - type: number
               format: int64
     ApiCreateNewProfileProxyCreateWaveParticipationDropAction:
+      type: object
+      required:
+        - action_type
+        - end_time
+      properties:
+        action_type:
+          $ref: "#/components/schemas/ApiProfileProxyActionType"
+        end_time:
+          anyOf:
+            - type: "null"
+            - type: number
+              format: int64
+    ApiCreateNewProfileProxyPublishCmsAction:
       type: object
       required:
         - action_type
@@ -13621,6 +13948,87 @@ components:
         - BOT
         - PARODY
         - COLLECTION
+    ApiProfileCmsPackage:
+      type: object
+      required:
+        - id
+        - package
+        - profile_id
+        - profile_handle
+        - package_id
+        - version
+        - status
+        - package_hash
+        - payload_hash
+        - updated_at
+        - created_at
+      properties:
+        id:
+          type: string
+        package:
+          type: object
+          additionalProperties: true
+        profile_id:
+          type: string
+        profile_handle:
+          type: string
+        package_id:
+          type: string
+        version:
+          type: integer
+          format: int64
+        status:
+          $ref: "#/components/schemas/ApiProfileCmsPackageStatus"
+        package_hash:
+          type: string
+        payload_hash:
+          type: string
+        updated_at:
+          type: integer
+          format: int64
+        created_at:
+          type: integer
+          format: int64
+        published_at:
+          type: integer
+          format: int64
+    ApiProfileCmsPackageStatus:
+      type: string
+      enum:
+        - draft
+        - validating
+        - published
+        - failed
+        - archived
+        - superseded
+    ApiProfileCmsPrimaryPackage:
+      type: object
+      required:
+        - package
+        - package_id
+        - version
+        - package_hash
+        - payload_hash
+        - updated_at
+      properties:
+        package:
+          type: object
+          additionalProperties: true
+        package_id:
+          type: string
+        version:
+          type: integer
+          format: int64
+        package_hash:
+          type: string
+        payload_hash:
+          type: string
+        updated_at:
+          type: integer
+          format: int64
+        published_at:
+          type: integer
+          format: int64
     ApiProfileMin:
       type: object
       required:
@@ -13823,6 +14231,7 @@ components:
         - READ_WAVE
         - CREATE_DROP_TO_WAVE
         - RATE_WAVE_DROP
+        - PUBLISH_CMS
     ApiProfileRepCategorySummary:
       type: object
       required:
@@ -13846,6 +14255,13 @@ components:
         profile_curation_id:
           type: string
           nullable: true
+    ApiPublishProfileCmsPackageRequest:
+      type: object
+      properties:
+        expected_package_hash:
+          type: string
+        expected_payload_hash:
+          type: string
     ApiPushNotificationDevice:
       type: object
       required:
@@ -14187,6 +14603,17 @@ components:
         rating:
           type: number
           format: int64
+    ApiSaveProfileCmsPackageDraftRequest:
+      type: object
+      required:
+        - profile_id
+        - cms_package
+      properties:
+        profile_id:
+          type: string
+        cms_package:
+          type: object
+          additionalProperties: true
     ApiSeizeSettings:
       type: object
       required:
@@ -14743,6 +15170,20 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ApiUploadItem"
+    ApiValidateProfileCmsPackageRequest:
+      type: object
+      required:
+        - cms_package
+      properties:
+        cms_package:
+          type: object
+          additionalProperties: true
+        allow_fixture_signatures:
+          type: boolean
+        allow_fixture_storage:
+          type: boolean
+        enforce_hashes:
+          type: boolean
     ApiWallet:
       type: object
       required:

@@ -107,6 +107,10 @@ export { ProfileLatestLogEntity } from './IProfileLatestLog';
 export { ProfileProxyEntity } from './IProfileProxy';
 export { ProfileProxyActionEntity } from './IProfileProxyAction';
 export { ProfileProxyRatingCreditBalanceEntity } from './IProfileProxyRatingCreditBalance';
+export {
+  ProfileCmsPackageEntity,
+  ProfileCmsPackageStatus
+} from './IProfileCmsPackage';
 export { PushNotificationDevice } from './IPushNotification';
 export { PushNotificationSettingsEntity } from './IPushNotificationSettings';
 export { Rating } from './IRating';
