@@ -405,6 +405,12 @@ export class ApiWaveV2Service {
         `You can't see waves organised by your behaviour unless you're authenticated`
       );
     }
+    const excludeFollowed = request.exclude_followed ?? false;
+    if (excludeFollowed && !authenticatedProfileId) {
+      throw new BadRequestException(
+        `You can't exclude followed waves unless you're authenticated`
+      );
+    }
     const findParams = {
       authenticated_user_id: authenticatedProfileId,
       only_waves_followed_by_authenticated_user: onlyFollowed,
@@ -423,6 +429,7 @@ export class ApiWaveV2Service {
             ? await this.wavesApiDb.findScoredRecentlyDroppedToWaves({
                 ...findParams,
                 score_sort: request.score_sort ?? ApiWaveScoreSort.Balanced,
+                exclude_followed: excludeFollowed,
                 min_visibility_score: request.min_visibility_score,
                 min_quality_score: request.min_quality_score,
                 min_hotness_score: request.min_hotness_score,
