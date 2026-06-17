@@ -12,9 +12,13 @@ export const METRICS_SORT = [
 
 export type MetricsSort = (typeof METRICS_SORT)[number];
 
-export function resolveMetricsSort(sort: string | undefined): MetricsSort {
+export function resolveMetricsSort(sort: unknown): MetricsSort {
   if (!sort) {
     return METRICS_SORT[0];
+  }
+
+  if (typeof sort !== 'string') {
+    throw new BadRequestException('sort must be a string');
   }
 
   const normalizedSort = sort.toLowerCase();

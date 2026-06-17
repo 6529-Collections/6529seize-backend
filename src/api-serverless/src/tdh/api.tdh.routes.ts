@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import * as Joi from 'joi';
 import { CONSOLIDATED_WALLETS_TDH_TABLE, WALLETS_TDH_TABLE } from '@/constants';
 import { enums } from '@/enums';
 import { BadRequestException, NotFoundException } from '@/exceptions';
@@ -17,6 +18,7 @@ import { identityFetcher } from '@/api/identities/identity.fetcher';
 import { DEFAULT_PAGE_SIZE } from '@/api/page-request';
 import { cacheRequest } from '@/api/request-cache';
 import { resolveMetricsSort } from '@/api/tdh/api.tdh.metrics-sort';
+import { getValidatedByJoiOrThrow } from '@/api/validation';
 import {
   fetchConsolidatedMetrics,
   fetchNftTdh,
@@ -30,11 +32,47 @@ const router = asyncRouter();
 
 export default router;
 
+type ConsolidatedMetricsQuery = {
+  sort?: string;
+  sort_direction: 'ASC' | 'DESC';
+  page: number;
+  page_size: number;
+  search?: string;
+  content?: string;
+  collector?: string;
+  season?: number;
+  tdh_view?: string;
+  download_page: boolean;
+  download_all: boolean;
+};
+
+const ConsolidatedMetricsQuerySchema: Joi.ObjectSchema<ConsolidatedMetricsQuery> =
+  Joi.object<ConsolidatedMetricsQuery>({
+    sort: Joi.string(),
+    sort_direction: Joi.string()
+      .uppercase()
+      .valid('ASC', 'DESC')
+      .default('DESC'),
+    page: Joi.number().integer().positive().default(1),
+    page_size: Joi.number().integer().positive().default(DEFAULT_PAGE_SIZE),
+    search: Joi.string(),
+    content: Joi.string(),
+    collector: Joi.string(),
+    season: Joi.number().integer().positive(),
+    tdh_view: Joi.string(),
+    download_page: Joi.boolean().default(false),
+    download_all: Joi.boolean().default(false)
+  }).unknown(true);
+
 export function resolveMetricsTdhView(
-  tdhView: string | undefined
+  tdhView: unknown
 ): MetricsConsolidatedTdhView {
   if (!tdhView) {
     return MetricsConsolidatedTdhView.BOOSTED;
+  }
+
+  if (typeof tdhView !== 'string') {
+    throw new BadRequestException('tdh_view must be a string');
   }
 
   const normalizedTdhView = tdhView.toLowerCase();
@@ -119,18 +157,22 @@ router.get(
     >,
     res: any
   ) {
-    let page = req.query.page ?? 1;
-    let pageSize = req.query.page_size ?? DEFAULT_PAGE_SIZE;
-    const sort = resolveMetricsSort(req.query.sort);
-    const sortDir = resolveSortDirection(req.query.sort_direction);
-    const search = req.query.search;
-    const content = enums.resolve(MetricsContent, req.query.content);
-    const season = req.query.season;
-    const collector = enums.resolve(MetricsCollector, req.query.collector);
-    const tdhView = resolveMetricsTdhView(req.query.tdh_view);
+    const query = getValidatedByJoiOrThrow(
+      req.query,
+      ConsolidatedMetricsQuerySchema
+    );
+    let page = query.page;
+    let pageSize = query.page_size;
+    const sort = resolveMetricsSort(query.sort);
+    const sortDir = query.sort_direction;
+    const search = query.search;
+    const content = enums.resolve(MetricsContent, query.content);
+    const season = query.season;
+    const collector = enums.resolve(MetricsCollector, query.collector);
+    const tdhView = resolveMetricsTdhView(query.tdh_view);
 
-    const downloadPage = req.query.download_page;
-    const downloadAll = req.query.download_all;
+    const downloadPage = query.download_page;
+    const downloadAll = query.download_all;
     if (downloadAll) {
       pageSize = Number.MAX_SAFE_INTEGER;
       page = 1;
