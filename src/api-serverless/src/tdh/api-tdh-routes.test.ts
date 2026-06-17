@@ -22,15 +22,13 @@ import router, { resolveMetricsTdhView } from '@/api/tdh/api.tdh.routes';
 function createTestApp() {
   const app = express();
   app.use('/api/tdh', router);
-  app.use((err: Error, _req: Request, res: Response, next: NextFunction) => {
+  app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
     if (err instanceof ApiCompliantException) {
       res.status(err.getStatusCode()).send({ error: err.message });
-      next();
       return;
     }
 
     res.status(500).send({ error: 'Something went wrong...' });
-    next(err);
   });
   return app;
 }
@@ -99,6 +97,12 @@ describe('api.tdh.routes', () => {
         BadRequestException
       );
     });
+
+    it('fails when sort is not a string', () => {
+      expect(() => resolveMetricsSort(['tdh', 'level'])).toThrow(
+        BadRequestException
+      );
+    });
   });
 
   describe('resolveMetricsTdhView', () => {
@@ -122,6 +126,12 @@ describe('api.tdh.routes', () => {
 
     it('fails when tdh_view is unsupported', () => {
       expect(() => resolveMetricsTdhView('raw')).toThrow(BadRequestException);
+    });
+
+    it('fails when tdh_view is not a string', () => {
+      expect(() => resolveMetricsTdhView(['boosted', 'unboosted'])).toThrow(
+        BadRequestException
+      );
     });
   });
 
@@ -165,6 +175,30 @@ describe('api.tdh.routes', () => {
       expect(response.status).toBe(400);
       expect(JSON.parse(response.body)).toEqual({
         error: 'Unsupported tdh_view: raw'
+      });
+      expect(mockFetchConsolidatedMetrics).not.toHaveBeenCalled();
+    });
+
+    it('returns 400 when sort is repeated', async () => {
+      const response = await getRoute(
+        '/api/tdh/consolidated_metrics?sort=tdh&sort=level'
+      );
+
+      expect(response.status).toBe(400);
+      expect(JSON.parse(response.body)).toEqual({
+        error: '"sort" must be a string'
+      });
+      expect(mockFetchConsolidatedMetrics).not.toHaveBeenCalled();
+    });
+
+    it('returns 400 when tdh_view is repeated', async () => {
+      const response = await getRoute(
+        '/api/tdh/consolidated_metrics?tdh_view=boosted&tdh_view=unboosted'
+      );
+
+      expect(response.status).toBe(400);
+      expect(JSON.parse(response.body)).toEqual({
+        error: '"tdh_view" must be a string'
       });
       expect(mockFetchConsolidatedMetrics).not.toHaveBeenCalled();
     });
