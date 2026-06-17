@@ -92,7 +92,7 @@ description: Write, open, iterate, and prepare pull requests in the 6529 SEIZE b
 - Never merge, deploy staging, or deploy production unless the user explicitly asked for that mode or repo standing instructions require it.
 - Use `ops/skills/deploy-6529/SKILL.md` for actual merge execution, staging deployment, production deployment, frontend coordination, failed-gate recovery, and deployed-environment validation.
 - Always list all lambdas/services that need redeployment and their deployment order when finishing development or writing the PR.
-- Use `.github/workflows/deploy.yml` workflow dispatch for deployments. It accepts `environment` (`staging` or `prod`) and `service`.
+- Use `ops/skills/deploy-6529/SKILL.md` as the source of truth for deployment workflow dispatch mechanics.
 - Deploy `dbMigrationsLoop` before services that depend on new schema/entity sync or data backfills.
 - Deploy `api` for API route, OpenAPI, auth, API service, generated-model, or API packaging changes.
 - Deploy each changed loop service whose `src/<loopName>/` implementation, dependencies, or deploy config changed.
