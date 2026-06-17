@@ -1,4 +1,5 @@
 import { constructFilters, constructFiltersOR } from '../api-helpers';
+import { BadRequestException } from '@/exceptions';
 import {
   CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE,
   CONSOLIDATED_OWNERS_BALANCES_TABLE,
@@ -40,6 +41,29 @@ export enum MetricsCollector {
 export enum MetricsConsolidatedTdhView {
   BOOSTED = 'boosted',
   UNBOOSTED = 'unboosted'
+}
+
+function resolveConsolidatedMetricsSortDirection(
+  sortDir: string
+): 'ASC' | 'DESC' {
+  const normalizedSortDir = sortDir.toUpperCase();
+  if (normalizedSortDir === 'ASC' || normalizedSortDir === 'DESC') {
+    return normalizedSortDir;
+  }
+
+  throw new BadRequestException(`Unsupported sort direction: ${sortDir}`);
+}
+
+function resolveConsolidatedMetricsSortExpression(
+  sort: string,
+  sortExpressions: Record<string, string>
+): string {
+  const sortExpression = sortExpressions[sort];
+  if (!sortExpression) {
+    throw new BadRequestException(`Unsupported sort field: ${sort}`);
+  }
+
+  return sortExpression;
 }
 
 export const fetchNftTdh = async (
@@ -296,6 +320,18 @@ export const fetchConsolidatedMetrics = async (
     query.tdhView === MetricsConsolidatedTdhView.BOOSTED
       ? `${LATEST_TDH_HISTORY_TABLE}.net_boosted_tdh`
       : `${LATEST_TDH_HISTORY_TABLE}.net_tdh`;
+  const dayChangeExpression = `COALESCE(${dayChangeField}, 0)`;
+  const safeSortDir = resolveConsolidatedMetricsSortDirection(sortDir);
+  const sortExpression = resolveConsolidatedMetricsSortExpression(sort, {
+    level: `${IDENTITIES_TABLE}.level_raw`,
+    balance: `${balancesTable}.${balanceColumn}`,
+    unique_memes: `${balancesTable}.${uniqueMemesColumn}`,
+    memes_cards_sets: `${balancesTable}.${memeCardSetsColumn}`,
+    tdh: selectedTdhExpression,
+    boosted_tdh: boostedTdhExpression,
+    day_change: dayChangeExpression
+  });
+  params.tdhView = query.tdhView;
 
   const fields = `${balancesTableField}, 
     ${IDENTITIES_TABLE}.handle,
@@ -306,11 +342,11 @@ export const fetchConsolidatedMetrics = async (
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display as consolidation_display,
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh as total_tdh,
     ${selectedTdhExpression} as tdh,
-    '${query.tdhView}' as tdh_view,
+    :tdhView as tdh_view,
     ${boostedTdhExpression} as boosted_tdh,
     ${unboostedTdhExpression} as unboosted_tdh,
     ${IDENTITIES_TABLE}.level_raw as level,
-    COALESCE(${dayChangeField}, 0) as day_change`;
+    ${dayChangeExpression} as day_change`;
 
   let joins = ` LEFT JOIN ${IDENTITIES_TABLE} on ${IDENTITIES_TABLE}.consolidation_key = ${CONSOLIDATED_OWNERS_BALANCES_TABLE}.consolidation_key`;
   joins += ` LEFT JOIN ${CONSOLIDATED_WALLETS_TDH_TABLE} ON ${CONSOLIDATED_OWNERS_BALANCES_TABLE}.consolidation_key = ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key`;
@@ -330,7 +366,7 @@ export const fetchConsolidatedMetrics = async (
   const results = await fetchPaginated(
     CONSOLIDATED_OWNERS_BALANCES_TABLE,
     params,
-    `${sort === 'tdh' ? selectedTdhExpression : sort} ${sortDir}, ${CONSOLIDATED_OWNERS_BALANCES_TABLE}.total_balance ${sortDir}`,
+    `${sortExpression} ${safeSortDir}, ${CONSOLIDATED_OWNERS_BALANCES_TABLE}.total_balance ${safeSortDir}`,
     pageSize,
     page,
     filters,
