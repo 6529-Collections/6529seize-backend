@@ -37,6 +37,12 @@ functions:
 
 resources:
   Resources:
+    WaveScoreRefreshLoopLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/waveScoreRefreshLoop
+        RetentionInDays: 60
+
     WaveScoreRefreshStartQueue:
       Type: 'AWS::SQS::Queue'
       Properties:
@@ -75,8 +81,11 @@ resources:
                 - !GetAtt WaveScoreRefreshStartQueue.Arn
     WaveScoreRefreshLoopOOMFilter:
       Type: AWS::Logs::MetricFilter
+      DependsOn:
+        - WaveScoreRefreshLoopLogGroup
       Properties:
-        LogGroupName: /aws/lambda/waveScoreRefreshLoop
+        LogGroupName:
+          Ref: WaveScoreRefreshLoopLogGroup
         FilterPattern: 'Runtime.OutOfMemory'
         MetricTransformations:
           - MetricNamespace: 'Lambda/OOM'
