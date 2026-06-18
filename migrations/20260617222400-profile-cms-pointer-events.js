@@ -8,7 +8,14 @@ exports.up = async function (db) {
     '20260617222400-profile-cms-pointer-events-up.sql'
   );
   const data = fs.readFileSync(filePath, { encoding: 'utf8' });
-  await db.runSql(data);
+  const statements = data
+    .split(';')
+    .map((statement) => statement.trim())
+    .filter((statement) => statement.length > 0);
+
+  for (const statement of statements) {
+    await db.runSql(statement);
+  }
 };
 
 exports.down = async function () {

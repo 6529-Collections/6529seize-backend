@@ -1,4 +1,4 @@
-CREATE TABLE profile_cms_pointer_events (
+CREATE TABLE IF NOT EXISTS profile_cms_pointer_events (
   id varchar(100) NOT NULL,
   event_type varchar(25) NOT NULL,
   profile_id varchar(100) NOT NULL,
@@ -22,7 +22,7 @@ CREATE TABLE profile_cms_pointer_events (
   KEY idx_profile_cms_pointer_events_package (package_db_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE profile_cms_publish_signatures (
+CREATE TABLE IF NOT EXISTS profile_cms_publish_signatures (
   id varchar(100) NOT NULL,
   typed_data_hash varchar(100) NOT NULL,
   profile_id varchar(100) NOT NULL,
