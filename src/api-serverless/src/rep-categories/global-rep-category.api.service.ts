@@ -50,12 +50,15 @@ export class GlobalRepCategoryApiService {
     private readonly userGroupsService: UserGroupsService
   ) {}
 
-  public async getSuggestedCategories(): Promise<
-    ApiGlobalRepCategorySuggestedCategory[]
-  > {
-    const rows = await this.globalRepCategoryDb.getSuggestedCategories({
-      limit: SUGGESTED_CATEGORIES_LIMIT
-    });
+  public async getSuggestedCategories(
+    ctx: RequestContext
+  ): Promise<ApiGlobalRepCategorySuggestedCategory[]> {
+    const rows = await this.globalRepCategoryDb.getSuggestedCategories(
+      {
+        limit: SUGGESTED_CATEGORIES_LIMIT
+      },
+      ctx
+    );
     return rows.map((row) => this.mapSuggestedCategory(row));
   }
 
@@ -479,7 +482,8 @@ export class GlobalRepCategoryApiService {
       id: row.wave_id,
       name: row.wave_name,
       pfp: row.wave_picture,
-      is_direct_message: Boolean(row.is_direct_message)
+      is_direct_message:
+        row.is_direct_message === true || row.is_direct_message === 1
     };
   }
 

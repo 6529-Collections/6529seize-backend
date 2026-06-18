@@ -221,32 +221,43 @@ export class GlobalRepCategoryDb extends LazyDbAccessCompatibleService {
     );
   }
 
-  public async getSuggestedCategories({
-    limit
-  }: {
-    readonly limit: number;
-  }): Promise<GlobalRepCategoryTopCategoryRow[]> {
-    return this.db.execute<GlobalRepCategoryTopCategoryRow>(
-      `
-      select
-        r.matter_category as category,
-        sum(r.rating) as total_rep,
-        sum(r.rating) as profile_rep,
-        0 as wave_rep,
-        count(*) as rating_count,
-        max(r.last_modified) as last_modified
-      from ${RATINGS_TABLE} r
-      where r.matter = :matter
-        and r.rating <> 0
-      group by 1
-      order by abs(total_rep) desc, total_rep desc, last_modified desc, category asc
-      limit :limit
-      `,
-      {
-        limit,
-        matter: RateMatter.REP
-      }
-    );
+  public async getSuggestedCategories(
+    {
+      limit
+    }: {
+      readonly limit: number;
+    },
+    ctx: RequestContext
+  ): Promise<GlobalRepCategoryTopCategoryRow[]> {
+    const timerName = `${this.constructor.name}->getSuggestedCategories`;
+    try {
+      ctx.timer?.start(timerName);
+      return this.db.execute<GlobalRepCategoryTopCategoryRow>(
+        `
+        select
+          r.matter_category as category,
+          sum(r.rating) as total_rep,
+          sum(case when r.matter = :profileMatter then r.rating else 0 end) as profile_rep,
+          sum(case when r.matter = :waveMatter then r.rating else 0 end) as wave_rep,
+          count(*) as rating_count,
+          max(r.last_modified) as last_modified
+        from ${RATINGS_TABLE} r
+        where r.matter in (:profileMatter, :waveMatter)
+          and r.rating <> 0
+        group by 1
+        order by abs(total_rep) desc, total_rep desc, last_modified desc, category asc
+        limit :limit
+        `,
+        {
+          limit,
+          profileMatter: RateMatter.REP,
+          waveMatter: RateMatter.WAVE_REP
+        },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
   }
 
   public async getWaveOverviewStats(
@@ -325,7 +336,7 @@ export class GlobalRepCategoryDb extends LazyDbAccessCompatibleService {
             r.matter_target_id as wave_id,
             w.name as wave_name,
             w.picture as wave_picture,
-            w.is_direct_message,
+            coalesce(w.is_direct_message, 0) as is_direct_message,
             sum(r.rating) as total_rep,
             count(distinct r.rater_profile_id) as contributor_count,
             max(r.last_modified) as last_modified
@@ -395,7 +406,7 @@ export class GlobalRepCategoryDb extends LazyDbAccessCompatibleService {
             r.matter_target_id as wave_id,
             w.name as wave_name,
             w.picture as wave_picture,
-            w.is_direct_message,
+            coalesce(w.is_direct_message, 0) as is_direct_message,
             r.rater_profile_id as profile_id,
             sum(r.rating) as contribution,
             max(r.last_modified) as last_modified
@@ -452,43 +463,59 @@ export class GlobalRepCategoryDb extends LazyDbAccessCompatibleService {
     if (!waveIds.length || topContributorsLimit <= 0) {
       return [];
     }
-    const waveRows = await Promise.all(
-      waveIds.map((waveId) =>
-        this.db.execute<GlobalRepCategoryWaveContributorRow>(
-          `
-          select
-            r.matter_target_id as wave_id,
-            w.name as wave_name,
-            w.picture as wave_picture,
-            w.is_direct_message,
-            r.rater_profile_id as profile_id,
-            r.rating as contribution,
-            r.last_modified
-          from ${RATINGS_TABLE} r
-          join ${WAVES_TABLE} w on w.id = r.matter_target_id
-          left join ${WAVES_TABLE} pw on pw.id = w.parent_wave_id
-          where r.matter = :matter
-            and r.matter_category = :category
-            and r.matter_target_id = :waveId
-            and r.rating <> 0
-            and ${this.getWaveAndParentVisibilityFilter(
-              groupIdsUserIsEligibleFor
-            )}
-          order by abs(r.rating) desc, r.rating desc, r.last_modified desc, r.rater_profile_id asc
-          limit :topContributorsLimit
-          `,
-          {
-            category,
-            waveId,
-            topContributorsLimit,
-            matter: RateMatter.WAVE_REP,
+    return this.db.execute<GlobalRepCategoryWaveContributorRow>(
+      `
+      with grouped_contributors as (
+        select
+          r.matter_target_id as wave_id,
+          w.name as wave_name,
+          w.picture as wave_picture,
+          coalesce(w.is_direct_message, 0) as is_direct_message,
+          r.rater_profile_id as profile_id,
+          sum(r.rating) as contribution,
+          max(r.last_modified) as last_modified
+        from ${RATINGS_TABLE} r
+        join ${WAVES_TABLE} w on w.id = r.matter_target_id
+        left join ${WAVES_TABLE} pw on pw.id = w.parent_wave_id
+        where r.matter = :matter
+          and r.matter_category = :category
+          and r.matter_target_id in (:waveIds)
+          and r.rating <> 0
+          and ${this.getWaveAndParentVisibilityFilter(
             groupIdsUserIsEligibleFor
-          },
-          { wrappedConnection: ctx.connection }
-        )
+          )}
+        group by 1, 2, 3, 4, 5
+      ),
+      ranked_contributors as (
+        select
+          gc.*,
+          row_number() over (
+            partition by gc.wave_id
+            order by abs(gc.contribution) desc, gc.contribution desc, gc.last_modified desc, gc.profile_id asc
+          ) as wave_rank
+        from grouped_contributors gc
       )
+      select
+        rc.wave_id,
+        rc.wave_name,
+        rc.wave_picture,
+        rc.is_direct_message,
+        rc.profile_id,
+        rc.contribution,
+        rc.last_modified
+      from ranked_contributors rc
+      where rc.wave_rank <= :topContributorsLimit
+      order by rc.wave_id asc, rc.wave_rank asc
+      `,
+      {
+        category,
+        waveIds,
+        topContributorsLimit,
+        matter: RateMatter.WAVE_REP,
+        groupIdsUserIsEligibleFor
+      },
+      { wrappedConnection: ctx.connection }
     );
-    return waveRows.flat();
   }
 
   private async getProfileAggregationPage<

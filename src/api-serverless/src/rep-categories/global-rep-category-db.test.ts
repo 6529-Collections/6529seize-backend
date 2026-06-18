@@ -2,6 +2,7 @@ import { PageSortDirection } from '@/api/page-request';
 import { GlobalRepCategoryDb } from '@/api/rep-categories/global-rep-category.db';
 import { IDENTITIES_TABLE, RATINGS_TABLE, WAVES_TABLE } from '@/constants';
 import { RateMatter } from '@/entities/IRating';
+import { RequestContext } from '@/request.context';
 import { SqlExecutor } from '@/sql-executor';
 
 type SqlExecutorMock = Pick<SqlExecutor, 'execute' | 'oneOrNull'>;
@@ -188,6 +189,39 @@ describe('GlobalRepCategoryDb', () => {
     });
   });
 
+  it('builds suggested categories from profile and wave REP totals with request context', async () => {
+    const { service, execute } = createDb();
+    const timer = {
+      start: jest.fn(),
+      stop: jest.fn()
+    };
+    const connection = {};
+    const ctx = { timer, connection } as unknown as RequestContext;
+
+    await service.getSuggestedCategories({ limit: 12 }, ctx);
+
+    const [sql, params, options] = execute.mock.calls[0];
+    expect(sql).toContain(
+      'sum(case when r.matter = :profileMatter then r.rating else 0 end) as profile_rep'
+    );
+    expect(sql).toContain(
+      'sum(case when r.matter = :waveMatter then r.rating else 0 end) as wave_rep'
+    );
+    expect(sql).toContain('where r.matter in (:profileMatter, :waveMatter)');
+    expect(params).toMatchObject({
+      limit: 12,
+      profileMatter: RateMatter.REP,
+      waveMatter: RateMatter.WAVE_REP
+    });
+    expect(options).toEqual({ wrappedConnection: connection });
+    expect(timer.start).toHaveBeenCalledWith(
+      'GlobalRepCategoryDb->getSuggestedCategories'
+    );
+    expect(timer.stop).toHaveBeenCalledWith(
+      'GlobalRepCategoryDb->getSuggestedCategories'
+    );
+  });
+
   it('sorts wave REP analytics by absolute impact and respects visibility groups', async () => {
     const { service, execute } = createDb();
 
@@ -208,16 +242,50 @@ describe('GlobalRepCategoryDb', () => {
     expect(sql).toContain(
       `left join ${WAVES_TABLE} pw on pw.id = w.parent_wave_id`
     );
+    expect(sql).toContain('coalesce(w.is_direct_message, 0)');
     expect(sql).toContain(
       'w.visibility_group_id in (:groupIdsUserIsEligibleFor)'
     );
     expect(sql).toContain(
       'pw.visibility_group_id in (:groupIdsUserIsEligibleFor)'
     );
+    expect(sql).toContain('pw.parent_wave_id is null');
     expect(sql).toContain('order by abs(gw.total_rep) desc');
     expect(sql).toContain('gw.total_rep desc');
     expect(params).toMatchObject({
       category: 'Dev extraordinaire',
+      matter: RateMatter.WAVE_REP,
+      groupIdsUserIsEligibleFor: ['group-1']
+    });
+  });
+
+  it('loads embedded top wave contributors with one grouped window query', async () => {
+    const { service, execute } = createDb();
+
+    await service.getTopWaveContributorsByWaveIds(
+      {
+        category: 'Dev extraordinaire',
+        waveIds: ['wave-1', 'wave-2'],
+        topContributorsLimit: 3,
+        groupIdsUserIsEligibleFor: ['group-1']
+      },
+      {}
+    );
+
+    expect(execute).toHaveBeenCalledTimes(1);
+    const [sql, params] = execute.mock.calls[0];
+    expect(sql).toContain('with grouped_contributors as');
+    expect(sql).toContain('sum(r.rating) as contribution');
+    expect(sql).toContain('coalesce(w.is_direct_message, 0)');
+    expect(sql).toContain('r.matter_target_id in (:waveIds)');
+    expect(sql).toContain('row_number() over');
+    expect(sql).toContain('partition by gc.wave_id');
+    expect(sql).toContain('where rc.wave_rank <= :topContributorsLimit');
+    expect(sql).not.toContain('r.rating as contribution');
+    expect(params).toMatchObject({
+      category: 'Dev extraordinaire',
+      waveIds: ['wave-1', 'wave-2'],
+      topContributorsLimit: 3,
       matter: RateMatter.WAVE_REP,
       groupIdsUserIsEligibleFor: ['group-1']
     });

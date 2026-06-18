@@ -148,6 +148,37 @@ function createService() {
 }
 
 describe('GlobalRepCategoryApiService', () => {
+  it('maps suggested categories with profile and wave REP totals', async () => {
+    const { service, globalRepCategoryDb } = createService();
+    const ctx = {};
+    globalRepCategoryDb.getSuggestedCategories.mockResolvedValueOnce([
+      {
+        category: 'Builder',
+        total_rep: '125',
+        profile_rep: '25',
+        wave_rep: '100',
+        rating_count: '4',
+        last_modified: '2026-06-06T00:00:00.000Z'
+      }
+    ]);
+
+    await expect(service.getSuggestedCategories(ctx)).resolves.toEqual([
+      {
+        category: 'Builder',
+        total_rep: 125,
+        profile_rep: 25,
+        wave_rep: 100,
+        rating_count: 4,
+        last_modified: '2026-06-06T00:00:00.000Z'
+      }
+    ]);
+
+    expect(globalRepCategoryDb.getSuggestedCategories).toHaveBeenCalledWith(
+      { limit: 12 },
+      ctx
+    );
+  });
+
   it('builds overview with signed totals, rankings and recent pair activity', async () => {
     const { service, globalRepCategoryDb, profiles } = createService();
 
