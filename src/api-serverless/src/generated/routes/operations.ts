@@ -20,6 +20,12 @@ import { ApiMediaResolveRequest } from '@/api/generated/models/ApiMediaResolveRe
 import { ApiMediaResolveResponse } from '@/api/generated/models/ApiMediaResolveResponse';
 import { ApiNotificationsResponseV2 } from '@/api/generated/models/ApiNotificationsResponseV2';
 import { ApiOgMetadata } from '@/api/generated/models/ApiOgMetadata';
+import { ApiProfileCmsPackage } from '@/api/generated/models/ApiProfileCmsPackage';
+import { ApiProfileCmsPrimaryPackage } from '@/api/generated/models/ApiProfileCmsPrimaryPackage';
+import { ApiProfileCmsValidationResult } from '@/api/generated/models/ApiProfileCmsValidationResult';
+import { ApiPublishProfileCmsPackageRequest } from '@/api/generated/models/ApiPublishProfileCmsPackageRequest';
+import { ApiSaveProfileCmsPackageDraftRequest } from '@/api/generated/models/ApiSaveProfileCmsPackageDraftRequest';
+import { ApiValidateProfileCmsPackageRequest } from '@/api/generated/models/ApiValidateProfileCmsPackageRequest';
 import { ApiWaveDecisionsPageV2 } from '@/api/generated/models/ApiWaveDecisionsPageV2';
 import { ApiWaveDropsFeedV2 } from '@/api/generated/models/ApiWaveDropsFeedV2';
 import { ApiWaveMetadata } from '@/api/generated/models/ApiWaveMetadata';
@@ -85,6 +91,132 @@ export type GetOgMetadataWaveRequest = Request<
   ApiResponse<GetOgMetadataWaveResponse>,
   never,
   GetOgMetadataWaveQuery,
+  Record<string, never>
+>;
+
+export interface GetPrimaryProfileCmsPackagePathParams {
+  "handle": string;
+}
+
+export type GetPrimaryProfileCmsPackageQuery = Record<string, never>;
+
+export type GetPrimaryProfileCmsPackageResponse = ApiProfileCmsPrimaryPackage;
+
+export type GetPrimaryProfileCmsPackageRequest = Request<
+  GetPrimaryProfileCmsPackagePathParams,
+  ApiResponse<GetPrimaryProfileCmsPackageResponse>,
+  never,
+  GetPrimaryProfileCmsPackageQuery,
+  Record<string, never>
+>;
+
+export type SaveProfileCmsPackageDraftPathParams = Record<string, never>;
+
+export type SaveProfileCmsPackageDraftQuery = Record<string, never>;
+
+export type SaveProfileCmsPackageDraftResponse = ApiProfileCmsPackage;
+
+export type SaveProfileCmsPackageDraftRequest = Request<
+  SaveProfileCmsPackageDraftPathParams,
+  ApiResponse<SaveProfileCmsPackageDraftResponse>,
+  ApiSaveProfileCmsPackageDraftRequest,
+  SaveProfileCmsPackageDraftQuery,
+  Record<string, never>
+>;
+
+export interface GetProfileCmsPackageByIdPathParams {
+  "id": string;
+}
+
+export type GetProfileCmsPackageByIdQuery = Record<string, never>;
+
+export type GetProfileCmsPackageByIdResponse = ApiProfileCmsPackage;
+
+export type GetProfileCmsPackageByIdRequest = Request<
+  GetProfileCmsPackageByIdPathParams,
+  ApiResponse<GetProfileCmsPackageByIdResponse>,
+  never,
+  GetProfileCmsPackageByIdQuery,
+  Record<string, never>
+>;
+
+export interface PublishProfileCmsPackagePathParams {
+  "id": string;
+}
+
+export type PublishProfileCmsPackageQuery = Record<string, never>;
+
+export type PublishProfileCmsPackageResponse = ApiProfileCmsPackage;
+
+export type PublishProfileCmsPackageRequest = Request<
+  PublishProfileCmsPackagePathParams,
+  ApiResponse<PublishProfileCmsPackageResponse>,
+  ApiPublishProfileCmsPackageRequest,
+  PublishProfileCmsPackageQuery,
+  Record<string, never>
+>;
+
+export interface GetProfileCmsPackageByHashPathParams {
+  "package_hash": string;
+}
+
+export type GetProfileCmsPackageByHashQuery = Record<string, never>;
+
+export type GetProfileCmsPackageByHashResponse = ApiProfileCmsPackage;
+
+export type GetProfileCmsPackageByHashRequest = Request<
+  GetProfileCmsPackageByHashPathParams,
+  ApiResponse<GetProfileCmsPackageByHashResponse>,
+  never,
+  GetProfileCmsPackageByHashQuery,
+  Record<string, never>
+>;
+
+export type ValidateProfileCmsPackagePathParams = Record<string, never>;
+
+export type ValidateProfileCmsPackageQuery = Record<string, never>;
+
+export type ValidateProfileCmsPackageResponse = ApiProfileCmsValidationResult;
+
+export type ValidateProfileCmsPackageRequest = Request<
+  ValidateProfileCmsPackagePathParams,
+  ApiResponse<ValidateProfileCmsPackageResponse>,
+  ApiValidateProfileCmsPackageRequest,
+  ValidateProfileCmsPackageQuery,
+  Record<string, never>
+>;
+
+export interface ListProfileCmsPackagesPathParams {
+  "profile_id": string;
+}
+
+export type ListProfileCmsPackagesQuery = Record<string, never>;
+
+export type ListProfileCmsPackagesResponse = ApiProfileCmsPackage[];
+
+export type ListProfileCmsPackagesRequest = Request<
+  ListProfileCmsPackagesPathParams,
+  ApiResponse<ListProfileCmsPackagesResponse>,
+  never,
+  ListProfileCmsPackagesQuery,
+  Record<string, never>
+>;
+
+export interface GetProfileCmsPackageByVersionPathParams {
+  "profile_id": string;
+  "package_id": string;
+  "version": number;
+}
+
+export type GetProfileCmsPackageByVersionQuery = Record<string, never>;
+
+export type GetProfileCmsPackageByVersionResponse = ApiProfileCmsPackage;
+
+export type GetProfileCmsPackageByVersionRequest = Request<
+  GetProfileCmsPackageByVersionPathParams,
+  ApiResponse<GetProfileCmsPackageByVersionResponse>,
+  never,
+  GetProfileCmsPackageByVersionQuery,
   Record<string, never>
 >;
 
