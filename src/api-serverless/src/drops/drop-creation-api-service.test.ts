@@ -1,10 +1,18 @@
-import { DropCreationApiService } from './drop-creation.api.service';
+import { DropCreationApiService } from '@/api/drops/drop-creation.api.service';
 
-function makeService({ currentHidden }: { readonly currentHidden: boolean }) {
+function makeService({
+  currentHidden,
+  refreshedHidden = currentHidden,
+  updateChanged = true
+}: {
+  readonly currentHidden: boolean;
+  readonly refreshedHidden?: boolean;
+  readonly updateChanged?: boolean;
+}) {
   const dropsService = {
     findDropByIdOrThrow: jest.fn().mockResolvedValue({
       id: 'drop-1',
-      hide_link_preview: currentHidden
+      hide_link_preview: refreshedHidden
     })
   };
   const dropsDb = {
@@ -13,7 +21,7 @@ function makeService({ currentHidden }: { readonly currentHidden: boolean }) {
       author_id: 'profile-1',
       hide_link_preview: currentHidden
     }),
-    updateHideLinkPreview: jest.fn()
+    updateHideLinkPreview: jest.fn().mockResolvedValue(updateChanged)
   };
   const wsListenersNotifier = {
     notifyAboutDropUpdate: jest.fn()
@@ -51,7 +59,10 @@ function makeService({ currentHidden }: { readonly currentHidden: boolean }) {
 
 describe('DropCreationApiService.toggleHideLinkPreview', () => {
   it('keeps legacy toggle behavior when no final state is provided', async () => {
-    const { ctx, dropsDb, service } = makeService({ currentHidden: false });
+    const { ctx, dropsDb, service, wsListenersNotifier } = makeService({
+      currentHidden: false,
+      refreshedHidden: true
+    });
 
     await service.toggleHideLinkPreview({ dropId: 'drop-1' }, ctx as never);
 
@@ -59,10 +70,17 @@ describe('DropCreationApiService.toggleHideLinkPreview', () => {
       { drop_id: 'drop-1', hide_link_preview: true },
       ctx
     );
+    expect(wsListenersNotifier.notifyAboutDropUpdate).toHaveBeenCalledWith(
+      { id: 'drop-1', hide_link_preview: true },
+      ctx
+    );
   });
 
   it('sets previews hidden when an explicit hidden state is provided', async () => {
-    const { ctx, dropsDb, service } = makeService({ currentHidden: false });
+    const { ctx, dropsDb, service, wsListenersNotifier } = makeService({
+      currentHidden: false,
+      refreshedHidden: true
+    });
 
     await service.toggleHideLinkPreview(
       { dropId: 'drop-1', hideLinkPreview: true },
@@ -73,10 +91,17 @@ describe('DropCreationApiService.toggleHideLinkPreview', () => {
       { drop_id: 'drop-1', hide_link_preview: true },
       ctx
     );
+    expect(wsListenersNotifier.notifyAboutDropUpdate).toHaveBeenCalledWith(
+      { id: 'drop-1', hide_link_preview: true },
+      ctx
+    );
   });
 
   it('restores previews when an explicit visible state is provided', async () => {
-    const { ctx, dropsDb, service } = makeService({ currentHidden: true });
+    const { ctx, dropsDb, service, wsListenersNotifier } = makeService({
+      currentHidden: true,
+      refreshedHidden: false
+    });
 
     await service.toggleHideLinkPreview(
       { dropId: 'drop-1', hideLinkPreview: false },
@@ -87,11 +112,16 @@ describe('DropCreationApiService.toggleHideLinkPreview', () => {
       { drop_id: 'drop-1', hide_link_preview: false },
       ctx
     );
+    expect(wsListenersNotifier.notifyAboutDropUpdate).toHaveBeenCalledWith(
+      { id: 'drop-1', hide_link_preview: false },
+      ctx
+    );
   });
 
-  it('does not write or notify when explicit state already matches', async () => {
+  it('does not notify when explicit state already matches', async () => {
     const { ctx, dropsDb, service, wsListenersNotifier } = makeService({
-      currentHidden: true
+      currentHidden: true,
+      updateChanged: false
     });
 
     await service.toggleHideLinkPreview(
@@ -99,7 +129,10 @@ describe('DropCreationApiService.toggleHideLinkPreview', () => {
       ctx as never
     );
 
-    expect(dropsDb.updateHideLinkPreview).not.toHaveBeenCalled();
+    expect(dropsDb.updateHideLinkPreview).toHaveBeenCalledWith(
+      { drop_id: 'drop-1', hide_link_preview: true },
+      ctx
+    );
     expect(wsListenersNotifier.notifyAboutDropUpdate).not.toHaveBeenCalled();
   });
 });

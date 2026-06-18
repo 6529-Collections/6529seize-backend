@@ -225,13 +225,10 @@ export class DropCreationApiService {
       );
     }
     const newValue = hideLinkPreview ?? !drop.hide_link_preview;
-    const changed = newValue !== drop.hide_link_preview;
-    if (changed) {
-      await this.dropsDb.updateHideLinkPreview(
-        { drop_id: dropId, hide_link_preview: newValue },
-        ctx
-      );
-    }
+    const changed = await this.dropsDb.updateHideLinkPreview(
+      { drop_id: dropId, hide_link_preview: newValue },
+      ctx
+    );
     const apiDrop = await this.dropsService.findDropByIdOrThrow(
       { dropId, skipEligibilityCheck: true },
       ctx
