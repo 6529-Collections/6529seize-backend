@@ -227,6 +227,124 @@ paths:
                 $ref: "#/components/schemas/ApiRedeemRefreshTokenResponse"
         "400":
           description: Invalid request
+  /cms/profile/{identity}/primary:
+    get:
+      tags:
+        - CMS
+      summary: Get the primary published CMS site for a profile identity.
+      operationId: getCmsPrimarySiteByIdentity
+      parameters:
+        - name: identity
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiCmsPublishedSite"
+        "404":
+          description: Profile or CMS site not found
+  /cms/packages/{package_hash}:
+    get:
+      tags:
+        - CMS
+      summary: Get a published CMS package by content hash.
+      operationId: getCmsPackageByHash
+      parameters:
+        - name: package_hash
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: ^sha256:[a-f0-9]{64}$
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiCmsPublishedPackage"
+        "404":
+          description: CMS package not found
+  /cms/my/sites:
+    get:
+      tags:
+        - CMS
+      summary: List CMS sites owned by the authenticated profile.
+      operationId: getMyCmsSites
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ApiCmsSite"
+        "401":
+          description: Unauthorized - authentication required
+  /cms/sites:
+    post:
+      tags:
+        - CMS
+      summary: Create a CMS site owned by the authenticated profile.
+      operationId: createCmsSite
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApiCmsCreateSiteRequest"
+      responses:
+        "201":
+          description: created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiCmsSite"
+        "401":
+          description: Unauthorized - authentication required
+  /cms/sites/{site_id}/published-packages:
+    post:
+      tags:
+        - CMS
+      summary: Publish an immutable CMS package for a site.
+      operationId: publishCmsPackage
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: site_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApiCmsPublishPackageRequest"
+      responses:
+        "201":
+          description: created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiCmsPublishedSite"
+        "401":
+          description: Unauthorized - authentication required
+        "403":
+          description: Forbidden - only site owners can publish
+        "404":
+          description: CMS site not found
   /collected-stats/{identityKey}:
     get:
       tags:
@@ -9462,6 +9580,214 @@ components:
           format: int64
         contributors:
           $ref: "#/components/schemas/ApiCicContributorsPage"
+    ApiCmsCreateSiteRequest:
+      type: object
+      required:
+        - slug
+        - title
+      properties:
+        slug:
+          type: string
+          pattern: ^[a-z0-9][a-z0-9-]{0,62}$
+        title:
+          type: string
+          minLength: 1
+          maxLength: 255
+        description:
+          type: string
+          nullable: true
+          maxLength: 5000
+    ApiCmsPublishedPackage:
+      type: object
+      required:
+        - package_hash
+        - payload_hash
+        - schema
+        - site_id
+        - owner_profile_id
+        - title
+        - static_path
+        - package_json
+        - storage
+        - signature
+        - published_at
+        - published_by_wallet
+      properties:
+        package_hash:
+          type: string
+          pattern: ^sha256:[a-f0-9]{64}$
+          description: >-
+            Server verifies this equals sha256(canonical package_json with
+            package_hash set to null).
+        payload_hash:
+          type: string
+          pattern: ^sha256:[a-f0-9]{64}$
+          description: Server verifies this equals sha256(canonical package_json.payload).
+        schema:
+          type: string
+        site_id:
+          type: string
+        owner_profile_id:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+          nullable: true
+        static_path:
+          type: string
+        canonical_url:
+          type: string
+          nullable: true
+        package_json:
+          type: object
+          additionalProperties: true
+          description: >-
+            Full portable CMS package. package_hash, payload_hash, schema,
+            storage, and signature must match the sibling request fields.
+        storage:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiCmsStorageLocation"
+        signature:
+          $ref: "#/components/schemas/ApiCmsSignatureEnvelope"
+        published_at:
+          type: integer
+          format: int64
+          description: Server-derived publish timestamp in milliseconds since epoch.
+        published_by_wallet:
+          type: string
+          description: Server-derived authenticated wallet that published the package.
+    ApiCmsPublishedSite:
+      type: object
+      required:
+        - site
+        - published_package
+      properties:
+        site:
+          $ref: "#/components/schemas/ApiCmsSite"
+        published_package:
+          $ref: "#/components/schemas/ApiCmsPublishedPackage"
+    ApiCmsPublishPackageRequest:
+      type: object
+      required:
+        - package_hash
+        - payload_hash
+        - schema
+        - title
+        - static_path
+        - package_json
+        - storage
+        - signature
+      properties:
+        package_hash:
+          type: string
+          pattern: ^sha256:[a-f0-9]{64}$
+        payload_hash:
+          type: string
+          pattern: ^sha256:[a-f0-9]{64}$
+        schema:
+          type: string
+          maxLength: 100
+        title:
+          type: string
+          minLength: 1
+          maxLength: 255
+        description:
+          type: string
+          nullable: true
+          maxLength: 5000
+        static_path:
+          type: string
+          maxLength: 500
+        canonical_url:
+          type: string
+          nullable: true
+          maxLength: 1000
+        package_json:
+          type: object
+          additionalProperties: true
+        storage:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/ApiCmsStorageLocation"
+        signature:
+          $ref: "#/components/schemas/ApiCmsSignatureEnvelope"
+        set_primary:
+          type: boolean
+          description: >-
+            Defaults to true. Only the authenticated owner of the site can
+            mutate the public primary package pointer.
+    ApiCmsSignatureEnvelope:
+      type: object
+      description: >-
+        Opaque package signature envelope for this vertical slice. The server
+        stores it and verifies hash consistency with package_json; wallet
+        signature verification is a future publish-adapter responsibility.
+      required:
+        - signature_type
+        - signing_wallet
+        - signed_at
+        - signature
+      properties:
+        signature_type:
+          type: string
+        signing_wallet:
+          type: string
+        signed_at:
+          type: string
+          description: Client-supplied signing timestamp stored as envelope metadata.
+        signature:
+          type: string
+      additionalProperties: true
+    ApiCmsSite:
+      type: object
+      required:
+        - id
+        - owner_profile_id
+        - slug
+        - title
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+        owner_profile_id:
+          type: string
+        slug:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+          nullable: true
+        primary_package_hash:
+          type: string
+          nullable: true
+        primary_static_path:
+          type: string
+          nullable: true
+        created_at:
+          type: integer
+          format: int64
+        updated_at:
+          type: integer
+          format: int64
+    ApiCmsStorageLocation:
+      type: object
+      required:
+        - provider
+        - uri
+        - pinned
+      properties:
+        provider:
+          type: string
+        uri:
+          type: string
+        pinned:
+          type: boolean
+      additionalProperties: true
     ApiCollectedStats:
       type: object
       required:
