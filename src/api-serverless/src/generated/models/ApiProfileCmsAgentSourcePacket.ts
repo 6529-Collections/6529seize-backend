@@ -17,7 +17,7 @@ import { HttpFile } from '../http/http';
 
 export class ApiProfileCmsAgentSourcePacket {
     'schema': ApiProfileCmsAgentSourcePacketSchemaEnum;
-    'generated_at': string;
+    'generated_at': Date;
     'package_db_id': string;
     'package_id': string;
     'version': number;
@@ -45,8 +45,8 @@ export class ApiProfileCmsAgentSourcePacket {
         {
             "name": "generated_at",
             "baseName": "generated_at",
-            "type": "string",
-            "format": ""
+            "type": "Date",
+            "format": "date-time"
         },
         {
             "name": "package_db_id",

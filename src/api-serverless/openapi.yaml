@@ -4599,7 +4599,9 @@ paths:
       description: >-
         Requires profile owner or delegated CMS publisher authority. This
         endpoint never applies changes; it dry-runs supported operations and
-        returns structured patch and CMS validation diagnostics.
+        returns structured patch and CMS validation diagnostics. The target must
+        be a draft package and agent_patch.target.base_package_hash is required
+        for stale-draft detection.
       operationId: validateProfileCmsAgentPatch
       x-6529-router:
         enabled: true
@@ -10165,6 +10167,102 @@ components:
           format: int64
         contributors:
           $ref: "#/components/schemas/ApiCicContributorsPage"
+    ApiCmsAgentPatch:
+      type: object
+      required:
+        - schema
+        - patch_id
+        - target
+        - operations
+        - provenance
+      properties:
+        schema:
+          type: string
+          enum:
+            - 6529.cms.agent_patch.v1
+        patch_id:
+          type: string
+          minLength: 1
+        target:
+          $ref: "#/components/schemas/ApiCmsAgentPatchTarget"
+        operations:
+          type: array
+          minItems: 1
+          maxItems: 200
+          items:
+            $ref: "#/components/schemas/ApiCmsAgentPatchOperation"
+        provenance:
+          $ref: "#/components/schemas/ApiCmsAgentPatchProvenance"
+    ApiCmsAgentPatchOperation:
+      type: object
+      required:
+        - op
+        - path
+      properties:
+        op:
+          type: string
+          enum:
+            - add_page
+            - remove_page
+            - update_page_metadata
+            - add_block
+            - update_block
+            - remove_block
+            - reorder_blocks
+            - update_navigation
+            - update_theme
+            - update_share_metadata
+            - attach_source_packet
+            - set_taxonomy_terms
+        path:
+          type: string
+          minLength: 1
+        value:
+          description: Operation-specific JSON value.
+          nullable: true
+        reason:
+          type: string
+        source_packet_ids:
+          type: array
+          items:
+            type: string
+    ApiCmsAgentPatchProvenance:
+      type: object
+      required:
+        - created_at
+        - author_type
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        author_type:
+          type: string
+          enum:
+            - user_agent
+            - local_tool
+            - human
+        agent_name:
+          type: string
+        agent_version:
+          type: string
+        notes:
+          type: string
+    ApiCmsAgentPatchTarget:
+      type: object
+      required:
+        - draft_id
+        - base_version
+        - base_package_hash
+      properties:
+        draft_id:
+          type: string
+        base_version:
+          type: integer
+          format: int64
+          minimum: 0
+        base_package_hash:
+          type: string
+          pattern: ^sha256:[a-f0-9]{64}$
     ApiCmsCreateSiteRequest:
       type: object
       required:
@@ -14770,6 +14868,7 @@ components:
           description: This endpoint is read-only and never applies patches.
         checked_at:
           type: string
+          format: date-time
         target:
           type: object
           required:
@@ -14810,6 +14909,7 @@ components:
         - safety
         - endpoints
         - endpoint_auth
+        - patch_limits
       properties:
         schema:
           type: string
@@ -14817,6 +14917,7 @@ components:
             - 6529.cms.agent_schema_bundle.v1
         generated_at:
           type: string
+          format: date-time
         schemas:
           type: object
           additionalProperties:
@@ -14907,6 +15008,38 @@ components:
               type: string
               enum:
                 - required
+        patch_limits:
+          type: object
+          required:
+            - max_operations
+            - required_target_fields
+            - navigation_update_path
+            - theme_update_path
+            - apply_supported
+          properties:
+            max_operations:
+              type: integer
+              format: int64
+            required_target_fields:
+              type: array
+              items:
+                type: string
+                enum:
+                  - draft_id
+                  - base_version
+                  - base_package_hash
+            navigation_update_path:
+              type: string
+              enum:
+                - /payload/navigation
+            theme_update_path:
+              type: string
+              enum:
+                - /site/theme
+            apply_supported:
+              type: boolean
+              enum:
+                - false
     ApiProfileCmsAgentSourcePacket:
       type: object
       required:
@@ -14931,6 +15064,7 @@ components:
             - 6529.cms.agent_source_packet.v1
         generated_at:
           type: string
+          format: date-time
         package_db_id:
           type: string
         package_id:
@@ -14964,8 +15098,7 @@ components:
             - live_result
           properties:
             stored_result:
-              type: object
-              additionalProperties: true
+              $ref: "#/components/schemas/ApiProfileCmsValidationResult"
             stored_error:
               type: string
             live_result:
@@ -16609,8 +16742,7 @@ components:
         - agent_patch
       properties:
         agent_patch:
-          type: object
-          additionalProperties: true
+          $ref: "#/components/schemas/ApiCmsAgentPatch"
         apply:
           type: boolean
           description: Must not be used to authorize writes; validation is read-only.

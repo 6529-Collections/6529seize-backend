@@ -22,6 +22,7 @@ import { ProfileCmsPublishSignaturesDb } from '@/profile-cms/profile-cms-publish
 import { ProfileCmsStorageReceiptVerifier } from '@/profile-cms/profile-cms-storage';
 import { ProfileCmsPublishSignatureVerificationResult } from '@/profile-cms/profile-cms-signing';
 import {
+  CMS_AGENT_PATCH_MAX_OPERATIONS,
   CMS_AGENT_PATCH_SCHEMA,
   CmsAgentPatchV1,
   CmsPackageV1
@@ -312,6 +313,17 @@ describe('ProfileCmsApiService', () => {
         source_packet: 'optional',
         validate_package: 'required',
         validate_patch: 'required'
+      },
+      patch_limits: {
+        max_operations: CMS_AGENT_PATCH_MAX_OPERATIONS,
+        required_target_fields: [
+          'draft_id',
+          'base_version',
+          'base_package_hash'
+        ],
+        navigation_update_path: '/payload/navigation',
+        theme_update_path: '/site/theme',
+        apply_supported: false
       }
     });
     expect(result.source_packet_types.map((type) => type.type)).toEqual(
@@ -478,6 +490,72 @@ describe('ProfileCmsApiService', () => {
     expect(packagesDb.markValidating).not.toHaveBeenCalled();
   });
 
+  it('requires agent patches to include the base package hash', async () => {
+    const draft = createEntity();
+    packagesDb.findById.mockResolvedValue(draft);
+
+    const result = await service.validateAgentPatch(
+      draft.id,
+      {
+        agent_patch: {
+          ...createAgentPatch(draft),
+          target: {
+            draft_id: draft.id,
+            base_version: draft.version
+          }
+        }
+      },
+      ownerContext()
+    );
+
+    expect(result).toMatchObject({
+      valid: false,
+      operation_count: 0
+    });
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'agent_patch.schema_invalid',
+          path: '/target/base_package_hash'
+        })
+      ])
+    );
+    expect(result).not.toHaveProperty('candidate_validation');
+  });
+
+  it('rejects oversized agent patch operation batches', async () => {
+    const draft = createEntity();
+    packagesDb.findById.mockResolvedValue(draft);
+    const operation = createAgentPatch(draft).operations[0];
+
+    const result = await service.validateAgentPatch(
+      draft.id,
+      {
+        agent_patch: createAgentPatch(draft, {
+          operations: Array.from(
+            { length: CMS_AGENT_PATCH_MAX_OPERATIONS + 1 },
+            () => ({ ...operation })
+          )
+        })
+      },
+      ownerContext()
+    );
+
+    expect(result).toMatchObject({
+      valid: false,
+      operation_count: 0
+    });
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'agent_patch.schema_invalid',
+          path: '/operations'
+        })
+      ])
+    );
+    expect(result).not.toHaveProperty('candidate_validation');
+  });
+
   it('returns structured patch path errors without mutating the draft', async () => {
     const draft = createEntity();
     packagesDb.findById.mockResolvedValue(draft);
@@ -547,6 +625,73 @@ describe('ProfileCmsApiService', () => {
     expect(result.candidate_validation).toMatchObject({
       valid: true
     });
+  });
+
+  it('accepts agent theme updates at the site theme path', async () => {
+    const draft = createEntity();
+    packagesDb.findById.mockResolvedValue(draft);
+
+    const result = await service.validateAgentPatch(
+      draft.id,
+      {
+        agent_patch: createAgentPatch(draft, {
+          operations: [
+            {
+              op: 'update_theme',
+              path: '/site/theme',
+              value: {
+                mode: 'light',
+                accent: '#ff00aa'
+              }
+            }
+          ]
+        })
+      },
+      ownerContext()
+    );
+
+    expect(result.valid).toBe(true);
+    expect(result.candidate_validation).toMatchObject({
+      valid: true
+    });
+    expect(result.issues).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'agent_patch.operation_path_not_allowed'
+        })
+      ])
+    );
+  });
+
+  it('rejects partial navigation sub-path updates from agents', async () => {
+    const draft = createEntity();
+    packagesDb.findById.mockResolvedValue(draft);
+
+    const result = await service.validateAgentPatch(
+      draft.id,
+      {
+        agent_patch: createAgentPatch(draft, {
+          operations: [
+            {
+              op: 'update_navigation',
+              path: '/payload/navigation/0/items',
+              value: []
+            }
+          ]
+        })
+      },
+      ownerContext()
+    );
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'agent_patch.operation_path_not_allowed',
+          path: '/operations/0/path'
+        })
+      ])
+    );
   });
 
   it('returns explicit reorder errors when existing blocks have no id', async () => {

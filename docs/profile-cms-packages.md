@@ -127,8 +127,8 @@ POST /api/profile-cms/packages/:id/agent/patch/validate
 
 The schema bundle is public and returns the current string schema ids,
 source-packet categories, patch operation names, endpoint templates, endpoint
-auth requirements, and safety metadata. Frontend clients should treat this as
-the narrow contract for external agent integrations.
+auth requirements, patch limits, and safety metadata. Frontend clients should
+treat this as the narrow contract for external agent integrations.
 
 Source packets are data, not instructions. The response deliberately separates:
 
@@ -161,6 +161,12 @@ patch preflight does not bypass draft save, CMS validation, decentralized
 storage, signing, or publish authority. Agents should use the returned
 `candidate_validation` to revise proposals, then hand the final package back to
 the normal save/publish flow.
+
+Agent patch targets must include `draft_id`, `base_version`, and
+`base_package_hash`; omitting the hash is rejected so stale local agent state
+cannot pass on version alone. Patch validation accepts at most 200 operations in
+one request. `update_navigation` replaces `/payload/navigation` as a whole, and
+`update_theme` targets `/site/theme`.
 
 ## Publish Rules
 

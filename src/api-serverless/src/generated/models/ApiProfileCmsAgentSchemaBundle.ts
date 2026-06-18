@@ -12,13 +12,14 @@
 
 import { ApiProfileCmsAgentSchemaBundleEndpointAuth } from '../models/ApiProfileCmsAgentSchemaBundleEndpointAuth';
 import { ApiProfileCmsAgentSchemaBundleEndpoints } from '../models/ApiProfileCmsAgentSchemaBundleEndpoints';
+import { ApiProfileCmsAgentSchemaBundlePatchLimits } from '../models/ApiProfileCmsAgentSchemaBundlePatchLimits';
 import { ApiProfileCmsAgentSchemaBundleSafety } from '../models/ApiProfileCmsAgentSchemaBundleSafety';
 import { ApiProfileCmsAgentSchemaBundleSourcePacketTypesInner } from '../models/ApiProfileCmsAgentSchemaBundleSourcePacketTypesInner';
 import { HttpFile } from '../http/http';
 
 export class ApiProfileCmsAgentSchemaBundle {
     'schema': ApiProfileCmsAgentSchemaBundleSchemaEnum;
-    'generated_at': string;
+    'generated_at': Date;
     'schemas': { [key: string]: string; };
     'source_packet_types': Array<ApiProfileCmsAgentSchemaBundleSourcePacketTypesInner>;
     'patch_operations': Array<string>;
@@ -26,6 +27,7 @@ export class ApiProfileCmsAgentSchemaBundle {
     'safety': ApiProfileCmsAgentSchemaBundleSafety;
     'endpoints': ApiProfileCmsAgentSchemaBundleEndpoints;
     'endpoint_auth': ApiProfileCmsAgentSchemaBundleEndpointAuth;
+    'patch_limits': ApiProfileCmsAgentSchemaBundlePatchLimits;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -41,8 +43,8 @@ export class ApiProfileCmsAgentSchemaBundle {
         {
             "name": "generated_at",
             "baseName": "generated_at",
-            "type": "string",
-            "format": ""
+            "type": "Date",
+            "format": "date-time"
         },
         {
             "name": "schemas",
@@ -84,6 +86,12 @@ export class ApiProfileCmsAgentSchemaBundle {
             "name": "endpoint_auth",
             "baseName": "endpoint_auth",
             "type": "ApiProfileCmsAgentSchemaBundleEndpointAuth",
+            "format": ""
+        },
+        {
+            "name": "patch_limits",
+            "baseName": "patch_limits",
+            "type": "ApiProfileCmsAgentSchemaBundlePatchLimits",
             "format": ""
         }    ];
 

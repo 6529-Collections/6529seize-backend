@@ -10,13 +10,12 @@
  * Do not edit the class manually.
  */
 
-import { ApiProfileCmsValidationResult } from '../models/ApiProfileCmsValidationResult';
 import { HttpFile } from '../http/http';
 
-export class ApiProfileCmsAgentSourcePacketValidationDiagnostics {
-    'stored_result'?: ApiProfileCmsValidationResult;
-    'stored_error'?: string;
-    'live_result': ApiProfileCmsValidationResult;
+export class ApiCmsAgentPatchTarget {
+    'draft_id': string;
+    'base_version': number;
+    'base_package_hash': string;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -24,26 +23,26 @@ export class ApiProfileCmsAgentSourcePacketValidationDiagnostics {
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
         {
-            "name": "stored_result",
-            "baseName": "stored_result",
-            "type": "ApiProfileCmsValidationResult",
-            "format": ""
-        },
-        {
-            "name": "stored_error",
-            "baseName": "stored_error",
+            "name": "draft_id",
+            "baseName": "draft_id",
             "type": "string",
             "format": ""
         },
         {
-            "name": "live_result",
-            "baseName": "live_result",
-            "type": "ApiProfileCmsValidationResult",
+            "name": "base_version",
+            "baseName": "base_version",
+            "type": "number",
+            "format": "int64"
+        },
+        {
+            "name": "base_package_hash",
+            "baseName": "base_package_hash",
+            "type": "string",
             "format": ""
         }    ];
 
     static getAttributeTypeMap() {
-        return ApiProfileCmsAgentSourcePacketValidationDiagnostics.attributeTypeMap;
+        return ApiCmsAgentPatchTarget.attributeTypeMap;
     }
 
     public constructor() {

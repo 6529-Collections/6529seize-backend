@@ -10,10 +10,11 @@
  * Do not edit the class manually.
  */
 
+import { ApiCmsAgentPatch } from '../models/ApiCmsAgentPatch';
 import { HttpFile } from '../http/http';
 
 export class ApiValidateProfileCmsAgentPatchRequest {
-    'agent_patch': { [key: string]: any; };
+    'agent_patch': ApiCmsAgentPatch;
     /**
     * Must not be used to authorize writes; validation is read-only.
     */
@@ -28,7 +29,7 @@ export class ApiValidateProfileCmsAgentPatchRequest {
         {
             "name": "agent_patch",
             "baseName": "agent_patch",
-            "type": "{ [key: string]: any; }",
+            "type": "ApiCmsAgentPatch",
             "format": ""
         },
         {

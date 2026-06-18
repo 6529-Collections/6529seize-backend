@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import {
   CMS_AGENT_PATCH_SCHEMA,
+  CMS_AGENT_PATCH_MAX_OPERATIONS,
   CMS_ASSET_KINDS,
   CMS_ASSET_ROLES,
   CMS_BLOCK_TYPES,
@@ -446,10 +447,13 @@ export const agentPatchSchema = z
       .object({
         draft_id: z.string(),
         base_version: z.number().int().min(0),
-        base_package_hash: hashSchema.optional()
+        base_package_hash: hashSchema
       })
       .strict(),
-    operations: z.array(agentPatchOperationSchema).min(1),
+    operations: z
+      .array(agentPatchOperationSchema)
+      .min(1)
+      .max(CMS_AGENT_PATCH_MAX_OPERATIONS),
     provenance: z
       .object({
         created_at: dateTimeSchema,

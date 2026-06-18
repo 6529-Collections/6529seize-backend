@@ -16,7 +16,8 @@ applying agent-proposed changes.
 - `GET /profile-cms/agent/schema-bundle`
   - Public.
   - Returns schema ids, source-packet categories, patch operation names,
-    endpoint templates, and prompt-injection safety metadata.
+    endpoint templates, auth requirements, patch limits, and prompt-injection
+    safety metadata.
 - `GET /profile-cms/packages/{id}/agent/source-packet`
   - Optional auth.
   - Public only for published production-safe packages.
@@ -28,6 +29,9 @@ applying agent-proposed changes.
   - Requires owner or delegated `PUBLISH_CMS` authority.
   - Draft-only preflight.
   - Accepts `6529.cms.agent_patch.v1`.
+  - Requires `target.draft_id`, `target.base_version`, and
+    `target.base_package_hash`.
+  - Caps operation batches at 200 operations.
   - Returns `6529.cms.agent_patch_validation_result.v1`.
   - Never applies writes; `applied` is always `false`.
 
@@ -39,12 +43,23 @@ applying agent-proposed changes.
 - Patch validation dry-runs in memory only. It does not bypass draft save,
   package validation, storage receipt verification, EIP-712 signature
   verification, consumed-signature replay protection, or publish authority.
+- Patch validation rejects omitted or stale `base_package_hash` values so
+  external agents cannot validate against a stale local copy using version
+  alone.
+- `update_navigation` can only replace `/payload/navigation` as a whole;
+  `update_theme` targets `/site/theme`.
 - No model calls, inference calls, or paid AI integrations were added.
 
 ## Validation
 
 - `npx jest src/api-serverless/src/profile-cms/profile-cms-api-service.test.ts src/api-serverless/src/profile-cms/profile-cms-handlers.test.ts --runInBand`
-  - Passed: 44 tests.
+- Passed: 48 tests.
+- `bash -lc "npm run lint"`
+  - Passed.
+- `npx tsc -p tsconfig.json --noEmit`
+  - Passed.
+- `codex-diff-check`
+  - Passed.
 
 ## FE Integration Notes
 
@@ -58,6 +73,9 @@ applying agent-proposed changes.
 - The schema bundle includes `endpoint_auth` so external adapters can see that
   source packet reads are optional-auth while package and patch validation are
   authenticated flows.
+- The schema bundle includes `patch_limits`: `max_operations=200`, required
+  target fields, `/payload/navigation` for navigation replacement, `/site/theme`
+  for theme replacement, and `apply_supported=false`.
 - For content-changing patches, request patch validation with
   `enforce_hashes=false` while drafting. The normal save/publish flow still
   enforces package hashes and signatures before publication.

@@ -211,10 +211,7 @@ function validatePatchPreflight({
     );
   }
 
-  if (
-    agentPatch.target.base_package_hash &&
-    agentPatch.target.base_package_hash !== packageHash
-  ) {
+  if (agentPatch.target.base_package_hash !== packageHash) {
     issues.push(
       issue({
         code: 'agent_patch.base_package_hash_mismatch',
@@ -343,7 +340,11 @@ function isAllowedOperationPath(
     case 'reorder_blocks':
       return isBlocksArrayPath(segments);
     case 'update_navigation':
-      return segments[0] === 'payload' && segments[1] === 'navigation';
+      return (
+        segments.length === 2 &&
+        segments[0] === 'payload' &&
+        segments[1] === 'navigation'
+      );
     case 'update_theme':
       return (
         segments.length === 2 &&

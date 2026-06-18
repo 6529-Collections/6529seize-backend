@@ -28,6 +28,10 @@ export * from '../models/ApiChangeWaveRepRating';
 export * from '../models/ApiCicContributor';
 export * from '../models/ApiCicContributorsPage';
 export * from '../models/ApiCicOverview';
+export * from '../models/ApiCmsAgentPatch';
+export * from '../models/ApiCmsAgentPatchOperation';
+export * from '../models/ApiCmsAgentPatchProvenance';
+export * from '../models/ApiCmsAgentPatchTarget';
 export * from '../models/ApiCmsCreateSiteRequest';
 export * from '../models/ApiCmsPublishPackageRequest';
 export * from '../models/ApiCmsPublishedPackage';
@@ -233,6 +237,7 @@ export * from '../models/ApiProfileCmsAgentPatchValidationResultTarget';
 export * from '../models/ApiProfileCmsAgentSchemaBundle';
 export * from '../models/ApiProfileCmsAgentSchemaBundleEndpointAuth';
 export * from '../models/ApiProfileCmsAgentSchemaBundleEndpoints';
+export * from '../models/ApiProfileCmsAgentSchemaBundlePatchLimits';
 export * from '../models/ApiProfileCmsAgentSchemaBundleSafety';
 export * from '../models/ApiProfileCmsAgentSchemaBundleSourcePacketTypesInner';
 export * from '../models/ApiProfileCmsAgentSourcePacket';
@@ -489,6 +494,10 @@ import { ApiChangeWaveRepRating } from '../models/ApiChangeWaveRepRating';
 import { ApiCicContributor } from '../models/ApiCicContributor';
 import { ApiCicContributorsPage } from '../models/ApiCicContributorsPage';
 import { ApiCicOverview } from '../models/ApiCicOverview';
+import { ApiCmsAgentPatch, ApiCmsAgentPatchSchemaEnum       } from '../models/ApiCmsAgentPatch';
+import { ApiCmsAgentPatchOperation, ApiCmsAgentPatchOperationOpEnum       } from '../models/ApiCmsAgentPatchOperation';
+import { ApiCmsAgentPatchProvenance , ApiCmsAgentPatchProvenanceAuthorTypeEnum      } from '../models/ApiCmsAgentPatchProvenance';
+import { ApiCmsAgentPatchTarget } from '../models/ApiCmsAgentPatchTarget';
 import { ApiCmsCreateSiteRequest } from '../models/ApiCmsCreateSiteRequest';
 import { ApiCmsPublishPackageRequest } from '../models/ApiCmsPublishPackageRequest';
 import { ApiCmsPublishedPackage } from '../models/ApiCmsPublishedPackage';
@@ -691,9 +700,10 @@ import { ApiPaymentDetails } from '../models/ApiPaymentDetails';
 import { ApiProfileClassification } from '../models/ApiProfileClassification';
 import { ApiProfileCmsAgentPatchValidationResult, ApiProfileCmsAgentPatchValidationResultSchemaEnum          } from '../models/ApiProfileCmsAgentPatchValidationResult';
 import { ApiProfileCmsAgentPatchValidationResultTarget } from '../models/ApiProfileCmsAgentPatchValidationResultTarget';
-import { ApiProfileCmsAgentSchemaBundle, ApiProfileCmsAgentSchemaBundleSchemaEnum      , ApiProfileCmsAgentSchemaBundleDataClassesEnum      } from '../models/ApiProfileCmsAgentSchemaBundle';
+import { ApiProfileCmsAgentSchemaBundle, ApiProfileCmsAgentSchemaBundleSchemaEnum      , ApiProfileCmsAgentSchemaBundleDataClassesEnum       } from '../models/ApiProfileCmsAgentSchemaBundle';
 import { ApiProfileCmsAgentSchemaBundleEndpointAuth, ApiProfileCmsAgentSchemaBundleEndpointAuthSourcePacketEnum  , ApiProfileCmsAgentSchemaBundleEndpointAuthValidatePackageEnum  , ApiProfileCmsAgentSchemaBundleEndpointAuthValidatePatchEnum   } from '../models/ApiProfileCmsAgentSchemaBundleEndpointAuth';
 import { ApiProfileCmsAgentSchemaBundleEndpoints } from '../models/ApiProfileCmsAgentSchemaBundleEndpoints';
+import { ApiProfileCmsAgentSchemaBundlePatchLimits , ApiProfileCmsAgentSchemaBundlePatchLimitsRequiredTargetFieldsEnum  , ApiProfileCmsAgentSchemaBundlePatchLimitsNavigationUpdatePathEnum  , ApiProfileCmsAgentSchemaBundlePatchLimitsThemeUpdatePathEnum    } from '../models/ApiProfileCmsAgentSchemaBundlePatchLimits';
 import { ApiProfileCmsAgentSchemaBundleSafety } from '../models/ApiProfileCmsAgentSchemaBundleSafety';
 import { ApiProfileCmsAgentSchemaBundleSourcePacketTypesInner , ApiProfileCmsAgentSchemaBundleSourcePacketTypesInnerDataClassEnum      } from '../models/ApiProfileCmsAgentSchemaBundleSourcePacketTypesInner';
 import { ApiProfileCmsAgentSourcePacket, ApiProfileCmsAgentSourcePacketSchemaEnum       , ApiProfileCmsAgentSourcePacketVisibilityEnum          } from '../models/ApiProfileCmsAgentSourcePacket';
@@ -937,6 +947,9 @@ let enumsMap: Set<string> = new Set<string>([
     "ApiAttachmentKind",
     "ApiAttachmentStatus",
     "ApiAttachmentUploadMimeType",
+    "ApiCmsAgentPatchSchemaEnum",
+    "ApiCmsAgentPatchOperationOpEnum",
+    "ApiCmsAgentPatchProvenanceAuthorTypeEnum",
     "ApiCommunityMembersSortOption",
     "ApiConsolidatedTdhMetricsCollector",
     "ApiConsolidatedTdhMetricsContent",
@@ -967,6 +980,9 @@ let enumsMap: Set<string> = new Set<string>([
     "ApiProfileCmsAgentSchemaBundleEndpointAuthSourcePacketEnum",
     "ApiProfileCmsAgentSchemaBundleEndpointAuthValidatePackageEnum",
     "ApiProfileCmsAgentSchemaBundleEndpointAuthValidatePatchEnum",
+    "ApiProfileCmsAgentSchemaBundlePatchLimitsRequiredTargetFieldsEnum",
+    "ApiProfileCmsAgentSchemaBundlePatchLimitsNavigationUpdatePathEnum",
+    "ApiProfileCmsAgentSchemaBundlePatchLimitsThemeUpdatePathEnum",
     "ApiProfileCmsAgentSchemaBundleSourcePacketTypesInnerDataClassEnum",
     "ApiProfileCmsAgentSourcePacketSchemaEnum",
     "ApiProfileCmsAgentSourcePacketVisibilityEnum",
@@ -1036,6 +1052,10 @@ let typeMap: {[index: string]: any} = {
     "ApiCicContributor": ApiCicContributor,
     "ApiCicContributorsPage": ApiCicContributorsPage,
     "ApiCicOverview": ApiCicOverview,
+    "ApiCmsAgentPatch": ApiCmsAgentPatch,
+    "ApiCmsAgentPatchOperation": ApiCmsAgentPatchOperation,
+    "ApiCmsAgentPatchProvenance": ApiCmsAgentPatchProvenance,
+    "ApiCmsAgentPatchTarget": ApiCmsAgentPatchTarget,
     "ApiCmsCreateSiteRequest": ApiCmsCreateSiteRequest,
     "ApiCmsPublishPackageRequest": ApiCmsPublishPackageRequest,
     "ApiCmsPublishedPackage": ApiCmsPublishedPackage,
@@ -1220,6 +1240,7 @@ let typeMap: {[index: string]: any} = {
     "ApiProfileCmsAgentSchemaBundle": ApiProfileCmsAgentSchemaBundle,
     "ApiProfileCmsAgentSchemaBundleEndpointAuth": ApiProfileCmsAgentSchemaBundleEndpointAuth,
     "ApiProfileCmsAgentSchemaBundleEndpoints": ApiProfileCmsAgentSchemaBundleEndpoints,
+    "ApiProfileCmsAgentSchemaBundlePatchLimits": ApiProfileCmsAgentSchemaBundlePatchLimits,
     "ApiProfileCmsAgentSchemaBundleSafety": ApiProfileCmsAgentSchemaBundleSafety,
     "ApiProfileCmsAgentSchemaBundleSourcePacketTypesInner": ApiProfileCmsAgentSchemaBundleSourcePacketTypesInner,
     "ApiProfileCmsAgentSourcePacket": ApiProfileCmsAgentSourcePacket,

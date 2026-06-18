@@ -22,7 +22,7 @@ export class ApiProfileCmsAgentPatchValidationResult {
     * This endpoint is read-only and never applies patches.
     */
     'applied': boolean;
-    'checked_at': string;
+    'checked_at': Date;
     'target': ApiProfileCmsAgentPatchValidationResultTarget;
     'operation_count': number;
     'issues': Array<ApiProfileCmsValidationIssue>;
@@ -54,8 +54,8 @@ export class ApiProfileCmsAgentPatchValidationResult {
         {
             "name": "checked_at",
             "baseName": "checked_at",
-            "type": "string",
-            "format": ""
+            "type": "Date",
+            "format": "date-time"
         },
         {
             "name": "target",

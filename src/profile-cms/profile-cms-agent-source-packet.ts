@@ -1,6 +1,7 @@
 import { ProfileCmsPackageEntity } from '@/entities/IProfileCmsPackage';
 import {
   CMS_AGENT_PATCH_SCHEMA,
+  CMS_AGENT_PATCH_MAX_OPERATIONS,
   CMS_PACKAGE_SCHEMA,
   CMS_PAYLOAD_SCHEMA,
   CMS_SOURCE_PACKET_TYPES,
@@ -49,6 +50,17 @@ export interface ProfileCmsAgentSchemaBundleResponse {
     readonly source_packet: 'optional';
     readonly validate_package: 'required';
     readonly validate_patch: 'required';
+  };
+  readonly patch_limits: {
+    readonly max_operations: number;
+    readonly required_target_fields: readonly [
+      'draft_id',
+      'base_version',
+      'base_package_hash'
+    ];
+    readonly navigation_update_path: '/payload/navigation';
+    readonly theme_update_path: '/site/theme';
+    readonly apply_supported: false;
   };
 }
 
@@ -191,6 +203,13 @@ export function buildProfileCmsAgentSchemaBundle(
       source_packet: 'optional',
       validate_package: 'required',
       validate_patch: 'required'
+    },
+    patch_limits: {
+      max_operations: CMS_AGENT_PATCH_MAX_OPERATIONS,
+      required_target_fields: ['draft_id', 'base_version', 'base_package_hash'],
+      navigation_update_path: '/payload/navigation',
+      theme_update_path: '/site/theme',
+      apply_supported: false
     }
   };
 }
