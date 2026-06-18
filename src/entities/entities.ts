@@ -20,6 +20,7 @@ export {
 } from './IAggregatedActivity';
 export { CicScoreAggregation } from './ICicScoreAggregation';
 export { CicStatement } from './ICICStatement';
+export { CmsPublishedPackageEntity, CmsSiteEntity } from './ICmsSite';
 export { CookiesConsent } from './ICookieConsent';
 export { Consolidation, Delegation, NFTDelegationBlock } from './IDelegation';
 export { DeletedDropEntity } from './IDeletedDrop';

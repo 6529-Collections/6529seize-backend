@@ -12,15 +12,10 @@
 
 import { HttpFile } from '../http/http';
 
-export class ApiAuthSettings {
-    /**
-    * True when backend strict structured wallet signature enforcement is enabled. Frontend clients should treat legacy auth as no longer acceptable when this is true.
-    */
-    'structured_signatures_required': boolean;
-    /**
-    * Optional global deadline for frontend v1-auth to session-v2 migration prompts, formatted as an ISO datetime with timezone. Null means no migration prompt should be shown unless strict structured signatures are required.
-    */
-    'session_v2_migration_deadline': string | null;
+export class ApiCmsCreateSiteRequest {
+    'slug': string;
+    'title': string;
+    'description'?: string | null;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -28,20 +23,26 @@ export class ApiAuthSettings {
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
         {
-            "name": "structured_signatures_required",
-            "baseName": "structured_signatures_required",
-            "type": "boolean",
+            "name": "slug",
+            "baseName": "slug",
+            "type": "string",
             "format": ""
         },
         {
-            "name": "session_v2_migration_deadline",
-            "baseName": "session_v2_migration_deadline",
+            "name": "title",
+            "baseName": "title",
+            "type": "string",
+            "format": ""
+        },
+        {
+            "name": "description",
+            "baseName": "description",
             "type": "string",
             "format": ""
         }    ];
 
     static getAttributeTypeMap() {
-        return ApiAuthSettings.attributeTypeMap;
+        return ApiCmsCreateSiteRequest.attributeTypeMap;
     }
 
     public constructor() {
