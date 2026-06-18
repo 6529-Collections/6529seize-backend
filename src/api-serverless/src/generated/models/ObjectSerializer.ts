@@ -27,6 +27,13 @@ export * from '../models/ApiChangeWaveRepRating';
 export * from '../models/ApiCicContributor';
 export * from '../models/ApiCicContributorsPage';
 export * from '../models/ApiCicOverview';
+export * from '../models/ApiCmsCreateSiteRequest';
+export * from '../models/ApiCmsPublishPackageRequest';
+export * from '../models/ApiCmsPublishedPackage';
+export * from '../models/ApiCmsPublishedSite';
+export * from '../models/ApiCmsSignatureEnvelope';
+export * from '../models/ApiCmsSite';
+export * from '../models/ApiCmsStorageLocation';
 export * from '../models/ApiCollectedStats';
 export * from '../models/ApiCollectedStatsSeason';
 export * from '../models/ApiCommunityMemberMinimal';
@@ -455,6 +462,13 @@ import { ApiChangeWaveRepRating } from '../models/ApiChangeWaveRepRating';
 import { ApiCicContributor } from '../models/ApiCicContributor';
 import { ApiCicContributorsPage } from '../models/ApiCicContributorsPage';
 import { ApiCicOverview } from '../models/ApiCicOverview';
+import { ApiCmsCreateSiteRequest } from '../models/ApiCmsCreateSiteRequest';
+import { ApiCmsPublishPackageRequest } from '../models/ApiCmsPublishPackageRequest';
+import { ApiCmsPublishedPackage } from '../models/ApiCmsPublishedPackage';
+import { ApiCmsPublishedSite } from '../models/ApiCmsPublishedSite';
+import { ApiCmsSignatureEnvelope } from '../models/ApiCmsSignatureEnvelope';
+import { ApiCmsSite } from '../models/ApiCmsSite';
+import { ApiCmsStorageLocation } from '../models/ApiCmsStorageLocation';
 import { ApiCollectedStats } from '../models/ApiCollectedStats';
 import { ApiCollectedStatsSeason } from '../models/ApiCollectedStatsSeason';
 import { ApiCommunityMemberMinimal } from '../models/ApiCommunityMemberMinimal';
@@ -948,6 +962,13 @@ let typeMap: {[index: string]: any} = {
     "ApiCicContributor": ApiCicContributor,
     "ApiCicContributorsPage": ApiCicContributorsPage,
     "ApiCicOverview": ApiCicOverview,
+    "ApiCmsCreateSiteRequest": ApiCmsCreateSiteRequest,
+    "ApiCmsPublishPackageRequest": ApiCmsPublishPackageRequest,
+    "ApiCmsPublishedPackage": ApiCmsPublishedPackage,
+    "ApiCmsPublishedSite": ApiCmsPublishedSite,
+    "ApiCmsSignatureEnvelope": ApiCmsSignatureEnvelope,
+    "ApiCmsSite": ApiCmsSite,
+    "ApiCmsStorageLocation": ApiCmsStorageLocation,
     "ApiCollectedStats": ApiCollectedStats,
     "ApiCollectedStatsSeason": ApiCollectedStatsSeason,
     "ApiCommunityMemberMinimal": ApiCommunityMemberMinimal,
