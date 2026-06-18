@@ -105,7 +105,9 @@ export async function handleValidateProfileCmsPackage(
   req: ValidateProfileCmsPackageRequest
 ): Promise<ApiProfileCmsValidationResult> {
   const body = getValidatedByJoiOrThrow(req.body, ValidateBodySchema);
-  return profileCmsApiService.validatePackage(body) as ApiProfileCmsValidationResult;
+  return profileCmsApiService.validatePackage(
+    body
+  ) as ApiProfileCmsValidationResult;
 }
 
 export async function handlePublishProfileCmsPackage(
