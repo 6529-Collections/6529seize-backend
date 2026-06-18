@@ -44,7 +44,7 @@ export interface WalletGalleryOwnershipRow {
   readonly animation: string | null;
   readonly compressed_animation: string | null;
   readonly icon: string | null;
-  readonly metadata: unknown | null;
+  readonly metadata: unknown;
 }
 
 export interface WalletGalleryMediaSource {

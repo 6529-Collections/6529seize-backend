@@ -2,15 +2,13 @@ import { getAuthenticationContext } from '@/api/auth/auth';
 import { ApiCreateProfileCmsWalletGallerySnapshotRequest } from '@/api/generated/models/ApiCreateProfileCmsWalletGallerySnapshotRequest';
 import { ApiProfileCmsWalletGallerySnapshot } from '@/api/generated/models/ApiProfileCmsWalletGallerySnapshot';
 import { CreateProfileCmsWalletGallerySnapshotRequest } from '@/api/generated/routes/operations';
-import {
-  profileCmsWalletGalleryApiService,
-  ProfileCmsWalletGallerySnapshotResponse
-} from '@/api/profile-cms/wallet-gallery.api.service';
+import { profileCmsWalletGalleryApiService } from '@/api/profile-cms/wallet-gallery.api.service';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
 import { RequestContext } from '@/request.context';
 import { Timer } from '@/time';
 import { Request } from 'express';
 import * as Joi from 'joi';
+export type { ProfileCmsWalletGallerySnapshotResponse } from '@/api/profile-cms/wallet-gallery.api.service';
 
 const WalletGalleryAssetIdentifierSchema = Joi.object({
   contract: Joi.string().trim().min(1).max(100).required(),
@@ -57,5 +55,3 @@ async function getRequestContext(
   const authenticationContext = await getAuthenticationContext(req, timer);
   return { authenticationContext, timer };
 }
-
-export type { ProfileCmsWalletGallerySnapshotResponse };

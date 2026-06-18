@@ -58,7 +58,7 @@ export interface ProfileCmsWalletGalleryAssetResponse {
   readonly artist_seize_handle: string | null;
   readonly token_type: string | null;
   readonly media: WalletGalleryNormalizedMedia;
-  readonly metadata: unknown | null;
+  readonly metadata: unknown;
   readonly flags: ProfileCmsWalletGalleryAssetFlagsResponse;
 }
 
@@ -258,7 +258,7 @@ function toExcludedAsset(
   };
 }
 
-function normalizeMetadata(metadata: unknown | null): unknown | null {
+function normalizeMetadata(metadata: unknown): unknown {
   if (typeof metadata !== 'string') {
     return metadata ?? null;
   }
