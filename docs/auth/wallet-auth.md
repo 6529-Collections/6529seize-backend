@@ -126,7 +126,7 @@ The revised auth flow uses these relevant flags/config values:
 - `AUTH_SIGNATURE_ALLOWED_AUDIENCES`: optional comma-separated audiences accepted during structured-signature verification.
 - `AUTH_SESSION_HASH_SECRET`: secret used for hashing session cookies, native refresh tokens, connection share codes, and public user-agent values. Defaults to the JWT secret if unset.
 - `AUTH_SESSION_V2_REFRESH_DAYS`: session refresh lifetime in days. Defaults to 30.
-- `AUTH_CONNECTION_SHARING_ENABLED`: default false. Must be `true` to enable `/auth/connection-share` and `/auth/connection-share/redeem`.
+- `AUTH_CONNECTION_SHARING_DISABLED`: default false. Set to `true` only to disable `/auth/connection-share` and `/auth/connection-share/redeem`; otherwise connection sharing is enabled.
 - `AUTH_CONNECTION_SHARE_CODE_TTL_SECONDS`: one-time connection share code lifetime. Defaults to 300 seconds.
 - `AUTH_LEGACY_WS_QUERY_TOKEN_ENABLED`: default true. Controls legacy WebSocket JWT query-token support.
 

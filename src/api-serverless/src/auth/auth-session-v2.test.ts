@@ -3,6 +3,7 @@ import {
   clearWalletSessionCookie,
   createConnectionShare,
   createWebSession,
+  isAuthConnectionSharingEnabled,
   logoutNativeSession,
   logoutWebSession,
   parseWalletSessionCookieHeader,
@@ -45,6 +46,18 @@ describe('auth-session-v2', () => {
     delete process.env.JWT_SECRET;
     delete process.env.JWT_EXPIRY_SECONDS;
     delete process.env.AUTH_SESSION_HASH_SECRET;
+    delete process.env.AUTH_CONNECTION_SHARING_DISABLED;
+  });
+
+  it('enables connection sharing unless explicitly disabled', () => {
+    delete process.env.AUTH_CONNECTION_SHARING_DISABLED;
+    expect(isAuthConnectionSharingEnabled()).toBe(true);
+
+    process.env.AUTH_CONNECTION_SHARING_DISABLED = 'false';
+    expect(isAuthConnectionSharingEnabled()).toBe(true);
+
+    process.env.AUTH_CONNECTION_SHARING_DISABLED = 'true';
+    expect(isAuthConnectionSharingEnabled()).toBe(false);
   });
 
   it('serializes and parses web session cookies without exposing stored raw secrets', async () => {
