@@ -202,10 +202,7 @@ export class DropCreationApiService {
   }
 
   async toggleHideLinkPreview(
-    {
-      dropId,
-      hideLinkPreview
-    }: { dropId: string; hideLinkPreview?: boolean | undefined },
+    { dropId, hideLinkPreview }: { dropId: string; hideLinkPreview?: boolean },
     ctx: RequestContext
   ): Promise<ApiDrop> {
     ctx.timer?.start('dropCreationApiService->toggleHideLinkPreview');
