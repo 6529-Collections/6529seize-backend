@@ -228,6 +228,15 @@ export * from '../models/ApiPageWithNextUriBase';
 export * from '../models/ApiPageWithoutCount';
 export * from '../models/ApiPaymentDetails';
 export * from '../models/ApiProfileClassification';
+export * from '../models/ApiProfileCmsAgentPatchValidationResult';
+export * from '../models/ApiProfileCmsAgentPatchValidationResultTarget';
+export * from '../models/ApiProfileCmsAgentSchemaBundle';
+export * from '../models/ApiProfileCmsAgentSchemaBundleEndpoints';
+export * from '../models/ApiProfileCmsAgentSchemaBundleSafety';
+export * from '../models/ApiProfileCmsAgentSchemaBundleSourcePacketTypesInner';
+export * from '../models/ApiProfileCmsAgentSourcePacket';
+export * from '../models/ApiProfileCmsAgentSourcePacketSafety';
+export * from '../models/ApiProfileCmsAgentSourcePacketValidationDiagnostics';
 export * from '../models/ApiProfileCmsPackage';
 export * from '../models/ApiProfileCmsPackageExport';
 export * from '../models/ApiProfileCmsPackageStatus';
@@ -304,6 +313,7 @@ export * from '../models/ApiUploadItem';
 export * from '../models/ApiUploadPartOfMultipartUploadRequest';
 export * from '../models/ApiUploadPartOfMultipartUploadResponse';
 export * from '../models/ApiUploadsPage';
+export * from '../models/ApiValidateProfileCmsAgentPatchRequest';
 export * from '../models/ApiValidateProfileCmsPackageRequest';
 export * from '../models/ApiWallet';
 export * from '../models/ApiWave';
@@ -678,6 +688,15 @@ import { ApiPageWithNextUriBase } from '../models/ApiPageWithNextUriBase';
 import { ApiPageWithoutCount } from '../models/ApiPageWithoutCount';
 import { ApiPaymentDetails } from '../models/ApiPaymentDetails';
 import { ApiProfileClassification } from '../models/ApiProfileClassification';
+import { ApiProfileCmsAgentPatchValidationResult, ApiProfileCmsAgentPatchValidationResultSchemaEnum          } from '../models/ApiProfileCmsAgentPatchValidationResult';
+import { ApiProfileCmsAgentPatchValidationResultTarget } from '../models/ApiProfileCmsAgentPatchValidationResultTarget';
+import { ApiProfileCmsAgentSchemaBundle, ApiProfileCmsAgentSchemaBundleSchemaEnum      , ApiProfileCmsAgentSchemaBundleDataClassesEnum     } from '../models/ApiProfileCmsAgentSchemaBundle';
+import { ApiProfileCmsAgentSchemaBundleEndpoints } from '../models/ApiProfileCmsAgentSchemaBundleEndpoints';
+import { ApiProfileCmsAgentSchemaBundleSafety } from '../models/ApiProfileCmsAgentSchemaBundleSafety';
+import { ApiProfileCmsAgentSchemaBundleSourcePacketTypesInner , ApiProfileCmsAgentSchemaBundleSourcePacketTypesInnerDataClassEnum      } from '../models/ApiProfileCmsAgentSchemaBundleSourcePacketTypesInner';
+import { ApiProfileCmsAgentSourcePacket, ApiProfileCmsAgentSourcePacketSchemaEnum       , ApiProfileCmsAgentSourcePacketVisibilityEnum          } from '../models/ApiProfileCmsAgentSourcePacket';
+import { ApiProfileCmsAgentSourcePacketSafety } from '../models/ApiProfileCmsAgentSourcePacketSafety';
+import { ApiProfileCmsAgentSourcePacketValidationDiagnostics } from '../models/ApiProfileCmsAgentSourcePacketValidationDiagnostics';
 import { ApiProfileCmsPackage             } from '../models/ApiProfileCmsPackage';
 import { ApiProfileCmsPackageExport               } from '../models/ApiProfileCmsPackageExport';
 import { ApiProfileCmsPackageStatus } from '../models/ApiProfileCmsPackageStatus';
@@ -754,6 +773,7 @@ import { ApiUploadItem } from '../models/ApiUploadItem';
 import { ApiUploadPartOfMultipartUploadRequest } from '../models/ApiUploadPartOfMultipartUploadRequest';
 import { ApiUploadPartOfMultipartUploadResponse } from '../models/ApiUploadPartOfMultipartUploadResponse';
 import { ApiUploadsPage } from '../models/ApiUploadsPage';
+import { ApiValidateProfileCmsAgentPatchRequest } from '../models/ApiValidateProfileCmsAgentPatchRequest';
 import { ApiValidateProfileCmsPackageRequest } from '../models/ApiValidateProfileCmsPackageRequest';
 import { ApiWallet } from '../models/ApiWallet';
 import { ApiWave } from '../models/ApiWave';
@@ -939,6 +959,12 @@ let enumsMap: Set<string> = new Set<string>([
     "ApiOgMetadataEntityType",
     "ApiPageSortDirection",
     "ApiProfileClassification",
+    "ApiProfileCmsAgentPatchValidationResultSchemaEnum",
+    "ApiProfileCmsAgentSchemaBundleSchemaEnum",
+    "ApiProfileCmsAgentSchemaBundleDataClassesEnum",
+    "ApiProfileCmsAgentSchemaBundleSourcePacketTypesInnerDataClassEnum",
+    "ApiProfileCmsAgentSourcePacketSchemaEnum",
+    "ApiProfileCmsAgentSourcePacketVisibilityEnum",
     "ApiProfileCmsPackageStatus",
     "ApiProfileCmsPointerEventEventTypeEnum",
     "ApiProfileCmsValidationIssueSeverityEnum",
@@ -1184,6 +1210,15 @@ let typeMap: {[index: string]: any} = {
     "ApiPageWithNextUriBase": ApiPageWithNextUriBase,
     "ApiPageWithoutCount": ApiPageWithoutCount,
     "ApiPaymentDetails": ApiPaymentDetails,
+    "ApiProfileCmsAgentPatchValidationResult": ApiProfileCmsAgentPatchValidationResult,
+    "ApiProfileCmsAgentPatchValidationResultTarget": ApiProfileCmsAgentPatchValidationResultTarget,
+    "ApiProfileCmsAgentSchemaBundle": ApiProfileCmsAgentSchemaBundle,
+    "ApiProfileCmsAgentSchemaBundleEndpoints": ApiProfileCmsAgentSchemaBundleEndpoints,
+    "ApiProfileCmsAgentSchemaBundleSafety": ApiProfileCmsAgentSchemaBundleSafety,
+    "ApiProfileCmsAgentSchemaBundleSourcePacketTypesInner": ApiProfileCmsAgentSchemaBundleSourcePacketTypesInner,
+    "ApiProfileCmsAgentSourcePacket": ApiProfileCmsAgentSourcePacket,
+    "ApiProfileCmsAgentSourcePacketSafety": ApiProfileCmsAgentSourcePacketSafety,
+    "ApiProfileCmsAgentSourcePacketValidationDiagnostics": ApiProfileCmsAgentSourcePacketValidationDiagnostics,
     "ApiProfileCmsPackage": ApiProfileCmsPackage,
     "ApiProfileCmsPackageExport": ApiProfileCmsPackageExport,
     "ApiProfileCmsPointerEvent": ApiProfileCmsPointerEvent,
@@ -1254,6 +1289,7 @@ let typeMap: {[index: string]: any} = {
     "ApiUploadPartOfMultipartUploadRequest": ApiUploadPartOfMultipartUploadRequest,
     "ApiUploadPartOfMultipartUploadResponse": ApiUploadPartOfMultipartUploadResponse,
     "ApiUploadsPage": ApiUploadsPage,
+    "ApiValidateProfileCmsAgentPatchRequest": ApiValidateProfileCmsAgentPatchRequest,
     "ApiValidateProfileCmsPackageRequest": ApiValidateProfileCmsPackageRequest,
     "ApiWallet": ApiWallet,
     "ApiWave": ApiWave,

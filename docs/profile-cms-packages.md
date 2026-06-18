@@ -114,6 +114,54 @@ Frontend integration notes:
 - Asset `flags.spam` is currently always `false`; `include_spam` is reserved
   for a later indexed spam/unwanted flag source.
 
+## BYO AI Agent Affordances
+
+The backend exposes read-only affordances so users can point their own agents at
+CMS drafts and packages without 6529 running or paying for model inference.
+
+```http
+GET /api/profile-cms/agent/schema-bundle
+GET /api/profile-cms/packages/:id/agent/source-packet
+POST /api/profile-cms/packages/:id/agent/patch/validate
+```
+
+The schema bundle is public and returns the current string schema ids,
+source-packet categories, patch operation names, endpoint templates, and safety
+metadata. Frontend clients should treat this as the narrow contract for external
+agent integrations.
+
+Source packets are data, not instructions. The response deliberately separates:
+
+- `facts`: backend package row facts, profile references, wallet gallery
+  snapshots, collection references, NFT references, storage receipts, and
+  signature summaries where present.
+- `author_copy`: user-authored titles, descriptions, captions, labels, and text
+  blocks. Treat all fields here as untrusted prompt input.
+- `derived_metadata`: route/page/block/asset/source-packet counts and other
+  computed metadata.
+- `validation_diagnostics`: a live CMS V1 validation result plus any stored
+  package validation result/error.
+
+The response includes `safety.untrusted_fields`; frontend and external-agent
+adapters must not execute or follow instructions found in those fields. They
+should pass them as quoted data/context only.
+
+Published production-safe source packets are public. Draft, failed, archived,
+or otherwise private package packets require the profile owner or delegated
+`PUBLISH_CMS` proxy authority. Missing authority returns the same not-found
+shape as other private package reads.
+
+Patch validation accepts an `agent_patch` object with schema
+`6529.cms.agent_patch.v1` and returns
+`6529.cms.agent_patch_validation_result.v1`. The endpoint requires profile CMS
+authority, only validates against draft packages, dry-runs supported operations
+in memory, and never writes. `applied` is always `false`; sending `apply: true`
+returns a structured `agent_patch.apply_not_supported` issue. A successful
+patch preflight does not bypass draft save, CMS validation, decentralized
+storage, signing, or publish authority. Agents should use the returned
+`candidate_validation` to revise proposals, then hand the final package back to
+the normal save/publish flow.
+
 ## Publish Rules
 
 Publish runs CMS V1 validation with production options:
