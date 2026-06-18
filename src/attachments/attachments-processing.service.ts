@@ -19,7 +19,7 @@ import { createHash } from 'node:crypto';
 import { Readable, Transform } from 'node:stream';
 import { TextDecoder } from 'node:util';
 import { fromBuffer as fileTypeFromBuffer } from 'file-type';
-import { PDFDocument } from 'pdf-lib';
+import { EncryptedPDFError, PDFDocument } from 'pdf-lib';
 import {
   getFileExtension,
   slugifyBaseName
@@ -424,9 +424,7 @@ export class AttachmentsProcessingService {
   }
 
   private isEncryptedPdfError(error: unknown): boolean {
-    return (
-      error instanceof Error && error.message.toLowerCase().includes('encrypt')
-    );
+    return error instanceof EncryptedPDFError;
   }
 
   private getPublishedFileName({

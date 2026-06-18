@@ -8,7 +8,6 @@ import {
   AttachmentStatus
 } from '@/entities/IAttachment';
 import { ApiAttachmentKind } from '@/api/generated/models/ApiAttachmentKind';
-import { ApiAttachmentSafetyScanner } from '@/api/generated/models/ApiAttachmentSafetyScanner';
 import { ApiAttachmentSafetyStatus } from '@/api/generated/models/ApiAttachmentSafetyStatus';
 import { ApiAttachmentStatus } from '@/api/generated/models/ApiAttachmentStatus';
 
@@ -79,7 +78,7 @@ describe('AttachmentsStatusNotifier', () => {
           error_reason: null,
           safety: {
             status: ApiAttachmentSafetyStatus.Pending,
-            scanner: ApiAttachmentSafetyScanner.Guardduty,
+            scanner: null,
             validation: null,
             size_bytes: null,
             sha256: null
@@ -111,7 +110,7 @@ describe('AttachmentsStatusNotifier', () => {
           url: 'https://ipfs/foo.pdf',
           safety: expect.objectContaining({
             status: ApiAttachmentSafetyStatus.Blocked,
-            scanner: ApiAttachmentSafetyScanner.Guardduty
+            scanner: null
           })
         }),
         ownerProfileId: baseAttachment.owner_profile_id,

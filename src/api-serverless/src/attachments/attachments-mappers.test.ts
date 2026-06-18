@@ -39,14 +39,18 @@ describe('attachments mappers', () => {
       expect(
         mapAttachmentSafetyToApi({
           ...baseAttachment,
-          status
+          status,
+          guardduty_status:
+            status === AttachmentStatus.PROCESSING
+              ? 'NO_THREATS_FOUND'
+              : null
         })
       ).toEqual({
         status: ApiAttachmentSafetyStatus.Pending,
         scanner:
-          status === AttachmentStatus.UPLOADING
-            ? null
-            : ApiAttachmentSafetyScanner.Guardduty,
+          status === AttachmentStatus.PROCESSING
+            ? ApiAttachmentSafetyScanner.Guardduty
+            : null,
         validation: null,
         size_bytes: null,
         sha256: null
@@ -59,6 +63,7 @@ describe('attachments mappers', () => {
       mapAttachmentSafetyToApi({
         ...baseAttachment,
         status: AttachmentStatus.READY,
+        guardduty_status: 'NO_THREATS_FOUND',
         verdict: 'VALIDATED_FOR_PUBLIC_IPFS',
         size_bytes: 1234,
         sha256: 'a'.repeat(64)
@@ -82,7 +87,7 @@ describe('attachments mappers', () => {
     ).toBeUndefined();
   });
 
-  it('maps blocked and failed attachments to terminal safety states', () => {
+  it('maps blocked and failed attachments to terminal safety states without assuming scanner cause', () => {
     expect(
       mapAttachmentSafetyToApi({
         ...baseAttachment,
@@ -90,7 +95,8 @@ describe('attachments mappers', () => {
       })
     ).toEqual(
       expect.objectContaining({
-        status: ApiAttachmentSafetyStatus.Blocked
+        status: ApiAttachmentSafetyStatus.Blocked,
+        scanner: null
       })
     );
     expect(
@@ -100,7 +106,23 @@ describe('attachments mappers', () => {
       })
     ).toEqual(
       expect.objectContaining({
-        status: ApiAttachmentSafetyStatus.Failed
+        status: ApiAttachmentSafetyStatus.Failed,
+        scanner: null
+      })
+    );
+  });
+
+  it('reports GuardDuty scanner only when a GuardDuty result is present', () => {
+    expect(
+      mapAttachmentSafetyToApi({
+        ...baseAttachment,
+        status: AttachmentStatus.BLOCKED,
+        guardduty_status: 'THREATS_FOUND'
+      })
+    ).toEqual(
+      expect.objectContaining({
+        status: ApiAttachmentSafetyStatus.Blocked,
+        scanner: ApiAttachmentSafetyScanner.Guardduty
       })
     );
   });

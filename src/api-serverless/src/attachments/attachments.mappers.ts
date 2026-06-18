@@ -78,7 +78,7 @@ export function mapAttachmentSafetyToApi(
 
   return {
     status: mapAttachmentSafetyStatusToApi(attachment),
-    scanner: shouldShowGuardDutyScanner(attachment.status)
+    scanner: shouldShowGuardDutyScanner(attachment)
       ? ApiAttachmentSafetyScanner.Guardduty
       : null,
     validation: scannedAndValidated
@@ -106,6 +106,6 @@ function mapAttachmentSafetyStatusToApi(
   }
 }
 
-function shouldShowGuardDutyScanner(status: AttachmentStatus): boolean {
-  return status !== AttachmentStatus.UPLOADING;
+function shouldShowGuardDutyScanner(attachment: AttachmentEntity): boolean {
+  return Boolean(attachment.guardduty_status);
 }

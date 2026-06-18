@@ -75,9 +75,11 @@ as bad.
 Drops reference attachments by attachment id. Drop responses include each
 attachment's id, file name, MIME type, kind, status, final URL when ready, and
 error reason when the attachment is bad. They also include a safety object with
-the normalized attachment safety state, scanner name when applicable, public
-IPFS validation marker when applicable, final payload size, and SHA-256 when
-known.
+the normalized attachment safety state, scanner name only when a GuardDuty
+result exists, public IPFS validation marker when applicable, and final payload
+size and SHA-256 when known. The size and SHA-256 fields can be null while an
+attachment is pending or when a terminal failure happens before processing
+records final artifact metadata.
 
 Only files uploaded through this attachment pipeline can show "Scanned and
 validated" in clients. External file links are not scanned by 6529 and must not
