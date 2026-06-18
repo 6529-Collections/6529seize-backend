@@ -3,8 +3,11 @@ import { ApiProfileCmsValidationResult } from '@/api/generated/models/ApiProfile
 import { ApiProfileCmsPackage } from '@/api/generated/models/ApiProfileCmsPackage';
 import { ApiProfileCmsPrimaryPackage } from '@/api/generated/models/ApiProfileCmsPrimaryPackage';
 import {
+  ArchiveProfileCmsPackageRequest,
+  ExportProfileCmsPackageRequest,
   GetProfileCmsPackageByVersionRequest,
   GetPrimaryProfileCmsPackageRequest,
+  RollbackProfileCmsPackageRequest,
   SaveProfileCmsPackageDraftRequest,
   ValidateProfileCmsPackageRequest
 } from '@/api/generated/routes/operations';
@@ -20,7 +23,10 @@ const mockProfileCmsApiService = {
   saveDraft: jest.fn(),
   validatePackage: jest.fn(),
   getPrimaryByHandle: jest.fn(),
-  getByVersion: jest.fn()
+  getByVersion: jest.fn(),
+  rollbackPrimary: jest.fn(),
+  archivePackage: jest.fn(),
+  exportPackage: jest.fn()
 };
 
 jest.mock('@/api/auth/auth', () => ({
@@ -32,8 +38,11 @@ jest.mock('@/api/profile-cms/profile-cms.api.service', () => ({
 }));
 
 import {
+  handleArchiveProfileCmsPackage,
+  handleExportProfileCmsPackage,
   handleGetProfileCmsPackageByVersion,
   handleGetPrimaryProfileCmsPackage,
+  handleRollbackProfileCmsPackage,
   handleSaveProfileCmsPackageDraft,
   handleValidateProfileCmsPackage
 } from './profile-cms.handlers';
@@ -175,6 +184,111 @@ describe('profile CMS handlers', () => {
       cmsPackage.package_id,
       2,
       { authenticationContext, timer: undefined }
+    );
+  });
+
+  it('rolls back through the API handler with current-package guard', async () => {
+    const authenticationContext = AuthenticationContext.fromProfileId(
+      PROFILE_CMS_FIXTURE_PROFILE_ID
+    );
+    const cmsPackage = createValidProfileCmsPackage();
+    const apiPackage = {
+      id: 'previous-package',
+      package: cmsPackage,
+      profile_id: PROFILE_CMS_FIXTURE_PROFILE_ID,
+      profile_handle: PROFILE_CMS_FIXTURE_HANDLE,
+      package_id: cmsPackage.package_id,
+      version: 1,
+      status: 'published',
+      package_hash: cmsPackage.integrity.package_hash,
+      payload_hash: cmsPackage.integrity.payload_hash,
+      updated_at: 1000,
+      created_at: 1000,
+      published_at: 1000
+    } as unknown as ApiProfileCmsPackage;
+    mockGetAuthenticationContext.mockResolvedValue(authenticationContext);
+    mockProfileCmsApiService.rollbackPrimary.mockResolvedValue(apiPackage);
+
+    const request = {
+      params: { id: 'previous-package' },
+      body: { expected_current_package_id: 'current-package' },
+      query: {}
+    } as unknown as RollbackProfileCmsPackageRequest;
+
+    await expect(handleRollbackProfileCmsPackage(request)).resolves.toBe(
+      apiPackage
+    );
+    expect(mockProfileCmsApiService.rollbackPrimary).toHaveBeenCalledWith(
+      'previous-package',
+      request.body,
+      { authenticationContext, timer: undefined }
+    );
+  });
+
+  it('archives through the API handler', async () => {
+    const authenticationContext = AuthenticationContext.fromProfileId(
+      PROFILE_CMS_FIXTURE_PROFILE_ID
+    );
+    const cmsPackage = createValidProfileCmsPackage();
+    const apiPackage = {
+      id: 'cms-package-id',
+      package: cmsPackage,
+      profile_id: PROFILE_CMS_FIXTURE_PROFILE_ID,
+      profile_handle: PROFILE_CMS_FIXTURE_HANDLE,
+      package_id: cmsPackage.package_id,
+      version: 1,
+      status: 'archived',
+      package_hash: cmsPackage.integrity.package_hash,
+      payload_hash: cmsPackage.integrity.payload_hash,
+      updated_at: 1000,
+      created_at: 1000
+    } as unknown as ApiProfileCmsPackage;
+    mockGetAuthenticationContext.mockResolvedValue(authenticationContext);
+    mockProfileCmsApiService.archivePackage.mockResolvedValue(apiPackage);
+
+    const request = {
+      params: { id: 'cms-package-id' },
+      body: { expected_package_hash: cmsPackage.integrity.package_hash },
+      query: {}
+    } as unknown as ArchiveProfileCmsPackageRequest;
+
+    await expect(handleArchiveProfileCmsPackage(request)).resolves.toBe(
+      apiPackage
+    );
+  });
+
+  it('exports through the API handler', async () => {
+    const authenticationContext = AuthenticationContext.fromProfileId(
+      PROFILE_CMS_FIXTURE_PROFILE_ID
+    );
+    const cmsPackage = createValidProfileCmsPackage();
+    const exported = {
+      package: cmsPackage,
+      package_id: cmsPackage.package_id,
+      package_db_id: 'cms-package-id',
+      version: 1,
+      status: 'published',
+      profile_id: PROFILE_CMS_FIXTURE_PROFILE_ID,
+      profile_handle: PROFILE_CMS_FIXTURE_HANDLE,
+      primary_path: `/${PROFILE_CMS_FIXTURE_HANDLE}/index.html`,
+      package_hash: cmsPackage.integrity.package_hash,
+      payload_hash: cmsPackage.integrity.payload_hash,
+      storage_receipts: cmsPackage.storage,
+      pointer_events: [],
+      updated_at: 1000,
+      published_at: 1000
+    };
+    mockGetAuthenticationContext.mockResolvedValue(authenticationContext);
+    mockProfileCmsApiService.exportPackage.mockResolvedValue(exported);
+
+    const request = {
+      params: { id: 'cms-package-id' },
+      body: undefined,
+      query: {}
+    } as unknown as ExportProfileCmsPackageRequest;
+
+    await expect(handleExportProfileCmsPackage(request)).resolves.toBe(
+      exported
     );
   });
 });

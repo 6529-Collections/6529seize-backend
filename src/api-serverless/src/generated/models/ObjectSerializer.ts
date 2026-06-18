@@ -7,6 +7,7 @@ export * from '../models/ApiAddReactionToDropRequest';
 export * from '../models/ApiAggregatedActivity';
 export * from '../models/ApiAggregatedActivityMemes';
 export * from '../models/ApiAggregatedActivityPage';
+export * from '../models/ApiArchiveProfileCmsPackageRequest';
 export * from '../models/ApiArtistNameItem';
 export * from '../models/ApiAttachment';
 export * from '../models/ApiAttachmentKind';
@@ -227,7 +228,9 @@ export * from '../models/ApiPageWithoutCount';
 export * from '../models/ApiPaymentDetails';
 export * from '../models/ApiProfileClassification';
 export * from '../models/ApiProfileCmsPackage';
+export * from '../models/ApiProfileCmsPackageExport';
 export * from '../models/ApiProfileCmsPackageStatus';
+export * from '../models/ApiProfileCmsPointerEvent';
 export * from '../models/ApiProfileCmsPrimaryPackage';
 export * from '../models/ApiProfileCmsValidationIssue';
 export * from '../models/ApiProfileCmsValidationResult';
@@ -262,6 +265,7 @@ export * from '../models/ApiReplyToDrop';
 export * from '../models/ApiReplyToDropAuthor';
 export * from '../models/ApiReplyToDropResponse';
 export * from '../models/ApiReplyToDropV2';
+export * from '../models/ApiRollbackProfileCmsPackageRequest';
 export * from '../models/ApiSaveProfileCmsPackageDraftRequest';
 export * from '../models/ApiSeizeSettings';
 export * from '../models/ApiSetPinnedDropRequest';
@@ -444,6 +448,7 @@ import { ApiAddReactionToDropRequest } from '../models/ApiAddReactionToDropReque
 import { ApiAggregatedActivity } from '../models/ApiAggregatedActivity';
 import { ApiAggregatedActivityMemes } from '../models/ApiAggregatedActivityMemes';
 import { ApiAggregatedActivityPage } from '../models/ApiAggregatedActivityPage';
+import { ApiArchiveProfileCmsPackageRequest } from '../models/ApiArchiveProfileCmsPackageRequest';
 import { ApiArtistNameItem } from '../models/ApiArtistNameItem';
 import { ApiAttachment        } from '../models/ApiAttachment';
 import { ApiAttachmentKind } from '../models/ApiAttachmentKind';
@@ -664,7 +669,9 @@ import { ApiPageWithoutCount } from '../models/ApiPageWithoutCount';
 import { ApiPaymentDetails } from '../models/ApiPaymentDetails';
 import { ApiProfileClassification } from '../models/ApiProfileClassification';
 import { ApiProfileCmsPackage             } from '../models/ApiProfileCmsPackage';
+import { ApiProfileCmsPackageExport               } from '../models/ApiProfileCmsPackageExport';
 import { ApiProfileCmsPackageStatus } from '../models/ApiProfileCmsPackageStatus';
+import { ApiProfileCmsPointerEvent , ApiProfileCmsPointerEventEventTypeEnum                 } from '../models/ApiProfileCmsPointerEvent';
 import { ApiProfileCmsPrimaryPackage } from '../models/ApiProfileCmsPrimaryPackage';
 import { ApiProfileCmsValidationIssue, ApiProfileCmsValidationIssueSeverityEnum         } from '../models/ApiProfileCmsValidationIssue';
 import { ApiProfileCmsValidationResult, ApiProfileCmsValidationResultSchemaEnum         } from '../models/ApiProfileCmsValidationResult';
@@ -699,6 +706,7 @@ import { ApiReplyToDrop } from '../models/ApiReplyToDrop';
 import { ApiReplyToDropAuthor } from '../models/ApiReplyToDropAuthor';
 import { ApiReplyToDropResponse } from '../models/ApiReplyToDropResponse';
 import { ApiReplyToDropV2 } from '../models/ApiReplyToDropV2';
+import { ApiRollbackProfileCmsPackageRequest } from '../models/ApiRollbackProfileCmsPackageRequest';
 import { ApiSaveProfileCmsPackageDraftRequest } from '../models/ApiSaveProfileCmsPackageDraftRequest';
 import { ApiSeizeSettings } from '../models/ApiSeizeSettings';
 import { ApiSetPinnedDropRequest } from '../models/ApiSetPinnedDropRequest';
@@ -914,6 +922,7 @@ let enumsMap: Set<string> = new Set<string>([
     "ApiPageSortDirection",
     "ApiProfileClassification",
     "ApiProfileCmsPackageStatus",
+    "ApiProfileCmsPointerEventEventTypeEnum",
     "ApiProfileCmsValidationIssueSeverityEnum",
     "ApiProfileCmsValidationResultSchemaEnum",
     "ApiProfileProxyActionType",
@@ -956,6 +965,7 @@ let typeMap: {[index: string]: any} = {
     "ApiAggregatedActivity": ApiAggregatedActivity,
     "ApiAggregatedActivityMemes": ApiAggregatedActivityMemes,
     "ApiAggregatedActivityPage": ApiAggregatedActivityPage,
+    "ApiArchiveProfileCmsPackageRequest": ApiArchiveProfileCmsPackageRequest,
     "ApiArtistNameItem": ApiArtistNameItem,
     "ApiAttachment": ApiAttachment,
     "ApiAvailableRatingCredit": ApiAvailableRatingCredit,
@@ -1152,6 +1162,8 @@ let typeMap: {[index: string]: any} = {
     "ApiPageWithoutCount": ApiPageWithoutCount,
     "ApiPaymentDetails": ApiPaymentDetails,
     "ApiProfileCmsPackage": ApiProfileCmsPackage,
+    "ApiProfileCmsPackageExport": ApiProfileCmsPackageExport,
+    "ApiProfileCmsPointerEvent": ApiProfileCmsPointerEvent,
     "ApiProfileCmsPrimaryPackage": ApiProfileCmsPrimaryPackage,
     "ApiProfileCmsValidationIssue": ApiProfileCmsValidationIssue,
     "ApiProfileCmsValidationResult": ApiProfileCmsValidationResult,
@@ -1183,6 +1195,7 @@ let typeMap: {[index: string]: any} = {
     "ApiReplyToDropAuthor": ApiReplyToDropAuthor,
     "ApiReplyToDropResponse": ApiReplyToDropResponse,
     "ApiReplyToDropV2": ApiReplyToDropV2,
+    "ApiRollbackProfileCmsPackageRequest": ApiRollbackProfileCmsPackageRequest,
     "ApiSaveProfileCmsPackageDraftRequest": ApiSaveProfileCmsPackageDraftRequest,
     "ApiSeizeSettings": ApiSeizeSettings,
     "ApiSetPinnedDropRequest": ApiSetPinnedDropRequest,

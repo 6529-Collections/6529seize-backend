@@ -2,6 +2,48 @@
 
 ## 2026-06-17
 
+- Started stacked CMS Decentralized Publish Spine branch
+  `codex/profile-cms-decentralized-publish` from BE PR #1645 head
+  `33c81546`, targeting `codex/profile-cms-backend`.
+- Added publish EIP-712 helpers for `ProfileCmsPublish`, including exact domain
+  and message fields, EOA recovery, deadline enforcement in the service, and an
+  EIP-1271 verifier path backed by the repo RPC provider for mainnet, Goerli,
+  and Sepolia.
+- Added production storage receipt validation for canonical decentralized
+  receipts: exactly one canonical IPFS or Arweave receipt, package-hash
+  `content_hash` consistency, native/provider id checks, and S3/fixture-only
+  rejection for publish.
+- Added profile CMS pointer event persistence:
+  `profile_cms_pointer_events` entity, table constant, explicit migration SQL,
+  repository, and publish/set-primary/supersede/rollback/archive event writes.
+- Added rollback, archive, and export API operations with generated OpenAPI
+  models/routes and handler/service tests. Rollback uses an expected-current
+  package guard and only restores published/superseded production-safe packages.
+- Updated profile CMS docs, architecture docs, and workstream memory with the
+  decentralized publish/signing/storage assumptions and remaining remote-byte
+  verification caveat.
+- Focused validation passed for the current branch:
+  `node node_modules/jest/bin/jest.js src/profile-cms/profile-cms-signing.test.ts src/profile-cms/profile-cms-storage.test.ts src/profile-cms/protocol/v1/profile-cms-protocol-v1.test.ts src/api-serverless/src/profile-cms/profile-cms-api-service.test.ts src/api-serverless/src/profile-cms/profile-cms-handlers.test.ts --runInBand --config %TEMP%/jest-profile-cms.config.cjs`
+- Targeted ESLint passed on touched CMS signing/storage/pointer/service/handler
+  source and tests. Root/API `tsc --noEmit` were attempted but blocked by the
+  borrowed local dependency tree and base CMS protocol typing issues before
+  providing a clean branch-specific signal.
+- Addressed PR #1647 6529bot review feedback locally:
+  - added a 15-minute server-side publish deadline cap and documented the
+    epoch-millisecond unit in OpenAPI.
+  - added `profile_cms_publish_signatures` to consume verified typed-data
+    hashes before the pointer transaction.
+  - required Safe/EIP-1271 signers to have contract bytecode on the same RPC
+    chain selected by `chain_id`.
+  - added deterministic `event_sequence` ordering to pointer events.
+  - tightened canonical Arweave publish receipts to native `ar://` URIs.
+  - added focused tests for verifying-contract domain parity, consumed
+    signatures, deadline cap, signer wallet rejection, rollback production
+    validity, rollback transaction order, and export omission of raw signature
+    and typed data.
+  - resolved the Sonar `typescript:S4325` redundant assertion in pointer event
+    hydration.
+
 - Created backend profile CMS package persistence:
   `profile_cms_packages` TypeORM entity, table constant, explicit SQL migration,
   repository, publication states, primary package flag, validation result
