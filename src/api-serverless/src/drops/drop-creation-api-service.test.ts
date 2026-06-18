@@ -1,16 +1,10 @@
 import { DropCreationApiService } from './drop-creation.api.service';
 
-function makeService({
-  currentHidden,
-  returnedHidden
-}: {
-  readonly currentHidden: boolean;
-  readonly returnedHidden?: boolean | undefined;
-}) {
+function makeService({ currentHidden }: { readonly currentHidden: boolean }) {
   const dropsService = {
     findDropByIdOrThrow: jest.fn().mockResolvedValue({
       id: 'drop-1',
-      hide_link_preview: returnedHidden ?? currentHidden
+      hide_link_preview: currentHidden
     })
   };
   const dropsDb = {

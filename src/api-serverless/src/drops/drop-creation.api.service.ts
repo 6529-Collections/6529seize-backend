@@ -228,7 +228,8 @@ export class DropCreationApiService {
       );
     }
     const newValue = hideLinkPreview ?? !drop.hide_link_preview;
-    if (newValue !== drop.hide_link_preview) {
+    const changed = newValue !== drop.hide_link_preview;
+    if (changed) {
       await this.dropsDb.updateHideLinkPreview(
         { drop_id: dropId, hide_link_preview: newValue },
         ctx
@@ -238,7 +239,7 @@ export class DropCreationApiService {
       { dropId, skipEligibilityCheck: true },
       ctx
     );
-    if (newValue !== drop.hide_link_preview) {
+    if (changed) {
       await this.wsListenersNotifier.notifyAboutDropUpdate(apiDrop, ctx);
     }
     ctx.timer?.stop('dropCreationApiService->toggleHideLinkPreview');

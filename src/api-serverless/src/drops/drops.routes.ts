@@ -62,6 +62,7 @@ const LatestDropsSerialNosQuerySchema: Joi.ObjectSchema<{
 const ToggleHideLinkPreviewSchema: Joi.ObjectSchema<ApiToggleHideLinkPreviewRequest> =
   Joi.object({
     hide_link_preview: Joi.boolean().optional()
+    // Preserve legacy behavior for callers that previously sent ignored body fields.
   }).unknown(true);
 
 router.get(
