@@ -42,3 +42,23 @@
   - Cleaned only this worktree's generated `node_modules` after path verification.
   - Reinstalled with `npm ci --ignore-scripts`; normal postinstall was avoided
     due `serverless` postinstall failure in the interrupted tree.
+- PR follow-up:
+  - Opened draft PR #1652 and requested CodeRabbit review with
+    `@coderabbitai review`.
+  - SonarQube Cloud reported one security hotspot on a trailing-slash regex in
+    the canonical URL helper.
+  - Replaced the regex with linear slash trimming and prepared the amended
+    branch update.
+  - Addressed 6529bot general review follow-up:
+    - `featured_page_ids` now stays empty when no NFT is explicitly featured.
+    - zero-NFT snapshots generate home/collections-index pages and pass draft
+      CMS validation.
+    - duplicate media asset lookup keys and empty/non-finite token IDs are
+      rejected at the generator boundary.
+    - fixture MIME fallback now emits valid MIME strings for all CMS asset
+      kinds.
+    - route slug and token-id sorting invariants have local comments.
+    - route uniqueness property coverage now runs 100 cases and fuzzes token
+      IDs, collection titles, and simple media roles.
+    - FE handoff docs now spell out the canonical `collection_nft_order`
+      collection-key derivation.

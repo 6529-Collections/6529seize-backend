@@ -6,10 +6,19 @@ import {
   createFixtureProfileCmsGallerySnapshot,
   generateProfileCmsGalleryPackage,
   ProfileCmsGallerySnapshotNft,
-  ProfileCmsGalleryWalletSnapshot
+  ProfileCmsGalleryWalletSnapshot,
+  toProfileCmsGalleryCollectionKey
 } from './profile-cms-gallery-package-generator';
 
 const CHECKED_AT = '2026-06-18T00:00:00.000Z';
+const MEDIA_ROLES = [
+  'grid',
+  'detail',
+  'social',
+  'original',
+  'thumbnail'
+] as const;
+const DISPLAY_VARIANT_ROLES = ['grid', 'detail', 'social'] as const;
 
 describe('profile CMS gallery package generator', () => {
   it('generates deterministic CMS V1 packages from shuffled snapshots', () => {
@@ -59,7 +68,9 @@ describe('profile CMS gallery package generator', () => {
       curation: {
         hidden_collection_keys: ['meme-lab'],
         featured_nft_keys: ['meme-2'],
-        nft_order: ['meme-2', 'meme-1']
+        collection_nft_order: {
+          [toProfileCmsGalleryCollectionKey(firstMeme)]: ['meme-2', 'meme-1']
+        }
       }
     });
 
@@ -77,6 +88,52 @@ describe('profile CMS gallery package generator', () => {
       blockById(curatedPackage, 'home-wallet-gallery')?.featured_page_ids
     ).toEqual(['nft-the-memes-2-2']);
     expect(validateForDraft(curatedPackage).valid).toBe(true);
+  });
+
+  it('keeps featured_page_ids empty when no NFTs are explicitly featured', () => {
+    const snapshot = createFixtureProfileCmsGallerySnapshot();
+    const unfeaturedPackage = generateProfileCmsGalleryPackage({
+      snapshot: {
+        ...snapshot,
+        nfts: snapshot.nfts.map((nft) => ({
+          ...nft,
+          featured: false,
+          collection: nft.collection
+            ? { ...nft.collection, featured: false }
+            : undefined
+        }))
+      }
+    });
+
+    expect(
+      blockById(unfeaturedPackage, 'home-wallet-gallery')?.featured_page_ids
+    ).toEqual([]);
+    expect(
+      blockById(unfeaturedPackage, 'home-wallet-gallery')?.page_ids
+    ).toHaveLength(2);
+    expect(validateForDraft(unfeaturedPackage).valid).toBe(true);
+  });
+
+  it('generates a valid empty gallery for zero-NFT snapshots', () => {
+    const snapshot = createFixtureProfileCmsGallerySnapshot();
+    const emptyPackage = generateProfileCmsGalleryPackage({
+      snapshot: { ...snapshot, nfts: [] }
+    });
+
+    expect(routePaths(emptyPackage)).toEqual([
+      '/punk6529bot/index.html',
+      '/punk6529bot/collections/index.html'
+    ]);
+    expect(
+      blockById(emptyPackage, 'home-wallet-gallery')?.featured_page_ids
+    ).toEqual([]);
+    expect(blockById(emptyPackage, 'home-wallet-gallery')?.page_ids).toEqual(
+      []
+    );
+    expect(sourcePacketById(emptyPackage, 'wallet-snapshot')?.nft_count).toBe(
+      0
+    );
+    expect(validateForDraft(emptyPackage).valid).toBe(true);
   });
 
   it('generates NFT detail pages with media profiles and social references when media is complete', () => {
@@ -146,22 +203,68 @@ describe('profile CMS gallery package generator', () => {
     expect(issueCodes(routeValidation)).toContain('route.duplicate_path');
   });
 
+  it('rejects malformed generator inputs before package generation', () => {
+    const snapshot = createFixtureProfileCmsGallerySnapshot();
+    const firstNft = snapshot.nfts[0];
+    const firstMedia = firstNft.media;
+    if (!firstMedia?.assets || firstMedia.assets.length < 2) {
+      throw new Error('Fixture NFT media assets are required for this test.');
+    }
+    const firstAssets = firstMedia.assets;
+    const duplicateAssetKeySnapshot: ProfileCmsGalleryWalletSnapshot = {
+      ...snapshot,
+      nfts: [
+        {
+          ...firstNft,
+          media: {
+            ...firstMedia,
+            assets: [
+              firstAssets[0],
+              { ...firstAssets[1], key: firstAssets[0].key }
+            ]
+          }
+        },
+        snapshot.nfts[1]
+      ]
+    };
+
+    expect(() =>
+      generateProfileCmsGalleryPackage({ snapshot: duplicateAssetKeySnapshot })
+    ).toThrow('Duplicate media asset lookup key');
+    expect(() =>
+      generateProfileCmsGalleryPackage({
+        snapshot: {
+          ...snapshot,
+          nfts: [{ ...firstNft, token_id: Number.POSITIVE_INFINITY }]
+        }
+      })
+    ).toThrow('finite string or number');
+    expect(() =>
+      generateProfileCmsGalleryPackage({
+        snapshot: {
+          ...snapshot,
+          nfts: [{ ...firstNft, token_id: '   ' }]
+        }
+      })
+    ).toThrow('non-empty');
+  });
+
   it('keeps route paths unique for random colliding names', () => {
     fc.assert(
       fc.property(
-        fc.array(fc.string({ maxLength: 40 }), {
+        fc.array(randomNftRecordArbitrary(), {
           minLength: 1,
           maxLength: 8
         }),
-        (names) => {
-          const snapshot = snapshotWithNftNames(names);
+        (records) => {
+          const snapshot = snapshotWithNftRecords(records);
           const cmsPackage = generateProfileCmsGalleryPackage({ snapshot });
 
           expect(hasUniqueRoutes(cmsPackage)).toBe(true);
           expect(validateForDraft(cmsPackage).valid).toBe(true);
         }
       ),
-      { numRuns: 25 }
+      { numRuns: 100 }
     );
   });
 });
@@ -203,30 +306,99 @@ function blockById(cmsPackage: CmsPackageV1, blockId: string) {
     .find((block) => !!block) as Record<string, unknown> | undefined;
 }
 
-function snapshotWithNftNames(
-  names: readonly string[]
+function sourcePacketById(cmsPackage: CmsPackageV1, packetId: string) {
+  return cmsPackage.payload.source_packets?.find(
+    (packet) => packet.id === packetId
+  ) as Record<string, unknown> | undefined;
+}
+
+interface RandomNftRecord {
+  readonly name: string;
+  readonly tokenId: string;
+  readonly collectionName: string;
+  readonly mediaRole?: (typeof MEDIA_ROLES)[number];
+}
+
+function randomNftRecordArbitrary() {
+  const nonEmptyText = fc
+    .string({ minLength: 1, maxLength: 40 })
+    .filter((value) => value.trim().length > 0);
+  return fc.record({
+    name: fc.oneof(
+      fc.constantFrom('Home', 'Collections Index', 'Same!!!', 'NFT'),
+      fc.string({ maxLength: 40 })
+    ),
+    tokenId: fc.oneof(
+      fc.constantFrom('page', 'index', '1', '01', 'collections-index'),
+      fc.integer({ min: 0, max: 1_000_000 }).map(String),
+      nonEmptyText
+    ),
+    collectionName: fc.oneof(
+      fc.constantFrom('Home', 'Collections Index', 'Same Collection'),
+      nonEmptyText
+    ),
+    mediaRole: fc.option(fc.constantFrom(...MEDIA_ROLES), { nil: undefined })
+  });
+}
+
+function snapshotWithNftRecords(
+  records: readonly RandomNftRecord[]
 ): ProfileCmsGalleryWalletSnapshot {
   const fixture = createFixtureProfileCmsGallerySnapshot();
   return {
     ...fixture,
-    nfts: names.map((name, index) => {
-      const tokenId = String(index + 1);
+    nfts: records.map((record, index) => {
       const contract = addressForIndex(index + 1);
       const nft: ProfileCmsGallerySnapshotNft = {
         key: `random-${index}`,
         chain_id: 1,
         contract,
-        token_id: tokenId,
-        name,
+        token_id: record.tokenId,
+        name: record.name,
         collection: {
           key: `collection-${index % 2}`,
-          name: 'Same Collection',
+          name: record.collectionName,
           description: 'A property-test collection.'
-        }
+        },
+        ...(record.mediaRole
+          ? { media: mediaForRecord(index, record.mediaRole) }
+          : {})
       };
       return nft;
     })
   };
+}
+
+function mediaForRecord(
+  index: number,
+  role: (typeof MEDIA_ROLES)[number]
+): NonNullable<ProfileCmsGallerySnapshotNft['media']> {
+  const key = `asset-${index}`;
+  return {
+    assets: [
+      {
+        key,
+        uri: `https://images.6529.io/property/${index}.png`,
+        content_hash: `sha256:${String(index).padStart(64, '0')}`,
+        mime_type: 'image/png',
+        kind: role === 'social' ? 'social_image' : 'image',
+        width: 1000,
+        height: 1000,
+        roles: [role]
+      }
+    ],
+    ...(isDisplayVariantRole(role)
+      ? { display_variants: [{ asset_key: key, role, crop_mode: 'cover' }] }
+      : {})
+  };
+}
+
+function isDisplayVariantRole(
+  role: (typeof MEDIA_ROLES)[number]
+): role is (typeof DISPLAY_VARIANT_ROLES)[number] {
+  return DISPLAY_VARIANT_ROLES.includes(
+    role as (typeof DISPLAY_VARIANT_ROLES)[number]
+  );
 }
 
 function addressForIndex(index: number): string {

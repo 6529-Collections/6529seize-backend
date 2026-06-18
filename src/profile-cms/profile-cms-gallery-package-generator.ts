@@ -488,6 +488,24 @@ export function toProfileCmsGalleryNftKey(
   )}:${normalizeTokenId(nft.token_id)}`;
 }
 
+export function toProfileCmsGalleryCollectionKey(
+  nft: Pick<
+    ProfileCmsGallerySnapshotNft,
+    'chain_id' | 'contract' | 'collection'
+  >
+): string {
+  if (nft.collection?.key) {
+    return nft.collection.key;
+  }
+  const contract = normalizeEthereumAddress(nft.contract);
+  const collectionTitle = nonEmptyText(nft.collection?.name, 'Collected NFTs');
+  const collectionIdentity =
+    nft.collection?.id ??
+    nft.collection?.slug ??
+    toProfileCmsGalleryRouteSlug(collectionTitle);
+  return `${nft.chain_id}:${contract}:${collectionIdentity}`;
+}
+
 export function toProfileCmsGalleryRouteSlug(
   value: string | number,
   fallback = 'item'
@@ -587,13 +605,7 @@ function prepareNft(nft: ProfileCmsGallerySnapshotNft): PreparedNft {
   const tokenId = normalizeTokenId(nft.token_id);
   const contract = normalizeEthereumAddress(nft.contract);
   const collectionTitle = nonEmptyText(nft.collection?.name, 'Collected NFTs');
-  const collectionKey =
-    nft.collection?.key ??
-    `${nft.chain_id}:${contract}:${
-      nft.collection?.id ??
-      nft.collection?.slug ??
-      toProfileCmsGalleryRouteSlug(collectionTitle)
-    }`;
+  const collectionKey = toProfileCmsGalleryCollectionKey(nft);
   const collectionAliases = uniqueStrings([
     collectionKey,
     nft.collection?.id,
@@ -638,6 +650,9 @@ function prepareNftPages(
       `${nft.title}-${nft.tokenId}`,
       `token-${nft.tokenId}`
     );
+    // Suffix candidates make slug collisions stable for the sorted NFT set; if
+    // membership changes, only the affected collision group can receive new
+    // numeric fallbacks.
     const slug = reserveSlug(baseSlug, slugReservation, [
       toProfileCmsGalleryRouteSlug(nft.contract.slice(-8), 'contract')
     ]);
@@ -730,15 +745,21 @@ function generateMediaForNft(
 ): GeneratedMedia {
   const inputAssets = nft.media?.assets ?? [];
   const assetsByInputKey = new Map<string, CmsAssetV1>();
+  const reservedInputKeys = new Set<string>();
   const assets: CmsAssetV1[] = [];
 
   inputAssets.forEach((asset, index) => {
+    const lookupKey = getMediaAssetLookupKey(asset, index);
+    if (reservedInputKeys.has(lookupKey)) {
+      throw new Error(`Duplicate media asset lookup key "${lookupKey}".`);
+    }
+    reservedInputKeys.add(lookupKey);
     const normalized = normalizeMediaAsset(asset, pageSlug, index, nft.title);
     if (!normalized) {
       return;
     }
     assets.push(normalized);
-    assetsByInputKey.set(asset.key ?? String(index), normalized);
+    assetsByInputKey.set(lookupKey, normalized);
   });
 
   if (!nft.media) {
@@ -908,8 +929,7 @@ function buildHomePage({
         collection_count: collections.length,
         nft_count: visibleNfts.length,
         page_ids: allPageIds,
-        featured_page_ids:
-          featuredPageIds.length > 0 ? featuredPageIds : allPageIds
+        featured_page_ids: featuredPageIds
       } as CmsBlockV1
     ]
   };
@@ -1090,8 +1110,10 @@ function buildWalletSourcePacket(
     id: 'wallet-snapshot',
     source_type: 'wallet',
     captured_at: capturedAt,
-    ...(snapshot.owner ? { owner: snapshot.owner } : {}),
-    ...(snapshot.wallets ? { wallets: [...snapshot.wallets] } : {}),
+    ...(snapshot.owner !== undefined ? { owner: snapshot.owner } : {}),
+    ...(snapshot.wallets !== undefined
+      ? { wallets: [...snapshot.wallets] }
+      : {}),
     ...(snapshot.block_number !== undefined
       ? { block_number: snapshot.block_number }
       : {}),
@@ -1173,11 +1195,32 @@ function createFixtureMediaAsset({
     uri,
     kind,
     content_hash: hashFixtureString(uri),
-    mime_type: kind === 'social_image' || kind === 'image' ? 'image/png' : kind,
+    mime_type: fixtureMimeTypeForKind(kind),
     width,
     height,
     roles: [role]
   };
+}
+
+function fixtureMimeTypeForKind(kind: CmsAssetKind): string {
+  switch (kind) {
+    case 'audio':
+      return 'audio/mpeg';
+    case 'build_manifest':
+    case 'search_index':
+      return 'application/json';
+    case 'document':
+      return 'application/pdf';
+    case 'html':
+      return 'text/html';
+    case 'model':
+      return 'model/gltf-binary';
+    case 'video':
+      return 'video/mp4';
+    case 'image':
+    case 'social_image':
+      return 'image/png';
+  }
 }
 
 function hashFixtureString(value: string): string {
@@ -1240,6 +1283,13 @@ function getAssetIdForInputKey(
   return assetsByInputKey.get(inputKey)?.id;
 }
 
+function getMediaAssetLookupKey(
+  asset: ProfileCmsGalleryMediaAssetInput,
+  index: number
+): string {
+  return asset.key ?? String(index);
+}
+
 function guessAssetKind(mimeType: string): CmsAssetKind {
   if (mimeType.startsWith('video/')) {
     return 'video';
@@ -1291,7 +1341,14 @@ function normalizeEthereumAddress(address: string): string {
 }
 
 function normalizeTokenId(tokenId: string | number): string {
-  return String(tokenId).trim();
+  if (typeof tokenId === 'number' && !Number.isFinite(tokenId)) {
+    throw new Error('NFT token_id must be a finite string or number.');
+  }
+  const normalized = String(tokenId).trim();
+  if (!normalized) {
+    throw new Error('NFT token_id must be non-empty.');
+  }
+  return normalized;
 }
 
 function toSet(values: readonly string[] | undefined): ReadonlySet<string> {
@@ -1379,6 +1436,8 @@ function compareStrings(left: string, right: string): number {
 }
 
 function compareTokenIds(left: string, right: string): number {
+  // Numeric-looking token IDs sort by integer magnitude without coercing to a
+  // JS number, so very large uint256 ids stay precise and deterministic.
   const normalizedLeft = stripLeadingZeroes(left);
   const normalizedRight = stripLeadingZeroes(right);
   if (isIntegerString(normalizedLeft) && isIntegerString(normalizedRight)) {
@@ -1400,7 +1459,11 @@ function isIntegerString(value: string): boolean {
 }
 
 function joinCanonicalUrl(baseUrl: string, path: string): string {
-  const trimmedBase = baseUrl.replace(/\/+$/, '');
+  let endIndex = baseUrl.length;
+  while (endIndex > 0 && baseUrl.charCodeAt(endIndex - 1) === 47) {
+    endIndex -= 1;
+  }
+  const trimmedBase = baseUrl.slice(0, endIndex);
   return `${trimmedBase}${path}`;
 }
 

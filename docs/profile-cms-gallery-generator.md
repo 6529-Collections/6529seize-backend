@@ -107,6 +107,18 @@ by `asset_key` and emit CMS `role`, `crop_mode`, `background`, and
 Sorting is deterministic. Explicit order wins, then numeric `order`, then
 featured status, then stable collection/NFT keys.
 
+Canonical collection keys are derived by
+`toProfileCmsGalleryCollectionKey(nft)`:
+
+1. Use `nft.collection.key` when present.
+2. Otherwise use
+   `{chain_id}:{lowercase_contract}:{nft.collection.id ?? nft.collection.slug ?? routeSlug(nft.collection.name ?? "Collected NFTs")}`.
+
+`collection_nft_order` must use that canonical collection key. NFT order values
+inside each collection accept the same NFT aliases as `nft_order`: `key`, `id`,
+`{lowercase_contract}:{token_id}`, or
+`{chain_id}:{lowercase_contract}:{token_id}`.
+
 ## Generated Routes
 
 The generator always emits:
@@ -133,6 +145,11 @@ The package uses only existing CMS V1 fields:
   display variants are included only when referenced assets are complete.
 - `payload.navigation`, `payload.taxonomies`, `payload.source_packets`, and `payload.build_manifest`.
 - `integrity.payload_hash` and `integrity.package_hash` computed with the existing CMS V1 hash helpers.
+
+The home page `generated_wallet_gallery.featured_page_ids` list contains only
+NFTs explicitly featured by snapshot item flags, collection flags, or
+`featured_nft_keys`. When nothing is featured, the list is empty; consumers
+should use `page_ids` for the full gallery.
 
 By default the generator adds fixture signature/storage receipts so offline and
 preview callers can validate deterministically with:
