@@ -149,9 +149,21 @@ function createService() {
 
 describe('GlobalRepCategoryApiService', () => {
   it('maps suggested categories with profile and wave REP totals', async () => {
-    const { service, globalRepCategoryDb } = createService();
-    const ctx = {};
+    const { service, globalRepCategoryDb, userGroupsService } = createService();
+    const ctx = {
+      authenticationContext: {
+        getActingAsId: jest.fn().mockReturnValue('profile-1')
+      }
+    } as unknown as RequestContext;
     globalRepCategoryDb.getSuggestedCategories.mockResolvedValueOnce([
+      {
+        category: 'Invalid <category>',
+        total_rep: '1000',
+        profile_rep: '1000',
+        wave_rep: '0',
+        rating_count: '1',
+        last_modified: '2026-06-07T00:00:00.000Z'
+      },
       {
         category: 'Builder',
         total_rep: '125',
@@ -174,8 +186,12 @@ describe('GlobalRepCategoryApiService', () => {
     ]);
 
     expect(globalRepCategoryDb.getSuggestedCategories).toHaveBeenCalledWith(
-      { limit: 12 },
+      { limit: 36, groupIdsUserIsEligibleFor: ['group-1'] },
       ctx
+    );
+    expect(userGroupsService.getGroupsUserIsEligibleFor).toHaveBeenCalledWith(
+      'profile-1',
+      undefined
     );
   });
 

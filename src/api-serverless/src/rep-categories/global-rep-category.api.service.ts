@@ -37,10 +37,12 @@ import {
   GlobalRepCategoryWaveOrderBy,
   GlobalRepCategoryWaveRow
 } from '@/api/rep-categories/global-rep-category.db';
+import { REP_CATEGORY_PATTERN } from '@/entities/IAbusivenessDetectionResult';
 import { RequestContext } from '@/request.context';
 
 const OVERVIEW_LIMIT = 10;
 const SUGGESTED_CATEGORIES_LIMIT = 12;
+const SUGGESTED_CATEGORIES_QUERY_LIMIT = SUGGESTED_CATEGORIES_LIMIT * 3;
 const WAVE_TOP_CONTRIBUTORS_LIMIT = 3;
 
 export class GlobalRepCategoryApiService {
@@ -53,13 +55,19 @@ export class GlobalRepCategoryApiService {
   public async getSuggestedCategories(
     ctx: RequestContext
   ): Promise<ApiGlobalRepCategorySuggestedCategory[]> {
+    const groupIdsUserIsEligibleFor =
+      await this.getGroupsUserIsEligibleFor(ctx);
     const rows = await this.globalRepCategoryDb.getSuggestedCategories(
       {
-        limit: SUGGESTED_CATEGORIES_LIMIT
+        limit: SUGGESTED_CATEGORIES_QUERY_LIMIT,
+        groupIdsUserIsEligibleFor
       },
       ctx
     );
-    return rows.map((row) => this.mapSuggestedCategory(row));
+    return rows
+      .filter((row) => REP_CATEGORY_PATTERN.test(row.category))
+      .slice(0, SUGGESTED_CATEGORIES_LIMIT)
+      .map((row) => this.mapSuggestedCategory(row));
   }
 
   public async getOverview(

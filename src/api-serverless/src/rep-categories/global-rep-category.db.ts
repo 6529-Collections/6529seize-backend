@@ -223,9 +223,11 @@ export class GlobalRepCategoryDb extends LazyDbAccessCompatibleService {
 
   public async getSuggestedCategories(
     {
-      limit
+      limit,
+      groupIdsUserIsEligibleFor
     }: {
       readonly limit: number;
+      readonly groupIdsUserIsEligibleFor: string[];
     },
     ctx: RequestContext
   ): Promise<GlobalRepCategoryTopCategoryRow[]> {
@@ -242,8 +244,23 @@ export class GlobalRepCategoryDb extends LazyDbAccessCompatibleService {
           count(*) as rating_count,
           max(r.last_modified) as last_modified
         from ${RATINGS_TABLE} r
+        left join ${WAVES_TABLE} w
+          on w.id = r.matter_target_id
+          and r.matter = :waveMatter
+        left join ${WAVES_TABLE} pw
+          on pw.id = w.parent_wave_id
+          and r.matter = :waveMatter
         where r.matter in (:profileMatter, :waveMatter)
           and r.rating <> 0
+          and (
+            r.matter = :profileMatter
+            or (
+              r.matter = :waveMatter
+              and ${this.getWaveAndParentVisibilityFilter(
+                groupIdsUserIsEligibleFor
+              )}
+            )
+          )
         group by 1
         order by abs(total_rep) desc, total_rep desc, last_modified desc, category asc
         limit :limit
@@ -251,7 +268,8 @@ export class GlobalRepCategoryDb extends LazyDbAccessCompatibleService {
         {
           limit,
           profileMatter: RateMatter.REP,
-          waveMatter: RateMatter.WAVE_REP
+          waveMatter: RateMatter.WAVE_REP,
+          groupIdsUserIsEligibleFor
         },
         { wrappedConnection: ctx.connection }
       );

@@ -198,9 +198,14 @@ describe('GlobalRepCategoryDb', () => {
     const connection = {};
     const ctx = { timer, connection } as unknown as RequestContext;
 
-    await service.getSuggestedCategories({ limit: 12 }, ctx);
+    await service.getSuggestedCategories(
+      { limit: 12, groupIdsUserIsEligibleFor: ['group-1'] },
+      ctx
+    );
 
     const [sql, params, options] = execute.mock.calls[0];
+    expect(sql).toContain(`left join ${WAVES_TABLE} w`);
+    expect(sql).toContain(`left join ${WAVES_TABLE} pw`);
     expect(sql).toContain(
       'sum(case when r.matter = :profileMatter then r.rating else 0 end) as profile_rep'
     );
@@ -208,10 +213,19 @@ describe('GlobalRepCategoryDb', () => {
       'sum(case when r.matter = :waveMatter then r.rating else 0 end) as wave_rep'
     );
     expect(sql).toContain('where r.matter in (:profileMatter, :waveMatter)');
+    expect(sql).toContain('r.matter = :profileMatter');
+    expect(sql).toContain('r.matter = :waveMatter');
+    expect(sql).toContain(
+      'w.visibility_group_id in (:groupIdsUserIsEligibleFor)'
+    );
+    expect(sql).toContain(
+      'pw.visibility_group_id in (:groupIdsUserIsEligibleFor)'
+    );
     expect(params).toMatchObject({
       limit: 12,
       profileMatter: RateMatter.REP,
-      waveMatter: RateMatter.WAVE_REP
+      waveMatter: RateMatter.WAVE_REP,
+      groupIdsUserIsEligibleFor: ['group-1']
     });
     expect(options).toEqual({ wrappedConnection: connection });
     expect(timer.start).toHaveBeenCalledWith(
