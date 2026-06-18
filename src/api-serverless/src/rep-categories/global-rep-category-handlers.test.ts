@@ -1,4 +1,5 @@
 import { ApiGlobalRepCategoryOverview } from '@/api/generated/models/ApiGlobalRepCategoryOverview';
+import { ApiGlobalRepCategoryWaveOverview } from '@/api/generated/models/ApiGlobalRepCategoryWaveOverview';
 import {
   GetGlobalRepCategoryGiversQuery,
   GetGlobalRepCategoryGiversRequest,
@@ -6,7 +7,12 @@ import {
   GetGlobalRepCategoryRatingsQuery,
   GetGlobalRepCategoryRatingsRequest,
   GetGlobalRepCategoryRecipientsQuery,
-  GetGlobalRepCategoryRecipientsRequest
+  GetGlobalRepCategoryRecipientsRequest,
+  GetGlobalRepCategoryWaveContributorsQuery,
+  GetGlobalRepCategoryWaveContributorsRequest,
+  GetGlobalRepCategoryWaveOverviewRequest,
+  GetGlobalRepCategoryWavesQuery,
+  GetGlobalRepCategoryWavesRequest
 } from '@/api/generated/routes/operations';
 import { PageSortDirection } from '@/api/page-request';
 import { globalRepCategoryApiService } from '@/api/rep-categories/global-rep-category.api.service';
@@ -14,7 +20,10 @@ import {
   handleGetGlobalRepCategoryGivers,
   handleGetGlobalRepCategoryOverview,
   handleGetGlobalRepCategoryRatings,
-  handleGetGlobalRepCategoryRecipients
+  handleGetGlobalRepCategoryRecipients,
+  handleGetGlobalRepCategoryWaveContributors,
+  handleGetGlobalRepCategoryWaveOverview,
+  handleGetGlobalRepCategoryWaves
 } from '@/api/rep-categories/global-rep-category.handlers';
 
 type QueryWithCategory<T> = T & {
@@ -31,6 +40,17 @@ function makeOverview(category: string): ApiGlobalRepCategoryOverview {
     top_recipients: [],
     top_givers: [],
     recently_updated: []
+  };
+}
+
+function makeWaveOverview(category: string): ApiGlobalRepCategoryWaveOverview {
+  return {
+    category,
+    total_rep: 0,
+    wave_count: 0,
+    contributor_count: 0,
+    top_waves: [],
+    top_contributors: []
   };
 }
 
@@ -75,6 +95,38 @@ function makeGiversRequest(
     query,
     user: undefined
   } as unknown as GetGlobalRepCategoryGiversRequest;
+}
+
+function makeWaveOverviewRequest(
+  category: string
+): GetGlobalRepCategoryWaveOverviewRequest {
+  return {
+    params: { category },
+    query: {},
+    user: undefined
+  } as unknown as GetGlobalRepCategoryWaveOverviewRequest;
+}
+
+function makeWavesRequest(
+  category: string,
+  query: QueryWithCategory<GetGlobalRepCategoryWavesQuery> = {}
+): GetGlobalRepCategoryWavesRequest {
+  return {
+    params: { category },
+    query,
+    user: undefined
+  } as unknown as GetGlobalRepCategoryWavesRequest;
+}
+
+function makeWaveContributorsRequest(
+  category: string,
+  query: QueryWithCategory<GetGlobalRepCategoryWaveContributorsQuery> = {}
+): GetGlobalRepCategoryWaveContributorsRequest {
+  return {
+    params: { category },
+    query,
+    user: undefined
+  } as unknown as GetGlobalRepCategoryWaveContributorsRequest;
 }
 
 describe('global REP category handlers', () => {
@@ -192,6 +244,71 @@ describe('global REP category handlers', () => {
         order: PageSortDirection.DESC,
         order_by: 'last_modified',
         search: 'bob'
+      },
+      expect.any(Object)
+    );
+  });
+
+  it('loads category-wide wave REP overview without requiring a wave search', async () => {
+    const overview = makeWaveOverview('Dev extraordinaire');
+    const getWaveOverview = jest
+      .spyOn(globalRepCategoryApiService, 'getWaveOverview')
+      .mockResolvedValue(overview);
+
+    await expect(
+      handleGetGlobalRepCategoryWaveOverview(
+        makeWaveOverviewRequest('Dev extraordinaire')
+      )
+    ).resolves.toBe(overview);
+
+    expect(getWaveOverview).toHaveBeenCalledWith(
+      { category: 'Dev extraordinaire' },
+      expect.any(Object)
+    );
+  });
+
+  it('applies wave REP waves query defaults', async () => {
+    const getWaves = jest
+      .spyOn(globalRepCategoryApiService, 'getWaves')
+      .mockResolvedValue({ page: 1, next: false, data: [] });
+
+    await handleGetGlobalRepCategoryWaves(
+      makeWavesRequest('Dev extraordinaire')
+    );
+
+    expect(getWaves).toHaveBeenCalledWith(
+      {
+        category: 'Dev extraordinaire',
+        page: 1,
+        page_size: 50,
+        order: PageSortDirection.DESC,
+        order_by: 'rep'
+      },
+      expect.any(Object)
+    );
+  });
+
+  it('validates wave REP contributor query params', async () => {
+    const getWaveContributors = jest
+      .spyOn(globalRepCategoryApiService, 'getWaveContributors')
+      .mockResolvedValue({ page: 2, next: false, data: [] });
+
+    await handleGetGlobalRepCategoryWaveContributors(
+      makeWaveContributorsRequest('Dev extraordinaire', {
+        page: 2,
+        page_size: 25,
+        order: 'ASC',
+        order_by: 'wave'
+      })
+    );
+
+    expect(getWaveContributors).toHaveBeenCalledWith(
+      {
+        category: 'Dev extraordinaire',
+        page: 2,
+        page_size: 25,
+        order: PageSortDirection.ASC,
+        order_by: 'wave'
       },
       expect.any(Object)
     );

@@ -1,6 +1,6 @@
 import { PageSortDirection } from '@/api/page-request';
 import { GlobalRepCategoryDb } from '@/api/rep-categories/global-rep-category.db';
-import { IDENTITIES_TABLE, RATINGS_TABLE } from '@/constants';
+import { IDENTITIES_TABLE, RATINGS_TABLE, WAVES_TABLE } from '@/constants';
 import { RateMatter } from '@/entities/IRating';
 import { SqlExecutor } from '@/sql-executor';
 
@@ -56,7 +56,7 @@ describe('GlobalRepCategoryDb', () => {
     expect(sql).toContain('and r.rating <> 0');
   });
 
-  it('returns a stable ratings page ordered by signed rep', async () => {
+  it('returns a stable ratings page ordered by absolute rep impact', async () => {
     const { service, execute } = createDb();
     execute.mockResolvedValueOnce([
       {
@@ -115,7 +115,8 @@ describe('GlobalRepCategoryDb', () => {
       ]
     });
     const [sql, params] = execute.mock.calls[0];
-    expect(sql).toContain('order by r.rating desc');
+    expect(sql).toContain('order by abs(r.rating) desc');
+    expect(sql).toContain('r.rating desc');
     expect(sql).toContain(
       'r.last_modified desc, r.rater_profile_id asc, r.matter_target_id asc'
     );
@@ -184,6 +185,41 @@ describe('GlobalRepCategoryDb', () => {
     expect(sql).toContain("like :searchLike escape '\\\\'");
     expect(params).toMatchObject({
       searchLike: '%50\\%\\_alice\\\\%'
+    });
+  });
+
+  it('sorts wave REP analytics by absolute impact and respects visibility groups', async () => {
+    const { service, execute } = createDb();
+
+    await service.getWavesPage(
+      {
+        category: 'Dev extraordinaire',
+        page: 1,
+        page_size: 25,
+        order: PageSortDirection.DESC,
+        order_by: 'rep',
+        groupIdsUserIsEligibleFor: ['group-1']
+      },
+      {}
+    );
+
+    const [sql, params] = execute.mock.calls[0];
+    expect(sql).toContain(`join ${WAVES_TABLE} w on w.id = r.matter_target_id`);
+    expect(sql).toContain(
+      `left join ${WAVES_TABLE} pw on pw.id = w.parent_wave_id`
+    );
+    expect(sql).toContain(
+      'w.visibility_group_id in (:groupIdsUserIsEligibleFor)'
+    );
+    expect(sql).toContain(
+      'pw.visibility_group_id in (:groupIdsUserIsEligibleFor)'
+    );
+    expect(sql).toContain('order by abs(gw.total_rep) desc');
+    expect(sql).toContain('gw.total_rep desc');
+    expect(params).toMatchObject({
+      category: 'Dev extraordinaire',
+      matter: RateMatter.WAVE_REP,
+      groupIdsUserIsEligibleFor: ['group-1']
     });
   });
 });

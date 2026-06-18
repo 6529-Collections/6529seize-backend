@@ -5,15 +5,22 @@ import { ApiGlobalRepCategoryGiversPage } from '@/api/generated/models/ApiGlobal
 import { ApiGlobalRepCategoryOverview } from '@/api/generated/models/ApiGlobalRepCategoryOverview';
 import { ApiGlobalRepCategoryRatingsPage } from '@/api/generated/models/ApiGlobalRepCategoryRatingsPage';
 import { ApiGlobalRepCategoryRecipientsPage } from '@/api/generated/models/ApiGlobalRepCategoryRecipientsPage';
+import { ApiGlobalRepCategoryWaveContributorsPage } from '@/api/generated/models/ApiGlobalRepCategoryWaveContributorsPage';
+import { ApiGlobalRepCategoryWaveOverview } from '@/api/generated/models/ApiGlobalRepCategoryWaveOverview';
+import { ApiGlobalRepCategoryWavesPage } from '@/api/generated/models/ApiGlobalRepCategoryWavesPage';
 import {
   GetGlobalRepCategoryGiversRequest,
   GetGlobalRepCategoryOverviewRequest,
   GetGlobalRepCategoryRatingsRequest,
-  GetGlobalRepCategoryRecipientsRequest
+  GetGlobalRepCategoryRecipientsRequest,
+  GetGlobalRepCategoryWaveContributorsRequest,
+  GetGlobalRepCategoryWaveOverviewRequest,
+  GetGlobalRepCategoryWavesRequest
 } from '@/api/generated/routes/operations';
 import {
   GlobalRepCategoryPairOrderBy,
-  GlobalRepCategoryProfileOrderBy
+  GlobalRepCategoryProfileOrderBy,
+  GlobalRepCategoryWaveOrderBy
 } from '@/api/rep-categories/global-rep-category.db';
 import { globalRepCategoryApiService } from '@/api/rep-categories/global-rep-category.api.service';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
@@ -39,6 +46,13 @@ type ProfileRankingParams = OverviewParams & {
   readonly order: PageSortDirection;
   readonly order_by: GlobalRepCategoryProfileOrderBy;
   readonly search?: string;
+};
+
+type WaveRankingParams = OverviewParams & {
+  readonly page: number;
+  readonly page_size: number;
+  readonly order: PageSortDirection;
+  readonly order_by: GlobalRepCategoryWaveOrderBy;
 };
 
 const CategorySchema = Joi.string()
@@ -76,6 +90,17 @@ const ProfileRankingSchema = Joi.object<ProfileRankingParams>({
     .valid('rep', 'last_modified', 'profile')
     .default('rep'),
   search: Joi.string().trim().max(100).allow('').optional()
+});
+
+const WaveRankingSchema = Joi.object<WaveRankingParams>({
+  category: CategorySchema,
+  page: Joi.number().integer().min(1).default(1),
+  page_size: Joi.number().integer().min(1).max(200).default(50),
+  order: Joi.string()
+    .uppercase()
+    .valid(PageSortDirection.ASC, PageSortDirection.DESC)
+    .default(PageSortDirection.DESC),
+  order_by: Joi.string().valid('rep', 'last_modified', 'wave').default('rep')
 });
 
 export async function handleGetGlobalRepCategoryOverview(
@@ -151,12 +176,66 @@ export async function handleGetGlobalRepCategoryGivers(
   );
 }
 
+export async function handleGetGlobalRepCategoryWaveOverview(
+  req: GetGlobalRepCategoryWaveOverviewRequest
+): Promise<ApiGlobalRepCategoryWaveOverview> {
+  const params = getValidatedByJoiOrThrow(
+    req.params,
+    OverviewSchema
+  ) as OverviewParams;
+  return globalRepCategoryApiService.getWaveOverview(
+    { category: params.category },
+    await getRequestContext(req)
+  );
+}
+
+export async function handleGetGlobalRepCategoryWaves(
+  req: GetGlobalRepCategoryWavesRequest
+): Promise<ApiGlobalRepCategoryWavesPage> {
+  const params = getValidatedByJoiOrThrow(
+    { ...req.query, ...req.params },
+    WaveRankingSchema
+  ) as WaveRankingParams;
+  return globalRepCategoryApiService.getWaves(
+    {
+      category: params.category,
+      page: params.page,
+      page_size: params.page_size,
+      order: params.order,
+      order_by: params.order_by
+    },
+    await getRequestContext(req)
+  );
+}
+
+export async function handleGetGlobalRepCategoryWaveContributors(
+  req: GetGlobalRepCategoryWaveContributorsRequest
+): Promise<ApiGlobalRepCategoryWaveContributorsPage> {
+  const params = getValidatedByJoiOrThrow(
+    { ...req.query, ...req.params },
+    WaveRankingSchema
+  ) as WaveRankingParams;
+  return globalRepCategoryApiService.getWaveContributors(
+    {
+      category: params.category,
+      page: params.page,
+      page_size: params.page_size,
+      order: params.order,
+      order_by: params.order_by
+    },
+    await getRequestContext(req)
+  );
+}
+
 async function getRequestContext(
   req:
     | GetGlobalRepCategoryOverviewRequest
     | GetGlobalRepCategoryRatingsRequest
     | GetGlobalRepCategoryRecipientsRequest
     | GetGlobalRepCategoryGiversRequest
+    | GetGlobalRepCategoryWaveOverviewRequest
+    | GetGlobalRepCategoryWavesRequest
+    | GetGlobalRepCategoryWaveContributorsRequest
 ): Promise<RequestContext> {
   const timer = Timer.getFromRequest(req);
   return {
