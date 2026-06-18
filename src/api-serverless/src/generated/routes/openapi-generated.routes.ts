@@ -10,9 +10,10 @@ import { handleDownloadDropV2VotersById, handleGetBoostedDropsV2, handleGetCurat
 import { handleResolveDecentralizedMedia } from '@/api/media/decentralized-media.handlers';
 import { handleGetNotificationsV2 } from '@/api/notifications/notifications-v2.handlers';
 import { handleGetOgMetadataDrop, handleGetOgMetadataProfile, handleGetOgMetadataWave } from '@/api/og-metadata/og-metadata.handlers';
+import { handleGetPrimaryProfileCmsPackage, handleGetProfileCmsPackageByHash, handleGetProfileCmsPackageById, handleGetProfileCmsPackageByVersion, handleListProfileCmsPackages, handlePublishProfileCmsPackage, handleSaveProfileCmsPackageDraft, handleValidateProfileCmsPackage } from '@/api/profile-cms/profile-cms.handlers';
 import { handleGetGlobalRepCategoryGivers, handleGetGlobalRepCategoryOverview, handleGetGlobalRepCategoryRatings, handleGetGlobalRepCategoryRecipients, handleGetGlobalRepCategoryWaveContributors, handleGetGlobalRepCategoryWaveOverview, handleGetGlobalRepCategoryWaves } from '@/api/rep-categories/global-rep-category.handlers';
 import { handleCreateWaveMetadata, handleDeleteWaveMetadata, handleGetDropRepliesV2, handleGetOfficialWaves, handleGetWaveDecisionsV2, handleGetWaveDropsV2, handleGetWaveLeaderboardV2, handleGetWaveMetadata, handleGetWavesV2, handleListWaveCurationDropsV2, handleListWaveSubwaves, handleSearchDropsInWaveV2 } from '@/api/waves/waves-v2.handlers';
-import { CreateWaveMetadataRequest, CreateWaveMetadataResponse, DeleteWaveMetadataRequest, DeleteWaveMetadataResponse, DownloadDropV2VotersByIdRequest, DownloadDropV2VotersByIdResponse, GetBoostedDropsV2Request, GetBoostedDropsV2Response, GetCuratedProfileWaveDropsV2Request, GetCuratedProfileWaveDropsV2Response, GetDropPollOptionVotersV2Request, GetDropPollOptionVotersV2Response, GetDropRepliesV2Request, GetDropRepliesV2Response, GetDropsV2Request, GetDropsV2Response, GetDropV2BoostsByIdRequest, GetDropV2BoostsByIdResponse, GetDropV2ByIdRequest, GetDropV2ByIdResponse, GetDropV2MetadataByIdRequest, GetDropV2MetadataByIdResponse, GetDropV2PartByIdRequest, GetDropV2PartByIdResponse, GetDropV2ReactionsByIdRequest, GetDropV2ReactionsByIdResponse, GetDropV2VoteEditLogsByIdRequest, GetDropV2VoteEditLogsByIdResponse, GetDropV2VotersByIdRequest, GetDropV2VotersByIdResponse, GetGlobalRepCategoryGiversRequest, GetGlobalRepCategoryGiversResponse, GetGlobalRepCategoryOverviewRequest, GetGlobalRepCategoryOverviewResponse, GetGlobalRepCategoryRatingsRequest, GetGlobalRepCategoryRatingsResponse, GetGlobalRepCategoryRecipientsRequest, GetGlobalRepCategoryRecipientsResponse, GetGlobalRepCategoryWaveContributorsRequest, GetGlobalRepCategoryWaveContributorsResponse, GetGlobalRepCategoryWaveOverviewRequest, GetGlobalRepCategoryWaveOverviewResponse, GetGlobalRepCategoryWavesRequest, GetGlobalRepCategoryWavesResponse, GetNotificationsV2Request, GetNotificationsV2Response, GetOfficialWavesRequest, GetOfficialWavesResponse, GetOgMetadataDropRequest, GetOgMetadataDropResponse, GetOgMetadataProfileRequest, GetOgMetadataProfileResponse, GetOgMetadataWaveRequest, GetOgMetadataWaveResponse, GetWaveDecisionsV2Request, GetWaveDecisionsV2Response, GetWaveDropsV2Request, GetWaveDropsV2Response, GetWaveLeaderboardV2Request, GetWaveLeaderboardV2Response, GetWaveMetadataRequest, GetWaveMetadataResponse, GetWavePollsV2Request, GetWavePollsV2Response, GetWavesV2Request, GetWavesV2Response, ListWaveCurationDropsV2Request, ListWaveCurationDropsV2Response, ListWaveSubwavesRequest, ListWaveSubwavesResponse, ResolveDecentralizedMediaRequest, ResolveDecentralizedMediaResponse, SearchDropsInWaveV2Request, SearchDropsInWaveV2Response, VoteDropPollV2Request, VoteDropPollV2Response } from './operations';
+import { CreateWaveMetadataRequest, CreateWaveMetadataResponse, DeleteWaveMetadataRequest, DeleteWaveMetadataResponse, DownloadDropV2VotersByIdRequest, DownloadDropV2VotersByIdResponse, GetBoostedDropsV2Request, GetBoostedDropsV2Response, GetCuratedProfileWaveDropsV2Request, GetCuratedProfileWaveDropsV2Response, GetDropPollOptionVotersV2Request, GetDropPollOptionVotersV2Response, GetDropRepliesV2Request, GetDropRepliesV2Response, GetDropsV2Request, GetDropsV2Response, GetDropV2BoostsByIdRequest, GetDropV2BoostsByIdResponse, GetDropV2ByIdRequest, GetDropV2ByIdResponse, GetDropV2MetadataByIdRequest, GetDropV2MetadataByIdResponse, GetDropV2PartByIdRequest, GetDropV2PartByIdResponse, GetDropV2ReactionsByIdRequest, GetDropV2ReactionsByIdResponse, GetDropV2VoteEditLogsByIdRequest, GetDropV2VoteEditLogsByIdResponse, GetDropV2VotersByIdRequest, GetDropV2VotersByIdResponse, GetGlobalRepCategoryGiversRequest, GetGlobalRepCategoryGiversResponse, GetGlobalRepCategoryOverviewRequest, GetGlobalRepCategoryOverviewResponse, GetGlobalRepCategoryRatingsRequest, GetGlobalRepCategoryRatingsResponse, GetGlobalRepCategoryRecipientsRequest, GetGlobalRepCategoryRecipientsResponse, GetGlobalRepCategoryWaveContributorsRequest, GetGlobalRepCategoryWaveContributorsResponse, GetGlobalRepCategoryWaveOverviewRequest, GetGlobalRepCategoryWaveOverviewResponse, GetGlobalRepCategoryWavesRequest, GetGlobalRepCategoryWavesResponse, GetNotificationsV2Request, GetNotificationsV2Response, GetOfficialWavesRequest, GetOfficialWavesResponse, GetOgMetadataDropRequest, GetOgMetadataDropResponse, GetOgMetadataProfileRequest, GetOgMetadataProfileResponse, GetOgMetadataWaveRequest, GetOgMetadataWaveResponse, GetPrimaryProfileCmsPackageRequest, GetPrimaryProfileCmsPackageResponse, GetProfileCmsPackageByHashRequest, GetProfileCmsPackageByHashResponse, GetProfileCmsPackageByIdRequest, GetProfileCmsPackageByIdResponse, GetProfileCmsPackageByVersionRequest, GetProfileCmsPackageByVersionResponse, GetWaveDecisionsV2Request, GetWaveDecisionsV2Response, GetWaveDropsV2Request, GetWaveDropsV2Response, GetWaveLeaderboardV2Request, GetWaveLeaderboardV2Response, GetWaveMetadataRequest, GetWaveMetadataResponse, GetWavePollsV2Request, GetWavePollsV2Response, GetWavesV2Request, GetWavesV2Response, ListProfileCmsPackagesRequest, ListProfileCmsPackagesResponse, ListWaveCurationDropsV2Request, ListWaveCurationDropsV2Response, ListWaveSubwavesRequest, ListWaveSubwavesResponse, PublishProfileCmsPackageRequest, PublishProfileCmsPackageResponse, ResolveDecentralizedMediaRequest, ResolveDecentralizedMediaResponse, SaveProfileCmsPackageDraftRequest, SaveProfileCmsPackageDraftResponse, SearchDropsInWaveV2Request, SearchDropsInWaveV2Response, ValidateProfileCmsPackageRequest, ValidateProfileCmsPackageResponse, VoteDropPollV2Request, VoteDropPollV2Response } from './operations';
 const router = asyncRouter();
 router.post(
   '/media/resolve',
@@ -54,6 +55,93 @@ router.get(
     res: Response<ApiResponse<GetOgMetadataWaveResponse>>
   ) => {
     res.send(await handleGetOgMetadataWave(req));
+  }
+);
+
+router.get(
+  '/profile-cms/:handle/primary',
+  async (
+    req: GetPrimaryProfileCmsPackageRequest,
+    res: Response<ApiResponse<GetPrimaryProfileCmsPackageResponse>>
+  ) => {
+    res.send(await handleGetPrimaryProfileCmsPackage(req));
+  }
+);
+
+router.post(
+  '/profile-cms/packages',
+  needsAuthenticatedUser(),
+  async (
+    req: SaveProfileCmsPackageDraftRequest,
+    res: Response<ApiResponse<SaveProfileCmsPackageDraftResponse>>
+  ) => {
+    res.send(await handleSaveProfileCmsPackageDraft(req));
+  }
+);
+
+router.get(
+  '/profile-cms/packages/:id',
+  maybeAuthenticatedUser(),
+  async (
+    req: GetProfileCmsPackageByIdRequest,
+    res: Response<ApiResponse<GetProfileCmsPackageByIdResponse>>
+  ) => {
+    res.send(await handleGetProfileCmsPackageById(req));
+  }
+);
+
+router.post(
+  '/profile-cms/packages/:id/publish',
+  needsAuthenticatedUser(),
+  async (
+    req: PublishProfileCmsPackageRequest,
+    res: Response<ApiResponse<PublishProfileCmsPackageResponse>>
+  ) => {
+    res.send(await handlePublishProfileCmsPackage(req));
+  }
+);
+
+router.get(
+  '/profile-cms/packages/by-hash/:package_hash',
+  maybeAuthenticatedUser(),
+  async (
+    req: GetProfileCmsPackageByHashRequest,
+    res: Response<ApiResponse<GetProfileCmsPackageByHashResponse>>
+  ) => {
+    res.send(await handleGetProfileCmsPackageByHash(req));
+  }
+);
+
+router.post(
+  '/profile-cms/packages/validate',
+  needsAuthenticatedUser(),
+  async (
+    req: ValidateProfileCmsPackageRequest,
+    res: Response<ApiResponse<ValidateProfileCmsPackageResponse>>
+  ) => {
+    res.send(await handleValidateProfileCmsPackage(req));
+  }
+);
+
+router.get(
+  '/profile-cms/profiles/:profile_id/packages',
+  maybeAuthenticatedUser(),
+  async (
+    req: ListProfileCmsPackagesRequest,
+    res: Response<ApiResponse<ListProfileCmsPackagesResponse>>
+  ) => {
+    res.send(await handleListProfileCmsPackages(req));
+  }
+);
+
+router.get(
+  '/profile-cms/profiles/:profile_id/packages/:package_id/versions/:version',
+  maybeAuthenticatedUser(),
+  async (
+    req: GetProfileCmsPackageByVersionRequest,
+    res: Response<ApiResponse<GetProfileCmsPackageByVersionResponse>>
+  ) => {
+    res.send(await handleGetProfileCmsPackageByVersion(req));
   }
 );
 

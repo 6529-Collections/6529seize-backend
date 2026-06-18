@@ -10,20 +10,12 @@
  * Do not edit the class manually.
  */
 
-import { ApiCreateNewProfileProxyAllocateCicAction } from '../models/ApiCreateNewProfileProxyAllocateCicAction';
-import { ApiCreateNewProfileProxyAllocateRepAction } from '../models/ApiCreateNewProfileProxyAllocateRepAction';
-import { ApiCreateNewProfileProxyCreateWaveAction } from '../models/ApiCreateNewProfileProxyCreateWaveAction';
-import { ApiCreateNewProfileProxyCreateWaveParticipationDropAction } from '../models/ApiCreateNewProfileProxyCreateWaveParticipationDropAction';
-import { ApiCreateNewProfileProxyPublishCmsAction } from '../models/ApiCreateNewProfileProxyPublishCmsAction';
-import { ApiCreateNewProfileProxyRateWaveDropAction } from '../models/ApiCreateNewProfileProxyRateWaveDropAction';
-import { ApiCreateNewProfileProxyReadWaveAction } from '../models/ApiCreateNewProfileProxyReadWaveAction';
 import { ApiProfileProxyActionType } from '../models/ApiProfileProxyActionType';
 import { HttpFile } from '../http/http';
 
-export class AddActionToProxyRequest {
+export class ApiCreateNewProfileProxyPublishCmsAction {
     'action_type': ApiProfileProxyActionType;
     'end_time': number | null;
-    'credit_amount': number;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -41,16 +33,10 @@ export class AddActionToProxyRequest {
             "baseName": "end_time",
             "type": "number",
             "format": "int64"
-        },
-        {
-            "name": "credit_amount",
-            "baseName": "credit_amount",
-            "type": "number",
-            "format": "int64"
         }    ];
 
     static getAttributeTypeMap() {
-        return AddActionToProxyRequest.attributeTypeMap;
+        return ApiCreateNewProfileProxyPublishCmsAction.attributeTypeMap;
     }
 
     public constructor() {

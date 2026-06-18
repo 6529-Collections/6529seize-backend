@@ -20,7 +20,8 @@ const ACTION_MAP: Record<ProfileProxyActionType, ApiProfileProxyActionType> = {
   [ProfileProxyActionType.CREATE_DROP_TO_WAVE]:
     ApiProfileProxyActionType.CreateDropToWave,
   [ProfileProxyActionType.RATE_WAVE_DROP]:
-    ApiProfileProxyActionType.RateWaveDrop
+    ApiProfileProxyActionType.RateWaveDrop,
+  [ProfileProxyActionType.PUBLISH_CMS]: ApiProfileProxyActionType.PublishCms
 };
 
 export class ProfileProxiesMapper {

@@ -204,11 +204,15 @@ Important API responsibilities:
 - Public read APIs for NFTs, TDH, waves, drops, profiles, community metrics, subscriptions, and notifications.
 - Global REP category analytics under `/rep/categories/{category}`, backed by current non-zero REP rating rows for category overview, giver-recipient pairings, recipient rankings, and giver rankings.
 - Public OG metadata inputs for profile, wave, and drop link previews under `/og-metadata`.
+- Public profile-native CMS primary package lookup under
+  `/profile-cms/{handle}/primary`, returning the published production-safe CMS
+  V1 package envelope used by `/{handle}/index.html`; draft, failed, fixture,
+  and missing primary packages return 404.
 - Public decentralized media resolution under `/media/resolve`, which maps
   native `ipfs://`, `ipns://`, and `ar://` references plus recognized gateway
   URLs to canonical native URIs, `media.6529.io` resolver URLs, and explicit
   external fallback URLs. This v1 API does not proxy media bytes.
-- Authenticated social writes: drops, votes, reactions, curations, subscriptions, groups, proxies, minting claims, and push settings.
+- Authenticated social writes: drops, votes, reactions, curations, subscriptions, groups, proxies, profile CMS package drafts/publish actions, minting claims, and push settings.
 - Upload preparation and multipart completion for drop media, wave media, distribution photos, and attachments.
 - WebSocket connection registration and real-time wave-related messages.
 - Operational endpoints such as health, docs, RPC/proxy routes, webhooks, and deploy-related routes.
@@ -233,6 +237,14 @@ There are two DB access modes:
 - Loop mode uses TypeORM initialization and the shared `SqlExecutor` abstraction. Schema ownership is entities-first: add or update TypeORM entity classes, export them from `src/entities/entities.ts`, and let `dbMigrationsLoop` run entity synchronization. Do not create SQL migrations for schema changes unless explicitly requested; migrations are reserved for one-off data work or views.
 
 The core architectural choice is that MySQL is both the system of record and the internal integration layer. This keeps the system understandable, but it makes table contracts, migrations, backfills, indexes, and worker idempotency especially important.
+
+Profile-native CMS packages are stored in `profile_cms_packages`. The table
+keeps the complete CMS V1 package JSON, indexed profile/package/version/hash
+fields, publication state, primary-package flags, validation results, and
+storage receipt indexes for IPFS, Arweave, S3, and fixture receipts. The API
+publish path validates CMS V1 semantics, enforces the submitted payload and
+package hashes, rejects fixture signatures/storage for production publish, and
+supersedes the previous primary package in one transaction.
 
 ## Async Processing
 

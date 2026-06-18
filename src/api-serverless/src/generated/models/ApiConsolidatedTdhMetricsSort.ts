@@ -12,12 +12,12 @@
 
 import { HttpFile } from '../http/http';
 
-export enum ApiProfileProxyActionType {
-    AllocateRep = 'ALLOCATE_REP',
-    AllocateCic = 'ALLOCATE_CIC',
-    CreateWave = 'CREATE_WAVE',
-    ReadWave = 'READ_WAVE',
-    CreateDropToWave = 'CREATE_DROP_TO_WAVE',
-    RateWaveDrop = 'RATE_WAVE_DROP',
-    PublishCms = 'PUBLISH_CMS'
+export enum ApiConsolidatedTdhMetricsSort {
+    Level = 'level',
+    Balance = 'balance',
+    UniqueMemes = 'unique_memes',
+    MemesCardsSets = 'memes_cards_sets',
+    Tdh = 'tdh',
+    BoostedTdh = 'boosted_tdh',
+    DayChange = 'day_change'
 }
