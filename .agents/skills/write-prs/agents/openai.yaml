@@ -1,0 +1,4 @@
+interface:
+  display_name: "Write PRs"
+  short_description: "Create backend PR descriptions, iterate with review bots, and plan lambda deployments."
+  default_prompt: "Use $write-prs to prepare this backend change for PR review, document validation and deployment order, iterate on available bot feedback, and stop at the requested completion mode."
