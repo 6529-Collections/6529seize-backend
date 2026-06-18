@@ -86,21 +86,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check production preconditions
-        uses: actions/github-script@v3
+        shell: bash
         if: ${prodCondition}
-        with:
-          script: core.setFailed('Given service can only be deployed to production environment')
+        run: |
+          echo "Given service can only be deployed to production environment" >&2
+          exit 1
       - name: Check staging preconditions
-        uses: actions/github-script@v3
+        shell: bash
         if: ${stagingCondition}
-        with:
-          script: core.setFailed('Given service can only be deployed to staging environment')
+        run: |
+          echo "Given service can only be deployed to staging environment" >&2
+          exit 1
       - name: Extract branch name
         shell: bash
-        run: echo "branch=\${GITHUB_HEAD_REF:-\${GITHUB_REF#refs/heads/}}" >> $GITHUB_OUTPUT
+        run: echo "branch=\${GITHUB_HEAD_REF:-\${GITHUB_REF#refs/heads/}}" >> "$GITHUB_OUTPUT"
         id: extract_branch
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v6
         with:
           ref: \${{ steps.extract_branch.outputs.branch }}
       - name: Install root dependencies
@@ -118,7 +120,7 @@ jobs:
         if: github.event.inputs.service == 'api'
         run: pushd src/api-serverless && npm run build && popd
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@13d241b293754004c80624b5567555c4a39ffbe3
+        uses: aws-actions/configure-aws-credentials@e7f100cf4c008499ea8adda475de1042d6975c7b # v6.2.0
         with:
           aws-access-key-id: \${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: \${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -141,7 +143,8 @@ jobs:
       - name: Deploy service
         if: github.event.inputs.service != 'api' && github.event.inputs.service != 'nextgenMediaProxyInterceptor' && github.event.inputs.service != 'mediaResizerLoop'
         run: |
-          export VERSION_DESCRIPTION="$(git rev-parse --short HEAD) - $(date) - $(git rev-parse --abbrev-ref HEAD) - $(git show -s --format=%s)"
+          VERSION_DESCRIPTION="$(git rev-parse --short HEAD) - $(date) - $(git rev-parse --abbrev-ref HEAD) - $(git show -s --format=%s)"
+          export VERSION_DESCRIPTION
           pushd src/\${{ github.event.inputs.service }} && npm run sls-deploy:\${{ github.event.inputs.environment }} && popd
       - name: Deploy API
         if: github.event.inputs.service == 'api'
