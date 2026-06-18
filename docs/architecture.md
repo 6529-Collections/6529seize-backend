@@ -215,6 +215,12 @@ Important API responsibilities:
   `/profile-cms/wallet-gallery/snapshot`, gated by
   `FEATURE_PROFILE_CMS_WALLET_GALLERY`, reading current indexed NFT ownership
   and normalized media from MySQL for deterministic gallery generation.
+- Profile-native CMS BYO-agent affordances under `/profile-cms/agent` and
+  `/profile-cms/packages/{id}/agent`, including a public schema bundle,
+  read-only source packets that separate facts, author copy, derived metadata,
+  and validation diagnostics, and authenticated draft patch validation that
+  dry-runs agent proposals without applying changes or bypassing publish
+  signing/storage authority.
 - Public decentralized media resolution under `/media/resolve`, which maps
   native `ipfs://`, `ipns://`, and `ar://` references plus recognized gateway
   URLs to canonical native URIs, `media.6529.io` resolver URLs, and explicit

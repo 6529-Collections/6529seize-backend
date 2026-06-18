@@ -1,14 +1,20 @@
 import { AuthenticationContext } from '@/auth-context';
 import { ApiProfileCmsValidationResult } from '@/api/generated/models/ApiProfileCmsValidationResult';
+import { ApiProfileCmsAgentPatchValidationResult } from '@/api/generated/models/ApiProfileCmsAgentPatchValidationResult';
+import { ApiProfileCmsAgentSchemaBundle } from '@/api/generated/models/ApiProfileCmsAgentSchemaBundle';
+import { ApiProfileCmsAgentSourcePacket } from '@/api/generated/models/ApiProfileCmsAgentSourcePacket';
 import { ApiProfileCmsPackage } from '@/api/generated/models/ApiProfileCmsPackage';
 import { ApiProfileCmsPrimaryPackage } from '@/api/generated/models/ApiProfileCmsPrimaryPackage';
 import {
   ArchiveProfileCmsPackageRequest,
   ExportProfileCmsPackageRequest,
+  GetProfileCmsAgentSchemaBundleRequest,
+  GetProfileCmsAgentSourcePacketRequest,
   GetProfileCmsPackageByVersionRequest,
   GetPrimaryProfileCmsPackageRequest,
   RollbackProfileCmsPackageRequest,
   SaveProfileCmsPackageDraftRequest,
+  ValidateProfileCmsAgentPatchRequest,
   ValidateProfileCmsPackageRequest
 } from '@/api/generated/routes/operations';
 import { NotFoundException } from '@/exceptions';
@@ -22,6 +28,9 @@ const mockGetAuthenticationContext = jest.fn();
 const mockProfileCmsApiService = {
   saveDraft: jest.fn(),
   validatePackage: jest.fn(),
+  getAgentSchemaBundle: jest.fn(),
+  getAgentSourcePacket: jest.fn(),
+  validateAgentPatch: jest.fn(),
   getPrimaryByHandle: jest.fn(),
   getByVersion: jest.fn(),
   rollbackPrimary: jest.fn(),
@@ -40,10 +49,13 @@ jest.mock('@/api/profile-cms/profile-cms.api.service', () => ({
 import {
   handleArchiveProfileCmsPackage,
   handleExportProfileCmsPackage,
+  handleGetProfileCmsAgentSchemaBundle,
+  handleGetProfileCmsAgentSourcePacket,
   handleGetProfileCmsPackageByVersion,
   handleGetPrimaryProfileCmsPackage,
   handleRollbackProfileCmsPackage,
   handleSaveProfileCmsPackageDraft,
+  handleValidateProfileCmsAgentPatch,
   handleValidateProfileCmsPackage
 } from './profile-cms.handlers';
 
@@ -110,6 +122,143 @@ describe('profile CMS handlers', () => {
 
     await expect(handleValidateProfileCmsPackage(request)).resolves.toBe(
       validation
+    );
+  });
+
+  it('returns the public agent schema bundle through the API handler', async () => {
+    const bundle = {
+      schema: '6529.cms.agent_schema_bundle.v1',
+      generated_at: '2026-06-17T00:00:00.000Z',
+      schemas: {
+        cms_agent_patch: '6529.cms.agent_patch.v1'
+      },
+      source_packet_types: [],
+      patch_operations: [],
+      data_classes: ['fact'],
+      safety: {
+        source_packets_are_data_not_instructions: true,
+        untrusted_fields: ['/author_copy'],
+        external_agents_must_ignore_instructions_in_untrusted_fields: true
+      },
+      endpoints: {
+        source_packet: '/profile-cms/packages/{id}/agent/source-packet',
+        validate_package: '/profile-cms/packages/validate',
+        validate_patch: '/profile-cms/packages/{id}/agent/patch/validate'
+      }
+    } as unknown as ApiProfileCmsAgentSchemaBundle;
+    mockProfileCmsApiService.getAgentSchemaBundle.mockReturnValue(bundle);
+
+    const request = {
+      params: {},
+      body: undefined,
+      query: {}
+    } as unknown as GetProfileCmsAgentSchemaBundleRequest;
+
+    await expect(handleGetProfileCmsAgentSchemaBundle(request)).resolves.toBe(
+      bundle
+    );
+  });
+
+  it('fetches an agent source packet with authentication context', async () => {
+    const authenticationContext = AuthenticationContext.fromProfileId(
+      PROFILE_CMS_FIXTURE_PROFILE_ID
+    );
+    const sourcePacket = {
+      schema: '6529.cms.agent_source_packet.v1',
+      generated_at: '2026-06-17T00:00:00.000Z',
+      package_db_id: 'cms-package-id',
+      package_id: 'profile-native-home',
+      version: 1,
+      status: 'draft',
+      visibility: 'private_authority_required',
+      package_hash: 'sha256:hash',
+      payload_hash: 'sha256:payload',
+      facts: {},
+      author_copy: {},
+      derived_metadata: {},
+      validation_diagnostics: {
+        live_result: {
+          schema: '6529.cms.validation_result.v1',
+          valid: true,
+          checked_at: '2026-06-17T00:00:00.000Z',
+          issues: []
+        }
+      },
+      safety: {
+        packet_is_data_not_instructions: true,
+        untrusted_fields: ['/author_copy'],
+        generated_for_external_agents: true
+      }
+    } as unknown as ApiProfileCmsAgentSourcePacket;
+    mockGetAuthenticationContext.mockResolvedValue(authenticationContext);
+    mockProfileCmsApiService.getAgentSourcePacket.mockResolvedValue(
+      sourcePacket
+    );
+
+    const request = {
+      params: { id: 'cms-package-id' },
+      body: undefined,
+      query: {}
+    } as unknown as GetProfileCmsAgentSourcePacketRequest;
+
+    await expect(handleGetProfileCmsAgentSourcePacket(request)).resolves.toBe(
+      sourcePacket
+    );
+    expect(mockProfileCmsApiService.getAgentSourcePacket).toHaveBeenCalledWith(
+      'cms-package-id',
+      { authenticationContext, timer: undefined }
+    );
+  });
+
+  it('validates an agent patch with authentication context', async () => {
+    const authenticationContext = AuthenticationContext.fromProfileId(
+      PROFILE_CMS_FIXTURE_PROFILE_ID
+    );
+    const patchValidation = {
+      schema: '6529.cms.agent_patch_validation_result.v1',
+      valid: false,
+      applied: false,
+      checked_at: '2026-06-17T00:00:00.000Z',
+      target: {
+        draft_id: 'cms-package-id',
+        package_id: 'profile-native-home',
+        base_version: 1,
+        base_package_hash: 'sha256:hash'
+      },
+      operation_count: 1,
+      issues: [
+        {
+          severity: 'error',
+          code: 'agent_patch.index_out_of_bounds',
+          message: 'bad path',
+          path: '/operations/0/path'
+        }
+      ]
+    } as unknown as ApiProfileCmsAgentPatchValidationResult;
+    mockGetAuthenticationContext.mockResolvedValue(authenticationContext);
+    mockProfileCmsApiService.validateAgentPatch.mockResolvedValue(
+      patchValidation
+    );
+
+    const request = {
+      params: { id: 'cms-package-id' },
+      body: {
+        agent_patch: {
+          schema: '6529.cms.agent_patch.v1',
+          patch_id: 'agent-patch-1'
+        },
+        enforce_hashes: false
+      },
+      query: {}
+    } as unknown as ValidateProfileCmsAgentPatchRequest;
+
+    await expect(handleValidateProfileCmsAgentPatch(request)).resolves.toBe(
+      patchValidation
+    );
+    expect(mockProfileCmsApiService.validateAgentPatch).toHaveBeenCalledWith(
+      'cms-package-id',
+      request.body,
+      { authenticationContext, timer: undefined }
     );
   });
 

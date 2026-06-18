@@ -3,6 +3,7 @@ export const CMS_PAYLOAD_SCHEMA = '6529.cms.payload.v1' as const;
 export const CMS_AGENT_PATCH_SCHEMA = '6529.cms.agent_patch.v1' as const;
 export const CMS_VALIDATION_RESULT_SCHEMA =
   '6529.cms.validation_result.v1' as const;
+export const CMS_AGENT_PATCH_MAX_OPERATIONS = 200;
 
 export const CMS_CANONICALIZATION = 'jcs-rfc8785' as const;
 export const CMS_HASH_ALGORITHM = 'sha256' as const;
