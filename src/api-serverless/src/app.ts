@@ -96,9 +96,9 @@ import { parseTdhResultsFromDB } from '@/sql_helpers';
 import deployRoutes from '@/api/deploy/deploy.routes';
 import alchemyProxyRoutes from './alchemy-proxy/alchemy-proxy.routes';
 import {
-  corsOptions,
   DEFAULT_PAGE_SIZE,
   DISTRIBUTION_PAGE_SIZE,
+  getCorsOptionsForRequest,
   NFTS_PAGE_SIZE,
   PaginatedResponse,
   SORT_DIRECTIONS
@@ -698,7 +698,19 @@ async function initializeApp() {
   }
   app.use(requestLogMiddleware());
   app.use(compression());
-  app.use(cors(corsOptions));
+  app.use(
+    cors(
+      (
+        req: Request,
+        callback: (
+          error: Error | null,
+          options: ReturnType<typeof getCorsOptionsForRequest>
+        ) => void
+      ) => {
+        callback(null, getCorsOptionsForRequest(req.path, req.headers.origin));
+      }
+    )
+  );
   app.use(
     express.json({
       limit: '5mb',

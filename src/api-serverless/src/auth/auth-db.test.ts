@@ -16,6 +16,77 @@ function createExecutor() {
 }
 
 describe('AuthDb', () => {
+  it('stores the validated role when creating a legacy refresh token', async () => {
+    const { authDb, execute, oneOrNull } = createExecutor();
+    oneOrNull.mockResolvedValueOnce(null);
+
+    await authDb.retrieveOrGenerateRefreshToken('0xabc', 'profile-1');
+
+    expect(execute).toHaveBeenCalledWith(
+      expect.stringContaining('(address, refresh_token, role)'),
+      expect.objectContaining({
+        address: '0xabc',
+        role: 'profile-1',
+        refreshToken: expect.any(String)
+      })
+    );
+  });
+
+  it('rebinds an existing legacy refresh token after a signed legacy login', async () => {
+    const { authDb, execute, oneOrNull } = createExecutor();
+    oneOrNull.mockResolvedValueOnce({
+      address: '0xabc',
+      refresh_token: 'refresh-token',
+      role: 'profile-1'
+    });
+
+    await expect(
+      authDb.retrieveOrGenerateRefreshToken('0xabc', 'profile-2')
+    ).resolves.toBe('refresh-token');
+
+    expect(execute).toHaveBeenCalledWith(
+      expect.stringContaining('set role = :role'),
+      {
+        address: '0xabc',
+        refreshToken: 'refresh-token',
+        role: 'profile-2'
+      }
+    );
+  });
+
+  it('returns the server-bound legacy refresh role when redeeming a token', async () => {
+    const { authDb, oneOrNull } = createExecutor();
+    oneOrNull.mockResolvedValueOnce({
+      address: '0xABC',
+      refresh_token: 'refresh-token',
+      role: 'profile-1'
+    });
+
+    await expect(
+      authDb.redeemRefreshToken('0xabc', 'refresh-token')
+    ).resolves.toEqual({
+      address: '0xabc',
+      role: 'profile-1'
+    });
+  });
+
+  it('binds only unbound legacy refresh tokens during the migration bridge', async () => {
+    const { authDb, execute } = createExecutor();
+
+    await expect(
+      authDb.bindUnboundRefreshTokenRole('0xabc', 'refresh-token', 'profile-1')
+    ).resolves.toBe(true);
+
+    expect(execute).toHaveBeenCalledWith(
+      expect.stringContaining('and role is null'),
+      {
+        address: '0xabc',
+        refreshToken: 'refresh-token',
+        role: 'profile-1'
+      }
+    );
+  });
+
   it('reads newly written wallet auth sessions from the write pool', async () => {
     const { authDb, oneOrNull } = createExecutor();
     const session = {

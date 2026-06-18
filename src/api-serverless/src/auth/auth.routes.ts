@@ -4,6 +4,8 @@ import * as jwt from 'jsonwebtoken';
 import { ApiResponse } from '../api-response';
 import * as Joi from 'joi';
 import { ethers } from 'ethers';
+import { env } from '@/env';
+import { isWebAuthCredentialOriginAllowed } from '../api-constants';
 import {
   getAuthenticatedWalletOrNull,
   getJwtSecret,
@@ -186,8 +188,10 @@ router.post(
         timer
       );
       const accessToken = issueAccessToken(signingAddress, chosenRole).token;
-      const refreshToken =
-        await authDb.retrieveOrGenerateRefreshToken(signingAddress);
+      const refreshToken = await authDb.retrieveOrGenerateRefreshToken(
+        signingAddress,
+        chosenRole
+      );
       res.status(201).send({
         token: accessToken,
         refresh_token: refreshToken
@@ -237,6 +241,7 @@ router.post(
           'Wallet auth web sessions require a client origin'
         );
       }
+      assertWebAuthCredentialOriginAllowed(parsedMessage.clientOrigin);
       assertSessionOriginMatchesRequest(req, parsedMessage.clientOrigin);
       const created = await createWebSession({
         address: signingAddress,
@@ -286,6 +291,7 @@ router.post(
       { ...body, client_type: 'web' },
       SessionRefreshWebRequestSchema
     );
+    assertWebSessionRequestOriginAllowed(req);
     const cookie = parseWalletSessionCookieHeader(req.headers.cookie);
     const refreshed = await refreshWebSession({
       cookie,
@@ -331,6 +337,7 @@ router.post(
       { ...body, client_type: 'web' },
       SessionLogoutWebRequestSchema
     );
+    assertWebSessionRequestOriginAllowed(req);
     const setCookie = await logoutWebSession({
       cookie: parseWalletSessionCookieHeader(req.headers.cookie),
       allSessions: logoutRequest.all_sessions ?? false,
@@ -414,9 +421,19 @@ router.post(
     if (!redeemedAddress) {
       throw new BadRequestException('Invalid refresh token');
     }
-    const accessToken = issueAccessToken(redeemedAddress, role).token;
+    const refreshRole = await resolveLegacyRefreshRole({
+      redeemedAddress: redeemedAddress.address,
+      storedRole: redeemedAddress.role,
+      requestedRole: role,
+      refreshToken,
+      timer: Timer.getFromRequest(req)
+    });
+    const accessToken = issueAccessToken(
+      redeemedAddress.address,
+      refreshRole
+    ).token;
     res.status(201).send({
-      address: redeemedAddress,
+      address: redeemedAddress.address,
       token: accessToken
     });
   }
@@ -480,6 +497,61 @@ async function resolveAuthenticatedRole(
   return chosenRole ?? null;
 }
 
+async function resolveLegacyRefreshRole({
+  redeemedAddress,
+  storedRole,
+  requestedRole,
+  refreshToken,
+  timer
+}: {
+  readonly redeemedAddress: string;
+  readonly storedRole: string | null;
+  readonly requestedRole: string | null;
+  readonly refreshToken: string;
+  readonly timer: Timer;
+}): Promise<string | null> {
+  if (storedRole) {
+    if (requestedRole) {
+      if (requestedRole === storedRole) {
+        return storedRole;
+      }
+      const resolvedRequestedRole = await resolveAuthenticatedRole(
+        redeemedAddress,
+        requestedRole,
+        timer
+      );
+      if (resolvedRequestedRole !== storedRole) {
+        throw new BadRequestException(
+          'Refresh token role does not match requested role'
+        );
+      }
+    }
+    return storedRole;
+  }
+
+  if (!requestedRole) {
+    return null;
+  }
+
+  const resolvedRole = await resolveAuthenticatedRole(
+    redeemedAddress,
+    requestedRole,
+    timer
+  );
+  if (!resolvedRole) {
+    return null;
+  }
+  const bound = await authDb.bindUnboundRefreshTokenRole(
+    redeemedAddress,
+    refreshToken,
+    resolvedRole
+  );
+  if (!bound) {
+    throw new BadRequestException('Refresh token role could not be bound');
+  }
+  return resolvedRole;
+}
+
 function verifyServerSignature(serverSignature: string): string {
   const nonce = jwt.verify(serverSignature, getJwtSecret());
   if (!nonce || typeof nonce !== 'string') {
@@ -508,7 +580,7 @@ async function verifyClientSignature(
       message: nonce,
       signature: clientSignature,
       expectedAddress: clientAddress,
-      expectedChainId: parsedMessage.chainId,
+      expectedChainId: getAuthWalletChainId(),
       expectedAction: 'login',
       expectedKind: 'authentication',
       requireAllowedDomain: parsedMessage.sessionType === 'first_party_web'
@@ -533,6 +605,15 @@ async function verifyClientSignature(
     throw new Error('Invalid client signature');
   }
   return signingAddress;
+}
+
+function getAuthWalletChainId(): number {
+  const chainId =
+    env.getIntOrNull('AUTH_WALLET_CHAIN_ID') ?? ETHEREUM_MAINNET_CHAIN_ID;
+  if (!Number.isInteger(chainId) || chainId < 1) {
+    throw new Error('AUTH_WALLET_CHAIN_ID must be a positive integer');
+  }
+  return chainId;
 }
 
 function assertSessionLoginSignatureType(
@@ -636,6 +717,7 @@ function resolveSessionNonceContext(
       'Wallet auth web sessions require a first-party Origin'
     );
   }
+  assertWebAuthCredentialOriginAllowed(requestOrigin);
   return {
     domain,
     clientOrigin: requestOrigin,
@@ -648,9 +730,24 @@ function assertSessionOriginMatchesRequest(
   signedClientOrigin: string
 ): void {
   const requestOrigin = getNormalizedRequestOrigin(req);
+  assertWebAuthCredentialOriginAllowed(requestOrigin);
   if (!requestOrigin || requestOrigin !== signedClientOrigin) {
     throw new BadRequestException(
       'Wallet auth web session Origin does not match the signed challenge'
+    );
+  }
+}
+
+function assertWebSessionRequestOriginAllowed(
+  req: Request<any, any, any, any, any>
+): void {
+  assertWebAuthCredentialOriginAllowed(getNormalizedRequestOrigin(req));
+}
+
+function assertWebAuthCredentialOriginAllowed(origin: string | null): void {
+  if (!origin || !isWebAuthCredentialOriginAllowed(origin)) {
+    throw new BadRequestException(
+      'Wallet auth web session Origin is not allowed'
     );
   }
 }
