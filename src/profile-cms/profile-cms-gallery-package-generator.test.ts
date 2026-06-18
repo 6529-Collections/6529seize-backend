@@ -136,6 +136,22 @@ describe('profile CMS gallery package generator', () => {
     expect(validateForDraft(emptyPackage).valid).toBe(true);
   });
 
+  it('truncates long unicode metadata without splitting surrogate pairs', () => {
+    const snapshot = createFixtureProfileCmsGallerySnapshot();
+    const cmsPackage = generateProfileCmsGalleryPackage({
+      snapshot,
+      site: {
+        title: `${'A'.repeat(159)}😀`,
+        description: `${'B'.repeat(299)}😀`
+      }
+    });
+    const homePage = pageById(cmsPackage, 'home-page');
+
+    expect(homePage?.metadata.title.endsWith('\uD83D')).toBe(false);
+    expect(homePage?.metadata.description.endsWith('\uD83D')).toBe(false);
+    expect(validateForDraft(cmsPackage).valid).toBe(true);
+  });
+
   it('generates NFT detail pages with media profiles and social references when media is complete', () => {
     const cmsPackage = generateProfileCmsGalleryPackage();
     const detailPage = pageById(cmsPackage, 'nft-the-memes-1-1');
@@ -261,6 +277,8 @@ describe('profile CMS gallery package generator', () => {
           const cmsPackage = generateProfileCmsGalleryPackage({ snapshot });
 
           expect(hasUniqueRoutes(cmsPackage)).toBe(true);
+          expect(hasUniquePageIds(cmsPackage)).toBe(true);
+          expect(hasUniqueAssetIds(cmsPackage)).toBe(true);
           expect(validateForDraft(cmsPackage).valid).toBe(true);
         }
       ),
@@ -285,6 +303,16 @@ function routePaths(cmsPackage: CmsPackageV1): string[] {
 function hasUniqueRoutes(cmsPackage: CmsPackageV1): boolean {
   const paths = routePaths(cmsPackage);
   return new Set(paths).size === paths.length;
+}
+
+function hasUniquePageIds(cmsPackage: CmsPackageV1): boolean {
+  const pageIds = cmsPackage.payload.pages.map((page) => page.id);
+  return new Set(pageIds).size === pageIds.length;
+}
+
+function hasUniqueAssetIds(cmsPackage: CmsPackageV1): boolean {
+  const assetIds = cmsPackage.payload.assets.map((asset) => asset.id);
+  return new Set(assetIds).size === assetIds.length;
 }
 
 function issueCodes(

@@ -62,3 +62,7 @@
       IDs, collection titles, and simple media roles.
     - FE handoff docs now spell out the canonical `collection_nft_order`
       collection-key derivation.
+  - Addressed 6529bot follow-up:
+    - property test now asserts unique route paths, page ids, and asset ids.
+    - fixture MIME fallback now has an exhaustive `assertNever` guard.
+    - metadata truncation now avoids splitting surrogate pairs.

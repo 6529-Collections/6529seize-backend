@@ -648,7 +648,7 @@ function prepareNftPages(
   nfts.forEach((nft) => {
     const baseSlug = toProfileCmsGalleryRouteSlug(
       `${nft.title}-${nft.tokenId}`,
-      `token-${nft.tokenId}`
+      toProfileCmsGalleryRouteSlug(`token-${nft.tokenId}`, 'token')
     );
     // Suffix candidates make slug collisions stable for the sorted NFT set; if
     // membership changes, only the affected collision group can receive new
@@ -1220,6 +1220,8 @@ function fixtureMimeTypeForKind(kind: CmsAssetKind): string {
     case 'image':
     case 'social_image':
       return 'image/png';
+    default:
+      return assertNever(kind);
   }
 }
 
@@ -1473,5 +1475,16 @@ function nonEmptyText(value: string | undefined, fallback: string): string {
 }
 
 function truncateText(value: string, maxLength: number): string {
-  return value.length <= maxLength ? value : value.slice(0, maxLength);
+  if (value.length <= maxLength) {
+    return value;
+  }
+  const truncated = value.slice(0, maxLength);
+  const lastCode = truncated.charCodeAt(truncated.length - 1);
+  return lastCode >= 0xd800 && lastCode <= 0xdbff
+    ? truncated.slice(0, -1)
+    : truncated;
+}
+
+function assertNever(value: never): never {
+  throw new Error(`Unsupported value: ${String(value)}`);
 }
