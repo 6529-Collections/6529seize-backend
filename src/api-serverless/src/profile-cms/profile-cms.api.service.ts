@@ -19,6 +19,17 @@ import {
   profileCmsPackagesDb
 } from '@/profile-cms/profile-cms-packages.db';
 import {
+  ProfileCmsAgentPatchValidationResult,
+  ValidateProfileCmsAgentPatchRequest,
+  validateProfileCmsAgentPatch
+} from '@/profile-cms/profile-cms-agent-patch';
+import {
+  ProfileCmsAgentSchemaBundleResponse,
+  ProfileCmsAgentSourcePacketResponse,
+  buildProfileCmsAgentSchemaBundle,
+  buildProfileCmsAgentSourcePacket
+} from '@/profile-cms/profile-cms-agent-source-packet';
+import {
   ProfileCmsPointerEventsDb,
   profileCmsPointerEventsDb
 } from '@/profile-cms/profile-cms-pointer-events.db';
@@ -227,6 +238,54 @@ export class ProfileCmsApiService {
       allowFixtureSignatures: request.allow_fixture_signatures,
       allowFixtureStorage: request.allow_fixture_storage,
       enforceHashes: request.enforce_hashes
+    });
+  }
+
+  getAgentSchemaBundle(): ProfileCmsAgentSchemaBundleResponse {
+    return buildProfileCmsAgentSchemaBundle(this.getCurrentIsoDate());
+  }
+
+  async getAgentSourcePacket(
+    id: string,
+    ctx: RequestContext
+  ): Promise<ProfileCmsAgentSourcePacketResponse> {
+    const entity = await this.getReadablePackageEntityOrThrow(id, ctx);
+    const cmsPackage = this.parsePackageOrThrow(entity.cms_package);
+    const checkedAt = this.getCurrentIsoDate();
+    const liveValidation = validateCmsPackageV1(cmsPackage, {
+      allowFixtureSignatures: false,
+      allowFixtureStorage: false,
+      checkedAt,
+      enforceHashes: true
+    });
+
+    return buildProfileCmsAgentSourcePacket({
+      entity,
+      cmsPackage,
+      liveValidation,
+      generatedAt: checkedAt,
+      visibility: this.isPublicPackage(entity)
+        ? 'public_published'
+        : 'private_authority_required'
+    });
+  }
+
+  async validateAgentPatch(
+    id: string,
+    request: ValidateProfileCmsAgentPatchRequest,
+    ctx: RequestContext
+  ): Promise<ProfileCmsAgentPatchValidationResult> {
+    const entity = await this.getPackageEntityOrThrow(id, ctx);
+    this.assertCanManageProfile(entity.profile_id, ctx.authenticationContext);
+    return validateProfileCmsAgentPatch({
+      cmsPackage: this.parsePackageOrThrow(entity.cms_package),
+      packageDbId: entity.id,
+      packageId: entity.package_id,
+      version: entity.version,
+      packageHash: entity.package_hash,
+      status: entity.status,
+      request,
+      checkedAt: this.getCurrentIsoDate()
     });
   }
 
@@ -1169,6 +1228,10 @@ export class ProfileCmsApiService {
       event_sequence: entity.event_sequence,
       created_at: entity.created_at
     };
+  }
+
+  private getCurrentIsoDate(): string {
+    return new Date(Time.currentMillis()).toISOString();
   }
 }
 

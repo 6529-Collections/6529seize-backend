@@ -22,6 +22,9 @@ import { ApiMediaResolveRequest } from '@/api/generated/models/ApiMediaResolveRe
 import { ApiMediaResolveResponse } from '@/api/generated/models/ApiMediaResolveResponse';
 import { ApiNotificationsResponseV2 } from '@/api/generated/models/ApiNotificationsResponseV2';
 import { ApiOgMetadata } from '@/api/generated/models/ApiOgMetadata';
+import { ApiProfileCmsAgentPatchValidationResult } from '@/api/generated/models/ApiProfileCmsAgentPatchValidationResult';
+import { ApiProfileCmsAgentSchemaBundle } from '@/api/generated/models/ApiProfileCmsAgentSchemaBundle';
+import { ApiProfileCmsAgentSourcePacket } from '@/api/generated/models/ApiProfileCmsAgentSourcePacket';
 import { ApiProfileCmsPackage } from '@/api/generated/models/ApiProfileCmsPackage';
 import { ApiProfileCmsPackageExport } from '@/api/generated/models/ApiProfileCmsPackageExport';
 import { ApiProfileCmsPrimaryPackage } from '@/api/generated/models/ApiProfileCmsPrimaryPackage';
@@ -30,6 +33,7 @@ import { ApiProfileCmsWalletGallerySnapshot } from '@/api/generated/models/ApiPr
 import { ApiPublishProfileCmsPackageRequest } from '@/api/generated/models/ApiPublishProfileCmsPackageRequest';
 import { ApiRollbackProfileCmsPackageRequest } from '@/api/generated/models/ApiRollbackProfileCmsPackageRequest';
 import { ApiSaveProfileCmsPackageDraftRequest } from '@/api/generated/models/ApiSaveProfileCmsPackageDraftRequest';
+import { ApiValidateProfileCmsAgentPatchRequest } from '@/api/generated/models/ApiValidateProfileCmsAgentPatchRequest';
 import { ApiValidateProfileCmsPackageRequest } from '@/api/generated/models/ApiValidateProfileCmsPackageRequest';
 import { ApiWaveDecisionsPageV2 } from '@/api/generated/models/ApiWaveDecisionsPageV2';
 import { ApiWaveDropsFeedV2 } from '@/api/generated/models/ApiWaveDropsFeedV2';
@@ -115,6 +119,20 @@ export type GetPrimaryProfileCmsPackageRequest = Request<
   Record<string, never>
 >;
 
+export type GetProfileCmsAgentSchemaBundlePathParams = Record<string, never>;
+
+export type GetProfileCmsAgentSchemaBundleQuery = Record<string, never>;
+
+export type GetProfileCmsAgentSchemaBundleResponse = ApiProfileCmsAgentSchemaBundle;
+
+export type GetProfileCmsAgentSchemaBundleRequest = Request<
+  GetProfileCmsAgentSchemaBundlePathParams,
+  ApiResponse<GetProfileCmsAgentSchemaBundleResponse>,
+  never,
+  GetProfileCmsAgentSchemaBundleQuery,
+  Record<string, never>
+>;
+
 export type SaveProfileCmsPackageDraftPathParams = Record<string, never>;
 
 export type SaveProfileCmsPackageDraftQuery = Record<string, never>;
@@ -142,6 +160,38 @@ export type GetProfileCmsPackageByIdRequest = Request<
   ApiResponse<GetProfileCmsPackageByIdResponse>,
   never,
   GetProfileCmsPackageByIdQuery,
+  Record<string, never>
+>;
+
+export interface ValidateProfileCmsAgentPatchPathParams {
+  "id": string;
+}
+
+export type ValidateProfileCmsAgentPatchQuery = Record<string, never>;
+
+export type ValidateProfileCmsAgentPatchResponse = ApiProfileCmsAgentPatchValidationResult;
+
+export type ValidateProfileCmsAgentPatchRequest = Request<
+  ValidateProfileCmsAgentPatchPathParams,
+  ApiResponse<ValidateProfileCmsAgentPatchResponse>,
+  ApiValidateProfileCmsAgentPatchRequest,
+  ValidateProfileCmsAgentPatchQuery,
+  Record<string, never>
+>;
+
+export interface GetProfileCmsAgentSourcePacketPathParams {
+  "id": string;
+}
+
+export type GetProfileCmsAgentSourcePacketQuery = Record<string, never>;
+
+export type GetProfileCmsAgentSourcePacketResponse = ApiProfileCmsAgentSourcePacket;
+
+export type GetProfileCmsAgentSourcePacketRequest = Request<
+  GetProfileCmsAgentSourcePacketPathParams,
+  ApiResponse<GetProfileCmsAgentSourcePacketResponse>,
+  never,
+  GetProfileCmsAgentSourcePacketQuery,
   Record<string, never>
 >;
 
