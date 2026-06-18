@@ -248,6 +248,7 @@ export class GlobalRepCategoryDb extends LazyDbAccessCompatibleService {
           left join ${WAVES_TABLE} w
             on w.id = r.matter_target_id
             and r.matter = :waveMatter
+          -- Join by parent wave id only, preserving one rating row per wave REP row.
           left join ${WAVES_TABLE} pw
             on pw.id = w.parent_wave_id
             and r.matter = :waveMatter

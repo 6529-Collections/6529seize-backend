@@ -208,6 +208,7 @@ describe('GlobalRepCategoryDb', () => {
     expect(sql).toContain(`from ${RATINGS_TABLE} r`);
     expect(sql).toContain(`left join ${WAVES_TABLE} w`);
     expect(sql).toContain(`left join ${WAVES_TABLE} pw`);
+    expect(sql).toContain('on pw.id = w.parent_wave_id');
     expect(sql).toContain(
       'sum(case when r.matter = :profileMatter then r.rating else 0 end) as profile_rep'
     );
@@ -228,6 +229,7 @@ describe('GlobalRepCategoryDb', () => {
     expect(sql.indexOf('where r.matter in')).toBeLessThan(
       sql.indexOf('from visible_rep r')
     );
+    expect(sql.indexOf('left join')).toBeLessThan(sql.indexOf('group by 1'));
     expect(sql).toContain('limit :limit');
     expect(sql).toContain('offset :offset');
     expect(params).toMatchObject({

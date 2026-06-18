@@ -43,6 +43,7 @@ import { RequestContext } from '@/request.context';
 const OVERVIEW_LIMIT = 10;
 const SUGGESTED_CATEGORIES_LIMIT = 12;
 const SUGGESTED_CATEGORIES_QUERY_PAGE_SIZE = SUGGESTED_CATEGORIES_LIMIT * 3;
+// Hard cap prevents legacy invalid category names from forcing unbounded scans.
 const SUGGESTED_CATEGORIES_MAX_QUERY_PAGES = 10;
 const WAVE_TOP_CONTRIBUTORS_LIMIT = 3;
 
