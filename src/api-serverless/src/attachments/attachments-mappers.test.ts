@@ -41,9 +41,7 @@ describe('attachments mappers', () => {
           ...baseAttachment,
           status,
           guardduty_status:
-            status === AttachmentStatus.PROCESSING
-              ? 'NO_THREATS_FOUND'
-              : null
+            status === AttachmentStatus.PROCESSING ? 'NO_THREATS_FOUND' : null
         })
       ).toEqual({
         status: ApiAttachmentSafetyStatus.Pending,
