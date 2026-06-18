@@ -27,6 +27,13 @@ export * from '../models/ApiChangeWaveRepRating';
 export * from '../models/ApiCicContributor';
 export * from '../models/ApiCicContributorsPage';
 export * from '../models/ApiCicOverview';
+export * from '../models/ApiCmsCreateSiteRequest';
+export * from '../models/ApiCmsPublishPackageRequest';
+export * from '../models/ApiCmsPublishedPackage';
+export * from '../models/ApiCmsPublishedSite';
+export * from '../models/ApiCmsSignatureEnvelope';
+export * from '../models/ApiCmsSite';
+export * from '../models/ApiCmsStorageLocation';
 export * from '../models/ApiCmsValidationIssue';
 export * from '../models/ApiCmsValidationResult';
 export * from '../models/ApiCmsValidationResultTarget';
@@ -451,6 +458,13 @@ import { ApiChangeWaveRepRating } from '../models/ApiChangeWaveRepRating';
 import { ApiCicContributor } from '../models/ApiCicContributor';
 import { ApiCicContributorsPage } from '../models/ApiCicContributorsPage';
 import { ApiCicOverview } from '../models/ApiCicOverview';
+import { ApiCmsCreateSiteRequest } from '../models/ApiCmsCreateSiteRequest';
+import { ApiCmsPublishPackageRequest } from '../models/ApiCmsPublishPackageRequest';
+import { ApiCmsPublishedPackage } from '../models/ApiCmsPublishedPackage';
+import { ApiCmsPublishedSite } from '../models/ApiCmsPublishedSite';
+import { ApiCmsSignatureEnvelope } from '../models/ApiCmsSignatureEnvelope';
+import { ApiCmsSite } from '../models/ApiCmsSite';
+import { ApiCmsStorageLocation } from '../models/ApiCmsStorageLocation';
 import { ApiCmsValidationIssue, ApiCmsValidationIssueSeverityEnum         } from '../models/ApiCmsValidationIssue';
 import { ApiCmsValidationResult, ApiCmsValidationResultSchemaEnum         } from '../models/ApiCmsValidationResult';
 import { ApiCmsValidationResultTarget } from '../models/ApiCmsValidationResultTarget';
@@ -943,6 +957,13 @@ let typeMap: {[index: string]: any} = {
     "ApiCicContributor": ApiCicContributor,
     "ApiCicContributorsPage": ApiCicContributorsPage,
     "ApiCicOverview": ApiCicOverview,
+    "ApiCmsCreateSiteRequest": ApiCmsCreateSiteRequest,
+    "ApiCmsPublishPackageRequest": ApiCmsPublishPackageRequest,
+    "ApiCmsPublishedPackage": ApiCmsPublishedPackage,
+    "ApiCmsPublishedSite": ApiCmsPublishedSite,
+    "ApiCmsSignatureEnvelope": ApiCmsSignatureEnvelope,
+    "ApiCmsSite": ApiCmsSite,
+    "ApiCmsStorageLocation": ApiCmsStorageLocation,
     "ApiCmsValidationIssue": ApiCmsValidationIssue,
     "ApiCmsValidationResult": ApiCmsValidationResult,
     "ApiCmsValidationResultTarget": ApiCmsValidationResultTarget,
