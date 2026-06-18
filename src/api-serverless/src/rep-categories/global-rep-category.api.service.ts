@@ -23,6 +23,7 @@ import {
   userGroupsService,
   UserGroupsService
 } from '@/api/community-members/user-groups.service';
+import { getGroupsUserIsEligibleForReadContext } from '@/api/waves/wave-access.helpers';
 import {
   GlobalRepCategoryDb,
   GlobalRepCategoryDbInteger,
@@ -37,10 +38,14 @@ import {
   GlobalRepCategoryWaveOrderBy,
   GlobalRepCategoryWaveRow
 } from '@/api/rep-categories/global-rep-category.db';
+import { REP_CATEGORY_PATTERN } from '@/entities/IAbusivenessDetectionResult';
 import { RequestContext } from '@/request.context';
 
 const OVERVIEW_LIMIT = 10;
 const SUGGESTED_CATEGORIES_LIMIT = 12;
+const SUGGESTED_CATEGORIES_QUERY_PAGE_SIZE = SUGGESTED_CATEGORIES_LIMIT * 3;
+// Hard cap prevents legacy invalid category names from forcing unbounded scans.
+const SUGGESTED_CATEGORIES_MAX_QUERY_PAGES = 10;
 const WAVE_TOP_CONTRIBUTORS_LIMIT = 3;
 
 export class GlobalRepCategoryApiService {
@@ -50,12 +55,40 @@ export class GlobalRepCategoryApiService {
     private readonly userGroupsService: UserGroupsService
   ) {}
 
-  public async getSuggestedCategories(): Promise<
-    ApiGlobalRepCategorySuggestedCategory[]
-  > {
-    const rows = await this.globalRepCategoryDb.getSuggestedCategories({
-      limit: SUGGESTED_CATEGORIES_LIMIT
-    });
+  public async getSuggestedCategories(
+    ctx: RequestContext
+  ): Promise<ApiGlobalRepCategorySuggestedCategory[]> {
+    const groupIdsUserIsEligibleFor =
+      await this.getGroupsUserIsEligibleFor(ctx);
+    const rows: GlobalRepCategoryTopCategoryRow[] = [];
+
+    // Bound the aggregate scans; suggestions may return fewer than 12 if the
+    // highest-impact legacy names fail today's category validation.
+    for (
+      let page = 0;
+      page < SUGGESTED_CATEGORIES_MAX_QUERY_PAGES &&
+      rows.length < SUGGESTED_CATEGORIES_LIMIT;
+      page += 1
+    ) {
+      const pageRows = await this.globalRepCategoryDb.getSuggestedCategories(
+        {
+          limit: SUGGESTED_CATEGORIES_QUERY_PAGE_SIZE,
+          offset: page * SUGGESTED_CATEGORIES_QUERY_PAGE_SIZE,
+          groupIdsUserIsEligibleFor
+        },
+        ctx
+      );
+      const validRows = pageRows.filter((row) =>
+        REP_CATEGORY_PATTERN.test(row.category)
+      );
+      rows.push(
+        ...validRows.slice(0, SUGGESTED_CATEGORIES_LIMIT - rows.length)
+      );
+      if (pageRows.length < SUGGESTED_CATEGORIES_QUERY_PAGE_SIZE) {
+        break;
+      }
+    }
+
     return rows.map((row) => this.mapSuggestedCategory(row));
   }
 
@@ -479,7 +512,8 @@ export class GlobalRepCategoryApiService {
       id: row.wave_id,
       name: row.wave_name,
       pfp: row.wave_picture,
-      is_direct_message: Boolean(row.is_direct_message)
+      is_direct_message:
+        row.is_direct_message === true || row.is_direct_message === 1
     };
   }
 
@@ -505,14 +539,7 @@ export class GlobalRepCategoryApiService {
   private async getGroupsUserIsEligibleFor(
     ctx: RequestContext
   ): Promise<string[]> {
-    const authenticatedProfileId =
-      ctx.authenticationContext?.getActingAsId() ?? null;
-    return authenticatedProfileId
-      ? this.userGroupsService.getGroupsUserIsEligibleFor(
-          authenticatedProfileId,
-          ctx.timer
-        )
-      : [];
+    return getGroupsUserIsEligibleForReadContext(this.userGroupsService, ctx);
   }
 
   private async getProfilesByIds(
