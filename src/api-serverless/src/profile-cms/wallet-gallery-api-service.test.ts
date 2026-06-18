@@ -204,6 +204,44 @@ describe('ProfileCmsWalletGalleryApiService', () => {
     });
   });
 
+  it('skips malformed indexed token ids without failing a valid snapshot', async () => {
+    const service = new ProfileCmsWalletGalleryApiService(
+      {
+        findHoldingsByWallets: jest
+          .fn()
+          .mockResolvedValue([
+            row({ token_id: 'bad-indexed-token' }),
+            row({ token_id: 4 })
+          ])
+      } as any,
+      {
+        normalizeWalletInputs: jest.fn().mockResolvedValue({
+          inputs: [
+            {
+              input: ADDRESS_ONE,
+              address: ADDRESS_ONE,
+              ens: null,
+              display: ADDRESS_ONE,
+              status: 'resolved',
+              reason: null
+            }
+          ],
+          addresses: [ADDRESS_ONE]
+        })
+      } as any,
+      () => true,
+      () => 1
+    );
+
+    const snapshot = await service.createSnapshot(
+      { wallets: [ADDRESS_ONE] },
+      {}
+    );
+
+    expect(snapshot.assets.map((asset) => asset.token_id)).toEqual([4]);
+    expect(snapshot.totals.indexed_assets).toBe(1);
+  });
+
   it('rejects requests while the feature flag is disabled', async () => {
     const service = new ProfileCmsWalletGalleryApiService(
       { findHoldingsByWallets: jest.fn() } as any,

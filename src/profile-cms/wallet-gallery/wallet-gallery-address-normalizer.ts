@@ -24,6 +24,7 @@ interface ParsedWalletGalleryInput {
 }
 
 const EMPTY_LOOKUP_SENTINEL = '__wallet_gallery_empty_lookup__';
+// This gates local ENS table lookups; it is not intended to validate ENS rules.
 const ENS_NAME_PATTERN = /^[a-z0-9-]+(?:\.[a-z0-9-]+)*\.eth$/;
 
 export class WalletGalleryAddressNormalizer extends LazyDbAccessCompatibleService {

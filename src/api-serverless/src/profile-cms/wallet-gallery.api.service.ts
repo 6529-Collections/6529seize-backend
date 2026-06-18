@@ -124,7 +124,8 @@ export class ProfileCmsWalletGalleryApiService {
       normalizedInputs.addresses,
       ctx
     );
-    const sortedHoldings = [...holdings].sort(compareOwnershipRows);
+    const indexedHoldings = holdings.filter(hasValidIndexedTokenId);
+    const sortedHoldings = [...indexedHoldings].sort(compareOwnershipRows);
     const exclusions = this.normalizeExclusions(request);
     const visibleAssets: ProfileCmsWalletGalleryAssetResponse[] = [];
     const excludedAssets: ProfileCmsWalletGalleryExcludedAssetResponse[] = [];
@@ -281,11 +282,23 @@ function normalizeTokenIdOrThrow(
   input: number | string,
   field: string
 ): number {
-  const value = Number(input);
-  if (!Number.isInteger(value) || value < 0) {
+  const value = normalizeTokenIdOrNull(input);
+  if (value === null) {
     throw new BadRequestException(`${field} contains an invalid token_id`);
   }
   return value;
+}
+
+function normalizeTokenIdOrNull(input: number | string): number | null {
+  const value = Number(input);
+  if (!Number.isInteger(value) || value < 0) {
+    return null;
+  }
+  return value;
+}
+
+function hasValidIndexedTokenId(row: WalletGalleryOwnershipRow): boolean {
+  return normalizeTokenIdOrNull(row.token_id) !== null;
 }
 
 function normalizeBalance(input: number | string): number {
@@ -324,8 +337,7 @@ function compareOwnershipRows(
     return contractComparison;
   }
   const tokenComparison =
-    normalizeTokenIdOrThrow(left.token_id, 'indexed_asset') -
-    normalizeTokenIdOrThrow(right.token_id, 'indexed_asset');
+    getIndexedTokenIdForSort(left) - getIndexedTokenIdForSort(right);
   if (tokenComparison !== 0) {
     return tokenComparison;
   }
@@ -334,7 +346,11 @@ function compareOwnershipRows(
     .localeCompare(right.owner_wallet.toLowerCase());
 }
 
-function getCollectionOrder(collectionKey: WalletGalleryCollectionKey): number {
+function getIndexedTokenIdForSort(row: WalletGalleryOwnershipRow): number {
+  return normalizeTokenIdOrNull(row.token_id) ?? Number.MAX_SAFE_INTEGER;
+}
+
+function getCollectionOrder(collectionKey: string): number {
   switch (collectionKey) {
     case WalletGalleryCollectionKey.MEMES:
       return 1;
@@ -344,6 +360,8 @@ function getCollectionOrder(collectionKey: WalletGalleryCollectionKey): number {
       return 3;
     case WalletGalleryCollectionKey.NEXTGEN:
       return 4;
+    default:
+      return Number.MAX_SAFE_INTEGER;
   }
 }
 

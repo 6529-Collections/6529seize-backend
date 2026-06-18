@@ -28,3 +28,24 @@
   - `node node_modules/typescript/bin/tsc -p tsconfig.json --noEmit`
   - `node node_modules/jest/bin/jest.js src/profile-cms/wallet-gallery/wallet-gallery-address-normalizer.test.ts src/profile-cms/wallet-gallery/wallet-gallery-media-normalizer.test.ts src/profile-cms/wallet-gallery/wallet-gallery-snapshot-db.test.ts src/api-serverless/src/profile-cms/wallet-gallery-api-service.test.ts --runInBand`
   - `codex-diff-check`
+- Opened PR #1650 targeting `codex/profile-cms-decentralized-publish`.
+- Requested CodeRabbit review with `@coderabbitai review`; CodeRabbit reported
+  org review rate limiting, so no inline CodeRabbit findings were available.
+- Addressed Sonar maintainability findings; follow-up Sonar analysis reported
+  zero new issues.
+- Addressed 6529bot follow-up review:
+  - NextGen snapshot ownership now reads from `nextgen_tokens.owner` and
+    left-joins `nft_owners` only to enrich block reference/balance when present.
+  - Verified against local indexed rows that sampled NextGen token ids
+    `10000000000` through `10000000004` match `nft_owners.token_id` for the
+    same owner wallet and have indexed block references.
+  - Removed the dead wallet sentinel fallback in snapshot DB queries.
+  - Made snapshot sorting resilient to unknown collection keys and skipped
+    malformed indexed token ids instead of failing otherwise valid requests.
+  - Added a comment clarifying that the ENS regex is a local lookup-format gate,
+    not exhaustive ENS validation.
+- Review-iteration validation passed:
+  - `bash -lc "npm run lint"`
+  - `node node_modules/typescript/bin/tsc -p tsconfig.json --noEmit`
+  - `node node_modules/jest/bin/jest.js src/profile-cms/wallet-gallery/wallet-gallery-address-normalizer.test.ts src/profile-cms/wallet-gallery/wallet-gallery-media-normalizer.test.ts src/profile-cms/wallet-gallery/wallet-gallery-snapshot-db.test.ts src/api-serverless/src/profile-cms/wallet-gallery-api-service.test.ts --runInBand`
+  - `codex-diff-check`

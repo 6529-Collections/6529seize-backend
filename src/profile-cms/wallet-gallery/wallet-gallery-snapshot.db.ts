@@ -23,8 +23,6 @@ import {
   SqlExecutor
 } from '@/sql-executor';
 
-const EMPTY_WALLET_SENTINEL = '__wallet_gallery_empty_wallet__';
-
 export class WalletGallerySnapshotDb extends LazyDbAccessCompatibleService {
   constructor(sqlExecutorGetter: () => SqlExecutor) {
     super(sqlExecutorGetter);
@@ -74,7 +72,7 @@ export class WalletGallerySnapshotDb extends LazyDbAccessCompatibleService {
             lower(owner_wallet) ASC
         `,
         {
-          wallets: wallets.length ? wallets : [EMPTY_WALLET_SENTINEL],
+          wallets,
           memesContract: MEMES_CONTRACT.toLowerCase(),
           gradientContract: GRADIENT_CONTRACT.toLowerCase(),
           memeLabContract: MEMELAB_CONTRACT.toLowerCase(),
@@ -131,12 +129,12 @@ export class WalletGallerySnapshotDb extends LazyDbAccessCompatibleService {
   private nextgenSelect(collectionOrder: number): string {
     return `
       SELECT
-        o.wallet as owner_wallet,
+        ng.owner as owner_wallet,
         e.display as owner_display,
-        lower(o.contract) as contract,
-        o.token_id,
-        o.balance,
-        o.block_reference,
+        :nextgenContract as contract,
+        ng.id as token_id,
+        COALESCE(o.balance, 1) as balance,
+        COALESCE(o.block_reference, 0) as block_reference,
         ng.name,
         ng.collection_name as collection,
         '${WalletGalleryCollectionKey.NEXTGEN}' as collection_key,
@@ -152,13 +150,15 @@ export class WalletGallerySnapshotDb extends LazyDbAccessCompatibleService {
         ng.icon_url as icon,
         ng.generator as metadata,
         ${collectionOrder} as collection_order
-      FROM ${NFT_OWNERS_TABLE} o
-      INNER JOIN ${NEXTGEN_TOKENS_TABLE} ng
-        ON ng.id = o.token_id
-      LEFT JOIN ${ENS_TABLE} e ON lower(e.wallet) = lower(o.wallet)
-      WHERE lower(o.wallet) IN (:wallets)
-        AND lower(o.contract) = :nextgenContract
-        AND o.balance > 0
+      FROM ${NEXTGEN_TOKENS_TABLE} ng
+      LEFT JOIN ${NFT_OWNERS_TABLE} o
+        ON lower(o.contract) = :nextgenContract
+       AND o.token_id = ng.id
+       AND lower(o.wallet) = lower(ng.owner)
+       AND o.balance > 0
+      LEFT JOIN ${ENS_TABLE} e ON lower(e.wallet) = lower(ng.owner)
+      WHERE lower(ng.owner) IN (:wallets)
+        AND ng.burnt = false
     `;
   }
 }
