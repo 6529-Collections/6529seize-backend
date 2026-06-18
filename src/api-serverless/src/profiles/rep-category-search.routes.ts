@@ -4,8 +4,20 @@ import { ApiResponse } from '../api-response';
 import { abusivenessCheckDb } from '../../../profiles/abusiveness-check.db';
 import { BadRequestException } from '../../../exceptions';
 import { abusivenessCheckService } from '../../../profiles/abusiveness-check.service';
+import { ApiGlobalRepCategorySuggestedCategory } from '../generated/models/ApiGlobalRepCategorySuggestedCategory';
+import { globalRepCategoryApiService } from '../rep-categories/global-rep-category.api.service';
 
 const router = asyncRouter();
+
+router.get(
+  `/top`,
+  async function (
+    _req: Request,
+    res: Response<ApiResponse<ApiGlobalRepCategorySuggestedCategory[]>>
+  ) {
+    res.send(await globalRepCategoryApiService.getSuggestedCategories());
+  }
+);
 
 router.get(
   `/`,

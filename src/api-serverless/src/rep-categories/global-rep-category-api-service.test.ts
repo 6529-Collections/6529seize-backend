@@ -1,9 +1,11 @@
 import { PageSortDirection } from '@/api/page-request';
 import { ApiProfileClassification } from '@/api/generated/models/ApiProfileClassification';
 import { ApiProfileMin } from '@/api/generated/models/ApiProfileMin';
+import { UserGroupsService } from '@/api/community-members/user-groups.service';
 import { IdentityFetcher } from '@/api/identities/identity.fetcher';
 import { GlobalRepCategoryApiService } from '@/api/rep-categories/global-rep-category.api.service';
 import { GlobalRepCategoryDb } from '@/api/rep-categories/global-rep-category.db';
+import { RequestContext } from '@/request.context';
 
 type GlobalRepCategoryDbMock = jest.Mocked<
   Pick<
@@ -12,11 +14,20 @@ type GlobalRepCategoryDbMock = jest.Mocked<
     | 'getRecipientsPage'
     | 'getGiversPage'
     | 'getRatingsPage'
+    | 'getSuggestedCategories'
+    | 'getWaveOverviewStats'
+    | 'getWavesPage'
+    | 'getWaveContributorsPage'
+    | 'getTopWaveContributorsByWaveIds'
   >
 >;
 
 type IdentityFetcherMock = jest.Mocked<
   Pick<IdentityFetcher, 'getOverviewsByIds'>
+>;
+
+type UserGroupsServiceMock = jest.Mocked<
+  Pick<UserGroupsService, 'getGroupsUserIsEligibleFor'>
 >;
 
 function makeProfile(id: string): ApiProfileMin {
@@ -90,7 +101,24 @@ function createService() {
           category: "Dev extraordinaire (A), can't miss"
         }
       ]
-    })
+    }),
+    getSuggestedCategories: jest.fn().mockResolvedValue([]),
+    getWaveOverviewStats: jest.fn().mockResolvedValue({
+      total_rep: '0',
+      wave_count: '0',
+      contributor_count: '0'
+    }),
+    getWavesPage: jest.fn().mockResolvedValue({
+      page: 1,
+      next: false,
+      data: []
+    }),
+    getWaveContributorsPage: jest.fn().mockResolvedValue({
+      page: 1,
+      next: false,
+      data: []
+    }),
+    getTopWaveContributorsByWaveIds: jest.fn().mockResolvedValue([])
   };
   const profiles = ['giver-1', 'giver-2', 'recipient-1', 'recipient-2'].reduce(
     (acc, id) => {
@@ -102,14 +130,19 @@ function createService() {
   const identityFetcher: IdentityFetcherMock = {
     getOverviewsByIds: jest.fn().mockResolvedValue(profiles)
   };
+  const userGroupsService: UserGroupsServiceMock = {
+    getGroupsUserIsEligibleFor: jest.fn().mockResolvedValue(['group-1'])
+  };
 
   return {
     service: new GlobalRepCategoryApiService(
       globalRepCategoryDb as unknown as GlobalRepCategoryDb,
-      identityFetcher as unknown as IdentityFetcher
+      identityFetcher as unknown as IdentityFetcher,
+      userGroupsService as unknown as UserGroupsService
     ),
     globalRepCategoryDb,
     identityFetcher,
+    userGroupsService,
     profiles
   };
 }
@@ -220,6 +253,133 @@ describe('GlobalRepCategoryApiService', () => {
         search: 'bob'
       },
       {}
+    );
+  });
+
+  it('builds wave overview from category-wide wave REP analytics', async () => {
+    const { service, globalRepCategoryDb, userGroupsService, profiles } =
+      createService();
+    const ctx = {
+      authenticationContext: {
+        getActingAsId: () => 'viewer-profile'
+      }
+    } as unknown as RequestContext;
+    globalRepCategoryDb.getWaveOverviewStats.mockResolvedValueOnce({
+      total_rep: '-12',
+      wave_count: '2',
+      contributor_count: '2'
+    });
+    globalRepCategoryDb.getWavesPage.mockResolvedValueOnce({
+      page: 1,
+      next: false,
+      data: [
+        {
+          wave_id: 'wave-1',
+          wave_name: 'Wave one',
+          wave_picture: null,
+          is_direct_message: false,
+          total_rep: '-10',
+          contributor_count: '2',
+          last_modified: '2026-06-05T00:00:00.000Z'
+        }
+      ]
+    });
+    globalRepCategoryDb.getWaveContributorsPage.mockResolvedValueOnce({
+      page: 1,
+      next: false,
+      data: [
+        {
+          wave_id: 'wave-1',
+          wave_name: 'Wave one',
+          wave_picture: null,
+          is_direct_message: false,
+          profile_id: 'giver-1',
+          contribution: '-10',
+          last_modified: '2026-06-05T00:00:00.000Z'
+        }
+      ]
+    });
+    globalRepCategoryDb.getTopWaveContributorsByWaveIds.mockResolvedValueOnce([
+      {
+        wave_id: 'wave-1',
+        wave_name: 'Wave one',
+        wave_picture: null,
+        is_direct_message: false,
+        profile_id: 'giver-2',
+        contribution: '7',
+        last_modified: '2026-06-04T00:00:00.000Z'
+      }
+    ]);
+
+    await expect(
+      service.getWaveOverview({ category: 'Dev extraordinaire' }, ctx)
+    ).resolves.toEqual({
+      category: 'Dev extraordinaire',
+      total_rep: -12,
+      wave_count: 2,
+      contributor_count: 2,
+      top_waves: [
+        {
+          wave: {
+            id: 'wave-1',
+            name: 'Wave one',
+            pfp: null,
+            is_direct_message: false
+          },
+          total_rep: -10,
+          contributor_count: 2,
+          last_modified: '2026-06-05T00:00:00.000Z',
+          top_contributors: [
+            {
+              wave: {
+                id: 'wave-1',
+                name: 'Wave one',
+                pfp: null,
+                is_direct_message: false
+              },
+              profile: profiles['giver-2'],
+              contribution: 7,
+              last_modified: '2026-06-04T00:00:00.000Z'
+            }
+          ]
+        }
+      ],
+      top_contributors: [
+        {
+          wave: {
+            id: 'wave-1',
+            name: 'Wave one',
+            pfp: null,
+            is_direct_message: false
+          },
+          profile: profiles['giver-1'],
+          contribution: -10,
+          last_modified: '2026-06-05T00:00:00.000Z'
+        }
+      ]
+    });
+
+    expect(userGroupsService.getGroupsUserIsEligibleFor).toHaveBeenCalledWith(
+      'viewer-profile',
+      undefined
+    );
+    expect(globalRepCategoryDb.getWavesPage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        category: 'Dev extraordinaire',
+        groupIdsUserIsEligibleFor: ['group-1'],
+        order_by: 'rep'
+      }),
+      ctx
+    );
+    expect(
+      globalRepCategoryDb.getTopWaveContributorsByWaveIds
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        category: 'Dev extraordinaire',
+        waveIds: ['wave-1'],
+        groupIdsUserIsEligibleFor: ['group-1']
+      }),
+      ctx
     );
   });
 
