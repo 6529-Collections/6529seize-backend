@@ -5,6 +5,10 @@ import {
   ProfileCmsPackageStatus
 } from '@/entities/IProfileCmsPackage';
 import {
+  ProfileCmsPointerEventEntity,
+  ProfileCmsPointerEventType
+} from '@/entities/IProfileCmsPointerEvent';
+import {
   BadRequestException,
   ForbiddenException,
   NotFoundException
@@ -14,6 +18,34 @@ import {
   ProfileCmsPackagesDb,
   profileCmsPackagesDb
 } from '@/profile-cms/profile-cms-packages.db';
+import {
+  ProfileCmsAgentPatchValidationResult,
+  ValidateProfileCmsAgentPatchRequest,
+  validateProfileCmsAgentPatch
+} from '@/profile-cms/profile-cms-agent-patch';
+import {
+  ProfileCmsAgentSchemaBundleResponse,
+  ProfileCmsAgentSourcePacketResponse,
+  buildProfileCmsAgentSchemaBundle,
+  buildProfileCmsAgentSourcePacket
+} from '@/profile-cms/profile-cms-agent-source-packet';
+import {
+  ProfileCmsPointerEventsDb,
+  profileCmsPointerEventsDb
+} from '@/profile-cms/profile-cms-pointer-events.db';
+import {
+  ProfileCmsPublishSignaturesDb,
+  profileCmsPublishSignaturesDb
+} from '@/profile-cms/profile-cms-publish-signatures.db';
+import {
+  ProfileCmsPublishSignatureRequest,
+  ProfileCmsPublishSignatureVerificationResult,
+  verifyProfileCmsPublishSignature
+} from '@/profile-cms/profile-cms-signing';
+import {
+  ProfileCmsStorageReceiptVerifier,
+  profileCmsStorageReceiptVerifier
+} from '@/profile-cms/profile-cms-storage';
 import {
   cmsPackageSchema,
   CmsPackageV1,
@@ -43,6 +75,21 @@ export interface ValidateProfileCmsPackageRequest {
 export interface PublishProfileCmsPackageRequest {
   readonly expected_package_hash?: string;
   readonly expected_payload_hash?: string;
+  readonly signer_address: string;
+  readonly signature: string;
+  readonly chain_id: number;
+  readonly deadline: number;
+  readonly is_safe_signature?: boolean;
+  readonly verifying_contract?: string | null;
+}
+
+export interface RollbackProfileCmsPackageRequest {
+  readonly expected_current_package_id: string;
+  readonly expected_current_package_hash?: string;
+}
+
+export interface ArchiveProfileCmsPackageRequest {
+  readonly expected_package_hash?: string;
 }
 
 export interface ProfileCmsPackageResponse {
@@ -70,16 +117,58 @@ export interface ProfileCmsPrimaryPackageResponse {
   readonly published_at?: number;
 }
 
+export interface ProfileCmsPointerEventResponse {
+  readonly id: string;
+  readonly event_type: string;
+  readonly profile_id: string;
+  readonly profile_handle: string;
+  readonly package_id: string;
+  readonly package_db_id: string;
+  readonly package_version: number;
+  readonly package_hash: string;
+  readonly payload_hash: string;
+  readonly previous_package_db_id?: string;
+  readonly actor_profile_id: string;
+  readonly signer_address?: string;
+  readonly typed_data_hash?: string;
+  readonly storage_receipt?: unknown;
+  readonly event_sequence: number;
+  readonly created_at: number;
+}
+
+export interface ProfileCmsPackageExportResponse {
+  readonly package: unknown;
+  readonly package_id: string;
+  readonly package_db_id: string;
+  readonly version: number;
+  readonly status: string;
+  readonly profile_id: string;
+  readonly profile_handle: string;
+  readonly primary_path: string;
+  readonly package_hash: string;
+  readonly payload_hash: string;
+  readonly storage_receipts: unknown;
+  readonly pointer_events: ProfileCmsPointerEventResponse[];
+  readonly updated_at: number;
+  readonly published_at?: number;
+}
+
 interface ProfileHandleIdentity {
   readonly id: string;
   readonly handle: string;
   readonly wallets: ReadonlySet<string>;
 }
 
+const PROFILE_CMS_PUBLISH_MAX_DEADLINE_MS = 15 * 60 * 1000;
+
 export class ProfileCmsApiService {
   constructor(
     private readonly packagesDb: ProfileCmsPackagesDb,
-    private readonly identityFetcher: IdentityFetcher
+    private readonly identityFetcher: IdentityFetcher,
+    private readonly pointerEventsDb: ProfileCmsPointerEventsDb,
+    private readonly publishSignaturesDb: ProfileCmsPublishSignaturesDb,
+    private readonly storageReceiptVerifier: ProfileCmsStorageReceiptVerifier,
+    private readonly publishSignatureVerifier = verifyProfileCmsPublishSignature
   ) {}
 
   async saveDraft(
@@ -152,6 +241,54 @@ export class ProfileCmsApiService {
     });
   }
 
+  getAgentSchemaBundle(): ProfileCmsAgentSchemaBundleResponse {
+    return buildProfileCmsAgentSchemaBundle(this.getCurrentIsoDate());
+  }
+
+  async getAgentSourcePacket(
+    id: string,
+    ctx: RequestContext
+  ): Promise<ProfileCmsAgentSourcePacketResponse> {
+    const entity = await this.getReadablePackageEntityOrThrow(id, ctx);
+    const cmsPackage = this.parsePackageOrThrow(entity.cms_package);
+    const checkedAt = this.getCurrentIsoDate();
+    const liveValidation = validateCmsPackageV1(cmsPackage, {
+      allowFixtureSignatures: false,
+      allowFixtureStorage: false,
+      checkedAt,
+      enforceHashes: true
+    });
+
+    return buildProfileCmsAgentSourcePacket({
+      entity,
+      cmsPackage,
+      liveValidation,
+      generatedAt: checkedAt,
+      visibility: this.isPublicPackage(entity)
+        ? 'public_published'
+        : 'private_authority_required'
+    });
+  }
+
+  async validateAgentPatch(
+    id: string,
+    request: ValidateProfileCmsAgentPatchRequest,
+    ctx: RequestContext
+  ): Promise<ProfileCmsAgentPatchValidationResult> {
+    const entity = await this.getPackageEntityOrThrow(id, ctx);
+    this.assertCanManageProfile(entity.profile_id, ctx.authenticationContext);
+    return validateProfileCmsAgentPatch({
+      cmsPackage: this.parsePackageOrThrow(entity.cms_package),
+      packageDbId: entity.id,
+      packageId: entity.package_id,
+      version: entity.version,
+      packageHash: entity.package_hash,
+      status: entity.status,
+      request,
+      checkedAt: this.getCurrentIsoDate()
+    });
+  }
+
   async publish(
     id: string,
     request: PublishProfileCmsPackageRequest,
@@ -161,6 +298,8 @@ export class ProfileCmsApiService {
     this.assertCanManageProfile(entity.profile_id, ctx.authenticationContext);
     this.assertDraftCanBePublished(entity);
     this.assertExpectedHashes(entity, request);
+    this.assertPublishSignatureRequest(request);
+    this.assertPublishDeadline(request.deadline);
 
     const validationResult = validateCmsPackageV1(entity.cms_package, {
       allowFixtureSignatures: false,
@@ -169,17 +308,59 @@ export class ProfileCmsApiService {
     });
 
     if (!validationResult.valid) {
-      const failedAt = Time.currentMillis();
-      await this.packagesDb.markValidating(entity.id, failedAt, ctx);
-      await this.packagesDb.markFailed(
+      await this.markPublishFailed(
         entity.id,
         validationResult,
         this.getValidationErrorMessage(validationResult),
-        failedAt,
         ctx
       );
       throw new BadRequestException('CMS package is not valid for publish');
     }
+
+    const cmsPackage = entity.cms_package as CmsPackageV1;
+    const storageValidation =
+      this.storageReceiptVerifier.validateForPublish(cmsPackage);
+    if (!storageValidation.valid || !storageValidation.canonical_receipt) {
+      await this.markPublishFailed(
+        entity.id,
+        validationResult,
+        storageValidation.reason ?? 'storage_receipt_invalid',
+        ctx
+      );
+      throw new BadRequestException(
+        `CMS package storage receipt is not valid for publish: ${
+          storageValidation.reason ?? 'unknown'
+        }`
+      );
+    }
+
+    const profile = await this.getProfileIdentityOrThrow(
+      entity.profile_id,
+      ctx
+    );
+    const signatureVerification = await this.publishSignatureVerifier({
+      request,
+      message: {
+        action: 'publish',
+        profileId: entity.profile_id,
+        handle: profile.handle,
+        packageId: entity.package_id,
+        version: entity.version,
+        draftId: entity.id,
+        payloadHash: entity.payload_hash,
+        packageHash: entity.package_hash,
+        primaryPath: entity.primary_path,
+        storageProvider: storageValidation.canonical_receipt.provider,
+        storageUri: storageValidation.canonical_receipt.uri,
+        storageContentHash: storageValidation.canonical_receipt.content_hash,
+        deadline: request.deadline
+      }
+    });
+    this.assertPublishSignatureVerified(signatureVerification);
+    this.assertSignerWalletMatchesProfile(
+      signatureVerification.signer_address,
+      profile
+    );
 
     const publishedAt = Time.currentMillis();
     const publishedByProfileId = this.getLoggedInProfileId(
@@ -203,6 +384,17 @@ export class ProfileCmsApiService {
         }
         this.assertDraftCanBePublished(lockedEntity);
         this.assertExpectedHashes(lockedEntity, request);
+        await this.consumePublishSignatureOrThrow(
+          lockedEntity,
+          request,
+          signatureVerification,
+          txCtx
+        );
+        const previousPrimary =
+          await this.packagesDb.findPrimaryPublishedByProfileIdForUpdate(
+            lockedEntity.profile_id,
+            txCtx
+          );
         await this.packagesDb.markValidating(
           lockedEntity.id,
           publishedAt,
@@ -221,12 +413,204 @@ export class ProfileCmsApiService {
           publishedAt,
           txCtx
         );
+        await this.recordPointerEvents(
+          [
+            this.toPointerEvent({
+              eventType: ProfileCmsPointerEventType.PUBLISH,
+              entity: lockedEntity,
+              previousPackageDbId: previousPrimary?.id ?? null,
+              actorProfileId: publishedByProfileId,
+              signatureVerification,
+              signatureRequest: request,
+              storageReceipt: storageValidation.canonical_receipt,
+              createdAt: publishedAt
+            }),
+            ...(previousPrimary
+              ? [
+                  this.toPointerEvent({
+                    eventType: ProfileCmsPointerEventType.SUPERSEDE,
+                    entity: previousPrimary,
+                    previousPackageDbId: lockedEntity.id,
+                    actorProfileId: publishedByProfileId,
+                    signatureVerification,
+                    signatureRequest: request,
+                    storageReceipt: storageValidation.canonical_receipt,
+                    createdAt: publishedAt
+                  })
+                ]
+              : []),
+            this.toPointerEvent({
+              eventType: ProfileCmsPointerEventType.SET_PRIMARY,
+              entity: lockedEntity,
+              previousPackageDbId: previousPrimary?.id ?? null,
+              actorProfileId: publishedByProfileId,
+              signatureVerification,
+              signatureRequest: request,
+              storageReceipt: storageValidation.canonical_receipt,
+              createdAt: publishedAt
+            })
+          ],
+          txCtx
+        );
       }
     );
 
     return this.toPackageResponse(
       await this.getPackageEntityOrThrow(entity.id, ctx)
     );
+  }
+
+  async rollbackPrimary(
+    id: string,
+    request: RollbackProfileCmsPackageRequest,
+    ctx: RequestContext
+  ): Promise<ProfileCmsPackageResponse> {
+    const target = await this.getPackageEntityOrThrow(id, ctx);
+    this.assertCanManageProfile(target.profile_id, ctx.authenticationContext);
+    this.assertPackageCanBecomePrimary(target);
+    const actorProfileId = this.getLoggedInProfileId(ctx.authenticationContext);
+    const now = Time.currentMillis();
+
+    await this.packagesDb.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const txCtx: RequestContext = { ...ctx, connection };
+        await this.packagesDb.lockProfilePackagesForUpdate(
+          target.profile_id,
+          txCtx
+        );
+        const lockedTarget = await this.packagesDb.findByIdForUpdate(
+          target.id,
+          txCtx
+        );
+        if (!lockedTarget) {
+          throw new NotFoundException(
+            `Profile CMS package ${target.id} was not found`
+          );
+        }
+        this.assertPackageCanBecomePrimary(lockedTarget);
+        const currentPrimary =
+          await this.packagesDb.findPrimaryPublishedByProfileIdForUpdate(
+            lockedTarget.profile_id,
+            txCtx
+          );
+        this.assertExpectedCurrentPrimary(currentPrimary, request);
+        if (currentPrimary?.id === lockedTarget.id) {
+          throw new BadRequestException(
+            'Target CMS package is already primary'
+          );
+        }
+        await this.packagesDb.supersedePrimaryForProfile(
+          lockedTarget.profile_id,
+          lockedTarget.id,
+          now,
+          txCtx
+        );
+        await this.packagesDb.markPrimary(lockedTarget.id, now, txCtx);
+        await this.recordPointerEvents(
+          [
+            this.toPointerEvent({
+              eventType: ProfileCmsPointerEventType.ROLLBACK,
+              entity: lockedTarget,
+              previousPackageDbId: currentPrimary?.id ?? null,
+              actorProfileId,
+              createdAt: now
+            }),
+            ...(currentPrimary
+              ? [
+                  this.toPointerEvent({
+                    eventType: ProfileCmsPointerEventType.SUPERSEDE,
+                    entity: currentPrimary,
+                    previousPackageDbId: lockedTarget.id,
+                    actorProfileId,
+                    createdAt: now
+                  })
+                ]
+              : []),
+            this.toPointerEvent({
+              eventType: ProfileCmsPointerEventType.SET_PRIMARY,
+              entity: lockedTarget,
+              previousPackageDbId: currentPrimary?.id ?? null,
+              actorProfileId,
+              createdAt: now
+            })
+          ],
+          txCtx
+        );
+      }
+    );
+
+    return this.toPackageResponse(
+      await this.getPackageEntityOrThrow(target.id, ctx)
+    );
+  }
+
+  async archivePackage(
+    id: string,
+    request: ArchiveProfileCmsPackageRequest,
+    ctx: RequestContext
+  ): Promise<ProfileCmsPackageResponse> {
+    const entity = await this.getPackageEntityOrThrow(id, ctx);
+    this.assertCanManageProfile(entity.profile_id, ctx.authenticationContext);
+    this.assertExpectedPackageHash(entity, request.expected_package_hash);
+    if (entity.is_primary) {
+      throw new BadRequestException(
+        'Primary CMS package must be rolled back before archive'
+      );
+    }
+    if (entity.status === ProfileCmsPackageStatus.ARCHIVED) {
+      throw new BadRequestException('CMS package is already archived');
+    }
+    const archivedAt = Time.currentMillis();
+    const actorProfileId = this.getLoggedInProfileId(ctx.authenticationContext);
+    await this.packagesDb.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const txCtx: RequestContext = { ...ctx, connection };
+        const lockedEntity = await this.packagesDb.findByIdForUpdate(
+          entity.id,
+          txCtx
+        );
+        if (!lockedEntity) {
+          throw new NotFoundException(
+            `Profile CMS package ${entity.id} was not found`
+          );
+        }
+        this.assertExpectedPackageHash(
+          lockedEntity,
+          request.expected_package_hash
+        );
+        if (lockedEntity.is_primary) {
+          throw new BadRequestException(
+            'Primary CMS package must be rolled back before archive'
+          );
+        }
+        await this.packagesDb.archive(lockedEntity.id, archivedAt, txCtx);
+        await this.recordPointerEvents(
+          [
+            this.toPointerEvent({
+              eventType: ProfileCmsPointerEventType.ARCHIVE,
+              entity: lockedEntity,
+              previousPackageDbId: null,
+              actorProfileId,
+              createdAt: archivedAt
+            })
+          ],
+          txCtx
+        );
+      }
+    );
+    return this.toPackageResponse(await this.getPackageEntityOrThrow(id, ctx));
+  }
+
+  async exportPackage(
+    id: string,
+    ctx: RequestContext
+  ): Promise<ProfileCmsPackageExportResponse> {
+    const entity = await this.getReadablePackageEntityOrThrow(id, ctx);
+    const pointerEvents = await this.pointerEventsDb.listByPackageId(
+      entity.id,
+      ctx
+    );
+    return this.toExportResponse(entity, pointerEvents);
   }
 
   async listForProfile(
@@ -326,11 +710,20 @@ export class ProfileCmsApiService {
     entity: ProfileCmsPackageEntity,
     ctx: RequestContext
   ): ProfileCmsPackageResponse {
+    return this.toPackageResponse(
+      this.getReadablePackageEntityOrThrowFromEntity(entity, ctx)
+    );
+  }
+
+  private getReadablePackageEntityOrThrowFromEntity(
+    entity: ProfileCmsPackageEntity,
+    ctx: RequestContext
+  ): ProfileCmsPackageEntity {
     if (
       entity.status === ProfileCmsPackageStatus.PUBLISHED &&
       this.isPublicPackage(entity)
     ) {
-      return this.toPackageResponse(entity);
+      return entity;
     }
 
     if (!this.canManageProfile(entity.profile_id, ctx.authenticationContext)) {
@@ -338,7 +731,17 @@ export class ProfileCmsApiService {
         `Profile CMS package ${entity.id} was not found`
       );
     }
-    return this.toPackageResponse(entity);
+    return entity;
+  }
+
+  private async getReadablePackageEntityOrThrow(
+    id: string,
+    ctx: RequestContext
+  ): Promise<ProfileCmsPackageEntity> {
+    return this.getReadablePackageEntityOrThrowFromEntity(
+      await this.getPackageEntityOrThrow(id, ctx),
+      ctx
+    );
   }
 
   private async getPackageEntityOrThrow(
@@ -350,6 +753,23 @@ export class ProfileCmsApiService {
       throw new NotFoundException(`Profile CMS package ${id} was not found`);
     }
     return entity;
+  }
+
+  private async markPublishFailed(
+    id: string,
+    validationResult: CmsValidationResultV1,
+    validationError: string,
+    ctx: RequestContext
+  ): Promise<void> {
+    const failedAt = Time.currentMillis();
+    await this.packagesDb.markValidating(id, failedAt, ctx);
+    await this.packagesDb.markFailed(
+      id,
+      validationResult,
+      validationError,
+      failedAt,
+      ctx
+    );
   }
 
   private parsePackageOrThrow(input: unknown): CmsPackageV1 {
@@ -432,6 +852,17 @@ export class ProfileCmsApiService {
       });
   }
 
+  private assertSignerWalletMatchesProfile(
+    signerAddress: string | null,
+    profile: ProfileHandleIdentity
+  ): void {
+    if (!signerAddress || !profile.wallets.has(signerAddress)) {
+      throw new BadRequestException(
+        'CMS publish signature signer does not belong to the profile'
+      );
+    }
+  }
+
   private assertCanManageProfile(
     profileId: string,
     authenticationContext: AuthenticationContext | undefined
@@ -488,9 +919,91 @@ export class ProfileCmsApiService {
     }
   }
 
+  private assertExpectedPackageHash(
+    entity: ProfileCmsPackageEntity,
+    expectedPackageHash: string | undefined
+  ): void {
+    if (expectedPackageHash && expectedPackageHash !== entity.package_hash) {
+      throw new BadRequestException(
+        'Expected package hash does not match CMS package'
+      );
+    }
+  }
+
+  private assertExpectedCurrentPrimary(
+    currentPrimary: ProfileCmsPackageEntity | null,
+    request: RollbackProfileCmsPackageRequest
+  ): void {
+    if (!currentPrimary) {
+      throw new BadRequestException('Profile has no current primary package');
+    }
+    if (currentPrimary.id !== request.expected_current_package_id) {
+      throw new BadRequestException('Expected current package id mismatch');
+    }
+    if (
+      request.expected_current_package_hash &&
+      currentPrimary.package_hash !== request.expected_current_package_hash
+    ) {
+      throw new BadRequestException('Expected current package hash mismatch');
+    }
+  }
+
   private assertDraftCanBePublished(entity: ProfileCmsPackageEntity): void {
     if (entity.status !== ProfileCmsPackageStatus.DRAFT) {
       throw new BadRequestException('Only draft CMS packages can be published');
+    }
+  }
+
+  private assertPackageCanBecomePrimary(entity: ProfileCmsPackageEntity): void {
+    if (
+      entity.status !== ProfileCmsPackageStatus.PUBLISHED &&
+      entity.status !== ProfileCmsPackageStatus.SUPERSEDED
+    ) {
+      throw new BadRequestException(
+        'Only published or superseded CMS packages can become primary'
+      );
+    }
+    if (
+      !entity.production_valid ||
+      !this.isProductionSafePackage(entity.cms_package)
+    ) {
+      throw new BadRequestException(
+        'Only production-valid CMS packages can become primary'
+      );
+    }
+  }
+
+  private assertPublishSignatureRequest(
+    request: PublishProfileCmsPackageRequest
+  ): asserts request is PublishProfileCmsPackageRequest &
+    ProfileCmsPublishSignatureRequest {
+    if (!request.signer_address || !request.signature) {
+      throw new BadRequestException('CMS publish signature is required');
+    }
+    if (!Number.isInteger(request.chain_id) || request.chain_id < 1) {
+      throw new BadRequestException('CMS publish chain_id is invalid');
+    }
+  }
+
+  private assertPublishDeadline(deadline: number): void {
+    const now = Time.currentMillis();
+    if (!Number.isInteger(deadline) || deadline < now) {
+      throw new BadRequestException('CMS publish signature is expired');
+    }
+    if (deadline > now + PROFILE_CMS_PUBLISH_MAX_DEADLINE_MS) {
+      throw new BadRequestException(
+        'CMS publish signature deadline is too far in the future'
+      );
+    }
+  }
+
+  private assertPublishSignatureVerified(
+    result: ProfileCmsPublishSignatureVerificationResult
+  ): void {
+    if (!result.valid) {
+      throw new BadRequestException(
+        `CMS publish signature is invalid: ${result.reason ?? 'unknown'}`
+      );
     }
   }
 
@@ -541,6 +1054,94 @@ export class ProfileCmsApiService {
     );
   }
 
+  private async recordPointerEvents(
+    events: ProfileCmsPointerEventEntity[],
+    ctx: RequestContext
+  ): Promise<void> {
+    for (let index = 0; index < events.length; index++) {
+      const event = events[index];
+      await this.pointerEventsDb.insert(
+        {
+          ...event,
+          event_sequence: index
+        },
+        ctx
+      );
+    }
+  }
+
+  private async consumePublishSignatureOrThrow(
+    entity: ProfileCmsPackageEntity,
+    request: ProfileCmsPublishSignatureRequest,
+    signatureVerification: ProfileCmsPublishSignatureVerificationResult,
+    ctx: RequestContext
+  ): Promise<void> {
+    if (!signatureVerification.signer_address) {
+      throw new BadRequestException('CMS publish signature signer is missing');
+    }
+    const consumed = await this.publishSignaturesDb.insertConsumed(
+      {
+        id: randomUUID(),
+        typed_data_hash: signatureVerification.typed_data_hash,
+        profile_id: entity.profile_id,
+        package_db_id: entity.id,
+        package_id: entity.package_id,
+        package_version: entity.version,
+        package_hash: entity.package_hash,
+        signer_address: signatureVerification.signer_address,
+        deadline: request.deadline,
+        created_at: Time.currentMillis()
+      },
+      ctx
+    );
+    if (!consumed) {
+      throw new BadRequestException(
+        'CMS publish signature has already been consumed'
+      );
+    }
+  }
+
+  private toPointerEvent({
+    eventType,
+    entity,
+    previousPackageDbId,
+    actorProfileId,
+    signatureVerification,
+    signatureRequest,
+    storageReceipt,
+    createdAt
+  }: {
+    readonly eventType: ProfileCmsPointerEventType;
+    readonly entity: ProfileCmsPackageEntity;
+    readonly previousPackageDbId: string | null;
+    readonly actorProfileId: string;
+    readonly signatureVerification?: ProfileCmsPublishSignatureVerificationResult;
+    readonly signatureRequest?: ProfileCmsPublishSignatureRequest;
+    readonly storageReceipt?: CmsPackageV1['storage'][number];
+    readonly createdAt: number;
+  }): ProfileCmsPointerEventEntity {
+    return {
+      id: randomUUID(),
+      event_type: eventType,
+      profile_id: entity.profile_id,
+      profile_handle: entity.profile_handle,
+      package_db_id: entity.id,
+      package_id: entity.package_id,
+      package_version: entity.version,
+      package_hash: entity.package_hash,
+      payload_hash: entity.payload_hash,
+      previous_package_db_id: previousPackageDbId,
+      actor_profile_id: actorProfileId,
+      signer_address: signatureVerification?.signer_address ?? null,
+      signature: signatureRequest?.signature ?? null,
+      typed_data: signatureVerification?.typed_data ?? null,
+      typed_data_hash: signatureVerification?.typed_data_hash ?? null,
+      storage_receipt: storageReceipt ?? null,
+      event_sequence: 0,
+      created_at: createdAt
+    };
+  }
+
   private toPackageResponse(
     entity: ProfileCmsPackageEntity
   ): ProfileCmsPackageResponse {
@@ -573,11 +1174,73 @@ export class ProfileCmsApiService {
       ...(entity.published_at ? { published_at: entity.published_at } : {})
     };
   }
+
+  private toExportResponse(
+    entity: ProfileCmsPackageEntity,
+    pointerEvents: ProfileCmsPointerEventEntity[]
+  ): ProfileCmsPackageExportResponse {
+    return {
+      package: entity.cms_package,
+      package_id: entity.package_id,
+      package_db_id: entity.id,
+      version: entity.version,
+      status: entity.status.toLowerCase(),
+      profile_id: entity.profile_id,
+      profile_handle: entity.profile_handle,
+      primary_path: entity.primary_path,
+      package_hash: entity.package_hash,
+      payload_hash: entity.payload_hash,
+      storage_receipts: entity.storage_receipts,
+      pointer_events: pointerEvents.map((event) =>
+        this.toPointerEventResponse(event)
+      ),
+      updated_at: entity.updated_at,
+      ...(entity.published_at ? { published_at: entity.published_at } : {})
+    };
+  }
+
+  private toPointerEventResponse(
+    entity: ProfileCmsPointerEventEntity
+  ): ProfileCmsPointerEventResponse {
+    return {
+      id: entity.id,
+      event_type: entity.event_type.toLowerCase(),
+      profile_id: entity.profile_id,
+      profile_handle: entity.profile_handle,
+      package_id: entity.package_id,
+      package_db_id: entity.package_db_id,
+      package_version: entity.package_version,
+      package_hash: entity.package_hash,
+      payload_hash: entity.payload_hash,
+      ...(entity.previous_package_db_id
+        ? { previous_package_db_id: entity.previous_package_db_id }
+        : {}),
+      actor_profile_id: entity.actor_profile_id,
+      ...(entity.signer_address
+        ? { signer_address: entity.signer_address }
+        : {}),
+      ...(entity.typed_data_hash
+        ? { typed_data_hash: entity.typed_data_hash }
+        : {}),
+      ...(entity.storage_receipt
+        ? { storage_receipt: entity.storage_receipt }
+        : {}),
+      event_sequence: entity.event_sequence,
+      created_at: entity.created_at
+    };
+  }
+
+  private getCurrentIsoDate(): string {
+    return new Date(Time.currentMillis()).toISOString();
+  }
 }
 
 export const profileCmsApiService = new ProfileCmsApiService(
   profileCmsPackagesDb,
-  identityFetcher
+  identityFetcher,
+  profileCmsPointerEventsDb,
+  profileCmsPublishSignaturesDb,
+  profileCmsStorageReceiptVerifier
 );
 
 function normalizeWallet(wallet: string | null | undefined): string | null {

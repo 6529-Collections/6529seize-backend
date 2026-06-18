@@ -208,6 +208,20 @@ Important API responsibilities:
   `/profile-cms/{handle}/primary`, returning the published production-safe CMS
   V1 package envelope used by `/{handle}/index.html`; draft, failed, fixture,
   and missing primary packages return 404.
+- Authenticated profile-native CMS publish hardening under `/profile-cms`,
+  including EIP-712 publish intent verification, canonical IPFS/Arweave receipt
+  checks, rollback/archive endpoints, and package export data for future
+  standalone renderers and mirrors.
+- Authenticated profile-native CMS wallet gallery snapshots under
+  `/profile-cms/wallet-gallery/snapshot`, gated by
+  `FEATURE_PROFILE_CMS_WALLET_GALLERY`, reading current indexed NFT ownership
+  and normalized media from MySQL for deterministic gallery generation.
+- Profile-native CMS BYO-agent affordances under `/profile-cms/agent` and
+  `/profile-cms/packages/{id}/agent`, including a public schema bundle,
+  read-only source packets that separate facts, author copy, derived metadata,
+  and validation diagnostics, and authenticated draft patch validation that
+  dry-runs agent proposals without applying changes or bypassing publish
+  signing/storage authority.
 - Public decentralized media resolution under `/media/resolve`, which maps
   native `ipfs://`, `ipns://`, and `ar://` references plus recognized gateway
   URLs to canonical native URIs, `media.6529.io` resolver URLs, and explicit
@@ -243,8 +257,24 @@ keeps the complete CMS V1 package JSON, indexed profile/package/version/hash
 fields, publication state, primary-package flags, validation results, and
 storage receipt indexes for IPFS, Arweave, S3, and fixture receipts. The API
 publish path validates CMS V1 semantics, enforces the submitted payload and
-package hashes, rejects fixture signatures/storage for production publish, and
+package hashes, rejects fixture signatures/storage for production publish,
+verifies EIP-712 publish intent, requires one canonical IPFS or Arweave receipt,
+consumes the verified typed-data hash to prevent publish-intent replay, and
 supersedes the previous primary package in one transaction.
+
+Profile CMS pointer history is stored in `profile_cms_pointer_events`. Publish,
+set-primary, supersede, rollback, and archive events keep package hashes,
+previous-primary links, actor profile ids, signature metadata, and canonical
+storage receipts. `event_sequence` preserves logical ordering for events written
+in the same millisecond so the primary pointer history can be reconstructed and
+exported for future mirrors. Consumed publish intent hashes are stored in
+`profile_cms_publish_signatures`.
+
+Profile CMS wallet gallery snapshots are read-only API projections over
+`nft_owners`, `ens`, `nfts`, `nfts_meme_lab`, and `nextgen_tokens`. They do not
+create schema, run migrations, enqueue indexers, or fetch chain/metadata data
+live. Request-side asset/contract exclusions are applied in the API service and
+reported in the response for generator auditability.
 
 ## Async Processing
 

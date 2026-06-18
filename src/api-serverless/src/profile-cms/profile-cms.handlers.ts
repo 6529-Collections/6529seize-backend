@@ -1,18 +1,31 @@
 import { getAuthenticationContext } from '@/api/auth/auth';
+import { ApiArchiveProfileCmsPackageRequest } from '@/api/generated/models/ApiArchiveProfileCmsPackageRequest';
 import { ApiProfileCmsValidationResult } from '@/api/generated/models/ApiProfileCmsValidationResult';
 import { ApiProfileCmsPackage } from '@/api/generated/models/ApiProfileCmsPackage';
+import { ApiProfileCmsAgentPatchValidationResult } from '@/api/generated/models/ApiProfileCmsAgentPatchValidationResult';
+import { ApiProfileCmsAgentSchemaBundle } from '@/api/generated/models/ApiProfileCmsAgentSchemaBundle';
+import { ApiProfileCmsAgentSourcePacket } from '@/api/generated/models/ApiProfileCmsAgentSourcePacket';
+import { ApiProfileCmsPackageExport } from '@/api/generated/models/ApiProfileCmsPackageExport';
 import { ApiProfileCmsPrimaryPackage } from '@/api/generated/models/ApiProfileCmsPrimaryPackage';
 import { ApiPublishProfileCmsPackageRequest } from '@/api/generated/models/ApiPublishProfileCmsPackageRequest';
+import { ApiRollbackProfileCmsPackageRequest } from '@/api/generated/models/ApiRollbackProfileCmsPackageRequest';
 import { ApiSaveProfileCmsPackageDraftRequest } from '@/api/generated/models/ApiSaveProfileCmsPackageDraftRequest';
+import { ApiValidateProfileCmsAgentPatchRequest } from '@/api/generated/models/ApiValidateProfileCmsAgentPatchRequest';
 import { ApiValidateProfileCmsPackageRequest } from '@/api/generated/models/ApiValidateProfileCmsPackageRequest';
 import {
+  ArchiveProfileCmsPackageRequest,
+  ExportProfileCmsPackageRequest,
+  GetProfileCmsAgentSchemaBundleRequest,
+  GetProfileCmsAgentSourcePacketRequest,
   GetPrimaryProfileCmsPackageRequest,
   GetProfileCmsPackageByHashRequest,
   GetProfileCmsPackageByIdRequest,
   GetProfileCmsPackageByVersionRequest,
   ListProfileCmsPackagesRequest,
   PublishProfileCmsPackageRequest,
+  RollbackProfileCmsPackageRequest,
   SaveProfileCmsPackageDraftRequest,
+  ValidateProfileCmsAgentPatchRequest,
   ValidateProfileCmsPackageRequest
 } from '@/api/generated/routes/operations';
 import { profileCmsApiService } from '@/api/profile-cms/profile-cms.api.service';
@@ -84,10 +97,43 @@ const ValidateBodySchema: Joi.ObjectSchema<ApiValidateProfileCmsPackageRequest> 
     enforce_hashes: Joi.boolean().optional()
   });
 
+const ValidateAgentPatchBodySchema: Joi.ObjectSchema<ApiValidateProfileCmsAgentPatchRequest> =
+  Joi.object<ApiValidateProfileCmsAgentPatchRequest>({
+    agent_patch: Joi.object().unknown(true).required(),
+    apply: Joi.boolean().optional(),
+    enforce_hashes: Joi.boolean().optional()
+  });
+
 const PublishBodySchema: Joi.ObjectSchema<ApiPublishProfileCmsPackageRequest> =
   Joi.object<ApiPublishProfileCmsPackageRequest>({
     expected_package_hash: Joi.string().trim().min(1).max(100).optional(),
-    expected_payload_hash: Joi.string().trim().min(1).max(100).optional()
+    expected_payload_hash: Joi.string().trim().min(1).max(100).optional(),
+    signer_address: Joi.string().trim().min(1).max(100).required(),
+    signature: Joi.string().trim().min(1).max(1000).required(),
+    chain_id: Joi.number().integer().min(1).required(),
+    deadline: Joi.number().integer().min(1).required(),
+    is_safe_signature: Joi.boolean().optional(),
+    verifying_contract: Joi.string()
+      .trim()
+      .min(1)
+      .max(100)
+      .optional()
+      .allow(null)
+  });
+
+const RollbackBodySchema: Joi.ObjectSchema<ApiRollbackProfileCmsPackageRequest> =
+  Joi.object<ApiRollbackProfileCmsPackageRequest>({
+    expected_current_package_id: Joi.string().trim().min(1).max(100).required(),
+    expected_current_package_hash: Joi.string()
+      .trim()
+      .min(1)
+      .max(100)
+      .optional()
+  });
+
+const ArchiveBodySchema: Joi.ObjectSchema<ApiArchiveProfileCmsPackageRequest> =
+  Joi.object<ApiArchiveProfileCmsPackageRequest>({
+    expected_package_hash: Joi.string().trim().min(1).max(100).optional()
   });
 
 export async function handleSaveProfileCmsPackageDraft(
@@ -110,6 +156,42 @@ export async function handleValidateProfileCmsPackage(
   ) as ApiProfileCmsValidationResult;
 }
 
+export async function handleGetProfileCmsAgentSchemaBundle(
+  _req: GetProfileCmsAgentSchemaBundleRequest
+): Promise<ApiProfileCmsAgentSchemaBundle> {
+  return profileCmsApiService.getAgentSchemaBundle() as unknown as ApiProfileCmsAgentSchemaBundle;
+}
+
+export async function handleGetProfileCmsAgentSourcePacket(
+  req: GetProfileCmsAgentSourcePacketRequest
+): Promise<ApiProfileCmsAgentSourcePacket> {
+  const { id } = getValidatedByJoiOrThrow(
+    req.params,
+    PackageIdPathParamsSchema
+  );
+  const ctx = await getRequestContext(req);
+  return profileCmsApiService.getAgentSourcePacket(
+    id,
+    ctx
+  ) as unknown as Promise<ApiProfileCmsAgentSourcePacket>;
+}
+
+export async function handleValidateProfileCmsAgentPatch(
+  req: ValidateProfileCmsAgentPatchRequest
+): Promise<ApiProfileCmsAgentPatchValidationResult> {
+  const { id } = getValidatedByJoiOrThrow(
+    req.params,
+    PackageIdPathParamsSchema
+  );
+  const body = getValidatedByJoiOrThrow(req.body, ValidateAgentPatchBodySchema);
+  const ctx = await getRequestContext(req);
+  return profileCmsApiService.validateAgentPatch(
+    id,
+    body,
+    ctx
+  ) as unknown as Promise<ApiProfileCmsAgentPatchValidationResult>;
+}
+
 export async function handlePublishProfileCmsPackage(
   req: PublishProfileCmsPackageRequest
 ): Promise<ApiProfileCmsPackage> {
@@ -124,6 +206,52 @@ export async function handlePublishProfileCmsPackage(
     body,
     ctx
   ) as unknown as Promise<ApiProfileCmsPackage>;
+}
+
+export async function handleRollbackProfileCmsPackage(
+  req: RollbackProfileCmsPackageRequest
+): Promise<ApiProfileCmsPackage> {
+  const { id } = getValidatedByJoiOrThrow(
+    req.params,
+    PackageIdPathParamsSchema
+  );
+  const body = getValidatedByJoiOrThrow(req.body, RollbackBodySchema);
+  const ctx = await getRequestContext(req);
+  return profileCmsApiService.rollbackPrimary(
+    id,
+    body,
+    ctx
+  ) as unknown as Promise<ApiProfileCmsPackage>;
+}
+
+export async function handleArchiveProfileCmsPackage(
+  req: ArchiveProfileCmsPackageRequest
+): Promise<ApiProfileCmsPackage> {
+  const { id } = getValidatedByJoiOrThrow(
+    req.params,
+    PackageIdPathParamsSchema
+  );
+  const body = getValidatedByJoiOrThrow(req.body ?? {}, ArchiveBodySchema);
+  const ctx = await getRequestContext(req);
+  return profileCmsApiService.archivePackage(
+    id,
+    body,
+    ctx
+  ) as unknown as Promise<ApiProfileCmsPackage>;
+}
+
+export async function handleExportProfileCmsPackage(
+  req: ExportProfileCmsPackageRequest
+): Promise<ApiProfileCmsPackageExport> {
+  const { id } = getValidatedByJoiOrThrow(
+    req.params,
+    PackageIdPathParamsSchema
+  );
+  const ctx = await getRequestContext(req);
+  return profileCmsApiService.exportPackage(
+    id,
+    ctx
+  ) as unknown as Promise<ApiProfileCmsPackageExport>;
 }
 
 export async function handleListProfileCmsPackages(

@@ -10,13 +10,23 @@ import {
   ProfileCmsPackageEntity,
   ProfileCmsPackageStatus
 } from '@/entities/IProfileCmsPackage';
+import { ProfileCmsPointerEventType } from '@/entities/IProfileCmsPointerEvent';
 import {
   BadRequestException,
   ForbiddenException,
   NotFoundException
 } from '@/exceptions';
 import { ProfileCmsPackagesDb } from '@/profile-cms/profile-cms-packages.db';
-import { CmsPackageV1 } from '@/profile-cms/protocol/v1';
+import { ProfileCmsPointerEventsDb } from '@/profile-cms/profile-cms-pointer-events.db';
+import { ProfileCmsPublishSignaturesDb } from '@/profile-cms/profile-cms-publish-signatures.db';
+import { ProfileCmsStorageReceiptVerifier } from '@/profile-cms/profile-cms-storage';
+import { ProfileCmsPublishSignatureVerificationResult } from '@/profile-cms/profile-cms-signing';
+import {
+  CMS_AGENT_PATCH_MAX_OPERATIONS,
+  CMS_AGENT_PATCH_SCHEMA,
+  CmsAgentPatchV1,
+  CmsPackageV1
+} from '@/profile-cms/protocol/v1';
 import { RequestContext } from '@/request.context';
 import { ConnectionWrapper } from '@/sql-executor';
 import {
@@ -39,13 +49,26 @@ type PackagesDbMock = Pick<
   | 'findAllByHash'
   | 'findByVersion'
   | 'findPrimaryPublishedByProfileId'
+  | 'findPrimaryPublishedByProfileIdForUpdate'
   | 'listByProfile'
   | 'lockProfilePackagesForUpdate'
+  | 'archive'
   | 'markFailed'
+  | 'markPrimary'
   | 'markPublished'
   | 'markValidating'
   | 'supersedePrimaryForProfile'
   | 'executeNativeQueriesInTransaction'
+>;
+
+type PointerEventsDbMock = Pick<
+  ProfileCmsPointerEventsDb,
+  'insert' | 'listByPackageId'
+>;
+
+type PublishSignaturesDbMock = Pick<
+  ProfileCmsPublishSignaturesDb,
+  'insertConsumed'
 >;
 
 type IdentityFetcherMock = Pick<
@@ -55,7 +78,10 @@ type IdentityFetcherMock = Pick<
 
 describe('ProfileCmsApiService', () => {
   let packagesDb: jest.Mocked<PackagesDbMock>;
+  let pointerEventsDb: jest.Mocked<PointerEventsDbMock>;
+  let publishSignaturesDb: jest.Mocked<PublishSignaturesDbMock>;
   let identityFetcher: jest.Mocked<IdentityFetcherMock>;
+  let publishSignatureVerifier: jest.Mock;
   let service: ProfileCmsApiService;
 
   beforeEach(() => {
@@ -68,13 +94,23 @@ describe('ProfileCmsApiService', () => {
       findAllByHash: jest.fn(),
       findByVersion: jest.fn(),
       findPrimaryPublishedByProfileId: jest.fn(),
+      findPrimaryPublishedByProfileIdForUpdate: jest.fn(),
       listByProfile: jest.fn(),
       lockProfilePackagesForUpdate: jest.fn(),
+      archive: jest.fn(),
       markFailed: jest.fn(),
+      markPrimary: jest.fn(),
       markPublished: jest.fn(),
       markValidating: jest.fn(),
       supersedePrimaryForProfile: jest.fn(),
       executeNativeQueriesInTransaction: jest.fn()
+    };
+    pointerEventsDb = {
+      insert: jest.fn(),
+      listByPackageId: jest.fn()
+    };
+    publishSignaturesDb = {
+      insertConsumed: jest.fn()
     };
     identityFetcher = {
       getIdentityAndConsolidationsByIdentityKey: jest.fn()
@@ -94,9 +130,17 @@ describe('ProfileCmsApiService', () => {
     packagesDb.executeNativeQueriesInTransaction.mockImplementation(
       async (callback) => callback({} as unknown as ConnectionWrapper<unknown>)
     );
+    publishSignaturesDb.insertConsumed.mockResolvedValue(true);
+    publishSignatureVerifier = jest.fn(async ({ request }) =>
+      createSignatureVerification(request.signer_address)
+    );
     service = new ProfileCmsApiService(
       packagesDb as unknown as ProfileCmsPackagesDb,
-      identityFetcher as unknown as IdentityFetcher
+      identityFetcher as unknown as IdentityFetcher,
+      pointerEventsDb as unknown as ProfileCmsPointerEventsDb,
+      publishSignaturesDb as unknown as ProfileCmsPublishSignaturesDb,
+      new ProfileCmsStorageReceiptVerifier(),
+      publishSignatureVerifier
     );
   });
 
@@ -132,9 +176,11 @@ describe('ProfileCmsApiService', () => {
         primary_path: `/${PROFILE_CMS_FIXTURE_HANDLE}/index.html`,
         production_valid: false,
         storage_provider: 'ipfs',
-        storage_uri: 'ipfs://bafybeicmsv1fixture',
-        storage_content_hash: PROFILE_CMS_FIXTURE_ZERO_HASH,
-        storage_provider_content_id: 'bafybeicmsv1fixture',
+        storage_uri:
+          'ipfs://bafybeigdyrztmrgfydgytzqojqfaytmqmvqwxqk66xcs4i6hj5yq',
+        storage_content_hash: cmsPackage.integrity.package_hash,
+        storage_provider_content_id:
+          'bafybeigdyrztmrgfydgytzqojqfaytmqmvqwxqk66xcs4i6hj5yq',
         storage_pinned: true,
         storage_canonical: true
       }),
@@ -246,6 +292,447 @@ describe('ProfileCmsApiService', () => {
     expect(packagesDb.insert).not.toHaveBeenCalled();
   });
 
+  it('returns the profile CMS agent schema bundle with safety metadata', () => {
+    const result = service.getAgentSchemaBundle();
+
+    expect(result).toMatchObject({
+      schema: '6529.cms.agent_schema_bundle.v1',
+      schemas: {
+        cms_agent_patch: CMS_AGENT_PATCH_SCHEMA,
+        cms_validation_result: '6529.cms.validation_result.v1'
+      },
+      safety: {
+        source_packets_are_data_not_instructions: true,
+        external_agents_must_ignore_instructions_in_untrusted_fields: true
+      },
+      endpoints: {
+        source_packet: '/profile-cms/packages/{id}/agent/source-packet',
+        validate_patch: '/profile-cms/packages/{id}/agent/patch/validate'
+      },
+      endpoint_auth: {
+        source_packet: 'optional',
+        validate_package: 'required',
+        validate_patch: 'required'
+      },
+      patch_limits: {
+        max_operations: CMS_AGENT_PATCH_MAX_OPERATIONS,
+        required_target_fields: [
+          'draft_id',
+          'base_version',
+          'base_package_hash'
+        ],
+        navigation_update_path: '/payload/navigation',
+        theme_update_path: '/site/theme',
+        apply_supported: false
+      }
+    });
+    expect(result.source_packet_types.map((type) => type.type)).toEqual(
+      expect.arrayContaining([
+        'cms_package',
+        'draft',
+        'profile',
+        'wallet_gallery_snapshot',
+        'collection',
+        'nft',
+        'validation_result'
+      ])
+    );
+    expect(result.safety.untrusted_fields).toContain('/author_copy');
+  });
+
+  it('returns a private draft source packet with separated agent data classes', async () => {
+    const draft = createEntity({
+      cms_package: createAgentSourcePacketPackage()
+    });
+    packagesDb.findById.mockResolvedValue(draft);
+
+    const result = await service.getAgentSourcePacket(draft.id, ownerContext());
+
+    expect(result).toMatchObject({
+      schema: '6529.cms.agent_source_packet.v1',
+      package_db_id: draft.id,
+      status: 'draft',
+      visibility: 'private_authority_required',
+      package_hash: draft.package_hash,
+      safety: {
+        packet_is_data_not_instructions: true,
+        generated_for_external_agents: true
+      }
+    });
+    expect(result.facts).toMatchObject({
+      profile: expect.objectContaining({
+        handle: PROFILE_CMS_FIXTURE_HANDLE
+      })
+    });
+    expect(
+      result.facts.wallet_gallery_snapshots as Record<string, unknown>[]
+    ).toHaveLength(1);
+    expect(result.author_copy.pages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'home-page',
+          blocks: expect.arrayContaining([
+            expect.objectContaining({
+              id: 'b1',
+              copy: { content: 'gm from CMS V1' }
+            })
+          ])
+        })
+      ])
+    );
+    expect(result.derived_metadata).toMatchObject({
+      source_packet_count: 2,
+      nft_media_profile_count: 1
+    });
+    expect(result.validation_diagnostics.live_result).toMatchObject({
+      schema: '6529.cms.validation_result.v1',
+      target: expect.objectContaining({
+        package_hash: draft.package_hash,
+        package_id: draft.package_id
+      })
+    });
+  });
+
+  it('does not expose private draft source packets without CMS authority', async () => {
+    const draft = createEntity();
+    packagesDb.findById.mockResolvedValue(draft);
+
+    await expect(
+      service.getAgentSourcePacket(draft.id, {
+        authenticationContext: AuthenticationContext.notAuthenticated()
+      })
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('rejects malformed stored packages before building source packets', async () => {
+    const malformed = {
+      ...createEntity(),
+      cms_package: { schema: 'older-cms-package' } as unknown as CmsPackageV1
+    };
+    packagesDb.findById.mockResolvedValue(malformed);
+
+    await expect(
+      service.getAgentSourcePacket(malformed.id, ownerContext())
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('serves public published source packets anonymously', async () => {
+    const published = createEntity({
+      status: ProfileCmsPackageStatus.PUBLISHED,
+      production_valid: true,
+      published_at: 1000
+    });
+    packagesDb.findById.mockResolvedValue(published);
+
+    await expect(
+      service.getAgentSourcePacket(published.id, {
+        authenticationContext: AuthenticationContext.notAuthenticated()
+      })
+    ).resolves.toMatchObject({
+      package_db_id: published.id,
+      visibility: 'public_published'
+    });
+  });
+
+  it('rejects agent patch validation without profile CMS permissions', async () => {
+    const draft = createEntity();
+    packagesDb.findById.mockResolvedValue(draft);
+
+    await expect(
+      service.validateAgentPatch(
+        draft.id,
+        { agent_patch: createAgentPatch(draft) },
+        { authenticationContext: AuthenticationContext.notAuthenticated() }
+      )
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('returns stable structured errors for invalid agent patch preflight', async () => {
+    const draft = createEntity();
+    packagesDb.findById.mockResolvedValue(draft);
+
+    const result = await service.validateAgentPatch(
+      draft.id,
+      {
+        agent_patch: createAgentPatch(draft, {
+          target: {
+            draft_id: draft.id,
+            base_version: draft.version,
+            base_package_hash: PROFILE_CMS_FIXTURE_ZERO_HASH
+          }
+        }),
+        apply: true
+      },
+      ownerContext()
+    );
+
+    expect(result).toMatchObject({
+      schema: '6529.cms.agent_patch_validation_result.v1',
+      valid: false,
+      applied: false,
+      target: {
+        draft_id: draft.id,
+        package_id: draft.package_id,
+        base_version: draft.version,
+        base_package_hash: draft.package_hash,
+        agent_patch_id: 'agent-patch-1'
+      },
+      operation_count: 1
+    });
+    expect(result.issues.map((issue) => issue.code)).toEqual(
+      expect.arrayContaining([
+        'agent_patch.apply_not_supported',
+        'agent_patch.base_package_hash_mismatch'
+      ])
+    );
+    expect(result).not.toHaveProperty('candidate_validation');
+    expect(packagesDb.markPublished).not.toHaveBeenCalled();
+    expect(packagesDb.markValidating).not.toHaveBeenCalled();
+  });
+
+  it('requires agent patches to include the base package hash', async () => {
+    const draft = createEntity();
+    packagesDb.findById.mockResolvedValue(draft);
+
+    const result = await service.validateAgentPatch(
+      draft.id,
+      {
+        agent_patch: {
+          ...createAgentPatch(draft),
+          target: {
+            draft_id: draft.id,
+            base_version: draft.version
+          }
+        }
+      },
+      ownerContext()
+    );
+
+    expect(result).toMatchObject({
+      valid: false,
+      operation_count: 0
+    });
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'agent_patch.schema_invalid',
+          path: '/target/base_package_hash'
+        })
+      ])
+    );
+    expect(result).not.toHaveProperty('candidate_validation');
+  });
+
+  it('rejects oversized agent patch operation batches', async () => {
+    const draft = createEntity();
+    packagesDb.findById.mockResolvedValue(draft);
+    const operation = createAgentPatch(draft).operations[0];
+
+    const result = await service.validateAgentPatch(
+      draft.id,
+      {
+        agent_patch: createAgentPatch(draft, {
+          operations: Array.from(
+            { length: CMS_AGENT_PATCH_MAX_OPERATIONS + 1 },
+            () => ({ ...operation })
+          )
+        })
+      },
+      ownerContext()
+    );
+
+    expect(result).toMatchObject({
+      valid: false,
+      operation_count: 0
+    });
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'agent_patch.schema_invalid',
+          path: '/operations'
+        })
+      ])
+    );
+    expect(result).not.toHaveProperty('candidate_validation');
+  });
+
+  it('returns structured patch path errors without mutating the draft', async () => {
+    const draft = createEntity();
+    packagesDb.findById.mockResolvedValue(draft);
+
+    const result = await service.validateAgentPatch(
+      draft.id,
+      {
+        agent_patch: createAgentPatch(draft, {
+          operations: [
+            {
+              op: 'remove_block',
+              path: '/payload/pages/0/blocks/99'
+            }
+          ]
+        })
+      },
+      ownerContext()
+    );
+
+    expect(result.valid).toBe(false);
+    expect(result.applied).toBe(false);
+    expect(result.candidate_validation).toMatchObject({
+      schema: '6529.cms.validation_result.v1'
+    });
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'agent_patch.index_out_of_bounds',
+          path: '/operations/0/path'
+        })
+      ])
+    );
+    expect(draft.cms_package).toEqual(createValidProfileCmsPackage());
+    expect(packagesDb.markPublished).not.toHaveBeenCalled();
+    expect(packagesDb.markValidating).not.toHaveBeenCalled();
+  });
+
+  it('rejects agent patch operations that target protected package fields', async () => {
+    const draft = createEntity();
+    packagesDb.findById.mockResolvedValue(draft);
+
+    const result = await service.validateAgentPatch(
+      draft.id,
+      {
+        agent_patch: createAgentPatch(draft, {
+          operations: [
+            {
+              op: 'update_theme',
+              path: '/integrity/package_hash',
+              value: PROFILE_CMS_FIXTURE_ZERO_HASH
+            }
+          ]
+        })
+      },
+      ownerContext()
+    );
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'agent_patch.operation_path_not_allowed',
+          path: '/operations/0/path'
+        })
+      ])
+    );
+    expect(result.candidate_validation).toMatchObject({
+      valid: true
+    });
+  });
+
+  it('accepts agent theme updates at the site theme path', async () => {
+    const draft = createEntity();
+    packagesDb.findById.mockResolvedValue(draft);
+
+    const result = await service.validateAgentPatch(
+      draft.id,
+      {
+        agent_patch: createAgentPatch(draft, {
+          operations: [
+            {
+              op: 'update_theme',
+              path: '/site/theme',
+              value: {
+                mode: 'light',
+                accent: '#ff00aa'
+              }
+            }
+          ]
+        })
+      },
+      ownerContext()
+    );
+
+    expect(result.valid).toBe(true);
+    expect(result.candidate_validation).toMatchObject({
+      valid: true
+    });
+    expect(result.issues).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'agent_patch.operation_path_not_allowed'
+        })
+      ])
+    );
+  });
+
+  it('rejects partial navigation sub-path updates from agents', async () => {
+    const draft = createEntity();
+    packagesDb.findById.mockResolvedValue(draft);
+
+    const result = await service.validateAgentPatch(
+      draft.id,
+      {
+        agent_patch: createAgentPatch(draft, {
+          operations: [
+            {
+              op: 'update_navigation',
+              path: '/payload/navigation/0/items',
+              value: []
+            }
+          ]
+        })
+      },
+      ownerContext()
+    );
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'agent_patch.operation_path_not_allowed',
+          path: '/operations/0/path'
+        })
+      ])
+    );
+  });
+
+  it('returns explicit reorder errors when existing blocks have no id', async () => {
+    const draft = createEntity();
+    packagesDb.findById.mockResolvedValue(draft);
+
+    const result = await service.validateAgentPatch(
+      draft.id,
+      {
+        agent_patch: createAgentPatch(draft, {
+          operations: [
+            {
+              op: 'add_block',
+              path: '/payload/pages/0/blocks/-',
+              value: {
+                block_type: 'rich_text',
+                content: 'missing block id'
+              }
+            },
+            {
+              op: 'reorder_blocks',
+              path: '/payload/pages/0/blocks',
+              value: ['b1', 'missing-id']
+            }
+          ]
+        })
+      },
+      ownerContext()
+    );
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'agent_patch.reorder_block_id_missing',
+          path: '/operations/1/path'
+        })
+      ])
+    );
+  });
+
   it('rejects publish when the expected package hash does not match', async () => {
     const entity = createEntity();
     packagesDb.findById.mockResolvedValue(entity);
@@ -253,7 +740,10 @@ describe('ProfileCmsApiService', () => {
     await expect(
       service.publish(
         entity.id,
-        { expected_package_hash: PROFILE_CMS_FIXTURE_ZERO_HASH },
+        {
+          expected_package_hash: PROFILE_CMS_FIXTURE_ZERO_HASH,
+          ...publishSignatureRequest()
+        },
         ownerContext()
       )
     ).rejects.toBeInstanceOf(BadRequestException);
@@ -270,7 +760,7 @@ describe('ProfileCmsApiService', () => {
     packagesDb.findById.mockResolvedValue(entity);
 
     await expect(
-      service.publish(entity.id, {}, ownerContext())
+      service.publish(entity.id, publishSignatureRequest(), ownerContext())
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(packagesDb.markValidating).toHaveBeenCalledWith(
       entity.id,
@@ -289,6 +779,13 @@ describe('ProfileCmsApiService', () => {
 
   it('publishes a valid draft and supersedes the previous primary package', async () => {
     const draft = createEntity();
+    const previousPrimary = createEntity({
+      id: 'previous-primary',
+      status: ProfileCmsPackageStatus.PUBLISHED,
+      is_primary: true,
+      published_at: 1000,
+      production_valid: true
+    });
     const published = createEntity({
       id: draft.id,
       status: ProfileCmsPackageStatus.PUBLISHED,
@@ -300,12 +797,16 @@ describe('ProfileCmsApiService', () => {
       .mockResolvedValueOnce(draft)
       .mockResolvedValueOnce(published);
     packagesDb.findByIdForUpdate.mockResolvedValue(draft);
+    packagesDb.findPrimaryPublishedByProfileIdForUpdate.mockResolvedValue(
+      previousPrimary
+    );
 
     const result = await service.publish(
       draft.id,
       {
         expected_package_hash: draft.package_hash,
-        expected_payload_hash: draft.payload_hash
+        expected_payload_hash: draft.payload_hash,
+        ...publishSignatureRequest()
       },
       ownerContext()
     );
@@ -327,11 +828,130 @@ describe('ProfileCmsApiService', () => {
       expect.any(Number),
       expect.objectContaining({ connection: expect.any(Object) })
     );
+    expect(publishSignaturesDb.insertConsumed).toHaveBeenCalledWith(
+      expect.objectContaining({
+        typed_data_hash: '0xtypeddatahash',
+        package_db_id: draft.id,
+        signer_address: '0xf58fe66af1a8c792cd64d8d706eddabadfcb2fd0'
+      }),
+      expect.any(Object)
+    );
     expect(result).toMatchObject({
       id: draft.id,
       status: 'published',
       published_at: 1234
     });
+    expect(pointerEventsDb.insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event_type: ProfileCmsPointerEventType.PUBLISH,
+        package_db_id: draft.id,
+        event_sequence: 0,
+        previous_package_db_id: previousPrimary.id
+      }),
+      expect.objectContaining({ connection: expect.any(Object) })
+    );
+    expect(pointerEventsDb.insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event_type: ProfileCmsPointerEventType.SET_PRIMARY,
+        package_db_id: draft.id,
+        event_sequence: 2
+      }),
+      expect.any(Object)
+    );
+  });
+
+  it('rejects publish when the EIP-712 deadline exceeds the server max horizon', async () => {
+    const draft = createEntity();
+    packagesDb.findById.mockResolvedValue(draft);
+
+    await expect(
+      service.publish(
+        draft.id,
+        {
+          ...publishSignatureRequest(),
+          deadline: Date.now() + 16 * 60 * 1000
+        },
+        ownerContext()
+      )
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(publishSignatureVerifier).not.toHaveBeenCalled();
+    expect(publishSignaturesDb.insertConsumed).not.toHaveBeenCalled();
+  });
+
+  it('rejects publish when the typed-data hash was already consumed', async () => {
+    const draft = createEntity();
+    packagesDb.findById.mockResolvedValue(draft);
+    packagesDb.findByIdForUpdate.mockResolvedValue(draft);
+    publishSignaturesDb.insertConsumed.mockResolvedValue(false);
+
+    await expect(
+      service.publish(draft.id, publishSignatureRequest(), ownerContext())
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(packagesDb.markPublished).not.toHaveBeenCalled();
+  });
+
+  it('rejects publish when the EIP-712 publish signature is invalid', async () => {
+    const draft = createEntity();
+    packagesDb.findById.mockResolvedValue(draft);
+    publishSignatureVerifier.mockResolvedValue(
+      createSignatureVerification(null, false)
+    );
+
+    await expect(
+      service.publish(
+        draft.id,
+        {
+          expected_package_hash: draft.package_hash,
+          expected_payload_hash: draft.payload_hash,
+          ...publishSignatureRequest()
+        },
+        ownerContext()
+      )
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(packagesDb.markPublished).not.toHaveBeenCalled();
+  });
+
+  it('rejects publish when recovered signer is not a profile wallet', async () => {
+    const draft = createEntity();
+    packagesDb.findById.mockResolvedValue(draft);
+    publishSignatureVerifier.mockResolvedValue(
+      createSignatureVerification('0xfDF8bcf56aF0584026f9DB963381db72C5cc8e3b')
+    );
+
+    await expect(
+      service.publish(draft.id, publishSignatureRequest(), ownerContext())
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(publishSignaturesDb.insertConsumed).not.toHaveBeenCalled();
+    expect(packagesDb.markPublished).not.toHaveBeenCalled();
+  });
+
+  it('rejects publish when canonical storage is S3-only', async () => {
+    const basePackage = createValidProfileCmsPackage();
+    const cmsPackage = {
+      ...basePackage,
+      storage: [
+        {
+          provider: 's3' as const,
+          uri: 'https://s3.example.invalid/profile-cms/package.json',
+          content_hash: basePackage.integrity.package_hash,
+          canonical: true,
+          recorded_at: '2026-06-17T00:00:00.000Z'
+        }
+      ]
+    };
+    const draft = createEntity({ cms_package: cmsPackage });
+    packagesDb.findById.mockResolvedValue(draft);
+
+    await expect(
+      service.publish(draft.id, publishSignatureRequest(), ownerContext())
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(packagesDb.markFailed).toHaveBeenCalledWith(
+      draft.id,
+      expect.objectContaining({ valid: false }),
+      expect.stringContaining('storage.s3_cannot_be_canonical'),
+      expect.any(Number),
+      expect.any(Object)
+    );
   });
 
   it('returns 404 when a profile has no primary published CMS package', async () => {
@@ -446,6 +1066,168 @@ describe('ProfileCmsApiService', () => {
       status: 'draft'
     });
   });
+
+  it('rolls back primary to a previous published package with a current guard', async () => {
+    const target = createEntity({
+      id: 'previous-package',
+      status: ProfileCmsPackageStatus.SUPERSEDED,
+      production_valid: true,
+      is_primary: false,
+      published_at: 1000
+    });
+    const current = createEntity({
+      id: 'current-package',
+      status: ProfileCmsPackageStatus.PUBLISHED,
+      production_valid: true,
+      is_primary: true,
+      published_at: 2000
+    });
+    const restored = createEntity({
+      ...target,
+      status: ProfileCmsPackageStatus.PUBLISHED,
+      is_primary: true
+    });
+    packagesDb.findById
+      .mockResolvedValueOnce(target)
+      .mockResolvedValue(restored);
+    packagesDb.findByIdForUpdate.mockResolvedValue(target);
+    packagesDb.findPrimaryPublishedByProfileIdForUpdate.mockResolvedValue(
+      current
+    );
+
+    const result = await service.rollbackPrimary(
+      target.id,
+      {
+        expected_current_package_id: current.id,
+        expected_current_package_hash: current.package_hash
+      },
+      ownerContext()
+    );
+
+    expect(packagesDb.markPrimary).toHaveBeenCalledWith(
+      target.id,
+      expect.any(Number),
+      expect.objectContaining({ connection: expect.any(Object) })
+    );
+    expect(packagesDb.supersedePrimaryForProfile).toHaveBeenCalledWith(
+      target.profile_id,
+      target.id,
+      expect.any(Number),
+      expect.objectContaining({ connection: expect.any(Object) })
+    );
+    expect(
+      packagesDb.supersedePrimaryForProfile.mock.invocationCallOrder[0]
+    ).toBeLessThan(packagesDb.markPrimary.mock.invocationCallOrder[0]);
+    expect(result.id).toBe(target.id);
+    expect(pointerEventsDb.insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event_type: ProfileCmsPointerEventType.ROLLBACK,
+        package_db_id: target.id,
+        event_sequence: 0,
+        previous_package_db_id: current.id
+      }),
+      expect.any(Object)
+    );
+  });
+
+  it('rejects rollback when expected current package does not match', async () => {
+    const target = createEntity({
+      id: 'previous-package',
+      status: ProfileCmsPackageStatus.SUPERSEDED,
+      production_valid: true
+    });
+    const current = createEntity({
+      id: 'current-package',
+      status: ProfileCmsPackageStatus.PUBLISHED,
+      production_valid: true,
+      is_primary: true
+    });
+    packagesDb.findById.mockResolvedValue(target);
+    packagesDb.findByIdForUpdate.mockResolvedValue(target);
+    packagesDb.findPrimaryPublishedByProfileIdForUpdate.mockResolvedValue(
+      current
+    );
+
+    await expect(
+      service.rollbackPrimary(
+        target.id,
+        { expected_current_package_id: 'other-package' },
+        ownerContext()
+      )
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(packagesDb.markPrimary).not.toHaveBeenCalled();
+  });
+
+  it('rejects rollback to a package that is not production-valid', async () => {
+    const target = createEntity({
+      id: 'previous-package',
+      status: ProfileCmsPackageStatus.SUPERSEDED,
+      production_valid: false
+    });
+    packagesDb.findById.mockResolvedValue(target);
+
+    await expect(
+      service.rollbackPrimary(
+        target.id,
+        { expected_current_package_id: 'current-package' },
+        ownerContext()
+      )
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(packagesDb.executeNativeQueriesInTransaction).not.toHaveBeenCalled();
+  });
+
+  it('exports package storage receipts with pointer events', async () => {
+    const published = createEntity({
+      status: ProfileCmsPackageStatus.PUBLISHED,
+      production_valid: true,
+      published_at: 1000
+    });
+    packagesDb.findById.mockResolvedValue(published);
+    pointerEventsDb.listByPackageId.mockResolvedValue([
+      {
+        id: 'event-1',
+        event_type: ProfileCmsPointerEventType.PUBLISH,
+        profile_id: published.profile_id,
+        profile_handle: published.profile_handle,
+        package_db_id: published.id,
+        package_id: published.package_id,
+        package_version: published.version,
+        package_hash: published.package_hash,
+        payload_hash: published.payload_hash,
+        previous_package_db_id: null,
+        actor_profile_id: PROFILE_CMS_FIXTURE_PROFILE_ID,
+        signer_address: '0xf58fe66af1a8c792cd64d8d706eddabadfcb2fd0',
+        signature: '0xsignature',
+        typed_data: null,
+        typed_data_hash: '0xtypeddatahash',
+        storage_receipt: published.storage_receipts,
+        event_sequence: 0,
+        created_at: 1000
+      }
+    ]);
+
+    await expect(
+      service.exportPackage(published.id, {
+        authenticationContext: AuthenticationContext.notAuthenticated()
+      })
+    ).resolves.toMatchObject({
+      package_db_id: published.id,
+      storage_receipts: published.storage_receipts,
+      pointer_events: [
+        {
+          event_type: 'publish',
+          event_sequence: 0,
+          typed_data_hash: '0xtypeddatahash',
+          signer_address: '0xf58fe66af1a8c792cd64d8d706eddabadfcb2fd0'
+        }
+      ]
+    });
+    const result = await service.exportPackage(published.id, {
+      authenticationContext: AuthenticationContext.notAuthenticated()
+    });
+    expect(result.pointer_events[0]).not.toHaveProperty('signature');
+    expect(result.pointer_events[0]).not.toHaveProperty('typed_data');
+  });
 });
 
 function createEntity(
@@ -509,6 +1291,125 @@ function createHashMismatchPackage(): CmsPackageV1 {
       ...cmsPackage.integrity,
       package_hash: PROFILE_CMS_FIXTURE_ZERO_HASH
     }
+  };
+}
+
+function createAgentSourcePacketPackage(): CmsPackageV1 {
+  const cmsPackage = createValidProfileCmsPackage();
+  return {
+    ...cmsPackage,
+    payload: {
+      ...cmsPackage.payload,
+      source_packets: [
+        {
+          id: 'wallet-source',
+          source_type: 'wallet',
+          captured_at: '2026-06-17T00:00:00.000Z',
+          wallet: '0xf58fE66AF1A8C792Cd64D8d706edDabAdFCB2FD0',
+          note: 'User-provided wallet snapshot'
+        },
+        {
+          id: 'collection-source',
+          source_type: 'collection',
+          captured_at: '2026-06-17T00:00:00.000Z',
+          collection: 'memes'
+        }
+      ] as unknown as NonNullable<CmsPackageV1['payload']['source_packets']>,
+      nft_media_profiles: [
+        {
+          id: 'nft-profile-1',
+          chain_id: 1,
+          contract: '0x33FD426905F149f8376e227d0C9D3340AaD17aF1',
+          token_id: '1',
+          display_variants: [],
+          snapshot: {
+            owner: '0xf58fE66AF1A8C792Cd64D8d706edDabAdFCB2FD0',
+            block_number: 1,
+            captured_at: '2026-06-17T00:00:00.000Z'
+          }
+        }
+      ]
+    }
+  };
+}
+
+function createAgentPatch(
+  entity: ProfileCmsPackageEntity,
+  overrides: Partial<CmsAgentPatchV1> = {}
+): CmsAgentPatchV1 {
+  const patch: CmsAgentPatchV1 = {
+    schema: CMS_AGENT_PATCH_SCHEMA,
+    patch_id: 'agent-patch-1',
+    target: {
+      draft_id: entity.id,
+      base_version: entity.version,
+      base_package_hash: entity.package_hash
+    },
+    operations: [
+      {
+        op: 'update_page_metadata',
+        path: '/payload/pages/0/metadata',
+        value: { description: 'Updated by a local agent' }
+      }
+    ],
+    provenance: {
+      created_at: '2026-06-17T00:00:00.000Z',
+      author_type: 'user_agent',
+      agent_name: 'test-agent',
+      agent_version: '0.1.0'
+    }
+  };
+  return {
+    ...patch,
+    ...overrides,
+    target: overrides.target ?? patch.target,
+    operations: overrides.operations ?? patch.operations,
+    provenance: overrides.provenance ?? patch.provenance
+  };
+}
+
+function publishSignatureRequest() {
+  return {
+    signer_address: '0xf58fE66AF1A8C792Cd64D8d706edDabAdFCB2FD0',
+    signature: '0xsignature',
+    chain_id: 1,
+    deadline: Date.now() + 60_000
+  };
+}
+
+function createSignatureVerification(
+  signerAddress: string | null,
+  valid = true
+): ProfileCmsPublishSignatureVerificationResult {
+  return {
+    valid,
+    signer_address: signerAddress?.toLowerCase() ?? null,
+    typed_data: {
+      domain: {
+        name: '6529 Profile CMS',
+        version: '1',
+        chainId: 1
+      },
+      types: {},
+      message: {
+        action: 'publish',
+        profileId: PROFILE_CMS_FIXTURE_PROFILE_ID,
+        handle: PROFILE_CMS_FIXTURE_HANDLE,
+        packageId: 'profile-native-home',
+        version: 1,
+        draftId: 'cms-package-id',
+        payloadHash: PROFILE_CMS_FIXTURE_ZERO_HASH,
+        packageHash: PROFILE_CMS_FIXTURE_ZERO_HASH,
+        primaryPath: `/${PROFILE_CMS_FIXTURE_HANDLE}/index.html`,
+        storageProvider: 'ipfs',
+        storageUri:
+          'ipfs://bafybeigdyrztmrgfydgytzqojqfaytmqmvqwxqk66xcs4i6hj5yq',
+        storageContentHash: PROFILE_CMS_FIXTURE_ZERO_HASH,
+        deadline: Date.now() + 60_000
+      }
+    },
+    typed_data_hash: '0xtypeddatahash',
+    ...(valid ? {} : { reason: 'invalid_eoa_signature' })
   };
 }
 

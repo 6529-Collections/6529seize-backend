@@ -232,6 +232,27 @@ export class ProfileCmsPackagesDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  async findPrimaryPublishedByProfileIdForUpdate(
+    profileId: string,
+    ctx: RequestContext
+  ): Promise<ProfileCmsPackageEntity | null> {
+    return this.hydrate(
+      await this.timedOneOrNull<ProfileCmsPackageEntity>(
+        'findPrimaryPublishedByProfileIdForUpdate',
+        `select * from ${PROFILE_CMS_PACKAGES_TABLE}
+         where profile_id = :profileId
+           and status = '${ProfileCmsPackageStatus.PUBLISHED}'
+           and is_primary = true
+           and production_valid = true
+         order by published_at desc, updated_at desc
+         limit 1
+         for update`,
+        { profileId },
+        ctx
+      )
+    );
+  }
+
   async findByIdForUpdate(
     id: string,
     ctx: RequestContext
@@ -358,6 +379,46 @@ export class ProfileCmsPackagesDb extends LazyDbAccessCompatibleService {
         now,
         status: ProfileCmsPackageStatus.PUBLISHED,
         validationResult: JSON.stringify(validationResult)
+      },
+      ctx
+    );
+  }
+
+  async markPrimary(
+    id: string,
+    now: number,
+    ctx: RequestContext
+  ): Promise<void> {
+    await this.timedExecute(
+      'markPrimary',
+      `update ${PROFILE_CMS_PACKAGES_TABLE}
+       set status = :status,
+           is_primary = true,
+           superseded_by_id = null,
+           updated_at = :now
+       where id = :id`,
+      {
+        id,
+        now,
+        status: ProfileCmsPackageStatus.PUBLISHED
+      },
+      ctx
+    );
+  }
+
+  async archive(id: string, now: number, ctx: RequestContext): Promise<void> {
+    await this.timedExecute(
+      'archive',
+      `update ${PROFILE_CMS_PACKAGES_TABLE}
+       set status = :status,
+           is_primary = false,
+           archived_at = :now,
+           updated_at = :now
+       where id = :id`,
+      {
+        id,
+        now,
+        status: ProfileCmsPackageStatus.ARCHIVED
       },
       ctx
     );
