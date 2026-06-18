@@ -211,6 +211,10 @@ Important API responsibilities:
   including EIP-712 publish intent verification, canonical IPFS/Arweave receipt
   checks, rollback/archive endpoints, and package export data for future
   standalone renderers and mirrors.
+- Authenticated profile-native CMS wallet gallery snapshots under
+  `/profile-cms/wallet-gallery/snapshot`, gated by
+  `FEATURE_PROFILE_CMS_WALLET_GALLERY`, reading current indexed NFT ownership
+  and normalized media from MySQL for deterministic gallery generation.
 - Public decentralized media resolution under `/media/resolve`, which maps
   native `ipfs://`, `ipns://`, and `ar://` references plus recognized gateway
   URLs to canonical native URIs, `media.6529.io` resolver URLs, and explicit
@@ -258,6 +262,12 @@ storage receipts. `event_sequence` preserves logical ordering for events written
 in the same millisecond so the primary pointer history can be reconstructed and
 exported for future mirrors. Consumed publish intent hashes are stored in
 `profile_cms_publish_signatures`.
+
+Profile CMS wallet gallery snapshots are read-only API projections over
+`nft_owners`, `ens`, `nfts`, `nfts_meme_lab`, and `nextgen_tokens`. They do not
+create schema, run migrations, enqueue indexers, or fetch chain/metadata data
+live. Request-side asset/contract exclusions are applied in the API service and
+reported in the response for generator auditability.
 
 ## Async Processing
 

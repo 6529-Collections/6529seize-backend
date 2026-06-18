@@ -84,6 +84,7 @@ export * from '../models/ApiCreateNewWaveVisibilityConfig';
 export * from '../models/ApiCreateNewWaveVotingConfig';
 export * from '../models/ApiCreateNewWaveVotingConfigBase';
 export * from '../models/ApiCreateOrUpdateProfileRequest';
+export * from '../models/ApiCreateProfileCmsWalletGallerySnapshotRequest';
 export * from '../models/ApiCreateWaveConfig';
 export * from '../models/ApiCreateWaveDropRequest';
 export * from '../models/ApiCreateWaveMetadataRequest';
@@ -235,6 +236,14 @@ export * from '../models/ApiProfileCmsPrimaryPackage';
 export * from '../models/ApiProfileCmsValidationIssue';
 export * from '../models/ApiProfileCmsValidationResult';
 export * from '../models/ApiProfileCmsValidationResultTarget';
+export * from '../models/ApiProfileCmsWalletGalleryAsset';
+export * from '../models/ApiProfileCmsWalletGalleryAssetFlags';
+export * from '../models/ApiProfileCmsWalletGalleryAssetIdentifier';
+export * from '../models/ApiProfileCmsWalletGalleryExcludedAsset';
+export * from '../models/ApiProfileCmsWalletGalleryMedia';
+export * from '../models/ApiProfileCmsWalletGallerySnapshot';
+export * from '../models/ApiProfileCmsWalletGalleryTotals';
+export * from '../models/ApiProfileCmsWalletGalleryWallet';
 export * from '../models/ApiProfileMin';
 export * from '../models/ApiProfileMinsPage';
 export * from '../models/ApiProfileProxy';
@@ -525,6 +534,7 @@ import { ApiCreateNewWaveVisibilityConfig } from '../models/ApiCreateNewWaveVisi
 import { ApiCreateNewWaveVotingConfigClass } from '../models/ApiCreateNewWaveVotingConfig';
 import { ApiCreateNewWaveVotingConfigBase          } from '../models/ApiCreateNewWaveVotingConfigBase';
 import { ApiCreateOrUpdateProfileRequest        } from '../models/ApiCreateOrUpdateProfileRequest';
+import { ApiCreateProfileCmsWalletGallerySnapshotRequest } from '../models/ApiCreateProfileCmsWalletGallerySnapshotRequest';
 import { ApiCreateWaveConfig          } from '../models/ApiCreateWaveConfig';
 import { ApiCreateWaveDropRequest } from '../models/ApiCreateWaveDropRequest';
 import { ApiCreateWaveMetadataRequest } from '../models/ApiCreateWaveMetadataRequest';
@@ -676,6 +686,14 @@ import { ApiProfileCmsPrimaryPackage } from '../models/ApiProfileCmsPrimaryPacka
 import { ApiProfileCmsValidationIssue, ApiProfileCmsValidationIssueSeverityEnum         } from '../models/ApiProfileCmsValidationIssue';
 import { ApiProfileCmsValidationResult, ApiProfileCmsValidationResultSchemaEnum         } from '../models/ApiProfileCmsValidationResult';
 import { ApiProfileCmsValidationResultTarget } from '../models/ApiProfileCmsValidationResultTarget';
+import { ApiProfileCmsWalletGalleryAsset      , ApiProfileCmsWalletGalleryAssetCollectionKeyEnum           } from '../models/ApiProfileCmsWalletGalleryAsset';
+import { ApiProfileCmsWalletGalleryAssetFlags } from '../models/ApiProfileCmsWalletGalleryAssetFlags';
+import { ApiProfileCmsWalletGalleryAssetIdentifier } from '../models/ApiProfileCmsWalletGalleryAssetIdentifier';
+import { ApiProfileCmsWalletGalleryExcludedAsset   , ApiProfileCmsWalletGalleryExcludedAssetReasonEnum   } from '../models/ApiProfileCmsWalletGalleryExcludedAsset';
+import { ApiProfileCmsWalletGalleryMedia } from '../models/ApiProfileCmsWalletGalleryMedia';
+import { ApiProfileCmsWalletGallerySnapshot , ApiProfileCmsWalletGallerySnapshotSourceEnum        } from '../models/ApiProfileCmsWalletGallerySnapshot';
+import { ApiProfileCmsWalletGalleryTotals } from '../models/ApiProfileCmsWalletGalleryTotals';
+import { ApiProfileCmsWalletGalleryWallet    , ApiProfileCmsWalletGalleryWalletStatusEnum    } from '../models/ApiProfileCmsWalletGalleryWallet';
 import { ApiProfileMin                       } from '../models/ApiProfileMin';
 import { ApiProfileMinsPage } from '../models/ApiProfileMinsPage';
 import { ApiProfileProxy } from '../models/ApiProfileProxy';
@@ -925,6 +943,10 @@ let enumsMap: Set<string> = new Set<string>([
     "ApiProfileCmsPointerEventEventTypeEnum",
     "ApiProfileCmsValidationIssueSeverityEnum",
     "ApiProfileCmsValidationResultSchemaEnum",
+    "ApiProfileCmsWalletGalleryAssetCollectionKeyEnum",
+    "ApiProfileCmsWalletGalleryExcludedAssetReasonEnum",
+    "ApiProfileCmsWalletGallerySnapshotSourceEnum",
+    "ApiProfileCmsWalletGalleryWalletStatusEnum",
     "ApiProfileProxyActionType",
     "ApiRateMatter",
     "ApiRepDirection",
@@ -1034,6 +1056,7 @@ let typeMap: {[index: string]: any} = {
     "ApiCreateNewWaveVotingConfig": ApiCreateNewWaveVotingConfigClass,
     "ApiCreateNewWaveVotingConfigBase": ApiCreateNewWaveVotingConfigBase,
     "ApiCreateOrUpdateProfileRequest": ApiCreateOrUpdateProfileRequest,
+    "ApiCreateProfileCmsWalletGallerySnapshotRequest": ApiCreateProfileCmsWalletGallerySnapshotRequest,
     "ApiCreateWaveConfig": ApiCreateWaveConfig,
     "ApiCreateWaveDropRequest": ApiCreateWaveDropRequest,
     "ApiCreateWaveMetadataRequest": ApiCreateWaveMetadataRequest,
@@ -1168,6 +1191,14 @@ let typeMap: {[index: string]: any} = {
     "ApiProfileCmsValidationIssue": ApiProfileCmsValidationIssue,
     "ApiProfileCmsValidationResult": ApiProfileCmsValidationResult,
     "ApiProfileCmsValidationResultTarget": ApiProfileCmsValidationResultTarget,
+    "ApiProfileCmsWalletGalleryAsset": ApiProfileCmsWalletGalleryAsset,
+    "ApiProfileCmsWalletGalleryAssetFlags": ApiProfileCmsWalletGalleryAssetFlags,
+    "ApiProfileCmsWalletGalleryAssetIdentifier": ApiProfileCmsWalletGalleryAssetIdentifier,
+    "ApiProfileCmsWalletGalleryExcludedAsset": ApiProfileCmsWalletGalleryExcludedAsset,
+    "ApiProfileCmsWalletGalleryMedia": ApiProfileCmsWalletGalleryMedia,
+    "ApiProfileCmsWalletGallerySnapshot": ApiProfileCmsWalletGallerySnapshot,
+    "ApiProfileCmsWalletGalleryTotals": ApiProfileCmsWalletGalleryTotals,
+    "ApiProfileCmsWalletGalleryWallet": ApiProfileCmsWalletGalleryWallet,
     "ApiProfileMin": ApiProfileMin,
     "ApiProfileMinsPage": ApiProfileMinsPage,
     "ApiProfileProxy": ApiProfileProxy,
