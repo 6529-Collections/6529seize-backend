@@ -122,6 +122,10 @@ export const PROFILE_PROXIES_TABLE = 'profile_proxies';
 export const PROFILE_PROXY_ACTIONS_TABLE = 'profile_proxy_actions';
 export const PROFILE_PROXY_RATING_CREDIT_BALANCES_TABLE =
   'profile_proxy_rating_credit_balances';
+export const PROFILE_CMS_PACKAGES_TABLE = 'profile_cms_packages';
+export const PROFILE_CMS_POINTER_EVENTS_TABLE = 'profile_cms_pointer_events';
+export const PROFILE_CMS_PUBLISH_SIGNATURES_TABLE =
+  'profile_cms_publish_signatures';
 export const WAVES_TABLE = 'waves';
 export const WAVES_METADATA_TABLE = 'waves_metadatas';
 export const OFFICIAL_WAVES_TABLE = 'official_waves';

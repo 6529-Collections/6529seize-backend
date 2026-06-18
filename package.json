@@ -122,7 +122,8 @@
     "sharp": "^0.34.5",
     "short-uuid": "^6.0.0",
     "slugify": "^1.6.6",
-    "winston": "^3.11.0"
+    "winston": "^3.11.0",
+    "zod": "^3.25.76"
   },
   "overrides": {
     "serverless": {
