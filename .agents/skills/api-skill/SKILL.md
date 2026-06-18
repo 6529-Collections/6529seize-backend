@@ -38,7 +38,7 @@ Use this workflow for API contract, route, handler, and generated-model changes.
 5. Do not add duplicate manual `.routes.ts` wiring or app wiring for generated endpoints. The generated router is already mounted in `src/api-serverless/src/app.ts`.
 6. If the generator rejects a needed route shape, extend `src/api-serverless/generate-openapi-routes.ts` when that is in scope; otherwise use a manual route and call out why.
 
-Generated routes currently support:
+`src/api-serverless/generate-openapi-routes.ts` is the source of truth for generated-route constraints. Before relying on a detailed constraint below, verify it against that generator if the route shape or middleware behavior is unusual. Generated routes currently support:
 
 - parameters with `in: path` or `in: query`; all other parameter locations are rejected
 - no `requestBody`, which generates a request body type of `never`
@@ -61,9 +61,9 @@ x-6529-router:
     name: handleGetSomething
 ```
 
-- `cache: true` emits `cacheRequest()`.
-- `cache.ttlSeconds` emits `cacheRequest({ ttl: Time.seconds(value) })`.
-- `cache.authDependent: true` includes the authenticated/anonymous identity in the cache key.
+- `cache: true` emits request caching.
+- `cache.ttlSeconds` configures the cache TTL.
+- `cache.authDependent: true` configures auth-aware cache behavior.
 - Use `cache.methods` when a generated route should cache non-GET methods.
 
 ## Handler Rules

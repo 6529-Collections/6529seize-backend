@@ -9,9 +9,9 @@ description: Write, open, iterate, and prepare pull requests in the 6529 SEIZE b
 
 1. Determine the requested completion mode:
    - `review-ready`: create or update the PR and stop once available review bots and the agent are satisfied.
-   - `merge`: do everything in `review-ready`, then hand off to `ops/skills/deploy-6529/SKILL.md` for merge execution when required checks and approvals allow it.
-   - `staging`: prepare release notes and hand off to `ops/skills/deploy-6529/SKILL.md` for merge, staging deployment, and smoke validation.
-   - `prod`: prepare release notes and hand off to `ops/skills/deploy-6529/SKILL.md` for staging verification, production deployment, and production smoke validation.
+   - `merge`: do everything in `review-ready`, then hand off to `.agents/skills/deploy-6529/SKILL.md` for merge execution when required checks and approvals allow it.
+   - `staging`: prepare release notes and hand off to `.agents/skills/deploy-6529/SKILL.md` for merge, staging deployment, and smoke validation.
+   - `prod`: prepare release notes and hand off to `.agents/skills/deploy-6529/SKILL.md` for staging verification, production deployment, and production smoke validation.
    If the user did not explicitly request merge or deployment, stop at `review-ready`.
 
 2. Inspect the change before writing:
@@ -90,14 +90,14 @@ description: Write, open, iterate, and prepare pull requests in the 6529 SEIZE b
 ## Deployment Gates
 
 - Never merge, deploy staging, or deploy production unless the user explicitly asked for that mode or repo standing instructions require it.
-- Use `ops/skills/deploy-6529/SKILL.md` for actual merge execution, staging deployment, production deployment, frontend coordination, failed-gate recovery, and deployed-environment validation.
+- Use `.agents/skills/deploy-6529/SKILL.md` for actual merge execution, staging deployment, production deployment, frontend coordination, failed-gate recovery, and deployed-environment validation.
 - Always list all lambdas/services that need redeployment and their deployment order when finishing development or writing the PR.
-- Use `ops/skills/deploy-6529/SKILL.md` as the source of truth for deployment workflow dispatch mechanics.
+- Use `.agents/skills/deploy-6529/SKILL.md` as the source of truth for deployment workflow dispatch mechanics.
 - Deploy `dbMigrationsLoop` before services that depend on new schema/entity sync or data backfills.
 - Deploy `api` for API route, OpenAPI, auth, API service, generated-model, or API packaging changes.
 - Deploy each changed loop service whose `src/<loopName>/` implementation, dependencies, or deploy config changed.
 - For shared code used by multiple deployed services, include every affected service in the deployment plan.
-- If deployment or smoke validation fails, hand off to `ops/skills/deploy-6529/SKILL.md` to diagnose, fix, redeploy, and rerun validation before proceeding.
+- If deployment or smoke validation fails, hand off to `.agents/skills/deploy-6529/SKILL.md` to diagnose, fix, redeploy, and rerun validation before proceeding.
 
 ## Anti-Patterns
 

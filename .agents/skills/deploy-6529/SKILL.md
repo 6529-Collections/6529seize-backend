@@ -89,9 +89,10 @@ Always determine the exact services to deploy before merging or deploying:
 1. Proceed to production when the user already asked to take the release through production, such as "take it all the way through prod." Ask only when the current request did not include production deployment.
 2. Reconfirm staging passed for the same backend release set and service order.
 3. Confirm no active production deploy is in progress for the same service lane.
-4. Deploy production through `.github/workflows/deploy.yml` with `environment=prod`, one workflow dispatch per planned service, in order.
-5. When coordinating with frontend, deploy backend production before frontend production when frontend depends on new backend behavior. Prefer backward-compatible backend changes so frontend and backend can roll independently.
-6. Watch each production deploy to completion. Record workflow run URL, service, environment, and deployed SHA/version evidence.
+4. Before each production workflow dispatch, get explicit human confirmation for the exact service, environment, and ref/SHA to deploy.
+5. Deploy production through `.github/workflows/deploy.yml` with `environment=prod`, one workflow dispatch per planned service, in order.
+6. When coordinating with frontend, deploy backend production before frontend production when frontend depends on new backend behavior. Prefer backward-compatible backend changes so frontend and backend can roll independently.
+7. Watch each production deploy to completion. Record workflow run URL, service, environment, and deployed SHA/version evidence.
 
 ## Production Validation And Watch
 
@@ -115,7 +116,7 @@ Always determine the exact services to deploy before merging or deploying:
 After production validation passes, post a detailed deployment overview to the `Follow The Repo` wave unless the user explicitly asked to skip repo-facing deploy notes. Use it for repo watchers who need enough operational detail to understand exactly what shipped.
 
 1. Use any authorized 6529.io account/profile or posting credential that the current operator personally controls or is explicitly approved to use for this release, such as an existing browser session or an approved local helper/API token. Do not request raw credentials, expose tokens, use shared wallets, use another person's account, or use automation keys unless that access was explicitly approved for this release.
-2. Resolve the wave immediately before posting. The current `Follow The Repo` wave is `https://6529.io/waves/49f0e595-ec7c-4235-8695-a527f61b69f4`; if using the local helper, verify it first:
+2. Resolve the current `Follow The Repo` wave immediately before posting and use the resolved wave ID in every post command. Do not reuse a previously documented wave UUID without confirming it is still current. If using the local helper, verify it first:
 
 ```powershell
 punk6529bot waves search --name "follow the repo"
@@ -132,8 +133,8 @@ punk6529bot waves search --name "follow the repo"
 5. Re-check the wave before sending so the overview is not duplicating a newer deploy note. If the local helper is available, dry-run or draft first, then send after the content passes the safety check:
 
 ```powershell
-punk6529bot waves post 49f0e595-ec7c-4235-8695-a527f61b69f4 --text "<deployment overview>"
-punk6529bot waves post 49f0e595-ec7c-4235-8695-a527f61b69f4 --text "<deployment overview>" --send
+punk6529bot waves post <resolved-wave-id> --text "<deployment overview>"
+punk6529bot waves post <resolved-wave-id> --text "<deployment overview>" --send
 ```
 
 6. Capture the wave drop URL or serial number for closeout evidence. If no authorized 6529.io posting credential is available, include the exact ready-to-post overview in the closeout and mark the wave publication as blocked.
@@ -141,7 +142,7 @@ punk6529bot waves post 49f0e595-ec7c-4235-8695-a527f61b69f4 --text "<deployment 
 ## Frontend Coordination
 
 - Treat `6529seize-frontend` as a separate deployable system with its own deploy skill and workflows.
-- Read `ops/skills/deploy-6529/SKILL.md` from the separate repository `6529-Collections/6529seize-frontend` when a release includes frontend work. Do not resolve that path inside the backend repo.
+- Read the deploy skill from the separate repository `6529-Collections/6529seize-frontend` when a release includes frontend work. Do not resolve that path inside the backend repo.
 - Deploy additive backend/API changes before frontend usage.
 - Keep old API behavior available until frontend production is updated when possible.
 - Gate frontend UI behavior when backend rollout may lag.

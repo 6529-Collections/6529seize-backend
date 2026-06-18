@@ -1,6 +1,6 @@
 # Commiting to Git
 
-Use DCO signoff commits. Before committing, verify `git config user.name` and `git config user.email`. Commit with `git commit -s -m "<message>"` so Git appends `Signed-off-by: <user.name> <user.email>`.
+Use DCO signoff commits. Before committing, verify `git config user.name` and `git config user.email`; for GitHub commits, `user.email` should be the matching `accountcode+username@users.noreply.github.com` address unless the user explicitly wants another verified email. Commit with `git commit -s -m "<message>"` so Git appends `Signed-off-by: <user.name> <user.email>`.
 
 # Writing unit tests
 

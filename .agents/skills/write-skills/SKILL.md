@@ -40,7 +40,7 @@ If a topic is not needed for the skill's job, omit it. A short complete skill is
 
 2. Choose name and location
 
-   Use lowercase letters, digits, and hyphens only. Keep the folder name identical to the skill name. In this repo, place repo-local skills under `ops/skills/<skill-name>/SKILL.md` unless the user asks for another skill location.
+   Use lowercase letters, digits, and hyphens only. Keep the folder name identical to the skill name. In this repo, place agent framework and meta-skills under `.agents/skills/<skill-name>/SKILL.md`; place operational guidance or external-reference skills under `ops/skills/<skill-name>/SKILL.md` unless the user asks for another skill location.
 
 3. Plan resources
 
