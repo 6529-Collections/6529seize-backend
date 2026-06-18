@@ -34,11 +34,11 @@ export * from '../models/ApiCmsPublishedSite';
 export * from '../models/ApiCmsSignatureEnvelope';
 export * from '../models/ApiCmsSite';
 export * from '../models/ApiCmsStorageLocation';
+export * from '../models/ApiCollectedStats';
+export * from '../models/ApiCollectedStatsSeason';
 export * from '../models/ApiCmsValidationIssue';
 export * from '../models/ApiCmsValidationResult';
 export * from '../models/ApiCmsValidationResultTarget';
-export * from '../models/ApiCollectedStats';
-export * from '../models/ApiCollectedStatsSeason';
 export * from '../models/ApiCommunityMemberMinimal';
 export * from '../models/ApiCommunityMemberOverview';
 export * from '../models/ApiCommunityMembersPage';
@@ -465,11 +465,11 @@ import { ApiCmsPublishedSite } from '../models/ApiCmsPublishedSite';
 import { ApiCmsSignatureEnvelope } from '../models/ApiCmsSignatureEnvelope';
 import { ApiCmsSite } from '../models/ApiCmsSite';
 import { ApiCmsStorageLocation } from '../models/ApiCmsStorageLocation';
+import { ApiCollectedStats } from '../models/ApiCollectedStats';
+import { ApiCollectedStatsSeason } from '../models/ApiCollectedStatsSeason';
 import { ApiCmsValidationIssue, ApiCmsValidationIssueSeverityEnum         } from '../models/ApiCmsValidationIssue';
 import { ApiCmsValidationResult, ApiCmsValidationResultSchemaEnum         } from '../models/ApiCmsValidationResult';
 import { ApiCmsValidationResultTarget } from '../models/ApiCmsValidationResultTarget';
-import { ApiCollectedStats } from '../models/ApiCollectedStats';
-import { ApiCollectedStatsSeason } from '../models/ApiCollectedStatsSeason';
 import { ApiCommunityMemberMinimal } from '../models/ApiCommunityMemberMinimal';
 import { ApiCommunityMemberOverview } from '../models/ApiCommunityMemberOverview';
 import { ApiCommunityMembersPage } from '../models/ApiCommunityMembersPage';
@@ -964,11 +964,11 @@ let typeMap: {[index: string]: any} = {
     "ApiCmsSignatureEnvelope": ApiCmsSignatureEnvelope,
     "ApiCmsSite": ApiCmsSite,
     "ApiCmsStorageLocation": ApiCmsStorageLocation,
+    "ApiCollectedStats": ApiCollectedStats,
+    "ApiCollectedStatsSeason": ApiCollectedStatsSeason,
     "ApiCmsValidationIssue": ApiCmsValidationIssue,
     "ApiCmsValidationResult": ApiCmsValidationResult,
     "ApiCmsValidationResultTarget": ApiCmsValidationResultTarget,
-    "ApiCollectedStats": ApiCollectedStats,
-    "ApiCollectedStatsSeason": ApiCollectedStatsSeason,
     "ApiCommunityMemberMinimal": ApiCommunityMemberMinimal,
     "ApiCommunityMemberOverview": ApiCommunityMemberOverview,
     "ApiCommunityMembersPage": ApiCommunityMembersPage,
