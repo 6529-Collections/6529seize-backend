@@ -16,6 +16,8 @@ import { ApiDropV2Page } from '@/api/generated/models/ApiDropV2Page';
 import { ApiDropV2PageWithoutCount } from '@/api/generated/models/ApiDropV2PageWithoutCount';
 import { ApiDropVoteEditLog } from '@/api/generated/models/ApiDropVoteEditLog';
 import { ApiDropVotersPage } from '@/api/generated/models/ApiDropVotersPage';
+import { ApiMediaResolveRequest } from '@/api/generated/models/ApiMediaResolveRequest';
+import { ApiMediaResolveResponse } from '@/api/generated/models/ApiMediaResolveResponse';
 import { ApiNotificationsResponseV2 } from '@/api/generated/models/ApiNotificationsResponseV2';
 import { ApiOgMetadata } from '@/api/generated/models/ApiOgMetadata';
 import { ApiWaveDecisionsPageV2 } from '@/api/generated/models/ApiWaveDecisionsPageV2';
@@ -23,6 +25,20 @@ import { ApiWaveDropsFeedV2 } from '@/api/generated/models/ApiWaveDropsFeedV2';
 import { ApiWaveMetadata } from '@/api/generated/models/ApiWaveMetadata';
 import { ApiWaveOverview } from '@/api/generated/models/ApiWaveOverview';
 import { ApiWaveOverviewPage } from '@/api/generated/models/ApiWaveOverviewPage';
+
+export type ResolveDecentralizedMediaPathParams = Record<string, never>;
+
+export type ResolveDecentralizedMediaQuery = Record<string, never>;
+
+export type ResolveDecentralizedMediaResponse = ApiMediaResolveResponse;
+
+export type ResolveDecentralizedMediaRequest = Request<
+  ResolveDecentralizedMediaPathParams,
+  ApiResponse<ResolveDecentralizedMediaResponse>,
+  ApiMediaResolveRequest,
+  ResolveDecentralizedMediaQuery,
+  Record<string, never>
+>;
 
 export interface GetOgMetadataDropPathParams {
   "drop": string;
@@ -250,6 +266,27 @@ export type GetDropV2ReactionsByIdRequest = Request<
   Record<string, never>
 >;
 
+export interface GetDropRepliesV2PathParams {
+  "id": string;
+}
+
+export interface GetDropRepliesV2Query {
+  "limit"?: number;
+  "serial_no_limit"?: number;
+  "search_strategy"?: string;
+  "drop_type"?: string;
+}
+
+export type GetDropRepliesV2Response = ApiWaveDropsFeedV2;
+
+export type GetDropRepliesV2Request = Request<
+  GetDropRepliesV2PathParams,
+  ApiResponse<GetDropRepliesV2Response>,
+  never,
+  GetDropRepliesV2Query,
+  Record<string, never>
+>;
+
 export interface GetDropV2VotersByIdPathParams {
   "id": string;
 }
@@ -354,6 +391,12 @@ export interface GetWavesV2Query {
   "overview_type"?: string;
   "only_waves_followed_by_authenticated_user"?: boolean;
   "pinned"?: string;
+  "score_sort"?: string;
+  "min_visibility_score"?: number;
+  "min_quality_score"?: number;
+  "min_hotness_score"?: number;
+  "min_rep_sort_score"?: number;
+  "visibility_tier"?: string;
   "exclude_followed"?: boolean;
   "identity"?: string;
 }

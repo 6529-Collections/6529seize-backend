@@ -68,6 +68,7 @@ on:
           - transactionsProcessingLoop
           - waveDecisionExecutionLoop
           - waveLeaderboardSnapshotterLoop
+          - waveScoreRefreshLoop
           - xTdhLoop
 
 env:

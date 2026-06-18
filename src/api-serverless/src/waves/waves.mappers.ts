@@ -74,6 +74,10 @@ import {
   isApproveWaveClosed
 } from '@/waves/wave-approve.helpers';
 import { resolveNextDropAllowed } from '@/waves/wave-chat-slow-mode.helpers';
+import {
+  mapWaveRepSummary,
+  mapWaveScore
+} from '@/api/waves/wave-score.api-mapper';
 
 type WaveMappingRelatedData = {
   contributors: Record<
@@ -542,7 +546,9 @@ export class WavesMappers {
       metrics: apiWaveMetrics,
       pauses,
       pinned: pinnedWaveIds.has(waveEntity.id),
-      identity_wave: identityWaveIds.has(waveEntity.id)
+      identity_wave: identityWaveIds.has(waveEntity.id),
+      wave_rep: mapWaveRepSummary(waveMetrics),
+      wave_score: mapWaveScore(waveMetrics)
     };
     const parentWave = parentWaveOverviewsByChildWaveId?.[waveEntity.id];
     if (parentWave) {

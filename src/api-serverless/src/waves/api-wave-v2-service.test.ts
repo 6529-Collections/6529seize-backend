@@ -12,6 +12,7 @@ import { ApiDropType } from '@/api/generated/models/ApiDropType';
 import { ApiWavesOverviewType } from '@/api/generated/models/ApiWavesOverviewType';
 import { ApiWavesPinFilter } from '@/api/generated/models/ApiWavesPinFilter';
 import { ApiWavesV2ListType } from '@/api/generated/models/ApiWavesV2ListType';
+import { ApiWaveScoreSort } from '@/api/generated/models/ApiWaveScoreSort';
 import { ApiWaveV2Service } from '@/api/waves/api-wave-v2.service';
 
 function makeDrop(overrides: Partial<DropEntity> = {}): DropEntity {
@@ -124,6 +125,7 @@ function createService() {
     searchWaves: jest.fn().mockResolvedValue([]),
     findMostSubscribedWaves: jest.fn().mockResolvedValue([]),
     findRecentlyDroppedToWaves: jest.fn().mockResolvedValue([]),
+    findScoredRecentlyDroppedToWaves: jest.fn().mockResolvedValue([]),
     findHotWaves: jest.fn().mockResolvedValue([]),
     findFavouriteWavesOfIdentity: jest.fn().mockResolvedValue([]),
     findOfficialWaves: jest.fn().mockResolvedValue([])
@@ -350,6 +352,49 @@ describe('ApiWaveV2Service', () => {
     });
   });
 
+  it('gets scored overview waves excluding followed waves', async () => {
+    const { service, deps } = createService();
+    const waveEntities = [
+      makeWave({ id: 'wave-1' }),
+      makeWave({ id: 'wave-2' })
+    ];
+    deps.wavesApiDb.findScoredRecentlyDroppedToWaves.mockResolvedValue(
+      waveEntities
+    );
+    const ctx = {
+      authenticationContext: AuthenticationContext.fromProfileId('viewer-1')
+    };
+
+    const result = await service.findWaves(
+      {
+        view: ApiWavesV2ListType.Overview,
+        overview_type: ApiWavesOverviewType.ScoredRecentlyDroppedTo,
+        page: 2,
+        page_size: 1,
+        score_sort: ApiWaveScoreSort.Rep,
+        exclude_followed: true
+      },
+      ctx
+    );
+
+    expect(
+      deps.wavesApiDb.findScoredRecentlyDroppedToWaves
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        limit: 2,
+        offset: 1,
+        authenticated_user_id: 'viewer-1',
+        score_sort: ApiWaveScoreSort.Rep,
+        exclude_followed: true
+      })
+    );
+    expect(result).toEqual({
+      data: [{ id: 'wave-1' }],
+      page: 2,
+      next: true
+    });
+  });
+
   it('gets official waves visible to the caller', async () => {
     const { service, deps } = createService();
     const waveEntities = [
@@ -517,6 +562,57 @@ describe('ApiWaveV2Service', () => {
     );
     expect(deps.apiDropMapper.mapDrops).toHaveBeenCalledWith(
       [rootDrop, reply],
+      expect.any(Object)
+    );
+  });
+
+  it('finds reply feeds by drop id and resolves the owning visible wave', async () => {
+    const { service, deps } = createService();
+    const rootDrop = makeDrop({ id: 'root-drop', wave_id: 'wave-1' });
+    const reply = makeDrop({ id: 'reply-1', reply_to_drop_id: 'root-drop' });
+    deps.dropsDb.findDropByIdWithEligibilityCheck.mockResolvedValue(rootDrop);
+    deps.dropsDb.findLatestDropRepliesSimple.mockResolvedValue([reply]);
+
+    const result = await service.findDropRepliesFeed(
+      {
+        drop_id: 'root-drop',
+        amount: 5,
+        serial_no_limit: null,
+        search_strategy: ApiDropSearchStrategy.Newer,
+        drop_type: null
+      },
+      {
+        authenticationContext: AuthenticationContext.fromProfileId('viewer-1')
+      }
+    );
+
+    expect(result).toEqual({
+      drops: [{ id: 'reply-1' }],
+      wave: { id: 'wave-1' },
+      trace: [{ drop_id: 'root-drop', is_deleted: false }],
+      root_drop: { id: 'root-drop' }
+    });
+    expect(deps.dropsDb.findDropByIdWithEligibilityCheck).toHaveBeenCalledTimes(
+      1
+    );
+    expect(deps.dropsDb.findDropByIdWithEligibilityCheck).toHaveBeenCalledWith(
+      'root-drop',
+      ['group-1'],
+      undefined
+    );
+    expect(deps.dropsDb.findWaveByIdOrNull).toHaveBeenCalledWith(
+      'wave-1',
+      undefined
+    );
+    expect(deps.dropsDb.findLatestDropRepliesSimple).toHaveBeenCalledWith(
+      {
+        drop_id: 'root-drop',
+        amount: 5,
+        serial_no_limit: null,
+        search_strategy: ApiDropSearchStrategy.Newer,
+        curation_id: null,
+        drop_type: null
+      },
       expect.any(Object)
     );
   });

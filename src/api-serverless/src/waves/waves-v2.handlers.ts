@@ -1,5 +1,4 @@
 import { getAuthenticationContext } from '@/api/auth/auth';
-import { dropsService } from '@/api/drops/drops.api.service';
 import { ApiDropSearchStrategy } from '@/api/generated/models/ApiDropSearchStrategy';
 import { ApiDropType } from '@/api/generated/models/ApiDropType';
 import { ApiDropsLeaderboardPageV2 } from '@/api/generated/models/ApiDropsLeaderboardPageV2';
@@ -11,6 +10,8 @@ import { ApiWaveMetadata } from '@/api/generated/models/ApiWaveMetadata';
 import { ApiWaveOverview } from '@/api/generated/models/ApiWaveOverview';
 import { ApiWaveOverviewPage } from '@/api/generated/models/ApiWaveOverviewPage';
 import { ApiSubwavesSort } from '@/api/generated/models/ApiSubwavesSort';
+import { ApiWaveScoreSort } from '@/api/generated/models/ApiWaveScoreSort';
+import { ApiWaveVisibilityTier } from '@/api/generated/models/ApiWaveVisibilityTier';
 import { ApiWavesOverviewType } from '@/api/generated/models/ApiWavesOverviewType';
 import { ApiWavesPinFilter } from '@/api/generated/models/ApiWavesPinFilter';
 import { ApiWavesV2ListType } from '@/api/generated/models/ApiWavesV2ListType';
@@ -25,8 +26,10 @@ import {
   GetOfficialWavesRequest,
   ListWaveSubwavesRequest,
   ListWaveCurationDropsV2Request,
+  GetDropRepliesV2Request,
   SearchDropsInWaveV2Request
 } from '@/api/generated/routes/operations';
+import { dropsService } from '@/api/drops/drops.api.service';
 import { PageSortDirection } from '@/api/page-request';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
 import {
@@ -40,13 +43,25 @@ import {
 } from '@/api/waves/wave-decisions-api.service';
 import { waveMetadataApiService } from '@/api/waves/wave-metadata.api.service';
 import { LeaderboardParams, LeaderboardSort } from '@/drops/drops.db';
-import { enums } from '@/enums';
-import { numbers } from '@/numbers';
 import { Timer } from '@/time';
 import * as Joi from 'joi';
 
+const DEFAULT_WAVE_DROPS_V2_LIMIT = 50;
+const MAX_WAVE_DROPS_V2_LIMIT = 200;
+
 type GetWaveDropsV2PathParams = {
   id: string;
+};
+
+type GetDropRepliesV2PathParams = {
+  id: string;
+};
+
+type DropsFeedV2Query = {
+  limit: number;
+  serial_no_limit: number | null;
+  search_strategy: ApiDropSearchStrategy;
+  drop_type: ApiDropType | null;
 };
 
 type WaveMetadataPathParams = {
@@ -61,6 +76,28 @@ type DeleteWaveMetadataPathParams = {
 const GetWaveDropsV2PathParamsSchema: Joi.ObjectSchema<GetWaveDropsV2PathParams> =
   Joi.object({
     id: Joi.string().required()
+  });
+
+const GetDropRepliesV2PathParamsSchema: Joi.ObjectSchema<GetDropRepliesV2PathParams> =
+  Joi.object({
+    id: Joi.string().required()
+  });
+
+const DropsFeedV2QuerySchema: Joi.ObjectSchema<DropsFeedV2Query> =
+  Joi.object<DropsFeedV2Query>({
+    limit: Joi.number()
+      .integer()
+      .min(1)
+      .max(MAX_WAVE_DROPS_V2_LIMIT)
+      .default(DEFAULT_WAVE_DROPS_V2_LIMIT),
+    serial_no_limit: Joi.number().integer().min(1).optional().default(null),
+    search_strategy: Joi.string()
+      .valid(...Object.values(ApiDropSearchStrategy))
+      .default(ApiDropSearchStrategy.Older),
+    drop_type: Joi.string()
+      .valid(...Object.values(ApiDropType))
+      .optional()
+      .default(null)
   });
 
 const WaveMetadataPathParamsSchema: Joi.ObjectSchema<WaveMetadataPathParams> =
@@ -293,26 +330,42 @@ export async function handleGetWaveDropsV2(
   );
   const timer = Timer.getFromRequest(req);
   const authenticationContext = await getAuthenticationContext(req, timer);
-  const amount = numbers.parseIntOrNull(String(req.query.limit)) ?? 200;
-  const serialNoLimit = req.query.serial_no_limit
-    ? numbers.parseIntOrNull(String(req.query.serial_no_limit))
-    : null;
-  const searchStrategy =
-    enums.resolve(ApiDropSearchStrategy, req.query.search_strategy) ??
-    ApiDropSearchStrategy.Older;
-  const dropType = req.query.drop_type
-    ? (enums.resolve(ApiDropType, req.query.drop_type) ?? null)
-    : null;
+  const { limit, serial_no_limit, search_strategy, drop_type } =
+    getValidatedByJoiOrThrow(req.query, DropsFeedV2QuerySchema);
 
   return apiWaveV2Service.findDropsFeed(
     {
       wave_id: id,
       drop_id: null,
-      amount: amount >= 200 || amount < 1 ? 50 : amount,
-      serial_no_limit: serialNoLimit,
-      search_strategy: searchStrategy,
-      drop_type: dropType,
+      amount: limit,
+      serial_no_limit,
+      search_strategy,
+      drop_type,
       curation_id: null
+    },
+    { authenticationContext, timer }
+  );
+}
+
+export async function handleGetDropRepliesV2(
+  req: GetDropRepliesV2Request
+): Promise<ApiWaveDropsFeedV2> {
+  const { id } = getValidatedByJoiOrThrow(
+    req.params,
+    GetDropRepliesV2PathParamsSchema
+  );
+  const timer = Timer.getFromRequest(req);
+  const authenticationContext = await getAuthenticationContext(req, timer);
+  const { limit, serial_no_limit, search_strategy, drop_type } =
+    getValidatedByJoiOrThrow(req.query, DropsFeedV2QuerySchema);
+
+  return apiWaveV2Service.findDropRepliesFeed(
+    {
+      drop_id: id,
+      amount: limit,
+      serial_no_limit,
+      search_strategy,
+      drop_type
     },
     { authenticationContext, timer }
   );
@@ -475,7 +528,20 @@ function validateWavesV2Params(
             .empty('')
             .valid(...Object.values(ApiWavesPinFilter))
             .optional()
-            .default(null)
+            .default(null),
+          score_sort: Joi.string()
+            .uppercase()
+            .valid(...Object.values(ApiWaveScoreSort))
+            .optional(),
+          exclude_followed: booleanQuerySchema().optional().default(false),
+          min_visibility_score: Joi.number().min(0).max(100).optional(),
+          min_quality_score: Joi.number().min(0).max(100).optional(),
+          min_hotness_score: Joi.number().min(0).max(100).optional(),
+          min_rep_sort_score: Joi.number().min(0).max(100).optional(),
+          visibility_tier: Joi.string()
+            .uppercase()
+            .valid(...Object.values(ApiWaveVisibilityTier))
+            .optional()
         }).unknown(false)
       );
     case ApiWavesV2ListType.Hot:

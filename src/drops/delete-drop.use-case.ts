@@ -36,6 +36,7 @@ import {
   dropPollsDb,
   DropPollsDb
 } from '@/api-serverless/src/drops/drop-polls.db';
+import { waveScoreService } from '@/api/waves/wave-score.service';
 
 export class DeleteDropUseCase {
   public constructor(
@@ -154,12 +155,13 @@ export class DeleteDropUseCase {
         this.dropBookmarksDb.deleteBookmarksByDropId(dropId, connection)
       ]);
       if (isPermanentDelete) {
-        await this.dropsDb.resyncParticipatoryDropCountsForWaves(
+        await this.dropsDb.resyncDropCountsForWaves([drop.wave_id], {
+          timer,
+          connection
+        });
+        await waveScoreService.refreshWaveScoresForWaveIdsBestEffort(
           [drop.wave_id],
-          {
-            timer,
-            connection
-          }
+          { timer, connection }
         );
         await this.dropsDb.insertDeletedDrop(
           {

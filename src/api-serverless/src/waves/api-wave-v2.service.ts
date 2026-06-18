@@ -1,6 +1,6 @@
 import { collections } from '@/collections';
 import { assertUnreachable } from '@/assertions';
-import { DropType } from '@/entities/IDrop';
+import { DropEntity, DropType } from '@/entities/IDrop';
 import { WaveEntity } from '@/entities/IWave';
 import { enums } from '@/enums';
 import { BadRequestException, NotFoundException } from '@/exceptions';
@@ -20,6 +20,8 @@ import { ApiDropV2PageWithoutCount } from '@/api/generated/models/ApiDropV2PageW
 import { ApiSubwavesSort } from '@/api/generated/models/ApiSubwavesSort';
 import { ApiWaveOverview } from '@/api/generated/models/ApiWaveOverview';
 import { ApiWaveOverviewPage } from '@/api/generated/models/ApiWaveOverviewPage';
+import { ApiWaveScoreSort } from '@/api/generated/models/ApiWaveScoreSort';
+import { ApiWaveVisibilityTier } from '@/api/generated/models/ApiWaveVisibilityTier';
 import { ApiWaveDropsFeedV2 } from '@/api/generated/models/ApiWaveDropsFeedV2';
 import { ApiWavesOverviewType } from '@/api/generated/models/ApiWavesOverviewType';
 import { ApiWavesPinFilter } from '@/api/generated/models/ApiWavesPinFilter';
@@ -53,6 +55,14 @@ export interface FindWaveDropsFeedV2Request {
   readonly curation_id: string | null;
 }
 
+export interface FindDropRepliesFeedV2Request {
+  readonly drop_id: string;
+  readonly serial_no_limit: number | null;
+  readonly amount: number;
+  readonly search_strategy: ApiDropSearchStrategy;
+  readonly drop_type: ApiDropType | null;
+}
+
 export interface FindWavesV2Request {
   readonly view: ApiWavesV2ListType;
   readonly page: number;
@@ -65,6 +75,12 @@ export interface FindWavesV2Request {
   readonly overview_type?: ApiWavesOverviewType;
   readonly only_waves_followed_by_authenticated_user?: boolean;
   readonly pinned?: ApiWavesPinFilter | null;
+  readonly score_sort?: ApiWaveScoreSort;
+  readonly min_visibility_score?: number;
+  readonly min_quality_score?: number;
+  readonly min_hotness_score?: number;
+  readonly min_rep_sort_score?: number;
+  readonly visibility_tier?: ApiWaveVisibilityTier;
   readonly exclude_followed?: boolean;
   readonly identity?: string;
 }
@@ -225,6 +241,59 @@ export class ApiWaveV2Service {
             },
             ctx
           );
+    } finally {
+      ctx.timer?.stop(timerKey);
+    }
+  }
+
+  public async findDropRepliesFeed(
+    request: FindDropRepliesFeedV2Request,
+    ctx: RequestContext
+  ): Promise<ApiWaveDropsFeedV2> {
+    const timerKey = `${this.constructor.name}->findDropRepliesFeed`;
+    ctx.timer?.start(timerKey);
+    try {
+      const contextProfileId = getWaveReadContextProfileId(
+        ctx.authenticationContext
+      );
+      const groupIdsUserIsEligibleFor =
+        await this.userGroupsService.getGroupsUserIsEligibleFor(
+          contextProfileId,
+          ctx.timer
+        );
+      const rootDrop = await this.findVisibleRootDropOrThrow(
+        request.drop_id,
+        groupIdsUserIsEligibleFor,
+        ctx
+      );
+      const { wave, curationFilter, notFoundMessage } =
+        await this.findWaveAndCurationFilter(
+          {
+            waveId: rootDrop.wave_id,
+            curationId: null
+          },
+          ctx
+        );
+      const visibleWave = await assertWaveAndParentVisibleOrThrow({
+        wave,
+        groupsUserIsEligibleFor: groupIdsUserIsEligibleFor,
+        message: notFoundMessage,
+        wavesApiDb: this.wavesApiDb,
+        ctx
+      });
+
+      return await this.findReplyFeed(
+        {
+          ...request,
+          wave_id: visibleWave.id,
+          wave: visibleWave,
+          curationFilter,
+          curation_id: null,
+          groupIdsUserIsEligibleFor,
+          rootDrop
+        },
+        ctx
+      );
     } finally {
       ctx.timer?.stop(timerKey);
     }
@@ -397,6 +466,12 @@ export class ApiWaveV2Service {
         `You can't see waves organised by your behaviour unless you're authenticated`
       );
     }
+    const excludeFollowed = request.exclude_followed ?? false;
+    if (excludeFollowed && !authenticatedProfileId) {
+      throw new BadRequestException(
+        `You can't exclude followed waves unless you're authenticated`
+      );
+    }
     const findParams = {
       authenticated_user_id: authenticatedProfileId,
       only_waves_followed_by_authenticated_user: onlyFollowed,
@@ -411,7 +486,18 @@ export class ApiWaveV2Service {
         ? await this.wavesApiDb.findMostSubscribedWaves(findParams)
         : overviewType === ApiWavesOverviewType.RecentlyDroppedTo
           ? await this.wavesApiDb.findRecentlyDroppedToWaves(findParams)
-          : assertUnreachable(overviewType);
+          : overviewType === ApiWavesOverviewType.ScoredRecentlyDroppedTo
+            ? await this.wavesApiDb.findScoredRecentlyDroppedToWaves({
+                ...findParams,
+                score_sort: request.score_sort ?? ApiWaveScoreSort.Balanced,
+                exclude_followed: excludeFollowed,
+                min_visibility_score: request.min_visibility_score,
+                min_quality_score: request.min_quality_score,
+                min_hotness_score: request.min_hotness_score,
+                min_rep_sort_score: request.min_rep_sort_score,
+                visibility_tier: request.visibility_tier
+              })
+            : assertUnreachable(overviewType);
     return await this.mapWaveEntitiesPage(waveEntities, request, ctx);
   }
 
@@ -551,6 +637,22 @@ export class ApiWaveV2Service {
     };
   }
 
+  private async findVisibleRootDropOrThrow(
+    dropId: string,
+    groupIdsUserIsEligibleFor: string[],
+    ctx: RequestContext
+  ): Promise<DropEntity> {
+    const rootDrop = await this.dropsDb.findDropByIdWithEligibilityCheck(
+      dropId,
+      groupIdsUserIsEligibleFor,
+      ctx.connection
+    );
+    if (!rootDrop) {
+      throw new NotFoundException(`Drop ${dropId} not found`);
+    }
+    return rootDrop;
+  }
+
   private async findWaveFeed(
     {
       wave,
@@ -595,23 +697,27 @@ export class ApiWaveV2Service {
       search_strategy,
       curationFilter,
       drop_type,
-      groupIdsUserIsEligibleFor
+      groupIdsUserIsEligibleFor,
+      rootDrop: providedRootDrop
     }: Omit<FindWaveDropsFeedV2Request, 'drop_id'> & {
       readonly drop_id: string;
       readonly wave: WaveEntity;
       readonly curationFilter: string | null;
       readonly groupIdsUserIsEligibleFor: string[];
+      readonly rootDrop?: DropEntity;
     },
     ctx: RequestContext
   ): Promise<ApiWaveDropsFeedV2> {
     const dropId = drop_id;
     const resolvedDropType = this.resolveDropType(drop_type);
     const [rootDrop, trace, dropEntities, apiWaveById] = await Promise.all([
-      this.dropsDb.findDropByIdWithEligibilityCheck(
-        dropId,
-        groupIdsUserIsEligibleFor,
-        ctx.connection
-      ),
+      providedRootDrop
+        ? Promise.resolve(providedRootDrop)
+        : this.dropsDb.findDropByIdWithEligibilityCheck(
+            dropId,
+            groupIdsUserIsEligibleFor,
+            ctx.connection
+          ),
       this.dropsDb.getTraceForDrop(dropId, ctx),
       this.dropsDb.findLatestDropRepliesSimple(
         {
@@ -626,6 +732,8 @@ export class ApiWaveV2Service {
       ),
       this.apiWaveOverviewMapper.mapWaves([wave], ctx)
     ]);
+    // This remains defensive for callers that provide a wave separately from
+    // the root drop lookup.
     if (rootDrop?.wave_id !== wave.id) {
       throw new NotFoundException(`Drop ${dropId} not found`);
     }

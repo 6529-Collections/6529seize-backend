@@ -56,6 +56,16 @@ describe(`AbusivenessCheckService`, () => {
     );
   });
 
+  it(`should accept unicode letters and numbers`, async () => {
+    const input = '建設者 реп 123';
+    when(abusivenessCheckDb.findResult)
+      .calledWith(input)
+      .mockResolvedValue(anAbusivenessCheckResult);
+    await expect(
+      abusivenessCheckService.checkRepPhrase(input)
+    ).resolves.toEqual(anAbusivenessCheckResult);
+  });
+
   it(`should turn to AI, save the result and finally return it if database has no result`, async () => {
     const input = "Gr3at 'react' (or, something)! dev?";
     when(abusivenessCheckDb.findResult)
@@ -76,7 +86,7 @@ describe(`AbusivenessCheckService`, () => {
     await expect(
       abusivenessCheckService.checkRepPhrase('Hey\nyou')
     ).rejects.toThrow(
-      'Rep statement contains invalid characters, is shorter than one character or is longer than 100 characters. Only alphanumeric characters, spaces, commas, punctuation, parentheses and single quotes are allowed.'
+      'Rep statement contains invalid characters, is shorter than one character or is longer than 100 characters. Only letters, numbers, spaces, commas, punctuation, parentheses and single quotes are allowed.'
     );
   });
 
@@ -84,7 +94,7 @@ describe(`AbusivenessCheckService`, () => {
     await expect(
       abusivenessCheckService.checkRepPhrase('Hey\tyou')
     ).rejects.toThrow(
-      'Rep statement contains invalid characters, is shorter than one character or is longer than 100 characters. Only alphanumeric characters, spaces, commas, punctuation, parentheses and single quotes are allowed.'
+      'Rep statement contains invalid characters, is shorter than one character or is longer than 100 characters. Only letters, numbers, spaces, commas, punctuation, parentheses and single quotes are allowed.'
     );
   });
 
@@ -92,7 +102,7 @@ describe(`AbusivenessCheckService`, () => {
     await expect(
       abusivenessCheckService.checkRepPhrase('Hey%you')
     ).rejects.toThrow(
-      'Rep statement contains invalid characters, is shorter than one character or is longer than 100 characters. Only alphanumeric characters, spaces, commas, punctuation, parentheses and single quotes are allowed.'
+      'Rep statement contains invalid characters, is shorter than one character or is longer than 100 characters. Only letters, numbers, spaces, commas, punctuation, parentheses and single quotes are allowed.'
     );
   });
 

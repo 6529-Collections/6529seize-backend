@@ -60,6 +60,8 @@ import {
   UserGroupsService
 } from '../community-members/user-groups.service';
 import { ApiWavesPinFilter } from '../generated/models/ApiWavesPinFilter';
+import { ApiWaveScoreSort } from '../generated/models/ApiWaveScoreSort';
+import { ApiWaveVisibilityTier } from '../generated/models/ApiWaveVisibilityTier';
 
 type RawWaveEntity = Omit<
   WaveEntity,
@@ -113,6 +115,19 @@ export interface WaveMentionOverview {
 }
 
 export class WavesApiDb extends LazyDbAccessCompatibleService {
+  private getWaveScoreSortColumn(sort: ApiWaveScoreSort): string {
+    switch (sort) {
+      case ApiWaveScoreSort.Quality:
+        return 'wm.wave_quality_score';
+      case ApiWaveScoreSort.Hotness:
+        return 'wm.wave_hotness_score';
+      case ApiWaveScoreSort.Rep:
+        return 'wm.wave_rep_sort_score';
+      case ApiWaveScoreSort.Balanced:
+        return 'wm.wave_visibility_score';
+    }
+  }
+
   private getWaveVisibilityFilter(
     alias: string,
     groupIds: readonly string[],
@@ -1307,7 +1322,33 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
               subscribers_count: 0,
               drops_count: 0,
               participatory_drops_count: 0,
-              latest_drop_timestamp: 0
+              latest_drop_timestamp: 0,
+              wave_rep_total: 0,
+              wave_rep_positive: 0,
+              wave_rep_negative: 0,
+              wave_rep_contributor_count: 0,
+              wave_rep_positive_contributor_count: 0,
+              wave_rep_negative_contributor_count: 0,
+              wave_score_version: 'wave-score-v1',
+              wave_visibility_tier: 'EXPLORATION_NEUTRAL',
+              wave_visibility_rank: 2,
+              wave_quality_score: 0,
+              wave_hotness_score: 0,
+              wave_rep_sort_score: 50,
+              wave_visibility_score: 0,
+              wave_creator_score: 0,
+              wave_level_weighted_participation_score: 0,
+              wave_trusted_diversity_score: 0,
+              wave_rep_component_score: 50,
+              wave_trusted_subscription_score: 0,
+              wave_recent_trusted_activity_score: 0,
+              wave_single_actor_penalty: 0,
+              wave_low_trust_flood_penalty: 0,
+              wave_cross_post_pressure: 0,
+              wave_cross_post_penalty: 0,
+              wave_negative_rep_penalty: 0,
+              wave_safety_multiplier: 1,
+              wave_score_calculated_at: 0
             };
             return acc;
           },
@@ -1965,6 +2006,134 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
             : null
         }))
       );
+  }
+
+  async findScoredRecentlyDroppedToWaves(param: {
+    authenticated_user_id: string | null;
+    only_waves_followed_by_authenticated_user: boolean;
+    offset: number;
+    limit: number;
+    eligibleGroups: string[];
+    direct_message?: boolean;
+    pinned: ApiWavesPinFilter | null;
+    score_sort: ApiWaveScoreSort;
+    exclude_followed: boolean;
+    min_visibility_score?: number;
+    min_quality_score?: number;
+    min_hotness_score?: number;
+    min_rep_sort_score?: number;
+    visibility_tier?: ApiWaveVisibilityTier;
+  }): Promise<WaveEntity[]> {
+    const applyMutedScoreFloor = (column: string) =>
+      param.authenticated_user_id
+        ? `CASE WHEN COALESCE(wrm.muted, false) = true THEN 0 ELSE ${column} END`
+        : column;
+    const scoreColumn = this.getWaveScoreSortColumn(param.score_sort);
+    const tierRankExpr = param.authenticated_user_id
+      ? `CASE WHEN COALESCE(wrm.muted, false) = true THEN 999 ELSE wm.wave_visibility_rank END`
+      : `wm.wave_visibility_rank`;
+    const scoreExpr = applyMutedScoreFloor(scoreColumn);
+    const visibilityScoreExpr = applyMutedScoreFloor(
+      `wm.wave_visibility_score`
+    );
+    const qualityScoreExpr = applyMutedScoreFloor(`wm.wave_quality_score`);
+    const hotnessScoreExpr = applyMutedScoreFloor(`wm.wave_hotness_score`);
+    const repSortScoreExpr = applyMutedScoreFloor(`wm.wave_rep_sort_score`);
+    const visibilityTierExpr = param.authenticated_user_id
+      ? `CASE WHEN COALESCE(wrm.muted, false) = true THEN NULL ELSE wm.wave_visibility_tier END`
+      : `wm.wave_visibility_tier`;
+    const filters = [
+      param.min_visibility_score !== undefined
+        ? `${visibilityScoreExpr} >= :min_visibility_score`
+        : null,
+      param.min_quality_score !== undefined
+        ? `${qualityScoreExpr} >= :min_quality_score`
+        : null,
+      param.min_hotness_score !== undefined
+        ? `${hotnessScoreExpr} >= :min_hotness_score`
+        : null,
+      param.min_rep_sort_score !== undefined
+        ? `${repSortScoreExpr} >= :min_rep_sort_score`
+        : null,
+      param.visibility_tier !== undefined
+        ? `${visibilityTierExpr} = :visibility_tier`
+        : null
+    ]
+      .filter((it): it is string => !!it)
+      .join(' and ');
+    const scoreFilters = filters ? `and ${filters}` : ``;
+    const sql = `with wids as (
+      select
+        w.id,
+        ${tierRankExpr} as tier_rank,
+        ${scoreExpr} as sort_val,
+        wm.latest_drop_timestamp
+      from ${WAVES_TABLE} w
+      ${
+        param.pinned === ApiWavesPinFilter.Pinned && param.authenticated_user_id
+          ? ` join ${PINNED_WAVES_TABLE} pw on pw.wave_id = w.id and pw.profile_id = :authenticated_user_id `
+          : ``
+      }
+      ${
+        param.pinned === ApiWavesPinFilter.NotPinned &&
+        param.authenticated_user_id
+          ? ` left join ${PINNED_WAVES_TABLE} pw on pw.wave_id = w.id and pw.profile_id = :authenticated_user_id `
+          : ``
+      }
+      ${
+        param.only_waves_followed_by_authenticated_user
+          ? `join ${IDENTITY_SUBSCRIPTIONS_TABLE} f on f.target_type = 'WAVE' and f.target_action = 'DROP_CREATED' and f.target_id = w.id`
+          : ``
+      }
+      ${
+        param.exclude_followed
+          ? `left join ${IDENTITY_SUBSCRIPTIONS_TABLE} xf
+              on xf.subscriber_id = :authenticated_user_id
+             and xf.target_id = w.id
+             and xf.target_type = :wave_target_type
+             and xf.target_action = :drop_created_action`
+          : ``
+      }
+      join ${WAVE_METRICS_TABLE} wm on wm.wave_id = w.id
+      ${
+        param.authenticated_user_id
+          ? `left join ${WAVE_READER_METRICS_TABLE} wrm on wrm.wave_id = w.id and wrm.reader_id = :authenticated_user_id`
+          : ``
+      }
+      where
+        ${param.pinned === ApiWavesPinFilter.NotPinned && param.authenticated_user_id ? ` pw.profile_id is null and ` : ``}
+        ${
+          param.only_waves_followed_by_authenticated_user
+            ? `f.subscriber_id = :authenticated_user_id and`
+            : ``
+        }
+        ${param.exclude_followed ? `xf.id is null and` : ``}
+        ${
+          param.direct_message !== undefined
+            ? ` w.is_direct_message = :direct_message and `
+            : ``
+        }
+        w.parent_wave_id is null
+        and (w.visibility_group_id is null ${
+          param.eligibleGroups.length
+            ? `or w.visibility_group_id in (:eligibleGroups)`
+            : ``
+        })
+        ${scoreFilters}
+      order by tier_rank asc, sort_val desc, wm.latest_drop_timestamp desc, w.id desc
+      limit :limit offset :offset
+    )
+    select w.*
+    from ${WAVES_TABLE} w
+      join wids on w.id = wids.id
+    order by wids.tier_rank asc, wids.sort_val desc, wids.latest_drop_timestamp desc, w.id desc`;
+    return this.db
+      .execute<RawWaveEntity>(sql, {
+        ...param,
+        wave_target_type: ActivityEventTargetType.WAVE,
+        drop_created_action: ActivityEventAction.DROP_CREATED
+      })
+      .then((res) => res.map((it) => this.parseWaveEntity(it)));
   }
 
   async findIdentityParticipationDropsCountByWaveId(
