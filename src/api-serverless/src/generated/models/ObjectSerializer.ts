@@ -231,6 +231,7 @@ export * from '../models/ApiProfileClassification';
 export * from '../models/ApiProfileCmsAgentPatchValidationResult';
 export * from '../models/ApiProfileCmsAgentPatchValidationResultTarget';
 export * from '../models/ApiProfileCmsAgentSchemaBundle';
+export * from '../models/ApiProfileCmsAgentSchemaBundleEndpointAuth';
 export * from '../models/ApiProfileCmsAgentSchemaBundleEndpoints';
 export * from '../models/ApiProfileCmsAgentSchemaBundleSafety';
 export * from '../models/ApiProfileCmsAgentSchemaBundleSourcePacketTypesInner';
@@ -690,7 +691,8 @@ import { ApiPaymentDetails } from '../models/ApiPaymentDetails';
 import { ApiProfileClassification } from '../models/ApiProfileClassification';
 import { ApiProfileCmsAgentPatchValidationResult, ApiProfileCmsAgentPatchValidationResultSchemaEnum          } from '../models/ApiProfileCmsAgentPatchValidationResult';
 import { ApiProfileCmsAgentPatchValidationResultTarget } from '../models/ApiProfileCmsAgentPatchValidationResultTarget';
-import { ApiProfileCmsAgentSchemaBundle, ApiProfileCmsAgentSchemaBundleSchemaEnum      , ApiProfileCmsAgentSchemaBundleDataClassesEnum     } from '../models/ApiProfileCmsAgentSchemaBundle';
+import { ApiProfileCmsAgentSchemaBundle, ApiProfileCmsAgentSchemaBundleSchemaEnum      , ApiProfileCmsAgentSchemaBundleDataClassesEnum      } from '../models/ApiProfileCmsAgentSchemaBundle';
+import { ApiProfileCmsAgentSchemaBundleEndpointAuth, ApiProfileCmsAgentSchemaBundleEndpointAuthSourcePacketEnum  , ApiProfileCmsAgentSchemaBundleEndpointAuthValidatePackageEnum  , ApiProfileCmsAgentSchemaBundleEndpointAuthValidatePatchEnum   } from '../models/ApiProfileCmsAgentSchemaBundleEndpointAuth';
 import { ApiProfileCmsAgentSchemaBundleEndpoints } from '../models/ApiProfileCmsAgentSchemaBundleEndpoints';
 import { ApiProfileCmsAgentSchemaBundleSafety } from '../models/ApiProfileCmsAgentSchemaBundleSafety';
 import { ApiProfileCmsAgentSchemaBundleSourcePacketTypesInner , ApiProfileCmsAgentSchemaBundleSourcePacketTypesInnerDataClassEnum      } from '../models/ApiProfileCmsAgentSchemaBundleSourcePacketTypesInner';
@@ -962,6 +964,9 @@ let enumsMap: Set<string> = new Set<string>([
     "ApiProfileCmsAgentPatchValidationResultSchemaEnum",
     "ApiProfileCmsAgentSchemaBundleSchemaEnum",
     "ApiProfileCmsAgentSchemaBundleDataClassesEnum",
+    "ApiProfileCmsAgentSchemaBundleEndpointAuthSourcePacketEnum",
+    "ApiProfileCmsAgentSchemaBundleEndpointAuthValidatePackageEnum",
+    "ApiProfileCmsAgentSchemaBundleEndpointAuthValidatePatchEnum",
     "ApiProfileCmsAgentSchemaBundleSourcePacketTypesInnerDataClassEnum",
     "ApiProfileCmsAgentSourcePacketSchemaEnum",
     "ApiProfileCmsAgentSourcePacketVisibilityEnum",
@@ -1213,6 +1218,7 @@ let typeMap: {[index: string]: any} = {
     "ApiProfileCmsAgentPatchValidationResult": ApiProfileCmsAgentPatchValidationResult,
     "ApiProfileCmsAgentPatchValidationResultTarget": ApiProfileCmsAgentPatchValidationResultTarget,
     "ApiProfileCmsAgentSchemaBundle": ApiProfileCmsAgentSchemaBundle,
+    "ApiProfileCmsAgentSchemaBundleEndpointAuth": ApiProfileCmsAgentSchemaBundleEndpointAuth,
     "ApiProfileCmsAgentSchemaBundleEndpoints": ApiProfileCmsAgentSchemaBundleEndpoints,
     "ApiProfileCmsAgentSchemaBundleSafety": ApiProfileCmsAgentSchemaBundleSafety,
     "ApiProfileCmsAgentSchemaBundleSourcePacketTypesInner": ApiProfileCmsAgentSchemaBundleSourcePacketTypesInner,

@@ -126,9 +126,9 @@ POST /api/profile-cms/packages/:id/agent/patch/validate
 ```
 
 The schema bundle is public and returns the current string schema ids,
-source-packet categories, patch operation names, endpoint templates, and safety
-metadata. Frontend clients should treat this as the narrow contract for external
-agent integrations.
+source-packet categories, patch operation names, endpoint templates, endpoint
+auth requirements, and safety metadata. Frontend clients should treat this as
+the narrow contract for external agent integrations.
 
 Source packets are data, not instructions. The response deliberately separates:
 

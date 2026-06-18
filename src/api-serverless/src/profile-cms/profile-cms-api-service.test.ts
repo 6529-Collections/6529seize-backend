@@ -307,6 +307,11 @@ describe('ProfileCmsApiService', () => {
       endpoints: {
         source_packet: '/profile-cms/packages/{id}/agent/source-packet',
         validate_patch: '/profile-cms/packages/{id}/agent/patch/validate'
+      },
+      endpoint_auth: {
+        source_packet: 'optional',
+        validate_package: 'required',
+        validate_patch: 'required'
       }
     });
     expect(result.source_packet_types.map((type) => type.type)).toEqual(
@@ -385,6 +390,18 @@ describe('ProfileCmsApiService', () => {
         authenticationContext: AuthenticationContext.notAuthenticated()
       })
     ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('rejects malformed stored packages before building source packets', async () => {
+    const malformed = {
+      ...createEntity(),
+      cms_package: { schema: 'older-cms-package' } as unknown as CmsPackageV1
+    };
+    packagesDb.findById.mockResolvedValue(malformed);
+
+    await expect(
+      service.getAgentSourcePacket(malformed.id, ownerContext())
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('serves public published source packets anonymously', async () => {
@@ -530,6 +547,45 @@ describe('ProfileCmsApiService', () => {
     expect(result.candidate_validation).toMatchObject({
       valid: true
     });
+  });
+
+  it('returns explicit reorder errors when existing blocks have no id', async () => {
+    const draft = createEntity();
+    packagesDb.findById.mockResolvedValue(draft);
+
+    const result = await service.validateAgentPatch(
+      draft.id,
+      {
+        agent_patch: createAgentPatch(draft, {
+          operations: [
+            {
+              op: 'add_block',
+              path: '/payload/pages/0/blocks/-',
+              value: {
+                block_type: 'rich_text',
+                content: 'missing block id'
+              }
+            },
+            {
+              op: 'reorder_blocks',
+              path: '/payload/pages/0/blocks',
+              value: ['b1', 'missing-id']
+            }
+          ]
+        })
+      },
+      ownerContext()
+    );
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'agent_patch.reorder_block_id_missing',
+          path: '/operations/1/path'
+        })
+      ])
+    );
   });
 
   it('rejects publish when the expected package hash does not match', async () => {

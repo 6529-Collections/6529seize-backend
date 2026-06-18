@@ -45,6 +45,11 @@ export interface ProfileCmsAgentSchemaBundleResponse {
     readonly validate_package: string;
     readonly validate_patch: string;
   };
+  readonly endpoint_auth: {
+    readonly source_packet: 'optional';
+    readonly validate_package: 'required';
+    readonly validate_patch: 'required';
+  };
 }
 
 export interface ProfileCmsAgentSourcePacketResponse {
@@ -181,22 +186,28 @@ export function buildProfileCmsAgentSchemaBundle(
       source_packet: '/profile-cms/packages/{id}/agent/source-packet',
       validate_package: '/profile-cms/packages/validate',
       validate_patch: '/profile-cms/packages/{id}/agent/patch/validate'
+    },
+    endpoint_auth: {
+      source_packet: 'optional',
+      validate_package: 'required',
+      validate_patch: 'required'
     }
   };
 }
 
 export function buildProfileCmsAgentSourcePacket({
   entity,
+  cmsPackage,
   liveValidation,
   generatedAt,
   visibility
 }: {
   readonly entity: ProfileCmsPackageEntity;
+  readonly cmsPackage: CmsPackageV1;
   readonly liveValidation: CmsValidationResultV1;
   readonly generatedAt: string;
   readonly visibility: ProfileCmsAgentSourcePacketResponse['visibility'];
 }): ProfileCmsAgentSourcePacketResponse {
-  const cmsPackage = entity.cms_package as CmsPackageV1;
   return {
     schema: CMS_AGENT_SOURCE_PACKET_SCHEMA,
     generated_at: generatedAt,

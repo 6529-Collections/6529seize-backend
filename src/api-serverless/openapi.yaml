@@ -14809,6 +14809,7 @@ components:
         - data_classes
         - safety
         - endpoints
+        - endpoint_auth
       properties:
         schema:
           type: string
@@ -14887,6 +14888,25 @@ components:
               type: string
             validate_patch:
               type: string
+        endpoint_auth:
+          type: object
+          required:
+            - source_packet
+            - validate_package
+            - validate_patch
+          properties:
+            source_packet:
+              type: string
+              enum:
+                - optional
+            validate_package:
+              type: string
+              enum:
+                - required
+            validate_patch:
+              type: string
+              enum:
+                - required
     ApiProfileCmsAgentSourcePacket:
       type: object
       required:

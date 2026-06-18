@@ -44,7 +44,7 @@ applying agent-proposed changes.
 ## Validation
 
 - `npx jest src/api-serverless/src/profile-cms/profile-cms-api-service.test.ts src/api-serverless/src/profile-cms/profile-cms-handlers.test.ts --runInBand`
-  - Passed: 41 tests.
+  - Passed: 44 tests.
 
 ## FE Integration Notes
 
@@ -55,6 +55,9 @@ applying agent-proposed changes.
   - `ApiProfileCmsAgentPatchValidationResult`
 - Agent adapters should treat `safety.untrusted_fields` as prompt-injection
   boundaries and quote those values as data only.
+- The schema bundle includes `endpoint_auth` so external adapters can see that
+  source packet reads are optional-auth while package and patch validation are
+  authenticated flows.
 - For content-changing patches, request patch validation with
   `enforce_hashes=false` while drafting. The normal save/publish flow still
   enforces package hashes and signatures before publication.

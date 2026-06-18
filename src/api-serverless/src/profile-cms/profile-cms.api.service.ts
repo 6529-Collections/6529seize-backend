@@ -250,16 +250,20 @@ export class ProfileCmsApiService {
     ctx: RequestContext
   ): Promise<ProfileCmsAgentSourcePacketResponse> {
     const entity = await this.getReadablePackageEntityOrThrow(id, ctx);
-    const liveValidation = validateCmsPackageV1(entity.cms_package, {
+    const cmsPackage = this.parsePackageOrThrow(entity.cms_package);
+    const checkedAt = this.getCurrentIsoDate();
+    const liveValidation = validateCmsPackageV1(cmsPackage, {
       allowFixtureSignatures: false,
       allowFixtureStorage: false,
+      checkedAt,
       enforceHashes: true
     });
 
     return buildProfileCmsAgentSourcePacket({
       entity,
+      cmsPackage,
       liveValidation,
-      generatedAt: this.getCurrentIsoDate(),
+      generatedAt: checkedAt,
       visibility: this.isPublicPackage(entity)
         ? 'public_published'
         : 'private_authority_required'
@@ -280,7 +284,8 @@ export class ProfileCmsApiService {
       version: entity.version,
       packageHash: entity.package_hash,
       status: entity.status,
-      request
+      request,
+      checkedAt: this.getCurrentIsoDate()
     });
   }
 

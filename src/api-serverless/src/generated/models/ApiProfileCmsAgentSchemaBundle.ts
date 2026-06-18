@@ -10,6 +10,7 @@
  * Do not edit the class manually.
  */
 
+import { ApiProfileCmsAgentSchemaBundleEndpointAuth } from '../models/ApiProfileCmsAgentSchemaBundleEndpointAuth';
 import { ApiProfileCmsAgentSchemaBundleEndpoints } from '../models/ApiProfileCmsAgentSchemaBundleEndpoints';
 import { ApiProfileCmsAgentSchemaBundleSafety } from '../models/ApiProfileCmsAgentSchemaBundleSafety';
 import { ApiProfileCmsAgentSchemaBundleSourcePacketTypesInner } from '../models/ApiProfileCmsAgentSchemaBundleSourcePacketTypesInner';
@@ -24,6 +25,7 @@ export class ApiProfileCmsAgentSchemaBundle {
     'data_classes': Array<ApiProfileCmsAgentSchemaBundleDataClassesEnum>;
     'safety': ApiProfileCmsAgentSchemaBundleSafety;
     'endpoints': ApiProfileCmsAgentSchemaBundleEndpoints;
+    'endpoint_auth': ApiProfileCmsAgentSchemaBundleEndpointAuth;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -76,6 +78,12 @@ export class ApiProfileCmsAgentSchemaBundle {
             "name": "endpoints",
             "baseName": "endpoints",
             "type": "ApiProfileCmsAgentSchemaBundleEndpoints",
+            "format": ""
+        },
+        {
+            "name": "endpoint_auth",
+            "baseName": "endpoint_auth",
+            "type": "ApiProfileCmsAgentSchemaBundleEndpointAuth",
             "format": ""
         }    ];
 

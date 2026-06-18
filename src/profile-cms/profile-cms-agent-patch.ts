@@ -549,11 +549,30 @@ function reorderBlocks(
     return;
   }
   const blocksById = new Map<string, unknown>();
-  current.value.forEach((block) => {
-    if (isRecord(block) && typeof block.id === 'string') {
-      blocksById.set(block.id, block);
+  for (const block of current.value) {
+    if (!isRecord(block) || typeof block.id !== 'string') {
+      issues.push(
+        issue({
+          code: 'agent_patch.reorder_block_id_missing',
+          message:
+            'reorder_blocks requires every existing block to have an id.',
+          path: `/operations/${operationIndex}/path`
+        })
+      );
+      return;
     }
-  });
+    if (blocksById.has(block.id)) {
+      issues.push(
+        issue({
+          code: 'agent_patch.reorder_duplicate_block_id',
+          message: `Block id '${block.id}' appears more than once.`,
+          path: `/operations/${operationIndex}/path`
+        })
+      );
+      return;
+    }
+    blocksById.set(block.id, block);
+  }
   if (
     blocksById.size !== current.value.length ||
     blocksById.size !== value.length
@@ -598,11 +617,16 @@ function attachSourcePacket(
   if (!payload.found || !isRecord(payload.value)) {
     return;
   }
-  const existing = payload.value.source_packets;
-  if (existing === undefined) {
-    payload.value.source_packets = [];
+  const sourcePackets = payload.value.source_packets;
+  if (sourcePackets === undefined) {
+    payload.value.source_packets = [value];
+    return;
   }
-  insertAtArrayPath(root, path, value, operationIndex, issues);
+  if (!Array.isArray(sourcePackets)) {
+    addPathIssue(operationIndex, issues, 'agent_patch.path_not_array', path);
+    return;
+  }
+  sourcePackets.push(value);
 }
 
 function resolveParent(
