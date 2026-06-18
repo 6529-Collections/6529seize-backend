@@ -256,6 +256,7 @@ export class GlobalRepCategoryDb extends LazyDbAccessCompatibleService {
             r.matter = :profileMatter
             or (
               r.matter = :waveMatter
+              and w.id is not null
               and ${this.getWaveAndParentVisibilityFilter(
                 groupIdsUserIsEligibleFor
               )}

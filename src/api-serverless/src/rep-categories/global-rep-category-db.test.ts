@@ -215,6 +215,7 @@ describe('GlobalRepCategoryDb', () => {
     expect(sql).toContain('where r.matter in (:profileMatter, :waveMatter)');
     expect(sql).toContain('r.matter = :profileMatter');
     expect(sql).toContain('r.matter = :waveMatter');
+    expect(sql).toContain('w.id is not null');
     expect(sql).toContain(
       'w.visibility_group_id in (:groupIdsUserIsEligibleFor)'
     );
