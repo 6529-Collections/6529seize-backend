@@ -199,7 +199,7 @@ describe('GlobalRepCategoryDb', () => {
     const ctx = { timer, connection } as unknown as RequestContext;
 
     await service.getSuggestedCategories(
-      { limit: 12, groupIdsUserIsEligibleFor: ['group-1'] },
+      { limit: 12, offset: 24, groupIdsUserIsEligibleFor: ['group-1'] },
       ctx
     );
 
@@ -222,8 +222,11 @@ describe('GlobalRepCategoryDb', () => {
     expect(sql).toContain(
       'pw.visibility_group_id in (:groupIdsUserIsEligibleFor)'
     );
+    expect(sql).toContain('limit :limit');
+    expect(sql).toContain('offset :offset');
     expect(params).toMatchObject({
       limit: 12,
+      offset: 24,
       profileMatter: RateMatter.REP,
       waveMatter: RateMatter.WAVE_REP,
       groupIdsUserIsEligibleFor: ['group-1']

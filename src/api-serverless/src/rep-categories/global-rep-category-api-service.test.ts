@@ -30,6 +30,10 @@ type UserGroupsServiceMock = jest.Mocked<
   Pick<UserGroupsService, 'getGroupsUserIsEligibleFor'>
 >;
 
+type SuggestedCategoryRow = Awaited<
+  ReturnType<GlobalRepCategoryDb['getSuggestedCategories']>
+>[number];
+
 function makeProfile(id: string): ApiProfileMin {
   return {
     id,
@@ -54,6 +58,31 @@ function makeProfile(id: string): ApiProfileMin {
     winner_main_stage_drop_ids: [],
     artist_of_prevote_cards: [],
     is_wave_creator: false
+  };
+}
+
+function makeSuggestedCategoryRow({
+  category,
+  totalRep = '1',
+  profileRep = '1',
+  waveRep = '0',
+  ratingCount = '1',
+  lastModified = '2026-06-07T00:00:00.000Z'
+}: {
+  readonly category: string;
+  readonly totalRep?: string;
+  readonly profileRep?: string;
+  readonly waveRep?: string;
+  readonly ratingCount?: string;
+  readonly lastModified?: string;
+}): SuggestedCategoryRow {
+  return {
+    category,
+    total_rep: totalRep,
+    profile_rep: profileRep,
+    wave_rep: waveRep,
+    rating_count: ratingCount,
+    last_modified: lastModified
   };
 }
 
@@ -156,22 +185,19 @@ describe('GlobalRepCategoryApiService', () => {
       }
     } as unknown as RequestContext;
     globalRepCategoryDb.getSuggestedCategories.mockResolvedValueOnce([
-      {
+      makeSuggestedCategoryRow({
         category: 'Invalid <category>',
-        total_rep: '1000',
-        profile_rep: '1000',
-        wave_rep: '0',
-        rating_count: '1',
-        last_modified: '2026-06-07T00:00:00.000Z'
-      },
-      {
+        totalRep: '1000',
+        profileRep: '1000'
+      }),
+      makeSuggestedCategoryRow({
         category: 'Builder',
-        total_rep: '125',
-        profile_rep: '25',
-        wave_rep: '100',
-        rating_count: '4',
-        last_modified: '2026-06-06T00:00:00.000Z'
-      }
+        totalRep: '125',
+        profileRep: '25',
+        waveRep: '100',
+        ratingCount: '4',
+        lastModified: '2026-06-06T00:00:00.000Z'
+      })
     ]);
 
     await expect(service.getSuggestedCategories(ctx)).resolves.toEqual([
@@ -186,12 +212,50 @@ describe('GlobalRepCategoryApiService', () => {
     ]);
 
     expect(globalRepCategoryDb.getSuggestedCategories).toHaveBeenCalledWith(
-      { limit: 36, groupIdsUserIsEligibleFor: ['group-1'] },
+      { limit: 36, offset: 0, groupIdsUserIsEligibleFor: ['group-1'] },
       ctx
     );
     expect(userGroupsService.getGroupsUserIsEligibleFor).toHaveBeenCalledWith(
       'profile-1',
       undefined
+    );
+  });
+
+  it('continues fetching suggested categories until enough valid names are collected', async () => {
+    const { service, globalRepCategoryDb } = createService();
+    const invalidRows = Array.from({ length: 36 }, (_, index) =>
+      makeSuggestedCategoryRow({ category: `Invalid <category ${index}>` })
+    );
+    globalRepCategoryDb.getSuggestedCategories
+      .mockResolvedValueOnce(invalidRows)
+      .mockResolvedValueOnce([
+        makeSuggestedCategoryRow({
+          category: 'Builder',
+          totalRep: '99',
+          ratingCount: '3'
+        })
+      ]);
+
+    await expect(service.getSuggestedCategories({})).resolves.toEqual([
+      {
+        category: 'Builder',
+        total_rep: 99,
+        profile_rep: 1,
+        wave_rep: 0,
+        rating_count: 3,
+        last_modified: '2026-06-07T00:00:00.000Z'
+      }
+    ]);
+
+    expect(globalRepCategoryDb.getSuggestedCategories).toHaveBeenNthCalledWith(
+      1,
+      { limit: 36, offset: 0, groupIdsUserIsEligibleFor: ['group-1'] },
+      {}
+    );
+    expect(globalRepCategoryDb.getSuggestedCategories).toHaveBeenNthCalledWith(
+      2,
+      { limit: 36, offset: 36, groupIdsUserIsEligibleFor: ['group-1'] },
+      {}
     );
   });
 

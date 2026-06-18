@@ -42,7 +42,7 @@ import { RequestContext } from '@/request.context';
 
 const OVERVIEW_LIMIT = 10;
 const SUGGESTED_CATEGORIES_LIMIT = 12;
-const SUGGESTED_CATEGORIES_QUERY_LIMIT = SUGGESTED_CATEGORIES_LIMIT * 3;
+const SUGGESTED_CATEGORIES_QUERY_PAGE_SIZE = SUGGESTED_CATEGORIES_LIMIT * 3;
 const WAVE_TOP_CONTRIBUTORS_LIMIT = 3;
 
 export class GlobalRepCategoryApiService {
@@ -57,17 +57,31 @@ export class GlobalRepCategoryApiService {
   ): Promise<ApiGlobalRepCategorySuggestedCategory[]> {
     const groupIdsUserIsEligibleFor =
       await this.getGroupsUserIsEligibleFor(ctx);
-    const rows = await this.globalRepCategoryDb.getSuggestedCategories(
-      {
-        limit: SUGGESTED_CATEGORIES_QUERY_LIMIT,
-        groupIdsUserIsEligibleFor
-      },
-      ctx
-    );
-    return rows
-      .filter((row) => REP_CATEGORY_PATTERN.test(row.category))
-      .slice(0, SUGGESTED_CATEGORIES_LIMIT)
-      .map((row) => this.mapSuggestedCategory(row));
+    const rows: GlobalRepCategoryTopCategoryRow[] = [];
+    let offset = 0;
+
+    while (rows.length < SUGGESTED_CATEGORIES_LIMIT) {
+      const pageRows = await this.globalRepCategoryDb.getSuggestedCategories(
+        {
+          limit: SUGGESTED_CATEGORIES_QUERY_PAGE_SIZE,
+          offset,
+          groupIdsUserIsEligibleFor
+        },
+        ctx
+      );
+      const validRows = pageRows.filter((row) =>
+        REP_CATEGORY_PATTERN.test(row.category)
+      );
+      rows.push(
+        ...validRows.slice(0, SUGGESTED_CATEGORIES_LIMIT - rows.length)
+      );
+      if (pageRows.length < SUGGESTED_CATEGORIES_QUERY_PAGE_SIZE) {
+        break;
+      }
+      offset += SUGGESTED_CATEGORIES_QUERY_PAGE_SIZE;
+    }
+
+    return rows.map((row) => this.mapSuggestedCategory(row));
   }
 
   public async getOverview(

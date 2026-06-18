@@ -224,9 +224,11 @@ export class GlobalRepCategoryDb extends LazyDbAccessCompatibleService {
   public async getSuggestedCategories(
     {
       limit,
+      offset,
       groupIdsUserIsEligibleFor
     }: {
       readonly limit: number;
+      readonly offset: number;
       readonly groupIdsUserIsEligibleFor: string[];
     },
     ctx: RequestContext
@@ -265,9 +267,11 @@ export class GlobalRepCategoryDb extends LazyDbAccessCompatibleService {
         group by 1
         order by abs(total_rep) desc, total_rep desc, last_modified desc, category asc
         limit :limit
+        offset :offset
         `,
         {
           limit,
+          offset,
           profileMatter: RateMatter.REP,
           waveMatter: RateMatter.WAVE_REP,
           groupIdsUserIsEligibleFor
