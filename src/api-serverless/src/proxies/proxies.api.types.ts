@@ -2,6 +2,8 @@ import { ApiCreateNewProfileProxyAllocateCicAction } from '../generated/models/A
 import { ApiCreateNewProfileProxyAllocateRepAction } from '../generated/models/ApiCreateNewProfileProxyAllocateRepAction';
 import { ApiCreateNewProfileProxyCreateWaveParticipationDropAction } from '../generated/models/ApiCreateNewProfileProxyCreateWaveParticipationDropAction';
 import { ApiCreateNewProfileProxyCreateWaveAction } from '../generated/models/ApiCreateNewProfileProxyCreateWaveAction';
+import { ApiCreateNewProfileProxyPublishCmsAction } from '../generated/models/ApiCreateNewProfileProxyPublishCmsAction';
+import { ApiCreateNewProfileProxyRateWaveDropAction } from '../generated/models/ApiCreateNewProfileProxyRateWaveDropAction';
 import { ApiCreateNewProfileProxyReadWaveAction } from '../generated/models/ApiCreateNewProfileProxyReadWaveAction';
 
 export type ProxyApiRequestAction =
@@ -9,4 +11,6 @@ export type ProxyApiRequestAction =
   | ApiCreateNewProfileProxyAllocateCicAction
   | ApiCreateNewProfileProxyCreateWaveAction
   | ApiCreateNewProfileProxyReadWaveAction
-  | ApiCreateNewProfileProxyCreateWaveParticipationDropAction;
+  | ApiCreateNewProfileProxyCreateWaveParticipationDropAction
+  | ApiCreateNewProfileProxyRateWaveDropAction
+  | ApiCreateNewProfileProxyPublishCmsAction;

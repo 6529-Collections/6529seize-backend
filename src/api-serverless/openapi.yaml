@@ -4561,6 +4561,402 @@ paths:
                   $ref: "#/components/schemas/ApiOwnerBalanceMemes"
         "404":
           description: Memes Owner Balance for consolidation key not found
+  /profile-cms/{handle}/primary:
+    get:
+      tags:
+        - Profile CMS
+      summary: Get a profile"s primary published CMS package
+      description: >-
+        Public mutable lookup used by profile-native sites, including
+        /{handle}/index.html. Returns 404 when the profile has no primary
+        published production CMS package.
+      operationId: getPrimaryProfileCmsPackage
+      x-6529-router:
+        enabled: true
+        auth: none
+        handler:
+          import: "@/api/profile-cms/profile-cms.handlers"
+          name: handleGetPrimaryProfileCmsPackage
+      parameters:
+        - name: handle
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiProfileCmsPrimaryPackage"
+        "404":
+          description: Primary published CMS package not found
+  /profile-cms/wallet-gallery/snapshot:
+    post:
+      tags:
+        - Profile CMS
+      summary: Create a wallet NFT holdings snapshot for CMS gallery generation
+      description: >-
+        Creates a bounded deterministic snapshot from the backend"s currently
+        indexed NFT ownership tables. This endpoint does not live-index wallets
+        or mutate CMS package hash/signing semantics. It is gated by
+        FEATURE_PROFILE_CMS_WALLET_GALLERY while the gallery generator contract
+        is being integrated.
+      operationId: createProfileCmsWalletGallerySnapshot
+      x-6529-router:
+        enabled: true
+        auth: required
+        handler:
+          import: "@/api/profile-cms/wallet-gallery.handlers"
+          name: handleCreateProfileCmsWalletGallerySnapshot
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: >-
+                #/components/schemas/ApiCreateProfileCmsWalletGallerySnapshotRequest
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiProfileCmsWalletGallerySnapshot"
+        "400":
+          description: Invalid wallet, ENS, or exclusion input
+        "403":
+          description: Wallet gallery snapshot feature is disabled
+  /profile-cms/packages:
+    post:
+      tags:
+        - Profile CMS
+      summary: Save a draft CMS package
+      description: Requires the profile owner or delegated CMS publisher.
+      operationId: saveProfileCmsPackageDraft
+      x-6529-router:
+        enabled: true
+        auth: required
+        handler:
+          import: "@/api/profile-cms/profile-cms.handlers"
+          name: handleSaveProfileCmsPackageDraft
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApiSaveProfileCmsPackageDraftRequest"
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiProfileCmsPackage"
+        "400":
+          description: Invalid CMS package
+        "403":
+          description: Missing CMS publish permissions
+  /profile-cms/packages/validate:
+    post:
+      tags:
+        - Profile CMS
+      summary: Validate a CMS package against V1 protocol
+      description: Requires authentication. Publish uses stricter production options.
+      operationId: validateProfileCmsPackage
+      x-6529-router:
+        enabled: true
+        auth: required
+        handler:
+          import: "@/api/profile-cms/profile-cms.handlers"
+          name: handleValidateProfileCmsPackage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApiValidateProfileCmsPackageRequest"
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiProfileCmsValidationResult"
+        "400":
+          description: Invalid request
+  /profile-cms/packages/{id}:
+    get:
+      tags:
+        - Profile CMS
+      summary: Fetch a CMS package by database id
+      operationId: getProfileCmsPackageById
+      x-6529-router:
+        enabled: true
+        auth: optional
+        handler:
+          import: "@/api/profile-cms/profile-cms.handlers"
+          name: handleGetProfileCmsPackageById
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiProfileCmsPackage"
+        "404":
+          description: CMS package not found
+  /profile-cms/packages/{id}/publish:
+    post:
+      tags:
+        - Profile CMS
+      summary: Publish a draft CMS package
+      description: >-
+        Requires the profile owner or delegated CMS publisher. The backend runs
+        CMS V1 validation with production options and enforces package hashes.
+      operationId: publishProfileCmsPackage
+      x-6529-router:
+        enabled: true
+        auth: required
+        handler:
+          import: "@/api/profile-cms/profile-cms.handlers"
+          name: handlePublishProfileCmsPackage
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApiPublishProfileCmsPackageRequest"
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiProfileCmsPackage"
+        "400":
+          description: Validation or hash check failed
+        "403":
+          description: Missing CMS publish permissions
+        "404":
+          description: CMS package not found
+  /profile-cms/packages/{id}/rollback:
+    post:
+      tags:
+        - Profile CMS
+      summary: Roll back primary CMS package pointer
+      description: >-
+        Requires the profile owner or delegated CMS publisher. Sets a previous
+        published package as primary with an expected-current concurrency guard.
+      operationId: rollbackProfileCmsPackage
+      x-6529-router:
+        enabled: true
+        auth: required
+        handler:
+          import: "@/api/profile-cms/profile-cms.handlers"
+          name: handleRollbackProfileCmsPackage
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApiRollbackProfileCmsPackageRequest"
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiProfileCmsPackage"
+        "400":
+          description: Concurrency guard or state check failed
+        "403":
+          description: Missing CMS publish permissions
+        "404":
+          description: CMS package not found
+  /profile-cms/packages/{id}/archive:
+    post:
+      tags:
+        - Profile CMS
+      summary: Archive a non-primary CMS package
+      description: Requires the profile owner or delegated CMS publisher.
+      operationId: archiveProfileCmsPackage
+      x-6529-router:
+        enabled: true
+        auth: required
+        handler:
+          import: "@/api/profile-cms/profile-cms.handlers"
+          name: handleArchiveProfileCmsPackage
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApiArchiveProfileCmsPackageRequest"
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiProfileCmsPackage"
+        "400":
+          description: State check failed
+        "403":
+          description: Missing CMS publish permissions
+        "404":
+          description: CMS package not found
+  /profile-cms/packages/{id}/export:
+    get:
+      tags:
+        - Profile CMS
+      summary: Export CMS package inspection data
+      description: >-
+        Returns package JSON, storage receipts, and pointer events needed by
+        future standalone renderers and mirrors. Published production packages
+        are public; private rows require profile CMS permissions.
+      operationId: exportProfileCmsPackage
+      x-6529-router:
+        enabled: true
+        auth: optional
+        handler:
+          import: "@/api/profile-cms/profile-cms.handlers"
+          name: handleExportProfileCmsPackage
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiProfileCmsPackageExport"
+        "404":
+          description: CMS package not found
+  /profile-cms/packages/by-hash/{package_hash}:
+    get:
+      tags:
+        - Profile CMS
+      summary: Fetch a CMS package by package hash
+      operationId: getProfileCmsPackageByHash
+      x-6529-router:
+        enabled: true
+        auth: optional
+        handler:
+          import: "@/api/profile-cms/profile-cms.handlers"
+          name: handleGetProfileCmsPackageByHash
+      parameters:
+        - name: package_hash
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiProfileCmsPackage"
+        "404":
+          description: CMS package not found
+  /profile-cms/profiles/{profile_id}/packages:
+    get:
+      tags:
+        - Profile CMS
+      summary: List CMS packages for a profile
+      operationId: listProfileCmsPackages
+      x-6529-router:
+        enabled: true
+        auth: optional
+        handler:
+          import: "@/api/profile-cms/profile-cms.handlers"
+          name: handleListProfileCmsPackages
+      parameters:
+        - name: profile_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ApiProfileCmsPackage"
+        "404":
+          description: Profile not found
+  /profile-cms/profiles/{profile_id}/packages/{package_id}/versions/{version}:
+    get:
+      tags:
+        - Profile CMS
+      summary: Fetch a CMS package by profile, package id, and version
+      operationId: getProfileCmsPackageByVersion
+      x-6529-router:
+        enabled: true
+        auth: optional
+        handler:
+          import: "@/api/profile-cms/profile-cms.handlers"
+          name: handleGetProfileCmsPackageByVersion
+      parameters:
+        - name: profile_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: package_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: version
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiProfileCmsPackage"
+        "404":
+          description: CMS package not found
   /profiles/{identity}/cic/rating:
     post:
       tags:
@@ -5572,6 +5968,10 @@ paths:
                 - $ref: "#/components/schemas/ApiCreateNewProfileProxyReadWaveAction"
                 - $ref: >-
                     #/components/schemas/ApiCreateNewProfileProxyCreateWaveParticipationDropAction
+                - $ref: >-
+                    #/components/schemas/ApiCreateNewProfileProxyRateWaveDropAction
+                - $ref: >-
+                    #/components/schemas/ApiCreateNewProfileProxyPublishCmsAction
       responses:
         "201":
           description: successful operation
@@ -9949,6 +10349,11 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ApiAggregatedActivity"
+    ApiArchiveProfileCmsPackageRequest:
+      type: object
+      properties:
+        expected_package_hash:
+          type: string
     ApiArtistNameItem:
       type: object
       required:
@@ -10493,6 +10898,65 @@ components:
         total_cards_held:
           type: integer
           format: int64
+    ApiProfileCmsValidationIssue:
+      type: object
+      required:
+        - severity
+        - code
+        - message
+        - path
+      properties:
+        severity:
+          type: string
+          enum:
+            - error
+            - warning
+            - note
+        code:
+          type: string
+        message:
+          type: string
+        path:
+          type: string
+        page_id:
+          type: string
+        block_id:
+          type: string
+        suggested_fix:
+          type: string
+    ApiProfileCmsValidationResult:
+      type: object
+      required:
+        - schema
+        - valid
+        - checked_at
+        - issues
+      properties:
+        schema:
+          type: string
+          enum:
+            - 6529.cms.validation_result.v1
+        valid:
+          type: boolean
+        checked_at:
+          type: string
+        validator:
+          type: string
+        validator_version:
+          type: string
+        target:
+          type: object
+          properties:
+            package_hash:
+              type: string
+            draft_id:
+              type: string
+            package_id:
+              type: string
+        issues:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiProfileCmsValidationIssue"
     ApiCommunityMemberMinimal:
       type: object
       required:
@@ -11331,6 +11795,19 @@ components:
             - type: "null"
             - type: number
               format: int64
+    ApiCreateNewProfileProxyPublishCmsAction:
+      type: object
+      required:
+        - action_type
+        - end_time
+      properties:
+        action_type:
+          $ref: "#/components/schemas/ApiProfileProxyActionType"
+        end_time:
+          anyOf:
+            - type: "null"
+            - type: number
+              format: int64
     ApiCreateNewProfileProxyRateWaveDropAction:
       type: object
       required:
@@ -11573,6 +12050,39 @@ components:
         pfp_url:
           type: string
           nullable: true
+    ApiCreateProfileCmsWalletGallerySnapshotRequest:
+      type: object
+      required:
+        - wallets
+      properties:
+        wallets:
+          type: array
+          minItems: 1
+          maxItems: 25
+          description: Wallet addresses or ENS names to resolve before snapshotting.
+          items:
+            type: string
+        exclude_contracts:
+          type: array
+          description: Whole NFT contracts to omit from the visible gallery assets.
+          items:
+            type: string
+        exclude_assets:
+          type: array
+          description: Individual NFT assets to omit from the visible gallery assets.
+          items:
+            $ref: "#/components/schemas/ApiProfileCmsWalletGalleryAssetIdentifier"
+        include_spam:
+          type: boolean
+          description: >-
+            Reserved for indexed spam flags. The MVP index currently returns no
+            spam-flagged assets.
+        max_assets:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 500
+          description: Maximum number of visible assets to return after exclusions.
     ApiCreateWaveConfig:
       type: object
       required:
@@ -15014,6 +15524,440 @@ components:
         - BOT
         - PARODY
         - COLLECTION
+    ApiProfileCmsPackage:
+      type: object
+      required:
+        - id
+        - package
+        - profile_id
+        - profile_handle
+        - package_id
+        - version
+        - status
+        - package_hash
+        - payload_hash
+        - updated_at
+        - created_at
+      properties:
+        id:
+          type: string
+        package:
+          type: object
+          additionalProperties: true
+        profile_id:
+          type: string
+        profile_handle:
+          type: string
+        package_id:
+          type: string
+        version:
+          type: integer
+          format: int64
+        status:
+          $ref: "#/components/schemas/ApiProfileCmsPackageStatus"
+        package_hash:
+          type: string
+        payload_hash:
+          type: string
+        updated_at:
+          type: integer
+          format: int64
+        created_at:
+          type: integer
+          format: int64
+        published_at:
+          type: integer
+          format: int64
+    ApiProfileCmsPackageExport:
+      type: object
+      required:
+        - package
+        - package_id
+        - package_db_id
+        - version
+        - status
+        - profile_id
+        - profile_handle
+        - primary_path
+        - package_hash
+        - payload_hash
+        - storage_receipts
+        - pointer_events
+        - updated_at
+      properties:
+        package:
+          type: object
+          additionalProperties: true
+        package_id:
+          type: string
+        package_db_id:
+          type: string
+        version:
+          type: integer
+          format: int64
+        status:
+          $ref: "#/components/schemas/ApiProfileCmsPackageStatus"
+        profile_id:
+          type: string
+        profile_handle:
+          type: string
+        primary_path:
+          type: string
+        package_hash:
+          type: string
+        payload_hash:
+          type: string
+        storage_receipts:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        pointer_events:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiProfileCmsPointerEvent"
+        updated_at:
+          type: integer
+          format: int64
+        published_at:
+          type: integer
+          format: int64
+    ApiProfileCmsPackageStatus:
+      type: string
+      enum:
+        - draft
+        - validating
+        - published
+        - failed
+        - archived
+        - superseded
+    ApiProfileCmsPointerEvent:
+      type: object
+      required:
+        - id
+        - event_type
+        - profile_id
+        - profile_handle
+        - package_id
+        - package_db_id
+        - package_version
+        - package_hash
+        - payload_hash
+        - actor_profile_id
+        - event_sequence
+        - created_at
+      properties:
+        id:
+          type: string
+        event_type:
+          type: string
+          enum:
+            - publish
+            - set_primary
+            - supersede
+            - rollback
+            - archive
+        profile_id:
+          type: string
+        profile_handle:
+          type: string
+        package_id:
+          type: string
+        package_db_id:
+          type: string
+        package_version:
+          type: integer
+          format: int64
+        package_hash:
+          type: string
+        payload_hash:
+          type: string
+        previous_package_db_id:
+          type: string
+        actor_profile_id:
+          type: string
+        signer_address:
+          type: string
+        typed_data_hash:
+          type: string
+        storage_receipt:
+          type: object
+          additionalProperties: true
+        event_sequence:
+          type: integer
+          format: int64
+          description: Logical ordering for pointer events created in the same millisecond.
+        created_at:
+          type: integer
+          format: int64
+    ApiProfileCmsPrimaryPackage:
+      type: object
+      required:
+        - package
+        - package_id
+        - version
+        - package_hash
+        - payload_hash
+        - updated_at
+      properties:
+        package:
+          type: object
+          additionalProperties: true
+        package_id:
+          type: string
+        version:
+          type: integer
+          format: int64
+        package_hash:
+          type: string
+        payload_hash:
+          type: string
+        updated_at:
+          type: integer
+          format: int64
+        published_at:
+          type: integer
+          format: int64
+    ApiProfileCmsWalletGalleryAsset:
+      type: object
+      required:
+        - contract
+        - token_id
+        - balance
+        - owner_wallet
+        - owner_display
+        - collection
+        - collection_key
+        - name
+        - description
+        - artist
+        - artist_seize_handle
+        - token_type
+        - media
+        - metadata
+        - flags
+      properties:
+        contract:
+          type: string
+        token_id:
+          type: integer
+          format: int64
+        balance:
+          type: integer
+          format: int64
+        owner_wallet:
+          type: string
+        owner_display:
+          type: string
+          nullable: true
+        collection:
+          type: string
+        collection_key:
+          type: string
+          enum:
+            - MEMES
+            - MEMELAB
+            - GRADIENTS
+            - NEXTGEN
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        artist:
+          type: string
+          nullable: true
+        artist_seize_handle:
+          type: string
+          nullable: true
+        token_type:
+          type: string
+          nullable: true
+        media:
+          $ref: "#/components/schemas/ApiProfileCmsWalletGalleryMedia"
+        metadata:
+          type: object
+          nullable: true
+          additionalProperties: true
+        flags:
+          $ref: "#/components/schemas/ApiProfileCmsWalletGalleryAssetFlags"
+    ApiProfileCmsWalletGalleryAssetFlags:
+      type: object
+      required:
+        - spam
+        - excluded
+        - exclusion_reason
+      properties:
+        spam:
+          type: boolean
+        excluded:
+          type: boolean
+        exclusion_reason:
+          type: string
+          nullable: true
+    ApiProfileCmsWalletGalleryAssetIdentifier:
+      type: object
+      required:
+        - contract
+        - token_id
+      properties:
+        contract:
+          type: string
+        token_id:
+          type: integer
+          format: int64
+          minimum: 0
+    ApiProfileCmsWalletGalleryExcludedAsset:
+      type: object
+      required:
+        - contract
+        - token_id
+        - owner_wallet
+        - reason
+      properties:
+        contract:
+          type: string
+        token_id:
+          type: integer
+          format: int64
+        owner_wallet:
+          type: string
+        reason:
+          type: string
+          enum:
+            - contract_excluded
+            - asset_excluded
+    ApiProfileCmsWalletGalleryMedia:
+      type: object
+      required:
+        - image
+        - image_preview
+        - thumbnail
+        - animation
+        - animation_preview
+        - mime_type
+      properties:
+        image:
+          type: string
+          nullable: true
+        image_preview:
+          type: string
+          nullable: true
+        thumbnail:
+          type: string
+          nullable: true
+        animation:
+          type: string
+          nullable: true
+        animation_preview:
+          type: string
+          nullable: true
+        mime_type:
+          type: string
+          nullable: true
+    ApiProfileCmsWalletGallerySnapshot:
+      type: object
+      required:
+        - generated_at
+        - source
+        - block_reference
+        - wallets
+        - assets
+        - excluded_assets
+        - totals
+      properties:
+        generated_at:
+          type: integer
+          format: int64
+        source:
+          type: string
+          enum:
+            - indexed_ownership
+        block_reference:
+          type: integer
+          format: int64
+          description: >-
+            Highest nft_owners block_reference represented by returned indexed
+            rows.
+        wallets:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiProfileCmsWalletGalleryWallet"
+        assets:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiProfileCmsWalletGalleryAsset"
+        excluded_assets:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiProfileCmsWalletGalleryExcludedAsset"
+        totals:
+          $ref: "#/components/schemas/ApiProfileCmsWalletGalleryTotals"
+    ApiProfileCmsWalletGalleryTotals:
+      type: object
+      required:
+        - requested_wallets
+        - resolved_wallets
+        - unresolved_wallets
+        - indexed_assets
+        - visible_assets
+        - excluded_assets
+        - spam_assets
+        - truncated
+      properties:
+        requested_wallets:
+          type: integer
+          format: int64
+        resolved_wallets:
+          type: integer
+          format: int64
+        unresolved_wallets:
+          type: integer
+          format: int64
+        indexed_assets:
+          type: integer
+          format: int64
+        visible_assets:
+          type: integer
+          format: int64
+        excluded_assets:
+          type: integer
+          format: int64
+        spam_assets:
+          type: integer
+          format: int64
+          description: Reserved for indexed spam flags; currently zero for the MVP source.
+        truncated:
+          type: boolean
+    ApiProfileCmsWalletGalleryWallet:
+      type: object
+      required:
+        - input
+        - address
+        - ens
+        - display
+        - status
+        - reason
+      properties:
+        input:
+          type: string
+        address:
+          type: string
+          nullable: true
+        ens:
+          type: string
+          nullable: true
+        display:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum:
+            - resolved
+            - unresolved
+        reason:
+          type: string
+          nullable: true
     ApiProfileMin:
       type: object
       required:
@@ -15216,6 +16160,7 @@ components:
         - READ_WAVE
         - CREATE_DROP_TO_WAVE
         - RATE_WAVE_DROP
+        - PUBLISH_CMS
     ApiProfileRepCategorySummary:
       type: object
       required:
@@ -15238,6 +16183,47 @@ components:
           nullable: true
         profile_curation_id:
           type: string
+          nullable: true
+    ApiPublishProfileCmsPackageRequest:
+      type: object
+      required:
+        - signer_address
+        - signature
+        - chain_id
+        - deadline
+      properties:
+        expected_package_hash:
+          type: string
+        expected_payload_hash:
+          type: string
+        signer_address:
+          type: string
+          description: >-
+            EOA wallet or Safe contract address expected to verify the CMS
+            publish signature.
+        signature:
+          type: string
+          description: EIP-712 signature over the ProfileCmsPublish typed data.
+        chain_id:
+          type: integer
+          format: int64
+          description: >-
+            EIP-712 domain chain id; Safe/EIP-1271 verification uses this same
+            RPC chain.
+        deadline:
+          type: integer
+          format: int64
+          description: >-
+            Unix epoch milliseconds. Must be in the future and no more than 15
+            minutes from server receipt.
+        is_safe_signature:
+          type: boolean
+          description: Set true only for Safe/EIP-1271 contract signatures.
+        verifying_contract:
+          type: string
+          description: >-
+            Optional EIP-712 domain verifyingContract. Omit or pass null when
+            the client signed without one.
           nullable: true
     ApiPushNotificationDevice:
       type: object
@@ -15616,6 +16602,26 @@ components:
         rating:
           type: number
           format: int64
+    ApiRollbackProfileCmsPackageRequest:
+      type: object
+      required:
+        - expected_current_package_id
+      properties:
+        expected_current_package_id:
+          type: string
+        expected_current_package_hash:
+          type: string
+    ApiSaveProfileCmsPackageDraftRequest:
+      type: object
+      required:
+        - profile_id
+        - cms_package
+      properties:
+        profile_id:
+          type: string
+        cms_package:
+          type: object
+          additionalProperties: true
     ApiSeizeSettings:
       type: object
       required:
@@ -16359,6 +17365,20 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ApiUploadItem"
+    ApiValidateProfileCmsPackageRequest:
+      type: object
+      required:
+        - cms_package
+      properties:
+        cms_package:
+          type: object
+          additionalProperties: true
+        allow_fixture_signatures:
+          type: boolean
+        allow_fixture_storage:
+          type: boolean
+        enforce_hashes:
+          type: boolean
     ApiWallet:
       type: object
       required:

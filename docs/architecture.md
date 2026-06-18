@@ -213,11 +213,23 @@ Important API responsibilities:
 - Public read APIs for NFTs, TDH, waves, drops, profiles, community metrics, subscriptions, and notifications.
 - Global REP category analytics under `/rep/categories/{category}`, backed by current non-zero REP rating rows for category overview, giver-recipient pairings, recipient rankings, and giver rankings.
 - Public OG metadata inputs for profile, wave, and drop link previews under `/og-metadata`.
+- Public profile-native CMS primary package lookup under
+  `/profile-cms/{handle}/primary`, returning the published production-safe CMS
+  V1 package envelope used by `/{handle}/index.html`; draft, failed, fixture,
+  and missing primary packages return 404.
+- Authenticated profile-native CMS publish hardening under `/profile-cms`,
+  including EIP-712 publish intent verification, canonical IPFS/Arweave receipt
+  checks, rollback/archive endpoints, and package export data for future
+  standalone renderers and mirrors.
+- Authenticated profile-native CMS wallet gallery snapshots under
+  `/profile-cms/wallet-gallery/snapshot`, gated by
+  `FEATURE_PROFILE_CMS_WALLET_GALLERY`, reading current indexed NFT ownership
+  and normalized media from MySQL for deterministic gallery generation.
 - Public decentralized media resolution under `/media/resolve`, which maps
   native `ipfs://`, `ipns://`, and `ar://` references plus recognized gateway
   URLs to canonical native URIs, `media.6529.io` resolver URLs, and explicit
   external fallback URLs. This v1 API does not proxy media bytes.
-- Authenticated social writes: drops, votes, reactions, curations, subscriptions, groups, proxies, minting claims, and push settings.
+- Authenticated social writes: drops, votes, reactions, curations, subscriptions, groups, proxies, profile CMS package drafts/publish actions, minting claims, and push settings.
 - Upload preparation and multipart completion for drop media, wave media, distribution photos, and attachments.
 - WebSocket connection registration and real-time wave-related messages.
 - Operational endpoints such as health, docs, RPC/proxy routes, webhooks, and deploy-related routes.
@@ -249,6 +261,30 @@ sessions persist the signed domain and normalized client origin so refresh and
 logout requests can be bound to the same browser origin that created the
 session; native sessions store refresh-token hashes instead of browser-origin
 metadata.
+
+Profile-native CMS packages are stored in `profile_cms_packages`. The table
+keeps the complete CMS V1 package JSON, indexed profile/package/version/hash
+fields, publication state, primary-package flags, validation results, and
+storage receipt indexes for IPFS, Arweave, S3, and fixture receipts. The API
+publish path validates CMS V1 semantics, enforces the submitted payload and
+package hashes, rejects fixture signatures/storage for production publish,
+verifies EIP-712 publish intent, requires one canonical IPFS or Arweave receipt,
+consumes the verified typed-data hash to prevent publish-intent replay, and
+supersedes the previous primary package in one transaction.
+
+Profile CMS pointer history is stored in `profile_cms_pointer_events`. Publish,
+set-primary, supersede, rollback, and archive events keep package hashes,
+previous-primary links, actor profile ids, signature metadata, and canonical
+storage receipts. `event_sequence` preserves logical ordering for events written
+in the same millisecond so the primary pointer history can be reconstructed and
+exported for future mirrors. Consumed publish intent hashes are stored in
+`profile_cms_publish_signatures`.
+
+Profile CMS wallet gallery snapshots are read-only API projections over
+`nft_owners`, `ens`, `nfts`, `nfts_meme_lab`, and `nextgen_tokens`. They do not
+create schema, run migrations, enqueue indexers, or fetch chain/metadata data
+live. Request-side asset/contract exclusions are applied in the API service and
+reported in the response for generator auditability.
 
 ## Async Processing
 

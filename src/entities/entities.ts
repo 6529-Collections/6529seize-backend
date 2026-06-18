@@ -108,6 +108,15 @@ export { ProfileLatestLogEntity } from './IProfileLatestLog';
 export { ProfileProxyEntity } from './IProfileProxy';
 export { ProfileProxyActionEntity } from './IProfileProxyAction';
 export { ProfileProxyRatingCreditBalanceEntity } from './IProfileProxyRatingCreditBalance';
+export {
+  ProfileCmsPackageEntity,
+  ProfileCmsPackageStatus
+} from './IProfileCmsPackage';
+export {
+  ProfileCmsPointerEventEntity,
+  ProfileCmsPointerEventType
+} from './IProfileCmsPointerEvent';
+export { ProfileCmsPublishSignatureEntity } from './IProfileCmsPublishSignature';
 export { PushNotificationDevice } from './IPushNotification';
 export { PushNotificationSettingsEntity } from './IPushNotificationSettings';
 export { Rating } from './IRating';
