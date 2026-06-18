@@ -202,7 +202,10 @@ export class DropCreationApiService {
   }
 
   async toggleHideLinkPreview(
-    { dropId }: { dropId: string },
+    {
+      dropId,
+      hideLinkPreview
+    }: { dropId: string; hideLinkPreview?: boolean | undefined },
     ctx: RequestContext
   ): Promise<ApiDrop> {
     ctx.timer?.start('dropCreationApiService->toggleHideLinkPreview');
@@ -224,16 +227,20 @@ export class DropCreationApiService {
         `Only the author can toggle hide link preview`
       );
     }
-    const newValue = !drop.hide_link_preview;
-    await this.dropsDb.updateHideLinkPreview(
-      { drop_id: dropId, hide_link_preview: newValue },
-      ctx
-    );
+    const newValue = hideLinkPreview ?? !drop.hide_link_preview;
+    if (newValue !== drop.hide_link_preview) {
+      await this.dropsDb.updateHideLinkPreview(
+        { drop_id: dropId, hide_link_preview: newValue },
+        ctx
+      );
+    }
     const apiDrop = await this.dropsService.findDropByIdOrThrow(
       { dropId, skipEligibilityCheck: true },
       ctx
     );
-    await this.wsListenersNotifier.notifyAboutDropUpdate(apiDrop, ctx);
+    if (newValue !== drop.hide_link_preview) {
+      await this.wsListenersNotifier.notifyAboutDropUpdate(apiDrop, ctx);
+    }
     ctx.timer?.stop('dropCreationApiService->toggleHideLinkPreview');
     return apiDrop;
   }

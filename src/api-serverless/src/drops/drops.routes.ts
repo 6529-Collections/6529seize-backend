@@ -25,6 +25,7 @@ import { ApiDropRatingRequest } from '../generated/models/ApiDropRatingRequest';
 import { ApiDropSubscriptionActions } from '../generated/models/ApiDropSubscriptionActions';
 import { ApiDropSubscriptionTargetAction } from '../generated/models/ApiDropSubscriptionTargetAction';
 import { ApiDropType } from '../generated/models/ApiDropType';
+import { ApiToggleHideLinkPreviewRequest } from '../generated/models/ApiToggleHideLinkPreviewRequest';
 import { ApiUpdateDropRequest } from '../generated/models/ApiUpdateDropRequest';
 import { identityFetcher } from '../identities/identity.fetcher';
 import { getValidatedByJoiOrThrow } from '../validation';
@@ -57,6 +58,11 @@ const LatestDropsSerialNosQuerySchema: Joi.ObjectSchema<{
 }> = Joi.object({
   serial_nos: SerialNosQueryParamSchema
 });
+
+const ToggleHideLinkPreviewSchema: Joi.ObjectSchema<ApiToggleHideLinkPreviewRequest> =
+  Joi.object({
+    hide_link_preview: Joi.boolean().optional()
+  }).unknown(true);
 
 router.get(
   '/',
@@ -357,13 +363,26 @@ router.post(
   '/:drop_id/toggle-hide-link-preview',
   needsAuthenticatedUser(),
   async (
-    req: Request<{ drop_id: string }, any, any, any, any>,
+    req: Request<
+      { drop_id: string },
+      any,
+      ApiToggleHideLinkPreviewRequest,
+      any,
+      any
+    >,
     res: Response<ApiResponse<ApiDrop>>
   ) => {
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
+    const request = getValidatedByJoiOrThrow(
+      req.body ?? {},
+      ToggleHideLinkPreviewSchema
+    );
     const drop = await dropCreationService.toggleHideLinkPreview(
-      { dropId: req.params.drop_id },
+      {
+        dropId: req.params.drop_id,
+        hideLinkPreview: request.hide_link_preview
+      },
       { timer, authenticationContext }
     );
     res.send(drop);
