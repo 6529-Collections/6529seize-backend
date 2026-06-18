@@ -238,6 +238,32 @@ export class GlobalRepCategoryDb extends LazyDbAccessCompatibleService {
       ctx.timer?.start(timerName);
       return this.db.execute<GlobalRepCategoryTopCategoryRow>(
         `
+        with visible_rep as (
+          select
+            r.matter_category,
+            r.rating,
+            r.matter,
+            r.last_modified
+          from ${RATINGS_TABLE} r
+          left join ${WAVES_TABLE} w
+            on w.id = r.matter_target_id
+            and r.matter = :waveMatter
+          left join ${WAVES_TABLE} pw
+            on pw.id = w.parent_wave_id
+            and r.matter = :waveMatter
+          where r.matter in (:profileMatter, :waveMatter)
+            and r.rating <> 0
+            and (
+              r.matter = :profileMatter
+              or (
+                r.matter = :waveMatter
+                and w.id is not null
+                and ${this.getWaveAndParentVisibilityFilter(
+                  groupIdsUserIsEligibleFor
+                )}
+              )
+            )
+        )
         select
           r.matter_category as category,
           sum(r.rating) as total_rep,
@@ -245,25 +271,7 @@ export class GlobalRepCategoryDb extends LazyDbAccessCompatibleService {
           sum(case when r.matter = :waveMatter then r.rating else 0 end) as wave_rep,
           count(*) as rating_count,
           max(r.last_modified) as last_modified
-        from ${RATINGS_TABLE} r
-        left join ${WAVES_TABLE} w
-          on w.id = r.matter_target_id
-          and r.matter = :waveMatter
-        left join ${WAVES_TABLE} pw
-          on pw.id = w.parent_wave_id
-          and r.matter = :waveMatter
-        where r.matter in (:profileMatter, :waveMatter)
-          and r.rating <> 0
-          and (
-            r.matter = :profileMatter
-            or (
-              r.matter = :waveMatter
-              and w.id is not null
-              and ${this.getWaveAndParentVisibilityFilter(
-                groupIdsUserIsEligibleFor
-              )}
-            )
-          )
+        from visible_rep r
         group by 1
         order by abs(total_rep) desc, total_rep desc, last_modified desc, category asc
         limit :limit

@@ -60,6 +60,8 @@ export class GlobalRepCategoryApiService {
       await this.getGroupsUserIsEligibleFor(ctx);
     const rows: GlobalRepCategoryTopCategoryRow[] = [];
 
+    // Bound the aggregate scans; suggestions may return fewer than 12 if the
+    // highest-impact legacy names fail today's category validation.
     for (
       let page = 0;
       page < SUGGESTED_CATEGORIES_MAX_QUERY_PAGES &&

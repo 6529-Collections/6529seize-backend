@@ -204,6 +204,8 @@ describe('GlobalRepCategoryDb', () => {
     );
 
     const [sql, params, options] = execute.mock.calls[0];
+    expect(sql).toContain('with visible_rep as');
+    expect(sql).toContain(`from ${RATINGS_TABLE} r`);
     expect(sql).toContain(`left join ${WAVES_TABLE} w`);
     expect(sql).toContain(`left join ${WAVES_TABLE} pw`);
     expect(sql).toContain(
@@ -221,6 +223,10 @@ describe('GlobalRepCategoryDb', () => {
     );
     expect(sql).toContain(
       'pw.visibility_group_id in (:groupIdsUserIsEligibleFor)'
+    );
+    expect(sql).toContain('from visible_rep r');
+    expect(sql.indexOf('where r.matter in')).toBeLessThan(
+      sql.indexOf('from visible_rep r')
     );
     expect(sql).toContain('limit :limit');
     expect(sql).toContain('offset :offset');
