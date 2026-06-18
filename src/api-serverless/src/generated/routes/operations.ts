@@ -330,6 +330,20 @@ export type GetProfileCmsPackageByVersionRequest = Request<
   Record<string, never>
 >;
 
+export type CreateProfileCmsWalletGallerySnapshotPathParams = Record<string, never>;
+
+export type CreateProfileCmsWalletGallerySnapshotQuery = Record<string, never>;
+
+export type CreateProfileCmsWalletGallerySnapshotResponse = ApiProfileCmsWalletGallerySnapshot;
+
+export type CreateProfileCmsWalletGallerySnapshotRequest = Request<
+  CreateProfileCmsWalletGallerySnapshotPathParams,
+  ApiResponse<CreateProfileCmsWalletGallerySnapshotResponse>,
+  ApiCreateProfileCmsWalletGallerySnapshotRequest,
+  CreateProfileCmsWalletGallerySnapshotQuery,
+  Record<string, never>
+>;
+
 export interface GetGlobalRepCategoryGiversPathParams {
   "category": string;
 }
@@ -467,20 +481,6 @@ export type GetGlobalRepCategoryWavesRequest = Request<
   ApiResponse<GetGlobalRepCategoryWavesResponse>,
   never,
   GetGlobalRepCategoryWavesQuery,
-  Record<string, never>
->;
-
-export type CreateProfileCmsWalletGallerySnapshotPathParams = Record<string, never>;
-
-export type CreateProfileCmsWalletGallerySnapshotQuery = Record<string, never>;
-
-export type CreateProfileCmsWalletGallerySnapshotResponse = ApiProfileCmsWalletGallerySnapshot;
-
-export type CreateProfileCmsWalletGallerySnapshotRequest = Request<
-  CreateProfileCmsWalletGallerySnapshotPathParams,
-  ApiResponse<CreateProfileCmsWalletGallerySnapshotResponse>,
-  ApiCreateProfileCmsWalletGallerySnapshotRequest,
-  CreateProfileCmsWalletGallerySnapshotQuery,
   Record<string, never>
 >;
 
