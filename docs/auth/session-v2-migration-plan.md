@@ -25,18 +25,19 @@ message or using connection sharing from an already-v2 session.
 
 Configure on the backend API service before enabling web v2 migration prompts.
 
-| Env var                                                                     | Required                         | Recommended production value shape                                  | Recommended staging value shape                               | Notes                                                                                                 |
-| --------------------------------------------------------------------------- | -------------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `AUTH_SESSION_HASH_SECRET`                                                  | Strongly recommended             | Dedicated high-entropy secret                                       | Dedicated high-entropy secret                                 | Falls back to `JWT_SECRET` if unset, but a separate secret isolates session hashing.                  |
-| `AUTH_WEB_CREDENTIAL_ORIGINS`                                               | Required for cross-origin web v2 | `https://6529.io`                                                   | `https://staging.6529.io`                                     | Enables exact credentialed CORS only for v2 web-cookie auth routes. Do not put API origins here.      |
-| `AUTH_WALLET_CHAIN_ID`                                                      | Optional                         | `1` or unset                                                        | `1` unless intentionally testing another supported auth chain | Defaults to Ethereum mainnet. Structured auth verification is pinned to this value.                   |
-| `AUTH_CONNECTION_SHARING_DISABLED`                                          | Optional                         | unset or `false`                                                    | unset or `false`                                              | Missing env means connection sharing is enabled. Set `true` only as a kill switch.                    |
-| `AUTH_CONNECTION_SHARE_CODE_TTL_SECONDS`                                    | Optional                         | unset or positive integer such as `300`                             | unset or positive integer such as `300`                       | Controls one-time connection share lifetime.                                                          |
-| `AUTH_STRUCTURED_SIGNATURES_REQUIRED`                                       | Rollout flag                     | `false` for silent/grace rollout, later `true`                      | `false` for initial validation, later `true`                  | Do not enable until FE/native/external client compatibility is verified.                              |
-| `SESSION_V2_MIGRATION_DEADLINE`                                             | Rollout flag                     | unset initially, later ISO timestamp with timezone                  | unset initially, later ISO timestamp with timezone            | Exposed through `/api/settings.auth` so FE can prompt/enforce v2 migration without another FE deploy. |
-| `AUTH_SIGNATURE_ALLOWED_DOMAINS` / `AUTH_SIGNATURE_ALLOWED_DOMAIN_SUFFIXES` | Domain-dependent                 | Include any first-party web signing domains not covered by defaults | Include staging domains or suffixes                           | Controls structured-signature first-party web domain validation.                                      |
-| `AUTH_SIGNATURE_AUDIENCE` / `AUTH_SIGNATURE_ALLOWED_AUDIENCES`              | Optional                         | API audience if overriding defaults                                 | API audience if overriding defaults                           | Keep narrow. Misconfiguration rejects valid signatures.                                               |
-| `AUTH_LEGACY_WS_QUERY_TOKEN_ENABLED`                                        | Temporary compatibility          | unset or `true`                                                     | unset or `true`                                               | Disable only after websocket clients no longer rely on query-token auth.                              |
+| Env var                                                                     | Required                         | Recommended production value shape                                  | Recommended staging value shape                               | Notes                                                                                                                                     |
+| --------------------------------------------------------------------------- | -------------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `AUTH_SESSION_HASH_SECRET`                                                  | Strongly recommended             | Dedicated high-entropy secret                                       | Dedicated high-entropy secret                                 | Falls back to `JWT_SECRET` if unset, but a separate secret isolates session hashing.                                                      |
+| `AUTH_WEB_CREDENTIAL_ORIGINS`                                               | Required for cross-origin web v2 | `https://6529.io`                                                   | `https://staging.6529.io`                                     | Enables exact credentialed CORS only for v2 web-cookie auth routes. Do not put API origins here.                                          |
+| `AUTH_WALLET_CHAIN_ID`                                                      | Optional                         | `1` or unset                                                        | `1` unless intentionally testing another supported auth chain | Defaults to Ethereum mainnet. Structured auth verification is pinned to this value.                                                       |
+| `AUTH_CONNECTION_SHARING_DISABLED`                                          | Optional                         | unset or `false`                                                    | unset or `false`                                              | Missing env means connection sharing is enabled. Set `true` only as a kill switch.                                                        |
+| `AUTH_LEGACY_REFRESH_DISABLED`                                              | Final v1 shutdown flag           | unset or `false` initially, later `true`                            | unset or `false` initially, later `true`                      | Missing env means `/auth/redeem-refresh-token` remains enabled. Set `true` only after the grace period and external-client communication. |
+| `AUTH_CONNECTION_SHARE_CODE_TTL_SECONDS`                                    | Optional                         | unset or positive integer such as `300`                             | unset or positive integer such as `300`                       | Controls one-time connection share lifetime.                                                                                              |
+| `AUTH_STRUCTURED_SIGNATURES_REQUIRED`                                       | Rollout flag                     | `false` for silent/grace rollout, later `true`                      | `false` for initial validation, later `true`                  | Do not enable until FE/native/external client compatibility is verified.                                                                  |
+| `SESSION_V2_MIGRATION_DEADLINE`                                             | Rollout flag                     | unset initially, later ISO timestamp with timezone                  | unset initially, later ISO timestamp with timezone            | Exposed through `/api/settings.auth` so FE can prompt/enforce v2 migration without another FE deploy.                                     |
+| `AUTH_SIGNATURE_ALLOWED_DOMAINS` / `AUTH_SIGNATURE_ALLOWED_DOMAIN_SUFFIXES` | Domain-dependent                 | Include any first-party web signing domains not covered by defaults | Include staging domains or suffixes                           | Controls structured-signature first-party web domain validation.                                                                          |
+| `AUTH_SIGNATURE_AUDIENCE` / `AUTH_SIGNATURE_ALLOWED_AUDIENCES`              | Optional                         | API audience if overriding defaults                                 | API audience if overriding defaults                           | Keep narrow. Misconfiguration rejects valid signatures.                                                                                   |
+| `AUTH_LEGACY_WS_QUERY_TOKEN_ENABLED`                                        | Temporary compatibility          | unset or `true`                                                     | unset or `true`                                               | Disable only after websocket clients no longer rely on query-token auth.                                                                  |
 
 ## Required Frontend Env
 
@@ -73,8 +74,11 @@ Configure in the frontend runtime/build env for the FE deployment.
 8. Monitor migration metrics and support channels during the grace period.
 9. Set `AUTH_STRUCTURED_SIGNATURES_REQUIRED=true` only after web, native, and
    external clients are verified.
-10. Remove or disable v1 refresh after the grace period and strict-mode rollout
-    are complete.
+10. Set `AUTH_LEGACY_REFRESH_DISABLED=true` only after the grace period,
+    support monitoring, and external-client communication are complete. This
+    makes `/auth/redeem-refresh-token` return a deliberate `410 Gone` response
+    without removing the endpoint.
+11. Remove v1 refresh endpoint/code in a later cleanup after traffic is zero.
 
 ## Silent Release Values
 
@@ -83,11 +87,13 @@ Use these for the backend-first production deploy:
 - `AUTH_STRUCTURED_SIGNATURES_REQUIRED=false`
 - `SESSION_V2_MIGRATION_DEADLINE` unset
 - `AUTH_CONNECTION_SHARING_DISABLED` unset or `false`
+- `AUTH_LEGACY_REFRESH_DISABLED` unset or `false`
 - `AUTH_LEGACY_WS_QUERY_TOKEN_ENABLED` unset or `true`
 
 The frontend can then be deployed silently. New sign-ins use v2. Existing v1
-sessions remain valid until the backend migration deadline or strict flag is
-enabled.
+web sessions remain valid until the FE-enforced migration deadline or strict
+flag requires a new sign-in. External clients that already hold legacy refresh
+tokens remain able to refresh until `AUTH_LEGACY_REFRESH_DISABLED=true`.
 
 ## Migration Policy
 
@@ -109,5 +115,8 @@ signature or by a v2-authenticated connection-sharing flow.
 - If connection sharing causes issues, set
   `AUTH_CONNECTION_SHARING_DISABLED=true`; normal v2 login/refresh remains
   available.
+- If legacy refresh is disabled too early, set
+  `AUTH_LEGACY_REFRESH_DISABLED=false` or unset it to restore
+  `/auth/redeem-refresh-token` without a code deploy.
 - If v2 auth must be paused after FE deploy, v1 refresh remains available while
-  strict mode is off.
+  strict mode is off and `AUTH_LEGACY_REFRESH_DISABLED` is not true.

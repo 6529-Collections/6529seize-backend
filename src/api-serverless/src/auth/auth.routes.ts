@@ -35,6 +35,7 @@ import { ApiSessionRefreshWebRequest } from '../generated/models/ApiSessionRefre
 import { CreateWalletAuthSession201Response } from '../generated/models/CreateWalletAuthSession201Response';
 import { LogoutWalletAuthSessionRequest } from '../generated/models/LogoutWalletAuthSessionRequest';
 import { RefreshWalletAuthSessionRequest } from '../generated/models/RefreshWalletAuthSessionRequest';
+import { assertLegacyRefreshEnabled } from './auth-legacy-refresh';
 import { identityFetcher } from '../identities/identity.fetcher';
 import { Timer } from '../../../time';
 import { authDb } from './auth.db';
@@ -408,6 +409,7 @@ router.post(
     req: Request<any, any, ApiRedeemRefreshTokenRequest, any, any>,
     res: Response<ApiResponse<ApiRedeemRefreshTokenResponse>>
   ) {
+    assertLegacyRefreshEnabled();
     const tokenAddress = req.body.address?.toLowerCase();
     const refreshToken = req.body.token;
     const role = req.body.role ?? null;

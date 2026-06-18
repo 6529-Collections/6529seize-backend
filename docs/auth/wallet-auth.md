@@ -132,12 +132,13 @@ The revised auth flow uses these relevant flags/config values:
 - `AUTH_SESSION_HASH_SECRET`: secret used for hashing session cookies, native refresh tokens, connection share codes, and public user-agent values. Defaults to the JWT secret if unset.
 - `AUTH_SESSION_V2_REFRESH_DAYS`: session refresh lifetime in days. Defaults to 30.
 - `AUTH_CONNECTION_SHARING_DISABLED`: default false. Set to `true` only to disable `/auth/connection-share` and `/auth/connection-share/redeem`; otherwise connection sharing is enabled.
+- `AUTH_LEGACY_REFRESH_DISABLED`: default false. Set to `true` only after the v2 migration grace period to make `/auth/redeem-refresh-token` return `410 Gone` without removing the endpoint.
 - `AUTH_CONNECTION_SHARE_CODE_TTL_SECONDS`: one-time connection share code lifetime. Defaults to 300 seconds.
 - `AUTH_LEGACY_WS_QUERY_TOKEN_ENABLED`: default true. Controls legacy WebSocket JWT query-token support.
 
 There is intentionally no `AUTH_SESSION_V2_ENABLED` flag. Session-v2 endpoints are separate from the legacy endpoints, so exposing them does not change legacy client behavior.
 
-There is intentionally no `AUTH_LEGACY_REFRESH_ENABLED` flag. Legacy refresh redemption stays available while legacy clients are supported.
+There is intentionally no `AUTH_LEGACY_REFRESH_ENABLED` flag. Legacy refresh redemption stays available while legacy clients are supported, and can later be disabled explicitly with `AUTH_LEGACY_REFRESH_DISABLED=true`.
 
 ## Data Model
 
