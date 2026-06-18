@@ -2,7 +2,6 @@
 import { Request } from 'express';
 import { ApiResponse } from '@/api/api-response';
 import { ApiArchiveProfileCmsPackageRequest } from '@/api/generated/models/ApiArchiveProfileCmsPackageRequest';
-import { ApiCmsValidationResult } from '@/api/generated/models/ApiCmsValidationResult';
 import { ApiCreateWaveMetadataRequest } from '@/api/generated/models/ApiCreateWaveMetadataRequest';
 import { ApiDropAndWave } from '@/api/generated/models/ApiDropAndWave';
 import { ApiDropBoostV2 } from '@/api/generated/models/ApiDropBoostV2';
@@ -25,6 +24,7 @@ import { ApiOgMetadata } from '@/api/generated/models/ApiOgMetadata';
 import { ApiProfileCmsPackage } from '@/api/generated/models/ApiProfileCmsPackage';
 import { ApiProfileCmsPackageExport } from '@/api/generated/models/ApiProfileCmsPackageExport';
 import { ApiProfileCmsPrimaryPackage } from '@/api/generated/models/ApiProfileCmsPrimaryPackage';
+import { ApiProfileCmsValidationResult } from '@/api/generated/models/ApiProfileCmsValidationResult';
 import { ApiPublishProfileCmsPackageRequest } from '@/api/generated/models/ApiPublishProfileCmsPackageRequest';
 import { ApiRollbackProfileCmsPackageRequest } from '@/api/generated/models/ApiRollbackProfileCmsPackageRequest';
 import { ApiSaveProfileCmsPackageDraftRequest } from '@/api/generated/models/ApiSaveProfileCmsPackageDraftRequest';
@@ -227,7 +227,7 @@ export type ValidateProfileCmsPackagePathParams = Record<string, never>;
 
 export type ValidateProfileCmsPackageQuery = Record<string, never>;
 
-export type ValidateProfileCmsPackageResponse = ApiCmsValidationResult;
+export type ValidateProfileCmsPackageResponse = ApiProfileCmsValidationResult;
 
 export type ValidateProfileCmsPackageRequest = Request<
   ValidateProfileCmsPackagePathParams,

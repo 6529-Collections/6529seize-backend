@@ -1,6 +1,6 @@
 import { getAuthenticationContext } from '@/api/auth/auth';
-import { ApiCmsValidationResult } from '@/api/generated/models/ApiCmsValidationResult';
 import { ApiArchiveProfileCmsPackageRequest } from '@/api/generated/models/ApiArchiveProfileCmsPackageRequest';
+import { ApiProfileCmsValidationResult } from '@/api/generated/models/ApiProfileCmsValidationResult';
 import { ApiProfileCmsPackage } from '@/api/generated/models/ApiProfileCmsPackage';
 import { ApiProfileCmsPackageExport } from '@/api/generated/models/ApiProfileCmsPackageExport';
 import { ApiProfileCmsPrimaryPackage } from '@/api/generated/models/ApiProfileCmsPrimaryPackage';
@@ -135,9 +135,11 @@ export async function handleSaveProfileCmsPackageDraft(
 
 export async function handleValidateProfileCmsPackage(
   req: ValidateProfileCmsPackageRequest
-): Promise<ApiCmsValidationResult> {
+): Promise<ApiProfileCmsValidationResult> {
   const body = getValidatedByJoiOrThrow(req.body, ValidateBodySchema);
-  return profileCmsApiService.validatePackage(body) as ApiCmsValidationResult;
+  return profileCmsApiService.validatePackage(
+    body
+  ) as ApiProfileCmsValidationResult;
 }
 
 export async function handlePublishProfileCmsPackage(

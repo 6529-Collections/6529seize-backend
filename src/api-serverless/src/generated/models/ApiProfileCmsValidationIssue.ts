@@ -12,8 +12,8 @@
 
 import { HttpFile } from '../http/http';
 
-export class ApiCmsValidationIssue {
-    'severity': ApiCmsValidationIssueSeverityEnum;
+export class ApiProfileCmsValidationIssue {
+    'severity': ApiProfileCmsValidationIssueSeverityEnum;
     'code': string;
     'message': string;
     'path': string;
@@ -29,7 +29,7 @@ export class ApiCmsValidationIssue {
         {
             "name": "severity",
             "baseName": "severity",
-            "type": "ApiCmsValidationIssueSeverityEnum",
+            "type": "ApiProfileCmsValidationIssueSeverityEnum",
             "format": ""
         },
         {
@@ -70,14 +70,14 @@ export class ApiCmsValidationIssue {
         }    ];
 
     static getAttributeTypeMap() {
-        return ApiCmsValidationIssue.attributeTypeMap;
+        return ApiProfileCmsValidationIssue.attributeTypeMap;
     }
 
     public constructor() {
     }
 }
 
-export enum ApiCmsValidationIssueSeverityEnum {
+export enum ApiProfileCmsValidationIssueSeverityEnum {
     Error = 'error',
     Warning = 'warning',
     Note = 'note'
