@@ -4297,6 +4297,42 @@ paths:
                 $ref: "#/components/schemas/ApiProfileCmsPrimaryPackage"
         "404":
           description: Primary published CMS package not found
+  /profile-cms/wallet-gallery/snapshot:
+    post:
+      tags:
+        - Profile CMS
+      summary: Create a wallet NFT holdings snapshot for CMS gallery generation
+      description: >-
+        Creates a bounded deterministic snapshot from the backend"s currently
+        indexed NFT ownership tables. This endpoint does not live-index wallets
+        or mutate CMS package hash/signing semantics. It is gated by
+        FEATURE_PROFILE_CMS_WALLET_GALLERY while the gallery generator contract
+        is being integrated.
+      operationId: createProfileCmsWalletGallerySnapshot
+      x-6529-router:
+        enabled: true
+        auth: required
+        handler:
+          import: "@/api/profile-cms/wallet-gallery.handlers"
+          name: handleCreateProfileCmsWalletGallerySnapshot
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: >-
+                #/components/schemas/ApiCreateProfileCmsWalletGallerySnapshotRequest
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiProfileCmsWalletGallerySnapshot"
+        "400":
+          description: Invalid wallet, ENS, or exclusion input
+        "403":
+          description: Wallet gallery snapshot feature is disabled
   /profile-cms/packages:
     post:
       tags:
@@ -10889,6 +10925,39 @@ components:
         pfp_url:
           type: string
           nullable: true
+    ApiCreateProfileCmsWalletGallerySnapshotRequest:
+      type: object
+      required:
+        - wallets
+      properties:
+        wallets:
+          type: array
+          minItems: 1
+          maxItems: 25
+          description: Wallet addresses or ENS names to resolve before snapshotting.
+          items:
+            type: string
+        exclude_contracts:
+          type: array
+          description: Whole NFT contracts to omit from the visible gallery assets.
+          items:
+            type: string
+        exclude_assets:
+          type: array
+          description: Individual NFT assets to omit from the visible gallery assets.
+          items:
+            $ref: "#/components/schemas/ApiProfileCmsWalletGalleryAssetIdentifier"
+        include_spam:
+          type: boolean
+          description: >-
+            Reserved for indexed spam flags. The MVP index currently returns no
+            spam-flagged assets.
+        max_assets:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 500
+          description: Maximum number of visible assets to return after exclusions.
     ApiCreateWaveConfig:
       type: object
       required:
@@ -14256,6 +14325,246 @@ components:
         published_at:
           type: integer
           format: int64
+    ApiProfileCmsWalletGalleryAsset:
+      type: object
+      required:
+        - contract
+        - token_id
+        - balance
+        - owner_wallet
+        - owner_display
+        - collection
+        - collection_key
+        - name
+        - description
+        - artist
+        - artist_seize_handle
+        - token_type
+        - media
+        - metadata
+        - flags
+      properties:
+        contract:
+          type: string
+        token_id:
+          type: integer
+          format: int64
+        balance:
+          type: integer
+          format: int64
+        owner_wallet:
+          type: string
+        owner_display:
+          type: string
+          nullable: true
+        collection:
+          type: string
+        collection_key:
+          type: string
+          enum:
+            - MEMES
+            - MEMELAB
+            - GRADIENTS
+            - NEXTGEN
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        artist:
+          type: string
+          nullable: true
+        artist_seize_handle:
+          type: string
+          nullable: true
+        token_type:
+          type: string
+          nullable: true
+        media:
+          $ref: "#/components/schemas/ApiProfileCmsWalletGalleryMedia"
+        metadata:
+          type: object
+          nullable: true
+          additionalProperties: true
+        flags:
+          $ref: "#/components/schemas/ApiProfileCmsWalletGalleryAssetFlags"
+    ApiProfileCmsWalletGalleryAssetFlags:
+      type: object
+      required:
+        - spam
+        - excluded
+        - exclusion_reason
+      properties:
+        spam:
+          type: boolean
+        excluded:
+          type: boolean
+        exclusion_reason:
+          type: string
+          nullable: true
+    ApiProfileCmsWalletGalleryAssetIdentifier:
+      type: object
+      required:
+        - contract
+        - token_id
+      properties:
+        contract:
+          type: string
+        token_id:
+          type: integer
+          format: int64
+          minimum: 0
+    ApiProfileCmsWalletGalleryExcludedAsset:
+      type: object
+      required:
+        - contract
+        - token_id
+        - owner_wallet
+        - reason
+      properties:
+        contract:
+          type: string
+        token_id:
+          type: integer
+          format: int64
+        owner_wallet:
+          type: string
+        reason:
+          type: string
+          enum:
+            - contract_excluded
+            - asset_excluded
+    ApiProfileCmsWalletGalleryMedia:
+      type: object
+      required:
+        - image
+        - image_preview
+        - thumbnail
+        - animation
+        - animation_preview
+        - mime_type
+      properties:
+        image:
+          type: string
+          nullable: true
+        image_preview:
+          type: string
+          nullable: true
+        thumbnail:
+          type: string
+          nullable: true
+        animation:
+          type: string
+          nullable: true
+        animation_preview:
+          type: string
+          nullable: true
+        mime_type:
+          type: string
+          nullable: true
+    ApiProfileCmsWalletGallerySnapshot:
+      type: object
+      required:
+        - generated_at
+        - source
+        - block_reference
+        - wallets
+        - assets
+        - excluded_assets
+        - totals
+      properties:
+        generated_at:
+          type: integer
+          format: int64
+        source:
+          type: string
+          enum:
+            - indexed_ownership
+        block_reference:
+          type: integer
+          format: int64
+          description: >-
+            Highest nft_owners block_reference represented by returned indexed
+            rows.
+        wallets:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiProfileCmsWalletGalleryWallet"
+        assets:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiProfileCmsWalletGalleryAsset"
+        excluded_assets:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiProfileCmsWalletGalleryExcludedAsset"
+        totals:
+          $ref: "#/components/schemas/ApiProfileCmsWalletGalleryTotals"
+    ApiProfileCmsWalletGalleryTotals:
+      type: object
+      required:
+        - requested_wallets
+        - resolved_wallets
+        - unresolved_wallets
+        - indexed_assets
+        - visible_assets
+        - excluded_assets
+        - spam_assets
+        - truncated
+      properties:
+        requested_wallets:
+          type: integer
+          format: int64
+        resolved_wallets:
+          type: integer
+          format: int64
+        unresolved_wallets:
+          type: integer
+          format: int64
+        indexed_assets:
+          type: integer
+          format: int64
+        visible_assets:
+          type: integer
+          format: int64
+        excluded_assets:
+          type: integer
+          format: int64
+        spam_assets:
+          type: integer
+          format: int64
+          description: Reserved for indexed spam flags; currently zero for the MVP source.
+        truncated:
+          type: boolean
+    ApiProfileCmsWalletGalleryWallet:
+      type: object
+      required:
+        - input
+        - address
+        - ens
+        - display
+        - status
+        - reason
+      properties:
+        input:
+          type: string
+        address:
+          type: string
+          nullable: true
+        ens:
+          type: string
+          nullable: true
+        display:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum:
+            - resolved
+            - unresolved
+        reason:
+          type: string
+          nullable: true
     ApiProfileMin:
       type: object
       required:

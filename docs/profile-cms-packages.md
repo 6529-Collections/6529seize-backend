@@ -61,6 +61,53 @@ Owners can manage their own profile packages. Delegated publishers can manage a
 profile when acting as that profile with the `PUBLISH_CMS` proxy action.
 Anonymous users can fetch only production-safe published packages.
 
+## Wallet Gallery Snapshot Contract
+
+Profile CMS gallery generation can request a bounded snapshot of indexed wallet
+holdings:
+
+```http
+POST /api/profile-cms/wallet-gallery/snapshot
+```
+
+This endpoint is authenticated and gated by
+`FEATURE_PROFILE_CMS_WALLET_GALLERY=true` while the frontend generator contract
+is being integrated. It reads the current backend NFT ownership index; it does
+not live-index wallets, enqueue chain work, or change CMS package hash/signing
+semantics.
+
+Request shape:
+
+```json
+{
+  "wallets": ["0x...", "name.eth"],
+  "exclude_contracts": ["0x..."],
+  "exclude_assets": [{ "contract": "0x...", "token_id": 1 }],
+  "include_spam": false,
+  "max_assets": 200
+}
+```
+
+Frontend integration notes:
+
+- `wallets` accepts Ethereum addresses and `.eth` ENS names. Addresses are
+  normalized through `ethers.getAddress(...).toLowerCase()`. ENS names are
+  resolved only from the backend `ens` table for deterministic MVP snapshots.
+- The snapshot source is always `indexed_ownership`; `block_reference` is the
+  highest `nft_owners.block_reference` represented by indexed rows in the
+  response.
+- `assets` are visible rows after request-side exclusions and `max_assets`.
+  Rows are sorted deterministically by collection order, contract, token id,
+  then owner wallet.
+- `excluded_assets` reports request-side exclusions with
+  `contract_excluded` or `asset_excluded` so the generator can preserve audit
+  context without rendering those assets.
+- Asset `media` normalizes image, preview, thumbnail, animation, animation
+  preview, and inferred MIME fields across MEMES, Meme Lab, Gradients, and
+  NextGen.
+- Asset `flags.spam` is currently always `false`; `include_spam` is reserved
+  for a later indexed spam/unwanted flag source.
+
 ## Publish Rules
 
 Publish runs CMS V1 validation with production options:

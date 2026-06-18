@@ -3,6 +3,7 @@ import { Request } from 'express';
 import { ApiResponse } from '@/api/api-response';
 import { ApiArchiveProfileCmsPackageRequest } from '@/api/generated/models/ApiArchiveProfileCmsPackageRequest';
 import { ApiCmsValidationResult } from '@/api/generated/models/ApiCmsValidationResult';
+import { ApiCreateProfileCmsWalletGallerySnapshotRequest } from '@/api/generated/models/ApiCreateProfileCmsWalletGallerySnapshotRequest';
 import { ApiCreateWaveMetadataRequest } from '@/api/generated/models/ApiCreateWaveMetadataRequest';
 import { ApiDropAndWave } from '@/api/generated/models/ApiDropAndWave';
 import { ApiDropBoostV2 } from '@/api/generated/models/ApiDropBoostV2';
@@ -25,6 +26,7 @@ import { ApiOgMetadata } from '@/api/generated/models/ApiOgMetadata';
 import { ApiProfileCmsPackage } from '@/api/generated/models/ApiProfileCmsPackage';
 import { ApiProfileCmsPackageExport } from '@/api/generated/models/ApiProfileCmsPackageExport';
 import { ApiProfileCmsPrimaryPackage } from '@/api/generated/models/ApiProfileCmsPrimaryPackage';
+import { ApiProfileCmsWalletGallerySnapshot } from '@/api/generated/models/ApiProfileCmsWalletGallerySnapshot';
 import { ApiPublishProfileCmsPackageRequest } from '@/api/generated/models/ApiPublishProfileCmsPackageRequest';
 import { ApiRollbackProfileCmsPackageRequest } from '@/api/generated/models/ApiRollbackProfileCmsPackageRequest';
 import { ApiSaveProfileCmsPackageDraftRequest } from '@/api/generated/models/ApiSaveProfileCmsPackageDraftRequest';
@@ -268,6 +270,20 @@ export type GetProfileCmsPackageByVersionRequest = Request<
   ApiResponse<GetProfileCmsPackageByVersionResponse>,
   never,
   GetProfileCmsPackageByVersionQuery,
+  Record<string, never>
+>;
+
+export type CreateProfileCmsWalletGallerySnapshotPathParams = Record<string, never>;
+
+export type CreateProfileCmsWalletGallerySnapshotQuery = Record<string, never>;
+
+export type CreateProfileCmsWalletGallerySnapshotResponse = ApiProfileCmsWalletGallerySnapshot;
+
+export type CreateProfileCmsWalletGallerySnapshotRequest = Request<
+  CreateProfileCmsWalletGallerySnapshotPathParams,
+  ApiResponse<CreateProfileCmsWalletGallerySnapshotResponse>,
+  ApiCreateProfileCmsWalletGallerySnapshotRequest,
+  CreateProfileCmsWalletGallerySnapshotQuery,
   Record<string, never>
 >;
 
