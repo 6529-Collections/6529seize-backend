@@ -1,6 +1,6 @@
 ---
 name: write-prs
-description: Write, open, iterate, merge, and optionally deploy pull requests in the 6529 SEIZE backend with clear PR descriptions, safe validation notes, review-bot follow-up, DCO-signed commits only when explicitly requested, backend/API checks, lambda deployment planning, and staging or production deployment gates. Use when preparing PR bodies, creating PRs, responding to CodeRabbit or Claude review bots, deciding whether a PR is ready, merging, or carrying a backend/API PR through staging/prod rollout.
+description: Write, open, iterate, and prepare pull requests in the 6529 SEIZE backend for merge or deployment with clear PR descriptions, safe validation notes, review-bot follow-up, DCO-signed commits only when explicitly requested, backend/API checks, lambda deployment planning, and deployment handoff notes. Use when preparing PR bodies, creating PRs, responding to CodeRabbit or Claude review bots, deciding whether a PR is ready, or preparing a backend/API PR for merge, staging, or production rollout; use deploy-6529 for actual deployment execution.
 ---
 
 # Write PRs
@@ -9,9 +9,9 @@ description: Write, open, iterate, merge, and optionally deploy pull requests in
 
 1. Determine the requested completion mode:
    - `review-ready`: create or update the PR and stop once available review bots and the agent are satisfied.
-   - `merge`: do everything in `review-ready`, then merge when required checks and approvals allow it.
-   - `staging`: merge, deploy to staging using the repo-approved path, and run smoke validation against staging.
-   - `prod`: complete staging validation first, then deploy to production and run production smoke validation.
+   - `merge`: do everything in `review-ready`, then hand off to `ops/skills/deploy-6529/SKILL.md` for merge execution when required checks and approvals allow it.
+   - `staging`: prepare release notes and hand off to `ops/skills/deploy-6529/SKILL.md` for merge, staging deployment, and smoke validation.
+   - `prod`: prepare release notes and hand off to `ops/skills/deploy-6529/SKILL.md` for staging verification, production deployment, and production smoke validation.
    If the user did not explicitly request merge or deployment, stop at `review-ready`.
 
 2. Inspect the change before writing:
@@ -90,13 +90,14 @@ description: Write, open, iterate, merge, and optionally deploy pull requests in
 ## Deployment Gates
 
 - Never merge, deploy staging, or deploy production unless the user explicitly asked for that mode or repo standing instructions require it.
+- Use `ops/skills/deploy-6529/SKILL.md` for actual merge execution, staging deployment, production deployment, frontend coordination, failed-gate recovery, and deployed-environment validation.
 - Always list all lambdas/services that need redeployment and their deployment order when finishing development or writing the PR.
-- Use `.github/workflows/deploy.yml` workflow dispatch for deployments. It accepts `environment` (`staging` or `prod`) and `service`.
+- Use `ops/skills/deploy-6529/SKILL.md` as the source of truth for deployment workflow dispatch mechanics.
 - Deploy `dbMigrationsLoop` before services that depend on new schema/entity sync or data backfills.
 - Deploy `api` for API route, OpenAPI, auth, API service, generated-model, or API packaging changes.
 - Deploy each changed loop service whose `src/<loopName>/` implementation, dependencies, or deploy config changed.
 - For shared code used by multiple deployed services, include every affected service in the deployment plan.
-- Stop after any deployment or smoke-validation failure; summarize the failure and do not proceed to the next environment without a fix or explicit user direction.
+- If deployment or smoke validation fails, hand off to `ops/skills/deploy-6529/SKILL.md` to diagnose, fix, redeploy, and rerun validation before proceeding.
 
 ## Anti-Patterns
 
