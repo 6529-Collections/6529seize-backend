@@ -826,13 +826,40 @@ export class GlobalRepCategoryDb extends LazyDbAccessCompatibleService {
   private getWaveAndParentVisibilityFilter(
     groupIdsUserIsEligibleFor: readonly string[]
   ): string {
-    const waveGroupClause = groupIdsUserIsEligibleFor.length
-      ? 'or w.visibility_group_id in (:groupIdsUserIsEligibleFor)'
+    const waveVisibilityFilter = this.getSingleWaveVisibilityFilter(
+      'w',
+      groupIdsUserIsEligibleFor
+    );
+    const parentVisibilityFilter = this.getSingleWaveVisibilityFilter(
+      'pw',
+      groupIdsUserIsEligibleFor
+    );
+    return `
+      ${waveVisibilityFilter}
+      and (
+        w.parent_wave_id is null
+        or (
+          pw.id is not null
+          and pw.parent_wave_id is null
+          and ${parentVisibilityFilter}
+        )
+      )`;
+  }
+
+  private getSingleWaveVisibilityFilter(
+    waveAlias: 'w' | 'pw',
+    groupIdsUserIsEligibleFor: readonly string[]
+  ): string {
+    const groupClause = groupIdsUserIsEligibleFor.length
+      ? `or ${waveAlias}.visibility_group_id in (:groupIdsUserIsEligibleFor)`
       : '';
-    const parentGroupClause = groupIdsUserIsEligibleFor.length
-      ? 'or pw.visibility_group_id in (:groupIdsUserIsEligibleFor)'
-      : '';
-    return `(w.visibility_group_id is null ${waveGroupClause}) and (w.parent_wave_id is null or (pw.id is not null and pw.parent_wave_id is null and (pw.visibility_group_id is null ${parentGroupClause})))`;
+    return `(
+      (${waveAlias}.visibility_group_id is null ${groupClause})
+      and (
+        coalesce(${waveAlias}.is_direct_message, 0) = 0
+        ${groupClause}
+      )
+    )`;
   }
 }
 

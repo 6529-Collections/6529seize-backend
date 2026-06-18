@@ -225,6 +225,8 @@ describe('GlobalRepCategoryDb', () => {
     expect(sql).toContain(
       'pw.visibility_group_id in (:groupIdsUserIsEligibleFor)'
     );
+    expect(sql).toContain('coalesce(w.is_direct_message, 0) = 0');
+    expect(sql).toContain('coalesce(pw.is_direct_message, 0) = 0');
     expect(sql).toContain('from visible_rep r');
     expect(sql.indexOf('where r.matter in')).toBeLessThan(
       sql.indexOf('from visible_rep r')
@@ -275,6 +277,8 @@ describe('GlobalRepCategoryDb', () => {
     expect(sql).toContain(
       'pw.visibility_group_id in (:groupIdsUserIsEligibleFor)'
     );
+    expect(sql).toContain('coalesce(w.is_direct_message, 0) = 0');
+    expect(sql).toContain('coalesce(pw.is_direct_message, 0) = 0');
     expect(sql).toContain('pw.parent_wave_id is null');
     expect(sql).toContain('order by abs(gw.total_rep) desc');
     expect(sql).toContain('gw.total_rep desc');

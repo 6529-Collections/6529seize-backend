@@ -5,6 +5,8 @@ import { UserGroupsService } from '@/api/community-members/user-groups.service';
 import { IdentityFetcher } from '@/api/identities/identity.fetcher';
 import { GlobalRepCategoryApiService } from '@/api/rep-categories/global-rep-category.api.service';
 import { GlobalRepCategoryDb } from '@/api/rep-categories/global-rep-category.db';
+import { AuthenticationContext } from '@/auth-context';
+import { ProfileProxyActionType } from '@/entities/IProfileProxyAction';
 import { RequestContext } from '@/request.context';
 
 type GlobalRepCategoryDbMock = jest.Mocked<
@@ -166,7 +168,11 @@ function createService() {
     getOverviewsByIds: jest.fn().mockResolvedValue(profiles)
   };
   const userGroupsService: UserGroupsServiceMock = {
-    getGroupsUserIsEligibleFor: jest.fn().mockResolvedValue(['group-1'])
+    getGroupsUserIsEligibleFor: jest
+      .fn()
+      .mockImplementation((profileId: string | null) =>
+        Promise.resolve(profileId ? ['group-1'] : [])
+      )
   };
 
   return {
@@ -186,9 +192,7 @@ describe('GlobalRepCategoryApiService', () => {
   it('maps suggested categories with profile and wave REP totals', async () => {
     const { service, globalRepCategoryDb, userGroupsService } = createService();
     const ctx = {
-      authenticationContext: {
-        getActingAsId: jest.fn().mockReturnValue('profile-1')
-      }
+      authenticationContext: AuthenticationContext.fromProfileId('profile-1')
     } as unknown as RequestContext;
     globalRepCategoryDb.getSuggestedCategories.mockResolvedValueOnce([
       makeSuggestedCategoryRow({
@@ -252,12 +256,12 @@ describe('GlobalRepCategoryApiService', () => {
 
     expect(globalRepCategoryDb.getSuggestedCategories).toHaveBeenNthCalledWith(
       1,
-      { limit: 36, offset: 0, groupIdsUserIsEligibleFor: ['group-1'] },
+      { limit: 36, offset: 0, groupIdsUserIsEligibleFor: [] },
       {}
     );
     expect(globalRepCategoryDb.getSuggestedCategories).toHaveBeenNthCalledWith(
       2,
-      { limit: 36, offset: 36, groupIdsUserIsEligibleFor: ['group-1'] },
+      { limit: 36, offset: 36, groupIdsUserIsEligibleFor: [] },
       {}
     );
   });
@@ -274,7 +278,7 @@ describe('GlobalRepCategoryApiService', () => {
       10
     );
     expect(globalRepCategoryDb.getSuggestedCategories).toHaveBeenLastCalledWith(
-      { limit: 36, offset: 324, groupIdsUserIsEligibleFor: ['group-1'] },
+      { limit: 36, offset: 324, groupIdsUserIsEligibleFor: [] },
       {}
     );
   });
@@ -391,9 +395,8 @@ describe('GlobalRepCategoryApiService', () => {
     const { service, globalRepCategoryDb, userGroupsService, profiles } =
       createService();
     const ctx = {
-      authenticationContext: {
-        getActingAsId: () => 'viewer-profile'
-      }
+      authenticationContext:
+        AuthenticationContext.fromProfileId('viewer-profile')
     } as unknown as RequestContext;
     globalRepCategoryDb.getWaveOverviewStats.mockResolvedValueOnce({
       total_rep: '-12',
@@ -508,6 +511,85 @@ describe('GlobalRepCategoryApiService', () => {
       expect.objectContaining({
         category: 'Dev extraordinaire',
         waveIds: ['wave-1'],
+        groupIdsUserIsEligibleFor: ['group-1']
+      }),
+      ctx
+    );
+  });
+
+  it('does not expose private wave REP through proxies without READ_WAVE', async () => {
+    const { service, globalRepCategoryDb, userGroupsService } = createService();
+    const ctx = {
+      authenticationContext: new AuthenticationContext({
+        authenticatedWallet: null,
+        authenticatedProfileId: 'proxy-profile',
+        roleProfileId: 'owner-profile',
+        activeProxyActions: []
+      })
+    } as unknown as RequestContext;
+
+    await service.getWaveOverview({ category: 'Dev extraordinaire' }, ctx);
+
+    expect(userGroupsService.getGroupsUserIsEligibleFor).toHaveBeenCalledWith(
+      null,
+      undefined
+    );
+    expect(globalRepCategoryDb.getWaveOverviewStats).toHaveBeenCalledWith(
+      expect.objectContaining({
+        category: 'Dev extraordinaire',
+        groupIdsUserIsEligibleFor: []
+      }),
+      ctx
+    );
+    expect(globalRepCategoryDb.getWavesPage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        groupIdsUserIsEligibleFor: []
+      }),
+      ctx
+    );
+    expect(globalRepCategoryDb.getWaveContributorsPage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        groupIdsUserIsEligibleFor: []
+      }),
+      ctx
+    );
+  });
+
+  it('allows proxies with READ_WAVE to use the role profile wave visibility', async () => {
+    const { service, globalRepCategoryDb, userGroupsService } = createService();
+    const ctx = {
+      authenticationContext: new AuthenticationContext({
+        authenticatedWallet: null,
+        authenticatedProfileId: 'proxy-profile',
+        roleProfileId: 'owner-profile',
+        activeProxyActions: [
+          {
+            id: 'proxy-action-1',
+            type: ProfileProxyActionType.READ_WAVE,
+            credit_amount: null,
+            credit_spent: null
+          }
+        ]
+      })
+    } as unknown as RequestContext;
+
+    await service.getWaves(
+      {
+        category: 'Dev extraordinaire',
+        page: 1,
+        page_size: 10,
+        order: PageSortDirection.DESC,
+        order_by: 'rep'
+      },
+      ctx
+    );
+
+    expect(userGroupsService.getGroupsUserIsEligibleFor).toHaveBeenCalledWith(
+      'owner-profile',
+      undefined
+    );
+    expect(globalRepCategoryDb.getWavesPage).toHaveBeenCalledWith(
+      expect.objectContaining({
         groupIdsUserIsEligibleFor: ['group-1']
       }),
       ctx

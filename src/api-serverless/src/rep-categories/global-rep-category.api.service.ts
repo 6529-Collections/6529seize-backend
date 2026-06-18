@@ -23,6 +23,7 @@ import {
   userGroupsService,
   UserGroupsService
 } from '@/api/community-members/user-groups.service';
+import { getGroupsUserIsEligibleForReadContext } from '@/api/waves/wave-access.helpers';
 import {
   GlobalRepCategoryDb,
   GlobalRepCategoryDbInteger,
@@ -538,14 +539,7 @@ export class GlobalRepCategoryApiService {
   private async getGroupsUserIsEligibleFor(
     ctx: RequestContext
   ): Promise<string[]> {
-    const authenticatedProfileId =
-      ctx.authenticationContext?.getActingAsId() ?? null;
-    return authenticatedProfileId
-      ? this.userGroupsService.getGroupsUserIsEligibleFor(
-          authenticatedProfileId,
-          ctx.timer
-        )
-      : [];
+    return getGroupsUserIsEligibleForReadContext(this.userGroupsService, ctx);
   }
 
   private async getProfilesByIds(
