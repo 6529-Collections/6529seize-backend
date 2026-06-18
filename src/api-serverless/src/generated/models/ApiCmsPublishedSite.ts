@@ -10,12 +10,13 @@
  * Do not edit the class manually.
  */
 
+import { ApiCmsPublishedPackage } from '../models/ApiCmsPublishedPackage';
+import { ApiCmsSite } from '../models/ApiCmsSite';
 import { HttpFile } from '../http/http';
 
-export class ApiCmsValidationResultTarget {
-    'package_hash'?: string;
-    'draft_id'?: string;
-    'package_id'?: string;
+export class ApiCmsPublishedSite {
+    'site': ApiCmsSite;
+    'published_package': ApiCmsPublishedPackage;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -23,26 +24,20 @@ export class ApiCmsValidationResultTarget {
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
         {
-            "name": "package_hash",
-            "baseName": "package_hash",
-            "type": "string",
+            "name": "site",
+            "baseName": "site",
+            "type": "ApiCmsSite",
             "format": ""
         },
         {
-            "name": "draft_id",
-            "baseName": "draft_id",
-            "type": "string",
-            "format": ""
-        },
-        {
-            "name": "package_id",
-            "baseName": "package_id",
-            "type": "string",
+            "name": "published_package",
+            "baseName": "published_package",
+            "type": "ApiCmsPublishedPackage",
             "format": ""
         }    ];
 
     static getAttributeTypeMap() {
-        return ApiCmsValidationResultTarget.attributeTypeMap;
+        return ApiCmsPublishedSite.attributeTypeMap;
     }
 
     public constructor() {

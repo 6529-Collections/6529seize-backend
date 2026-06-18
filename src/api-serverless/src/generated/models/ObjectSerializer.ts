@@ -28,9 +28,13 @@ export * from '../models/ApiChangeWaveRepRating';
 export * from '../models/ApiCicContributor';
 export * from '../models/ApiCicContributorsPage';
 export * from '../models/ApiCicOverview';
-export * from '../models/ApiCmsValidationIssue';
-export * from '../models/ApiCmsValidationResult';
-export * from '../models/ApiCmsValidationResultTarget';
+export * from '../models/ApiCmsCreateSiteRequest';
+export * from '../models/ApiCmsPublishPackageRequest';
+export * from '../models/ApiCmsPublishedPackage';
+export * from '../models/ApiCmsPublishedSite';
+export * from '../models/ApiCmsSignatureEnvelope';
+export * from '../models/ApiCmsSite';
+export * from '../models/ApiCmsStorageLocation';
 export * from '../models/ApiCollectedStats';
 export * from '../models/ApiCollectedStatsSeason';
 export * from '../models/ApiCommunityMemberMinimal';
@@ -223,6 +227,9 @@ export * from '../models/ApiProfileCmsPackageExport';
 export * from '../models/ApiProfileCmsPackageStatus';
 export * from '../models/ApiProfileCmsPointerEvent';
 export * from '../models/ApiProfileCmsPrimaryPackage';
+export * from '../models/ApiProfileCmsValidationIssue';
+export * from '../models/ApiProfileCmsValidationResult';
+export * from '../models/ApiProfileCmsValidationResultTarget';
 export * from '../models/ApiProfileCmsWalletGalleryAsset';
 export * from '../models/ApiProfileCmsWalletGalleryAssetFlags';
 export * from '../models/ApiProfileCmsWalletGalleryAssetIdentifier';
@@ -465,9 +472,13 @@ import { ApiChangeWaveRepRating } from '../models/ApiChangeWaveRepRating';
 import { ApiCicContributor } from '../models/ApiCicContributor';
 import { ApiCicContributorsPage } from '../models/ApiCicContributorsPage';
 import { ApiCicOverview } from '../models/ApiCicOverview';
-import { ApiCmsValidationIssue, ApiCmsValidationIssueSeverityEnum         } from '../models/ApiCmsValidationIssue';
-import { ApiCmsValidationResult, ApiCmsValidationResultSchemaEnum         } from '../models/ApiCmsValidationResult';
-import { ApiCmsValidationResultTarget } from '../models/ApiCmsValidationResultTarget';
+import { ApiCmsCreateSiteRequest } from '../models/ApiCmsCreateSiteRequest';
+import { ApiCmsPublishPackageRequest } from '../models/ApiCmsPublishPackageRequest';
+import { ApiCmsPublishedPackage } from '../models/ApiCmsPublishedPackage';
+import { ApiCmsPublishedSite } from '../models/ApiCmsPublishedSite';
+import { ApiCmsSignatureEnvelope } from '../models/ApiCmsSignatureEnvelope';
+import { ApiCmsSite } from '../models/ApiCmsSite';
+import { ApiCmsStorageLocation } from '../models/ApiCmsStorageLocation';
 import { ApiCollectedStats } from '../models/ApiCollectedStats';
 import { ApiCollectedStatsSeason } from '../models/ApiCollectedStatsSeason';
 import { ApiCommunityMemberMinimal } from '../models/ApiCommunityMemberMinimal';
@@ -660,6 +671,9 @@ import { ApiProfileCmsPackageExport               } from '../models/ApiProfileCm
 import { ApiProfileCmsPackageStatus } from '../models/ApiProfileCmsPackageStatus';
 import { ApiProfileCmsPointerEvent , ApiProfileCmsPointerEventEventTypeEnum                 } from '../models/ApiProfileCmsPointerEvent';
 import { ApiProfileCmsPrimaryPackage } from '../models/ApiProfileCmsPrimaryPackage';
+import { ApiProfileCmsValidationIssue, ApiProfileCmsValidationIssueSeverityEnum         } from '../models/ApiProfileCmsValidationIssue';
+import { ApiProfileCmsValidationResult, ApiProfileCmsValidationResultSchemaEnum         } from '../models/ApiProfileCmsValidationResult';
+import { ApiProfileCmsValidationResultTarget } from '../models/ApiProfileCmsValidationResultTarget';
 import { ApiProfileCmsWalletGalleryAsset      , ApiProfileCmsWalletGalleryAssetCollectionKeyEnum           } from '../models/ApiProfileCmsWalletGalleryAsset';
 import { ApiProfileCmsWalletGalleryAssetFlags } from '../models/ApiProfileCmsWalletGalleryAssetFlags';
 import { ApiProfileCmsWalletGalleryAssetIdentifier } from '../models/ApiProfileCmsWalletGalleryAssetIdentifier';
@@ -889,8 +903,6 @@ let enumsMap: Set<string> = new Set<string>([
     "ApiAttachmentKind",
     "ApiAttachmentStatus",
     "ApiAttachmentUploadMimeType",
-    "ApiCmsValidationIssueSeverityEnum",
-    "ApiCmsValidationResultSchemaEnum",
     "ApiCommunityMembersSortOption",
     "ApiDecentralizedMediaProtocol",
     "ApiDropGroupMention",
@@ -913,6 +925,8 @@ let enumsMap: Set<string> = new Set<string>([
     "ApiProfileClassification",
     "ApiProfileCmsPackageStatus",
     "ApiProfileCmsPointerEventEventTypeEnum",
+    "ApiProfileCmsValidationIssueSeverityEnum",
+    "ApiProfileCmsValidationResultSchemaEnum",
     "ApiProfileCmsWalletGalleryAssetCollectionKeyEnum",
     "ApiProfileCmsWalletGalleryExcludedAssetReasonEnum",
     "ApiProfileCmsWalletGallerySnapshotSourceEnum",
@@ -975,9 +989,13 @@ let typeMap: {[index: string]: any} = {
     "ApiCicContributor": ApiCicContributor,
     "ApiCicContributorsPage": ApiCicContributorsPage,
     "ApiCicOverview": ApiCicOverview,
-    "ApiCmsValidationIssue": ApiCmsValidationIssue,
-    "ApiCmsValidationResult": ApiCmsValidationResult,
-    "ApiCmsValidationResultTarget": ApiCmsValidationResultTarget,
+    "ApiCmsCreateSiteRequest": ApiCmsCreateSiteRequest,
+    "ApiCmsPublishPackageRequest": ApiCmsPublishPackageRequest,
+    "ApiCmsPublishedPackage": ApiCmsPublishedPackage,
+    "ApiCmsPublishedSite": ApiCmsPublishedSite,
+    "ApiCmsSignatureEnvelope": ApiCmsSignatureEnvelope,
+    "ApiCmsSite": ApiCmsSite,
+    "ApiCmsStorageLocation": ApiCmsStorageLocation,
     "ApiCollectedStats": ApiCollectedStats,
     "ApiCollectedStatsSeason": ApiCollectedStatsSeason,
     "ApiCommunityMemberMinimal": ApiCommunityMemberMinimal,
@@ -1152,6 +1170,9 @@ let typeMap: {[index: string]: any} = {
     "ApiProfileCmsPackageExport": ApiProfileCmsPackageExport,
     "ApiProfileCmsPointerEvent": ApiProfileCmsPointerEvent,
     "ApiProfileCmsPrimaryPackage": ApiProfileCmsPrimaryPackage,
+    "ApiProfileCmsValidationIssue": ApiProfileCmsValidationIssue,
+    "ApiProfileCmsValidationResult": ApiProfileCmsValidationResult,
+    "ApiProfileCmsValidationResultTarget": ApiProfileCmsValidationResultTarget,
     "ApiProfileCmsWalletGalleryAsset": ApiProfileCmsWalletGalleryAsset,
     "ApiProfileCmsWalletGalleryAssetFlags": ApiProfileCmsWalletGalleryAssetFlags,
     "ApiProfileCmsWalletGalleryAssetIdentifier": ApiProfileCmsWalletGalleryAssetIdentifier,
