@@ -86,6 +86,12 @@ function makeSuggestedCategoryRow({
   };
 }
 
+function makeInvalidSuggestedCategoryRows(): SuggestedCategoryRow[] {
+  return Array.from({ length: 36 }, (_, index) =>
+    makeSuggestedCategoryRow({ category: `Invalid <category ${index}>` })
+  );
+}
+
 function createService() {
   const globalRepCategoryDb: GlobalRepCategoryDbMock = {
     getOverviewStats: jest.fn().mockResolvedValue({
@@ -223,11 +229,8 @@ describe('GlobalRepCategoryApiService', () => {
 
   it('continues fetching suggested categories until enough valid names are collected', async () => {
     const { service, globalRepCategoryDb } = createService();
-    const invalidRows = Array.from({ length: 36 }, (_, index) =>
-      makeSuggestedCategoryRow({ category: `Invalid <category ${index}>` })
-    );
     globalRepCategoryDb.getSuggestedCategories
-      .mockResolvedValueOnce(invalidRows)
+      .mockResolvedValueOnce(makeInvalidSuggestedCategoryRows())
       .mockResolvedValueOnce([
         makeSuggestedCategoryRow({
           category: 'Builder',
@@ -255,6 +258,23 @@ describe('GlobalRepCategoryApiService', () => {
     expect(globalRepCategoryDb.getSuggestedCategories).toHaveBeenNthCalledWith(
       2,
       { limit: 36, offset: 36, groupIdsUserIsEligibleFor: ['group-1'] },
+      {}
+    );
+  });
+
+  it('stops suggested category paging after the max query page cap', async () => {
+    const { service, globalRepCategoryDb } = createService();
+    globalRepCategoryDb.getSuggestedCategories.mockResolvedValue(
+      makeInvalidSuggestedCategoryRows()
+    );
+
+    await expect(service.getSuggestedCategories({})).resolves.toEqual([]);
+
+    expect(globalRepCategoryDb.getSuggestedCategories).toHaveBeenCalledTimes(
+      10
+    );
+    expect(globalRepCategoryDb.getSuggestedCategories).toHaveBeenLastCalledWith(
+      { limit: 36, offset: 324, groupIdsUserIsEligibleFor: ['group-1'] },
       {}
     );
   });

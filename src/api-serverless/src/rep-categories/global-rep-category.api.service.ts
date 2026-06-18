@@ -43,6 +43,7 @@ import { RequestContext } from '@/request.context';
 const OVERVIEW_LIMIT = 10;
 const SUGGESTED_CATEGORIES_LIMIT = 12;
 const SUGGESTED_CATEGORIES_QUERY_PAGE_SIZE = SUGGESTED_CATEGORIES_LIMIT * 3;
+const SUGGESTED_CATEGORIES_MAX_QUERY_PAGES = 10;
 const WAVE_TOP_CONTRIBUTORS_LIMIT = 3;
 
 export class GlobalRepCategoryApiService {
@@ -58,13 +59,17 @@ export class GlobalRepCategoryApiService {
     const groupIdsUserIsEligibleFor =
       await this.getGroupsUserIsEligibleFor(ctx);
     const rows: GlobalRepCategoryTopCategoryRow[] = [];
-    let offset = 0;
 
-    while (rows.length < SUGGESTED_CATEGORIES_LIMIT) {
+    for (
+      let page = 0;
+      page < SUGGESTED_CATEGORIES_MAX_QUERY_PAGES &&
+      rows.length < SUGGESTED_CATEGORIES_LIMIT;
+      page += 1
+    ) {
       const pageRows = await this.globalRepCategoryDb.getSuggestedCategories(
         {
           limit: SUGGESTED_CATEGORIES_QUERY_PAGE_SIZE,
-          offset,
+          offset: page * SUGGESTED_CATEGORIES_QUERY_PAGE_SIZE,
           groupIdsUserIsEligibleFor
         },
         ctx
@@ -78,7 +83,6 @@ export class GlobalRepCategoryApiService {
       if (pageRows.length < SUGGESTED_CATEGORIES_QUERY_PAGE_SIZE) {
         break;
       }
-      offset += SUGGESTED_CATEGORIES_QUERY_PAGE_SIZE;
     }
 
     return rows.map((row) => this.mapSuggestedCategory(row));
