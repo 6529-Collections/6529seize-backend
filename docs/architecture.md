@@ -225,6 +225,12 @@ Important API responsibilities:
   `/profile-cms/wallet-gallery/snapshot`, gated by
   `FEATURE_PROFILE_CMS_WALLET_GALLERY`, reading current indexed NFT ownership
   and normalized media from MySQL for deterministic gallery generation.
+- Profile-native CMS BYO-agent affordances under `/profile-cms/agent` and
+  `/profile-cms/packages/{id}/agent`, including a public schema bundle,
+  read-only source packets that separate facts, author copy, derived metadata,
+  and validation diagnostics, and authenticated draft patch validation that
+  dry-runs agent proposals without applying changes or bypassing publish
+  signing/storage authority.
 - Public decentralized media resolution under `/media/resolve`, which maps
   native `ipfs://`, `ipns://`, and `ar://` references plus recognized gateway
   URLs to canonical native URIs, `media.6529.io` resolver URLs, and explicit
@@ -255,13 +261,6 @@ There are two DB access modes:
 
 The core architectural choice is that MySQL is both the system of record and the internal integration layer. This keeps the system understandable, but it makes table contracts, migrations, backfills, indexes, and worker idempotency especially important.
 
-Wallet auth session v2 state is stored in `wallet_auth_sessions` and one-time
-connection share state is stored in `wallet_connection_shares`. Web
-sessions persist the signed domain and normalized client origin so refresh and
-logout requests can be bound to the same browser origin that created the
-session; native sessions store refresh-token hashes instead of browser-origin
-metadata.
-
 Profile-native CMS packages are stored in `profile_cms_packages`. The table
 keeps the complete CMS V1 package JSON, indexed profile/package/version/hash
 fields, publication state, primary-package flags, validation results, and
@@ -285,6 +284,13 @@ Profile CMS wallet gallery snapshots are read-only API projections over
 create schema, run migrations, enqueue indexers, or fetch chain/metadata data
 live. Request-side asset/contract exclusions are applied in the API service and
 reported in the response for generator auditability.
+
+Wallet auth session v2 state is stored in `wallet_auth_sessions` and one-time
+connection share state is stored in `wallet_connection_shares`. Web
+sessions persist the signed domain and normalized client origin so refresh and
+logout requests can be bound to the same browser origin that created the
+session; native sessions store refresh-token hashes instead of browser-origin
+metadata.
 
 ## Async Processing
 
