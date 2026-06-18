@@ -12,7 +12,7 @@
 
 import { HttpFile } from '../http/http';
 
-export class ApiCmsValidationResultTarget {
+export class ApiProfileCmsValidationResultTarget {
     'package_hash'?: string;
     'draft_id'?: string;
     'package_id'?: string;
@@ -42,7 +42,7 @@ export class ApiCmsValidationResultTarget {
         }    ];
 
     static getAttributeTypeMap() {
-        return ApiCmsValidationResultTarget.attributeTypeMap;
+        return ApiProfileCmsValidationResultTarget.attributeTypeMap;
     }
 
     public constructor() {

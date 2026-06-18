@@ -36,9 +36,6 @@ export * from '../models/ApiCmsSite';
 export * from '../models/ApiCmsStorageLocation';
 export * from '../models/ApiCollectedStats';
 export * from '../models/ApiCollectedStatsSeason';
-export * from '../models/ApiCmsValidationIssue';
-export * from '../models/ApiCmsValidationResult';
-export * from '../models/ApiCmsValidationResultTarget';
 export * from '../models/ApiCommunityMemberMinimal';
 export * from '../models/ApiCommunityMemberOverview';
 export * from '../models/ApiCommunityMembersPage';
@@ -226,6 +223,9 @@ export * from '../models/ApiProfileClassification';
 export * from '../models/ApiProfileCmsPackage';
 export * from '../models/ApiProfileCmsPackageStatus';
 export * from '../models/ApiProfileCmsPrimaryPackage';
+export * from '../models/ApiProfileCmsValidationIssue';
+export * from '../models/ApiProfileCmsValidationResult';
+export * from '../models/ApiProfileCmsValidationResultTarget';
 export * from '../models/ApiProfileMin';
 export * from '../models/ApiProfileMinsPage';
 export * from '../models/ApiProfileProxy';
@@ -467,9 +467,6 @@ import { ApiCmsSite } from '../models/ApiCmsSite';
 import { ApiCmsStorageLocation } from '../models/ApiCmsStorageLocation';
 import { ApiCollectedStats } from '../models/ApiCollectedStats';
 import { ApiCollectedStatsSeason } from '../models/ApiCollectedStatsSeason';
-import { ApiCmsValidationIssue, ApiCmsValidationIssueSeverityEnum         } from '../models/ApiCmsValidationIssue';
-import { ApiCmsValidationResult, ApiCmsValidationResultSchemaEnum         } from '../models/ApiCmsValidationResult';
-import { ApiCmsValidationResultTarget } from '../models/ApiCmsValidationResultTarget';
 import { ApiCommunityMemberMinimal } from '../models/ApiCommunityMemberMinimal';
 import { ApiCommunityMemberOverview } from '../models/ApiCommunityMemberOverview';
 import { ApiCommunityMembersPage } from '../models/ApiCommunityMembersPage';
@@ -657,6 +654,9 @@ import { ApiProfileClassification } from '../models/ApiProfileClassification';
 import { ApiProfileCmsPackage             } from '../models/ApiProfileCmsPackage';
 import { ApiProfileCmsPackageStatus } from '../models/ApiProfileCmsPackageStatus';
 import { ApiProfileCmsPrimaryPackage } from '../models/ApiProfileCmsPrimaryPackage';
+import { ApiProfileCmsValidationIssue, ApiProfileCmsValidationIssueSeverityEnum         } from '../models/ApiProfileCmsValidationIssue';
+import { ApiProfileCmsValidationResult, ApiProfileCmsValidationResultSchemaEnum         } from '../models/ApiProfileCmsValidationResult';
+import { ApiProfileCmsValidationResultTarget } from '../models/ApiProfileCmsValidationResultTarget';
 import { ApiProfileMin                       } from '../models/ApiProfileMin';
 import { ApiProfileMinsPage } from '../models/ApiProfileMinsPage';
 import { ApiProfileProxy } from '../models/ApiProfileProxy';
@@ -877,8 +877,6 @@ let enumsMap: Set<string> = new Set<string>([
     "ApiAttachmentKind",
     "ApiAttachmentStatus",
     "ApiAttachmentUploadMimeType",
-    "ApiCmsValidationIssueSeverityEnum",
-    "ApiCmsValidationResultSchemaEnum",
     "ApiCommunityMembersSortOption",
     "ApiDecentralizedMediaProtocol",
     "ApiDropGroupMention",
@@ -900,6 +898,8 @@ let enumsMap: Set<string> = new Set<string>([
     "ApiPageSortDirection",
     "ApiProfileClassification",
     "ApiProfileCmsPackageStatus",
+    "ApiProfileCmsValidationIssueSeverityEnum",
+    "ApiProfileCmsValidationResultSchemaEnum",
     "ApiProfileProxyActionType",
     "ApiRateMatter",
     "ApiRepDirection",
@@ -966,9 +966,6 @@ let typeMap: {[index: string]: any} = {
     "ApiCmsStorageLocation": ApiCmsStorageLocation,
     "ApiCollectedStats": ApiCollectedStats,
     "ApiCollectedStatsSeason": ApiCollectedStatsSeason,
-    "ApiCmsValidationIssue": ApiCmsValidationIssue,
-    "ApiCmsValidationResult": ApiCmsValidationResult,
-    "ApiCmsValidationResultTarget": ApiCmsValidationResultTarget,
     "ApiCommunityMemberMinimal": ApiCommunityMemberMinimal,
     "ApiCommunityMemberOverview": ApiCommunityMemberOverview,
     "ApiCommunityMembersPage": ApiCommunityMembersPage,
@@ -1138,6 +1135,9 @@ let typeMap: {[index: string]: any} = {
     "ApiPaymentDetails": ApiPaymentDetails,
     "ApiProfileCmsPackage": ApiProfileCmsPackage,
     "ApiProfileCmsPrimaryPackage": ApiProfileCmsPrimaryPackage,
+    "ApiProfileCmsValidationIssue": ApiProfileCmsValidationIssue,
+    "ApiProfileCmsValidationResult": ApiProfileCmsValidationResult,
+    "ApiProfileCmsValidationResultTarget": ApiProfileCmsValidationResultTarget,
     "ApiProfileMin": ApiProfileMin,
     "ApiProfileMinsPage": ApiProfileMinsPage,
     "ApiProfileProxy": ApiProfileProxy,

@@ -1,5 +1,5 @@
 import { AuthenticationContext } from '@/auth-context';
-import { ApiCmsValidationResult } from '@/api/generated/models/ApiCmsValidationResult';
+import { ApiProfileCmsValidationResult } from '@/api/generated/models/ApiProfileCmsValidationResult';
 import { ApiProfileCmsPackage } from '@/api/generated/models/ApiProfileCmsPackage';
 import { ApiProfileCmsPrimaryPackage } from '@/api/generated/models/ApiProfileCmsPrimaryPackage';
 import {
@@ -88,7 +88,7 @@ describe('profile CMS handlers', () => {
       valid: true,
       checked_at: '2026-06-17T00:00:00.000Z',
       issues: []
-    } as ApiCmsValidationResult;
+    } as ApiProfileCmsValidationResult;
     mockProfileCmsApiService.validatePackage.mockReturnValue(validation);
     const request = {
       body: {

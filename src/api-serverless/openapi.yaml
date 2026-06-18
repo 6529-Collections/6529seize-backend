@@ -4352,7 +4352,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ApiCmsValidationResult"
+                $ref: "#/components/schemas/ApiProfileCmsValidationResult"
         "400":
           description: Invalid request
   /profile-cms/packages/{id}:
@@ -9970,7 +9970,7 @@ components:
         total_cards_held:
           type: integer
           format: int64
-    ApiCmsValidationIssue:
+    ApiProfileCmsValidationIssue:
       type: object
       required:
         - severity
@@ -9996,7 +9996,7 @@ components:
           type: string
         suggested_fix:
           type: string
-    ApiCmsValidationResult:
+    ApiProfileCmsValidationResult:
       type: object
       required:
         - schema
@@ -10028,7 +10028,7 @@ components:
         issues:
           type: array
           items:
-            $ref: "#/components/schemas/ApiCmsValidationIssue"
+            $ref: "#/components/schemas/ApiProfileCmsValidationIssue"
     ApiCommunityMemberMinimal:
       type: object
       required:

@@ -10,18 +10,18 @@
  * Do not edit the class manually.
  */
 
-import { ApiCmsValidationIssue } from '../models/ApiCmsValidationIssue';
-import { ApiCmsValidationResultTarget } from '../models/ApiCmsValidationResultTarget';
+import { ApiProfileCmsValidationIssue } from '../models/ApiProfileCmsValidationIssue';
+import { ApiProfileCmsValidationResultTarget } from '../models/ApiProfileCmsValidationResultTarget';
 import { HttpFile } from '../http/http';
 
-export class ApiCmsValidationResult {
-    'schema': ApiCmsValidationResultSchemaEnum;
+export class ApiProfileCmsValidationResult {
+    'schema': ApiProfileCmsValidationResultSchemaEnum;
     'valid': boolean;
     'checked_at': string;
     'validator'?: string;
     'validator_version'?: string;
-    'target'?: ApiCmsValidationResultTarget;
-    'issues': Array<ApiCmsValidationIssue>;
+    'target'?: ApiProfileCmsValidationResultTarget;
+    'issues': Array<ApiProfileCmsValidationIssue>;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -31,7 +31,7 @@ export class ApiCmsValidationResult {
         {
             "name": "schema",
             "baseName": "schema",
-            "type": "ApiCmsValidationResultSchemaEnum",
+            "type": "ApiProfileCmsValidationResultSchemaEnum",
             "format": ""
         },
         {
@@ -61,25 +61,25 @@ export class ApiCmsValidationResult {
         {
             "name": "target",
             "baseName": "target",
-            "type": "ApiCmsValidationResultTarget",
+            "type": "ApiProfileCmsValidationResultTarget",
             "format": ""
         },
         {
             "name": "issues",
             "baseName": "issues",
-            "type": "Array<ApiCmsValidationIssue>",
+            "type": "Array<ApiProfileCmsValidationIssue>",
             "format": ""
         }    ];
 
     static getAttributeTypeMap() {
-        return ApiCmsValidationResult.attributeTypeMap;
+        return ApiProfileCmsValidationResult.attributeTypeMap;
     }
 
     public constructor() {
     }
 }
 
-export enum ApiCmsValidationResultSchemaEnum {
+export enum ApiProfileCmsValidationResultSchemaEnum {
     _6529CmsValidationResultV1 = '6529.cms.validation_result.v1'
 }
 
