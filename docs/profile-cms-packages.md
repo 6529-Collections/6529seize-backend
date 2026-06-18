@@ -7,6 +7,12 @@ rules are owned by the frontend protocol package in
 test vectors for canonical JSON, payload hash, package hash, and package hash
 exclusions.
 
+The profile gallery package generator is documented in
+`docs/profile-cms-gallery-generator.md`. It defines the wallet snapshot input
+contract, stable route slug rules, media profile/display variant mapping,
+hide/feature/reorder controls, and the future API boundary for FE to replace
+temporary preview adapters.
+
 ## Public Primary Lookup
 
 Frontend `/handle/index.html` integration should use:
@@ -163,21 +169,21 @@ The exact EIP-712 domain is:
 `verifyingContract` is omitted when the request does not provide one. The exact
 primary type is `ProfileCmsPublish`:
 
-| Field | Type | Meaning |
-|---|---|---|
-| `action` | `string` | Literal `publish`; prevents signature reuse across future actions. |
-| `profileId` | `string` | Target profile id. |
-| `handle` | `string` | Live profile handle resolved by the backend. |
-| `packageId` | `string` | CMS package protocol id. |
-| `version` | `uint256` | CMS package version. |
-| `draftId` | `string` | Backend package row id being published. |
-| `payloadHash` | `string` | CMS V1 payload hash. |
-| `packageHash` | `string` | CMS V1 package hash. |
-| `primaryPath` | `string` | Expected public path, e.g. `/handle/index.html`. |
-| `storageProvider` | `string` | Canonical decentralized receipt provider. |
-| `storageUri` | `string` | Canonical decentralized receipt URI. |
-| `storageContentHash` | `string` | Canonical receipt content hash. |
-| `deadline` | `uint256` | Epoch-millis replay window end. |
+| Field                | Type      | Meaning                                                            |
+| -------------------- | --------- | ------------------------------------------------------------------ |
+| `action`             | `string`  | Literal `publish`; prevents signature reuse across future actions. |
+| `profileId`          | `string`  | Target profile id.                                                 |
+| `handle`             | `string`  | Live profile handle resolved by the backend.                       |
+| `packageId`          | `string`  | CMS package protocol id.                                           |
+| `version`            | `uint256` | CMS package version.                                               |
+| `draftId`            | `string`  | Backend package row id being published.                            |
+| `payloadHash`        | `string`  | CMS V1 payload hash.                                               |
+| `packageHash`        | `string`  | CMS V1 package hash.                                               |
+| `primaryPath`        | `string`  | Expected public path, e.g. `/handle/index.html`.                   |
+| `storageProvider`    | `string`  | Canonical decentralized receipt provider.                          |
+| `storageUri`         | `string`  | Canonical decentralized receipt URI.                               |
+| `storageContentHash` | `string`  | Canonical receipt content hash.                                    |
+| `deadline`           | `uint256` | Epoch-millis replay window end.                                    |
 
 EOA signatures are recovered server-side and must match `signer_address` and a
 wallet consolidated into the target profile. Safe/EIP-1271 signatures set
