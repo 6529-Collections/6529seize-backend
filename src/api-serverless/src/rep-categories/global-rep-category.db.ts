@@ -641,12 +641,7 @@ export class GlobalRepCategoryDb extends LazyDbAccessCompatibleService {
         giver: this.getProfileSortExpression('r.rater_profile_id'),
         recipient: this.getProfileSortExpression('r.matter_target_id')
       };
-    const tieBreaker =
-      orderBy === 'last_modified'
-        ? 'r.last_modified desc, r.rater_profile_id asc, r.matter_target_id asc'
-        : orderBy === 'rep'
-          ? 'r.rating desc, r.last_modified desc, r.rater_profile_id asc, r.matter_target_id asc'
-          : 'r.rater_profile_id asc, r.matter_target_id asc';
+    const tieBreaker = this.getPairTieBreaker(orderBy);
     return `order by ${sortExpressionByOrder[orderBy]} ${direction}, ${tieBreaker}`;
   }
 
@@ -663,12 +658,7 @@ export class GlobalRepCategoryDb extends LazyDbAccessCompatibleService {
       last_modified: 'gp.last_modified',
       profile: this.getProfileSortExpression('gp.profile_id')
     };
-    const tieBreaker =
-      orderBy === 'last_modified'
-        ? 'gp.last_modified desc, gp.profile_id asc'
-        : orderBy === 'rep'
-          ? 'gp.total_rep desc, gp.last_modified desc, gp.profile_id asc'
-          : 'gp.profile_id asc';
+    const tieBreaker = this.getProfileTieBreaker(orderBy);
     return `order by ${sortExpressionByOrder[orderBy]} ${direction}, ${tieBreaker}`;
   }
 
@@ -683,12 +673,7 @@ export class GlobalRepCategoryDb extends LazyDbAccessCompatibleService {
         last_modified: 'gw.last_modified',
         wave: 'gw.wave_name'
       };
-    const tieBreaker =
-      orderBy === 'last_modified'
-        ? 'gw.last_modified desc, gw.wave_name asc, gw.wave_id asc'
-        : orderBy === 'rep'
-          ? 'gw.total_rep desc, gw.last_modified desc, gw.wave_name asc, gw.wave_id asc'
-          : 'gw.wave_id asc';
+    const tieBreaker = this.getWaveTieBreaker(orderBy);
     return `order by ${sortExpressionByOrder[orderBy]} ${direction}, ${tieBreaker}`;
   }
 
@@ -703,13 +688,57 @@ export class GlobalRepCategoryDb extends LazyDbAccessCompatibleService {
         last_modified: 'gc.last_modified',
         wave: 'gc.wave_name'
       };
-    const tieBreaker =
-      orderBy === 'last_modified'
-        ? 'gc.last_modified desc, gc.wave_name asc, gc.profile_id asc'
-        : orderBy === 'rep'
-          ? 'gc.contribution desc, gc.last_modified desc, gc.wave_name asc, gc.profile_id asc'
-          : 'gc.wave_id asc, gc.profile_id asc';
+    const tieBreaker = this.getWaveContributorTieBreaker(orderBy);
     return `order by ${sortExpressionByOrder[orderBy]} ${direction}, ${tieBreaker}`;
+  }
+
+  private getPairTieBreaker(orderBy: GlobalRepCategoryPairOrderBy): string {
+    switch (orderBy) {
+      case 'last_modified':
+        return 'r.last_modified desc, r.rater_profile_id asc, r.matter_target_id asc';
+      case 'rep':
+        return 'r.rating desc, r.last_modified desc, r.rater_profile_id asc, r.matter_target_id asc';
+      case 'giver':
+      case 'recipient':
+        return 'r.rater_profile_id asc, r.matter_target_id asc';
+    }
+  }
+
+  private getProfileTieBreaker(
+    orderBy: GlobalRepCategoryProfileOrderBy
+  ): string {
+    switch (orderBy) {
+      case 'last_modified':
+        return 'gp.last_modified desc, gp.profile_id asc';
+      case 'rep':
+        return 'gp.total_rep desc, gp.last_modified desc, gp.profile_id asc';
+      case 'profile':
+        return 'gp.profile_id asc';
+    }
+  }
+
+  private getWaveTieBreaker(orderBy: GlobalRepCategoryWaveOrderBy): string {
+    switch (orderBy) {
+      case 'last_modified':
+        return 'gw.last_modified desc, gw.wave_name asc, gw.wave_id asc';
+      case 'rep':
+        return 'gw.total_rep desc, gw.last_modified desc, gw.wave_name asc, gw.wave_id asc';
+      case 'wave':
+        return 'gw.wave_id asc';
+    }
+  }
+
+  private getWaveContributorTieBreaker(
+    orderBy: GlobalRepCategoryWaveOrderBy
+  ): string {
+    switch (orderBy) {
+      case 'last_modified':
+        return 'gc.last_modified desc, gc.wave_name asc, gc.profile_id asc';
+      case 'rep':
+        return 'gc.contribution desc, gc.last_modified desc, gc.wave_name asc, gc.profile_id asc';
+      case 'wave':
+        return 'gc.wave_id asc, gc.profile_id asc';
+    }
   }
 
   private getProfileSortExpression(profileIdExpression: string): string {
