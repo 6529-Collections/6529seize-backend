@@ -78,7 +78,7 @@ export function issueAccessToken(
 }
 
 export function isAuthConnectionSharingEnabled(): boolean {
-  return process.env.AUTH_CONNECTION_SHARING_ENABLED === 'true';
+  return process.env.AUTH_CONNECTION_SHARING_DISABLED !== 'true';
 }
 
 export function isLegacyWsQueryTokenEnabled(): boolean {
