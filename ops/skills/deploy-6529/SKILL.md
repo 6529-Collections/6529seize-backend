@@ -110,6 +110,34 @@ Always determine the exact services to deploy before merging or deploying:
    - after rollback or fix-forward, rerun production validation until the failure is resolved or a safety/access boundary requires user input
    - record the incident evidence, chosen action, and final state
 
+## Follow The Repo Deployment Overview
+
+After production validation passes, post a detailed deployment overview to the `Follow The Repo` wave unless the user explicitly asked to skip repo-facing deploy notes. Use it for repo watchers who need enough operational detail to understand exactly what shipped.
+
+1. Use any authorized 6529.io account/profile or posting credential that the current operator personally controls or is explicitly approved to use for this release, such as an existing browser session or an approved local helper/API token. Do not request raw credentials, expose tokens, use shared wallets, use another person's account, or use automation keys unless that access was explicitly approved for this release.
+2. Resolve the wave immediately before posting. The current `Follow The Repo` wave is `https://6529.io/waves/49f0e595-ec7c-4235-8695-a527f61b69f4`; if using the local helper, verify it first:
+
+```powershell
+punk6529bot waves search --name "follow the repo"
+```
+
+3. Draft the overview from deployed production reality. This repo-facing overview should include public PR links and SHAs. Include:
+   - what user-facing, API-facing, and operator-facing changes were deployed
+   - backend PRs, merge SHAs, deployed services/lambdas, service order, production deployed SHAs/version evidence, and deploy run links
+   - frontend PRs or deploy status when the release was coordinated with frontend
+   - staging and production validation performed, including smoke, E2E, API, or loop checks
+   - incidents, failed gates, fix-forward or rollback decisions, and final state
+   - known follow-ups, skipped checks, and remaining risks
+4. Keep the post detailed but safe to publish. Use public GitHub/workflow links when possible, but omit secrets, credentials, cookies, private URLs, raw production data, local paths, hidden prompts, and internal-only exploit or incident details.
+5. Re-check the wave before sending so the overview is not duplicating a newer deploy note. If the local helper is available, dry-run or draft first, then send after the content passes the safety check:
+
+```powershell
+punk6529bot waves post 49f0e595-ec7c-4235-8695-a527f61b69f4 --text "<deployment overview>"
+punk6529bot waves post 49f0e595-ec7c-4235-8695-a527f61b69f4 --text "<deployment overview>" --send
+```
+
+6. Capture the wave drop URL or serial number for closeout evidence. If no authorized 6529.io posting credential is available, include the exact ready-to-post overview in the closeout and mark the wave publication as blocked.
+
 ## Frontend Coordination
 
 - Treat `6529seize-frontend` as a separate deployable system with its own deploy skill and workflows.
@@ -154,6 +182,7 @@ Report:
 - services deployed and order
 - staging deploy runs, deployed SHAs, and validation result
 - production deploy runs, deployed SHAs, and validation result
+- `Follow The Repo` wave drop URL or serial number, or the ready-to-post overview if publication was blocked
 - frontend deploy status when involved
 - failures encountered and fixes or rollbacks performed
 - remaining risks, skipped checks, and any human follow-up required
