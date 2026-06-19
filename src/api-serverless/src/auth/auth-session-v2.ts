@@ -55,6 +55,11 @@ export type ParsedSessionCookie = {
   readonly secret: string;
 } | null;
 
+export interface ActiveWebSession {
+  readonly address: string;
+  readonly role: string | null;
+}
+
 type AuthDbConnection = ConnectionWrapper<any>;
 
 export function issueAccessToken(
@@ -224,6 +229,33 @@ export async function refreshWebSession({
   };
 }
 
+export async function getActiveWebSession({
+  cookie,
+  requestOrigin
+}: {
+  readonly cookie: ParsedSessionCookie;
+  readonly requestOrigin: string | null;
+}): Promise<ActiveWebSession | null> {
+  if (!cookie) {
+    return null;
+  }
+  const existing = await authDb.getActiveWebSessionBySecretHash(
+    cookie.sessionId,
+    hashSecret(cookie.secret),
+    new Date()
+  );
+  if (!existing) {
+    return null;
+  }
+  if (!isMatchingSessionOrigin(existing.client_origin, requestOrigin)) {
+    return null;
+  }
+  return {
+    address: existing.address.toLowerCase(),
+    role: existing.role ?? null
+  };
+}
+
 export async function refreshNativeSession({
   address,
   nativeRefreshToken
@@ -346,9 +378,6 @@ export async function createConnectionShare({
   const queryParams = new URLSearchParams();
   queryParams.set('connection_share_code', connectionShareCode);
   queryParams.set('address', share.address);
-  if (share.role) {
-    queryParams.set('role', share.role);
-  }
   return {
     connection_share_code: connectionShareCode,
     expires_at: toDate(share.expires_at),
