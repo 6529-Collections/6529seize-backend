@@ -49,9 +49,6 @@ Additive origin config:
 - `WEB_APP_ADDITIONAL_ORIGINS`: comma-separated extra web origins to add to the
   defaults and `WEB_APP_ORIGIN`. Use this for previews or temporary first-party
   web origins.
-- `AUTH_WEB_CREDENTIAL_ORIGINS`: deprecated compatibility alias. Do not add it
-  for new deploys; leave it only if an existing environment already depends on
-  it.
 
 Do not set these yet for a silent release:
 
@@ -105,9 +102,8 @@ Frontend env:
 - Production: `API_ENDPOINT=https://api.6529.io`.
 - Staging: `API_ENDPOINT=https://api.staging.6529.io`.
 
-No frontend credential-origin env is required. `WEB_SESSION_CREDENTIAL_API_ORIGINS`
-is deprecated and no longer read; the FE sends session-v2 credentials to the
-configured `API_ENDPOINT`.
+No frontend credential-origin env is required. The FE sends session-v2
+credentials to the configured `API_ENDPOINT`.
 
 Frontend targets:
 
@@ -182,14 +178,6 @@ zero and rollback is no longer needed.
   connection sharing only. Missing/false means connection sharing is enabled.
 - `AUTH_LEGACY_WS_QUERY_TOKEN_ENABLED=false`: final websocket query-token
   cleanup after web/mobile clients no longer require it.
-
-## Deprecated Env Vars
-
-- Backend `AUTH_WEB_CREDENTIAL_ORIGINS`: still accepted as an additive
-  compatibility alias, but new deploys should use `WEB_APP_ORIGIN` and
-  `WEB_APP_ADDITIONAL_ORIGINS`.
-- Frontend `WEB_SESSION_CREDENTIAL_API_ORIGINS`: no longer read. Remove it from
-  FE runtime/build env; `API_ENDPOINT` is the frontend source of truth.
 
 ## Migration Policy
 
