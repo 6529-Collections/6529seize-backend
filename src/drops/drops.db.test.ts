@@ -997,7 +997,10 @@ describeWithSeed(
       expect(JSON.parse(results[0].medias_json ?? '[]')).toEqual([
         {
           url: 'https://example.com/new-public-a-1.png',
-          mime_type: 'image/png'
+          mime_type: 'image/png',
+          media_upload_id: null,
+          media_status: 'ready',
+          media_error: null
         }
       ]);
     });

@@ -7,10 +7,12 @@ import { WaveEntity, WaveType } from '@/entities/IWave';
 import { WaveChatDropCooldownEntity } from '@/entities/IWaveChatDropCooldown';
 import { WaveMetricEntity } from '@/entities/IWaveMetric';
 import { WaveReaderMetricEntity } from '@/entities/IWaveReaderMetric';
+import { DropMediaUploadStatus } from '@/entities/IDropMediaUpload';
 import { collections } from '@/collections';
 import { RequestContext } from '@/request.context';
 import { dropsDb, DropsDb } from '@/drops/drops.db';
 import { ApiDropMedia } from '@/api/generated/models/ApiDropMedia';
+import { ApiDropMediaStatus } from '@/api/generated/models/ApiDropMediaStatus';
 import { ApiWaveOverview } from '@/api/generated/models/ApiWaveOverview';
 import { ApiWaveOverviewContributor } from '@/api/generated/models/ApiWaveOverviewContributor';
 import { ApiWaveOverviewContextProfileContext } from '@/api/generated/models/ApiWaveOverviewContextProfileContext';
@@ -401,7 +403,10 @@ export class ApiWaveOverviewMapper {
   private mapDescriptionDropMedia(media: DropMediaEntity[]): ApiDropMedia[] {
     return media.map((item) => ({
       url: item.url,
-      mime_type: item.mime_type
+      mime_type: item.mime_type,
+      media_upload_id: item.media_upload_id,
+      media_status: mapDropMediaUploadStatus(item.media_status),
+      media_error: item.media_error ?? null
     }));
   }
 
@@ -492,6 +497,24 @@ export class ApiWaveOverviewMapper {
       profilesById[profileId] ??
       createUnknownWaveCreatorProfile({ profileId, waveId: wave.id })
     );
+  }
+}
+
+function mapDropMediaUploadStatus(
+  status: string | null | undefined
+): ApiDropMediaStatus {
+  switch (status) {
+    case ApiDropMediaStatus.Uploading:
+      return ApiDropMediaStatus.Uploading;
+    case ApiDropMediaStatus.Processing:
+    case DropMediaUploadStatus.COMPLETING:
+    case DropMediaUploadStatus.SANITIZING:
+      return ApiDropMediaStatus.Processing;
+    case ApiDropMediaStatus.Failed:
+      return ApiDropMediaStatus.Failed;
+    case ApiDropMediaStatus.Ready:
+    default:
+      return ApiDropMediaStatus.Ready;
   }
 }
 

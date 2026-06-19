@@ -40,6 +40,7 @@ export {
   DropPartEntity,
   DropReferencedNftEntity
 } from './IDrop';
+export { DropMediaUploadEntity } from './IDropMediaUpload';
 export { DropNftLinkEntity } from './IDropNftLink';
 export { DropBookmarkEntity } from './IDropBookmark';
 export { DropQuickVoteSkipEntity } from './IDropQuickVoteSkip';

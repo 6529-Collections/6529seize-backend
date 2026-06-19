@@ -36,6 +36,7 @@ export interface DropPartIdentifierModel {
 export interface DropMediaModel {
   readonly url: string;
   readonly mime_type: string;
+  readonly media_upload_id?: string | null;
 }
 
 export interface DropAttachmentReferenceModel {

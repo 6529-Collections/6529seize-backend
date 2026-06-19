@@ -305,12 +305,10 @@ router.post(
       ApiCompleteMultipartUploadRequestSchema
     );
 
-    const url =
+    const response =
       await uploadMediaService.completeMultipartUpload(validatedRequest);
 
-    res.send({
-      media_url: url
-    });
+    res.send(response);
   }
 );
 
