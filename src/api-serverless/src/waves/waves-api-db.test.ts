@@ -105,6 +105,46 @@ const publicSubwaveOfHiddenParent = aWave(
   { id: 'wave-hidden-parent-child', serial_no: 14, name: 'Visible Child' }
 );
 
+const followedRootWave = aWave(
+  {
+    created_by: author.profile_id!
+  },
+  { id: 'wave-followed-root', serial_no: 15, name: 'Followed Root Wave' }
+);
+
+const unfollowedDiscoveryWave = aWave(
+  {
+    created_by: author.profile_id!
+  },
+  { id: 'wave-unfollowed-discovery', serial_no: 16, name: 'Unfollowed Wave' }
+);
+
+const mutedContainerParentWave = aWave(
+  {
+    created_by: author.profile_id!
+  },
+  { id: 'wave-muted-container-parent', serial_no: 17, name: 'Muted Parent' }
+);
+
+const mutedContainerSubwave = aWave(
+  {
+    created_by: author.profile_id!,
+    parent_wave_id: mutedContainerParentWave.id
+  },
+  {
+    id: 'wave-muted-container-child',
+    serial_no: 18,
+    name: 'Muted Parent Child'
+  }
+);
+
+const mutedContainerComparatorWave = aWave(
+  {
+    created_by: author.profile_id!
+  },
+  { id: 'wave-muted-container-comparator', serial_no: 19, name: 'Comparator' }
+);
+
 describeWithSeed(
   'WavesApiDb read visibility',
   [
@@ -194,6 +234,427 @@ describeWithSeed(
         expect.objectContaining({ id: privateWave.id }),
         expect.objectContaining({ id: publicWave.id })
       ]);
+    });
+  }
+);
+
+describeWithSeed(
+  'WavesApiDb followed subwave overview containers',
+  [
+    withIdentities([author]),
+    withWaves([
+      parentWave,
+      alphaSubwave,
+      betaSubwave,
+      hiddenParentWave,
+      publicSubwaveOfHiddenParent,
+      followedRootWave,
+      unfollowedDiscoveryWave
+    ]),
+    {
+      table: WAVE_METRICS_TABLE,
+      rows: [
+        {
+          wave_id: parentWave.id,
+          latest_drop_timestamp: 100,
+          wave_visibility_tier: ApiWaveVisibilityTier.TrustedVisible,
+          wave_visibility_rank: 1,
+          wave_visibility_score: 60,
+          wave_quality_score: 60,
+          wave_hotness_score: 60,
+          wave_rep_sort_score: 60
+        },
+        {
+          wave_id: alphaSubwave.id,
+          latest_drop_timestamp: 900,
+          wave_visibility_tier: ApiWaveVisibilityTier.TrustedVisible,
+          wave_visibility_rank: 1,
+          wave_visibility_score: 99,
+          wave_quality_score: 99,
+          wave_hotness_score: 99,
+          wave_rep_sort_score: 99
+        },
+        {
+          wave_id: betaSubwave.id,
+          latest_drop_timestamp: 1000,
+          wave_visibility_tier: ApiWaveVisibilityTier.TrustedVisible,
+          wave_visibility_rank: 1,
+          wave_visibility_score: 95,
+          wave_quality_score: 95,
+          wave_hotness_score: 95,
+          wave_rep_sort_score: 95
+        },
+        {
+          wave_id: hiddenParentWave.id,
+          latest_drop_timestamp: 50,
+          wave_visibility_tier: ApiWaveVisibilityTier.TrustedVisible,
+          wave_visibility_rank: 1,
+          wave_visibility_score: 80,
+          wave_quality_score: 80,
+          wave_hotness_score: 80,
+          wave_rep_sort_score: 80
+        },
+        {
+          wave_id: publicSubwaveOfHiddenParent.id,
+          latest_drop_timestamp: 1100,
+          wave_visibility_tier: ApiWaveVisibilityTier.TrustedVisible,
+          wave_visibility_rank: 1,
+          wave_visibility_score: 90,
+          wave_quality_score: 90,
+          wave_hotness_score: 90,
+          wave_rep_sort_score: 90
+        },
+        {
+          wave_id: followedRootWave.id,
+          latest_drop_timestamp: 500,
+          wave_visibility_tier: ApiWaveVisibilityTier.TrustedVisible,
+          wave_visibility_rank: 1,
+          wave_visibility_score: 70,
+          wave_quality_score: 70,
+          wave_hotness_score: 70,
+          wave_rep_sort_score: 70
+        },
+        {
+          wave_id: unfollowedDiscoveryWave.id,
+          latest_drop_timestamp: 200,
+          wave_visibility_tier: ApiWaveVisibilityTier.TrustedVisible,
+          wave_visibility_rank: 1,
+          wave_visibility_score: 50,
+          wave_quality_score: 50,
+          wave_hotness_score: 50,
+          wave_rep_sort_score: 50
+        }
+      ]
+    },
+    {
+      table: IDENTITY_SUBSCRIPTIONS_TABLE,
+      rows: [
+        {
+          subscriber_id: author.profile_id!,
+          target_id: alphaSubwave.id,
+          target_type: ActivityEventTargetType.WAVE,
+          target_action: ActivityEventAction.DROP_CREATED,
+          wave_id: alphaSubwave.id,
+          subscribed_to_all_drops: false
+        },
+        {
+          subscriber_id: author.profile_id!,
+          target_id: betaSubwave.id,
+          target_type: ActivityEventTargetType.WAVE,
+          target_action: ActivityEventAction.DROP_CREATED,
+          wave_id: betaSubwave.id,
+          subscribed_to_all_drops: false
+        },
+        {
+          subscriber_id: author.profile_id!,
+          target_id: publicSubwaveOfHiddenParent.id,
+          target_type: ActivityEventTargetType.WAVE,
+          target_action: ActivityEventAction.DROP_CREATED,
+          wave_id: publicSubwaveOfHiddenParent.id,
+          subscribed_to_all_drops: false
+        },
+        {
+          subscriber_id: author.profile_id!,
+          target_id: followedRootWave.id,
+          target_type: ActivityEventTargetType.WAVE,
+          target_action: ActivityEventAction.DROP_CREATED,
+          wave_id: followedRootWave.id,
+          subscribed_to_all_drops: false
+        }
+      ]
+    },
+    {
+      table: WAVE_READER_METRICS_TABLE,
+      rows: [
+        {
+          wave_id: alphaSubwave.id,
+          reader_id: author.profile_id!,
+          latest_read_timestamp: 800,
+          muted: false
+        },
+        {
+          wave_id: betaSubwave.id,
+          reader_id: author.profile_id!,
+          latest_read_timestamp: 800,
+          muted: true
+        }
+      ]
+    },
+    {
+      table: DROPS_TABLE,
+      rows: [
+        {
+          id: 'alpha-unread-drop-1',
+          wave_id: alphaSubwave.id,
+          author_id: author.profile_id!,
+          created_at: 850,
+          updated_at: null,
+          title: null,
+          parts_count: 1,
+          reply_to_drop_id: null,
+          reply_to_part_id: null,
+          drop_type: DropType.CHAT,
+          signature: null,
+          hide_link_preview: false
+        },
+        {
+          id: 'alpha-unread-drop-2',
+          wave_id: alphaSubwave.id,
+          author_id: author.profile_id!,
+          created_at: 900,
+          updated_at: null,
+          title: null,
+          parts_count: 1,
+          reply_to_drop_id: null,
+          reply_to_part_id: null,
+          drop_type: DropType.CHAT,
+          signature: null,
+          hide_link_preview: false
+        },
+        {
+          id: 'beta-muted-drop',
+          wave_id: betaSubwave.id,
+          author_id: author.profile_id!,
+          created_at: 1000,
+          updated_at: null,
+          title: null,
+          parts_count: 1,
+          reply_to_drop_id: null,
+          reply_to_part_id: null,
+          drop_type: DropType.CHAT,
+          signature: null,
+          hide_link_preview: false
+        }
+      ]
+    }
+  ],
+  () => {
+    it('returns parent containers for followed subwaves in activity order', async () => {
+      const waves = await repo.findRecentlyDroppedToWaves({
+        authenticated_user_id: author.profile_id!,
+        only_waves_followed_by_authenticated_user: true,
+        offset: 0,
+        limit: 10,
+        eligibleGroups: [],
+        direct_message: false,
+        pinned: null
+      });
+
+      expect(waves.map((wave) => wave.id)).toEqual([
+        parentWave.id,
+        followedRootWave.id
+      ]);
+    });
+
+    it('uses parent score for followed-subwave containers in scored overviews', async () => {
+      const waves = await repo.findScoredRecentlyDroppedToWaves({
+        authenticated_user_id: author.profile_id!,
+        only_waves_followed_by_authenticated_user: true,
+        offset: 0,
+        limit: 10,
+        eligibleGroups: [],
+        direct_message: false,
+        pinned: null,
+        score_sort: ApiWaveScoreSort.Quality,
+        exclude_followed: false
+      });
+
+      expect(waves.map((wave) => wave.id)).toEqual([
+        followedRootWave.id,
+        parentWave.id
+      ]);
+    });
+
+    it('excludes parents with followed subwaves from scored discovery', async () => {
+      const waves = await repo.findScoredRecentlyDroppedToWaves({
+        authenticated_user_id: author.profile_id!,
+        only_waves_followed_by_authenticated_user: false,
+        offset: 0,
+        limit: 10,
+        eligibleGroups: [],
+        direct_message: false,
+        pinned: null,
+        score_sort: ApiWaveScoreSort.Quality,
+        exclude_followed: true
+      });
+
+      expect(waves.map((wave) => wave.id)).toEqual([
+        unfollowedDiscoveryWave.id
+      ]);
+    });
+
+    it('summarizes hidden followed subwave activity and unread counts', async () => {
+      const contexts =
+        await repo.findFollowedSubwaveOverviewContextsByParentWaveId(
+          {
+            identityId: author.profile_id!,
+            parentWaveIds: [parentWave.id],
+            eligibleGroups: []
+          },
+          ctx
+        );
+
+      expect(contexts[parentWave.id]).toEqual({
+        followed_subwaves_count: 2,
+        latest_followed_subwave_activity_timestamp: 900,
+        hidden_followed_subwave_unread_drops: 2,
+        first_hidden_followed_subwave_unread_drop_serial_no: expect.any(Number)
+      });
+    });
+
+    it('does not surface followed child aggregates for hidden parents', async () => {
+      const contexts =
+        await repo.findFollowedSubwaveOverviewContextsByParentWaveId(
+          {
+            identityId: author.profile_id!,
+            parentWaveIds: [hiddenParentWave.id],
+            eligibleGroups: []
+          },
+          ctx
+        );
+
+      expect(contexts[hiddenParentWave.id]).toBeUndefined();
+    });
+  }
+);
+
+describeWithSeed(
+  'WavesApiDb followed subwave muted parent containers',
+  [
+    withIdentities([author]),
+    withWaves([
+      mutedContainerParentWave,
+      mutedContainerSubwave,
+      mutedContainerComparatorWave
+    ]),
+    {
+      table: WAVE_METRICS_TABLE,
+      rows: [
+        {
+          wave_id: mutedContainerParentWave.id,
+          latest_drop_timestamp: 10,
+          wave_visibility_tier: ApiWaveVisibilityTier.TrustedVisible,
+          wave_visibility_rank: 1,
+          wave_visibility_score: 60,
+          wave_quality_score: 60,
+          wave_hotness_score: 60,
+          wave_rep_sort_score: 60
+        },
+        {
+          wave_id: mutedContainerSubwave.id,
+          latest_drop_timestamp: 900,
+          wave_visibility_tier: ApiWaveVisibilityTier.TrustedVisible,
+          wave_visibility_rank: 1,
+          wave_visibility_score: 95,
+          wave_quality_score: 95,
+          wave_hotness_score: 95,
+          wave_rep_sort_score: 95
+        },
+        {
+          wave_id: mutedContainerComparatorWave.id,
+          latest_drop_timestamp: 500,
+          wave_visibility_tier: ApiWaveVisibilityTier.TrustedVisible,
+          wave_visibility_rank: 1,
+          wave_visibility_score: 70,
+          wave_quality_score: 70,
+          wave_hotness_score: 70,
+          wave_rep_sort_score: 70
+        }
+      ]
+    },
+    {
+      table: IDENTITY_SUBSCRIPTIONS_TABLE,
+      rows: [
+        {
+          subscriber_id: author.profile_id!,
+          target_id: mutedContainerSubwave.id,
+          target_type: ActivityEventTargetType.WAVE,
+          target_action: ActivityEventAction.DROP_CREATED,
+          wave_id: mutedContainerSubwave.id,
+          subscribed_to_all_drops: false
+        },
+        {
+          subscriber_id: author.profile_id!,
+          target_id: mutedContainerComparatorWave.id,
+          target_type: ActivityEventTargetType.WAVE,
+          target_action: ActivityEventAction.DROP_CREATED,
+          wave_id: mutedContainerComparatorWave.id,
+          subscribed_to_all_drops: false
+        }
+      ]
+    },
+    {
+      table: WAVE_READER_METRICS_TABLE,
+      rows: [
+        {
+          wave_id: mutedContainerParentWave.id,
+          reader_id: author.profile_id!,
+          latest_read_timestamp: 0,
+          muted: true
+        },
+        {
+          wave_id: mutedContainerSubwave.id,
+          reader_id: author.profile_id!,
+          latest_read_timestamp: 100,
+          muted: false
+        }
+      ]
+    },
+    {
+      table: DROPS_TABLE,
+      rows: [
+        {
+          id: 'muted-parent-child-unread-drop',
+          wave_id: mutedContainerSubwave.id,
+          author_id: author.profile_id!,
+          created_at: 900,
+          updated_at: null,
+          title: null,
+          parts_count: 1,
+          reply_to_drop_id: null,
+          reply_to_part_id: null,
+          drop_type: DropType.CHAT,
+          signature: null,
+          hide_link_preview: false
+        }
+      ]
+    }
+  ],
+  () => {
+    it('does not let followed child activity lift a muted parent container', async () => {
+      const waves = await repo.findRecentlyDroppedToWaves({
+        authenticated_user_id: author.profile_id!,
+        only_waves_followed_by_authenticated_user: true,
+        offset: 0,
+        limit: 10,
+        eligibleGroups: [],
+        direct_message: false,
+        pinned: null
+      });
+
+      expect(waves.map((wave) => wave.id)).toEqual([
+        mutedContainerComparatorWave.id,
+        mutedContainerParentWave.id
+      ]);
+    });
+
+    it('does not surface hidden child unread counts for a muted parent', async () => {
+      const contexts =
+        await repo.findFollowedSubwaveOverviewContextsByParentWaveId(
+          {
+            identityId: author.profile_id!,
+            parentWaveIds: [mutedContainerParentWave.id],
+            eligibleGroups: []
+          },
+          ctx
+        );
+
+      expect(contexts[mutedContainerParentWave.id]).toEqual({
+        followed_subwaves_count: 1,
+        latest_followed_subwave_activity_timestamp: null,
+        hidden_followed_subwave_unread_drops: 0,
+        first_hidden_followed_subwave_unread_drop_serial_no: null
+      });
     });
   }
 );
@@ -289,6 +750,24 @@ describeWithSeed(
       });
 
       expect(waves.map((wave) => wave.id)).toEqual([visibleScoredWave.id]);
+    });
+
+    it('rejects conflicting followed-only and exclude-followed scored filters', async () => {
+      await expect(
+        repo.findScoredRecentlyDroppedToWaves({
+          authenticated_user_id: author.profile_id!,
+          only_waves_followed_by_authenticated_user: true,
+          offset: 0,
+          limit: 10,
+          eligibleGroups: [],
+          direct_message: false,
+          pinned: null,
+          score_sort: ApiWaveScoreSort.Quality,
+          exclude_followed: true
+        })
+      ).rejects.toThrow(
+        'Cannot request followed-only waves and exclude-followed waves together'
+      );
     });
   }
 );

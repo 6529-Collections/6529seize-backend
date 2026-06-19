@@ -97,6 +97,25 @@ type WaveChatDropCooldownPolicyRow = {
   stored_updated_at: number | string | null;
 };
 
+type FollowedSubwaveActivityRow = {
+  parent_wave_id: string;
+  followed_subwaves_count: number | string;
+  latest_followed_subwave_activity_timestamp: number | string | null;
+};
+
+type HiddenFollowedSubwaveUnreadRow = {
+  parent_wave_id: string;
+  hidden_followed_subwave_unread_drops: number | string;
+  first_hidden_followed_subwave_unread_drop_serial_no: number | string | null;
+};
+
+export interface FollowedSubwaveOverviewContext {
+  readonly followed_subwaves_count: number;
+  readonly latest_followed_subwave_activity_timestamp: number | null;
+  readonly hidden_followed_subwave_unread_drops: number;
+  readonly first_hidden_followed_subwave_unread_drop_serial_no: number | null;
+}
+
 export enum WaveSubwavesSort {
   NAME = 'NAME',
   CREATED_AT = 'CREATED_AT'
@@ -161,6 +180,91 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     value: number | string | null | undefined
   ): number | null {
     return value === null || value === undefined ? null : Number(value);
+  }
+
+  private toActivityTimestamp(
+    value: number | string | null | undefined
+  ): number | null {
+    const numericValue = this.toNullableNumber(value);
+    return numericValue !== null && numericValue > 0 ? numericValue : null;
+  }
+
+  private getFollowedSubwaveActivitySelect({
+    groupIds,
+    identityParamName,
+    eligibleGroupsParamName,
+    parentWaveIdsParamName
+  }: {
+    groupIds: readonly string[];
+    identityParamName: string;
+    eligibleGroupsParamName: string;
+    parentWaveIdsParamName?: string;
+  }): string {
+    return `
+      select
+        child.parent_wave_id,
+        count(distinct child.id) as followed_subwaves_count,
+        max(
+          case
+            when coalesce(parent_wrm.muted, false) = true then 0
+            when coalesce(child_wrm.muted, false) = true then 0
+            else coalesce(child_wm.latest_drop_timestamp, 0)
+          end
+        ) as latest_followed_subwave_activity_timestamp
+      from ${WAVES_TABLE} child
+      join ${WAVES_TABLE} parent
+        on parent.id = child.parent_wave_id
+       and parent.parent_wave_id is null
+      join ${IDENTITY_SUBSCRIPTIONS_TABLE} child_follow
+        on child_follow.subscriber_id = :${identityParamName}
+       and child_follow.target_id = child.id
+       and child_follow.target_type = :wave_target_type
+       and child_follow.target_action = :drop_created_action
+      left join ${WAVE_METRICS_TABLE} child_wm
+        on child_wm.wave_id = child.id
+      left join ${WAVE_READER_METRICS_TABLE} parent_wrm
+        on parent_wrm.wave_id = parent.id
+       and parent_wrm.reader_id = :${identityParamName}
+      left join ${WAVE_READER_METRICS_TABLE} child_wrm
+        on child_wrm.wave_id = child.id
+       and child_wrm.reader_id = :${identityParamName}
+      where ${this.getWaveVisibilityFilter(
+        'child',
+        groupIds,
+        eligibleGroupsParamName
+      )}
+        and ${this.getWaveVisibilityFilter(
+          'parent',
+          groupIds,
+          eligibleGroupsParamName
+        )}
+        ${
+          parentWaveIdsParamName
+            ? `and child.parent_wave_id in (:${parentWaveIdsParamName})`
+            : ``
+        }
+      group by child.parent_wave_id
+    `;
+  }
+
+  private getFollowedSubwaveActivityCte({
+    groupIds,
+    identityParamName,
+    eligibleGroupsParamName
+  }: {
+    groupIds: readonly string[];
+    identityParamName: string;
+    eligibleGroupsParamName: string;
+  }): string {
+    return `
+      followed_subwave_activity as (
+        ${this.getFollowedSubwaveActivitySelect({
+          groupIds,
+          identityParamName,
+          eligibleGroupsParamName
+        })}
+      )
+    `;
   }
 
   private resolveWaveChatDropCooldownPolicy(
@@ -956,6 +1060,132 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         { wrappedConnection: ctx.connection }
       );
       return new Set(rows.map((row) => row.wave_id));
+    } finally {
+      ctx.timer?.stop(timerKey);
+    }
+  }
+
+  async findFollowedSubwaveOverviewContextsByParentWaveId(
+    {
+      identityId,
+      parentWaveIds,
+      eligibleGroups
+    }: {
+      identityId: string;
+      parentWaveIds: string[];
+      eligibleGroups: string[];
+    },
+    ctx: RequestContext
+  ): Promise<Record<string, FollowedSubwaveOverviewContext>> {
+    if (!parentWaveIds.length) {
+      return {};
+    }
+    const timerKey = `${this.constructor.name}->findFollowedSubwaveOverviewContextsByParentWaveId`;
+    ctx.timer?.start(timerKey);
+    try {
+      const activityRows = await this.db.execute<FollowedSubwaveActivityRow>(
+        `
+            ${this.getFollowedSubwaveActivitySelect({
+              groupIds: eligibleGroups,
+              identityParamName: 'identityId',
+              eligibleGroupsParamName: 'eligibleGroups',
+              parentWaveIdsParamName: 'parentWaveIds'
+            })}
+          `,
+        {
+          identityId,
+          parentWaveIds,
+          eligibleGroups,
+          wave_target_type: ActivityEventTargetType.WAVE,
+          drop_created_action: ActivityEventAction.DROP_CREATED
+        },
+        { wrappedConnection: ctx.connection }
+      );
+
+      const unreadRows = await this.db.execute<HiddenFollowedSubwaveUnreadRow>(
+        `
+            select
+              child.parent_wave_id,
+              count(d.id) as hidden_followed_subwave_unread_drops,
+              min(d.serial_no) as first_hidden_followed_subwave_unread_drop_serial_no
+            from ${WAVES_TABLE} child
+            join ${WAVES_TABLE} parent
+              on parent.id = child.parent_wave_id
+             and parent.parent_wave_id is null
+            left join ${WAVE_READER_METRICS_TABLE} parent_reader
+              on parent_reader.wave_id = parent.id
+             and parent_reader.reader_id = :identityId
+            join ${IDENTITY_SUBSCRIPTIONS_TABLE} child_follow
+              on child_follow.subscriber_id = :identityId
+             and child_follow.target_id = child.id
+             and child_follow.target_type = :waveTargetType
+             and child_follow.target_action = :dropCreatedAction
+            join ${WAVE_READER_METRICS_TABLE} child_reader
+              on child_reader.wave_id = child.id
+             and child_reader.reader_id = :identityId
+             and child_reader.latest_read_timestamp is not null
+             and coalesce(child_reader.muted, false) = false
+            join ${DROPS_TABLE} d
+              on d.wave_id = child.id
+             and d.created_at > child_reader.latest_read_timestamp
+            where child.parent_wave_id in (:parentWaveIds)
+              and coalesce(parent_reader.muted, false) = false
+              and ${this.getWaveVisibilityFilter(
+                'child',
+                eligibleGroups,
+                'eligibleGroups'
+              )}
+              and ${this.getWaveVisibilityFilter(
+                'parent',
+                eligibleGroups,
+                'eligibleGroups'
+              )}
+            group by child.parent_wave_id
+          `,
+        {
+          identityId,
+          parentWaveIds,
+          eligibleGroups,
+          waveTargetType: ActivityEventTargetType.WAVE,
+          dropCreatedAction: ActivityEventAction.DROP_CREATED
+        },
+        { wrappedConnection: ctx.connection }
+      );
+
+      const result = activityRows.reduce(
+        (acc, row) => {
+          acc[row.parent_wave_id] = {
+            followed_subwaves_count: Number(row.followed_subwaves_count),
+            latest_followed_subwave_activity_timestamp:
+              this.toActivityTimestamp(
+                row.latest_followed_subwave_activity_timestamp
+              ),
+            hidden_followed_subwave_unread_drops: 0,
+            first_hidden_followed_subwave_unread_drop_serial_no: null
+          };
+          return acc;
+        },
+        {} as Record<string, FollowedSubwaveOverviewContext>
+      );
+
+      for (const row of unreadRows) {
+        const existing = result[row.parent_wave_id];
+        if (!existing) {
+          continue;
+        }
+        result[row.parent_wave_id] = {
+          ...existing,
+          hidden_followed_subwave_unread_drops: Number(
+            row.hidden_followed_subwave_unread_drops
+          ),
+          first_hidden_followed_subwave_unread_drop_serial_no:
+            this.toNullableNumber(
+              row.first_hidden_followed_subwave_unread_drop_serial_no
+            )
+        };
+      }
+
+      return result;
     } finally {
       ctx.timer?.stop(timerKey);
     }
@@ -1936,10 +2166,23 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     direct_message?: boolean;
     pinned: ApiWavesPinFilter | null;
   }): Promise<WaveEntity[]> {
-    const sortExpr = param.authenticated_user_id
+    const useFollowedSubwaveActivity =
+      !!param.authenticated_user_id &&
+      param.only_waves_followed_by_authenticated_user;
+    const rootSortExpr = param.authenticated_user_id
       ? `CASE WHEN COALESCE(wrm.muted, false) = true THEN 0 ELSE wm.latest_drop_timestamp END`
       : `wm.latest_drop_timestamp`;
-    const sql = `with wids as (select w.id, ${sortExpr} as sort_val from ${WAVES_TABLE} w 
+    const sortExpr = useFollowedSubwaveActivity
+      ? `GREATEST(${rootSortExpr}, COALESCE(fsa.latest_followed_subwave_activity_timestamp, 0))`
+      : rootSortExpr;
+    const followedSubwaveActivityCte = useFollowedSubwaveActivity
+      ? `${this.getFollowedSubwaveActivityCte({
+          groupIds: param.eligibleGroups,
+          identityParamName: 'authenticated_user_id',
+          eligibleGroupsParamName: 'eligibleGroups'
+        })},`
+      : ``;
+    const sql = `with ${followedSubwaveActivityCte} wids as (select w.id, ${sortExpr} as sort_val from ${WAVES_TABLE} w
     ${
       param.pinned === ApiWavesPinFilter.Pinned && param.authenticated_user_id
         ? ` join ${PINNED_WAVES_TABLE} pw on pw.wave_id = w.id and pw.profile_id = :authenticated_user_id `
@@ -1952,7 +2195,16 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
    }
     ${
       param.only_waves_followed_by_authenticated_user
-        ? `join ${IDENTITY_SUBSCRIPTIONS_TABLE} f on f.target_type = 'WAVE' and f.target_action = 'DROP_CREATED' and f.target_id = w.id`
+        ? `left join ${IDENTITY_SUBSCRIPTIONS_TABLE} f
+             on f.subscriber_id = :authenticated_user_id
+            and f.target_type = :wave_target_type
+            and f.target_action = :drop_created_action
+            and f.target_id = w.id`
+        : ``
+    }
+    ${
+      useFollowedSubwaveActivity
+        ? `left join followed_subwave_activity fsa on fsa.parent_wave_id = w.id`
         : ``
     }
     join ${WAVE_METRICS_TABLE} wm on wm.wave_id = w.id 
@@ -1965,7 +2217,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
      ${param.pinned === ApiWavesPinFilter.NotPinned && param.authenticated_user_id ? ` pw.profile_id is null and ` : ``}
     ${
       param.only_waves_followed_by_authenticated_user
-        ? `f.subscriber_id = :authenticated_user_id and`
+        ? `(${useFollowedSubwaveActivity ? `f.id is not null or fsa.parent_wave_id is not null` : `f.id is not null`}) and`
         : ``
     }
      ${
@@ -1978,7 +2230,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
        param.eligibleGroups.length
          ? `or w.visibility_group_id in (:eligibleGroups)`
          : ``
-     }) order by sort_val desc limit :limit offset :offset) select w.* from ${WAVES_TABLE} w join wids on w.id = wids.id order by wids.sort_val desc`;
+     }) order by sort_val desc, w.id desc limit :limit offset :offset) select w.* from ${WAVES_TABLE} w join wids on w.id = wids.id order by wids.sort_val desc, w.id desc`;
     return this.db
       .execute<
         Omit<
@@ -1991,7 +2243,11 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           participation_required_metadata: string;
           decisions_strategy: string;
         }
-      >(sql, param)
+      >(sql, {
+        ...param,
+        wave_target_type: ActivityEventTargetType.WAVE,
+        drop_created_action: ActivityEventAction.DROP_CREATED
+      })
       .then((res) =>
         res.map((it) => ({
           ...it,
@@ -2024,6 +2280,18 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     min_rep_sort_score?: number;
     visibility_tier?: ApiWaveVisibilityTier;
   }): Promise<WaveEntity[]> {
+    if (
+      param.only_waves_followed_by_authenticated_user &&
+      param.exclude_followed
+    ) {
+      throw new Error(
+        'Cannot request followed-only waves and exclude-followed waves together'
+      );
+    }
+    const useFollowedSubwaveActivity =
+      !!param.authenticated_user_id &&
+      (param.only_waves_followed_by_authenticated_user ||
+        param.exclude_followed);
     const applyMutedScoreFloor = (column: string) =>
       param.authenticated_user_id
         ? `CASE WHEN COALESCE(wrm.muted, false) = true THEN 0 ELSE ${column} END`
@@ -2042,6 +2310,11 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     const visibilityTierExpr = param.authenticated_user_id
       ? `CASE WHEN COALESCE(wrm.muted, false) = true THEN NULL ELSE wm.wave_visibility_tier END`
       : `wm.wave_visibility_tier`;
+    const latestActivityExpr =
+      useFollowedSubwaveActivity &&
+      param.only_waves_followed_by_authenticated_user
+        ? `GREATEST(${applyMutedScoreFloor('wm.latest_drop_timestamp')}, COALESCE(fsa.latest_followed_subwave_activity_timestamp, 0))`
+        : `wm.latest_drop_timestamp`;
     const filters = [
       param.min_visibility_score !== undefined
         ? `${visibilityScoreExpr} >= :min_visibility_score`
@@ -2062,12 +2335,19 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       .filter((it): it is string => !!it)
       .join(' and ');
     const scoreFilters = filters ? `and ${filters}` : ``;
-    const sql = `with wids as (
+    const followedSubwaveActivityCte = useFollowedSubwaveActivity
+      ? `${this.getFollowedSubwaveActivityCte({
+          groupIds: param.eligibleGroups,
+          identityParamName: 'authenticated_user_id',
+          eligibleGroupsParamName: 'eligibleGroups'
+        })},`
+      : ``;
+    const sql = `with ${followedSubwaveActivityCte} wids as (
       select
         w.id,
         ${tierRankExpr} as tier_rank,
         ${scoreExpr} as sort_val,
-        wm.latest_drop_timestamp
+        ${latestActivityExpr} as latest_drop_timestamp
       from ${WAVES_TABLE} w
       ${
         param.pinned === ApiWavesPinFilter.Pinned && param.authenticated_user_id
@@ -2081,17 +2361,18 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           : ``
       }
       ${
-        param.only_waves_followed_by_authenticated_user
-          ? `join ${IDENTITY_SUBSCRIPTIONS_TABLE} f on f.target_type = 'WAVE' and f.target_action = 'DROP_CREATED' and f.target_id = w.id`
+        param.only_waves_followed_by_authenticated_user ||
+        param.exclude_followed
+          ? `left join ${IDENTITY_SUBSCRIPTIONS_TABLE} f
+              on f.subscriber_id = :authenticated_user_id
+             and f.target_id = w.id
+             and f.target_type = :wave_target_type
+             and f.target_action = :drop_created_action`
           : ``
       }
       ${
-        param.exclude_followed
-          ? `left join ${IDENTITY_SUBSCRIPTIONS_TABLE} xf
-              on xf.subscriber_id = :authenticated_user_id
-             and xf.target_id = w.id
-             and xf.target_type = :wave_target_type
-             and xf.target_action = :drop_created_action`
+        useFollowedSubwaveActivity
+          ? `left join followed_subwave_activity fsa on fsa.parent_wave_id = w.id`
           : ``
       }
       join ${WAVE_METRICS_TABLE} wm on wm.wave_id = w.id
@@ -2104,10 +2385,14 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         ${param.pinned === ApiWavesPinFilter.NotPinned && param.authenticated_user_id ? ` pw.profile_id is null and ` : ``}
         ${
           param.only_waves_followed_by_authenticated_user
-            ? `f.subscriber_id = :authenticated_user_id and`
+            ? `(${useFollowedSubwaveActivity ? `f.id is not null or fsa.parent_wave_id is not null` : `f.id is not null`}) and`
             : ``
         }
-        ${param.exclude_followed ? `xf.id is null and` : ``}
+        ${
+          param.exclude_followed
+            ? `f.id is null${useFollowedSubwaveActivity ? ` and fsa.parent_wave_id is null` : ``} and`
+            : ``
+        }
         ${
           param.direct_message !== undefined
             ? ` w.is_direct_message = :direct_message and `
@@ -2120,7 +2405,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
             : ``
         })
         ${scoreFilters}
-      order by tier_rank asc, sort_val desc, wm.latest_drop_timestamp desc, w.id desc
+      order by tier_rank asc, sort_val desc, latest_drop_timestamp desc, w.id desc
       limit :limit offset :offset
     )
     select w.*
