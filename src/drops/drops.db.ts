@@ -3529,14 +3529,18 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       hide_link_preview: boolean;
     },
     ctx: RequestContext
-  ): Promise<void> {
+  ): Promise<boolean> {
     ctx.timer?.start(`${this.constructor.name}->updateHideLinkPreview`);
-    await this.db.execute(
-      `update ${DROPS_TABLE} set hide_link_preview = :hide_link_preview where id = :drop_id`,
+    const result = await this.db.execute(
+      `update ${DROPS_TABLE}
+       set hide_link_preview = :hide_link_preview
+       where id = :drop_id
+         and not (hide_link_preview <=> :hide_link_preview)`,
       { drop_id, hide_link_preview },
       { wrappedConnection: ctx.connection }
     );
     ctx.timer?.stop(`${this.constructor.name}->updateHideLinkPreview`);
+    return this.db.getAffectedRows(result) > 0;
   }
 
   async getDropAuthorHandle(
