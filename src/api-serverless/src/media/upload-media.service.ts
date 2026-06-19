@@ -345,43 +345,61 @@ export class UploadMediaService {
     upload: DropMediaUploadEntity;
     parts: { etag: string; part_no: number }[];
   }): Promise<ApiCompleteMultipartUploadResponse> {
-    const completeCmd = new CompleteMultipartUploadCommand({
-      Bucket: upload.ingest_bucket,
-      Key: upload.ingest_key,
-      UploadId: upload.s3_upload_id,
-      MultipartUpload: {
-        Parts: parts.map((part) => ({
-          ETag: part.etag.replace(/(^")|("$)/g, ''),
-          PartNumber: part.part_no
-        }))
-      }
-    });
-
-    await this.getIngestS3().send(completeCmd);
-    const markedProcessing = await this.dropMediaUploadsDb.transitionStatus({
-      id: upload.id,
-      fromStatuses: [DropMediaUploadStatus.UPLOADING],
-      toStatus: DropMediaUploadStatus.PROCESSING
-    });
-    if (!markedProcessing) {
-      throw new Error(
-        `Drop media upload ${upload.id} is not in uploading state`
-      );
+    if (upload.status === DropMediaUploadStatus.READY) {
+      return {
+        media_url: upload.public_url,
+        media_upload_id: upload.id,
+        media_status: ApiDropMediaStatus.Ready
+      };
     }
-    try {
-      await this.enqueueSanitization({ mediaUploadId: upload.id });
-    } catch (error) {
-      await this.dropMediaUploadsDb.transitionStatus({
-        id: upload.id,
-        fromStatuses: [DropMediaUploadStatus.PROCESSING],
-        toStatus: DropMediaUploadStatus.FAILED,
-        patch: {
-          error_reason: error instanceof Error ? error.message : String(error),
-          completed_at: Time.currentMillis()
+    if (upload.status === DropMediaUploadStatus.FAILED) {
+      throw new BadRequestException('Media upload has failed');
+    }
+
+    if (upload.status === DropMediaUploadStatus.UPLOADING) {
+      const completeCmd = new CompleteMultipartUploadCommand({
+        Bucket: upload.ingest_bucket,
+        Key: upload.ingest_key,
+        UploadId: upload.s3_upload_id,
+        MultipartUpload: {
+          Parts: parts.map((part) => ({
+            ETag: part.etag.replace(/(^")|("$)/g, ''),
+            PartNumber: part.part_no
+          }))
         }
       });
-      throw error;
+
+      await this.getIngestS3().send(completeCmd);
+      const markedProcessing = await this.dropMediaUploadsDb.transitionStatus({
+        id: upload.id,
+        fromStatuses: [DropMediaUploadStatus.UPLOADING],
+        toStatus: DropMediaUploadStatus.PROCESSING
+      });
+      if (!markedProcessing) {
+        throw new Error(
+          `Drop media upload ${upload.id} is not in uploading state`
+        );
+      }
+    } else if (upload.status === DropMediaUploadStatus.SANITIZING) {
+      return {
+        media_url: upload.public_url,
+        media_upload_id: upload.id,
+        media_status: ApiDropMediaStatus.Processing
+      };
+    } else if (upload.status !== DropMediaUploadStatus.PROCESSING) {
+      throw new Error(
+        `Drop media upload ${upload.id} is ${upload.status}, not processing`
+      );
     }
+
+    try {
+      await this.enqueueSanitization({ mediaUploadId: upload.id });
+    } catch {
+      throw new Error(
+        `Failed to enqueue sanitization for media upload ${upload.id}`
+      );
+    }
+
     return {
       media_url: upload.public_url,
       media_upload_id: upload.id,

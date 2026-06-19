@@ -35,7 +35,7 @@ const ALLOWED_FORMAT_MIME_TYPES = {
 } as const;
 
 type AllowedSharpFormat = keyof typeof ALLOWED_FORMAT_MIME_TYPES;
-const SANITIZER_CLAIM_STALE_MS = Time.minutes(15).toMillis();
+const SANITIZER_CLAIM_STALE_MS = Time.minutes(20).toMillis();
 
 export class PermanentMediaSanitizationError extends Error {
   constructor(message: string) {

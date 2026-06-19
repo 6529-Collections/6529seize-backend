@@ -291,6 +291,7 @@ describe('UploadMediaService', () => {
       findByPublicKeyAndS3UploadId: jest.fn().mockResolvedValue({
         id: 'media-upload-123',
         profile_id: 'author-123',
+        status: 'uploading',
         ingest_bucket: 'ingest-bucket',
         ingest_key: 'staging/drop-media-ingest/drops/key.jpg',
         s3_upload_id: 'upload-123',
@@ -327,6 +328,99 @@ describe('UploadMediaService', () => {
       fromStatuses: ['uploading'],
       toStatus: 'processing'
     });
+    expect(enqueue).toHaveBeenCalledWith({
+      mediaUploadId: 'media-upload-123'
+    });
+    expect(result).toEqual({
+      media_url: `${CLOUDFRONT_LINK}/drops/key.jpg`,
+      media_upload_id: 'media-upload-123',
+      media_status: ApiDropMediaStatus.Processing
+    });
+  });
+
+  it('keeps upload processing when sanitization enqueue fails after completion', async () => {
+    const ingestS3 = {
+      send: jest.fn().mockResolvedValue({})
+    };
+    const uploadsDb = {
+      findByPublicKeyAndS3UploadId: jest.fn().mockResolvedValue({
+        id: 'media-upload-123',
+        profile_id: 'author-123',
+        status: 'uploading',
+        ingest_bucket: 'ingest-bucket',
+        ingest_key: 'staging/drop-media-ingest/drops/key.jpg',
+        s3_upload_id: 'upload-123',
+        public_url: `${CLOUDFRONT_LINK}/drops/key.jpg`
+      }),
+      transitionStatus: jest.fn().mockResolvedValue(true)
+    };
+    const enqueue = jest.fn().mockRejectedValue(new Error('sqs maybe sent'));
+
+    const service = new UploadMediaService(
+      () =>
+        ({
+          send: jest.fn()
+        }) as any,
+      () => ingestS3 as any,
+      uploadsDb as any,
+      enqueue
+    );
+
+    await expect(
+      service.completeMultipartUpload({
+        key: 'drops/key.jpg',
+        upload_id: 'upload-123',
+        parts: [{ etag: '"etag-1"', part_no: 1 }],
+        authenticatedProfileId: 'author-123'
+      })
+    ).rejects.toThrow(
+      'Failed to enqueue sanitization for media upload media-upload-123'
+    );
+    expect(uploadsDb.transitionStatus).toHaveBeenCalledTimes(1);
+    expect(uploadsDb.transitionStatus).toHaveBeenCalledWith({
+      id: 'media-upload-123',
+      fromStatuses: ['uploading'],
+      toStatus: 'processing'
+    });
+  });
+
+  it('re-enqueues sanitization when completion is retried for a processing upload', async () => {
+    const ingestS3 = {
+      send: jest.fn()
+    };
+    const uploadsDb = {
+      findByPublicKeyAndS3UploadId: jest.fn().mockResolvedValue({
+        id: 'media-upload-123',
+        profile_id: 'author-123',
+        status: 'processing',
+        ingest_bucket: 'ingest-bucket',
+        ingest_key: 'staging/drop-media-ingest/drops/key.jpg',
+        s3_upload_id: 'upload-123',
+        public_url: `${CLOUDFRONT_LINK}/drops/key.jpg`
+      }),
+      transitionStatus: jest.fn()
+    };
+    const enqueue = jest.fn().mockResolvedValue(undefined);
+
+    const service = new UploadMediaService(
+      () =>
+        ({
+          send: jest.fn()
+        }) as any,
+      () => ingestS3 as any,
+      uploadsDb as any,
+      enqueue
+    );
+
+    const result = await service.completeMultipartUpload({
+      key: 'drops/key.jpg',
+      upload_id: 'upload-123',
+      parts: [{ etag: '"etag-1"', part_no: 1 }],
+      authenticatedProfileId: 'author-123'
+    });
+
+    expect(ingestS3.send).not.toHaveBeenCalled();
+    expect(uploadsDb.transitionStatus).not.toHaveBeenCalled();
     expect(enqueue).toHaveBeenCalledWith({
       mediaUploadId: 'media-upload-123'
     });

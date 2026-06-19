@@ -166,13 +166,19 @@ export class DropMediaUploadsDb extends LazyDbAccessCompatibleService {
     const assignments = Object.keys(allowedPatch)
       .map((key) => `${key} = :${key}`)
       .join(', ');
+    const params = {
+      id,
+      fromStatuses,
+      ...allowedPatch,
+      ...(updatedBefore === undefined ? {} : { updatedBefore })
+    };
     const result = await this.db.execute(
       `update ${DROP_MEDIA_UPLOADS_TABLE}
        set ${assignments}
        where id = :id
          and status in (:fromStatuses)
          ${updatedBefore === undefined ? '' : 'and updated_at < :updatedBefore'}`,
-      { id, fromStatuses, updatedBefore, ...allowedPatch },
+      params,
       ctx.connection ? { wrappedConnection: ctx.connection } : undefined
     );
     return this.db.getAffectedRows(result) === 1;
