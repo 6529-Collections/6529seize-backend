@@ -24,6 +24,7 @@ export interface WsMessage<MESSAGE_DATA> {
 }
 
 export const DROP_UPDATE_REASON_POLL_RESPONSE = 'POLL_RESPONSE';
+export const DROP_UPDATE_REASON_MEDIA_STATUS = 'MEDIA_STATUS';
 
 export function dropUpdateMessage(
   data: ApiDrop,

@@ -65,6 +65,7 @@ export * from '../models/ApiCreateAttachmentMultipartUploadRequest';
 export * from '../models/ApiCreateAttachmentMultipartUploadResponse';
 export * from '../models/ApiCreateConnectionShareRequest';
 export * from '../models/ApiCreateConnectionShareResponse';
+export * from '../models/ApiCreateDropMedia';
 export * from '../models/ApiCreateDropPart';
 export * from '../models/ApiCreateDropPollRequest';
 export * from '../models/ApiCreateDropRequest';
@@ -118,6 +119,7 @@ export * from '../models/ApiDropGroupMention';
 export * from '../models/ApiDropId';
 export * from '../models/ApiDropMainType';
 export * from '../models/ApiDropMedia';
+export * from '../models/ApiDropMediaStatus';
 export * from '../models/ApiDropMentionedUser';
 export * from '../models/ApiDropMetadata';
 export * from '../models/ApiDropMetadataResponse';
@@ -551,7 +553,7 @@ import { ApiCommunityMetricsSeries } from '../models/ApiCommunityMetricsSeries';
 import { ApiCompleteAttachmentMultipartUploadRequest } from '../models/ApiCompleteAttachmentMultipartUploadRequest';
 import { ApiCompleteMultipartUploadRequest } from '../models/ApiCompleteMultipartUploadRequest';
 import { ApiCompleteMultipartUploadRequestPart } from '../models/ApiCompleteMultipartUploadRequestPart';
-import { ApiCompleteMultipartUploadResponse } from '../models/ApiCompleteMultipartUploadResponse';
+import { ApiCompleteMultipartUploadResponse     } from '../models/ApiCompleteMultipartUploadResponse';
 import { ApiConsolidatedTdh } from '../models/ApiConsolidatedTdh';
 import { ApiConsolidatedTdhMetrics                   } from '../models/ApiConsolidatedTdhMetrics';
 import { ApiConsolidatedTdhMetricsCollector } from '../models/ApiConsolidatedTdhMetricsCollector';
@@ -563,6 +565,7 @@ import { ApiCreateAttachmentMultipartUploadRequest   } from '../models/ApiCreate
 import { ApiCreateAttachmentMultipartUploadResponse     } from '../models/ApiCreateAttachmentMultipartUploadResponse';
 import { ApiCreateConnectionShareRequest, ApiCreateConnectionShareRequestTargetClientTypeEnum    } from '../models/ApiCreateConnectionShareRequest';
 import { ApiCreateConnectionShareResponse    , ApiCreateConnectionShareResponseTargetClientTypeEnum    } from '../models/ApiCreateConnectionShareResponse';
+import { ApiCreateDropMedia } from '../models/ApiCreateDropMedia';
 import { ApiCreateDropPart } from '../models/ApiCreateDropPart';
 import { ApiCreateDropPollRequest } from '../models/ApiCreateDropPollRequest';
 import { ApiCreateDropRequest                 } from '../models/ApiCreateDropRequest';
@@ -615,7 +618,8 @@ import { ApiDropCurationRequest } from '../models/ApiDropCurationRequest';
 import { ApiDropGroupMention } from '../models/ApiDropGroupMention';
 import { ApiDropId } from '../models/ApiDropId';
 import { ApiDropMainType } from '../models/ApiDropMainType';
-import { ApiDropMedia } from '../models/ApiDropMedia';
+import { ApiDropMedia      } from '../models/ApiDropMedia';
+import { ApiDropMediaStatus } from '../models/ApiDropMediaStatus';
 import { ApiDropMentionedUser } from '../models/ApiDropMentionedUser';
 import { ApiDropMetadata } from '../models/ApiDropMetadata';
 import { ApiDropMetadataResponse } from '../models/ApiDropMetadataResponse';
@@ -820,7 +824,7 @@ import { ApiSessionRefreshWebRequest, ApiSessionRefreshWebRequestClientTypeEnum 
 import { ApiSessionWebResponse    , ApiSessionWebResponseClientTypeEnum   } from '../models/ApiSessionWebResponse';
 import { ApiSetPinnedDropRequest } from '../models/ApiSetPinnedDropRequest';
 import { ApiSetProfileWaveRequest } from '../models/ApiSetProfileWaveRequest';
-import { ApiStartMultipartMediaUploadResponse } from '../models/ApiStartMultipartMediaUploadResponse';
+import { ApiStartMultipartMediaUploadResponse     } from '../models/ApiStartMultipartMediaUploadResponse';
 import { ApiSubmissionDropContext       } from '../models/ApiSubmissionDropContext';
 import { ApiSubmissionDropStatus } from '../models/ApiSubmissionDropStatus';
 import { ApiSubmissionDropVoting } from '../models/ApiSubmissionDropVoting';
@@ -1024,6 +1028,7 @@ let enumsMap: Set<string> = new Set<string>([
     "ApiDecentralizedMediaProtocol",
     "ApiDropGroupMention",
     "ApiDropMainType",
+    "ApiDropMediaStatus",
     "ApiDropSearchStrategy",
     "ApiDropSubscriptionTargetAction",
     "ApiDropType",
@@ -1164,6 +1169,7 @@ let typeMap: {[index: string]: any} = {
     "ApiCreateAttachmentMultipartUploadResponse": ApiCreateAttachmentMultipartUploadResponse,
     "ApiCreateConnectionShareRequest": ApiCreateConnectionShareRequest,
     "ApiCreateConnectionShareResponse": ApiCreateConnectionShareResponse,
+    "ApiCreateDropMedia": ApiCreateDropMedia,
     "ApiCreateDropPart": ApiCreateDropPart,
     "ApiCreateDropPollRequest": ApiCreateDropPollRequest,
     "ApiCreateDropRequest": ApiCreateDropRequest,
