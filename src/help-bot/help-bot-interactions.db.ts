@@ -12,6 +12,7 @@ import { HELP_BOT_KNOWLEDGE_VERSION } from './help-bot.config';
 export interface HelpBotInteractionRow {
   readonly id: string;
   readonly trigger_drop_id: string;
+  readonly target_drop_id: string | null;
   readonly wave_id: string;
   readonly author_id: string;
   readonly trigger_type: HelpBotInteractionTriggerType;
@@ -29,6 +30,7 @@ export interface HelpBotInteractionRow {
 
 export interface InsertHelpBotInteractionRequest {
   readonly triggerDropId: string;
+  readonly targetDropId: string;
   readonly waveId: string;
   readonly authorProfileId: string;
   readonly triggerType: HelpBotInteractionTriggerType;
@@ -61,6 +63,7 @@ export class HelpBotInteractionsDb extends LazyDbAccessCompatibleService {
           (
             id,
             trigger_drop_id,
+            target_drop_id,
             wave_id,
             author_id,
             trigger_type,
@@ -75,6 +78,7 @@ export class HelpBotInteractionsDb extends LazyDbAccessCompatibleService {
           (
             :id,
             :triggerDropId,
+            :targetDropId,
             :waveId,
             :authorProfileId,
             :triggerType,
@@ -89,6 +93,7 @@ export class HelpBotInteractionsDb extends LazyDbAccessCompatibleService {
       {
         id,
         triggerDropId: request.triggerDropId,
+        targetDropId: request.targetDropId,
         waveId: request.waveId,
         authorProfileId: request.authorProfileId,
         triggerType: request.triggerType,

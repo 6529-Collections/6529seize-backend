@@ -31,15 +31,17 @@ export class HelpBotDropWriterService {
     {
       botProfileId,
       waveId,
-      triggerDropId,
+      replyToDropId,
       interactionId,
-      message
+      message,
+      mentionedHandles = []
     }: {
       readonly botProfileId: string;
       readonly waveId: string;
-      readonly triggerDropId: string;
+      readonly replyToDropId: string;
       readonly interactionId: string;
       readonly message: string;
+      readonly mentionedHandles?: string[];
     },
     ctx: RequestContext
   ): Promise<ApiDrop> {
@@ -48,7 +50,7 @@ export class HelpBotDropWriterService {
       drop_id: null,
       wave_id: waveId,
       reply_to: {
-        drop_id: triggerDropId,
+        drop_id: replyToDropId,
         drop_part_id: 1
       },
       title: null,
@@ -61,7 +63,7 @@ export class HelpBotDropWriterService {
         }
       ],
       referenced_nfts: [],
-      mentioned_users: [],
+      mentioned_users: mentionedHandles.map((handle) => ({ handle })),
       mentioned_waves: [],
       metadata: [
         {

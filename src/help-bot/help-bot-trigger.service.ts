@@ -73,6 +73,7 @@ export class HelpBotTriggerService {
       const { interaction, created } = await this.interactionsDb.insertSeen(
         {
           triggerDropId: trigger.triggerDropId,
+          targetDropId: trigger.targetDropId,
           waveId: trigger.waveId,
           authorProfileId: trigger.authorProfileId,
           triggerType: trigger.triggerType,
@@ -88,7 +89,7 @@ export class HelpBotTriggerService {
       await this.reactionService.setReaction(
         {
           botProfileId,
-          dropId: trigger.triggerDropId,
+          dropId: trigger.targetDropId,
           waveId: trigger.waveId,
           reaction: HELP_BOT_SEEN_REACTION
         },
@@ -104,7 +105,7 @@ export class HelpBotTriggerService {
         await this.handleEnqueueFailure({
           botProfileId,
           interactionId: interaction.id,
-          triggerDropId: trigger.triggerDropId,
+          targetDropId: trigger.targetDropId,
           waveId: trigger.waveId,
           error,
           ctx
@@ -146,14 +147,14 @@ export class HelpBotTriggerService {
   private async handleEnqueueFailure({
     botProfileId,
     interactionId,
-    triggerDropId,
+    targetDropId,
     waveId,
     error,
     ctx
   }: {
     readonly botProfileId: string;
     readonly interactionId: string;
-    readonly triggerDropId: string;
+    readonly targetDropId: string;
     readonly waveId: string;
     readonly error: unknown;
     readonly ctx: RequestContext;
@@ -166,7 +167,7 @@ export class HelpBotTriggerService {
       await this.reactionService.setReaction(
         {
           botProfileId,
-          dropId: triggerDropId,
+          dropId: targetDropId,
           waveId,
           reaction: HELP_BOT_FAILURE_REACTION
         },
@@ -176,7 +177,7 @@ export class HelpBotTriggerService {
         {
           botProfileId,
           waveId,
-          triggerDropId,
+          replyToDropId: targetDropId,
           interactionId,
           message: HELP_BOT_TECHNICAL_FAILURE_REPLY
         },

@@ -40,10 +40,12 @@ function createRequest(
 
 function createDrop({
   id,
-  authorId = 'user-profile'
+  authorId = 'user-profile',
+  content = ''
 }: {
   readonly id: string;
   readonly authorId?: string;
+  readonly content?: string;
 }): ApiDrop {
   return {
     id,
@@ -53,7 +55,11 @@ function createDrop({
     author: {
       id: authorId
     },
-    parts: []
+    parts: [
+      {
+        content
+      }
+    ]
   } as unknown as ApiDrop;
 }
 
@@ -68,6 +74,7 @@ describe('detectHelpBotTrigger', () => {
 
     expect(trigger).toEqual({
       triggerDropId: 'drop-1',
+      targetDropId: 'drop-1',
       waveId: 'wave-1',
       authorProfileId: 'user-profile',
       question: 'what is TDH?',
@@ -87,7 +94,34 @@ describe('detectHelpBotTrigger', () => {
     });
 
     expect(trigger?.triggerType).toBe(HelpBotInteractionTriggerType.MENTION);
+    expect(trigger?.targetDropId).toBe('drop-2');
     expect(trigger?.question).toBe('How do subscriptions work?');
+  });
+
+  it('uses the parent drop as the question target when a reply only tags the bot', () => {
+    const trigger = detectHelpBotTrigger({
+      request: createRequest('@6529help', {
+        replyToDropId: 'original-question'
+      }),
+      createdDrop: createDrop({ id: 'summon-drop', authorId: 'summoner' }),
+      parentDrop: createDrop({
+        id: 'original-question',
+        authorId: 'question-author',
+        content: 'what is tdh'
+      }),
+      authorProfileId: 'summoner',
+      botProfileId: 'bot-profile'
+    });
+
+    expect(trigger).toEqual({
+      triggerDropId: 'summon-drop',
+      targetDropId: 'original-question',
+      waveId: 'wave-1',
+      authorProfileId: 'summoner',
+      question: 'what is tdh',
+      triggerType: HelpBotInteractionTriggerType.MENTION,
+      parentBotDropId: null
+    });
   });
 
   it('detects direct replies to bot drops without requiring a mention', () => {
@@ -102,6 +136,7 @@ describe('detectHelpBotTrigger', () => {
     });
 
     expect(trigger?.triggerType).toBe(HelpBotInteractionTriggerType.BOT_REPLY);
+    expect(trigger?.targetDropId).toBe('drop-3');
     expect(trigger?.parentBotDropId).toBe('bot-drop');
   });
 

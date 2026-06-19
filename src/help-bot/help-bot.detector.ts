@@ -13,6 +13,7 @@ export interface HelpBotTriggerDetectionInput {
 
 export interface HelpBotTriggerDetection {
   readonly triggerDropId: string;
+  readonly targetDropId: string;
   readonly waveId: string;
   readonly authorProfileId: string;
   readonly question: string;
@@ -45,6 +46,15 @@ function extractText(request: ApiCreateDropRequest): string {
     .map((part) => part.content ?? '')
     .join('\n')
     .trim();
+}
+
+function extractDropText(drop: ApiDrop | null | undefined): string {
+  return (
+    drop?.parts
+      .map((part) => part.content ?? '')
+      .join('\n')
+      .trim() ?? ''
+  );
 }
 
 function stripBotMention(text: string): string {
@@ -81,19 +91,43 @@ export function detectHelpBotTrigger(
 
   const text = extractText(input.request);
   const question = stripBotMention(text);
-  if (!isMeaningfulQuestion(question)) {
+
+  if (hasExplicitMention(input.request, text)) {
+    if (isMeaningfulQuestion(question)) {
+      return {
+        triggerDropId: input.createdDrop.id,
+        targetDropId: input.createdDrop.id,
+        waveId: input.createdDrop.wave.id,
+        authorProfileId: input.authorProfileId,
+        question,
+        triggerType: HelpBotInteractionTriggerType.MENTION,
+        parentBotDropId: null
+      };
+    }
+
+    const parentDrop = input.parentDrop;
+    const parentQuestion = stripBotMention(extractDropText(parentDrop));
+    if (
+      parentDrop &&
+      parentDrop.author.id !== input.botProfileId &&
+      isMeaningfulQuestion(parentQuestion)
+    ) {
+      return {
+        triggerDropId: input.createdDrop.id,
+        targetDropId: parentDrop.id,
+        waveId: input.createdDrop.wave.id,
+        authorProfileId: input.authorProfileId,
+        question: parentQuestion,
+        triggerType: HelpBotInteractionTriggerType.MENTION,
+        parentBotDropId: null
+      };
+    }
+
     return null;
   }
 
-  if (hasExplicitMention(input.request, text)) {
-    return {
-      triggerDropId: input.createdDrop.id,
-      waveId: input.createdDrop.wave.id,
-      authorProfileId: input.authorProfileId,
-      question,
-      triggerType: HelpBotInteractionTriggerType.MENTION,
-      parentBotDropId: null
-    };
+  if (!isMeaningfulQuestion(question)) {
+    return null;
   }
 
   const parentBotDropId =
@@ -104,6 +138,7 @@ export function detectHelpBotTrigger(
   if (parentBotDropId) {
     return {
       triggerDropId: input.createdDrop.id,
+      targetDropId: input.createdDrop.id,
       waveId: input.createdDrop.wave.id,
       authorProfileId: input.authorProfileId,
       question,

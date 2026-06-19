@@ -1,3 +1,5 @@
+import { env } from '@/env';
+
 export const HELP_BOT_HANDLE = '6529help';
 export const HELP_BOT_BASE_URL = 'https://6529.io';
 export const HELP_BOT_INDEX_URL = `${HELP_BOT_BASE_URL}/help-index.json`;
@@ -13,9 +15,46 @@ export const HELP_BOT_REPLY_QUEUE_NAME = 'help-bot-replies';
 export const HELP_BOT_SEEN_REACTION = '👀';
 export const HELP_BOT_SUCCESS_REACTION = '✅';
 export const HELP_BOT_FAILURE_REACTION = '⚠️';
+export const HELP_BOT_TECH_TEAM_HANDLES_ENV = 'HELP_BOT_TECH_TEAM_HANDLES';
 
-export const HELP_BOT_NO_RELIABLE_SOURCE_REPLY =
-  "I saw this, but I couldn't find a reliable answer from the current 6529 docs. Try rephrasing, or ask in 6529 Tech Feedback.";
+export const HELP_BOT_NO_RELIABLE_SOURCE_BASE_REPLY =
+  "I don't have enough knowledge to help you here.";
 
 export const HELP_BOT_TECHNICAL_FAILURE_REPLY =
   'I saw this, but I hit a temporary issue while looking it up. Please try again in a minute.';
+
+function normalizeMentionHandle(handle: string): string | null {
+  const normalized = handle.trim().replace(/^@/, '').trim();
+  if (!/^[a-z0-9][a-z0-9_-]{0,99}$/i.test(normalized)) {
+    return null;
+  }
+  return normalized;
+}
+
+export function getHelpBotTechTeamMentionHandles(): string[] {
+  const seen = new Set<string>();
+  const handles: string[] = [];
+  for (const rawHandle of env.getStringArray(HELP_BOT_TECH_TEAM_HANDLES_ENV)) {
+    const handle = normalizeMentionHandle(rawHandle);
+    if (!handle) {
+      continue;
+    }
+    const key = handle.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    handles.push(handle);
+  }
+  return handles;
+}
+
+export function buildHelpBotNoReliableSourceReply(
+  mentionedHandles: readonly string[] = getHelpBotTechTeamMentionHandles()
+): string {
+  if (!mentionedHandles.length) {
+    return HELP_BOT_NO_RELIABLE_SOURCE_BASE_REPLY;
+  }
+  const mentions = mentionedHandles.map((handle) => `@${handle}`).join(' ');
+  return `${HELP_BOT_NO_RELIABLE_SOURCE_BASE_REPLY} ${mentions}`;
+}

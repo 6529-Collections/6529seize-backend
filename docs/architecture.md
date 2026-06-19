@@ -296,7 +296,7 @@ Most long-running scheduled jobs have reserved concurrency set low, usually `1`,
 
 ## 6529 Help Bot Flow
 
-The V1 6529 Help Bot is intentionally bounded and fast. Drop creation remains the synchronous user write. After a drop is created, the API checks for an explicit `@6529help` mention or a direct reply to a prior bot-authored reply. When matched, it inserts one `help_bot_interactions` row keyed by `trigger_drop_id`, reacts to the triggering drop with the bot's seen marker, and sends `{ interaction_id }` to `help-bot-replies`.
+The V1 6529 Help Bot is intentionally bounded and fast. Drop creation remains the synchronous user write. After a drop is created, the API checks for an explicit `@6529help` mention or a direct reply to a prior bot-authored reply. When matched, it inserts one `help_bot_interactions` row keyed by `trigger_drop_id`, stores `target_drop_id` for the drop that should receive reactions/replies, reacts with the bot's seen marker, and sends `{ interaction_id }` to `help-bot-replies`.
 
 ```mermaid
 %%{init: {"flowchart": {"nodeSpacing": 24, "rankSpacing": 44, "curve": "basis"}} }%%
@@ -318,12 +318,14 @@ Important details:
 - The bot handle is hardcoded as `@6529help`; runtime resolves that handle to the current bot profile id before posting replies or reactions.
 - Creating the `6529help` profile activates runtime behavior; if that handle cannot be resolved, the bot no-ops.
 - The API enqueues reply jobs by the hardcoded SQS queue name `help-bot-replies`; no queue URL environment variable is required.
+- If a user replies to someone else's question with only `@6529help`, the bot uses the parent drop text as the question and targets the parent drop for reactions and the reply.
 - V1 retrieval uses the frontend-published `https://6529.io/help-index.json` artifact for product knowledge and a bounded public-data query-intent mode for aggregate backend data questions.
 - Bedrock selects a semantic public-data plan from a hardcoded catalog; Bedrock output never contains executable SQL, table names, columns, joins, or expressions.
 - The backend public-data compiler validates the selected entity, operation, metric, numeric filters, and limit, then emits parameterized SQL through the shared `SqlExecutor` with the read pool forced, hard row limits, and a MySQL execution-time hint injected by backend code.
 - Help index fetches use a short timeout; a cold load failure produces the technical-failure reply instead of a no-reliable-source answer.
 - Bedrock rendering uses a fixed short timeout; if it fails or times out, the worker falls back to deterministic wording when a reliable frontend record or public DB row exists.
-- If no reliable record exists, or a technical failure prevents answering, the worker posts a failure reply and changes the bot reaction to warning.
+- If no reliable record exists, the worker posts `I don't have enough knowledge to help you here.` and changes the bot reaction to warning. `HELP_BOT_TECH_TEAM_HANDLES` can optionally provide semicolon-separated handles that are appended as real mentions in that no-knowledge reply.
+- If a technical failure prevents answering, the worker posts the technical-failure reply and changes the bot reaction to warning.
 
 ## Drops -> Minting Claim Queue Flows
 

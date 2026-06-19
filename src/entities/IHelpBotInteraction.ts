@@ -25,6 +25,9 @@ export class HelpBotInteractionEntity {
   @Column({ type: 'varchar', length: 100 })
   trigger_drop_id!: string;
 
+  @Column({ type: 'varchar', length: 100, nullable: true, default: null })
+  target_drop_id!: string | null;
+
   @Column({ type: 'varchar', length: 100 })
   wave_id!: string;
 

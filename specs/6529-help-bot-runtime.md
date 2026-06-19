@@ -60,10 +60,11 @@ The bot must fail visibly.
 If the bot cannot produce a reliable answer from indexed sources:
 
 1. Replace 👀 with ⚠️.
-2. Reply:
+2. Reply without hallucinating. If `HELP_BOT_TECH_TEAM_HANDLES` is configured,
+   append those handles as mentions.
 
 ```text
-I saw this, but I couldn't find a reliable answer from the current 6529 docs. Try rephrasing, or ask in 6529 Tech Feedback.
+I don't have enough knowledge to help you here.
 ```
 
 If the bot hits a technical issue, timeout, or provider error:
@@ -248,6 +249,10 @@ message_created
   -> replace 👀 with ✅
 ```
 
+If a user replies to someone else's question with only `@6529help`, the bot uses
+the parent drop text as the question and targets the parent drop for 👀, ⚠️/✅,
+and the bot reply. The summoning drop remains the idempotency trigger.
+
 ### 5.2 Follow-up flow
 
 ```text
@@ -280,6 +285,7 @@ Recommended fields:
 
 - `id`
 - `trigger_drop_id`
+- `target_drop_id`
 - `wave_id`
 - `author_id`
 - `parent_bot_drop_id`
@@ -297,6 +303,8 @@ Recommended fields:
 Idempotency rules:
 
 - One interaction per triggering message.
+- Replies and reactions target `target_drop_id` when present, otherwise
+  `trigger_drop_id` for older rows.
 - If an interaction exists in `SEEN` or `ANSWERING`, do not enqueue another job.
 - If an interaction is `ANSWERED`, do not answer again unless explicit retry
   behavior is added later.
@@ -362,7 +370,14 @@ gm 🙂 Yes. To create a wave, click the + button at the top-right of the Waves 
 Bot:
 
 ```text
-I saw this, but I couldn't find a reliable answer from the current 6529 docs. Try rephrasing, or ask in 6529 Tech Feedback.
+I don't have enough knowledge to help you here.
+```
+
+When `HELP_BOT_TECH_TEAM_HANDLES` is configured as a semicolon-separated handle
+array, the bot appends those mentions, for example:
+
+```text
+I don't have enough knowledge to help you here. @6529tech @support
 ```
 
 ## 9. Queuing and Timeouts
@@ -421,8 +436,11 @@ private user data beyond what is needed for debugging and abuse controls.
 - Create bot identity.
 - Resolve the `@6529help` profile id from the hardcoded handle at runtime; profile existence is the activation gate, with no enable/profile/queue env var.
 - Detect explicit `@6529help` mentions.
+- Support mention-only replies to another user's question by answering the
+  original question drop.
 - Add 👀, answer from cached frontend records, replace with ✅.
 - Add failure reply path and ⚠️.
+- Optionally tag `HELP_BOT_TECH_TEAM_HANDLES` on no-reliable-source replies.
 - Trigger on direct replies to bot messages.
 - Use Bedrock wording with deterministic fallback when Bedrock is unavailable.
 - Fetch and cache the frontend-published `/help-index.json` artifact.

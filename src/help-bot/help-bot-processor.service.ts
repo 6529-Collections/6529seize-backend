@@ -6,9 +6,10 @@ import {
   HELP_BOT_BASE_URL,
   HELP_BOT_BEDROCK_MODEL_ID,
   HELP_BOT_FAILURE_REACTION,
-  HELP_BOT_NO_RELIABLE_SOURCE_REPLY,
   HELP_BOT_SUCCESS_REACTION,
-  HELP_BOT_TECHNICAL_FAILURE_REPLY
+  HELP_BOT_TECHNICAL_FAILURE_REPLY,
+  buildHelpBotNoReliableSourceReply,
+  getHelpBotTechTeamMentionHandles
 } from './help-bot.config';
 import { HelpBotAnswerer, HelpBotLlmRenderer } from './help-bot.answerer';
 import { HelpBotBedrockRenderer } from './help-bot.bedrock-renderer';
@@ -45,6 +46,12 @@ function extractDropText(drop: ApiDrop): string {
     .map((part) => part.content ?? '')
     .join('\n')
     .trim();
+}
+
+function getInteractionTargetDropId(
+  interaction: HelpBotInteractionRow
+): string {
+  return interaction.target_drop_id ?? interaction.trigger_drop_id;
 }
 
 export class HelpBotProcessorService {
@@ -103,7 +110,7 @@ export class HelpBotProcessorService {
         {
           botProfileId,
           waveId: interaction.wave_id,
-          triggerDropId: interaction.trigger_drop_id,
+          replyToDropId: getInteractionTargetDropId(interaction),
           interactionId: interaction.id,
           message: answer.answer
         },
@@ -119,7 +126,7 @@ export class HelpBotProcessorService {
       await this.reactionService.setReaction(
         {
           botProfileId,
-          dropId: interaction.trigger_drop_id,
+          dropId: getInteractionTargetDropId(interaction),
           waveId: interaction.wave_id,
           reaction: HELP_BOT_SUCCESS_REACTION
         },
@@ -170,13 +177,15 @@ export class HelpBotProcessorService {
     readonly interaction: HelpBotInteractionRow;
     readonly ctx: RequestContext;
   }): Promise<void> {
+    const mentionedHandles = getHelpBotTechTeamMentionHandles();
     const reply = await this.dropWriter.reply(
       {
         botProfileId,
         waveId: interaction.wave_id,
-        triggerDropId: interaction.trigger_drop_id,
+        replyToDropId: getInteractionTargetDropId(interaction),
         interactionId: interaction.id,
-        message: HELP_BOT_NO_RELIABLE_SOURCE_REPLY
+        message: buildHelpBotNoReliableSourceReply(mentionedHandles),
+        mentionedHandles
       },
       ctx
     );
@@ -190,7 +199,7 @@ export class HelpBotProcessorService {
     await this.reactionService.setReaction(
       {
         botProfileId,
-        dropId: interaction.trigger_drop_id,
+        dropId: getInteractionTargetDropId(interaction),
         waveId: interaction.wave_id,
         reaction: HELP_BOT_FAILURE_REACTION
       },
@@ -219,7 +228,7 @@ export class HelpBotProcessorService {
         {
           botProfileId,
           waveId: interaction.wave_id,
-          triggerDropId: interaction.trigger_drop_id,
+          replyToDropId: getInteractionTargetDropId(interaction),
           interactionId: interaction.id,
           message: HELP_BOT_TECHNICAL_FAILURE_REPLY
         },
@@ -229,7 +238,7 @@ export class HelpBotProcessorService {
       await this.reactionService.setReaction(
         {
           botProfileId,
-          dropId: interaction.trigger_drop_id,
+          dropId: getInteractionTargetDropId(interaction),
           waveId: interaction.wave_id,
           reaction: HELP_BOT_FAILURE_REACTION
         },
