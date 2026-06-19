@@ -13,6 +13,11 @@ export interface HelpBotPublicDataAnswerRequest {
   readonly previousBotAnswer?: string | null;
 }
 
+/**
+ * Public-data mode never executes SQL emitted by Bedrock. The model can only
+ * choose one query id and numeric params; executable SQL stays in the fixed
+ * backend-owned templates below.
+ */
 export const HELP_BOT_PUBLIC_DATA_QUERY_IDS = [
   'memes_in_season_count',
   'meme_tdh_rate',
@@ -47,12 +52,12 @@ export interface HelpBotPublicDataLlm {
 
 export interface HelpBotPublicDataAnswer {
   readonly answer: string;
-  readonly sql: string;
+  readonly queryId: HelpBotPublicDataQueryId;
 }
 
 interface HelpBotPublicDataExecutableQuery {
   readonly queryId: HelpBotPublicDataQueryId;
-  readonly sql: string;
+  readonly templateSql: string;
   readonly params?: Record<string, unknown>;
   readonly title: string;
   readonly canonicalPath: string;
@@ -184,7 +189,7 @@ export function buildHelpBotPublicDataQuery(
       }
       return {
         queryId,
-        sql: `SELECT COUNT(*) AS meme_count FROM memes_extended_data WHERE season = :season LIMIT ${HELP_BOT_PUBLIC_DATA_MAX_ROWS}`,
+        templateSql: `SELECT COUNT(*) AS meme_count FROM memes_extended_data WHERE season = :season LIMIT ${HELP_BOT_PUBLIC_DATA_MAX_ROWS}`,
         params: { season },
         title: `Meme Cards in SZN${season}`,
         canonicalPath: `/the-memes?szn=${season}`
@@ -197,7 +202,7 @@ export function buildHelpBotPublicDataQuery(
       }
       return {
         queryId,
-        sql: `SELECT m.meme, m.meme_name, n.hodl_rate AS tdh_rate FROM memes_extended_data m JOIN nfts n ON n.id = m.id WHERE m.meme = :meme LIMIT 1`,
+        templateSql: `SELECT m.meme, m.meme_name, n.hodl_rate AS tdh_rate FROM memes_extended_data m JOIN nfts n ON n.id = m.id WHERE m.meme = :meme LIMIT 1`,
         params: { meme },
         title: `Meme #${meme} TDH Rate`,
         canonicalPath: `/the-memes/${meme}`
@@ -206,28 +211,32 @@ export function buildHelpBotPublicDataQuery(
     case 'highest_tdh_rate':
       return {
         queryId,
-        sql: 'SELECT m.meme, m.meme_name, n.hodl_rate AS tdh_rate FROM memes_extended_data m JOIN nfts n ON n.id = m.id ORDER BY n.hodl_rate DESC LIMIT 1',
+        templateSql:
+          'SELECT m.meme, m.meme_name, n.hodl_rate AS tdh_rate FROM memes_extended_data m JOIN nfts n ON n.id = m.id ORDER BY n.hodl_rate DESC LIMIT 1',
         title: 'Highest Meme Card TDH Rate',
         canonicalPath: '/the-memes'
       };
     case 'highest_edition_size':
       return {
         queryId,
-        sql: 'SELECT meme, meme_name, edition_size FROM memes_extended_data ORDER BY edition_size DESC LIMIT 1',
+        templateSql:
+          'SELECT meme, meme_name, edition_size FROM memes_extended_data ORDER BY edition_size DESC LIMIT 1',
         title: 'Highest Meme Card Edition Size',
         canonicalPath: '/the-memes'
       };
     case 'highest_supply':
       return {
         queryId,
-        sql: 'SELECT m.meme, m.meme_name, n.supply FROM memes_extended_data m JOIN nfts n ON n.id = m.id ORDER BY n.supply DESC LIMIT 1',
+        templateSql:
+          'SELECT m.meme, m.meme_name, n.supply FROM memes_extended_data m JOIN nfts n ON n.id = m.id ORDER BY n.supply DESC LIMIT 1',
         title: 'Highest Meme Card Supply',
         canonicalPath: '/the-memes'
       };
     case 'total_tdh':
       return {
         queryId,
-        sql: 'SELECT total_boosted_tdh AS total_tdh, date, block FROM latest_tdh_global_history LIMIT 1',
+        templateSql:
+          'SELECT total_boosted_tdh AS total_tdh, date, block FROM latest_tdh_global_history LIMIT 1',
         title: 'Total TDH',
         canonicalPath: '/network/tdh'
       };
@@ -283,7 +292,7 @@ export class HelpBotPublicDataService {
     }
     const rows = await withTimeout(
       this.db().execute<Record<string, unknown>>(
-        applyStatementTimeoutHint(query.sql),
+        applyStatementTimeoutHint(query.templateSql),
         query.params,
         { forcePool: DbPoolName.READ }
       ),
@@ -309,7 +318,7 @@ export class HelpBotPublicDataService {
       if (rendered.trim()) {
         return {
           answer: normalizeRenderedDataAnswer(rendered, canonicalUrl),
-          sql: query.sql
+          queryId: query.queryId
         };
       }
     } catch {
@@ -322,7 +331,7 @@ export class HelpBotPublicDataService {
         rows,
         canonicalUrl
       }),
-      sql: query.sql
+      queryId: query.queryId
     };
   }
 

@@ -16,7 +16,7 @@ export interface HelpBotAnswerSuccess {
   readonly type: 'ANSWER';
   readonly answer: string;
   readonly record: HelpBotKnowledgeRecord;
-  readonly publicDataSql?: string;
+  readonly publicDataQueryId?: string;
 }
 
 export interface HelpBotNoReliableSource {
@@ -95,7 +95,7 @@ export class HelpBotAnswerer {
         type: 'ANSWER',
         answer: publicDataAnswer.answer,
         record: buildPublicDataRecord(),
-        publicDataSql: publicDataAnswer.sql
+        publicDataQueryId: publicDataAnswer.queryId
       };
     }
 

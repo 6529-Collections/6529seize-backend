@@ -29,7 +29,8 @@ describe('buildHelpBotPublicDataQuery', () => {
     ).toEqual(
       expect.objectContaining({
         queryId: 'memes_in_season_count',
-        sql: 'SELECT COUNT(*) AS meme_count FROM memes_extended_data WHERE season = :season LIMIT 10',
+        templateSql:
+          'SELECT COUNT(*) AS meme_count FROM memes_extended_data WHERE season = :season LIMIT 10',
         params: { season: 1 },
         title: 'Meme Cards in SZN1',
         canonicalPath: '/the-memes?szn=1'
@@ -41,7 +42,7 @@ describe('buildHelpBotPublicDataQuery', () => {
     expect(
       buildHelpBotPublicDataQuery({
         queryId: 'raw_sql',
-        params: { sql: 'SELECT id FROM profiles' }
+        params: { rawSql: 'SELECT id FROM profiles' }
       })
     ).toBeNull();
     expect(
@@ -81,7 +82,7 @@ describe('HelpBotPublicDataService', () => {
     ).resolves.toEqual({
       answer:
         'SZN1 has 47 Meme Cards.\n\nMore info: https://6529.io/the-memes?szn=1',
-      sql: 'SELECT COUNT(*) AS meme_count FROM memes_extended_data WHERE season = :season LIMIT 10'
+      queryId: 'memes_in_season_count'
     });
     expect(db.execute).toHaveBeenCalledWith(
       withStatementTimeoutHint(
@@ -118,7 +119,7 @@ describe('HelpBotPublicDataService', () => {
     const llm: HelpBotPublicDataLlm = {
       planPublicDataQuery: jest.fn().mockResolvedValue({
         queryId: 'raw_sql',
-        params: { sql: 'SELECT id FROM profiles' }
+        params: { rawSql: 'SELECT id FROM profiles' }
       }),
       renderPublicDataAnswer: jest.fn()
     };
