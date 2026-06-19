@@ -319,7 +319,8 @@ Important details:
 - Creating the `6529help` profile activates runtime behavior; if that handle cannot be resolved, the bot no-ops.
 - The API enqueues reply jobs by the hardcoded SQS queue name `help-bot-replies`; no queue URL environment variable is required.
 - V1 retrieval uses the frontend-published `https://6529.io/help-index.json` artifact for product knowledge and a bounded public-data SQL mode for aggregate backend data questions.
-- Public-data SQL is generated from a hardcoded public schema catalog, then validated as a single read-only `SELECT` against whitelisted tables before execution.
+- Public-data SQL is generated from a hardcoded public schema catalog, then validated as a single read-only `SELECT` against whitelisted tables before execution. The validator rejects comments, semicolons, `UNION`, subqueries, comma joins, `SELECT *`, non-whitelisted tables, and over-large limits.
+- Public-data SQL is executed through the shared `SqlExecutor` with the read pool forced, a hard row limit, and a MySQL execution-time hint injected after validation.
 - Help index fetches use a short timeout; a cold load failure produces the technical-failure reply instead of a no-reliable-source answer.
 - Bedrock rendering uses a fixed short timeout; if it fails or times out, the worker falls back to deterministic wording when a reliable frontend record or public DB row exists.
 - If no reliable record exists, or a technical failure prevents answering, the worker posts a failure reply and changes the bot reaction to warning.

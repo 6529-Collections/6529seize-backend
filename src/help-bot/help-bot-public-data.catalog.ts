@@ -64,8 +64,11 @@ Public 6529 data schema available for @6529help SQL planning.
 Rules:
 - Only answer public aggregate or public NFT/Meme Card lookup questions.
 - Use one SELECT statement only.
+- Select explicit columns; never use SELECT *.
+- Do not use UNION, subqueries, comments, semicolons, or comma-separated table lists.
+- Use explicit JOIN syntax when multiple tables are needed.
 - Prefer aggregate queries for "how many", "total", "highest", "lowest", "average".
-- Add LIMIT ${10} for ranked/list answers.
+- Add LIMIT ${10} for every answer.
 - Use /the-memes for Meme Card answers and /network/tdh for TDH totals.
 
 Tables:
@@ -95,7 +98,7 @@ latest_tdh_global_history:
 
 Examples:
 - Question: "how many memes are in szn1"
-  SQL: SELECT COUNT(*) AS meme_count FROM memes_extended_data WHERE season = 1
+  SQL: SELECT COUNT(*) AS meme_count FROM memes_extended_data WHERE season = 1 LIMIT 10
   canonical_path: /the-memes?szn=1
 - Question: "what is the tdh rate of meme #1"
   SQL: SELECT m.meme, m.meme_name, n.hodl_rate AS tdh_rate FROM memes_extended_data m JOIN nfts n ON n.id = m.id WHERE m.meme = 1 LIMIT 1

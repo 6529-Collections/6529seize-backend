@@ -1,6 +1,8 @@
+import { DbPoolName } from '@/db-query.options';
 import { SqlExecutor, dbSupplier } from '@/sql-executor';
 import {
   HELP_BOT_BASE_URL,
+  HELP_BOT_BEDROCK_TIMEOUT_MS,
   HELP_BOT_PUBLIC_DATA_MAX_ROWS,
   HELP_BOT_PUBLIC_DATA_QUERY_TIMEOUT_MS
 } from './help-bot.config';
@@ -44,9 +46,12 @@ const DATA_QUESTION_PATTERN =
   /\b(how many|count|highest|lowest|max|min|total|sum|average|avg|edition size|tdh rate|hodl rate|supply|szn|season|meme\s*#?\d+)\b/i;
 
 const DANGEROUS_SQL_PATTERN =
-  /\b(insert|update|delete|drop|alter|truncate|create|replace|grant|revoke|call|load|outfile|dumpfile|information_schema|performance_schema|mysql)\b/i;
+  /\b(insert|update|delete|drop|alter|truncate|create|replace|grant|revoke|call|load|union|outfile|dumpfile|information_schema|performance_schema|mysql)\b/i;
 
 const TABLE_REF_PATTERN = /\b(?:from|join)\s+`?([a-zA-Z0-9_]+)`?/gi;
+const COMMENT_PATTERN = /--|#|\/\*|\*\//;
+const SUBQUERY_PATTERN = /\(\s*select\b/i;
+const SELECT_STAR_PATTERN = /\bselect\s+\*/i;
 
 function isPotentialPublicDataQuestion(question: string): boolean {
   return DATA_QUESTION_PATTERN.test(question);
@@ -63,8 +68,37 @@ function readTableReferences(sql: string): string[] {
 }
 
 function readLimit(sql: string): number | null {
+  const offsetLimitMatch = /\blimit\s+\d+\s*,\s*(\d+)\b/i.exec(sql);
+  if (offsetLimitMatch) {
+    return Number(offsetLimitMatch[1]);
+  }
   const match = /\blimit\s+(\d+)\b/i.exec(sql);
   return match ? Number(match[1]) : null;
+}
+
+function readFromClause(sql: string): string | null {
+  const match =
+    /\bfrom\s+(.+?)(?:\bwhere\b|\bgroup\s+by\b|\border\s+by\b|\bhaving\b|\blimit\b|$)/i.exec(
+      sql
+    );
+  return match?.[1] ?? null;
+}
+
+function hasCommaSeparatedTables(sql: string): boolean {
+  return readFromClause(sql)?.includes(',') ?? false;
+}
+
+function applyStatementTimeoutHint(sql: string): string {
+  return sql.replace(
+    /^select\b/i,
+    `SELECT /*+ MAX_EXECUTION_TIME(${HELP_BOT_PUBLIC_DATA_QUERY_TIMEOUT_MS}) */`
+  );
+}
+
+function rowsContainAnswer(rows: readonly Record<string, unknown>[]): boolean {
+  return rows.some((row) =>
+    Object.values(row).some((value) => value !== null && value !== undefined)
+  );
 }
 
 export function validateHelpBotPublicDataSql(sql: string): string {
@@ -75,8 +109,17 @@ export function validateHelpBotPublicDataSql(sql: string): string {
   if (!/^select\b/i.test(normalized)) {
     throw new Error('Public data SQL must be a SELECT statement');
   }
-  if (/[;]/.test(normalized) || /--|\/\*|\*\//.test(normalized)) {
+  if (/[;]/.test(normalized) || COMMENT_PATTERN.test(normalized)) {
     throw new Error('Public data SQL must be a single uncommented statement');
+  }
+  if (SELECT_STAR_PATTERN.test(normalized)) {
+    throw new Error('Public data SQL must select explicit columns');
+  }
+  if (SUBQUERY_PATTERN.test(normalized)) {
+    throw new Error('Public data SQL must not use subqueries');
+  }
+  if (hasCommaSeparatedTables(normalized)) {
+    throw new Error('Public data SQL must use explicit JOIN syntax');
   }
   if (DANGEROUS_SQL_PATTERN.test(normalized)) {
     throw new Error('Public data SQL contains a disallowed keyword');
@@ -101,7 +144,7 @@ export function validateHelpBotPublicDataSql(sql: string): string {
       `Public data SQL limit ${limit} exceeds max ${HELP_BOT_PUBLIC_DATA_MAX_ROWS}`
     );
   }
-  if (limit === null && !/\b(count|sum|max|min|avg)\s*\(/i.test(normalized)) {
+  if (limit === null) {
     return `${normalized} LIMIT ${HELP_BOT_PUBLIC_DATA_MAX_ROWS}`;
   }
   return normalized;
@@ -211,19 +254,30 @@ export class HelpBotPublicDataService {
       return null;
     }
     const rows = await withTimeout(
-      this.db().execute<Record<string, unknown>>(sql),
+      this.db().execute<Record<string, unknown>>(
+        applyStatementTimeoutHint(sql),
+        undefined,
+        { forcePool: DbPoolName.READ }
+      ),
       HELP_BOT_PUBLIC_DATA_QUERY_TIMEOUT_MS,
       'Help bot public data query'
     );
+    if (!rowsContainAnswer(rows)) {
+      return null;
+    }
     const canonicalUrl = toCanonicalUrl(plan.canonicalPath);
 
     try {
-      const rendered = await this.llm.renderPublicDataAnswer({
-        question: request.question,
-        title: plan.title,
-        rows,
-        canonicalUrl
-      });
+      const rendered = await withTimeout(
+        llm.renderPublicDataAnswer({
+          question: request.question,
+          title: plan.title,
+          rows,
+          canonicalUrl
+        }),
+        HELP_BOT_BEDROCK_TIMEOUT_MS,
+        'Help bot public data rendering'
+      );
       if (rendered.trim()) {
         return {
           answer: normalizeRenderedDataAnswer(rendered, canonicalUrl),
@@ -249,11 +303,15 @@ export class HelpBotPublicDataService {
     request: HelpBotPublicDataAnswerRequest
   ): Promise<HelpBotPublicDataQueryPlan | null> {
     try {
-      return await llm.planPublicDataQuery({
-        question: request.question,
-        previousBotAnswer: request.previousBotAnswer,
-        catalog: HELP_BOT_PUBLIC_DATA_CATALOG
-      });
+      return await withTimeout(
+        llm.planPublicDataQuery({
+          question: request.question,
+          previousBotAnswer: request.previousBotAnswer,
+          catalog: HELP_BOT_PUBLIC_DATA_CATALOG
+        }),
+        HELP_BOT_BEDROCK_TIMEOUT_MS,
+        'Help bot public data planning'
+      );
     } catch {
       return null;
     }

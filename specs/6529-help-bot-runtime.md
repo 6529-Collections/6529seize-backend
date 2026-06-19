@@ -157,8 +157,13 @@ frontend help index. Examples:
 For V1, Bedrock can translate these public-data questions into SQL, but only
 inside a hardcoded public schema catalog. The backend validates the generated SQL
 before execution. The validator allows only one `SELECT` statement, rejects
-comments, semicolons, DML/DDL keywords, rejects non-whitelisted tables, and
-applies a small row limit to non-aggregate list queries.
+comments including `#`, semicolons, `UNION`, subqueries, comma-style joins,
+`SELECT *`, DML/DDL keywords, and non-whitelisted tables, and applies a small
+row limit to every query. Public-data SQL executes through the shared
+`SqlExecutor` with the read pool forced and a MySQL `MAX_EXECUTION_TIME` hint
+injected after validation. The mysql pool configuration does not enable
+`multipleStatements`, and the validator rejects semicolons before table or
+keyword checks.
 
 Initial whitelisted tables:
 
@@ -171,7 +176,9 @@ Initial whitelisted tables:
 
 If the SQL planner fails or produces an unsafe query, the bot declines that data
 mode and falls back to the normal help-index path. If a validated DB query
-times out or fails, the bot uses the technical-failure reply path.
+returns no rows or only null aggregate values, the bot also declines that data
+mode instead of wording an empty result as a fact. If a validated DB query times
+out or fails, the bot uses the technical-failure reply path.
 
 ### 4.5 Agent maintenance contract
 
