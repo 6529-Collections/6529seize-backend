@@ -132,6 +132,31 @@ describe('HelpBotPublicDataService', () => {
     expect(db.execute).not.toHaveBeenCalled();
   });
 
+  it('ignores SQL-shaped params and executes only the fixed template', async () => {
+    const llm: HelpBotPublicDataLlm = {
+      planPublicDataQuery: jest.fn().mockResolvedValue({
+        queryId: 'total_tdh',
+        params: { rawSql: 'SELECT id FROM profiles' }
+      }),
+      renderPublicDataAnswer: jest.fn().mockResolvedValue('Total TDH is 123.')
+    };
+    const db = new TestSqlExecutor();
+    db.execute.mockResolvedValue([{ total_tdh: 123 }]);
+    const service = new HelpBotPublicDataService(llm, () => db);
+
+    await expect(service.answer({ question: 'total tdh?' })).resolves.toEqual({
+      answer: 'Total TDH is 123.\n\nMore info: https://6529.io/network/tdh',
+      queryId: 'total_tdh'
+    });
+    expect(db.execute).toHaveBeenCalledWith(
+      withStatementTimeoutHint(
+        'SELECT total_boosted_tdh AS total_tdh, date, block FROM latest_tdh_global_history LIMIT 1'
+      ),
+      undefined,
+      { forcePool: DbPoolName.READ }
+    );
+  });
+
   it('declines empty public data rows without rendering an answer', async () => {
     const llm: HelpBotPublicDataLlm = {
       planPublicDataQuery: jest.fn().mockResolvedValue({
