@@ -202,6 +202,7 @@ Important API responsibilities:
 
 - Authentication and refresh-token flows.
 - Public read APIs for NFTs, TDH, waves, drops, profiles, community metrics, subscriptions, and notifications.
+- Global REP category analytics under `/rep/categories/{category}`, backed by current non-zero REP rating rows for category overview, giver-recipient pairings, recipient rankings, and giver rankings.
 - Public OG metadata inputs for profile, wave, and drop link previews under `/og-metadata`.
 - Public profile-native CMS primary package lookup under
   `/profile-cms/{handle}/primary`, returning the published production-safe CMS
