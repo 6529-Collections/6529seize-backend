@@ -22,6 +22,10 @@ export class AppFeatures {
   public isXTdhEnabled(): boolean {
     return this.isFeatureEnabled('XTDH');
   }
+
+  public isProfileCmsWalletGalleryEnabled(): boolean {
+    return this.isFeatureEnabled('PROFILE_CMS_WALLET_GALLERY');
+  }
 }
 
 export const appFeatures = new AppFeatures();
