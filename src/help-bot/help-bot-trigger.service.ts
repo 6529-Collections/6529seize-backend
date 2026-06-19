@@ -105,7 +105,8 @@ export class HelpBotTriggerService {
           interactionId: interaction.id,
           triggerDropId: trigger.triggerDropId,
           waveId: trigger.waveId,
-          error
+          error,
+          ctx
         });
       }
     } catch (error) {
@@ -146,13 +147,15 @@ export class HelpBotTriggerService {
     interactionId,
     triggerDropId,
     waveId,
-    error
+    error,
+    ctx
   }: {
     readonly botProfileId: string;
     readonly interactionId: string;
     readonly triggerDropId: string;
     readonly waveId: string;
     readonly error: unknown;
+    readonly ctx: RequestContext;
   }): Promise<void> {
     this.logger.error(
       `Failed to enqueue help bot interaction ${interactionId}`,
@@ -166,7 +169,7 @@ export class HelpBotTriggerService {
           waveId,
           reaction: HELP_BOT_FAILURE_REACTION
         },
-        {}
+        ctx
       );
       const reply = await this.dropWriter.reply(
         {
@@ -176,7 +179,7 @@ export class HelpBotTriggerService {
           interactionId,
           message: HELP_BOT_TECHNICAL_FAILURE_REPLY
         },
-        {}
+        ctx
       );
       await this.interactionsDb.markFailed(
         {
@@ -186,7 +189,7 @@ export class HelpBotTriggerService {
             error
           )}`
         },
-        {}
+        ctx
       );
     } catch (failureReplyError) {
       this.logger.error(
