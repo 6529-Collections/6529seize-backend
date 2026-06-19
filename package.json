@@ -127,12 +127,13 @@
   },
   "overrides": {
     "serverless": {
-      "tar": "7.5.13",
-      "ws": "8.18.0"
+      "tar": "7.5.16",
+      "ws": "8.21.0"
     },
     "@serverless/platform-client": {
-      "ws": "8.18.0"
+      "ws": "8.21.0"
     },
+    "uuid": "11.1.1",
     "discord.js": {
       "undici": "6.24.1"
     },
