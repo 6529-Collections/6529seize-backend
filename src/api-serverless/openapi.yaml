@@ -11505,6 +11505,19 @@ components:
           type: string
         status:
           $ref: "#/components/schemas/ApiAttachmentStatus"
+    ApiCreateDropMedia:
+      type: object
+      required:
+        - url
+        - mime_type
+      properties:
+        url:
+          type: string
+        mime_type:
+          type: string
+        media_upload_id:
+          type: string
+          nullable: true
     ApiCreateDropPart:
       type: object
       required:
@@ -11521,7 +11534,7 @@ components:
         media:
           type: array
           items:
-            $ref: "#/components/schemas/ApiDropMedia"
+            $ref: "#/components/schemas/ApiCreateDropMedia"
         attachments:
           type: array
           default: []
