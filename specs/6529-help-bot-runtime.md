@@ -12,8 +12,8 @@ answers.
 
 V1 ships without full RAG. It retrieves bounded records from the
 frontend-published `/help-index.json`, caches the latest valid copy in the
-backend answer path, and can optionally use a Bedrock renderer for natural
-wording when configured.
+backend answer path, and uses a Bedrock renderer for natural wording with a
+deterministic fallback.
 
 ## 2. Product Behavior
 
@@ -94,7 +94,7 @@ V1 answers from short frontend-owned records for common 6529 topics, routes, and
 UI affordances. The source of truth lives in the frontend repository at
 `ops/help/help-index.json`; the frontend build publishes
 `public/help-index.json`; the backend reads the deployed artifact at
-`${HELP_BOT_BASE_URL}/help-index.json` unless `HELP_BOT_INDEX_URL` overrides it.
+`https://6529.io/help-index.json`.
 
 Initial curated topics include:
 
@@ -109,9 +109,9 @@ Initial curated topics include:
 
 The backend does not inspect GitHub, frontend source files, or live rendered
 pages while users wait for answers. It fetches the generated index, validates a
-usable record set, caches successful loads for `HELP_BOT_INDEX_CACHE_TTL_MS`,
+usable record set, caches successful loads for five minutes,
 and keeps the previous valid cache if a refresh fails. Fetches use
-`HELP_BOT_INDEX_FETCH_TIMEOUT_MS` so a slow index endpoint fails into the
+the hardcoded five-second timeout so a slow index endpoint fails into the
 technical-failure reply path instead of stalling the worker.
 
 ### 4.2 Future docs chunking and RAG
@@ -252,9 +252,9 @@ Idempotency rules:
 
 V1 should use a managed LLM provider rather than self-hosting.
 
-Optional V1 provider:
+V1 provider:
 
-- Amazon Bedrock with Claude or another approved text model.
+- Amazon Bedrock with the hardcoded Claude model selected in backend code.
 
 The backend should isolate provider calls behind an internal service boundary so
 the model can change later.
@@ -269,9 +269,8 @@ Prompt rules:
 - Preserve conversational tone without pretending to be human.
 
 The LLM is responsible for natural wording only. It is not responsible for
-deciding canonical facts or links without retrieved context. If Bedrock is not
-configured, or if it fails after a reliable record is found, V1 uses the
-deterministic record answer.
+deciding canonical facts or links without retrieved context. If Bedrock fails
+after a reliable record is found, V1 uses the deterministic record answer.
 
 ## 8. Answer Examples
 
@@ -365,12 +364,12 @@ private user data beyond what is needed for debugging and abuse controls.
 ### Phase 2: V1 Help Bot Plumbing - Done In PR
 
 - Create bot identity.
-- Resolve the `@6529help` profile id from the hardcoded handle at runtime.
+- Resolve the `@6529help` profile id from the hardcoded handle at runtime; profile existence is the activation gate, with no enable/profile/queue env var.
 - Detect explicit `@6529help` mentions.
 - Add 👀, answer from cached frontend records, replace with ✅.
 - Add failure reply path and ⚠️.
 - Trigger on direct replies to bot messages.
-- Use optional Bedrock wording when configured, with deterministic fallback.
+- Use Bedrock wording with deterministic fallback when Bedrock is unavailable.
 - Fetch and cache the frontend-published `/help-index.json` artifact.
 
 ### Phase 3: Full Index/RAG Integration - Future

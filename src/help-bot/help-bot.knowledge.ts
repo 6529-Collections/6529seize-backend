@@ -1,5 +1,9 @@
 import { Logger } from '@/logging';
-import { getHelpBotConfig } from './help-bot.config';
+import {
+  HELP_BOT_INDEX_CACHE_TTL_MS,
+  HELP_BOT_INDEX_FETCH_TIMEOUT_MS,
+  HELP_BOT_INDEX_URL
+} from './help-bot.config';
 
 export interface HelpBotKnowledgeRecord {
   readonly id: string;
@@ -240,15 +244,14 @@ export class FrontendHelpBotKnowledgeSource implements HelpBotKnowledgeSource {
   }
 
   private async loadIndex(): Promise<HelpBotKnowledgeIndex | null> {
-    const config = getHelpBotConfig();
     const now = Date.now();
     if (now < this.cacheExpiresAt) {
       return this.cachedIndex ?? this.throwUnavailable();
     }
     try {
       const response = await this.fetcher(
-        config.knowledgeIndexUrl,
-        config.knowledgeIndexFetchTimeoutMs
+        HELP_BOT_INDEX_URL,
+        HELP_BOT_INDEX_FETCH_TIMEOUT_MS
       );
       if (!response.ok) {
         throw new Error(`Frontend help index returned HTTP ${response.status}`);
@@ -258,13 +261,12 @@ export class FrontendHelpBotKnowledgeSource implements HelpBotKnowledgeSource {
         throw new Error('Frontend help index is empty or invalid');
       }
       this.cachedIndex = index;
-      this.cacheExpiresAt = now + config.knowledgeIndexCacheTtlMs;
+      this.cacheExpiresAt = now + HELP_BOT_INDEX_CACHE_TTL_MS;
       return index;
     } catch (error) {
-      this.cacheExpiresAt =
-        now + Math.min(config.knowledgeIndexCacheTtlMs, 30_000);
+      this.cacheExpiresAt = now + Math.min(HELP_BOT_INDEX_CACHE_TTL_MS, 30_000);
       logger.warn(
-        `Could not load frontend help index from ${config.knowledgeIndexUrl}`,
+        `Could not load frontend help index from ${HELP_BOT_INDEX_URL}`,
         error
       );
       return this.cachedIndex ?? this.throwUnavailable(error);

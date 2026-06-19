@@ -234,7 +234,7 @@ Important API responsibilities:
   URLs to canonical native URIs, `media.6529.io` resolver URLs, and explicit
   external fallback URLs. This v1 API does not proxy media bytes.
 - Authenticated social writes: drops, votes, reactions, curations, subscriptions, groups, proxies, profile CMS package drafts/publish actions, minting claims, and push settings.
-- `@6529help` trigger detection after drop creation. The API writes a durable `help_bot_interactions` row, reacts with the bot's seen marker, and enqueues the reply worker when help-bot env flags are enabled.
+- `@6529help` trigger detection after drop creation. The API writes a durable `help_bot_interactions` row, reacts with the bot's seen marker, and enqueues the reply worker when the `6529help` profile exists.
 - Upload preparation and multipart completion for drop media, wave media, distribution photos, and attachments. When `DROP_MEDIA_SANITIZE_IMAGES=true`, drop/wave image multipart uploads complete into private ingest storage, return `media_status=processing`, and publish a `DROP_UPDATE` websocket event with reason `MEDIA_STATUS` after the sanitizer marks the media ready or failed.
 - WebSocket connection registration and real-time wave-related messages.
 - Operational endpoints such as health, docs, RPC/proxy routes, webhooks, and deploy-related routes.
@@ -315,10 +315,11 @@ flowchart TD
 Important details:
 
 - The bot handle is hardcoded as `@6529help`; runtime resolves that handle to the current bot profile id before posting replies or reactions.
-- The bot is inactive unless `HELP_BOT_ENABLED` and the API's `HELP_BOT_SQS_URL` are configured.
-- V1 retrieval uses the frontend-published `/help-index.json` artifact, cached in the backend answer path, not full RAG or live repo lookup.
+- Creating the `6529help` profile activates runtime behavior; if that handle cannot be resolved, the bot no-ops.
+- The API enqueues reply jobs by the hardcoded SQS queue name `help-bot-replies`; no queue URL environment variable is required.
+- V1 retrieval uses the frontend-published `https://6529.io/help-index.json` artifact, cached in the backend answer path, not full RAG or live repo lookup.
 - Help index fetches use a short timeout; a cold load failure produces the technical-failure reply instead of a no-reliable-source answer.
-- If Bedrock rendering is configured and fails, the worker falls back to deterministic record wording when a reliable frontend record exists.
+- If Bedrock rendering fails, the worker falls back to deterministic record wording when a reliable frontend record exists.
 - If no reliable record exists, or a technical failure prevents answering, the worker posts a failure reply and changes the bot reaction to warning.
 
 ## Drops -> Minting Claim Queue Flows

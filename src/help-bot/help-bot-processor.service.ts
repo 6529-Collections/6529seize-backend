@@ -3,12 +3,12 @@ import { ApiDrop } from '@/api/generated/models/ApiDrop';
 import { Logger } from '@/logging';
 import { RequestContext } from '@/request.context';
 import {
-  getHelpBotConfig,
+  HELP_BOT_BASE_URL,
+  HELP_BOT_BEDROCK_MODEL_ID,
   HELP_BOT_FAILURE_REACTION,
   HELP_BOT_NO_RELIABLE_SOURCE_REPLY,
   HELP_BOT_SUCCESS_REACTION,
-  HELP_BOT_TECHNICAL_FAILURE_REPLY,
-  isHelpBotRuntimeReady
+  HELP_BOT_TECHNICAL_FAILURE_REPLY
 } from './help-bot.config';
 import { HelpBotAnswerer, HelpBotLlmRenderer } from './help-bot.answerer';
 import { HelpBotBedrockRenderer } from './help-bot.bedrock-renderer';
@@ -33,8 +33,7 @@ import { withHelpBotAuthentication } from './help-bot.auth';
 import { errorToMessage } from './help-bot.errors';
 
 function buildRenderer(): HelpBotLlmRenderer | null {
-  const modelId = getHelpBotConfig().bedrockModelId;
-  return modelId ? new HelpBotBedrockRenderer(modelId) : null;
+  return new HelpBotBedrockRenderer(HELP_BOT_BEDROCK_MODEL_ID);
 }
 
 function extractDropText(drop: ApiDrop): string {
@@ -60,13 +59,6 @@ export class HelpBotProcessorService {
     interactionId: string,
     ctx: RequestContext
   ): Promise<void> {
-    const config = getHelpBotConfig();
-    if (!isHelpBotRuntimeReady(config)) {
-      this.logger.warn(
-        `Help bot runtime is not configured; skipping interaction ${interactionId}`
-      );
-      return;
-    }
     const botProfileId = await this.profileResolver.resolveBotProfileId(ctx);
     if (!botProfileId) {
       this.logger.warn(
@@ -92,7 +84,7 @@ export class HelpBotProcessorService {
       const answer = await this.answererFactory().answer({
         question: interaction.question,
         previousBotAnswer,
-        baseUrl: config.baseUrl
+        baseUrl: HELP_BOT_BASE_URL
       });
       if (answer.type === 'NO_RELIABLE_SOURCE') {
         await this.replyWithNoReliableSource({

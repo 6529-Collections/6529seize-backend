@@ -32,9 +32,6 @@ functions:
     environment:
       SENTRY_DSN: ${env:SENTRY_DSN}
       SENTRY_ENVIRONMENT: 'helpBotReplyLoop_${opt:stage, self:provider.stage}'
-      HELP_BOT_ENABLED: ${env:HELP_BOT_ENABLED, 'false'}
-      HELP_BOT_BEDROCK_MODEL_ID: ${env:HELP_BOT_BEDROCK_MODEL_ID, ''}
-      HELP_BOT_BASE_URL: ${env:HELP_BOT_BASE_URL, 'https://6529.io'}
 
 resources:
   Resources:
@@ -70,6 +67,7 @@ resources:
               Principal:
                 AWS: arn:aws:iam::987989283142:role/lambda-vpc-role
               Action:
+                - sqs:GetQueueUrl
                 - sqs:SendMessage
               Resource:
                 - !GetAtt HelpBotRepliesQueue.Arn

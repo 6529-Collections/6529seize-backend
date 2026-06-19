@@ -5,11 +5,10 @@ import { Logger } from '@/logging';
 import { RequestContext } from '@/request.context';
 import { sqs, SQS } from '@/sqs';
 import {
-  getHelpBotConfig,
   HELP_BOT_FAILURE_REACTION,
+  HELP_BOT_REPLY_QUEUE_NAME,
   HELP_BOT_SEEN_REACTION,
-  HELP_BOT_TECHNICAL_FAILURE_REPLY,
-  isHelpBotTriggerRuntimeReady
+  HELP_BOT_TECHNICAL_FAILURE_REPLY
 } from './help-bot.config';
 import { detectHelpBotTrigger } from './help-bot.detector';
 import {
@@ -54,12 +53,6 @@ export class HelpBotTriggerService {
     },
     ctx: RequestContext
   ): Promise<void> {
-    const config = getHelpBotConfig();
-    const queueUrl = config.queueUrl;
-    if (!isHelpBotTriggerRuntimeReady(config) || !queueUrl) {
-      return;
-    }
-
     try {
       const botProfileId = await this.profileResolver.resolveBotProfileId(ctx);
       if (!botProfileId) {
@@ -103,8 +96,8 @@ export class HelpBotTriggerService {
       );
 
       try {
-        await this.sqs.send({
-          queue: queueUrl,
+        await this.sqs.sendToQueueName({
+          queueName: HELP_BOT_REPLY_QUEUE_NAME,
           message: { interaction_id: interaction.id }
         });
       } catch (error) {
