@@ -1252,6 +1252,7 @@ function mapDropMediaUploadStatus(
     case ApiDropMediaStatus.Uploading:
       return ApiDropMediaStatus.Uploading;
     case ApiDropMediaStatus.Processing:
+    case DropMediaUploadStatus.COMPLETING:
     case DropMediaUploadStatus.SANITIZING:
       return ApiDropMediaStatus.Processing;
     case ApiDropMediaStatus.Failed:

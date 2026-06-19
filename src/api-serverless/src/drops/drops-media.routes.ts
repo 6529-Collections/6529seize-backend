@@ -1,5 +1,6 @@
 import { asyncRouter } from '../async.router';
 import { Request, Response } from 'express';
+import Joi from 'joi';
 import { ApiResponse } from '../api-response';
 import {
   getAuthenticatedProfileIdOrNull,
@@ -31,6 +32,10 @@ import { DropMediaUploadStatus } from '@/entities/IDropMediaUpload';
 
 const router = asyncRouter();
 
+const GetDropMediaUploadStatusParamsSchema = Joi.object({
+  media_upload_id: Joi.string().uuid().required()
+});
+
 router.get(
   '/uploads/:media_upload_id',
   needsAuthenticatedUser(),
@@ -42,9 +47,11 @@ router.get(
     if (!authenticatedProfileId) {
       throw new ForbiddenException(`Please create a profile first`);
     }
-    const upload = await dropMediaUploadsDb.findById(
-      req.params.media_upload_id
+    const { media_upload_id } = getValidatedByJoiOrThrow(
+      req.params,
+      GetDropMediaUploadStatusParamsSchema
     );
+    const upload = await dropMediaUploadsDb.findById(media_upload_id);
     if (!upload) {
       throw new NotFoundException('Media upload not found');
     }
@@ -178,6 +185,7 @@ function mapDropMediaStatus(status: string): ApiDropMediaStatus {
     case ApiDropMediaStatus.Uploading:
       return ApiDropMediaStatus.Uploading;
     case ApiDropMediaStatus.Processing:
+    case DropMediaUploadStatus.COMPLETING:
     case DropMediaUploadStatus.SANITIZING:
       return ApiDropMediaStatus.Processing;
     case ApiDropMediaStatus.Failed:

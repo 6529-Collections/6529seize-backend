@@ -35,7 +35,7 @@ export class DropMediaUploadStatusNotifier {
         return;
       }
       await giveReadReplicaTimeToCatchUp();
-      await Promise.all(
+      const results = await Promise.allSettled(
         dropIds.map(async (dropId) => {
           const drop = await this.dropsService!.findDropByIdOrThrow(
             {
@@ -50,6 +50,14 @@ export class DropMediaUploadStatusNotifier {
           });
         })
       );
+      results.forEach((result, index) => {
+        if (result.status === 'rejected') {
+          this.logger.error(
+            `Failed to broadcast drop media upload status for drop ${dropIds[index]}`,
+            result.reason
+          );
+        }
+      });
     } catch (error) {
       this.logger.error(
         `Failed to broadcast drop media upload status for ${mediaUploadId}`,

@@ -11513,8 +11513,10 @@ components:
       properties:
         url:
           type: string
+          maxLength: 2000
         mime_type:
           type: string
+          maxLength: 100
         media_upload_id:
           type: string
           nullable: true

@@ -287,16 +287,23 @@ async function invalidatePaths(paths: string[]): Promise<number> {
 function parseOptions(args: string[]): BackfillOptions {
   const dryRun = !args.includes('--live');
   const limitArg = args.find((arg) => arg.startsWith('--limit='));
-  const parsedLimit = limitArg ? Number(limitArg.split('=')[1]) : null;
-  const limit =
-    parsedLimit !== null && Number.isInteger(parsedLimit) && parsedLimit > 0
-      ? parsedLimit
-      : null;
+  const limit = parseLimit(limitArg);
   return {
     dryRun,
     limit,
     skipInvalidation: args.includes('--skip-invalidation')
   };
+}
+
+function parseLimit(limitArg: string | undefined): number | null {
+  if (!limitArg) {
+    return null;
+  }
+  const parsedLimit = Number(limitArg.split('=')[1]);
+  if (!Number.isInteger(parsedLimit) || parsedLimit <= 0) {
+    throw new Error('--limit must be a positive integer');
+  }
+  return parsedLimit;
 }
 
 function getPublicBucket(): string {

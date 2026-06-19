@@ -19,10 +19,11 @@ export function isImageMimeType(contentType: string): boolean {
 }
 
 export function getDropMediaIngestS3Bucket(): string {
-  return (
-    process.env.DROP_MEDIA_INGEST_S3_BUCKET ??
-    `${DROP_MEDIA_INGEST_BUCKET_PREFIX}-${getAwsAccountId()}`
-  );
+  const configuredBucket = process.env.DROP_MEDIA_INGEST_S3_BUCKET;
+  if (configuredBucket) {
+    return configuredBucket;
+  }
+  return `${DROP_MEDIA_INGEST_BUCKET_PREFIX}-${getAwsAccountId()}`;
 }
 
 export function getDropMediaIngestS3Region(): string {
@@ -58,7 +59,11 @@ export function getDropMediaIngestS3(): S3Client {
 }
 
 function getAwsAccountId(): string {
-  return process.env.AWS_ACCOUNT_ID ?? '987989283142';
+  const accountId = process.env.AWS_ACCOUNT_ID;
+  if (!accountId) {
+    throw new Error('AWS_ACCOUNT_ID is not configured');
+  }
+  return accountId;
 }
 
 function getDefaultStagePrefix(): string {

@@ -201,12 +201,19 @@ export class DropMediaSanitizerService {
         }
       })
     );
-    await this.ingestS3().send(
-      new DeleteObjectCommand({
-        Bucket: upload.ingest_bucket,
-        Key: upload.ingest_key
-      })
-    );
+    try {
+      await this.ingestS3().send(
+        new DeleteObjectCommand({
+          Bucket: upload.ingest_bucket,
+          Key: upload.ingest_key
+        })
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to delete ingest object for drop media upload ${upload.id}`,
+        error
+      );
+    }
   }
 
   private async handleProcessingError({

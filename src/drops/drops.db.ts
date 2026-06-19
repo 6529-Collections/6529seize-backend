@@ -169,7 +169,12 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     try {
       const rows = await this.db.execute<DropMediaEntity>(
         `
-        select dm.*, dmu.status as media_status, dmu.error_reason as media_error
+        select dm.*,
+               CASE
+                 WHEN dm.media_upload_id IS NULL THEN 'ready'
+                 ELSE COALESCE(dmu.status, 'failed')
+               END as media_status,
+               dmu.error_reason as media_error
         from ${DROP_MEDIA_TABLE} dm
              left join ${DROP_MEDIA_UPLOADS_TABLE} dmu on dmu.id = dm.media_upload_id
         where dm.drop_id in (:dropIds)
@@ -226,7 +231,12 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     try {
       return await this.db.execute<DropMediaEntity>(
         `
-        select dm.*, dmu.status as media_status, dmu.error_reason as media_error
+        select dm.*,
+               CASE
+                 WHEN dm.media_upload_id IS NULL THEN 'ready'
+                 ELSE COALESCE(dmu.status, 'failed')
+               END as media_status,
+               dmu.error_reason as media_error
         from ${DROP_MEDIA_TABLE} dm
              left join ${DROP_MEDIA_UPLOADS_TABLE} dmu on dmu.id = dm.media_upload_id
         where dm.drop_id = :dropId
@@ -1531,7 +1541,12 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       return {};
     }
     const dbResult: DropMediaEntity[] = await this.db.execute(
-      `select dm.*, dmu.status as media_status, dmu.error_reason as media_error
+      `select dm.*,
+              CASE
+                WHEN dm.media_upload_id IS NULL THEN 'ready'
+                ELSE COALESCE(dmu.status, 'failed')
+              END as media_status,
+              dmu.error_reason as media_error
        from ${DROP_MEDIA_TABLE} dm
             left join ${DROP_MEDIA_UPLOADS_TABLE} dmu on dmu.id = dm.media_upload_id
        where dm.drop_id in (:dropIds)`,

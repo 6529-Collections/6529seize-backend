@@ -8,6 +8,7 @@ export enum DropMediaUploadSource {
 
 export enum DropMediaUploadStatus {
   UPLOADING = 'uploading',
+  COMPLETING = 'completing',
   PROCESSING = 'processing',
   SANITIZING = 'sanitizing',
   READY = 'ready',

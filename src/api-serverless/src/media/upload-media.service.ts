@@ -130,7 +130,7 @@ export class UploadMediaService {
     authenticatedProfileId?: string;
   }): Promise<string> {
     const upload = await this.findTrackedDropMediaUpload({ key, upload_id });
-    this.assertTrackedUploadOwner({ upload, authenticatedProfileId });
+    this.assertDropMediaUploadOwner({ upload, key, authenticatedProfileId });
     const bucket = upload?.ingest_bucket ?? this.getS3Bucket();
     const objectKey = upload?.ingest_key ?? key;
     const s3 = upload ? this.getIngestS3() : this.getS3();
@@ -158,7 +158,7 @@ export class UploadMediaService {
     authenticatedProfileId?: string;
   }): Promise<ApiCompleteMultipartUploadResponse> {
     const upload = await this.findTrackedDropMediaUpload({ key, upload_id });
-    this.assertTrackedUploadOwner({ upload, authenticatedProfileId });
+    this.assertDropMediaUploadOwner({ upload, key, authenticatedProfileId });
     if (upload) {
       return await this.completeSanitizedImageMultipartUpload({
         upload,
@@ -357,6 +357,16 @@ export class UploadMediaService {
     }
 
     if (upload.status === DropMediaUploadStatus.UPLOADING) {
+      const claimedForCompletion =
+        await this.dropMediaUploadsDb.transitionStatus({
+          id: upload.id,
+          fromStatuses: [DropMediaUploadStatus.UPLOADING],
+          toStatus: DropMediaUploadStatus.COMPLETING
+        });
+      if (!claimedForCompletion) {
+        return this.processingResponse(upload);
+      }
+
       const completeCmd = new CompleteMultipartUploadCommand({
         Bucket: upload.ingest_bucket,
         Key: upload.ingest_key,
@@ -369,10 +379,24 @@ export class UploadMediaService {
         }
       });
 
-      await this.getIngestS3().send(completeCmd);
+      try {
+        await this.getIngestS3().send(completeCmd);
+      } catch (error) {
+        await this.dropMediaUploadsDb.transitionStatus({
+          id: upload.id,
+          fromStatuses: [DropMediaUploadStatus.COMPLETING],
+          toStatus: DropMediaUploadStatus.FAILED,
+          patch: {
+            error_reason:
+              error instanceof Error ? error.message : String(error),
+            completed_at: Time.currentMillis()
+          }
+        });
+        throw error;
+      }
       const markedProcessing = await this.dropMediaUploadsDb.transitionStatus({
         id: upload.id,
-        fromStatuses: [DropMediaUploadStatus.UPLOADING],
+        fromStatuses: [DropMediaUploadStatus.COMPLETING],
         toStatus: DropMediaUploadStatus.PROCESSING
       });
       if (!markedProcessing) {
@@ -380,7 +404,10 @@ export class UploadMediaService {
           `Drop media upload ${upload.id} is not in uploading state`
         );
       }
-    } else if (upload.status === DropMediaUploadStatus.SANITIZING) {
+    } else if (
+      upload.status === DropMediaUploadStatus.COMPLETING ||
+      upload.status === DropMediaUploadStatus.SANITIZING
+    ) {
       return {
         media_url: upload.public_url,
         media_upload_id: upload.id,
@@ -400,6 +427,16 @@ export class UploadMediaService {
       );
     }
 
+    return {
+      media_url: upload.public_url,
+      media_upload_id: upload.id,
+      media_status: ApiDropMediaStatus.Processing
+    };
+  }
+
+  private processingResponse(
+    upload: DropMediaUploadEntity
+  ): ApiCompleteMultipartUploadResponse {
     return {
       media_url: upload.public_url,
       media_upload_id: upload.id,
@@ -481,19 +518,45 @@ export class UploadMediaService {
     return key.startsWith('drops/') || key.startsWith('waves/');
   }
 
-  private assertTrackedUploadOwner({
+  private assertDropMediaUploadOwner({
     upload,
+    key,
     authenticatedProfileId
   }: {
     upload: DropMediaUploadEntity | null;
+    key: string;
     authenticatedProfileId: string | undefined;
   }): void {
     if (!upload) {
+      this.assertUntrackedDropMediaKeyOwner({ key, authenticatedProfileId });
       return;
     }
     if (
       !authenticatedProfileId ||
       upload.profile_id !== authenticatedProfileId
+    ) {
+      throw new ForbiddenException('Cannot write this media upload');
+    }
+  }
+
+  private assertUntrackedDropMediaKeyOwner({
+    key,
+    authenticatedProfileId
+  }: {
+    key: string;
+    authenticatedProfileId: string | undefined;
+  }): void {
+    if (!this.isPotentialTrackedDropMediaKey(key)) {
+      return;
+    }
+    if (!authenticatedProfileId) {
+      throw new ForbiddenException('Cannot write this media upload');
+    }
+    const expectedDropPrefix = `drops/author_${authenticatedProfileId}/`;
+    const expectedWavePrefix = `waves/author_${authenticatedProfileId}/`;
+    if (
+      !key.startsWith(expectedDropPrefix) &&
+      !key.startsWith(expectedWavePrefix)
     ) {
       throw new ForbiddenException('Cannot write this media upload');
     }

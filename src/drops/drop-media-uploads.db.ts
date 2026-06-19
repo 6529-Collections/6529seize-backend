@@ -203,12 +203,14 @@ export class DropMediaUploadsDb extends LazyDbAccessCompatibleService {
     }
     timer?.start(`${this.constructor.name}->attachUploadsToDrop`);
     try {
-      await this.db.execute(
+      const result = await this.db.execute(
         `update ${DROP_MEDIA_UPLOADS_TABLE}
          set drop_id = :dropId,
              wave_id = :waveId,
              updated_at = :updatedAt
-         where id in (:mediaUploadIds)`,
+         where id in (:mediaUploadIds)
+           and (drop_id is null or drop_id = :dropId)
+           and (wave_id is null or wave_id = :waveId)`,
         {
           mediaUploadIds: uniqueUploadIds,
           dropId,
@@ -217,6 +219,9 @@ export class DropMediaUploadsDb extends LazyDbAccessCompatibleService {
         },
         { wrappedConnection: connection }
       );
+      if (this.db.getAffectedRows(result) !== uniqueUploadIds.length) {
+        throw new Error('One or more media uploads could not be attached');
+      }
     } finally {
       timer?.stop(`${this.constructor.name}->attachUploadsToDrop`);
     }

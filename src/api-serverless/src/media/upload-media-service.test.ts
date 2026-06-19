@@ -323,9 +323,14 @@ describe('UploadMediaService', () => {
       Key: 'staging/drop-media-ingest/drops/key.jpg',
       UploadId: 'upload-123'
     });
-    expect(uploadsDb.transitionStatus).toHaveBeenCalledWith({
+    expect(uploadsDb.transitionStatus).toHaveBeenNthCalledWith(1, {
       id: 'media-upload-123',
       fromStatuses: ['uploading'],
+      toStatus: 'completing'
+    });
+    expect(uploadsDb.transitionStatus).toHaveBeenNthCalledWith(2, {
+      id: 'media-upload-123',
+      fromStatuses: ['completing'],
       toStatus: 'processing'
     });
     expect(enqueue).toHaveBeenCalledWith({
@@ -376,12 +381,45 @@ describe('UploadMediaService', () => {
     ).rejects.toThrow(
       'Failed to enqueue sanitization for media upload media-upload-123'
     );
-    expect(uploadsDb.transitionStatus).toHaveBeenCalledTimes(1);
-    expect(uploadsDb.transitionStatus).toHaveBeenCalledWith({
+    expect(uploadsDb.transitionStatus).toHaveBeenCalledTimes(2);
+    expect(uploadsDb.transitionStatus).toHaveBeenNthCalledWith(1, {
       id: 'media-upload-123',
       fromStatuses: ['uploading'],
+      toStatus: 'completing'
+    });
+    expect(uploadsDb.transitionStatus).toHaveBeenNthCalledWith(2, {
+      id: 'media-upload-123',
+      fromStatuses: ['completing'],
       toStatus: 'processing'
     });
+  });
+
+  it('rejects untracked drop media part signing for another profile', async () => {
+    const uploadsDb = {
+      findByPublicKeyAndS3UploadId: jest.fn().mockResolvedValue(null)
+    };
+
+    const service = new UploadMediaService(
+      () =>
+        ({
+          send: jest.fn()
+        }) as any,
+      () =>
+        ({
+          send: jest.fn()
+        }) as any,
+      uploadsDb as any,
+      jest.fn()
+    );
+
+    await expect(
+      service.getSignedUrlForPartOfMultipartUpload({
+        key: 'drops/author_author-123/upload/file.mp4',
+        upload_id: 'upload-123',
+        part_no: 1,
+        authenticatedProfileId: 'author-456'
+      })
+    ).rejects.toThrow('Cannot write this media upload');
   });
 
   it('re-enqueues sanitization when completion is retried for a processing upload', async () => {
