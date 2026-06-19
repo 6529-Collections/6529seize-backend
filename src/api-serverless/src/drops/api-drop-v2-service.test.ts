@@ -132,6 +132,7 @@ function makeMedia(overrides: Partial<DropMediaEntity> = {}): DropMediaEntity {
     drop_part_id: 1,
     url: 'https://example.com/image.png',
     mime_type: 'image/png',
+    media_upload_id: null,
     wave_id: 'wave-1',
     ...overrides
   };

@@ -49,6 +49,7 @@ describe('CreateOrUpdateDropUseCase', () => {
       {} as any,
       {} as any,
       {} as any,
+      {} as any,
       {} as any
     );
   }
@@ -77,7 +78,8 @@ describe('CreateOrUpdateDropUseCase', () => {
       {} as any,
       {} as any,
       overrides.artCurationTokenWatchService ?? ({} as any),
-      overrides.attachmentsDb ?? ({} as any)
+      overrides.attachmentsDb ?? ({} as any),
+      {} as any
     );
   }
 
