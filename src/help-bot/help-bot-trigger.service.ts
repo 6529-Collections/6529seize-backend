@@ -49,7 +49,9 @@ export class HelpBotTriggerService {
     ctx: RequestContext
   ): Promise<void> {
     const config = getHelpBotConfig();
-    if (!isHelpBotTriggerRuntimeReady(config)) {
+    const botProfileId = config.botProfileId;
+    const queueUrl = config.queueUrl;
+    if (!isHelpBotTriggerRuntimeReady(config) || !botProfileId || !queueUrl) {
       return;
     }
 
@@ -59,7 +61,7 @@ export class HelpBotTriggerService {
         request: createDropRequest,
         createdDrop,
         authorProfileId,
-        botProfileId: config.botProfileId!,
+        botProfileId,
         parentDrop
       });
       if (!trigger) {
@@ -83,7 +85,7 @@ export class HelpBotTriggerService {
 
       await this.reactionService.setReaction(
         {
-          botProfileId: config.botProfileId!,
+          botProfileId,
           dropId: trigger.triggerDropId,
           waveId: trigger.waveId,
           reaction: HELP_BOT_SEEN_REACTION
@@ -93,12 +95,12 @@ export class HelpBotTriggerService {
 
       try {
         await this.sqs.send({
-          queue: config.queueUrl!,
+          queue: queueUrl,
           message: { interaction_id: interaction.id }
         });
       } catch (error) {
         await this.handleEnqueueFailure({
-          botProfileId: config.botProfileId!,
+          botProfileId,
           interactionId: interaction.id,
           triggerDropId: trigger.triggerDropId,
           waveId: trigger.waveId,
@@ -179,7 +181,9 @@ export class HelpBotTriggerService {
         {
           id: interactionId,
           replyDropId: reply.id,
-          failureReason: `Failed to enqueue help bot answer: ${String(error)}`
+          failureReason: `Failed to enqueue help bot answer: ${errorToMessage(
+            error
+          )}`
         },
         {}
       );
@@ -189,6 +193,20 @@ export class HelpBotTriggerService {
         failureReplyError
       );
     }
+  }
+}
+
+function errorToMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  if (typeof error === 'string') {
+    return error;
+  }
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
   }
 }
 

@@ -6,7 +6,7 @@ import {
 import { RequestContext } from '@/request.context';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
 import { Time } from '@/time';
-import { randomUUID } from 'crypto';
+import { randomUUID } from 'node:crypto';
 import { HELP_BOT_KNOWLEDGE_VERSION } from './help-bot.config';
 
 export interface HelpBotInteractionRow {

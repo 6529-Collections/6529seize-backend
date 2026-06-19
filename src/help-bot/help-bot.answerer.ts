@@ -37,7 +37,8 @@ function toCanonicalUrl(baseUrl: string, path: string): string {
   if (path.startsWith('http://') || path.startsWith('https://')) {
     return path;
   }
-  return `${baseUrl}${path.startsWith('/') ? path : `/${path}`}`;
+  const normalizedPath = path.startsWith('/') ? path : '/' + path;
+  return `${baseUrl}${normalizedPath}`;
 }
 
 function buildDeterministicAnswer(

@@ -4,7 +4,7 @@ import {
   InvokeModelCommand,
   InvokeModelCommandInput
 } from '@aws-sdk/client-bedrock-runtime';
-import { TextDecoder } from 'util';
+import { TextDecoder } from 'node:util';
 import { HelpBotLlmRenderer } from './help-bot.answerer';
 import { HelpBotKnowledgeRecord } from './help-bot.knowledge';
 
@@ -28,6 +28,7 @@ function buildPrompt({
   readonly record: HelpBotKnowledgeRecord;
   readonly canonicalUrl: string;
 }): string {
+  const factLines = record.facts.map((fact) => `- ${fact}`).join('\n');
   return [
     'You are @6529help, a concise helper bot for 6529.io.',
     'Answer only from the provided facts.',
@@ -39,7 +40,7 @@ function buildPrompt({
       : '',
     `User question:\n${question}`,
     `Topic: ${record.title}`,
-    `Facts:\n${record.facts.map((fact) => `- ${fact}`).join('\n')}`
+    `Facts:\n${factLines}`
   ]
     .filter(Boolean)
     .join('\n\n');
