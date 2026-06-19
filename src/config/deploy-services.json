@@ -19,6 +19,7 @@
     { "name": "ethPriceLoop", "allowed_environments": ["staging", "prod"] },
     { "name": "externalCollectionLiveTailingLoop", "allowed_environments": ["staging", "prod"] },
     { "name": "externalCollectionSnapshottingLoop", "allowed_environments": ["staging", "prod"] },
+    { "name": "helpBotReplyLoop", "allowed_environments": ["staging", "prod"] },
     { "name": "marketStatsLoop", "allowed_environments": ["staging", "prod"] },
     { "name": "mediaResizerLoop", "allowed_environments": ["prod"] },
     { "name": "mintAnnouncementsLoop", "allowed_environments": ["staging", "prod"] },

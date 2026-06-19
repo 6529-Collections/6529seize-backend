@@ -10,7 +10,10 @@ The bot should respond quickly with visible status reactions, answer as a reply
 to the triggering message, and use a frontend-provided help index plus backend
 business-rule records to ground answers.
 
-This document is a draft runtime spec only. It does not implement the feature.
+V1 ships without full RAG. It uses bounded backend seed records with canonical
+6529.io URLs, plus an optional Bedrock renderer for natural wording when
+configured. The fuller frontend help-index/RAG path remains the next corpus
+phase.
 
 ## 2. Product Behavior
 
@@ -80,12 +83,29 @@ The bot should not hallucinate a fallback answer when source confidence is low.
 - Do not provide wallet-specific eligibility answers unless a dedicated
   authenticated tool is added.
 - Do not replace human support or moderation.
-- Do not merge, deploy to staging, or change production behavior as part of this
-  spec-only PR.
+- Do not merge, deploy to staging, or activate production behavior in this
+  PR-ready/no-deploy pass.
 
 ## 4. Knowledge Architecture
 
-### 4.1 Frontend-owned help index
+### 4.1 V1 backend seed records
+
+V1 answers from short backend-owned records for common 6529 topics and routes.
+These records are intentionally small so the bot is fast and reliable while the
+team learns what users ask.
+
+Initial seeded topics include:
+
+- TDH and network definitions
+- Waves and wave creation
+- subscriptions and subscription eligibility
+- profile subscriptions tab
+- REP/CIC and Levels
+- delegation
+- The Memes
+- NextGen
+
+### 4.2 Future frontend-owned help index
 
 The frontend should publish a generated help index containing:
 
@@ -99,7 +119,7 @@ The frontend should publish a generated help index containing:
 The backend should sync this artifact into a runtime store and answer from the
 latest valid cached copy.
 
-### 4.2 Backend-owned help records
+### 4.3 Backend-owned help records
 
 The backend should own records for backend business rules that are not safe to
 infer from frontend pages alone. Examples:
@@ -113,7 +133,7 @@ These should be short, curated records or generated summaries from backend docs
 and tests. Raw code lookup should happen offline during indexing or authoring,
 not during a user request.
 
-### 4.3 Retrieval model
+### 4.4 Retrieval model
 
 The bot should not depend on a predefined list of questions. It should retrieve
 records and chunks by:
@@ -125,6 +145,11 @@ records and chunks by:
 
 The live answer prompt should receive only the top relevant snippets, not the
 entire corpus.
+
+For V1, retrieval is alias/keyword scoring over the seed records. Direct
+follow-up questions first match the current user message; previous bot answer
+text is used only as fallback context so old wording does not dominate the next
+topic.
 
 ## 5. Runtime Flow
 
@@ -173,18 +198,20 @@ Add an interaction record to prevent duplicate bot replies.
 Recommended fields:
 
 - `id`
-- `trigger_message_id`
-- `parent_message_id`
-- `root_message_id`
-- `trigger_type`: `MENTION` or `REPLY_TO_BOT`
+- `trigger_drop_id`
+- `wave_id`
+- `author_id`
+- `parent_bot_drop_id`
+- `trigger_type`: `MENTION` or `BOT_REPLY`
 - `status`: `SEEN`, `ANSWERING`, `ANSWERED`, `NO_RELIABLE_SOURCE`,
-  `MODEL_ERROR`, `TIMEOUT`, `RATE_LIMITED`
-- `bot_reply_message_id`
-- `help_index_version`
-- `model_provider`
-- `model_id`
+  `FAILED`
+- `bot_reply_drop_id`
+- `knowledge_version`
+- `failure_reason`
 - `created_at`
 - `updated_at`
+- `answer_started_at`
+- `completed_at`
 
 Idempotency rules:
 
@@ -198,7 +225,7 @@ Idempotency rules:
 
 V1 should use a managed LLM provider rather than self-hosting.
 
-Recommended default:
+Optional V1 provider:
 
 - Amazon Bedrock with Claude or another approved text model.
 
@@ -214,8 +241,10 @@ Prompt rules:
 - If context is insufficient, return a no-reliable-source result.
 - Preserve conversational tone without pretending to be human.
 
-The LLM is responsible for natural wording. It is not responsible for deciding
-canonical facts or links without retrieved context.
+The LLM is responsible for natural wording only. It is not responsible for
+deciding canonical facts or links without retrieved context. If Bedrock is not
+configured, or if it fails after a reliable seed record is found, V1 uses the
+deterministic seeded answer.
 
 ## 8. Answer Examples
 
@@ -300,33 +329,29 @@ private user data beyond what is needed for debugging and abuse controls.
 
 ## 12. Rollout Plan
 
-### Phase 1: Spec and Corpus Design
+### Phase 1: Spec and Corpus Design - Done
 
 - Draft frontend help index spec.
 - Draft backend runtime spec.
-- Agree on bot naming and handle.
+- Agree on bot naming and handle: `@6529help`.
 
-### Phase 2: Minimal Bot Plumbing
+### Phase 2: V1 Seeded Bot Plumbing - Done In PR
 
 - Create bot identity.
 - Detect explicit `@6529help` mentions.
-- Add 👀, post simple canned answer, replace with ✅.
+- Add 👀, answer from seeded records, replace with ✅.
 - Add failure reply path and ⚠️.
+- Trigger on direct replies to bot messages.
+- Use optional Bedrock wording when configured, with deterministic fallback.
 
-### Phase 3: RAG Integration
+### Phase 3: Full Index/RAG Integration - Future
 
 - Sync frontend help index.
-- Add backend help records.
-- Add retrieval and Bedrock-backed answer generation.
+- Expand backend help records.
+- Add vector/search retrieval over frontend/backend docs.
 - Add no-reliable-source behavior.
 
-### Phase 4: Follow-ups
-
-- Trigger on direct replies to bot messages.
-- Include short thread context.
-- Re-run retrieval for the current follow-up question.
-
-### Phase 5: Evaluation and Coverage
+### Phase 4: Evaluation and Coverage
 
 - Add eval questions for TDH, wave creation, subscriptions, voting, drops, and
   navigation.
@@ -334,13 +359,7 @@ private user data beyond what is needed for debugging and abuse controls.
 
 ## 13. Open Questions
 
-- What exact bot handle should ship: `@6529help`, `@6529-help`, or another
-  identity?
-- Which reaction APIs should the bot use for 👀, ✅, and ⚠️?
 - Should successful answers keep ✅ forever, or should status reactions expire?
-- Should the failure reply route users to 6529 Tech Feedback, a help wave, or a
-  docs page?
-- Should the first release support direct-message contexts or public waves only?
 - Which Bedrock model should be approved for initial production use?
 - How should the backend sync the frontend help index: scheduled pull, deploy
   webhook, S3 event, or admin endpoint?

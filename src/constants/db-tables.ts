@@ -67,6 +67,7 @@ export const DROPS_VOTES_CREDIT_SPENDINGS_TABLE =
   'drops_votes_credit_spendings';
 export const DROP_VOTER_STATE_TABLE = 'drop_voter_states';
 export const DROP_REACTIONS_TABLE = 'drop_reactions';
+export const HELP_BOT_INTERACTIONS_TABLE = 'help_bot_interactions';
 export const DROP_REAL_VOTER_VOTE_IN_TIME_TABLE =
   'drop_real_voter_vote_in_time';
 export const EXTERNAL_INDEXED_CONTRACTS_TABLE = 'external_indexed_contracts';

@@ -76,6 +76,7 @@ flowchart TD
     SeizeAPI --> NftLinkRefreshQueue["SQS: nft-link-refreshes"] --> NftLinkRefresherLoop["nftLinkRefresherLoop"]
     NftLinkRefresherLoop --> NftLinkPreviewQueue["SQS: nft-link-media-previews"] --> NftLinkMediaPreviewLoop["nftLinkMediaPreviewLoop"]
     SeizeAPI --> PushQueue["SQS: firebase-push-notifications"] --> PushNotificationsHandler["pushNotificationsHandler"]
+    SeizeAPI --> HelpBotQueue["SQS: help-bot-replies"] --> HelpBotReplyLoop["helpBotReplyLoop"]
     TdhLoop --> TdhDoneTopic["SNS: tdh-calculation-done.fifo"]
     TdhDoneTopic --> XTdhQueue["SQS: xtdh-start.fifo"] --> XTdhLoop["xTdhLoop"]
     TdhDoneTopic --> OverRatesQueue["SQS: over-rates-revocation-start.fifo"] --> OverRatesRevocationLoop["overRatesRevocationLoop"]
@@ -159,6 +160,7 @@ flowchart TD
 | `nftLinkRefresherLoop` | SQS `nft-link-refreshes` | Resolve external NFT links. |
 | `nftLinkMediaPreviewLoop` | SQS `nft-link-media-previews` | Generate media previews for NFT links. |
 | `pushNotificationsHandler` | SQS `firebase-push-notifications` | Deliver Firebase push notifications. |
+| `helpBotReplyLoop` | SQS `help-bot-replies` | Answer `@6529help` mentions and direct follow-ups to bot replies. |
 | `xTdhLoop` | SNS `tdh-calculation-done.fifo` via SQS `xtdh-start.fifo` | Recalculate xTDH after TDH finishes. |
 | `overRatesRevocationLoop` | SNS `tdh-calculation-done.fifo` via SQS `over-rates-revocation-start.fifo` | Revoke over-rates after TDH changes. |
 | `waveScoreRefreshLoop` | SNS `tdh-calculation-done.fifo` via SQS `wave-score-refresh-start.fifo` | Refresh materialized wave REP and Wave Score discovery fields after TDH changes. |
@@ -227,6 +229,7 @@ Important API responsibilities:
   URLs to canonical native URIs, `media.6529.io` resolver URLs, and explicit
   external fallback URLs. This v1 API does not proxy media bytes.
 - Authenticated social writes: drops, votes, reactions, curations, subscriptions, groups, proxies, profile CMS package drafts/publish actions, minting claims, and push settings.
+- `@6529help` trigger detection after drop creation. The API writes a durable `help_bot_interactions` row, reacts with the bot's seen marker, and enqueues the reply worker when help-bot env flags are enabled.
 - Upload preparation and multipart completion for drop media, wave media, distribution photos, and attachments.
 - WebSocket connection registration and real-time wave-related messages.
 - Operational endpoints such as health, docs, RPC/proxy routes, webhooks, and deploy-related routes.
@@ -285,6 +288,31 @@ There are three async patterns:
 - DB-backed event processing: the `events` table stores processable events, and `rateEventProcessingLoop` locks and dispatches them to listener implementations.
 
 Most long-running scheduled jobs have reserved concurrency set low, usually `1`, which protects shared tables from concurrent writer races. SQS workers use queue visibility timeouts, DLQs, and batch failure reporting where configured.
+
+## 6529 Help Bot Flow
+
+The V1 6529 Help Bot is intentionally bounded and fast. Drop creation remains the synchronous user write. After a drop is created, the API checks for an explicit `@6529help` mention or a direct reply to a prior bot-authored reply. When matched, it inserts one `help_bot_interactions` row keyed by `trigger_drop_id`, reacts to the triggering drop with the bot's seen marker, and sends `{ interaction_id }` to `help-bot-replies`.
+
+```mermaid
+%%{init: {"flowchart": {"nodeSpacing": 24, "rankSpacing": 44, "curve": "basis"}} }%%
+flowchart TD
+  UserDrop["user creates drop"] --> DropRoute["seizeAPI drop route"]
+  DropRoute --> InteractionRow["help_bot_interactions"]
+  DropRoute --> SeenReaction["bot reaction: seen"]
+  DropRoute --> HelpBotSqs["SQS: help-bot-replies"]
+  HelpBotSqs --> HelpBotWorker["helpBotReplyLoop"]
+  HelpBotWorker --> SeededKnowledge["seeded V1 knowledge records"]
+  HelpBotWorker -. optional .-> Bedrock["Bedrock renderer"]
+  HelpBotWorker --> BotReply["bot reply drop"]
+  HelpBotWorker --> FinalReaction["bot reaction: success or warning"]
+```
+
+Important details:
+
+- The bot is inactive unless `HELP_BOT_ENABLED`, `HELP_BOT_PROFILE_ID`, and the API's `HELP_BOT_SQS_URL` are configured.
+- V1 retrieval uses seeded backend knowledge records and canonical frontend URLs, not full RAG or live repo lookup.
+- If Bedrock rendering is configured and fails, the worker falls back to deterministic seeded wording when a reliable record exists.
+- If no reliable record exists, or a technical failure prevents answering, the worker posts a failure reply and changes the bot reaction to warning.
 
 ## Drops -> Minting Claim Queue Flows
 
