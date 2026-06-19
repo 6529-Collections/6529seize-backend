@@ -23,6 +23,10 @@ export interface HelpBotPublicDataAnswerRequest {
  * Public-data mode never executes SQL emitted by Bedrock. The model can only
  * choose a semantic plan from this backend-owned public schema. The backend
  * compiler below turns that plan into parameterized SQL.
+ *
+ * There is intentionally no "LLM SQL validator" here: SQL is not part of the
+ * accepted model output surface. Unexpected fields such as sql/rawSql are
+ * ignored or rejected before execution depending on where they appear.
  */
 export const HELP_BOT_PUBLIC_DATA_ENTITIES = [
   'meme_cards',
@@ -73,7 +77,7 @@ export interface HelpBotPublicDataAnswer {
 
 interface HelpBotPublicDataExecutableQuery {
   readonly queryId: string;
-  readonly templateSql: string;
+  readonly compiledSql: string;
   readonly params?: Record<string, unknown>;
   readonly title: string;
   readonly canonicalPath: string;
@@ -362,7 +366,7 @@ function buildMemeCardsCountQuery(
   const from = buildMemeCardsFromSql();
   return {
     queryId: buildQueryId('meme_cards', 'count'),
-    templateSql: sqlJoin([
+    compiledSql: sqlJoin([
       'SELECT COUNT(*) AS meme_count',
       from.fromSql,
       where.whereSql,
@@ -386,7 +390,7 @@ function buildMemeCardsValueQuery(
   const from = buildMemeCardsFromSql(metric);
   return {
     queryId: buildQueryId('meme_cards', 'value', metricKey),
-    templateSql: sqlJoin([
+    compiledSql: sqlJoin([
       `SELECT m.meme, m.meme_name, ${metric.expression} AS ${metric.alias}`,
       from.fromSql,
       where.whereSql,
@@ -412,7 +416,7 @@ function buildMemeCardsSortedQuery(
   const scope = filters.season !== undefined ? ` in SZN${filters.season}` : '';
   return {
     queryId: buildQueryId('meme_cards', operation, metricKey),
-    templateSql: sqlJoin([
+    compiledSql: sqlJoin([
       `SELECT m.meme, m.meme_name, ${metric.expression} AS ${metric.alias}`,
       from.fromSql,
       where.whereSql,
@@ -444,7 +448,7 @@ function buildMemeCardsAggregateQuery(
   const scope = filters.season !== undefined ? ` in SZN${filters.season}` : '';
   return {
     queryId: buildQueryId('meme_cards', operation, metricKey),
-    templateSql: sqlJoin([
+    compiledSql: sqlJoin([
       `SELECT ${sqlOperation}(${metric.expression}) AS ${metric.alias}`,
       from.fromSql,
       where.whereSql,
@@ -514,7 +518,7 @@ function buildTdhGlobalQuery(
   }
   return {
     queryId: buildQueryId('tdh_global', 'latest', metric),
-    templateSql: `SELECT total_boosted_tdh AS total_tdh, date, block FROM ${LATEST_TDH_GLOBAL_HISTORY_TABLE} LIMIT 1`,
+    compiledSql: `SELECT total_boosted_tdh AS total_tdh, date, block FROM ${LATEST_TDH_GLOBAL_HISTORY_TABLE} LIMIT 1`,
     title: 'Total TDH',
     canonicalPath: '/network/tdh'
   };
@@ -581,7 +585,7 @@ export class HelpBotPublicDataService {
     }
     const rows = await withTimeout(
       this.db().execute<Record<string, unknown>>(
-        applyStatementTimeoutHint(query.templateSql),
+        applyStatementTimeoutHint(query.compiledSql),
         query.params,
         { forcePool: DbPoolName.READ }
       ),

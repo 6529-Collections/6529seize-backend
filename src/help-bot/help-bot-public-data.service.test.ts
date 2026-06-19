@@ -31,7 +31,7 @@ describe('buildHelpBotPublicDataQuery', () => {
     ).toEqual(
       expect.objectContaining({
         queryId: 'meme_cards.count',
-        templateSql:
+        compiledSql:
           'SELECT COUNT(*) AS meme_count FROM memes_extended_data m WHERE m.season = :season LIMIT 1',
         params: { season: 1 },
         title: 'Meme Cards in SZN1',
@@ -51,7 +51,7 @@ describe('buildHelpBotPublicDataQuery', () => {
     ).toEqual(
       expect.objectContaining({
         queryId: 'meme_cards.value.tdh_rate',
-        templateSql:
+        compiledSql:
           'SELECT m.meme, m.meme_name, n.hodl_rate AS tdh_rate FROM memes_extended_data m JOIN nfts n ON n.id = m.id AND n.contract = :memesContract WHERE m.meme = :meme LIMIT 1',
         params: { memesContract: MEMES_CONTRACT, meme: 1 },
         title: 'Meme #1 TDH Rate',
@@ -72,7 +72,7 @@ describe('buildHelpBotPublicDataQuery', () => {
     ).toEqual(
       expect.objectContaining({
         queryId: 'meme_cards.max.edition_size',
-        templateSql:
+        compiledSql:
           'SELECT m.meme, m.meme_name, m.edition_size AS edition_size FROM memes_extended_data m WHERE m.season = :season ORDER BY m.edition_size DESC, m.meme ASC LIMIT 3',
         params: { season: 2 },
         title: 'Highest Meme Card Edition Size in SZN2',
@@ -116,6 +116,21 @@ describe('buildHelpBotPublicDataQuery', () => {
         entity: 'meme_cards',
         operation: 'count',
         filters: 'season = 1'
+      })
+    ).toBeNull();
+    expect(
+      buildHelpBotPublicDataQuery({
+        entity: 'meme_cards',
+        operation: 'count; DELETE FROM users',
+        filters: { season: 1 }
+      })
+    ).toBeNull();
+    expect(
+      buildHelpBotPublicDataQuery({
+        entity: 'meme_cards',
+        operation: 'value',
+        metric: 'tdh_rate FROM users',
+        filters: { meme: 1 }
       })
     ).toBeNull();
   });
@@ -212,6 +227,36 @@ describe('HelpBotPublicDataService', () => {
       service.answer({ question: 'total tdh?' })
     ).resolves.toBeNull();
     expect(db.execute).not.toHaveBeenCalled();
+  });
+
+  it('ignores unexpected SQL fields and executes only compiled backend SQL', async () => {
+    const llm: HelpBotPublicDataLlm = {
+      planPublicDataQuery: jest.fn().mockResolvedValue({
+        entity: 'meme_cards',
+        operation: 'count',
+        filters: { season: 1 },
+        sql: 'SELECT id FROM users'
+      }),
+      renderPublicDataAnswer: jest.fn().mockResolvedValue('SZN1 has 47 cards.')
+    };
+    const db = new TestSqlExecutor();
+    db.execute.mockResolvedValue([{ meme_count: 47 }]);
+    const service = new HelpBotPublicDataService(llm, () => db);
+
+    await expect(
+      service.answer({ question: 'how many memes are in szn1?' })
+    ).resolves.toEqual({
+      answer:
+        'SZN1 has 47 cards.\n\nMore info: https://6529.io/the-memes?szn=1',
+      queryId: 'meme_cards.count'
+    });
+    expect(db.execute).toHaveBeenCalledWith(
+      withStatementTimeoutHint(
+        'SELECT COUNT(*) AS meme_count FROM memes_extended_data m WHERE m.season = :season LIMIT 1'
+      ),
+      { season: 1 },
+      { forcePool: DbPoolName.READ }
+    );
   });
 
   it('executes a latest global TDH plan through the read pool', async () => {
