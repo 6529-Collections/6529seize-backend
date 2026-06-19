@@ -161,6 +161,7 @@ export const DROP_MENTIONED_WAVES_TABLE = 'drop_mentioned_waves';
 export const DROP_REFERENCED_NFTS_TABLE = 'drops_referenced_nfts';
 export const DROP_METADATA_TABLE = 'drops_metadatas';
 export const DROP_MEDIA_TABLE = 'drop_medias';
+export const DROP_MEDIA_UPLOADS_TABLE = 'drop_media_uploads';
 export const DROP_BOOSTS_TABLE = 'drop_boosts';
 export const DROP_CURATIONS_TABLE = 'drop_curations';
 export const DROP_BOOKMARKS_TABLE = 'drop_bookmarks';

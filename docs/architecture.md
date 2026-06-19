@@ -26,7 +26,8 @@ flowchart TD
   ReadPool --> MySQL["MySQL / RDS"]
   WritePool --> MySQL
   SeizeAPI --> Redis["Redis"]
-  SeizeAPI --> S3["S3"]
+  SeizeAPI --> S3["public S3 media bucket"]
+  SeizeAPI --> DropMediaIngestS3["private drop media ingest S3 bucket"]
   SeizeAPI --> MediaResolver["Decentralized media resolver<br/>native URI + gateway URL mapping"]
   SeizeAPI --> AiRpc["AI / RPC / webhooks"]
 
@@ -73,6 +74,7 @@ flowchart TD
     NftsLoop --> S3UploaderQueue["SQS: s3-uploader-jobs"] --> S3Uploader["s3Uploader"]
     SeizeAPI --> AttachOrchestrationQueue["SQS: attachments-orchestration"] --> AttachmentsOrchestrator["attachmentsOrchestrator"]
     AttachmentsOrchestrator --> AttachProcessingQueue["SQS: attachments-processing"] --> AttachmentsProcessor["attachmentsProcessor"]
+    SeizeAPI --> DropMediaSanitizerQueue["SQS: drop-media-sanitizer"] --> DropMediaSanitizer["dropMediaSanitizer"]
     SeizeAPI --> NftLinkRefreshQueue["SQS: nft-link-refreshes"] --> NftLinkRefresherLoop["nftLinkRefresherLoop"]
     NftLinkRefresherLoop --> NftLinkPreviewQueue["SQS: nft-link-media-previews"] --> NftLinkMediaPreviewLoop["nftLinkMediaPreviewLoop"]
     SeizeAPI --> PushQueue["SQS: firebase-push-notifications"] --> PushNotificationsHandler["pushNotificationsHandler"]
@@ -103,6 +105,8 @@ flowchart TD
 
   S3Uploader --> S3
   AttachmentsProcessor --> S3
+  DropMediaSanitizer --> DropMediaIngestS3
+  DropMediaSanitizer --> S3
   NftLinkMediaPreviewLoop --> S3
   ClaimsMediaArweaveUploader --> Arweave["Arweave"]
   PushNotificationsHandler --> Firebase["Firebase"]
@@ -157,6 +161,7 @@ flowchart TD
 | `s3Uploader` | SQS `s3-uploader-jobs` | Mirror, compress, and upload NFT media. |
 | `attachmentsOrchestrator` | SQS `attachments-orchestration` and S3 object-created event | Find uploaded attachment objects, retry, and enqueue processing. |
 | `attachmentsProcessor` | SQS `attachments-processing` | Scan/process attachments. |
+| `dropMediaSanitizer` | SQS `drop-media-sanitizer` | Strip metadata from private-ingest drop/wave image uploads and publish sanitized originals. |
 | `nftLinkRefresherLoop` | SQS `nft-link-refreshes` | Resolve external NFT links. |
 | `nftLinkMediaPreviewLoop` | SQS `nft-link-media-previews` | Generate media previews for NFT links. |
 | `pushNotificationsHandler` | SQS `firebase-push-notifications` | Deliver Firebase push notifications. |
@@ -193,7 +198,7 @@ MySQL is the integration contract between nearly all modules. API routes, schedu
 3. Scheduled ingestion Lambdas poll Ethereum/RPC/Alchemy/Etherscan, normalize chain state, and write canonical rows into MySQL.
 4. Derived-data Lambdas read canonical tables and write projections such as TDH, owner balances, aggregated activity, wave decisions, leaderboards, metrics, and reputation aggregates.
 5. SQS workers handle slow or retryable side effects through named queues: claim building, claim media Arweave uploads, S3 media mirroring, attachment orchestration/processing, NFT link resolution/previews, xTDH recalculation, and Firebase push notifications.
-6. S3 and CloudFront serve media. Some paths have specialized Lambda behavior: on-demand resizing, video conversion, and NextGen metadata placeholder interception.
+6. S3 and CloudFront serve media. Drop and wave image uploads can first land in a private ingest bucket, then `dropMediaSanitizer` strips metadata and publishes the sanitized full-size original to the public bucket before CloudFront/resizer paths serve it. Other specialized media paths include on-demand resizing, video conversion, and NextGen metadata placeholder interception.
 7. Operational signals flow to Sentry, CloudWatch alarms, Discord, and SNS.
 
 ## API Boundary
@@ -230,7 +235,7 @@ Important API responsibilities:
   external fallback URLs. This v1 API does not proxy media bytes.
 - Authenticated social writes: drops, votes, reactions, curations, subscriptions, groups, proxies, profile CMS package drafts/publish actions, minting claims, and push settings.
 - `@6529help` trigger detection after drop creation. The API writes a durable `help_bot_interactions` row, reacts with the bot's seen marker, and enqueues the reply worker when help-bot env flags are enabled.
-- Upload preparation and multipart completion for drop media, wave media, distribution photos, and attachments.
+- Upload preparation and multipart completion for drop media, wave media, distribution photos, and attachments. When `DROP_MEDIA_SANITIZE_IMAGES=true`, drop/wave image multipart uploads complete into private ingest storage, return `media_status=processing`, and publish a `DROP_UPDATE` websocket event with reason `MEDIA_STATUS` after the sanitizer marks the media ready or failed.
 - WebSocket connection registration and real-time wave-related messages.
 - Operational endpoints such as health, docs, RPC/proxy routes, webhooks, and deploy-related routes.
 
@@ -352,7 +357,7 @@ Important details:
 
 Deployment is service-by-service through the generated GitHub Actions workflow. The workflow exposes `api` and each Lambda service as a deploy choice.
 
-Most Lambdas deploy through each service's `serverless.yaml`. The API is packaged from `src/api-serverless` and deployed by direct AWS Lambda update commands as `seizeAPI`. `mediaResizerLoop` also has a direct Lambda update path. `nextgenMediaProxyInterceptor` deploys as a Lambda@Edge version and updates CloudFront associations through its shell script.
+Most Lambdas deploy through each service's `serverless.yaml`. The API is packaged from `src/api-serverless` and deployed by direct AWS Lambda update commands as `seizeAPI`. `mediaResizerLoop` also has a direct Lambda update path. `nextgenMediaProxyInterceptor` deploys as a Lambda@Edge version and updates CloudFront associations through its shell script. `dropMediaIngestStorage` is a resources-only Serverless service that owns the shared private ingest bucket from the staging-region stack; it does not attach to the public media bucket or CloudFront.
 
 Typical deployment order when schema or generated API contracts change:
 

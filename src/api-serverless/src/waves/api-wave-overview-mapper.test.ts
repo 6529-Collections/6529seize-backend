@@ -1,4 +1,5 @@
 import { AuthenticationContext } from '@/auth-context';
+import { ApiDropMediaStatus } from '@/api/generated/models/ApiDropMediaStatus';
 import { ActivityEventAction } from '@/entities/IActivityEvent';
 import {
   WaveCreditScope,
@@ -348,7 +349,10 @@ describe('ApiWaveOverviewMapper', () => {
           media: [
             {
               url: 'https://example.com/image.png',
-              mime_type: 'image/png'
+              mime_type: 'image/png',
+              media_upload_id: undefined,
+              media_status: ApiDropMediaStatus.Ready,
+              media_error: null
             }
           ]
         },
