@@ -78,6 +78,18 @@ I saw this, but I hit a temporary issue while looking it up. Please try again in
 
 The bot should not hallucinate a fallback answer when source confidence is low.
 
+Obvious impossible requests, privilege requests, prompt-injection attempts, or
+private-data pokes should not page the tech team. The bot should answer with a
+short bounded refusal, for example:
+
+```text
+Nice try. I can't grant TDH, REP, NFTs, admin powers, or secret shortcuts on request. Ask me how the real thing works and I'll point you to the right page.
+```
+
+This branch is only for clear messing-around or bypass attempts. Genuine
+unsupported product questions should still use the no-reliable-source path
+above, including optional tech-team mentions when configured.
+
 The hardcoded `@6529help` handle is resolved to the current profile id at
 runtime. Successful resolutions cache for five minutes; missing-profile lookups
 cache for 30 seconds so manual profile creation becomes active quickly.
@@ -410,6 +422,8 @@ Initial controls:
   creating interactions, queueing work, or calling Bedrock.
 - Ignore bot mentions inside bot-authored messages.
 - Ignore follow-up messages that are trivial acknowledgements.
+- Return a bounded no-tech-team reply for obvious impossible grants, prompt
+  injection, or private-data requests.
 
 The bot should prefer a polite failure or no-op over spamming a wave.
 

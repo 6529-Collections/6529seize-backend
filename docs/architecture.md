@@ -326,6 +326,7 @@ Important details:
 - Help index fetches use a short timeout; a cold load failure produces the technical-failure reply instead of a no-reliable-source answer.
 - Bedrock rendering uses a fixed short timeout; if it fails or times out, the worker falls back to deterministic wording when a reliable frontend record or public DB row exists.
 - If no reliable record exists, the worker posts `I don't have enough knowledge to help you here.` and changes the bot reaction to warning. `HELP_BOT_TECH_TEAM_HANDLES` can optionally provide semicolon-separated handles that are appended as real mentions in that no-knowledge reply.
+- Obvious impossible grants, prompt-injection attempts, and private-data pokes return a short bounded no-tech-team reply instead of escalating to the no-reliable-source path.
 - If a technical failure prevents answering, the worker posts the technical-failure reply and changes the bot reaction to warning.
 
 ## Drops -> Minting Claim Queue Flows
