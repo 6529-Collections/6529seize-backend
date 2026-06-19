@@ -119,7 +119,9 @@ Checks after deploy:
 - New web login creates a v2 session.
 - Web refresh and logout work through the API domain.
 - Existing v1 web sessions are not immediately logged out.
-- Connection sharing create/redeem works where applicable.
+- Connection sharing create/redeem works from an active session-v2 web session.
+  Legacy-authenticated web users should be prompted to update authentication
+  before they can create a share.
 
 ## Phase 3: Start Migration Prompt
 
@@ -191,6 +193,8 @@ through one of these paths:
 
 This keeps the v2 session model clean: every v2 session is created by a v2
 signature or by a v2-authenticated connection-sharing flow.
+Connection-share URLs carry the one-time code and address only; the server
+stores and returns the role associated with the share.
 
 ## Rollback
 

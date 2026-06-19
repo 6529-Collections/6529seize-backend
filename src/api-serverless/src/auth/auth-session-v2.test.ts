@@ -3,6 +3,7 @@ import {
   clearWalletSessionCookie,
   createConnectionShare,
   createWebSession,
+  getActiveWebSession,
   isAuthConnectionSharingEnabled,
   logoutNativeSession,
   logoutWebSession,
@@ -126,6 +127,39 @@ describe('auth-session-v2', () => {
     expect(clearWalletSessionCookie()).toBe(
       `${WALLET_SESSION_COOKIE_NAME}=; Max-Age=0; Path=/api/auth; HttpOnly; Secure; SameSite=Lax`
     );
+  });
+
+  it('loads active web sessions from the session-v2 cookie without trusting URL role metadata', async () => {
+    authDbMock.getActiveWebSessionBySecretHash.mockResolvedValue({
+      id: 'session-1',
+      address: '0xABC',
+      role: 'profile-1',
+      client_type: 'web',
+      secret_hash: 'stored-secret-hash',
+      refresh_token_hash: null,
+      user_agent_hash: null,
+      signature_domain: '6529.io',
+      client_origin: 'https://6529.io',
+      created_at: new Date(),
+      last_used_at: new Date(),
+      expires_at: new Date(Date.now() + 60_000),
+      revoked_at: null
+    });
+
+    const session = await getActiveWebSession({
+      cookie: { sessionId: 'session-1', secret: 'cookie-secret' },
+      requestOrigin: 'https://6529.io'
+    });
+
+    expect(session).toEqual({
+      address: '0xabc',
+      role: 'profile-1'
+    });
+    const [sessionId, secretHash] =
+      authDbMock.getActiveWebSessionBySecretHash.mock.calls[0];
+    expect(sessionId).toBe('session-1');
+    expect(secretHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(secretHash).not.toBe('cookie-secret');
   });
 
   it('requires native refresh-token ownership before revoking all sessions', async () => {
@@ -404,7 +438,9 @@ describe('auth-session-v2', () => {
     });
     expect(created.connection_share_code).toEqual(expect.any(String));
     expect(created.deep_link_path).toContain('connection_share_code=');
+    expect(created.deep_link_path).toContain('address=0xabc');
     expect(created.deep_link_path).not.toContain('token=');
+    expect(created.deep_link_path).not.toContain('role=');
 
     const [storedShare] = authDbMock.createWalletConnectionShare.mock.calls[0];
     expect(storedShare.connectionShareCodeHash).toMatch(/^[a-f0-9]{64}$/);
