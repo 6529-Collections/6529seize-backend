@@ -85,6 +85,8 @@ cache for 30 seconds so manual profile creation becomes active quickly.
 ## 3. Non-Goals
 
 - Do not answer without a user trigger.
+- Do not process private waves, restricted-visibility waves, or direct-message
+  waves.
 - Do not inspect GitHub or frontend source files during the live answer path.
 - Do not train or fine-tune a model for V1.
 - Do not provide private wallet-specific eligibility answers unless a dedicated
@@ -251,7 +253,9 @@ message_created
 
 If a user replies to someone else's question with only `@6529help`, the bot uses
 the parent drop text as the question and targets the parent drop for 👀, ⚠️/✅,
-and the bot reply. The summoning drop remains the idempotency trigger.
+and the bot reply. This only applies in public waves. The parent drop is fetched
+through the caller's normal visibility checks, and the summoning drop remains the
+idempotency trigger.
 
 ### 5.2 Follow-up flow
 
@@ -402,6 +406,8 @@ Initial controls:
 - Per-wave trigger limit.
 - Global bot concurrency limit.
 - Maximum prompt/context token budget.
+- Skip private/restricted/direct-message waves before reading parent context,
+  creating interactions, queueing work, or calling Bedrock.
 - Ignore bot mentions inside bot-authored messages.
 - Ignore follow-up messages that are trivial acknowledgements.
 

@@ -318,7 +318,8 @@ Important details:
 - The bot handle is hardcoded as `@6529help`; runtime resolves that handle to the current bot profile id before posting replies or reactions.
 - Creating the `6529help` profile activates runtime behavior; if that handle cannot be resolved, the bot no-ops.
 - The API enqueues reply jobs by the hardcoded SQS queue name `help-bot-replies`; no queue URL environment variable is required.
-- If a user replies to someone else's question with only `@6529help`, the bot uses the parent drop text as the question and targets the parent drop for reactions and the reply.
+- The bot skips restricted-visibility waves and direct-message waves before reading parent context, creating an interaction row, queueing work, or calling Bedrock.
+- If a user replies to someone else's question with only `@6529help` in a public wave, the bot fetches the parent drop through the caller's normal visibility checks, uses the parent drop text as the question, and targets the parent drop for reactions and the reply.
 - V1 retrieval uses the frontend-published `https://6529.io/help-index.json` artifact for product knowledge and a bounded public-data query-intent mode for aggregate backend data questions.
 - Bedrock selects a semantic public-data plan from a hardcoded catalog; Bedrock output never contains executable SQL, table names, columns, joins, or expressions.
 - The backend public-data compiler validates the selected entity, operation, metric, numeric filters, and limit, then emits parameterized SQL through the shared `SqlExecutor` with the read pool forced, hard row limits, and a MySQL execution-time hint injected by backend code.

@@ -1,6 +1,7 @@
 import { dropsService, DropsApiService } from '@/api/drops/drops.api.service';
 import { ApiCreateDropRequest } from '@/api/generated/models/ApiCreateDropRequest';
 import { ApiDrop } from '@/api/generated/models/ApiDrop';
+import { wavesApiDb, WavesApiDb } from '@/api/waves/waves.api.db';
 import { Logger } from '@/logging';
 import { RequestContext } from '@/request.context';
 import { sqs, SQS } from '@/sqs';
@@ -38,7 +39,8 @@ export class HelpBotTriggerService {
     private readonly dropWriter: HelpBotDropWriterService,
     private readonly dropsService: DropsApiService,
     private readonly sqs: SQS,
-    private readonly profileResolver: HelpBotProfileResolver
+    private readonly profileResolver: HelpBotProfileResolver,
+    private readonly wavesDb: WavesApiDb
   ) {}
 
   public async handleCreatedDrop(
@@ -56,6 +58,9 @@ export class HelpBotTriggerService {
     try {
       const botProfileId = await this.profileResolver.resolveBotProfileId(ctx);
       if (!botProfileId) {
+        return;
+      }
+      if (!(await this.isPublicHelpBotWave(createdDrop.wave.id, ctx))) {
         return;
       }
       const parentDrop = await this.findParentDrop(createDropRequest, ctx);
@@ -130,8 +135,7 @@ export class HelpBotTriggerService {
     try {
       return await this.dropsService.findDropByIdOrThrow(
         {
-          dropId: parentDropId,
-          skipEligibilityCheck: true
+          dropId: parentDropId
         },
         ctx
       );
@@ -142,6 +146,21 @@ export class HelpBotTriggerService {
       );
       return null;
     }
+  }
+
+  private async isPublicHelpBotWave(
+    waveId: string,
+    ctx: RequestContext
+  ): Promise<boolean> {
+    const wave = await this.wavesDb.findWaveById(waveId, ctx.connection);
+    if (!wave) {
+      this.logger.warn(`Could not resolve wave ${waveId} for help bot trigger`);
+      return false;
+    }
+    if (wave.visibility_group_id || wave.is_direct_message === true) {
+      return false;
+    }
+    return true;
   }
 
   private async handleEnqueueFailure({
@@ -208,5 +227,6 @@ export const helpBotTriggerService = new HelpBotTriggerService(
   helpBotDropWriterService,
   dropsService,
   sqs,
-  helpBotProfileResolver
+  helpBotProfileResolver,
+  wavesApiDb
 );
