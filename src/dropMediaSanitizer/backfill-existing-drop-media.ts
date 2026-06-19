@@ -35,65 +35,121 @@ type BackfillOptions = {
   readonly skipInvalidation: boolean;
 };
 
+type BackfillReport = {
+  processed: number;
+  skipped: number;
+  failed: number;
+  invalidated: number;
+  failures: Array<{ id: string; key: string; error: string }>;
+};
+
 const logger = Logger.get('DROP_MEDIA_SANITIZER_BACKFILL');
 const DEFAULT_PAGE_SIZE = 100;
 const INVALIDATION_BATCH_SIZE = 1000;
 
 async function main() {
   const options = parseOptions(process.argv.slice(2));
-  const report = {
-    processed: 0,
-    skipped: 0,
-    failed: 0,
-    invalidated: 0,
-    failures: [] as Array<{ id: string; key: string; error: string }>
-  };
-  const invalidationPaths: string[] = [];
-  let lastId = 0;
+  const report = createBackfillReport();
 
   await doInDbContext(
     async () => {
-      while (options.limit === null || report.processed < options.limit) {
-        const rows = await fetchPage(lastId, options.limit, report.processed);
-        if (!rows.length) {
-          break;
-        }
-        lastId = Number(rows[rows.length - 1].id);
-        for (const row of rows) {
-          const key = parseCloudFrontMediaKey(row.url);
-          if (!key) {
-            report.skipped++;
-            continue;
-          }
-          try {
-            const result = await processRow({ row, key, options });
-            report[result]++;
-            if (result === 'processed') {
-              invalidationPaths.push(`/${key}`);
-            }
-          } catch (error) {
-            report.failed++;
-            report.failures.push({
-              id: row.id,
-              key,
-              error: error instanceof Error ? error.message : String(error)
-            });
-          }
-        }
-      }
-
-      if (
-        !options.dryRun &&
-        !options.skipInvalidation &&
-        invalidationPaths.length
-      ) {
-        report.invalidated = await invalidatePaths(invalidationPaths);
-      }
+      const invalidationPaths = await collectInvalidationPaths(options, report);
+      report.invalidated = await maybeInvalidatePaths(
+        options,
+        invalidationPaths
+      );
     },
     { logger }
   );
 
   logger.info(`Drop media backfill report: ${JSON.stringify(report)}`);
+}
+
+function createBackfillReport(): BackfillReport {
+  return {
+    processed: 0,
+    skipped: 0,
+    failed: 0,
+    invalidated: 0,
+    failures: []
+  };
+}
+
+async function collectInvalidationPaths(
+  options: BackfillOptions,
+  report: BackfillReport
+): Promise<string[]> {
+  const invalidationPaths: string[] = [];
+  let lastId = 0;
+
+  while (shouldFetchNextPage(options, report.processed)) {
+    const rows = await fetchPage(lastId, options.limit, report.processed);
+    if (!rows.length) {
+      break;
+    }
+    lastId = Number(rows[rows.length - 1].id);
+    invalidationPaths.push(...(await processPage(rows, options, report)));
+  }
+
+  return invalidationPaths;
+}
+
+function shouldFetchNextPage(
+  options: BackfillOptions,
+  processed: number
+): boolean {
+  return options.limit === null || processed < options.limit;
+}
+
+async function processPage(
+  rows: DropMediaBackfillRow[],
+  options: BackfillOptions,
+  report: BackfillReport
+): Promise<string[]> {
+  const invalidationPaths: string[] = [];
+  for (const row of rows) {
+    const path = await processBackfillRow(row, options, report);
+    if (path) {
+      invalidationPaths.push(path);
+    }
+  }
+  return invalidationPaths;
+}
+
+async function processBackfillRow(
+  row: DropMediaBackfillRow,
+  options: BackfillOptions,
+  report: BackfillReport
+): Promise<string | null> {
+  const key = parseCloudFrontMediaKey(row.url);
+  if (!key) {
+    report.skipped++;
+    return null;
+  }
+
+  try {
+    const result = await processRow({ row, key, options });
+    report[result]++;
+    return result === 'processed' ? `/${key}` : null;
+  } catch (error) {
+    report.failed++;
+    report.failures.push({
+      id: row.id,
+      key,
+      error: error instanceof Error ? error.message : String(error)
+    });
+    return null;
+  }
+}
+
+async function maybeInvalidatePaths(
+  options: BackfillOptions,
+  paths: string[]
+): Promise<number> {
+  if (options.dryRun || options.skipInvalidation || !paths.length) {
+    return 0;
+  }
+  return await invalidatePaths(paths);
 }
 
 async function fetchPage(
