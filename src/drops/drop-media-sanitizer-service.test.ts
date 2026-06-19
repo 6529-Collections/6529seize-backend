@@ -3,6 +3,7 @@ import {
   DropMediaSanitizerService,
   PermanentMediaSanitizationError
 } from '@/drops/drop-media-sanitizer.service';
+import { DropMediaUploadStatus } from '@/entities/IDropMediaUpload';
 
 describe('DropMediaSanitizerService', () => {
   const service = new DropMediaSanitizerService({} as any);
@@ -61,5 +62,51 @@ describe('DropMediaSanitizerService', () => {
         declaredMimeType: 'image/jpeg'
       })
     ).rejects.toBeInstanceOf(PermanentMediaSanitizationError);
+  });
+
+  it('claims processing uploads before publishing sanitized media', async () => {
+    const uploadsDb = {
+      findById: jest.fn().mockResolvedValue({
+        id: 'media-upload-123',
+        status: DropMediaUploadStatus.PROCESSING,
+        updated_at: 100
+      }),
+      transitionStatus: jest.fn().mockResolvedValue(true)
+    };
+    const notifier = {
+      notifyStatusTransition: jest.fn().mockResolvedValue(undefined)
+    };
+    const processService = new DropMediaSanitizerService(
+      uploadsDb as any,
+      jest.fn() as any,
+      jest.fn() as any,
+      notifier as any
+    );
+    jest
+      .spyOn(processService as any, 'sanitizeAndPublish')
+      .mockResolvedValue(undefined);
+
+    await processService.processUpload({
+      mediaUploadId: 'media-upload-123',
+      approximateReceiveCount: 1
+    });
+
+    expect(uploadsDb.transitionStatus).toHaveBeenNthCalledWith(1, {
+      id: 'media-upload-123',
+      fromStatuses: [DropMediaUploadStatus.PROCESSING],
+      toStatus: DropMediaUploadStatus.SANITIZING
+    });
+    expect(uploadsDb.transitionStatus).toHaveBeenNthCalledWith(2, {
+      id: 'media-upload-123',
+      fromStatuses: [DropMediaUploadStatus.SANITIZING],
+      toStatus: DropMediaUploadStatus.READY,
+      patch: expect.objectContaining({
+        error_reason: null,
+        completed_at: expect.any(Number)
+      })
+    });
+    expect(notifier.notifyStatusTransition).toHaveBeenCalledWith(
+      'media-upload-123'
+    );
   });
 });

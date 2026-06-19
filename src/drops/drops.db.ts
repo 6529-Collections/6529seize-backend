@@ -908,7 +908,10 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                                     'url',       url,
                                     'mime_type', mime_type,
                                     'media_upload_id', media_upload_id,
-                                    'media_status', COALESCE(media_status, 'ready'),
+                                    'media_status', CASE
+                                      WHEN media_upload_id IS NULL THEN 'ready'
+                                      ELSE COALESCE(media_status, 'failed')
+                                    END,
                                     'media_error', media_error
                             )
                     ) AS medias_json

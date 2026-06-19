@@ -222,6 +222,7 @@ describe('UploadMediaService', () => {
     const ingestS3 = { send: jest.fn() };
     const uploadsDb = {
       findByPublicKeyAndS3UploadId: jest.fn().mockResolvedValue({
+        profile_id: 'author-123',
         ingest_bucket: 'ingest-bucket',
         ingest_key: 'staging/drop-media-ingest/drops/key.jpg'
       })
@@ -237,7 +238,8 @@ describe('UploadMediaService', () => {
     const url = await service.getSignedUrlForPartOfMultipartUpload({
       key: 'drops/key.jpg',
       upload_id: 'upload-123',
-      part_no: 2
+      part_no: 2,
+      authenticatedProfileId: 'author-123'
     });
 
     expect(url).toBe('https://signed-upload-url.example');
@@ -249,6 +251,38 @@ describe('UploadMediaService', () => {
     });
   });
 
+  it('rejects tracked upload part signing for another profile', async () => {
+    const uploadsDb = {
+      findByPublicKeyAndS3UploadId: jest.fn().mockResolvedValue({
+        profile_id: 'author-123',
+        ingest_bucket: 'ingest-bucket',
+        ingest_key: 'staging/drop-media-ingest/drops/key.jpg'
+      })
+    };
+
+    const service = new UploadMediaService(
+      () =>
+        ({
+          send: jest.fn()
+        }) as any,
+      () =>
+        ({
+          send: jest.fn()
+        }) as any,
+      uploadsDb as any,
+      jest.fn()
+    );
+
+    await expect(
+      service.getSignedUrlForPartOfMultipartUpload({
+        key: 'drops/key.jpg',
+        upload_id: 'upload-123',
+        part_no: 2,
+        authenticatedProfileId: 'author-456'
+      })
+    ).rejects.toThrow('Cannot write this media upload');
+  });
+
   it('enqueues sanitization after completing an ingest multipart upload', async () => {
     const ingestS3 = {
       send: jest.fn().mockResolvedValue({})
@@ -256,12 +290,13 @@ describe('UploadMediaService', () => {
     const uploadsDb = {
       findByPublicKeyAndS3UploadId: jest.fn().mockResolvedValue({
         id: 'media-upload-123',
+        profile_id: 'author-123',
         ingest_bucket: 'ingest-bucket',
         ingest_key: 'staging/drop-media-ingest/drops/key.jpg',
         s3_upload_id: 'upload-123',
         public_url: `${CLOUDFRONT_LINK}/drops/key.jpg`
       }),
-      updateUpload: jest.fn()
+      transitionStatus: jest.fn().mockResolvedValue(true)
     };
     const enqueue = jest.fn().mockResolvedValue(undefined);
 
@@ -278,7 +313,8 @@ describe('UploadMediaService', () => {
     const result = await service.completeMultipartUpload({
       key: 'drops/key.jpg',
       upload_id: 'upload-123',
-      parts: [{ etag: '"etag-1"', part_no: 1 }]
+      parts: [{ etag: '"etag-1"', part_no: 1 }],
+      authenticatedProfileId: 'author-123'
     });
 
     expect(ingestS3.send.mock.calls[0][0].input).toMatchObject({
@@ -286,9 +322,10 @@ describe('UploadMediaService', () => {
       Key: 'staging/drop-media-ingest/drops/key.jpg',
       UploadId: 'upload-123'
     });
-    expect(uploadsDb.updateUpload).toHaveBeenCalledWith({
+    expect(uploadsDb.transitionStatus).toHaveBeenCalledWith({
       id: 'media-upload-123',
-      patch: expect.objectContaining({ status: 'processing' })
+      fromStatuses: ['uploading'],
+      toStatus: 'processing'
     });
     expect(enqueue).toHaveBeenCalledWith({
       mediaUploadId: 'media-upload-123'
@@ -298,6 +335,41 @@ describe('UploadMediaService', () => {
       media_upload_id: 'media-upload-123',
       media_status: ApiDropMediaStatus.Processing
     });
+  });
+
+  it('rejects tracked upload completion for another profile', async () => {
+    const uploadsDb = {
+      findByPublicKeyAndS3UploadId: jest.fn().mockResolvedValue({
+        id: 'media-upload-123',
+        profile_id: 'author-123',
+        ingest_bucket: 'ingest-bucket',
+        ingest_key: 'staging/drop-media-ingest/drops/key.jpg',
+        s3_upload_id: 'upload-123',
+        public_url: `${CLOUDFRONT_LINK}/drops/key.jpg`
+      })
+    };
+
+    const service = new UploadMediaService(
+      () =>
+        ({
+          send: jest.fn()
+        }) as any,
+      () =>
+        ({
+          send: jest.fn()
+        }) as any,
+      uploadsDb as any,
+      jest.fn()
+    );
+
+    await expect(
+      service.completeMultipartUpload({
+        key: 'drops/key.jpg',
+        upload_id: 'upload-123',
+        parts: [{ etag: '"etag-1"', part_no: 1 }],
+        authenticatedProfileId: 'author-456'
+      })
+    ).rejects.toThrow('Cannot write this media upload');
   });
 
   it('rejects single PUT image upload prep while sanitization is enabled', async () => {

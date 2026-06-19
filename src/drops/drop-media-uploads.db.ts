@@ -147,11 +147,13 @@ export class DropMediaUploadsDb extends LazyDbAccessCompatibleService {
       id,
       fromStatuses,
       toStatus,
+      updatedBefore,
       patch = {}
     }: {
       id: string;
       fromStatuses: DropMediaUploadStatus[];
       toStatus: DropMediaUploadStatus;
+      updatedBefore?: number;
       patch?: Omit<DropMediaUploadPatch, 'status' | 'updated_at'>;
     },
     ctx: RequestContext = {}
@@ -168,8 +170,9 @@ export class DropMediaUploadsDb extends LazyDbAccessCompatibleService {
       `update ${DROP_MEDIA_UPLOADS_TABLE}
        set ${assignments}
        where id = :id
-         and status in (:fromStatuses)`,
-      { id, fromStatuses, ...allowedPatch },
+         and status in (:fromStatuses)
+         ${updatedBefore === undefined ? '' : 'and updated_at < :updatedBefore'}`,
+      { id, fromStatuses, updatedBefore, ...allowedPatch },
       ctx.connection ? { wrappedConnection: ctx.connection } : undefined
     );
     return this.db.getAffectedRows(result) === 1;

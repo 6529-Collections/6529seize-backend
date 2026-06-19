@@ -35,6 +35,7 @@ const ALLOWED_FORMAT_MIME_TYPES = {
 } as const;
 
 type AllowedSharpFormat = keyof typeof ALLOWED_FORMAT_MIME_TYPES;
+const SANITIZER_CLAIM_STALE_MS = Time.minutes(15).toMillis();
 
 export class PermanentMediaSanitizationError extends Error {
   constructor(message: string) {
@@ -73,23 +74,24 @@ export class DropMediaSanitizerService {
     if (upload.status === DropMediaUploadStatus.FAILED) {
       return;
     }
-    if (upload.status !== DropMediaUploadStatus.PROCESSING) {
-      throw new Error(
-        `Drop media upload ${mediaUploadId} is ${upload.status}, not processing`
-      );
+    if (!(await this.claimUploadForSanitizing(upload))) {
+      return;
     }
 
     try {
       await this.sanitizeAndPublish(upload);
-      await this.dropMediaUploadsDb.updateUpload({
+      const markedReady = await this.dropMediaUploadsDb.transitionStatus({
         id: upload.id,
+        fromStatuses: [DropMediaUploadStatus.SANITIZING],
+        toStatus: DropMediaUploadStatus.READY,
         patch: {
-          status: DropMediaUploadStatus.READY,
           error_reason: null,
-          completed_at: Time.currentMillis(),
-          updated_at: Time.currentMillis()
+          completed_at: Time.currentMillis()
         }
       });
+      if (!markedReady) {
+        return;
+      }
       await this.notifier.notifyStatusTransition(upload.id);
     } catch (error) {
       await this.handleProcessingError({
@@ -98,6 +100,36 @@ export class DropMediaSanitizerService {
         approximateReceiveCount
       });
     }
+  }
+
+  private async claimUploadForSanitizing(
+    upload: DropMediaUploadEntity
+  ): Promise<boolean> {
+    if (upload.status === DropMediaUploadStatus.PROCESSING) {
+      return await this.dropMediaUploadsDb.transitionStatus({
+        id: upload.id,
+        fromStatuses: [DropMediaUploadStatus.PROCESSING],
+        toStatus: DropMediaUploadStatus.SANITIZING
+      });
+    }
+
+    if (upload.status !== DropMediaUploadStatus.SANITIZING) {
+      throw new Error(
+        `Drop media upload ${upload.id} is ${upload.status}, not processing`
+      );
+    }
+
+    const staleBefore = Time.currentMillis() - SANITIZER_CLAIM_STALE_MS;
+    if (Number(upload.updated_at) >= staleBefore) {
+      throw new Error(`Drop media upload ${upload.id} is already sanitizing`);
+    }
+
+    return await this.dropMediaUploadsDb.transitionStatus({
+      id: upload.id,
+      fromStatuses: [DropMediaUploadStatus.SANITIZING],
+      toStatus: DropMediaUploadStatus.SANITIZING,
+      updatedBefore: staleBefore
+    });
   }
 
   async sanitizeBuffer({
@@ -192,12 +224,15 @@ export class DropMediaSanitizerService {
     ) {
       const errorReason =
         error instanceof Error ? error.message : String(error);
-      await this.dropMediaUploadsDb.updateUpload({
+      await this.dropMediaUploadsDb.transitionStatus({
         id: upload.id,
+        fromStatuses: [
+          DropMediaUploadStatus.PROCESSING,
+          DropMediaUploadStatus.SANITIZING
+        ],
+        toStatus: DropMediaUploadStatus.FAILED,
         patch: {
-          status: DropMediaUploadStatus.FAILED,
           error_reason: errorReason,
-          updated_at: Time.currentMillis(),
           completed_at: Time.currentMillis()
         }
       });

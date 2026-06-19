@@ -7,6 +7,7 @@ import { WaveEntity, WaveType } from '@/entities/IWave';
 import { WaveChatDropCooldownEntity } from '@/entities/IWaveChatDropCooldown';
 import { WaveMetricEntity } from '@/entities/IWaveMetric';
 import { WaveReaderMetricEntity } from '@/entities/IWaveReaderMetric';
+import { DropMediaUploadStatus } from '@/entities/IDropMediaUpload';
 import { collections } from '@/collections';
 import { RequestContext } from '@/request.context';
 import { dropsDb, DropsDb } from '@/drops/drops.db';
@@ -506,6 +507,7 @@ function mapDropMediaUploadStatus(
     case ApiDropMediaStatus.Uploading:
       return ApiDropMediaStatus.Uploading;
     case ApiDropMediaStatus.Processing:
+    case DropMediaUploadStatus.SANITIZING:
       return ApiDropMediaStatus.Processing;
     case ApiDropMediaStatus.Failed:
       return ApiDropMediaStatus.Failed;

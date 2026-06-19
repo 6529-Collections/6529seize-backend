@@ -88,15 +88,19 @@ router.post(
     req: Request<any, any, ApiUploadPartOfMultipartUploadRequest, any, any>,
     res: Response<ApiResponse<ApiUploadPartOfMultipartUploadResponse>>
   ) => {
+    const authenticatedProfileId = await getAuthenticatedProfileIdOrNull(req);
+    if (!authenticatedProfileId) {
+      throw new ForbiddenException(`Please create a profile first`);
+    }
     const validatedRequest = getValidatedByJoiOrThrow(
       req.body,
       ApiUploadPartOfMultipartUploadRequestSchema
     );
 
-    const url =
-      await uploadMediaService.getSignedUrlForPartOfMultipartUpload(
-        validatedRequest
-      );
+    const url = await uploadMediaService.getSignedUrlForPartOfMultipartUpload({
+      ...validatedRequest,
+      authenticatedProfileId
+    });
 
     res.send({
       upload_url: url
@@ -111,12 +115,18 @@ router.post(
     req: Request<any, any, ApiCompleteMultipartUploadRequest, any, any>,
     res: Response<ApiResponse<ApiCompleteMultipartUploadResponse>>
   ) => {
+    const authenticatedProfileId = await getAuthenticatedProfileIdOrNull(req);
+    if (!authenticatedProfileId) {
+      throw new ForbiddenException(`Please create a profile first`);
+    }
     const validatedRequest = getValidatedByJoiOrThrow(
       req.body,
       ApiCompleteMultipartUploadRequestSchema
     );
-    const response =
-      await uploadMediaService.completeMultipartUpload(validatedRequest);
+    const response = await uploadMediaService.completeMultipartUpload({
+      ...validatedRequest,
+      authenticatedProfileId
+    });
     res.send(response);
   }
 );

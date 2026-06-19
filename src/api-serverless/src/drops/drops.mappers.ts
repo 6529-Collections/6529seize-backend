@@ -50,6 +50,7 @@ import { ApiDropGroupMention } from '../generated/models/ApiDropGroupMention';
 import { dropVotingService, DropVotingService } from './drop-voting.service';
 import { dropVotingDb, DropVotingDb } from './drop-voting.db';
 import { WaveDecisionWinnerDropWithSaleEntity } from '@/entities/IWaveDecision';
+import { DropMediaUploadStatus } from '@/entities/IDropMediaUpload';
 import { ApiDropWinningContext } from '../generated/models/ApiDropWinningContext';
 import { ApiWaveOutcomeType } from '../generated/models/ApiWaveOutcomeType';
 import { ApiWaveOutcomeSubType } from '../generated/models/ApiWaveOutcomeSubType';
@@ -1251,6 +1252,7 @@ function mapDropMediaUploadStatus(
     case ApiDropMediaStatus.Uploading:
       return ApiDropMediaStatus.Uploading;
     case ApiDropMediaStatus.Processing:
+    case DropMediaUploadStatus.SANITIZING:
       return ApiDropMediaStatus.Processing;
     case ApiDropMediaStatus.Failed:
       return ApiDropMediaStatus.Failed;

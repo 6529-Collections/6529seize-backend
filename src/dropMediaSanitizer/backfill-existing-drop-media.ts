@@ -188,7 +188,7 @@ function parseCloudFrontMediaKey(url: string): string | null {
   } catch {
     return null;
   }
-  if (parsed.origin !== CLOUDFRONT_LINK) {
+  if (parsed.origin !== getCloudFrontOrigin()) {
     return null;
   }
   const key = parsed.pathname.replace(/^\/+/, '');
@@ -200,6 +200,10 @@ function parseCloudFrontMediaKey(url: string): string | null {
   } catch {
     return key;
   }
+}
+
+function getCloudFrontOrigin(): string {
+  return new URL(CLOUDFRONT_LINK).origin;
 }
 
 async function invalidatePaths(paths: string[]): Promise<number> {

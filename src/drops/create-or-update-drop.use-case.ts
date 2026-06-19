@@ -979,6 +979,7 @@ export class CreateOrUpdateDropUseCase {
     }
     if (
       upload.status !== DropMediaUploadStatus.PROCESSING &&
+      upload.status !== DropMediaUploadStatus.SANITIZING &&
       upload.status !== DropMediaUploadStatus.READY
     ) {
       throw new BadRequestException(

@@ -19,7 +19,7 @@ import {
   slugifyBaseName
 } from './sanitize-file-name';
 import { CLOUDFRONT_LINK } from '@/constants';
-import { BadRequestException } from '@/exceptions';
+import { BadRequestException, ForbiddenException } from '@/exceptions';
 import {
   createDropMediaIngestKey,
   getDropMediaIngestS3,
@@ -121,16 +121,16 @@ export class UploadMediaService {
   async getSignedUrlForPartOfMultipartUpload({
     upload_id,
     key,
-    part_no
+    part_no,
+    authenticatedProfileId
   }: {
     upload_id: string;
     key: string;
     part_no: number;
+    authenticatedProfileId?: string;
   }): Promise<string> {
-    const upload = await this.dropMediaUploadsDb.findByPublicKeyAndS3UploadId({
-      publicKey: key,
-      s3UploadId: upload_id
-    });
+    const upload = await this.findTrackedDropMediaUpload({ key, upload_id });
+    this.assertTrackedUploadOwner({ upload, authenticatedProfileId });
     const bucket = upload?.ingest_bucket ?? this.getS3Bucket();
     const objectKey = upload?.ingest_key ?? key;
     const s3 = upload ? this.getIngestS3() : this.getS3();
@@ -149,16 +149,16 @@ export class UploadMediaService {
   async completeMultipartUpload({
     key,
     upload_id,
-    parts
+    parts,
+    authenticatedProfileId
   }: {
     upload_id: string;
     key: string;
     parts: { etag: string; part_no: number }[];
+    authenticatedProfileId?: string;
   }): Promise<ApiCompleteMultipartUploadResponse> {
-    const upload = await this.dropMediaUploadsDb.findByPublicKeyAndS3UploadId({
-      publicKey: key,
-      s3UploadId: upload_id
-    });
+    const upload = await this.findTrackedDropMediaUpload({ key, upload_id });
+    this.assertTrackedUploadOwner({ upload, authenticatedProfileId });
     if (upload) {
       return await this.completeSanitizedImageMultipartUpload({
         upload,
@@ -358,22 +358,25 @@ export class UploadMediaService {
     });
 
     await this.getIngestS3().send(completeCmd);
-    await this.dropMediaUploadsDb.updateUpload({
+    const markedProcessing = await this.dropMediaUploadsDb.transitionStatus({
       id: upload.id,
-      patch: {
-        status: DropMediaUploadStatus.PROCESSING,
-        updated_at: Time.currentMillis()
-      }
+      fromStatuses: [DropMediaUploadStatus.UPLOADING],
+      toStatus: DropMediaUploadStatus.PROCESSING
     });
+    if (!markedProcessing) {
+      throw new Error(
+        `Drop media upload ${upload.id} is not in uploading state`
+      );
+    }
     try {
       await this.enqueueSanitization({ mediaUploadId: upload.id });
     } catch (error) {
-      await this.dropMediaUploadsDb.updateUpload({
+      await this.dropMediaUploadsDb.transitionStatus({
         id: upload.id,
+        fromStatuses: [DropMediaUploadStatus.PROCESSING],
+        toStatus: DropMediaUploadStatus.FAILED,
         patch: {
-          status: DropMediaUploadStatus.FAILED,
           error_reason: error instanceof Error ? error.message : String(error),
-          updated_at: Time.currentMillis(),
           completed_at: Time.currentMillis()
         }
       });
@@ -438,6 +441,44 @@ export class UploadMediaService {
 
   private shouldSanitizeMultipartUpload(contentType: string): boolean {
     return isDropMediaSanitizationEnabled() && isImageMimeType(contentType);
+  }
+
+  private async findTrackedDropMediaUpload({
+    key,
+    upload_id
+  }: {
+    key: string;
+    upload_id: string;
+  }): Promise<DropMediaUploadEntity | null> {
+    if (!this.isPotentialTrackedDropMediaKey(key)) {
+      return null;
+    }
+    return await this.dropMediaUploadsDb.findByPublicKeyAndS3UploadId({
+      publicKey: key,
+      s3UploadId: upload_id
+    });
+  }
+
+  private isPotentialTrackedDropMediaKey(key: string): boolean {
+    return key.startsWith('drops/') || key.startsWith('waves/');
+  }
+
+  private assertTrackedUploadOwner({
+    upload,
+    authenticatedProfileId
+  }: {
+    upload: DropMediaUploadEntity | null;
+    authenticatedProfileId: string | undefined;
+  }): void {
+    if (!upload) {
+      return;
+    }
+    if (
+      !authenticatedProfileId ||
+      upload.profile_id !== authenticatedProfileId
+    ) {
+      throw new ForbiddenException('Cannot write this media upload');
+    }
   }
 
   private assertSinglePutImageUploadAllowed(contentType: string): void {
