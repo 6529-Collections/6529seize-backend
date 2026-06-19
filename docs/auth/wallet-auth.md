@@ -30,9 +30,9 @@ Connection sharing is a separate optional flow:
 
 `GET /api/auth/nonce` keeps the legacy request shape. It accepts `signer_address` and optional `short_nonce`, then returns a nonce and server signature.
 
-`POST /api/auth/login` verifies the signed nonce, resolves the optional role/proxy identity, returns a JWT access token, and returns the legacy refresh token from `refresh_tokens`.
+`POST /api/auth/login` verifies the signed nonce, resolves the optional role/proxy identity, returns a JWT access token, and returns the legacy refresh token from `refresh_tokens`. The refresh-token row stores the server-resolved role from the signed login so future refreshes continue the same legacy session role instead of accepting a new client-selected role.
 
-`POST /api/auth/redeem-refresh-token` redeems the legacy refresh token for a fresh JWT access token. It remains enabled unconditionally while legacy clients are supported. If the request supplies `role`, the refreshed JWT preserves that role.
+`POST /api/auth/redeem-refresh-token` redeems the legacy refresh token for a fresh JWT access token. It remains enabled while legacy clients are supported. Refresh preserves the role already bound to that refresh token. If an existing production refresh token has no bound role yet, the first refresh that supplies a role validates it server-side and binds it to that token; later refreshes must match the bound role. Unbound refreshes without a requested role return a wallet-only JWT.
 
 ## Session V2 Nonce
 
@@ -48,6 +48,7 @@ For web clients:
 - The normalized client origin is included in the message as `Client Origin`.
 - The structured message uses `Session Type: first_party_web`.
 - The origin domain must be allowed by the structured-signature domain configuration.
+- Cross-origin browser clients must also be allowed by the web app origin configuration so the API can return exact credentialed CORS headers.
 
 For native clients:
 
@@ -56,7 +57,7 @@ For native clients:
 - The structured message uses `Session Type: native`.
 - No browser client origin is included.
 
-`chain_id` is optional and defaults to Ethereum mainnet.
+`chain_id` is accepted for backward-compatible request shape, but wallet auth challenges are issued for the backend-configured auth chain. `AUTH_WALLET_CHAIN_ID` defaults to Ethereum mainnet.
 
 ## Session V2 Login
 
@@ -67,6 +68,7 @@ For web sessions:
 - The signed message must have `Session Type: first_party_web`.
 - The signed message must include `Client Origin`.
 - The request `Origin` must match the signed client origin.
+- The request `Origin` must be allowed by the web app origin configuration when the browser calls the API cross-origin with cookies.
 - The server creates a row in `wallet_auth_sessions` with `client_type=web`.
 - The stored session includes the signed domain and normalized client origin.
 - The refresh secret is stored only as a server-side hash.
@@ -89,6 +91,7 @@ For web sessions:
 
 - The request uses the `6529_session` cookie.
 - The request `Origin` must match the `client_origin` stored on the session.
+- The request `Origin` must be allowed for credentialed web auth CORS.
 - The cookie secret is rotated on every successful refresh.
 - On invalid or mismatched sessions, the response clears the session cookie.
 
@@ -120,19 +123,25 @@ Connection share state is stored in `wallet_connection_shares`. Share codes are 
 The revised auth flow uses these relevant flags/config values:
 
 - `AUTH_STRUCTURED_SIGNATURES_REQUIRED`: default false. When true, legacy signature verification paths reject unstructured wallet messages where structured verification is used.
-- `AUTH_SIGNATURE_ALLOWED_DOMAINS`: comma-separated extra exact domains allowed for first-party web structured signatures. The built-in production domains include `6529.io`, `www.6529.io`, and `app.6529.io`; non-production also allows localhost origins.
+- `WEB_APP_ORIGIN`: canonical first-party web app origin. The backend uses it to derive credentialed CORS origins for web-cookie auth routes and first-party web structured-signature domains.
+- `WEB_APP_ADDITIONAL_ORIGINS`: comma-separated extra first-party web app origins. These are additive to the built-in defaults and `WEB_APP_ORIGIN`.
+- Built-in web app origin defaults: `api.6529.io` allows credentialed web auth from `https://6529.io`; `api.staging.6529.io` allows credentialed web auth from `https://staging.6529.io`; localhost API hosts allow common localhost frontend ports.
+- `AUTH_SIGNATURE_ALLOWED_DOMAINS`: comma-separated extra exact domains allowed for first-party web structured signatures. The built-in production domains include `6529.io`, `www.6529.io`, and `app.6529.io`; web app origins also derive allowed signature domains; non-production also allows localhost origins.
 - `AUTH_SIGNATURE_ALLOWED_DOMAIN_SUFFIXES`: comma-separated domain suffixes allowed for first-party web structured signatures. A value of `staging.6529.io` allows `staging.6529.io` and any host below it, such as `app.staging.6529.io`, but does not allow lookalike hosts such as `fake-staging.6529.io`.
 - `AUTH_SIGNATURE_AUDIENCE`: structured-signature audience used when issuing session-v2 nonces.
 - `AUTH_SIGNATURE_ALLOWED_AUDIENCES`: optional comma-separated audiences accepted during structured-signature verification.
+- `AUTH_WEB_CREDENTIAL_ORIGINS`: deprecated compatibility alias for extra browser origins allowed to call v2 web-auth cookie endpoints with credentials. Prefer `WEB_APP_ORIGIN` and `WEB_APP_ADDITIONAL_ORIGINS`.
+- `AUTH_WALLET_CHAIN_ID`: chain id accepted for structured login authentication. Defaults to Ethereum mainnet (`1`) when unset.
 - `AUTH_SESSION_HASH_SECRET`: secret used for hashing session cookies, native refresh tokens, connection share codes, and public user-agent values. Defaults to the JWT secret if unset.
 - `AUTH_SESSION_V2_REFRESH_DAYS`: session refresh lifetime in days. Defaults to 30.
 - `AUTH_CONNECTION_SHARING_DISABLED`: default false. Set to `true` only to disable `/auth/connection-share` and `/auth/connection-share/redeem`; otherwise connection sharing is enabled.
+- `AUTH_LEGACY_REFRESH_DISABLED`: default false. Set to `true` only after the v2 migration grace period to make `/auth/redeem-refresh-token` return `410 Gone` without removing the endpoint.
 - `AUTH_CONNECTION_SHARE_CODE_TTL_SECONDS`: one-time connection share code lifetime. Defaults to 300 seconds.
 - `AUTH_LEGACY_WS_QUERY_TOKEN_ENABLED`: default true. Controls legacy WebSocket JWT query-token support.
 
 There is intentionally no `AUTH_SESSION_V2_ENABLED` flag. Session-v2 endpoints are separate from the legacy endpoints, so exposing them does not change legacy client behavior.
 
-There is intentionally no `AUTH_LEGACY_REFRESH_ENABLED` flag. Legacy refresh redemption stays available while legacy clients are supported.
+There is intentionally no `AUTH_LEGACY_REFRESH_ENABLED` flag. Legacy refresh redemption stays available while legacy clients are supported, and can later be disabled explicitly with `AUTH_LEGACY_REFRESH_DISABLED=true`.
 
 ## Data Model
 
@@ -149,3 +158,9 @@ There is intentionally no `AUTH_LEGACY_REFRESH_ENABLED` flag. Legacy refresh red
 - Target client type.
 - Expiry and consumption metadata.
 - The native session id created when the share is redeemed.
+
+`refresh_tokens` stores legacy refresh-token compatibility state:
+
+- Wallet address.
+- Legacy refresh token.
+- Optional server-bound role profile id used only while v1 refresh remains available during migration.

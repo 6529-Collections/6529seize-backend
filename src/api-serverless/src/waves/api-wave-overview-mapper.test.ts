@@ -117,7 +117,10 @@ function createMapper() {
     findVisibleParentWavesByChildWaveIds: jest.fn().mockResolvedValue({}),
     findWaveIdsWithVisibleSubwaves: jest
       .fn()
-      .mockResolvedValue(new Set<string>())
+      .mockResolvedValue(new Set<string>()),
+    findFollowedSubwaveOverviewContextsByParentWaveId: jest
+      .fn()
+      .mockResolvedValue({})
   };
   const dropsDb = {
     getDropPartOnes: jest.fn().mockResolvedValue({}),
@@ -441,6 +444,8 @@ describe('ApiWaveOverviewMapper', () => {
         can_chat: true,
         unread_drops: 7,
         first_unread_drop_serial_no: 19,
+        followed_subwaves_count: 0,
+        hidden_followed_subwave_unread_drops: 0,
         muted: true
       },
       ...expectedNeutralWaveRepAndScore()
@@ -486,8 +491,60 @@ describe('ApiWaveOverviewMapper', () => {
       can_chat: false,
       next_drop_allowed: nextDropTimestamp,
       unread_drops: 0,
+      followed_subwaves_count: 0,
+      hidden_followed_subwave_unread_drops: 0,
       muted: false
     });
+  });
+
+  it('maps followed subwave aggregate context without changing parent state', async () => {
+    const { mapper, deps } = createMapper();
+    deps.wavesApiDb.findWavesMetricsByWaveIds.mockResolvedValue({
+      'wave-1': makeMetric({
+        wave_id: 'wave-1',
+        latest_drop_timestamp: 111
+      })
+    });
+    deps.wavesApiDb.findFollowedSubwaveOverviewContextsByParentWaveId.mockResolvedValue(
+      {
+        'wave-1': {
+          followed_subwaves_count: 2,
+          latest_followed_subwave_activity_timestamp: 999,
+          hidden_followed_subwave_unread_drops: 5,
+          first_hidden_followed_subwave_unread_drop_serial_no: 77
+        }
+      }
+    );
+
+    const result = await mapper.mapWaves([makeWave()], {
+      authenticationContext: AuthenticationContext.fromProfileId('viewer-1')
+    });
+
+    expect(
+      deps.wavesApiDb.findFollowedSubwaveOverviewContextsByParentWaveId
+    ).toHaveBeenCalledWith(
+      {
+        identityId: 'viewer-1',
+        parentWaveIds: ['wave-1'],
+        eligibleGroups: []
+      },
+      expect.any(Object)
+    );
+    expect(result['wave-1']).toEqual(
+      expect.objectContaining({
+        last_drop_time: 111,
+        context_profile_context: expect.objectContaining({
+          subscribed: false,
+          pinned: false,
+          unread_drops: 0,
+          followed_subwaves_count: 2,
+          latest_followed_subwave_activity_timestamp: 999,
+          hidden_followed_subwave_unread_drops: 5,
+          first_hidden_followed_subwave_unread_drop_serial_no: 77,
+          muted: false
+        })
+      })
+    );
   });
 });
 

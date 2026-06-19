@@ -7928,8 +7928,9 @@ paths:
         - name: only_waves_followed_by_authenticated_user
           in: query
           description: >-
-            If true then result only includes waves what authenticated user
-            follows
+            If true then result only includes waves the authenticated user
+            follows, plus root parent containers for subwaves the authenticated
+            user follows where the parent is visible.
           required: false
           schema:
             type: boolean
@@ -8009,7 +8010,8 @@ paths:
           in: query
           description: >-
             If true then result excludes waves the authenticated user already
-            follows
+            follows, plus root parent containers for subwaves the authenticated
+            user follows where the parent is visible.
           required: false
           schema:
             type: boolean
@@ -9003,7 +9005,8 @@ paths:
           in: query
           description: >-
             OVERVIEW view only. If true then result only includes waves that the
-            authenticated user follows.
+            authenticated user follows, plus root parent containers for subwaves
+            the authenticated user follows where the parent is visible.
           required: false
           schema:
             type: boolean
@@ -9068,7 +9071,9 @@ paths:
           description: >-
             HOT view and OVERVIEW view with
             overview_type=SCORED_RECENTLY_DROPPED_TO only. If true then result
-            excludes waves the authenticated user already follows.
+            excludes waves the authenticated user already follows, plus root
+            parent containers for subwaves the authenticated user follows where
+            the parent is visible.
           required: false
           schema:
             type: boolean
@@ -18693,6 +18698,18 @@ components:
           type: integer
           format: int64
         first_unread_drop_serial_no:
+          type: integer
+          format: int64
+        followed_subwaves_count:
+          type: integer
+          format: int64
+        latest_followed_subwave_activity_timestamp:
+          type: integer
+          format: int64
+        hidden_followed_subwave_unread_drops:
+          type: integer
+          format: int64
+        first_hidden_followed_subwave_unread_drop_serial_no:
           type: integer
           format: int64
         muted:

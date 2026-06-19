@@ -51,19 +51,34 @@ type CreateWalletConnectionShareParams = {
   readonly expiresAt: Date;
 };
 
+export type RedeemedLegacyRefreshToken = {
+  readonly address: string;
+  readonly role: string | null;
+};
+
 export class AuthDb extends LazyDbAccessCompatibleService {
-  async retrieveOrGenerateRefreshToken(address: string): Promise<string> {
+  async retrieveOrGenerateRefreshToken(
+    address: string,
+    role: string | null
+  ): Promise<string> {
     const existingToken = await this.db.oneOrNull<RefreshToken>(
-      `select refresh_token from ${REFRESH_TOKENS_TABLE} where address = :address`,
+      `select refresh_token, role from ${REFRESH_TOKENS_TABLE} where address = :address`,
       { address }
     );
     if (existingToken) {
+      if (existingToken.role !== role) {
+        await this.updateRefreshTokenRole(
+          address,
+          existingToken.refresh_token,
+          role
+        );
+      }
       return existingToken.refresh_token;
     }
     const refreshToken = randomBytes(64).toString('hex');
     await this.db.execute(
-      `insert into ${REFRESH_TOKENS_TABLE} (address, refresh_token) values (:address, :refreshToken)`,
-      { address, refreshToken }
+      `insert into ${REFRESH_TOKENS_TABLE} (address, refresh_token, role) values (:address, :refreshToken, :role)`,
+      { address, refreshToken, role }
     );
     return refreshToken;
   }
@@ -71,9 +86,9 @@ export class AuthDb extends LazyDbAccessCompatibleService {
   async redeemRefreshToken(
     address: string | null | undefined,
     refreshToken: string
-  ): Promise<string | null> {
+  ): Promise<RedeemedLegacyRefreshToken | null> {
     const result = await this.db.oneOrNull<RefreshToken>(
-      `select address from ${REFRESH_TOKENS_TABLE} where refresh_token = :refreshToken`,
+      `select address, role from ${REFRESH_TOKENS_TABLE} where refresh_token = :refreshToken`,
       { refreshToken }
     );
     if (!result?.address) {
@@ -82,7 +97,39 @@ export class AuthDb extends LazyDbAccessCompatibleService {
     if (address && !equalIgnoreCase(address, result.address)) {
       return null;
     }
-    return result.address.toLowerCase();
+    return {
+      address: result.address.toLowerCase(),
+      role: result.role ?? null
+    };
+  }
+
+  async bindUnboundRefreshTokenRole(
+    address: string,
+    refreshToken: string,
+    role: string
+  ): Promise<boolean> {
+    const result = await this.db.execute(
+      `update ${REFRESH_TOKENS_TABLE}
+       set role = :role
+       where address = :address
+         and refresh_token = :refreshToken
+         and role is null`,
+      { address, refreshToken, role }
+    );
+    return this.db.getAffectedRows(result) === 1;
+  }
+
+  private async updateRefreshTokenRole(
+    address: string,
+    refreshToken: string,
+    role: string | null
+  ): Promise<void> {
+    await this.db.execute(
+      `update ${REFRESH_TOKENS_TABLE}
+       set role = :role
+       where address = :address and refresh_token = :refreshToken`,
+      { address, refreshToken, role }
+    );
   }
 
   async createWalletAuthSession(

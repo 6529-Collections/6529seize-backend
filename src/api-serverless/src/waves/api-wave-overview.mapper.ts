@@ -36,7 +36,11 @@ import {
   WaveDisplayOverride
 } from '@/api/waves/direct-message-wave-display.service';
 import { getWaveReadContextProfileId } from '@/api/waves/wave-access.helpers';
-import { wavesApiDb, WavesApiDb } from '@/api/waves/waves.api.db';
+import {
+  FollowedSubwaveOverviewContext,
+  wavesApiDb,
+  WavesApiDb
+} from '@/api/waves/waves.api.db';
 import {
   mapWaveRepSummary,
   mapWaveScore
@@ -119,6 +123,9 @@ export class ApiWaveOverviewMapper {
         (wave) => wave.id
       );
       const waveIds = relatedEntities.map((wave) => wave.id);
+      const rootWaveIds = relatedEntities
+        .filter((wave) => wave.parent_wave_id === null)
+        .map((wave) => wave.id);
       const descriptionDropIds = collections.distinct(
         relatedEntities.map((wave) => wave.description_drop_id)
       );
@@ -140,6 +147,7 @@ export class ApiWaveOverviewMapper {
         firstUnreadDropSerialNoByWaveId,
         chatDropCooldownsByWaveId,
         waveIdsWithVisibleSubwaves,
+        followedSubwaveContextsByParentWaveId,
         profilesById
       ] = await Promise.all([
         this.wavesApiDb.findWavesMetricsByWaveIds(waveIds, ctx),
@@ -214,6 +222,18 @@ export class ApiWaveOverviewMapper {
           groupIdsUserIsEligibleFor,
           ctx
         ),
+        contextProfileId
+          ? this.wavesApiDb.findFollowedSubwaveOverviewContextsByParentWaveId(
+              {
+                identityId: contextProfileId,
+                parentWaveIds: rootWaveIds,
+                eligibleGroups: groupIdsUserIsEligibleFor
+              },
+              ctx
+            )
+          : Promise.resolve(
+              {} as Record<string, FollowedSubwaveOverviewContext>
+            ),
         creatorIds.length
           ? this.identityFetcher.getOverviewsByIds(creatorIds, ctx)
           : Promise.resolve({} as Record<string, ApiProfileMin>)
@@ -235,6 +255,8 @@ export class ApiWaveOverviewMapper {
             unreadDropsCount: unreadDropsCountByWaveId[wave.id] ?? 0,
             firstUnreadDropSerialNo:
               firstUnreadDropSerialNoByWaveId[wave.id] ?? undefined,
+            followedSubwaveContext:
+              followedSubwaveContextsByParentWaveId[wave.id],
             nextDropTimestamp:
               chatDropCooldownsByWaveId[wave.id]?.next_drop_timestamp,
             hasSubwaves: waveIdsWithVisibleSubwaves.has(wave.id),
@@ -275,6 +297,7 @@ export class ApiWaveOverviewMapper {
     readerMetric,
     unreadDropsCount,
     firstUnreadDropSerialNo,
+    followedSubwaveContext,
     nextDropTimestamp,
     hasSubwaves,
     profilesById
@@ -291,6 +314,7 @@ export class ApiWaveOverviewMapper {
     readerMetric?: WaveReaderMetricEntity;
     unreadDropsCount: number;
     firstUnreadDropSerialNo?: number;
+    followedSubwaveContext?: FollowedSubwaveOverviewContext;
     nextDropTimestamp?: number;
     hasSubwaves: boolean;
     profilesById: Record<string, ApiProfileMin>;
@@ -334,6 +358,7 @@ export class ApiWaveOverviewMapper {
         readerMetric,
         unreadDropsCount,
         firstUnreadDropSerialNo,
+        followedSubwaveContext,
         contextProfileId,
         nextDropTimestamp
       });
@@ -388,6 +413,7 @@ export class ApiWaveOverviewMapper {
     readerMetric,
     unreadDropsCount,
     firstUnreadDropSerialNo,
+    followedSubwaveContext,
     contextProfileId,
     nextDropTimestamp
   }: {
@@ -398,6 +424,7 @@ export class ApiWaveOverviewMapper {
     readerMetric?: WaveReaderMetricEntity;
     unreadDropsCount: number;
     firstUnreadDropSerialNo?: number;
+    followedSubwaveContext?: FollowedSubwaveOverviewContext;
     contextProfileId: string;
     nextDropTimestamp?: number;
   }): ApiWaveOverviewContextProfileContext {
@@ -416,6 +443,10 @@ export class ApiWaveOverviewMapper {
           groupIdsUserIsEligibleFor.includes(wave.chat_group_id)) &&
         nextDropAllowed === undefined,
       unread_drops: unreadDropsCount,
+      followed_subwaves_count:
+        followedSubwaveContext?.followed_subwaves_count ?? 0,
+      hidden_followed_subwave_unread_drops:
+        followedSubwaveContext?.hidden_followed_subwave_unread_drops ?? 0,
       muted: readerMetric?.muted ?? false
     };
 
@@ -425,6 +456,25 @@ export class ApiWaveOverviewMapper {
 
     if (firstUnreadDropSerialNo !== undefined) {
       result.first_unread_drop_serial_no = firstUnreadDropSerialNo;
+    }
+
+    if (
+      followedSubwaveContext?.latest_followed_subwave_activity_timestamp !==
+        undefined &&
+      followedSubwaveContext.latest_followed_subwave_activity_timestamp !== null
+    ) {
+      result.latest_followed_subwave_activity_timestamp =
+        followedSubwaveContext.latest_followed_subwave_activity_timestamp;
+    }
+
+    if (
+      followedSubwaveContext?.first_hidden_followed_subwave_unread_drop_serial_no !==
+        undefined &&
+      followedSubwaveContext.first_hidden_followed_subwave_unread_drop_serial_no !==
+        null
+    ) {
+      result.first_hidden_followed_subwave_unread_drop_serial_no =
+        followedSubwaveContext.first_hidden_followed_subwave_unread_drop_serial_no;
     }
 
     return result;

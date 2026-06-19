@@ -27,6 +27,9 @@ describe('structured wallet signatures', () => {
     delete process.env.AUTH_STRUCTURED_SIGNATURES_REQUIRED;
     delete process.env.AUTH_SIGNATURE_ALLOWED_AUDIENCES;
     delete process.env.AUTH_SIGNATURE_ALLOWED_DOMAIN_SUFFIXES;
+    delete process.env.AUTH_WEB_CREDENTIAL_ORIGINS;
+    delete process.env.WEB_APP_ADDITIONAL_ORIGINS;
+    delete process.env.WEB_APP_ORIGIN;
   });
 
   afterEach(() => {
@@ -34,8 +37,11 @@ describe('structured wallet signatures', () => {
     delete process.env.AUTH_SIGNATURE_AUDIENCE;
     delete process.env.AUTH_SIGNATURE_ALLOWED_AUDIENCES;
     delete process.env.AUTH_SIGNATURE_ALLOWED_DOMAIN_SUFFIXES;
+    delete process.env.AUTH_WEB_CREDENTIAL_ORIGINS;
     delete process.env.ALCHEMY_API_KEY;
     delete process.env.AUTH_STRUCTURED_SIGNATURES_REQUIRED;
+    delete process.env.WEB_APP_ADDITIONAL_ORIGINS;
+    delete process.env.WEB_APP_ORIGIN;
     jest.restoreAllMocks();
   });
 
@@ -261,6 +267,35 @@ describe('structured wallet signatures', () => {
       wallet: wallet.address,
       expirationTime: getExpirationTime(),
       nonce: 'first-party-registered-domain-nonce',
+      action: 'login',
+      purpose: 'Sign this message to authenticate with 6529.'
+    });
+    const signature = await wallet.signMessage(message);
+
+    await expect(
+      verifyStructuredWalletSignature({
+        message,
+        signature,
+        expectedAddress: wallet.address,
+        expectedChainId: 1,
+        expectedAction: 'login',
+        expectedKind: 'authentication',
+        requireAllowedDomain: true,
+        consumeNonce: false
+      })
+    ).resolves.toBe(wallet.address.toLowerCase());
+  });
+
+  it('accepts first-party web signatures from WEB_APP_ORIGIN', async () => {
+    process.env.AUTH_SIGNATURE_ALLOWED_DOMAINS = '';
+    process.env.WEB_APP_ORIGIN = 'https://preview.6529.io/path';
+    const message = buildStructuredWalletSignatureMessage({
+      kind: 'authentication',
+      domain: 'preview.6529.io',
+      sessionType: 'first_party_web',
+      wallet: wallet.address,
+      expirationTime: getExpirationTime(),
+      nonce: 'first-party-web-app-origin-domain-nonce',
       action: 'login',
       purpose: 'Sign this message to authenticate with 6529.'
     });
