@@ -18,6 +18,13 @@ import { ApiDropV2Page } from '@/api/generated/models/ApiDropV2Page';
 import { ApiDropV2PageWithoutCount } from '@/api/generated/models/ApiDropV2PageWithoutCount';
 import { ApiDropVoteEditLog } from '@/api/generated/models/ApiDropVoteEditLog';
 import { ApiDropVotersPage } from '@/api/generated/models/ApiDropVotersPage';
+import { ApiGlobalRepCategoryGiversPage } from '@/api/generated/models/ApiGlobalRepCategoryGiversPage';
+import { ApiGlobalRepCategoryOverview } from '@/api/generated/models/ApiGlobalRepCategoryOverview';
+import { ApiGlobalRepCategoryRatingsPage } from '@/api/generated/models/ApiGlobalRepCategoryRatingsPage';
+import { ApiGlobalRepCategoryRecipientsPage } from '@/api/generated/models/ApiGlobalRepCategoryRecipientsPage';
+import { ApiGlobalRepCategoryWaveContributorsPage } from '@/api/generated/models/ApiGlobalRepCategoryWaveContributorsPage';
+import { ApiGlobalRepCategoryWaveOverview } from '@/api/generated/models/ApiGlobalRepCategoryWaveOverview';
+import { ApiGlobalRepCategoryWavesPage } from '@/api/generated/models/ApiGlobalRepCategoryWavesPage';
 import { ApiMediaResolveRequest } from '@/api/generated/models/ApiMediaResolveRequest';
 import { ApiMediaResolveResponse } from '@/api/generated/models/ApiMediaResolveResponse';
 import { ApiNotificationsResponseV2 } from '@/api/generated/models/ApiNotificationsResponseV2';
@@ -334,6 +341,146 @@ export type CreateProfileCmsWalletGallerySnapshotRequest = Request<
   ApiResponse<CreateProfileCmsWalletGallerySnapshotResponse>,
   ApiCreateProfileCmsWalletGallerySnapshotRequest,
   CreateProfileCmsWalletGallerySnapshotQuery,
+  Record<string, never>
+>;
+
+export interface GetGlobalRepCategoryGiversPathParams {
+  "category": string;
+}
+
+export interface GetGlobalRepCategoryGiversQuery {
+  "page"?: number;
+  "page_size"?: number;
+  "order"?: "ASC" | "DESC";
+  "order_by"?: "rep" | "last_modified" | "profile";
+  "search"?: string;
+}
+
+export type GetGlobalRepCategoryGiversResponse = ApiGlobalRepCategoryGiversPage;
+
+export type GetGlobalRepCategoryGiversRequest = Request<
+  GetGlobalRepCategoryGiversPathParams,
+  ApiResponse<GetGlobalRepCategoryGiversResponse>,
+  never,
+  GetGlobalRepCategoryGiversQuery,
+  Record<string, never>
+>;
+
+export interface GetGlobalRepCategoryOverviewPathParams {
+  "category": string;
+}
+
+export type GetGlobalRepCategoryOverviewQuery = Record<string, never>;
+
+export type GetGlobalRepCategoryOverviewResponse = ApiGlobalRepCategoryOverview;
+
+export type GetGlobalRepCategoryOverviewRequest = Request<
+  GetGlobalRepCategoryOverviewPathParams,
+  ApiResponse<GetGlobalRepCategoryOverviewResponse>,
+  never,
+  GetGlobalRepCategoryOverviewQuery,
+  Record<string, never>
+>;
+
+export interface GetGlobalRepCategoryRatingsPathParams {
+  "category": string;
+}
+
+export interface GetGlobalRepCategoryRatingsQuery {
+  "page"?: number;
+  "page_size"?: number;
+  "order"?: "ASC" | "DESC";
+  "order_by"?: "rep" | "last_modified" | "giver" | "recipient";
+  "search"?: string;
+}
+
+export type GetGlobalRepCategoryRatingsResponse = ApiGlobalRepCategoryRatingsPage;
+
+export type GetGlobalRepCategoryRatingsRequest = Request<
+  GetGlobalRepCategoryRatingsPathParams,
+  ApiResponse<GetGlobalRepCategoryRatingsResponse>,
+  never,
+  GetGlobalRepCategoryRatingsQuery,
+  Record<string, never>
+>;
+
+export interface GetGlobalRepCategoryRecipientsPathParams {
+  "category": string;
+}
+
+export interface GetGlobalRepCategoryRecipientsQuery {
+  "page"?: number;
+  "page_size"?: number;
+  "order"?: "ASC" | "DESC";
+  "order_by"?: "rep" | "last_modified" | "profile";
+  "search"?: string;
+}
+
+export type GetGlobalRepCategoryRecipientsResponse = ApiGlobalRepCategoryRecipientsPage;
+
+export type GetGlobalRepCategoryRecipientsRequest = Request<
+  GetGlobalRepCategoryRecipientsPathParams,
+  ApiResponse<GetGlobalRepCategoryRecipientsResponse>,
+  never,
+  GetGlobalRepCategoryRecipientsQuery,
+  Record<string, never>
+>;
+
+export interface GetGlobalRepCategoryWaveContributorsPathParams {
+  "category": string;
+}
+
+export interface GetGlobalRepCategoryWaveContributorsQuery {
+  "page"?: number;
+  "page_size"?: number;
+  "order"?: "ASC" | "DESC";
+  "order_by"?: "rep" | "last_modified" | "wave";
+}
+
+export type GetGlobalRepCategoryWaveContributorsResponse = ApiGlobalRepCategoryWaveContributorsPage;
+
+export type GetGlobalRepCategoryWaveContributorsRequest = Request<
+  GetGlobalRepCategoryWaveContributorsPathParams,
+  ApiResponse<GetGlobalRepCategoryWaveContributorsResponse>,
+  never,
+  GetGlobalRepCategoryWaveContributorsQuery,
+  Record<string, never>
+>;
+
+export interface GetGlobalRepCategoryWaveOverviewPathParams {
+  "category": string;
+}
+
+export type GetGlobalRepCategoryWaveOverviewQuery = Record<string, never>;
+
+export type GetGlobalRepCategoryWaveOverviewResponse = ApiGlobalRepCategoryWaveOverview;
+
+export type GetGlobalRepCategoryWaveOverviewRequest = Request<
+  GetGlobalRepCategoryWaveOverviewPathParams,
+  ApiResponse<GetGlobalRepCategoryWaveOverviewResponse>,
+  never,
+  GetGlobalRepCategoryWaveOverviewQuery,
+  Record<string, never>
+>;
+
+export interface GetGlobalRepCategoryWavesPathParams {
+  "category": string;
+}
+
+export interface GetGlobalRepCategoryWavesQuery {
+  "page"?: number;
+  "page_size"?: number;
+  "order"?: "ASC" | "DESC";
+  "order_by"?: "rep" | "last_modified" | "wave";
+}
+
+export type GetGlobalRepCategoryWavesResponse = ApiGlobalRepCategoryWavesPage;
+
+export type GetGlobalRepCategoryWavesRequest = Request<
+  GetGlobalRepCategoryWavesPathParams,
+  ApiResponse<GetGlobalRepCategoryWavesResponse>,
+  never,
+  GetGlobalRepCategoryWavesQuery,
   Record<string, never>
 >;
 

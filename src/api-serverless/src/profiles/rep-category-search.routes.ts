@@ -4,8 +4,28 @@ import { ApiResponse } from '../api-response';
 import { abusivenessCheckDb } from '../../../profiles/abusiveness-check.db';
 import { BadRequestException } from '../../../exceptions';
 import { abusivenessCheckService } from '../../../profiles/abusiveness-check.service';
+import { ApiGlobalRepCategorySuggestedCategory } from '../generated/models/ApiGlobalRepCategorySuggestedCategory';
+import { globalRepCategoryApiService } from '../rep-categories/global-rep-category.api.service';
+import { getAuthenticationContext } from '../auth/auth';
+import { Timer } from '../../../time';
 
 const router = asyncRouter();
+
+router.get(
+  `/top`,
+  async function (
+    req: Request,
+    res: Response<ApiResponse<ApiGlobalRepCategorySuggestedCategory[]>>
+  ) {
+    const timer = Timer.getFromRequest(req);
+    res.send(
+      await globalRepCategoryApiService.getSuggestedCategories({
+        timer,
+        authenticationContext: await getAuthenticationContext(req, timer)
+      })
+    );
+  }
+);
 
 router.get(
   `/`,
