@@ -63,6 +63,9 @@ resources:
           - Ref: HelpBotRepliesQueue
         PolicyDocument:
           Statement:
+            # seizeAPI is deployed outside this stack, but it uses the same
+            # lambda-vpc-role as this worker; the policy covers both enqueue
+            # and reply-loop access.
             - Effect: Allow
               Principal:
                 AWS: arn:aws:iam::987989283142:role/lambda-vpc-role

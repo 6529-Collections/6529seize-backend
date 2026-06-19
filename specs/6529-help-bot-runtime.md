@@ -13,7 +13,7 @@ answers.
 V1 ships without full RAG. It retrieves bounded records from the
 frontend-published `/help-index.json`, caches the latest valid copy in the
 backend answer path, and uses a Bedrock renderer for natural wording with a
-deterministic fallback.
+deterministic fallback if the model call fails or times out.
 
 ## 2. Product Behavior
 
@@ -74,6 +74,10 @@ I saw this, but I hit a temporary issue while looking it up. Please try again in
 ```
 
 The bot should not hallucinate a fallback answer when source confidence is low.
+
+The hardcoded `@6529help` handle is resolved to the current profile id at
+runtime. Successful resolutions cache for five minutes; missing-profile lookups
+cache for 30 seconds so manual profile creation becomes active quickly.
 
 ## 3. Non-Goals
 
@@ -270,7 +274,8 @@ Prompt rules:
 
 The LLM is responsible for natural wording only. It is not responsible for
 deciding canonical facts or links without retrieved context. If Bedrock fails
-after a reliable record is found, V1 uses the deterministic record answer.
+or times out after a reliable record is found, V1 uses the deterministic record
+answer.
 
 ## 8. Answer Examples
 

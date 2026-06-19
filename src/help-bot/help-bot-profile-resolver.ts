@@ -4,6 +4,7 @@ import { RequestContext } from '@/request.context';
 import { HELP_BOT_HANDLE } from './help-bot.config';
 
 const CACHE_TTL_MS = 300_000;
+const MISSING_CACHE_TTL_MS = 30_000;
 
 interface HelpBotProfileCache {
   readonly profileId: string | null;
@@ -35,7 +36,7 @@ export class HelpBotProfileResolver {
     if (!profileId) {
       this.cache = {
         profileId: null,
-        expiresAt: this.now() + CACHE_TTL_MS
+        expiresAt: this.now() + MISSING_CACHE_TTL_MS
       };
       this.logger.warn(
         `Help bot profile handle ${HELP_BOT_HANDLE} could not be resolved`

@@ -46,7 +46,10 @@ describe('HelpBotProfileResolver', () => {
 
   it('caches missing handle lookups briefly', async () => {
     let now = 1_000;
-    const getIdentityByHandle = jest.fn().mockResolvedValue(null);
+    const getIdentityByHandle = jest
+      .fn()
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ profile_id: 'profile-6529help' });
     const resolver = new HelpBotProfileResolver(
       { getIdentityByHandle },
       () => now
@@ -55,7 +58,11 @@ describe('HelpBotProfileResolver', () => {
     await expect(resolver.resolveBotProfileId(ctx)).resolves.toBeNull();
     now += 1_000;
     await expect(resolver.resolveBotProfileId(ctx)).resolves.toBeNull();
+    now += 30_000;
+    await expect(resolver.resolveBotProfileId(ctx)).resolves.toBe(
+      'profile-6529help'
+    );
 
-    expect(getIdentityByHandle).toHaveBeenCalledTimes(1);
+    expect(getIdentityByHandle).toHaveBeenCalledTimes(2);
   });
 });

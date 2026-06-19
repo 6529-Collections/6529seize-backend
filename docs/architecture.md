@@ -319,7 +319,7 @@ Important details:
 - The API enqueues reply jobs by the hardcoded SQS queue name `help-bot-replies`; no queue URL environment variable is required.
 - V1 retrieval uses the frontend-published `https://6529.io/help-index.json` artifact, cached in the backend answer path, not full RAG or live repo lookup.
 - Help index fetches use a short timeout; a cold load failure produces the technical-failure reply instead of a no-reliable-source answer.
-- If Bedrock rendering fails, the worker falls back to deterministic record wording when a reliable frontend record exists.
+- Bedrock rendering uses a fixed short timeout; if it fails or times out, the worker falls back to deterministic record wording when a reliable frontend record exists.
 - If no reliable record exists, or a technical failure prevents answering, the worker posts a failure reply and changes the bot reaction to warning.
 
 ## Drops -> Minting Claim Queue Flows

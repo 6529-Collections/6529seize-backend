@@ -6,6 +6,7 @@ import {
 } from '@aws-sdk/client-bedrock-runtime';
 import { TextDecoder } from 'node:util';
 import { HelpBotLlmRenderer } from './help-bot.answerer';
+import { HELP_BOT_BEDROCK_TIMEOUT_MS } from './help-bot.config';
 import { HelpBotKnowledgeRecord } from './help-bot.knowledge';
 
 interface AnthropicTextBlock {
@@ -85,7 +86,8 @@ function parseAnthropicResponse(jsonString: string): string {
 export class HelpBotBedrockRenderer implements HelpBotLlmRenderer {
   constructor(
     private readonly modelId: string,
-    private readonly getBedrock: () => BedrockRuntimeClient = getBedrockClient
+    private readonly getBedrock: () => BedrockRuntimeClient = getBedrockClient,
+    private readonly timeoutMs: number = HELP_BOT_BEDROCK_TIMEOUT_MS
   ) {}
 
   public async renderAnswer(input: {
@@ -94,14 +96,21 @@ export class HelpBotBedrockRenderer implements HelpBotLlmRenderer {
     readonly record: HelpBotKnowledgeRecord;
     readonly canonicalUrl: string;
   }): Promise<string> {
-    const response = await this.getBedrock().send(
-      new InvokeModelCommand(
-        buildInvokeModelInput(this.modelId, buildPrompt(input))
-      )
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+    const command = new InvokeModelCommand(
+      buildInvokeModelInput(this.modelId, buildPrompt(input))
     );
-    if (!response.body) {
-      throw new Error('Unexpected empty response body from Bedrock');
+    try {
+      const response = await this.getBedrock().send(command, {
+        abortSignal: controller.signal
+      });
+      if (!response.body) {
+        throw new Error('Unexpected empty response body from Bedrock');
+      }
+      return parseAnthropicResponse(new TextDecoder().decode(response.body));
+    } finally {
+      clearTimeout(timeout);
     }
-    return parseAnthropicResponse(new TextDecoder().decode(response.body));
   }
 }
