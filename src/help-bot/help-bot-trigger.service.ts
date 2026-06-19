@@ -206,7 +206,7 @@ function errorToMessage(error: unknown): string {
   try {
     return JSON.stringify(error);
   } catch {
-    return String(error);
+    return 'Unknown error';
   }
 }
 
