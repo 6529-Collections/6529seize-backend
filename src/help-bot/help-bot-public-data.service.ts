@@ -6,20 +6,28 @@ import {
   HELP_BOT_PUBLIC_DATA_MAX_ROWS,
   HELP_BOT_PUBLIC_DATA_QUERY_TIMEOUT_MS
 } from './help-bot.config';
-import {
-  HELP_BOT_PUBLIC_DATA_ALLOWED_TABLES,
-  HELP_BOT_PUBLIC_DATA_CATALOG
-} from './help-bot-public-data.catalog';
+import { HELP_BOT_PUBLIC_DATA_CATALOG } from './help-bot-public-data.catalog';
 
 export interface HelpBotPublicDataAnswerRequest {
   readonly question: string;
   readonly previousBotAnswer?: string | null;
 }
 
+export const HELP_BOT_PUBLIC_DATA_QUERY_IDS = [
+  'memes_in_season_count',
+  'meme_tdh_rate',
+  'highest_tdh_rate',
+  'highest_edition_size',
+  'highest_supply',
+  'total_tdh'
+] as const;
+
+export type HelpBotPublicDataQueryId =
+  (typeof HELP_BOT_PUBLIC_DATA_QUERY_IDS)[number];
+
 export interface HelpBotPublicDataQueryPlan {
-  readonly sql: string;
-  readonly title: string;
-  readonly canonicalPath: string;
+  readonly queryId: string;
+  readonly params?: Record<string, unknown>;
 }
 
 export interface HelpBotPublicDataLlm {
@@ -42,50 +50,19 @@ export interface HelpBotPublicDataAnswer {
   readonly sql: string;
 }
 
+interface HelpBotPublicDataExecutableQuery {
+  readonly queryId: HelpBotPublicDataQueryId;
+  readonly sql: string;
+  readonly params?: Record<string, unknown>;
+  readonly title: string;
+  readonly canonicalPath: string;
+}
+
 const DATA_QUESTION_PATTERN =
   /\b(how many|count|highest|lowest|max|min|total|sum|average|avg|edition size|tdh rate|hodl rate|supply|szn|season|meme\s*#?\d+)\b/i;
 
-const DANGEROUS_SQL_PATTERN =
-  /\b(insert|update|delete|drop|alter|truncate|create|replace|grant|revoke|call|load|union|outfile|dumpfile|information_schema|performance_schema|mysql)\b/i;
-
-const TABLE_REF_PATTERN = /\b(?:from|join)\s+`?([a-zA-Z0-9_]+)`?/gi;
-const COMMENT_PATTERN = /--|#|\/\*|\*\//;
-const SUBQUERY_PATTERN = /\(\s*select\b/i;
-const SELECT_STAR_PATTERN = /\bselect\s+\*/i;
-
 function isPotentialPublicDataQuestion(question: string): boolean {
   return DATA_QUESTION_PATTERN.test(question);
-}
-
-function normalizeSql(sql: string): string {
-  return sql.trim().replace(/\s+/g, ' ');
-}
-
-function readTableReferences(sql: string): string[] {
-  return Array.from(sql.matchAll(TABLE_REF_PATTERN)).map((match) =>
-    match[1].toLowerCase()
-  );
-}
-
-function readLimit(sql: string): number | null {
-  const offsetLimitMatch = /\blimit\s+\d+\s*,\s*(\d+)\b/i.exec(sql);
-  if (offsetLimitMatch) {
-    return Number(offsetLimitMatch[1]);
-  }
-  const match = /\blimit\s+(\d+)\b/i.exec(sql);
-  return match ? Number(match[1]) : null;
-}
-
-function readFromClause(sql: string): string | null {
-  const match =
-    /\bfrom\s+(.+?)(?:\bwhere\b|\bgroup\s+by\b|\border\s+by\b|\bhaving\b|\blimit\b|$)/i.exec(
-      sql
-    );
-  return match?.[1] ?? null;
-}
-
-function hasCommaSeparatedTables(sql: string): boolean {
-  return readFromClause(sql)?.includes(',') ?? false;
 }
 
 function applyStatementTimeoutHint(sql: string): string {
@@ -99,55 +76,6 @@ function rowsContainAnswer(rows: readonly Record<string, unknown>[]): boolean {
   return rows.some((row) =>
     Object.values(row).some((value) => value !== null && value !== undefined)
   );
-}
-
-export function validateHelpBotPublicDataSql(sql: string): string {
-  const normalized = normalizeSql(sql);
-  if (!normalized) {
-    throw new Error('Public data SQL is empty');
-  }
-  if (!/^select\b/i.test(normalized)) {
-    throw new Error('Public data SQL must be a SELECT statement');
-  }
-  if (/[;]/.test(normalized) || COMMENT_PATTERN.test(normalized)) {
-    throw new Error('Public data SQL must be a single uncommented statement');
-  }
-  if (SELECT_STAR_PATTERN.test(normalized)) {
-    throw new Error('Public data SQL must select explicit columns');
-  }
-  if (SUBQUERY_PATTERN.test(normalized)) {
-    throw new Error('Public data SQL must not use subqueries');
-  }
-  if (hasCommaSeparatedTables(normalized)) {
-    throw new Error('Public data SQL must use explicit JOIN syntax');
-  }
-  if (DANGEROUS_SQL_PATTERN.test(normalized)) {
-    throw new Error('Public data SQL contains a disallowed keyword');
-  }
-
-  const tables = readTableReferences(normalized);
-  if (!tables.length) {
-    throw new Error('Public data SQL must reference a table');
-  }
-  const disallowedTable = tables.find(
-    (table) => !HELP_BOT_PUBLIC_DATA_ALLOWED_TABLES.has(table)
-  );
-  if (disallowedTable) {
-    throw new Error(
-      `Public data SQL references disallowed table ${disallowedTable}`
-    );
-  }
-
-  const limit = readLimit(normalized);
-  if (limit !== null && limit > HELP_BOT_PUBLIC_DATA_MAX_ROWS) {
-    throw new Error(
-      `Public data SQL limit ${limit} exceeds max ${HELP_BOT_PUBLIC_DATA_MAX_ROWS}`
-    );
-  }
-  if (limit === null) {
-    return `${normalized} LIMIT ${HELP_BOT_PUBLIC_DATA_MAX_ROWS}`;
-  }
-  return normalized;
 }
 
 function toCanonicalUrl(path: string): string {
@@ -205,6 +133,108 @@ function normalizeRenderedDataAnswer(
   return withUrl.length <= 1200 ? withUrl : `${withUrl.slice(0, 1197)}...`;
 }
 
+function readQueryId(value: string): HelpBotPublicDataQueryId | null {
+  return HELP_BOT_PUBLIC_DATA_QUERY_IDS.includes(
+    value as HelpBotPublicDataQueryId
+  )
+    ? (value as HelpBotPublicDataQueryId)
+    : null;
+}
+
+function readPlanParams(
+  params: Record<string, unknown> | undefined
+): Record<string, unknown> {
+  if (!params || Array.isArray(params) || typeof params !== 'object') {
+    return {};
+  }
+  return params;
+}
+
+function readPositiveIntegerParam(
+  params: Record<string, unknown>,
+  key: string,
+  max: number
+): number | null {
+  const raw = params[key];
+  const value =
+    typeof raw === 'number'
+      ? raw
+      : typeof raw === 'string' && /^\d+$/.test(raw)
+        ? Number(raw)
+        : null;
+  return value !== null && Number.isInteger(value) && value > 0 && value <= max
+    ? value
+    : null;
+}
+
+export function buildHelpBotPublicDataQuery(
+  plan: HelpBotPublicDataQueryPlan
+): HelpBotPublicDataExecutableQuery | null {
+  const queryId = readQueryId(plan.queryId);
+  if (!queryId) {
+    return null;
+  }
+  const params = readPlanParams(plan.params);
+
+  switch (queryId) {
+    case 'memes_in_season_count': {
+      const season = readPositiveIntegerParam(params, 'season', 10_000);
+      if (season === null) {
+        return null;
+      }
+      return {
+        queryId,
+        sql: `SELECT COUNT(*) AS meme_count FROM memes_extended_data WHERE season = :season LIMIT ${HELP_BOT_PUBLIC_DATA_MAX_ROWS}`,
+        params: { season },
+        title: `Meme Cards in SZN${season}`,
+        canonicalPath: `/the-memes?szn=${season}`
+      };
+    }
+    case 'meme_tdh_rate': {
+      const meme = readPositiveIntegerParam(params, 'meme', 100_000);
+      if (meme === null) {
+        return null;
+      }
+      return {
+        queryId,
+        sql: `SELECT m.meme, m.meme_name, n.hodl_rate AS tdh_rate FROM memes_extended_data m JOIN nfts n ON n.id = m.id WHERE m.meme = :meme LIMIT 1`,
+        params: { meme },
+        title: `Meme #${meme} TDH Rate`,
+        canonicalPath: `/the-memes/${meme}`
+      };
+    }
+    case 'highest_tdh_rate':
+      return {
+        queryId,
+        sql: 'SELECT m.meme, m.meme_name, n.hodl_rate AS tdh_rate FROM memes_extended_data m JOIN nfts n ON n.id = m.id ORDER BY n.hodl_rate DESC LIMIT 1',
+        title: 'Highest Meme Card TDH Rate',
+        canonicalPath: '/the-memes'
+      };
+    case 'highest_edition_size':
+      return {
+        queryId,
+        sql: 'SELECT meme, meme_name, edition_size FROM memes_extended_data ORDER BY edition_size DESC LIMIT 1',
+        title: 'Highest Meme Card Edition Size',
+        canonicalPath: '/the-memes'
+      };
+    case 'highest_supply':
+      return {
+        queryId,
+        sql: 'SELECT m.meme, m.meme_name, n.supply FROM memes_extended_data m JOIN nfts n ON n.id = m.id ORDER BY n.supply DESC LIMIT 1',
+        title: 'Highest Meme Card Supply',
+        canonicalPath: '/the-memes'
+      };
+    case 'total_tdh':
+      return {
+        queryId,
+        sql: 'SELECT total_boosted_tdh AS total_tdh, date, block FROM latest_tdh_global_history LIMIT 1',
+        title: 'Total TDH',
+        canonicalPath: '/network/tdh'
+      };
+  }
+  return null;
+}
+
 async function withTimeout<T>(
   promise: Promise<T>,
   timeoutMs: number,
@@ -247,16 +277,14 @@ export class HelpBotPublicDataService {
       return null;
     }
 
-    let sql: string;
-    try {
-      sql = validateHelpBotPublicDataSql(plan.sql);
-    } catch {
+    const query = buildHelpBotPublicDataQuery(plan);
+    if (!query) {
       return null;
     }
     const rows = await withTimeout(
       this.db().execute<Record<string, unknown>>(
-        applyStatementTimeoutHint(sql),
-        undefined,
+        applyStatementTimeoutHint(query.sql),
+        query.params,
         { forcePool: DbPoolName.READ }
       ),
       HELP_BOT_PUBLIC_DATA_QUERY_TIMEOUT_MS,
@@ -265,13 +293,13 @@ export class HelpBotPublicDataService {
     if (!rowsContainAnswer(rows)) {
       return null;
     }
-    const canonicalUrl = toCanonicalUrl(plan.canonicalPath);
+    const canonicalUrl = toCanonicalUrl(query.canonicalPath);
 
     try {
       const rendered = await withTimeout(
         llm.renderPublicDataAnswer({
           question: request.question,
-          title: plan.title,
+          title: query.title,
           rows,
           canonicalUrl
         }),
@@ -281,7 +309,7 @@ export class HelpBotPublicDataService {
       if (rendered.trim()) {
         return {
           answer: normalizeRenderedDataAnswer(rendered, canonicalUrl),
-          sql
+          sql: query.sql
         };
       }
     } catch {
@@ -290,11 +318,11 @@ export class HelpBotPublicDataService {
 
     return {
       answer: buildDeterministicDataAnswer({
-        title: plan.title,
+        title: query.title,
         rows,
         canonicalUrl
       }),
-      sql
+      sql: query.sql
     };
   }
 

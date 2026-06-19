@@ -58,14 +58,14 @@ function buildPublicDataPlanningPrompt({
   readonly catalog: string;
 }): string {
   return [
-    'You are @6529help SQL planner for public 6529.io data.',
+    'You are @6529help public data planner for 6529.io.',
     'Return strict JSON only. Do not wrap in Markdown.',
-    'If the question is not answerable from the catalog, return {"sql":null}.',
-    'Use only tables and fields shown in the catalog.',
-    'Use one read-only SELECT statement.',
-    'Do not use comments, semicolons, DML, DDL, stored procedures, or private tables.',
+    'If the question is not answerable from the catalog, return {"queryId":null}.',
+    'Choose only one queryId from the catalog.',
+    'Return numeric params only.',
+    'Do not return SQL.',
     'Return this JSON shape:',
-    '{"sql":"SELECT ...","title":"short answer title","canonicalPath":"/path"}',
+    '{"queryId":"query_id","params":{"name":123}}',
     previousBotAnswer
       ? `Previous bot answer for context:\n${previousBotAnswer}`
       : '',
@@ -89,13 +89,13 @@ function buildPublicDataAnswerPrompt({
 }): string {
   return [
     'You are @6529help, a concise helper bot for 6529.io.',
-    'Answer only from the SQL result rows.',
+    'Answer only from the public database result rows.',
     'Do not invent data.',
     'Use one or two short paragraphs.',
     `Include this URL exactly once: ${canonicalUrl}`,
     `User question:\n${question}`,
     `Answer title:\n${title}`,
-    `SQL result rows:\n${JSON.stringify(rows).slice(0, 4000)}`
+    `Public database result rows:\n${JSON.stringify(rows).slice(0, 4000)}`
   ].join('\n\n');
 }
 
@@ -150,18 +150,23 @@ function readString(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
+function readObject(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
 function parsePublicDataQueryPlan(
   text: string
 ): HelpBotPublicDataQueryPlan | null {
   const parsed = parseJsonObject(text);
-  const sql = readString(parsed.sql);
-  if (!sql) {
+  const queryId = readString(parsed.queryId);
+  if (!queryId) {
     return null;
   }
   return {
-    sql,
-    title: readString(parsed.title) ?? '6529 public data',
-    canonicalPath: readString(parsed.canonicalPath) ?? '/open-data'
+    queryId,
+    params: readObject(parsed.params)
   };
 }
 

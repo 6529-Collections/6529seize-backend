@@ -69,7 +69,7 @@ describe('HelpBotBedrockRenderer', () => {
     ).rejects.toThrow('aborted');
   });
 
-  it('parses public data query plans from JSON', async () => {
+  it('parses public data query intents from JSON', async () => {
     const send = jest.fn().mockResolvedValue({
       body: Buffer.from(
         JSON.stringify({
@@ -77,9 +77,8 @@ describe('HelpBotBedrockRenderer', () => {
             {
               type: 'text',
               text: JSON.stringify({
-                sql: 'SELECT COUNT(*) AS meme_count FROM memes_extended_data WHERE season = 1',
-                title: 'Meme Cards in SZN1',
-                canonicalPath: '/the-memes?szn=1'
+                queryId: 'memes_in_season_count',
+                params: { season: 1 }
               })
             }
           ]
@@ -98,9 +97,8 @@ describe('HelpBotBedrockRenderer', () => {
         catalog: 'catalog'
       })
     ).resolves.toEqual({
-      sql: 'SELECT COUNT(*) AS meme_count FROM memes_extended_data WHERE season = 1',
-      title: 'Meme Cards in SZN1',
-      canonicalPath: '/the-memes?szn=1'
+      queryId: 'memes_in_season_count',
+      params: { season: 1 }
     });
   });
 });

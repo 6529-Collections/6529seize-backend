@@ -89,6 +89,7 @@ cache for 30 seconds so manual profile creation becomes active quickly.
 - Do not provide private wallet-specific eligibility answers unless a dedicated
   authenticated tool is added.
 - Do not let the LLM query arbitrary backend tables or execute unvalidated SQL.
+- Do not execute SQL text emitted by the LLM in the public-data path.
 - Do not replace human support or moderation.
 - Do not merge, deploy to staging, or activate production behavior in this
   PR-ready/no-deploy pass.
@@ -154,31 +155,39 @@ frontend help index. Examples:
 - `what is the highest edition size`
 - `what is total TDH`
 
-For V1, Bedrock can translate these public-data questions into SQL, but only
-inside a hardcoded public schema catalog. The backend validates the generated SQL
-before execution. The validator allows only one `SELECT` statement, rejects
-comments including `#`, semicolons, `UNION`, subqueries, comma-style joins,
-`SELECT *`, DML/DDL keywords, and non-whitelisted tables, and applies a small
-row limit to every query. Public-data SQL executes through the shared
-`SqlExecutor` with the read pool forced and a MySQL `MAX_EXECUTION_TIME` hint
-injected after validation. The mysql pool configuration does not enable
-`multipleStatements`, and the validator rejects semicolons before table or
-keyword checks.
+For V1, Bedrock does not author SQL. Bedrock maps the user's question to a
+backend-owned public-data query id plus numeric params, for example
+`{"queryId":"memes_in_season_count","params":{"season":1}}`. The backend
+rejects unknown query ids and invalid params, then executes a fixed SQL template
+owned in backend code. SQL from Bedrock is never executed.
 
-Initial whitelisted tables:
+Initial public-data query ids:
+
+- `memes_in_season_count` with `season`
+- `meme_tdh_rate` with `meme`
+- `highest_tdh_rate`
+- `highest_edition_size`
+- `highest_supply`
+- `total_tdh`
+
+Initial backend template tables:
 
 - `nfts`: Meme Card names, supply, TDH fields, and `hodl_rate` used as card TDH
   rate.
 - `memes_extended_data`: season, meme number/name, edition size, holder, burn,
   and uniqueness metrics.
-- `memes_seasons`: season boundaries and counts.
 - `latest_tdh_global_history`: latest global TDH totals and wallet counts.
 
-If the SQL planner fails or produces an unsafe query, the bot declines that data
-mode and falls back to the normal help-index path. If a validated DB query
-returns no rows or only null aggregate values, the bot also declines that data
-mode instead of wording an empty result as a fact. If a validated DB query times
-out or fails, the bot uses the technical-failure reply path.
+Public-data queries execute through the shared `SqlExecutor` with the read pool
+forced, a hard row limit in every template, and a MySQL `MAX_EXECUTION_TIME`
+hint injected by backend code. The mysql pool configuration does not enable
+`multipleStatements`; this mode also does not accept statements from the model.
+
+If the public-data planner fails, returns an unknown query id, or returns invalid
+params, the bot declines that data mode and falls back to the normal help-index
+path. If a fixed DB query returns no rows or only null aggregate values, the bot
+also declines that data mode instead of wording an empty result as a fact. If a
+fixed DB query times out or fails, the bot uses the technical-failure reply path.
 
 ### 4.5 Agent maintenance contract
 
@@ -218,9 +227,10 @@ The live answer prompt should receive only the top relevant snippets, not the
 entire corpus.
 
 For V1, retrieval is alias/keyword scoring over the cached frontend records plus
-validated public SQL over whitelisted backend data tables. Direct follow-up
-questions first match the current user message; previous bot answer text is used
-only as fallback context so old wording does not dominate the next topic.
+Bedrock-planned public-data query ids mapped to fixed backend SQL templates.
+Direct follow-up questions first match the current user message; previous bot
+answer text is used only as fallback context so old wording does not dominate
+the next topic.
 
 ## 5. Runtime Flow
 
@@ -416,8 +426,8 @@ private user data beyond what is needed for debugging and abuse controls.
 - Trigger on direct replies to bot messages.
 - Use Bedrock wording with deterministic fallback when Bedrock is unavailable.
 - Fetch and cache the frontend-published `/help-index.json` artifact.
-- Add bounded public-data SQL mode for aggregate questions over whitelisted
-  public tables.
+- Add bounded public-data query-intent mode for aggregate questions over fixed
+  backend SQL templates.
 
 ### Phase 3: Full Index/RAG Integration - Future
 

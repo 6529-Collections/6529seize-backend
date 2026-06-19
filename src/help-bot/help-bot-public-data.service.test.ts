@@ -4,7 +4,7 @@ import { HELP_BOT_PUBLIC_DATA_QUERY_TIMEOUT_MS } from './help-bot.config';
 import {
   HelpBotPublicDataLlm,
   HelpBotPublicDataService,
-  validateHelpBotPublicDataSql
+  buildHelpBotPublicDataQuery
 } from './help-bot-public-data.service';
 
 class TestSqlExecutor extends SqlExecutor {
@@ -19,70 +19,43 @@ function withStatementTimeoutHint(sql: string): string {
   );
 }
 
-describe('validateHelpBotPublicDataSql', () => {
-  it('allows a single SELECT against public help-bot tables', () => {
+describe('buildHelpBotPublicDataQuery', () => {
+  it('builds fixed SQL from a typed query plan', () => {
     expect(
-      validateHelpBotPublicDataSql(
-        'SELECT COUNT(*) AS meme_count FROM memes_extended_data WHERE season = 1'
-      )
-    ).toBe(
-      'SELECT COUNT(*) AS meme_count FROM memes_extended_data WHERE season = 1 LIMIT 10'
+      buildHelpBotPublicDataQuery({
+        queryId: 'memes_in_season_count',
+        params: { season: '1' }
+      })
+    ).toEqual(
+      expect.objectContaining({
+        queryId: 'memes_in_season_count',
+        sql: 'SELECT COUNT(*) AS meme_count FROM memes_extended_data WHERE season = :season LIMIT 10',
+        params: { season: 1 },
+        title: 'Meme Cards in SZN1',
+        canonicalPath: '/the-memes?szn=1'
+      })
     );
   });
 
-  it('adds a safe limit to non-aggregate list queries', () => {
+  it('declines unknown query ids and invalid numeric params', () => {
     expect(
-      validateHelpBotPublicDataSql(
-        'SELECT meme, meme_name FROM memes_extended_data ORDER BY meme ASC'
-      )
-    ).toBe(
-      'SELECT meme, meme_name FROM memes_extended_data ORDER BY meme ASC LIMIT 10'
-    );
-  });
-
-  it('rejects non-public tables and mutations', () => {
-    expect(() =>
-      validateHelpBotPublicDataSql('SELECT id FROM profiles LIMIT 1')
-    ).toThrow('disallowed table profiles');
-    expect(() =>
-      validateHelpBotPublicDataSql('DELETE FROM memes_extended_data')
-    ).toThrow('SELECT');
-  });
-
-  it('rejects risky SQL shapes from planner output', () => {
-    expect(() =>
-      validateHelpBotPublicDataSql('SELECT * FROM memes_extended_data LIMIT 1')
-    ).toThrow('explicit columns');
-    expect(() =>
-      validateHelpBotPublicDataSql(
-        'SELECT meme FROM memes_extended_data # comment'
-      )
-    ).toThrow('single uncommented statement');
-    expect(() =>
-      validateHelpBotPublicDataSql(
-        'SELECT meme FROM memes_extended_data UNION SELECT id FROM nfts'
-      )
-    ).toThrow('disallowed keyword');
-    expect(() =>
-      validateHelpBotPublicDataSql(
-        'SELECT meme FROM memes_extended_data, nfts LIMIT 1'
-      )
-    ).toThrow('explicit JOIN syntax');
-    expect(() =>
-      validateHelpBotPublicDataSql(
-        'SELECT meme FROM (SELECT id FROM profiles) p LIMIT 1'
-      )
-    ).toThrow('subqueries');
-    expect(() =>
-      validateHelpBotPublicDataSql(
-        'SELECT m.meme FROM memes_extended_data m JOIN profiles p ON p.id = m.id LIMIT 1'
-      )
-    ).toThrow('disallowed table profiles');
-    expect(() =>
-      validateHelpBotPublicDataSql(
-        'SELECT meme FROM memes_extended_data LIMIT 0, 100'
-      )
-    ).toThrow('exceeds max 10');
+      buildHelpBotPublicDataQuery({
+        queryId: 'raw_sql',
+        params: { sql: 'SELECT id FROM profiles' }
+      })
+    ).toBeNull();
+    expect(
+      buildHelpBotPublicDataQuery({
+        queryId: 'memes_in_season_count',
+        params: { season: 0 }
+      })
+    ).toBeNull();
+    expect(
+      buildHelpBotPublicDataQuery({
+        queryId: 'meme_tdh_rate',
+        params: { meme: '1; DROP TABLE profiles' }
+      })
+    ).toBeNull();
   });
 });
 
@@ -90,9 +63,8 @@ describe('HelpBotPublicDataService', () => {
   it('plans, validates, executes, and renders public data answers', async () => {
     const llm: HelpBotPublicDataLlm = {
       planPublicDataQuery: jest.fn().mockResolvedValue({
-        sql: 'SELECT COUNT(*) AS meme_count FROM memes_extended_data WHERE season = 1',
-        title: 'Meme Cards in SZN1',
-        canonicalPath: '/the-memes?szn=1'
+        queryId: 'memes_in_season_count',
+        params: { season: 1 }
       }),
       renderPublicDataAnswer: jest
         .fn()
@@ -109,14 +81,20 @@ describe('HelpBotPublicDataService', () => {
     ).resolves.toEqual({
       answer:
         'SZN1 has 47 Meme Cards.\n\nMore info: https://6529.io/the-memes?szn=1',
-      sql: 'SELECT COUNT(*) AS meme_count FROM memes_extended_data WHERE season = 1 LIMIT 10'
+      sql: 'SELECT COUNT(*) AS meme_count FROM memes_extended_data WHERE season = :season LIMIT 10'
     });
     expect(db.execute).toHaveBeenCalledWith(
       withStatementTimeoutHint(
-        'SELECT COUNT(*) AS meme_count FROM memes_extended_data WHERE season = 1 LIMIT 10'
+        'SELECT COUNT(*) AS meme_count FROM memes_extended_data WHERE season = :season LIMIT 10'
       ),
-      undefined,
+      { season: 1 },
       { forcePool: DbPoolName.READ }
+    );
+    expect(llm.renderPublicDataAnswer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'Meme Cards in SZN1',
+        canonicalUrl: 'https://6529.io/the-memes?szn=1'
+      })
     );
   });
 
@@ -139,9 +117,8 @@ describe('HelpBotPublicDataService', () => {
   it('declines unsafe planner output without executing SQL', async () => {
     const llm: HelpBotPublicDataLlm = {
       planPublicDataQuery: jest.fn().mockResolvedValue({
-        sql: 'SELECT * FROM profiles LIMIT 1',
-        title: 'Unsafe',
-        canonicalPath: '/open-data'
+        queryId: 'raw_sql',
+        params: { sql: 'SELECT id FROM profiles' }
       }),
       renderPublicDataAnswer: jest.fn()
     };
@@ -157,9 +134,7 @@ describe('HelpBotPublicDataService', () => {
   it('declines empty public data rows without rendering an answer', async () => {
     const llm: HelpBotPublicDataLlm = {
       planPublicDataQuery: jest.fn().mockResolvedValue({
-        sql: 'SELECT total_boosted_tdh AS total_tdh FROM latest_tdh_global_history LIMIT 1',
-        title: 'Total TDH',
-        canonicalPath: '/network/tdh'
+        queryId: 'total_tdh'
       }),
       renderPublicDataAnswer: jest.fn()
     };
@@ -176,9 +151,7 @@ describe('HelpBotPublicDataService', () => {
   it('declines all-null aggregate rows without rendering an answer', async () => {
     const llm: HelpBotPublicDataLlm = {
       planPublicDataQuery: jest.fn().mockResolvedValue({
-        sql: 'SELECT MAX(hodl_rate) AS highest_tdh_rate FROM nfts LIMIT 1',
-        title: 'Highest TDH Rate',
-        canonicalPath: '/the-memes'
+        queryId: 'highest_tdh_rate'
       }),
       renderPublicDataAnswer: jest.fn()
     };
@@ -209,9 +182,7 @@ describe('HelpBotPublicDataService', () => {
   it('falls back to deterministic row rendering when LLM wording fails', async () => {
     const llm: HelpBotPublicDataLlm = {
       planPublicDataQuery: jest.fn().mockResolvedValue({
-        sql: 'SELECT total_boosted_tdh AS total_tdh FROM latest_tdh_global_history LIMIT 1',
-        title: 'Total TDH',
-        canonicalPath: '/network/tdh'
+        queryId: 'total_tdh'
       }),
       renderPublicDataAnswer: jest.fn().mockRejectedValue(new Error('bedrock'))
     };
