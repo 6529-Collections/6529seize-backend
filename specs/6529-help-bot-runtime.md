@@ -360,11 +360,12 @@ private user data beyond what is needed for debugging and abuse controls.
 
 - Draft frontend help index spec.
 - Draft backend runtime spec.
-- Agree on bot naming and handle: `@6529help`.
+- Agree on bot naming and hardcoded handle: `@6529help`.
 
 ### Phase 2: V1 Help Bot Plumbing - Done In PR
 
 - Create bot identity.
+- Resolve the `@6529help` profile id from the hardcoded handle at runtime.
 - Detect explicit `@6529help` mentions.
 - Add 👀, answer from cached frontend records, replace with ✅.
 - Add failure reply path and ⚠️.

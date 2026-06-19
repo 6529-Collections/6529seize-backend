@@ -25,6 +25,10 @@ import {
   helpBotReactionService,
   HelpBotReactionService
 } from './help-bot-reaction.service';
+import {
+  helpBotProfileResolver,
+  HelpBotProfileResolver
+} from './help-bot-profile-resolver';
 import { withHelpBotAuthentication } from './help-bot.auth';
 import { errorToMessage } from './help-bot.errors';
 
@@ -48,6 +52,7 @@ export class HelpBotProcessorService {
     private readonly reactionService: HelpBotReactionService,
     private readonly dropWriter: HelpBotDropWriterService,
     private readonly dropsService: DropsApiService,
+    private readonly profileResolver: HelpBotProfileResolver,
     private readonly answererFactory: () => HelpBotAnswerer
   ) {}
 
@@ -56,10 +61,16 @@ export class HelpBotProcessorService {
     ctx: RequestContext
   ): Promise<void> {
     const config = getHelpBotConfig();
-    const botProfileId = config.botProfileId;
-    if (!isHelpBotRuntimeReady(config) || !botProfileId) {
+    if (!isHelpBotRuntimeReady(config)) {
       this.logger.warn(
         `Help bot runtime is not configured; skipping interaction ${interactionId}`
+      );
+      return;
+    }
+    const botProfileId = await this.profileResolver.resolveBotProfileId(ctx);
+    if (!botProfileId) {
+      this.logger.warn(
+        `Help bot profile could not be resolved; skipping interaction ${interactionId}`
       );
       return;
     }
@@ -250,5 +261,6 @@ export const helpBotProcessorService = new HelpBotProcessorService(
   helpBotReactionService,
   helpBotDropWriterService,
   dropsService,
+  helpBotProfileResolver,
   () => new HelpBotAnswerer(buildRenderer())
 );

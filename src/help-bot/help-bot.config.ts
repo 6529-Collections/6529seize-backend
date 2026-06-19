@@ -14,7 +14,6 @@ export const HELP_BOT_TECHNICAL_FAILURE_REPLY =
 
 export interface HelpBotConfig {
   readonly enabled: boolean;
-  readonly botProfileId: string | null;
   readonly queueUrl: string | null;
   readonly bedrockModelId: string | null;
   readonly baseUrl: string;
@@ -47,7 +46,6 @@ export function getHelpBotConfig(): HelpBotConfig {
   const baseUrl = normalizeBaseUrl(env.getStringOrNull('HELP_BOT_BASE_URL'));
   return {
     enabled: parseEnabled(env.getStringOrNull('HELP_BOT_ENABLED')),
-    botProfileId: env.getStringOrNull('HELP_BOT_PROFILE_ID')?.trim() || null,
     queueUrl: env.getStringOrNull('HELP_BOT_SQS_URL')?.trim() || null,
     bedrockModelId:
       env.getStringOrNull('HELP_BOT_BEDROCK_MODEL_ID')?.trim() || null,
@@ -67,7 +65,7 @@ export function getHelpBotConfig(): HelpBotConfig {
 }
 
 export function isHelpBotRuntimeReady(config: HelpBotConfig): boolean {
-  return config.enabled && !!config.botProfileId;
+  return config.enabled;
 }
 
 export function isHelpBotTriggerRuntimeReady(config: HelpBotConfig): boolean {

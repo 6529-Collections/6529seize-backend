@@ -33,7 +33,6 @@ functions:
       SENTRY_DSN: ${env:SENTRY_DSN}
       SENTRY_ENVIRONMENT: 'helpBotReplyLoop_${opt:stage, self:provider.stage}'
       HELP_BOT_ENABLED: ${env:HELP_BOT_ENABLED, 'false'}
-      HELP_BOT_PROFILE_ID: ${env:HELP_BOT_PROFILE_ID, ''}
       HELP_BOT_BEDROCK_MODEL_ID: ${env:HELP_BOT_BEDROCK_MODEL_ID, ''}
       HELP_BOT_BASE_URL: ${env:HELP_BOT_BASE_URL, 'https://6529.io'}
 

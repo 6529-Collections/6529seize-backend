@@ -25,6 +25,10 @@ import {
   helpBotReactionService,
   HelpBotReactionService
 } from './help-bot-reaction.service';
+import {
+  helpBotProfileResolver,
+  HelpBotProfileResolver
+} from './help-bot-profile-resolver';
 
 export class HelpBotTriggerService {
   private readonly logger = Logger.get(this.constructor.name);
@@ -34,7 +38,8 @@ export class HelpBotTriggerService {
     private readonly reactionService: HelpBotReactionService,
     private readonly dropWriter: HelpBotDropWriterService,
     private readonly dropsService: DropsApiService,
-    private readonly sqs: SQS
+    private readonly sqs: SQS,
+    private readonly profileResolver: HelpBotProfileResolver
   ) {}
 
   public async handleCreatedDrop(
@@ -50,13 +55,16 @@ export class HelpBotTriggerService {
     ctx: RequestContext
   ): Promise<void> {
     const config = getHelpBotConfig();
-    const botProfileId = config.botProfileId;
     const queueUrl = config.queueUrl;
-    if (!isHelpBotTriggerRuntimeReady(config) || !botProfileId || !queueUrl) {
+    if (!isHelpBotTriggerRuntimeReady(config) || !queueUrl) {
       return;
     }
 
     try {
+      const botProfileId = await this.profileResolver.resolveBotProfileId(ctx);
+      if (!botProfileId) {
+        return;
+      }
       const parentDrop = await this.findParentDrop(createDropRequest, ctx);
       const trigger = detectHelpBotTrigger({
         request: createDropRequest,
@@ -205,5 +213,6 @@ export const helpBotTriggerService = new HelpBotTriggerService(
   helpBotReactionService,
   helpBotDropWriterService,
   dropsService,
-  sqs
+  sqs,
+  helpBotProfileResolver
 );

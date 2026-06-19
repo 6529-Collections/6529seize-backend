@@ -314,7 +314,8 @@ flowchart TD
 
 Important details:
 
-- The bot is inactive unless `HELP_BOT_ENABLED`, `HELP_BOT_PROFILE_ID`, and the API's `HELP_BOT_SQS_URL` are configured.
+- The bot handle is hardcoded as `@6529help`; runtime resolves that handle to the current bot profile id before posting replies or reactions.
+- The bot is inactive unless `HELP_BOT_ENABLED` and the API's `HELP_BOT_SQS_URL` are configured.
 - V1 retrieval uses the frontend-published `/help-index.json` artifact, cached in the backend answer path, not full RAG or live repo lookup.
 - Help index fetches use a short timeout; a cold load failure produces the technical-failure reply instead of a no-reliable-source answer.
 - If Bedrock rendering is configured and fails, the worker falls back to deterministic record wording when a reliable frontend record exists.
