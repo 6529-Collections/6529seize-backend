@@ -133,7 +133,30 @@ These should be short, curated records or generated summaries from backend docs
 and tests. Raw code lookup should happen offline during indexing or authoring,
 not during a user request.
 
-### 4.4 Retrieval model
+### 4.4 Agent maintenance contract
+
+Future agents must treat the help bot corpus as part of the user-facing product
+surface. When a backend change adds or changes behavior that users may ask
+`@6529help` about, update the help bot materials in the same PR.
+
+Backend-owned examples:
+
+- subscription behavior and eligibility concepts
+- wave, drop, voting, or permission rules
+- posting limits, slow-mode, or rate-limit explanations
+- backend-owned product terminology
+- canonical URLs for backend-owned reports or tools
+
+For V1, add or update seed records in `src/help-bot/help-bot.knowledge.ts` and
+adjust focused help bot tests. Also update this runtime spec when trigger
+behavior, failure wording, provider behavior, source ownership, observability,
+or coverage expectations change.
+
+If a backend change is user-visible but intentionally should not be answerable
+by the bot yet, the PR should say why and whether a follow-up corpus update is
+needed.
+
+### 4.5 Retrieval model
 
 The bot should not depend on a predefined list of questions. It should retrieve
 records and chunks by:
