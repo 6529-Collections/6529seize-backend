@@ -26,7 +26,6 @@ describe('DropSignatureVerifier', () => {
   beforeEach(() => {
     clearStructuredWalletSignatureReplayCacheForTests();
     process.env.AUTH_SIGNATURE_ALLOWED_DOMAINS = 'example.com';
-    process.env.AUTH_SIGNATURE_AUDIENCE = 'api.6529.io';
     process.env.ALCHEMY_API_KEY = 'test-key';
     isValidSignatureMock = jest.fn().mockResolvedValue(EIP1271_INVALID_VALUE);
     const contractConstructor = jest.fn().mockImplementation(() => ({
@@ -41,7 +40,6 @@ describe('DropSignatureVerifier', () => {
 
   afterEach(() => {
     delete process.env.AUTH_SIGNATURE_ALLOWED_DOMAINS;
-    delete process.env.AUTH_SIGNATURE_AUDIENCE;
     delete process.env.AUTH_STRUCTURED_SIGNATURES_REQUIRED;
     delete process.env.ALCHEMY_API_KEY;
     jest.restoreAllMocks();

@@ -25,7 +25,8 @@ const ALCHEMY_NETWORK_BY_CHAIN_ID = new Map<number, Network>([
 ]);
 const DEFAULT_STRUCTURED_WALLET_SIGNATURE_AUDIENCE = 'api.6529.io';
 const DEFAULT_SIGNATURE_ALLOWED_AUDIENCES = [
-  DEFAULT_STRUCTURED_WALLET_SIGNATURE_AUDIENCE
+  DEFAULT_STRUCTURED_WALLET_SIGNATURE_AUDIENCE,
+  'api.staging.6529.io'
 ];
 const LOCAL_SIGNATURE_ALLOWED_AUDIENCES = ['localhost:3000', '127.0.0.1:3000'];
 const DEFAULT_SIGNATURE_ALLOWED_DOMAINS = [
@@ -128,11 +129,24 @@ export function isStructuredWalletSignatureMessage(message: string): boolean {
 export function getDefaultStructuredWalletSignatureAudience(): string {
   return (
     normalizeDomain(
-      process.env.AUTH_SIGNATURE_AUDIENCE ??
-        process.env.API_BASE_URL ??
-        DEFAULT_STRUCTURED_WALLET_SIGNATURE_AUDIENCE
+      process.env.API_BASE_URL ?? DEFAULT_STRUCTURED_WALLET_SIGNATURE_AUDIENCE
     ) ?? DEFAULT_STRUCTURED_WALLET_SIGNATURE_AUDIENCE
   );
+}
+
+export function getStructuredWalletSignatureAudienceForHost(
+  apiHostHeader: unknown
+): string | null {
+  if (typeof apiHostHeader !== 'string') {
+    return null;
+  }
+
+  const audience = normalizeDomain(apiHostHeader.trim());
+  if (!audience || !isStructuredSignatureAudienceAllowed(audience)) {
+    return null;
+  }
+
+  return audience;
 }
 
 export function buildStructuredWalletSignatureMessage({
@@ -473,7 +487,9 @@ function getConfiguredNormalizedDomains(envName: string): string[] {
   );
 }
 
-function isStructuredSignatureAudienceAllowed(audience: string): boolean {
+export function isStructuredSignatureAudienceAllowed(
+  audience: string
+): boolean {
   if (isLocalhostSignatureHostAllowed(audience)) {
     return true;
   }

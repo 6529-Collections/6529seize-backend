@@ -57,6 +57,7 @@ import {
   buildStructuredWalletSignatureMessage,
   ETHEREUM_MAINNET_CHAIN_ID,
   getDefaultStructuredWalletSignatureAudience,
+  getStructuredWalletSignatureAudienceForHost,
   isStructuredSignaturesRequired,
   isStructuredSignatureDomainAllowed,
   isStructuredWalletSignatureMessage,
@@ -146,9 +147,12 @@ router.get(
       );
     }
     const nonceContext = resolveSessionNonceContext(req, nonceRequest);
+    const audience =
+      getStructuredWalletSignatureAudienceForHost(req.headers.host) ??
+      getDefaultStructuredWalletSignatureAudience();
     const signableMessage = buildStructuredWalletSignatureMessage({
       kind: 'authentication',
-      audience: getDefaultStructuredWalletSignatureAudience(),
+      audience,
       domain: nonceContext.domain,
       clientOrigin: nonceContext.clientOrigin,
       sessionType: nonceContext.sessionType,
