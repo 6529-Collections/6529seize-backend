@@ -25,6 +25,8 @@ import {
   helpBotReactionService,
   HelpBotReactionService
 } from './help-bot-reaction.service';
+import { withHelpBotAuthentication } from './help-bot.auth';
+import { errorToMessage } from './help-bot.errors';
 
 function buildRenderer(): HelpBotLlmRenderer | null {
   const modelId = getHelpBotConfig().bedrockModelId;
@@ -54,7 +56,8 @@ export class HelpBotProcessorService {
     ctx: RequestContext
   ): Promise<void> {
     const config = getHelpBotConfig();
-    if (!isHelpBotRuntimeReady(config)) {
+    const botProfileId = config.botProfileId;
+    if (!isHelpBotRuntimeReady(config) || !botProfileId) {
       this.logger.warn(
         `Help bot runtime is not configured; skipping interaction ${interactionId}`
       );
@@ -72,6 +75,7 @@ export class HelpBotProcessorService {
     try {
       const previousBotAnswer = await this.getPreviousBotAnswer(
         interaction,
+        botProfileId,
         ctx
       );
       const answer = await this.answererFactory().answer({
@@ -81,7 +85,7 @@ export class HelpBotProcessorService {
       });
       if (answer.type === 'NO_RELIABLE_SOURCE') {
         await this.replyWithNoReliableSource({
-          botProfileId: config.botProfileId!,
+          botProfileId,
           interaction,
           ctx
         });
@@ -90,7 +94,7 @@ export class HelpBotProcessorService {
 
       const reply = await this.dropWriter.reply(
         {
-          botProfileId: config.botProfileId!,
+          botProfileId,
           waveId: interaction.wave_id,
           triggerDropId: interaction.trigger_drop_id,
           interactionId: interaction.id,
@@ -107,7 +111,7 @@ export class HelpBotProcessorService {
       );
       await this.reactionService.setReaction(
         {
-          botProfileId: config.botProfileId!,
+          botProfileId,
           dropId: interaction.trigger_drop_id,
           waveId: interaction.wave_id,
           reaction: HELP_BOT_SUCCESS_REACTION
@@ -116,7 +120,7 @@ export class HelpBotProcessorService {
       );
     } catch (error) {
       await this.replyWithTechnicalFailure({
-        botProfileId: config.botProfileId!,
+        botProfileId,
         interaction,
         error,
         ctx
@@ -126,6 +130,7 @@ export class HelpBotProcessorService {
 
   private async getPreviousBotAnswer(
     interaction: HelpBotInteractionRow,
+    botProfileId: string,
     ctx: RequestContext
   ): Promise<string | null> {
     if (!interaction.parent_bot_drop_id) {
@@ -137,7 +142,7 @@ export class HelpBotProcessorService {
           dropId: interaction.parent_bot_drop_id,
           skipEligibilityCheck: true
         },
-        ctx
+        withHelpBotAuthentication(botProfileId, ctx)
       );
       return extractDropText(drop);
     } catch (error) {
@@ -233,7 +238,7 @@ export class HelpBotProcessorService {
       {
         id: interaction.id,
         replyDropId,
-        failureReason: String(error)
+        failureReason: errorToMessage(error)
       },
       ctx
     );

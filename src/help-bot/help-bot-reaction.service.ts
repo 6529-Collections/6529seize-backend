@@ -5,6 +5,7 @@ import {
   WsListenersNotifier
 } from '@/api/ws/ws-listeners-notifier';
 import { RequestContext } from '@/request.context';
+import { withHelpBotAuthentication } from './help-bot.auth';
 
 export class HelpBotReactionService {
   constructor(
@@ -27,12 +28,13 @@ export class HelpBotReactionService {
     },
     ctx: RequestContext
   ): Promise<void> {
+    const botCtx = withHelpBotAuthentication(botProfileId, ctx);
     const changed = await this.reactionsDb.addReaction(
       botProfileId,
       dropId,
       waveId,
       reaction,
-      ctx
+      botCtx
     );
     if (!changed) {
       return;
@@ -43,9 +45,9 @@ export class HelpBotReactionService {
         dropId,
         skipEligibilityCheck: true
       },
-      ctx
+      botCtx
     );
-    await this.wsListenersNotifier.notifyAboutDropReactionUpdate(drop, ctx);
+    await this.wsListenersNotifier.notifyAboutDropReactionUpdate(drop, botCtx);
   }
 }
 

@@ -45,7 +45,7 @@ function affectedRows(result: unknown): number {
   if (result && typeof result === 'object' && 'affectedRows' in result) {
     return Number((result as { affectedRows?: unknown }).affectedRows ?? 0);
   }
-  return Array.isArray(result) && typeof result[1] === 'number' ? result[1] : 0;
+  return Array.isArray(result) ? affectedRows(result[0]) : 0;
 }
 
 export class HelpBotInteractionsDb extends LazyDbAccessCompatibleService {

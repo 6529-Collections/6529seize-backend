@@ -63,9 +63,9 @@ function buildInvokeModelInput(
           content: [{ type: 'text', text: prompt }]
         }
       ],
-      temperature: 0.7,
-      top_p: 0.8,
-      top_k: 30
+      temperature: 0.2,
+      top_p: 0.5,
+      top_k: 20
     })
   };
 }

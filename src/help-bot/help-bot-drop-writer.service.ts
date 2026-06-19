@@ -1,4 +1,3 @@
-import { AuthenticationContext } from '@/auth-context';
 import { ApiDrop } from '@/api/generated/models/ApiDrop';
 import { sendIdentityPushNotifications } from '@/api/push-notifications/push-notifications.service';
 import {
@@ -16,6 +15,7 @@ import { dropsDb, DropsDb } from '@/drops/drops.db';
 import { dropsService, DropsApiService } from '@/api/drops/drops.api.service';
 import { HELP_BOT_HANDLE } from './help-bot.config';
 import { Logger } from '@/logging';
+import { withHelpBotAuthentication } from './help-bot.auth';
 
 export class HelpBotDropWriterService {
   private readonly logger = Logger.get(this.constructor.name);
@@ -43,7 +43,7 @@ export class HelpBotDropWriterService {
     },
     ctx: RequestContext
   ): Promise<ApiDrop> {
-    const authContext = AuthenticationContext.fromProfileId(botProfileId);
+    const botCtx = withHelpBotAuthentication(botProfileId, ctx);
     const model: CreateOrUpdateDropModel = {
       drop_id: null,
       wave_id: waveId,
@@ -95,7 +95,7 @@ export class HelpBotDropWriterService {
             {
               timer: ctx.timer,
               connection,
-              authenticationContext: authContext
+              authenticationContext: botCtx.authenticationContext
             }
           );
           return {
@@ -110,8 +110,7 @@ export class HelpBotDropWriterService {
       pendingPushNotificationIds
     });
     await this.wsListenersNotifier.notifyAboutDropUpdate(drop, {
-      ...ctx,
-      authenticationContext: authContext
+      ...botCtx
     });
     return drop;
   }
