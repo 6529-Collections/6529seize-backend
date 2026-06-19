@@ -156,21 +156,20 @@ frontend help index. Examples:
 - `what is total TDH`
 
 For V1, Bedrock does not author SQL. Bedrock maps the user's question to a
-backend-owned public-data query id plus numeric params, for example
-`{"queryId":"memes_in_season_count","params":{"season":1}}`. The backend
-rejects unknown query ids and invalid params, then executes a fixed SQL template
-owned in backend code. SQL from Bedrock is never executed.
+semantic public-data plan, for example
+`{"entity":"meme_cards","operation":"count","metric":null,"filters":{"season":1},"limit":1}`.
+The backend rejects unknown entities, operations, metrics, filters, and invalid
+numeric values, then compiles the plan to backend-owned parameterized SQL. SQL
+from Bedrock is never executed.
 
-Initial public-data query ids:
+Initial public-data plan surface:
 
-- `memes_in_season_count` with `season`
-- `meme_tdh_rate` with `meme`
-- `highest_tdh_rate`
-- `highest_edition_size`
-- `highest_supply`
-- `total_tdh`
+- `meme_cards` supports `count`, `value`, `max`, `min`, `sum`, and `avg`.
+- `meme_cards` metrics include `tdh_rate`, `edition_size`, and `supply`.
+- `meme_cards` filters include numeric `meme` and `season`.
+- `tdh_global` supports latest `total_tdh`.
 
-Initial backend template tables:
+Initial backend public tables:
 
 - `nfts`: Meme Card names, supply, TDH fields, and `hodl_rate` used as card TDH
   rate.
@@ -179,15 +178,16 @@ Initial backend template tables:
 - `latest_tdh_global_history`: latest global TDH totals and wallet counts.
 
 Public-data queries execute through the shared `SqlExecutor` with the read pool
-forced, a hard row limit in every template, and a MySQL `MAX_EXECUTION_TIME`
-hint injected by backend code. The mysql pool configuration does not enable
+forced, backend-applied hard row limits, and a MySQL `MAX_EXECUTION_TIME` hint
+injected by backend code. The mysql pool configuration does not enable
 `multipleStatements`; this mode also does not accept statements from the model.
 
-If the public-data planner fails, returns an unknown query id, or returns invalid
-params, the bot declines that data mode and falls back to the normal help-index
-path. If a fixed DB query returns no rows or only null aggregate values, the bot
-also declines that data mode instead of wording an empty result as a fact. If a
-fixed DB query times out or fails, the bot uses the technical-failure reply path.
+If the public-data planner fails, returns an unknown plan field, or returns
+invalid values, the bot declines that data mode and falls back to the normal
+help-index path. If a compiled DB query returns no rows or only null aggregate
+values, the bot also declines that data mode instead of wording an empty result
+as a fact. If a compiled DB query times out or fails, the bot uses the
+technical-failure reply path.
 
 ### 4.5 Agent maintenance contract
 
@@ -227,7 +227,7 @@ The live answer prompt should receive only the top relevant snippets, not the
 entire corpus.
 
 For V1, retrieval is alias/keyword scoring over the cached frontend records plus
-Bedrock-planned public-data query ids mapped to fixed backend SQL templates.
+Bedrock-planned public-data intents compiled to backend-owned SQL.
 Direct follow-up questions first match the current user message; previous bot
 answer text is used only as fallback context so old wording does not dominate
 the next topic.
@@ -426,8 +426,8 @@ private user data beyond what is needed for debugging and abuse controls.
 - Trigger on direct replies to bot messages.
 - Use Bedrock wording with deterministic fallback when Bedrock is unavailable.
 - Fetch and cache the frontend-published `/help-index.json` artifact.
-- Add bounded public-data query-intent mode for aggregate questions over fixed
-  backend SQL templates.
+- Add bounded public-data query-intent mode for aggregate questions over the
+  backend-owned public query compiler.
 
 ### Phase 3: Full Index/RAG Integration - Future
 

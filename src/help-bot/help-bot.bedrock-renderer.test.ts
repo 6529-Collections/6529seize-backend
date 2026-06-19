@@ -77,8 +77,11 @@ describe('HelpBotBedrockRenderer', () => {
             {
               type: 'text',
               text: JSON.stringify({
-                queryId: 'memes_in_season_count',
-                params: { season: 1 }
+                entity: 'meme_cards',
+                operation: 'count',
+                metric: null,
+                filters: { season: 1 },
+                limit: 1
               })
             }
           ]
@@ -97,8 +100,11 @@ describe('HelpBotBedrockRenderer', () => {
         catalog: 'catalog'
       })
     ).resolves.toEqual({
-      queryId: 'memes_in_season_count',
-      params: { season: 1 }
+      entity: 'meme_cards',
+      operation: 'count',
+      metric: null,
+      filters: { season: 1 },
+      limit: 1
     });
   });
 });

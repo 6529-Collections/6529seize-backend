@@ -60,12 +60,12 @@ function buildPublicDataPlanningPrompt({
   return [
     'You are @6529help public data planner for 6529.io.',
     'Return strict JSON only. Do not wrap in Markdown.',
-    'If the question is not answerable from the catalog, return {"queryId":null}.',
-    'Choose only one queryId from the catalog.',
-    'Return numeric params only.',
-    'Do not return SQL.',
+    'If the question is not answerable from the catalog, return {"entity":null}.',
+    'Choose one entity, operation, metric, and filter set from the catalog.',
+    'Return numeric filter and limit values only.',
+    'Do not return SQL, table names, column names, joins, or expressions.',
     'Return this JSON shape:',
-    '{"queryId":"query_id","params":{"name":123}}',
+    '{"entity":"meme_cards","operation":"count","metric":null,"filters":{"season":1},"limit":1}',
     previousBotAnswer
       ? `Previous bot answer for context:\n${previousBotAnswer}`
       : '',
@@ -150,23 +150,20 @@ function readString(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
-function readObject(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
-}
-
 function parsePublicDataQueryPlan(
   text: string
 ): HelpBotPublicDataQueryPlan | null {
   const parsed = parseJsonObject(text);
-  const queryId = readString(parsed.queryId);
-  if (!queryId) {
+  const entity = readString(parsed.entity);
+  if (!entity) {
     return null;
   }
   return {
-    queryId,
-    params: readObject(parsed.params)
+    entity,
+    operation: readString(parsed.operation),
+    metric: readString(parsed.metric),
+    filters: parsed.filters,
+    limit: parsed.limit
   };
 }
 

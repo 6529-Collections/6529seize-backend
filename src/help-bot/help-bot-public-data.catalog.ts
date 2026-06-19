@@ -2,47 +2,57 @@ export const HELP_BOT_PUBLIC_DATA_CATALOG = `
 Public 6529 data query catalog available for @6529help planning.
 
 Rules:
-- Return strict JSON only with the shape {"queryId":"...","params":{...}}.
-- Do not return SQL.
-- Return {"queryId":null} when no query id below fits the user's question.
+- Return strict JSON only with the semantic plan shape below.
+- Do not return SQL, table names, column names, joins, or expressions.
+- Return {"entity":null} when the question is not answerable from this catalog.
 - Only answer public aggregate or public Meme Card lookup questions.
-- Use numeric params only.
+- Use numeric filter and limit values only.
+- Prefer limit 1 for highest/lowest questions unless the user asks for a top-N list.
 
-Available query ids:
+Plan shape:
+{"entity":"meme_cards","operation":"count","metric":null,"filters":{"season":1},"limit":1}
 
-- memes_in_season_count
-  Purpose: Count Meme Cards in one season.
-  Params: {"season": number}
-  Examples: "how many memes are in szn1", "count meme cards in season 2"
-  Source tables: memes_extended_data.
+Entities:
 
-- meme_tdh_rate
-  Purpose: Look up one Meme Card's TDH rate.
-  Params: {"meme": number}
-  Examples: "what is the tdh rate of meme #1", "hodl rate for meme 42"
-  Source tables: memes_extended_data, nfts.
+- meme_cards
+  Purpose: Public The Memes card stats.
+  Operations:
+    - count: count Meme Cards, metric should be null.
+    - value: look up one metric for a specific Meme Card; requires filters.meme.
+    - max: highest value for a metric.
+    - min: lowest value for a metric.
+    - sum: total value for metrics that can be summed.
+    - avg: average value for metrics that can be averaged.
+  Metrics:
+    - tdh_rate: Meme Card TDH / HODL rate.
+    - edition_size: Meme Card edition size.
+    - supply: current NFT supply.
+  Filters:
+    - meme: Meme Card number, e.g. Meme #1 -> {"meme":1}.
+    - season: The Memes season, e.g. SZN1 -> {"season":1}.
+  Examples:
+    - "how many memes are in szn1"
+      -> {"entity":"meme_cards","operation":"count","metric":null,"filters":{"season":1},"limit":1}
+    - "what is the tdh rate of meme #1"
+      -> {"entity":"meme_cards","operation":"value","metric":"tdh_rate","filters":{"meme":1},"limit":1}
+    - "what is the highest tdh rate"
+      -> {"entity":"meme_cards","operation":"max","metric":"tdh_rate","filters":{},"limit":1}
+    - "highest edition size in season 2"
+      -> {"entity":"meme_cards","operation":"max","metric":"edition_size","filters":{"season":2},"limit":1}
+    - "average edition size in szn1"
+      -> {"entity":"meme_cards","operation":"avg","metric":"edition_size","filters":{"season":1},"limit":1}
 
-- highest_tdh_rate
-  Purpose: Find the Meme Card with the highest TDH rate.
-  Params: {}
-  Examples: "what is the highest tdh rate", "which card has the highest hodl rate"
-  Source tables: memes_extended_data, nfts.
-
-- highest_edition_size
-  Purpose: Find the Meme Card with the highest edition size.
-  Params: {}
-  Examples: "highest edition size", "which meme has the biggest edition size"
-  Source tables: memes_extended_data.
-
-- highest_supply
-  Purpose: Find the Meme Card with the highest NFT supply.
-  Params: {}
-  Examples: "highest supply", "which meme has the largest supply"
-  Source tables: memes_extended_data, nfts.
-
-- total_tdh
-  Purpose: Look up the latest global total boosted TDH.
-  Params: {}
-  Examples: "total tdh", "what is the current total tdh"
-  Source tables: latest_tdh_global_history.
+- tdh_global
+  Purpose: Latest public global TDH aggregate.
+  Operations:
+    - latest: latest global aggregate value.
+    - value: same as latest for "current" wording.
+  Metrics:
+    - total_tdh: latest total boosted TDH.
+  Filters: none.
+  Examples:
+    - "total tdh"
+      -> {"entity":"tdh_global","operation":"latest","metric":"total_tdh","filters":{},"limit":1}
+    - "what is the current total TDH"
+      -> {"entity":"tdh_global","operation":"latest","metric":"total_tdh","filters":{},"limit":1}
 `;

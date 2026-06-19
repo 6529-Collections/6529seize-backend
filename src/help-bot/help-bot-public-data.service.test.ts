@@ -1,3 +1,4 @@
+import { MEMES_CONTRACT } from '@/constants';
 import { DbPoolName } from '@/db-query.options';
 import { SqlExecutor } from '@/sql-executor';
 import { HELP_BOT_PUBLIC_DATA_QUERY_TIMEOUT_MS } from './help-bot.config';
@@ -20,17 +21,18 @@ function withStatementTimeoutHint(sql: string): string {
 }
 
 describe('buildHelpBotPublicDataQuery', () => {
-  it('builds fixed SQL from a typed query plan', () => {
+  it('compiles a semantic season-count plan to backend-owned SQL', () => {
     expect(
       buildHelpBotPublicDataQuery({
-        queryId: 'memes_in_season_count',
-        params: { season: '1' }
+        entity: 'meme_cards',
+        operation: 'count',
+        filters: { season: '1' }
       })
     ).toEqual(
       expect.objectContaining({
-        queryId: 'memes_in_season_count',
+        queryId: 'meme_cards.count',
         templateSql:
-          'SELECT COUNT(*) AS meme_count FROM memes_extended_data WHERE season = :season LIMIT 10',
+          'SELECT COUNT(*) AS meme_count FROM memes_extended_data m WHERE m.season = :season LIMIT 1',
         params: { season: 1 },
         title: 'Meme Cards in SZN1',
         canonicalPath: '/the-memes?szn=1'
@@ -38,23 +40,82 @@ describe('buildHelpBotPublicDataQuery', () => {
     );
   });
 
-  it('declines unknown query ids and invalid numeric params', () => {
+  it('compiles a card metric lookup with the MEMES contract guard', () => {
     expect(
       buildHelpBotPublicDataQuery({
-        queryId: 'raw_sql',
-        params: { rawSql: 'SELECT id FROM profiles' }
+        entity: 'meme_cards',
+        operation: 'value',
+        metric: 'tdh_rate',
+        filters: { meme: 1 }
+      })
+    ).toEqual(
+      expect.objectContaining({
+        queryId: 'meme_cards.value.tdh_rate',
+        templateSql:
+          'SELECT m.meme, m.meme_name, n.hodl_rate AS tdh_rate FROM memes_extended_data m JOIN nfts n ON n.id = m.id AND n.contract = :memesContract WHERE m.meme = :meme LIMIT 1',
+        params: { memesContract: MEMES_CONTRACT, meme: 1 },
+        title: 'Meme #1 TDH Rate',
+        canonicalPath: '/the-memes/1'
+      })
+    );
+  });
+
+  it('compiles top-N metric plans without accepting model SQL', () => {
+    expect(
+      buildHelpBotPublicDataQuery({
+        entity: 'meme_cards',
+        operation: 'max',
+        metric: 'edition_size',
+        filters: { season: 2 },
+        limit: 3
+      })
+    ).toEqual(
+      expect.objectContaining({
+        queryId: 'meme_cards.max.edition_size',
+        templateSql:
+          'SELECT m.meme, m.meme_name, m.edition_size AS edition_size FROM memes_extended_data m WHERE m.season = :season ORDER BY m.edition_size DESC, m.meme ASC LIMIT 3',
+        params: { season: 2 },
+        title: 'Highest Meme Card Edition Size in SZN2',
+        canonicalPath: '/the-memes?szn=2'
+      })
+    );
+  });
+
+  it('declines unknown plan fields and invalid numeric filters', () => {
+    expect(
+      buildHelpBotPublicDataQuery({
+        entity: 'raw_sql',
+        operation: 'value',
+        filters: { rawSql: 'SELECT id FROM profiles' }
       })
     ).toBeNull();
     expect(
       buildHelpBotPublicDataQuery({
-        queryId: 'memes_in_season_count',
-        params: { season: 0 }
+        entity: 'meme_cards',
+        operation: 'count',
+        filters: { season: 0 }
       })
     ).toBeNull();
     expect(
       buildHelpBotPublicDataQuery({
-        queryId: 'meme_tdh_rate',
-        params: { meme: '1; DROP TABLE profiles' }
+        entity: 'meme_cards',
+        operation: 'value',
+        metric: 'tdh_rate',
+        filters: { meme: '1; DROP TABLE profiles' }
+      })
+    ).toBeNull();
+    expect(
+      buildHelpBotPublicDataQuery({
+        entity: 'meme_cards',
+        operation: 'count',
+        filters: { season: 1, rawSql: 'SELECT id FROM profiles' }
+      })
+    ).toBeNull();
+    expect(
+      buildHelpBotPublicDataQuery({
+        entity: 'meme_cards',
+        operation: 'count',
+        filters: 'season = 1'
       })
     ).toBeNull();
   });
@@ -64,8 +125,9 @@ describe('HelpBotPublicDataService', () => {
   it('plans, validates, executes, and renders public data answers', async () => {
     const llm: HelpBotPublicDataLlm = {
       planPublicDataQuery: jest.fn().mockResolvedValue({
-        queryId: 'memes_in_season_count',
-        params: { season: 1 }
+        entity: 'meme_cards',
+        operation: 'count',
+        filters: { season: 1 }
       }),
       renderPublicDataAnswer: jest
         .fn()
@@ -82,11 +144,11 @@ describe('HelpBotPublicDataService', () => {
     ).resolves.toEqual({
       answer:
         'SZN1 has 47 Meme Cards.\n\nMore info: https://6529.io/the-memes?szn=1',
-      queryId: 'memes_in_season_count'
+      queryId: 'meme_cards.count'
     });
     expect(db.execute).toHaveBeenCalledWith(
       withStatementTimeoutHint(
-        'SELECT COUNT(*) AS meme_count FROM memes_extended_data WHERE season = :season LIMIT 10'
+        'SELECT COUNT(*) AS meme_count FROM memes_extended_data m WHERE m.season = :season LIMIT 1'
       ),
       { season: 1 },
       { forcePool: DbPoolName.READ }
@@ -118,8 +180,9 @@ describe('HelpBotPublicDataService', () => {
   it('declines unsafe planner output without executing SQL', async () => {
     const llm: HelpBotPublicDataLlm = {
       planPublicDataQuery: jest.fn().mockResolvedValue({
-        queryId: 'raw_sql',
-        params: { rawSql: 'SELECT id FROM profiles' }
+        entity: 'raw_sql',
+        operation: 'value',
+        filters: { rawSql: 'SELECT id FROM profiles' }
       }),
       renderPublicDataAnswer: jest.fn()
     };
@@ -132,11 +195,32 @@ describe('HelpBotPublicDataService', () => {
     expect(db.execute).not.toHaveBeenCalled();
   });
 
-  it('ignores SQL-shaped params and executes only the fixed template', async () => {
+  it('rejects SQL-shaped filters and never treats them as executable text', async () => {
     const llm: HelpBotPublicDataLlm = {
       planPublicDataQuery: jest.fn().mockResolvedValue({
-        queryId: 'total_tdh',
-        params: { rawSql: 'SELECT id FROM profiles' }
+        entity: 'tdh_global',
+        operation: 'latest',
+        metric: 'total_tdh',
+        filters: { rawSql: 'SELECT id FROM profiles' }
+      }),
+      renderPublicDataAnswer: jest.fn()
+    };
+    const db = new TestSqlExecutor();
+    const service = new HelpBotPublicDataService(llm, () => db);
+
+    await expect(
+      service.answer({ question: 'total tdh?' })
+    ).resolves.toBeNull();
+    expect(db.execute).not.toHaveBeenCalled();
+  });
+
+  it('executes a latest global TDH plan through the read pool', async () => {
+    const llm: HelpBotPublicDataLlm = {
+      planPublicDataQuery: jest.fn().mockResolvedValue({
+        entity: 'tdh_global',
+        operation: 'latest',
+        metric: 'total_tdh',
+        filters: {}
       }),
       renderPublicDataAnswer: jest.fn().mockResolvedValue('Total TDH is 123.')
     };
@@ -146,7 +230,7 @@ describe('HelpBotPublicDataService', () => {
 
     await expect(service.answer({ question: 'total tdh?' })).resolves.toEqual({
       answer: 'Total TDH is 123.\n\nMore info: https://6529.io/network/tdh',
-      queryId: 'total_tdh'
+      queryId: 'tdh_global.latest.total_tdh'
     });
     expect(db.execute).toHaveBeenCalledWith(
       withStatementTimeoutHint(
@@ -160,7 +244,9 @@ describe('HelpBotPublicDataService', () => {
   it('declines empty public data rows without rendering an answer', async () => {
     const llm: HelpBotPublicDataLlm = {
       planPublicDataQuery: jest.fn().mockResolvedValue({
-        queryId: 'total_tdh'
+        entity: 'tdh_global',
+        operation: 'latest',
+        metric: 'total_tdh'
       }),
       renderPublicDataAnswer: jest.fn()
     };
@@ -177,16 +263,19 @@ describe('HelpBotPublicDataService', () => {
   it('declines all-null aggregate rows without rendering an answer', async () => {
     const llm: HelpBotPublicDataLlm = {
       planPublicDataQuery: jest.fn().mockResolvedValue({
-        queryId: 'highest_tdh_rate'
+        entity: 'meme_cards',
+        operation: 'avg',
+        metric: 'edition_size',
+        filters: {}
       }),
       renderPublicDataAnswer: jest.fn()
     };
     const db = new TestSqlExecutor();
-    db.execute.mockResolvedValue([{ highest_tdh_rate: null }]);
+    db.execute.mockResolvedValue([{ edition_size: null }]);
     const service = new HelpBotPublicDataService(llm, () => db);
 
     await expect(
-      service.answer({ question: 'highest tdh rate?' })
+      service.answer({ question: 'average edition size?' })
     ).resolves.toBeNull();
     expect(llm.renderPublicDataAnswer).not.toHaveBeenCalled();
   });
@@ -208,7 +297,9 @@ describe('HelpBotPublicDataService', () => {
   it('falls back to deterministic row rendering when LLM wording fails', async () => {
     const llm: HelpBotPublicDataLlm = {
       planPublicDataQuery: jest.fn().mockResolvedValue({
-        queryId: 'total_tdh'
+        entity: 'tdh_global',
+        operation: 'latest',
+        metric: 'total_tdh'
       }),
       renderPublicDataAnswer: jest.fn().mockRejectedValue(new Error('bedrock'))
     };
