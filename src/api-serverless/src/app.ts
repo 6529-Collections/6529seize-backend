@@ -707,7 +707,14 @@ async function initializeApp() {
           options: ReturnType<typeof getCorsOptionsForRequest>
         ) => void
       ) => {
-        callback(null, getCorsOptionsForRequest(req.path, req.headers.origin));
+        callback(
+          null,
+          getCorsOptionsForRequest(
+            req.path,
+            req.headers.origin,
+            req.headers.host
+          )
+        );
       }
     )
   );

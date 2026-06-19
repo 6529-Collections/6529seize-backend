@@ -48,7 +48,7 @@ For web clients:
 - The normalized client origin is included in the message as `Client Origin`.
 - The structured message uses `Session Type: first_party_web`.
 - The origin domain must be allowed by the structured-signature domain configuration.
-- Cross-origin browser clients must also be allowed by `AUTH_WEB_CREDENTIAL_ORIGINS` so the API can return exact credentialed CORS headers.
+- Cross-origin browser clients must also be allowed by the web app origin configuration so the API can return exact credentialed CORS headers.
 
 For native clients:
 
@@ -68,7 +68,7 @@ For web sessions:
 - The signed message must have `Session Type: first_party_web`.
 - The signed message must include `Client Origin`.
 - The request `Origin` must match the signed client origin.
-- The request `Origin` must be present in `AUTH_WEB_CREDENTIAL_ORIGINS` when the browser calls the API cross-origin with cookies.
+- The request `Origin` must be allowed by the web app origin configuration when the browser calls the API cross-origin with cookies.
 - The server creates a row in `wallet_auth_sessions` with `client_type=web`.
 - The stored session includes the signed domain and normalized client origin.
 - The refresh secret is stored only as a server-side hash.
@@ -123,11 +123,14 @@ Connection share state is stored in `wallet_connection_shares`. Share codes are 
 The revised auth flow uses these relevant flags/config values:
 
 - `AUTH_STRUCTURED_SIGNATURES_REQUIRED`: default false. When true, legacy signature verification paths reject unstructured wallet messages where structured verification is used.
-- `AUTH_SIGNATURE_ALLOWED_DOMAINS`: comma-separated extra exact domains allowed for first-party web structured signatures. The built-in production domains include `6529.io`, `www.6529.io`, and `app.6529.io`; non-production also allows localhost origins.
+- `WEB_APP_ORIGIN`: canonical first-party web app origin. The backend uses it to derive credentialed CORS origins for web-cookie auth routes and first-party web structured-signature domains.
+- `WEB_APP_ADDITIONAL_ORIGINS`: comma-separated extra first-party web app origins. These are additive to the built-in defaults and `WEB_APP_ORIGIN`.
+- Built-in web app origin defaults: `api.6529.io` allows credentialed web auth from `https://6529.io`; `api.staging.6529.io` allows credentialed web auth from `https://staging.6529.io`; localhost API hosts allow common localhost frontend ports.
+- `AUTH_SIGNATURE_ALLOWED_DOMAINS`: comma-separated extra exact domains allowed for first-party web structured signatures. The built-in production domains include `6529.io`, `www.6529.io`, and `app.6529.io`; web app origins also derive allowed signature domains; non-production also allows localhost origins.
 - `AUTH_SIGNATURE_ALLOWED_DOMAIN_SUFFIXES`: comma-separated domain suffixes allowed for first-party web structured signatures. A value of `staging.6529.io` allows `staging.6529.io` and any host below it, such as `app.staging.6529.io`, but does not allow lookalike hosts such as `fake-staging.6529.io`.
 - `AUTH_SIGNATURE_AUDIENCE`: structured-signature audience used when issuing session-v2 nonces.
 - `AUTH_SIGNATURE_ALLOWED_AUDIENCES`: optional comma-separated audiences accepted during structured-signature verification.
-- `AUTH_WEB_CREDENTIAL_ORIGINS`: comma-separated browser origins allowed to call v2 web-auth cookie endpoints with credentials, for example `https://6529.io` in production and `https://staging.6529.io` in staging. General API CORS remains wildcard/non-credentialed; this allowlist is only for cookie-backed web auth routes.
+- `AUTH_WEB_CREDENTIAL_ORIGINS`: deprecated compatibility alias for extra browser origins allowed to call v2 web-auth cookie endpoints with credentials. Prefer `WEB_APP_ORIGIN` and `WEB_APP_ADDITIONAL_ORIGINS`.
 - `AUTH_WALLET_CHAIN_ID`: chain id accepted for structured login authentication. Defaults to Ethereum mainnet (`1`) when unset.
 - `AUTH_SESSION_HASH_SECRET`: secret used for hashing session cookies, native refresh tokens, connection share codes, and public user-agent values. Defaults to the JWT secret if unset.
 - `AUTH_SESSION_V2_REFRESH_DAYS`: session refresh lifetime in days. Defaults to 30.

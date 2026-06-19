@@ -2,98 +2,194 @@
 
 Revision: June 2026
 
-This plan covers the production and staging rollout for wallet auth session v2.
-It keeps v1 auth available during a grace period so existing users are not
-logged out, but requires users to migrate by signing a v2 structured auth
-message or using connection sharing from an already-v2 session.
+This is the deploy runbook for wallet auth session v2. The rollout keeps v1
+refresh available during a grace period so existing users are not logged out,
+but new v2 sessions are created only by a v2 structured signature or by
+connection sharing from an already-v2 session.
 
-## Target Architecture
+## Target Shape
 
-- Web app continues to call the public API domain directly:
-  - production web: `https://6529.io`
-  - production API: `https://api.6529.io`
-  - staging web: `https://staging.6529.io`
-  - staging API: `https://api.staging.6529.io`
-- Browser web auth uses the backend-owned HttpOnly `6529_session` cookie.
-- Native auth uses the v2 native refresh token in secure storage.
-- External API clients keep using public API auth flows and are not gated by
-  browser CORS origin allowlists.
-- Legacy refresh remains available only as a temporary grace-period bridge and
-  preserves the server-bound legacy role instead of accepting a new client role.
+- Production web keeps calling `https://api.6529.io` directly from
+  `https://6529.io`.
+- Staging web keeps calling `https://api.staging.6529.io` directly from
+  `https://staging.6529.io`.
+- Web session v2 uses the backend-owned HttpOnly `6529_session` cookie.
+- Native session v2 uses the native refresh token in secure storage.
+- External API clients are not blocked by browser CORS allowlists. Browser
+  credentialed CORS remains narrow only on cookie-backed web auth routes.
+- Legacy refresh remains a temporary grace-period bridge. It preserves the role
+  bound to the legacy refresh token instead of trusting a new client-supplied
+  role.
 
-## Required Backend Env
+## Phase 0: Pre-Deploy Config
 
-Configure on the backend API service before enabling web v2 migration prompts.
+Set or verify these before the backend silent release.
 
-| Env var                                                                     | Required                         | Recommended production value shape                                  | Recommended staging value shape                               | Notes                                                                                                                                     |
-| --------------------------------------------------------------------------- | -------------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `AUTH_SESSION_HASH_SECRET`                                                  | Strongly recommended             | Dedicated high-entropy secret                                       | Dedicated high-entropy secret                                 | Falls back to `JWT_SECRET` if unset, but a separate secret isolates session hashing.                                                      |
-| `AUTH_WEB_CREDENTIAL_ORIGINS`                                               | Required for cross-origin web v2 | `https://6529.io`                                                   | `https://staging.6529.io`                                     | Enables exact credentialed CORS only for v2 web-cookie auth routes. Do not put API origins here.                                          |
-| `AUTH_WALLET_CHAIN_ID`                                                      | Optional                         | `1` or unset                                                        | `1` unless intentionally testing another supported auth chain | Defaults to Ethereum mainnet. Structured auth verification is pinned to this value.                                                       |
-| `AUTH_CONNECTION_SHARING_DISABLED`                                          | Optional                         | unset or `false`                                                    | unset or `false`                                              | Missing env means connection sharing is enabled. Set `true` only as a kill switch.                                                        |
-| `AUTH_LEGACY_REFRESH_DISABLED`                                              | Final v1 shutdown flag           | unset or `false` initially, later `true`                            | unset or `false` initially, later `true`                      | Missing env means `/auth/redeem-refresh-token` remains enabled. Set `true` only after the grace period and external-client communication. |
-| `AUTH_CONNECTION_SHARE_CODE_TTL_SECONDS`                                    | Optional                         | unset or positive integer such as `300`                             | unset or positive integer such as `300`                       | Controls one-time connection share lifetime.                                                                                              |
-| `AUTH_STRUCTURED_SIGNATURES_REQUIRED`                                       | Rollout flag                     | `false` for silent/grace rollout, later `true`                      | `false` for initial validation, later `true`                  | Do not enable until FE/native/external client compatibility is verified.                                                                  |
-| `SESSION_V2_MIGRATION_DEADLINE`                                             | Rollout flag                     | unset initially, later ISO timestamp with timezone                  | unset initially, later ISO timestamp with timezone            | Exposed through `/api/settings.auth` so FE can prompt/enforce v2 migration without another FE deploy.                                     |
-| `AUTH_SIGNATURE_ALLOWED_DOMAINS` / `AUTH_SIGNATURE_ALLOWED_DOMAIN_SUFFIXES` | Domain-dependent                 | Include any first-party web signing domains not covered by defaults | Include staging domains or suffixes                           | Controls structured-signature first-party web domain validation.                                                                          |
-| `AUTH_SIGNATURE_AUDIENCE` / `AUTH_SIGNATURE_ALLOWED_AUDIENCES`              | Optional                         | API audience if overriding defaults                                 | API audience if overriding defaults                           | Keep narrow. Misconfiguration rejects valid signatures.                                                                                   |
-| `AUTH_LEGACY_WS_QUERY_TOKEN_ENABLED`                                        | Temporary compatibility          | unset or `true`                                                     | unset or `true`                                               | Disable only after websocket clients no longer rely on query-token auth.                                                                  |
+Required:
 
-## Required Frontend Env
+- `AUTH_SESSION_HASH_SECRET`: set on the backend API service to a dedicated
+  high-entropy secret. The code can fall back to `JWT_SECRET`, but production
+  should use a separate value.
 
-Configure in the frontend runtime/build env for the FE deployment.
+Recommended, not required when the default domains match:
 
-| Env var                              | Required            | Production value      | Staging value                 | Notes                                                                                     |
-| ------------------------------------ | ------------------- | --------------------- | ----------------------------- | ----------------------------------------------------------------------------------------- |
-| `API_ENDPOINT`                       | Required            | `https://api.6529.io` | `https://api.staging.6529.io` | Keep the direct public API endpoint.                                                      |
-| `WEB_SESSION_CREDENTIAL_API_ORIGINS` | Required for web v2 | `https://api.6529.io` | `https://api.staging.6529.io` | Allows FE to send `credentials: "include"` to trusted cross-origin v2 web auth endpoints. |
+- Production backend API: `WEB_APP_ORIGIN=https://6529.io`.
+- Staging backend API: `WEB_APP_ORIGIN=https://staging.6529.io`.
 
-## Deployment Order
+Defaults if `WEB_APP_ORIGIN` is unset:
 
-1. Deploy backend branch first with strict migration flags off.
-2. Run backend `dbMigrationsLoop` first so TypeORM/entity sync adds the nullable
-   `refresh_tokens.role` column and any existing auth-session entities are
-   synchronized.
-3. Deploy backend `api`.
-4. Verify backend health and auth settings:
-   - `/api/settings` returns `auth.structured_signatures_required=false`.
-   - `auth.session_v2_migration_deadline` is `null` while silent rollout is
-     active.
-5. Deploy frontend with `API_ENDPOINT` and
-   `WEB_SESSION_CREDENTIAL_API_ORIGINS` set for the same environment.
-   - Production web deploy target: `https://6529.io` Elastic Beanstalk app.
-   - Staging web deploy target: `https://staging.6529.io` EC2/pm2 app.
-6. Verify browser v2 flows from the real web origin:
-   - session nonce
-   - session login
-   - session refresh
-   - session logout
-   - connection sharing create/redeem where applicable
-7. Set `SESSION_V2_MIGRATION_DEADLINE` to a future ISO timestamp when the
-   migration prompt should begin.
-8. Monitor migration metrics and support channels during the grace period.
-9. Set `AUTH_STRUCTURED_SIGNATURES_REQUIRED=true` only after web, native, and
-   external clients are verified.
-10. Set `AUTH_LEGACY_REFRESH_DISABLED=true` only after the grace period,
-    support monitoring, and external-client communication are complete. This
-    makes `/auth/redeem-refresh-token` return a deliberate `410 Gone` response
-    without removing the endpoint.
-11. Remove v1 refresh endpoint/code in a later cleanup after traffic is zero.
+- Requests served by `api.6529.io` allow credentialed web auth from
+  `https://6529.io`.
+- Requests served by `api.staging.6529.io` allow credentialed web auth from
+  `https://staging.6529.io`.
+- Localhost API hosts allow common localhost frontend ports.
 
-## Silent Release Values
+Additive origin config:
 
-Use these for the backend-first production deploy:
+- `WEB_APP_ADDITIONAL_ORIGINS`: comma-separated extra web origins to add to the
+  defaults and `WEB_APP_ORIGIN`. Use this for previews or temporary first-party
+  web origins.
+- `AUTH_WEB_CREDENTIAL_ORIGINS`: deprecated compatibility alias. Do not add it
+  for new deploys; leave it only if an existing environment already depends on
+  it.
 
-- `AUTH_STRUCTURED_SIGNATURES_REQUIRED=false`
-- `SESSION_V2_MIGRATION_DEADLINE` unset
-- `AUTH_CONNECTION_SHARING_DISABLED` unset or `false`
-- `AUTH_LEGACY_REFRESH_DISABLED` unset or `false`
-- `AUTH_LEGACY_WS_QUERY_TOKEN_ENABLED` unset or `true`
+Do not set these yet for a silent release:
 
-The frontend can then be deployed silently. New sign-ins use v2. Existing v1
-web sessions remain valid until the FE-enforced migration deadline or strict
-flag requires a new sign-in. External clients that already hold legacy refresh
-tokens remain able to refresh until `AUTH_LEGACY_REFRESH_DISABLED=true`.
+- `SESSION_V2_MIGRATION_DEADLINE`: leave unset.
+- `AUTH_STRUCTURED_SIGNATURES_REQUIRED`: leave unset or `false`.
+- `AUTH_LEGACY_REFRESH_DISABLED`: leave unset or `false`.
+
+## Phase 1: Backend Silent Release
+
+Deploy backend first. This should not force users to sign again and should not
+break existing v1 refresh sessions.
+
+Backend services, in order:
+
+1. `dbMigrationsLoop`: required for entity sync / nullable auth-session schema
+   changes.
+2. `api`: required for auth routes, settings, CORS, session-v2, and legacy
+   refresh behavior.
+
+Backend env for this phase:
+
+- `AUTH_SESSION_HASH_SECRET`: required production hardening.
+- `WEB_APP_ORIGIN`: recommended explicit value, but defaults cover
+  `api.6529.io` and `api.staging.6529.io`.
+- `AUTH_CONNECTION_SHARING_DISABLED`: unset or `false`; connection sharing is
+  enabled by default.
+- `AUTH_LEGACY_REFRESH_DISABLED`: unset or `false`; legacy refresh must remain
+  available during the grace period.
+- `AUTH_STRUCTURED_SIGNATURES_REQUIRED`: unset or `false`; legacy signatures
+  must remain accepted until clients are verified.
+- `SESSION_V2_MIGRATION_DEADLINE`: unset; this keeps FE migration prompts
+  silent.
+- `AUTH_LEGACY_WS_QUERY_TOKEN_ENABLED`: unset or `true` until websocket clients
+  have moved off query-token auth.
+
+Backend checks after deploy:
+
+- `/api/settings` returns `auth.structured_signatures_required=false`.
+- `/api/settings` returns `auth.session_v2_migration_deadline=null`.
+- `POST /api/auth/redeem-refresh-token` still works for valid legacy refresh
+  tokens.
+- V2 web auth routes return exact credentialed CORS for the real web origin and
+  reject unrelated browser origins.
+
+## Phase 2: Frontend Silent Release
+
+Deploy the frontend after the backend silent release.
+
+Frontend env:
+
+- Production: `API_ENDPOINT=https://api.6529.io`.
+- Staging: `API_ENDPOINT=https://api.staging.6529.io`.
+
+No frontend credential-origin env is required. `WEB_SESSION_CREDENTIAL_API_ORIGINS`
+is deprecated and no longer read; the FE sends session-v2 credentials to the
+configured `API_ENDPOINT`.
+
+Frontend targets:
+
+- Production web: `https://6529.io` Elastic Beanstalk app.
+- Staging web: `https://staging.6529.io` EC2/pm2 app.
+
+Checks after deploy:
+
+- New web login creates a v2 session.
+- Web refresh and logout work through the API domain.
+- Existing v1 web sessions are not immediately logged out.
+- Connection sharing create/redeem works where applicable.
+
+## Phase 3: Start Migration Prompt
+
+After backend and frontend are both deployed and basic v2 auth is verified, set:
+
+- `SESSION_V2_MIGRATION_DEADLINE=<ISO timestamp with timezone>`.
+
+This is a backend API env change only. It updates `/api/settings.auth` so the FE
+can prompt and later enforce v2 migration without another FE release.
+
+Use a future timestamp that leaves enough grace for:
+
+- active web users to sign a v2 auth message;
+- native users to establish native v2 sessions;
+- external-client operators to receive the cutoff plan.
+
+## Phase 4: Strict Structured Signatures
+
+After web, native, and known external clients are verified with structured
+signatures, set:
+
+- `AUTH_STRUCTURED_SIGNATURES_REQUIRED=true`.
+
+This blocks legacy/unstructured signing paths where structured verification is
+used. It is not the same as removing legacy refresh: clients that already hold
+valid legacy refresh tokens can still refresh until `AUTH_LEGACY_REFRESH_DISABLED`
+is set.
+
+## Phase 5: Legacy Refresh Shutdown
+
+After the grace period, support monitoring, and external-client communication
+are complete, set:
+
+- `AUTH_LEGACY_REFRESH_DISABLED=true`.
+
+This makes `/auth/redeem-refresh-token` return a deliberate `410 Gone` response
+without removing the route. At this point v1 refresh clients must sign into v2
+or use a supported v2 flow.
+
+Remove the v1 refresh endpoint/code in a later cleanup only after traffic is
+zero and rollback is no longer needed.
+
+## Optional Controls
+
+- `WEB_APP_ADDITIONAL_ORIGINS`: add temporary first-party web origins without
+  changing defaults.
+- `AUTH_SIGNATURE_ALLOWED_DOMAINS`: add exact first-party structured-signature
+  domains not covered by web app origin config or existing defaults.
+- `AUTH_SIGNATURE_ALLOWED_DOMAIN_SUFFIXES`: add a suffix such as
+  `staging.6529.io` when a controlled set of subdomains should be accepted.
+- `AUTH_SIGNATURE_AUDIENCE`: override the nonce audience only if the API
+  audience needs to differ from the default.
+- `AUTH_SIGNATURE_ALLOWED_AUDIENCES`: add accepted verification audiences when
+  rotating or supporting more than one API audience.
+- `AUTH_WALLET_CHAIN_ID`: leave unset for Ethereum mainnet unless intentionally
+  testing another supported auth chain.
+- `AUTH_CONNECTION_SHARE_CODE_TTL_SECONDS`: leave unset for the default short
+  TTL, or set a positive integer such as `300`.
+- `AUTH_CONNECTION_SHARING_DISABLED=true`: emergency kill switch for
+  connection sharing only. Missing/false means connection sharing is enabled.
+- `AUTH_LEGACY_WS_QUERY_TOKEN_ENABLED=false`: final websocket query-token
+  cleanup after web/mobile clients no longer require it.
+
+## Deprecated Env Vars
+
+- Backend `AUTH_WEB_CREDENTIAL_ORIGINS`: still accepted as an additive
+  compatibility alias, but new deploys should use `WEB_APP_ORIGIN` and
+  `WEB_APP_ADDITIONAL_ORIGINS`.
+- Frontend `WEB_SESSION_CREDENTIAL_API_ORIGINS`: no longer read. Remove it from
+  FE runtime/build env; `API_ENDPOINT` is the frontend source of truth.
 
 ## Migration Policy
 
@@ -106,15 +202,18 @@ through one of these paths:
 This keeps the v2 session model clean: every v2 session is created by a v2
 signature or by a v2-authenticated connection-sharing flow.
 
-## Rollback Notes
+## Rollback
 
 - If web v2 cookie refresh fails, unset `SESSION_V2_MIGRATION_DEADLINE` and keep
   `AUTH_STRUCTURED_SIGNATURES_REQUIRED=false`.
-- If credentialed browser CORS is wrong, fix `AUTH_WEB_CREDENTIAL_ORIGINS` on
-  backend and `WEB_SESSION_CREDENTIAL_API_ORIGINS` on frontend.
+- If credentialed browser CORS is wrong, set or fix `WEB_APP_ORIGIN` /
+  `WEB_APP_ADDITIONAL_ORIGINS` on the backend API service. No FE env change is
+  required as long as `API_ENDPOINT` points at the intended API.
 - If connection sharing causes issues, set
   `AUTH_CONNECTION_SHARING_DISABLED=true`; normal v2 login/refresh remains
   available.
+- If strict signatures are enabled too early, set
+  `AUTH_STRUCTURED_SIGNATURES_REQUIRED=false`.
 - If legacy refresh is disabled too early, set
   `AUTH_LEGACY_REFRESH_DISABLED=false` or unset it to restore
   `/auth/redeem-refresh-token` without a code deploy.

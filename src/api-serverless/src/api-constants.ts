@@ -1,5 +1,9 @@
 import { Time } from '../../time';
 import { PageSortDirection } from './page-request';
+import {
+  getAllowedWebAuthCredentialOrigins,
+  normalizeWebAppOrigin
+} from './web-app-origins';
 export const ACCESS_CONTROL_ALLOW_ORIGIN_HEADER = 'Access-Control-Allow-Origin';
 export const CONTENT_TYPE_HEADER = 'Content-Type';
 export const JSON_HEADER_VALUE = 'application/json';
@@ -39,13 +43,14 @@ const WEB_AUTH_CREDENTIAL_ROUTE_PATHS = new Set([
 
 export function getCorsOptionsForRequest(
   path: string,
-  originHeader: unknown
+  originHeader: unknown,
+  apiHostHeader: unknown
 ): ApiCorsOptions {
   if (!WEB_AUTH_CREDENTIAL_ROUTE_PATHS.has(path)) {
     return corsOptions;
   }
 
-  const origin = getAllowedWebAuthCredentialOrigin(originHeader);
+  const origin = getAllowedWebAuthCredentialOrigin(originHeader, apiHostHeader);
   if (!origin) {
     return { ...corsOptions, origin: false };
   }
@@ -58,47 +63,25 @@ export function getCorsOptionsForRequest(
 }
 
 export function isWebAuthCredentialOriginAllowed(
-  origin: string | null | undefined
+  origin: string | null | undefined,
+  apiHostHeader: unknown
 ): boolean {
-  return getAllowedWebAuthCredentialOrigin(origin) !== null;
+  return getAllowedWebAuthCredentialOrigin(origin, apiHostHeader) !== null;
 }
 
 function getAllowedWebAuthCredentialOrigin(
-  originHeader: unknown
+  originHeader: unknown,
+  apiHostHeader: unknown
 ): string | null {
   if (typeof originHeader !== 'string') {
     return null;
   }
-  const origin = normalizeWebAuthCredentialOrigin(originHeader);
+  const origin = normalizeWebAppOrigin(originHeader);
   if (!origin) {
     return null;
   }
-  const configuredOrigins = getConfiguredWebAuthCredentialOrigins();
-  return configuredOrigins.includes(origin) ? origin : null;
-}
-
-function getConfiguredWebAuthCredentialOrigins(): string[] {
-  return (process.env.AUTH_WEB_CREDENTIAL_ORIGINS ?? '')
-    .split(',')
-    .map(normalizeWebAuthCredentialOrigin)
-    .filter((origin): origin is string => origin !== null);
-}
-
-function normalizeWebAuthCredentialOrigin(
-  value: string | null | undefined
-): string | null {
-  if (!value) {
-    return null;
-  }
-  try {
-    const parsed = new URL(value.trim());
-    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
-      return null;
-    }
-    return parsed.origin;
-  } catch {
-    return null;
-  }
+  const allowedOrigins = getAllowedWebAuthCredentialOrigins(apiHostHeader);
+  return allowedOrigins.includes(origin) ? origin : null;
 }
 
 export interface PaginatedResponse<T> {

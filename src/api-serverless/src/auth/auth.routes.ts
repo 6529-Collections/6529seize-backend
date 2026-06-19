@@ -242,7 +242,10 @@ router.post(
           'Wallet auth web sessions require a client origin'
         );
       }
-      assertWebAuthCredentialOriginAllowed(parsedMessage.clientOrigin);
+      assertWebAuthCredentialOriginAllowed(
+        parsedMessage.clientOrigin,
+        req.headers.host
+      );
       assertSessionOriginMatchesRequest(req, parsedMessage.clientOrigin);
       const created = await createWebSession({
         address: signingAddress,
@@ -719,7 +722,7 @@ function resolveSessionNonceContext(
       'Wallet auth web sessions require a first-party Origin'
     );
   }
-  assertWebAuthCredentialOriginAllowed(requestOrigin);
+  assertWebAuthCredentialOriginAllowed(requestOrigin, req.headers.host);
   return {
     domain,
     clientOrigin: requestOrigin,
@@ -732,7 +735,7 @@ function assertSessionOriginMatchesRequest(
   signedClientOrigin: string
 ): void {
   const requestOrigin = getNormalizedRequestOrigin(req);
-  assertWebAuthCredentialOriginAllowed(requestOrigin);
+  assertWebAuthCredentialOriginAllowed(requestOrigin, req.headers.host);
   if (!requestOrigin || requestOrigin !== signedClientOrigin) {
     throw new BadRequestException(
       'Wallet auth web session Origin does not match the signed challenge'
@@ -743,11 +746,17 @@ function assertSessionOriginMatchesRequest(
 function assertWebSessionRequestOriginAllowed(
   req: Request<any, any, any, any, any>
 ): void {
-  assertWebAuthCredentialOriginAllowed(getNormalizedRequestOrigin(req));
+  assertWebAuthCredentialOriginAllowed(
+    getNormalizedRequestOrigin(req),
+    req.headers.host
+  );
 }
 
-function assertWebAuthCredentialOriginAllowed(origin: string | null): void {
-  if (!origin || !isWebAuthCredentialOriginAllowed(origin)) {
+function assertWebAuthCredentialOriginAllowed(
+  origin: string | null | undefined,
+  apiHostHeader: unknown
+): void {
+  if (!origin || !isWebAuthCredentialOriginAllowed(origin, apiHostHeader)) {
     throw new BadRequestException(
       'Wallet auth web session Origin is not allowed'
     );

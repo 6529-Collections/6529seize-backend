@@ -5,6 +5,7 @@ import { getRpcUrlFromNetwork } from '@/alchemy';
 import { env } from '@/env';
 import { Logger } from '@/logging';
 import { getRedisClient } from '@/redis';
+import { getWebAppSignatureDomains } from '../web-app-origins';
 
 const logger = Logger.get('STRUCTURED_WALLET_SIGNATURES');
 
@@ -501,6 +502,7 @@ export function isStructuredSignatureDomainAllowed(domain: string): boolean {
   if (
     new Set([
       ...DEFAULT_SIGNATURE_ALLOWED_DOMAINS,
+      ...getWebAppSignatureDomains(),
       ...localDomains,
       ...getConfiguredNormalizedDomains('AUTH_SIGNATURE_ALLOWED_DOMAINS')
     ]).has(domain)
