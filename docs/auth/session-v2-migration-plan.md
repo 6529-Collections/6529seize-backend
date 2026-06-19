@@ -43,6 +43,10 @@ Defaults if `WEB_APP_ORIGIN` is unset:
 - Requests served by `api.staging.6529.io` allow credentialed web auth from
   `https://staging.6529.io`.
 - Localhost API hosts allow common localhost frontend ports.
+- Session-v2 signable messages use the accepted request API host as `Audience`
+  when the request is served through `api.6529.io` or `api.staging.6529.io`.
+  If the request host is not accepted, the backend falls back to `API_BASE_URL`
+  and then `api.6529.io`.
 
 Additive origin config:
 
@@ -166,8 +170,6 @@ zero and rollback is no longer needed.
   domains not covered by web app origin config or existing defaults.
 - `AUTH_SIGNATURE_ALLOWED_DOMAIN_SUFFIXES`: add a suffix such as
   `staging.6529.io` when a controlled set of subdomains should be accepted.
-- `AUTH_SIGNATURE_AUDIENCE`: override the nonce audience only if the API
-  audience needs to differ from the default.
 - `AUTH_SIGNATURE_ALLOWED_AUDIENCES`: add accepted verification audiences when
   rotating or supporting more than one API audience.
 - `AUTH_WALLET_CHAIN_ID`: leave unset for Ethereum mainnet unless intentionally

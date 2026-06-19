@@ -2,7 +2,10 @@ import { ethers } from 'ethers';
 import {
   buildStructuredWalletSignatureMessage,
   clearStructuredWalletSignatureReplayCacheForTests,
+  getDefaultStructuredWalletSignatureAudience,
+  getStructuredWalletSignatureAudienceForHost,
   hashStructuredWalletSignaturePayload,
+  isStructuredSignatureAudienceAllowed,
   parseStructuredWalletSignatureMessage,
   verifyStructuredWalletSignature
 } from './structured-wallet-signatures';
@@ -22,7 +25,6 @@ describe('structured wallet signatures', () => {
   beforeEach(() => {
     clearStructuredWalletSignatureReplayCacheForTests();
     process.env.AUTH_SIGNATURE_ALLOWED_DOMAINS = 'example.com';
-    process.env.AUTH_SIGNATURE_AUDIENCE = 'api.6529.io';
     process.env.ALCHEMY_API_KEY = 'test-key';
     delete process.env.AUTH_STRUCTURED_SIGNATURES_REQUIRED;
     delete process.env.AUTH_SIGNATURE_ALLOWED_AUDIENCES;
@@ -30,11 +32,11 @@ describe('structured wallet signatures', () => {
     delete process.env.AUTH_WEB_CREDENTIAL_ORIGINS;
     delete process.env.WEB_APP_ADDITIONAL_ORIGINS;
     delete process.env.WEB_APP_ORIGIN;
+    delete process.env.API_BASE_URL;
   });
 
   afterEach(() => {
     delete process.env.AUTH_SIGNATURE_ALLOWED_DOMAINS;
-    delete process.env.AUTH_SIGNATURE_AUDIENCE;
     delete process.env.AUTH_SIGNATURE_ALLOWED_AUDIENCES;
     delete process.env.AUTH_SIGNATURE_ALLOWED_DOMAIN_SUFFIXES;
     delete process.env.AUTH_WEB_CREDENTIAL_ORIGINS;
@@ -42,7 +44,32 @@ describe('structured wallet signatures', () => {
     delete process.env.AUTH_STRUCTURED_SIGNATURES_REQUIRED;
     delete process.env.WEB_APP_ADDITIONAL_ORIGINS;
     delete process.env.WEB_APP_ORIGIN;
+    delete process.env.API_BASE_URL;
     jest.restoreAllMocks();
+  });
+
+  it('derives accepted signature audiences from API hosts', () => {
+    expect(isStructuredSignatureAudienceAllowed('api.6529.io')).toBe(true);
+    expect(isStructuredSignatureAudienceAllowed('api.staging.6529.io')).toBe(
+      true
+    );
+    expect(
+      getStructuredWalletSignatureAudienceForHost('api.staging.6529.io')
+    ).toBe('api.staging.6529.io');
+    expect(
+      getStructuredWalletSignatureAudienceForHost('api.staging.6529.io:443')
+    ).toBe('api.staging.6529.io');
+    expect(getStructuredWalletSignatureAudienceForHost('evil.example')).toBe(
+      null
+    );
+  });
+
+  it('uses API_BASE_URL as the default audience fallback', () => {
+    process.env.API_BASE_URL = 'https://api.staging.6529.io/api';
+
+    expect(getDefaultStructuredWalletSignatureAudience()).toBe(
+      'api.staging.6529.io'
+    );
   });
 
   it('parses versioned action messages', () => {
