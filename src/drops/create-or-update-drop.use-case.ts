@@ -83,6 +83,11 @@ import { profilesService } from '@/profiles/profiles.service';
 import { isApproveWaveClosed } from '@/waves/wave-approve.helpers';
 import { attachmentsDb, AttachmentsDb } from '@/attachments/attachments.db';
 import {
+  dropMediaUploadsDb,
+  DropMediaUploadsDb
+} from '@/drops/drop-media-uploads.db';
+import { DropMediaUploadStatus } from '@/entities/IDropMediaUpload';
+import {
   isWaveChatSlowModeActive,
   isWaveChatSlowModeExempt
 } from '@/waves/wave-chat-slow-mode.helpers';
@@ -173,7 +178,8 @@ export class CreateOrUpdateDropUseCase {
     private readonly metricsRecorder: MetricsRecorder,
     private readonly dropNftLinksDb: DropNftLinksDb,
     private readonly artCurationTokenWatchService: ArtCurationTokenWatchService,
-    private readonly attachmentsDb: AttachmentsDb
+    private readonly attachmentsDb: AttachmentsDb,
+    private readonly dropMediaUploadsDb: DropMediaUploadsDb
   ) {}
 
   private getRequiredAuthorId(model: CreateOrUpdateDropModel): string {
@@ -892,12 +898,19 @@ export class CreateOrUpdateDropUseCase {
     { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
   ) {
     timer?.start(`${CreateOrUpdateDropUseCase.name}->verifyMedia`);
+    const authorId = this.getRequiredAuthorId(model);
     for (const part of model.parts) {
       for (const media of part.media) {
         validateDropMediaAttachment({
           mimeType: media.mime_type,
           url: media.url,
           dropType: model.drop_type
+        });
+        await this.verifyDropMediaUploadReference({
+          mediaUploadId: media.media_upload_id ?? null,
+          mediaUrl: media.url,
+          mimeType: media.mime_type,
+          authorId
         });
       }
     }
@@ -931,6 +944,47 @@ export class CreateOrUpdateDropUseCase {
       }
     }
     timer?.stop(`${CreateOrUpdateDropUseCase.name}->verifyMedia`);
+  }
+
+  private async verifyDropMediaUploadReference({
+    mediaUploadId,
+    mediaUrl,
+    mimeType,
+    authorId
+  }: {
+    mediaUploadId: string | null;
+    mediaUrl: string;
+    mimeType: string;
+    authorId: string;
+  }): Promise<void> {
+    if (!mediaUploadId) {
+      return;
+    }
+    const upload = await this.dropMediaUploadsDb.findById(mediaUploadId);
+    if (!upload) {
+      throw new BadRequestException(`Invalid media_upload_id ${mediaUploadId}`);
+    }
+    if (upload.public_url !== mediaUrl) {
+      throw new BadRequestException(`media_upload_id does not match media url`);
+    }
+    if (upload.declared_mime_type !== mimeType) {
+      throw new BadRequestException(
+        `media_upload_id does not match media type`
+      );
+    }
+    if (upload.profile_id !== authorId) {
+      throw new ForbiddenException(
+        `media_upload_id does not belong to the drop author`
+      );
+    }
+    if (
+      upload.status !== DropMediaUploadStatus.PROCESSING &&
+      upload.status !== DropMediaUploadStatus.READY
+    ) {
+      throw new BadRequestException(
+        `media_upload_id is not ready to attach to a drop`
+      );
+    }
   }
 
   private async verifyAttachments(
@@ -1473,6 +1527,7 @@ export class CreateOrUpdateDropUseCase {
             (part, index) =>
               part.media?.map<Omit<DropMediaEntity, 'id'>>((media) => ({
                 ...media,
+                media_upload_id: media.media_upload_id ?? null,
                 drop_id: dropId,
                 drop_part_id: index + 1,
                 wave_id: wave.id
@@ -1525,6 +1580,15 @@ export class CreateOrUpdateDropUseCase {
         { timer, connection }
       )
     ]);
+    await this.dropMediaUploadsDb.attachUploadsToDrop({
+      mediaUploadIds: parts
+        .flatMap((part) => part.media.map((media) => media.media_upload_id))
+        .filter((mediaUploadId): mediaUploadId is string => !!mediaUploadId),
+      dropId,
+      waveId: wave.id,
+      connection,
+      timer
+    });
     await waveScoreService.refreshWaveScoresForWaveIdsBestEffort([wave.id], {
       timer,
       connection
@@ -1851,5 +1915,6 @@ export const createOrUpdateDrop = new CreateOrUpdateDropUseCase(
   metricsRecorder,
   dropNftLinksDb,
   artCurationTokenWatchService,
-  attachmentsDb
+  attachmentsDb,
+  dropMediaUploadsDb
 );

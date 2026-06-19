@@ -1,0 +1,119 @@
+service: dropMediaIngestStorage
+
+provider:
+  name: aws
+  runtime: nodejs20.x
+  stage: ${opt:stage, 'staging'}
+  logRetentionInDays: 60
+
+resources:
+  Conditions:
+    CreateSharedIngestBucket: !Equals ['${self:provider.stage}', 'staging']
+
+  Resources:
+    DropMediaIngestBucket:
+      Type: AWS::S3::Bucket
+      Condition: CreateSharedIngestBucket
+      DeletionPolicy: Retain
+      UpdateReplacePolicy: Retain
+      Properties:
+        BucketName: !Sub '6529-drop-media-ingest-${AWS::AccountId}'
+        PublicAccessBlockConfiguration:
+          BlockPublicAcls: true
+          BlockPublicPolicy: true
+          IgnorePublicAcls: true
+          RestrictPublicBuckets: true
+        OwnershipControls:
+          Rules:
+            - ObjectOwnership: BucketOwnerEnforced
+        BucketEncryption:
+          ServerSideEncryptionConfiguration:
+            - ServerSideEncryptionByDefault:
+                SSEAlgorithm: AES256
+        CorsConfiguration:
+          CorsRules:
+            - AllowedOrigins:
+                - https://staging.6529.io
+                - https://6529.io
+                - https://www.6529.io
+              AllowedMethods:
+                - PUT
+              AllowedHeaders:
+                - '*'
+              ExposedHeaders:
+                - ETag
+              MaxAge: 3000
+        LifecycleConfiguration:
+          Rules:
+            - Id: AbortIncompleteMultipartUploads
+              Status: Enabled
+              AbortIncompleteMultipartUpload:
+                DaysAfterInitiation: 1
+            - Id: ExpireStagingDropRawIngest
+              Status: Enabled
+              Prefix: staging/drop-media-ingest/
+              ExpirationInDays: 3
+            - Id: ExpireStagingWaveRawIngest
+              Status: Enabled
+              Prefix: staging/wave-media-ingest/
+              ExpirationInDays: 3
+            - Id: ExpireProdDropRawIngest
+              Status: Enabled
+              Prefix: prod/drop-media-ingest/
+              ExpirationInDays: 3
+            - Id: ExpireProdWaveRawIngest
+              Status: Enabled
+              Prefix: prod/wave-media-ingest/
+              ExpirationInDays: 3
+
+    DropMediaIngestBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Condition: CreateSharedIngestBucket
+      Properties:
+        Bucket: !Ref DropMediaIngestBucket
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Sid: DenyNonTlsAccess
+              Effect: Deny
+              Principal: '*'
+              Action: s3:*
+              Resource:
+                - !GetAtt DropMediaIngestBucket.Arn
+                - !Sub '${DropMediaIngestBucket.Arn}/*'
+              Condition:
+                Bool:
+                  aws:SecureTransport: false
+            - Sid: AllowLambdaVpcRoleBucketAccess
+              Effect: Allow
+              Principal:
+                AWS: arn:aws:iam::987989283142:role/lambda-vpc-role
+              Action:
+                - s3:GetBucketLocation
+                - s3:ListBucket
+                - s3:ListBucketMultipartUploads
+              Resource:
+                - !GetAtt DropMediaIngestBucket.Arn
+            - Sid: AllowLambdaVpcRoleObjectAccess
+              Effect: Allow
+              Principal:
+                AWS: arn:aws:iam::987989283142:role/lambda-vpc-role
+              Action:
+                - s3:AbortMultipartUpload
+                - s3:DeleteObject
+                - s3:GetObject
+                - s3:ListMultipartUploadParts
+                - s3:PutObject
+              Resource:
+                - !Sub '${DropMediaIngestBucket.Arn}/staging/drop-media-ingest/*'
+                - !Sub '${DropMediaIngestBucket.Arn}/staging/wave-media-ingest/*'
+                - !Sub '${DropMediaIngestBucket.Arn}/prod/drop-media-ingest/*'
+                - !Sub '${DropMediaIngestBucket.Arn}/prod/wave-media-ingest/*'
+
+  Outputs:
+    DropMediaIngestBucketName:
+      Condition: CreateSharedIngestBucket
+      Value: !Ref DropMediaIngestBucket
+    DropMediaIngestBucketArn:
+      Condition: CreateSharedIngestBucket
+      Value: !GetAtt DropMediaIngestBucket.Arn

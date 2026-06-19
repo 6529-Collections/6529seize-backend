@@ -6,7 +6,10 @@ import {
   needsAuthenticatedUser
 } from '../auth/auth';
 import { ForbiddenException } from '../../../exceptions';
+import { NotFoundException } from '@/exceptions';
 import { uploadMediaService } from '../media/upload-media.service';
+import { dropMediaUploadsDb } from '@/drops/drop-media-uploads.db';
+import { ApiDropMediaStatus } from '@/api/generated/models/ApiDropMediaStatus';
 import { getValidatedByJoiOrThrow } from '../validation';
 import { ApiCreateMediaUrlResponse } from '../generated/models/ApiCreateMediaUrlResponse';
 import { ApiCreateMediaUploadUrlRequest } from '../generated/models/ApiCreateMediaUploadUrlRequest';
@@ -26,6 +29,35 @@ import {
 } from '@/api/media/media-mime-types';
 
 const router = asyncRouter();
+
+router.get(
+  '/uploads/:media_upload_id',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<{ media_upload_id: string }, any, any, any, any>,
+    res: Response<ApiResponse<ApiCompleteMultipartUploadResponse>>
+  ) => {
+    const authenticatedProfileId = await getAuthenticatedProfileIdOrNull(req);
+    if (!authenticatedProfileId) {
+      throw new ForbiddenException(`Please create a profile first`);
+    }
+    const upload = await dropMediaUploadsDb.findById(
+      req.params.media_upload_id
+    );
+    if (!upload) {
+      throw new NotFoundException('Media upload not found');
+    }
+    if (upload.profile_id !== authenticatedProfileId) {
+      throw new ForbiddenException('Cannot read this media upload');
+    }
+    res.send({
+      media_url: upload.public_url,
+      media_upload_id: upload.id,
+      media_status: mapDropMediaStatus(upload.status),
+      media_error: upload.error_reason
+    });
+  }
+);
 
 router.post(
   '/prep',
@@ -74,17 +106,14 @@ router.post(
       MediaPrepRequestSchema
     );
 
-    const { key, upload_id } =
+    const response =
       await uploadMediaService.getDropMediaMultipartUploadKeyAndUploadId({
         content_type: validatedRequest.content_type,
         author_id: validatedRequest.author,
         file_name: validatedRequest.file_name
       });
 
-    res.send({
-      upload_id,
-      key
-    });
+    res.send(response);
   }
 );
 
@@ -122,11 +151,9 @@ router.post(
       req.body,
       ApiCompleteMultipartUploadRequestSchema
     );
-    const url =
+    const response =
       await uploadMediaService.completeMultipartUpload(validatedRequest);
-    res.send({
-      media_url: url
-    });
+    res.send(response);
   }
 );
 
@@ -134,5 +161,19 @@ const MediaPrepRequestSchema = createMediaPrepRequestSchema({
   allowedMimeTypes: [...DROP_MEDIA_ALLOWED_MIME_TYPES],
   allowedExtensionsByMimeType: DROP_MEDIA_ALLOWED_EXTENSIONS_BY_MIME_TYPE
 });
+
+function mapDropMediaStatus(status: string): ApiDropMediaStatus {
+  switch (status) {
+    case ApiDropMediaStatus.Uploading:
+      return ApiDropMediaStatus.Uploading;
+    case ApiDropMediaStatus.Processing:
+      return ApiDropMediaStatus.Processing;
+    case ApiDropMediaStatus.Failed:
+      return ApiDropMediaStatus.Failed;
+    case ApiDropMediaStatus.Ready:
+    default:
+      return ApiDropMediaStatus.Ready;
+  }
+}
 
 export default router;

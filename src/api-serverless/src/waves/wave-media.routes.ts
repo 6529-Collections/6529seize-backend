@@ -70,17 +70,14 @@ router.post(
       MediaPrepRequestSchema
     );
 
-    const { key, upload_id } =
+    const response =
       await uploadMediaService.getWaveMediaMultipartUploadKeyAndUploadId({
         content_type: validatedRequest.content_type,
         author_id: validatedRequest.author,
         file_name: validatedRequest.file_name
       });
 
-    res.send({
-      upload_id,
-      key
-    });
+    res.send(response);
   }
 );
 
@@ -118,11 +115,9 @@ router.post(
       req.body,
       ApiCompleteMultipartUploadRequestSchema
     );
-    const url =
+    const response =
       await uploadMediaService.completeMultipartUpload(validatedRequest);
-    res.send({
-      media_url: url
-    });
+    res.send(response);
   }
 );
 

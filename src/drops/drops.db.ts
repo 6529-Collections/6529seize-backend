@@ -13,6 +13,7 @@ import {
   DELETED_DROPS_TABLE,
   DROP_BOOSTS_TABLE,
   DROP_CURATIONS_TABLE,
+  DROP_MEDIA_UPLOADS_TABLE,
   DROP_MEDIA_TABLE,
   DROP_MENTIONED_GROUPS_TABLE,
   DROP_MENTIONED_WAVES_TABLE,
@@ -168,11 +169,12 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     try {
       const rows = await this.db.execute<DropMediaEntity>(
         `
-        select *
-        from ${DROP_MEDIA_TABLE}
-        where drop_id in (:dropIds)
-          and drop_part_id = 1
-        order by id asc
+        select dm.*, dmu.status as media_status, dmu.error_reason as media_error
+        from ${DROP_MEDIA_TABLE} dm
+             left join ${DROP_MEDIA_UPLOADS_TABLE} dmu on dmu.id = dm.media_upload_id
+        where dm.drop_id in (:dropIds)
+          and dm.drop_part_id = 1
+        order by dm.id asc
       `,
         { dropIds },
         { wrappedConnection: ctx.connection }
@@ -224,11 +226,12 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     try {
       return await this.db.execute<DropMediaEntity>(
         `
-        select *
-        from ${DROP_MEDIA_TABLE}
-        where drop_id = :dropId
-          and drop_part_id = :partNo
-        order by id asc
+        select dm.*, dmu.status as media_status, dmu.error_reason as media_error
+        from ${DROP_MEDIA_TABLE} dm
+             left join ${DROP_MEDIA_UPLOADS_TABLE} dmu on dmu.id = dm.media_upload_id
+        where dm.drop_id = :dropId
+          and dm.drop_part_id = :partNo
+        order by dm.id asc
       `,
         { dropId, partNo },
         { wrappedConnection: ctx.connection }
@@ -903,10 +906,17 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                     JSON_ARRAYAGG(
                             JSON_OBJECT(
                                     'url',       url,
-                                    'mime_type', mime_type
+                                    'mime_type', mime_type,
+                                    'media_upload_id', media_upload_id,
+                                    'media_status', COALESCE(media_status, 'ready'),
+                                    'media_error', media_error
                             )
                     ) AS medias_json
-            FROM    ${DROP_MEDIA_TABLE}
+            FROM    (
+              SELECT dm.*, dmu.status as media_status, dmu.error_reason as media_error
+              FROM ${DROP_MEDIA_TABLE} dm
+                   left join ${DROP_MEDIA_UPLOADS_TABLE} dmu on dmu.id = dm.media_upload_id
+            ) drop_media_with_uploads
             WHERE   drop_part_id = 1
               and drop_id in (:dropIds)
             GROUP BY drop_id
@@ -1500,8 +1510,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     await Promise.all(
       media.map((medium) =>
         this.db.execute(
-          `insert into ${DROP_MEDIA_TABLE} (drop_id, drop_part_id, url, mime_type, wave_id)
-           values (:drop_id, :drop_part_id, :url, :mime_type, :wave_id)`,
+          `insert into ${DROP_MEDIA_TABLE} (drop_id, drop_part_id, url, mime_type, media_upload_id, wave_id)
+           values (:drop_id, :drop_part_id, :url, :mime_type, :media_upload_id, :wave_id)`,
           medium,
           { wrappedConnection: connection }
         )
@@ -1518,7 +1528,10 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       return {};
     }
     const dbResult: DropMediaEntity[] = await this.db.execute(
-      `select * from ${DROP_MEDIA_TABLE} where drop_id in (:dropIds)`,
+      `select dm.*, dmu.status as media_status, dmu.error_reason as media_error
+       from ${DROP_MEDIA_TABLE} dm
+            left join ${DROP_MEDIA_UPLOADS_TABLE} dmu on dmu.id = dm.media_upload_id
+       where dm.drop_id in (:dropIds)`,
       { dropIds },
       connection ? { wrappedConnection: connection } : undefined
     );

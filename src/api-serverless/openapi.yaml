@@ -2085,6 +2085,30 @@ paths:
                 $ref: "#/components/schemas/ApiCompleteMultipartUploadResponse"
         "400":
           description: Invalid request
+  /drop-media/uploads/{media_upload_id}:
+    get:
+      tags:
+        - Drops
+      summary: Get drop or wave media upload status
+      description: Returns the final media URL and async sanitizer status.
+      operationId: getDropMediaUploadStatus
+      parameters:
+        - name: media_upload_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiCompleteMultipartUploadResponse"
+        "403":
+          description: Forbidden
+        "404":
+          description: Media upload not found
   /wave-media/multipart-upload:
     post:
       tags:
@@ -11223,6 +11247,14 @@ components:
       properties:
         media_url:
           type: string
+        media_upload_id:
+          type: string
+          nullable: true
+        media_status:
+          $ref: "#/components/schemas/ApiDropMediaStatus"
+        media_error:
+          type: string
+          nullable: true
     ApiConsolidatedTdh:
       type: object
       properties:
@@ -12544,6 +12576,21 @@ components:
         mime_type:
           type: string
           maxLength: 100
+        media_upload_id:
+          type: string
+          nullable: true
+        media_status:
+          $ref: "#/components/schemas/ApiDropMediaStatus"
+        media_error:
+          type: string
+          nullable: true
+    ApiDropMediaStatus:
+      type: string
+      enum:
+        - uploading
+        - processing
+        - ready
+        - failed
     ApiDropMentionedUser:
       type: object
       required:
@@ -16892,6 +16939,11 @@ components:
           type: string
         key:
           type: string
+        media_upload_id:
+          type: string
+          nullable: true
+        media_status:
+          $ref: "#/components/schemas/ApiDropMediaStatus"
     ApiSubmissionDropContext:
       type: object
       required:

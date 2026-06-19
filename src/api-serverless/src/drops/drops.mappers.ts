@@ -13,6 +13,7 @@ import { ApiDrop } from '../generated/models/ApiDrop';
 import { ApiProfileMin } from '../generated/models/ApiProfileMin';
 import { ApiDropPart } from '../generated/models/ApiDropPart';
 import { ApiDropMedia } from '../generated/models/ApiDropMedia';
+import { ApiDropMediaStatus } from '../generated/models/ApiDropMediaStatus';
 import { ApiDropReferencedNFT } from '../generated/models/ApiDropReferencedNFT';
 import { ApiDropMentionedUser } from '../generated/models/ApiDropMentionedUser';
 import { ApiMentionedWave } from '../generated/models/ApiMentionedWave';
@@ -1173,7 +1174,10 @@ export class DropsMappers {
                 .filter((m) => m.drop_part_id === it.drop_part_id)
                 .map<ApiDropMedia>((it) => ({
                   url: it.url,
-                  mime_type: it.mime_type
+                  mime_type: it.mime_type,
+                  media_upload_id: it.media_upload_id,
+                  media_status: mapDropMediaUploadStatus(it.media_status),
+                  media_error: it.media_error ?? null
                 })) ?? [],
             attachments: (dropAttachments[dropEntity.id] ?? [])
               .filter(
@@ -1237,6 +1241,22 @@ export class DropsMappers {
         ? (rootDropNftLinksByDropId[dropEntity.id] ?? [])
         : []
     };
+  }
+}
+
+function mapDropMediaUploadStatus(
+  status: string | null | undefined
+): ApiDropMediaStatus {
+  switch (status) {
+    case ApiDropMediaStatus.Uploading:
+      return ApiDropMediaStatus.Uploading;
+    case ApiDropMediaStatus.Processing:
+      return ApiDropMediaStatus.Processing;
+    case ApiDropMediaStatus.Failed:
+      return ApiDropMediaStatus.Failed;
+    case ApiDropMediaStatus.Ready:
+    default:
+      return ApiDropMediaStatus.Ready;
   }
 }
 
