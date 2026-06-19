@@ -15,6 +15,9 @@ export const HELP_BOT_REPLY_QUEUE_NAME = 'help-bot-replies';
 export const HELP_BOT_SEEN_REACTION = '👀';
 export const HELP_BOT_SUCCESS_REACTION = '✅';
 export const HELP_BOT_FAILURE_REACTION = '⚠️';
+export const HELP_BOT_SPAM_REACTION = '⛔️';
+export const HELP_BOT_USER_SPAM_WINDOW_MS = 60_000;
+export const HELP_BOT_USER_SPAM_MAX_TRIGGERS_PER_WINDOW = 5;
 export const HELP_BOT_TECH_TEAM_HANDLES_ENV = 'HELP_BOT_TECH_TEAM_HANDLES';
 
 export const HELP_BOT_NO_RELIABLE_SOURCE_BASE_REPLY =

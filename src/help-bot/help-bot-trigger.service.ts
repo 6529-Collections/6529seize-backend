@@ -5,10 +5,14 @@ import { wavesApiDb, WavesApiDb } from '@/api/waves/waves.api.db';
 import { Logger } from '@/logging';
 import { RequestContext } from '@/request.context';
 import { sqs, SQS } from '@/sqs';
+import { Time } from '@/time';
 import {
   HELP_BOT_FAILURE_REACTION,
   HELP_BOT_REPLY_QUEUE_NAME,
   HELP_BOT_SEEN_REACTION,
+  HELP_BOT_SPAM_REACTION,
+  HELP_BOT_USER_SPAM_MAX_TRIGGERS_PER_WINDOW,
+  HELP_BOT_USER_SPAM_WINDOW_MS,
   HELP_BOT_TECHNICAL_FAILURE_REPLY
 } from './help-bot.config';
 import { detectHelpBotTrigger } from './help-bot.detector';
@@ -91,6 +95,26 @@ export class HelpBotTriggerService {
         return;
       }
 
+      if (await this.isSpamSuppressed(trigger.authorProfileId, ctx)) {
+        await this.interactionsDb.markSpamSuppressed(
+          {
+            id: interaction.id,
+            failureReason: `Author exceeded ${HELP_BOT_USER_SPAM_MAX_TRIGGERS_PER_WINDOW} help bot triggers in ${HELP_BOT_USER_SPAM_WINDOW_MS}ms`
+          },
+          ctx
+        );
+        await this.reactionService.setReaction(
+          {
+            botProfileId,
+            dropId: trigger.triggerDropId,
+            waveId: trigger.waveId,
+            reaction: HELP_BOT_SPAM_REACTION
+          },
+          ctx
+        );
+        return;
+      }
+
       await this.reactionService.setReaction(
         {
           botProfileId,
@@ -161,6 +185,21 @@ export class HelpBotTriggerService {
       return false;
     }
     return true;
+  }
+
+  private async isSpamSuppressed(
+    authorProfileId: string,
+    ctx: RequestContext
+  ): Promise<boolean> {
+    const recentInteractionCount =
+      await this.interactionsDb.countRecentByAuthor(
+        {
+          authorProfileId,
+          sinceMillis: Time.currentMillis() - HELP_BOT_USER_SPAM_WINDOW_MS
+        },
+        ctx
+      );
+    return recentInteractionCount > HELP_BOT_USER_SPAM_MAX_TRIGGERS_PER_WINDOW;
   }
 
   private async handleEnqueueFailure({

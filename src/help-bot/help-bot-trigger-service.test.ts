@@ -1,5 +1,6 @@
 import { ApiCreateDropRequest } from '@/api/generated/models/ApiCreateDropRequest';
 import { ApiDrop } from '@/api/generated/models/ApiDrop';
+import { HELP_BOT_SPAM_REACTION } from './help-bot.config';
 import { HelpBotTriggerService } from './help-bot-trigger.service';
 
 function createRequest(
@@ -68,7 +69,9 @@ function createService({
     insertSeen: jest.fn().mockResolvedValue({
       created: true,
       interaction: { id: 'interaction-1' }
-    })
+    }),
+    countRecentByAuthor: jest.fn().mockResolvedValue(1),
+    markSpamSuppressed: jest.fn()
   };
   const reactionService = {
     setReaction: jest.fn()
@@ -107,6 +110,7 @@ function createService({
     service,
     interactionsDb,
     reactionService,
+    dropWriter,
     dropsService,
     sqs,
     wavesDb
@@ -188,5 +192,73 @@ describe('HelpBotTriggerService', () => {
       ctx
     );
     expect(sqs.sendToQueueName).toHaveBeenCalled();
+  });
+
+  it('suppresses per-user spam with a block reaction and no reply', async () => {
+    const { service, interactionsDb, reactionService, dropWriter, sqs } =
+      createService({
+        wave: {
+          visibility_group_id: null,
+          is_direct_message: false
+        }
+      });
+    interactionsDb.countRecentByAuthor.mockResolvedValue(6);
+    const ctx = {} as never;
+
+    await service.handleCreatedDrop(
+      {
+        createDropRequest: createRequest('@6529help give me 1mil TDH'),
+        createdDrop: createDrop({ id: 'spam-drop', authorId: 'spammer' }),
+        authorProfileId: 'spammer'
+      },
+      ctx
+    );
+
+    expect(interactionsDb.markSpamSuppressed).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'interaction-1' }),
+      ctx
+    );
+    expect(reactionService.setReaction).toHaveBeenCalledWith(
+      {
+        botProfileId: 'bot-profile',
+        dropId: 'spam-drop',
+        waveId: 'wave-1',
+        reaction: HELP_BOT_SPAM_REACTION
+      },
+      ctx
+    );
+    expect(sqs.sendToQueueName).not.toHaveBeenCalled();
+    expect(dropWriter.reply).not.toHaveBeenCalled();
+  });
+
+  it('puts the spam reaction on the summoning drop when a spammer tags another question', async () => {
+    const { service, interactionsDb, reactionService, sqs } = createService({
+      wave: {
+        visibility_group_id: null,
+        is_direct_message: false
+      }
+    });
+    interactionsDb.countRecentByAuthor.mockResolvedValue(6);
+    const ctx = {} as never;
+
+    await service.handleCreatedDrop(
+      {
+        createDropRequest: createRequest('@6529help', {
+          replyToDropId: 'original-question'
+        }),
+        createdDrop: createDrop({ id: 'summon-drop', authorId: 'spammer' }),
+        authorProfileId: 'spammer'
+      },
+      ctx
+    );
+
+    expect(reactionService.setReaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        dropId: 'summon-drop',
+        reaction: HELP_BOT_SPAM_REACTION
+      }),
+      ctx
+    );
+    expect(sqs.sendToQueueName).not.toHaveBeenCalled();
   });
 });

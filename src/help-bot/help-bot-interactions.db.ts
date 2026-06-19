@@ -43,6 +43,11 @@ export interface InsertHelpBotInteractionResult {
   readonly created: boolean;
 }
 
+export interface CountRecentAuthorInteractionsRequest {
+  readonly authorProfileId: string;
+  readonly sinceMillis: number;
+}
+
 function affectedRows(result: unknown): number {
   if (result && typeof result === 'object' && 'affectedRows' in result) {
     return Number((result as { affectedRows?: unknown }).affectedRows ?? 0);
@@ -180,6 +185,26 @@ export class HelpBotInteractionsDb extends LazyDbAccessCompatibleService {
     return await this.findById(id, ctx);
   }
 
+  public async countRecentByAuthor(
+    request: CountRecentAuthorInteractionsRequest,
+    ctx: RequestContext
+  ): Promise<number> {
+    const row = await this.db.oneOrNull<{ readonly interaction_count: number }>(
+      `
+        SELECT COUNT(1) AS interaction_count
+        FROM ${HELP_BOT_INTERACTIONS_TABLE}
+        WHERE author_id = :authorProfileId
+          AND created_at >= :sinceMillis
+      `,
+      {
+        authorProfileId: request.authorProfileId,
+        sinceMillis: request.sinceMillis
+      },
+      { wrappedConnection: ctx.connection }
+    );
+    return Number(row?.interaction_count ?? 0);
+  }
+
   public async markAnswered(
     {
       id,
@@ -217,6 +242,27 @@ export class HelpBotInteractionsDb extends LazyDbAccessCompatibleService {
         status: HelpBotInteractionStatus.NO_RELIABLE_SOURCE,
         replyDropId,
         failureReason: null
+      },
+      ctx
+    );
+  }
+
+  public async markSpamSuppressed(
+    {
+      id,
+      failureReason
+    }: {
+      readonly id: string;
+      readonly failureReason: string;
+    },
+    ctx: RequestContext
+  ): Promise<void> {
+    await this.markCompleted(
+      {
+        id,
+        status: HelpBotInteractionStatus.SPAM_SUPPRESSED,
+        replyDropId: null,
+        failureReason
       },
       ctx
     );

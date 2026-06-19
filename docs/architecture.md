@@ -319,6 +319,7 @@ Important details:
 - Creating the `6529help` profile activates runtime behavior; if that handle cannot be resolved, the bot no-ops.
 - The API enqueues reply jobs by the hardcoded SQS queue name `help-bot-replies`; no queue URL environment variable is required.
 - The bot skips restricted-visibility waves and direct-message waves before reading parent context, creating an interaction row, queueing work, or calling Bedrock.
+- The API suppresses per-user help-bot spam before queueing: after more than 5 triggers in 60 seconds by the same author, it records the interaction as `SPAM_SUPPRESSED`, reacts `⛔️` to the triggering drop, and does not post a reply.
 - If a user replies to someone else's question with only `@6529help` in a public wave, the bot fetches the parent drop through the caller's normal visibility checks, uses the parent drop text as the question, and targets the parent drop for reactions and the reply.
 - V1 retrieval uses the frontend-published `https://6529.io/help-index.json` artifact for product knowledge and a bounded public-data query-intent mode for aggregate backend data questions.
 - Bedrock selects a semantic public-data plan from a hardcoded catalog; Bedrock output never contains executable SQL, table names, columns, joins, or expressions.

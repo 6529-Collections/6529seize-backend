@@ -6,6 +6,7 @@ export enum HelpBotInteractionStatus {
   ANSWERING = 'ANSWERING',
   ANSWERED = 'ANSWERED',
   NO_RELIABLE_SOURCE = 'NO_RELIABLE_SOURCE',
+  SPAM_SUPPRESSED = 'SPAM_SUPPRESSED',
   FAILED = 'FAILED'
 }
 
@@ -18,6 +19,7 @@ export enum HelpBotInteractionTriggerType {
 @Index(['trigger_drop_id'], { unique: true })
 @Index(['status', 'created_at'])
 @Index(['wave_id', 'created_at'])
+@Index(['author_id', 'created_at'])
 export class HelpBotInteractionEntity {
   @PrimaryColumn({ type: 'varchar', length: 100 })
   id!: string;

@@ -284,6 +284,10 @@ message_created
   -> replace 👀 with ✅
 ```
 
+If the triggering author has already tripped the per-user spam threshold, the
+bot records the interaction, reacts `⛔️` to the triggering drop, does not queue
+answer generation, and does not post a reply.
+
 ### 5.3 Failure flow
 
 ```text
@@ -307,7 +311,7 @@ Recommended fields:
 - `parent_bot_drop_id`
 - `trigger_type`: `MENTION` or `BOT_REPLY`
 - `status`: `SEEN`, `ANSWERING`, `ANSWERED`, `NO_RELIABLE_SOURCE`,
-  `FAILED`
+  `SPAM_SUPPRESSED`, `FAILED`
 - `bot_reply_drop_id`
 - `knowledge_version`
 - `failure_reason`
@@ -414,7 +418,9 @@ Recommended behavior:
 
 Initial controls:
 
-- Per-user trigger limit.
+- Per-user trigger limit: more than 5 accepted triggers in 60 seconds records
+  the interaction as `SPAM_SUPPRESSED`, reacts `⛔️` to the triggering drop,
+  and skips queueing/reply generation.
 - Per-wave trigger limit.
 - Global bot concurrency limit.
 - Maximum prompt/context token budget.
