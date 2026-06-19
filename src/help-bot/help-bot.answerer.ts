@@ -4,6 +4,7 @@ import {
   HelpBotKnowledgeSource,
   HelpBotKnowledgeRecord
 } from './help-bot.knowledge';
+import { HelpBotPublicDataService } from './help-bot-public-data.service';
 
 export interface HelpBotAnswerRequest {
   readonly question: string;
@@ -15,6 +16,7 @@ export interface HelpBotAnswerSuccess {
   readonly type: 'ANSWER';
   readonly answer: string;
   readonly record: HelpBotKnowledgeRecord;
+  readonly publicDataSql?: string;
 }
 
 export interface HelpBotNoReliableSource {
@@ -57,17 +59,46 @@ function normalizeRenderedAnswer(text: string, canonicalUrl: string): string {
   return withUrl.length <= 1200 ? withUrl : `${withUrl.slice(0, 1197)}...`;
 }
 
+function buildPublicDataRecord(): HelpBotKnowledgeRecord {
+  return {
+    id: 'public-data.query',
+    kind: 'public_data',
+    title: '6529 public data',
+    canonicalPath: '/open-data',
+    aliases: ['public data'],
+    keywords: ['public', 'data'],
+    facts: ['This answer was generated from public 6529 database rows.'],
+    relatedPaths: ['/network/tdh', '/the-memes'],
+    tags: ['public-data'],
+    sourceRefs: ['backend public data query catalog']
+  };
+}
+
 export class HelpBotAnswerer {
   private readonly logger = Logger.get(this.constructor.name);
 
   constructor(
     private readonly renderer?: HelpBotLlmRenderer | null,
-    private readonly knowledgeSource: HelpBotKnowledgeSource = frontendHelpBotKnowledgeSource
+    private readonly knowledgeSource: HelpBotKnowledgeSource = frontendHelpBotKnowledgeSource,
+    private readonly publicDataService?: HelpBotPublicDataService | null
   ) {}
 
   public async answer(
     request: HelpBotAnswerRequest
   ): Promise<HelpBotAnswerResult> {
+    const publicDataAnswer = await this.publicDataService?.answer({
+      question: request.question,
+      previousBotAnswer: request.previousBotAnswer
+    });
+    if (publicDataAnswer) {
+      return {
+        type: 'ANSWER',
+        answer: publicDataAnswer.answer,
+        record: buildPublicDataRecord(),
+        publicDataSql: publicDataAnswer.sql
+      };
+    }
+
     const directMatch = await this.knowledgeSource.findMatch(request.question);
     const contextualMatch = request.previousBotAnswer
       ? await this.knowledgeSource.findMatch(

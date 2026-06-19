@@ -307,6 +307,7 @@ flowchart TD
   DropRoute --> HelpBotSqs["SQS: help-bot-replies"]
   HelpBotSqs --> HelpBotWorker["helpBotReplyLoop"]
   HelpBotWorker --> FrontendIndex["cached frontend /help-index.json"]
+  HelpBotWorker --> PublicData["validated public DB query"]
   HelpBotWorker -. optional .-> Bedrock["Bedrock renderer"]
   HelpBotWorker --> BotReply["bot reply drop"]
   HelpBotWorker --> FinalReaction["bot reaction: success or warning"]
@@ -317,9 +318,10 @@ Important details:
 - The bot handle is hardcoded as `@6529help`; runtime resolves that handle to the current bot profile id before posting replies or reactions.
 - Creating the `6529help` profile activates runtime behavior; if that handle cannot be resolved, the bot no-ops.
 - The API enqueues reply jobs by the hardcoded SQS queue name `help-bot-replies`; no queue URL environment variable is required.
-- V1 retrieval uses the frontend-published `https://6529.io/help-index.json` artifact, cached in the backend answer path, not full RAG or live repo lookup.
+- V1 retrieval uses the frontend-published `https://6529.io/help-index.json` artifact for product knowledge and a bounded public-data SQL mode for aggregate backend data questions.
+- Public-data SQL is generated from a hardcoded public schema catalog, then validated as a single read-only `SELECT` against whitelisted tables before execution.
 - Help index fetches use a short timeout; a cold load failure produces the technical-failure reply instead of a no-reliable-source answer.
-- Bedrock rendering uses a fixed short timeout; if it fails or times out, the worker falls back to deterministic record wording when a reliable frontend record exists.
+- Bedrock rendering uses a fixed short timeout; if it fails or times out, the worker falls back to deterministic wording when a reliable frontend record or public DB row exists.
 - If no reliable record exists, or a technical failure prevents answering, the worker posts a failure reply and changes the bot reaction to warning.
 
 ## Drops -> Minting Claim Queue Flows

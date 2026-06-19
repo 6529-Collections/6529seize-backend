@@ -6,6 +6,8 @@ export const HELP_BOT_INDEX_CACHE_TTL_MS = 300_000;
 export const HELP_BOT_BEDROCK_MODEL_ID =
   'anthropic.claude-3-sonnet-20240229-v1:0';
 export const HELP_BOT_BEDROCK_TIMEOUT_MS = 4000;
+export const HELP_BOT_PUBLIC_DATA_QUERY_TIMEOUT_MS = 5000;
+export const HELP_BOT_PUBLIC_DATA_MAX_ROWS = 10;
 export const HELP_BOT_KNOWLEDGE_VERSION = 'frontend-help-index-v1';
 export const HELP_BOT_REPLY_QUEUE_NAME = 'help-bot-replies';
 export const HELP_BOT_SEEN_REACTION = '👀';

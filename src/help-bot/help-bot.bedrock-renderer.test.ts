@@ -68,4 +68,39 @@ describe('HelpBotBedrockRenderer', () => {
       })
     ).rejects.toThrow('aborted');
   });
+
+  it('parses public data query plans from JSON', async () => {
+    const send = jest.fn().mockResolvedValue({
+      body: Buffer.from(
+        JSON.stringify({
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                sql: 'SELECT COUNT(*) AS meme_count FROM memes_extended_data WHERE season = 1',
+                title: 'Meme Cards in SZN1',
+                canonicalPath: '/the-memes?szn=1'
+              })
+            }
+          ]
+        })
+      )
+    });
+    const renderer = new HelpBotBedrockRenderer(
+      'anthropic.test-model',
+      () => ({ send }) as never,
+      100
+    );
+
+    await expect(
+      renderer.planPublicDataQuery({
+        question: 'how many memes are in szn1?',
+        catalog: 'catalog'
+      })
+    ).resolves.toEqual({
+      sql: 'SELECT COUNT(*) AS meme_count FROM memes_extended_data WHERE season = 1',
+      title: 'Meme Cards in SZN1',
+      canonicalPath: '/the-memes?szn=1'
+    });
+  });
 });

@@ -10,10 +10,12 @@ The bot should respond quickly with visible status reactions, answer as a reply
 to the triggering message, and use a frontend-provided help index to ground
 answers.
 
-V1 ships without full RAG. It retrieves bounded records from the
+V1 ships without full RAG. It retrieves bounded product records from the
 frontend-published `/help-index.json`, caches the latest valid copy in the
 backend answer path, and uses a Bedrock renderer for natural wording with a
-deterministic fallback if the model call fails or times out.
+deterministic fallback if the model call fails or times out. It also supports a
+bounded public-data query mode for aggregate questions that are better answered
+from backend database rows than from static frontend docs.
 
 ## 2. Product Behavior
 
@@ -84,8 +86,9 @@ cache for 30 seconds so manual profile creation becomes active quickly.
 - Do not answer without a user trigger.
 - Do not inspect GitHub or frontend source files during the live answer path.
 - Do not train or fine-tune a model for V1.
-- Do not provide wallet-specific eligibility answers unless a dedicated
+- Do not provide private wallet-specific eligibility answers unless a dedicated
   authenticated tool is added.
+- Do not let the LLM query arbitrary backend tables or execute unvalidated SQL.
 - Do not replace human support or moderation.
 - Do not merge, deploy to staging, or activate production behavior in this
   PR-ready/no-deploy pass.
@@ -140,7 +143,37 @@ Those records should be short, curated records or generated summaries from
 backend docs and tests. Raw code lookup should happen offline during indexing or
 authoring, not during a user request.
 
-### 4.4 Agent maintenance contract
+### 4.4 Backend-owned public data query mode
+
+Some questions should be answered from public indexed data, not from the
+frontend help index. Examples:
+
+- `how many memes are in szn1`
+- `what is the TDH rate of Meme #1`
+- `what is the highest TDH rate`
+- `what is the highest edition size`
+- `what is total TDH`
+
+For V1, Bedrock can translate these public-data questions into SQL, but only
+inside a hardcoded public schema catalog. The backend validates the generated SQL
+before execution. The validator allows only one `SELECT` statement, rejects
+comments, semicolons, DML/DDL keywords, rejects non-whitelisted tables, and
+applies a small row limit to non-aggregate list queries.
+
+Initial whitelisted tables:
+
+- `nfts`: Meme Card names, supply, TDH fields, and `hodl_rate` used as card TDH
+  rate.
+- `memes_extended_data`: season, meme number/name, edition size, holder, burn,
+  and uniqueness metrics.
+- `memes_seasons`: season boundaries and counts.
+- `latest_tdh_global_history`: latest global TDH totals and wallet counts.
+
+If the SQL planner fails or produces an unsafe query, the bot declines that data
+mode and falls back to the normal help-index path. If a validated DB query
+times out or fails, the bot uses the technical-failure reply path.
+
+### 4.5 Agent maintenance contract
 
 Future agents must treat the help bot corpus as part of the user-facing product
 surface. When a backend change adds or changes behavior that users may ask
@@ -164,7 +197,7 @@ If a backend change is user-visible but intentionally should not be answerable
 by the bot yet, the PR should say why and whether a follow-up corpus update is
 needed.
 
-### 4.5 Retrieval model
+### 4.6 Retrieval model
 
 The bot should not depend on a predefined list of questions. It should retrieve
 records and chunks by:
@@ -177,10 +210,10 @@ records and chunks by:
 The live answer prompt should receive only the top relevant snippets, not the
 entire corpus.
 
-For V1, retrieval is alias/keyword scoring over the cached frontend records. Direct
-follow-up questions first match the current user message; previous bot answer
-text is used only as fallback context so old wording does not dominate the next
-topic.
+For V1, retrieval is alias/keyword scoring over the cached frontend records plus
+validated public SQL over whitelisted backend data tables. Direct follow-up
+questions first match the current user message; previous bot answer text is used
+only as fallback context so old wording does not dominate the next topic.
 
 ## 5. Runtime Flow
 
@@ -192,7 +225,7 @@ message_created
   -> create interaction row
   -> add 👀 reaction
   -> enqueue help job
-  -> worker retrieves context
+  -> worker retrieves context or validated public DB rows
   -> worker calls LLM
   -> worker posts reply
   -> replace 👀 with ✅
@@ -207,7 +240,7 @@ message_created
   -> create interaction row
   -> add 👀 reaction
   -> enqueue help job with previous bot answer context
-  -> worker retrieves fresh context for current question
+  -> worker retrieves fresh context or validated public DB rows for current question
   -> worker calls LLM
   -> worker posts reply
   -> replace 👀 with ✅
@@ -376,6 +409,8 @@ private user data beyond what is needed for debugging and abuse controls.
 - Trigger on direct replies to bot messages.
 - Use Bedrock wording with deterministic fallback when Bedrock is unavailable.
 - Fetch and cache the frontend-published `/help-index.json` artifact.
+- Add bounded public-data SQL mode for aggregate questions over whitelisted
+  public tables.
 
 ### Phase 3: Full Index/RAG Integration - Future
 

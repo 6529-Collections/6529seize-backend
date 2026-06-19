@@ -8,6 +8,7 @@ import { TextDecoder } from 'node:util';
 import { HelpBotLlmRenderer } from './help-bot.answerer';
 import { HELP_BOT_BEDROCK_TIMEOUT_MS } from './help-bot.config';
 import { HelpBotKnowledgeRecord } from './help-bot.knowledge';
+import { HelpBotPublicDataQueryPlan } from './help-bot-public-data.service';
 
 interface AnthropicTextBlock {
   readonly type?: string;
@@ -47,9 +48,61 @@ function buildPrompt({
     .join('\n\n');
 }
 
+function buildPublicDataPlanningPrompt({
+  question,
+  previousBotAnswer,
+  catalog
+}: {
+  readonly question: string;
+  readonly previousBotAnswer?: string | null;
+  readonly catalog: string;
+}): string {
+  return [
+    'You are @6529help SQL planner for public 6529.io data.',
+    'Return strict JSON only. Do not wrap in Markdown.',
+    'If the question is not answerable from the catalog, return {"sql":null}.',
+    'Use only tables and fields shown in the catalog.',
+    'Use one read-only SELECT statement.',
+    'Do not use comments, semicolons, DML, DDL, stored procedures, or private tables.',
+    'Return this JSON shape:',
+    '{"sql":"SELECT ...","title":"short answer title","canonicalPath":"/path"}',
+    previousBotAnswer
+      ? `Previous bot answer for context:\n${previousBotAnswer}`
+      : '',
+    `User question:\n${question}`,
+    catalog
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+}
+
+function buildPublicDataAnswerPrompt({
+  question,
+  title,
+  rows,
+  canonicalUrl
+}: {
+  readonly question: string;
+  readonly title: string;
+  readonly rows: readonly Record<string, unknown>[];
+  readonly canonicalUrl: string;
+}): string {
+  return [
+    'You are @6529help, a concise helper bot for 6529.io.',
+    'Answer only from the SQL result rows.',
+    'Do not invent data.',
+    'Use one or two short paragraphs.',
+    `Include this URL exactly once: ${canonicalUrl}`,
+    `User question:\n${question}`,
+    `Answer title:\n${title}`,
+    `SQL result rows:\n${JSON.stringify(rows).slice(0, 4000)}`
+  ].join('\n\n');
+}
+
 function buildInvokeModelInput(
   modelId: string,
-  prompt: string
+  prompt: string,
+  maxTokens: number
 ): InvokeModelCommandInput {
   return {
     modelId,
@@ -57,7 +110,7 @@ function buildInvokeModelInput(
     accept: 'application/json',
     body: JSON.stringify({
       anthropic_version: 'bedrock-2023-05-31',
-      max_tokens: 220,
+      max_tokens: maxTokens,
       messages: [
         {
           role: 'user',
@@ -83,6 +136,35 @@ function parseAnthropicResponse(jsonString: string): string {
   return text;
 }
 
+function parseJsonObject(text: string): Record<string, unknown> {
+  const trimmed = text.trim();
+  const start = trimmed.indexOf('{');
+  const end = trimmed.lastIndexOf('}');
+  if (start === -1 || end === -1 || end <= start) {
+    throw new Error(`Expected JSON object from Bedrock: ${text}`);
+  }
+  return JSON.parse(trimmed.slice(start, end + 1)) as Record<string, unknown>;
+}
+
+function readString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function parsePublicDataQueryPlan(
+  text: string
+): HelpBotPublicDataQueryPlan | null {
+  const parsed = parseJsonObject(text);
+  const sql = readString(parsed.sql);
+  if (!sql) {
+    return null;
+  }
+  return {
+    sql,
+    title: readString(parsed.title) ?? '6529 public data',
+    canonicalPath: readString(parsed.canonicalPath) ?? '/open-data'
+  };
+}
+
 export class HelpBotBedrockRenderer implements HelpBotLlmRenderer {
   constructor(
     private readonly modelId: string,
@@ -96,10 +178,36 @@ export class HelpBotBedrockRenderer implements HelpBotLlmRenderer {
     readonly record: HelpBotKnowledgeRecord;
     readonly canonicalUrl: string;
   }): Promise<string> {
+    return this.invokePrompt(buildPrompt(input), 220);
+  }
+
+  public async planPublicDataQuery(input: {
+    readonly question: string;
+    readonly previousBotAnswer?: string | null;
+    readonly catalog: string;
+  }): Promise<HelpBotPublicDataQueryPlan | null> {
+    return parsePublicDataQueryPlan(
+      await this.invokePrompt(buildPublicDataPlanningPrompt(input), 320)
+    );
+  }
+
+  public async renderPublicDataAnswer(input: {
+    readonly question: string;
+    readonly title: string;
+    readonly rows: readonly Record<string, unknown>[];
+    readonly canonicalUrl: string;
+  }): Promise<string> {
+    return this.invokePrompt(buildPublicDataAnswerPrompt(input), 220);
+  }
+
+  private async invokePrompt(
+    prompt: string,
+    maxTokens: number
+  ): Promise<string> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
     const command = new InvokeModelCommand(
-      buildInvokeModelInput(this.modelId, buildPrompt(input))
+      buildInvokeModelInput(this.modelId, prompt, maxTokens)
     );
     try {
       const response = await this.getBedrock().send(command, {

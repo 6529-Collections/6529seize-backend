@@ -12,6 +12,7 @@ import {
 } from './help-bot.config';
 import { HelpBotAnswerer, HelpBotLlmRenderer } from './help-bot.answerer';
 import { HelpBotBedrockRenderer } from './help-bot.bedrock-renderer';
+import { HelpBotPublicDataService } from './help-bot-public-data.service';
 import {
   helpBotDropWriterService,
   HelpBotDropWriterService
@@ -32,7 +33,7 @@ import {
 import { withHelpBotAuthentication } from './help-bot.auth';
 import { errorToMessage } from './help-bot.errors';
 
-function buildRenderer(): HelpBotLlmRenderer | null {
+function buildRenderer(): HelpBotBedrockRenderer {
   return new HelpBotBedrockRenderer(HELP_BOT_BEDROCK_MODEL_ID);
 }
 
@@ -254,5 +255,12 @@ export const helpBotProcessorService = new HelpBotProcessorService(
   helpBotDropWriterService,
   dropsService,
   helpBotProfileResolver,
-  () => new HelpBotAnswerer(buildRenderer())
+  () => {
+    const renderer = buildRenderer();
+    return new HelpBotAnswerer(
+      renderer as HelpBotLlmRenderer,
+      undefined,
+      new HelpBotPublicDataService(renderer)
+    );
+  }
 );
