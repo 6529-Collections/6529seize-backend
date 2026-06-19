@@ -1,7 +1,7 @@
 import { env } from '@/env';
 
 export const HELP_BOT_HANDLE = '6529help';
-export const HELP_BOT_KNOWLEDGE_VERSION = '2026-06-19-v1';
+export const HELP_BOT_KNOWLEDGE_VERSION = 'frontend-help-index-v1';
 export const HELP_BOT_SEEN_REACTION = '👀';
 export const HELP_BOT_SUCCESS_REACTION = '✅';
 export const HELP_BOT_FAILURE_REACTION = '⚠️';
@@ -18,6 +18,8 @@ export interface HelpBotConfig {
   readonly queueUrl: string | null;
   readonly bedrockModelId: string | null;
   readonly baseUrl: string;
+  readonly knowledgeIndexUrl: string;
+  readonly knowledgeIndexCacheTtlMs: number;
 }
 
 function parseEnabled(value: string | null): boolean {
@@ -32,14 +34,30 @@ function normalizeBaseUrl(value: string | null): string {
   return baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
 }
 
+function normalizePositiveInteger(
+  value: string | null,
+  fallback: number
+): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 export function getHelpBotConfig(): HelpBotConfig {
+  const baseUrl = normalizeBaseUrl(env.getStringOrNull('HELP_BOT_BASE_URL'));
   return {
     enabled: parseEnabled(env.getStringOrNull('HELP_BOT_ENABLED')),
     botProfileId: env.getStringOrNull('HELP_BOT_PROFILE_ID')?.trim() || null,
     queueUrl: env.getStringOrNull('HELP_BOT_SQS_URL')?.trim() || null,
     bedrockModelId:
       env.getStringOrNull('HELP_BOT_BEDROCK_MODEL_ID')?.trim() || null,
-    baseUrl: normalizeBaseUrl(env.getStringOrNull('HELP_BOT_BASE_URL'))
+    baseUrl,
+    knowledgeIndexUrl:
+      env.getStringOrNull('HELP_BOT_INDEX_URL')?.trim() ||
+      `${baseUrl}/help-index.json`,
+    knowledgeIndexCacheTtlMs: normalizePositiveInteger(
+      env.getStringOrNull('HELP_BOT_INDEX_CACHE_TTL_MS'),
+      300_000
+    )
   };
 }
 

@@ -124,12 +124,14 @@ about, update the help bot knowledge in the same PR. This includes changes to
 subscriptions, eligibility rules, wave or drop permissions, posting limits,
 profile/business-rule terminology, and canonical backend-owned URLs.
 
-For V1, update `src/help-bot/help-bot.knowledge.ts` seed records and the related
-tests whenever the new or changed behavior should be answerable before the full
-frontend help-index/RAG path exists. Keep `specs/6529-help-bot-runtime.md`
-aligned with any runtime, provider, source, failure-mode, or coverage change.
-If a touched backend behavior is intentionally not added to the bot corpus,
-state that in the PR or final handoff.
+For V1, frontend product knowledge is owned by the frontend repository in
+`ops/help/help-index.json` and published as `/help-index.json`. The backend help
+bot runtime should consume and cache that artifact instead of hardcoding
+frontend routes, controls, or product navigation. Keep
+`specs/6529-help-bot-runtime.md` aligned with any runtime, provider, source,
+failure-mode, or coverage change. If a backend behavior is user-visible but the
+frontend corpus is not updated in the same release set, state the gap in the PR
+or final handoff.
 
 ### Loop-Based Services (Backend)
 

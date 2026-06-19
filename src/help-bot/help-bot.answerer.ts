@@ -1,6 +1,7 @@
 import { Logger } from '@/logging';
 import {
-  findHelpBotKnowledgeRecord,
+  frontendHelpBotKnowledgeSource,
+  HelpBotKnowledgeSource,
   HelpBotKnowledgeRecord
 } from './help-bot.knowledge';
 
@@ -59,14 +60,17 @@ function normalizeRenderedAnswer(text: string, canonicalUrl: string): string {
 export class HelpBotAnswerer {
   private readonly logger = Logger.get(this.constructor.name);
 
-  constructor(private readonly renderer?: HelpBotLlmRenderer | null) {}
+  constructor(
+    private readonly renderer?: HelpBotLlmRenderer | null,
+    private readonly knowledgeSource: HelpBotKnowledgeSource = frontendHelpBotKnowledgeSource
+  ) {}
 
   public async answer(
     request: HelpBotAnswerRequest
   ): Promise<HelpBotAnswerResult> {
-    const directMatch = findHelpBotKnowledgeRecord(request.question);
+    const directMatch = await this.knowledgeSource.findMatch(request.question);
     const contextualMatch = request.previousBotAnswer
-      ? findHelpBotKnowledgeRecord(
+      ? await this.knowledgeSource.findMatch(
           [request.question, request.previousBotAnswer].join('\n')
         )
       : null;

@@ -7,13 +7,13 @@ product questions inside Waves. Users can trigger it by mentioning the bot or by
 replying directly to a previous bot answer.
 
 The bot should respond quickly with visible status reactions, answer as a reply
-to the triggering message, and use a frontend-provided help index plus backend
-business-rule records to ground answers.
+to the triggering message, and use a frontend-provided help index to ground
+answers.
 
-V1 ships without full RAG. It uses bounded backend seed records with canonical
-6529.io URLs, plus an optional Bedrock renderer for natural wording when
-configured. The fuller frontend help-index/RAG path remains the next corpus
-phase.
+V1 ships without full RAG. It retrieves bounded records from the
+frontend-published `/help-index.json`, caches the latest valid copy in the
+backend answer path, and can optionally use a Bedrock renderer for natural
+wording when configured.
 
 ## 2. Product Behavior
 
@@ -88,13 +88,15 @@ The bot should not hallucinate a fallback answer when source confidence is low.
 
 ## 4. Knowledge Architecture
 
-### 4.1 V1 backend seed records
+### 4.1 V1 frontend-owned help index
 
-V1 answers from short backend-owned records for common 6529 topics and routes.
-These records are intentionally small so the bot is fast and reliable while the
-team learns what users ask.
+V1 answers from short frontend-owned records for common 6529 topics, routes, and
+UI affordances. The source of truth lives in the frontend repository at
+`ops/help/help-index.json`; the frontend build publishes
+`public/help-index.json`; the backend reads the deployed artifact at
+`${HELP_BOT_BASE_URL}/help-index.json` unless `HELP_BOT_INDEX_URL` overrides it.
 
-Initial seeded topics include:
+Initial curated topics include:
 
 - TDH and network definitions
 - Waves and wave creation
@@ -105,33 +107,32 @@ Initial seeded topics include:
 - The Memes
 - NextGen
 
-### 4.2 Future frontend-owned help index
+The backend does not inspect GitHub, frontend source files, or live rendered
+pages while users wait for answers. It fetches the generated index, validates a
+usable record set, caches successful loads for `HELP_BOT_INDEX_CACHE_TTL_MS`,
+and keeps the previous valid cache if a refresh fails.
 
-The frontend should publish a generated help index containing:
+### 4.2 Future docs chunking and RAG
 
-- curated glossary records
-- curated UI affordance records
-- route records
-- chunks from frontend `ops/docs`
-- canonical 6529.io links
-- source commit SHA and schema version
+The frontend index can later include generated chunks from frontend `ops/docs`,
+route metadata, component help metadata, embeddings, and eval coverage. That
+future phase should keep curated records as the higher-confidence source for
+canonical facts and URLs.
 
-The backend should sync this artifact into a runtime store and answer from the
-latest valid cached copy.
+### 4.3 Backend-owned business-rule records
 
-### 4.3 Backend-owned help records
-
-The backend should own records for backend business rules that are not safe to
-infer from frontend pages alone. Examples:
+The frontend owns product navigation and UI knowledge. The backend may add
+backend-owned records later for business rules that are not safe to infer from
+frontend pages alone. Examples:
 
 - subscription processing behavior
 - eligibility concepts where rules are implemented in backend services
 - wave and drop permission rules
 - rate limit or posting restrictions
 
-These should be short, curated records or generated summaries from backend docs
-and tests. Raw code lookup should happen offline during indexing or authoring,
-not during a user request.
+Those records should be short, curated records or generated summaries from
+backend docs and tests. Raw code lookup should happen offline during indexing or
+authoring, not during a user request.
 
 ### 4.4 Agent maintenance contract
 
@@ -147,10 +148,11 @@ Backend-owned examples:
 - backend-owned product terminology
 - canonical URLs for backend-owned reports or tools
 
-For V1, add or update seed records in `src/help-bot/help-bot.knowledge.ts` and
-adjust focused help bot tests. Also update this runtime spec when trigger
-behavior, failure wording, provider behavior, source ownership, observability,
-or coverage expectations change.
+For frontend product knowledge, update the frontend-owned
+`ops/help/help-index.json` source and generated `public/help-index.json` in the
+frontend PR. Backend runtime changes should update focused help bot tests and
+this runtime spec when trigger behavior, failure wording, provider behavior,
+source ownership, observability, or coverage expectations change.
 
 If a backend change is user-visible but intentionally should not be answerable
 by the bot yet, the PR should say why and whether a follow-up corpus update is
@@ -169,7 +171,7 @@ records and chunks by:
 The live answer prompt should receive only the top relevant snippets, not the
 entire corpus.
 
-For V1, retrieval is alias/keyword scoring over the seed records. Direct
+For V1, retrieval is alias/keyword scoring over the cached frontend records. Direct
 follow-up questions first match the current user message; previous bot answer
 text is used only as fallback context so old wording does not dominate the next
 topic.
@@ -266,8 +268,8 @@ Prompt rules:
 
 The LLM is responsible for natural wording only. It is not responsible for
 deciding canonical facts or links without retrieved context. If Bedrock is not
-configured, or if it fails after a reliable seed record is found, V1 uses the
-deterministic seeded answer.
+configured, or if it fails after a reliable record is found, V1 uses the
+deterministic record answer.
 
 ## 8. Answer Examples
 
@@ -358,21 +360,21 @@ private user data beyond what is needed for debugging and abuse controls.
 - Draft backend runtime spec.
 - Agree on bot naming and handle: `@6529help`.
 
-### Phase 2: V1 Seeded Bot Plumbing - Done In PR
+### Phase 2: V1 Help Bot Plumbing - Done In PR
 
 - Create bot identity.
 - Detect explicit `@6529help` mentions.
-- Add 👀, answer from seeded records, replace with ✅.
+- Add 👀, answer from cached frontend records, replace with ✅.
 - Add failure reply path and ⚠️.
 - Trigger on direct replies to bot messages.
 - Use optional Bedrock wording when configured, with deterministic fallback.
+- Fetch and cache the frontend-published `/help-index.json` artifact.
 
 ### Phase 3: Full Index/RAG Integration - Future
 
-- Sync frontend help index.
-- Expand backend help records.
-- Add vector/search retrieval over frontend/backend docs.
-- Add no-reliable-source behavior.
+- Add docs chunking, embeddings, and vector/search retrieval over the expanded
+  frontend index and any backend-owned business-rule records.
+- Add evaluation coverage for common and broad product questions.
 
 ### Phase 4: Evaluation and Coverage
 
@@ -384,5 +386,3 @@ private user data beyond what is needed for debugging and abuse controls.
 
 - Should successful answers keep ✅ forever, or should status reactions expire?
 - Which Bedrock model should be approved for initial production use?
-- How should the backend sync the frontend help index: scheduled pull, deploy
-  webhook, S3 event, or admin endpoint?

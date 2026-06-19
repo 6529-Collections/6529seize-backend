@@ -306,7 +306,7 @@ flowchart TD
   DropRoute --> SeenReaction["bot reaction: seen"]
   DropRoute --> HelpBotSqs["SQS: help-bot-replies"]
   HelpBotSqs --> HelpBotWorker["helpBotReplyLoop"]
-  HelpBotWorker --> SeededKnowledge["seeded V1 knowledge records"]
+  HelpBotWorker --> FrontendIndex["cached frontend /help-index.json"]
   HelpBotWorker -. optional .-> Bedrock["Bedrock renderer"]
   HelpBotWorker --> BotReply["bot reply drop"]
   HelpBotWorker --> FinalReaction["bot reaction: success or warning"]
@@ -315,8 +315,8 @@ flowchart TD
 Important details:
 
 - The bot is inactive unless `HELP_BOT_ENABLED`, `HELP_BOT_PROFILE_ID`, and the API's `HELP_BOT_SQS_URL` are configured.
-- V1 retrieval uses seeded backend knowledge records and canonical frontend URLs, not full RAG or live repo lookup.
-- If Bedrock rendering is configured and fails, the worker falls back to deterministic seeded wording when a reliable record exists.
+- V1 retrieval uses the frontend-published `/help-index.json` artifact, cached in the backend answer path, not full RAG or live repo lookup.
+- If Bedrock rendering is configured and fails, the worker falls back to deterministic record wording when a reliable frontend record exists.
 - If no reliable record exists, or a technical failure prevents answering, the worker posts a failure reply and changes the bot reaction to warning.
 
 ## Drops -> Minting Claim Queue Flows
