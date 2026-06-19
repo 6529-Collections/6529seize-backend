@@ -37,11 +37,38 @@ interface HelpBotIndexResponse {
   text(): Promise<string>;
 }
 
-type HelpBotIndexFetcher = (url: string) => Promise<HelpBotIndexResponse>;
+type HelpBotIndexFetcher = (
+  url: string,
+  timeoutMs: number
+) => Promise<HelpBotIndexResponse>;
 
 const MINIMUM_MATCH_SCORE = 2;
 const DEFAULT_COMMIT_SHA = 'unknown';
 const logger = Logger.get('HelpBotKnowledge');
+
+export class HelpBotKnowledgeUnavailableError extends Error {
+  constructor(
+    message: string,
+    public readonly originalError?: unknown
+  ) {
+    super(message);
+    this.name = 'HelpBotKnowledgeUnavailableError';
+    Object.setPrototypeOf(this, HelpBotKnowledgeUnavailableError.prototype);
+  }
+}
+
+async function fetchHelpIndexWithTimeout(
+  url: string,
+  timeoutMs: number
+): Promise<HelpBotIndexResponse> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object'
@@ -202,7 +229,7 @@ export class FrontendHelpBotKnowledgeSource implements HelpBotKnowledgeSource {
   private cacheExpiresAt = 0;
 
   constructor(
-    private readonly fetcher: HelpBotIndexFetcher = (url) => fetch(url)
+    private readonly fetcher: HelpBotIndexFetcher = fetchHelpIndexWithTimeout
   ) {}
 
   public async findMatch(
@@ -216,10 +243,13 @@ export class FrontendHelpBotKnowledgeSource implements HelpBotKnowledgeSource {
     const config = getHelpBotConfig();
     const now = Date.now();
     if (now < this.cacheExpiresAt) {
-      return this.cachedIndex;
+      return this.cachedIndex ?? this.throwUnavailable();
     }
     try {
-      const response = await this.fetcher(config.knowledgeIndexUrl);
+      const response = await this.fetcher(
+        config.knowledgeIndexUrl,
+        config.knowledgeIndexFetchTimeoutMs
+      );
       if (!response.ok) {
         throw new Error(`Frontend help index returned HTTP ${response.status}`);
       }
@@ -237,8 +267,15 @@ export class FrontendHelpBotKnowledgeSource implements HelpBotKnowledgeSource {
         `Could not load frontend help index from ${config.knowledgeIndexUrl}`,
         error
       );
-      return this.cachedIndex;
+      return this.cachedIndex ?? this.throwUnavailable(error);
     }
+  }
+
+  private throwUnavailable(error?: unknown): never {
+    throw new HelpBotKnowledgeUnavailableError(
+      'Frontend help index is currently unavailable',
+      error
+    );
   }
 }
 

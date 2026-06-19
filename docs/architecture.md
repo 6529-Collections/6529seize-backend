@@ -316,6 +316,7 @@ Important details:
 
 - The bot is inactive unless `HELP_BOT_ENABLED`, `HELP_BOT_PROFILE_ID`, and the API's `HELP_BOT_SQS_URL` are configured.
 - V1 retrieval uses the frontend-published `/help-index.json` artifact, cached in the backend answer path, not full RAG or live repo lookup.
+- Help index fetches use a short timeout; a cold load failure produces the technical-failure reply instead of a no-reliable-source answer.
 - If Bedrock rendering is configured and fails, the worker falls back to deterministic record wording when a reliable frontend record exists.
 - If no reliable record exists, or a technical failure prevents answering, the worker posts a failure reply and changes the bot reaction to warning.
 

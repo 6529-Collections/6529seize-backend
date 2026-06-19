@@ -19,6 +19,7 @@ export interface HelpBotConfig {
   readonly bedrockModelId: string | null;
   readonly baseUrl: string;
   readonly knowledgeIndexUrl: string;
+  readonly knowledgeIndexFetchTimeoutMs: number;
   readonly knowledgeIndexCacheTtlMs: number;
 }
 
@@ -54,6 +55,10 @@ export function getHelpBotConfig(): HelpBotConfig {
     knowledgeIndexUrl:
       env.getStringOrNull('HELP_BOT_INDEX_URL')?.trim() ||
       `${baseUrl}/help-index.json`,
+    knowledgeIndexFetchTimeoutMs: normalizePositiveInteger(
+      env.getStringOrNull('HELP_BOT_INDEX_FETCH_TIMEOUT_MS'),
+      5000
+    ),
     knowledgeIndexCacheTtlMs: normalizePositiveInteger(
       env.getStringOrNull('HELP_BOT_INDEX_CACHE_TTL_MS'),
       300_000

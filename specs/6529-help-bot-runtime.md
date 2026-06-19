@@ -110,7 +110,9 @@ Initial curated topics include:
 The backend does not inspect GitHub, frontend source files, or live rendered
 pages while users wait for answers. It fetches the generated index, validates a
 usable record set, caches successful loads for `HELP_BOT_INDEX_CACHE_TTL_MS`,
-and keeps the previous valid cache if a refresh fails.
+and keeps the previous valid cache if a refresh fails. Fetches use
+`HELP_BOT_INDEX_FETCH_TIMEOUT_MS` so a slow index endpoint fails into the
+technical-failure reply path instead of stalling the worker.
 
 ### 4.2 Future docs chunking and RAG
 

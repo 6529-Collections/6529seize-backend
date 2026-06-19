@@ -1,4 +1,7 @@
-import { FrontendHelpBotKnowledgeSource } from './help-bot.knowledge';
+import {
+  FrontendHelpBotKnowledgeSource,
+  HelpBotKnowledgeUnavailableError
+} from './help-bot.knowledge';
 
 function response(body: unknown, ok = true, status = 200) {
   return {
@@ -41,14 +44,18 @@ describe('FrontendHelpBotKnowledgeSource', () => {
     expect(match?.record.sourceRefs).toEqual(['ops/help/help-index.json']);
   });
 
-  it('returns null when the frontend help index cannot be loaded', async () => {
+  it('throws and negative-caches when the frontend help index cannot be loaded', async () => {
     const fetcher = jest
       .fn()
       .mockResolvedValue(response('missing', false, 404));
     const source = new FrontendHelpBotKnowledgeSource(fetcher);
 
-    await expect(source.findMatch('what is tdh?')).resolves.toBeNull();
-    await expect(source.findMatch('what is tdh?')).resolves.toBeNull();
+    await expect(source.findMatch('what is tdh?')).rejects.toThrow(
+      HelpBotKnowledgeUnavailableError
+    );
+    await expect(source.findMatch('what is tdh?')).rejects.toThrow(
+      HelpBotKnowledgeUnavailableError
+    );
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 });
