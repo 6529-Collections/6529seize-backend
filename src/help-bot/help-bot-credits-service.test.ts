@@ -96,6 +96,31 @@ describe('HelpBotCreditsService', () => {
     );
   });
 
+  it('scopes daily automatic grant dedupe to the current credit category', async () => {
+    const { service, executor } = createService({
+      executeResults: [{ affectedRows: 1 }],
+      oneOrNullResults: [{ rating: 0 }, { balance: 0 }]
+    });
+
+    await service.grantDailyActivityCredits(
+      {
+        profileId: 'profile-1',
+        nowMillis: Date.UTC(2026, 5, 20)
+      },
+      ctx
+    );
+
+    expect(executor.execute).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT IGNORE INTO help_bot_credit_events'),
+      expect.objectContaining({
+        eventType: HelpBotCreditEventType.DAILY_ACTIVITY_GRANT,
+        sourceId: 'Help6529 Credits:2026-06-20',
+        amount: 0
+      }),
+      expect.anything()
+    );
+  });
+
   it('does not auto-grant above the current category balance cap', async () => {
     const { service, executor } = createService({
       executeResults: [{ affectedRows: 1 }],

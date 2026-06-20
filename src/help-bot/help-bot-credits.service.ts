@@ -54,6 +54,10 @@ export function getHelpBotDailyActivitySourceId(
   return new Date(nowMillis).toISOString().slice(0, 10);
 }
 
+function getHelpBotCreditEventSourceId(sourceId: string): string {
+  return `${HELP_BOT_CREDIT_CATEGORY}:${sourceId}`;
+}
+
 export class HelpBotCreditsService extends LazyDbAccessCompatibleService {
   public constructor(
     sqlExecutorGetter: () => SqlExecutor,
@@ -74,7 +78,7 @@ export class HelpBotCreditsService extends LazyDbAccessCompatibleService {
       {
         profileId,
         eventType: HelpBotCreditEventType.SIGNUP_GRANT,
-        sourceId: profileId,
+        sourceId: getHelpBotCreditEventSourceId(profileId),
         amount: HELP_BOT_SIGNUP_CREDIT_GRANT
       },
       ctx
@@ -93,7 +97,7 @@ export class HelpBotCreditsService extends LazyDbAccessCompatibleService {
       {
         profileId,
         eventType: HelpBotCreditEventType.PROFILE_SETUP_GRANT,
-        sourceId: profileId,
+        sourceId: getHelpBotCreditEventSourceId(profileId),
         amount: HELP_BOT_PROFILE_SETUP_CREDIT_GRANT
       },
       ctx
@@ -114,7 +118,9 @@ export class HelpBotCreditsService extends LazyDbAccessCompatibleService {
       {
         profileId,
         eventType: HelpBotCreditEventType.DAILY_ACTIVITY_GRANT,
-        sourceId: getHelpBotDailyActivitySourceId(nowMillis),
+        sourceId: getHelpBotCreditEventSourceId(
+          getHelpBotDailyActivitySourceId(nowMillis)
+        ),
         amount: HELP_BOT_DAILY_ACTIVITY_CREDIT_GRANT
       },
       ctx
