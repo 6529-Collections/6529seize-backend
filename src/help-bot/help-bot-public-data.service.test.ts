@@ -3,6 +3,7 @@ import { DbPoolName } from '@/db-query.options';
 import { SqlExecutor } from '@/sql-executor';
 import { HELP_BOT_PUBLIC_DATA_QUERY_TIMEOUT_MS } from './help-bot.config';
 import {
+  HelpBotPublicDataQueryPlan,
   HelpBotPublicDataLlm,
   HelpBotPublicDataService,
   buildHelpBotPublicDataQuery
@@ -133,6 +134,13 @@ describe('buildHelpBotPublicDataQuery', () => {
         filters: { meme: 1 }
       })
     ).toBeNull();
+    const injectedPlan: HelpBotPublicDataQueryPlan & { sql: string } = {
+      entity: 'meme_cards',
+      operation: 'count',
+      filters: { season: 1 },
+      sql: 'SELECT id FROM profiles'
+    };
+    expect(buildHelpBotPublicDataQuery(injectedPlan)).toBeNull();
   });
 
   it('declines comment-obfuscated and schema-qualified SQL-shaped plan values', () => {
@@ -221,6 +229,59 @@ describe('buildHelpBotPublicDataQuery', () => {
       expect(query).not.toBeNull();
       expect(query?.compiledSql).not.toMatch(
         /\b(owner|address|wallet|nft_owners|profile|identity)\b/i
+      );
+    }
+  });
+
+  it('keeps compiled public-data SQL single-statement and hard-limited', () => {
+    const plans = [
+      {
+        entity: 'meme_cards',
+        operation: 'count',
+        filters: { season: 1 }
+      },
+      {
+        entity: 'meme_cards',
+        operation: 'value',
+        metric: 'tdh_rate',
+        filters: { meme: 1 }
+      },
+      {
+        entity: 'meme_cards',
+        operation: 'max',
+        metric: 'tdh_rate',
+        filters: {},
+        limit: 999
+      },
+      {
+        entity: 'meme_cards',
+        operation: 'min',
+        metric: 'edition_size',
+        filters: {},
+        limit: 2
+      },
+      {
+        entity: 'meme_cards',
+        operation: 'sum',
+        metric: 'supply',
+        filters: { season: 1 }
+      },
+      {
+        entity: 'tdh_global',
+        operation: 'latest',
+        metric: 'total_tdh',
+        filters: {}
+      }
+    ];
+
+    for (const plan of plans) {
+      const query = buildHelpBotPublicDataQuery(plan);
+      expect(query).not.toBeNull();
+      expect(query?.compiledSql).toMatch(/^SELECT\b/i);
+      expect(query?.compiledSql).not.toMatch(/[;]/);
+      expect(query?.compiledSql).toMatch(/\bLIMIT\s+([1-9]|10)\b/i);
+      expect(query?.compiledSql).not.toMatch(
+        /\b(WITH|UNION|INSERT|UPDATE|DELETE|DROP|ALTER)\b/i
       );
     }
   });
@@ -319,7 +380,7 @@ describe('HelpBotPublicDataService', () => {
     expect(db.execute).not.toHaveBeenCalled();
   });
 
-  it('ignores unexpected SQL fields and executes only compiled backend SQL', async () => {
+  it('declines unexpected SQL fields and never executes model-supplied SQL', async () => {
     const llm: HelpBotPublicDataLlm = {
       planPublicDataQuery: jest.fn().mockResolvedValue({
         entity: 'meme_cards',
@@ -327,24 +388,49 @@ describe('HelpBotPublicDataService', () => {
         filters: { season: 1 },
         sql: 'SELECT id FROM users'
       }),
-      renderPublicDataAnswer: jest.fn().mockResolvedValue('SZN1 has 47 cards.')
+      renderPublicDataAnswer: jest.fn()
     };
     const db = new TestSqlExecutor();
-    db.execute.mockResolvedValue([{ meme_count: 47 }]);
     const service = new HelpBotPublicDataService(llm, () => db);
 
     await expect(
       service.answer({ question: 'how many memes are in szn1?' })
+    ).resolves.toBeNull();
+    expect(db.execute).not.toHaveBeenCalled();
+    expect(llm.renderPublicDataAnswer).not.toHaveBeenCalled();
+  });
+
+  it('applies backend statement timeout hints and read-pool execution to top-N queries', async () => {
+    const llm: HelpBotPublicDataLlm = {
+      planPublicDataQuery: jest.fn().mockResolvedValue({
+        entity: 'meme_cards',
+        operation: 'max',
+        metric: 'tdh_rate',
+        filters: {},
+        limit: 20
+      }),
+      renderPublicDataAnswer: jest
+        .fn()
+        .mockResolvedValue('The highest TDH rate is 99.')
+    };
+    const db = new TestSqlExecutor();
+    db.execute.mockResolvedValue([
+      { meme: 1, meme_name: 'Genesis', tdh_rate: 99 }
+    ]);
+    const service = new HelpBotPublicDataService(llm, () => db);
+
+    await expect(
+      service.answer({ question: 'what is the highest tdh rate?' })
     ).resolves.toEqual({
       answer:
-        'SZN1 has 47 cards.\n\nMore info: https://6529.io/the-memes?szn=1',
-      queryId: 'meme_cards.count'
+        'The highest TDH rate is 99.\n\nMore info: https://6529.io/the-memes',
+      queryId: 'meme_cards.max.tdh_rate'
     });
     expect(db.execute).toHaveBeenCalledWith(
       withStatementTimeoutHint(
-        'SELECT COUNT(*) AS meme_count FROM memes_extended_data m WHERE m.season = :season LIMIT 1'
+        'SELECT m.meme, m.meme_name, n.hodl_rate AS tdh_rate FROM memes_extended_data m JOIN nfts n ON n.id = m.id AND n.contract = :memesContract ORDER BY n.hodl_rate DESC, m.meme ASC LIMIT 10'
       ),
-      { season: 1 },
+      { memesContract: MEMES_CONTRACT },
       { forcePool: DbPoolName.READ }
     );
   });
