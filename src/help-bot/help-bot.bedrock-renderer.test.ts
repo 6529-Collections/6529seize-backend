@@ -5,6 +5,7 @@ const RECORD: HelpBotKnowledgeRecord = {
   id: 'network.tdh',
   kind: 'glossary',
   title: 'TDH',
+  linkLabel: 'TDH page',
   canonicalPath: '/network/tdh',
   aliases: ['tdh'],
   keywords: ['tdh'],
@@ -78,6 +79,9 @@ describe('HelpBotBedrockRenderer', () => {
     expect(readPrompt(send)).toContain('Do not print a bare URL');
     expect(readPrompt(send)).toContain(
       'Include this URL exactly once as a Markdown link target: https://6529.io/network/tdh'
+    );
+    expect(readPrompt(send)).toContain(
+      'Use this exact Markdown link label for that URL: TDH page'
     );
   });
 

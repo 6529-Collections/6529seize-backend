@@ -47,6 +47,7 @@ function buildPrompt({
     NO_SELF_INTRO_GUIDANCE,
     MARKDOWN_LINK_GUIDANCE,
     `Include this URL exactly once as a Markdown link target: ${canonicalUrl}`,
+    `Use this exact Markdown link label for that URL: ${record.linkLabel}`,
     previousBotAnswer
       ? `Previous bot answer for context:\n${previousBotAnswer}`
       : '',
@@ -106,6 +107,7 @@ function buildPublicDataAnswerPrompt({
     NO_SELF_INTRO_GUIDANCE,
     MARKDOWN_LINK_GUIDANCE,
     `Include this URL exactly once as a Markdown link target: ${canonicalUrl}`,
+    `Use this exact Markdown link label for that URL: ${title}`,
     `User question:\n${question}`,
     `Answer title:\n${title}`,
     `Public database result rows:\n${JSON.stringify(rows).slice(0, 4000)}`
