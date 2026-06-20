@@ -142,7 +142,7 @@ The backend consists of independent "loop" services that run as AWS Lambda funct
 - `nftOwnersLoop` - Tracks NFT ownership changes
 - `nftHistoryLoop` - Maintains NFT ownership history
 - `transactionsProcessingLoop` - Processes blockchain transactions
-- `tdhHistoryLoop` - Calculates TDH (The Destructive Hemisphere) scores
+- `tdhHistoryLoop` - Calculates TDH (Total Days Held) scores
 - `delegationsLoop` - Processes delegation.cash delegations
 - `marketStatsLoop` - Aggregates NFT market statistics
 - `aggregatedActivityLoop` - Calculates aggregated activity metrics
@@ -231,9 +231,9 @@ The API (`src/api-serverless/src/`) is an Express application with:
 - **Ratings** - Reputation system with categories (CIC, REP)
 - **Identities** - User profiles with proxy support
 
-**TDH (The Destructive Hemisphere):**
-- Scoring system based on NFT ownership and community participation
-- Consolidated calculations across wallet consolidations
+**TDH (Total Days Held):**
+- Scoring system based on eligible NFT ownership duration
+- Per-wallet calculations and consolidated calculations across wallet consolidations
 - Historical tracking in `tdh_history` and `tdh_global_history`
 
 **Delegations:**
