@@ -37,7 +37,9 @@ describe('HelpBotDropWriterService', () => {
           waveId: 'wave-1',
           replyToDropId: 'source-drop',
           interactionId: 'interaction-1',
-          message: 'See [TDH](https://6529.io/network/tdh).'
+          message:
+            "I don't have enough knowledge to help you here. I'm referring this to the tech team: @[current-dev] @[support]",
+          mentionedHandles: ['current-dev', 'support']
         },
         {}
       )
@@ -59,6 +61,14 @@ describe('HelpBotDropWriterService', () => {
         bypassChatSlowModeRestrictions: true
       })
     );
+    const model = createOrUpdateDrop.execute.mock.calls[0]?.[0];
+    expect(model.parts[0].content).toBe(
+      "I don't have enough knowledge to help you here. I'm referring this to the tech team: @[current-dev] @[support]"
+    );
+    expect(model.mentioned_users).toEqual([
+      { handle: 'current-dev' },
+      { handle: 'support' }
+    ]);
     expect(dropsDb.updateHideLinkPreview).toHaveBeenCalledWith(
       {
         drop_id: 'reply-drop',

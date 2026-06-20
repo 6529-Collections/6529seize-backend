@@ -50,6 +50,19 @@ const TEST_INDEX: HelpBotKnowledgeIndex = {
       relatedPaths: [],
       tags: ['subscriptions'],
       sourceRefs: []
+    },
+    {
+      id: 'profiles.overview',
+      kind: 'route',
+      title: 'Profiles',
+      linkLabel: 'Profiles',
+      canonicalPath: '/{user}',
+      aliases: ['profile page'],
+      keywords: ['profile', 'handle', 'identity'],
+      facts: ['Profile pages use a real handle route.'],
+      relatedPaths: ['/network'],
+      tags: ['profiles'],
+      sourceRefs: []
     }
   ]
 };
@@ -94,6 +107,20 @@ describe('HelpBotAnswerer', () => {
       expect(answer.answer).toContain(
         'Subscriptions do not create extra eligibility.'
       );
+    }
+  });
+
+  it('does not emit placeholder profile routes as clickable canonical links', async () => {
+    const answer = await answerer().answer({
+      question: 'where is the profile page?',
+      baseUrl: BASE_URL
+    });
+
+    expect(answer.type).toBe('ANSWER');
+    if (answer.type === 'ANSWER') {
+      expect(answer.record.id).toBe('profiles.overview');
+      expect(answer.answer).toContain('[Profiles](https://6529.io/network)');
+      expect(answer.answer).not.toContain('https://6529.io/{user}');
     }
   });
 

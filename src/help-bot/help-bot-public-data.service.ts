@@ -1,4 +1,5 @@
 import {
+  IDENTITIES_TABLE,
   LATEST_TDH_GLOBAL_HISTORY_TABLE,
   MEMES_CONTRACT,
   MEMES_EXTENDED_DATA_TABLE,
@@ -34,6 +35,7 @@ export interface HelpBotPublicDataAnswerRequest {
  */
 export const HELP_BOT_PUBLIC_DATA_ENTITIES = [
   'meme_cards',
+  'profiles',
   'tdh_global'
 ] as const;
 
@@ -85,6 +87,9 @@ interface HelpBotPublicDataExecutableQuery {
   readonly params?: Record<string, unknown>;
   readonly title: string;
   readonly canonicalPath: string;
+  readonly canonicalPathFromRows?: (
+    rows: readonly Record<string, unknown>[]
+  ) => string | null;
 }
 
 interface MemeCardMetricDefinition {
@@ -131,6 +136,7 @@ const MEME_CARD_METRICS: Record<MemeCardMetric, MemeCardMetricDefinition> = {
 };
 
 const MEME_CARD_FILTER_KEYS = ['meme', 'season'] as const;
+const PROFILE_METRICS = ['tdh'] as const;
 const TDH_GLOBAL_METRICS = ['total_tdh'] as const;
 const QUERY_PLAN_KEYS = [
   'entity',
@@ -139,12 +145,91 @@ const QUERY_PLAN_KEYS = [
   'filters',
   'limit'
 ] as const;
+const MEME_CARD_FILTER_KEY_SET = new Set<string>(MEME_CARD_FILTER_KEYS);
+const QUERY_PLAN_KEY_SET = new Set<string>(QUERY_PLAN_KEYS);
 
-const DATA_QUESTION_PATTERN =
-  /\b(how many|count|highest|lowest|max|min|total|sum|average|avg|edition size|tdh rate|hodl rate|supply|szn|season|meme\s*#?\d+|current tdh)\b/i;
+const DATA_QUESTION_TERMS = [
+  'how many',
+  'count',
+  'highest',
+  'lowest',
+  'max',
+  'min',
+  'top',
+  'total',
+  'sum',
+  'average',
+  'avg',
+  'who has',
+  'which profile',
+  'which user',
+  'profile',
+  'profiles',
+  'user',
+  'users',
+  'identity',
+  'identities',
+  'edition size',
+  'tdh rate',
+  'hodl rate',
+  'current tdh',
+  'supply',
+  'szn',
+  'season'
+] as const;
+
+const PROFILE_TDH_HINT_TERMS = [
+  'profile',
+  'profiles',
+  'user',
+  'users',
+  'person',
+  'people',
+  'identity',
+  'identities',
+  'handle',
+  'handles',
+  'account',
+  'accounts',
+  'holder',
+  'holders'
+] as const;
+
+const PROFILE_TDH_RANKING_TERMS = [
+  'highest',
+  'top',
+  'most',
+  'leader',
+  'leaders',
+  'rank',
+  'ranking',
+  'currently',
+  'current',
+  'value',
+  'which',
+  'who'
+] as const;
+
+const MEME_CARD_HINT_TERMS = [
+  'meme',
+  'memes',
+  'card',
+  'cards',
+  'nft',
+  'nfts',
+  'edition',
+  'supply',
+  'hodl rate',
+  'tdh rate'
+] as const;
 
 function isPotentialPublicDataQuestion(question: string): boolean {
-  return DATA_QUESTION_PATTERN.test(question);
+  return (
+    containsAnyNormalizedTerm(
+      normalizeIntentText(question),
+      DATA_QUESTION_TERMS
+    ) || /\bmeme\s*#?\d+\b/i.test(question)
+  );
 }
 
 function applyStatementTimeoutHint(sql: string): string {
@@ -168,17 +253,115 @@ function toCanonicalUrl(path: string): string {
   return `${HELP_BOT_BASE_URL}${normalizedPath}`;
 }
 
+function normalizeIntentText(value: string | null | undefined): string {
+  return (value ?? '')
+    .toLowerCase()
+    .replace(/[^a-z0-9+#@]+/g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ');
+}
+
+function containsNormalizedTerm(text: string, term: string): boolean {
+  return ` ${text} `.includes(` ${term} `);
+}
+
+function containsAnyNormalizedTerm(
+  text: string,
+  terms: readonly string[]
+): boolean {
+  return terms.some((term) => containsNormalizedTerm(text, term));
+}
+
+function isProfileTdhQuestion({
+  question,
+  previousBotAnswer
+}: HelpBotPublicDataAnswerRequest): boolean {
+  const normalizedQuestion = normalizeIntentText(question);
+  const normalizedPreviousAnswer = normalizeIntentText(previousBotAnswer);
+  const explicitProfileHint = containsAnyNormalizedTerm(
+    normalizedQuestion,
+    PROFILE_TDH_HINT_TERMS
+  );
+  const personQuestionHint = containsNormalizedTerm(
+    normalizedQuestion,
+    'who has'
+  );
+  const rankingHint = containsAnyNormalizedTerm(
+    normalizedQuestion,
+    PROFILE_TDH_RANKING_TERMS
+  );
+  const questionMentionsTdh = containsNormalizedTerm(normalizedQuestion, 'tdh');
+  const previousAnswerMentionsTdh = containsNormalizedTerm(
+    normalizedPreviousAnswer,
+    'tdh'
+  );
+  const memeCardHint = containsAnyNormalizedTerm(
+    normalizedQuestion,
+    MEME_CARD_HINT_TERMS
+  );
+
+  if (memeCardHint && !explicitProfileHint) {
+    return false;
+  }
+
+  return (
+    (explicitProfileHint || personQuestionHint) &&
+    rankingHint &&
+    (questionMentionsTdh || (explicitProfileHint && previousAnswerMentionsTdh))
+  );
+}
+
+function inferDeterministicPublicDataPlan(
+  request: HelpBotPublicDataAnswerRequest
+): HelpBotPublicDataQueryPlan | null {
+  if (!isProfileTdhQuestion(request)) {
+    return null;
+  }
+  return {
+    entity: 'profiles',
+    operation: 'max',
+    metric: 'tdh',
+    filters: {},
+    limit: 1
+  };
+}
+
 function compactValue(value: unknown): string {
   if (value === null || value === undefined) {
     return 'none';
   }
   if (typeof value === 'number') {
-    return Number.isInteger(value) ? value.toLocaleString('en-US') : `${value}`;
+    if (Number.isInteger(value)) {
+      return value.toLocaleString('en-US');
+    }
+    return `${value}`;
   }
   if (value instanceof Date) {
     return value.toISOString().slice(0, 10);
   }
-  return `${value}`;
+  if (typeof value === 'object') {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return '[unserializable object]';
+    }
+  }
+  if (typeof value === 'function') {
+    return '[function]';
+  }
+  if (typeof value === 'string') {
+    return value;
+  }
+  if (typeof value === 'boolean') {
+    return value ? 'true' : 'false';
+  }
+  if (typeof value === 'bigint') {
+    return '[bigint]';
+  }
+  if (typeof value === 'symbol') {
+    return value.description ?? '[symbol]';
+  }
+  return '[unknown]';
 }
 
 function compactRow(row: Record<string, unknown>): string {
@@ -207,18 +390,25 @@ function buildDeterministicDataAnswer({
       label: title
     });
   }
-  const firstRow = rows[0];
-  const valueText =
-    rows.length === 1
-      ? Object.entries(firstRow).length === 1
-        ? compactValue(Object.values(firstRow)[0])
-        : compactRow(firstRow)
-      : rows.map((row, index) => `${index + 1}. ${compactRow(row)}`).join('\n');
+  const valueText = compactRows(rows);
   return ensureCanonicalMarkdownLink({
     text: `${title}: ${valueText}`,
     canonicalUrl,
     label: title
   });
+}
+
+function compactRows(rows: readonly Record<string, unknown>[]): string {
+  if (rows.length !== 1) {
+    return rows
+      .map((row, index) => `${index + 1}. ${compactRow(row)}`)
+      .join('\n');
+  }
+  const entries = Object.entries(rows[0]);
+  if (entries.length === 1) {
+    return compactValue(entries[0][1]);
+  }
+  return compactRow(rows[0]);
 }
 
 function normalizeRenderedDataAnswer(
@@ -231,16 +421,20 @@ function normalizeRenderedDataAnswer(
     canonicalUrl,
     label
   });
-  return withUrl.length <= 1200 ? withUrl : `${withUrl.slice(0, 1197)}...`;
+  if (withUrl.length <= 1200) {
+    return withUrl;
+  }
+  return `${withUrl.slice(0, 1197)}...`;
 }
 
 function readStringEnum<T extends string>(
   value: unknown,
   allowed: readonly T[]
 ): T | null {
-  return typeof value === 'string' && allowed.includes(value as T)
-    ? (value as T)
-    : null;
+  if (typeof value !== 'string') {
+    return null;
+  }
+  return allowed.find((allowedValue) => allowedValue === value) ?? null;
 }
 
 function readPlanFilters(filters: unknown): Record<string, unknown> | null {
@@ -253,56 +447,51 @@ function readPlanFilters(filters: unknown): Record<string, unknown> | null {
 }
 
 function readPositiveInteger(value: unknown, max: number): number | null {
-  const parsed =
-    typeof value === 'number'
-      ? value
-      : typeof value === 'string' && /^\d+$/.test(value)
-        ? Number(value)
-        : null;
-  return parsed !== null &&
-    Number.isInteger(parsed) &&
-    parsed > 0 &&
-    parsed <= max
-    ? parsed
-    : null;
+  const parsed = readIntegerValue(value);
+  if (
+    parsed === null ||
+    !Number.isInteger(parsed) ||
+    parsed <= 0 ||
+    parsed > max
+  ) {
+    return null;
+  }
+  return parsed;
 }
 
 function readLimit(value: unknown): number {
-  const parsed =
-    typeof value === 'number'
-      ? value
-      : typeof value === 'string' && /^\d+$/.test(value)
-        ? Number(value)
-        : null;
+  const parsed = readIntegerValue(value);
   if (parsed === null || !Number.isInteger(parsed) || parsed <= 0) {
     return 1;
   }
   return Math.min(parsed, HELP_BOT_PUBLIC_DATA_MAX_ROWS);
 }
 
+function readIntegerValue(value: unknown): number | null {
+  if (typeof value === 'number') {
+    return value;
+  }
+  if (typeof value === 'string' && /^\d+$/.test(value)) {
+    return Number(value);
+  }
+  return null;
+}
+
 function hasOnlyKnownPlanKeys(plan: HelpBotPublicDataQueryPlan): boolean {
-  return Object.keys(plan).every((key) =>
-    QUERY_PLAN_KEYS.includes(key as never)
-  );
+  return Object.keys(plan).every((key) => QUERY_PLAN_KEY_SET.has(key));
 }
 
 function readMemeCardFilters(
   filters: Record<string, unknown>
 ): MemeCardFilterValues | null {
   const unknownKeys = Object.keys(filters).filter(
-    (key) => !MEME_CARD_FILTER_KEYS.includes(key as never)
+    (key) => !MEME_CARD_FILTER_KEY_SET.has(key)
   );
   if (unknownKeys.length) {
     return null;
   }
-  const meme =
-    filters.meme === undefined
-      ? undefined
-      : readPositiveInteger(filters.meme, 100_000);
-  const season =
-    filters.season === undefined
-      ? undefined
-      : readPositiveInteger(filters.season, 10_000);
+  const meme = readOptionalPositiveInteger(filters.meme, 100_000);
+  const season = readOptionalPositiveInteger(filters.season, 10_000);
   if (
     (filters.meme !== undefined && meme === null) ||
     (filters.season !== undefined && season === null)
@@ -310,6 +499,13 @@ function readMemeCardFilters(
     return null;
   }
   return { meme: meme ?? undefined, season: season ?? undefined };
+}
+
+function readOptionalPositiveInteger(
+  value: unknown,
+  max: number
+): number | null | undefined {
+  return value === undefined ? undefined : readPositiveInteger(value, max);
 }
 
 function buildMemeCardsWhere(filters: MemeCardFilterValues): {
@@ -342,6 +538,19 @@ function canonicalMemeCardsPath(filters: MemeCardFilterValues): string {
   return '/the-memes';
 }
 
+function canonicalMemeCardPathFromRows(
+  rows: readonly Record<string, unknown>[]
+): string | null {
+  if (rows.length !== 1) {
+    return null;
+  }
+  const meme = rows[0]?.meme;
+  if (typeof meme === 'number' && Number.isInteger(meme) && meme > 0) {
+    return `/the-memes/${meme}`;
+  }
+  return null;
+}
+
 function describeMemeCardsScope(filters: MemeCardFilterValues): string {
   if (filters.meme !== undefined) {
     return `Meme #${filters.meme}`;
@@ -350,6 +559,13 @@ function describeMemeCardsScope(filters: MemeCardFilterValues): string {
     return `Meme Cards in SZN${filters.season}`;
   }
   return 'Meme Cards';
+}
+
+function describeMemeCardsSeasonScope(filters: MemeCardFilterValues): string {
+  if (filters.season === undefined) {
+    return '';
+  }
+  return ` in SZN${filters.season}`;
 }
 
 function titleCaseOperation(operation: HelpBotPublicDataOperation): string {
@@ -371,15 +587,15 @@ function buildMemeCardsFromSql(metric?: MemeCardMetricDefinition): {
   readonly fromSql: string;
   readonly params: Record<string, unknown>;
 } {
-  if (!metric?.requiresNfts) {
+  if (metric?.requiresNfts) {
     return {
-      fromSql: `FROM ${MEMES_EXTENDED_DATA_TABLE} m`,
-      params: {}
+      fromSql: `FROM ${MEMES_EXTENDED_DATA_TABLE} m JOIN ${NFTS_TABLE} n ON n.id = m.id AND n.contract = :memesContract`,
+      params: { memesContract: MEMES_CONTRACT }
     };
   }
   return {
-    fromSql: `FROM ${MEMES_EXTENDED_DATA_TABLE} m JOIN ${NFTS_TABLE} n ON n.id = m.id AND n.contract = :memesContract`,
-    params: { memesContract: MEMES_CONTRACT }
+    fromSql: `FROM ${MEMES_EXTENDED_DATA_TABLE} m`,
+    params: {}
   };
 }
 
@@ -449,7 +665,7 @@ function buildMemeCardsSortedQuery(
   const from = buildMemeCardsFromSql(metric);
   const direction = operation === 'max' ? 'DESC' : 'ASC';
   const titlePrefix = titleCaseOperation(operation);
-  const scope = filters.season !== undefined ? ` in SZN${filters.season}` : '';
+  const scope = describeMemeCardsSeasonScope(filters);
   return {
     queryId: buildQueryId('meme_cards', operation, metricKey),
     compiledSql: sqlJoin([
@@ -461,7 +677,8 @@ function buildMemeCardsSortedQuery(
     ]),
     params: { ...from.params, ...where.params },
     title: `${titlePrefix} Meme Card ${metric.label}${scope}`,
-    canonicalPath: canonicalMemeCardsPath(filters)
+    canonicalPath: canonicalMemeCardsPath(filters),
+    canonicalPathFromRows: canonicalMemeCardPathFromRows
   };
 }
 
@@ -481,7 +698,7 @@ function buildMemeCardsAggregateQuery(
   const from = buildMemeCardsFromSql(metric);
   const sqlOperation = operation === 'sum' ? 'SUM' : 'AVG';
   const titlePrefix = titleCaseOperation(operation);
-  const scope = filters.season !== undefined ? ` in SZN${filters.season}` : '';
+  const scope = describeMemeCardsSeasonScope(filters);
   return {
     queryId: buildQueryId('meme_cards', operation, metricKey),
     compiledSql: sqlJoin([
@@ -560,6 +777,61 @@ function buildTdhGlobalQuery(
   };
 }
 
+function readProfileMetric(
+  metric: unknown
+): (typeof PROFILE_METRICS)[number] | null {
+  return readStringEnum(metric, PROFILE_METRICS);
+}
+
+function readEmptyFilters(filters: unknown): Record<string, never> | null {
+  const rawFilters = readPlanFilters(filters);
+  if (rawFilters === null || Object.keys(rawFilters).length) {
+    return null;
+  }
+  return {};
+}
+
+function canonicalProfilePathFromRows(
+  rows: readonly Record<string, unknown>[]
+): string | null {
+  if (rows.length !== 1) {
+    return null;
+  }
+  const handle = rows[0]?.handle;
+  if (typeof handle !== 'string') {
+    return null;
+  }
+  const routeHandle = handle.trim().replace(/^@+/, '');
+  return routeHandle ? `/${encodeURIComponent(routeHandle)}` : null;
+}
+
+function buildProfilesQuery(
+  plan: HelpBotPublicDataQueryPlan
+): HelpBotPublicDataExecutableQuery | null {
+  const operation = readStringEnum(
+    plan.operation,
+    HELP_BOT_PUBLIC_DATA_OPERATIONS
+  );
+  const metric = readProfileMetric(plan.metric);
+  const filters = readEmptyFilters(plan.filters);
+  if (!metric || filters === null || operation !== 'max') {
+    return null;
+  }
+  const limit = readLimit(plan.limit);
+  return {
+    queryId: buildQueryId('profiles', operation, metric),
+    compiledSql: sqlJoin([
+      `SELECT i.handle, i.tdh AS tdh FROM ${IDENTITIES_TABLE} i`,
+      "WHERE i.handle IS NOT NULL AND i.handle <> '' AND i.tdh > 0",
+      'ORDER BY i.tdh DESC, i.handle ASC',
+      `LIMIT ${limit}`
+    ]),
+    title: 'Highest Profile TDH',
+    canonicalPath: '/network/tdh',
+    canonicalPathFromRows: canonicalProfilePathFromRows
+  };
+}
+
 export function buildHelpBotPublicDataQuery(
   plan: HelpBotPublicDataQueryPlan
 ): HelpBotPublicDataExecutableQuery | null {
@@ -569,6 +841,9 @@ export function buildHelpBotPublicDataQuery(
   const entity = readStringEnum(plan.entity, HELP_BOT_PUBLIC_DATA_ENTITIES);
   if (entity === 'meme_cards') {
     return buildMemeCardsQuery(plan);
+  }
+  if (entity === 'profiles') {
+    return buildProfilesQuery(plan);
   }
   if (entity === 'tdh_global') {
     return buildTdhGlobalQuery(plan);
@@ -634,7 +909,9 @@ export class HelpBotPublicDataService {
     if (!rowsContainAnswer(rows)) {
       return null;
     }
-    const canonicalUrl = toCanonicalUrl(query.canonicalPath);
+    const canonicalUrl = toCanonicalUrl(
+      query.canonicalPathFromRows?.(rows) ?? query.canonicalPath
+    );
 
     try {
       const rendered = await withTimeout(
@@ -675,6 +952,10 @@ export class HelpBotPublicDataService {
     llm: HelpBotPublicDataLlm,
     request: HelpBotPublicDataAnswerRequest
   ): Promise<HelpBotPublicDataQueryPlan | null> {
+    const deterministicPlan = inferDeterministicPublicDataPlan(request);
+    if (deterministicPlan) {
+      return deterministicPlan;
+    }
     try {
       return await withTimeout(
         llm.planPublicDataQuery({

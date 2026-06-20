@@ -5,7 +5,7 @@ Rules:
 - Return strict JSON only with the semantic plan shape below.
 - Do not return SQL, table names, column names, joins, or expressions.
 - Return {"entity":null} when the question is not answerable from this catalog.
-- Only answer public aggregate or public Meme Card lookup questions.
+- Only answer public aggregate, public Meme Card lookup, or public profile TDH leaderboard questions.
 - Use numeric filter and limit values only.
 - Prefer limit 1 for highest/lowest questions unless the user asks for a top-N list.
 
@@ -55,4 +55,17 @@ Entities:
       -> {"entity":"tdh_global","operation":"latest","metric":"total_tdh","filters":{},"limit":1}
     - "what is the current total TDH"
       -> {"entity":"tdh_global","operation":"latest","metric":"total_tdh","filters":{},"limit":1}
+
+- profiles
+  Purpose: Public profile TDH leaderboard stats. Use this when the user asks who, which profile, which user, or which identity has the highest/current TDH.
+  Operations:
+    - max: highest profile value for a metric.
+  Metrics:
+    - tdh: current public profile TDH.
+  Filters: none.
+  Examples:
+    - "who has the highest tdh currently"
+      -> {"entity":"profiles","operation":"max","metric":"tdh","filters":{},"limit":1}
+    - "which profile has the highest TDH and what is the value"
+      -> {"entity":"profiles","operation":"max","metric":"tdh","filters":{},"limit":1}
 `;

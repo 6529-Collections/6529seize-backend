@@ -81,6 +81,6 @@ export function buildHelpBotNoReliableSourceReply(
   if (!mentionedHandles.length) {
     return HELP_BOT_NO_RELIABLE_SOURCE_BASE_REPLY;
   }
-  const mentions = mentionedHandles.map((handle) => `@${handle}`).join(' ');
-  return `${HELP_BOT_NO_RELIABLE_SOURCE_BASE_REPLY} ${mentions}`;
+  const mentions = mentionedHandles.map((handle) => `@[${handle}]`).join(' ');
+  return `${HELP_BOT_NO_RELIABLE_SOURCE_BASE_REPLY} I'm referring this to the tech team: ${mentions}`;
 }
