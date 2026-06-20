@@ -92,6 +92,23 @@ function buildBoundaryRecord(): HelpBotKnowledgeRecord {
   };
 }
 
+function buildCapabilitiesRecord(): HelpBotKnowledgeRecord {
+  return {
+    id: 'help-bot.capabilities',
+    kind: 'guardrail',
+    title: 'Help bot capabilities',
+    canonicalPath: '/waves',
+    aliases: ['help bot capabilities'],
+    keywords: ['help', 'capabilities'],
+    facts: [
+      'The help bot can answer public 6529 product questions and ask for a topic when the user only asks for help.'
+    ],
+    relatedPaths: [],
+    tags: ['help-bot', 'guardrail'],
+    sourceRefs: ['backend help bot capability classifier']
+  };
+}
+
 function normalizeBoundaryText(value: string): string {
   return value
     .toLowerCase()
@@ -105,6 +122,19 @@ function isPromptOrPrivateDataRequest(normalizedQuestion: string): boolean {
     /\b(ignore|forget|bypass|override)\b.*\b(instruction|instructions|prompt|rules|guardrail|policy)\b/,
     /\b(system|developer|hidden)\s+(prompt|instruction|instructions|message)\b/,
     /\b(show|reveal|read|dump|leak|expose|send|give|tell me|what did)\b.*\b(private|dm|dms|secret|token|password|api key|private key)\b/
+  ].some((pattern) => pattern.test(normalizedQuestion));
+}
+
+function isGenericHelpRequest(normalizedQuestion: string): boolean {
+  return [
+    /^(help|help me|i need help|need help|help please|please help)$/,
+    /^(can|could|would) you help( me)?$/,
+    /^what (can|could) you (do|help with|answer)$/,
+    /^what do you do$/,
+    /^how (can|could|do) you help( me)?$/,
+    /^what should i ask( you)?$/,
+    /^what questions can i ask( you)?$/,
+    /^(show me )?(help|options|commands|menu)$/
   ].some((pattern) => pattern.test(normalizedQuestion));
 }
 
@@ -225,6 +255,14 @@ function buildBoundaryAnswer(question: string): string | null {
   return null;
 }
 
+function buildGenericHelpAnswer(question: string): string | null {
+  const normalizedQuestion = normalizeBoundaryText(question);
+  if (!isGenericHelpRequest(normalizedQuestion)) {
+    return null;
+  }
+  return 'What do you need help with? I can answer public 6529 product questions about TDH, Waves, subscriptions, drops, profiles, The Memes, public data, and where to find things on 6529.io. Reply with a topic or question.';
+}
+
 export class HelpBotAnswerer {
   private readonly logger = Logger.get(this.constructor.name);
 
@@ -243,6 +281,15 @@ export class HelpBotAnswerer {
         type: 'ANSWER',
         answer: boundaryAnswer,
         record: buildBoundaryRecord()
+      };
+    }
+
+    const genericHelpAnswer = buildGenericHelpAnswer(request.question);
+    if (genericHelpAnswer) {
+      return {
+        type: 'ANSWER',
+        answer: genericHelpAnswer,
+        record: buildCapabilitiesRecord()
       };
     }
 
