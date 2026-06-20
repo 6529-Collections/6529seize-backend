@@ -346,7 +346,10 @@ function compactValue(value: unknown): string {
       return '[unserializable object]';
     }
   }
-  return String(value);
+  if (typeof value === 'function') {
+    return '[function]';
+  }
+  return value.toString();
 }
 
 function compactRow(row: Record<string, unknown>): string {
