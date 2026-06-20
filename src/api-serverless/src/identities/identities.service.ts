@@ -48,8 +48,12 @@ import { profilesDb } from '@/profiles/profiles.db';
 import { profileWavesDb } from '@/profiles/profile-waves.db';
 import { NULL_ADDRESS } from '@/constants';
 import { findEnsForAddress } from '@/ens-lookup';
+import { helpBotCreditsService } from '@/help-bot/help-bot-credits.service';
+import { Logger } from '@/logging';
 
 export class IdentitiesService {
+  private readonly logger = Logger.get(this.constructor.name);
+
   constructor(
     private readonly identitiesDb: IdentitiesDb,
     private readonly identitySubscriptionsDb: IdentitySubscriptionsDb,
@@ -605,6 +609,19 @@ export class IdentitiesService {
           newProfileEntities.map((it) => it.external_id),
           ctx
         );
+        for (const profile of newProfileEntities) {
+          try {
+            await helpBotCreditsService.grantSignupCredits(
+              { profileId: profile.external_id },
+              ctx
+            );
+          } catch (error) {
+            this.logger.error(
+              `Failed to grant signup help bot credits for profile ${profile.external_id}`,
+              error
+            );
+          }
+        }
       }
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->bulkCreateIdentities`);

@@ -8,6 +8,8 @@ import { sqs, SQS } from '@/sqs';
 import { Time } from '@/time';
 import {
   HELP_BOT_FAILURE_REACTION,
+  HELP_BOT_INSUFFICIENT_CREDITS_REACTION,
+  HELP_BOT_INSUFFICIENT_CREDITS_REPLY,
   HELP_BOT_REPLY_QUEUE_NAME,
   HELP_BOT_SEEN_REACTION,
   HELP_BOT_SPAM_REACTION,
@@ -15,6 +17,10 @@ import {
   HELP_BOT_USER_SPAM_WINDOW_MS,
   HELP_BOT_TECHNICAL_FAILURE_REPLY
 } from './help-bot.config';
+import {
+  helpBotCreditsService,
+  HelpBotCreditsService
+} from './help-bot-credits.service';
 import { detectHelpBotTrigger } from './help-bot.detector';
 import {
   helpBotDropWriterService,
@@ -44,7 +50,8 @@ export class HelpBotTriggerService {
     private readonly dropsService: DropsApiService,
     private readonly sqs: SQS,
     private readonly profileResolver: HelpBotProfileResolver,
-    private readonly wavesDb: WavesApiDb
+    private readonly wavesDb: WavesApiDb,
+    private readonly creditsService: HelpBotCreditsService
   ) {}
 
   public async handleCreatedDrop(
@@ -130,6 +137,20 @@ export class HelpBotTriggerService {
         return;
       }
 
+      const chargeResult = await this.tryChargeQuestionCredit(
+        {
+          botProfileId,
+          interaction,
+          authorProfileId: trigger.authorProfileId,
+          triggerDropId: trigger.triggerDropId,
+          waveId: trigger.waveId
+        },
+        ctx
+      );
+      if (!chargeResult) {
+        return;
+      }
+
       await this.trySetReaction(
         {
           botProfileId,
@@ -154,6 +175,7 @@ export class HelpBotTriggerService {
           interactionId: interaction.id,
           targetDropId: trigger.targetDropId,
           waveId: trigger.waveId,
+          authorProfileId: trigger.authorProfileId,
           error,
           ctx
         });
@@ -252,11 +274,115 @@ export class HelpBotTriggerService {
     }
   }
 
+  private async tryChargeQuestionCredit(
+    {
+      botProfileId,
+      interaction,
+      authorProfileId,
+      triggerDropId,
+      waveId
+    }: {
+      readonly botProfileId: string;
+      readonly interaction: { readonly id: string };
+      readonly authorProfileId: string;
+      readonly triggerDropId: string;
+      readonly waveId: string;
+    },
+    ctx: RequestContext
+  ): Promise<boolean> {
+    try {
+      const chargeResult = await this.creditsService.chargeQuestionCredit(
+        {
+          profileId: authorProfileId,
+          interactionId: interaction.id
+        },
+        ctx
+      );
+      if (chargeResult.charged) {
+        return true;
+      }
+      await this.handleInsufficientCredits({
+        botProfileId,
+        interactionId: interaction.id,
+        triggerDropId,
+        waveId,
+        balance: chargeResult.balance,
+        ctx
+      });
+      return false;
+    } catch (error) {
+      await this.handleEnqueueFailure({
+        botProfileId,
+        interactionId: interaction.id,
+        targetDropId: triggerDropId,
+        waveId,
+        authorProfileId,
+        error,
+        ctx
+      });
+      return false;
+    }
+  }
+
+  private async handleInsufficientCredits({
+    botProfileId,
+    interactionId,
+    triggerDropId,
+    waveId,
+    balance,
+    ctx
+  }: {
+    readonly botProfileId: string;
+    readonly interactionId: string;
+    readonly triggerDropId: string;
+    readonly waveId: string;
+    readonly balance: number | null;
+    readonly ctx: RequestContext;
+  }): Promise<void> {
+    await this.trySetReaction(
+      {
+        botProfileId,
+        dropId: triggerDropId,
+        waveId,
+        reaction: HELP_BOT_INSUFFICIENT_CREDITS_REACTION
+      },
+      ctx
+    );
+    let replyDropId: string | null = null;
+    try {
+      const reply = await this.dropWriter.reply(
+        {
+          botProfileId,
+          waveId,
+          replyToDropId: triggerDropId,
+          interactionId,
+          message: HELP_BOT_INSUFFICIENT_CREDITS_REPLY
+        },
+        ctx
+      );
+      replyDropId = reply.id;
+    } catch (error) {
+      this.logger.error(
+        `Failed to post help bot insufficient-credits reply for interaction ${interactionId}`,
+        error
+      );
+    }
+    await this.interactionsDb.markInsufficientCredits(
+      {
+        id: interactionId,
+        replyDropId,
+        failureReason: `Help bot credit balance ${balance ?? 'unknown'} is below the question cost`
+      },
+      ctx
+    );
+  }
+
   private async handleEnqueueFailure({
     botProfileId,
     interactionId,
     targetDropId,
     waveId,
+    authorProfileId,
     error,
     ctx
   }: {
@@ -264,6 +390,7 @@ export class HelpBotTriggerService {
     readonly interactionId: string;
     readonly targetDropId: string;
     readonly waveId: string;
+    readonly authorProfileId: string;
     readonly error: unknown;
     readonly ctx: RequestContext;
   }): Promise<void> {
@@ -280,6 +407,20 @@ export class HelpBotTriggerService {
       },
       ctx
     );
+    try {
+      await this.creditsService.refundQuestionCredit(
+        {
+          profileId: authorProfileId,
+          interactionId
+        },
+        ctx
+      );
+    } catch (refundError) {
+      this.logger.error(
+        `Failed to refund help bot credit for enqueue failure ${interactionId}`,
+        refundError
+      );
+    }
     try {
       const reply = await this.dropWriter.reply(
         {
@@ -317,5 +458,6 @@ export const helpBotTriggerService = new HelpBotTriggerService(
   dropsService,
   sqs,
   helpBotProfileResolver,
-  wavesApiDb
+  wavesApiDb,
+  helpBotCreditsService
 );
