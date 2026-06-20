@@ -349,7 +349,19 @@ function compactValue(value: unknown): string {
   if (typeof value === 'function') {
     return '[function]';
   }
-  return value.toString();
+  if (typeof value === 'string') {
+    return value;
+  }
+  if (typeof value === 'boolean') {
+    return value ? 'true' : 'false';
+  }
+  if (typeof value === 'bigint') {
+    return `${value}`;
+  }
+  if (typeof value === 'symbol') {
+    return value.description ?? '[symbol]';
+  }
+  return '[unknown]';
 }
 
 function compactRow(row: Record<string, unknown>): string {
