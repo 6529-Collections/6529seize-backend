@@ -148,11 +148,34 @@ const QUERY_PLAN_KEYS = [
 const MEME_CARD_FILTER_KEY_SET = new Set<string>(MEME_CARD_FILTER_KEYS);
 const QUERY_PLAN_KEY_SET = new Set<string>(QUERY_PLAN_KEYS);
 
-const DATA_QUESTION_PATTERNS = [
-  /\b(how many|count|highest|lowest|max|min|top|total|sum|average|avg)\b/i,
-  /\b(who has|which profile|which user|profile|profiles|user|users|identity|identities)\b/i,
-  /\b(edition size|tdh rate|hodl rate|current tdh|supply|szn|season)\b/i,
-  /\bmeme\s*#?\d+\b/i
+const DATA_QUESTION_TERMS = [
+  'how many',
+  'count',
+  'highest',
+  'lowest',
+  'max',
+  'min',
+  'top',
+  'total',
+  'sum',
+  'average',
+  'avg',
+  'who has',
+  'which profile',
+  'which user',
+  'profile',
+  'profiles',
+  'user',
+  'users',
+  'identity',
+  'identities',
+  'edition size',
+  'tdh rate',
+  'hodl rate',
+  'current tdh',
+  'supply',
+  'szn',
+  'season'
 ] as const;
 
 const PROFILE_TDH_HINT_TERMS = [
@@ -201,7 +224,12 @@ const MEME_CARD_HINT_TERMS = [
 ] as const;
 
 function isPotentialPublicDataQuestion(question: string): boolean {
-  return DATA_QUESTION_PATTERNS.some((pattern) => pattern.test(question));
+  return (
+    containsAnyNormalizedTerm(
+      normalizeIntentText(question),
+      DATA_QUESTION_TERMS
+    ) || /\bmeme\s*#?\d+\b/i.test(question)
+  );
 }
 
 function applyStatementTimeoutHint(sql: string): string {
@@ -303,7 +331,10 @@ function compactValue(value: unknown): string {
     return 'none';
   }
   if (typeof value === 'number') {
-    return Number.isInteger(value) ? value.toLocaleString('en-US') : `${value}`;
+    if (Number.isInteger(value)) {
+      return value.toLocaleString('en-US');
+    }
+    return `${value}`;
   }
   if (value instanceof Date) {
     return value.toISOString().slice(0, 10);
@@ -375,7 +406,10 @@ function normalizeRenderedDataAnswer(
     canonicalUrl,
     label
   });
-  return withUrl.length <= 1200 ? withUrl : `${withUrl.slice(0, 1197)}...`;
+  if (withUrl.length <= 1200) {
+    return withUrl;
+  }
+  return `${withUrl.slice(0, 1197)}...`;
 }
 
 function readStringEnum<T extends string>(
