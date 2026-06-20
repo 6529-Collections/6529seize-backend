@@ -9,6 +9,7 @@ export interface HelpBotKnowledgeRecord {
   readonly id: string;
   readonly kind: string;
   readonly title: string;
+  readonly linkLabel: string;
   readonly canonicalPath: string;
   readonly aliases: string[];
   readonly keywords: string[];
@@ -96,6 +97,15 @@ function readCanonicalPath(raw: Record<string, unknown>): string | null {
   return readString(raw.canonicalPath) ?? readString(raw.canonical_path);
 }
 
+function readLinkLabel(
+  raw: Record<string, unknown>,
+  fallbackTitle: string
+): string {
+  return (
+    readString(raw.linkLabel) ?? readString(raw.link_label) ?? fallbackTitle
+  );
+}
+
 function readSourceRefs(raw: Record<string, unknown>): string[] {
   return readStringArray(raw.sourceRefs).concat(
     readStringArray(raw.source_refs)
@@ -120,6 +130,7 @@ function normalizeRecord(value: unknown): HelpBotKnowledgeRecord | null {
     id,
     kind: readString(raw.kind) ?? 'curated',
     title,
+    linkLabel: readLinkLabel(raw, title),
     canonicalPath,
     aliases: aliases.length ? aliases : [title],
     keywords: keywords.length ? keywords : aliases.concat([title]),

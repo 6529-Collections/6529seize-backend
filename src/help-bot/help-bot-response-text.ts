@@ -20,6 +20,12 @@ function escapeMarkdownLinkLabel(label: string): string {
   return label.replace(/([\\[\]])/g, '\\$1');
 }
 
+function isGenericLinkLabel(label: string): boolean {
+  return /^(?:more\s+info|learn\s+more|source|details|read\s+more|here)$/i.test(
+    label.trim()
+  );
+}
+
 export function formatHelpBotMarkdownLink({
   label,
   url
@@ -43,15 +49,24 @@ export function ensureCanonicalMarkdownLink({
   const compact = text.replace(/\n{3,}/g, '\n\n');
   const markdownLink = formatHelpBotMarkdownLink({ label, url: canonicalUrl });
   const markdownLinkPattern = new RegExp(
-    `\\[[^\\]]+\\]\\(${escapeRegExp(canonicalUrl)}\\)`
+    `\\[([^\\]]+)\\]\\(${escapeRegExp(canonicalUrl)}\\)`,
+    'g'
   );
-  if (markdownLinkPattern.test(compact)) {
-    return compact;
+  let sawCanonicalMarkdownLink = false;
+  const withPreferredLinkLabels = compact.replace(
+    markdownLinkPattern,
+    (match, existingLabel: string) => {
+      sawCanonicalMarkdownLink = true;
+      return isGenericLinkLabel(existingLabel) ? markdownLink : match;
+    }
+  );
+  if (sawCanonicalMarkdownLink) {
+    return withPreferredLinkLabels;
   }
-  if (compact.includes(canonicalUrl)) {
-    return compact.split(canonicalUrl).join(markdownLink);
+  if (withPreferredLinkLabels.includes(canonicalUrl)) {
+    return withPreferredLinkLabels.split(canonicalUrl).join(markdownLink);
   }
-  return `${compact}\n\nMore info: ${markdownLink}`;
+  return `${withPreferredLinkLabels}\n\nMore info: ${markdownLink}`;
 }
 
 export function stripHelpBotSelfIntro(text: string): string {

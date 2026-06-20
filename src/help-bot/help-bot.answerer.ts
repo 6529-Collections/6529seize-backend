@@ -56,7 +56,7 @@ function buildDeterministicAnswer(
   return ensureCanonicalMarkdownLink({
     text: record.facts.join(' '),
     canonicalUrl,
-    label: record.title
+    label: record.linkLabel
   });
 }
 
@@ -78,6 +78,7 @@ function buildPublicDataRecord(): HelpBotKnowledgeRecord {
     id: 'public-data.query',
     kind: 'public_data',
     title: '6529 public data',
+    linkLabel: 'Open Data',
     canonicalPath: '/open-data',
     aliases: ['public data'],
     keywords: ['public', 'data'],
@@ -93,6 +94,7 @@ function buildBoundaryRecord(): HelpBotKnowledgeRecord {
     id: 'help-bot.boundary.playful',
     kind: 'guardrail',
     title: 'Help bot boundary',
+    linkLabel: 'Waves',
     canonicalPath: '/waves',
     aliases: ['help bot boundary'],
     keywords: ['help', 'bot', 'boundary'],
@@ -110,6 +112,7 @@ function buildCapabilitiesRecord(): HelpBotKnowledgeRecord {
     id: 'help-bot.capabilities',
     kind: 'guardrail',
     title: 'Help bot capabilities',
+    linkLabel: 'Waves',
     canonicalPath: '/waves',
     aliases: ['help bot capabilities'],
     keywords: ['help', 'capabilities'],
@@ -361,7 +364,7 @@ export class HelpBotAnswerer {
           answer: normalizeRenderedAnswer(
             rendered,
             canonicalUrl,
-            match.record.title
+            match.record.linkLabel
           ),
           record: match.record
         };

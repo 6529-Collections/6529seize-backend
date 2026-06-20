@@ -76,4 +76,16 @@ describe('ensureCanonicalMarkdownLink', () => {
       })
     ).toBe('See [the TDH page](https://6529.io/network/tdh).');
   });
+
+  it('replaces generic markdown link labels with the canonical label', () => {
+    expect(
+      ensureCanonicalMarkdownLink({
+        text: 'Subscriptions do not create extra eligibility. [More info](https://6529.io/about/subscriptions)',
+        canonicalUrl: 'https://6529.io/about/subscriptions',
+        label: 'Subscriptions'
+      })
+    ).toBe(
+      'Subscriptions do not create extra eligibility. [Subscriptions](https://6529.io/about/subscriptions)'
+    );
+  });
 });

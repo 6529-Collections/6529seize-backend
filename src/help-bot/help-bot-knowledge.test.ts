@@ -24,6 +24,7 @@ describe('FrontendHelpBotKnowledgeSource', () => {
             id: 'network.tdh',
             kind: 'glossary',
             title: 'TDH',
+            link_label: 'TDH page',
             canonical_path: '/network/tdh',
             aliases: ['tdh', 'total days held'],
             keywords: ['tdh', 'total', 'days', 'held'],
@@ -39,6 +40,7 @@ describe('FrontendHelpBotKnowledgeSource', () => {
     const match = await source.findMatch('what is tdh?');
 
     expect(match?.record.id).toBe('network.tdh');
+    expect(match?.record.linkLabel).toBe('TDH page');
     expect(match?.record.canonicalPath).toBe('/network/tdh');
     expect(match?.record.relatedPaths).toEqual(['/network/definitions']);
     expect(match?.record.sourceRefs).toEqual(['ops/help/help-index.json']);
