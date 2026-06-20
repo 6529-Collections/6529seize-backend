@@ -82,6 +82,29 @@ describe('buildHelpBotPublicDataQuery', () => {
     );
   });
 
+  it('compiles highest profile TDH plans to a bounded public leaderboard query', () => {
+    const query = buildHelpBotPublicDataQuery({
+      entity: 'profiles',
+      operation: 'max',
+      metric: 'tdh',
+      filters: {},
+      limit: 1
+    });
+
+    expect(query).toEqual(
+      expect.objectContaining({
+        queryId: 'profiles.max.tdh',
+        compiledSql:
+          "SELECT i.handle, i.tdh AS tdh FROM identities i WHERE i.handle IS NOT NULL AND i.handle <> '' AND i.tdh > 0 ORDER BY i.tdh DESC, i.handle ASC LIMIT 1",
+        title: 'Highest Profile TDH',
+        canonicalPath: '/network/tdh'
+      })
+    );
+    expect(query?.compiledSql).not.toMatch(
+      /\b(owner|address|wallet|nft_owners|primary_address)\b/i
+    );
+  });
+
   it('declines unknown plan fields and invalid numeric filters', () => {
     expect(
       buildHelpBotPublicDataQuery({
@@ -271,6 +294,13 @@ describe('buildHelpBotPublicDataQuery', () => {
         operation: 'latest',
         metric: 'total_tdh',
         filters: {}
+      },
+      {
+        entity: 'profiles',
+        operation: 'max',
+        metric: 'tdh',
+        filters: {},
+        limit: 1
       }
     ];
 
@@ -423,7 +453,7 @@ describe('HelpBotPublicDataService', () => {
       service.answer({ question: 'what is the highest tdh rate?' })
     ).resolves.toEqual({
       answer:
-        'The highest TDH rate is 99.\n\nMore info: [Highest Meme Card TDH Rate](https://6529.io/the-memes)',
+        'The highest TDH rate is 99.\n\nMore info: [Highest Meme Card TDH Rate](https://6529.io/the-memes/1)',
       queryId: 'meme_cards.max.tdh_rate'
     });
     expect(db.execute).toHaveBeenCalledWith(
@@ -433,6 +463,73 @@ describe('HelpBotPublicDataService', () => {
       { memesContract: MEMES_CONTRACT },
       { forcePool: DbPoolName.READ }
     );
+  });
+
+  it('answers highest-current-TDH profile questions with profile data instead of Meme Card data', async () => {
+    const llm: HelpBotPublicDataLlm = {
+      planPublicDataQuery: jest.fn().mockResolvedValue({
+        entity: 'meme_cards',
+        operation: 'max',
+        metric: 'tdh_rate',
+        filters: {}
+      }),
+      renderPublicDataAnswer: jest
+        .fn()
+        .mockResolvedValue('punk6529 has the highest TDH with 123,456.')
+    };
+    const db = new TestSqlExecutor();
+    db.execute.mockResolvedValue([{ handle: 'punk6529', tdh: 123456 }]);
+    const service = new HelpBotPublicDataService(llm, () => db);
+
+    await expect(
+      service.answer({
+        question: 'who has the highest tdh currently and what is the value'
+      })
+    ).resolves.toEqual({
+      answer:
+        'punk6529 has the highest TDH with 123,456.\n\nMore info: [Highest Profile TDH](https://6529.io/punk6529)',
+      queryId: 'profiles.max.tdh'
+    });
+    expect(llm.planPublicDataQuery).not.toHaveBeenCalled();
+    expect(db.execute).toHaveBeenCalledWith(
+      withStatementTimeoutHint(
+        "SELECT i.handle, i.tdh AS tdh FROM identities i WHERE i.handle IS NOT NULL AND i.handle <> '' AND i.tdh > 0 ORDER BY i.tdh DESC, i.handle ASC LIMIT 1"
+      ),
+      undefined,
+      { forcePool: DbPoolName.READ }
+    );
+    expect(llm.renderPublicDataAnswer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'Highest Profile TDH',
+        rows: [{ handle: 'punk6529', tdh: 123456 }],
+        canonicalUrl: 'https://6529.io/punk6529'
+      })
+    );
+  });
+
+  it('uses prior TDH answers as context for profile follow-ups', async () => {
+    const llm: HelpBotPublicDataLlm = {
+      planPublicDataQuery: jest.fn(),
+      renderPublicDataAnswer: jest
+        .fn()
+        .mockResolvedValue('punk6529 has the highest profile TDH.')
+    };
+    const db = new TestSqlExecutor();
+    db.execute.mockResolvedValue([{ handle: 'punk6529', tdh: 123456 }]);
+    const service = new HelpBotPublicDataService(llm, () => db);
+
+    await expect(
+      service.answer({
+        question: 'i meant which profile',
+        previousBotAnswer:
+          'The meme card with the highest TDH rate is WAGMI at 24.18%.'
+      })
+    ).resolves.toEqual({
+      answer:
+        'punk6529 has the highest profile TDH.\n\nMore info: [Highest Profile TDH](https://6529.io/punk6529)',
+      queryId: 'profiles.max.tdh'
+    });
+    expect(llm.planPublicDataQuery).not.toHaveBeenCalled();
   });
 
   it('executes a latest global TDH plan through the read pool', async () => {

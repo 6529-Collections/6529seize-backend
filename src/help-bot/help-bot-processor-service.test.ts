@@ -21,7 +21,7 @@ describe('HelpBotProcessorService', () => {
     process.env.HELP_BOT_TECH_TEAM_HANDLES = previousTechTeamHandles;
   });
 
-  it('replies to the target drop and mentions tech team handles when no reliable source exists', async () => {
+  it('replies to the target drop and mentions resolved tech team profiles when no reliable source exists', async () => {
     process.env.HELP_BOT_TECH_TEAM_HANDLES = 'dev-team,@support';
     const ctx = {} as never;
     const interaction: HelpBotInteractionRow = {
@@ -59,6 +59,11 @@ describe('HelpBotProcessorService', () => {
     const creditsService = {
       refundQuestionCredit: jest.fn()
     };
+    const mentionResolver = {
+      resolveMentionHandles: jest
+        .fn()
+        .mockResolvedValue(['current-dev', 'support'])
+    };
     const answer = jest.fn().mockResolvedValue({
       type: 'NO_RELIABLE_SOURCE',
       escalateToTechTeam: true
@@ -70,7 +75,8 @@ describe('HelpBotProcessorService', () => {
       {} as never,
       profileResolver as never,
       () => ({ answer }) as never,
-      creditsService as never
+      creditsService as never,
+      mentionResolver
     );
 
     await service.processInteraction('interaction-1', ctx);
@@ -87,9 +93,13 @@ describe('HelpBotProcessorService', () => {
         replyToDropId: 'original-question-drop',
         interactionId: 'interaction-1',
         message:
-          "I don't have enough knowledge to help you here. @dev-team @support",
-        mentionedHandles: ['dev-team', 'support']
+          "I don't have enough knowledge to help you here. I'm referring this to the tech team: @[current-dev] @[support]",
+        mentionedHandles: ['current-dev', 'support']
       },
+      ctx
+    );
+    expect(mentionResolver.resolveMentionHandles).toHaveBeenCalledWith(
+      ['dev-team', 'support'],
       ctx
     );
     expect(interactionsDb.markNoReliableSource).toHaveBeenCalledWith(
@@ -148,6 +158,9 @@ describe('HelpBotProcessorService', () => {
     const creditsService = {
       refundQuestionCredit: jest.fn()
     };
+    const mentionResolver = {
+      resolveMentionHandles: jest.fn()
+    };
     const answer = jest.fn().mockResolvedValue({
       type: 'NO_RELIABLE_SOURCE',
       escalateToTechTeam: false
@@ -159,7 +172,8 @@ describe('HelpBotProcessorService', () => {
       {} as never,
       profileResolver as never,
       () => ({ answer }) as never,
-      creditsService as never
+      creditsService as never,
+      mentionResolver
     );
 
     await service.processInteraction('interaction-1', ctx);
@@ -175,6 +189,7 @@ describe('HelpBotProcessorService', () => {
       },
       ctx
     );
+    expect(mentionResolver.resolveMentionHandles).not.toHaveBeenCalled();
   });
 
   it('does not post a technical-failure reply when the success reaction fails', async () => {
@@ -214,6 +229,9 @@ describe('HelpBotProcessorService', () => {
     const creditsService = {
       refundQuestionCredit: jest.fn()
     };
+    const mentionResolver = {
+      resolveMentionHandles: jest.fn()
+    };
     const answer = jest.fn().mockResolvedValue({
       type: 'ANSWER',
       answer: 'TDH stands for Total Days Held.'
@@ -225,7 +243,8 @@ describe('HelpBotProcessorService', () => {
       {} as never,
       profileResolver as never,
       () => ({ answer }) as never,
-      creditsService as never
+      creditsService as never,
+      mentionResolver
     );
 
     await service.processInteraction('interaction-1', ctx);
@@ -286,6 +305,9 @@ describe('HelpBotProcessorService', () => {
     const creditsService = {
       refundQuestionCredit: jest.fn()
     };
+    const mentionResolver = {
+      resolveMentionHandles: jest.fn()
+    };
     const answerError = new Error('db timeout');
     const answer = jest.fn().mockRejectedValue(answerError);
     const service = new HelpBotProcessorService(
@@ -295,7 +317,8 @@ describe('HelpBotProcessorService', () => {
       {} as never,
       profileResolver as never,
       () => ({ answer }) as never,
-      creditsService as never
+      creditsService as never,
+      mentionResolver
     );
 
     await service.processInteraction('interaction-1', ctx);

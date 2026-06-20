@@ -41,6 +41,10 @@ import {
   helpBotCreditsService,
   HelpBotCreditsService
 } from './help-bot-credits.service';
+import {
+  helpBotMentionResolver,
+  HelpBotMentionResolver
+} from './help-bot-mention-resolver';
 
 function buildRenderer(): HelpBotLlmRenderer & HelpBotPublicDataLlm {
   return new HelpBotBedrockRenderer(HELP_BOT_BEDROCK_MODEL_ID);
@@ -69,7 +73,8 @@ export class HelpBotProcessorService {
     private readonly dropsService: DropsApiService,
     private readonly profileResolver: HelpBotProfileResolver,
     private readonly answererFactory: () => HelpBotAnswerer,
-    private readonly creditsService: HelpBotCreditsService
+    private readonly creditsService: HelpBotCreditsService,
+    private readonly mentionResolver: HelpBotMentionResolver
   ) {}
 
   public async processInteraction(
@@ -187,7 +192,7 @@ export class HelpBotProcessorService {
     readonly ctx: RequestContext;
   }): Promise<void> {
     const mentionedHandles = escalateToTechTeam
-      ? getHelpBotTechTeamMentionHandles()
+      ? await this.resolveTechTeamMentionHandles(ctx)
       : [];
     const reply = await this.dropWriter.reply(
       {
@@ -218,6 +223,30 @@ export class HelpBotProcessorService {
       },
       ctx
     );
+  }
+
+  private async resolveTechTeamMentionHandles(
+    ctx: RequestContext
+  ): Promise<string[]> {
+    const configuredHandles = getHelpBotTechTeamMentionHandles();
+    if (!configuredHandles.length) {
+      return [];
+    }
+    try {
+      const resolvedHandles = await this.mentionResolver.resolveMentionHandles(
+        configuredHandles,
+        ctx
+      );
+      if (!resolvedHandles.length) {
+        this.logger.warn(
+          `No configured help bot tech team handles resolved to profiles`
+        );
+      }
+      return resolvedHandles;
+    } catch (error) {
+      this.logger.error(`Failed to resolve help bot tech team handles`, error);
+      return [];
+    }
   }
 
   private async replyWithTechnicalFailure({
@@ -341,5 +370,6 @@ export const helpBotProcessorService = new HelpBotProcessorService(
       new HelpBotPublicDataService(renderer)
     );
   },
-  helpBotCreditsService
+  helpBotCreditsService,
+  helpBotMentionResolver
 );

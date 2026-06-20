@@ -1,4 +1,5 @@
 import {
+  IDENTITIES_TABLE,
   LATEST_TDH_GLOBAL_HISTORY_TABLE,
   MEMES_CONTRACT,
   MEMES_EXTENDED_DATA_TABLE,
@@ -34,6 +35,7 @@ export interface HelpBotPublicDataAnswerRequest {
  */
 export const HELP_BOT_PUBLIC_DATA_ENTITIES = [
   'meme_cards',
+  'profiles',
   'tdh_global'
 ] as const;
 
@@ -85,6 +87,9 @@ interface HelpBotPublicDataExecutableQuery {
   readonly params?: Record<string, unknown>;
   readonly title: string;
   readonly canonicalPath: string;
+  readonly canonicalPathFromRows?: (
+    rows: readonly Record<string, unknown>[]
+  ) => string | null;
 }
 
 interface MemeCardMetricDefinition {
@@ -131,6 +136,7 @@ const MEME_CARD_METRICS: Record<MemeCardMetric, MemeCardMetricDefinition> = {
 };
 
 const MEME_CARD_FILTER_KEYS = ['meme', 'season'] as const;
+const PROFILE_METRICS = ['tdh'] as const;
 const TDH_GLOBAL_METRICS = ['total_tdh'] as const;
 const QUERY_PLAN_KEYS = [
   'entity',
@@ -141,7 +147,7 @@ const QUERY_PLAN_KEYS = [
 ] as const;
 
 const DATA_QUESTION_PATTERN =
-  /\b(how many|count|highest|lowest|max|min|total|sum|average|avg|edition size|tdh rate|hodl rate|supply|szn|season|meme\s*#?\d+|current tdh)\b/i;
+  /\b(how many|count|highest|lowest|max|min|top|who has|which profile|which user|profile|profiles|user|users|identity|identities|total|sum|average|avg|edition size|tdh rate|hodl rate|supply|szn|season|meme\s*#?\d+|current tdh)\b/i;
 
 function isPotentialPublicDataQuestion(question: string): boolean {
   return DATA_QUESTION_PATTERN.test(question);
@@ -166,6 +172,62 @@ function toCanonicalUrl(path: string): string {
   }
   const normalizedPath = path.startsWith('/') ? path : '/' + path;
   return `${HELP_BOT_BASE_URL}${normalizedPath}`;
+}
+
+function normalizeIntentText(value: string | null | undefined): string {
+  return (value ?? '')
+    .toLowerCase()
+    .replace(/[^a-z0-9+#@]+/g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ');
+}
+
+function isProfileTdhQuestion({
+  question,
+  previousBotAnswer
+}: HelpBotPublicDataAnswerRequest): boolean {
+  const normalizedQuestion = normalizeIntentText(question);
+  const normalizedPreviousAnswer = normalizeIntentText(previousBotAnswer);
+  const explicitProfileHint =
+    /\b(profile|profiles|user|users|person|people|identity|identities|handle|handles|account|accounts|holder|holders)\b/.test(
+      normalizedQuestion
+    );
+  const personQuestionHint = /\bwho has\b/.test(normalizedQuestion);
+  const rankingHint =
+    /\b(highest|top|most|leader|leaders|rank|ranking|currently|current|value|which|who)\b/.test(
+      normalizedQuestion
+    );
+  const questionMentionsTdh = /\btdh\b/.test(normalizedQuestion);
+  const previousAnswerMentionsTdh = /\btdh\b/.test(normalizedPreviousAnswer);
+  const memeCardHint =
+    /\b(meme|memes|card|cards|nft|nfts|edition|supply|hodl rate|tdh rate)\b/.test(
+      normalizedQuestion
+    );
+
+  if (memeCardHint && !explicitProfileHint) {
+    return false;
+  }
+
+  return (
+    (explicitProfileHint || personQuestionHint) &&
+    rankingHint &&
+    (questionMentionsTdh || (explicitProfileHint && previousAnswerMentionsTdh))
+  );
+}
+
+function inferDeterministicPublicDataPlan(
+  request: HelpBotPublicDataAnswerRequest
+): HelpBotPublicDataQueryPlan | null {
+  if (!isProfileTdhQuestion(request)) {
+    return null;
+  }
+  return {
+    entity: 'profiles',
+    operation: 'max',
+    metric: 'tdh',
+    filters: {},
+    limit: 1
+  };
 }
 
 function compactValue(value: unknown): string {
@@ -342,6 +404,19 @@ function canonicalMemeCardsPath(filters: MemeCardFilterValues): string {
   return '/the-memes';
 }
 
+function canonicalMemeCardPathFromRows(
+  rows: readonly Record<string, unknown>[]
+): string | null {
+  if (rows.length !== 1) {
+    return null;
+  }
+  const meme = rows[0]?.meme;
+  if (typeof meme === 'number' && Number.isInteger(meme) && meme > 0) {
+    return `/the-memes/${meme}`;
+  }
+  return null;
+}
+
 function describeMemeCardsScope(filters: MemeCardFilterValues): string {
   if (filters.meme !== undefined) {
     return `Meme #${filters.meme}`;
@@ -461,7 +536,8 @@ function buildMemeCardsSortedQuery(
     ]),
     params: { ...from.params, ...where.params },
     title: `${titlePrefix} Meme Card ${metric.label}${scope}`,
-    canonicalPath: canonicalMemeCardsPath(filters)
+    canonicalPath: canonicalMemeCardsPath(filters),
+    canonicalPathFromRows: canonicalMemeCardPathFromRows
   };
 }
 
@@ -560,6 +636,61 @@ function buildTdhGlobalQuery(
   };
 }
 
+function readProfileMetric(
+  metric: unknown
+): (typeof PROFILE_METRICS)[number] | null {
+  return readStringEnum(metric, PROFILE_METRICS);
+}
+
+function readEmptyFilters(filters: unknown): Record<string, never> | null {
+  const rawFilters = readPlanFilters(filters);
+  if (rawFilters === null || Object.keys(rawFilters).length) {
+    return null;
+  }
+  return {};
+}
+
+function canonicalProfilePathFromRows(
+  rows: readonly Record<string, unknown>[]
+): string | null {
+  if (rows.length !== 1) {
+    return null;
+  }
+  const handle = rows[0]?.handle;
+  if (typeof handle !== 'string') {
+    return null;
+  }
+  const routeHandle = handle.trim().replace(/^@+/, '');
+  return routeHandle ? `/${encodeURIComponent(routeHandle)}` : null;
+}
+
+function buildProfilesQuery(
+  plan: HelpBotPublicDataQueryPlan
+): HelpBotPublicDataExecutableQuery | null {
+  const operation = readStringEnum(
+    plan.operation,
+    HELP_BOT_PUBLIC_DATA_OPERATIONS
+  );
+  const metric = readProfileMetric(plan.metric);
+  const filters = readEmptyFilters(plan.filters);
+  if (!metric || filters === null || operation !== 'max') {
+    return null;
+  }
+  const limit = readLimit(plan.limit);
+  return {
+    queryId: buildQueryId('profiles', operation, metric),
+    compiledSql: sqlJoin([
+      `SELECT i.handle, i.tdh AS tdh FROM ${IDENTITIES_TABLE} i`,
+      "WHERE i.handle IS NOT NULL AND i.handle <> '' AND i.tdh > 0",
+      'ORDER BY i.tdh DESC, i.handle ASC',
+      `LIMIT ${limit}`
+    ]),
+    title: 'Highest Profile TDH',
+    canonicalPath: '/network/tdh',
+    canonicalPathFromRows: canonicalProfilePathFromRows
+  };
+}
+
 export function buildHelpBotPublicDataQuery(
   plan: HelpBotPublicDataQueryPlan
 ): HelpBotPublicDataExecutableQuery | null {
@@ -569,6 +700,9 @@ export function buildHelpBotPublicDataQuery(
   const entity = readStringEnum(plan.entity, HELP_BOT_PUBLIC_DATA_ENTITIES);
   if (entity === 'meme_cards') {
     return buildMemeCardsQuery(plan);
+  }
+  if (entity === 'profiles') {
+    return buildProfilesQuery(plan);
   }
   if (entity === 'tdh_global') {
     return buildTdhGlobalQuery(plan);
@@ -634,7 +768,9 @@ export class HelpBotPublicDataService {
     if (!rowsContainAnswer(rows)) {
       return null;
     }
-    const canonicalUrl = toCanonicalUrl(query.canonicalPath);
+    const canonicalUrl = toCanonicalUrl(
+      query.canonicalPathFromRows?.(rows) ?? query.canonicalPath
+    );
 
     try {
       const rendered = await withTimeout(
@@ -675,6 +811,10 @@ export class HelpBotPublicDataService {
     llm: HelpBotPublicDataLlm,
     request: HelpBotPublicDataAnswerRequest
   ): Promise<HelpBotPublicDataQueryPlan | null> {
+    const deterministicPlan = inferDeterministicPublicDataPlan(request);
+    if (deterministicPlan) {
+      return deterministicPlan;
+    }
     try {
       return await withTimeout(
         llm.planPublicDataQuery({

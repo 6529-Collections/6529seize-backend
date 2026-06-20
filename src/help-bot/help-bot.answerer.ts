@@ -49,6 +49,19 @@ function toCanonicalUrl(baseUrl: string, path: string): string {
   return `${baseUrl}${normalizedPath}`;
 }
 
+function hasRoutePlaceholder(path: string): boolean {
+  return /[{}]|%7B|%7D/i.test(path);
+}
+
+function safeCanonicalPath(record: HelpBotKnowledgeRecord): string {
+  if (!hasRoutePlaceholder(record.canonicalPath)) {
+    return record.canonicalPath;
+  }
+  return (
+    record.relatedPaths.find((path) => !hasRoutePlaceholder(path)) ?? '/network'
+  );
+}
+
 function buildDeterministicAnswer(
   record: HelpBotKnowledgeRecord,
   canonicalUrl: string
@@ -341,7 +354,7 @@ export class HelpBotAnswerer {
 
     const canonicalUrl = toCanonicalUrl(
       request.baseUrl,
-      match.record.canonicalPath
+      safeCanonicalPath(match.record)
     );
     if (!this.renderer) {
       return {
