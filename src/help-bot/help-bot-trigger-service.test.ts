@@ -1,6 +1,9 @@
 import { ApiCreateDropRequest } from '@/api/generated/models/ApiCreateDropRequest';
 import { ApiDrop } from '@/api/generated/models/ApiDrop';
-import { HELP_BOT_SPAM_REACTION } from './help-bot.config';
+import {
+  HELP_BOT_SEEN_REACTION,
+  HELP_BOT_SPAM_REACTION
+} from './help-bot.config';
 import { HelpBotTriggerService } from './help-bot-trigger.service';
 
 function createRequest(
@@ -260,5 +263,41 @@ describe('HelpBotTriggerService', () => {
       ctx
     );
     expect(sqs.sendToQueueName).not.toHaveBeenCalled();
+  });
+
+  it('still queues the reply when the seen reaction fails', async () => {
+    const { service, reactionService, sqs } = createService({
+      wave: {
+        visibility_group_id: null,
+        is_direct_message: false
+      }
+    });
+    reactionService.setReaction.mockRejectedValueOnce(
+      new Error('reaction insert failed')
+    );
+    const ctx = {} as never;
+
+    await service.handleCreatedDrop(
+      {
+        createDropRequest: createRequest('@[6529help] what is tdh'),
+        createdDrop: createDrop({ id: 'drop-1' }),
+        authorProfileId: 'user-profile'
+      },
+      ctx
+    );
+
+    expect(reactionService.setReaction).toHaveBeenCalledWith(
+      {
+        botProfileId: 'bot-profile',
+        dropId: 'drop-1',
+        waveId: 'wave-1',
+        reaction: HELP_BOT_SEEN_REACTION
+      },
+      ctx
+    );
+    expect(sqs.sendToQueueName).toHaveBeenCalledWith({
+      queueName: 'help-bot-replies',
+      message: { interaction_id: 'interaction-1' }
+    });
   });
 });

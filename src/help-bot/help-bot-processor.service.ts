@@ -125,7 +125,7 @@ export class HelpBotProcessorService {
         },
         ctx
       );
-      await this.reactionService.setReaction(
+      await this.trySetReaction(
         {
           botProfileId,
           dropId: getInteractionTargetDropId(interaction),
@@ -204,7 +204,7 @@ export class HelpBotProcessorService {
       },
       ctx
     );
-    await this.reactionService.setReaction(
+    await this.trySetReaction(
       {
         botProfileId,
         dropId: getInteractionTargetDropId(interaction),
@@ -243,7 +243,7 @@ export class HelpBotProcessorService {
         ctx
       );
       replyDropId = reply.id;
-      await this.reactionService.setReaction(
+      await this.trySetReaction(
         {
           botProfileId,
           dropId: getInteractionTargetDropId(interaction),
@@ -266,6 +266,38 @@ export class HelpBotProcessorService {
       },
       ctx
     );
+  }
+
+  private async trySetReaction(
+    {
+      botProfileId,
+      dropId,
+      waveId,
+      reaction
+    }: {
+      readonly botProfileId: string;
+      readonly dropId: string;
+      readonly waveId: string;
+      readonly reaction: string;
+    },
+    ctx: RequestContext
+  ): Promise<void> {
+    try {
+      await this.reactionService.setReaction(
+        {
+          botProfileId,
+          dropId,
+          waveId,
+          reaction
+        },
+        ctx
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to set help bot reaction ${reaction} on drop ${dropId}`,
+        error
+      );
+    }
   }
 }
 

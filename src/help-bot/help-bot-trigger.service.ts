@@ -103,7 +103,7 @@ export class HelpBotTriggerService {
           },
           ctx
         );
-        await this.reactionService.setReaction(
+        await this.trySetReaction(
           {
             botProfileId,
             dropId: trigger.triggerDropId,
@@ -115,7 +115,7 @@ export class HelpBotTriggerService {
         return;
       }
 
-      await this.reactionService.setReaction(
+      await this.trySetReaction(
         {
           botProfileId,
           dropId: trigger.targetDropId,
@@ -202,6 +202,38 @@ export class HelpBotTriggerService {
     return recentInteractionCount > HELP_BOT_USER_SPAM_MAX_TRIGGERS_PER_WINDOW;
   }
 
+  private async trySetReaction(
+    {
+      botProfileId,
+      dropId,
+      waveId,
+      reaction
+    }: {
+      readonly botProfileId: string;
+      readonly dropId: string;
+      readonly waveId: string;
+      readonly reaction: string;
+    },
+    ctx: RequestContext
+  ): Promise<void> {
+    try {
+      await this.reactionService.setReaction(
+        {
+          botProfileId,
+          dropId,
+          waveId,
+          reaction
+        },
+        ctx
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to set help bot reaction ${reaction} on drop ${dropId}`,
+        error
+      );
+    }
+  }
+
   private async handleEnqueueFailure({
     botProfileId,
     interactionId,
@@ -221,16 +253,16 @@ export class HelpBotTriggerService {
       `Failed to enqueue help bot interaction ${interactionId}`,
       error
     );
+    await this.trySetReaction(
+      {
+        botProfileId,
+        dropId: targetDropId,
+        waveId,
+        reaction: HELP_BOT_FAILURE_REACTION
+      },
+      ctx
+    );
     try {
-      await this.reactionService.setReaction(
-        {
-          botProfileId,
-          dropId: targetDropId,
-          waveId,
-          reaction: HELP_BOT_FAILURE_REACTION
-        },
-        ctx
-      );
       const reply = await this.dropWriter.reply(
         {
           botProfileId,
