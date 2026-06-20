@@ -48,13 +48,6 @@ export interface CountRecentAuthorInteractionsRequest {
   readonly sinceMillis: number;
 }
 
-function affectedRows(result: unknown): number {
-  if (result && typeof result === 'object' && 'affectedRows' in result) {
-    return Number((result as { affectedRows?: unknown }).affectedRows ?? 0);
-  }
-  return Array.isArray(result) ? affectedRows(result[0]) : 0;
-}
-
 export class HelpBotInteractionsDb extends LazyDbAccessCompatibleService {
   public async insertSeen(
     request: InsertHelpBotInteractionRequest,
@@ -116,7 +109,7 @@ export class HelpBotInteractionsDb extends LazyDbAccessCompatibleService {
     );
     return {
       interaction,
-      created: affectedRows(result) > 0
+      created: this.db.getAffectedRows(result) > 0
     };
   }
 
@@ -179,7 +172,7 @@ export class HelpBotInteractionsDb extends LazyDbAccessCompatibleService {
       },
       { wrappedConnection: ctx.connection }
     );
-    if (affectedRows(result) === 0) {
+    if (this.db.getAffectedRows(result) === 0) {
       return null;
     }
     return await this.findById(id, ctx);
