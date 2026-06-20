@@ -1,5 +1,6 @@
 import { identitiesDb, IdentitiesDb } from '@/identities/identities.db';
 import { Logger } from '@/logging';
+import { profilesDb, ProfilesDb } from '@/profiles/profiles.db';
 import { RequestContext } from '@/request.context';
 import { HELP_BOT_HANDLE } from './help-bot.config';
 
@@ -17,6 +18,7 @@ export class HelpBotProfileResolver {
 
   constructor(
     private readonly identitiesDb: Pick<IdentitiesDb, 'getIdentityByHandle'>,
+    private readonly profilesDb: Pick<ProfilesDb, 'getProfileByHandle'>,
     private readonly now: () => number = () => Date.now()
   ) {}
 
@@ -32,7 +34,8 @@ export class HelpBotProfileResolver {
       HELP_BOT_HANDLE,
       ctx
     );
-    const profileId = identity?.profile_id ?? null;
+    const profileId =
+      identity?.profile_id ?? (await this.resolveProfileIdFromProfile(ctx));
     if (!profileId) {
       this.cache = {
         profileId: null,
@@ -51,6 +54,22 @@ export class HelpBotProfileResolver {
     return profileId;
   }
 
+  private async resolveProfileIdFromProfile(
+    ctx: RequestContext
+  ): Promise<string | null> {
+    const profile = await this.profilesDb.getProfileByHandle(
+      HELP_BOT_HANDLE,
+      ctx.connection
+    );
+    if (!profile?.external_id) {
+      return null;
+    }
+    this.logger.warn(
+      `Help bot profile handle ${HELP_BOT_HANDLE} resolved through profiles fallback`
+    );
+    return profile.external_id;
+  }
+
   private getCachedProfileId(): string | null | undefined {
     if (!this.cache || this.cache.expiresAt <= this.now()) {
       return undefined;
@@ -59,4 +78,7 @@ export class HelpBotProfileResolver {
   }
 }
 
-export const helpBotProfileResolver = new HelpBotProfileResolver(identitiesDb);
+export const helpBotProfileResolver = new HelpBotProfileResolver(
+  identitiesDb,
+  profilesDb
+);

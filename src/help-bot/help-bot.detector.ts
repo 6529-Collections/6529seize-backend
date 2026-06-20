@@ -65,14 +65,29 @@ function stripBotMention(text: string): string {
     .trim();
 }
 
-function hasExplicitMention(request: ApiCreateDropRequest, text: string) {
-  const mentionedByPayload = (request.mentioned_users ?? []).some((user) => {
+function hasMentionedBot(
+  mentions:
+    | readonly {
+        readonly handle_in_content?: string | null;
+        readonly current_handle?: string | null;
+      }[]
+    | null
+    | undefined
+): boolean {
+  return (mentions ?? []).some((user) => {
     return (
       normalizeHandle(user.handle_in_content) === HELP_BOT_HANDLE ||
       normalizeHandle(user.current_handle) === HELP_BOT_HANDLE
     );
   });
-  return mentionedByPayload || HANDLE_MENTION_REGEX.test(text);
+}
+
+function hasExplicitMention(input: HelpBotTriggerDetectionInput, text: string) {
+  return (
+    hasMentionedBot(input.request.mentioned_users) ||
+    hasMentionedBot(input.createdDrop.mentioned_users) ||
+    HANDLE_MENTION_REGEX.test(text)
+  );
 }
 
 function isMeaningfulQuestion(text: string): boolean {
@@ -93,7 +108,7 @@ export function detectHelpBotTrigger(
   const text = extractText(input.request);
   const question = stripBotMention(text);
 
-  if (hasExplicitMention(input.request, text)) {
+  if (hasExplicitMention(input, text)) {
     if (isMeaningfulQuestion(question)) {
       return {
         triggerDropId: input.createdDrop.id,

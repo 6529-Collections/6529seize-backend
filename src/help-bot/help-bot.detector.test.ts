@@ -41,11 +41,13 @@ function createRequest(
 function createDrop({
   id,
   authorId = 'user-profile',
-  content = ''
+  content = '',
+  mentionedHandle
 }: {
   readonly id: string;
   readonly authorId?: string;
   readonly content?: string;
+  readonly mentionedHandle?: string;
 }): ApiDrop {
   return {
     id,
@@ -59,7 +61,16 @@ function createDrop({
       {
         content
       }
-    ]
+    ],
+    mentioned_users: mentionedHandle
+      ? [
+          {
+            mentioned_profile_id: 'bot-profile',
+            handle_in_content: mentionedHandle,
+            current_handle: mentionedHandle
+          }
+        ]
+      : []
   } as unknown as ApiDrop;
 }
 
@@ -108,6 +119,22 @@ describe('detectHelpBotTrigger', () => {
         mentionedHandle: '6529help'
       }),
       createdDrop: createDrop({ id: 'drop-2' }),
+      authorProfileId: 'user-profile',
+      botProfileId: 'bot-profile'
+    });
+
+    expect(trigger?.triggerType).toBe(HelpBotInteractionTriggerType.MENTION);
+    expect(trigger?.targetDropId).toBe('drop-2');
+    expect(trigger?.question).toBe('How do subscriptions work?');
+  });
+
+  it('detects persisted mentions on the created drop', () => {
+    const trigger = detectHelpBotTrigger({
+      request: createRequest('How do subscriptions work?'),
+      createdDrop: createDrop({
+        id: 'drop-2',
+        mentionedHandle: '6529help'
+      }),
       authorProfileId: 'user-profile',
       botProfileId: 'bot-profile'
     });
