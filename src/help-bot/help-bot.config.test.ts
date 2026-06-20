@@ -1,4 +1,6 @@
 import {
+  HELP_BOT_INSUFFICIENT_CREDITS_REACTION,
+  HELP_BOT_INSUFFICIENT_CREDITS_REPLY,
   HELP_BOT_NO_RELIABLE_SOURCE_BASE_REPLY,
   HELP_BOT_TECH_TEAM_HANDLES_ENV,
   buildHelpBotNoReliableSourceReply,
@@ -23,6 +25,13 @@ describe('help bot config', () => {
     expect(getHelpBotTechTeamMentionHandles()).toEqual([]);
     expect(buildHelpBotNoReliableSourceReply()).toBe(
       HELP_BOT_NO_RELIABLE_SOURCE_BASE_REPLY
+    );
+  });
+
+  it('uses low-battery insufficient-credit reaction and REP-category copy', () => {
+    expect(HELP_BOT_INSUFFICIENT_CREDITS_REACTION).toBe(':low_battery:');
+    expect(HELP_BOT_INSUFFICIENT_CREDITS_REPLY).toBe(
+      'You need at least 1 Help6529 Credit REP to ask a question. It is REP in the `Help6529 Credits` category, earned through activity or given by other profiles.'
     );
   });
 
